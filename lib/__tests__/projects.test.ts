@@ -193,6 +193,16 @@ describe("PM-4 — the project release is per session, and says what really happ
     expect(describeReleaseOutcome(out)).toBe("2 active checkouts were released; 1 is still held by ann.");
   });
 
+  it("the actor's own sessions go in batches of 100 ids — no single .in() filter past the gateway's URL limit", async () => {
+    const many = Array.from({ length: 150 }, (_, i) => ({ id: `s-own-${i}`, document_id: `d-${i}`, org_id: "o1", user_id: "own", user_name: "own" }));
+    state.queue["checkout_sessions.select"] = [{ data: many }];
+    state.queue["checkout_sessions.update"] = [{ data: many.slice(0, 100) }, { data: many.slice(100) }];
+    const out = await releaseAllCheckoutsForProject({ projectId: "p1", reason: "x", actorUserId: "own" });
+    const batches = writesTo("checkout_sessions", "update").map((u) => (u.filters.find(([k]) => k === "in:id")?.[1] as string[]).length);
+    expect(batches).toEqual([100, 50]);
+    expect(out.released).toBe(150);
+  });
+
   it("before the fix the ONE batch refused everything — now a non-controller owner still frees their own", async () => {
     state.queue["checkout_sessions.select"] = [{ data: [own, ann] }];
     state.queue["checkout_sessions.update"] = [

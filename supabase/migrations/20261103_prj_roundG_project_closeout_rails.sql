@@ -388,7 +388,7 @@ BEGIN
   VALUES ('PROJECT_DELETED', p_project::text, 'project', v_proj.org_id, v_actor, v_email,
           jsonb_build_object('name', v_proj.name, 'reason', v_reason, 'counts', v_counts,
                              'regulatedRecords', v_regulated, 'revokedIntakeLinks', v_links,
-                             'orphanedStorageKeys', v_keys, 'snapshotAction', 'PURGE_PROJECT_SNAPSHOT',
+                             'orphanedStorageKeyCount', jsonb_array_length(v_keys), 'snapshotAction', 'PURGE_PROJECT_SNAPSHOT',
                              'path', 'delete_project_record'));
   -- What was destroyed, recoverable by the org's audit viewers only: the
   -- action is PURGE_, inside audit_logs_admin_trail's RESTRICTIVE overlay
@@ -396,6 +396,9 @@ BEGIN
   INSERT INTO audit_logs (action, resource_id, resource_type, org_id, user_id, user_email, details)
   VALUES ('PURGE_PROJECT_SNAPSHOT', p_project::text, 'project', v_proj.org_id, v_actor, v_email,
           jsonb_build_object('name', v_proj.name, 'reason', v_reason, 'snapshot', v_snapshot,
+                             -- the storage keys carry original file names: audit viewers
+                             -- only (the orphan collector runs as the service role)
+                             'orphanedStorageKeys', v_keys,
                              'path', 'delete_project_record'));
 
   -- The purge: children first, in an order that fires no ON DELETE SET NULL
@@ -522,7 +525,7 @@ UNION ALL SELECT 'PM-6: a project carrying records refuses a direct delete — t
               FROM pg_proc WHERE proname = 'enforce_project_delete_guard' AND pronamespace = 'public'::regnamespace), NULL
 UNION ALL SELECT 'PM-6: delete_project_record audits counts, snapshot and storage keys BEFORE it deletes',
        (SELECT prosrc LIKE '%PROJECT_DELETED%' AND prosrc LIKE '%''counts''%' AND prosrc LIKE '%''snapshot''%'
-               AND prosrc LIKE '%''orphanedStorageKeys''%' AND prosrc LIKE '%UPDATE project_intake_links SET revoked_at%'
+               AND prosrc LIKE '%''orphanedStorageKeys''%' AND prosrc LIKE '%''orphanedStorageKeyCount''%' AND prosrc LIKE '%UPDATE project_intake_links SET revoked_at%'
                AND strpos(prosrc, 'INSERT INTO audit_logs') < strpos(prosrc, 'DELETE FROM projects')
           FROM pg_proc WHERE proname = 'delete_project_record' AND pronamespace = 'public'::regnamespace), NULL
 UNION ALL SELECT 'SEC-2 / PM-6: the snapshot rides only in PURGE_PROJECT_SNAPSHOT (audit viewers) — the org-readable PROJECT_DELETED row carries none',

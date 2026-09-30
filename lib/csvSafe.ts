@@ -30,13 +30,19 @@ export function isFormulaLike(s: string): boolean {
 }
 
 /**
- * Encode one value as a CSV cell. `null`/`undefined` → empty. A
- * formula-leading value is apostrophe-prefixed and quoted; a value holding
+ * Encode one value as a CSV cell. `null`/`undefined` → empty. A typed
+ * number is written as a number. A formula-leading TEXT value is
+ * apostrophe-prefixed and quoted; a value holding
  * a quote, comma, CR or LF is quoted with its quotes doubled; anything else
  * is written bare.
  */
 export function csvCell(v: unknown): string {
   if (v == null) return "";
+  // A typed number is data, never a formula: "-1250" stays a number a
+  // spreadsheet can sum (only TEXT that leads with a formula character is
+  // neutralised). A non-finite number has no honest cell.
+  if (typeof v === "number") return Number.isFinite(v) ? String(v) : "";
+  if (typeof v === "bigint") return String(v);
   const raw = String(v);
   if (isFormulaLike(raw)) return `"'${raw.replace(/"/g, '""')}"`;
   if (/[",\n\r]/.test(raw)) return `"${raw.replace(/"/g, '""')}"`;

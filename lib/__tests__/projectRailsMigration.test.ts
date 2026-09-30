@@ -382,7 +382,10 @@ describe("20261103 — PM-6 / QUAL-3: delete counts, audits, and only then delet
     const deleted = between(d, "VALUES ('PROJECT_DELETED'", ");");
     const purge = between(d, "VALUES ('PURGE_PROJECT_SNAPSHOT'", ");");
     expect(deleted).not.toContain("v_snapshot");
-    for (const k of ["'counts', v_counts", "'orphanedStorageKeys', v_keys", "'reason', v_reason", "'revokedIntakeLinks', v_links", "'snapshotAction', 'PURGE_PROJECT_SNAPSHOT'"]) expect(deleted).toContain(k);
+    for (const k of ["'counts', v_counts", "'orphanedStorageKeyCount', jsonb_array_length(v_keys)", "'reason', v_reason", "'revokedIntakeLinks', v_links", "'snapshotAction', 'PURGE_PROJECT_SNAPSHOT'"]) expect(deleted).toContain(k);
+    // the keys carry original file names: they ride in the audit-viewer-only row
+    expect(deleted).not.toContain("'orphanedStorageKeys', v_keys");
+    expect(purge).toContain("'orphanedStorageKeys', v_keys");
     expect(purge).toContain("'snapshot', v_snapshot");
     expect(d.split("v_snapshot").length - 1).toBe(3); // declared, built, written once (the PURGE_ row)
     // The overlay: the NEWEST audit_logs_admin_trail in the sequence is a

@@ -776,6 +776,9 @@ project history for the document will be hidden.
 - **Moved links.** A link that moves is now refused outright, by `trg_project_documents_link_fixed` (BEFORE UPDATE on `project_documents`, 20261102) for any signed-in caller. The UPDATE policy therefore follows the fleet plan (`can_manage_project`, in a project the caller can see; see `SEC-17`). The detach (DELETE) and the `doc_*` feed rows stay owner-or-controller, so dw3 is unchanged.
 - **The history read.** The timeline's read of `doc_removed` rows had no range, so a register with more than 1,000 detaches lost cutoffs silently. It is now paged to exhaustion (see `SAF-6`), so dw1 ("history preserved") holds at any size.
 
+
+**Residual (2026-09-30, projects Round G — final review, not fixed).** The preserved history depends on a second client request: the `doc_removed` feed row is written after the DELETE (`components/projects/ProjectDocumentsCard.tsx` ~:132). A detach whose second request fails leaves no cutoff row, the same as the raw-API case already recorded. Writing the feed row in the same statement, through a trigger on `project_documents` delete, would close it.
+
 ---
 
 ## Report progress

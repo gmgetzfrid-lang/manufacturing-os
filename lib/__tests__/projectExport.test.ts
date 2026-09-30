@@ -55,6 +55,7 @@ function chain(table: string) {
 vi.mock("@/lib/supabase", () => ({ supabase: { from: (t: string) => { state.from.push(t); return chain(t); } } }));
 
 import { buildAllProjectsCsv, buildProjectCsv, ExportCancelledError, EXPORT_PROJECT_BATCH, EXPORT_PAGE_ROWS } from "@/lib/projectExport";
+import { csvCell } from "@/lib/csvSafe";
 
 function seed(n: number) {
   state.rows.projects = Array.from({ length: n }, (_, i) => ({
@@ -177,6 +178,14 @@ describe("PM-10 — the exported cells are inert text", () => {
     expect(built!.csv).toContain(`"'-ISO-1",Line,A,Issued,lib`);
     // No cell in the file begins with a formula character.
     for (const line of lines) for (const cell of line.split(",")) expect(/^[=+@\t\r-]/.test(cell), cell).toBe(false);
+  });
+
+  it("a typed number is written as a number — a negative amount stays summable; only TEXT that leads with a formula character is neutralised", () => {
+    expect(csvCell(-1250)).toBe("-1250");
+    expect(csvCell(0.5)).toBe("0.5");
+    expect(csvCell(Number.NaN)).toBe("");
+    expect(csvCell("-1250")).toBe(`"'-1250"`);
+    expect(csvCell("=1+1")).toBe(`"'=1+1"`);
   });
 
   it("the org export's section header is a cell too: a name carrying a line break or a comma starts no live formula", async () => {

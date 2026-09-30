@@ -739,8 +739,10 @@ export async function releaseAllCheckoutsForProject(params: {
 
   // The actor's own sessions: one statement — the guard never refuses these.
   const own = rows.filter((r) => String(r.user_id) === String(params.actorUserId));
-  if (own.length > 0) {
-    const res = await endSessions(own.map((r) => r.id));
+  // In batches of IN_FILTER_CHUNK ids: a longer `.in("id", …)` list can
+  // exceed the API gateway's URL limit.
+  for (let i = 0; i < own.length; i += IN_FILTER_CHUNK) {
+    const res = await endSessions(own.slice(i, i + IN_FILTER_CHUNK).map((r) => r.id));
     if (res.error) throw new Error(`The project's active checkouts were NOT released: ${res.error.message}`);
     endedRows.push(...res.ended);
   }
@@ -826,6 +828,8 @@ export interface ProjectDocumentRegister {
 /** Document ids per `.in()` read of the register — keeps the request line
  *  bounded however many documents a project lists. */
 const REGISTER_DOC_CHUNK = 100;
+/** The most ids one `.in("id", …)` filter carries (the gateway URL limit). */
+const IN_FILTER_CHUNK = 100;
 
 /** Before 20260902 the projects row has no intake_collection_id — then the
  *  project simply has no intake collection. Any OTHER failure of that read
@@ -1227,11 +1231,12 @@ function headQuery(table: string) {
  *    caller is a controller AND gives a reason (the default is Archive);
  *  · revokes the project's contractor intake links (PM-2's inline limb —
  *    PC-1 / J1 exports the shared intake-link revoke helper);
- *  · writes PROJECT_DELETED (org-readable) with the counts and the storage
- *    keys of the cost documents' files for the orphan sweep, and
- *    PURGE_PROJECT_SNAPSHOT — a serialized snapshot of the cost and quality
- *    rows, readable by the org's audit viewers only (a PURGE_ action is
- *    inside the audit_logs_admin_trail overlay);
+ *  · writes PROJECT_DELETED (org-readable) with the counts and how many
+ *    stored files the delete orphans, and PURGE_PROJECT_SNAPSHOT — a
+ *    serialized snapshot of the cost and quality rows plus the orphaned
+ *    storage keys (they carry original file names) for the orphan sweep,
+ *    readable by the org's audit viewers only (a PURGE_ action is inside the
+ *    audit_logs_admin_trail overlay);
  *  · then deletes the schedule and the project (the rest cascades; the
  *    purge GUC app.record_purge = 'project:<id>' is the one pass through the
  *    money and quality delete guards).
@@ -1932,6 +1937,13 @@ async function sweepSessions(
   ids: string[],
   o: { browserMode: boolean; nowIso: string; reason: string; title: string; body: string },
 ): Promise<number> {
+  // In batches of IN_FILTER_CHUNK ids: a longer `.in("id", …)` list can
+  // exceed the API gateway's URL limit.
+  if (ids.length > IN_FILTER_CHUNK) {
+    let released = 0;
+    for (let i = 0; i < ids.length; i += IN_FILTER_CHUNK) released += await sweepSessions(db, ids.slice(i, i + IN_FILTER_CHUNK), o);
+    return released;
+  }
   const { browserMode, nowIso } = o;
   // The register outcome for a sweep is 'auto_released' — the one outcome no
   // human ever chooses. Pre-migration (no outcome columns) the write retries
