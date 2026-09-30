@@ -206,6 +206,7 @@ describe("SCH-5 · one 'now' per screen: the pulse and the summary strip cannot 
     const tab = readFileSync(join(process.cwd(), "components/projects/ScheduleTab.tsx"), "utf8");
     expect(tab).toMatch(/const nowMs = useScheduleNow\(\);/);
     expect(tab).toMatch(/<ScheduleProgress milestones=\{milestones\} metrics=\{metrics\} nowMs=\{nowMs\} \/>/);
+    expect(tab).toMatch(/computeScheduleMetrics\(milestones, \{ now: new Date\(nowMs\) \}\)/); // the card's plan % on the same instant
     expect(tab).toMatch(/filterMilestones\(ghostFiltered, planFilter, \{ now: nowMs \}\)/);
     expect(tab).toMatch(/<MilestoneRow[\s\S]{0,300}nowMs=\{nowMs\}/);
     expect(tab).not.toMatch(/useState<number>\(\(\) => Date\.now\(\)\)/); // no row keeps its own clock

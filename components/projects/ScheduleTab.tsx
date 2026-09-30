@@ -207,7 +207,7 @@ export default function ScheduleTab({ orgId, projectId, projectName, projectStat
     return out;
   }, [visible]);
 
-  const metrics = useMemo(() => computeScheduleMetrics(milestones), [milestones]);
+  const metrics = useMemo(() => computeScheduleMetrics(milestones, { now: new Date(nowMs) }), [milestones, nowMs]);
   // Per-task effective progress + derived status for the Planning list, so a
   // phase shows a rolled-up status/% and can't be marked done directly. Over
   // the FULL list (PT SCH-6): hiding imported children must never turn their
