@@ -28,7 +28,15 @@
 // A REBUILD IS THE REBUILDER'S. Reset clears another member's background
 // consent first (a plain build or a standing "keep current"), so a full
 // rebuild is never continued on a key whose owner consented to something
-// else; the panel's Rebuild dialog says so before it runs.
+// else; the panel's Rebuild dialog says so before it runs. The clear is
+// conditional on the consent read, and only a clear that changed the row
+// counts: a consent renewed in between is read again and cleared; one that
+// keeps changing refuses the rebuild (409) before any vector is touched.
+//
+// A coverage read that fails is not a missing migration: only a missing
+// function (PGRST202 / 42883) says "run 20260930"; anything else (a
+// statement timeout during a rebuild) is reported as the transient failure
+// it is (503).
 //
 // Refused passages are reported to controllers with their document and page;
 // every other reader gets the count only — a mirror's name is its controlled
@@ -46,7 +54,8 @@ import {
 import { openAiKey } from "@/lib/ai/keyVault";
 import {
   embedLibrarySlice, setEmbedBuildMarker, patchEmbedBuildMarker, parseEmbedBuildMarker,
-  loadEmbedDetail, failedPassageSamples, embedAgreementSigned, expectationOf, type EmbedDetail,
+  loadEmbedDetail, failedPassageSamples, embedAgreementSigned, expectationOf,
+  readEmbedBuildMarker, clearEmbedBuildMarkerIf, type EmbedDetail,
 } from "@/lib/knowledgeEmbedCore";
 
 export const runtime = "nodejs";
@@ -64,12 +73,26 @@ function bad(msg: string, status = 400, extra?: Record<string, unknown>) {
   return NextResponse.json({ error: msg, ...(extra ?? {}) }, { status });
 }
 
-async function coverage(orgId: string, libraryId: string) {
+/** The coverage read, and — when it fails — whether the function is missing
+ *  (a migration to run) or the read itself failed (a timeout while the table
+ *  is being rewritten, a dropped connection: try again). */
+async function readCoverage(orgId: string, libraryId: string): Promise<
+  { stats: { total: number; embedded: number }; missing: false; error: null }
+  | { stats: null; missing: boolean; error: string }
+> {
   const { data, error } = await supabaseAdmin
     .rpc("semantic_coverage", { p_org_id: orgId, p_library_id: libraryId });
-  if (error) return null;
+  if (error) {
+    const missing = error.code === "PGRST202" || error.code === "42883"
+      || /Could not find the function/i.test(error.message ?? "");
+    return { stats: null, missing, error: error.message ?? "unknown error" };
+  }
   const row = (data as Array<{ total: number; embedded: number }> | null)?.[0];
-  return { total: Number(row?.total ?? 0), embedded: Number(row?.embedded ?? 0) };
+  return { stats: { total: Number(row?.total ?? 0), embedded: Number(row?.embedded ?? 0) }, missing: false, error: null };
+}
+
+async function coverage(orgId: string, libraryId: string) {
+  return (await readCoverage(orgId, libraryId)).stats;
 }
 
 /** The caller's embedding connection, key decrypted (never returned). */
@@ -101,6 +124,9 @@ async function detailFields(orgId: string, libraryId: string, userId: string, de
     failed: detail?.failed ?? 0,
     failedSamples: isController && detail && detail.failed > 0 ? await failedPassageSamples(orgId, libraryId) : [],
     busy: detail?.leased ?? 0,
+    // Refused by the provider and waiting to be offered again — nobody is
+    // embedding them, so they are never shown as "busy" (SEM-4).
+    waiting: detail?.waiting ?? 0,
     models: detail?.models ?? {},
     mixed: detail?.corpus.state === "mixed",
     connection: connection ? { provider: connection.provider, model: connection.model } : null,
@@ -149,12 +175,19 @@ export async function POST(req: NextRequest) {
     .eq("id", libraryId).eq("org_id", orgId).maybeSingle();
   if (!lib) return bad("Library not found", 404);
 
-  const stats = await coverage(orgId, libraryId);
-  if (!stats) {
+  const cov = await readCoverage(orgId, libraryId);
+  if (!cov.stats) {
+    if (cov.missing) {
+      return bad(
+        "Semantic search needs migration 20260930 — run it in Supabase, then try again.", 424,
+      );
+    }
     return bad(
-      "Semantic search needs migration 20260930 — run it in Supabase, then try again.", 424,
+      `Couldn't read the meaning index's coverage just now (${cov.error}). The database may be busy — `
+      + "a rebuild rewrites every passage — so try again in a moment.", 503,
     );
   }
+  const stats = cov.stats;
 
   if (body.action === "status") {
     // Mirror the SemanticProgress shape the build path returns EXACTLY.
@@ -214,16 +247,30 @@ export async function POST(req: NextRequest) {
   // running drain stops at its next batch; the rebuild that follows records
   // the caller's own consent. The caller's own consent is left as it is.
   if (body.action === "reset") {
+    // backgroundCleared is reported only when a clear actually changed the
+    // row. A conditional clear that matched nothing means the consent moved
+    // between the read and the clear (renewed, re-recorded, replaced): read
+    // it again and clear THAT one, once; still moving → 409, nothing cleared.
     let backgroundCleared = false;
-    const prior = await readMarker(libraryId);
-    if (prior && prior.userId !== user.id) {
-      const clearErr = await setEmbedBuildMarker(libraryId, null, { expect: expectationOf(prior) });
-      if (clearErr) return bad(`Couldn't stop another member's background build before the rebuild: ${clearErr}`, 500);
-      backgroundCleared = true;
+    let seen = await readEmbedBuildMarker(libraryId);
+    for (let round = 0; ; round++) {
+      if (seen.error) return bad(`Couldn't read the background build before the rebuild: ${seen.error}`, 500);
+      const other = seen.marker && seen.marker.userId !== user.id ? seen.marker : null;
+      if (!other) break;
+      const cleared = await clearEmbedBuildMarkerIf(libraryId, expectationOf(other));
+      if (cleared.error) return bad(`Couldn't stop another member's background build before the rebuild: ${cleared.error}`, 500);
+      if (cleared.applied) { backgroundCleared = true; break; }
+      if (round >= 1) {
+        return bad(
+          "Another member's background build changed while the rebuild was starting, so nothing was cleared "
+          + "and no vector was touched — try the rebuild again.", 409,
+        );
+      }
+      seen = await readEmbedBuildMarker(libraryId);
     }
     let { error } = await supabaseAdmin
       .from("knowledge_chunks")
-      .update({ embedding: null, embedding_model: null, embed_attempts: 0, embed_error: null, embed_claimed_until: null })
+      .update({ embedding: null, embedding_model: null, embed_attempts: 0, embed_error: null, embed_claimed_until: null, embed_retry_after: null })
       .eq("org_id", orgId)
       .eq("library_id", libraryId);
     if (error && (error.code === "PGRST204" || error.code === "42703")) {
@@ -252,7 +299,7 @@ export async function POST(req: NextRequest) {
   if (body.action === "retry-failed") {
     const { data, error } = await supabaseAdmin
       .from("knowledge_chunks")
-      .update({ embed_attempts: 0, embed_error: null })
+      .update({ embed_attempts: 0, embed_error: null, embed_retry_after: null })
       .eq("org_id", orgId).eq("library_id", libraryId)
       .is("embedding", null)
       .gte("embed_attempts", EMBED_MAX_ATTEMPTS)
@@ -348,7 +395,8 @@ export async function POST(req: NextRequest) {
     // The claim hands out nothing while the library holds another model's
     // vectors (another driver's landed first): that, not the cache.
     lastError = conflictAfter.message;
-  } else if (slice.fetchedNone && remainingBefore > 0 && !(detailBefore && detailBefore.leased >= detailBefore.remaining)) {
+  } else if (slice.fetchedNone && remainingBefore > 0
+    && !(detailBefore && detailBefore.leased + detailBefore.waiting >= detailBefore.remaining)) {
     // Coverage says passages lack vectors, yet the fetch returned none —
     // the classic symptom of a stale PostgREST schema cache after the
     // embedding column was rebuilt. Say so; silence here reads as "done".

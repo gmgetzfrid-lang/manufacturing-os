@@ -18,9 +18,11 @@
 // only. Controllers read all memory (DEC-43).
 //
 // Fails CLOSED on a failed read of the stored answers, of the cited knowledge
-// documents or of the controlled documents: an error and no rows — never an
-// unfiltered answer. (The seam's library / folder landscape read does not yet
-// fail closed — see readableKnowledgeDocIds.)
+// documents, of the controlled documents, or of the document libraries and
+// folders whose ACLs decide them: an error and no rows — never an unfiltered
+// answer. (The seam's own landscape read still ignores its errors; the
+// libraries / folders reads are checked first in readableKnowledgeDocIds
+// until the seam's owner makes it throw.)
 
 import { NextRequest, NextResponse } from "next/server";
 import { supabaseAdmin } from "@/lib/supabaseAdmin";

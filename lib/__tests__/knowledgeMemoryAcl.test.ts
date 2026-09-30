@@ -16,8 +16,13 @@
 //   * KACL-7 / IEDGE-6 / IRLS-9 — the mirror-row and mention policies, pinned
 //     by shape (and verified against a scratch PostgreSQL 16 — see the
 //     finding records); the backlinks panel counts what it may not show.
-//   * 20261120 — the paste contract, byte fidelity against 20260911, and a
-//     census replaying every numbered migration.
+//   * The 20260917 chunk lockdown was written as NOT EXISTS over
+//     knowledge_documents; once a mirror row is hidden by RLS that turns into
+//     a pass, so 20261120 re-creates it as a positive EXISTS — and a policy
+//     census replaying every migration asserts no live policy tests NOT
+//     EXISTS over a table this package narrowed.
+//   * 20261120 — the paste contract, byte fidelity against 20260911 and
+//     20260917, and a census replaying every numbered migration.
 
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { readFileSync, readdirSync } from "node:fs";
@@ -301,6 +306,44 @@ describe("/api/knowledge/history — the team's record, re-decided per reader", 
     admin.state.user = null;
     expect((await post({ orgId: ORG, libraryId: LIB, action: "list" })).status).toBe(401);
   });
+  it("reproduction: the seam judges a document restricted ONLY by its library's ACL as readable when the libraries read fails (loadDcLandscape ignores the error)", async () => {
+    const { loadPrincipal, readableControlledDocIds } = await import("@/lib/knowledgeAccess");
+    const RLIB = "0c000000-0000-4000-8000-000000000002";
+    const DLIB = "0e000000-0000-4000-8000-000000000003";
+    admin.state.tables.libraries.push({ id: RLIB, org_id: ORG, name: "Restricted", visibility: "private", owner_user_id: null, owner_team_id: null,
+      acl: { visibility: "private", rules: [{ effect: "allow", subject: { type: "user", id: E }, actions: ["read", "discover"] }] } });
+    admin.state.tables.documents.push({ id: DLIB, org_id: ORG, library_id: RLIB, collection_id: null, acl: null, visibility: "normal", is_private: false, scope: "org", created_by: A, owner_user_id: null });
+    const pv = (await loadPrincipal(ORG, V))!;
+    expect([...await readableControlledDocIds(pv, [DLIB])]).toEqual([]);           // the library's ACL denies V
+    admin.state.failReads.libraries = { message: "statement timeout" };
+    expect([...await readableControlledDocIds(pv, [DLIB])]).toEqual([DLIB]);      // …until the libraries read fails
+  });
+  it("…so the history route checks the libraries and folders reads first: either failing answers 500 with NO rows (fail closed)", async () => {
+    const K_LIBR = "0f000000-0000-4000-8000-000000000003";
+    const RLIB = "0c000000-0000-4000-8000-000000000002";
+    const DLIB = "0e000000-0000-4000-8000-000000000003";
+    admin.state.tables.libraries.push({ id: RLIB, org_id: ORG, name: "Restricted", visibility: "private", owner_user_id: null, owner_team_id: null,
+      acl: { visibility: "private", rules: [{ effect: "allow", subject: { type: "user", id: E }, actions: ["read", "discover"] }] } });
+    admin.state.tables.documents.push({ id: DLIB, org_id: ORG, library_id: RLIB, collection_id: null, acl: null, visibility: "normal", is_private: false, scope: "org", created_by: A, owner_user_id: null });
+    admin.state.tables.knowledge_documents.push({ id: K_LIBR, org_id: ORG, source_document_id: DLIB });
+    admin.state.tables.knowledge_questions.push(q({ question: "Q-libr: relief valve set points in the restricted library", citations: [cite(K_LIBR, "LIBRARY-ONLY QUOTE")] }));
+    admin.state.user = { id: V };
+    // healthy: withheld by the library's ACL
+    const ok = await (await post({ orgId: ORG, libraryId: LIB, action: "list" })).text();
+    expect(ok).not.toContain("LIBRARY-ONLY QUOTE");
+    for (const table of ["libraries", "collections"]) {
+      admin.state.failReads = { [table]: { message: "statement timeout" } };
+      const res = await post({ orgId: ORG, libraryId: LIB, action: "list" });
+      expect(res.status).toBe(500);
+      const text = await res.text();
+      expect(JSON.parse(text).rows).toBeUndefined();
+      expect(JSON.parse(text).error).toMatch(/could not be read: statement timeout/);
+      expect(text).not.toContain("LIBRARY-ONLY QUOTE");
+    }
+    // a controller is not filtered, so nothing is checked for them (DEC-43)
+    admin.state.user = { id: A };
+    expect((await post({ orgId: ORG, libraryId: LIB, action: "list" })).status).toBe(200);
+  });
   it("a library of another org is 404; malformed ids are 400", async () => {
     admin.state.user = { id: V };
     admin.state.tables.knowledge_libraries = [{ id: LIB, org_id: OTHER_ORG }];
@@ -366,8 +409,16 @@ describe("the knowledge page — memory card, conversations, reopen", () => {
     expect(fn).toContain("setThreadId(own && ordered[0]?.threadId ? ordered[0].threadId : crypto.randomUUID());");
     expect(fn).toContain("Nothing in this conversation is visible to you");
   });
-  it("the Conversations list says how many answers it is not showing, and a failed read is shown as a failure", () => {
+  it("the Conversations list says how many answers it is not showing — in words true of every reason a row is withheld — and a failed read is shown as a failure", () => {
     expect(page).toContain("recent answer{historyWithheld === 1 ? \" is\" : \"s are\"} not shown");
+    // a teammate's uncited answer is withheld too: never told the reader it "cites documents you can't open"
+    expect(page).not.toMatch(/they cite"\} documents|cite documents you can't open|it cites documents you can't open/);
+    expect(page).toContain("{historyWithheld === 1 ? \"it draws\" : \"they draw\"} on documents");
+    expect(page).toContain("{historyWithheld === 1 ? \"it is a teammate's answer that cites\" : \"they are teammates' answers that cite\"} no");
+    expect(page).toContain("they draw on documents you can't open, or are a teammate's answer that cites no document.");
+    expect(page).toContain("Nothing in this conversation is visible to you — it draws on documents you can't open, or is a teammate's answer that cites no document.");
+    expect(page).toContain("and an answer that cites no document only to whoever asked it.");
+    expect(repo("lib/knowledge.ts")).toContain("or because they are a\n *  teammate's library answer that cites no document (shown to its asker\n *  only)");
     expect(page).toContain("Couldn&apos;t load the conversations: {historyError}");
     expect(page).toContain("applyHistory(await listKnowledgeQuestions(activeOrgId, libraryId));");
   });
@@ -424,7 +475,10 @@ describe("20261120 — the paste contract, the predicates, byte fidelity, the ce
     expect(selects[0]).toContain("SELECT 'inventory (before): ' || what, NULL, n::text FROM _intel_g20_before");
     // inventory is aggregate only
     const inv = strip(m.slice(m.indexOf("CREATE TEMP TABLE"), m.indexOf("\nBEGIN;")));
-    expect(inv.match(/SELECT '[^']*'(?: AS what)?, COUNT\(\*\)/g)?.length).toBe(9);
+    expect(inv.match(/SELECT '[^']*'(?: AS what)?, COUNT\(\*\)/g)?.length).toBe(10);
+    // the read 20260917's NOT EXISTS would have widened is counted before apply
+    expect(inv).toContain("SELECT 'knowledge_chunks of mirrors of private or hidden documents");
+    expect(inv).toContain("JOIN knowledge_documents k ON k.id = c.document_id");
     // probes use no bare cast inside a LIKE pattern (pg_policies.qual is deparsed)
     expect(tail).not.toMatch(/LIKE '[^']*::[^']*'/);
   });
@@ -447,6 +501,31 @@ describe("20261120 — the paste contract, the predicates, byte fidelity, the ce
       "OR EXISTS (SELECT 1 FROM documents d WHERE d.id = knowledge_documents.source_document_id))",
     ]);
   });
+  it("reproduction: 20260917's chunk lockdown is a NOT EXISTS over knowledge_documents — under the caller's RLS a HIDDEN mirror row makes it pass", () => {
+    const old = strip(mig("20260917_knowledge_sources.sql"));
+    const pol = old.slice(old.indexOf("CREATE POLICY knowledge_chunks_select"), old.indexOf("\n);", old.indexOf("CREATE POLICY knowledge_chunks_select")) + 3);
+    expect(pol).toMatch(/AND NOT EXISTS \(\s*SELECT 1 FROM knowledge_documents d/);
+    expect(pol).toContain("AND d.source_document_id IS NOT NULL");
+    // …and 20261120 is the migration that starts hiding mirror rows
+    expect(body).toContain("OR EXISTS (SELECT 1 FROM documents d WHERE d.id = knowledge_documents.source_document_id))");
+  });
+  it("knowledge_chunks_select = 20260917's body with the lockdown written POSITIVELY (an upload row the caller can see), in the same transaction as the mirror-row narrowing", () => {
+    const old = strip(mig("20260917_knowledge_sources.sql"));
+    const oldPol = old.slice(old.indexOf("CREATE POLICY knowledge_chunks_select"), old.indexOf("\n);", old.indexOf("CREATE POLICY knowledge_chunks_select")) + 3);
+    const newPol = body.slice(body.indexOf("CREATE POLICY knowledge_chunks_select"), body.indexOf("\n);", body.indexOf("CREATE POLICY knowledge_chunks_select")) + 3);
+    const d = lineDiff(oldPol, newPol);
+    expect(d.onlyInA).toEqual(["AND NOT EXISTS (", "AND d.source_document_id IS NOT NULL"]);
+    expect(d.onlyInB).toEqual(["AND EXISTS (", "AND d.source_document_id IS NULL"]);
+    expect(body).toContain("DROP POLICY IF EXISTS knowledge_chunks_select ON knowledge_chunks;");
+    // inside the one transaction, after the knowledge_documents narrowing
+    expect(body.indexOf("CREATE POLICY knowledge_chunks_select")).toBeGreaterThan(body.indexOf("CREATE POLICY knowledge_documents_select"));
+    // the paste probes the positive form (deparsed: NOT EXISTS reads "NOT (EXISTS (") and every policy in the database
+    expect(tail).toContain("AND qual LIKE '%d.source_document_id IS NULL%'");
+    expect(tail).toContain("AND qual NOT LIKE '%IS NOT NULL%'");
+    expect(tail).toContain("AND qual !~ 'NOT \\(?EXISTS')");
+    expect(tail).toContain("~ 'NOT \\(?EXISTS \\( *SELECT[^()]*FROM (public\\.)?(knowledge_documents|knowledge_questions|entity_mentions)\\M'");
+    expect(tail).not.toContain("the 20260917 chunk lockdown still closes every mirror chunk");
+  });
   it("entity_mentions_source_readable is RESTRICTIVE for SELECT and reads both hops through RLS; entity_mentions_read is untouched", () => {
     expect(body).toMatch(/CREATE POLICY entity_mentions_source_readable ON entity_mentions AS RESTRICTIVE FOR SELECT USING \(\n\s+\(entity_mentions\.document_id IS NULL\n\s+OR EXISTS \(SELECT 1 FROM documents d WHERE d\.id = entity_mentions\.document_id\)\)\n\s+AND \(entity_mentions\.knowledge_document_id IS NULL\n\s+OR EXISTS \(SELECT 1 FROM knowledge_documents k WHERE k\.id = entity_mentions\.knowledge_document_id\)\)\n\);/);
     expect(body).not.toMatch(/CREATE POLICY entity_mentions_read\b/);
@@ -465,16 +544,44 @@ describe("20261120 — the paste contract, the predicates, byte fidelity, the ce
     expect(tail).toContain("AND qual LIKE '%d.id = knowledge_documents.source_document_id%'");
     expect(tail).toContain("AND permissive = 'RESTRICTIVE' AND cmd = 'SELECT'");
   });
-  it("census: 20261120 is the last definer of the three policies; the 20260917 chunk lockdown is the live chunk read", () => {
+  it("census: 20261120 is the last definer of the four policies; the controller write policies are 20260911's", () => {
     const files = readdirSync(join(process.cwd(), "supabase", "migrations")).filter((f) => /^\d{8}.*\.sql$/.test(f)).sort();
     const last = (re: RegExp) => files.filter((f) => re.test(strip(mig(f)))).pop();
     expect(last(/CREATE POLICY\s+knowledge_questions_select\b/)).toBe(FILE);
     expect(last(/CREATE POLICY\s+knowledge_documents_select\b/)).toBe(FILE);
+    expect(last(/CREATE POLICY\s+knowledge_chunks_select\b/)).toBe(FILE);
     expect(last(/CREATE POLICY\s+entity_mentions_source_readable\b/)).toBe(FILE);
-    expect(last(/CREATE POLICY\s+knowledge_chunks_select\b/)).toBe("20260917_knowledge_sources.sql");
     expect(last(/CREATE POLICY\s+knowledge_documents_write\b/)).toBe("20260911_knowledge_ai.sql");
+    expect(last(/CREATE POLICY\s+knowledge_chunks_write\b/)).toBe("20260911_knowledge_ai.sql");
     // schema.sql defines none of them (the baseline predates the tables)
-    expect(strip(repo("supabase/schema.sql"))).not.toMatch(/knowledge_questions_select|knowledge_documents_select|entity_mentions_source_readable/);
+    expect(strip(repo("supabase/schema.sql"))).not.toMatch(/knowledge_questions_select|knowledge_documents_select|knowledge_chunks_select|entity_mentions_source_readable/);
+  });
+  it("policy census (schema.sql + every migration, in order): no LIVE policy tests NOT EXISTS over a table whose rows RLS now hides — the cross-table read the blocker hid in", () => {
+    const files = readdirSync(join(process.cwd(), "supabase", "migrations")).filter((f) => /^\d{8}.*\.sql$/.test(f)).sort();
+    const replay = (upTo: string | null) => {
+      const live = new Map<string, string>();
+      const sources = [strip(repo("supabase/schema.sql")), ...files.filter((f) => upTo === null || f <= upTo).map((f) => strip(mig(f)))];
+      const stmt = /DROP POLICY\s+(?:IF EXISTS\s+)?"?(\w+)"?\s+ON\s+(?:public\.)?(\w+)\s*;|CREATE POLICY\s+"?(\w+)"?\s+ON\s+(?:public\.)?(\w+)([^;]*);/g;
+      for (const src of sources) {
+        for (const x of src.matchAll(stmt)) {
+          if (x[1]) live.delete(`${x[2]}.${x[1]}`);
+          else live.set(`${x[4]}.${x[3]}`, x[5]);
+        }
+      }
+      return live;
+    };
+    const opensOnHidden = /NOT\s+EXISTS\s*\(\s*SELECT[^()]*?\bFROM\s+(?:public\.)?(knowledge_documents|knowledge_questions|entity_mentions)\b/i;
+    const offenders = (live: Map<string, string>) => [...live].filter(([, b]) => opensOnHidden.test(b)).map(([k]) => k);
+    const now = replay(null);
+    // the census sees the policies it must (it is not vacuous)
+    for (const k of ["knowledge_chunks.knowledge_chunks_select", "knowledge_documents.knowledge_documents_select",
+      "knowledge_questions.knowledge_questions_select", "entity_mentions.entity_mentions_source_readable", "entity_mentions.entity_mentions_read"]) {
+      expect(now.has(k)).toBe(true);
+    }
+    expect(offenders(now)).toEqual([]);
+    // reproduction: replayed up to the migration before this one, the 20260917 lockdown is the one offender
+    const before = replay(files[files.indexOf(FILE) - 1]);
+    expect(offenders(before)).toEqual(["knowledge_chunks.knowledge_chunks_select"]);
   });
 });
 

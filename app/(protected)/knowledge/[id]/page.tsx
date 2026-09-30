@@ -1592,7 +1592,7 @@ export default function KnowledgeLibraryPage() {
         if (page.withheld > 0) {
           showToast({
             type: "warning",
-            title: `${page.withheld} turn(s) of this conversation are withheld — they cite documents you can't open.`,
+            title: `${page.withheld} turn(s) of this conversation are withheld — they draw on documents you can't open, or are a teammate's answer that cites no document.`,
           });
         }
       } catch (e) {
@@ -1601,7 +1601,7 @@ export default function KnowledgeLibraryPage() {
       }
     }
     if (source.length === 0) {
-      showToast({ type: "warning", title: "Nothing in this conversation is visible to you — it cites documents you can't open." });
+      showToast({ type: "warning", title: "Nothing in this conversation is visible to you — it draws on documents you can't open, or is a teammate's answer that cites no document." });
       return;
     }
     const ordered = [...source].sort((a, b) => a.createdAt.localeCompare(b.createdAt));
@@ -2099,14 +2099,16 @@ export default function KnowledgeLibraryPage() {
           )}
           {historyWithheld > 0 && (
             <div className="mb-2 rounded-xl border border-[var(--color-border)] bg-[var(--color-surface-2)] px-3 py-2 text-[11px] text-[var(--color-text-muted)]">
-              {historyWithheld} recent answer{historyWithheld === 1 ? " is" : "s are"} not shown — {historyWithheld === 1 ? "it cites" : "they cite"} documents
-              you can&apos;t open, or that have since left this library.
+              {historyWithheld} recent answer{historyWithheld === 1 ? " is" : "s are"} not shown — {historyWithheld === 1 ? "it draws" : "they draw"} on documents
+              you can&apos;t open (or that have since left this library), or {historyWithheld === 1 ? "it is a teammate's answer that cites" : "they are teammates' answers that cite"} no
+              document, which only whoever asked can see.
             </div>
           )}
           {history.length === 0 ? (
             <div className="rounded-xl border border-dashed border-[var(--color-border)] p-8 text-center text-xs text-[var(--color-text-muted)]">
               Questions and their cited answers land here for the team — each answer shows only to people who can open
-              every document it cites. Click one to reopen and continue it.
+              every document it cites, and an answer that cites no document only to whoever asked it. Click one to reopen
+              and continue it.
             </div>
           ) : (
             <ul className="divide-y divide-[var(--color-border)] rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] overflow-hidden">

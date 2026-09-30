@@ -121,11 +121,13 @@ export function planVisibleHistory(
  * Which of these knowledge-document ids may the principal read now? Throws on
  * a failed read of knowledge_documents — the caller fails CLOSED (serves
  * nothing) rather than serving an unfiltered answer. A failed read of the
- * controlled documents themselves admits none of them (closed). One seam read
- * is not yet closed: loadDcLandscape (lib/knowledgeAccess, not this
- * package's file) ignores a failed libraries / folders read, so a document
- * restricted ONLY by its library or folder ACL is then judged by its own ACL
- * — handed to the seam's owner.
+ * controlled documents themselves admits none of them (closed).
+ * loadDcLandscape (lib/knowledgeAccess, the seam owner's file) ignores a
+ * failed libraries / folders read and would then judge a document restricted
+ * ONLY by its library or folder ACL by its own ACL alone; until it throws,
+ * the same two reads are made here first and a failure of either throws
+ * (closed). What remains is a read failing between this check and the
+ * seam's own — closed for good when loadDcLandscape throws (handed over).
  */
 export async function readableKnowledgeDocIds(
   principal: KnowledgePrincipal,
@@ -152,8 +154,24 @@ export async function readableKnowledgeDocIds(
     else mirrors.set(r.id, r.source_document_id);
   }
   if (mirrors.size > 0) {
+    if (!principal.isController) await assertDcLandscapeReadable(principal.orgId);
     const ok = await readableControlledDocIds(principal, [...new Set(mirrors.values())]);
     for (const [kid, dcId] of mirrors) if (ok.has(dcId)) readable.add(kid);
   }
   return readable;
+}
+
+/** The two reads loadDcLandscape depends on and does not check: the org's
+ *  document libraries and folders. A failure of either throws, so the caller
+ *  answers nothing rather than judging a document without its library or
+ *  folder ACL. */
+async function assertDcLandscapeReadable(orgId: string): Promise<void> {
+  const reads = [
+    { table: "libraries", what: "document libraries" },
+    { table: "collections", what: "folders" },
+  ] as const;
+  for (const { table, what } of reads) {
+    const { error } = await supabaseAdmin.from(table).select("id", { count: "exact", head: true }).eq("org_id", orgId);
+    if (error) throw new Error(`the ${what} (and their access rules) could not be read: ${error.message}`);
+  }
 }

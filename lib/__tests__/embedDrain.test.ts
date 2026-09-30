@@ -2,9 +2,16 @@
 //
 //   * SEM-4 — one passage the provider refuses no longer pins a library: the
 //     batch is split until the refused passage stands alone, it gets an
-//     attempt and its reason, the rest embed; after EMBED_MAX_ATTEMPTS the
-//     queue skips it. A refusal of the KEY blames no passage. Every vector
-//     paid for is written even when one write fails.
+//     attempt and its reason, gives its lease back and waits to be offered
+//     again, the rest embed; after EMBED_MAX_ATTEMPTS the queue skips it. A
+//     passage refused alone is blamed only once the provider is known to
+//     accept the request (a sibling embedded, or a one-line canary did), so
+//     two bad passages that make up a whole batch, or a bad document longer
+//     than a batch, still reach the limit and the library still completes. A
+//     refusal of the KEY, or of the request itself (the canary refused too),
+//     blames no passage. Every vector paid for is written even when one
+//     write fails. A library whose last passages were refused says so
+//     ("retrying"), never "busy".
 //   * SEM-7 — the queue is a claim: two slices running at once take disjoint
 //     passages (the reproduction shows the unclaimed queue paying twice).
 //   * SEM-11 — every marked library is read and worked least-recently-drained
@@ -83,7 +90,8 @@ function installRpcs(state: FakeAdminState) {
     const picked = (state.tables.knowledge_chunks ?? [])
       .filter((c) => c.org_id === a.p_org_id && c.library_id === a.p_library_id && c.embedding == null && retrievable(c)
         && Number(c.embed_attempts ?? 0) < Number(a.p_max_attempts)
-        && (!c.embed_claimed_until || Date.parse(String(c.embed_claimed_until)) < now))
+        && (!c.embed_claimed_until || Date.parse(String(c.embed_claimed_until)) < now)
+        && (!c.embed_retry_after || Date.parse(String(c.embed_retry_after)) < now))
       .sort((x, y) => Number(x.embed_attempts ?? 0) - Number(y.embed_attempts ?? 0)
         || String(x.document_id).localeCompare(String(y.document_id)) || Number(x.page) - Number(y.page) || String(x.id).localeCompare(String(y.id)))
       .slice(0, Math.max(1, Math.min(Number(a.p_limit), 96)));
@@ -104,6 +112,7 @@ function installRpcs(state: FakeAdminState) {
         remaining: open.filter((c) => Number(c.embed_attempts ?? 0) < max).length,
         failed: open.filter((c) => Number(c.embed_attempts ?? 0) >= max).length,
         leased: open.filter((c) => Number(c.embed_attempts ?? 0) < max && c.embed_claimed_until && Date.parse(String(c.embed_claimed_until)) > Date.now()).length,
+        waiting: open.filter((c) => Number(c.embed_attempts ?? 0) < max && c.embed_retry_after && Date.parse(String(c.embed_retry_after)) > Date.now()).length,
         remaining_chars: open.filter((c) => Number(c.embed_attempts ?? 0) < max).reduce((n, c) => n + String(c.content).length, 0),
         total_chars: pop.reduce((n, c) => n + String(c.content).length, 0),
         models,
@@ -116,7 +125,7 @@ function installRpcs(state: FakeAdminState) {
 
 const chunk = (i: number, over: Row = {}): Row => ({
   id: `c${String(i).padStart(4, "0")}`, org_id: ORG, library_id: LIB, document_id: DOC, page: i, seq: 0, section: null,
-  content: `passage ${i}`, embedding: null, embedding_model: null, embed_attempts: 0, embed_error: null, embed_claimed_until: null, ...over,
+  content: `passage ${i}`, embedding: null, embedding_model: null, embed_attempts: 0, embed_error: null, embed_claimed_until: null, embed_retry_after: null, ...over,
 });
 
 // ── the provider ────────────────────────────────────────────────────────────
@@ -178,9 +187,13 @@ describe("SEM-4 — a refused passage never pins the library", () => {
     expect(out.refused).toBe(1);
     const poison = chunks().find((c) => String(c.content).includes("POISON"))!;
     expect(poison).toMatchObject({ embedding: null, embed_attempts: 1 });
-    // it keeps its lease: nobody asks the provider again this run
-    expect(Date.parse(String(poison.embed_claimed_until))).toBeGreaterThan(Date.now());
+    // it gives its lease back (nobody is embedding it) and waits: nobody asks
+    // the provider again for it this run
+    expect(poison.embed_claimed_until).toBeNull();
+    expect(Date.parse(String(poison.embed_retry_after))).toBeGreaterThan(Date.now() + 100_000);
     expect(String(poison.embed_error)).toMatch(/exceeds the model's context/);
+    // a sibling embedded in the same batch, so the request was known good: no canary was spent
+    expect(provider.inputs).not.toContain("Embedding check.");
     // every passage but the refused one carries a vector stamped with the model, lease cleared
     for (const c of chunks().filter((x) => x !== poison)) {
       expect(c.embedding).toBeTruthy();
@@ -190,9 +203,13 @@ describe("SEM-4 — a refused passage never pins the library", () => {
   it(`after ${EMBED_MAX_ATTEMPTS} refusals the queue skips the passage; the library reports it failed and is otherwise done`, async () => {
     admin.state.tables.knowledge_chunks = [chunk(1, { content: "POISON" }), chunk(2)];
     for (let run = 0; run < EMBED_MAX_ATTEMPTS; run++) {
+      provider.inputs = [];
       await slice();
       expect(chunks()[0].embed_attempts).toBe(run + 1);              // one attempt per run, never a tight loop
-      chunks()[0].embed_claimed_until = "2000-01-01T00:00:00Z";      // the lease runs out between runs
+      // run 1: its sibling (refused first, embedded after) proves the request good — no canary;
+      // later runs: it stands alone, so one canary decides
+      expect(provider.inputs.filter((t) => t === "Embedding check.")).toHaveLength(run === 0 ? 0 : 1);
+      chunks()[0].embed_retry_after = "2000-01-01T00:00:00Z";        // the wait runs out between runs
     }
     expect(chunks()[0].embed_attempts).toBe(EMBED_MAX_ATTEMPTS);
     const again = await slice();
@@ -208,13 +225,72 @@ describe("SEM-4 — a refused passage never pins the library", () => {
     expect(out.error).toMatch(/rejected the embeddings key/);
     expect(chunks().every((c) => c.embed_attempts === 0 && c.embed_claimed_until === null)).toBe(true);
   });
-  it("a batch the provider refuses whole (every split fails, nothing embeds) is the request, not the passages — nobody is blamed", async () => {
+  it("a batch the provider refuses whole AND a one-line canary refused too is the request, not the passages — nobody is blamed", async () => {
     provider.mode = "400-all";
     admin.state.tables.knowledge_chunks = Array.from({ length: 8 }, (_, i) => chunk(i + 1));
     const out = await slice();
     expect(out.error).toMatch(/input_type is not supported/);
+    expect(out.error).toMatch(/refused a one-line test request as well/);
     expect(out.refused).toBe(0);
-    expect(chunks().every((c) => c.embed_attempts === 0)).toBe(true);
+    expect(chunks().every((c) => c.embed_attempts === 0 && c.embed_claimed_until === null && c.embed_retry_after === null)).toBe(true);
+  });
+  const poisonSeen = () => chunks().filter((c) => String(c.content).includes("POISON"));
+  const expireWaits = () => { for (const c of chunks()) if (c.embed_retry_after) c.embed_retry_after = "2000-01-01T00:00:00Z"; };
+  it("two refused passages that make up a WHOLE batch are still charged (a canary proves the request good): both reach the limit and the library completes around them", async () => {
+    admin.state.tables.knowledge_chunks = [chunk(1, { content: "POISON a" }), chunk(2), chunk(3, { content: "POISON b" }), chunk(4)];
+    // run 1: the good passages embed beside them
+    await slice();
+    expect(poisonSeen().map((c) => c.embed_attempts)).toEqual([1, 1]);
+    // from run 2 on the batch is JUST the two refused passages
+    for (let run = 2; run <= EMBED_MAX_ATTEMPTS; run++) {
+      expireWaits();
+      provider.inputs = [];
+      const out = await slice();
+      expect(out.error).toBeNull();
+      expect(out.refused).toBe(2);
+      expect(provider.inputs).toEqual(["Embedding check."]);          // the canary, once — then each is blamed
+      expect(poisonSeen().map((c) => c.embed_attempts)).toEqual([run, run]);
+    }
+    expireWaits();
+    expect(await slice()).toMatchObject({ embedded: 0, refused: 0, error: null });
+    expect(await loadEmbedDetail(ORG, LIB)).toMatchObject({ total: 4, embedded: 2, remaining: 0, failed: 2, leased: 0, waiting: 0 });
+  });
+  it("the drain over the same two: never an error run, the standing consent is never released, and the library ends 'current' with failed = 2", async () => {
+    seedDrainWorld();
+    admin.state.tables.knowledge_libraries = [marked(LIB, { userId: PAYER, at: "2026-09-01T00:00:00Z", standing: true })];
+    admin.state.tables.knowledge_chunks = [chunk(1, { content: "POISON a" }), chunk(2), chunk(3, { content: "POISON b" })];
+    const outcomes: string[] = [];
+    for (let run = 0; run < MAX_ERROR_RUNS + 1; run++) {
+      expireWaits();
+      (admin.state.tables.knowledge_libraries[0].ai_features as { embedBuild: Row }).embedBuild.lastDrainAt = "2000-01-01T00:00:00Z";
+      const out = await drainEmbedBacklog({ scopeOrgIds: null, budgetMs: 200_000 });
+      outcomes.push(out.drained[0].outcome);
+    }
+    expect(outcomes).not.toContain("blocked");
+    expect(outcomes).not.toContain("released");
+    expect(outcomes.at(-1)).toBe("current");
+    const m = parseEmbedBuildMarker((admin.state.tables.knowledge_libraries[0].ai_features as Row).embedBuild)!;
+    expect(m).toMatchObject({ userId: PAYER, standing: true });
+    expect(m.errorRuns ?? 0).toBe(0);
+    expect(poisonSeen().every((c) => c.embed_attempts === EMBED_MAX_ATTEMPTS)).toBe(true);
+    expect(await loadEmbedDetail(ORG, LIB)).toMatchObject({ remaining: 0, failed: 2 });
+  });
+  it("a refused document LONGER than one batch (the claim orders it first): every passage reaches the limit, the rest of the library embeds", async () => {
+    const BAD = "0e000000-0000-4000-8000-000000000000";                // sorts before DOC
+    admin.state.tables.knowledge_documents.push({ id: BAD, org_id: ORG, library_id: LIB, name: "Scanned tables", status: "ready" });
+    admin.state.tables.knowledge_chunks = [
+      ...Array.from({ length: 70 }, (_, i) => chunk(100 + i, { document_id: BAD, content: `POISON row ${i}` })),
+      ...Array.from({ length: 10 }, (_, i) => chunk(i + 1)),
+    ];
+    for (let run = 1; run <= EMBED_MAX_ATTEMPTS; run++) {
+      expireWaits();
+      const out = await slice();
+      expect(out.error).toBeNull();
+      expect(poisonSeen().every((c) => c.embed_attempts === run)).toBe(true);
+    }
+    expireWaits();
+    await slice();
+    expect(await loadEmbedDetail(ORG, LIB)).toMatchObject({ total: 80, embedded: 10, remaining: 0, failed: 70 });
   });
   it("a write that fails does not abandon the other vectors already paid for", async () => {
     admin.state.tables.knowledge_chunks = Array.from({ length: 5 }, (_, i) => chunk(i + 1));
@@ -362,6 +438,22 @@ describe("SEM-11 — no library starves another; every hold has a date", () => {
     const out = await drainEmbedBacklog({ scopeOrgIds: [ORG], budgetMs: 200_000, minIntervalMs: 120_000 });
     expect(out.drained[0].outcome).toBe("recent");
     expect(provider.inputs).toHaveLength(0);
+  });
+  it("SEM-4: the last passage refused once (it waits to be offered again) → 'retrying' with the reason, never 'busy'; nothing spent", async () => {
+    seedDrainWorld();
+    admin.state.tables.knowledge_libraries = [marked(LIB, { userId: PAYER, at: "2026-09-01T00:00:00Z" })];
+    admin.state.tables.knowledge_chunks = [
+      chunk(1, { embedding: "[0]", embedding_model: "voyage-3.5-lite" }),
+      chunk(2, { content: "POISON", embed_attempts: 1, embed_error: "input exceeds the model's context", embed_retry_after: new Date(Date.now() + 90_000).toISOString() }),
+    ];
+    expect(await loadEmbedDetail(ORG, LIB)).toMatchObject({ remaining: 1, leased: 0, waiting: 1 });
+    const out = await drainEmbedBacklog({ scopeOrgIds: null, budgetMs: 200_000 });
+    expect(out.drained[0]).toMatchObject({ outcome: "retrying", remaining: 1 });
+    expect(out.drained[0].note).toMatch(/1 passage was refused by the embeddings provider and waits to be tried again by the next run/);
+    expect(out.drained[0].note).not.toMatch(/another run/);
+    expect(provider.inputs).toHaveLength(0);
+    // the stamp stays for the next run
+    expect(parseEmbedBuildMarker((admin.state.tables.knowledge_libraries[0].ai_features as Row).embedBuild)).toMatchObject({ userId: PAYER });
   });
   it("every remaining passage leased by another run → busy, no spend", async () => {
     seedDrainWorld();
@@ -680,10 +772,29 @@ describe("20261121 — the paste contract, byte fidelity, the census", () => {
     expect(tail).toContain("AND has_function_privilege('service_role', 'semantic_search(uuid, uuid, vector, integer, text)', 'EXECUTE')");
     expect(tail).toContain("AND has_function_privilege('service_role', 'semantic_coverage_detail(uuid, uuid, integer)', 'EXECUTE')");
   });
-  it("leased counts only passages still claimable: a refused-out passage that keeps its lease is not 'busy'", () => {
+  it("leased counts passages a driver holds; a refused passage gives its lease back and is counted as WAITING (never 'busy')", () => {
     const fn = body.slice(body.indexOf("CREATE OR REPLACE FUNCTION semantic_coverage_detail("), body.indexOf("REVOKE ALL ON FUNCTION semantic_coverage_detail"));
     expect(fn).toContain("COUNT(*) FILTER (WHERE NOT has_vec AND embed_attempts < p_max_attempts AND embed_claimed_until > now())::BIGINT,");
+    expect(fn).toContain("COUNT(*) FILTER (WHERE NOT has_vec AND embed_attempts < p_max_attempts AND embed_retry_after > now())::BIGINT,");
+    expect(fn).toContain("waiting         BIGINT,");
+    expect(fn).toContain("c.embed_retry_after, octet_length(c.content) AS chars");
+    // the return type changed: the old one is dropped first, grants re-stated after
+    expect(body.indexOf("DROP FUNCTION IF EXISTS semantic_coverage_detail(UUID, UUID, INTEGER);")).toBeLessThan(body.indexOf("CREATE OR REPLACE FUNCTION semantic_coverage_detail("));
     expect(tail).toContain("AND prosrc LIKE '%embed_attempts < p_max_attempts AND embed_claimed_until > now()%'");
+    expect(tail).toContain("AND prosrc LIKE '%embed_attempts < p_max_attempts AND embed_retry_after > now()%'");
+    // the app gives the lease back and sets the wait when it records a refusal
+    const core = repo("lib/knowledgeEmbedCore.ts");
+    expect(core).toContain("embed_claimed_until: null,\n        embed_retry_after: new Date(Date.now() + REFUSAL_RETRY_SECONDS * 1000).toISOString(),");
+    expect(core).toContain("waiting: Number(row.waiting ?? 0),");
+  });
+  it("coverage stays index-only: two covering indexes carry document_id (the column the retrievable-document filter reads), and the paste probes them", () => {
+    expect(body).toContain("CREATE INDEX IF NOT EXISTS knowledge_chunks_org_lib_doc_idx\n  ON knowledge_chunks (org_id, library_id, document_id);");
+    expect(body).toContain("CREATE INDEX IF NOT EXISTS knowledge_chunks_org_lib_doc_embedded_idx\n  ON knowledge_chunks (org_id, library_id, document_id)\n  WHERE embedding IS NOT NULL;");
+    expect(body.indexOf("knowledge_chunks_org_lib_doc_idx")).toBeLessThan(body.indexOf("CREATE OR REPLACE FUNCTION semantic_coverage("));
+    expect(tail).toContain("AND to_regclass('public.knowledge_chunks_org_lib_doc_idx') IS NOT NULL");
+    expect(tail).toContain("AND to_regclass('public.knowledge_chunks_org_lib_doc_embedded_idx') IS NOT NULL");
+    // what 20261011 indexed, for comparison: no document_id
+    expect(strip(mig("20261011_semantic_coverage_fast.sql"))).toContain("ON knowledge_chunks (org_id, library_id)\n  WHERE embedding IS NOT NULL;");
   });
   it("the marker is written alone: embed_build_marker_write touches only the embedBuild key, conditionally; the toggles save keeps it", () => {
     const w = body.slice(body.indexOf("CREATE OR REPLACE FUNCTION embed_build_marker_write("), body.indexOf("REVOKE ALL ON FUNCTION embed_build_marker_write"));
@@ -724,6 +835,8 @@ describe("20261121 — the paste contract, byte fidelity, the census", () => {
     expect(fn).toContain("AND d.status IN ('ready', 'indexing')");
     expect(fn).toContain("AND c.embed_attempts < p_max_attempts");
     expect(fn).toContain("AND (c.embed_claimed_until IS NULL OR c.embed_claimed_until < now())");
+    expect(fn).toContain("AND (c.embed_retry_after IS NULL OR c.embed_retry_after < now())");
+    expect(tail).toContain("AND prosrc LIKE '%c.embed_retry_after IS NULL OR c.embed_retry_after < now()%'");
     expect(fn).toContain("p_model         TEXT DEFAULT NULL");
     expect(fn).toContain("AND (p_model IS NULL OR NOT EXISTS (");
     expect(fn).toContain("AND o.embedding_model IS DISTINCT FROM p_model))");
@@ -741,6 +854,7 @@ describe("20261121 — the paste contract, byte fidelity, the census", () => {
     expect(body).toContain("ALTER TABLE knowledge_chunks ADD COLUMN IF NOT EXISTS embed_attempts INTEGER NOT NULL DEFAULT 0;");
     expect(body).toContain("ALTER TABLE knowledge_chunks ADD COLUMN IF NOT EXISTS embed_error TEXT;");
     expect(body).toContain("ALTER TABLE knowledge_chunks ADD COLUMN IF NOT EXISTS embed_claimed_until TIMESTAMPTZ;");
+    expect(body).toContain("ALTER TABLE knowledge_chunks ADD COLUMN IF NOT EXISTS embed_retry_after TIMESTAMPTZ;");
     expect(body).not.toMatch(/SECURITY DEFINER/);
     expect(body).not.toMatch(/\bUPDATE knowledge_chunks SET embedding\b|DELETE FROM/);
   });

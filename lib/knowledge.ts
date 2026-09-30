@@ -178,8 +178,11 @@ export interface KnowledgeQuestion {
 }
 
 /** A page of the team's record as THIS reader may see it. `withheld` counts
- *  answers left out because they cite a document the reader cannot open (or
- *  one since removed from the library) — said out loud, never silently. */
+ *  answers left out — because they draw on a document the reader cannot open
+ *  (or one since removed from the library), or because they are a
+ *  teammate's library answer that cites no document (shown to its asker
+ *  only), or a later turn of a conversation holding either — said out loud,
+ *  never silently, and never as a claim about which of these it was. */
 export interface KnowledgeHistoryPage {
   questions: KnowledgeQuestion[];
   withheld: number;
@@ -918,6 +921,9 @@ export interface SemanticProgress {
   failedSamples?: Array<{ documentName: string; page: number; error: string | null }>;
   /** Passages another run is embedding right now (SEM-7: the queue is a claim). */
   busy?: number;
+  /** Passages the provider refused that wait to be offered again (SEM-4) —
+   *  nobody is embedding them; the background build retries them. */
+  waiting?: number;
   /** Passages the provider refused during THIS call (an attempt recorded). */
   refused?: number;
   /** Vectors per embedding model, and whether the library holds more than
@@ -1094,12 +1100,17 @@ export async function buildSemanticIndex(
       busyRounds = 0;
       await sleepUnlessStopped(last.retryAfterMs ?? 65_000);
       if (shouldStop?.()) break;
-    } else if (last.embedded === 0 && (last.busy ?? 0) > 0 && (last.busy ?? 0) >= last.remaining) {
+    } else if (last.embedded === 0 && (last.busy ?? 0) > 0 && (last.busy ?? 0) + (last.waiting ?? 0) >= last.remaining) {
       // Another run holds the rest (SEM-7): the passages are being embedded,
       // just not by this tab. Give it a moment, a bounded number of times.
       if (++busyRounds > 6) break;
       await sleepUnlessStopped(20_000);
       if (shouldStop?.()) break;
+    } else if ((last.busy ?? 0) === 0 && (last.waiting ?? 0) > 0 && (last.waiting ?? 0) >= last.remaining) {
+      // Everything left was refused by the provider and waits to be offered
+      // again (SEM-4): nobody is embedding it, and this tab has nothing to
+      // do until then. Say so rather than wait on a build that isn't running.
+      break;
     } else if (last.embedded === 0 && (last.refused ?? 0) === 0) {
       // Embedded nothing, refused nothing, not done, not rate-limited —
       // stuck. Hand back what happened rather than spinning forever.

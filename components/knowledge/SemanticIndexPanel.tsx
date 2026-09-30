@@ -135,6 +135,16 @@ export default function SemanticIndexPanel({ orgId, libraryId, isController, onS
       } else if (stopRef.current) {
         setBuildNote({ tone: "ok", text: `Stopped — ${final.remaining} passage(s) left. Resume any time.` });
         showToast({ type: "success", title: `Stopped — ${final.remaining} passage(s) left. Resume any time.` });
+      } else if ((final.waiting ?? 0) > 0 && (final.busy ?? 0) + (final.waiting ?? 0) >= final.remaining) {
+        // SEM-4: refused passages wait to be offered again — nobody is
+        // embedding them, so this never says a background build is.
+        const waiting = final.waiting ?? 0;
+        const busy = final.busy ?? 0;
+        const text = `${waiting} passage${waiting === 1 ? " was" : "s were"} refused by the embeddings provider and will be retried `
+          + "by the background build in a few minutes (or build again then); a passage the provider keeps refusing is "
+          + "skipped after a few tries and listed here."
+          + (busy > 0 ? ` ${busy} more ${busy === 1 ? "is" : "are"} being embedded by the background build.` : "");
+        setBuildNote({ tone: "ok", text });
       } else if ((final.busy ?? 0) > 0) {
         const text = `The background build is embedding the remaining ${final.remaining} passage(s) — it continues without this tab.`;
         setBuildNote({ tone: "ok", text });

@@ -26,7 +26,10 @@
 // 1st, a provider / key error with a doubling backoff (released after
 // MAX_ERROR_RUNS failed runs), a model conflict or an unsigned agreement for
 // an hour. Every run reports each library as advanced / complete / current /
-// blocked / released / busy / recent / starved (never reached this run).
+// blocked / released / busy / retrying / recent / starved (never reached this
+// run). "busy" means another driver holds the rest; "retrying" means the
+// passages left were refused by the provider and wait to be offered again
+// (SEM-4) — nobody is embedding them, and the report says so.
 //
 // SCHEDULING NOTE — read before touching vercel.json: this used to have its
 // own hourly cron. Hourly (and any third) cron entries FAIL EVERY VERCEL
@@ -36,7 +39,7 @@
 // the page-load nudge; lib/__tests__/vercelConfig.test.ts enforces the limit.
 
 import { supabaseAdmin } from "@/lib/supabaseAdmin";
-import { embeddingConnectionFrom, buildModelConflict } from "@/lib/ai/embeddings";
+import { embeddingConnectionFrom, buildModelConflict, EMBED_MAX_ATTEMPTS } from "@/lib/ai/embeddings";
 import { openAiKey } from "@/lib/ai/keyVault";
 import { getMonthUsage, getCapUsd, recordAskUsage } from "@/lib/ai/usageServer";
 import {
@@ -69,6 +72,7 @@ export type DrainOutcome =
   | "blocked"    // holding off (cap / error backoff / model conflict / agreement) — see note
   | "released"   // stamp removed (invalid consent, no key, repeated failure) — see note
   | "busy"       // every remaining passage is claimed by another driver right now
+  | "retrying"   // what remains was refused by the provider and waits to be offered again
   | "recent"     // drained moments ago (a user-triggered run skips it)
   | "starved";   // the run's budget ended before this library was reached
 
@@ -86,6 +90,13 @@ const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/
 export function nextMonthStartIso(now: number): string {
   const d = new Date(now);
   return new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth() + 1, 1)).toISOString();
+}
+
+/** What a run says when the passages left were refused by the provider. */
+function refusedNote(waiting: number, leased: number): string {
+  return `${waiting} passage${waiting === 1 ? " was" : "s were"} refused by the embeddings provider and wait${waiting === 1 ? "s" : ""} to be tried again by the next run`
+    + (leased > 0 ? ` (${leased} more ${leased === 1 ? "is" : "are"} being embedded by another run)` : "")
+    + ` — after ${EMBED_MAX_ATTEMPTS} refusals a passage is skipped and listed as failed`;
 }
 
 /** Backoff after the n-th consecutive failed run: 15 min, 30, 60 … capped at a day. */
@@ -204,8 +215,14 @@ export async function drainEmbedBacklog(opts: {
         }
         continue;
       }
-      if (detail && detail.leased >= detail.remaining) {
-        record({ embedded: 0, remaining: remainingBefore, outcome: "busy", note: "every remaining passage is being embedded by another run" });
+      if (detail && detail.leased + detail.waiting >= detail.remaining) {
+        // Nothing is claimable. A passage the provider refused gave its lease
+        // back and waits (SEM-4): that is not another run embedding it.
+        if (detail.waiting > 0) {
+          record({ embedded: 0, remaining: remainingBefore, outcome: "retrying", note: refusedNote(detail.waiting, detail.leased) });
+        } else {
+          record({ embedded: 0, remaining: remainingBefore, outcome: "busy", note: "every remaining passage is being embedded by another run" });
+        }
         continue;
       }
 
@@ -341,6 +358,8 @@ export async function drainEmbedBacklog(opts: {
           await setEmbedBuildMarker(lib.id, null, { expect });
           record({ embedded, remaining: 0, outcome: "complete" });
         }
+      } else if (detailAfter && detailAfter.waiting > 0 && detailAfter.leased + detailAfter.waiting >= detailAfter.remaining) {
+        record({ embedded, remaining: remainingAfter, outcome: embedded > 0 ? "advanced" : "retrying", note: refusedNote(detailAfter.waiting, detailAfter.leased) });
       } else {
         record({ embedded, remaining: remainingAfter, outcome: "advanced" });
       }

@@ -21,18 +21,35 @@
 --      member. A MIRROR row (source_document_id IS NOT NULL) is now visible
 --      only when its controlled document's row is visible to the caller under
 --      the documents RLS (documents_org_access + the documents_acl_select
---      node_visible overlay) — the same shape as 20260917's chunk lockdown,
---      without hiding a mirror from someone who may read the document. Upload
---      rows stay org-readable by design. Controllers keep every row through
+--      node_visible overlay): a positive EXISTS through that RLS, so a
+--      document the caller cannot see hides its mirror. Upload rows stay
+--      org-readable by design. Controllers keep every row through
 --      knowledge_documents_write (FOR ALL, is_org_controller).
---   3. IEDGE-6 / IRLS-9 — entity_mentions_read (20260929:73-76) published the
+--   3. The 20260917 chunk lockdown, re-stated so that 2 cannot open it.
+--      20260917's knowledge_chunks_select hid a mirror's chunks with
+--      NOT EXISTS (SELECT 1 FROM knowledge_documents d WHERE d.id =
+--      knowledge_chunks.document_id AND d.source_document_id IS NOT NULL).
+--      That subquery runs under the CALLER's RLS on knowledge_documents: once
+--      2 hides a mirror row from a member, the NOT EXISTS finds no row, is
+--      TRUE, and every chunk of that mirror — the full text of a private or
+--      hidden controlled document — becomes member-readable (reproduced on a
+--      scratch PostgreSQL 16). The policy is re-created here, in the same
+--      transaction, with the same rule written POSITIVELY: a member reads a
+--      chunk only when its document is an UPLOAD row they can see
+--      (EXISTS … AND d.source_document_id IS NULL). A row hidden by RLS now
+--      fails closed. For every row a member could read before, the answer is
+--      the same (upload chunks yes, mirror chunks no); a chunk whose document
+--      row is gone is now hidden too. Controllers keep every chunk through
+--      knowledge_chunks_write (FOR ALL, is_org_controller), as before.
+--   4. IEDGE-6 / IRLS-9 — entity_mentions_read (20260929:73-76) published the
 --      proving sentence (context_snippet) of every mention to every member. A
 --      RESTRICTIVE SELECT overlay now requires the mentioned document to be
 --      readable — directly (document_id, under the documents RLS) and through
 --      the mirror hop (knowledge_document_id, under the knowledge_documents
---      RLS above). RESTRICTIVE, so the FOR ALL write policy (Manager and
+--      RLS above) — both positive EXISTS, so a row hidden by RLS fails
+--      closed. RESTRICTIVE, so the FOR ALL write policy (Manager and
 --      Supervisor hold it) cannot re-open reads.
---   4. IEDGE-6 done-when 2 — entity_mentions_total_for_asset(org, asset): the
+--   5. IEDGE-6 done-when 2 — entity_mentions_total_for_asset(org, asset): the
 --      org-wide COUNT of an asset's mentions for an active member, so the
 --      equipment hub can say "N further mentions are in documents you don't
 --      have access to" instead of silently omitting them. A count only — no
@@ -47,7 +64,13 @@
 -- clause below evaluates THROUGH the documents RLS rather than beside it.
 --
 -- NARROWS (members lose org-wide reads of other people's answers, of mirrors
--- of documents they cannot see, and of mentions in them); nobody gains.
+-- of documents they cannot see, and of mentions in them); nobody gains —
+-- which holds only because 3 is in the same paste: every policy that reads
+-- one of the tables narrowed here must test it POSITIVELY. A NOT EXISTS over
+-- a table whose rows RLS now hides turns every hidden row into a pass; after
+-- this paste no live policy does that (a probe below checks every policy in
+-- the database, and lib/__tests__/knowledgeMemoryAcl.test.ts replays every
+-- migration's policies to the same end).
 -- Pre-apply inventory (DEC-30) is captured into a TEMP TABLE before the
 -- transaction: aggregate counts only. Single paste: inventory →
 -- BEGIN/DDL/COMMIT → ONE SELECT (check text, ok boolean, n text) — the editor
@@ -93,6 +116,12 @@ SELECT 'mirror rows whose controlled document no longer exists (now visible to c
  WHERE k.source_document_id IS NOT NULL
    AND NOT EXISTS (SELECT 1 FROM documents d WHERE d.id = k.source_document_id)
 UNION ALL
+SELECT 'knowledge_chunks of mirrors of private or hidden documents (closed to members before and after: the 20260917 NOT EXISTS would have opened them once their mirror row is hidden, so it is re-created as a positive test)', COUNT(*)
+  FROM knowledge_chunks c
+  JOIN knowledge_documents k ON k.id = c.document_id
+  JOIN documents d ON d.id = k.source_document_id
+ WHERE d.visibility IN ('private', 'hidden')
+UNION ALL
 SELECT 'entity_mentions rows', COUNT(*) FROM entity_mentions
 UNION ALL
 SELECT 'entity_mentions rows on a private or hidden document, directly or through its mirror (now hidden from members who cannot see it)', COUNT(*)
@@ -127,7 +156,25 @@ CREATE POLICY knowledge_documents_select ON knowledge_documents FOR SELECT USING
        OR EXISTS (SELECT 1 FROM documents d WHERE d.id = knowledge_documents.source_document_id))
 );
 
--- ── 3. IEDGE-6 / IRLS-9: a mention's sentence needs its document readable ──
+-- ── 3. The 20260917 chunk lockdown, as a positive test ─────────────────────
+-- 20260917 wrote "no mirror row for this chunk" (NOT EXISTS). Under the
+-- caller's RLS that is also true of a mirror row section 2 now HIDES, which
+-- would open the full text of every private / hidden document's mirror to
+-- members. Same rule, written as "an upload row the caller can see": the
+-- membership clause and the subquery are 20260917's, NOT EXISTS → EXISTS and
+-- IS NOT NULL → IS NULL.
+DROP POLICY IF EXISTS knowledge_chunks_select ON knowledge_chunks;
+CREATE POLICY knowledge_chunks_select ON knowledge_chunks FOR SELECT USING (
+  EXISTS (SELECT 1 FROM org_members WHERE org_id = knowledge_chunks.org_id
+          AND uid = auth.uid() AND status = 'active')
+  AND EXISTS (
+    SELECT 1 FROM knowledge_documents d
+    WHERE d.id = knowledge_chunks.document_id
+      AND d.source_document_id IS NULL
+  )
+);
+
+-- ── 4. IEDGE-6 / IRLS-9: a mention's sentence needs its document readable ──
 -- RESTRICTIVE: ANDed with every permissive policy, including the FOR ALL
 -- entity_mentions_write (Admin, DocCtrl, Manager, Supervisor), so no write
 -- grant re-opens a read. Both hops evaluate under the caller's RLS.
@@ -139,7 +186,7 @@ CREATE POLICY entity_mentions_source_readable ON entity_mentions AS RESTRICTIVE 
        OR EXISTS (SELECT 1 FROM knowledge_documents k WHERE k.id = entity_mentions.knowledge_document_id))
 );
 
--- ── 4. IEDGE-6: the hub may say how many mentions it is not showing ────────
+-- ── 5. IEDGE-6: the hub may say how many mentions it is not showing ────────
 -- A count for an active member of the org; 0 for anyone else. Never a
 -- document, a page or a sentence.
 CREATE OR REPLACE FUNCTION entity_mentions_total_for_asset(p_org_id uuid, p_asset_id uuid)
@@ -202,10 +249,24 @@ SELECT 'entity_mentions_total_for_asset: SECURITY DEFINER, search_path pinned, a
           FROM pg_proc WHERE proname = 'entity_mentions_total_for_asset'),
        NULL
 UNION ALL
-SELECT 'knowledge_chunks_select: the 20260917 chunk lockdown still closes every mirror chunk to members',
+SELECT 'knowledge_chunks_select: a member reads a chunk only when its document is an UPLOAD row they can see (a positive EXISTS: a mirror row hidden by RLS keeps its chunks closed), and knowledge_chunks_write is the only other read-capable policy',
        EXISTS (SELECT 1 FROM pg_policies
                 WHERE tablename = 'knowledge_chunks' AND policyname = 'knowledge_chunks_select'
-                  AND qual LIKE '%source_document_id IS NOT NULL%'),
+                  AND permissive = 'PERMISSIVE' AND cmd = 'SELECT'
+                  AND qual LIKE '%org_members%'
+                  AND qual LIKE '%FROM knowledge_documents d%'
+                  AND qual LIKE '%d.id = knowledge_chunks.document_id%'
+                  AND qual LIKE '%d.source_document_id IS NULL%'
+                  AND qual NOT LIKE '%IS NOT NULL%'
+                  AND qual !~ 'NOT \(?EXISTS')
+       AND (SELECT COUNT(*) = 2 FROM pg_policies
+             WHERE tablename = 'knowledge_chunks' AND cmd IN ('SELECT', 'ALL')),
+       NULL
+UNION ALL
+SELECT 'no policy in the database tests NOT EXISTS over knowledge_documents, knowledge_questions or entity_mentions (a row this paste hides would open another table''s row)',
+       NOT EXISTS (SELECT 1 FROM pg_policies
+                    WHERE COALESCE(qual, '') || ' ' || COALESCE(with_check, '')
+                          ~ 'NOT \(?EXISTS \( *SELECT[^()]*FROM (public\.)?(knowledge_documents|knowledge_questions|entity_mentions)\M'),
        NULL
 UNION ALL
 SELECT 'documents_acl_select (RESTRICTIVE node_visible) is installed — the predicate the mirror and mention policies read through',

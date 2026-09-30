@@ -14,7 +14,12 @@
 // controllers only; a Rebuild ends another member's background consent
 // first, so the drain never re-embeds a whole library on a key whose owner
 // consented to something else; and saving Library AI setup never erases the
-// standing consent that shares its JSON column.
+// standing consent that shares its JSON column. The second fix pass adds: a
+// Rebuild reports backgroundCleared only when its conditional clear changed
+// the row (a consent renewed in between is read again; one that keeps moving
+// is a 409 with no vector touched); a failed coverage read is a transient
+// 503, never "needs migration 20260930"; and passages the provider refused
+// are reported as waiting — never as a background build embedding them.
 
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { NextRequest } from "next/server";
@@ -201,6 +206,57 @@ describe("Round G — what the status says out loud", () => {
   });
 });
 
+describe("a failed coverage read is not a missing migration", () => {
+  it("a statement timeout (or any other failure) is a transient 503 that never mentions a migration; only a missing function is the 424", async () => {
+    const { POST } = await import("@/app/api/knowledge/embed/route");
+    admin.state.rpc.semantic_coverage = () => ({ data: null, error: { code: "57014", message: "canceling statement due to statement timeout" } });
+    const busy = await POST(statusReq());
+    expect(busy.status).toBe(503);
+    const body = await busy.json();
+    expect(body.error).toMatch(/Couldn't read the meaning index's coverage just now \(canceling statement due to statement timeout\)/);
+    expect(body.error).not.toMatch(/migration/i);
+    delete admin.state.rpc.semantic_coverage;                        // → PGRST202, the function is missing
+    const missing = await POST(statusReq());
+    expect(missing.status).toBe(424);
+    expect((await missing.json()).error).toMatch(/needs migration 20260930/);
+  });
+});
+
+describe("SEM-4 — refused passages wait; they are never 'being embedded'", () => {
+  it("the status reports them as waiting (not busy), and a build that finds only them does not blame a stale schema cache", async () => {
+    detail = { total: 10, embedded: 9, remaining: 1, failed: 0, leased: 0, waiting: 1, remaining_chars: 10, total_chars: 100, models: { "voyage-3.5-lite": 9 } };
+    coverage = { total: 10, embedded: 9 };
+    admin.state.rpc.embed_claim_batch = () => ({ data: [], error: null });
+    const { POST } = await import("@/app/api/knowledge/embed/route");
+    const status = await (await POST(statusReq())).json();
+    expect(status).toMatchObject({ remaining: 1, busy: 0, waiting: 1, done: false });
+    const build = await (await POST(req({}))).json();
+    expect(build.error).toBeNull();
+    expect(build).toMatchObject({ waiting: 1, busy: 0, remaining: 1, done: false });
+    expect(fetch).not.toHaveBeenCalled();
+  });
+  it("the browser build stops at once (no waiting on a build that is not running) and the panel says the passages were refused and will be retried", async () => {
+    const replies = [{ embedded: 0, total: 10, coveredNow: 9, remaining: 1, done: false, error: null, spentThisRun: 0, busy: 0, waiting: 1, refused: 0 }];
+    const calls: string[] = [];
+    vi.stubGlobal("fetch", vi.fn(async (url: string) => {
+      calls.push(url);
+      return { ok: true, status: 200, json: async () => replies[0] };
+    }));
+    const { buildSemanticIndex } = await import("@/lib/knowledge");
+    const started = Date.now();
+    const final = await buildSemanticIndex(ORG, LIB);
+    expect(calls).toHaveLength(1);
+    expect(Date.now() - started).toBeLessThan(5_000);
+    expect(final).toMatchObject({ waiting: 1, busy: 0 });
+    const { readFileSync } = await import("node:fs");
+    const panel = readFileSync("components/knowledge/SemanticIndexPanel.tsx", "utf8");
+    expect(panel).toContain("} else if ((final.waiting ?? 0) > 0 && (final.busy ?? 0) + (final.waiting ?? 0) >= final.remaining) {");
+    expect(panel).toContain("refused by the embeddings provider and will be retried ");
+    // the "background build is embedding" line is reached only past it
+    expect(panel.indexOf("(final.waiting ?? 0) > 0 && (final.busy ?? 0)")).toBeLessThan(panel.indexOf("The background build is embedding the remaining"));
+  });
+});
+
 describe("Round G — the build refuses before spending anything", () => {
   it("a library of another org is 404 (every write below is keyed by its id)", async () => {
     admin.state.tables.knowledge_libraries = [{ id: LIB, org_id: "0a000000-0000-4000-8000-000000000099", ai_features: {} }];
@@ -341,11 +397,80 @@ describe("Round G — the controls", () => {
     expect(panel).toContain("It also ends another member's consent to keep this index current on their key");
     expect(panel).toContain("It also stops the background build running on another member's key");
   });
-  it("reset clears vectors AND the refusal counters and leases (a rebuild starts clean)", async () => {
-    admin.state.tables.knowledge_chunks = [{ id: "a", org_id: ORG, library_id: LIB, embedding: "[0]", embedding_model: "m", embed_attempts: 3, embed_error: "x", embed_claimed_until: "2099-01-01" }];
+  it("reset clears vectors AND the refusal counters, leases and waits (a rebuild starts clean)", async () => {
+    admin.state.tables.knowledge_chunks = [{ id: "a", org_id: ORG, library_id: LIB, embedding: "[0]", embedding_model: "m", embed_attempts: 3, embed_error: "x", embed_claimed_until: "2099-01-01", embed_retry_after: "2099-01-01" }];
     const { POST } = await import("@/app/api/knowledge/embed/route");
     expect((await POST(req({ action: "reset" }))).status).toBe(200);
-    expect(admin.state.tables.knowledge_chunks[0]).toMatchObject({ embedding: null, embedding_model: null, embed_attempts: 0, embed_error: null, embed_claimed_until: null });
+    expect(admin.state.tables.knowledge_chunks[0]).toMatchObject({ embedding: null, embedding_model: null, embed_attempts: 0, embed_error: null, embed_claimed_until: null, embed_retry_after: null });
+  });
+  const OTHER = "0d000000-0000-4000-8000-0000000000bb";
+  /** embed_build_marker_write, with the other member acting between the
+   *  route's read and its clear: `moves` times, their consent is renewed (a
+   *  new instant) just before the write is evaluated. */
+  const renewBeforeClear = (moves: number) => {
+    const real = admin.state.rpc.embed_build_marker_write;
+    let n = 0;
+    admin.state.rpc.embed_build_marker_write = (a) => {
+      if (a.p_marker == null && !a.p_patch && n++ < moves) {
+        (admin.state.tables.knowledge_libraries[0].ai_features as { embedBuild: Row }).embedBuild =
+          { userId: OTHER, at: `2026-09-30T12:00:0${n}Z`, standing: true };
+      }
+      return real(a);
+    };
+  };
+  it("reproduction: the marker writer said 'success' for a conditional clear that changed nothing — now the write reports it was not applied", async () => {
+    admin.state.tables.knowledge_libraries[0].ai_features = { embedBuild: { userId: OTHER, at: "2026-09-30T12:00:05Z", standing: true } };
+    const { setEmbedBuildMarker, clearEmbedBuildMarkerIf } = await import("@/lib/knowledgeEmbedCore");
+    // the old signature: no error, so the caller took it as done
+    expect(await setEmbedBuildMarker(LIB, null, { expect: { userId: OTHER, at: "2026-09-01T00:00:00Z" } })).toBeNull();
+    expect((admin.state.tables.knowledge_libraries[0].ai_features as Row).embedBuild).toBeTruthy();
+    // the checked clear says what happened
+    expect(await clearEmbedBuildMarkerIf(LIB, { userId: OTHER, at: "2026-09-01T00:00:00Z" })).toEqual({ error: null, applied: false });
+    expect(await clearEmbedBuildMarkerIf(LIB, { userId: OTHER, at: "2026-09-30T12:00:05Z" })).toEqual({ error: null, applied: true });
+    expect((admin.state.tables.knowledge_libraries[0].ai_features as Row).embedBuild).toBeUndefined();
+    // and before 20261121 (the whole-blob fallback) the same
+    delete admin.state.rpc.embed_build_marker_write;
+    admin.state.tables.knowledge_libraries[0].ai_features = { embedBuild: { userId: OTHER, at: "2026-09-30T12:00:05Z" } };
+    expect(await clearEmbedBuildMarkerIf(LIB, { userId: OTHER, at: "2026-09-01T00:00:00Z" })).toEqual({ error: null, applied: false });
+    expect(await clearEmbedBuildMarkerIf(LIB, { userId: OTHER, at: "2026-09-30T12:00:05Z" })).toEqual({ error: null, applied: true });
+  });
+  it("a Rebuild whose clear matched nothing (the other member renewed their consent in between) reads it again and clears THAT one — backgroundCleared only when a row changed", async () => {
+    admin.state.tables.knowledge_libraries[0].ai_features = { embedBuild: { userId: OTHER, at: "2026-09-01T00:00:00Z", standing: true } };
+    admin.state.tables.knowledge_chunks = [{ id: "a", org_id: ORG, library_id: LIB, embedding: "[0]", embedding_model: "m", embed_attempts: 0 }];
+    renewBeforeClear(1);
+    const { POST } = await import("@/app/api/knowledge/embed/route");
+    const res = await POST(req({ action: "reset" }));
+    expect(res.status).toBe(200);
+    expect((await res.json()).backgroundCleared).toBe(true);
+    expect((admin.state.tables.knowledge_libraries[0].ai_features as Row).embedBuild).toBeUndefined();
+    const clears = admin.state.calls.filter((c) => c.table === "rpc:embed_build_marker_write").map((c) => (c.args[0] as Row).p_expect_at);
+    expect(clears).toEqual(["2026-09-01T00:00:00Z", "2026-09-30T12:00:01Z"]);   // the renewed instant, read again
+    expect(admin.state.tables.knowledge_chunks[0].embedding).toBeNull();
+  });
+  it("a consent that keeps moving refuses the Rebuild (409) BEFORE any vector is cleared — their renewed consent is left exactly as they recorded it", async () => {
+    admin.state.tables.knowledge_libraries[0].ai_features = { embedBuild: { userId: OTHER, at: "2026-09-01T00:00:00Z", standing: true } };
+    admin.state.tables.knowledge_chunks = [{ id: "a", org_id: ORG, library_id: LIB, embedding: "[0]", embedding_model: "m", embed_attempts: 0 }];
+    renewBeforeClear(5);
+    const { POST } = await import("@/app/api/knowledge/embed/route");
+    const res = await POST(req({ action: "reset" }));
+    expect(res.status).toBe(409);
+    expect((await res.json()).error).toMatch(/changed while the rebuild was starting, so nothing was cleared/);
+    expect(admin.state.tables.knowledge_chunks[0].embedding).toBe("[0]");
+    expect((admin.state.tables.knowledge_libraries[0].ai_features as { embedBuild: Row }).embedBuild).toMatchObject({ userId: OTHER, standing: true });
+  });
+  it("a Rebuild that cannot read the marker refuses (500) before any vector is cleared", async () => {
+    admin.state.tables.knowledge_chunks = [{ id: "a", org_id: ORG, library_id: LIB, embedding: "[0]", embedding_model: "m", embed_attempts: 0 }];
+    const { POST } = await import("@/app/api/knowledge/embed/route");
+    // the route's own library check reads knowledge_libraries once before the marker read
+    const real = admin.state.failReads;
+    let reads = 0;
+    admin.state.failReads = new Proxy(real, {
+      get: (t, p: string) => (p === "knowledge_libraries" && ++reads === 2 ? { message: "timeout" } : (t as Record<string, unknown>)[p]),
+    });
+    const res = await POST(req({ action: "reset" }));
+    expect(res.status).toBe(500);
+    expect((await res.json()).error).toMatch(/Couldn't read the background build before the rebuild: timeout/);
+    expect(admin.state.tables.knowledge_chunks[0].embedding).toBe("[0]");
   });
 });
 

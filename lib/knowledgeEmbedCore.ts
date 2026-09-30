@@ -18,10 +18,18 @@
 //
 // ONE BAD PASSAGE NEVER PINS A LIBRARY (SEM-4). When the provider refuses the
 // INPUT (400 / 413 / 422), the batch is split and retried until the refused
-// passage stands alone; that passage gets an attempt and its error recorded,
-// and after EMBED_MAX_ATTEMPTS the queue skips it (reported as failed, with
-// document and page). A refusal of the key, the model or the provider itself
-// stops the slice and blames no passage. Every vector already paid for is
+// passage stands alone. A passage refused ALONE is blamed only once the
+// provider is known to accept the request itself — another passage of the
+// batch embedded, or a one-line canary (same provider, model and parameters)
+// did: then it gets an attempt and its error recorded, gives its lease back
+// and waits REFUSAL_RETRY_SECONDS (embed_retry_after) before any driver
+// offers it again, and after EMBED_MAX_ATTEMPTS the queue skips it (reported
+// as failed, with document and page). So two bad passages that make up a
+// whole batch, or a bad document longer than a batch, still reach the limit
+// and the library still completes around them. A canary the provider refuses
+// too means the REQUEST is at fault (a parameter it now rejects): nobody is
+// blamed and the slice stops with the provider's words — as for a refusal of
+// the key, the model or the provider itself. Every vector already paid for is
 // written, even when one write fails.
 //
 // ONE MODEL PER LIBRARY, AT THE QUEUE (SEM-1). The claim carries the model
@@ -84,9 +92,19 @@ const missingDbObject = (e: { code?: string; message?: string } | null | undefin
 const LEASE_SECONDS = 120;
 
 /** Provider calls one batch may spend isolating refused passages. One bad
- *  passage in 64 is found in 13; the cap bounds a request the provider
- *  refuses outright (every split fails) to a few cheap refusals. */
+ *  passage in 64 is found in 13; the cap bounds a batch of many bad passages
+ *  to a few cheap refusals — the passages isolated so far are charged, the
+ *  rest go back to the queue and the slice moves on to its next batch. */
 const MAX_CALLS_PER_BATCH = 16;
+
+/** How long a passage the provider refused waits before any driver offers it
+ *  again: attempts accrue across runs, never in one tight loop. Its lease is
+ *  given back at once — a refused passage is not "being embedded" by anyone,
+ *  and the status says so (`waiting`, not `leased`). */
+export const REFUSAL_RETRY_SECONDS = 120;
+
+/** The canary's input: one short line, embedded exactly as a passage is. */
+const CANARY_PASSAGE = "Embedding check.";
 
 /** Embed one time-bounded slice of a library. Never throws — every outcome
  *  is a field on the result, because both drivers must keep going. */
@@ -169,7 +187,7 @@ export async function embedLibrarySlice(opts: {
       const part = group.slice(i, i + 8);
       const results = await Promise.all(part.map((c, j) => {
         const patch = queue === "claim"
-          ? { embedding: toVectorLiteral(vectors[i + j]), embedding_model: connection.model, embed_claimed_until: null, embed_error: null }
+          ? { embedding: toVectorLiteral(vectors[i + j]), embedding_model: connection.model, embed_claimed_until: null, embed_error: null, embed_retry_after: null }
           : { embedding: toVectorLiteral(vectors[i + j]), embedding_model: connection.model };
         const q = supabaseAdmin.from("knowledge_chunks").update(patch).eq("id", c.id);
         return queue === "claim" ? q.is("embedding", null).select("id") : q;
@@ -183,15 +201,29 @@ export async function embedLibrarySlice(opts: {
   };
 
   /** One passage refused by the provider: an attempt and the reason. Its
-   *  lease is KEPT, so no driver (this slice included) asks again until the
-   *  lease runs out — attempts accrue across runs, not in one tight loop. At
-   *  EMBED_MAX_ATTEMPTS the queue stops offering it. */
+   *  lease is given back and it waits REFUSAL_RETRY_SECONDS before any
+   *  driver (this slice included) offers it again — attempts accrue across
+   *  runs, not in one tight loop. At EMBED_MAX_ATTEMPTS the queue stops
+   *  offering it. */
   const recordRefusal = async (c: ClaimedChunk, message: string) => {
     const { error } = await supabaseAdmin.from("knowledge_chunks")
-      .update({ embed_attempts: (c.embed_attempts ?? 0) + 1, embed_error: message.slice(0, 500) })
+      .update({
+        embed_attempts: (c.embed_attempts ?? 0) + 1,
+        embed_error: message.slice(0, 500),
+        embed_claimed_until: null,
+        embed_retry_after: new Date(Date.now() + REFUSAL_RETRY_SECONDS * 1000).toISOString(),
+      })
       .eq("id", c.id);
     if (error) lastError ??= error.message;
     else refused += 1;
+  };
+
+  /** The passages' text as the provider sees it: a contextual prefix
+   *  (document name + section + page) makes the heading visible to the
+   *  vector space — the cheapest retrieval upgrade there is. */
+  const passageText = (c: ClaimedChunk) => {
+    const head = [c.document_name, c.section, `p.${c.page}`].filter(Boolean).join(" — ");
+    return head ? `${head}\n${c.content}` : c.content;
   };
 
   // ── one batch, split on a refused passage ─────────────────────────────────
@@ -199,12 +231,47 @@ export async function embedLibrarySlice(opts: {
     const refusedHere: Array<{ c: ClaimedChunk; message: string }> = [];
     const embeddedIds = new Set<string>();
     let calls = 0;
+    // Out of calls: this batch's unexplored passages go back to the queue;
+    // the slice goes on to its next batch (unlike the clock, which stops it).
+    let capped = false;
+    // Does the provider accept THIS request (provider, model, parameters)?
+    // Known once a call of this batch embedded, or once the canary did —
+    // and only then is a passage refused alone its own fault. The canary is
+    // asked at most once per batch, and only when nothing in it embedded.
+    let requestAccepted = false;
+
+    /** One short input, the same provider, model and parameters: tells a
+     *  refused REQUEST (blame nobody) from refused PASSAGES (blame each). */
+    const canary = async (leafMessage: string): Promise<boolean> => {
+      try {
+        const out = await embedPassages({
+          provider: connection.provider, model: connection.model, apiKey: connection.apiKey,
+          passages: [CANARY_PASSAGE],
+          kind: "document",
+          signal: AbortSignal.timeout(Math.max(5_000, hardStopMs - elapsed())),
+        });
+        usage.inputTokens += out.usage.inputTokens;
+        requestAccepted = true;
+        return true;
+      } catch (e) {
+        if (e instanceof AiCallError && e.status === 429) { rateLimited = true; stop = true; return false; }
+        const name = (e as { name?: string })?.name ?? "";
+        if (name === "TimeoutError" || name === "AbortError") { stop = true; return false; }
+        // Refused as well: the request is at fault, not the passages.
+        lastError = isPassageRefusal(e)
+          ? `The embeddings provider refused a one-line test request as well as these passages, so the request itself is being refused (the model or its parameters), not the passages — no passage was marked failed. ${leafMessage}`
+          : (e instanceof AiCallError ? e.message : "Embedding failed.");
+        stop = true;
+        return false;
+      }
+    };
 
     const attempt = async (group: ClaimedChunk[], depth: number): Promise<void> => {
-      if (stop || group.length === 0) return;
+      if (stop || capped || group.length === 0) return;
       // A split never outruns the slice: out of time or out of calls, the
       // unexplored passages go back to the queue untouched.
-      if (depth > 0 && (elapsed() >= budgetMs || calls >= MAX_CALLS_PER_BATCH)) { stop = true; return; }
+      if (depth > 0 && elapsed() >= budgetMs) { stop = true; return; }
+      if (depth > 0 && calls >= MAX_CALLS_PER_BATCH) { capped = true; return; }
       calls += 1;
       let vectors: number[][];
       try {
@@ -213,17 +280,13 @@ export async function embedLibrarySlice(opts: {
         const callBudget = Math.max(5_000, hardStopMs - elapsed());
         const out = await embedPassages({
           provider: connection.provider, model: connection.model, apiKey: connection.apiKey,
-          // Contextual prefix: document name + section + page make the heading
-          // visible to the vector space — the cheapest retrieval upgrade there is.
-          passages: group.map((c) => {
-            const head = [c.document_name, c.section, `p.${c.page}`].filter(Boolean).join(" — ");
-            return head ? `${head}\n${c.content}` : c.content;
-          }),
+          passages: group.map(passageText),
           kind: "document",             // corpus side of the asymmetric pair
           signal: AbortSignal.timeout(callBudget),
         });
         vectors = out.vectors;
         usage.inputTokens += out.usage.inputTokens;
+        requestAccepted = true;
       } catch (e) {
         // 429 is pacing, not failure — the driver waits out the window.
         if (e instanceof AiCallError && e.status === 429) { rateLimited = true; stop = true; return; }
@@ -232,6 +295,7 @@ export async function embedLibrarySlice(opts: {
         if (name === "TimeoutError" || name === "AbortError") { stop = true; return; }
         const message = e instanceof AiCallError ? e.message : "Embedding failed.";
         if (queue === "claim" && isPassageRefusal(e)) {
+          // Refused alone: a suspect until the request itself is known good.
           if (group.length === 1) { refusedHere.push({ c: group[0], message }); return; }
           const mid = Math.ceil(group.length / 2);
           await attempt(group.slice(0, mid), depth + 1);
@@ -248,22 +312,26 @@ export async function embedLibrarySlice(opts: {
     };
 
     await attempt(root, 0);
-    // Set inside: a 429, a timeout, the call cap, or a refusal of the key /
-    // model / provider. Nothing below may turn pacing into a failure.
-    const interrupted = stop;
     const unembedded = root.filter((c) => !embeddedIds.has(c.id));
+    // A capped batch that isolated and embedded nothing would only be claimed
+    // again as it is: stop the slice rather than spin on it.
+    if (capped && embeddedIds.size === 0 && refusedHere.length === 0) stop = true;
 
-    // The key, the model or the provider refused: blame no passage.
+    // The key, the model or the provider refused: blame no passage, give the
+    // batch back.
     if (lastError) { await release(unembedded); return; }
-    // A multi-passage batch in which NOTHING embedded is the request, not the
-    // passages (a parameter the provider now rejects): blame none of them —
-    // no attempt is recorded. A completed split says so and stops; a split
-    // cut short (pacing, the clock) just gives the batch back.
-    if (root.length > 1 && embeddedIds.size === 0 && refusedHere.length > 0) {
-      if (!interrupted) { lastError = refusedHere[0].message; stop = true; }
-      await release(unembedded);
-      return;
+    // Passages were refused alone and NOTHING in this batch embedded: the
+    // passages, or the request (a parameter the provider now rejects)? Ask
+    // once with the canary. Refused too → the request: blame nobody. A batch
+    // cut short by pacing or the clock is not asked — the next run decides.
+    if (refusedHere.length > 0 && !requestAccepted) {
+      if (stop || !(await canary(refusedHere[0].message))) { await release(unembedded); return; }
     }
+    // Every passage in refusedHere was refused ALONE while the provider
+    // accepted the same request (a sibling embedded, or the canary did), so
+    // each is charged an attempt — however many of the batch they are. A
+    // split cut short (pacing, the clock, the call cap) charges only the
+    // passages it isolated; the rest go back to the queue untouched.
     for (const r of refusedHere) await recordRefusal(r.c, r.message);
     await release(unembedded.filter((c) => !refusedHere.some((r) => r.c.id === c.id)));
   };
@@ -285,10 +353,7 @@ export async function embedLibrarySlice(opts: {
         const callBudget = Math.max(5_000, hardStopMs - elapsed());
         const out = await embedPassages({
           provider: connection.provider, model: connection.model, apiKey: connection.apiKey,
-          passages: batch.map((c) => {
-            const head = [c.document_name, c.section, `p.${c.page}`].filter(Boolean).join(" — ");
-            return head ? `${head}\n${c.content}` : c.content;
-          }),
+          passages: batch.map(passageText),
           kind: "document",
           signal: AbortSignal.timeout(callBudget),
         });
@@ -320,8 +385,11 @@ export interface EmbedDetail {
   remaining: number;
   /** Refused EMBED_MAX_ATTEMPTS times: skipped until retried or rebuilt. */
   failed: number;
-  /** Claimed by a driver right now. */
+  /** Claimed by a driver right now (a refused passage gives its lease back). */
   leased: number;
+  /** Refused by the provider, waiting REFUSAL_RETRY_SECONDS to be offered
+   *  again — nobody is embedding them now (SEM-4). */
+  waiting: number;
   remainingChars: number;
   totalChars: number;
   /** Vectors per embedding model, whole library. */
@@ -345,6 +413,7 @@ export async function loadEmbedDetail(orgId: string, libraryId: string): Promise
     remaining: Number(row.remaining ?? 0),
     failed: Number(row.failed ?? 0),
     leased: Number(row.leased ?? 0),
+    waiting: Number(row.waiting ?? 0),
     remainingChars: Number(row.remaining_chars ?? 0),
     totalChars: Number(row.total_chars ?? 0),
     models,
@@ -459,15 +528,23 @@ export interface MarkerExpectation { userId: string | null; at: string | null }
 export const expectationOf = (m: { userId?: string; at?: string } | null | undefined): MarkerExpectation =>
   ({ userId: m?.userId || null, at: m?.at || null });
 
+/** What a marker write did. `applied` is false when nothing changed — a
+ *  conditional write whose expectation no longer held (the marker was
+ *  renewed, replaced or cleared since it was read), a patch of a library
+ *  with no marker, or an error. A caller that must KNOW its write landed
+ *  (a Rebuild ending another member's consent) reads it; the rest only
+ *  report the error. */
+export interface MarkerWrite { error: string | null; applied: boolean }
+
 /** Set, patch or clear ai_features.embedBuild ALONE (20261121's atomic
  *  write); before 20261121, the whole-blob read-modify-write it replaces. */
 async function writeMarker(
   libraryId: string,
   change: { set: Record<string, unknown> | null } | { patch: Record<string, unknown>; drop: string[] },
   expect?: MarkerExpectation | null,
-): Promise<string | null> {
+): Promise<MarkerWrite> {
   const isPatch = "patch" in change;
-  const { error } = await supabaseAdmin.rpc("embed_build_marker_write", {
+  const { data, error } = await supabaseAdmin.rpc("embed_build_marker_write", {
     p_library_id: libraryId,
     p_marker: isPatch ? change.patch : change.set,
     p_patch: isPatch,
@@ -475,16 +552,17 @@ async function writeMarker(
     p_expect_user: expect?.userId ?? null,
     p_expect_at: expect?.at ?? null,
   });
-  if (!error) return null;
-  if (!missingDbObject(error)) return error.message;
+  // The function returns whether a row changed.
+  if (!error) return { error: null, applied: data === true };
+  if (!missingDbObject(error)) return { error: error.message, applied: false };
   // 20261121 not applied: the original whole-blob write, with the same checks.
   const { feats, error: readErr } = await readFeatures(libraryId);
-  if (readErr) return readErr;
+  if (readErr) return { error: readErr, applied: false };
   const cur = feats.embedBuild && typeof feats.embedBuild === "object" ? feats.embedBuild as Record<string, unknown> : null;
-  if (expect?.userId && cur?.userId !== expect.userId) return null;
-  if (expect?.at && cur?.at !== expect.at) return null;
+  if (expect?.userId && cur?.userId !== expect.userId) return { error: null, applied: false };
+  if (expect?.at && cur?.at !== expect.at) return { error: null, applied: false };
   if (isPatch) {
-    if (!cur) return null;
+    if (!cur) return { error: null, applied: false };
     const next: Record<string, unknown> = { ...cur, ...change.patch };
     for (const k of change.drop) delete next[k];
     feats.embedBuild = next;
@@ -493,7 +571,8 @@ async function writeMarker(
   } else {
     delete feats.embedBuild;
   }
-  return writeFeatures(libraryId, feats);
+  const writeErr = await writeFeatures(libraryId, feats);
+  return { error: writeErr, applied: !writeErr };
 }
 
 /** The library's marker now, or the read error (never guessed). */
@@ -519,7 +598,7 @@ export async function readEmbedBuildMarker(
 export async function setEmbedBuildMarker(
   libraryId: string, userId: string | null, opts?: { standing?: boolean; expect?: MarkerExpectation },
 ): Promise<string | null> {
-  if (!userId) return writeMarker(libraryId, { set: null }, opts?.expect);
+  if (!userId) return (await writeMarker(libraryId, { set: null }, opts?.expect)).error;
   const { feats, error } = await readFeatures(libraryId);
   if (error) return error;
   const prior = parseEmbedBuildMarker(feats.embedBuild);
@@ -527,11 +606,19 @@ export async function setEmbedBuildMarker(
     return null;
   }
   const standing = opts?.standing ?? (prior?.userId === userId && prior.standing === true);
-  return writeMarker(
+  return (await writeMarker(
     libraryId,
     { set: { userId, at: new Date().toISOString(), ...(standing ? { standing: true } : {}) } },
     opts?.expect,
-  );
+  )).error;
+}
+
+/** Clear the marker only while it is still the one the caller read, and SAY
+ *  whether it was cleared: `applied: false` with no error means the marker
+ *  changed in between (renewed, replaced or already cleared) and is as its
+ *  new writer left it. */
+export async function clearEmbedBuildMarkerIf(libraryId: string, expect: MarkerExpectation): Promise<MarkerWrite> {
+  return writeMarker(libraryId, { set: null }, expect);
 }
 
 /** Merge drain bookkeeping into the existing marker (never creates one); an
@@ -545,7 +632,7 @@ export async function patchEmbedBuildMarker(
     if (v === undefined || v === null) drop.push(k);
     else set[k] = v;
   }
-  return writeMarker(libraryId, { patch: set, drop }, expect);
+  return (await writeMarker(libraryId, { patch: set, drop }, expect)).error;
 }
 
 /** The acceptable-use agreement, checked locally until I-05's aiGates lands:
