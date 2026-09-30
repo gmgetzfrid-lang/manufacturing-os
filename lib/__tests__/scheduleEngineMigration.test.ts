@@ -55,7 +55,7 @@ describe("20261106 — milestones in supabase_realtime (PT SCH-7 / RT-12)", () =
 
 describe("ScheduleTab — the lock, the named rejections and the live channel (PT SCH-7)", () => {
   it("each move carries the loaded row's updated_at (or the Undo's pinned value) and asks for the rejected ids back", () => {
-    expect(tab).toMatch(/expectedUpdatedAt: opts\?\.expectedUpdatedAt\?\.\[c\.id\] \?\? \(loaded\.get\(c\.id\) as string \| null \| undefined\) \?\? null/);
+    expect(tab).toMatch(/expectedUpdatedAt: opts\?\.expectedUpdatedAt\?\.\[c\.id\] \?\? \(loaded\.get\(c\.id\) as string \| null \| undefined\) \?\? undefined/);
     expect(tab).toMatch(/onUnmatched: "return"/);
     expect(tab).toMatch(/changed by someone else and \$\{names\.length === 1 \? "was" : "were"\} not moved: \$\{names\.slice\(0, 5\)\.join\(", "\)\}/);
     expect(tab).toMatch(/setMilestones\(\(arr\) => arr\.map\(\(m\) => \(m\.id && stamps\[m\.id\] \? \{ \.\.\.m, updatedAt: stamps\[m\.id\] \} : m\)\)\)/);

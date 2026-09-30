@@ -372,9 +372,12 @@ export default function ScheduleTab({ orgId, projectId, projectName, projectStat
             // The lock: each row's updated_at as this view loaded it (an Undo
             // passes the value its move reported) — PT SCH-7 / SCH-18.
             const loaded = new Map(milestonesRef.current.map((m) => [m.id, m.updatedAt ?? null]));
+            // A row loaded without an updated_at sends none (undefined, not
+            // null — null would switch the lock off): applyMilestoneMoves then
+            // locks on the row as it reads it just before the write.
             const moves = changes.map((c) => ({
               id: c.id, plannedStartAt: c.plannedStartAt, plannedAt: c.plannedAt,
-              expectedUpdatedAt: opts?.expectedUpdatedAt?.[c.id] ?? (loaded.get(c.id) as string | null | undefined) ?? null,
+              expectedUpdatedAt: opts?.expectedUpdatedAt?.[c.id] ?? (loaded.get(c.id) as string | null | undefined) ?? undefined,
             }));
             // Optimistic: apply every reflowed date locally so the drag
             // feels instant, then persist the batch.

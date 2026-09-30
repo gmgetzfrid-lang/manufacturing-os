@@ -153,9 +153,15 @@ export default function ExecutionView({
     return () => ro.disconnect();
   }, []);
   const onTimelineScroll = useCallback((e: React.UIEvent<HTMLDivElement>) => {
-    const top = e.currentTarget.scrollTop;
+    const el = e.currentTarget;
     if (scrollFrame.current != null) return;
-    scrollFrame.current = requestAnimationFrame(() => { scrollFrame.current = null; setScrollTop(top); });
+    // Read the height here too: the scroller can remount (Timeline ↔
+    // Calendar) after the one-time ResizeObserver attached to the first one.
+    scrollFrame.current = requestAnimationFrame(() => {
+      scrollFrame.current = null;
+      setScrollTop(el.scrollTop);
+      setViewportH(el.clientHeight);
+    });
   }, []);
   useEffect(() => () => { if (scrollFrame.current != null) cancelAnimationFrame(scrollFrame.current); }, []);
 
