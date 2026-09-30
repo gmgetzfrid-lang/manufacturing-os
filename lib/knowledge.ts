@@ -2,7 +2,11 @@
 //
 // Reads go straight to supabase (RLS scopes them); anything involving the
 // PDF pipeline or a provider key goes through the /api routes with a bearer
-// token (same contract as lib/storage.ts).
+// token (same contract as lib/storage.ts). The team's stored answers are the
+// exception: they were built under the ASKER's ACL, so they are read only
+// through /api/knowledge/history, which re-checks every citation for the
+// current reader (20261120 narrows the table itself to the asker and
+// controllers).
 
 import { supabase } from "@/lib/supabase";
 import { uploadToPath, type UploadProgress } from "@/lib/storage";
@@ -164,6 +168,18 @@ export interface KnowledgeQuestion {
   userName: string | null;
   mode: AskMode;
   createdAt: string;
+  /** The reader asked it. Continuing someone else's conversation starts a
+   *  new thread seeded with their turns — never appends to theirs. */
+  mine?: boolean;
+}
+
+/** A page of the team's record as THIS reader may see it. `withheld` counts
+ *  answers left out because they cite a document the reader cannot open (or
+ *  one since removed from the library) — said out loud, never silently. */
+export interface KnowledgeHistoryPage {
+  questions: KnowledgeQuestion[];
+  withheld: number;
+  error?: string;
 }
 
 export interface AiConnectionInfo {
@@ -493,56 +509,77 @@ export function parseNeedPrompt(answer: string): string | null {
   return m ? m[1].trim() : null;
 }
 
-/** Ask memory: search the ORG's past Q&A before spending a fresh AI call.
- *  FTS via the generated search_tsv (websearch syntax); falls back to a plain
- *  ilike on a pre-migration DB so the feature degrades, never breaks. */
+/** Ask memory: past answers in THIS library that match the question, offered
+ *  before a fresh AI call. Served by /api/knowledge/history, which withholds
+ *  every answer citing a document the reader cannot open — the card never
+ *  replays what the original asker's ACL admitted (ASK-1). Best-effort: a
+ *  failure answers [] and the ask goes ahead. */
 export interface PastAsk {
   id: string; library_id: string; question: string; answer: string;
   user_name: string | null; created_at: string;
   citations: unknown;
 }
+
+/** One row as /api/knowledge/history returns it. */
+interface HistoryRowWire {
+  id: string; libraryId: string; threadId: string | null; question: string; answer: string | null;
+  citations: unknown; userName: string | null; mode: AskMode; createdAt: string; mine: boolean;
+}
+
+const toQuestion = (r: HistoryRowWire): KnowledgeQuestion => ({
+  id: r.id,
+  threadId: r.threadId ?? null,
+  question: r.question,
+  answer: r.answer ?? null,
+  citations: Array.isArray(r.citations) ? (r.citations as KnowledgeCitation[]) : [],
+  userName: r.userName ?? null,
+  mode: r.mode === "internet" ? "internet" : "library",
+  createdAt: r.createdAt,
+  mine: r.mine === true,
+});
+
 export async function searchAskHistory(
-  orgId: string, query: string, limit = 5,
+  orgId: string, libraryId: string, query: string, limit = 5,
 ): Promise<PastAsk[]> {
   const q = query.trim();
   if (q.length < 8) return []; // too short to mean anything
   try {
-    const { data, error } = await supabase
-      .from("knowledge_questions")
-      .select("id, library_id, question, answer, user_name, created_at, citations")
-      .eq("org_id", orgId)
-      .textSearch("search_tsv", q, { type: "websearch", config: "english" })
-      .order("created_at", { ascending: false })
-      .limit(limit);
-    if (!error && data) return data as PastAsk[];
-  } catch { /* fall through */ }
-  const { data } = await supabase
-    .from("knowledge_questions")
-    .select("id, library_id, question, answer, user_name, created_at, citations")
-    .eq("org_id", orgId)
-    .ilike("question", `%${q.slice(0, 60).replace(/[%_]/g, " ")}%`)
-    .order("created_at", { ascending: false })
-    .limit(limit);
-  return (data as PastAsk[]) ?? [];
+    const out = await apiPost<{ rows: HistoryRowWire[] }>("/api/knowledge/history", {
+      orgId, libraryId, action: "search", query: q, limit,
+    });
+    return (out.rows ?? []).filter((r) => typeof r.answer === "string").map((r) => ({
+      id: r.id, library_id: r.libraryId, question: r.question, answer: r.answer as string,
+      user_name: r.userName ?? null, created_at: r.createdAt, citations: r.citations,
+    }));
+  } catch {
+    return [];
+  }
 }
 
+/** The library's recent answers as THIS reader may see them. A failure is
+ *  reported on the page, never shown as an empty record. */
 export async function listKnowledgeQuestions(
-  libraryId: string, limit = 25,
-): Promise<KnowledgeQuestion[]> {
-  const { data, error } = await supabase
-    .from("knowledge_questions").select("*").eq("library_id", libraryId)
-    .order("created_at", { ascending: false }).limit(limit);
-  if (error) return [];
-  return (data ?? []).map((r: Record<string, unknown>) => ({
-    id: r.id as string,
-    threadId: (r.thread_id as string | null) ?? null,
-    question: r.question as string,
-    answer: (r.answer as string | null) ?? null,
-    citations: Array.isArray(r.citations) ? (r.citations as KnowledgeCitation[]) : [],
-    userName: (r.user_name as string | null) ?? null,
-    mode: (r.mode as AskMode) === "internet" ? "internet" as const : "library" as const,
-    createdAt: r.created_at as string,
-  }));
+  orgId: string, libraryId: string, limit = 25,
+): Promise<KnowledgeHistoryPage> {
+  try {
+    const out = await apiPost<{ rows: HistoryRowWire[]; withheld: number }>("/api/knowledge/history", {
+      orgId, libraryId, action: "list", limit,
+    });
+    return { questions: (out.rows ?? []).map(toQuestion), withheld: Number(out.withheld) || 0 };
+  } catch (e) {
+    return { questions: [], withheld: 0, error: (e as Error).message };
+  }
+}
+
+/** Every turn of one conversation this reader may see, oldest first. A turn
+ *  after a withheld one is withheld too — it was answered with it as context. */
+export async function loadConversation(
+  orgId: string, libraryId: string, threadId: string,
+): Promise<KnowledgeHistoryPage> {
+  const out = await apiPost<{ rows: HistoryRowWire[]; withheld: number }>("/api/knowledge/history", {
+    orgId, libraryId, action: "thread", threadId,
+  });
+  return { questions: (out.rows ?? []).map(toQuestion), withheld: Number(out.withheld) || 0 };
 }
 
 // ── AI connection (BYO keys — always via the API, never direct) ───────────

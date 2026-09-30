@@ -4,6 +4,14 @@
 // connected?" — and answers it with the sentence from the document, not with
 // a row id. That's the whole difference between a graph you trust and a
 // graph you close.
+//
+// The sentence IS document content, so the database decides who may read it:
+// entity_mentions_source_readable (20261120, RESTRICTIVE) returns a mention
+// only when its document is visible to the reader — the controlled document
+// directly (documents RLS) and through its knowledge mirror
+// (knowledge_documents RLS). These reads are therefore already the reader's
+// own view; mentionAccessGap says how many mentions that view leaves out, so
+// a panel can say so instead of silently omitting them (IEDGE-6 / IRLS-9).
 
 import { supabase } from "@/lib/supabase";
 
@@ -178,6 +186,35 @@ export async function evidenceForEdge(
   if (tolerate(error)) return [];
   if (error) throw new Error(error.message);
   return shape((data ?? []) as unknown as Row[]);
+}
+
+/**
+ * How many of this equipment's mentions the reader is NOT shown — they sit in
+ * documents the reader cannot open. A count only (no document, page or
+ * sentence), from entity_mentions_total_for_asset (20261120) against the
+ * reader's own visible count. Null when it can't be told (pre-migration, or
+ * a read failed) — the caller then says nothing rather than guessing.
+ */
+export async function mentionAccessGap(
+  orgId: string, assetId: string,
+): Promise<{ total: number; visible: number; withheld: number } | null> {
+  const [all, mine] = await Promise.all([
+    supabase.rpc("entity_mentions_total_for_asset", { p_org_id: orgId, p_asset_id: assetId }),
+    supabase.from("entity_mentions").select("id", { count: "exact", head: true })
+      .eq("org_id", orgId).eq("asset_id", assetId),
+  ]);
+  if (all.error || mine.error || mine.count == null) return null;
+  const total = Number(all.data ?? 0);
+  const visible = mine.count;
+  return { total, visible, withheld: Math.max(0, total - visible) };
+}
+
+/** The line a backlinks panel shows for mentions it may not display. */
+export function describeWithheldMentions(withheld: number, anyVisible: boolean, tag: string): string | null {
+  if (withheld <= 0) return null;
+  const n = `${withheld} ${anyVisible ? "further " : ""}mention${withheld === 1 ? "" : "s"}`;
+  const of = anyVisible ? "" : ` of ${tag}`;
+  return `${n}${of} ${withheld === 1 ? "is" : "are"} in documents you don't have access to.`;
 }
 
 /** Is the mention engine installed and populated for this org? Drives the

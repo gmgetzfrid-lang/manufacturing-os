@@ -25,7 +25,7 @@ import { parseAnswerBlocks, extractCitationNumbers, proofTerms, highlightQuote, 
 import {
   getKnowledgeLibrary, listKnowledgeDocuments, addKnowledgeDocument,
   ingestKnowledgeDocument, deleteKnowledgeDocument, deleteKnowledgeLibrary,
-  askKnowledgeLibrary, listKnowledgeQuestions, listLibraryLinks, acceptAiAgreement,
+  askKnowledgeLibrary, listKnowledgeQuestions, loadConversation, listLibraryLinks, acceptAiAgreement,
   parseNeedPrompt,
   type AgreementRequiredError,
   type KnowledgeLibrary, type KnowledgeDocument, type KnowledgeAnswer,
@@ -1128,6 +1128,15 @@ export default function KnowledgeLibraryPage() {
   const [library, setLibrary] = useState<KnowledgeLibrary | null>(null);
   const [docs, setDocs] = useState<KnowledgeDocument[]>([]);
   const [history, setHistory] = useState<KnowledgeQuestion[]>([]);
+  // Answers the history route left out for THIS reader (they cite a document
+  // the reader cannot open) and a failed read — both said, never hidden.
+  const [historyWithheld, setHistoryWithheld] = useState(0);
+  const [historyError, setHistoryError] = useState<string | null>(null);
+  const applyHistory = useCallback((page: { questions: KnowledgeQuestion[]; withheld: number; error?: string }) => {
+    setHistory(page.questions);
+    setHistoryWithheld(page.withheld);
+    setHistoryError(page.error ?? null);
+  }, []);
   // The per-document status list is bookkeeping, not the point of the page —
   // collapsed by default, live counts always in the header.
   const [docsOpen, setDocsOpen] = useState(false);
@@ -1316,15 +1325,17 @@ export default function KnowledgeLibraryPage() {
     const [lib, documents, questions, libLinks] = await Promise.all([
       getKnowledgeLibrary(libraryId),
       listKnowledgeDocuments(libraryId),
-      listKnowledgeQuestions(libraryId),
+      activeOrgId
+        ? listKnowledgeQuestions(activeOrgId, libraryId)
+        : Promise.resolve({ questions: [] as KnowledgeQuestion[], withheld: 0 }),
       listLibraryLinks(libraryId),
     ]);
     setLibrary(lib);
     setDocs(documents);
-    setHistory(questions);
+    applyHistory(questions);
     setLinks(libLinks);
     setLoading(false);
-  }, [libraryId]);
+  }, [libraryId, activeOrgId, applyHistory]);
   useEffect(() => { void refresh(); }, [refresh]);
 
   // ── Auto-index queued documents while the page is open ─────────────────
@@ -1399,9 +1410,11 @@ export default function KnowledgeLibraryPage() {
     })();
   }, [hasQueued, uploadState, reindexing, libraryId, refresh]);
 
-  // Ask memory: a near-duplicate of a past question gets offered from the
-  // org's own record BEFORE a fresh AI call spends anything. "Ask fresh"
-  // always available — memory is a shortcut, never a wall.
+  // Ask memory: a near-duplicate of a past question in THIS library gets
+  // offered from the team's record BEFORE a fresh AI call spends anything —
+  // only answers whose every source this reader may open (the history route
+  // re-checks each citation; ASK-1). "Ask fresh" always available — memory
+  // is a shortcut, never a wall.
   const [priorAsks, setPriorAsks] = useState<import("@/lib/knowledge").PastAsk[] | null>(null);
   const priorDismissedRef = useRef<string>("");
 
@@ -1411,7 +1424,7 @@ export default function KnowledgeLibraryPage() {
     if (!skipMemory && thread.length === 0 && mode === "library" && priorDismissedRef.current !== q) {
       try {
         const { searchAskHistory } = await import("@/lib/knowledge");
-        const past = await searchAskHistory(activeOrgId, q, 3);
+        const past = await searchAskHistory(activeOrgId, libraryId, q, 3);
         if (past.length > 0) {
           setPriorAsks(past);
           priorDismissedRef.current = q;
@@ -1463,7 +1476,7 @@ export default function KnowledgeLibraryPage() {
         setAnswer(res);
         setThread((prev) => [...prev, { question: q, answer: res }]);
         setThreadId(tid);
-        setHistory(await listKnowledgeQuestions(libraryId));
+        applyHistory(await listKnowledgeQuestions(activeOrgId, libraryId));
       }
     } catch (e) {
       const msg = (e as Error).message || "The question failed.";
@@ -1494,10 +1507,35 @@ export default function KnowledgeLibraryPage() {
   };
 
   /** Reopen a past conversation IN FULL and make it continuable — the way
-   *  every chat product works. Rows sharing a thread_id load together in
-   *  order; pre-thread history rows load as single-turn conversations. */
-  const openConversation = (rows: KnowledgeQuestion[]) => {
-    const ordered = [...rows].sort((a, b) => a.createdAt.localeCompare(b.createdAt));
+   *  every chat product works. A threaded conversation is read whole through
+   *  the history route, every turn re-checked for THIS reader (a turn after a
+   *  withheld one is withheld too); pre-thread rows load as single-turn
+   *  conversations. Continuing keeps the thread only when every turn is the
+   *  reader's own — a teammate's conversation seeds a NEW one, so the next
+   *  ask is filed under the reader, never appended to someone else's. */
+  const openConversation = async (rows: KnowledgeQuestion[]) => {
+    const threadKey = rows.find((r) => r.threadId)?.threadId ?? null;
+    let source = rows;
+    if (threadKey && activeOrgId) {
+      try {
+        const page = await loadConversation(activeOrgId, libraryId, threadKey);
+        source = page.questions;
+        if (page.withheld > 0) {
+          showToast({
+            type: "warning",
+            title: `${page.withheld} turn(s) of this conversation are withheld — they cite documents you can't open.`,
+          });
+        }
+      } catch (e) {
+        showToast({ type: "error", title: `Couldn't reopen the conversation: ${(e as Error).message}` });
+        return;
+      }
+    }
+    if (source.length === 0) {
+      showToast({ type: "warning", title: "Nothing in this conversation is visible to you — it cites documents you can't open." });
+      return;
+    }
+    const ordered = [...source].sort((a, b) => a.createdAt.localeCompare(b.createdAt));
     const turns = ordered.map((q) => ({
       question: q.question,
       answer: {
@@ -1508,7 +1546,8 @@ export default function KnowledgeLibraryPage() {
       } as KnowledgeAnswer,
     }));
     setThread(turns);
-    setThreadId(ordered[0]?.threadId ?? crypto.randomUUID());
+    const own = ordered.every((q) => q.mine === true);
+    setThreadId(own && ordered[0]?.threadId ? ordered[0].threadId : crypto.randomUUID());
     setAnswer(turns[turns.length - 1]?.answer ?? null);
     setLastQuestion(turns[turns.length - 1]?.question ?? "");
     setPriorAsks(null); setClarify(null); setNeed(null);
@@ -1978,9 +2017,21 @@ export default function KnowledgeLibraryPage() {
               return seen.size;
             })()})
           </h2>
+          {historyError && (
+            <div className="mb-2 rounded-xl border border-rose-300 bg-rose-50 dark:bg-rose-950/40 px-3 py-2 text-[11px] font-bold text-rose-700 dark:text-rose-300">
+              Couldn&apos;t load the conversations: {historyError}
+            </div>
+          )}
+          {historyWithheld > 0 && (
+            <div className="mb-2 rounded-xl border border-[var(--color-border)] bg-[var(--color-surface-2)] px-3 py-2 text-[11px] text-[var(--color-text-muted)]">
+              {historyWithheld} recent answer{historyWithheld === 1 ? " is" : "s are"} not shown — {historyWithheld === 1 ? "it cites" : "they cite"} documents
+              you can&apos;t open, or that have since left this library.
+            </div>
+          )}
           {history.length === 0 ? (
             <div className="rounded-xl border border-dashed border-[var(--color-border)] p-8 text-center text-xs text-[var(--color-text-muted)]">
-              Questions and their cited answers land here for the whole team — click one to reopen and continue it.
+              Questions and their cited answers land here for the team — each answer shows only to people who can open
+              every document it cites. Click one to reopen and continue it.
             </div>
           ) : (
             <ul className="divide-y divide-[var(--color-border)] rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] overflow-hidden">
@@ -1996,7 +2047,7 @@ export default function KnowledgeLibraryPage() {
                   return (
                     <li key={first.threadId ?? first.id}>
                       <button
-                        onClick={() => openConversation(rows)}
+                        onClick={() => void openConversation(rows)}
                         className="w-full text-left px-3.5 py-2.5 hover:bg-[var(--color-surface-2)] transition-colors flex items-center gap-2.5 group"
                       >
                         {first.mode === "internet"
