@@ -2670,8 +2670,9 @@ an in-figure watermark: the forecast sentence, legend, labels, tooltips, bar
 values and the crew figure; the S-curve carries the watermark twice inside
 the plot. A corner chip alone is not enough. **(4) The example shows only what the
 real view draws.** Both go through one layout. Burn by budget line renders for
-real projects. A project with no dates gets an explanation instead of an
-empty region. **(5) Status colours read as text in both themes.** A status token
+real projects, each line in its own currency and against its own budget, as
+the accounts table draws it. A project with no dates gets an explanation
+instead of an empty region. **(5) Status colours read as text in both themes.** A status token
 used where a caller may paint text (`--state-held`) has its own light and
 dark step, each ≥ 4.5:1 on its surfaces. The dial's band word wears a text token.
 
@@ -2704,12 +2705,18 @@ place of that criterion.
 **Implementation.** `components/ui/ChartKit.tsx` (`SCurveChart`,
 `sCurveScale` — a money-less chart labels only its zero gridline —
 `sCurveTodayX`, `sCurveTodayLabel` with `sCurveLabelWidth` — the "Today"
-label clears the top gridline label actually drawn, in any locale —
-`LegendKey`, `BarList` `example`,
+label clears the top gridline label actually drawn, whose width is a
+per-glyph upper bound checked against 5,259 locale labels in four fonts, with
+both labels' haloes in the gap —
+`LegendKey`, `BarList` `example` / `valueLabel` / `of` / `ghost` / `alarm`
+and `barPct` — no stub for a zero value —
 `scoreBandColor`, `ScoreDial`), `components/dashboard/viz.tsx` (`VIZ_CAT`,
 `MiniBars` `ariaLabel`), `components/projects/cost/CostCharts.tsx`
 (`hasRealData`, `CostPictures` and its no-dates / no-money explanations,
-`CrewStat`, `ForecastSentence` `example`, `COST_GLOSSARY_TERMS`),
+`burnItem` and `byBurn` — each burn row in its line's own currency, spent
+against its own budget with committed behind it, the lines furthest through
+their budgets first — `CrewStat`, `ForecastSentence` `example`,
+`COST_GLOSSARY_TERMS`),
 `components/projects/CostsTab.tsx` (`loaded`: nothing that draws from the
 tab's read renders before one succeeds, so a failed first load shows neither
 the example nor a new project's empty state; the burn bar and account bars
@@ -2721,8 +2728,9 @@ draw Spent and Committed in the S-curve's two slots),
 `lib/__tests__/costChartsRender.test.ts` and
 `lib/__tests__/costsTabFirstLoad.test.ts`. The example appears only on an
 empty project that was actually read, and every money figure in it is marked. The two S-curve series
-differ in stroke token, dash and marker. No hex literal remains in the
-chart kit. `--state-held` clears 4.5:1 on every light surface and on the
+differ in stroke token, dash and marker. The burn list and the accounts
+table print each line in the same currency and draw it on the same scale.
+No hex literal remains in the chart kit. `--state-held` clears 4.5:1 on every light surface and on the
 dark ones. The crew is a sentence with its inputs.
 
 **Reversal.** (2) When the schedule carries resource loading, a crew curve
