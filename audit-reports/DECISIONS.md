@@ -879,6 +879,8 @@ the narrow roster-plus-hash condition — never as "a ticket id exists."
 
 **Risk:** medium.
 
+*Landed 2026-09-30 (intelligence Round G): intelligence `WIRE-9` — the same waiver, whose remediation ("both call sites pass relatedTicketId") was the other branch of this fork — is recorded `INVALID` on this decision, with the contradicting code quoted (`lib/reviewControl.ts:74-85`, `effectiveModeForRevUp` has no `relatedTicketId` parameter) and kept in the corpus with the reason (`DEC-41`). The provenance write this decision keeps is live since `GAP-6` / `20261049`.*
+
 <a id="dec-24"></a>
 ## DEC-24 · Where does markup live?
 

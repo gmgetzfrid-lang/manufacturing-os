@@ -196,6 +196,8 @@ waive review is not.
    being bound to the same file hash — and it records a real sign-off row.
 3. `lib/__tests__/reviewControl.test.ts:42` encodes whichever rule survives.
 
+*Cross-area note (2026-09-30, intelligence Round G): intelligence `WIRE-9` is recorded `INVALID` on `DEC-23` (this deletion), with the contradicting code quoted there.*
+
 ---
 
 ## LIFE-3 · Viewer markup is never persisted — the redline exists only in React state

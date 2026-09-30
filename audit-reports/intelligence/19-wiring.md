@@ -246,6 +246,10 @@ types/schema.ts:1112 `unit: string;` on Ticket; supabase/schema.sql:403 `unit TE
 - [ ] holds and work packages can be listed by operating area
 - [ ] milestone.location resolves to an asset or unit when it matches, and the asset hub shows scheduled work
 
+**Partial (2026-09-30, intelligence Round G).** Handoff, no code. Re-verified at HEAD `1b71ca1`: unchanged — `Ticket.unit` is still an unconstrained string (`types/schema.ts:1159`), the request form has no equipment field (`app/(protected)/requests/new/page.tsx` has no tag or asset input), holds, checkouts and work packages carry no unit or asset reference, and `Milestone.location` is still only round-tripped (`lib/milestones.ts:57`, `:108`). No criterion holds.
+- Criterion 1 (tickets gain a codebook-checked `unit_code` and an optional equipment list) **is `GAP-312`** (the drafting request gets an equipment field, `90-gap-register.md`), handed to the **drafting-flow fleet**: it edits the same form as `GAP-110` / `GAP-111` (drafting-flow `DF-P6`, which owns `app/(protected)/requests/new/page.tsx` for the declaration) and must ship with them or the form is edited twice (`99-fix-sequencing.md` Phase 5). Prerequisites on the intelligence side: `GAP-311` (tag lookup — I-10, merged) and `GAP-304` (the Bridge writes the relation — I-11). No drafting-flow package lists `GAP-312` today; the integrator adds it to `DF-P6` or schedules it directly after.
+- Criteria 2 (holds and work packages listed by operating area) and 3 (`milestone.location` resolving to an asset or unit; scheduled work on the asset hub) ride the same relation (`GAP-304` → `document_assets`, one unit identity from `GAP-305`) and are in no fleet plan; they stay here.
+
 ---
 
 <a id="wire-8"></a>
@@ -283,7 +287,7 @@ lib/transmittals.ts:401 `.contains("items", JSON.stringify([{ documentId }]))`. 
 ## WIRE-9 · document_versions.related_ticket_id is read in two places, written in none — and the review-gate escape hatch it feeds is unreachable twice over
 
 - **Severity:** LOW
-- **Status:** OPEN
+- **Status:** INVALID
 - **Verification:** CONFIRMED
 - **Locations:** `supabase/schema.sql:334`, `lib/revisions.ts:958`, `app/(protected)/documents/[libraryId]/page.tsx:1893`, `lib/reviewControl.ts:55-61`, `components/documents/RevUpModal.tsx:210`, `lib/documentLifecycle/setRevUp.ts:83`
 - **Independently verified:** ✓ **SURVIVES, corrected** — second independent adversarial pass. Severity **MEDIUM → LOW** by this pass. SURVIVES on the facts — the escape hatch is dead twice over, so a ticket-derived rev never skips the gate as documented. Downgraded because the failure direction is safe: the consequence is an unnecessary trip through the reviewer queue, never a revision publishing without a review it should have had. Dead documented feature + extra friction is LOW, not MEDIUM.
@@ -307,6 +311,21 @@ lib/reviewControl.ts:60 `if (input.relatedTicketId) return "none";`. RevUpModal.
 - [ ] the publish path stamps document_versions.related_ticket_id when a rev originates from a ticket deliverable
 - [ ] both effectiveModeForRevUp call sites pass relatedTicketId
 - [ ] the inspector's history can show "Rev 3 — from DR-0142"
+
+**Resolution (2026-09-30, intelligence Round G) — INVALID by decision (`DEC-23`); kept in the corpus with the reason (`DEC-41`).** The finding documents a dead escape hatch, and its remediation asks to make it reachable ("both effectiveModeForRevUp call sites pass relatedTicketId"). `DEC-23` chose the other branch of that fork: the waiver is deleted, so there is nothing to wire. The contradicting code at HEAD `1b71ca1`:
+
+```
+lib/reviewControl.ts:74-85 — "Ticket origin NEVER waives review (DEC-23). Ticket approval is not the document's reviewer roster, is not bound to the file's content hash, and produces no e-signature on the version — so `related_ticket_id` is written for provenance only and must never satisfy a document sign-off." / `export function effectiveModeForRevUp(input: { control: ReviewControl; changeType?: string | null; }): ReviewControlMode {` — there is no `relatedTicketId` parameter; both callers (components/documents/RevUpModal.tsx:249, lib/documentLifecycle/setRevUp.ts:83) pass `{ control, changeType }`, which is the whole contract.
+```
+
+Closed under roles-and-permissions [`LIFE-2`](../roles-and-permissions/07-document-lifecycle.md) (commit `2af2ebe`; its record names this finding), pinned by `lib/__tests__/reviewControl.test.ts` "never waives the gate because the rev came from a drafting ticket (DEC-23)". The title's "written in none" is also overtaken: since `GAP-6` (roles-and-permissions Round C2, `20261049` live) the ticket hand-back writes `document_versions.related_ticket_id` for provenance — `lib/revisions.ts:531` (the publish contract) and `:901` (the review-draft insert), fed from `RevUpModal.tsx:363` and pre-seeded by the ticket page (`app/(protected)/requests/[id]/page.tsx:1658`).
+
+**Done-when.**
+1. ✓ (overtaken, by `GAP-6` rather than this finding's mechanism) the publish path stamps `related_ticket_id` when a revision comes from a ticket deliverable.
+2. — Declined by `DEC-23`: the call sites must NOT pass it; the parameter was removed so re-arming the waiver takes a deliberate signature change.
+3. ✗ Not built, and not queued from here: the inspector's history does not render "Rev 3 — from DR-0142". `relatedTicketId` is mapped onto the version (`lib/revisions.ts:965`, `app/(protected)/documents/[libraryId]/page.tsx:2000`) but no component displays it; "which revisions came out of DR-0142?" is answerable from the version row and from the hand-back's change log naming the ticket (`GAP-6` acceptance 1). A display nicety, not this finding's defect (the waiver).
+
+**Scope / residual.** None as a defect. The `DEC-23` section carries a `Landed` note for this closure.
 
 ---
 
