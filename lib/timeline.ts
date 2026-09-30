@@ -196,9 +196,55 @@ export function holdIdsReferencedBy(auditRows: AuditRow[]): string[] {
 async function lookupExistingHoldIds(ids: string[], alreadyOnPage: ReadonlySet<string>): Promise<Set<string>> {
   const missing = ids.filter((id) => !alreadyOnPage.has(id));
   if (missing.length === 0) return new Set();
-  const { data, error } = await supabase.from("document_holds").select("id").in("id", missing);
-  if (error) throw new Error(error.message);
-  return new Set(((data as Array<{ id: string }>) ?? []).map((r) => r.id));
+  const rows = await readByIdChunks<{ id: string }>(missing, (part) => supabase.from("document_holds").select("id").in("id", part));
+  return new Set(rows.map((r) => r.id));
+}
+
+/** Ids per `.in()` read. A list of 100 UUIDs keeps a request line near
+ *  4 KB; a busy project (hundreds of quotes, hundreds of linked drawings)
+ *  used to put every id in ONE filter, past the gateway's URL limit, and a
+ *  refused request failed the whole Activity tab. */
+export const TIMELINE_ID_CHUNK = 100;
+
+/** PostgREST's max-rows: a read with no range returns at most this many
+ *  rows and says nothing about the rest. */
+const TIMELINE_PAGE_ROWS = 1000;
+
+/** Every row of one read, in windows of TIMELINE_PAGE_ROWS until a short
+ *  page; the caller orders by a unique key so the windows neither skip nor
+ *  repeat a row. Any failed window fails the read — a capped read is never
+ *  taken as the whole set (SAF-6: an award on an older quote; SAF-17: the
+ *  detach cutoffs of a long-lived register). */
+async function readAllRows<T>(
+  page: (from: number, to: number) => PromiseLike<{ data: unknown; error: { message: string } | null }>,
+): Promise<T[]> {
+  const out: T[] = [];
+  for (let from = 0; ; from += TIMELINE_PAGE_ROWS) {
+    const { data, error } = await page(from, from + TIMELINE_PAGE_ROWS - 1);
+    if (error) throw new Error(error.message);
+    const batch = ((data as T[] | null) ?? []);
+    out.push(...batch);
+    if (batch.length < TIMELINE_PAGE_ROWS) return out;
+  }
+}
+
+/** One read per chunk of ids (in parallel), concatenated; any failed chunk
+ *  fails the read — a partial feed is never presented as the whole one.
+ *  Callers that cap each read at `limit` still get the newest `limit`
+ *  overall after their merged sort and slice. */
+async function readByIdChunks<T>(
+  ids: readonly string[],
+  read: (part: string[]) => PromiseLike<{ data: unknown; error: { message: string } | null }>,
+): Promise<T[]> {
+  const parts: string[][] = [];
+  for (let i = 0; i < ids.length; i += TIMELINE_ID_CHUNK) parts.push(ids.slice(i, i + TIMELINE_ID_CHUNK));
+  const results = await Promise.all(parts.map((part) => read(part)));
+  const out: T[] = [];
+  for (const r of results) {
+    if (r.error) throw new Error(r.error.message);
+    out.push(...(((r.data as T[] | null) ?? [])));
+  }
+  return out;
 }
 
 /**
@@ -334,6 +380,110 @@ function projectActivityRowToEvent(r: ProjectActivityRow): TimelineEvent {
   };
 }
 
+/** SAF-16: the ONE visibility rule every timeline reader applies to
+ *  document_versions. In-review drafts (and rejected ones) are only visible
+ *  to their reviewers/owner (see lib/reviewControl.ts) — no timeline may
+ *  leak them to everyone who can read the document. PostgREST `.or()` form. */
+export const CONTROLLED_VERSIONS_ONLY = "review_state.is.null,review_state.eq.approved";
+
+/**
+ * SAF-6 / GAP-408: the project timeline's vocabulary for the project- and
+ * cost-scoped audit rows the controls program writes — ONE map, read by the
+ * project timeline's queries. The class decides whether a row reaches the
+ * project's Activity tab:
+ *   · milestone — shown: an award, a change-order decision, a checklist
+ *     ruling (created / assessed / completed or voided), a turnover review
+ *     (accept / reject / waive), a punch-item close, a schedule hit or miss;
+ *   · noise     — left in audit_logs (the admin audit page shows it) but off
+ *     the feed: individual cost entries and ledger edits, individual
+ *     checklist item updates, evidence sweeps, uploads and reads;
+ *   · mirrored  — the same fact is already a project_activity row the feed
+ *     shows (status changes, ownership, membership, edits), so the audit row
+ *     would render it twice.
+ * An action NOT in this map is shown: a new event is never silently
+ * dropped from the record because nobody classified it yet.
+ */
+export type ProjectEventClass = "milestone" | "noise" | "mirrored";
+export const PROJECT_EVENT_VOCABULARY: Readonly<Record<string, ProjectEventClass>> = {
+  // Money & commercial (resource_type 'cost', resource_id = the cost row)
+  COST_DOC_AWARDED: "milestone",
+  COST_DOC_AWARD_OVERRIDE_DO_NOT_USE: "milestone",
+  COST_DOC_UPLOADED: "noise",
+  COST_DOC_PARSED: "noise",
+  COST_DOC_MANUAL_TOTAL: "noise",
+  COST_DOC_POSTED: "noise",
+  COST_DOC_VOIDED: "noise",
+  COST_DOC_COMPANY_LINKED: "noise",
+  COST_DOC_AWARD_OVERRIDE_ABANDONED: "noise",
+  COST_ENTRY_POSTED: "noise",
+  COST_ENTRY_VOIDED: "noise",
+  COST_ACCOUNT_CREATED: "noise",
+  COST_ACCOUNT_UPDATED: "noise",
+  COST_PARTY_CREATED: "noise",
+  COST_PARTY_UPDATED: "noise",
+  INTAKE_QUOTE_SUBMISSION: "noise",
+  // Change control (resource_type 'project')
+  CHANGE_ORDER_PROPOSED: "milestone",
+  CHANGE_ORDER_APPROVED: "milestone",
+  CHANGE_ORDER_REJECTED: "milestone",
+  CHANGE_ORDER_VOIDED: "milestone",
+  // Quality & closeout
+  CHECKLIST_CREATED: "milestone",
+  CHECKLIST_ASSESSED: "milestone",
+  CHECKLIST_STATUS: "milestone",
+  CHECKLIST_ITEM_UPDATED: "noise",
+  CHECKLIST_AUTO_EVIDENCE: "noise",
+  TURNOVER_SEEDED: "milestone",
+  TURNOVER_ITEM_ADDED: "noise",
+  TURNOVER_REVIEWED: "milestone",
+  PUNCH_ADDED: "noise",
+  PUNCH_STATUS: "milestone",
+  // Schedule
+  MILESTONE_COMPLETED: "milestone",
+  MILESTONE_MISSED: "milestone",
+  MILESTONE_BLOCKED: "milestone",
+  MILESTONES_RESCHEDULED: "milestone",
+  SCHEDULE_BASELINED: "milestone",
+  SCHEDULE_REBASED: "milestone",
+  MILESTONE_CREATED: "noise",
+  MILESTONE_UPDATED: "noise",
+  MILESTONE_DELETED: "noise",
+  TASKS_GROUPED: "noise",
+  // The project itself — the feed already carries these as activity rows
+  PROJECT_CREATED: "mirrored",
+  PROJECT_UPDATED: "mirrored",
+  PROJECT_ACTIVE: "mirrored",
+  PROJECT_PAUSED: "mirrored",
+  PROJECT_COMPLETED: "mirrored",
+  PROJECT_CANCELLED: "mirrored",
+  PROJECT_ARCHIVED: "mirrored",
+  PROJECT_REOPENED: "mirrored",
+  PROJECT_OWNERSHIP_TRANSFERRED: "mirrored",
+  PROJECT_MEMBER_REMOVED: "mirrored",
+  PROJECT_LESSONS_SAVED: "milestone",
+};
+
+/** The actions the project timeline leaves off the feed (noise + mirrored),
+ *  as the PostgREST `not.in` list its queries use. Pure. */
+export function hiddenProjectActions(): string[] {
+  return Object.entries(PROJECT_EVENT_VOCABULARY)
+    .filter(([, c]) => c !== "milestone")
+    .map(([a]) => a)
+    .sort();
+}
+
+/** Is this project- or cost-scoped audit action shown on the feed? Pure. */
+export function isProjectFeedAction(action: string): boolean {
+  return (PROJECT_EVENT_VOCABULARY[action] ?? "milestone") === "milestone";
+}
+
+const pgList = (xs: string[]) => `(${xs.map((x) => `"${x}"`).join(",")})`;
+
+const money = (v: unknown): string | null => {
+  const n = typeof v === "number" ? v : typeof v === "string" && v.trim() !== "" ? Number(v) : NaN;
+  return Number.isFinite(n) ? n.toLocaleString(undefined, { maximumFractionDigits: 2 }) : null;
+};
+
 /** Best-effort human summary for an audit row. Mirrors the action vocabulary
  *  used by lib/audit.ts so renderers don't reinvent strings. Exported for
  *  the renderer-map tests (DCK-12). */
@@ -381,6 +531,23 @@ export function summarizeAudit(r: Pick<AuditRow, "action" | "details">): string 
     case "MILESTONE_MISSED":    return `Milestone missed${d.name ? `: ${d.name}` : ""}`;
     case "MILESTONE_BLOCKED":   return `Milestone blocked${d.name ? `: ${d.name}` : ""}`;
     case "MILESTONE_DELETED":   return `Milestone deleted${d.name ? `: ${d.name}` : ""}`;
+    // SAF-6: the controls program's milestone vocabulary (PROJECT_EVENT_VOCABULARY).
+    case "COST_DOC_AWARDED":    return `Quote awarded${d.vendor ? ` — ${d.vendor}` : ""}${money(d.total) ? ` (${money(d.total)})` : ""}`;
+    case "COST_DOC_AWARD_OVERRIDE_DO_NOT_USE": return `Award made over a do-not-use flag${d.vendor ? ` — ${d.vendor}` : ""}`;
+    case "CHANGE_ORDER_PROPOSED": return `Change order proposed${d.coNumber ? ` ${d.coNumber}` : ""}${money(d.amount) ? ` (${money(d.amount)})` : ""}`;
+    case "CHANGE_ORDER_APPROVED": return `Change order approved${d.coNumber ? ` ${d.coNumber}` : ""}${money(d.amount) ? ` (${money(d.amount)})` : ""}`;
+    case "CHANGE_ORDER_REJECTED": return `Change order rejected${d.coNumber ? ` ${d.coNumber}` : ""}`;
+    case "CHANGE_ORDER_VOIDED":   return `Change order voided${d.coNumber ? ` ${d.coNumber}` : ""}`;
+    case "CHECKLIST_CREATED":   return `Checklist created${d.title ? `: ${d.title}` : ""}`;
+    case "CHECKLIST_ASSESSED":  return `Checklist assessed${typeof d.applied === "number" ? ` — ${d.applied} item${d.applied === 1 ? "" : "s"} ruled` : ""}`;
+    case "CHECKLIST_STATUS":    return `Checklist ${d.status === "complete" ? "completed" : d.status === "void" ? "voided" : d.status === "open" ? "reopened" : "status changed"}${d.title ? `: ${d.title}` : ""}`;
+    case "TURNOVER_SEEDED":     return "Turnover package seeded";
+    case "TURNOVER_REVIEWED":   return `Turnover ${typeof d.status === "string" ? d.status : "reviewed"}${d.name ? `: ${d.name}` : ""}`;
+    case "PUNCH_STATUS":        return `Punch item ${d.status === "done" ? "closed" : d.status === "void" ? "voided" : "reopened"}${d.title ? `: ${d.title}` : ""}`;
+    case "MILESTONES_RESCHEDULED": return `Schedule moved${typeof d.count === "number" ? ` — ${d.count} task${d.count === 1 ? "" : "s"}` : ""}`;
+    case "SCHEDULE_BASELINED":  return "Schedule baselined";
+    case "SCHEDULE_REBASED":    return "Schedule re-based";
+    case "PROJECT_LESSONS_SAVED": return "Lessons learned saved";
     case "SUPERSEDE_DOC":return "Document superseded";
     case "ARCHIVE_DOC":  return d.action === "unarchive" ? "Restored from archive" : "Archived";
     default:             return r.action.replace(/_/g, " ").toLowerCase();
@@ -418,7 +585,7 @@ export async function getDocumentTimeline(params: DocumentTimelineParams): Promi
       .eq("record_id", documentId)
       // In-review drafts are only visible to their reviewers/owner (see
       // lib/reviewControl.ts) — the timeline must not leak them to everyone.
-      .or("review_state.is.null,review_state.eq.approved")
+      .or(CONTROLLED_VERSIONS_ONLY)
       .order("created_at", { ascending: false })
       .limit(limit),
     supabase
@@ -494,8 +661,19 @@ export interface ProjectTimelineParams {
 
 /** Per-project timeline. Merges:
  *   - project_activity rows (the project's own event log)
- *   - audit_logs and document_versions for documents linked to the
- *     project via the Phase 1 project_documents join table
+ *   - the controls program's project- and cost-scoped audit rows (SAF-6):
+ *     resource_type 'project' for this project, and resource_type 'cost'
+ *     for this project's cost documents — through PROJECT_EVENT_VOCABULARY,
+ *     so a milestone is shown and noise stays in audit_logs
+ *   - audit_logs, document_versions and document_holds for documents linked
+ *     to the project via the Phase 1 project_documents join table — and for
+ *     documents DETACHED from it (SAF-17): a doc_removed activity row keeps
+ *     the document's history up to the moment it was detached, so one ✕
+ *     click no longer erases a drawing's history from the project view
+ *
+ *  Versions follow the one visibility rule every timeline reader applies
+ *  (CONTROLLED_VERSIONS_ONLY, SAF-16): an in-review or rejected draft never
+ *  reaches the project feed.
  *
  *  The directive's "linked scope visibility" requirement is what
  *  drives the cross-table pull — without it, a project timeline
@@ -503,74 +681,148 @@ export interface ProjectTimelineParams {
  *  document work the project produced. */
 export async function getProjectTimeline(params: ProjectTimelineParams): Promise<TimelineEvent[]> {
   const { projectId, limit = 100 } = params;
+  const hidden = pgList(hiddenProjectActions());
 
   // 1. project_activity (manual + system events tied to the project)
   // 2. Resolve linked document IDs via project_documents
-  const [activityResult, linkedDocsResult] = await Promise.all([
+  // 3. SAF-6: the project-scoped controls audit rows, noise filtered in the query
+  // 4. SAF-17: documents detached from the project (doc_removed rows) and when
+  // 5. SAF-6: the project's cost documents — their awards are cost-scoped rows
+  // The three id lists (2, 4, 5) are read WHOLE — paged by id to exhaustion
+  // — so the badge and the tab never depend on which rows a capped read
+  // happened to return: an award on the project's oldest quote, or the
+  // detach cutoff of a register with more than 1,000 doc_removed rows.
+  const [activityResult, linkedDocRows, projectAuditResult, detachedRows, costDocRows] = await Promise.all([
     supabase
       .from("project_activity")
       .select("*")
       .eq("project_id", projectId)
       .order("created_at", { ascending: false })
       .limit(limit),
-    supabase
+    readAllRows<{ document_id: string }>((from, to) => supabase
       .from("project_documents")
-      .select("document_id")
-      .eq("project_id", projectId),
+      .select("id, document_id")
+      .eq("project_id", projectId)
+      .order("id")
+      .range(from, to)),
+    supabase
+      .from("audit_logs")
+      .select("*")
+      .eq("resource_type", "project")
+      .eq("resource_id", projectId)
+      .not("action", "in", hidden)
+      .order("timestamp", { ascending: false })
+      .limit(limit),
+    readAllRows<{ metadata: Record<string, unknown> | null; created_at: string }>((from, to) => supabase
+      .from("project_activity")
+      .select("id, metadata, created_at")
+      .eq("project_id", projectId)
+      .eq("type", "doc_removed")
+      .order("id")
+      .range(from, to)),
+    readAllRows<{ id: string }>((from, to) => supabase
+      .from("cost_documents")
+      .select("id")
+      .eq("project_id", projectId)
+      .order("id")
+      .range(from, to)),
   ]);
   if (activityResult.error) throw new Error(activityResult.error.message);
-  if (linkedDocsResult.error) throw new Error(linkedDocsResult.error.message);
+  if (projectAuditResult.error) throw new Error(projectAuditResult.error.message);
 
   const events: TimelineEvent[] = ((activityResult.data as ProjectActivityRow[]) ?? []).map(projectActivityRowToEvent);
+  // The query already left noise out; the map is re-applied so a row the
+  // database returned for any other reason is still classified the same way.
+  events.push(...((projectAuditResult.data as AuditRow[]) ?? [])
+    .filter((r) => isProjectFeedAction(r.action))
+    .map(auditRowToEvent));
 
-  const linkedDocIds = ((linkedDocsResult.data as Array<{ document_id: string }>) ?? []).map((r) => r.document_id);
-  if (linkedDocIds.length > 0) {
-    // 3. Audit + version + hold events for the linked documents.
-    // Each source capped to `limit` so a project with many docs
-    // doesn't return 10,000 rows; the merged sort + final slice
-    // still respects the overall limit.
-    const [docAudit, docVersions, docHolds] = await Promise.all([
-      supabase
+  const costDocIds = costDocRows.map((r) => r.id);
+  if (costDocIds.length > 0) {
+    const costAudit = await readByIdChunks<AuditRow>(costDocIds, (part) => supabase
+      .from("audit_logs")
+      .select("*")
+      .eq("resource_type", "cost")
+      .in("resource_id", part)
+      .not("action", "in", hidden)
+      .order("timestamp", { ascending: false })
+      .limit(limit));
+    events.push(...costAudit
+      .filter((r) => isProjectFeedAction(r.action))
+      .map(auditRowToEvent));
+  }
+
+  const linkedDocIds = linkedDocRows.map((r) => r.document_id);
+  // SAF-17: a document no longer linked keeps its history up to its latest
+  // detach — events after that are not the project's.
+  const detachedAt = detachCutoffs(detachedRows, new Set(linkedDocIds));
+  const docIds = [...linkedDocIds, ...detachedAt.keys()];
+  if (docIds.length > 0) {
+    // 6. Audit + version + hold events for the linked (and detached) documents.
+    // Each read is chunked (TIMELINE_ID_CHUNK ids) and each chunk capped to
+    // `limit` so a project with many docs doesn't return 10,000 rows; the
+    // merged sort + final slice still respects the overall limit.
+    const [auditRows, versionRows, holdRows] = await Promise.all([
+      readByIdChunks<AuditRow>(docIds, (part) => supabase
         .from("audit_logs")
         .select("*")
         .eq("resource_type", "document")
-        .in("resource_id", linkedDocIds)
+        .in("resource_id", part)
         .order("timestamp", { ascending: false })
-        .limit(limit),
-      supabase
+        .limit(limit)),
+      readByIdChunks<VersionRow>(docIds, (part) => supabase
         .from("document_versions")
         .select("*")
-        .in("record_id", linkedDocIds)
+        .in("record_id", part)
+        // SAF-16: the same rule as getDocumentTimeline and getRevisionChain.
+        .or(CONTROLLED_VERSIONS_ONLY)
         .order("created_at", { ascending: false })
-        .limit(limit),
-      supabase
+        .limit(limit)),
+      readByIdChunks<HoldRow>(docIds, (part) => supabase
         .from("document_holds")
         .select("*")
-        .in("document_id", linkedDocIds)
+        .in("document_id", part)
         .order("opened_at", { ascending: false })
-        .limit(limit),
+        .limit(limit)),
     ]);
-    if (docAudit.error) throw new Error(docAudit.error.message);
-    if (docVersions.error) throw new Error(docVersions.error.message);
-    if (docHolds.error) throw new Error(docHolds.error.message);
 
     // Same dedup as getDocumentTimeline — by hold id (HLD-11), with the
     // same targeted existence check: the holds page is pooled across every
     // linked document, so a busy project pushes old rows off it fast.
-    const auditRows = (docAudit.data as AuditRow[]) ?? [];
-    const holdRows = (docHolds.data as HoldRow[]) ?? [];
     const existingHoldIds = await lookupExistingHoldIds(holdIdsReferencedBy(auditRows), new Set(holdRows.map((h) => h.id)));
     const { auditEvents, holdEvents } = mergeHoldHistory(auditRows, holdRows, existingHoldIds);
 
-    events.push(
+    const docEvents = [
       ...auditEvents,
-      ...((docVersions.data as VersionRow[]) ?? []).map(versionRowToEvent),
+      ...versionRows.map(versionRowToEvent),
       ...holdEvents,
-    );
+    ];
+    events.push(...docEvents.filter((e) => {
+      const cut = detachedAt.get(e.resourceId);
+      return cut === undefined || e.timestamp <= cut;
+    }));
   }
 
   events.sort((a, b) => (a.timestamp < b.timestamp ? 1 : a.timestamp > b.timestamp ? -1 : 0));
   return events.slice(0, limit);
+}
+
+/** SAF-17: for every document a doc_removed row names that is NOT linked
+ *  now, the time of its latest detach — the cutoff for the history the
+ *  project timeline keeps showing. A document linked again is simply
+ *  linked (its full history returns). Pure. */
+export function detachCutoffs(
+  rows: Array<{ metadata: Record<string, unknown> | null; created_at: string }>,
+  linked: ReadonlySet<string>,
+): Map<string, string> {
+  const out = new Map<string, string>();
+  for (const r of rows) {
+    const id = typeof r.metadata?.documentId === "string" ? (r.metadata.documentId as string) : null;
+    if (!id || linked.has(id)) continue;
+    const prev = out.get(id);
+    if (!prev || r.created_at > prev) out.set(id, r.created_at);
+  }
+  return out;
 }
 
 // ─── Revision chain ───────────────────────────────────────────
@@ -606,7 +858,7 @@ export async function getRevisionChain(documentId: string): Promise<RevisionChai
       .select("id, revision_label, released_at, created_at, created_by_name, change_type, change_log, moc_reference, supersedes_version_id, reverted_from_version_id")
       .eq("record_id", documentId)
       // Hide in-review drafts — the chain shows controlled revisions only.
-      .or("review_state.is.null,review_state.eq.approved")
+      .or(CONTROLLED_VERSIONS_ONLY)
       .order("released_at", { ascending: true, nullsFirst: true })
       .order("created_at", { ascending: true }),
   ]);

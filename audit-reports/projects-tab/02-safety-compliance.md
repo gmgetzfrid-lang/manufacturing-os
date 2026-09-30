@@ -330,7 +330,7 @@ arguments the approve path passes.
 ## SAF-6 · The project timeline cannot see the controls program at all
 
 - **Severity:** HIGH
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Verification:** CONFIRMED
 - **Blast radius:** audit integrity / compliance
 - **Locations:**
@@ -384,6 +384,23 @@ summarizers then start working with no further change.
 - An award, an approved change order, a turnover acceptance and a checklist ruling all appear in the project's Activity tab.
 - The Activity badge count matches what the tab renders (see `UX-11` for the badge).
 - A test asserts a project-scoped audit row reaches `getProjectTimeline`.
+
+**Resolution (2026-09-30, projects Round G).** Reproduced: `getProjectTimeline` queried `audit_logs` only for `resource_type = 'document'`; the controls modules write `resource_type: 'project'` (checklists, turnover, change orders) and the cost modules `resource_type: 'cost'` keyed by the cost row. `lib/timeline.ts` now adds (a) one query for `resource_type = 'project' AND resource_id = projectId` and (b) one for `resource_type = 'cost'` over the project's cost documents (the award row's id), both filtered IN THE QUERY through ONE vocabulary map, `PROJECT_EVENT_VOCABULARY` (`DEC-54`): an award (and an award over a do-not-use flag), every change-order proposal and decision, checklist created / assessed / status, turnover seeded / reviewed, punch status, milestone hit / missed / blocked, schedule baselined / re-based, lessons saved are **milestones** (shown); individual cost entries, ledger edits, uploads, reads and manual totals, individual checklist item updates, evidence sweeps, turnover item adds and punch adds are **noise** (kept in `audit_logs`, off the feed); status / ownership / membership / edit rows are **mirrored** (the feed already has the `project_activity` row). An action nobody classified is shown, never dropped. Summarizers were added for the milestone vocabulary; the `MILESTONE_*` summarizers now execute. The Activity badge counts the timeline the tab renders (projects/[id]/page.tsx — `timeline.length`, loaded with the tab, `PERF-8`).
+- Commits: `054cb61`, `9363ebb`
+- Tests: `lib/__tests__/timeline.test.ts` "SAF-6 — the controls program reaches the project's Activity tab" (an award, an approved change order, a turnover acceptance, a checklist ruling and a punch close appear; noise, mirrored rows and another project's row do not; noise filtered in the query) and "the vocabulary is ONE map; an unclassified action is SHOWN". Test first: all six `timeline.test.ts` cases failed against the `2a2ae73` `lib/timeline.ts` (run with inert shims for the new exports) and pass now.
+
+**Done-when.**
+- An award, an approved change order, a turnover acceptance and a checklist ruling all appear in the project's Activity tab — ✓ (a "checklist ruling" is a checklist completed / voided / assessed; item-by-item edits are noise per the decided vocabulary).
+- The Activity badge count matches what the tab renders — ✓.
+- A test asserts a project-scoped audit row reaches `getProjectTimeline` — ✓.
+
+**Scope / residual.** Intake-link events written with `resource_type = 'project_intake_link'` (link created / revoked / assignment changed) and intake rows keyed on an unlinked document are not pulled — the intake door is projects-and-cost PC-1 / J1's; a `project_intake_link` query can join the map when that package fixes the rows' resource type. `audit_logs` itself is org-readable (`SEC-20`). *Second fix pass (2026-09-30):* dw2 ("the badge matches what the tab renders") could fail for a busy project. The cost-audit read put up to 500 cost-document UUIDs in ONE `.in()` filter, about 18 KB of request line, and the linked-document reads did the same with every linked id. The gateway refuses a request that long, and one refused read failed the whole Activity tab ("The timeline could not be loaded"). `lib/timeline.ts` now reads every id list `TIMELINE_ID_CHUNK` (100) ids per request (`readByIdChunks`), and so does the hold existence lookup. Each chunk is still capped at `limit`, and the chunks are merged before the final newest-first sort and slice, so the feed is the same one. A failed chunk fails the read rather than showing a partial feed. Tests: `timeline.test.ts` "250 quotes and 230 drawings: every .in() carries at most 100 ids, and an event from the last chunk still reaches the feed" (fails against the previous `lib/timeline.ts`), "one refused chunk fails the read — a partial feed is never shown as the whole one". *Third fix pass (2026-09-30):* the id lists themselves were still capped, so dw2 ("the badge matches") could fail silently.
+- **Cost documents.** `getProjectTimeline` read them with `.limit(500)`, newest first. On a project with more than 500 quotes, an award on an older quote was never asked for.
+- **Register links and doc_removed rows.** These were read with no range, under PostgREST's 1,000-row cap.
+
+All three lists are now read whole: `readAllRows` pages them by id in 1,000-row windows until a short page, and a failed window fails the read. The ids are then chunked through `readByIdChunks` as before. Tests (both fail against the previous `lib/timeline.ts`; the mock now applies the 1,000-row cap and honours `.range`):
+- `timeline.test.ts` "600 quotes: an award on the OLDEST one still reaches the feed…".
+- `timeline.test.ts` "1,200 doc_removed rows and 1,100 links: the detach cutoff past row 1,000 and the link past row 1,000 both hold".
 
 ---
 
@@ -663,7 +680,7 @@ arbitrary moves, not to stop a sanctioned adoption. (b) preserves the feature.
 ## SAF-14 · The closeout override leaves no trace of what was overridden
 
 - **Severity:** MEDIUM
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Verification:** CONFIRMED
 - **Blast radius:** audit integrity
 - **Locations:**
@@ -692,6 +709,16 @@ in the report's closeout section rather than recomputing from current state.
 **Done when.**
 - The override audit row contains the full gate snapshot.
 - The printed report shows what was open at closeout, not what is open now.
+
+**Resolution (2026-09-30, projects Round G).** Reproduced: the completion's audit row carried `details: { reason }` only; the gate lines lived in the dialog. `lib/projects.ts` `closeoutGateLines(snapshot)` builds the four gate lines once (punch, turnover, checklists, change orders — each `{ key, ok, text, openCount }`; a gate whose read failed or is not migrated is `ok: null`, "could not be read", never "clear"); `transitionProjectStatus` records them in the `PROJECT_COMPLETED` audit row as `details.gates` with `overridden` (any gate not clear) — from the snapshot the actor was SHOWN (the page passes `gateSnapshot`) or, when none was loaded, gathered at that moment; a failed gather is recorded as `gateSnapshotError` with `gates: null` AND `overridden: null` (unknown — never "not overridden"). The dialog renders the same `closeoutGateLines` and says the state is recorded. The report half (reading `details.gates` from the newest `PROJECT_COMPLETED` row) landed with J7 (`lib/projectReport.ts` `parseGateSnapshot`); it now prints the recorded lines.
+- Commits: `7ca202f`, `9363ebb`
+- Tests: `projects.test.ts` "SAF-14 — the completion's audit row records what was open at the override" (the four lines as recorded, and `parseGateSnapshot` reads back exactly those lines), "a gate whose read failed is recorded as UNKNOWN", "a snapshot that could not be gathered records overridden: null beside gates: null"; `projectPageRoundG.test.ts` "renders the recorded gate lines, passes them to the transition…".
+
+**Done-when.**
+- The override audit row contains the full gate snapshot — ✓.
+- The printed report shows what was open at closeout, not what is open now — ✓ (J7's reader over this writer).
+
+**Scope / residual.** Waived-counted-as-accepted in `lib/turnover.ts:225` (cited in the mechanism) is the quality package's (`QUAL-*`) semantics, not this record; unchanged. *Fix pass (2026-09-30):* the first cut computed `overridden` as `(gates ?? []).some(…)`, so a completion whose snapshot could not be gathered was recorded `{ gates: null, overridden: false }` — an unknown gate state written as a clean closeout. It is now `overridden: gates === null ? null : …`.
 
 ---
 
@@ -733,7 +760,7 @@ submission changed — refresh to see the current one."
 ## SAF-16 · The project timeline leaks in-review drafts that the document timeline deliberately hides
 
 - **Severity:** MEDIUM
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Verification:** CONFIRMED
 - **Blast radius:** data-confidentiality
 - **Locations:**
@@ -759,12 +786,22 @@ review. Two of three readers get this right; only the project reader is wrong.
 - An in-review version does not appear in the project timeline for a non-reviewer.
 - The three timeline readers apply the same visibility rule.
 
+**Resolution (2026-09-30, projects Round G).** Reproduced: `getProjectTimeline`'s `document_versions` query had no review-state filter (the document timeline and the revision chain did). `lib/timeline.ts` exports ONE rule, `CONTROLLED_VERSIONS_ONLY` (`review_state.is.null,review_state.eq.approved`), and all three readers apply it — the project reader now drops in-review and rejected versions.
+- Commit: `054cb61`
+- Tests: `timeline.test.ts` "an in-review or rejected version of a linked document does not reach the project timeline" (the filter executed by the mock over null / approved / in_review / rejected rows) and "the document timeline, the revision chain and the project timeline all read CONTROLLED_VERSIONS_ONLY" (three uses, no literal left).
+
+**Done-when.**
+- An in-review version does not appear in the project timeline for a non-reviewer — ✓ (for everyone, reviewers included — the same rule as the document timeline).
+- The three timeline readers apply the same visibility rule — ✓.
+
+**Scope / residual.** None.
+
 ---
 
 ## SAF-17 · Detaching a document from a project amputates its history from the project timeline
 
 - **Severity:** MEDIUM
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Verification:** CONFIRMED
 - **Blast radius:** audit integrity
 - **Locations:**
@@ -795,6 +832,23 @@ project history for the document will be hidden.
 - The confirm states the consequence.
 - Only owners and controllers can detach (see `SEC-17`).
 
+**Resolution (2026-09-30, projects Round G).** Reproduced: the timeline's document scope was exactly the `project_documents` rows; a detach deleted the row and with it the drawing's history from the project view. `getProjectTimeline` now also reads the project's `doc_removed` feed rows (`metadata.documentId`) and keeps a detached document's audit / version / hold events **up to its latest detach** (`detachCutoffs`); anything that happens to it afterwards is not the project's; a re-linked document is simply linked. No schema change: the history of documents detached BEFORE this fix returns too, wherever the UI wrote its `doc_removed` row. The detach confirm (`ProjectDocumentsCard`) states the consequence ("Its history up to now stays on the project's Activity tab; anything that happens to it after this is not shown there", plus the re-link note for checkout-sourced rows); the `doc_removed` row goes through `writeActivity` (checked, author stamped by the database) and — `supabase/migrations/20261102_prj_roundG_project_rails.sql` — only the register's own authority (owner or controller) may write `doc_added` / `doc_removed` rows, so nobody can plant a detach record that pulls a document's history into a project.
+- Commits: `054cb61`, `e0c1aa2`, `9363ebb`
+- Tests: `timeline.test.ts` "a detached document's events up to the detach remain; later ones are not the project's", "detachCutoffs: the latest detach wins; a re-linked document is simply linked"; `projectPageRoundG.test.ts` "detaching states the consequence first; declining removes nothing; confirming removes and writes the stamped feed row".
+- Pending migration: `supabase/migrations/20261102_prj_roundG_project_rails.sql` (the owner-or-controller detach rail, with `SEC-17`).
+
+**Done-when.**
+- Detaching preserves the document's historical events in the project timeline — ✓.
+- The confirm states the consequence — ✓.
+- Only owners and controllers can detach (see `SEC-17`) — ✓ UI; database after `supabase/migrations/20261102_prj_roundG_project_rails.sql`.
+
+**Scope / residual.** The remediation suggested a soft-delete column; the feed row already records the detach (document and time), so the history is recovered without a schema change and without touching the resync trigger's re-link behaviour. A detach made by a direct API delete that wrote no `doc_removed` row (possible before `supabase/migrations/20261102_prj_roundG_project_rails.sql`) is not recoverable this way. *Second fix pass (2026-09-30):* the register's INSERT (an attach) now admits the project's managers (`can_manage_project`, the fleet plan's predicate — see `SEC-17`). A detach, and an UPDATE that could move a link (a detach by another name), stay owner-or-controller, and so do `doc_added` / `doc_removed` feed rows. dw3 is unchanged. *Third fix pass (2026-09-30):*
+- **Moved links.** A link that moves is now refused outright, by `trg_project_documents_link_fixed` (BEFORE UPDATE on `project_documents`, 20261102) for any signed-in caller. The UPDATE policy therefore follows the fleet plan (`can_manage_project`, in a project the caller can see; see `SEC-17`). The detach (DELETE) and the `doc_*` feed rows stay owner-or-controller, so dw3 is unchanged.
+- **The history read.** The timeline's read of `doc_removed` rows had no range, so a register with more than 1,000 detaches lost cutoffs silently. It is now paged to exhaustion (see `SAF-6`), so dw1 ("history preserved") holds at any size.
+
+
+**Residual (2026-09-30, projects Round G — final review, not fixed).** The preserved history depends on a second client request: the `doc_removed` feed row is written after the DELETE (`components/projects/ProjectDocumentsCard.tsx` ~:132). A detach whose second request fails leaves no cutoff row, the same as the raw-API case already recorded. Writing the feed row in the same statement, through a trigger on `project_documents` delete, would close it.
+
 ---
 
 ## Report progress
@@ -806,7 +860,7 @@ project history for the document will be hidden.
 | SAF-3 | CRITICAL | OPEN |
 | SAF-4 | CRITICAL | OPEN |
 | SAF-5 | CRITICAL | OPEN |
-| SAF-6 | CRITICAL | OPEN |
+| SAF-6 | CRITICAL | RESOLVED |
 | SAF-7 | HIGH | OPEN |
 | SAF-8 | HIGH | OPEN |
 | SAF-9 | HIGH | OPEN |
@@ -814,7 +868,7 @@ project history for the document will be hidden.
 | SAF-11 | HIGH | OPEN |
 | SAF-12 | HIGH | OPEN |
 | SAF-13 | HIGH | OPEN |
-| SAF-14 | MEDIUM | OPEN |
+| SAF-14 | MEDIUM | RESOLVED |
 | SAF-15 | MEDIUM | OPEN |
-| SAF-16 | MEDIUM | OPEN |
-| SAF-17 | MEDIUM | OPEN |
+| SAF-16 | MEDIUM | RESOLVED |
+| SAF-17 | MEDIUM | RESOLVED |

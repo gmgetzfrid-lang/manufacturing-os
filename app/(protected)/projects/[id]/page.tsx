@@ -1,13 +1,24 @@
 "use client";
 
-// /projects/[id] — project detail with three tabs:
-//   1. Documents — every checkout attached to this project (released + active)
-//   2. Activity  — chronological feed of comments + system events
-//   3. Members   — who's on the project, with add/remove for owner
+// /projects/[id] — project detail with seven tabs:
+//   Documents — the project's document register (checked-out, attached and
+//               approved-intake documents, each a live reference marked
+//               current or not) and, below it, the checkouts taken under
+//               the project (active + released)
+//   Costs · Quality · Intake — the controls program
+//   Activity  — the project timeline: comments, status changes, the controls
+//               program's milestones, and linked documents' history
+//               (loaded when the tab is opened — PERF-8)
+//   Schedule  — milestones / the execution board
+//   Members   — who's on the project, with add/remove for the owner
 //
-// Project owner gets a settings strip up top with status-transition buttons:
-// Pause / Resume / Complete / Cancel / Archive. Status changes auto-release
-// every active checkout (handled in lib/projects.ts).
+// The owner / a controller gets the status strip: Pause / Resume / Complete
+// / Cancel / Archive. Closing (complete / cancel / archive) revokes the
+// project's contractor intake links and releases active checkouts per
+// session — anything the actor may not release is named afterwards
+// (lib/projects.ts). A closed project is reopened only by a controller, with
+// a reason (audited). Each tab renders inside its own error boundary
+// (REL-5): one tab crashing leaves the others usable.
 
 import React, { useCallback, useEffect, useState } from "react";
 import { useParams, useRouter, useSearchParams } from "next/navigation";
@@ -21,25 +32,29 @@ import {
 } from "lucide-react";
 import IntakePanel from "@/components/projects/IntakePanel";
 import ProjectDocumentsCard from "@/components/projects/ProjectDocumentsCard";
+import TabErrorBoundary from "@/components/projects/TabErrorBoundary";
 import EditProjectModal from "@/components/projects/EditProjectModal";
 import CostsTab from "@/components/projects/CostsTab";
 import QualityTab from "@/components/projects/QualityTab";
 import ProjectCoach from "@/components/projects/ProjectCoach";
 import { openProjectReport, draftLessonsLearned, saveLessonsLearned } from "@/lib/projectReport";
 import { gatherProjectSnapshot } from "@/lib/projectSnapshot";
-import type { ProjectStateSnapshot } from "@/lib/projectHealth";
+import { CLOSEOUT_GATE_POLICY, type ProjectStateSnapshot } from "@/lib/projectHealth";
 import { exportProjectToCsv } from "@/lib/projectExport";
 import WatchButton from "@/components/ui/WatchButton";
 import QuickNoteComposer from "@/components/notes/QuickNoteComposer";
 import PresenceIndicator from "@/components/ui/PresenceIndicator";
 import { useRole } from "@/components/providers/RoleContext";
-import { appAlert, appConfirm } from "@/components/providers/DialogProvider";
+import { appAlert, appConfirm, appPrompt } from "@/components/providers/DialogProvider";
 import { Select } from "@/components/ui/Field";
 import { Spinner } from "@/components/ui/Spinner";
 import {
-  getProject, listMembers, listActivity, listProjectCheckouts,
+  getProjectForPage, listMembers, listProjectCheckouts, activeOrgMemberIds,
   postComment, transitionProjectStatus, addMember, removeMember,
-  deleteProject, transferOwnership, updateMember,
+  deleteProject, transferOwnership, updateMember, reopenProject,
+  countProjectRecords, describeProjectRecords, regulatedRecordTotal,
+  closeoutGateLines, documentsTabCount, CLOSED_PROJECT_STATUSES,
+  type ProjectDocumentRegister,
 } from "@/lib/projects";
 import { getProjectTimeline, type TimelineEvent } from "@/lib/timeline";
 import { openProjectEvidencePack } from "@/lib/evidencePack";
@@ -49,7 +64,7 @@ import HelpTooltip from "@/components/ui/HelpTooltip";
 import { supabase } from "@/lib/supabase";
 import { applyEmailLookup } from "@/lib/identity";
 import type {
-  Project, ProjectMember, ProjectMemberRole, ProjectActivity, CheckoutSession, ProjectStatus, Timestamp,
+  Project, ProjectMember, ProjectMemberRole, CheckoutSession, ProjectStatus, Timestamp,
 } from "@/types/schema";
 
 type Tab = "documents" | "intake" | "costs" | "quality" | "activity" | "schedule" | "members";
@@ -72,12 +87,20 @@ export default function ProjectDetailPage() {
 
   const [project, setProject] = useState<Project | null>(null);
   const [members, setMembers] = useState<ProjectMember[]>([]);
-  const [activity, setActivity] = useState<ProjectActivity[]>([]);
-  // Phase 3 — unified project timeline (project_activity + linked
-  // document audit_logs + linked document_versions). Drives the
-  // Activity tab; `activity` is still kept for the count badge.
-  const [timeline, setTimeline] = useState<TimelineEvent[]>([]);
+  // SEC-15: roster members who are ACTIVE in the org — ownership can only go
+  // to one of them. null = not known (the button stays hidden).
+  const [activeMemberIds, setActiveMemberIds] = useState<Set<string> | null>(null);
+  // Phase 3 — unified project timeline (project_activity + the controls
+  // program's audit rows + linked documents' history). Drives the Activity
+  // tab AND its badge (the badge counts what the tab renders — SAF-6/UX-11).
+  // PERF-8: loaded when the Activity tab is opened, not on every project
+  // open; `timelineFresh` goes false after a write so the next view reloads.
+  const [timeline, setTimeline] = useState<TimelineEvent[] | null>(null);
+  const [timelineFresh, setTimelineFresh] = useState(false);
+  const [timelineError, setTimelineError] = useState<string | null>(null);
   const [checkouts, setCheckouts] = useState<CheckoutWithDoc[]>([]);
+  // UX-11: the register the Documents card shows, for the tab badge.
+  const [register, setRegister] = useState<ProjectDocumentRegister | null>(null);
   const [loading, setLoading] = useState(true);
   // Load errors (page can't render) vs action errors (page stays up, a
   // dismissible banner reports the failure). Sharing one state used to let a
@@ -129,29 +152,42 @@ export default function ProjectDetailPage() {
   // Coach re-gathers when page data changes.
   const [coachKey, setCoachKey] = useState(0);
 
+  // Authority comes from projects.owner_user_id, never from a roster row's
+  // role (PM-11: a roster 'owner' row is not the owner).
   const isOwner = project && uid && project.ownerUserId === uid;
-  const isMember = members.some((m) => m.userId === uid);
-  const canComment = isOwner || isMember || isAdmin;
+  const myRosterRole = members.find((m) => m.userId === uid)?.role ?? null;
+  const isMember = myRosterRole !== null;
+  // PM-11 / UX-14: an observer is on the roster to SEE — no comment box
+  // (the 20261102 insert policy refuses an observer's comment too).
+  const canComment = isOwner || isAdmin || (isMember && myRosterRole !== "observer");
   const canManage = isOwner || isAdmin;
+  const isClosed = !!project && CLOSED_PROJECT_STATUSES.has(project.status);
 
+  // The header paints as soon as the project row lands (PERF-8); later
+  // refreshes update in place instead of blanking the page to a spinner.
+  const loadedOnce = React.useRef(false);
   const refresh = useCallback(async () => {
     if (!projectId) return;
-    setLoading(true);
+    if (!loadedOnce.current) setLoading(true);
     setError(null);
     try {
-      const proj = await getProject(projectId);
-      if (!proj) { setError("Project not found"); setLoading(false); return; }
+      const got = await getProjectForPage(projectId);
+      if (!got) { setError("Project not found"); setLoading(false); return; }
+      const proj = got.project;
       setProject(proj);
+      setJobKind(got.jobKind);
+      loadedOnce.current = true;
+      setLoading(false);
+      setTimelineFresh(false);
 
-      const [m, act, ck, tl] = await Promise.all([
+      const [m, ck] = await Promise.all([
         listMembers(projectId),
-        listActivity(projectId, 200),
         listProjectCheckouts(projectId),
-        getProjectTimeline({ projectId, limit: 200 }),
       ]);
       setMembers(m);
-      setActivity(act);
-      setTimeline(tl);
+      activeOrgMemberIds(proj.orgId, m.map((x) => x.userId))
+        .then(setActiveMemberIds)
+        .catch(() => setActiveMemberIds(null));
 
       // Hydrate doc + library context for checkouts
       if (ck.length > 0) {
@@ -176,11 +212,6 @@ export default function ProjectDetailPage() {
       } else {
         setCheckouts([]);
       }
-
-      // Wizard fields (tolerant — pre-migration DBs simply report null).
-      const { data: ext, error: extErr } = await supabase
-        .from("projects").select("job_kind").eq("id", projectId).maybeSingle();
-      setJobKind(!extErr && ext ? ((ext as { job_kind?: string | null }).job_kind ?? null) : null);
       setCoachKey((k) => k + 1);
     } catch (e) {
       setError((e as Error).message || "Failed to load project");
@@ -201,6 +232,84 @@ export default function ProjectDetailPage() {
   }, [pendingStatus, projectId]);
 
   useEffect(() => { void refresh(); }, [refresh]);
+
+  // PERF-8: the timeline is fetched when the Activity tab is shown (and again
+  // after a write marks it stale) — opening Documents never fetches it. A
+  // newer request supersedes an older one still in flight.
+  const timelineReq = React.useRef(0);
+  useEffect(() => {
+    if (tab !== "activity" || timelineFresh || !projectId) return;
+    const mine = ++timelineReq.current;
+    setTimelineError(null);
+    setTimelineFresh(true);
+    getProjectTimeline({ projectId, limit: 200 })
+      .then((tl) => { if (mine === timelineReq.current) setTimeline(tl); })
+      .catch((e) => { if (mine === timelineReq.current) setTimelineError((e as Error).message || "The timeline could not be loaded."); });
+  }, [tab, timelineFresh, projectId]);
+
+  // PM-1: a controller reopens a closed project — a distinct, audited action.
+  const handleReopen = async () => {
+    if (!project?.id || !uid) return;
+    const reason = await appPrompt({
+      title: "Reopen this project?",
+      message: `It is ${project.status}. Reopening makes its cost, quality and schedule records writable again and clears the ${project.status === "cancelled" ? "cancellation" : "completion"} on the record. The reason is audited. Contractor intake links stay revoked — create new ones if the work continues.`,
+      placeholder: "Why is this project being reopened?",
+      confirmLabel: "Reopen",
+    });
+    if (reason === null) return;
+    if (!reason.trim()) { setActionError("A reason is required to reopen a closed project."); return; }
+    try {
+      await reopenProject({ projectId: project.id, orgId: project.orgId, reason, actorUserId: uid, actorEmail: userEmail ?? undefined });
+      await refresh();
+    } catch (e) {
+      setActionError((e as Error).message);
+    }
+  };
+
+  // PM-6 / QUAL-3 / SEC-9: the delete confirm is driven by LIVE counts, and a
+  // project carrying cost or quality records is archived, not deleted —
+  // except by a controller, with a stated reason, audited with the counts.
+  const handleDelete = async () => {
+    if (!project?.id || !uid) return;
+    let counts;
+    try { counts = await countProjectRecords(project.id); }
+    catch (e) { await appAlert({ message: `The project's records could not be counted, so nothing was deleted: ${(e as Error).message}`, tone: "danger" }); return; }
+    const lines = describeProjectRecords(counts);
+    const regulated = regulatedRecordTotal(counts);
+    const list = lines.length ? `\n\nThis would permanently destroy:\n• ${lines.join("\n• ")}` : "\n\nNo cost, quality or schedule records are attached.";
+    let reason: string | undefined;
+    if (regulated === null || regulated > 0) {
+      if (!isAdmin) {
+        await appAlert({
+          title: "This project can't be deleted",
+          message: `It carries cost or quality records${regulated === null ? " (or they could not be counted)" : ""} — the project's financial and PSSR / turnover / punch record.${list}\n\n${isClosed ? "Archive it instead" : "Complete or cancel it, then archive it"} — the record stays intact and out of the active list.`,
+          tone: "danger",
+        });
+        return;
+      }
+      if (!(await appConfirm({
+        title: `Delete "${project.name}" and its record?`,
+        message: `This project carries cost or quality records. Archiving keeps them; deleting destroys them and cannot be undone. The counts and a snapshot are written to the audit log.${list}`,
+        tone: "danger", confirmLabel: "Continue to delete",
+      }))) return;
+      const typed = await appPrompt({
+        title: "Reason for deleting a project with records",
+        message: "Required — recorded in the PROJECT_DELETED audit row with the counts.",
+        placeholder: "Why must this record be destroyed rather than archived?",
+        confirmLabel: "Delete permanently",
+      });
+      if (typed === null) return;
+      if (!typed.trim()) { await appAlert({ message: "A reason is required.", tone: "danger" }); return; }
+      reason = typed.trim();
+    } else if (!(await appConfirm({
+      message: `Delete "${project.name}"? The project, its roster, feed and document links are removed and its contractor intake links are revoked. Document checkouts are kept (just unlinked). This cannot be undone.${list}`,
+      tone: "danger", confirmLabel: "Delete",
+    }))) return;
+    try {
+      await deleteProject({ projectId: project.id, actorUserId: uid, actorEmail: userEmail ?? undefined, actorRole: activeRole ?? undefined, reason });
+      router.push("/projects");
+    } catch (e) { await appAlert({ message: (e as Error).message, tone: "danger" }); }
+  };
 
   const handlePostComment = async () => {
     if (!commentDraft.trim() || !uid || !project) return;
@@ -227,7 +336,7 @@ export default function ProjectDetailPage() {
     }
     setTransitionBusy(true);
     try {
-      const { releaseError } = await transitionProjectStatus({
+      const { releaseError, activityError } = await transitionProjectStatus({
         projectId: project.id!,
         orgId: project.orgId,
         toStatus: pendingStatus,
@@ -235,13 +344,16 @@ export default function ProjectDetailPage() {
         actorUserId: uid,
         actorEmail: userEmail ?? undefined,
         actorRole: activeRole,
+        // SAF-14: the gates the actor was shown are what the audit row records.
+        gateSnapshot: pendingStatus === "completed" ? gates : undefined,
       });
       setPendingStatus(null);
       setStatusReason("");
       await refresh();
-      // DCK-9: the status DID change (refresh above shows it); what did not
-      // happen — the checkouts were not released — is shown against it.
+      // DCK-9 / PM-4: the status DID change (refresh above shows it); what did
+      // not happen — a checkout still held by someone — is shown against it.
       if (releaseError) setActionError(releaseError);
+      else if (activityError) setActionError(`The project is ${pendingStatus}, but ${activityError.charAt(0).toLowerCase()}${activityError.slice(1)}`);
     } catch (e) {
       setActionError((e as Error).message);
       // The status may have changed before the throw; render the database's
@@ -404,19 +516,16 @@ export default function ProjectDetailPage() {
             {canManage && (project.status === "completed" || project.status === "cancelled") && (
               <ActionButton icon={<ArchiveIcon className="w-3.5 h-3.5" />} label="Archive" onClick={() => setPendingStatus("archived")} />
             )}
+            {/* PM-1: reopening a closed project is a controller's audited act. */}
+            {isAdmin && isClosed && (
+              <ActionButton icon={<Play className="w-3.5 h-3.5" />} label="Reopen" onClick={() => void handleReopen()} />
+            )}
             {canManage && (
               <ActionButton
                 icon={<Trash2 className="w-3.5 h-3.5" />}
                 label="Delete"
                 color="red"
-                onClick={async () => {
-                  if (!project.id) return;
-                  if (!(await appConfirm({ message: `Delete "${project.name}"? This permanently removes the project and its schedule. Document checkouts are kept (just unlinked). This cannot be undone.`, tone: "danger", confirmLabel: "Delete" }))) return;
-                  try {
-                    await deleteProject({ projectId: project.id, actorUserId: uid!, actorEmail: userEmail ?? undefined, actorRole: activeRole ?? undefined });
-                    router.push("/projects");
-                  } catch (e) { await appAlert({ message: (e as Error).message, tone: "danger" }); }
-                }}
+                onClick={() => void handleDelete()}
               />
             )}
           </div>
@@ -424,7 +533,7 @@ export default function ProjectDetailPage() {
           {/* TABS */}
           <div className="mt-5 flex items-center gap-1 border-b border-[var(--color-border)] -mb-px overflow-x-auto [scrollbar-width:none]">
             <TabButton active={tab === "documents"} onClick={() => setTab("documents")}>
-              <FileText className="w-3.5 h-3.5" /> Documents <span className="text-[10px] text-[var(--color-text-faint)]">{checkouts.length}</span>
+              <FileText className="w-3.5 h-3.5" /> Documents <span className="text-[10px] text-[var(--color-text-faint)]">{documentsTabCount(register, checkouts.map((c) => c.documentId))}</span>
             </TabButton>
             <TabButton active={tab === "costs"} onClick={() => setTab("costs")}>
               <CircleDollarSign className="w-3.5 h-3.5" /> Costs
@@ -436,7 +545,7 @@ export default function ProjectDetailPage() {
               <UploadCloud className="w-3.5 h-3.5" /> Intake
             </TabButton>
             <TabButton active={tab === "activity"} onClick={() => setTab("activity")}>
-              <ActivityIcon className="w-3.5 h-3.5" /> Activity <span className="text-[10px] text-[var(--color-text-faint)]">{activity.length}</span>
+              <ActivityIcon className="w-3.5 h-3.5" /> Activity {timeline && <span className="text-[10px] text-[var(--color-text-faint)]">{timeline.length}</span>}
             </TabButton>
             <TabButton active={tab === "schedule"} onClick={() => setTab("schedule")}>
               <Flag className="w-3.5 h-3.5" /> Schedule
@@ -446,7 +555,7 @@ export default function ProjectDetailPage() {
             </TabButton>
             <div className="ml-1 pb-2">
               <HelpTooltip>
-                <b>Documents</b> — every checkout attached to this project (active + released).
+                <b>Documents</b> — the project&rsquo;s document register (checked-out, attached and approved contractor documents, each marked current or not), then every checkout taken under the project (active + released). The badge counts distinct documents.
                 <b className="block mt-1">Activity</b> — the project&rsquo;s full timeline: comments, doc events, holds, milestone hits.
                 <b className="block mt-1">Schedule</b> — milestones with planned/actual dates and an Earned-Value rollup. Import P6/MS Project as ghost overlay.
                 <b className="block mt-1">Members</b> — who&rsquo;s on this project. Owner can add/remove.
@@ -463,8 +572,13 @@ export default function ProjectDetailPage() {
         {/* Health + "what do I feed you" — the wizard for the rest of the
             project's life, visible from every tab. */}
         {project.id && project.orgId && tab !== "schedule" && (
-          <ProjectCoach orgId={project.orgId} projectId={project.id} refreshKey={coachKey} />
+          <TabErrorBoundary label="The project coach" resetKey={tab}>
+            <ProjectCoach orgId={project.orgId} projectId={project.id} refreshKey={coachKey} />
+          </TabErrorBoundary>
         )}
+        {/* REL-5: each tab renders inside its own boundary — one tab's crash
+            leaves the header, the tab bar and the other tabs usable. */}
+        <TabErrorBoundary label={`The ${TAB_LABEL[tab]} tab`} resetKey={tab}>
         {tab === "documents" && (
           <div className="space-y-4">
             {project.id && project.orgId && uid && (
@@ -474,6 +588,7 @@ export default function ProjectDetailPage() {
                 canManage={!!canManage}
                 uid={uid}
                 userEmail={userEmail}
+                onLoaded={setRegister}
               />
             )}
             <DocumentsTab checkouts={checkouts} />
@@ -531,6 +646,7 @@ export default function ProjectDetailPage() {
         {tab === "activity" && (
           <ActivityTab
             timeline={timeline}
+            timelineError={timelineError}
             canComment={!!canComment}
             commentDraft={commentDraft}
             setCommentDraft={setCommentDraft}
@@ -555,12 +671,14 @@ export default function ProjectDetailPage() {
           <MembersTab
             project={project}
             members={members}
+            activeMemberIds={activeMemberIds}
             canManage={!!canManage}
             onAdded={() => void refresh()}
             actorUserId={uid!}
             actorEmail={userEmail ?? undefined}
           />
         )}
+        </TabErrorBoundary>
       </div>
 
       {/* Lessons-learned editor — auto-drafted from the project's exhaust
@@ -625,34 +743,32 @@ export default function ProjectDetailPage() {
               </div>
               <div className="text-xs text-[var(--color-text-muted)] mt-1">
                 {pendingStatus === "cancelled" || pendingStatus === "completed" || pendingStatus === "archived"
-                  ? "Every active checkout on this project will be released."
+                  ? "Active checkouts on this project will be released. A checkout you are not allowed to release stays with its holder, and you will be told who still holds what. The project's contractor intake links are revoked, and its cost, quality and schedule records become read-only until an Admin / Document Control reopens it."
                   : "No checkouts will be affected."}
               </div>
             </div>
             {/* Closeout gates — what a finished job should have closed out.
                 Warnings, not walls: the owner can complete anyway, on the record. */}
             {pendingStatus === "completed" && gates && (() => {
-              const gateLines: Array<{ ok: boolean; text: string }> = [
-                { ok: gates.punchOpen === 0, text: gates.punchOpen === 0 ? "Punch list clear" : `${gates.punchOpen} punch item${gates.punchOpen === 1 ? "" : "s"} still open` },
-                { ok: gates.turnoverRequired === 0 || gates.turnoverAccepted >= gates.turnoverRequired, text: gates.turnoverRequired === 0 ? "No turnover requirements set" : gates.turnoverAccepted >= gates.turnoverRequired ? "Turnover package fully accepted" : `Turnover ${gates.turnoverAccepted}/${gates.turnoverRequired} accepted` },
-                { ok: gates.checklistOpenItems + gates.checklistNeedsEvidence === 0, text: gates.checklistOpenItems + gates.checklistNeedsEvidence === 0 ? "Checklists clear" : `${gates.checklistOpenItems + gates.checklistNeedsEvidence} checklist item${gates.checklistOpenItems + gates.checklistNeedsEvidence === 1 ? "" : "s"} unresolved` },
-                { ok: gates.openChangeOrders === 0, text: gates.openChangeOrders === 0 ? "No change orders awaiting decision" : `${gates.openChangeOrders} change order${gates.openChangeOrders === 1 ? "" : "s"} awaiting decision` },
-              ];
-              const failed = gateLines.filter((g) => !g.ok).length;
+              // SAF-14: the same lines lib/projects.ts records in the
+              // completion's audit row — what the report prints as "open at
+              // closeout". A gate whose read failed is unknown, not clear.
+              const gateLines = closeoutGateLines(gates);
+              const failed = gateLines.filter((g) => g.ok !== true).length;
               return (
                 <div className="px-6 pt-4">
                   <div className="text-[10px] font-black uppercase tracking-widest text-[var(--color-text-muted)] mb-1.5">Closeout gates</div>
                   <ul className="space-y-1">
-                    {gateLines.map((g, i) => (
-                      <li key={i} className={`flex items-center gap-2 text-xs font-bold ${g.ok ? "text-emerald-700 dark:text-emerald-300" : "text-amber-700 dark:text-amber-300"}`}>
-                        {g.ok ? <CheckCircle2 className="w-3.5 h-3.5 shrink-0" /> : <AlertTriangle className="w-3.5 h-3.5 shrink-0" />}
+                    {gateLines.map((g) => (
+                      <li key={g.key} className={`flex items-center gap-2 text-xs font-bold ${g.ok === true ? "text-emerald-700 dark:text-emerald-300" : g.ok === false ? "text-amber-700 dark:text-amber-300" : "text-[var(--color-text-muted)]"}`}>
+                        {g.ok === true ? <CheckCircle2 className="w-3.5 h-3.5 shrink-0" /> : <AlertTriangle className="w-3.5 h-3.5 shrink-0" />}
                         {g.text}
                       </li>
                     ))}
                   </ul>
                   {failed > 0 && (
                     <div className="mt-2 text-[11px] text-[var(--color-text-muted)]">
-                      You can complete anyway — the open items stay on the record and in the report.
+                      {CLOSEOUT_GATE_POLICY.overrideNote} The gate state above is recorded with the completion.
                     </div>
                   )}
                 </div>
@@ -726,12 +842,19 @@ function TabButton({ active, onClick, children }: { active: boolean; onClick: ()
   );
 }
 
+const TAB_LABEL: Record<Tab, string> = {
+  documents: "Documents", intake: "Intake", costs: "Costs", quality: "Quality",
+  activity: "Activity", schedule: "Schedule", members: "Members",
+};
+
+/** UX-11: the SECONDARY list under the register card — the checkout
+ *  sessions taken under this project (one row per session). */
 function DocumentsTab({ checkouts }: { checkouts: CheckoutWithDoc[] }) {
   if (checkouts.length === 0) {
     return (
-      <div className="bg-[var(--color-surface)] border border-dashed border-[var(--color-border-strong)] rounded-2xl p-10 text-center">
-        <FileText className="w-10 h-10 mx-auto text-slate-300 mb-3" />
-        <p className="text-sm text-[var(--color-text-muted)]">No documents checked out yet. Open a doc in a library and check it out to this project.</p>
+      <div className="bg-[var(--color-surface)] border border-dashed border-[var(--color-border-strong)] rounded-2xl p-6 text-center">
+        <FileText className="w-8 h-8 mx-auto text-slate-300 mb-2" />
+        <p className="text-xs text-[var(--color-text-muted)]">No checkouts under this project yet. Open a document in a library and check it out to this project — it joins the register above.</p>
       </div>
     );
   }
@@ -803,9 +926,10 @@ function CheckoutLine({ c, historical }: { c: CheckoutWithDoc; historical?: bool
 }
 
 function ActivityTab({
-  timeline, canComment, commentDraft, setCommentDraft, posting, onPost,
+  timeline, timelineError, canComment, commentDraft, setCommentDraft, posting, onPost,
 }: {
-  timeline: TimelineEvent[];
+  timeline: TimelineEvent[] | null;
+  timelineError: string | null;
   canComment: boolean;
   commentDraft: string;
   setCommentDraft: (v: string) => void;
@@ -843,20 +967,30 @@ function ActivityTab({
         </div>
       )}
 
-      <TimelineFeed
-        events={timeline}
-        showScope={false}
-        emptyMessage="No activity yet — comments, checkouts, and document revisions will land here."
-      />
+      {timelineError ? (
+        <div className="rounded-xl border border-rose-500/40 bg-rose-500/[0.06] px-4 py-3 text-xs font-bold text-rose-700 dark:text-rose-300 flex items-start gap-2">
+          <AlertTriangle className="w-4 h-4 shrink-0 mt-0.5" /> The timeline could not be loaded: {timelineError}
+        </div>
+      ) : timeline === null ? (
+        <div className="py-10 flex justify-center"><Spinner /></div>
+      ) : (
+        <TimelineFeed
+          events={timeline}
+          showScope={false}
+          emptyMessage="No activity yet — comments, status changes, awards, change orders, quality rulings and document revisions will land here."
+        />
+      )}
     </div>
   );
 }
 
 function MembersTab({
-  project, members, canManage, onAdded, actorUserId, actorEmail,
+  project, members, activeMemberIds, canManage, onAdded, actorUserId, actorEmail,
 }: {
   project: Project;
   members: ProjectMember[];
+  /** SEC-15: roster members active in the org (null = unknown). */
+  activeMemberIds: Set<string> | null;
   canManage: boolean;
   onAdded: () => void;
   actorUserId: string;
@@ -931,9 +1065,12 @@ function MembersTab({
           <div className="flex flex-col sm:flex-row gap-2">
             <input value={addEmail} onChange={(e) => setAddEmail(e.target.value)} placeholder="user@example.com"
               className="flex-1 px-3 py-2 border border-[var(--color-border)] rounded-lg text-sm focus:ring-2 focus:ring-[var(--color-accent-ring)] outline-none" />
-            <Select value={addRole} onChange={(e) => setAddRole(e.target.value as ProjectMemberRole)}>
-              <option value="collaborator">Collaborator</option>
-              <option value="observer">Observer</option>
+            {/* UX-14 / PM-11: the observer role is enforced — the database's
+                can_manage_project excludes it (20261047) and the activity
+                insert policy refuses an observer's comment (20261102). */}
+            <Select value={addRole} onChange={(e) => setAddRole(e.target.value as ProjectMemberRole)} aria-label="Project role">
+              <option value="collaborator">Collaborator — works on it, comments</option>
+              <option value="observer">Observer — can see, cannot manage or comment</option>
             </Select>
           </div>
           <input value={addResp} onChange={(e) => setAddResp(e.target.value)} placeholder="Responsibility (what they own / will own) — optional"
@@ -950,8 +1087,13 @@ function MembersTab({
       <div className="bg-[var(--color-surface)] rounded-2xl border border-[var(--color-border)] overflow-hidden shadow-sm">
         <div className="divide-y divide-[var(--color-border)]">
           {members.map((m) => {
-            const isOwner = m.role === "owner" || m.userId === project.ownerUserId;
+            // PM-11: authority is projects.owner_user_id — a roster row that
+            // merely SAYS 'owner' is not the owner and gets no protection.
+            const isOwner = m.userId === project.ownerUserId;
+            const rosterOwnerOnly = !isOwner && m.role === "owner";
             const canRemove = canManage && !isOwner;
+            // SEC-15: ownership can only go to an ACTIVE member of the org.
+            const canReceiveOwnership = canManage && !isOwner && activeMemberIds !== null && activeMemberIds.has(m.userId);
             const respDraft = editingResp[m.userId];
             return (
               <div key={m.id} className="px-4 py-3 flex items-start gap-3 group">
@@ -959,7 +1101,13 @@ function MembersTab({
                 <div className="flex-1 min-w-0">
                   <div className="flex items-center gap-2 flex-wrap">
                     <span className="text-sm font-bold text-[var(--color-text)] truncate">{m.userName || m.userEmail || m.userId.slice(0, 8)}</span>
-                    <span className={`text-[10px] font-bold uppercase px-1.5 py-0.5 rounded ${isOwner ? "bg-[var(--color-accent-soft)] text-[var(--color-accent)]" : m.role === "collaborator" ? "bg-[var(--color-surface-2)] text-[var(--color-text)]" : "bg-[var(--color-surface-2)] text-[var(--color-text-muted)]"}`}>{isOwner ? "owner" : m.role}</span>
+                    <span
+                      className={`text-[10px] font-bold uppercase px-1.5 py-0.5 rounded ${isOwner ? "bg-[var(--color-accent-soft)] text-[var(--color-accent)]" : m.role === "collaborator" ? "bg-[var(--color-surface-2)] text-[var(--color-text)]" : "bg-[var(--color-surface-2)] text-[var(--color-text-muted)]"}`}
+                      title={rosterOwnerOnly ? "Recorded as owner on the roster, but the project's owner is someone else — no owner authority." : m.role === "observer" ? "Can see this project; cannot manage it or comment." : undefined}
+                    >{isOwner ? "owner" : rosterOwnerOnly ? "owner (roster only)" : m.role}</span>
+                    {activeMemberIds !== null && !activeMemberIds.has(m.userId) && (
+                      <span className="text-[10px] font-bold uppercase px-1.5 py-0.5 rounded bg-rose-500/10 text-rose-700 dark:text-rose-300" title="No longer an active member of this workspace">inactive</span>
+                    )}
                   </div>
                   {m.userEmail && <div className="text-xs text-[var(--color-text-muted)] truncate">{m.userEmail}</div>}
                   {canManage ? (
@@ -984,7 +1132,7 @@ function MembersTab({
                   ) : null}
                 </div>
                 <div className="flex items-center gap-1 shrink-0">
-                  {canManage && !isOwner && (
+                  {canReceiveOwnership && (
                     <button onClick={() => void makeOwner(m)} title="Transfer ownership to this member"
                       className="opacity-60 sm:opacity-0 group-hover:opacity-100 transition-opacity text-[11px] font-bold text-[var(--color-accent)] hover:text-[var(--color-accent-hover)] px-1.5 py-1 rounded hover:bg-[var(--color-accent-soft)] whitespace-nowrap">
                       Make owner

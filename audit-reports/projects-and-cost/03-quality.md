@@ -152,7 +152,7 @@ lib/checklists.ts:290 `miChecklistComplete: checklists.some((c) => c.kind === "m
 ## QUAL-3 · Deleting a project hard-deletes the entire PSSR/turnover/punch record by cascade — unmentioned in the confirmation, uncounted in the audit row, and exempt from retention, legal hold and every delete guard the document side has
 
 - **Severity:** HIGH
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Verification:** CONFIRMED
 - **Locations:** `lib/projects.ts:599-617`, `supabase/migrations/20261013_project_controls_program.sql:141-142`, `supabase/migrations/20261013_project_controls_program.sql:156`, `supabase/migrations/20261013_project_controls_program.sql:174-175`, `supabase/migrations/20261013_project_controls_program.sql:193-194`, `app/(protected)/projects/[id]/page.tsx:407`, `supabase/migrations/20261013_project_controls_program.sql:253-288`
 - **Independently verified:** ✓ **SURVIVES** — second independent adversarial pass. Confirmed on all four legs, including the two claims of absence — no BEFORE DELETE trigger exists on any of project_checklists / checklist_items / turnover_items / punch_items / change_orders, and the audit row (lib/projects.ts:612-616) carries `details: { name: p.name }` with no counts. Substantially the same defect as PM-6 viewed from the quality-record side; both are accurate as written.
@@ -185,6 +185,19 @@ lib/projects.ts:604-610 — `checkout_sessions`, `markup_requests`, `milestones`
 - [ ] `PROJECT_DELETED` audit details carry the counts of checklists, checklist items, turnover items and punch items removed.
 - [ ] A project carrying any completed checklist or accepted turnover item cannot be hard-deleted — it archives, or requires an explicit second confirmation with a reason.
 - [ ] A `BEFORE DELETE` guard covers the four quality tables the way 20260826 covers `documents`, and retention/legal-hold reaches quality records.
+
+**Resolution (2026-09-30, projects Round G).** One defect with `PM-6` (worked there, one commit set). The quality side: the delete confirm lists the live counts of checklists, checklist items, turnover items and punch items (with the money and schedule counts); `PROJECT_DELETED` (written by `delete_project_record`, `supabase/migrations/20261103_prj_roundG_project_closeout_rails.sql`) carries those counts, and `PURGE_PROJECT_SNAPSHOT` a snapshot of the rows (readable by the org's audit viewers only — see `PM-6`); a project carrying any checklist, item, turnover or punch row (or any cost row) is archived — only a controller with a reason deletes it; `projects.legal_hold` (controller-set) reaches the quality record: `enforce_project_delete_guard` refuses a held project to everyone, and `enforce_project_record_guard` — on the four quality tables among nine — refuses a direct DELETE of a row whose project is held (the 20260826 shape, everyone), honours the purge GUC (`app.record_purge = 'project:<id>'`) and an FK cascade from the project's own delete.
+- Commits: `7ca202f`, `e0c1aa2`, `9363ebb`
+- Tests: see `PM-6`; `projectRailsMigration.test.ts` "the guard refuses a signed-in write on a closed project, reads a checklist item's project through its checklist, and passes the purge and the cascade", "the regulated count the guard and the RPC share is the same eight tables the app's confirm calls regulated", "QUAL-3 after merge: a checklist item is never deleted directly — it cascades with its checklist, the one delete projects Round G J2's quality rail admits".
+- Pending migration: `supabase/migrations/20261103_prj_roundG_project_closeout_rails.sql`.
+
+**Done-when.**
+- The confirmation enumerates the quality records, with counts — ✓.
+- PROJECT_DELETED carries the counts of checklists, items, turnover and punch items — ✓ (the snapshot of the rows rides in `PURGE_PROJECT_SNAPSHOT`, audit viewers only).
+- A project carrying any completed checklist or accepted turnover item cannot be hard-deleted — archive, or an explicit second confirmation with a reason — ✓ (stricter: ANY cost or quality row; controller + reason).
+- A BEFORE DELETE guard covers the four quality tables, and retention / legal hold reaches quality records — ✓ in the minimal form (`projects.legal_hold`); a retention-policy engine for projects is not built (`DEC-54` default: the full retention model stays a follow-on).
+
+**Scope / residual.** Retention periods for project records (as documents have) — not in this finding's minimal form. *Second fix pass (2026-09-30):* dw3's controller path did not survive the merge with projects Round G J2. `delete_project_record` deleted `checklist_items` directly, and J2's `checklist_items_decision_rail` (20261091) refuses a signed-in item DELETE outside a cascade. So on the integrated tree no project with a checklist item could be deleted, not even by a controller with a reason. The purge now deletes the checklists, and their items go by cascade one trigger level down, which J2's rail admits (details and probe in `PM-6`).
 
 ---
 
@@ -487,7 +500,7 @@ lib/checklists.ts:103 — `const { data } = await supabase...` with no `error` d
 ## QUAL-9 · The coach tells the project owner that closeout is gated on turnover acceptance; it is not, and the gates are explicitly advisory
 
 - **Severity:** LOW
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Verification:** CONFIRMED
 - **Locations:** `lib/projectHealth.ts:228-233`, `lib/projectHealth.ts:231`, `app/(protected)/projects/[id]/page.tsx:625-651`, `app/(protected)/projects/[id]/page.tsx:645-650`, `components/projects/QualityTab.tsx:14-17`
 - **Independently verified:** ✓ **SURVIVES, corrected** — second independent adversarial pass. Severity **MEDIUM → LOW** by this pass. The copy claim is accurate — the coach asserts a gate that does not exist and Confirm is never blocked. But the confirmation dialog states the true position in plain language at the exact moment of decision, so nobody reaches 'Complete' still believing the system will stop them; this is misleading marketing copy, not an operative deception.
@@ -529,6 +542,17 @@ lib/projectHealth.ts:231 `payoff: "Closeout is gated on acceptance; contractors 
 - A single source of truth describes gate strictness, referenced by both the coach text and the dialog — coach ✓; dialog **not done**: the consumer line is `app/(protected)/projects/[id]/page.tsx:649` (J8's file; its text is byte-identical to `CLOSEOUT_GATE_POLICY.overrideNote`, so the swap is a one-line import). Listed under `filesOutsidePlan`.
 
 **Scope / residual.** J8 closes this finding by rendering `CLOSEOUT_GATE_POLICY.overrideNote` (imported from `lib/projectHealth.ts`) at `page.tsx:649` in place of the literal, and adding an assertion to `lib/__tests__/projectControls.test.ts` "gate strictness has one source of truth" (or a source pin) that the literal no longer appears in `page.tsx`. Until then the two strings can drift on the next copy edit.
+
+**Resolution (2026-09-30, projects Round G).** The third done-when — J8's one line — landed: the Complete dialog (`app/(protected)/projects/[id]/page.tsx`) renders `{CLOSEOUT_GATE_POLICY.overrideNote}` imported from `lib/projectHealth.ts` instead of its literal, followed by "The gate state above is recorded with the completion." — true now that `transitionProjectStatus` records the gate snapshot (projects-tab `SAF-14`). The first two done-whens landed with J7 (see the Partial block above).
+- Commit: `9363ebb`
+- Tests: `projectPageRoundG.test.ts` "renders the recorded gate lines, passes them to the transition, and reads the override line from CLOSEOUT_GATE_POLICY" (the literal no longer appears in the page); J7's `projectControls.test.ts` "gate strictness has one source of truth" unchanged and green.
+
+**Done-when.**
+- The coach copy states what actually happens — ✓ (J7).
+- No UI string claims contractor scoring until MON-7 — ✓ (J7).
+- A single source of truth, referenced by the coach and the dialog — ✓ (dialog now reads it).
+
+**Scope / residual.** The policy's summary still says open items "stay open on the record"; with the snapshot recorded, J7's comment that "recorded on the closeout" wording is J8's to switch on may now be taken up in `lib/projectHealth.ts` (J7's file) — optional copy, not a done-when.
 
 ---
 

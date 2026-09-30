@@ -2,7 +2,7 @@
 
 Who can reach what, and what an outsider can put inside the perimeter.
 
-**18 findings** — 4 CRITICAL, 11 HIGH, 3 MEDIUM (`SEC-18` opened by projects Round G, 2026-09-30).
+**19 findings** — 4 CRITICAL, 11 HIGH, 4 MEDIUM (`SEC-18` and `SEC-20` opened by projects Round G, 2026-09-30; `SEC-19` is package J1's number on its parallel branch — this branch skips it; if the numbers collide at merge the integrator renumbers).
 
 > Line numbers are from commit `6a14d7d` and drift with edits. **Match on the
 > quoted code, not the number.** See [`../README.md`](../README.md) for the
@@ -68,7 +68,7 @@ of the chain.
 ## SEC-2 · Private projects are not private for cost, bid, or quality data
 
 - **Severity:** CRITICAL
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Verification:** CONFIRMED
 - **Blast radius:** security / data-confidentiality
 - **Locations:**
@@ -107,6 +107,32 @@ Write it as a new migration; do not edit `20261013` in place.
 - A member who is not on a private project's member list receives zero rows from every one of those tables.
 - The company profile page shows no data drawn from private projects the viewer cannot see.
 - A policy test (pgTAP or an integration test) pins the negative case.
+
+**Resolution (2026-09-30, projects Round G).** Reproduced at `2a2ae73`: `project_visible_to_me` was referenced by one policy (`project_activity_select`, 20260913:91); the five controls tables' `%I_member_read` (20261013:253-258) and the four cost tables' `%I_select` (20260906:160-173) checked org membership only — a census replaying the whole migration sequence (`lib/__tests__/projectsRls.test.ts` "sees the policies the 20261013 and 20260906 loops generated before 20261102 replaced them") shows both loop-generated policies with the bare `org_members` predicate. Fixed in `supabase/migrations/20261102_prj_roundG_project_rails.sql` section 1: `change_orders_member_read`, `project_checklists_member_read`, `turnover_items_member_read`, `punch_items_member_read`, `project_parties_select`, `cost_accounts_select`, `cost_documents_select`, `cost_entries_select` are dropped and re-created `FOR SELECT USING (project_visible_to_me(project_id))`; `checklist_items_member_read` reads through its checklist (`EXISTS (… project_checklists c WHERE c.id = checklist_items.checklist_id AND project_visible_to_me(c.project_id))`). Controllers stay unscoped (the helper's controller branch, DEC-43); owners and roster members of a private project read it; write policies are untouched. The profile page's reads (`lib/companies.ts` gather through the authenticated client) are bound by the same policies, so a private project's change orders, turnover / punch items and quotes no longer reach `/companies/[id]` for a non-member (its schedule and intake reads are keyed on the project ids of the parties it could read, so they follow). The one gather source keyed on the COMPANY rather than a project is `company_events`: `company_events_member_read` (20261013:241, org membership only) is re-created in the same section with 20261013's line kept and one added line — `AND (company_events.project_id IS NULL OR project_visible_to_me(company_events.project_id))` — so an event with no project stays an org record, and a recordable / stop-work / warning logged against a private project is shown only to someone who can see that project. No code change in P9's `lib/companies.ts`.
+- Commits: `e0c1aa2` (migration + census), `7ca202f`, `9363ebb`
+- Tests: `lib/__tests__/projectsRls.test.ts` — a policy census over `supabase/schema.sql` + every numbered migration (literal statements AND the `FOREACH … format('CREATE POLICY %I …')` loops expanded per table): "every permissive read of the nine tables goes through project_visible_to_me — or is a controller / active-owner write policy", "each table's member read is the 20261102 policy"; `lib/__tests__/projectRailsMigration.test.ts` "20261102 — SEC-2: the nine read policies"; the company profile: `projectsRls.test.ts` "SEC-2 dw2 — the company profile shows no private-project event to a non-member" (before 20261102 the census sees the bare org read; after it every permissive read of `company_events` gates a project-tied event), `projectRailsMigration.test.ts` "company_events_member_read … is 20261013's line, closed one parenthesis early, plus ONE line gating a project-tied event on project_visible_to_me".
+- Pending migration: `supabase/migrations/20261102_prj_roundG_project_rails.sql` (DEC-30 inventory in the file: private projects carrying cost / quality rows, the count of those rows, and the company events logged against a private project — the blast-radius statement; two probes check the `company_events` read).
+
+**Done-when.**
+- A member who is not on a private project's member list receives zero rows from every one of those tables — ✓ by policy (all nine SELECT policies are `project_visible_to_me`; no other permissive SELECT / ALL policy on them grants a bare org read — census-pinned); live once `supabase/migrations/20261102_prj_roundG_project_rails.sql` is applied (the file's probes check it). On the integrated tree the same holds for projects Round G J2's turnover review history, `turnover_review_events` (20261091) — second fix pass below.
+- The company profile page shows no data drawn from private projects the viewer cannot see — ✓ by policy (the gather reads through the RLS client: the nine tables, and `company_events` — the source the first cut missed — now gate private-project rows, and since the third fix pass they stay gated after the private project is deleted; live once `supabase/migrations/20261102_prj_roundG_project_rails.sql` is applied).
+- A policy test pins the negative case — ✓ as a **census** only (`projectsRls.test.ts`, a static replay of every policy statement in migration order, with a fixture for 20261091). It is **not** the pgTAP or integration test this item names. There is no live database in this environment, so per `DEC-30` the paste-back probes check the live policies instead. A pgTAP test that signs in as a non-member and reads zero rows is still to be written.
+
+**Scope / residual.** `milestones` is still `milestones_member_all` FOR ALL for any org member (20260614) — outside this finding's nine tables; it is projects-and-cost PC-3's (`SCHED-*`) policy work (the profile's milestone read is keyed on visible projects, so it does not leak there). `audit_logs` rows about a private project (resource_type `project` / `cost`) stay readable org-wide — opened as `SEC-20`. *Fix pass (2026-09-30):* the first cut recorded dw2 ✓ with no change to `company_events`, whose member read stayed org-only while carrying `project_id` — a stop-work order logged against a private project still reached `/companies/[id]` for every member. Closed as above. *Second fix pass (2026-09-30):* two routes around dw1 were missed.
+1. **J2's `turnover_review_events`.** Projects Round G J2's migration (20261091, merged on the integration branch, not in this package's base) creates `turnover_review_events` — status changes, reviewer notes, nonconformances, reviewed document ids — with `turnover_review_events_member_read` on org membership. That is the same private data as `turnover_items`, readable after merge with one query. `supabase/migrations/20261102_prj_roundG_project_rails.sql` section 1 now re-creates that policy, in J2's statement shape, on `project_visible_to_me(project_id)`, inside a `to_regclass` guard, so a database without 20261091 skips it. The DEC-30 inventory counts the exposed rows (dynamically; 0 where the table is absent), and a probe checks the read. The census replays J2's statement as a fixture: 20261091 alone leaks, and with 20261102 after it every permissive read gates. Apply 20261102 after 20261091. If 20261091 is re-run, re-run 20261102; the probe says so.
+2. **The delete snapshot.** Projects-and-cost `PM-6`'s `PROJECT_DELETED` row copied a deleted private project's whole cost and quality ledger into `audit_logs`, which any member reads. The snapshot now rides in `PURGE_PROJECT_SNAPSHOT`, which the `audit_logs_admin_trail` overlay limits to the org's audit viewers (see `PM-6`).
+
+Tests: `projectsRls.test.ts` "SEC-2 after merge — projects Round G J2's turnover review history (20261091) is private with its project"; `projectRailsMigration.test.ts` "20261102 — SEC-2 after merge…". Still open beside this finding's tables: `milestone_baseline_history` (projects Round G J6a, 20261099) reads on `caller_is_active_member(org_id)`. It is schedule data, like `milestones_member_all`, and belongs with that projects-and-cost PC-3 policy work, not here.
+
+*Third fix pass (2026-09-30):* dw2 did not survive a delete. `company_events.project_id` is ON DELETE SET NULL (20261013:98), and the member read above admits every active member to an event with no project. So once a private project was deleted, its recordables and stop-work orders became org-readable on `/companies/[id]`. That held on every delete path: `delete_project_record`, a raw DELETE under `projects_delete_owner`, and the pre-20261103 app path. `supabase/migrations/20261102_prj_roundG_project_rails.sql` section 1 now adds `company_events.deleted_private_project` (NOT NULL, default false). A BEFORE DELETE trigger on projects, `trg_projects_private_company_events` (SECURITY DEFINER, `keep_private_project_company_events_private`), sets the mark on a PRIVATE project's events before the FK unlinks them. The member read's added line is now `AND ((company_events.project_id IS NULL AND NOT company_events.deleted_private_project) OR project_visible_to_me(company_events.project_id))`. It is still 20261013's line plus one line (lineDiff).
+
+The events are kept, not deleted: a contractor's recordable is its permanent record. They stay readable to the org's controllers, through `company_events_controller_write` (FOR ALL), as they were while the project existed. `delete_project_record` (20261103) counts them and puts them in `PURGE_PROJECT_SNAPSHOT` (audit viewers), which keeps their project association. A probe in each file checks this.
+
+Tests:
+- `projectsRls.test.ts`: "deleting a private project does not make its events org-readable…". The census now requires the mark in every permissive member read of `company_events`.
+- `projectRailsMigration.test.ts`: "deleting a private project keeps its company events private…" and "SEC-2: the company events the delete unlinks are counted and snapshotted…".
+
+Events unlinked by a private project's delete BEFORE 20261102 cannot be told apart from org events, and stay org-readable. Two inventory rows bound this: "company events logged against a private project" counts the events the mark will protect, and "company events with no project" counts every unlinked event, including any of those.
 
 ---
 
@@ -361,7 +387,7 @@ window produce one digest rather than N emails.
 ## SEC-9 · An offboarded project owner can still delete the project, cascading away the financial and quality record
 
 - **Severity:** HIGH
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Verification:** SUSPECTED (policy read is unambiguous; not exercised against a live database)
 - **Blast radius:** data-integrity
 - **Locations:**
@@ -389,6 +415,18 @@ cost entries should be deletable at all, versus archive-only.
 - A deactivated owner's DELETE returns zero rows.
 - A policy test pins it.
 - (Decide separately) a project with financial records cannot be hard-deleted.
+
+**Resolution (2026-09-30, projects Round G).** Reproduced: `projects_delete_owner` and `projects_update_owner` (20260906:60-68) admit `owner_user_id::text = auth.uid()::text` with no membership term. `supabase/migrations/20261102_prj_roundG_project_rails.sql` section 2 re-creates both with the 20260906 lines kept verbatim plus ONE added line — `AND EXISTS (SELECT 1 FROM org_members m WHERE m.org_id = projects.org_id AND m.uid = auth.uid() AND m.status = 'active')` — so an offboarded owner matches neither (lineDiff-pinned: the only line not in 20260906 is that one). `assertCanManageProject` (`lib/projects.ts`) now also requires an active membership before the owner branch. The decision part ("a project with financial records cannot be hard-deleted") is `DEC-54` and landed with projects-and-cost `PM-6` / `QUAL-3` in `supabase/migrations/20261103_prj_roundG_project_closeout_rails.sql`: `enforce_project_delete_guard` refuses a project carrying any cost or quality row unless `delete_project_record` — controller + reason, counts and snapshot audited — sets the purge GUC; a project under `projects.legal_hold` is deleted by nobody.
+- Commits: `e0c1aa2`, `7ca202f`
+- Tests: `lib/__tests__/projectRailsMigration.test.ts` "20261102 — SEC-9: projects UPDATE / DELETE are byte-faithful to 20260906 plus one active-membership line"; `projectsRls.test.ts` "the projects UPDATE and DELETE owner branches require an active org membership"; `lib/__tests__/projects.test.ts` "PM-5 / SEC-9 — who may manage a project" (a suspended owner is refused).
+- Pending migration: `supabase/migrations/20261102_prj_roundG_project_rails.sql`, `supabase/migrations/20261103_prj_roundG_project_closeout_rails.sql` (inventory: projects whose owner is not an active member).
+
+**Done-when.**
+- A deactivated owner's DELETE returns zero rows — ✓ by policy (live after `supabase/migrations/20261102_prj_roundG_project_rails.sql`).
+- A policy test pins it — ✓ (census + lineDiff shape).
+- (Decide separately) a project with financial records cannot be hard-deleted — ✓ decided (`DEC-54`) and built (`supabase/migrations/20261103_prj_roundG_project_closeout_rails.sql`): archive, or a controller's reasoned `delete_project_record`.
+
+**Scope / residual.** None beyond the pending migrations.
 
 ---
 
@@ -589,7 +627,7 @@ screen so a reviewer can supply it.
 ## SEC-15 · Transferring project ownership is rejected by row-level security for the exact user offered the button
 
 - **Severity:** MEDIUM
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Verification:** SUSPECTED (policy read is unambiguous; not exercised live)
 - **Blast radius:** ux / correctness
 - **Locations:**
@@ -625,6 +663,18 @@ validate the recipient's active membership (see `SEC-17` note below).
 - A plain project owner can transfer ownership successfully.
 - Transfer to a deactivated org member is refused with a readable message.
 - The button is hidden or disabled when the action is not available.
+
+**Resolution (2026-09-30, projects Round G).** Reproduced: `projects_update_owner`'s WITH CHECK reads the NEW row's `owner_user_id`, so a plain owner handing the project to someone else fails their own policy (20260906:60-65), and `transferOwnership` surfaced the raw RLS text. `supabase/migrations/20261102_prj_roundG_project_rails.sql` section 5 adds `transfer_project_ownership(p_project, p_new_owner, p_new_owner_name)` — SECURITY DEFINER, `search_path` pinned, row locked `FOR UPDATE`; the caller must be the project's ACTIVE owner (`user_owns_project`) or an org controller; the recipient must be an ACTIVE member of the project's org (else `The new owner must be an active member of this workspace.`); it moves `owner_user_id`, makes the recipient the roster `owner`, demotes the previous owner's `owner` row to `collaborator`, writes the `ownership_transferred` feed row and the `PROJECT_OWNERSHIP_TRANSFERRED` audit row — one transaction; EXECUTE revoked from PUBLIC and anon, granted to authenticated. The WITH CHECK is deliberately unchanged: the RPC is the path. `transferOwnership` (`lib/projects.ts`) calls it; before the migration it falls back to the direct writes, refuses an inactive recipient itself, and turns an RLS-filtered update into "Only an Admin / Document Control can transfer ownership until database migration 20261102 … is applied" instead of the raw text. The page (`app/(protected)/projects/[id]/page.tsx` MembersTab) offers "Make owner" only to a manager and only for a member who is ACTIVE in the org (`activeOrgMemberIds`), and badges an inactive member.
+- Commits: `e0c1aa2`, `7ca202f`, `9363ebb`
+- Tests: `projects.test.ts` "SEC-15 — ownership moves through transfer_project_ownership" (one RPC and a notice; the database's refusal of a deactivated recipient in words; the pre-migration fallback refusals); `projectRailsMigration.test.ts` "20261102 — SEC-15"; `projectPageRoundG.test.ts` "Make owner is offered only when the target is an ACTIVE member".
+- Pending migration: `supabase/migrations/20261102_prj_roundG_project_rails.sql`.
+
+**Done-when.**
+- A plain project owner can transfer ownership successfully — ✓ through the RPC (live after `supabase/migrations/20261102_prj_roundG_project_rails.sql`).
+- Transfer to a deactivated org member is refused with a readable message — ✓ (RPC and the pre-migration path).
+- The button is hidden or disabled when the action is not available — ✓ (hidden for non-managers, the current owner, and any member not active in the org).
+
+**Scope / residual.** Before `supabase/migrations/20261102_prj_roundG_project_rails.sql` is applied a plain owner still cannot transfer (they are told why, in words).
 
 ---
 
@@ -667,7 +717,7 @@ writes, so a token used from inside the app is distinguishable.
 ## SEC-17 · `project_documents` is writable by any active org member
 
 - **Severity:** MEDIUM
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Verification:** CONFIRMED gap; SUSPECTED impact
 - **Blast radius:** data-integrity
 - **Locations:**
@@ -694,6 +744,25 @@ matching `project_members_write`. Keep SELECT at member level.
 **Done when.**
 - A non-managing member's attach and detach both return zero rows.
 - The card's `canManage` gate and the policy agree.
+
+**Resolution (2026-09-30, projects Round G).** Worked with projects-and-cost `PM-8` (same defect; drafting-flow `PROJ-3` closes by pointer). Reproduced: `project_documents_member_all` FOR ALL with active-org-membership in USING and WITH CHECK (20260609:192-197), the table's only policy. `supabase/migrations/20261102_prj_roundG_project_rails.sql` section 4 DROPS it (not supplemented — cluster 3 / `DRLS-1`) and creates one policy per verb: SELECT `project_visible_to_me(project_id)`; INSERT `is_org_controller(org_id) OR can_manage_project(project_id)` (the fleet plan's predicate — owner / Admin / Manager / roster owner-or-collaborator, 20261047; second fix pass); UPDATE / DELETE `is_org_controller(org_id) OR is_project_owner(project_id)` (active owner, 20261047) — a detach or a moved link; every write with WITH CHECK `org_id = project_org(project_id)`. The detach is exactly the card's `canManage` (owner or Admin/DocCtrl); the card offers Attach to the same set, which the database admits. `checkouts_resync_project_documents` is re-created SECURITY DEFINER with `search_path` pinned (lineDiff: 20260609's body plus two guards — it links only a session whose org is its project's org, and, for a signed-in caller, only the caller's OWN session into a project the caller can see: `IF auth.uid() IS NOT NULL AND (NEW.user_id IS DISTINCT FROM auth.uid() OR NOT project_visible_to_me(NEW.project_id)) THEN RETURN NEW`), so a collaborator's checkout still links its document and nobody plants a register row through the definer. The card writes its `doc_added` / `doc_removed` rows through `writeActivity` (checked; author stamped by the database — `PM-7`) and checks the detach's row count.
+- Commits: `e0c1aa2`, `9363ebb`
+- Tests: `projectsRls.test.ts` "SEC-17 / PM-8 — project_documents" (no FOR ALL in the final policy set; per-verb predicates; no later migration re-creates `project_documents_member_all`); `projectRailsMigration.test.ts` "20261102 — PM-8 / SEC-17: the register" (the resync body is 20260609's plus exactly the two guards; "SEC-17: a signed-in caller cannot plant a register row through the definer — the guard is probed by the paste-back"); `projectPageRoundG.test.ts` "a viewer who cannot manage sees no attach or remove control".
+- Pending migration: `supabase/migrations/20261102_prj_roundG_project_rails.sql` (inventory: `manual` rows — attacher unrecorded — and rows whose org is not their project's org).
+
+**Done-when.**
+- A non-managing member's attach and detach both return zero rows — ✓ by policy (live after `supabase/migrations/20261102_prj_roundG_project_rails.sql`): "managing" is `can_manage_project` for an attach, and the owner or a controller for a detach. The card also refuses a zero-row detach in words.
+- The card's `canManage` gate and the policy agree — ✓ for detach, where both are owner-or-controller. For attach the card is the narrower of the two. It offers Attach to owner-or-controller, and the database also admits the project's managers, so the card never offers a write the database refuses. A manager's attach through the lib (split / merge carry-over, adoption) is not offered by the card.
+
+**Scope / residual.** The fleet plan proposed `can_manage_project` for the write predicate; the findings' contract (this finding's remediation, `PM-8` dw1 and `SAF-17` dw3) names owner-or-controller, which is narrower (a collaborator's checkout still links through the definer trigger). Recorded in `DEC-54`. *Fix pass (2026-09-30):* the first cut's definer trigger checked only the org, and `checkout_sessions` is writable by any active member (FOR ALL, schema.sql) with `project_id` unguarded — one INSERT, or a PATCH moving someone else's session, still wrote a `checkout` row into any same-org project's register, private ones included (the drawing on its Documents tab and export, its history on the timeline). The caller guard above closes it; the paste-back probes it. The narrower write predicate also refuses two writers in other packages that swallow the error — the split / merge register carry-over (`lib/documentLifecycle/common.ts` `copyProjectMembershipToDoc`, document-control: a document owner who does not own every project listing the document gets the whole upsert refused, so the new sheets fall out of every register) and `adoptDocument`'s register link (`lib/transitionIn.ts`, projects-and-cost PC-1 / J1: a collaborator's adoption is not linked). Recorded in `DEC-54`; handed to those owners (surface the refusal, or route the write through the register's authority). *Second fix pass (2026-09-30):* the INSERT predicate now follows the fleet plan (`is_org_controller OR can_manage_project`), so those two writers land for anyone who manages the project. A document owner who neither manages the project nor is a controller is still refused, and a merge's second upsert over an existing row still meets the owner-only UPDATE. Both are recorded in projects-and-cost `PM-8` and remain handed off. UPDATE and DELETE stay owner-or-controller (`SAF-17`). *Third fix pass (2026-09-30):* the owner-or-controller UPDATE refused every upsert that met an existing row, for the managers the INSERT admits. That covered `adoptDocument`'s re-link and a merge's carry-over over a row already written, and both swallow the refusal. The INSERT also let an org Manager off a private project's roster write into a register they cannot see, because `can_manage_project` admits a Manager whatever the project's visibility. Now:
+- **Links never move.** `trg_project_documents_link_fixed` (BEFORE UPDATE) refuses, for a signed-in caller, an UPDATE that changes `project_id` or `document_id`. So the rule that a moved link is a detach no longer needs the UPDATE policy.
+- **UPDATE follows the plan.** USING `is_org_controller(org_id) OR can_manage_project(project_id)`, and WITH CHECK the same `AND org_id = project_org(project_id) AND project_visible_to_me(project_id)`.
+- **INSERT gains the visibility line.** Its WITH CHECK now also requires `project_visible_to_me(project_id)`.
+- **DELETE, the detach, stays owner-or-controller.**
+
+dw1 now reads: a member who does not manage the project, or who cannot see it, gets zero rows on attach; on detach, anyone but the owner or a controller does. The card is unchanged, and still narrower than the database for attach.
+
+Tests: `projectsRls.test.ts` "SEC-17 / PM-8 — project_documents"; `projectRailsMigration.test.ts` "an attach and an upsert's update follow the fleet plan…". The paste-back probes both policies and the trigger.
 
 ---
 
@@ -745,25 +814,79 @@ in `lib/__tests__/presignedDisposition.test.ts`.
 
 ---
 
+## SEC-20 · Audit rows about a private project are readable by every org member
+
+*Numbered SEC-20 on this branch: package J1, in parallel, opened `SEC-19` (intake tokens stored in plaintext) in this report. If the numbers collide at merge the integrator renumbers.*
+
+- **Severity:** MEDIUM
+- **Status:** OPEN
+- **Verification:** CONFIRMED (policy read; not exercised against a live database)
+- **Blast radius:** data-confidentiality
+- **Locations:**
+  - `supabase/schema.sql:1122` — `audit_logs_org_access … FOR SELECT USING (org_id IN (SELECT my_org_ids()))`
+  - `supabase/migrations/20261063_rp_roundE_audit_view_capability.sql:175` — `audit_logs_admin_trail`, the RESTRICTIVE overlay, which narrows only the org-level authority trail
+  - `lib/checklists.ts:87-93`, `lib/turnover.ts:121-127`, `lib/changeOrders.ts:113,191`, `lib/costs.ts:111-117`, `lib/costDocs.ts:78-84` — the controls program's audit writers (`resource_type` `project` / `cost`)
+  - `supabase/migrations/20261103_prj_roundG_project_closeout_rails.sql` `delete_project_record` — the snapshot of a deleted project's cost and quality rows is written as `PURGE_PROJECT_SNAPSHOT`, inside the overlay (audit viewers only); `PROJECT_DELETED` carries counts, not rows
+- **Related:** `SEC-2`, `SAF-6`, projects-and-cost `PM-6`
+- **Independently verified:** — (`author`: opened by projects Round G while resolving `SEC-2` / `SAF-6`, per `DEC-31`; not yet challenged)
+
+**Mechanism.** `SEC-2` made the controls and cost TABLES follow
+`project_visible_to_me`. Their audit rows did not move with them: every
+`audit_logs` row is readable by any active member of its org (the base
+`audit_logs_org_access` policy), and the only overlay (`audit_logs_admin_trail`)
+restricts the org-level authority trail (members, roles, capability policy,
+exports), not project rows. The controls program writes its decisions there with
+their content — `COST_DOC_AWARDED` (vendor, total), `CHANGE_ORDER_*` (number,
+amount, reason code), `TURNOVER_REVIEWED` (item, status, note),
+`CHECKLIST_ITEM_UPDATED` (the ruling). Since projects-and-cost `PM-6`,
+`PROJECT_DELETED` carries the counts of a deleted project's rows. The
+serialized snapshot of those rows is kept deliberately: it is the only
+surviving record of a regulated project a controller chose to delete. It is
+written as a separate `PURGE_PROJECT_SNAPSHOT` row, which the existing
+overlay's `PURGE_%` clause already limits to `admin.audit_view` holders.
+
+**Failure scenario.** A member who is not on a private MOC project reads its
+award amounts and change-order values with one PostgREST query on `audit_logs`
+filtered by `resource_type = 'project'` / `'cost'` — the same data `SEC-2` now
+hides in the tables. The project's Activity tab (`SAF-6`) is not the channel:
+it opens only for someone who can see the project.
+
+**Remediation.** A RESTRICTIVE SELECT overlay on `audit_logs` for
+`resource_type IN ('project', 'cost')`: visible when the caller holds an
+audit-viewing role (the `audit_logs_admin_trail` role set), or the row's
+project is visible to them — `project_visible_to_me(resource_id::uuid)` for
+`project`, and through the cost row's project for `cost` (a `cost_project_id`
+helper, SECURITY DEFINER). A deleted project resolves to invisible for
+everyone but the audit roles, which is the intent for a `PROJECT_DELETED`
+snapshot. Keep the insert policy as it is.
+
+**Done when.**
+- A member who cannot see a private project receives zero `project` / `cost` audit rows for it.
+- The audit roles still read every row (the `/admin/audit` page is unchanged for them), including `PROJECT_DELETED` and `PURGE_PROJECT_SNAPSHOT`.
+- A policy census pins it (extend `lib/__tests__/projectsRls.test.ts`).
+
+---
+
 ## Report progress
 
 | ID | Severity | Status |
 |---|---|---|
 | SEC-1 | CRITICAL | OPEN |
-| SEC-2 | CRITICAL | OPEN |
+| SEC-2 | CRITICAL | RESOLVED |
 | SEC-3 | CRITICAL | OPEN |
 | SEC-4 | CRITICAL | OPEN |
 | SEC-5 | HIGH | OPEN |
 | SEC-6 | HIGH | OPEN |
 | SEC-7 | MEDIUM | RESOLVED |
 | SEC-8 | HIGH | OPEN |
-| SEC-9 | HIGH | OPEN |
+| SEC-9 | HIGH | RESOLVED |
 | SEC-10 | HIGH | OPEN |
 | SEC-11 | HIGH | OPEN |
 | SEC-12 | HIGH | OPEN |
 | SEC-13 | HIGH | OPEN |
 | SEC-14 | HIGH | OPEN |
-| SEC-15 | HIGH | OPEN |
+| SEC-15 | HIGH | RESOLVED |
 | SEC-16 | MEDIUM | OPEN |
-| SEC-17 | MEDIUM | OPEN |
+| SEC-17 | MEDIUM | RESOLVED |
 | SEC-18 | MEDIUM | OPEN |
+| SEC-20 | MEDIUM | OPEN |

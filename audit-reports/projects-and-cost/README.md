@@ -4,7 +4,7 @@ The project model and its server behaviour, scheduling and the critical path, th
 
 **No application code, test, or migration was modified at any point.**
 
-**The Projects *tabs UI* was audited separately** — [`../projects-tab/`](../projects-tab/README.md), 135 findings. This area is the model and the server beneath it. Where a defect belongs to both, it is recorded once and cross-referenced.
+**The Projects *tabs UI* was audited separately** — [`../projects-tab/`](../projects-tab/README.md), 136 findings. This area is the model and the server beneath it. Where a defect belongs to both, it is recorded once and cross-referenced.
 
 ---
 
@@ -22,11 +22,11 @@ The project model and its server behaviour, scheduling and the critical path, th
 
 ## Findings
 
-**70 findings** — 2 CRITICAL, 22 HIGH, 34 MEDIUM, 12 LOW.
+**71 findings** — 2 CRITICAL, 22 HIGH, 35 MEDIUM, 12 LOW.
 
 | # | Report | n | Note |
 |---|---|---|---|
-| 01 | [The project model, membership & lifecycle](./01-project-model.md) | 14 |  |
+| 01 | [The project model, membership & lifecycle](./01-project-model.md) | 15 |  |
 | 02 | [Scheduling — dependencies, critical path, import](./02-scheduling.md) | 14 |  |
 | 03 | [The quality program — checklists, turnover, punch](./03-quality.md) | 13 |  |
 | 04 | [Cost, change orders & bid tabulation](./04-cost-and-bids.md) | 15 |  |

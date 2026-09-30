@@ -210,7 +210,7 @@ but the three above remove the user-visible damage for far less work.
 ## REL-5 · One tab crashing unmounts the entire project page
 
 - **Severity:** MEDIUM
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Verification:** CONFIRMED
 - **Blast radius:** availability
 - **Locations:**
@@ -233,6 +233,15 @@ About fifteen lines.
 
 **Done when.**
 - A thrown error in one tab leaves the other six usable.
+
+**Resolution (2026-09-30, projects Round G).** Reproduced by absence: no `ErrorBoundary` existed in the repo; a throw in any tab unmounted the page to `app/(protected)/error.tsx`. New `components/projects/TabErrorBoundary.tsx` (a class boundary: fallback "The Costs tab couldn't load — the rest of the project page still works", a Retry, and `resetKey` so moving to another tab clears it). `app/(protected)/projects/[id]/page.tsx` renders every tab's content inside one boundary keyed on the tab, and the coach inside its own — the header, status strip and tab bar sit outside both.
+- Commit: `9363ebb`
+- Tests: `projectPageRoundG.test.ts` (jsdom) "the crashing tab renders its fallback; everything outside the boundary stays mounted", "moving to another tab clears the error (resetKey); Retry re-renders the tab", "the project page wraps the tab content and the coach in boundaries keyed on the tab" (all seven tabs inside it).
+
+**Done-when.**
+- A thrown error in one tab leaves the other six usable — ✓.
+
+**Scope / residual.** None.
 
 ---
 
@@ -540,7 +549,7 @@ condition to match `hasPlan`. Use the project currency in the example.
 | REL-2 | HIGH | OPEN |
 | REL-3 | HIGH | OPEN |
 | REL-4 | HIGH | OPEN |
-| REL-5 | HIGH | OPEN |
+| REL-5 | HIGH | RESOLVED |
 | REL-6 | HIGH | OPEN |
 | REL-7 | HIGH | RESOLVED |
 | REL-8 | MEDIUM | OPEN |

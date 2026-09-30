@@ -87,6 +87,7 @@ about the system.
 | [DEC-51](#dec-51) | A schedule re-import is a **reviewed merge, never a guess**: the importer plans before it writes, keeps local progress, keys rows on content, reads dates one way for the whole file, and adopts a legacy position row only by a name unique on both sides | low | `SCH-1`, `SCH-2`, `SCH-3`, `SCH-14`, `SCHED-3`, `SCHED-4`, `SCHED-9` |
 | [DEC-52](#dec-52) | A green on a PSSR / MI / QA-QC line says who decided it: a **person** (a reason that meets the bar, uid on the row) or the **machine** (a citation the database resolves); only a person's decisions make a completion citable | low–medium | `QUAL-1`, `QUAL-2`, `QUAL-5`, `QUAL-6`, `QUAL-11`, `QUAL-12`, `SAF-1`, `SAF-4` |
 | [DEC-53](#dec-53) | The equipment registry: writer tier edits and archives, controller tier deletes; a site code identifies the **type**, one code is one asset; codebook edits never rewrite codes | medium | `AREA-1`, `IRLS-5`, `CB-3`, `CB-5`, `CB-6`, `CB-10`, `GAP-310` |
+| [DEC-54](#dec-54) | A closed project is a **closed record**: closing releases its checkouts and closes its intake door, reopening is explicit and audited, and a project carrying cost or quality records is archived — deleted only by a controller with a reason, its rows snapshotted first | medium | `PM-1`, `PM-4`, `PM-6`, `PM-11`, `SEC-9`, `SEC-15`, `SEC-17`, `SAF-6` |
 
 ---
 
@@ -1593,6 +1594,8 @@ already-solved problem, not a change to this rule.
 
 **Risk:** medium.
 
+*Landed 2026-09-30 (projects Round G): the project's Documents tab lists the register as live references — `lib/projects.ts` `listProjectDocuments` reads each linked document's CURRENT row (number, rev, status) and marks a superseded / void / archived one "Not current" (`NOT_CURRENT_STATUSES`); approved contractor documents not yet adopted are listed from the intake folder by reference; no bytes are copied. See projects-tab `UX-11`.*
+
 ---
 
 ### DEC-41 · Verification grade is a field, not a caveat
@@ -2872,3 +2875,136 @@ and siblings included), without blocking a document or party delete.
 **Reversal.** (1) If a facility states that Managers delete equipment, `is_org_controller` in the DELETE overlay becomes `caller_holds_any_role(org_id, writes)`. (2) If a site's standard encodes the prefix, the code format becomes an org setting read by `tagToCode` and `codeToTag`; there is still no default. (4) A server-side re-decode job and a version stamp are additive to the plan and replace nothing.
 
 **Risk:** medium. The only narrowing is DELETE for Manager and Supervisor; everything else is either a warning or a refusal of data that would otherwise be corrupted.
+<a id="dec-54-j8"></a>
+## DEC-54 · Closing, reopening and deleting a project
+
+> Made during projects Round G (2026-09-30), package J8 PROJECT-MODEL, under
+> the protocol's fail-safe rule, taking the fleet plan's stated defaults.
+> Numbered DEC-54 at merge (DEC-44 to DEC-53 were already taken on the
+> integration branch).
+
+**Decision. A closed project is a closed record; the door closes with it; a
+project that carries cost or quality records is archived, not deleted.**
+
+1. **Closing revokes the door.** Completing, cancelling or archiving a
+   project REVOKES its contractor intake links — first, so a refused
+   revocation leaves the project open — rather than suspending them.
+   Reopening does not restore them; new links are minted.
+2. **Closing freezes the regulated record.** For a signed-in writer, the
+   database refuses writes to a completed / cancelled / archived project's
+   cost_entries, change_orders, cost_documents, cost_accounts,
+   project_checklists, checklist_items, turnover_items, punch_items and
+   milestones. The service role keeps its pass (the intake door's own
+   refusal is its package's). Deleting what a frozen row cites is not a
+   write to the record: the FK's ON DELETE SET NULL, an UPDATE one trigger
+   level down that only nulls SET NULL references, passes, so a drawing
+   a closed project's schedule cites can still be deleted. A server route
+   that writes a regulated row through the admin client on a user's
+   behalf refuses a closed project itself, because the database sees the
+   service role. `/api/projects/cost-docs` is the one such route, and its
+   owner adds the check.
+3. **Reopening is a controller's audited act.** Only Admin / Document
+   Control, with a reason; it clears completed_at / cancelled_at /
+   cancelled_reason and writes `PROJECT_REOPENED`. A project owner cannot
+   reopen their own closed project.
+4. **Deleting.** A project carrying ANY cost or quality row cannot be
+   hard-deleted by its owner — it is archived. A controller may delete it
+   only with a stated reason, through one audited transaction. That
+   transaction revokes the intake links first, then records the counts and
+   the storage keys in `PROJECT_DELETED`. The snapshot of the rows goes in
+   `PURGE_PROJECT_SNAPSHOT`, which only the org's audit viewers can read: a
+   private project's ledger is never copied where every member can read it.
+   `projects.legal_hold` (controller-set) blocks every
+   delete of the project and of its regulated rows. No retention-policy
+   engine for projects beyond the hold. The purge is the ONE pass through the
+   money and quality delete guards: `app.record_purge = 'project:<id>'`. It
+   never deletes a checklist item on its own: items leave with their
+   checklist by cascade, the only way out the quality rail allows. The
+   company events logged against a deleted project are KEPT, unlinked, and
+   recorded in the snapshot. A PRIVATE project's events stay private after
+   the delete: they are marked before the FK unlinks them, on every delete
+   path, and only controllers read them from then on.
+5. **Releasing checkouts at closure** runs per session: the actor's own, and
+   everyone else's the release guard lets them release (a controller: all);
+   the rest stay active and are named ("still held by X"). The maintenance
+   sweep releases a checkout still on a closed project 24h after closure.
+6. **Roster roles mean something.** An observer sees the project; it cannot
+   manage it (20261047) or post to its feed. `owner` is set only by the
+   ownership transfer. The document register:
+   - **Attach, or update a link in place.** Anyone who manages the project
+     (`can_manage_project`: owner, Admin, Manager, roster owner or
+     collaborator) or a controller may attach a document, or re-upsert a
+     link — the fleet plan's predicate — in a project they can SEE. This
+     lets the split / merge carry-over (`lib/documentLifecycle/common.ts`,
+     document-control) and `adoptDocument`'s register link
+     (`lib/transitionIn.ts`, PC-1 / J1) land for a project's managers,
+     over an existing row too.
+   - **A link never moves.** A trigger refuses an UPDATE that changes a
+     link's project or document, since that is a detach by another name.
+   - **Detach.** Only the project owner or a controller: a detach drops a
+     document's later history from the timeline. The card offers Attach and
+     Detach to that same pair, and `doc_added` / `doc_removed` feed rows
+     need it too.
+   - **Checkouts.** A collaborator's OWN checkout, under a project they can
+     see, still links through the definer trigger — never someone else's
+     session, never a project the caller cannot see.
+   - **Still refused.** A document owner who does not manage the project is
+     still refused, and the carry-over swallows it. Its owner surfaces the
+     refusal.
+7. **The project timeline's vocabulary is one map** (`lib/timeline.ts`
+   `PROJECT_EVENT_VOCABULARY`): awards, change-order proposals and
+   decisions, checklist rulings, turnover reviews, punch closes and schedule
+   hits / misses are shown; individual cost entries and checklist item edits
+   are not; an unclassified action is shown.
+8. **Exports.** A formula-leading CSV cell is written as an
+   apostrophe-prefixed quoted cell (BOM and extension unchanged) — every
+   cell, the org export's per-project header line included; the org-wide
+   project export reads in batches of 100 projects, each read paged to
+   exhaustion under PostgREST's 1,000-row cap, with progress and cancel.
+
+**Rationale.** Each is the direction that fails safe for a PSM-regulated
+record: an open door on a cancelled project can publish a controlled
+revision (PM-1); a silent cascade destroys the PSSR record an OSHA auditor
+asks for (PM-6 / QUAL-3); a one-batch release that one refusal aborts tells
+a drafter a lock was freed when it was not (PM-4).
+
+**Implementation.** `supabase/migrations/20261102_prj_roundG_project_rails.sql`
+(feed, register, visibility, ownership transfer),
+`supabase/migrations/20261103_prj_roundG_project_closeout_rails.sql`
+(freeze, reopen, delete); `lib/projects.ts`, `lib/timeline.ts`,
+`lib/csvSafe.ts`, `lib/projectExport.ts`, the project page and its
+Documents card. See projects-and-cost `PM-1`, `PM-4`, `PM-6`, `PM-10`,
+`PM-11`, `QUAL-3`; projects-tab `SEC-9`, `SEC-17`, `SAF-6`, `UX-14`,
+`PERF-2`.
+
+**Do not** make the closed-project freeze a client check, let a project
+owner reopen their own project, or add a second purge GUC name.
+
+**Acceptance.** Pinned by `lib/__tests__/projects.test.ts`,
+`projectRailsMigration.test.ts`, `projectsRls.test.ts`, `timeline.test.ts`,
+`projectExport.test.ts` and `projectPageRoundG.test.ts`; live once 20261102
+and 20261103 are applied (DEC-30).
+
+**Reversal.** A stated facility need to edit a closed project's record
+without reopening it — then a named, audited correction path per table, not a
+hole in the freeze.
+
+**Risk:** medium — the freeze makes closed projects read-only for signed-in
+users, by design.
+
+*Landed 2026-09-30 (projects Round G, J8 review fix pass): the register trigger links only the signed-in caller's own session into a project they can see (SEC-17 / PM-8); `company_events` rows logged against a private project follow its visibility (SEC-2 — the company profile); the export's reads page to exhaustion and its section header is a csvSafe cell (PERF-2 / PM-10); the stranded-checkout sweep measures from the closure stamp, not `updated_at`, with bounded reads (PM-4); `lib/projects.writeActivity` keeps its non-throwing exported contract and returns the refusal, `writeActivityChecked` throws for a comment (PM-9); the lifecycle and adoption writers item 6 refuses are handed to their owners.*
+
+*Landed 2026-09-30 (projects Round G, J8 second review fix pass), checked against the integration branch:*
+- *The purge deletes checklists and lets their items cascade. Projects Round G J2's `checklist_items_decision_rail` (20261091) refuses a direct item delete by a signed-in caller, even inside a definer RPC (PM-6 / QUAL-3).*
+- *The deleted project's snapshot moved out of the org-readable `PROJECT_DELETED` into `PURGE_PROJECT_SNAPSHOT`, which the 20261063 overlay limits to `admin.audit_view` holders (item 4, SEC-2 / SEC-20).*
+- *J2's `turnover_review_events` read is re-created on project visibility where the table exists (SEC-2).*
+- *The register's INSERT follows the fleet plan (`can_manage_project`); UPDATE and DELETE stay owner-or-controller (item 6, PM-8 / SEC-17).*
+- *A project status UPDATE that RLS filters to zero rows is a refusal, not a closure (PM-1 / PM-4).*
+- *The register and timeline reads are complete or fail: paged, with id lists chunked at 100 (UX-11, SAF-6).*
+
+*Landed 2026-09-30 (projects Round G, J8 third review fix pass):*
+- *The freeze passes an FK ON DELETE SET NULL (item 2): deleting a document a closed project's milestone, turnover item or checklist cites no longer fails after the library page has stripped its revisions. The references are read from `pg_constraint` (PM-1).*
+- *`/api/projects/cost-docs` is named as the one user-initiated service-role writer the freeze does not see; its owner adds the status check (PM-1 residual).*
+- *A private project's company events stay private after its delete, kept and snapshotted (item 4; SEC-2, PM-6).*
+- *The register's UPDATE follows the plan; a trigger keeps links from moving; attach and update need project visibility (item 6; PM-8, SEC-17, SAF-17).*
+- *The timeline's id lists are read whole (SAF-6, SAF-17).*
