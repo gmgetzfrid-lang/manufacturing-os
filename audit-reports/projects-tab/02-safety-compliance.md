@@ -264,7 +264,7 @@ arguments the approve path passes.
 - [x] Subscribers and intent holders are notified — ✓ (`notifySuperseded`).
 - [x] A test asserts the side-effect runner is invoked on the auto path — ✓.
 
-**Scope / residual.** None in this finding. The census in `lib/__tests__/intakeUploadRoute.test.ts` fails the build for a new unpiped writer of `current_version_id` (two first-version writers allow-listed for document-control P3).
+**Scope / residual.** None in this finding. The census in `lib/__tests__/intakeUploadRoute.test.ts` fails the build for a new unpiped writer of `current_version_id` — per call site after the J1 review's fix pass (TypeScript's parser; inline, shorthand, spread and prebuilt patches; the pipeline must run in the same function), with four pinned exemptions, each with its reason (three first-version seeds, two of them document-control P3's to convert, and revUp's legacy leg, whose caller runs the pipeline — checked).
 
 ---
 
@@ -502,14 +502,14 @@ reviewers, and preserve any signatures. Add a maintenance query that surfaces
 - Reviewers of an abandoned draft are told it was superseded.
 - A health check reports orphaned in-review versions.
 
-**Resolution (2026-09-30, projects Round G).** Worked as projects-and-cost `INTK-4` (J1), on top of document-control `RG-10` (RESOLVED — a draft carrying a roster can never be displaced; `IntakePanel` reject voids a draft's sign-offs). A displaced submission is now RESOLVED: `review_state = 'superseded'` + `superseded_at` + an `INTAKE_SUBMISSION_DISPLACED` audit row, on both the trusted-publish and the trusted-replacement paths, and the project team's notice says the earlier submission was replaced (never folded into a burst). Migration `20261105` admits the state and keeps it out of the revert-target gate; `orphaned_in_review_versions_count()` is reported by the maintenance cron (step 4c) and by the migration's inventory. Tests — `lib/__tests__/intakeUploadRoute.test.ts` "the auto path clears only the pointer it read and marks the displaced draft 'superseded' with an audit row and a forced notice"; `lib/__tests__/intakeDoorMigration.test.ts`.
+**Resolution (2026-09-30, projects Round G).** Worked as projects-and-cost `INTK-4` (J1), on top of document-control `RG-10` (RESOLVED — a draft carrying a roster can never be displaced; `IntakePanel` reject voids a draft's sign-offs). A displaced submission is now RESOLVED: `review_state = 'superseded'` + `superseded_at` + an `INTAKE_SUBMISSION_DISPLACED` audit row, and the project team's notice says the earlier submission was replaced (never folded into a burst). Displacement happens only on the review path — a trusted link whose own submission is still in review never auto-publishes (`INTK-1`'s fix pass), so its new upload replaces the draft IN REVIEW. Migration `20261105` admits the state and keeps it out of the revert-target gate; `orphaned_in_review_versions_count()` is reported by the maintenance cron (step 4c) and by the migration's inventory. Fix pass (J1 review): the door's own lost pointer race now resolves its new version 'superseded' (it had stayed 'in_review' with only `superseded_at` — unreferenced); `20261105` converts intake rows retired that older way to 'superseded'; the health signal counts only in-review rows nothing points at AND nothing withdrew, so it is not permanently red, and the cron line names a remedy a document controller can run. Tests — `lib/__tests__/intakeUploadRoute.test.ts` "a trusted link with its own submission still in review does NOT auto-publish: the upload replaces it IN REVIEW — CAS on that draft, 'superseded', an audit row, a forced notice", "the door's own lost pointer race RESOLVES the new version ('superseded')…"; `lib/__tests__/intakeDoorMigration.test.ts` "intake rows retired the older way are RESOLVED at apply; the health signal counts only rows nothing withdrew".
 
 **Done-when.**
-- [x] Clearing `pending_version_id` never leaves an unreferenced `in_review` row — ✓ (asserted).
+- [x] Clearing `pending_version_id` never leaves an unreferenced `in_review` row — ✓ (asserted on displacement; the lost-race withdrawal too after the fix pass).
 - [x] Reviewers of an abandoned draft are told it was superseded — ✓: a displaceable draft has no roster (RG-10 refuses otherwise), so its reviewers are the review queue's audience — the controllers and the project owner — and they are told.
-- [x] A health check reports orphaned in-review versions — ✓ (the cron's `orphanedInReviewVersions` and a `review-health` error line when non-zero).
+- [x] A health check reports orphaned in-review versions — ✓ (the cron's `orphanedInReviewVersions` and a `review-health` error line when non-zero — rows nothing withdrew, with a remedy a controller can act on).
 
-**Scope / residual.** Pending migration: `20261105`. Existing orphans are counted, not auto-voided.
+**Scope / residual.** Pending migration: `20261105`. Existing true orphans (in review, nothing withdrew, no pointer) are counted, not auto-voided — which submission is live is a person's call; intake rows already retired by `superseded_at` are converted. No screen lists a version nothing points at; the cron line names the SQL function a controller runs.
 
 ---
 

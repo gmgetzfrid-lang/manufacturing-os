@@ -1584,6 +1584,8 @@ already-solved problem, not a change to this rule.
 
 **Risk:** medium.
 
+*Landed 2026-09-30 (projects Round G, J1 INTAKE-DOOR): a document the external intake door CREATES is referenced from its project — one `project_documents` row (`source 'manual'`, the row "attach to project" writes), written by `app/api/intake/upload/route.ts` after the submission is queued; a refused reference is logged and the submission stands. No bytes are copied; revisions of existing documents write none.*
+
 ---
 
 ### DEC-41 · Verification grade is a field, not a caveat
@@ -2366,9 +2368,13 @@ narrow privilege, both enforced where the write happens:**
    document's first version). A trusted link auto-publishes a revision ONLY when
    the document is its own by that column, is NOT in the link's
    `assigned_doc_ids`, has had at least one approved revision
-   (`current_version_id`), the link's previous submission on it was not
-   rejected, and none of the gates below refuses. Anything else goes to review,
-   and the portal is told why.
+   (`current_version_id`), has no submission of the link's still awaiting
+   review, has no rejected submission made against its current revision
+   (until the team approves one), is not being sent bytes the team rejected
+   before, and whose newest submission from the link was not rejected — and
+   none of the gates below refuses. Anything else goes to review, and the
+   portal is told why. (A rejected file is never re-published by resubmitting
+   it: the reject → throwaway → resend route is closed by the pending rule.)
 2. **The trusted promote is the publish contract**, never a pointer write:
    `publish_revision` acting as the link's CREATOR (the person who sanctioned
    auto-publish), so the hold gate, the checkout lock, the expected-base check
@@ -2380,36 +2386,74 @@ narrow privilege, both enforced where the write happens:**
    (`runPostPublishSideEffects({ …, settle: true })`). A refusal DEMOTES the
    upload to review (OWN-4); it never discards the file.
 3. **A displaced submission is resolved, not orphaned**: only a trusted link,
-   only its OWN roster-free earlier submission on its own document; the
-   displaced version becomes `review_state = 'superseded'` with an audit row
-   and a notice, and is never a revert target.
+   only its OWN roster-free earlier submission on its own document, and only
+   on the review path (the replacement is itself reviewed); the displaced
+   version becomes `review_state = 'superseded'` with an audit row and a
+   notice, and is never a revert target. A submission the door WITHDRAWS (a
+   lost pointer race) is resolved the same way. The health signal counts only
+   in-review rows nothing points at and nothing withdrew.
 4. **What the door admits**: the token travels in a header (or the query
    string) and is checked — format, rate window, existence, revocation,
    expiry, the link's budget, the declared size — before the body is read.
    30 uploads per token and 60 per IP per hour (environment-configurable),
-   FAIL OPEN on a limiter error; one team notice per link per 15 minutes; a
-   per-link lifetime cap of 500 submissions and 5 GB. Links expire: 14 days
-   by default, 90 at most (the database allows one extra day for an
-   end-of-day local expiry). The bytes decide the type: quotes PDF only;
+   FAIL OPEN on a limiter error; one team notice per link per 15 minutes
+   (a revision published without review is always told; a folded notice is
+   counted into the next one); a per-link lifetime cap of 500 submissions
+   and 5 GB. Links expire: 14 days by default, 90 at most (the database CHECK
+   allows 92 days: an end-of-day LOCAL expiry picked from a UTC date lands up
+   to ~91.5 days out west of UTC). A retry of the same bytes answers with the
+   LIVE original of the same record — never a withdrawn row, never another
+   document's. The bytes decide the type: quotes PDF only;
    drawings and redlines PDF, DWG, DXF or ZIP, by magic number, extension and
    a plausible declared type; the stored Content-Type is the sniffed one.
    Title ≤ 200, number ≤ 64, revision label a label. Portal errors are a
    sentence and a reference id — database text stays in the log.
 5. **Assigning a controlled document to a contractor is a publish-grade act**:
-   the document must be in the link's org and the assigner must hold publish
-   authority on its library (a trigger, not a policy).
+   the document must be in the link's org, the assigner must hold publish
+   authority on its library AND be able to open the document
+   (`doc_is_visible` — publish authority is not read access), controllers
+   exempt (a trigger, not a policy).
 6. **Transition-in**: a rejected sheet is not a candidate; an unapproved one
    is shown and blocked; a sheet whose checks could not run is
    "unverifiable" — never clean, never bulk-adopted; adoption re-checks at the
    click and is offered to the controller tier only (the move guard's tier).
-7. **A deleted project closes its doors** (FK ON DELETE CASCADE; orphans
-   found at apply are revoked, never deleted).
+7. **A deleted project closes its doors** — a trigger on `projects` deletes
+   the project's links on every delete path. Not a foreign key: the org
+   restore loads tables in `RESTORE_TABLE_ORDER` and fails a chunk on a
+   23503, so an FK would have lost the links table (and the quotes that
+   reference it) for any backup holding an orphan link. For the same reason
+   `documents.authored_by_link_id` is a plain indexed UUID (`documents`
+   restores before `project_intake_links`). J1 adds no foreign key a restore
+   cannot satisfy — a tripwire test checks every FK its migrations add
+   against the restore order. Orphans found at apply are revoked, never
+   deleted.
+8. **What the door files where**: a quote carries the project party the
+   link's company names (`matchCompanyByName` — exact, else the one party it
+   normalises to; ambiguity binds nothing); a document the door creates is
+   referenced from the project (`project_documents`, `DEC-40`), never copied.
 
-> Made during projects Round G (2026-09-30), package J1 INTAKE-DOOR, closing
-> projects-and-cost `INTK-1` … `INTK-13`, `PM-2` and projects-tab `SEC-1`,
-> `SEC-3` … `SEC-14`, `SAF-5`, `SAF-10` … `SAF-15`, `REL-8`. Numbered DEC-50 on
-> the package branch (DEC-44 … DEC-49 were taken); the integrator renumbers
-> if needed.
+**Deploy constraint.** The door runs the post-publish pipeline, `emit` and
+`listLiveIntents` — written against the shared `supabase` client — by binding
+that module-level client to the service role for the call
+(`__setServerSupabaseClient`, reference-counted, always reset; the maintenance
+cron's pattern). That is safe only where each route runs in its own module
+instance (one serverless function per route — the model `lib/supabase.ts`
+assumes). A deploy that shares lib modules across routes in one long-lived
+process (`next start`, grouped functions) must first thread an explicit
+client through those three entry points; until then, any other route using
+the shared client during the window would run as the service role.
+
+> Made during projects Round G (2026-09-30), package J1 INTAKE-DOOR. Closed:
+> projects-and-cost `INTK-1`, `INTK-2`, `INTK-3`, `INTK-4`, `INTK-5`, `INTK-7`,
+> `INTK-8`, `INTK-9`, `INTK-10`, `INTK-11`, `INTK-13`, `PM-2` (its production
+> run of the orphan query pending the paste); projects-tab `SEC-1`, `SEC-3`,
+> `SEC-4`, `SEC-5`, `SEC-6`, `SEC-8`, `SEC-11`, `SEC-12`, `SEC-13`, `SEC-14`,
+> `SAF-5`, `SAF-10`, `SAF-11`, `SAF-12`, `SAF-13`, `SAF-15`, `REL-8`. Partial
+> and still OPEN: `INTK-6`, `INTK-14`, `SEC-16`, `SAF-9`, `COST-12` (its intake
+> limb landed); `INTK-12`'s Intake-tab limb landed but it stays open for its
+> owner. Opened: `INTK-15`, `SEC-19`. Not this package's: `SEC-7`, `SEC-9`,
+> `SEC-10`, `SAF-14`. Numbered DEC-50 on the package branch (DEC-44 … DEC-49
+> were taken); the integrator renumbers if needed.
 
 **Rationale.** The door is the one place an outside party writes into document
 control. Every earlier defect had the same shape: a fact the route itself
@@ -2427,10 +2471,10 @@ route — the portal shows outcome and reason in the meantime.
 
 **Acceptance.** Two submissions against an assigned document both land in
 review; a trusted link's revision of its own approved document publishes
-through `publish_revision` and a fresh acknowledgment roster opens; an HTML
-file named `.pdf` is refused before storage; the 31st upload in an hour is a
-429; a retry returns the original record; a gone project's link opens
-nothing (`lib/__tests__/intakeUploadRoute.test.ts`,
+through `publish_revision` and a fresh acknowledgment roster opens; reject F
+→ submit G → resend F lands in review; an HTML file named `.pdf` is refused
+before storage; the 31st upload in an hour is a 429; a retry returns the
+original record; a gone project's link opens nothing (`lib/__tests__/intakeUploadRoute.test.ts`,
 `lib/__tests__/intakeAutoPublishAcks.test.ts`,
 `lib/__tests__/intakeDoorMigration.test.ts`).
 
