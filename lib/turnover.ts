@@ -5,8 +5,11 @@
 // Each turnover item is one required content of the package (weld map, NDE
 // reports, MTRs…), seeded by job size, tracked open → received → accepted /
 // rejected / waived with the reviewer's name on the decision and — on
-// accept — the document that was reviewed (QUAL-13). Every decision also
-// lands as a turnover_review_events row (QUAL-11): a review history that is
+// accept — the document that was reviewed (QUAL-13). Every status change
+// also lands as a turnover_review_events row (QUAL-11) — written by the
+// DATABASE (20261091's trigger on turnover_items), in the same statement as
+// the decision, so a decision can never land without its history row and a
+// client can never write a history row of its own: a review history that is
 // never overwritten, in which a rejection is a nonconformance event the
 // scorecard and the report can read, and from which an accepted or waived
 // item can be reopened with a reason. Accepted items become evidence the
@@ -16,11 +19,12 @@
 //
 // Every decision write is a checked write (lib/checkedWrite.ts, GAP-402):
 // a refusal surfaces and audits nothing. Waive, reject, reopen and void
-// require a typed reason that meets the bar (SAF-4 / GAP-405, server-side).
+// require a typed reason that meets the bar (SAF-4 / GAP-405): checked here,
+// and enforced by the database for a write that bypasses this file.
 
 import { supabase } from "@/lib/supabase";
 import type { Actor } from "@/lib/costs";
-import { checkedWrite, describeWriteError } from "@/lib/checkedWrite";
+import { checkedWrite, describeWriteError, isMissingSchemaError } from "@/lib/checkedWrite";
 import { reasonProblem } from "@/lib/checklistEngine";
 
 export type TurnoverStatus = "open" | "received" | "accepted" | "rejected" | "waived";
@@ -188,14 +192,18 @@ export async function listTurnoverItems(orgId: string, projectId: string): Promi
   return (((data ?? []) as Array<Record<string, unknown>>)).map(mapItem);
 }
 
-/** The review history for a project's turnover items, oldest first. A
- *  missing table (pre-migration) is an empty history, not a failure — the
- *  items themselves still render. */
+/** The review history for a project's turnover items, oldest first. Only a
+ *  missing table (the migration not applied yet) is an empty history; any
+ *  other failure throws, so the surface says "history unavailable" instead
+ *  of hiding a nonconformance behind an empty list (UX-10). */
 export async function listTurnoverReviewEvents(orgId: string, projectId: string): Promise<TurnoverReviewEvent[]> {
   const { data, error } = await supabase.from("turnover_review_events").select("*")
     .eq("org_id", orgId).eq("project_id", projectId)
     .order("created_at", { ascending: true }).limit(1000);
-  if (error) return [];
+  if (error) {
+    if (isMissingSchemaError(error)) return [];
+    throw new Error(describeWriteError(error));
+  }
   return (((data ?? []) as Array<Record<string, unknown>>)).map(mapEvent);
 }
 
@@ -247,29 +255,17 @@ export async function addTurnoverItem(input: {
   return { ok: true };
 }
 
-/** Append one row to the review history. A refused or failed insert is
- *  reported — the status write already landed, so the caller says so. */
-async function recordReviewEvent(input: {
-  item: TurnoverItem; from: TurnoverStatus; to: TurnoverStatus; kind: TurnoverEventKind;
-  note: string | null; documentId: string | null; actor: Actor;
-}): Promise<{ ok: boolean; error?: string }> {
-  const w = await checkedWrite(supabase.from("turnover_review_events").insert({
-    org_id: input.item.orgId, project_id: input.item.projectId, item_id: input.item.id,
-    from_status: input.from, to_status: input.to, kind: input.kind,
-    reviewer: input.actor.uid, reviewer_name: actorName(input.actor),
-    note: input.note, document_id: input.documentId,
-  }).select("id"));
-  return w.ok ? { ok: true } : { ok: false, error: w.error };
-}
-
 /**
  * Move one item through the review: mark received (optionally attaching the
  * submitted document), then accepted / rejected / waived — decisions stamp
- * the reviewer's name and note, and an accept records the document that was
- * reviewed (QUAL-13). Reject and waive REQUIRE a reason that meets the bar
- * (SAF-4). The prior decision survives as a turnover_review_events row —
- * a rejection as a `nonconformance` event (QUAL-11). Acceptance rates feed
- * the contractor's scorecard, so the decision is the record.
+ * the reviewer's name, date and note (a fresh reviewed_at is what tells the
+ * database's history trigger to carry the name and note into the event row),
+ * and an accept records the document that was reviewed (QUAL-13). Reject and
+ * waive REQUIRE a reason that meets the bar (SAF-4). The database appends
+ * the turnover_review_events row in the same statement — a rejection as a
+ * `nonconformance` event (QUAL-11) — so there is no second request that
+ * could fail after the decision landed. Acceptance rates feed the
+ * contractor's scorecard, so the decision is the record.
  */
 export async function reviewTurnoverItem(input: {
   item: TurnoverItem;
@@ -298,21 +294,18 @@ export async function reviewTurnoverItem(input: {
     itemId: item.id, name: item.name, from: item.status, status: input.status, note,
     documentId: input.documentId ?? item.documentId ?? null,
   });
-  if (input.status === "accepted" || input.status === "rejected" || input.status === "waived") {
-    const ev = await recordReviewEvent({
-      item, from: item.status, to: input.status,
-      kind: input.status === "rejected" ? "nonconformance" : "review",
-      note, documentId: input.documentId ?? item.documentId ?? null, actor: input.actor,
-    });
-    if (!ev.ok) return { ok: false, error: `The item is now ${input.status}, but the review history row was not written: ${ev.error}` };
-  }
   return { ok: true };
 }
 
 /** Reopen an accepted or waived item for re-review (QUAL-11): the item goes
- *  back to "received — awaiting review", the acceptance survives in the
- *  history, and the reason goes on the record. Authority is the write
- *  policy's (a controller or the project owner). */
+ *  back to "received — awaiting review" and the row carries WHO reopened it,
+ *  WHEN and WHY (the reason is the row's review note, which the database
+ *  requires — at least 10 characters — for any move out of accepted /
+ *  waived). The acceptance itself is never lost: its history row was written
+ *  when it was decided (or backfilled by 20261091 for a decision made before
+ *  the history existed), and the reopen appends a `reopen` row in the same
+ *  statement. Authority is the write policy's (a controller or the project
+ *  owner). */
 export async function reopenTurnoverItem(input: {
   item: TurnoverItem; reason: string; actor: Actor;
 }): Promise<{ ok: boolean; error?: string }> {
@@ -325,17 +318,15 @@ export async function reopenTurnoverItem(input: {
   if (problem) return { ok: false, error: problem };
   const w = await checkedWrite(supabase.from("turnover_items").update({
     status: "received",
-    reviewed_at: null, reviewed_by: null, reviewed_by_name: null, review_note: null,
+    reviewed_at: new Date().toISOString(), reviewed_by: input.actor.uid,
+    reviewed_by_name: actorName(input.actor), review_note: reason,
   }).eq("id", item.id).eq("status", item.status).select("id"));
   if (!w.ok) return { ok: false, error: w.error };
   await audit("TURNOVER_REOPENED", item.orgId, item.projectId, input.actor, {
     itemId: item.id, name: item.name, from: item.status, reason,
+    // the decision being reopened, as the row carried it
+    prior: { reviewedByName: item.reviewedByName, reviewedAt: item.reviewedAt, note: item.reviewNote, documentId: item.documentId },
   });
-  const ev = await recordReviewEvent({
-    item, from: item.status, to: "received", kind: "reopen", note: reason,
-    documentId: item.documentId, actor: input.actor,
-  });
-  if (!ev.ok) return { ok: false, error: `The item was reopened, but the review history row was not written: ${ev.error}` };
   return { ok: true };
 }
 
@@ -381,12 +372,16 @@ export async function addPunchItem(input: {
   actor: Actor;
 }): Promise<{ ok: boolean; error?: string }> {
   if (!input.title.trim()) return { ok: false, error: "Describe the punch item." };
+  // description / location are 20261091 columns: sent only when filled, so
+  // adding a plain punch item keeps working before the migration is applied.
+  const description = input.description?.trim() || null;
+  const location = input.location?.trim() || null;
   const w = await checkedWrite(supabase.from("punch_items").insert({
     org_id: input.orgId, project_id: input.projectId,
     party_id: input.partyId ?? null,
     title: input.title.trim(), due_date: input.dueDate || null,
-    description: input.description?.trim() || null,
-    location: input.location?.trim() || null,
+    ...(description ? { description } : {}),
+    ...(location ? { location } : {}),
     created_by: input.actor.uid,
     created_by_name: actorName(input.actor),
   }).select("id"));

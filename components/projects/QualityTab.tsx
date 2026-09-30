@@ -16,8 +16,10 @@
 //   — and marks the rest needs_evidence, which feeds the coach.
 //   A human override always wins and is never touched again. Every
 //   decision needs a typed reason; a machine-verified item is labelled as
-//   such, separately from a human decision, and a person can Verify it —
-//   only a checklist whose every green carries a person is citable (QUAL-2).
+//   such, separately from a human decision, and a person can Verify it (and
+//   Confirm an N/A the assessment proposed) — only a checklist where a person
+//   stands behind every green and every N/A is citable (QUAL-2). Mark
+//   complete re-checks the evidence first (QUAL-1).
 //
 //   Turnover: the quality-package contents this job requires, seeded by job
 //   size, each tracked open → received → accepted/rejected/waived with the
@@ -46,7 +48,7 @@ import {
   listTurnoverItems, listTurnoverReviewEvents, seedTurnoverItems, addTurnoverItem, reviewTurnoverItem, reopenTurnoverItem,
   listPunchItems, addPunchItem, setPunchStatus, computeTurnoverProgress,
 } from "@/lib/turnover";
-import { type SegmentedItem, isAutoOnlyGreen, isMachineActorName, REASON_MIN_LENGTH } from "@/lib/checklistEngine";
+import { type SegmentedItem, isAutoOnlyGreen, isHumanGreen, isUnreasonedNa, isMachineActorName, REASON_MIN_LENGTH } from "@/lib/checklistEngine";
 import { NOT_CURRENT_STATUSES } from "@/lib/aiBoundary";
 import { appPrompt } from "@/components/providers/DialogProvider";
 
@@ -65,7 +67,7 @@ const failure = (text: string): NoticeState => ({ tone: "error", text });
 const success = (text: string): NoticeState => ({ tone: "success", text });
 const info = (text: string): NoticeState => ({ tone: "info", text });
 
-function Notice({ notice, onClose, action }: { notice: NoticeState | null; onClose: () => void; action?: React.ReactNode }) {
+function Notice({ notice, onClose, action }: { notice: NoticeState | null; onClose?: () => void; action?: React.ReactNode }) {
   if (!notice) return null;
   const tone = notice.tone === "error"
     ? "border-rose-500/50 bg-rose-500/[0.08] text-rose-700 dark:text-rose-300"
@@ -78,7 +80,7 @@ function Notice({ notice, onClose, action }: { notice: NoticeState | null; onClo
       className={`flex items-center gap-2 rounded-xl border px-3 py-2 text-xs font-bold ${tone}`}>
       <Icon className="w-4 h-4 shrink-0" /> <span className="min-w-0 flex-1">{notice.text}</span>
       {action}
-      <button type="button" onClick={onClose} aria-label="Dismiss" className="opacity-70 hover:opacity-100"><X className="w-3.5 h-3.5" /></button>
+      {onClose && <button type="button" onClick={onClose} aria-label="Dismiss" className="opacity-70 hover:opacity-100"><X className="w-3.5 h-3.5" /></button>}
     </div>
   );
 }
@@ -96,7 +98,8 @@ export default function QualityTab({ orgId, projectId, canManage, uid, userEmail
   onDataChanged?: () => void;
 }) {
   const actor: Actor = useMemo(() => ({ uid, email: userEmail ?? null }), [uid, userEmail]);
-  const [loadError, setLoadError] = useState<string | null>(null);
+  /** Per read: each section shows its own data or its own failure (UX-10). */
+  const [loadErrors, setLoadErrors] = useState<{ checklists?: string; turnover?: string; history?: string; punch?: string }>({});
   const [checklists, setChecklists] = useState<Checklist[]>([]);
   const [turnover, setTurnover] = useState<TurnoverItem[]>([]);
   const [events, setEvents] = useState<TurnoverReviewEvent[]>([]);
@@ -104,20 +107,22 @@ export default function QualityTab({ orgId, projectId, canManage, uid, userEmail
   const [loading, setLoading] = useState(true);
 
   const refresh = useCallback(async () => {
-    try {
-      const [cl, to, ev, pu] = await Promise.all([
-        listChecklists(orgId, projectId),
-        listTurnoverItems(orgId, projectId),
-        listTurnoverReviewEvents(orgId, projectId),
-        listPunchItems(orgId, projectId),
-      ]);
-      setChecklists(cl); setTurnover(to); setEvents(ev); setPunch(pu);
-      setLoadError(null);
-    } catch (e) {
-      // UX-10: a denied policy or a missing migration is a failure to load,
-      // never "No checklists yet".
-      setLoadError((e as Error).message);
-    } finally { setLoading(false); }
+    // allSettled: one failing read never hides the three that answered, and
+    // a denied policy or a missing migration is a failure to load — never
+    // "No checklists yet" (UX-10).
+    const [cl, to, ev, pu] = await Promise.allSettled([
+      listChecklists(orgId, projectId),
+      listTurnoverItems(orgId, projectId),
+      listTurnoverReviewEvents(orgId, projectId),
+      listPunchItems(orgId, projectId),
+    ]);
+    const why = (r: PromiseSettledResult<unknown>) => (r.status === "rejected" ? String((r.reason as Error)?.message ?? r.reason) : undefined);
+    setChecklists(cl.status === "fulfilled" ? cl.value : []);
+    setTurnover(to.status === "fulfilled" ? to.value : []);
+    setEvents(ev.status === "fulfilled" ? ev.value : []);
+    setPunch(pu.status === "fulfilled" ? pu.value : []);
+    setLoadErrors({ checklists: why(cl), turnover: why(to), history: why(ev), punch: why(pu) });
+    setLoading(false);
     onDataChanged?.();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [orgId, projectId]);
@@ -125,28 +130,36 @@ export default function QualityTab({ orgId, projectId, canManage, uid, userEmail
 
   if (loading) return <div className="py-12 flex justify-center"><Loader2 className="w-5 h-5 animate-spin text-[var(--color-accent)]" /></div>;
 
+  const retry = () => void refresh();
   return (
     <div className="space-y-4">
-      {loadError && (
-        <Notice notice={failure(`The quality program couldn't be loaded — ${loadError}`)} onClose={() => setLoadError(null)}
-          action={<button type="button" onClick={() => void refresh()} className="underline">Retry</button>} />
-      )}
-
       <ChecklistsSection orgId={orgId} projectId={projectId} canManage={canManage} actor={actor}
-        checklists={checklists} onChanged={() => void refresh()} />
+        checklists={checklists} loadError={loadErrors.checklists} onRetry={retry} onChanged={retry} />
       <TurnoverSection orgId={orgId} projectId={projectId} canManage={canManage} actor={actor}
-        items={turnover} events={events} jobKind={jobKind} onChanged={() => void refresh()} />
+        items={turnover} events={events} loadError={loadErrors.turnover} historyError={loadErrors.history} onRetry={retry}
+        jobKind={jobKind} onChanged={retry} />
       <PunchSection orgId={orgId} projectId={projectId} canManage={canManage} actor={actor}
-        items={punch} onChanged={() => void refresh()} />
+        items={punch} loadError={loadErrors.punch} onRetry={retry} onChanged={retry} />
+    </div>
+  );
+}
+
+/** A section whose read failed: the failure, a Retry — never the empty
+ *  state, and no add / seed control over a list nobody could see (UX-10). */
+function LoadFailed({ what, error, onRetry }: { what: string; error: string; onRetry: () => void }) {
+  return (
+    <div className="px-4 py-3">
+      <Notice notice={failure(`${what} couldn't be loaded — ${error}`)}
+        action={<button type="button" onClick={onRetry} className="underline">Retry</button>} />
     </div>
   );
 }
 
 // ── Checklists ───────────────────────────────────────────────────────────
 
-function ChecklistsSection({ orgId, projectId, canManage, actor, checklists, onChanged }: {
+function ChecklistsSection({ orgId, projectId, canManage, actor, checklists, loadError, onRetry, onChanged }: {
   orgId: string; projectId: string; canManage: boolean; actor: Actor;
-  checklists: Checklist[]; onChanged: () => void;
+  checklists: Checklist[]; loadError?: string; onRetry: () => void; onChanged: () => void;
 }) {
   const [showNew, setShowNew] = useState(false);
   const [notice, setNotice] = useState<NoticeState | null>(null);
@@ -156,7 +169,7 @@ function ChecklistsSection({ orgId, projectId, canManage, actor, checklists, onC
         <ClipboardCheck className="w-4 h-4 text-[var(--color-accent)]" />
         <span className="text-sm font-bold text-[var(--color-text)]">Checklists — PSSR, MI, QA/QC</span>
         <span className="text-[10px] text-[var(--color-text-muted)]">The system reads them, works out what applies, and tracks the gaps.</span>
-        {canManage && (
+        {canManage && !loadError && (
           <button onClick={() => setShowNew((v) => !v)}
             className="ml-auto inline-flex items-center gap-1 px-2.5 py-1 rounded-lg bg-[var(--color-accent)] text-[var(--color-accent-fg)] text-[11px] font-black hover:bg-[var(--color-accent-hover)] transition-colors">
             <Plus className="w-3 h-3" /> New from document
@@ -166,12 +179,14 @@ function ChecklistsSection({ orgId, projectId, canManage, actor, checklists, onC
 
       {notice && <div className="px-4 pt-3"><Notice notice={notice} onClose={() => setNotice(null)} /></div>}
 
-      {showNew && canManage && (
+      {showNew && canManage && !loadError && (
         <NewChecklistFlow orgId={orgId} projectId={projectId} actor={actor}
           onDone={() => { setShowNew(false); onChanged(); }} onCancel={() => setShowNew(false)} notify={setNotice} />
       )}
 
-      {checklists.filter((c) => c.status !== "void").length === 0 ? (
+      {loadError ? (
+        <LoadFailed what="The checklists" error={loadError} onRetry={onRetry} />
+      ) : checklists.filter((c) => c.status !== "void").length === 0 ? (
         <div className="px-4 py-8 text-center">
           <ClipboardCheck className="w-7 h-7 mx-auto text-[var(--color-text-faint)] mb-2" />
           <div className="text-sm font-bold text-[var(--color-text)]">No checklists yet</div>
@@ -380,6 +395,18 @@ function ChecklistCard({ orgId, projectId, checklist, canManage, actor, onChange
   /** Greens the sweep set that no person has verified — each one makes the
    *  completion 'auto' (not citable) until a person verifies it (QUAL-2). */
   const autoGreens = useMemo(() => (items ?? []).filter(isAutoOnlyGreen).length, [items]);
+  /** N/As no person gave a reason for (the assessment's) — each keeps the
+   *  completion 'auto' until a person confirms it (QUAL-2). */
+  const unreasonedNa = useMemo(() => (items ?? []).filter(isUnreasonedNa).length, [items]);
+  const humanGreens = useMemo(() => (items ?? []).filter(isHumanGreen).length, [items]);
+  /** Sweep greens whose cited document has left Issued / Locked (or can no
+   *  longer be read) — Mark complete refuses them (QUAL-1); mirrored here so
+   *  the button says why before the server does. */
+  const staleGreens = useMemo(() => (items ?? []).filter((it) => isAutoOnlyGreen(it) && it.evidence.some((e) => {
+    if (e.source !== "auto" || !e.documentId) return false;
+    const d = docs[e.documentId];
+    return d ? NOT_CURRENT_STATUSES.has(d.status ?? "") || d.status === "Draft" : docsChecked;
+  })).length, [items, docs, docsChecked]);
 
   const assess = async () => {
     setBusy("assess"); setNotice(null);
@@ -460,12 +487,18 @@ function ChecklistCard({ orgId, projectId, checklist, canManage, actor, onChange
     return [...by.entries()];
   }, [items]);
 
-  const completeBlocked = progress != null && (progress.total === 0 || blocking > 0);
+  const completeBlocked = progress != null && (progress.total === 0 || blocking > 0 || staleGreens > 0);
+  const autoReasons = [
+    autoGreens > 0 ? `${autoGreens} green${autoGreens === 1 ? " rests" : "s rest"} on the evidence sweep alone (✓ Verify)` : null,
+    unreasonedNa > 0 ? `${unreasonedNa} N/A${unreasonedNa === 1 ? " carries" : "s carry"} no person's reason (✓ Confirm N/A)` : null,
+    humanGreens === 0 ? "no green item was decided by a person" : null,
+  ].filter((x): x is string => Boolean(x));
   const completeTitle = progress == null ? "Loading items…"
     : progress.total === 0 ? "No items — nothing to verify, so this checklist cannot be completed."
     : blocking > 0 ? `${blocking} item${blocking === 1 ? " is" : "s are"} not satisfied yet — a checklist only completes when every applicable item is green or N/A.`
-    : autoGreens > 0 ? `Every applicable item is green or N/A, but ${autoGreens} green${autoGreens === 1 ? " rests" : "s rest"} on the evidence sweep alone — completing now records this checklist as "auto", which no other checklist can cite. Verify ${autoGreens === 1 ? "it" : "them"} first to sign it off.`
-    : "Every applicable item is green or N/A, and every green carries a person's decision.";
+    : staleGreens > 0 ? `${staleGreens} green item${staleGreens === 1 ? " rests" : "s rest"} on a document that is no longer current — run "Check evidence we already hold" first.`
+    : autoReasons.length > 0 ? `Every applicable item is green or N/A, but ${autoReasons.join("; ")} — completing now records this checklist as "auto", which no other checklist can cite.`
+    : "Every applicable item is green or N/A, and a person stands behind every green and every N/A.";
 
   return (
     <div>
@@ -475,7 +508,7 @@ function ChecklistCard({ orgId, projectId, checklist, canManage, actor, onChange
         <span className="text-[9px] font-bold uppercase tracking-wider text-[var(--color-text-muted)]">{CHECKLIST_KIND_LABEL[checklist.kind]}</span>
         {checklist.status === "complete" && (
           <span className="inline-flex items-center gap-0.5 text-[9px] font-black uppercase text-emerald-700 dark:text-emerald-300"
-            title={checklist.completedBasis === "human" ? "Completed on human sign-off — every green item carries a person's decision" : checklist.completedBasis === "auto" ? "Completed while at least one green item rested on the evidence sweep alone — not citable as proof by another checklist" : "Completed"}>
+            title={checklist.completedBasis === "human" ? "Completed on human sign-off — a person stands behind every green and every N/A" : checklist.completedBasis === "auto" ? "Completed while a green rested on the evidence sweep alone, an N/A carried no person's reason, or no green was a person's decision — not citable as proof by another checklist" : "Completed"}>
             <ShieldCheck className="w-3 h-3" /> complete{checklist.completedBasis === "auto" ? " (auto)" : ""}
           </span>
         )}
@@ -509,7 +542,7 @@ function ChecklistCard({ orgId, projectId, checklist, canManage, actor, onChange
               {completeBlocked && progress && (
                 <span className="basis-full text-[10px] text-[var(--color-text-muted)]">{completeTitle}</span>
               )}
-              {!completeBlocked && progress && autoGreens > 0 && (
+              {!completeBlocked && progress && autoReasons.length > 0 && (
                 <span className="basis-full text-[10px] font-bold text-amber-700 dark:text-amber-300">{completeTitle}</span>
               )}
             </div>
@@ -525,7 +558,7 @@ function ChecklistCard({ orgId, projectId, checklist, canManage, actor, onChange
                 if (ticked.has(id)) ticked.delete(id); else ticked.add(id);
                 return { ...r, ticked };
               })}
-              onTickAll={() => setReview((r) => r ? { ...r, ticked: new Set(r.proposals.filter((p) => !(p.applicability === "na" && p.current.protectedFromDowngrade) && !p.current.humanDecided).map((p) => p.itemId)) } : r)}
+              onTickAll={() => setReview((r) => r ? { ...r, ticked: new Set([...r.ticked, ...r.proposals.filter((p) => p.applicability !== "na" && !p.current.humanDecided).map((p) => p.itemId)]) } : r)}
               onClear={() => setReview((r) => r ? { ...r, ticked: new Set() } : r)}
               onApply={() => void applyReview()} onCancel={() => setReview(null)} />
           )}
@@ -586,8 +619,14 @@ function AssessmentReview({ review, busy, onToggle, onTickAll, onClear, onApply,
           <span>{protectedNa.length} of the proposed N/As target{protectedNa.length === 1 ? "s" : ""} an item that is already satisfied or has evidence attached. The assessment will not change {protectedNa.length === 1 ? "it" : "them"} — if one really is not applicable, use its own N/A control and say why.</span>
         </div>
       )}
+      {na.length > 0 && (
+        <div className="text-[10px] text-[var(--color-text-muted)]">
+          N/A proposals are ticked one by one. An applied N/A carries no reason of yours, so a checklist completed with it is recorded as &quot;auto&quot; until you confirm it on the item.
+        </div>
+      )}
       <div className="flex items-center gap-2 text-[10px] font-bold">
-        <button type="button" onClick={onTickAll} className="underline text-[var(--color-text-muted)]">Tick every applicable proposal</button>
+        <button type="button" onClick={onTickAll} className="underline text-[var(--color-text-muted)]"
+          title="Ticks every proposal that keeps an item in scope — never an N/A">Tick every in-scope proposal</button>
         <button type="button" onClick={onClear} className="underline text-[var(--color-text-muted)]">Clear</button>
         <span className="ml-auto tabular-nums text-[var(--color-text-muted)]">{review.ticked.size} ticked</span>
       </div>
@@ -636,6 +675,10 @@ function ChecklistItemRow({ orgId, projectId, item, docs, docsChecked, canManage
   const [busy, setBusy] = useState(false);
   const na = item.applicability === "na" || item.status === "na";
   const machine = item.status === "satisfied" && !item.manualNote && isMachineActorName(item.updatedByName);
+  // An N/A no person gave a reason for (the assessment's): a person can
+  // Confirm it — their reason goes on the row, and the completion can then
+  // be citable (QUAL-2).
+  const unreasonedNa = isUnreasonedNa(item);
   // A green no person has verified (the sweep's, or a legacy one): a person
   // can Verify it — the row gains their note, uid and name, the sweep's
   // citation chip stays, and the sweep keeps its hands off from then on.
@@ -676,6 +719,11 @@ function ChecklistItemRow({ orgId, projectId, item, docs, docsChecked, canManage
               Machine-verified ({item.updatedByName}){item.updatedAt ? ` · ${new Date(item.updatedAt).toLocaleDateString()}` : ""} — not a human sign-off{canManage ? " · Verify to sign it off" : ""}
             </div>
           )}
+          {unreasonedNa && (
+            <div className="mt-0.5 text-[10px] font-bold text-amber-700 dark:text-amber-300" title="An N/A the AI assessment applied (or a legacy one) carries no reason — ticking a proposal is not a reason, so a completion containing this N/A is recorded as auto.">
+              N/A with no person&apos;s reason on record{item.updatedByName ? ` — set by ${item.updatedByName}` : ""}{canManage ? " · Confirm N/A to sign it off" : ""}
+            </div>
+          )}
           {item.evidence.length > 0 && (
             <div className="mt-1 flex flex-wrap gap-1">
               {item.evidence.map((e, i) => <EvidenceChip key={i} chip={e} doc={e.documentId ? docs[e.documentId] : undefined} checked={docsChecked} />)}
@@ -697,6 +745,12 @@ function ChecklistItemRow({ orgId, projectId, item, docs, docsChecked, canManage
             {!na && (
               <button onClick={() => void override({ applicability: "na", status: "na" }, "Mark not applicable")}
                 className="px-1.5 py-0.5 rounded text-[10px] font-bold text-[var(--color-text-muted)] hover:bg-[var(--color-surface-2)]" title="Not applicable to this job — your reason goes on the record">N/A</button>
+            )}
+            {unreasonedNa && (
+              <button onClick={() => void override({ applicability: "na", status: "na" }, "Confirm not applicable",
+                "Say why this item does not apply to this job. Your reason goes on the record with your name and makes this N/A your decision.")}
+                className="px-1.5 py-0.5 rounded text-[10px] font-bold text-[var(--color-text-muted)] hover:bg-[var(--color-surface-2)]"
+                title="Confirm the assessment's N/A yourself — only a checklist where a person stands behind every N/A can be cited as proof elsewhere">✓ Confirm N/A</button>
             )}
             {na && (
               <button onClick={() => void override({ applicability: "applies", status: "open" }, "Reopen this item")}
@@ -800,9 +854,12 @@ function DocPicker({ orgId, title, onPick, onSkip, onCancel }: {
   );
 }
 
-function TurnoverSection({ orgId, projectId, canManage, actor, items, events, jobKind, onChanged }: {
+function TurnoverSection({ orgId, projectId, canManage, actor, items, events, loadError, historyError, onRetry, jobKind, onChanged }: {
   orgId: string; projectId: string; canManage: boolean; actor: Actor;
-  items: TurnoverItem[]; events: TurnoverReviewEvent[]; jobKind: string | null;
+  items: TurnoverItem[]; events: TurnoverReviewEvent[];
+  /** The items' read failed / the history's read failed (UX-10). */
+  loadError?: string; historyError?: string; onRetry: () => void;
+  jobKind: string | null;
   onChanged: () => void;
 }) {
   const [busy, setBusy] = useState<string | null>(null);
@@ -887,7 +944,7 @@ function TurnoverSection({ orgId, projectId, canManage, actor, items, events, jo
             {progress.accepted}/{progress.required} accepted{progress.waived > 0 ? ` · ${progress.waived} waived` : ""}{progress.received > 0 ? ` · ${progress.received} awaiting review` : ""}
           </span>
         )}
-        {canManage && (
+        {canManage && !loadError && (
           <button onClick={() => void seed()} disabled={busy != null}
             className="ml-auto inline-flex items-center gap-1 px-2.5 py-1 rounded-lg border border-[var(--color-border-strong)] text-[11px] font-bold text-[var(--color-text)] hover:bg-[var(--color-surface-2)] disabled:opacity-50 transition-colors"
             title={`Adds the required contents for a ${jobKind ?? "standard"} job (existing items are kept).`}>
@@ -898,7 +955,15 @@ function TurnoverSection({ orgId, projectId, canManage, actor, items, events, jo
 
       {notice && <div className="px-4 pt-3"><Notice notice={notice} onClose={() => setNotice(null)} /></div>}
 
-      {items.length === 0 ? (
+      {!loadError && historyError && items.length > 0 && (
+        <div role="alert" className="px-4 pt-2 text-[10px] font-bold text-rose-700 dark:text-rose-300">
+          Review history unavailable — {historyError} · <button type="button" onClick={onRetry} className="underline">Retry</button>
+        </div>
+      )}
+
+      {loadError ? (
+        <LoadFailed what="The turnover package" error={loadError} onRetry={onRetry} />
+      ) : items.length === 0 ? (
         <div className="px-4 py-6 text-center text-xs text-[var(--color-text-muted)]">
           Nothing required yet. Seed the standard contents for this job size, or add items by hand —
           then track what the contractor has actually delivered and whether QA/QC accepted it.
@@ -982,7 +1047,7 @@ function TurnoverSection({ orgId, projectId, canManage, actor, items, events, jo
         </ul>
       )}
 
-      {canManage && (
+      {canManage && !loadError && (
         <div className="px-4 py-2.5 border-t border-[var(--color-border)] flex items-center gap-2">
           <input value={addName} onChange={(e) => setAddName(e.target.value)}
             onKeyDown={(e) => { if (e.key === "Enter" && addName.trim()) { void (async () => { const r = await addTurnoverItem({ orgId, projectId, name: addName, actor }); if (!r.ok) setNotice(failure(r.error ?? "Couldn't add.")); else { setAddName(""); onChanged(); } })(); } }}
@@ -1013,9 +1078,9 @@ function TurnoverChip({ status }: { status: TurnoverItem["status"] }) {
 
 // ── Punch list ───────────────────────────────────────────────────────────
 
-function PunchSection({ orgId, projectId, canManage, actor, items, onChanged }: {
+function PunchSection({ orgId, projectId, canManage, actor, items, loadError, onRetry, onChanged }: {
   orgId: string; projectId: string; canManage: boolean; actor: Actor;
-  items: PunchItem[]; onChanged: () => void;
+  items: PunchItem[]; loadError?: string; onRetry: () => void; onChanged: () => void;
 }) {
   const [title, setTitle] = useState("");
   const [location, setLocation] = useState("");
@@ -1062,7 +1127,7 @@ function PunchSection({ orgId, projectId, canManage, actor, items, onChanged }: 
 
       {notice && <div className="px-4 pt-3"><Notice notice={notice} onClose={() => setNotice(null)} /></div>}
 
-      {canManage && (
+      {canManage && !loadError && (
         <div className="px-4 py-2.5 border-b border-[var(--color-border)] flex items-center gap-2 flex-wrap">
           <input value={title} onChange={(e) => setTitle(e.target.value)}
             onKeyDown={(e) => { if (e.key === "Enter") void add(); }}
@@ -1083,7 +1148,9 @@ function PunchSection({ orgId, projectId, canManage, actor, items, onChanged }: 
         </div>
       )}
 
-      {items.length === 0 ? (
+      {loadError ? (
+        <LoadFailed what="The punch list" error={loadError} onRetry={onRetry} />
+      ) : items.length === 0 ? (
         <div className="px-4 py-5 text-center text-xs text-[var(--color-text-muted)]">Nothing on the punch list.</div>
       ) : (
         <ul className="divide-y divide-[var(--color-border)]">

@@ -44,15 +44,24 @@ interface PgErrorLike { message: string; code?: string | null }
  *  table) — the shapes a write or read meets before its migration lands. */
 const MISSING_SCHEMA_CODES = new Set(["42P01", "42703", "PGRST204", "PGRST205"]);
 
+/** True for the shapes a read or write meets before its migration lands —
+ *  a caller that may treat "not there yet" as empty (and nothing else) asks
+ *  this, so a denial or an outage never reads as an empty list (UX-10). */
+export function isMissingSchemaError(err: PgErrorLike): boolean {
+  const code = err.code ?? "";
+  const msg = err.message ?? "";
+  return MISSING_SCHEMA_CODES.has(code)
+    || /relation "[^"]+" does not exist/i.test(msg)
+    || /column "[^"]+"( of relation "[^"]+")? does not exist/i.test(msg)
+    || /in the schema cache/i.test(msg);
+}
+
 /** Plain language for the two error shapes the Projects area meets most,
  *  the raw message for the rest (never thrown, always returned). */
 export function describeWriteError(err: PgErrorLike): string {
   const code = err.code ?? "";
   const msg = err.message ?? "";
-  if (MISSING_SCHEMA_CODES.has(code)
-    || /relation "[^"]+" does not exist/i.test(msg)
-    || /column "[^"]+"( of relation "[^"]+")? does not exist/i.test(msg)
-    || /in the schema cache/i.test(msg)) {
+  if (isMissingSchemaError(err)) {
     return "This needs the latest database migration applied — nothing was changed.";
   }
   if (code === "42501" || /row-level security/i.test(msg)) {

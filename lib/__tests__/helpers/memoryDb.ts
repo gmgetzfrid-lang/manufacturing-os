@@ -27,6 +27,10 @@ export interface MemoryState {
   /** Called after each read of `table` resolves — a hook for "someone else
    *  changed the row between the read and the write". */
   onRead?: (table: string) => void;
+  /** Called with the rows a write landed on — a stand-in for a database
+   *  trigger (e.g. 20261091's completion-basis rail) in a test that needs
+   *  to show what the lib does with the value the database recorded. */
+  afterWrite?: (table: string, method: string, rows: Array<Record<string, unknown>>) => void;
   nextId: number;
 }
 
@@ -35,7 +39,7 @@ export const freshState = (): MemoryState => ({
 });
 
 export function resetState(s: MemoryState) {
-  s.tables = {}; s.calls = []; s.writes = []; s.refuse = false; s.writeError = null; s.tableWriteError = undefined; s.readError = {}; s.onRead = undefined; s.nextId = 1;
+  s.tables = {}; s.calls = []; s.writes = []; s.refuse = false; s.writeError = null; s.tableWriteError = undefined; s.readError = {}; s.onRead = undefined; s.afterWrite = undefined; s.nextId = 1;
 }
 
 type Filter = [string, unknown];
@@ -90,6 +94,7 @@ export function makeSupabase(state: MemoryState) {
         state.tables[table] = (state.tables[table] ?? []).filter((r) => !landed.includes(r));
       }
       state.writes.push({ table, method: w.method, payload: w.payload, filters: [...filters], matched: landed.length });
+      state.afterWrite?.(table, w.method, landed);
       return { data: landed.map((r) => ({ ...r })), error: null };
     };
 

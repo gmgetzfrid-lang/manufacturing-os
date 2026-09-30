@@ -14,7 +14,7 @@
 import { describe, it, expect } from "vitest";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
-import { checkedWrite, describeWriteError, CHECKED_WRITE_REFUSED } from "@/lib/checkedWrite";
+import { checkedWrite, describeWriteError, isMissingSchemaError, CHECKED_WRITE_REFUSED } from "@/lib/checkedWrite";
 
 describe("checkedWrite", () => {
   it("zero rows ⇒ refused (the RLS shape: { data: [], error: null })", async () => {
@@ -45,8 +45,8 @@ describe("checkedWrite", () => {
     expect(describeWriteError({ message: "" })).toMatch(/write failed/);
   });
   it("a pending migration in PostgREST's schema-cache shapes (PGRST204 / PGRST205) and raw 42703 reads as the migration message, never raw text", async () => {
-    // What setChecklistStatus (completed_basis), setPunchStatus (closed_by_name…)
-    // and the turnover_review_events insert actually meet before 20261091.
+    // What setPunchStatus (closed_by_name…), a punch add with a location or
+    // details, and a history read actually meet before 20261091.
     const column = { message: "Could not find the 'completed_basis' column of 'project_checklists' in the schema cache", code: "PGRST204" };
     const table = { message: "Could not find the table 'public.turnover_review_events' in the schema cache", code: "PGRST205" };
     const rawColumn = { message: 'column "closed_by_name" of relation "punch_items" does not exist', code: "42703" };
@@ -61,6 +61,18 @@ describe("checkedWrite", () => {
     expect(describeWriteError({ message: rawColumn.message })).toMatch(/latest database migration/);
     // …and an unrelated PostgREST error still carries its own message
     expect(describeWriteError({ message: "JSON object requested, multiple (or no) rows returned", code: "PGRST116" })).toBe("JSON object requested, multiple (or no) rows returned");
+  });
+  it("isMissingSchemaError is true for the pending-migration shapes only — a denial or an outage is never 'not there yet'", () => {
+    for (const e of [
+      { message: "x", code: "42P01" }, { message: "x", code: "42703" }, { message: "x", code: "PGRST204" }, { message: "x", code: "PGRST205" },
+      { message: 'relation "public.turnover_review_events" does not exist' },
+      { message: "Could not find the table 'public.turnover_review_events' in the schema cache" },
+    ]) expect(isMissingSchemaError(e), JSON.stringify(e)).toBe(true);
+    for (const e of [
+      { message: "permission denied for table turnover_review_events", code: "42501" },
+      { message: "upstream request timeout", code: "PGRST000" },
+      { message: "fetch failed" },
+    ]) expect(isMissingSchemaError(e), JSON.stringify(e)).toBe(false);
   });
 });
 

@@ -16,8 +16,12 @@
 //   QUAL-6           the machine paths stamp updated_by NULL + a sentinel.
 //   QUAL-8 / UX-10   a failed item read blocks completion; zero items block
 //                    completion; list reads throw instead of returning [].
-//   QUAL-2           completion records its basis; only 'human' MI
-//                    completions feed miChecklistComplete.
+//   QUAL-1           Mark complete re-checks the evidence: a sweep green whose
+//                    document has left the register refuses the completion.
+//   QUAL-2           the completion basis is the database's to record (the
+//                    write sends the status only, the stored value is read
+//                    back); an N/A without a person's reason keeps it 'auto';
+//                    only 'human' MI completions feed miChecklistComplete.
 //   QUAL-12          item rows take org_id from the header row.
 //   PERF-7           writes are batched (parallel, WRITE_BATCH per batch)
 //                    and guarded on updated_at (a concurrent change refuses).
@@ -238,9 +242,35 @@ describe("updateChecklistItem", () => {
   });
 });
 
-// ── setChecklistStatus (QUAL-8 / QUAL-2 / SAF-3) ─────────────────────────
+// ── setChecklistStatus (QUAL-8 / QUAL-1 / QUAL-2 / SAF-3) ────────────────
+const register = () => {
+  state.tables.projects = [{ id: "p1", intake_collection_id: "intake", sow_document_id: null }];
+  state.tables.turnover_items = []; state.tables.assets = [];
+  state.tables.documents = [doc({ id: "d1", title: "E-301 Hydrotest Report" })];
+  state.tables.document_versions = [{ id: "v1", record_id: "d1", provenance: "internal", review_state: null }];
+};
+const HYDRO_CHIP = { label: 'Document on file: "E-301 Hydrotest Report"', documentId: "d1", source: "auto" };
+/** A stand-in for 20261091's completion-basis rail: the database records
+ *  the basis from the items (the same rule), whatever the client sends. */
+const basisRail = async () => {
+  const { completionBasis } = await import("@/lib/checklistEngine");
+  state.afterWrite = (table, method, rows) => {
+    if (table !== "project_checklists" || method !== "update") return;
+    for (const r of rows) {
+      const items = (state.tables.checklist_items ?? []).filter((i) => i.checklist_id === r.id).map((i) => ({
+        id: String(i.id), text: String(i.text), applicability: i.applicability as "applies", status: i.status as "open",
+        manualNote: (i.manual_note as string | null) ?? null, evidence: (Array.isArray(i.evidence) ? i.evidence : []) as ChecklistItem["evidence"],
+      }));
+      r.completed_basis = r.status === "complete" ? completionBasis(items) : null;
+    }
+  };
+};
+
 describe("setChecklistStatus('complete')", () => {
-  beforeEach(() => { state.tables.project_checklists = [{ id: "cl1", org_id: "o1", project_id: "p1", status: "open" }]; });
+  beforeEach(() => {
+    state.tables.project_checklists = [{ id: "cl1", org_id: "o1", project_id: "p1", status: "open" }];
+    register();
+  });
 
   it("item read error ⇒ ok:false, nothing written", async () => {
     state.tables.checklist_items = [];
@@ -267,60 +297,108 @@ describe("setChecklistStatus('complete')", () => {
     expect(res.error).toMatch(/not satisfied yet/);
   });
 
-  it("records completed_basis: auto when a green rests on the sweep alone, human when every green carries a person", async () => {
+  it("QUAL-1: a sweep green whose document was voided since the last sweep REFUSES the completion — nothing written, nothing audited", async () => {
+    state.tables.checklist_items = [row({ id: "a" })];
+    await runAutoEvidence({ orgId: "o1", projectId: "p1", checklistId: "cl1", actor });
+    expect(state.tables.checklist_items[0]).toMatchObject({ status: "satisfied", evidence: [HYDRO_CHIP] });
+    const before = audits().length;
+
+    state.tables.documents[0].status = "Void";   // nobody re-runs the sweep
+    const res = await setChecklistStatus({ orgId: "o1", projectId: "p1", checklist: checklist(), status: "complete", actor });
+    expect(res.ok).toBe(false);
+    expect(res.error).toMatch(/^1 green item rests on a document that is no longer current .* run "Check evidence we already hold" first/);
+    expect(state.tables.project_checklists[0].status).toBe("open");
+    expect(state.writes.filter((w) => w.table === "project_checklists")).toHaveLength(0);
+    expect(audits()).toHaveLength(before);
+  });
+
+  it("QUAL-1: a chip whose document left the register refuses even when another admitted document has the same title", async () => {
+    state.tables.documents = [
+      doc({ id: "d1", title: "E-301 Hydrotest Report", status: "Superseded" }),
+      doc({ id: "d2", title: "E-301 Hydrotest Report", current_version_id: "v1" }),
+    ];
+    state.tables.checklist_items = [row({ id: "a", status: "satisfied", evidence: [HYDRO_CHIP] })];
+    const res = await setChecklistStatus({ orgId: "o1", projectId: "p1", checklist: checklist(), status: "complete", actor });
+    expect(res.ok).toBe(false);
+    expect(res.error).toMatch(/no longer current/);
+  });
+
+  it("QUAL-2: the write sends the status only — the basis is the database's to record; the stored value is reported and audited", async () => {
+    await basisRail();
     state.tables.checklist_items = [
-      row({ id: "a", status: "satisfied", evidence: [{ label: "x", source: "auto" }] }),
+      row({ id: "a", status: "satisfied", evidence: [HYDRO_CHIP] }),
       row({ id: "b", status: "na", applicability: "na", manual_note: "not in scope for this repipe" }),
     ];
     const r1 = await setChecklistStatus({ orgId: "o1", projectId: "p1", checklist: checklist(), status: "complete", actor });
     expect(r1).toEqual({ ok: true, basis: "auto" });
+    const w = state.writes.filter((x) => x.table === "project_checklists" && x.method === "update");
+    expect(w.map((x) => x.payload)).toEqual([{ status: "complete" }]);   // no completed_basis from the client
     expect(state.tables.project_checklists[0].completed_basis).toBe("auto");
-    expect((audits()[0].details as { completedBasis: string }).completedBasis).toBe("auto");
+    expect((audits().at(-1)!.details as { completedBasis: string }).completedBasis).toBe("auto");
 
     state.tables.project_checklists[0].status = "open";
     state.tables.checklist_items[0].manual_note = "Reviewed the hydro chart myself — 150 psig, 30 min";
     const r2 = await setChecklistStatus({ orgId: "o1", projectId: "p1", checklist: checklist(), status: "complete", actor });
     expect(r2).toEqual({ ok: true, basis: "human" });
     expect(state.tables.project_checklists[0].completed_basis).toBe("human");
+
+    // void / reopen send the status only too (the rail nulls the basis)
+    for (const status of ["open", "void"] as const) {
+      const r = await setChecklistStatus({ orgId: "o1", projectId: "p1", checklist: checklist(), status, actor });
+      expect(r).toEqual({ ok: true });
+      expect(state.tables.project_checklists[0].completed_basis).toBeNull();   // the rail nulls it
+    }
+    expect(state.writes.filter((x) => x.table === "project_checklists").every((x) => Object.keys(x.payload as object).join() === "status")).toBe(true);
   });
 
-  it("before 20261091 'Mark complete' meets PostgREST's unknown-column error for completed_basis (PGRST204) — the migration message, not raw text", async () => {
-    state.tables.checklist_items = [row({ status: "satisfied", manual_note: "verified on the walkdown 9/14" })];
-    state.tableWriteError = { project_checklists: { message: "Could not find the 'completed_basis' column of 'project_checklists' in the schema cache", code: "PGRST204" } };
+  it("QUAL-2: the stored basis wins over the lib's reading (the database is the record)", async () => {
+    state.afterWrite = (table, method, rows) => { if (table === "project_checklists" && method === "update") for (const r of rows) r.completed_basis = "auto"; };
+    state.tables.checklist_items = [row({ id: "a", status: "satisfied", manual_note: "verified on the walkdown 9/14" })];
     const res = await setChecklistStatus({ orgId: "o1", projectId: "p1", checklist: checklist(), status: "complete", actor });
-    expect(res).toEqual({ ok: false, error: "This needs the latest database migration applied — nothing was changed." });
-    expect(state.tables.project_checklists[0].status).toBe("open");
-    expect(audits()).toHaveLength(0);
+    expect(res).toEqual({ ok: true, basis: "auto" });
+    expect((audits().at(-1)!.details as { completedBasis: string }).completedBasis).toBe("auto");
   });
 
-  it("the Verify path: a person confirming a sweep green (status satisfied + a real reason) makes it human — the chip stays, the sweep keeps out, and the completion is 'human' even with assessment-confirmed N/As (QUAL-2)", async () => {
-    state.tables.projects = [{ id: "p1", intake_collection_id: "intake", sow_document_id: null }];
-    state.tables.turnover_items = []; state.tables.assets = []; state.tables.document_versions = [];
-    state.tables.documents = [doc({ id: "d1", title: "E-301 Hydrotest Report" })];
-    state.tables.document_versions = [{ id: "v1", record_id: "d1", provenance: "internal", review_state: null }];
+  it("before 20261091 'Mark complete' names no new column, so it lands; the basis is the lib's reading and nothing can cite it (the gather fails closed)", async () => {
+    state.tables.checklist_items = [row({ status: "satisfied", manual_note: "verified on the walkdown 9/14" })];
+    const res = await setChecklistStatus({ orgId: "o1", projectId: "p1", checklist: checklist(), status: "complete", actor });
+    expect(res).toEqual({ ok: true, basis: "human" });
+    expect(state.tables.project_checklists[0]).toMatchObject({ status: "complete" });
+    expect(state.tables.project_checklists[0].completed_basis).toBeUndefined();
+    // …and the MI citation reads the (missing) column, so it stays closed
+    state.tables.project_checklists = [{ project_id: "p1", kind: "mi", status: "complete" }];
+    expect((await gatherProjectEvidenceState("o1", "p1")).miChecklistComplete).toBe(false);
+  });
+
+  it("the Verify and Confirm-N/A paths: a person confirming a sweep green AND the assessment's N/A makes the completion human — the chip stays and the sweep keeps out (QUAL-2)", async () => {
+    await basisRail();
     state.tables.checklist_items = [
       row({ id: "a" }),
-      // an N/A a reviewer ticked in the per-item assessment review: machine sentinel, no note
+      // an N/A the assessment applied: machine sentinel, no person's reason
       row({ id: "b", text: "Operators trained on the new pump", status: "na", applicability: "na", updated_by: null, updated_by_name: MACHINE_ACTOR_ASSESSMENT }),
     ];
     await runAutoEvidence({ orgId: "o1", projectId: "p1", checklistId: "cl1", actor });
     expect(state.tables.checklist_items[0]).toMatchObject({ status: "satisfied", updated_by_name: MACHINE_ACTOR_SWEEP, manual_note: null });
 
     // Completing now: the green rests on the sweep alone → auto.
-    const r1 = await setChecklistStatus({ orgId: "o1", projectId: "p1", checklist: checklist(), status: "complete", actor });
-    expect(r1).toEqual({ ok: true, basis: "auto" });
+    expect(await setChecklistStatus({ orgId: "o1", projectId: "p1", checklist: checklist(), status: "complete", actor })).toEqual({ ok: true, basis: "auto" });
     state.tables.project_checklists[0].status = "open";
 
-    // Verify: the same control the ✓ Verify button calls.
+    // ✓ Verify: the same control the button calls.
     const green = (await readChecklistItems("cl1")).rows.find((i) => i.id === "a")!;
-    const v = await updateChecklistItem({ orgId: "o1", projectId: "p1", item: green, patch: { status: "satisfied", manualNote: "Checked the hydro chart: 150 psig held 30 min" }, actor });
-    expect(v.ok).toBe(true);
+    expect((await updateChecklistItem({ orgId: "o1", projectId: "p1", item: green, patch: { status: "satisfied", manualNote: "Checked the hydro chart: 150 psig held 30 min" }, actor })).ok).toBe(true);
     const a = state.tables.checklist_items[0];
     expect(a).toMatchObject({ status: "satisfied", manual_note: "Checked the hydro chart: 150 psig held 30 min", updated_by: "u1", updated_by_name: "mreyes" });
-    expect(a.evidence).toEqual([{ label: 'Document on file: "E-301 Hydrotest Report"', documentId: "d1", source: "auto" }]); // the citation stays
+    expect(a.evidence).toEqual([HYDRO_CHIP]); // the citation stays
 
-    const r2 = await setChecklistStatus({ orgId: "o1", projectId: "p1", checklist: checklist(), status: "complete", actor });
-    expect(r2).toEqual({ ok: true, basis: "human" });   // the assessment-confirmed N/A does not make it auto
+    // The assessment's N/A still carries no person's reason → still auto.
+    expect(await setChecklistStatus({ orgId: "o1", projectId: "p1", checklist: checklist(), status: "complete", actor })).toEqual({ ok: true, basis: "auto" });
+    state.tables.project_checklists[0].status = "open";
+
+    // ✓ Confirm N/A: the person gives the N/A their reason.
+    const na = (await readChecklistItems("cl1")).rows.find((i) => i.id === "b")!;
+    expect((await updateChecklistItem({ orgId: "o1", projectId: "p1", item: na, patch: { applicability: "na", status: "na", manualNote: "No operator interface changes on this repipe" }, actor })).ok).toBe(true);
+    expect(await setChecklistStatus({ orgId: "o1", projectId: "p1", checklist: checklist(), status: "complete", actor })).toEqual({ ok: true, basis: "human" });
     expect(state.tables.project_checklists[0].completed_basis).toBe("human");
 
     // …and the sweep keeps its hands off a verified green, even when the document goes Void.
@@ -328,6 +406,18 @@ describe("setChecklistStatus('complete')", () => {
     const sweep = await runAutoEvidence({ orgId: "o1", projectId: "p1", checklistId: "cl1", actor });
     expect(sweep.retracted).toBe(0);
     expect(state.tables.checklist_items[0].status).toBe("satisfied");
+  });
+
+  it("QUAL-2: a checklist the assessment N/A'd end to end completes as auto — never citable (the one-click laundering)", async () => {
+    await basisRail();
+    state.tables.checklist_items = [
+      row({ id: "a", status: "na", applicability: "na", updated_by: null, updated_by_name: MACHINE_ACTOR_ASSESSMENT }),
+      row({ id: "b", status: "na", applicability: "na", updated_by: null, updated_by_name: MACHINE_ACTOR_ASSESSMENT }),
+    ];
+    const res = await setChecklistStatus({ orgId: "o1", projectId: "p1", checklist: checklist({ kind: "mi" }), status: "complete", actor });
+    expect(res).toEqual({ ok: true, basis: "auto" });
+    state.tables.project_checklists[0].kind = "mi";
+    expect((await gatherProjectEvidenceState("o1", "p1")).miChecklistComplete).toBe(false);
   });
 
   it("a refused status write reports the refusal and audits nothing (SAF-3)", async () => {
@@ -346,7 +436,8 @@ describe("gatherProjectEvidenceState — the evidence contract", () => {
     state.tables.turnover_items = [];
     state.tables.project_checklists = [];
     state.tables.assets = [];
-    state.tables.document_versions = [];
+    // doc() defaults every document's current version to "v1" (internal)
+    state.tables.document_versions = [{ id: "v1", record_id: "d1", provenance: "internal", review_state: null }];
   });
 
   it("an unreviewed Draft with a matching title does NOT enter the register; Void / Superseded / no-current-version are out too", async () => {
@@ -397,6 +488,18 @@ describe("gatherProjectEvidenceState — the evidence contract", () => {
     expect(q).toEqual([{ table: "document_versions", method: "in", args: ["id", ["c2", "d2", "e2"]] }]);
   });
 
+  it("a document whose current version did not come back is NOT admitted — its provenance was never checked (fails closed per document)", async () => {
+    state.tables.documents = [
+      doc({ id: "seen", title: "NDE Report F", current_version_id: "f1" }),
+      doc({ id: "unseen", title: "NDE Report G", current_version_id: "g1" }),
+    ];
+    // the read succeeds but returns only a subset (a hidden or missing version row)
+    state.tables.document_versions = [{ id: "f1", record_id: "seen", provenance: "internal", review_state: null }];
+    const s = await gatherProjectEvidenceState("o1", "p1");
+    expect(s.documents!.map((d) => d.id)).toEqual(["seen"]);
+    expect(s.documentTitles).toEqual(["NDE Report F"]);
+  });
+
   it("a failed version read fails CLOSED — nothing whose current version could not be checked is admitted", async () => {
     state.tables.documents = [doc({ id: "d1", title: "E-301 Hydrotest Report", current_version_id: "v1" })];
     state.tables.document_versions = [{ id: "v1", record_id: "d1", provenance: "internal", review_state: null }];
@@ -439,7 +542,7 @@ describe("runAutoEvidence", () => {
     state.tables.turnover_items = [];
     state.tables.project_checklists = [];
     state.tables.assets = [];
-    state.tables.document_versions = [];
+    state.tables.document_versions = [{ id: "v1", record_id: "d1", provenance: "internal", review_state: null }];
   });
 
   it("satisfies on an Issued document with the documentId attached and the machine actor stamped; the audit row names the item and citation", async () => {

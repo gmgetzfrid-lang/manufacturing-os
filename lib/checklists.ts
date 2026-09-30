@@ -19,6 +19,9 @@
 // the audit row is written only after a confirmed match. The machine paths
 // stamp a reserved actor (DEC-35: updated_by NULL + a sentinel name), so a
 // row always says whether a person or the machine set its status (QUAL-6).
+// The reason bar and the completion basis are checked here AND enforced by
+// the database (20261091): a write that bypasses this file meets the same
+// rules there.
 
 import { supabase } from "@/lib/supabase";
 import type { Actor } from "@/lib/costs";
@@ -30,6 +33,7 @@ import {
   MACHINE_ACTOR_ASSESSMENT,
   MACHINE_ACTOR_SWEEP,
   reasonProblem,
+  staleAutoGreens,
   type ChecklistItemState,
   type EvidenceDocument,
   type ProjectEvidenceState,
@@ -364,13 +368,18 @@ export async function updateChecklistItem(input: {
 
 /** Mark a checklist complete / open / void. Completion is gated on the
  *  items — and the gate FAILS CLOSED (QUAL-8): a failed item read or an
- *  empty checklist refuses, and the completion records whether it rested
- *  on human sign-off or on automation alone (QUAL-2, completed_basis). */
+ *  empty checklist refuses. The evidence is re-checked at the moment it
+ *  matters (QUAL-1): a green resting on the sweep alone whose document has
+ *  since left the register refuses the completion until the evidence check
+ *  runs. What the completion rested on (QUAL-2, completed_basis) is the
+ *  DATABASE's to record — its rail computes it with completionBasis()'s rule
+ *  and ignores a client value — so this write sends the status only (and
+ *  works before 20261091, when no basis exists and nothing cites one); the
+ *  stored basis is read back for the caller and the audit row. */
 export async function setChecklistStatus(input: {
   orgId: string; projectId: string; checklist: Checklist;
   status: "open" | "complete" | "void"; actor: Actor;
 }): Promise<{ ok: boolean; error?: string; basis?: "human" | "auto" }> {
-  const row: Record<string, unknown> = { status: input.status };
   let basis: "human" | "auto" | undefined;
   if (input.status === "complete") {
     const read = await readChecklistItems(input.checklist.id);
@@ -381,13 +390,22 @@ export async function setChecklistStatus(input: {
     if (blocking.length > 0) {
       return { ok: false, error: `${blocking.length} item${blocking.length === 1 ? " is" : "s are"} not satisfied yet — a checklist only completes when every applicable item is green or N/A.` };
     }
-    basis = completionBasis(items.map(toState));
-    row.completed_basis = basis;
-  } else {
-    row.completed_basis = null;
+    const states = items.map(toState);
+    const stale = staleAutoGreens(states, await gatherProjectEvidenceState(input.orgId, input.projectId));
+    if (stale.length > 0) {
+      return { ok: false, error: `${stale.length} green item${stale.length === 1 ? " rests" : "s rest"} on a document that is no longer current (voided, superseded, back to Draft, or no longer readable) — run "Check evidence we already hold" first. The checklist stays open.` };
+    }
+    basis = completionBasis(states);
   }
-  const w = await checkedWrite(supabase.from("project_checklists").update(row).eq("id", input.checklist.id).select("id"));
+  const w = await checkedWrite(supabase.from("project_checklists").update({ status: input.status }).eq("id", input.checklist.id).select("id"));
   if (!w.ok) return { ok: false, error: w.error };
+  if (basis) {
+    // The stored value is the database's (same rule); before 20261091 there
+    // is no column and the lib's reading stands in for the audit row.
+    const back = await supabase.from("project_checklists").select("*").eq("id", input.checklist.id).maybeSingle();
+    const stored = (back.data as { completed_basis?: unknown } | null)?.completed_basis;
+    if (stored === "human" || stored === "auto") basis = stored;
+  }
   await audit("CHECKLIST_STATUS", input.orgId, input.projectId, input.actor, {
     checklistId: input.checklist.id, status: input.status, title: input.checklist.title,
     ...(basis ? { completedBasis: basis } : {}),
@@ -464,8 +482,10 @@ export async function gatherProjectEvidenceState(orgId: string, projectId: strin
   // An external (intake) submission counts only once it was approved —
   // an unreviewed upload is a label, not evidence. Judged on the document's
   // CURRENT version only: an earlier rejected submission does not taint an
-  // approved (or internal) current revision. A failed read fails CLOSED —
-  // nothing whose current version could not be checked is admitted.
+  // approved (or internal) current revision. The check fails CLOSED, per
+  // document: a failed read admits nothing, and a document whose current
+  // version did not come back (hidden by its own policy, or missing) is not
+  // admitted either — its provenance was never checked.
   if (documents.length > 0) {
     const currentVersionIds = [...new Set(documents.map((d) => currentVersionOf.get(d.id)!))];
     const versions = await safe(
@@ -473,10 +493,12 @@ export async function gatherProjectEvidenceState(orgId: string, projectId: strin
         .in("id", currentVersionIds).limit(1000)
         .then((r) => (r.error ? null : (r.data ?? []) as Array<{ id: string; provenance: string | null; review_state: string | null }>)),
       null);
+    const checked = new Set((versions ?? []).map((v) => String(v.id)));
     const unapprovedExternal = new Set((versions ?? [])
-      .filter((v) => v.provenance === "external" && v.review_state !== "approved").map((v) => v.id));
+      .filter((v) => v.provenance === "external" && v.review_state !== "approved").map((v) => String(v.id)));
     for (let i = documents.length - 1; i >= 0; i--) {
-      if (versions === null || unapprovedExternal.has(currentVersionOf.get(documents[i].id)!)) documents.splice(i, 1);
+      const current = currentVersionOf.get(documents[i].id)!;
+      if (versions === null || !checked.has(current) || unapprovedExternal.has(current)) documents.splice(i, 1);
     }
   }
 
@@ -507,7 +529,8 @@ export interface SweepOutcome {
 
 /** The deterministic sweep: gather what the platform can prove, apply the
  *  pure rules, persist what changed — batched, checked, stamped with the
- *  machine actor, and audited per item. Returns the tallies the UI
+ *  machine actor, and audited as ONE row per sweep whose items[] names every
+ *  item it changed (retractions flagged). Returns the tallies the UI
  *  announces. */
 export async function runAutoEvidence(input: {
   orgId: string; projectId: string; checklistId: string; actor: Actor;

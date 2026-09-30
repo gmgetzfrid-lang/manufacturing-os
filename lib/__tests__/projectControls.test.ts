@@ -8,6 +8,7 @@ import { computeProjectHealth, buildCoachItems, type ProjectStateSnapshot } from
 import {
   validateSegmentedItems, applyAutoEvidence, rubricCoverageScore,
   validateRubricFindings, QUALITY_MANUAL_RUBRIC, completionBasis, reasonProblem, isAutoOnlyGreen, isHumanDecided,
+  isHumanGreen, isUnreasonedNa, staleAutoGreens, CANNED_REASONS,
   isMachineActorName, MACHINE_ACTOR_SWEEP, MACHINE_ACTOR_ASSESSMENT, REASON_MIN_LENGTH,
   type ChecklistItemState, type ProjectEvidenceState,
 } from "@/lib/checklistEngine";
@@ -306,13 +307,27 @@ describe("checklistEngine", () => {
     ];
     expect(completionBasis(human)).toBe("human");
     expect(completionBasis([item({ id: "1", text: "x", status: "satisfied", evidence: [{ label: "walked down", source: "manual" }] })])).toBe("human");
-    // N/A does not bear on the basis: an assessment-confirmed N/A (ticked by a
-    // person in the per-item review, no note) never makes a completion 'auto' —
-    // only a green resting on the sweep alone does.
+    // An N/A no person gave a reason for (the assessment's: machine stamp, no
+    // note) keeps the completion 'auto' — ticking a proposal is not a reason.
     expect(completionBasis([
       item({ id: "1", text: "Weld log", status: "satisfied", evidence: [{ label: "x", source: "auto" }], manualNote: "verified the log against the weld map" }),
       item({ id: "2", text: "Ops trained", status: "na", applicability: "na" }),
-    ])).toBe("human");
+    ])).toBe("auto");
+    // The one-click laundering: an MI checklist the assessment N/A'd end to
+    // end has no green at all — 'auto', never citable.
+    expect(completionBasis([
+      item({ id: "1", text: "Weld log", status: "na", applicability: "na" }),
+      item({ id: "2", text: "NDE", status: "na", applicability: "na" }),
+    ])).toBe("auto");
+    // …and even when a person gave every N/A a reason, a checklist with no
+    // human green proves nothing about mechanical integrity.
+    expect(completionBasis([item({ id: "1", text: "Weld log", status: "na", applicability: "na", manualNote: "no welding in this scope" })])).toBe("auto");
+    expect(completionBasis([])).toBe("auto");
+    expect(isUnreasonedNa(item({ id: "1", status: "na", applicability: "na" }))).toBe(true);
+    expect(isUnreasonedNa(item({ id: "1", status: "open", applicability: "na" }))).toBe(true);
+    expect(isUnreasonedNa(item({ id: "1", status: "na", applicability: "na", manualNote: "no welding in this scope" }))).toBe(false);
+    expect(isHumanGreen(item({ id: "1", status: "satisfied", manualNote: "walked it down 9/14" }))).toBe(true);
+    expect(isHumanGreen(item({ id: "1", status: "satisfied", applicability: "na", manualNote: "walked it down 9/14" }))).toBe(false);
     expect(isAutoOnlyGreen(item({ id: "1", text: "x", status: "satisfied", evidence: [{ label: "x", source: "auto" }] }))).toBe(true);
     expect(isAutoOnlyGreen(item({ id: "1", text: "x", status: "satisfied", applicability: "na" }))).toBe(false);
     expect(isAutoOnlyGreen(item({ id: "1", text: "x", status: "needs_evidence" }))).toBe(false);
@@ -325,8 +340,28 @@ describe("checklistEngine", () => {
     expect(pssr[0].status).toBe("needs_evidence");
   });
 
+  it("QUAL-1: staleAutoGreens — at completion, a sweep green whose proof left the register (or whose chip names a dropped document) is stale; a person's green never is", () => {
+    const docs = [{ id: "d1", label: "E-301 Hydrotest Report", status: "Issued", rev: "0", viaTurnover: false }];
+    const chip = { label: 'Document on file: "E-301 Hydrotest Report"', documentId: "d1", source: "auto" as const };
+    const green = item({ id: "a", text: "Hydrotest complete", status: "satisfied", evidence: [chip] });
+    const current = state({ documentTitles: ["E-301 Hydrotest Report"], documents: docs });
+    expect(staleAutoGreens([green], current)).toEqual([]);
+    // voided: the register no longer admits it → the sweep would withdraw it
+    expect(staleAutoGreens([green], state())).toEqual(["a"]);
+    // the cited row is gone but another document shares its title → still stale (the chip names d1)
+    const twin = state({ documentTitles: ["E-301 Hydrotest Report"], documents: [{ ...docs[0], id: "d2" }] });
+    expect(staleAutoGreens([green], twin)).toEqual(["a"]);
+    // a re-citation (the proof moved to another title) is stale too
+    const moved = state({ documentTitles: ["E-302 Hydrotest Report"], documents: [{ ...docs[0], id: "d3", label: "E-302 Hydrotest Report" }] });
+    expect(staleAutoGreens([green], moved)).toEqual(["a"]);
+    // a person's green is theirs
+    expect(staleAutoGreens([{ ...green, manualNote: "checked the chart myself 9/14" }], state())).toEqual([]);
+  });
+
   it("SAF-4: the reason bar refuses blank, short and canned reasons and accepts a real one", () => {
     expect(REASON_MIN_LENGTH).toBe(10);
+    // the database mirrors this list (quality_reason_ok, 20261091 — pinned in qualityRailsMigration.test.ts)
+    for (const canned of CANNED_REASONS) expect(reasonProblem(canned)).not.toBeNull();
     expect(reasonProblem(null)).toMatch(/required/);
     expect(reasonProblem("   ")).toMatch(/required/);
     expect(reasonProblem("too short")).toMatch(/at least 10/);

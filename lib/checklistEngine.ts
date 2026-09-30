@@ -98,10 +98,14 @@ export const isMachineActorName = (name: string | null | undefined): boolean =>
 //
 // A decision that turns a gate green — N/A, reopen, waive, void — needs a
 // typed reason: the same bar lib/checkinOutcomes.ts sets (no canned text,
-// no get-out-of-jail-free cards). Enforced SERVER-SIDE in lib/checklists.ts
-// and lib/turnover.ts; the prompt mirrors it (required + minLength).
+// no get-out-of-jail-free cards). Checked in lib/checklists.ts and
+// lib/turnover.ts (the client data layer, which says why), and ENFORCED by
+// the database — quality_reason_ok() and the 20261091 rails refuse a write
+// that bypasses the lib (GAP-405: not a client-side check). The prompt
+// mirrors it (required + minLength). The SQL carries the same canned list
+// (lib/__tests__/qualityRailsMigration.test.ts pins the two together).
 export const REASON_MIN_LENGTH = 10;
-const CANNED_REASONS = new Set(["decided by reviewer", "n/a", "na", "not applicable", "reason", "none", "ok"]);
+export const CANNED_REASONS: ReadonlySet<string> = new Set(["decided by reviewer", "n/a", "na", "not applicable", "reason", "none", "ok"]);
 
 /** null when the reason meets the bar, otherwise the refusal to show. */
 export function reasonProblem(reason: string | null | undefined): string | null {
@@ -125,16 +129,34 @@ export const isHumanDecided = (it: Pick<ChecklistItemState, "manualNote" | "evid
 export const isAutoOnlyGreen = (it: Pick<ChecklistItemState, "status" | "applicability" | "manualNote" | "evidence">): boolean =>
   it.status === "satisfied" && it.applicability !== "na" && !isHumanDecided(it);
 
-/** 'human' when every GREEN item that counted toward the gate carries a
- *  human decision; 'auto' when any green rests on the evidence sweep alone.
- *  N/A items do not bear on the basis: every path to N/A is a person's (the
- *  item's own control with a reason, or a proposal ticked one by one in the
- *  assessment review — SAF-2), and an N/A proves nothing — the laundering
- *  QUAL-2 closes is a machine green becoming citable proof. Only a 'human'
- *  completion is citable as proof by another checklist. The migration's
- *  backfill (20261091) applies the same rule. */
+/** Out of scope for this job, by either column. */
+const isNa = (it: Pick<ChecklistItemState, "status" | "applicability">): boolean =>
+  it.applicability === "na" || it.status === "na";
+
+/** An N/A no person gave a reason for — the AI assessment's (stamped with
+ *  the machine actor, no note) or a legacy one. Every human N/A path writes
+ *  a reason (updateChecklistItem; the database refuses a uid-stamped N/A
+ *  without one), so a note-less N/A is not a person's decision. */
+export const isUnreasonedNa = (it: Pick<ChecklistItemState, "status" | "applicability" | "manualNote">): boolean =>
+  isNa(it) && !it.manualNote;
+
+/** A green a person decided (a note, or a person-attached chip). */
+export const isHumanGreen = (it: Pick<ChecklistItemState, "status" | "applicability" | "manualNote" | "evidence">): boolean =>
+  it.status === "satisfied" && it.applicability !== "na" && isHumanDecided(it);
+
+/** 'human' only when a person stands behind the whole checklist: no green
+ *  rests on the evidence sweep alone, no N/A lacks a person's reason, and at
+ *  least one green was decided by a person. Otherwise 'auto'. An N/A proves
+ *  nothing, so a checklist the assessment N/A'd end to end — or one with no
+ *  human green at all — is never citable proof (QUAL-2). Only a 'human'
+ *  completion is citable by another checklist. The database computes the
+ *  stored value with the SAME rule (checklist_completion_basis(), 20261091)
+ *  and ignores a client-supplied one; its backfill uses it too. */
 export function completionBasis(items: ChecklistItemState[]): "human" | "auto" {
-  return items.some(isAutoOnlyGreen) ? "auto" : "human";
+  if (items.some(isAutoOnlyGreen)) return "auto";
+  if (items.some(isUnreasonedNa)) return "auto";
+  if (!items.some(isHumanGreen)) return "auto";
+  return "human";
 }
 
 const norm = (s: string) => s.toLowerCase().replace(/[^a-z0-9 ]+/g, " ").replace(/\s+/g, " ").trim();
@@ -278,6 +300,29 @@ export function applyAutoEvidence(
       // The green rested on the sweep alone and the proof is gone.
       out.push({ id: item.id, status: "needs_evidence", addedEvidence: [], removeAutoEvidence: true, retracted: true });
     }
+  }
+  return out;
+}
+
+/**
+ * The completion-time evidence check (QUAL-1: a green never silently stays
+ * green). Returns the ids of the greens that rest on the sweep alone and
+ * whose proof is no longer current: the sweep would withdraw or re-cite
+ * them now, or a chip names a document the register no longer admits (voided,
+ * superseded, back to Draft, or unreadable to this caller). A person's green
+ * is theirs and is not second-guessed here — its chip shows the document's
+ * standing.
+ */
+export function staleAutoGreens(items: ChecklistItemState[], state: ProjectEvidenceState): string[] {
+  const admitted = new Set((state.documents ?? []).map((d) => d.id));
+  const changed = new Map(applyAutoEvidence(items, state).map((r) => [r.id, r]));
+  const out: string[] = [];
+  for (const it of items) {
+    if (!isAutoOnlyGreen(it)) continue;
+    const r = changed.get(it.id);
+    const withdrawnOrReCited = Boolean(r && (r.retracted || r.removeAutoEvidence || r.status !== "satisfied"));
+    const citesDropped = it.evidence.some((e) => e.source === "auto" && e.documentId && !admitted.has(e.documentId));
+    if (withdrawnOrReCited || citesDropped) out.push(it.id);
   }
   return out;
 }
