@@ -361,6 +361,8 @@ the contractor's permanent scorecard."
 - An awarded quote appears in the company's bid history.
 - A test with a fully-populated fixture asserts each dimension is non-null.
 
+*Landed 2026-09-29 (projects Round G, J4 limb): reader half: `gatherCompanyProfiles` derives `awardsTotal` from posted commitment entries on the company's parties (the typed `contract_value` is a labelled fallback), reads quotes through `cost_documents.company_id` OR `party_id`, and reports "unlinked" distinctly from "no work"; the quote upload row passes `partyId`; 20261096 backfills `project_parties.company_id` where the normalised name matches exactly one registry row (second fix pass: every decision is recorded as a `PROJECT_PARTY_COMPANY_BACKFILLED` audit row that drives the UPDATE, listed by the review query at the file's foot and undone by its revert statement). The writer limbs (`saveParty` companyId, turnover/punch `partyId`, the intake quote branch) stay with P11 / PC-1 / PC-5 / PC-7. Fix pass: the derived award base excludes the commitments approved change orders post (`posted_entry_id`, or the CO number on the entry), and every batched read pages past PostgREST's 1000-row cap. Second fix pass: the base is resolved per party — posted commitments where a party has them, that party's `contract_value` otherwise ("mixed" when both contribute).*
+
 ---
 
 ## MON-8 · An unmapped document status throws inside the award path, hanging the button forever
@@ -524,6 +526,12 @@ explicit override that captures a reason and writes an audit row. Decide what
 - Awarding a `do_not_use` company requires an explicit, reasoned override.
 - The override is audited.
 - `inactive` either has behaviour or no longer exists.
+
+*Landed 2026-09-29 (projects Round G, J4 limb): the bid-tab chip (`QuotesPanel.tsx`) renders from the bound registry company (`cost_documents.company_id`, 20261096) or the normalised name match, so realistic letterhead variants resolve (BID-12); a failed registry load is announced instead of blanking the flag; and the award flow refuses a do-not-use company unless a reason is typed and recorded (`COST_DOC_AWARD_OVERRIDE_DO_NOT_USE`, insert `{ error }`-checked — a failed record stops the award). The posting-side refusal in `awardQuote` and the meaning of `inactive` close in P3 / PC-7.*
+
+*Fix pass 2026-09-30 (projects Round G, J4): the bid-tab gate no longer fails open — Award is withheld while the registry or the project's bidder-link read is loading or failed, the award re-reads the row's `company_id` and the registry at the click, the override row is written only after every confirmation (and closed with `COST_DOC_AWARD_OVERRIDE_ABANDONED` if the award then fails), and re-linking a bidder away from a do-not-use company needs a typed, audited reason. Companies-page limb (`app/(protected)/companies/[id]/page.tsx`, the status select's tooltip): it no longer promises the flag "across the app"; it states what is enforced — the bid-tab chip and the typed override on award and on re-linking, with the posting refusal pending in P3 / PC-7.*
+
+*Second fix pass 2026-09-30 (projects Round G, J4 — review findings): the first fix pass regressed the chip and gate for two registry rows that normalise alike (the bid bound to neither and the flag vanished) and matched against the 1000-row name list. The flag and the award gate now read the org's barred rows in full (`lib/companies.listBarredCompanies`) and fire on ANY row the bidder's name could be (`lib/bidTab.barredCompanyFor`, DEC-48: binding refuses ambiguity, gating does not); an ambiguous bidder shows "ambiguous — link to registry" beside "do not use? · <name>". A decided bid's company link no longer moves from this screen.*
 
 ---
 

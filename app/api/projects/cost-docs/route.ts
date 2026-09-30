@@ -18,13 +18,19 @@ import { supabaseAdmin } from "@/lib/supabaseAdmin";
 import { governedAiCall, GovernedCallError } from "@/lib/ai/governedCall";
 import { extractJsonBlock } from "@/lib/orchestrator/protocol";
 import { renderKnowledgePages } from "@/lib/knowledgePageRender";
-import { validateParsedQuote } from "@/lib/bidTab";
+import { countPdfPages } from "@/lib/pdfPageCount";
+import { validateParsedQuote, isoCurrency } from "@/lib/bidTab";
 import { memberHoldsAny } from "@/lib/roleHeld";
 
 export const runtime = "nodejs";
 export const maxDuration = 120;
 
 const bad = (error: string, status: number) => NextResponse.json({ error }, { status });
+// The read is capped at 8 pages for cost and latency (COST-13 — raising
+// it is a cost/latency question for the user). What matters is that the
+// cap is RECORDED: pages_total / pages_read land on the row, travel in the
+// response and the audit row, and the review screen says "read pages
+// 1–8 of N" before anyone awards on the number.
 const MAX_PAGES = 8;
 
 const QUOTE_SYSTEM =
@@ -79,25 +85,36 @@ export async function POST(req: NextRequest) {
   const doc = docRow as {
     id: string; kind: string; status: string;
     file_url: string | null; file_name: string | null; mime_type: string | null;
-    vendor_name: string | null;
+    vendor_name: string | null; total_amount?: number | null;
   } | null;
   if (!doc) return bad("Cost document not found.", 404);
+  // The total this read starts from — the final write requires it unchanged.
+  const startedTotal = doc.total_amount ?? null;
   if (!doc.file_url) return bad("This row has no stored file to read.", 404);
-  // Only live documents are readable: awarded/posted are locked (money
-  // moved), and a declined or voided document stays dead — re-reading must
-  // never resurrect a decision someone already made.
-  if (doc.status !== "draft" && doc.status !== "parsed") {
+  // Only a document nobody has read or totalled yet is readable (COST-13):
+  // awarded/posted are locked (money moved), a declined or voided document
+  // stays dead — re-reading must never resurrect a decision someone
+  // already made — and a `parsed` one already carries an extraction or a
+  // total a person typed ("type total" moves a draft to parsed), which a
+  // Read clicked from a stale table must never replace.
+  if (doc.status !== "draft") {
     return bad(
       doc.status === "awarded" || doc.status === "posted"
         ? "This document already moved money — its extraction is locked."
-        : `This document is ${doc.status} — upload it again if it should be back in play.`,
+        : doc.status === "parsed"
+          ? "This document has already been read, or its total typed by hand — nothing was changed. Refresh to see it; use \"correct total\" to change its total."
+          : `This document is ${doc.status} — upload it again if it should be back in play.`,
       409);
   }
   const looksPdf = (doc.mime_type ?? "").includes("pdf") || /\.pdf$/i.test(doc.file_name ?? "");
   if (!looksPdf) return bad("Only PDF quotes and invoices can be read for now — ask the vendor for a PDF.", 415);
 
-  const images = await renderKnowledgePages(doc.file_url, Array.from({ length: MAX_PAGES }, (_, i) => i + 1), MAX_PAGES);
+  const [images, pagesTotal] = await Promise.all([
+    renderKnowledgePages(doc.file_url, Array.from({ length: MAX_PAGES }, (_, i) => i + 1), MAX_PAGES),
+    countPdfPages(doc.file_url),
+  ]);
   if (images.length === 0) return bad("The pages could not be rendered for reading — the file may be corrupt or password-protected.", 502);
+  const pagesRead = images.map((i) => i.page);
 
   const isQuote = doc.kind === "quote";
   let text: string;
@@ -122,13 +139,22 @@ export async function POST(req: NextRequest) {
   let raw: unknown;
   try { raw = JSON.parse(block); } catch { return bad("The extraction wasn't valid JSON — try again.", 502); }
 
-  const patch: Record<string, unknown> = { parsed: raw, status: "parsed" };
+  const patch: Record<string, unknown> = {
+    parsed: raw, status: "parsed",
+    // Read extent (COST-13): the document's true page count and the pages
+    // the model actually saw. Unknown stays NULL — never "complete".
+    pages_total: pagesTotal, pages_read: pagesRead.length,
+  };
   if (isQuote) {
     let quote;
     try { quote = validateParsedQuote(raw, costDocId); } catch (e) { return bad((e as Error).message, 422); }
+    // Currency is stored only as a known ISO-4217 code (COST-8): the
+    // model's free text ("$", "dollars", "US") is NULL = unknown, and the
+    // stored extraction carries the same validated value.
+    quote.currency = isoCurrency(quote.currency);
     patch.parsed = quote;
     patch.total_amount = quote.total;
-    if (quote.currency) patch.currency = quote.currency;
+    patch.currency = quote.currency;
     // The submission channel's identity outranks the model's reading of a
     // letterhead — only fill vendor_name when the row has none.
     if (!doc.vendor_name && quote.vendorName !== "Unknown vendor") patch.vendor_name = quote.vendorName;
@@ -137,7 +163,7 @@ export async function POST(req: NextRequest) {
     const total = typeof r.total === "number" && Number.isFinite(r.total) ? r.total : null;
     if (total == null || total <= 0) return bad("Couldn't read an amount due from the invoice.", 422);
     patch.total_amount = total;
-    if (typeof r.currency === "string" && r.currency.trim()) patch.currency = r.currency.trim();
+    patch.currency = isoCurrency(r.currency);
     if (typeof r.docNumber === "string" && r.docNumber.trim()) patch.doc_number = r.docNumber.trim().slice(0, 60);
     if (typeof r.docDate === "string" && /^\d{4}-\d{2}-\d{2}$/.test(r.docDate)) patch.doc_date = r.docDate;
     if (!doc.vendor_name && typeof r.vendorName === "string" && r.vendorName.trim()) {
@@ -145,15 +171,43 @@ export async function POST(req: NextRequest) {
     }
   }
 
-  const { error: updErr } = await supabaseAdmin.from("cost_documents").update(patch).eq("id", costDocId);
+  // The read took seconds to minutes: the document may have been decided
+  // meanwhile (a typed total, then an award that posted the commitment; an
+  // invoice posted as an actual). The write carries the same status
+  // predicate as the check above — still a draft — so a late read never
+  // reopens a decided document or replaces a total a person typed during
+  // the read (both human-total writers move a draft to parsed) — zero rows
+  // is a refusal, and nothing is audited (MON-3 / COST-13). It also
+  // requires the total the read started from, so a total written without
+  // that status change is not overwritten either.
+  const save = () => {
+    const q = supabaseAdmin.from("cost_documents").update(patch)
+      .eq("id", costDocId).eq("org_id", orgId).eq("status", "draft");
+    return (startedTotal == null ? q.is("total_amount", null) : q.eq("total_amount", startedTotal)).select("id");
+  };
+  let { data: saved, error: updErr } = await save();
+  if (updErr && (updErr.code === "PGRST204" || updErr.code === "42703")) {
+    // Pre-migration tolerance: pages_total / pages_read land in 20261096.
+    // The extent still travels in the response and the audit row.
+    delete patch.pages_total;
+    delete patch.pages_read;
+    ({ data: saved, error: updErr } = await save());
+  }
   if (updErr) return bad(`The read succeeded but saving it failed: ${updErr.message}`, 500);
+  if (!saved || (saved as unknown[]).length === 0) {
+    return bad("This document was decided, or its total typed by hand, while it was being read — nothing was changed. Refresh to see the latest.", 409);
+  }
 
   await supabaseAdmin.from("audit_logs").insert({
     action: "COST_DOC_PARSED",
     resource_type: "cost", resource_id: costDocId,
     org_id: orgId, user_id: userId, user_email: userData.user.email ?? null,
-    details: { kind: doc.kind, fileName: doc.file_name, total: patch.total_amount ?? null, pagesRead: images.map((i) => i.page) },
+    details: {
+      kind: doc.kind, fileName: doc.file_name, total: patch.total_amount ?? null,
+      currency: patch.currency ?? null,
+      pagesRead, pagesTotal, truncated: pagesTotal != null ? pagesRead.length < pagesTotal : null,
+    },
   }).then(() => undefined, () => undefined);
 
-  return NextResponse.json({ parsed: patch.parsed, pagesRead: images.map((i) => i.page) });
+  return NextResponse.json({ parsed: patch.parsed, pagesRead, pagesTotal });
 }

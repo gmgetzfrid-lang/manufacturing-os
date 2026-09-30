@@ -215,7 +215,7 @@ regardless of whether a schedule span exists.
 ## RFQ-1 · A control character pasted from Word or Excel produces a corrupt RFQ document
 
 - **Severity:** MEDIUM
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Verification:** CONFIRMED (measured with a strict expat parser)
 - **Blast radius:** correctness / vendor-facing
 - **Locations:**
@@ -253,12 +253,20 @@ Do it in the one function so every field is covered.
 - A `purpose` containing a Shift+Enter break produces a document that strict-parses.
 - A fuzz test over the C0 range asserts every output is well-formed.
 
+**Resolution (2026-09-29, projects Round G).** `lib/rfqDocx.ts` `cleanXmlText()` runs inside `esc()` — the one function every field passes through: VT (0x0B) and FF (0x0C) become line breaks, CR/CRLF are normalised, every other C0 byte, DEL, U+FFFE/FFFF and lone surrogates are dropped; metacharacters are escaped after. `buildRfqDocumentXml()` is exported so the main part can be strict-parsed. Tests (`lib/__tests__/rfqDocx.test.ts`, jsdom's strict XML `DOMParser`): a Shift+Enter purpose parses and yields a `<w:br/>`; a fuzz over every C0 byte in every field and in turnover items asserts well-formedness.
+
+**Done-when.**
+- A `purpose` containing a Shift+Enter break produces a document that strict-parses — ✓.
+- A fuzz test over the C0 range asserts every output is well-formed — ✓.
+
+**Scope / residual.** None.
+
 ---
 
 ## RFQ-2 · Newlines are emitted raw, flattening the scope section of the RFQ
 
 - **Severity:** MEDIUM
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Verification:** CONFIRMED that no `<w:br/>` conversion occurs; the exact Word rendering is SUSPECTED
 - **Blast radius:** vendor-facing quality
 - **Locations:**
@@ -299,6 +307,15 @@ date as an ISO date or a spelled month.
 - A non-Latin company name yields a distinct, non-empty filename.
 - The due date is unambiguous to any reader.
 
+**Resolution (2026-09-29, projects Round G).** Paragraph runs split on `\n` and emit `<w:br/>` between segments; the scope purpose becomes one paragraph per blank-line-separated block (`paragraphs()`). Filenames use `fileSlug()`: ASCII word characters kept, and a name with none falls back to `company-<hash>` / `scope-<hash>` so two non-Latin vendors never collide and nothing strips to empty (`rfqFileName()`). The due date renders as `formatDueDate()`: ISO plus the month spelled out ("2026-09-01 (1 September 2026)"). Tests: `rfqDocx.test.ts` (three paragraphs, one break, no raw newline in any `<w:t>`; distinct non-empty filenames; the date string and the absence of `9/1/2026` / `1/9/2026`).
+
+**Done-when.**
+- A multi-paragraph purpose renders as multiple lines in Word — ✓ (multiple `<w:p>` and `<w:br/>`; Word rendering itself not opened here — the structure is what OOXML defines for it).
+- A non-Latin company name yields a distinct, non-empty filename — ✓.
+- The due date is unambiguous to any reader — ✓.
+
+**Scope / residual.** The sole call site still passes `dueDate: null`; the formatter is exercised by test.
+
 ---
 
 ## Verified sound — do not "fix" these
@@ -334,5 +351,5 @@ Recorded so a later pass does not mistake them for gaps.
 | CHART-3 | HIGH | OPEN |
 | CHART-4 | MEDIUM | OPEN |
 | CHART-5 | MEDIUM | OPEN |
-| RFQ-1 | HIGH | OPEN |
-| RFQ-2 | MEDIUM | OPEN |
+| RFQ-1 | HIGH | RESOLVED |
+| RFQ-2 | MEDIUM | RESOLVED |

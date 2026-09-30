@@ -234,6 +234,8 @@ forwarded email, a departed employee, a shared inbox.
 - A `CHECK` constraint rejects an out-of-range expiry at the database.
 - Every surface that displays a link also offers Revoke.
 
+*Landed 2026-09-29 (projects Round G, J4 limb): the quote-link mint (`QuotesPanel.tsx` `QuoteLinksSection.create`) now requires an expiry (date input, default 90 days, refused when blank or past), writes `expires_at`, inserts with `.select("id").single()`, records the audit row against the link id (no token material) with `{ error }` checked and surfaced, and the list offers Revoke (`INTAKE_QUOTE_LINK_REVOKED`; fix pass: the revoke reads back `.select("id")` and a zero-row result is reported, never audited as a revocation). The DB `CHECK` ceiling and the document-link half close in P1; existing quote links without an expiry are inventoried by 20261096 and the backfill is left commented there until no link is in active bidding (INTK-12 default).*
+
 ---
 
 ## SEC-6 · Zero file-type validation on the public upload door

@@ -16,67 +16,103 @@ import Link from "next/link";
 import {
   HardHat, Plus, Search, Loader2, AlertTriangle, X, Check, Phone, Mail,
   Trophy, GitPullRequestArrow, Briefcase, ShieldAlert, BookOpenCheck, Timer,
+  ChevronLeft, ChevronRight, RotateCcw,
 } from "lucide-react";
 import { useRole } from "@/components/providers/RoleContext";
 import { PageShell, PageHeaderBar } from "@/components/ui/PageShell";
 import { Button } from "@/components/ui/Button";
 import { Spinner } from "@/components/ui/Spinner";
 import {
-  listCompanies, saveCompany, gatherCompanyProfile,
+  listCompaniesPage, saveCompany, gatherCompanyProfiles, COMPANY_PAGE_SIZE,
   COMPANY_KIND_LABEL, type Company, type CompanyProfileData,
 } from "@/lib/companies";
 import { scoreBand } from "@/lib/companyScore";
+import { readExtent } from "@/lib/bidTab";
 import { ScoreDial, scoreBandColor } from "@/components/ui/ChartKit";
 import { fmtMoney } from "@/lib/costs";
 
 const KIND_FILTERS = ["all", "contractor", "vendor", "rental", "internal"] as const;
 
+// The registry is paged and filtered SERVER-SIDE (PERF-1 / GAP-409): one
+// page of COMPANY_PAGE_SIZE companies sorted by name, search by ILIKE on
+// the trigram index, and ONE batched evidence gather for the visible page —
+// a handful of queries whatever the registry's size. No client cache:
+// stale company data drives award decisions, so every visit reads fresh.
 export default function CompaniesPage() {
-  const { activeOrgId, uid, hasAnyRole } = useRole();
+  const { activeOrgId, uid, hasAnyRole, loading: roleLoading, membershipState } = useRole();
   const canManage = hasAnyRole(["Admin", "DocCtrl"]);
 
   const [companies, setCompanies] = useState<Company[]>([]);
+  const [total, setTotal] = useState(0);
+  const [page, setPage] = useState(0);
   const [profiles, setProfiles] = useState<Map<string, CompanyProfileData>>(new Map());
-  const [loading, setLoading] = useState(true);
+  // Tri-state, not a boolean (REL-1): "loading" | "ready" | "failed".
+  // "failed" carries the reason; an org that never resolves is a reason.
+  const [state, setState] = useState<"loading" | "ready" | "failed">("loading");
   const [error, setError] = useState<string | null>(null);
   const [search, setSearch] = useState("");
+  const [debounced, setDebounced] = useState("");
   const [kindFilter, setKindFilter] = useState<(typeof KIND_FILTERS)[number]>("all");
   const [showAdd, setShowAdd] = useState(false);
+  const [reloadKey, setReloadKey] = useState(0);
 
-  const refresh = useCallback(async () => {
+  useEffect(() => {
+    // A new search term starts from page 0 (set inside the timer callback,
+    // never synchronously in the effect body).
+    const t = setTimeout(() => { setDebounced(search); setPage(0); }, 250);
+    return () => clearTimeout(t);
+  }, [search]);
+
+  // The org resolver gave up without an id: say so, with a retry — never
+  // a spinner that waits for something that will not arrive. Derived, not
+  // stored: it is true exactly while the resolver has settled with no org.
+  const orgUnresolved = !activeOrgId && !roleLoading;
+  const orgFailure = orgUnresolved
+    ? (membershipState === "error"
+      ? "Couldn't determine your organization — the membership lookup failed. Retry, or sign in again."
+      : "Couldn't determine your organization. Retry, or sign in again.")
+    : null;
+  const shownState: typeof state = orgFailure ? "failed" : state;
+  const shownError = orgFailure ?? error;
+
+  // One page load: the list first (cards paint), then ONE batched evidence
+  // gather for the visible page. `ctl.cancelled` is flipped by the effect's
+  // cleanup, so navigating away drops the result instead of setting state
+  // on a page that is gone. State moves only after the read returns — the
+  // current cards stay up while the next page or filter loads.
+  const refresh = useCallback(async (ctl: { cancelled: boolean }) => {
     if (!activeOrgId) return;
-    setError(null);
     try {
-      const list = await listCompanies(activeOrgId);
-      setCompanies(list);
-      setLoading(false);
-      // Evidence gathers run AFTER the cards paint, a few at a time — the
-      // page is instant, the scores stream in.
-      const queue = [...list];
-      const workers = Array.from({ length: 4 }, async () => {
-        for (;;) {
-          const c = queue.shift();
-          if (!c) return;
-          try {
-            const p = await gatherCompanyProfile(c);
-            setProfiles((prev) => new Map(prev).set(c.id, p));
-          } catch { /* card stays basic */ }
-        }
-      });
-      await Promise.all(workers);
+      const res = await listCompaniesPage(activeOrgId, { search: debounced, kind: kindFilter, page, pageSize: COMPANY_PAGE_SIZE });
+      if (ctl.cancelled) return;
+      setCompanies(res.rows); setTotal(res.total);
+      setProfiles(new Map());
+      setError(null);
+      setState("ready");
+      const gathered = await gatherCompanyProfiles(res.rows);
+      if (!ctl.cancelled) setProfiles(gathered);
     } catch (e) {
+      if (ctl.cancelled) return;
       setError((e as Error).message);
-      setLoading(false);
+      setState("failed");
     }
-  }, [activeOrgId]);
-  useEffect(() => { void refresh(); }, [refresh]);
+  }, [activeOrgId, debounced, kindFilter, page]);
 
-  const shown = useMemo(() => {
-    const q = search.trim().toLowerCase();
-    return companies.filter((c) =>
-      (kindFilter === "all" || c.kind === kindFilter) &&
-      (!q || c.name.toLowerCase().includes(q) || (c.trade ?? "").toLowerCase().includes(q)));
-  }, [companies, search, kindFilter]);
+  useEffect(() => {
+    // The read starts on the next tick — the effect body itself writes no
+    // state — and the cleanup token cancels it on navigation or re-run.
+    const ctl = { cancelled: false };
+    queueMicrotask(() => { void refresh(ctl); });
+    return () => { ctl.cancelled = true; };
+  }, [refresh, reloadKey]);
+
+  const retry = useCallback(() => setReloadKey((k) => k + 1), []);
+  // With no org the list read has nothing to re-run: Retry re-runs the
+  // resolver the only way this page can — a fresh load of the app shell
+  // (RoleContext is not this package's file and exposes no re-resolve).
+  const retryOrg = useCallback(() => { window.location.reload(); }, []);
+  const pageCount = Math.max(1, Math.ceil(total / COMPANY_PAGE_SIZE));
+  const shown = useMemo(() => companies, [companies]);
 
   return (
     <PageShell width="work">
@@ -91,7 +127,7 @@ export default function CompaniesPage() {
 
       <div className="flex flex-wrap items-center gap-2 mb-4">
         {KIND_FILTERS.map((k) => (
-          <button key={k} onClick={() => setKindFilter(k)}
+          <button key={k} onClick={() => { setKindFilter(k); setPage(0); }}
             className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-colors ${
               kindFilter === k
                 ? "bg-slate-900 text-white"
@@ -107,38 +143,58 @@ export default function CompaniesPage() {
         </div>
       </div>
 
-      {error && (
-        <div className="mb-4 flex items-center gap-2 rounded-xl border border-rose-500/50 bg-rose-500/[0.08] px-3 py-2.5 text-xs font-bold text-rose-700 dark:text-rose-300">
-          <AlertTriangle className="w-4 h-4 shrink-0" /> {error}
+      {shownState === "failed" && (
+        <div role="alert" className="mb-4 flex items-center gap-2 rounded-xl border border-rose-500/50 bg-rose-500/[0.08] px-3 py-2.5 text-xs font-bold text-rose-700 dark:text-rose-300">
+          <AlertTriangle className="w-4 h-4 shrink-0" /> <span className="min-w-0 flex-1">{shownError ?? "The registry couldn't be loaded."}</span>
+          <button onClick={orgFailure ? retryOrg : retry} className="inline-flex items-center gap-1 rounded-lg border border-rose-500/40 px-2 py-1 text-[11px] font-bold hover:bg-rose-500/10">
+            <RotateCcw className="w-3 h-3" /> Retry
+          </button>
         </div>
       )}
 
-      {loading ? (
+      {shownState === "loading" ? (
         <div className="flex items-center gap-2 text-sm text-[var(--color-text-muted)] p-8"><Spinner size="sm" /> Loading the registry…</div>
-      ) : shown.length === 0 ? (
+      ) : shownState === "failed" ? null : shown.length === 0 ? (
         <div className="bg-[var(--color-surface)] border border-dashed border-[var(--color-border-strong)] rounded-2xl p-12 text-center">
           <HardHat className="w-10 h-10 mx-auto text-slate-300 mb-3" />
           <h3 className="text-base font-black text-[var(--color-text)] mb-1">
-            {companies.length === 0 ? "No companies in the registry yet" : "No companies match"}
+            {total === 0 && !debounced && kindFilter === "all" ? "No companies in the registry yet" : "No companies match"}
           </h3>
           <p className="text-xs text-[var(--color-text-muted)] max-w-md mx-auto">
-            {companies.length === 0
+            {total === 0 && !debounced && kindFilter === "all"
               ? "Add the contractors and vendors you work with. Their record — awards, change orders, turnover acceptance, safety events — builds itself as projects run."
               : "Try a different filter or search."}
           </p>
         </div>
       ) : (
-        <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-          {shown.map((c) => (
-            <CompanyCard key={c.id} company={c} profile={profiles.get(c.id) ?? null} />
-          ))}
-        </div>
+        <>
+          <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+            {shown.map((c) => (
+              <CompanyCard key={c.id} company={c} profile={profiles.get(c.id) ?? null} />
+            ))}
+          </div>
+          {(pageCount > 1 || total > shown.length) && (
+            <nav aria-label="Registry pages" className="mt-4 flex items-center justify-between gap-2 text-xs text-[var(--color-text-muted)]">
+              <span>{total} compan{total === 1 ? "y" : "ies"} · page {page + 1} of {pageCount}</span>
+              <span className="inline-flex items-center gap-1">
+                <button onClick={() => setPage((p) => Math.max(0, p - 1))} disabled={page === 0}
+                  className="inline-flex items-center gap-1 rounded-lg border border-[var(--color-border)] px-2 py-1 font-bold hover:bg-[var(--color-surface-2)] disabled:opacity-40">
+                  <ChevronLeft className="w-3.5 h-3.5" /> Prev
+                </button>
+                <button onClick={() => setPage((p) => Math.min(pageCount - 1, p + 1))} disabled={page >= pageCount - 1}
+                  className="inline-flex items-center gap-1 rounded-lg border border-[var(--color-border)] px-2 py-1 font-bold hover:bg-[var(--color-surface-2)] disabled:opacity-40">
+                  Next <ChevronRight className="w-3.5 h-3.5" />
+                </button>
+              </span>
+            </nav>
+          )}
+        </>
       )}
 
       {showAdd && activeOrgId && uid && (
         <AddCompanyModal orgId={activeOrgId} actorId={uid}
           onClose={() => setShowAdd(false)}
-          onCreated={() => { setShowAdd(false); void refresh(); }} />
+          onCreated={() => { setShowAdd(false); retry(); }} />
       )}
     </PageShell>
   );
@@ -148,7 +204,7 @@ export default function CompaniesPage() {
 
 function CompanyCard({ company: c, profile }: { company: Company; profile: CompanyProfileData | null }) {
   const sc = profile?.scorecard ?? null;
-  const band = scoreBand(sc?.composite ?? null);
+  const band = scoreBand(sc?.composite ?? null, sc?.evidenceCount);
   const safety = useMemo(() => {
     const ev = profile?.events ?? [];
     return {
@@ -165,8 +221,8 @@ function CompanyCard({ company: c, profile }: { company: Company; profile: Compa
 
   return (
     <Link href={`/companies/${c.id}`}
-      className="group block bg-[var(--color-surface)] rounded-2xl border border-[var(--color-border)] p-4 shadow-sm hover-lift hover:border-[var(--color-accent-ring)]">
-      <div className="flex items-start gap-4">
+      className="group block min-w-0 overflow-hidden bg-[var(--color-surface)] rounded-2xl border border-[var(--color-border)] p-4 shadow-sm hover-lift hover:border-[var(--color-accent-ring)]">
+      <div className="flex items-start gap-3 sm:gap-4">
         {/* Dial */}
         <div className="shrink-0 flex flex-col items-center">
           <ScoreDial score={sc?.composite ?? null} size={76} label={band.label} />
@@ -189,21 +245,23 @@ function CompanyCard({ company: c, profile }: { company: Company; profile: Compa
             {c.status === "inactive" && <span className="text-[9px] font-bold text-[var(--color-text-faint)]">inactive</span>}
           </div>
 
-          {/* The five dimensions — each shows its work on hover AND in text. */}
-          <div className="mt-2 space-y-1">
+          {/* The five dimensions — each shows its work on hover AND in text.
+              Fixed widths only from sm: up (A11Y-9); on a phone the label
+              sits above a bar that flexes, and nothing can overflow the card. */}
+          <div className="mt-2 space-y-1 min-w-0">
             {(sc?.dimensions ?? []).map((d) => (
-              <div key={d.key} className="flex items-center gap-2 text-[10px]" title={d.detail}>
-                <span className="w-24 shrink-0 font-bold text-[var(--color-text-muted)]">{d.label}</span>
+              <div key={d.key} className="flex flex-wrap sm:flex-nowrap items-center gap-x-2 gap-y-0.5 text-[10px] min-w-0" title={d.detail}>
+                <span className="w-full sm:w-24 shrink-0 font-bold text-[var(--color-text-muted)]">{d.label}</span>
                 {d.score != null ? (
                   <>
-                    <span className="h-1.5 w-24 rounded-full bg-[var(--viz-track)] overflow-hidden shrink-0">
+                    <span className="h-1.5 flex-1 sm:flex-none sm:w-24 min-w-10 rounded-full bg-[var(--viz-track)] overflow-hidden">
                       <span className="block h-full rounded-full" style={{ width: `${d.score}%`, background: scoreBandColor(d.score) }} />
                     </span>
                     <span className="tabular-nums font-black text-[var(--color-text)] w-7 shrink-0">{Math.round(d.score)}</span>
-                    <span className="text-[var(--color-text-muted)] truncate">{d.detail}</span>
+                    <span className="text-[var(--color-text-muted)] truncate min-w-0 basis-full sm:basis-auto">{d.detail}</span>
                   </>
                 ) : (
-                  <span className="text-[var(--color-text-faint)] italic">{d.detail}</span>
+                  <span className="text-[var(--color-text-faint)] italic truncate min-w-0">{d.detail}</span>
                 )}
               </div>
             ))}
@@ -221,6 +279,11 @@ function CompanyCard({ company: c, profile }: { company: Company; profile: Compa
             <Briefcase className="w-3 h-3" /> {profile!.projects.length} job{profile!.projects.length === 1 ? "" : "s"}
           </span>
         )}
+        {profile && profile.partiesLinked === 0 && (
+          <span className="inline-flex items-center gap-1 italic" title="No project party is linked to this registry row — awards, change orders, turnover and punch evidence cannot reach it until one is. Link a party on a project's Costs tab.">
+            <Briefcase className="w-3 h-3" /> unlinked — no project party yet
+          </span>
+        )}
         {bidsTotal > 0 && (
           <span className="inline-flex items-center gap-1" title="Quotes submitted / awarded">
             <Trophy className="w-3 h-3" /> {bidsWon}/{bidsTotal} bids won
@@ -236,11 +299,16 @@ function CompanyCard({ company: c, profile }: { company: Company; profile: Compa
             <ShieldAlert className="w-3 h-3" /> {safety.recordables > 0 ? `${safety.recordables} recordable${safety.recordables === 1 ? "" : "s"}` : ""}{safety.recordables > 0 && safety.stopWorks > 0 ? " · " : ""}{safety.stopWorks > 0 ? `${safety.stopWorks} stop-work${safety.stopWorks === 1 ? "" : "s"}` : ""}
           </span>
         )}
-        {c.qualityManualScore != null && (
-          <span className="inline-flex items-center gap-1" title="Quality-manual coverage vs the ISO 9001-shaped rubric (human-confirmed)">
-            <BookOpenCheck className="w-3 h-3" /> QM {Math.round(c.qualityManualScore)}%
-          </span>
-        )}
+        {c.qualityManualScore != null && (() => {
+          // COST-3: a coverage figure from a partial (or unknown-extent)
+          // read never renders bare.
+          const ext = readExtent(c.qualityManualPagesRead, c.qualityManualPagesTotal);
+          return (
+            <span className="inline-flex items-center gap-1" title={`Quality-manual coverage vs the ISO 9001-shaped rubric (human-confirmed) — ${ext.label}`}>
+              <BookOpenCheck className="w-3 h-3" /> QM {Math.round(c.qualityManualScore)}%{ext.known && !ext.truncated ? "" : ` (${ext.label})`}
+            </span>
+          );
+        })()}
         {sc?.dimensions.find((d) => d.key === "responsiveness")?.score != null && (
           <span className="inline-flex items-center gap-1" title={sc.dimensions.find((d) => d.key === "responsiveness")!.detail}>
             <Timer className="w-3 h-3" /> {sc.dimensions.find((d) => d.key === "responsiveness")!.detail.split(" · ")[0]}

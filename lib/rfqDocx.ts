@@ -8,8 +8,9 @@
 // the submission instructions with the contractor's tokened quote link.
 // The point is symmetry: the system READS inbound quotes, so it should
 // also write the outbound ask that makes those quotes comparable — asking
-// every bidder for the same price breakdown, labor hours, crew size, and
-// explicit exclusions the bid tabulation scores on.
+// every bidder for the same price breakdown, labor hours and crew size
+// the bid tabulation scores on, and the explicit exclusions its reviewers
+// weigh.
 //
 // Built with PizZip alone (a .docx is a zip of XML) — no template file,
 // no new dependency.
@@ -28,8 +29,30 @@ export interface RfqInput {
   turnoverItems: string[];           // required package contents
 }
 
+/** XML 1.0 forbids the C0 control range in text (RFQ-1). Word's Shift+Enter
+ *  (VT, 0x0B) and a PDF form feed (0x0C) mean "line break" — keep that
+ *  meaning; every other control byte is dropped. CR/LF are normalised so a
+ *  Windows paste and a Mac paste render the same. Done in the one function
+ *  every field passes through, so nothing can bypass it. */
+export function cleanXmlText(s: string): string {
+  return s
+    .replace(/\r\n?/g, "\n")
+    .replace(/[\u000B\u000C]/g, "\n")
+    .replace(/[\u0000-\u0008\u000E-\u001F\u007F\uFFFE\uFFFF]/g, "")
+    // Lone surrogates are not XML characters either.
+    .replace(/[\uD800-\uDBFF](?![\uDC00-\uDFFF])|(?<![\uD800-\uDBFF])[\uDC00-\uDFFF]/g, "");
+}
+
 const esc = (s: string) =>
-  s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
+  cleanXmlText(s).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
+
+/** Runs for one paragraph: a newline becomes a real OOXML line break
+ *  (<w:br/>) instead of vanishing inside the run (RFQ-2). */
+function runs(text: string, rPr: string): string {
+  return cleanXmlText(text).split("\n")
+    .map((seg) => `<w:r>${rPr}<w:t xml:space="preserve">${esc(seg)}</w:t></w:r>`)
+    .join(`<w:r>${rPr}<w:br/></w:r>`);
+}
 
 /** One paragraph. style: Title | Heading | Normal | Bullet */
 function para(text: string, style: "Title" | "Heading" | "Normal" | "Bullet" = "Normal"): string {
@@ -39,30 +62,69 @@ function para(text: string, style: "Title" | "Heading" | "Normal" | "Bullet" = "
     : style === "Bullet" ? `<w:pPr><w:numPr><w:ilvl w:val="0"/><w:numId w:val="1"/></w:numPr></w:pPr><w:rPr><w:sz w:val="22"/></w:rPr>`
     : `<w:pPr><w:spacing w:after="80"/></w:pPr><w:rPr><w:sz w:val="22"/></w:rPr>`;
   const [pPr, rPr] = props.split("</w:pPr>");
-  return `<w:p>${pPr}</w:pPr><w:r>${rPr ?? ""}<w:t xml:space="preserve">${esc(text)}</w:t></w:r></w:p>`;
+  return `<w:p>${pPr}</w:pPr>${runs(text, rPr ?? "")}</w:p>`;
 }
 
-function documentXml(i: RfqInput): string {
+/** A multi-paragraph field (the scope purpose) becomes one Normal
+ *  paragraph per blank-line-separated block; single newlines inside a
+ *  block become line breaks. */
+function paragraphs(text: string): string[] {
+  const blocks = cleanXmlText(text).split(/\n{2,}/).map((b) => b.trim()).filter(Boolean);
+  return blocks.length ? blocks.map((b) => para(b)) : [para(text)];
+}
+
+const MONTHS = ["January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November", "December"];
+/** A due date no reader can misorder: ISO plus the month spelled out. */
+export function formatDueDate(iso: string): string {
+  const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(iso.trim());
+  if (!m) return iso;
+  const month = MONTHS[Number(m[2]) - 1];
+  return month ? `${m[1]}-${m[2]}-${m[3]} (${Number(m[3])} ${month} ${m[1]})` : iso;
+}
+
+/** Filename part: ASCII word characters kept; a name that has none (a
+ *  non-Latin company) falls back to a short stable hash so two different
+ *  vendors never collide on one filename and no name yields "" (RFQ-2). */
+export function fileSlug(raw: string, fallback: string, max: number): string {
+  const kept = raw.replace(/[^\w\- ]+/g, "").slice(0, max).trim().replace(/\s+/g, "-").replace(/-+/g, "-").replace(/^-|-$/g, "");
+  if (kept) return kept;
+  let h = 5381;
+  for (const ch of raw) h = ((h * 33) ^ (ch.codePointAt(0) ?? 0)) >>> 0;
+  return `${fallback}-${h.toString(16)}`;
+}
+
+export function rfqFileName(input: Pick<RfqInput, "rfqGroup" | "companyName">): string {
+  return `RFQ-${fileSlug(input.rfqGroup ?? "scope", "scope", 60)}-${fileSlug(input.companyName, "company", 40)}.docx`;
+}
+
+/** The main document part, exported so its well-formedness can be pinned
+ *  by a strict parser in tests. */
+export function buildRfqDocumentXml(i: RfqInput): string {
   const scope = i.rfqGroup ?? "the attached scope";
   const body: string[] = [
     para(`Request for Quote — ${scope}`, "Title"),
     para(`${i.projectName}${i.orgName ? ` · ${i.orgName}` : ""}`, "Normal"),
     para(`To: ${i.companyName}`, "Normal"),
-    ...(i.dueDate ? [para(`Quotes due: ${new Date(i.dueDate + "T00:00:00").toLocaleDateString()}`, "Normal")] : []),
+    ...(i.dueDate ? [para(`Quotes due: ${formatDueDate(i.dueDate)}`, "Normal")] : []),
 
     para("1. Scope of work", "Heading"),
-    para(i.purpose
-      ? `${i.purpose}`
-      : "Provide all labor, supervision, equipment, and consumables to complete the scope described below and in the referenced documents."),
+    ...(i.purpose
+      ? paragraphs(i.purpose)
+      : [para("Provide all labor, supervision, equipment, and consumables to complete the scope described below and in the referenced documents.")]),
     ...(i.sowLabel
       ? [para(`The controlling scope document is the Summary of Work: ${i.sowLabel}. Where this letter and the Summary of Work differ, the Summary of Work governs.`)]
       : [para("A Summary of Work will be issued with this request; it governs the scope.")]),
 
     para("2. Your quote must include", "Heading"),
-    para("Quotes are compared line by line on price, manpower, and scope coverage. To be evaluated fairly, include:"),
+    para("Price is scored, and so is manpower once at least three bids state labor hours in line with one another; scope coverage and any undeclared gaps are reviewed by our evaluators. To be evaluated fairly, include:"),
     para("A price breakdown by scope item — not a single lump sum.", "Bullet"),
     para("Labor hours and crew size (peak headcount) per item, by craft.", "Bullet"),
-    para("An explicit EXCLUSIONS list — anything you are not pricing. Undeclared gaps found during evaluation count against the bid; declared exclusions do not.", "Bullet"),
+    // This promise is what the tabulation does (lib/bidTab, DEC-48): the
+    // score is price + manpower (manpower only once three bids state
+    // plausible hours); coverage is not scored, so a declared
+    // exclusion never lowers a score and an undeclared gap is a matter
+    // for the reviewers, never the scorer.
+    para("An explicit EXCLUSIONS list — anything you are not pricing. Declared exclusions do not lower your score — they are shown to our reviewers as scope we must buy elsewhere; undeclared gaps are reviewed by our evaluators.", "Bullet"),
     para("Quote validity date, and any schedule constraints or premium-time assumptions.", "Bullet"),
 
     para("3. Turnover package (required from the successful bidder)", "Heading"),
@@ -115,15 +177,14 @@ export function downloadStarterRfq(input: RfqInput): void {
   zip.file("_rels/.rels", RELS);
   zip.file("word/_rels/document.xml.rels", DOC_RELS);
   zip.file("word/numbering.xml", NUMBERING);
-  zip.file("word/document.xml", documentXml(input));
+  zip.file("word/document.xml", buildRfqDocumentXml(input));
   const blob = zip.generate({
     type: "blob",
     mimeType: "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
   });
-  const safe = (input.rfqGroup ?? "scope").replace(/[^\w\- ]+/g, "").slice(0, 60).trim().replace(/\s+/g, "-");
   const a = document.createElement("a");
   a.href = URL.createObjectURL(blob);
-  a.download = `RFQ-${safe || "scope"}-${input.companyName.replace(/[^\w\- ]+/g, "").slice(0, 40).trim().replace(/\s+/g, "-")}.docx`;
+  a.download = rfqFileName(input);
   a.click();
   setTimeout(() => URL.revokeObjectURL(a.href), 5000);
 }

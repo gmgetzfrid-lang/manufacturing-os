@@ -22,11 +22,12 @@ import { useRole } from "@/components/providers/RoleContext";
 import { supabase } from "@/lib/supabase";
 import { Spinner } from "@/components/ui/Spinner";
 import {
-  getCompany, saveCompany, gatherCompanyProfile, addCompanyEvent, confirmQualityManual,
+  getCompany, saveCompany, gatherCompanyProfile, addCompanyEvent, confirmQualityManual, recordedQualityScore,
   COMPANY_KIND_LABEL, EVENT_KIND_LABEL,
   type Company, type CompanyEvent, type CompanyProfileData,
 } from "@/lib/companies";
-import { scoreBand, type CompanyScorecard } from "@/lib/companyScore";
+import { scoreBand, MIN_EVIDENCE_FOR_BAND, type CompanyScorecard } from "@/lib/companyScore";
+import { readExtent } from "@/lib/bidTab";
 import { QUALITY_MANUAL_RUBRIC, type RubricFinding } from "@/lib/checklistEngine";
 import { CO_REASON_LABEL, type CoReason } from "@/lib/changeOrders";
 import { ScoreDial, scoreBandColor } from "@/components/ui/ChartKit";
@@ -46,7 +47,13 @@ export default function CompanyProfilePage() {
   const [company, setCompany] = useState<Company | null>(null);
   const [profile, setProfile] = useState<CompanyProfileData | null>(null);
   const [loading, setLoading] = useState(true);
+  // Load errors (the record can't render) vs action errors (the record
+  // stays up, a dismissible banner reports the failure). Sharing one state
+  // used to let a failed quality-manual evaluation blank the whole company
+  // page and discard the form contents (UX-9) — the projects page fixed
+  // the same bug first.
   const [error, setError] = useState<string | null>(null);
+  const [actionError, setActionError] = useState<string | null>(null);
   const [showEdit, setShowEdit] = useState(false);
 
   const [reloadKey, setReloadKey] = useState(0);
@@ -82,18 +89,26 @@ export default function CompanyProfilePage() {
   );
 
   const sc = profile?.scorecard ?? null;
-  const band = scoreBand(sc?.composite ?? null);
+  const band = scoreBand(sc?.composite ?? null, sc?.evidenceCount);
 
   return (
-    <div className="pb-20 max-w-5xl mx-auto px-6 py-6 space-y-4">
+    <div className="pb-20 max-w-5xl mx-auto px-4 sm:px-6 py-6 space-y-4 min-w-0">
       <button onClick={() => { if (window.history.length > 1) router.back(); else router.push("/companies"); }}
         className="inline-flex items-center gap-1.5 text-xs text-[var(--color-text-muted)] hover:text-[var(--color-text)]">
         <ArrowLeft className="w-3.5 h-3.5" /> Back to companies
       </button>
 
+      {actionError && (
+        <div role="alert" className="flex items-start gap-2 rounded-xl border border-rose-500/50 bg-rose-500/[0.08] px-3 py-2.5 text-xs font-bold text-rose-700 dark:text-rose-300">
+          <AlertTriangle className="w-4 h-4 shrink-0 mt-0.5" />
+          <span className="min-w-0 flex-1">{actionError}</span>
+          <button onClick={() => setActionError(null)} aria-label="Dismiss" className="p-0.5 rounded hover:bg-rose-500/10"><X className="w-3.5 h-3.5" /></button>
+        </div>
+      )}
+
       {/* ── Header card ── */}
-      <div className="bg-[var(--color-surface)] rounded-2xl border border-[var(--color-border)] p-5 shadow-sm">
-        <div className="flex items-start gap-5 flex-wrap">
+      <div className="bg-[var(--color-surface)] rounded-2xl border border-[var(--color-border)] p-4 sm:p-5 shadow-sm min-w-0 overflow-hidden">
+        <div className="flex items-start gap-4 sm:gap-5 flex-wrap">
           <ScoreDial score={sc?.composite ?? null} size={92} label={band.label} />
           <div className="min-w-0 flex-1">
             <div className="flex items-center gap-2 flex-wrap">
@@ -120,21 +135,23 @@ export default function CompanyProfilePage() {
             </div>
             {company.notes && <p className="mt-2 text-xs text-[var(--color-text-muted)]">{company.notes}</p>}
 
-            {/* Dimensions with their work shown. */}
-            <div className="mt-3 space-y-1.5">
+            {/* Dimensions with their work shown. Fixed widths only from
+                sm: up (A11Y-9) — on a phone the label stacks above a bar
+                that flexes and the detail wraps. */}
+            <div className="mt-3 space-y-1.5 min-w-0">
               {(sc?.dimensions ?? []).map((d) => (
-                <div key={d.key} className="flex items-center gap-2 text-[11px]">
-                  <span className="w-28 shrink-0 font-bold text-[var(--color-text-muted)]">{d.label}</span>
+                <div key={d.key} className="flex flex-wrap sm:flex-nowrap items-center gap-x-2 gap-y-0.5 text-[11px] min-w-0">
+                  <span className="w-full sm:w-28 shrink-0 font-bold text-[var(--color-text-muted)]">{d.label}</span>
                   {d.score != null ? (
                     <>
-                      <span className="h-2 w-32 rounded-full bg-[var(--viz-track)] overflow-hidden shrink-0">
+                      <span className="h-2 flex-1 sm:flex-none sm:w-32 min-w-10 rounded-full bg-[var(--viz-track)] overflow-hidden">
                         <span className="block h-full rounded-full" style={{ width: `${d.score}%`, background: scoreBandColor(d.score) }} />
                       </span>
                       <span className="tabular-nums font-black text-[var(--color-text)] w-8 shrink-0">{Math.round(d.score)}</span>
-                      <span className="text-[var(--color-text-muted)]">{d.detail}</span>
+                      <span className="text-[var(--color-text-muted)] min-w-0 basis-full sm:basis-auto break-words">{d.detail}</span>
                     </>
                   ) : (
-                    <span className="text-[var(--color-text-faint)] italic">{d.detail}</span>
+                    <span className="text-[var(--color-text-faint)] italic min-w-0 break-words">{d.detail}</span>
                   )}
                 </div>
               ))}
@@ -143,6 +160,18 @@ export default function CompanyProfilePage() {
             {sc && (
               <div className="mt-2 text-[10px] text-[var(--color-text-faint)]">
                 Score computed from {sc.evidenceCount} recorded evidence point{sc.evidenceCount === 1 ? "" : "s"} — never from typed-in ratings. Dimensions without evidence stay Unrated and don&apos;t count.
+                {sc.composite != null && sc.evidenceCount < MIN_EVIDENCE_FOR_BAND && (
+                  <> Fewer than {MIN_EVIDENCE_FOR_BAND} evidence points — the band is <b>provisional</b>, not a grade.</>
+                )}
+                {profile && profile.partiesLinked === 0 && (
+                  <> <b>Unlinked:</b> no project party points at this registry row, so awards, change orders, turnover and punch evidence cannot reach it — link a party on a project&apos;s Costs tab.</>
+                )}
+                {profile && profile.awardsSource === "contract_value" && (
+                  <> Awards come from a typed contract value, not posted commitments.</>
+                )}
+                {profile && profile.awardsSource === "mixed" && (
+                  <> Awards on some parties come from a typed contract value (no commitment has posted there), the rest from posted commitments.</>
+                )}
               </div>
             )}
           </div>
@@ -150,11 +179,11 @@ export default function CompanyProfilePage() {
       </div>
 
       <QualityManualPanel orgId={activeOrgId ?? company.orgId} company={company} canManage={canManage}
-        actorId={uid ?? ""} onChanged={() => void refresh()} setErr={setError} />
+        actorId={uid ?? ""} onChanged={() => void refresh()} setErr={setActionError} />
 
       <EventsPanel orgId={company.orgId} company={company} events={profile?.events ?? []}
         canManage={canManage} actorId={uid ?? ""} actorName={userEmail?.split("@")[0] ?? null}
-        onChanged={() => void refresh()} setErr={setError} />
+        onChanged={() => void refresh()} setErr={setActionError} />
 
       <HistoryPanels profile={profile} scorecard={sc} />
 
@@ -177,7 +206,10 @@ function QualityManualPanel({ orgId, company, canManage, actorId, onChanged, set
   const [results, setResults] = useState<Array<{ id: string; label: string }>>([]);
   const [doc, setDoc] = useState<{ id: string; label: string } | null>(null);
   const [evaluating, setEvaluating] = useState(false);
-  const [proposal, setProposal] = useState<{ score: number; findings: RubricFinding[] } | null>(null);
+  const [proposal, setProposal] = useState<{ score: number; findings: RubricFinding[]; pagesRead: number | null; pagesTotal: number | null } | null>(null);
+  // The human may adjust the model's number before it lands (COST-3 dw4);
+  // when they don't, the record says the proposal was accepted as-is.
+  const [adjusted, setAdjusted] = useState<string>("");
   const [confirming, setConfirming] = useState(false);
   const areaLabel = useMemo(() => new Map(QUALITY_MANUAL_RUBRIC.map((a) => [a.key, a.label])), []);
 
@@ -206,25 +238,38 @@ function QualityManualPanel({ orgId, company, canManage, actorId, onChanged, set
         headers: { "content-type": "application/json", ...(await authHeader()) },
         body: JSON.stringify({ orgId, companyId: company.id, documentId: doc.id }),
       });
-      const body = (await res.json().catch(() => null)) as { score?: number; findings?: RubricFinding[]; error?: string } | null;
+      const body = (await res.json().catch(() => null)) as {
+        score?: number; findings?: RubricFinding[]; error?: string; pagesRead?: number[]; pagesTotal?: number | null;
+      } | null;
       if (!res.ok || body?.score == null || !body.findings) throw new Error(body?.error || `HTTP ${res.status}`);
-      setProposal({ score: body.score, findings: body.findings });
+      setProposal({
+        score: body.score, findings: body.findings,
+        pagesRead: Array.isArray(body.pagesRead) ? body.pagesRead.length : null,
+        pagesTotal: typeof body.pagesTotal === "number" ? body.pagesTotal : null,
+      });
+      setAdjusted(String(body.score));
     } catch (e) {
       setErr((e as Error).message);
     } finally { setEvaluating(false); }
   };
 
+  // Blank is "nothing entered", never 0% (recordedQualityScore).
+  const adjustedScore = recordedQualityScore(adjusted);
+
   const confirm = async () => {
     if (!proposal || !doc) return;
+    if (adjustedScore == null) { setErr("Enter the coverage percentage to record (0–100)."); return; }
     setConfirming(true); setErr(null);
     try {
       await confirmQualityManual({
         orgId, companyId: company.id, documentId: doc.id,
-        score: proposal.score,
+        score: adjustedScore,
+        proposedScore: proposal.score,
+        pagesRead: proposal.pagesRead, pagesTotal: proposal.pagesTotal,
         gaps: proposal.findings.filter((f) => !f.covered).map((f) => ({ area: f.area, finding: f.finding })),
         actorId,
       });
-      setProposal(null); setDoc(null); setQuery("");
+      setProposal(null); setDoc(null); setQuery(""); setAdjusted("");
       onChanged();
     } catch (e) {
       setErr((e as Error).message);
@@ -237,8 +282,10 @@ function QualityManualPanel({ orgId, company, canManage, actorId, onChanged, set
         <BookOpenCheck className="w-4 h-4 text-[var(--color-accent)]" />
         <span className="text-sm font-bold text-[var(--color-text)]">Quality manual</span>
         {company.qualityManualScore != null ? (
-          <span className="text-[11px] font-black tabular-nums" style={{ color: scoreBandColor(company.qualityManualScore) }}>
+          <span className="text-[11px] font-black tabular-nums" style={{ color: scoreBandColor(company.qualityManualScore) }}
+            title={`Based on ${readExtent(company.qualityManualPagesRead, company.qualityManualPagesTotal).label} of the manual`}>
             {Math.round(company.qualityManualScore)}% coverage
+            <span className="ml-1 font-bold text-[var(--color-text-faint)]">· {readExtent(company.qualityManualPagesRead, company.qualityManualPagesTotal).label}</span>
           </span>
         ) : (
           <span className="text-[10px] text-[var(--color-text-muted)]">Not evaluated — the score gauges how much of a real quality program their manual covers.</span>
@@ -296,12 +343,26 @@ function QualityManualPanel({ orgId, company, canManage, actorId, onChanged, set
             </>
           ) : (
             <>
-              <div className="flex items-center gap-2">
+              <div className="flex items-center gap-2 flex-wrap">
                 <span className="text-xs font-black text-[var(--color-text)]">Proposed: {proposal.score}% coverage</span>
+                <span className={`text-[10px] font-bold ${readExtent(proposal.pagesRead, proposal.pagesTotal).truncated || !readExtent(proposal.pagesRead, proposal.pagesTotal).known ? "text-amber-700 dark:text-amber-300" : "text-[var(--color-text-muted)]"}`}
+                  title="The model judged only the pages attached; areas covered later in a longer manual read as uncovered.">
+                  {readExtent(proposal.pagesRead, proposal.pagesTotal).label}
+                </span>
+                <label className="inline-flex items-center gap-1 text-[10px] text-[var(--color-text-muted)]">
+                  record as
+                  <input type="number" min={0} max={100} value={adjusted} onChange={(e) => setAdjusted(e.target.value)}
+                    aria-label="Coverage percentage to record"
+                    className="h-6 w-14 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-1 text-[11px] font-black tabular-nums" />%
+                  {adjustedScore != null && adjustedScore !== proposal.score
+                    ? <span className="font-bold text-amber-700 dark:text-amber-300">adjusted from the model&apos;s {proposal.score}%</span>
+                    : <span>the model&apos;s proposal, accepted as-is</span>}
+                </label>
                 <span className="text-[10px] text-[var(--color-text-muted)]">Review the findings — nothing lands on the record until you confirm.</span>
                 <span className="ml-auto flex items-center gap-2">
-                  <button onClick={() => setProposal(null)} className="text-xs font-bold text-[var(--color-text-muted)] hover:text-[var(--color-text)]">Discard</button>
-                  <button onClick={() => void confirm()} disabled={confirming}
+                  <button onClick={() => { setProposal(null); setAdjusted(""); }} className="text-xs font-bold text-[var(--color-text-muted)] hover:text-[var(--color-text)]">Discard</button>
+                  <button onClick={() => void confirm()} disabled={confirming || adjustedScore == null}
+                    title={adjustedScore == null ? "Enter the coverage percentage to record (0–100)" : undefined}
                     className="inline-flex items-center gap-1 px-3 py-1 rounded-lg bg-[var(--color-accent)] text-[var(--color-accent-fg)] text-[11px] font-black hover:bg-[var(--color-accent-hover)] disabled:opacity-50">
                     {confirming ? <Loader2 className="w-3 h-3 animate-spin" /> : <Check className="w-3 h-3" />} Confirm to record
                   </button>
@@ -519,7 +580,7 @@ function EditCompanyModal({ company, actorId, onClose, onSaved }: {
               className="px-3 py-2 border border-[var(--color-border-strong)] rounded-lg text-sm bg-[var(--color-surface)]" />
             <select value={status} onChange={(e) => setStatus(e.target.value as Company["status"])}
               className="px-2 py-2 border border-[var(--color-border-strong)] rounded-lg text-sm bg-[var(--color-surface)]"
-              title="'Do not use' keeps the record but flags the company across the app.">
+              title="'Do not use' keeps the record and flags the company on the bid tab: an award to it needs a typed, recorded override (and so does re-linking a bidder away from it). The refusal at posting is pending (P3 / PC-7).">
               <option value="active">Active</option>
               <option value="inactive">Inactive</option>
               <option value="do_not_use">Do not use</option>
