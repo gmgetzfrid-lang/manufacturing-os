@@ -30,21 +30,28 @@
 --   4. CB-3 — codebook codes for units and equipment types are 1–6 digits:
 --      the codec composes and inverts site codes digit by digit, so a letter
 --      code is write-only. A BEFORE INSERT OR UPDATE OF code, kind trigger
---      refuses a NEW letter code (an insert, or an edit that changes the
---      code); a legacy letter-coded row stays fully usable otherwise — relabel,
---      pinned libraries, knowledge binding (a NOT VALID CHECK would bind every
---      UPDATE of such a row, meta-only ones included). The CHECK itself is
---      added, validated, only when no legacy row violates it (the inventory
---      says which world you are in; nothing is rewritten or deleted).
---   5. CB-10 — one site code is one asset: a UNIQUE partial index on
---      assets (org_id, code) for non-blank codes, created only when no org
---      carries a duplicate today (otherwise the plain index stays and the
---      inventory counts the duplicates to resolve first; nothing is rewritten).
---      App writers treat a DERIVED code as optional (lib/assets.ts
---      codeOptional: the importer, the bulk filer). HANDED TO I-11: the
---      Bridge's discovery insert and unit backfill (lib/equipmentBridgeServer.ts)
---      must retry without `code` on this index and write unit_code apart from
---      code — until then a colliding discovered tag is not created.
+--      refuses a NEW letter code a PERSON writes (an insert, or an edit that
+--      changes the code); a legacy letter-coded row stays fully usable
+--      otherwise — relabel, pinned libraries, knowledge binding. The service
+--      role passes (auth.uid() IS NULL — the org restore, whose additive
+--      upsert fires a BEFORE INSERT trigger ahead of ON CONFLICT (id), so a
+--      backup holding a legacy letter code restores whole). There is NO CHECK:
+--      a CHECK (NOT VALID or validated) would refuse restoring any backup
+--      taken before the org replaced its letter codes; one an earlier paste of
+--      this file added is dropped. Nothing is rewritten or deleted.
+--   5. CB-10 — one site code is one asset. A code the SERVICE ROLE writes
+--      (the Bridge's discovery insert and unit backfill, the org restore, a
+--      direct SQL write) yields to the asset that already carries it: an
+--      INSERT lands without it, an UPDATE keeps the row's own code, so the
+--      row and the rest of the write (the unit filing) always land (BEFORE
+--      INSERT OR UPDATE OF code trigger). A UNIQUE partial index on assets
+--      (org_id, code) for non-blank codes is the backstop for a person's write
+--      and for a race; it is created only when no org carries a duplicate
+--      today (otherwise the plain index stays and the inventory counts the
+--      duplicates to resolve first; nothing is rewritten). App writers treat
+--      a DERIVED code as optional (lib/assets.ts codeOptional: the importer,
+--      the bulk filer, the drawer's auto-derived code), so the index refuses
+--      a code but never the asset.
 --   6. CB-5 — a unit or equipment type that registry equipment (its filing,
 --      or the unit / type part of a stored site code) or a process flow still
 --      references cannot be removed or re-coded by a person: a BEFORE DELETE
@@ -74,7 +81,7 @@ SELECT 'active members who are not controllers (lose write on document_equipment
 UNION ALL
 SELECT 'document_equipment_suggestions rows', COUNT(*) FROM document_equipment_suggestions
 UNION ALL
-SELECT 'codebook unit / equipment-type codes that are not 1-6 digits (CB-3: no CHECK while > 0 — the trigger binds new codes; each stays usable until replaced)', COUNT(*)
+SELECT 'codebook unit / equipment-type codes that are not 1-6 digits (CB-3: legacy — each stays usable until replaced; the trigger refuses new ones)', COUNT(*)
   FROM codebook_entries WHERE kind IN ('unit', 'equipment_type') AND code !~ '^[0-9]{1,6}$'
 UNION ALL
 SELECT 'assets sharing a non-blank site code with another asset of the same org (CB-10: no unique index while > 0)', COUNT(*)
@@ -138,12 +145,15 @@ CREATE POLICY doc_equip_sugg_write ON document_equipment_suggestions FOR ALL
   WITH CHECK (is_org_controller(org_id));
 
 -- ── 4. CB-3: unit and equipment-type codes are digits ───────────────────────
--- The rule binds a NEW code only — an insert, or an edit that changes the code
--- (or the kind). A meta-only UPDATE of a legacy letter-coded unit (pinning a
--- library, binding its knowledge library, a relabel) is not a new code.
+-- The rule binds a NEW code a person writes — an insert, or an edit that
+-- changes the code (or the kind). A meta-only UPDATE of a legacy letter-coded
+-- unit (pinning a library, binding its knowledge library, a relabel) is not a
+-- new code. The service role's writes (the org restore re-inserting a legacy
+-- row, org cascades) are not a person's and pass — the rule of §2 and §6.
 CREATE OR REPLACE FUNCTION codebook_entries_code_digits_guard()
 RETURNS trigger LANGUAGE plpgsql SET search_path = public AS $$
 BEGIN
+  IF auth.uid() IS NULL THEN RETURN NEW; END IF;
   IF NEW.kind IN ('unit', 'equipment_type') AND NEW.code !~ '^[0-9]{1,6}$'
      AND (TG_OP = 'INSERT' OR NEW.code IS DISTINCT FROM OLD.code OR NEW.kind IS DISTINCT FROM OLD.kind) THEN
     RAISE EXCEPTION 'codebook_entries_code_digits: % code "%" is not 1-6 digits', NEW.kind, NEW.code
@@ -159,25 +169,40 @@ CREATE TRIGGER trg_codebook_entries_code_digits
   BEFORE INSERT OR UPDATE OF code, kind ON codebook_entries
   FOR EACH ROW EXECUTE FUNCTION codebook_entries_code_digits_guard();
 
--- The CHECK exists only in the clean world, and only VALIDATED: with legacy
--- letter codes present it is absent (dropped if an earlier paste left it NOT
--- VALID), because a NOT VALID CHECK still binds every UPDATE of those rows.
-DO $$
-BEGIN
-  IF EXISTS (SELECT 1 FROM codebook_entries
-              WHERE kind IN ('unit', 'equipment_type') AND code !~ '^[0-9]{1,6}$') THEN
-    ALTER TABLE codebook_entries DROP CONSTRAINT IF EXISTS codebook_entries_code_digits;
-  ELSIF NOT EXISTS (SELECT 1 FROM pg_constraint
-                     WHERE conname = 'codebook_entries_code_digits'
-                       AND conrelid = 'codebook_entries'::regclass) THEN
-    ALTER TABLE codebook_entries ADD CONSTRAINT codebook_entries_code_digits
-      CHECK (kind NOT IN ('unit', 'equipment_type') OR code ~ '^[0-9]{1,6}$');
-  ELSE
-    ALTER TABLE codebook_entries VALIDATE CONSTRAINT codebook_entries_code_digits;
-  END IF;
-END $$;
+-- No CHECK: it binds the service role too, so restoring a backup taken
+-- before the org replaced its letter codes would stop at codebook_entries
+-- (and skip every later table). One an earlier paste of this file added is
+-- removed; the trigger above binds every code a person writes.
+ALTER TABLE codebook_entries DROP CONSTRAINT IF EXISTS codebook_entries_code_digits;
 
 -- ── 5. CB-10: one site code is one asset ────────────────────────────────────
+-- A code the service role writes yields to its holder: an INSERT lands without
+-- it, an UPDATE keeps the row's own code — the row and its unit filing always
+-- land, and the identity review lists the asset (derived_code_taken). A person's
+-- write passes through to the unique index (the app writes a derived code as
+-- optional; a typed one that is taken is refused and named). Excluding NEW.id
+-- keeps a restore's ON CONFLICT (id) skip of a live row as it was.
+CREATE OR REPLACE FUNCTION assets_code_one_holder()
+RETURNS trigger LANGUAGE plpgsql SET search_path = public AS $$
+BEGIN
+  IF auth.uid() IS NOT NULL THEN RETURN NEW; END IF;
+  IF NEW.code IS NULL OR btrim(NEW.code) = '' THEN RETURN NEW; END IF;
+  IF TG_OP = 'UPDATE' AND NEW.code IS NOT DISTINCT FROM OLD.code THEN RETURN NEW; END IF;
+  IF EXISTS (SELECT 1 FROM assets o
+              WHERE o.org_id = NEW.org_id AND o.code = NEW.code
+                AND o.id IS DISTINCT FROM NEW.id) THEN
+    RAISE NOTICE 'assets_code_one_holder: site code % is already carried by another asset; % lands without it', NEW.code, NEW.tag;
+    IF TG_OP = 'INSERT' THEN NEW.code := NULL; ELSE NEW.code := OLD.code; END IF;
+  END IF;
+  RETURN NEW;
+END;
+$$;
+
+DROP TRIGGER IF EXISTS trg_assets_code_one_holder ON assets;
+CREATE TRIGGER trg_assets_code_one_holder
+  BEFORE INSERT OR UPDATE OF code ON assets
+  FOR EACH ROW EXECUTE FUNCTION assets_code_one_holder();
+
 DO $$
 BEGIN
   IF NOT EXISTS (SELECT 1 FROM assets
@@ -308,16 +333,27 @@ SELECT 'search_path pinned on assets_audit_delete',
           FROM pg_proc WHERE proname = 'assets_audit_delete'),
        NULL
 UNION ALL
-SELECT 'CB-3: a new letter unit / type code is refused on INSERT or a code change (trigger); meta-only updates pass',
+SELECT 'CB-3: a new letter unit / type code a person writes is refused on INSERT or a code change (trigger); meta-only updates and the service role (restore) pass',
        EXISTS (SELECT 1 FROM pg_trigger WHERE tgname = 'trg_codebook_entries_code_digits'
                 AND tgrelid = 'codebook_entries'::regclass AND NOT tgisinternal)
        AND (SELECT prosrc LIKE '%TG_OP = ''INSERT'' OR NEW.code IS DISTINCT FROM OLD.code%'
+                   AND prosrc LIKE '%IF auth.uid() IS NULL THEN RETURN NEW; END IF;%'
                    AND array_to_string(proconfig, ',') LIKE '%search_path=public%'
               FROM pg_proc WHERE proname = 'codebook_entries_code_digits_guard'),
        NULL
 UNION ALL
-SELECT 'CB-3: codebook_entries_code_digits CHECK is either absent (legacy letter codes remain) or VALIDATED — never NOT VALID',
-       NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'codebook_entries_code_digits' AND NOT convalidated),
+SELECT 'CB-3: no codebook_entries_code_digits CHECK (it would refuse restoring a backup that holds a legacy letter code)',
+       NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'codebook_entries_code_digits'),
+       NULL
+UNION ALL
+SELECT 'CB-10: a code the service role writes (Bridge, restore) yields to the asset already carrying it — the row and its filing land (trigger, search_path pinned)',
+       EXISTS (SELECT 1 FROM pg_trigger WHERE tgname = 'trg_assets_code_one_holder'
+                AND tgrelid = 'assets'::regclass AND NOT tgisinternal)
+       AND (SELECT prosrc LIKE '%IF auth.uid() IS NOT NULL THEN RETURN NEW; END IF;%'
+                   AND prosrc LIKE '%AND o.id IS DISTINCT FROM NEW.id%'
+                   AND prosrc LIKE '%IF TG_OP = ''INSERT'' THEN NEW.code := NULL; ELSE NEW.code := OLD.code; END IF;%'
+                   AND array_to_string(proconfig, ',') LIKE '%search_path=public%'
+              FROM pg_proc WHERE proname = 'assets_code_one_holder'),
        NULL
 UNION ALL
 SELECT 'CB-5: a unit / type still referenced by equipment or a process flow cannot be removed or re-coded (trigger, search_path pinned)',
@@ -330,9 +366,6 @@ SELECT 'CB-5: a unit / type still referenced by equipment or a process flow cann
        NULL
 UNION ALL
 SELECT 'inventory (before): ' || what, NULL, n::text FROM _intel_g28_before
-UNION ALL
-SELECT 'inventory (after): codebook_entries_code_digits CHECK validated (true = every code is digits; absent = legacy letter codes remain, the trigger binds new ones)', NULL,
-       COALESCE((SELECT convalidated::text FROM pg_constraint WHERE conname = 'codebook_entries_code_digits'), 'absent')
 UNION ALL
 SELECT 'inventory (after): assets_org_code_unique created (true = one site code is one asset)', NULL,
        (to_regclass('public.assets_org_code_unique') IS NOT NULL)::text;

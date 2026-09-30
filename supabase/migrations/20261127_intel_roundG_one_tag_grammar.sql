@@ -26,7 +26,10 @@
 --      is DROPPED (RETURN NULL — "already taught", as addAssetAlias treats
 --      23505), so a restore of an export holding both the keyed row and an
 --      inert duplicate spelling (or a pre-20261127 backup holding two
---      spellings) carries on instead of stopping at asset_aliases.
+--      spellings) carries on instead of stopping at asset_aliases. An alias
+--      with no letter or digit has the empty key, so a second one on the same
+--      asset ("?" beside "#", distinct under the old grammar) is dropped the
+--      same way — inert either way, and the restore carries on.
 --
 -- NARROWS nothing and WIDENS nothing (no policy is touched). Pre-apply
 -- inventory (DEC-30) is captured into a TEMP TABLE before the transaction:
@@ -82,8 +85,9 @@ BEGIN
   NEW.alias_normalized := normalize_tag(NEW.alias);
   -- The same alias in another spelling is the same identity: an insert whose
   -- key another row of the asset already holds is dropped, not raised (a
-  -- re-run of the same row, by id, still reaches ON CONFLICT (id)).
-  IF TG_OP = 'INSERT' AND NEW.alias_normalized <> ''
+  -- re-run of the same row, by id, still reaches ON CONFLICT (id)). The empty
+  -- key (no letter or digit — never matched) is dropped the same way.
+  IF TG_OP = 'INSERT'
      AND EXISTS (SELECT 1 FROM asset_aliases o
                   WHERE o.asset_id = NEW.asset_id
                     AND o.alias_normalized = NEW.alias_normalized
@@ -129,8 +133,10 @@ SELECT 'asset_aliases_one_grammar derives the key from normalize_tag(NEW.alias) 
           FROM pg_proc WHERE proname = 'asset_aliases_one_grammar'),
        NULL
 UNION ALL
-SELECT 'a second spelling of an alias the asset already carries is dropped on INSERT (a restore carries on)',
-       (SELECT prosrc LIKE '%IF TG_OP = ''INSERT'' AND NEW.alias_normalized <> ''''%'
+SELECT 'a second spelling of an alias the asset already carries (the empty key included) is dropped on INSERT (a restore carries on)',
+       (SELECT prosrc LIKE '%IF TG_OP = ''INSERT''%'
+               AND prosrc NOT LIKE '%NEW.alias_normalized <> ''''%'
+               AND prosrc LIKE '%o.alias_normalized = NEW.alias_normalized%'
                AND prosrc LIKE '%RETURN NULL;%'
           FROM pg_proc WHERE proname = 'asset_aliases_one_grammar'),
        NULL

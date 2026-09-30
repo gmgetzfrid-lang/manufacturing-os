@@ -12,6 +12,13 @@
 //               is optional — the row still lands, without it.
 //   * CB-5 — a codebook entry still referenced cannot be removed: the
 //               database's refusal arrives with the counts.
+//   * Restores and the Bridge (service role) — the org restore's additive
+//               upsert and the Bridge's discovery insert / unit backfill,
+//               driven against 20261128's triggers (transcribed below and
+//               pinned to the SQL by shape tests): a legacy letter code
+//               restores, a taken site code is dropped, never the row.
+//   * IRLS-5 — archive is reversible: restoreAsset and the page's Archived
+//               list / the drawer's Restore.
 //   * 20261128 — the paste contract, the predicates, the two-world DO blocks,
 //               and a policy census: the registry's final DELETE overlays and
 //               the Bridge ledger's write policy are the ones this file wrote,
@@ -20,7 +27,8 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { readFileSync, readdirSync } from "node:fs";
 import { join } from "node:path";
-import { newFakeDb, type FakeDb, type Row } from "./helpers/fakeSupabase";
+import { newFakeDb, makeFakeSupabase, type FakeDb, type Row } from "./helpers/fakeSupabase";
+import type { SupabaseClient } from "@supabase/supabase-js";
 
 const db = vi.hoisted(() => ({ ref: null as unknown as FakeDb }));
 vi.mock("@/lib/supabase", async () => {
@@ -32,9 +40,12 @@ vi.mock("@/lib/supabase", async () => {
 
 import {
   listAssets, listAssetIdentities, getPhotoCounts, updateAsset, deleteAsset, archiveAsset, deletePhoto,
-  createAsset, findAssetsByTagKeys, SITE_CODE_UNIQUE_INDEX, isSiteCodeTaken,
+  createAsset, findAssetsByTagKeys, SITE_CODE_UNIQUE_INDEX, isSiteCodeTaken, restoreAsset,
+  type Asset,
 } from "@/lib/assets";
-import { upsertEntry, deleteEntry, saveUnitLinks, saveConfig, applyImport, unitFlowReferenceCount } from "@/lib/codebook";
+import { upsertEntry, deleteEntry, saveUnitLinks, saveConfig, applyImport, unitFlowReferenceCount, EMPTY_CODEBOOK, type Codebook } from "@/lib/codebook";
+import { applyForDocument } from "@/lib/equipmentBridgeServer";
+import { planCategorization, applyCategorization } from "@/lib/assetCategorize";
 
 const repo = (p: string) => readFileSync(join(process.cwd(), p), "utf8");
 const mig = (f: string) => repo(join("supabase", "migrations", f));
@@ -94,9 +105,18 @@ describe("AREA-1 / IRLS-5 — registry writes are checked; delete is the control
     await expect(deleteAsset("a00001")).rejects.toThrow(/deleting registry equipment is limited to Admin and Document Control.*Archive it instead/);
     expect(db.ref.tables.assets).toHaveLength(1);
   });
-  it("archive is the reversible removal: the row stays, archived", async () => {
+  it("archive is the reversible removal: the row stays, archived — and restoreAsset brings it back as it was", async () => {
     await archiveAsset("a00001", "u1");
     expect(db.ref.tables.assets[0]).toMatchObject({ archived: true, updated_by: "u1" });
+    expect(await listAssets({ orgId: "o1", archived: false })).toHaveLength(0);
+    await restoreAsset("a00001", "u2");
+    expect(db.ref.tables.assets[0]).toMatchObject({ archived: false, updated_by: "u2", tag: "P-1" });
+    expect((await listAssets({ orgId: "o1", archived: false })).map((a) => a.id)).toEqual(["a00001"]);
+    // A restore RLS refuses is reported, never a silent success.
+    await archiveAsset("a00001", "u1");
+    db.ref.refuseWrites.add("assets");
+    await expect(restoreAsset("a00001", "u2")).rejects.toThrow(/was not saved/);
+    expect(db.ref.tables.assets[0].archived).toBe(true);
   });
   it("a permitted delete removes the row; a refused photo delete is reported", async () => {
     await deleteAsset("a00001");
@@ -314,12 +334,28 @@ describe("20261128 §4/§5 — CB-3 CHECK and CB-10 unique index choose their ow
     expect(fn).toContain("USING ERRCODE = '23514',");
     expect(body).toMatch(/CREATE TRIGGER trg_codebook_entries_code_digits\n\s+BEFORE INSERT OR UPDATE OF code, kind ON codebook_entries\n\s+FOR EACH ROW EXECUTE FUNCTION codebook_entries_code_digits_guard\(\);/);
   });
-  it("CB-3: the CHECK is never NOT VALID (which binds every UPDATE of a violating row) — absent while legacy codes remain, added VALIDATED when clean", () => {
-    expect(body).not.toMatch(/NOT VALID/);
-    expect(body).toMatch(/IF EXISTS \(SELECT 1 FROM codebook_entries\s+WHERE kind IN \('unit', 'equipment_type'\) AND code !~ '\^\[0-9\]\{1,6\}\$'\) THEN\s+ALTER TABLE codebook_entries DROP CONSTRAINT IF EXISTS codebook_entries_code_digits;/);
-    expect(body).toMatch(/ELSIF NOT EXISTS \(SELECT 1 FROM pg_constraint\s+WHERE conname = 'codebook_entries_code_digits'\s+AND conrelid = 'codebook_entries'::regclass\) THEN\s+ALTER TABLE codebook_entries ADD CONSTRAINT codebook_entries_code_digits\s+CHECK \(kind NOT IN \('unit', 'equipment_type'\) OR code ~ '\^\[0-9\]\{1,6\}\$'\);\s+ELSE\s+ALTER TABLE codebook_entries VALIDATE CONSTRAINT codebook_entries_code_digits;/);
+  it("CB-3: the service role passes the digit rule first thing (the org restore re-inserts legacy rows ahead of ON CONFLICT) — the rule of §2 and §6", () => {
+    const fn = body.slice(body.indexOf("CREATE OR REPLACE FUNCTION codebook_entries_code_digits_guard()"), body.indexOf("DROP TRIGGER IF EXISTS trg_codebook_entries_code_digits"));
+    expect(fn).toMatch(/AS \$\$\nBEGIN\n\s+IF auth\.uid\(\) IS NULL THEN RETURN NEW; END IF;\n\s+IF NEW\.kind IN \('unit', 'equipment_type'\)/);
     const tail = m28.slice(m28.indexOf("\nCOMMIT;"));
-    expect(tail).toContain("NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'codebook_entries_code_digits' AND NOT convalidated)");
+    expect(tail).toContain("AND prosrc LIKE '%IF auth.uid() IS NULL THEN RETURN NEW; END IF;%'");
+  });
+  it("CB-3: there is NO CHECK (it binds the service role, so a pre-cleanup backup could never be restored) — one an earlier paste added is dropped", () => {
+    expect(body).not.toMatch(/NOT VALID/);
+    expect(body).not.toMatch(/ADD CONSTRAINT codebook_entries_code_digits|VALIDATE CONSTRAINT/);
+    expect(body).toContain("ALTER TABLE codebook_entries DROP CONSTRAINT IF EXISTS codebook_entries_code_digits;");
+    const tail = m28.slice(m28.indexOf("\nCOMMIT;"));
+    expect(tail).toContain("NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'codebook_entries_code_digits'),");
+    expect(tail).not.toContain("convalidated");
+  });
+  it("CB-10: a code the service role writes yields to the asset already carrying it — INSERT lands without it, UPDATE keeps its own; NEW.id excluded", () => {
+    const fn = body.slice(body.indexOf("CREATE OR REPLACE FUNCTION assets_code_one_holder()"), body.indexOf("DROP TRIGGER IF EXISTS trg_assets_code_one_holder"));
+    expect(fn).toContain("RETURNS trigger LANGUAGE plpgsql SET search_path = public AS $$");
+    expect(fn).toMatch(/BEGIN\n\s+IF auth\.uid\(\) IS NOT NULL THEN RETURN NEW; END IF;\n\s+IF NEW\.code IS NULL OR btrim\(NEW\.code\) = '' THEN RETURN NEW; END IF;\n\s+IF TG_OP = 'UPDATE' AND NEW\.code IS NOT DISTINCT FROM OLD\.code THEN RETURN NEW; END IF;\n\s+IF EXISTS \(SELECT 1 FROM assets o\n\s+WHERE o\.org_id = NEW\.org_id AND o\.code = NEW\.code\n\s+AND o\.id IS DISTINCT FROM NEW\.id\) THEN/);
+    expect(fn).toContain("IF TG_OP = 'INSERT' THEN NEW.code := NULL; ELSE NEW.code := OLD.code; END IF;");
+    expect(body).toMatch(/CREATE TRIGGER trg_assets_code_one_holder\n\s+BEFORE INSERT OR UPDATE OF code ON assets\n\s+FOR EACH ROW EXECUTE FUNCTION assets_code_one_holder\(\);/);
+    const tail = m28.slice(m28.indexOf("\nCOMMIT;"));
+    expect(tail).toContain("prosrc LIKE '%IF TG_OP = ''INSERT'' THEN NEW.code := NULL; ELSE NEW.code := OLD.code; END IF;%'");
   });
   it("the unique partial index is created only when no org carries a duplicate — nothing is rewritten", () => {
     expect(body).toMatch(/IF NOT EXISTS \(SELECT 1 FROM assets\s+WHERE code IS NOT NULL AND btrim\(code\) <> ''\s+GROUP BY org_id, code HAVING COUNT\(\*\) > 1\) THEN\s+CREATE UNIQUE INDEX IF NOT EXISTS assets_org_code_unique\s+ON assets \(org_id, code\) WHERE code IS NOT NULL AND btrim\(code\) <> '';/);
@@ -327,9 +363,12 @@ describe("20261128 §4/§5 — CB-3 CHECK and CB-10 unique index choose their ow
     const { SITE_CODE_UNIQUE_INDEX: name } = { SITE_CODE_UNIQUE_INDEX };
     expect(m28).toContain(name);
   });
-  it("the Bridge's retry-without-code is handed to I-11 in the file itself (its insert and backfill are not this package's)", () => {
-    expect(m28).toContain("HANDED TO I-11: the");
-    expect(m28).toContain("must retry without `code` on this index and write unit_code apart from");
+  it("the index is the backstop for PERSON writes; the service role's writes (Bridge, restore) yield at the trigger — no dependency on another package's retry", () => {
+    expect(m28).not.toContain("HANDED TO I-11");
+    expect(m28).toContain("A code the SERVICE ROLE writes");
+    expect(m28).toContain("the Bridge's discovery insert and unit backfill, the org restore, a");
+    // The trigger runs before the index is created, in the same transaction.
+    expect(body.indexOf("CREATE TRIGGER trg_assets_code_one_holder")).toBeLessThan(body.indexOf("CREATE UNIQUE INDEX IF NOT EXISTS assets_org_code_unique"));
   });
 });
 
@@ -430,7 +469,32 @@ describe("the page and the codebook screen say what the database enforces", () =
     expect(page).toContain("Only Admin / Doc Control / Manager / Supervisor can create, edit or archive equipment; deleting it is Admin / Doc Control only.");
     expect(page).toContain("const isController = roles.some((r) => isControllerRole(r as Role));");
     expect(page).toContain("canDelete={isController}");
-    expect(page).toMatch(/!isCreate && canDelete \? \([\s\S]*?Delete asset[\s\S]*?\) : !isCreate && canEdit \? \([\s\S]*?Archive asset/);
+    expect(page).toMatch(/!isCreate && canDelete \? \([\s\S]*?Delete asset[\s\S]*?\) : !isCreate && canEdit && !asset\?\.archived \? \([\s\S]*?Archive asset/);
+  });
+  it("IRLS-5: archive is reversible in the product — an Archived list with Restore, the drawer's Restore, and the confirms say where", () => {
+    expect(page).toContain("const archivedIdentities = useMemo(() => identities.filter((a) => a.archived), [identities]);");
+    expect(page).toContain("Archived ({archivedIdentities.length})");
+    expect(page).toMatch(/<ArchivedAssetsPanel archived=\{archivedIdentities\} canRestore=\{isAdmin\}/);
+    expect(page).toContain("await restoreAsset(a.id, userId);");
+    expect(page).toMatch(/\{!isCreate && asset\?\.archived && canEdit && \([\s\S]*?onClick=\{onRestore\}[\s\S]*?Restore asset/);
+    expect(page).toContain("await restoreAsset(asset.id, userId);");
+    expect((page.match(/can be restored from the Archived list/g) ?? []).length).toBe(2); // the drawer's confirm and the bulk one
+    expect(page).toContain("each can be restored from the Archived list.");
+    expect(page).not.toMatch(/They leave the registry views and can be restored\./);
+  });
+  it("CB-10: the drawer's auto-derived code is optional (the asset saves without it, and says so); a typed code is not", () => {
+    expect(page).toContain("const derivedHere = !asset?.code && unitCode ? tagToCode(tag, unitCode, book) : null;");
+    expect(page).toContain("const codeIsDerived = !!derivedHere && siteCode.trim() === derivedHere;");
+    expect(page).toContain("codeOptional: codeIsDerived,");
+    expect(page).toContain("}, userId, { codeOptional: codeIsDerived });");
+    expect(page).toContain("if (codeDropped) await appAlert({ title: \"Saved without a site code\", message: codeDroppedMessage(codeDropped) });");
+  });
+  it("BR-4: blank codes of filed equipment are filled from the page (the categorize banner hides when only codes are missing), against every identity, reporting what landed", () => {
+    expect(page).toContain("const codeFill = useMemo(() => planCategorization(assets, types, book, identities).codeAssignments, [assets, types, book, identities]);");
+    expect(page).toMatch(/<SiteCodeFillBanner orgId=\{activeOrgId\} userId=\{uid\} fill=\{codeFill\}/);
+    expect(page).toContain("if (fill.length === 0 && !result) return null;");
+    expect(page).toContain("result.codesDerived} site code");
+    expect(page).toContain("result.codesTaken > 0");
   });
   it("DEC-35: no new literal role list — the controller tier comes from lib/permissions", () => {
     expect(page).not.toContain('hasAnyRole(["Admin", "DocCtrl"])');
@@ -441,5 +505,186 @@ describe("the page and the codebook screen say what the database enforces", () =
     expect(cb).not.toMatch(/mirrorsTag: true/);
     expect(cb).toContain("const [mirrorsTag, setMirrorsTag] = useState(book.iterableRule.mirrorsTag);");
     expect(cb).toContain("const nextRule = { mirrorsTag, padTo: Math.max(0, Math.min(6, padTo)) };");
+  });
+});
+
+// ── Restores and the Bridge against 20261128's triggers ─────────────────────
+// Transcriptions of the two service-role paths, pinned to the SQL above.
+const LETTER_OR_DIGITS = /^[0-9]{1,6}$/;
+/** codebook_entries_code_digits_guard, BEFORE INSERT (TG_OP = 'INSERT'). */
+const codeDigitsGuard = (withServiceRoleBypass: boolean, authUid: string | null) => (row: Row): Row => {
+  if (withServiceRoleBypass && authUid === null) return row;                   // IF auth.uid() IS NULL THEN RETURN NEW; END IF;
+  if (["unit", "equipment_type"].includes(String(row.kind)) && !LETTER_OR_DIGITS.test(String(row.code))) {
+    throw { code: "23514", message: `codebook_entries_code_digits: ${String(row.kind)} code "${String(row.code)}" is not 1-6 digits` };
+  }
+  return row;
+};
+/** assets_code_one_holder, BEFORE INSERT OR UPDATE OF code. */
+const codeOneHolder = (authUid: string | null) => {
+  const heldElsewhere = (row: Row, table: Row[]) =>
+    table.some((o) => o.org_id === row.org_id && o.code === row.code && o.id !== row.id);
+  return {
+    insert: (row: Row, table: Row[]): Row => {
+      if (authUid !== null) return row;                                         // IF auth.uid() IS NOT NULL THEN RETURN NEW; END IF;
+      if (row.code == null || String(row.code).trim() === "") return row;
+      return heldElsewhere(row, table) ? { ...row, code: null } : row;          // NEW.code := NULL
+    },
+    update: (next: Row, old: Row, table: Row[]): Row => {
+      if (authUid !== null) return next;
+      if (next.code == null || String(next.code).trim() === "") return next;
+      if (next.code === old.code) return next;
+      return heldElsewhere(next, table) ? { ...next, code: old.code } : next;   // NEW.code := OLD.code
+    },
+  };
+};
+const SITE_CODE_INDEX = { cols: ["org_id", "code"], name: SITE_CODE_UNIQUE_INDEX, where: (r: Row) => r.code != null && String(r.code).trim() !== "" };
+
+/** app/api/admin/restore/apply/route.ts: upsert(chunk, { onConflict: "id", ignoreDuplicates: true }), then insert as the fallback. */
+async function restoreChunk(table: string, rows: Row[]) {
+  const { supabase: sb } = await import("@/lib/supabase");
+  const up = await sb.from(table).upsert(rows.map((r) => ({ ...r })), { onConflict: "id", ignoreDuplicates: true });
+  if (!up.error) return up;
+  return sb.from(table).insert(rows.map((r) => ({ ...r })));
+}
+
+describe("CB-3 — an org restore holding a legacy letter-coded unit carries on (the service role passes the digit guard)", () => {
+  const CU = { id: "eCU", org_id: "o1", kind: "unit", code: "CU", label: "Crude (legacy)", meta: {} };
+  const D20 = { id: "e20", org_id: "o1", kind: "unit", code: "20", label: "Crude", meta: {} };
+  it("reproduction: a guard with no service-role bypass fires ahead of ON CONFLICT (id) — the live CU row's own restore raises 23514 and the restore stops", async () => {
+    db.ref.tables.codebook_entries = [{ ...CU }];
+    db.ref.beforeInsert = { codebook_entries: codeDigitsGuard(false, null) };
+    const res = await restoreChunk("codebook_entries", [CU, D20]);
+    expect((res.error as { code?: string } | null)?.code).toBe("23514");
+  });
+  it("with the bypass: the live row is skipped, the rest lands; into a fresh org the legacy row restores whole", async () => {
+    db.ref.tables.codebook_entries = [{ ...CU, label: "live label" }];
+    db.ref.beforeInsert = { codebook_entries: codeDigitsGuard(true, null) };
+    expect((await restoreChunk("codebook_entries", [CU, D20])).error).toBeNull();
+    expect(db.ref.tables.codebook_entries.map((e) => e.code).sort()).toEqual(["20", "CU"]);
+    expect(db.ref.tables.codebook_entries.find((e) => e.id === "eCU")!.label).toBe("live label"); // DO NOTHING
+    db.ref.tables.codebook_entries = [];
+    expect((await restoreChunk("codebook_entries", [CU, D20])).error).toBeNull();
+    expect(db.ref.tables.codebook_entries).toHaveLength(2);
+  });
+  it("a PERSON's new letter code is still refused at the database (and by upsertEntry before any write)", async () => {
+    db.ref.tables.codebook_entries = [];
+    db.ref.beforeInsert = { codebook_entries: codeDigitsGuard(true, "u1") };
+    const { supabase } = await import("@/lib/supabase");
+    const res = await supabase.from("codebook_entries").insert({ ...CU });
+    expect((res.error as { code?: string } | null)?.code).toBe("23514");
+  });
+});
+
+describe("CB-10 — the service role's writes (Bridge, restore) never lose a row to a taken site code", () => {
+  const book = (): Row[] => [
+    { id: "u20", org_id: "o1", kind: "unit", code: "20", label: "Crude", meta: {}, sort: 0 },
+    { id: "t10", org_id: "o1", kind: "equipment_type", code: "10", label: "Vessels", meta: { tagPrefixes: ["V", "D"] }, sort: 0 },
+    { id: "t30", org_id: "o1", kind: "equipment_type", code: "30", label: "Exchangers", meta: { tagPrefixes: ["E"] }, sort: 1 },
+  ];
+  const V1 = { id: "a-v1", org_id: "o1", tag: "V-1", tag_normalized: "v1", unit_code: "20", code: "2010.1", archived: false };
+  const E22 = { id: "a-e22", org_id: "o1", tag: "E-22", tag_normalized: "e22", unit_code: "20", code: "2030.22", archived: false };
+  const E022 = { id: "a-e022", org_id: "o1", tag: "E-022", tag_normalized: "e022", unit_code: null, code: null, archived: false };
+  const seedBridge = () => {
+    db.ref.tables = {
+      codebook_entries: book(),
+      assets: [{ ...V1 }, { ...E22 }, { ...E022 }],
+      asset_types: [],
+      documents: [{ id: "d1", org_id: "o1", library_id: "lib1", metadata: {} }],
+      libraries: [{ id: "lib1", equipment_bridge: { targetColumnKey: "equipment" } }],
+      document_equipment_suggestions: [{
+        id: "s1", org_id: "o1", document_id: "d1", applied: [],
+        suggested: [
+          // D-1 is new: its derived code is V-1's (Vessels [V, D] share a number space).
+          { tag: "D-1", code: "2010.1", pages: [1], assetId: null, assetStatus: "new", unitCode: "20" },
+          // E-022 is matched, unfiled; its derived code is E-22's.
+          { tag: "E-022", code: "2030.22", pages: [1], assetId: "a-e022", assetStatus: "existing", unitCode: "20" },
+        ],
+      }],
+      audit_logs: [],
+    };
+    db.ref.unique = { assets: [SITE_CODE_INDEX, ["org_id", "tag_normalized"]] };
+  };
+  const bridge = () => applyForDocument(makeFakeSupabase(db.ref) as unknown as SupabaseClient, { orgId: "o1", documentId: "d1", userId: null });
+
+  it("reproduction (index, no trigger): the discovered D-1 is never created and E-022's filing is swallowed", async () => {
+    seedBridge();
+    const res = await bridge();
+    expect(res.createdAssets).toBe(0);
+    expect(db.ref.tables.assets.find((a) => a.tag === "D-1")).toBeUndefined();
+    expect(db.ref.tables.assets.find((a) => a.id === "a-e022")).toMatchObject({ unit_code: null, code: null });
+  });
+  it("with 20261128's trigger (service role): D-1 lands filed, without the code; E-022 is filed, its code left blank; the index is never hit", async () => {
+    seedBridge();
+    const t = codeOneHolder(null);
+    db.ref.beforeInsert = { assets: t.insert };
+    db.ref.beforeUpdate = { assets: t.update };
+    const res = await bridge();
+    expect(res.createdAssets).toBe(1);
+    expect(db.ref.tables.assets.find((a) => a.tag === "D-1")).toMatchObject({ unit_code: "20", code: null, origin: "drawing" });
+    expect(db.ref.tables.assets.find((a) => a.id === "a-e022")).toMatchObject({ unit_code: "20", code: null });
+    expect(db.ref.tables.assets.find((a) => a.id === "a-v1")!.code).toBe("2010.1");
+  });
+  it("the org restore: a live id is skipped as before; a deleted asset whose code was reused lands without it; a pre-index backup's duplicate pair both land", async () => {
+    db.ref.tables = { assets: [{ ...V1 }] };
+    db.ref.unique = { assets: [SITE_CODE_INDEX] };
+    const backup: Row[] = [
+      { ...V1, description: "from the backup" },                                                  // live id
+      { id: "a-old", org_id: "o1", tag: "V-1-OLD", tag_normalized: "v1old", unit_code: "20", code: "2010.1", archived: false }, // code since reused
+      { id: "a-p1", org_id: "o1", tag: "P-1", tag_normalized: "p1", unit_code: "20", code: "2040.1", archived: false },
+      { id: "a-p1b", org_id: "o1", tag: "P-01", tag_normalized: "p01", unit_code: "20", code: "2040.1", archived: false },  // pre-index duplicate
+    ];
+    // Reproduction: without the trigger the restore raises on the index and stops at assets.
+    const bare = await restoreChunk("assets", backup);
+    expect((bare.error as { message?: string } | null)?.message).toContain(SITE_CODE_UNIQUE_INDEX);
+    db.ref.tables = { assets: [{ ...V1 }] };
+    db.ref.beforeInsert = { assets: codeOneHolder(null).insert };
+    expect((await restoreChunk("assets", backup)).error).toBeNull();
+    const by = (id: string) => db.ref.tables.assets.find((a) => a.id === id);
+    expect(by("a-v1")).not.toHaveProperty("description");                 // DO NOTHING
+    expect(by("a-old")).toMatchObject({ code: null, unit_code: "20" });
+    expect(by("a-p1")!.code).toBe("2040.1");
+    expect(by("a-p1b")).toMatchObject({ code: null, tag: "P-01" });
+    expect((await restoreChunk("assets", backup)).error).toBeNull();      // idempotent
+    expect(db.ref.tables.assets).toHaveLength(4);
+  });
+  it("a PERSON's write passes through to the index: a typed code is refused and named; a derived one (codeOptional) lands without it", async () => {
+    db.ref.tables = { assets: [{ ...V1 }] };
+    db.ref.unique = { assets: [SITE_CODE_INDEX] };
+    const t = codeOneHolder("u1");
+    db.ref.beforeInsert = { assets: t.insert };
+    db.ref.beforeUpdate = { assets: t.update };
+    await expect(createAsset({ orgId: "o1", tag: "D-1", unitCode: "20", code: "2010.1", createdBy: "u1" })).rejects.toThrow(/Site code 2010\.1 is already carried/);
+    const made = await createAsset({ orgId: "o1", tag: "D-1", unitCode: "20", code: "2010.1", codeOptional: true, createdBy: "u1" });
+    expect(made.code).toBeNull();
+  });
+});
+
+describe("BR-4 / CB-10 — filling blank codes never proposes a taken code, and a code taken at apply is not a failure", () => {
+  const book: Codebook = {
+    ...EMPTY_CODEBOOK,
+    units: [{ id: "u20", kind: "unit", code: "20", label: "Crude", meta: {}, sort: 0, origin: "manual" }],
+    equipmentTypes: [{ id: "t30", kind: "equipment_type", code: "30", label: "Exchangers", meta: { tagPrefixes: ["E"] }, sort: 0, origin: "manual" }],
+  };
+  const archivedHolder = { id: "a-old", org_id: "o1", tag: "E-22-OLD", tag_normalized: "e22old", unit_code: "20", code: "2030.22", archived: true, type_id: null };
+  const filed = { id: "a-e22", org_id: "o1", tag: "E-22", tag_normalized: "e22", unit_code: "20", code: null, archived: false, type_id: "t" };
+  const filed2 = { id: "a-e23", org_id: "o1", tag: "E-23", tag_normalized: "e23", unit_code: "20", code: null, archived: false, type_id: "t" };
+  beforeEach(() => {
+    db.ref.tables = { assets: [{ ...archivedHolder }, { ...filed }, { ...filed2 }] };
+    db.ref.unique = { assets: [SITE_CODE_INDEX] };
+  });
+  it("given every identity (archived included), the plan skips the code the archived asset holds", async () => {
+    const active = (await listAssets({ orgId: "o1", archived: false })) as Asset[];
+    const identities = await listAssetIdentities("o1");
+    const plan = planCategorization(active, [], book, identities);
+    expect(plan.codeAssignments).toEqual([{ assetId: "a-e23", tag: "E-23", code: "2030.23" }]);
+  });
+  it("a caller that passes only the active list: the taken code is reported as codesTaken, not as a failure; the free one is written", async () => {
+    const active = (await listAssets({ orgId: "o1", archived: false })) as Asset[];
+    const plan = planCategorization(active, [], book);
+    expect(plan.codeAssignments.map((c) => c.code)).toEqual(["2030.22", "2030.23"]);
+    const res = await applyCategorization("o1", "u1", plan, []);
+    expect(res).toMatchObject({ codesDerived: 1, codesTaken: 1, failed: 0 });
+    expect(db.ref.tables.assets.find((a) => a.id === "a-e23")!.code).toBe("2030.23");
+    expect(db.ref.tables.assets.find((a) => a.id === "a-e22")!.code).toBeNull();
   });
 });

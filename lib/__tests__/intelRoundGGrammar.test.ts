@@ -99,9 +99,15 @@ describe("CB-9 — a phrase alias round-trips through every reader", () => {
 //    (id) DO NOTHING) against 20261127's trigger, transcribed below and pinned
 //    to the SQL by the shape test further down ────────────────────────────────
 const normalizeTagSql = (t: string) => (t ?? "").replace(/[^a-zA-Z0-9]+/g, "").toLowerCase();
-const oneGrammarTrigger = (dropSecondSpelling: boolean) => (row: Record<string, unknown>, table: Array<Record<string, unknown>>) => {
+// "rekey"      — a trigger that only re-derives the key (the first version);
+// "keyed-only" — the drop, but not for the empty key (the review-fix version);
+// "drop"       — 20261127 as it stands: any key another row of the asset holds.
+const oneGrammarTrigger = (mode: boolean | "rekey" | "keyed-only" | "drop") => (row: Record<string, unknown>, table: Array<Record<string, unknown>>) => {
+  const m = mode === true ? "drop" : mode === false ? "rekey" : mode;
   const next: Record<string, unknown> = { ...row, alias_normalized: normalizeTagSql(String(row.alias)) }; // NEW.alias_normalized := normalize_tag(NEW.alias);
-  if (dropSecondSpelling && next.alias_normalized !== "" && table.some((o) =>
+  if (m === "rekey") return next;
+  if (m === "keyed-only" && next.alias_normalized === "") return next;
+  if (table.some((o) =>
     o.asset_id === next.asset_id && o.alias_normalized === next.alias_normalized && o.id !== next.id)) return null; // RETURN NULL;
   return next;
 };
@@ -134,6 +140,27 @@ describe("20261127 — an org restore carries on past two spellings of one alias
     expect((await getAssetByTag("o1", "North-Furnace"))?.id).toBe("a-h3");
     expect((await restore()).error).toBeNull();
     expect(db.ref.tables.asset_aliases).toHaveLength(1);
+  });
+  it("two aliases with no letter or digit on one asset (? and #, distinct under the old grammar) both re-key to '' — the second is dropped, the restore carries on", async () => {
+    const keyless = [
+      { id: "al-3", org_id: "o1", asset_id: "a-h3", alias: "?", alias_normalized: "?" },
+      { id: "al-4", org_id: "o1", asset_id: "a-h3", alias: "#", alias_normalized: "#" },
+    ];
+    const { supabase } = await import("@/lib/supabase");
+    const up = () => supabase.from("asset_aliases").upsert(keyless.map((r) => ({ ...r })), { onConflict: "id", ignoreDuplicates: true });
+    // Reproduction: the drop that exempts the empty key raises 23505 on the second — the restore stops at asset_aliases.
+    db.ref.beforeInsert = { asset_aliases: oneGrammarTrigger("keyed-only") };
+    expect(((await up()).error as { code?: string } | null)?.code).toBe("23505");
+    db.ref.tables.asset_aliases = [];
+    db.ref.beforeInsert = { asset_aliases: oneGrammarTrigger("drop") };
+    expect((await up()).error).toBeNull();
+    expect(db.ref.tables.asset_aliases).toHaveLength(1);
+    expect(db.ref.tables.asset_aliases[0]).toMatchObject({ id: "al-3", alias_normalized: "" });
+    expect((await up()).error).toBeNull(); // a re-run is a no-op
+    expect(db.ref.tables.asset_aliases).toHaveLength(1);
+    // …and a keyed alias beside them still lands and resolves.
+    expect((await restore()).error).toBeNull();
+    expect((await getAssetByTag("o1", "north furnace"))?.id).toBe("a-h3");
   });
   it("the app teaching a third spelling reads as 'already taught' (no error, nothing added)", async () => {
     db.ref.beforeInsert = { asset_aliases: oneGrammarTrigger(true) };
@@ -175,10 +202,13 @@ describe("20261127 — asset_aliases.alias_normalized in the one grammar", () =>
     expect(m27).toContain("NEW.alias_normalized := normalize_tag(NEW.alias);");
     expect(m27).toMatch(/CREATE TRIGGER trg_asset_aliases_one_grammar\n\s+BEFORE INSERT OR UPDATE OF alias, alias_normalized ON asset_aliases\n\s+FOR EACH ROW EXECUTE FUNCTION asset_aliases_one_grammar\(\);/);
   });
-  it("a second spelling of an alias the asset already carries is DROPPED on insert (RETURN NULL), never raised; a re-run by id still reaches ON CONFLICT", () => {
+  it("a second spelling of an alias the asset already carries — the empty key included — is DROPPED on insert (RETURN NULL), never raised; a re-run by id still reaches ON CONFLICT", () => {
     const fn = m27.slice(m27.indexOf("CREATE OR REPLACE FUNCTION asset_aliases_one_grammar()"), m27.indexOf("DROP TRIGGER IF EXISTS trg_asset_aliases_one_grammar"));
-    expect(fn).toMatch(/IF TG_OP = 'INSERT' AND NEW\.alias_normalized <> ''\s+AND EXISTS \(SELECT 1 FROM asset_aliases o\s+WHERE o\.asset_id = NEW\.asset_id\s+AND o\.alias_normalized = NEW\.alias_normalized\s+AND o\.id IS DISTINCT FROM NEW\.id\) THEN\s+RETURN NULL;\s+END IF;\s+RETURN NEW;/);
-    expect(m27).toContain("prosrc LIKE '%IF TG_OP = ''INSERT'' AND NEW.alias_normalized <> ''''%'");
+    expect(fn).toMatch(/IF TG_OP = 'INSERT'\s+AND EXISTS \(SELECT 1 FROM asset_aliases o\s+WHERE o\.asset_id = NEW\.asset_id\s+AND o\.alias_normalized = NEW\.alias_normalized\s+AND o\.id IS DISTINCT FROM NEW\.id\) THEN\s+RETURN NULL;\s+END IF;\s+RETURN NEW;/);
+    // The transcription above ("drop") is this body: no exemption for the empty key.
+    expect(fn).not.toMatch(/alias_normalized <> ''/);
+    expect(m27).toContain("prosrc LIKE '%IF TG_OP = ''INSERT''%'");
+    expect(m27).toContain("AND prosrc NOT LIKE '%NEW.alias_normalized <> ''''%'");
   });
   it("probes read prosrc verbatim and never touch customer rows", () => {
     expect(m27).toContain("p.prosrc LIKE '%lower(regexp_replace(%'");

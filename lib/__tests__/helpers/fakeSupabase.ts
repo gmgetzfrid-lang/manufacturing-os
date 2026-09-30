@@ -24,13 +24,24 @@ export interface FakeDb {
   /** table → a database error its DELETEs raise (a trigger's refusal). */
   deleteErrors?: Record<string, { code?: string; message: string }>;
   /** table → a BEFORE INSERT row trigger, transcribed by the test: the row
-   *  to insert (possibly rewritten), or null to drop it silently. */
+   *  to insert (possibly rewritten), or null to drop it silently. It fires
+   *  ahead of an upsert's ON CONFLICT check, as Postgres fires it. Throwing
+   *  `{ code, message }` is the trigger's RAISE: the statement fails with it. */
   beforeInsert?: Record<string, (row: Row, table: Row[]) => Row | null>;
+  /** table → a BEFORE UPDATE row trigger: (NEW, OLD, table) → the row to
+   *  write. Throwing `{ code, message }` fails the statement. */
+  beforeUpdate?: Record<string, (next: Row, old: Row, table: Row[]) => Row>;
   seq: number;
 }
 
 export function newFakeDb(): FakeDb {
-  return { tables: {}, unique: {}, refuseWrites: new Set(), calls: [], deleteErrors: {}, beforeInsert: {}, seq: 0 };
+  return { tables: {}, unique: {}, refuseWrites: new Set(), calls: [], deleteErrors: {}, beforeInsert: {}, beforeUpdate: {}, seq: 0 };
+}
+
+/** A trigger's RAISE, as the statement's error. */
+function raised(e: unknown): { code?: string; message: string } {
+  if (e && typeof e === "object" && "message" in e) return e as { code?: string; message: string };
+  throw e;
 }
 
 type Filter = (r: Row) => boolean;
@@ -71,6 +82,7 @@ export function makeFakeSupabase(db: FakeDb) {
     let payload: Row[] = [];
     let patch: Row = {};
     let upsertOn: string[] = [];
+    let ignoreDuplicates = false;
     let returning = false;
     let head = false;
     let wantCount = false;
@@ -102,12 +114,15 @@ export function makeFakeSupabase(db: FakeDb) {
           let row: Row = { id: p.id ?? `${table}-${++db.seq}`, ...p };
           const trigger = db.beforeInsert?.[table];
           if (trigger) {
-            const next = trigger(row, rowsOf());
+            let next: Row | null;
+            try { next = trigger(row, rowsOf()); } catch (e) { return { data: null, error: raised(e) }; }
             if (!next) continue;
             row = next;
           }
           if (op === "upsert" && upsertOn.length > 0) {
             const existing = rowsOf().find((r) => upsertOn.every((c) => r[c] === row[c]));
+            // ON CONFLICT DO NOTHING (ignoreDuplicates) leaves the live row as it is.
+            if (existing && ignoreDuplicates) continue;
             if (existing) { Object.assign(existing, p); out.push(existing); continue; }
           }
           const v = uniqueViolation(row);
@@ -120,12 +135,18 @@ export function makeFakeSupabase(db: FakeDb) {
       if (op === "update") {
         if (db.refuseWrites.has(table)) return { data: returning ? [] : null, error: null };
         const hit = matches();
+        const trigger = db.beforeUpdate?.[table];
+        const nexts: Row[] = [];
         for (const r of hit) {
-          const next = { ...r, ...patch };
+          let next = { ...r, ...patch };
+          if (trigger) {
+            try { next = trigger(next, { ...r }, rowsOf()); } catch (e) { return { data: null, error: raised(e) }; }
+          }
           const v = uniqueViolation(next, r);
           if (v) return { data: null, error: v };
+          nexts.push(next);
         }
-        for (const r of hit) Object.assign(r, patch);
+        hit.forEach((r, i) => Object.assign(r, nexts[i]));
         return { data: returning ? hit : null, error: null };
       }
       if (op === "delete") {
@@ -173,6 +194,7 @@ export function makeFakeSupabase(db: FakeDb) {
             case "upsert": {
               op = "upsert"; payload = Array.isArray(args[0]) ? (args[0] as Row[]) : [args[0] as Row];
               upsertOn = String((args[1] as { onConflict?: string } | undefined)?.onConflict ?? "").split(",").map((s) => s.trim()).filter(Boolean);
+              ignoreDuplicates = (args[1] as { ignoreDuplicates?: boolean } | undefined)?.ignoreDuplicates === true;
               return self;
             }
             case "update": op = "update"; patch = args[0] as Row; return self;

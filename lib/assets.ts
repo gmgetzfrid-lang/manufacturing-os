@@ -345,9 +345,17 @@ export async function updateAsset(
 
 /** IRLS-5: the writer tier's removal — reversible, keeps the photos, the
  *  aliases and every document link. Hidden from the registry (listAssets
- *  archived:false) until someone restores it. */
+ *  archived:false) until someone restores it (restoreAsset — the Operating
+ *  Areas page's "Archived" list and the drawer's Restore). */
 export async function archiveAsset(id: string, updatedBy: string): Promise<void> {
   await updateAsset(id, { archived: true }, updatedBy);
+}
+
+/** IRLS-5: undo an archive — the asset returns to the registry views with
+ *  its tag, site code, photos, aliases and document links as they were (an
+ *  archived row keeps its tag and code, so nothing can have taken them). */
+export async function restoreAsset(id: string, updatedBy: string): Promise<void> {
+  await updateAsset(id, { archived: false }, updatedBy);
 }
 
 /** Hard delete: the controller tier only (20261128), audited by the

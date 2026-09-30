@@ -87,7 +87,9 @@ export default function AssetCsvImportModal({
   const [error, setError] = useState<string | null>(null);
   const [result, setResult] = useState<ImportResult | null>(null);
   const [book, setBook] = useState<Codebook>(EMPTY_CODEBOOK);
-  const [existing, setExisting] = useState<Map<string, Pick<Asset, "id" | "unit_code" | "code">> | null>(null);
+  // Archived rows included — an archived tag cannot be re-created, and an
+  // update restores it (IRLS-5).
+  const [existing, setExisting] = useState<Map<string, Pick<Asset, "id" | "unit_code" | "code" | "archived">> | null>(null);
   // CB-10: site code → the registry asset carrying it (archived included).
   const [codeHolders, setCodeHolders] = useState<Map<string, { id: string; tag: string }>>(new Map());
   // A workbook's rows carry their real sheet row numbers (title blocks and
@@ -352,6 +354,13 @@ export default function AssetCsvImportModal({
                 <div>
                   <b>{plan.filed}</b> land in an operating area{book.units.length === 0 ? " (no units in the Site Codebook yet — rows import unassigned)" : ""}.
                 </div>
+                {plan.archivedMatches > 0 && (
+                  <div className="text-amber-800">
+                    <b>{plan.archivedMatches}</b> name an ARCHIVED asset — {mode === "create_and_update"
+                      ? "updating restores each to the registry."
+                      : "skipped; update them from this file to restore them, or restore them from the Archived list."}
+                  </div>
+                )}
                 {plan.codesDropped > 0 && (
                   <div className="text-amber-800">
                     <b>{plan.codesDropped}</b> land without a site code — another asset (or an earlier row) already carries the code; one site code is one asset. See the row notes.

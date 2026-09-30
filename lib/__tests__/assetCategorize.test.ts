@@ -337,3 +337,37 @@ describe("CB-10 — the import plan drops a site code another asset (or an earli
     expect(plan.rows[0].patch).not.toHaveProperty("code");
   });
 });
+
+describe("BR-4 / CB-10 — the categorizer's code fill counts every code holder the caller passes (archived included)", () => {
+  it("a code an ARCHIVED asset holds is never proposed when the caller passes every identity; the active list alone would propose it", () => {
+    const active = [asset("a1", "E-22", "t-pump", { unit_code: "20" }), asset("a2", "E-23", "t-pump", { unit_code: "20" })];
+    const identities = [...active, { id: "old", tag: "E-22-OLD", unit_code: "20", code: "2030.22", archived: true }];
+    expect(planCategorization(active, types, book2).codeAssignments.map((c) => c.code)).toEqual(["2030.22", "2030.23"]);
+    expect(planCategorization(active, types, book2, identities).codeAssignments).toEqual([{ assetId: "a2", tag: "E-23", code: "2030.23" }]);
+  });
+});
+
+describe("IRLS-5 — the import plan and an ARCHIVED asset of the same tag", () => {
+  const archived = new Map([["e22", { id: "x-e22", unit_code: "20", code: "2030.22", archived: true }]]);
+  it("create-only: skipped, with a note that says how to restore it — never a failed create", () => {
+    const plan = planAssetImport([{ row: 2, tag: "E-22", unit: "20" }], { book: book2, types, existing: archived, mode: "create_only" });
+    expect(plan.rows[0]).toMatchObject({ action: "skip", existingId: "x-e22" });
+    expect(plan.rows[0].notes.join(" ")).toMatch(/ARCHIVED — skipped \(create-only\)\. Update from this file to restore it/);
+    expect(plan.archivedMatches).toBe(1);
+  });
+  it("update: the row restores the asset (archived: false) with the supplied cells — even when nothing else changes", () => {
+    const upd = planAssetImport([{ row: 2, tag: "E-22", description: "Crude exchanger" }], { book: book2, types, existing: archived, mode: "create_and_update" });
+    expect(upd.rows[0]).toMatchObject({ action: "update", existingId: "x-e22", patch: { description: "Crude exchanger", archived: false } });
+    expect(upd.rows[0].notes.join(" ")).toMatch(/was archived — the update restores it/);
+    const bare = planAssetImport([{ row: 2, tag: "E-22" }], { book: book2, types, existing: archived, mode: "create_and_update" });
+    expect(bare.rows[0]).toMatchObject({ action: "update", patch: { archived: false } });
+    expect(bare.updates).toBe(1);
+    expect(bare.archivedMatches).toBe(1);
+  });
+  it("an active match is not flagged and its patch never carries archived", () => {
+    const live = new Map([["e22", { id: "x-e22", unit_code: null, code: null, archived: false }]]);
+    const upd = planAssetImport([{ row: 2, tag: "E-22", unit: "20" }], { book: book2, types, existing: live, mode: "create_and_update" });
+    expect(upd.rows[0].patch).not.toHaveProperty("archived");
+    expect(upd.archivedMatches).toBe(0);
+  });
+});

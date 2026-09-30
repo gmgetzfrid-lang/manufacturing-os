@@ -17,12 +17,13 @@ import {
   Lock, X, Save, Edit3, Trash2, Factory,
   FileText, Upload, QrCode, BookMarked, ArrowRight,
   FolderOpen, Link2, ArrowLeft, Waypoints, ChevronDown, BookMarked as BookMarkedIcon,
+  RotateCcw, Archive, Wand2,
 } from "lucide-react";
 import { useRole } from "@/components/providers/RoleContext";
 import { supabase } from "@/lib/supabase";
 import {
   listAssets, listAssetTypes, getPhotoCounts, getCoverPhotoUrls, createAsset, createAssetType,
-  updateAsset, deleteAsset, archiveAsset, listAssetPhotos, deletePhoto, updatePhoto,
+  updateAsset, deleteAsset, archiveAsset, restoreAsset, listAssetPhotos, deletePhoto, updatePhoto,
   invalidateAssetCache, photoAgeCategory, listAssetIdentities, getAsset,
   type Asset, type AssetType, type AssetPhoto, type PhotoStatus, type AssetIdentity,
 } from "@/lib/assets";
@@ -34,6 +35,7 @@ import {
 import { isControllerRole } from "@/lib/permissions";
 import {
   codeUnitConflict, planIdentityReview, assetsMatchingTagPrefix, sharedSiteCodes, type IdentityReviewRow,
+  planCategorization, applyCategorization, type CategorizationPlan, type CategorizationResult,
 } from "@/lib/assetCategorize";
 import type { Role } from "@/types/schema";
 import { listLibraryFoldersOnce, type PickerFolder } from "@/lib/libraryCollections";
@@ -100,6 +102,9 @@ function AssetsPageInner() {
   // BR-8: provenance is a filter — equipment the drawings created, awaiting
   // a person to vouch for it.
   const [discoveredOnly, setDiscoveredOnly] = useState(false);
+  // IRLS-5: archive is reversible — the archived equipment has a list of its
+  // own (it is not in the grid), where the writer tier restores it.
+  const [showArchived, setShowArchived] = useState(false);
   // Unit-first browsing (Site Codebook): no ?unit= param = the unit picker; a
   // unit code (or "__unassigned") = inside that unit. Living in the URL means
   // the browser back button leaves a unit the way people expect — no trap.
@@ -186,6 +191,11 @@ function AssetsPageInner() {
   // (the database's unique index waits until there are none). Archived
   // assets count: they block the index exactly like active ones.
   const sharedCodes = useMemo(() => sharedSiteCodes(identities), [identities]);
+  const archivedIdentities = useMemo(() => identities.filter((a) => a.archived), [identities]);
+  // BR-4: assets filed to a unit with no site code, whose code the codebook
+  // derives — filled on request, never proposing a code another asset
+  // (archived included) already carries.
+  const codeFill = useMemo(() => planCategorization(assets, types, book, identities).codeAssignments, [assets, types, book, identities]);
 
   // Per-unit counts for the picker cards.
   const unitCounts = useMemo(() => {
@@ -466,6 +476,13 @@ function AssetsPageInner() {
             onDone={() => { invalidateAssetCache(); void refresh(); }} />
         )}
 
+        {/* BR-4: filed equipment with a blank site code the codebook derives
+            (mounted through the reload, so its result stays on screen). */}
+        {isAdmin && uid && activeOrgId && (
+          <SiteCodeFillBanner orgId={activeOrgId} userId={uid} fill={codeFill} types={types}
+            onDone={() => { invalidateAssetCache(); void refresh(); }} />
+        )}
+
         {/* AREA-11 / CB-6: stored identity that disagrees with the codebook —
             reviewed per asset, never rewritten silently. */}
         {isAdmin && !loading && uid && (identityReview.length > 0 || sharedCodes.length > 0) && (
@@ -476,6 +493,13 @@ function AssetsPageInner() {
               // An archived asset is not in the grid; open it from the registry.
               void getAsset(id).then((hit) => { if (hit) setSelectedAsset(hit); }).catch(() => undefined);
             }}
+            onChanged={() => { invalidateAssetCache(); void refresh(); }} />
+        )}
+
+        {/* IRLS-5: the archived equipment — restored here by the writer tier. */}
+        {!loading && showArchived && archivedIdentities.length > 0 && (
+          <ArchivedAssetsPanel archived={archivedIdentities} canRestore={isAdmin} userId={uid || ""}
+            onOpen={(id) => { void getAsset(id).then((hit) => { if (hit) setSelectedAsset(hit); }).catch(() => undefined); }}
             onChanged={() => { invalidateAssetCache(); void refresh(); }} />
         )}
 
@@ -514,6 +538,15 @@ function AssetsPageInner() {
                 ? "bg-sky-700 text-white border-sky-700"
                 : "bg-[var(--color-surface)] text-sky-800 border-sky-200 hover:bg-sky-50"}`}>
               Discovered from drawings ({discoveredCount})
+            </button>
+          )}
+          {archivedIdentities.length > 0 && (
+            <button onClick={() => setShowArchived((v) => !v)}
+              title="Equipment archived out of the registry views — open it, or restore it"
+              className={`inline-flex items-center gap-1 px-3 py-2.5 text-xs font-bold rounded-lg border ${showArchived
+                ? "bg-slate-700 text-white border-slate-700"
+                : "bg-[var(--color-surface)] text-[var(--color-text-muted)] border-[var(--color-border)] hover:bg-[var(--color-surface-2)]"}`}>
+              <Archive className="w-3.5 h-3.5" /> Archived ({archivedIdentities.length})
             </button>
           )}
         </div>
@@ -1345,7 +1378,7 @@ function DiscoveredReviewPanel({ assets, userId, onChanged }: {
   const act = async (verb: "confirm" | "archive") => {
     const ids = [...picked];
     if (ids.length === 0) return;
-    if (verb === "archive" && !(await appConfirm({ message: `Archive ${ids.length} discovered asset${ids.length === 1 ? "" : "s"}? They leave the registry views and can be restored.`, confirmLabel: "Archive" }))) return;
+    if (verb === "archive" && !(await appConfirm({ message: `Archive ${ids.length} discovered asset${ids.length === 1 ? "" : "s"}? They leave the registry views; each can be restored from the Archived list.`, confirmLabel: "Archive" }))) return;
     setBusy(true); setError(null);
     let done = 0;
     const failed: string[] = [];
@@ -1416,6 +1449,115 @@ function DiscoveredReviewPanel({ assets, userId, onChanged }: {
       </div>
     </div>
   );
+}
+
+// ─── Archived equipment (IRLS-5: archive is reversible) ─────
+
+function ArchivedAssetsPanel({ archived, canRestore, userId, onOpen, onChanged }: {
+  archived: AssetIdentity[]; canRestore: boolean; userId: string;
+  onOpen: (id: string) => void; onChanged: () => void;
+}) {
+  const [busy, setBusy] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const shown = archived.slice(0, 200);
+  const restore = async (a: AssetIdentity) => {
+    setBusy(a.id); setError(null);
+    try {
+      await restoreAsset(a.id, userId);
+      onChanged();
+    } catch (e) {
+      setError(`${a.tag} was not restored — ${(e as Error).message}`);
+    } finally { setBusy(null); }
+  };
+  return (
+    <div className="mb-4 rounded-xl border border-slate-300 bg-slate-50/70 px-3.5 py-3 space-y-2">
+      <div className="text-xs font-black text-[var(--color-text)]">
+        {archived.length} archived asset{archived.length === 1 ? "" : "s"} — out of the registry views, with photos, aliases and document links kept
+      </div>
+      <p className="text-[11px] text-[var(--color-text-muted)]">
+        An archived asset keeps its tag and site code, so it is restored rather than re-created.
+        {canRestore ? " Restore puts it back exactly as it was." : " Admin, Document Control, Manager or Supervisor can restore it."}
+      </p>
+      <div className="max-h-72 overflow-y-auto space-y-1">
+        {shown.map((a) => (
+          <div key={a.id} className="flex items-center gap-2 bg-[var(--color-surface)] border border-[var(--color-border)] rounded-lg px-2.5 py-1.5 text-[11px]">
+            <button type="button" onClick={() => onOpen(a.id)} className="font-mono font-black w-24 shrink-0 text-left hover:underline">{a.tag}</button>
+            <span className="flex-1 min-w-0 truncate text-[var(--color-text-muted)]">
+              {a.code ? <span className="font-mono">{a.code}</span> : "no site code"}{a.unit_code ? ` · unit ${a.unit_code}` : " · no unit"}
+            </span>
+            {canRestore && (
+              <button type="button" disabled={busy !== null} onClick={() => void restore(a)}
+                className="inline-flex items-center gap-1 text-[11px] font-black text-emerald-800 bg-[var(--color-surface)] border border-emerald-300 hover:bg-emerald-50 rounded-lg px-2 py-0.5 disabled:opacity-50">
+                {busy === a.id ? <Loader2 className="w-3 h-3 animate-spin" /> : <RotateCcw className="w-3 h-3" />} Restore
+              </button>
+            )}
+          </div>
+        ))}
+        {archived.length > shown.length && (
+          <div className="text-[10px] text-[var(--color-text-faint)]">Showing the first {shown.length} of {archived.length}.</div>
+        )}
+      </div>
+      {error && <div className="text-[11px] text-rose-700">{error}</div>}
+    </div>
+  );
+}
+
+// ─── Blank site codes the codebook derives (BR-4) ─────────
+
+function SiteCodeFillBanner({ orgId, userId, fill, types, onDone }: {
+  orgId: string; userId: string; fill: CategorizationPlan["codeAssignments"]; types: AssetType[]; onDone: () => void;
+}) {
+  const [busy, setBusy] = useState(false);
+  const [result, setResult] = useState<CategorizationResult | null>(null);
+  if (fill.length === 0 && !result) return null;
+  const run = async () => {
+    setBusy(true);
+    try {
+      // The categorizer's code limb alone: fill-blank only, one row at a time.
+      const plan: CategorizationPlan = { assignments: [], unitAssignments: [], codeAssignments: fill, typesToCreate: [], unmatched: [], alreadyCategorized: 0 };
+      setResult(await applyCategorization(orgId, userId, plan, types));
+      onDone();
+    } finally { setBusy(false); }
+  };
+  return (
+    <div className="mb-4 rounded-xl border border-violet-200 bg-violet-50/60 px-3.5 py-3 flex items-center gap-3 flex-wrap">
+      <div className="flex-1 min-w-[14rem]">
+        {result ? (
+          <div className="text-xs font-black text-emerald-700">
+            {result.codesDerived} site code{result.codesDerived === 1 ? "" : "s"} filled from the codebook
+            {result.codesTaken > 0 ? ` · ${result.codesTaken} already carried by another asset (listed under Identity review)` : ""}
+            {result.failed > 0 ? ` · ${result.failed} failed` : ""}
+          </div>
+        ) : (
+          <>
+            <div className="text-xs font-black text-[var(--color-text)]">
+              {fill.length} piece{fill.length === 1 ? "" : "s"} of filed equipment without a site code
+            </div>
+            <div className="text-[11px] text-[var(--color-text-muted)]">
+              The Site Codebook derives each from its tag and operating area ({fill.slice(0, 3).map((c) => `${c.tag} → ${c.code}`).join(", ")}{fill.length > 3 ? "…" : ""}). Blank codes only — a code that exists is never rewritten.
+            </div>
+          </>
+        )}
+      </div>
+      {!result ? (
+        <button type="button" onClick={() => void run()} disabled={busy}
+          className="inline-flex items-center gap-1.5 px-3 py-2 rounded-lg text-xs font-black text-white bg-violet-600 hover:bg-violet-500 disabled:opacity-60 shrink-0">
+          {busy ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Wand2 className="w-3.5 h-3.5" />}
+          Fill site codes from codebook
+        </button>
+      ) : (
+        <button type="button" onClick={() => setResult(null)} title="Dismiss"
+          className="p-1 rounded text-[var(--color-text-faint)] hover:text-[var(--color-text)] shrink-0">
+          <X className="w-3.5 h-3.5" />
+        </button>
+      )}
+    </div>
+  );
+}
+
+/** CB-10: what the drawer says when a derived code could not be written. */
+function codeDroppedMessage(code: string): string {
+  return `Site code ${code}, which the codebook derives for this tag, is already carried by another asset — one site code is one asset. The asset was saved without it and is listed under Identity review; give it its own code there.`;
 }
 
 // ─── Documents referencing the unit's equipment ────────────
@@ -1673,6 +1815,11 @@ function AssetEditDrawer({
   const codeUnit = siteCode.trim() ? (codeToTag(siteCode.trim(), book)?.unitCode ?? null) : null;
   const identityClash = !!(unitCode && codeUnit && codeUnit !== unitCode);
   const derivedForUnit = identityClash ? tagToCode(tag, unitCode, book) : null;
+  // CB-10: a code the codebook derived here (nobody typed it, the asset had
+  // none) is optional — when another asset already carries it, the asset is
+  // still saved, without it, and the person is told. A typed code is not.
+  const derivedHere = !asset?.code && unitCode ? tagToCode(tag, unitCode, book) : null;
+  const codeIsDerived = !!derivedHere && siteCode.trim() === derivedHere;
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [hasTagConflict, setHasTagConflict] = useState(false);
@@ -1727,25 +1874,28 @@ function AssetEditDrawer({
           location: location.trim() || undefined,
           unitCode: unitCode || undefined,
           code: siteCode.trim() || undefined,
+          codeOptional: codeIsDerived,
           createdBy: userId,
         });
         invalidateAssetCache();
         onSaved();
+        if (siteCode.trim() && !created.code) await appAlert({ title: "Saved without a site code", message: codeDroppedMessage(siteCode.trim()) });
         // Stay open so user can immediately upload photos
         // Replace `asset` in url? Simplification: just close.
         onOpenUploader(created);
       } else {
-        await updateAsset(asset!.id, {
+        const { codeDropped } = await updateAsset(asset!.id, {
           tag: tag.trim(),
           type_id: typeId || null,
           description: description.trim() || null,
           location: location.trim() || null,
           unit_code: unitCode || null,
           code: siteCode.trim() || null,
-        }, userId);
+        }, userId, { codeOptional: codeIsDerived });
         invalidateAssetCache();
         onSaved();
         onClose();
+        if (codeDropped) await appAlert({ title: "Saved without a site code", message: codeDroppedMessage(codeDropped) });
       }
     } catch (e) {
       const friendly = translatePostgresError(e, { entity: "asset", field: "tag" });
@@ -1774,10 +1924,25 @@ function AssetEditDrawer({
   // document links stay.
   const onArchive = async () => {
     if (!asset) return;
-    if (!(await appConfirm({ message: `Archive "${asset.tag}"? It leaves the registry views but keeps its photos, aliases and document links, and can be restored.`, confirmLabel: "Archive" }))) return;
+    if (!(await appConfirm({ message: `Archive "${asset.tag}"? It leaves the registry views but keeps its photos, aliases and document links, and can be restored from the Archived list.`, confirmLabel: "Archive" }))) return;
     setBusy(true);
     try {
       await archiveAsset(asset.id, userId);
+      invalidateAssetCache();
+      onSaved();
+      onClose();
+    } catch (e) {
+      setError((e as Error).message);
+      setBusy(false);
+    }
+  };
+
+  // IRLS-5: undo an archive — back in the registry views as it was.
+  const onRestore = async () => {
+    if (!asset) return;
+    setBusy(true);
+    try {
+      await restoreAsset(asset.id, userId);
       invalidateAssetCache();
       onSaved();
       onClose();
@@ -1812,6 +1977,9 @@ function AssetEditDrawer({
             <div>
               <div className="text-sm font-black text-[var(--color-text)]">
                 {isCreate ? "Create asset" : `Edit ${asset?.tag}`}
+                {asset?.archived && (
+                  <span className="ml-2 align-middle text-[10px] font-black uppercase tracking-wider text-slate-600 bg-slate-100 border border-slate-300 rounded px-1.5 py-0.5">Archived</span>
+                )}
               </div>
               <div className="text-[11px] text-[var(--color-text-muted)]">Canonical record + photo gallery</div>
             </div>
@@ -2072,16 +2240,24 @@ function AssetEditDrawer({
         </div>
 
         <div className="px-5 py-3 bg-[var(--color-surface-2)] border-t border-[var(--color-border)] flex items-center justify-between shrink-0">
-          {!isCreate && canDelete ? (
-            <button onClick={onDelete} disabled={busy} className="text-xs font-bold text-red-600 hover:text-red-700 inline-flex items-center gap-1">
-              <Trash2 className="w-3 h-3" /> Delete asset
-            </button>
-          ) : !isCreate && canEdit ? (
-            <button onClick={onArchive} disabled={busy} title="Deleting equipment is Admin / Doc Control only — archiving keeps its history"
-              className="text-xs font-bold text-amber-700 hover:text-amber-800 inline-flex items-center gap-1">
-              <Trash2 className="w-3 h-3" /> Archive asset
-            </button>
-          ) : <div />}
+          <div className="flex items-center gap-3">
+            {!isCreate && asset?.archived && canEdit && (
+              <button onClick={onRestore} disabled={busy} title="Bring it back to the registry views — its photos, aliases and document links are still attached"
+                className="text-xs font-bold text-emerald-700 hover:text-emerald-800 inline-flex items-center gap-1">
+                <RotateCcw className="w-3 h-3" /> Restore asset
+              </button>
+            )}
+            {!isCreate && canDelete ? (
+              <button onClick={onDelete} disabled={busy} className="text-xs font-bold text-red-600 hover:text-red-700 inline-flex items-center gap-1">
+                <Trash2 className="w-3 h-3" /> Delete asset
+              </button>
+            ) : !isCreate && canEdit && !asset?.archived ? (
+              <button onClick={onArchive} disabled={busy} title="Deleting equipment is Admin / Doc Control only — archiving keeps its history"
+                className="text-xs font-bold text-amber-700 hover:text-amber-800 inline-flex items-center gap-1">
+                <Trash2 className="w-3 h-3" /> Archive asset
+              </button>
+            ) : null}
+          </div>
           <div className="flex items-center gap-2">
             <button onClick={onClose} disabled={busy} className="px-3 py-2 rounded-lg text-xs font-bold text-[var(--color-text)] bg-[var(--color-surface)] border border-[var(--color-border)]">Cancel</button>
             {canEdit && (

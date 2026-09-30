@@ -17,7 +17,7 @@
 
 import { supabase } from "@/lib/supabase";
 import { typeForTag, codeToTag, tagToCode, tagKey, type Codebook, type CodebookEntry } from "@/lib/codebook";
-import { createAssetType, updateAsset, type Asset, type AssetType } from "@/lib/assets";
+import { createAssetType, updateAsset, isSiteCodeTaken, type Asset, type AssetType } from "@/lib/assets";
 
 export interface CategorizationPlan {
   /** tag → codebook type label, for assets currently uncategorized. */
@@ -36,11 +36,15 @@ export interface CategorizationPlan {
   alreadyCategorized: number;
 }
 
-/** Pure planning: what would auto-categorize do, exactly. */
+/** Pure planning: what would auto-categorize do, exactly. `codeHolders` —
+ *  every asset of the org with a code, archived included (listAssetIdentities)
+ *  — is who already carries a code; it defaults to `assets`, and an archived
+ *  holder the caller leaves out is caught at apply (`codesTaken`). */
 export function planCategorization(
   assets: Asset[],
   types: AssetType[],
   book: Codebook,
+  codeHolders: ReadonlyArray<Pick<Asset, "code">> = assets,
 ): CategorizationPlan {
   const typeByName = new Map(types.map((t) => [t.name.toLowerCase(), t]));
   const assignments: CategorizationPlan["assignments"] = [];
@@ -52,7 +56,7 @@ export function planCategorization(
   // CB-10: one site code is one asset — never propose a code another asset
   // already carries (or this plan already hands out); the identity review
   // lists that asset instead (derived_code_taken).
-  const codesTaken = new Set(assets.map((a) => (a.code ?? "").trim()).filter(Boolean));
+  const codesTaken = new Set([...codeHolders, ...assets].map((a) => (a.code ?? "").trim()).filter(Boolean));
 
   for (const a of assets) {
     // Unit filing: the site code carries the unit ("2030.22" → 20). An
@@ -93,6 +97,10 @@ export interface CategorizationResult {
   filedToUnits: number;
   /** BR-4: blank site codes filled from the codebook. */
   codesDerived: number;
+  /** CB-10: derived codes not written because another asset (an archived
+   *  one the plan did not see, or one written since) already carries the
+   *  code — not a failure; the identity review lists each such asset. */
+  codesTaken: number;
   createdTypes: number;
   unmatched: string[];
   failed: number;
@@ -142,13 +150,16 @@ export async function applyCategorization(
     } catch { failed += 1; }
   }
   let codesDerived = 0;
+  let codesTaken = 0;
   for (const c of plan.codeAssignments ?? []) {
     try {
       await updateAsset(c.assetId, { code: c.code }, userId);
       codesDerived += 1;
-    } catch { failed += 1; }
+    } catch (e) {
+      if (isSiteCodeTaken(e)) codesTaken += 1; else failed += 1;
+    }
   }
-  return { categorized, filedToUnits, codesDerived, createdTypes, unmatched: plan.unmatched, failed };
+  return { categorized, filedToUnits, codesDerived, codesTaken, createdTypes, unmatched: plan.unmatched, failed };
 }
 
 // ─── Identity review (AREA-11 / CB-6) ─────────────────────────────────────
@@ -319,8 +330,9 @@ export interface ImportRowPlan {
   unitCode: string | null;
   code: string | null;
   typeId: string | null;
-  /** What the row will write (update: only the cells the file supplies). */
-  patch: Partial<Pick<Asset, "description" | "location" | "type_id" | "unit_code" | "code">>;
+  /** What the row will write (update: only the cells the file supplies;
+   *  `archived: false` when the row restores an archived asset). */
+  patch: Partial<Pick<Asset, "description" | "location" | "type_id" | "unit_code" | "code" | "archived">>;
   /** CB-10: the site code this row would have carried that another asset
    *  (in the registry, or an earlier row of the file) already carries — the
    *  row lands without it (one site code is one asset). */
@@ -341,6 +353,9 @@ export interface ImportPlan {
   existing: number;
   /** CB-10: rows that land without the site code they would have carried. */
   codesDropped: number;
+  /** IRLS-5: rows whose tag an ARCHIVED asset carries — restored by an
+   *  update, skipped (with a note) in create-only mode. */
+  archivedMatches: number;
 }
 
 /** Resolve a unit cell against the codebook: code first ("20"), then name
@@ -365,8 +380,8 @@ export function planAssetImport(
   ctx: {
     book: Codebook;
     types: ReadonlyArray<Pick<AssetType, "id" | "name">>;
-    /** Existing registry rows by tag key (tagKey). */
-    existing: ReadonlyMap<string, Pick<Asset, "id" | "unit_code" | "code">>;
+    /** Existing registry rows by tag key (tagKey), archived included. */
+    existing: ReadonlyMap<string, Pick<Asset, "id" | "unit_code" | "code"> & { archived?: boolean }>;
     mode: ImportMode;
     /** CB-10: site code → the registry asset carrying it (every asset of the
      *  org, archived included — listAssetIdentities). */
@@ -376,6 +391,7 @@ export function planAssetImport(
   const typeByName = new Map(ctx.types.map((t) => [t.name.trim().toLowerCase(), t.id]));
   const firstRowByKey = new Map<string, number>();
   const rows: ImportRowPlan[] = [];
+  let archivedMatches = 0;
   // CB-10: one site code is one asset (assets_org_code_unique). A code this
   // plan would write that another asset already carries — in the registry,
   // or an earlier row of this file (V-1 / D-1 of a two-prefix type; E-022 /
@@ -411,6 +427,7 @@ export function planAssetImport(
       notes.push(`Site code ${givenCode} names unit ${decoded.unitCode}, the unit column says ${unitCode} — both kept; resolve it under Identity review.`);
     }
     const existing = ctx.existing.get(key) ?? null;
+    if (existing?.archived) archivedMatches += 1;
     // A derived code only ever fills a blank: an existing asset's own code
     // is never replaced by one (that is the identity review).
     let derived = !givenCode && unitCode && !existing?.code ? tagToCode(tag, unitCode, ctx.book) : null;
@@ -450,7 +467,9 @@ export function planAssetImport(
       continue;
     }
     if (ctx.mode === "create_only") {
-      rows.push({ ...base, action: "skip", existingId: existing.id, unitCode: existing.unit_code ?? null, code: existing.code ?? null, notes: ["Already in the registry — skipped (create-only)."] });
+      rows.push({ ...base, action: "skip", existingId: existing.id, unitCode: existing.unit_code ?? null, code: existing.code ?? null, notes: [existing.archived
+        ? "Already in the registry, ARCHIVED — skipped (create-only). Update from this file to restore it, or restore it from the Archived list."
+        : "Already in the registry — skipped (create-only)."] });
       continue;
     }
     // Update: only the cells the file supplies; a DERIVED code fills a blank
@@ -463,6 +482,13 @@ export function planAssetImport(
     if (keptGiven) patch.code = keptGiven;
     else if (derived) patch.code = derived;
     if (patch.code) claimed.set(patch.code, { row: r.row, tag });
+    // IRLS-5: an archived asset the list names comes back — it keeps its tag
+    // (so it cannot be re-created), and an update that stays hidden is no
+    // update at all.
+    if (existing.archived) {
+      patch.archived = false;
+      notes.push("This asset was archived — the update restores it to the registry.");
+    }
     const nextUnit = patch.unit_code ?? existing.unit_code ?? null;
     const nextCode = patch.code ?? existing.code ?? null;
     if (!givenCode && existing.code && unitCode && unitCode !== existing.unit_code) {
@@ -483,6 +509,7 @@ export function planAssetImport(
     filed: rows.filter((r) => (r.action === "create" || r.action === "update") && r.unitCode).length,
     existing: rows.filter((r) => r.existingId !== null).length,
     codesDropped: rows.filter((r) => (r.action === "create" || r.action === "update") && r.codeDropped).length,
+    archivedMatches,
   };
 }
 
