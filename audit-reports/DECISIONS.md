@@ -1862,33 +1862,62 @@ rules are the publish rules:**
 2. **How long:** every share expires. "Never expires" is removed; 30 days is
    the default and 90 the ceiling, enforced by trigger on INSERT and on any
    change to `expires_at` (a never-expiring legacy row is capped at
-   `created_at + 90 days` on apply — one older than that expires then).
+   `created_at + 90 days` on apply — one older than that expires then). The
+   ceiling is measured on the DATABASE's clock: a live INSERT is stamped
+   `created_at := now()` whatever the client sent, `created_at` is immutable
+   after (so neither an INSERT nor an UPDATE can walk the anchor forward),
+   and a row with no `created_at` may only move its expiry earlier. The
+   expiry itself is computed on the minting browser's clock, so an expiry up
+   to one hour past the ceiling (a clock running ahead on a "90 days" pick)
+   is clamped to the ceiling rather than refused; beyond that the insert is
+   refused and the modal says why.
 3. **What may be shared, and what serves:** never a Draft, a Superseded /
    Void / Archived document (the shared `NOT_CURRENT_STATUSES`), an archived
    record, or a document under an active hold — refused WITH THE REASON at
    mint time (`document_share_refusal`, `describeShareRefusal`) and at every
    resolve (`lib/shareServe.ts`), fail-closed when the hold set cannot be
-   read. A retired document's outstanding links stop serving the moment its
-   status changes; supersede also revokes them for the record (`DIST-1`).
+   read. The landing page is UNAUTHENTICATED, so a hold refusal there names
+   only the hold's predefined category (`publicHoldReason`, the HLD-7 /
+   VFY-6 rule `/api/verify-hold` follows) — never the operator's free text
+   and never a database error (logged server-side instead); members see the
+   full reason in the modal. A retired document's outstanding links stop
+   serving while its status is not current (and serve again if an archive
+   or void is undone); supersede also revokes them for the record
+   (`DIST-1`).
 4. **Which revision:** a share always serves the CURRENT issued revision. No
    version pinning. Stated in the modal, on every link row, on the landing
    page and in the stamped footer, so neither party can believe otherwise.
+   The link row's "resolves to" is computed by the same function the routes
+   run (`resolveServedVersion`), so it says "not serving" or "no published
+   file" exactly when the routes would refuse or answer `nofile`.
 5. **What is recorded:** every download is a `download_audits` row attributed
    by `share_id` (DEC-44 §1) written before the bytes leave — a refused
    write refuses the download; every access (open or download) is a
-   `document_share_accesses` row with IP, user agent, kind and version. No
-   recipient identification: possession of the token is the whole
-   authorization, and the record says what it knows rather than a name
-   nobody verified.
+   `document_share_accesses` row with IP, user agent, kind and version, and
+   so is every REFUSED attempt on a known share (kind `refused` + the
+   reason: revoked, expired, withdrawn, on hold, lapsed authority, no file,
+   unrecorded) — bounded to one per share per minute by a unique index, since
+   anyone holding a dead token can call the route. Pruning that table is the
+   retention owner's (the `RET-*` findings / `08-retention.md`), not this
+   decision's; until a retention rule names it, rows are kept. No recipient
+   identification: possession of the token is the whole authorization, and
+   the record says what it knows rather than a name nobody verified.
 6. **Revocation is durable:** `revoked_at`, once set, never clears or moves,
    a revoked share cannot be re-dated, and creators revoke but only
-   controllers DELETE (retention). Creating and revoking write `audit_logs`.
+   controllers DELETE (retention). Creating and revoking write `audit_logs`;
+   revoking a row that is already revoked is a no-op (no second row).
+7. **Deploy order is a gate:** `20261068` (wave 1) → `20261080` →
+   `20261081` are applied BEFORE the wave-2 routes deploy. The share
+   download fails closed on its record, so a deploy ahead of `20261068`
+   refuses every external download (503 `unrecorded`, logged as the missing
+   migration) until the paste lands.
 
 > Made during document-control Round F wave 2 (2026-09-23, package P1
 > SHARE + public-surfaces PKG-3) closing `DRLS-5`, `DRLS-7`, `DIST-6`,
-> `DIST-7`, `EGR-3`, `EGR-5`, `EGR-6`, `REV-10`, `SHR-3` … `SHR-13`,
-> `PHYS-13`. The defaults were stated to the system's owner on 2026-09-17
-> and applied unless overridden.
+> `DIST-7`, `EGR-3`, `EGR-5`, `EGR-6`, `REV-10`, `SHR-3` … `SHR-13` (but
+> `SHR-12`, partial) and partially `PHYS-13` — the remainders of those two
+> are other packages' files. The defaults were stated to the system's owner
+> on 2026-09-17 and applied unless overridden.
 
 **Rationale.** A share link is the one channel that hands a controlled
 drawing to someone with no account, no ACL and no recall path. Every other
@@ -1897,8 +1926,9 @@ which revision and where is the record; the share link asked only "does the
 token exist". Aligning it with the publish tier and the not-current set makes
 "outside the building" no weaker than "inside".
 
-**Implementation.** `lib/shareRules.ts` (pure), `lib/shareServe.ts`
-(server), `lib/documentShares.ts` (client mint path),
+**Implementation.** `lib/shareRules.ts` (the rules, plus
+`resolveServedVersion`, which reads only through the caller's client),
+`lib/shareServe.ts` (server), `lib/documentShares.ts` (client mint path),
 `components/documents/ShareLinkModal.tsx`, `app/share/[token]/page.tsx`,
 `app/api/share/{resolve,file}/route.ts`; migrations `20261080`
 (minting tier, refusal rail, durable revocation, 90-day ceiling) and
@@ -1906,10 +1936,15 @@ token exist". Aligning it with the publish tier and the not-current set makes
 
 **Acceptance.** A Viewer's INSERT into `document_shares` is refused; a
 controller's INSERT on a Draft / Superseded / held document is refused with
-the reason; `expires_at` NULL or > 90 days is refused; a Superseded or held
-document answers `withdrawn` / `on_hold` on both routes; a share download
-produces exactly one `download_audits` row with `share_id` before the bytes;
-`UPDATE document_shares SET revoked_at = NULL` on a revoked row raises.
+the reason; `expires_at` NULL or more than 90 days (plus the one-hour skew
+allowance) after the database's `now()` is refused, whatever `created_at`
+the INSERT names; `UPDATE document_shares SET created_at = …` raises; a
+Superseded or held document answers `withdrawn` / `on_hold` on both routes,
+the latter naming no free-text hold reason; a share download produces
+exactly one `download_audits` row with `share_id` before the bytes;
+`UPDATE document_shares SET revoked_at = NULL` on a revoked row raises; a
+signed-in member calling `document_share_refusal` on another org's document
+gets `not_found`.
 
 **Reversal.** A stated need for a longer-lived external link (a customer
 contract, a regulator) raises the ceiling in one constant and one interval —

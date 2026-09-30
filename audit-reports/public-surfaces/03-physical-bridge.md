@@ -278,7 +278,7 @@ schema.sql:789-799 (nine columns, no `source`, no `ticket_id`); share/file/route
 - [ ] Drafting-portal audit rows carry document_id and version_id so staleCopies can see them
 - [ ] A test asserts a share-link download produces exactly one download_audits row
 
-**Partial (2026-09-23, document-control Round F wave 2).** **The share-link limb is resolved** (document-control `DIST-7` / `EGR-3`, public-surfaces `SHR-5` — one fix): `20261068` (P2 EGRESS) added `source`, `share_id`, `transmittal_id` and made `user_id` nullable behind an attribution CHECK; `app/api/share/file/route.ts:102-119` writes exactly that shape (`user_id: null`, `share_id`, `source`, the served `version_id`), checks `{ error }`, logs a refusal and refuses the download `503 unrecorded` before any byte leaves. `lib/__tests__/shareRoutes.test.ts` asserts exactly one `download_audits` row per share download and that a refused write refuses the download (criterion 4 ✓).
+**Partial (2026-09-23, document-control Round F wave 2).** **The share-link limb is resolved** (document-control `DIST-7` / `EGR-3`, public-surfaces `SHR-5` — one fix): `20261068` (P2 EGRESS) added `source`, `share_id`, `transmittal_id` and made `user_id` nullable behind an attribution CHECK; `app/api/share/file/route.ts:111-132` writes exactly that shape (`user_id: null`, `share_id`, `source`, the served `version_id`), checks `{ error }`, logs a refusal and refuses the download `503 unrecorded` before any byte leaves. `lib/__tests__/shareRoutes.test.ts` asserts exactly one `download_audits` row per share download and that a refused write refuses the download (criterion 4 ✓).
 
 **The drafting-portal limb is NOT resolved here** — `app/(protected)/requests/[id]/page.tsx:592-600` / `:673-684` (inserts naming `ticket_id`, `attachment_id`, `attachment_type`, `filename`, `watermark_text` and no `document_id` / `version_id`) and `lib/downloads.ts:131-145` are owned by public-surfaces `PKG-5 DRAFTING-DELIVERABLE-PRINT` (with the drafting-flow fleet) and document-control P8 (`DIST-9` limb) respectively, not this package's files. `20261068` deliberately added only the channel / attribution columns, not the ticket / attachment ones — PKG-5 decides whether to rewrite those inserts onto the existing schema (the DEC-44 shape: `document_id` + `version_id` + `source: "drafting"`) so `staleCopies` can see them.
 
@@ -423,7 +423,7 @@ stamping.ts:118-119 `const base = page.getViewport({ scale: 1 });\n        const
 ## PHYS-13 · Two QR generators bypass publicOrigin() and encode window.location.origin — including the share-link QR handed to external parties
 
 - **Severity:** MEDIUM
-- **Status:** RESOLVED
+- **Status:** OPEN
 - **Verification:** CONFIRMED
 - **Locations:** `components/viewers/FullScreenViewer.tsx:1268`, `components/viewers/FullScreenViewer.tsx:63`, `components/viewers/FullScreenViewer.tsx:1015-1016`, `components/documents/ShareLinkModal.tsx:81`, `components/documents/ShareLinkModal.tsx:209`, `lib/publicOrigin.ts:8-12`
 - **Independently verified:** ✓ **SURVIVES** — second independent adversarial pass. Both call sites confirmed, and the file-local inconsistency in FullScreenViewer (publicOrigin at :1016, window.location.origin at :1268) makes it plainly an oversight rather than a deliberate exception. The share-link QR is the one that reaches an external party, so the preview-deploy dead-end is real; the /documents QR at :1268 targets a protected route the scanner must log into anyway, which limits the blast radius of that half.
@@ -448,17 +448,17 @@ FullScreenViewer.tsx:1268 `value={\`${window.location.origin}/documents/${docRec
 - [ ] ShareLinkModal's copied link and its QR use the same publicOrigin-derived base
 - [ ] No file outside lib/publicOrigin.ts reads window.location.origin to build a URL that leaves the app
 
-**Resolution (2026-09-23, document-control Round F wave 2).** `components/documents/ShareLinkModal.tsx:118-121` builds the base of every copied link and of the QR from `publicOrigin()` (``const origin = publicOrigin(); const baseUrl = origin ? `${origin}/share/` : "/share/";``) — the same string feeds the read-only input, the Copy button, the Open link and `<QrBadge value={url}>`, so the clipboard and the QR can never disagree and neither carries a preview-deploy host when `NEXT_PUBLIC_SITE_URL` is set. `window.location.origin` no longer appears in the modal, the landing page or `lib/documentShares.ts` (pinned by test). The `FullScreenViewer.tsx:1268` phone QR is left as the verifier narrowed it (an in-app, login-required route for the same viewer in the same session — an inconsistency, not a field failure); that file is PS-STAMP's this wave (`QrBadge (~1291) from publicOrigin()` is in its list).
+**Partial (2026-09-23, document-control Round F wave 2).** The share-link half (the one the verifier kept) landed; the `FullScreenViewer.tsx` phone QR did not, so the finding stays OPEN for done-when 1 and 3. `components/documents/ShareLinkModal.tsx:138-143` builds the base of every copied link and of the QR from `publicOrigin()` (``const origin = publicOrigin(); const baseUrl = origin ? `${origin}/share/` : "/share/";``) — the same string feeds the read-only input, the Copy button, the Open link and `<QrBadge value={url}>`, so the clipboard and the QR can never disagree and neither carries a preview-deploy host when `NEXT_PUBLIC_SITE_URL` is set. `window.location.origin` no longer appears in the modal, the landing page or `lib/documentShares.ts` (pinned by test). The `FullScreenViewer.tsx:1268` phone QR is left as the verifier narrowed it (an in-app, login-required route for the same viewer in the same session — an inconsistency, not a field failure); that file is PS-STAMP's this wave (`QrBadge (~1291) from publicOrigin()` is in its file list, although `PHYS-13` is not in its finding list).
 - Files: `components/documents/ShareLinkModal.tsx`
 - Tests: `lib/__tests__/shareRoutes.test.ts` — "the modal offers no never-expires option, caps at 90, builds the link and QR on publicOrigin …" (`not.toMatch(/window\.location\.origin/)`, the `publicOrigin` import and the `baseUrl` line), "no file outside lib/publicOrigin.ts under the share surface reads window.location.origin (PHYS-13)".
 - Reproduced: base `ShareLinkModal.tsx:86` ``const baseUrl = typeof window !== "undefined" ? `${window.location.origin}/share/` : "/share/";`` feeding `:235` `<QrBadge value={url} …>`.
-- Verified: `tsc` 0, `eslint` 0 on every touched file, full `vitest` green (194 files / 2583 tests).
+- Verified: `tsc` 0, `eslint` 0 on every touched file, full `vitest` green (194 files / 2590 tests, re-run after the review fix pass).
 
 **Done-when.**
-1. ◐ The ShareLinkModal `QrBadge` builds from `publicOrigin()` ✓; the FullScreenViewer phone QR is PS-STAMP's file (and the verifier's narrowing applies).
+1. ◐ Not fully done — the ShareLinkModal `QrBadge` builds from `publicOrigin()` ✓; the FullScreenViewer phone QR still reads `window.location.origin` (PS-STAMP's file; the verifier's narrowing makes it an inconsistency, not a field failure).
 2. ✓ The copied link and the QR share one `publicOrigin`-derived base.
-3. ◐ Under the share surface, no file reads `window.location.origin` (pinned); `FullScreenViewer.tsx:1268` remains — PS-STAMP.
+3. ◐ Not fully done — under the share surface no file reads `window.location.origin` (pinned); `FullScreenViewer.tsx:1268` remains.
 
-**Scope / residual.** `FullScreenViewer.tsx` → PS-STAMP (`PHYS-12` / `SHR-8` package).
+**Scope / residual.** Done-when 1 and 3 keep this finding OPEN. Owner: public-surfaces PS-STAMP, whose file list already carries the `FullScreenViewer.tsx` `QrBadge (~1291) from publicOrigin()` change; when that lands, the integrator (or PS-STAMP) closes `PHYS-13` against it.
 
 ---

@@ -104,3 +104,12 @@ control; it is a suggestion with a confirmation dialog. This is the same shape a
 the client-side-only admin guard found in the drafting-flow area and the one
 `ALOG-*` reports on the admin surfaces. Treat "is this enforced server-side?" as a
 standing question for every guard in this area.
+
+⚠ **Deploy gate — share links (Round F wave 2, P1 SHARE; DEC-46 §7).** Apply
+`20261068` (wave 1, P2 EGRESS) → `20261080` → `20261081` BEFORE the wave-2
+share routes deploy. `/api/share/file` writes its `download_audits` row with
+`share_id` / `source` / a NULL `user_id` and FAILS CLOSED when that write is
+refused, so a deploy ahead of `20261068` refuses every external share
+download (`503 unrecorded`, logged as the missing migration) until the paste
+lands; ahead of `20261081` the per-access rows and the two-argument counter
+RPC fail (logged, not fatal).
