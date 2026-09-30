@@ -16,7 +16,11 @@
 //               upsert and the Bridge's discovery insert / unit backfill,
 //               driven against 20261128's triggers (transcribed below and
 //               pinned to the SQL by shape tests): a legacy letter code
-//               restores, a taken site code is dropped, never the row.
+//               restores; a taken site code is dropped from an INSERT, an
+//               UPDATE to one is refused (the Bridge re-sends its backfill
+//               without it), and a parallel insert the trigger cannot see is
+//               refused by the index and re-sent once by the Bridge without
+//               the code — recorded as codesLeftBlank.
 //   * IRLS-5 — archive is reversible: restoreAsset and the page's Archived
 //               list / the drawer's Restore.
 //   * 20261128 — the paste contract, the predicates, the two-world DO blocks,
@@ -348,14 +352,23 @@ describe("20261128 §4/§5 — CB-3 CHECK and CB-10 unique index choose their ow
     expect(tail).toContain("NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'codebook_entries_code_digits'),");
     expect(tail).not.toContain("convalidated");
   });
-  it("CB-10: a code the service role writes yields to the asset already carrying it — INSERT lands without it, UPDATE keeps its own; NEW.id excluded", () => {
+  it("CB-10: a code the service role INSERTS yields to the asset already carrying it (the row lands without it); an UPDATE to a taken code RAISES 23505 naming the holder; NEW.id excluded", () => {
     const fn = body.slice(body.indexOf("CREATE OR REPLACE FUNCTION assets_code_one_holder()"), body.indexOf("DROP TRIGGER IF EXISTS trg_assets_code_one_holder"));
     expect(fn).toContain("RETURNS trigger LANGUAGE plpgsql SET search_path = public AS $$");
-    expect(fn).toMatch(/BEGIN\n\s+IF auth\.uid\(\) IS NOT NULL THEN RETURN NEW; END IF;\n\s+IF NEW\.code IS NULL OR btrim\(NEW\.code\) = '' THEN RETURN NEW; END IF;\n\s+IF TG_OP = 'UPDATE' AND NEW\.code IS NOT DISTINCT FROM OLD\.code THEN RETURN NEW; END IF;\n\s+IF EXISTS \(SELECT 1 FROM assets o\n\s+WHERE o\.org_id = NEW\.org_id AND o\.code = NEW\.code\n\s+AND o\.id IS DISTINCT FROM NEW\.id\) THEN/);
-    expect(fn).toContain("IF TG_OP = 'INSERT' THEN NEW.code := NULL; ELSE NEW.code := OLD.code; END IF;");
+    expect(fn).toMatch(/BEGIN\n\s+IF auth\.uid\(\) IS NOT NULL THEN RETURN NEW; END IF;\n\s+IF NEW\.code IS NULL OR btrim\(NEW\.code\) = '' THEN RETURN NEW; END IF;\n\s+IF TG_OP = 'UPDATE' AND NEW\.code IS NOT DISTINCT FROM OLD\.code THEN RETURN NEW; END IF;\n\s+SELECT o\.id, o\.tag INTO v_holder_id, v_holder_tag FROM assets o\n\s+WHERE o\.org_id = NEW\.org_id AND o\.code = NEW\.code\n\s+AND o\.id IS DISTINCT FROM NEW\.id\n\s+LIMIT 1;\n\s+IF NOT FOUND THEN RETURN NEW; END IF;/);
+    // The UPDATE path is refused, never silently kept (a SQL-editor cleanup
+    // in the wrong order used to answer UPDATE 1 and change nothing).
+    expect(fn).toMatch(/IF TG_OP = 'UPDATE' THEN\n\s+RAISE EXCEPTION 'assets_org_code_unique: site code % is already carried by % \(asset %\); % keeps its code', NEW\.code, v_holder_tag, v_holder_id, OLD\.tag\n\s+USING ERRCODE = '23505', CONSTRAINT = 'assets_org_code_unique',/);
+    expect(fn).not.toContain("NEW.code := OLD.code");
+    // Only an INSERT is blanked (restores, the Bridge's discovery insert).
+    expect(fn).toMatch(/END IF;\n\s+RAISE NOTICE 'assets_code_one_holder: [^\n]*lands without it'[^\n]*\n\s+NEW\.code := NULL;\n\s+RETURN NEW;\nEND;/);
+    // The message carries the index name, so the app's and the Bridge's
+    // site-code-taken checks recognise the trigger's refusal too.
+    expect(fn).toContain(`RAISE EXCEPTION '${SITE_CODE_UNIQUE_INDEX}: site code`);
     expect(body).toMatch(/CREATE TRIGGER trg_assets_code_one_holder\n\s+BEFORE INSERT OR UPDATE OF code ON assets\n\s+FOR EACH ROW EXECUTE FUNCTION assets_code_one_holder\(\);/);
     const tail = m28.slice(m28.indexOf("\nCOMMIT;"));
-    expect(tail).toContain("prosrc LIKE '%IF TG_OP = ''INSERT'' THEN NEW.code := NULL; ELSE NEW.code := OLD.code; END IF;%'");
+    expect(tail).toContain("AND prosrc LIKE '%IF TG_OP = ''UPDATE'' THEN%RAISE EXCEPTION ''assets_org_code_unique: site code % is already carried by %USING ERRCODE = ''23505''%'");
+    expect(tail).toContain("AND prosrc NOT LIKE '%NEW.code := OLD.code%'");
   });
   it("the unique partial index is created only when no org carries a duplicate — nothing is rewritten", () => {
     expect(body).toMatch(/IF NOT EXISTS \(SELECT 1 FROM assets\s+WHERE code IS NOT NULL AND btrim\(code\) <> ''\s+GROUP BY org_id, code HAVING COUNT\(\*\) > 1\) THEN\s+CREATE UNIQUE INDEX IF NOT EXISTS assets_org_code_unique\s+ON assets \(org_id, code\) WHERE code IS NOT NULL AND btrim\(code\) <> '';/);
@@ -363,16 +376,18 @@ describe("20261128 §4/§5 — CB-3 CHECK and CB-10 unique index choose their ow
     const { SITE_CODE_UNIQUE_INDEX: name } = { SITE_CODE_UNIQUE_INDEX };
     expect(m28).toContain(name);
   });
-  it("the index is the backstop for PERSON writes; the service role's writes (Bridge, restore) yield at the trigger — no dependency on another package's retry", () => {
+  it("the header says what the trigger does and does not do: INSERTs yield, UPDATEs are refused, a parallel insert is the index's (the Bridge re-sends it) — no 'always land' claim", () => {
     expect(m28).not.toContain("HANDED TO I-11");
-    expect(m28).toContain("A code the SERVICE ROLE writes");
-    expect(m28).toContain("the Bridge's discovery insert and unit backfill, the org restore, a");
+    expect(m28).toContain("A code the SERVICE ROLE INSERTS");
+    expect(m28).toContain("A service-role UPDATE that sets a code another asset carries is\n--      REFUSED (23505, the holder named)");
+    expect(m28).toContain("The trigger\n--      sees committed rows only");
+    expect(m28).not.toMatch(/always land/);
     // The trigger runs before the index is created, in the same transaction.
     expect(body.indexOf("CREATE TRIGGER trg_assets_code_one_holder")).toBeLessThan(body.indexOf("CREATE UNIQUE INDEX IF NOT EXISTS assets_org_code_unique"));
   });
 });
 
-describe("20261128 §6 — CB-5: a code still in use cannot be removed or re-coded, by any caller", () => {
+describe("20261128 §6 — CB-5: a code still in use cannot be removed or re-coded by a person (the service role's cascades pass)", () => {
   const body = strip(m28.slice(m28.indexOf("\nBEGIN;"), m28.indexOf("\nCOMMIT;")));
   const fn = body.slice(body.indexOf("CREATE OR REPLACE FUNCTION codebook_entries_guard_in_use()"), body.indexOf("DROP TRIGGER IF EXISTS trg_codebook_entries_guard_in_use"));
   it("a SECURITY DEFINER trigger with search_path pinned, BEFORE DELETE and before a code / kind change", () => {
@@ -519,21 +534,26 @@ const codeDigitsGuard = (withServiceRoleBypass: boolean, authUid: string | null)
   }
   return row;
 };
-/** assets_code_one_holder, BEFORE INSERT OR UPDATE OF code. */
+/** assets_code_one_holder, BEFORE INSERT OR UPDATE OF code. `table` is what
+ *  the trigger can SEE — committed rows only. */
 const codeOneHolder = (authUid: string | null) => {
-  const heldElsewhere = (row: Row, table: Row[]) =>
-    table.some((o) => o.org_id === row.org_id && o.code === row.code && o.id !== row.id);
+  const holderOf = (row: Row, table: Row[]) =>
+    table.find((o) => o.org_id === row.org_id && o.code === row.code && o.id !== row.id);
   return {
     insert: (row: Row, table: Row[]): Row => {
       if (authUid !== null) return row;                                         // IF auth.uid() IS NOT NULL THEN RETURN NEW; END IF;
       if (row.code == null || String(row.code).trim() === "") return row;
-      return heldElsewhere(row, table) ? { ...row, code: null } : row;          // NEW.code := NULL
+      return holderOf(row, table) ? { ...row, code: null } : row;               // NEW.code := NULL (NOTICE)
     },
     update: (next: Row, old: Row, table: Row[]): Row => {
       if (authUid !== null) return next;
       if (next.code == null || String(next.code).trim() === "") return next;
       if (next.code === old.code) return next;
-      return heldElsewhere(next, table) ? { ...next, code: old.code } : next;   // NEW.code := OLD.code
+      const holder = holderOf(next, table);
+      if (holder) {                                                             // RAISE EXCEPTION … USING ERRCODE = '23505'
+        throw { code: "23505", message: `${SITE_CODE_UNIQUE_INDEX}: site code ${String(next.code)} is already carried by ${String(holder.tag)} (asset ${String(holder.id)}); ${String(old.tag)} keeps its code` };
+      }
+      return next;
     },
   };
 };
@@ -575,7 +595,7 @@ describe("CB-3 — an org restore holding a legacy letter-coded unit carries on 
   });
 });
 
-describe("CB-10 — the service role's writes (Bridge, restore) never lose a row to a taken site code", () => {
+describe("CB-10 — the Bridge and the org restore meet a taken site code: an INSERT yields it, an UPDATE is refused, a parallel insert is re-sent without it", () => {
   const book = (): Row[] => [
     { id: "u20", org_id: "o1", kind: "unit", code: "20", label: "Crude", meta: {}, sort: 0 },
     { id: "t10", org_id: "o1", kind: "equipment_type", code: "10", label: "Vessels", meta: { tagPrefixes: ["V", "D"] }, sort: 0 },
@@ -606,14 +626,21 @@ describe("CB-10 — the service role's writes (Bridge, restore) never lose a row
   };
   const bridge = () => applyForDocument(makeFakeSupabase(db.ref) as unknown as SupabaseClient, { orgId: "o1", documentId: "d1", userId: null });
 
-  it("reproduction (index, no trigger): the discovered D-1 is never created and E-022's filing is swallowed", async () => {
+  const audit = () => (db.ref.tables.audit_logs ?? []).find((l) => l.action === "EQUIPMENT_BRIDGE_APPLIED") as { details: Record<string, unknown> } | undefined;
+
+  it("index only (a holder the trigger cannot see): the Bridge re-sends once without the code — D-1 is created, E-022 is filed, both recorded", async () => {
     seedBridge();
+    // Reproduction of the old path: its only retry matched a missing COLUMN,
+    // never the site-code index, so D-1 was silently not created.
+    expect(/unit_code|origin|discovered_from|column/i.test(`duplicate key value violates unique constraint "${SITE_CODE_UNIQUE_INDEX}"`)).toBe(false);
     const res = await bridge();
-    expect(res.createdAssets).toBe(0);
-    expect(db.ref.tables.assets.find((a) => a.tag === "D-1")).toBeUndefined();
-    expect(db.ref.tables.assets.find((a) => a.id === "a-e022")).toMatchObject({ unit_code: null, code: null });
+    expect(res.createdAssets).toBe(1);
+    expect(db.ref.tables.assets.find((a) => a.tag === "D-1")).toMatchObject({ unit_code: "20", code: null, origin: "drawing" });
+    expect(db.ref.tables.assets.find((a) => a.id === "a-e022")).toMatchObject({ unit_code: "20", code: null });
+    expect(res.codesLeftBlank).toEqual(["D-1", "E-022"]);
+    expect(audit()!.details.codesLeftBlank).toEqual(["D-1", "E-022"]);
   });
-  it("with 20261128's trigger (service role): D-1 lands filed, without the code; E-022 is filed, its code left blank; the index is never hit", async () => {
+  it("with 20261128's trigger (service role): D-1's insert lands without the code; E-022's backfill is REFUSED by the trigger (holder named) and re-sent without the code, so it is filed", async () => {
     seedBridge();
     const t = codeOneHolder(null);
     db.ref.beforeInsert = { assets: t.insert };
@@ -623,6 +650,47 @@ describe("CB-10 — the service role's writes (Bridge, restore) never lose a row
     expect(db.ref.tables.assets.find((a) => a.tag === "D-1")).toMatchObject({ unit_code: "20", code: null, origin: "drawing" });
     expect(db.ref.tables.assets.find((a) => a.id === "a-e022")).toMatchObject({ unit_code: "20", code: null });
     expect(db.ref.tables.assets.find((a) => a.id === "a-v1")!.code).toBe("2010.1");
+    expect(res.codesLeftBlank).toEqual(["D-1", "E-022"]);
+    expect(audit()!.details.codesLeftBlank).toEqual(["D-1", "E-022"]);
+  });
+  it("two drawings ingested in parallel (V-7 and D-7 both derive 2010.7): the trigger passes D-7, the index refuses it once V-7 commits, and the Bridge re-sends D-7 once without the code — created, filed, recorded", async () => {
+    seedBridge();
+    db.ref.tables.document_equipment_suggestions[0].suggested = [
+      { tag: "D-7", code: "2010.7", pages: [2], assetId: null, assetStatus: "new", unitCode: "20" },
+    ];
+    const V7 = { id: "a-v7", org_id: "o1", tag: "V-7", tag_normalized: "v7", unit_code: "20", code: "2010.7", archived: false, origin: "drawing" };
+    const t = codeOneHolder(null);
+    let otherDrawingCommitted = false;
+    db.ref.beforeInsert = {
+      assets: (row, table) => {
+        const seen = t.insert(row, table);                                     // the trigger looks: V-7 is not committed yet
+        if (!otherDrawingCommitted) { otherDrawingCommitted = true; table.push({ ...V7 }); } // …then the other drawing's insert commits
+        return seen;
+      },
+    };
+    db.ref.beforeUpdate = { assets: t.update };
+    const res = await bridge();
+    expect(res.createdAssets).toBe(1);
+    expect(db.ref.tables.assets.find((a) => a.tag === "D-7")).toMatchObject({ unit_code: "20", code: null, origin: "drawing" });
+    expect(db.ref.tables.assets.find((a) => a.tag === "V-7")!.code).toBe("2010.7");
+    expect(res.codesLeftBlank).toEqual(["D-7"]);
+    expect(audit()!.details).toMatchObject({ createdAssets: 1, codesLeftBlank: ["D-7"] });
+    // Exactly one re-send, and it carried no code.
+    const inserts = db.ref.calls.filter((c) => c.table === "assets" && c.method === "insert").map((c) => (c.args[0] as Row).code);
+    expect(inserts).toEqual(["2010.7", null]);
+  });
+  it("a service-role UPDATE to a taken code (a SQL-editor cleanup in the wrong order) is refused with 23505 naming the holder — never 'UPDATE 1' with nothing changed; a free code lands", async () => {
+    db.ref.tables = { assets: [{ ...V1 }, { ...E22 }] };
+    db.ref.unique = { assets: [SITE_CODE_INDEX] };
+    db.ref.beforeUpdate = { assets: codeOneHolder(null).update };
+    const { supabase } = await import("@/lib/supabase");
+    const taken = await supabase.from("assets").update({ code: "2010.1" }).eq("id", "a-e22").select("id");
+    expect(taken.error).toMatchObject({ code: "23505" });
+    expect((taken.error as { message: string }).message).toContain(`${SITE_CODE_UNIQUE_INDEX}: site code 2010.1 is already carried by V-1 (asset a-v1); E-22 keeps its code`);
+    expect(db.ref.tables.assets.find((a) => a.id === "a-e22")!.code).toBe("2030.22");
+    const free = await supabase.from("assets").update({ code: "2030.99" }).eq("id", "a-e22").select("id");
+    expect(free.error).toBeNull();
+    expect(db.ref.tables.assets.find((a) => a.id === "a-e22")!.code).toBe("2030.99");
   });
   it("the org restore: a live id is skipped as before; a deleted asset whose code was reused lands without it; a pre-index backup's duplicate pair both land", async () => {
     db.ref.tables = { assets: [{ ...V1 }] };

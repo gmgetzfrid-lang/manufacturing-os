@@ -45,6 +45,11 @@ export interface BridgeConfig {
 /** assets.tag_normalized convention (lib/assets.ts normalizeTag). */
 const assetNorm = (tag: string) => tag.toLowerCase().replace(/[^a-z0-9]+/g, "");
 
+/** CB-10 (20261128): another asset already carries this site code — the
+ *  unique index, or the one-holder trigger's refusal of an UPDATE. */
+const siteCodeTaken = (e: { message?: string } | null | undefined) =>
+  !!e && /assets_org_code_unique/.test(e.message ?? "");
+
 // ─── Compute ────────────────────────────────────────────────────────────────
 
 export async function computeForKnowledgeDoc(admin: SupabaseClient, knowledgeDocId: string): Promise<{
@@ -170,7 +175,7 @@ export async function applyForDocument(admin: SupabaseClient, input: {
   userId: string | null;
   /** Restrict to a subset of suggested tags (review UI); omit = all. */
   tags?: string[];
-}): Promise<{ appliedTags: string[]; createdAssets: number }> {
+}): Promise<{ appliedTags: string[]; createdAssets: number; codesLeftBlank: string[] }> {
   const { orgId, documentId } = input;
   const { data: row } = await admin
     .from("document_equipment_suggestions").select("suggested, applied")
@@ -180,7 +185,7 @@ export async function applyForDocument(admin: SupabaseClient, input: {
   const alreadyApplied = new Set<string>(Array.isArray(row.applied) ? (row.applied as string[]) : []);
   const wanted = suggested.filter((s) =>
     (!input.tags || input.tags.includes(s.tag)));
-  if (wanted.length === 0) return { appliedTags: [], createdAssets: 0 };
+  if (wanted.length === 0) return { appliedTags: [], createdAssets: 0, codesLeftBlank: [] };
 
   const { data: doc } = await admin
     .from("documents").select("id, library_id, metadata")
@@ -197,6 +202,9 @@ export async function applyForDocument(admin: SupabaseClient, input: {
   //    build the registry.
   const book = await loadCodebookAdmin(admin, orgId);
   let createdAssets = 0;
+  // CB-10: tags written WITHOUT their derived site code because another
+  // asset already carries it (recorded in the audit row below).
+  const codesLeftBlank: string[] = [];
   if (bridge?.createAssets !== false) {
     const typeIdByLabel = await ensureAssetTypes(admin, orgId, book, wanted);
     for (const s of wanted) {
@@ -216,12 +224,21 @@ export async function applyForDocument(admin: SupabaseClient, input: {
       };
       // Unique (org, tag_normalized) makes concurrent discovery safe: the
       // loser of a race just resolves to the winner's row.
-      let { data: created, error } = await admin.from("assets").insert(insert).select("id").single();
+      let { data: created, error } = await admin.from("assets").insert(insert).select("id, code").single();
       if (error && /unit_code|origin|discovered_from|column/i.test(error.message)) {
         // Pre-migration DB: retry with the base columns only.
         const { unit_code: _u, code: _c, origin: _o, discovered_from: _d, ...base } = insert;
         void _u; void _c; void _o; void _d;
         ({ data: created, error } = await admin.from("assets").insert(base).select("id").single());
+      } else if (error && insert.code && siteCodeTaken(error)) {
+        // CB-10: the index refused the code — another insert of it (a second
+        // drawing ingested in parallel) committed after 20261128's trigger
+        // looked, which sees committed rows only. Land the asset without the
+        // code, once.
+        ({ data: created, error } = await admin.from("assets").insert({ ...insert, code: null }).select("id, code").single());
+        if (!error && created) codesLeftBlank.push(s.tag);
+      } else if (!error && created && insert.code && !(created as { code?: unknown }).code) {
+        codesLeftBlank.push(s.tag); // the trigger dropped a code another asset carries
       }
       if (error) {
         const { data: raced } = await admin.from("assets").select("id")
@@ -250,8 +267,16 @@ export async function applyForDocument(admin: SupabaseClient, input: {
         if (!blank.has(id)) continue;
         const patch: Record<string, unknown> = { unit_code: s.unitCode };
         if (!blank.get(id) && s.code) patch.code = s.code;
-        await admin.from("assets").update(patch).eq("id", id).is("unit_code", null)
-          .then(() => undefined, () => undefined);
+        const write = async (p: Record<string, unknown>): Promise<{ message: string } | null> => {
+          try { return (await admin.from("assets").update(p).eq("id", id).is("unit_code", null)).error; }
+          catch (e) { return { message: String(e) }; }
+        };
+        // CB-10: a code another asset carries is refused (20261128) — the
+        // filing is re-sent without it, and the tag recorded.
+        const err = await write(patch);
+        if (patch.code && siteCodeTaken(err) && !(await write({ unit_code: s.unitCode }))) {
+          codesLeftBlank.push(s.tag);
+        }
         blank.delete(id); // one write per asset even if it appears under several tags
       }
     }
@@ -290,10 +315,10 @@ export async function applyForDocument(admin: SupabaseClient, input: {
     resource_id: documentId,
     org_id: orgId,
     user_id: input.userId,
-    details: { tags: appliedNow, createdAssets, column: targetKey, auto: input.userId === null },
+    details: { tags: appliedNow, createdAssets, codesLeftBlank, column: targetKey, auto: input.userId === null },
   }).then(() => undefined, () => undefined);
 
-  return { appliedTags: appliedNow, createdAssets };
+  return { appliedTags: appliedNow, createdAssets, codesLeftBlank };
 }
 
 /** Find-or-create asset_types matching the codebook equipment-type labels

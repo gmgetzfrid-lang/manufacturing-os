@@ -39,19 +39,27 @@
 --      a CHECK (NOT VALID or validated) would refuse restoring any backup
 --      taken before the org replaced its letter codes; one an earlier paste of
 --      this file added is dropped. Nothing is rewritten or deleted.
---   5. CB-10 — one site code is one asset. A code the SERVICE ROLE writes
---      (the Bridge's discovery insert and unit backfill, the org restore, a
---      direct SQL write) yields to the asset that already carries it: an
---      INSERT lands without it, an UPDATE keeps the row's own code, so the
---      row and the rest of the write (the unit filing) always land (BEFORE
---      INSERT OR UPDATE OF code trigger). A UNIQUE partial index on assets
---      (org_id, code) for non-blank codes is the backstop for a person's write
---      and for a race; it is created only when no org carries a duplicate
---      today (otherwise the plain index stays and the inventory counts the
---      duplicates to resolve first; nothing is rewritten). App writers treat
---      a DERIVED code as optional (lib/assets.ts codeOptional: the importer,
---      the bulk filer, the drawer's auto-derived code), so the index refuses
---      a code but never the asset.
+--   5. CB-10 — one site code is one asset (BEFORE INSERT OR UPDATE OF code
+--      trigger). A code the SERVICE ROLE INSERTS (the org restore, the
+--      Bridge's discovery insert, a direct SQL insert) yields to the asset
+--      that already carries it: the row lands without it (a NOTICE says so).
+--      A service-role UPDATE that sets a code another asset carries is
+--      REFUSED (23505, the holder named): a SQL-editor cleanup done in the
+--      wrong order is told, never silently kept; the Bridge's unit backfill
+--      re-sends its patch without the code so the filing lands. The trigger
+--      sees committed rows only: two service-role inserts of one code in
+--      parallel (two drawings ingested at once) both pass it and the index
+--      refuses the second (23505 on assets_org_code_unique); the Bridge
+--      re-sends that insert once without the code and records it; another
+--      service-role writer (a restore, SQL) gets the error. A UNIQUE partial
+--      index on assets (org_id, code) for non-blank codes is the backstop for
+--      a person's write and for a race; it is created only when no org
+--      carries a duplicate today (otherwise the plain index stays and the
+--      inventory counts the duplicates to resolve first; nothing is
+--      rewritten). App writers treat a DERIVED code as optional
+--      (lib/assets.ts codeOptional: the importer, the bulk filer, the
+--      drawer's auto-derived code), so for them the index refuses a code but
+--      not the asset; a code a person typed is refused.
 --   6. CB-5 — a unit or equipment type that registry equipment (its filing,
 --      or the unit / type part of a stored site code) or a process flow still
 --      references cannot be removed or re-coded by a person: a BEFORE DELETE
@@ -176,24 +184,39 @@ CREATE TRIGGER trg_codebook_entries_code_digits
 ALTER TABLE codebook_entries DROP CONSTRAINT IF EXISTS codebook_entries_code_digits;
 
 -- ── 5. CB-10: one site code is one asset ────────────────────────────────────
--- A code the service role writes yields to its holder: an INSERT lands without
--- it, an UPDATE keeps the row's own code — the row and its unit filing always
--- land, and the identity review lists the asset (derived_code_taken). A person's
--- write passes through to the unique index (the app writes a derived code as
--- optional; a typed one that is taken is refused and named). Excluding NEW.id
--- keeps a restore's ON CONFLICT (id) skip of a live row as it was.
+-- A code the service role INSERTS yields to its holder: the row lands without
+-- it (restores and the Bridge's discovery insert). A NOTICE is the only record
+-- the database keeps; the identity review lists such an asset only when it is
+-- filed and the dropped code is the one the codebook derives for it
+-- (derived_code_taken) — any other code a restore drops (one a person had
+-- typed) is recorded by that NOTICE alone. A service-role UPDATE to a taken
+-- code is refused with 23505, naming the holder (the Bridge's backfill
+-- re-sends without the code). A person's write passes through to the unique
+-- index (the app writes a derived code as optional; a typed one that is taken
+-- is refused and named). Only committed holders are visible here; a parallel
+-- insert of the same code is the index's to refuse. Excluding NEW.id keeps a
+-- restore's ON CONFLICT (id) skip of a live row as it was.
 CREATE OR REPLACE FUNCTION assets_code_one_holder()
 RETURNS trigger LANGUAGE plpgsql SET search_path = public AS $$
+DECLARE
+  v_holder_id  uuid;
+  v_holder_tag text;
 BEGIN
   IF auth.uid() IS NOT NULL THEN RETURN NEW; END IF;
   IF NEW.code IS NULL OR btrim(NEW.code) = '' THEN RETURN NEW; END IF;
   IF TG_OP = 'UPDATE' AND NEW.code IS NOT DISTINCT FROM OLD.code THEN RETURN NEW; END IF;
-  IF EXISTS (SELECT 1 FROM assets o
-              WHERE o.org_id = NEW.org_id AND o.code = NEW.code
-                AND o.id IS DISTINCT FROM NEW.id) THEN
-    RAISE NOTICE 'assets_code_one_holder: site code % is already carried by another asset; % lands without it', NEW.code, NEW.tag;
-    IF TG_OP = 'INSERT' THEN NEW.code := NULL; ELSE NEW.code := OLD.code; END IF;
+  SELECT o.id, o.tag INTO v_holder_id, v_holder_tag FROM assets o
+   WHERE o.org_id = NEW.org_id AND o.code = NEW.code
+     AND o.id IS DISTINCT FROM NEW.id
+   LIMIT 1;
+  IF NOT FOUND THEN RETURN NEW; END IF;
+  IF TG_OP = 'UPDATE' THEN
+    RAISE EXCEPTION 'assets_org_code_unique: site code % is already carried by % (asset %); % keeps its code', NEW.code, v_holder_tag, v_holder_id, OLD.tag
+      USING ERRCODE = '23505', CONSTRAINT = 'assets_org_code_unique',
+            HINT = 'One site code is one asset: clear or change the holder''s code first.';
   END IF;
+  RAISE NOTICE 'assets_code_one_holder: site code % is already carried by % (asset %); % lands without it', NEW.code, v_holder_tag, v_holder_id, NEW.tag;
+  NEW.code := NULL;
   RETURN NEW;
 END;
 $$;
@@ -346,12 +369,14 @@ SELECT 'CB-3: no codebook_entries_code_digits CHECK (it would refuse restoring a
        NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'codebook_entries_code_digits'),
        NULL
 UNION ALL
-SELECT 'CB-10: a code the service role writes (Bridge, restore) yields to the asset already carrying it — the row and its filing land (trigger, search_path pinned)',
+SELECT 'CB-10: a code the service role INSERTS (restore, Bridge) yields to the asset already carrying it and the row lands; a service-role UPDATE to a taken code is refused (23505, holder named) (trigger, search_path pinned)',
        EXISTS (SELECT 1 FROM pg_trigger WHERE tgname = 'trg_assets_code_one_holder'
                 AND tgrelid = 'assets'::regclass AND NOT tgisinternal)
        AND (SELECT prosrc LIKE '%IF auth.uid() IS NOT NULL THEN RETURN NEW; END IF;%'
                    AND prosrc LIKE '%AND o.id IS DISTINCT FROM NEW.id%'
-                   AND prosrc LIKE '%IF TG_OP = ''INSERT'' THEN NEW.code := NULL; ELSE NEW.code := OLD.code; END IF;%'
+                   AND prosrc LIKE '%IF TG_OP = ''UPDATE'' THEN%RAISE EXCEPTION ''assets_org_code_unique: site code % is already carried by %USING ERRCODE = ''23505''%'
+                   AND prosrc LIKE '%NEW.code := NULL;%'
+                   AND prosrc NOT LIKE '%NEW.code := OLD.code%'
                    AND array_to_string(proconfig, ',') LIKE '%search_path=public%'
               FROM pg_proc WHERE proname = 'assets_code_one_holder'),
        NULL
