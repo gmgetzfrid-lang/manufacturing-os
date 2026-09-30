@@ -85,6 +85,7 @@ about the system.
 | [DEC-49](#dec-49) | A URL `/api/storage/download-url` signs is an **attachment** unless a viewer asks AND the type cannot be a page (PDF, raster image — type pinned); the viewer frames only a PDF and shows images as `<img>` | low | `SEC-7`, `SEC-1` |
 | [DEC-50](#dec-50) | The money ledger: the headline is what is still **uncommitted**; approved change orders revise the budget only while their money is on the ledger; CPI forecasts only what it measured; the ledger is never deleted; the decider decides the amount and line they were shown | medium | `MON-1`, `MON-4`, `COST-2`, `COST-4`, `COST-6`, `COST-9`, `COST-10`, `COST-11` |
 | [DEC-51](#dec-51) | A schedule re-import is a **reviewed merge, never a guess**: the importer plans before it writes, keeps local progress, keys rows on content, reads dates one way for the whole file, and adopts a legacy position row only by a name unique on both sides | low | `SCH-1`, `SCH-2`, `SCH-3`, `SCH-14`, `SCHED-3`, `SCHED-4`, `SCHED-9` |
+| [DEC-52](#dec-52) | The cost charts draw **only what the data holds and say what they are**: series identity is a validated categorical pair plus shape; one number is shown as a number; example data only on an empty project, every figure marked; the example shows only what the real view draws | low | `CHART-2`, `CHART-3`, `CHART-4`, `REL-10`, `REL-11` |
 
 ---
 
@@ -2646,3 +2647,68 @@ repeats is added again rather than matched (its old row and progress kept
 and listed), and a unique-named one is matched by name even when the file
 moved it.
 
+<a id="dec-52"></a>
+## DEC-52 · The cost charts draw only what the data holds, and say what they are
+
+**Decision. (1) Series identity is hue AND shape.** Two series on one chart take
+consecutive slots of the validated categorical scale, never the white-label
+brand accent. They also differ in line and marker shape, and the legend
+repeats that shape. The categorical colours are theme tokens named literally in source, so
+the stylesheet build emits them. The criterion is the palette's own six checks (lightness band, chroma
+floor, CVD and normal-vision separation, ≥ 3:1 against the surface) —
+**not** luminance contrast between the two marks. A validated pair sits in
+one lightness band by construction, and the shape channel carries identity.
+**(2) One number is shown as a number.** The planned crew is a stated average
+with its inputs (labor hours ÷ weeks ÷ 40) until the schedule carries a
+week-by-week loading. No variation is invented to fill a chart. **(3) Example
+data only on an empty project.** The example renders only when the project has
+zero cost accounts AND zero entries. Every example figure carries the word or
+an in-figure watermark: the forecast sentence, legend, labels, tooltips, bar
+values and the crew figure; the S-curve carries the watermark twice inside
+the plot. A corner chip alone is not enough. **(4) The example shows only what the
+real view draws.** Both go through one layout. Burn by budget line renders for
+real projects. A project with no dates gets an explanation instead of an
+empty region. **(5) Status colours read as text in both themes.** A status token
+used where a caller may paint text (`--state-held`) has its own light and
+dark step, each ≥ 4.5:1 on its surfaces. The dial's band word wears a text token.
+
+> Made during projects Round G (2026-09-30) by the joint J5 CHARTS package,
+> taking the fleet brief's stated defaults for `CHART-3`, `REL-10` and
+> `REL-11`, and the dataviz palette rule the brief named for `CHART-2` /
+> `CHART-4`. *Minted as DEC-52 (the next free number in this package's
+> base, where DEC-44 to DEC-51 were taken); the integrator renumbers on
+> merge if it collides.*
+
+**Rationale.** Each default removes a confident, plausible picture that the
+data does not support. The removed pictures were a flat bar row presented as a
+curve, stand-in numbers on a project with real accounts, a preview of a view
+the product could not draw, and two series told apart by a brand colour that
+an org can set to match the other. `CHART-2`'s done-when asked for 3:1
+contrast between the two marks. No validated categorical pair meets that
+while both marks clear 3:1 against the surface. Measured: 1.03:1 light and
+1.15:1 dark for slots 1 and 2, whose hue separation is ΔE 34.6 for normal
+vision and ≥ 30 under simulated CVD. Rule 1 therefore replaces that criterion
+with the palette checks plus shape.
+
+**Implementation.** `components/ui/ChartKit.tsx` (`SCurveChart`,
+`sCurveScale`, `sCurveTodayX`, `LegendKey`, `BarList` `example`,
+`scoreBandColor`, `ScoreDial`), `components/dashboard/viz.tsx` (`VIZ_CAT`,
+`MiniBars` `ariaLabel`), `components/projects/cost/CostCharts.tsx`
+(`hasRealData`, `CostPictures`, `CrewStat`, `ForecastSentence` `example`,
+`COST_GLOSSARY_TERMS`), `lib/costSeries.ts` (`plannedCrewAverage`),
+`app/globals.css` (`--state-held` per theme).
+
+**Acceptance.** `lib/__tests__/chartKit.test.ts` and
+`lib/__tests__/costChartsRender.test.ts`. The example appears only on an
+empty project, and every money figure in it is marked. The two S-curve series
+differ in stroke token, dash and marker. No hex literal remains in the
+chart kit. `--state-held` clears 4.5:1 on every light surface and on the
+dark ones. The crew is a sentence with its inputs.
+
+**Reversal.** (2) When the schedule carries resource loading, a crew curve
+built from it may replace the stat. (3) A product decision to preview on a
+project with blank accounts must still mark every figure. (1) and (5) are
+house rules the dataviz method already states.
+
+**Risk:** low — presentation only; no stored value changes. The visible
+change: Spent is drawn in the categorical blue instead of the brand accent.

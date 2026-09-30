@@ -106,7 +106,7 @@ The `20261093` final row "award/invoice-shaped entries still unlinked" counts th
 ## MON-2 · The cost S-curve's planned line starts on the day the first task finishes
 
 - **Severity:** HIGH
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Verification:** CONFIRMED
 - **Blast radius:** correctness / decision-quality
 - **Locations:** `components/projects/CostsTab.tsx:76-79`
@@ -142,6 +142,16 @@ definitions (`MON-6`) so the whole app agrees.
 - The planned line begins at the earliest task start, not the earliest finish.
 - The crew curve and the run-rate forecast use the same span.
 - A test pins the span for a fixture with multi-day tasks.
+
+**Resolution (2026-09-30, projects Round G).** Joint J5 CHARTS. `lib/costSeries.ts` `scheduleSpanFromMilestones()` (:53) is the one span every cost picture shares. It runs from the earliest task START (`planned_start_at`, or the finish for a row with no start) to the latest finish (`planned_at`). A single row with a real duration spans; otherwise two dated rows are needed, as before. `components/projects/CostsTab.tsx` now selects `planned_start_at` beside `planned_at` and sets its span through the helper. That replaced the sorted-`planned_at` `dates[0]` / `dates.at(-1)` lines, two lines in total. **This is an edit to P3/J3's file, recorded as outside this package's plan:** the Costs tab never read `planned_start_at`, so the span could not be derived inside `buildCostSeries` without it. J3 has merged, and no running package holds the file. `CostCharts` passes that one span to `buildCostSeries` (the planned line), `computeForecast` (the run-rate basis) and `plannedCrewAverage` (the crew figure, `CHART-3`). The column comes from `20260703_milestones_hierarchy.sql`, older than `20260731`'s `percent_complete`, which the same select already reads.
+- Tests: `lib/__tests__/projectControls.test.ts` — "MON-2: the schedule span runs from the earliest task START to the latest finish". The finding's own fixture: tasks 1–12 June … 20–30 September. The finish-only answer is shown to be 12 June; the helper gives 1 June → 30 September. It also covers a row with no start, a single task with a duration, a single zero-duration milestone, and two same-day milestones. "MON-2: the planned line begins at the first task's start and the run-rate forecast uses the same span": at one sample per day the planned line is 0 on 1 June and 11/121 of budget on 12 June; the run-rate EAC divides by 30/121 elapsed on 1 July; the crew figure spans the same 121 days. "MON-2: the Costs tab reads each milestone's start and derives its span through the shared helper" is a source pin over `CostsTab.tsx`. The first two failed at the base (no helper); the base tab computed `dates[0]` of sorted `planned_at`.
+
+**Done-when.**
+1. ✓ The planned line begins at the earliest task start, not the earliest finish.
+2. ✓ The crew curve (now the planned-average-crew figure) and the run-rate forecast use the same span.
+3. ✓ A test pins the span for a fixture with multi-day tasks.
+
+**Scope / residual.** The remediation's "reconcile with the other span definitions (`MON-6`)" is done for the Costs tab only. The printed report still derives its own finish-only span for its run-rate forecast: it sorts `planned_at` and takes `dates[0]`, from a select without `planned_start_at`. That is `lib/projectReport.ts:129` in this base and `:196` after the J7b integration fix. On the run-rate basis, the paper's EAC can therefore differ from the tab's. **Pointer to J7 (that file's owner):** add `planned_start_at` to the report's milestone select and take the span from `scheduleSpanFromMilestones(live)`. `MON-6` itself (the source filter) is resolved.
 
 ---
 
@@ -241,6 +251,8 @@ definition.
 3. Partly — the draft and the tile agree ONLY while no change order is approved. Both consume `rollup.remaining`, but `lib/projectSnapshot.ts:55` (`computeCostRollup(accounts, entries, pctIdx)`) and `lib/projectReport.ts:59` (`computeCostRollup(accounts, entries, new Map())`) build the rollup WITHOUT the approved-changes map, so there `revisedBudget = budget` and the health snapshot / lessons-learned draft read `budget − exposure` while the Costs tab reads `revised budget − exposure` — they differ by the approved-changes total (200k account + approved 100k CO + 150k spent: tab Available $150k, draft/health Remaining $50k). **Pointer to J7 (projects-tab `MON-5` / projects-and-cost PC-9 limb):** both files must pass `approvedChangesByAccount(await listChangeOrders(projectId))` as the fourth argument — only an approved CO whose linked entry is still POSTED revises the budget (review fix pass 2), and since the verification fix (2026-09-30, `COST-4`) `listChangeOrders` reads that status by id, so the call takes no entries argument. J7 has merged to the integration branch without it (there the calls are `lib/projectSnapshot.ts:253` / `lib/projectReport.ts:127`), so this is now a follow-on for the integrator or the next package on those files. The report's "Remaining" row label is also J7's one-line limb.
 
 **Scope / residual.** Open until J5 adds the glossary line and J7 passes the approved-changes map in `lib/projectSnapshot.ts` / `lib/projectReport.ts`. The exposure matching rule (by party) is DEC-50's stated default; an invoice posted with no party against an award that carries one is counted as unmatched (conservative — exposure over-counts, never under-counts).
+
+**Partial (2026-09-30, projects Round G).** Joint J5 CHARTS — done-when 2's glossary line only. `components/projects/cost/CostCharts.tsx` `COST_GLOSSARY_TERMS` carries J3's specified entry verbatim: "Available (uncommitted)" — "Budget minus what you've spent minus what you've promised (open commitments, net of the invoices already posted against them). The number you can still award." Test: `lib/__tests__/costChartsRender.test.ts` "carries the Available (uncommitted) entry the money-ledger package specified". With it, done-when 2 is ✓. Done-when 3, the approved-changes map in `lib/projectSnapshot.ts` / `lib/projectReport.ts`, is J7's. In this package's base those calls still omit the map. The J7b integration fix (`126d4d1`, merged on the integration branch after this base) passes `approvedChangesByAccount(cos)` in both files and prints "Available (uncommitted)" on the report. The Status flip is the integrator's call at merge.
 
 ---
 
@@ -659,7 +671,7 @@ explicit override that captures a reason and writes an audit row. Decide what
 | ID | Severity | Status |
 |---|---|---|
 | MON-1 | CRITICAL | OPEN |
-| MON-2 | CRITICAL | OPEN |
+| MON-2 | CRITICAL | RESOLVED |
 | MON-3 | HIGH | OPEN |
 | MON-4 | HIGH | OPEN |
 | MON-5 | HIGH | RESOLVED |

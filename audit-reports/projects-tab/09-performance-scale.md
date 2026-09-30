@@ -515,6 +515,16 @@ once. Hoist the `toLocaleString` formatters out of the row components.
 
 **Scope / residual.** OPEN until J5 lands the series parse-once.
 
+**Partial (2026-09-30, projects Round G — the `costSeries` limb and the chart kit's per-point formatter).** Joint J5 CHARTS. `lib/costSeries.ts` `buildCostSeries` parses each entry date once (`parsedSorted`), sorts once, and walks the sorted arrays with a cursor. `cumulativeAt` re-parsed every entry at every sample and is gone, as is the second pass for the entries' extremes. The totals are the same sums in the same order. `components/ui/ChartKit.tsx` formats every S-curve date label and tooltip through one lazily created `Intl.DateTimeFormat` (`fmtDay`) instead of `toLocaleDateString` per point (the finding's `ChartKit.tsx:56-57` ×40).
+- Tests: `lib/__tests__/projectControls.test.ts` "PERF-10: buildCostSeries parses each entry date once, not once per sample". 500 entries at 40 samples call `Date.parse` at most 502 times; the base made about 36,000 calls, and the test failed there. "PERF-10: the cursor walk returns the same cumulative totals as a full re-scan" covers unsorted input, an unparseable date and duplicate dates.
+
+**Done-when.**
+1. ✓ `fmtMoney` reuses formatters (J3).
+2. ✓ `buildCostSeries` parses each entry date once.
+3. Partly. ✓ for the Costs tab's entry rows (J3) and the S-curve's per-point labels (here). ✗ for `TimelineFeed.tsx` and `QualityTab.tsx`, which are other packages' files.
+
+**Scope / residual.** OPEN only for the `TimelineFeed` / `QualityTab` per-row formatters.
+
 ---
 
 ## PERF-11 · Four join columns and two search columns have no index

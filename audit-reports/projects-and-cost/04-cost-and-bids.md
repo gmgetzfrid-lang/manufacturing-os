@@ -66,6 +66,13 @@ components/projects/cost/CostCharts.tsx:53-56 — `computeForecast({ budget: rol
 
 **Scope / residual.** OPEN for J7's report half. Decision (DEC-50 rule 3): CPI to the pinned subset, the rest at budget (a pace may only raise it), labelled. **Pointer to J5 (CHARTS):** the three `CostCharts.tsx` edits above are this package's; J5's own limbs in that file (REL-10/11, A11Y-11, CHART-3) merge around them.
 
+**Partial (2026-09-30, projects Round G — the chart half, joint J5 CHARTS; the brief closes it here by pointer).** J3's edits to `components/projects/cost/CostCharts.tsx` are verified and kept. The forecast gets the revised budget with `pinnedBudget` / `pinnedSpent`. `forecast.scopeNote` prints beside the basis line. The S-curve plans against the same revised budget, and now also draws it as a labelled reference line ("Revised budget $X" when a change order moved it, `CHART-5`). One stale statement in this file is corrected: the glossary's "EAC / forecast" entry said "(budget ÷ CPI)". It now reads: "the part of the budget pinned to schedule tasks ÷ CPI, plus the rest at its budget (or at its spend pace, if that runs higher). The note beside the forecast says which applied." — `DEC-50` rule 3's reading.
+- Tests: `lib/__tests__/costChartsRender.test.ts` — "one pinned + one unpinned account: the scope note renders beside the CPI basis" (the finding's shape: "CPI applies to the 67% of budget pinned to schedule tasks" beside "Based on cost performance so far (CPI)."), "the glossary's EAC entry no longer claims budget ÷ CPI over the whole budget", "the S-curve draws the budget it plans against — the revised budget when a change order is approved".
+
+**Done-when.** Done-when 1, 2 and 4 are ✓ on the Costs tab (J3; done-when 2 is rendered and tested here). Done-when 3 is the report half. In this package's base (`e48ab68`), the report's index is keyed by the real milestone id (`MON-5`), but its `computeForecast` call (`lib/projectReport.ts:130`) still passes neither the pinned figures nor the revised budget. The J7b integration fix (`126d4d1`, merged on the integration branch after this base) passes both and prints `scopeNote` on paper. With it, and with this chart half verified, all four done-whens hold. The Status flip is the integrator's call at merge, as J7b's note says.
+
+**Scope / residual.** None for the chart half. `lib/projectReport.ts` is J7's file and is not edited here. One related gap is recorded under projects-tab `MON-2`: the report's run-rate span is still finish-only.
+
 ---
 
 <a id="cost-2"></a>

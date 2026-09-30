@@ -423,7 +423,7 @@ also pure cost, per report `09`).
 ## REL-10 · Example charts can appear on a project that has real data, and the watermark is effectively invisible
 
 - **Severity:** MEDIUM
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Verification:** CONFIRMED
 - **Blast radius:** trust
 - **Locations:**
@@ -465,12 +465,21 @@ indistinguishable from a real forecast.
 - No dollar figure inside the example frame is unmarked.
 - A project with accounts but no budgets does not show example data.
 
+**Resolution (2026-09-30, projects Round G).** Joint J5 CHARTS; `DEC-52` rule 3 (the brief's default). `components/projects/cost/CostCharts.tsx:74`: `hasRealData = rollup.accounts.length > 0 || entries.length > 0`. The example renders ONLY for a project with no accounts AND no entries. A chart of accounts whose budgets are still blank, the natural order of setup, gets its own sparse real picture: the explanation panel and the burn list (`REL-11`). So does a ledger whose every entry was voided. Every figure inside the example is marked in its own element. The forecast sentence reads "Example — At this performance …". The S-curve legend values, budget label and per-point tooltips carry "(example)" / "Example —". Its `aria-label` begins "Example cost curve, not this project's numbers". Each burn-list value and sublabel says "(example)", and the crew stat reads "≈ 3.9 people (example)". The watermark sits inside the figure: `SCurveChart`'s `example` flag draws "EXAMPLE" twice across the plot at 13% ink, so no crop of the chart loses it. `BarList` takes the same flag. The frame's own watermark is raised from 7% to 12%. The example also formats in the project's currency formatter (`fmt`), not a literal "USD".
+- Tests: `lib/__tests__/costChartsRender.test.ts` — "a project with no accounts and no entries sees the example; every money figure says so". It walks every text node carrying a money figure. Each one inside the chart's SVG sits on a canvas with two in-plot watermarks, and each one outside carries "example" in its own element or row. The forecast starts "Example —" and the crew says "(example)". "a chart of accounts with blank budgets is a real project — no example numbers"; "a ledger whose every entry was voided is a real project too"; `lib/__tests__/chartKit.test.ts` "the S-curve repeats its watermark inside the plot and every legend figure says example", "BarList marks each value when it draws example data". Reproduced at the base: `hasRealData = rollup.budget > 0 || entries.some(…)`, and the forecast sentence, legend and bar figures were unmarked.
+
+**Done-when.**
+1. ✓ No dollar figure inside the example frame is unmarked. Legend, labels, tooltips, sentence, bars and crew carry the word. The S-curve's compact axis ticks sit on a canvas that carries the in-plot watermark twice.
+2. ✓ A project with accounts but no budgets does not show example data.
+
+**Scope / residual.** `REL-2`'s silent-failure path is J3's: a failed load now throws to the tab's error banner, so it can no longer turn accounts and entries into empty arrays and bring the example back. `REL-2` is resolved.
+
 ---
 
 ## REL-11 · The example promises four charts; the real interface can draw at most two
 
 - **Severity:** MEDIUM
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Verification:** CONFIRMED
 - **Blast radius:** ux / expectation
 - **Locations:**
@@ -509,6 +518,20 @@ condition to match `hasPlan`. Use the project currency in the example.
 - A budget-only project sees an explanation rather than a blank region.
 - The missing-planned-line hint fires whenever the line is missing.
 
+**Resolution (2026-09-30, projects Round G).** Joint J5 CHARTS; `DEC-52` rule 4 (the brief's default). `components/projects/cost/CostCharts.tsx`: the real picture and the example draw through one layout, `CostPictures`, so the example can only show what the real interface draws.
+- Burn by budget line renders for real projects. `BarList` gets the rollup's accounts, the most-spent lines first. Each shows its spent figure, "X committed · of Y budget" against the revised budget, an "over budget" flag on actuals and "over-committed" on exposure (`DEC-50` rule 1). It draws up to `BURN_LINES_SHOWN` (8) lines, then "The 8 lines with the most spent, of N — every line is in the accounts table below."
+- The budget-only state no longer returns null. With no dates the S-curve slot shows an explanation (`data-empty="spend-curve"`): "No spend curve yet — it needs dates. Add or import milestones to draw the planned pace against your budget, or post a commitment or an actual to start the spent line." The burn list still renders below it.
+- The missing-planned-line hint fires whenever the line is absent (no planned value in the series), not only when `scheduleStart` is empty. It names why: no budget, no schedule dates, or both.
+- The example uses the project's currency formatter instead of the hardcoded "USD", and it shows nothing the real interface cannot: the S-curve, the forecast, the planned average crew (`CHART-3`) and the burn list.
+- Tests: `lib/__tests__/costChartsRender.test.ts` — "burn by budget line renders for a real project, the most-spent lines first", "more lines than the list shows point at the accounts table", "a budget-only project (no schedule, no entries) gets an explanation, not a blank region", "the missing-planned-line hint fires whenever the line is missing, and names why". That last one includes the audit's measured case: budget 0 with a full schedule leaves the line omitted and the hint present. All four failed at the base.
+
+**Done-when.**
+1. ✓ Burn-by-budget-line renders for real projects.
+2. ✓ A budget-only project sees an explanation rather than a blank region.
+3. ✓ The missing-planned-line hint fires whenever the line is missing.
+
+**Scope / residual.** None in this component. The crew figure still needs an awarded quote with stated hours and a schedule span. Without them it is simply absent, and the example no longer promises a crew curve the real data cannot draw.
+
 ---
 
 ## Verified sound — do not "fix" these
@@ -543,5 +566,5 @@ condition to match `hasPlan`. Use the project currency in the example.
 | REL-7 | HIGH | RESOLVED |
 | REL-8 | MEDIUM | OPEN |
 | REL-9 | MEDIUM | OPEN |
-| REL-10 | MEDIUM | OPEN |
-| REL-11 | MEDIUM | OPEN |
+| REL-10 | MEDIUM | RESOLVED |
+| REL-11 | MEDIUM | RESOLVED |

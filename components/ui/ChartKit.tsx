@@ -6,9 +6,10 @@
 //
 // Same design method as components/dashboard/viz.tsx: thin marks, recessive
 // grids, text wears text tokens (never series color), identity never
-// color-alone (legends carry labels; dashes differentiate the planned
-// line), every mark hoverable via <title>. No chart library — these render
-// anywhere the app does, at zero bundle cost.
+// color-alone (legends carry labels; each S-curve series has its own line
+// and marker shape — solid, dash-dot, the planned line's even dash), colours
+// are theme tokens only, every mark hoverable via <title>. No chart library —
+// these render anywhere the app does, at zero bundle cost.
 
 import React from "react";
 import { vizCat } from "@/components/dashboard/viz";
