@@ -77,6 +77,7 @@ about the system.
 | [DEC-40](#dec-40) | Projects link by **reference**, never by copy | medium | `GAP-114`, `PROJ-*` |
 | [DEC-42](#dec-42) | Supabase identity linking is **required**; the unique index is the backstop, not the mechanism | medium | `IDENT-1`, `IDENT-2`, `IDENT-3` |
 | [DEC-43](#dec-43) | Controllers are **unscoped by design**; a bypass-decided read of a restricted node is audited at the bytes egress | low | `DOCACL-3`, `DEC-2` |
+| [DEC-50](#dec-50) | Bids are scored on **price and plausible stated hours only** — declared exclusions never lower a score, coverage is unscored until a per-RFQ scope list exists; a bidder **binds** to a registry row only by exact/normalised name or a human link, but the **do-not-use gate** fires on any row the name could be | low | `BID-3`, `BID-4`, `BID-6`, `BID-7`, `BID-12`, `COST-5`, `COST-7`, `MON-12` |
 
 ---
 
@@ -1701,8 +1702,8 @@ the `Admin` branch, and an unscoped controller keeps today's behaviour.
 
 **Risk:** low.
 
-<a id="dec-47"></a>
-## DEC-47 · Bid scoring honesty and the registry's evidence floor
+<a id="dec-50"></a>
+## DEC-50 · Bid scoring honesty and the registry's evidence floor
 
 **Decision. The bid tabulation scores only what a vendor states about its
 own price and hours. (1) A DECLARED exclusion never lowers a score; it is
@@ -1714,34 +1715,52 @@ exists; the composite is price + manpower with the weights renormalised.
 (4) Labour hours are vendor-stated and AI-extracted: among bids that state
 them the manpower part moves the composite by at most 5 points; a bid that
 states NONE scores a manpower part of 0 — so against a silent bid, stating
-any hours at all is worth up to 100 × the manpower share (37.5 composite
-points at the default weights). (5) A best-value badge needs two scored
+plausible hours is worth up to 100 × the manpower share (37.5 composite
+points at the default weights). Stated hours count only when PLAUSIBLE:
+fewer than a person-day (8 hours) for the whole bid, or — once two or more
+bids state hours — a whole-price $/hr more than 4× off the field's median
+(log-scale median, so two statements are flagged only when more than 16×
+apart, and then both), scores exactly like silence and the row says
+"implausible hours — check". (5) A best-value badge needs two scored
 bids and a unique top; a tie is a tie; a mixed-currency field is not
 ranked, and a bid with no printed currency is shown in the field's
-currency, marked as assumed. On the registry: `field_condition` change
-orders are contractor-neutral (neither side's miss); a scorecard band is
-PROVISIONAL below three recorded evidence points; a bidder is bound to a
-registry row only by exact normalised-name equality or an explicit human
-link, never fuzzily.**
+currency, marked as assumed — or, when no bid prints one, shown as USD and
+said so, and never awarded into a line kept in another currency without a
+restatement. On the registry: `field_condition` change orders are
+contractor-neutral (neither side's miss); a scorecard band is PROVISIONAL
+below three recorded evidence points; a bidder is BOUND to a registry row
+only by an exact (trimmed, case-insensitive) name hit, else exact
+normalised-name equality with a single row, or an explicit human link —
+never fuzzily and never on ambiguity; but the do-not-use GATE fails toward
+the flag: without a link, a bid is flagged when ANY registry row its name
+normalises to is barred (two rows normalising alike included), read from
+the org's full list of barred rows.**
 
 > Made during the projects Round G resolution (2026-09-23, package J4
 > BID-TAB-AND-REGISTRY) closing `BID-3`, `BID-4`, `BID-6`, `BID-7`,
 > `BID-12`, `COST-7` and `COST-12`'s band gate, and partially `COST-5`.
-> Numbered DEC-47 in the 2026-09-23 fix pass: DEC-44, DEC-45 and DEC-46 are
-> taken on the integration and document-control branches (the integrator
-> renumbers again on a later collision). **For the user to ratify — two
-> departures from a binding default:** (a) the joint fleet's ownership
-> rule makes the projects-and-cost brief binding for `lib/bidTab.ts`, and
-> its COST-5 default — "100 − 15 per silent gap − 5 per declared
-> exclusion" — was NOT taken: it contradicts the RFQ letter this product
-> sends ("declared exclusions do not lower your score") and `BID-4`'s
-> finding that the matcher cannot carry a score; (b) item (4)'s
+> **Numbering.** First written as DEC-44, then renumbered DEC-47 on the
+> mistaken belief that 47 was free; it is not — DEC-47 is J7's ("Imported
+> schedule rows are commitments everywhere", merged on the integration
+> branch), DEC-46 is document-control P1's and DEC-48 is J3's, and J3's note
+> leaves 49 onward for the J2 / J4 / J6a branches. This package takes
+> DEC-50, leaving DEC-49 to J2, which merges ahead of it in the fleet's
+> order; the integrator renumbers again on any later collision. **For the
+> user to ratify — two departures from a binding default:** (a) the joint
+> fleet's ownership rule makes the projects-and-cost brief binding for
+> `lib/bidTab.ts`, and its COST-5 default — "100 − 15 per silent gap − 5
+> per declared exclusion" — was NOT taken: it contradicts the RFQ letter
+> this product sends ("declared exclusions do not lower your score") and
+> `BID-4`'s finding that the matcher cannot carry a score; (b) item (4)'s
 > silence-scores-0 keeps the pinned "cheapest does not automatically win"
 > example (the brief keeps the five pre-existing bid-tab pins green), at
-> the cost that one stated labour hour can outrank a much cheaper silent
-> bid (a $240k bid stating 1 hour scores 63.5 against a silent $100k bid's
-> 62.5). The first landing described silence as taking "the floor"; the
-> code never did, and this text now says what it does.
+> the cost that a plausible statement of hours outscores silence by up to
+> 37.5 points. The first landing described silence as taking "the floor";
+> the code never did. The first fix pass then let ANY stated figure buy
+> that gap (a $150k bid stating one hour scored 79.2 and took the badge
+> from a silent $100k bid); the brief's other option — a plausibility
+> check — now stands between the two, and the pinned example is unchanged
+> (its lone stating bid, 1,150 hours at about $83/hr, is plausible).
 
 **Rationale.** The scorer punished the disclosure the RFQ letter promised
 to reward (a single honest exclusion cost twenty points; hiding it cost
@@ -1753,14 +1772,25 @@ the composite rather than score on noise — is the only honest position
 until the RFQ carries an explicit scope list the bids are mapped onto.
 Bounding manpower to five points between bids that state hours keeps
 "price alone is never the verdict" without letting a padded figure outbid
-an honest one; it does NOT stop a bid that states any figure from
+an honest one; it does NOT stop a bid that states a plausible figure from
 outscoring one that states none — the letter asks for hours, and silence
-is treated as non-compliance. One commendation graded "Excellent" is a
-rating, not evidence; three points is the floor.
+is treated as non-compliance. The plausibility check keeps an absurd
+statement (one hour for a whole scope) from buying that gap; the
+person-day floor is currency-independent, so it holds when a bid is the
+only one stating hours, and the field comparison is taken on a log-scale
+median so one padder cannot drag an honest bid out of line. One
+commendation graded "Excellent" is a rating, not evidence; three points
+is the floor. Binding and gating differ on purpose: binding on an
+ambiguous name would put the wrong company's record beside the price;
+clearing the do-not-use flag on the same ambiguity would let a barred
+company through because a duplicate registry row exists.
 
 **Implementation.** `lib/bidTab.ts` (`scoreBids`, `effectiveWeights`,
-`MANPOWER_MAX_COMPOSITE_SWING`, `scopeSimilarity`, `matchCompanyByName`,
-`fieldCurrency`, `bidCurrency`), `lib/rfqDocx.ts` (the letter: "Price and
+`MANPOWER_MAX_COMPOSITE_SWING`, `MIN_PLAUSIBLE_BID_HOURS`,
+`HOURS_PLAUSIBILITY_RATIO`, `BidEconomics.implausibleHours`,
+`scopeSimilarity`, `matchCompanyByName`, `companyCandidatesByName`,
+`barredCompanyFor`, `fieldCurrency`, `bidCurrency`), `lib/companies.ts`
+(`listBarredCompanies`), `lib/rfqDocx.ts` (the letter: "Price and
 manpower are scored; scope coverage and any undeclared gaps are reviewed
 by our evaluators"), `lib/companyScore.ts` (`MIN_EVIDENCE_FOR_BAND`,
 `scoreBand(score, evidenceCount)`), `lib/companies.ts`
@@ -1773,9 +1803,11 @@ costs; coverage is not scored).
 declared exclusion; realistic rewordings of identical scope never change a
 score; two bids stating hours differ by at most five composite points on
 manpower; a bid stating no hours scores 0 on manpower (pinned, with the
-37.5-point consequence); a single bid or a tie carries no badge; a
-mixed-currency field has no scores; a registry row with one commendation
-reads "Provisional".
+37.5-point consequence); a bid stating one hour scores 0 on manpower and
+does not take the badge from a cheaper silent bid; a single bid or a tie
+carries no badge; a mixed-currency field has no scores; a registry row
+with one commendation reads "Provisional"; a barred registry row beside a
+same-normalised sibling still flags the bid and prompts for the override.
 
 **Reversal.** Coverage re-enters the score when an RFQ carries a per-RFQ
 scope checklist and each bid's line items are mapped onto it (`BID-4`
@@ -1785,8 +1817,9 @@ prefers the projects-and-cost weighting, the −15 / −5 coverage part is a
 `scoreBids` change plus the letter. If the silence gap is unacceptable,
 give an hours-silent bid the swing floor (`100 − 5 / manpowerShare`)
 instead of 0 and re-decide the pinned "cheapest does not automatically
-win" example in the same change. `field_condition` attribution and the
-five-point cap are org-level tunables once an org states a different
+win" example in the same change. The plausibility thresholds (8 hours,
+4×) are constants in `lib/bidTab.ts`. `field_condition` attribution and
+the five-point cap are org-level tunables once an org states a different
 reading of the reason-code contract.
 
 **Risk:** low — pure scoring logic, every branch pinned by tests.

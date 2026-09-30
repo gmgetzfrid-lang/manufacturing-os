@@ -164,15 +164,26 @@ export async function POST(req: NextRequest) {
     }
   }
 
-  let { error: updErr } = await supabaseAdmin.from("cost_documents").update(patch).eq("id", costDocId);
+  // The read took seconds to minutes: the document may have been decided
+  // meanwhile (a typed total, then an award that posted the commitment; an
+  // invoice posted as an actual). The write carries the same status
+  // predicate as the check above, so a late read never reopens a decided
+  // document or rewrites its total — zero rows is a refusal, and nothing
+  // is audited (MON-3 / COST-13).
+  const save = () => supabaseAdmin.from("cost_documents").update(patch)
+    .eq("id", costDocId).eq("org_id", orgId).in("status", ["draft", "parsed"]).select("id");
+  let { data: saved, error: updErr } = await save();
   if (updErr && (updErr.code === "PGRST204" || updErr.code === "42703")) {
     // Pre-migration tolerance: pages_total / pages_read land in 20261096.
     // The extent still travels in the response and the audit row.
     delete patch.pages_total;
     delete patch.pages_read;
-    ({ error: updErr } = await supabaseAdmin.from("cost_documents").update(patch).eq("id", costDocId));
+    ({ data: saved, error: updErr } = await save());
   }
   if (updErr) return bad(`The read succeeded but saving it failed: ${updErr.message}`, 500);
+  if (!saved || (saved as unknown[]).length === 0) {
+    return bad("This document was decided while it was being read — nothing was changed. Refresh to see the latest.", 409);
+  }
 
   await supabaseAdmin.from("audit_logs").insert({
     action: "COST_DOC_PARSED",

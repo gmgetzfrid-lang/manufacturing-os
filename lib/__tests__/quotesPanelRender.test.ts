@@ -3,9 +3,10 @@
 // projects Round G — the bid table as RENDERED (MON-12 UI half, BID-7,
 // COST-3 dw3): Award is withheld while the registry or the bidder links
 // are loading or failed (a missing do-not-use flag must never read as
-// "clear"); a bid with no printed currency is shown in the field's
-// currency and says so; a quality-manual percentage from a partial read
-// carries its read extent.
+// "clear"); the flag survives two registry rows that normalise alike and a
+// registry larger than the name list's cap; a bid with no printed currency
+// is shown in the field's currency and says so; a quality-manual
+// percentage from a partial read carries its read extent.
 
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import React, { act } from "react";
@@ -14,9 +15,10 @@ import { createRoot, type Root } from "react-dom/client";
 const db = vi.hoisted(() => ({
   results: {} as Record<string, { data: unknown; error: null | { code?: string; message: string } }>,
   inserts: [] as Array<{ table: string; row: Record<string, unknown> }>,
+  calls: [] as Array<{ table: string; method: string; args: unknown[] }>,
   single: {} as Record<string, unknown>,
 }));
-const reg = vi.hoisted(() => ({ listCompanies: vi.fn(), getCompany: vi.fn() }));
+const reg = vi.hoisted(() => ({ listCompanies: vi.fn(), listBarredCompanies: vi.fn(), getCompany: vi.fn() }));
 const dlg = vi.hoisted(() => ({ appPrompt: vi.fn(), appConfirm: vi.fn(), appAlert: vi.fn() }));
 const cd = vi.hoisted(() => ({ awardQuote: vi.fn() }));
 
@@ -30,6 +32,7 @@ vi.mock("@/lib/supabase", () => {
           return (resolve: (v: unknown) => void) => resolve(res);
         }
         return (...args: unknown[]) => {
+          db.calls.push({ table, method: prop, args });
           if (prop === "insert") db.inserts.push({ table, row: args[0] as Record<string, unknown> });
           if (prop === "maybeSingle") single = true;
           return new Proxy({}, h);
@@ -79,9 +82,10 @@ beforeEach(() => {
   host = document.createElement("div");
   document.body.appendChild(host);
   root = createRoot(host);
-  reg.listCompanies.mockReset(); reg.getCompany.mockReset();
+  reg.listCompanies.mockReset(); reg.getCompany.mockReset(); reg.listBarredCompanies.mockReset();
+  reg.listBarredCompanies.mockResolvedValue([]);
   for (const f of [...Object.values(dlg), cd.awardQuote]) f.mockReset();
-  db.inserts = []; db.single = {};
+  db.inserts = []; db.calls = []; db.single = {};
   db.results = {
     cost_documents: { data: docs.map((d) => ({ id: d.id, company_id: null, pages_total: 3, pages_read: 3 })), error: null },
     project_parties: { data: [], error: null },
@@ -129,6 +133,7 @@ describe("MON-12 — Award never runs ahead of the do-not-use check", () => {
 
   it("both loaded: Award is offered, and the barred match is flagged beside its price with its quality-manual read extent", async () => {
     reg.listCompanies.mockResolvedValue([apex]);
+    reg.listBarredCompanies.mockResolvedValue([apex]);
     await render();
     expect(awardButtons()).toHaveLength(2);
     expect(host.textContent).toMatch(/matched to Apex Industrial · QM 38% \(read pages 1–10 of 62\)/);
@@ -158,10 +163,12 @@ const auditActions = () => db.inserts.filter((i) => i.table === "audit_logs").ma
 
 describe("MON-12 — the do-not-use override at award time", () => {
   it("re-reads the registry at the click: a company barred AFTER the table loaded still needs the override", async () => {
-    reg.listCompanies.mockResolvedValueOnce([{ ...apex, status: "active" }]);   // what the table rendered from
-    reg.listCompanies.mockResolvedValue([apex]);                                // the registry now
+    reg.listCompanies.mockResolvedValue([{ ...apex, status: "active" }]);       // what the table rendered from
+    reg.listBarredCompanies.mockResolvedValueOnce([]);                          // nothing barred when it loaded
+    reg.listBarredCompanies.mockResolvedValue([apex]);                          // the registry now
     dlg.appPrompt.mockResolvedValue(null);                                      // no reason given
     await render();
+    expect(host.textContent).not.toMatch(/do not use/);
     await awardOn(/Apex/);
     expect(dlg.appPrompt).toHaveBeenCalledTimes(1);
     expect(String(dlg.appPrompt.mock.calls[0][0].title)).toMatch(/DO NOT USE/);
@@ -172,6 +179,7 @@ describe("MON-12 — the do-not-use override at award time", () => {
 
   it("the override row is written only once every confirmation passed — cancelling the confirm leaves no override on the record", async () => {
     reg.listCompanies.mockResolvedValue([apex]);
+    reg.listBarredCompanies.mockResolvedValue([apex]);
     dlg.appPrompt.mockResolvedValue("Sole qualified bidder for the outage window");
     dlg.appConfirm.mockResolvedValue(false);
     await render();
@@ -183,6 +191,7 @@ describe("MON-12 — the do-not-use override at award time", () => {
 
   it("an award that fails after the override was recorded closes it with an abandonment row", async () => {
     reg.listCompanies.mockResolvedValue([apex]);
+    reg.listBarredCompanies.mockResolvedValue([apex]);
     dlg.appPrompt.mockResolvedValue("Sole qualified bidder");
     dlg.appConfirm.mockResolvedValue(true);
     cd.awardQuote.mockResolvedValue({ ok: false, error: "Someone else just decided this document — refresh to see the latest." });
@@ -249,5 +258,139 @@ describe("BID-10 / BID-7 / COST-13 at award time", () => {
     expect(text).toMatch(/read pages 1–8 of 14/);
     expect(`${opts.title} ${text} ${opts.placeholder}`).not.toMatch(/140[,.]?000/);
     expect(cd.awardQuote).toHaveBeenCalledTimes(1);   // the typed figure matched the row
+  });
+});
+
+const company = (id: string, name: string, status: Company["status"] = "active"): Company => ({ ...apex, id, name, status, qualityManualScore: null });
+const rowOf = (vendor: RegExp) => [...host.querySelectorAll("tbody tr")].find((r) => vendor.test(r.textContent ?? ""))!;
+
+describe("BID-12 / MON-12 regression — two registry rows that normalise alike", () => {
+  it("an exact-name bid from the barred company keeps its flag and its award gate beside a same-normalised sibling", async () => {
+    const barred = company("c-barred", "Apex Industrial, Inc.", "do_not_use");
+    const sibling = company("c-sib", "Apex Industrial");
+    reg.listCompanies.mockResolvedValue([barred, sibling]);
+    reg.listBarredCompanies.mockResolvedValue([barred]);
+    dlg.appPrompt.mockResolvedValue(null);
+    await render();
+    const row = rowOf(/Apex/);
+    expect(row.textContent).toMatch(/matched to Apex Industrial, Inc\./);   // exact name binds
+    expect(row.textContent).toMatch(/do not use/);
+    await awardOn(/Apex/);
+    expect(String(dlg.appPrompt.mock.calls[0][0].title)).toMatch(/Apex Industrial, Inc\. is flagged DO NOT USE/);
+    expect(cd.awardQuote).not.toHaveBeenCalled();
+    expect(auditActions()).toEqual([]);
+  });
+
+  it("a variant that could be either row binds to neither, says so, and still prompts for the override", async () => {
+    const barred = company("c-barred", "Apex Industrial Inc", "do_not_use");
+    const sibling = company("c-sib", "Apex Industrial");
+    reg.listCompanies.mockResolvedValue([barred, sibling]);
+    reg.listBarredCompanies.mockResolvedValue([barred]);
+    dlg.appPrompt.mockResolvedValue("Only bidder with the certified welders");
+    dlg.appConfirm.mockResolvedValue(true);
+    cd.awardQuote.mockResolvedValue({ ok: true });
+    await render();
+    const row = rowOf(/Apex/);
+    expect(row.textContent).not.toMatch(/matched to/);
+    expect(row.textContent).toMatch(/ambiguous — link to registry/);
+    expect(row.textContent).toMatch(/do not use\? · Apex Industrial Inc/);
+    await awardOn(/Apex/);
+    expect(String(dlg.appPrompt.mock.calls[0][0].title)).toMatch(/Apex Industrial Inc is flagged DO NOT USE/);
+    expect(auditActions()).toEqual(["COST_DOC_AWARD_OVERRIDE_DO_NOT_USE"]);
+    expect(db.inserts[0].row.details).toMatchObject({ companyId: "c-barred", reason: "Only bidder with the certified welders" });
+    expect(cd.awardQuote).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("MON-12 — a registry larger than the name list's cap keeps its flags", () => {
+  it("the barred company sorts past the first thousand names: the chip and the award gate read the full barred list", async () => {
+    const filler = Array.from({ length: 1000 }, (_, i) => company(`f${i}`, `AAA Filler ${String(i).padStart(4, "0")}`));
+    reg.listCompanies.mockResolvedValue(filler);                // capped: Apex is not in it
+    reg.listBarredCompanies.mockResolvedValue([apex]);          // read in full, server-side
+    dlg.appPrompt.mockResolvedValue(null);
+    await render();
+    expect(rowOf(/Apex/).textContent).toMatch(/do not use/);
+    await awardOn(/Apex/);
+    expect(reg.listBarredCompanies).toHaveBeenCalledTimes(2);   // the table's read and the click's re-read
+    expect(String(dlg.appPrompt.mock.calls[0][0].title)).toMatch(/DO NOT USE/);
+    expect(cd.awardQuote).not.toHaveBeenCalled();
+  });
+
+  it("a failed barred-list read withholds Award like a failed registry read", async () => {
+    reg.listCompanies.mockResolvedValue([]);
+    reg.listBarredCompanies.mockRejectedValue(new Error("timeout"));
+    await render();
+    expect(awardButtons()).toHaveLength(0);
+    expect(host.textContent).toMatch(/registry unavailable — reload to award/);
+  });
+});
+
+describe("BID-12 / COST-12 — a decided bid's company link does not move", () => {
+  it("no picker on an awarded or declined row; an open row's link write carries the status predicate", async () => {
+    const other = company("c-other", "Bayline Scaffold");
+    reg.listCompanies.mockResolvedValue([other]);
+    const list = [{ ...docs[0], status: "awarded" as const }, docs[1]];
+    await render(list);
+    expect(rowOf(/Apex/).textContent).not.toMatch(/link to registry|change/);
+    const bay = rowOf(/Bayline/);
+    const linkBtn = [...bay.querySelectorAll("button")].find((b) => /link to registry/.test(b.textContent ?? ""))!;
+    await act(async () => { linkBtn.click(); });
+    const select = rowOf(/Bayline/).querySelector("select")!;
+    await act(async () => {
+      select.value = "c-other";
+      select.dispatchEvent(new Event("change", { bubbles: true }));
+    });
+    for (let i = 0; i < 5; i++) await act(async () => { await new Promise((r) => setTimeout(r, 0)); });
+    const upd = db.calls.findIndex((c) => c.table === "cost_documents" && c.method === "update" && (c.args[0] as Record<string, unknown>).company_id === "c-other");
+    expect(upd).toBeGreaterThanOrEqual(0);
+    const after = db.calls.slice(upd, upd + 5);
+    expect(after).toContainEqual({ table: "cost_documents", method: "in", args: ["status", ["draft", "parsed"]] });
+    expect(after).toContainEqual({ table: "cost_documents", method: "select", args: ["id"] });
+    expect(auditActions()).toEqual(["COST_DOC_COMPANY_LINKED"]);
+  });
+});
+
+describe("COST-13 / BID-12 — the link and extent read covers exactly the rendered documents", () => {
+  it("reads by the documents' own ids, never an arbitrary .limit()", async () => {
+    reg.listCompanies.mockResolvedValue([]);
+    await render();
+    const read = db.calls.filter((c) => c.table === "cost_documents" && c.method === "in" && c.args[0] === "id");
+    expect(read).toHaveLength(1);
+    expect(read[0].args[1]).toEqual(["apex", "bay"]);
+    expect(db.calls.some((c) => c.table === "cost_documents" && c.method === "limit")).toBe(false);
+  });
+});
+
+describe("BID-7 — a field where no bid prints a currency", () => {
+  it("says the prices are only shown as USD, and refuses to award into a line kept in another currency", async () => {
+    reg.listCompanies.mockResolvedValue([]);
+    dlg.appConfirm.mockResolvedValue(true);
+    const bare = docs.map((d) => ({ ...d, currency: null, parsed: { ...(d.parsed as Record<string, unknown>), currency: null } }));
+    await render(bare, "EUR");
+    expect(rowOf(/Bayline/).textContent).toMatch(/currency not printed — shown as USD/);
+    await awardOn(/Bayline/);
+    expect(cd.awardQuote).not.toHaveBeenCalled();
+    expect(errors.at(-1)).toMatch(/currency isn't printed and "Piping" is kept in EUR/);
+  });
+});
+
+describe("COST-5 dw3 / BID-9 — what the row says, and what a typed total may be", () => {
+  it("implausible hours are marked on the row", async () => {
+    reg.listCompanies.mockResolvedValue([]);
+    const oneHour = [docs[0], { ...docs[1], parsed: { ...(docs[1].parsed as Record<string, unknown>), lineItems: [{ description: "Repipe exchanger circuits", total: 140_000, hours: 1 }] } }];
+    await render(oneHour);
+    expect(rowOf(/Bayline/).textContent).toMatch(/implausible hours — check/);
+    expect(rowOf(/Apex/).textContent).not.toMatch(/implausible/);
+  });
+
+  it("a figure that could be read two ways is refused — nothing is written", async () => {
+    reg.listCompanies.mockResolvedValue([]);
+    dlg.appPrompt.mockResolvedValue("162.000 EUR");
+    await render();
+    const btn = [...rowOf(/Bayline/).querySelectorAll("button")].find((b) => /correct total/.test(b.textContent ?? ""))!;
+    await act(async () => { btn.click(); });
+    for (let i = 0; i < 5; i++) await act(async () => { await new Promise((r) => setTimeout(r, 0)); });
+    expect(errors.at(-1)).toMatch(/^Nothing was saved — "162\.000" can be read two ways/);
+    expect(db.calls.some((c) => c.table === "cost_documents" && c.method === "update")).toBe(false);
   });
 });

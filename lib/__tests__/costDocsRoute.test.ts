@@ -17,8 +17,9 @@ const state = vi.hoisted(() => ({
 }));
 function chain(table: string) {
   const filters: Array<[string, unknown]> = [];
+  const inFilters: Array<[string, unknown[]]> = [];
   let isUpdate = false;
-  const rows = () => (state.rows[table] ?? []).filter((r) => filters.every(([k, v]) => r[k] === v));
+  const rows = () => (state.rows[table] ?? []).filter((r) => filters.every(([k, v]) => r[k] === v) && inFilters.every(([k, vs]) => vs.includes(r[k])));
   const c: Record<string, unknown> = {};
   const h: ProxyHandler<Record<string, unknown>> = {
     get(_t, prop: string) {
@@ -30,6 +31,7 @@ function chain(table: string) {
         state.calls.push({ table, method: prop, args });
         if (prop === "update") isUpdate = true;
         if (prop === "eq") filters.push([String(args[0]), args[1]]);
+        if (prop === "in") inFilters.push([String(args[0]), args[1] as unknown[]]);
         if (prop === "maybeSingle" || prop === "single") return Promise.resolve({ data: rows()[0] ?? null, error: null });
         return new Proxy(c, h);
       };
@@ -43,8 +45,9 @@ vi.mock("@/lib/supabaseAdmin", () => ({
     from: (t: string) => chain(t),
   },
 }));
+const ai = vi.hoisted(() => ({ duringCall: null as null | (() => void) }));
 vi.mock("@/lib/ai/governedCall", () => ({
-  governedAiCall: vi.fn(async () => ({ text: state.aiText })),
+  governedAiCall: vi.fn(async () => { ai.duringCall?.(); return { text: state.aiText }; }),
   GovernedCallError: class extends Error { status = 500; },
 }));
 vi.mock("@/lib/knowledgePageRender", () => ({
@@ -65,6 +68,7 @@ const auditDetails = () => (state.calls.find((c) => c.table === "audit_logs" && 
 
 beforeEach(() => {
   state.user = { id: "u1", email: "u1@x.io" }; state.calls = []; state.updateErrorsOnce = null; state.images = 8; state.pagesTotal = 14;
+  ai.duringCall = null;
   state.rows = {
     org_members: [{ org_id: "o1", uid: "u1", role: "DocCtrl", roles: ["DocCtrl"], status: "active" }],
     projects: [{ id: "pr1", org_id: "o1", owner_user_id: "someone-else" }],
@@ -115,6 +119,43 @@ describe("POST /api/projects/cost-docs — read extent is recorded, returned and
     expect(patches[1]).not.toHaveProperty("pages_total");
     expect(patches[1]).not.toHaveProperty("pages_read");
     expect(auditDetails().pagesTotal).toBe(14);
+  });
+});
+
+describe("POST /api/projects/cost-docs — a read that finishes after a decision changes nothing (MON-3 / COST-13)", () => {
+  const updateChain = () => {
+    const i = state.calls.findIndex((c) => c.table === "cost_documents" && c.method === "update");
+    return state.calls.slice(i, i + 6).map((c) => [c.method, ...c.args]);
+  };
+
+  it("the save carries the same status predicate as the check, scoped to the org, and reads back the row", async () => {
+    const res = await post(readCostDoc, "http://x/api/projects/cost-docs", { orgId: "o1", projectId: "pr1", costDocId: "d1" });
+    expect(res.status).toBe(200);
+    const chain = updateChain();
+    expect(chain).toContainEqual(["eq", "id", "d1"]);
+    expect(chain).toContainEqual(["eq", "org_id", "o1"]);
+    expect(chain).toContainEqual(["in", "status", ["draft", "parsed"]]);
+    expect(chain).toContainEqual(["select", "id"]);
+  });
+
+  it("the quote was typed, awarded and posted while the model read it: 409, the row is not reopened, nothing is audited", async () => {
+    ai.duringCall = () => { state.rows.cost_documents[0].status = "awarded"; };
+    const res = await post(readCostDoc, "http://x/api/projects/cost-docs", { orgId: "o1", projectId: "pr1", costDocId: "d1" });
+    expect(res.status).toBe(409);
+    expect((await res.json()).error).toMatch(/decided while it was being read — nothing was changed/);
+    expect(state.calls.some((c) => c.table === "audit_logs")).toBe(false);
+  });
+
+  it("the pre-migration retry carries the predicate too — a decided invoice is not re-posted by a late read", async () => {
+    state.rows.cost_documents[0].kind = "invoice";
+    state.aiText = JSON.stringify({ vendorName: "X", total: 4100, currency: "USD", docNumber: "INV-1" });
+    state.updateErrorsOnce = { code: "42703", message: 'column "pages_total" does not exist' };
+    ai.duringCall = () => { state.rows.cost_documents[0].status = "posted"; };
+    const res = await post(readCostDoc, "http://x/api/projects/cost-docs", { orgId: "o1", projectId: "pr1", costDocId: "d1" });
+    expect(res.status).toBe(409);
+    const ins = state.calls.filter((c) => c.table === "cost_documents" && c.method === "in").map((c) => c.args);
+    expect(ins).toEqual([["status", ["draft", "parsed"]], ["status", ["draft", "parsed"]]]);
+    expect(state.calls.some((c) => c.table === "audit_logs")).toBe(false);
   });
 });
 

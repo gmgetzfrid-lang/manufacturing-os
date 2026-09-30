@@ -119,7 +119,7 @@ export function buildRfqDocumentXml(i: RfqInput): string {
     para("Price and manpower are scored; scope coverage and any undeclared gaps are reviewed by our evaluators. To be evaluated fairly, include:"),
     para("A price breakdown by scope item — not a single lump sum.", "Bullet"),
     para("Labor hours and crew size (peak headcount) per item, by craft.", "Bullet"),
-    // This promise is what the tabulation does (lib/bidTab, DEC-47): the
+    // This promise is what the tabulation does (lib/bidTab, DEC-50): the
     // score is price + manpower; coverage is not scored, so a declared
     // exclusion never lowers a score and an undeclared gap is a matter
     // for the reviewers, never the scorer.

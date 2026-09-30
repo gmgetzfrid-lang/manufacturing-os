@@ -3,6 +3,7 @@ import {
   computeBidEconomics, scoreBids, validateParsedQuote, DEFAULT_WEIGHTS,
   normalizeCompanyName, matchCompanyByName, isoCurrency, fieldCurrency, effectiveWeights,
   MANPOWER_MAX_COMPOSITE_SWING, bidCurrency, parseTypedAmount, withHumanTotal,
+  companyCandidatesByName, barredCompanyFor, MIN_PLAUSIBLE_BID_HOURS, HOURS_PLAUSIBILITY_RATIO,
   type ParsedQuote,
 } from "@/lib/bidTab";
 import { buildCostSeries, computeForecast, plannedManpowerSeries } from "@/lib/costSeries";
@@ -95,7 +96,7 @@ describe("bidTab economics", () => {
 
 // ── Round G scoring honesty (BID-3 / BID-4 / BID-6 / BID-7 / COST-5) ──────
 
-describe("bidTab honesty (Round G, DEC-47)", () => {
+describe("bidTab honesty (Round G, DEC-50)", () => {
   const line = (description: string, total: number, hours: number | null = null) => ({ description, total, hours });
 
   it("BID-3 / COST-5: declaring an exclusion never lowers a bid's score relative to hiding it", () => {
@@ -202,25 +203,103 @@ describe("bidTab honesty (Round G, DEC-47)", () => {
     expect(matchCompanyByName("Apex Industrial Services, LLC", registry)?.id).toBe("a2");
     expect(matchCompanyByName("Apex", registry)).toBeNull();          // no fuzzy binding
     expect(matchCompanyByName("Unknown vendor", registry)).toBeNull();
-    // Two registry rows that normalise alike never auto-bind.
-    expect(matchCompanyByName("Gulf Mechanical", [...registry, { id: "dup", name: "Gulf Mechanical LLC" }])).toBeNull();
+    // Two registry rows that normalise alike never auto-bind a variant…
+    const dup = [...registry, { id: "dup", name: "Gulf Mechanical LLC" }];
+    expect(matchCompanyByName("Gulf Mechanical, Inc.", dup)).toBeNull();
+    // …but an EXACT (trimmed, case-insensitive) name hit binds before the normalised comparison.
+    expect(matchCompanyByName("Gulf Mechanical", dup)?.id).toBe("g");
+    expect(matchCompanyByName("  gulf  MECHANICAL llc ", dup)?.id).toBe("dup");
+    // Two rows with the very same name are still ambiguous.
+    expect(matchCompanyByName("Gulf Mechanical", [...registry, { id: "g2", name: "gulf mechanical" }])).toBeNull();
   });
 
-  it("COST-5 / DEC-47 (recorded for ratification): silence on hours scores 0, so stating ANY hours is worth up to 100 × the manpower share; the 5-point cap binds hours against hours only", () => {
+  it("BID-12 / MON-12 regression: the do-not-use flag survives two registry rows that normalise alike — binding refuses ambiguity, gating does not", () => {
+    const barred = { id: "apex-inc", name: "Apex Inc.", status: "do_not_use" };
+    const sibling = { id: "apex", name: "Apex", status: "active" };
+    const registry = [barred, sibling];
+    // An exact-name bid from the barred company binds to it (and is flagged).
+    expect(matchCompanyByName("Apex Inc.", registry)?.id).toBe("apex-inc");
+    expect(barredCompanyFor("Apex Inc.", null, registry)?.id).toBe("apex-inc");
+    // A variant that could be either binds to neither, and is STILL flagged.
+    expect(matchCompanyByName("Apex Co.", registry)).toBeNull();
+    expect(companyCandidatesByName("Apex Co.", registry).map((c) => c.id).sort()).toEqual(["apex", "apex-inc"]);
+    expect(barredCompanyFor("Apex Co.", null, registry)?.id).toBe("apex-inc");
+    // Even an exact hit on the ACTIVE sibling is flagged while a barred row shares its normalised name — fail toward the flag.
+    expect(matchCompanyByName("Apex", registry)?.id).toBe("apex");
+    expect(barredCompanyFor("Apex", null, registry)?.id).toBe("apex-inc");
+    // An explicit human link decides: linked to the active row → not flagged; linked to the barred row → flagged.
+    expect(barredCompanyFor("Apex Co.", "apex", registry)).toBeNull();
+    expect(barredCompanyFor("Totally Different", "apex-inc", registry)?.id).toBe("apex-inc");
+    // Nothing barred among the candidates → nothing flagged.
+    expect(barredCompanyFor("Apex Co.", null, [sibling, { id: "a2", name: "Apex LLC", status: "inactive" }])).toBeNull();
+  });
+
+  it("COST-5 / DEC-50 (recorded for ratification): silence on hours scores 0, so stating PLAUSIBLE hours is worth up to 100 × the manpower share; the 5-point cap binds hours against hours only", () => {
     const w = effectiveWeights();
     const silent = quote({ id: "silent", total: 100_000, lineItems: [line("Repipe unit 300 exchanger circuits", 100_000, null)] });
-    const oneHour = quote({ id: "one", total: 240_000, lineItems: [line("Repipe unit 300 exchanger circuits", 240_000, 1)] });
-    const scores = scoreBids(computeBidEconomics([silent, oneHour]));
-    const si = scores.find((s) => s.quoteId === "silent")!, oh = scores.find((s) => s.quoteId === "one")!;
+    const stated = quote({ id: "stated", total: 150_000, lineItems: [line("Repipe unit 300 exchanger circuits", 150_000, 1500)] });
+    const scores = scoreBids(computeBidEconomics([silent, stated]));
+    const si = scores.find((s) => s.quoteId === "silent")!, st = scores.find((s) => s.quoteId === "stated")!;
     expect(si.parts.manpower).toBe(0);
-    expect(oh.parts.manpower).toBe(100);
-    // The consequence the record states, not the one DEC-47 once claimed: 37.5 composite points at the default weights.
-    expect((oh.parts.manpower! - si.parts.manpower!) * w.manpower).toBeCloseTo(100 * w.manpower, 9);
+    expect(st.parts.manpower).toBe(100);
+    // The consequence the record states: 37.5 composite points at the default weights.
+    expect((st.parts.manpower! - si.parts.manpower!) * w.manpower).toBeCloseTo(100 * w.manpower, 9);
     expect(100 * w.manpower).toBeCloseTo(37.5, 9);
     expect(si.score).toBe(62.5);
-    expect(oh.score).toBe(63.5);
-    // …which is why the badge sits on the 2.4×-priced bid here. Changing this is the user's call (DEC-47 reversal).
-    expect(scores.find((s) => s.best)!.quoteId).toBe("one");
+    expect(st.score).toBe(79.2);
+    // A plausible statement (1,500 h, $100/h) against silence: the badge follows the statement. Changing this is the user's call (DEC-50 reversal).
+    expect(scores.find((s) => s.best)!.quoteId).toBe("stated");
+  });
+
+  it("COST-5 dw3: stated hours must be PLAUSIBLE — one hour cannot buy best value over a cheaper silent bid", () => {
+    const silent = quote({ id: "silent", total: 100_000, lineItems: [line("Repipe unit 300 exchanger circuits", 100_000, null)] });
+    for (const hours of [1, MIN_PLAUSIBLE_BID_HOURS - 1]) {
+      const gamed = quote({ id: "gamed", total: 150_000, lineItems: [line("Repipe unit 300 exchanger circuits", 150_000, hours)] });
+      const econ = computeBidEconomics([silent, gamed]);
+      expect(econ.find((e) => e.quoteId === "gamed")!.implausibleHours).toMatch(/less than a person-day/);
+      const scores = scoreBids(econ);
+      const g = scores.find((s) => s.quoteId === "gamed")!;
+      expect(g.parts.manpower).toBe(0);            // scored as not stated
+      expect(g.best).toBe(false);
+      expect(scores.find((s) => s.best)!.quoteId).toBe("silent");
+    }
+    // A person-day or more is a statement the floor accepts.
+    const day = computeBidEconomics([silent, quote({ id: "d", total: 150_000, lineItems: [line("Repipe", 150_000, MIN_PLAUSIBLE_BID_HOURS)] })]);
+    expect(day.find((e) => e.quoteId === "d")!.implausibleHours).toBeNull();
+  });
+
+  it("COST-5 dw3: with three or more bids stating hours, a price per hour more than 4× off the field's median scores as not stated", () => {
+    const honest = (id: string, total: number, hours: number) => quote({ id, total, lineItems: [line("Repipe unit 300 exchanger circuits", total, hours)] });
+    const econ = computeBidEconomics([
+      honest("a", 180_000, 1800),          // $100/h
+      honest("b", 190_000, 2000),          // $95/h
+      honest("c", 170_000, 60),            // $2,833/h — 28× the median: too few hours for the price
+      honest("d", 200_000, 40_000),        // $5/h — 1/19 of the median: too many hours for the price
+    ]);
+    const by = (id: string) => econ.find((e) => e.quoteId === id)!;
+    expect(by("a").implausibleHours).toBeNull();
+    expect(by("b").implausibleHours).toBeNull();
+    expect(by("c").implausibleHours).toMatch(/too few hours for the price/);
+    expect(by("d").implausibleHours).toMatch(/too many hours for the price/);
+    const scores = scoreBids(econ);
+    expect(scores.find((s) => s.quoteId === "c")!.parts.manpower).toBe(0);
+    expect(scores.find((s) => s.quoteId === "d")!.parts.manpower).toBe(0);
+    // The implausible padder never sets the field's best $/hr: the honest bids keep the full band between them.
+    expect(scores.find((s) => s.quoteId === "b")!.parts.manpower).toBe(100);
+    expect(HOURS_PLAUSIBILITY_RATIO).toBe(4);
+  });
+
+  it("COST-5 dw3: two bids stating hours are only flagged when more than 4² apart — and then BOTH (neither can vouch for the other)", () => {
+    const q = (id: string, total: number, hours: number) => quote({ id, total, lineItems: [line("Repipe unit 300 exchanger circuits", total, hours)] });
+    // The padded-hours pin's pair (1.9× apart) stays scored — the 5-point swing handles it.
+    const near = computeBidEconomics([q("honest", 188_000, 2000), q("padded", 200_000, 4000)]);
+    expect(near.every((e) => e.implausibleHours == null)).toBe(true);
+    // 150× apart: neither statement is scored until checked; price decides.
+    const far = computeBidEconomics([q("honest", 160_000, 1600), q("gamed", 150_000, 10)]);
+    expect(far.every((e) => e.implausibleHours != null)).toBe(true);
+    const scores = scoreBids(far);
+    expect(scores.every((s) => s.parts.manpower === 0)).toBe(true);
+    expect(scores.find((s) => s.best)!.quoteId).toBe("gamed");   // cheaper on price alone — its hours bought nothing
   });
 
   it("BID-5 limb: a one-word declared exclusion covers the longer scope line built on it — never 'excludes: NDE' beside 'check: NDE (RT 10%)'", () => {
@@ -248,8 +327,8 @@ describe("bidTab honesty (Round G, DEC-47)", () => {
     expect(bidCurrency("EUR", field)).toEqual({ code: "EUR", known: true, note: null });
     // In a mixed field an unprinted currency cannot be vouched for.
     expect(bidCurrency(null, { currency: null, currencies: ["USD", "EUR"] })).toEqual({ code: "USD", known: false, note: "currency not printed — unknown in a mixed field" });
-    // No currency printed anywhere: the display default, unmarked (nothing to be inconsistent with).
-    expect(bidCurrency(null, { currency: null, currencies: [] })).toEqual({ code: "USD", known: false, note: null });
+    // No currency printed anywhere: shown as USD and SAID so — never a silent dollar sign.
+    expect(bidCurrency(null, { currency: null, currencies: [] })).toEqual({ code: "USD", known: false, note: "currency not printed — shown as USD" });
   });
 
   it("BID-7: restating a foreign bid ('correct total' with a currency code) joins it to the field — the mixed flag clears and the AI's reading stays", () => {
@@ -257,7 +336,7 @@ describe("bidTab honesty (Round G, DEC-47)", () => {
     const us = quote({ id: "us", currency: "USD", total: 170_000, lineItems: [line("Repipe circuits", 170_000, 1600)] });
     expect(fieldCurrency(computeBidEconomics([eu, us])).mixed).toBe(true);
     const typed = parseTypedAmount("162,000 USD");
-    expect(typed).toEqual({ amount: 162_000, currency: "USD", badCurrency: null });
+    expect(typed).toEqual({ amount: 162_000, currency: "USD", badCurrency: null, problem: null });
     // The panel writes total_amount AND currency on the row; the table overlays both.
     const econ = computeBidEconomics([withHumanTotal(eu, typed.amount, typed.currency), us]);
     expect(fieldCurrency(econ)).toEqual({ currency: "USD", currencies: ["USD"], mixed: false });
@@ -266,10 +345,30 @@ describe("bidTab honesty (Round G, DEC-47)", () => {
     // A row whose currency matches the extraction is not a restatement.
     expect(withHumanTotal(eu, 150_000, "EUR").totalSource).toBe("extracted");
     expect(parseTypedAmount("182000EUR").currency).toBe("EUR");
-    expect(parseTypedAmount("USD 1,182,000.50")).toEqual({ amount: 1_182_000.5, currency: "USD", badCurrency: null });
+    expect(parseTypedAmount("USD 1,182,000.50")).toEqual({ amount: 1_182_000.5, currency: "USD", badCurrency: null, problem: null });
     expect(parseTypedAmount("182000 XYZ").badCurrency).toBe("XYZ");
     expect(parseTypedAmount("182000").currency).toBeNull();
     expect(parseTypedAmount("n/a").amount).toBeNull();
+  });
+
+  it("BID-7 / BID-9 / COST-13: a typed figure that could be read two ways is REFUSED, never guessed", () => {
+    // The reviewer's three: each was silently a different number before (162 / 16,200,050 / 182).
+    for (const raw of ["162.000 EUR", "162 000,50 EUR", "182k", "€162.000", "1.234,56", "162,5", "12,34,567", "1.5M", "2 million", "-162,000", "1.234.567"]) {
+      const r = parseTypedAmount(raw);
+      expect(r.amount, raw).toBeNull();
+      expect(r.problem, raw).toBeTruthy();
+    }
+    expect(parseTypedAmount("162.000 EUR").problem).toMatch(/can be read two ways/);
+    expect(parseTypedAmount("162.000 EUR").currency).toBe("EUR");
+    expect(parseTypedAmount("182k").problem).toMatch(/no shorthand/);
+    expect(parseTypedAmount("USD 162000 EUR").problem).toMatch(/Two currencies/);
+    // Unambiguous forms still read.
+    expect(parseTypedAmount("162 000 EUR")).toEqual({ amount: 162_000, currency: "EUR", badCurrency: null, problem: null });
+    expect(parseTypedAmount("US$ 162,000")).toEqual({ amount: 162_000, currency: "USD", badCurrency: null, problem: null });
+    expect(parseTypedAmount("$182,000.50").amount).toBe(182_000.5);
+    expect(parseTypedAmount("182000.5").amount).toBe(182_000.5);
+    expect(parseTypedAmount("1234.567 KWD").amount).toBe(1234.567);
+    expect(parseTypedAmount("1,234.567 KWD").amount).toBe(1234.567);
   });
 });
 

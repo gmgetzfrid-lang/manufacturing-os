@@ -31,9 +31,9 @@ export interface CompanyEvidence {
   punchTotal: number;
   // Cost discipline. The reason-code contract (lib/changeOrders.ts):
   // scope_gap lands on the contractor, design_error and owner_request land
-  // on us, field_condition is contractor-neutral (DEC-47). Only the
+  // on us, field_condition is contractor-neutral (DEC-50). Only the
   // contractor-attributable total enters the growth numerator.
-  awardsTotal: number;                 // Σ awarded work (posted commitments, or contract_value)
+  awardsTotal: number;                 // Σ awarded work, per party: posted commitments, else that party's contract_value
   finalCostTotal: number;              // Σ awarded + their CONTRACTOR-ATTRIBUTABLE approved COs
   changeOrderCount: number;            // every approved CO on their scopes (shown, not all scored)
   changeOrderScopeGapCount: number;    // COs coded scope_gap — THEIR misses
@@ -42,8 +42,11 @@ export interface CompanyEvidence {
   neutralCoCount?: number;             // field_condition / other — nobody's miss
   neutralCoTotal?: number;
   /** Where awardsTotal came from, so the card can say "contract value
-   *  typed on the party" versus "posted commitments". */
-  awardsSource?: "entries" | "contract_value" | "none";
+   *  typed on the party" versus "posted commitments" — "mixed" when some
+   *  parties contribute each way (the base is resolved per party). */
+  awardsSource?: "entries" | "contract_value" | "mixed" | "none";
+  awardsPostedPartyCount?: number;
+  awardsTypedPartyCount?: number;
   /** How many project parties are linked to this registry row. 0 means
    *  the evidence channels that hang off party_id CANNOT reach it — an
    *  unlinked company must never read as an unrated-but-clean one. */
@@ -156,6 +159,9 @@ export function computeCompanyScorecard(e: CompanyEvidence): CompanyScorecard {
             : "finished on their bid",
           ownerBit, neutralBit,
           e.awardsSource === "contract_value" ? "awards from the typed contract value" : null,
+          e.awardsSource === "mixed"
+            ? `awards from posted commitments on ${e.awardsPostedPartyCount ?? "some"} part${e.awardsPostedPartyCount === 1 ? "y" : "ies"} and the typed contract value on ${e.awardsTypedPartyCount ?? "others"}`
+            : null,
         ].filter(Boolean).join(" · "),
       });
     }

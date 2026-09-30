@@ -169,6 +169,9 @@ export default function CompanyProfilePage() {
                 {profile && profile.awardsSource === "contract_value" && (
                   <> Awards come from a typed contract value, not posted commitments.</>
                 )}
+                {profile && profile.awardsSource === "mixed" && (
+                  <> Awards on some parties come from a typed contract value (no commitment has posted there), the rest from posted commitments.</>
+                )}
               </div>
             )}
           </div>

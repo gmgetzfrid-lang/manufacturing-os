@@ -88,7 +88,7 @@ function chain(table: string) {
 vi.mock("@/lib/supabase", () => ({ supabase: { from: (t: string) => chain(t) } }));
 vi.mock("@/lib/audit", () => ({ logAuditAction: vi.fn(async () => undefined) }));
 
-import { gatherCompanyProfiles, gatherCompanyProfile, listCompaniesPage, type Company } from "@/lib/companies";
+import { gatherCompanyProfiles, gatherCompanyProfile, listCompaniesPage, listBarredCompanies, type Company } from "@/lib/companies";
 
 const company = (i: number, over: Partial<Company> = {}): Company => ({
   id: `c${i}`, orgId: "o1", name: `Company ${i}`, kind: "contractor", trade: null, status: "active",
@@ -218,6 +218,55 @@ describe("COST-12 / COST-7 — awards, attribution and the unlinked state", () =
   });
 });
 
+describe("COST-12 — the award base is resolved PER PARTY", () => {
+  it("one party with posted commitments, one with only a typed contract_value and a scope_gap CO: both parties are in the base", async () => {
+    state.rows.project_parties = [
+      { id: "pa", project_id: "proj1", company_id: "c0", trade: null, contract_value: null },
+      { id: "pb", project_id: "proj2", company_id: "c0", trade: null, contract_value: 300_000 },
+    ];
+    state.rows.projects = [{ id: "proj1", name: "Job A" }, { id: "proj2", name: "Job B" }];
+    state.rows.cost_entries = [
+      { id: "e1", party_id: "pa", amount: 500_000, reference: "RFQ-1", entry_type: "commitment", status: "posted" },
+      { id: "e2", party_id: "pb", amount: 100_000, reference: "CO-001", entry_type: "commitment", status: "posted" },
+    ];
+    state.rows.change_orders = [
+      { id: "co1", project_id: "proj2", party_id: "pb", co_number: "CO-001", title: "missed scope", amount: 100_000, reason_code: "scope_gap", status: "approved", posted_entry_id: "e2" },
+    ];
+    const p = await gatherCompanyProfile(company(0));
+    expect(p.awardsSource).toBe("mixed");
+    const cost = p.scorecard.dimensions.find((d) => d.key === "cost")!;
+    // $100k over a base of $800k = 12.5% (the whole-company switch read $100k over $500k = 20%, score 0).
+    expect(cost.detail).toMatch(/^13% cost growth over bid/);
+    expect(cost.score).toBe(37.5);
+    expect(cost.detail).toContain("awards from posted commitments on 1 party and the typed contract value on 1");
+  });
+
+  it("a party whose posted commitments exist never adds its typed contract_value on top", async () => {
+    state.rows.project_parties = [{ id: "pa", project_id: "proj1", company_id: "c0", trade: null, contract_value: 999_999 }];
+    state.rows.projects = [{ id: "proj1", name: "Job A" }];
+    state.rows.cost_entries = [{ id: "e1", party_id: "pa", amount: 400_000, reference: "RFQ-1", entry_type: "commitment", status: "posted" }];
+    state.rows.change_orders = [{ id: "co1", project_id: "proj1", party_id: "pa", co_number: "CO-001", title: "gap", amount: 40_000, reason_code: "scope_gap", status: "approved", posted_entry_id: null }];
+    const p = await gatherCompanyProfile(company(0));
+    expect(p.awardsSource).toBe("entries");
+    expect(p.scorecard.dimensions.find((d) => d.key === "cost")!.detail).toMatch(/^10% cost growth over bid/);
+  });
+});
+
+describe("MON-12 — the do-not-use rows are read in full, past the row cap", () => {
+  it("listBarredCompanies pages every barred row (ORDER BY id), however large the registry", async () => {
+    state.rows.companies = [
+      ...Array.from({ length: 2500 }, (_, i) => ({ id: `a${String(i).padStart(5, "0")}`, org_id: "o1", name: `Active ${i}`, status: "active" })),
+      ...Array.from({ length: 1200 }, (_, i) => ({ id: `b${String(i).padStart(5, "0")}`, org_id: "o1", name: `Zzz Barred ${i}`, status: "do_not_use" })),
+      { id: "other-org", org_id: "o2", name: "Elsewhere", status: "do_not_use" },
+    ];
+    const barred = await listBarredCompanies("o1");
+    expect(barred).toHaveLength(1200);
+    expect(barred.every((c) => c.status === "do_not_use" && c.orgId === "o1")).toBe(true);
+    expect(state.calls.filter((c) => c.method === "range").map((c) => c.args)).toEqual([[0, 999], [1000, 1999]]);
+    expect(state.calls.some((c) => c.method === "order" && c.args[0] === "id")).toBe(true);
+  });
+});
+
 describe("COST-12 / COST-7 — change-order money is growth over the award, never part of its base", () => {
   it("award $500k + an approved $125k scope_gap CO reads 25% growth — linked by posted_entry_id or, where that link was never written, by the CO number on the entry", async () => {
     state.rows.project_parties = [{ id: "p1", project_id: "proj1", company_id: "c0", trade: null, contract_value: null }];
@@ -292,7 +341,7 @@ describe("PERF-1 — every batched read pages past PostgREST's 1000-row cap", ()
 });
 
 describe("PERF-1 — server-side page and search", () => {
-  it("asks the database for one page, sorted, with kind and ILIKE filters and a sanitised term", async () => {
+  it("asks the database for one page, sorted, with kind and ILIKE filters and the term as ONE quoted value", async () => {
     state.rows.companies = Array.from({ length: 3 }, (_, i) => ({ id: `c${i}`, org_id: "o1", name: `N${i}`, kind: "vendor" }));
     const res = await listCompaniesPage("o1", { search: "gulf, (mech)", kind: "vendor", page: 2 });
     expect(res.pageSize).toBe(50);
@@ -300,8 +349,21 @@ describe("PERF-1 — server-side page and search", () => {
     expect(state.calls.find((c) => c.method === "range")!.args).toEqual([100, 149]);
     expect(state.calls.find((c) => c.method === "order")!.args[0]).toBe("name");
     expect(state.calls.find((c) => c.method === "eq" && c.args[0] === "kind")!.args[1]).toBe("vendor");
-    expect(state.calls.find((c) => c.method === "or")!.args[0]).toBe("name.ilike.%gulf mech%,trade.ilike.%gulf mech%");
+    expect(state.calls.find((c) => c.method === "or")!.args[0]).toBe('name.ilike."*gulf, (mech)*",trade.ilike."*gulf, (mech)*"');
     expect(state.calls.find((c) => c.method === "select")!.args[1]).toEqual({ count: "exact" });
+  });
+
+  it("a typed double quote or backslash stays inside the value — an ordinary search, not a parse error", async () => {
+    state.rows.companies = [
+      { id: "c1", org_id: "o1", name: 'Smith "Mechanical" Services', kind: "contractor", trade: null },
+      { id: "c2", org_id: "o1", name: "Gulf Mechanical", kind: "contractor", trade: null },
+      { id: "c3", org_id: "o1", name: "A\\B Welding", kind: "contractor", trade: null },
+    ];
+    const quoted = await listCompaniesPage("o1", { search: 'Smith "Mechanical"' });
+    expect(state.calls.filter((c) => c.method === "or").at(-1)!.args[0]).toBe('name.ilike."*Smith \\"Mechanical\\"*",trade.ilike."*Smith \\"Mechanical\\"*"');
+    expect(quoted.rows.map((r) => r.id)).toEqual(["c1"]);
+    const slashed = await listCompaniesPage("o1", { search: "A\\B" });
+    expect(slashed.rows.map((r) => r.id)).toEqual(["c3"]);
   });
 });
 

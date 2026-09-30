@@ -21,7 +21,13 @@
 --      whitespace, trailing legal suffix — the same rule as
 --      lib/bidTab.normalizeCompanyName) matches EXACTLY ONE company in
 --      its org is linked. Ambiguous names (two companies normalise alike)
---      are left alone and counted below.
+--      are left alone. EVERY decision is recorded first, one audit_logs
+--      row per party (action PROJECT_PARTY_COMPANY_BACKFILLED, outcome
+--      'linked' with the company chosen, or 'ambiguous'), and the UPDATE
+--      is driven from exactly those rows — so the matches can be listed
+--      (the review query at the foot of this file) and undone (the revert
+--      statement there). The result set below carries counts only; the
+--      party and company names stay in the database.
 --
 -- NOT widening: no policy, grant or function changes. DEC-30 inventories
 -- (aggregate counts only, captured BEFORE the transaction) are returned
@@ -39,10 +45,14 @@
 --     this file, commented out.
 --
 -- HOW TO APPLY: paste the whole file into the Supabase SQL editor and run
--- it once. The final SELECT is the only result set shown — probe rows must
--- read ok = true; inventory rows carry ok NULL and a count in n.
+-- it once (a second run is safe: the temp tables are dropped first, and a
+-- party this backfill already decided is never touched again). The final
+-- SELECT is the only result set shown — probe rows must read ok = true;
+-- inventory rows carry ok NULL and a count in n. Then paste the review
+-- query at the foot to see which party was linked to which company.
 
 -- ── DEC-30 inventory, captured BEFORE the transaction ───────────────────
+DROP TABLE IF EXISTS pg_temp.prj_g_inventory;
 CREATE TEMP TABLE prj_g_inventory AS
 SELECT 'inventory: cost_documents with a non-ISO-4217 currency (route now stores NULL for these)' AS inventory,
        COUNT(*)::text AS n
@@ -81,6 +91,7 @@ SELECT 'inventory: quote links with no expiry used in the last 30 days (must be 
 -- "Gulf Mechanical, Inc." and "Apex Co." lose their suffix exactly as the
 -- TypeScript rule drops them (pinned by a port of this expression in
 -- lib/__tests__/prjRoundGMigrations.test.ts).
+DROP TABLE IF EXISTS pg_temp.prj_g_party_match;
 CREATE TEMP TABLE prj_g_party_match AS
 WITH norm AS (
   SELECT id, org_id, project_id,
@@ -98,19 +109,23 @@ WITH norm AS (
            '^the\s+', '')) AS key
     FROM companies
 )
-SELECT n.id AS party_id,
+SELECT n.id AS party_id, n.org_id, n.project_id, n.key,
        MIN(c.id::text)::uuid AS company_id,
-       COUNT(c.id) AS matches
+       COUNT(c.id) AS matches,
+       -- Decided by an earlier run of this backfill (linked, left alone,
+       -- or linked and since reverted): never touched again.
+       EXISTS (SELECT 1 FROM audit_logs a
+                WHERE a.action = 'PROJECT_PARTY_COMPANY_BACKFILLED' AND a.resource_id = n.id::text) AS decided_before
   FROM norm n
   JOIN cnorm c ON c.org_id = n.org_id AND c.key = n.key AND c.key <> ''
- GROUP BY n.id;
+ GROUP BY n.id, n.org_id, n.project_id, n.key;
 
 INSERT INTO prj_g_inventory (inventory, n)
 SELECT 'inventory: project_parties linked to a company by unique normalised name (backfilled below)', COUNT(*)::text
-  FROM prj_g_party_match WHERE matches = 1
+  FROM prj_g_party_match WHERE matches = 1 AND NOT decided_before
 UNION ALL
 SELECT 'inventory: project_parties whose name matches MORE THAN ONE company (left unlinked)', COUNT(*)::text
-  FROM prj_g_party_match WHERE matches > 1;
+  FROM prj_g_party_match WHERE matches > 1 AND NOT decided_before;
 
 BEGIN;
 
@@ -130,10 +145,27 @@ ALTER TABLE companies ADD COLUMN IF NOT EXISTS quality_manual_pages_read  INT;
 ALTER TABLE companies ADD COLUMN IF NOT EXISTS quality_manual_pages_total INT;
 
 -- ── 4. one-off party → company backfill (COST-12 / MON-7 dw4) ───────────
+-- Record, then apply, in ONE statement: every decision becomes an audit
+-- row (the org's own trail, where a controller can see it), and the
+-- UPDATE links exactly the parties those rows say 'linked'. A party this
+-- backfill has already recorded (an earlier run, or a link reverted since)
+-- is never recorded or linked again.
+WITH recorded AS (
+  INSERT INTO audit_logs (action, resource_id, resource_type, org_id, user_id, user_email, details)
+  SELECT 'PROJECT_PARTY_COMPANY_BACKFILLED', m.party_id::text, 'project_party', m.org_id, NULL, NULL,
+         jsonb_build_object(
+           'migration', '20261096',
+           'outcome', CASE WHEN m.matches = 1 THEN 'linked' ELSE 'ambiguous' END,
+           'companyId', CASE WHEN m.matches = 1 THEN m.company_id END,
+           'matchedKey', m.key, 'matches', m.matches, 'projectId', m.project_id)
+    FROM prj_g_party_match m
+   WHERE NOT m.decided_before
+  RETURNING resource_id, details
+)
 UPDATE project_parties p
-   SET company_id = m.company_id
-  FROM prj_g_party_match m
- WHERE m.party_id = p.id AND m.matches = 1 AND p.company_id IS NULL;
+   SET company_id = (r.details->>'companyId')::uuid
+  FROM recorded r
+ WHERE r.details->>'outcome' = 'linked' AND p.id::text = r.resource_id AND p.company_id IS NULL;
 
 COMMIT;
 
@@ -154,8 +186,47 @@ UNION ALL SELECT 'companies.quality_manual_pages_read exists',
 UNION ALL SELECT 'companies.quality_manual_pages_total exists',
        EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = 'companies' AND column_name = 'quality_manual_pages_total'), NULL
 UNION ALL SELECT 'no party from the unique-match set is still unlinked',
-       NOT EXISTS (SELECT 1 FROM prj_g_party_match m JOIN project_parties p ON p.id = m.party_id WHERE m.matches = 1 AND p.company_id IS NULL), NULL
+       NOT EXISTS (SELECT 1 FROM prj_g_party_match m JOIN project_parties p ON p.id = m.party_id
+                    WHERE m.matches = 1 AND NOT m.decided_before AND p.company_id IS NULL), NULL
+UNION ALL SELECT 'every party this backfill linked has its PROJECT_PARTY_COMPANY_BACKFILLED audit row (list them with the review query at the foot)',
+       NOT EXISTS (SELECT 1 FROM prj_g_party_match m JOIN project_parties p ON p.id = m.party_id
+                    WHERE m.matches = 1 AND NOT m.decided_before AND p.company_id = m.company_id
+                      AND NOT EXISTS (SELECT 1 FROM audit_logs a WHERE a.action = 'PROJECT_PARTY_COMPANY_BACKFILLED'
+                                        AND a.resource_id = m.party_id::text AND a.details->>'outcome' = 'linked')), NULL
+UNION ALL SELECT 'inventory: backfill audit rows, outcome linked (all runs)', NULL::boolean, COUNT(*)::text
+  FROM audit_logs WHERE action = 'PROJECT_PARTY_COMPANY_BACKFILLED' AND details->>'outcome' = 'linked'
+UNION ALL SELECT 'inventory: backfill audit rows, outcome ambiguous — left unlinked (all runs)', NULL::boolean, COUNT(*)::text
+  FROM audit_logs WHERE action = 'PROJECT_PARTY_COMPANY_BACKFILLED' AND details->>'outcome' = 'ambiguous'
 UNION ALL SELECT inventory, NULL::boolean, n FROM prj_g_inventory;
+
+-- ── Backfill review — paste on its own to LIST the matches ──────────────
+-- One row per party the backfill decided: linked (and to which company)
+-- or left alone as ambiguous. Run it in the SQL editor after the file.
+--
+-- SELECT a.details->>'outcome' AS outcome, p.name AS party, a.resource_id AS party_id,
+--        c.name AS company, a.details->>'companyId' AS company_id,
+--        a.details->>'matchedKey' AS matched_key, a.details->>'matches' AS matches, a."timestamp" AS recorded_at
+--   FROM audit_logs a
+--   LEFT JOIN project_parties p ON p.id::text = a.resource_id
+--   LEFT JOIN companies c ON c.id::text = a.details->>'companyId'
+--  WHERE a.action = 'PROJECT_PARTY_COMPANY_BACKFILLED'
+--  ORDER BY 1, 2;
+--
+-- ── Backfill revert — undo a wrong link (or all of them) ────────────────
+-- Unlinks only a party whose link is still the one the backfill set, and
+-- records the undo. Add  AND a.resource_id = '<party id>'  to undo one.
+--
+-- WITH undone AS (
+--   UPDATE project_parties p SET company_id = NULL
+--     FROM audit_logs a
+--    WHERE a.action = 'PROJECT_PARTY_COMPANY_BACKFILLED' AND a.details->>'outcome' = 'linked'
+--      AND a.resource_id = p.id::text AND p.company_id::text = a.details->>'companyId'
+--   RETURNING p.id, p.org_id, a.details->>'companyId' AS company_id
+-- )
+-- INSERT INTO audit_logs (action, resource_id, resource_type, org_id, details)
+-- SELECT 'PROJECT_PARTY_COMPANY_BACKFILL_REVERTED', id::text, 'project_party', org_id,
+--        jsonb_build_object('migration', '20261096', 'companyId', company_id)
+--   FROM undone;
 
 -- ── INTK-12 expiry backfill — BLOCKED until the 'used in the last 30 days'
 -- inventory row above reads 0 (a link in active bidding must not be cut

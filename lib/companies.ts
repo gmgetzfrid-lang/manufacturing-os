@@ -98,6 +98,29 @@ export async function listCompanies(orgId: string): Promise<Company[]> {
   return ((data as Record<string, unknown>[]) ?? []).map(rowToCompany);
 }
 
+/** EVERY do-not-use row in the org, read in windows past PostgREST's row
+ *  cap (ORDER BY id) until a short page. The bid tab's do-not-use flag and
+ *  its award gate read this — never the capped `listCompanies` name list —
+ *  so a barred company whose name sorts past the thousandth row keeps its
+ *  flag (MON-12 / COST-3). A failed read throws: the caller withholds
+ *  Award rather than treat "unknown" as "clear". */
+export async function listBarredCompanies(orgId: string): Promise<Company[]> {
+  const out: Company[] = [];
+  for (let from = 0; ; from += COMPANY_LIST_CAP) {
+    const { data, error } = await supabase.from("companies").select("*")
+      .eq("org_id", orgId).eq("status", "do_not_use").order("id").range(from, from + COMPANY_LIST_CAP - 1);
+    if (error) throw new Error(error.message);
+    const batch = (data as Record<string, unknown>[] | null) ?? [];
+    out.push(...batch.map(rowToCompany));
+    if (batch.length < COMPANY_LIST_CAP) return out;
+  }
+}
+
+/** A value inside a PostgREST or() tree, double-quoted so a name's commas,
+ *  dots, parentheses, quotes and backslashes ("Gulf Mechanical, Inc.",
+ *  'Smith "Mechanical"') stay one value. */
+const orValue = (v: string) => `"${v.replace(/\\/g, "\\\\").replace(/"/g, '\\"')}"`;
+
 /** One server-side page of the registry (PERF-1 / GAP-409): kind and
  *  search filters run in the database (ILIKE, trigram-indexed by
  *  20261095), sorted by name, COMPANY_PAGE_SIZE rows, with the total so the
@@ -112,10 +135,11 @@ export async function listCompaniesPage(orgId: string, opts: {
   const page = Math.max(0, opts.page ?? 0);
   let q = supabase.from("companies").select("*", { count: "exact" }).eq("org_id", orgId);
   if (opts.kind && opts.kind !== "all") q = q.eq("kind", opts.kind);
-  // PostgREST's or() grammar reserves , ( ) — strip them from the term so a
-  // typed comma can't break the filter into something else.
-  const term = (opts.search ?? "").replace(/[,()]/g, " ").replace(/\s+/g, " ").trim();
-  if (term) q = q.or(`name.ilike.%${term}%,trade.ilike.%${term}%`);
+  // PostgREST's or() grammar reserves , ( ) " \ — the term travels as ONE
+  // quoted value (orValue), so a typed comma or quote can't break the
+  // filter into something else (or into a parse error).
+  const term = (opts.search ?? "").replace(/\s+/g, " ").trim();
+  if (term) q = q.or(`name.ilike.${orValue(`*${term}*`)},trade.ilike.${orValue(`*${term}*`)}`);
   const { data, error, count } = await q.order("name").range(page * pageSize, page * pageSize + pageSize - 1);
   if (error) throw new Error(error.message);
   return {
@@ -293,7 +317,10 @@ export interface CompanyProfileData {
   /** 0 = no project party is linked to this registry row: the party-keyed
    *  evidence channels cannot reach it (COST-12) — shown, never hidden. */
   partiesLinked: number;
-  awardsSource: "entries" | "contract_value" | "none";
+  /** Where the award base came from, resolved per party: posted
+   *  commitments, the typed contract_value, both ("mixed" — some parties
+   *  each way), or nothing. */
+  awardsSource: "entries" | "contract_value" | "mixed" | "none";
   projects: Array<{ projectId: string; projectName: string; contractValue: number | null; trade: string | null }>;
   bids: Array<{ projectId: string; rfqGroup: string | null; total: number | null; won: boolean; docDate: string | null }>;
   changeOrders: Array<{ projectId: string; coNumber: string; title: string; amount: number; reasonCode: string; status: string }>;
@@ -301,7 +328,7 @@ export interface CompanyProfileData {
 
 /** Reason codes the CO module attributes to the CONTRACTOR (their miss).
  *  design_error / owner_request are ours; field_condition and other are
- *  nobody's (DEC-47) — shown on the record, excluded from the growth
+ *  nobody's (DEC-50) — shown on the record, excluded from the growth
  *  numerator. */
 export const CONTRACTOR_CO_REASONS = new Set(["scope_gap"]);
 export const OWNER_CO_REASONS = new Set(["design_error", "owner_request"]);
@@ -359,10 +386,6 @@ async function batchedRead(ids: string[], page: PageFn, size = IN_CHUNK): Promis
 async function batched(ids: string[], page: PageFn, size = IN_CHUNK): Promise<Row[]> {
   return (await batchedRead(ids, page, size)).rows;
 }
-
-/** A value inside a PostgREST or() tree, double-quoted so a name's commas,
- *  dots and parentheses ("Gulf Mechanical, Inc.") stay one value. */
-const orValue = (v: string) => `"${v.replace(/\\/g, "\\\\").replace(/"/g, '\\"')}"`;
 
 /** Split or() terms into filters that keep the request line bounded: at
  *  most `maxTerms` terms and about `maxChars` characters each. */
@@ -495,11 +518,10 @@ export async function gatherCompanyProfiles(companies: Company[]): Promise<Map<s
     ).length;
 
     // Awards: posted commitments on their parties that are NOT a change
-    // order's posting; the typed contract_value only when nothing has
-    // posted — and then labelled as such. An approved CO whose entry link
-    // was never written (the link write is best-effort) is matched to its
-    // entry by the CO number decideChangeOrder stamps as the reference, on
-    // the same party, for the same amount.
+    // order's posting. An approved CO whose entry link was never written
+    // (the link write is best-effort) is matched to its entry by the CO
+    // number decideChangeOrder stamps as the reference, on the same party,
+    // for the same amount.
     const awardEntries = (entriesBy.get(company.id) ?? []).filter((r) => !coEntryIds.has(String(r.id)));
     for (const co of myCoRows) {
       if (co.status !== "approved" || co.posted_entry_id != null) continue;
@@ -507,10 +529,21 @@ export async function gatherCompanyProfiles(companies: Company[]): Promise<Map<s
         && String(r.reference ?? "") === String(co.co_number ?? "") && Number(r.amount ?? 0) === Number(co.amount ?? 0));
       if (i >= 0) awardEntries.splice(i, 1);
     }
-    const postedAwards = awardEntries.reduce((s, r) => s + Number(r.amount ?? 0), 0);
-    const typedAwards = myParties.reduce((s, p) => s + (p.contract_value ? Number(p.contract_value) : 0), 0);
-    const awardsSource: CompanyProfileData["awardsSource"] = postedAwards > 0 ? "entries" : typedAwards > 0 ? "contract_value" : "none";
-    const awardsTotal = awardsSource === "entries" ? postedAwards : typedAwards;
+    // The base is resolved PER PARTY (COST-12): a party's posted awards
+    // when it has any, else that party's typed contract_value — so one
+    // party's posted commitments never discard another party's typed value
+    // (which would read that party's change orders as growth over nothing).
+    const postedByParty = new Map<string, number>();
+    for (const r of awardEntries) postedByParty.set(String(r.party_id), (postedByParty.get(String(r.party_id)) ?? 0) + Number(r.amount ?? 0));
+    let postedAwards = 0, typedAwards = 0, typedParties = 0, postedParties = 0;
+    for (const p of myParties) {
+      const posted = postedByParty.get(p.id) ?? 0;
+      if (posted > 0) { postedAwards += posted; postedParties++; }
+      else if (p.contract_value != null && Number(p.contract_value) > 0) { typedAwards += Number(p.contract_value); typedParties++; }
+    }
+    const awardsSource: CompanyProfileData["awardsSource"] = postedAwards > 0 && typedAwards > 0 ? "mixed"
+      : postedAwards > 0 ? "entries" : typedAwards > 0 ? "contract_value" : "none";
+    const awardsTotal = postedAwards + typedAwards;
     const approved = cos.filter((c) => c.status === "approved");
     const contractorCos = approved.filter((c) => CONTRACTOR_CO_REASONS.has(c.reasonCode));
     const ownerCos = approved.filter((c) => OWNER_CO_REASONS.has(c.reasonCode));
@@ -539,6 +572,8 @@ export async function gatherCompanyProfiles(companies: Company[]): Promise<Map<s
       neutralCoCount: neutralCos.length,
       neutralCoTotal: sum(neutralCos),
       awardsSource,
+      awardsPostedPartyCount: postedParties,
+      awardsTypedPartyCount: typedParties,
       partiesLinked: myParties.length,
       milestonesOnTheirScopes: milestones.length,
       milestonesHitOnTime: hit,

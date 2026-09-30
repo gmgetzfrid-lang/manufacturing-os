@@ -32,12 +32,15 @@
 -- writes.
 --
 -- HOW TO APPLY: paste the whole file into the Supabase SQL editor and run
--- it once. The final SELECT is the only result set shown — probe rows must
--- read ok = true (a documents / milestones trigram probe that reads false
--- means its table was above the threshold: run the foot block); inventory
--- rows carry ok NULL and a row count in n.
+-- it once (a second run in the same session is safe — the temp table is
+-- dropped first). The final SELECT is the only result set shown — probe
+-- rows must read ok = true (a documents / milestones trigram probe that
+-- reads false means its table was above the threshold: run the foot
+-- block, then its stand-alone probe SELECT); inventory rows carry ok NULL
+-- and a row count in n.
 
 -- ── DEC-30 inventory, captured BEFORE the transaction (counts only) ─────
+DROP TABLE IF EXISTS pg_temp.prj_g_index_inventory;
 CREATE TEMP TABLE prj_g_index_inventory AS
 SELECT 'inventory: documents rows (trigram indexes built in this transaction only at or below 50000)' AS inventory,
        COUNT(*)::text AS n
@@ -133,9 +136,25 @@ UNION ALL SELECT inventory, NULL::boolean, n FROM prj_g_index_inventory;
 -- ── Large-table builds — ONLY when a trigram probe above read false ─────
 -- Paste and run ONE statement at a time (CREATE INDEX CONCURRENTLY cannot
 -- share a run with anything else); each builds without blocking writes.
--- Re-run the verification SELECT above afterwards.
+-- Then paste the stand-alone probe SELECT below it (it reads no temp
+-- table, so it runs in a fresh session); every row must read ok = true.
 --
 -- CREATE INDEX CONCURRENTLY IF NOT EXISTS milestones_responsible_party_trgm_idx ON milestones USING GIN (responsible_party gin_trgm_ops);
 -- CREATE INDEX CONCURRENTLY IF NOT EXISTS documents_title_trgm_idx ON documents USING GIN (title gin_trgm_ops);
 -- CREATE INDEX CONCURRENTLY IF NOT EXISTS documents_name_trgm_idx ON documents USING GIN (name gin_trgm_ops);
 -- CREATE INDEX CONCURRENTLY IF NOT EXISTS documents_document_number_trgm_idx ON documents USING GIN (document_number gin_trgm_ops);
+--
+-- Stand-alone probe (after the CONCURRENTLY builds):
+--
+-- SELECT 'milestones.responsible_party trigram index exists' AS check,
+--        EXISTS (SELECT 1 FROM pg_indexes WHERE indexname = 'milestones_responsible_party_trgm_idx' AND indexdef ILIKE '%gin_trgm_ops%') AS ok, NULL::text AS n
+-- UNION ALL SELECT 'documents.title trigram index exists',
+--        EXISTS (SELECT 1 FROM pg_indexes WHERE indexname = 'documents_title_trgm_idx' AND indexdef ILIKE '%gin_trgm_ops%'), NULL
+-- UNION ALL SELECT 'documents.name trigram index exists',
+--        EXISTS (SELECT 1 FROM pg_indexes WHERE indexname = 'documents_name_trgm_idx' AND indexdef ILIKE '%gin_trgm_ops%'), NULL
+-- UNION ALL SELECT 'documents.document_number trigram index exists',
+--        EXISTS (SELECT 1 FROM pg_indexes WHERE indexname = 'documents_document_number_trgm_idx' AND indexdef ILIKE '%gin_trgm_ops%'), NULL
+-- UNION ALL SELECT 'no invalid (half-built) index left by an interrupted CONCURRENTLY build',
+--        NOT EXISTS (SELECT 1 FROM pg_index i JOIN pg_class c ON c.oid = i.indexrelid
+--                     WHERE NOT i.indisvalid AND c.relname IN ('milestones_responsible_party_trgm_idx', 'documents_title_trgm_idx',
+--                                                             'documents_name_trgm_idx', 'documents_document_number_trgm_idx')), NULL;

@@ -25,8 +25,12 @@
 // company link (BID-12); Award waits for the registry and re-reads the
 // company at the click, and a do-not-use company cannot be awarded — or
 // re-linked away from — without a typed, audited override (MON-12 UI
-// half); a truncated read is said out loud and the award total must be
-// typed back from the paper (COST-13).
+// half). The do-not-use check reads the org's barred rows in full (never
+// the name list, which is capped) and fails toward the flag: a bidder
+// whose name could be ANY barred row — two rows normalising alike
+// included — is flagged until a human links it. A truncated read is said
+// out loud and the award total must be typed back from the paper
+// (COST-13).
 
 import React, { useMemo, useState } from "react";
 import {
@@ -35,7 +39,7 @@ import {
 } from "lucide-react";
 import Link from "next/link";
 import { supabase } from "@/lib/supabase";
-import { listCompanies, getCompany, type Company } from "@/lib/companies";
+import { listCompanies, listBarredCompanies, getCompany, type Company } from "@/lib/companies";
 import { fmtMoney, type CostAccount, type Actor } from "@/lib/costs";
 import { getFileUrl } from "@/lib/storage";
 import {
@@ -44,8 +48,9 @@ import {
   parsedQuoteFrom, quoteGroups,
 } from "@/lib/costDocs";
 import {
-  computeBidEconomics, scoreBids, effectiveWeights, MANPOWER_MAX_COMPOSITE_SWING,
+  computeBidEconomics, scoreBids, effectiveWeights, MANPOWER_MAX_COMPOSITE_SWING, MIN_PLAUSIBLE_BID_HOURS, HOURS_PLAUSIBILITY_RATIO,
   withHumanTotal, priceOnlyQuote, mergeQuoteGroups, snapRfqGroup, matchCompanyByName, alignGroupSpelling,
+  companyCandidatesByName, barredCompanyFor,
   quoteExpired, readExtent, fieldCurrency, bidCurrency, isoCurrency, parseTypedAmount,
   type ParsedQuote, type BidEconomics,
 } from "@/lib/bidTab";
@@ -61,8 +66,12 @@ type LoadState = "loading" | "ready" | "failed";
 /** A column a pending migration adds is not there yet. */
 const missingColumn = (e: { code?: string } | null | undefined) => !!e && (e.code === "42703" || e.code === "PGRST204");
 
-/** Statuses a document can still be corrected or voided from. */
+/** Statuses a document can still be corrected, voided or re-linked from. */
 const OPEN_DOC_STATUSES = ["draft", "parsed"] as const;
+const isOpenDoc = (d: Pick<CostDocument, "status">) => (OPEN_DOC_STATUSES as readonly string[]).includes(d.status);
+
+/** Ids per `.in()` request — keeps the request line bounded. */
+const ID_CHUNK = 100;
 
 /**
  * Correct, restate or void a document that is still OPEN (BID-9 / MON-3).
@@ -115,19 +124,24 @@ export default function QuotesPanel({ orgId, projectId, canManage, actor, accoun
   // an explicit link) so their record (quality-manual coverage, do-not-use
   // flags) sits beside every price. A FAILED load is said out loud: an
   // empty list would silently remove the do-not-use flag from every bidder.
+  // The name list is capped (listCompanies); the do-not-use flag reads the
+  // org's barred rows IN FULL, so a large registry never drops it.
   const [companies, setCompanies] = useState<Company[]>([]);
+  const [barredList, setBarredList] = useState<Company[]>([]);
   const [companiesState, setCompaniesState] = useState<"loading" | "ready" | "failed">("loading");
   React.useEffect(() => {
     let cancelled = false;
     setCompaniesState("loading");
-    listCompanies(orgId)
-      .then((list) => { if (!cancelled) { setCompanies(list); setCompaniesState("ready"); } })
-      .catch(() => { if (!cancelled) { setCompanies([]); setCompaniesState("failed"); } });
+    Promise.all([listCompanies(orgId), listBarredCompanies(orgId)])
+      .then(([list, barred]) => { if (!cancelled) { setCompanies(list); setBarredList(barred); setCompaniesState("ready"); } })
+      .catch(() => { if (!cancelled) { setCompanies([]); setBarredList([]); setCompaniesState("failed"); } });
     return () => { cancelled = true; };
   }, [orgId]);
-  // Explicit registry links + read extent per row (20261096 columns). One
-  // bounded query; pre-migration the columns are absent and every row
-  // reads "unknown", never "complete".
+  // Explicit registry links + read extent per row (20261096 columns), read
+  // for exactly the documents this panel renders (by id, in bounded
+  // chunks) — never an arbitrary subset of a large project's rows. Pre-
+  // migration the columns are absent and every row reads "unknown", never
+  // "complete".
   // A FAILED read is tracked (not swallowed): explicit links drive the
   // do-not-use flag, so Award waits for this read to succeed. Before
   // 20261096 the columns are absent — no link can exist yet, so that case
@@ -137,14 +151,17 @@ export default function QuotesPanel({ orgId, projectId, canManage, actor, accoun
   React.useEffect(() => {
     let cancelled = false;
     void (async () => {
-      const { data, error } = await supabase.from("cost_documents")
-        .select("id, company_id, pages_total, pages_read").eq("org_id", orgId).eq("project_id", projectId).limit(500);
+      const ids = docs.map((d) => d.id);
+      const parts = await Promise.all(Array.from({ length: Math.ceil(ids.length / ID_CHUNK) }, (_, i) => ids.slice(i * ID_CHUNK, (i + 1) * ID_CHUNK))
+        .map((chunk) => supabase.from("cost_documents").select("id, company_id, pages_total, pages_read")
+          .eq("org_id", orgId).eq("project_id", projectId).in("id", chunk)));
       if (cancelled) return;
+      const error = parts.find((p) => p.error)?.error ?? null;
       if (error) {
         if (missingColumn(error)) { setExtras(new Map()); setExtrasState("ready"); } else setExtrasState("failed");
         return;
       }
-      setExtras(new Map((((data ?? []) as Array<Record<string, unknown>>)).map((r) => [String(r.id), {
+      setExtras(new Map(parts.flatMap((p) => (p.data ?? []) as Array<Record<string, unknown>>).map((r) => [String(r.id), {
         companyId: (r.company_id as string | null) ?? null,
         pagesTotal: r.pages_total == null ? null : Number(r.pages_total),
         pagesRead: r.pages_read == null ? null : Number(r.pages_read),
@@ -177,32 +194,36 @@ export default function QuotesPanel({ orgId, projectId, canManage, actor, accoun
   const existingGroups = useMemo(
     () => [...new Set(docs.map((d) => d.rfqGroup).filter((g): g is string => !!g))], [docs]);
 
-  /** Bind (or unbind) a bidder to a registry row. Moving a bidder AWAY
-   *  from a do-not-use company — its explicit link or its name match — is
-   *  an override like awarding it: a typed reason is required, and the
-   *  change is undone if its audit row cannot be written (MON-12). */
+  /** Bind (or unbind) a bidder to a registry row — only while the document
+   *  is still open: a decided bid's link is its evidence on a company's
+   *  record ("won" / "not selected") and never moves from this screen.
+   *  Moving a bidder AWAY from a do-not-use company — its explicit link or
+   *  a name it could be — is an override like awarding it: a typed reason
+   *  is required, and the change is undone if its audit row cannot be
+   *  written (MON-12). */
   const linkCompany = async (doc: CostDocument, companyId: string | null, current: Company | null) => {
     setErr(null);
+    if (!isOpenDoc(doc)) { setErr("A decided bid keeps its company link — it is evidence on that company's record."); return; }
     const previousLink = extras.get(doc.id)?.companyId ?? null;
     const leavingBarred = current?.status === "do_not_use" && companyId !== current.id;
     let reason: string | null = null;
     if (leavingBarred) {
       reason = (await appPrompt({
         title: `${current!.name} is flagged DO NOT USE`,
-        message: `This bidder is ${previousLink ? "linked" : "matched by name"} to a barred company. Linking it elsewhere removes the flag from this bid — state why; the reason is recorded.`,
+        message: `This bidder is ${previousLink ? "linked" : "matched by name"} to a barred company${!previousLink ? " (or its name could be one)" : ""}. Linking it elsewhere removes the flag from this bid — state why; the reason is recorded.`,
         placeholder: "Reason (required)",
       }))?.trim() || null;
       if (!reason) { setErr(`Link unchanged — ${current!.name} is flagged do-not-use and no reason was given.`); return; }
     }
     const { data, error } = await supabase.from("cost_documents").update({ company_id: companyId })
-      .eq("id", doc.id).eq("org_id", orgId).select("id");
+      .eq("id", doc.id).eq("org_id", orgId).in("status", [...OPEN_DOC_STATUSES]).select("id");
     if (error) {
       setErr(missingColumn(error)
         ? "Linking a bidder to the registry needs migration 20261096 applied."
         : `Couldn't link the company: ${error.message}`);
       return;
     }
-    if (!data || (data as unknown[]).length === 0) { setErr("Couldn't link the company — the document wasn't updated (refresh; it may have been removed)."); return; }
+    if (!data || (data as unknown[]).length === 0) { setErr("Couldn't link the company — the document was decided (awarded, declined or voided) or removed since this table loaded. Refresh to see the latest."); return; }
     const { error: auditErr } = await supabase.from("audit_logs").insert({
       action: "COST_DOC_COMPANY_LINKED", resource_type: "cost", resource_id: doc.id,
       org_id: orgId, user_id: actor.uid, user_email: actor.email,
@@ -214,11 +235,13 @@ export default function QuotesPanel({ orgId, projectId, canManage, actor, accoun
     if (auditErr) {
       if (leavingBarred) {
         // An un-audited move away from a barred company must not stand.
-        const { error: revertErr } = await supabase.from("cost_documents").update({ company_id: previousLink }).eq("id", doc.id).eq("org_id", orgId);
-        setErr(revertErr
-          ? `The link changed but its override record failed (${auditErr.message}) and it could not be undone (${revertErr.message}) — relink it by hand.`
-          : `The override could not be recorded (${auditErr.message}) — the link was put back.`);
-        if (revertErr) setExtras((prev) => new Map(prev).set(doc.id, { ...(prev.get(doc.id) ?? { pagesTotal: null, pagesRead: null }), companyId }));
+        const { data: reverted, error: revertErr } = await supabase.from("cost_documents").update({ company_id: previousLink })
+          .eq("id", doc.id).eq("org_id", orgId).select("id");
+        const undone = !revertErr && !!reverted && (reverted as unknown[]).length > 0;
+        setErr(undone
+          ? `The override could not be recorded (${auditErr.message}) — the link was put back.`
+          : `The link changed but its override record failed (${auditErr.message}) and it could not be undone (${revertErr ? revertErr.message : "no row was updated"}) — relink it by hand.`);
+        if (!undone) setExtras((prev) => new Map(prev).set(doc.id, { ...(prev.get(doc.id) ?? { pagesTotal: null, pagesRead: null }), companyId }));
         return;
       }
       setErr(`The company was linked but its audit record failed: ${auditErr.message}`);
@@ -293,6 +316,9 @@ export default function QuotesPanel({ orgId, projectId, canManage, actor, accoun
     if (!v) return;
     const typed = parseTypedAmount(String(v));
     if (typed.badCurrency) { setErr(`"${typed.badCurrency}" isn't an ISO currency code — use e.g. USD, EUR, GBP.`); return; }
+    // A figure that could be read two ways ("162.000", "162 000,50", "182k")
+    // is refused, never guessed: it becomes the one authoritative total.
+    if (typed.problem) { setErr(`Nothing was saved — ${typed.problem}`); return; }
     if (typed.amount == null) { setErr("That didn't read as a positive number."); return; }
     await saveTotal(doc, typed.amount, typed.currency);
   };
@@ -315,6 +341,7 @@ export default function QuotesPanel({ orgId, projectId, canManage, actor, accoun
     });
     if (typed == null) return false;
     const parsed = parseTypedAmount(String(typed));
+    if (parsed.problem) { setErr(`Nothing was posted — ${parsed.problem}`); return false; }
     if (parsed.amount == null) { setErr("That didn't read as a number — nothing was posted."); return false; }
     if (Math.round(parsed.amount) === Math.round(total) && (!parsed.currency || parsed.currency === cur)) return true;
     const paper = fmtMoney(parsed.amount, parsed.currency ?? cur);
@@ -373,7 +400,7 @@ export default function QuotesPanel({ orgId, projectId, canManage, actor, accoun
         <div className="divide-y divide-[var(--color-border)]">
           {groups.map(({ group, docs: groupDocs }) => (
             <BidGroup key={group} group={group} docs={groupDocs} allDocs={docs}
-              accounts={accounts} companies={companies} companiesState={companiesState} extras={extras} extrasState={extrasState}
+              accounts={accounts} companies={companies} barredList={barredList} companiesState={companiesState} extras={extras} extrasState={extrasState}
               canManage={canManage} actor={actor} orgId={orgId}
               busy={busy} setBusy={setBusy} readDoc={readDoc} typeTotal={typeTotal} linkCompany={linkCompany}
               confirmFromPaper={confirmFromPaper} onChanged={onChanged} setErr={setErr} />
@@ -450,9 +477,9 @@ export default function QuotesPanel({ orgId, projectId, canManage, actor, accoun
 
 // ── One RFQ group: the tabulation ────────────────────────────────────────
 
-function BidGroup({ group, docs: groupDocs, allDocs, accounts, companies, companiesState, extras, extrasState, canManage, actor, orgId, busy, setBusy, readDoc, typeTotal, linkCompany, confirmFromPaper, onChanged, setErr }: {
+function BidGroup({ group, docs: groupDocs, allDocs, accounts, companies, barredList, companiesState, extras, extrasState, canManage, actor, orgId, busy, setBusy, readDoc, typeTotal, linkCompany, confirmFromPaper, onChanged, setErr }: {
   group: string; docs: CostDocument[]; allDocs: CostDocument[];
-  accounts: CostAccount[]; companies: Company[]; companiesState: LoadState;
+  accounts: CostAccount[]; companies: Company[]; barredList: Company[]; companiesState: LoadState;
   extras: Map<string, DocExtras>; extrasState: LoadState;
   canManage: boolean; actor: Actor; orgId: string;
   busy: string | null; setBusy: (v: string | null) => void;
@@ -485,8 +512,8 @@ function BidGroup({ group, docs: groupDocs, allDocs, accounts, companies, compan
   const unread = groupDocs.filter((d) => d.status === "draft");
   const weights = effectiveWeights();
   const scoredCount = [...scores.values()].filter((s) => s.score != null).length;
-  // What stating hours at all is worth over silence, in composite points
-  // (DEC-47): the 5-point cap binds hours against hours only.
+  // What stating plausible hours is worth over silence, in composite points
+  // (DEC-50): the 5-point cap binds hours against hours only.
   const silenceGap = Math.round(weights.manpower * 1000) / 10;
   // Award waits for the registry AND the explicit-link read: an empty or
   // failed list would silently drop the do-not-use flag (MON-12).
@@ -494,26 +521,41 @@ function BidGroup({ group, docs: groupDocs, allDocs, accounts, companies, compan
     : companiesState === "ready" && extrasState === "ready" ? "ready" : "loading";
 
   /** The registry row for a bid: the explicit link wins; otherwise a
-   *  normalised-name match, shown as a suggestion the human can change. */
-  const registryFor = (doc: CostDocument, e: BidEconomics): { known: Company | null; bound: boolean } => {
+   *  name match (exact, else unique normalised), shown as a suggestion the
+   *  human can change. BINDING refuses ambiguity; GATING does not: `barred`
+   *  is the do-not-use row the bid answers for — the linked company, or
+   *  ANY row the name could be (two rows normalising alike included) —
+   *  read from the org's full barred list, never the capped name list. */
+  const registryFor = (doc: CostDocument, e: BidEconomics): { known: Company | null; bound: boolean; barred: Company | null; candidates: Company[] } => {
     const boundId = extras.get(doc.id)?.companyId ?? null;
-    if (boundId) return { known: companies.find((c) => c.id === boundId) ?? null, bound: true };
-    return { known: matchCompanyByName(e.vendorName, companies), bound: false };
+    const flags = [...barredList, ...companies];
+    if (boundId) {
+      const known = companies.find((c) => c.id === boundId) ?? barredList.find((c) => c.id === boundId) ?? null;
+      return { known, bound: true, barred: barredCompanyFor(null, boundId, flags), candidates: [] };
+    }
+    return {
+      known: matchCompanyByName(e.vendorName, companies), bound: false,
+      barred: barredCompanyFor(e.vendorName, null, flags),
+      candidates: companyCandidatesByName(e.vendorName, companies),
+    };
   };
 
-  /** The registry row for this bid AS IT STANDS NOW — the explicit link
-   *  re-read from the row, else a normalised-name match against a fresh
-   *  registry read. Never the in-memory list the table rendered from. */
-  const registryNow = async (doc: CostDocument, vendorName: string | null): Promise<Company | null> => {
+  /** The do-not-use row this bid answers for AS IT STANDS NOW — the
+   *  explicit link re-read from the row, else any barred row the name
+   *  could be, from a fresh read of the org's barred rows (in full — never
+   *  the capped name list, never the in-memory list the table rendered
+   *  from). Null means nothing barred; a failed read throws (the award
+   *  stops). */
+  const barredNow = async (doc: CostDocument, vendorName: string | null): Promise<Company | null> => {
     const { data: row, error } = await supabase.from("cost_documents").select("company_id").eq("id", doc.id).maybeSingle();
     if (error && !missingColumn(error)) throw new Error(error.message);
     const boundId = (row as { company_id?: string | null } | null)?.company_id ?? null;
     if (boundId) {
       const bound = await getCompany(boundId);
       if (!bound) throw new Error("the linked company record couldn't be read");
-      return bound;
+      return bound.status === "do_not_use" ? bound : null;
     }
-    return matchCompanyByName(vendorName, await listCompanies(orgId));
+    return barredCompanyFor(vendorName, null, await listBarredCompanies(orgId));
   };
 
   const award = async (doc: CostDocument, accountId: string) => {
@@ -534,24 +576,32 @@ function BidGroup({ group, docs: groupDocs, allDocs, accounts, companies, compan
       setErr(`Award stopped — this field mixes ${currency.currencies.join(" and ")} and "${account?.name ?? "the budget line"}" is kept in ${budgetCur}. ${bc.known ? `Restate this ${bc.code} bid in ${budgetCur}` : "This bid's currency isn't printed — restate it"} with "correct total" (e.g. 162000 ${budgetCur}), then award.`);
       return;
     }
+    // No bid in the field prints a currency: the figure is only SHOWN as
+    // USD, so it never posts into a line kept in another currency unread.
+    if (!bc.known && bc.code !== budgetCur) {
+      setErr(`Award stopped — this bid's currency isn't printed and "${account?.name ?? "the budget line"}" is kept in ${budgetCur}. Check the paper and restate it with "correct total" (e.g. 162000 ${budgetCur}), then award.`);
+      return;
+    }
 
     // MON-12 / COST-3: the barred-company check reads the registry at the
-    // click (never the list this table rendered from), and fails CLOSED.
-    let known: Company | null;
+    // click (never the list this table rendered from) — the linked company,
+    // or every barred row the vendor name could be — and a failed read
+    // stops the award.
+    let barred: Company | null;
     try {
-      known = await registryNow(doc, e?.vendorName ?? doc.vendorName);
+      barred = await barredNow(doc, e?.vendorName ?? doc.vendorName);
     } catch (err) {
       setErr(`Award stopped — the Known Companies registry couldn't be checked (${(err as Error).message}). Reload and try again.`);
       return;
     }
     let overrideReason: string | null = null;
-    if (known?.status === "do_not_use") {
+    if (barred) {
       overrideReason = (await appPrompt({
-        title: `${known.name} is flagged DO NOT USE`,
-        message: "The registry bars this company. To award anyway, state the reason — it is recorded against this award and the company's record.",
+        title: `${barred.name} is flagged DO NOT USE`,
+        message: "The registry bars this company — this bidder is linked to it, or its name matches it (if the name matches more than one registry record, link the bidder to the right one). To award anyway, state the reason — it is recorded against this award and the company's record.",
         placeholder: "Override reason (required)",
       }))?.trim() || null;
-      if (!overrideReason) { setErr(`Award stopped — ${known.name} is flagged do-not-use and no override reason was given.`); return; }
+      if (!overrideReason) { setErr(`Award stopped — ${barred.name} is flagged do-not-use and no override reason was given.`); return; }
     }
 
     const warnings = [
@@ -575,11 +625,11 @@ function BidGroup({ group, docs: groupDocs, allDocs, accounts, companies, compan
     // The override is recorded once every confirmation has passed and
     // BEFORE money moves (fail-closed); an award that then fails closes it
     // with an explicit abandonment row.
-    if (known?.status === "do_not_use") {
+    if (barred) {
       const { error } = await supabase.from("audit_logs").insert({
         action: "COST_DOC_AWARD_OVERRIDE_DO_NOT_USE", resource_type: "cost", resource_id: doc.id,
         org_id: orgId, user_id: actor.uid, user_email: actor.email,
-        details: { companyId: known.id, company: known.name, reason: overrideReason, total, currency: cur, rfqGroup: group, costAccountId: accountId },
+        details: { companyId: barred.id, company: barred.name, reason: overrideReason, total, currency: cur, rfqGroup: group, costAccountId: accountId },
       });
       if (error) { setErr(`The override could not be recorded (${error.message}) — award stopped.`); return; }
     }
@@ -597,11 +647,11 @@ function BidGroup({ group, docs: groupDocs, allDocs, accounts, companies, compan
       failure = (err as Error).message;
     } finally { setBusy(null); }
     if (failure == null) { onChanged(); return; }
-    if (known?.status === "do_not_use") {
+    if (barred) {
       const { error } = await supabase.from("audit_logs").insert({
         action: "COST_DOC_AWARD_OVERRIDE_ABANDONED", resource_type: "cost", resource_id: doc.id,
         org_id: orgId, user_id: actor.uid, user_email: actor.email,
-        details: { companyId: known.id, company: known.name, why: failure },
+        details: { companyId: barred.id, company: barred.name, why: failure },
       });
       if (error) failure = `${failure} (The do-not-use override was recorded but could not be closed: ${error.message}.)`;
     }
@@ -671,7 +721,7 @@ function BidGroup({ group, docs: groupDocs, allDocs, accounts, companies, compan
                     const isDeclined = doc?.status === "declined";
                     const bc = bidCurrency(e.currency, currency);
                     const cur = bc.code;
-                    const { known, bound } = doc ? registryFor(doc, e) : { known: null, bound: false };
+                    const { known, bound, barred, candidates } = doc ? registryFor(doc, e) : { known: null, bound: false, barred: null, candidates: [] as Company[] };
                     const qmExtent = known ? readExtent(known.qualityManualPagesRead, known.qualityManualPagesTotal) : null;
                     const ext = doc ? extras.get(doc.id) ?? null : null;
                     const expired = quoteExpired(quote?.validUntil);
@@ -690,8 +740,19 @@ function BidGroup({ group, docs: groupDocs, allDocs, accounts, companies, compan
                                 {bound ? "known" : `matched to ${known.name}`}{known.qualityManualScore != null ? ` · QM ${Math.round(known.qualityManualScore)}%${qmExtent && (!qmExtent.known || qmExtent.truncated) ? ` (${qmExtent.label})` : ""}` : ""}
                               </Link>
                             )}
-                            {known?.status === "do_not_use" && (
-                              <span className="ml-1.5 text-[9px] font-black uppercase tracking-wider px-1.5 py-0.5 rounded border border-rose-500/50 bg-rose-500/10 text-rose-700 dark:text-rose-300" title="Flagged in the registry — an award needs a typed, recorded override">do not use</span>
+                            {barred && (
+                              <span className="ml-1.5 text-[9px] font-black uppercase tracking-wider px-1.5 py-0.5 rounded border border-rose-500/50 bg-rose-500/10 text-rose-700 dark:text-rose-300"
+                                title={barred.id === known?.id
+                                  ? "Flagged in the registry — an award needs a typed, recorded override"
+                                  : `This bidder's name could be "${barred.name}", flagged DO NOT USE in the registry — link the bidder to the right record; until then an award needs a typed, recorded override`}>
+                                {barred.id === known?.id ? "do not use" : `do not use? · ${barred.name}`}
+                              </span>
+                            )}
+                            {!bound && !known && candidates.length > 1 && (
+                              <span className="ml-1.5 text-[9px] font-bold text-amber-700 dark:text-amber-300"
+                                title={`The name matches ${candidates.map((c) => `"${c.name}"`).join(", ")} in the registry — nothing binds automatically; pick the right one`}>
+                                ambiguous — link to registry
+                              </span>
                             )}
                             {known?.status === "inactive" && (
                               <span className="ml-1.5 text-[9px] font-bold uppercase text-[var(--color-text-faint)]">inactive</span>
@@ -699,9 +760,9 @@ function BidGroup({ group, docs: groupDocs, allDocs, accounts, companies, compan
                             {!known && companiesState === "failed" && (
                               <span className="ml-1.5 text-[9px] font-bold text-amber-700 dark:text-amber-300" title="The registry failed to load — flags unknown">registry unavailable</span>
                             )}
-                            {doc && canManage && companiesState === "ready" && (
+                            {doc && canManage && companiesState === "ready" && isOpenDoc(doc) && (
                               <CompanyPicker companies={companies} value={ext?.companyId ?? null} suggestion={!bound ? known : null}
-                                onChange={(id) => void linkCompany(doc, id, known)} />
+                                onChange={(id) => void linkCompany(doc, id, barred ?? known)} />
                             )}
                             {s?.best && !awarded && (
                               <span className="ml-1.5 text-[9px] font-black uppercase text-[var(--color-accent)]"
@@ -730,8 +791,18 @@ function BidGroup({ group, docs: groupDocs, allDocs, accounts, companies, compan
                           </td>
                           <td className="px-3 py-2 text-right tabular-nums">
                             {e.priceOnly ? <span className="text-[var(--color-text-faint)]">not scored</span>
-                              : e.laborHours > 0 ? <span title="Vendor-stated, AI-extracted">{e.laborHours.toLocaleString()}</span>
-                              : <span className="text-[var(--color-text-faint)]" title={`This bid doesn't state labor hours — its manpower part is 0 (the RFQ asks for hours), so a bid that states any hours can score up to ${silenceGap} points higher on that alone.`}>not stated</span>}
+                              : e.laborHours > 0 ? (
+                                <span title="Vendor-stated, AI-extracted">
+                                  {e.laborHours.toLocaleString()}
+                                  {e.implausibleHours && (
+                                    <span className="block text-[9px] font-bold text-amber-700 dark:text-amber-300"
+                                      title={`${e.implausibleHours}. Scored as not stated (manpower 0) — check the hours against the PDF.`}>
+                                      implausible hours — check
+                                    </span>
+                                  )}
+                                </span>
+                              )
+                              : <span className="text-[var(--color-text-faint)]" title={`This bid doesn't state labor hours — its manpower part is 0 (the RFQ asks for hours), so a bid that states plausible hours can score up to ${silenceGap} points higher on that alone.`}>not stated</span>}
                           </td>
                           <td className="px-3 py-2 text-right tabular-nums">{e.priceOnly ? <span className="text-[var(--color-text-faint)]">not scored</span> : e.dollarsPerHour != null ? fmtMoney(e.dollarsPerHour, cur) : "—"}</td>
                           <td className="px-3 py-2 text-right tabular-nums">{e.priceOnly ? <span className="text-[var(--color-text-faint)]">—</span> : e.peakHeadcount ?? "—"}</td>
@@ -811,7 +882,7 @@ function BidGroup({ group, docs: groupDocs, allDocs, accounts, companies, compan
           )}
           {econ.length > 0 && (
             <div className="text-[10px] text-[var(--color-text-muted)]">
-              Value score = {Math.round(weights.price * 100)}% price + {Math.round(weights.manpower * 100)}% manpower-for-the-money, each measured against this field; labor hours are vendor-stated and AI-extracted and, between bids that state them, move the score by at most {MANPOWER_MAX_COMPOSITE_SWING} points — a bid that states none scores 0 on manpower, up to {silenceGap} points below one that does.
+              Value score = {Math.round(weights.price * 100)}% price + {Math.round(weights.manpower * 100)}% manpower-for-the-money, each measured against this field; labor hours are vendor-stated and AI-extracted and, between bids that state them, move the score by at most {MANPOWER_MAX_COMPOSITE_SWING} points — a bid that states none scores 0 on manpower, up to {silenceGap} points below one that does. Stated hours that are implausible (under {MIN_PLAUSIBLE_BID_HOURS} for the whole bid, or a price per hour more than {HOURS_PLAUSIBILITY_RATIO}× off this field&apos;s median) score as not stated.
               Scope coverage is not scored: declared exclusions never lower a score (as the RFQ letter promises) and &quot;check&quot; prompts are for you to verify against the PDF.
               {scoredCount < 2 ? " With fewer than two scored bids there is no field to rank, so no bid is badged." : " The cheapest bid doesn't automatically win — exclusions are why. You make the call."}
             </div>

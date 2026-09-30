@@ -11,7 +11,7 @@
 //   * a weighted best-value score whose math is always shown, never a
 //     black box. Weights are inputs; price alone is never the verdict.
 //
-// Honesty rules (projects Round G, DEC-47 — BID-3/BID-4/BID-6/BID-7/BID-8
+// Honesty rules (projects Round G, DEC-50 — BID-3/BID-4/BID-6/BID-7/BID-8
 // and COST-5):
 //   * A DECLARED exclusion never lowers a score — the RFQ letter promises
 //     it, and a scorer that punishes disclosure teaches vendors to hide
@@ -29,7 +29,11 @@
 //     non-compliance), so stating hours at all is worth up to
 //     100 × the manpower share of the composite over silence (37.5
 //     points at the default weights) — the cap bounds hours against
-//     hours, not hours against silence (DEC-47, recorded for ratification).
+//     hours, not hours against silence (DEC-50, recorded for ratification).
+//     Stated hours must also be PLAUSIBLE to count (COST-5 dw3): fewer than
+//     a person-day for the whole bid, or a whole-price $/hr more than
+//     HOURS_PLAUSIBILITY_RATIO× off the field's median, is scored as not
+//     stated and shown as "implausible hours — check".
 //   * A best-value badge needs at least two scored bids and a unique top;
 //     a tie is a tie. A mixed-currency field is not scored at all.
 //   * A human-typed total (price-only bid) enters the price normalisation
@@ -96,6 +100,10 @@ export interface BidEconomics {
   /** $ per labor hour across the WHOLE price — the manpower-to-cost number.
    *  Lower = more labor for the money. Null when hours unknown. */
   dollarsPerHour: number | null;
+  /** Why the stated hours are not plausible enough to score (COST-5 dw3),
+   *  or null. An implausible statement scores like silence — manpower 0 —
+   *  and the row says "implausible hours — check". */
+  implausibleHours: string | null;
 }
 
 export interface BestValueWeights {
@@ -110,13 +118,27 @@ export const DEFAULT_WEIGHTS: BestValueWeights = { price: 0.5, manpower: 0.3, co
  *  part may move the composite by at most this many points (COST-5). */
 export const MANPOWER_MAX_COMPOSITE_SWING = 5;
 
+/** Fewer stated labour hours than one person-day is not a plausible
+ *  labour statement for a whole tabulated scope (COST-5 dw3). Currency-
+ *  independent, so it holds when a bid is the only one stating hours. */
+export const MIN_PLAUSIBLE_BID_HOURS = 8;
+
+/** A bid's whole-price $/hr more than this many times the field's median
+ *  (or less than 1/this of it) is out of line with the field's own
+ *  statements. The median is taken on a log scale — the geometric mean of
+ *  the middle two when the count is even — so with two bids stating hours
+ *  both are flagged only when they are more than this SQUARED apart
+ *  (neither can be the reference for the other), and with one there is no
+ *  field to compare against (the person-day floor still applies). */
+export const HOURS_PLAUSIBILITY_RATIO = 4;
+
 export interface BidScore {
   quoteId: string;
   /** 0..100, or null when this bid is not scored — see `unscored`. */
   score: number | null;
   /** Each 0..100 pre-weight; null = not scored for this bid ("not
    *  scored", never a 0). Coverage is null for every bid until a per-RFQ
-   *  scope checklist exists (DEC-47). */
+   *  scope checklist exists (DEC-50). */
   parts: { price: number | null; manpower: number | null; coverage: number | null };
   best: boolean;
   /** Shares the top score with another bid — rendered as a tie, no badge. */
@@ -200,7 +222,7 @@ export function computeBidEconomics(quotes: ParsedQuote[]): BidEconomics[] {
     }
   }
 
-  return quotes.map((q) => {
+  const rows = quotes.map((q) => {
     let hours = 0;
     let laborTotal = 0;
     let peak: number | null = null;
@@ -234,20 +256,44 @@ export function computeBidEconomics(quotes: ParsedQuote[]): BidEconomics[] {
       exclusionCount: q.exclusions.length,
       missingScope,
       dollarsPerHour: hours > 0 ? q.total / hours : null,
+      implausibleHours: null as string | null,
     };
   });
+
+  // Plausibility of the stated hours (COST-5 dw3). First the currency-
+  // independent floor; then, among the statements that clear it, the
+  // field's own median on a log scale.
+  const stating = rows.filter((e) => !e.priceOnly && e.laborHours > 0 && e.dollarsPerHour != null && e.dollarsPerHour > 0);
+  for (const e of stating) {
+    if (e.laborHours < MIN_PLAUSIBLE_BID_HOURS) {
+      e.implausibleHours = `${e.laborHours.toLocaleString()} labour hour${e.laborHours === 1 ? "" : "s"} for the whole bid — less than a person-day`;
+    }
+  }
+  const field = stating.filter((e) => e.implausibleHours == null).map((e) => e.dollarsPerHour!).sort((a, b) => a - b);
+  if (field.length >= 2) {
+    const mid = Math.floor(field.length / 2);
+    const median = field.length % 2 ? field[mid] : Math.sqrt(field[mid - 1] * field[mid]);
+    for (const e of stating) {
+      if (e.implausibleHours != null) continue;
+      const ratio = e.dollarsPerHour! / median;
+      if (ratio > HOURS_PLAUSIBILITY_RATIO) e.implausibleHours = `price per stated hour is ${Math.round(ratio)}× the field's median — too few hours for the price`;
+      else if (ratio < 1 / HOURS_PLAUSIBILITY_RATIO) e.implausibleHours = `price per stated hour is 1/${Math.round(1 / ratio)} of the field's median — too many hours for the price`;
+    }
+  }
+  return rows;
 }
 
 /**
  * Weighted best value, math shown. Price and manpower each score 0..100
  * relative to the field (best bid = 100). A bid with unknown labor hours
  * scores a manpower part of 0 — undisclosed manpower never beats disclosed
- * manpower. Among bids that state hours the (vendor-stated) number moves
- * the composite by at most MANPOWER_MAX_COMPOSITE_SWING points; against a
- * bid that states none, stating any hours is worth up to 100 × the
- * manpower share (DEC-47 — the cap is hours-vs-hours, not hours-vs-
- * silence). Coverage is not scored. A mixed-currency field is refused:
- * every score is null.
+ * manpower — and so does a bid whose stated hours are implausible
+ * (`implausibleHours`). Among bids that state plausible hours the
+ * (vendor-stated) number moves the composite by at most
+ * MANPOWER_MAX_COMPOSITE_SWING points; against a bid that states none,
+ * stating plausible hours is worth up to 100 × the manpower share (DEC-50
+ * — the cap is hours-vs-hours, not hours-vs-silence). Coverage is not
+ * scored. A mixed-currency field is refused: every score is null.
  */
 export function scoreBids(
   econ: BidEconomics[],
@@ -268,9 +314,11 @@ export function scoreBids(
   // Every bid — typed totals included — enters the price normalisation.
   const positive = econ.map((e) => e.total).filter((t) => t > 0);
   const minTotal = positive.length ? Math.min(...positive) : 0;
+  // Only plausible statements count as stated hours.
+  const statedDph = (e: BidEconomics) => (e.implausibleHours ? null : e.dollarsPerHour);
   const knownDph = econ
     .filter((e) => !e.priceOnly)
-    .map((e) => e.dollarsPerHour)
+    .map(statedDph)
     .filter((d): d is number => d != null && d > 0);
   const minDph = knownDph.length ? Math.min(...knownDph) : null;
 
@@ -286,12 +334,13 @@ export function scoreBids(
       };
     }
     // Stated hours land in [floor, 100] (the 5-point swing among bids that
-    // state them). Undisclosed hours score 0 — BELOW that band, by design
-    // and pinned ("cheapest does not automatically win"): silence is
-    // non-compliance with the letter, and the gap to any stated figure is
-    // up to 100 × manpowerShare composite points (DEC-47).
-    const manpower = e.dollarsPerHour != null && e.dollarsPerHour > 0 && minDph != null
-      ? floor + (minDph / e.dollarsPerHour) * (100 - floor)
+    // state them). Undisclosed — or implausible — hours score 0, BELOW that
+    // band, by design and pinned ("cheapest does not automatically win"):
+    // silence is non-compliance with the letter, and the gap to a plausible
+    // stated figure is up to 100 × manpowerShare composite points (DEC-50).
+    const dph = statedDph(e);
+    const manpower = dph != null && dph > 0 && minDph != null
+      ? floor + (minDph / dph) * (100 - floor)
       : 0;
     const score = (price * weights.price + manpower * weights.manpower) / wSum;
     return {
@@ -348,8 +397,8 @@ export function fieldCurrency(econ: Array<{ currency: string | null }>): { curre
  *  currency, with a note saying it was assumed, so a bid ranked beside
  *  EUR bids is never rendered in dollars. `known: false` means no currency
  *  can be vouched for (the field is mixed, or nothing printed one):
- *  displayed as USD by default, never awardable into a field that needs a
- *  specific currency. */
+ *  displayed as USD — and SAID so — and never awarded into a budget line
+ *  kept in another currency without a restatement. */
 export function bidCurrency(
   own: string | null | undefined,
   field: { currency: string | null; currencies: string[] },
@@ -358,22 +407,45 @@ export function bidCurrency(
   if (code) return { code, known: true, note: null };
   if (field.currency) return { code: field.currency, known: true, note: `currency not printed — assumed ${field.currency}` };
   if (field.currencies.length > 1) return { code: "USD", known: false, note: "currency not printed — unknown in a mixed field" };
-  return { code: "USD", known: false, note: null };
+  return { code: "USD", known: false, note: "currency not printed — shown as USD" };
 }
 
-/** Read a human-typed figure: "182,000", "182000 EUR", "USD 162,000.50".
- *  The amount is the digits; a three-letter token, when present, must be
- *  an ISO-4217 code (the restatement currency, BID-7). */
-export function parseTypedAmount(raw: string): { amount: number | null; currency: string | null; badCurrency: string | null } {
-  const token = /(?<![A-Za-z])([A-Za-z]{3})(?![A-Za-z])/.exec(raw)?.[1] ?? null;
-  const currency = token ? isoCurrency(token) : null;
-  const digits = raw.replace(/[^0-9.]/g, "");
-  const n = digits ? Number(digits) : NaN;
-  return {
-    amount: Number.isFinite(n) && n > 0 ? n : null,
-    currency,
-    badCurrency: token && !currency ? token : null,
-  };
+/** Read a human-typed figure: "182,000", "182000 EUR", "USD 162,000.50",
+ *  "162 000 EUR". A three-letter word, when present, must be an ISO-4217
+ *  code (the restatement currency, BID-7). The figure becomes the one
+ *  authoritative total, so anything that could be read two ways is
+ *  REFUSED with a reason (`problem`), never guessed (BID-9 / COST-13):
+ *  a decimal comma ("162 000,50"), a lone dot before exactly three digits
+ *  ("162.000" — thousands or decimals?), dot-grouped thousands, other
+ *  groupings, a sign, and shorthand ("182k", "1.5M", "2 million"). */
+export function parseTypedAmount(raw: string): { amount: number | null; currency: string | null; badCurrency: string | null; problem: string | null } {
+  const refuse = (problem: string, currency: string | null = null) => ({ amount: null, currency, badCurrency: null, problem });
+  let s = String(raw ?? "").trim();
+  let currency: string | null = null;
+  // "US$" is how many quotes print dollars.
+  if (/\bUS\$/i.test(s)) { currency = "USD"; s = s.replace(/\bUS\$/i, " "); }
+  for (const word of s.match(/[A-Za-z]+/g) ?? []) {
+    if (word.length !== 3) {
+      return refuse(`"${word}" isn't read — type the full figure with no shorthand (e.g. 182000, not 182k or 1.5 million).`, currency);
+    }
+    const code = isoCurrency(word);
+    if (!code) return { amount: null, currency: null, badCurrency: word, problem: null };
+    if (currency && currency !== code) return refuse(`Two currencies were typed (${currency} and ${code}) — type one.`);
+    currency = code;
+  }
+  const figure = s.replace(/[A-Za-z]+/g, " ").replace(/[$€£¥]/g, " ").replace(/[\s\u00a0\u202f]+/g, " ").trim();
+  if (!figure) return refuse("That didn't read as a positive number.", currency);
+  if (/[^0-9.,\s]/.test(figure)) return refuse("That didn't read as a positive number — type digits only (e.g. 182000 or 182,000.50).", currency);
+  const ambiguous = "can be read two ways — type it without separators, or with commas for thousands and a dot for decimals (e.g. 162000, 162,000 or 162,000.50).";
+  let digits: string | null = null;
+  if (/^\d+$/.test(figure)) digits = figure;                                              // 182000
+  else if (/^\d{1,3}(,\d{3})+(\.\d+)?$/.test(figure)) digits = figure.replace(/,/g, "");  // 182,000 / 1,182,000.50
+  else if (/^\d{1,3}( \d{3})+(\.\d+)?$/.test(figure)) digits = figure.replace(/ /g, ""); // 162 000 / 162 000.50
+  else if (/^\d+\.\d+$/.test(figure) && !/^\d{1,3}\.\d{3}$/.test(figure)) digits = figure; // 182000.5 (not 162.000)
+  if (digits == null) return refuse(`"${figure}" ${ambiguous}`, currency);
+  const n = Number(digits);
+  if (!Number.isFinite(n) || n <= 0) return refuse("That didn't read as a positive number.", currency);
+  return { amount: n, currency, badCurrency: null, problem: null };
 }
 
 // ── One authoritative total (BID-1 / GAP-407) ─────────────────────────────
@@ -466,8 +538,9 @@ const LEGAL_SUFFIXES = new Set([
 
 /** Normalise a company name for matching: case, punctuation, whitespace
  *  and trailing legal suffixes ("Gulf Mechanical, Inc." → "gulf
- *  mechanical"). Exact equality on this form is the ONLY automatic match;
- *  nothing fuzzier binds a bidder to a registry row on its own. */
+ *  mechanical"). Exact equality on this form (after an exact-name hit) is
+ *  the ONLY automatic match; nothing fuzzier binds a bidder to a registry
+ *  row on its own. */
 export function normalizeCompanyName(s: string): string {
   const tokens = s.toLowerCase().replace(/&/g, " and ").replace(/[^a-z0-9 ]+/g, " ").split(/\s+/).filter(Boolean);
   while (tokens.length > 1 && LEGAL_SUFFIXES.has(tokens[tokens.length - 1])) tokens.pop();
@@ -475,14 +548,45 @@ export function normalizeCompanyName(s: string): string {
   return tokens.join(" ");
 }
 
-/** The registry row a vendor name resolves to by normalised equality, or
- *  null when none or more than one matches (ambiguity never auto-binds). */
+const exactName = (s: string) => s.trim().replace(/\s+/g, " ").toLowerCase();
+
+/** EVERY registry row a vendor name could be — normalised equality, no
+ *  uniqueness required. For GATING, never for binding (BID-12 / MON-12):
+ *  when two rows normalise alike neither binds, but if either is flagged
+ *  do-not-use the bid is flagged too. */
+export function companyCandidatesByName<T extends { name: string }>(vendorName: string | null | undefined, companies: T[]): T[] {
+  if (!vendorName) return [];
+  const key = normalizeCompanyName(vendorName);
+  if (!key) return [];
+  return companies.filter((c) => normalizeCompanyName(c.name) === key);
+}
+
+/** The registry row a vendor name BINDS to for display: an exact
+ *  (trimmed, case-insensitive) name hit first, else the one row it
+ *  normalises to — null when none or more than one matches (ambiguity
+ *  never auto-binds). The do-not-use gate reads `companyCandidatesByName`,
+ *  not this. */
 export function matchCompanyByName<T extends { name: string }>(vendorName: string | null | undefined, companies: T[]): T | null {
   if (!vendorName) return null;
-  const key = normalizeCompanyName(vendorName);
-  if (!key) return null;
-  const hits = companies.filter((c) => normalizeCompanyName(c.name) === key);
+  const exact = exactName(vendorName);
+  if (exact) {
+    const hits = companies.filter((c) => exactName(c.name) === exact);
+    if (hits.length === 1) return hits[0];
+    if (hits.length > 1) return null;
+  }
+  const hits = companyCandidatesByName(vendorName, companies);
   return hits.length === 1 ? hits[0] : null;
+}
+
+/** The do-not-use row a bid must answer for (MON-12 / COST-3): the
+ *  explicitly linked company when there is a link (a human chose it);
+ *  otherwise ANY registry row the vendor name could be. Fails toward the
+ *  flag — ambiguity never clears it. */
+export function barredCompanyFor<T extends { id: string; name: string; status: string }>(
+  vendorName: string | null | undefined, boundId: string | null | undefined, registry: T[],
+): T | null {
+  if (boundId) return registry.find((c) => c.id === boundId && c.status === "do_not_use") ?? null;
+  return companyCandidatesByName(vendorName, registry).find((c) => c.status === "do_not_use") ?? null;
 }
 
 // ── Read extent (COST-13) ─────────────────────────────────────────────────
