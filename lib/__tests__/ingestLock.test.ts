@@ -364,6 +364,19 @@ describe("ING-11 / GOV-9 — the row's counters and each chunk's provenance", ()
     expect(docRow().empty_pages).toBe(27);
   });
 
+  it("ING-12: a re-index restarts every counter at page 0 — even after the drawing rebuild's own reset, which does not zero them", async () => {
+    // Exactly the fields app/api/knowledge/drawing/route.ts's rebuild writes
+    // today (I-07 moves it onto resetKnowledgeIndex): vision_pages untouched.
+    const doc = await seed([null, null, prosePage("bolting")], {
+      status: "stale", pages_indexed: 0, page_count: null, last_section: null, error: null,
+      vision_pages: 40, empty_pages: 12, vision_failed_pages: [3], vision_partial_accepted: true,
+    });
+    // Rebuilt with no key: the SHX sheets come back textless.
+    const res = await ingestKnowledgeDocBatch(asArg(doc));
+    expect(res.done).toBe(true);
+    expect(docRow()).toMatchObject({ status: "ready", vision_pages: 0, empty_pages: 2, vision_failed_pages: [], vision_partial_accepted: false });
+  });
+
   it("chunks say 'vision' with the model that read them, or 'text'", async () => {
     const doc = await seed([null, prosePage("bolting")]);
     vision.impl = async (page) => ({ text: transcript(page), usage: { inputTokens: 1, outputTokens: 1 }, model: "vision-tier" });

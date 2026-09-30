@@ -487,10 +487,19 @@ export async function ingestKnowledgeDocBatch(
     // and retried once the main pass is through; the document is 'ready'
     // only when none remain (or someone explicitly accepted the partial
     // index).
-    const failedBefore = pageList(cur.vision_failed_pages);
+    //
+    // A batch that starts at page 0 starts a NEW index generation, however
+    // the row got there — the rev-up refresh, the drawing rebuild, a fresh
+    // upload: every counter restarts from zero here, so no reset path can
+    // carry the last generation's vision_pages / empty_pages / failed pages
+    // into this one (ING-12, ING-11), even one that forgot to zero them.
+    const genStart = from === 0;
+    const failedBefore = genStart ? [] : pageList(cur.vision_failed_pages);
     const failed = new Set<number>(failedBefore);
-    const accepted = cur.vision_partial_accepted === true;
+    const accepted = !genStart && cur.vision_partial_accepted === true;
     const retryMode = from >= pageCount && failedBefore.length > 0 && !accepted;
+    const baseVisionPages = genStart ? 0 : Number(cur.vision_pages ?? 0);
+    const baseEmptyPages = genStart ? 0 : Number(cur.empty_pages ?? 0);
 
     // Which chunker (ING-4 / ING-7): a document keeps the one it started
     // with — its chunk boundaries never mix — and a document (re)starting at
@@ -1012,7 +1021,7 @@ export async function ingestKnowledgeDocBatch(
     // ── Commit: compare-and-set on what this batch read (ING-1) ──────────
     const failedAfter = [...failed].sort((a, b) => a - b);
     const done = reached >= pageCount && (failedAfter.length === 0 || accepted);
-    const emptyTotal = Math.max(0, Number(cur.empty_pages ?? 0) + emptyDelta);
+    const emptyTotal = Math.max(0, baseEmptyPages + emptyDelta);
     const docUpdate: Record<string, unknown> = {
       page_count: pageCount,
       pages_indexed: reached,
@@ -1037,9 +1046,10 @@ export async function ingestKnowledgeDocBatch(
       const known = new Set(Object.keys(claimed));
       const full: Record<string, unknown> = {
         ...docUpdate,
-        vision_pages: Number(cur.vision_pages ?? 0) + visionPages,
+        vision_pages: baseVisionPages + visionPages,
         empty_pages: emptyTotal,
         vision_failed_pages: failedAfter,
+        vision_partial_accepted: accepted,
         chunk_version: chunkVersion,
         ingest_claimed_by: null, ingest_claimed_at: null,
       };
@@ -1074,15 +1084,15 @@ export async function ingestKnowledgeDocBatch(
         .catch(() => undefined);
     }
 
-    if (!leased && visionPages > 0) {
+    if (!leased && (visionPages > 0 || genStart)) {
       // Pre-20261122 database: the running total the UI shows ("14 pages
       // read by AI vision") is kept the old way. Best-effort: a pre-migration
       // DB (no column) simply doesn't show the count. Under a claim it rides
-      // the commit above instead.
+      // the commit above instead. A generation's first batch starts it over.
       const { data: now } = await supabaseAdmin
         .from("knowledge_documents").select("vision_pages").eq("id", cur.id).maybeSingle();
       await supabaseAdmin.from("knowledge_documents")
-        .update({ vision_pages: Number(now?.vision_pages ?? 0) + visionPages })
+        .update({ vision_pages: (genStart ? 0 : Number(now?.vision_pages ?? 0)) + visionPages })
         .eq("id", cur.id)
         .then(() => undefined, () => undefined);
     }
