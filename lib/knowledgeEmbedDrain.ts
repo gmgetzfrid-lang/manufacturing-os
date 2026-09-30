@@ -20,7 +20,7 @@
 // WHEN to look again instead of holding a slot: the monthly cap until the
 // 1st, a provider / key error with a doubling backoff (released after
 // MAX_ERROR_RUNS failed runs), a model conflict or an unsigned agreement for
-// a day. Every run reports each library as advanced / complete / current /
+// an hour. Every run reports each library as advanced / complete / current /
 // blocked / released / busy / recent / starved (never reached this run).
 //
 // SCHEDULING NOTE — read before touching vercel.json: this used to have its
@@ -49,6 +49,10 @@ const FULL_BATCH = 64;
 /** A library whose runs keep failing is released after this many in a row —
  *  its stamp says why, and a controller can start it again. */
 export const MAX_ERROR_RUNS = 5;
+/** How long a hold that a person can clear at any moment (sign the
+ *  agreement, set the model back) lasts before the drain looks again —
+ *  cheap to re-check, so short. A read error lands here too, never a release. */
+const RECHECK_HOLD_MS = 3_600_000;
 const MARKER_PAGE = 500;
 const MAX_MARKERS = 5_000;
 
@@ -156,8 +160,14 @@ export async function drainEmbedBacklog(opts: {
       const userId = m.userId;
       let consentOk = m.valid && UUID_RE.test(userId);
       if (consentOk) {
-        const { data: member } = await supabaseAdmin.from("org_members").select("uid")
+        const { data: member, error: memberErr } = await supabaseAdmin.from("org_members").select("uid")
           .eq("org_id", lib.org_id).eq("uid", userId).eq("status", "active").maybeSingle();
+        if (memberErr) {
+          // Could not tell: spend nothing, and never release a consent on a
+          // failed read — the next run asks again.
+          record({ embedded: 0, remaining: -1, outcome: "blocked", note: `couldn't verify the build's consent: ${memberErr.message}` });
+          continue;
+        }
         consentOk = !!member;
       }
       if (!consentOk) {
@@ -209,14 +219,14 @@ export async function drainEmbedBacklog(opts: {
 
       // The acceptable-use agreement (local gate until the shared one lands).
       if ((await embedAgreementSigned(lib.org_id, userId)) === false) {
-        await hold("agreement", new Date(now + 24 * 3_600_000).toISOString(),
+        await hold("agreement", new Date(now + RECHECK_HOLD_MS).toISOString(),
           "the member whose key pays has not accepted the current AI acceptable-use agreement");
         continue;
       }
       // One vector space per library (SEM-1 / SEM-3).
       const conflict = detail ? buildModelConflict(detail.corpus, connection) : null;
       if (conflict) {
-        await hold("model_conflict", new Date(now + 24 * 3_600_000).toISOString(), conflict.message);
+        await hold("model_conflict", new Date(now + RECHECK_HOLD_MS).toISOString(), conflict.message);
         continue;
       }
       // Respect the consenting user's monthly cap — until it resets.

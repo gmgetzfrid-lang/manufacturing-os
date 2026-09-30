@@ -373,6 +373,19 @@ describe("GOV-14 limb — a consent that names nobody is released, never spent",
   });
 });
 
+describe("GOV-14 limb — a failed membership read never releases a consent", () => {
+  it("the read errors: nothing is spent, the stamp stays, the run says why", async () => {
+    seedDrainWorld();
+    admin.state.tables.knowledge_libraries = [marked(LIB, { userId: PAYER, at: "2026-09-01T00:00:00Z" })];
+    admin.state.tables.knowledge_chunks = [chunk(1)];
+    admin.state.failReads.org_members = { message: "timeout" };
+    const out = await drainEmbedBacklog({ scopeOrgIds: null, budgetMs: 200_000 });
+    expect(out.drained[0]).toMatchObject({ outcome: "blocked", note: "couldn't verify the build's consent: timeout" });
+    expect((admin.state.tables.knowledge_libraries[0].ai_features as Row).embedBuild).toBeTruthy();
+    expect(provider.inputs).toHaveLength(0);
+  });
+});
+
 describe("SEM-8 — a standing consent keeps the index current", () => {
   it("at 100% a standing stamp stays (outcome current); a plain one clears (complete)", async () => {
     seedDrainWorld();
