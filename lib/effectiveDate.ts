@@ -13,27 +13,67 @@ import { effectiveOwnerForDocument, getOrgControllers } from "@/lib/ownership";
 
 export type EffectiveStatus = "none" | "pending" | "effective";
 
-const todayISO = () => new Date().toISOString().slice(0, 10);
+// ─── REV-9: ONE definition of "today" ─────────────────────────────────────
+//
+// The badge used to compare against the BROWSER's local midnight while the
+// suppression watermark, the daily scan and /api/verify compared against
+// UTC — so a publisher west of UTC choosing "tomorrow" in the evening had
+// the announcement pre-suppressed (UTC was already "tomorrow") while the
+// badge still read pending, and the day it flipped nobody was told.
+//
+// Every "is this date in force yet?" question now asks the same calendar:
+// the effective-date zone below. There is no facility time-zone setting in
+// the product yet, so it is UTC — the calendar the server paths already used
+// (the cron scan, /api/verify). When a facility zone lands it changes HERE
+// and every reader follows. Dates are compared as YYYY-MM-DD strings, never
+// by parsing a bare datetime (which JS reads in the local zone).
+
+/** The calendar every effective-date decision is made in (REV-9). */
+export const EFFECTIVE_DATE_TIME_ZONE = "UTC";
+
+/** Today's date (YYYY-MM-DD) in the effective-date calendar — the ONE
+ *  "today" the badge, the suppression watermark, the daily scan and the
+ *  public verify endpoint share. `now` is injectable for tests. */
+export function effectiveTodayISO(now: Date = new Date(), timeZone: string = EFFECTIVE_DATE_TIME_ZONE): string {
+  // en-CA formats as YYYY-MM-DD; formatToParts keeps it locale-proof.
+  const parts = new Intl.DateTimeFormat("en-CA", { timeZone, year: "numeric", month: "2-digit", day: "2-digit" }).formatToParts(now);
+  const get = (t: string) => parts.find((p) => p.type === t)?.value ?? "";
+  return `${get("year")}-${get("month")}-${get("day")}`;
+}
+
+/** The YYYY-MM-DD head of a stored date, or null when it is not a real
+ *  calendar date (never parsed through the local zone). */
+function isoDay(value: string): string | null {
+  const day = value.slice(0, 10);
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(day)) return null;
+  const [y, m, d] = day.split("-").map(Number);
+  const t = Date.UTC(y, m - 1, d);
+  const back = new Date(t);
+  if (back.getUTCFullYear() !== y || back.getUTCMonth() !== m - 1 || back.getUTCDate() !== d) return null;
+  return day;
+}
+
+const todayISO = () => effectiveTodayISO();
 
 /** `none` = no future effective date (effective immediately / already in force);
  *  `pending` = a future effective date not yet reached; `effective` = the date
- *  has arrived/passed. Only `pending` warrants a badge. */
-export function effectiveStatusFor(effectiveDate?: string | null): EffectiveStatus {
+ *  has arrived/passed. Only `pending` warrants a badge. Decided in the
+ *  effective-date calendar (REV-9), the same one the scan announces in. */
+export function effectiveStatusFor(effectiveDate?: string | null, now: Date = new Date()): EffectiveStatus {
   if (!effectiveDate) return "none";
-  const today = new Date(); today.setHours(0, 0, 0, 0);
-  const eff = new Date(`${effectiveDate.slice(0, 10)}T00:00:00`);
-  if (Number.isNaN(eff.getTime())) return "none";
-  if (eff.getTime() > today.getTime()) return "pending";
-  return "effective";
+  const eff = isoDay(effectiveDate);
+  if (!eff) return "none";
+  return eff > effectiveTodayISO(now) ? "pending" : "effective";
 }
 
-/** Whole days until the effective date (negative = already effective). */
-export function daysUntilEffective(effectiveDate?: string | null): number | null {
+/** Whole days until the effective date (negative = already effective), in
+ *  the effective-date calendar (REV-9). */
+export function daysUntilEffective(effectiveDate?: string | null, now: Date = new Date()): number | null {
   if (!effectiveDate) return null;
-  const today = new Date(); today.setHours(0, 0, 0, 0);
-  const eff = new Date(`${effectiveDate.slice(0, 10)}T00:00:00`);
-  if (Number.isNaN(eff.getTime())) return null;
-  return Math.ceil((eff.getTime() - today.getTime()) / 86_400_000);
+  const eff = isoDay(effectiveDate);
+  if (!eff) return null;
+  const toUtc = (day: string) => { const [y, m, d] = day.split("-").map(Number); return Date.UTC(y, m - 1, d); };
+  return Math.round((toUtc(eff) - toUtc(effectiveTodayISO(now))) / 86_400_000);
 }
 
 /** Persist an effective date onto a version + denormalize it onto the document.
@@ -61,7 +101,7 @@ export async function applyEffectiveDate(input: { documentId: string; versionId:
 export async function scanEffectiveDates(orgId: string): Promise<number> {
   const { data } = await supabase
     .from("documents")
-    .select("id, library_id, collection_id, document_number, title, name, rev, effective_date, owner_user_id, owner_name")
+    .select("id, library_id, collection_id, document_number, title, name, rev, effective_date, owner_user_id, owner_name, current_version_id")
     .eq("org_id", orgId)
     .not("effective_date", "is", null)
     .lte("effective_date", todayISO())
@@ -69,10 +109,33 @@ export async function scanEffectiveDates(orgId: string): Promise<number> {
   const docs = (data ?? []) as Array<Record<string, unknown>>;
   if (!docs.length) return 0;
 
+  // REV-13: the date on the document row is a denormalized copy of the
+  // CURRENT version's. A revert, or any path that moved the pointer without
+  // reconciling, can leave a withdrawn revision's future date behind — and
+  // announcing it would tell the roster a pulled revision came into force.
+  // Announce only when the current version itself carries that date; a
+  // stale copy is watermarked (silenced) instead, never announced.
+  const currentIds = docs.map((d) => d.current_version_id as string | null).filter((v): v is string => !!v);
+  const versionDate = new Map<string, string | null>();
+  if (currentIds.length) {
+    const { data: vers, error: verErr } = await supabase
+      .from("document_versions").select("id, effective_date").in("id", currentIds);
+    if (verErr) throw new Error(`effective-date scan: current versions unreadable (${verErr.message}) — nothing announced`);
+    for (const v of (vers ?? []) as Array<Record<string, unknown>>) {
+      versionDate.set(v.id as string, (v.effective_date as string | null) ?? null);
+    }
+  }
+
   const controllers = await getOrgControllers(orgId);
   let n = 0;
   for (const d of docs) {
     const docId = d.id as string;
+    if (!belongsToCurrentVersion(d.effective_date as string | null, (d.current_version_id as string | null) ?? null, versionDate)) {
+      const { error: quietErr } = await supabase.from("documents")
+        .update({ effective_notified_at: new Date().toISOString() }).eq("id", docId).select("id");
+      if (quietErr) console.error(`[effectiveDate] could not silence a stale effective date on ${docId}:`, quietErr.message);
+      continue;
+    }
     const label = (d.document_number as string) || (d.title as string) || (d.name as string) || "Document";
     const link = `/documents/${d.library_id as string}?doc=${docId}`;
     const owner = await effectiveOwnerForDocument({
@@ -96,4 +159,19 @@ export async function scanEffectiveDates(orgId: string): Promise<number> {
     n++;
   }
   return n;
+}
+
+/** REV-13: does the document's denormalized effective date belong to the
+ *  version now in force? Pure; exported for the scan's tests. A document
+ *  with no current version, or whose current version carries a different
+ *  (or no) effective date, is NOT announced. */
+export function belongsToCurrentVersion(
+  documentEffectiveDate: string | null,
+  currentVersionId: string | null,
+  versionDates: Map<string, string | null>,
+): boolean {
+  if (!documentEffectiveDate || !currentVersionId) return false;
+  if (!versionDates.has(currentVersionId)) return false;
+  const v = versionDates.get(currentVersionId) ?? null;
+  return !!v && v.slice(0, 10) === documentEffectiveDate.slice(0, 10);
 }
