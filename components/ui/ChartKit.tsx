@@ -50,17 +50,21 @@ function niceStep(range: number): number {
  * not, so a credit that took a cumulative line below zero projected below the
  * plot floor — or, with a zero budget, ~920,000 units off the canvas. The
  * domain now spans [min(0, data), max(1, data, budget)], widened to clean tick
- * values, and every projected value lands inside the plot.
+ * values, and every projected value lands inside the plot. With no money in
+ * the data at all, the floor of 1 only gives the scale a height: the one
+ * gridline is zero, never an invented "$1" (DEC-52: draw only what the data
+ * holds).
  */
 export function sCurveScale(values: number[]): { lo: number; hi: number; ticks: number[]; py: (v: number) => number } {
   const finite = values.filter(Number.isFinite);
+  const noMoney = !finite.some((v) => v !== 0);
   const dataHi = Math.max(1, ...finite);
   const dataLo = Math.min(0, ...finite);
   const step = niceStep(dataHi - dataLo);
   const hi = Math.ceil(dataHi / step) * step;
   const lo = Math.floor(dataLo / step) * step;
   const count = Math.round((hi - lo) / step);
-  const ticks = Array.from({ length: count + 1 }, (_, k) => lo + k * step);
+  const ticks = noMoney ? [0] : Array.from({ length: count + 1 }, (_, k) => lo + k * step);
   const py = (v: number) => PAD_T + ((hi - Math.min(hi, Math.max(lo, v))) / (hi - lo)) * PLOT_H;
   return { lo, hi, ticks, py };
 }
@@ -84,6 +88,20 @@ export function sCurveTodayX(points: SCurvePoint[], todayIso: string | null | un
 // In-plot labels get a surface-coloured halo so a line crossing them never
 // makes them unreadable.
 const HALO = { stroke: "var(--color-surface)", strokeWidth: 3, paintOrder: "stroke" } as const;
+
+/** The top-left corner the top gridline's label occupies (it sits at
+ *  x = PAD_L + 2 on the "Today" label's baseline): a compact figure such as
+ *  "$300K" plus the half-width of a centred "Today". A today marker this close
+ *  to the left edge drops its label just inside the plot instead. */
+const TOP_LABEL_ROOM = 56;
+
+/** Where the "Today" label goes: above the plot, centred on the marker —
+ *  or, early in the span, just inside the plot beside it, clear of the top
+ *  gridline's label (which is drawn later, haloed, and would cover it). */
+export function sCurveTodayLabel(todayX: number): { x: number; y: number; anchor: "start" | "middle" | "end" } {
+  if (todayX < PAD_L + TOP_LABEL_ROOM) return { x: todayX + 3, y: PAD_T + 10, anchor: "start" };
+  return { x: todayX, y: PAD_T - 3, anchor: todayX > VB_W - PAD_R - 20 ? "end" : "middle" };
+}
 
 // PERF-10: one date formatter for every label and tooltip, not one per point.
 let dayFmt: Intl.DateTimeFormat | null = null;
@@ -143,6 +161,7 @@ export function SCurveChart({ points, fmt, tickFmt, todayIso, budget, budgetLabe
   const hasPlanned = points.some((p) => p.planned != null);
   const last = points[n - 1];
   const todayX = sCurveTodayX(points, todayIso);
+  const todayLabel = todayX != null ? sCurveTodayLabel(todayX) : null;
   const money = (v: number) => (example ? `${fmt(v)} (example)` : fmt(v));
   const tick = tickFmt ?? fmt;
   const budgetY = ref != null ? py(ref) : null;
@@ -188,13 +207,12 @@ export function SCurveChart({ points, fmt, tickFmt, todayIso, budget, budgetLabe
         <path data-series="spent" d={path((p) => p.actual)} fill="none" stroke={SPENT} strokeWidth="2.5"
           strokeLinecap="round" strokeLinejoin="round" />
         {/* Today marker: at today's true position, labelled, in the legend. */}
-        {todayX != null && (
+        {todayX != null && todayLabel && (
           <g data-mark="today">
             <line x1={todayX} x2={todayX} y1={PAD_T} y2={VB_H - PAD_B} stroke="var(--color-text-muted)" strokeWidth="1">
               <title>{`Today — ${fmtDay(todayIso as string)}`}</title>
             </line>
-            <text x={todayX} y={PAD_T - 3} fontSize="9" fontWeight="700"
-              textAnchor={todayX < PAD_L + 20 ? "start" : todayX > VB_W - PAD_R - 20 ? "end" : "middle"}
+            <text x={todayLabel.x} y={todayLabel.y} fontSize="9" fontWeight="700" textAnchor={todayLabel.anchor}
               fill="var(--color-text-muted)" {...HALO}>Today</text>
           </g>
         )}

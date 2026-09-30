@@ -550,18 +550,31 @@ describe("costSeries", () => {
     }
   });
 
-  it("PERF-10: the cursor walk returns the same cumulative totals as a full re-scan", () => {
+  it("PERF-10: the cursor walk returns the same cumulative totals as a full re-scan, at every sample", () => {
     const commitments = [{ date: "2026-03-01", amount: 5 }, { date: "2026-01-10", amount: 7 }, { date: "not a date", amount: 1_000 }];
     const actuals = [{ date: "2026-02-01", amount: 3 }, { date: "2026-02-01", amount: 4 }, { date: "2026-04-30", amount: 11 }];
-    const s = buildCostSeries({ budget: 0, commitments, actuals, points: 7 });
-    for (const p of s) {
-      const at = Date.parse(p.date);
-      const scan = (xs: typeof actuals) => xs.filter((x) => Date.parse(x.date) <= at + 86_399_999).reduce((a, x) => a + x.amount, 0);
-      expect(p.actual).toBeLessThanOrEqual(scan(actuals));
-      expect(p.committed).toBeLessThanOrEqual(scan(commitments.slice(0, 2)));
-    }
-    expect(s.at(-1)!).toMatchObject({ committed: 12, actual: 18, planned: null });
-    expect(s[0]).toMatchObject({ date: "2026-01-10", committed: 7, actual: 0 });
+    const points = 7;
+    const s = buildCostSeries({ budget: 0, commitments, actuals, points });
+    expect(s).toHaveLength(points);
+    // The grid rebuilt exactly: no schedule, so it runs from the earliest to
+    // the latest PARSEABLE entry, evenly spaced (the unparseable one is dropped).
+    const parseable = (xs: typeof actuals) => xs.filter((x) => Number.isFinite(Date.parse(x.date)));
+    const all = [...parseable(commitments), ...parseable(actuals)].map((x) => Date.parse(x.date));
+    const startMs = Math.min(...all);
+    const span = Math.max(...all) - startMs;
+    const scan = (xs: typeof actuals, t: number) =>
+      parseable(xs).filter((x) => Date.parse(x.date) <= t).reduce((a, x) => a + x.amount, 0);
+    s.forEach((p, i) => {
+      const t = startMs + (span * i) / (points - 1);
+      expect(p.date).toBe(new Date(t).toISOString().slice(0, 10));
+      expect(p.committed, `committed at sample ${i}`).toBe(scan(commitments, t));
+      expect(p.actual, `actual at sample ${i}`).toBe(scan(actuals, t));
+    });
+    // The interior samples are neither zero nor the final total, so a cursor
+    // that stalls (or only catches up on the last sample) fails above.
+    expect(s.map((p) => p.committed)).toEqual([7, 7, 7, 12, 12, 12, 12]);
+    expect(s.map((p) => p.actual)).toEqual([0, 0, 7, 7, 7, 7, 18]);
+    expect(s.every((p) => p.planned === null)).toBe(true);
   });
 
   it("CHART-3: the planned crew is one average at 40h per person-week — no invented curve", () => {

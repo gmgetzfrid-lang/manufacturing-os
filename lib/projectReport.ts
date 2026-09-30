@@ -14,7 +14,7 @@ import { listAccounts, listEntries, computeCostRollup, milestonePctIndex, fmtMon
 import { listChangeOrders, summarizeChangeOrders, CO_REASON_LABEL, type CoReason } from "@/lib/changeOrders";
 import { listTurnoverItems, computeTurnoverProgress } from "@/lib/turnover";
 import { listChecklists, listChecklistItems, computeChecklistProgress } from "@/lib/checklists";
-import { computeForecast } from "@/lib/costSeries";
+import { computeForecast, scheduleSpanFromMilestones } from "@/lib/costSeries";
 import { openPrintWindow } from "@/lib/evidencePack";
 import { liveMilestones, isImportedMilestone, isOverdueMilestone, PROJECT_MILESTONE_READ_LIMIT } from "@/lib/milestoneLiveness";
 
@@ -96,7 +96,7 @@ export async function gatherReportData(orgId: string, projectId: string): Promis
     // The same first rows by planned date the snapshot reads and the Costs
     // tab's capped read returns (PROJECT_MILESTONE_READ_LIMIT), so the EV
     // index — and the CPI — agree; the exact count discloses a larger one.
-    safe(supabase.from("milestones").select("id, name, planned_at, status, percent_complete, source", { count: "exact" })
+    safe(supabase.from("milestones").select("id, name, planned_at, planned_start_at, status, percent_complete, source", { count: "exact" })
       .eq("project_id", projectId).order("planned_at").order("id").limit(PROJECT_MILESTONE_READ_LIMIT)
       .then((r) => (r.error
         ? { rows: [] as Array<Record<string, unknown>>, total: 0 }
@@ -126,10 +126,15 @@ export async function gatherReportData(orgId: string, projectId: string): Promis
   })));
   const rollup = computeCostRollup(accounts, entries, pctIdx);
 
-  const dates = live.map((m) => (m.planned_at ? String(m.planned_at).slice(0, 10) : null)).filter((v): v is string => !!v).sort();
+  // MON-2: the Costs tab's span — earliest task START to latest finish
+  // (planned_at is the finish) — so the run-rate forecast on paper divides
+  // by the same elapsed share as the screen's.
+  const span = scheduleSpanFromMilestones(live.map((m) => ({
+    planned_at: (m.planned_at as string | null) ?? null, planned_start_at: (m.planned_start_at as string | null) ?? null,
+  })));
   const forecast = computeForecast({
     budget: rollup.budget, spent: rollup.spent, cpi: rollup.cpi,
-    scheduleStart: dates[0] ?? null, scheduleEnd: dates[dates.length - 1] ?? null,
+    scheduleStart: span.start, scheduleEnd: span.end,
     today: new Date().toISOString().slice(0, 10),
     fmt: (n) => fmtMoney(n, rollup.currencies[0] ?? "USD"),
   });

@@ -131,6 +131,21 @@ describe("REL-11 · the real interface draws what the example promises", () => {
     expect(both.body.textContent).not.toContain("there's no planned-pace line");
   });
 
+  it("blank budgets and a schedule with nothing posted: an explanation, not flat lines on a '$1' axis", () => {
+    const doc = charts([account({ budget: 0 })], [], { start: "2026-06-01", end: "2026-08-30" });
+    const empty = doc.querySelector('[data-empty="spend-curve"]')!;
+    expect(empty.getAttribute("data-reason")).toBe("no-money");
+    expect(empty.textContent).toContain("there's no money to plot");
+    expect(doc.querySelector("svg[role=img]")).toBeNull();
+    expect(doc.body.textContent).not.toContain("there's no planned-pace line");
+    expect(doc.body.textContent).not.toMatch(/\$1(?!\d)/);
+    // The same with every entry voided.
+    const voided = charts([account({ budget: 0 })], [entry({ status: "void" })], { start: "2026-06-01", end: "2026-08-30" });
+    expect(voided.querySelector('[data-empty="spend-curve"]')!.getAttribute("data-reason")).toBe("no-money");
+    // No dates at all keeps the dates explanation.
+    expect(charts([account({ budget: 0 })], []).querySelector('[data-empty="spend-curve"]')!.getAttribute("data-reason")).toBe("no-dates");
+  });
+
   it("the S-curve draws the budget it plans against — the revised budget when a change order is approved", () => {
     const doc = charts([account({ budget: 200_000 })], [entry({ amount: 20_000 })],
       { start: "2026-06-01", end: "2026-08-30", changes: new Map([["a1", 100_000]]) });

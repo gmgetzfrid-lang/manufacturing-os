@@ -60,6 +60,10 @@ export default function CostsTab({ orgId, projectId, canManage, uid, userEmail, 
   const [milestones, setMilestones] = useState<Array<{ id: string; name: string; pct: number }>>([]);
   const [schedSpan, setSchedSpan] = useState<{ start: string | null; end: string | null }>({ start: null, end: null });
   const [loading, setLoading] = useState(true);
+  // REL-10: set only by a SUCCESSFUL read. Until then accounts and entries
+  // are the initial empty arrays, which the charts would take for an empty
+  // project and draw the EXAMPLE picture over a failed first load.
+  const [loaded, setLoaded] = useState(false);
   const [err, setErr] = useState<string | null>(null);
   const [openAccount, setOpenAccount] = useState<string | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
@@ -103,6 +107,7 @@ export default function CostsTab({ orgId, projectId, canManage, uid, userEmail, 
       setMilestones(rows.map((m) => ({ id: m.id, name: m.name, pct: idx.get(m.id) ?? 0 })));
       // MON-2: earliest task START to latest finish — planned_at is the finish.
       setSchedSpan(scheduleSpanFromMilestones(rows));
+      setLoaded(true);
     } catch (e) {
       setErr((e as Error).message);
     } finally { setLoading(false); }
@@ -111,7 +116,7 @@ export default function CostsTab({ orgId, projectId, canManage, uid, userEmail, 
   }, [orgId, projectId]);
   useEffect(() => { void refresh(); }, [refresh]);
 
-  // Crew curve input: the awarded quote's stated labor hours.
+  // Planned average crew input: the awarded quote's stated labor hours.
   const awardedLaborHours = useMemo(() => {
     const awarded = docs.find((d) => d.kind === "quote" && d.status === "awarded");
     if (!awarded) return null;
@@ -217,11 +222,22 @@ export default function CostsTab({ orgId, projectId, canManage, uid, userEmail, 
         </div>
       )}
 
-      {/* ── The picture: S-curve, forecast sentence, crew curve (or the
-             watermarked EXAMPLE preview until real numbers exist) ── */}
-      <CostCharts rollup={rollup} entries={entries}
-        scheduleStart={schedSpan.start} scheduleEnd={schedSpan.end}
-        awardedLaborHours={awardedLaborHours} />
+      {/* ── The picture: S-curve, forecast sentence, planned average crew,
+             burn by line (or the watermarked EXAMPLE preview while the
+             project has no accounts and no entries). Drawn only from a
+             successful read (REL-10): a failed first load says so here
+             instead of passing the empty initial state off as a new project. ── */}
+      {loaded ? (
+        <CostCharts rollup={rollup} entries={entries}
+          scheduleStart={schedSpan.start} scheduleEnd={schedSpan.end}
+          awardedLaborHours={awardedLaborHours} />
+      ) : (
+        <div data-empty="cost-picture" className="rounded-2xl border border-dashed border-[var(--color-border-strong)] bg-[var(--color-surface)] px-4 py-3 text-[11px] text-[var(--color-text-muted)]">
+          <b className="text-[var(--color-text)]">No cost picture — this project&apos;s cost data couldn&apos;t be read.</b>{" "}
+          The spend curve, forecast and burn by budget line are drawn once it loads.
+          <button type="button" onClick={() => void refresh()} className="ml-2 font-black text-[var(--color-text)] underline hover:no-underline">Try again</button>
+        </div>
+      )}
 
       {/* ── Inbound quotes → AI read → bid tabulation → award ── */}
       <QuotesPanel orgId={orgId} projectId={projectId} canManage={canManage} actor={actor}

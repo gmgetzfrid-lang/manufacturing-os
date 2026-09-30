@@ -14,7 +14,7 @@ import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { renderToStaticMarkup } from "react-dom/server";
 import {
-  SCurveChart, sCurveScale, sCurveTodayX, SCURVE_VIEWBOX, scoreBandColor, ScoreDial, BarList,
+  SCurveChart, sCurveScale, sCurveTodayX, sCurveTodayLabel, SCURVE_VIEWBOX, scoreBandColor, ScoreDial, BarList,
   type SCurvePoint,
 } from "@/components/ui/ChartKit";
 import { vizCat, MiniBars } from "@/components/dashboard/viz";
@@ -186,6 +186,44 @@ describe("CHART-5 · today at today, labelled; gridlines with values; a budget l
     expect(doc.querySelector('[data-series="planned"]')!.getAttribute("stroke-dasharray")).toBe("5 4");
     expect(doc.body.textContent).toContain("Planned pace");
     expect(doc.body.textContent).toContain("Spent $200,000");
+  });
+});
+
+describe("CHART-5 / DEC-52 · the axis and labels say only what the data holds (review fix)", () => {
+  it("a chart with no money in it labels only the zero gridline — never an invented '$1'", () => {
+    expect(sCurveScale([0, 0, 0]).ticks).toEqual([0]);
+    expect(sCurveScale([]).ticks).toEqual([0]);
+    // A schedule, no budget, nothing posted: every value is zero.
+    const flat = buildCostSeries({ budget: 0, scheduleStart: "2026-06-01", scheduleEnd: "2026-08-30", commitments: [], actuals: [] });
+    expect(flat.length).toBeGreaterThanOrEqual(2);
+    const doc = render(React.createElement(SCurveChart, { points: flat, fmt: usd }));
+    expect([...doc.querySelectorAll('[data-mark="grid-label"]')].map((l) => l.textContent)).toEqual(["$0"]);
+    expect(doc.querySelectorAll('[data-mark="grid"]')).toHaveLength(1);
+    expect(doc.body.textContent).not.toContain("$1");
+    // Real money keeps its labelled scale.
+    expect(sCurveScale([0, 0.5]).ticks.length).toBeGreaterThan(1);
+  });
+
+  it("early in the span the Today label drops inside the plot, clear of the top gridline's label", () => {
+    const long = buildCostSeries({
+      budget: 3_000_000, scheduleStart: "2026-01-01", scheduleEnd: "2028-12-30",
+      commitments: [{ date: "2026-02-01", amount: 1_000_000 }], actuals: [{ date: "2026-03-01", amount: 200_000 }],
+    });
+    for (const today of [long[0].date, "2026-01-20", "2026-02-20"]) {
+      const doc = render(React.createElement(SCurveChart, { points: long, fmt: usd, todayIso: today }));
+      const topLabel = [...doc.querySelectorAll('[data-mark="grid-label"]')].reduce((a, b) =>
+        Number(a.getAttribute("y")) <= Number(b.getAttribute("y")) ? a : b);
+      const todayText = doc.querySelector('[data-mark="today"] text')!;
+      const x = Number(doc.querySelector('[data-mark="today"] line')!.getAttribute("x1"));
+      expect(x).toBeLessThan(8 + 56);
+      // Below the top label's line of text (9-unit type), and beside the marker.
+      expect(Number(todayText.getAttribute("y")) - 9).toBeGreaterThanOrEqual(Number(topLabel.getAttribute("y")));
+      expect(todayText.getAttribute("text-anchor")).toBe("start");
+      expect(Number(todayText.getAttribute("x"))).toBeGreaterThan(x);
+    }
+    // Mid-span it stays above the plot, centred on the marker.
+    expect(sCurveTodayLabel(300)).toEqual({ x: 300, y: 9, anchor: "middle" });
+    expect(sCurveTodayLabel(590).anchor).toBe("end");
   });
 });
 

@@ -122,6 +122,67 @@ describe("the printed report's CPI (MON-5 / PM-12)", () => {
   });
 });
 
+// projects-tab MON-2 (report half, J5 CHARTS fix pass): planned_at is a
+// milestone's FINISH. The printed report's run-rate forecast divides by the
+// elapsed share of the SAME span the Costs tab uses — earliest task start to
+// latest finish (lib/costSeries scheduleSpanFromMilestones) — so paper and
+// screen print one EAC. Before: the report sorted planned_at and began its
+// span at the first FINISH (12 June here), printing about $57,895 where the
+// tab said $40,333.
+describe("the printed report's forecast runs over the Costs tab's span (MON-2)", () => {
+  const multiDay = [
+    { id: "m1", name: "Demo", planned_start_at: "2026-06-01T00:00:00+00:00", planned_at: "2026-06-12T00:00:00+00:00", status: "completed", percent_complete: 100, source: "p6" },
+    { id: "m2", name: "Tie-ins", planned_start_at: "2026-07-01T00:00:00+00:00", planned_at: "2026-08-15T00:00:00+00:00", status: "planned", percent_complete: 0, source: "p6" },
+    { id: "m3", name: "Hydrotest", planned_start_at: "2026-09-20T00:00:00+00:00", planned_at: "2026-09-30T00:00:00+00:00", status: "planned", percent_complete: 0, source: "p6" },
+  ];
+
+  it("multi-day tasks, $121,000 budget, $10,000 spent, no CPI, today 1 July: the report's EAC is the tab's", async () => {
+    vi.useFakeTimers({ toFake: ["Date"] });
+    vi.setSystemTime(new Date("2026-07-01T12:00:00Z"));
+    try {
+      state.tables.milestones = multiDay;
+      state.tables.cost_accounts = [
+        { id: "a1", project_id: "p1", name: "Piping", budget: 121_000, currency: "USD", wbs_milestone_id: null, status: "active" },
+      ];
+      state.tables.cost_entries = [
+        { id: "e1", cost_account_id: "a1", project_id: "p1", entry_type: "actual", amount: 10_000, status: "posted", entry_date: "2026-06-20" },
+      ];
+      const d = await gatherReportData("org1", "p1");
+      expect(d.rollup.cpi).toBeNull();
+
+      // The Costs tab's computation: its span (CostsTab.tsx sets it through
+      // scheduleSpanFromMilestones over the same rows) into computeForecast
+      // (CostCharts.tsx).
+      const { computeForecast, scheduleSpanFromMilestones } = await import("@/lib/costSeries");
+      const { fmtMoney } = await import("@/lib/costs");
+      const span = scheduleSpanFromMilestones(multiDay);
+      expect(span).toEqual({ start: "2026-06-01", end: "2026-09-30" });
+      const tab = computeForecast({
+        budget: 121_000, spent: 10_000, cpi: null, scheduleStart: span.start, scheduleEnd: span.end,
+        today: "2026-07-01", fmt: (n) => fmtMoney(n, "USD"),
+      });
+      expect(tab.basis).toBe("run_rate");
+      expect(tab.eac).toBeCloseTo(10_000 / (30 / 121), 6); // 30 of 121 days elapsed → $40,333
+
+      expect(d.forecastSentence).toBe(tab.sentence);
+      expect(d.forecastSentence).toContain(fmtMoney(10_000 / (30 / 121), "USD"));
+      // The finish-only span (12 June → 30 September: 19 of 110 days).
+      expect(d.forecastSentence).not.toContain(fmtMoney(10_000 / (19 / 110), "USD"));
+      expect(renderReportHtml(d)).toContain(tab.sentence!);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("the report reads each milestone's start and takes its span from the shared helper (source pin)", async () => {
+    const fs = await import("node:fs");
+    const src = fs.readFileSync(new URL("../projectReport.ts", import.meta.url), "utf8");
+    expect(src).toMatch(/from\("milestones"\)\.select\("[^"]*\bplanned_start_at\b[^"]*"/);
+    expect(src).toContain("scheduleSpanFromMilestones(live.map(");
+    expect(src).not.toMatch(/\bdates\[0\]/);
+  });
+});
+
 /** A P6-scale schedule: `n` imported activities, one a day, ascending. */
 const bigSchedule = (n: number) => Array.from({ length: n }, (_, i) => ({
   id: `m${String(i).padStart(4, "0")}`,

@@ -126,7 +126,10 @@ export default function CostCharts({ rollup, entries, scheduleStart, scheduleEnd
   // schedule span — the hint says which, every time the line is absent.
   const noBudget = !(rollup.revisedBudget > 0);
   const noSchedule = !scheduleStart || !scheduleEnd;
-  const plannedHint = series.length >= 2 && !series.some((p) => p.planned != null)
+  // DEC-52: a schedule with no budget and no money posted draws flat lines on
+  // a zero axis — nothing to read. Say so instead of drawing it.
+  const noMoney = noBudget && series.every((p) => p.planned == null && p.committed === 0 && p.actual === 0);
+  const plannedHint = !noMoney && series.length >= 2 && !series.some((p) => p.planned != null)
     ? noBudget && noSchedule
       ? "No budget and no schedule dates yet, so there's no planned-pace line — set a budget and add milestones and it appears."
       : noBudget
@@ -145,7 +148,8 @@ export default function CostCharts({ rollup, entries, scheduleStart, scheduleEnd
 
   return (
     <div className="rounded-2xl border border-[var(--color-border)] bg-[var(--color-surface)] p-4 shadow-sm">
-      <CostPictures series={series} fmt={fmt} tickFmt={tickFmt} todayIso={todayIso}
+      <CostPictures series={noMoney ? [] : series} emptyReason={series.length >= 2 ? "no-money" : "no-dates"}
+        fmt={fmt} tickFmt={tickFmt} todayIso={todayIso}
         budget={rollup.revisedBudget} budgetLabel={rollup.approvedChanges !== 0 ? "Revised budget" : "Budget"}
         plannedHint={plannedHint} forecast={forecast} crew={crew} burn={burn} burnTotal={burnLines.length} />
     </div>
@@ -153,8 +157,11 @@ export default function CostCharts({ rollup, entries, scheduleStart, scheduleEnd
 }
 
 /** The one layout both the real picture and the example draw through. */
-function CostPictures({ series, fmt, tickFmt, todayIso, budget, budgetLabel, plannedHint, forecast, crew, burn, burnTotal, example = false }: {
+function CostPictures({ series, emptyReason = "no-dates", fmt, tickFmt, todayIso, budget, budgetLabel, plannedHint, forecast, crew, burn, burnTotal, example = false }: {
   series: SCurvePoint[];
+  /** Why `series` is empty: no dates to draw across, or dates but no money
+   *  (no budget, nothing posted). */
+  emptyReason?: "no-dates" | "no-money";
   fmt: (n: number) => string;
   tickFmt: (n: number) => string;
   todayIso: string;
@@ -179,10 +186,17 @@ function CostPictures({ series, fmt, tickFmt, todayIso, budget, budgetLabel, pla
               <div className="mt-1 text-[10px] text-[var(--color-text-muted)]">{plannedHint}</div>
             )}
           </>
+        ) : emptyReason === "no-money" ? (
+          // A schedule but no budget and nothing posted (right after an
+          // import): no flat line on a zero axis — say what would draw it.
+          <div data-empty="spend-curve" data-reason="no-money" className="rounded-xl border border-dashed border-[var(--color-border-strong)] px-3 py-2.5 text-[11px] text-[var(--color-text-muted)]">
+            <b className="text-[var(--color-text)]">No spend curve yet — there&apos;s no money to plot.</b>{" "}
+            Set a budget on a budget line to draw the planned pace across the schedule, or post a commitment or an actual to start the spent line.
+          </div>
         ) : (
           // REL-11: the budget-only state (the one right after onboarding)
           // explains itself instead of leaving a silent gap.
-          <div data-empty="spend-curve" className="rounded-xl border border-dashed border-[var(--color-border-strong)] px-3 py-2.5 text-[11px] text-[var(--color-text-muted)]">
+          <div data-empty="spend-curve" data-reason="no-dates" className="rounded-xl border border-dashed border-[var(--color-border-strong)] px-3 py-2.5 text-[11px] text-[var(--color-text-muted)]">
             <b className="text-[var(--color-text)]">No spend curve yet — it needs dates.</b>{" "}
             Add or import milestones to draw the planned pace against your budget, or post a commitment or an actual to start the spent line.
           </div>
