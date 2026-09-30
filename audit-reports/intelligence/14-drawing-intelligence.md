@@ -65,6 +65,21 @@ lib/knowledgeSourceSync.ts:259 — `source_rev: version.revision_label,` (the ho
 - [ ] `recordAudit` reads the revision from `knowledge_documents.source_rev` (what was indexed), not `documents.rev` (what is current), and refuses to record when the two disagree
 - [ ] A sheet whose `source_version_id` differs from the controlled doc's `current_version_id` is reported as 'skipped' with a reason, never 'passed'
 
+**Partial (2026-09-30, intelligence Round G).** Criteria 1 and 2 landed with ING-3, and both were reproduced first against the pre-fix code. A re-read that extracted nothing left both old entity rows and still stamped the document `ready`.
+
+- **The refresh.** `lib/knowledgeSourceSync.ts` drops the document's page entities, machine mentions and cached traces through `resetKnowledgeIndex` (`lib/knowledgeIngest.ts`). A failed entity purge is treated exactly like `chunkErr`: the refresh is skipped and reported, and the row keeps the old version so the next pass repeats it.
+- **The ingest.** In `ingestKnowledgeDocBatch` the entity range clear moved OUTSIDE the `entityRows.length > 0` guard and no longer swallows its own error. A missing table skips the tag layer; any other failure stops the batch before `pages_indexed` moves.
+
+Tests: `lib/__tests__/ingestLock.test.ts` ("a re-read that extracts nothing still clears the range's old entities", "a failed range clear stops the batch before pages_indexed moves"), and `lib/__tests__/sourceSync.test.ts` ("a failed entity purge skips the refresh…").
+
+**Done-when.**
+- ✓ The refresh deletes `knowledge_page_entities` alongside `knowledge_chunks` and treats a failure like `chunkErr`.
+- ✓ The entity delete runs outside the `entityRows.length > 0` guard and its error is checked.
+- ✗ Not done here. `recordAudit` should read the revision from `knowledge_documents.source_rev` and refuse to record when that disagrees with the current revision. That code is in `app/api/knowledge/drawing/route.ts` and `lib/drawingAuditLog.ts`, which are I-07's files (DWG-6 / DWG-13 key the verdict by revision).
+- ✗ Not done here. A sheet whose `source_version_id` differs from the controlled document's `current_version_id` is not yet reported as `skipped`. That is the same file, handed to I-07.
+
+**Scope / residual.** With criteria 1 and 2 in place, a rev-up no longer leaves Rev C's tags under Rev D. The audit therefore reads the current revision's extraction, or none if the sheet is still re-indexing. But the revision it FILES is still `documents.rev`. OPEN until I-07 lands criteria 3 and 4.
+
 ---
 
 <a id="dwg-2"></a>

@@ -498,6 +498,22 @@ CitationOut read in full at ask/route.ts:1627-1650 — enumerated every field, n
 - [ ] The ask prompt is told which passages are transcriptions so it can hedge alphanumerics it cannot verify
 - [ ] Title-block fields parsed out of a vision transcript are never treated as authoritative document identity without a human confirming them
 
+**Partial (2026-09-30, intelligence Round G).** Confirmed first by reading: no chunk column recorded how its text was obtained. What landed:
+
+- Migration `20261122` adds `knowledge_chunks.source TEXT NOT NULL DEFAULT 'text'`, with a validated CHECK `source IN ('text','vision')`, and `source_model TEXT`.
+- `ingestKnowledgeDocBatch` (`lib/knowledgeIngest.ts`) writes both on every chunk row. A page whose vision transcript was used gets `'vision'` and the model that wrote the transcript. Every other page gets `'text'` and NULL, including a page whose vision call failed and kept its text layer.
+- On a database without the columns, the insert strips them and indexes as before.
+
+Tests: `lib/__tests__/ingestLock.test.ts` ("chunks say 'vision' with the model that read them, or 'text'", "a database without the provenance columns still indexes"), and `lib/__tests__/intelRoundGIngestMigration.test.ts`.
+
+**Done-when.**
+- ✓ `knowledge_chunks` records how its text was obtained: text layer or vision transcription, plus the model id.
+- ✗ Not done here. `CitationOut` carrying the field, and the answer UI marking vision-derived quotes, are in `app/api/knowledge/ask/route.ts` (I-03's file; its PR-4 wording waits on this column) and the answer surfaces.
+- ✗ Not done here. Telling the ask prompt which passages are transcriptions is the same route, I-03's.
+- ✗ Not done here. Treating title-block fields parsed from a vision transcript (kind `self` rows) as authoritative identity only after a human confirms them belongs to the consumers of those rows: I-07 (PR-11, the title block read only from the border) and I-11 (GAP-301, the sheet address).
+
+**Scope / residual.** Pending migration: `20261122_intel_roundG_ingest_integrity.sql`. Chunks written before it read `'text'`, because nobody recorded otherwise. The pre-apply inventory counts the documents with vision-read pages, whose older chunks stay ambiguous until their next re-index. OPEN until criteria 2–4 land.
+
 ---
 
 <a id="gov-10"></a>
