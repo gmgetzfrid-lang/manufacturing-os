@@ -237,8 +237,57 @@ describe("ING-8 — a failed batch is retried automatically, and says when", () 
     expect(again.status).toBe(409);
     const blocked = await again.json();
     expect(blocked).toMatchObject({ failureRetryBlocked: true, failureRetryAfter: body.retryAfter });
-    expect(blocked.error).toMatch(/^entity insert failed: connection reset by peer — indexing is tried again automatically/);
+    expect(blocked.error).toMatch(/^entity insert failed: connection reset by peer — attempt 1 of 3\. Indexing is tried again automatically on the next indexing pass/);
     expect(rowsOf("knowledge_documents")[0]).toMatchObject({ status: "indexing", pages_indexed: 1, ingest_claimed_by: null });
+  });
+});
+
+describe("ING-8 — a person's explicit re-run (retryNow)", () => {
+  const sheets = [drawingSheet(1, ["V-101", "P-201A", "E-301"]), drawingSheet(2, ["V-102", "P-202A", "E-302"])];
+  const inBackoff = async (over: Row = {}) => {
+    seed(docRow({
+      status: "indexing", pages_indexed: 1, page_count: 2, ingest_failures: 1,
+      error: "entity insert failed: connection reset by peer — attempt 1 of 3.",
+      vision_retry_after: new Date(Date.now() + 600_000).toISOString(), ...over,
+    }));
+    db.tables.knowledge_chunks = [{ id: "c1", document_id: DOC, org_id: "o1", library_id: "kl-1", page: 1, seq: 0, content: "sheet 1" }];
+    r2.objects.set(KEY, await makePdf(sheets));
+  };
+
+  it("inside the back-off the indicator's plain POST waits; Resume's retryNow runs the batch at once, audited first", async () => {
+    await inBackoff();
+    const plain = await post({ documentId: DOC });
+    expect(plain.status).toBe(409);
+    expect(rowsOf("audit_logs")).toEqual([]);
+
+    const res = await post({ documentId: DOC, retryNow: true });
+    expect(res.status).toBe(200);
+    expect(await res.json()).toMatchObject({ done: true, failureRetryBlocked: false });
+    expect(rowsOf("audit_logs").map((a) => a.action)).toEqual(["KNOWLEDGE_DOC_RETRY_NOW", "KNOWLEDGE_DOC_INDEXED"]);
+    expect(rowsOf("audit_logs")[0]).toMatchObject({
+      resource_id: DOC, user_id: "u-ctrl", org_id: "o1",
+      details: expect.objectContaining({ failures: 1, fileKey: KEY, lastError: expect.stringMatching(/^entity insert failed/) }),
+    });
+    expect(rowsOf("knowledge_documents")[0]).toMatchObject({ status: "ready", ingest_failures: 0, error: null, vision_retry_after: null });
+  });
+
+  it("a re-run that cannot be recorded runs nothing", async () => {
+    await inBackoff();
+    db.hooks.push((op) => op.table === "audit_logs" && op.kind === "insert"
+      ? { error: { code: "42501", message: "permission denied for table audit_logs" } } : undefined);
+    const res = await post({ documentId: DOC, retryNow: true });
+    expect(res.status).toBe(500);
+    expect((await res.json()).error).toMatch(/The re-run could not be recorded, so nothing was run: permission denied/);
+    expect(rowsOf("knowledge_documents")[0]).toMatchObject({ status: "indexing", pages_indexed: 1, ingest_failures: 1, ingest_claimed_by: null });
+  });
+
+  it("with no back-off in force it is an ordinary batch — nothing is recorded — and it stays a controller's action", async () => {
+    await inBackoff({ ingest_failures: 0, error: null, vision_retry_after: null });
+    const viewer = await post({ documentId: DOC, retryNow: true }, "viewer");
+    expect(viewer.status).toBe(403);
+    const res = await post({ documentId: DOC, retryNow: true });
+    expect(res.status).toBe(200);
+    expect(rowsOf("audit_logs").map((a) => a.action)).toEqual(["KNOWLEDGE_DOC_INDEXED"]);
   });
 });
 

@@ -30,7 +30,12 @@
 // AI vision could not read that cannot be retried right now (no key, or the
 // provider refused again), and a failed batch still waiting out its back-off,
 // answer 409 with the plain reason — the document keeps its index and its
-// status, never 'error' (ING-6, ING-8).
+// status, never 'error' (ING-6, ING-8). The route cannot tell a person's
+// click from the automatic loops (the library page's, the app-shell
+// indicator's), so a person's explicit re-run says so: `retryNow: true`
+// skips a failed batch's back-off, audited first (KNOWLEDGE_DOC_RETRY_NOW).
+// The library page's Resume is to pass it (I-02); the automatic loops never
+// do.
 
 import { randomUUID } from "node:crypto";
 import { NextRequest, NextResponse } from "next/server";
@@ -38,7 +43,7 @@ import { supabaseAdmin } from "@/lib/supabaseAdmin";
 import { openAiKey } from "@/lib/ai/keyVault";
 import {
   ingestKnowledgeDocBatch, refuseNonPdf, reindexLibraryChunks, onDocumentReady, markIngestFailed,
-  claimIngestLease, releaseIngestLease,
+  claimIngestLease, releaseIngestLease, failureBackoffUntil,
   type VisionContext, type IngestBatchResult,
 } from "@/lib/knowledgeIngest";
 import { memberHoldsAny } from "@/lib/roleHeld";
@@ -78,7 +83,7 @@ export async function POST(req: NextRequest) {
   const { data: { user }, error: authError } = await supabaseAdmin.auth.getUser(authHeader.slice(7));
   if (authError || !user) return bad("Unauthorized", 401);
 
-  let body: { documentId?: string; action?: string; libraryId?: string; chunker?: number; dryRun?: boolean };
+  let body: { documentId?: string; action?: string; libraryId?: string; chunker?: number; dryRun?: boolean; retryNow?: boolean };
   try { body = await req.json(); } catch { return bad("Expected JSON body"); }
   if (body.action === "reindex") {
     return reindex(String(body.libraryId ?? "").trim(), body.chunker, user.id, body.dryRun === true, deadlineMs);
@@ -105,6 +110,29 @@ export async function POST(req: NextRequest) {
 
   if (doc.status === "ready") {
     return NextResponse.json({ done: true, pageCount: doc.page_count, pagesIndexed: doc.pages_indexed });
+  }
+
+  // ── A person's explicit re-run (ING-8) ─────────────────────────────────
+  // `retryNow` skips a failed batch's back-off: someone fixed the cause (a
+  // connection, their AI budget) and wants it tried now, not on the next
+  // pass. Controller-only like the rest of this route, and audited FIRST — a
+  // re-run that cannot be recorded runs nothing. Only when a back-off is
+  // actually in force: otherwise it is an ordinary batch, and nothing is
+  // recorded.
+  let retryNow = false;
+  const backoffUntil = body.retryNow === true ? failureBackoffUntil(doc as Record<string, unknown>) : null;
+  if (backoffUntil) {
+    const { error: auditErr } = await supabaseAdmin.from("audit_logs").insert({
+      action: "KNOWLEDGE_DOC_RETRY_NOW",
+      resource_type: "knowledge_document", resource_id: documentId,
+      org_id: doc.org_id, user_id: user.id,
+      details: {
+        name: doc.name, fileKey: doc.file_key, sourceVersionId: doc.source_version_id ?? null,
+        failures: doc.ingest_failures, backoffUntil, lastError: doc.error,
+      },
+    });
+    if (auditErr) return bad(`The re-run could not be recorded, so nothing was run: ${auditErr.message}`, 500);
+    retryNow = true;
   }
 
   // ── Vision fallback context ────────────────────────────────────────────
@@ -175,12 +203,12 @@ export async function POST(req: NextRequest) {
       // unclaimed on a pre-20261122 database.
       ...("source_version_id" in doc ? { source_version_id: (doc.source_version_id as string | null) ?? null } : {}),
     };
-    let res: IngestBatchResult = await ingestKnowledgeDocBatch(row, vision, deadlineMs);
+    let res: IngestBatchResult = await ingestKnowledgeDocBatch(row, vision, deadlineMs, { retryNow });
     // The loser WAITS (ING-2): the other driver holds the claim for one batch
     // at most. Look again until it lets go, while a batch still fits.
     while (res.busy && Date.now() + BUSY_POLL_MS + MIN_BATCH_MS < deadlineMs) {
       await new Promise((r) => setTimeout(r, BUSY_POLL_MS));
-      res = await ingestKnowledgeDocBatch(row, vision, deadlineMs);
+      res = await ingestKnowledgeDocBatch(row, vision, deadlineMs, { retryNow });
     }
 
     // ── Not a PDF at all (ING-9). An upload leaves nothing behind; a

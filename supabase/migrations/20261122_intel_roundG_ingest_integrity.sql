@@ -14,7 +14,8 @@
 --      none — every row starts unclaimed. ingest_failures: failed batches in
 --      a row (ING-8) — a failed batch is retried automatically after a
 --      back-off, and only the third failure in a row makes the document
---      'error'; a committed batch zeroes it.
+--      'error'; only a batch that did work (read a page, tried a vision
+--      retry, or finished the document) zeroes it.
 --   2. HONEST COUNTERS. empty_pages (pages with no extractable text, kept per
 --      document — ING-11); vision_failed_pages (pages whose AI-vision read
 --      failed, retried before the document may be 'ready' — ING-6; the

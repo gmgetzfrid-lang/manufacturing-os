@@ -70,7 +70,7 @@ vi.mock("@/lib/ai/keyVault", () => ({ openAiKey: (k: string) => k }));
 import {
   ingestKnowledgeDocBatch, drainKnowledgeIngestQueue, claimIngestLease, resetKnowledgeIndex,
   INGEST_LEASE_TTL_MS, VISION_RETRY_BACKOFF_MS, visionRetryMessage, type VisionContext,
-  INGEST_FAILURE_MAX_ATTEMPTS, ingestFailureBackoffMs,
+  INGEST_FAILURE_MAX_ATTEMPTS, ingestFailureBackoffMs, markIngestFailed, failureBackoffUntil,
 } from "@/lib/knowledgeIngest";
 import { AGREEMENT_VERSION } from "@/lib/ai/pricing";
 
@@ -321,7 +321,9 @@ describe("ING-1 — a superseded batch's failure never lands on the new revision
     expect(out.errors).toHaveLength(1);
     // Nothing indexed yet: it stays queued ('stale'), counted, backing off.
     expect(docRow()).toMatchObject({ status: "stale", source_version_id: "ver-3", pages_indexed: 0, ingest_failures: 1 });
-    expect(String(docRow().error)).toMatch(/^entity insert failed: connection reset by peer — indexing is tried again automatically in about 10 minutes \(attempt 1 of 3\)\.$/);
+    // It says when honestly: no sooner than the back-off, and on the next
+    // indexing pass — an open controller tab, or the nightly cron.
+    expect(String(docRow().error)).toMatch(/^entity insert failed: connection reset by peer — attempt 1 of 3\. Indexing is tried again automatically on the next indexing pass \(while an Admin or Doc Control member has the app open, or the nightly maintenance run\), no sooner than about 10 minutes from now\.$/);
     expect(Date.parse(String(docRow().vision_retry_after))).toBeGreaterThan(Date.now());
     // A failed batch writes nothing: its chunks went with it.
     expect(rowsOf("knowledge_chunks")).toHaveLength(0);
@@ -426,7 +428,7 @@ describe("ING-8 — the entity insert ladder", () => {
     // re-ran it. Now it stays 'indexing' (its first two sheets in Ask), with
     // the failure, the count and a back-off on the row.
     expect(docRow()).toMatchObject({ status: "indexing", pages_indexed: 2, ingest_failures: 1, ingest_claimed_by: null });
-    expect(String(docRow().error)).toMatch(/^entity insert failed: connection reset by peer — indexing is tried again automatically in about 10 minutes \(attempt 1 of 3\)\. The pages indexed so far stay searchable meanwhile\.$/);
+    expect(String(docRow().error)).toMatch(/^entity insert failed: connection reset by peer — attempt 1 of 3\. Indexing is tried again automatically on the next indexing pass \(.*nightly maintenance run\), no sooner than about 10 minutes from now\. The pages indexed so far stay searchable meanwhile\.$/);
     expect(Date.parse(String(docRow().vision_retry_after))).toBeGreaterThanOrEqual(Date.now() + ingestFailureBackoffMs(1) - 5_000);
     expect(retrievable()).toBe(true);
 
@@ -450,7 +452,7 @@ describe("ING-8 — the entity insert ladder", () => {
   it("the interactive driver honours the back-off too: nothing is downloaded, and the reason comes back", async () => {
     await midway();
     Object.assign(docRow(), {
-      ingest_failures: 1, error: "entity insert failed: connection reset by peer — indexing is tried again automatically in about 10 minutes (attempt 1 of 3).",
+      ingest_failures: 1, error: "entity insert failed: connection reset by peer — attempt 1 of 3. Indexing is tried again automatically on the next indexing pass, no sooner than about 10 minutes from now.",
       vision_retry_after: new Date(Date.now() + 600_000).toISOString(),
     });
     r2.objects.clear();
@@ -484,6 +486,104 @@ describe("ING-8 — the entity insert ladder", () => {
     const res = await ingestKnowledgeDocBatch(asArg(docRow()));
     expect(res.done).toBe(true);
     expect(docRow()).toMatchObject({ status: "ready", ingest_failures: 0, error: null, vision_retry_after: null });
+  });
+
+  // The bound is real only if nothing but work clears the count (review fix
+  // pass 4: a no-op commit and a keyless park used to zero it, so a failure
+  // that persists was retried — and its vision pages re-billed — without end).
+  const attempt2 = "entity insert failed: connection reset by peer — attempt 2 of 3. Indexing is tried again automatically on the next indexing pass, no sooner than about 30 minutes from now.";
+
+  it("a batch that stops for time before its first page did nothing: the failure's count, message and back-off stay, and the next failure is the third", async () => {
+    // The reviewer's probe: a lapsed back-off, and the next page needs AI
+    // vision with 10 s left — the cron drain's tail, or the route after a
+    // busy wait. The page is never started.
+    await seed([drawingSheet(1, ["V-101", "P-201A", "E-301"]), drawingSheet(2, ["V-102", "P-202A", "E-302"]), null], {
+      status: "indexing", pages_indexed: 2, page_count: 3,
+    });
+    db.tables.knowledge_chunks = [1, 2].map((p) => ({ id: `c${p}`, document_id: DOC, org_id: "o1", library_id: "kl-1", page: p, seq: 0, content: `sheet ${p}` }));
+    const lapsed = new Date(Date.now() - 1000).toISOString();
+    Object.assign(docRow(), { ingest_failures: 2, error: attempt2, vision_retry_after: lapsed });
+    vision.impl = async (page) => ({ text: transcript(page), usage: { inputTokens: 1, outputTokens: 1 }, model: "vision-tier" });
+    const res = await ingestKnowledgeDocBatch(asArg(docRow()), visionCtx(), Date.now() + 10_000);
+    expect(res).toMatchObject({ stoppedForTime: true, resumeAt: 2, done: false, visionPages: 0 });
+    expect(vision.calls).toEqual([]);
+    // It used to commit ingest_failures 0 and error null: the record gone,
+    // and the bound restarted, with no retry having run.
+    expect(docRow()).toMatchObject({
+      status: "indexing", pages_indexed: 2, ingest_failures: 2, error: attempt2, vision_retry_after: lapsed, ingest_claimed_by: null,
+    });
+    // So the next real failure is the third in a row: 'error', for a person.
+    db.hooks.push((op) => op.table === "knowledge_page_entities" && op.kind === "insert"
+      ? { error: { code: "08006", message: "connection reset by peer" } } : undefined);
+    const failed = await ingestKnowledgeDocBatch(asArg(docRow()), visionCtx()).then(() => null, (e: unknown) => e);
+    expect(failed).toBeInstanceOf(Error);
+    expect(await markIngestFailed(asArg(docRow()), failed)).toMatchObject({ marked: true, retryAfter: null });
+    expect(docRow()).toMatchObject({ status: "error", ingest_failures: 3, vision_retry_after: null });
+  });
+
+  it("a driver without a key parking the document between failed retry batches never resets the count: the third failure is 'error', after three vision reads", async () => {
+    // The reviewer's other probe: a document at its vision-retry stage whose
+    // chunk insert fails every time, driven alternately by a controller with
+    // a key and a tab without one. It used to go on for ever — every with-key
+    // attempt re-billing the page, every keyless park zeroing the count.
+    await seed([null, prosePage("bolting")], { status: "indexing", pages_indexed: 2, page_count: 2, vision_failed_pages: [1] });
+    db.tables.knowledge_chunks = [{ id: "c-2", document_id: DOC, org_id: "o1", library_id: "kl-1", page: 2, seq: 0, content: "bolting text" }];
+    vision.impl = async (page) => ({ text: transcript(page), usage: { inputTokens: 1, outputTokens: 1 }, model: "vision-tier" });
+    db.hooks.push((op) => op.table === "knowledge_chunks" && op.kind === "insert"
+      ? { error: { code: "08006", message: "connection reset by peer" } } : undefined);
+    for (let attempt = 1; attempt <= INGEST_FAILURE_MAX_ATTEMPTS; attempt++) {
+      const failed = await ingestKnowledgeDocBatch(asArg(docRow()), visionCtx()).then(() => null, (e: unknown) => e);
+      expect(String((failed as Error).message)).toMatch(/chunk insert failed: connection reset by peer/);
+      await markIngestFailed(asArg(docRow()), failed);
+      expect(docRow().ingest_failures).toBe(attempt);
+      if (attempt === INGEST_FAILURE_MAX_ATTEMPTS) break;
+      backoffLapses();
+      // The keyless tab: it says why on the row — and keeps the count.
+      const parked = await ingestKnowledgeDocBatch(asArg(docRow()));
+      expect(parked.visionRetryBlocked).toBe(true);
+      expect(docRow()).toMatchObject({ status: "indexing", ingest_failures: attempt });
+      expect(String(docRow().error)).toMatch(/retrying needs an AI key/);
+    }
+    expect(vision.calls).toEqual([1, 1, 1]);
+    expect(docRow()).toMatchObject({ status: "error", ingest_failures: 3, vision_retry_after: null });
+  });
+
+  it("a retry pass with no page left to try this round parks without clearing a failed batch's count", async () => {
+    await seed([null, prosePage("bolting")], {
+      status: "indexing", pages_indexed: 2, page_count: 2, vision_failed_pages: [1], vision_retry_tried: [1],
+      ingest_failures: 1, error: "chunk insert failed: connection reset by peer — attempt 1 of 3.", vision_retry_after: new Date(Date.now() - 1000).toISOString(),
+    });
+    vision.impl = async (page) => ({ text: transcript(page), usage: { inputTokens: 1, outputTokens: 1 }, model: "vision-tier" });
+    const res = await ingestKnowledgeDocBatch(asArg(docRow()), visionCtx());
+    expect(res.visionRetryBlocked).toBe(true);
+    expect(vision.calls).toEqual([]);
+    expect(docRow()).toMatchObject({ ingest_failures: 1, vision_retry_tried: [], status: "indexing" });
+  });
+
+  it("a person's explicit re-run (retryNow) skips the back-off; no automatic driver does", async () => {
+    await midway();
+    const until = new Date(Date.now() + 600_000).toISOString();
+    Object.assign(docRow(), { ingest_failures: 1, error: "entity insert failed: connection reset by peer — attempt 1 of 3.", vision_retry_after: until });
+    expect(failureBackoffUntil(docRow())).toBe(until);
+    const blocked = await ingestKnowledgeDocBatch(asArg(docRow()));
+    expect(blocked).toMatchObject({ failureRetryBlocked: true, failureRetryAfter: until });
+    const res = await ingestKnowledgeDocBatch(asArg(docRow()), undefined, undefined, { retryNow: true });
+    expect(res.done).toBe(true);
+    expect(docRow()).toMatchObject({ status: "ready", ingest_failures: 0, error: null, vision_retry_after: null });
+  });
+
+  it("a failure record another writer cleared holds nothing back: the drawing rebuild's own reset nulls the message, and the rebuilt index runs", async () => {
+    // What app/api/knowledge/drawing/route.ts writes today (I-07's file):
+    // status, pages_indexed, page_count, last_section and error — not the
+    // count, not the back-off.
+    await seed([drawingSheet(1, ["V-101", "P-201A", "E-301"]), drawingSheet(2, ["V-102", "P-202A", "E-302"])], {
+      status: "stale", pages_indexed: 0, page_count: null, last_section: null, error: null,
+      ingest_failures: 2, vision_retry_after: new Date(Date.now() + 600_000).toISOString(),
+    });
+    expect(failureBackoffUntil(docRow())).toBeNull();
+    const res = await ingestKnowledgeDocBatch(asArg(docRow()));
+    expect(res).toMatchObject({ done: true, failureRetryBlocked: false });
+    expect(docRow()).toMatchObject({ status: "ready", ingest_failures: 0, vision_retry_after: null });
   });
 
   it("a failed library read never picks the chunker: the batch stops (and is retried) rather than stamping chunker 1", async () => {
@@ -551,6 +651,42 @@ describe("ING-1 — a withdrawal that fails is said, never dropped", () => {
     expect(docRow()).toMatchObject({ status: "stale", pages_indexed: 0, file_key: "orgs/o1/dc/rev4.pdf", error: null });
     expect(rowsOf("knowledge_chunks")).toHaveLength(0);
     expect(rowsOf("knowledge_page_entities")).toHaveLength(0);
+  });
+});
+
+describe("ING-1 — the legacy re-queue lands only on the row it checked", () => {
+  it("unclaimed (pre-20261122): a new-file batch that commits between the check and the re-queue keeps its pages", async () => {
+    const doc = await seed([drawingSheet(1, ["V-101", "P-201A", "E-301"]), prosePage("bolting")],
+      { source_document_id: "dc-1", source_version_id: "ver-3", source_rev: "3" });
+    const legacyCols = ["ingest_claimed_by", "ingest_claimed_at", "empty_pages", "vision_failed_pages", "vision_partial_accepted", "chunk_version", "vision_retry_after", "vision_retry_tried", "ingest_failures"];
+    db.missingColumns.knowledge_documents = legacyCols;
+    const legacy = Object.fromEntries(Object.entries(doc).filter(([k]) => !legacyCols.includes(k)));
+    db.tables.knowledge_documents = [{ ...legacy }];
+    let repointed = false;
+    let committed = false;
+    db.hooks.push((op) => {
+      // Rev 4's first batch has read page 1 when the Rev 3 batch commits…
+      if (!repointed && op.table === "knowledge_documents" && op.kind === "update" && "page_count" in (op.payload as Row)) {
+        repointed = true;
+        Object.assign(docRow(), { file_key: "orgs/o1/dc/rev4.pdf", source_version_id: "ver-4", source_rev: "4", pages_indexed: 1, page_count: 2, status: "indexing" });
+        return;
+      }
+      // …and its second batch commits page 2 just as the re-queue starts.
+      if (repointed && !committed && op.table === "knowledge_documents" && op.kind === "update" && "ingest_claimed_by" in (op.payload as Row)) {
+        committed = true;
+        db.tables.knowledge_chunks.push({ id: "rev4-p2", document_id: DOC, org_id: "o1", library_id: "kl-1", page: 2, seq: 0, content: "rev 4 page 2" });
+        Object.assign(docRow(), { pages_indexed: 2 });
+      }
+    });
+    db.hooks.push((op, filters) =>
+      op.kind === "delete" && (op.table === "knowledge_chunks" || op.table === "knowledge_page_entities") && filters.some((f) => f.op === "in" && f.col === "id")
+        ? { error: { code: "57014", message: "canceling statement due to statement timeout" } } : undefined);
+    await expect(ingestKnowledgeDocBatch(asArg(legacy))).rejects.toThrow(/could not be withdrawn: .* — it could not be re-queued \(another driver moved it first\)/);
+    expect(committed).toBe(true);
+    // Before, the re-queue reset the row and deleted every chunk under the
+    // new batch's commit — Rev 4 pages recorded with nothing indexed.
+    expect(docRow()).toMatchObject({ file_key: "orgs/o1/dc/rev4.pdf", pages_indexed: 2, status: "indexing" });
+    expect(rowsOf("knowledge_chunks").some((c) => c.id === "rev4-p2")).toBe(true);
   });
 });
 
@@ -639,6 +775,23 @@ describe("ING-6 — a failed vision page is never silently 'read'", () => {
     expect(Date.parse(String(docRow().vision_retry_after))).toBeLessThanOrEqual(Date.now());
     expect(retrievable()).toBe(true);
     expect(rowsOf("knowledge_chunks").map((c) => c.id)).toEqual(["c-2"]);
+  });
+
+  it("a keyless driver that finds its own reason already on the row gives the claim back and writes nothing else", async () => {
+    const doc = await awaitingRetry();
+    r2.objects.clear();
+    await ingestKnowledgeDocBatch(asArg(doc));            // the first park says why
+    const said = { error: docRow().error, vision_retry_after: docRow().vision_retry_after };
+    db.ops = [];
+    const again = await ingestKnowledgeDocBatch(asArg(docRow()));
+    expect(again).toMatchObject({ visionRetryBlocked: true, visionRetryMessage: said.error, visionRetryAfter: null });
+    // The app-shell indicator asks every two minutes from every open tab:
+    // only the claim and its release reach the row.
+    const writes = db.ops.filter((o) => o.table === "knowledge_documents" && o.kind === "update");
+    expect(writes.map((w) => Object.keys(w.payload as Row).sort())).toEqual([
+      ["ingest_claimed_at", "ingest_claimed_by"], ["ingest_claimed_at", "ingest_claimed_by"],
+    ]);
+    expect(docRow()).toMatchObject({ ...said, status: "indexing", ingest_claimed_by: null });
   });
 
   it("the cron drain without a sponsored key does the same — never 'error', never billed", async () => {

@@ -34,7 +34,9 @@
 // number of times: the failure is written on the row with a back-off
 // (markIngestFailed), the document keeps its status — an 'indexing' document
 // stays retrievable — and only after INGEST_FAILURE_MAX_ATTEMPTS failures in a
-// row does it become 'error', for a person.
+// row does it become 'error', for a person. Only a batch that did work clears
+// the count; one that did nothing (it stopped before its first page, or a
+// driver without an AI key parked it) leaves it, so the bound holds.
 
 import { randomUUID } from "node:crypto";
 import { GetObjectCommand, DeleteObjectCommand } from "@aws-sdk/client-s3";
@@ -183,7 +185,7 @@ type KnowledgeDocRow = {
   /** Failed vision pages whose retry failed again since the last back-off —
    *  the current round (ING-6). */
   vision_retry_tried?: number[] | null;
-  /** Failed batches in a row (ING-8); a committed batch zeroes it. */
+  /** Failed batches in a row (ING-8); only a batch that did work zeroes it. */
   ingest_failures?: number | null;
   /** The controlled document a mirror reflects (for the mention pass). */
   source_document_id?: string | null;
@@ -614,24 +616,51 @@ export class IngestBatchError extends Error {
 /** Failed batches in a row that are retried automatically (ING-8). The
  *  bound is on re-billing: a batch that fails after its page loop has read
  *  up to its vision budget, and each retry reads those pages again — so at
- *  most this many times, then the document is 'error' and a person decides. */
+ *  most this many times, then the document is 'error' and a person decides.
+ *  "In a row" means with no work in between: the count is cleared only by a
+ *  batch that read a page, tried a vision retry or finished the document
+ *  (its commit, or a retry pass's park) — never by one that stopped before
+ *  its first page, nor by a driver without an AI key parking the document. */
 export const INGEST_FAILURE_MAX_ATTEMPTS = 3;
 
-/** How long a failed batch waits before any driver tries it again: ten
+/** Where the next automatic attempt comes from: nothing runs on a timer.
+ *  An open app tab of an Admin or Doc Control member drives indexing every
+ *  two minutes; otherwise the maintenance cron's drain runs once a day
+ *  (vercel.json, 03:00 UTC). */
+const NEXT_INDEXING_PASS =
+  "on the next indexing pass (while an Admin or Doc Control member has the app open, or the nightly maintenance run)";
+
+/** How long a failed batch waits before any driver may try it again: ten
  *  minutes after the first failure, thirty after the second. Long enough
  *  that the app-shell indicator (every open tab, every two minutes) and the
- *  library page cannot hot-retry a failure; short enough that a transient
- *  one (a connection reset, a statement timeout under load) heals the same
- *  hour, on the cron or the next tab that looks. */
+ *  library page cannot hot-retry a failure. It is a floor, not a schedule:
+ *  the retry comes on the next indexing pass after it — within minutes while
+ *  a controller has the app open, otherwise the nightly maintenance run, so
+ *  a failure no one is watching is next tried the following night, and its
+ *  third attempt (the move to 'error') comes about two days after the first. */
 export const ingestFailureBackoffMs = (attempt: number): number =>
   10 * 60_000 * 3 ** Math.max(0, attempt - 1);
 
 /** The plain-language record of a failed batch that will be retried. */
 export function ingestFailureMessage(cause: string, attempt: number, retryAfterMs: number, searchable: boolean): string {
   const mins = Math.max(1, Math.round(retryAfterMs / 60_000));
-  return `${cause} — indexing is tried again automatically in about ${mins} minutes ` +
-    `(attempt ${attempt} of ${INGEST_FAILURE_MAX_ATTEMPTS}).` +
+  return `${cause} — attempt ${attempt} of ${INGEST_FAILURE_MAX_ATTEMPTS}. ` +
+    `Indexing is tried again automatically ${NEXT_INDEXING_PASS}, no sooner than about ${mins} minutes from now.` +
     (searchable ? " The pages indexed so far stay searchable meanwhile." : "");
+}
+
+/** When a failed batch's back-off (ING-8) still holds this document back:
+ *  the time it lapses, or null. It holds only while the row carries the
+ *  failure's record — the count AND its message. A writer that cleared the
+ *  message without the count (the drawing rebuild's own reset, until I-07
+ *  moves it onto resetKnowledgeIndex, which zeroes both) releases it. */
+export function failureBackoffUntil(
+  row: { ingest_failures?: unknown; error?: unknown; vision_retry_after?: unknown },
+  nowMs: number = Date.now(),
+): string | null {
+  if (!(Number(row.ingest_failures ?? 0) > 0) || row.error == null) return null;
+  const after = Date.parse(String(row.vision_retry_after ?? ""));
+  return Number.isFinite(after) && after > nowMs ? String(row.vision_retry_after) : null;
 }
 
 /** Record a failed batch on its document — the route's and the cron drain's
@@ -643,11 +672,16 @@ export function ingestFailureMessage(cause: string, attempt: number, retryAfterM
  *      stays in Ask; one with nothing indexed yet stays 'pending' / 'stale'
  *      — and carries the message, the count (`ingest_failures`) and a back-off
  *      (`vision_retry_after`, ingestFailureBackoffMs) that every driver
- *      honours before it tries the document again. A committed batch clears
- *      all three.
+ *      honours before it tries the document again (failureBackoffUntil) —
+ *      except a person's explicit re-run (`retryNow`). A batch that did work
+ *      clears all three; one that did nothing leaves them.
  *    - At the bound, for a failure retrying cannot mend (a damaged PDF), or
  *      on a database without 20261122 (nowhere to count): `status: 'error'`
- *      with the message, for a person to re-run.
+ *      with the message, for a person to re-run. That takes the whole
+ *      document out of Ask until they do — accepted (DEC-54 item 3): the
+ *      library page shows an 'error' row's message and re-runs it, and it
+ *      cannot yet show one on an 'indexing' row or tell its Resume from the
+ *      automatic loops.
  *
  *  It is a compare-and-set on what the batch read (the file, the version,
  *  the resume point and the failure count; the caller's copy when the batch
@@ -781,7 +815,9 @@ class IngestSuperseded extends Error {}
 /** How long failed vision pages wait after a retry pass in which the
  *  provider refused every one of them again (ING-6). A provider that is
  *  rate-limiting or overloaded is not asked again on the very next batch —
- *  by any driver — and the rest of the document stays searchable meanwhile. */
+ *  by any driver — and the rest of the document stays searchable meanwhile.
+ *  A floor, like ingestFailureBackoffMs: the retry comes on the next
+ *  indexing pass after it. */
 export const VISION_RETRY_BACKOFF_MS = 30 * 60_000;
 
 /** The plain-language reason failed vision pages were not retried. It
@@ -793,7 +829,7 @@ export function visionRetryMessage(pages: number[], cause: string | null): strin
   const what = `AI vision could not read ${pages.length} page${pages.length === 1 ? "" : "s"} (p. ${list})`;
   const meanwhile = "The rest of the document is searchable meanwhile.";
   return cause
-    ? `${what}: ${cause}. They are tried again automatically in about ${Math.round(VISION_RETRY_BACKOFF_MS / 60_000)} minutes. ${meanwhile} If they stay unreadable, ask an admin to accept the partial index.`
+    ? `${what}: ${cause}. They are tried again automatically ${NEXT_INDEXING_PASS}, no sooner than about ${Math.round(VISION_RETRY_BACKOFF_MS / 60_000)} minutes from now. ${meanwhile} If they stay unreadable, ask an admin to accept the partial index.`
     : `${what}, and retrying needs an AI key with budget left. ${meanwhile} Add one in AI settings and re-run indexing, or ask an admin to accept the partial index.`;
 }
 
@@ -854,6 +890,12 @@ export async function ingestKnowledgeDocBatch(
    *  same range forever and indexing stalls at zero. Stopping ourselves,
    *  early and cleanly, is what makes progress durable. */
   deadlineMs?: number,
+  opts: {
+    /** A person's explicit re-run (the route's `retryNow`, audited there):
+     *  a failed batch's back-off (ING-8) does not hold it. Every automatic
+     *  driver leaves it unset. */
+    retryNow?: boolean;
+  } = {},
 ): Promise<IngestBatchResult> {
   ensurePdfPolyfills();
 
@@ -929,13 +971,23 @@ export async function ingestKnowledgeDocBatch(
       message: string, retryAfter: string,
       queue?: { failed: number[]; tried: number[]; attempts: number },
     ): Promise<IngestBatchResult> => {
-      if (claimed) {
+      const stamped = Date.parse(String(cur.vision_retry_after ?? ""));
+      if (claimed && !queue && claimed.error === message.slice(0, 500) &&
+          Number.isFinite(stamped) && stamped <= Date.now()) {
+        // A driver without a key that finds its own reason already on the
+        // row, holding no one back, has nothing to add: it gives the claim
+        // back and writes nothing else (the app-shell indicator asks again
+        // every two minutes, from every open tab).
+        released = await releaseIngestLease(doc.id, driver);
+      } else if (claimed) {
         const known = new Set(Object.keys(claimed));
         const update = Object.fromEntries(Object.entries({
           error: message.slice(0, 500), vision_retry_after: retryAfter,
-          // Not a failed batch (ING-8): its reads ran and their outcome is
-          // recorded here.
-          ingest_failures: 0,
+          // A retry pass whose reads ran is not a failed batch (ING-8): it
+          // clears the count. A park that read nothing — no key, or no page
+          // left to try this round — keeps it, or a failure that persists
+          // could be retried (and re-billed) without end.
+          ...(queue && queue.attempts > 0 ? { ingest_failures: 0 } : {}),
           // The rotated queue and the round, when a retry pass ran.
           ...(queue ? { vision_failed_pages: queue.failed, vision_retry_tried: queue.tried } : {}),
           ingest_claimed_by: null, ingest_claimed_at: null,
@@ -955,16 +1007,17 @@ export async function ingestKnowledgeDocBatch(
     // ── A failed batch waiting out its back-off (ING-8) ──────────────────
     //    Nothing to do and nothing to write: the failure and when it is next
     //    tried are on the row already. Checked before anything is
-    //    downloaded, by every driver alike.
-    if (claimed && Number(cur.ingest_failures ?? 0) > 0) {
-      const after = Date.parse(String(cur.vision_retry_after ?? ""));
-      if (Number.isFinite(after) && after > Date.now()) {
+    //    downloaded, by every driver alike — except a person's explicit
+    //    re-run (`retryNow`), which the route audits.
+    if (claimed && !opts.retryNow) {
+      const until = failureBackoffUntil(cur);
+      if (until) {
         released = await releaseIngestLease(doc.id, driver);
         return idle(claimed, {
           failureRetryBlocked: true,
           failureRetryMessage: typeof claimed.error === "string" && claimed.error
-            ? claimed.error : "The last indexing attempt failed; it is tried again automatically.",
-          failureRetryAfter: String(cur.vision_retry_after),
+            ? claimed.error : `The last indexing attempt failed; it is tried again automatically ${NEXT_INDEXING_PASS}.`,
+          failureRetryAfter: until,
         });
       }
     }
@@ -1494,7 +1547,8 @@ export async function ingestKnowledgeDocBatch(
      *  Unclaimed (a database without 20261122) no batch does a full clear,
      *  so a row that moved to another file is re-queued through the shared
      *  reset — every derived row goes, and the new file is read from its
-     *  first page. Returns the failure, or null. */
+     *  first page — as long as the row still says what the check read (the
+     *  reset's `expect`). Returns the failure, or null. */
     const withdrawOrRequeue = async (): Promise<string | null> => {
       const left = await withdraw();
       if (left.length === 0) return null;
@@ -1505,9 +1559,20 @@ export async function ingestKnowledgeDocBatch(
         const moved = !!row && (row.file_key !== cur.file_key ||
           (cur.source_version_id !== undefined && "source_version_id" in row && (row.source_version_id ?? null) !== (cur.source_version_id ?? null)));
         if (moved) {
-          const res = await resetKnowledgeIndex([cur.id]);
+          // Only while the row still says what this check read: an unclaimed
+          // batch of the new file that committed since keeps its pages. (One
+          // still writing cannot be seen without the claim — its commit
+          // compares the file and version only — so a reset can still land
+          // under it: the legacy residual, ING-1.)
+          const seenNow = row!;
+          const res = await resetKnowledgeIndex([cur.id], {
+            expect: () => ({
+              file_key: seenNow.file_key, pages_indexed: seenNow.pages_indexed,
+              ...("source_version_id" in seenNow ? { source_version_id: seenNow.source_version_id } : {}),
+            }),
+          });
           note += res.reset.length > 0 ? " — the document was re-queued for a full re-index"
-            : ` — it could not be re-queued (${res.errors.join("; ") || "another driver held it"})`;
+            : ` — it could not be re-queued (${res.errors.join("; ") || "another driver moved it first"})`;
         }
       }
       return `rows this batch wrote could not be withdrawn: ${note}`;
@@ -1700,6 +1765,13 @@ export async function ingestKnowledgeDocBatch(
     const failedQueue = [...failed];
     const failedAfter = [...failedQueue].sort((a, b) => a - b);
     const done = reached >= pageCount && (failedAfter.length === 0 || accepted);
+    // Only a batch that did work — read a page, tried a vision retry, or
+    // finished the document — says anything about a failed batch before it
+    // (ING-8): its commit clears the count, the failure's message and its
+    // back-off. One that stopped for time or budget before its first page
+    // did nothing, and leaves all three exactly as they are: a no-op must
+    // never reset the bound on re-billing, nor erase the failure's record.
+    const didWork = touched || done || attempted > 0;
     const emptyTotal = Math.max(0, baseEmptyPages + emptyDelta);
     const docUpdate: Record<string, unknown> = {
       page_count: pageCount,
@@ -1722,14 +1794,15 @@ export async function ingestKnowledgeDocBatch(
         // its own claim) and cleared only by a new generation — a batch never
         // writes back a copy it read.
         ...(genStart ? { vision_partial_accepted: false } : {}),
-        // A committed batch is not a failed one (ING-8), and holds no one
-        // back — unless it finished a vision-retry round (ING-6).
-        ingest_failures: 0,
-        vision_retry_after: roundBackoff?.after ?? null,
+        // A batch that did work is not a failed one (ING-8), and holds no
+        // one back — unless it finished a vision-retry round (ING-6).
+        ...(didWork ? { ingest_failures: 0, vision_retry_after: roundBackoff?.after ?? null } : {}),
         ...(roundBackoff ? { error: roundBackoff.message.slice(0, 500) } : {}),
         chunk_version: chunkVersion,
         ingest_claimed_by: null, ingest_claimed_at: null,
       };
+      // …and one that did nothing leaves the row's message as it is.
+      if (!didWork) delete full.error;
       const update = Object.fromEntries(Object.entries(full).filter(([k]) => known.has(k)));
       const { data, error } = await cas(supabaseAdmin.from("knowledge_documents").update(update)).select("id");
       updErr = error; committed = (data ?? []).length;
@@ -1935,8 +2008,9 @@ export async function drainKnowledgeIngestQueue(opts: {
         row = {
           ...row, pages_indexed: res.resumeAt, page_count: res.pageCount, status: "indexing",
           vision_failed_pages: res.visionFailedPages,
-          // The commit zeroed the failure count; the copy follows it, so a
-          // later failure write compares against what the row holds.
+          // This batch did work (a no-op stopped the loop above), so its
+          // commit zeroed the failure count; the copy follows it, so a later
+          // failure write compares against what the row holds.
           ...("ingest_failures" in row ? { ingest_failures: 0 } : {}),
         };
       }
