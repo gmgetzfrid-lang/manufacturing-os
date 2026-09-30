@@ -3,7 +3,7 @@
 Where a wrong number gets signed, and where a failure leaves the books
 inconsistent with no way to detect or repair it.
 
-**12 findings** — 2 CRITICAL, 6 HIGH, 4 MEDIUM.
+**12 findings** — 0 CRITICAL, 5 HIGH, 6 MEDIUM, 1 LOW (severities as recorded after verification; as filed, 2 CRITICAL, 6 HIGH, 4 MEDIUM).
 
 > Line numbers are from commit `6a14d7d` and drift with edits. **Match on the
 > quoted code, not the number.** See [`../README.md`](../README.md) for the
@@ -673,15 +673,15 @@ explicit override that captures a reason and writes an audit row. Decide what
 
 | ID | Severity | Status |
 |---|---|---|
-| MON-1 | CRITICAL | OPEN |
-| MON-2 | CRITICAL | RESOLVED |
-| MON-3 | HIGH | OPEN |
+| MON-1 | HIGH | RESOLVED |
+| MON-2 | HIGH | RESOLVED |
+| MON-3 | HIGH | RESOLVED |
 | MON-4 | HIGH | OPEN |
-| MON-5 | HIGH | RESOLVED |
+| MON-5 | MEDIUM | RESOLVED |
 | MON-6 | HIGH | RESOLVED |
-| MON-7 | HIGH | OPEN |
-| MON-8 | HIGH | OPEN |
-| MON-9 | MEDIUM | OPEN |
+| MON-7 | MEDIUM | OPEN |
+| MON-8 | MEDIUM | OPEN |
+| MON-9 | LOW | RESOLVED |
 | MON-10 | MEDIUM | OPEN |
 | MON-11 | MEDIUM | OPEN |
 | MON-12 | MEDIUM | OPEN |

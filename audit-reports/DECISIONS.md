@@ -2684,7 +2684,8 @@ dark step, each ≥ 4.5:1 on its surfaces. The dial's band word wears a text tok
 > equipment-registry decision) are already taken, so this decision is
 > renumbered at merge to the next free number there: DEC-54 if it merges
 > next. The renumber covers this section's anchor, heading and note, its index
-> row, and every reference to it in the records and source comments.*
+> row, and every reference to it in the records. Source and test code cite the
+> rule by its text ("draw only what the data holds"), never by number.*
 
 **Rationale.** Each default removes a confident, plausible picture that the
 data does not support. The removed pictures were a flat bar row presented as a
@@ -2702,13 +2703,17 @@ place of that criterion.
 
 **Implementation.** `components/ui/ChartKit.tsx` (`SCurveChart`,
 `sCurveScale` — a money-less chart labels only its zero gridline —
-`sCurveTodayX`, `sCurveTodayLabel`, `LegendKey`, `BarList` `example`,
+`sCurveTodayX`, `sCurveTodayLabel` with `sCurveLabelWidth` — the "Today"
+label clears the top gridline label actually drawn, in any locale —
+`LegendKey`, `BarList` `example`,
 `scoreBandColor`, `ScoreDial`), `components/dashboard/viz.tsx` (`VIZ_CAT`,
 `MiniBars` `ariaLabel`), `components/projects/cost/CostCharts.tsx`
 (`hasRealData`, `CostPictures` and its no-dates / no-money explanations,
 `CrewStat`, `ForecastSentence` `example`, `COST_GLOSSARY_TERMS`),
-`components/projects/CostsTab.tsx` (`loaded`: the charts draw only from a
-successful read, so a failed first load never shows the example),
+`components/projects/CostsTab.tsx` (`loaded`: nothing that draws from the
+tab's read renders before one succeeds, so a failed first load shows neither
+the example nor a new project's empty state; the burn bar and account bars
+draw Spent and Committed in the S-curve's two slots),
 `lib/costSeries.ts` (`plannedCrewAverage`), `app/globals.css`
 (`--state-held` per theme).
 
