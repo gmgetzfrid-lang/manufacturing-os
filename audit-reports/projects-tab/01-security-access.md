@@ -2,7 +2,7 @@
 
 Who can reach what, and what an outsider can put inside the perimeter.
 
-**19 findings** — 4 CRITICAL, 11 HIGH, 4 MEDIUM (`SEC-18` and `SEC-20` opened by projects Round G, 2026-09-30; `SEC-19` is package J1's number on its parallel branch — this branch skips it; if the numbers collide at merge the integrator renumbers).
+**20 findings** — 4 CRITICAL, 11 HIGH, 4 MEDIUM, 1 LOW (`SEC-18` opened by projects Round G package J9, `SEC-19` by J1, `SEC-20` by J8, 2026-09-30).
 
 > Line numbers are from commit `6a14d7d` and drift with edits. **Match on the
 > quoted code, not the number.** See [`../README.md`](../README.md) for the
@@ -13,7 +13,7 @@ Who can reach what, and what an outsider can put inside the perimeter.
 ## SEC-1 · An unauthenticated upload link can put executing JavaScript on the app's own origin
 
 - **Severity:** CRITICAL
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Verification:** CONFIRMED (by construction — code path traced link by link; no payload executed)
 - **Blast radius:** security
 - **Locations:**
@@ -62,6 +62,16 @@ of the chain.
 - A test asserts the disposition header is present on the presigned URL — ✓.
 
 **Scope / residual.** P1 closes the ID: the sniff and allowlist at the door (`SEC-6`, GAP-401). GAP-401 acceptance 1 (an uploaded HTML / SVG / JS file cannot execute on the app's origin) is proven here for the egress half — the headers for an HTML / SVG key and the viewer's refusal to frame one — with P1's upload-side test as the first line. `/api/storage/resolve` and `lib/dataExport.ts` are the remaining unsigned issuers: `SEC-18`.
+
+**Resolution (2026-09-30, projects Round G — the route half; the egress limb above).** Package J1 INTAKE-DOOR (`GAP-401`, with projects-and-cost `INTK-11`). The intake door stores what the BYTES are: new `lib/fileSniff.ts` reads the magic number (PDF `%PDF-` at offset 0, DWG `AC10nn`, ZIP local header, DXF), `app/api/intake/upload/route.ts` refuses anything off the branch's allowlist BEFORE storage (quotes PDF; drawings and redlines PDF / DWG / DXF / ZIP), requires the extension to name the sniffed kind and the declared type to be one a real file of that kind is sent with, and writes the SNIFFED type as the object's `ContentType` and the version's `file_type` — never `file.type`. An HTML, SVG or script upload cannot enter through the door at all. Tests — `lib/__tests__/intakeUploadRoute.test.ts` "an HTML page named .pdf and declared application/pdf is refused before storage", "the stored ContentType is the SNIFFED type, never the declared one", "a DWG is accepted … and stored as image/vnd.dwg"; `lib/__tests__/intakeDoorLibs.test.ts` (the sniffer refuses HTML / SVG / script / text / EXE / a PDF header not at offset 0).
+
+**Done-when.**
+- [x] A stored `text/html` object downloads rather than renders — ✓ (egress limb, J9: every signed URL is an attachment unless an in-app viewer asks for a PDF or a raster image); and the door no longer stores one.
+- [x] The viewer iframe carries a `sandbox` with no `allow-same-origin` — ✓ by `DEC-49`'s decision, not literally: the viewer's only frame is the PDF frame, left unsandboxed because Chromium refuses its PDF viewer in any sandboxed frame; it is protected by the type gate (J9's limb above).
+- [x] An upload declaring a false MIME type is stored with its sniffed type — ✓ (this limb).
+- [x] A test asserts the disposition header on the presigned URL — ✓ (J9).
+
+**Scope / residual.** `SEC-18` (two other unsigned presigned-GET issuers) and `INTK-15` (presigned direct-to-R2 uploads) stay open under their own ids; serving uploads from a separate origin remains `GAP-401` item 4.
 
 ---
 
@@ -139,7 +149,7 @@ Events unlinked by a private project's delete BEFORE 20261102 cannot be told apa
 ## SEC-3 · The assigned-document review guarantee self-destructs after one submission
 
 - **Severity:** CRITICAL
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Verification:** CONFIRMED
 - **Blast radius:** safety / document-control integrity
 - **Locations:**
@@ -188,12 +198,21 @@ implement it.
 - A link that created a document itself can still auto-supersede its own work when trusted.
 - A test covers both branches.
 
+**Resolution (2026-09-30, projects Round G).** Worked as projects-and-cost `INTK-1` (J1). Authorship is `documents.authored_by_link_id`, stamped when the door CREATES a document and backfilled from each document's first version (migration `20261104`); a document in the link's `assigned_doc_ids` is never auto-published whatever its history; a link-authored document needs at least one approved revision before a trusted link may publish over it (`DEC-56`). Fix pass (J1 review): a rejected submission can no longer be re-published by resubmission — a pending own submission, a rejection against the current revision, or rejected bytes all send the upload to review (`INTK-1`'s fix pass). Tests — `lib/__tests__/intakeUploadRoute.test.ts` "an ASSIGNED org document goes to review on every submission — even after a link version was approved", "publishes through publish_revision acting as the link's creator …" (the trusted own-document branch), "reject F → submit G (review) → submit F again, or F plus one byte: each lands IN REVIEW".
+
+**Done-when.**
+- [x] A link that submits twice against an assigned org-authored document routes both to review — ✓.
+- [x] A link that created a document can still auto-supersede its own (approved) work when trusted — ✓ (through `publish_revision`, `SAF-5`).
+- [x] A test covers both branches — ✓.
+
+**Scope / residual.** Pending migration: `20261104` (before it, the route reads the document's first version — equally fail-safe).
+
 ---
 
 ## SEC-4 · The external door runs as service role, so every database-level document-control guard is skipped
 
 - **Severity:** CRITICAL
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Verification:** CONFIRMED
 - **Blast radius:** safety / document-control integrity
 - **Locations:**
@@ -236,12 +255,21 @@ hold is silently ignored.
 - An intake auto-supersede against a document checked out by someone else is refused.
 - The refusal reaches the contractor's portal as a readable message, not a 500.
 
+**Resolution (2026-09-30, projects Round G — the residual after roles-and-permissions `OWN-4`).** `OWN-4` (RESOLVED) put the hold / checkout / creator-authority demotions in the route. J1 routes the trusted promote itself through the publish CONTRACT (`publish_revision`, acting as the link's creator — projects-and-cost `INTK-2`): the database locks the document row and applies the hold gate, the foreign-checkout lock, the expected-base check and the drawing-class MOC gate; the route's own gates now also include the library's review policy (the SQL twin `review_control_mode_for` — a `require` policy demotes, `SEC-13`) and HLD-1's shared hold gate (`lib/holdGate.ts` `readActiveHolds` / `decideHoldGate`, fail-closed) in place of the inline read. Every refusal DEMOTES the upload to review with the reason in the portal's `note` (OWN-4's semantics: the file is kept, the instant publish withheld). Tests — `lib/__tests__/intakeUploadRoute.test.ts` the ten-case demotion table ("an active hold", "an unreadable hold state (fails closed)", "a legal hold", "a checkout", "a creator without authority", "a library that requires sign-off", "the contract's hold gate", "the contract's checkout lock", "the contract's MOC gate …"); `lib/__tests__/rpPhase3Migration.test.ts` pins extended.
+
+**Done-when.**
+- [x] An auto-supersede against a held document is refused with a clear reason — ✓ (the promote is refused and the upload goes to review, reason shown).
+- [x] …against a document checked out by someone else — ✓.
+- [x] The refusal reaches the portal as a readable message, not a 500 — ✓.
+
+**Scope / residual.** The route still runs as the service role, so `enforce_document_publish_guard` returns early on it; the guards the contract does not carry (per-library authority, review completion) are evaluated by the route (the creator's authority, the review policy). Replacing the service role with a constrained identity is `GAP-401`'s build, which runs on this tree. DEPENDENCY (J1 second review): the review-policy rail calls `review_control_mode_for`, which document-control Round F's `20261070` creates — until it is applied, the call errors and every trusted auto-publish DEMOTES ("the library's review policy could not be verified"; fail closed). The shared client the post-publish pipeline runs on is bound to the service role per request (`lib/serverClientScope.ts` — projects-and-cost `INTK-2` fix pass 2), never module-wide.
+
 ---
 
 ## SEC-5 · Quote links never expire, and document links default to never
 
 - **Severity:** HIGH
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Verification:** CONFIRMED
 - **Blast radius:** security
 - **Locations:**
@@ -272,12 +300,23 @@ forwarded email, a departed employee, a shared inbox.
 
 *Landed 2026-09-29 (projects Round G, J4 limb): the quote-link mint (`QuotesPanel.tsx` `QuoteLinksSection.create`) now requires an expiry (date input, default 90 days, refused when blank or past), writes `expires_at`, inserts with `.select("id").single()`, records the audit row against the link id (no token material) with `{ error }` checked and surfaced, and the list offers Revoke (`INTAKE_QUOTE_LINK_REVOKED`; fix pass: the revoke reads back `.select("id")` and a zero-row result is reported, never audited as a revocation). The DB `CHECK` ceiling and the document-link half close in P1; existing quote links without an expiry are inventoried by 20261096 and the backfill is left commented there until no link is in active bidding (INTK-12 default).*
 
+**Resolution (2026-09-30, projects Round G).** J1 finishes what J4 started on the quote-link mint. `components/projects/IntakePanel.tsx`: the document-link form now REQUIRES an expiry — 14 days by default, at most 90 (`lib/intakeLinks.ts` `intakeExpiryFor`; the date input carries `max`), written to `expires_at`; the list shows the expiry, and Revoke stays on every live link. Migration `20261104`: a `CHECK` — for every link created after the migration is applied — `expires_at IS NOT NULL AND expires_at > created_at AND expires_at <= created_at + 92 days` (the 90-day policy plus slack for an end-of-day LOCAL expiry; older rows grandfathered by a literal apply timestamp), and every live DOCUMENT link with no expiry is given 14 days from apply (listed in the inventory; quote links stay with 20261096's blocked backfill, `INTK-12`). The portal shows "link valid until …". Tests — `lib/__tests__/intakeUploadRoute.test.ts` "IntakePanel links: document links only, an expiry always, the audit row names the link"; `lib/__tests__/intakeDoorLibs.test.ts` "a link's expiry is required, in the future, and at most 90 days away"; `lib/__tests__/intakeDoorMigration.test.ts` (the CHECK, the backfill).
+
+**Fix pass (2026-09-30, projects Round G — J1 review).** The first ceiling was `created_at + 91 days`, on the claim that the Costs tab's 90-day default passes it. It does not west of UTC in the evening: `QuotesPanel` computes the UTC date of now + 90 days and then that day's END in LOCAL time, which is 91.29 days out at 18:00 in California and 91.19 at 20:30 in New York — the CHECK would have refused a legitimate mint with a raw constraint message. The ceiling is now 92 days (the worst case over every UTC offset from −12 to +14 is under 91.5 days — UTC−12 around local noon), and the Intake tab's date picker works in the user's LOCAL calendar (`isoDateInDays` and the `min`, no more `toISOString().slice(0, 10)`), so its maximum is the 90 days `intakeExpiryFor` accepts. Tests — `lib/__tests__/intakeDoorLibs.test.ts` "SEC-5: the database ceiling (92 days) admits every end-of-day local expiry the app offers — the Costs tab's UTC-date default included" (a grid of offsets and local hours, plus the reviewer's 18:00 PDT measurement, which exceeds 91 days); `lib/__tests__/intakeDoorMigration.test.ts` (the CHECK text and the probe say 92; no `91 days` remains); the IntakePanel source pin.
+
+**Done-when.**
+- [x] No code path creates a link with a null or unbounded `expires_at` — ✓ (both mint forms require one; the database refuses one for every new row).
+- [x] A `CHECK` rejects an out-of-range expiry — ✓ (pending `20261104`; 92 days, so no in-range local expiry is refused — fix pass).
+- [x] Every surface that displays a link offers Revoke — ✓ (Intake tab; J4's Costs tab).
+
+**Scope / residual.** Pending migration: `supabase/migrations/20261104_prj_roundG_intake_links.sql`. Quote links minted before J4 without an expiry stay until 20261096's backfill runs (its own blocking inventory). FOLLOW-UP for J4 (J1 second review — `QuotesPanel.tsx` is J4's file and was not edited here): the quote-link date input has no `max` and no mapping of the CHECK's refusal, so an expiry picked more than 92 days out fails with the raw Postgres text ("violates check constraint \"project_intake_links_ttl\""). Done-when 1's "both mint forms comply" holds for the DEFAULT expiry only. The fix: `max={localDateInDays(90)}` on the input, validate with `lib/intakeLinks.ts` `intakeExpiryFor` in `create()`, and map a `23514` on `project_intake_links_ttl` to "A link can live at most 90 days".
+
 ---
 
 ## SEC-6 · Zero file-type validation on the public upload door
 
 - **Severity:** HIGH
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Verification:** CONFIRMED
 - **Blast radius:** security
 - **Locations:**
@@ -305,6 +344,15 @@ before reading the body, and read the body once.
 - A renamed `.exe` is rejected with a clear message before it reaches storage.
 - An oversize upload is rejected without the body being buffered.
 - The stored `ContentType` is the sniffed type in every case.
+
+**Resolution (2026-09-30, projects Round G).** Worked with projects-and-cost `INTK-11` (J1). The route refuses on the declared `Content-Length` (100 MB + framing) BEFORE reading the body, reads the body once, and runs the magic-byte allowlist (`lib/fileSniff.ts`) before anything reaches storage; the refusal names the accepted list; the stored `ContentType` is always the sniffed type. Tests — `lib/__tests__/intakeUploadRoute.test.ts` "an oversize Content-Length is refused 413 without reading the body", "a renamed .exe is refused with the accepted list named", "an HTML page named .pdf … is refused before storage", "the stored ContentType is the SNIFFED type".
+
+**Done-when.**
+- [x] A renamed `.exe` is rejected with a clear message before it reaches storage — ✓.
+- [x] An oversize upload is rejected without the body being buffered — ✓ when the client declares its length (every browser upload does); a chunked body with no length is still bounded by the platform's own request cap and refused by size after parsing.
+- [x] The stored `ContentType` is the sniffed type in every case — ✓.
+
+**Scope / residual.** No malware scanning (none exists on any upload path); presigned direct-to-R2 uploads are `INTK-15`.
 
 ---
 
@@ -355,7 +403,7 @@ inline case must be opted into explicitly by callers that genuinely need it
 ## SEC-8 · No rate limiting on the intake door, and each upload fans out email
 
 - **Severity:** HIGH
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Verification:** CONFIRMED
 - **Blast radius:** availability / abuse
 - **Locations:**
@@ -381,6 +429,21 @@ window produce one digest rather than N emails.
 - The Nth upload within a window is rejected with a 429 and a readable message.
 - A burst of uploads produces at most one notification per recipient per window.
 - Limits are configurable without a code change.
+
+**Resolution (2026-09-30, projects Round G).** Worked as projects-and-cost `INTK-8` / `INTK-10` (J1). New `lib/intakeRateLimit.ts`: a durable per-token (stored hashed) and per-IP hourly window in `intake_attempts` (migration `20261105`), checked before the link lookup and the body; 429 with `Retry-After` and a sentence the portal renders; FAIL OPEN on a limiter error (`GAP-401` acceptance 4); a per-link lifetime cap and byte budget (`20261104`). The project team hears at most ONE submission notice per link per 15-minute window (a displaced review is always told), through `emit()`. Fix pass (J1 review): a revision a trusted link PUBLISHED is always told (never folded); a folded notice is counted and the next one says how many more submissions arrived (`INTK-10`'s fix pass). Tests — `lib/__tests__/intakeUploadRoute.test.ts` "429 once the per-token hourly window is full", "the per-IP window counts every token from one address", "the limiter FAILS OPEN", "a link that has spent its submission budget answers 429 before the body", "a burst is ONE notice per link per window".
+
+**Fix pass 2 (2026-09-30, projects Round G — J1 second review).** Done-when 2 was ticked without its exception: published notices (forced) and displacement notices (forced whenever a pending draft was replaced) bypassed the window, so a trusted — or leaked trusted — token re-sending its own document up to the per-token cap (30 an hour) sent every controller, the owner and the followers up to 30 notices an hour. Forced notices are now bounded (`lib/intakeRateLimit.ts` `noticeGoesOut`, `FORCED_NOTICES_PER_WINDOW` = 3): an ordinary notice goes only into an empty window; a forced one only while the window holds fewer than three notices of any kind; beyond that it is folded and counted by kind (`suppressed_published`, `suppressed_displaced`), and the next notice names them ("… (2 published without review, 1 replacing an earlier submission in review)"). Tests — `lib/__tests__/intakeUploadRoute.test.ts` "SEC-8 dw2: a burst of trusted publishes is NOT one notice per upload — at most three notices per window; the rest are counted by kind into the next notice"; `lib/__tests__/intakeDoorLibs.test.ts` (the rule and the by-kind count).
+
+**Fix pass 3 (2026-09-30, projects Round G — J1 third review).** The folded publishes and replacements were reported only in the link's NEXT notice, so a link that went quiet after its burst left the controllers and the owner unaware that controlled revisions were published without review. The cap stays; what it folds is now always announced: `lib/intakeRateLimit.ts` `flushFoldedIntakeNotices`, run daily by the maintenance cron's intake step, sends ONE digest per link with unannounced `suppressed_published` / `suppressed_displaced` rows to the controller pool and the project owner (through `emit()`, request-scoped service role) and records a `notified` row, so nothing is counted twice or digested twice. Tests — `lib/__tests__/intakeDoorLibs.test.ts` "flushFoldedIntakeNotices — folded publishes / replacements never go unannounced" (six cases); the cron pin. (Full account: projects-and-cost `INTK-10` fix pass 3.)
+
+**Done-when.**
+- [x] The Nth upload in a window is rejected with a 429 and a readable message — ✓.
+- [x] A burst produces at most one notification per recipient per window — ✓ **with a recorded exception**: a revision published without review, or a submission that replaced one in review, is told without waiting for the window — at most three notices per link per window in all (fix pass 2); every further submission in the window is folded and counted, by kind, into the next notice — or, for a folded publish or replacement no later notice announces, into the maintenance cron's daily digest (fix pass 3; one per PROJECT, each link listed — verification fix; so at most one more notice per project per day). (Before fix pass 2 the forced notices were unbounded.)
+- [x] Limits are configurable without a code change — ✓ (`INTAKE_MAX_PER_TOKEN_HOUR`, `INTAKE_MAX_PER_IP_HOUR`, `INTAKE_NOTICE_WINDOW_MIN`; per link, `max_submissions` / `max_total_bytes`).
+
+**Scope / residual.** Pending migrations: `20261104`, `20261105`. Until `20261105` is applied the limiter fails open (the house trade-off) and the per-link cap reads nothing.
+
+**Verification fix (2026-09-30, projects Round G).** Fix pass 3's "nothing is counted twice or digested twice" and "one digest per link" did not hold. The digest's send was `emit()`, which swallows every delivery failure, and the marker write swallowed its own: a digest nobody received was marked and lost, and a lost marker repeated it. Now the cron inserts the digest's bell rows itself and checks them (`lib/intakeRateLimit.ts` `deliverFoldedDigest`); a link is marked only when they landed, and a marker that does not land is counted and reported (that link is announced again next run — repeated, never lost). The email leg is `emit()`, best-effort. Digests are ONE per project, listing each link (two links on one project had shared the email dedupe key, so the second link's email was dropped). The marker is its own outcome (`digested`) — a boundary for the fold count that the notice window does not count, so the link's next submission after a digest is told at once. Candidates are read to the two-day horizon page by page, not from the newest 1000 rows. So done-when 2's exception now reads: a folded publish or replacement no later notice announces goes into the cron's daily digest for its project — at most one per project per day. Full account: projects-and-cost `INTK-10` verification fix; tests in `lib/__tests__/intakeDoorLibs.test.ts` ("item 1" … "item 5").
 
 ---
 
@@ -477,7 +540,7 @@ resolve documents the same way.
 ## SEC-11 · `assigned_doc_ids` is validated against nothing — not the project, not the ACL, not even the org
 
 - **Severity:** MEDIUM
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Verification:** CONFIRMED for project/ACL scope; the *absence* of an org check is CONFIRMED, cross-org exploitation is SUSPECTED (needs a foreign UUID)
 - **Blast radius:** security / data-confidentiality
 - **Locations:**
@@ -518,12 +581,21 @@ says an out-of-project restricted document was exposed.
 - The resolve route returns nothing for an id outside the link's org.
 - A test covers both.
 
+**Resolution (2026-09-30, projects Round G).** Worked as projects-and-cost `INTK-9` (J1). Writes: migration `20261104`'s `trg_intake_links_assignment_guard` refuses a newly assigned document that is not in the link's org, that the writer holds no publish authority over (controller or `user_can_publish_on_library` on its library), or — fix pass — that the writer cannot OPEN (`doc_is_visible`, the read gate; controllers exempt), and caps the array at 500. Correction (J1 review): the first landing claimed publish authority was "stronger than can read it"; it is not — `node_visible` can deny a library publisher (an explicit deny, a restricted folder with no grant), and the SECURITY DEFINER trigger read the document regardless, so a denied publisher could have exposed a restricted document on the contractor's portal. The read check is now its own clause. Reads: `/api/intake/resolve` and `/api/intake/upload` scope every document read to the link's org. Tests — `lib/__tests__/intakeUploadRoute.test.ts` the resolve route's "an assigned id from ANOTHER org lists nothing", the upload route's "an assigned id that belongs to ANOTHER org resolves to nothing"; `lib/__tests__/intakeDoorMigration.test.ts` (the trigger).
+
+**Done-when.**
+- [x] Assigning a document the writer cannot read is refused — ✓ after the fix pass (`doc_is_visible(v_doc.doc_id)` in the trigger, beside the org and publish-authority checks; pending `20261104`). The first landing met this only for documents the publisher could also read.
+- [x] The resolve route returns nothing for an id outside the link's org — ✓.
+- [x] A test covers both — ✓ (route behaviour + migration shape, including the read clause and its probe; the trigger itself runs only in the database).
+
+**Scope / residual.** Pending migration: `20261104`. Assignments are not scoped to the project (an org document assigned to a contractor for a project normally lives outside it); a FK-backed join table was not built.
+
 ---
 
 ## SEC-12 · A trusted link can publish a brand-new document into the controlled library by uploading twice
 
 - **Severity:** HIGH
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Verification:** CONFIRMED
 - **Blast radius:** document-control integrity
 - **Locations:** `app/api/intake/upload/route.ts:302`
@@ -553,12 +625,20 @@ authorship) also covers this.
 - A document that has never had an approved version cannot be auto-superseded.
 - The second upload against a never-approved document routes to review.
 
+**Resolution (2026-09-30, projects Round G).** Worked as projects-and-cost `INTK-1` (J1): a trusted link may auto-publish only a document that has had at least one human approval (`current_version_id`), so a brand-new document's second upload goes to review; a trusted link may REPLACE its own pending submission (the displaced one is resolved 'superseded', `SAF-10`) but the replacement is reviewed too. Tests — `lib/__tests__/intakeUploadRoute.test.ts` "a link-authored document with no approved revision goes to review, and says why".
+
+**Done-when.**
+- [x] A never-approved document cannot be auto-superseded — ✓.
+- [x] The second upload against a never-approved document routes to review — ✓.
+
+**Scope / residual.** None.
+
 ---
 
 ## SEC-13 · Intake approval bypasses the library's configured review gate
 
 - **Severity:** HIGH
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Verification:** CONFIRMED
 - **Blast radius:** compliance
 - **Locations:**
@@ -586,12 +666,24 @@ completion. Approval then requires the configured signatures.
 - A submission against a two-reviewer library cannot be published with one approval.
 - The signatures appear in `document_review_signoffs` and on the revision chain.
 
+**Resolution (2026-09-30, projects Round G).** `components/projects/IntakePanel.tsx` approve resolves the document's review policy through the container chain (`effectiveReviewControlForDocument`, `DEC-36`; a read failure refuses). When the policy REQUIRES sign-off, Approve sends the submission to the resolved roster (`openReviewRoster` on the pending version) and it publishes only through `finalizeReviewedRevision` with `requireRosterComplete: true` once the roster is complete — the signatures land in `document_review_signoffs` like any reviewed draft; `requireRosterComplete: false` is passed only when the resolved policy does not require a roster (the click is then the review). The database half: migration `20261105` re-creates `enforce_document_publish_guard` from its live body (20261070) with a block that refuses an authenticated promote of an EXTERNAL submission (a version with `intake_link_id`) in a `require` policy with no roster — RG-7 had exempted intake versions — and the door itself demotes a trusted auto-publish in such a library (`SEC-4`). Tests — `lib/__tests__/intakeUploadRoute.test.ts` "IntakePanel approve: the version on screen, the chain-resolved review policy, the MOC reference", "a library that requires sign-off (SEC-13)" demotion; `lib/__tests__/intakeDoorMigration.test.ts` "the publish guard is 20261070's body plus the two intake blocks — nothing removed" and "the intake blocks sit BEFORE the controller short-circuit".
+
+**Fix pass (2026-09-30, projects Round G — J1 review).** In a `require` policy that resolves NO reviewer, `openReviewRoster` writes no roster (it tells the owner and Document Control), yet the panel said "was sent to its reviewers — it publishes once they sign off", and every later Approve looped on the same prompt (the guard refuses a roster-less intake promote). The panel now re-reads the roster after opening it and, with no primary slot, says "No reviewer could be resolved for … library — set its reviewers before this submission can be approved."; a roster is judged by its PRIMARY slots (a standby alternate alone reviews nothing). Source pin in `lib/__tests__/intakeUploadRoute.test.ts` "IntakePanel approve: …".
+
+**Fix pass 2 (2026-09-30, projects Round G — J1 second review).** Two gaps on the `require` path. (1) The roster was opened with `contentHash: null`, so reviewers' `document_review_signoffs.content_hash` was NULL for every intake roster — no signature proved which bytes were reviewed (the internal submit path passes the file hash). The panel now reads the pending version's `file_hash` with its MOC reference and passes it as `contentHash`. (2) Approve opened the roster and returned BEFORE the SEC-14 MOC capture; the reviewers then signed on the document's review panel, whose publish (`finalizeReviewedRevision`) the 20261105 guard refused for a drawing-class submission with no MOC reference — and nothing on that panel could add it. The MOC is now captured before either path. The message names where the publish happens ("… it publishes when the last of them signs off on the document's review panel (in the document library), not from this tab."). Source pins in `lib/__tests__/intakeUploadRoute.test.ts` "IntakePanel approve: …" (the class read and the MOC write precede `openReviewRoster`; `contentHash` is the file hash; no `contentHash: null`).
+
+**Done-when.**
+- [x] A submission against a two-reviewer library cannot be published with one approval — ✓ (the panel sends it to the roster; finalize requires completion; the guard refuses a roster-less intake promote — pending `20261105`).
+- [x] The signatures appear in `document_review_signoffs` and on the revision chain — ✓ (the ordinary roster and signing flow on the document's review panel); fix pass 2: each sign-off row carries the submission's file hash, and a drawing-class submission reaches the roster with its MOC reference, so the reviewers' final sign-off can publish.
+
+**Scope / residual.** Pending migration: `supabase/migrations/20261105_prj_roundG_intake_review_and_attempts.sql` (apply after document-control Round F's 20261070).
+
 ---
 
 ## SEC-14 · No document-class or management-of-change gate on either intake path
 
 - **Severity:** HIGH
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Verification:** CONFIRMED (verified by exhaustive grep of `mocRequirementFor` / `effectiveDocClassForDocument` call sites)
 - **Blast radius:** compliance (OSHA 1910.119(l))
 - **Locations:**
@@ -621,6 +713,15 @@ screen so a reviewer can supply it.
 - Publishing a drawing revision with a null `moc_reference` fails at the database on every path.
 - The intake approve UI captures the MOC reference.
 - A test covers the service-role path specifically.
+
+**Resolution (2026-09-30, projects Round G — the intake paths).** Both external routes to a live revision now carry the MOC rule. Trusted auto-publish: the promote goes through `publish_revision`, whose drawing-class MOC gate runs for the service-role caller too — a non-minor drawing revision with no MOC reference raises, and the door DEMOTES the upload to review naming the reason (the service-role path, tested). Intake approve: `IntakePanel` resolves the document class through the chain (`effectiveDocClassForDocument`; a read failure refuses) and, for a drawing, requires the reviewer to record the MOC reference on the submission (`appPrompt`, ≥ 3 characters, a checked write) before `finalizeReviewedRevision`. The database half for the approve path: migration `20261105`'s guard block refuses an authenticated promote of an external drawing-class submission with no MOC reference (the same class rule and 3-character floor as the contract). Tests — `lib/__tests__/intakeUploadRoute.test.ts` "the contract's MOC gate on a drawing (SEC-14, the service-role path)" demotion; "IntakePanel approve: … the MOC reference"; `lib/__tests__/intakeDoorMigration.test.ts` (the guard block, line-diffed).
+
+**Done-when.**
+- [x] Publishing an external drawing revision with a null `moc_reference` fails at the database on every intake path — ✓ (service role: `publish_revision`; signed-in approver: the guard — pending `20261105`).
+- [x] The intake approve UI captures the MOC reference — ✓.
+- [x] A test covers the service-role path specifically — ✓.
+
+**Scope / residual.** Pending migration: `20261105`. Non-intake drafts finalized through the review path keep the MOC capture RevUpModal / check-in apply (document-control `DCK-1`'s surface) — the guard block is deliberately scoped to external submissions (`DEC-31`). J1 second review: the approve UI's capture now runs BEFORE a `require` policy's roster opens as well (it ran only on the direct path, so a roster-reviewed drawing submission reached the review panel with no reference and its final sign-off was refused) — see `SEC-13` fix pass 2.
 
 ---
 
@@ -711,6 +812,14 @@ writes, so a token used from inside the app is distinguishable.
 **Done when.**
 - The raw token is not retrievable from the client after the creation response.
 - An intake write made while an app session is present records that session.
+
+**Partial (2026-09-30, projects Round G).** Done-when 2: a contractor token used from a browser that is also signed in to the app records that session — the portal sends the app session's bearer token when one exists, the door verifies it (`supabaseAdmin.auth.getUser`) and writes `details.appSession = { userId, email }` on the intake audit row (quote, redline and document branches). Test — `lib/__tests__/intakeUploadRoute.test.ts` "a token used from a browser signed in to the app records that session on the audit row".
+
+**Done-when.**
+- [ ] The raw token is not retrievable from the client after the creation response — **not done**: the Costs tab's quote-link list (`components/projects/cost/QuotesPanel.tsx` — J4's file) reads `token` for its Copy and RFQ actions, so a column-privilege `REVOKE SELECT (token)` would empty that list; the Intake tab still reads it for Copy link too. Needs both lists moved to a mint-once display (or a server copy endpoint) before the privilege can be revoked; hashing at rest is recorded as `SEC-19`.
+- [x] An intake write made while an app session is present records that session — ✓.
+
+**Scope / residual.** Stays OPEN for Done-when 1 (a QuotesPanel + IntakePanel change plus a `20261104`-style column REVOKE).
 
 ---
 
@@ -814,6 +923,30 @@ in `lib/__tests__/presignedDisposition.test.ts`.
 
 ---
 
+## SEC-19 · Contractor intake tokens are stored in plaintext — any read of the table is a working door credential
+
+- **Severity:** LOW
+- **Status:** OPEN
+- **Verification:** CONFIRMED (by reading)
+- **Blast radius:** security
+- **Locations:**
+  - `supabase/migrations/20260902_project_intake.sql:22` — `token TEXT NOT NULL UNIQUE`
+  - `app/api/intake/upload/route.ts`, `app/api/intake/resolve/route.ts` — `.eq("token", token)` lookups
+  - `components/projects/IntakePanel.tsx`, `components/projects/cost/QuotesPanel.tsx` — read `token` back for Copy link / RFQ
+- **Related:** `SEC-16`, projects-and-cost `INTK-6`, `DEC-45`
+- **Independently verified:** — (`author`: opened by projects Round G package J1 while resolving `SEC-16`, per the plan's decision to defer hashing; not yet challenged)
+
+**Mechanism.** The door's credential is stored as the plain value it compares against, so anything that can read `project_intake_links` — a signed-in controller or project owner, the SQL console, a service-role code path — holds every live link. Exports redact it (`DEC-45`), but the live table does not.
+
+**Remediation.** Store `token_hash` (SHA-256) and a short display prefix; mint shows the full URL once; both public routes look up by the hash; the lists show the prefix and offer "re-issue" instead of "copy".
+
+**Done when.**
+- No column of `project_intake_links` holds a usable token.
+- Both public routes resolve a link by the token's hash.
+- A lost link is re-issued, never read back.
+
+---
+
 ## SEC-20 · Audit rows about a private project are readable by every org member
 
 *Numbered SEC-20 on this branch: package J1, in parallel, opened `SEC-19` (intake tokens stored in plaintext) in this report. If the numbers collide at merge the integrator renumbers.*
@@ -871,22 +1004,23 @@ snapshot. Keep the insert policy as it is.
 
 | ID | Severity | Status |
 |---|---|---|
-| SEC-1 | CRITICAL | OPEN |
+| SEC-1 | CRITICAL | RESOLVED |
 | SEC-2 | CRITICAL | RESOLVED |
-| SEC-3 | CRITICAL | OPEN |
-| SEC-4 | CRITICAL | OPEN |
-| SEC-5 | HIGH | OPEN |
-| SEC-6 | HIGH | OPEN |
+| SEC-3 | CRITICAL | RESOLVED |
+| SEC-4 | CRITICAL | RESOLVED |
+| SEC-5 | HIGH | RESOLVED |
+| SEC-6 | HIGH | RESOLVED |
 | SEC-7 | MEDIUM | RESOLVED |
-| SEC-8 | HIGH | OPEN |
+| SEC-8 | HIGH | RESOLVED |
 | SEC-9 | HIGH | RESOLVED |
 | SEC-10 | HIGH | OPEN |
-| SEC-11 | HIGH | OPEN |
-| SEC-12 | HIGH | OPEN |
-| SEC-13 | HIGH | OPEN |
-| SEC-14 | HIGH | OPEN |
-| SEC-15 | HIGH | RESOLVED |
+| SEC-11 | MEDIUM | RESOLVED |
+| SEC-12 | HIGH | RESOLVED |
+| SEC-13 | HIGH | RESOLVED |
+| SEC-14 | HIGH | RESOLVED |
+| SEC-15 | MEDIUM | RESOLVED |
 | SEC-16 | MEDIUM | OPEN |
 | SEC-17 | MEDIUM | RESOLVED |
 | SEC-18 | MEDIUM | OPEN |
+| SEC-19 | LOW | OPEN |
 | SEC-20 | MEDIUM | OPEN |

@@ -563,9 +563,12 @@ export async function transitionProjectStatus(input: StatusTransitionInput): Pro
 }
 
 /** PM-1: revoke the project's live intake links. Checked; a missing table
- *  (pre-20260902) means there is nothing to revoke. PC-1 / J1 exports the
- *  shared intake-link revoke helper — until it lands, the revocation is
- *  inline here (and inside delete_project_record, 20261103). */
+ *  (pre-20260902) means there is nothing to revoke. Kept inline rather than
+ *  calling lib/intakeLinks.ts's revokeProjectIntakeLinks (J1): a refused
+ *  revocation must THROW here, before the status changes, and the close and
+ *  delete audit rows already carry the count. The database closes the doors
+ *  on every delete path as well (delete_project_record, 20261103; the
+ *  AFTER DELETE trigger trg_projects_close_intake_links, 20261104). */
 async function revokeProjectIntakeLinks(projectId: string, nowIso: string): Promise<number> {
   const { data, error } = await supabase
     .from("project_intake_links")

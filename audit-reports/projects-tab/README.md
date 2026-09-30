@@ -26,8 +26,8 @@ before and after.
 | CRITICAL | 17 |
 | HIGH | 52 |
 | MEDIUM | 66 |
-| LOW | 2 |
-| **Total** | **137** |
+| LOW | 3 |
+| **Total** | **138** |
 
 Two findings here (`BID-5`, `UX-2`) carry `Status: REFUTED` — an independent pass
 disproved them. They are kept with the reason rather than deleted (`DEC-41`);
@@ -39,6 +39,8 @@ and the make-it-true-by-automation half was split out for the intake and
 quality packages.
 `SEC-18` (two presigned-GET issuers sign no disposition: `/api/storage/resolve`
 and the data-export envelope) was opened by package J9 on 2026-09-30.
+`SEC-19` (contractor intake tokens are stored in plaintext) was opened by package
+J1 on 2026-09-30.
 `SEC-20` (audit rows about a private project stay readable org-wide) was opened
 by package J8 on 2026-09-30.
 `CHART-6` (two consumers paint the score band's colour as text; the 70–84 band
@@ -58,14 +60,14 @@ Work these in order. The numbering reflects priority, not just grouping —
 
 | # | Report | Findings | CRIT | Progress |
 |---|---|---|---|---|
-| 01 | [Security & access](./01-security-access.md) | 19 | 4 | 5 / 19 |
-| 02 | [Safety, compliance & the record](./02-safety-compliance.md) | 17 | 3 | 8 / 17 |
+| 01 | [Security & access](./01-security-access.md) | 20 | 4 | 15 / 20 |
+| 02 | [Safety, compliance & the record](./02-safety-compliance.md) | 17 | 3 | 14 / 17 |
 | 03 | [Money & the ledger](./03-money-ledger.md) | 12 | 0 | 7 / 12 |
 | 04 | [Bid tabulation & the award decision](./04-bid-tabulation.md) | 12 | 2 | 11 / 12 |
 | 05 | [Charts & the printed RFQ](./05-charts-and-rfq.md) | 8 | 0 | 6 / 8 |
 | 06 | [Schedule engine](./06-schedule-engine.md) | 18 | 5 | 6 / 18 |
 | 07 | [Truth in the interface](./07-interface-truth.md) | 16 | 1 | 11 / 16 |
-| 08 | [Reliability & failure modes](./08-reliability.md) | 11 | 0 | 6 / 11 |
+| 08 | [Reliability & failure modes](./08-reliability.md) | 11 | 0 | 7 / 11 |
 | 09 | [Performance & scale](./09-performance-scale.md) | 11 | 0 | 2 / 11 |
 | 10 | [Accessibility, mobile & dark mode](./10-accessibility-mobile.md) | 13 | 2 | 3 / 13 |
 | — | [Upload door — recommended controls](./11-upload-door-controls.md) | design note | — | — |

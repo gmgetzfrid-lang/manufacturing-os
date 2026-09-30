@@ -6,6 +6,14 @@
 // approve (promotes via the same finalize pipeline as any reviewed
 // revision — supersede notices, ack rosters, the works) or reject with the
 // reason on the record. Trusted links (auto-supersede own work) are marked.
+//
+// projects Round G (J1): approve honours the document's review policy
+// through the container chain — a policy that REQUIRES sign-off sends the
+// submission to its reviewers first (SEC-13); a drawing-class document asks
+// for its MOC reference (SEC-14); the approval is of exactly the version on
+// screen (SAF-15). A rejection needs a reason, which the contractor sees on
+// their portal (SAF-9). Every link expires (SEC-5); quote links live on the
+// Costs tab, not here (INTK-12).
 
 import React, { useCallback, useEffect, useRef, useState } from "react";
 import {
@@ -13,8 +21,24 @@ import {
   FilePlus2, Search,
 } from "lucide-react";
 import { supabase } from "@/lib/supabase";
-import { finalizeReviewedRevision, finalizeReasonMessage } from "@/lib/reviewControl";
-import { appConfirm } from "@/components/providers/DialogProvider";
+import {
+  finalizeReviewedRevision, finalizeReasonMessage,
+  effectiveReviewControlForDocument, listDraftRoster, openReviewRoster,
+} from "@/lib/reviewControl";
+import { effectiveDocClassForDocument } from "@/lib/docClass";
+import { appConfirm, appPrompt } from "@/components/providers/DialogProvider";
+import { INTAKE_LINK_DEFAULT_DAYS, INTAKE_LINK_MAX_DAYS, intakeExpiryFor } from "@/lib/intakeLinks";
+import type { ReviewControl } from "@/types/schema";
+
+// SEC-5: the date picker works in the user's LOCAL calendar (the expiry
+// is that day's end, local time — intakeExpiryFor). A UTC date is a day
+// ahead west of UTC in the evening, which offered a "90-day" maximum that
+// was really 91 and then refused it.
+const isoDateInDays = (days: number) => {
+  const d = new Date();
+  d.setDate(d.getDate() + days);
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+};
 import TransitionInPanel from "@/components/projects/TransitionInPanel";
 import { flagCollisionToDrafting, TransitionCandidate, TransitionImpact } from "@/lib/transitionIn";
 
@@ -51,20 +75,32 @@ export default function IntakePanel({ orgId, projectId, canManage, uid, userEmai
   // New-link form
   const [company, setCompany] = useState("");
   const [email, setEmail] = useState("");
-  const [expires, setExpires] = useState("");
+  // SEC-5: a link always expires — 14 days unless changed, 90 at most.
+  const [expires, setExpires] = useState(() => isoDateInDays(INTAKE_LINK_DEFAULT_DAYS));
   const [trusted, setTrusted] = useState(false);
   const [libPick, setLibPick] = useState("");
 
   const refresh = useCallback(async () => {
     setLoading(true);
     try {
-      const [{ data: lk }, { data: proj }, { data: ls }] = await Promise.all([
-        supabase.from("project_intake_links")
-          .select("id, token, company_name, contact_email, allow_auto_supersede, expires_at, revoked_at, submission_count, last_used_at, assigned_doc_ids")
-          .eq("project_id", projectId).order("created_at", { ascending: false }),
+      // INTK-12: this panel manages DOCUMENT links only — a quote link is
+      // the Costs tab's (with its own expiry and revoke), and shown here it
+      // would offer an "Assign docs" that does nothing. Tolerant of a
+      // database without the purpose column (20261013).
+      const linkCols = "id, token, company_name, contact_email, allow_auto_supersede, expires_at, revoked_at, submission_count, last_used_at, assigned_doc_ids";
+      const [linksRead, { data: proj }, { data: ls }] = await Promise.all([
+        supabase.from("project_intake_links").select(linkCols)
+          .eq("project_id", projectId).eq("purpose", "documents").order("created_at", { ascending: false }),
         supabase.from("projects").select("intake_library_id, intake_collection_id").eq("id", projectId).maybeSingle(),
         supabase.from("libraries").select("id, name").eq("org_id", orgId).order("name"),
       ]);
+      let lk = linksRead.data;
+      if (linksRead.error && /purpose/.test(linksRead.error.message ?? "")) {
+        ({ data: lk } = await supabase.from("project_intake_links").select(linkCols)
+          .eq("project_id", projectId).order("created_at", { ascending: false }));
+      } else if (linksRead.error) {
+        throw new Error(linksRead.error.message);
+      }
       const linkRows = (((lk ?? []) as Array<Record<string, unknown>>)).map((r) => ({
         id: String(r.id), token: String(r.token), companyName: String(r.company_name),
         contactEmail: (r.contact_email as string | null) ?? null,
@@ -137,29 +173,36 @@ export default function IntakePanel({ orgId, projectId, canManage, uid, userEmai
     if (!company.trim()) { setMsg("Company name is required."); return; }
     const lib = intakeLibraryId ?? libPick;
     if (!lib) { setMsg("Pick the library where intake documents will live."); return; }
+    const expiry = intakeExpiryFor(expires);
+    if (!expiry.ok) { setMsg(expiry.message); return; }
     setBusy("create"); setMsg(null);
     try {
       if (!intakeLibraryId) {
-        await supabase.from("projects").update({ intake_library_id: lib }).eq("id", projectId);
+        const { error: libErr } = await supabase.from("projects").update({ intake_library_id: lib }).eq("id", projectId);
+        if (libErr) throw new Error(`Couldn't set the intake library: ${libErr.message}`);
       }
       const token = (crypto.randomUUID() + crypto.randomUUID()).replace(/-/g, "").slice(0, 40);
-      const { error } = await supabase.from("project_intake_links").insert({
+      const { data: created, error } = await supabase.from("project_intake_links").insert({
         org_id: orgId, project_id: projectId, token,
         company_name: company.trim(), contact_email: email.trim() || null,
         allow_auto_supersede: trusted,
-        expires_at: expires ? new Date(`${expires}T23:59:59`).toISOString() : null,
+        expires_at: expiry.iso,
         created_by: uid,
-      });
+      }).select("id").single();
       if (error) throw new Error(error.message);
-      await supabase.from("audit_logs").insert({
+      // INTK-12: the audit row names the LINK (its id) — never the project in
+      // its place, never token material — and a failed audit is visible.
+      const { error: auditErr } = await supabase.from("audit_logs").insert({
         action: "INTAKE_LINK_CREATED",
-        resource_type: "project_intake_link", resource_id: projectId,
+        resource_type: "project_intake_link", resource_id: String((created as { id: string }).id),
         org_id: orgId, user_id: uid, user_email: userEmail ?? null,
-        details: { company: company.trim(), trusted, expires: expires || null },
-      }).then(() => undefined, () => undefined);
-      setCompany(""); setEmail(""); setExpires(""); setTrusted(false);
+        details: { company: company.trim(), trusted, expiresAt: expiry.iso, projectId },
+      });
+      setCompany(""); setEmail(""); setExpires(isoDateInDays(INTAKE_LINK_DEFAULT_DAYS)); setTrusted(false);
       await refresh();
-      setMsg("Link created — copy it below and send it to the company.");
+      setMsg(auditErr
+        ? `Link created, but its audit record failed: ${auditErr.message}`
+        : "Link created — copy it below and send it to the company.");
     } catch (e) { setMsg((e as Error).message); }
     finally { setBusy(null); }
   };
@@ -170,12 +213,13 @@ export default function IntakePanel({ orgId, projectId, canManage, uid, userEmai
     try {
       const { error } = await supabase.from("project_intake_links").update({ revoked_at: new Date().toISOString() }).eq("id", l.id);
       if (error) { setMsg(`Couldn't revoke: ${error.message}`); return; }
-      await supabase.from("audit_logs").insert({
+      const { error: auditErr } = await supabase.from("audit_logs").insert({
         action: "INTAKE_LINK_REVOKED",
         resource_type: "project_intake_link", resource_id: l.id,
         org_id: orgId, user_id: uid, user_email: userEmail ?? null,
         details: { company: l.companyName, projectId },
-      }).then(() => undefined, () => undefined);
+      });
+      if (auditErr) setMsg(`The link was revoked, but its audit record failed: ${auditErr.message}`);
       await refresh();
     } finally { setBusy(null); }
   };
@@ -234,26 +278,122 @@ export default function IntakePanel({ orgId, projectId, canManage, uid, userEmai
   const approve = async (p: PendingSub) => {
     setBusy(p.docId); setMsg(null);
     try {
+      // SAF-15: approve exactly the version on screen. A pointer that has
+      // moved since the list loaded (rejected and resubmitted, or displaced)
+      // is refused — the reviewer never approves a file they did not open.
+      const { data: doc, error: docErr } = await supabase.from("documents")
+        .select("id, library_id, collection_id, review_control, pending_version_id")
+        .eq("id", p.docId).eq("org_id", orgId).maybeSingle();
+      if (docErr) throw new Error(`Couldn't read ${p.label}: ${docErr.message}`);
+      if (!doc || String(doc.pending_version_id ?? "") !== p.pendingVersionId) {
+        await refresh();
+        throw new Error(`${p.label} changed since this list loaded — it has been refreshed. Check the submission shown now before approving.`);
+      }
+      const libraryId = String(doc.library_id);
+      // SEC-13 / DEC-36: the document's review policy, resolved through the
+      // container chain. A policy that REQUIRES sign-off is never satisfied
+      // by this click alone: the submission goes to the resolved roster, and
+      // publishes when the roster is complete (the database refuses an
+      // intake promote that skipped it — 20261105).
+      const control = await effectiveReviewControlForDocument({
+        reviewControl: (doc.review_control as ReviewControl | null) ?? null,
+        collectionId: (doc.collection_id as string | null) ?? null,
+        libraryId,
+      });
+      const rosterRequired = control.mode === "require";
+      // The submission as stored: its file hash binds reviewers' sign-offs
+      // to the bytes they reviewed; its MOC reference is SEC-14's.
+      const { data: ver, error: verErr } = await supabase.from("document_versions")
+        .select("moc_reference, file_hash").eq("id", p.pendingVersionId).maybeSingle();
+      if (verErr) throw new Error(`Couldn't read the submission: ${verErr.message}`);
+      // SEC-14: a drawing-class document's external revision carries its
+      // management-of-change reference (the database refuses it otherwise).
+      // Captured HERE, before either path — on the roster path the publish
+      // happens later from the review panel, which has no MOC prompt, so a
+      // reference missing now would refuse the reviewers' final sign-off.
+      const docClass = await effectiveDocClassForDocument({ id: p.docId, collectionId: (doc.collection_id as string | null) ?? null, libraryId });
+      if (docClass === "drawing" && String((ver as { moc_reference?: string | null } | null)?.moc_reference ?? "").trim().length < 3) {
+        const moc = await appPrompt({
+          title: "MOC reference required",
+          message: `${p.label} is a drawing — PSM (OSHA 1910.119(l)) requires the management-of-change reference for this revision before it can become current.`,
+          placeholder: "MOC reference",
+          confirmLabel: rosterRequired ? "Record and continue" : "Record and approve",
+        });
+        if (moc == null) return;
+        if (moc.trim().length < 3) throw new Error("An MOC reference is at least 3 characters.");
+        const { data: set, error: setErr } = await supabase.from("document_versions")
+          .update({ moc_reference: moc.trim() }).eq("id", p.pendingVersionId).eq("review_state", "in_review").select("id");
+        if (setErr) throw new Error(`Couldn't record the MOC reference: ${setErr.message}`);
+        if (!set || set.length === 0) throw new Error("Couldn't record the MOC reference: the write was refused.");
+      }
+      if (rosterRequired) {
+        // A roster is its PRIMARY slots (the guard counts primaries; a
+        // standby alternate alone reviews nothing).
+        const hasPrimary = (rows: Awaited<ReturnType<typeof listDraftRoster>>) => rows.some((r) => r.slot === "primary");
+        const roster = await listDraftRoster(p.docId, p.pendingVersionId);
+        if (!hasPrimary(roster)) {
+          if (!(await appConfirm({ message: `${p.label}'s review policy requires reviewer sign-off. Send Rev ${p.revLabel ?? ""} to its reviewers? It publishes from the document's review panel once they have signed.` }))) return;
+          await openReviewRoster({
+            orgId, documentId: p.docId, libraryId, versionId: p.pendingVersionId,
+            revisionLabel: p.revLabel ?? "",
+            contentHash: ((ver as { file_hash?: string | null } | null)?.file_hash ?? null),
+            control, actorId: uid, actorName: userEmail ?? null,
+          });
+          // Say what actually happened: a policy that resolves nobody opens
+          // no roster (the owner and Document Control are told of the gap),
+          // and "sent to its reviewers" would loop the next Approve on the
+          // same prompt.
+          const opened = await listDraftRoster(p.docId, p.pendingVersionId);
+          setMsg(hasPrimary(opened)
+            ? `${p.label} Rev ${p.revLabel ?? ""} was sent to its reviewers — it publishes when the last of them signs off on the document's review panel (in the document library), not from this tab.`
+            : `No reviewer could be resolved for ${p.label}'s library — set its reviewers before this submission can be approved.`);
+          await refresh();
+          return;
+        }
+      }
+      // A roster-free policy: this click IS the review (the publish guard
+      // still checks authority and holds). A required one: the roster must
+      // be complete.
       const res = await finalizeReviewedRevision({
         orgId, documentId: p.docId, actorId: uid, actorName: userEmail ?? "Reviewer",
-        requireRosterComplete: false,
+        requireRosterComplete: rosterRequired,
       });
       if (!res.published) throw new Error(finalizeReasonMessage(res.reason));
-      setMsg(`${p.label} Rev ${p.revLabel ?? ""} approved — it is now the current revision.`);
+      // Name what actually became current — never the stale row's label.
+      const { data: after } = await supabase.from("documents").select("rev, current_version_id").eq("id", p.docId).maybeSingle();
+      setMsg(String(after?.current_version_id ?? "") === p.pendingVersionId
+        ? `${p.label} Rev ${String(after?.rev ?? p.revLabel ?? "")} approved — it is now the current revision.`
+        : `${p.label}: the approval went through, but the current revision is not the submission you approved — refresh and check the document.`);
       await refresh();
     } catch (e) { setMsg((e as Error).message); }
     finally { setBusy(null); }
   };
 
   const reject = async (p: PendingSub) => {
-    if (!(await appConfirm({ message: `Reject ${p.label} Rev ${p.revLabel ?? ""}? The company will see it as not accepted.`, tone: "danger" }))) return;
+    // SAF-9: a rejection carries its reason — the contractor sees it on
+    // their portal, so they never resubmit blind.
+    const reason = await appPrompt({
+      title: `Reject ${p.label} Rev ${p.revLabel ?? ""}?`,
+      message: "Say why — the company sees this reason on their submission portal.",
+      placeholder: "What needs to change",
+      confirmLabel: "Reject",
+      tone: "danger",
+    });
+    if (reason == null) return;
+    if (reason.trim().length < 5) { setMsg("Give the company a reason (at least a few words) so they know what to fix."); return; }
     setBusy(p.docId); setMsg(null);
     try {
       // Mark the version first — if the DB refuses (pre-migration CHECK, or
       // the EGRESS-6 overlay), we stop BEFORE clearing pending, so nothing
-      // half-completes. Zero rows is a refusal too.
-      const { data: vRows, error: vErr } = await supabase.from("document_versions")
-        .update({ review_state: "rejected" }).eq("id", p.pendingVersionId).select("id");
+      // half-completes. Zero rows is a refusal too. The reason rides on the
+      // version (20261105); a database without the column keeps it in the
+      // audit row only.
+      let { data: vRows, error: vErr } = await supabase.from("document_versions")
+        .update({ review_state: "rejected", review_note: reason.trim() }).eq("id", p.pendingVersionId).select("id");
+      if (vErr && /review_note/.test(vErr.message ?? "")) {
+        ({ data: vRows, error: vErr } = await supabase.from("document_versions")
+          .update({ review_state: "rejected" }).eq("id", p.pendingVersionId).select("id"));
+      }
       if (vErr) throw new Error(`Couldn't reject: ${vErr.message}`);
       if (!vRows || vRows.length === 0) throw new Error("Couldn't reject: the write was refused.");
       const { error: dErr } = await supabase.from("documents")
@@ -266,13 +406,15 @@ export default function IntakePanel({ orgId, projectId, canManage, uid, userEmai
         .update({ status: "void", updated_at: new Date().toISOString() })
         .eq("document_version_id", p.pendingVersionId).in("status", ["pending", "signed"]);
       if (voidErr) throw new Error(`The submission was rejected, but its review sign-offs could not be closed out: ${voidErr.message}`);
-      await supabase.from("audit_logs").insert({
+      const { error: auditErr } = await supabase.from("audit_logs").insert({
         action: "INTAKE_REJECTED",
         resource_type: "document", resource_id: p.docId,
         org_id: orgId, user_id: uid, user_email: userEmail ?? null,
-        details: { projectId, versionId: p.pendingVersionId, revLabel: p.revLabel, company: p.company },
-      }).then(() => undefined, () => undefined);
-      setMsg(`${p.label} Rev ${p.revLabel ?? ""} rejected — the record and portal now show it as not accepted.`);
+        details: { projectId, versionId: p.pendingVersionId, revLabel: p.revLabel, company: p.company, reason: reason.trim() },
+      });
+      setMsg(auditErr
+        ? `${p.label} Rev ${p.revLabel ?? ""} rejected, but its audit record failed: ${auditErr.message}`
+        : `${p.label} Rev ${p.revLabel ?? ""} rejected — the company sees it as not accepted, with your reason, on their portal.`);
       await refresh();
     } catch (e) { setMsg((e as Error).message); }
     finally { setBusy(null); }
@@ -437,11 +579,11 @@ export default function IntakePanel({ orgId, projectId, canManage, uid, userEmai
                   {libs.map((l) => <option key={l.id} value={l.id}>{l.name}</option>)}
                 </select>
               )}
-              <input type="date" value={expires} onChange={(e) => setExpires(e.target.value)} min={new Date().toISOString().slice(0, 10)} className="h-8 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-2 text-xs [color-scheme:light] dark:[color-scheme:dark]" title="Expiry (optional)" />
+              <input type="date" value={expires} onChange={(e) => setExpires(e.target.value)} min={isoDateInDays(0)} max={isoDateInDays(INTAKE_LINK_MAX_DAYS)} required className="h-8 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-2 text-xs [color-scheme:light] dark:[color-scheme:dark]" title={`Expiry (required — at most ${INTAKE_LINK_MAX_DAYS} days)`} aria-label="Link expiry date" />
             </div>
             <label className="flex items-center gap-2 text-xs text-[var(--color-text)]">
               <input type="checkbox" checked={trusted} onChange={(e) => setTrusted(e.target.checked)} />
-              Trusted: their revisions of <b>their own documents</b> publish immediately (skip review)
+              Trusted: once one of <b>their own documents</b> has been approved, their later revisions of it publish immediately — never documents assigned to them, never over a hold or a checkout, never in a library that requires reviewer sign-off
             </label>
             <button onClick={() => void createLink()} disabled={busy === "create"} className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-[var(--color-accent)] text-[var(--color-accent-fg)] text-xs font-black hover:bg-[var(--color-accent-hover)] disabled:opacity-50">
               {busy === "create" ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Link2 className="w-3.5 h-3.5" />} Create link

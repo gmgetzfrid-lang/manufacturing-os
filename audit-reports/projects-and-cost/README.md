@@ -22,7 +22,7 @@ The project model and its server behaviour, scheduling and the critical path, th
 
 ## Findings
 
-**71 findings** — 2 CRITICAL, 22 HIGH, 35 MEDIUM, 12 LOW.
+**72 findings** — 2 CRITICAL, 22 HIGH, 36 MEDIUM, 12 LOW.
 
 | # | Report | n | Note |
 |---|---|---|---|
@@ -30,7 +30,7 @@ The project model and its server behaviour, scheduling and the critical path, th
 | 02 | [Scheduling — dependencies, critical path, import](./02-scheduling.md) | 14 |  |
 | 03 | [The quality program — checklists, turnover, punch](./03-quality.md) | 13 |  |
 | 04 | [Cost, change orders & bid tabulation](./04-cost-and-bids.md) | 15 |  |
-| 05 | [External intake & the contractor door](./05-intake-door.md) | 14 |  |
+| 05 | [External intake & the contractor door](./05-intake-door.md) | 15 | `INTK-15` opened by projects Round G package J1, 2026-09-30 |
 
 Every report except the critic was **adversarially verified** — a second agent
 read the cited code and tried to refute each finding. Across the whole run, 333

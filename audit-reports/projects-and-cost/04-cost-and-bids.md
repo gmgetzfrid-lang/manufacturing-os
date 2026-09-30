@@ -573,6 +573,8 @@ lib/companies.ts:284 — `const awardsTotal = parties.reduce((s, p) => s + (p.co
 
 **Scope / residual.** Pending migration: `20261096_prj_roundG_cost_doc_links_and_extent.sql` (DEC-30). PC-5's nonconformance events are not read (the table is not in this tree; DEC-31).
 
+**Partial (2026-09-30, projects Round G — J1 INTAKE-DOOR, the intake limb of Done-when 3).** The intake quote branch (`app/api/intake/upload/route.ts`) now resolves `party_id` from the link's company before it files the quote: the project's `project_parties` (org- and project-scoped) matched by `lib/bidTab.ts` `matchCompanyByName` — the registry's own binding rule, an exact case-insensitive name first, else the ONE party the name normalises to; none or several binds nothing (the Costs tab links it by hand), and an unreadable party list files the quote unlinked rather than refusing it. The chosen party rides on the audit row and the team notice. Tests — `lib/__tests__/intakeUploadRoute.test.ts` "a quote is filed against the project party the link's company names (COST-12 intake limb)", "an ambiguous or unmatched company binds no party — and an unreadable party list never refuses the quote". The finding stays OPEN: Done-when 1 is PC-7's and the turnover/punch half of Done-when 3 is PC-5's.
+
 ---
 
 <a id="cost-13"></a>

@@ -106,12 +106,22 @@ describe("app halves are wired (source pins)", () => {
 
   it("the intake route gates auto-supersede on holds, checkout and the creator's authority", () => {
     const src = readFileSync(join(process.cwd(), "app", "api", "intake", "upload", "route.ts"), "utf8");
-    expect(src).toMatch(/document_holds/);
+    // projects Round G J1: the hold read is HLD-1's shared gate (which reads
+    // document_holds and fails closed), not an inline copy of it.
+    expect(src).toMatch(/decideHoldGate\(await readActiveHolds\(docId, supabaseAdmin\)\)/);
+    expect(readFileSync(join(process.cwd(), "lib", "holdGate.ts"), "utf8")).toMatch(/\.from\("document_holds"\)/);
     expect(src).toMatch(/the hold status could not be verified/); // fail closed
     expect(src).toMatch(/checked_out_by/);
     expect(src).toMatch(/user_can_publish_on_library/);
-    // A never-reviewed external upload is not "approved".
+    // A never-reviewed external upload is not "approved": the review path
+    // writes in_review, and the trusted promote is publish_revision's row
+    // (review_state NULL — issued without review), never "approved".
     expect(src).not.toMatch(/review_state: autoNow \? "approved"/);
-    expect(src).toMatch(/review_state: autoNow \? null : "in_review"/);
+    expect(src).not.toMatch(/review_state: "approved"/);
+    expect(src).toMatch(/review_state: "in_review",/);
+    expect(src).toMatch(/supabaseAdmin\.rpc\("publish_revision", \{/);
+    // J1: a failed gate still DEMOTES to review — the promote is withheld,
+    // the file is kept.
+    expect(src).toMatch(/if \(outcome\.kind === "demote"\) \{\s*\n\s*autoWithheld = outcome\.reason;/);
   });
 });

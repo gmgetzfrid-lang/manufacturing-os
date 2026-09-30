@@ -89,6 +89,7 @@ about the system.
 | [DEC-53](#dec-53) | The equipment registry: writer tier edits and archives, controller tier deletes; a site code identifies the **type**, one code is one asset; codebook edits never rewrite codes | medium | `AREA-1`, `IRLS-5`, `CB-3`, `CB-5`, `CB-6`, `CB-10`, `GAP-310` |
 | [DEC-54](#dec-54) | A closed project is a **closed record**: closing releases its checkouts and closes its intake door, reopening is explicit and audited, and a project carrying cost or quality records is archived — deleted only by a controller with a reason, its rows snapshotted first | medium | `PM-1`, `PM-4`, `PM-6`, `PM-11`, `SEC-9`, `SEC-15`, `SEC-17`, `SAF-6` |
 | [DEC-55](#dec-55) | The cost charts draw **only what the data holds and say what they are**: series identity is a validated categorical pair plus shape; one number is shown as a number; example data only on an empty project, every figure marked; the example shows only what the real view draws | low | `CHART-2`, `CHART-3`, `CHART-4`, `REL-10`, `REL-11` |
+| [DEC-56](#dec-56) | The external door: a contractor link is a **bounded credential** and a trusted link a **narrow privilege**, both enforced where the write happens — authorship fixed at creation, the trusted promote is the publish contract, a displaced submission is resolved, what the door admits is bounded, a deleted project closes its doors, a uniqueness key is written only when complete | medium | `INTK-1`–`INTK-5`, `INTK-7`–`INTK-11`, `INTK-13`, `PM-2`, `SEC-1`, `SEC-3`–`SEC-6`, `SEC-8`, `SEC-11`–`SEC-14`, `SAF-5`, `SAF-10`–`SAF-13`, `SAF-15`, `REL-8` |
 
 ---
 
@@ -1391,6 +1392,8 @@ no router.
 
 *Landed 2026-09-23 (document-control Round F): the single resolver exists — `lib/containerChain.ts` (`loadContainerChain` / `firstDefinedInChain` / `folderChainFromMap`) walks document → folder → `path_ids` ancestors nearest first → library, throws on a read error, and is the only chain walk: `review_control` and `doc_class` ride it; `routing_control` must too. Its SQL twin is `review_control_mode_for` (`20261070`). See `RG-3`, `RG-6`.*
 
+*Landed 2026-09-30 (projects Round G, J1): the external door resolves the review policy through the same SQL twin (`review_control_mode_for`) — a `require` policy is never auto-published by a contractor link — and `enforce_document_publish_guard` (re-created in 20261105 from 20261070's body) no longer exempts an EXTERNAL submission from a `require` policy with no roster; the Intake tab's approve resolves the policy with `effectiveReviewControlForDocument` and opens the roster. See projects-tab `SEC-13`, `DEC-56`.*
+
 <a id="dec-37"></a>
 ## DEC-37 · One person, many hats
 
@@ -1596,6 +1599,7 @@ already-solved problem, not a change to this rule.
 **Risk:** medium.
 
 *Landed 2026-09-30 (projects Round G): the project's Documents tab lists the register as live references — `lib/projects.ts` `listProjectDocuments` reads each linked document's CURRENT row (number, rev, status) and marks a superseded / void / archived one "Not current" (`NOT_CURRENT_STATUSES`); approved contractor documents not yet adopted are listed from the intake folder by reference; no bytes are copied. See projects-tab `UX-11`.*
+*Landed 2026-09-30 (projects Round G, J1 INTAKE-DOOR): a document the external intake door CREATES is referenced from its project — one `project_documents` row (`source 'manual'`, the row "attach to project" writes), written by `app/api/intake/upload/route.ts` after the submission is queued; a refused reference is logged and the submission stands. No bytes are copied; revisions of existing documents write none.*
 
 ---
 
@@ -3108,3 +3112,190 @@ house rules the dataviz method already states.
 
 **Risk:** low — presentation only; no stored value changes. The visible
 change: Spent is drawn in the categorical blue instead of the brand accent.
+
+<a id="dec-56"></a>
+## DEC-56 · The external door: who authored a document, how a trusted link publishes, and what the door admits
+
+**Decision. A contractor link is a bounded credential and a trusted link is a
+narrow privilege, both enforced where the write happens:**
+
+1. **Authorship is a fact fixed at creation** — `documents.authored_by_link_id`,
+   stamped only when the door CREATES a document (backfilled from each
+   document's first version). A trusted link auto-publishes a revision ONLY when
+   the document is its own by that column, is NOT in the link's
+   `assigned_doc_ids`, has had at least one approved revision
+   (`current_version_id`), has no submission of the link's still awaiting
+   review, has no rejected submission made against its current revision
+   (until the team approves one), is not being sent bytes the team rejected
+   before, and whose newest submission from the link was not rejected — and
+   none of the gates below refuses. Anything else goes to review, and the
+   portal is told why. (A rejected file is never re-published by resubmitting
+   it: the reject → throwaway → resend route is closed by the pending rule.)
+2. **The trusted promote is the publish contract**, never a pointer write:
+   `publish_revision` acting as the link's CREATOR (the person who sanctioned
+   auto-publish), so the hold gate, the checkout lock, the expected-base check
+   and the drawing-class MOC gate run in the database; the route adds the
+   creator's current publish authority and the document's review policy (the
+   SQL twin of the container-chain resolver — a `require` policy is never
+   auto-published). Then the full post-publish pipeline, run server-side with
+   the shared client bound to the service role FOR THAT REQUEST ONLY
+   (`lib/serverClientScope.ts`, AsyncLocalStorage) and every signal settled
+   (`runPostPublishSideEffects({ …, settle: true })`). A refusal DEMOTES the
+   upload to review (OWN-4); it never discards the file.
+3. **A displaced submission is resolved, not orphaned**: only a trusted link,
+   only its OWN roster-free earlier submission on its own document, and only
+   on the review path (the replacement is itself reviewed); the displaced
+   version becomes `review_state = 'superseded'` — BEFORE the replacement is
+   inserted (so a corrected resubmission may reuse its revision label),
+   compare-and-set on a still-undecided draft, checked — with an audit row
+   and a notice once the replacement lands, and is never a revert target. A
+   replacement that fails restores the displaced draft; a restore that cannot
+   land is audited `INTAKE_DISPLACE_UNRESOLVED`. A submission the door
+   WITHDRAWS (a lost pointer race) is resolved the same way. The health
+   signals count STATE, on every cron run until they reach 0: in-review rows
+   nothing points at and nothing withdrew, and documents whose pending
+   revision names a retired draft (whatever wrote it — the unrestorable
+   displacement is one way there).
+4. **What the door admits**: the token travels in a header (or the query
+   string) and is checked — format, rate window, existence, revocation,
+   expiry, the project's existence and status, the declared size, the link's
+   budget — before the body is read. A link the database does not hold is
+   answered "no longer valid — withdrawn or mistyped" (a deleted project's
+   links are deleted, item 7). 30 uploads per token and 60 per IP per hour
+   (environment-configurable), FAIL OPEN on a limiter error; one team notice
+   per link per 15 minutes — a revision published without review or a
+   replaced submission does not wait for the window, but a window holds at
+   most THREE notices of any kind; every folded submission is counted, by
+   kind, into the next notice — and a folded publish or replacement that no
+   later notice announces (the link went quiet) goes to the controllers and
+   the owner in the maintenance cron's daily digest, one per project (each
+   link listed), repeated only when its marker failed to land (verification
+   fix, below); a per-link lifetime cap of 500 submissions
+   and 5 GB. Links expire: 14 days by default, 90 at most (the database CHECK
+   allows 92 days: an end-of-day LOCAL expiry picked from a UTC date lands up
+   to ~91.5 days out west of UTC). A retry of the same bytes answers with the
+   LIVE original of the same record — never a withdrawn row, never another
+   document's. The bytes decide the type: quotes PDF only;
+   drawings PDF, DWG, DXF or ZIP; redlines those plus PNG and JPEG (a photo or
+   scan of a marked-up print) — by magic number, extension and a plausible
+   declared type; the stored Content-Type is the sniffed one.
+   Title ≤ 200, number ≤ 64, revision label a label. Portal errors are a
+   sentence and a reference id — database text stays in the log.
+5. **Assigning a controlled document to a contractor is a publish-grade act**:
+   the document must be in the link's org, the assigner must hold publish
+   authority on its library AND be able to open the document
+   (`doc_is_visible` — publish authority is not read access), controllers
+   exempt (a trigger, not a policy).
+6. **Transition-in**: a never-approved sheet whose latest submission was
+   rejected is not a candidate (an APPROVED sheet whose newer proposal was
+   rejected is adopted at its approved revision); an unapproved one is shown
+   and blocked; a sheet whose checks could not run is "unverifiable" — never
+   clean, never bulk-adopted; adoption re-checks at the click and is offered
+   to the controller tier only (the move guard's tier). A same-numbered live
+   document is a collision where the number is the destination library's
+   key; in a multi-part library (a sheet set) the full key decides between
+   the sheets INSIDE it — a sheet set shares its number within its library,
+   never across libraries, so a live same-numbered document in any OTHER
+   library still blocks until a renumber that is itself clear. An approved
+   sheet with a newer submission in review is marked and blocked like an
+   unapproved one — never "clean".
+7. **A deleted project closes its doors** — a trigger on `projects` deletes
+   the project's links on every delete path. Not a foreign key: the org
+   restore loads tables in `RESTORE_TABLE_ORDER` and fails a chunk on a
+   23503, so an FK would have lost the links table (and the quotes that
+   reference it) for any backup holding an orphan link. For the same reason
+   `documents.authored_by_link_id` is a plain indexed UUID (`documents`
+   restores before `project_intake_links`). J1 adds no foreign key a restore
+   cannot satisfy — a tripwire test checks every FK its migrations add
+   against the restore order. Orphans found at apply are revoked, never
+   deleted.
+8. **What the door files where**: a quote carries the project party the
+   link's company names (`matchCompanyByName` — exact, else the one party it
+   normalises to; ambiguity binds nothing); a document the door creates is
+   referenced from the project (`project_documents`, `DEC-40`), never copied.
+9. **A uniqueness key is written only when it is complete.** A library's
+   tuple can name a field the door never collects (`["documentNumber",
+   "sheet"]` — a sheet set shares one number). The door, adoption and the
+   `20261105` backfill write the key `lib/uniqueness.ts` computes only when
+   EVERY part is supplied and filled (`completeUniquenessKey`); otherwise the
+   key is NULL — the column's documented opt-out — and the sheet enters the
+   unique index when its missing part is set. A partial key would make sheet
+   2 collide with sheet 1.
+
+**Binding the shared client (corrected in the second review).** The door runs
+the post-publish pipeline, `emit` and `listLiveIntents` — written against the
+shared `supabase` client — with that client resolving to the service role for
+the REQUEST only: `runWithServerClient(supabaseAdmin, fn)` stores it in an
+`AsyncLocalStorage` that `lib/supabase.ts`'s proxy reads first. The first
+landing swapped the module-level client (`__setServerSupabaseClient`) and
+recorded "one serverless function per route" as a deploy constraint; that
+premise does not hold on the target platform (routes can share a function,
+and one instance serves concurrent requests), so any other request in the
+instance could have run as the service role during an upload. There is no
+deploy constraint now. (The maintenance cron's own module-wide swap for the
+compliance scans is unchanged and not this decision's.)
+
+> Made during projects Round G (2026-09-30), package J1 INTAKE-DOOR. Closed:
+> projects-and-cost `INTK-1`, `INTK-2`, `INTK-3`, `INTK-4`, `INTK-5`, `INTK-7`,
+> `INTK-8`, `INTK-9`, `INTK-10`, `INTK-11`, `INTK-13`, `PM-2` (its production
+> run of the orphan query pending the paste); projects-tab `SEC-1`, `SEC-3`,
+> `SEC-4`, `SEC-5`, `SEC-6`, `SEC-8`, `SEC-11`, `SEC-12`, `SEC-13`, `SEC-14`,
+> `SAF-5`, `SAF-10`, `SAF-11`, `SAF-12`, `SAF-13`, `SAF-15`, `REL-8`. Partial
+> and still OPEN: `INTK-6`, `INTK-14`, `SEC-16`, `SAF-9`, `COST-12` (its intake
+> limb landed); `INTK-12`'s Intake-tab limb landed but it stays open for its
+> owner. Opened: `INTK-15`, `SEC-19`. Not this package's: `SEC-7`, `SEC-9`,
+> `SEC-10`, `SAF-14`. *Numbered DEC-56 at merge (DEC-44 to DEC-55
+> were already taken on the integration branch).*
+>
+> **Verification fix (2026-09-30, projects Round G).** Item 4's digest was
+> "one per link, never repeated"; neither held. It is now ONE digest per
+> PROJECT listing each link's counts (a second link's email on the same
+> project was dropped by `queueEmail`'s 60-second dedupe). Delivery is the
+> digest's bell rows, inserted by the cron and checked; a link is marked
+> only when they landed, and its marker is `digested` — a boundary for the
+> fold count, not a notice in the window. A marker that fails to land is
+> counted and reported, and that link is announced again the next day — a
+> repeat, never a loss. The email leg is best-effort. Item 3's health
+> signals are now logged on every run, an unavailable count is reported
+> (quiet only before the migration is applied), and each affected org's
+> controller pool is nudged once a day (best-effort, through `emit()`).
+> Item 6: a sheet whose pending revision names a retired draft is marked
+> "stuck" and sent to Document Control, not the review queue; the
+> adoption re-check is the controller's browser's, not the server's
+> (projects-and-cost `INTK-3` done-when 1 is partial, pending `SAF-13`'s
+> server-side adopt).
+
+**Rationale.** The door is the one place an outside party writes into document
+control. Every earlier defect had the same shape: a fact the route itself
+manufactured (a version row carrying the link's id) was read back as
+authority, and a service-role write skipped the rails the database already
+had. Reading authorship from a column only the creating call writes, and
+publishing through the same contract as every internal publish, removes both
+without a second implementation of the guards.
+
+**Deferred, on the record.** Hashing the token at rest (`SEC-19`) and a
+mint-once display (`SEC-16` Done-when 1) wait on the Costs tab's list;
+presigned direct-to-R2 uploads (`INTK-15`) wait on `GAP-401`'s constrained
+identity; the contractor's email on approve/reject (`SAF-9`) needs a server
+route — the portal shows outcome and reason in the meantime.
+
+**Acceptance.** Two submissions against an assigned document both land in
+review; a trusted link's revision of its own approved document publishes
+through `publish_revision` and a fresh acknowledgment roster opens; reject F
+→ submit G → resend F lands in review; an HTML file named `.pdf` is refused
+before storage; the 31st upload in an hour is a 429; a retry returns the
+original record; a gone project's link opens nothing; two same-numbered sheets
+into a multi-sheet library are both taken and both adopted, while a live
+P-100 in ANOTHER library refuses a P-100's adoption into it until renumbered;
+a concurrent request never sees the upload's service-role client; a quiet
+link's folded publishes reach the controllers in one digest; a pending
+pointer on a retired draft is reported until resolved (`lib/__tests__/intakeUploadRoute.test.ts`,
+`lib/__tests__/intakeAutoPublishAcks.test.ts`,
+`lib/__tests__/intakeDoorMigration.test.ts`, `lib/__tests__/transitionIn.test.ts`,
+`lib/__tests__/serverClientScope.test.ts`, `lib/__tests__/intakeDoorLibs.test.ts`).
+
+**Reversal.** Per item, in configuration where it is one (the limits, the
+allowlist); the authorship rule and the contract-only promote are structural.
+
+**Risk:** medium — a trusted vendor's first revisions now wait for a person,
+and an unverifiable sheet needs a deliberate single adopt.

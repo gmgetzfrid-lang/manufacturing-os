@@ -131,13 +131,25 @@ export function __resetServerSupabaseClient() {
   clientImpl = baseClient;
 }
 
+// SERVER-ONLY, request-scoped: lib/serverClientScope.ts registers a reader
+// of its AsyncLocalStorage here. Inside `runWithServerClient(client, fn)`
+// the shared client resolves to `client` for that async context ONLY — a
+// concurrent request in the same instance (grouped functions, in-instance
+// concurrency) keeps its own. Browser bundles never register a reader, so
+// nothing changes for them.
+let scopedServerClient: (() => unknown) | null = null;
+export function __registerScopedServerClient(read: () => unknown) {
+  scopedServerClient = read;
+}
+
 // Delegating proxy so existing `import { supabase }` call sites transparently
 // follow a server-side swap. Methods are bound to the live impl.
 export const supabase: SharedClient = new Proxy({} as SharedClient, {
   get(_t, prop) {
-    const v = (clientImpl as unknown as Record<PropertyKey, unknown>)[prop as PropertyKey];
+    const impl = ((scopedServerClient?.() as SharedClient | undefined) ?? clientImpl);
+    const v = (impl as unknown as Record<PropertyKey, unknown>)[prop as PropertyKey];
     return typeof v === "function"
-      ? (v as (...a: unknown[]) => unknown).bind(clientImpl)
+      ? (v as (...a: unknown[]) => unknown).bind(impl)
       : v;
   },
 });

@@ -75,6 +75,7 @@ export const EXPECTED_TABLES: readonly TableExpectation[] = [
   { table: "entity_mentions", migration: "20260929_mention_engine.sql" },
   { table: "export_destinations", migration: "20260530_data_export_schedules.sql" },
   { table: "export_runs", migration: "20260530_data_export_schedules.sql" },
+  { table: "intake_attempts", migration: "20261105_prj_roundG_intake_review_and_attempts.sql" },
   { table: "knowledge_chunks", migration: "20260911_knowledge_ai.sql" },
   { table: "knowledge_documents", migration: "20260911_knowledge_ai.sql" },
   { table: "knowledge_libraries", migration: "20260911_knowledge_ai.sql" },
