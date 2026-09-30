@@ -1719,7 +1719,7 @@ the `Admin` branch, and an unscoped controller keeps today's behaviour.
 
 **Risk:** low.
 
-*Landed 2026-09-30 (projects Round G): service-role PAGE reads are a second bytes egress. `lib/docFileServer.ts` `resolveDocumentFile` — used by the checklist reader and the quality-manual reviewer, and required to name its reader — makes the app's own read decision over the full library → folder → document chain (read or download wherever an ACL exists, on every visibility) and writes the same `CONTROLLER_RESTRICTED_READ` row when a controller is served a document only by the controller tier — a normal document restricted by an allow-list included — with `details.channel` naming the route. A read it then refuses (a download deny) and a label-only read write none. `lib/__tests__/docFileServer.test.ts` runs the egress route and the gate over the same principals and documents and asserts the gate is never looser and records at least what the egress route records, naming each case where it is stricter until intelligence `KACL-5` brings the egress route to the same chain (projects-tab `SEC-10`). `/api/flows/read` renders a knowledge mirror's `file_key` — the controlled version's key — as the service role with no such row; that is recorded as a residual under `SEC-10` for the intelligence package that owns the route.*
+*Landed 2026-09-30 (projects Round G): service-role PAGE reads are a second bytes egress. `lib/docFileServer.ts` `resolveDocumentFile` — used by the checklist reader and the quality-manual reviewer, and required to name its reader — makes the app's own read decision over the full library → folder → document chain (read or download wherever an ACL exists, on every visibility) and writes the same `CONTROLLER_RESTRICTED_READ` row when a controller is served a document only by the controller tier — a normal document restricted by an allow-list included — with `details.channel` naming the route. A read it then refuses (a download deny) and a label-only read write none, and the version it serves must belong to the document it decided on — a forged pointer to another document's version resolves nothing, so no row describes a read of the wrong document. `lib/__tests__/docFileServer.test.ts` runs the egress route and the gate over the same principals and documents and asserts the gate is never looser and records at least what the egress route records, naming each case where it is stricter until intelligence `KACL-5` brings the egress route to the same chain (projects-tab `SEC-10`). `/api/flows/read` renders a knowledge mirror's `file_key` — the controlled version's key — as the service role with no such row; that is recorded as a residual under `SEC-10` for the intelligence package that owns the route.*
 
 <a id="dec-44"></a>
 ## DEC-44 · The download record, the presigned window, and the worker's cache
@@ -1923,6 +1923,20 @@ one (`SEC-18`'s class).**
 > fail-safe rule, closing projects-tab `SEC-7` and the egress limb of `SEC-1`.
 > It delivers the download-disposition item of projects-and-cost `INTK-11`
 > for URLs this route issues; that record's owner should cross-reference it.
+> **Numbering.** Written as DEC-49 because the brief's placeholder, DEC-44,
+> is already this tree's content-egress decision (`download-url/route.ts`
+> cites "DEC-44 §2") and DEC-48 is J3's (`fleet/I-10-registry-codebook` also
+> writes a DEC-48). J4's record takes DEC-50 and leaves DEC-49 to J2, which —
+> like J6a — still writes a DEC-44 placeholder. If DEC-49 is claimed first,
+> renumber this one mechanically: the index row, the anchor and the heading
+> here; `SEC-1`, `SEC-7` and `SEC-18` in projects-tab
+> `01-security-access.md`; and the comments in
+> `app/api/storage/download-url/route.ts`, `lib/storage.ts` (×3),
+> `components/viewers/SecureDocViewer.tsx`,
+> `app/(protected)/requests/[id]/page.tsx`,
+> `components/knowledge/CitedPageViewer.tsx` and
+> `lib/__tests__/presignedDisposition.test.ts` (×2). No test asserts the
+> number.
 
 **Rationale.** A presigned URL signed with no overrides is served with the
 object's stored type, and for an intake upload that is whatever the uploader
