@@ -3,10 +3,17 @@
 // TransitionInPanel — the adoption step after intake. A contractor's new
 // drawing set sits in the project's intake folder; this panel scans each
 // sheet against the existing register (equipment tie-ins, number collisions,
-// overlapping drawings) and then moves the clean ones into a real library —
+// overlapping drawings) and then moves sheets into a real library —
 // renumbered if wanted, equipment linked, project association kept,
-// provenance untouched. Anything with a collision stays put until a human
-// resolves it — a single source of truth is the whole point.
+// provenance untouched. Only CLEAN sheets (every check ran, nothing found)
+// are bulk-adopted. A sheet with a number collision cannot be adopted until
+// it is renumbered to a clear number — adoptDocument re-checks at the click
+// and refuses otherwise. A sheet still awaiting review (or rejected) cannot
+// be adopted at all. A sheet whose checks could not run (no number, no
+// recognised equipment) is "unverifiable": single adopt only, after an
+// explicit confirmation. Adopting moves documents between folders, which
+// the database reserves for Admin / Document Control — the controls are
+// shown to them only (SAF-13).
 
 import React, { useCallback, useEffect, useMemo, useState } from "react";
 import {
@@ -15,9 +22,18 @@ import {
 } from "lucide-react";
 import { supabase } from "@/lib/supabase";
 import {
-  TransitionCandidate, TransitionImpact,
+  TransitionCandidate, TransitionImpact, UnverifiableReason,
   listTransitionCandidates, scanTransitionImpact, adoptDocument,
 } from "@/lib/transitionIn";
+import { useRole } from "@/components/providers/RoleContext";
+import { isControllerPrincipal } from "@/lib/permissions";
+import { appConfirm } from "@/components/providers/DialogProvider";
+
+const UNVERIFIABLE_TEXT: Record<UnverifiableReason, string> = {
+  no_number: "no drawing number — it was not checked against the register",
+  no_equipment: "no equipment recognised — overlapping drawings were not checked",
+  check_failed: "a check could not run",
+};
 
 export default function TransitionInPanel({ orgId, projectId, intakeCollectionId, canManage, uid, userEmail, onFlagCollision }: {
   orgId: string; projectId: string; intakeCollectionId: string; canManage: boolean;
@@ -39,6 +55,11 @@ export default function TransitionInPanel({ orgId, projectId, intakeCollectionId
   const [destLib, setDestLib] = useState("");
   const [destCol, setDestCol] = useState("");
   const [renumber, setRenumber] = useState<Map<string, string>>(new Map());
+  // SAF-13: adopting moves documents between folders — the database's move
+  // guard reserves that for the controller tier (is_org_controller), so the
+  // controls are offered to exactly that tier.
+  const { activeRole, roles } = useRole();
+  const canAdopt = canManage && isControllerPrincipal({ role: activeRole, roles });
 
   const refresh = useCallback(async () => {
     setLoading(true);
@@ -80,18 +101,26 @@ export default function TransitionInPanel({ orgId, projectId, intakeCollectionId
     return () => { alive = false; };
   }, [destLib]);
 
+  // Bulk adoption takes only sheets that are approved AND scanned clean.
+  const bulkable = (c: TransitionCandidate) => !c.awaitingReview && !!impacts.get(c.docId)?.clean;
   const cleanCount = useMemo(
-    () => candidates.filter((c) => impacts.get(c.docId)?.clean).length,
+    () => candidates.filter((c) => !c.awaitingReview && !!impacts.get(c.docId)?.clean).length,
     [candidates, impacts],
   );
   const flaggedCount = useMemo(
-    () => candidates.filter((c) => { const i = impacts.get(c.docId); return i && !i.clean; }).length,
+    () => candidates.filter((c) => { const i = impacts.get(c.docId); return !!c.awaitingReview || (i && !i.clean); }).length,
     [candidates, impacts],
   );
 
   const adoptOne = async (c: TransitionCandidate) => {
     if (!destLib) { setMsg("Pick the destination library first."); return; }
     const impact = impacts.get(c.docId);
+    const renum = (renumber.get(c.docId) ?? "").trim();
+    if (impact && impact.unverifiable.length > 0 && !impact.numberCollision) {
+      const what = impact.unverifiable.map((r) => UNVERIFIABLE_TEXT[r]).join("; ");
+      if (!(await appConfirm({ message: `${c.label} could not be fully checked (${what}). Adopt it into the controlled register anyway?`, tone: "danger" }))) return;
+    }
+    if (impact?.numberCollision && !renum) { setMsg(`${c.label} collides with ${impact.numberCollision.label} — renumber it before adopting.`); return; }
     setBusy(c.docId); setMsg(null);
     try {
       const res = await adoptDocument({
@@ -110,7 +139,7 @@ export default function TransitionInPanel({ orgId, projectId, intakeCollectionId
 
   const adoptAllClean = async () => {
     if (!destLib) { setMsg("Pick the destination library first."); return; }
-    const clean = candidates.filter((c) => impacts.get(c.docId)?.clean);
+    const clean = candidates.filter(bulkable);
     if (!clean.length) return;
     setBusy("bulk"); setMsg(null);
     let ok = 0; const failed: string[] = [];
@@ -154,7 +183,12 @@ export default function TransitionInPanel({ orgId, projectId, intakeCollectionId
 
       {msg && <div className="rounded-xl border border-[var(--color-border)] bg-[var(--color-surface-2)]/50 px-3 py-2 text-xs font-bold text-[var(--color-text)]">{msg}</div>}
 
-      {canManage && (
+      {canManage && !canAdopt && (
+        <div className="rounded-xl border border-[var(--color-border)] bg-[var(--color-surface-2)]/40 px-3 py-2 text-xs text-[var(--color-text-muted)]">
+          Adopting sheets into the controlled register moves them between folders, which needs Admin or Document Control — ask one of them to adopt the clean sheets below.
+        </div>
+      )}
+      {canAdopt && (
         <div className="flex items-center gap-2 flex-wrap rounded-xl border border-[var(--color-border-strong)] bg-[var(--color-surface-2)]/40 p-2.5">
           <span className="text-[10px] font-bold text-[var(--color-text-muted)]">Adopt into</span>
           <select value={destLib} onChange={(e) => setDestLib(e.target.value)} className="h-7 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-2 text-xs">
@@ -196,7 +230,11 @@ export default function TransitionInPanel({ orgId, projectId, intakeCollectionId
                   {impact && impact.overlapDocs.length > 0 && (
                     <span className="inline-flex items-center gap-0.5 text-[10px] font-bold text-amber-700 dark:text-amber-400"><Layers className="w-3 h-3" /> {impact.overlapDocs.length} overlap{impact.overlapDocs.length === 1 ? "" : "s"}</span>
                   )}
-                  {impact?.clean && <span className="text-[10px] font-bold text-emerald-600">clean</span>}
+                  {c.awaitingReview && <span className="text-[10px] font-bold text-amber-700 dark:text-amber-400">{c.pendingReview ? "in review" : "not approved"}</span>}
+                  {impact && !impact.numberCollision && impact.unverifiable.length > 0 && (
+                    <span className="text-[10px] font-bold text-[var(--color-text-muted)]" title={impact.unverifiable.map((r) => UNVERIFIABLE_TEXT[r]).join("; ")}>unverifiable</span>
+                  )}
+                  {impact?.clean && !c.awaitingReview && <span className="text-[10px] font-bold text-emerald-600">clean</span>}
                 </span>
               </button>
 
@@ -226,24 +264,37 @@ export default function TransitionInPanel({ orgId, projectId, intakeCollectionId
                       Registry equipment on this sheet: <b className="text-[var(--color-text)]">{impact.matchedAssets.map((a) => a.tag).join(", ")}</b> — linked automatically on adoption.
                     </div>
                   )}
-                  {impact.tags.length === 0 && (
-                    <div className="text-[var(--color-text-faint)] italic">No equipment tags recognized in the number/title — adoption still works, links can be added later.</div>
+                  {impact.unverifiable.length > 0 && (
+                    <div className="text-[var(--color-text-muted)] italic">
+                      Not fully checked: {impact.unverifiable.map((r) => UNVERIFIABLE_TEXT[r]).join("; ")}. It is left out of bulk adoption; adopt it on its own once you have looked at it.
+                    </div>
+                  )}
+                  {c.awaitingReview && (
+                    <div className="rounded-lg border border-amber-500/40 bg-amber-500/[0.06] px-2.5 py-1.5 text-[var(--color-text)]">
+                      {c.pendingReview ? "This submission is still in review" : "This sheet has no approved revision yet"} — approve or reject it in the review queue above before it can be adopted.
+                    </div>
                   )}
 
                   {canManage && (
                     <div className="flex items-center gap-2 flex-wrap">
+                      {canAdopt && (<>
                       <input
                         value={renumber.get(c.docId) ?? ""}
                         onChange={(e) => setRenumber(new Map(renumber).set(c.docId, e.target.value))}
                         placeholder={`Renumber (now ${c.number ?? "unnumbered"})…`}
                         className="h-7 w-56 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-2 text-xs"
                       />
-                      <button onClick={() => void adoptOne(c)} disabled={busy === c.docId || !destLib}
-                        title={!destLib ? "Pick the destination library above" : undefined}
+                      <button onClick={() => void adoptOne(c)}
+                        disabled={busy === c.docId || !destLib || !!c.awaitingReview || (!!impact.numberCollision && !(renumber.get(c.docId) ?? "").trim())}
+                        title={!destLib ? "Pick the destination library above"
+                          : c.awaitingReview ? "Approve or reject the submission first"
+                          : impact.numberCollision && !(renumber.get(c.docId) ?? "").trim() ? "Renumber it to a number that isn't in use first"
+                          : undefined}
                         className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg bg-emerald-500 text-white text-[11px] font-black hover:bg-emerald-600 disabled:opacity-50">
                         {busy === c.docId ? <Loader2 className="w-3 h-3 animate-spin" /> : <ArrowRightCircle className="w-3 h-3" />} Adopt
                       </button>
-                      {!impact.clean && onFlagCollision && (
+                      </>)}
+                      {(impact.numberCollision || impact.overlapDocs.length > 0) && onFlagCollision && (
                         <button onClick={() => onFlagCollision(c, impact)}
                           className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg border border-amber-500/50 text-amber-700 dark:text-amber-400 text-[11px] font-black hover:bg-amber-500/10">
                           <ShieldAlert className="w-3 h-3" /> Flag to drafting

@@ -25,6 +25,7 @@ import { resolveTicketRecipients } from "@/lib/ticketRouting";
 import { emit } from "@/lib/notify/dispatch";
 import { buildSourceDocumentRef, unitOfDocumentMetadata } from "@/lib/sourceDocRef";
 import { defaultSlaTargetDate } from "@/lib/notifications";
+import { computeUniquenessKey } from "@/lib/uniqueness";
 
 /** Global variant of the entity-tag pattern (lib/notes.ts keeps the
  *  single-match one): FE-201, P-101A, PSV-1002 … The trailing lookahead
@@ -41,7 +42,16 @@ export interface TransitionCandidate {
   status: string | null;
   company: string | null;
   submittedAt: string | null;
+  /** INTK-3 / SAF-11: the sheet has no approved revision yet — its
+   *  submission is still in review (or was never decided). Shown, marked,
+   *  and never adoptable until someone approves it. */
+  awaitingReview?: boolean;
+  /** A submission sits in the review queue right now. */
+  pendingReview?: boolean;
 }
+
+/** Why a sheet's collision check could not say "clean" (INTK-7). */
+export type UnverifiableReason = "no_number" | "no_equipment" | "check_failed";
 
 export interface TransitionImpact {
   /** Candidate equipment tags found on the document's number/title. */
@@ -52,7 +62,13 @@ export interface TransitionImpact {
   numberCollision: { id: string; label: string; rev: string | null } | null;
   /** Existing documents that reference the same equipment tags. */
   overlapDocs: Array<{ id: string; label: string; rev: string | null; sharedTags: string[] }>;
-  /** No collisions and no overlaps — safe to bulk-adopt. */
+  /** INTK-7: what could NOT be checked. A sheet with no number was never
+   *  compared with the register; one with no recognised equipment was never
+   *  compared with the drawings covering it; a check that errored checked
+   *  nothing. Any of these makes the sheet UNVERIFIABLE — never clean. */
+  unverifiable: UnverifiableReason[];
+  /** Checked, and nothing found: no number collision, no overlap, and every
+   *  check ran. Only these may be bulk-adopted. */
   clean: boolean;
 }
 
@@ -66,34 +82,76 @@ export function extractCandidateTags(...texts: Array<string | null | undefined>)
   return [...found];
 }
 
+/** INTK-7: a contractor's drawing number as a LIKE pattern that matches only
+ *  itself (case-insensitively). `%`, `_` and `\` are escaped; PostgREST's
+ *  `*` wildcard alias cannot be escaped, so it becomes `_` — a broader
+ *  pattern, never a narrower one — and the caller keeps only exact matches. */
+export function likeExact(value: string): string {
+  return value.replace(/[\\%_]/g, (c) => `\\${c}`).replace(/\*/g, "_");
+}
+
+/** Case- and whitespace-insensitive number comparison (the key the partial
+ *  unique index uses for the default tuple). */
+export function sameNumber(a: string | null | undefined, b: string | null | undefined): boolean {
+  const n = (v: string | null | undefined) => String(v ?? "").trim().toLowerCase();
+  return !!n(a) && n(a) === n(b);
+}
+
+const RETIRED = "(Archived,Superseded)";
+
 /** Documents still sitting in the project's intake folder — the un-adopted
- *  set. Company comes from the latest external version. */
+ *  set. Company comes from the latest external version. INTK-3 / SAF-11: a
+ *  sheet whose latest intake submission was REJECTED is not a candidate
+ *  (the organisation refused it); one with no approved revision yet is
+ *  listed, marked, and blocked from adoption. */
 export async function listTransitionCandidates(
   orgId: string,
   intakeCollectionId: string,
 ): Promise<TransitionCandidate[]> {
-  const { data: docs } = await supabase
+  const { data: docs, error } = await supabase
     .from("documents")
-    .select("id, document_number, title, name, rev, status, created_by_name, created_at")
+    .select("id, document_number, title, name, rev, status, created_by_name, created_at, current_version_id, pending_version_id")
     .eq("org_id", orgId)
     .eq("collection_id", intakeCollectionId)
     .neq("status", "Superseded")
     .order("created_at", { ascending: false })
     .limit(200);
-  return (((docs ?? []) as Array<Record<string, unknown>>)).map((d) => ({
-    docId: String(d.id),
-    label: String(d.document_number || d.title || d.name || "Document"),
-    number: (d.document_number as string | null) ?? null,
-    title: ((d.title ?? d.name) as string | null) ?? null,
-    rev: (d.rev as string | null) ?? null,
-    status: (d.status as string | null) ?? null,
-    company: ((d.created_by_name as string | null) ?? null)?.replace(/ \(intake\)$/, "") ?? null,
-    submittedAt: (d.created_at as string | null) ?? null,
-  }));
+  if (error) throw new Error(`Couldn't list the intake sheets: ${error.message}`);
+  const rows = ((docs ?? []) as Array<Record<string, unknown>>);
+  const ids = rows.map((d) => String(d.id));
+  // The latest intake submission per sheet (newest first).
+  const latestState = new Map<string, string | null>();
+  if (ids.length) {
+    const { data: vers, error: vErr } = await supabase
+      .from("document_versions")
+      .select("record_id, review_state, created_at")
+      .in("record_id", ids)
+      .not("intake_link_id", "is", null)
+      .order("created_at", { ascending: false });
+    if (vErr) throw new Error(`Couldn't read the intake submissions: ${vErr.message}`);
+    for (const v of ((vers ?? []) as Array<{ record_id: string; review_state: string | null }>)) {
+      if (!latestState.has(String(v.record_id))) latestState.set(String(v.record_id), v.review_state ?? null);
+    }
+  }
+  return rows
+    .filter((d) => latestState.get(String(d.id)) !== "rejected")
+    .map((d) => ({
+      docId: String(d.id),
+      label: String(d.document_number || d.title || d.name || "Document"),
+      number: (d.document_number as string | null) ?? null,
+      title: ((d.title ?? d.name) as string | null) ?? null,
+      rev: (d.rev as string | null) ?? null,
+      status: (d.status as string | null) ?? null,
+      company: ((d.created_by_name as string | null) ?? null)?.replace(/ \(intake\)$/, "") ?? null,
+      submittedAt: (d.created_at as string | null) ?? null,
+      awaitingReview: !d.current_version_id,
+      pendingReview: !!d.pending_version_id,
+    }));
 }
 
 /** Impact scan for one intake document against the existing register.
- *  Read-only; every slice is best-effort. */
+ *  Read-only. A slice that errors is recorded as `check_failed` — an
+ *  unread register is never "no collision". */
 export async function scanTransitionImpact(
   orgId: string,
   candidate: TransitionCandidate,
@@ -104,36 +162,49 @@ export async function scanTransitionImpact(
     matchedAssets: [],
     numberCollision: null,
     overlapDocs: [],
-    clean: true,
+    unverifiable: [],
+    clean: false,
   };
+  const failed = () => { if (!out.unverifiable.includes("check_failed")) out.unverifiable.push("check_failed"); };
 
   // Registry tie-ins.
   try {
     if (out.tags.length) {
-      const { data: assets } = await supabase
+      const { data: assets, error } = await supabase
         .from("assets")
         .select("id, tag, tag_normalized")
         .eq("org_id", orgId)
         .eq("archived", false)
         .in("tag_normalized", out.tags.map((t) => normalizeTag(t)));
+      if (error) failed();
       out.matchedAssets = (((assets ?? []) as Array<{ id: string; tag: string }>))
         .map((a) => ({ id: a.id, tag: a.tag }));
     }
-  } catch { /* slice empty */ }
+  } catch { failed(); }
+  if (out.matchedAssets.length === 0) out.unverifiable.push("no_equipment");
 
-  // Hard number collision.
-  try {
-    if (candidate.number) {
-      const { data: dup } = await supabase
+  // Hard number collision (INTK-7): every candidate with a number is
+  // checked — exact (case-insensitive) match, live status filtered in the
+  // database, a deterministic order, and a library-root document (no
+  // folder) counted like any other.
+  const number = (candidate.number ?? "").trim();
+  if (!number) {
+    out.unverifiable.push("no_number");
+  } else {
+    try {
+      const { data: dup, error } = await supabase
         .from("documents")
         .select("id, document_number, title, name, rev, status")
         .eq("org_id", orgId)
-        .ilike("document_number", candidate.number)
+        .ilike("document_number", likeExact(number))
         .neq("id", candidate.docId)
-        .neq("collection_id", intakeCollectionId)
-        .limit(5);
+        .or(`collection_id.is.null,collection_id.neq.${intakeCollectionId}`)
+        .not("status", "in", RETIRED)
+        .order("id", { ascending: true })
+        .limit(25);
+      if (error) failed();
       const live = (((dup ?? []) as Array<Record<string, unknown>>))
-        .find((d) => d.status !== "Superseded" && d.status !== "Archived");
+        .find((d) => sameNumber(d.document_number as string | null, number));
       if (live) {
         out.numberCollision = {
           id: String(live.id),
@@ -141,20 +212,21 @@ export async function scanTransitionImpact(
           rev: (live.rev as string | null) ?? null,
         };
       }
-    }
-  } catch { /* slice empty */ }
+    } catch { failed(); }
+  }
 
   // Equipment overlap: existing sheets already linked to the same assets —
   // the drawings most likely to need a tie-in revision.
   try {
     if (out.matchedAssets.length) {
       const tagByAsset = new Map(out.matchedAssets.map((a) => [a.id, a.tag]));
-      const { data: links } = await supabase
+      const { data: links, error } = await supabase
         .from("document_assets")
         .select("document_id, asset_id")
         .in("asset_id", out.matchedAssets.map((a) => a.id))
         .neq("document_id", candidate.docId)
         .limit(200);
+      if (error) failed();
       const byDoc = new Map<string, Set<string>>();
       for (const l of ((links ?? []) as Array<{ document_id: string; asset_id: string }>)) {
         const set = byDoc.get(l.document_id) ?? new Set<string>();
@@ -162,10 +234,11 @@ export async function scanTransitionImpact(
         byDoc.set(l.document_id, set);
       }
       if (byDoc.size) {
-        const { data: docs } = await supabase
+        const { data: docs, error: dErr } = await supabase
           .from("documents")
           .select("id, document_number, title, name, rev, status, collection_id")
           .in("id", [...byDoc.keys()].slice(0, 50));
+        if (dErr) failed();
         out.overlapDocs = (((docs ?? []) as Array<Record<string, unknown>>))
           .filter((d) => d.status !== "Superseded" && d.status !== "Archived"
             && String(d.collection_id ?? "") !== intakeCollectionId)
@@ -177,9 +250,9 @@ export async function scanTransitionImpact(
           }));
       }
     }
-  } catch { /* slice empty */ }
+  } catch { failed(); }
 
-  out.clean = !out.numberCollision && out.overlapDocs.length === 0;
+  out.clean = !out.numberCollision && out.overlapDocs.length === 0 && out.unverifiable.length === 0;
   return out;
 }
 
@@ -200,24 +273,92 @@ export interface AdoptInput {
 
 /** Move one intake document into the controlled register. Provenance chain
  *  (external versions, company stamp) is untouched — only location, number,
- *  equipment links, and the project association change. */
+ *  uniqueness key, equipment links, and the project association change.
+ *
+ *  INTK-3 / SAF-12: the impact is RE-CHECKED here, at the click, never
+ *  trusted from the panel's page-load scan: a sheet still in review or never
+ *  approved is refused, a rejected one is refused, and a number that
+ *  collides with a live document is refused unless the sheet is renumbered
+ *  to a number that is itself clear. INTK-5: the uniqueness key is computed
+ *  for the destination library, so the database's unique index sees the
+ *  adopted sheet — and its refusal reaches the operator as a sentence. */
 export async function adoptDocument(input: AdoptInput): Promise<{ ok: boolean; error?: string }> {
   const nowIso = new Date().toISOString();
-  const { data: before } = await supabase
+  const { data: before, error: readErr } = await supabase
     .from("documents")
-    .select("id, document_number, library_id, collection_id")
+    .select("id, document_number, title, name, rev, status, metadata, library_id, collection_id, current_version_id, pending_version_id")
     .eq("id", input.docId)
+    .eq("org_id", input.orgId)
     .maybeSingle();
+  if (readErr) return { ok: false, error: "Couldn't read the sheet — try again." };
   if (!before) return { ok: false, error: "Document not found." };
+  const label = String(before.document_number || before.title || before.name || "This sheet");
+  if (before.pending_version_id || !before.current_version_id) {
+    return { ok: false, error: `${label} is still awaiting review — approve or reject its submission on the Intake tab before adopting it.` };
+  }
+  {
+    const { data: latest, error: lErr } = await supabase
+      .from("document_versions").select("review_state")
+      .eq("record_id", input.docId).not("intake_link_id", "is", null)
+      .order("created_at", { ascending: false }).limit(1);
+    if (lErr) return { ok: false, error: "Couldn't read the sheet's review history — try again." };
+    if ((((latest ?? []) as Array<{ review_state: string | null }>)[0]?.review_state) === "rejected") {
+      return { ok: false, error: `${label}'s latest submission was rejected — it can't be adopted into the controlled register.` };
+    }
+  }
+
+  const newNumber = (input.newNumber ?? "").trim() || null;
+  const effectiveNumber = newNumber ?? ((before.document_number as string | null) ?? null);
+  const impact = await scanTransitionImpact(input.orgId, {
+    docId: input.docId, label, number: effectiveNumber,
+    title: ((before.title ?? before.name) as string | null) ?? null,
+    rev: (before.rev as string | null) ?? null, status: (before.status as string | null) ?? null,
+    company: null, submittedAt: null,
+  }, String(before.collection_id ?? "") || "00000000-0000-0000-0000-000000000000");
+  if (impact.unverifiable.includes("check_failed")) {
+    return { ok: false, error: `Couldn't confirm ${effectiveNumber ?? label} is free in the register — try again.` };
+  }
+  if (impact.numberCollision) {
+    return {
+      ok: false,
+      error: newNumber
+        ? `${newNumber} is already the number of ${impact.numberCollision.label} (Rev ${impact.numberCollision.rev ?? "—"}) — pick a number that isn't in use.`
+        : `${label} collides with ${impact.numberCollision.label} (Rev ${impact.numberCollision.rev ?? "—"}) — renumber it to a number that isn't in use, or resolve which one is the source of truth first.`,
+    };
+  }
+
+  // INTK-5: the destination library's key tuple.
+  const { data: lib, error: libErr } = await supabase
+    .from("libraries").select("uniqueness_keys").eq("id", input.libraryId).eq("org_id", input.orgId).maybeSingle();
+  if (libErr || !lib) return { ok: false, error: "Couldn't read the destination library — try again." };
+  const uniquenessKey = computeUniquenessKey({
+    documentNumber: effectiveNumber,
+    title: ((before.title ?? null) as string | null),
+    rev: (before.rev as string | null) ?? null,
+    status: (before.status as string | null) ?? null,
+    customFields: (before.metadata as Record<string, unknown> | null) ?? null,
+  }, ((lib as { uniqueness_keys?: string[] | null }).uniqueness_keys ?? null));
 
   const patch: Record<string, unknown> = {
     library_id: input.libraryId,
     collection_id: input.collectionId,
+    uniqueness_key: uniquenessKey,
     updated_at: nowIso,
   };
-  if (input.newNumber) patch.document_number = input.newNumber;
-  const { error } = await supabase.from("documents").update(patch).eq("id", input.docId);
-  if (error) return { ok: false, error: error.message };
+  if (newNumber) patch.document_number = newNumber;
+  const { data: moved, error } = await supabase.from("documents").update(patch).eq("id", input.docId).select("id");
+  if (error) {
+    if (String(error.code ?? "") === "23505") {
+      return { ok: false, error: `Another live document in that library already carries ${effectiveNumber ?? "this number"} — renumber the sheet before adopting it.` };
+    }
+    if (/requires Admin or Document Control/i.test(error.message ?? "")) {
+      return { ok: false, error: "Adopting into the controlled register moves the document between folders, which needs Admin or Document Control." };
+    }
+    return { ok: false, error: `Couldn't adopt ${label} — try again, or ask Document Control.` };
+  }
+  if (!moved || (moved as unknown[]).length === 0) {
+    return { ok: false, error: `${label} was not adopted — you may not have permission to move it. Ask Document Control.` };
+  }
 
   // Keep the project tracking the document after it leaves the intake folder.
   await supabase.from("project_documents")
@@ -247,8 +388,9 @@ export async function adoptDocument(input: AdoptInput): Promise<{ ok: boolean; e
     details: {
       projectId: input.projectId,
       before: { number: before.document_number, libraryId: before.library_id, collectionId: before.collection_id },
-      after: { number: input.newNumber ?? before.document_number, libraryId: input.libraryId, collectionId: input.collectionId },
+      after: { number: newNumber ?? before.document_number, libraryId: input.libraryId, collectionId: input.collectionId },
       linkedAssetTags: input.linkAssets.map((a) => a.tag),
+      unverifiable: impact.unverifiable,
     },
   }).then(() => undefined, () => undefined);
 
