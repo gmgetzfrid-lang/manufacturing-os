@@ -30,6 +30,10 @@ export interface SheetData {
   rows: Array<Record<string, string>>;
   /** Sheets present in the workbook (so the UI can offer a picker). */
   sheetNames: string[];
+  /** Parallel to `rows`: each row's 1-based row number in the sheet as the
+   *  person sees it (the title block above the header and the skipped blank
+   *  rows counted), so an importer can say "Row 10" and mean row 10. */
+  rowNumbers?: number[];
 }
 
 /** Largest workbook the generator will parse. */
@@ -116,6 +120,15 @@ export function parseWorkbook(bytes: Uint8Array | Buffer, sheet?: string): Sheet
     );
   }
   const matrix = XLSX.utils.sheet_to_json<unknown[]>(ws, { header: 1, blankrows: false, defval: "" });
+  // The same rows keyed by column letter: SheetJS applies its one blank-row
+  // rule to both reads and stamps each keyed row with its 0-based sheet row
+  // (__rowNum__, non-enumerable) — which array rows do not carry.
+  const stamped = XLSX.utils.sheet_to_json<Record<string, unknown>>(ws, { header: "A", blankrows: false, defval: "" });
+  const sheetRowOf = (i: number): number | null => {
+    if (stamped.length !== matrix.length) return null;
+    const n = (stamped[i] as { __rowNum__?: unknown } | undefined)?.__rowNum__;
+    return typeof n === "number" ? n + 1 : null;
+  };
 
   // Find the header row — scan the first 15 rows for the first plausible one.
   let headerIdx = matrix.findIndex((r, i) => i < HEADER_SCAN_ROWS && looksLikeHeaderRow(r));
@@ -126,6 +139,7 @@ export function parseWorkbook(bytes: Uint8Array | Buffer, sheet?: string): Sheet
   const headers = rawHeaders.map((h, i) => h || `Column ${i + 1}`);
 
   const rows: Array<Record<string, string>> = [];
+  const rowNumbers: number[] = [];
   for (let r = headerIdx + 1; r < matrix.length; r++) {
     const row = matrix[r] ?? [];
     const obj: Record<string, string> = {};
@@ -142,6 +156,8 @@ export function parseWorkbook(bytes: Uint8Array | Buffer, sheet?: string): Sheet
       );
     }
     rows.push(obj);
+    const sheetRow = sheetRowOf(r);
+    if (sheetRow !== null) rowNumbers.push(sheetRow);
   }
-  return { sheetName, headers, rows, sheetNames };
+  return { sheetName, headers, rows, sheetNames, ...(rowNumbers.length === rows.length ? { rowNumbers } : {}) };
 }

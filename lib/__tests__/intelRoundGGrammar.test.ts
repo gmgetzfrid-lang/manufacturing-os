@@ -95,6 +95,54 @@ describe("CB-9 — a phrase alias round-trips through every reader", () => {
   });
 });
 
+// ── the restore round trip (the org restore's per-table upsert, ON CONFLICT
+//    (id) DO NOTHING) against 20261127's trigger, transcribed below and pinned
+//    to the SQL by the shape test further down ────────────────────────────────
+const normalizeTagSql = (t: string) => (t ?? "").replace(/[^a-zA-Z0-9]+/g, "").toLowerCase();
+const oneGrammarTrigger = (dropSecondSpelling: boolean) => (row: Record<string, unknown>, table: Array<Record<string, unknown>>) => {
+  const next: Record<string, unknown> = { ...row, alias_normalized: normalizeTagSql(String(row.alias)) }; // NEW.alias_normalized := normalize_tag(NEW.alias);
+  if (dropSecondSpelling && next.alias_normalized !== "" && table.some((o) =>
+    o.asset_id === next.asset_id && o.alias_normalized === next.alias_normalized && o.id !== next.id)) return null; // RETURN NULL;
+  return next;
+};
+
+describe("20261127 — an org restore carries on past two spellings of one alias", () => {
+  // What an export holds after 20261127: the keyed row and the inert second
+  // spelling (old key kept for the record) — a pre-20261127 backup holds both
+  // rows in the old display grammar, which the trigger re-keys the same way.
+  const exported = [
+    { id: "al-1", org_id: "o1", asset_id: "a-h3", alias: "North Furnace", alias_normalized: "northfurnace" },
+    { id: "al-2", org_id: "o1", asset_id: "a-h3", alias: "north-furnace", alias_normalized: "NORTH-FURNACE" },
+  ];
+  const restore = async () => {
+    const { supabase } = await import("@/lib/supabase");
+    // app/api/admin/restore/apply/route.ts: upsert(chunk, { onConflict, ignoreDuplicates }), then insert as the fallback.
+    const up = await supabase.from("asset_aliases").upsert(exported.map((r) => ({ ...r })), { onConflict: "id", ignoreDuplicates: true });
+    if (!up.error) return up;
+    return supabase.from("asset_aliases").insert(exported.map((r) => ({ ...r })));
+  };
+  it("reproduction: a trigger that only re-derives the key turns the second spelling into a 23505, and the restore stops there", async () => {
+    db.ref.beforeInsert = { asset_aliases: oneGrammarTrigger(false) };
+    const res = await restore();
+    expect((res.error as { code?: string } | null)?.code).toBe("23505");
+  });
+  it("with the drop: one row per (asset, key) lands with no error and resolves; a re-run is a no-op", async () => {
+    db.ref.beforeInsert = { asset_aliases: oneGrammarTrigger(true) };
+    expect((await restore()).error).toBeNull();
+    expect(db.ref.tables.asset_aliases).toHaveLength(1);
+    expect(db.ref.tables.asset_aliases[0]).toMatchObject({ asset_id: "a-h3", alias_normalized: "northfurnace" });
+    expect((await getAssetByTag("o1", "North-Furnace"))?.id).toBe("a-h3");
+    expect((await restore()).error).toBeNull();
+    expect(db.ref.tables.asset_aliases).toHaveLength(1);
+  });
+  it("the app teaching a third spelling reads as 'already taught' (no error, nothing added)", async () => {
+    db.ref.beforeInsert = { asset_aliases: oneGrammarTrigger(true) };
+    await restore();
+    await expect(addAssetAlias({ orgId: "o1", assetId: "a-h3", alias: "NORTH  FURNACE" })).resolves.toBeUndefined();
+    expect(db.ref.tables.asset_aliases).toHaveLength(1);
+  });
+});
+
 // ── 20261127 — the column rewrite ships with the reader flip ────────────────
 const m27 = readFileSync(join(process.cwd(), "supabase", "migrations", "20261127_intel_roundG_one_tag_grammar.sql"), "utf8");
 
@@ -126,6 +174,11 @@ describe("20261127 — asset_aliases.alias_normalized in the one grammar", () =>
     expect(m27).toContain("RETURNS trigger LANGUAGE plpgsql SET search_path = public AS $$");
     expect(m27).toContain("NEW.alias_normalized := normalize_tag(NEW.alias);");
     expect(m27).toMatch(/CREATE TRIGGER trg_asset_aliases_one_grammar\n\s+BEFORE INSERT OR UPDATE OF alias, alias_normalized ON asset_aliases\n\s+FOR EACH ROW EXECUTE FUNCTION asset_aliases_one_grammar\(\);/);
+  });
+  it("a second spelling of an alias the asset already carries is DROPPED on insert (RETURN NULL), never raised; a re-run by id still reaches ON CONFLICT", () => {
+    const fn = m27.slice(m27.indexOf("CREATE OR REPLACE FUNCTION asset_aliases_one_grammar()"), m27.indexOf("DROP TRIGGER IF EXISTS trg_asset_aliases_one_grammar"));
+    expect(fn).toMatch(/IF TG_OP = 'INSERT' AND NEW\.alias_normalized <> ''\s+AND EXISTS \(SELECT 1 FROM asset_aliases o\s+WHERE o\.asset_id = NEW\.asset_id\s+AND o\.alias_normalized = NEW\.alias_normalized\s+AND o\.id IS DISTINCT FROM NEW\.id\) THEN\s+RETURN NULL;\s+END IF;\s+RETURN NEW;/);
+    expect(m27).toContain("prosrc LIKE '%IF TG_OP = ''INSERT'' AND NEW.alias_normalized <> ''''%'");
   });
   it("probes read prosrc verbatim and never touch customer rows", () => {
     expect(m27).toContain("p.prosrc LIKE '%lower(regexp_replace(%'");

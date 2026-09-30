@@ -82,6 +82,24 @@ describe("POST /api/assets/parse-workbook", () => {
     ]);
     expect(res.headers.get("cache-control")).toBe("no-store");
   });
+  it("each row carries its REAL sheet row number — the title block above the header and blank separator rows counted", async () => {
+    const json = await (await post({ orgId: "o1", fileBase64: workbookB64(MASTER) })).json();
+    expect(json.rowNumbers).toEqual([4, 5]);
+    const spaced = {
+      List: [
+        ["Refinery — master equipment list", ""], ["Rev C", ""], [],
+        ["Tag", "Unit"],
+        ["E-22", "20"], [], [], ["P-101", "20"], [], ["V-1", "25"],
+      ],
+    };
+    const j2 = await (await post({ orgId: "o1", fileBase64: workbookB64(spaced) })).json();
+    expect(j2.rows.map((r: string[]) => r[0])).toEqual(["E-22", "P-101", "V-1"]);
+    expect(j2.rowNumbers).toEqual([5, 8, 10]);
+    // A .csv through the same door counts its lines the same way.
+    const csv = Buffer.from("Master list,\n\nTag,Unit\nE-22,20\n\nP-101,20\n").toString("base64");
+    const j3 = await (await post({ orgId: "o1", fileBase64: csv, fileName: "mel.csv" })).json();
+    expect(j3.rowNumbers).toEqual([4, 6]);
+  });
   it("reads the sheet asked for", async () => {
     const json = await (await post({ orgId: "o1", fileBase64: workbookB64(MASTER), sheet: "Notes" })).json();
     expect(json.headers).toEqual(["Revision", "By"]);

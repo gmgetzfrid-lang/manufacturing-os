@@ -243,6 +243,12 @@ export async function createAsset(input: {
   libraryId?: string;
   unitCode?: string;
   code?: string;
+  /** CB-10 / AREA-7: the code is OPTIONAL — derived by the codebook (or read
+   *  from a list) rather than typed for this asset. A collision on the
+   *  site-code index then creates the asset WITHOUT the code (it lands, filed,
+   *  and the identity review lists it) instead of losing the whole row. The
+   *  returned asset's `code` says which happened. */
+  codeOptional?: boolean;
   createdBy: string;
 }): Promise<Asset> {
   const base = {
@@ -264,6 +270,11 @@ export async function createAsset(input: {
   if (resp.error && /unit_code|column/i.test(resp.error.message)) {
     resp = await supabase.from("assets").insert(base).select("*").single();
   }
+  if (resp.error && input.codeOptional && input.code && resp.error.message.includes(SITE_CODE_UNIQUE_INDEX)) {
+    resp = await supabase.from("assets")
+      .insert({ ...base, unit_code: input.unitCode ?? null, code: null })
+      .select("*").single();
+  }
   if (resp.error) throw registryWriteError(resp.error, input.code);
   return resp.data as Asset;
 }
@@ -277,7 +288,9 @@ function registryWriteError(err: { message: string; code?: string }, code?: stri
   if (err.message.includes(SITE_CODE_UNIQUE_INDEX)) {
     const which = code ? `Site code ${code}` : "That site code";
     // No .code: a translated 23505 would read "that TAG already exists".
-    return new Error(`${which} is already carried by another asset in this org — one site code is one asset. Check the code, or file this asset under a different unit.`);
+    const e = new Error(`${which} is already carried by another asset in this org — one site code is one asset. Check the code, or file this asset under a different unit.`);
+    (e as Error & { siteCodeTaken?: boolean }).siteCodeTaken = true;
+    return e;
   }
   const e = new Error(err.message);
   if (err.code) (e as Error & { code?: string }).code = err.code;
@@ -289,16 +302,45 @@ function registryWriteError(err: { message: string; code?: string }, code?: stri
 const WRITE_REFUSED = "The asset was not saved — only Admin, Document Control, Manager or Supervisor can edit the equipment registry.";
 const DELETE_REFUSED = "The asset was not deleted — deleting registry equipment is limited to Admin and Document Control (it cascades into photos, aliases and document links). Archive it instead.";
 
-export async function updateAsset(id: string, patch: Partial<Pick<Asset, "tag" | "type_id" | "description" | "location" | "library_id" | "archived" | "cover_photo_id" | "unit_code" | "code" | "origin">>, updatedBy: string): Promise<void> {
-  const update: Record<string, unknown> = {
-    ...patch,
-    updated_by: updatedBy,
-    updated_at: new Date().toISOString(),
+/** True when a registry write was refused because another asset of the org
+ *  already carries the site code (CB-10, assets_org_code_unique). */
+export function isSiteCodeTaken(e: unknown): boolean {
+  return e instanceof Error && (e as Error & { siteCodeTaken?: boolean }).siteCodeTaken === true;
+}
+
+/** Write a patch. With `codeOptional` (the patch's `code` was DERIVED — a
+ *  filing's by-product, not something a person typed for this asset), a
+ *  collision on the site-code index re-sends the patch WITHOUT the code, so
+ *  the rest of it (the unit filing above all) still lands; `codeDropped`
+ *  names the code that was not written. A patch that is only a code has
+ *  nothing left to write and throws. */
+export async function updateAsset(
+  id: string,
+  patch: Partial<Pick<Asset, "tag" | "type_id" | "description" | "location" | "library_id" | "archived" | "cover_photo_id" | "unit_code" | "code" | "origin">>,
+  updatedBy: string,
+  opts?: { codeOptional?: boolean },
+): Promise<{ codeDropped: string | null }> {
+  const send = async (p: typeof patch) => {
+    const update: Record<string, unknown> = {
+      ...p,
+      updated_by: updatedBy,
+      updated_at: new Date().toISOString(),
+    };
+    if (p.tag) update.tag_normalized = normalizeTag(p.tag);
+    return supabase.from("assets").update(update).eq("id", id).select("id");
   };
-  if (patch.tag) update.tag_normalized = normalizeTag(patch.tag);
-  const { data, error } = await supabase.from("assets").update(update).eq("id", id).select("id");
+  let { data, error } = await send(patch);
+  let codeDropped: string | null = null;
+  if (error && opts?.codeOptional && patch.code && error.message.includes(SITE_CODE_UNIQUE_INDEX)) {
+    const { code: dropped, ...rest } = patch;
+    if (Object.keys(rest).length > 0) {
+      ({ data, error } = await send(rest));
+      codeDropped = dropped ?? null;
+    }
+  }
   if (error) throw registryWriteError(error, patch.code);
   if (!data || data.length === 0) throw new Error(WRITE_REFUSED);
+  return { codeDropped };
 }
 
 /** IRLS-5: the writer tier's removal — reversible, keeps the photos, the

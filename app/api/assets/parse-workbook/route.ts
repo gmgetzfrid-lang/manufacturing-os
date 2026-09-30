@@ -65,6 +65,10 @@ export async function POST(req: NextRequest) {
       headers: sheet.headers,
       // Row order follows the header order — the client maps by header name.
       rows: sheet.rows.map((r) => sheet.headers.map((h) => r[h] ?? "")),
+      // Each row's real sheet row number (a title block above the header and
+      // blank separator rows counted), so the preview and the failure list
+      // name the row the person will look for.
+      rowNumbers: sheet.rowNumbers ?? sheet.rows.map((_, i) => i + 2),
     }, { headers: { "Cache-Control": "no-store" } });
   } catch (e) {
     // parseWorkbook refuses (never truncates) an over-cap sheet, and refuses a

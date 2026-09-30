@@ -6,8 +6,12 @@
 //   * AREA-1 / IRLS-5 / CB-4 / IRLS-10 — a write RLS refuses (zero rows, no
 //               error) is a loud refusal on every registry and codebook
 //               funnel; the writer tier archives, the controller tier deletes.
-//   * CB-3 / CB-8 / CB-10 — the codebook refuses a letter code and a claimed
-//               prefix before writing; a site-code collision says so.
+//   * CB-3 / CB-8 / CB-10 — the codebook refuses a NEW letter code and a
+//               claimed prefix before writing (a legacy letter-coded row stays
+//               editable); a site-code collision says so, and a DERIVED code
+//               is optional — the row still lands, without it.
+//   * CB-5 — a codebook entry still referenced cannot be removed: the
+//               database's refusal arrives with the counts.
 //   * 20261128 — the paste contract, the predicates, the two-world DO blocks,
 //               and a policy census: the registry's final DELETE overlays and
 //               the Bridge ledger's write policy are the ones this file wrote,
@@ -28,7 +32,7 @@ vi.mock("@/lib/supabase", async () => {
 
 import {
   listAssets, listAssetIdentities, getPhotoCounts, updateAsset, deleteAsset, archiveAsset, deletePhoto,
-  createAsset, findAssetsByTagKeys, SITE_CODE_UNIQUE_INDEX,
+  createAsset, findAssetsByTagKeys, SITE_CODE_UNIQUE_INDEX, isSiteCodeTaken,
 } from "@/lib/assets";
 import { upsertEntry, deleteEntry, saveUnitLinks, saveConfig, applyImport, unitFlowReferenceCount } from "@/lib/codebook";
 
@@ -107,6 +111,27 @@ describe("AREA-1 / IRLS-5 — registry writes are checked; delete is the control
       .rejects.toThrow(/Site code 2010\.1 is already carried by another asset in this org/);
     db.ref.tables.assets.push(assetRow(2, { id: "a2", code: null }));
     await expect(updateAsset("a2", { code: "2010.1" }, "u1")).rejects.toThrow(/one site code is one asset/);
+    await updateAsset("a2", { code: "2010.1" }, "u1").catch((e) => expect(isSiteCodeTaken(e)).toBe(true));
+  });
+  it("CB-10 / AREA-7: a DERIVED code is optional — the asset is still created / filed, without it, and the caller is told", async () => {
+    db.ref.unique.assets = [{ cols: ["org_id", "code"], name: SITE_CODE_UNIQUE_INDEX, where: (r) => !!r.code }];
+    db.ref.tables.assets = [assetRow(1, { code: "2010.1", tag: "V-1", tag_normalized: "v1" })];
+    // Import / Bridge-style create: D-1 derives V-1's code (Vessels [V, D]).
+    const made = await createAsset({ orgId: "o1", tag: "D-1", unitCode: "20", code: "2010.1", codeOptional: true, createdBy: "u1" });
+    expect(made).toMatchObject({ tag: "D-1", unit_code: "20", code: null });
+    expect(db.ref.tables.assets).toHaveLength(2);
+    // Bulk filing: {unit_code, derived code} — the filing lands, the code is named as dropped.
+    db.ref.tables.assets.push(assetRow(3, { id: "a3", tag: "D-2", tag_normalized: "d2", unit_code: null, code: "2010.2" }));
+    db.ref.tables.assets.push(assetRow(4, { id: "a4", tag: "V-2", tag_normalized: "v2", unit_code: null, code: null }));
+    await expect(updateAsset("a4", { unit_code: "20", code: "2010.2" }, "u1", { codeOptional: true })).resolves.toEqual({ codeDropped: "2010.2" });
+    expect(db.ref.tables.assets.find((a) => a.id === "a4")).toMatchObject({ unit_code: "20", code: null });
+    // A free code is written as asked.
+    await expect(updateAsset("a4", { code: "2010.9" }, "u1", { codeOptional: true })).resolves.toEqual({ codeDropped: null });
+    // A patch that is ONLY the code has nothing else to land — it still throws.
+    await expect(updateAsset("a4", { code: "2010.1" }, "u1", { codeOptional: true })).rejects.toThrow(/Site code 2010\.1 is already carried/);
+    // A tag collision is not a site-code collision: never retried without the code.
+    db.ref.unique.assets.push(["org_id", "tag_normalized"]);
+    await expect(createAsset({ orgId: "o1", tag: "D-1", unitCode: "20", code: "2010.77", codeOptional: true, createdBy: "u1" })).rejects.toThrow();
   });
   it("BR-6: findAssetsByTagKeys finds existing tags by the one grammar, in chunks, archived included", async () => {
     db.ref.tables.assets = Array.from({ length: 250 }, (_, i) => assetRow(i, i === 3 ? { archived: true } : {}));
@@ -147,6 +172,24 @@ describe("CB-4 / IRLS-10 — every codebook write is checked", () => {
   it("CB-3: a letter code is refused BEFORE any write; the database's CHECK refusal is translated", async () => {
     await expect(upsertEntry("o1", { ...unit, code: "CU" }, "u1")).rejects.toThrow(/not numeric/);
     expect(db.ref.calls.some((c) => c.table === "codebook_entries" && (c.method === "upsert" || c.method === "update"))).toBe(false);
+  });
+  it("CB-3: a LEGACY letter-coded unit stays editable — relabel and links land; only a new or changed code is checked", async () => {
+    db.ref.tables.codebook_entries.push({ id: "eCU", org_id: "o1", kind: "unit", code: "CU", label: "Crude (legacy)", meta: {} });
+    await upsertEntry("o1", { ...unit, id: "eCU", code: "CU", label: "Crude — old numbering", meta: { links: [] } }, "u1");
+    expect(db.ref.tables.codebook_entries.find((e) => e.id === "eCU")).toMatchObject({ code: "CU", label: "Crude — old numbering" });
+    await saveUnitLinks("o1", "CU", [{ libraryId: "lib1", label: "P&IDs" }] as never);
+    expect((db.ref.tables.codebook_entries.find((e) => e.id === "eCU")!.meta as { links: unknown[] }).links).toHaveLength(1);
+    // Changing the code to another letter code is a NEW code: refused before any write.
+    const before = db.ref.calls.length;
+    await expect(upsertEntry("o1", { ...unit, id: "eCU", code: "CX", label: "x" }, "u1")).rejects.toThrow(/not numeric/);
+    expect(db.ref.calls.slice(before).some((c) => c.method === "update" || c.method === "upsert")).toBe(false);
+    // Re-adding it as a new row (no id) is also a new code.
+    await expect(upsertEntry("o1", { ...unit, code: "CU", label: "again" }, "u1")).rejects.toThrow(/not numeric/);
+  });
+  it("CB-5: a removal the database refuses (entry still referenced) arrives with its counts, not as a raw constraint", async () => {
+    db.ref.deleteErrors = { codebook_entries: { code: "23503", message: "codebook_entries_in_use: unit 20 is still referenced by 312 asset(s) and 2 process flow(s)" } };
+    await expect(deleteEntry("e20")).rejects.toThrow(/^Refused — unit 20 is still referenced by 312 asset\(s\) and 2 process flow\(s\)\. A code still in use cannot be removed or changed/);
+    expect(db.ref.tables.codebook_entries).toHaveLength(1);
   });
   it("CB-8: a prefix another equipment type claims is refused, with the claimant named", async () => {
     db.ref.tables.codebook_entries.push({ id: "t30", org_id: "o1", kind: "equipment_type", code: "30", label: "Exchangers", meta: { tagPrefixes: ["E"] } });
@@ -263,15 +306,57 @@ describe("20261128 §3 — CB-2 / IRLS-8: the Bridge ledger is service role + co
 
 describe("20261128 §4/§5 — CB-3 CHECK and CB-10 unique index choose their own world", () => {
   const body = strip(m28.slice(m28.indexOf("\nBEGIN;"), m28.indexOf("\nCOMMIT;")));
-  it("the CHECK binds new rows NOT VALID and validates only when no legacy row violates it", () => {
-    expect(body).toContain("CHECK (kind NOT IN ('unit', 'equipment_type') OR code ~ '^[0-9]{1,6}$') NOT VALID;");
-    expect(body).toMatch(/IF NOT EXISTS \(SELECT 1 FROM codebook_entries\s+WHERE kind IN \('unit', 'equipment_type'\) AND code !~ '\^\[0-9\]\{1,6\}\$'\) THEN\s+ALTER TABLE codebook_entries VALIDATE CONSTRAINT codebook_entries_code_digits;/);
+  it("CB-3 binds a NEW code only: a trigger on INSERT and on a code / kind change — a meta-only UPDATE of a legacy letter-coded unit passes", () => {
+    const fn = body.slice(body.indexOf("CREATE OR REPLACE FUNCTION codebook_entries_code_digits_guard()"), body.indexOf("DROP TRIGGER IF EXISTS trg_codebook_entries_code_digits"));
+    expect(fn).toContain("RETURNS trigger LANGUAGE plpgsql SET search_path = public AS $$");
+    expect(fn).toContain("IF NEW.kind IN ('unit', 'equipment_type') AND NEW.code !~ '^[0-9]{1,6}$'");
+    expect(fn).toContain("AND (TG_OP = 'INSERT' OR NEW.code IS DISTINCT FROM OLD.code OR NEW.kind IS DISTINCT FROM OLD.kind) THEN");
+    expect(fn).toContain("USING ERRCODE = '23514',");
+    expect(body).toMatch(/CREATE TRIGGER trg_codebook_entries_code_digits\n\s+BEFORE INSERT OR UPDATE OF code, kind ON codebook_entries\n\s+FOR EACH ROW EXECUTE FUNCTION codebook_entries_code_digits_guard\(\);/);
+  });
+  it("CB-3: the CHECK is never NOT VALID (which binds every UPDATE of a violating row) — absent while legacy codes remain, added VALIDATED when clean", () => {
+    expect(body).not.toMatch(/NOT VALID/);
+    expect(body).toMatch(/IF EXISTS \(SELECT 1 FROM codebook_entries\s+WHERE kind IN \('unit', 'equipment_type'\) AND code !~ '\^\[0-9\]\{1,6\}\$'\) THEN\s+ALTER TABLE codebook_entries DROP CONSTRAINT IF EXISTS codebook_entries_code_digits;/);
+    expect(body).toMatch(/ELSIF NOT EXISTS \(SELECT 1 FROM pg_constraint\s+WHERE conname = 'codebook_entries_code_digits'\s+AND conrelid = 'codebook_entries'::regclass\) THEN\s+ALTER TABLE codebook_entries ADD CONSTRAINT codebook_entries_code_digits\s+CHECK \(kind NOT IN \('unit', 'equipment_type'\) OR code ~ '\^\[0-9\]\{1,6\}\$'\);\s+ELSE\s+ALTER TABLE codebook_entries VALIDATE CONSTRAINT codebook_entries_code_digits;/);
+    const tail = m28.slice(m28.indexOf("\nCOMMIT;"));
+    expect(tail).toContain("NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'codebook_entries_code_digits' AND NOT convalidated)");
   });
   it("the unique partial index is created only when no org carries a duplicate — nothing is rewritten", () => {
     expect(body).toMatch(/IF NOT EXISTS \(SELECT 1 FROM assets\s+WHERE code IS NOT NULL AND btrim\(code\) <> ''\s+GROUP BY org_id, code HAVING COUNT\(\*\) > 1\) THEN\s+CREATE UNIQUE INDEX IF NOT EXISTS assets_org_code_unique\s+ON assets \(org_id, code\) WHERE code IS NOT NULL AND btrim\(code\) <> '';/);
     expect(body).not.toMatch(/UPDATE assets|DELETE FROM assets/);
     const { SITE_CODE_UNIQUE_INDEX: name } = { SITE_CODE_UNIQUE_INDEX };
     expect(m28).toContain(name);
+  });
+  it("the Bridge's retry-without-code is handed to I-11 in the file itself (its insert and backfill are not this package's)", () => {
+    expect(m28).toContain("HANDED TO I-11: the");
+    expect(m28).toContain("must retry without `code` on this index and write unit_code apart from");
+  });
+});
+
+describe("20261128 §6 — CB-5: a code still in use cannot be removed or re-coded, by any caller", () => {
+  const body = strip(m28.slice(m28.indexOf("\nBEGIN;"), m28.indexOf("\nCOMMIT;")));
+  const fn = body.slice(body.indexOf("CREATE OR REPLACE FUNCTION codebook_entries_guard_in_use()"), body.indexOf("DROP TRIGGER IF EXISTS trg_codebook_entries_guard_in_use"));
+  it("a SECURITY DEFINER trigger with search_path pinned, BEFORE DELETE and before a code / kind change", () => {
+    expect(fn).toContain("RETURNS trigger LANGUAGE plpgsql SECURITY DEFINER SET search_path = public AS $$");
+    expect(body).toMatch(/CREATE TRIGGER trg_codebook_entries_guard_in_use\n\s+BEFORE DELETE OR UPDATE OF code, kind ON codebook_entries\n\s+FOR EACH ROW EXECUTE FUNCTION codebook_entries_guard_in_use\(\);/);
+    expect(fn).toMatch(/IF TG_OP = 'UPDATE' THEN\s+IF NEW\.code IS NOT DISTINCT FROM OLD\.code AND NEW\.kind IS NOT DISTINCT FROM OLD\.kind THEN RETURN NEW; END IF;/);
+  });
+  it("counts the STORED references: the unit filing, the <unit><type> head of a site code, and process flows ending at the unit", () => {
+    expect(fn).toContain("AND (a.unit_code = OLD.code");
+    expect(fn).toContain("AND split_part(a.code, '.', 1) = OLD.code || t.code));");
+    expect(fn).toContain("AND split_part(a.code, '.', 1) = u.code || OLD.code);");
+    expect(fn).toContain("IF to_regclass('public.process_flows') IS NOT NULL THEN");
+    expect(fn).toContain("((from_kind = ''unit'' AND from_ref = $2) OR (to_kind = ''unit'' AND to_ref = $2))");
+    expect(fn).toContain("RAISE EXCEPTION 'codebook_entries_in_use: % % is still referenced by % asset(s) and % process flow(s)'");
+  });
+  it("the service role's cascades (org purge, restore) and an org already gone pass — the same rule as the delete audit", () => {
+    expect(fn).toContain("IF auth.uid() IS NULL OR NOT EXISTS (SELECT 1 FROM orgs WHERE id = OLD.org_id) THEN");
+  });
+  it("the page counts first (friendlier, includes prefix-typed tags); lib/codebook.ts translates the database's refusal for every other caller", () => {
+    const cb = repo("lib/codebook.ts");
+    expect(cb).toContain("if (/codebook_entries_in_use/.test(err.message)) {");
+    const del = cb.slice(cb.indexOf("export async function deleteEntry"), cb.indexOf("export async function saveUnitLinks"));
+    expect(del).toContain("if (error) throw codebookWriteError(error);");
   });
 });
 
@@ -306,6 +391,36 @@ describe("registry policy census — the FINAL definitions after replaying every
     const later = files.filter((f) => f > "20261046_rp_phase6_sweep_authority_by_collection.sql" && redefines.test(strip(mig(f))));
     expect(later).toEqual([]);
     expect(mig("20261020_pin_search_path.sql")).toContain("'is_org_controller(uuid)',");
+  });
+});
+
+describe("AREA-7 / CB-10 — the bulk filer and the importer never lose a row to a derived code", () => {
+  const page = repo("app/(protected)/admin/assets/page.tsx");
+  const modal = repo("components/assets/AssetCsvImportModal.tsx");
+  it("bulk assign: one try per row, the derived code optional, failures reported, the page refreshed in finally", () => {
+    const assign = page.slice(page.indexOf("const assign = async (rows: Array<{ asset: Asset; unitCode: string }>) => {"), page.indexOf("const chosen = assets.filter"));
+    expect(assign).toMatch(/for \(const r of rows\) \{[\s\S]*?try \{[\s\S]*?await updateAsset\(r\.asset\.id, \{[\s\S]*?\}, userId, \{ codeOptional: true \}\);[\s\S]*?\} catch \(e\) \{ failed\.push/);
+    expect(assign).toMatch(/\} finally \{\s+setBusy\(false\);\s+onAssigned\(\);\s+\}/);
+    expect(assign).toContain("const derived = r.asset.code ? null : tagToCode(r.asset.tag, r.unitCode, book);");
+    expect(assign).toContain("filed WITHOUT a site code");
+  });
+  it("the identity review and the shared-code list read every asset (archived included); an archived holder opens from the registry", () => {
+    expect(page).toContain("listAssetIdentities(activeOrgId),");
+    expect(page).toContain("const identityReview = useMemo(() => planIdentityReview(assets, book, identities), [assets, book, identities]);");
+    expect(page).toContain("const sharedCodes = useMemo(() => sharedSiteCodes(identities), [identities]);");
+    expect(page).toContain("void getAsset(id).then((hit) => { if (hit) setSelectedAsset(hit); })");
+    expect(page).toContain('r.kind === "derived_code_taken"');
+  });
+  it("import: preview knows the carried codes; commit writes with the code optional and lists the rows that landed without it", () => {
+    expect(modal).toContain("listAssetIdentities(orgId),");
+    expect(modal).toContain("planAssetImport(inputs, { book, types, existing, mode, codeHolders })");
+    expect(modal).toContain("codeOptional: true,");
+    expect(modal).toContain("await updateAsset(p.existingId, p.patch, actorUserId, { codeOptional: true });");
+    expect(modal).toContain("landed without a site code");
+  });
+  it("import row numbers are the sheet's own (title block and blank rows counted) when the workbook route reports them", () => {
+    expect(modal).toContain("row: rowNumbers?.[rIdx] ?? rIdx + 2,");
+    expect(modal).toContain("applyTable(hdr, data, Array.isArray(json.rowNumbers) ? json.rowNumbers : null);");
   });
 });
 

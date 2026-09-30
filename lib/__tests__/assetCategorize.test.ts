@@ -99,6 +99,15 @@ describe("BR-4 — a known unit and a blank code: the categorizer derives the co
     ], types, book2);
     expect(plan.codeAssignments).toEqual([{ assetId: "a1", tag: "E-22", code: "2030.22" }]);
   });
+  it("CB-10: never proposes a code another asset already carries, or one this plan already hands out", () => {
+    const plan = planCategorization([
+      asset("h", "E-22", "t-pump", { unit_code: "20", code: "2030.22" }),
+      asset("a1", "E-022", "t-pump", { unit_code: "20" }),   // derives 2030.22 — held by h
+      asset("a2", "E-7", "t-pump", { unit_code: "20" }),     // 2030.7 — free
+      asset("a3", "E-007", "t-pump", { unit_code: "20" }),   // 2030.7 — already handed to a2
+    ], types, book2);
+    expect(plan.codeAssignments).toEqual([{ assetId: "a2", tag: "E-7", code: "2030.7" }]);
+  });
 });
 
 describe("AREA-11 — code and unit are two spellings of one fact", () => {
@@ -242,6 +251,89 @@ describe("CB-10 — codes already shared are listed for a person to resolve (the
       { id: "a", tag: "V-1", code: "2010.1" }, { id: "b", tag: "D-1", code: "2010.1" },
       { id: "c", tag: "E-22", code: "2030.22" }, { id: "d", tag: "X-1", code: "" }, { id: "e", tag: "X-2", code: " " },
       { id: "f", tag: "X-3", code: null },
-    ])).toEqual([{ code: "2010.1", assets: [{ id: "a", tag: "V-1" }, { id: "b", tag: "D-1" }] }]);
+    ])).toEqual([{ code: "2010.1", assets: [{ id: "a", tag: "V-1", archived: false }, { id: "b", tag: "D-1", archived: false }] }]);
+  });
+  it("an ARCHIVED holder counts and is marked — the index and the 20261128 inventory both count archived rows", () => {
+    expect(sharedSiteCodes([
+      { id: "a", tag: "E-22", code: "2030.22", archived: false },
+      { id: "b", tag: "E-22 (old)", code: "2030.22", archived: true },
+    ])).toEqual([{ code: "2030.22", assets: [{ id: "a", tag: "E-22", archived: false }, { id: "b", tag: "E-22 (old)", archived: true }] }]);
+  });
+});
+
+// ── CB-10: a DERIVED site code is optional — a collision never costs the row ─
+const vessels: Codebook = {
+  ...book2,
+  equipmentTypes: [
+    ...book2.equipmentTypes,
+    { id: "t10", kind: "equipment_type", code: "10", label: "Vessels", meta: { tagPrefixes: ["V", "D"] }, sort: 2, origin: "manual" },
+  ],
+};
+
+describe("CB-10 — the identity review lists an asset filed without the code the codebook derives, when another asset carries it", () => {
+  it("derived_code_taken names the holder (archived holders included); a blank code nobody holds stays the categorizer's job", () => {
+    const active = [
+      { id: "v1", tag: "V-1", unit_code: "20", code: "2010.1" },
+      { id: "d1", tag: "D-1", unit_code: "20", code: null },     // derives 2010.1 — V-1 holds it
+      { id: "e5", tag: "E-5", unit_code: "20", code: null },     // derives 2030.5 — held by an archived row
+      { id: "e6", tag: "E-6", unit_code: "20", code: null },     // derives 2030.6 — free: categorizer fills it
+    ];
+    const all = [...active, { id: "old", tag: "E-5 (old)", unit_code: "20", code: "2030.5", archived: true }];
+    const rows = planIdentityReview(active, vessels, all);
+    expect(rows).toEqual([
+      { assetId: "d1", tag: "D-1", unitCode: "20", code: null, kind: "derived_code_taken", codeUnit: null, derivedCode: "2010.1", heldBy: { id: "v1", tag: "V-1", archived: false } },
+      { assetId: "e5", tag: "E-5", unitCode: "20", code: null, kind: "derived_code_taken", codeUnit: null, derivedCode: "2030.5", heldBy: { id: "old", tag: "E-5 (old)", archived: true } },
+    ]);
+    // Without the archived rows the archived holder is invisible — which is why the page passes every identity.
+    expect(planIdentityReview(active, vessels).map((r) => r.assetId)).toEqual(["d1"]);
+  });
+});
+
+describe("CB-10 — the import plan drops a site code another asset (or an earlier row) already carries, and the row still lands filed", () => {
+  const holders = new Map([["2010.1", { id: "v1", tag: "V-1" }], ["2030.7", { id: "e7", tag: "E-7" }]]);
+  it("a derived code held in the registry (Vessels [V, D]: D-1 → 2010.1, held by V-1) is dropped with a note", () => {
+    const plan = planAssetImport([{ row: 4, tag: "D-1", unit: "20" }], { book: vessels, types, existing: new Map(), mode: "create_only", codeHolders: holders });
+    expect(plan.rows[0]).toMatchObject({ action: "create", unitCode: "20", code: null, codeDropped: "2010.1", patch: { unit_code: "20", code: undefined } });
+    expect(plan.rows[0].notes.join(" ")).toMatch(/derives site code 2010\.1, but V-1 already carries it — one site code is one asset/);
+    expect(plan.filed).toBe(1);
+    expect(plan.codesDropped).toBe(1);
+  });
+  it("two rows of one file deriving one code (E-022 / E-22; V-2 / D-2): the first keeps it, the later row lands without it", () => {
+    const plan = planAssetImport([
+      { row: 2, tag: "E-022", unit: "20" },
+      { row: 3, tag: "E-22", unit: "20" },
+      { row: 4, tag: "V-2", unit: "20" },
+      { row: 5, tag: "D-2", unit: "20" },
+    ], { book: vessels, types, existing: new Map(), mode: "create_only", codeHolders: new Map() });
+    expect(plan.rows.map((r) => [r.tag, r.action, r.unitCode, r.code])).toEqual([
+      ["E-022", "create", "20", "2030.22"],
+      ["E-22", "create", "20", null],
+      ["V-2", "create", "20", "2010.2"],
+      ["D-2", "create", "20", null],
+    ]);
+    expect(plan.rows[1].notes.join(" ")).toMatch(/row 2 \(E-022\) already carries it/);
+    expect(plan.filed).toBe(4);
+    expect(plan.codesDropped).toBe(2);
+  });
+  it("a GIVEN code another asset carries is dropped too (the unit it names still files the row); an asset's own code is never a collision", () => {
+    const plan = planAssetImport([
+      { row: 2, tag: "E-8", code: "2030.7" },
+      { row: 3, tag: "E-7", unit: "20", code: "2030.7" },
+    ], {
+      book: vessels, types, mode: "create_and_update", codeHolders: holders,
+      existing: new Map([["e7", { id: "e7", unit_code: null, code: "2030.7" }]]),
+    });
+    expect(plan.rows[0]).toMatchObject({ action: "create", unitCode: "20", code: null, codeDropped: "2030.7" });
+    expect(plan.rows[0].notes.join(" ")).toMatch(/Site code 2030\.7 is already carried by E-7/);
+    expect(plan.rows[1]).toMatchObject({ action: "update", existingId: "e7", code: "2030.7", patch: { unit_code: "20", code: "2030.7" } });
+    expect(plan.rows[1].codeDropped).toBeNull();
+  });
+  it("an update that would FILL a blank with a held code files the unit and leaves the code blank", () => {
+    const plan = planAssetImport([{ row: 2, tag: "D-1", unit: "20" }], {
+      book: vessels, types, mode: "create_and_update", codeHolders: holders,
+      existing: new Map([["d1", { id: "d1", unit_code: null, code: null }]]),
+    });
+    expect(plan.rows[0]).toMatchObject({ action: "update", patch: { unit_code: "20" }, codeDropped: "2010.1" });
+    expect(plan.rows[0].patch).not.toHaveProperty("code");
   });
 });

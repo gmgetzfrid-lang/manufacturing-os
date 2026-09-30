@@ -21,11 +21,16 @@ export interface FakeDb {
   calls: Array<{ table: string; method: string; args: unknown[] }>;
   /** Max rows a plain select returns (PostgREST max-rows); undefined = no cap. */
   maxRows?: number;
+  /** table → a database error its DELETEs raise (a trigger's refusal). */
+  deleteErrors?: Record<string, { code?: string; message: string }>;
+  /** table → a BEFORE INSERT row trigger, transcribed by the test: the row
+   *  to insert (possibly rewritten), or null to drop it silently. */
+  beforeInsert?: Record<string, (row: Row, table: Row[]) => Row | null>;
   seq: number;
 }
 
 export function newFakeDb(): FakeDb {
-  return { tables: {}, unique: {}, refuseWrites: new Set(), calls: [], seq: 0 };
+  return { tables: {}, unique: {}, refuseWrites: new Set(), calls: [], deleteErrors: {}, beforeInsert: {}, seq: 0 };
 }
 
 type Filter = (r: Row) => boolean;
@@ -94,7 +99,13 @@ export function makeFakeSupabase(db: FakeDb) {
         if (db.refuseWrites.has(table)) return { data: null, error: { code: "42501", message: "new row violates row-level security policy" } };
         const out: Row[] = [];
         for (const p of payload) {
-          const row: Row = { id: p.id ?? `${table}-${++db.seq}`, ...p };
+          let row: Row = { id: p.id ?? `${table}-${++db.seq}`, ...p };
+          const trigger = db.beforeInsert?.[table];
+          if (trigger) {
+            const next = trigger(row, rowsOf());
+            if (!next) continue;
+            row = next;
+          }
           if (op === "upsert" && upsertOn.length > 0) {
             const existing = rowsOf().find((r) => upsertOn.every((c) => r[c] === row[c]));
             if (existing) { Object.assign(existing, p); out.push(existing); continue; }
@@ -119,6 +130,8 @@ export function makeFakeSupabase(db: FakeDb) {
       }
       if (op === "delete") {
         if (db.refuseWrites.has(table)) return { data: returning ? [] : null, error: null };
+        const raised = db.deleteErrors?.[table];
+        if (raised && matches().length > 0) return { data: null, error: raised };
         const hit = matches();
         db.tables[table] = rowsOf().filter((r) => !hit.includes(r));
         return { data: returning ? hit : null, error: null };

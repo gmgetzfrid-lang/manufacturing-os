@@ -301,7 +301,10 @@ export function codebookProblems(book: Codebook): CodebookProblem[] {
   const out: CodebookProblem[] = [];
   for (const e of [...book.units, ...book.equipmentTypes]) {
     const why = codeProblem(e.kind, e.code);
-    if (why) out.push({ kind: "non_numeric_code", entryIds: [e.id], message: `${why} Nothing is decoded for ${e.label}.` });
+    // CB-3: a legacy letter code stays usable for everything but decoding
+    // (label, pinned libraries, knowledge binding); its code is replaced by
+    // adding the digit code, refiling the equipment, then removing this one.
+    if (why) out.push({ kind: "non_numeric_code", entryIds: [e.id], message: `${why} Nothing is decoded for ${e.label}. To replace it: add a digit code for ${e.label}, refile its equipment there, then remove ${e.code}.` });
   }
   const byPrefix = new Map<string, CodebookEntry[]>();
   for (const t of book.equipmentTypes) {
@@ -551,6 +554,13 @@ export async function loadCodebook(orgId: string): Promise<Codebook> {
 const CODEBOOK_REFUSED = "Not saved — only Admin or Document Control can edit the Site Codebook.";
 
 function codebookWriteError(err: { code?: string; message: string }): Error {
+  // CB-5: the database refuses to remove (or re-code) a unit / type that
+  // registry equipment or a process flow still references (20261128
+  // codebook_entries_guard_in_use) and says how many.
+  if (/codebook_entries_in_use/.test(err.message)) {
+    const what = err.message.replace(/^[\s\S]*?codebook_entries_in_use:\s*/, "").trim();
+    return new Error(`Refused — ${what}. A code still in use cannot be removed or changed: refile them first (Operating areas).`);
+  }
   if (err.code === "23514" || /codebook_entries_code_digits/.test(err.message)) {
     return new Error("Unit and equipment-type codes are digits — the database refused a letter code (CB-3).");
   }
@@ -559,9 +569,24 @@ function codebookWriteError(err: { code?: string; message: string }): Error {
 }
 
 export async function upsertEntry(orgId: string, entry: Omit<CodebookEntry, "id"> & { id?: string }, userId: string): Promise<void> {
-  // CB-3: the shared shape guard, before anything is written.
-  const problem = codeProblem(entry.kind, entry.code);
-  if (problem) throw new Error(problem);
+  // CB-3: the shared shape guard binds a NEW code — a new row, or an edit
+  // that changes the code. A legacy letter-coded unit or type already in
+  // the book keeps working for everything else (relabel, prefixes, pinned
+  // libraries, its knowledge binding): the database's guard (20261128
+  // trg_codebook_entries_code_digits) fires on INSERT and on a code change
+  // only, and so does this one.
+  let storedCode: string | null = null;
+  if (entry.id) {
+    const { data: stored, error: readErr } = await supabase
+      .from("codebook_entries").select("code, kind").eq("id", entry.id).maybeSingle();
+    if (readErr) throw new Error(readErr.message);
+    const s = stored as { code?: unknown; kind?: unknown } | null;
+    if (s && String(s.kind) === entry.kind) storedCode = String(s.code ?? "").trim();
+  }
+  if (storedCode === null || storedCode !== String(entry.code ?? "").trim()) {
+    const problem = codeProblem(entry.kind, entry.code);
+    if (problem) throw new Error(problem);
+  }
   // CB-8: one prefix, one equipment type — a second claimant would leave
   // every tag with that prefix uncategorized (typeForTag answers ambiguous).
   if (entry.kind === "equipment_type" && (entry.meta?.tagPrefixes ?? []).length > 0) {
@@ -592,6 +617,12 @@ export async function upsertEntry(orgId: string, entry: Omit<CodebookEntry, "id"
   if (!data || data.length === 0) throw new Error(CODEBOOK_REFUSED);
 }
 
+/** CB-5: the database refuses to remove a unit or equipment type that
+ *  registry equipment (its filing, or the unit / type part of a stored site
+ *  code) or a process flow still references — for EVERY caller, not only
+ *  the codebook page (20261128 codebook_entries_guard_in_use); the refusal
+ *  arrives here with the counts. The page counts first for a friendlier
+ *  message (it also counts tags typed by a type's prefixes). */
 export async function deleteEntry(id: string): Promise<void> {
   const { data, error } = await supabase.from("codebook_entries").delete().eq("id", id).select("id");
   if (error) throw codebookWriteError(error);

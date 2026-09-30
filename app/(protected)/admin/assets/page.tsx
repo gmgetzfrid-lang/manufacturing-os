@@ -23,8 +23,8 @@ import { supabase } from "@/lib/supabase";
 import {
   listAssets, listAssetTypes, getPhotoCounts, getCoverPhotoUrls, createAsset, createAssetType,
   updateAsset, deleteAsset, archiveAsset, listAssetPhotos, deletePhoto, updatePhoto,
-  invalidateAssetCache, photoAgeCategory,
-  type Asset, type AssetType, type AssetPhoto, type PhotoStatus,
+  invalidateAssetCache, photoAgeCategory, listAssetIdentities, getAsset,
+  type Asset, type AssetType, type AssetPhoto, type PhotoStatus, type AssetIdentity,
 } from "@/lib/assets";
 import {
   loadCodebook, tagToCode, parseDrawingNumber, saveUnitLinks, EMPTY_CODEBOOK,
@@ -82,6 +82,10 @@ function AssetsPageInner() {
   const searchParams = useSearchParams();
 
   const [assets, setAssets] = useState<Asset[]>([]);
+  // CB-10: every asset's identity columns, archived included — the unique
+  // index and 20261128's inventory count archived rows, so the shared-code
+  // list and the derived-code holders must too.
+  const [identities, setIdentities] = useState<AssetIdentity[]>([]);
   const [types, setTypes] = useState<AssetType[]>([]);
   const [photoCounts, setPhotoCounts] = useState<Map<string, number>>(new Map());
   const [coverUrls, setCoverUrls] = useState<Map<string, string>>(new Map());
@@ -125,12 +129,14 @@ function AssetsPageInner() {
     setLoading(true);
     setError(null);
     try {
-      const [as, ts, cb] = await Promise.all([
+      const [as, ts, cb, ids] = await Promise.all([
         listAssets({ orgId: activeOrgId, archived: false }),
         listAssetTypes(activeOrgId),
         loadCodebook(activeOrgId),
+        listAssetIdentities(activeOrgId),
       ]);
       setAssets(as);
+      setIdentities(ids);
       setTypes(ts);
       setBook(cb);
       const [counts, covers] = await Promise.all([
@@ -175,10 +181,11 @@ function AssetsPageInner() {
   const discoveredCount = useMemo(() => assets.filter((a) => a.origin === "drawing").length, [assets]);
   // AREA-11 / CB-6: every asset whose stored identity disagrees with the
   // codebook as it stands (the code names another unit; the code re-derives).
-  const identityReview = useMemo(() => planIdentityReview(assets, book), [assets, book]);
+  const identityReview = useMemo(() => planIdentityReview(assets, book, identities), [assets, book, identities]);
   // CB-10: one site code, one asset — codes already shared are listed first
-  // (the database's unique index waits until there are none).
-  const sharedCodes = useMemo(() => sharedSiteCodes(assets), [assets]);
+  // (the database's unique index waits until there are none). Archived
+  // assets count: they block the index exactly like active ones.
+  const sharedCodes = useMemo(() => sharedSiteCodes(identities), [identities]);
 
   // Per-unit counts for the picker cards.
   const unitCounts = useMemo(() => {
@@ -463,7 +470,12 @@ function AssetsPageInner() {
             reviewed per asset, never rewritten silently. */}
         {isAdmin && !loading && uid && (identityReview.length > 0 || sharedCodes.length > 0) && (
           <IdentityReviewPanel rows={identityReview} shared={sharedCodes} book={book} userId={uid}
-            onOpen={(id) => { const a = assets.find((x) => x.id === id); if (a) setSelectedAsset(a); }}
+            onOpen={(id) => {
+              const a = assets.find((x) => x.id === id);
+              if (a) { setSelectedAsset(a); return; }
+              // An archived asset is not in the grid; open it from the registry.
+              void getAsset(id).then((hit) => { if (hit) setSelectedAsset(hit); }).catch(() => undefined);
+            }}
             onChanged={() => { invalidateAssetCache(); void refresh(); }} />
         )}
 
@@ -1057,18 +1069,42 @@ function UnassignedAssignPanel({ assets, book, userId, onAssigned }: {
     return () => { alive = false; };
   }, [idsKey, book]);
 
+  // AREA-7 / CB-10: every row is attempted on its own — one refusal never
+  // stops the rest of a bulk filing. The derived site code is OPTIONAL: when
+  // another asset already carries it (one site code is one asset), the asset
+  // is still filed, without the code, and the identity review lists it.
   const assign = async (rows: Array<{ asset: Asset; unitCode: string }>) => {
     setBusy(true);
+    let filed = 0;
+    const codeless: string[] = [];
+    const failed: string[] = [];
     try {
       for (const r of rows) {
-        await updateAsset(r.asset.id, {
-          unit_code: r.unitCode,
-          code: r.asset.code ?? tagToCode(r.asset.tag, r.unitCode, book) ?? null,
-        }, userId);
+        const derived = r.asset.code ? null : tagToCode(r.asset.tag, r.unitCode, book);
+        try {
+          const { codeDropped } = await updateAsset(r.asset.id, {
+            unit_code: r.unitCode,
+            ...(derived ? { code: derived } : {}),
+          }, userId, { codeOptional: true });
+          filed += 1;
+          if (codeDropped) codeless.push(`${r.asset.tag} (${codeDropped})`);
+        } catch (e) { failed.push(`${r.asset.tag}: ${(e as Error).message}`); }
       }
+    } finally {
+      setBusy(false);
       onAssigned();
-    } catch (e) { await appAlert({ message: (e as Error).message, tone: "danger" }); }
-    finally { setBusy(false); }
+    }
+    if (failed.length > 0 || codeless.length > 0) {
+      const list = (xs: string[]) => `${xs.slice(0, 5).join(" · ")}${xs.length > 5 ? ` (+${xs.length - 5} more)` : ""}`;
+      await appAlert({
+        title: `Filed ${filed} of ${rows.length}`,
+        message: [
+          codeless.length > 0 ? `${codeless.length} filed WITHOUT a site code — another asset already carries the code the codebook derives (one site code is one asset): ${list(codeless)}. Give each its own code; they are listed under Identity review.` : null,
+          failed.length > 0 ? `${failed.length} not filed — ${list(failed)}` : null,
+        ].filter(Boolean).join("\n\n"),
+        tone: failed.length > 0 ? "danger" : "default",
+      });
+    }
   };
 
   const chosen = assets.filter((a) => choices.get(a.id));
@@ -1165,14 +1201,16 @@ function UnassignedAssignPanel({ assets, book, userId, onAssigned }: {
 
 function IdentityReviewPanel({ rows, shared, book, userId, onOpen, onChanged }: {
   rows: IdentityReviewRow[];
-  shared: Array<{ code: string; assets: Array<{ id: string; tag: string }> }>;
+  shared: Array<{ code: string; assets: Array<{ id: string; tag: string; archived?: boolean }> }>;
   book: Codebook; userId: string; onOpen: (assetId: string) => void; onChanged: () => void;
 }) {
   const [open, setOpen] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const conflicts = rows.filter((r) => r.kind === "code_names_other_unit").length;
-  const drift = rows.length - conflicts;
+  // CB-10: filed without a code because the derived one is already carried.
+  const taken = rows.filter((r) => r.kind === "derived_code_taken").length;
+  const drift = rows.length - conflicts - taken;
   const shown = rows.slice(0, 50);
   const unitLabel = (code: string | null) => (code ? book.units.find((u) => u.code === code)?.label ?? null : null);
 
@@ -1197,7 +1235,9 @@ function IdentityReviewPanel({ rows, shared, book, userId, onOpen, onChanged }: 
           Identity review — {conflicts > 0 ? `${conflicts} site code${conflicts === 1 ? "" : "s"} naming a different unit than the filing` : ""}
           {conflicts > 0 && drift > 0 ? " · " : ""}
           {drift > 0 ? `${drift} code${drift === 1 ? "" : "s"} the codebook now derives differently` : ""}
-          {(conflicts > 0 || drift > 0) && shared.length > 0 ? " · " : ""}
+          {(conflicts > 0 || drift > 0) && taken > 0 ? " · " : ""}
+          {taken > 0 ? `${taken} asset${taken === 1 ? "" : "s"} without a site code (the derived one is already carried)` : ""}
+          {(conflicts > 0 || drift > 0 || taken > 0) && shared.length > 0 ? " · " : ""}
           {shared.length > 0 ? `${shared.length} site code${shared.length === 1 ? "" : "s"} carried by more than one asset` : ""}
         </span>
         <ChevronDown className={`w-4 h-4 text-rose-500 transition-transform ${open ? "" : "-rotate-90"}`} />
@@ -1213,8 +1253,9 @@ function IdentityReviewPanel({ rows, shared, book, userId, onOpen, onChanged }: 
               <span className="text-[var(--color-text-muted)]">one site code on {g.assets.length} assets — give each its own:</span>
               {g.assets.map((a) => (
                 <button key={a.id} type="button" onClick={() => onOpen(a.id)}
+                  title={a.archived ? "Archived — still holds the code; the unique index counts it" : undefined}
                   className="px-2 py-0.5 rounded border border-[var(--color-border-strong)] font-mono font-bold hover:bg-[var(--color-surface-2)]">
-                  {a.tag}
+                  {a.tag}{a.archived ? <span className="ml-1 font-sans font-normal text-[var(--color-text-faint)]">(archived)</span> : null}
                 </button>
               ))}
             </div>
@@ -1225,15 +1266,23 @@ function IdentityReviewPanel({ rows, shared, book, userId, onOpen, onChanged }: 
               <span className="flex-1 min-w-[12rem] text-[var(--color-text-muted)]">
                 {r.kind === "code_names_other_unit"
                   ? <>code <b className="font-mono">{r.code}</b> names unit <b className="font-mono">{r.codeUnit}</b>{unitLabel(r.codeUnit) ? ` (${unitLabel(r.codeUnit)})` : ""}; filed under <b className="font-mono">{r.unitCode}</b></>
-                  : <>code <b className="font-mono">{r.code}</b>; the codebook now derives <b className="font-mono">{r.derivedCode}</b></>}
+                  : r.kind === "derived_code_taken"
+                    ? <>no site code — the codebook derives <b className="font-mono">{r.derivedCode}</b>, which <b className="font-mono">{r.heldBy?.tag}</b>{r.heldBy?.archived ? " (archived)" : ""} already carries; give this one its own code</>
+                    : <>code <b className="font-mono">{r.code}</b>; the codebook now derives <b className="font-mono">{r.derivedCode}</b></>}
               </span>
+              {r.kind === "derived_code_taken" && (
+                <button type="button" onClick={() => onOpen(r.assetId)}
+                  className="px-2 py-0.5 rounded border border-[var(--color-border-strong)] font-bold hover:bg-[var(--color-surface-2)]">
+                  Open — set its code
+                </button>
+              )}
               {r.kind === "code_names_other_unit" && r.codeUnit && (
                 <button type="button" disabled={busy} onClick={() => void apply([{ assetId: r.assetId, patch: { unit_code: r.codeUnit! } }])}
                   className="px-2 py-0.5 rounded border border-[var(--color-border-strong)] font-bold hover:bg-[var(--color-surface-2)]">
                   Keep the code — file under {r.codeUnit}
                 </button>
               )}
-              {r.derivedCode && (
+              {r.derivedCode && r.kind !== "derived_code_taken" && (
                 <button type="button" disabled={busy} onClick={() => void apply([{ assetId: r.assetId, patch: { code: r.derivedCode! } }])}
                   className="px-2 py-0.5 rounded border border-[var(--color-border-strong)] font-bold hover:bg-[var(--color-surface-2)]">
                   {r.kind === "code_names_other_unit" ? "Keep the filing — code" : "Re-derive —"} <span className="font-mono">{r.derivedCode}</span>

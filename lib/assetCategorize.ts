@@ -49,6 +49,10 @@ export function planCategorization(
   const unmatched: string[] = [];
   const typesToCreate = new Set<string>();
   let alreadyCategorized = 0;
+  // CB-10: one site code is one asset — never propose a code another asset
+  // already carries (or this plan already hands out); the identity review
+  // lists that asset instead (derived_code_taken).
+  const codesTaken = new Set(assets.map((a) => (a.code ?? "").trim()).filter(Boolean));
 
   for (const a of assets) {
     // Unit filing: the site code carries the unit ("2030.22" → 20). An
@@ -62,7 +66,10 @@ export function planCategorization(
     // BR-4: a unit is known and the code is blank → the codebook derives it.
     if (a.unit_code && !a.code) {
       const derived = tagToCode(a.tag, a.unit_code, book);
-      if (derived) codeAssignments.push({ assetId: a.id, tag: a.tag, code: derived });
+      if (derived && !codesTaken.has(derived)) {
+        codeAssignments.push({ assetId: a.id, tag: a.tag, code: derived });
+        codesTaken.add(derived);
+      }
     }
     if (a.type_id) { alreadyCategorized += 1; continue; }
     const entry = typeForTag(a.tag, book);
@@ -171,20 +178,45 @@ export interface IdentityReviewRow {
   code: string | null;
   /** code_names_other_unit — AREA-11: the code says one unit, the filing another.
    *  code_rederives — CB-6: the codebook as it stands derives a different code
-   *  (a padding, type-code or prefix edit since the code was written). */
-  kind: "code_names_other_unit" | "code_rederives";
+   *  (a padding, type-code or prefix edit since the code was written).
+   *  derived_code_taken — CB-10: filed, no code, and the code the codebook
+   *  derives is already carried by another asset (one site code is one
+   *  asset) — a person gives this one its own code. */
+  kind: "code_names_other_unit" | "code_rederives" | "derived_code_taken";
   /** The unit the stored code names (code_names_other_unit). */
   codeUnit: string | null;
   /** What the current codebook derives for (tag, unit_code); null = it cannot. */
   derivedCode: string | null;
+  /** derived_code_taken: the asset that already carries derivedCode. */
+  heldBy?: { id: string; tag: string; archived: boolean } | null;
 }
 
 /** The re-decode plan: every asset whose stored identity disagrees with the
- *  codebook as it stands. Pure. Blank codes are the categorizer's fill-blank
- *  job (codeAssignments), not a disagreement. */
-export function planIdentityReview(assets: ReadonlyArray<IdentityFields>, book: Codebook): IdentityReviewRow[] {
+ *  codebook as it stands. Pure. A blank code the codebook can derive is the
+ *  categorizer's fill-blank job (codeAssignments), not a disagreement —
+ *  unless another asset already carries that code (CB-10: derived_code_taken;
+ *  `codeHolders`, every asset of the org with archived ones included,
+ *  defaults to `assets`). */
+export function planIdentityReview(
+  assets: ReadonlyArray<IdentityFields>,
+  book: Codebook,
+  codeHolders: ReadonlyArray<IdentityFields & { archived?: boolean }> = assets,
+): IdentityReviewRow[] {
   const out: IdentityReviewRow[] = [];
+  const holderOf = new Map<string, { id: string; tag: string; archived: boolean }>();
+  for (const h of codeHolders) {
+    const c = (h.code ?? "").trim() ? h.code! : null;
+    if (c && !holderOf.has(c)) holderOf.set(c, { id: h.id, tag: h.tag, archived: !!h.archived });
+  }
   for (const a of assets) {
+    if (a.unit_code && !(a.code ?? "").trim()) {
+      const derived = tagToCode(a.tag, a.unit_code, book);
+      const holder = derived ? holderOf.get(derived) : undefined;
+      if (derived && holder && holder.id !== a.id) {
+        out.push({ assetId: a.id, tag: a.tag, unitCode: a.unit_code, code: null, kind: "derived_code_taken", codeUnit: null, derivedCode: derived, heldBy: holder });
+      }
+      continue;
+    }
     if (!a.unit_code || !a.code) continue;
     const derived = tagToCode(a.tag, a.unit_code, book);
     const conflict = codeUnitConflict(a, book);
@@ -201,13 +233,16 @@ export function planIdentityReview(assets: ReadonlyArray<IdentityFields>, book: 
  *  the unique index (assets_org_code_unique, 20261128) from being created,
  *  and what a person resolves first. Blank codes are not identities. */
 export function sharedSiteCodes(
-  assets: ReadonlyArray<Pick<Asset, "id" | "tag" | "code">>,
-): Array<{ code: string; assets: Array<{ id: string; tag: string }> }> {
-  const byCode = new Map<string, Array<{ id: string; tag: string }>>();
+  assets: ReadonlyArray<Pick<Asset, "id" | "tag" | "code"> & { archived?: boolean }>,
+): Array<{ code: string; assets: Array<{ id: string; tag: string; archived: boolean }> }> {
+  // Archived rows count: the index and 20261128's inventory both do, so an
+  // archived duplicate blocks the index exactly like an active one — pass
+  // every asset of the org (listAssetIdentities), not the active list.
+  const byCode = new Map<string, Array<{ id: string; tag: string; archived: boolean }>>();
   for (const a of assets) {
     const c = (a.code ?? "").trim() ? a.code! : null;
     if (!c) continue;
-    byCode.set(c, [...(byCode.get(c) ?? []), { id: a.id, tag: a.tag }]);
+    byCode.set(c, [...(byCode.get(c) ?? []), { id: a.id, tag: a.tag, archived: !!a.archived }]);
   }
   return [...byCode.entries()].filter(([, list]) => list.length > 1)
     .map(([code, list]) => ({ code, assets: list }))
@@ -260,7 +295,8 @@ export function entryAssetReferences(
 // ─── Master-list import (BR-4 / AREA-7 / BR-6) ────────────────────────────
 
 export interface ImportRowInput {
-  /** 1-based spreadsheet row (the header is row 1). */
+  /** The row's 1-based number in the source (the pasted CSV's line, or the
+   *  sheet row a workbook reports — title blocks and blank rows counted). */
   row: number;
   tag: string;
   description?: string;
@@ -285,6 +321,10 @@ export interface ImportRowPlan {
   typeId: string | null;
   /** What the row will write (update: only the cells the file supplies). */
   patch: Partial<Pick<Asset, "description" | "location" | "type_id" | "unit_code" | "code">>;
+  /** CB-10: the site code this row would have carried that another asset
+   *  (in the registry, or an earlier row of the file) already carries — the
+   *  row lands without it (one site code is one asset). */
+  codeDropped?: string | null;
   notes: string[];
   error: string | null;
 }
@@ -299,6 +339,8 @@ export interface ImportPlan {
   filed: number;
   /** Rows whose tag already exists in the registry. */
   existing: number;
+  /** CB-10: rows that land without the site code they would have carried. */
+  codesDropped: number;
 }
 
 /** Resolve a unit cell against the codebook: code first ("20"), then name
@@ -326,11 +368,26 @@ export function planAssetImport(
     /** Existing registry rows by tag key (tagKey). */
     existing: ReadonlyMap<string, Pick<Asset, "id" | "unit_code" | "code">>;
     mode: ImportMode;
+    /** CB-10: site code → the registry asset carrying it (every asset of the
+     *  org, archived included — listAssetIdentities). */
+    codeHolders?: ReadonlyMap<string, { id: string; tag: string }>;
   },
 ): ImportPlan {
   const typeByName = new Map(ctx.types.map((t) => [t.name.trim().toLowerCase(), t.id]));
   const firstRowByKey = new Map<string, number>();
   const rows: ImportRowPlan[] = [];
+  // CB-10: one site code is one asset (assets_org_code_unique). A code this
+  // plan would write that another asset already carries — in the registry,
+  // or an earlier row of this file (V-1 / D-1 of a two-prefix type; E-022 /
+  // E-22) — is dropped from the row with a note, so the asset still lands
+  // (filed) instead of failing whole at commit.
+  const claimed = new Map<string, { row: number; tag: string }>();
+  const carrierOf = (code: string, self: string | null): string | null => {
+    const h = ctx.codeHolders?.get(code);
+    if (h && h.id !== self) return h.tag;
+    const c = claimed.get(code);
+    return c ? `row ${c.row} (${c.tag})` : null;
+  };
   for (const r of input) {
     const tag = String(r.tag ?? "").trim();
     const base: ImportRowPlan = { row: r.row, tag, action: "error", existingId: null, unitCode: null, code: null, typeId: null, patch: {}, notes: [], error: null };
@@ -353,19 +410,42 @@ export function planAssetImport(
     } else if (unitCode && decoded && decoded.unitCode !== unitCode) {
       notes.push(`Site code ${givenCode} names unit ${decoded.unitCode}, the unit column says ${unitCode} — both kept; resolve it under Identity review.`);
     }
-    const derived = !givenCode && unitCode ? tagToCode(tag, unitCode, ctx.book) : null;
-    if (derived) notes.push(`Site code ${derived} derived from the codebook.`);
+    const existing = ctx.existing.get(key) ?? null;
+    // A derived code only ever fills a blank: an existing asset's own code
+    // is never replaced by one (that is the identity review).
+    let derived = !givenCode && unitCode && !existing?.code ? tagToCode(tag, unitCode, ctx.book) : null;
+    let codeDropped: string | null = null;
+    if (derived) {
+      const who = carrierOf(derived, existing?.id ?? null);
+      if (who) {
+        notes.push(`The codebook derives site code ${derived}, but ${who} already carries it — one site code is one asset, so this row lands without a code (listed under Identity review).`);
+        codeDropped = derived;
+        derived = null;
+      } else {
+        notes.push(`Site code ${derived} derived from the codebook.`);
+      }
+    }
+    let keptGiven = givenCode;
+    if (givenCode) {
+      const who = carrierOf(givenCode, existing?.id ?? null);
+      if (who) {
+        notes.push(`Site code ${givenCode} is already carried by ${who} — one site code is one asset, so this row lands without it; decide which asset owns it.`);
+        codeDropped = givenCode;
+        keptGiven = null;
+      }
+    }
     const typeName = String(r.typeName ?? "").trim();
     const typeId = typeName ? (typeByName.get(typeName.toLowerCase()) ?? null) : null;
     if (typeName && !typeId) notes.push(`Type "${typeName}" is not a category yet — left uncategorized.`);
 
-    const existing = ctx.existing.get(key) ?? null;
     const description = String(r.description ?? "").trim() || undefined;
     const location = String(r.location ?? "").trim() || undefined;
     if (!existing) {
+      const code = keptGiven ?? derived;
+      if (code) claimed.set(code, { row: r.row, tag });
       rows.push({
-        ...base, action: "create", unitCode, code: givenCode ?? derived, typeId, notes,
-        patch: { description, location, type_id: typeId ?? undefined, unit_code: unitCode ?? undefined, code: givenCode ?? derived ?? undefined },
+        ...base, action: "create", unitCode, code, typeId, notes, codeDropped,
+        patch: { description, location, type_id: typeId ?? undefined, unit_code: unitCode ?? undefined, code: code ?? undefined },
       });
       continue;
     }
@@ -380,18 +460,19 @@ export function planAssetImport(
     if (location !== undefined) patch.location = location;
     if (typeId) patch.type_id = typeId;
     if (unitCode) patch.unit_code = unitCode;
-    if (givenCode) patch.code = givenCode;
-    else if (derived && !existing.code) patch.code = derived;
+    if (keptGiven) patch.code = keptGiven;
+    else if (derived) patch.code = derived;
+    if (patch.code) claimed.set(patch.code, { row: r.row, tag });
     const nextUnit = patch.unit_code ?? existing.unit_code ?? null;
     const nextCode = patch.code ?? existing.code ?? null;
     if (!givenCode && existing.code && unitCode && unitCode !== existing.unit_code) {
       notes.push(`Its existing site code ${existing.code} was kept — review it under Identity review.`);
     }
     if (Object.keys(patch).length === 0) {
-      rows.push({ ...base, action: "skip", existingId: existing.id, unitCode: nextUnit, code: nextCode, notes: [...notes, "Nothing in this row changes the existing asset."] });
+      rows.push({ ...base, action: "skip", existingId: existing.id, unitCode: nextUnit, code: nextCode, codeDropped, notes: [...notes, "Nothing in this row changes the existing asset."] });
       continue;
     }
-    rows.push({ ...base, action: "update", existingId: existing.id, unitCode: nextUnit, code: nextCode, typeId, patch, notes });
+    rows.push({ ...base, action: "update", existingId: existing.id, unitCode: nextUnit, code: nextCode, typeId, patch, notes, codeDropped });
   }
   return {
     rows,
@@ -401,6 +482,7 @@ export function planAssetImport(
     errors: rows.filter((r) => r.action === "error").length,
     filed: rows.filter((r) => (r.action === "create" || r.action === "update") && r.unitCode).length,
     existing: rows.filter((r) => r.existingId !== null).length,
+    codesDropped: rows.filter((r) => (r.action === "create" || r.action === "update") && r.codeDropped).length,
   };
 }
 

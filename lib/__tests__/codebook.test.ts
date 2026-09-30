@@ -379,6 +379,10 @@ describe("CB-8 — two types on one prefix are ambiguous, never first-by-sort", 
     const book: Codebook = { ...BOOK, units: [...BOOK.units, entry("unit", "CU", "Crude")], equipmentTypes: [...BOOK.equipmentTypes, entry("equipment_type", "45", "Ejectors", ["E"])] };
     const kinds = codebookProblems(book).map((p) => p.kind).sort();
     expect(kinds).toEqual(["multi_prefix_type", "non_numeric_code", "shared_prefix"]);
+    // CB-3: a legacy letter code is flagged WITH its way out (it stays usable
+    // meanwhile — only a new or changed code is refused).
+    expect(codebookProblems(book).find((p) => p.kind === "non_numeric_code")!.message)
+      .toMatch(/To replace it: add a digit code for Crude, refile its equipment there, then remove CU\./);
     expect(codebookProblems(EMPTY_CODEBOOK)).toEqual([]);
   });
 });

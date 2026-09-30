@@ -17,7 +17,7 @@ import {
   X, KeyRound, Loader2, AlertTriangle, CheckCircle2, Upload, ChevronRight, ArrowLeft,
 } from "lucide-react";
 import {
-  createAsset, updateAsset, listAssetTypes, findAssetsByTagKeys, type Asset, type AssetType,
+  createAsset, updateAsset, listAssetTypes, findAssetsByTagKeys, listAssetIdentities, type Asset, type AssetType,
 } from "@/lib/assets";
 import { loadCodebook, tagKey, EMPTY_CODEBOOK, type Codebook } from "@/lib/codebook";
 import { planAssetImport, type ImportMode, type ImportPlan, type ImportRowInput } from "@/lib/assetCategorize";
@@ -49,6 +49,9 @@ interface ImportResult {
   skipped: number;
   /** Rows written into an operating area. */
   filed: number;
+  /** CB-10: rows that landed WITHOUT the site code they would have carried
+   *  (another asset already carries it — one site code is one asset). */
+  codeless: Array<{ row: number; tag: string; code: string }>;
   failed: Array<{ row: number; reason: string }>;
 }
 
@@ -85,6 +88,11 @@ export default function AssetCsvImportModal({
   const [result, setResult] = useState<ImportResult | null>(null);
   const [book, setBook] = useState<Codebook>(EMPTY_CODEBOOK);
   const [existing, setExisting] = useState<Map<string, Pick<Asset, "id" | "unit_code" | "code">> | null>(null);
+  // CB-10: site code → the registry asset carrying it (archived included).
+  const [codeHolders, setCodeHolders] = useState<Map<string, { id: string; tag: string }>>(new Map());
+  // A workbook's rows carry their real sheet row numbers (title blocks and
+  // blank rows counted); a pasted CSV's are its line numbers.
+  const [rowNumbers, setRowNumbers] = useState<number[] | null>(null);
   const [mode, setMode] = useState<ImportMode>("create_only");
   // The spreadsheet door: an .xlsx / .xls / .csv read server-side by
   // lib/xlsxData.ts parseWorkbook (POST /api/assets/parse-workbook).
@@ -105,7 +113,7 @@ export default function AssetCsvImportModal({
       return r[headerIndex[h]] ?? undefined;
     };
     return rows.map((r, rIdx) => ({
-      row: rIdx + 2,
+      row: rowNumbers?.[rIdx] ?? rIdx + 2,
       tag: pick(r, "tag")?.trim() ?? "",
       description: pick(r, "description"),
       location: pick(r, "location"),
@@ -113,18 +121,19 @@ export default function AssetCsvImportModal({
       unit: pick(r, "unit"),
       code: pick(r, "code"),
     }));
-  }, [rows, headers, mapping]);
+  }, [rows, headers, mapping, rowNumbers]);
 
   const plan: ImportPlan | null = useMemo(
-    () => (existing ? planAssetImport(inputs, { book, types, existing, mode }) : null),
-    [existing, inputs, book, types, mode]);
+    () => (existing ? planAssetImport(inputs, { book, types, existing, mode, codeHolders }) : null),
+    [existing, inputs, book, types, mode, codeHolders]);
 
   if (!isOpen) return null;
 
   // Headers + rows from either door, then the same column suggestion.
-  const applyTable = (hdr: string[], data: string[][]) => {
+  const applyTable = (hdr: string[], data: string[][], sheetRowNumbers: number[] | null = null) => {
     setHeaders(hdr);
     setRows(data);
+    setRowNumbers(sheetRowNumbers && sheetRowNumbers.length === data.length ? sheetRowNumbers : null);
     const suggested: Record<string, string> = {};
     const used = new Set<string>();
     const wordsOf = (f: (typeof CANONICAL_FIELDS)[number]) => [f.key.toLowerCase(), ...(f.match ?? [])];
@@ -159,13 +168,13 @@ export default function AssetCsvImportModal({
         headers: { "Content-Type": "application/json", Authorization: `Bearer ${session?.access_token ?? ""}` },
         body: JSON.stringify({ orgId, fileBase64: b64, fileName, sheet }),
       });
-      const json = await res.json().catch(() => ({})) as { error?: string; headers?: string[]; rows?: string[][]; sheetNames?: string[]; sheetName?: string };
+      const json = await res.json().catch(() => ({})) as { error?: string; headers?: string[]; rows?: string[][]; rowNumbers?: number[]; sheetNames?: string[]; sheetName?: string };
       if (!res.ok) throw new Error(json.error ?? `HTTP ${res.status}`);
       const hdr = json.headers ?? [];
       const data = json.rows ?? [];
       if (hdr.length === 0 || data.length === 0) throw new Error("No header row and data rows were found in that sheet.");
       setWorkbook({ fileName, b64, sheetNames: json.sheetNames ?? [], sheetName: json.sheetName ?? "" });
-      applyTable(hdr, data);
+      applyTable(hdr, data, Array.isArray(json.rowNumbers) ? json.rowNumbers : null);
     } catch (e) {
       setError((e as Error).message);
     } finally { setBusy(false); }
@@ -185,8 +194,20 @@ export default function AssetCsvImportModal({
     setError(null);
     setBusy(true);
     try {
-      // BR-6: count what already exists BEFORE anything is written.
-      setExisting(await findAssetsByTagKeys(orgId, inputs.map((r) => tagKey(r.tag))));
+      // BR-6: count what already exists BEFORE anything is written; CB-10:
+      // and which site codes are already carried, so a derived code that
+      // collides is dropped in the preview instead of failing the row.
+      const [found, identities] = await Promise.all([
+        findAssetsByTagKeys(orgId, inputs.map((r) => tagKey(r.tag))),
+        listAssetIdentities(orgId),
+      ]);
+      const holders = new Map<string, { id: string; tag: string }>();
+      for (const a of identities) {
+        const c = (a.code ?? "").trim() ? a.code! : null;
+        if (c && !holders.has(c)) holders.set(c, { id: a.id, tag: a.tag });
+      }
+      setCodeHolders(holders);
+      setExisting(found);
       setStep("preview");
     } catch (e) {
       setError(`Could not check which tags already exist — ${(e as Error).message}`);
@@ -197,24 +218,32 @@ export default function AssetCsvImportModal({
     if (!plan) return;
     setBusy(true); setError(null);
     const failed: Array<{ row: number; reason: string }> = [];
+    const codeless: ImportResult["codeless"] = plan.rows
+      .filter((p) => (p.action === "create" || p.action === "update") && p.codeDropped)
+      .map((p) => ({ row: p.row, tag: p.tag, code: p.codeDropped! }));
     let created = 0, updated = 0, filed = 0;
     for (const p of plan.rows) {
       if (p.action === "error") { failed.push({ row: p.row, reason: p.error ?? "Not importable" }); continue; }
       if (p.action === "skip") continue;
       try {
+        // CB-10: a code that became taken since the preview (another import,
+        // the Bridge) never costs the row — the asset lands without it.
         if (p.action === "create") {
-          await createAsset({
+          const made = await createAsset({
             orgId, tag: p.tag,
             description: p.patch.description ?? undefined,
             location: p.patch.location ?? undefined,
             typeId: p.patch.type_id ?? undefined,
             unitCode: p.patch.unit_code ?? undefined,
             code: p.patch.code ?? undefined,
+            codeOptional: true,
             createdBy: actorUserId,
           });
+          if (p.patch.code && !made.code) codeless.push({ row: p.row, tag: p.tag, code: p.patch.code });
           created += 1;
         } else if (p.existingId) {
-          await updateAsset(p.existingId, p.patch, actorUserId);
+          const { codeDropped } = await updateAsset(p.existingId, p.patch, actorUserId, { codeOptional: true });
+          if (codeDropped) codeless.push({ row: p.row, tag: p.tag, code: codeDropped });
           updated += 1;
         }
         if (p.unitCode) filed += 1;
@@ -224,7 +253,7 @@ export default function AssetCsvImportModal({
         failed.push({ row: p.row, reason: `${f.heading} — ${f.message}` });
       }
     }
-    setResult({ created, updated, skipped: plan.skipped, filed, failed });
+    setResult({ created, updated, skipped: plan.skipped, filed, codeless, failed });
     setStep("done");
     setBusy(false);
     if (created + updated > 0) onImported?.(created + updated);
@@ -323,6 +352,11 @@ export default function AssetCsvImportModal({
                 <div>
                   <b>{plan.filed}</b> land in an operating area{book.units.length === 0 ? " (no units in the Site Codebook yet — rows import unassigned)" : ""}.
                 </div>
+                {plan.codesDropped > 0 && (
+                  <div className="text-amber-800">
+                    <b>{plan.codesDropped}</b> land without a site code — another asset (or an earlier row) already carries the code; one site code is one asset. See the row notes.
+                  </div>
+                )}
                 {plan.existing > 0 && (
                   <div className="flex items-center gap-3 pt-1">
                     <span className="font-bold">Rows whose tag already exists:</span>
@@ -378,6 +412,18 @@ export default function AssetCsvImportModal({
                   {" "}— <b>{result.filed}</b> filed to an operating area.
                 </span>
               </div>
+              {result.codeless.length > 0 && (
+                <div className="rounded-lg bg-amber-50 border border-amber-200 p-3 text-xs text-amber-900">
+                  <div className="font-bold flex items-center gap-1.5 mb-1"><AlertTriangle className="w-4 h-4" /> {result.codeless.length} landed without a site code</div>
+                  <div className="mb-1">Another asset already carries the code (one site code is one asset). Give each its own code — they are listed under Identity review.</div>
+                  <ul className="ml-5 list-disc space-y-0.5">
+                    {result.codeless.slice(0, 8).map((c, i) => (
+                      <li key={i}>Row {c.row}: {c.tag} — {c.code}</li>
+                    ))}
+                    {result.codeless.length > 8 && <li className="italic">+{result.codeless.length - 8} more</li>}
+                  </ul>
+                </div>
+              )}
               {result.failed.length > 0 && (
                 <div className="rounded-lg bg-red-50 border border-red-200 p-3 text-xs text-red-800">
                   <div className="font-bold flex items-center gap-1.5 mb-1"><AlertTriangle className="w-4 h-4" /> {result.failed.length} failed</div>
