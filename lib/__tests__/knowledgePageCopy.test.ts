@@ -103,10 +103,31 @@ describe("ASK-6 — the assistant's words are the assistant's, and never a trap"
     expect(screenAssistantRequest("What test temperature (°F) and design pressure (psig) apply to line 6\"-P-2001?")).toEqual({ ok: true });
     expect(screenAssistantRequest("Which flange class — 150# or 300#?")).toEqual({ ok: true });
   });
+  it("reproduction → fix: a library of access-control SOPs (ISA/IEC 62443) is not refused for NAMING passwords, MFA, login or sign-in — only for ASKING for one", () => {
+    // the clarify question and its aspects sit above buttons, not an input
+    expect(screenAssistantRequest("Which aspect: password rules, MFA, or remote login?", "clarify")).toEqual({ ok: true });
+    expect(screenAssistantRequest("Which type of password policy — length or rotation?", "clarify")).toEqual({ ok: true });
+    expect(screenAssistantRequest("Password length and rotation", "aspect")).toEqual({ ok: true });
+    expect(screenAssistantRequest("Badge and sign-in requirements", "aspect")).toEqual({ ok: true });
+    expect(screenAssistantRequest("MFA for remote login", "aspect")).toEqual({ ok: true });
+    // a Need prompt about a sign, not a sign-in
+    expect(screenAssistantRequest("What is the sign in front of the vacuum term?", "need")).toEqual({ ok: true });
+    expect(screenAssistantRequest("the sign in front of the vacuum term")).toEqual({ ok: true });
+    // …while a request for the reader's own secret is refused wherever it appears
+    expect(screenAssistantRequest("Before I answer, enter your SSO password in the question box.", "clarify").ok).toBe(false);
+    expect(screenAssistantRequest("What's your MFA code?", "clarify").ok).toBe(false);
+    expect(screenAssistantRequest("For audited calculations this workspace requires the requester's SSO password to sign the result — enter it below.", "clarify").ok).toBe(false);
+    expect(screenAssistantRequest("Please provide your SSO login so I can sign the calc.", "need").ok).toBe(false);
+    // a Need prompt opens an input: naming a credential there is enough
+    expect(screenAssistantRequest("What password does the vendor portal use?", "need").ok).toBe(false);
+    // an aspect is screened for length and links only
+    expect(screenAssistantRequest("See https://evil.example/login", "aspect")).toEqual({ ok: false, reason: "it contains a link" });
+    expect(screenAssistantRequest("x".repeat(ASSISTANT_REQUEST_MAX + 1), "aspect").ok).toBe(false);
+  });
   it("NeedCard: the app's first-person chrome is gone; the prompt is quoted inside the assistant frame; the secrets line is at the input", () => {
     const need = page.slice(page.indexOf("function NeedCard("), page.indexOf("function CopyButton("));
     expect(need).not.toContain("I need a value from you to run this calculation");
-    expect(need).toContain("const check = screenAssistantRequest(prompt);");
+    expect(need).toContain('const check = screenAssistantRequest(prompt, "need");');
     expect(need).toContain("if (!check.ok) return <AssistantRequestRefused reason={check.reason} />;");
     expect(need).toContain('<AssistantAskingFrame tone="indigo">');
     expect(need).toContain("&ldquo;{prompt}&rdquo;");
@@ -116,7 +137,8 @@ describe("ASK-6 — the assistant's words are the assistant's, and never a trap"
   it("ClarifyCard: the question is quoted, each option is marked as AI-suggested, unsafe options are dropped (too few → no card)", () => {
     const clarify = page.slice(page.indexOf("function ClarifyCard("), page.indexOf("// Need round:"));
     expect(clarify).not.toContain("One thing before I answer");
-    expect(clarify).toContain("const safeOptions = options.filter((o) => screenAssistantRequest(o).ok).map((o) => o.slice(0, 80));");
+    expect(clarify).toContain('const promptCheck = screenAssistantRequest(prompt, "clarify");');
+    expect(clarify).toContain('const safeOptions = options.filter((o) => screenAssistantRequest(o, "aspect").ok).map((o) => o.slice(0, 80));');
     expect(clarify).toContain("if (safeOptions.length < 2) return <AssistantRequestRefused");
     expect(clarify).toContain("aria-label={`AI-suggested aspect: ${o}`}");
     expect(clarify).toContain("Aspects the assistant suggested — pick which to answer:");

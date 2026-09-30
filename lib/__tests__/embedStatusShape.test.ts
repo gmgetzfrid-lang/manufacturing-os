@@ -474,6 +474,119 @@ describe("Round G — the controls", () => {
   });
 });
 
+describe("review fix pass 3 — a consent write that did not land is never reported as done", () => {
+  const OTHER = "0d000000-0000-4000-8000-0000000000bb";
+  const feats = () => admin.state.tables.knowledge_libraries[0].ai_features as { embedBuild?: Row };
+  /** Another member acts between the route's read and its write: before the
+   *  first write matching `when`, their consent is recorded as `marker`. */
+  let instant = 0;                                                  // every renewal a new instant
+  const actFirst = (when: (a: Row) => boolean, marker: Row, times = 1) => {
+    const real = admin.state.rpc.embed_build_marker_write;
+    let n = 0;
+    admin.state.rpc.embed_build_marker_write = (a) => {
+      if (when(a) && n++ < times) feats().embedBuild = { ...marker, at: `2026-09-30T12:00:${String(++instant % 60).padStart(2, "0")}Z` };
+      return real(a);
+    };
+  };
+  beforeEach(() => { instant = 0; });
+  const setsMe = (a: Row) => !a.p_patch && (a.p_marker as Row | null)?.userId === ME;
+
+  it("a plain build that read NO marker never overwrites a standing consent recorded before its write lands", async () => {
+    feats().embedBuild = undefined;
+    actFirst(setsMe, { userId: OTHER, standing: true });
+    const { setEmbedBuildMarker } = await import("@/lib/knowledgeEmbedCore");
+    expect(await setEmbedBuildMarker(LIB, ME)).toBeNull();
+    // their standing consent stands; the build is continued on it (the rule a plain build follows)
+    expect(feats().embedBuild).toMatchObject({ userId: OTHER, standing: true });
+    // the first write expected NO marker ('' — the SQL's COALESCE), and so changed nothing
+    const writes = admin.state.calls.filter((c) => c.table === "rpc:embed_build_marker_write").map((c) => c.args[0] as Row);
+    expect(writes[0]).toMatchObject({ p_expect_user: "", p_expect_at: null });
+    expect(writes).toHaveLength(1);                                  // the re-read found a standing consent: nothing more to write
+  });
+  it("…a plain consent recorded in between is read again and replaced by the builder, conditionally on THAT one", async () => {
+    feats().embedBuild = undefined;
+    actFirst(setsMe, { userId: OTHER });
+    const { setEmbedBuildMarker } = await import("@/lib/knowledgeEmbedCore");
+    expect(await setEmbedBuildMarker(LIB, ME)).toBeNull();
+    expect(feats().embedBuild).toMatchObject({ userId: ME });
+    const writes = admin.state.calls.filter((c) => c.table === "rpc:embed_build_marker_write").map((c) => c.args[0] as Row);
+    expect(writes.map((w) => w.p_expect_user)).toEqual(["", OTHER]);
+    expect(writes[1].p_expect_at).toBe("2026-09-30T12:00:01Z");
+  });
+  it("…and a consent that keeps moving is said (the route then tells the builder to keep the page open)", async () => {
+    feats().embedBuild = undefined;
+    actFirst(setsMe, { userId: OTHER }, 5);
+    const { setEmbedBuildMarker } = await import("@/lib/knowledgeEmbedCore");
+    expect(await setEmbedBuildMarker(LIB, ME)).toMatch(/consent changed while this one was being recorded/);
+    expect(feats().embedBuild).toMatchObject({ userId: OTHER });
+  });
+  it("the whole-blob fallback (before 20261121) applies the same test: expecting no marker, it writes nothing over one", async () => {
+    delete admin.state.rpc.embed_build_marker_write;
+    feats().embedBuild = { userId: OTHER, at: "2026-09-01T00:00:00Z", standing: true };
+    const { clearEmbedBuildMarkerIf, NO_MARKER } = await import("@/lib/knowledgeEmbedCore");
+    expect(await clearEmbedBuildMarkerIf(LIB, NO_MARKER)).toEqual({ error: null, applied: false });
+    expect(feats().embedBuild).toMatchObject({ userId: OTHER });
+  });
+  it("reproduction → fix: 'Stop it' whose conditional clear matched nothing (the payer restarted the build in between) is a 409 — never 'Background build stopped'", async () => {
+    feats().embedBuild = { userId: OTHER, at: "2026-09-01T00:00:00Z" };
+    actFirst((a) => !a.p_patch && a.p_marker == null, { userId: OTHER });
+    const { POST } = await import("@/app/api/knowledge/embed/route");
+    const res = await POST(req({ action: "release" }));
+    expect(res.status).toBe(409);
+    const body = await res.json();
+    expect(body).toMatchObject({ released: false, changed: true });
+    expect(body.error).toMatch(/nothing was stopped/);
+    expect(feats().embedBuild).toMatchObject({ userId: OTHER, at: "2026-09-30T12:00:01Z" });   // the new consent stands
+    // and the panel's toast is driven by that refusal (apiPost throws on a non-2xx)
+    const { readFileSync } = await import("node:fs");
+    expect(readFileSync("lib/knowledge.ts", "utf8")).toContain("if (!res.ok || !data) {");
+  });
+  it("keep-current off whose conditional write matched nothing is a 409 — the renewed consent is left as recorded (both the patch and the clear)", async () => {
+    const { POST } = await import("@/app/api/knowledge/embed/route");
+    // passages left → the standing flag is patched off
+    detail = { total: 3, embedded: 1, remaining: 2, failed: 0, leased: 0, waiting: 0, remaining_chars: 0, total_chars: 10, models: { "voyage-3.5-lite": 1 } };
+    feats().embedBuild = { userId: ME, at: "2026-09-01T00:00:00Z", standing: true };
+    actFirst((a) => a.p_patch === true, { userId: ME, standing: true });
+    let res = await POST(req({ action: "keep-current", on: false }));
+    expect(res.status).toBe(409);
+    expect(await res.json()).toMatchObject({ changed: true });
+    expect(feats().embedBuild).toMatchObject({ userId: ME, standing: true });
+    // nothing left → the stamp is cleared
+    admin.state.rpc.embed_build_marker_write = undefined as never;
+    installMarkerRpc(admin.state);
+    detail = { total: 3, embedded: 3, remaining: 0, failed: 0, leased: 0, waiting: 0, remaining_chars: 0, total_chars: 10, models: { "voyage-3.5-lite": 3 } };
+    actFirst((a) => !a.p_patch && a.p_marker == null, { userId: ME, standing: true });
+    res = await POST(req({ action: "keep-current", on: false }));
+    expect(res.status).toBe(409);
+    expect(feats().embedBuild).toMatchObject({ userId: ME, standing: true });
+    // unmoved, it withdraws as before
+    admin.state.rpc.embed_build_marker_write = undefined as never;
+    installMarkerRpc(admin.state);
+    res = await POST(req({ action: "keep-current", on: false }));
+    expect((await res.json()).standing).toBe(false);
+    expect(feats().embedBuild).toBeUndefined();
+  });
+  it("reproduction → fix: another driver claims the tail between the build's first read and its claim — the build reports it busy, never 'run NOTIFY pgrst'", async () => {
+    coverage = { total: 40, embedded: 10 };
+    detail = { total: 40, embedded: 10, remaining: 30, failed: 0, leased: 0, waiting: 0, remaining_chars: 300, total_chars: 400, models: { "voyage-3.5-lite": 10 } };
+    // the drain (a page-load nudge) takes all 30 just before this slice asks
+    admin.state.rpc.embed_claim_batch = () => {
+      detail = { ...(detail as Row), leased: 30 };
+      return { data: [], error: null };
+    };
+    const { POST } = await import("@/app/api/knowledge/embed/route");
+    const body = await (await POST(req({}))).json();
+    expect(body.error).toBeNull();
+    expect(body).toMatchObject({ busy: 30, remaining: 30, done: false });
+    // a genuinely empty claim over passages nobody holds still names the stale cache
+    detail = { total: 40, embedded: 10, remaining: 30, failed: 0, leased: 0, waiting: 0, remaining_chars: 300, total_chars: 400, models: { "voyage-3.5-lite": 10 } };
+    admin.state.rpc.embed_claim_batch = () => ({ data: [], error: null });
+    const stale = await (await POST(req({}))).json();
+    expect(stale.error).toMatch(/30 passages lack vectors but none could be fetched/);
+    expect(stale.error).toContain("NOTIFY pgrst");
+  });
+});
+
 describe("SEM-8 — saving Library AI setup never erases the standing consent", () => {
   const LIBROW = () => ({ id: LIB, org_id: ORG, ai_features: { visionAllPages: false, decoder: "PID", embedBuild: { userId: ME, at: "2026-09-01T00:00:00Z", standing: true } } as Row });
   it("with 20261121: one RPC replaces the toggles and keeps embedBuild (transcribed from the SQL); a refused save is an error", async () => {

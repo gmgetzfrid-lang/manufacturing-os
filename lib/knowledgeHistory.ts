@@ -8,9 +8,12 @@
 // for the CURRENT reader, through the same seam retrieval uses
 // (loadPrincipal + readableControlledDocIds — never a parallel evaluator).
 //
-// The rule, fail-safe: an answer is as restricted as its most restricted
-// source. A row is shown only when every document it cites resolves, now, to
-// a document the reader may read:
+// The rule, fail-safe for what a row records: an answer is as restricted as
+// its most restricted CITED source. A row is shown only when every document
+// it cites resolves, now, to a document the reader may read (a row does not
+// record passages retrieved but not cited, nor drawing facts — until the ask
+// route records them, an answer citing some readable documents is judged by
+// those alone; ASK-1 / KACL-1 / IEDGE-5 stay open on it):
 //   - an upload-origin knowledge document of the reader's org — readable (the
 //     same content as the PDF every member can open, by design);
 //   - a mirror of a controlled document — readable when
@@ -25,7 +28,10 @@
 // internet-mode answer (web sources only) is shown to everyone.
 // A conversation carries its earlier turns into every later answer (the ask
 // sends them back as context), so once a turn is withheld every later turn
-// of the same thread is withheld too.
+// of the same thread is withheld too. A conversation continued from someone
+// else's record starts a NEW thread, which records nothing of the turns it
+// was seeded with — so the page never sends those back (askContextHistory,
+// lib/knowledge.ts).
 //
 // DEC-43: controllers read all memory — the caller skips the filter for them,
 // exactly as knowledge_questions_select (20261120) lets them read every row.

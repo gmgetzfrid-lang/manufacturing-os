@@ -14,7 +14,13 @@
 // the browser build, a drain per page-load nudge, the daily cron — works on
 // DISJOINT passages and nobody pays twice for the same one. An abandoned
 // lease simply expires; nothing is lost, which keeps the property that made
-// this survivable: every committed batch is permanent.
+// this survivable: every committed batch is permanent. The claim returns its
+// lease instant and every write a slice makes to a claimed passage (its
+// vector, its refusal, giving it back) is held to that instant: a Rebuild
+// clears every lease, and another driver's newer claim replaces it, so a
+// batch still in flight when either happens writes nothing — no old-model
+// vector lands in a rebuilt library, and no lease another driver holds is
+// cleared.
 //
 // ONE BAD PASSAGE NEVER PINS A LIBRARY (SEM-4). When the provider refuses the
 // INPUT (400 / 413 / 422), the batch is split and retried until the refused
@@ -80,6 +86,8 @@ interface ClaimedChunk {
   document_id: string;
   document_name: string | null;
   embed_attempts: number;
+  /** The lease instant the claim set (20261121); absent on the legacy queue. */
+  embed_claimed_until?: string | null;
 }
 
 /** The claim function (or a column) a pending migration has not created. */
@@ -170,18 +178,37 @@ export async function embedLibrarySlice(opts: {
     return rows.map((c) => ({ ...c, document_name: names.get(c.document_id) ?? null, embed_attempts: 0 }));
   };
 
-  /** Give back passages this slice claimed but will not embed. */
+  /** Hold a write to a claimed passage to THIS slice's lease instant (the
+   *  claim returns it). A claim that did not return one (a pre-release draft
+   *  of 20261121) is held to "some lease still stands", which a Rebuild
+   *  voids. */
+  const heldBy = <Q extends { eq(column: string, value: string): Q; not(column: string, op: string, value: null): Q }>(q: Q, c: ClaimedChunk): Q =>
+    (c.embed_claimed_until ? q.eq("embed_claimed_until", c.embed_claimed_until) : q.not("embed_claimed_until", "is", null));
+
+  /** Give back passages this slice claimed but will not embed — only while
+   *  this slice's lease still stands (a lease another driver took since, or
+   *  one a Rebuild cleared, is not ours to clear). */
   const release = async (chunks: ClaimedChunk[]) => {
     if (queue !== "claim" || chunks.length === 0) return;
-    await supabaseAdmin.from("knowledge_chunks")
-      .update({ embed_claimed_until: null }).in("id", chunks.map((c) => c.id))
-      .then(() => undefined, () => undefined); // an unreleased lease just expires
+    const byLease = new Map<string, string[]>();
+    for (const c of chunks) {
+      const k = c.embed_claimed_until ?? "";
+      byLease.set(k, [...(byLease.get(k) ?? []), c.id]);
+    }
+    for (const [lease, ids] of byLease) {
+      const q = supabaseAdmin.from("knowledge_chunks").update({ embed_claimed_until: null }).in("id", ids);
+      await (lease ? q.eq("embed_claimed_until", lease) : q.not("embed_claimed_until", "is", null))
+        .then(() => undefined, () => undefined); // an unreleased lease just expires
+    }
   };
 
   // ── writing back what was paid for ────────────────────────────────────────
   /** Write every vector; a failed write never abandons the rest. Counts the
    *  rows that actually changed (a passage another driver already embedded
-   *  is not counted twice). */
+   *  is not counted twice). On the claim queue a write lands only while the
+   *  passage still carries THIS slice's lease (`heldBy`): a Rebuild that
+   *  cleared every lease mid-batch, or a newer claim by another driver,
+   *  voids it. */
   const writeBack = async (group: ClaimedChunk[], vectors: number[][]): Promise<void> => {
     for (let i = 0; i < group.length; i += 8) {
       const part = group.slice(i, i + 8);
@@ -190,7 +217,7 @@ export async function embedLibrarySlice(opts: {
           ? { embedding: toVectorLiteral(vectors[i + j]), embedding_model: connection.model, embed_claimed_until: null, embed_error: null, embed_retry_after: null }
           : { embedding: toVectorLiteral(vectors[i + j]), embedding_model: connection.model };
         const q = supabaseAdmin.from("knowledge_chunks").update(patch).eq("id", c.id);
-        return queue === "claim" ? q.is("embedding", null).select("id") : q;
+        return queue === "claim" ? heldBy(q.is("embedding", null), c).select("id") : q;
       }));
       for (const r of results) {
         if (r.error) { lastError ??= r.error.message; continue; }
@@ -206,16 +233,16 @@ export async function embedLibrarySlice(opts: {
    *  runs, not in one tight loop. At EMBED_MAX_ATTEMPTS the queue stops
    *  offering it. */
   const recordRefusal = async (c: ClaimedChunk, message: string) => {
-    const { error } = await supabaseAdmin.from("knowledge_chunks")
+    const { data, error } = await heldBy(supabaseAdmin.from("knowledge_chunks")
       .update({
         embed_attempts: (c.embed_attempts ?? 0) + 1,
         embed_error: message.slice(0, 500),
         embed_claimed_until: null,
         embed_retry_after: new Date(Date.now() + REFUSAL_RETRY_SECONDS * 1000).toISOString(),
       })
-      .eq("id", c.id);
+      .eq("id", c.id), c).select("id");
     if (error) lastError ??= error.message;
-    else refused += 1;
+    else refused += Array.isArray(data) ? data.length : 0;   // a voided lease charges nobody
   };
 
   /** The passages' text as the provider sees it: a contextual prefix
@@ -521,8 +548,13 @@ async function writeFeatures(libraryId: string, feats: Record<string, unknown>):
 }
 
 /** The marker a writer read: a write goes through only while the stored
- *  marker still names this member (and, when known, was recorded at `at`). */
+ *  marker still names this member (and, when known, was recorded at `at`).
+ *  null = no check on that field; "" = expect NONE (the writer read no
+ *  marker, so it writes only while there is still none). */
 export interface MarkerExpectation { userId: string | null; at: string | null }
+
+/** The expectation of a writer that read no marker at all. */
+export const NO_MARKER: MarkerExpectation = { userId: "", at: null };
 
 /** The expectation for a marker as read — empty fields expect nothing. */
 export const expectationOf = (m: { userId?: string; at?: string } | null | undefined): MarkerExpectation =>
@@ -559,8 +591,10 @@ async function writeMarker(
   const { feats, error: readErr } = await readFeatures(libraryId);
   if (readErr) return { error: readErr, applied: false };
   const cur = feats.embedBuild && typeof feats.embedBuild === "object" ? feats.embedBuild as Record<string, unknown> : null;
-  if (expect?.userId && cur?.userId !== expect.userId) return { error: null, applied: false };
-  if (expect?.at && cur?.at !== expect.at) return { error: null, applied: false };
+  // The SQL's own test: COALESCE(stored, '') = expected, NULL = no check.
+  const stored = (k: "userId" | "at") => (typeof cur?.[k] === "string" ? cur[k] as string : "");
+  if (expect && expect.userId !== null && stored("userId") !== expect.userId) return { error: null, applied: false };
+  if (expect && expect.at !== null && stored("at") !== expect.at) return { error: null, applied: false };
   if (isPatch) {
     if (!cur) return { error: null, applied: false };
     const next: Record<string, unknown> = { ...cur, ...change.patch };
@@ -594,23 +628,32 @@ export async function readEmbedBuildMarker(
  *  (reset) clears another member's marker first, so a rebuild is never
  *  continued on a consent given for something else.
  *  `expect` makes the write conditional on the marker the caller read.
+ *  Without one, setting a consent is conditional on the marker read HERE
+ *  (none read → none may exist), so a consent recorded between that read and
+ *  the write is never overwritten: a write that no longer applies re-reads
+ *  once and applies the same rule to what it finds; still moving → said.
  *  Returns the write error, if any — a consent that did not record is said. */
 export async function setEmbedBuildMarker(
   libraryId: string, userId: string | null, opts?: { standing?: boolean; expect?: MarkerExpectation },
 ): Promise<string | null> {
   if (!userId) return (await writeMarker(libraryId, { set: null }, opts?.expect)).error;
-  const { feats, error } = await readFeatures(libraryId);
-  if (error) return error;
-  const prior = parseEmbedBuildMarker(feats.embedBuild);
-  if (opts?.standing === undefined && prior?.valid && prior.standing && prior.userId !== userId) {
-    return null;
+  for (let round = 0; round < 2; round++) {
+    const { feats, error } = await readFeatures(libraryId);
+    if (error) return error;
+    const prior = parseEmbedBuildMarker(feats.embedBuild);
+    if (opts?.standing === undefined && prior?.valid && prior.standing && prior.userId !== userId) {
+      return null;
+    }
+    const standing = opts?.standing ?? (prior?.userId === userId && prior.standing === true);
+    const expect = opts?.expect ?? (prior ? { userId: prior.userId, at: prior.at || null } : NO_MARKER);
+    const out = await writeMarker(
+      libraryId,
+      { set: { userId, at: new Date().toISOString(), ...(standing ? { standing: true } : {}) } },
+      expect,
+    );
+    if (out.error || out.applied || opts?.expect) return out.error;
   }
-  const standing = opts?.standing ?? (prior?.userId === userId && prior.standing === true);
-  return (await writeMarker(
-    libraryId,
-    { set: { userId, at: new Date().toISOString(), ...(standing ? { standing: true } : {}) } },
-    opts?.expect,
-  )).error;
+  return "the background build's consent changed while this one was being recorded — start the build again to record it";
 }
 
 /** Clear the marker only while it is still the one the caller read, and SAY
@@ -626,13 +669,21 @@ export async function clearEmbedBuildMarkerIf(libraryId: string, expect: MarkerE
 export async function patchEmbedBuildMarker(
   libraryId: string, patch: Partial<EmbedBuildMarker>, expect?: MarkerExpectation,
 ): Promise<string | null> {
+  return (await patchEmbedBuildMarkerIf(libraryId, patch, expect)).error;
+}
+
+/** patchEmbedBuildMarker, saying whether the patch landed (`applied: false`
+ *  with no error: the marker changed since it was read, or is gone). */
+export async function patchEmbedBuildMarkerIf(
+  libraryId: string, patch: Partial<EmbedBuildMarker>, expect?: MarkerExpectation,
+): Promise<MarkerWrite> {
   const set: Record<string, unknown> = {};
   const drop: string[] = [];
   for (const [k, v] of Object.entries(patch)) {
     if (v === undefined || v === null) drop.push(k);
     else set[k] = v;
   }
-  return (await writeMarker(libraryId, { patch: set, drop }, expect)).error;
+  return writeMarker(libraryId, { patch: set, drop }, expect);
 }
 
 /** The acceptable-use agreement, checked locally until I-05's aiGates lands:

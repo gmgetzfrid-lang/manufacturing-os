@@ -162,7 +162,8 @@ export function makeFakeAdmin(state: FakeAdminState) {
 /** 20261121's embed_build_marker_write, transcribed: the embedBuild key of
  *  knowledge_libraries.ai_features is set, merged into or cleared ALONE —
  *  every other key of the row is left exactly as it is — and only while the
- *  stored marker still names p_expect_user / was recorded at p_expect_at.
+ *  stored marker still names p_expect_user / was recorded at p_expect_at
+ *  (COALESCE(stored, '') = expected: '' expects NO marker; NULL = no check).
  *  Pinned to the SQL by the shape tests in embedDrain.test.ts. */
 export function installMarkerRpc(state: FakeAdminState) {
   state.rpc.embed_build_marker_write = (a) => {
@@ -171,8 +172,9 @@ export function installMarkerRpc(state: FakeAdminState) {
     const feats = (lib.ai_features ?? {}) as Row;
     const cur = feats.embedBuild && typeof feats.embedBuild === "object" ? feats.embedBuild as Row : null;
     if (a.p_patch && !cur) return { data: false, error: null };
-    if (a.p_expect_user != null && cur?.userId !== a.p_expect_user) return { data: false, error: null };
-    if (a.p_expect_at != null && cur?.at !== a.p_expect_at) return { data: false, error: null };
+    const stored = (k: string) => (typeof cur?.[k] === "string" ? cur[k] as string : "");
+    if (a.p_expect_user != null && stored("userId") !== a.p_expect_user) return { data: false, error: null };
+    if (a.p_expect_at != null && stored("at") !== a.p_expect_at) return { data: false, error: null };
     if (a.p_patch) {
       const next: Row = { ...cur };
       for (const k of (a.p_drop as string[] | null) ?? []) delete next[k];

@@ -17,6 +17,12 @@
 // conversation; a library answer citing no document is shown to its asker
 // only. Controllers read all memory (DEC-43).
 //
+// How many rows were withheld is said for `list` and `thread` (a count of
+// recent answers / of one conversation's turns — no query decides it) and
+// NEVER for `search`: there the reader's own words pick the rows, so a count
+// of matches they may not see would answer "does a restricted answer say
+// X?" one phrase at a time.
+//
 // Fails CLOSED on a failed read of the stored answers, of the cited knowledge
 // documents, of the controlled documents, or of the document libraries and
 // folders whose ACLs decide them: an error and no rows — never an unfiltered
@@ -164,6 +170,8 @@ export async function POST(req: NextRequest) {
       // reader's own; a teammate's turns seed a NEW conversation.
       mine: !!r.user_id && r.user_id === user.id,
     })),
-    withheld,
+    // Never for a search: a count of withheld MATCHES is an oracle over the
+    // text of answers the reader may not see.
+    ...(action === "search" ? {} : { withheld }),
   });
 }

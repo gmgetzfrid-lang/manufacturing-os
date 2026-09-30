@@ -538,6 +538,48 @@ export async function askKnowledgeLibrary(
   });
 }
 
+// ── What a follow-up may send back as context (IEDGE-5 / KACL-1) ────────────
+//
+// A conversation reopened from the saved record — a teammate's thread, one
+// holding a turn the reader can no longer see, or a memory-card answer —
+// starts a NEW thread, so the follow-up is filed under the reader. Those
+// seeded turns were built under someone else's ACL (or an earlier one) and
+// the new thread records nothing of them, so the history rule could never
+// withhold a follow-up that restated them. They are therefore SHOWN, never
+// sent: `seeded` counts the leading turns of the thread that came from the
+// saved record, and only the turns after them go back to the model.
+
+/** Turns sent back as context with a follow-up (the latest ones). */
+export const ASK_CONTEXT_TURNS = 4;
+
+/** The history a follow-up sends: the turns after the `seeded` ones, the
+ *  last ASK_CONTEXT_TURNS of them. An unreadable `seeded` sends nothing. */
+export function askContextHistory(
+  thread: ReadonlyArray<{ question: string; answer: { answer: string } }>,
+  seeded: number,
+): Array<{ question: string; answer: string }> {
+  const from = Number.isFinite(seeded) ? Math.min(thread.length, Math.max(0, Math.floor(seeded))) : thread.length;
+  return thread.slice(from).slice(-ASK_CONTEXT_TURNS).map((t) => ({ question: t.question, answer: t.answer.answer }));
+}
+
+/** The active conversation as mirrored to sessionStorage: the last `keep`
+ *  turns, with the seeded count re-based onto them. */
+export function persistedThread<T>(turns: readonly T[], seeded: number, keep = 6): { turns: T[]; seeded: number } {
+  const kept = turns.slice(-keep);
+  const safe = Number.isFinite(seeded) ? Math.max(0, Math.floor(seeded)) : turns.length;
+  return { turns: kept, seeded: Math.min(kept.length, Math.max(0, safe - (turns.length - kept.length))) };
+}
+
+/** The seeded count of a restored conversation. A saved conversation that
+ *  does not say (written before this rule) is treated as seeded whole —
+ *  shown, nothing of it sent. */
+export function restoredSeeded(saved: { turns?: readonly unknown[] | null; seeded?: unknown }): number {
+  const n = saved.turns?.length ?? 0;
+  return typeof saved.seeded === "number" && Number.isFinite(saved.seeded)
+    ? Math.min(n, Math.max(0, Math.floor(saved.seeded)))
+    : n;
+}
+
 /** SEM-12: what an answer's retrieval flag means, in words, for every reader.
  *  "keyword" is not a degraded state to hide — it is what this product has
  *  always done well — but an answer must never IMPLY a meaning search that

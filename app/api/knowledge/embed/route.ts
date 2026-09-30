@@ -55,7 +55,7 @@ import { openAiKey } from "@/lib/ai/keyVault";
 import {
   embedLibrarySlice, setEmbedBuildMarker, patchEmbedBuildMarker, parseEmbedBuildMarker,
   loadEmbedDetail, failedPassageSamples, embedAgreementSigned, expectationOf,
-  readEmbedBuildMarker, clearEmbedBuildMarkerIf, type EmbedDetail,
+  readEmbedBuildMarker, clearEmbedBuildMarkerIf, patchEmbedBuildMarkerIf, type EmbedDetail,
 } from "@/lib/knowledgeEmbedCore";
 
 export const runtime = "nodejs";
@@ -220,8 +220,17 @@ export async function POST(req: NextRequest) {
       return bad("Only the member whose key pays, or Admin / Doc Control, can stop this background build.", 403);
     }
     // Only the build the caller was allowed to stop — not one started since.
-    const err = await setEmbedBuildMarker(libraryId, null, { expect: expectationOf(marker) });
-    if (err) return bad(`Couldn't stop the background build: ${err}`, 500);
+    // A clear that matched nothing means the consent moved in between (it
+    // was renewed or replaced): nothing was stopped, and the caller is told
+    // so rather than shown "stopped" while the new consent keeps spending.
+    const cleared = await clearEmbedBuildMarkerIf(libraryId, expectationOf(marker));
+    if (cleared.error) return bad(`Couldn't stop the background build: ${cleared.error}`, 500);
+    if (!cleared.applied) {
+      return bad(
+        "The background build changed while it was being stopped (it was restarted or renewed), so nothing was "
+        + "stopped — look at it again and stop it if you still want to.", 409, { released: false, changed: true },
+      );
+    }
     return NextResponse.json({ released: true });
   }
 
@@ -339,10 +348,16 @@ export async function POST(req: NextRequest) {
     if (marker) {
       const detail = await loadEmbedDetail(orgId, libraryId);
       const left = detail ? detail.remaining : stats.total - stats.embedded;
-      const err = left === 0
-        ? await setEmbedBuildMarker(libraryId, null, { expect: expectationOf(marker) })
-        : await patchEmbedBuildMarker(libraryId, { standing: undefined }, expectationOf(marker));
-      if (err) return bad(`Couldn't withdraw the standing consent: ${err}`, 500);
+      const write = left === 0
+        ? await clearEmbedBuildMarkerIf(libraryId, expectationOf(marker))
+        : await patchEmbedBuildMarkerIf(libraryId, { standing: undefined }, expectationOf(marker));
+      if (write.error) return bad(`Couldn't withdraw the standing consent: ${write.error}`, 500);
+      if (!write.applied) {
+        return bad(
+          "The background build's consent changed while it was being withdrawn (it was renewed or replaced), so "
+          + "nothing was changed — look at it again.", 409, { standing: null, changed: true },
+        );
+      }
     }
     return NextResponse.json({ standing: false });
   }
@@ -367,6 +382,9 @@ export async function POST(req: NextRequest) {
 
   // One vector space per library: never add a second model's vectors.
   const detailBefore = await loadEmbedDetail(orgId, libraryId);
+  /** Every passage still to embed is leased by a driver or waiting to be
+   *  offered again (or none is left) — an empty claim is then expected. */
+  const heldElsewhere = (d: EmbedDetail | null) => !!d && d.leased + d.waiting >= d.remaining;
   if (detailBefore) {
     const conflict = buildModelConflict(detailBefore.corpus, embedding);
     if (conflict) return bad(conflict.message, 409, { conflict: true, stamped: conflict.stamped, yours: conflict.yours });
@@ -396,10 +414,15 @@ export async function POST(req: NextRequest) {
     // vectors (another driver's landed first): that, not the cache.
     lastError = conflictAfter.message;
   } else if (slice.fetchedNone && remainingBefore > 0
-    && !(detailBefore && detailBefore.leased + detailBefore.waiting >= detailBefore.remaining)) {
+    && !heldElsewhere(detailBefore) && !heldElsewhere(detailAfter)) {
     // Coverage says passages lack vectors, yet the fetch returned none —
     // the classic symptom of a stale PostgREST schema cache after the
     // embedding column was rebuilt. Say so; silence here reads as "done".
+    // Never when every passage left is held by another driver or waiting to
+    // be retried — before this slice's claim OR after it: another driver
+    // (the drain a page load nudged) may have claimed the tail in between,
+    // and a controller told to run SQL for that is told something false.
+    // The response carries `busy`, and the build loop waits on it.
     lastError =
       `${remainingBefore} passages lack vectors but none could be fetched — ` +
       "the API schema cache is likely stale after a column rebuild. In the Supabase SQL " +

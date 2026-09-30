@@ -54,7 +54,10 @@ vi.mock("@/lib/supabase", async () => {
 
 import { POST as historyPost } from "@/app/api/knowledge/history/route";
 import { citedKnowledgeDocIds, planVisibleHistory, readableKnowledgeDocIds, type StoredAnswerRow } from "@/lib/knowledgeHistory";
-import { searchAskHistory, listKnowledgeQuestions, loadConversation } from "@/lib/knowledge";
+import {
+  searchAskHistory, listKnowledgeQuestions, loadConversation, askKnowledgeLibrary,
+  askContextHistory, persistedThread, restoredSeeded, ASK_CONTEXT_TURNS,
+} from "@/lib/knowledge";
 import { mentionAccessGap, describeWithheldMentions } from "@/lib/mentions";
 
 const repo = (p: string) => readFileSync(join(process.cwd(), p), "utf8");
@@ -158,7 +161,7 @@ beforeEach(() => {
 });
 
 // ── the pure rule ───────────────────────────────────────────────────────────
-describe("the rule — an answer is as restricted as its most restricted source", () => {
+describe("the rule — an answer is as restricted as its most restricted CITED source (what a row records)", () => {
   it("citedKnowledgeDocIds reads document citations only; web citations name nothing; a malformed id is kept (so it resolves to nothing)", () => {
     expect(citedKnowledgeDocIds([cite(K_OPEN), { n: 2, url: "https://x" }, cite(K_OPEN), { documentId: 42 }, null, "x"])).toEqual([K_OPEN, "42"]);
     expect(citedKnowledgeDocIds({ not: "an array" })).toEqual([]);
@@ -276,6 +279,24 @@ describe("/api/knowledge/history — the team's record, re-decided per reader", 
     const own = await (await post({ orgId: ORG, libraryId: LIB, action: "thread", threadId: T2 })).json();
     expect(own.rows.map((r: { question: string }) => r.question.split(":")[0])).toEqual(["T2-turn1"]);
     expect(own.rows[0].mine).toBe(true);
+  });
+  it("reproduction → fix: a search never says how many MATCHES it withheld — that count answered 'does a restricted answer say X?' one phrase at a time", async () => {
+    // Q-uncited (E's) says "PSV-2001 is set at 285 psig." — withheld from V.
+    admin.state.user = { id: V };
+    const probe = await (await post({ orgId: ORG, libraryId: LIB, action: "search", query: "285 psig", limit: 25 })).json();
+    expect(probe.rows).toEqual([]);
+    expect(probe).not.toHaveProperty("withheld");                       // was { rows: [], withheld: 1 }
+    const miss = await (await post({ orgId: ORG, libraryId: LIB, action: "search", query: "999 psig", limit: 25 })).json();
+    expect(miss).toEqual(probe);                                         // a hit and a miss answer alike
+    // the asker still finds their own answer
+    admin.state.user = { id: E };
+    const own = await (await post({ orgId: ORG, libraryId: LIB, action: "search", query: "285 psig", limit: 25 })).json();
+    expect(own.rows.map((r: { question: string }) => r.question.split(":")[0])).toEqual(["Q-uncited"]);
+    // list and thread still say how many they are not showing (no query picks those rows)
+    admin.state.user = { id: V };
+    expect((await (await post({ orgId: ORG, libraryId: LIB, action: "list" })).json()).withheld).toBe(8);
+    expect((await (await post({ orgId: ORG, libraryId: LIB, action: "thread", threadId: T1 })).json()).withheld).toBe(2);
+    expect(repo("app/api/knowledge/history/route.ts")).toContain('...(action === "search" ? {} : { withheld }),');
   });
   it("ask memory is scoped to THIS library (ASK-1 done-when 2) and to readable answers", async () => {
     admin.state.user = { id: E };
@@ -406,7 +427,10 @@ describe("the knowledge page — memory card, conversations, reopen", () => {
     // a turn withheld from the reader's own thread would withhold every new
     // answer appended after it, so such a thread seeds a new one
     expect(fn).toContain("const own = withheldTurns === 0 && ordered.every((q) => q.mine === true);");
-    expect(fn).toContain("setThreadId(own && ordered[0]?.threadId ? ordered[0].threadId : crypto.randomUUID());");
+    expect(fn).toContain("const kept = own ? ordered[0]?.threadId ?? null : null;");
+    expect(fn).toContain("setThreadId(kept ?? crypto.randomUUID());");
+    // …and every turn of a seeded conversation is shown, never sent back (review blocker)
+    expect(fn).toContain("setSeededTurns(kept ? 0 : turns.length);");
     expect(fn).toContain("Nothing in this conversation is visible to you");
   });
   it("the Conversations list says how many answers it is not showing — in words true of every reason a row is withheld — and a failed read is shown as a failure", () => {
@@ -421,6 +445,80 @@ describe("the knowledge page — memory card, conversations, reopen", () => {
     expect(repo("lib/knowledge.ts")).toContain("or because they are a\n *  teammate's library answer that cites no document (shown to its asker\n *  only)");
     expect(page).toContain("Couldn&apos;t load the conversations: {historyError}");
     expect(page).toContain("applyHistory(await listKnowledgeQuestions(activeOrgId, libraryId));");
+  });
+});
+
+describe("a conversation seeded from the saved record is SHOWN, never sent back to the model (review blocker — IEDGE-5 / KACL-1)", () => {
+  const turn = (question: string, answer: string) => ({ question, answer: { answer } });
+  const foreign = turn("T1-turn1: relief valve set points on the restricted sheet", "PSV-2001 set at 285 psig [1]");
+  it("reproduction: a follow-up stored in the NEW thread cites only what IT cites — so once it restates a seeded turn, the history rule cannot withhold it", () => {
+    // E reopened T's thread (a new thread N) and asked "is that within the
+    // ASME limit?" with T's restricted turn sent as history; the answer
+    // restated 285 psig and cited only the open standard.
+    const N = "1a000000-0000-4000-8000-0000000000aa";
+    const followUp: StoredAnswerRow = {
+      id: "f1", library_id: LIB, thread_id: N, user_id: E, question: "is that within the ASME limit?",
+      answer: "Yes — 285 psig is within the ASME limit [1].", citations: [cite(K_OPEN)], mode: "library", created_at: "9",
+    };
+    const plan = planVisibleHistory([followUp], [followUp], new Set([K_UP, K_OPEN]), V);
+    expect(plan.visible.map((r) => r.id)).toEqual(["f1"]);              // nothing on the row says where "that" came from
+  });
+  it("askContextHistory sends only the turns AFTER the seeded ones (the last ASK_CONTEXT_TURNS of them); an unreadable count sends nothing", () => {
+    const own1 = turn("is that within the ASME limit?", "Yes, per ASME VIII [1].");
+    const own2 = turn("and the blowdown?", "7% [1].");
+    expect(askContextHistory([foreign], 1)).toEqual([]);
+    expect(askContextHistory([foreign, own1, own2], 1)).toEqual([
+      { question: own1.question, answer: own1.answer.answer },
+      { question: own2.question, answer: own2.answer.answer },
+    ]);
+    expect(askContextHistory([foreign, foreign, own1], 2).map((t) => t.question)).toEqual([own1.question]);
+    expect(askContextHistory([foreign], Number.NaN)).toEqual([]);
+    expect(askContextHistory([foreign], -3)).toHaveLength(1);           // a negative count seeds nothing (own thread)
+    const many = Array.from({ length: 9 }, (_, i) => turn(`q${i}`, `a${i}`));
+    expect(askContextHistory(many, 0).map((t) => t.question)).toEqual(["q5", "q6", "q7", "q8"]);
+    expect(ASK_CONTEXT_TURNS).toBe(4);
+  });
+  it("…so the seeded turn's restricted text never reaches askKnowledgeLibrary's request", async () => {
+    const fetchMock = vi.fn(async () => ({ ok: true, status: 200, json: async () => ({ answer: "ok", citations: [] }) }));
+    vi.stubGlobal("fetch", fetchMock);
+    try {
+      const thread = [foreign, turn("my own follow-up", "an answer from the open standard [1]")];
+      await askKnowledgeLibrary(ORG, LIB, "is that within the ASME limit?", "library", undefined, undefined,
+        { history: askContextHistory(thread, 1), threadId: "1a000000-0000-4000-8000-0000000000aa" });
+      const body = JSON.parse(String((fetchMock.mock.calls[0] as unknown as [string, RequestInit])[1].body));
+      expect(JSON.stringify(body)).not.toContain("285 psig");
+      expect(body.history).toEqual([{ question: "my own follow-up", answer: "an answer from the open standard [1]" }]);
+    } finally { vi.unstubAllGlobals(); }
+  });
+  it("the page: every ask sends askContextHistory(thread, seededTurns); reopening a teammate's (or a withheld) conversation seeds all of it; the memory card seeds its answer; a new conversation seeds nothing", () => {
+    const page = repo("app/(protected)/knowledge/[id]/page.tsx");
+    expect(page).toContain("history: askContextHistory(thread, seededTurns),");
+    expect(page).not.toMatch(/history: thread\.slice\(/);
+    const card = page.slice(page.indexOf("Show this answer — no AI call") - 1400, page.indexOf("Show this answer — no AI call"));
+    expect(card).toContain("setThread([{ question: pa.question, answer: past }]);");
+    expect(card).toContain("setSeededTurns(1);");
+    expect(page).toContain("onClick={() => { setThread([]); setThreadId(null); setSeededTurns(0); setAnswer(null); setLastQuestion(\"\"); }}");
+    // every place the thread is replaced sets the seeded count with it
+    const replaced = page.match(/setThread\((?!\(prev\))/g) ?? [];
+    const seededSet = page.match(/setSeededTurns\(/g) ?? [];
+    expect(replaced.length).toBe(4);                                     // restore, reopen, memory card, new conversation
+    expect(seededSet.length).toBe(replaced.length);
+    // the reader is told, where they type the follow-up
+    expect(page).toContain("never sent to the AI with a follow-up, so ask it in full.");
+  });
+  it("a reload keeps the count: persisted with the turns (re-based when older turns are dropped); a saved conversation that does not say is seeded whole", () => {
+    const t = (i: number) => turn(`q${i}`, `a${i}`);
+    expect(persistedThread([t(1), t(2), t(3)], 1)).toEqual({ turns: [t(1), t(2), t(3)], seeded: 1 });
+    const eight = Array.from({ length: 8 }, (_, i) => t(i));
+    expect(persistedThread(eight, 3)).toEqual({ turns: eight.slice(-6), seeded: 1 });
+    expect(persistedThread(eight, 1).seeded).toBe(0);
+    expect(persistedThread(eight, 8).seeded).toBe(6);
+    expect(restoredSeeded({ turns: [t(1), t(2)], seeded: 1 })).toBe(1);
+    expect(restoredSeeded({ turns: [t(1), t(2)] })).toBe(2);             // written before this rule: nothing of it is sent
+    expect(restoredSeeded({ turns: [t(1)], seeded: 9 })).toBe(1);
+    const page = repo("app/(protected)/knowledge/[id]/page.tsx");
+    expect(page).toContain("JSON.stringify({ threadId, ...persistedThread(thread, seededTurns) }),");
+    expect(page).toContain("setSeededTurns(restoredSeeded(saved));");
   });
 });
 

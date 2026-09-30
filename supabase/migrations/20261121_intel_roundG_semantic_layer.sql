@@ -53,7 +53,12 @@
 --          an older pgvector does not know would refuse the whole paste);
 --        * a new result column `eligible` — how many vectors the org /
 --          library / model filters admit (counted before the document-status
---          filter) — so a short result can be told from a thin corpus;
+--          filter) — so a short result can be told from a thin corpus. For
+--          one library it is counted by library_id alone (a library belongs
+--          to one org, and a row is only returned for a library of p_org_id),
+--          so the count is an index-only scan of
+--          knowledge_chunks_library_model_idx rather than a heap fetch per
+--          vector for org_id on every question;
 --        * a library holding vectors under any model other than p_model
 --          returns NOTHING: one arbitrary stamp no longer decides, silently
 --          and differently from day to day, which half of a mixed corpus a
@@ -248,8 +253,15 @@ GRANT EXECUTE ON FUNCTION semantic_coverage_detail(UUID, UUID, INTEGER) TO servi
 
 -- ── 4. SEM-4 / SEM-5 / SEM-7 (+ SEM-1): the queue is a claim ────────────────
 -- An earlier draft of this file had no p_model; drop that signature so a
--- re-paste never leaves two overloads for PostgREST to choose between.
+-- re-paste never leaves two overloads for PostgREST to choose between. The
+-- claim returns its lease instant (embed_claimed_until): every write a driver
+-- makes to a claimed passage — its vector, its refusal, giving it back — is
+-- conditional on that instant, so a Rebuild (which clears every lease) or a
+-- newer claim by another driver voids a write still in flight. An earlier
+-- draft returned no lease, and a changed return type needs the old one
+-- dropped first.
 DROP FUNCTION IF EXISTS embed_claim_batch(UUID, UUID, INTEGER, INTEGER, INTEGER);
+DROP FUNCTION IF EXISTS embed_claim_batch(UUID, UUID, INTEGER, INTEGER, INTEGER, TEXT);
 CREATE OR REPLACE FUNCTION embed_claim_batch(
   p_org_id        UUID,
   p_library_id    UUID,
@@ -265,7 +277,8 @@ RETURNS TABLE (
   page           INTEGER,
   document_id    UUID,
   document_name  TEXT,
-  embed_attempts INTEGER
+  embed_attempts INTEGER,
+  embed_claimed_until TIMESTAMPTZ
 )
 LANGUAGE sql VOLATILE SECURITY INVOKER
 SET search_path = public
@@ -294,7 +307,7 @@ AS $$
    WHERE k.id = picked.id
   RETURNING k.id, k.content, k.section, k.page, k.document_id,
             (SELECT d.name FROM knowledge_documents d WHERE d.id = k.document_id),
-            k.embed_attempts;
+            k.embed_attempts, k.embed_claimed_until;
 $$;
 
 REVOKE ALL ON FUNCTION embed_claim_batch(UUID, UUID, INTEGER, INTEGER, INTEGER, TEXT) FROM public, anon, authenticated;
@@ -342,11 +355,17 @@ AS $body$
     c.page,
     c.content,
     (1 - (c.embedding <=> p_embedding))::REAL AS similarity,
-    (SELECT COUNT(*) FROM knowledge_chunks e
-      WHERE e.org_id = p_org_id
-        AND (p_library_id IS NULL OR e.library_id = p_library_id)
-        AND e.embedding IS NOT NULL
-        AND (p_model IS NULL OR e.embedding_model = p_model))::BIGINT AS eligible
+    (CASE WHEN p_library_id IS NOT NULL THEN
+      (SELECT COUNT(*) FROM knowledge_chunks e
+        WHERE e.library_id = p_library_id
+          AND e.embedding IS NOT NULL
+          AND (p_model IS NULL OR e.embedding_model = p_model))
+    ELSE
+      (SELECT COUNT(*) FROM knowledge_chunks e
+        WHERE e.org_id = p_org_id
+          AND e.embedding IS NOT NULL
+          AND (p_model IS NULL OR e.embedding_model = p_model))
+    END)::BIGINT AS eligible
   FROM knowledge_chunks c
   JOIN knowledge_documents d ON d.id = c.document_id
   WHERE c.org_id = p_org_id
@@ -373,7 +392,9 @@ GRANT EXECUTE ON FUNCTION semantic_search(UUID, UUID, vector, INT, TEXT) TO serv
 -- p_marker: the new marker (NULL clears it) or, with p_patch, the fields to
 -- merge into the existing one (never creates one); p_drop: fields to remove
 -- on a patch. p_expect_user / p_expect_at: apply only while the stored marker
--- still names that member / was recorded at that instant (NULL = no check).
+-- still names that member / was recorded at that instant (NULL = no check;
+-- '' = expect none: a writer that read NO marker writes only while there is
+-- still none, so a consent recorded in between is never overwritten).
 -- Returns whether a row changed. Service role only (the embed route, the
 -- drain).
 CREATE OR REPLACE FUNCTION embed_build_marker_write(
@@ -398,8 +419,8 @@ AS $$
            END
      WHERE l.id = p_library_id
        AND (NOT p_patch OR jsonb_typeof(l.ai_features -> 'embedBuild') = 'object')
-       AND (p_expect_user IS NULL OR l.ai_features -> 'embedBuild' ->> 'userId' = p_expect_user)
-       AND (p_expect_at IS NULL OR l.ai_features -> 'embedBuild' ->> 'at' = p_expect_at)
+       AND (p_expect_user IS NULL OR COALESCE(l.ai_features -> 'embedBuild' ->> 'userId', '') = p_expect_user)
+       AND (p_expect_at IS NULL OR COALESCE(l.ai_features -> 'embedBuild' ->> 'at', '') = p_expect_at)
     RETURNING 1
   )
   SELECT EXISTS (SELECT 1 FROM u);
@@ -470,9 +491,10 @@ SELECT 'semantic_coverage_detail: invoker, search_path pinned, reports failed / 
        AND has_function_privilege('service_role', 'semantic_coverage(uuid, uuid)', 'EXECUTE'),
        NULL
 UNION ALL
-SELECT 'embed_claim_batch: one definition — FOR UPDATE SKIP LOCKED + lease, retrievable documents only, a refused passage not before its retry time, failed passages skipped, fewest attempts first, nothing while another model is in the library',
+SELECT 'embed_claim_batch: one definition — FOR UPDATE SKIP LOCKED + lease (returned, so every write can be held to it), retrievable documents only, a refused passage not before its retry time, failed passages skipped, fewest attempts first, nothing while another model is in the library',
        (SELECT COUNT(*) = 1 FROM pg_proc WHERE proname = 'embed_claim_batch')
        AND (SELECT prosrc LIKE '%FOR UPDATE OF c SKIP LOCKED%'
+               AND pg_get_function_result(oid) LIKE '%embed_claimed_until timestamp with time zone%'
                AND prosrc LIKE '%SET embed_claimed_until = now() + make_interval%'
                AND prosrc LIKE '%d.status IN (''ready'', ''indexing'')%'
                AND prosrc LIKE '%c.embed_attempts < p_max_attempts%'
@@ -507,8 +529,8 @@ SELECT 'embed_build_marker_write: writes the embedBuild key alone, conditional o
                AND array_to_string(proconfig, ',') LIKE '%search_path=public%'
                AND prosrc LIKE '%jsonb_set(l.ai_features, ''{embedBuild}''%'
                AND prosrc LIKE '%- ''embedBuild''%'
-               AND prosrc LIKE '%p_expect_user IS NULL OR%'
-               AND prosrc LIKE '%p_expect_at IS NULL OR%'
+               AND prosrc LIKE '%p_expect_user IS NULL OR COALESCE(%'
+               AND prosrc LIKE '%p_expect_at IS NULL OR COALESCE(%'
           FROM pg_proc WHERE proname = 'embed_build_marker_write')
        AND has_function_privilege('service_role', 'embed_build_marker_write(uuid, jsonb, boolean, text[], text, text)', 'EXECUTE')
        AND NOT has_function_privilege('authenticated', 'embed_build_marker_write(uuid, jsonb, boolean, text[], text, text)', 'EXECUTE')

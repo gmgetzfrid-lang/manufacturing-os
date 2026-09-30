@@ -28,6 +28,7 @@ import {
   ingestKnowledgeDocument, deleteKnowledgeDocument, deleteKnowledgeLibrary,
   askKnowledgeLibrary, listKnowledgeQuestions, loadConversation, listLibraryLinks, acceptAiAgreement,
   parseNeedPrompt, describeRetrieval, meaningIndexDrift, screenAssistantRequest,
+  askContextHistory, persistedThread, restoredSeeded,
   type AgreementRequiredError, type SemanticProgress,
   type KnowledgeLibrary, type KnowledgeDocument, type KnowledgeAnswer,
   type KnowledgeQuestion, type KnowledgeCitation, type AskMode,
@@ -575,10 +576,12 @@ function ClarifyCard({ prompt, options, onAnswer }: {
   onAnswer: (focus: string[]) => void;
 }) {
   const [selected, setSelected] = useState<Set<string>>(new Set());
-  const promptCheck = screenAssistantRequest(prompt);
-  // An aspect is a short label the model proposed; one that fails the same
-  // screen is dropped, and too few left means no card at all.
-  const safeOptions = options.filter((o) => screenAssistantRequest(o).ok).map((o) => o.slice(0, 80));
+  // The question sits above buttons, not an input: refused only when it asks
+  // for a credential. An aspect is a short label the model proposed (length
+  // and links only — "Password length and rotation" is an aspect); one that
+  // fails is dropped, and too few left means no card at all.
+  const promptCheck = screenAssistantRequest(prompt, "clarify");
+  const safeOptions = options.filter((o) => screenAssistantRequest(o, "aspect").ok).map((o) => o.slice(0, 80));
   const toggle = (o: string) => {
     setSelected((prev) => {
       const next = new Set(prev);
@@ -625,7 +628,8 @@ function NeedCard({ prompt, onProvide }: {
   onProvide: (values: string) => void;
 }) {
   const [value, setValue] = useState("");
-  const check = screenAssistantRequest(prompt);
+  // A Need prompt opens an input: the strictest screen.
+  const check = screenAssistantRequest(prompt, "need");
   if (!check.ok) return <AssistantRequestRefused reason={check.reason} />;
   return (
     <AssistantAskingFrame tone="indigo">
@@ -1209,6 +1213,13 @@ export default function KnowledgeLibraryPage() {
   // knowledge_questions so a conversation can be reopened tomorrow.
   const [thread, setThread] = useState<Array<{ question: string; answer: KnowledgeAnswer }>>([]);
   const [threadId, setThreadId] = useState<string | null>(null);
+  // How many leading turns of `thread` came from the saved record (a
+  // teammate's conversation, one holding a withheld turn, a memory-card
+  // answer): shown, NEVER sent back to the model with a follow-up — the new
+  // thread records nothing of them, so the history rule could not withhold a
+  // follow-up that restated them (IEDGE-5 / KACL-1; lib/knowledge.ts
+  // askContextHistory).
+  const [seededTurns, setSeededTurns] = useState(0);
   // Conversations survive reloads. Thread state used to live only in this
   // component — any reload, navigation, or crash silently reset the chat to
   // zero while looking identical, which read as "my chats are one-shot".
@@ -1230,10 +1241,12 @@ export default function KnowledgeLibraryPage() {
       const saved = JSON.parse(raw) as {
         threadId: string | null;
         turns: Array<{ question: string; answer: KnowledgeAnswer }>;
+        seeded?: number;
       };
       if (saved?.turns?.length) {
         setThread(saved.turns);
         setThreadId(saved.threadId);
+        setSeededTurns(restoredSeeded(saved));
         const last = saved.turns[saved.turns.length - 1];
         setAnswer(last.answer);
         setLastQuestion(last.question);
@@ -1245,10 +1258,10 @@ export default function KnowledgeLibraryPage() {
       if (thread.length === 0) { window.sessionStorage.removeItem(threadStoreKey); return; }
       window.sessionStorage.setItem(
         threadStoreKey,
-        JSON.stringify({ threadId, turns: thread.slice(-6) }),
+        JSON.stringify({ threadId, ...persistedThread(thread, seededTurns) }),
       );
     } catch { /* storage full — chat still works, it just won't survive a reload */ }
-  }, [thread, threadId, threadStoreKey]);
+  }, [thread, threadId, seededTurns, threadStoreKey]);
   // Org Playbooks visibility: how many standing instructions ride on asks.
   const [instructionCount, setInstructionCount] = useState(0);
   useEffect(() => {
@@ -1504,7 +1517,8 @@ export default function KnowledgeLibraryPage() {
       const tid = threadId ?? crypto.randomUUID();
       const run = () => askKnowledgeLibrary(activeOrgId, libraryId, q, mode, focusArg, inputsArg,
         {
-          history: thread.slice(-4).map((t) => ({ question: t.question, answer: t.answer.answer })),
+          // Seeded turns (from the saved record) are shown, never sent.
+          history: askContextHistory(thread, seededTurns),
           threadId: tid,
         });
       let res: KnowledgeAnswer;
@@ -1579,7 +1593,9 @@ export default function KnowledgeLibraryPage() {
    *  reader's own AND none was withheld — a teammate's conversation, or one
    *  with a turn the reader can no longer see, seeds a NEW one, so the next
    *  ask is filed under the reader and never lands behind a withheld turn
-   *  (which would withhold it too). */
+   *  (which would withhold it too). Seeded turns are shown, never sent back
+   *  to the model: the new thread records nothing of them, so a follow-up
+   *  built on them could reach readers they were withheld from. */
   const openConversation = async (rows: KnowledgeQuestion[]) => {
     const threadKey = rows.find((r) => r.threadId)?.threadId ?? null;
     let source = rows;
@@ -1616,7 +1632,9 @@ export default function KnowledgeLibraryPage() {
     }));
     setThread(turns);
     const own = withheldTurns === 0 && ordered.every((q) => q.mine === true);
-    setThreadId(own && ordered[0]?.threadId ? ordered[0].threadId : crypto.randomUUID());
+    const kept = own ? ordered[0]?.threadId ?? null : null;
+    setThreadId(kept ?? crypto.randomUUID());
+    setSeededTurns(kept ? 0 : turns.length);
     setAnswer(turns[turns.length - 1]?.answer ?? null);
     setLastQuestion(turns[turns.length - 1]?.question ?? "");
     setPriorAsks(null); setClarify(null); setNeed(null);
@@ -1824,10 +1842,12 @@ export default function KnowledgeLibraryPage() {
                         provider: "memory", model: "past answer", mode: "library",
                       };
                       setAnswer(past);
-                      // Seed the conversation so the next question CONTINUES
-                      // from this answer instead of starting cold.
+                      // Shown as the start of a new conversation — for
+                      // reference only: it is never sent back to the model
+                      // with a follow-up (built under its asker's ACL).
                       setThread([{ question: pa.question, answer: past }]);
                       setThreadId(crypto.randomUUID());
+                      setSeededTurns(1);
                       setLastQuestion(pa.question);
                       setPriorAsks(null);
                     }}
@@ -1892,9 +1912,15 @@ export default function KnowledgeLibraryPage() {
           </div>
         )}
         {thread.length > 0 && !asking && (
-          <div className="flex justify-end -mb-2">
+          <div className="flex items-start justify-end gap-3 -mb-2">
+            {seededTurns > 0 && (
+              <p className="flex-1 text-[10px] text-[var(--color-text-faint)]" data-seeded-context="true">
+                Opened from the saved record — {seededTurns === 1 ? "that answer is" : `those ${seededTurns} answers are`} shown
+                for reference only and never sent to the AI with a follow-up, so ask it in full.
+              </p>
+            )}
             <button
-              onClick={() => { setThread([]); setThreadId(null); setAnswer(null); setLastQuestion(""); }}
+              onClick={() => { setThread([]); setThreadId(null); setSeededTurns(0); setAnswer(null); setLastQuestion(""); }}
               className="text-[11px] font-black px-2.5 py-1 rounded-lg border border-[var(--color-border)] text-[var(--color-text-muted)] hover:bg-[var(--color-surface-2)]">
               + New conversation
             </button>

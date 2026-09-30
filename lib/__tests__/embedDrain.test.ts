@@ -129,10 +129,15 @@ const chunk = (i: number, over: Row = {}): Row => ({
 });
 
 // ── the provider ────────────────────────────────────────────────────────────
-const provider = vi.hoisted(() => ({ inputs: [] as string[], mode: "ok" as "ok" | "401" | "429" | "400-all" }));
+const provider = vi.hoisted(() => ({
+  inputs: [] as string[], mode: "ok" as "ok" | "401" | "429" | "400-all",
+  /** Runs while a provider call is in flight (a Rebuild, another driver). */
+  during: null as null | (() => void),
+}));
 function stubProvider() {
   vi.stubGlobal("fetch", vi.fn(async (_url: string, init: RequestInit) => {
     const body = JSON.parse(String(init.body)) as { input: string[] };
+    provider.during?.();
     const reply = (status: number, payload: unknown) => ({ ok: status < 300, status, json: async () => payload, text: async () => JSON.stringify(payload) });
     if (provider.mode === "401") return reply(401, { detail: "invalid key" });
     if (provider.mode === "429") return reply(429, { detail: "slow down" });
@@ -155,6 +160,7 @@ beforeEach(() => {
   ];
   provider.inputs = [];
   provider.mode = "ok";
+  provider.during = null;
   usage.spent = 0; usage.cap = 0; usage.recorded = [];
   stubProvider();
 });
@@ -335,10 +341,68 @@ describe("SEM-7 — two drivers at once take disjoint passages", () => {
     expect(out.error).toBeNull();
     expect(chunks().every((c) => c.embed_claimed_until === null && c.embed_attempts === 0)).toBe(true);
   });
-  it("the write-back is conditional (a passage another driver already embedded is not counted twice)", () => {
+  it("the write-back is conditional (a passage another driver already embedded is not counted twice) and held to this slice's lease", () => {
     const core = repo("lib/knowledgeEmbedCore.ts");
-    expect(core).toContain('return queue === "claim" ? q.is("embedding", null).select("id") : q;');
+    expect(core).toContain('return queue === "claim" ? heldBy(q.is("embedding", null), c).select("id") : q;');
     expect(core).toContain('if (queue === "claim") embedded += Array.isArray(r.data) ? r.data.length : 0;');
+    expect(core).toContain('(c.embed_claimed_until ? q.eq("embed_claimed_until", c.embed_claimed_until) : q.not("embed_claimed_until", "is", null));');
+    // the refusal and the give-back are held to it too
+    expect(core).toContain('const { data, error } = await heldBy(supabaseAdmin.from("knowledge_chunks")');
+    expect(core).toContain('await (lease ? q.eq("embed_claimed_until", lease) : q.not("embed_claimed_until", "is", null))');
+  });
+  it("the claim returns its lease instant, and the slice carries it", async () => {
+    admin.state.tables.knowledge_chunks = [chunk(1)];
+    const writes: unknown[][] = [];
+    const out = await slice();
+    for (const c of admin.state.calls) if (c.table === "knowledge_chunks" && c.method === "eq" && c.args[0] === "embed_claimed_until") writes.push(c.args);
+    expect(out.embedded).toBe(1);
+    expect(writes).toHaveLength(1);
+    expect(typeof writes[0][1]).toBe("string");                        // the instant the claim set
+  });
+  it("reproduction → fix: a Rebuild that clears every vector and lease while a batch is in flight — the batch's old-model vectors are NOT written into the rebuilt library", async () => {
+    admin.state.tables.knowledge_chunks = Array.from({ length: 5 }, (_, i) => chunk(i + 1));
+    // The reset, exactly as /api/knowledge/embed "reset" writes it — which
+    // also ended the payer's consent, so the drain's per-batch re-read stops
+    // it before another batch (beforeBatch); the batch already in flight is
+    // what this is about.
+    let reset = false;
+    provider.during = () => {
+      for (const c of chunks()) Object.assign(c, { embedding: null, embedding_model: null, embed_attempts: 0, embed_error: null, embed_claimed_until: null, embed_retry_after: null });
+      reset = true;
+      provider.during = null;
+    };
+    const out = await slice({ batchSize: 5, beforeBatch: async () => (reset ? "the consent was withdrawn" : null) });
+    expect(provider.inputs.length).toBe(5);                              // paid for (the call was already out)
+    expect(out.embedded).toBe(0);                                        // …but nothing landed
+    expect(chunks().every((c) => c.embedding === null && c.embedding_model === null)).toBe(true);
+    // the rebuilder's first build on ANOTHER model then claims every passage (no conflict)
+    const rebuilt = await slice({ connection: { ...CONN, model: "the-rebuild-model" } });
+    expect(rebuilt.embedded).toBe(5);
+    expect(chunks().every((c) => c.embedding_model === "the-rebuild-model")).toBe(true);
+  });
+  it("a newer claim by another driver (after this slice's lease lapsed) voids this slice's write: the passage is the new holder's", async () => {
+    admin.state.tables.knowledge_chunks = [chunk(1)];
+    const theirs = new Date(Date.now() + 90_000).toISOString();
+    provider.during = () => { chunks()[0].embed_claimed_until = theirs; provider.during = null; };
+    const out = await slice();
+    expect(out.embedded).toBe(0);
+    expect(chunks()[0]).toMatchObject({ embedding: null, embed_claimed_until: theirs });   // their lease stands
+  });
+  it("a refusal recorded after a Rebuild cleared the lease charges nobody", async () => {
+    admin.state.tables.knowledge_chunks = [chunk(1, { content: "POISON" }), chunk(2)];
+    let calls = 0;
+    let reset = false;
+    provider.during = () => {
+      // the split's calls: whole batch refused, then [POISON] refused, then [2] embedded —
+      // the Rebuild lands before the refusal is recorded
+      if (++calls === 3) {
+        for (const c of chunks()) Object.assign(c, { embed_claimed_until: null, embedding: null, embedding_model: null });
+        reset = true;
+      }
+    };
+    const out = await slice({ beforeBatch: async () => (reset ? "the consent was withdrawn" : null) });
+    expect(out.refused).toBe(0);
+    expect(chunks().find((c) => c.id === "c0001")).toMatchObject({ embed_attempts: 0, embed_error: null });
   });
 });
 
@@ -747,17 +811,32 @@ describe("20261121 — the paste contract, byte fidelity, the census", () => {
       "SET hnsw.ef_search = 200%s",
       "AS $body$",
       "(1 - (c.embedding <=> p_embedding))::REAL AS similarity,",
+      "(CASE WHEN p_library_id IS NOT NULL THEN",
+      "(SELECT COUNT(*) FROM knowledge_chunks e",
+      "WHERE e.library_id = p_library_id",
+      "AND e.embedding IS NOT NULL",
+      "AND (p_model IS NULL OR e.embedding_model = p_model))",
+      "ELSE",
       "(SELECT COUNT(*) FROM knowledge_chunks e",
       "WHERE e.org_id = p_org_id",
-      "AND (p_library_id IS NULL OR e.library_id = p_library_id)",
       "AND e.embedding IS NOT NULL",
-      "AND (p_model IS NULL OR e.embedding_model = p_model))::BIGINT AS eligible",
+      "AND (p_model IS NULL OR e.embedding_model = p_model))",
+      "END)::BIGINT AS eligible",
       "AND NOT (p_library_id IS NOT NULL AND p_model IS NOT NULL AND EXISTS (",
       "SELECT 1 FROM knowledge_chunks o",
       "WHERE o.library_id = p_library_id AND o.embedding IS NOT NULL",
       "AND o.embedding_model IS DISTINCT FROM p_model))",
       "$body$",
     ]);
+    // `eligible` for one library is counted by library_id ALONE (index-only
+    // on knowledge_chunks_library_model_idx): no org_id predicate in that
+    // branch, which no index on the model column carries (review minor)
+    const lib = newFn.slice(newFn.indexOf("(CASE WHEN p_library_id IS NOT NULL THEN"), newFn.indexOf("ELSE", newFn.indexOf("(CASE WHEN p_library_id IS NOT NULL THEN")));
+    expect(lib).not.toContain("org_id");
+    expect(lib).toContain("WHERE e.library_id = p_library_id");
+    expect(body).toContain("CREATE INDEX IF NOT EXISTS knowledge_chunks_library_model_idx\n  ON knowledge_chunks (library_id, embedding_model)\n  WHERE embedding IS NOT NULL;");
+    // format() would read a % in the body as a placeholder: the only one is the SET clause's
+    expect((newFn.match(/%/g) ?? []).length).toBe(1);
     // iterative scan only where pgvector knows it (0.8+), chosen from pg_extension
     expect(body).toContain("SELECT (m[1]::int, m[2]::int) >= (0, 8)");
     expect(body).toContain("CASE WHEN v_iterative THEN E'\\nSET hnsw.iterative_scan = strict_order' ELSE '' END");
@@ -805,8 +884,10 @@ describe("20261121 — the paste contract, byte fidelity, the census", () => {
     expect(w).toContain("WHEN p_marker IS NULL THEN COALESCE(l.ai_features, '{}'::jsonb) - 'embedBuild'");
     expect(w).toContain("ELSE COALESCE(l.ai_features, '{}'::jsonb) || jsonb_build_object('embedBuild', p_marker)");
     expect(w).toContain("AND (NOT p_patch OR jsonb_typeof(l.ai_features -> 'embedBuild') = 'object')");
-    expect(w).toContain("AND (p_expect_user IS NULL OR l.ai_features -> 'embedBuild' ->> 'userId' = p_expect_user)");
-    expect(w).toContain("AND (p_expect_at IS NULL OR l.ai_features -> 'embedBuild' ->> 'at' = p_expect_at)");
+    // '' expects NO marker (COALESCE): a writer that read none never overwrites one recorded since
+    expect(w).toContain("AND (p_expect_user IS NULL OR COALESCE(l.ai_features -> 'embedBuild' ->> 'userId', '') = p_expect_user)");
+    expect(w).toContain("AND (p_expect_at IS NULL OR COALESCE(l.ai_features -> 'embedBuild' ->> 'at', '') = p_expect_at)");
+    expect(tail).toContain("AND prosrc LIKE '%p_expect_user IS NULL OR COALESCE(%'");
     expect(body).toContain("REVOKE ALL ON FUNCTION embed_build_marker_write(UUID, JSONB, BOOLEAN, TEXT[], TEXT, TEXT) FROM public, anon, authenticated;");
     expect(body).toContain("GRANT EXECUTE ON FUNCTION embed_build_marker_write(UUID, JSONB, BOOLEAN, TEXT[], TEXT, TEXT) TO service_role;");
     const save = body.slice(body.indexOf("CREATE OR REPLACE FUNCTION knowledge_library_save_ai_features("), body.indexOf("REVOKE ALL ON FUNCTION knowledge_library_save_ai_features"));
@@ -842,7 +923,13 @@ describe("20261121 — the paste contract, byte fidelity, the census", () => {
     expect(fn).toContain("AND o.embedding_model IS DISTINCT FROM p_model))");
     expect(fn).toContain("ORDER BY c.embed_attempts, c.document_id, c.page, c.seq, c.id");
     expect(body).toContain("DROP FUNCTION IF EXISTS embed_claim_batch(UUID, UUID, INTEGER, INTEGER, INTEGER);");
-    expect(body.indexOf("DROP FUNCTION IF EXISTS embed_claim_batch(")).toBeLessThan(body.indexOf("CREATE OR REPLACE FUNCTION embed_claim_batch("));
+    // the claim returns its lease instant (every write is held to it); the
+    // return type changed, so the 6-argument signature is dropped first too
+    expect(fn).toContain("embed_claimed_until TIMESTAMPTZ\n)");
+    expect(fn).toContain("k.embed_attempts, k.embed_claimed_until;");
+    expect(body).toContain("DROP FUNCTION IF EXISTS embed_claim_batch(UUID, UUID, INTEGER, INTEGER, INTEGER, TEXT);");
+    expect(body.lastIndexOf("DROP FUNCTION IF EXISTS embed_claim_batch(")).toBeLessThan(body.indexOf("CREATE OR REPLACE FUNCTION embed_claim_batch("));
+    expect(tail).toContain("AND pg_get_function_result(oid) LIKE '%embed_claimed_until timestamp with time zone%'");
     expect(body).toContain("REVOKE ALL ON FUNCTION embed_claim_batch(UUID, UUID, INTEGER, INTEGER, INTEGER, TEXT) FROM public, anon, authenticated;");
     expect(body).toContain("GRANT EXECUTE ON FUNCTION embed_claim_batch(UUID, UUID, INTEGER, INTEGER, INTEGER, TEXT) TO service_role;");
     // the app asks for the same limit the SQL skips at, with the model it embeds with
