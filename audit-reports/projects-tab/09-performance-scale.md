@@ -444,7 +444,7 @@ the project row lands rather than blocking on everything.
 - The header paints before the tab data arrives — ✓.
 - No query runs twice in one load — **not done**: the coach (`components/projects/ProjectCoach.tsx` → `lib/projectSnapshot.ts`, J7's files) still reads `projects` and `project_members` beside the page's own reads. Removing that needs the page to hand its rows to the coach — a change in J7's component and gather, not in this package's files.
 
-**Scope / residual.** The remaining limb is one prop through `ProjectCoach` and an optional pre-read argument to `gatherProjectSnapshot`.
+**Scope / residual.** The remaining limb is one prop through `ProjectCoach` and an optional pre-read argument to `gatherProjectSnapshot`. *Second fix pass (2026-09-30):* the lazily loaded timeline read put every cost-document and linked-document id in one `.in()` filter. A project with a few hundred quotes exceeded the gateway's URL limit, and the Activity tab failed as a whole. Every id list is now read 100 ids per request (`SAF-6`).
 
 ---
 

@@ -324,7 +324,7 @@ summarizers then start working with no further change.
 - The Activity badge count matches what the tab renders — ✓.
 - A test asserts a project-scoped audit row reaches `getProjectTimeline` — ✓.
 
-**Scope / residual.** Intake-link events written with `resource_type = 'project_intake_link'` (link created / revoked / assignment changed) and intake rows keyed on an unlinked document are not pulled — the intake door is projects-and-cost PC-1 / J1's; a `project_intake_link` query can join the map when that package fixes the rows' resource type. `audit_logs` itself is org-readable (`SEC-20`).
+**Scope / residual.** Intake-link events written with `resource_type = 'project_intake_link'` (link created / revoked / assignment changed) and intake rows keyed on an unlinked document are not pulled — the intake door is projects-and-cost PC-1 / J1's; a `project_intake_link` query can join the map when that package fixes the rows' resource type. `audit_logs` itself is org-readable (`SEC-20`). *Second fix pass (2026-09-30):* dw2 ("the badge matches what the tab renders") could fail for a busy project. The cost-audit read put up to 500 cost-document UUIDs in ONE `.in()` filter, about 18 KB of request line, and the linked-document reads did the same with every linked id. The gateway refuses a request that long, and one refused read failed the whole Activity tab ("The timeline could not be loaded"). `lib/timeline.ts` now reads every id list `TIMELINE_ID_CHUNK` (100) ids per request (`readByIdChunks`), and so does the hold existence lookup. Each chunk is still capped at `limit`, and the chunks are merged before the final newest-first sort and slice, so the feed is the same one. A failed chunk fails the read rather than showing a partial feed. Tests: `timeline.test.ts` "250 quotes and 230 drawings: every .in() carries at most 100 ids, and an event from the last chunk still reaches the feed" (fails against the previous `lib/timeline.ts`), "one refused chunk fails the read — a partial feed is never shown as the whole one".
 
 ---
 
@@ -766,7 +766,7 @@ project history for the document will be hidden.
 - The confirm states the consequence — ✓.
 - Only owners and controllers can detach (see `SEC-17`) — ✓ UI; database after `supabase/migrations/20261102_prj_roundG_project_rails.sql`.
 
-**Scope / residual.** The remediation suggested a soft-delete column; the feed row already records the detach (document and time), so the history is recovered without a schema change and without touching the resync trigger's re-link behaviour. A detach made by a direct API delete that wrote no `doc_removed` row (possible before `supabase/migrations/20261102_prj_roundG_project_rails.sql`) is not recoverable this way.
+**Scope / residual.** The remediation suggested a soft-delete column; the feed row already records the detach (document and time), so the history is recovered without a schema change and without touching the resync trigger's re-link behaviour. A detach made by a direct API delete that wrote no `doc_removed` row (possible before `supabase/migrations/20261102_prj_roundG_project_rails.sql`) is not recoverable this way. *Second fix pass (2026-09-30):* the register's INSERT (an attach) now admits the project's managers (`can_manage_project`, the fleet plan's predicate — see `SEC-17`). A detach, and an UPDATE that could move a link (a detach by another name), stay owner-or-controller, and so do `doc_added` / `doc_removed` feed rows. dw3 is unchanged.
 
 ---
 

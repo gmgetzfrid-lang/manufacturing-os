@@ -2382,29 +2382,41 @@ project that carries cost or quality records is archived, not deleted.**
    reopen their own closed project.
 4. **Deleting.** A project carrying ANY cost or quality row cannot be
    hard-deleted by its owner — it is archived. A controller may delete it
-   only with a stated reason, through one audited transaction that records
-   the counts, a snapshot of the rows and the storage keys, and revokes the
-   intake links first. `projects.legal_hold` (controller-set) blocks every
+   only with a stated reason, through one audited transaction. That
+   transaction revokes the intake links first, then records the counts and
+   the storage keys in `PROJECT_DELETED`. The snapshot of the rows goes in
+   `PURGE_PROJECT_SNAPSHOT`, which only the org's audit viewers can read: a
+   private project's ledger is never copied where every member can read it.
+   `projects.legal_hold` (controller-set) blocks every
    delete of the project and of its regulated rows. No retention-policy
    engine for projects beyond the hold. The purge is the ONE pass through the
-   money and quality delete guards: `app.record_purge = 'project:<id>'`.
+   money and quality delete guards: `app.record_purge = 'project:<id>'`. It
+   never deletes a checklist item on its own: items leave with their
+   checklist by cascade, the only way out the quality rail allows.
 5. **Releasing checkouts at closure** runs per session: the actor's own, and
    everyone else's the release guard lets them release (a controller: all);
    the rest stay active and are named ("still held by X"). The maintenance
    sweep releases a checkout still on a closed project 24h after closure.
 6. **Roster roles mean something.** An observer sees the project; it cannot
    manage it (20261047) or post to its feed. `owner` is set only by the
-   ownership transfer. The document register is written by the project owner
-   or a controller (not by collaborators — the findings' contract; a
-   collaborator's OWN checkout, under a project they can see, still links
-   through the definer trigger — never someone else's session, never a
-   project the caller cannot see). Two writers in other packages are refused
-   by this and swallow the refusal: the split / merge register carry-over
-   (`lib/documentLifecycle/common.ts`, document-control) for a document
-   owner who does not own every project listing the document, and
-   `adoptDocument`'s register link (`lib/transitionIn.ts`, PC-1 / J1) for a
-   collaborator — their owners surface the refusal or route the write
-   through the register's authority.
+   ownership transfer. The document register:
+   - **Attach.** Anyone who manages the project (`can_manage_project`: owner,
+     Admin, Manager, roster owner or collaborator) or a controller may
+     attach a document — the fleet plan's predicate. This lets the split /
+     merge carry-over (`lib/documentLifecycle/common.ts`, document-control)
+     and `adoptDocument`'s register link (`lib/transitionIn.ts`, PC-1 / J1)
+     land for a project's managers.
+   - **Detach, or move a link.** Only the project owner or a controller: a
+     detach drops a document's later history from the timeline. The card
+     offers Attach and Detach to that same pair, and `doc_added` /
+     `doc_removed` feed rows need it too.
+   - **Checkouts.** A collaborator's OWN checkout, under a project they can
+     see, still links through the definer trigger — never someone else's
+     session, never a project the caller cannot see.
+   - **Still refused.** A document owner who does not manage the project,
+     and a merge upsert that meets an existing row (the UPDATE path), are
+     still refused, and the carry-over swallows it. Its owner surfaces the
+     refusal or upserts with DO NOTHING.
 7. **The project timeline's vocabulary is one map** (`lib/timeline.ts`
    `PROJECT_EVENT_VOCABULARY`): awards, change-order proposals and
    decisions, checklist rulings, turnover reviews, punch closes and schedule
@@ -2447,3 +2459,11 @@ hole in the freeze.
 users, by design.
 
 *Landed 2026-09-30 (projects Round G, J8 review fix pass): the register trigger links only the signed-in caller's own session into a project they can see (SEC-17 / PM-8); `company_events` rows logged against a private project follow its visibility (SEC-2 — the company profile); the export's reads page to exhaustion and its section header is a csvSafe cell (PERF-2 / PM-10); the stranded-checkout sweep measures from the closure stamp, not `updated_at`, with bounded reads (PM-4); `lib/projects.writeActivity` keeps its non-throwing exported contract and returns the refusal, `writeActivityChecked` throws for a comment (PM-9); the lifecycle and adoption writers item 6 refuses are handed to their owners.*
+
+*Landed 2026-09-30 (projects Round G, J8 second review fix pass), checked against the integration branch:*
+- *The purge deletes checklists and lets their items cascade. Projects Round G J2's `checklist_items_decision_rail` (20261091) refuses a direct item delete by a signed-in caller, even inside a definer RPC (PM-6 / QUAL-3).*
+- *The deleted project's snapshot moved out of the org-readable `PROJECT_DELETED` into `PURGE_PROJECT_SNAPSHOT`, which the 20261063 overlay limits to `admin.audit_view` holders (item 4, SEC-2 / SEC-20).*
+- *J2's `turnover_review_events` read is re-created on project visibility where the table exists (SEC-2).*
+- *The register's INSERT follows the fleet plan (`can_manage_project`); UPDATE and DELETE stay owner-or-controller (item 6, PM-8 / SEC-17).*
+- *A project status UPDATE that RLS filters to zero rows is a refusal, not a closure (PM-1 / PM-4).*
+- *The register and timeline reads are complete or fail: paged, with id lists chunked at 100 (UX-11, SAF-6).*
