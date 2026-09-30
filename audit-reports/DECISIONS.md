@@ -1753,18 +1753,25 @@ The defaults the projects Round G quality package (`J2 QUALITY`: `SAF-1`–`SAF-
    20261091 rails on waive / reject / reopen, punch void, and every checklist
    decision a person makes — satisfied, N/A, item reopen; the service pass —
    restores, server routes, the SQL editor — passes). A decision needs its
-   OWN reason: the note already on the row belongs to the earlier decision,
-   and a standing decision keeps its reason (and a turnover decision its
-   reviewer) until the next one; a checklist note is never cleared. No
-   placeholder is ever written. Waived is its own bucket.
+   OWN reason: the note already on the row belongs to the earlier decision
+   (compared normalised — case, spacing and invisible characters do not make
+   a new one), and a standing decision keeps its reason (a turnover decision
+   its reviewer, date and reviewed document; a punch closure its closer and
+   date) until the next one; a checklist note is never cleared. The bar
+   strips Unicode whitespace and zero-width characters before measuring, in
+   the lib and in the database alike. No placeholder is ever written. Waived
+   is its own bucket.
 5. **Completion basis** (`QUAL-2`): `project_checklists.completed_basis` is
-   `'human'` only when every applicable item is green or N/A, no green rests
-   on the sweep alone, no N/A lacks a person's reason, and at least one green
-   was decided by a person (a note that meets the reason bar — `x` is not
-   one — or a person-attached chip); otherwise `'auto'`. The completion
-   itself is refused by the database while the checklist has no items or an
-   applicable item is neither green nor N/A, and a completed checklist's
-   items are frozen until it is reopened (which clears the basis). Only a `'human'` MI completion
+   `'human'` only when every applicable item is green or N/A, every green
+   and every N/A carries a person's reason (a note that meets the reason bar
+   — `x` is not one, and a person-attached chip is evidence, not a reason),
+   and at least one green was decided by a person; otherwise `'auto'`. The
+   completion itself is refused by the database while the checklist has no
+   items or an applicable item is neither green nor N/A; an item is never
+   deleted on its own or moved; every item write serialises with the
+   completion (a SHARE lock on the checklist row); and a completed
+   checklist's items, kind and project are frozen until it is reopened
+   (which clears the basis). Only a `'human'` MI completion
    is citable by another checklist. The DATABASE records it
    (`checklist_completion_basis()`, the same rule as `completionBasis()`,
    computed by a rail when the status moves to complete; a client value is
@@ -1774,12 +1781,17 @@ The defaults the projects Round G quality package (`J2 QUALITY`: `SAF-1`–`SAF-
    then on).
 6. **Machine actor** (`QUAL-6`, `DEC-35`): `updated_by = NULL` + a sentinel
    name. The sweep and the assessment run in the browser under the user's
-   token, so the database bounds what a machine-stamped write may do — a
-   sentinel name, never on an item a person decided (a note or a person
-   chip), no note, no person chip, a green carries its auto citation — and
-   stamps every other signed-in write with the caller's uid and profile name;
-   all a machine write can produce is `'auto'`. A server-side sweep (service
-   role) would make the actor unforgeable — a follow-on. Provenance is carried by the existing `updated_by` / `updated_by_name`
+   token, so the database bounds a machine-stamped write to what that
+   machine writes — the sweep: status (satisfied / needs evidence) and its
+   own citations, each resolving to its row (an admitted document, an
+   accepted turnover item, a human MI completion); the assessment:
+   applicability, its rationale and the status that follows, never an N/A on
+   a satisfied or evidence-bearing item; neither on an item a person decided
+   (a visible note or a person chip), neither touching text, section, seq or
+   the note — and stamps every other signed-in write with the caller's uid
+   and sign-in name (`auth.users`, which the app cannot edit); all a machine
+   write can produce is `'auto'`. A server-side sweep (service role) would
+   make the actor unforgeable — a follow-on. Provenance is carried by the existing `updated_by` / `updated_by_name`
    pair and `evidence[].source` / `documentId`; no `satisfied_by` /
    `satisfied_how` columns were added (a column the sweep must write breaks
    the sweep until the migration is applied — `DEC-30`).
@@ -1789,8 +1801,8 @@ The defaults the projects Round G quality package (`J2 QUALITY`: `SAF-1`–`SAF-
    made before it existed are backfilled. A rejection is a `nonconformance`
    event, a reopen of an accepted / waived item is a `reopen` event whose OWN
    reason (a new note that meets the bar) the database requires. Each row
-   carries the note its decision set and the reviewer's name from the users
-   profile, never the client's; a history row outlives a deleted item
+   carries the note its decision changed and the reviewer's sign-in name,
+   never the client's; a history row outlives a deleted item
    (`item_id` is a plain column); a restore never imports the history
    (`IMMUTABLE_TABLES`) and writes one row per restored decided item. There is
    no separate NCR module (a follow-on capability if a facility wants
@@ -1823,6 +1835,24 @@ above (`checklist_items_decision_rail`, `project_checklists_completion_basis_rai
 `quality_actor_name`; `lib/__tests__/qualityRailsMigration.test.ts`), with the
 lib mirroring the own-reason rule and keeping the sweep and the assessment off
 human territory.
+
+**Verification fix 2 (2026-09-30, projects Round G).** A second
+independent pass showed items 4–7 still claimed more than 20261091 did at
+c031239: a person chip counted as a person's decision and a made-up sweep
+citation passed, so a checklist with no reason anywhere completed as
+`'human'`; deleting an unmet line, or racing a completion, walked round the
+gate; a machine-shaped write could rewrite an item's text; a completed
+checklist could change kind; a standing acceptance's document and a standing
+void's closer and date could be rewritten; a note plus a trailing space, or a
+reason of no-break spaces, counted as a reason; a fresh `reviewed_at`
+re-attributed a carried note; and the actor's name came from a profile the
+user can edit. Items 4–7 above now say what the database enforces
+(`checklist_completion_basis`, `checklist_auto_citation_ok`,
+`checklist_items_decision_rail`, `project_checklists_completion_basis_rail`,
+`turnover_items_decision_rail`, `punch_items_void_rail`,
+`turnover_items_record_review_event`, `quality_reason_key`,
+`quality_actor_name`; `lib/__tests__/qualityRailsMigration.test.ts`), with the
+lib mirroring the reason rule, the key, the chip rule and the citation rows.
 
 **Rationale.** A pre-startup safety review is signed. The audit found the
 green could come from a contractor's filename, survive the document's voiding,
