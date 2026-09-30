@@ -25,9 +25,9 @@ before and after.
 |---|---|
 | CRITICAL | 17 |
 | HIGH | 52 |
-| MEDIUM | 65 |
+| MEDIUM | 66 |
 | LOW | 2 |
-| **Total** | **136** |
+| **Total** | **137** |
 
 Two findings here (`BID-5`, `UX-2`) carry `Status: REFUTED` — an independent pass
 disproved them. They are kept with the reason rather than deleted (`DEC-41`);
@@ -41,6 +41,8 @@ quality packages.
 and the data-export envelope) was opened by package J9 on 2026-09-30.
 `SEC-20` (audit rows about a private project stay readable org-wide) was opened
 by package J8 on 2026-09-30.
+`CHART-6` (two consumers paint the score band's colour as text; the 70–84 band
+is the white-label accent) was opened by package J5 on 2026-09-30.
 
 Counts are generated from the reports by
 [`../build-index.mjs`](../build-index.mjs) — see
@@ -58,14 +60,14 @@ Work these in order. The numbering reflects priority, not just grouping —
 |---|---|---|---|---|
 | 01 | [Security & access](./01-security-access.md) | 19 | 4 | 5 / 19 |
 | 02 | [Safety, compliance & the record](./02-safety-compliance.md) | 17 | 3 | 8 / 17 |
-| 03 | [Money & the ledger](./03-money-ledger.md) | 12 | 0 | 5 / 12 |
+| 03 | [Money & the ledger](./03-money-ledger.md) | 12 | 0 | 7 / 12 |
 | 04 | [Bid tabulation & the award decision](./04-bid-tabulation.md) | 12 | 2 | 11 / 12 |
-| 05 | [Charts & the printed RFQ](./05-charts-and-rfq.md) | 7 | 0 | 2 / 7 |
+| 05 | [Charts & the printed RFQ](./05-charts-and-rfq.md) | 8 | 0 | 6 / 8 |
 | 06 | [Schedule engine](./06-schedule-engine.md) | 18 | 5 | 6 / 18 |
 | 07 | [Truth in the interface](./07-interface-truth.md) | 16 | 1 | 11 / 16 |
-| 08 | [Reliability & failure modes](./08-reliability.md) | 11 | 0 | 4 / 11 |
+| 08 | [Reliability & failure modes](./08-reliability.md) | 11 | 0 | 6 / 11 |
 | 09 | [Performance & scale](./09-performance-scale.md) | 11 | 0 | 2 / 11 |
-| 10 | [Accessibility, mobile & dark mode](./10-accessibility-mobile.md) | 13 | 2 | 2 / 13 |
+| 10 | [Accessibility, mobile & dark mode](./10-accessibility-mobile.md) | 13 | 2 | 3 / 13 |
 | — | [Upload door — recommended controls](./11-upload-door-controls.md) | design note | — | — |
 
 Report `11` is not a findings list. It is the control set requested for the

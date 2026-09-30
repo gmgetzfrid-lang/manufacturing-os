@@ -21,7 +21,7 @@ import {
 } from "@/lib/changeOrders";
 import { listTurnoverItems, computeTurnoverProgress } from "@/lib/turnover";
 import { listChecklists, listChecklistItems, computeChecklistProgress } from "@/lib/checklists";
-import { computeForecast } from "@/lib/costSeries";
+import { computeForecast, scheduleSpanFromMilestones } from "@/lib/costSeries";
 import { openPrintWindow } from "@/lib/evidencePack";
 import { liveMilestones, isImportedMilestone, isOverdueMilestone, PROJECT_MILESTONE_READ_LIMIT } from "@/lib/milestoneLiveness";
 import { SNAPSHOT_READS as R } from "@/lib/projectHealth";
@@ -158,7 +158,7 @@ export async function gatherReportData(orgId: string, projectId: string): Promis
     // The same first rows by planned date the snapshot and the Costs tab
     // read (PROJECT_MILESTONE_READ_LIMIT), so the EV index — and the CPI —
     // agree; the exact count discloses a larger schedule.
-    named(R.milestones, supabase.from("milestones").select("id, name, planned_at, status, percent_complete, source", { count: "exact" })
+    named(R.milestones, supabase.from("milestones").select("id, name, planned_at, planned_start_at, status, percent_complete, source", { count: "exact" })
       .eq("project_id", projectId).order("planned_at").order("id").limit(PROJECT_MILESTONE_READ_LIMIT)
       .then((r) => {
         if (r.error) throw new Error(r.error.message);
@@ -192,12 +192,16 @@ export async function gatherReportData(orgId: string, projectId: string): Promis
   const rollup = computeCostRollup(accounts, entries, pctIdx, approvedChangesByAccount(coList));
 
   // The forecast takes the Costs tab's inputs too (CostCharts.tsx): the
-  // REVISED budget and the pinned subset CPI was measured on (COST-1).
-  const dates = live.map((m) => (m.planned_at ? String(m.planned_at).slice(0, 10) : null)).filter((v): v is string => !!v).sort();
+  // REVISED budget and the pinned subset CPI was measured on (COST-1), over
+  // the Costs tab's span — earliest task START to latest finish (MON-2) —
+  // so the run-rate forecast on paper divides by the same elapsed share.
+  const span = scheduleSpanFromMilestones(live.map((m) => ({
+    planned_at: (m.planned_at as string | null) ?? null, planned_start_at: (m.planned_start_at as string | null) ?? null,
+  })));
   const forecast = computeForecast({
     budget: rollup.revisedBudget, spent: rollup.spent, cpi: rollup.cpi,
     pinnedBudget: rollup.pinnedBudget, pinnedSpent: rollup.pinnedSpent,
-    scheduleStart: dates[0] ?? null, scheduleEnd: dates[dates.length - 1] ?? null,
+    scheduleStart: span.start, scheduleEnd: span.end,
     today: new Date().toISOString().slice(0, 10),
     fmt: (n) => fmtMoney(n, rollup.currencies[0] ?? "USD"),
   });

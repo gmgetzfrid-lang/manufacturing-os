@@ -14,9 +14,20 @@
 
 import React from "react";
 
+/** The six slots, spelled out. Tailwind emits a theme variable only when a
+ *  source file names it literally — a name assembled at runtime from the
+ *  slot number is invisible to its scanner, so the light-theme values of the
+ *  slots it never saw were missing from the built CSS (CHART-2). */
+const VIZ_CAT = [
+  "var(--viz-cat-1)", "var(--viz-cat-2)", "var(--viz-cat-3)",
+  "var(--viz-cat-4)", "var(--viz-cat-5)", "var(--viz-cat-6)",
+] as const;
+
 /** Fixed-order categorical color for slot i (0-based). Never cycles — callers
- *  must fold overflow into "Other" before slot 6. */
-export const vizCat = (i: number) => `var(--viz-cat-${Math.min(i + 1, 6)})`;
+ *  must fold overflow into "Other" before slot 6. Every input names a slot:
+ *  past the end is the last, and below the start — or NaN, which fails both
+ *  comparisons — is the first. */
+export const vizCat = (i: number): string => VIZ_CAT[i >= 5 ? 5 : i >= 1 ? Math.trunc(i) : 0];
 
 // ── Day bucketing (shared by sparkline/bars callers) ─────────────────────────
 
@@ -91,17 +102,20 @@ export function Sparkline({
 // ── MiniBars — daily activity columns with per-bar hover ────────────────────
 
 export function MiniBars({
-  values, labels, height = 40, fill = "var(--color-accent)", className = "",
+  values, labels, height = 40, fill = "var(--color-accent)", ariaLabel = "Daily activity", className = "",
 }: {
   values: number[];
   labels?: string[];
   height?: number;
   fill?: string;
+  /** Accessible name — say what the bars show (A11Y-11); the dashboard's
+   *  daily-activity widgets keep the default. */
+  ariaLabel?: string;
   className?: string;
 }) {
   const max = Math.max(1, ...values);
   return (
-    <div className={`flex items-end gap-[3px] ${className}`} style={{ height }} role="img" aria-label="Daily activity">
+    <div className={`flex items-end gap-[3px] ${className}`} style={{ height }} role="img" aria-label={ariaLabel}>
       {values.map((v, i) => {
         const h = v === 0 ? 3 : Math.max(4, Math.round((v / max) * height));
         return (

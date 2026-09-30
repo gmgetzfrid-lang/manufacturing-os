@@ -401,7 +401,7 @@ to the truncating stat values.
 ## A11Y-11 · The crew-size chart announces itself as "Daily activity" and exposes no values
 
 - **Severity:** MEDIUM
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Verification:** CONFIRMED
 - **Blast radius:** accessibility
 - **Locations:**
@@ -426,6 +426,15 @@ disappears with it — resolve that one first.
 **Done when.**
 - The chart's accessible name describes what it shows.
 - The headcount values are available as text.
+
+**Resolution (2026-09-30, projects Round G).** Joint J5 CHARTS. Resolved with `CHART-3`, as the remediation ordered: the crew chart is replaced by a stat. `components/projects/cost/CostCharts.tsx` `CrewStat` is text. Its section label reads "Planned average crew (from the awarded bid's hours)". The value reads "≈ 3.9 people", and the inputs read "1,980 labor hours over 90 days (12.9 weeks) ÷ 40 hours per person-week …". A screen reader gets the figure and how it was reached, and there is no `role="img"` named "Daily activity" on the Costs tab. `components/dashboard/viz.tsx` `MiniBars` also gains an `ariaLabel` prop, so any later reuse can say what its bars show. The default stays "Daily activity" for the dashboard's daily-activity widgets, which is what they show.
+- Tests: `lib/__tests__/costChartsRender.test.ts` "renders the average and its inputs as text — no bars, no 'Daily activity'"; `lib/__tests__/chartKit.test.ts` "callers can say what the bars show; the dashboard default is unchanged".
+
+**Done-when.**
+1. ✓ The accessible name describes what is shown. There is no chart now: the section's text names it.
+2. ✓ The headcount value is available as text, with its inputs.
+
+**Scope / residual.** None.
 
 ---
 
@@ -586,6 +595,6 @@ background to the one date input.
 | A11Y-8 | HIGH | OPEN |
 | A11Y-9 | HIGH | RESOLVED |
 | A11Y-10 | HIGH | OPEN |
-| A11Y-11 | MEDIUM | OPEN |
+| A11Y-11 | MEDIUM | RESOLVED |
 | A11Y-12 | MEDIUM | OPEN |
 | A11Y-13 | MEDIUM | OPEN |

@@ -28,7 +28,10 @@ import {
 } from "@/lib/costDocs";
 import { listChangeOrders, approvedChangesByAccount, repairChangeOrder, type ChangeOrder } from "@/lib/changeOrders";
 import { PROJECT_MILESTONE_READ_LIMIT } from "@/lib/milestoneLiveness";
-import CostCharts, { CostGlossary } from "@/components/projects/cost/CostCharts";
+import CostCharts, { CostGlossary, accountCurrency } from "@/components/projects/cost/CostCharts";
+import { barPct } from "@/components/ui/ChartKit";
+import { scheduleSpanFromMilestones } from "@/lib/costSeries";
+import { vizCat } from "@/components/dashboard/viz";
 import QuotesPanel from "@/components/projects/cost/QuotesPanel";
 import ChangeOrdersPanel from "@/components/projects/cost/ChangeOrdersPanel";
 import { appConfirm, appPrompt } from "@/components/providers/DialogProvider";
@@ -60,6 +63,11 @@ export default function CostsTab({ orgId, projectId, canManage, uid, userEmail, 
   const [milestones, setMilestones] = useState<Array<{ id: string; name: string; pct: number }>>([]);
   const [schedSpan, setSchedSpan] = useState<{ start: string | null; end: string | null }>({ start: null, end: null });
   const [loading, setLoading] = useState(true);
+  // REL-2 / REL-10: set only by a SUCCESSFUL read. Until then every list is
+  // its initial empty array — which is what a brand-new project shows ($0.00
+  // tiles, "No cost accounts yet", the EXAMPLE picture), so nothing that
+  // draws from the read renders over a failed first load.
+  const [loaded, setLoaded] = useState(false);
   const [err, setErr] = useState<string | null>(null);
   const [openAccount, setOpenAccount] = useState<string | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
@@ -91,8 +99,9 @@ export default function CostsTab({ orgId, projectId, canManage, uid, userEmail, 
         // The same first rows by planned date the health snapshot and the
         // printed report read (id breaks planned-date ties; the bound is
         // explicit, not the API's row cap), so EV and CPI agree across all
-        // three (lib/milestoneLiveness PROJECT_MILESTONE_READ_LIMIT).
-        supabase.from("milestones").select("id, name, percent_complete, status, planned_at")
+        // three (lib/milestoneLiveness PROJECT_MILESTONE_READ_LIMIT). The
+        // task starts give the span its first day (MON-2).
+        supabase.from("milestones").select("id, name, percent_complete, status, planned_at, planned_start_at")
           .eq("project_id", projectId).order("planned_at").order("id").limit(PROJECT_MILESTONE_READ_LIMIT),
       ]);
       if (msErr) throw new Error(`Couldn't load the schedule for earned value: ${msErr.message}`);
@@ -102,13 +111,12 @@ export default function CostsTab({ orgId, projectId, canManage, uid, userEmail, 
       setDocs(d);
       setCos(c);
       setOrphans(o);
-      const rows = ((ms ?? []) as Array<{ id: string; name: string; percent_complete: number | null; status: string; planned_at: string | null }>);
+      const rows = ((ms ?? []) as Array<{ id: string; name: string; percent_complete: number | null; status: string; planned_at: string | null; planned_start_at: string | null }>);
       const idx = milestonePctIndex(rows.map((m) => ({ id: m.id, percentComplete: m.percent_complete, status: m.status })));
       setMilestones(rows.map((m) => ({ id: m.id, name: m.name, pct: idx.get(m.id) ?? 0 })));
-      const dates = rows.map((m) => m.planned_at).filter((v): v is string => !!v).sort();
-      setSchedSpan(dates.length >= 2
-        ? { start: dates[0].slice(0, 10), end: dates[dates.length - 1].slice(0, 10) }
-        : { start: null, end: null });
+      // MON-2: earliest task START to latest finish — planned_at is the finish.
+      setSchedSpan(scheduleSpanFromMilestones(rows));
+      setLoaded(true);
     } catch (e) {
       setErr((e as Error).message);
     } finally { setLoading(false); }
@@ -117,7 +125,7 @@ export default function CostsTab({ orgId, projectId, canManage, uid, userEmail, 
   }, [orgId, projectId]);
   useEffect(() => { void refresh(); }, [refresh]);
 
-  // Crew curve input: the awarded quote's stated labor hours.
+  // Planned average crew input: the awarded quote's stated labor hours.
   const awardedLaborHours = useMemo(() => {
     const awarded = docs.find((d) => d.kind === "quote" && d.status === "awarded");
     if (!awarded) return null;
@@ -160,15 +168,36 @@ export default function CostsTab({ orgId, projectId, canManage, uid, userEmail, 
 
   if (loading) return <div className="py-12 flex justify-center"><Loader2 className="w-5 h-5 animate-spin text-[var(--color-accent)]" /></div>;
 
+  const banner = err && (
+    <div ref={errRef} tabIndex={-1} role="alert"
+      className="flex items-center gap-2 rounded-xl border border-rose-500/50 bg-rose-500/[0.08] px-3 py-2.5 text-xs font-bold text-rose-700 dark:text-rose-300 outline-none focus-visible:ring-2 focus-visible:ring-rose-500/40">
+      <AlertTriangle className="w-4 h-4 shrink-0" /> {err}
+      <button onClick={() => setErr(null)} className="ml-auto text-rose-400 hover:text-rose-600"><X className="w-3.5 h-3.5" /></button>
+    </div>
+  );
+
+  // REL-2 / REL-10: a failed FIRST load. The money tiles, the picture,
+  // quotes, change orders, accounts and parties all draw from this tab's
+  // read; before one succeeds they would render the empty initial state,
+  // pixel-identical to a new project (and an invitation to re-create budget
+  // lines that may already exist). Say so once, with a retry, instead. A
+  // later failed refresh keeps the last good read on screen under the banner.
+  if (!loaded) {
+    return (
+      <div className="space-y-4">
+        {banner}
+        <div data-empty="cost-data" className="rounded-2xl border border-dashed border-[var(--color-border-strong)] bg-[var(--color-surface)] px-4 py-3 text-[11px] text-[var(--color-text-muted)]">
+          <b className="text-[var(--color-text)]">This project&apos;s cost data couldn&apos;t be read.</b>{" "}
+          Nothing is shown rather than an empty ledger — the budget figures, spend curve, quotes, change orders and cost accounts appear once it loads.
+          <button type="button" onClick={() => void refresh()} className="ml-2 font-black text-[var(--color-text)] underline hover:no-underline">Try again</button>
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div className="space-y-4">
-      {err && (
-        <div ref={errRef} tabIndex={-1} role="alert"
-          className="flex items-center gap-2 rounded-xl border border-rose-500/50 bg-rose-500/[0.08] px-3 py-2.5 text-xs font-bold text-rose-700 dark:text-rose-300 outline-none focus-visible:ring-2 focus-visible:ring-rose-500/40">
-          <AlertTriangle className="w-4 h-4 shrink-0" /> {err}
-          <button onClick={() => setErr(null)} className="ml-auto text-rose-400 hover:text-rose-600"><X className="w-3.5 h-3.5" /></button>
-        </div>
-      )}
+      {banner}
 
       {/* ── Ledger data-health (MON-1 / COST-11): the two orphan states the
              claim-then-post design can produce, with the audited repair. ── */}
@@ -202,7 +231,9 @@ export default function CostsTab({ orgId, projectId, canManage, uid, userEmail, 
         />
       </div>
 
-      {/* ── Burn bar: spent (solid) + committed (hatched ghost) vs budget ── */}
+      {/* ── Burn bar: spent (solid) + committed (ghost) vs budget, in the
+             S-curve's own series colours (CHART-2: a series keeps its colour
+             across the tab — Spent is categorical slot 1, Committed slot 2). ── */}
       {rollup.revisedBudget > 0 && (
         <div className="rounded-2xl border border-[var(--color-border)] bg-[var(--color-surface)] px-4 py-3">
           <div className="flex items-center justify-between text-[10px] font-bold text-[var(--color-text-muted)] mb-1.5">
@@ -210,8 +241,8 @@ export default function CostsTab({ orgId, projectId, canManage, uid, userEmail, 
             <span className="tabular-nums">{fmtMoney(rollup.spent, cur)} spent · {fmtMoney(rollup.committed, cur)} committed · {fmtMoney(rollup.revisedBudget, cur)} budget</span>
           </div>
           <div className="relative h-2.5 rounded-full bg-[var(--color-surface-2)] overflow-hidden">
-            <div className="absolute inset-y-0 left-0 rounded-full bg-[var(--color-accent)]/25 transition-all duration-700" style={{ width: `${commitPct}%` }} />
-            <div className={`absolute inset-y-0 left-0 rounded-full transition-all duration-700 ${burnPct >= 100 ? "bg-rose-500" : "bg-[image:var(--brand-gradient)]"}`} style={{ width: `${burnPct}%` }} />
+            <div data-series="committed" className="absolute inset-y-0 left-0 rounded-full opacity-40 transition-all duration-700" style={{ width: `${commitPct}%`, background: vizCat(1) }} />
+            <div data-series="spent" className={`absolute inset-y-0 left-0 rounded-full transition-all duration-700 ${burnPct >= 100 ? "bg-rose-500" : ""}`} style={{ width: `${burnPct}%`, background: burnPct >= 100 ? undefined : vizCat(0) }} />
           </div>
         </div>
       )}
@@ -223,8 +254,10 @@ export default function CostsTab({ orgId, projectId, canManage, uid, userEmail, 
         </div>
       )}
 
-      {/* ── The picture: S-curve, forecast sentence, crew curve (or the
-             watermarked EXAMPLE preview until real numbers exist) ── */}
+      {/* ── The picture: S-curve, forecast sentence, planned average crew,
+             burn by line (or the watermarked EXAMPLE preview while the
+             project has no accounts and no entries). Only ever drawn from a
+             successful read (REL-10; the failed-first-load return above). ── */}
       <CostCharts rollup={rollup} entries={entries}
         scheduleStart={schedSpan.start} scheduleEnd={schedSpan.end}
         awardedLaborHours={awardedLaborHours} />
@@ -272,7 +305,9 @@ export default function CostsTab({ orgId, projectId, canManage, uid, userEmail, 
           <div className="divide-y divide-[var(--color-border)]">
             {rollup.accounts.map((r) => {
               const isOpen = openAccount === r.account.id;
-              const rowPct = r.revisedBudget > 0 ? Math.min(100, (r.spent / r.revisedBudget) * 100) : 0;
+              // The burn list's scale and currency rule for the same line (REL-11).
+              const rowPct = barPct(r.spent, r.revisedBudget);
+              const lineCur = accountCurrency(r.account);
               const accEntries = entriesByAccount.get(r.account.id) ?? [];
               return (
                 <div key={r.account.id} className={r.overBudget ? "bg-rose-500/[0.04]" : undefined}>
@@ -292,20 +327,20 @@ export default function CostsTab({ orgId, projectId, canManage, uid, userEmail, 
                           </span>
                         )}
                         {r.earnedValue !== null && (
-                          <span className="text-[9px] font-bold text-[var(--color-text-muted)]" title="Earned value from the pinned schedule task">EV {fmtMoney(r.earnedValue, r.account.currency ?? cur)}</span>
+                          <span className="text-[9px] font-bold text-[var(--color-text-muted)]" title="Earned value from the pinned schedule task">EV {fmtMoney(r.earnedValue, lineCur)}</span>
                         )}
                       </div>
                       <div className="mt-1.5 relative h-1.5 rounded-full bg-[var(--color-surface-2)] overflow-hidden max-w-md">
-                        <div className={`absolute inset-y-0 left-0 rounded-full transition-all duration-500 ${r.overBudget ? "bg-rose-500" : "bg-[var(--color-accent)]"}`} style={{ width: `${rowPct}%` }} />
+                        <div data-series="spent" className={`absolute inset-y-0 left-0 rounded-full transition-all duration-500 ${r.overBudget ? "bg-rose-500" : ""}`} style={{ width: `${rowPct}%`, background: r.overBudget ? undefined : vizCat(0) }} />
                       </div>
                     </div>
                     <div className="shrink-0 text-right">
-                      <div className="text-sm font-black tabular-nums text-[var(--color-text)]">{fmtMoney(r.spent, r.account.currency ?? cur)}</div>
+                      <div className="text-sm font-black tabular-nums text-[var(--color-text)]">{fmtMoney(r.spent, lineCur)}</div>
                       <div className="text-[10px] tabular-nums text-[var(--color-text-muted)]">
-                        of {fmtMoney(r.revisedBudget, r.account.currency ?? cur)}{r.approvedChanges !== 0 ? ` (revised from ${fmtMoney(r.account.budget, r.account.currency ?? cur)})` : ""}
+                        of {fmtMoney(r.revisedBudget, lineCur)}{r.approvedChanges !== 0 ? ` (revised from ${fmtMoney(r.account.budget, lineCur)})` : ""}
                       </div>
                       <div className={`text-[10px] tabular-nums font-bold ${r.remaining < 0 ? "text-rose-600" : "text-[var(--color-text-muted)]"}`}>
-                        {fmtMoney(r.remaining, r.account.currency ?? cur)} uncommitted
+                        {fmtMoney(r.remaining, lineCur)} uncommitted
                       </div>
                     </div>
                   </button>
@@ -495,7 +530,7 @@ function AccountDetail({ orgId, projectId, actor, rollup: r, entries, parties, m
   const a = r.account;
   const [budgetDraft, setBudgetDraft] = useState(String(a.budget));
   const [pinDraft, setPinDraft] = useState(a.wbsMilestoneId ?? "");
-  const cur = a.currency ?? "USD";
+  const cur = accountCurrency(a);
 
   const saveBudget = async () => {
     const n = Number(budgetDraft);

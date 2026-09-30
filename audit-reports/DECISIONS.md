@@ -88,6 +88,7 @@ about the system.
 | [DEC-52](#dec-52) | A green on a PSSR / MI / QA-QC line says who decided it: a **person** (a reason that meets the bar, uid on the row) or the **machine** (a citation the database resolves); only a person's decisions make a completion citable | low–medium | `QUAL-1`, `QUAL-2`, `QUAL-5`, `QUAL-6`, `QUAL-11`, `QUAL-12`, `SAF-1`, `SAF-4` |
 | [DEC-53](#dec-53) | The equipment registry: writer tier edits and archives, controller tier deletes; a site code identifies the **type**, one code is one asset; codebook edits never rewrite codes | medium | `AREA-1`, `IRLS-5`, `CB-3`, `CB-5`, `CB-6`, `CB-10`, `GAP-310` |
 | [DEC-54](#dec-54) | A closed project is a **closed record**: closing releases its checkouts and closes its intake door, reopening is explicit and audited, and a project carrying cost or quality records is archived — deleted only by a controller with a reason, its rows snapshotted first | medium | `PM-1`, `PM-4`, `PM-6`, `PM-11`, `SEC-9`, `SEC-15`, `SEC-17`, `SAF-6` |
+| [DEC-55](#dec-55) | The cost charts draw **only what the data holds and say what they are**: series identity is a validated categorical pair plus shape; one number is shown as a number; example data only on an empty project, every figure marked; the example shows only what the real view draws | low | `CHART-2`, `CHART-3`, `CHART-4`, `REL-10`, `REL-11` |
 
 ---
 
@@ -2876,6 +2877,7 @@ and siblings included), without blocking a document or party delete.
 
 **Risk:** medium. The only narrowing is DELETE for Manager and Supervisor; everything else is either a warning or a refusal of data that would otherwise be corrupted.
 <a id="dec-54-j8"></a>
+<a id="dec-54"></a>
 ## DEC-54 · Closing, reopening and deleting a project
 
 > Made during projects Round G (2026-09-30), package J8 PROJECT-MODEL, under
@@ -3008,3 +3010,101 @@ users, by design.
 - *A private project's company events stay private after its delete, kept and snapshotted (item 4; SEC-2, PM-6).*
 - *The register's UPDATE follows the plan; a trigger keeps links from moving; attach and update need project visibility (item 6; PM-8, SEC-17, SAF-17).*
 - *The timeline's id lists are read whole (SAF-6, SAF-17).*
+
+<a id="dec-55"></a>
+## DEC-55 · The cost charts draw only what the data holds, and say what they are
+
+**Decision. (1) Series identity is hue AND shape.** Two series on one chart take
+consecutive slots of the validated categorical scale, never the white-label
+brand accent. They also differ in line and marker shape, and the legend
+repeats that shape. The categorical colours are theme tokens named literally in source, so
+the stylesheet build emits them. The criterion is the palette's own six checks (lightness band, chroma
+floor, CVD and normal-vision separation, ≥ 3:1 against the surface) —
+**not** luminance contrast between the two marks. A validated pair sits in
+one lightness band by construction, and the shape channel carries identity.
+*This rule replaces an audit done-when (`CHART-2`'s 3:1 between the marks),
+so it needs the owner's ratification. Until it is ratified, `CHART-2` stays
+OPEN.*
+**(2) One number is shown as a number.** The planned crew is a stated average
+with its inputs (labor hours ÷ weeks ÷ 40) until the schedule carries a
+week-by-week loading. No variation is invented to fill a chart. **(3) Example
+data only on an empty project.** The example renders only when the project has
+zero cost accounts AND zero entries. Every example figure carries the word or
+an in-figure watermark: the forecast sentence, legend, labels, tooltips, bar
+values and the crew figure; the S-curve carries the watermark twice inside
+the plot. A corner chip alone is not enough. **(4) The example shows only what the
+real view draws.** Both go through one layout. Burn by budget line renders for
+real projects, each line in its own currency and against its own budget, as
+the accounts table draws and flags it, with the alarms (over budget, or money
+on no budget) ahead of every other line. A project with no dates gets an explanation
+instead of an empty region. **(5) Status colours read as text in both themes.** A status token
+used where a caller may paint text (`--state-held`) has its own light and
+dark step, each ≥ 4.5:1 on its surfaces. The dial's band word wears a text token.
+
+> Made during projects Round G (2026-09-30) by the joint J5 CHARTS package,
+> taking the fleet brief's stated defaults for `CHART-3`, `REL-10` and
+> `REL-11`, and the dataviz palette rule the brief named for `CHART-2` /
+> `CHART-4`. *Numbered DEC-55 at merge (DEC-44 to DEC-54 were already taken on
+> the integration branch). Source and test code cite the rule by its text
+> ("draw only what the data holds"), never by number.*
+
+**Rationale.** Each default removes a confident, plausible picture that the
+data does not support. The removed pictures were a flat bar row presented as a
+curve, stand-in numbers on a project with real accounts, a preview of a view
+the product could not draw, and two series told apart by a brand colour that
+an org can set to match the other. `CHART-2`'s done-when asked for 3:1
+contrast between the two marks. No pair within the palette's validated
+lightness band meets that. Measured: 1.03:1 light and 1.15:1 dark for slots 1
+and 2, whose hue separation is ΔE 34.6 for normal vision and ≥ 30 under
+simulated CVD. Outside the band such a pair exists (on white, an amber near
+luminance 0.28 and a navy near 0.045 clear 3:1 against each other and the
+surface), but one of its lines then out-shouts the other, which is what the
+band prevents. Rule 1 therefore proposes the palette checks plus shape in
+place of that criterion.
+
+**Implementation.** `components/ui/ChartKit.tsx` (`SCurveChart`,
+`sCurveScale` — a money-less chart labels only its zero gridline —
+`sCurveTodayX`, `sCurveTodayLabel` with `sCurveLabelWidth` — the "Today"
+label clears the top gridline label actually drawn, whose width is a
+per-glyph upper bound checked against 5,259 locale labels in four fonts, with
+both labels' haloes in the gap —
+`LegendKey`, `BarList` `example` / `valueLabel` / `of` / `ghost` / `alarm`
+and `barPct` — no stub for a zero value, and no floor on a bar drawn
+against its own whole —
+`scoreBandColor`, `ScoreDial`), `components/dashboard/viz.tsx` (`VIZ_CAT`,
+which every input, NaN included, maps to a slot; `MiniBars` `ariaLabel`), `components/projects/cost/CostCharts.tsx`
+(`hasRealData`, `CostPictures` and its no-dates / no-money explanations,
+`burnItem`, `burnTier` and `byBurn` — each burn row in its line's own currency
+(`accountCurrency`: a line with no currency is USD, as the rollup counts it),
+spent against its own budget with committed behind it, flagged "over budget"
+when the accounts table flags it; lines over budget first, then money on no
+budget, then the lines furthest through their budgets, with any alarm the cut
+leaves out counted under the list — `CrewStat`, `ForecastSentence` `example`,
+`COST_GLOSSARY_TERMS`),
+`components/projects/CostsTab.tsx` (`loaded`: nothing that draws from the
+tab's read renders before one succeeds, so a failed first load shows neither
+the example nor a new project's empty state; the burn bar and account bars
+draw Spent and Committed in the S-curve's two slots; each account row takes
+its width from `barPct` and its currency from `accountCurrency`, as the burn
+list does),
+`lib/costSeries.ts` (`plannedCrewAverage`), `app/globals.css`
+(`--state-held` per theme).
+
+**Acceptance.** `lib/__tests__/chartKit.test.ts`,
+`lib/__tests__/costChartsRender.test.ts` and
+`lib/__tests__/costsTabFirstLoad.test.ts`. The example appears only on an
+empty project that was actually read, and every money figure in it is marked. The two S-curve series
+differ in stroke token, dash and marker. The burn list and the accounts
+table print each line in the same currency, draw it on the same scale and
+flag it with the same word. No line over budget, or with money on no budget,
+is cut from the list while a line that is merely further along is shown.
+No hex literal remains in the chart kit. `--state-held` clears 4.5:1 on every light surface and on the
+dark ones. The crew is a sentence with its inputs.
+
+**Reversal.** (2) When the schedule carries resource loading, a crew curve
+built from it may replace the stat. (3) A product decision to preview on a
+project with blank accounts must still mark every figure. (1) and (5) are
+house rules the dataviz method already states.
+
+**Risk:** low — presentation only; no stored value changes. The visible
+change: Spent is drawn in the categorical blue instead of the brand accent.

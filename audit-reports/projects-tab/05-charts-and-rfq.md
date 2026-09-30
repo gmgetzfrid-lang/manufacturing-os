@@ -2,7 +2,7 @@
 
 Degenerate chart inputs, and the document you hand to a vendor.
 
-**7 findings** — 0 CRITICAL, 4 HIGH, 3 MEDIUM.
+**8 findings** — 0 CRITICAL, 0 HIGH, 8 MEDIUM (severities as recorded after verification; `CHART-6` opened 2026-09-30).
 
 > Figures marked **measured** are program output: the pure chart logic was
 > executed with adversarial inputs, and real `.docx` bytes were generated and
@@ -14,7 +14,7 @@ Degenerate chart inputs, and the document you hand to a vendor.
 ## CHART-1 · The S-curve has no lower bound on its scale, so negative values draw outside the canvas
 
 - **Severity:** MEDIUM
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Verification:** CONFIRMED (measured)
 - **Blast radius:** correctness
 - **Locations:**
@@ -48,6 +48,16 @@ case, and let it go negative when the data does — then project across
 - A series containing negative values renders entirely inside the viewBox.
 - A zero baseline is drawn when any value is negative.
 - A test asserts every projected `y` falls within the viewBox for a negative-value fixture.
+
+**Resolution (2026-09-30, projects Round G).** Joint J5 CHARTS. `components/ui/ChartKit.tsx` `sCurveScale()` (:58) builds the S-curve's domain from `min(0, data)` and `max(1, data, budget)`, widened to clean tick values (1 / 2 / 2.5 / 5 × 10ⁿ, about four intervals), and `py` projects across `[lo, hi]` — so a cumulative line that a credit takes below zero, or a lone negative adjustment on a zero budget, draws inside the plot. A zero baseline (`data-mark="zero"`) is drawn whenever `lo < 0`; the spent area closes on it. Reproduced at the base commit: `const max = Math.max(1, …)` and `py = PAD_T + (1 − v / max) · 184`, no `min` term.
+- Tests: `lib/__tests__/chartKit.test.ts` — "the audit's measured rows render entirely inside the viewBox, with a zero line" (both measured rows: $200k budget with a −$40k credit then +$150k, and budget 0 with one −$5,000 adjustment; every path vertex, circle, rect and line y lies in [0, 220], and the −$5,000 line sits inside the plot band), "a scale with nothing below zero keeps its zero floor and draws no zero line", "the domain includes negative values and clean ticks that bracket them". All three failed at the base (no `sCurveScale`, no zero line).
+
+**Done-when.**
+1. ✓ A series containing negative values renders entirely inside the viewBox.
+2. ✓ A zero baseline is drawn when any value is negative.
+3. ✓ A test asserts every projected `y` falls within the viewBox for a negative-value fixture.
+
+**Scope / residual.** None. The per-point `<title>` and legend figures were already right and are unchanged.
 
 ---
 
@@ -90,12 +100,25 @@ the brand accent for one of two adjacent series in the same chart.
 - Both colours come from the validated categorical scale.
 - Contrast between the marks clears 3:1 in both themes.
 
+**Partial (2026-09-30, projects Round G).** Joint J5 CHARTS; decision `DEC-55` rule 1, which this package proposed and the owner has not yet ratified (see done-when 3). The code is complete. `components/ui/ChartKit.tsx`: Spent is `vizCat(0)` (`--viz-cat-1`) and Committed `vizCat(1)` (`--viz-cat-2`) — both from the validated categorical scale; the white-label `--color-accent` no longer draws either series (`SPENT` / `COMMITTED`, :34-35). Shape carries identity as well as hue: Spent is a solid 2.5px line with a 10% area wash and a round end marker (r 4, 2px surface ring); Committed is a dash-dot line (`8 3 2 3`) with a square end marker; Planned keeps its even `5 4` dash. The legend keys are drawn with each series' own stroke, dash and marker (`LegendKey`), so the legend repeats the shape, not just a colour swatch.
+- Palette check (the dataviz six-checks validator, run on the pair): light `#2563eb` / `#b45309` on `#ffffff` — lightness band, chroma floor, CVD separation ΔE 31.3 (protan; tritan 27.3), normal-vision ΔE 34.6 and ≥ 3:1 against the surface all PASS; dark `#3b82f6` / `#d97706` on `#111827` — ΔE 30.2 (tritan 28.7), normal-vision 34.2, all PASS (ΔE is OKLab × 100).
+- Found while fixing (same palette line, `components/dashboard/viz.tsx:11`): `vizCat` assembled the variable name at runtime (`var(--viz-cat-` + slot + `)`), and Tailwind v4 emits a theme variable only when a source file names it literally. `app/globals.css` was compiled through `@tailwindcss/postcss` 4.1.17 over the whole tree. At the base, the LIGHT values of slots 3–6 are absent: only their `.dark` values are emitted. Slots 1 and 2 survive only because an audit report quotes their names, and the local `.next` build of the base shows the same. So a light-theme Donut or SegmentBar painted slots 3–6 with an undefined colour. `vizCat` now reads a literal six-entry table (`VIZ_CAT`, clamped, never cycled; the fourth review fix pass maps NaN to the first slot, where it had returned undefined). The same compile on this branch emits all six light values.
+- Tests: `lib/__tests__/chartKit.test.ts` — "both hues are categorical slots 1 and 2, never the white-label accent; the lines and markers differ in shape" (strokes, dash patterns, circle vs square markers, the legend keys), "the two slots clear 3:1 against their own surface in both themes (the palette's validated steps)" (read from `app/globals.css`), "every categorical slot is spelled literally, so the stylesheet build emits its light value". Failed at the base (Spent was `var(--color-accent)`, no dash on Committed, `vizCat(-1)` gave `var(--viz-cat-0)`).
+- Second review fix pass: the Costs tab's own bars now wear the same pair, so a series keeps its colour across the tab. The Budget burn bar drew Spent with the brand gradient and Committed as `--color-accent` at 25%, so the orange bar above the chart read as Spent while the amber dash-dot line in it is Committed. `components/projects/CostsTab.tsx` now draws the burn bar's Spent in `vizCat(0)` and its Committed ghost in `vizCat(1)` at 40% opacity, and each account row's Spent bar in `vizCat(0)`. Over budget, both Spent bars still turn rose. Tests: `lib/__tests__/costsTabFirstLoad.test.ts` "the budget burn bar and each account's bar draw Spent in slot 1 and Committed in slot 2 — never the brand accent or gradient" (it also checks the S-curve below uses the same two slots) and "over budget, Spent turns rose on both bars (the alarm wins over the series colour)". Both failed on the previous head (`b2eddd9`).
+
+**Done-when.**
+1. ✓ The two series differ by shape as well as hue.
+2. ✓ Both colours come from the validated categorical scale.
+3. ✗ Not met as worded. `DEC-55` rule 1 proposes to replace it, and **that change to an audit done-when awaits the owner's ratification**. The two validated steps are 1.03:1 (light) and 1.15:1 (dark) in luminance against each other. A categorical palette is validated inside one lightness band so that no series out-shouts another, and no pair within the palette's validated lightness band is 3:1 apart. Outside the band such a pair does exist: on white, an amber near luminance 0.28 and a navy near 0.045 clear 3:1 against each other and against the surface. One of those lines then out-shouts the other, which is exactly what the band prevents. What the criterion was protecting is met by other means. Identity no longer rests on colour: the lines and markers differ in shape and the legend names each series. The hues themselves are far apart: ΔE 34.6 for normal vision and ΔE ≥ 30 under simulated colour-vision deficiency. Each mark clears 3:1 against its own surface in both themes.
+
+**Scope / residual.** OPEN for done-when 3 only. If the owner ratifies `DEC-55` rule 1, the integrator flips the Status to RESOLVED with no code change. If the owner keeps the 3:1 criterion, the fix is a pair from outside the validated band, which needs the palette re-validated; this package does not make that change. The planned line's `--color-text-faint` stroke is 2.6:1 on white. It is unchanged: the dashed planned line is one of the README's "verified sound" items, and the dash carries its identity. The other `vizCat` consumers (dashboard widgets, Donut, SegmentBar) are unchanged in code. They now receive a defined light-theme colour for slots 3–6. **Pointer for the Costs tab's owner:** the stat strip's icon chips (`StatCard` tones: Committed `sky`, Spent `violet`) are decoration beside a text label, not series marks, and are unchanged. If the tiles are ever to carry series colour, they take slots 1 and 2 as above.
+
 ---
 
 ## CHART-3 · The planned crew curve is mathematically incapable of varying
 
 - **Severity:** MEDIUM
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Verification:** CONFIRMED (measured)
 - **Blast radius:** correctness / decision-quality
 - **Locations:**
@@ -134,12 +157,21 @@ feature the label promises.
 - Either the flat curve is replaced by a stat, or the distribution reflects the schedule.
 - A tiny-hours input does not render a row of zero-height stubs.
 
+**Resolution (2026-09-30, projects Round G).** Joint J5 CHARTS; option 1 (make it honest), `DEC-55` rule 2 — the brief's default. `lib/costSeries.ts` `plannedCrewAverage()` (:238) replaces `plannedManpowerSeries`: it returns the ONE number the input holds — `laborHours ÷ weeks ÷ 40` over the schedule span (fractional weeks, so a partial last week counts as part) — with the days and weeks it used, or null when there is nothing to average. No variation is invented. `components/projects/cost/CostCharts.tsx` `CrewStat` renders it as a stat titled "Planned average crew (from the awarded bid's hours)": "≈ 3.9 people" and the inputs ("1,980 labor hours over 90 days (12.9 weeks) ÷ 40 hours per person-week. The bid states hours, not when they are worked, so this is an average across the schedule — not a crew curve."). Below 0.05 it reads "Under 0.1 people". The glossary gains a "Planned average crew" entry. The crew figure takes the same schedule span as the S-curve and the forecast (`MON-2`).
+- Tests: `lib/__tests__/projectControls.test.ts` "CHART-3: the planned crew is one average at 40h per person-week — no invented curve" (800 h over 4 weeks → 5; the audit's 1,980 h over 90 days → 3.85; 40 h over a year → a small positive number, not zero; empty inputs → null); `lib/__tests__/costChartsRender.test.ts` "renders the average and its inputs as text — no bars, no 'Daily activity'" and "tiny hours read as a small number, never a row of zero stubs". Reproduced at the base: `perWeek = laborHours / weeks` inside the loop gave thirteen identical 3.8 bars.
+
+**Done-when.**
+1. ✓ The flat curve is replaced by a stat.
+2. ✓ A tiny-hours input does not render a row of zero-height stubs ("Under 0.1 people").
+
+**Scope / residual.** Option 2 (a crew curve shaped by the schedule) stays a feature for when the schedule carries resource loading. A bid's line-item hours alone cannot place hours in weeks.
+
 ---
 
 ## CHART-4 · The one hardcoded colour in the chart kit fails contrast in light mode, and it is applied to text
 
 - **Severity:** MEDIUM
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Verification:** CONFIRMED (measured contrast)
 - **Blast radius:** accessibility
 - **Locations:**
@@ -174,12 +206,22 @@ in the dial arc instead — which is where colour belongs.
 - The band label clears AA in both themes.
 - The four consumers render correctly in both themes.
 
+**Resolution (2026-09-30, projects Round G).** Joint J5 CHARTS; `DEC-55` rule 5. `components/ui/ChartKit.tsx` `scoreBandColor()` (:395) returns theme tokens only — the 50–69 "watch" band is `var(--state-held)` instead of the literal `#d97706`. `app/globals.css`: `--state-held` (:49, used nowhere else in the app) is amber-700 `#b45309` on light (5.02:1 on white, 4.80 on `--color-surface-2`, 4.58 on the canvas). The `.dark` block gains its own step, amber-600 `#d97706` (:121; 5.57:1 on `#111827`). So the band colour reads as TEXT in both themes, not only as an arc. `ScoreDial`'s band word now wears a text token (`text-[var(--color-text-muted)]`, 4.76:1 light / 6.92:1 dark), and the arc carries the band's colour — the house rule "text wears text tokens, never series colour".
+- Tests: `lib/__tests__/chartKit.test.ts` — "ChartKit.tsx carries no hex colour and every band resolves to a theme token", "--state-held clears 4.5:1 as text on every light surface and on the dark one" (contrast computed from the values in `app/globals.css`), "the dial's band word wears a text token; the arc carries the band colour". All three failed at the base.
+
+**Done-when.**
+1. ✓ No literal hex remains in `ChartKit.tsx`.
+2. ✓ The band label clears AA in both themes (a text token).
+3. Partly. ✓ in the 50–69 band this finding measured. The three `ScoreDial` call sites (`ProjectCoach.tsx`, `companies/page.tsx`, `companies/[id]/page.tsx`) render the word in a text token and the arc in the band token. The two sites that paint `scoreBandColor` as text, `ProjectCoach.tsx:85` and `companies/[id]/page.tsx:285`, now get 5.0:1 / 5.6:1 in the 50–69 band. The bar fills are unaffected. ✗ in the 70–84 band at those two text sites: they paint the white-label `--color-accent` as text, 3.6:1 on white in the default theme, under the 4.5:1 an 11px label needs ("78 · Good"). That remainder is not this finding's defect (the literal hex), and the two files belong to other packages.
+
+**Scope / residual.** The status is RESOLVED because the literal-hex defect is closed and the consumer contrast that remains, done-when 3's 70–84 case, is carried in full by **`CHART-6`** (OPEN, opened below, with its own row in the progress table). Done-when 3 is not met until `CHART-6` is resolved.
+
 ---
 
 ## CHART-5 · The today marker is unlabeled, has no legend entry, and can be four weeks off
 
 - **Severity:** MEDIUM
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Verification:** CONFIRMED (measured)
 - **Blast radius:** ux / correctness
 - **Locations:**
@@ -209,6 +251,41 @@ regardless of whether a schedule span exists.
 - The today marker sits at today's true position.
 - It is labelled and appears in the legend.
 - Gridlines carry values and a budget line is drawn when a budget exists.
+
+**Resolution (2026-09-30, projects Round G).** Joint J5 CHARTS. `components/ui/ChartKit.tsx`: the S-curve's samples are evenly spaced in time from the first point's date to the last, so `sCurveTodayX()` (:78) interpolates today's x on that same axis. It no longer snaps to the first sample on or after today, which on a three-year job was up to 28 days off. The marker is drawn whenever today is inside the span, including on the first sample; the old `todayIdx > 0` suppressed that case. It is a solid `--color-text-muted` hairline, no longer the planned line's faint dash family. It carries a `<title>` ("Today — Mar 10"), an in-plot "Today" label and a legend entry. Every gridline sits at a clean value and is labelled (compact money from `CostCharts`' `compactMoney`, e.g. "$100K"). A budget reference line (`data-mark="budget"`) is drawn and labelled whenever the budget is above zero, schedule or not. It reads "Revised budget" when approved change orders move it, the same revised figure the planned line and the forecast use (`DEC-50` rule 2). It also appears in the legend and the chart's `aria-label`. In-plot labels are drawn last with a surface halo, so no line crosses them.
+- Review fix pass. With no money in the data at all (a schedule, blank budgets, nothing posted), `sCurveScale()` labels only the zero gridline. The floor of 1 still gives the scale a height, but it no longer shows up as an invented "$1" gridline (`DEC-55`: draw only what the data holds). The Costs tab shows an explanation in that state instead of a flat chart (`REL-11`). Early in the span, the "Today" label no longer sits on the top gridline label's baseline, where the later, haloed "$300K" covered it. `sCurveTodayLabel()` drops the label just inside the plot beside the marker whenever the marker is within 56 units of the left edge, and keeps it centred above the plot otherwise.
+- Second review fix pass. That fixed room was sized for "$300K", but the axis labels come from `Intl` in the viewer's locale. A de-DE viewer sees "3.000 Tsd. $" and a CAD project shows "CA$1.5M", so a longer top label still covered a centred "Today" at x ≈ 64–72. The room is now taken from the label actually drawn on the top gridline: `SCurveChart` passes the drawn top label to `sCurveTodayLabel()`, which sizes it with `sCurveLabelWidth()`. A chart with no money has no label at the top: its only label, $0, sits at the bottom. This pass's estimate (about 0.62 em a glyph, a full em for CJK) and its 2-unit gap proved short; the third pass below replaces both.
+- Third review fix pass. The 0.62-em estimate was not an upper bound for capital-heavy labels: "CA$3M" is 31.7 units and "MX$3M" 33.1 in DejaVu Sans at 9 units (32.3 and 33.7 in Inter), where it gave 28.0 for both. The gap also left out the haloes, and the 14-unit half-width of "Today" was under DejaVu Sans Bold's 15.35. So at the threshold the later, haloed top label could still paint over the start of "Today". `components/ui/ChartKit.tsx` `sCurveLabelWidth()` (:108) is now a per-glyph upper bound: a full em for m, w, M, W, % and @ and for anything from U+0370 on (other scripts, the ₩ and ₹ signs, CJK), 0.8 em for the other capitals and the rest of Latin-1 and Latin Extended (no-break spaces, £, ¥), 0.65 em for digits, lowercase, "$" and punctuation. **Measured** in this pass from the fonts' advance-width tables (read with fontTools; the script is scratch work, not in the repo): against every compact currency label `Intl` writes for 37 locales × 21 currencies (5,259 labels), in Inter (the app's face, `@fontsource/inter` 5.3.0) and in DejaVu Sans, Liberation Sans and FreeSans, the estimate is never below the real advance; the smallest margin is 0.2 units. The test pins the review's two labels and "Today" with those fonts' advance widths. `TODAY_HALF_W` is 16 (Inter Bold "Today" is 27.8 units, DejaVu Sans Bold 30.7). The centred label must clear the top label's end by `TODAY_LABEL_GAP`, 2 units plus both haloes (3), or it drops inside the plot.
+- Tests: `lib/__tests__/chartKit.test.ts` — "the marker is interpolated from today's date, not snapped to the next 28-day sample" (3-year span, 40 samples: x equals the date-interpolated position; the old snap is > 1 unit away; the label, `<title>` and legend entry exist), "today on the first sample is still drawn; outside the span it is not", "every gridline carries its value", "a budget line is drawn and labelled whenever there is a budget — schedule or not", "the verified-sound accessibility is kept: role=img with a value-bearing label, a text legend, a dashed planned line", "a chart with no money in it labels only the zero gridline — never an invented '$1'", "early in the span the Today label drops inside the plot, clear of the top gridline's label", "the room the Today label needs is the top label actually drawn — a long locale label cannot cover it" (second review fix pass; the same marker position is centred beside "$3M" and dropped inside beside "3.000 Tsd. $", and every rendered position either clears the label or sits a line below it, now by the 16-unit half-width and the 5-unit gap), "capital-heavy labels: the estimate is never below the real advance ('CA$3M', 'MX$3M')" and "at the threshold, the real 'Today' clears the real top label and both haloes" (third review fix pass; both carry the Inter and DejaVu Sans advance widths of their glyphs, and at the first marker position that keeps "Today" centred beside "CA$3M", "MX$3M" or "$3M", the real "Today" in either bold face starts past the real label plus both haloes); `lib/__tests__/costChartsRender.test.ts` "the S-curve draws the budget it plans against — the revised budget when a change order is approved". Failed at the base (no `sCurveTodayX`, no budget line, unlabelled gridlines). The two review-fix cases failed on the package's first head (`d226bb3`); the long-label case failed on `b2eddd9`; the two capital-heavy cases failed on `d061f8e`.
+
+**Done-when.**
+1. ✓ The today marker sits at today's true position.
+2. ✓ It is labelled and appears in the legend.
+3. ✓ Gridlines carry values, and a budget line is drawn whenever a budget exists.
+
+**Scope / residual.** The S-curve's `role="img"`, value-bearing label, text legend and dashed planned line — the README's "verified sound" items — are kept and pinned by test. The top label's width is an estimate, not a measurement of the face the viewer's browser renders. It is an upper bound for the four fonts and the 5,259 labels it was checked against. A face wider than those (a user stylesheet, an unusual system fallback) could still exceed it. Measuring the drawn label after mount (`getComputedTextLength()`) would close that, and is not done.
+
+---
+
+## CHART-6 · Two consumers paint the score band's colour as text, and the 70–84 band is the white-label accent
+
+- **Severity:** MEDIUM
+- **Status:** OPEN
+- **Verification:** CONFIRMED (measured contrast)
+- **Blast radius:** accessibility
+- **Locations:**
+  - `components/projects/ProjectCoach.tsx:85` — `style={{ color: scoreBandColor(health.score) }}` on the 11px "score · band" header label
+  - `app/(protected)/companies/[id]/page.tsx:285` — the same on the "NN% coverage" label
+  - `components/ui/ChartKit.tsx` `scoreBandColor` — the 70–84 band returns `var(--color-accent)`
+- **Independently verified:** — (`author`: opened by projects Round G package J5 on 2026-09-30, split from `CHART-4` under `DEC-31`)
+
+**Mechanism.** `scoreBandColor` is a MARK colour — the dial arc, a bar fill. Two consumers also paint it as text. `CHART-4` made the 50–69 band a token that reads as text in both themes. The 70–84 band paints `--color-accent`, the brand token an org can set to anything. The default orange-600 `#ea580c` is 3.56:1 on white, under the 4.5:1 an 11px label needs.
+
+**Failure scenario.** A project scoring 78 shows "78 · Good" in the health header at 3.6:1 in light mode. A white-label org with a pale brand colour pushes it lower.
+
+**Done when.**
+- Neither consumer paints a band colour on text: the figure wears a text token, and the band is carried by a mark beside it (a dot, the arc) or by the band word.
+- A test pins that no consumer passes `scoreBandColor` to a text `color`.
 
 ---
 
@@ -346,10 +423,11 @@ Recorded so a later pass does not mistake them for gaps.
 
 | ID | Severity | Status |
 |---|---|---|
-| CHART-1 | HIGH | OPEN |
-| CHART-2 | HIGH | OPEN |
-| CHART-3 | HIGH | OPEN |
-| CHART-4 | MEDIUM | OPEN |
-| CHART-5 | MEDIUM | OPEN |
-| RFQ-1 | HIGH | RESOLVED |
+| CHART-1 | MEDIUM | RESOLVED |
+| CHART-2 | MEDIUM | OPEN |
+| CHART-3 | MEDIUM | RESOLVED |
+| CHART-4 | MEDIUM | RESOLVED |
+| CHART-5 | MEDIUM | RESOLVED |
+| CHART-6 | MEDIUM | OPEN |
+| RFQ-1 | MEDIUM | RESOLVED |
 | RFQ-2 | MEDIUM | RESOLVED |

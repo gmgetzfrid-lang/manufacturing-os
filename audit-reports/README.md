@@ -369,7 +369,7 @@ was deliberately cut are stated in each spec.
 
 | Area | Scope | Findings | Gaps | Index |
 |---|---|---|---|---|
-| **Projects tab** | The Projects tabs + the Project Controls program merged in PR #181 (`6a14d7d`) | 136 | 10 | [`projects-tab/`](./projects-tab/README.md) |
+| **Projects tab** | The Projects tabs + the Project Controls program merged in PR #181 (`6a14d7d`) | 137 | 10 | [`projects-tab/`](./projects-tab/README.md) |
 | **Roles & permissions** | The whole authority model: roles, additive roles, capability policy, content ACL, ownership & publish, the drafting workflow, document lifecycle, delegation & teams, non-document surfaces, content egress, and the database functions underneath | 124 | 15 | [`roles-and-permissions/`](./roles-and-permissions/README.md) |
 | **Document control** | Checkout & the lock, revisions & publish, the review gate & e-signatures, holds, distribution & acknowledgment, transmittals, packages, retention & archive, content egress, and the RLS underneath | 148 | — | [`document-control/`](./document-control/README.md) |
 | **Projects & cost** | The project model and server behaviour beneath the tabs, scheduling & critical path, the quality program, cost & bid tabulation, and the external contractor door | 71 | — | [`projects-and-cost/`](./projects-and-cost/README.md) |
