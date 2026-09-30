@@ -264,7 +264,7 @@ arguments the approve path passes.
 - [x] Subscribers and intent holders are notified — ✓ (`notifySuperseded`).
 - [x] A test asserts the side-effect runner is invoked on the auto path — ✓.
 
-**Scope / residual.** None in this finding. The census in `lib/__tests__/intakeUploadRoute.test.ts` fails the build for a new unpiped writer of `current_version_id` — per call site after the J1 review's fix pass (TypeScript's parser; inline, shorthand, spread and prebuilt patches; the pipeline must run in the same function), with four pinned exemptions, each with its reason (three first-version seeds, two of them document-control P3's to convert, and revUp's legacy leg, whose caller runs the pipeline — checked).
+**Scope / residual.** None in this finding. The census in `lib/__tests__/intakeUploadRoute.test.ts` fails the build for a new unpiped writer of `current_version_id` — per call site after the J1 review's fix pass (TypeScript's parser; inline, shorthand, spread and prebuilt patches; the pipeline must run in the same function), with four pinned exemptions, each with its reason (three first-version seeds, two of them document-control P3's to convert, and revUp's legacy leg, whose caller runs the pipeline — checked). J1 second review: the census also sees RPC writers — every `rpc("publish_revision")` call and every call of its pinned wrapper `callPublishRevisionRpc` (the door's `publishThroughContract` pinned via `POST`) — and only a real CALL of the pipeline in the syntax tree satisfies it, never a comment or a string naming it (projects-and-cost `INTK-2` fix pass 2). The pipeline runs on a request-scoped service-role binding (`lib/serverClientScope.ts`).
 
 ---
 
@@ -505,11 +505,11 @@ reviewers, and preserve any signatures. Add a maintenance query that surfaces
 **Resolution (2026-09-30, projects Round G).** Worked as projects-and-cost `INTK-4` (J1), on top of document-control `RG-10` (RESOLVED — a draft carrying a roster can never be displaced; `IntakePanel` reject voids a draft's sign-offs). A displaced submission is now RESOLVED: `review_state = 'superseded'` + `superseded_at` + an `INTAKE_SUBMISSION_DISPLACED` audit row, and the project team's notice says the earlier submission was replaced (never folded into a burst). Displacement happens only on the review path — a trusted link whose own submission is still in review never auto-publishes (`INTK-1`'s fix pass), so its new upload replaces the draft IN REVIEW. Migration `20261105` admits the state and keeps it out of the revert-target gate; `orphaned_in_review_versions_count()` is reported by the maintenance cron (step 4c) and by the migration's inventory. Fix pass (J1 review): the door's own lost pointer race now resolves its new version 'superseded' (it had stayed 'in_review' with only `superseded_at` — unreferenced); `20261105` converts intake rows retired that older way to 'superseded'; the health signal counts only in-review rows nothing points at AND nothing withdrew, so it is not permanently red, and the cron line names a remedy a document controller can run. Tests — `lib/__tests__/intakeUploadRoute.test.ts` "a trusted link with its own submission still in review does NOT auto-publish: the upload replaces it IN REVIEW — CAS on that draft, 'superseded', an audit row, a forced notice", "the door's own lost pointer race RESOLVES the new version ('superseded')…"; `lib/__tests__/intakeDoorMigration.test.ts` "intake rows retired the older way are RESOLVED at apply; the health signal counts only rows nothing withdrew".
 
 **Done-when.**
-- [x] Clearing `pending_version_id` never leaves an unreferenced `in_review` row — ✓ (asserted on displacement; the lost-race withdrawal too after the fix pass).
+- [x] Clearing `pending_version_id` never leaves an unreferenced `in_review` row — ✓ **on the intake paths** (asserted on displacement; the lost-race withdrawal too after the fix pass; J1 second review: the displaced draft is retired before its replacement exists, checked, and a failed replacement restores it — projects-and-cost `INTK-4` fix pass 2). NOT across the codebase: `lib/revisions.ts` `revUpDocument`'s resubmit (`update({ superseded_at })` on the prior draft, ~:637) and `lib/reviewControl.ts` `withdrawStrandedSubmission` (~:327-333) still leave a row 'in_review' with `superseded_at` stamped after `20261105`'s one-shot conversion (which converts intake rows only). Those writers are document-control P3's; the health signal does not count them (nothing points at them, but something withdrew them), so they are resolved-in-fact but mis-stated in `review_state`.
 - [x] Reviewers of an abandoned draft are told it was superseded — ✓: a displaceable draft has no roster (RG-10 refuses otherwise), so its reviewers are the review queue's audience — the controllers and the project owner — and they are told.
 - [x] A health check reports orphaned in-review versions — ✓ (the cron's `orphanedInReviewVersions` and a `review-health` error line when non-zero — rows nothing withdrew, with a remedy a controller can act on).
 
-**Scope / residual.** Pending migration: `20261105`. Existing true orphans (in review, nothing withdrew, no pointer) are counted, not auto-voided — which submission is live is a person's call; intake rows already retired by `superseded_at` are converted. No screen lists a version nothing points at; the cron line names the SQL function a controller runs.
+**Scope / residual.** Pending migration: `20261105`. Existing true orphans (in review, nothing withdrew, no pointer) are counted, not auto-voided — which submission is live is a person's call; intake rows already retired by `superseded_at` are converted. No screen lists a version nothing points at; the cron line names the SQL function a controller runs, and (J1 second review) a displaced intake draft the door could not restore after a failed replacement (`INTAKE_DISPLACE_UNRESOLVED`, last 25 hours). Handed to document-control P3: `revUpDocument`'s resubmit and `withdrawStrandedSubmission` should set `review_state = 'superseded'` with `superseded_at` (the state `20261105` adds).
 
 ---
 
@@ -550,7 +550,7 @@ rather than by inference.
 - [x] A rejected submission does not appear in the transition-in list — ✓.
 - [x] An un-reviewed submission appears clearly marked and blocked from adoption — ✓.
 
-**Scope / residual.** None (a terminal "rejected" document status was not introduced — exclusion is by the latest submission's state).
+**Scope / residual.** None (a terminal "rejected" document status was not introduced — exclusion is by the latest submission's state). J1 second review: the exclusion is for a sheet NEVER approved whose latest submission was rejected; a sheet with an approved revision whose newer proposal was rejected stays adoptable at its approved revision (it was stranded before — projects-and-cost `INTK-3` fix pass 2).
 
 ---
 
@@ -598,7 +598,7 @@ the exact "two sources of truth" the module header declares impossible.
 - [x] The renumber value is uniqueness-checked at write time — ✓ (the re-scan, then the key the index enforces).
 - [x] A test covers the collision path — ✓.
 
-**Scope / residual.** Pending migration: `20261105` backfills keys for existing numbered rows (skipping live collisions, which it counts).
+**Scope / residual.** Pending migration: `20261105` backfills keys for existing numbered rows (skipping live collisions, which it counts). J1 second review: a collision is judged by the DESTINATION library's tuple — where the number alone is the key, as above; in a multi-sheet library (`["documentNumber","sheet"]`) a shared number is expected and the full key decides, and a sheet with no sheet value is adopted unkeyed with a note (the key was a partial `'p-100::'` that refused sheet 2 — projects-and-cost `INTK-5` fix pass 2).
 
 ---
 

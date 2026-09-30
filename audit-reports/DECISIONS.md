@@ -2382,30 +2382,41 @@ narrow privilege, both enforced where the write happens:**
    creator's current publish authority and the document's review policy (the
    SQL twin of the container-chain resolver — a `require` policy is never
    auto-published). Then the full post-publish pipeline, run server-side with
-   the shared client bound to the service role and every signal settled
+   the shared client bound to the service role FOR THAT REQUEST ONLY
+   (`lib/serverClientScope.ts`, AsyncLocalStorage) and every signal settled
    (`runPostPublishSideEffects({ …, settle: true })`). A refusal DEMOTES the
    upload to review (OWN-4); it never discards the file.
 3. **A displaced submission is resolved, not orphaned**: only a trusted link,
    only its OWN roster-free earlier submission on its own document, and only
    on the review path (the replacement is itself reviewed); the displaced
-   version becomes `review_state = 'superseded'` with an audit row and a
-   notice, and is never a revert target. A submission the door WITHDRAWS (a
-   lost pointer race) is resolved the same way. The health signal counts only
-   in-review rows nothing points at and nothing withdrew.
+   version becomes `review_state = 'superseded'` — BEFORE the replacement is
+   inserted (so a corrected resubmission may reuse its revision label),
+   compare-and-set on a still-undecided draft, checked — with an audit row
+   and a notice once the replacement lands, and is never a revert target. A
+   replacement that fails restores the displaced draft; a restore that cannot
+   land is audited `INTAKE_DISPLACE_UNRESOLVED` and surfaced by the cron. A
+   submission the door WITHDRAWS (a lost pointer race) is resolved the same
+   way. The health signal counts only in-review rows nothing points at and
+   nothing withdrew.
 4. **What the door admits**: the token travels in a header (or the query
    string) and is checked — format, rate window, existence, revocation,
-   expiry, the link's budget, the declared size — before the body is read.
-   30 uploads per token and 60 per IP per hour (environment-configurable),
-   FAIL OPEN on a limiter error; one team notice per link per 15 minutes
-   (a revision published without review is always told; a folded notice is
-   counted into the next one); a per-link lifetime cap of 500 submissions
+   expiry, the project's existence and status, the declared size, the link's
+   budget — before the body is read. A link the database does not hold is
+   answered "no longer valid — withdrawn or mistyped" (a deleted project's
+   links are deleted, item 7). 30 uploads per token and 60 per IP per hour
+   (environment-configurable), FAIL OPEN on a limiter error; one team notice
+   per link per 15 minutes — a revision published without review or a
+   replaced submission does not wait for the window, but a window holds at
+   most THREE notices of any kind; every folded submission is counted, by
+   kind, into the next notice; a per-link lifetime cap of 500 submissions
    and 5 GB. Links expire: 14 days by default, 90 at most (the database CHECK
    allows 92 days: an end-of-day LOCAL expiry picked from a UTC date lands up
    to ~91.5 days out west of UTC). A retry of the same bytes answers with the
    LIVE original of the same record — never a withdrawn row, never another
    document's. The bytes decide the type: quotes PDF only;
-   drawings and redlines PDF, DWG, DXF or ZIP, by magic number, extension and
-   a plausible declared type; the stored Content-Type is the sniffed one.
+   drawings PDF, DWG, DXF or ZIP; redlines those plus PNG and JPEG (a photo or
+   scan of a marked-up print) — by magic number, extension and a plausible
+   declared type; the stored Content-Type is the sniffed one.
    Title ≤ 200, number ≤ 64, revision label a label. Portal errors are a
    sentence and a reference id — database text stays in the log.
 5. **Assigning a controlled document to a contractor is a publish-grade act**:
@@ -2413,10 +2424,14 @@ narrow privilege, both enforced where the write happens:**
    authority on its library AND be able to open the document
    (`doc_is_visible` — publish authority is not read access), controllers
    exempt (a trigger, not a policy).
-6. **Transition-in**: a rejected sheet is not a candidate; an unapproved one
-   is shown and blocked; a sheet whose checks could not run is
-   "unverifiable" — never clean, never bulk-adopted; adoption re-checks at the
-   click and is offered to the controller tier only (the move guard's tier).
+6. **Transition-in**: a never-approved sheet whose latest submission was
+   rejected is not a candidate (an APPROVED sheet whose newer proposal was
+   rejected is adopted at its approved revision); an unapproved one is shown
+   and blocked; a sheet whose checks could not run is "unverifiable" — never
+   clean, never bulk-adopted; adoption re-checks at the click and is offered
+   to the controller tier only (the move guard's tier). A same-numbered live
+   document is a collision where the number is the destination library's
+   key; in a multi-part library (a sheet set) the full key decides.
 7. **A deleted project closes its doors** — a trigger on `projects` deletes
    the project's links on every delete path. Not a foreign key: the org
    restore loads tables in `RESTORE_TABLE_ORDER` and fails a chunk on a
@@ -2431,17 +2446,27 @@ narrow privilege, both enforced where the write happens:**
    link's company names (`matchCompanyByName` — exact, else the one party it
    normalises to; ambiguity binds nothing); a document the door creates is
    referenced from the project (`project_documents`, `DEC-40`), never copied.
+9. **A uniqueness key is written only when it is complete.** A library's
+   tuple can name a field the door never collects (`["documentNumber",
+   "sheet"]` — a sheet set shares one number). The door, adoption and the
+   `20261105` backfill write the key `lib/uniqueness.ts` computes only when
+   EVERY part is supplied and filled (`completeUniquenessKey`); otherwise the
+   key is NULL — the column's documented opt-out — and the sheet enters the
+   unique index when its missing part is set. A partial key would make sheet
+   2 collide with sheet 1.
 
-**Deploy constraint.** The door runs the post-publish pipeline, `emit` and
-`listLiveIntents` — written against the shared `supabase` client — by binding
-that module-level client to the service role for the call
-(`__setServerSupabaseClient`, reference-counted, always reset; the maintenance
-cron's pattern). That is safe only where each route runs in its own module
-instance (one serverless function per route — the model `lib/supabase.ts`
-assumes). A deploy that shares lib modules across routes in one long-lived
-process (`next start`, grouped functions) must first thread an explicit
-client through those three entry points; until then, any other route using
-the shared client during the window would run as the service role.
+**Binding the shared client (corrected in the second review).** The door runs
+the post-publish pipeline, `emit` and `listLiveIntents` — written against the
+shared `supabase` client — with that client resolving to the service role for
+the REQUEST only: `runWithServerClient(supabaseAdmin, fn)` stores it in an
+`AsyncLocalStorage` that `lib/supabase.ts`'s proxy reads first. The first
+landing swapped the module-level client (`__setServerSupabaseClient`) and
+recorded "one serverless function per route" as a deploy constraint; that
+premise does not hold on the target platform (routes can share a function,
+and one instance serves concurrent requests), so any other request in the
+instance could have run as the service role during an upload. There is no
+deploy constraint now. (The maintenance cron's own module-wide swap for the
+compliance scans is unchanged and not this decision's.)
 
 > Made during projects Round G (2026-09-30), package J1 INTAKE-DOOR. Closed:
 > projects-and-cost `INTK-1`, `INTK-2`, `INTK-3`, `INTK-4`, `INTK-5`, `INTK-7`,
@@ -2474,9 +2499,12 @@ review; a trusted link's revision of its own approved document publishes
 through `publish_revision` and a fresh acknowledgment roster opens; reject F
 → submit G → resend F lands in review; an HTML file named `.pdf` is refused
 before storage; the 31st upload in an hour is a 429; a retry returns the
-original record; a gone project's link opens nothing (`lib/__tests__/intakeUploadRoute.test.ts`,
+original record; a gone project's link opens nothing; two same-numbered sheets
+into a multi-sheet library are both taken and both adopted; a concurrent
+request never sees the upload's service-role client (`lib/__tests__/intakeUploadRoute.test.ts`,
 `lib/__tests__/intakeAutoPublishAcks.test.ts`,
-`lib/__tests__/intakeDoorMigration.test.ts`).
+`lib/__tests__/intakeDoorMigration.test.ts`, `lib/__tests__/transitionIn.test.ts`,
+`lib/__tests__/serverClientScope.test.ts`).
 
 **Reversal.** Per item, in configuration where it is one (the limits, the
 allowlist); the authorship rule and the contract-only promote are structural.

@@ -10,14 +10,16 @@
 // Callers: revUpDocument (direct publish), revertToVersion,
 // finalizeReviewedRevision (review-approved promote), and the external
 // intake door's trusted auto-publish (app/api/intake/upload/route.ts —
-// INTK-2 / SAF-5, which runs it server-side under the service role with
+// INTK-2 / SAF-5, which runs it server-side with the shared client bound to
+// the service role for that request only — lib/serverClientScope.ts — and
 // `settle: true`). Everything here is best-effort — the publish already
 // committed; signals must never roll it back.
 //
 // Every writer of documents.current_version_id (INTK-2 dw3), and whether it
 // runs this pipeline — lib/__tests__/intakeUploadRoute.test.ts parses every
-// call site that sets the pointer and fails the build unless the SAME
-// function runs runPostPublishSideEffects or is pinned there, by
+// call site that sets the pointer (a table write, or a call of
+// rpc("publish_revision") or its pinned wrapper) and fails the build unless
+// the SAME function CALLS runPostPublishSideEffects or is pinned there, by
 // file:function, with its reason:
 //   * lib/revisions.ts — revertToVersion (runs it); legacyRevUpAfterUpload
 //     (pinned: its caller revUpDocument runs it — checked); the
@@ -26,7 +28,10 @@
 //     supersede)
 //   * lib/reviewControl.ts — finalizeReviewedRevision (runs it)
 //   * app/api/intake/upload/route.ts — trusted auto-publish via
-//     publish_revision (runs it; writes no pointer itself)
+//     publish_revision in publishThroughContract (pinned: POST runs it —
+//     checked); the route writes no pointer itself
+//   * lib/revisions.ts callPublishRevisionRpc — the rpc wrapper (pinned);
+//     its callers revUpDocument and revertToVersion are censused and run it
 //   * lib/documentLifecycle/common.ts createNewDocWithFirstVersion (split/
 //     merge targets) and app/(protected)/documents/[libraryId]/page.tsx
 //     uploadOne (bulk upload of new documents) — first-version writers,
@@ -101,9 +106,9 @@ export interface PostPublishInput {
   skipComplianceClocks?: boolean;
   /** Await EVERY side effect before returning (default: the signals are
    *  fired and forgotten, only the compliance clocks are awaited). A
-   *  server route that swaps the shared client for the service role around
-   *  this call (the intake door) sets it, so no signal outlives the swap
-   *  and silently runs as anon. */
+   *  server route that binds the shared client to the service role around
+   *  this call (the intake door) sets it, so every signal completes before
+   *  the route answers. */
   settle?: boolean;
 }
 

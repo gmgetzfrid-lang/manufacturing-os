@@ -236,7 +236,7 @@ hold is silently ignored.
 - [x] …against a document checked out by someone else — ✓.
 - [x] The refusal reaches the portal as a readable message, not a 500 — ✓.
 
-**Scope / residual.** The route still runs as the service role, so `enforce_document_publish_guard` returns early on it; the guards the contract does not carry (per-library authority, review completion) are evaluated by the route (the creator's authority, the review policy). Replacing the service role with a constrained identity is `GAP-401`'s build, which runs on this tree.
+**Scope / residual.** The route still runs as the service role, so `enforce_document_publish_guard` returns early on it; the guards the contract does not carry (per-library authority, review completion) are evaluated by the route (the creator's authority, the review policy). Replacing the service role with a constrained identity is `GAP-401`'s build, which runs on this tree. DEPENDENCY (J1 second review): the review-policy rail calls `review_control_mode_for`, which document-control Round F's `20261070` creates — until it is applied, the call errors and every trusted auto-publish DEMOTES ("the library's review policy could not be verified"; fail closed). The shared client the post-publish pipeline runs on is bound to the service role per request (`lib/serverClientScope.ts` — projects-and-cost `INTK-2` fix pass 2), never module-wide.
 
 ---
 
@@ -283,7 +283,7 @@ forwarded email, a departed employee, a shared inbox.
 - [x] A `CHECK` rejects an out-of-range expiry — ✓ (pending `20261104`; 92 days, so no in-range local expiry is refused — fix pass).
 - [x] Every surface that displays a link offers Revoke — ✓ (Intake tab; J4's Costs tab).
 
-**Scope / residual.** Pending migration: `supabase/migrations/20261104_prj_roundG_intake_links.sql`. Quote links minted before J4 without an expiry stay until 20261096's backfill runs (its own blocking inventory).
+**Scope / residual.** Pending migration: `supabase/migrations/20261104_prj_roundG_intake_links.sql`. Quote links minted before J4 without an expiry stay until 20261096's backfill runs (its own blocking inventory). FOLLOW-UP for J4 (J1 second review — `QuotesPanel.tsx` is J4's file and was not edited here): the quote-link date input has no `max` and no mapping of the CHECK's refusal, so an expiry picked more than 92 days out fails with the raw Postgres text ("violates check constraint \"project_intake_links_ttl\""). Done-when 1's "both mint forms comply" holds for the DEFAULT expiry only. The fix: `max={localDateInDays(90)}` on the input, validate with `lib/intakeLinks.ts` `intakeExpiryFor` in `create()`, and map a `23514` on `project_intake_links_ttl` to "A link can live at most 90 days".
 
 ---
 
@@ -406,9 +406,11 @@ window produce one digest rather than N emails.
 
 **Resolution (2026-09-30, projects Round G).** Worked as projects-and-cost `INTK-8` / `INTK-10` (J1). New `lib/intakeRateLimit.ts`: a durable per-token (stored hashed) and per-IP hourly window in `intake_attempts` (migration `20261105`), checked before the link lookup and the body; 429 with `Retry-After` and a sentence the portal renders; FAIL OPEN on a limiter error (`GAP-401` acceptance 4); a per-link lifetime cap and byte budget (`20261104`). The project team hears at most ONE submission notice per link per 15-minute window (a displaced review is always told), through `emit()`. Fix pass (J1 review): a revision a trusted link PUBLISHED is always told (never folded); a folded notice is counted and the next one says how many more submissions arrived (`INTK-10`'s fix pass). Tests — `lib/__tests__/intakeUploadRoute.test.ts` "429 once the per-token hourly window is full", "the per-IP window counts every token from one address", "the limiter FAILS OPEN", "a link that has spent its submission budget answers 429 before the body", "a burst is ONE notice per link per window".
 
+**Fix pass 2 (2026-09-30, projects Round G — J1 second review).** Done-when 2 was ticked without its exception: published notices (forced) and displacement notices (forced whenever a pending draft was replaced) bypassed the window, so a trusted — or leaked trusted — token re-sending its own document up to the per-token cap (30 an hour) sent every controller, the owner and the followers up to 30 notices an hour. Forced notices are now bounded (`lib/intakeRateLimit.ts` `noticeGoesOut`, `FORCED_NOTICES_PER_WINDOW` = 3): an ordinary notice goes only into an empty window; a forced one only while the window holds fewer than three notices of any kind; beyond that it is folded and counted by kind (`suppressed_published`, `suppressed_displaced`), and the next notice names them ("… (2 published without review, 1 replacing an earlier submission in review)"). Tests — `lib/__tests__/intakeUploadRoute.test.ts` "SEC-8 dw2: a burst of trusted publishes is NOT one notice per upload — at most three notices per window; the rest are counted by kind into the next notice"; `lib/__tests__/intakeDoorLibs.test.ts` (the rule and the by-kind count).
+
 **Done-when.**
 - [x] The Nth upload in a window is rejected with a 429 and a readable message — ✓.
-- [x] A burst produces at most one notification per recipient per window — ✓.
+- [x] A burst produces at most one notification per recipient per window — ✓ **with a recorded exception**: a revision published without review, or a submission that replaced one in review, is told without waiting for the window — at most three notices per link per window in all (fix pass 2); every further submission in the window is folded and counted, by kind, into the next notice. (Before fix pass 2 the forced notices were unbounded.)
 - [x] Limits are configurable without a code change — ✓ (`INTAKE_MAX_PER_TOKEN_HOUR`, `INTAKE_MAX_PER_IP_HOUR`, `INTAKE_NOTICE_WINDOW_MIN`; per link, `max_submissions` / `max_total_bytes`).
 
 **Scope / residual.** Pending migrations: `20261104`, `20261105`. Until `20261105` is applied the limiter fails open (the house trade-off) and the per-link cap reads nothing.
@@ -626,9 +628,11 @@ completion. Approval then requires the configured signatures.
 
 **Fix pass (2026-09-30, projects Round G — J1 review).** In a `require` policy that resolves NO reviewer, `openReviewRoster` writes no roster (it tells the owner and Document Control), yet the panel said "was sent to its reviewers — it publishes once they sign off", and every later Approve looped on the same prompt (the guard refuses a roster-less intake promote). The panel now re-reads the roster after opening it and, with no primary slot, says "No reviewer could be resolved for … library — set its reviewers before this submission can be approved."; a roster is judged by its PRIMARY slots (a standby alternate alone reviews nothing). Source pin in `lib/__tests__/intakeUploadRoute.test.ts` "IntakePanel approve: …".
 
+**Fix pass 2 (2026-09-30, projects Round G — J1 second review).** Two gaps on the `require` path. (1) The roster was opened with `contentHash: null`, so reviewers' `document_review_signoffs.content_hash` was NULL for every intake roster — no signature proved which bytes were reviewed (the internal submit path passes the file hash). The panel now reads the pending version's `file_hash` with its MOC reference and passes it as `contentHash`. (2) Approve opened the roster and returned BEFORE the SEC-14 MOC capture; the reviewers then signed on the document's review panel, whose publish (`finalizeReviewedRevision`) the 20261105 guard refused for a drawing-class submission with no MOC reference — and nothing on that panel could add it. The MOC is now captured before either path. The message names where the publish happens ("… it publishes when the last of them signs off on the document's review panel (in the document library), not from this tab."). Source pins in `lib/__tests__/intakeUploadRoute.test.ts` "IntakePanel approve: …" (the class read and the MOC write precede `openReviewRoster`; `contentHash` is the file hash; no `contentHash: null`).
+
 **Done-when.**
 - [x] A submission against a two-reviewer library cannot be published with one approval — ✓ (the panel sends it to the roster; finalize requires completion; the guard refuses a roster-less intake promote — pending `20261105`).
-- [x] The signatures appear in `document_review_signoffs` and on the revision chain — ✓ (the ordinary roster and signing flow on the document's review panel).
+- [x] The signatures appear in `document_review_signoffs` and on the revision chain — ✓ (the ordinary roster and signing flow on the document's review panel); fix pass 2: each sign-off row carries the submission's file hash, and a drawing-class submission reaches the roster with its MOC reference, so the reviewers' final sign-off can publish.
 
 **Scope / residual.** Pending migration: `supabase/migrations/20261105_prj_roundG_intake_review_and_attempts.sql` (apply after document-control Round F's 20261070).
 
@@ -675,7 +679,7 @@ screen so a reviewer can supply it.
 - [x] The intake approve UI captures the MOC reference — ✓.
 - [x] A test covers the service-role path specifically — ✓.
 
-**Scope / residual.** Pending migration: `20261105`. Non-intake drafts finalized through the review path keep the MOC capture RevUpModal / check-in apply (document-control `DCK-1`'s surface) — the guard block is deliberately scoped to external submissions (`DEC-31`).
+**Scope / residual.** Pending migration: `20261105`. Non-intake drafts finalized through the review path keep the MOC capture RevUpModal / check-in apply (document-control `DCK-1`'s surface) — the guard block is deliberately scoped to external submissions (`DEC-31`). J1 second review: the approve UI's capture now runs BEFORE a `require` policy's roster opens as well (it ran only on the direct path, so a roster-reviewed drawing submission reached the review panel with no reference and its final sign-off was refused) — see `SEC-13` fix pass 2.
 
 ---
 

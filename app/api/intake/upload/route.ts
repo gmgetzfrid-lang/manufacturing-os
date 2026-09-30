@@ -30,9 +30,15 @@
 //     SEC-4 / SEC-14). A refused promote DEMOTES the upload to review — the
 //     file is still wanted; only the instant publish is withheld (OWN-4).
 //   * A submission that displaces the link's own pending one resolves it —
-//     review_state 'superseded', an audit row, a notice (INTK-4 / SAF-10).
+//     retired 'superseded' BEFORE the replacement is inserted (restored if
+//     the replacement fails), an audit row, a notice (INTK-4 / SAF-10).
 //   * Notices go through emit() (followers, intent holders, preferences,
-//     dedupe) — one per link per window (INTK-10 / SEC-8 dw2).
+//     dedupe) — one per link per window; a published revision or a replaced
+//     submission does not wait for the window, but a window holds at most
+//     three notices; folded ones are counted, by kind (INTK-10 / SEC-8 dw2).
+//   * A new document's uniqueness key is written only when the door can fill
+//     the library's whole tuple (INTK-5) — a sheet set's shared number is
+//     not a duplicate.
 //   * A retried upload of the same bytes returns the original record —
 //     only a LIVE one: the document still points at it, nothing withdrew
 //     it, and it is the record THIS request would have made (the same
