@@ -94,7 +94,7 @@ bidTab.ts:190-224 — the whole of validateParsedQuote; the only cross-field log
 ## PR-3 · Any active member can publish an instruction pack that is injected into every member's answer prompt
 
 - **Severity:** MEDIUM
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Verification:** CONFIRMED
 - **Locations:** `supabase/migrations/20261016_reasoning_skills.sql:44-49`, `lib/answerSkills.ts:74-98`, `lib/answerSkillsServer.ts:29-48`, `app/api/knowledge/ask/route.ts:1481-1483`, `app/api/orchestrator/route.ts:117-120`, `components/intelligence/SkillStudio.tsx:265-269`
 - **Independently verified:** ✓ **SURVIVES** — second independent adversarial pass. Confirmed. `grep -n "role|Role|Admin|DocCtrl" components/intelligence/SkillStudio.tsx` returns nothing — the 'Share org-wide' button (SkillStudio.tsx:265-269) has no authority check, and lib/answerSkills.ts:74-98 createAnswerSkill validates only that instructions are ≥40 chars. app/api/orchestrator/route.ts:117-120 loads the same block into the tool-driving agent. The only guard is the prose at answerSkillsServer.ts:44-45 ('they never override the citation and safety rules above'), which is an instruction, not a control.
@@ -116,6 +116,17 @@ Migration:45-49 `CREATE POLICY answer_skills_insert ON answer_skills FOR INSERT 
 - [ ] visibility = 'org' requires is_org_controller in both the RLS INSERT/UPDATE policies and the UI
 - [ ] the built-in packs are seeded with created_by NULL from every path, so no member inherits edit rights over them
 - [ ] publishing or editing an org-visible Reasoning Skill writes an audit_logs row naming the author and the pack text
+
+**Resolution (2026-09-30, intelligence Round G).** `20261125` (`DEC-55`): org-wide is the controller tier in RLS, and the Studio offers "Share org-wide" to controllers only. The surviving bug the verifier isolated — the client seeder stamping `created_by: userId` on the six built-ins — is closed on every path: `seedBuiltinAnswerSkills(orgId)` / `seedBuiltinRules(orgId)` write `created_by: null`, are called once per table and only for a controller (the Skill Library / the Connection Skills list), and the two server seeders (`lib/answerSkillsServer.ts`, `lib/linkProposerServer.ts` `loadRules`) write `null` too; the migration releases built-ins a member already owns, and a built-in cannot be inserted with an author or updated to carry one. Every person's create, change or delete of a skill writes an audit row: `skills_audit` (AFTER INSERT OR UPDATE OR DELETE on both tables, SECURITY DEFINER, `search_path` pinned) records `SKILL_CREATED` / `SKILL_UPDATED` / `SKILL_DELETED` with the actor, the author, the skill, the changed fields and their previous values, and the pack text (or patterns) whenever it is written or published. The service role's writes (seeding, restore, the engine switching a skill off) are not recorded as a person's act. Tests: `lib/__tests__/skillsAuthority.test.ts`.
+
+**Pending migration:** `supabase/migrations/20261125_intel_roundG_skills_authority.sql` (DEC-30: the pre-apply inventory — built-ins carrying a member uid, org-wide custom skills whose author is not an active controller, packs without APPLIES WHEN or over 4,000 characters, connection skills over the pattern limits, non-controller members — is captured into a TEMP TABLE before the DDL and printed in the one result set; the probes verify every policy, trigger and pin after apply). Until it is applied, the app half holds (the Studio offers org-wide publishing to controllers only, built-ins are seeded without an author by controllers only, private connection skills do not run) but the database still admits a direct PostgREST write.
+
+**Done-when.**
+1. ✓ `visibility = 'org'` requires `is_org_controller` in the RLS INSERT / UPDATE policies and in the UI.
+2. ✓ Built-ins are seeded with `created_by` NULL from every path.
+3. ✓ Publishing or editing an org-visible reasoning skill writes an audit row naming the actor, the author and the pack text.
+
+**Scope / residual.** None.
 
 ---
 

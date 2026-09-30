@@ -62,7 +62,7 @@ Table by table: who can write what, and which writes carry authority.
 ## IRLS-2 · 'Provable' link auto-apply names a partial index as its conflict target and fails on every run, with the error swallowed into a note
 
 - **Severity:** HIGH
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Verification:** CONFIRMED
 - **Locations:** `supabase/migrations/20260807_link_proposals.sql:110-113`, `lib/linkProposerServer.ts:403-407`, `lib/linkProposalLogic.ts:416-423`, `lib/answerSkills.ts:56-59`
 - **Independently verified:** ✓ **SURVIVES** — second independent adversarial pass. Confirmed: grep over supabase/ shows the partial index is the ONLY unique constraint on that pair (the table's only other key is `id UUID PRIMARY KEY` at 20260806_intelligence_layer.sql:69), so ON CONFLICT with a bare column list cannot be inferred → 42P10 on every autoApply batch, swallowed into notes with autoApplied left at 0. The codebase already knows this failure mode: lib/answerSkills.ts:56-58 says "the unique (org_id, builtin_key) index is PARTIAL, which ON CONFLICT can't infer through the API, so an upsert here fails wholesale." The sibling proposed_links upsert works because proposed_links_pair_idx (20260807:68-69) is not partial.
@@ -83,6 +83,17 @@ lib/linkProposerServer.ts:403-407 — `const { error } = await admin.from("docum
 - [ ] a provable draft that fails to apply falls back into the review queue instead of vanishing
 - [ ] 'Auto-apply skipped' is surfaced as an error on the Find-connections surface, not appended to a notes array
 
+**Resolution (2026-09-30, intelligence Round G).** See `LNK-3`: `20261126` replaces the partial index with the plain `document_related_resources_doc_target_uniq`, and the auto-apply write targets it; when the batch fails each row is inserted alone (23505 = already linked), a row that still fails is queued for a person as a provable proposal instead of vanishing, and the failure is a run ERROR rendered as a red banner on the Find-connections surface. Tests: `lib/__tests__/linkProposalsRoundG.test.ts`.
+
+**Pending migration:** `supabase/migrations/20261126_intel_roundG_link_conflict_targets.sql` (DEC-30: the inventory — `document_related_resources` rows with NULL `target_document_id`, pairs linked both ways, `origin` values outside the declared set, duplicate mention keys, `proposed_links` rows in status `stale` and pending — is captured before the DDL; the plain mention indexes and the VALIDATE of the origin CHECK happen only in the world where nothing violates them, and the final rows say which world was taken).
+
+**Done-when.**
+1. ✓ The partial index is replaced by a full unique index (target NULL rows stay unconstrained, NULLs being distinct).
+2. ✓ A provable draft that fails to apply falls back into the review queue.
+3. ✓ "Auto-apply" failures are errors on the run, surfaced as an error, not a note.
+
+**Scope / residual.** None.
+
 ---
 
 <a id="irls-3"></a>
@@ -90,7 +101,7 @@ lib/linkProposerServer.ts:403-407 — `const { error } = await admin.from("docum
 ## IRLS-3 · Any active member — Requester, Accounting — can publish instructions that ride every colleague's AI answer prompt
 
 - **Severity:** HIGH
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Verification:** CONFIRMED
 - **Locations:** `supabase/migrations/20261016_reasoning_skills.sql:44-49`, `supabase/migrations/20261016_reasoning_skills.sql:51-54`, `lib/answerSkills.ts:73-96`, `lib/answerSkills.ts:100-108`, `lib/answerSkillsServer.ts:28-47`, `lib/roleCapabilities.ts:48-61`
 - **Independently verified:** ✓ **SURVIVES** — second independent adversarial pass. Confirmed. lib/roleCapabilities.ts:59-60 shows Requester and Accounting hold only ["create_requests"], and lib/answerSkills.ts:73-96 createAnswerSkill uses the RLS-bound client with no role gate (its only caller, components/intelligence/SkillStudio.tsx:97, is likewise ungated). Mitigating context, not refuting: the migration header at :9-12 states this authority model as intentional ("any active member may author"), and the assembled block ends with "they never override the citation and safety rules above" — but that is a prompt-level request, not an enforcement boundary.
@@ -113,6 +124,17 @@ lib/linkProposerServer.ts:403-407 — `const { error } = await admin.from("docum
 - [ ] the same rule is applied to link_rules, whose insert policy has the identical shape (20261015_connection_skills.sql:54-59)
 - [ ] the answer UI names which Reasoning Skills shaped a given answer, so an unexpected instruction is visible rather than silent
 
+**Resolution (2026-09-30, intelligence Round G).** `20261125` (`DEC-55`): `answer_skills_insert` requires `visibility = 'private' OR is_org_controller(org_id)` for a custom row, and `answer_skills_update`'s `WITH CHECK` admits a non-controller author only when the row stays private — so neither `createAnswerSkill` nor `setAnswerSkillVisibility(id, 'org')` can publish for a Requester or Accounting member; the client functions are checked writes and say so. `link_rules` has the same predicates. A member asks to share (`share_requested`); a controller approves. Tests: `lib/__tests__/skillsAuthority.test.ts`.
+
+**Pending migration:** `supabase/migrations/20261125_intel_roundG_skills_authority.sql` (DEC-30: the pre-apply inventory — built-ins carrying a member uid, org-wide custom skills whose author is not an active controller, packs without APPLIES WHEN or over 4,000 characters, connection skills over the pattern limits, non-controller members — is captured into a TEMP TABLE before the DDL and printed in the one result set; the probes verify every policy, trigger and pin after apply). Until it is applied, the app half holds (the Studio offers org-wide publishing to controllers only, built-ins are seeded without an author by controllers only, private connection skills do not run) but the database still admits a direct PostgREST write.
+
+**Done-when.**
+1. ✓ `answer_skills_insert` and `answer_skills_update` require `is_org_controller(org_id)` whenever `visibility = 'org'`.
+2. ✓ The same rule on `link_rules`.
+3. Not done here — naming the reasoning skills that shaped an answer changes the ask route and the answer UI, which belong to another package (I-03). Opened as `IRLS-13` (`DEC-31`).
+
+**Scope / residual.** `IRLS-13`.
+
 ---
 
 <a id="irls-4"></a>
@@ -120,7 +142,7 @@ lib/linkProposerServer.ts:403-407 — `const { error } = await admin.from("docum
 ## IRLS-4 · The mention engine's upsert names a conflict target Postgres cannot resolve — entity_mentions has never been written
 
 - **Severity:** HIGH
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Verification:** CONFIRMED
 - **Locations:** `supabase/migrations/20260929_mention_engine.sql:59-60`, `lib/mentionIndexer.ts:136-142`, `lib/answerSkills.ts:56-59`, `lib/answerSkillsServer.ts:68-70`
 - **Independently verified:** ✓ **SURVIVES** — second independent adversarial pass. Confirmed: grep over supabase/ shows entity_mentions_unique_idx is the table's only unique index besides `id UUID PRIMARY KEY`, and `COALESCE(knowledge_document_id, document_id)` cannot be matched by the plain column `knowledge_document_id` in ON CONFLICT → 42P10, which is thrown rather than swallowed (unlike IRLS-2). lib/mentionIndexer.ts:138 is the sole write path in the repo (grep for entity_mentions shows every other TS hit is a SELECT or DELETE, except the generic lib/dataRestore.ts restore list).
@@ -142,6 +164,17 @@ lib/mentionIndexer.ts:136-142 — `const { error } = await supabaseAdmin.from("e
 - [ ] either the index is replaced with a plain unique constraint on (asset_id, knowledge_document_id, page) plus a second one for the document_id branch, or the writer stops using upsert and relies on the existing wholesale delete + plain insert
 - [ ] lib/mentions.ts stops classifying an empty result as "migration hasn't run" — a write failure and an unbuilt index must look different
 - [ ] /api/graph/mentions surfaces the row count it actually wrote, and the graph reports zero mention edges as a problem rather than as an empty map
+
+**Resolution (2026-09-30, intelligence Round G).** `20261126` replaces the COALESCE expression key with two indexes of the same meaning: a PLAIN unique `entity_mentions_kdoc_page_uniq (asset_id, knowledge_document_id, page)` — the indexer's conflict target — and `entity_mentions_doc_page_uniq (asset_id, document_id, page)` over the rows that have no knowledge document (one controlled document can be mirrored in several libraries, `20260919`, so the document branch cannot bind rows that carry a knowledge document). They are built only when no key is duplicated (the inventory proves the expression index made that impossible) and the old index is then dropped. `lib/mentionIndexer.ts` upserts against the plain key with DO NOTHING — after its delete the only rows left for the document are a person's explicit pins, which now survive instead of being overwritten with machine text — counts the rows actually written, falls back to plain inserts on a database without the index (42P10), and logs every failure where it happens before throwing. Tests: `lib/__tests__/linkProposalsRoundG.test.ts` ("IRLS-4 / WIRE-2 — the mention engine writes against the plain index").
+
+**Pending migration:** `supabase/migrations/20261126_intel_roundG_link_conflict_targets.sql` (DEC-30: the inventory — `document_related_resources` rows with NULL `target_document_id`, pairs linked both ways, `origin` values outside the declared set, duplicate mention keys, `proposed_links` rows in status `stale` and pending — is captured before the DDL; the plain mention indexes and the VALIDATE of the origin CHECK happen only in the world where nothing violates them, and the final rows say which world was taken).
+
+**Done-when.**
+1. ✓ Plain unique keys for the knowledge-document branch and the document branch; the writer's conflict target matches.
+2. ✓ verified, no edit: `lib/mentions.ts` `tolerate()` treats only 42P01 / "does not exist" as not installed; an empty result is `mentionCoverage → { installed: true, total: 0 }` ("run the indexer"), and a write failure is now logged by the indexer and returned by `/api/graph/mentions` as a 500 with its message — the two look different. (`lib/mentions.ts` belongs to I-02.)
+3. Partly — `/api/graph/mentions` returns `mentionsWritten`, now the count actually written ✓; the graph presenting zero mention edges as a problem is the graph page's (I-14's file) → opened `IRLS-14` (`DEC-31`).
+
+**Scope / residual.** `IRLS-14`.
 
 ---
 
@@ -320,7 +353,7 @@ lib/mentionIndexer.ts:136-142 — `const { error } = await supabaseAdmin.from("e
 ## IRLS-10 · is_org_controller is SECURITY DEFINER with no SET search_path, and half the intelligence policies ignore the additive roles[] model it exists to honor
 
 - **Severity:** MEDIUM
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Verification:** CONFIRMED
 - **Locations:** `supabase/migrations/20260814_documents_delete_controllers.sql:31-41`, `supabase/schema.sql:1031-1034`, `supabase/migrations/20260928_site_codebook.sql:66-73`, `supabase/migrations/20260806_intelligence_layer.sql:44-51`, `supabase/migrations/20260807_link_proposals.sql:83-90`, `supabase/migrations/20260929_mention_engine.sql:79-86`, `lib/codebook.ts:381-387`
 - **Independently verified:** ✓ **SURVIVES** — second independent adversarial pass. Both halves verified. The consequence is documented in the app itself at lib/codebook.ts:382-387: "the codebook RLS write policy checks only the headline role column, so a client-side update could silently affect zero rows for a member whose DocCtrl authority lives in the additive roles[] array" — while is_org_controller (20260814:38) is precisely the function that DOES honor `roles && ARRAY['Admin','DocCtrl']`.
@@ -351,6 +384,15 @@ lib/mentionIndexer.ts:136-142 — `const { error } = await supabaseAdmin.from("e
 3. Partly — codebook and alias writes now check affected rows ✓; the related-resource writes (`lib/relatedResources.ts`) are I-08's file and still unchecked.
 
 **Scope / residual.** The related-resource limb of done-when 3 is I-08's (`lib/relatedResources.ts`).
+
+**Resolution (2026-09-30, intelligence Round G, I-08).** The remaining limb of done-when 3 — the related-resource writes, named for I-08 in the Partial block above — is closed: `lib/relatedResources.ts` `addRelatedResource` and `removeRelatedResource` ask for their rows back and throw when RLS refused (42501, or zero rows without an error: "That link was not changed — your role cannot edit related links on this document"); `components/documents/RelatedPanel.tsx` shows the refusal. The proposal decisions on the same surface (`approveProposal`, `dismissProposal`, `reopenProposal`) are checked the same way. The role-list limb of this finding on `proposed_links_write` / `entity_mentions_write` was already the collection since `20261046` (`caller_holds_any_role`); `20261126`'s probes verify it live and it is not re-created. Tests: `lib/__tests__/linkProposalsRoundG.test.ts` ("an unpin RLS refuses is reported (checked write)", "a dismissal can be reopened; a decision RLS refuses is an error …").
+
+**Done-when.**
+1. ✓ (R&P `DB-6`, `20261020`; see the Partial block).
+2. ✓ (R&P `ADD-4`, `20261046`; the proposal / mention write policies verified by `20261126`'s probes).
+3. ✓ Codebook and alias writes (I-10), related-resource and proposal-decision writes (I-08) check what they affected.
+
+**Scope / residual.** None.
 
 ---
 
@@ -409,5 +451,43 @@ lib/schemaExpectations.ts:11-13 — `// Generated from supabase/migrations (CREA
 - [ ] answer_skills, link_rules and process_flows are added to EXPECTED_TABLES with their migration filenames (and the seven project-controls tables too)
 - [ ] a unit test regenerates the CREATE TABLE scan and fails when a migration creates a table absent from EXPECTED_TABLES
 - [ ] the three libs distinguish 42P01 from an empty result in what they show the user
+
+---
+
+
+<a id="irls-13"></a>
+
+## IRLS-13 · An answer does not say which Reasoning Skills shaped it
+
+- **Severity:** LOW
+- **Status:** OPEN
+- **Verification:** CONFIRMED
+- **Locations:** `lib/answerSkillsServer.ts` (`loadAnswerSkillsBlock`), `app/api/knowledge/ask/route.ts` (the answer response), `app/api/orchestrator/route.ts`
+- **Opened 2026-09-30 (intelligence Round G, I-08)** as the remainder of `IRLS-3` (`DEC-31`): `IRLS-3`'s third done-when is in the ask route and the answer UI, which another package owns (I-03).
+
+**Mechanism.** `loadAnswerSkillsBlock` returns only the assembled prompt text. Neither the ask route nor the orchestrator returns which packs rode the prompt, so an answer shaped by an org-wide Reasoning Skill looks like every other cited answer. Since `20261125` only a controller can publish an org-wide pack (`DEC-55`), so this is now about transparency rather than about who can inject a pack.
+
+**Done when.**
+
+- [ ] The skills loader returns the names (and ids) of the packs it included alongside the block.
+- [ ] The ask response and the orchestrator response carry that list, and the answer UI names the skills that shaped an answer.
+
+---
+
+<a id="irls-14"></a>
+
+## IRLS-14 · The graph shows an unbuilt or failed mention index as an empty map
+
+- **Severity:** LOW
+- **Status:** OPEN
+- **Verification:** CONFIRMED
+- **Locations:** `app/(protected)/graph/page.tsx`, `lib/orgGraph.ts` (mention edges), `lib/mentions.ts` `mentionCoverage`
+- **Opened 2026-09-30 (intelligence Round G, I-08)** as the remainder of `IRLS-4` (`DEC-31`): the graph page belongs to another package (I-14).
+
+**Mechanism.** Since `20261126` the mention engine can write, and `/api/graph/mentions` returns the rows it wrote. The graph still draws zero `mention` edges the same way whether the index was never built, the last build failed, or the corpus really names no registry equipment. `mentionCoverage` already tells "not installed" (42P01) from "installed, 0 rows", but the graph does not use it.
+
+**Done when.**
+
+- [ ] The graph reads `mentionCoverage` and, with zero mention edges, says which case it is, with the next step (run the indexer / see the failure).
 
 ---

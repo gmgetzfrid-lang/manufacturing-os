@@ -64,7 +64,7 @@ tools.ts:532-551 — `async run(args, ctx) { const status = String(args.status);
 ## ORCH-2 · Any active member can inject permanent text into every colleague's orchestrator system prompt via an org-visible Reasoning Skill
 
 - **Severity:** HIGH
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Verification:** CONFIRMED
 - **Locations:** `supabase/migrations/20261016_reasoning_skills.sql:44`, `lib/answerSkills.ts:87`, `lib/answerSkillsServer.ts:29`, `lib/answerSkillsServer.ts:44`, `app/api/orchestrator/route.ts:117`, `lib/orchestrator/loop.ts:101`, `components/intelligence/SkillStudio.tsx:48`
 - **Independently verified:** ✓ **SURVIVES** — second independent adversarial pass. Every link in the chain verified, and there is no role gate anywhere upstream — /api/orchestrator checks membership only (route.ts:62-67) and the Skills page's author affordance is shown to anyone with an org and a uid (skills/page.tsx:176). The 9000-char BLOCK_BUDGET_CHARS bounds the size, not the authority; only a controller or the author can remove the row afterwards.
@@ -89,6 +89,18 @@ tools.ts:532-551 — `async run(args, ctx) { const status = String(args.status);
 - [ ] a non-controller's insert with visibility='org' is rejected by the database, covered by a test
 - [ ] loadAnswerSkillsBlock drops org skills whose author is no longer an active member
 - [ ] the org-wide instruction block is delimited in the prompt as untrusted org configuration that cannot override the tool/citation/write-approval rules, and the SkillStudio copy matches whatever is actually enforced
+
+**Resolution (2026-09-30, intelligence Round G).** The authority half is `20261125` (`DEC-55`; see `IEDGE-3`): a member's insert or flip to `'org'` is refused by RLS; org-wide is the controller tier. The prompt half is `lib/answerSkillsServer.ts`: `loadAnswerSkillsBlock` reads `org_members` for the authors of the org-wide custom packs and `buildAnswerSkillsBlock(rows, askerId, activeAuthors)` drops any whose author is not an active member (fail-closed: an author it cannot confirm does not ride); built-ins have no author and always qualify. The block is fenced `<<<ORG SKILLS … ORG SKILLS>>>` and labelled as ORG-AUTHORED CONFIGURATION that cannot change the citation, grounding, safety, tool-use or write-approval rules; a pack that writes the fence marker has it stripped, so it cannot close the fence early. The Studio's copy now states what is enforced (who can publish), not what a model will do. The orchestrator and ask routes are unchanged — they call the same loader. Tests: `lib/__tests__/skillsAuthority.test.ts` ("ORCH-2: an org-wide pack rides only while its author is an active member", "ORCH-2: the block is fenced …").
+
+**Pending migration:** `supabase/migrations/20261125_intel_roundG_skills_authority.sql` (DEC-30: the pre-apply inventory — built-ins carrying a member uid, org-wide custom skills whose author is not an active controller, packs without APPLIES WHEN or over 4,000 characters, connection skills over the pattern limits, non-controller members — is captured into a TEMP TABLE before the DDL and printed in the one result set; the probes verify every policy, trigger and pin after apply). Until it is applied, the app half holds (the Studio offers org-wide publishing to controllers only, built-ins are seeded without an author by controllers only, private connection skills do not run) but the database still admits a direct PostgREST write.
+
+**Done-when.**
+1. ✓ Setting or flipping `visibility = 'org'` is the controller tier in the RLS `WITH CHECK`.
+2. ✓ A non-controller's org-wide insert is refused by the policy, covered by the transcribed-policy test (no database here; the `20261125` probes verify the live text).
+3. ✓ `loadAnswerSkillsBlock` drops org skills whose author is no longer an active member.
+4. ✓ The block is delimited as org configuration subordinate to the tool / citation / write-approval rules, and the Studio copy matches what is enforced. The delimiter is prompt text; the enforcement is who may publish.
+
+**Scope / residual.** None in this finding.
 
 ---
 

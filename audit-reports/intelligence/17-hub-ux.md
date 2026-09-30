@@ -61,7 +61,7 @@ LibraryAiModal.tsx:86-90 — `await saveLibraryAiFeatures(library.id, { clarifyF
 ## HUB-2 · Whoever opens the Skills page first permanently owns every built-in skill — RLS then lets a Viewer disable the org's reasoning and connection skills
 
 - **Severity:** HIGH
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Verification:** CONFIRMED
 - **Locations:** `lib/answerSkills.ts:46-71`, `lib/linkRules.ts:57-82`, `supabase/migrations/20261016_reasoning_skills.sql:51-58`, `supabase/migrations/20261015_connection_skills.sql:62-70`, `app/(protected)/intelligence/skills/page.tsx:68-79`, `app/(protected)/intelligence/skills/page.tsx:162-173`, `components/intelligence/ConnectionSkillsPanel.tsx:50-58`
 - **Independently verified:** ✓ **SURVIVES** — second independent adversarial pass. Confirmed end to end, including the exploitability the finding rests on: `mayManage = canManageOrg || mine` is duplicated at ConnectionSkillsPanel.tsx:111-112, so a Viewer who happened to be first through the door can flip the org's built-in reasoning and connection skills off (delete is blocked for built-ins in the UI by the `!opts.builtin` guard, but the RLS DELETE policy would still permit it directly).
@@ -85,6 +85,17 @@ answerSkills.ts:60-70 — `await supabase.from("answer_skills").insert(want.map(
 - [ ] Built-in skills seed with `created_by: null` (or a sentinel), so authorship-based write access applies only to skills a member actually authored
 - [ ] Seeding is not triggered by a non-controller page load — either the seed runs server-side/on org creation, or the client seed is gated on `canManageOrg`
 - [ ] Toggling a `builtin_key` skill requires `is_org_controller` in both the RLS policy and the UI gate, matching the existing delete/visibility treatment
+
+**Resolution (2026-09-30, intelligence Round G).** Built-ins belong to nobody (`DEC-55`). Both client seeders write `created_by: null` and run from exactly one place each, for a controller only (`components/intelligence/ConnectionSkillsPanel.tsx` for `link_rules`, `app/(protected)/intelligence/skills/page.tsx` for `answer_skills`); everyone else gets the built-ins from the server seeders (the engine run and the answer pipeline, service role, `created_by` NULL). `20261125` releases built-ins a member already owns, and its policies make a built-in controller-managed: UPDATE by `is_org_controller` only and never with an author, DELETE by nobody, INSERT by a controller with no author. The On/Off control on a built-in renders for the controller tier only (`skillControls`: a built-in offers `toggle` to a controller and nothing else), matching the delete / visibility treatment. Tests: `lib/__tests__/skillsAuthority.test.ts` ("HUB-2 / LNK-7 — built-ins belong to nobody", "HUB-8 / HUB-2 — … one seeding entry per table", "the client seeders write every built-in with no author").
+
+**Pending migration:** `supabase/migrations/20261125_intel_roundG_skills_authority.sql` (DEC-30: the pre-apply inventory — built-ins carrying a member uid, org-wide custom skills whose author is not an active controller, packs without APPLIES WHEN or over 4,000 characters, connection skills over the pattern limits, non-controller members — is captured into a TEMP TABLE before the DDL and printed in the one result set; the probes verify every policy, trigger and pin after apply). Until it is applied, the app half holds (the Studio offers org-wide publishing to controllers only, built-ins are seeded without an author by controllers only, private connection skills do not run) but the database still admits a direct PostgREST write.
+
+**Done-when.**
+1. ✓ Built-in skills seed with `created_by: null`.
+2. ✓ Seeding is not triggered by a non-controller page load: the client seed is gated on the controller tier; the server seeds on the service role.
+3. ✓ Toggling a `builtin_key` skill requires `is_org_controller` in the RLS policy and in the UI gate.
+
+**Scope / residual.** None.
 
 ---
 
@@ -238,7 +249,7 @@ intelligence/page.tsx:137-143 — `void supabase.rpc("semantic_coverage", { p_or
 ## HUB-8 · The Connection Skills list is implemented twice — two independent components, two seeding entry points, two divergent authority surfaces
 
 - **Severity:** MEDIUM
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Verification:** CONFIRMED
 - **Locations:** `components/intelligence/ConnectionSkillsPanel.tsx:34-199`, `app/(protected)/intelligence/skills/page.tsx:292-352`, `components/intelligence/ConnectionSkillsPanel.tsx:180-183`
 - **Independently verified:** ✓ **SURVIVES** — second independent adversarial pass. Confirmed on both halves. The Review-tab panel deletes a custom skill on a single click with no confirm and no undo, while the Skills page gates the identical deleteLinkRule call behind appConfirm. The duplication is real too: both files independently import listLinkRules/seedBuiltinRules/setLinkRuleEnabled/setLinkRuleVisibility/deleteLinkRule and both call seedBuiltinRules(activeOrgId, uid) in their own effect (panel :54, page :73), and the surfaces already diverge (panel shows 4 patterns and no author; page shows 3 patterns, author line, and the Reasoning shelf).
@@ -260,6 +271,15 @@ ConnectionSkillsPanel.tsx:74-79 — `const remove = async (r: LinkRule) => { set
 - [ ] One implementation backs both surfaces (the panel renders a compact mode of the shelf), so authority gates and confirmations cannot diverge
 - [ ] Deleting a skill raises the same confirmation wherever it is offered
 - [ ] Built-in seeding happens in one place, not once per surface
+
+**Resolution (2026-09-30, intelligence Round G).** One implementation: `components/intelligence/ConnectionSkillsPanel.tsx` is the Connection Skills list, mounted compact on the review page and as the Connection shelf of the Skill Library (`mode="shelf"`); the library page no longer lists, seeds or edits `link_rules` itself. The card controls — `SkillActions` (On/Off, share / approve, decline, make private, ask to share, withdraw, delete), `SkillBadges` and `SkillByline` — are exported from it and render the Reasoning shelf too, all driven by `skillControls` (`lib/skillAuthority.ts`), so the two skill classes and the two surfaces cannot diverge. The delete confirmation exists once, inside `SkillActions`. Seeding: one client call per table, controller-only (`HUB-2`). Tests: `lib/__tests__/skillsAuthority.test.ts` ("HUB-8 / HUB-2 — one list, one seeding entry per table, one confirmation").
+
+**Done-when.**
+1. ✓ One implementation backs both surfaces (the panel's compact mode on the review page, its shelf mode in the library).
+2. ✓ Deleting a skill raises the same confirmation wherever it is offered.
+3. ✓ Built-in seeding happens in one place per table.
+
+**Scope / residual.** None.
 
 ---
 

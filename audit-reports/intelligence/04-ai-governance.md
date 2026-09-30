@@ -92,7 +92,7 @@ The op-label inventory came from `grep -rnE 'op: *"' app lib`, which returned 17
 ## GOV-2 · Any active member — including a Viewer or external contractor — can inject free text into every other member's AI system prompt
 
 - **Severity:** HIGH
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Verification:** CONFIRMED
 - **Locations:** `supabase/migrations/20261016_reasoning_skills.sql:22-24`, `supabase/migrations/20261016_reasoning_skills.sql:44-49`, `lib/answerSkillsServer.ts:29-48`, `lib/answerSkillsServer.ts:51-66`, `app/api/knowledge/ask/route.ts:1483`, `app/api/orchestrator/route.ts:117-120`
 - **Independently verified:** ✓ **SURVIVES** — second independent adversarial pass. Right, and the line that settles it is the missing role check in answer_skills_insert. I looked for a guard elsewhere and there is none: lib/answerSkills.ts:87 writes through the browser's anon `supabase` client, so RLS is the entire boundary — any UI role gating is bypassable with a direct PostgREST call. A Viewer's row defaults to enabled + org-visible and lands verbatim in every teammate's system prompt on both the ask and orchestrator paths. HIGH stands.
@@ -146,6 +146,19 @@ Table defaults confirmed at 20261016_reasoning_skills.sql:22-24 (read in full). 
 - [ ] The default for visibility on new custom rows is 'private', not 'org'
 - [ ] The Skill Library shows who authored each org-visible skill and when it was last changed, so an injected row is visible as an anomaly
 - [ ] Test: a Viewer-role insert with visibility='org' is rejected by RLS
+
+**Resolution (2026-09-30, intelligence Round G).** The insert policy that admitted any active member with any visibility is replaced by `20261125` (`DEC-55`): a custom `answer_skills` row is inserted by its author as `'private'` unless the author is a controller (`is_org_controller`), and the UPDATE `WITH CHECK` leaves a non-controller author only a private row. The column default is now `'private'` on both skill tables, and the Studio starts on "Just me"; members see "Just me" / "Ask to share", controllers "Just me" / "Share org-wide" (`studioSharingChoices`). Every custom card on both shelves carries its author and last change ("by … · changed …", `SkillByline`; `updated_at` stamped by the guard), and every person's create / change / delete writes an audit row (`PR-3`). Tests: `lib/__tests__/skillsAuthority.test.ts`.
+
+**Pending migration:** `supabase/migrations/20261125_intel_roundG_skills_authority.sql` (DEC-30: the pre-apply inventory — built-ins carrying a member uid, org-wide custom skills whose author is not an active controller, packs without APPLIES WHEN or over 4,000 characters, connection skills over the pattern limits, non-controller members — is captured into a TEMP TABLE before the DDL and printed in the one result set; the probes verify every policy, trigger and pin after apply). Until it is applied, the app half holds (the Studio offers org-wide publishing to controllers only, built-ins are seeded without an author by controllers only, private connection skills do not run) but the database still admits a direct PostgREST write.
+
+**Done-when.**
+1. ✓ Creating or editing an org-visible reasoning skill is the controller tier, in RLS; members still author private skills.
+2. ✓ The insert policy constrains visibility (`'private' OR is_org_controller(org_id)`).
+3. ✓ The default for new custom rows is `'private'` (column default and the Studio).
+4. ✓ The Skill Library shows who authored each custom skill and when it last changed.
+5. ✓ as a policy test: the `20261125` predicates are transcribed and pinned byte-for-byte to the SQL, and a member's org-wide insert is refused by them (`skillsAuthority.test.ts`). There is no database here to sign in against; after apply, the probes in `20261125`'s result set check the live predicates.
+
+**Scope / residual.** The verifier's note stands: the service-role read re-applies the visibility rule in `buildAnswerSkillsBlock`; it now also drops org-wide packs whose author is no longer active (`ORCH-2`).
 
 ---
 

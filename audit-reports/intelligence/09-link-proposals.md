@@ -32,7 +32,7 @@ Candidate generation, false positives, and who may accept.
 ## LNK-1 · 'stale' and 'dismissed' share one permanent blacklist: publishing a new revision retires pending proposals and then blocks them from ever being re-proposed — the exact opposite of the stated contract
 
 - **Severity:** HIGH
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Verification:** CONFIRMED
 - **Locations:** `lib/linkProposerServer.ts:375-385`, `lib/linkProposals.ts:181-194`, `lib/postPublish.ts:129-134`, `app/(protected)/admin/proposed-links/page.tsx:280-283`, `lib/linkProposalLogic.ts:402-412`
 - **Independently verified:** ✓ **SURVIVES** — second independent adversarial pass. Confirmed, and nothing anywhere reverses it: grep over the repo shows proposed_links.status is only ever written to 'stale' (linkProposals.ts:186, linkProposerServer.ts:463) or decided by a human, never back to 'pending'. The upsert at linkProposerServer.ts:423-425 would refresh the row, but filterDrafts removes the draft before it can reach the queue, so the publish that was supposed to re-open the pair is exactly what seals it.
@@ -64,6 +64,16 @@ lib/linkProposerServer.ts:381 — `if (r.status === "pending") continue;` is the
 - [ ] A test: queue a proposal at rev 3, stale it, re-run the proposer with the same inputs at rev 4, assert the pair is pending again
 - [ ] The review page's "unless a new revision brings new evidence" line is either true or removed
 
+**Resolution (2026-09-30, intelligence Round G).** Reproduced as a test first (queue at rev 3 → stale → the same facts at rev 4 were blocked for good). The engine's block-set (`lib/linkProposerServer.ts`) is built from a targeted read of the candidate pairs: `approved` settles the pair, `dismissed` blocks only the skill that produced it (`LNK-8`), `pending` is already queued (`LNK-12`), and `stale` is none of these — the revision it was read from was superseded, so the next run re-derives it and the upsert on `proposed_links_pair_idx` flips the row back to `pending` with the new `source_rev` (one row, refreshed in place). Publish-time staling now runs on the service role: `lib/postPublish.ts` calls `requestProposalInvalidation` → `POST /api/links/invalidate` (new; verifies the caller, reads the document under the caller's own RLS — 404 when they cannot see it — checks active membership, and stales against the document's CURRENT revision read server-side, never a client value), or runs `invalidateProposalsForRevision` in-process when a server caller passes `serviceClient`; a sweep that did not run is logged. The review page's line is rewritten to what holds. Decision recorded in `DEC-55` (stale re-enters; dismissed stays blocked for that skill). Tests: `lib/__tests__/linkProposalsRoundG.test.ts` ("LNK-1 / LNK-11", "/api/links/invalidate — who may trigger the sweep …").
+
+**Done-when.**
+1. ✓ `decided` is built from `approved` (pair) and `dismissed` (pair, skill) only; `stale` rows are excluded and re-derived.
+2. ✓ The queue upsert on a pair with a stale row flips it back to `pending` with the new `source_rev`.
+3. ✓ Test: queue at rev 3, stale it, re-run with the same inputs at rev 4 → pending again, from rev 4, one row.
+4. ✓ The review page's line now says what is true ("the same skill won't propose that pair again … When a document is revised, its waiting proposals are re-checked against the new revision").
+
+**Scope / residual.** None. (A server-side publisher that does not pass `serviceClient` logs that the sweep did not run; the intake route belongs to another package.)
+
 ---
 
 <a id="lnk-2"></a>
@@ -71,7 +81,7 @@ lib/linkProposerServer.ts:381 — `if (r.status === "pending") continue;` is the
 ## LNK-2 · Every input the engine reads is silently truncated by an unordered LIMIT — including the 800-row knowledge_documents cap that bounds three of the four skills, and the 20,000-row priors cap that lets dismissed pairs come back
 
 - **Severity:** HIGH
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Verification:** CONFIRMED
 - **Locations:** `lib/linkProposerServer.ts:189-198`, `lib/linkProposerServer.ts:152-170`, `lib/linkProposerServer.ts:236-268`, `lib/linkProposerServer.ts:366-383`, `lib/linkProposerServer.ts:296-318`
 - **Independently verified:** ✓ **SURVIVES** — second independent adversarial pass. Both named failures verified exactly as described, including the misleading `scanned` figure and the `inputs.mirroredDocs` (:197) that quietly records the 800. One over-generalization in the title: not EVERY input is unordered — the co-citation read at :333-339 does `.order("created_at", { ascending: false }).limit(400)`, so its truncation is at least deterministic.
@@ -101,6 +111,15 @@ lib/linkProposerServer.ts:194 `.limit(BATCH * 2)` with BATCH=400 at :28, feeding
 - [ ] The `decided` and `linked` sets are computed by targeted query on the candidate pairs rather than a bulk-load-and-truncate
 - [ ] `ProposerInputs` carries a saturated flag per input and the review page surfaces ceilings alongside zeroes
 
+**Resolution (2026-09-30, intelligence Round G).** `lib/linkProposerServer.ts` `readPaged` reads every input in stable id order to completion, walking on past PostgREST's max-rows (which truncates without an error) and stopping at an empty window, up to a stated ceiling (50,000 documents / mirrors / aliases / system links, 200,000 equipment links / extracted references); a ceiling reached adds a note and names the input in `inputs.saturated`. That covers documents, knowledge mirrors (the 800-row slice that bounded three skills is gone), the drawing entities per mirror chunk (silently cut at max-rows before), document_assets, aliases, the custom-skill text scan and the evidence audit. The `linked` and `decided` sets are no longer bulk loads: they are read by targeted query on the candidate documents (`document_related_resources` by either endpoint; `proposed_links` by the pair's first id — pairs are stored smallest-id-first) to completion, and a failed read stops the pass before anything is written (a run error: no dismissed pair can come back). Answered-together says when it read only its latest-400 window. The review page lists every ceiling next to the zeroes and never prints "healthy" over one. Tests: `lib/__tests__/linkProposalsRoundG.test.ts` ("LNK-2 — inputs page past max-rows; decisions are read by targeted query", "a failed decisions read writes nothing").
+
+**Done-when.**
+1. ✓ Each read pages to completion or reports the ceiling it reached.
+2. ✓ `decided` / `linked` are computed by targeted query on the candidate pairs.
+3. ✓ `ProposerInputs.saturated` carries the saturated inputs and the review page surfaces ceilings alongside zeroes.
+
+**Scope / residual.** The custom-skill text scan still reads the first 2,400 indexed pages per pass (said in a note and in `saturated`); there is no cursor that carries it across passes.
+
 ---
 
 <a id="lnk-3"></a>
@@ -108,7 +127,7 @@ lib/linkProposerServer.ts:194 `.limit(BATCH * 2)` with BATCH=400 at :28, feeding
 ## LNK-3 · The provable auto-apply upsert targets a PARTIAL unique index PostgREST cannot infer — "provable connections apply themselves" almost certainly never writes a row, and the error is swallowed into a note
 
 - **Severity:** HIGH
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Verification:** SUSPECTED
 - **Locations:** `lib/linkProposerServer.ts:391-408`, `supabase/migrations/20260807_link_proposals.sql:111-113`, `lib/linkProposerServer.ts:86-101`, `lib/linkRules.ts:64-70`, `lib/answerSkillsServer.ts:66-70`, `lib/linkProposerServer.ts:423-427`
 - **Independently verified:** ✓ **SURVIVES** — second independent adversarial pass. Repo-wide grep of supabase/migrations for document_related_resources unique constraints returns exactly one hit — the partial index — and the base table (20260806_intelligence_layer.sql:68-84) declares no UNIQUE, so there is no non-partial arbiter for PostgREST to infer and the DO NOTHING raises 42P10. proposeOpcContinuity:82-88 does emit tier 'provable'/confidence 1 and splitByAutoApply:420 routes it to autoApply, so the path is reachable; the only correction is that the note IS rendered to the admin (proposed-links/page.tsx:189), just alongside autoApplied:0 — 'swallowed' is slightly strong, the failure itself is real. Approval by a human uses a plain .insert with 23505 handling (linkProposals.ts:111-127) and is unaffected.
@@ -138,6 +157,17 @@ lib/linkProposerServer.ts:403-407 — `.upsert(rows, { onConflict: "document_id,
 - [ ] A failed auto-apply is a loud error on the run result, not a note in a list — `autoApplied: 0` with a non-empty note must render as a red banner
 - [ ] A test inserts a provable OPC draft twice and asserts exactly one document_related_resources row with origin='system' exists afterwards
 
+**Resolution (2026-09-30, intelligence Round G).** Both limbs. `20261126` replaces the partial `document_related_resources_doc_target_idx` with a PLAIN unique index `document_related_resources_doc_target_uniq (document_id, target_document_id)` — URL rows (NULL target) stay unconstrained, since NULLs are distinct — and the auto-apply write targets exactly it (`onConflict: "document_id,target_document_id"`, `ignoreDuplicates`, counting the rows actually written). If the batch fails (42P10 on a database without the index, or anything else) each row is inserted on its own: 23505 means already linked; any other failure queues the draft as a provable proposal for a person (it no longer vanishes) and the run carries an ERROR, rendered as a red banner on the review page. The row is carried by the lower document number (`LNK-13`). Tests: `lib/__tests__/linkProposalsRoundG.test.ts` ("a provable draft run twice leaves exactly one system link …", "a provable draft that cannot be applied is an ERROR and falls back to the review queue").
+
+**Pending migration:** `supabase/migrations/20261126_intel_roundG_link_conflict_targets.sql` (DEC-30: the inventory — `document_related_resources` rows with NULL `target_document_id`, pairs linked both ways, `origin` values outside the declared set, duplicate mention keys, `proposed_links` rows in status `stale` and pending — is captured before the DDL; the plain mention indexes and the VALIDATE of the origin CHECK happen only in the world where nothing violates them, and the final rows say which world was taken).
+
+**Done-when.**
+1. ✓ The migration adds a non-partial unique index the API infers, and the writer tolerates 23505 row by row when a batch cannot be written.
+2. ✓ A failed auto-apply is an error on the run result (red banner), not a note.
+3. ✓ A test applies a provable OPC draft twice and finds exactly one `origin='system'` row (against the in-memory stand-in; the 42P10 itself is Postgres behaviour and stays unobserved here).
+
+**Scope / residual.** None.
+
 ---
 
 <a id="lnk-4"></a>
@@ -145,7 +175,7 @@ lib/linkProposerServer.ts:403-407 — `.upsert(rows, { onConflict: "document_id,
 ## LNK-4 · proposed_links is readable by every active member with no document-visibility condition — the "hide proposals whose endpoints you can't read" rule is client-side JavaScript only
 
 - **Severity:** HIGH
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Verification:** CONFIRMED
 - **Locations:** `supabase/migrations/20260807_link_proposals.sql:78-81`, `lib/linkProposals.ts:71-96`, `lib/linkProposals.ts:153-173`, `lib/linkProposals.ts:197-206`, `lib/acl.ts:1-8`
 - **Independently verified:** ✓ **SURVIVES** — second independent adversarial pass. The asymmetry is confirmed by 20260708_acl_rls_enforcement.sql:85-87, which puts a RESTRICTIVE `documents_acl_select ... USING (node_visible(visibility, acl_index, org_id))` on documents — so document rows ARE ACL-scoped while proposed_links is not, and the leaked evidence JSONB carries exactly the sensitive payload (drawing numbers in `Off-page connector … continues onto <ref>`, `tags` arrays from proposeSharedEquipment:173-181). listPendingPairs (:197-206) reads the same table with no filter at all.
@@ -178,6 +208,17 @@ supabase/migrations/20260807_link_proposals.sql:79-81 (quoted above) — no join
 - [ ] A test signs in as a member denied one endpoint and asserts a raw `select('*')` on proposed_links returns zero rows for that pair
 - [ ] asset_aliases_read (:142-144, same org-only shape) is reviewed under the same question
 
+**Resolution (2026-09-30, intelligence Round G).** `20261126` adds `proposed_links_read_endpoints`, a RESTRICTIVE SELECT policy: `EXISTS (SELECT 1 FROM documents d WHERE d.id = proposed_links.document_id) AND EXISTS (… target_document_id)`. The subqueries run under the caller's own `documents` RLS (`documents_acl_select`), so a proposal is readable only by someone who can read both documents — the documents predicate itself, not a copy of it. It is RESTRICTIVE because `proposed_links_write` is FOR ALL: its USING would otherwise grant SELECT on every row to the writer tier. The engine and the publish sweep run on the service role and are unaffected; `listPendingPairs` / `listProposals` are now scoped by the database. Tests: `lib/__tests__/linkProposalsRoundG.test.ts` ("LNK-4: a RESTRICTIVE select policy requires both endpoints readable …").
+
+**Pending migration:** `supabase/migrations/20261126_intel_roundG_link_conflict_targets.sql` (DEC-30: the inventory — `document_related_resources` rows with NULL `target_document_id`, pairs linked both ways, `origin` values outside the declared set, duplicate mention keys, `proposed_links` rows in status `stale` and pending — is captured before the DDL; the plain mention indexes and the VALIDATE of the origin CHECK happen only in the world where nothing violates them, and the final rows say which world was taken).
+
+**Done-when.**
+1. ✓ The read condition requires both endpoints visible to `auth.uid()` under the documents policy (the documents RLS itself through the subqueries, rather than a SECURITY DEFINER re-implementation that could drift).
+2. ✓ as a shape test plus the live probe in `20261126`'s result set; there is no database here to sign in as a denied member.
+3. ✓ Reviewed: `asset_aliases_read` stays member-wide. An alias is a registry fact (a nickname of an asset); the registry itself is member-readable (`20261128` keeps registry reads with members), and an alias row carries no document identity or evidence.
+
+**Scope / residual.** None.
+
 ---
 
 <a id="lnk-5"></a>
@@ -185,7 +226,7 @@ supabase/migrations/20260807_link_proposals.sql:79-81 (quoted above) — no join
 ## LNK-5 · "Private" Connection Skills are not private: the proposer ignores visibility entirely, and the skill's name is copied into org-readable evidence — while the reasoning-skill twin does filter correctly
 
 - **Severity:** LOW
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Verification:** CONFIRMED
 - **Locations:** `lib/linkProposerServer.ts:138-140`, `lib/linkProposalLogic.ts:307-321`, `supabase/migrations/20261015_connection_skills.sql:11-14,46-50`, `lib/answerSkillsServer.ts:29-32`, `components/intelligence/SkillStudio.tsx:258-269`
 - **Independently verified:** ✓ **SURVIVES, corrected** — second independent adversarial pass. Severity **MEDIUM → LOW** by this pass. The impact framing is wrong: the migration's own header (20261015_connection_skills.sql:12-14) DEFINES private as "the author's experiment; it still runs, but its findings NEVER auto-apply and only reach the normal review queue" — which is exactly what the code does (custom skills top out at 'strong', linkProposalLogic.ts:311), and SkillStudio.tsx:268 tells the connection-skill author "Either way its findings only ever QUEUE for review". So this is the declared contract, not a violated one; the residual defect is only that the shared Studio control labels it "Just me" with a Lock icon and that the skill's name rides into org-visible evidence.
@@ -214,6 +255,17 @@ lib/linkProposerServer.ts:139 — `!r.builtin_key && r.kind === "reference" && r
 - [ ] The Studio's "Just me" copy states plainly what private means for a connection skill (runs org-wide, findings visible to reviewers) if that stays the behaviour
 - [ ] A test mirrors linkProposalLogic.test.ts:304-318 for connection skills: a teammate's private skill produces no drafts for another member's run
 
+**Resolution (2026-09-30, intelligence Round G).** Decision (`DEC-55`): a private Connection Skill is its author's draft — the Studio's live tester runs it, the engine does not. `runLinkProposers` runs only enabled, org-wide custom skills; a private one never reads the org's corpus, so its name never reaches `proposed_links.evidence`, and the run says how many private skills it skipped. Org-wide is the controller tier (`20261125`), so the skills that do run are ones a controller shared. The Studio's copy for each sharing choice states this ("A draft: the tester above runs it; the engine does not run it until it is shared org-wide"). Tests: `lib/__tests__/linkProposalsRoundG.test.ts` ("a private connection skill never runs over the org's corpus (and its name reaches no evidence)").
+
+**Pending migration:** `supabase/migrations/20261125_intel_roundG_skills_authority.sql` (DEC-30: the pre-apply inventory — built-ins carrying a member uid, org-wide custom skills whose author is not an active controller, packs without APPLIES WHEN or over 4,000 characters, connection skills over the pattern limits, non-controller members — is captured into a TEMP TABLE before the DDL and printed in the one result set; the probes verify every policy, trigger and pin after apply). Until it is applied, the app half holds (the Studio offers org-wide publishing to controllers only, built-ins are seeded without an author by controllers only, private connection skills do not run) but the database still admits a direct PostgREST write.
+
+**Done-when.**
+1. ✓ `customRules` is filtered to `visibility === 'org'`.
+2. ✓ The Studio states plainly what private means for a connection skill.
+3. ✓ A teammate's private skill produces no drafts in a run.
+
+**Scope / residual.** None.
+
 ---
 
 <a id="lnk-6"></a>
@@ -221,7 +273,7 @@ lib/linkProposerServer.ts:139 — `!r.builtin_key && r.kind === "reference" && r
 ## LNK-6 · Any active member — including a Viewer — can author a regex that the server then runs unbounded over the document corpus: catastrophic backtracking hangs the propose function, and `config` can be PATCHed directly, bypassing the only validation
 
 - **Severity:** MEDIUM
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Verification:** CONFIRMED
 - **Locations:** `supabase/migrations/20261015_connection_skills.sql:54-65`, `lib/linkProposalLogic.ts:254-272`, `lib/linkProposalLogic.ts:280-330`, `lib/linkProposerServer.ts:138-140`, `lib/linkProposerServer.ts:294-326`, `lib/linkRules.ts:93-109`, `app/api/links/propose/route.ts:19,32-39`
 - **Independently verified:** ✓ **SURVIVES** — second independent adversarial pass. Confirmed end to end: createLinkRule's validation (linkRules.ts:93-94) is a client-side library call, so a direct PATCH of link_rules.config bypasses it entirely, and there is no pattern-count cap anywhere. The only gate on execution is app/api/links/propose/route.ts:37 (Admin/DocCtrl), so the Viewer plants and an Admin detonates; maxDuration=60 (route.ts:19) bounds the platform kill, not the hang.
@@ -249,6 +301,18 @@ lib/linkProposalLogic.ts:262-266 — `if (p.length > 200) { … } try { const re
 - [ ] `link_rules_insert` and the `config` column are restricted to the roles that can already run the engine, or `config` is made write-only through a validating API route
 - [ ] `customRules` filters on `visibility = 'org' OR created_by = <the run's actor>`, matching what buildAnswerSkillsBlock already does for reasoning skills
 
+**Resolution (2026-09-30, intelligence Round G).** Decision (`DEC-55`): patterns are a bounded, backtracking-safe subset, validated wherever they are written or run, under a per-document time budget. `lib/linkProposalLogic.ts` `patternSafetyIssue` refuses backreferences, lookarounds / named groups / inline flags, a repeated group holding a repeat, an alternation or another group (the exponential class), an unbounded repeat of `.`, two unbounded repeats side by side (the polynomial class), more than 2 unbounded repeats and repeat bounds above 100; `compileSkillPatterns` applies it before compiling and caps a skill at 8 patterns — the Studio's live tester, `createLinkRule` and the engine all use it, so the author's tab never compiles an unsafe pattern either. The database applies the same rules on the same normalised text (`20261125` `skill_pattern_issue`, called by the BEFORE trigger `link_rules_guard` on every person's write of `config`), so a direct PATCH cannot bypass them. `runCustomSkill` runs a skill under a 50 ms per-document budget (and all custom skills under 15 s per run); a skill that overruns is switched off by the engine (`enabled = false`, `disabled_reason` naming the overrun, shown on the card and cleared when a person switches it back on), the run says so, and its partial output is not queued. Authorship: a member's skill is a private draft the engine does not run (`LNK-5`). Tests: `lib/__tests__/linkProposalsRoundG.test.ts` ("LNK-6 — the bounded pattern subset …", "LNK-6 — a per-document time budget", "an overrunning skill is switched off with the reason …"), `lib/__tests__/skillsAuthority.test.ts` ("LNK-6: a connection skill outside the bounded subset is refused before the insert").
+
+**Pending migration:** `supabase/migrations/20261125_intel_roundG_skills_authority.sql` (DEC-30: the pre-apply inventory — built-ins carrying a member uid, org-wide custom skills whose author is not an active controller, packs without APPLIES WHEN or over 4,000 characters, connection skills over the pattern limits, non-controller members — is captured into a TEMP TABLE before the DDL and printed in the one result set; the probes verify every policy, trigger and pin after apply). Until it is applied, the app half holds (the Studio offers org-wide publishing to controllers only, built-ins are seeded without an author by controllers only, private connection skills do not run) but the database still admits a direct PostgREST write.
+
+**Done-when.**
+1. ✓ with a stated limit: each skill runs under a per-document and a per-run wall-clock budget. The clock is read between matches, and a single V8 match cannot be interrupted; the subset is what bounds one match. No worker or linear-time engine was added (`DEC-55`).
+2. ✓ The pattern count is capped at 8 and nested unbounded quantifiers are refused, server-side on every read of `config` (the engine compiles through the same check) and at the database on every write.
+3. ✓ `config` is validated at the database on every person's write, and org-wide authorship (the only skills the engine runs) is the controller tier.
+4. ✓ Stricter than asked: `customRules` runs org-wide skills only.
+
+**Scope / residual.** None.
+
 ---
 
 <a id="lnk-7"></a>
@@ -256,7 +320,7 @@ lib/linkProposalLogic.ts:262-266 — `if (p.length > 200) { … } try { const re
 ## LNK-7 · Built-in Connection Skills become owned by whichever member's browser seeded them first, and RLS lets that owner disable or delete the org's core detectors — the UI hides the delete button but the database does not
 
 - **Severity:** MEDIUM
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Verification:** CONFIRMED
 - **Locations:** `lib/linkRules.ts:57-82`, `supabase/migrations/20261015_connection_skills.sql:62-70`, `lib/linkProposerServer.ts:86-111`, `components/intelligence/ConnectionSkillsPanel.tsx:50-58`, `app/(protected)/intelligence/skills/page.tsx:302-347`
 - **Independently verified:** ✓ **SURVIVES** — second independent adversarial pass. The functional impact checks out: disabling opc_continuity really does stop discovery, because linkProposerServer.ts:201 gates the whole entity fetch on `builtinEnabled("opc_continuity")`. One detail is worse than the finding says, not better — `mayManage = canManageOrg || mine` (skills/page.tsx:305-306) means the seeding Viewer is shown the On/Off toggle in the UI too, so no API client is even needed to disable a core detector.
@@ -287,6 +351,18 @@ lib/linkRules.ts:79 — `created_by: userId,` inside the built-in seed insert; l
 - [ ] Seeding moves server-side (it already exists in loadRules) rather than firing from every member's page load
 - [ ] Toggling or deleting a skill writes an audit event naming the actor and the skill
 
+**Resolution (2026-09-30, intelligence Round G).** See `HUB-2` for the shared fix (`DEC-55`). For Connection Skills specifically: `seedBuiltinRules(orgId)` writes no author and runs only for a controller, once, in the one Connection Skills list; `loadRules` (the engine, service role) seeds with `created_by: null`; `20261125` releases member-owned built-ins and makes every built-in controller-managed — `link_rules_update` admits a built-in only for `is_org_controller` and only without an author, `link_rules_delete` never admits a built-in (every seeder restores a missing one; switch it off instead). Every person's toggle or delete of a skill writes `SKILL_UPDATED` / `SKILL_DELETED` to `audit_logs` naming the actor and the skill (`skills_audit`). Tests: `lib/__tests__/skillsAuthority.test.ts` ("LNK-7: the engine seeds built-ins with no author", "HUB-2 / LNK-7 …").
+
+**Pending migration:** `supabase/migrations/20261125_intel_roundG_skills_authority.sql` (DEC-30: the pre-apply inventory — built-ins carrying a member uid, org-wide custom skills whose author is not an active controller, packs without APPLIES WHEN or over 4,000 characters, connection skills over the pattern limits, non-controller members — is captured into a TEMP TABLE before the DDL and printed in the one result set; the probes verify every policy, trigger and pin after apply). Until it is applied, the app half holds (the Studio offers org-wide publishing to controllers only, built-ins are seeded without an author by controllers only, private connection skills do not run) but the database still admits a direct PostgREST write.
+
+**Done-when.**
+1. ✓ Built-in rows are seeded with `created_by = NULL`, so only `is_org_controller` touches them.
+2. ✓ `link_rules_update` / `_delete` exclude built-in rows unless the caller is a controller (delete: always excluded).
+3. ✓ Client seeding is controller-only and in one place; the engine's server-side seeding remains.
+4. ✓ Toggling or deleting a skill writes an audit event naming the actor and the skill.
+
+**Scope / residual.** None.
+
 ---
 
 <a id="lnk-8"></a>
@@ -294,7 +370,7 @@ lib/linkRules.ts:79 — `created_by: userId,` inside the built-in seed insert; l
 ## LNK-8 · Dismissing one skill's proposal permanently silences every other skill for that pair — the block-set is keyed on the pair while the uniqueness contract is keyed on (pair, proposer)
 
 - **Severity:** LOW
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Verification:** CONFIRMED
 - **Locations:** `lib/linkProposerServer.ts:380-383`, `lib/linkProposalLogic.ts:404-412`, `supabase/migrations/20260807_link_proposals.sql:66-69`, `lib/linkProposalLogic.ts:388-400`
 - **Independently verified:** ✓ **SURVIVES, corrected** — second independent adversarial pass. Severity **MEDIUM → LOW** by this pass. Both facts are right, but the severity assumes an accident where the code documents an intent: 20260807_link_proposals.sql:66-67 says "Dismissals stay as rows so the engine never nags twice about the same pair", and the proposer repeats it at :378-379 ("a rejected pair must never come back to nag"). It is also mostly moot in practice — mergeDrafts (linkProposalLogic.ts:388-399) already collapses every pair to a single strongest draft before filtering, so two skills can never have live proposals for one pair anyway; the third index column is vestigial rather than a violated contract.
@@ -317,6 +393,15 @@ supabase/migrations/20260807_link_proposals.sql:68-69 — `CREATE UNIQUE INDEX �
 - [ ] A dismissed-proposals view exists so a decision can be revisited (listProposals already accepts a status option that nothing uses)
 - [ ] A test: dismiss a 'tag' proposal for a|b, then run a custom skill that finds a|b, and assert it queues
 
+**Resolution (2026-09-30, intelligence Round G).** The block-set is keyed like the unique index: a dismissal blocks the `(pair, proposer)` that produced it; an approval settles the pair. `filterDrafts` now runs BEFORE `mergeDrafts`, so a dismissed opinion cannot win the merge and hide another skill's evidence — including the verifier's case, a later provable off-page reference after a dismissed shared-equipment guess, which now applies. The review page gains a "Dismissed" view, and `reopenProposal` (checked write) puts a dismissed proposal back in the queue. Tests: `lib/__tests__/linkProposalsRoundG.test.ts` ("a dismissal blocks only its own skill's opinion, and is applied BEFORE the merge", "a dismissed inferred opinion does not silence a later provable reference", "dismissing the shared-equipment opinion leaves the work-order reference free to queue", "a dismissal can be reopened …").
+
+**Done-when.**
+1. ✓ A dismissal blocks only the (pair, proposer) that produced it.
+2. ✓ A dismissed-proposals view exists, and a decision can be revisited.
+3. ✓ Test: dismiss a `tag` proposal for a|b, run a custom skill that finds a|b, and it queues.
+
+**Scope / residual.** None.
+
 ---
 
 <a id="lnk-9"></a>
@@ -324,7 +409,7 @@ supabase/migrations/20260807_link_proposals.sql:68-69 — `CREATE UNIQUE INDEX �
 ## LNK-9 · GraphShapeWizard writes an undeclared provenance value that the Related panel renders as "approved" — a link nobody reviewed is badged as having come through the proposal queue
 
 - **Severity:** LOW
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Verification:** CONFIRMED
 - **Locations:** `components/graph/GraphShapeWizard.tsx:130-142`, `components/documents/RelatedPanel.tsx:173-183`, `lib/relatedResources.ts:19-24`, `supabase/migrations/20260807_link_proposals.sql:95-96`
 - **Independently verified:** ✓ **SURVIVES, corrected** — second independent adversarial pass. Severity **MEDIUM → LOW** by this pass. The mislabel is exactly as claimed — 'user' falls through the `!== "human"` test and lands in the else branch, so it badges "approved" with the tooltip "Approved from a proposal" and no approver name. Downgrading because the impact is confined to a display chip: the row itself is honest (proposer:"answer", created_by/created_by_name set, evidence.rule "Shaped from an answer"), and a human did accept it in the wizard, so nothing fabricated an unreviewed link — it is a one-token provenance-label bug.
@@ -352,6 +437,17 @@ components/graph/GraphShapeWizard.tsx:136-138 — `origin: "user", proposer: "an
 - [ ] RelatedPanel renders an explicit unknown-origin fallback instead of defaulting to "approved"
 - [ ] Existing rows with origin='user' are backfilled to the correct value
 
+**Resolution (2026-09-30, intelligence Round G).** The provenance set is declared once: `lib/relatedResources.ts` `LINK_ORIGINS = human | system | proposed | shaped`, where `'shaped'` is a link a person accepted while shaping the graph from an AI answer. `GraphShapeWizard` writes `'shaped'`; `originBadge` gives each value its chip and tooltip ("from answer — not reviewed in the proposal queue"), and a value the app does not know renders as unknown ("origin?"), never "approved". `20261126` backfills `'user'` to `'shaped'`, adds a BEFORE trigger that normalises `'user'` (so a backup taken earlier restores whole), and adds `CHECK (origin IN (…the four…))` NOT VALID — binding every new row — VALIDATEd when no row outside the set remains (the inventory counts any). Tests: `lib/__tests__/linkProposalsRoundG.test.ts` ("provenance renders from the declared set; an unknown value is never 'approved'", "LNK-9: the origin normaliser, the backfill and the two-world CHECK").
+
+**Pending migration:** `supabase/migrations/20261126_intel_roundG_link_conflict_targets.sql` (DEC-30: the inventory — `document_related_resources` rows with NULL `target_document_id`, pairs linked both ways, `origin` values outside the declared set, duplicate mention keys, `proposed_links` rows in status `stale` and pending — is captured before the DDL; the plain mention indexes and the VALIDATE of the origin CHECK happen only in the world where nothing violates them, and the final rows say which world was taken).
+
+**Done-when.**
+1. ✓ The origin column has a CHECK over exactly the set the renderer understands, and `'shaped'` is a first-class value with its own badge and tooltip.
+2. ✓ The Related panel renders an explicit unknown-origin fallback.
+3. ✓ Existing `'user'` rows are backfilled to `'shaped'`.
+
+**Scope / residual.** None.
+
 ---
 
 <a id="lnk-10"></a>
@@ -359,7 +455,7 @@ components/graph/GraphShapeWizard.tsx:136-138 — `origin: "user", proposer: "an
 ## LNK-10 · Shared-equipment queues one 'inferred' proposal for every document pair sharing a single tag — up to 780 rows from one tag — with no minimum, no per-tier cap, and no ranking before the 400-row slice
 
 - **Severity:** MEDIUM
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Verification:** CONFIRMED
 - **Locations:** `lib/linkProposalLogic.ts:114,143,159-184`, `lib/linkProposerServer.ts:386-387`, `lib/linkProposalLogic.ts:388-400`
 - **Independently verified:** ✓ **SURVIVES** — second independent adversarial pass. Every element checks out, including the arithmetic (35 documents → 595 pairs). filterDrafts (linkProposalLogic.ts:404-412) removes only already-linked/already-decided pairs and does no ranking, and the only ordering in the system is display-side (linkProposals.ts:75-76), applied after the unranked 400 have already been chosen.
@@ -381,6 +477,16 @@ lib/linkProposalLogic.ts:166-167 — `const tier: ProposalTier = shared >= 3 ? "
 - [ ] The queue's ordering uses the tier RANK (provable > strong > inferred), not alphabetical text ordering
 - [ ] A per-run ceiling on 'inferred' rows keeps a single sweep from burying the queue
 
+**Resolution (2026-09-30, intelligence Round G).** Four changes in `lib/linkProposalLogic.ts` / `lib/linkProposerServer.ts` / `lib/linkProposals.ts`. (1) Shared equipment proposes a pair only when it shares at least two registry items (`MIN_SHARED_TAGS`); a single shared item already shows each document to the other under "Found automatically" (the same bridge), so it no longer costs a review click — a vessel on 35 documents was 595 of them. (2) `rankDrafts` orders by tier rank, then confidence, then pair before the slice. (3) The queue orders by tier RANK: `listProposals` reads provable, then strong, then inferred. (4) The queue holds at most 150 `inferred` proposals at a time (`MAX_PENDING_INFERRED`); a run adds guesses only while there is room and counts the rest as held (`heldInferred`, with a note), without keeping the loop running. Tests: `lib/__tests__/linkProposalsRoundG.test.ts` ("ranks by tier strength …", "with the inferred room used up, new inferred proposals wait …", "listProposals returns provable, then strong, then inferred"), `lib/__tests__/linkProposalLogic.test.ts` (updated for the two-item floor).
+
+**Done-when.**
+1. ✓ Single-shared-tag pairs are not queued.
+2. ✓ `fresh` is sorted by tier rank then confidence before the BATCH slice.
+3. ✓ The queue orders by tier rank, not the text.
+4. ✓ A ceiling on queued `inferred` rows keeps a sweep from burying the queue.
+
+**Scope / residual.** The built-in skill's description row in existing orgs keeps its old wording until re-seeded (seeding fills missing built-ins only); the behaviour is the code's.
+
 ---
 
 <a id="lnk-11"></a>
@@ -388,7 +494,7 @@ lib/linkProposalLogic.ts:166-167 — `const tier: ProposalTier = shared >= 3 ? "
 ## LNK-11 · The 'semantic' proposer is advertised in the label table but never emitted, and the server-side revision-invalidation function has no callers
 
 - **Severity:** LOW
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Verification:** CONFIRMED
 - **Locations:** `lib/linkProposals.ts:47-53`, `lib/linkProposalLogic.ts:20`, `lib/linkProposerServer.ts:457-472`, `lib/postPublish.ts:129-134`, `lib/linkProposals.ts:181-194`
 - **Independently verified:** ✓ **SURVIVES, corrected** — second independent adversarial pass. Severity **MEDIUM → LOW** by this pass. Both absence claims verified by repo-wide search, so the finding is factually airtight — but it describes dead code and a stale label, which is LOW, not MEDIUM. Worth noting the finding actually understates one consequence it stumbled on: because postPublish routes through the client function, the UPDATE runs under the publisher's RLS and proposed_links_write (20260807:84-90) restricts writes to Admin/DocCtrl/Manager/Supervisor, so a publish by any other role silently stales nothing and returns 0 (linkProposals.ts:192).
@@ -411,6 +517,15 @@ lib/linkProposals.ts:51 — `semantic: "Similar content",` in PROPOSER_LABELS. S
 - [ ] postPublish calls the server-side `invalidateProposalsForRevision` through an API route with the service role, so the sweep does not depend on the publisher's role, and its result is logged
 - [ ] `staleProposalsForDocument` either gains an org filter or is deleted
 
+**Resolution (2026-09-30, intelligence Round G).** Decision (`DEC-55`): no detector is named until one emits. `semantic` is removed from `PROPOSER_LABELS` and from both `ProposerKind` unions. The publish-time sweep goes through the service role: `postPublish` → `requestProposalInvalidation` → `POST /api/links/invalidate` (see `LNK-1`) → `invalidateProposalsForRevision`, which is org-scoped, returns its error, and whose outcome is logged by the caller; a server caller can pass `serviceClient` to run it in-process. `staleProposalsForDocument` (RLS-bound, no org filter, a silent 0 for most publishers) is deleted. Tests: `lib/__tests__/linkProposalsRoundG.test.ts` ("no label names a detector that does not run", "the publish pipeline sweeps on the service role …", "/api/links/invalidate …").
+
+**Done-when.**
+1. ✓ `semantic` is removed from `PROPOSER_LABELS` and the type unions.
+2. ✓ `postPublish` calls `invalidateProposalsForRevision` through an API route with the service role, and the result is logged (a count when proposals were retired, a warning when the sweep did not run).
+3. ✓ `staleProposalsForDocument` is deleted.
+
+**Scope / residual.** None.
+
 ---
 
 <a id="lnk-12"></a>
@@ -418,7 +533,7 @@ lib/linkProposals.ts:51 — `semantic: "Similar content",` in PROPOSER_LABELS. S
 ## LNK-12 · The 12-pass "bounded slices" driver is a treadmill: pending proposals are excluded from the block-set, so every pass recomputes the identical first 400 drafts, re-writes the same rows, and reports 12× the real count — while drafts 401+ never reach the queue
 
 - **Severity:** MEDIUM
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Verification:** CONFIRMED
 - **Locations:** `lib/linkProposerServer.ts:375-386`, `lib/linkProposerServer.ts:410-428`, `lib/linkProposerServer.ts:438-447`, `app/(protected)/admin/proposed-links/page.tsx:105-131`
 - **Independently verified:** ✓ **SURVIVES** — second independent adversarial pass. Confirmed: nothing in the loop can shrink `fresh`, because the queued rows stay 'pending' and the auto-applied ones would only shrink it via `linked`, which LNK-3's 42P10 prevents in the first place. Drafts 401+ are unreachable until a human decides the first 400.
@@ -442,6 +557,16 @@ lib/linkProposerServer.ts:381 `if (r.status === "pending") continue;` + :386 `co
 - [ ] `more: false` once a pass produces no NEW pair, so the client loop terminates on the first idempotent pass
 - [ ] A test drives two consecutive runs over inputs producing 500 drafts and asserts run 2 queues the remaining 100, not the same 400
 
+**Resolution (2026-09-30, intelligence Round G).** Pending proposals are in the block-set: a draft identical to the one already queued for its (pair, skill) is not new work (`dropAlreadyQueued`; a changed tier or confidence is, and is refreshed). Each pass therefore takes the next slice, `planBatch` sets `more` only while drafts that fit remain, and `proposed` counts the rows the upsert actually returned (inserted, re-opened or changed). The review page sums those real numbers, shows how many passes ran and whether more remain, and the loop stops on the first pass with nothing new. Tests: `lib/__tests__/linkProposalsRoundG.test.ts` ("two runs over 528 strong drafts queue 400, then the remaining 128; `proposed` is rows written" — a third run queues 0).
+
+**Done-when.**
+1. ✓ Slicing advances: pending pairs are in the block-set.
+2. ✓ `proposed` counts rows actually inserted or changed.
+3. ✓ `more` is false once a pass produces no new pair.
+4. ✓ Test: two consecutive runs over more than 400 drafts — the second queues the remainder, not the same 400 (528 → 400 + 128).
+
+**Scope / residual.** None.
+
 ---
 
 <a id="lnk-13"></a>
@@ -449,7 +574,7 @@ lib/linkProposerServer.ts:381 `if (r.status === "pending") continue;` + :386 `co
 ## LNK-13 · Which of the two documents carries the approved link is decided by UUID sort order, so an approved connection appears in one document's Related panel and only as a backlink on the other
 
 - **Severity:** MEDIUM
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Verification:** CONFIRMED
 - **Locations:** `lib/linkProposalLogic.ts:39-43`, `lib/linkProposals.ts:108-127`, `lib/relatedResources.ts:33-36`, `lib/relatedResources.ts:100-109`, `components/documents/RelatedPanel.tsx:173-183`
 - **Independently verified:** ✓ **SURVIVES** — second independent adversarial pass. The asymmetry is real and is decided by UUID ordering, so roughly half of approved links render with the provenance chip and half do not. RelatedPanel.tsx:173-183 renders the "approved" badge and evidence tooltip only from the listRelatedResources rows, confirming the backlink side loses exactly the evidence the feature exists to show.
@@ -471,5 +596,14 @@ lib/linkProposalLogic.ts:41-43 `return a < b ? [a, b] : [b, a];` — lexicograph
 - [ ] Either approval writes both directions (and the panel dedups), or the Related panel unions outbound and inbound rows into one list so an approved link reads identically from both documents
 - [ ] The engine's `linked` check and the unique index stay pair-normalized regardless, so dedup is preserved
 - [ ] A test approves a proposal and asserts both endpoint documents render it in the same panel with the same evidence
+
+**Resolution (2026-09-30, intelligence Round G).** Decision (`DEC-55`): the lower document number carries the row (`carrierOrder` — natural order, falling back to the id order), for auto-applied links and approvals alike; both documents render it. `approveProposal` first checks the pair in EITHER direction and writes nothing when it is already linked (the proposal still resolves); otherwise it inserts with the carrier order. `listRelatedResources` returns the links a document carries AND the document links carried by the other end (`direction: 'in'`), one entry per other document, so the Related panel shows an approved link identically from both documents — provenance chip, evidence tooltip and unpin control — and "Linked from" no longer repeats one of them. The engine's `linked` check stays pair-normalised (`orderPair`) and `proposed_links` stays pair-ordered. Tests: `lib/__tests__/linkProposalsRoundG.test.ts` ("approval writes the row once, carried by the lower number, and both panels list it with its evidence", "a pair already linked the other way is not written twice …"), and the carrier unit test.
+
+**Done-when.**
+1. ✓ The Related panel unions outbound and inbound rows into one list, so an approved link reads identically from both documents.
+2. ✓ The `linked` check and the proposal index stay pair-normalised; an approval never writes the reverse of an existing link.
+3. ✓ Test: approve a proposal; both documents list it with the same evidence.
+
+**Scope / residual.** Rows written before this round keep the direction they were written in; both panels render them either way.
 
 ---

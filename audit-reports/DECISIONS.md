@@ -1065,6 +1065,7 @@ For a fix that needs a schema or policy change:
   from here.
 
 *Landed 2026-09-23 (document-control Round F): `20261077` applies the two-worlds rule inside one paste — the pre-apply inventory (TEMP TABLE, aggregate counts: `document_review_events` rows with NULL `org_id` and how many of those have no parent document left, live `document_versions` rows sharing a storage key, documents disposed or Archived under an open hold) is captured BEFORE the transaction, the DDL then chooses its own world — `org_id SET NOT NULL` when the backfill left nothing, otherwise a `NOT VALID` CHECK that binds every NEW row and keeps the unbackfillable residue for the record (never deleted) — and the final SELECT reports which world it chose. See `DRLS-4`, `RET-8`, `HLD-1`.*
+*Landed 2026-09-30 (intelligence Round G, I-08): `20261125` and `20261126` take the two-worlds rule into one paste each — the pre-apply inventory (built-in skills carrying a member uid; org-wide custom skills whose author is not an active controller; `document_related_resources` rows with NULL `target_document_id`; duplicate mention keys; `origin` values outside the declared set; `proposed_links` rows in status `stale`) is a TEMP TABLE before the transaction, the plain mention indexes are built and the `origin` CHECK is VALIDATEd only in the world where nothing violates them, and the final rows report the world taken. See `IEDGE-3`, `IRLS-4`, `LNK-9`.*
 
 <a id="dec-31"></a>
 ## DEC-31 · The scope rule
@@ -1319,6 +1320,7 @@ facility with no configuration must keep working exactly as it does today.
 *Landed 2026-09-29 (projects Round G): the quality program's machine actor is a reserved sentinel, not a facility role — `MACHINE_ACTOR_SWEEP` (`"evidence sweep"`) / `MACHINE_ACTOR_ASSESSMENT` (`"AI assessment"`) in `lib/checklistEngine.ts`, written as `updated_by = NULL` + `updated_by_name = <sentinel>` by `runAutoEvidence` / `applyAssessment`; a human write always carries a uid. Checklist kinds stay seed data (`CHECKLIST_KIND_LABEL`), and the turnover subject match reads the seeded item names, never a role. See `QUAL-6`, `DEC-52`.*
 
 *Landed 2026-09-30 (intelligence Round G, I-10): the equipment registry adds no role list. Its delete tier is the controller tier (`isControllerRole` from `lib/permissions.ts` on the client, `is_org_controller` in `20261128`), and the master-list workbook route reads the registry writer tier from `ADMIN_SURFACES` "assets" `writes` through `memberHoldsAny`, which checks the whole role collection. See `AREA-1`, `IRLS-5`, `BR-4` and `DEC-53`.*
+*Landed 2026-09-30 (intelligence Round G, I-08): skill authority names no role. Publishing a Reasoning or Connection Skill org-wide, and managing a built-in, is the controller tier — `is_org_controller` in `20261125`'s policies, `isSkillController` (`isControllerRole` over the held collection) on the Skill Library, the Connection Skills list and the Studio, which no longer carry an `"Admin"` / `"DocCtrl"` literal. See `DEC-55`, `IEDGE-3`, `HUB-2`.*
 
 <a id="dec-36"></a>
 ## DEC-36 · Where the routing table lives, and how it resolves
@@ -3008,3 +3010,25 @@ users, by design.
 - *A private project's company events stay private after its delete, kept and snapshotted (item 4; SEC-2, PM-6).*
 - *The register's UPDATE follows the plan; a trigger keeps links from moving; attach and update need project visibility (item 6; PM-8, SEC-17, SAF-17).*
 - *The timeline's id lists are read whole (SAF-6, SAF-17).*
+
+<a id="dec-55"></a>
+## DEC-55 · Who publishes a skill, and how the link engine remembers
+
+> Made during intelligence Round G (2026-09-30), package I-08 SKILLS AUTHORITY & LINK PROPOSALS, under the protocol's fail-safe rule, taking the fleet plan's stated defaults. The task named it DEC-44 for renumbering at merge; DEC-44 to DEC-54 already exist in this file, so it is written as the next free number and the integrator renumbers it if another package took DEC-55.
+
+**Decision. A member's skill is private until a document controller shares it; built-ins belong to the org; the link engine blocks what a person decided and nothing else.**
+
+1. **Org-wide skills are the controller tier.** Any active member authors Reasoning and Connection Skills as PRIVATE. A private reasoning skill rides only its author's questions; a private connection skill is a draft — the Studio's tester runs it, the engine does not. Publishing org-wide (or flipping a row to org-wide) is `is_org_controller` at the database (`20261125`) and in the UI (`lib/skillAuthority.ts`). A member asks to share (`share_requested`); a controller approves (the database stamps `shared_by` / `shared_at`) or declines. Once org-wide, a skill is changed by a controller; its author may take it back to private or delete it. Controllers read every skill of the org. Every person's create, change or delete of a skill is audited with the text.
+2. **Built-ins belong to nobody.** They are written with no author, seeded by the service role on every engine run and answer, and by a controller's visit to the Skill Library; only a controller switches one; nobody deletes one.
+3. **Connection-skill patterns are a bounded subset**, the same rules in `lib/linkProposalLogic.ts` and in the database: no backreferences, lookarounds, named groups or inline flags; no repeated group holding a repeat, an alternation or another group; no unbounded repeat of `.`; no two unbounded repeats side by side; at most 2 unbounded repeats; bounds ≤ 100; at most 8 patterns. A skill runs under 50 ms per document (15 s for all custom skills per run); one that overruns is switched off by the engine with the reason on the row, never silently skipped. No worker or linear-time regex engine.
+4. **The engine's memory** is keyed like the table's unique index: an approval settles the pair; a dismissal blocks that skill's opinion of the pair only; a pending proposal is already queued; a STALE proposal (its revision was superseded) re-enters the queue when the next run re-derives it from the new text. A dismissal can be reopened from the review page.
+5. **No detector is named until one emits** — the 'semantic' label is removed.
+6. **An applied link is carried by the lower document number**, and both documents' Related panels render it with the same provenance and evidence. Provenance is the declared set `human`, `system`, `proposed`, `shaped`.
+
+**Rationale.** An org-wide reasoning skill is text in every colleague's answer prompt and in the orchestrator's playbook; an org-wide connection skill is code the engine runs over the whole corpus. Both are org configuration, and org configuration here is the controller tier (the org playbooks already were). The fail-safe is that no member can reach another member's prompt or the engine without a controller's act. The engine's memory had one key for four different facts; a superseded revision is not a human "no".
+
+**Acceptance.** A member's insert or update that makes a skill org-wide is refused by the database; a controller's is admitted and stamped. A built-in cannot be switched by a member or deleted by anyone. `(a+)+b` is refused by the Studio, `createLinkRule` and the database. A proposal staled by a new revision is pending again after the next run; a dismissed shared-equipment opinion does not block a work-order reference or a provable connector for the same pair. See `lib/__tests__/skillsAuthority.test.ts` and `lib/__tests__/linkProposalsRoundG.test.ts`.
+
+**Reversal.** (1) A facility that wants members to publish drops the `is_org_controller` term from the INSERT / UPDATE checks; the share request becomes unnecessary but harmless. (3) A linear-time regex engine replaces the subset without changing the storage. (6) The carrier rule is presentation only; both directions render.
+
+**Risk:** low. Narrows authority (members lose org-wide publishing and built-in management); existing org-wide member skills go back to private with a share request, nothing is deleted.

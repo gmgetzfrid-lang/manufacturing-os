@@ -127,7 +127,7 @@ lib/orchestrator/tools.ts:133-135 — `const { data, error } = await supabaseAdm
 ## IEDGE-3 · Any active member — including a Viewer — can publish an org-wide Reasoning Skill whose free text is appended to the END of every teammate's answer system prompt and the orchestrator's playbook
 
 - **Severity:** HIGH
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Verification:** CONFIRMED
 - **Locations:** `supabase/migrations/20261016_reasoning_skills.sql:41-48`, `lib/answerSkills.ts:87-98`, `components/intelligence/SkillStudio.tsx:48`, `components/intelligence/SkillStudio.tsx:202-206`, `lib/answerSkillsServer.ts:29-46`, `app/api/knowledge/ask/route.ts:1481-1483`, `app/api/knowledge/ask/route.ts:1538-1540`, `app/api/orchestrator/route.ts:117-120`, `app/(protected)/intelligence/skills/page.tsx:175-185`
 - **Also surfaced independently as** [`LNK-6`](./09-link-proposals.md#lnk-6) — two lenses found this separately. Fix once.
@@ -150,6 +150,18 @@ supabase/migrations/20261016_reasoning_skills.sql:43-48 — `CREATE POLICY answe
 - [ ] An org-wide skill authored by a non-controller lands in a review state and does not ride anyone's prompt until approved
 - [ ] The APPLIES WHEN requirement is enforced server-side (or in createAnswerSkill) rather than shown as a dismissible hint
 - [ ] link_rules gets the same treatment — its INSERT policy has the identical any-member/any-visibility shape
+
+**Resolution (2026-09-30, intelligence Round G).** Reproduced from the policy text: `answer_skills_insert` (`20261016`:43-48) checked active membership and `created_by = auth.uid()` only, the column defaulted to `'org'`, and `SkillStudio` defaulted its control to `"org"`. `20261125` re-creates the four `answer_skills` policies and the four `link_rules` policies (`DEC-55`, the controller tier by `is_org_controller`, no role name — `DEC-35`). A custom row is inserted only by its author and only as `'private'` unless the author is a controller; the UPDATE `WITH CHECK` leaves a non-controller author nothing but a private row, so neither an insert nor a flip can make a member's pack org-wide. A member who wants a pack shared sets `share_requested` on the private row; controllers (who read every skill of the org) approve (`visibility → 'org'`, `shared_by` / `shared_at` stamped by the database) or decline on the shelf. Org-wide custom rows already written by a non-controller go back to private with a share request (inventory counts them; nothing is deleted). The self-gating rule is enforced: `answerSkillIssue` in `lib/answerSkills.ts` (40–4,000 characters and "APPLIES WHEN") refuses in `createAnswerSkill` and keeps the Studio's Publish off, and the BEFORE trigger `answer_skills_guard` refuses a person's new, changed or newly published pack that breaks it. `link_rules` gets the same authority (and its own guard, `LNK-6`). The one list the surfaces render is driven by `lib/skillAuthority.ts` `skillControls`, which mirrors the policies. Tests: `lib/__tests__/skillsAuthority.test.ts` ("the transcription above IS the policy text", "IEDGE-3 / GOV-2 / IRLS-3 / ORCH-2 / PR-3 — publishing org-wide is the controller tier", "the controls every surface renders are exactly the writes the policies admit", "IEDGE-3: a pack that never says when it applies …").
+
+**Pending migration:** `supabase/migrations/20261125_intel_roundG_skills_authority.sql` (DEC-30: the pre-apply inventory — built-ins carrying a member uid, org-wide custom skills whose author is not an active controller, packs without APPLIES WHEN or over 4,000 characters, connection skills over the pattern limits, non-controller members — is captured into a TEMP TABLE before the DDL and printed in the one result set; the probes verify every policy, trigger and pin after apply). Until it is applied, the app half holds (the Studio offers org-wide publishing to controllers only, built-ins are seeded without an author by controllers only, private connection skills do not run) but the database still admits a direct PostgREST write.
+
+**Done-when.**
+1. ✓ INSERT and UPDATE force `visibility = 'private'` unless `is_org_controller(org_id)`; a member authors for themselves, a controller publishes.
+2. ✓ A non-controller's "share org-wide" is a `share_requested` private row: it rides only its author's questions until a controller approves it.
+3. ✓ APPLIES WHEN is enforced in `createAnswerSkill` and at the database (`answer_skills_guard`), no longer a dismissible hint.
+4. ✓ `link_rules` has the identical treatment (`link_rules_insert` / `_update` in `20261125`).
+
+**Scope / residual.** What an approved pack says to the model is still free text; the block it rides in is now fenced as org-authored configuration (`ORCH-2`). Naming which skills shaped an answer is `IRLS-13`.
 
 ---
 
