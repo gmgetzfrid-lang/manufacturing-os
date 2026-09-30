@@ -72,7 +72,7 @@ lib/projects.ts:259-318 (transitionProjectStatus) writes status/completed_at/can
 ## PM-2 · Deleting a project does not revoke its contractor upload tokens — project_intake_links has no FK to projects, so live external links survive and keep serving the assigned-document register
 
 - **Severity:** HIGH
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Verification:** CONFIRMED
 - **Locations:** `supabase/migrations/20260902_project_intake.sql:18-34`, `lib/projects.ts:597-617`, `app/api/intake/resolve/route.ts:34-46`, `app/api/intake/resolve/route.ts:105-120`, `app/api/intake/upload/route.ts:64-92`
 - **Independently verified:** ✓ **SURVIVES** — second independent adversarial pass. Survives. Both halves confirmed by repo-wide search: no FK, no cascade, no cleanup in deleteProject. The link keeps resolving and keeps listing the assigned documents' numbers/titles/revs; uploads do fail ("Project not found.", route.ts:227), but the org has also lost the only UI that could revoke the link, since the Intake tab lived on the deleted project page.
@@ -99,6 +99,16 @@ lib/projects.ts:259-318 (transitionProjectStatus) writes status/completed_at/can
 - [ ] /api/intake/resolve and /api/intake/upload return a definite 'this link is no longer valid' when the project row is missing, instead of falling back to a generic 'Project'
 - [ ] the quote branch of /api/intake/upload validates the link's project before writing bytes to R2
 - [ ] an operational query exists for orphaned intake links (project_id with no matching project) and is run once against production
+
+**Resolution (2026-09-30, projects Round G).** Package J1 INTAKE-DOOR. (1) Migration `20261104` gives `project_intake_links.project_id` a `REFERENCES projects(id) ON DELETE CASCADE` (the plan's default, `DEC-50`): deleting a project deletes its links. DEC-30's two worlds: links whose project is already gone are REVOKED first (never deleted — the documents they submitted keep their provenance), the constraint is added `NOT VALID` so it binds every new row, and it is `VALIDATE`d only when no orphan remains; the result set reports the orphan count either way. (2) Both public routes answer a definite "link no longer valid" when the project row is missing: `/api/intake/resolve` returns 410 `link_gone` (and 410 `project_closed` for a completed / cancelled / archived project — PM-1's route limb), and `/api/intake/upload` refuses with `LINK_GONE_MESSAGE` / `PROJECT_CLOSED_MESSAGE`; the portal renders both (`lib/intakeLinks.ts`). No generic "Project" fallback remains. (3) The quote branch — every branch — validates the link's project (org-scoped) before any byte reaches R2. (4) The operational query for orphaned links is the migration's inventory (run once when it is pasted). `lib/intakeLinks.ts` exports `revokeProjectIntakeLinks` — THE revoke helper for the project model (J8 points `deleteProject` / project closure at it; checked write, read back, audited by link id). Tests — `lib/__tests__/intakeUploadRoute.test.ts` "a link whose project no longer exists opens nothing — on the quote branch too, before any byte is stored", "a closed project's link accepts nothing", the resolve route's "a link whose project is gone answers a definite link_gone" and "a closed project's link answers project_closed"; `lib/__tests__/intakeDoorMigration.test.ts` (orphans revoked, never deleted; NOT VALID then VALIDATE); `lib/__tests__/intakeDoorLibs.test.ts` "revokeProjectIntakeLinks revokes only live links of that project, reads them back, and audits by id".
+
+**Done-when.**
+- [x] `project_id` carries `REFERENCES projects(id) ON DELETE CASCADE` after the orphans are dealt with — ✓ (pending `20261104`; orphans revoked, constraint validated when none remain).
+- [x] Both routes return a definite "this link is no longer valid" when the project row is missing — ✓.
+- [x] The quote branch validates the project before writing bytes to R2 — ✓.
+- [x] An operational query exists for orphaned links — ✓ (the inventory in `20261104`); run once against production — **pending the paste**.
+
+**Scope / residual.** Pending migration: `supabase/migrations/20261104_prj_roundG_intake_links.sql`. `lib/projects.ts` (deleteProject) is J8's file — it is not edited here; the cascade makes a delete close the doors regardless.
 
 ---
 

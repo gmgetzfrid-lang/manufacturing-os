@@ -1378,6 +1378,8 @@ no router.
 
 *Landed 2026-09-23 (document-control Round F): the single resolver exists — `lib/containerChain.ts` (`loadContainerChain` / `firstDefinedInChain` / `folderChainFromMap`) walks document → folder → `path_ids` ancestors nearest first → library, throws on a read error, and is the only chain walk: `review_control` and `doc_class` ride it; `routing_control` must too. Its SQL twin is `review_control_mode_for` (`20261070`). See `RG-3`, `RG-6`.*
 
+*Landed 2026-09-30 (projects Round G, J1): the external door resolves the review policy through the same SQL twin (`review_control_mode_for`) — a `require` policy is never auto-published by a contractor link — and `enforce_document_publish_guard` (re-created in 20261105 from 20261070's body) no longer exempts an EXTERNAL submission from a `require` policy with no roster; the Intake tab's approve resolves the policy with `effectiveReviewControlForDocument` and opens the roster. See projects-tab `SEC-13`, `DEC-50`.*
+
 <a id="dec-37"></a>
 ## DEC-37 · One person, many hats
 
@@ -2352,3 +2354,88 @@ PDF viewer in sandboxed frames would let the PDF frame take `sandbox=""` too.
 
 **Risk:** low — every change narrows; the viewers that frame keep working
 through the opt-in.
+
+<a id="dec-50"></a>
+## DEC-50 · The external door: who authored a document, how a trusted link publishes, and what the door admits
+
+**Decision. A contractor link is a bounded credential and a trusted link is a
+narrow privilege, both enforced where the write happens:**
+
+1. **Authorship is a fact fixed at creation** — `documents.authored_by_link_id`,
+   stamped only when the door CREATES a document (backfilled from each
+   document's first version). A trusted link auto-publishes a revision ONLY when
+   the document is its own by that column, is NOT in the link's
+   `assigned_doc_ids`, has had at least one approved revision
+   (`current_version_id`), the link's previous submission on it was not
+   rejected, and none of the gates below refuses. Anything else goes to review,
+   and the portal is told why.
+2. **The trusted promote is the publish contract**, never a pointer write:
+   `publish_revision` acting as the link's CREATOR (the person who sanctioned
+   auto-publish), so the hold gate, the checkout lock, the expected-base check
+   and the drawing-class MOC gate run in the database; the route adds the
+   creator's current publish authority and the document's review policy (the
+   SQL twin of the container-chain resolver — a `require` policy is never
+   auto-published). Then the full post-publish pipeline, run server-side with
+   the shared client bound to the service role and every signal settled
+   (`runPostPublishSideEffects({ …, settle: true })`). A refusal DEMOTES the
+   upload to review (OWN-4); it never discards the file.
+3. **A displaced submission is resolved, not orphaned**: only a trusted link,
+   only its OWN roster-free earlier submission on its own document; the
+   displaced version becomes `review_state = 'superseded'` with an audit row
+   and a notice, and is never a revert target.
+4. **What the door admits**: the token travels in a header (or the query
+   string) and is checked — format, rate window, existence, revocation,
+   expiry, the link's budget, the declared size — before the body is read.
+   30 uploads per token and 60 per IP per hour (environment-configurable),
+   FAIL OPEN on a limiter error; one team notice per link per 15 minutes; a
+   per-link lifetime cap of 500 submissions and 5 GB. Links expire: 14 days
+   by default, 90 at most (the database allows one extra day for an
+   end-of-day local expiry). The bytes decide the type: quotes PDF only;
+   drawings and redlines PDF, DWG, DXF or ZIP, by magic number, extension and
+   a plausible declared type; the stored Content-Type is the sniffed one.
+   Title ≤ 200, number ≤ 64, revision label a label. Portal errors are a
+   sentence and a reference id — database text stays in the log.
+5. **Assigning a controlled document to a contractor is a publish-grade act**:
+   the document must be in the link's org and the assigner must hold publish
+   authority on its library (a trigger, not a policy).
+6. **Transition-in**: a rejected sheet is not a candidate; an unapproved one
+   is shown and blocked; a sheet whose checks could not run is
+   "unverifiable" — never clean, never bulk-adopted; adoption re-checks at the
+   click and is offered to the controller tier only (the move guard's tier).
+7. **A deleted project closes its doors** (FK ON DELETE CASCADE; orphans
+   found at apply are revoked, never deleted).
+
+> Made during projects Round G (2026-09-30), package J1 INTAKE-DOOR, closing
+> projects-and-cost `INTK-1` … `INTK-13`, `PM-2` and projects-tab `SEC-1`,
+> `SEC-3` … `SEC-14`, `SAF-5`, `SAF-10` … `SAF-15`, `REL-8`. Numbered DEC-50 on
+> the package branch (DEC-44 … DEC-49 were taken); the integrator renumbers
+> if needed.
+
+**Rationale.** The door is the one place an outside party writes into document
+control. Every earlier defect had the same shape: a fact the route itself
+manufactured (a version row carrying the link's id) was read back as
+authority, and a service-role write skipped the rails the database already
+had. Reading authorship from a column only the creating call writes, and
+publishing through the same contract as every internal publish, removes both
+without a second implementation of the guards.
+
+**Deferred, on the record.** Hashing the token at rest (`SEC-19`) and a
+mint-once display (`SEC-16` Done-when 1) wait on the Costs tab's list;
+presigned direct-to-R2 uploads (`INTK-15`) wait on `GAP-401`'s constrained
+identity; the contractor's email on approve/reject (`SAF-9`) needs a server
+route — the portal shows outcome and reason in the meantime.
+
+**Acceptance.** Two submissions against an assigned document both land in
+review; a trusted link's revision of its own approved document publishes
+through `publish_revision` and a fresh acknowledgment roster opens; an HTML
+file named `.pdf` is refused before storage; the 31st upload in an hour is a
+429; a retry returns the original record; a gone project's link opens
+nothing (`lib/__tests__/intakeUploadRoute.test.ts`,
+`lib/__tests__/intakeAutoPublishAcks.test.ts`,
+`lib/__tests__/intakeDoorMigration.test.ts`).
+
+**Reversal.** Per item, in configuration where it is one (the limits, the
+allowlist); the authorship rule and the contract-only promote are structural.
+
+**Risk:** medium — a trusted vendor's first revisions now wait for a person,
+and an unverifiable sheet needs a deliberate single adopt.

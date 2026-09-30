@@ -1,6 +1,6 @@
 # 05 · External intake & the contractor door
 
-**14 findings** — 2 CRITICAL · 7 HIGH · 5 MEDIUM.
+**15 findings** — 2 CRITICAL · 7 HIGH · 6 MEDIUM (`INTK-15` opened by projects Round G, 2026-09-30).
 
 The tokened portal, and whether promoted content enters document control through the guard or around it.
 
@@ -30,7 +30,7 @@ The tokened portal, and whether promoted content enters document control through
 ## INTK-1 · A trusted link ASSIGNED an org-authored controlled drawing auto-publishes on its second submission — `linkAuthored` bootstraps from the link's own rejected or pending version
 
 - **Severity:** CRITICAL
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Verification:** CONFIRMED
 - **Locations:** `app/api/intake/upload/route.ts:245-250`, `app/api/intake/upload/route.ts:257-259`, `app/api/intake/upload/route.ts:302`, `app/api/intake/upload/route.ts:322-329`, `supabase/migrations/20260903_intake_assignments.sql:5-9,21-22`, `components/projects/IntakePanel.tsx:409`
 - **Independently verified:** ✓ **SURVIVES** — second independent adversarial pass. Claim confirmed, and it contradicts two explicit written promises: the route's own comment at :299-301 ("an assigned org-authored controlled drawing ALWAYS goes through review, whatever the link's trust level") and 20260903_intake_assignments.sql:21-22 / IntakePanel.tsx:409 ("Their revisions of your documents always go through review, even on trusted links"). Rejection is not even required for the bootstrap — a first submission left in_review is enough, and the reject path (IntakePanel.tsx:254-259) leaves the version row intact with intake_link_id set, so it bootstraps too.
@@ -56,6 +56,16 @@ upload/route.ts:246-248 `.eq("record_id", docId).eq("intake_link_id", link.id as
 - [ ] A version whose `review_state` is 'rejected' can never make a link look like the author, and a rejected submission cannot be re-published by resubmission without a controller action.
 - [ ] The three comments asserting the invariant (upload/route.ts:299-301, 20260903:5-9, IntakePanel.tsx:409) are either true or deleted.
 
+**Resolution (2026-09-30, projects Round G).** Package J1 INTAKE-DOOR. Authorship is now a fact fixed at creation: migration `20261104` adds `documents.authored_by_link_id` (FK to `project_intake_links`, ON DELETE SET NULL), backfilled from each document's FIRST version (lowest `created_at`), and `app/api/intake/upload/route.ts` stamps it when — and only when — it CREATES a document. `linkAuthorOf` reads that column (org-scoped); on a database without it, the document's first version (a fact the route never rewrites), never the version chain it appends to. The rule (`DEC-50`): a trusted link may auto-publish only a document it authored, that is NOT in its `assigned_doc_ids`, and that has had at least one approved revision (`current_version_id`); after a rejected submission the next one is reviewed too. Everything else goes to review, and the portal is told why (`note`). The in-review lock now exempts only a trusted link replacing its OWN earlier submission on its own document (the pending version's `intake_link_id` is checked). Tests — `lib/__tests__/intakeUploadRoute.test.ts`: "an ASSIGNED org document goes to review on every submission — even after a link version was approved", "a document the link authored AND was assigned is treated as assigned", "a link-authored document with no approved revision goes to review", "after a rejection, the next submission is reviewed", "a document the link did not author and was not assigned is refused — whether or not it exists", the trusted own-document publish; `lib/__tests__/intakeDoorMigration.test.ts` (the column, its FK and the first-version backfill); `lib/__tests__/dcRoundFReviewGate.test.ts` RG-10 fixtures updated to the authorship column. Reproduced first: the new route, transition-in and pipeline tests run against the base `2a2ae73` (with the new libraries copied in so the files import) fail 73 of 83.
+
+**Done-when.**
+- [x] `linkAuthored` derives from `documents.authored_by_link_id`, stamped only at creation — ✓.
+- [x] An assigned document never takes the auto branch, whatever its history; two submissions against an assigned doc both go to review — ✓ (tested).
+- [x] A rejected version never makes a link look like the author (authorship is not read from versions), and a rejected submission is not re-published by resubmitting it — the next submission after a rejection is reviewed — ✓.
+- [x] The three comments are true: the route's header and eligibility comments are rewritten; 20260903's "restricted to documents the link itself authored" is now what the code enforces; IntakePanel's "always go through review" is true (and the Trusted checkbox copy states the real rule) — ✓.
+
+**Scope / residual.** Pending migration: `supabase/migrations/20261104_prj_roundG_intake_links.sql` (the column and backfill; until it is applied the route falls back to first-version authorship, which is equally fail-safe). Its inventory lists intake-born documents whose newest version came through a different link and ASSIGNED documents that already took an auto-publish — the bootstraps already taken, for a controller to look at.
+
 ---
 
 <a id="intk-2"></a>
@@ -63,7 +73,7 @@ upload/route.ts:246-248 `.eq("record_id", docId).eq("intake_link_id", link.id as
 ## INTK-2 · Intake auto-supersede is a fourth writer of `current_version_id` that never runs the post-publish pipeline — no stale-copy signal, no fresh read-and-understood roster, no review-cycle reset
 
 - **Severity:** HIGH
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Verification:** CONFIRMED
 - **Locations:** `app/api/intake/upload/route.ts:322-334`, `lib/postPublish.ts:1-13,79-90`, `lib/reviewControl.ts:490-509`, `app/api/intake/upload/route.ts:349-358`
 - **Independently verified:** ✓ **SURVIVES, corrected** — second independent adversarial pass. Severity **CRITICAL → HIGH** by this pass. All three named omissions are real — no stale-copy signal to intent holders/watchers, no fresh acknowledgment roster, no review-cycle reset. Lowered from CRITICAL because the route is not silent: :337-358 notifies every Admin/DocCtrl plus the project owner in-app and :363-385 queues them email, and the publish itself is authorized (the unauthorized-publish problem is INTK-1). This is a compliance/integrity gap, strictly less severe than INTK-1. Note also that intake is not the only unpiped writer — lib/revisions.ts:384, lib/documentLifecycle/common.ts:227 and app/(protected)/documents/[libraryId]/page.tsx:2475 also set current_version_id without the pipeline, so "a fourth writer" undercounts.
@@ -88,6 +98,15 @@ lib/postPublish.ts:9-11 `// Callers: revUpDocument (direct publish), revertToVer
 - [ ] A test asserts that after an intake auto-supersede, a new acknowledgement roster exists for the new revision and the prior roster is closed.
 - [ ] lib/postPublish.ts's caller list is updated to name every writer of `documents.current_version_id`, and a grep-based test fails the build when a new writer appears that does not import it.
 
+**Resolution (2026-09-30, projects Round G).** The auto-supersede branch no longer writes `current_version_id` at all. It publishes through `publish_revision` (the contract every internal publish uses) acting as the link's creator — the document row is locked, the hold gate, the foreign-checkout lock, the expected-base check (`p_expected_base` = the current version read) and the drawing-class MOC gate run in the database — then stamps the new version's `intake_link_id` and runs `runPostPublishSideEffects` with finalizeReviewedRevision's argument shape (`orgId, documentId, libraryId, docLabel, newRev, actorUserId, actorName, actorEmail`). The pipeline's modules are written against the shared browser client, which a server route holds as anon; the route binds it to the service role for the call (`asServiceRole`, reference-counted, always unbound — the maintenance cron's pattern) and passes the new `settle: true` so every fire-and-forget signal finishes inside the binding (`lib/postPublish.ts`: opt-in, existing callers unchanged). A contract refusal (hold, checkout, MOC, a member who left) DEMOTES the upload to review with the reason (OWN-4's semantics); a moved base or a duplicate label is a readable 409. `lib/postPublish.ts`'s header names every writer of `current_version_id`. Tests — `lib/__tests__/intakeUploadRoute.test.ts`: "publishes through publish_revision acting as the link's creator, stamps provenance, and runs the pipeline bound to the service role", the ten-case demotion table, "a moved base is a 409"; the census "every writer of current_version_id runs the post-publish pipeline" (allow-lists `lib/documentLifecycle/common.ts` and `app/(protected)/documents/[libraryId]/page.tsx`, document-control P3's to convert); `lib/__tests__/intakeAutoPublishAcks.test.ts` runs the REAL pipeline and acknowledgments module after an auto-publish; `lib/__tests__/intakeDoorLibs.test.ts` "settle:true awaits the fire-and-forget signals".
+
+**Done-when.**
+- [x] The autoNow branch calls `runPostPublishSideEffects` with finalizeReviewedRevision's arguments — ✓ (and publishes through the contract rather than a raw write).
+- [x] A test asserts that after an intake auto-supersede a new acknowledgement roster exists for the new revision and the prior roster is closed — ✓ `intakeAutoPublishAcks.test.ts` (the Rev B row voided, a pending Rev C row for the policy's assignee, every roster write made under the service-role binding; a control proves the unbound pipeline would have touched nothing).
+- [x] `lib/postPublish.ts` names every writer, and a grep-based test fails the build for a new writer that does not import it — ✓ (two first-version writers allow-listed until DC P3 LIFECYCLE).
+
+**Scope / residual.** No migration needed for this half (`publish_revision` is live since R&P; `20261105` only adds a revert-gate word). The notification kinds are unchanged (`doc_superseded`, `review_requested` — the notifications fleet owns the vocabulary).
+
 ---
 
 <a id="intk-3"></a>
@@ -95,7 +114,7 @@ lib/postPublish.ts:9-11 `// Callers: revUpDocument (direct publish), revertToVer
 ## INTK-3 · Adoption never re-checks the impact: colliding sheets are one click from the controlled register, and rejected or still-in-review submissions stay adoptable
 
 - **Severity:** MEDIUM
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Verification:** CONFIRMED
 - **Locations:** `components/projects/TransitionInPanel.tsx:241-245`, `components/projects/TransitionInPanel.tsx:8-9`, `lib/transitionIn.ts:202-254`, `lib/transitionIn.ts:73-80`, `components/projects/IntakePanel.tsx:254-259`
 - **Independently verified:** ✓ **SURVIVES, corrected** — second independent adversarial pass. Severity **HIGH → MEDIUM** by this pass. Every factual clause verified, including that the row renders only label/rev/company (:184-185) with no rejected/in-review indicator. Lowered from HIGH because the panel does show the collision loudly before the click (:193-195 collapsed chip, :205-211 expanded red box), so a colliding adoption is a deliberate override rather than a blind one; and an adopted rejected sheet lands as status 'Draft' with no current_version_id (the intake route only ever set pending_version_id, :331-333), so it does not become an issued controlled revision — it squats in the library.
@@ -120,6 +139,15 @@ TransitionInPanel.tsx:241-242 `<button onClick={() => void adoptOne(c)} disabled
 - [ ] `listTransitionCandidates` excludes documents whose latest intake version is 'rejected', and either excludes or clearly marks those with an open `pending_version_id`.
 - [ ] The header comment at TransitionInPanel.tsx:8-9 matches the code, or the single-sheet Adopt button gains the same `clean` gate the bulk button has.
 
+**Resolution (2026-09-30, projects Round G).** `lib/transitionIn.ts`: `listTransitionCandidates` reads each sheet's latest INTAKE submission and drops a sheet whose latest submission was rejected; a sheet with no approved revision (`current_version_id` NULL — pending or never decided) is listed with `awaitingReview` / `pendingReview`; an unreadable list throws instead of reading as empty. `adoptDocument` re-checks at the click: org-scoped read; refuses a sheet still in review or never approved, and one whose latest submission was rejected; RE-RUNS `scanTransitionImpact` with the effective number (the renumber if given) and refuses a live collision — naming the colliding document — unless the new number is itself clear; a scan that could not run refuses. `components/projects/TransitionInPanel.tsx`: the single Adopt button is disabled for an unapproved sheet and for a collision until a renumber is typed; bulk adoption takes only approved AND clean sheets; badges "in review" / "not approved" / "unverifiable"; the header comment states what the code does. Tests — `lib/__tests__/transitionIn.test.ts` "drops a sheet whose latest intake submission was rejected; marks one still in review or never approved", "refuses a sheet still in review, or never approved", "refuses a sheet whose latest submission was rejected", "refuses a live collision; refuses a renumber onto another live number; accepts a clear renumber"; the panel's gates are source-pinned in `lib/__tests__/intakeUploadRoute.test.ts`.
+
+**Done-when.**
+- [x] Adopting re-runs the scan and refuses a collision unless the new number is itself clear — ✓.
+- [x] Rejected candidates are excluded; open `pending_version_id` (and never-approved) sheets are marked and blocked — ✓ (`DEC-50`: exclude rejected, block single adopt of pending).
+- [x] The single-sheet Adopt button carries the gate and the header comment matches the code — ✓.
+
+**Scope / residual.** None in this finding. The scan is still the browser's (it runs in the controller's session at the click, not in a server route); `flagCollisionToDrafting` is drafting-flow's and was not edited.
+
 ---
 
 <a id="intk-4"></a>
@@ -127,7 +155,7 @@ TransitionInPanel.tsx:241-242 `<button onClick={() => void adoptOne(c)} disabled
 ## INTK-4 · Auto-supersede silently voids a pending review — the in_review version is orphaned and vanishes from the Intake review queue
 
 - **Severity:** MEDIUM
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Verification:** CONFIRMED
 - **Locations:** `app/api/intake/upload/route.ts:257-259`, `app/api/intake/upload/route.ts:325`, `components/projects/IntakePanel.tsx:99-113`
 - **Independently verified:** ✓ **SURVIVES, corrected** — second independent adversarial pass. Severity **HIGH → MEDIUM** by this pass. Mechanism confirmed exactly. Lowered from HIGH because this is the trusted link's OWN document publishing its own newer revision — the register ends up correct (Rev C current) and no authority is bypassed; the harm is a permanently in_review zombie row and a review item that vanishes from the controller's queue with no notice.
@@ -152,6 +180,15 @@ upload/route.ts:257-259 `if (d.pending_version_id && !(link.allow_auto_supersede
 - [ ] A query for `document_versions` with review_state='in_review' whose record_id's `pending_version_id` does not point at them returns zero rows in a fresh environment after an auto-supersede test.
 - [ ] The 409 message at :258 is either true for all links or reworded to state the trusted exemption.
 
+**Resolution (2026-09-30, projects Round G).** A submission displaced by a newer one from the same link is RESOLVED: `retireDisplaced` in `app/api/intake/upload/route.ts` sets `review_state = 'superseded'` and `superseded_at` (CAS on `review_state = 'in_review'`), writes `INTAKE_SUBMISSION_DISPLACED` (displaced and displacing version ids) and the project team's notice says so — forced past the burst window. It runs on both paths: the trusted publish (after clearing the pending pointer with a CAS on exactly the draft read) and a trusted replacement that goes to review. Only a trusted link may displace, only its OWN earlier submission on its own document (checked by the pending version's `intake_link_id`); a roster on the draft still refuses (RG-10). Migration `20261105` widens the `review_state` CHECK to admit 'superseded' and re-creates `publish_revision` from its live body (20261049) with one word — a superseded submission is never a revert target; a database without it keeps the older `superseded_at` retirement (tested). `orphaned_in_review_versions_count()` (service role) is reported by the maintenance cron. Tests — `lib/__tests__/intakeUploadRoute.test.ts`: "the auto path clears only the pointer it read and marks the displaced draft 'superseded' with an audit row and a forced notice" (asserts the orphan query is empty afterwards), "a pre-20261105 database … keeps the superseded_at retirement", "a NON-trusted link cannot displace its pending submission", "a trusted link never displaces a pending draft that is not its OWN submission"; `lib/__tests__/intakeDoorMigration.test.ts` (CHECK, the publish_revision line-diff); RG-10's demotion test asserts the 'superseded' state.
+
+**Done-when.**
+- [x] A superseding submission resolves the version it displaces — 'superseded' with an audit row — ✓ (`DEC-50` picks 'superseded').
+- [x] The orphan query returns zero rows after an auto-supersede test — ✓ (asserted in the route test).
+- [x] The 409 is true for every link it reaches — ✓ (it is returned only when no replacement right applies, and the route comment states the trusted own-submission exemption).
+
+**Scope / residual.** Pending migration: `supabase/migrations/20261105_prj_roundG_intake_review_and_attempts.sql` (apply after document-control Round F's 20261070). Its inventory counts the in-review versions no document points at today (surfaced, not auto-voided).
+
 ---
 
 <a id="intk-5"></a>
@@ -159,7 +196,7 @@ upload/route.ts:257-259 `if (d.pending_version_id && !(link.allow_auto_supersede
 ## INTK-5 · Documents born through the external door never get `uniqueness_key`, so the DB duplicate-number index never applies to contractor drawings — before or after adoption
 
 - **Severity:** HIGH
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Verification:** CONFIRMED
 - **Locations:** `app/api/intake/upload/route.ts:284-296`, `lib/transitionIn.ts:211-217`, `supabase/migrations/20260619_document_uniqueness_configurable.sql:39-46`, `lib/uniqueness.ts:22-42`
 - **Independently verified:** ✓ **SURVIVES** — second independent adversarial pass. Confirmed by repo-wide search: computeUniquenessKey is called only from app/(protected)/documents/[libraryId]/page.tsx (:2438 create, :2564/:2596 save), CsvImportModal.tsx:162-176 and BulkEditModal.tsx:69-79 — never from the intake route or from adoptDocument. A NULL key opts the row out of the index entirely, so an intake-born number can duplicate a live controlled number both before and after adoption, and renumbering during adoption leaves it NULL as well.
@@ -183,6 +220,15 @@ upload/route.ts:286-292 — the full insert object, with no `uniqueness_key`. li
 - [ ] The intake document insert computes `uniqueness_key` from the destination library's `uniqueness_keys` (reusing lib/uniqueness.ts) so the partial index applies from the moment the row exists.
 - [ ] `adoptDocument` recomputes `uniqueness_key` whenever it writes `document_number` or moves the row to a different `library_id`, and reports the resulting unique-violation to the operator instead of returning `{ok:false}` with a raw message.
 - [ ] A backfill sets `uniqueness_key` for existing rows where it is NULL and `document_number` is not, and a test asserts that adopting two sheets with the same number into one library fails at the database.
+
+**Resolution (2026-09-30, projects Round G).** The intake document insert computes `uniqueness_key` with `lib/uniqueness.ts` `computeUniquenessKey` over the intake library's `uniqueness_keys` (read org-scoped; an unreadable library refuses), checks the live key BEFORE storing any byte (409 "That drawing number is already in use in this project's library…"), and maps a racing unique violation to the same sentence. `adoptDocument` recomputes the key for the DESTINATION library on every adoption (number or library change) and reports the index's refusal readably. Migration `20261105` backfills keys for every row with a number and no key — the same tuple, trimmed and lower-cased, `::`-joined — and SKIPS (counts, never guesses) a live row whose key would collide with another live row. Tests — `lib/__tests__/intakeUploadRoute.test.ts` "a new document … carries the uniqueness key the library's tuple computes", "a number already live in the library is refused BEFORE storage"; `lib/__tests__/transitionIn.test.ts` "accepts a clear renumber and writes its key", "the database's unique refusal … reach[es] the operator as [a] sentence[s]"; `lib/__tests__/intakeDoorMigration.test.ts` (the backfill mirrors the helper and skips collisions).
+
+**Done-when.**
+- [x] The intake insert computes the key from the destination library's tuple — ✓.
+- [x] `adoptDocument` recomputes the key and reports the violation readably — ✓.
+- [x] The backfill exists; a test asserts two same-numbered sheets into one library fail — ✓ as far as a unit test reaches: the adopted row carries the key the partial unique index keys on, and the index's refusal (simulated `23505`; no live database here) becomes the operator's sentence.
+
+**Scope / residual.** Pending migration: `20261105` (the backfill). Its inventory reports the skipped live collisions — two sources of truth for a person to resolve.
 
 ---
 
@@ -216,6 +262,15 @@ lib/dataExport.ts:300 `let q = sb.from(table).select("*").range(from, from + pag
 - [ ] A restore that encounters a redacted token either regenerates one and marks the link revoked, or refuses — a restored backup never resurrects a live external door.
 - [ ] The export API's role set and the table's RLS agree, or the export explicitly documents that it is a controller-only surface and drops 'Manager'.
 
+**Partial (2026-09-30, projects Round G — record by pointer, re-verified).** Package J1 re-read each Done-when against the merged tree (`DEC-29`). (1) `lib/exportTables.ts` `REDACT_COLUMNS` redacts `project_intake_links.token` (and `document_shares.token`), applied by `dumpTable` to every row — document-control `EGR-7` / `DEC-45`. (2) `lib/dataRestore.ts` `scrubRestoredRow` lands a restored intake link with an unguessable placeholder token and REVOKED — `DEC-45`. (3) The export API still admits `Manager` (`app/api/data-export/run/route.ts:18`, `structured/route.ts:56`, `destinations/route.ts:14` — `["Admin", "Manager", "DocCtrl"]`) while the table's RLS is controller-or-project-owner; admin-and-org P3 (exports admin-only), which the plan names as this item's closer, has not merged.
+
+**Done-when.**
+- [x] No bearer secret leaves in a backup — ✓ by `EGR-7` (redaction, tripwire in `lib/__tests__/exportCoverage.test.ts`).
+- [x] A restore never resurrects a live external door — ✓ by `DEC-45` (placeholder token, revoked).
+- [ ] The export API's role set and the table's RLS agree — **not done**: waits for admin-and-org P3.
+
+**Scope / residual.** No code in this package (the export files are document-control / admin-and-org's). Close by pointer when A&O P3 merges.
+
 ---
 
 <a id="intk-7"></a>
@@ -223,7 +278,7 @@ lib/dataExport.ts:300 `let q = sb.from(table).select("*").range(from, from + pag
 ## INTK-7 · The collision scan is opt-in, wildcard-vulnerable, and truncated — the contractor decides whether the 'two sources of truth' check runs at all
 
 - **Severity:** HIGH
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Verification:** CONFIRMED
 - **Locations:** `lib/transitionIn.ts:124-142`, `lib/transitionIn.ts:101,147-181`, `app/submit/[token]/page.tsx:230`, `app/api/intake/upload/route.ts:134,137`
 - **Independently verified:** ✓ **SURVIVES** — second independent adversarial pass. Survives. A blank number skips the collision query outright, and the tag scan (TAG_SCAN_RE over number+title, :57-64) is the only other input, so a numberless/tagless sheet is always `clean: true` and adoptAllClean (TransitionInPanel.tsx:113-117) moves it into the controlled library with no further check. One correction to the wording: the unescaped `ilike` pattern is a real injection of LIKE metacharacters but its effect is *extra* matches (false collisions), not evasion — the evasion path is the optional number, and the `.limit(5)`-before-filter truncation is the genuine false-negative.
@@ -249,6 +304,16 @@ lib/transitionIn.ts:124 `if (candidate.number) {`; :129 `.ilike("document_number
 - [ ] The duplicate query filters status server-side and orders deterministically rather than taking an arbitrary 5 rows and filtering in JS.
 - [ ] `clean` reflects what was actually checked — a sheet whose tag scan found nothing is reported as 'no equipment recognised', which TransitionInPanel already renders (:229-231) but does not let influence `clean`.
 
+**Resolution (2026-09-30, projects Round G).** `scanTransitionImpact` (`lib/transitionIn.ts`) now reports what it could NOT check in `unverifiable`: `no_number` (never compared with the register), `no_equipment` (no registry tag recognised — overlaps never compared), `check_failed` (a slice errored — never read as "no collision"); `clean` requires every check to have run and found nothing. The number check runs on every numbered sheet: `likeExact` escapes `%`, `_` and `\` (PostgREST's `*` alias becomes `_`, only ever broader) and the result is filtered to exact case-insensitive matches; status is filtered in the database (`not in (Archived,Superseded)`), ordered by id, 25 rows; and a library-root document (no folder) is counted — the old `neq(collection_id)` silently excluded it. `TransitionInPanel` shows "unverifiable" with the reasons, leaves it out of bulk adoption, and asks for confirmation on a single adopt; "Flag to drafting" is offered only for a real collision or overlap. Tests — `lib/__tests__/transitionIn.test.ts` "a sheet with no number is UNVERIFIABLE", "a sheet whose tags match no registry equipment is UNVERIFIABLE", "the collision query filters status server-side, orders deterministically, and never takes an arbitrary 5-row window", "finds a live collision hiding behind six superseded rows, a library-root document, and ignores a wildcard look-alike", "a check that errors is 'check_failed'".
+
+**Done-when.**
+- [x] Every candidate is checked; no number ⇒ 'unverifiable', never clean — ✓ (`DEC-50`: excluded from bulk adopt; the number is not made mandatory on the portal).
+- [x] The number is LIKE-escaped and matched exactly — ✓.
+- [x] Status filtered server-side, deterministic order, no 5-row window — ✓.
+- [x] `clean` reflects what was checked; "no equipment recognised" influences it — ✓.
+
+**Scope / residual.** The tag scan still reads the number and title only (the file bytes are not OCR'd); a sheet whose tags are only on the drawing face is honestly "unverifiable" now rather than falsely clean.
+
 ---
 
 <a id="intk-8"></a>
@@ -256,7 +321,7 @@ lib/transitionIn.ts:124 `if (candidate.number) {`; :129 `.ilike("document_number
 ## INTK-8 · The external door has no throttling and parses the whole request body before checking the token — and it is the only upload path that streams bytes through the function at all
 
 - **Severity:** HIGH
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Verification:** CONFIRMED
 - **Locations:** `app/api/intake/upload/route.ts:28-33`, `app/api/intake/upload/route.ts:20-22,44-46,266-271`, `lib/storage.ts:218-224,400-423`, `supabase/migrations/20261010_signup_rate_limit.sql:1-17`, `app/submit/[token]/page.tsx:172,244`
 - **Independently verified:** ✓ **SURVIVES** — second independent adversarial pass. Confirmed as a claim of absence: no throttle, no per-token ceiling (bump_intake_use increments submission_count but nothing reads it as a limit), body parsed before auth, and this is the only browser-facing upload that passes bytes through the serverless function. Each replay also fans out notifications + queued email to every Admin/DocCtrl (:377-385) and an R2 object.
@@ -282,6 +347,16 @@ upload/route.ts:29-33 `let form: FormData; try { form = await req.formData(); } 
 - [ ] Intake uploads use the same presigned direct-to-R2 path as every internal upload, so the advertised size limit is the real one.
 - [ ] A per-link submission cap (and a per-link storage budget) exists, and its pruning attaches to the existing /api/cron/maintenance entry rather than a new cron.
 
+**Resolution (2026-09-30, projects Round G).** The credential is checked before the body: the portal sends the token in the `x-intake-token` header (the query string works too — `lib/intakeLinks.ts` `intakeTokenFromRequest`); the route checks format, the rate window, existence, revocation, expiry, the link's lifetime budget and the declared `Content-Length` (413 over 100 MB + framing) — and only then calls `req.formData()`. A token in the multipart body is not a credential. New `lib/intakeRateLimit.ts` on the `signup_attempts` pattern: a durable per-token (hashed) and per-IP hourly window in `intake_attempts` (migration `20261105`, RLS on, no policies), 429 with `Retry-After` and a portal-renderable sentence, FAIL OPEN on a limiter error; defaults 30 / token / hour and 60 / IP / hour, configurable by `INTAKE_MAX_PER_TOKEN_HOUR` / `INTAKE_MAX_PER_IP_HOUR`. Per-link lifetime budget (`20261104`): `max_submissions` (500), `max_total_bytes` (5 GB), `bytes_received` (filled by `bump_intake_use(p_link, p_bytes)`). The maintenance cron gains ONE step (4c) calling `prune_intake_attempts()` (two days kept) — no new cron entry; `lib/schemaExpectations.ts` lists the table. Tests — `lib/__tests__/intakeUploadRoute.test.ts` "no token header: 400 … the body is never parsed", "a token in the multipart body is NOT a credential", "an oversize Content-Length is refused 413 without reading the body", "429 once the per-token hourly window is full", "the per-IP window counts every token from one address", "the limiter FAILS OPEN", "a link that has spent its submission budget answers 429 before the body", "the maintenance cron gains ONE intake step"; `lib/__tests__/intakeDoorLibs.test.ts` (limits, fail-open, budget).
+
+**Done-when.**
+- [x] The token is validated before the body is read — ✓.
+- [x] A durable per-token and per-IP window caps submissions; 429 with a message the portal renders — ✓.
+- [ ] Presigned direct-to-R2 uploads — **not done here, by the plan's decision** (deferred to GAP-401's build): split to the new finding `INTK-15` (DEC-31).
+- [x] A per-link submission cap and storage budget exist, pruning on `/api/cron/maintenance` — ✓.
+
+**Scope / residual.** Pending migrations: `20261104` (budget columns, the byte-counting `bump_intake_use`) and `20261105` (`intake_attempts`, `prune_intake_attempts`). Until `20261105` is applied the limiter reads an absent table and fails open — no throttling — which is the house pattern's stated trade-off. The remainder is `INTK-15`.
+
 ---
 
 <a id="intk-9"></a>
@@ -289,7 +364,7 @@ upload/route.ts:29-33 `let form: FormData; try { form = await req.formData(); } 
 ## INTK-9 · `assigned_doc_ids` is an unvalidated UUID[] that both public routes trust without an org check — a non-controller project owner can point a contractor at another tenant's document
 
 - **Severity:** HIGH
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Verification:** CONFIRMED
 - **Locations:** `app/api/intake/upload/route.ts:249,253-256`, `app/api/intake/resolve/route.ts:108-120`, `supabase/migrations/20260902_project_intake.sql:51-60`, `supabase/migrations/20260903_intake_assignments.sql:18-19`, `components/projects/IntakePanel.tsx:215-220`
 - **Independently verified:** ✓ **SURVIVES** — second independent adversarial pass. Survives at HIGH. Neither public route constrains the fetched document to the link's org, and the write path is a raw client-side array update that RLS opens to any project owner regardless of org role. Worse than the summary states: the upload route not only reads the foreign document, it writes to it — `.from("documents").update({ pending_version_id: versionId })` (:333) — a cross-tenant write.
@@ -314,6 +389,15 @@ upload/route.ts:249-250 `const isAssigned = (((link.assigned_doc_ids as string[]
 - [ ] A DB-level constraint or trigger rejects an `assigned_doc_ids` entry whose document's `org_id` differs from the link's `org_id`.
 - [ ] Assigning a controlled document to an external link requires the same authority as publishing in that document's library, not merely project ownership.
 
+**Resolution (2026-09-30, projects Round G).** Both public routes scope every document read to the link's org: the upload route's target read is `.eq("id", docId).eq("org_id", link.org_id)` (a foreign id resolves to nothing — no read of it, no write to it), and `/api/intake/resolve` adds `.eq("org_id", orgId)` to the assigned/authored document read (and to its version and quote reads). Migration `20261104` adds `trg_intake_links_assignment_guard` — a BEFORE INSERT OR UPDATE OF `assigned_doc_ids` trigger (a trigger, not a second permissive policy): every NEWLY assigned document must exist in the link's org, and the writer must be a controller or hold publish authority on that document's library (`user_can_publish_on_library`); at most 500 entries; removals always allowed; service-role / SQL writes exempt (the 20260831 pattern). Tests — `lib/__tests__/intakeUploadRoute.test.ts` "an assigned id that belongs to ANOTHER org resolves to nothing — no read of it, no write to it", the resolve route's "an assigned id from ANOTHER org lists nothing"; `lib/__tests__/intakeDoorMigration.test.ts` (the trigger's org and authority checks, SECURITY DEFINER pinned, no new policy).
+
+**Done-when.**
+- [x] Both routes add the org predicate to every document fetch derived from `docId` or `assigned_doc_ids` — ✓.
+- [x] A DB trigger rejects an entry whose document's org differs from the link's — ✓ (pending `20261104`).
+- [x] Assigning requires publish authority on the document's library — ✓ (pending `20261104`).
+
+**Scope / residual.** Pending migration: `20261104`. Its inventory counts existing `assigned_doc_ids` entries naming a document outside the link's org (the routes already refuse to read them; the entries are not rewritten).
+
 ---
 
 <a id="intk-10"></a>
@@ -321,7 +405,7 @@ upload/route.ts:249-250 `const isAssigned = (((link.assigned_doc_ids as string[]
 ## INTK-10 · Intake notifications bypass `emit`/`queueEmail` entirely — hardcoded Admin/DocCtrl recipients, no follower resolution, and email that ignores every per-user preference despite a comment claiming otherwise
 
 - **Severity:** MEDIUM
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Verification:** CONFIRMED
 - **Locations:** `app/api/intake/upload/route.ts:97-113`, `app/api/intake/upload/route.ts:337-358`, `app/api/intake/upload/route.ts:360-385`, `lib/notify/dispatch.ts:3-8`, `lib/notifications.ts:50-89`, `lib/transitionIn.ts:335-354`
 - **Independently verified:** ✓ **SURVIVES** — second independent adversarial pass. Survives. Verified the one plausible refutation — that the drain honours preferences — and it does not: send-queued has no preference lookup at any point, so a user with email_enabled:false is mailed. No follower resolution (resolveFollowers is never reached), so document watchers get nothing.
@@ -346,6 +430,15 @@ upload/route.ts:362 `// rows honor delivery config; the drain kick makes it land
 - [ ] The email leg calls `queueEmail` so preference, digest and dedupe gates apply, or the comment at :360-362 is corrected to say the opposite.
 - [ ] Every `insert` in this route checks `{ error }` rather than relying on try/catch, and the role list comes from the org's capability/role configuration rather than a literal array.
 
+**Resolution (2026-09-30, projects Round G).** The route no longer inserts `notifications` or `email_notifications` rows. Every notice goes through `emit()` (preferences, digest, per-category toggles and `queueEmail`'s 60-second dedupe apply), with the shared client bound to the service role for the call (the route has no session). The document branch's audience: the controller pool (`roleFilter(["Admin","DocCtrl"])` — `DEC-35`'s sanctioned controller shape, the same pair `is_org_controller` means) + the project owner + live intent holders on the target document, and followers of the document; on a trusted publish the post-publish pipeline's own stale-copy signal reaches intent holders and followers, and the team's notice goes to the controllers and the owner. The quote branch notifies the controllers, the owner and the project's followers; the redline branch the drafter, the requester and the ticket's followers. One submission notice per link per 15-minute window (a displacement is always told). The drain is kicked once. Every insert the route makes checks `{ error }` (audit rows logged with the reference; the usage counter's refusal logged). Tests — `lib/__tests__/intakeUploadRoute.test.ts` "a review-routed submission notifies through emit(): controllers + owner + live intent holders, followers on, under the service role" (asserts no raw notifications / email_notifications write), "a burst is ONE notice per link per window".
+
+**Done-when.**
+- [x] Both intake branches call `emit` with followers and live intent holders on the target — ✓.
+- [x] The email leg is `queueEmail` (through `emit`) — ✓; the misleading comment is gone.
+- [x] Every insert checks `{ error }`; the role list is the sanctioned controller pool, not a hand-built literal — ✓ (`DEC-35`: the C1b census's `roleFilter` shape).
+
+**Scope / residual.** The notification kinds (`review_requested`, `doc_superseded`, `ticket_comment`) are unchanged — the notifications fleet owns the vocabulary (PROD-13 / TAX-13).
+
 ---
 
 <a id="intk-11"></a>
@@ -353,7 +446,7 @@ upload/route.ts:362 `// rows honor delivery config; the drain kick makes it land
 ## INTK-11 · No content validation on the external door: any MIME type and extension accepted, attacker-controlled Content-Type stored on the object, and unbounded title/number/rev text written into the register
 
 - **Severity:** MEDIUM
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Verification:** CONFIRMED
 - **Locations:** `app/api/intake/upload/route.ts:44-46,74-77,163-166,268-271`, `app/api/intake/upload/route.ts:133-136`, `app/api/intake/upload/route.ts:307,325`, `app/submit/[token]/page.tsx:173,245`
 - **Independently verified:** ✓ **SURVIVES, corrected** — second independent adversarial pass. The core claim stands — no content validation, attacker-controlled Content-Type persisted, and the presigned GET adds no disposition override, so an uploaded text/html renders inline in the bucket origin. Correction: `rev` is NOT unbounded — route.ts:137 does `.slice(0, 24)` on revLabel (changeNote is capped at 2000 too); only `title` and `number` (:135-136) are written with no length cap. Severity unchanged at MEDIUM.
@@ -377,6 +470,15 @@ upload/route.ts:45-46 — the complete file validation. :270 `ContentType: file.
 - [ ] Intake uploads are checked against an extension+MIME allowlist appropriate to the branch (PDF only for quotes; PDF/DWG/DXF/ZIP for drawings), with a magic-byte check for the declared type.
 - [ ] Stored `ContentType` is derived from the validated type, never echoed from `file.type`, and download URLs set an explicit attachment disposition.
 - [ ] `title` and `number` are length-capped like `changeNote`, and `revLabel` is validated against a revision-label format before it can become `documents.rev`.
+
+**Resolution (2026-09-30, projects Round G).** New `lib/fileSniff.ts` (pure): the bytes decide the kind — PDF (`%PDF-` at offset 0), DWG (`AC10nn`), ZIP (local-file header), DXF (ASCII or binary). Per-branch allowlists (`DEC-50`): quotes PDF only; drawings and redlines PDF, DWG, DXF or ZIP. The filename's extension must name the sniffed kind and a declared type other than empty / octet-stream must be one a real file of that kind is sent with; anything else is refused 415 naming the accepted list, BEFORE storage. The stored `ContentType`, `document_versions.file_type` and `cost_documents.mime_type` are the sniffed type — never `file.type`. Title (200) and number (64) are length-capped — refused, not truncated; the revision label must be a label (`REV_LABEL_RE`: letters/digits with `.`/`-` inside, ≤ 24). The portal's file inputs carry `accept=".pdf,.dwg,.dxf,.zip"` (a hint only). Tests — `lib/__tests__/intakeUploadRoute.test.ts` "an HTML page named .pdf and declared application/pdf is refused before storage", "a renamed .exe is refused", "the stored ContentType is the SNIFFED type", "a DWG is accepted … and stored as image/vnd.dwg", "a quote link takes PDF only", "a revision label that is free text is refused; a 201-character title is refused"; `lib/__tests__/intakeDoorLibs.test.ts` (the sniffer, the extension/declared-type rule, the allowlists).
+
+**Done-when.**
+- [x] Extension + MIME allowlist per branch with a magic-byte check — ✓.
+- [x] Stored `ContentType` derives from the validated type — ✓; download URLs set an explicit attachment disposition — ✓ by projects-tab `SEC-7` (RESOLVED, package J9 — `lib/presignedDisposition.ts`, `DEC-49`).
+- [x] Title and number are capped; `revLabel` is format-validated — ✓.
+
+**Scope / residual.** None here. The ZIP kind is allowed for drawing sets; its members are never rendered (a ZIP is served as an attachment).
 
 ---
 
@@ -421,6 +523,9 @@ QuotesPanel.tsx:539-544 — the insert object, no `expires_at`. :613-634 — the
 
 **Scope / residual.** PT SEC-5's mint limb is the same change (recorded there). The DB `CHECK` ceiling on `expires_at` is P1's.
 
+
+*IntakePanel limb landed 2026-09-30 (projects Round G, J1): `components/projects/IntakePanel.tsx` lists DOCUMENT links only (`.eq("purpose", "documents")`, tolerant of a database without the column) — a quote link is managed on the Costs tab and is no longer shown here with an "Assign docs" control; the link insert reads back `.select("id").single()`, `INTAKE_LINK_CREATED`'s `resource_id` is the link id (no longer the project id, never token material) and its `{ error }` — and `INTAKE_LINK_REVOKED`'s — is checked and surfaced. With J4's QuotesPanel half this meets Done-when 2–4; Done-when 1 was J4's. This finding stays with its owner (PC-8) to close.*
+
 ---
 
 <a id="intk-13"></a>
@@ -428,7 +533,7 @@ QuotesPanel.tsx:539-544 — the insert object, no `expires_at`. :613-634 — the
 ## INTK-13 · The external door leaks raw Postgres error text, answers as an existence oracle for ticket ids, and races itself into duplicate intake folders on an unchecked write
 
 - **Severity:** MEDIUM
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Verification:** CONFIRMED
 - **Locations:** `app/api/intake/upload/route.ts:93,191,294,318`, `app/api/intake/upload/route.ts:149-157`, `app/api/intake/upload/route.ts:231-240`, `app/submit/[token]/page.tsx:96,101`
 - **Independently verified:** ✓ **SURVIVES** — second independent adversarial pass. All three legs verified, including the claim of absence: there is no UNIQUE index anywhere on collections, so two concurrent first-submissions both see NULL and both insert a folder, and the unchecked projects update makes the survivor arbitrary. The ticket oracle is the weakest leg (it requires a valid ticket UUID, which is not guessable), but the error-text leak and the race stand on their own at MEDIUM.
@@ -452,6 +557,15 @@ upload/route.ts:232-240 `if (!collectionId) { const { data: col, error: colErr }
 - [ ] Error responses to the unauthenticated portal carry a generic message and a correlation id; the database message is logged server-side only.
 - [ ] The redline branch checks link ownership before (or independently of) whether the ticket exists, so both cases return the same status.
 - [ ] The `intake_collection_id` write checks `{ error }` and fails the request if it cannot persist; the collection creation is idempotent (unique index on `(library_id, name)` or a re-read under lock) so concurrent first submissions cannot fork the folder.
+
+**Resolution (2026-09-30, projects Round G).** (1) Every refusal the portal sees is a plain sentence plus an 8-character reference id; the database message is logged server-side only under that id (`refuser`), and the portal renders "(reference …)". (2) The redline branch looks the ticket up by id, org AND this link's id in one query, so a ticket that is not this link's and one that does not exist answer the same 404. (3) The intake folder never forks: `ensureIntakeFolder` creates the folder, CLAIMS the project's still-empty `intake_collection_id` with a compare-and-set (checked), and a loser deletes its own folder and files into the winner's; a refused pointer write fails the request instead of creating a folder per submission. Migration `20261105`'s inventory counts projects that already have duplicate "Intake — …" folders (not merged). Tests — `lib/__tests__/intakeUploadRoute.test.ts` "a database error reaches the portal as a sentence and a reference — never the Postgres text", "the redline branch answers the same for a ticket that is not this link's and one that does not exist", "two first submissions never fork the intake folder", "a refused intake-folder pointer write fails the request (checked)", and the portal's rendering (source pin).
+
+**Done-when.**
+- [x] Generic message + correlation id; database text logged server-side only — ✓.
+- [x] The redline branch returns the same status whether or not the ticket exists — ✓.
+- [x] The `intake_collection_id` write is checked; creation is idempotent (a re-read under a compare-and-set) — ✓.
+
+**Scope / residual.** Retry idempotency (REL-8's half of this cluster) is recorded on projects-tab `REL-8`.
 
 ---
 
@@ -483,5 +597,36 @@ upload/route.ts:232-240 `if (!collectionId) { const { data: col, error: colErr }
 
 - [ ] `REVOKE ALL ON FUNCTION bump_intake_use(UUID) FROM public, anon, authenticated; GRANT EXECUTE ... TO service_role;` is added, matching the pattern in 20260930/20261007.
 - [ ] A sweep confirms every SECURITY DEFINER function added since 20260902 either carries an explicit grant policy or is deliberately public with a written reason.
+
+**Partial (2026-09-30, projects Round G).** Migration `20261104` drops `bump_intake_use(uuid)` and re-creates it as `bump_intake_use(p_link uuid, p_bytes bigint DEFAULT 0)` (it now also fills the per-link storage budget, INTK-8), `SECURITY DEFINER SET search_path = public`, with `REVOKE ALL … FROM PUBLIC, anon, authenticated; GRANT EXECUTE … TO service_role` — the 20260930 pattern; the probe checks the grant state with `has_function_privilege`. The route calls the two-argument form and falls back to the one-argument form on a database without the migration. Tests — `lib/__tests__/intakeDoorMigration.test.ts` "bump_intake_use: the one-argument form dropped, the byte-counting form service-role only"; `lib/__tests__/intakeUploadRoute.test.ts` "the usage counter is bumped with the byte count".
+
+**Done-when.**
+- [x] The REVOKE / GRANT is added — ✓ (pending `20261104`).
+- [ ] A sweep of every SECURITY DEFINER function added since 20260902 — **not done**: a census of the numbered migrations finds 59 such functions, 48 with no explicit REVOKE/GRANT. Most are trigger functions (not callable over PostgREST); 19 are not — `acl_index_denies`, `apply_milestone_moves`, `caller_holds_any_role`, `caller_is_active_member`, `can_manage_node`, `can_manage_project`, `doc_is_visible`, `is_org_admin`, `is_project_owner`, `member_is_active`, `my_team_ids`, `node_visible`, `org_capability_allows`, `org_capability_allows_for`, `project_org`, `project_visible_to_me`, `user_can_publish_doc`, `user_can_publish_on_library`, `user_owns_project`. Each needs its own reasoned decision (most are policy helpers that must stay executable by `authenticated`; `apply_milestone_moves` is an RPC; the ones taking a `p_uid` are oracles) — roles-and-permissions DB territory (DB-6's family), not this package's.
+
+**Scope / residual.** Pending migration: `20261104`. The sweep above stays open here.
+
+---
+
+<a id="intk-15"></a>
+
+## INTK-15 · The intake door still streams every upload through a serverless function — the advertised 100 MB limit is not the host's, and the bytes are buffered before they are sniffed
+
+- **Severity:** MEDIUM
+- **Status:** OPEN
+- **Verification:** CONFIRMED (by reading; the platform body limit is SUSPECTED, as in `INTK-8`)
+- **Locations:** `app/api/intake/upload/route.ts` (`req.formData()` then `file.arrayBuffer()`), `app/submit/[token]/page.tsx` (the `fetch` of the multipart body), `lib/storage.ts` (`getPresignedUploadUrl`, the S3 multipart path above `MULTIPART_THRESHOLD`)
+- **Independently verified:** — (`author`: opened by projects Round G package J1 while resolving `INTK-8`, per `DEC-31`; not yet challenged)
+
+**Mechanism.** `INTK-8`'s third Done-when — "Intake uploads use the same presigned direct-to-R2 path as every internal upload, so the advertised size limit is the real one" — was deferred by the plan to `GAP-401`'s build (the door's constrained identity). Round G moved every credential and budget check ahead of the body and refuses an oversize declared `Content-Length` unread, but a live link's upload is still received, buffered and sniffed inside the function: the portal promises "up to 100 MB", and a serverless request body is capped far below that on the deployment platform.
+
+**Failure scenario.** A contractor with a valid link uploads a 40 MB DWG set; the platform answers 413 before the route runs. The portal now shows a readable sentence ("The file is too large for the portal — the limit is 100 MB.") rather than `HTTP 413`, but the stated limit is still not the real one.
+
+**Remediation.** A two-step door: the route validates the token, budget and declared size/type and returns a short-lived presigned PUT (single-part or multipart) scoped to a fresh key under the link's org/project prefix; the portal uploads direct to R2; a finalize call sniffs the stored object's first bytes (a ranged GET), records the version, and deletes the object on a refusal. The magic-byte rule (`lib/fileSniff.ts`) is unchanged.
+
+**Done when.**
+- The portal uploads the bytes directly to R2 with a presigned URL issued only to a live link.
+- The finalize step sniffs the STORED bytes and refuses (and deletes) a disallowed type.
+- The advertised size limit is the one the platform actually accepts.
 
 ---

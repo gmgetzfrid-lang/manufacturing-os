@@ -317,7 +317,7 @@ test — the export-coverage test already diffs table lists against
 ## REL-8 · A retried intake submission double-creates the record, the notification and the counter
 
 - **Severity:** MEDIUM
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Verification:** CONFIRMED
 - **Blast radius:** data-integrity
 - **Locations:**
@@ -336,6 +336,13 @@ a window.
 
 **Done when.**
 - A retried upload of the same file returns the original record rather than creating a second.
+
+**Resolution (2026-09-30, projects Round G).** A retried upload returns the original record. The door hashes the bytes (SHA-256) and, before storing anything, looks for a submission from the same link with the same hash in the last 24 hours that is still awaiting a decision (an in-review version — for a revision, on the same document — or a trusted publish; a draft quote): if found it answers 200 with the ORIGINAL ids and `duplicate: true`, stores nothing, notifies nobody and does not bump the counter. The database backstop (migration `20261105`): partial UNIQUE indexes on `(intake_link_id, file_hash)` over in-review versions and draft quotes, so two racing retries cannot both insert — the loser answers with the winner's record. A resubmission after a rejection is a new decision and is taken. Tests — `lib/__tests__/intakeUploadRoute.test.ts` "the same bytes resubmitted while the first is in review return the first record — nothing stored, nobody notified again", "a quote retried while still a draft returns the original quote".
+
+**Done-when.**
+- [x] A retried upload of the same file returns the original record rather than creating a second — ✓.
+
+**Scope / residual.** Pending migration: `20261105` (the race backstop, and `cost_documents.file_hash` — until it is applied a retried QUOTE is not detected; document retries are, `file_hash` exists on versions).
 
 ---
 
@@ -506,7 +513,7 @@ condition to match `hasPlan`. Use the project currency in the example.
 | REL-5 | HIGH | OPEN |
 | REL-6 | HIGH | OPEN |
 | REL-7 | HIGH | RESOLVED |
-| REL-8 | MEDIUM | OPEN |
+| REL-8 | MEDIUM | RESOLVED |
 | REL-9 | MEDIUM | OPEN |
 | REL-10 | MEDIUM | OPEN |
 | REL-11 | MEDIUM | OPEN |

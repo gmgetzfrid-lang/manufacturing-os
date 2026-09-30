@@ -210,7 +210,7 @@ green in about a dozen keystrokes, and the audit log will record
 ## SAF-5 · Auto-supersede is a raw column write, so the whole post-publish compliance pipeline is skipped
 
 - **Severity:** CRITICAL
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Verification:** CONFIRMED
 - **Blast radius:** compliance
 - **Locations:**
@@ -254,6 +254,17 @@ arguments the approve path passes.
 - Retention is recomputed.
 - Subscribers and intent holders are notified.
 - A test asserts the side-effect runner is invoked on the auto path.
+
+**Resolution (2026-09-30, projects Round G).** Worked as projects-and-cost `INTK-2` (J1). The auto-supersede branch publishes through `publish_revision` (acting as the link's creator — the database's hold gate, checkout lock, expected-base check and MOC gate) and then runs `runPostPublishSideEffects` with finalizeReviewedRevision's arguments, the shared client bound to the service role and `settle: true` (`lib/postPublish.ts`) so every signal finishes inside the binding: stale-copy notices to intent holders and followers, library-subscriber notices, the recall nudge, work-package pin drift, connected-work warnings, stale-proposal retirement, `onDocumentIssued`, `onDocumentIssuedAck`, `recomputeRetention`. Tests — `lib/__tests__/intakeUploadRoute.test.ts` "publishes through publish_revision … and runs the pipeline bound to the service role"; `lib/__tests__/intakeAutoPublishAcks.test.ts` (the REAL pipeline and acknowledgments module: the prior roster voided, a fresh one for the new revision); `lib/__tests__/intakeDoorLibs.test.ts` "settle:true awaits the fire-and-forget signals".
+
+**Done-when.**
+- [x] An auto-supersede issues a fresh acknowledgment roster where the document requires one — ✓ (tested end to end).
+- [x] The periodic-review clock resets — ✓ (`onDocumentIssued` in the settled pipeline).
+- [x] Retention is recomputed — ✓ (`recomputeRetention`).
+- [x] Subscribers and intent holders are notified — ✓ (`notifySuperseded`).
+- [x] A test asserts the side-effect runner is invoked on the auto path — ✓.
+
+**Scope / residual.** None in this finding. The census in `lib/__tests__/intakeUploadRoute.test.ts` fails the build for a new unpiped writer of `current_version_id` (two first-version writers allow-listed for document-control P3).
 
 ---
 
@@ -438,12 +449,21 @@ again.
 - The contractor is notified on both outcomes.
 - No UI string claims a channel that does not exist.
 
+**Partial (2026-09-30, projects Round G).** Intake rejection now REQUIRES a reason (`IntakePanel` reject: `appPrompt`, at least a few words), stored on the version (`document_versions.review_note`, migration `20261105`; a database without the column keeps it in the audit row only) and in `INTAKE_REJECTED`'s details; `/api/intake/resolve` returns it with the rejected item (`rejectionReason`) and the portal shows "Reviewer's reason: …" under "not accepted — resubmit". The confirmation copy says exactly that ("the company sees this reason on their submission portal"). Tests — `lib/__tests__/intakeUploadRoute.test.ts` "IntakePanel reject: a required reason, stored for the portal and the audit", the resolve route's "a rejected submission carries the reviewer's reason".
+
+**Done-when.**
+- [x] A rejected submission shows its reason on the contractor's portal — ✓ (pending `20261105` for the column).
+- [ ] The contractor is notified on both outcomes — **not done**: the portal shows the outcome and the reason on the contractor's next visit; an email to the link's `contact_email` needs a server route (external mail is server-only since SURF-17 / 20261047) that is not in this package's plan (`DEC-50`'s default: email only when the link carries a contact the org entered — to be built with it).
+- [ ] No UI string claims a channel that does not exist — **partly**: the Intake tab's copy is now true; the turnover claim at `components/projects/QualityTab.tsx:524` is another package's file (J2 QUALITY) and was not edited.
+
+**Scope / residual.** Stays OPEN for the contractor notification and the turnover copy.
+
 ---
 
 ## SAF-10 · Auto-supersede orphans a pending review and its e-signatures
 
 - **Severity:** HIGH
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Verification:** CONFIRMED
 - **Blast radius:** compliance / data-integrity
 - **Locations:**
@@ -482,12 +502,21 @@ reviewers, and preserve any signatures. Add a maintenance query that surfaces
 - Reviewers of an abandoned draft are told it was superseded.
 - A health check reports orphaned in-review versions.
 
+**Resolution (2026-09-30, projects Round G).** Worked as projects-and-cost `INTK-4` (J1), on top of document-control `RG-10` (RESOLVED — a draft carrying a roster can never be displaced; `IntakePanel` reject voids a draft's sign-offs). A displaced submission is now RESOLVED: `review_state = 'superseded'` + `superseded_at` + an `INTAKE_SUBMISSION_DISPLACED` audit row, on both the trusted-publish and the trusted-replacement paths, and the project team's notice says the earlier submission was replaced (never folded into a burst). Migration `20261105` admits the state and keeps it out of the revert-target gate; `orphaned_in_review_versions_count()` is reported by the maintenance cron (step 4c) and by the migration's inventory. Tests — `lib/__tests__/intakeUploadRoute.test.ts` "the auto path clears only the pointer it read and marks the displaced draft 'superseded' with an audit row and a forced notice"; `lib/__tests__/intakeDoorMigration.test.ts`.
+
+**Done-when.**
+- [x] Clearing `pending_version_id` never leaves an unreferenced `in_review` row — ✓ (asserted).
+- [x] Reviewers of an abandoned draft are told it was superseded — ✓: a displaceable draft has no roster (RG-10 refuses otherwise), so its reviewers are the review queue's audience — the controllers and the project owner — and they are told.
+- [x] A health check reports orphaned in-review versions — ✓ (the cron's `orphanedInReviewVersions` and a `review-health` error line when non-zero).
+
+**Scope / residual.** Pending migration: `20261105`. Existing orphans are counted, not auto-voided.
+
 ---
 
 ## SAF-11 · A rejected submission remains an adoptable transition-in candidate
 
 - **Severity:** HIGH
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Verification:** CONFIRMED
 - **Blast radius:** document-control integrity
 - **Locations:**
@@ -515,12 +544,20 @@ rather than by inference.
 - A rejected submission does not appear in the transition-in candidate list.
 - An un-reviewed submission either does not appear, or appears clearly marked and blocked from adoption.
 
+**Resolution (2026-09-30, projects Round G).** Worked as projects-and-cost `INTK-3` (J1). `listTransitionCandidates` drops a sheet whose latest intake submission was rejected and marks one with no approved revision (in review, or never decided); `adoptDocument` refuses both, and a sheet whose latest submission was rejected; the panel shows "in review" / "not approved" and disables Adopt. Tests — `lib/__tests__/transitionIn.test.ts` "drops a sheet whose latest intake submission was rejected; marks one still in review or never approved", "refuses a sheet still in review, or never approved", "refuses a sheet whose latest submission was rejected".
+
+**Done-when.**
+- [x] A rejected submission does not appear in the transition-in list — ✓.
+- [x] An un-reviewed submission appears clearly marked and blocked from adoption — ✓.
+
+**Scope / residual.** None (a terminal "rejected" document status was not introduced — exclusion is by the latest submission's state).
+
 ---
 
 ## SAF-12 · A known number collision can be adopted in one click, creating two live documents on one number
 
 - **Severity:** HIGH
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Verification:** CONFIRMED
 - **Blast radius:** document-control integrity
 - **Locations:**
@@ -554,12 +591,21 @@ the exact "two sources of truth" the module header declares impossible.
 - The renumber value is uniqueness-checked at write time.
 - A test covers the collision path.
 
+**Resolution (2026-09-30, projects Round G).** Worked as projects-and-cost `INTK-3` / `INTK-5` / `INTK-7` (J1). Single Adopt is disabled for a sheet with a live number collision until a renumber is typed; `adoptDocument` RE-RUNS the scan at the click with the effective number and refuses a collision (naming the other document) unless the new number is itself clear, refuses when the scan could not run, and writes the destination library's `uniqueness_key` so the partial unique index sees the adopted sheet — its refusal reaches the operator as a sentence. The scan itself is exact and complete (LIKE-escaped, exact-match filtered, status filtered in the database, library-root documents counted). Tests — `lib/__tests__/transitionIn.test.ts` "refuses a live collision; refuses a renumber onto another live number; accepts a clear renumber and writes its key", "finds a live collision hiding behind six superseded rows, a library-root document …", "the database's unique refusal and the move guard reach the operator as sentences".
+
+**Done-when.**
+- [x] Adopting a candidate with a live number collision is refused, or requires a validated renumber — ✓.
+- [x] The renumber value is uniqueness-checked at write time — ✓ (the re-scan, then the key the index enforces).
+- [x] A test covers the collision path — ✓.
+
+**Scope / residual.** Pending migration: `20261105` backfills keys for existing numbered rows (skipping live collisions, which it counts).
+
 ---
 
 ## SAF-13 · Adopt is broken for precisely the user the panel is offered to
 
 - **Severity:** HIGH
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Verification:** SUSPECTED (trigger read is unambiguous; not exercised live)
 - **Blast radius:** ux / correctness
 - **Locations:**
@@ -587,6 +633,14 @@ arbitrary moves, not to stop a sanctioned adoption. (b) preserves the feature.
 **Done when.**
 - The user who is shown the Adopt button can complete it, or is not shown it.
 - No raw Postgres trigger message reaches the UI from this path.
+
+**Resolution (2026-09-30, projects Round G).** Remedy (a): `components/projects/TransitionInPanel.tsx` shows the destination picker, the bulk button, the renumber input and Adopt only to the controller tier (`isControllerPrincipal` over the viewer's role collection — what the database's move guard, `is_org_controller`, means); a non-controller project owner sees the scan and a sentence saying adoption needs Admin or Document Control (and can still flag a conflict to drafting). `adoptDocument` maps the move guard's refusal (and any other) to a sentence; a zero-row write is reported. Tests — `lib/__tests__/transitionIn.test.ts` "the database's unique refusal and the move guard reach the operator as sentences"; the panel's gate is source-pinned in `lib/__tests__/intakeUploadRoute.test.ts`.
+
+**Done-when.**
+- [x] The user shown the Adopt button can complete it — ✓ (only the controller tier sees it).
+- [x] No raw Postgres trigger message reaches the UI from this path — ✓.
+
+**Scope / residual.** Remedy (b) — a SECURITY DEFINER adopt that lets a project owner with publish authority on the destination adopt — was not built; the collections guard (20261011) is unchanged.
 
 ---
 
@@ -628,7 +682,7 @@ in the report's closeout section rather than recomputing from current state.
 ## SAF-15 · Approving an intake submission promotes whatever is pending now, not the version you were shown
 
 - **Severity:** MEDIUM
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Verification:** CONFIRMED
 - **Blast radius:** compliance
 - **Locations:**
@@ -657,6 +711,14 @@ submission changed — refresh to see the current one."
 **Done when.**
 - Approving a stale row is refused rather than silently promoting a different version.
 - The success message names the version that was actually promoted.
+
+**Resolution (2026-09-30, projects Round G).** `IntakePanel` approve re-reads the document's `pending_version_id` (org-scoped) at the click and refuses when it is not the version on screen ("… changed since this list loaded — it has been refreshed. Check the submission shown now before approving."), and after `finalizeReviewedRevision` names what actually became current (the document's new `rev`) — or says the current revision is not the one approved. Test — `lib/__tests__/intakeUploadRoute.test.ts` "IntakePanel approve: the version on screen …" (source pin; the repo has no component renderer).
+
+**Done-when.**
+- [x] Approving a stale row is refused rather than silently promoting a different version — ✓.
+- [x] The success message names the version that was actually promoted — ✓.
+
+**Scope / residual.** `finalizeReviewedRevision` still re-reads the pointer itself; the window between the panel's check and that read is milliseconds. Passing the expected version into finalize's compare-and-set is a change to `lib/reviewControl.ts` (document-control P4's file) — noted for its owner.
 
 ---
 
@@ -735,16 +797,16 @@ project history for the document will be hidden.
 | SAF-2 | CRITICAL | OPEN |
 | SAF-3 | CRITICAL | OPEN |
 | SAF-4 | CRITICAL | OPEN |
-| SAF-5 | CRITICAL | OPEN |
+| SAF-5 | CRITICAL | RESOLVED |
 | SAF-6 | CRITICAL | OPEN |
 | SAF-7 | HIGH | OPEN |
 | SAF-8 | HIGH | OPEN |
 | SAF-9 | HIGH | OPEN |
-| SAF-10 | HIGH | OPEN |
-| SAF-11 | HIGH | OPEN |
-| SAF-12 | HIGH | OPEN |
-| SAF-13 | HIGH | OPEN |
+| SAF-10 | HIGH | RESOLVED |
+| SAF-11 | HIGH | RESOLVED |
+| SAF-12 | HIGH | RESOLVED |
+| SAF-13 | HIGH | RESOLVED |
 | SAF-14 | MEDIUM | OPEN |
-| SAF-15 | MEDIUM | OPEN |
+| SAF-15 | MEDIUM | RESOLVED |
 | SAF-16 | MEDIUM | OPEN |
 | SAF-17 | MEDIUM | OPEN |
