@@ -1292,7 +1292,7 @@ facility with no configuration must keep working exactly as it does today.
 
 **Risk:** medium — wide, but mechanical.
 
-*Landed 2026-09-23 (projects Round G): the schedule-editing predicate — `can_edit_project_schedule(p_org, p_project)` in `20261098`, `caller_holds_any_role` over the four roles `20260907` listed inline, or the project owner — is read by `apply_milestone_moves`, `set_project_baseline` and `clear_project_baseline` (`20261099`) instead of a fresh literal in each; registered as a collection funnel in `authorityCensus.test.ts`. Aligning the read to the funnel admits one member class `20260907`'s `COALESCE(roles, ARRAY[role])` refused — a headline role among the four with a `roles[]` that holds none of them — inventoried before the apply in `20261098`'s result set. See `SCHED-4`, `SCHED-3`.*
+*Landed 2026-09-29 (projects Round G): the schedule-editing predicate — `can_edit_project_schedule(p_org, p_project)` in `20261098`, `caller_holds_any_role` over the four roles `20260907` listed inline, or the project owner — is read by `apply_milestone_moves`, `set_project_baseline` and `clear_project_baseline` (`20261099`) instead of a fresh literal in each; registered as a collection funnel in `authorityCensus.test.ts`. Aligning the read to the funnel admits one member class `20260907`'s `COALESCE(roles, ARRAY[role])` refused — a headline role among the four with a `roles[]` that holds none of them — inventoried before the apply in `20261098`'s result set. See `SCHED-4`, `SCHED-3`.*
 
 <a id="dec-36"></a>
 ## DEC-36 · Where the routing table lives, and how it resolves
@@ -1703,8 +1703,8 @@ the `Admin` branch, and an unscoped controller keeps today's behaviour.
 
 **Risk:** low.
 
-<a id="dec-44"></a>
-## DEC-44 · A schedule re-import is a reviewed merge, never a guess
+<a id="dec-51"></a>
+## DEC-51 · A schedule re-import is a reviewed merge, never a guess
 
 **Decision. The importer decides nothing it cannot read from the file, shows
 what it would do before it writes, and never erases what the crew recorded.
@@ -1756,7 +1756,7 @@ written is what was reviewed — a change to the column review discards the
 plan — and a batch move the lock rejected is reported as an error, never a
 success.**
 
-> Made during projects Round G (2026-09-23) under the protocol's fail-safe
+> Made during projects Round G (2026-09-29) under the protocol's fail-safe
 > rule, taking the defaults the fleet plan proposed for `GAP-403`, `SCH-1`,
 > `SCH-2`, `SCH-3`, `SCH-8`, `SCH-14`, `SCH-16` and `SCHED-1`, `SCHED-3`,
 > `SCHED-6`, `SCHED-8`, `SCHED-9`, `SCHED-11`.
