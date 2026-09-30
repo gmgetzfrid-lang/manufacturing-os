@@ -7,6 +7,9 @@
 
 import { supabase } from "@/lib/supabase";
 import { normalizeRoles } from "@/lib/roleCapabilities";
+import { isControllerPrincipal } from "@/lib/permissions";
+import { SNAPSHOT_READS, type ProjectStateSnapshot } from "@/lib/projectHealth";
+import { NOT_CURRENT_STATUSES } from "@/lib/aiBoundary";
 import { logAuditAction } from "@/lib/audit";
 import { notify, notifyMany } from "@/lib/inAppNotifications";
 import { listFollowerIds } from "@/lib/subscriptions";
@@ -18,7 +21,7 @@ import {
 import type {
   Project, ProjectMember, ProjectActivity, ProjectActivityType,
   ProjectStatus, ProjectVisibility, ProjectMemberRole,
-  CheckoutSession, Timestamp,
+  CheckoutSession, Timestamp, Role,
 } from "@/types/schema";
 
 /** Structural type for either the RLS-scoped browser client or a
@@ -132,7 +135,10 @@ export async function createProject(input: CreateProjectInput): Promise<Project>
     role: "owner",
   });
 
-  await writeActivity({
+  // PM-9: the project exists — a refused feed row must not read as a failed
+  // create (a retry would make a second project), and must not vanish:
+  // it is written into the PROJECT_CREATED audit row.
+  const activityError = await writeActivityAfterCommit({
     projectId: data.id,
     orgId: input.orgId,
     userId: input.actorUserId,
@@ -149,7 +155,7 @@ export async function createProject(input: CreateProjectInput): Promise<Project>
     userId: input.actorUserId,
     userEmail: input.actorEmail,
     userRole: input.actorRole,
-    details: { name: input.name, visibility: input.visibility || "public" },
+    details: { name: input.name, visibility: input.visibility || "public", ...(activityError ? { activityError } : {}) },
   });
 
   return rowToProject(data as Record<string, unknown>);
@@ -167,9 +173,24 @@ type WriteActivityInput = {
   metadata?: Record<string, unknown>;
 };
 
+/**
+ * Write one project_activity row. The write is CHECKED (PM-9): a refusal
+ * (the 20261102 insert policy — identity, visibility, observers may not
+ * comment) throws, it is never reported as success.
+ *
+ * Identity is the session's (PM-7): the database stamps user_id, user_name
+ * and created_at from the signed-in caller (trg_project_activity_stamp), so
+ * the userId / userName passed here are a pre-migration fallback only and
+ * cannot attribute a row to someone else.
+ *
+ * projects.last_activity_at is no longer touched from here (PM-9): the
+ * client UPDATE was silently filtered out by RLS for every non-owner. An
+ * AFTER INSERT trigger on project_activity (20261102) advances it for
+ * every author.
+ */
 export async function writeActivity(input: WriteActivityInput): Promise<void> {
   const now = new Date().toISOString();
-  await supabase.from("project_activity").insert({
+  const { error } = await supabase.from("project_activity").insert({
     project_id: input.projectId,
     org_id: input.orgId,
     user_id: input.userId || null,
@@ -179,11 +200,26 @@ export async function writeActivity(input: WriteActivityInput): Promise<void> {
     metadata: input.metadata || null,
     created_at: now,
   });
-  // Touch last_activity_at so the list view sorts correctly.
-  await supabase
-    .from("projects")
-    .update({ last_activity_at: now, updated_at: now })
-    .eq("id", input.projectId);
+  if (error) throw new Error(`The project activity row was not written: ${error.message}`);
+}
+
+/** A feed row written AFTER the change it describes has committed: the
+ *  refusal comes back as text for the caller to carry (a result field, an
+ *  audit detail, a message) — never thrown as if the change had failed,
+ *  never dropped. */
+async function writeActivityAfterCommit(input: WriteActivityInput): Promise<string | null> {
+  try {
+    await writeActivity(input);
+    return null;
+  } catch (e) {
+    return (e as Error).message;
+  }
+}
+
+/** PM-9: the change landed; its feed row did not. Said, not swallowed —
+ *  thrown AFTER everything else the change owes (audit, notices) is done. */
+function savedButNotRecorded(what: string, activityError: string): Error {
+  return new Error(`${what} — saved, but the project feed row was not written: ${activityError.replace(/^The project activity row was not written: /, "")}`);
 }
 
 // ─── LIST PROJECTS ───────────────────────────────────────────────────────
@@ -235,6 +271,28 @@ export async function getProject(projectId: string): Promise<Project | null> {
   return data ? rowToProject(data as Record<string, unknown>) : null;
 }
 
+/** PERF-8: the project row once, with the wizard field the page needs
+ *  (job_kind — not on the typed Project) read from the SAME row rather than
+ *  a second round trip for one column. A refused read throws. */
+export async function getProjectForPage(projectId: string): Promise<{ project: Project; jobKind: string | null } | null> {
+  const { data, error } = await supabase.from("projects").select("*").eq("id", projectId).maybeSingle();
+  if (error) throw new Error(error.message);
+  if (!data) return null;
+  const r = data as Record<string, unknown>;
+  return { project: rowToProject(r), jobKind: (r.job_kind as string | null | undefined) ?? null };
+}
+
+/** SEC-15: which of these users are ACTIVE members of the org — ownership can
+ *  only go to one of them (transfer_project_ownership refuses anyone else),
+ *  so the page offers "Make owner" only for them. */
+export async function activeOrgMemberIds(orgId: string, userIds: string[]): Promise<Set<string>> {
+  if (userIds.length === 0) return new Set();
+  const { data, error } = await supabase.from("org_members").select("uid")
+    .eq("org_id", orgId).eq("status", "active").in("uid", userIds);
+  if (error) throw new Error(error.message);
+  return new Set(((data ?? []) as Array<{ uid: string }>).map((r) => String(r.uid)));
+}
+
 export async function listMembers(projectId: string): Promise<ProjectMember[]> {
   const { data, error } = await supabase
     .from("project_members")
@@ -247,6 +305,12 @@ export async function listMembers(projectId: string): Promise<ProjectMember[]> {
 
 // ─── PROJECT STATUS TRANSITIONS ──────────────────────────────────────────
 
+/** The closed statuses (PM-1): a project in one of these is closed out —
+ *  its regulated record refuses writes at the database (20261103), its
+ *  intake links are revoked, and only a controller's audited Reopen makes
+ *  it writable again. */
+export const CLOSED_PROJECT_STATUSES: ReadonlySet<ProjectStatus> = new Set<ProjectStatus>(["completed", "cancelled", "archived"]);
+
 export type StatusTransitionInput = {
   projectId: string;
   orgId: string;
@@ -255,17 +319,126 @@ export type StatusTransitionInput = {
   actorUserId: string;
   actorEmail?: string;
   actorRole?: string;
+  /** SAF-14: the gate state the actor was shown when they confirmed a
+   *  completion. Omitted → gathered here, at the moment of the override. */
+  gateSnapshot?: ProjectStateSnapshot | null;
 };
 
-/** Returns `releaseError` when the status change succeeded but the
- *  project's active checkouts were NOT released (DCK-9: the release guard
- *  refused another user's session). The status DID change — a throw here
- *  would make the caller skip its refresh and render the old status beside
- *  the message — so the refusal travels in the result and the caller shows
- *  it against the new state. Any failure BEFORE the status change throws. */
-export async function transitionProjectStatus(input: StatusTransitionInput): Promise<{ releaseError: string | null }> {
+/** One closeout gate as recorded and rendered: `ok` null = the read it
+ *  depends on failed or is not migrated — unknown, never a pass. */
+export interface CloseoutGateLine {
+  key: "punch" | "turnover" | "checklists" | "changeOrders";
+  ok: boolean | null;
+  text: string;
+  /** How many items are open behind the gate (null = unknown). Named so
+   *  the report prints the line's own text, not "text — n". */
+  openCount: number | null;
+}
+
+/**
+ * SAF-14: the closeout gates — the same four lines the Complete dialog shows
+ * and the completion's audit row records, so what the report prints is what
+ * was open at the moment of the override. A gate whose read failed (or is
+ * not migrated) is recorded as unknown, not as clear. Pure.
+ */
+export function closeoutGateLines(s: ProjectStateSnapshot): CloseoutGateLine[] {
+  const gap = new Set([...(s.readFailures ?? []), ...(s.notMigrated ?? [])]);
+  const unknown = (...reads: string[]) => reads.some((r) => gap.has(r));
+  const plural = (n: number, one: string, many = `${one}s`) => `${n} ${n === 1 ? one : many}`;
+  const checklistOpen = s.checklistOpenItems + s.checklistNeedsEvidence;
+  return [
+    unknown(SNAPSHOT_READS.punch)
+      ? { key: "punch", ok: null, text: "Punch list — could not be read", openCount: null }
+      : { key: "punch", ok: s.punchOpen === 0, text: s.punchOpen === 0 ? "Punch list clear" : `${plural(s.punchOpen, "punch item")} still open`, openCount: s.punchOpen },
+    unknown(SNAPSHOT_READS.turnover)
+      ? { key: "turnover", ok: null, text: "Turnover package — could not be read", openCount: null }
+      : {
+          key: "turnover",
+          ok: s.turnoverRequired === 0 || s.turnoverAccepted >= s.turnoverRequired,
+          text: s.turnoverRequired === 0 ? "No turnover requirements set"
+            : s.turnoverAccepted >= s.turnoverRequired ? "Turnover package fully accepted"
+            : `Turnover ${s.turnoverAccepted}/${s.turnoverRequired} accepted`,
+          openCount: Math.max(0, s.turnoverRequired - s.turnoverAccepted),
+        },
+    unknown(SNAPSHOT_READS.checklists, SNAPSHOT_READS.checklistItems)
+      ? { key: "checklists", ok: null, text: "Checklists — could not be read", openCount: null }
+      : { key: "checklists", ok: checklistOpen === 0, text: checklistOpen === 0 ? "Checklists clear" : `${plural(checklistOpen, "checklist item")} unresolved`, openCount: checklistOpen },
+    unknown(SNAPSHOT_READS.changeOrders)
+      ? { key: "changeOrders", ok: null, text: "Change orders — could not be read", openCount: null }
+      : { key: "changeOrders", ok: s.openChangeOrders === 0, text: s.openChangeOrders === 0 ? "No change orders awaiting decision" : `${plural(s.openChangeOrders, "change order")} awaiting decision`, openCount: s.openChangeOrders },
+  ];
+}
+
+/** A session the release could not end, and why — shown as "still held by X". */
+export interface StillHeldCheckout {
+  sessionId: string;
+  documentId: string;
+  userId: string;
+  userName: string | null;
+  reason: string;
+}
+
+/** PM-4: what the project release actually did — never assumed. */
+export interface ProjectReleaseOutcome {
+  released: number;
+  releasedSessionIds: string[];
+  stillHeld: StillHeldCheckout[];
+}
+
+export interface StatusTransitionResult {
+  /** Set when the status DID change but not every active checkout was
+   *  released (DCK-9 / PM-4) — "still held by …", or the release's own
+   *  failure. The caller shows it against the new status. */
+  releaseError: string | null;
+  /** PM-4: the real release outcome (null when the transition releases nothing). */
+  release: ProjectReleaseOutcome | null;
+  /** PM-1: intake links revoked by this closure. */
+  revokedIntakeLinks: number;
+  /** PM-9: the status change landed but its feed row was refused. */
+  activityError: string | null;
+}
+
+/** Human line for a release outcome — the notification body and the page's
+ *  message are built from THIS, i.e. from what really happened (PM-4 dw3). */
+export function describeReleaseOutcome(o: ProjectReleaseOutcome): string {
+  const parts: string[] = [];
+  if (o.released > 0) parts.push(`${o.released} active checkout${o.released === 1 ? " was" : "s were"} released`);
+  if (o.stillHeld.length > 0) {
+    const names = Array.from(new Set(o.stillHeld.map((h) => h.userName || h.userId)));
+    parts.push(`${o.stillHeld.length} ${o.stillHeld.length === 1 ? "is" : "are"} still held by ${names.join(", ")}`);
+  }
+  return parts.length ? `${parts.join("; ")}.` : "No checkouts were active on the project.";
+}
+
+/**
+ * Change a project's status. Owner or controller (defense in depth beside
+ * the 20260906 / 20261102 RLS).
+ *
+ * Closing (completed / cancelled / archived — PM-1):
+ *  · the project's intake links are REVOKED first (fail safe: if that write
+ *    is refused nothing else happens; a reopened project mints new links);
+ *  · a completion records the closeout gate snapshot in its audit row
+ *    (SAF-14) — the gates are checks with an override, not blocks;
+ *  · every active checkout is released PER SESSION (PM-4): sessions the
+ *    actor may not release stay active and come back as "still held by X".
+ *
+ * A closed project is reopened only by reopenProject (controller-only,
+ * audited); this function refuses to move a closed project back to an open
+ * status.
+ *
+ * Returns `releaseError` when the status change succeeded but checkouts
+ * were NOT all released. The status DID change — a throw here would make
+ * the caller skip its refresh and render the old status beside the message
+ * — so the refusal travels in the result. Any failure BEFORE the status
+ * change throws.
+ */
+export async function transitionProjectStatus(input: StatusTransitionInput): Promise<StatusTransitionResult> {
   // Defense in depth alongside the 20260906 RLS: owner/controller only.
-  await assertCanManageProject(input.projectId, input.actorUserId);
+  const current = await assertCanManageProject(input.projectId, input.actorUserId);
+  const closing = CLOSED_PROJECT_STATUSES.has(input.toStatus);
+  if (current.status && CLOSED_PROJECT_STATUSES.has(current.status) && !closing) {
+    throw new Error(`This project is ${current.status}. Reopening a closed project is a separate, audited action (Admin / Document Control).`);
+  }
   const now = new Date().toISOString();
   const update: Record<string, unknown> = {
     status: input.toStatus,
@@ -279,10 +452,29 @@ export async function transitionProjectStatus(input: StatusTransitionInput): Pro
     update.cancelled_reason = input.reason.trim();
   }
 
+  // PM-1: the external door closes with the project — before the status
+  // changes, so a refused revocation leaves the project open, never closed
+  // with live contractor links.
+  let revokedIntakeLinks = 0;
+  if (closing) revokedIntakeLinks = await revokeProjectIntakeLinks(input.projectId, now);
+
+  // SAF-14: what was open at the moment of the completion override.
+  let gates: CloseoutGateLine[] | null = null;
+  let gateSnapshotError: string | null = null;
+  if (input.toStatus === "completed") {
+    try {
+      const snap = input.gateSnapshot
+        ?? await (await import("@/lib/projectSnapshot")).gatherProjectSnapshotUncached(input.orgId, input.projectId);
+      gates = closeoutGateLines(snap);
+    } catch (e) {
+      gateSnapshotError = (e as Error).message;
+    }
+  }
+
   const { error } = await supabase.from("projects").update(update).eq("id", input.projectId);
   if (error) throw new Error(error.message);
 
-  await writeActivity({
+  const activityError = await writeActivityAfterCommit({
     projectId: input.projectId,
     orgId: input.orgId,
     userId: input.actorUserId,
@@ -300,18 +492,27 @@ export async function transitionProjectStatus(input: StatusTransitionInput): Pro
     userId: input.actorUserId,
     userEmail: input.actorEmail,
     userRole: input.actorRole,
-    details: { reason: input.reason || null },
+    details: {
+      reason: input.reason || null,
+      fromStatus: current.status ?? null,
+      ...(closing ? { revokedIntakeLinks } : {}),
+      ...(input.toStatus === "completed"
+        ? { gates, overridden: (gates ?? []).some((g) => g.ok !== true), ...(gateSnapshotError ? { gateSnapshotError } : {}) }
+        : {}),
+      ...(activityError ? { activityError } : {}),
+    },
   });
 
-  // Cancelling or archiving releases every active checkout on the project.
-  // DCK-9: a refused release (the release guard, for another user's session)
-  // is reported AFTER the audience is told about the status change — the
-  // status did change; what did not happen must not vanish into a warn, and
-  // must not be thrown as if the change had not happened.
-  let releaseError: Error | null = null;
-  if (input.toStatus === "cancelled" || input.toStatus === "archived" || input.toStatus === "completed") {
+  // Closing releases every active checkout on the project — per session
+  // (PM-4). DCK-9: a refused release is reported AFTER the audience is told
+  // about the status change — the status did change; what did not happen
+  // must not vanish into a warn, and must not be thrown as if the change
+  // had not happened.
+  let release: ProjectReleaseOutcome | null = null;
+  let releaseFailure: Error | null = null;
+  if (closing) {
     try {
-      await releaseAllCheckoutsForProject({
+      release = await releaseAllCheckoutsForProject({
         projectId: input.projectId,
         reason: input.reason || `Project ${input.toStatus}`,
         actorUserId: input.actorUserId,
@@ -319,25 +520,81 @@ export async function transitionProjectStatus(input: StatusTransitionInput): Pro
         actorRole: input.actorRole ?? null,
       });
     } catch (e) {
-      releaseError = e as Error;
+      releaseFailure = e as Error;
     }
   }
 
-  // Tell the people who care — members and watchers were previously never
-  // told a project completed/cancelled (or that their checkouts were freed).
+  // Tell the people who care — built from what really happened (PM-4 dw3).
   const { data: pj } = await supabase.from("projects").select("name").eq("id", input.projectId).maybeSingle();
+  const releaseLine = release ? describeReleaseOutcome(release)
+    : releaseFailure ? "Its active checkouts were NOT released." : null;
   await notifyProjectAudience({
     projectId: input.projectId, orgId: input.orgId,
     actorUserId: input.actorUserId, actorName: input.actorEmail?.split("@")[0],
     kind: "project_status",
     title: `Project ${input.toStatus}: ${(pj?.name as string) ?? "project"}`,
-    body: input.reason ? `Reason: ${input.reason}` : (input.toStatus === "cancelled" || input.toStatus === "completed" || input.toStatus === "archived" ? "Any active checkouts on the project were released." : undefined),
+    body: [input.reason ? `Reason: ${input.reason}` : null, closing ? releaseLine : null].filter(Boolean).join(" ") || undefined,
   });
-  return {
-    releaseError: releaseError
-      ? `The project is ${input.toStatus}, but its active checkouts were NOT released: ${releaseError.message.replace(/^The project's active checkouts were NOT released: /, "")}`
-      : null,
-  };
+
+  let releaseError: string | null = null;
+  if (releaseFailure) {
+    releaseError = `The project is ${input.toStatus}, but its active checkouts were NOT released: ${releaseFailure.message.replace(/^The project's active checkouts were NOT released: /, "")}`;
+  } else if (release && release.stillHeld.length > 0) {
+    releaseError = `The project is ${input.toStatus}, but not every active checkout was released: ${describeReleaseOutcome(release)} Ask the holder to check in, or an Admin / Document Control to release them.`;
+  }
+  return { releaseError, release, revokedIntakeLinks, activityError };
+}
+
+/** PM-1: revoke the project's live intake links. Checked; a missing table
+ *  (pre-20260902) means there is nothing to revoke. PC-1 / J1 exports the
+ *  shared intake-link revoke helper — until it lands, the revocation is
+ *  inline here (and inside delete_project_record, 20261103). */
+async function revokeProjectIntakeLinks(projectId: string, nowIso: string): Promise<number> {
+  const { data, error } = await supabase
+    .from("project_intake_links")
+    .update({ revoked_at: nowIso })
+    .eq("project_id", projectId)
+    .is("revoked_at", null)
+    .select("id");
+  if (error) {
+    if (error.code === "42P01" || error.code === "PGRST205") return 0;
+    throw new Error(`The project's contractor intake links could not be revoked, so the project was not closed: ${error.message}`);
+  }
+  return ((data ?? []) as unknown[]).length;
+}
+
+/**
+ * PM-1 dw2/dw3: reopen a closed project — a distinct, audited,
+ * controller-only action. The 20261103 reopen_project RPC checks the
+ * controller tier, requires a reason, clears completed_at / cancelled_at /
+ * cancelled_reason, and writes the PROJECT_REOPENED audit row and the feed
+ * row in one transaction; the closed-project write guard lets it through
+ * and nothing else. Intake links stay revoked — reopening mints new ones.
+ */
+export async function reopenProject(input: {
+  projectId: string; orgId: string; reason: string;
+  actorUserId: string; actorEmail?: string;
+}): Promise<void> {
+  if (!input.reason.trim()) throw new Error("A reason is required to reopen a closed project.");
+  const { error } = await supabase.rpc("reopen_project", { p_project: input.projectId, p_reason: input.reason.trim() });
+  if (error) {
+    if (isMissingRpc(error)) throw new Error("Reopening a closed project needs database migration 20261103 (reopen_project). Ask an administrator to apply it.");
+    throw new Error(error.message);
+  }
+  await notifyProjectAudience({
+    projectId: input.projectId, orgId: input.orgId,
+    actorUserId: input.actorUserId, actorName: input.actorEmail?.split("@")[0],
+    kind: "project_status",
+    title: "Project reopened",
+    body: `Reason: ${input.reason.trim()}`,
+  });
+}
+
+/** PostgREST / Postgres "function does not exist" — the migration that
+ *  defines the RPC has not been applied yet. */
+function isMissingRpc(error: { code?: string | null; message?: string }): boolean {
+  return error.code === "PGRST202" || error.code === "42883"
+    || /could not find the function|function .* does not exist/i.test(error.message ?? "");
 }
 
 // ─── CHECKOUTS LINKED TO PROJECTS ────────────────────────────────────────
@@ -394,18 +651,31 @@ function rowToCheckoutSession(r: Record<string, unknown>): CheckoutSession {
 /** DCK-9: ending every checkout on a project is a CHECK-IN of each session,
  *  and the register says so — an outcome on every row (`auto_released`: the
  *  project's state change ended it, nobody chose it; the reason travels in
- *  outcome_note) and a CHECK_IN audit row per document. The session write is
- *  CHECKED: the release guard refuses another user's session unless the
- *  actor holds checkout.force_release, and that refusal is surfaced, not
- *  swallowed. Returns the number of sessions actually ended. Exported for
- *  tests; transitionProjectStatus is the caller. */
+ *  outcome_note) and a CHECK_IN audit row per document.
+ *
+ *  PM-4: the release runs PER SESSION. The release guard
+ *  (enforce_checkout_release_guard) refuses a status change on another
+ *  user's session unless the actor holds checkout.force_release, and a
+ *  BEFORE-trigger RAISE aborts the whole statement — so one batch UPDATE let
+ *  a single refusal leave EVERY session active, the actor's own included.
+ *  Now the actor's own sessions end in one statement (the guard never
+ *  refuses those), every other session is released on its own, and a
+ *  refused session stays active and comes back in `stillHeld` naming its
+ *  holder. The authority is the guard's, unchanged: a controller (or anyone
+ *  holding checkout.force_release) releases everyone's; nobody else releases
+ *  anyone else's. (force_release_document is not used here: it ends EVERY
+ *  active session on the document, including ones held outside this
+ *  project, which the per-document settle below exists to protect.)
+ *
+ *  A failure of the actor's own batch throws. Exported for tests;
+ *  transitionProjectStatus is the caller. */
 export async function releaseAllCheckoutsForProject(params: {
   projectId: string;
   reason: string;
   actorUserId: string;
   actorEmail?: string | null;
   actorRole?: string | null;
-}): Promise<number> {
+}): Promise<ProjectReleaseOutcome> {
   const now = new Date().toISOString();
   const { data: active, error: listErr } = await supabase
     .from("checkout_sessions")
@@ -414,11 +684,13 @@ export async function releaseAllCheckoutsForProject(params: {
     .eq("status", "active");
   if (listErr) throw new Error(`Project checkouts could not be read: ${listErr.message}`);
 
-  if (!active || active.length === 0) return 0;
+  const none: ProjectReleaseOutcome = { released: 0, releasedSessionIds: [], stillHeld: [] };
+  if (!active || active.length === 0) return none;
 
-  const ids = active.map((r) => r.id as string);
-  const docIds = Array.from(new Set(active.map((r) => r.document_id as string)));
-  const orgByDoc = new Map(active.map((r) => [r.document_id as string, r.org_id as string]));
+  type ActiveRow = { id: string; document_id: string; org_id: string; user_id: string; user_name: string | null };
+  const rows = active as ActiveRow[];
+  const docIds = Array.from(new Set(rows.map((r) => r.document_id)));
+  const orgByDoc = new Map(rows.map((r) => [r.document_id, r.org_id]));
 
   const basePayload = {
     status: "checked_in",
@@ -427,21 +699,43 @@ export async function releaseAllCheckoutsForProject(params: {
     released_by: params.actorUserId,
     released_reason: params.reason,
   };
-  const endSessions = (payload: Record<string, unknown>) =>
-    supabase
-      .from("checkout_sessions")
-      .update(payload)
-      .in("id", ids)
-      .eq("status", "active")
-      .select("id, document_id, user_id, user_name");
-  let { data: ended, error: endErr } = await endSessions({ ...basePayload, outcome: "auto_released", outcome_note: params.reason });
-  if (endErr) {
-    const { isMissingOutcomeSchema } = await import("@/lib/checkoutEpisodes");
-    // Pre-20261012 environment: record the check-in without the register columns.
-    if (isMissingOutcomeSchema(endErr)) ({ data: ended, error: endErr } = await endSessions(basePayload));
+  type EndedRow = { id: string; document_id: string; user_id: string; user_name: string | null };
+  const endSessions = async (ids: string[]): Promise<{ ended: EndedRow[]; error: { message: string; code?: string } | null }> => {
+    const run = (payload: Record<string, unknown>) =>
+      supabase
+        .from("checkout_sessions")
+        .update(payload)
+        .in("id", ids)
+        .eq("status", "active")
+        .select("id, document_id, user_id, user_name");
+    let { data, error } = await run({ ...basePayload, outcome: "auto_released", outcome_note: params.reason });
+    if (error) {
+      const { isMissingOutcomeSchema } = await import("@/lib/checkoutEpisodes");
+      // Pre-20261012 environment: record the check-in without the register columns.
+      if (isMissingOutcomeSchema(error)) ({ data, error } = await run(basePayload));
+    }
+    return { ended: ((data ?? []) as EndedRow[]), error: error ? { message: error.message, code: (error as { code?: string }).code } : null };
+  };
+
+  const endedRows: EndedRow[] = [];
+  const stillHeld: StillHeldCheckout[] = [];
+
+  // The actor's own sessions: one statement — the guard never refuses these.
+  const own = rows.filter((r) => String(r.user_id) === String(params.actorUserId));
+  if (own.length > 0) {
+    const res = await endSessions(own.map((r) => r.id));
+    if (res.error) throw new Error(`The project's active checkouts were NOT released: ${res.error.message}`);
+    endedRows.push(...res.ended);
   }
-  if (endErr) throw new Error(`The project's active checkouts were NOT released: ${endErr.message}`);
-  const endedRows = (ended ?? []) as Array<{ id: string; document_id: string; user_id: string; user_name: string | null }>;
+  // Everyone else's: one session at a time, so a refusal holds only itself.
+  for (const r of rows.filter((x) => String(x.user_id) !== String(params.actorUserId))) {
+    const res = await endSessions([r.id]);
+    if (res.error) {
+      stillHeld.push({ sessionId: r.id, documentId: r.document_id, userId: r.user_id, userName: r.user_name, reason: res.error.message });
+      continue;
+    }
+    endedRows.push(...res.ended);
+  }
 
   // The document's control history shows the check-in — one row per
   // document naming every session it ended (DCK-9 done-when 2).
@@ -460,7 +754,7 @@ export async function releaseAllCheckoutsForProject(params: {
         via: "project_release",
         projectId: params.projectId,
         reason: params.reason,
-        releasedSessions: mine.map((r) => ({ sessionId: r.id, userId: r.user_id, userName: r.user_name })),
+        releasedSessions: mine.map((x) => ({ sessionId: x.id, userId: x.user_id, userName: x.user_name })),
       },
     });
   }
@@ -479,7 +773,109 @@ export async function releaseAllCheckoutsForProject(params: {
       console.warn("[releaseAllCheckoutsForProject] reconcile failed for", docId, e);
     }
   }
-  return endedRows.length;
+  return { released: endedRows.length, releasedSessionIds: endedRows.map((r) => r.id), stillHeld };
+}
+
+// ─── THE DOCUMENT REGISTER (UX-11) ───────────────────────────────────────
+
+/** One row of the project's Documents tab register — a live reference to a
+ *  controlled document (DEC-40: never a copy), marked current or not. */
+export interface ProjectDocumentRow {
+  /** project_documents.id — null for an approved intake document that is
+   *  not (yet) adopted into the register. */
+  linkId: string | null;
+  docId: string;
+  label: string;
+  rev: string | null;
+  status: string | null;
+  libraryId: string | null;
+  source: "checkout" | "manual" | "intake";
+  lastSeenAt: string | null;
+  /** DEC-40: false for a superseded / voided / archived document — the tab
+   *  says so rather than presenting it as the drawing in force. */
+  isCurrent: boolean;
+}
+
+export interface ProjectDocumentRegister {
+  rows: ProjectDocumentRow[];
+  /** Linked documents the viewer's permissions hide — disclosed as a count,
+   *  never silently dropped. */
+  hiddenByPermissions: number;
+}
+
+/**
+ * UX-11: the Documents tab's primary list. The project's register
+ * (project_documents: checkout-linked and hand-attached) PLUS the
+ * contractor intake documents that were APPROVED (they carry a current
+ * version) but not yet adopted — so 40 approved sheets are visible here,
+ * not only inside the Intake tab's transition-in panel. A pending (never
+ * approved) submission is not listed. Linked rows the viewer cannot read
+ * are counted in `hiddenByPermissions`.
+ */
+export async function listProjectDocuments(projectId: string): Promise<ProjectDocumentRegister> {
+  const [linksRes, projRes] = await Promise.all([
+    supabase.from("project_documents")
+      .select("id, document_id, source, last_seen_at")
+      .eq("project_id", projectId)
+      .order("last_seen_at", { ascending: false }),
+    supabase.from("projects").select("org_id, intake_collection_id").eq("id", projectId).maybeSingle(),
+  ]);
+  if (linksRes.error) throw new Error(linksRes.error.message);
+  const links = ((linksRes.data ?? []) as Array<{ id: string; document_id: string; source: string | null; last_seen_at: string | null }>);
+  const proj = (projRes.error ? null : projRes.data) as { org_id: string; intake_collection_id: string | null } | null;
+
+  const COLS = "id, document_number, title, name, rev, status, library_id, archived_at";
+  type DocRow = { id: string; document_number: string | null; title: string | null; name: string | null; rev: string | null; status: string | null; library_id: string | null; archived_at?: string | null };
+  const linkedIds = [...new Set(links.map((l) => String(l.document_id)))];
+  const [docsRes, intakeRes] = await Promise.all([
+    linkedIds.length
+      ? supabase.from("documents").select(COLS).in("id", linkedIds)
+      : Promise.resolve({ data: [] as DocRow[], error: null }),
+    proj?.intake_collection_id
+      ? supabase.from("documents").select(COLS)
+          .eq("org_id", proj.org_id)
+          .eq("collection_id", proj.intake_collection_id)
+          .not("current_version_id", "is", null)
+          .order("created_at", { ascending: false })
+          .limit(200)
+      : Promise.resolve({ data: [] as DocRow[], error: null }),
+  ]);
+  if (docsRes.error) throw new Error(docsRes.error.message);
+  if (intakeRes.error) throw new Error(intakeRes.error.message);
+  const byId = new Map(((docsRes.data ?? []) as DocRow[]).map((d) => [String(d.id), d]));
+  const toRow = (d: DocRow, link: { id: string; source: string | null; last_seen_at: string | null } | null): ProjectDocumentRow => ({
+    linkId: link ? String(link.id) : null,
+    docId: String(d.id),
+    label: String(d.document_number || d.title || d.name || "Document"),
+    rev: d.rev ?? null,
+    status: d.status ?? null,
+    libraryId: d.library_id ?? null,
+    source: link ? (link.source === "manual" ? "manual" : "checkout") : "intake",
+    lastSeenAt: link?.last_seen_at ?? null,
+    isCurrent: !d.archived_at && !NOT_CURRENT_STATUSES.has(d.status ?? ""),
+  });
+
+  const rows: ProjectDocumentRow[] = [];
+  let hiddenByPermissions = 0;
+  for (const l of links) {
+    const d = byId.get(String(l.document_id));
+    if (!d) { hiddenByPermissions += 1; continue; }
+    rows.push(toRow(d, l));
+  }
+  const inRegister = new Set(rows.map((r) => r.docId));
+  for (const d of ((intakeRes.data ?? []) as DocRow[])) {
+    if (!inRegister.has(String(d.id)) && !linkedIds.includes(String(d.id))) rows.push(toRow(d, null));
+  }
+  return { rows, hiddenByPermissions };
+}
+
+/** UX-11: the Documents tab badge — DISTINCT documents the tab shows (the
+ *  register, approved intake, and anything checked out under the project),
+ *  plus the ones hidden by permissions it discloses. Never a session count. Pure. */
+export function documentsTabCount(register: ProjectDocumentRegister | null, checkoutDocIds: readonly string[]): number {
+  const ids = new Set<string>(checkoutDocIds.filter(Boolean));
+  for (const r of register?.rows ?? []) ids.add(r.docId);
+  return ids.size + (register?.hiddenByPermissions ?? 0);
 }
 
 // ─── COMMENTS / ACTIVITY READ ────────────────────────────────────────────
@@ -503,14 +899,20 @@ export async function postComment(input: {
   actorEmail?: string;
 }): Promise<void> {
   if (!input.body.trim()) throw new Error("Comment cannot be empty");
-  await writeActivity({
-    projectId: input.projectId,
-    orgId: input.orgId,
-    userId: input.actorUserId,
-    userName: input.actorEmail,
-    type: "comment",
-    body: input.body.trim(),
-  });
+  // The comment IS the activity row: a refusal (20261102 — an observer, or a
+  // project the caller cannot see) means nothing was posted, and says so.
+  try {
+    await writeActivity({
+      projectId: input.projectId,
+      orgId: input.orgId,
+      userId: input.actorUserId,
+      userName: input.actorEmail,
+      type: "comment",
+      body: input.body.trim(),
+    });
+  } catch (e) {
+    throw new Error(`Your comment was not posted: ${(e as Error).message.replace(/^The project activity row was not written: /, "")}`);
+  }
   const trimmed = input.body.trim();
   await notifyProjectAudience({
     projectId: input.projectId, orgId: input.orgId,
@@ -536,7 +938,7 @@ export async function attachCheckoutToProject(input: {
     .update({ project_id: input.projectId })
     .eq("id", input.checkoutSessionId);
   if (error) throw new Error(error.message);
-  await writeActivity({
+  const activityError = await writeActivityAfterCommit({
     projectId: input.projectId,
     orgId: input.orgId,
     userId: input.actorUserId,
@@ -545,6 +947,7 @@ export async function attachCheckoutToProject(input: {
     body: "Checkout attached to project",
     metadata: { checkoutSessionId: input.checkoutSessionId },
   });
+  if (activityError) throw savedButNotRecorded("The checkout was attached to the project", activityError);
 }
 
 export async function addMember(input: {
@@ -558,6 +961,9 @@ export async function addMember(input: {
   actorUserId: string;
   actorEmail?: string;
 }): Promise<void> {
+  if (input.role === "owner") {
+    throw new Error("Ownership moves only through Transfer ownership — a member cannot be added as owner.");
+  }
   const { error } = await supabase.from("project_members").upsert({
     project_id: input.projectId,
     user_id: input.userId,
@@ -567,7 +973,7 @@ export async function addMember(input: {
     responsibility: input.responsibility?.trim() || null,
   }, { onConflict: "project_id,user_id" });
   if (error) throw new Error(error.message);
-  await writeActivity({
+  const activityError = await writeActivityAfterCommit({
     projectId: input.projectId,
     orgId: input.orgId,
     userId: input.actorUserId,
@@ -588,6 +994,7 @@ export async function addMember(input: {
     resourceType: "project",
     resourceId: input.projectId,
   });
+  if (activityError) throw savedButNotRecorded(`${input.userName || input.userEmail || "The member"} was added`, activityError);
 }
 
 /**
@@ -616,7 +1023,7 @@ export async function removeMember(input: {
     .eq("project_id", input.projectId)
     .eq("user_id", input.userId);
   if (error) throw new Error(error.message);
-  await writeActivity({
+  const activityError = await writeActivityAfterCommit({
     projectId: input.projectId,
     orgId: input.orgId,
     userId: input.actorUserId,
@@ -639,84 +1046,217 @@ export async function removeMember(input: {
     link: "/projects",
     resourceType: "project", resourceId: input.projectId,
   }).catch(() => undefined);
+  if (activityError) throw savedButNotRecorded(`${input.userName || input.userEmail || "The member"} was removed`, activityError);
 }
 
 // ─── OWNERSHIP / DELETE / MEMBER MANAGEMENT ──────────────────────────────
 
+export interface ManagedProject {
+  id: string; orgId: string; ownerUserId: string; name: string;
+  status: ProjectStatus | null;
+}
+
 /** Verify the actor may manage this project — its current owner, or an org
- *  Admin/DocCtrl. Returns the project's core fields. Throws otherwise. */
-export async function assertCanManageProject(projectId: string, actorUserId: string): Promise<{ id: string; orgId: string; ownerUserId: string; name: string }> {
+ *  controller — and is an ACTIVE member of the project's org (SEC-9: the
+ *  user_owns_project shape; an offboarded owner manages nothing). The
+ *  controller tier is the role COLLECTION through isControllerPrincipal
+ *  (PM-5, DEC-35) — the same rule as the database's is_org_controller, with
+ *  no facility role literal here. Returns the project's core fields.
+ *  Throws otherwise. */
+export async function assertCanManageProject(projectId: string, actorUserId: string): Promise<ManagedProject> {
   const { data, error } = await supabase
-    .from("projects").select("id, org_id, owner_user_id, name").eq("id", projectId).maybeSingle();
+    .from("projects").select("id, org_id, owner_user_id, name, status").eq("id", projectId).maybeSingle();
   if (error || !data) throw new Error("Project not found.");
-  const p = data as { id: string; org_id: string; owner_user_id: string; name: string };
-  if (String(p.owner_user_id) === String(actorUserId)) {
-    return { id: p.id, orgId: p.org_id, ownerUserId: p.owner_user_id, name: p.name };
-  }
-  const { data: mem } = await supabase
+  const p = data as { id: string; org_id: string; owner_user_id: string; name: string; status?: ProjectStatus | null };
+  const out: ManagedProject = { id: p.id, orgId: p.org_id, ownerUserId: p.owner_user_id, name: p.name, status: p.status ?? null };
+  const { data: mem, error: memErr } = await supabase
     .from("org_members").select("role, roles").eq("org_id", p.org_id).eq("uid", actorUserId).eq("status", "active").maybeSingle();
-  const held = normalizeRoles((mem as { roles?: unknown } | null)?.roles, (mem as { role?: string } | null)?.role);
-  if (held.some((r) => r === "Admin" || r === "DocCtrl")) {
-    return { id: p.id, orgId: p.org_id, ownerUserId: p.owner_user_id, name: p.name };
-  }
+  if (memErr) throw new Error(`Your membership could not be checked: ${memErr.message}`);
+  if (!mem) throw new Error("Only an active member of this workspace can manage its projects.");
+  if (String(p.owner_user_id) === String(actorUserId)) return out;
+  const m = mem as { role?: string | null; roles?: unknown };
+  if (isControllerPrincipal({ role: (m.role ?? "") as Role, roles: normalizeRoles(m.roles, m.role) })) return out;
   throw new Error("Only the project owner or an admin can do this.");
 }
 
-/** Delete a project and its schedule. Owner or org Admin/DocCtrl only.
- *  Checkouts are detached (kept), not deleted. Audited. */
+/** PM-6 / QUAL-3: what deleting a project would destroy, by table. `null`
+ *  = that count could not be read (shown as unknown, never as zero). */
+export interface ProjectRecordCounts {
+  costAccounts: number | null;
+  costEntries: number | null;
+  costDocuments: number | null;
+  changeOrders: number | null;
+  parties: number | null;
+  checklists: number | null;
+  checklistItems: number | null;
+  turnoverItems: number | null;
+  punchItems: number | null;
+  documentLinks: number | null;
+  milestones: number | null;
+}
+
+const RECORD_COUNT_LABELS: Array<[keyof ProjectRecordCounts, string, string]> = [
+  ["costAccounts", "budget line", "budget lines"],
+  ["costEntries", "cost entry", "cost entries"],
+  ["costDocuments", "quote / invoice", "quotes / invoices"],
+  ["changeOrders", "change order", "change orders"],
+  ["parties", "company on the job", "companies on the job"],
+  ["checklists", "checklist", "checklists"],
+  ["checklistItems", "checklist item", "checklist items"],
+  ["turnoverItems", "turnover item", "turnover items"],
+  ["punchItems", "punch item", "punch items"],
+  ["documentLinks", "document link", "document links"],
+  ["milestones", "schedule task", "schedule tasks"],
+];
+
+/** The financial and quality record (PM-6 / QUAL-3): a project carrying any
+ *  of these cannot be hard-deleted except by a controller, with a reason,
+ *  through delete_project_record — which audits the counts and a snapshot. */
+export const REGULATED_RECORD_KEYS: ReadonlyArray<keyof ProjectRecordCounts> = [
+  "costAccounts", "costEntries", "costDocuments", "changeOrders",
+  "checklists", "checklistItems", "turnoverItems", "punchItems",
+];
+
+/** Regulated rows present, or null when any of those counts is unknown. Pure. */
+export function regulatedRecordTotal(c: ProjectRecordCounts): number | null {
+  let n = 0;
+  for (const k of REGULATED_RECORD_KEYS) {
+    const v = c[k];
+    if (v === null) return null;
+    n += v;
+  }
+  return n;
+}
+
+/** The confirm's lines: every non-zero count, and every unknown one. Pure. */
+export function describeProjectRecords(c: ProjectRecordCounts): string[] {
+  const out: string[] = [];
+  for (const [k, one, many] of RECORD_COUNT_LABELS) {
+    const v = c[k];
+    if (v === null) out.push(`${many}: could not be counted`);
+    else if (v > 0) out.push(`${v} ${v === 1 ? one : many}`);
+  }
+  return out;
+}
+
+/** Live counts for the delete confirmation (PM-6 dw1). Each count is a
+ *  head-only read; a refused or missing table reads as null (unknown). */
+export async function countProjectRecords(projectId: string): Promise<ProjectRecordCounts> {
+  const count = async (table: string, build?: (q: ReturnType<typeof headQuery>) => ReturnType<typeof headQuery>): Promise<number | null> => {
+    const q = build ? build(headQuery(table)) : headQuery(table).eq("project_id", projectId);
+    const { count: n, error } = await q;
+    return error ? null : (n ?? 0);
+  };
+  const [costAccounts, costEntries, costDocuments, changeOrders, parties, checklists, checklistIds, turnoverItems, punchItems, documentLinks, milestones] = await Promise.all([
+    count("cost_accounts"), count("cost_entries"), count("cost_documents"), count("change_orders"),
+    count("project_parties"), count("project_checklists"),
+    supabase.from("project_checklists").select("id").eq("project_id", projectId),
+    count("turnover_items"), count("punch_items"), count("project_documents"), count("milestones"),
+  ]);
+  let checklistItems: number | null = null;
+  if (!checklistIds.error) {
+    const ids = ((checklistIds.data ?? []) as Array<{ id: string }>).map((r) => r.id);
+    checklistItems = ids.length === 0 ? 0 : await count("checklist_items", (q) => q.in("checklist_id", ids));
+  }
+  return { costAccounts, costEntries, costDocuments, changeOrders, parties, checklists, checklistItems, turnoverItems, punchItems, documentLinks, milestones };
+}
+
+function headQuery(table: string) {
+  return supabase.from(table).select("id", { count: "exact", head: true });
+}
+
+/**
+ * Delete a project (PM-6 / QUAL-3 / SEC-9). One transaction in the
+ * database — delete_project_record (20261103) — which:
+ *  · refuses a project under legal hold;
+ *  · refuses a project carrying any cost or quality record unless the
+ *    caller is a controller AND gives a reason (the default is Archive);
+ *  · revokes the project's contractor intake links (PM-2's inline limb —
+ *    PC-1 / J1 exports the shared intake-link revoke helper);
+ *  · writes PROJECT_DELETED with the counts, a serialized snapshot of the
+ *    cost and quality rows, and the storage keys of the cost documents'
+ *    files for the orphan sweep;
+ *  · then deletes the schedule and the project (the rest cascades; the
+ *    purge GUC app.record_purge = 'project:<id>' is the one pass through the
+ *    money and quality delete guards).
+ * Nothing is deleted before that transaction starts, so a refusal can no
+ * longer leave a live project stripped of its roster, feed and schedule.
+ * Without the migration the delete is refused (fail closed) — Archive.
+ */
 export async function deleteProject(input: {
   projectId: string; actorUserId: string; actorEmail?: string; actorRole?: string;
-}): Promise<void> {
+  /** Required by the database when the project carries cost / quality records. */
+  reason?: string;
+}): Promise<{ counts: Record<string, unknown> | null }> {
   const p = await assertCanManageProject(input.projectId, input.actorUserId);
-  // Keep document checkouts; just unlink them from the deleted project.
-  await supabase.from("checkout_sessions").update({ project_id: null }).eq("project_id", input.projectId);
-  await supabase.from("markup_requests").update({ project_id: null }).eq("project_id", input.projectId);
-  // milestones.project_id is ON DELETE SET NULL, so delete them explicitly.
-  await supabase.from("milestones").delete().eq("project_id", input.projectId);
-  await supabase.from("project_activity").delete().eq("project_id", input.projectId);
-  await supabase.from("project_members").delete().eq("project_id", input.projectId);
+  const { data, error } = await supabase.rpc("delete_project_record", {
+    p_project: input.projectId,
+    p_reason: input.reason?.trim() || null,
+  });
+  if (error) {
+    if (isMissingRpc(error)) return legacyDeleteRecordlessProject(p, input);
+    throw new Error(error.message);
+  }
+  const counts = (data && typeof data === "object" ? (data as { counts?: Record<string, unknown> }).counts : null) ?? null;
+  return { counts };
+}
+
+/** Before 20261103: only a project with NO cost or quality record may be
+ *  deleted (every count read, all zero) — anything else is refused and
+ *  archived instead (fail closed). The projects row is deleted FIRST (its
+ *  roster, feed and links cascade), then the schedule rows it named, so a
+ *  refused delete strips nothing. Audited with the counts. */
+async function legacyDeleteRecordlessProject(
+  p: ManagedProject,
+  input: { projectId: string; actorUserId: string; actorEmail?: string; actorRole?: string },
+): Promise<{ counts: Record<string, unknown> | null }> {
+  const counts = await countProjectRecords(input.projectId);
+  const regulated = regulatedRecordTotal(counts);
+  if (regulated === null || regulated > 0) {
+    throw new Error("This project carries cost or quality records (or they could not be counted). It cannot be deleted until database migration 20261103 (delete_project_record) is applied — archive it instead.");
+  }
+  const { data: ms, error: msErr } = await supabase.from("milestones").select("id").eq("project_id", input.projectId);
+  if (msErr) throw new Error(`The project's schedule could not be read, so nothing was deleted: ${msErr.message}`);
+  const milestoneIds = ((ms ?? []) as Array<{ id: string }>).map((r) => r.id);
+  await revokeProjectIntakeLinks(input.projectId, new Date().toISOString());
   const { error } = await supabase.from("projects").delete().eq("id", input.projectId);
   if (error) throw new Error(error.message);
+  // milestones.project_id is ON DELETE SET NULL — the schedule goes with the project.
+  let scheduleError: string | null = null;
+  if (milestoneIds.length > 0) {
+    const { error: mdErr } = await supabase.from("milestones").delete().in("id", milestoneIds);
+    if (mdErr) scheduleError = mdErr.message;
+  }
   await logAuditAction({
     action: "PROJECT_DELETED", resourceId: input.projectId, resourceType: "project",
     orgId: p.orgId, userId: input.actorUserId, userEmail: input.actorEmail, userRole: input.actorRole,
-    details: { name: p.name },
+    details: { name: p.name, counts, path: "pre-20261103", ...(scheduleError ? { scheduleError } : {}) },
   });
+  if (scheduleError) throw new Error(`The project was deleted, but its ${milestoneIds.length} schedule task(s) were not: ${scheduleError}`);
+  return { counts: counts as unknown as Record<string, unknown> };
 }
 
 /** Transfer project ownership to another user (who is made an 'owner' member).
- *  Current owner or org Admin/DocCtrl only. Audited + notifies the new owner. */
+ *  Current owner or org controller only; the recipient must be an ACTIVE
+ *  member of the project's org. SEC-15: the transfer_project_ownership RPC
+ *  (20261102) is the path — projects_update_owner's WITH CHECK cannot admit
+ *  the post-transfer row for a plain owner, so the direct UPDATE failed with
+ *  a raw RLS error for exactly the person offered the button. Audited (in
+ *  the RPC) + notifies the new owner. */
 export async function transferOwnership(input: {
   projectId: string; newOwnerUserId: string; newOwnerName?: string; newOwnerEmail?: string;
   actorUserId: string; actorEmail?: string; actorRole?: string;
 }): Promise<void> {
   const p = await assertCanManageProject(input.projectId, input.actorUserId);
-  const now = new Date().toISOString();
-  const { error } = await supabase.from("projects").update({
-    owner_user_id: input.newOwnerUserId,
-    owner_user_name: input.newOwnerName || null,
-    updated_at: now, updated_by: input.actorUserId,
-  }).eq("id", input.projectId);
-  if (error) throw new Error(error.message);
-  // Make the new owner an 'owner' member; demote the prior owner to collaborator.
-  await supabase.from("project_members").upsert({
-    project_id: input.projectId, user_id: input.newOwnerUserId,
-    user_name: input.newOwnerName || null, user_email: input.newOwnerEmail || null, role: "owner",
-  }, { onConflict: "project_id,user_id" });
-  if (String(p.ownerUserId) !== String(input.newOwnerUserId)) {
-    await supabase.from("project_members").update({ role: "collaborator" })
-      .eq("project_id", input.projectId).eq("user_id", p.ownerUserId).eq("role", "owner");
+  const { error } = await supabase.rpc("transfer_project_ownership", {
+    p_project: input.projectId,
+    p_new_owner: input.newOwnerUserId,
+    p_new_owner_name: input.newOwnerName || input.newOwnerEmail || null,
+  });
+  if (error) {
+    if (!isMissingRpc(error)) throw new Error(error.message);
+    await legacyTransferOwnership(p, input);
   }
-  await writeActivity({
-    projectId: input.projectId, orgId: p.orgId, userId: input.actorUserId, userName: input.actorEmail,
-    type: "ownership_transferred",
-    body: `Ownership transferred to ${input.newOwnerName || input.newOwnerEmail || input.newOwnerUserId}`,
-  });
-  await logAuditAction({
-    action: "PROJECT_OWNERSHIP_TRANSFERRED", resourceId: input.projectId, resourceType: "project",
-    orgId: p.orgId, userId: input.actorUserId, userEmail: input.actorEmail, userRole: input.actorRole,
-    details: { from: p.ownerUserId, to: input.newOwnerUserId },
-  });
   void notify({
     orgId: p.orgId, userId: input.newOwnerUserId, actorUserId: input.actorUserId, actorName: input.actorEmail,
     kind: "project_member", title: "You're now the project owner",
@@ -725,12 +1265,63 @@ export async function transferOwnership(input: {
   });
 }
 
-/** Update a member's role and/or responsibility. Owner or org Admin only. */
+/** Before 20261102: the direct writes. They succeed for a controller; a
+ *  plain owner is refused by projects_update_owner's WITH CHECK, and is told
+ *  so in words rather than with the raw RLS text. The recipient must be an
+ *  active member either way. */
+async function legacyTransferOwnership(
+  p: ManagedProject,
+  input: { projectId: string; newOwnerUserId: string; newOwnerName?: string; newOwnerEmail?: string; actorUserId: string; actorEmail?: string; actorRole?: string },
+): Promise<void> {
+  const { data: target, error: tErr } = await supabase.from("org_members").select("uid")
+    .eq("org_id", p.orgId).eq("uid", input.newOwnerUserId).eq("status", "active").maybeSingle();
+  if (tErr) throw new Error(`The new owner's membership could not be checked: ${tErr.message}`);
+  if (!target) throw new Error("The new owner must be an active member of this workspace.");
+  const now = new Date().toISOString();
+  const { data: moved, error } = await supabase.from("projects").update({
+    owner_user_id: input.newOwnerUserId,
+    owner_user_name: input.newOwnerName || null,
+    updated_at: now, updated_by: input.actorUserId,
+  }).eq("id", input.projectId).select("id");
+  if (error || !moved || (moved as unknown[]).length === 0) {
+    throw new Error("Only an Admin / Document Control can transfer ownership until database migration 20261102 (transfer_project_ownership) is applied.");
+  }
+  // Make the new owner an 'owner' member; demote the prior owner to collaborator.
+  const { error: upErr } = await supabase.from("project_members").upsert({
+    project_id: input.projectId, user_id: input.newOwnerUserId,
+    user_name: input.newOwnerName || null, user_email: input.newOwnerEmail || null, role: "owner",
+  }, { onConflict: "project_id,user_id" });
+  if (upErr) throw new Error(`Ownership moved, but the roster was not updated: ${upErr.message}`);
+  if (String(p.ownerUserId) !== String(input.newOwnerUserId)) {
+    const { error: dErr } = await supabase.from("project_members").update({ role: "collaborator" })
+      .eq("project_id", input.projectId).eq("user_id", p.ownerUserId).eq("role", "owner");
+    if (dErr) throw new Error(`Ownership moved, but the previous owner's roster row was not updated: ${dErr.message}`);
+  }
+  const activityError = await writeActivityAfterCommit({
+    projectId: input.projectId, orgId: p.orgId, userId: input.actorUserId, userName: input.actorEmail,
+    type: "ownership_transferred",
+    body: `Ownership transferred to ${input.newOwnerName || input.newOwnerEmail || input.newOwnerUserId}`,
+  });
+  await logAuditAction({
+    action: "PROJECT_OWNERSHIP_TRANSFERRED", resourceId: input.projectId, resourceType: "project",
+    orgId: p.orgId, userId: input.actorUserId, userEmail: input.actorEmail, userRole: input.actorRole,
+    details: { from: p.ownerUserId, to: input.newOwnerUserId, ...(activityError ? { activityError } : {}) },
+  });
+  if (activityError) throw savedButNotRecorded("Ownership was transferred", activityError);
+}
+
+/** Update a member's role and/or responsibility. Owner or org controller
+ *  only. PM-11: 'owner' is never set here — ownership moves only through
+ *  transferOwnership, which also moves projects.owner_user_id (the one
+ *  value authority reads). */
 export async function updateMember(input: {
   projectId: string; userId: string;
   role?: ProjectMemberRole; responsibility?: string | null;
   actorUserId: string;
 }): Promise<void> {
+  if (input.role === "owner") {
+    throw new Error("Ownership moves only through Transfer ownership — a member cannot be given the owner role here.");
+  }
   await assertCanManageProject(input.projectId, input.actorUserId);
   const patch: Record<string, unknown> = {};
   if (input.role !== undefined) patch.role = input.role;
@@ -808,7 +1399,7 @@ export async function updateProjectMeta(input: {
   const { error } = await supabase.from("projects").update(update).eq("id", input.projectId);
   if (error) throw new Error(error.message);
 
-  await writeActivity({
+  const activityError = await writeActivityAfterCommit({
     projectId: input.projectId, orgId: proj.orgId,
     userId: input.actorUserId, userName: input.actorEmail,
     type: "comment",
@@ -820,8 +1411,9 @@ export async function updateProjectMeta(input: {
     resourceId: input.projectId, resourceType: "project",
     orgId: proj.orgId, userId: input.actorUserId,
     userEmail: input.actorEmail, userRole: input.actorRole,
-    details: { before: beforeRow ?? null, after: input.patch },
+    details: { before: beforeRow ?? null, after: input.patch, ...(activityError ? { activityError } : {}) },
   });
+  if (activityError) throw savedButNotRecorded("The project details", activityError);
 }
 
 // ─── STALE-CHECKOUT WARNINGS ─────────────────────────────────────────────
@@ -949,6 +1541,8 @@ export type BulkCheckoutResult = {
   projectName: string | null;
   checkedOutCount: number;
   skipped: Array<{ docId: string; reason: string }>;
+  /** PM-9: the checkouts landed but the project's summary feed row was refused. */
+  activityError?: string | null;
 };
 
 export async function bulkCheckoutToProject(input: BulkCheckoutInput): Promise<BulkCheckoutResult> {
@@ -1062,8 +1656,9 @@ export async function bulkCheckoutToProject(input: BulkCheckoutInput): Promise<B
   // 3. Single activity entry summarising the batch (cleaner than N rows).
   //    Only fires for project checkouts — ad-hoc bulk lives in each
   //    document's own activity thread.
+  let activityError: string | null = null;
   if (project) {
-    await writeActivity({
+    activityError = await writeActivityAfterCommit({
       projectId: project.id!,
       orgId: input.orgId,
       userId: input.actorUserId,
@@ -1084,6 +1679,7 @@ export async function bulkCheckoutToProject(input: BulkCheckoutInput): Promise<B
     projectName: project?.name ?? null,
     checkedOutCount,
     skipped,
+    activityError,
   };
 }
 
@@ -1093,8 +1689,18 @@ interface SweptSession {
   id: string; document_id: string; org_id: string; user_id: string; library_id: string | null;
 }
 
+/** PM-4 dw4: the window after a project closes before its stranded
+ *  checkouts are swept — the same 24h as the ad-hoc cap. */
+export const CLOSED_PROJECT_SWEEP_MS = 24 * 60 * 60 * 1000;
+
 /**
  * Auto-release ad-hoc checkouts whose cap has passed. Idempotent.
+ *
+ * PM-4 dw4: also releases a PROJECT checkout still active on a project that
+ * closed (completed / cancelled / archived) more than CLOSED_PROJECT_SWEEP_MS
+ * ago — the sessions the closer could not release (the release guard) no
+ * longer stay locked to a closed project forever. Same register outcome
+ * (`auto_released`), same CHECK_IN rows, its own reason and notice.
  *
  * Two call modes:
  *  - Client (default): pass an `orgId` AND `{ userId }`; uses the RLS-scoped
@@ -1136,9 +1742,71 @@ export async function autoReleaseExpiredAdHoc(
   const { data, error: listErr } = await query;
   if (listErr) throw new Error(`Expired checkouts could not be read: ${listErr.message}`);
 
-  if (!data || data.length === 0) return 0;
-  const ids = data.map((r: { id: string }) => r.id);
+  let released = 0;
+  const ids = ((data ?? []) as Array<{ id: string }>).map((r) => r.id);
+  if (ids.length > 0) {
+    released += await sweepSessions(db, ids, {
+      browserMode, nowIso,
+      reason: "Auto-released after 24h ad-hoc cap",
+      title: "Your ad-hoc checkout auto-released",
+      body: "The time window you picked ran out, so the checkout closed on its own. If you're still working on this document, check it out again — otherwise nothing to do.",
+    });
+  }
 
+  // PM-4 dw4: project checkouts stranded on a closed project.
+  const strandedIds = await strandedClosedProjectSessions(db, { orgId: orgId ?? null, userId: browserMode ? (opts!.userId as string) : null, nowMs: Date.parse(nowIso) });
+  if (strandedIds.length > 0) {
+    released += await sweepSessions(db, strandedIds, {
+      browserMode, nowIso,
+      reason: "Auto-released: the project was closed",
+      title: "Your project checkout was released",
+      body: "The project this checkout belonged to was closed, so the checkout ended on its own. If the work continues, check the document out again.",
+    });
+  }
+  return released;
+}
+
+/** PM-4 dw4: active checkouts tied to a project that has been closed for
+ *  longer than CLOSED_PROJECT_SWEEP_MS. Two bounded reads: the active
+ *  project-tied sessions (scoped like the ad-hoc selection), then the
+ *  status of the projects they name. */
+async function strandedClosedProjectSessions(
+  db: SupabaseLike,
+  scope: { orgId: string | null; userId: string | null; nowMs: number },
+): Promise<string[]> {
+  let q = db
+    .from("checkout_sessions")
+    .select("id, project_id")
+    .eq("status", "active")
+    .not("project_id", "is", null);
+  if (scope.orgId) q = q.eq("org_id", scope.orgId);
+  if (scope.userId) q = q.eq("user_id", scope.userId);
+  const { data, error } = await q;
+  if (error) throw new Error(`Project checkouts could not be read: ${error.message}`);
+  const rows = ((data ?? []) as Array<{ id: string; project_id: string | null }>).filter((r) => !!r.project_id);
+  if (rows.length === 0) return [];
+  const projectIds = Array.from(new Set(rows.map((r) => r.project_id as string)));
+  const { data: projects, error: pErr } = await db
+    .from("projects")
+    .select("id, status, updated_at")
+    .in("id", projectIds);
+  if (pErr) throw new Error(`Project status could not be read for the checkout sweep: ${pErr.message}`);
+  const cutoff = scope.nowMs - CLOSED_PROJECT_SWEEP_MS;
+  const closed = new Set(((projects ?? []) as Array<{ id: string; status: ProjectStatus; updated_at: string | null }>)
+    .filter((p) => CLOSED_PROJECT_STATUSES.has(p.status) && p.updated_at != null && Date.parse(p.updated_at) < cutoff)
+    .map((p) => p.id));
+  return rows.filter((r) => closed.has(r.project_id as string)).map((r) => r.id);
+}
+
+/** The sweep's write, settle, CHECK_IN rows and holder notices — one pass
+ *  over the given session ids, everything built from the rows the UPDATE
+ *  returned. Returns the number of sessions actually released. */
+async function sweepSessions(
+  db: SupabaseLike,
+  ids: string[],
+  o: { browserMode: boolean; nowIso: string; reason: string; title: string; body: string },
+): Promise<number> {
+  const { browserMode, nowIso } = o;
   // The register outcome for a sweep is 'auto_released' — the one outcome no
   // human ever chooses. Pre-migration (no outcome columns) the write retries
   // without them, same tolerance as finishMySession.
@@ -1146,7 +1814,7 @@ export async function autoReleaseExpiredAdHoc(
     status: "checked_in",
     ended_at: nowIso,
     released_at: nowIso,
-    released_reason: "Auto-released after 24h ad-hoc cap",
+    released_reason: o.reason,
   };
   const RETURNING = "id, document_id, org_id, user_id, library_id";
   const sweep = db
@@ -1227,8 +1895,8 @@ export async function autoReleaseExpiredAdHoc(
       org_id: r.org_id,
       user_id: r.user_id,
       kind: "checkout_released",
-      title: "Your ad-hoc checkout auto-released",
-      body: "The time window you picked ran out, so the checkout closed on its own. If you're still working on this document, check it out again — otherwise nothing to do.",
+      title: o.title,
+      body: o.body,
       link: r.library_id ? `/documents/${r.library_id}?doc=${r.document_id}` : "/checkouts",
       resource_type: "document",
       resource_id: r.document_id,

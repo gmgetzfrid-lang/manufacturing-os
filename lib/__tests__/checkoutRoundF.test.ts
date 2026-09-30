@@ -419,7 +419,9 @@ describe("DCK-7 — the browser sweep is the caller's own, select-driven, and lo
     const n = await autoReleaseExpiredAdHoc("o1", { userId: "u1" });
     expect(n).toBe(1);
     const listing = state.calls.filter((c) => c.table === "checkout_sessions" && c.op === "select" && c.method === "eq" && c.args[0] === "user_id");
-    expect(listing.map((c) => c.args[1])).toEqual(["u1"]);
+    // Both selections — the ad-hoc one and (projects-and-cost PM-4 dw4) the
+    // stranded closed-project one — are the caller's own.
+    expect(listing.map((c) => c.args[1])).toEqual(["u1", "u1"]);
     const sweep = writesTo("checkout_sessions", "update")[0];
     expect(sweep.payload).toMatchObject({ status: "checked_in", outcome: "auto_released" });
     expect(sweep.filters).toContainEqual(["in:id", ["s1", "s2"]]);
@@ -471,11 +473,12 @@ describe("DCK-7 — the browser sweep is the caller's own, select-driven, and lo
 describe("DCK-9 — the project release is a check-in with an outcome, a CHECK_IN row, and a checked write", () => {
   const row = { id: "s1", document_id: "d1", org_id: "o1", user_id: "u1", user_name: "ann" };
 
-  it("records outcome 'auto_released' with the reason, one CHECK_IN per document naming the sessions, and returns the count", async () => {
+  it("records outcome 'auto_released' with the reason, one CHECK_IN per document naming the sessions, and returns the outcome", async () => {
     state.seq["checkout_sessions.select"] = [[row]];
     state.seq["checkout_sessions.update"] = [[row]];
     const n = await releaseAllCheckoutsForProject({ projectId: "p1", reason: "Project completed", actorUserId: "mgr", actorEmail: "mgr@x.io", actorRole: "Manager" });
-    expect(n).toBe(1);
+    // projects-and-cost PM-4: the real outcome, not a count the caller trusts.
+    expect(n).toEqual({ released: 1, releasedSessionIds: ["s1"], stillHeld: [] });
     const w = writesTo("checkout_sessions", "update")[0];
     expect(w.payload).toMatchObject({ status: "checked_in", released_by: "mgr", released_reason: "Project completed", outcome: "auto_released", outcome_note: "Project completed" });
     const checkIn = state.audits.filter((a) => a.action === "CHECK_IN");
@@ -484,35 +487,48 @@ describe("DCK-9 — the project release is a check-in with an outcome, a CHECK_I
     expect(checkIn[0].details).toMatchObject({ outcome: "auto_released", via: "project_release", projectId: "p1", releasedSessions: [{ sessionId: "s1", userId: "u1", userName: "ann" }] });
   });
 
-  it("a refused write is thrown, not discarded, and no CHECK_IN is written", async () => {
+  it("a refused release of ANOTHER user's session is not discarded: it comes back as still held by its holder, and no CHECK_IN is written (PM-4)", async () => {
     state.seq["checkout_sessions.select"] = [[row]];
     state.errors["checkout_sessions.update"] = { message: "You are not allowed to release another user's checkout.", code: "23514" };
-    await expect(releaseAllCheckoutsForProject({ projectId: "p1", reason: "Project completed", actorUserId: "mgr" })).rejects.toThrow(/NOT released: You are not allowed/);
+    const out = await releaseAllCheckoutsForProject({ projectId: "p1", reason: "Project completed", actorUserId: "mgr" });
+    expect(out.released).toBe(0);
+    expect(out.stillHeld).toEqual([{ sessionId: "s1", documentId: "d1", userId: "u1", userName: "ann", reason: "You are not allowed to release another user's checkout." }]);
     expect(state.audits.filter((a) => a.action === "CHECK_IN")).toHaveLength(0);
   });
 
-  it("nothing active → nothing written, 0", async () => {
+  it("a refused write of the actor's OWN sessions is thrown, not discarded", async () => {
+    state.seq["checkout_sessions.select"] = [[{ ...row, user_id: "mgr" }]];
+    state.errors["checkout_sessions.update"] = { message: "permission denied for table checkout_sessions", code: "42501" };
+    await expect(releaseAllCheckoutsForProject({ projectId: "p1", reason: "Project completed", actorUserId: "mgr" })).rejects.toThrow(/NOT released: permission denied/);
+    expect(state.audits.filter((a) => a.action === "CHECK_IN")).toHaveLength(0);
+  });
+
+  it("nothing active → nothing written, an empty outcome", async () => {
     state.seq["checkout_sessions.select"] = [[]];
-    await expect(releaseAllCheckoutsForProject({ projectId: "p1", reason: "x", actorUserId: "mgr" })).resolves.toBe(0);
+    await expect(releaseAllCheckoutsForProject({ projectId: "p1", reason: "x", actorUserId: "mgr" })).resolves.toEqual({ released: 0, releasedSessionIds: [], stillHeld: [] });
     expect(state.writes).toEqual([]);
   });
 
-  it("transitionProjectStatus: the status change lands and a refused release comes back in the RESULT, not as a throw", async () => {
+  it("transitionProjectStatus: the status change lands and a refused release comes back in the RESULT, naming the holder, not as a throw", async () => {
     state.rows.projects = [{ id: "p1", org_id: "o1", owner_user_id: "mgr", name: "Pump swap" }];
+    // SEC-9: the owner manages the project only while an ACTIVE member.
+    state.rows.org_members = [{ org_id: "o1", uid: "mgr", status: "active", role: "Manager", roles: ["Manager"] }];
     state.seq["checkout_sessions.select"] = [[row]];
     state.errors["checkout_sessions.update"] = { message: "You are not allowed to release another user's checkout.", code: "23514" };
     const res = await transitionProjectStatus({ projectId: "p1", orgId: "o1", toStatus: "completed", actorUserId: "mgr", actorEmail: "mgr@x.io", actorRole: "Manager" });
-    expect(res.releaseError).toMatch(/^The project is completed, but its active checkouts were NOT released: You are not allowed/);
+    expect(res.releaseError).toMatch(/^The project is completed, but not every active checkout was released: 1 is still held by ann\./);
+    expect(res.release?.stillHeld.map((h) => h.userName)).toEqual(["ann"]);
     expect(writesTo("projects", "update")[0].payload).toMatchObject({ status: "completed" });
     // and with nothing to refuse, releaseError is null
     state.errors = {}; state.writes = [];
     state.seq["checkout_sessions.select"] = [[]];
-    await expect(transitionProjectStatus({ projectId: "p1", orgId: "o1", toStatus: "completed", actorUserId: "mgr" })).resolves.toEqual({ releaseError: null });
+    await expect(transitionProjectStatus({ projectId: "p1", orgId: "o1", toStatus: "completed", actorUserId: "mgr" }))
+      .resolves.toMatchObject({ releaseError: null, release: { released: 0, releasedSessionIds: [], stillHeld: [] } });
   });
 
   it("the project page refreshes to the database's status BEFORE showing the release refusal, and refreshes on a throw too", () => {
     const page = src("app/(protected)/projects/[id]/page.tsx");
-    expect(page).toMatch(/const \{ releaseError \} = await transitionProjectStatus\(\{/);
+    expect(page).toMatch(/const \{ releaseError(, activityError)? \} = await transitionProjectStatus\(\{/);
     expect(page).toMatch(/await refresh\(\);\s*\n(\s*\/\/.*\n)*\s*if \(releaseError\) setActionError\(releaseError\);/);
     expect(page).toMatch(/setActionError\(\(e as Error\)\.message\);\s*\n(\s*\/\/.*\n)*\s*await refresh\(\)\.catch\(\(\) => undefined\);/);
   });
