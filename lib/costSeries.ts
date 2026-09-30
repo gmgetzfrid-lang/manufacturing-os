@@ -2,7 +2,7 @@
 //
 // The Cost Command Center's S-curve: planned spend (budget spread across the
 // schedule span), committed, and actual — cumulative over time. Also the
-// planned-manpower curve from an awarded quote's labor hours spread over the
+// planned average crew from an awarded quote's labor hours over the
 // schedule. All date math is day-granular and deterministic; the UI only
 // draws what this returns.
 
@@ -34,13 +34,51 @@ const toMs = (d: string) => {
 };
 const iso = (ms: number) => new Date(ms).toISOString().slice(0, 10);
 
-function cumulativeAt(sorted: DatedAmount[], atMs: number): number {
-  let sum = 0;
-  for (const e of sorted) {
-    if (toMs(e.date) <= atMs) sum += e.amount;
-    else break;
+/** A milestone row as the schedule stores it: `planned_at` is the FINISH,
+ *  `planned_start_at` the start (NULL for a zero-duration milestone). */
+export interface MilestoneSpanRow {
+  planned_at: string | null;
+  planned_start_at?: string | null;
+}
+
+/**
+ * MON-2: the schedule span every cost picture shares — the S-curve's planned
+ * line, the crew figure and the run-rate forecast — from the EARLIEST task
+ * START (`planned_start_at`, or the finish for a row with no start) to the
+ * LATEST finish. The span used to start at the earliest FINISH, so a first
+ * task running 1–12 June drew the planned line from 12 June: eleven days
+ * late and steeper than the plan. A single dated row still spans when it has
+ * a start before its finish; otherwise two dated rows are needed, as before.
+ */
+export function scheduleSpanFromMilestones(rows: MilestoneSpanRow[]): { start: string | null; end: string | null } {
+  let lo = Infinity;
+  let hi = -Infinity;
+  let dated = 0;
+  for (const r of rows) {
+    const finish = r.planned_at ? toMs(r.planned_at) : NaN;
+    const begin = r.planned_start_at ? toMs(r.planned_start_at) : NaN;
+    const s = Number.isFinite(begin) ? begin : finish;
+    const e = Number.isFinite(finish) ? finish : begin;
+    if (!Number.isFinite(s) || !Number.isFinite(e)) continue;
+    dated++;
+    lo = Math.min(lo, s, e);
+    hi = Math.max(hi, s, e);
   }
-  return sum;
+  if (dated === 0 || (dated < 2 && !(hi > lo))) return { start: null, end: null };
+  return { start: iso(lo), end: iso(hi) };
+}
+
+/** PERF-10: every entry date is parsed ONCE, here — the sampling loop then
+ *  walks the sorted arrays with a cursor instead of re-parsing every entry
+ *  at every sample (40 samples × 450 entries was ~36,000 Date.parse calls).
+ *  An unparseable date is dropped, as the old scan effectively did. */
+function parsedSorted(xs: DatedAmount[]): Array<{ t: number; amount: number }> {
+  const out: Array<{ t: number; amount: number }> = [];
+  for (const e of xs) {
+    const t = toMs(e.date);
+    if (Number.isFinite(t)) out.push({ t, amount: e.amount });
+  }
+  return out.sort((a, b) => a.t - b.t);
 }
 
 /** The S-curve series. The GRID spans schedule dates extended to cover
@@ -50,13 +88,15 @@ function cumulativeAt(sorted: DatedAmount[], atMs: number): number {
  *  single-day span still renders (two points). */
 export function buildCostSeries(input: CostSeriesInput): CostSeriesPoint[] {
   const points = Math.max(2, input.points ?? 40);
-  const entries = [...input.commitments, ...input.actuals]
-    .map((e) => toMs(e.date))
-    .filter(Number.isFinite);
+  const commitments = parsedSorted(input.commitments);
+  const actuals = parsedSorted(input.actuals);
   const planStart = input.scheduleStart ? toMs(input.scheduleStart) : NaN;
   const planEnd = input.scheduleEnd ? toMs(input.scheduleEnd) : NaN;
-  const candidatesStart = [planStart, ...(entries.length ? [Math.min(...entries)] : [])].filter(Number.isFinite);
-  const candidatesEnd = [planEnd, ...(entries.length ? [Math.max(...entries)] : [])].filter(Number.isFinite);
+  // The sorted arrays' ends are the entries' extremes — no second pass.
+  const firstEntry = Math.min(commitments[0]?.t ?? Infinity, actuals[0]?.t ?? Infinity);
+  const lastEntry = Math.max(commitments.at(-1)?.t ?? -Infinity, actuals.at(-1)?.t ?? -Infinity);
+  const candidatesStart = [planStart, firstEntry].filter(Number.isFinite);
+  const candidatesEnd = [planEnd, lastEntry].filter(Number.isFinite);
   if (candidatesStart.length === 0 || candidatesEnd.length === 0) return [];
   const startMs = Math.min(...candidatesStart);
   const endMs = Math.max(...candidatesEnd);
@@ -64,17 +104,18 @@ export function buildCostSeries(input: CostSeriesInput): CostSeriesPoint[] {
 
   const hasPlan = input.budget > 0 && Number.isFinite(planStart) && Number.isFinite(planEnd);
   const planSpan = hasPlan ? Math.max(planEnd - planStart, DAY) : DAY;
-  const commitments = [...input.commitments].sort((a, b) => toMs(a.date) - toMs(b.date));
-  const actuals = [...input.actuals].sort((a, b) => toMs(a.date) - toMs(b.date));
 
   const out: CostSeriesPoint[] = [];
+  let ci = 0, ai = 0, committed = 0, actual = 0;
   for (let i = 0; i < points; i++) {
     const t = startMs + (span * i) / (points - 1);
+    while (ci < commitments.length && commitments[ci].t <= t) committed += commitments[ci++].amount;
+    while (ai < actuals.length && actuals[ai].t <= t) actual += actuals[ai++].amount;
     out.push({
       date: iso(t),
       planned: hasPlan ? (input.budget * Math.min(Math.max((t - planStart) / planSpan, 0), 1)) : null,
-      committed: cumulativeAt(commitments, t),
-      actual: cumulativeAt(actuals, t),
+      committed,
+      actual,
     });
   }
   return out;

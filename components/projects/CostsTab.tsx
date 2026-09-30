@@ -28,6 +28,7 @@ import {
 } from "@/lib/costDocs";
 import { listChangeOrders, approvedChangesByAccount, repairChangeOrder, type ChangeOrder } from "@/lib/changeOrders";
 import CostCharts, { CostGlossary } from "@/components/projects/cost/CostCharts";
+import { scheduleSpanFromMilestones } from "@/lib/costSeries";
 import QuotesPanel from "@/components/projects/cost/QuotesPanel";
 import ChangeOrdersPanel from "@/components/projects/cost/ChangeOrdersPanel";
 import { appConfirm, appPrompt } from "@/components/providers/DialogProvider";
@@ -87,7 +88,7 @@ export default function CostsTab({ orgId, projectId, canManage, uid, userEmail, 
         listCostDocs(orgId, projectId),
         listChangeOrders(projectId),
         listLedgerOrphans(orgId, projectId),
-        supabase.from("milestones").select("id, name, percent_complete, status, planned_at")
+        supabase.from("milestones").select("id, name, percent_complete, status, planned_at, planned_start_at")
           .eq("project_id", projectId).order("planned_at"),
       ]);
       if (msErr) throw new Error(`Couldn't load the schedule for earned value: ${msErr.message}`);
@@ -97,13 +98,11 @@ export default function CostsTab({ orgId, projectId, canManage, uid, userEmail, 
       setDocs(d);
       setCos(c);
       setOrphans(o);
-      const rows = ((ms ?? []) as Array<{ id: string; name: string; percent_complete: number | null; status: string; planned_at: string | null }>);
+      const rows = ((ms ?? []) as Array<{ id: string; name: string; percent_complete: number | null; status: string; planned_at: string | null; planned_start_at: string | null }>);
       const idx = milestonePctIndex(rows.map((m) => ({ id: m.id, percentComplete: m.percent_complete, status: m.status })));
       setMilestones(rows.map((m) => ({ id: m.id, name: m.name, pct: idx.get(m.id) ?? 0 })));
-      const dates = rows.map((m) => m.planned_at).filter((v): v is string => !!v).sort();
-      setSchedSpan(dates.length >= 2
-        ? { start: dates[0].slice(0, 10), end: dates[dates.length - 1].slice(0, 10) }
-        : { start: null, end: null });
+      // MON-2: earliest task START to latest finish — planned_at is the finish.
+      setSchedSpan(scheduleSpanFromMilestones(rows));
     } catch (e) {
       setErr((e as Error).message);
     } finally { setLoading(false); }

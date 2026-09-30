@@ -1,4 +1,6 @@
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, vi } from "vitest";
+import { readFileSync } from "node:fs";
+import { resolve } from "node:path";
 import {
   computeBidEconomics, scoreBids, validateParsedQuote, DEFAULT_WEIGHTS,
   normalizeCompanyName, matchCompanyByName, isoCurrency, fieldCurrency, effectiveWeights,
@@ -6,7 +8,7 @@ import {
   companyCandidatesByName, barredCompanyFor, MIN_CORROBORATING_STATEMENTS, HOURS_PLAUSIBILITY_RATIO,
   type ParsedQuote,
 } from "@/lib/bidTab";
-import { buildCostSeries, computeForecast, plannedManpowerSeries } from "@/lib/costSeries";
+import { buildCostSeries, computeForecast, plannedManpowerSeries, scheduleSpanFromMilestones } from "@/lib/costSeries";
 import {
   computeProjectHealth, buildCoachItems, CLOSEOUT_GATE_POLICY, SNAPSHOT_READS, PROJECT_FIELDS_NOT_MIGRATED,
   type ProjectStateSnapshot,
@@ -477,6 +479,87 @@ describe("costSeries", () => {
     expect(f.sentence).toContain("over budget");
     const none = computeForecast({ budget: 0, spent: 0, cpi: null, today: "2026-02-01", fmt });
     expect(none.sentence).toBeNull();
+  });
+
+  // MON-2: planned_at is a milestone's FINISH. A first task running 1–12 June
+  // and a last finishing 30 September span 121 days (122 counted inclusively);
+  // the finish-only span (the Costs tab's old `dates[0]` of sorted
+  // planned_at) began on 12 June.
+  const multiDay = [
+    { planned_start_at: "2026-06-01T00:00:00+00:00", planned_at: "2026-06-12T00:00:00+00:00" },
+    { planned_start_at: "2026-07-01T00:00:00+00:00", planned_at: "2026-08-15T00:00:00+00:00" },
+    { planned_start_at: "2026-09-20T00:00:00+00:00", planned_at: "2026-09-30T00:00:00+00:00" },
+  ];
+
+  it("MON-2: the schedule span runs from the earliest task START to the latest finish", () => {
+    const finishOnly = multiDay.map((m) => m.planned_at).sort()[0].slice(0, 10);
+    expect(finishOnly).toBe("2026-06-12"); // the defect: the first FINISH
+    expect(scheduleSpanFromMilestones(multiDay)).toEqual({ start: "2026-06-01", end: "2026-09-30" });
+    // A milestone with no start contributes its finish; order does not matter.
+    expect(scheduleSpanFromMilestones([
+      { planned_at: "2026-10-05T00:00:00+00:00", planned_start_at: null },
+      ...multiDay.slice().reverse(),
+    ])).toEqual({ start: "2026-06-01", end: "2026-10-05" });
+    // One task with a real duration spans; one zero-duration milestone does not; nothing dated → no span.
+    expect(scheduleSpanFromMilestones([multiDay[0]])).toEqual({ start: "2026-06-01", end: "2026-06-12" });
+    expect(scheduleSpanFromMilestones([{ planned_at: "2026-06-12", planned_start_at: null }])).toEqual({ start: null, end: null });
+    expect(scheduleSpanFromMilestones([{ planned_at: null, planned_start_at: null }])).toEqual({ start: null, end: null });
+    // Two milestones on one day still span (a single-day plan), as before.
+    expect(scheduleSpanFromMilestones([{ planned_at: "2026-06-12" }, { planned_at: "2026-06-12" }])).toEqual({ start: "2026-06-12", end: "2026-06-12" });
+  });
+
+  it("MON-2: the planned line begins at the first task's start and the run-rate forecast uses the same span", () => {
+    const span = scheduleSpanFromMilestones(multiDay);
+    const s = buildCostSeries({
+      budget: 121_000, scheduleStart: span.start, scheduleEnd: span.end,
+      commitments: [], actuals: [{ date: "2026-06-05", amount: 1_000 }], points: 122,
+    });
+    expect(s[0].date).toBe("2026-06-01");
+    expect(s[0].planned).toBe(0);
+    // One day per sample: on 12 June the plan has already earned 11 of 121 days.
+    const june12 = s.find((p) => p.date === "2026-06-12")!;
+    expect(june12.planned).toBeCloseTo(11_000, 6);
+    expect(s.at(-1)!.planned).toBe(121_000);
+    // Run-rate: 30 of 121 days elapsed on 1 July (the finish-only span had 19 of 110).
+    const f = computeForecast({ budget: 121_000, spent: 10_000, cpi: null, scheduleStart: span.start, scheduleEnd: span.end, today: "2026-07-01", fmt: String });
+    expect(f.basis).toBe("run_rate");
+    expect(f.eac).toBeCloseTo(10_000 / (30 / 121), 6);
+  });
+
+  it("MON-2: the Costs tab reads each milestone's start and derives its span through the shared helper", () => {
+    const src = readFileSync(resolve(__dirname, "../../components/projects/CostsTab.tsx"), "utf8");
+    expect(src).toMatch(/from\("milestones"\)\.select\("[^"]*\bplanned_start_at\b[^"]*"\)/);
+    expect(src).toContain("setSchedSpan(scheduleSpanFromMilestones(rows))");
+    expect(src).not.toMatch(/\bdates\[0\]/);
+  });
+
+  it("PERF-10: buildCostSeries parses each entry date once, not once per sample", () => {
+    const actuals = Array.from({ length: 450 }, (_, i) => ({ date: `2026-${String(1 + (i % 12)).padStart(2, "0")}-${String(1 + (i % 28)).padStart(2, "0")}`, amount: 100 }));
+    const spy = vi.spyOn(Date, "parse");
+    try {
+      const s = buildCostSeries({ budget: 1_000_000, scheduleStart: "2026-01-01", scheduleEnd: "2026-12-31", commitments: actuals.slice(0, 50), actuals });
+      expect(s).toHaveLength(40);
+      expect(s.at(-1)!.actual).toBe(45_000);
+      expect(s.at(-1)!.committed).toBe(5_000);
+      // 500 entry dates + the two schedule endpoints (was ~36,000 at 40 samples).
+      expect(spy.mock.calls.length).toBeLessThanOrEqual(502);
+    } finally {
+      spy.mockRestore();
+    }
+  });
+
+  it("PERF-10: the cursor walk returns the same cumulative totals as a full re-scan", () => {
+    const commitments = [{ date: "2026-03-01", amount: 5 }, { date: "2026-01-10", amount: 7 }, { date: "not a date", amount: 1_000 }];
+    const actuals = [{ date: "2026-02-01", amount: 3 }, { date: "2026-02-01", amount: 4 }, { date: "2026-04-30", amount: 11 }];
+    const s = buildCostSeries({ budget: 0, commitments, actuals, points: 7 });
+    for (const p of s) {
+      const at = Date.parse(p.date);
+      const scan = (xs: typeof actuals) => xs.filter((x) => Date.parse(x.date) <= at + 86_399_999).reduce((a, x) => a + x.amount, 0);
+      expect(p.actual).toBeLessThanOrEqual(scan(actuals));
+      expect(p.committed).toBeLessThanOrEqual(scan(commitments.slice(0, 2)));
+    }
+    expect(s.at(-1)!).toMatchObject({ committed: 12, actual: 18, planned: null });
+    expect(s[0]).toMatchObject({ date: "2026-01-10", committed: 7, actual: 0 });
   });
 
   it("planned manpower spreads hours across weeks at 40h heads", () => {
