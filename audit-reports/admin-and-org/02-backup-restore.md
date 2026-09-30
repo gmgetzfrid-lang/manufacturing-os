@@ -88,6 +88,8 @@ lib/storageOrphans.ts:11-13 promises the opposite — "the reference collector q
 - [ ] a test enumerates every storage-key column in the schema and fails when either collector is missing one (the binary analogue of exportCoverage.test.ts)
 - [ ] orphan deletion refuses to run when the reference collector's source list is smaller than the schema's storage-key column set
 
+*Cross-area note (2026-09-30, intelligence Round G): intelligence `ILIFE-1` (the same `cost_documents` gap) closes by pointer when this lands, and also asks that the orphan purge's audit row record the deleted KEYS. Intelligence `ILIFE-6`'s open half rides this package's export contract: `dumpTable` (`lib/dataExport.ts:315`) pages with no `.order`, and the manifest has no per-table count reconciliation.*
+
 ---
 
 <a id="bkp-3"></a>
@@ -180,6 +182,8 @@ app/api/admin/restore/apply-table/route.ts:77 `const up = await sb.from(table).u
 - [ ] the client aborts the remaining FK-ordered tables when a table fails, matching apply/route.ts's stated rule
 - [ ] an explicit "overwrite existing rows" mode exists (or the UI states plainly that restore cannot repair modified rows), so a corruption-recovery restore is not silently a no-op
 
+*Cross-area note (2026-09-30, intelligence Round G): intelligence `ILIFE-4` closes with this finding's criterion 2 plus `ORG-1` / `BKP-3`'s disposition of the uncalled `/api/admin/restore/apply`, and asks the result panel to state the consequence ("stopped at <table>; N tables not attempted").*
+
 ---
 
 <a id="bkp-6"></a>
@@ -242,6 +246,8 @@ lib/clientBackup.ts:124 `zip.file("data.json", JSON.stringify(envelope, null, 2)
 - [ ] the restore page accepts a multi-part backup (part1..partN) rather than a single file
 - [ ] one archive layout is documented and both producers emit it
 
+*Cross-area note (2026-09-30, intelligence Round G): intelligence `ILIFE-3` closes by pointer when this lands; it adds a round-trip test (the entry names `clientBackup` writes satisfy the restore page's manifest / tables patterns) and a documented multi-part procedure.*
+
 ---
 
 <a id="bkp-8"></a>
@@ -272,6 +278,8 @@ app/api/data-export/structured/route.ts:55 `if (!["Admin", "Manager", "DocCtrl"]
 - [ ] private standalone notes are excluded or author-redacted in the export, and ACL-restricted documents are either excluded for non-controllers or the export is refused for a role that cannot read them all
 - [ ] every export writes one download_audits row per file (or an equivalent bulk-distribution record) so the chain of custody names the drawings, not just the event
 - [ ] the role list stops being hardcoded in three route files and comes from the shared capability policy
+
+*Cross-area note (2026-09-30, intelligence Round G): intelligence `ILIFE-7`, `DACL-7` and `IEDGE-10` (the same Manager / DocCtrl export) close by pointer when this lands. Together they add: destination create / edit Admin-only; the `DATA_EXPORT` row recording the exporter's role and whether presigned URLs were minted or the dump was ACL-filtered; the manifest naming withheld rows; and a test that the export role list and the ACL controller tier cannot drift.*
 
 ---
 
@@ -396,6 +404,8 @@ lib/dataRestore.ts:346-348 `export function conflictTargetFor(table: string): st
 - [ ] the coverage tripwire asserts every exported table's conflict target names columns that carry a unique or primary-key constraint in the schema
 - [ ] the insert fallback stops re-sending a chunk the upsert already rejected for a data reason, and reports the underlying error instead
 
+*Cross-area note (2026-09-30, intelligence Round G): intelligence `ILIFE-9` closes by pointer here. `ILIFE-10` hands this package the business keys — `process_flows (org_id, from_kind, from_ref, to_kind, to_ref)`, `proposed_links (document_id, target_document_id, proposer)`, and `entity_mentions`' EXPRESSION key `(asset_id, COALESCE(knowledge_document_id, document_id), page)`, which needs a pre-filter rather than an `onConflict` list and must keep every `is_explicit` row. Intelligence `ILIFE-2` (I-01 phase B) moves `knowledge_libraries` / `knowledge_sources` / `knowledge_documents` ahead of `process_flows` / `entity_mentions` in `RESTORE_TABLE_ORDER` after this package merges.*
+
 ---
 
 <a id="bkp-13"></a>
@@ -455,5 +465,7 @@ lib/schemaExpectations.ts:104 `{ table: "statements", migration: "20260819_orpha
 - [ ] the `statements` entry is deleted
 - [ ] EXPECTED_TABLES is regenerated from the CREATE TABLE scan (parsing SQL, not comments) and covers all 111 tables
 - [ ] a vitest tripwire diffs EXPECTED_TABLES against supabase/ on every run, the way lib/__tests__/exportCoverage.test.ts guards the export contract
+
+*Cross-area note (2026-09-30, intelligence Round G): intelligence `ILIFE-12` and `IRLS-12` close by pointer here. Since projects J9 `REL-7` a tripwire exists (`lib/__tests__/schemaExpectations.test.ts`), but it grandfathers `answer_skills` / `link_rules` / `process_flows` / `knowledge_line_traces` / `document_markups` (`:71`) and does not assert the reverse, so `statements` survives; ILIFE-12 also asks for `EXPECTED_COLUMNS` rows for the 20261015 / 16 / 17 ALTERs.*
 
 ---

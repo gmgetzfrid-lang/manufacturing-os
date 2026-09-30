@@ -356,6 +356,8 @@ app/api/data-export/structured/route.ts:56-58 — `if (!["Admin", "Manager", "Do
 - [ ] A full-fidelity backup export is a distinct, audited, Admin-only capability separate from any Manager-facing data pull
 - [ ] The audit_logs entry for an export records which role ran it and whether it was ACL-filtered
 
+**Partial (2026-09-30, intelligence Round G).** Pointer — re-verified at HEAD `1b71ca1`: no criterion has landed. `/api/data-export/structured` still admits Admin / Manager / DocCtrl (`app/api/data-export/structured/route.ts:56`, by the role collection), `/api/data-export/run` the same (`run/route.ts:18`, `:76`); `knowledge_documents` and `knowledge_chunks` are still dumped by org id with no ACL filter (`lib/exportTables.ts:142-143`); the `DATA_EXPORT` row records counts only (`lib/dataExport.ts:189-196`). Landed neighbour, not one of these criteria: document-control `EGR-7` (P10) redacts bearer-token columns from every dump (`DEC-45`). Owner: admin-and-org **P3** (`BKP-8` — Admin-only full export; ACL-restricted content excluded, or the export refused, for a role that cannot read it all); the same fix closes `DACL-7` and `ILIFE-7`. Cross-note on `BKP-8`.
+
 ---
 
 <a id="iedge-11"></a>

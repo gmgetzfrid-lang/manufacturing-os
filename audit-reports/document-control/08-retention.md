@@ -303,6 +303,8 @@ lib/storageOrphans.ts:127-129 `const res = await r2.send(new ListObjectsV2Comman
 
 **Scope / residual.** Objects outside every `orgs/<uuid>/` prefix (legacy layout, if any exist) are now reachable by no tenant's sweep — an operator-level inventory (`ListObjectsV2` without prefix, counting keys not under `orgs/`) belongs to admin-and-org `BKP-2`/`BKP-9`, which own the collector side; the storage page's orphan section wording ("files in storage") is unchanged.
 
+*Cross-area note (2026-09-30, intelligence Round G): intelligence `ILIFE-8` (the same bucket-wide sweep) is closed by pointer to this resolution.*
+
 ---
 
 <a id="ret-8"></a>
