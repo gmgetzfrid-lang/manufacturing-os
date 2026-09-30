@@ -1798,7 +1798,7 @@ constant — neither reopens member writes to the record.
 
 *Corrected 2026-09-23 (document-control Round F, second fix pass): "re-signed in place while on screen" is now literally true — the re-sign gives up only on the route's refusal (a 4xx), keeps the current URL and retries on a bounded backoff (and at once on reconnect) for any transient failure, so a wifi blip or a wake from sleep at the margin no longer blanks the image for the session; the margin is a quarter of the granted window capped at a minute; and an avatar's subscription is held by the mounted avatar and released on unmount, not kept per path for the tab's life. §3's "every sign-out site posts `SIGN_OUT`" means the four click sites; the expiry-driven and cross-tab `SIGNED_OUT` branch in `RoleContext.tsx` is handed to identity-and-session `IS-P1` / public-surfaces `OFF-8` (`XEDGE-6` dw2).*
 
-*Landed 2026-09-23 (document-control Round F wave 2, P1 SHARE): §1's share-link row is now written — `app/api/share/file/route.ts` inserts `user_id` NULL + `share_id` + `source` with the served `version_id`, BEFORE the bytes leave, and a refused write refuses the download (`503 unrecorded`, logged) rather than shipping an unrecorded copy; `lib/staleCopies.ts` already keys such rows `share:<id>` and flags them external. The per-access IP / user-agent trail lives beside it in `document_share_accesses` (20261081), controller-readable, service-role written. See `DIST-7`, `EGR-3`, `SHR-5`, `SHR-10`.*
+*Landed 2026-09-23 (document-control Round F wave 2, P1 SHARE): §1's share-link row is now written — `app/api/share/file/route.ts` inserts `user_id` NULL + `share_id` + `source` with the served `version_id`, BEFORE the bytes leave, and a refused write refuses the download (`503 unrecorded`, logged) rather than shipping an unrecorded copy — except that a refusal which IS the unapplied `20261068` is retried once in the table's pre-20261068 shape (sharer-attributed, as before) and logged as the deploy order, so the record degrades, not the access; `lib/staleCopies.ts` already keys such rows `share:<id>` and flags them external. The per-access IP / user-agent trail lives beside it in `document_share_accesses` (20261081), controller-readable, service-role written. See `DIST-7`, `EGR-3`, `SHR-5`, `SHR-10`.*
 
 <a id="dec-45"></a>
 ## DEC-45 · Bearer columns never leave the database and never come back from a backup
@@ -1858,7 +1858,12 @@ rules are the publish rules:**
    every member, and not the effective owner as such — a share is a copy
    leaving the building, and the tier that issues the revision is the tier
    that lets it out. Enforced by the INSERT policy (20261080) and mirrored in
-   the modal (`canMintShare`), which explains rather than hides.
+   the modal (`canMintShare`), which explains rather than hides — and
+   re-asked at SERVE time (`creatorMayShare`, `lib/shareServe.ts`): a link
+   serves only while its creator still holds the tier (and can still read
+   the document), so a link a Viewer minted before 20261080, or one whose
+   publisher has since lost the grant, stops serving at the wave-2 deploy
+   rather than living out its expiry. Nothing is grandfathered.
 2. **How long:** every share expires. "Never expires" is removed; 30 days is
    the default and 90 the ceiling, enforced by trigger on INSERT and on any
    change to `expires_at` (a never-expiring legacy row is capped at
@@ -1881,43 +1886,72 @@ rules are the publish rules:**
    VFY-6 rule `/api/verify-hold` follows) — never the operator's free text
    and never a database error (logged server-side instead); members see the
    full reason in the modal. A retired document's outstanding links stop
-   serving while its status is not current (and serve again if an archive
-   or void is undone); supersede also revokes them for the record
-   (`DIST-1`).
+   serving while its status is not current — for supersede, split, merge,
+   void and archive alike — and serve again if that status is undone (an
+   unarchive, a reversed split or merge). Only supersede also REVOKES them
+   for the record (`DIST-1`); revoke-on-archive / split / merge is P3
+   LIFECYCLE's (`REV-10`, OPEN for that half). The modal says only "a link
+   stops serving while the document is held, withdrawn or archived, and may
+   be revoked when it is superseded, split, merged or archived".
 4. **Which revision:** a share always serves the CURRENT issued revision. No
    version pinning. Stated in the modal, on every link row, on the landing
    page and in the stamped footer, so neither party can believe otherwise.
    The link row's "resolves to" is computed by the same function the routes
-   run (`resolveServedVersion`), so it says "not serving" or "no published
-   file" exactly when the routes would refuse or answer `nofile`.
+   run (`resolveServedVersion`) and the same status + hold rule, so for the
+   DOCUMENT it says "not serving" or "no published file" when the routes
+   would refuse or answer `nofile`, and "couldn't confirm" when the modal's
+   own read failed. It is not a per-link verdict: whether a given link's
+   creator still holds the authority it serves on is the server's to decide
+   at each request, and the list states that rule in words.
 5. **What is recorded:** every download is a `download_audits` row attributed
    by `share_id` (DEC-44 §1) written before the bytes leave — a refused
    write refuses the download; every access (open or download) is a
    `document_share_accesses` row with IP, user agent, kind and version, and
    so is every REFUSED attempt on a known share (kind `refused` + the
    reason: revoked, expired, withdrawn, on hold, lapsed authority, no file,
-   unrecorded) — bounded to one per share per minute by a unique index, since
-   anyone holding a dead token can call the route. Pruning that table is the
-   retention owner's (the `RET-*` findings / `08-retention.md`), not this
-   decision's; until a retention rule names it, rows are kept. No recipient
-   identification: possession of the token is the whole authorization, and
-   the record says what it knows rather than a name nobody verified.
+   unrecorded). Anyone holding a token, live or dead, can call the routes in
+   a loop, so the trail is BOUNDED by unique indexes: refused attempts one
+   per share per minute, opens one per share per client IP per minute;
+   downloads are one per copy served (each is a distribution). The
+   accessor's IP is CONTROLLER-ONLY: it lives on `document_share_accesses`
+   and nowhere else — never on `document_shares`, whose rows every member
+   who can read the document can read (`access_last_ip` stays unwritten,
+   commented as such; `bump_share_access` carries no IP). Pruning the trail
+   (the plan's default: 90 days) is the retention owner's (the `RET-*`
+   findings / `08-retention.md`), not this decision's; until a retention
+   rule names it, rows are kept and the bounds above are the only brake. No
+   recipient identification: possession of the token is the whole
+   authorization, and the record says what it knows rather than a name
+   nobody verified.
 6. **Revocation is durable:** `revoked_at`, once set, never clears or moves,
    a revoked share cannot be re-dated, and creators revoke but only
-   controllers DELETE (retention). Creating and revoking write `audit_logs`;
-   revoking a row that is already revoked is a no-op (no second row).
-7. **Deploy order is a gate:** `20261068` (wave 1) → `20261080` →
-   `20261081` are applied BEFORE the wave-2 routes deploy. The share
-   download fails closed on its record, so a deploy ahead of `20261068`
-   refuses every external download (503 `unrecorded`, logged as the missing
-   migration) until the paste lands.
+   controllers DELETE (retention). Creating and revoking write `audit_logs`
+   — checked: a refused audit row leaves the change standing and the modal
+   says the record could not be written; revoking a row that is already
+   revoked is a no-op (no second row).
+7. **Deploy order:** `20261068` (wave 1) → `20261080` → `20261081` are
+   applied before the wave-2 routes deploy. Deploying first degrades, it
+   does not lock out: ahead of `20261068` a share download's record is
+   retried once in the table's older shape (sharer-attributed, as before —
+   logged as the deploy order) and the copy is served on it; ahead of
+   `20261081` the access rows fail (logged, not fatal) and the counter call
+   still resolves (`bump_share_access` keeps its one-argument arity); ahead
+   of `20261080` minting follows the old policy. A download is refused
+   (`503 unrecorded`) only when no record at all can be written.
 
 > Made during document-control Round F wave 2 (2026-09-23, package P1
-> SHARE + public-surfaces PKG-3) closing `DRLS-5`, `DRLS-7`, `DIST-6`,
-> `DIST-7`, `EGR-3`, `EGR-5`, `EGR-6`, `REV-10`, `SHR-3` … `SHR-13` (but
-> `SHR-12`, partial) and partially `PHYS-13` — the remainders of those two
-> are other packages' files. The defaults were stated to the system's owner
-> on 2026-09-17 and applied unless overridden.
+> SHARE + public-surfaces PKG-3). Closed: `DRLS-5`, `DRLS-7`, `DIST-6`,
+> `DIST-7`, `EGR-2` (record-only), `EGR-3`, `EGR-5`, `SHR-1` (record-only),
+> `SHR-3`, `SHR-4`, `SHR-5`, `SHR-6`, `SHR-7`, `SHR-10`, `SHR-13`
+> (record-only). Partial, left OPEN with the closer named: `REV-10` (the
+> lifecycle revoke — P3 LIFECYCLE), `EGR-6` (the other `download_audits`
+> writers — P8 FIELD), `SHR-11` (`PHYS-11` — PS-STAMP), `SHR-12` (the
+> `schemaExpectations` row — integrator follow-up), `PHYS-8` (the drafting
+> limb — PKG-5 / P8), `PHYS-13` (the viewer QR — PS-STAMP). Opened:
+> `DIST-15` (the org-wide inventory — unassigned). Not this package's,
+> though in the same `SHR-` range: `SHR-8` (PS-STAMP), `SHR-9` (PKG-1). The
+> defaults were stated to the system's owner on 2026-09-17 and applied
+> unless overridden.
 
 **Rationale.** A share link is the one channel that hands a controlled
 drawing to someone with no account, no ACL and no recall path. Every other
@@ -1943,8 +1977,12 @@ Superseded or held document answers `withdrawn` / `on_hold` on both routes,
 the latter naming no free-text hold reason; a share download produces
 exactly one `download_audits` row with `share_id` before the bytes;
 `UPDATE document_shares SET revoked_at = NULL` on a revoked row raises; a
-signed-in member calling `document_share_refusal` on another org's document
-gets `not_found`.
+signed-in member calling `document_share_refusal` on another org's document,
+or on a private / hidden document of their own org they cannot read, gets
+`not_found`; a link whose creator no longer holds the minting tier answers
+410 on both routes; after a resolve, `document_shares.access_last_ip` is
+still NULL and the IP is on the `document_share_accesses` row; a second open
+from the same IP in the same minute adds no row.
 
 **Reversal.** A stated need for a longer-lived external link (a customer
 contract, a regulator) raises the ceiling in one constant and one interval —

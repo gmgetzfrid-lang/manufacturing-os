@@ -105,11 +105,15 @@ the client-side-only admin guard found in the drafting-flow area and the one
 `ALOG-*` reports on the admin surfaces. Treat "is this enforced server-side?" as a
 standing question for every guard in this area.
 
-⚠ **Deploy gate — share links (Round F wave 2, P1 SHARE; DEC-46 §7).** Apply
-`20261068` (wave 1, P2 EGRESS) → `20261080` → `20261081` BEFORE the wave-2
+⚠ **Deploy order — share links (Round F wave 2, P1 SHARE; DEC-46 §7).** Apply
+`20261068` (wave 1, P2 EGRESS) → `20261080` → `20261081` before the wave-2
 share routes deploy. `/api/share/file` writes its `download_audits` row with
-`share_id` / `source` / a NULL `user_id` and FAILS CLOSED when that write is
-refused, so a deploy ahead of `20261068` refuses every external share
-download (`503 unrecorded`, logged as the missing migration) until the paste
-lands; ahead of `20261081` the per-access rows and the two-argument counter
-RPC fail (logged, not fatal).
+`share_id` / `source` / a NULL `user_id` and fails closed when no record can
+be written; ahead of `20261068` the refusal that IS the missing migration is
+logged (`DEPLOY ORDER: …`) and the row is retried once in the table's older
+shape (sharer-attributed, as before), so a deploy first degrades attribution
+rather than refusing every external download. Ahead of `20261081` the
+per-access rows fail (logged, not fatal); the counter RPC keeps its
+one-argument arity and resolves either side of the apply. The integrator
+still applies in the order above so the first external pull is attributed
+to the share.
