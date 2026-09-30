@@ -488,7 +488,7 @@ describe("change orders — numbering, authority, unwind (MON-9 / COST-6 / COST-
   it("COST-6: the proposer cannot decide their own CO while another eligible decider exists; the refusal says so", async () => {
     db.tables.change_orders.push(coRow({ created_by: "u-owner" }));
     db.tables.org_members.push({ uid: "u-ctl", org_id: "o1", status: "active", role: "Requester", roles: ["DocCtrl"] });
-    await expect(decideChangeOrder({ co: co({ createdBy: "u-owner" }), decision: "approved", actorId: "u-owner" }))
+    await expect(decideChangeOrder({ co: co({ createdBy: "u-owner" }), decision: "approved", shownAmount: 500, actorId: "u-owner" }))
       .rejects.toThrow(/second person has to decide it \(1 other eligible decider/);
     expect(db.tables.change_orders[0].status).toBe("proposed");
     expect(entries()).toHaveLength(0);
@@ -496,7 +496,7 @@ describe("change orders — numbering, authority, unwind (MON-9 / COST-6 / COST-
 
   it("COST-6: with nobody else able to decide, the self-decision goes through and is MARKED", async () => {
     db.tables.change_orders.push(coRow({ created_by: "u-owner" }));
-    const out = await decideChangeOrder({ co: co({ createdBy: "u-owner" }), decision: "approved", actorId: "u-owner" });
+    const out = await decideChangeOrder({ co: co({ createdBy: "u-owner" }), decision: "approved", shownAmount: 500, actorId: "u-owner" });
     expect(out.warning).toBeNull();
     expect(db.tables.change_orders[0]).toMatchObject({ status: "approved", decided_by: "u-owner" });
     expect(audited.find((a) => a.action === "CHANGE_ORDER_APPROVED")?.details).toMatchObject({ selfDecided: true });
@@ -509,10 +509,10 @@ describe("change orders — numbering, authority, unwind (MON-9 / COST-6 / COST-
     db.tables.org_configurations.push({ org_id: "o1", key: "change_order_approval_threshold", data: { amount: 1000 } });
     db.tables.org_members.push({ uid: "u-ctl", org_id: "o1", status: "active", role: "Requester", roles: ["DocCtrl"] });
     db.tables.change_orders.push(coRow({ amount: 5000 }));
-    await expect(decideChangeOrder({ co: co({ amount: 5000 }), decision: "approved", actorId: "u-owner" }))
+    await expect(decideChangeOrder({ co: co({ amount: 5000 }), decision: "approved", shownAmount: 5000, actorId: "u-owner" }))
       .rejects.toThrow(/above this org's change-order approval threshold \(1,000\)/);
     expect(db.tables.change_orders[0].status).toBe("proposed");
-    const out = await decideChangeOrder({ co: co({ amount: 5000 }), decision: "approved", actorId: "u-ctl" });
+    const out = await decideChangeOrder({ co: co({ amount: 5000 }), decision: "approved", shownAmount: 5000, actorId: "u-ctl" });
     expect(out.warning).toBeNull();
     expect(db.tables.change_orders[0].status).toBe("approved");
     expect(entries()[0]).toMatchObject({ entry_type: "commitment", amount: 5000 });
@@ -520,7 +520,7 @@ describe("change orders — numbering, authority, unwind (MON-9 / COST-6 / COST-
 
   it("MON-11: an approval notifies the proposer (and not the decider)", async () => {
     db.tables.change_orders.push(coRow({}));
-    await decideChangeOrder({ co: co(), decision: "approved", actorId: "u-owner", actorName: "owner" });
+    await decideChangeOrder({ co: co(), decision: "approved", shownAmount: 500, actorId: "u-owner", actorName: "owner" });
     expect(emitted).toHaveLength(1);
     expect(emitted[0]).toMatchObject({ kind: "project_status", actorUserId: "u-owner" });
     expect((emitted[0].audience as { involved: string[] }).involved).toEqual(["u-proposer"]);
@@ -530,12 +530,12 @@ describe("change orders — numbering, authority, unwind (MON-9 / COST-6 / COST-
     db.tables.change_orders.push(coRow({}));
     db.fail["cost_entries:insert"] = [{ message: "insert refused" }];
     db.fail["change_orders:update"] = [null, { message: "revert refused" }];   // claim passes; the revert fails
-    await expect(decideChangeOrder({ co: co(), decision: "approved", actorId: "u-owner" }))
+    await expect(decideChangeOrder({ co: co(), decision: "approved", shownAmount: 500, actorId: "u-owner" }))
       .rejects.toThrow(/insert refused AND the change order could not be put back \(revert refused\) — CO-001 is stuck as approved/);
 
     db.tables.change_orders = [coRow({ id: "co2", co_number: "CO-002" })];
     db.fail["change_orders:update"] = [null, { message: "link refused" }];     // claim passes; the posted_entry_id write fails
-    const out = await decideChangeOrder({ co: co({ id: "co2", coNumber: "CO-002" }), decision: "approved", actorId: "u-owner" });
+    const out = await decideChangeOrder({ co: co({ id: "co2", coNumber: "CO-002" }), decision: "approved", shownAmount: 500, actorId: "u-owner" });
     expect(out.warning).toMatch(/CO-002 was approved and its money posted, but the link/);
     expect(entries()).toHaveLength(1);
   });
@@ -578,7 +578,7 @@ describe("change orders — numbering, authority, unwind (MON-9 / COST-6 / COST-
     expect(audited.filter((a) => a.action === "CHANGE_ORDER_VOIDED")).toHaveLength(0);
   });
 
-  it("second verification fix: the unwind voids the entry BEFORE the CO — a CO claim that then fails is said out loud and leaves a listed orphan, never a void CO over posted money", async () => {
+  it("second verification fix: the unwind voids the entry BEFORE the CO — a CO claim that then fails is said out loud and leaves a listed orphan", async () => {
     db.tables.cost_entries.push({ id: "e-co", org_id: "o1", project_id: "p1", status: "posted", amount: 500, entry_type: "commitment" });
     db.tables.change_orders.push(coRow({ status: "approved", posted_entry_id: "e-co", decided_by: "u-ctl" }));
     db.fail["change_orders:update"] = [{ message: "claim refused" }];
@@ -600,6 +600,48 @@ describe("change orders — numbering, authority, unwind (MON-9 / COST-6 / COST-
     db.denyUpdate.add("change_orders");   // our compare-and-swap matches nothing
     await expect(unwindChangeOrder({ co: co({ id: "co2", coNumber: "CO-002", status: "approved", postedEntryId: "e-co" }), actorId: "u-owner" }))
       .rejects.toThrow(/Someone else just reversed CO-002 — refresh/);
+  });
+
+  it("third verification fix: the unwind's claim is pinned to the link it voided — a repair that re-links the CO meanwhile is not voided with the old entry", async () => {
+    db.tables.cost_entries.push(
+      { id: "f40", org_id: "o1", project_id: "p1", cost_account_id: "a1", entry_type: "commitment", status: "posted", amount: 500, reference: "CO-001", source_document_id: null },
+      { id: "f41", org_id: "o1", project_id: "p1", cost_account_id: "a1", entry_type: "commitment", status: "posted", amount: 500, reference: "CO-001", source_document_id: null },
+    );
+    const row = coRow({ status: "approved", posted_entry_id: "f40", decided_by: "u-ctl" });
+    // our read sees the link to f40; between our entry void and our claim a
+    // second user repair-links the CO to the posted look-alike f41
+    const links = ["f40"];
+    Object.defineProperty(row, "posted_entry_id", { get: () => (links.length ? links.shift() : "f41"), enumerable: true });
+    db.tables.change_orders.push(row);
+    await expect(unwindChangeOrder({ co: co({ status: "approved", postedEntryId: "f40" }), actorId: "u-owner" }))
+      .rejects.toThrow(/CO-001 was re-linked to another cost entry while it was being reversed — its old entry is void, and it stays approved on the new one/);
+    expect(db.tables.change_orders[0].status).toBe("approved");          // NOT a void CO over posted f41
+    expect(db.tables.cost_entries.map((e) => [e.id, e.status])).toEqual([["f40", "void"], ["f41", "posted"]]);
+    expect(audited.filter((a) => a.action === "CHANGE_ORDER_VOIDED")).toHaveLength(0);
+  });
+
+  it("third verification fix: a decision binds to the amount the decider was SHOWN — a changed amount is refused, never decided at the new figure", async () => {
+    // the owner raised the proposed amount 900 → 90,000 after the controller opened it
+    db.tables.org_members.push({ uid: "u-ctl", org_id: "o1", status: "active", role: "Requester", roles: ["DocCtrl"] });
+    db.tables.change_orders.push(coRow({ co_number: "CO-120", amount: 90_000 }));
+    await expect(decideChangeOrder({ co: co({ coNumber: "CO-120", amount: 900 }), decision: "approved", shownAmount: 900, actorId: "u-ctl" }))
+      .rejects.toThrow(/The amount of CO-120 changed since you opened it \(you were shown 900, it is now 90,000\) — nothing was decided/);
+    expect(db.tables.change_orders[0]).toMatchObject({ status: "proposed", decided_by: null });
+    expect(entries()).toHaveLength(0);
+    // …and a change that lands between the re-read and the claim is caught by the compare-and-swap on amount
+    const row = coRow({ id: "co9", co_number: "CO-121" });
+    const amounts = [900];
+    Object.defineProperty(row, "amount", { get: () => (amounts.length ? amounts.shift() : 90_000), enumerable: true });
+    db.tables.change_orders = [row];
+    await expect(decideChangeOrder({ co: co({ id: "co9", coNumber: "CO-121", amount: 900 }), decision: "approved", shownAmount: 900, actorId: "u-ctl" }))
+      .rejects.toThrow(/The amount of CO-121 changed since you opened it \(you were shown 900, it is now 90,000\)/);
+    expect(db.tables.change_orders[0].status).toBe("proposed");
+    expect(entries()).toHaveLength(0);
+    // the amount as shown decides normally
+    db.tables.change_orders = [coRow({ id: "co10", co_number: "CO-122", amount: 900 })];
+    await decideChangeOrder({ co: co({ id: "co10", coNumber: "CO-122", amount: 900 }), decision: "approved", shownAmount: 900, actorId: "u-ctl" });
+    expect(db.tables.change_orders[0].status).toBe("approved");
+    expect(entries()[0]).toMatchObject({ amount: 900, reference: "CO-122" });
   });
 });
 
@@ -948,7 +990,7 @@ describe("MON-12 / COST-8 / MON-10 — registry lookups fail closed, currencies 
     expect(parseThresholdAmount("1e3")).toBeNull();
     db.tables.org_configurations.push({ org_id: "o1", key: "change_order_approval_threshold", data: { amount: "10k" } });
     db.tables.change_orders.push(coRow({ amount: 50_000 }));
-    const out = await decideChangeOrder({ co: co({ amount: 50_000 }), decision: "approved", actorId: "u-owner" });
+    const out = await decideChangeOrder({ co: co({ amount: 50_000 }), decision: "approved", shownAmount: 50_000, actorId: "u-owner" });
     expect(out.warning).toBeNull();
     expect(db.tables.change_orders[0].status).toBe("approved");
   });

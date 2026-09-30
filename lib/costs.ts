@@ -295,7 +295,10 @@ export async function addEntry(input: {
  *  BEFORE DELETE trigger on cost_entries / change_orders / cost_documents /
  *  cost_accounts that refuses every DELETE except an audited purge —
  *  `app.record_purge = 'project:<id>'` set by the project-purge RPC, or the
- *  service role, which the trigger audits first. */
+ *  service role, which the trigger audits first. And an entry is corrected
+ *  by voiding it, never by editing it: `enforce_cost_entry_update_guard`
+ *  (20261093) lets a signed-in caller change only status, posted → void —
+ *  this function's write, the app's only cost_entries update. */
 export async function voidEntry(input: {
   orgId: string; entryId: string; actor: Actor;
 }): Promise<{ ok: boolean; error?: string }> {

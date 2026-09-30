@@ -298,10 +298,19 @@ export async function loadApprovalThreshold(orgId: string): Promise<number | nul
  * money moves — two approvers on stale tabs can't both post; the loser is
  * told the CO was already decided. If posting then fails, the claim is
  * reverted so a clean retry is possible.
+ *
+ * The decider decides what they were SHOWN: `shownAmount` is the amount on
+ * the screen (the panel's confirm names it), and the claim carries
+ * `.eq("amount", shownAmount)` — a proposed CO whose amount changed since
+ * it was opened is refused with "the amount changed", never approved at
+ * the new figure. (20261094 also freezes a proposed CO's amount for a
+ * signed-in caller; this binds the decision itself.)
  */
 export async function decideChangeOrder(input: {
   co: ChangeOrder;
   decision: "approved" | "rejected" | "void";
+  /** The amount the decider was shown — the claim matches it exactly. */
+  shownAmount: number;
   note?: string | null;
   actorId: string;
   actorName?: string | null;
@@ -312,6 +321,9 @@ export async function decideChangeOrder(input: {
   if (readErr || !row) throw new Error(readErr?.message ?? "Change order not found.");
   const co = rowToCo(row as Record<string, unknown>);
   if (co.status !== "proposed") throw new Error(`This change order is already ${co.status}.`);
+  const amountChanged = (now: number) =>
+    `The amount of ${co.coNumber} changed since you opened it (you were shown ${input.shownAmount.toLocaleString()}, it is now ${now.toLocaleString()}) — nothing was decided. Refresh and review it again.`;
+  if (!Number.isFinite(input.shownAmount) || co.amount !== input.shownAmount) throw new Error(amountChanged(co.amount));
   if (input.decision === "approved" && !co.costAccountId) {
     throw new Error("Pick which budget line this change order posts to before approving.");
   }
@@ -342,9 +354,13 @@ export async function decideChangeOrder(input: {
     decided_by: input.actorId,
     decided_by_name: input.actorName ?? null,
     decision_note: input.note?.trim() || null,
-  }).eq("id", co.id).eq("status", "proposed").select("id");
+  }).eq("id", co.id).eq("status", "proposed").eq("amount", input.shownAmount).select("id");
   if (error) throw new Error(error.message);
   if (!claimed || claimed.length === 0) {
+    // Zero rows: decided by someone else, or the amount moved under us.
+    const { data: now } = await supabase.from("change_orders").select("status, amount").eq("id", co.id).maybeSingle();
+    const cur = now as { status?: string; amount?: unknown } | null;
+    if (cur?.status === "proposed" && Number(cur.amount) !== input.shownAmount) throw new Error(amountChanged(Number(cur.amount)));
     throw new Error("Someone else just decided this change order — refresh to see the outcome.");
   }
 
@@ -438,7 +454,8 @@ async function notifyApproval(co: ChangeOrder, actorId: string, actorName: strin
  * the entry it posted (posted_entry_id) is voided — never a hunt through the
  * entry list — and the CO goes to void on the record. The money moves
  * FIRST: the entry is voided, then the CO is claimed with a compare-and-swap
- * (approved → void). A void is terminal at the database (20261093 for the
+ * (approved → void, on the link as read — a CO re-linked meanwhile by the
+ * repair is not voided with the old entry). A void is terminal at the database (20261093 for the
  * entry, 20261094 for the CO), so there is no put-back: a failed entry void
  * changes nothing (the CO stays approved), and a CO claim that fails after
  * the entry was voided leaves an approved CO whose entry is void — it stops
@@ -502,15 +519,21 @@ export async function unwindChangeOrder(input: {
     }
   }
 
-  // Then the record: claim approved → void.
+  // Then the record: claim approved → void, on the link as read — a repair
+  // that re-linked the CO to another (posted) entry meanwhile must not be
+  // voided with it, or a void CO would sit over posted money no line lists.
   const { data: claimed, error } = await supabase.from("change_orders").update({
     status: "void",
     decision_note: reversalNote(input.actorName, input.note),
-  }).eq("id", co.id).eq("status", "approved").select("id");
+  }).eq("id", co.id).eq("status", "approved").eq("posted_entry_id", entryId).select("id");
   if (error || !claimed || claimed.length === 0) {
-    const { data: after } = await supabase.from("change_orders").select("status").eq("id", co.id).maybeSingle();
-    if ((after as { status?: string } | null)?.status === "void") {
+    const { data: after } = await supabase.from("change_orders").select("status, posted_entry_id").eq("id", co.id).maybeSingle();
+    const cur = after as { status?: string; posted_entry_id?: string | null } | null;
+    if (cur?.status === "void") {
       throw new Error(`Someone else just reversed ${co.coNumber} — refresh to see the outcome.`);
+    }
+    if (cur?.status === "approved" && cur.posted_entry_id && cur.posted_entry_id !== entryId) {
+      throw new Error(`${co.coNumber} was re-linked to another cost entry while it was being reversed — its old entry is void, and it stays approved on the new one. Refresh, and Reverse it again if it should go.`);
     }
     throw new Error(`${co.coNumber}'s cost entry is void, but the change order could not be marked void${error ? ` (${error.message})` : ""} — it no longer revises the budget and is listed under "Ledger needs attention" on the Costs tab: Reverse it there.`);
   }

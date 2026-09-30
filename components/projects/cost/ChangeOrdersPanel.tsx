@@ -81,7 +81,8 @@ export default function ChangeOrdersPanel({ orgId, projectId, canManage, actor, 
     }
     setBusy(co.id); setErr(null);
     try {
-      const out = await decideChangeOrder({ co: target, decision, note, actorId: actor.uid, actorName: actor.email?.split("@")[0] ?? null });
+      // The decision binds to the amount on this screen (the confirm above names it).
+      const out = await decideChangeOrder({ co: target, decision, shownAmount: co.amount, note, actorId: actor.uid, actorName: actor.email?.split("@")[0] ?? null });
       await refresh();
       if (decision === "approved") onMoneyMoved();
       // COST-11: a partial outcome (money posted, link not saved) is said out loud.

@@ -6,21 +6,24 @@
 // the "No change orders" empty state, stays quiet only when the table is
 // absent (pre-migration), and names approved COs whose money is not on the
 // ledger beside the approved total (COST-4: the same rule as the budget).
+// Third verification pass: Approve hands decideChangeOrder the amount the
+// confirm showed (`shownAmount`), so the decision binds to it.
 
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import React, { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 
-const co = vi.hoisted(() => ({ listChangeOrders: vi.fn() }));
+const co = vi.hoisted(() => ({ listChangeOrders: vi.fn(), decideChangeOrder: vi.fn() }));
+const dlg = vi.hoisted(() => ({ appConfirm: vi.fn(), appPrompt: vi.fn() }));
 
 vi.mock("@/lib/supabase", () => ({ supabase: { from: () => ({}) } }));
 vi.mock("@/lib/audit", () => ({ logAuditAction: vi.fn() }));
 vi.mock("@/lib/notify/dispatch", () => ({ emit: vi.fn() }));
-vi.mock("@/components/providers/DialogProvider", () => ({ appConfirm: vi.fn(), appPrompt: vi.fn() }));
+vi.mock("@/components/providers/DialogProvider", () => ({ appConfirm: dlg.appConfirm, appPrompt: dlg.appPrompt }));
 vi.mock("@/components/ui/ChartKit", () => ({ Donut: () => null }));
 vi.mock("@/lib/changeOrders", async (importOriginal) => {
   const real = await importOriginal<typeof import("@/lib/changeOrders")>();
-  return { ...real, listChangeOrders: co.listChangeOrders };
+  return { ...real, listChangeOrders: co.listChangeOrders, decideChangeOrder: co.decideChangeOrder };
 });
 
 import ChangeOrdersPanel from "@/components/projects/cost/ChangeOrdersPanel";
@@ -42,6 +45,8 @@ beforeEach(() => {
   document.body.appendChild(host);
   root = createRoot(host);
   co.listChangeOrders.mockReset();
+  co.decideChangeOrder.mockReset();
+  dlg.appConfirm.mockReset();
 });
 afterEach(() => {
   act(() => root.unmount());
@@ -90,5 +95,18 @@ describe("ChangeOrdersPanel — a failed read is said out loud (REL-2), never an
     await renderPanel();
     expect(host.textContent).toMatch(/1 approved · \$500(\.00)? total change/);
     expect(host.textContent).toMatch(/1 approved not on the ledger \(not in the budget\)/);
+  });
+
+  it("Approve passes the amount the confirm showed as shownAmount (the decision binds to it)", async () => {
+    co.listChangeOrders.mockResolvedValue([coOf({ id: "c9", coNumber: "CO-120", amount: 900, status: "proposed", decidedBy: null, postedEntryId: null, postedEntryStatus: null })]);
+    dlg.appConfirm.mockResolvedValue(true);
+    co.decideChangeOrder.mockResolvedValue({ warning: null });
+    await renderPanel();
+    const approve = [...host.querySelectorAll("button")].find((b) => (b.textContent ?? "").includes("Approve"));
+    await act(async () => { approve?.dispatchEvent(new MouseEvent("click", { bubbles: true })); });
+    await act(async () => { await Promise.resolve(); });
+    expect(dlg.appConfirm.mock.calls[0][0].message).toMatch(/Approve CO-120 for \$900/);
+    expect(co.decideChangeOrder).toHaveBeenCalledTimes(1);
+    expect(co.decideChangeOrder.mock.calls[0][0]).toMatchObject({ decision: "approved", shownAmount: 900 });
   });
 });

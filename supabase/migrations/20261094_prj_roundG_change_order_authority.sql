@@ -28,41 +28,50 @@
 --      decision itself (proposed → decided) or cleared by its revert
 --      (→ proposed).
 --      A SIGNED-IN caller's UPDATE (auth.uid() set) may make exactly the
---      updates lib/changeOrders.ts makes, and no others:
+--      updates lib/changeOrders.ts makes, and no others. Each step names the
+--      columns it writes; EVERY other column of the row must stay as it was
+--      (to_jsonb(NEW) minus those columns = to_jsonb(OLD) minus them):
 --        · proposed → proposed — the budget-line pick before an approval
---          (ChangeOrdersPanel); decided_by stays empty.
+--          (ChangeOrdersPanel): cost_account_id only. A proposed CO's
+--          amount, reason, title, party, number and decision fields never
+--          change — the decider decides what was proposed.
 --        · proposed → approved | rejected | void — the decision
---          (decideChangeOrder). It records the caller: NEW.decided_by must be
---          auth.uid(). approved / rejected run the two rules below; void (a
---          proposer withdrawing, or anyone closing the paper) moves no money
---          and runs neither, exactly as the lib. An approval needs a row with
---          no link yet (a row inserted with one before this rail cannot be
---          approved as it is).
+--          (decideChangeOrder's claim): status, decided_at, decided_by,
+--          decided_by_name, decision_note. It records the caller:
+--          NEW.decided_by must be auth.uid(). approved / rejected run the two
+--          rules below; void (a proposer withdrawing, or anyone closing the
+--          paper) moves no money and runs neither, exactly as the lib. An
+--          approval needs a row with no link yet (a row given one before
+--          this rail cannot be approved as it is).
 --        · approved → approved — the posted_entry_id link (decideChangeOrder
---          after the post; repairChangeOrder link).
+--          after the post; repairChangeOrder link): posted_entry_id only.
 --        · approved → void — the unwind (unwindChangeOrder, which voids the
 --          CO's entry FIRST and then the CO) and the repair reverse
---          (repairChangeOrder); the approver stays decided_by.
+--          (repairChangeOrder): status and decision_note only; the approver
+--          stays decided_by.
 --        · approved → proposed — ONLY revertDecision after a failed post: by
---          the caller who approved (OLD.decided_by = auth.uid()), with no
---          posted_entry_id and no unlinked posted commitment of this CO (its
---          number, on its budget line) on the ledger.
+--          the caller who approved (OLD.decided_by = auth.uid()), clearing
+--          every decision field, with no posted_entry_id and no unlinked
+--          posted commitment carrying this CO's number on its budget line
+--          (an entry's reference cannot be edited once posted — 20261093).
 --        · everything else is refused: rejected and void are TERMINAL (no
 --          update of any column; void → approved does not exist — the
 --          unwind never needs a put-back), and approved → rejected does not
 --          exist.
---      Also for a signed-in caller's UPDATE: a change order's org, project
---      and number are never rewritten; its amount and budget line are frozen
---      once it is decided; decided_at / decided_by_name move only with the
---      decision or its revert; posted_entry_id is written only on an
---      approved CO (approved → approved), never cleared, to a POSTED
---      commitment of the same project and budget line whose reference is the
---      CO number, with no source document and no other change order's link
---      (repairChangeOrder's link tie), and is repointed only away from a void
---      or missing entry (the repair link path) — never away from a posted
---      one. NOT pinned here: a decided CO's reason code, party, title and
---      description, and the linked entry's own columns (cost_entries has only
---      20261093's rails: never deleted, void is terminal).
+--      posted_entry_id, when the link step writes it, goes only to a POSTED
+--      commitment of the same project and budget line whose trimmed
+--      reference is the CO number, with no source document and no other
+--      change order's link (repairChangeOrder's link tie); it is never
+--      cleared, and repointed only away from a void or missing entry (the
+--      repair link path) — never away from a posted one.
+--      lib/changeOrders.decideChangeOrder also binds the decision to the
+--      amount the decider was shown (`shownAmount`, a compare-and-swap on
+--      amount) — the same guarantee before this migration is applied, and
+--      against a service-role write.
+--      NOT pinned here: which budget line a proposed CO names (any
+--      cost_account_id — the pick is the one column a proposed CO may
+--      change, and the id is not tied to the CO's project); decided_at is
+--      the caller's clock.
 --      The service role / SQL editor (auth.uid() IS NULL) keeps its pass on
 --      the transitions and the link; it is held to the two pins above and,
 --      on proposed → approved/rejected, to the two rules below judged on the
@@ -129,6 +138,7 @@ DECLARE
   v_others integer := 0;
   v_threshold numeric;
   v_decider_is_controller boolean := false;
+  v_may text[];
 BEGIN
   -- The proposer is part of the record: never rewritten.
   IF NEW.created_by IS DISTINCT FROM OLD.created_by THEN
@@ -144,24 +154,21 @@ BEGIN
       USING ERRCODE = 'check_violation';
   END IF;
 
-  -- A signed-in caller makes exactly the writes lib/changeOrders.ts makes.
-  -- The service role (auth.uid() IS NULL) keeps its pass here.
+  -- A signed-in caller makes exactly the updates lib/changeOrders.ts makes:
+  -- each step names the columns it writes (v_may), and every other column
+  -- of the row must stay as it was. The service role (auth.uid() IS NULL)
+  -- keeps its pass here.
   IF v_uid IS NOT NULL THEN
-    -- The identity is never rewritten; the money is frozen once decided.
-    IF NEW.org_id IS DISTINCT FROM OLD.org_id
-       OR NEW.project_id IS DISTINCT FROM OLD.project_id
-       OR NEW.co_number IS DISTINCT FROM OLD.co_number
-       OR (OLD.status <> 'proposed'
-           AND (NEW.amount IS DISTINCT FROM OLD.amount OR NEW.cost_account_id IS DISTINCT FROM OLD.cost_account_id)) THEN
-      RAISE EXCEPTION 'A change order keeps its org, project and number, and its amount and budget line are frozen once it is decided. COST-6, 20261094'
-        USING ERRCODE = 'check_violation';
-    END IF;
-
-    -- The status transitions the app performs, and no others.
-    IF OLD.status = 'proposed' THEN
-      -- proposed -> proposed (the budget-line pick), or the decision
-      -- (approved | rejected | void), which records the caller.
-      IF NEW.status <> 'proposed' AND NEW.decided_by IS DISTINCT FROM v_uid THEN
+    IF OLD.status = 'proposed' AND NEW.status = 'proposed' THEN
+      -- The budget-line pick before an approval (ChangeOrdersPanel): the
+      -- budget line only. Amount, reason, title and the decision fields of a
+      -- proposed CO never change (the decider approves what was proposed).
+      v_may := ARRAY['cost_account_id'];
+    ELSIF OLD.status = 'proposed' THEN
+      -- The decision (decideChangeOrder's claim): approved | rejected | void,
+      -- recording the caller.
+      v_may := ARRAY['status', 'decided_at', 'decided_by', 'decided_by_name', 'decision_note'];
+      IF NEW.decided_by IS DISTINCT FROM v_uid THEN
         RAISE EXCEPTION 'A change order is decided by the signed-in caller: decided_by must be the caller. COST-6, 20261094'
           USING ERRCODE = 'check_violation';
       END IF;
@@ -171,23 +178,31 @@ BEGIN
         RAISE EXCEPTION 'A change order is approved before its cost entry is linked; this one already carries a link, so it cannot be approved as it is. COST-6, 20261094'
           USING ERRCODE = 'check_violation';
       END IF;
-    ELSIF OLD.status = 'approved' AND NEW.status IN ('approved', 'void') THEN
-      -- The link (approved -> approved); the unwind and the repair reverse
-      -- (approved -> void). The approval record stays as decided (below).
-      NULL;
+    ELSIF OLD.status = 'approved' AND NEW.status = 'approved' THEN
+      -- The link (decideChangeOrder after the post; repairChangeOrder link).
+      v_may := ARRAY['posted_entry_id'];
+    ELSIF OLD.status = 'approved' AND NEW.status = 'void' THEN
+      -- The unwind and the repair reverse: the reversal note only; the
+      -- approval record (decided_by, decided_at) stays.
+      v_may := ARRAY['status', 'decision_note'];
     ELSIF OLD.status = 'approved' AND NEW.status = 'proposed' THEN
       -- revertDecision, ONLY after a failed post: by the caller who approved,
-      -- while no entry is linked and no unlinked posted commitment of this CO
-      -- (its number, on its budget line) is on the ledger.
+      -- clearing the decision, while no entry is linked and no unlinked
+      -- posted commitment of this CO (its number, on its budget line) is on
+      -- the ledger. An entry's reference cannot be edited after it posts
+      -- (20261093), so a post that landed unlinked is always found here.
+      v_may := ARRAY['status', 'decided_at', 'decided_by', 'decided_by_name', 'decision_note'];
       IF OLD.decided_by IS DISTINCT FROM v_uid
-         OR OLD.posted_entry_id IS NOT NULL OR NEW.posted_entry_id IS NOT NULL
+         OR NEW.decided_by IS NOT NULL OR NEW.decided_at IS NOT NULL
+         OR NEW.decided_by_name IS NOT NULL OR NEW.decision_note IS NOT NULL
+         OR OLD.posted_entry_id IS NOT NULL
          OR EXISTS (
            SELECT 1 FROM cost_entries e
             WHERE e.project_id = OLD.project_id AND e.cost_account_id = OLD.cost_account_id
               AND e.entry_type = 'commitment' AND e.status = 'posted' AND e.source_document_id IS NULL
               AND btrim(e.reference) = OLD.co_number
               AND NOT EXISTS (SELECT 1 FROM change_orders o WHERE o.posted_entry_id = e.id AND o.id <> OLD.id)) THEN
-        RAISE EXCEPTION 'An approved change order goes back to proposed only when its approval posted no money, and only by the caller who approved it. COST-6, 20261094'
+        RAISE EXCEPTION 'An approved change order goes back to proposed only when its approval posted no money, only by the caller who approved it, and with its decision cleared. COST-6, 20261094'
           USING ERRCODE = 'check_violation';
       END IF;
     ELSIF OLD.status IN ('rejected', 'void') THEN
@@ -200,10 +215,10 @@ BEGIN
         USING ERRCODE = 'check_violation';
     END IF;
 
-    -- When and by whom it was decided moves only with the decision or its revert.
-    IF OLD.status <> 'proposed' AND NEW.status <> 'proposed'
-       AND (NEW.decided_at IS DISTINCT FROM OLD.decided_at OR NEW.decided_by_name IS DISTINCT FROM OLD.decided_by_name) THEN
-      RAISE EXCEPTION 'When and by whom a change order was decided is written by the decision itself and never rewritten. COST-6, 20261094'
+    -- Every column that step does not write stays as it was.
+    IF (to_jsonb(NEW) - v_may) IS DISTINCT FROM (to_jsonb(OLD) - v_may) THEN
+      RAISE EXCEPTION 'This update changes a column the app does not write in the % -> % step: only % may change. COST-6, 20261094',
+        OLD.status, NEW.status, array_to_string(v_may, ', ')
         USING ERRCODE = 'check_violation';
     END IF;
 
@@ -277,7 +292,7 @@ END;
 $$;
 
 COMMENT ON FUNCTION enforce_change_order_decision_guard() IS
-  'COST-6: created_by is never rewritten and decided_by only by the decision or its revert. A signed-in caller''s UPDATE makes only the app writes: proposed -> proposed | approved | rejected | void (the decision records the caller as decided_by; an approval needs a row with no link yet), approved -> approved (the link) | void (unwind, repair reverse), approved -> proposed only by its approver while no money of it is on the ledger (the failed-post revert); rejected and void are terminal (void -> approved does not exist). Org, project and number never change; amount and budget line freeze once decided; posted_entry_id is set only on an approved CO, to its own posted commitment (same project and line, reference = its number, no source document, no other CO linked), never away from a posted entry. On proposed -> approved/rejected a self-decision is refused while another eligible decider exists, and an approval above org_configurations.change_order_approval_threshold (malformed = none) by a non-controller. The service role keeps its pass on the transitions and the link. The INSERT half (born proposed, no decision, no link, in its project org) is change_orders_insert.';
+  'COST-6: created_by is never rewritten and decided_by only by the decision or its revert. A signed-in caller''s UPDATE makes only the app updates, each changing only its own columns (every other column stays as it was): proposed -> proposed (cost_account_id), proposed -> approved | rejected | void (status and the decision fields; the decision records the caller as decided_by; an approval needs a row with no link yet), approved -> approved (posted_entry_id), approved -> void (status, decision_note: unwind, repair reverse), approved -> proposed only by its approver, decision cleared, while no money of it is on the ledger (the failed-post revert); rejected and void are terminal (void -> approved does not exist). posted_entry_id goes only to the CO''s own posted commitment (same project and line, reference = its number, no source document, no other CO linked), never away from a posted entry. On proposed -> approved/rejected a self-decision is refused while another eligible decider exists, and an approval above org_configurations.change_order_approval_threshold (malformed = none) by a non-controller. The service role keeps its pass on the transitions and the columns. The INSERT half (born proposed, no decision, no link, in its project org) is change_orders_insert.';
 
 DROP TRIGGER IF EXISTS trg_change_orders_decision_guard ON change_orders;
 CREATE TRIGGER trg_change_orders_decision_guard
@@ -355,10 +370,12 @@ SELECT 'decision guard: posted_entry_id is set only on an approved change order,
           FROM pg_proc WHERE proname = 'enforce_change_order_decision_guard' AND pronargs = 0),
        NULL
 UNION ALL
-SELECT 'decision guard: identity never rewritten, amount and budget line frozen once decided, decided_at and decided_by_name move only with the decision',
-       (SELECT prosrc LIKE '%NEW.co_number IS DISTINCT FROM OLD.co_number%'
-           AND prosrc LIKE '%NEW.amount IS DISTINCT FROM OLD.amount%'
-           AND prosrc LIKE '%NEW.decided_at IS DISTINCT FROM OLD.decided_at%'
+SELECT 'decision guard: each app step names the columns it writes and every other column stays as it was (proposed to proposed: the budget line only; the decision: status and the decision fields; the link: posted_entry_id; the reverse: status and the note)',
+       (SELECT prosrc LIKE '%IF (to_jsonb(NEW) - v_may) IS DISTINCT FROM (to_jsonb(OLD) - v_may) THEN%'
+           AND prosrc LIKE '%v_may := ARRAY[''cost_account_id''];%'
+           AND prosrc LIKE '%v_may := ARRAY[''status'', ''decided_at'', ''decided_by'', ''decided_by_name'', ''decision_note''];%'
+           AND prosrc LIKE '%v_may := ARRAY[''posted_entry_id''];%'
+           AND prosrc LIKE '%v_may := ARRAY[''status'', ''decision_note''];%'
           FROM pg_proc WHERE proname = 'enforce_change_order_decision_guard' AND pronargs = 0),
        NULL
 UNION ALL
@@ -401,10 +418,14 @@ SELECT 'inventory: void change orders whose linked entry is still POSTED (a reve
          WHERE c.status = 'void'
            AND EXISTS (SELECT 1 FROM cost_entries e WHERE e.id = c.posted_entry_id AND e.status = 'posted'))::text
 UNION ALL
-SELECT 'inventory: proposed change orders already carrying a link or a decision (inserted before this rail — cannot be approved as they are; reject or void them)', NULL,
+SELECT 'inventory: proposed change orders already carrying a posted_entry_id (written before this rail — cannot be approved as they are; reject or void them)', NULL,
+       (SELECT COUNT(*) FROM change_orders
+         WHERE status = 'proposed' AND posted_entry_id IS NOT NULL)::text
+UNION ALL
+SELECT 'inventory: proposed change orders carrying decision fields (written before this rail — the decision overwrites them; nothing else can)', NULL,
        (SELECT COUNT(*) FROM change_orders
          WHERE status = 'proposed'
-           AND (posted_entry_id IS NOT NULL OR decided_by IS NOT NULL OR decided_at IS NOT NULL))::text
+           AND (decided_by IS NOT NULL OR decided_at IS NOT NULL OR decided_by_name IS NOT NULL OR decision_note IS NOT NULL))::text
 UNION ALL
 SELECT 'inventory: change orders whose org_id is not their project org (inserted before this rail)', NULL,
        (SELECT COUNT(*) FROM change_orders c JOIN projects p ON p.id = c.project_id

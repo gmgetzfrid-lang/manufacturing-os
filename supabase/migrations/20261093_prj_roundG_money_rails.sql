@@ -18,15 +18,19 @@
 --     So the app's existing Delete-project action keeps working exactly as
 --     before this migration, while a direct DELETE on a cost row — its
 --     project still present — is refused.
---   COST-10 / COST-6 (verification fix): a VOID cost entry stays void.
---     `enforce_cost_entry_void_terminal` is a BEFORE UPDATE trigger on
---     cost_entries that refuses, for a signed-in caller (auth.uid() set),
---     any update that takes a void entry out of void. The app's only
---     cost_entries update is lib/costs.voidEntry (posted → void); nothing in
---     the app un-voids an entry, and un-voiding one brought a reversed
---     change order's money back onto the ledger without a new decision. The
---     service role (auth.uid() IS NULL — a restore) keeps its pass. Other
---     columns of an entry are not pinned here.
+--   COST-10 / COST-6 (verification fix): a cost entry is corrected by
+--     voiding it, never by editing it. `enforce_cost_entry_update_guard` is
+--     a BEFORE UPDATE trigger on cost_entries that, for a signed-in caller
+--     (auth.uid() set), refuses any update that takes a void entry out of
+--     void, any other status change than posted → void, and any update
+--     that changes a column other than status. The
+--     app's only cost_entries update is lib/costs.voidEntry (posted → void,
+--     status only); nothing in the app un-voids or edits an entry.
+--     Un-voiding one brought a reversed change order's money back onto the
+--     ledger without a new decision; renaming the reference of a change
+--     order's commitment hid it from the look-alike test the failed-post
+--     revert relies on (20261094). The service role (auth.uid() IS NULL — a
+--     restore, the backfill below in the SQL editor) keeps its pass.
 --   PT MON-8 dw3 / REL-4: CHECK constraints on cost_documents.status and kind,
 --     NOT VALID so a live row outside the set never aborts the apply — new
 --     writes are bound immediately; the inventory below counts the old ones.
@@ -156,27 +160,38 @@ CREATE TRIGGER trg_cost_accounts_delete_guard
   FOR EACH ROW
   EXECUTE FUNCTION enforce_cost_ledger_delete_guard();
 
--- ── 1b. a void cost entry stays void (signed-in callers) ───────────────────
-CREATE OR REPLACE FUNCTION enforce_cost_entry_void_terminal()
+-- ── 1b. entries are voided, never edited (signed-in callers) ──────────────
+CREATE OR REPLACE FUNCTION enforce_cost_entry_update_guard()
 RETURNS trigger LANGUAGE plpgsql SECURITY DEFINER SET search_path = public AS $$
 BEGIN
   -- The service role (auth.uid() IS NULL) keeps its pass.
-  IF auth.uid() IS NOT NULL AND OLD.status = 'void' AND NEW.status IS DISTINCT FROM 'void' THEN
+  IF auth.uid() IS NULL THEN
+    RETURN NEW;
+  END IF;
+  IF OLD.status = 'void' AND NEW.status IS DISTINCT FROM 'void' THEN
     RAISE EXCEPTION 'A void cost entry stays void: post a new entry instead. (COST-10, 20261093)'
+      USING ERRCODE = 'check_violation';
+  END IF;
+  IF NEW.status IS DISTINCT FROM OLD.status AND NOT (OLD.status = 'posted' AND NEW.status = 'void') THEN
+    RAISE EXCEPTION 'A cost entry changes status only from posted to void. (COST-10, 20261093)'
+      USING ERRCODE = 'check_violation';
+  END IF;
+  IF (to_jsonb(NEW) - 'status') IS DISTINCT FROM (to_jsonb(OLD) - 'status') THEN
+    RAISE EXCEPTION 'A cost entry is never edited: void it and post the corrected entry. (COST-10, 20261093)'
       USING ERRCODE = 'check_violation';
   END IF;
   RETURN NEW;
 END;
 $$;
 
-COMMENT ON FUNCTION enforce_cost_entry_void_terminal() IS
-  'COST-10 / COST-6: BEFORE UPDATE guard on cost_entries. A signed-in caller never takes a void entry out of void (the app only ever voids: lib/costs.voidEntry); the service role keeps its pass.';
+COMMENT ON FUNCTION enforce_cost_entry_update_guard() IS
+  'COST-10 / COST-6: BEFORE UPDATE guard on cost_entries. A signed-in caller changes only status, and never takes a void entry out of void (the app only ever voids: lib/costs.voidEntry); the service role keeps its pass.';
 
-DROP TRIGGER IF EXISTS trg_cost_entries_void_terminal ON cost_entries;
-CREATE TRIGGER trg_cost_entries_void_terminal
+DROP TRIGGER IF EXISTS trg_cost_entries_update_guard ON cost_entries;
+CREATE TRIGGER trg_cost_entries_update_guard
   BEFORE UPDATE ON cost_entries
   FOR EACH ROW
-  EXECUTE FUNCTION enforce_cost_entry_void_terminal();
+  EXECUTE FUNCTION enforce_cost_entry_update_guard();
 
 -- ── 2. MON-8 / REL-4: the database rejects an unmapped status or kind ──────
 DO $$ BEGIN
@@ -247,12 +262,15 @@ SELECT 'delete guard honours ONLY the purge GUC, the audited service-role path a
           FROM pg_proc WHERE proname = 'enforce_cost_ledger_delete_guard' AND pronargs = 0),
        NULL
 UNION ALL
-SELECT 'a void cost entry stays void for a signed-in caller: SECURITY DEFINER guard with search_path pinned, BEFORE UPDATE row trigger on cost_entries',
+SELECT 'cost entries are voided, never edited, for a signed-in caller: SECURITY DEFINER guard with search_path pinned, BEFORE UPDATE row trigger on cost_entries',
        (SELECT prosecdef AND array_to_string(proconfig, ',') LIKE '%search_path=public%'
-               AND prosrc LIKE '%auth.uid() IS NOT NULL AND OLD.status = ''void'' AND NEW.status IS DISTINCT FROM ''void''%'
-          FROM pg_proc WHERE proname = 'enforce_cost_entry_void_terminal' AND pronargs = 0)
+               AND prosrc LIKE '%IF auth.uid() IS NULL THEN%'
+               AND prosrc LIKE '%IF OLD.status = ''void'' AND NEW.status IS DISTINCT FROM ''void'' THEN%'
+               AND prosrc LIKE '%NOT (OLD.status = ''posted'' AND NEW.status = ''void'')%'
+               AND prosrc LIKE '%IF (to_jsonb(NEW) - ''status'') IS DISTINCT FROM (to_jsonb(OLD) - ''status'') THEN%'
+          FROM pg_proc WHERE proname = 'enforce_cost_entry_update_guard' AND pronargs = 0)
        AND (SELECT COUNT(*) = 1 FROM pg_trigger t
-             WHERE NOT t.tgisinternal AND t.tgname = 'trg_cost_entries_void_terminal'
+             WHERE NOT t.tgisinternal AND t.tgname = 'trg_cost_entries_update_guard'
                AND (t.tgtype & 2) = 2 AND (t.tgtype & 16) = 16 AND (t.tgtype & 1) = 1),
        NULL
 UNION ALL
