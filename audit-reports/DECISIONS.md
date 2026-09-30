@@ -1720,7 +1720,9 @@ The defaults the projects Round G quality package (`J2 QUALITY`: `SAF-1`–`SAF-
 1. **Evidence register** (`SAF-1`, `QUAL-13`): only documents at `Issued` or
    `Locked` with a `current_version_id` are admissible; `NOT_CURRENT_STATUSES`
    (`lib/aiBoundary.ts`) and `Draft` never are; an external (intake) submission
-   counts only once its version is `approved`; documents attached to ACCEPTED
+   counts only once its CURRENT version is `approved` (an earlier rejected
+   submission does not taint an approved current revision; a failed version
+   read admits nothing); documents attached to ACCEPTED
    turnover items are listed first. A title match inside that register is the
    citation; a title match outside it is nothing. Equipment-tag binding via
    `document_assets` is a follow-on, not built.
@@ -1738,8 +1740,14 @@ The defaults the projects Round G quality package (`J2 QUALITY`: `SAF-1`–`SAF-
    (`reasonProblem`) and mirrored by `appPrompt({ required, minLength })`.
    No placeholder is ever written. Waived is its own bucket.
 5. **Completion basis** (`QUAL-2`): `project_checklists.completed_basis` is
-   `'human'` only when every counted item carries a human decision; only a
-   `'human'` MI completion is citable by another checklist.
+   `'human'` only when every GREEN item carries a human decision (a note or a
+   person-attached chip); only a `'human'` MI completion is citable by another
+   checklist. N/A items do not bear on it — every path to N/A is a person's
+   (the item control with a reason, or a proposal ticked in the per-item
+   review) and an N/A proves nothing. A person gives a sweep green that
+   decision with **✓ Verify** (reason on the record, the sweep's chip kept, the
+   sweep hands-off from then on). The migration's backfill applies the same
+   rule.
 6. **Machine actor** (`QUAL-6`, `DEC-35`): `updated_by = NULL` + a sentinel
    name. Provenance is carried by the existing `updated_by` / `updated_by_name`
    pair and `evidence[].source` / `documentId`; no `satisfied_by` /
@@ -1757,9 +1765,11 @@ The defaults the projects Round G quality package (`J2 QUALITY`: `SAF-1`–`SAF-
    confirmed match; the census in `lib/__tests__/checkedWrite.test.ts` holds
    the quality files at zero raw writes and ratchets the money files until
    `J3` converts them.
-10. **Batching** (`PERF-7`): parallel batches of 50 checked, `updated_at`-guarded
-    client writes — not a server-side RPC, which would tie both paths to a
-    pending migration.
+10. **Batching** (`PERF-7`): n checked, `updated_at`-guarded single-row client
+    writes, at most 50 in flight (wall-clock ≈ ceil(n/50) waves; still n
+    requests) — not a server-side RPC, which would tie both paths to a pending
+    migration. A single-statement apply (one request per assessment) is the
+    follow-on if request count ever matters; it must keep the per-row guard.
 
 **Rationale.** A pre-startup safety review is signed. The audit found the
 green could come from a contractor's filename, survive the document's voiding,
@@ -1775,4 +1785,7 @@ admitted document", which is the contract itself.
 
 **Risk:** low–medium — the register is narrower than before (existing intake-
 title greens retract on the next sweep, visibly, with an audit row each), and
-four writes now depend on migration `20261091` being applied.
+four writes now depend on migration `20261091` being applied (until then they
+fail with the migration message, PostgREST's schema-cache shapes included).
+The same migration ties every project-scoped quality row's `org_id` to its
+project's (`QUAL-12`, header and siblings included).
