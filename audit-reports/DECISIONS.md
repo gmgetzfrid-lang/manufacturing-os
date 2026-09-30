@@ -2671,7 +2671,8 @@ values and the crew figure; the S-curve carries the watermark twice inside
 the plot. A corner chip alone is not enough. **(4) The example shows only what the
 real view draws.** Both go through one layout. Burn by budget line renders for
 real projects, each line in its own currency and against its own budget, as
-the accounts table draws it. A project with no dates gets an explanation
+the accounts table draws and flags it, with the alarms (over budget, or money
+on no budget) ahead of every other line. A project with no dates gets an explanation
 instead of an empty region. **(5) Status colours read as text in both themes.** A status token
 used where a caller may paint text (`--state-held`) has its own light and
 dark step, each ≥ 4.5:1 on its surfaces. The dial's band word wears a text token.
@@ -2709,18 +2710,24 @@ label clears the top gridline label actually drawn, whose width is a
 per-glyph upper bound checked against 5,259 locale labels in four fonts, with
 both labels' haloes in the gap —
 `LegendKey`, `BarList` `example` / `valueLabel` / `of` / `ghost` / `alarm`
-and `barPct` — no stub for a zero value —
+and `barPct` — no stub for a zero value, and no floor on a bar drawn
+against its own whole —
 `scoreBandColor`, `ScoreDial`), `components/dashboard/viz.tsx` (`VIZ_CAT`,
-`MiniBars` `ariaLabel`), `components/projects/cost/CostCharts.tsx`
+which every input, NaN included, maps to a slot; `MiniBars` `ariaLabel`), `components/projects/cost/CostCharts.tsx`
 (`hasRealData`, `CostPictures` and its no-dates / no-money explanations,
-`burnItem` and `byBurn` — each burn row in its line's own currency, spent
-against its own budget with committed behind it, the lines furthest through
-their budgets first — `CrewStat`, `ForecastSentence` `example`,
+`burnItem`, `burnTier` and `byBurn` — each burn row in its line's own currency
+(`accountCurrency`: a line with no currency is USD, as the rollup counts it),
+spent against its own budget with committed behind it, flagged "over budget"
+when the accounts table flags it; lines over budget first, then money on no
+budget, then the lines furthest through their budgets, with any alarm the cut
+leaves out counted under the list — `CrewStat`, `ForecastSentence` `example`,
 `COST_GLOSSARY_TERMS`),
 `components/projects/CostsTab.tsx` (`loaded`: nothing that draws from the
 tab's read renders before one succeeds, so a failed first load shows neither
 the example nor a new project's empty state; the burn bar and account bars
-draw Spent and Committed in the S-curve's two slots),
+draw Spent and Committed in the S-curve's two slots; each account row takes
+its width from `barPct` and its currency from `accountCurrency`, as the burn
+list does),
 `lib/costSeries.ts` (`plannedCrewAverage`), `app/globals.css`
 (`--state-held` per theme).
 
@@ -2729,7 +2736,9 @@ draw Spent and Committed in the S-curve's two slots),
 `lib/__tests__/costsTabFirstLoad.test.ts`. The example appears only on an
 empty project that was actually read, and every money figure in it is marked. The two S-curve series
 differ in stroke token, dash and marker. The burn list and the accounts
-table print each line in the same currency and draw it on the same scale.
+table print each line in the same currency, draw it on the same scale and
+flag it with the same word. No line over budget, or with money on no budget,
+is cut from the list while a line that is merely further along is shown.
 No hex literal remains in the chart kit. `--state-held` clears 4.5:1 on every light surface and on the
 dark ones. The crew is a sentence with its inputs.
 

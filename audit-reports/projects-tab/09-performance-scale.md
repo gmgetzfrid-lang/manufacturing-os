@@ -609,5 +609,5 @@ everywhere; add an explicit `order` to the snapshot query at minimum. Time-bound
 | PERF-7 | HIGH | OPEN |
 | PERF-8 | HIGH | OPEN |
 | PERF-9 | MEDIUM | OPEN |
-| PERF-10 | MEDIUM | OPEN |
+| PERF-10 | LOW | OPEN |
 | PERF-11 | MEDIUM | RESOLVED |
