@@ -1,38 +1,45 @@
 "use client";
 
-// ProjectDocumentsCard — the project's REAL document register. The audit
-// found the Documents tab only showed checkout history: documents adopted
-// through intake transition-in (project_documents rows) never appeared,
-// and there was no way to attach a document to a project by hand. This
-// card reads the actual link table, badges where each link came from, and
-// gives managers attach/remove — with doc_added / doc_removed activity
-// (two enum values that existed since day one and were never written).
+// ProjectDocumentsCard — the project's REAL document register, and the
+// Documents tab's primary list (UX-11). It reads the link table
+// (project_documents: checkout-linked and hand-attached) plus the
+// contractor intake documents that were APPROVED but not yet adopted, so an
+// approved submission is visible here rather than only inside the Intake
+// tab. Each row is a live reference (DEC-40): a superseded / voided /
+// archived document is marked "not current". Documents the viewer's
+// permissions hide are disclosed as a count, never silently dropped.
+// Managers attach and detach; each writes a doc_added / doc_removed feed row
+// whose author the database stamps from the session (PM-8 / PM-7), and a
+// refused feed row is reported, not swallowed.
+//
+// Who may attach / detach: the project owner or an org controller — the
+// same predicate as the 20261102 project_documents write policy, so the
+// `canManage` gate and the database agree (SEC-17). Detaching removes the
+// link from the register; the document's history up to that moment stays
+// on the project's Activity tab (SAF-17) and the confirm says so.
 
 import React, { useCallback, useEffect, useRef, useState } from "react";
 import Link from "next/link";
-import { FileStack, Search, Plus, X, Loader2, ExternalLink } from "lucide-react";
+import { FileStack, Search, Plus, X, Loader2, ExternalLink, EyeOff } from "lucide-react";
 import { supabase } from "@/lib/supabase";
+import { writeActivity, listProjectDocuments, type ProjectDocumentRow, type ProjectDocumentRegister } from "@/lib/projects";
+import { appConfirm } from "@/components/providers/DialogProvider";
 
-interface LinkedDoc {
-  linkId: string;
-  docId: string;
-  label: string;
-  rev: string | null;
-  status: string | null;
-  libraryId: string | null;
-  source: string;
-  lastSeenAt: string | null;
-}
+type LinkedDoc = ProjectDocumentRow;
 
 const SOURCE_BADGE: Record<string, { label: string; cls: string; hint: string }> = {
   checkout: { label: "via checkout", cls: "bg-sky-500/10 text-sky-700 dark:text-sky-300 border-sky-500/30", hint: "Linked automatically when someone checked it out under this project" },
   manual: { label: "attached", cls: "bg-violet-500/10 text-violet-700 dark:text-violet-300 border-violet-500/30", hint: "Attached by hand (or adopted from intake)" },
+  intake: { label: "approved intake", cls: "bg-emerald-500/10 text-emerald-700 dark:text-emerald-300 border-emerald-500/30", hint: "Submitted through a contractor intake link and approved — still in the project's intake folder (adopt it from the Intake tab to file it)" },
 };
 
-export default function ProjectDocumentsCard({ orgId, projectId, canManage, uid, userEmail }: {
+export default function ProjectDocumentsCard({ orgId, projectId, canManage, uid, userEmail, onLoaded }: {
   orgId: string; projectId: string; canManage: boolean; uid: string; userEmail?: string | null;
+  /** UX-11: the page badges what this card shows. */
+  onLoaded?: (register: ProjectDocumentRegister) => void;
 }) {
   const [rows, setRows] = useState<LinkedDoc[]>([]);
+  const [hidden, setHidden] = useState(0);
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState<string | null>(null);
   const [err, setErr] = useState<string | null>(null);
@@ -48,38 +55,15 @@ export default function ProjectDocumentsCard({ orgId, projectId, canManage, uid,
   const refresh = useCallback(async () => {
     setLoading(true); setErr(null);
     try {
-      const { data: links, error } = await supabase
-        .from("project_documents")
-        .select("id, document_id, source, last_seen_at")
-        .eq("project_id", projectId)
-        .order("last_seen_at", { ascending: false });
-      if (error) throw new Error(error.message);
-      const linkRows = ((links ?? []) as Array<Record<string, unknown>>);
-      const docIds = [...new Set(linkRows.map((l) => String(l.document_id)))];
-      const { data: docs } = docIds.length
-        ? await supabase.from("documents")
-            .select("id, document_number, title, name, rev, status, library_id")
-            .in("id", docIds)
-        : { data: [] };
-      const dMap = new Map((((docs ?? []) as Array<Record<string, unknown>>)).map((d) => [String(d.id), d]));
-      setRows(linkRows
-        .filter((l) => dMap.has(String(l.document_id)))
-        .map((l) => {
-          const d = dMap.get(String(l.document_id))!;
-          return {
-            linkId: String(l.id),
-            docId: String(l.document_id),
-            label: String(d.document_number || d.title || d.name || "Document"),
-            rev: (d.rev as string | null) ?? null,
-            status: (d.status as string | null) ?? null,
-            libraryId: (d.library_id as string | null) ?? null,
-            source: String(l.source ?? "checkout"),
-            lastSeenAt: (l.last_seen_at as string | null) ?? null,
-          };
-        }));
+      const register = await listProjectDocuments(projectId);
+      setRows(register.rows);
+      setHidden(register.hiddenByPermissions);
+      onLoaded?.(register);
     } catch (e) {
       setErr((e as Error).message);
     } finally { setLoading(false); }
+    // onLoaded is a parent callback; the register is keyed on the project.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [projectId]);
   useEffect(() => { void refresh(); }, [refresh]);
 
@@ -108,12 +92,17 @@ export default function ProjectDocumentsCard({ orgId, projectId, canManage, uid,
     }, 250);
   };
 
-  const activity = async (type: "doc_added" | "doc_removed", body: string, docId: string) => {
-    await supabase.from("project_activity").insert({
-      project_id: projectId, org_id: orgId,
-      user_id: uid, user_name: userEmail ?? null,
-      type, body, metadata: { documentId: docId },
-    }).then(() => undefined, () => undefined);
+  /** The feed row for an attach / detach — checked (a refusal is shown),
+   *  and its author stamped by the database from the session (PM-8). The
+   *  documentId in metadata is what keeps a detached document's history on
+   *  the project timeline (SAF-17). */
+  const activity = async (type: "doc_added" | "doc_removed", body: string, docId: string): Promise<string | null> => {
+    try {
+      await writeActivity({ projectId, orgId, userId: uid, userName: userEmail ?? undefined, type, body, metadata: { documentId: docId } });
+      return null;
+    } catch (e) {
+      return (e as Error).message;
+    }
   };
 
   const attach = async (doc: { id: string; label: string }) => {
@@ -125,20 +114,32 @@ export default function ProjectDocumentsCard({ orgId, projectId, canManage, uid,
         { onConflict: "project_id,document_id", ignoreDuplicates: false },
       );
       if (error) throw new Error(error.message);
-      await activity("doc_added", `${doc.label} attached to the project`, doc.id);
+      const feedErr = await activity("doc_added", `${doc.label} attached to the project`, doc.id);
       setQ(""); setResults([]);
       await refresh();
+      if (feedErr) setErr(`${doc.label} was attached, but ${feedErr.charAt(0).toLowerCase()}${feedErr.slice(1)}`);
     } catch (e) { setErr((e as Error).message); }
     finally { setBusy(null); }
   };
 
   const detach = async (r: LinkedDoc) => {
+    if (!r.linkId) return;
+    // SAF-17: the consequence, stated before the click lands.
+    const ok = await appConfirm({
+      title: `Remove ${r.label} from this project?`,
+      message: `It leaves the project's document register. Its history up to now stays on the project's Activity tab; anything that happens to it after this is not shown there.${r.source === "checkout" ? " It will re-link automatically the next time someone checks it out under this project." : ""}`,
+      tone: "danger",
+      confirmLabel: "Remove",
+    });
+    if (!ok) return;
     setBusy(r.linkId); setErr(null);
     try {
-      const { error } = await supabase.from("project_documents").delete().eq("id", r.linkId);
+      const { data: gone, error } = await supabase.from("project_documents").delete().eq("id", r.linkId).select("id");
       if (error) throw new Error(error.message);
-      await activity("doc_removed", `${r.label} removed from the project`, r.docId);
+      if (!gone || (gone as unknown[]).length === 0) throw new Error("The document was not removed — only the project owner or an Admin / Document Control can change the register.");
+      const feedErr = await activity("doc_removed", `${r.label} removed from the project`, r.docId);
       await refresh();
+      if (feedErr) setErr(`${r.label} was removed, but ${feedErr.charAt(0).toLowerCase()}${feedErr.slice(1)}`);
     } catch (e) { setErr((e as Error).message); }
     finally { setBusy(null); }
   };
@@ -148,7 +149,7 @@ export default function ProjectDocumentsCard({ orgId, projectId, canManage, uid,
       <div className="px-4 py-3 border-b border-[var(--color-border)] flex items-center gap-2">
         <FileStack className="w-4 h-4 text-[var(--color-accent)]" />
         <span className="text-sm font-bold text-[var(--color-text)]">Project documents</span>
-        <span className="text-[10px] font-mono text-[var(--color-text-muted)]">{rows.length}</span>
+        <span className="text-[10px] font-mono text-[var(--color-text-muted)]">{rows.length + hidden}</span>
         {canManage && (
           <button
             onClick={() => { setAttachOpen((v) => !v); setQ(""); setResults([]); }}
@@ -160,6 +161,12 @@ export default function ProjectDocumentsCard({ orgId, projectId, canManage, uid,
       </div>
 
       {err && <div className="px-4 py-2 text-[11px] font-bold text-rose-700 bg-rose-500/[0.07] border-b border-rose-500/30">{err}</div>}
+      {hidden > 0 && (
+        <div className="px-4 py-2 text-[11px] text-[var(--color-text-muted)] border-b border-[var(--color-border)] inline-flex items-center gap-1.5 w-full">
+          <EyeOff className="w-3.5 h-3.5 shrink-0" />
+          {hidden} linked document{hidden === 1 ? " is" : "s are"} hidden by your permissions.
+        </div>
+      )}
 
       {attachOpen && canManage && (
         <div className="px-4 py-3 border-b border-[var(--color-border)] bg-[var(--color-surface-2)]/40">
@@ -196,19 +203,25 @@ export default function ProjectDocumentsCard({ orgId, projectId, canManage, uid,
         <div className="px-4 py-8 flex justify-center"><Loader2 className="w-4 h-4 animate-spin text-[var(--color-accent)]" /></div>
       ) : rows.length === 0 ? (
         <div className="px-4 py-8 text-center text-xs text-[var(--color-text-muted)]">
-          No documents linked yet. Checking a document out under this project links it automatically{canManage ? ", or use Attach document above" : ""}.
+          No documents on this project yet. Checking a document out under this project links it automatically; approved contractor submissions appear here too{canManage ? "; or use Attach document above" : ""}.
         </div>
       ) : (
         <ul className="divide-y divide-[var(--color-border)]">
           {rows.map((r) => {
             const badge = SOURCE_BADGE[r.source] ?? SOURCE_BADGE.manual;
             return (
-              <li key={r.linkId} className="px-4 py-2.5 flex items-center gap-3 hover:bg-[var(--color-surface-2)]/40 transition-colors">
+              <li key={r.linkId ?? `intake:${r.docId}`} className="px-4 py-2.5 flex items-center gap-3 hover:bg-[var(--color-surface-2)]/40 transition-colors">
                 <div className="min-w-0 flex-1">
                   <div className="flex items-center gap-2 flex-wrap">
-                    <span className="text-xs font-bold text-[var(--color-text)] truncate">{r.label}</span>
+                    <span className={`text-xs font-bold truncate ${r.isCurrent ? "text-[var(--color-text)]" : "text-[var(--color-text-muted)] line-through"}`}>{r.label}</span>
                     {r.rev && <span className="text-[10px] font-mono text-[var(--color-text-muted)]">Rev {r.rev}</span>}
                     {r.status && <span className="text-[9px] font-bold uppercase tracking-wider text-[var(--color-text-muted)] bg-[var(--color-surface-2)] px-1.5 py-0.5 rounded">{r.status}</span>}
+                    {/* DEC-40: a reference that is no longer the drawing in force says so. */}
+                    {!r.isCurrent && (
+                      <span className="text-[9px] font-black uppercase tracking-wider text-amber-800 dark:text-amber-200 bg-amber-500/15 border border-amber-500/40 px-1.5 py-0.5 rounded" title="This document is superseded, void or archived — it is not the current controlled revision.">
+                        Not current
+                      </span>
+                    )}
                     <span className={`text-[9px] font-bold px-1.5 py-0.5 rounded border ${badge.cls}`} title={badge.hint}>{badge.label}</span>
                   </div>
                   {r.lastSeenAt && <div className="text-[10px] text-[var(--color-text-faint)] mt-0.5">last activity {new Date(r.lastSeenAt).toLocaleDateString()}</div>}
@@ -218,11 +231,12 @@ export default function ProjectDocumentsCard({ orgId, projectId, canManage, uid,
                     <ExternalLink className="w-3 h-3" /> Open
                   </Link>
                 )}
-                {canManage && (
+                {canManage && r.linkId && (
                   <button
                     onClick={() => void detach(r)}
                     disabled={busy === r.linkId}
-                    title={r.source === "checkout" ? "Remove (it will re-link on the next checkout under this project)" : "Remove from project"}
+                    aria-label={`Remove ${r.label} from the project`}
+                    title={r.source === "checkout" ? "Remove from the register (its history stays on the Activity tab; it re-links on the next checkout under this project)" : "Remove from the register (its history stays on the Activity tab)"}
                     className="shrink-0 p-1 rounded text-[var(--color-text-faint)] hover:text-rose-600 hover:bg-rose-500/10 transition-colors disabled:opacity-40"
                   >
                     <X className="w-3.5 h-3.5" />
