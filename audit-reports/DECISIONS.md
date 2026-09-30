@@ -2658,6 +2658,9 @@ the stylesheet build emits them. The criterion is the palette's own six checks (
 floor, CVD and normal-vision separation, ≥ 3:1 against the surface) —
 **not** luminance contrast between the two marks. A validated pair sits in
 one lightness band by construction, and the shape channel carries identity.
+*This rule replaces an audit done-when (`CHART-2`'s 3:1 between the marks),
+so it needs the owner's ratification. Until it is ratified, `CHART-2` stays
+OPEN.*
 **(2) One number is shown as a number.** The planned crew is a stated average
 with its inputs (labor hours ÷ weeks ÷ 40) until the schedule carries a
 week-by-week loading. No variation is invented to fill a chart. **(3) Example
@@ -2675,32 +2678,44 @@ dark step, each ≥ 4.5:1 on its surfaces. The dial's band word wears a text tok
 > Made during projects Round G (2026-09-30) by the joint J5 CHARTS package,
 > taking the fleet brief's stated defaults for `CHART-3`, `REL-10` and
 > `REL-11`, and the dataviz palette rule the brief named for `CHART-2` /
-> `CHART-4`. *Minted as DEC-52 (the next free number in this package's
-> base, where DEC-44 to DEC-51 were taken); the integrator renumbers on
-> merge if it collides.*
+> `CHART-4`. *Minted as DEC-52, the next free number in this package's base,
+> where DEC-44 to DEC-51 were taken. On the integration branch DEC-52 (J2's
+> decision on who decided a PSSR / MI / QA-QC green) and DEC-53 (I-10's
+> equipment-registry decision) are already taken, so this decision is
+> renumbered at merge to the next free number there: DEC-54 if it merges
+> next. The renumber covers this section's anchor, heading and note, its index
+> row, and every reference to it in the records and source comments.*
 
 **Rationale.** Each default removes a confident, plausible picture that the
 data does not support. The removed pictures were a flat bar row presented as a
 curve, stand-in numbers on a project with real accounts, a preview of a view
 the product could not draw, and two series told apart by a brand colour that
 an org can set to match the other. `CHART-2`'s done-when asked for 3:1
-contrast between the two marks. No validated categorical pair meets that
-while both marks clear 3:1 against the surface. Measured: 1.03:1 light and
-1.15:1 dark for slots 1 and 2, whose hue separation is ΔE 34.6 for normal
-vision and ≥ 30 under simulated CVD. Rule 1 therefore replaces that criterion
-with the palette checks plus shape.
+contrast between the two marks. No pair within the palette's validated
+lightness band meets that. Measured: 1.03:1 light and 1.15:1 dark for slots 1
+and 2, whose hue separation is ΔE 34.6 for normal vision and ≥ 30 under
+simulated CVD. Outside the band such a pair exists (on white, an amber near
+luminance 0.28 and a navy near 0.045 clear 3:1 against each other and the
+surface), but one of its lines then out-shouts the other, which is what the
+band prevents. Rule 1 therefore proposes the palette checks plus shape in
+place of that criterion.
 
 **Implementation.** `components/ui/ChartKit.tsx` (`SCurveChart`,
-`sCurveScale`, `sCurveTodayX`, `LegendKey`, `BarList` `example`,
+`sCurveScale` — a money-less chart labels only its zero gridline —
+`sCurveTodayX`, `sCurveTodayLabel`, `LegendKey`, `BarList` `example`,
 `scoreBandColor`, `ScoreDial`), `components/dashboard/viz.tsx` (`VIZ_CAT`,
 `MiniBars` `ariaLabel`), `components/projects/cost/CostCharts.tsx`
-(`hasRealData`, `CostPictures`, `CrewStat`, `ForecastSentence` `example`,
-`COST_GLOSSARY_TERMS`), `lib/costSeries.ts` (`plannedCrewAverage`),
-`app/globals.css` (`--state-held` per theme).
+(`hasRealData`, `CostPictures` and its no-dates / no-money explanations,
+`CrewStat`, `ForecastSentence` `example`, `COST_GLOSSARY_TERMS`),
+`components/projects/CostsTab.tsx` (`loaded`: the charts draw only from a
+successful read, so a failed first load never shows the example),
+`lib/costSeries.ts` (`plannedCrewAverage`), `app/globals.css`
+(`--state-held` per theme).
 
-**Acceptance.** `lib/__tests__/chartKit.test.ts` and
-`lib/__tests__/costChartsRender.test.ts`. The example appears only on an
-empty project, and every money figure in it is marked. The two S-curve series
+**Acceptance.** `lib/__tests__/chartKit.test.ts`,
+`lib/__tests__/costChartsRender.test.ts` and
+`lib/__tests__/costsTabFirstLoad.test.ts`. The example appears only on an
+empty project that was actually read, and every money figure in it is marked. The two S-curve series
 differ in stroke token, dash and marker. No hex literal remains in the
 chart kit. `--state-held` clears 4.5:1 on every light surface and on the
 dark ones. The crew is a sentence with its inputs.

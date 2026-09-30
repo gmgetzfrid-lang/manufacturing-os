@@ -71,7 +71,7 @@ components/projects/cost/CostCharts.tsx:53-56 — `computeForecast({ budget: rol
 
 **Done-when.** Done-when 1, 2 and 4 are ✓ on the Costs tab (J3; done-when 2 is rendered and tested here). Done-when 3 is the report half. In this package's base (`e48ab68`), the report's index is keyed by the real milestone id (`MON-5`), but its `computeForecast` call (`lib/projectReport.ts:130`) still passes neither the pinned figures nor the revised budget. The J7b integration fix (`126d4d1`, merged on the integration branch after this base) passes both and prints `scopeNote` on paper. With it, and with this chart half verified, all four done-whens hold. The Status flip is the integrator's call at merge, as J7b's note says.
 
-**Scope / residual.** None for the chart half. `lib/projectReport.ts` is J7's file and is not edited here. One related gap is recorded under projects-tab `MON-2`: the report's run-rate span is still finish-only.
+**Scope / residual.** None for the chart half. This package's one edit to `lib/projectReport.ts` is projects-tab `MON-2`'s span, made in the review fix pass: the forecast's schedule span now runs from the earliest task start, as on the Costs tab. The forecast's budget and pinned inputs (done-when 3) are untouched here; they come from the J7b integration fix.
 
 ---
 
