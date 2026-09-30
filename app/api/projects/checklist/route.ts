@@ -177,8 +177,17 @@ export async function POST(req: NextRequest) {
   ]);
   const sowFile = sow?.ok ? sow.file : null;
   const sowRestricted = !!sow && !sow.ok && sow.status === 403;
+  // A check that could not RUN is not an absence: a SOW whose access could
+  // not be verified (a lookup error, a broken folder chain, a thrown read),
+  // and intake documents whose titles could not be filtered, are told to
+  // the model as on file but unread — never as "none", which would ground
+  // an N/A proposal on a false premise.
+  const sowUnchecked = !!project.sow_document_id
+    && (sow === null || (!sow.ok && (sow.status === 503 || sow.status === 409)));
   type DocTitleRow = { title: string | null; name: string | null; document_number: string | null; visibility?: string | null; acl?: unknown; owner_user_id?: string | null };
   const docs = docRows && intakeChain ? discoverableDocuments(reader, docRows as DocTitleRow[], intakeChain) : null;
+  const titlesUnchecked = !!intakeCollectionId
+    && (docRows === null || (docRows.length > 0 && intakeChain === null));
 
   const goals = Array.isArray(project.goals) ? (project.goals as string[]).join("; ") : "";
   const context = [
@@ -189,13 +198,16 @@ export async function POST(req: NextRequest) {
     project.success_criteria ? `Success criteria: ${String(project.success_criteria)}` : "",
     sowFile
       ? `Summary of Work document on file: ${sowFile.label}`
-      : sowRestricted ? "A Summary of Work is on file but restricted — it was not read." : "No Summary of Work attached.",
+      : sowRestricted ? "A Summary of Work is on file but restricted — it was not read."
+        : sowUnchecked ? "A Summary of Work is on file but could not be checked — it was not read."
+          : "No Summary of Work attached.",
     milestones?.length
       ? `Schedule milestones: ${(milestones as Array<{ name: string }>).map((m) => m.name).slice(0, 40).join("; ")}`
       : "No schedule loaded.",
     docs?.length
       ? `Project documents on file: ${docs.map((d) => [d.document_number, d.title ?? d.name].filter(Boolean).join(" ")).slice(0, 60).join("; ")}`
-      : "No project documents on file yet.",
+      : titlesUnchecked ? "Project documents may be on file but could not be checked — their titles were not read."
+        : "No project documents on file yet.",
     assets?.length ? `Known equipment tags (sample): ${(assets as Array<{ tag: string }>).map((a) => a.tag).slice(0, 60).join(", ")}` : "",
   ].filter(Boolean).join("\n");
 

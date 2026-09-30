@@ -9,7 +9,12 @@
 //     (library → ancestor folders → folder → document), requiring read or
 //     download wherever an ACL exists, on every visibility — the matrix in
 //     "SEC-10: the full chain" pins it case by case, and pins that the gate
-//     never serves what the library page's own read check would hide;
+//     never serves what read-or-download over the chain would refuse (the
+//     library page LISTS by read alone; a download-only grant, which the
+//     gate serves as the egress does, is the one named divergence). A chain
+//     that cannot be read is 503; one with a rung that does not exist is
+//     409, naming it. The version served must belong to the document the
+//     decision was made on;
 //   · it is never LOOSER than the bytes egress (/api/storage/download-url):
 //     the parity matrix runs the real route and the real gate over the same
 //     principal × document fixtures and names every case where the gate is
@@ -27,12 +32,21 @@ const state = vi.hoisted(() => ({
   single: {} as Record<string, { data?: unknown; error?: unknown }>,
   rpc: {} as Record<string, { data?: unknown; error?: unknown }>,
   inserts: [] as Array<{ table: string; row: Record<string, unknown> }>,
-  calls: [] as Array<{ table: string; method: string; args: unknown[] }>,
+  calls: [] as Array<{ table: string; method: string; args: unknown[]; chain: number }>,
+  chainSeq: 0,
+  // Tables whose single-row reads honour .eq() filters against the fixture
+  // (a filter on a column the fixture carries, with another value, resolves
+  // no row — as the database would). seed() turns it on for
+  // document_versions, so every served case proves the version's record_id
+  // matched the evaluated document.
+  honourEq: new Set<string>(),
 }));
 
 function chain(table: string) {
   const result = () => state.tables[table] ?? { data: null, error: null };
   const c: Record<string, unknown> = {};
+  const id = ++state.chainSeq;
+  const eqs: Array<[string, unknown]> = [];
   const handler: ProxyHandler<Record<string, unknown>> = {
     get(_t, prop: string) {
       if (prop === "then") {
@@ -40,11 +54,15 @@ function chain(table: string) {
         return (resolve: (v: unknown) => void) => resolve({ data: r.data ?? null, error: r.error ?? null });
       }
       return (...args: unknown[]) => {
-        state.calls.push({ table, method: prop, args });
+        state.calls.push({ table, method: prop, args, chain: id });
+        if (prop === "eq") eqs.push([String(args[0]), args[1]]);
         if (prop === "insert") state.inserts.push({ table, row: args[0] as Record<string, unknown> });
         if (prop === "maybeSingle" || prop === "single") {
           const r = state.single[table] ?? result();
-          return Promise.resolve({ data: r.data ?? null, error: r.error ?? null });
+          const row = r.data as Record<string, unknown> | null | undefined;
+          const filteredOut = state.honourEq.has(table) && !!row && !Array.isArray(row)
+            && eqs.some(([col, val]) => col in row && row[col] !== val);
+          return Promise.resolve({ data: filteredOut ? null : r.data ?? null, error: r.error ?? null });
         }
         return new Proxy(c, handler);
       };
@@ -69,6 +87,7 @@ vi.mock("@aws-sdk/s3-request-presigner", () => ({ getSignedUrl: vi.fn(async () =
 import { GET as downloadUrl } from "@/app/api/storage/download-url/route";
 import {
   resolveDocumentFile, documentContentDecision, discoverableDocuments, loadReaderPrincipal, loadContainerAclChain,
+  docChainBrokenMessage, BrokenAclChainError,
   DOC_READ_DENIED, DOC_NO_FILE, DOC_ACCESS_UNVERIFIED,
 } from "@/lib/docFileServer";
 import { canWithAclChain, type Principal } from "@/lib/permissions";
@@ -130,6 +149,7 @@ function seed(member: { role: string; roles: string[] } | null, doc: Record<stri
   };
   state.rpc = owner ? { user_is_effective_owner: { data: true } } : {};
   state.inserts = [];
+  state.honourEq = new Set(["document_versions"]);
 }
 const restrictedReads = () => state.inserts.filter((i) => i.table === "audit_logs" && i.row.action === "CONTROLLER_RESTRICTED_READ");
 
@@ -313,14 +333,15 @@ describe("SEC-10: the full chain — library → ancestor folders → folder →
     expect(await gateVerdict()).toEqual({ status: 200, recorded: 0 });
   });
 
-  it("the gate never serves a document the library page's own read check hides", async () => {
+  it("the gate never serves what read-or-download over the chain would refuse — the one divergence from the library page's read listing is a download-only grant, named", async () => {
     const lib = teamGrant("team-A", ["read"]);
     const fixtures: Array<{ doc: Record<string, unknown>; library: unknown; team: string | null }> = [];
     for (const doc of Object.values(DOCS)) {
       for (const library of [null, lib]) for (const team of [null, "team-A"]) fixtures.push({ doc, library, team });
     }
     let served = 0;
-    for (const member of Object.values(MEMBERS)) {
+    const servedWithoutRead = new Set<string>();
+    for (const [who, member] of Object.entries(MEMBERS)) {
       for (const f of fixtures) {
         seed(member, f.doc);
         setLibrary(f.library);
@@ -340,19 +361,23 @@ describe("SEC-10: the full chain — library → ancestor folders → folder →
           effectiveOwnerUserId: "someone-else",
         });
         expect(pageMayRead("read") || pageMayRead("download")).toBe(true);
+        // The library page lists by READ alone; the gate (like the bytes
+        // egress) also serves a DOWNLOAD grant. Collect where that differs.
+        if (!pageMayRead("read")) {
+          const docName = Object.entries(DOCS).find(([, d]) => d === f.doc)![0];
+          servedWithoutRead.add(`${who} × ${docName}`);
+        }
       }
     }
     expect(served).toBeGreaterThan(20);
+    expect(servedWithoutRead).toEqual(new Set(["viewer × privateDownloadGrant", "manager × privateDownloadGrant"]));
   });
 
-  it("fails CLOSED: a library, folder or ancestor that cannot be read — or is missing — is 503, never 'no ACL'", async () => {
+  it("fails CLOSED: a library, folder or ancestor that cannot be READ is 503 ('try again'), never 'no ACL'", async () => {
     const cases: Array<[string, () => void]> = [
       ["library read error", () => { state.tables.libraries = { data: null, error: { message: "boom" } }; }],
-      ["library missing", () => { state.tables.libraries = { data: null }; }],
       ["folder read error", () => { state.single.collections = { data: null, error: { message: "boom" } }; }],
-      ["folder missing", () => { state.single.collections = { data: null }; }],
       ["ancestor read error", () => { setFolder(null, ["c0"]); state.tables.collections = { data: null, error: { message: "boom" } }; }],
-      ["ancestor missing", () => { setFolder(null, ["c0", "c00"]); setAncestors([{ id: "c0", acl: null }]); }],
     ];
     for (const [label, breakIt] of cases) {
       seed(MEMBERS.viewer, DOCS.normal);
@@ -361,6 +386,40 @@ describe("SEC-10: the full chain — library → ancestor folders → folder →
         .toEqual({ ok: false, status: 503, error: DOC_ACCESS_UNVERIFIED });
       expect(state.calls.filter((c) => c.table === "document_versions"), label).toHaveLength(0);
     }
+  });
+
+  it("fails CLOSED on a BROKEN chain too — a rung that does not exist is 409 naming it, not a retry, and it binds a controller", async () => {
+    const cases: Array<[string, () => void, string]> = [
+      ["library missing", () => { state.tables.libraries = { data: null }; }, docChainBrokenMessage("library", "l1")],
+      ["folder missing", () => { state.single.collections = { data: null }; }, docChainBrokenMessage("folder", "c1")],
+      ["ancestor missing (a stale path_ids rung)", () => { setFolder(null, ["c0", "c00"]); setAncestors([{ id: "c0", acl: null }]); },
+        docChainBrokenMessage("folder", "c00")],
+      ["no library recorded", () => {
+        state.tables.documents = { data: { ...(state.tables.documents.data as object), library_id: null } };
+        state.single.collections = { data: { id: "c1", library_id: null, path_ids: [], acl: null } };
+      }, docChainBrokenMessage("library", null)],
+    ];
+    for (const member of [MEMBERS.viewer, MEMBERS.admin]) {
+      for (const [label, breakIt, message] of cases) {
+        seed(member, DOCS.normal);
+        breakIt();
+        expect(await resolveDocumentFile(ORG, "d1", { uid: "u1", channel: "test" }), label)
+          .toEqual({ ok: false, status: 409, error: message });
+        expect(state.calls.filter((c) => c.table === "document_versions"), label).toHaveLength(0);
+        expect(restrictedReads(), label).toHaveLength(0);
+      }
+    }
+    expect(docChainBrokenMessage("folder", "c00")).toBe(
+      "This document's folder chain is broken (folder c00 no longer exists), so access to it can't be checked. "
+      + "A document controller needs to repair the folder chain — trying again won't help.");
+    // The loader itself: an intact chain resolves; a stale rung throws the typed error naming it.
+    seed(MEMBERS.viewer, DOCS.normal);
+    await expect(loadContainerAclChain(ORG, { collectionId: "c1" }).then(() => null, (e: unknown) => e))
+      .resolves.toBeNull();
+    setFolder(null, ["gone"]);
+    const err = await loadContainerAclChain(ORG, { collectionId: "c1" }).catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(BrokenAclChainError);
+    expect(err).toMatchObject({ rung: "folder", missingId: "gone" });
   });
 
   it("a root document (no folder) reads only its library; every chain read is org-scoped", async () => {
@@ -417,6 +476,31 @@ describe("resolveDocumentFile — the required reader, fail-closed lookups, and 
   it("the pending version is the fallback when nothing is current", async () => {
     seed(MEMBERS.viewer, { current_version_id: null, pending_version_id: "v2" });
     expect((await resolveDocumentFile(ORG, "d1", { uid: "u1", channel: "test" })).ok).toBe(true);
+  });
+  it("SEC-10: the version is bound to the document the decision was made on — a pointer naming ANOTHER document's version resolves nothing", async () => {
+    const KEY_B = `orgs/${ORG}/libraries/l1/HSE-private.pdf`;
+    // d1 is readable to each reader (a normal document to the viewer; a
+    // private one to the Admin, whose served read WOULD write a DEC-43 row);
+    // its member-writable pointer names private document dB's version vB.
+    for (const [member, doc] of [[MEMBERS.viewer, DOCS.normal], [MEMBERS.admin, DOCS.privateNoAcl]] as const) {
+      for (const pointer of [{ current_version_id: "vB" }, { current_version_id: null, pending_version_id: "vB" }]) {
+        seed(member, { ...doc, ...pointer });
+        state.tables.document_versions = { data: { id: "vB", record_id: "dB", org_id: ORG, file_url: KEY_B, file_type: "application/pdf" } };
+        expect(await resolveDocumentFile(ORG, "d1", { uid: "u1", channel: "test" }))
+          .toEqual({ ok: false, status: 404, error: DOC_NO_FILE });
+        expect(restrictedReads()).toHaveLength(0);
+        // The version read carried the binding — the id, the evaluated document, the org.
+        const ver = state.calls.filter((c) => c.table === "document_versions");
+        const verEqs = ver.filter((c) => c.method === "eq").map((c) => c.args);
+        expect(verEqs).toEqual([["id", "vB"], ["record_id", "d1"], ["org_id", ORG]]);
+      }
+    }
+    // The same pointer naming d1's OWN version serves it (and the Admin's controller-only read is recorded).
+    seed(MEMBERS.admin, { ...DOCS.privateNoAcl, current_version_id: "v9" });
+    state.tables.document_versions = { data: { id: "v9", record_id: "d1", org_id: ORG, file_url: KEY, file_type: "application/pdf" } };
+    const r = await resolveDocumentFile(ORG, "d1", { uid: "u1", channel: "test" });
+    expect(r).toEqual({ ok: true, file: { documentId: "d1", label: "HSE-7", fileKey: KEY, fileType: "application/pdf" } });
+    expect(restrictedReads()).toHaveLength(1);
   });
   it("labelOnly: a controller-only label read is served but leaves no CONTROLLER_RESTRICTED_READ row", async () => {
     seed(MEMBERS.admin, DOCS.privateNoAcl);

@@ -11,6 +11,11 @@
 //     unlisted when the tripwire landed; they are grandfathered by name
 //     (the list regeneration is admin-and-org BKP-14 / intelligence ILIFE-12)
 //     and nothing may join them.
+//
+// MERGE NOTE: three in-flight branches create a table with no row here —
+// document_share_accesses (DC-P1-share, 20261081), turnover_review_events
+// (J2, 20261091), milestone_baseline_history (J6a, 20261099). Each merge
+// adds its EXPECTED_TABLES row; none is grandfathered.
 
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { readFileSync, readdirSync, existsSync } from "node:fs";

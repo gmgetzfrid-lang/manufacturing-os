@@ -302,7 +302,9 @@ describe("source pins — the viewer (SEC-1 egress limb) and the reviewed inline
     expect(viewer).toMatch(/blobUrl && blobKind === 'image' \? \([\s\S]*?<img\s+src=\{blobUrl\}/);
     expect((viewer.match(/<iframe/g) ?? []).length).toBe(1);
     expect(viewer).toMatch(/blobUrl && blobKind === 'pdf' \? \([\s\S]*?<iframe\s/);
-    // No sandbox token is granted anywhere — not same-origin, not scripts.
+    // A forward guard only: the PDF frame carries no sandbox today (DEC-49 —
+    // Chromium refuses its PDF viewer in a sandboxed frame), so this pins
+    // nothing present; it refuses a future sandbox that grants allow-* tokens.
     expect(viewer).not.toMatch(/sandbox=["{][^"}]*allow-/);
   });
   it("a legacy cross-origin URL is shown only when its path NAMES a PDF or a raster image — never framed blind", () => {

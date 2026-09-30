@@ -25,7 +25,14 @@ import { NextRequest } from "next/server";
 const mockState = vi.hoisted(() => ({
   user: null as null | { id: string; email?: string },
   tables: {} as Record<string, { data?: unknown; error?: unknown; count?: number }>,
-  calls: [] as Array<{ table: string; method: string; args: unknown[] }>,
+  // `chain` numbers each from(table) builder, so a test can ask what ONE
+  // query did (its select AND its filters), not what the table saw overall.
+  calls: [] as Array<{ table: string; method: string; args: unknown[]; chain: number }>,
+  chainSeq: 0,
+  // Tables whose single-row reads honour .eq() filters against the fixture:
+  // a filter on a column the fixture carries, with a different value,
+  // resolves no row (as the database would). Opt-in per test.
+  honourEq: new Set<string>(),
   // Per-table override for .maybeSingle()/.single() — for a table read both
   // as one row and as a list in the same request (documents in the
   // checklist assess path).
@@ -44,6 +51,8 @@ const mockState = vi.hoisted(() => ({
 function makeChain(table: string) {
   const result = () => mockState.tables[table] ?? { data: null, error: null };
   const chain: Record<string, unknown> = {};
+  const id = ++mockState.chainSeq;
+  const eqs: Array<[string, unknown]> = [];
   const handler: ProxyHandler<Record<string, unknown>> = {
     get(_t, prop: string) {
       if (prop === "then") {
@@ -52,10 +61,14 @@ function makeChain(table: string) {
           resolve({ data: r.data ?? null, error: r.error ?? null, count: r.count ?? null });
       }
       return (...args: unknown[]) => {
-        mockState.calls.push({ table, method: prop, args });
+        mockState.calls.push({ table, method: prop, args, chain: id });
+        if (prop === "eq") eqs.push([String(args[0]), args[1]]);
         if (prop === "maybeSingle" || prop === "single") {
           const r = mockState.single[table] ?? result();
-          return Promise.resolve({ data: r.data ?? null, error: r.error ?? null });
+          const row = r.data as Record<string, unknown> | null | undefined;
+          const filteredOut = mockState.honourEq.has(table) && !!row && !Array.isArray(row)
+            && eqs.some(([col, val]) => col in row && row[col] !== val);
+          return Promise.resolve({ data: filteredOut ? null : r.data ?? null, error: r.error ?? null });
         }
         return new Proxy(chain, handler);
       };
@@ -126,6 +139,7 @@ beforeEach(() => {
   mockState.user = null;
   mockState.tables = {};
   mockState.calls = [];
+  mockState.honourEq = new Set();
   mockState.single = {};
   mockState.rpc = {};
   mockState.rpcCalls = [];
@@ -549,6 +563,45 @@ describe("POST /api/projects/checklist — any active member, over documents THE
     nothingServed();
   });
 
+  it("SEC-10: a pointer on a readable document naming ANOTHER document's version serves nothing — 404, nothing rendered, no row", async () => {
+    const { POST } = await load();
+    // d1 is readable to each reader — a normal document with no ACL to the
+    // member; a private one to the controller, whose served read WOULD write
+    // a DEC-43 row — and its member-writable pending pointer names private
+    // document dB's version.
+    for (const [member, visibility] of [[PLAIN_MEMBER, "normal"], [ADDITIVE_DOCCTRL, "private"]] as const) {
+      seed(member, docRow({ visibility, current_version_id: null, pending_version_id: "vB" }));
+      mockState.honourEq = new Set(["document_versions"]);
+      mockState.tables.document_versions = { data: { id: "vB", record_id: "dB", file_url: "orgs/o1/libraries/l1/HSE-private.pdf", file_type: "application/pdf" } };
+      const res = await POST(segment());
+      expect(res.status).toBe(404);
+      expect(String((await res.json()).error)).toMatch(/no stored file/);
+      expect(mockState.renderCalls).toBe(0);
+      expect(mockState.aiCalls).toHaveLength(0);
+      expect(auditRows()).toHaveLength(0);
+    }
+    // The same pointer naming d1's OWN version is served.
+    seed(PLAIN_MEMBER, docRow({ current_version_id: null, pending_version_id: "v1" }));
+    mockState.honourEq = new Set(["document_versions"]);
+    mockState.tables.document_versions = { data: { id: "v1", record_id: "d1", file_url: "orgs/o1/libraries/l1/HSE-7.pdf", file_type: "application/pdf" } };
+    expect((await POST(segment())).status).toBe(200);
+  });
+
+  it("a folder chain with a rung that no longer exists is 409 naming it — not 'try again', and a controller gets it too", async () => {
+    const { POST } = await load();
+    for (const member of [PLAIN_MEMBER, ADDITIVE_DOCCTRL]) {
+      seed(member, docRow());
+      mockState.single.collections = { data: { id: "c1", library_id: "l1", path_ids: ["c0-gone"], acl: null } };
+      const res = await POST(segment());
+      expect(res.status).toBe(409);
+      const error = String((await res.json()).error);
+      expect(error).toMatch(/folder chain is broken \(folder c0-gone no longer exists\)/);
+      expect(error).toMatch(/document controller needs to repair/);
+      expect(error).not.toMatch(/try again\.?$/);
+      nothingServed();
+    }
+  });
+
   describe("assess — only what the caller may see reaches the model", () => {
     function seedAssess(member: unknown) {
       seed(member, [
@@ -598,9 +651,14 @@ describe("POST /api/projects/checklist — any active member, over documents THE
       const prompt = String(mockState.aiCalls[0].user);
       expect(prompt).not.toContain("P-1 General arrangement");
       expect(prompt).toContain("No project documents on file yet.");
-      // The list read is org-scoped (a foreign intake_collection_id lists nothing of another tenant's).
-      const docCalls = mockState.calls.filter((c) => c.table === "documents");
-      const listEqs = docCalls.filter((c) => c.method === "eq").map((c) => c.args);
+      // The list read ITSELF is org-scoped (a foreign intake_collection_id
+      // lists nothing of another tenant's) — asked of the one query that
+      // selects the titles, not of every documents read the request made
+      // (the SOW's gate read is org-scoped too, and must not mask a gap here).
+      const listSelects = mockState.calls.filter((c) => c.table === "documents" && c.method === "select"
+        && c.args[0] === "title, name, document_number, visibility, acl, owner_user_id");
+      expect(listSelects).toHaveLength(1);
+      const listEqs = mockState.calls.filter((c) => c.chain === listSelects[0].chain && c.method === "eq").map((c) => c.args);
       expect(listEqs).toContainEqual(["org_id", ORG]);
       expect(listEqs).toContainEqual(["collection_id", "c1"]);
       // …and so is every chain read.
@@ -616,6 +674,48 @@ describe("POST /api/projects/checklist — any active member, over documents THE
       expect((await POST(assess())).status).toBe(200);
       const prompt = String(mockState.aiCalls[0].user);
       expect(prompt).not.toContain("P-1 General arrangement");
+    });
+
+    it("a check that cannot RUN is never told to the model as an absence — the SOW and the titles are 'on file but could not be checked'", async () => {
+      const { POST } = await load();
+      // A read error on the chain: the SOW's gate answers 503, the intake chain is unreadable.
+      seedAssess(PLAIN_MEMBER);
+      mockState.tables.libraries = { data: null, error: { message: "boom" } };
+      expect((await POST(assess())).status).toBe(200);
+      let prompt = String(mockState.aiCalls[0].user);
+      expect(prompt).toContain("A Summary of Work is on file but could not be checked — it was not read.");
+      expect(prompt).toContain("Project documents may be on file but could not be checked — their titles were not read.");
+      expect(prompt).not.toContain("No Summary of Work attached.");
+      expect(prompt).not.toContain("No project documents on file yet.");
+      expect(prompt).not.toContain("SOW-9");
+      // A broken chain (a path_ids rung that no longer exists): the gate's 409, the same honest lines.
+      seedAssess(PLAIN_MEMBER);
+      mockState.single.collections = { data: { id: "c1", library_id: "l1", path_ids: ["gone"], acl: null } };
+      mockState.aiCalls = [];
+      expect((await POST(assess())).status).toBe(200);
+      prompt = String(mockState.aiCalls[0].user);
+      expect(prompt).toContain("A Summary of Work is on file but could not be checked");
+      expect(prompt).toContain("their titles were not read");
+      // …and the intake list read failing is not "none" either.
+      seedAssess(ADDITIVE_DOCCTRL);
+      mockState.tables.documents = { data: null, error: { message: "boom" } };
+      mockState.aiCalls = [];
+      expect((await POST(assess())).status).toBe(200);
+      prompt = String(mockState.aiCalls[0].user);
+      expect(prompt).toContain("their titles were not read");
+      expect(prompt).not.toContain("No project documents on file yet.");
+    });
+
+    it("a project with no SOW and an empty intake folder still says so plainly", async () => {
+      seedAssess(PLAIN_MEMBER);
+      mockState.tables.projects = { data: { id: "p1", name: "Unit 4", sow_document_id: null, intake_collection_id: "c1" } };
+      mockState.tables.documents = { data: [] };
+      const { POST } = await load();
+      expect((await POST(assess())).status).toBe(200);
+      const prompt = String(mockState.aiCalls[0].user);
+      expect(prompt).toContain("No Summary of Work attached.");
+      expect(prompt).toContain("No project documents on file yet.");
+      expect(prompt).not.toContain("could not be checked");
     });
   });
 });
@@ -666,6 +766,23 @@ describe("POST /api/companies/quality-manual — controllers only, and still bou
     expect(rows[0].details).toMatchObject({ channel: "quality_manual" });
   });
 
+  it("SEC-10: a manual in a folder whose path_ids names a folder that no longer exists — 409 naming it, not a 'try again' 503", async () => {
+    seed({ status: "active", role: "Admin", roles: ["Admin"] }, docRow());
+    mockState.single.collections = { data: { id: "c1", library_id: "l1", path_ids: ["c-stale"], acl: null } };
+    const { POST } = await load();
+    const res = await POST(evaluate());
+    expect(res.status).toBe(409);
+    expect(String((await res.json()).error)).toMatch(/folder c-stale no longer exists.*repair the folder chain/);
+    expect(mockState.renderCalls).toBe(0);
+    // A read ERROR on the same rung is still the transient 503.
+    seed({ status: "active", role: "Admin", roles: ["Admin"] }, docRow());
+    mockState.single.collections = { data: { id: "c1", library_id: "l1", path_ids: ["c-stale"], acl: null } };
+    mockState.tables.collections = { data: null, error: { message: "boom" } };
+    const retry = await POST(evaluate());
+    expect(retry.status).toBe(503);
+    expect(String((await retry.json()).error)).toMatch(/try again/);
+  });
+
   it("SEC-10: an explicit download deny binds the controller — 403, nothing rendered", async () => {
     seed(ADDITIVE_DOCCTRL, docRow({ acl_index: { deny: { roles: { download: ["DocCtrl"] } } } }));
     const { POST } = await load();
@@ -674,7 +791,7 @@ describe("POST /api/companies/quality-manual — controllers only, and still bou
     expect(mockState.aiCalls).toHaveLength(0);
   });
 
-  it("PERF-6: the page cap is surfaced — a manual read to the cap says only the first pages were judged", async () => {
+  it("PERF-6: the page cap is in the response — a manual read to the cap says only the first pages were judged", async () => {
     seed(ADDITIVE_DOCCTRL, docRow());
     mockState.render = async () => Array.from({ length: 10 }, (_, i) => ({ page: i + 1, mediaType: "image/png", base64: "AA==" }));
     const { POST } = await load();

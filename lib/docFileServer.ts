@@ -19,7 +19,11 @@
 // ONLY because the reader is a controller, the DEC-43 record
 // (CONTROLLER_RESTRICTED_READ) is written, as the egress route writes it.
 // The `reader` argument is required: a route cannot resolve a document's
-// file without naming who is reading it.
+// file without naming who is reading it. The version served must BELONG to
+// the document the decision was made on: the pointer columns are
+// member-writable, so a pointer naming another document's version resolves
+// nothing (404) — otherwise the ACL of one document would admit the bytes
+// of another.
 //
 // This is STRICTER than /api/storage/download-url today, which evaluates
 // only the document's own ACL and only for private / hidden documents
@@ -55,7 +59,7 @@ export interface DocumentReader {
 
 export type DocFileResolution =
   | { ok: true; file: ResolvedDocFile }
-  | { ok: false; status: 403 | 404 | 503; error: string };
+  | { ok: false; status: 403 | 404 | 409 | 503; error: string };
 
 /** The ACL-bearing columns of a `documents` row. */
 export interface DocAclRow {
@@ -68,6 +72,23 @@ export interface DocAclRow {
 export const DOC_READ_DENIED = "You don't have access to read that document.";
 export const DOC_NO_FILE = "That document has no stored file to read.";
 export const DOC_ACCESS_UNVERIFIED = "Couldn't verify your access to that document — try again.";
+
+/** The chain above a document names a folder or library that does not
+ *  exist (a stale `path_ids` rung, a dangling `collection_id` or
+ *  `library_id`). Not transient — retrying cannot help — and not "no ACL"
+ *  either: the gate cannot tell what that rung would have said, so it
+ *  refuses with a message that says what is wrong and who can repair it. */
+export class BrokenAclChainError extends Error {
+  constructor(readonly rung: "folder" | "library", readonly missingId: string | null) {
+    super(docChainBrokenMessage(rung, missingId));
+    this.name = "BrokenAclChainError";
+  }
+}
+export function docChainBrokenMessage(rung: "folder" | "library", missingId: string | null): string {
+  const what = missingId ? `${rung} ${missingId} no longer exists` : `its ${rung} is not recorded`;
+  return `This document's folder chain is broken (${what}), so access to it can't be checked. `
+    + "A document controller needs to repair the folder chain — trying again won't help.";
+}
 
 function visibilityOf(row: DocAclRow): NodeVisibility {
   return row.visibility === "private" || row.visibility === "hidden" ? row.visibility : "normal";
@@ -105,8 +126,11 @@ export type ContainerAclChain = Array<AccessControl | undefined>;
 /** Load the container chain for a document (or for every document in one
  *  folder). THROWS when any rung cannot be read or is missing — a gate that
  *  cannot see the library's or a folder's ACL must not guess that it grants
- *  nothing (a dropped allow-list would serve everyone). Every read is
- *  org-scoped. `libraryId` defaults to the folder's own library. */
+ *  nothing (a dropped allow-list would serve everyone). A read ERROR throws
+ *  a plain Error (transient — the caller answers "try again"); a rung that
+ *  does not exist throws BrokenAclChainError naming it (permanent until a
+ *  controller repairs the chain). Every read is org-scoped. `libraryId`
+ *  defaults to the folder's own library. */
 export async function loadContainerAclChain(
   orgId: string,
   where: { libraryId?: string | null; collectionId?: string | null },
@@ -117,7 +141,8 @@ export async function loadContainerAclChain(
     const { data: folder, error } = await supabaseAdmin
       .from("collections").select("id, library_id, path_ids, acl")
       .eq("org_id", orgId).eq("id", where.collectionId).maybeSingle();
-    if (error || !folder) throw new Error("The document's folder could not be read.");
+    if (error) throw new Error("The document's folder could not be read.");
+    if (!folder) throw new BrokenAclChainError("folder", String(where.collectionId));
     const f = folder as { library_id?: string | null; path_ids?: unknown; acl?: unknown };
     libraryId = libraryId ?? f.library_id ?? null;
     const pathIds = Array.isArray(f.path_ids) ? (f.path_ids as unknown[]).map(String).filter(Boolean) : [];
@@ -128,16 +153,17 @@ export async function loadContainerAclChain(
       const byId = new Map(((ancestors ?? []) as Array<{ id: string; acl?: unknown }>).map((a) => [String(a.id), a]));
       for (const id of pathIds) {
         const a = byId.get(id);
-        if (!a) throw new Error("A folder above the document could not be read.");
+        if (!a) throw new BrokenAclChainError("folder", id);
         folders.push((a.acl ?? undefined) as AccessControl | undefined);
       }
     }
     folders.push((f.acl ?? undefined) as AccessControl | undefined);
   }
-  if (!libraryId) throw new Error("The document's library is unknown.");
+  if (!libraryId) throw new BrokenAclChainError("library", null);
   const { data: lib, error: libErr } = await supabaseAdmin
     .from("libraries").select("id, acl").eq("org_id", orgId).eq("id", libraryId).maybeSingle();
-  if (libErr || !lib) throw new Error("The document's library could not be read.");
+  if (libErr) throw new Error("The document's library could not be read.");
+  if (!lib) throw new BrokenAclChainError("library", libraryId);
   return [((lib as { acl?: unknown }).acl ?? undefined) as AccessControl | undefined, ...folders];
 }
 
@@ -254,14 +280,17 @@ export async function resolveDocumentFile(
   if (!doc) return { ok: false, status: 404, error: DOC_NO_FILE };
 
   // The library → folder chain above the document: a rung that cannot be
-  // read is 503, never "no ACL".
+  // read is 503 ("try again"), never "no ACL"; a rung that does not exist
+  // is 409, naming it — retrying cannot help, and it binds controllers too
+  // (the gate cannot know what the missing rung would have denied).
   let containerChain: ContainerAclChain;
   try {
     containerChain = await loadContainerAclChain(orgId, {
       libraryId: (doc.library_id as string | null) ?? null,
       collectionId: (doc.collection_id as string | null) ?? null,
     });
-  } catch {
+  } catch (e) {
+    if (e instanceof BrokenAclChainError) return { ok: false, status: 409, error: e.message };
     return { ok: false, status: 503, error: DOC_ACCESS_UNVERIFIED };
   }
 
@@ -285,11 +314,13 @@ export async function resolveDocumentFile(
 
   const versionId = (doc.current_version_id as string | null) ?? (doc.pending_version_id as string | null);
   if (!versionId) return { ok: false, status: 404, error: DOC_NO_FILE };
-  // org_id re-checked on the version too: the pointer columns are
-  // member-writable, so a forged cross-org version id must never resolve.
+  // The pointer columns are member-writable, so the version is bound to the
+  // document the decision above was made on (record_id) and to the org: a
+  // forged pointer naming another document's version — same org or not —
+  // resolves no file, rather than serving B's pages under A's ACL.
   const { data: ver } = await supabaseAdmin
     .from("document_versions").select("file_url, file_type")
-    .eq("id", versionId).eq("org_id", orgId).maybeSingle();
+    .eq("id", versionId).eq("record_id", documentId).eq("org_id", orgId).maybeSingle();
   if (!ver?.file_url) return { ok: false, status: 404, error: DOC_NO_FILE };
 
   // DOCACL-3 / DEC-43: pages served ONLY because the reader is a controller
