@@ -374,7 +374,7 @@ COMMIT;
 SELECT 'SEC-2: all nine controls / cost read policies go through project_visible_to_me' AS check,
        (SELECT COUNT(*) = 9 FROM pg_policies
          WHERE schemaname = 'public' AND cmd = 'SELECT'
-           AND (tablename, policyname) IN (('change_orders', 'change_orders_member_read'),
+           AND (tablename::text, policyname::text) IN (('change_orders', 'change_orders_member_read'),
                                           ('project_checklists', 'project_checklists_member_read'),
                                           ('checklist_items', 'checklist_items_member_read'),
                                           ('turnover_items', 'turnover_items_member_read'),
