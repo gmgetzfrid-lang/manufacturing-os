@@ -109,9 +109,17 @@ export default function ChangeOrdersPanel({ orgId, projectId, canManage, actor, 
             {open.length} awaiting decision
           </span>
         )}
+        {/* COST-4: the same rule as the Budget tile — an approved CO counts
+            only while its linked entry is posted; the others are named. */}
         {summary.approvedCount > 0 && (
           <span className="text-[10px] text-[var(--color-text-muted)]">
             {summary.approvedCount} approved · {fmtMoney(summary.approvedAmount)} total change
+          </span>
+        )}
+        {summary.approvedOffLedger > 0 && (
+          <span className="text-[10px] font-bold text-amber-700 dark:text-amber-300"
+            title="Approved, but its cost entry is void, missing or unlinked — it does not revise the budget until repaired.">
+            {summary.approvedOffLedger} approved not on the ledger (not in the budget)
           </span>
         )}
         {canManage && (

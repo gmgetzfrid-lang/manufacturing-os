@@ -13,7 +13,14 @@
 //              client-written decided_by / created_by) with a defensively
 //              parsed threshold; the controller-or-owner predicate
 //              byte-carried from 20261013 and the controller-tier predicate
-//              byte-carried from 20260814.
+//              byte-carried from 20260814. Verification fix (2026-09-30):
+//              for a signed-in caller the guard admits exactly the writes
+//              lib/changeOrders.ts makes — rejected / void terminal, the
+//              failed-post revert by its approver only, the unwind put-back
+//              only while the entry is posted, posted_entry_id tied to the
+//              CO's own commitment and never repointed away from a posted
+//              entry, identity and decided money frozen; the service role
+//              keeps its pass.
 //
 // Every migration is ONE script whose final statement is a single SELECT of
 // (check, ok, n): probes carry ok, inventory rows carry n.
@@ -207,7 +214,7 @@ describe("20261094 — change-order authority", () => {
     expect(fn).toContain("c.key = 'change_order_approval_threshold'");
     expect(fn).toContain("abs(NEW.amount) > v_threshold");
     expect(fn).toContain("WHERE uid = v_decider");
-    expect((fn.match(/USING ERRCODE = 'check_violation'/g) ?? []).length).toBe(5);
+    expect((fn.match(/USING ERRCODE = 'check_violation'/g) ?? []).length).toBe(11);
     // no apostrophe inside a string literal (the probe rule): the two messages are plain
     expect(fn).not.toMatch(/'[^'\n]*''[^'\n]*'/);
     expect(m94).toMatch(/CREATE TRIGGER trg_change_orders_decision_guard\s+BEFORE UPDATE ON change_orders\s+FOR EACH ROW\s+EXECUTE FUNCTION enforce_change_order_decision_guard\(\);/);
@@ -216,8 +223,12 @@ describe("20261094 — change-order authority", () => {
   it("the guard judges the SIGNED-IN caller, never a client-written decided_by / created_by (blocker)", () => {
     const fn = between(m94, "CREATE OR REPLACE FUNCTION enforce_change_order_decision_guard()", "COMMENT ON FUNCTION");
     expect(fn).toContain("v_uid uuid := auth.uid();");
-    // a session must record ITSELF as the decider…
-    expect(fn).toContain("IF v_uid IS NOT NULL AND NEW.decided_by IS DISTINCT FROM v_uid THEN");
+    // a session must record ITSELF as the decider — on EVERY decision out of
+    // proposed (void included: the verifier's void-then-approve path wrote a
+    // controller's uid on the void)…
+    expect(fn).toContain("IF OLD.status = 'proposed' THEN");
+    expect(fn).toContain("IF NEW.status <> 'proposed' AND NEW.decided_by IS DISTINCT FROM v_uid THEN");
+    expect(fn.indexOf("IF v_uid IS NOT NULL THEN")).toBeLessThan(fn.indexOf("IF NEW.status <> 'proposed' AND NEW.decided_by IS DISTINCT FROM v_uid THEN"));
     // …and both rules judge the caller (a service write, with no uid, is judged on the recorded decider)
     expect(fn).toContain("v_decider := COALESCE(v_uid, NEW.decided_by);");
     expect(fn.indexOf("v_decider := COALESCE(v_uid, NEW.decided_by);")).toBeLessThan(fn.indexOf("SELECT COUNT(*) INTO v_others"));
@@ -225,11 +236,97 @@ describe("20261094 — change-order authority", () => {
     expect(fn).not.toContain("NEW.decided_by = NEW.created_by");
     expect(fn).not.toContain("WHERE uid = NEW.decided_by");
     // the proposer is never rewritten, on ANY update — checked before the early return
+    const earlyReturn = "IF OLD.status <> 'proposed' OR NEW.status NOT IN ('approved', 'rejected') THEN";
     expect(fn).toContain("IF NEW.created_by IS DISTINCT FROM OLD.created_by THEN");
-    expect(fn.indexOf("IF NEW.created_by IS DISTINCT FROM OLD.created_by THEN")).toBeLessThan(fn.indexOf("IF OLD.status <> 'proposed'"));
+    expect(fn.indexOf("IF NEW.created_by IS DISTINCT FROM OLD.created_by THEN")).toBeLessThan(fn.indexOf("IF v_uid IS NOT NULL THEN"));
     // the decider is written by the decision or cleared by its revert, nothing else
     expect(fn).toContain("IF NEW.decided_by IS DISTINCT FROM OLD.decided_by\n     AND NOT (OLD.status = 'proposed' AND NEW.status <> 'proposed')\n     AND NOT (NEW.status = 'proposed' AND NEW.decided_by IS NULL) THEN");
-    expect(fn.indexOf("IF NEW.decided_by IS DISTINCT FROM OLD.decided_by")).toBeLessThan(fn.indexOf("IF OLD.status <> 'proposed'"));
+    expect(fn.indexOf("IF NEW.decided_by IS DISTINCT FROM OLD.decided_by")).toBeLessThan(fn.indexOf("IF v_uid IS NOT NULL THEN"));
+    // the transition rails run before the early return, so no transition escapes them
+    expect(fn.indexOf("IF v_uid IS NOT NULL THEN")).toBeLessThan(fn.indexOf(earlyReturn));
+  });
+
+  // ── verification fix (2026-09-30): the guard admits exactly the app's writes ──
+  const guard = () => between(m94, "CREATE OR REPLACE FUNCTION enforce_change_order_decision_guard()", "COMMENT ON FUNCTION");
+  /** The signed-in block: from its opening IF to the early return that follows it. */
+  const signedIn = () => between(guard(), "  IF v_uid IS NOT NULL THEN", "  IF OLD.status <> 'proposed' OR NEW.status NOT IN ('approved', 'rejected') THEN");
+
+  it("rejected and void are TERMINAL for a signed-in caller; approved -> rejected does not exist (verifier: void-then-approve, rejection flip)", () => {
+    const b = signedIn();
+    // the transition ladder, in order: proposed; approved -> approved | void;
+    // approved -> proposed; void -> approved (put-back); terminal; else refused
+    const ladder = [
+      "    IF OLD.status = 'proposed' THEN",
+      "    ELSIF OLD.status = 'approved' AND NEW.status IN ('approved', 'void') THEN",
+      "    ELSIF OLD.status = 'approved' AND NEW.status = 'proposed' THEN",
+      "    ELSIF OLD.status = 'void' AND NEW.status = 'approved'",
+      "    ELSIF OLD.status IN ('rejected', 'void') THEN",
+      "    ELSE\n      RAISE EXCEPTION 'An approved change order is reversed (void), never rejected.",
+    ];
+    let at = -1;
+    for (const step of ladder) {
+      const i = b.indexOf(step);
+      expect(i, step).toBeGreaterThan(at);
+      at = i;
+    }
+    expect(b).toContain("RAISE EXCEPTION 'A % change order is final: nothing on it changes any more. COST-6, 20261094', OLD.status");
+    // no other branch lets a rejected row move
+    expect(b).not.toMatch(/OLD\.status = 'rejected' AND/);
+  });
+
+  it("approved -> proposed is ONLY the failed-post revert: by the approver, no link, no posted look-alike on its line", () => {
+    const b = signedIn();
+    const revert = between(b, "    ELSIF OLD.status = 'approved' AND NEW.status = 'proposed' THEN", "    ELSIF OLD.status = 'void' AND NEW.status = 'approved'");
+    expect(revert).toContain("IF OLD.decided_by IS DISTINCT FROM v_uid");
+    expect(revert).toContain("OR OLD.posted_entry_id IS NOT NULL OR NEW.posted_entry_id IS NOT NULL");
+    // repairChangeOrder's look-alike: posted, unlinked commitment carrying the number on the CO's line
+    expect(revert).toContain("WHERE e.project_id = OLD.project_id AND e.cost_account_id = OLD.cost_account_id");
+    expect(revert).toContain("AND e.entry_type = 'commitment' AND e.status = 'posted' AND e.source_document_id IS NULL");
+    expect(revert).toContain("AND btrim(e.reference) = OLD.co_number");
+    expect(revert).toContain("AND NOT EXISTS (SELECT 1 FROM change_orders o WHERE o.posted_entry_id = e.id AND o.id <> OLD.id)");
+  });
+
+  it("void -> approved is ONLY the unwind put-back: same link, and that entry still POSTED", () => {
+    const b = signedIn();
+    expect(b).toContain(
+      "    ELSIF OLD.status = 'void' AND NEW.status = 'approved'\n"
+      + "          AND OLD.posted_entry_id IS NOT NULL AND NEW.posted_entry_id = OLD.posted_entry_id\n"
+      + "          AND EXISTS (SELECT 1 FROM cost_entries e WHERE e.id = OLD.posted_entry_id AND e.status = 'posted') THEN",
+    );
+  });
+
+  it("posted_entry_id: set only on an approved CO, never cleared, tied to its OWN commitment (repairChangeOrder's link tie), never repointed away from a posted entry", () => {
+    const b = signedIn();
+    const link = between(b, "    IF NEW.posted_entry_id IS DISTINCT FROM OLD.posted_entry_id THEN", "  END IF;\n");
+    expect(link).toContain("IF OLD.status <> 'approved' OR NEW.status <> 'approved' OR NEW.posted_entry_id IS NULL");
+    expect(link).toContain("OR EXISTS (SELECT 1 FROM cost_entries e WHERE e.id = OLD.posted_entry_id AND e.status = 'posted')");
+    expect(link).toContain("WHERE e.id = NEW.posted_entry_id");
+    expect(link).toContain("AND e.project_id = NEW.project_id AND e.cost_account_id = NEW.cost_account_id");
+    expect(link).toContain("AND e.entry_type = 'commitment' AND e.status = 'posted' AND e.source_document_id IS NULL");
+    expect(link).toContain("AND btrim(e.reference) = NEW.co_number)");
+    expect(link).toContain("OR EXISTS (SELECT 1 FROM change_orders o WHERE o.posted_entry_id = NEW.posted_entry_id AND o.id <> NEW.id) THEN");
+  });
+
+  it("identity never rewritten, amount / budget line frozen once decided, decided_at / decided_by_name move only with the decision or its revert", () => {
+    const b = signedIn();
+    expect(b).toContain("IF NEW.org_id IS DISTINCT FROM OLD.org_id\n       OR NEW.project_id IS DISTINCT FROM OLD.project_id\n       OR NEW.co_number IS DISTINCT FROM OLD.co_number");
+    expect(b).toContain("OR (OLD.status <> 'proposed'\n           AND (NEW.amount IS DISTINCT FROM OLD.amount OR NEW.cost_account_id IS DISTINCT FROM OLD.cost_account_id)) THEN");
+    expect(b).toContain("IF OLD.status <> 'proposed' AND NEW.status <> 'proposed'\n       AND (NEW.decided_at IS DISTINCT FROM OLD.decided_at OR NEW.decided_by_name IS DISTINCT FROM OLD.decided_by_name) THEN");
+  });
+
+  it("the service role (auth.uid() IS NULL) keeps its pass: every new rail sits inside IF v_uid IS NOT NULL", () => {
+    const fn = guard();
+    const b = signedIn();
+    for (const rail of ["change order is final", "OLD.decided_by IS DISTINCT FROM v_uid", "NEW.posted_entry_id IS DISTINCT FROM OLD.posted_entry_id", "NEW.amount IS DISTINCT FROM OLD.amount", "NEW.decided_at IS DISTINCT FROM OLD.decided_at"]) {
+      expect(b, rail).toContain(rail);
+      expect(fn.split(rail).length - 1, rail).toBe(1);
+    }
+    const header = m94.slice(0, m94.indexOf("BEGIN;"));
+    expect(header).toMatch(/service role \/ SQL editor \(auth\.uid\(\) IS NULL\) keeps its pass/);
+    // the header enumerates every app write the guard admits
+    for (const w of ["proposed → proposed", "proposed → approved | rejected | void", "approved → approved", "approved → void", "approved → proposed", "void → approved", "rejected and void are TERMINAL"]) {
+      expect(header, w).toContain(w);
+    }
   });
 
   it("a malformed threshold means NO threshold — parsed defensively in the guard and the inventory, never a raw cast", () => {
@@ -253,9 +350,27 @@ describe("20261094 — change-order authority", () => {
     expect(fn).not.toMatch(/role = 'Admin'|role = 'DocCtrl'/);
   });
 
-  it("final statement: 7 probes + 5 inventory rows, deparsed-safe, read-only", () => {
+  it("final statement: 10 probes + 7 inventory rows, deparsed-safe, read-only", () => {
     const fin = finalSelect(m94);
-    expect((fin.match(/UNION ALL/g) ?? []).length).toBe(11);
+    expect((fin.match(/UNION ALL/g) ?? []).length).toBe(16);
+    // verification fix: the terminal-state refusal and the posted_entry_id rule are probed in the body
+    expect(fin).toContain("prosrc LIKE '%ELSIF OLD.status IN (''rejected'', ''void'') THEN%'");
+    expect(fin).toContain("prosrc LIKE '%change order is final%'");
+    expect(fin).toContain("prosrc LIKE '%IF OLD.decided_by IS DISTINCT FROM v_uid%'");
+    expect(fin).toContain("prosrc LIKE '%ELSIF OLD.status = ''void'' AND NEW.status = ''approved''%'");
+    expect(fin).toContain("prosrc LIKE '%IF NEW.posted_entry_id IS DISTINCT FROM OLD.posted_entry_id THEN%'");
+    expect(fin).toContain("prosrc LIKE '%IF OLD.status <> ''approved'' OR NEW.status <> ''approved'' OR NEW.posted_entry_id IS NULL%'");
+    expect(fin).toContain("prosrc LIKE '%AND btrim(e.reference) = NEW.co_number)%'");
+    expect(fin).toContain("prosrc LIKE '%WHERE o.posted_entry_id = NEW.posted_entry_id AND o.id <> NEW.id%'");
+    expect(fin).toContain("prosrc LIKE '%NEW.amount IS DISTINCT FROM OLD.amount%'");
+    // every prosrc LIKE pattern is a substring of the function body as written (the probe reads prosrc, not a deparse)
+    const body = between(m94, "RETURNS trigger LANGUAGE plpgsql SECURITY DEFINER SET search_path = public AS $$", "$$;");
+    for (const [, pat] of fin.matchAll(/prosrc LIKE '%((?:[^']|'')*)%'/g)) {
+      expect(body, pat).toContain(pat.replace(/''/g, "'"));
+    }
+    // two new aggregate inventories: links that do not tie, voids whose entry is still posted
+    expect(fin).toMatch(/posted_entry_id is not a commitment of their own/);
+    expect(fin).toMatch(/void change orders whose linked entry is still POSTED/);
     expect(fin).toContain("with_check LIKE '%created_by = auth.uid()%'");
     expect(fin).toContain("prosrc LIKE '%v_decider := COALESCE(v_uid, NEW.decided_by)%'");
     expect(fin).toContain("prosrc LIKE '%NEW.created_by IS DISTINCT FROM OLD.created_by%'");

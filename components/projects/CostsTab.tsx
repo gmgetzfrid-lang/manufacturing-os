@@ -122,8 +122,10 @@ export default function CostsTab({ orgId, projectId, canManage, uid, userEmail, 
   }, [docs]);
 
   const pctIndex = useMemo(() => new Map(milestones.map((m) => [m.id, m.pct])), [milestones]);
-  // COST-4: only an approved CO whose linked entry is still POSTED revises the budget.
-  const approvedChanges = useMemo(() => approvedChangesByAccount(cos, entries), [cos, entries]);
+  // COST-4: only an approved CO whose linked entry is still POSTED revises the
+  // budget — the entry's status is read by id in listChangeOrders, never
+  // looked up in the loaded entry page (the newest 2,000).
+  const approvedChanges = useMemo(() => approvedChangesByAccount(cos), [cos]);
   const rollup = useMemo(() => computeCostRollup(accounts, entries, pctIndex, approvedChanges), [accounts, entries, pctIndex, approvedChanges]);
   const cur = rollup.currencies[0] ?? "USD";
   const mixedCurrency = rollup.currencies.length > 1;

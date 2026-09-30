@@ -21,6 +21,11 @@
 //   document; the orphan line waits for 20261093; approved COs whose entry
 //   is void stop revising the budget, are listed, and are repaired (link /
 //   reverse); an already-void entry does not block the unwind
+//   verification fix (2026-09-30): the linked entries' status is read by id
+//   (not from the loaded page) and the CO summary counts by the same rule;
+//   Reverse on an already-void entry applies the repair's look-alike check;
+//   the typed-back confirmation is explicit (confirmedTotal); a document
+//   whose entry was voided by hand is not reverted
 
 import { describe, it, expect, vi, beforeEach } from "vitest";
 
@@ -123,7 +128,7 @@ import {
 } from "@/lib/costDocs";
 import {
   proposeChangeOrder, decideChangeOrder, unwindChangeOrder, listChangeOrders, repairChangeOrder,
-  approvedChangesByAccount, parseThresholdAmount, isReversal, type ChangeOrder,
+  approvedChangesByAccount, changeOrderOnLedger, summarizeChangeOrders, parseThresholdAmount, isReversal, type ChangeOrder,
 } from "@/lib/changeOrders";
 import { voidEntry, listAccounts, listEntries, saveAccount, NO_ROW_MATCHED } from "@/lib/costs";
 
@@ -420,10 +425,17 @@ describe("orphans are listed and repaired, never deleted (MON-1 / COST-11 dw3)",
     expect(res.error).toMatch(/voided by hand/);
     expect(entries()).toHaveLength(1);
     expect(auditRows("COST_DOC_REPAIRED")).toHaveLength(0);
-    // …but it can still be put back to parsed: none of its money is on the ledger.
+    // Verification fix: nor is it reverted — reopening it would let it be
+    // awarded again, a second commitment beside the hand-posted correction.
     const back = await repairCostDoc({ doc: doc({ status: "awarded" }), action: "revert", actor });
-    expect(back.ok).toBe(true);
-    expect(db.tables.cost_documents[0].status).toBe("parsed");
+    expect(back.ok).toBe(false);
+    expect(back.error).toMatch(/voided by hand — that void was the correction, so the document is not reopened/);
+    expect(db.tables.cost_documents[0].status).toBe("awarded");
+    expect(auditRows("COST_DOC_REPAIRED")).toHaveLength(0);
+    // …and with it still awarded, the Award path cannot post it a second time.
+    const again = await awardQuote({ doc: doc(), siblings: [], costAccountId: "a1", actor });
+    expect(again.ok).toBe(false);
+    expect(entries()).toHaveLength(1);
   });
 
   it("re-post posts the missing commitment with the document as source and audits; a second repair is refused", async () => {
@@ -550,10 +562,19 @@ describe("change orders — numbering, authority, unwind (MON-9 / COST-6 / COST-
   it("an unwind with no linked entry is refused and points at the reconciliation line; a failed void puts the CO back", async () => {
     db.tables.change_orders.push(coRow({ status: "approved", posted_entry_id: null }));
     await expect(unwindChangeOrder({ co: co({ status: "approved" }), actorId: "u-owner" })).rejects.toThrow(/no linked cost entry/);
+    // a linked entry that cannot be found is refused BEFORE anything is written
     db.tables.change_orders = [coRow({ status: "approved", posted_entry_id: "missing" })];
     await expect(unwindChangeOrder({ co: co({ status: "approved", postedEntryId: "missing" }), actorId: "u-owner" }))
-      .rejects.toThrow(/Couldn't void the change order's cost entry .* — the change order is still approved/);
+      .rejects.toThrow(/linked cost entry can't be found — it is listed under "Ledger needs attention"/);
     expect(db.tables.change_orders[0].status).toBe("approved");
+    // a void that fails while the entry is still posted puts the CO back
+    db.tables.cost_entries.push({ id: "e-co", org_id: "o1", project_id: "p1", status: "posted", amount: 500, entry_type: "commitment" });
+    db.tables.change_orders = [coRow({ status: "approved", posted_entry_id: "e-co" })];
+    db.fail["cost_entries:update"] = [{ message: "void refused" }];
+    await expect(unwindChangeOrder({ co: co({ status: "approved", postedEntryId: "e-co" }), actorId: "u-owner" }))
+      .rejects.toThrow(/Couldn't void the change order's cost entry \(void refused\) — the change order is still approved/);
+    expect(db.tables.change_orders[0].status).toBe("approved");
+    expect(audited.filter((a) => a.action === "CHANGE_ORDER_VOIDED")).toHaveLength(0);
   });
 });
 
@@ -640,13 +661,55 @@ describe("legacy (pre-Round-G) entries attend their document — never a second 
 describe("approved change orders whose entry is gone — budget, listing, unwind and repair (COST-4 / REL-9 / COST-11 dw3)", () => {
   it("COST-4: only an approved CO whose linked entry is POSTED revises the budget", () => {
     const cos = [
-      co({ id: "c1", status: "approved", amount: 50_000, postedEntryId: "e1" }),   // posted → counts
-      co({ id: "c2", status: "approved", amount: 20_000, postedEntryId: "e2" }),   // voided by hand → does not
-      co({ id: "c3", status: "approved", amount: 7_000, postedEntryId: null }),    // no link → does not
+      co({ id: "c1", status: "approved", amount: 50_000, postedEntryId: "e1", postedEntryStatus: "posted" }),   // posted → counts
+      co({ id: "c2", status: "approved", amount: 20_000, postedEntryId: "e2", postedEntryStatus: "void" }),     // voided by hand → does not
+      co({ id: "c3", status: "approved", amount: 7_000, postedEntryId: null }),                                 // no link → does not
+      co({ id: "c5", status: "approved", amount: 3_000, postedEntryId: "e5", postedEntryStatus: "missing" }),   // entry gone → does not
+      co({ id: "c6", status: "approved", amount: 1_000, postedEntryId: "e6" }),                                 // status never read → does not
       co({ id: "c4", status: "proposed", amount: 9_000, postedEntryId: null }),
     ];
-    const map = approvedChangesByAccount(cos, [{ id: "e1", status: "posted" }, { id: "e2", status: "void" }]);
+    const map = approvedChangesByAccount(cos);
     expect(map.get("a1")).toBe(50_000);
+    expect(cos.filter(changeOrderOnLedger).map((c) => c.id)).toEqual(["c1"]);
+  });
+
+  it("COST-4 (verification fix): listChangeOrders reads the linked entries BY ID — an approval older than the loaded entry page still counts", async () => {
+    // 150 approved COs (two .in chunks); their entries are nowhere in any
+    // "newest 2,000" page the Costs tab loads — the budget no longer asks it.
+    for (let i = 0; i < 150; i++) {
+      db.tables.change_orders.push(coRow({ id: `c${i}`, co_number: `CO-${i}`, status: "approved", amount: 100, posted_entry_id: `e${i}` }));
+      db.tables.cost_entries.push({ id: `e${i}`, org_id: "o1", project_id: "p1", status: i === 0 ? "void" : "posted" });
+    }
+    db.tables.change_orders.push(coRow({ id: "c-gone", co_number: "CO-X", status: "approved", amount: 100, posted_entry_id: "e-nowhere" }));
+    const cos = await listChangeOrders("p1");
+    const byId = new Map(cos.map((c) => [c.id, c]));
+    expect(byId.get("c0")?.postedEntryStatus).toBe("void");
+    expect(byId.get("c1")?.postedEntryStatus).toBe("posted");
+    expect(byId.get("c149")?.postedEntryStatus).toBe("posted");
+    expect(byId.get("c-gone")?.postedEntryStatus).toBe("missing");
+    expect(approvedChangesByAccount(cos).get("a1")).toBe(149 * 100);
+    // a failed entry read is a failed read (REL-2), never a budget that silently dropped its changes
+    db.fail["cost_entries:select"] = [{ message: "statement timeout" }];
+    await expect(listChangeOrders("p1")).rejects.toThrow(/Couldn't read the change orders' cost entries: statement timeout/);
+  });
+
+  it("COST-4 (verification fix): the CO tiles and the report figure count by the same rule as the revised budget", async () => {
+    db.tables.cost_entries.push(
+      { id: "e-ok", org_id: "o1", project_id: "p1", status: "posted" },
+      { id: "e-void", org_id: "o1", project_id: "p1", status: "void" },
+    );
+    db.tables.change_orders.push(
+      coRow({ id: "c-ok", status: "approved", amount: 50_000, posted_entry_id: "e-ok", reason_code: "scope_gap" }),
+      coRow({ id: "c-void", co_number: "CO-002", status: "approved", amount: 20_000, posted_entry_id: "e-void", reason_code: "scope_gap" }),
+      coRow({ id: "c-null", co_number: "CO-003", status: "approved", amount: 7_000, posted_entry_id: null, reason_code: "design_error" }),
+      coRow({ id: "c-open", co_number: "CO-004", status: "proposed", amount: 9_000 }),
+    );
+    const cos = await listChangeOrders("p1");
+    const sum = summarizeChangeOrders(cos);
+    expect(sum).toMatchObject({ open: 1, approvedCount: 1, approvedAmount: 50_000, approvedOffLedger: 2 });
+    expect(sum.byReason).toEqual([{ reason: "scope_gap", count: 1, amount: 50_000 }]);
+    const budget = [...approvedChangesByAccount(cos).values()].reduce((a, b) => a + b, 0);
+    expect(sum.approvedAmount).toBe(budget);
   });
 
   it("an approved CO whose entry was voided by hand is listed (entry_void), and so are unlinked / missing ones; a posted link is not", async () => {
@@ -671,6 +734,23 @@ describe("approved change orders whose entry is gone — budget, listing, unwind
     expect(db.tables.change_orders[0].status).toBe("void");
     expect(audited.find((a) => a.action === "CHANGE_ORDER_VOIDED")?.details).toMatchObject({ reversedEntryId: "e-co", alreadyVoided: true });
     expect(auditRows("COST_ENTRY_VOIDED")).toHaveLength(0);   // nothing was voided twice
+  });
+
+  it("REL-9 (verification fix): Reverse on an already-void entry applies the repair's look-alike check — refused while a posted commitment carrying the CO number remains", async () => {
+    db.tables.cost_entries.push(
+      { id: "e-co", org_id: "o1", project_id: "p1", cost_account_id: "a1", entry_type: "commitment", status: "void", amount: 500, reference: "CO-001", source_document_id: null },
+      { id: "e-hand", org_id: "o1", project_id: "p1", cost_account_id: "a1", entry_type: "commitment", status: "posted", amount: 500, reference: "CO-001", source_document_id: null },
+    );
+    db.tables.change_orders.push(coRow({ status: "approved", posted_entry_id: "e-co", decided_by: "u-owner" }));
+    await expect(unwindChangeOrder({ co: co({ status: "approved", postedEntryId: "e-co" }), actorId: "u-owner" }))
+      .rejects.toThrow(/CO-001's own entry is already void, but a posted commitment referencing CO-001 is still on the budget line — link it/);
+    expect(db.tables.change_orders[0]).toMatchObject({ status: "approved", decision_note: null });
+    expect(audited.filter((a) => a.action === "CHANGE_ORDER_VOIDED")).toHaveLength(0);
+    // once the look-alike is gone the reverse goes through, exactly as the repair's reverse
+    db.tables.cost_entries[1].status = "void";
+    await unwindChangeOrder({ co: co({ status: "approved", postedEntryId: "e-co" }), actorId: "u-owner", actorName: "owner" });
+    expect(db.tables.change_orders[0].status).toBe("void");
+    expect(audited.filter((a) => a.action === "CHANGE_ORDER_VOIDED")).toHaveLength(1);
   });
 
   it("repairChangeOrder link: a posted commitment on the CO's line carrying its number is linked (checked, audited); anything else is refused", async () => {
@@ -728,17 +808,42 @@ describe("COST-13 posting limb — a total from a truncated (or unknown-extent) 
     expect(auditRows("COST_DOC_AWARDED")[0].details).toMatchObject({ pagesRead: 8, pagesTotal: 14, totalConfirmed: true });
   });
 
-  it("once the extent is recordable, UNKNOWN fails safe; a human-corrected total and a fully read document need no typed total", async () => {
+  it("once the extent is recordable, UNKNOWN fails safe; a fully read document and a total nobody read need no typed total", async () => {
     db.tables.cost_documents.push(
       aiRead({ id: "unk", pages_read: null, pages_total: null }),
-      aiRead({ id: "fixed", pages_read: null, pages_total: null, total_amount: 1200 }),   // typed by a human
       aiRead({ id: "full", pages_read: 3, pages_total: 3 }),
+      docRow({ id: "typed", parsed: null, total_amount: 800, pages_read: null, pages_total: null, rfq_group: "G2" }),   // no AI read at all
     );
     const unk = await awardQuote({ doc: doc({ id: "unk" }), siblings: [], costAccountId: "a1", actor });
     expect(unk.error).toMatch(/How much of this document the AI read is unknown/);
-    expect((await awardQuote({ doc: doc({ id: "fixed" }), siblings: [], costAccountId: "a1", actor })).ok).toBe(true);
     expect((await awardQuote({ doc: doc({ id: "full" }), siblings: [], costAccountId: "a1", actor })).ok).toBe(true);
-    expect(auditRows("COST_DOC_AWARDED").map((r) => (r.details as Row).pagesTotal)).toEqual([null, 3]);
+    expect((await awardQuote({ doc: doc({ id: "typed", rfqGroup: "G2" }), siblings: [], costAccountId: "a1", actor })).ok).toBe(true);
+    expect(auditRows("COST_DOC_AWARDED").map((r) => (r.details as Row).pagesTotal)).toEqual([3, null]);
+  });
+
+  it("verification fix: the confirmation is EXPLICIT — a typed-back total equal to the extraction posts with confirmedTotal; a hand-corrected total on a truncated read needs it too", async () => {
+    // The user typed the figure from the paper and it equals the AI's
+    // reading (setManualTotal wrote the same number): before the fix the
+    // lib read that as "from the read" and the award could never post
+    // unless the caller also passed confirmedTotal — which is exactly the
+    // explicit signal now, and the only one.
+    db.tables.cost_documents.push(aiRead({ id: "same", pages_read: 8, pages_total: 14 }));
+    const typed = await setManualTotal({ doc: doc({ id: "same" }), total: 1000, actor });
+    expect(typed.ok).toBe(true);
+    expect((await awardQuote({ doc: doc({ id: "same" }), siblings: [], costAccountId: "a1", actor })).error).toMatch(/read only pages 1–8 of 14/);
+    const ok = await awardQuote({ doc: doc({ id: "same" }), siblings: [], costAccountId: "a1", actor, confirmedTotal: 1000.4 });
+    expect(ok.ok).toBe(true);
+    expect(entries()[0]).toMatchObject({ amount: 1000, source_document_id: "same" });
+    // a hand-corrected total (differs from the extraction) is no longer waved through on a truncated read
+    db.tables.cost_documents.push(aiRead({ id: "i9", kind: "invoice", parsed: { total: 700 }, total_amount: 750, pages_read: 2, pages_total: 5 }));
+    const corrected = await postInvoice({ doc: doc({ id: "i9", kind: "invoice" }), costAccountId: "a1", actor });
+    expect(corrected.error).toMatch(/read only pages 1–2 of 5/);
+    expect((await postInvoice({ doc: doc({ id: "i9", kind: "invoice" }), costAccountId: "a1", actor, confirmedTotal: 750 })).ok).toBe(true);
+    // a confirmedTotal that disagrees with the row is refused even on a FULL read — the paper and the row differ
+    db.tables.cost_documents.push(aiRead({ id: "full2", pages_read: 3, pages_total: 3, rfq_group: "G3" }));
+    const wrong = await awardQuote({ doc: doc({ id: "full2", rfqGroup: "G3" }), siblings: [], costAccountId: "a1", actor, confirmedTotal: 1200 });
+    expect(wrong.error).toMatch(/confirmed total \(1,200\) doesn't match the stored total \(1,000\)/);
+    expect(entries()).toHaveLength(2);
   });
 
   it("an invoice follows the same rule, and before the extent columns exist the check is a no-op (the brief's fail-open window)", async () => {

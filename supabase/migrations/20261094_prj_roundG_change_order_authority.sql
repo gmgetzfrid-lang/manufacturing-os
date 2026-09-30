@@ -18,12 +18,47 @@
 --      ORs, it never narrows). On EVERY update: the proposer (created_by) is
 --      never rewritten, and the decider (decided_by) is written only by the
 --      decision itself (proposed → decided) or cleared by its revert
---      (→ proposed). On the proposed → approved/rejected transition the
---      decider is the SIGNED-IN CALLER: a session must record itself as
---      decided_by, and both rules below judge COALESCE(auth.uid(),
---      NEW.decided_by) — a client-written decided_by is never trusted (a
---      service-role or SQL-editor write, with no auth.uid(), is judged on
---      the decider it records):
+--      (→ proposed).
+--      A SIGNED-IN caller (auth.uid() set) may make exactly the writes
+--      lib/changeOrders.ts makes, and no others:
+--        · proposed → proposed — the budget-line pick before an approval
+--          (ChangeOrdersPanel); decided_by stays empty.
+--        · proposed → approved | rejected | void — the decision
+--          (decideChangeOrder). It records the caller: NEW.decided_by must be
+--          auth.uid(). approved / rejected run the two rules below; void (a
+--          proposer withdrawing, or anyone closing the paper) moves no money
+--          and runs neither, exactly as the lib.
+--        · approved → approved — the posted_entry_id link (decideChangeOrder
+--          after the post; repairChangeOrder link).
+--        · approved → void — the unwind (unwindChangeOrder) and the repair
+--          reverse (repairChangeOrder); the approver stays decided_by.
+--        · approved → proposed — ONLY revertDecision after a failed post: by
+--          the caller who approved (OLD.decided_by = auth.uid()), with no
+--          posted_entry_id and no unlinked posted commitment of this CO (its
+--          number, on its budget line) on the ledger.
+--        · void → approved — ONLY unwindChangeOrder's put-back when voiding
+--          the CO's entry failed: the CO keeps its posted_entry_id and that
+--          entry is still POSTED, so it returns to the approval its recorded
+--          approver made, backed by money on the ledger.
+--        · everything else is refused: rejected and void are TERMINAL, and
+--          approved → rejected does not exist.
+--      Also for a signed-in caller: a change order's org, project and number
+--      are never rewritten; its amount and budget line are frozen once it is
+--      decided; decided_at / decided_by_name move only with the decision or
+--      its revert; posted_entry_id is written only on an approved CO
+--      (approved → approved), never cleared, to a POSTED commitment of the
+--      same project and budget line whose reference is the CO number, with no
+--      source document and no other change order's link (repairChangeOrder's
+--      link tie), and is repointed only away from a void or missing entry
+--      (the repair link path) — never away from a posted one.
+--      The service role / SQL editor (auth.uid() IS NULL) keeps its pass on
+--      the transitions and the link; it is held to the two pins above and,
+--      on proposed → approved/rejected, to the two rules below judged on the
+--      decider it records.
+--      On the proposed → approved/rejected transition the decider is the
+--      SIGNED-IN CALLER: a session must record itself as decided_by, and both
+--      rules below judge COALESCE(auth.uid(), NEW.decided_by) — a
+--      client-written decided_by is never trusted:
 --        · self-decision (decided_by = created_by) is refused while the org
 --          has another eligible decider — an active member holding the
 --          controller tier, or the project owner (DEC-12's shape, derived from
@@ -93,15 +128,92 @@ BEGIN
       USING ERRCODE = 'check_violation';
   END IF;
 
+  -- A signed-in caller makes exactly the writes lib/changeOrders.ts makes.
+  -- The service role (auth.uid() IS NULL) keeps its pass here.
+  IF v_uid IS NOT NULL THEN
+    -- The identity is never rewritten; the money is frozen once decided.
+    IF NEW.org_id IS DISTINCT FROM OLD.org_id
+       OR NEW.project_id IS DISTINCT FROM OLD.project_id
+       OR NEW.co_number IS DISTINCT FROM OLD.co_number
+       OR (OLD.status <> 'proposed'
+           AND (NEW.amount IS DISTINCT FROM OLD.amount OR NEW.cost_account_id IS DISTINCT FROM OLD.cost_account_id)) THEN
+      RAISE EXCEPTION 'A change order keeps its org, project and number, and its amount and budget line are frozen once it is decided. COST-6, 20261094'
+        USING ERRCODE = 'check_violation';
+    END IF;
+
+    -- The status transitions the app performs, and no others.
+    IF OLD.status = 'proposed' THEN
+      -- proposed -> proposed (the budget-line pick), or the decision
+      -- (approved | rejected | void), which records the caller.
+      IF NEW.status <> 'proposed' AND NEW.decided_by IS DISTINCT FROM v_uid THEN
+        RAISE EXCEPTION 'A change order is decided by the signed-in caller: decided_by must be the caller. COST-6, 20261094'
+          USING ERRCODE = 'check_violation';
+      END IF;
+    ELSIF OLD.status = 'approved' AND NEW.status IN ('approved', 'void') THEN
+      -- The link (approved -> approved); the unwind and the repair reverse
+      -- (approved -> void). The approval record stays as decided (below).
+      NULL;
+    ELSIF OLD.status = 'approved' AND NEW.status = 'proposed' THEN
+      -- revertDecision, ONLY after a failed post: by the caller who approved,
+      -- while no entry is linked and no unlinked posted commitment of this CO
+      -- (its number, on its budget line) is on the ledger.
+      IF OLD.decided_by IS DISTINCT FROM v_uid
+         OR OLD.posted_entry_id IS NOT NULL OR NEW.posted_entry_id IS NOT NULL
+         OR EXISTS (
+           SELECT 1 FROM cost_entries e
+            WHERE e.project_id = OLD.project_id AND e.cost_account_id = OLD.cost_account_id
+              AND e.entry_type = 'commitment' AND e.status = 'posted' AND e.source_document_id IS NULL
+              AND btrim(e.reference) = OLD.co_number
+              AND NOT EXISTS (SELECT 1 FROM change_orders o WHERE o.posted_entry_id = e.id AND o.id <> OLD.id)) THEN
+        RAISE EXCEPTION 'An approved change order goes back to proposed only when its approval posted no money, and only by the caller who approved it. COST-6, 20261094'
+          USING ERRCODE = 'check_violation';
+      END IF;
+    ELSIF OLD.status = 'void' AND NEW.status = 'approved'
+          AND OLD.posted_entry_id IS NOT NULL AND NEW.posted_entry_id = OLD.posted_entry_id
+          AND EXISTS (SELECT 1 FROM cost_entries e WHERE e.id = OLD.posted_entry_id AND e.status = 'posted') THEN
+      -- unwindChangeOrder's put-back: voiding the entry failed, so the CO
+      -- returns to the approval its recorded approver made, still backed by
+      -- that posted entry.
+      NULL;
+    ELSIF OLD.status IN ('rejected', 'void') THEN
+      RAISE EXCEPTION 'A % change order is final: nothing on it changes any more. COST-6, 20261094', OLD.status
+        USING ERRCODE = 'check_violation';
+    ELSE
+      RAISE EXCEPTION 'An approved change order is reversed (void), never rejected. COST-6, 20261094'
+        USING ERRCODE = 'check_violation';
+    END IF;
+
+    -- When and by whom it was decided moves only with the decision or its revert.
+    IF OLD.status <> 'proposed' AND NEW.status <> 'proposed'
+       AND (NEW.decided_at IS DISTINCT FROM OLD.decided_at OR NEW.decided_by_name IS DISTINCT FROM OLD.decided_by_name) THEN
+      RAISE EXCEPTION 'When and by whom a change order was decided is written by the decision itself and never rewritten. COST-6, 20261094'
+        USING ERRCODE = 'check_violation';
+    END IF;
+
+    -- posted_entry_id links an approved CO to its OWN commitment.
+    IF NEW.posted_entry_id IS DISTINCT FROM OLD.posted_entry_id THEN
+      IF OLD.status <> 'approved' OR NEW.status <> 'approved' OR NEW.posted_entry_id IS NULL
+         OR EXISTS (SELECT 1 FROM cost_entries e WHERE e.id = OLD.posted_entry_id AND e.status = 'posted')
+         OR NOT EXISTS (
+           SELECT 1 FROM cost_entries e
+            WHERE e.id = NEW.posted_entry_id
+              AND e.project_id = NEW.project_id AND e.cost_account_id = NEW.cost_account_id
+              AND e.entry_type = 'commitment' AND e.status = 'posted' AND e.source_document_id IS NULL
+              AND btrim(e.reference) = NEW.co_number)
+         OR EXISTS (SELECT 1 FROM change_orders o WHERE o.posted_entry_id = NEW.posted_entry_id AND o.id <> NEW.id) THEN
+        RAISE EXCEPTION 'A change order links only its own posted commitment (same project and budget line, reference = its number, no source document, no other change order linked), only while approved, and never away from a posted entry. COST-6, 20261094'
+          USING ERRCODE = 'check_violation';
+      END IF;
+    END IF;
+  END IF;
+
   IF OLD.status <> 'proposed' OR NEW.status NOT IN ('approved', 'rejected') THEN
     RETURN NEW;
   END IF;
 
-  -- The decider is the signed-in caller, never a client-written uid.
-  IF v_uid IS NOT NULL AND NEW.decided_by IS DISTINCT FROM v_uid THEN
-    RAISE EXCEPTION 'A change order is decided by the signed-in caller: decided_by must be the caller. COST-6, 20261094'
-      USING ERRCODE = 'check_violation';
-  END IF;
+  -- The decider is the signed-in caller (recorded as decided_by, checked
+  -- above), never a client-written uid; a service write is judged on the
+  -- decider it records.
   v_decider := COALESCE(v_uid, NEW.decided_by);
 
   -- Separation of duties, derived from who else could decide (DEC-12 shape).
@@ -148,7 +260,7 @@ END;
 $$;
 
 COMMENT ON FUNCTION enforce_change_order_decision_guard() IS
-  'COST-6: created_by is never rewritten and decided_by only by the decision or its revert; on proposed → approved/rejected the decider is the caller (auth.uid(), else the recorded decided_by for a service write), a self-decision is refused while another eligible decider exists, and an approval above org_configurations.change_order_approval_threshold (malformed = none) by a non-controller.';
+  'COST-6: created_by is never rewritten and decided_by only by the decision or its revert. A signed-in caller makes only the app writes: proposed -> proposed | approved | rejected | void (the decision records the caller as decided_by), approved -> approved (the link) | void (unwind, repair reverse), approved -> proposed only by its approver while no money of it is on the ledger (the failed-post revert), void -> approved only while its linked entry is still posted (the unwind put-back); rejected and void are otherwise terminal. Org, project and number never change; amount and budget line freeze once decided; posted_entry_id is set only on an approved CO, to its own posted commitment (same project and line, reference = its number, no source document, no other CO linked), never away from a posted entry. On proposed -> approved/rejected a self-decision is refused while another eligible decider exists, and an approval above org_configurations.change_order_approval_threshold (malformed = none) by a non-controller. The service role keeps its pass on the transitions and the link.';
 
 DROP TRIGGER IF EXISTS trg_change_orders_decision_guard ON change_orders;
 CREATE TRIGGER trg_change_orders_decision_guard
@@ -200,6 +312,33 @@ SELECT 'decision guard is SECURITY DEFINER with search_path pinned, judges the c
           FROM pg_proc WHERE proname = 'enforce_change_order_decision_guard' AND pronargs = 0),
        NULL
 UNION ALL
+SELECT 'decision guard: for a signed-in caller rejected and void are TERMINAL; only the failed-post revert (approved to proposed, by its approver) and the unwind put-back (void to approved, entry still posted) step back',
+       (SELECT prosrc LIKE '%IF v_uid IS NOT NULL THEN%'
+           AND prosrc LIKE '%ELSIF OLD.status IN (''rejected'', ''void'') THEN%'
+           AND prosrc LIKE '%change order is final%'
+           AND prosrc LIKE '%ELSIF OLD.status = ''approved'' AND NEW.status = ''proposed'' THEN%'
+           AND prosrc LIKE '%IF OLD.decided_by IS DISTINCT FROM v_uid%'
+           AND prosrc LIKE '%ELSIF OLD.status = ''void'' AND NEW.status = ''approved''%'
+           AND prosrc LIKE '%WHERE e.id = OLD.posted_entry_id AND e.status = ''posted''%'
+          FROM pg_proc WHERE proname = 'enforce_change_order_decision_guard' AND pronargs = 0),
+       NULL
+UNION ALL
+SELECT 'decision guard: posted_entry_id is set only on an approved change order, to its own posted commitment (same project and line, its number, no source document, no other link), never away from a posted entry',
+       (SELECT prosrc LIKE '%IF NEW.posted_entry_id IS DISTINCT FROM OLD.posted_entry_id THEN%'
+           AND prosrc LIKE '%IF OLD.status <> ''approved'' OR NEW.status <> ''approved'' OR NEW.posted_entry_id IS NULL%'
+           AND prosrc LIKE '%AND e.project_id = NEW.project_id AND e.cost_account_id = NEW.cost_account_id%'
+           AND prosrc LIKE '%AND btrim(e.reference) = NEW.co_number)%'
+           AND prosrc LIKE '%WHERE o.posted_entry_id = NEW.posted_entry_id AND o.id <> NEW.id%'
+          FROM pg_proc WHERE proname = 'enforce_change_order_decision_guard' AND pronargs = 0),
+       NULL
+UNION ALL
+SELECT 'decision guard: identity never rewritten, amount and budget line frozen once decided, decided_at and decided_by_name move only with the decision',
+       (SELECT prosrc LIKE '%NEW.co_number IS DISTINCT FROM OLD.co_number%'
+           AND prosrc LIKE '%NEW.amount IS DISTINCT FROM OLD.amount%'
+           AND prosrc LIKE '%NEW.decided_at IS DISTINCT FROM OLD.decided_at%'
+          FROM pg_proc WHERE proname = 'enforce_change_order_decision_guard' AND pronargs = 0),
+       NULL
+UNION ALL
 SELECT 'trg_change_orders_decision_guard is a BEFORE UPDATE row trigger',
        (SELECT COUNT(*) = 1 FROM pg_trigger t
          WHERE NOT t.tgisinternal AND t.tgname = 'trg_change_orders_decision_guard'
@@ -224,4 +363,17 @@ SELECT 'inventory: approved change orders above their org threshold (decided bef
            AND abs(c.amount) > CASE WHEN o.data->>'amount' ~ '^\s*\d+(\.\d+)?\s*$' THEN (o.data->>'amount')::numeric END)::text
 UNION ALL
 SELECT 'inventory: change orders with no proposer recorded (created_by NULL — the self-decision rule cannot see them)', NULL,
-       (SELECT COUNT(*) FROM change_orders WHERE created_by IS NULL)::text;
+       (SELECT COUNT(*) FROM change_orders WHERE created_by IS NULL)::text
+UNION ALL
+SELECT 'inventory: change orders whose posted_entry_id is not a commitment of their own (project, budget line, CO number) — linked before this rail, left as they are', NULL,
+       (SELECT COUNT(*) FROM change_orders c
+         WHERE c.posted_entry_id IS NOT NULL
+           AND NOT EXISTS (SELECT 1 FROM cost_entries e
+                            WHERE e.id = c.posted_entry_id AND e.project_id = c.project_id
+                              AND e.cost_account_id = c.cost_account_id AND e.entry_type = 'commitment'
+                              AND btrim(e.reference) = c.co_number))::text
+UNION ALL
+SELECT 'inventory: void change orders whose linked entry is still POSTED (a reversal whose entry void failed — the only void a signed-in caller can put back to approved)', NULL,
+       (SELECT COUNT(*) FROM change_orders c
+         WHERE c.status = 'void'
+           AND EXISTS (SELECT 1 FROM cost_entries e WHERE e.id = c.posted_entry_id AND e.status = 'posted'))::text;

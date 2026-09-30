@@ -16,15 +16,21 @@
 // approve. Both rules are re-checked by `enforce_change_order_decision_guard`
 // (20261094) at the database, so the UI is never the only gate — the trigger
 // judges the SIGNED-IN caller (auth.uid()), never a client-written
-// decided_by / created_by. Default: no threshold until the org sets one — a
-// shipped default that blocked every large CO would strand real approvals;
-// the marker + audit make the gap visible instead. A malformed threshold
-// value (anything but a plain non-negative number) means no threshold, in
-// the lib and in the trigger alike.
+// decided_by / created_by, and admits for a signed-in caller exactly the
+// writes this file makes: the decision (proposed → approved | rejected |
+// void, recording the caller), the entry link, the unwind / repair reverse
+// (approved → void), the failed-post revert (approved → proposed, by the
+// approver, no money posted) and the unwind's put-back (void → approved,
+// entry still posted). Rejected and void are otherwise terminal; the link
+// ties to the CO's own commitment. Default: no threshold until the org sets
+// one — a shipped default that blocked every large CO would strand real
+// approvals; the marker + audit make the gap visible instead. A malformed
+// threshold value (anything but a plain non-negative number) means no
+// threshold, in the lib and in the trigger alike.
 
 import { supabase } from "@/lib/supabase";
 import { logAuditAction } from "@/lib/audit";
-import { addEntry, voidEntry, NO_ROW_MATCHED, type CostEntry } from "@/lib/costs";
+import { addEntry, voidEntry, NO_ROW_MATCHED } from "@/lib/costs";
 import { memberHoldsAny } from "@/lib/roleHeld";
 import { emit } from "@/lib/notify/dispatch";
 
@@ -66,6 +72,11 @@ export interface ChangeOrder {
   createdAt: string | null;
   /** COST-9: the cost entry an approval created — the unwind voids exactly this. */
   postedEntryId: string | null;
+  /** COST-4: the linked entry's status, read BY ID by `listChangeOrders` for
+   *  approved change orders ("missing" = the id matches no readable entry).
+   *  Null when there is no link or it was not read (every other reader). Only
+   *  "posted" puts the change order on the ledger (`changeOrderOnLedger`). */
+  postedEntryStatus?: "posted" | "void" | "missing" | null;
   /** COST-6: proposer and decider are the same person (allowed only when
    *  nobody else could decide; rendered as a visible marker). */
   selfDecided: boolean;
@@ -95,26 +106,33 @@ function rowToCo(r: Record<string, unknown>): ChangeOrder {
     createdByName: (r.created_by_name as string | null) ?? null,
     createdAt: (r.created_at as string | null) ?? null,
     postedEntryId: (r.posted_entry_id as string | null) ?? null,
+    postedEntryStatus: null,
     selfDecided: !!createdBy && !!decidedBy && createdBy === decidedBy,
   };
 }
 
+/** COST-4: is this change order's money on the ledger? Approved AND its
+ *  linked entry (posted_entry_id) is POSTED, as `listChangeOrders` read it by
+ *  id. An approval whose entry was voided by hand (the base's only unwind),
+ *  whose link is missing, or whose entry was not read, is not. The revised
+ *  budget (`approvedChangesByAccount`) and the CO tiles / report figures
+ *  (`summarizeChangeOrders`) both count by this one rule. */
+export function changeOrderOnLedger(co: Pick<ChangeOrder, "status" | "postedEntryId" | "postedEntryStatus">): boolean {
+  return co.status === "approved" && !!co.postedEntryId && co.postedEntryStatus === "posted";
+}
+
 /** COST-4: approved change-order totals by cost account — the map
- *  computeCostRollup folds into revisedBudget. Only a CO whose linked cost
- *  entry is still POSTED counts: an approval whose entry was voided by hand
- *  (the base's only unwind), or whose link is missing, revises nothing —
- *  money that is not on the ledger never raises the budget or Available.
- *  Those COs are listed under "Ledger needs attention" (listLedgerOrphans)
- *  with a link / reverse repair. Every consumer passes the project's
- *  entries (any status) beside the change orders. */
-export function approvedChangesByAccount(
-  cos: ChangeOrder[],
-  entries: ReadonlyArray<Pick<CostEntry, "id" | "status">>,
-): Map<string, number> {
-  const posted = new Set(entries.filter((e) => e.status === "posted").map((e) => e.id));
+ *  computeCostRollup folds into revisedBudget. Only a CO whose money is on
+ *  the ledger counts (`changeOrderOnLedger`): money that is not on the ledger
+ *  never raises the budget or Available. The linked entry's status comes from
+ *  `listChangeOrders`, which reads it BY ID — never from the Costs tab's
+ *  loaded entry page (the newest 2,000), which an older approval's entry can
+ *  fall outside of. COs that do not count are listed under "Ledger needs
+ *  attention" (listLedgerOrphans) with a link / reverse repair. */
+export function approvedChangesByAccount(cos: ChangeOrder[]): Map<string, number> {
   const out = new Map<string, number>();
   for (const c of cos) {
-    if (c.status !== "approved" || !c.costAccountId || !c.postedEntryId || !posted.has(c.postedEntryId)) continue;
+    if (!c.costAccountId || !changeOrderOnLedger(c)) continue;
     out.set(c.costAccountId, (out.get(c.costAccountId) ?? 0) + c.amount);
   }
   return out;
@@ -134,12 +152,30 @@ function reversalNote(actorName: string | null | undefined, note: string | null 
   return `Reversed by ${who} on ${when}${note?.trim() ? `: ${note.trim()}` : ""}`;
 }
 
+/** The change orders of a project, newest first. For every APPROVED CO with
+ *  a link, the linked entry's status is read BY ID (`.in`, in chunks of 100)
+ *  and carried as `postedEntryStatus` — the input of `changeOrderOnLedger`.
+ *  A failed read throws (REL-2): a budget that silently dropped its approved
+ *  changes would read like a real one. */
 export async function listChangeOrders(projectId: string): Promise<ChangeOrder[]> {
   const { data, error } = await supabase
     .from("change_orders").select("*").eq("project_id", projectId)
     .order("created_at", { ascending: false }).limit(500);
   if (error) throw new Error(error.message);
-  return ((data as Record<string, unknown>[]) ?? []).map(rowToCo);
+  const cos = ((data as Record<string, unknown>[]) ?? []).map(rowToCo);
+  const ids = [...new Set(cos.filter((c) => c.status === "approved" && c.postedEntryId).map((c) => c.postedEntryId as string))];
+  const status = new Map<string, string | null>();
+  for (let i = 0; i < ids.length; i += 100) {
+    const { data: rows, error: entryErr } = await supabase.from("cost_entries").select("id, status").in("id", ids.slice(i, i + 100));
+    if (entryErr) throw new Error(`Couldn't read the change orders' cost entries: ${entryErr.message}`);
+    for (const r of (rows ?? []) as Array<{ id: string; status: string | null }>) status.set(r.id, r.status);
+  }
+  for (const c of cos) {
+    if (c.status !== "approved" || !c.postedEntryId) continue;
+    const st = status.get(c.postedEntryId);
+    c.postedEntryStatus = st === undefined ? "missing" : st === "posted" ? "posted" : "void";
+  }
+  return cos;
 }
 
 export async function proposeChangeOrder(input: {
@@ -357,12 +393,18 @@ export async function decideChangeOrder(input: {
   return { warning };
 }
 
-/** Put a claimed decision back to proposed — checked. */
+/** Put a claimed APPROVAL back to proposed after its post failed — checked.
+ *  The only step back from approved the 20261094 guard admits for a
+ *  signed-in caller: by the caller who approved (this same call), while no
+ *  entry is linked and no unlinked posted commitment of the CO is on its
+ *  line. When the post DID land despite reporting failure, the guard refuses
+ *  and the CO is reported stuck — listed for the link repair, never
+ *  re-approvable into a second post. */
 async function revertDecision(coId: string): Promise<{ ok: boolean; error?: string }> {
   try {
     const { data, error } = await supabase.from("change_orders").update({
       status: "proposed", decided_at: null, decided_by: null, decided_by_name: null, decision_note: null,
-    }).eq("id", coId).neq("status", "proposed").select("id");
+    }).eq("id", coId).eq("status", "approved").select("id");
     if (error) return { ok: false, error: error.message };
     if (!data || data.length === 0) return { ok: false, error: "the row was not in the claimed state any more" };
     return { ok: true };
@@ -395,11 +437,17 @@ async function notifyApproval(co: ChangeOrder, actorId: string, actorName: strin
  * goes to void on the record and EXACTLY the entry it posted
  * (posted_entry_id) is voided — never a hunt through the entry list. The CO
  * is claimed first (compare-and-swap, so two unwinds cannot race) and put
- * back if the entry could not be voided. An entry that is ALREADY void (the
- * base's only unwind was voiding it by hand on the Costs tab) is not a
- * failure: no money of the CO remains, so the CO is voided and the audit row
- * says `alreadyVoided`. Recorded as CHANGE_ORDER_VOIDED with the entry id;
- * the note names the reverser and the date (decided_by keeps the approver).
+ * back if the entry could not be voided (the one void → approved write the
+ * 20261094 guard admits: the entry is still posted). An entry that is
+ * ALREADY void (the base's only unwind was voiding it by hand on the Costs
+ * tab) is not a failure: no money of the CO remains, so the CO is voided and
+ * the audit row says `alreadyVoided` — but only after the look-alike check
+ * repairChangeOrder's reverse applies: while a posted, unlinked commitment
+ * carrying the CO number is on its budget line (a hand re-post of its
+ * money), the unwind is refused — link it first. A linked entry that cannot
+ * be found is refused before anything is written (the repair line handles
+ * it). Recorded as CHANGE_ORDER_VOIDED with the entry id; the note names
+ * the reverser and the date (decided_by keeps the approver).
  */
 export async function unwindChangeOrder(input: {
   co: ChangeOrder; note?: string | null; actorId: string; actorName?: string | null;
@@ -412,6 +460,23 @@ export async function unwindChangeOrder(input: {
   if (!co.postedEntryId) {
     throw new Error(`${co.coNumber} has no linked cost entry to reverse — it is listed under "Ledger needs attention" on the Costs tab: link its entry there, or reverse it there when no entry of it remains.`);
   }
+  // The linked entry as it stands, BEFORE anything is written.
+  const { data: linkedRow, error: linkedErr } = await supabase.from("cost_entries").select("id, status").eq("id", co.postedEntryId).maybeSingle();
+  if (linkedErr) throw new Error(`Couldn't read ${co.coNumber}'s cost entry: ${linkedErr.message}`);
+  const linked = (linkedRow as { id: string; status: string | null } | null) ?? null;
+  if (!linked) {
+    throw new Error(`${co.coNumber}'s linked cost entry can't be found — it is listed under "Ledger needs attention" on the Costs tab: link its entry there, or reverse it there when no entry of it remains.`);
+  }
+  const entryAlreadyVoid = linked.status !== "posted";
+  if (entryAlreadyVoid) {
+    // Same rule as repairChangeOrder's reverse: a posted look-alike means
+    // money of this CO is still on the ledger, unlinked.
+    const look = await lookalikeEntries(co);
+    if (look.error) throw new Error(`Couldn't check ${co.coNumber}'s entries: ${look.error}`);
+    if (look.rows.length > 0) {
+      throw new Error(`${co.coNumber}'s own entry is already void, but a posted commitment referencing ${co.coNumber} is still on the budget line — link it under "Ledger needs attention" on the Costs tab (then Reverse voids it with the change order), or void it by hand first.`);
+    }
+  }
   const { data: claimed, error } = await supabase.from("change_orders").update({
     status: "void",
     decision_note: reversalNote(input.actorName, input.note),
@@ -419,17 +484,19 @@ export async function unwindChangeOrder(input: {
   if (error) throw new Error(error.message);
   if (!claimed || claimed.length === 0) throw new Error("Someone else just changed this change order — refresh to see the outcome.");
 
-  let alreadyVoided = false;
-  const voided = await voidEntry({ orgId: co.orgId, entryId: co.postedEntryId, actor: { uid: input.actorId, email: input.actorName ?? null } });
-  if (!voided.ok) {
-    // Zero rows matched: the entry may already be void — re-read it.
-    const { data: entry, error: entryErr } = await supabase.from("cost_entries").select("id, status").eq("id", co.postedEntryId).maybeSingle();
-    alreadyVoided = !entryErr && (entry as { status?: string } | null)?.status === "void";
-    if (!alreadyVoided) {
-      const { data: back, error: backErr } = await supabase.from("change_orders")
-        .update({ status: "approved", decision_note: co.decisionNote }).eq("id", co.id).eq("status", "void").select("id");
-      const restored = !backErr && !!back && back.length > 0;
-      throw new Error(`Couldn't void the change order's cost entry (${voided.error ?? "unknown"})${restored ? " — the change order is still approved." : ` AND the change order could not be put back — ${co.coNumber} reads void while its entry ${co.postedEntryId} is still posted. Void that entry by hand.`}`);
+  let alreadyVoided = entryAlreadyVoid;
+  if (!entryAlreadyVoid) {
+    const voided = await voidEntry({ orgId: co.orgId, entryId: co.postedEntryId, actor: { uid: input.actorId, email: input.actorName ?? null } });
+    if (!voided.ok) {
+      // Zero rows matched: the entry may have been voided meanwhile — re-read it.
+      const { data: entry, error: entryErr } = await supabase.from("cost_entries").select("id, status").eq("id", co.postedEntryId).maybeSingle();
+      alreadyVoided = !entryErr && (entry as { status?: string } | null)?.status === "void";
+      if (!alreadyVoided) {
+        const { data: back, error: backErr } = await supabase.from("change_orders")
+          .update({ status: "approved", decision_note: co.decisionNote }).eq("id", co.id).eq("status", "void").select("id");
+        const restored = !backErr && !!back && back.length > 0;
+        throw new Error(`Couldn't void the change order's cost entry (${voided.error ?? "unknown"})${restored ? " — the change order is still approved." : ` AND the change order could not be put back — ${co.coNumber} reads void while its entry ${co.postedEntryId} is still posted. Void that entry by hand.`}`);
+      }
     }
   }
 
@@ -550,12 +617,18 @@ export async function repairChangeOrder(input: {
   });
 }
 
-/** Per-project CO rollup for tiles + health. */
+/** Per-project CO rollup for tiles + health. "Approved" here means the
+ *  same thing the revised budget means (`changeOrderOnLedger`): approved
+ *  AND its linked entry posted, as `listChangeOrders` reads it — so the CO
+ *  panel's "N approved · X total change" and the report's change-order line
+ *  can never disagree with the Budget tile. `approvedOffLedger` counts the
+ *  approved COs whose money is not on the ledger (entry voided by hand,
+ *  missing, or no link) — the ones "Ledger needs attention" lists. */
 export function summarizeChangeOrders(cos: ChangeOrder[]): {
-  open: number; approvedCount: number; approvedAmount: number;
+  open: number; approvedCount: number; approvedAmount: number; approvedOffLedger: number;
   byReason: Array<{ reason: CoReason; count: number; amount: number }>;
 } {
-  const approved = cos.filter((c) => c.status === "approved");
+  const approved = cos.filter(changeOrderOnLedger);
   const byReason = (Object.keys(CO_REASON_LABEL) as CoReason[]).map((reason) => ({
     reason,
     count: approved.filter((c) => c.reasonCode === reason).length,
@@ -565,6 +638,7 @@ export function summarizeChangeOrders(cos: ChangeOrder[]): {
     open: cos.filter((c) => c.status === "proposed").length,
     approvedCount: approved.length,
     approvedAmount: approved.reduce((s, c) => s + c.amount, 0),
+    approvedOffLedger: cos.filter((c) => c.status === "approved" && !changeOrderOnLedger(c)).length,
     byReason,
   };
 }

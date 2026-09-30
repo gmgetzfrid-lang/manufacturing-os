@@ -356,9 +356,8 @@ function readExtentOf(raw: Record<string, unknown>): { recorded: boolean; pagesR
   return { recorded, pagesRead: n(raw.pages_read), pagesTotal: n(raw.pages_total) };
 }
 
-/** The total that would post and the AI's reading of it. A total is "from
- *  the read" when the number that posts IS the extraction (equal counts —
- *  fail safe); a human-typed or human-corrected total is not. */
+/** The total that would post and the AI's reading of it (null when the AI
+ *  read no total — the row's total was typed by hand with nothing read). */
 function postableTotal(fresh: CostDocument): { total: number | null; extracted: number | null } {
   const extracted = fresh.kind === "quote"
     ? parsedQuoteFrom(fresh)?.total ?? null
@@ -366,28 +365,34 @@ function postableTotal(fresh: CostDocument): { total: number | null; extracted: 
   return { total: fresh.totalAmount ?? extracted, extracted };
 }
 
-/** COST-13: refuse to post a total read from a truncated (or, once the
- *  extent is recordable, an unknown-extent) read unless the caller passes
- *  `confirmedTotal` — the total typed back from the paper — equal to the
- *  stored one (whole units, as the bid tab's typed-back prompt compares). */
+/** COST-13: the typed-back confirmation is EXPLICIT. When the AI read this
+ *  document and the read was truncated (or, once the extent is recordable,
+ *  of unknown extent), the total posts only with `confirmedTotal` — the
+ *  figure the user typed from the paper — equal to the row's total in whole
+ *  units. Whether that total equals the extraction or was corrected by hand
+ *  does not matter: the lib no longer infers "typed" from "differs from the
+ *  AI" (a typed-back figure equal to the extraction used to read as "from
+ *  the read" and could never post). A `confirmedTotal` that differs from the
+ *  row's total is refused whatever the extent — the paper and the row
+ *  disagree. No refusal: extent not recorded (before 20261096), a full
+ *  read, or no AI total at all (nothing was read to be incomplete). */
 function extentRefusal(fresh: CostDocument, raw: Record<string, unknown>, confirmedTotal: number | null | undefined): string | null {
   const { total, extracted } = postableTotal(fresh);
-  if (total == null || !(total > 0) || extracted == null || total !== extracted) return null;
+  if (total == null || !(total > 0)) return null;   // the no-total refusal follows the claim
+  const shown = total.toLocaleString();
+  if (confirmedTotal != null && (!Number.isFinite(confirmedTotal) || Math.round(confirmedTotal) !== Math.round(total))) {
+    return `The confirmed total (${Number.isFinite(confirmedTotal) ? confirmedTotal.toLocaleString() : String(confirmedTotal)}) doesn't match the stored total (${shown}) — correct the total first if the paper says something else.`;
+  }
+  if (extracted == null) return null;
   const ext = readExtentOf(raw);
   if (!ext.recorded) return null;
   const truncated = ext.pagesRead != null && ext.pagesTotal != null && ext.pagesRead < ext.pagesTotal;
   const unknown = ext.pagesRead == null || ext.pagesTotal == null;
   if (!truncated && !unknown) return null;
-  const shown = total.toLocaleString();
-  if (confirmedTotal == null) {
-    return truncated
-      ? `The AI read only pages 1–${ext.pagesRead} of ${ext.pagesTotal} of this document, so its total (${shown}) may come from an incomplete read. Type the total from the paper to confirm it, or correct the total first.`
-      : `How much of this document the AI read is unknown, so its total (${shown}) may come from an incomplete read. Type the total from the paper to confirm it, or correct the total first.`;
-  }
-  if (!Number.isFinite(confirmedTotal) || Math.round(confirmedTotal) !== Math.round(total)) {
-    return `The confirmed total (${Number.isFinite(confirmedTotal) ? confirmedTotal.toLocaleString() : String(confirmedTotal)}) doesn't match the stored total (${shown}) — correct the total first if the paper says something else.`;
-  }
-  return null;
+  if (confirmedTotal != null) return null;   // typed back and equal (checked above)
+  return truncated
+    ? `The AI read only pages 1–${ext.pagesRead} of ${ext.pagesTotal} of this document, so its total (${shown}) may come from an incomplete read. Type the total from the paper to confirm it (correct the row's total first if the paper says something else).`
+    : `How much of this document the AI read is unknown, so its total (${shown}) may come from an incomplete read. Type the total from the paper to confirm it (correct the row's total first if the paper says something else).`;
 }
 
 /** The reference an award / invoice entry carried before Round G (and
@@ -477,9 +482,13 @@ export async function awardQuote(input: {
    *  (COST_DOC_AWARD_OVERRIDE, written by this function after the post — a
    *  caller does not write its own override row). */
   overrideReason?: string | null;
-  /** COST-13: the total typed back from the paper. Required when the total
-   *  that would post came from a truncated read, or — once the read extent
-   *  is recorded (20261096) — from a read of unknown extent. */
+  /** COST-13: the figure the user typed from the PAPER, in the document's
+   *  currency — pass the typed number itself, never the row's total. It
+   *  must equal the row's total in whole units (else refused). Required
+   *  when the AI read this document and the read was truncated, or — once
+   *  the read extent is recorded (20261096) — of unknown extent, whether
+   *  the row's total is the extraction or a hand correction. Omit it when
+   *  nothing was typed. */
   confirmedTotal?: number | null;
 }): Promise<{ ok: boolean; error?: string; warning?: string }> {
   const { doc } = input;
@@ -611,7 +620,8 @@ export async function postInvoice(input: {
   doc: CostDocument;
   costAccountId: string;
   actor: Actor;
-  /** COST-13: the total typed back from the paper (see awardQuote). */
+  /** COST-13: the figure the user typed from the paper (same contract as
+   *  awardQuote's `confirmedTotal`). */
   confirmedTotal?: number | null;
 }): Promise<{ ok: boolean; error?: string }> {
   const { doc } = input;
@@ -814,11 +824,14 @@ export async function listLedgerOrphans(orgId: string, projectId: string): Promi
  *             again (rivals it declined stay declined; decide them by hand).
  * Controller / owner writes only (RLS); the entry check is re-done here so
  * a repair on a document that has since been made whole is refused. A
- * document whose linked entry was VOIDED by hand is not re-posted (the void
- * was the correction, and its total is locked); it may still be reverted,
- * since no money of its own remains on the ledger. A document that an
- * UNLINKED pre-Round-G entry of its award/invoice shape stands for (any
- * status) is refused BOTH actions — its money reached the ledger.
+ * document whose linked entry was VOIDED by hand is refused BOTH actions:
+ * the void was the correction (a re-post would bring back the locked total),
+ * and a revert would reopen the paper for a fresh award / post beside the
+ * corrected money — the amount the controller hand-posted after voiding
+ * would be joined by a second commitment. It is not an orphan (the linked
+ * entry attends it) and stays as it is. A document that an UNLINKED
+ * pre-Round-G entry of its award/invoice shape stands for (any status) is
+ * refused BOTH actions too — its money reached the ledger.
  */
 export async function repairCostDoc(input: {
   doc: CostDocument; action: "repost" | "revert"; costAccountId?: string | null; actor: Actor;
@@ -848,10 +861,19 @@ export async function repairCostDoc(input: {
     };
   }
 
+  // A linked entry voided by hand: the void was the correction. Neither
+  // action — a re-post brings back the locked total, a revert reopens the
+  // paper so a fresh award / post would add money beside the correction.
+  if (links.length > 0) {
+    return {
+      ok: false,
+      error: input.action === "repost"
+        ? "This document's cost entry was voided by hand — that void was the correction, so its locked total is not re-posted. Post the corrected amount on the budget line instead."
+        : "This document's cost entry was voided by hand — that void was the correction, so the document is not reopened: awarding or posting it again would put its money on the ledger a second time beside the correction. It stays as it is; post any corrected amount on the budget line.",
+    };
+  }
+
   if (input.action === "repost") {
-    if (links.length > 0) {
-      return { ok: false, error: "This document's cost entry was voided by hand — that void was the correction, so its locked total is not re-posted. Post the corrected amount on the budget line instead." };
-    }
     if (!input.costAccountId) return { ok: false, error: "Pick the budget line the money posts to." };
     const mismatch = await currencyMismatch(fresh, input.costAccountId);
     if (mismatch) return { ok: false, error: mismatch };
