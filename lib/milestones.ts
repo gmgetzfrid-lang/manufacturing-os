@@ -1071,43 +1071,27 @@ export interface ImportPlan {
    *  the app to an imported row is removed if the file does not carry it).
    *  `onlyStructure` counts rows whose plan fields are otherwise unchanged. */
   structure: { rows: number; onlyStructure: number; parents: number; linksAdded: number; linksRemoved: number };
-  /** Existing rows keyed by POSITION before content keys (`csv-row:N` /
-   *  `msp-row:N`), or by an earlier content key, that this file's row matches
-   *  on name + planned start + planned finish — a content-keyed row exactly,
-   *  a position-keyed row under the ONE reading decided for the whole import
-   *  (`positionReading`): adopted and re-keyed instead of added beside
-   *  themselves (PT SCH-3). `rekeyedOnly` counts those whose plan and
-   *  structure are otherwise unchanged — they are still written, to carry
-   *  the new key. */
+  /** Existing rows re-keyed instead of added beside themselves (PT SCH-3):
+   *  a row keyed by POSITION before content keys (`csv-row:N` /
+   *  `msp-row:N`) adopted by its unique name (`positionAdopted`), or a row
+   *  under an earlier content key whose name and planned dates match exactly.
+   *  `rekeyedOnly` counts those whose plan and structure are otherwise
+   *  unchanged — they are still written, to carry the new key. */
   rekeyed: number;
   rekeyedOnly: number;
-  /** Of `rekeyed`: position-keyed rows adopted under a non-zero offset (the
-   *  earlier importer read their dates in its browser's zone). Their planned
-   *  dates are rewritten to the file's reading, so they also count as
-   *  `changed`. */
-  rekeyedByZone: number;
-  /** File rows that fit a position-keyed row under the decided reading, but
-   *  not one-to-one (identical rows whose counts differ between the file and
-   *  the board): not adopted — added as new — and named here (first 10). */
-  zoneAmbiguous: number;
-  zoneAmbiguousNames: string[];
-  /** How position-keyed rows were read, decided ONCE for the whole import
-   *  before anything is paired; null when no position row could pair with
-   *  any row of this file. `offsetMinutes` is stored minus the file's wall
-   *  clock (0 = stored exactly; +300 = the earlier import ran at UTC-5), or
-   *  null when no reading dominated — then no position row is adopted and
-   *  `undecidedRows` of them stay as they are, listed as not in this file.
-   *  `dstTwinMinutes` is the offset one hour away that rows on the other side
-   *  of a DST change carry, when some time zone explains both. `support` /
-   *  `against` count the file rows that fit only one reading, for the chosen
-   *  one (twin included) and for others. */
-  positionReading: null | {
-    offsetMinutes: number | null;
-    dstTwinMinutes: number | null;
-    support: number;
-    against: number;
-    undecidedRows: number;
-  };
+  /** Position-keyed rows adopted: each task name (normalised: trimmed,
+   *  inner spaces collapsed, case-folded) occurs ONCE among the position
+   *  rows of its source tag and ONCE in this file, so the row is that task
+   *  whatever its dates — the file's planned dates are written, the crew's
+   *  progress is kept as on any re-import. Names: the first 20. */
+  positionAdopted: number;
+  positionAdoptedNames: string[];
+  /** Position-keyed rows NOT adopted because their name repeats — among the
+   *  position rows or in this file: they are kept as they are (listed as not
+   *  in this file) and the file's rows of that name are added. Names: the
+   *  first 10. */
+  positionRepeated: number;
+  positionRepeatedNames: string[];
   /** The per-file row cap the importer enforces. */
   rowCap: number;
 }
@@ -1328,39 +1312,6 @@ async function fetchExistingImportRows(input: ImportParsedInput, missing: Set<Sc
   }
 }
 
-/** A time zone's UTC offset in minutes (east positive) at an instant, from
- *  the runtime's zone data; null when the runtime cannot say. */
-const zoneFormatters = new Map<string, Intl.DateTimeFormat>();
-const zoneOffsetCache = new Map<string, number | null>();
-function zoneOffsetMinutesAt(zone: string, t: number): number | null {
-  const key = `${zone}|${t}`;
-  if (zoneOffsetCache.has(key)) return zoneOffsetCache.get(key)!;
-  let out: number | null = null;
-  try {
-    let f = zoneFormatters.get(zone);
-    if (!f) { f = new Intl.DateTimeFormat("en-US", { timeZone: zone, timeZoneName: "longOffset" }); zoneFormatters.set(zone, f); }
-    const name = f.formatToParts(new Date(t)).find((x) => x.type === "timeZoneName")?.value ?? "";
-    const m = name.match(/^GMT(?:([+-])(\d{1,2})(?::(\d{2}))?)?$/);
-    if (m) out = m[1] ? (m[1] === "-" ? -1 : 1) * (Number(m[2]) * 60 + Number(m[3] ?? 0)) : 0;
-  } catch { out = null; }
-  if (zoneOffsetCache.size > 50_000) zoneOffsetCache.clear();
-  zoneOffsetCache.set(key, out);
-  return out;
-}
-/** The IANA zones whose offset at EVERY given instant is minus the given
- *  stored-minus-wall-clock offset (ms) — the zones an earlier import could
- *  have run in. Empty when the runtime lists no zones. */
-function zonesShowing(points: Array<[number, number]>): string[] {
-  const list = typeof Intl.supportedValuesOf === "function" ? Intl.supportedValuesOf("timeZone") : [];
-  if (points.length === 0) return [];
-  // Screen on one instant per offset first, then check every instant.
-  const firstOf = new Map<number, number>();
-  for (const [t, d] of points) if (!firstOf.has(d)) firstOf.set(d, t);
-  const screen = Array.from(firstOf.entries()).map(([d, t]) => [t, d] as [number, number]);
-  const fits = (zone: string, [t, d]: [number, number]) => zoneOffsetMinutesAt(zone, t) === -d / 60_000;
-  return list.filter((z) => screen.every((pt) => fits(z, pt)) && points.every((pt) => fits(z, pt)));
-}
-
 /** A keyless CSV row's content key, or a position key from before content
  *  keys: `csv-key:…` / `msp-row:12` → { tag: "csv" | "msp", kind }. */
 function keylessRef(ref: string | null | undefined): { tag: string; kind: "row" | "key" } | null {
@@ -1495,214 +1446,79 @@ export async function importMilestonesFromParsed(input: ImportParsedInput): Prom
     const e = existingByRef.get(p.row.externalRef);
     if (e) attach(p, e);
   }
-  // Adoption (PT SCH-3): a keyless row whose content key matches nothing may
-  // be a row imported before content keys — keyed by its POSITION
-  // (`csv-row:N`) — or under an earlier content key (`csv-key:…`). Such a
-  // row of the same tag and name (trimmed, case-folded) whose planned dates
-  // match is adopted and re-keyed, keeping its id and the crew's progress,
-  // instead of a duplicate being added beside it.
-  const candidates = new Map<string, ExistingImportRow[]>();
+  // Adoption (PT SCH-3): a keyless file row whose content key matches no
+  // existing row may be a row imported earlier — under an earlier content key
+  // (`csv-key:…`), or before content keys by its POSITION (`csv-row:N`).
+  //   * Earlier content key: adopted when name and planned dates match
+  //     exactly (this round's parser wrote it), first unclaimed by key.
+  //   * Position row: adopted ONLY when its normalised name occurs once among
+  //     the position rows of its tag and once in this file — then it is that
+  //     task whatever its dates (the old parser may have read them in the
+  //     importing browser's zone; the file's dates are written, the crew's
+  //     progress is kept as on any re-import). A repeated name — on either
+  //     side — is never adopted: its file rows are added, its earlier rows kept
+  //     and listed as not in this file, and the plan says so. No offset, zone
+  //     or DST inference: nothing can move a completion between tasks.
+  // Every lookup is a map built once, so the step is linear in the rows.
+  const normName = (n: unknown) => String(n ?? "").trim().replace(/\s+/g, " ").toLowerCase();
   const rowIndex = (ref: string) => Number(ref.slice(ref.indexOf(":") + 1)) || 0;
+  const keylessKeyRow = (p: Prepared) => { const k = keylessRef(p.row.externalRef); return k && k.kind === "key" ? k : null; };
+  const instantKey = (v: unknown): string => {
+    if (v == null || v === "") return "";
+    const t = Date.parse(String(v));
+    return Number.isFinite(t) ? String(t) : String(v);
+  };
+  const exactKey = (tag: string, name: unknown, planned: unknown, start: unknown) =>
+    `${tag}|${normName(name)}|${instantKey(planned)}|${lacks("20260703") ? "" : instantKey(start)}`;
+  const byExactKey = new Map<string, ExistingImportRow[]>();
+  const positionByName = new Map<string, ExistingImportRow[]>();
   for (const e of existingRows) {
     const k = keylessRef(e.external_ref);
     if (!k || claimed.has(e.id) || fileRefs.has(e.external_ref!)) continue;
-    const bucket = `${k.tag}|${String(e.name ?? "").trim().toLowerCase()}`;
-    const list = candidates.get(bucket) ?? [];
+    const map = k.kind === "key" ? byExactKey : positionByName;
+    const key = k.kind === "key" ? exactKey(k.tag, e.name, e.planned_at, e.planned_start_at) : `${k.tag}|${normName(e.name)}`;
+    const list = map.get(key) ?? [];
+    if (list.length === 0) map.set(key, list);
     list.push(e);
-    candidates.set(bucket, list);
   }
-  const keylessKeyRow = (p: Prepared) => { const k = keylessRef(p.row.externalRef); return k && k.kind === "key" ? k : null; };
-
-  // Position rows: ONE reading for the whole import, decided before anything
-  // is paired. Before this round the parser read timed M/D/Y, weekday-
-  // prefixed ("Mon 6/1/26"), year-first and written-out values with new
-  // Date() — in the importing browser's zone — so every position row of an
-  // import sits one zone offset from the file's wall-clock-as-UTC reading (0
-  // when that browser ran at UTC, or for a date-only / ISO value). Pairing
-  // row by row on "some offset fits" pairs repeated same-named tasks with
-  // their neighbours (a 1 PM walkdown taking the 8 AM one's row, a shift
-  // check taking the next shift's), so:
-  //   1. every (file row, position row) of the same tag and name whose finish
-  //      — and start, unless the database lacks 20260703 — are off by a
-  //      multiple of 15 minutes within ±14 h is a candidate pairing (a start
-  //      exactly one hour from the finish's offset = a DST change between them);
-  //   2. a pairing is EVIDENCE when its file row, or its position row, fits
-  //      nothing under any other offset; each file row in evidence supports
-  //      that offset (exact matches are offset 0 in the same count);
-  //   3. the reading is the best-supported offset, with its DST twin one hour
-  //      away when some IANA time zone gives exactly those two offsets at every
-  //      evidence instant (then each date must carry that zone's offset at
-  //      its own instant); it is DECIDED only when it is the single best,
-  //      supported by at least one file row (offset 0) or two (any other),
-  //      and by at least twice as many file rows as every other offset
-  //      together;
-  //   4. only pairings that fit the decided reading are adopted, and only one
-  //      to one — identical rows (same name and dates) pair in file order when
-  //      the file and the board hold the same number of them; otherwise they
-  //      are added and counted as ambiguous;
-  //   5. undecided: no position row is adopted — every file row is added, the
-  //      position rows stay as they are, listed as not in this file, and the
-  //      plan says why. Never a guess.
-  const QUARTER_HOUR_MS = 15 * 60_000, HOUR_MS = 3_600_000, MAX_ZONE_MS = 14 * HOUR_MS;
-  const instantOf = (v: unknown): number | null => {
-    if (v == null || v === "") return null;
-    const t = Date.parse(String(v));
-    return Number.isFinite(t) ? t : null;
-  };
-  const plausibleOffset = (d: number) => Math.abs(d) <= MAX_ZONE_MS && d % QUARTER_HOUR_MS === 0;
-  type Pairing = { p: Prepared; c: ExistingImportRow; dF: number; dS: number | null; cF: number; cS: number | null };
-  // Each bucket's position rows, parsed once and sorted by finish, so a file
-  // row looks only at the rows within ±14 h of its own finish.
-  type Stored = { c: ExistingImportRow; cF: number; cS: number | null };
-  const storedByBucket = new Map<string, Stored[]>();
-  for (const [bucket, list] of candidates) {
-    const rows: Stored[] = [];
-    for (const c of list) {
-      if (keylessRef(c.external_ref)?.kind !== "row") continue;
-      const cF = instantOf(c.planned_at);
-      if (cF !== null) rows.push({ c, cF, cS: lacks("20260703") ? null : instantOf(c.planned_start_at) });
-    }
-    rows.sort((a, b) => a.cF - b.cF);
-    if (rows.length > 0) storedByBucket.set(bucket, rows);
-  }
-  const pairings: Pairing[] = [];
-  const pairingsOfP = new Map<Prepared, Pairing[]>(), pairingsOfC = new Map<string, Pairing[]>();
-  for (const p of prepared) {
-    if (p.existing) continue;
-    const k = keylessKeyRow(p);
-    const fF = instantOf(p.plannedIso), fS = instantOf(p.plannedStartIso);
-    const rows = k ? storedByBucket.get(`${k.tag}|${p.name.toLowerCase()}`) : undefined;
-    if (!rows || fF === null) continue;
-    let lo = 0, hi = rows.length;
-    while (lo < hi) { const mid = (lo + hi) >> 1; if (rows[mid].cF < fF - MAX_ZONE_MS) lo = mid + 1; else hi = mid; }
-    for (let i = lo; i < rows.length && rows[i].cF <= fF + MAX_ZONE_MS; i++) {
-      const { c, cF, cS } = rows[i];
-      const dF = cF - fF;
-      if (!plausibleOffset(dF)) continue;
-      let dS: number | null = null;
-      if (!lacks("20260703")) {
-        if ((fS === null) !== (cS === null)) continue;
-        if (fS !== null && cS !== null) {
-          dS = cS - fS;
-          if (!plausibleOffset(dS) || (dS !== dF && Math.abs(dS - dF) !== HOUR_MS)) continue;
-        }
-      }
-      const pr: Pairing = { p, c, dF, dS, cF, cS: lacks("20260703") ? null : cS };
-      pairings.push(pr);
-      (pairingsOfP.get(p) ?? pairingsOfP.set(p, []).get(p)!).push(pr);
-      (pairingsOfC.get(c.id) ?? pairingsOfC.set(c.id, []).get(c.id)!).push(pr);
-    }
-  }
-  const oneOffset = (list: Pairing[]) => list.every((x) => x.dF === list[0].dF);
-  const singleP = new Map<Prepared, boolean>(), singleC = new Map<string, boolean>();
-  for (const [q, list] of pairingsOfP) singleP.set(q, oneOffset(list));
-  for (const [id, list] of pairingsOfC) singleC.set(id, oneOffset(list));
-  const evidence = pairings.filter((x) => singleP.get(x.p) || singleC.get(x.c.id));
-  const supportOf = (accept: (d: number) => boolean) => new Set(evidence.filter((x) => accept(x.dF)).map((x) => x.p)).size;
-  let positionReading: ImportPlan["positionReading"] = null;
-  /** Whether a pairing fits the decided reading; null while undecided. */
-  let fitsReading: ((x: Pairing) => boolean) | null = null;
-  if (pairings.length > 0) {
-    const byOffset = new Map<number, number>();
-    for (const d of new Set(evidence.map((x) => x.dF))) byOffset.set(d, supportOf((v) => v === d));
-    const ranked = Array.from(byOffset.entries()).sort((a, b) => b[1] - a[1]);
-    // Two best offsets one hour apart with equal support are one reading and
-    // its DST twin; any other tie at the top is undecided.
-    const tiedTop = ranked.length > 1 && ranked[0][1] === ranked[1][1];
-    const D: number | null = ranked.length === 0 ? null
-      : !tiedTop ? ranked[0][0]
-      : Math.abs(ranked[0][0] - ranked[1][0]) === HOUR_MS && (ranked.length < 3 || ranked[2][1] < ranked[0][1]) ? Math.max(ranked[0][0], ranked[1][0])
-      : null;
-    let twin: number | null = null;
-    let zones: string[] = [];
-    if (D !== null) {
-      // The DST twin: offsets one hour from D among the evidence (a finish or
-      // a start), justified only by a zone that shows D and the twin at every
-      // evidence instant.
-      const points: Array<[number, number]> = [];
-      for (const x of evidence) { points.push([x.cF, x.dF]); if (x.dS !== null && x.cS !== null) points.push([x.cS, x.dS]); }
-      const count = (d: number) => points.filter(([, v]) => v === d).length;
-      const t = [D + HOUR_MS, D - HOUR_MS].filter((d) => count(d) > 0).sort((a, b) => count(b) - count(a))[0];
-      if (t !== undefined) {
-        const used = points.filter(([, v]) => v === D || v === t);
-        zones = zonesShowing(used);
-        if (zones.length > 0) twin = t;
-      }
-    }
-    // Reported against the best reading even when a tie leaves it undecided.
-    const shown = D ?? (ranked.length > 0 ? ranked[0][0] : null);
-    const accepted = (d: number) => d === shown || (twin !== null && d === twin);
-    const support = shown === null ? 0 : supportOf(accepted);
-    const against = supportOf((d) => !accepted(d));
-    const decided = D !== null && support >= (D === 0 ? 1 : 2) && support >= 2 * against;
-    const undecidedRows = decided ? 0 : new Set(pairings.map((x) => x.c.id)).size;
-    positionReading = {
-      offsetMinutes: decided ? D! / 60_000 : null,
-      dstTwinMinutes: decided && twin !== null ? twin / 60_000 : null,
-      support, against, undecidedRows,
-    };
-    if (decided) {
-      const fieldFits = (instant: number, d: number) => twin === null
-        ? d === D
-        : accepted(d) && zones.every((z) => zoneOffsetMinutesAt(z, instant) === -d / 60_000);
-      fitsReading = (x) => fieldFits(x.cF, x.dF) && (x.dS === null || x.cS === null || fieldFits(x.cS, x.dS));
-    }
-  }
-  let rekeyedByZone = 0;
-  const zoneAmbiguous: Prepared[] = [];
-  if (fitsReading) {
-    const fit = pairings.filter(fitsReading);
-    const fitP = new Map<Prepared, ExistingImportRow[]>(), fitC = new Map<string, Prepared[]>();
-    const offsetOf = new Map<string, Pairing>();
-    for (const x of fit) {
-      (fitP.get(x.p) ?? fitP.set(x.p, []).get(x.p)!).push(x.c);
-      (fitC.get(x.c.id) ?? fitC.set(x.c.id, []).get(x.c.id)!).push(x.p);
-      offsetOf.set(`${x.p.index}|${x.c.id}`, x);
-    }
-    const sameMembers = <T,>(a: T[], b: T[]) => a.length === b.length && a.every((v) => b.includes(v));
-    const settled = new Set<Prepared>();
-    for (const p of prepared) {
-      const S = fitP.get(p);
-      if (!S || settled.has(p)) continue;
-      const T = fitC.get(S[0].id)!;
-      // One to one: a block of identical rows, the same number on both sides.
-      const oneToOne = S.length === T.length
-        && S.every((c) => sameMembers(fitC.get(c.id)!, T))
-        && T.every((q) => sameMembers(fitP.get(q)!, S));
-      if (!oneToOne) { zoneAmbiguous.push(p); settled.add(p); continue; }
-      const files = [...T].sort((a, b) => a.index - b.index);
-      const rows = [...S].sort((a, b) => rowIndex(a.external_ref!) - rowIndex(b.external_ref!));
-      files.forEach((q, i) => {
-        const c = rows[i];
-        const x = offsetOf.get(`${q.index}|${c.id}`)!;
-        q.rekeyedFrom = c.external_ref;
-        attach(q, c);
-        if (x.dF !== 0 || (x.dS ?? 0) !== 0) rekeyedByZone++;
-        settled.add(q);
-      });
-    }
-  }
-  // Earlier content keys: exact only (this round's parser wrote them).
+  for (const list of byExactKey.values()) list.sort((a, b) => String(a.external_ref).localeCompare(String(b.external_ref)));
   for (const p of prepared) {
     if (p.existing) continue;
     const k = keylessKeyRow(p);
     if (!k) continue;
-    const e = (candidates.get(`${k.tag}|${p.name.toLowerCase()}`) ?? [])
-      .filter((c) => keylessRef(c.external_ref)?.kind === "key")
-      .sort((a, b) => String(a.external_ref).localeCompare(String(b.external_ref)))
-      .find((c) => !claimed.has(c.id)
-        && samePlanValue("planned_at", c.planned_at, p.plannedIso)
-        && (lacks("20260703") || samePlanValue("planned_start_at", c.planned_start_at, p.plannedStartIso)));
+    const e = byExactKey.get(exactKey(k.tag, p.name, p.plannedIso, p.plannedStartIso))?.find((c) => !claimed.has(c.id));
     if (!e) continue;
     p.rekeyedFrom = e.external_ref;
     attach(p, e);
   }
+  const fileNameCount = new Map<string, number>();
+  for (const p of prepared) fileNameCount.set(normName(p.name), (fileNameCount.get(normName(p.name)) ?? 0) + 1);
+  const positionAdopted: Prepared[] = [];
+  for (const p of prepared) {
+    if (p.existing) continue;
+    const k = keylessKeyRow(p);
+    if (!k) continue;
+    const rows = positionByName.get(`${k.tag}|${normName(p.name)}`);
+    if (!rows || rows.length !== 1 || fileNameCount.get(normName(p.name)) !== 1 || claimed.has(rows[0].id)) continue;
+    p.rekeyedFrom = rows[0].external_ref;
+    attach(p, rows[0]);
+    positionAdopted.push(p);
+  }
+  // Position rows whose name is in this file but repeats: kept, not matched.
+  const positionRepeated: ExistingImportRow[] = [];
+  for (const [key, rows] of positionByName) {
+    const inFile = fileNameCount.get(key.slice(key.indexOf("|") + 1)) ?? 0;
+    if (inFile === 0 || (rows.length === 1 && inFile === 1)) continue;
+    for (const e of rows) if (!claimed.has(e.id)) positionRepeated.push(e);
+  }
+  positionRepeated.sort((a, b) => rowIndex(a.external_ref!) - rowIndex(b.external_ref!));
 
   // ── The plan ──────────────────────────────────────────────────────
   const plan: ImportPlan = {
     added: 0, changed: 0, unchanged: 0, notInFile: 0, notInFileNames: [], localProgressAtRisk: [],
     structure: { rows: 0, onlyStructure: 0, parents: 0, linksAdded: 0, linksRemoved: 0 }, rekeyed: 0, rekeyedOnly: 0,
-    rekeyedByZone, zoneAmbiguous: zoneAmbiguous.length, zoneAmbiguousNames: zoneAmbiguous.slice(0, 10).map((p) => p.name), positionReading, rowCap,
+    positionAdopted: positionAdopted.length, positionAdoptedNames: positionAdopted.slice(0, 20).map((p) => p.name),
+    positionRepeated: positionRepeated.length, positionRepeatedNames: positionRepeated.slice(0, 10).map((e) => e.name), rowCap,
   };
   // On an older database only the columns it has are compared (and written).
   const missingColumns = new Set<string>(Array.from(missing).flatMap((id) => [...SCHEMA_SETS[id].columns]));

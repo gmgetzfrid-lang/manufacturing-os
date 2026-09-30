@@ -146,7 +146,7 @@ import { parseScheduleFile } from "@/lib/scheduleParsers";
 import { shiftForStart, shiftAfterMove, filterMilestones, EMPTY_FILTER } from "@/lib/scheduleFilter";
 import type { Milestone } from "@/types/schema";
 import { countPastBaseline } from "@/components/projects/MovePreviewSheet";
-import { planChangeCount, progressChangeLabel, structureSummary, rekeyedSummary, zoneAmbiguousSummary, positionUndecidedSummary } from "@/components/projects/ScheduleImportModal";
+import { planChangeCount, progressChangeLabel, structureSummary, rekeyedSummary, positionAdoptedSummary, positionRepeatedSummary } from "@/components/projects/ScheduleImportModal";
 import { isImmutableTable, isSkippedTable } from "@/lib/dataRestore";
 
 const ORG = "org-1", PROJECT = "proj-1", USER = "user-1";
@@ -343,7 +343,7 @@ describe("SCH-3 · a row inserted at the top leaves every other row's identity A
   });
 });
 
-describe("SCH-3 · rows imported by POSITION before content keys are adopted and re-keyed, never duplicated", () => {
+describe("SCH-3 · rows imported by POSITION before content keys: a unique name is adopted and re-keyed, a repeated one never", () => {
   // What the pre-Round-G parser + importer stored for a keyless file: its
   // position, `msp-row:<index>` (a "Task Name" header is an MS Project CSV) or
   // `csv-row:<index>` (generic CSV), date-only starts at 00:00Z labelled
@@ -364,7 +364,7 @@ describe("SCH-3 · rows imported by POSITION before content keys are adopted and
     seedLegacy();
     Object.assign(milestones()[1], { percent_complete: 60, status: "in_progress", actual_start_at: "2026-01-03T00:00:00+00:00" }); // Scaffold
     const dry = await importMilestonesFromParsed({ ...scope, rows: rowsOf(fileA), dryRun: true });
-    expect(dry.plan).toMatchObject({ added: 0, changed: 0, unchanged: 3, notInFile: 0, rekeyed: 3, rekeyedOnly: 3 });
+    expect(dry.plan).toMatchObject({ added: 0, changed: 0, unchanged: 3, notInFile: 0, rekeyed: 3, rekeyedOnly: 3, positionAdopted: 3, positionAdoptedNames: ["Mobilize", "Scaffold", "Hydrotest"], positionRepeated: 0 });
     expect(planChangeCount(dry.plan!)).toBe(3); // the button never reads "Import 0 changes" while keys will be written
 
     const res = await importMilestonesFromParsed({ ...scope, rows: rowsOf(fileA) });
@@ -381,23 +381,23 @@ describe("SCH-3 · rows imported by POSITION before content keys are adopted and
     expect(db.writes.filter((w) => w.table === "milestones")).toEqual([]);
   });
 
-  it("the fail-safe: a keyless row whose dates changed is NOT adopted — it is added, and the old one is reported as not in this file", async () => {
+  it("a unique name is adopted even when its dates moved: the file's dates are written, the crew's progress is kept", async () => {
     seedLegacy();
+    Object.assign(milestones()[1], { percent_complete: 60, status: "in_progress" }); // Scaffold
     const moved = fileA.replace("Scaffold,2026-01-03,2026-01-05,0", "Scaffold,2026-01-03,2026-01-09,0");
-    const res = await importMilestonesFromParsed({ ...scope, rows: rowsOf(moved), dryRun: true });
-    expect(res.plan).toMatchObject({ added: 1, changed: 0, unchanged: 2, notInFile: 1, notInFileNames: ["Scaffold"], rekeyed: 2, rekeyedOnly: 2 });
+    const res = await importMilestonesFromParsed({ ...scope, rows: rowsOf(moved) });
+    expect(res.plan).toMatchObject({ added: 0, changed: 1, unchanged: 2, notInFile: 0, rekeyed: 3, positionAdopted: 3 });
+    expect(res.plan!.localProgressAtRisk.map((r) => [r.name, r.localPercent, r.filePercent])).toEqual([["Scaffold", 60, 0]]);
+    expect(byName("Scaffold")).toMatchObject({ id: "old1", planned_at: "2026-01-09T00:00:00+00:00", percent_complete: 60, status: "in_progress" });
   });
 
-  it("a generic CSV (csv-row:) is adopted the same way; identical rows pair in file order, so each keeps its own progress", async () => {
+  it("a generic CSV (csv-row:) with a repeated name: never adopted — both file rows added, both earlier rows kept with their own progress, and the plan says why", async () => {
     seedLegacy(["Inspect,2026-01-01,2026-01-02", "Inspect,2026-01-01,2026-01-02"], "csv");
     Object.assign(milestones()[1], { percent_complete: 100, status: "completed" });
     const twice = ["Name,Start,Finish", "Inspect,2026-01-01,2026-01-02", "Inspect,2026-01-01,2026-01-02"].join("\n");
     const res = await importMilestonesFromParsed({ ...scope, rows: rowsOf(twice) });
-    expect(res.plan).toMatchObject({ added: 0, notInFile: 0, rekeyed: 2 });
-    const [first, second] = milestones();
-    expect(String(first.external_ref)).toMatch(/^csv-key:[0-9a-f]{8}$/);
-    expect(String(second.external_ref)).toBe(`${String(first.external_ref)}#2`);
-    expect(second).toMatchObject({ id: "old1", percent_complete: 100, status: "completed" });
+    expect(res.plan).toMatchObject({ added: 2, notInFile: 2, rekeyed: 0, positionAdopted: 0, positionRepeated: 2, positionRepeatedNames: ["Inspect", "Inspect"] });
+    expect(milestones().slice(0, 2).map((r) => [r.id, r.external_ref, r.status])).toEqual([["old0", "csv-row:0", "planned"], ["old1", "csv-row:1", "completed"]]);
   });
 
   it("a name that differs only in case or surrounding space still matches (and the new spelling is a change)", async () => {
@@ -409,23 +409,27 @@ describe("SCH-3 · rows imported by POSITION before content keys are adopted and
   });
 });
 
-describe("SCH-3 · position-keyed rows are read with ONE offset decided for the whole import — pairs that fit it one to one are adopted, nothing is guessed", () => {
-  // Before this round, timed M/D/Y ("6/15/2026 8:00 AM"), weekday-prefixed
-  // ("Mon 6/15/26", MS Project's default) and written-out values went through
-  // new Date() — the importing browser's zone. oldReading() is exactly that
-  // fallback, run under the zone the earlier import ran in.
-  const oldReading = (value: string, zone: string): string => {
+describe("SCH-3 · position rows the OLD importer stored (in any browser zone): adopted only by a name unique on both sides — no completion ever moves between tasks", () => {
+  /** The pre-Round-G coerceIso, run in the importing browser's zone: ISO and
+   *  date-only slash dates exactly, every other form through new Date(). */
+  const legacyReading = (value: string, zone: string): string => {
+    const v = value.replace(/^"|"$/g, "").trim();
+    if (/^\d{4}-\d{2}-\d{2}T/.test(v)) return /(?:Z|[+-]\d{2}:?\d{2})$/i.test(v) ? v : `${v}Z`;
+    if (/^\d{4}-\d{2}-\d{2}$/.test(v)) return `${v}T00:00:00Z`;
+    const m1 = v.match(/^(\d{4}-\d{2}-\d{2})[ T](\d{2}):(\d{2})(?::(\d{2}))?$/);
+    if (m1) return `${m1[1]}T${m1[2]}:${m1[3]}:${m1[4] ?? "00"}Z`;
+    const m2 = v.match(/^(\d{1,2})[/-](\d{1,2})[/-](\d{2,4})$/);
+    if (m2) return `${Number(m2[3]) < 100 ? 2000 + Number(m2[3]) : m2[3]}-${m2[1].padStart(2, "0")}-${m2[2].padStart(2, "0")}T00:00:00Z`;
     const tz = process.env.TZ;
-    try { process.env.TZ = zone; return new Date(value.replace(/^"|"$/g, "")).toISOString(); } finally { process.env.TZ = tz; }
+    try { process.env.TZ = zone; return new Date(v).toISOString(); } finally { process.env.TZ = tz; }
   };
   const header = "Task Name,Start,Finish,% Complete";
   const lines = [
-    "Mobilize,6/15/2026 8:00 AM,6/15/2026 5:00 PM,0",
-    "Scaffold,Mon 6/15/26,Wed 6/17/26,0",
-    'Hydrotest,"June 18, 2026 7:00 PM","June 19, 2026 5:00 AM",0',
+    "Mobilize,6/15/2026 8:00 AM,6/15/2026 5:00 PM,",
+    "Scaffold,Mon 6/15/26,Wed 6/17/26,",
+    'Hydrotest,"June 18, 2026 7:00 PM","June 19, 2026 5:00 AM",',
   ];
   const splitLine = (l: string) => l.match(/("[^"]*"|[^,]+)/g)!;
-  /** What the pre-Round-G importer stored for `from` from a browser in `zone`, read back as PostgREST renders it. */
   const seedOld = (zone: string, from = lines, over: (i: number) => Row = () => ({})) => {
     db.tables.milestones = from.map((l, i) => {
       const [name, start, finish] = splitLine(l);
@@ -434,177 +438,134 @@ describe("SCH-3 · position-keyed rows are read with ONE offset decided for the 
         name, description: null, weight: 1, outline_level: null, wbs: null, is_summary: false, shift: null,
         work_order_ref: null, responsible_party: null, responsible_kind: null, responsible_org: null, location: null,
         duration_hours: null, attributes: {}, status: "planned", percent_complete: 0, actual_at: null, actual_start_at: null,
-        planned_at: pgTimestamptz(oldReading(finish, zone)), planned_start_at: pgTimestamptz(oldReading(start, zone)),
+        planned_at: pgTimestamptz(legacyReading(finish, zone)), planned_start_at: pgTimestamptz(legacyReading(start, zone)),
         parent_id: null, depends_on: [], created_by: "someone", created_by_name: "Earlier import", ...over(i),
       } as Row;
     });
   };
-  const file = (from = lines) => rowsOf([header, ...from].join("\n"));
+  const file = (from = lines) => parseScheduleFile("punch.csv", [header, ...from].join("\n"), { dateConvention: "mdy" }).rows;
   const done = { status: "completed", percent_complete: 100 };
-  const statusOf = () => milestones().map((r) => [r.id, r.external_ref && String(r.external_ref).startsWith("msp-row:") ? "row" : "key", r.planned_start_at, r.status]);
+  /** Every old row: [id, still keyed by position?, status] — a completion moving shows here. */
+  const oldRows = () => milestones().filter((r) => String(r.id).startsWith("old")).map((r) => [r.id, String(r.external_ref).startsWith("msp-row:"), r.status]);
 
-  it("America/Chicago (13:00Z for '8:00 AM'): one reading, +5 h, for the whole import — the unchanged file adds nothing, re-keys 3 in place with their progress, corrects the dates, and the next re-import writes nothing", async () => {
-    seedOld("America/Chicago");
-    expect(byName("Mobilize").planned_start_at).toBe("2026-06-15T13:00:00+00:00"); // the old reading, 5 h off
-    Object.assign(byName("Scaffold"), { percent_complete: 60, status: "in_progress" });
-    const dry = await importMilestonesFromParsed({ ...scope, rows: file(), dryRun: true });
-    expect(dry.plan).toMatchObject({ added: 0, notInFile: 0, rekeyed: 3, rekeyedByZone: 3, changed: 3, unchanged: 0, zoneAmbiguous: 0 });
-    expect(dry.plan!.positionReading).toEqual({ offsetMinutes: 300, dstTwinMinutes: null, support: 3, against: 0, undecidedRows: 0 });
-    expect(rekeyedSummary(dry.plan!)).toMatch(/3 of them were stored by the earlier importer in its browser's time zone \(stored 5 h later than the file's clock\) — one reading for every task imported by position/);
+  for (const zone of ["America/Chicago", "Asia/Kolkata", "UTC"]) {
+    it(`unique names from a ${zone} browser: all adopted whatever the offset, the file's dates written, progress kept; the next re-import writes nothing`, async () => {
+      seedOld(zone);
+      Object.assign(byName("Scaffold"), { percent_complete: 60, status: "in_progress" });
+      const res = await importMilestonesFromParsed({ ...scope, rows: file() });
+      expect(res.errors).toEqual([]);
+      expect(res.plan).toMatchObject({ added: 0, notInFile: 0, rekeyed: 3, positionAdopted: 3, positionAdoptedNames: ["Mobilize", "Scaffold", "Hydrotest"], positionRepeated: 0 });
+      expect(milestones().map((r) => r.id)).toEqual(["old0", "old1", "old2"]);
+      expect(byName("Mobilize")).toMatchObject({ planned_start_at: "2026-06-15T08:00:00+00:00", planned_at: "2026-06-15T17:00:00+00:00" });
+      expect(byName("Scaffold")).toMatchObject({ percent_complete: 60, status: "in_progress", created_by: "someone" });
+      db.writes = [];
+      const again = await importMilestonesFromParsed({ ...scope, rows: file() });
+      expect(again.plan).toMatchObject({ added: 0, changed: 0, unchanged: 3, rekeyed: 0, positionAdopted: 0 });
+      expect(db.writes.filter((w) => w.table === "milestones")).toEqual([]);
+    });
+  }
 
-    const res = await importMilestonesFromParsed({ ...scope, rows: file() });
-    expect(res.errors).toEqual([]);
-    expect(res).toMatchObject({ inserted: 0, updated: 3 });
-    expect(milestones().map((r) => r.id)).toEqual(["old0", "old1", "old2"]);
-    expect(milestones().every((r) => /^msp-key:[0-9a-f]{8}$/.test(String(r.external_ref)))).toBe(true);
-    expect(byName("Mobilize")).toMatchObject({ planned_start_at: "2026-06-15T08:00:00+00:00", planned_at: "2026-06-15T17:00:00+00:00" });
-    expect(byName("Hydrotest")).toMatchObject({ planned_start_at: "2026-06-18T19:00:00+00:00", planned_at: "2026-06-19T05:00:00+00:00" });
-    expect(byName("Scaffold")).toMatchObject({ percent_complete: 60, status: "in_progress", created_by: "someone", planned_start_at: "2026-06-15T00:00:00+00:00" });
-
-    db.writes = [];
-    const again = await importMilestonesFromParsed({ ...scope, rows: file() });
-    expect(again.plan).toMatchObject({ added: 0, changed: 0, unchanged: 3, notInFile: 0, rekeyed: 0, rekeyedByZone: 0, positionReading: null });
-    expect(db.writes.filter((w) => w.table === "milestones")).toEqual([]);
+  it("the panel names every adoption (first 20, then a count)", () => {
+    const names = Array.from({ length: 23 }, (_, i) => `T${i + 1}`);
+    expect(positionAdoptedSummary({ positionAdopted: 23, positionAdoptedNames: names.slice(0, 20) })).toBe(
+      `23 tasks imported earlier by row position are matched by name — each name occurs once on the board and once in this file — and keep their progress; the planned dates are taken from the file: ${names.slice(0, 20).join(", ")}, and 3 more.`);
   });
 
-  it("Asia/Kolkata (+5:30, a half-hour offset: 02:30Z for '8:00 AM') is read the same way", async () => {
-    seedOld("Asia/Kolkata");
-    expect(byName("Mobilize").planned_start_at).toBe("2026-06-15T02:30:00+00:00");
-    const res = await importMilestonesFromParsed({ ...scope, rows: file() });
-    expect(res.plan).toMatchObject({ added: 0, notInFile: 0, rekeyed: 3, rekeyedByZone: 3, zoneAmbiguous: 0, positionReading: { offsetMinutes: -330 } });
-    expect(milestones().map((r) => r.id)).toEqual(["old0", "old1", "old2"]);
-    expect(byName("Mobilize").planned_start_at).toBe("2026-06-15T08:00:00+00:00");
-  });
-
-  it("UTC (the old reading WAS the wall clock): the reading is 0 and the exact matches are adopted, nothing read through an offset", async () => {
-    seedOld("UTC");
-    const dry = await importMilestonesFromParsed({ ...scope, rows: file(), dryRun: true });
-    expect(dry.plan).toMatchObject({ added: 0, notInFile: 0, changed: 0, unchanged: 3, rekeyed: 3, rekeyedOnly: 3, rekeyedByZone: 0, zoneAmbiguous: 0, positionReading: { offsetMinutes: 0, support: 3, against: 0 } });
-  });
-
-  it("Walkdown at 8 AM and 1 PM, Chicago (1 PM = 18:00Z, 8 AM = 13:00Z — the 1 PM file row EXACTLY equals the 8 AM task's stored row): the +5 h reading keeps each task on its own row, so the 8 AM task's 100 % stays with the 8 AM task", async () => {
-    const f = [
-      "Walkdown,6/15/2026 8:00 AM,6/15/2026 9:00 AM,",
-      "Walkdown,6/15/2026 1:00 PM,6/15/2026 2:00 PM,",
-      "Mobilize,6/14/2026 7:00 AM,6/14/2026 5:00 PM,",
-      "Demob,6/19/2026 7:00 AM,6/19/2026 5:00 PM,",
-    ];
+  it("walkdowns at 8 AM (completed) and 1 PM, Chicago: the repeated name is never adopted — both added, the completion stays on its own old row; the unique tasks are adopted", async () => {
+    const f = ["Walkdown,6/15/2026 8:00 AM,6/15/2026 9:00 AM,", "Walkdown,6/15/2026 1:00 PM,6/15/2026 2:00 PM,", "Mobilize,6/14/2026 7:00 AM,6/14/2026 5:00 PM,", "Demob,6/19/2026 7:00 AM,6/19/2026 5:00 PM,"];
     seedOld("America/Chicago", f, (i) => (i === 0 ? done : {}));
     const res = await importMilestonesFromParsed({ ...scope, rows: file(f) });
-    expect(res.plan).toMatchObject({ added: 0, notInFile: 0, rekeyed: 4, rekeyedByZone: 4, zoneAmbiguous: 0, positionReading: { offsetMinutes: 300, support: 2, against: 0 } });
-    expect(statusOf().slice(0, 2)).toEqual([
-      ["old0", "key", "2026-06-15T08:00:00+00:00", "completed"], // the 8 AM task, with its own completion
-      ["old1", "key", "2026-06-15T13:00:00+00:00", "planned"],
-    ]);
+    expect(res.plan).toMatchObject({ added: 2, notInFile: 2, rekeyed: 2, positionAdopted: 2, positionRepeated: 2, positionRepeatedNames: ["Walkdown", "Walkdown"] });
+    expect(positionRepeatedSummary(res.plan!)).toBe("2 tasks repeat a name (Walkdown) — their earlier rows are kept, not matched; review before importing. This file's tasks of those names are added.");
+    expect(oldRows()).toEqual([["old0", true, "completed"], ["old1", true, "planned"], ["old2", false, "planned"], ["old3", false, "planned"]]);
+    expect(milestones().filter((r) => r.name === "Walkdown" && !String(r.id).startsWith("old")).map((r) => r.status ?? "planned")).toEqual(["planned", "planned"]);
   });
 
-  it("the same two walkdowns with nothing else to decide by: no reading dominates, so nothing is adopted — both added, both earlier rows kept and listed, and the panel says why", async () => {
-    const f = ["Walkdown,6/15/2026 8:00 AM,6/15/2026 9:00 AM,", "Walkdown,6/15/2026 1:00 PM,6/15/2026 2:00 PM,"];
-    seedOld("America/Chicago", f, (i) => (i === 0 ? done : {}));
-    const res = await importMilestonesFromParsed({ ...scope, rows: file(f), dryRun: true });
-    expect(res.plan).toMatchObject({ added: 2, notInFile: 2, rekeyed: 0, zoneAmbiguous: 0 });
-    expect(res.plan!.positionReading).toEqual({ offsetMinutes: null, dstTwinMinutes: null, support: 0, against: 0, undecidedRows: 2 });
-    expect(positionUndecidedSummary(res.plan!)).toBe("2 tasks imported earlier by position could not be matched: no single time-zone reading explains them — no task in this file fits them under only one reading (repeated tasks of the same name fit several). None of them is guessed: every task in this file is added, and the earlier ones stay as they are, listed as not in this file.");
-  });
-
-  it("shift schedule: 30-minute 'Line check' every 8 h, imported from Los Angeles in January (-8 h, so each stored row equals the NEXT shift's wall clock): the unchanged file keeps every check on its own row — completion does not move a slot", async () => {
+  it("30-minute 'Line check' every 8 h from Los Angeles in January: none adopted, the three completions stay on their own old rows", async () => {
     const f: string[] = [];
     for (const d of [12, 13]) for (const [a, b] of [["6:00 AM", "6:30 AM"], ["2:00 PM", "2:30 PM"], ["10:00 PM", "10:30 PM"]]) f.push(`Line check,1/${d}/2026 ${a},1/${d}/2026 ${b},`);
     seedOld("America/Los_Angeles", f, (i) => (i < 3 ? done : {}));
     const res = await importMilestonesFromParsed({ ...scope, rows: file(f) });
-    expect(res.plan).toMatchObject({ added: 0, notInFile: 0, rekeyed: 6, rekeyedByZone: 6, zoneAmbiguous: 0, positionReading: { offsetMinutes: 480, against: 0 } });
-    expect(statusOf()).toEqual([
-      ["old0", "key", "2026-01-12T06:00:00+00:00", "completed"], ["old1", "key", "2026-01-12T14:00:00+00:00", "completed"], ["old2", "key", "2026-01-12T22:00:00+00:00", "completed"],
-      ["old3", "key", "2026-01-13T06:00:00+00:00", "planned"], ["old4", "key", "2026-01-13T14:00:00+00:00", "planned"], ["old5", "key", "2026-01-13T22:00:00+00:00", "planned"],
-    ]);
+    expect(res.plan).toMatchObject({ added: 6, notInFile: 6, rekeyed: 0, positionRepeated: 6 });
+    expect(oldRows().map((r) => r[2])).toEqual(["completed", "completed", "completed", "planned", "planned", "planned"]);
   });
 
-  it("hourly 'QC check' at 8, 9 and 10 AM in Berlin (CEST, -2 h, so 10 AM is stored at 8 AM's wall clock): with other tasks to decide by, each check keeps its own row and the 10 AM completion stays at 10 AM; with only the checks, nothing is adopted", async () => {
-    const qc = ["QC check,6/15/2026 8:00 AM,6/15/2026 9:00 AM,", "QC check,6/15/2026 9:00 AM,6/15/2026 10:00 AM,", "QC check,6/15/2026 10:00 AM,6/15/2026 11:00 AM,"];
-    const f = [...qc, "Mobilize,6/14/2026 7:00 AM,6/14/2026 5:00 PM,", "Demob,6/19/2026 7:00 AM,6/19/2026 5:00 PM,"];
+  it("hourly 'QC check' in Berlin: none adopted, the 10 AM completion stays on its own old row", async () => {
+    const f = ["QC check,6/15/2026 8:00 AM,6/15/2026 9:00 AM,", "QC check,6/15/2026 9:00 AM,6/15/2026 10:00 AM,", "QC check,6/15/2026 10:00 AM,6/15/2026 11:00 AM,", "Mobilize,6/14/2026 7:00 AM,6/14/2026 5:00 PM,"];
     seedOld("Europe/Berlin", f, (i) => (i === 2 ? done : {}));
     const res = await importMilestonesFromParsed({ ...scope, rows: file(f) });
-    expect(res.plan).toMatchObject({ added: 0, notInFile: 0, rekeyed: 5, rekeyedByZone: 5, positionReading: { offsetMinutes: -120 } });
-    expect(statusOf().slice(0, 3)).toEqual([
-      ["old0", "key", "2026-06-15T08:00:00+00:00", "planned"], ["old1", "key", "2026-06-15T09:00:00+00:00", "planned"], ["old2", "key", "2026-06-15T10:00:00+00:00", "completed"],
-    ]);
-    seedOld("Europe/Berlin", qc, (i) => (i === 2 ? done : {}));
-    const only = await importMilestonesFromParsed({ ...scope, rows: file(qc), dryRun: true });
-    expect(only.plan).toMatchObject({ added: 3, notInFile: 3, rekeyed: 0, positionReading: { offsetMinutes: null, undecidedRows: 3 } });
+    expect(res.plan).toMatchObject({ added: 3, rekeyed: 1, positionAdopted: 1, positionRepeated: 3 });
+    expect(oldRows()).toEqual([["old0", true, "planned"], ["old1", true, "planned"], ["old2", true, "completed"], ["old3", false, "planned"]]);
   });
 
-  it("UTC-browser legacy: a task really rescheduled by 3 h is not taken for a zone correction — it is added and its completed row kept; with only that task and one other, no reading dominates and nothing is adopted", async () => {
-    const before = ["Pour,6/15/2026 8:00 AM,6/15/2026 5:00 PM,", "Cure,6/16/2026 8:00 AM,6/17/2026 8:00 AM,", "Mobilize,6/14/2026 7:00 AM,6/14/2026 5:00 PM,", "Demob,6/19/2026 7:00 AM,6/19/2026 5:00 PM,"];
-    const after = ["Pour,6/15/2026 11:00 AM,6/15/2026 8:00 PM,", ...before.slice(1)];
-    seedOld("UTC", before, (i) => (i === 0 ? { ...done, actual_at: "2026-06-15T17:00:00+00:00" } : {}));
-    const res = await importMilestonesFromParsed({ ...scope, rows: file(after) });
-    expect(res.plan).toMatchObject({ added: 1, notInFile: 1, notInFileNames: ["Pour"], rekeyed: 3, rekeyedByZone: 0, positionReading: { offsetMinutes: 0, support: 3, against: 1 } });
-    expect(milestones().find((r) => r.id === "old0")).toMatchObject({ external_ref: "msp-row:0", status: "completed", planned_start_at: "2026-06-15T08:00:00+00:00" });
-    expect(milestones().filter((r) => r.name === "Pour" && r.id !== "old0").map((r) => r.status ?? "planned")).toEqual(["planned"]);
-
-    seedOld("UTC", before.slice(0, 2), (i) => (i === 0 ? done : {}));
-    const two = await importMilestonesFromParsed({ ...scope, rows: file(after.slice(0, 2)), dryRun: true });
-    expect(two.plan).toMatchObject({ added: 2, notInFile: 2, rekeyed: 0, positionReading: { offsetMinutes: null, support: 1, against: 1, undecidedRows: 2 } });
-  });
-
-  it("UTC-browser legacy: a 6 PM 'Inspect' that replaced a removed 8 AM one does not inherit its completed / 100 % — with other tasks (the reading is 0) or alone (one task cannot decide a non-zero offset)", async () => {
-    const before = ["Inspect,6/15/2026 8:00 AM,6/15/2026 9:00 AM", "Mobilize,6/14/2026 7:00 AM,6/14/2026 5:00 PM", "Demob,6/19/2026 7:00 AM,6/19/2026 5:00 PM"];
-    const noPct = (rows: string[]) => rowsOf(["Task Name,Start,Finish", ...rows].join("\n"));
-    const after = ["Inspect,6/15/2026 6:00 PM,6/15/2026 7:00 PM", ...before.slice(1)];
+  it("'Inspect' moved from 8 AM to 6 PM (a unique name): the same task — adopted with the file's dates; its completion stays, and the at-risk list shows it when the file's % differs", async () => {
+    const before = ["Inspect,6/15/2026 8:00 AM,6/15/2026 9:00 AM,", "Mobilize,6/14/2026 7:00 AM,6/14/2026 5:00 PM,"];
     seedOld("UTC", before, (i) => (i === 0 ? { ...done, actual_at: "2026-06-15T09:00:00+00:00" } : {}));
-    const res = await importMilestonesFromParsed({ ...scope, rows: noPct(after) });
-    expect(res.plan).toMatchObject({ added: 1, notInFile: 1, rekeyed: 2, rekeyedByZone: 0, positionReading: { offsetMinutes: 0 } });
-    const newInspect = milestones().find((r) => r.name === "Inspect" && r.id !== "old0")!;
-    expect(newInspect.status ?? "planned").toBe("planned");
-    expect(newInspect.percent_complete ?? 0).toBe(0);
-    expect(milestones().find((r) => r.id === "old0")).toMatchObject({ status: "completed", external_ref: "msp-row:0" });
-
-    seedOld("UTC", before.slice(0, 1), () => ({ ...done, actual_at: "2026-06-15T09:00:00+00:00" }));
-    const alone = await importMilestonesFromParsed({ ...scope, rows: noPct(after.slice(0, 1)) });
-    expect(alone.plan).toMatchObject({ added: 1, notInFile: 1, rekeyed: 0, positionReading: { offsetMinutes: null, support: 1, against: 0, undecidedRows: 1 } });
-    expect(milestones().find((r) => r.id !== "old0")!.status ?? "planned").toBe("planned");
+    const after = ["Inspect,6/15/2026 6:00 PM,6/15/2026 7:00 PM,0", "Mobilize,6/14/2026 7:00 AM,6/14/2026 5:00 PM,0"];
+    const res = await importMilestonesFromParsed({ ...scope, rows: file(after) });
+    expect(res.plan).toMatchObject({ added: 0, notInFile: 0, changed: 1, positionAdopted: 2, positionAdoptedNames: ["Inspect", "Mobilize"] });
+    expect(res.plan!.localProgressAtRisk.map((r) => [r.name, r.localPercent, r.localStatus, r.filePercent])).toEqual([["Inspect", 100, "completed", 0]]);
+    expect(byName("Inspect")).toMatchObject({ id: "old0", status: "completed", percent_complete: 100, planned_start_at: "2026-06-15T18:00:00+00:00" });
   });
 
-  it("identical rows pair in file order only when the file and the board hold the same number of them; otherwise they are ambiguous — added, counted and named", async () => {
-    const two = ["Inspect,6/15/2026 8:00 AM,6/15/2026 9:00 AM,", "Inspect,6/15/2026 8:00 AM,6/15/2026 9:00 AM,"];
-    const rest = ["Mobilize,6/14/2026 7:00 AM,6/14/2026 5:00 PM,", "Demob,6/19/2026 7:00 AM,6/19/2026 5:00 PM,"];
-    seedOld("America/Chicago", [...two, two[0], ...rest]); // three identical on the board, two in the file
-    const res = await importMilestonesFromParsed({ ...scope, rows: file([...two, ...rest]), dryRun: true });
-    expect(res.plan).toMatchObject({ added: 2, rekeyed: 2, zoneAmbiguous: 2, zoneAmbiguousNames: ["Inspect", "Inspect"], notInFile: 3, positionReading: { offsetMinutes: 300 } });
-    expect(zoneAmbiguousSummary(res.plan!)).toMatch(/^2 tasks in this file \(Inspect, Inspect\) fit tasks imported earlier, but not one to one/);
-    seedOld("America/Chicago", [...two, ...rest]);
-    Object.assign(milestones()[1], done);
-    const same = await importMilestonesFromParsed({ ...scope, rows: file([...two, ...rest]) });
-    expect(same.plan).toMatchObject({ added: 0, rekeyed: 4, zoneAmbiguous: 0 });
-    expect(milestones()[1]).toMatchObject({ id: "old1", status: "completed" });
-    expect(String(milestones()[1].external_ref)).toBe(`${String(milestones()[0].external_ref)}#2`);
+  it("A1 (Chicago legacy): one other task legitimately moved +5 h — the 1 PM walkdown does not take the completed 8 AM row; the moved task is adopted", async () => {
+    const old = ["Walkdown,6/15/2026 8:00 AM,6/15/2026 9:00 AM,", "Walkdown,6/15/2026 1:00 PM,6/15/2026 2:00 PM,", "Mobilize,6/14/2026 7:00 AM,6/14/2026 5:00 PM,"];
+    const now = [old[0], old[1], "Mobilize,6/14/2026 12:00 PM,6/14/2026 10:00 PM,"];
+    seedOld("America/Chicago", old, (i) => (i === 0 ? done : {}));
+    const res = await importMilestonesFromParsed({ ...scope, rows: file(now) });
+    expect(res.plan).toMatchObject({ added: 2, notInFile: 2, positionAdopted: 1, positionAdoptedNames: ["Mobilize"], positionRepeated: 2 });
+    expect(oldRows()).toEqual([["old0", true, "completed"], ["old1", true, "planned"], ["old2", false, "planned"]]);
+    expect(byName("Mobilize").planned_start_at).toBe("2026-06-14T12:00:00+00:00");
   });
 
-  it("DST twin: rows on both sides of Chicago's 2026-03-08 change carry +6 h and +5 h, and a task spanning it carries both — a zone shows exactly those offsets at those instants, so all are adopted", async () => {
-    const f = [
-      "Demob,3/2/2026 8:00 AM,3/2/2026 5:00 PM,",   // CST: +6 h
-      "Outage,3/6/2026 8:00 AM,3/10/2026 5:00 PM,", // starts in CST (+6 h), finishes in CDT (+5 h)
-      "Mobilize,3/13/2026 8:00 AM,3/13/2026 5:00 PM,",
-      "Scaffold,3/16/2026 8:00 AM,3/17/2026 5:00 PM,",
-    ];
-    seedOld("America/Chicago", f);
-    const res = await importMilestonesFromParsed({ ...scope, rows: file(f), dryRun: true });
-    expect(res.plan).toMatchObject({ added: 0, notInFile: 0, rekeyed: 4, rekeyedByZone: 4, positionReading: { offsetMinutes: 300, dstTwinMinutes: 360, support: 4, against: 0 } });
+  it("A2 (UTC legacy): three tasks moved +2 h — the 10 AM walkdown does not take the 8 AM row, and the unchanged Demob is adopted, not duplicated", async () => {
+    const old = ["Walkdown,6/15/2026 8:00 AM,6/15/2026 9:00 AM,", "Walkdown,6/15/2026 10:00 AM,6/15/2026 11:00 AM,",
+      "Pour,6/16/2026 6:00 AM,6/16/2026 2:00 PM,", "Cure,6/17/2026 6:00 AM,6/17/2026 2:00 PM,", "Strip,6/18/2026 6:00 AM,6/18/2026 2:00 PM,", "Demob,6/19/2026 7:00 AM,6/19/2026 5:00 PM,"];
+    const now = [old[0], old[1], "Pour,6/16/2026 8:00 AM,6/16/2026 4:00 PM,", "Cure,6/17/2026 8:00 AM,6/17/2026 4:00 PM,", "Strip,6/18/2026 8:00 AM,6/18/2026 4:00 PM,", old[5]];
+    seedOld("UTC", old, (i) => (i === 0 ? done : {}));
+    const res = await importMilestonesFromParsed({ ...scope, rows: file(now) });
+    expect(res.plan).toMatchObject({ added: 2, notInFile: 2, positionAdopted: 4, positionAdoptedNames: ["Pour", "Cure", "Strip", "Demob"], positionRepeated: 2 });
+    expect(oldRows()[0]).toEqual(["old0", true, "completed"]);
+    expect(milestones().filter((r) => r.name === "Demob")).toHaveLength(1);
   });
 
-  it("no DST twin without a zone to justify it: in June a task one hour off (+4 h against the import's +5 h) is a real change — added, its earlier row kept", async () => {
-    const f = ["Pour,6/15/2026 8:00 AM,6/15/2026 5:00 PM,", "Mobilize,6/14/2026 7:00 AM,6/14/2026 5:00 PM,", "Demob,6/19/2026 7:00 AM,6/19/2026 5:00 PM,"];
-    seedOld("America/Chicago", f);
-    const moved = ["Pour,6/15/2026 9:00 AM,6/15/2026 6:00 PM,", ...f.slice(1)];
-    const res = await importMilestonesFromParsed({ ...scope, rows: file(moved), dryRun: true });
-    expect(res.plan).toMatchObject({ added: 1, notInFile: 1, notInFileNames: ["Pour"], rekeyed: 2, positionReading: { offsetMinutes: 300, dstTwinMinutes: null, support: 2, against: 1 } });
+  it("A3 (Chicago legacy, date-only milestones stored at 00:00Z beside timed tasks): every unique task adopted, the walkdowns added, no completion moves", async () => {
+    const f = ["Kickoff,6/10/2026,6/10/2026,", "Design freeze,6/12/2026,6/12/2026,", "Handover,6/30/2026,6/30/2026,",
+      "Walkdown,6/15/2026 8:00 AM,6/15/2026 9:00 AM,", "Walkdown,6/15/2026 1:00 PM,6/15/2026 2:00 PM,", "Pour,6/16/2026 7:00 AM,6/16/2026 3:00 PM,"];
+    seedOld("America/Chicago", f, (i) => (i === 3 ? done : i === 5 ? { status: "in_progress", percent_complete: 40 } : {}));
+    const res = await importMilestonesFromParsed({ ...scope, rows: file(f) });
+    expect(res.plan).toMatchObject({ added: 2, notInFile: 2, positionAdopted: 4, positionAdoptedNames: ["Kickoff", "Design freeze", "Handover", "Pour"], positionRepeated: 2 });
+    expect(oldRows()).toEqual([["old0", false, "planned"], ["old1", false, "planned"], ["old2", false, "planned"], ["old3", true, "completed"], ["old4", true, "planned"], ["old5", false, "in_progress"]]);
+    expect(byName("Pour")).toMatchObject({ percent_complete: 40, planned_start_at: "2026-06-16T07:00:00+00:00" });
   });
 
-  it("only POSITION rows are read through an offset: an earlier content-keyed row 5 h off is not adopted", async () => {
+  it("A5 (UTC legacy, a +1 h reschedule after the UK change, hourly checks after it): the rescheduled task is adopted as itself, the checks are added, the completion stays", async () => {
+    const old = ["Mobilize,3/16/2026 7:00 AM,3/16/2026 5:00 PM,", "Scaffold,3/18/2026 7:00 AM,3/18/2026 5:00 PM,", "Pour,3/20/2026 7:00 AM,3/20/2026 5:00 PM,",
+      "Hydrotest,4/1/2026 7:00 AM,4/1/2026 5:00 PM,", "QC check,4/2/2026 8:00 AM,4/2/2026 9:00 AM,", "QC check,4/2/2026 9:00 AM,4/2/2026 10:00 AM,"];
+    const now = [...old.slice(0, 3), "Hydrotest,4/1/2026 8:00 AM,4/1/2026 6:00 PM,", old[4], old[5]];
+    seedOld("UTC", old, (i) => (i === 4 ? done : {}));
+    const res = await importMilestonesFromParsed({ ...scope, rows: file(now) });
+    expect(res.plan).toMatchObject({ added: 2, notInFile: 2, positionAdopted: 4, positionRepeated: 2 });
+    expect(oldRows().slice(4)).toEqual([["old4", true, "completed"], ["old5", true, "planned"]]);
+    expect(byName("Hydrotest").planned_start_at).toBe("2026-04-01T08:00:00+00:00");
+  });
+
+  it("an earlier CONTENT-keyed row matches exactly only: 5 h off, it is not adopted", async () => {
     seedOld("America/Chicago", lines.slice(0, 1));
     milestones()[0].external_ref = "msp-key:0badc0de";
     const res = await importMilestonesFromParsed({ ...scope, rows: file(lines.slice(0, 1)), dryRun: true });
-    expect(res.plan).toMatchObject({ added: 1, rekeyed: 0, zoneAmbiguous: 0, notInFile: 1, positionReading: null });
+    expect(res.plan).toMatchObject({ added: 1, rekeyed: 0, notInFile: 1, positionAdopted: 0, positionRepeated: 0 });
+  });
+
+  it("linear: 5,000 rows, most sharing a handful of names (4,990 identical + 10 unique), plan in well under a second", async () => {
+    const f = [...Array.from({ length: 4990 }, () => "Touch-up paint,6/30/2026,6/30/2026,"), ...Array.from({ length: 10 }, (_, i) => `Unique ${i},6/${10 + i}/2026,6/${10 + i}/2026,`)];
+    seedOld("UTC", f);
+    const rows = file(f);
+    const t0 = performance.now();
+    const res = await importMilestonesFromParsed({ ...scope, rows, dryRun: true });
+    const ms = performance.now() - t0;
+    expect(res.plan).toMatchObject({ added: 4990, positionAdopted: 10, positionRepeated: 4990, notInFile: 4990 });
+    expect(ms).toBeLessThan(1000);
   });
 });
 
@@ -996,7 +957,7 @@ describe("SCH-2 / SCH-16 · the review panel's numbers", () => {
   const plan = (over: Partial<ImportPlanT> = {}): ImportPlanT => ({
     added: 0, changed: 0, unchanged: 3, notInFile: 0, notInFileNames: [], localProgressAtRisk: [],
     structure: { rows: 0, onlyStructure: 0, parents: 0, linksAdded: 0, linksRemoved: 0 }, rekeyed: 0, rekeyedOnly: 0,
-    rekeyedByZone: 0, zoneAmbiguous: 0, zoneAmbiguousNames: [], positionReading: null, rowCap: 5000, ...over,
+    positionAdopted: 0, positionAdoptedNames: [], positionRepeated: 0, positionRepeatedNames: [], rowCap: 5000, ...over,
   });
   it("a file that only removes a predecessor does not read 'Import 0 changes'", () => {
     expect(planChangeCount(plan())).toBe(0);
@@ -1005,7 +966,7 @@ describe("SCH-2 / SCH-16 · the review panel's numbers", () => {
   });
   it("rows that only need their new key count toward the button, and the panel says what re-keying means", () => {
     expect(planChangeCount(plan({ unchanged: 3, rekeyed: 3, rekeyedOnly: 3 }))).toBe(3);
-    expect(rekeyedSummary({ rekeyed: 2 })).toMatch(/^2 tasks imported earlier were matched by name and dates and will be re-keyed — they keep their progress and history\. A task whose name or dates changed in the file, or that fits only under another offset, is not matched: it is added, and the earlier one is listed as not in this file\.$/);
+    expect(rekeyedSummary({ rekeyed: 2 })).toBe("2 tasks imported earlier will be re-keyed — they keep their progress and history. A task matched on its earlier content key matches on name and dates exactly: if its name or dates changed in the file, it is added, and the earlier one is listed as not in this file.");
   });
   it("progress at risk is worded by direction, never as a 'reset' when the file is higher", () => {
     expect(progressChangeLabel(60, 80)).toBe("60% on the board → 80% in the file (higher)");

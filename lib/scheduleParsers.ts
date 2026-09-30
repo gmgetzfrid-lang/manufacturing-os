@@ -425,6 +425,7 @@ function parseMsProjectXml(text: string, ctx: ParseCtx): Omit<ParseResult, "form
   const recentByLevel = new Map<number, string>(); // level → parent's externalRef
   let dropped = 0;
   let unreadableDates = 0;
+  let ignoredText = 0;
   const census = { fs: 0, notEnforced: 0, withLag: 0, unresolved: 0 };
 
   // MSPDI exports the project-summary task as <UID>0</UID><OutlineLevel>0</
@@ -459,12 +460,17 @@ function parseMsProjectXml(text: string, ctx: ParseCtx): Omit<ParseResult, "form
       for (const k of Array.from(recentByLevel.keys())) if (k >= outlineLevel) recentByLevel.delete(k);
       continue;
     }
-    const plannedIso = coerceIso(plannedRaw, ctx.conv);
-    if (!plannedIso) {
+    const plannedRead = readDate(plannedRaw, ctx.conv);
+    const startRead = start ? readDate(start, ctx.conv) : null;
+    // An unreadable Start is reported like an unreadable Finish: the row is
+    // skipped and counted, never imported without the start it carried.
+    if (!plannedRead.iso || (startRead && !startRead.iso)) {
       unreadableDates++;
       for (const k of Array.from(recentByLevel.keys())) if (k >= outlineLevel) recentByLevel.delete(k);
       continue;
     }
+    const plannedIso = plannedRead.iso;
+    if (plannedRead.ignored || startRead?.ignored) ignoredText++;
 
     const externalRef = uid ? `msp-uid:${uid}` : null;
 
@@ -539,7 +545,7 @@ function parseMsProjectXml(text: string, ctx: ParseCtx): Omit<ParseResult, "form
     rows.push({
       name: name.trim(),
       plannedAt: plannedIso,
-      plannedStartAt: start ? (coerceIso(start, ctx.conv) || null) : null,
+      plannedStartAt: startRead ? startRead.iso : null,
       weight: 1,
       externalRef,
       description: descParts.length > 0 ? descParts.join(" · ") : null,
@@ -558,7 +564,8 @@ function parseMsProjectXml(text: string, ctx: ParseCtx): Omit<ParseResult, "form
   }
   if (resourcesFound > 0) warnings.push(`Resources mapped onto ${resourcesFound} task${resourcesFound === 1 ? "" : "s"}.`);
   if (dropped > 0) warnings.push(`${dropped} task${dropped === 1 ? "" : "s"} skipped (missing name or date).`);
-  if (unreadableDates > 0) warnings.push(`${unreadableDates} task${unreadableDates === 1 ? "" : "s"} skipped (date could not be read).`);
+  if (unreadableDates > 0) warnings.push(`${unreadableDates} task${unreadableDates === 1 ? "" : "s"} skipped (a start or finish date could not be read).`);
+  if (ignoredText > 0) warnings.push(ignoredTextWarning(ignoredText, "task"));
   const cleaned = dropPlaceholderLeaves(rows);
   if (cleaned.dropped > 0) warnings.push(`${cleaned.dropped} unnamed "<New Task>" placeholder row${cleaned.dropped === 1 ? "" : "s"} dropped.`);
   if (cleaned.rows.length === 0) warnings.push("No usable rows found in the MS Project XML.");
@@ -666,6 +673,7 @@ function parseP6Xml(text: string, ctx: ParseCtx): Omit<ParseResult, "format"> {
 
   let dropped = 0;
   let unreadableDates = 0;
+  let ignoredText = 0;
   for (const a of acts) {
     const name = childText(a, "Name");
     const finish = childText(a, "PlannedFinishDate") || childText(a, "ExpectedFinishDate") || childText(a, "FinishDate");
@@ -676,8 +684,11 @@ function parseP6Xml(text: string, ctx: ParseCtx): Omit<ParseResult, "format"> {
     const pct    = Number(childText(a, "PercentComplete") || childText(a, "DurationPercentComplete") || "0");
     const plannedRaw = finish || start;
     if (!name || !plannedRaw) { dropped++; continue; }
-    const plannedIso = coerceIso(plannedRaw, ctx.conv);
-    if (!plannedIso) { unreadableDates++; continue; }
+    const plannedRead = readDate(plannedRaw, ctx.conv);
+    const startRead = start ? readDate(start, ctx.conv) : null;
+    if (!plannedRead.iso || (startRead && !startRead.iso)) { unreadableDates++; continue; }
+    const plannedIso = plannedRead.iso;
+    if (plannedRead.ignored || startRead?.ignored) ignoredText++;
     const links = objId ? (linksByActObjId.get(objId) ?? []) : [];
     const attributes: Record<string, string> = {};
     const split = splitLinks(links, attributes);
@@ -687,7 +698,7 @@ function parseP6Xml(text: string, ctx: ParseCtx): Omit<ParseResult, "format"> {
     rows.push({
       name: name.trim(),
       plannedAt: plannedIso,
-      plannedStartAt: start ? (coerceIso(start, ctx.conv) || null) : null,
+      plannedStartAt: startRead ? startRead.iso : null,
       weight: 1,
       externalRef: objId ? `p6-act:${objId}` : (idTxt ? `p6-id:${idTxt}` : null),
       parentExternalRef: wbsId ? `p6-wbs:${wbsId}` : null,
@@ -709,7 +720,8 @@ function parseP6Xml(text: string, ctx: ParseCtx): Omit<ParseResult, "format"> {
   const droppedSummaries = rows.length - usable.length;
 
   if (dropped > 0) warnings.push(`${dropped} activit${dropped === 1 ? "y" : "ies"} skipped (missing name or date).`);
-  if (unreadableDates > 0) warnings.push(`${unreadableDates} activit${unreadableDates === 1 ? "y" : "ies"} skipped (date could not be read).`);
+  if (unreadableDates > 0) warnings.push(`${unreadableDates} activit${unreadableDates === 1 ? "y" : "ies"} skipped (a start or finish date could not be read).`);
+  if (ignoredText > 0) warnings.push(ignoredTextWarning(ignoredText, "activity"));
   if (droppedSummaries > 0) warnings.push(`${droppedSummaries} empty WBS node${droppedSummaries === 1 ? "" : "s"} dropped (no dated activities beneath).`);
   if (usable.length === 0) warnings.push("No usable rows found in the P6 XML.");
   linkWarnings(census, warnings);
@@ -856,6 +868,7 @@ function parseP6Xer(text: string, ctx: ParseCtx): Omit<ParseResult, "format"> {
   const tDrtn   = col(task, ["target_drtn_hr_cnt", "target_work_qty"]); // hours (PC SCHED-2)
   let dropped = 0;
   let unreadableDates = 0;
+  let ignoredText = 0;
   for (const r of task.rows) {
     if (!inProject(r, tProj)) continue;
     const name = tName >= 0 ? r[tName]?.trim() : "";
@@ -863,8 +876,11 @@ function parseP6Xer(text: string, ctx: ParseCtx): Omit<ParseResult, "format"> {
     const start  = tStart  >= 0 ? r[tStart]?.trim()  : "";
     const planned = finish || start;
     if (!name || !planned) { dropped++; continue; }
-    const plannedIso = coerceIso(planned, ctx.conv);
-    if (!plannedIso) { unreadableDates++; continue; }
+    const plannedRead = readDate(planned, ctx.conv);
+    const startRead = start ? readDate(start, ctx.conv) : null;
+    if (!plannedRead.iso || (startRead && !startRead.iso)) { unreadableDates++; continue; }
+    const plannedIso = plannedRead.iso;
+    if (plannedRead.ignored || startRead?.ignored) ignoredText++;
     const id    = tId  >= 0 ? r[tId]?.trim()  : "";
     const wbsId = tWbs >= 0 ? r[tWbs]?.trim() : "";
     const pct   = tPct >= 0 ? Number(r[tPct]?.trim() || "0") : NaN;
@@ -876,7 +892,7 @@ function parseP6Xer(text: string, ctx: ParseCtx): Omit<ParseResult, "format"> {
     rows.push({
       name,
       plannedAt: plannedIso,
-      plannedStartAt: start ? (coerceIso(start, ctx.conv) || null) : null,
+      plannedStartAt: startRead ? startRead.iso : null,
       weight: 1,
       externalRef: id ? `p6-task:${id}` : null,
       parentExternalRef: wbsId ? `p6-wbs:${wbsId}` : null,
@@ -896,7 +912,8 @@ function parseP6Xer(text: string, ctx: ParseCtx): Omit<ParseResult, "format"> {
   const droppedSummaries = rows.length - usable.length;
 
   if (dropped > 0) warnings.push(`${dropped} activit${dropped === 1 ? "y" : "ies"} skipped (missing name or date).`);
-  if (unreadableDates > 0) warnings.push(`${unreadableDates} activit${unreadableDates === 1 ? "y" : "ies"} skipped (date could not be read).`);
+  if (unreadableDates > 0) warnings.push(`${unreadableDates} activit${unreadableDates === 1 ? "y" : "ies"} skipped (a start or finish date could not be read).`);
+  if (ignoredText > 0) warnings.push(ignoredTextWarning(ignoredText, "activity"));
   if (droppedSummaries > 0) warnings.push(`${droppedSummaries} empty WBS node${droppedSummaries === 1 ? "" : "s"} dropped (no dated activities beneath).`);
   if (usable.length === 0) warnings.push("XER parsed but no rows carried a usable date.");
   linkWarnings(census, warnings);
@@ -1075,6 +1092,7 @@ function parseCsvLikeWithSynonyms(text: string, syn: SynonymSpec, refTag: string
 
   let dropped = 0;
   let unreadableDates = 0;
+  let ignoredText = 0;
   let duplicateKeys = 0;
   const seenRefs = new Set<string>();
   // Predecessor tokens are resolved AFTER every row is read, through the
@@ -1088,10 +1106,15 @@ function parseCsvLikeWithSynonyms(text: string, syn: SynonymSpec, refTag: string
     const name = cell(iName);
     const planned = cell(iPlanned);
     if (!name || !planned) { dropped++; continue; }
-    const plannedIso = coerceIso(planned, ctx.conv);
-    if (!plannedIso) { unreadableDates++; continue; }
+    const plannedRead = readDate(planned, ctx.conv);
     const startRaw = cell(iStart);
-    const startIso = startRaw ? (coerceIso(startRaw, ctx.conv) || null) : null;
+    const startRead = startRaw ? readDate(startRaw, ctx.conv) : null;
+    // An unreadable Start is reported like an unreadable Finish: the row is
+    // skipped and counted, never imported without the start it carried.
+    if (!plannedRead.iso || (startRead && !startRead.iso)) { unreadableDates++; continue; }
+    const plannedIso = plannedRead.iso;
+    const startIso = startRead ? startRead.iso : null;
+    if (plannedRead.ignored || startRead?.ignored) ignoredText++;
     const startHasTime = startIso ? hasTimeOfDay(startRaw) : undefined;
     const id     = cell(iKey);
     const pctRaw = iPct >= 0 ? cells[iPct]?.trim().replace(/[%"]/g, "") : "";
@@ -1177,7 +1200,8 @@ function parseCsvLikeWithSynonyms(text: string, syn: SynonymSpec, refTag: string
   }
 
   if (dropped > 0) warnings.push(`${dropped} row${dropped === 1 ? "" : "s"} skipped (missing name or date).`);
-  if (unreadableDates > 0) warnings.push(`${unreadableDates} row${unreadableDates === 1 ? "" : "s"} skipped (date could not be read as ${ctx.conv === "dmy" ? "day/month/year" : "month/day/year"}).`);
+  if (unreadableDates > 0) warnings.push(`${unreadableDates} row${unreadableDates === 1 ? "" : "s"} skipped (a start or finish date could not be read as ${ctx.conv === "dmy" ? "day/month/year" : "month/day/year"}).`);
+  if (ignoredText > 0) warnings.push(ignoredTextWarning(ignoredText, "row"));
   if (duplicateKeys > 0) warnings.push(`${duplicateKeys} row${duplicateKeys === 1 ? "" : "s"} share${duplicateKeys === 1 ? "s" : ""} a key with an earlier row and ${duplicateKeys === 1 ? "was" : "were"} given a "#n" suffix so neither overwrites the other.`);
   linkWarnings(census, warnings);
   return { rows, warnings, keyColumn, links: census };
@@ -1373,9 +1397,22 @@ function childText(parent: Element, tag: string): string {
 // Every branch emits wall-clock-as-UTC ("…Z"), so the same file reads the same
 // on every machine (PC SCHED-9).
 export function coerceIso(s: string, conv: DateConvention = "mdy"): string {
-  const raw = s.trim();
+  return readDate(s, conv).iso;
+}
+
+/** A date cell's reading: the ISO instant ("" when unreadable) and any text
+ *  after its time of day that was ignored because it is not a time zone
+ *  ("est." = estimated, "(approx)", "Eastern") — the parsers count those
+ *  rows and say so. */
+export interface DateReading { iso: string; ignored: string | null }
+
+export function readDate(s: string, conv: DateConvention = "mdy"): DateReading {
+  // One spelling of AM / PM for every branch and for Date(): "8:00a.m.",
+  // "8:00 am", "8:00AM" → "8:00 AM".
+  const raw = s.trim().replace(AM_PM, (_m, d: string, ap: string) => `${d} ${ap.toUpperCase()}M `).replace(/\s+/g, " ").trim()
+    .replace(HOUR_ONLY, "$1:00 $2"); // "8 AM" → "8:00 AM"
   // The day name is dropped for the numeric forms only; the Date() fallback
-  // below sees the raw value (so "June 1, 2026" keeps its month name).
+  // below sees the value with it (so "June 1, 2026" keeps its month name).
   const trimmed = raw.replace(LEADING_DAY_NAME, "");
   if (ISO_DATETIME.test(trimmed)) {
     // Schedule dates are stored wall-clock-as-UTC. MS Project / P6 XML write
@@ -1383,40 +1420,72 @@ export function coerceIso(s: string, conv: DateConvention = "mdy"): string {
     // local and the importer's shift label would drift by the importer's UTC
     // offset (PC SCHED-9). Attach Z so the reading matches the convention; an
     // offset the value carries is kept as written.
-    return /(?:Z|[+-]\d{2}:?\d{2})$/i.test(trimmed) ? trimmed : `${trimmed}Z`;
+    return { iso: /(?:Z|[+-]\d{2}:?\d{2})$/i.test(trimmed) ? trimmed : `${trimmed}Z`, ignored: null };
   }
-  // A zone named RIGHT AFTER a time of day — an abbreviation in upper case
-  // ("8:00 AM EST", "17:00 (CEST)") or a numeric offset ("8:00 PM +02:00",
-  // "8:00AM -0500", "08:00 GMT+0200"): the rest is read like any other value
-  // (wall-clock-as-UTC, per the file's convention) and that FIXED offset is
-  // applied, so the value names the same instant on every machine. A second
-  // zone, an offset beyond ±14 h, or a rest that cannot be read makes the
-  // value unreadable ("") — counted, not guessed.
-  const z = raw.match(ZONE_AFTER_TIME);
-  if (z) {
-    const offsetMin = zoneTokenMinutes(z);
-    if (offsetMin === null) return "";
-    const rest = `${raw.slice(0, z.index)}${z[1]}${raw.slice(z.index! + z[0].length)}`.replace(/\s+/g, " ").trim();
-    if (ZONE_AFTER_TIME.test(rest) || ZONE_WORD.test(rest)) return "";
-    const wall = Date.parse(coerceIso(rest, conv));
-    if (!Number.isFinite(wall)) return "";
-    return new Date(wall - offsetMin * 60_000).toISOString();
+  // What follows the time of day. Directly after it, a numeric offset
+  // ("8:00 PM +02:00", "08:00 GMT+0200", "8:00 -0500") or an UPPER-CASE
+  // listed abbreviation ("8:00 AM EST", "17:00 (CEST)", "Z") is the value's
+  // zone: the date and time are read like any other value (wall-clock-as-
+  // UTC, per the file's convention) and that FIXED offset applied — the same
+  // instant on every machine. Any other trailing words ("est.", "(est)",
+  // "approx", "Eastern") are not a zone: ignored and reported, the time read
+  // as written. Unreadable (""): an offset beyond ±14 h, or a second zone or
+  // more date-like text after a zone.
+  const time = raw.match(TIME_OF_DAY);
+  if (time) {
+    const end = time.index! + time[0].length;
+    const tail = raw.slice(end);
+    if (tail.trim()) {
+      const num = tail.match(NUMERIC_ZONE);
+      const abbr = num ? null : tail.match(ABBR_ZONE);
+      const offsetMin: number | null | undefined = num ? numericZoneMinutes(num) : abbr ? ZONE_OFFSET_MINUTES[abbr[1]] : undefined;
+      if (offsetMin === null) return { iso: "", ignored: null };
+      const leftover = tail.slice(num ? num[0].length : abbr ? abbr[0].length : 0).trim();
+      // A number standing on its own ("June 1, 2026") is more date; a digit
+      // inside a word ("EST5EDT") is not.
+      const moreDate = /(?:^|[^A-Za-z0-9])\d/.test(leftover);
+      if (offsetMin !== undefined || !moreDate) {
+        if (offsetMin !== undefined && (moreDate || ZONE_WORD.test(leftover))) return { iso: "", ignored: null };
+        const inner = readDate(raw.slice(0, end), conv);
+        if (!inner.iso) return { iso: "", ignored: null };
+        const ignored = leftover || null;
+        if (offsetMin === undefined) return { iso: inner.iso, ignored };
+        const wall = Date.parse(inner.iso);
+        if (!Number.isFinite(wall)) return { iso: "", ignored: null };
+        return { iso: new Date(wall - offsetMin * 60_000).toISOString(), ignored };
+      }
+      // Date-like text after the time ("8:00 AM June 1, 2026"): read below as written.
+    }
   }
   // An upper-case abbreviation anywhere else: with a time of day in the value
   // it is not attached to that time, so the value is unreadable; on a date
   // alone ("6/1/2026 EST") there is no time to offset — it is dropped and the
-  // date stays a date-only 00:00Z value. Lower case ("est." = estimated) is
-  // not a zone.
+  // date stays a date-only 00:00Z value.
   if (ZONE_WORD.test(raw)) {
-    if (hasTimeOfDay(raw)) return "";
+    if (hasTimeOfDay(raw)) return { iso: "", ignored: null };
     const rest = raw.replace(ZONE_WORD_ALL, " ").replace(/\s+/g, " ").trim();
-    const out = rest ? coerceIso(rest, conv) : "";
-    return Number.isFinite(Date.parse(out)) ? out : "";
+    const out = rest ? readDate(rest, conv).iso : "";
+    return { iso: Number.isFinite(Date.parse(out)) ? out : "", ignored: null };
   }
+  // Whatever no branch can turn into an instant is unreadable ("") — counted
+  // by the parsers like a bad finish, never handed on as text.
+  const iso = readPlainDate(raw, trimmed, conv);
+  return { iso: iso && Number.isFinite(Date.parse(iso)) ? iso : "", ignored: null };
+}
+
+/** A time of day no clock shows ("25:99", "13:00 PM"): the value is
+ *  unreadable, never rolled over into another day. */
+function badClock(hh: number, mm: number, ss: number, ampm: string | null): boolean {
+  if (mm > 59 || ss > 59) return true;
+  return ampm ? hh < 1 || hh > 12 : hh > 23;
+}
+
+/** The zone-free branches of readDate. */
+function readPlainDate(raw: string, trimmed: string, conv: DateConvention): string {
   if (/^\d{4}-\d{2}-\d{2}$/.test(trimmed)) return `${trimmed}T00:00:00Z`;
   // "2026-08-15 00:00" / "2026-08-15 00:00:00"
   const m1 = trimmed.match(/^(\d{4}-\d{2}-\d{2})[ T](\d{2}):(\d{2})(?::(\d{2}))?$/);
-  if (m1) return `${m1[1]}T${m1[2]}:${m1[3]}:${m1[4] ?? "00"}Z`;
+  if (m1) return badClock(Number(m1[2]), Number(m1[3]), Number(m1[4] ?? 0), null) ? "" : `${m1[1]}T${m1[2]}:${m1[3]}:${m1[4] ?? "00"}Z`;
   // M/D/YYYY or D/M/YYYY, per the FILE's convention (PT SCH-1).
   const m2 = trimmed.match(/^(\d{1,2})[\/\-](\d{1,2})[\/\-](\d{2,4})(?:\s+(\d{1,2}):(\d{2})(?::(\d{2}))?\s*([AaPp][Mm])?)?$/);
   if (m2) {
@@ -1428,6 +1497,7 @@ export function coerceIso(s: string, conv: DateConvention = "mdy"): string {
     let hh = m2[4] ? Number(m2[4]) : 0;
     const mm = m2[5] ? Number(m2[5]) : 0;
     const ss = m2[6] ? Number(m2[6]) : 0;
+    if (badClock(hh, mm, ss, m2[7] ?? null)) return "";
     if (m2[7]) { const pm = /p/i.test(m2[7]); if (pm && hh < 12) hh += 12; if (!pm && hh === 12) hh = 0; }
     const pad = (n: number) => n.toString().padStart(2, "0");
     return `${y.toString().padStart(4, "0")}-${pad(month)}-${pad(day)}T${pad(hh)}:${pad(mm)}:${pad(ss)}Z`;
@@ -1440,6 +1510,7 @@ export function coerceIso(s: string, conv: DateConvention = "mdy"): string {
     let hh = m3[4] ? Number(m3[4]) : 0;
     const mm = m3[5] ? Number(m3[5]) : 0;
     const ss = m3[6] ? Number(m3[6]) : 0;
+    if (badClock(hh, mm, ss, m3[7] ?? null)) return "";
     if (m3[7]) { const pm = /p/i.test(m3[7]); if (pm && hh < 12) hh += 12; if (!pm && hh === 12) hh = 0; }
     const pad = (n: number) => n.toString().padStart(2, "0");
     return `${y.toString().padStart(4, "0")}-${pad(month)}-${pad(day)}T${pad(hh)}:${pad(mm)}:${pad(ss)}Z`;
@@ -1459,7 +1530,7 @@ export function coerceIso(s: string, conv: DateConvention = "mdy"): string {
     if (!isNaN(asUtc.getTime())) return asUtc.toISOString();
     return new Date(Date.UTC(d.getFullYear(), d.getMonth(), d.getDate(), d.getHours(), d.getMinutes(), d.getSeconds())).toISOString();
   }
-  return raw; // hand it to the importer; if invalid, Supabase will reject.
+  return ""; // no branch reads it: unreadable, counted by the caller
 }
 
 /** Zone abbreviations recognised after a time of day, at FIXED offsets
@@ -1467,28 +1538,33 @@ export function coerceIso(s: string, conv: DateConvention = "mdy"): string {
  *  and the UK / central-European ones (BST is British Summer Time). Upper
  *  case only: "est." in a schedule means "estimated". */
 const ZONE_OFFSET_MINUTES: Record<string, number> = {
-  EST: -300, EDT: -240, CST: -360, CDT: -300, MST: -420, MDT: -360, PST: -480, PDT: -420,
+  Z: 0, EST: -300, EDT: -240, CST: -360, CDT: -300, MST: -420, MDT: -360, PST: -480, PDT: -420,
   GMT: 0, UTC: 0, BST: 60, CET: 60, CEST: 120,
 };
 const ZONE_ABBRS = "EST|EDT|CST|CDT|MST|MDT|PST|PDT|GMT|UTC|BST|CET|CEST";
-/** A time of day (with an optional AM / PM), then a zone: a numeric offset —
- *  "+02:00", "-0500", "+2", optionally after GMT / UTC ("GMT+0200",
- *  "UTC-5") — or an upper-case abbreviation, optionally in parentheses.
- *  Group 1 is the time (kept); 2-4 sign / hours / minutes; 5 abbreviation. */
-const ZONE_AFTER_TIME = new RegExp(
-  String.raw`(?<![\d:])(\d{1,2}:\d{2}(?::\d{2}(?:\.\d+)?)?(?:\s*[AaPp]\.?[Mm]\.?)?)\s*(?:(?:(?:GMT|UTC)\s*)?([+-])(\d{1,2})(?::?(\d{2}))?(?![\d/.:])|\(?(` + ZONE_ABBRS + String.raw`)\)?(?![A-Za-z]))`,
-);
+/** "8:00a.m.", "8:00 am", "8:00AM", "8 PM" → the digit, then "AM" / "PM"
+ *  (a lower-case letter after it is a word, not a marker). */
+const AM_PM = /(\d)\s*([AaPp])\.?\s?[Mm]\.?(?![a-z])/g;
+/** A 12-hour time without minutes, once AM / PM is normalised ("8 AM"). */
+const HOUR_ONLY = /(?<![\d:.\/-])(\d{1,2}) (AM|PM)(?![A-Za-z])/g;
+/** A time of day, with AM / PM once normalised. */
+const TIME_OF_DAY = /(?<![\d:])\d{1,2}:\d{2}(?::\d{2}(?:\.\d+)?)?(?: (?:AM|PM))?/;
+/** Directly after the time: a numeric offset, optionally after GMT / UTC
+ *  ("+02:00", "-0500", "+2", "GMT+0200", "UTC-5"). */
+const NUMERIC_ZONE = /^\s*(?:(?:GMT|UTC)\s*)?([+-])(\d{1,2})(?::?(\d{2}))?(?![\d/.:])/;
+/** Directly after the time: "Z" or a listed abbreviation, upper case only,
+ *  optionally in parentheses. */
+const ABBR_ZONE = new RegExp(String.raw`^\s*\(?(Z|` + ZONE_ABBRS + String.raw`)\)?(?![A-Za-z0-9])`);
+/** The offset (minutes east of UTC) a NUMERIC_ZONE match names, or null when
+ *  it is not a real offset (beyond ±14 h, or minutes ≥ 60). */
+function numericZoneMinutes(m: RegExpMatchArray): number | null {
+  const h = Number(m[2]), min = m[3] ? Number(m[3]) : 0;
+  if (h > 14 || min >= 60 || h * 60 + min > 14 * 60) return null;
+  return (m[1] === "-" ? -1 : 1) * (h * 60 + min);
+}
 /** An upper-case zone abbreviation as a word, anywhere in the value. */
 const ZONE_WORD = new RegExp(String.raw`(?<![A-Za-z])\(?(?:` + ZONE_ABBRS + String.raw`)\)?(?![A-Za-z])`);
 const ZONE_WORD_ALL = new RegExp(ZONE_WORD.source, "g");
-/** The offset (minutes east of UTC) a ZONE_AFTER_TIME match names, or null
- *  when it is not a real offset (beyond ±14 h, or minutes ≥ 60). */
-function zoneTokenMinutes(m: RegExpMatchArray): number | null {
-  if (m[5]) return ZONE_OFFSET_MINUTES[m[5]];
-  const h = Number(m[3]), min = m[4] ? Number(m[4]) : 0;
-  if (h > 14 || min >= 60 || h * 60 + min > 14 * 60) return null;
-  return (m[2] === "-" ? -1 : 1) * (h * 60 + min);
-}
 /** ISO 8601 date and time, with or without an offset ("2026-08-15T08:00:00",
  *  "…T08:00:00.000Z", "…T08:00+02:00"). */
 const ISO_DATETIME = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(?::\d{2}(?:\.\d+)?)?(?:Z|[+-]\d{2}:?\d{2})?$/i;
@@ -1502,10 +1578,17 @@ const YEAR_FIRST = /^(\d{4})[\/.\-](\d{1,2})[\/.\-](\d{1,2})(?:[ T](\d{1,2}):(\d
  *  guards the Date() fallback.) */
 const NAMES_ITS_ZONE = /\b(?:GMT|UTC)\b|\d{1,2}:\d{2}(?::\d{2})?(?:\.\d+)?(?:\s*[AaPp]\.?[Mm]\.?)?\s*(?:Z|[+-]\d{1,2}(?::?\d{2})?)\b/i;
 
+/** The warning for rows whose date carried words after its time of day
+ *  that are not a time zone (read as written, the words ignored). */
+function ignoredTextWarning(n: number, noun: "row" | "task" | "activity"): string {
+  const nouns = noun === "activity" ? (n === 1 ? "activity" : "activities") : `${noun}${n === 1 ? "" : "s"}`;
+  return `${n} ${nouns} had words after a date's time of day that are not a time zone (for example "est." or "approx"): they were ignored and the time read as written.`;
+}
+
 /** True when a date cell carries a time of day ("8:00", "2026-06-01T08:00").
  *  A date-only start is stored at 00:00Z, which is not a shift reading. */
 export function hasTimeOfDay(raw: string | null | undefined): boolean {
-  return !!raw && /\d{1,2}:\d{2}/.test(raw);
+  return !!raw && (/\d{1,2}:\d{2}/.test(raw) || /(?<![\d:.\/-])\d{1,2}\s*[AaPp]\.?\s?[Mm]\.?(?![a-z])/.test(raw));
 }
 
 // Same minimal CSV split as before, but parameterizable by delim.

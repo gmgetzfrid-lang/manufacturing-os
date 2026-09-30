@@ -205,7 +205,7 @@ describe("placeholder (<New Task>) handling", () => {
 
 // ─── projects Round G (PT SCH-1 / SCH-3 / SCH-8, PC SCHED-2 / SCHED-6 / SCHED-8 / SCHED-9) ───
 
-import { detectDateConvention, coerceIso, contentKey, durationTextToHours, hasTimeOfDay, SCHEDULE_IMPORT_LIMITS } from "@/lib/scheduleParsers";
+import { detectDateConvention, coerceIso, readDate, contentKey, durationTextToHours, hasTimeOfDay, SCHEDULE_IMPORT_LIMITS } from "@/lib/scheduleParsers";
 
 describe("SCH-1 · day/month is decided once from the whole file, never per row", () => {
   it("a file with any day-part > 12 reads EVERY row as D/M/Y (15/08/2026 fixes it)", () => {
@@ -259,7 +259,7 @@ describe("SCH-1 · day/month is decided once from the whole file, never per row"
     expect(detectDateConvention(csv)).toMatchObject({ conflict: true, ambiguous: true, convention: null });
     const res = parseScheduleFile("plan.csv", csv, { dateConvention: "dmy" });
     expect(res.rows.map((r) => r.name)).toEqual(["A"]);
-    expect(res.warnings.some((w) => /1 row skipped \(date could not be read as day\/month\/year\)/.test(w))).toBe(true);
+    expect(res.warnings.some((w) => /1 row skipped \(a start or finish date could not be read as day\/month\/year\)/.test(w))).toBe(true);
     expect(coerceIso("15/08/2026", "mdy")).toBe("");
   });
 
@@ -423,7 +423,7 @@ describe("SCHED-9 · offset-less datetimes are read as wall-clock-as-UTC", () =>
     const files = ["America/Chicago", "Asia/Kolkata"].map((zone) => inZone(zone, () => parseScheduleFile("plan.csv", csv)));
     for (const res of files) {
       expect(res.rows.map((r) => [r.name, r.plannedStartAt, r.plannedAt])).toEqual([["Pour", "2026-06-01T13:00:00.000Z", "2026-06-01T22:00:00.000Z"]]);
-      expect(res.warnings.join(" ")).toMatch(/1 row skipped \(date could not be read/);
+      expect(res.warnings.join(" ")).toMatch(/1 row skipped \(a start or finish date could not be read/);
     }
   });
 
@@ -462,6 +462,41 @@ describe("SCHED-9 · offset-less datetimes are read as wall-clock-as-UTC", () =>
     const csv = ["Task Name,Start,Finish", "Set,6/13/2026 EST,6/14/2026 EST"].join("\n");
     const res = inZone("America/Chicago", () => parseScheduleFile("plan.csv", csv));
     expect(res.rows.map((r) => [r.plannedStartAt, r.plannedAt, r.startHasTime])).toEqual([["2026-06-13T00:00:00Z", "2026-06-14T00:00:00Z", false]]);
+  });
+
+  it("a.m. / p.m. are normalised, an UPPER-CASE abbreviation directly after the time is the zone, and any other words after the time are ignored and reported — never an unreadable value", () => {
+    for (const zone of ["America/Chicago", "Asia/Kolkata"]) {
+      inZone(zone, () => {
+        expect(readDate("6/1/2026 8:00 AM est.")).toEqual({ iso: "2026-06-01T08:00:00Z", ignored: "est." });
+        expect(readDate("6/1/2026 8:00 AM (est)")).toEqual({ iso: "2026-06-01T08:00:00Z", ignored: "(est)" });
+        expect(readDate("6/1/2026 8:00 a.m. EST")).toEqual({ iso: "2026-06-01T13:00:00.000Z", ignored: null });
+        expect(readDate("6/1/2026 8:00 p.m.")).toEqual({ iso: "2026-06-01T20:00:00Z", ignored: null });
+        expect(readDate("Jun 1 2026 8:00AM EST")).toEqual({ iso: "2026-06-01T13:00:00.000Z", ignored: null });
+        expect(readDate("June 1, 2026 8:00 AM EST approx")).toEqual({ iso: "2026-06-01T13:00:00.000Z", ignored: "approx" });
+        expect(readDate("June 1, 2026 8:00 AM Eastern")).toEqual({ iso: "2026-06-01T08:00:00.000Z", ignored: "Eastern" });
+        expect(readDate("2026-06-01T08:00:00 est")).toEqual({ iso: "2026-06-01T08:00:00Z", ignored: "est" });
+        expect(readDate("June 1, 2026 8:00 AM EST PST").iso).toBe("");          // two zones: unreadable
+        expect(readDate("6/1/2026 8:00 AM").ignored).toBeNull();
+      });
+    }
+    // In a file: the words are counted in a warning, the rows kept.
+    const csv = ["Task Name,Start,Finish", "Pour,6/13/2026 8:00 AM est.,6/13/2026 5:00 PM est.", "Set,6/14/2026 8:00 a.m. EST,6/14/2026 5:00 PM EST"].join("\n");
+    const res = inZone("America/Chicago", () => parseScheduleFile("plan.csv", csv));
+    expect(res.rows.map((r) => [r.name, r.plannedStartAt, r.plannedAt])).toEqual([
+      ["Pour", "2026-06-13T08:00:00Z", "2026-06-13T17:00:00Z"],
+      ["Set", "2026-06-14T13:00:00.000Z", "2026-06-14T22:00:00.000Z"],
+    ]);
+    expect(res.warnings).toContain(`1 row had words after a date's time of day that are not a time zone (for example "est." or "approx"): they were ignored and the time read as written.`);
+  });
+
+  it("an unreadable Start is counted and reported like an unreadable Finish — the row is skipped, never imported without its start", () => {
+    const csv = ["Task Name,Start,Finish", "Pour,6/13/2026 8:00 AM,6/13/2026 5:00 PM", "Cure,6/14/2026 8:00 AM EST PST,6/14/2026 5:00 PM", "Set,6/15/2026 25:99,6/15/2026 5:00 PM", "Tie,soon,6/16/2026 5:00 PM", "Clean,6/17/2026 8 AM,6/17/2026 5 PM"].join("\n");
+    const res = parseScheduleFile("plan.csv", csv);
+    expect(res.rows.map((r) => [r.name, r.plannedStartAt, r.startHasTime])).toEqual([["Pour", "2026-06-13T08:00:00Z", true], ["Clean", "2026-06-17T08:00:00Z", true]]);
+    expect(res.warnings).toContain("3 rows skipped (a start or finish date could not be read as month/day/year).");
+    // Nothing unreadable is handed on as text: "" is the one answer.
+    expect([coerceIso("soon"), coerceIso("June 1st, 2026"), coerceIso("6/1/2026 13:00 PM")]).toEqual(["", "", ""]);
+    expect(coerceIso("June 1, 2026 8 AM EST")).toBe("2026-06-01T13:00:00.000Z"); // an hour without minutes is 8:00
   });
 
   it("a written-out month is read AS UTC, so a local DST gap does not move it (Los Angeles skips 02:00–03:00 on 2026-03-08)", () => {

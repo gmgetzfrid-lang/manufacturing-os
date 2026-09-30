@@ -517,14 +517,14 @@ export default function ScheduleImportModal({
                       {rekeyedSummary(plan)}
                     </div>
                   )}
-                  {(plan.zoneAmbiguous ?? 0) > 0 && (
-                    <div className="text-[11px] text-amber-900">
-                      {zoneAmbiguousSummary(plan)}
+                  {(plan.positionAdopted ?? 0) > 0 && (
+                    <div className="text-[11px] text-[var(--color-text-muted)]">
+                      {positionAdoptedSummary(plan)}
                     </div>
                   )}
-                  {positionUndecidedSummary(plan) && (
+                  {(plan.positionRepeated ?? 0) > 0 && (
                     <div className="text-[11px] text-amber-900">
-                      {positionUndecidedSummary(plan)}
+                      {positionRepeatedSummary(plan)}
                     </div>
                   )}
                   {plan.structure.rows > 0 && (
@@ -685,47 +685,28 @@ export function planChangeCount(plan: ImportPlan): number {
   return plan.added + plan.changed + plan.structure.onlyStructure + plan.rekeyedOnly;
 }
 
-/** "5 h", "5 h 30 min", "45 min". */
-function hoursLabel(minutes: number): string {
-  const m = Math.abs(minutes), h = Math.floor(m / 60), r = m % 60;
-  return h === 0 ? `${r} min` : r === 0 ? `${h} h` : `${h} h ${r} min`;
-}
-
-/** Rows imported before content keys (by position) that this file's rows
- *  matched on name and dates: they keep their id and progress (PT SCH-3).
- *  Those matched through the import's time-zone reading are said so, with
- *  the reading: their dates change. */
-export function rekeyedSummary(plan: Pick<ImportPlan, "rekeyed"> & Partial<Pick<ImportPlan, "rekeyedByZone" | "positionReading">>): string {
+/** Rows imported earlier that this import re-keys: they keep their id,
+ *  progress and history (PT SCH-3). */
+export function rekeyedSummary(plan: Pick<ImportPlan, "rekeyed">): string {
   const n = plan.rekeyed;
-  const z = plan.rekeyedByZone ?? 0;
-  const r = plan.positionReading;
-  const reading = r && r.offsetMinutes !== null && r.offsetMinutes !== 0
-    ? ` (stored ${hoursLabel(r.offsetMinutes)} ${r.offsetMinutes > 0 ? "later" : "earlier"} than the file's clock${r.dstTwinMinutes !== null ? `, ${hoursLabel(r.dstTwinMinutes)} on the other side of a daylight-saving change` : ""})`
-    : "";
-  const zone = z > 0
-    ? ` ${z} of them ${z === 1 ? "was" : "were"} stored by the earlier importer in its browser's time zone${reading} — one reading for every task imported by position, decided from the tasks that fit only that reading — so ${z === 1 ? "its dates are" : "their dates are"} corrected to what the file says.`
-    : "";
-  return `${n} task${n === 1 ? "" : "s"} imported earlier ${n === 1 ? "was" : "were"} matched by name and dates and will be re-keyed — ${n === 1 ? "it keeps its" : "they keep their"} progress and history.${zone} A task whose name or dates changed in the file, or that fits only under another offset, is not matched: it is added, and the earlier one is listed as not in this file.`;
+  return `${n} task${n === 1 ? "" : "s"} imported earlier will be re-keyed — ${n === 1 ? "it keeps its" : "they keep their"} progress and history. A task matched on its earlier content key matches on name and dates exactly: if its name or dates changed in the file, it is added, and the earlier one is listed as not in this file.`;
 }
 
-/** File rows that fit tasks imported earlier under the import's reading, but
- *  not one to one: added, never guessed (PT SCH-3). */
-export function zoneAmbiguousSummary(plan: Pick<ImportPlan, "zoneAmbiguous" | "zoneAmbiguousNames">): string {
-  const n = plan.zoneAmbiguous;
-  const names = plan.zoneAmbiguousNames.slice(0, 5).join(", ") + (n > 5 ? ", …" : "");
-  return `${n} task${n === 1 ? "" : "s"} in this file (${names}) ${n === 1 ? "fits" : "fit"} tasks imported earlier, but not one to one (the file and the board hold different numbers of identical tasks), so nothing is guessed: ${n === 1 ? "it is" : "they are"} added, and the earlier tasks are left as they are — any not matched otherwise is listed as not in this file.`;
+/** Position-keyed rows adopted by their unique name — every one named, so
+ *  each adoption is seen before anything is written (PT SCH-3). */
+export function positionAdoptedSummary(plan: Pick<ImportPlan, "positionAdopted" | "positionAdoptedNames">): string {
+  const n = plan.positionAdopted;
+  const more = n - plan.positionAdoptedNames.length;
+  return `${n} task${n === 1 ? "" : "s"} imported earlier by row position ${n === 1 ? "is" : "are"} matched by name — each name occurs once on the board and once in this file — and ${n === 1 ? "keeps its" : "keep their"} progress; the planned dates are taken from the file: ${plan.positionAdoptedNames.join(", ")}${more > 0 ? `, and ${more} more` : ""}.`;
 }
 
-/** Position-keyed rows left unmatched because no single time-zone reading
- *  dominated: the fail-safe, said in words (PT SCH-3). Empty when decided. */
-export function positionUndecidedSummary(plan: Pick<ImportPlan, "positionReading">): string {
-  const r = plan.positionReading;
-  if (!r || r.offsetMinutes !== null || r.undecidedRows === 0) return "";
-  const n = r.undecidedRows;
-  const why = r.support + r.against === 0
-    ? "no task in this file fits them under only one reading (repeated tasks of the same name fit several)"
-    : `the best reading is backed by ${r.support} task${r.support === 1 ? " that fits" : "s that fit"} only it and contradicted by ${r.against}; it needs at least two (one for an exact match) and twice as many as all others`;
-  return `${n} task${n === 1 ? "" : "s"} imported earlier by position could not be matched: no single time-zone reading explains them — ${why}. None of them is guessed: every task in this file is added, and the earlier ones stay as they are, listed as not in this file.`;
+/** Position-keyed rows whose name repeats: kept, never matched (PT SCH-3). */
+export function positionRepeatedSummary(plan: Pick<ImportPlan, "positionRepeated" | "positionRepeatedNames">): string {
+  const n = plan.positionRepeated;
+  const names = Array.from(new Set(plan.positionRepeatedNames)).join(", ");
+  return n === 1
+    ? `1 task repeats a name (${names}) — its earlier row is kept, not matched; review before importing. This file's tasks of that name are added.`
+    : `${n} tasks repeat a name (${names}) — their earlier rows are kept, not matched; review before importing. This file's tasks of those names are added.`;
 }
 
 /** "60% → 80%" / "60% → 0%" — the direction the file would move progress. */

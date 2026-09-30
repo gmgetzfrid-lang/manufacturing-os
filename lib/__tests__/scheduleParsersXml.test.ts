@@ -256,3 +256,15 @@ describe("SCH-1 · XML dates are ISO, so a slash date in a note never withholds 
     expect(res.rows[0].plannedStartAt).toBe("2026-06-01T08:00:00Z");
   });
 });
+
+describe("SCHED-9 · an unreadable Start in MS Project XML is counted like an unreadable Finish", () => {
+  it("the row is skipped and reported, never imported without the start it carried", () => {
+    const xml = `<?xml version="1.0"?><Project xmlns="http://schemas.microsoft.com/project"><Tasks>
+      <Task><UID>1</UID><Name>A</Name><Start>not a date</Start><Finish>2026-06-01T17:00:00</Finish><OutlineLevel>1</OutlineLevel></Task>
+      <Task><UID>2</UID><Name>B</Name><Start>2026-06-01T08:00:00</Start><Finish>2026-06-01T17:00:00</Finish><OutlineLevel>1</OutlineLevel></Task>
+    </Tasks></Project>`;
+    const res = parseScheduleFile("plan.xml", xml);
+    expect(res.rows.map((r) => [r.name, r.plannedStartAt])).toEqual([["B", "2026-06-01T08:00:00Z"]]);
+    expect(res.warnings).toContain("1 task skipped (a start or finish date could not be read).");
+  });
+});
