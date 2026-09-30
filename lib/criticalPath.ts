@@ -19,7 +19,9 @@
 // "Ready" is the instant a finish-to-start successor may start
 // (scheduleReflow.fsReadyMs: the end of the day for a date-only finish, the
 // instant for a timed one), and lag is the source schedule's own
-// (attributes.source_links, PT SCH-8).
+// (attributes.source_links, PT SCH-8), stored in WORKING hours and counted
+// as working days Monday–Friday (scheduleReflow.afterLagMs, the rule the
+// cascade applies) — "+5d" is five working days, not 40 elapsed hours.
 //
 // The PATH is the chain of DRIVING links traced back from the finish —
 // Primavera's "longest path": start from the unfinished leaves that are ready
@@ -36,7 +38,7 @@
 // every leaf inside it. A loop in the links is reported and left out. Pure.
 
 import type { Milestone } from "@/types/schema";
-import { DAY_MS, fsReadyMs, reflowNodesFromMilestones } from "@/lib/scheduleReflow";
+import { DAY_MS, afterLagMs, fsReadyMs, reflowNodesFromMilestones } from "@/lib/scheduleReflow";
 import { leafPercent } from "@/lib/scheduleProgress";
 
 export interface CriticalPathResult {
@@ -57,7 +59,6 @@ export interface CriticalPathResult {
   cycle: string[] | null;
 }
 
-const HOUR_MS = 3_600_000;
 const startMs = (m: Milestone) => Date.parse((m.plannedStartAt as string | undefined) ?? (m.plannedAt as string));
 const finishMs = (m: Milestone) => Date.parse(m.plannedAt as string);
 
@@ -97,21 +98,22 @@ export function computeCriticalPath(
     return out;
   };
 
-  // Leaf-level successor edges with their lag (hours → ms).
+  // Leaf-level successor edges with their lag (working hours; afterLagMs
+  // turns them into calendar time from the instant they are counted from).
   const lagOf = new Map<string, Record<string, number> | null>();
   for (const n of reflowNodesFromMilestones(milestones)) lagOf.set(n.id, n.lagHours ?? null);
-  const succ = new Map<string, Map<string, number>>(); // pred leaf → (succ leaf → lag ms)
+  const succ = new Map<string, Map<string, number>>(); // pred leaf → (succ leaf → lag, working hours)
   const hasPred = new Set<string>();
   let linked = false;
   for (const m of milestones) {
     if (!m.id) continue;
     for (const pred of m.dependsOn ?? []) {
       if (!byId.has(pred)) continue;
-      const lagMs = (lagOf.get(m.id)?.[pred] ?? 0) * HOUR_MS;
+      const lagH = lagOf.get(m.id)?.[pred] ?? 0;
       for (const p of leavesOf(pred)) for (const s of leavesOf(m.id)) {
         if (p === s) continue;
         const row = succ.get(p) ?? new Map<string, number>();
-        row.set(s, Math.max(row.get(s) ?? -Infinity, lagMs));
+        row.set(s, Math.max(row.get(s) ?? -Infinity, lagH));
         succ.set(p, row);
         hasPred.add(s);
         linked = true;
@@ -160,7 +162,7 @@ export function computeCriticalPath(
     for (const [s, lag] of succ.get(id) ?? []) {
       const sLate = lateReady.get(s);
       if (sLate === undefined) continue; // a successor inside a loop does not constrain
-      lr = Math.min(lr, sLate - occupied.get(s)! - lag);
+      lr = Math.min(lr, afterLagMs(sLate - occupied.get(s)!, -lag));
     }
     lateReady.set(id, lr);
   }
@@ -188,7 +190,7 @@ export function computeCriticalPath(
     const start = ready.get(id)! - occupied.get(id)!;
     for (const { p, lag } of preds.get(id) ?? []) {
       if (!open(p) || ids.has(p)) continue;
-      if (start - (ready.get(p)! + lag) < tolerance) stack.push(p);
+      if (start - afterLagMs(ready.get(p)!, lag) < tolerance) stack.push(p);
     }
   }
   let remainingHours = 0;

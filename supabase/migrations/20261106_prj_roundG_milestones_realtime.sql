@@ -17,13 +17,17 @@
 --   * If the database has no supabase_realtime publication at all (a
 --     non-Supabase Postgres), nothing is changed and the probe reads false.
 --   * No REPLICA IDENTITY change: INSERT and UPDATE events carry the new row
---     (the board filters them on project_id server-side); under RLS a DELETE
---     event carries only the key whatever the replica identity, so the board
---     matches a deleted id against the rows it shows. FULL would only grow
---     the WAL for every schedule edit.
---   * Realtime delivers a row change only to subscribers whose RLS SELECT
---     admits the row (milestones_member_all), so nobody sees a row they could
---     not already read. NOT widening.
+--     (the board filters them on project_id server-side). FULL would only
+--     grow the WAL for every schedule edit.
+--   * Realtime checks RLS on INSERT and UPDATE events: they reach only
+--     subscribers whose SELECT policy (milestones_member_all) admits the row.
+--   * WIDENING, id-only: Supabase does NOT apply RLS to DELETE events (it
+--     cannot check access to a row that is gone). Once this table is
+--     published, any client subscribed to milestones DELETE events receives
+--     the primary key — only the key, no other column — of every milestone
+--     deleted in any workspace. Accepted: a bare id of a deleted row names
+--     nothing. The board (components/projects/ScheduleTab.tsx) therefore does
+--     NOT subscribe to DELETE; a colleague's delete shows on its next reload.
 
 -- ── DEC-30 inventory, captured BEFORE the transaction ─────────────────────
 CREATE TEMP TABLE prj_roundg_realtime_inventory AS
@@ -58,7 +62,7 @@ SELECT 'milestones is in the supabase_realtime publication' AS check,
                 WHERE pubname = 'supabase_realtime' AND schemaname = 'public' AND tablename = 'milestones') AS ok,
        NULL::text AS n
 UNION ALL
-SELECT 'milestones keeps row-level security (realtime delivers only rows a subscriber may read)',
+SELECT 'milestones keeps row-level security (realtime INSERT / UPDATE events reach only subscribers who may read the row, DELETE events carry the id alone, unchecked)',
        EXISTS (SELECT 1 FROM pg_class c JOIN pg_namespace ns ON ns.oid = c.relnamespace
                 WHERE ns.nspname = 'public' AND c.relname = 'milestones' AND c.relrowsecurity),
        NULL

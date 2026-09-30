@@ -109,9 +109,10 @@ vi.mock("@/lib/audit", () => ({
 
 import {
   updateMilestone, applyMilestoneMoves, setTaskDuration, groupTasksUnderParent, deleteMilestone,
-  planMilestoneDelete, listBaselineCaptures, currentBaselineSummary,
-  ImportedRowLockedError, DependencyCycleError,
+  planMilestoneDelete, listBaselineCaptures, currentBaselineSummary, baselineHistoryAvailable,
+  ImportedRowLockedError, DependencyCycleError, MoveConflictError,
 } from "@/lib/milestones";
+import { computeTreeMove, reflowNodesFromMilestones } from "@/lib/scheduleReflow";
 import type { Milestone } from "@/types/schema";
 
 const ORG = "org1", PROJECT = "prj1", USER = "u1";
@@ -176,6 +177,107 @@ describe("SCH-13 · an imported row's plan is locked below the UI; its progress 
   });
 });
 
+// PT SCH-13 (review): the engine re-enveloped imported PARENTS, so every move in
+// a project holding an imported summary whose stored span differs from its
+// children's — or a manual task under an imported phase — was refused whole.
+// Driven end to end: the board's engine computes the change set, the writer
+// writes it.
+describe("SCH-13 · manual moves in a project with imported summaries are written", () => {
+  const seed = () => {
+    db.tables.milestones = [
+      row({ id: "IP", name: "Unit 100 (MSP summary)", source: "msproject", is_summary: true, parent_id: null, planned_start_at: "2026-03-01T08:00:00.000Z", planned_at: "2026-03-10T17:00:00.000Z", updated_at: "2026-02-01T00:00:00+00:00" }),
+      row({ id: "i1", name: "Imported one", source: "msproject", parent_id: "IP", planned_start_at: "2026-03-01T08:00:00.000Z", planned_at: "2026-03-05T17:00:00.000Z", updated_at: "2026-02-01T00:00:00+00:00" }),
+      row({ id: "i2", name: "Imported two", source: "msproject", parent_id: "IP", planned_start_at: "2026-03-06T08:00:00.000Z", planned_at: "2026-03-09T17:00:00.000Z", updated_at: "2026-02-01T00:00:00+00:00" }),
+      row({ id: "mc", name: "Manual under the imported phase", parent_id: "IP", planned_start_at: "2026-03-08T08:00:00.000Z", planned_at: "2026-03-09T17:00:00.000Z", updated_at: "2026-02-02T00:00:00+00:00" }),
+      row({ id: "m", name: "Unrelated manual task", parent_id: null, planned_start_at: "2026-04-01T08:00:00.000Z", planned_at: "2026-04-02T17:00:00.000Z", updated_at: "2026-02-03T00:00:00+00:00" }),
+    ];
+  };
+  const asMilestones = (): Milestone[] => ms().map((r) => ({
+    id: r.id as string, orgId: ORG, projectId: PROJECT, name: r.name as string, weight: 1, status: "planned", createdBy: USER,
+    source: r.source as Milestone["source"], parentId: (r.parent_id as string | null) ?? null, isSummary: !!r.is_summary,
+    plannedStartAt: r.planned_start_at as string, plannedAt: r.planned_at as string, updatedAt: r.updated_at as string,
+  }));
+  const write = async (id: string, days: number) => {
+    const list = asMilestones();
+    const changes = computeTreeMove(reflowNodesFromMilestones(list), id, days);
+    const stamp = new Map(list.map((m) => [m.id, m.updatedAt as string]));
+    let sent: Row[] = [];
+    db.rpcImpl = (_fn, args) => { sent = args.p_moves as Row[]; return { data: { count: sent.length, matched: sent.map((x) => x.id), unmatched: [] }, error: null }; };
+    const res = await applyMilestoneMoves({ orgId: ORG, projectId: PROJECT, actorUserId: USER, moves: changes.map((c) => ({ ...c, expectedUpdatedAt: stamp.get(c.id) })) });
+    return { res, sent };
+  };
+  it("dragging an unrelated manual task beside a mismatched imported summary is written (was: refused, “1 of these tasks comes from MS Project”)", async () => {
+    seed();
+    const { res, sent } = await write("m", 2);
+    expect(sent.map((x) => x.id)).toEqual(["m"]);
+    expect(res).toMatchObject({ matched: ["m"], unmatched: [] });
+  });
+  it("moving a manual task under an imported phase past the phase's finish is written; the phase is not", async () => {
+    seed();
+    const { res, sent } = await write("mc", 5);
+    expect(sent.map((x) => x.id)).toEqual(["mc"]);
+    expect(sent[0]).toMatchObject({ start: "2026-03-13T08:00:00.000Z", finish: "2026-03-14T17:00:00.000Z" });
+    expect(res.matched).toEqual(["mc"]);
+  });
+  it("setTaskDuration under an imported phase writes the task and never the imported phase (the lock applyMilestoneMoves enforces)", async () => {
+    seed();
+    const res = await setTaskDuration({ id: "mc", days: 12, actorUserId: USER }); // starts 02-26, before the phase
+    expect(res.ok).toBe(true);
+    const updated = db.writes.filter((w) => w.method === "update").map((w) => w.filters.find(([c]) => c === "id")?.[2]);
+    expect(updated).toEqual(["mc"]);
+    expect(ms().find((r) => r.id === "IP")!.planned_start_at).toBe("2026-03-01T08:00:00.000Z");
+  });
+  it("grouping under an imported phase is refused before any write — it would not follow tasks added here", async () => {
+    seed();
+    const grp = await groupTasksUnderParent({ orgId: ORG, projectId: PROJECT, parentId: "IP", childIds: ["m"], actorUserId: USER });
+    expect(grp.errors[0]).toMatch(/“Unit 100 \(MSP summary\)” comes from MS Project: its dates are set there .*Nothing was grouped/);
+    expect(grp.childCount).toBe(0);
+    expect(db.writes).toEqual([]);
+  });
+});
+
+// PT SCH-7 (review): the lock used to leave a batch half-applied — the RPC
+// moved the rows that matched and skipped the stale ones, breaking the
+// cascade's links. A row already stale when the batch is read is now caught
+// BEFORE the write, and the whole batch is refused.
+describe("SCH-7 · a stale view is refused whole, before anything is written", () => {
+  const seed = () => {
+    db.tables.milestones = [
+      row({ id: "a", name: "Weld", planned_at: "2026-06-03T17:00:00Z", planned_start_at: "2026-06-01T08:00:00Z", updated_at: "2026-05-01T00:00:00+00:00" }),
+      row({ id: "b", name: "NDE", planned_at: "2026-06-05T17:00:00Z", planned_start_at: "2026-06-04T08:00:00Z", updated_at: "2026-05-09T10:00:00.123456+00:00" }),
+    ];
+  };
+  const moves = [
+    { id: "a", plannedStartAt: "2026-06-02T08:00:00Z", plannedAt: "2026-06-04T17:00:00Z", expectedUpdatedAt: "2026-05-01T00:00:00+00:00" },
+    { id: "b", plannedStartAt: "2026-06-05T08:00:00Z", plannedAt: "2026-06-06T17:00:00Z", expectedUpdatedAt: "2026-05-02T00:00:00+00:00" }, // a colleague saved since
+  ];
+  it("returns every stale row in `unmatched`, `refused` set, nothing matched — and the RPC is never called", async () => {
+    seed();
+    let rpcCalled = false;
+    db.rpcImpl = () => { rpcCalled = true; return { data: { count: 1, matched: ["a"], unmatched: ["b"] }, error: null }; };
+    const res = await applyMilestoneMoves({ orgId: ORG, projectId: PROJECT, actorUserId: USER, moves, onUnmatched: "return" });
+    expect(res).toMatchObject({ matched: [], unmatched: ["b"], count: 0, refused: true });
+    expect(rpcCalled).toBe(false);
+    expect(db.writes).toEqual([]); // no breadcrumb, no audit row: nothing moved
+  });
+  it("by default it throws, and says nothing was moved", async () => {
+    seed();
+    const err = await applyMilestoneMoves({ orgId: ORG, projectId: PROJECT, actorUserId: USER, moves }).then(() => null, (e: unknown) => e);
+    expect(err).toBeInstanceOf(MoveConflictError);
+    expect((err as Error).message).toBe("1 task was changed or removed by someone else since the schedule loaded — nothing was moved. Reload the schedule and try again.");
+  });
+  it("the same instant written differently is not stale; a row that is gone is", async () => {
+    seed();
+    db.rpcImpl = (_fn, args) => ({ data: { count: (args.p_moves as Row[]).length, matched: (args.p_moves as Row[]).map((x) => x.id), unmatched: [] }, error: null });
+    const same = [moves[0], { ...moves[1], expectedUpdatedAt: "2026-05-09T10:00:00.123456Z" }];
+    await expect(applyMilestoneMoves({ orgId: ORG, projectId: PROJECT, actorUserId: USER, moves: same })).resolves.toMatchObject({ matched: ["a", "b"] });
+    seed();
+    db.tables.milestones = ms().filter((r) => r.id !== "b");
+    const gone = await applyMilestoneMoves({ orgId: ORG, projectId: PROJECT, actorUserId: USER, moves: same, onUnmatched: "return" });
+    expect(gone).toMatchObject({ matched: [], unmatched: ["b"], refused: true });
+  });
+});
+
 describe("SCH-9 · a new link is checked for loops over the WHOLE project, from the database", () => {
   it("a loop through a row the board may be hiding is refused and named; a forward link saves", async () => {
     db.tables.milestones = [
@@ -189,6 +291,18 @@ describe("SCH-9 · a new link is checked for loops over the WHOLE project, from 
     expect(db.writes).toEqual([]);
     await updateMilestone({ id: "c", patch: { dependsOn: ["b", "a"] }, updatedBy: USER });
     expect(ms().find((r) => r.id === "c")!.depends_on).toEqual(["b", "a"]);
+  });
+  it("only the links an edit ADDS are judged: a task inside a loop an old import left can still lose an unrelated link", async () => {
+    db.tables.milestones = [
+      row({ id: "A", name: "Fit-up", planned_at: "2026-06-01T00:00:00Z", depends_on: ["B", "C"] }),
+      row({ id: "B", name: "Weld", planned_at: "2026-06-02T00:00:00Z", depends_on: ["A"] }), // the stored loop A ↔ B
+      row({ id: "C", name: "Stage", planned_at: "2026-05-30T00:00:00Z" }),
+      row({ id: "D", name: "NDE", planned_at: "2026-06-03T00:00:00Z", depends_on: ["B"] }),
+    ];
+    await updateMilestone({ id: "A", patch: { dependsOn: ["B"] }, updatedBy: USER }); // removing C used to be refused
+    expect(ms().find((r) => r.id === "A")!.depends_on).toEqual(["B"]);
+    // …but a link the edit adds is still checked: D waits on B, which waits on A.
+    await expect(updateMilestone({ id: "A", patch: { dependsOn: ["B", "D"] }, updatedBy: USER })).rejects.toThrow(/That link would make a loop: Fit-up → Weld → NDE → Fit-up/);
   });
   it("on a 2,500-row project the loop through row #2,400 is still caught (the read is paged past the 1,000-row cap)", async () => {
     const filler = Array.from({ length: 2497 }, (_, i) => row({ id: `f${String(i).padStart(4, "0")}`, name: `F${i}`, planned_at: "2026-06-01T00:00:00Z" }));
@@ -299,6 +413,14 @@ describe("SAF-7 · every captured baseline is available for drift, newest first"
       ["h0", "2026-01-10T08:00:00Z", "clear", 1],
     ]);
     expect(res.captures[1].finishById.get("a")).toBe("2026-04-01T00:00:00Z");
+  });
+  it("baselineHistoryAvailable: true when replaced baselines are kept, false without 20261099, null when it cannot tell (the confirm's 'kept' promise)", async () => {
+    db.tables.milestone_baseline_history = [];
+    expect(await baselineHistoryAvailable({ orgId: ORG, projectId: PROJECT })).toBe(true);
+    db.failSelect = (t) => (t === "milestone_baseline_history" ? { code: "42P01", message: "relation \"milestone_baseline_history\" does not exist" } : null);
+    expect(await baselineHistoryAvailable({ orgId: ORG, projectId: PROJECT })).toBe(false);
+    db.failSelect = (t) => (t === "milestone_baseline_history" ? { message: "network error" } : null);
+    expect(await baselineHistoryAvailable({ orgId: ORG, projectId: PROJECT })).toBeNull();
   });
   it("a database without the history table says so; any other failure is an error, never 'no history'", async () => {
     db.failSelect = (t) => (t === "milestone_baseline_history" ? { code: "42P01", message: "relation \"milestone_baseline_history\" does not exist" } : null);

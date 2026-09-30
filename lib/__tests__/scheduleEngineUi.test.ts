@@ -250,7 +250,55 @@ describe("SCH-18 · a failed Undo keeps its toast and says so; timers stay bound
     const src = readFileSync(join(process.cwd(), "components/projects/ExecutionView.tsx"), "utf8");
     expect(src).toMatch(/if \(!\(await onSetStatus\(id, prevStatus\)\)\) \{[^}]*\}?[\s\S]{0,200}throw new Error/);
     expect(src).toMatch(/if \(!\(await onSetProgress\(id, prevPct\)\)\)/);
-    expect(src).toMatch(/const undone = await onMoveMany\(before, res\.updatedAt \? \{ expectedUpdatedAt: res\.updatedAt \} : undefined\);\s*if \(!undone\.ok\) throw/);
+    expect(src).toMatch(/const undone = await onMoveMany\(rows, stamps \? \{ expectedUpdatedAt: stamps \} : undefined\);\s*if \(!undone\.ok\) throw new Error\(undone\.error \|\| "the move could not be undone"\);/);
+    expect(src).toMatch(/announce\(message, undoOf\(before, res\.updatedAt\), "default"\)/);
+    expect(src).not.toMatch(/the schedule changed since that move/); // every failure used to read as a concurrent edit
+  });
+});
+
+// PT SCH-7 / SCH-18 (review): when the lock rejected some rows AFTER others
+// were written, the board treated the batch as failed and offered no Undo, so
+// the rows that did move could not be put back. It now announces what moved
+// with an Undo for exactly those rows under their read-back locks, and a
+// failed Undo says WHY (the handler's own error), not "the schedule changed".
+describe("SCH-7 / SCH-18 · a partly written batch can be undone, and a failed Undo gives its real reason", () => {
+  const phase: Milestone[] = [
+    mk({ id: "S", name: "Spool 12", isSummary: true, plannedStartAt: "2026-03-01T00:00:00Z", plannedAt: "2026-03-04T00:00:00Z" }),
+    mk({ id: "c1", name: "Fit-up", parentId: "S", plannedStartAt: "2026-03-01T00:00:00Z", plannedAt: "2026-03-03T00:00:00Z" }),
+    mk({ id: "c2", name: "Weld", parentId: "S", plannedStartAt: "2026-03-02T00:00:00Z", plannedAt: "2026-03-04T00:00:00Z" }),
+  ];
+  it("sequencing writes 2 rows, the lock lets 1 through: the toast names it and its Undo restores that row alone, with its new lock", async () => {
+    const calls: Array<{ rows: Array<{ id: string; plannedStartAt: string; plannedAt: string }>; opts?: { expectedUpdatedAt?: Record<string, string> } }> = [];
+    const onMoveMany = async (rows: Array<{ id: string; plannedStartAt: string; plannedAt: string }>, opts?: { expectedUpdatedAt?: Record<string, string> }) => {
+      calls.push({ rows, opts });
+      if (calls.length === 1) return { ok: false, matched: ["c2"], updatedAt: { c2: "2026-09-30T10:00:00.5+00:00" }, error: "Spool 12 was changed by someone else and not moved (the other 1 moved)" };
+      return { ok: false, error: "permission denied for table milestones" };
+    };
+    await render(board(phase, { onMoveMany }));
+    const seq = host.querySelector('button[title^="Sequence sub-tasks end-to-end"]') as HTMLButtonElement;
+    expect(seq).not.toBeNull();
+    await act(async () => { seq.click(); });
+    await act(async () => { await Promise.resolve(); });
+    expect(calls[0].rows.map((r) => r.id).sort()).toEqual(["S", "c2"]);
+    expect(host.textContent).toMatch(/Only 1 of 2 tasks moved \(the rest were changed by someone else\) — Undo puts it back · Sequenced “Spool 12” end-to-end/);
+    const undo = [...host.querySelectorAll("button")].find((b) => b.textContent?.trim() === "Undo") as HTMLButtonElement;
+    await act(async () => { undo.click(); });
+    await act(async () => { await Promise.resolve(); });
+    expect(calls[1].rows).toEqual([{ id: "c2", plannedStartAt: "2026-03-02T00:00:00Z", plannedAt: "2026-03-04T00:00:00Z" }]);
+    expect(calls[1].opts).toEqual({ expectedUpdatedAt: { c2: "2026-09-30T10:00:00.5+00:00" } });
+    // the Undo was refused for a reason that is not a concurrent edit — and says so
+    expect(host.textContent).toMatch(/Couldn't undo: permission denied for table milestones — Only 1 of 2 tasks moved/);
+  });
+  it("a batch that moved nothing offers no Undo", async () => {
+    await render(board(phase, { onMoveMany: async () => ({ ok: false, matched: [], error: "Weld was changed by someone else — nothing was moved" }) }));
+    const seq = host.querySelector('button[title^="Sequence sub-tasks end-to-end"]') as HTMLButtonElement;
+    await act(async () => { seq.click(); });
+    await act(async () => { await Promise.resolve(); });
+    expect([...host.querySelectorAll("button")].some((b) => b.textContent?.trim() === "Undo")).toBe(false);
+  });
+  it("PT SCH-13: an imported phase is not offered as a parent to group under (source pin; groupTasksUnderParent refuses it too)", () => {
+    const src = readFileSync(join(process.cwd(), "components/projects/ExecutionView.tsx"), "utf8");
+    expect(src).toMatch(/const summaries = useMemo\(\(\) => items\.filter\(\(m\) => m\.isSummary && \(childrenOf\.get\(m\.id!\) \?\? \[\]\)\.length > 0 && !isImportedMilestone\(m\)\)/);
   });
 });
 

@@ -817,7 +817,10 @@ describe("SCH-7 / SCHED-11 · applyMilestoneMoves", () => {
   const seed = () => {
     db.tables.milestones = [
       { id: "a", org_id: ORG, project_id: PROJECT, name: "A", planned_at: "2026-06-03T17:00:00Z", planned_start_at: "2026-06-01T08:00:00Z", updated_at: "2026-05-01T00:00:00+00:00", status: "planned" },
-      { id: "b", org_id: ORG, project_id: PROJECT, name: "B", planned_at: "2026-06-05T17:00:00Z", planned_start_at: "2026-06-04T08:00:00Z", updated_at: "2026-05-02T00:00:00+00:00", status: "in_progress" },
+      // b's caller-supplied lock below matches the row as read (the pre-read
+      // refuses a stale view whole — PT SCH-7, J6b); an "unmatched" from the
+      // RPC is the row changing in the instant between that read and the write.
+      { id: "b", org_id: ORG, project_id: PROJECT, name: "B", planned_at: "2026-06-05T17:00:00Z", planned_start_at: "2026-06-04T08:00:00Z", updated_at: "2026-04-30T00:00:00+00:00", status: "in_progress" },
     ];
   };
   const moves = [
@@ -896,7 +899,7 @@ describe("SCH-7 / SCHED-11 · applyMilestoneMoves", () => {
     expect(milestones()[0].shift).toBeUndefined(); // an unlabelled row stays unlabelled (SCHED-9)
   });
 
-  it("the pre-read failing never turns the lock off: without the caller's lock values nothing moves; with them the move goes ahead and the missing trail is reported", async () => {
+  it("the pre-read failing never turns the lock off: nothing moves, with or without the caller's lock values (the imported-row and stale checks need the read — J6b)", async () => {
     seed();
     db.failSelect = (t) => (t === "milestones" ? "permission denied for table milestones" : null);
     db.rpcImpl = () => ({ data: { count: 2, matched: ["a", "b"], unmatched: [] }, error: null });
@@ -904,9 +907,8 @@ describe("SCH-7 / SCHED-11 · applyMilestoneMoves", () => {
     expect(db.rpcCalls).toEqual([]);
 
     const locked = moves.map((m) => ({ ...m, expectedUpdatedAt: "2026-05-01T00:00:00+00:00" }));
-    const res = await applyMilestoneMoves({ ...actor, moves: locked });
-    expect((db.rpcCalls[0].args.p_moves as Row[]).map((m) => m.expected_updated_at)).toEqual(["2026-05-01T00:00:00+00:00", "2026-05-01T00:00:00+00:00"]);
-    expect(res.auditError).toMatch(/^breadcrumbs: the tasks could not be read before the move \(permission denied for table milestones\)/);
+    await expect(applyMilestoneMoves({ ...actor, moves: locked })).rejects.toThrow(/Could not read the tasks before moving them \(permission denied for table milestones\) — nothing was moved/);
+    expect(db.rpcCalls).toEqual([]);
   });
 });
 

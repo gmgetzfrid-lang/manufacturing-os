@@ -10,8 +10,10 @@
 //
 //   And the client half ScheduleTab owns: each batch move carries the row's
 //   updated_at as loaded (the lock 20261098 checks), rejected moves come back
-//   by id (onUnmatched: "return") and are named, and the realtime channel
-//   listens for DELETE by id (no project_id on a DELETE under RLS).
+//   by id (onUnmatched: "return") and are named, rows that did move in a race
+//   come back with their locks so they can be undone, and the realtime
+//   channel listens to INSERT / UPDATE in this project only — never DELETE,
+//   which Supabase delivers for every workspace without an RLS check.
 
 import { describe, it, expect } from "vitest";
 import { readFileSync } from "node:fs";
@@ -51,6 +53,12 @@ describe("20261106 — milestones in supabase_realtime (PT SCH-7 / RT-12)", () =
     expect(mig).toMatch(/'milestones is in the supabase_realtime publication' AS check/);
     expect(mig).toMatch(/c\.relname = 'milestones' AND c\.relrowsecurity/);
   });
+  it("the header says what it widens: DELETE events carry the id of every deleted milestone, unchecked by RLS (review)", () => {
+    const header = mig.slice(0, mig.indexOf("CREATE TEMP TABLE"));
+    expect(header).toMatch(/WIDENING, id-only: Supabase does NOT apply RLS to DELETE events/);
+    expect(header).toMatch(/NOT subscribe to DELETE/);
+    expect(header).not.toMatch(/NOT widening/);
+  });
 });
 
 describe("ScheduleTab — the lock, the named rejections and the live channel (PT SCH-7)", () => {
@@ -60,15 +68,22 @@ describe("ScheduleTab — the lock, the named rejections and the live channel (P
     expect(tab).toMatch(/changed by someone else and \$\{names\.length === 1 \? "was" : "were"\} not moved: \$\{names\.slice\(0, 5\)\.join\(", "\)\}/);
     expect(tab).toMatch(/setMilestones\(\(arr\) => arr\.map\(\(m\) => \(m\.id && stamps\[m\.id\] \? \{ \.\.\.m, updatedAt: stamps\[m\.id\] \} : m\)\)\)/);
   });
-  it("INSERT / UPDATE are filtered on project_id; DELETE is matched by id against the rows on screen", () => {
+  it("a partly written batch hands back the rows that moved and their new locks (so the board can undo them), and every failure carries its reason", () => {
+    expect(tab).toMatch(/return \{ ok: false, matched: res\.matched, updatedAt: res\.updatedAt, error: reason \};/);
+    expect(tab).toMatch(/return \{ ok: false, error: \(e as Error\)\.message \};/);
+    expect(tab).not.toMatch(/return \{ ok: false \};/);
+  });
+  it("INSERT / UPDATE are filtered on project_id; DELETE is NOT subscribed (RLS is not applied to DELETE events)", () => {
     expect(tab).toMatch(/event: "INSERT", schema: "public", table: "milestones", filter: `project_id=eq\.\$\{projectId\}`/);
     expect(tab).toMatch(/event: "UPDATE", schema: "public", table: "milestones", filter: `project_id=eq\.\$\{projectId\}`/);
-    expect(tab).toMatch(/event: "DELETE", schema: "public", table: "milestones" \}/);
-    expect(tab).toMatch(/milestonesRef\.current\.some\(\(m\) => m\.id === id\)/);
+    expect(tab).not.toMatch(/event: "DELETE"/);
   });
-  it("PT SAF-7: the re-baseline confirm names the baseline it replaces and says it is kept", () => {
+  it("PT SAF-7: the re-baseline confirm names the baseline it replaces and promises 'kept' only when the database keeps it", () => {
     expect(tab).toMatch(/Replace the baseline \$\{setOn \? `set on \$\{setOn\} ` : ""\}\(\$\{baselineNow\.rowCount\} task/);
-    expect(tab).toMatch(/The one you replace is kept — the Report can still measure drift against it/);
+    expect(tab).toMatch(/const kept = baselineNow \? await baselineHistoryAvailable\(\{ orgId, projectId \}\) : null;/);
+    expect(tab).toMatch(/kept === true\s*\? "The one you replace is kept — the Report can still measure drift against it/);
+    expect(tab).toMatch(/: kept === false\s*\? "This database does not keep replaced baselines yet \(the baseline-history migration is not applied\): the one you replace is overwritten and cannot be recovered/);
+    expect(tab).not.toMatch(/the one it replaces is kept, and the Report/); // the button's tooltip no longer promises it either
   });
   it("PT SCH-6: the board gets the FULL list and hides imported rows itself; the planning rollup reads the full list", () => {
     expect(tab).toMatch(/<ExecutionView\s+milestones=\{milestones\}\s+hideImported=\{!showGhost\}/);

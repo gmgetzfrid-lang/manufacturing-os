@@ -2,7 +2,7 @@
 import { describe, it, expect } from "vitest";
 import {
   cascadeDependents, wouldCreateCycle, dependentsClosure, linkCyclePath, fsLagHours, reflowNodesFromMilestones,
-  CascadeRefusedError, type ReflowNode,
+  CascadeRefusedError, afterLagMs, fsReadyMs, WORK_DAY_HOURS, DAY_MS, type ReflowNode,
 } from "@/lib/scheduleReflow";
 import type { Milestone } from "@/types/schema";
 
@@ -125,6 +125,49 @@ describe("cascadeDependents — finish-to-start", () => {
     expect(day(by["c"].plannedStartAt)).toBe("2026-01-13"); // after b's new finish (Jan 12)
   });
 
+  // The FIFO relaxation re-pushed a task every time a longer path reached it:
+  // A plus a chain X1 → … → X40 where every Xi also depends on A, listed in
+  // reverse (the database returns same-day rows in no fixed order), took ~800
+  // steps against a guard of 512 and was REFUSED as "runaway" with nothing
+  // moved. Each task is now settled once, in topological order.
+  const fanIn = (n: number, reversed: boolean): ReflowNode[] => {
+    const xs: ReflowNode[] = Array.from({ length: n }, (_, i) => ({
+      id: `X${i + 1}`, parentId: null, plannedStartAt: d("2026-06-02"), plannedAt: d("2026-06-02"),
+      dependsOn: i === 0 ? ["A"] : ["A", `X${i}`],
+    }));
+    return [{ id: "A", parentId: null, plannedStartAt: d("2026-06-01"), plannedAt: d("2026-06-10") }, ...(reversed ? xs.reverse() : xs)];
+  };
+  it("SCH-4 · a reversed fan-in of 40 (A plus X1 → … → X40, each also on A) is WRITTEN, not refused as runaway", () => {
+    const changes = cascadeDependents(fanIn(40, true), ["A"]);
+    const by = Object.fromEntries(changes.map((c) => [c.id, c]));
+    expect(changes).toHaveLength(40);
+    expect(day(by["X1"].plannedStartAt)).toBe("2026-06-11");
+    expect(day(by["X2"].plannedStartAt)).toBe("2026-06-12");
+    expect(day(by["X40"].plannedStartAt)).toBe("2026-07-20"); // 06-10 + 40 days: one day per link, no more
+    // the same network in forward order gives exactly the same writes
+    const fwd = Object.fromEntries(cascadeDependents(fanIn(40, false), ["A"]).map((c) => [c.id, c]));
+    expect(fwd).toEqual(by);
+  });
+  it("SCH-4 · a 400-task reversed fan-in settles too (each task once — ~80,000 relaxation steps before)", () => {
+    const changes = cascadeDependents(fanIn(400, true), ["A"]);
+    expect(changes).toHaveLength(400);
+    expect(day(changes.find((c) => c.id === "X400")!.plannedStartAt)).toBe("2027-07-15"); // 2026-06-10 + 400 days
+  });
+  it("SCH-4 · a stored loop downstream that no push reaches is left alone (only a loop the move drives is refused)", () => {
+    // a moved within its float: x still starts after it, so nothing is pushed —
+    // the old loop b ↔ c further down (an old import) is not the move's business.
+    const nodes: ReflowNode[] = [
+      { id: "a", parentId: null, plannedStartAt: d("2026-01-01"), plannedAt: d("2026-01-03") },
+      { id: "x", parentId: null, plannedStartAt: d("2026-01-06"), plannedAt: d("2026-01-07"), dependsOn: ["a"] },
+      { id: "b", parentId: null, plannedStartAt: d("2026-01-10"), plannedAt: d("2026-01-11"), dependsOn: ["x", "c"] },
+      { id: "c", parentId: null, plannedStartAt: d("2026-01-12"), plannedAt: d("2026-01-13"), dependsOn: ["b"] },
+    ];
+    expect(cascadeDependents(nodes, ["a"])).toEqual([]);
+    // …and once the move does reach it, it is refused with the loop named.
+    const pushed = nodes.map((n) => (n.id === "a" ? { ...n, plannedAt: d("2026-01-12") } : n));
+    expect(() => cascadeDependents(pushed, ["a"])).toThrow(CascadeRefusedError);
+  });
+
   it("SCH-4 · a dependent's sub-task's own successors are cascaded too", () => {
     // b is pushed; its child b1 carries along; x depends on b1 and must follow.
     const nodes: ReflowNode[] = [
@@ -170,17 +213,79 @@ describe("SCHED-13 · finish-to-start with real clock times (08:00 / 17:00) and 
     // the chain absorbed no extra day per link
   });
 
-  it("a stored lag is honoured (and a lead pulls the constraint in)", () => {
+  it("a stored lag is honoured as WORKING time (and a lead pulls the constraint in)", () => {
+    // a finishes Wed 2026-06-03 17:00.
     const nodes = (lag: number): ReflowNode[] => [
       { id: "a", parentId: null, plannedStartAt: t("2026-06-01T08:00"), plannedAt: t("2026-06-03T17:00") },
       { id: "b", parentId: null, plannedStartAt: t("2026-06-01T08:00"), plannedAt: t("2026-06-01T17:00"), dependsOn: ["a"], lagHours: { a: lag } },
     ];
-    // +24h: ready 06-04 17:00 → b's first 08:00 at/after that is 06-05 08:00.
-    expect(cascadeDependents(nodes(24), ["a"]).find((c) => c.id === "b")!.plannedStartAt).toBe(t("2026-06-05T08:00"));
+    // +24h = 3 working days: Thu, Fri, (weekend), Mon → ready Mon 06-08 17:00 → b 06-09 08:00.
+    // (Applied as elapsed hours it required only Thu 06-04 17:00 → 06-05 08:00.)
+    expect(cascadeDependents(nodes(24), ["a"]).find((c) => c.id === "b")!.plannedStartAt).toBe(t("2026-06-09T08:00"));
     // no lag: 06-04 08:00.
     expect(cascadeDependents(nodes(0), ["a"]).find((c) => c.id === "b")!.plannedStartAt).toBe(t("2026-06-04T08:00"));
-    // −16h lead: ready 06-03 01:00 → 06-03 08:00.
-    expect(cascadeDependents(nodes(-16), ["a"]).find((c) => c.id === "b")!.plannedStartAt).toBe(t("2026-06-03T08:00"));
+    // −16h = a 2-working-day lead: Mon 06-01 17:00 → b 06-02 08:00.
+    expect(cascadeDependents(nodes(-16), ["a"]).find((c) => c.id === "b")!.plannedStartAt).toBe(t("2026-06-02T08:00"));
+  });
+
+  it("'+5d' (stored +40h) is five working days, not 1⅔ calendar days", () => {
+    // The predecessor is pushed to finish Fri 2026-06-05 17:00; FS +5d.
+    const nodes: ReflowNode[] = [
+      { id: "p", parentId: null, plannedStartAt: t("2026-06-01T08:00"), plannedAt: t("2026-06-05T17:00") },
+      { id: "s", parentId: null, plannedStartAt: t("2026-06-01T08:00"), plannedAt: t("2026-06-02T17:00"), dependsOn: ["p"], lagHours: { p: 40 } },
+    ];
+    const s = cascadeDependents(nodes, ["p"]).find((c) => c.id === "s")!;
+    // Lag days Mon 06-08 … Fri 06-12 → ready Fri 06-12 17:00 → the next 08:00 is Sat 06-13
+    // (no project calendar: the push itself may land on a weekend — the scheduling tool
+    // would say Mon 06-15). As elapsed hours the same link required only Sun 06-07 09:00
+    // and laid s on Mon 06-08, a week early.
+    expect(s.plannedStartAt).toBe(t("2026-06-13T08:00"));
+    expect(s.plannedAt).toBe(t("2026-06-14T17:00"));
+    // A date-only finish on Fri 06-05 with +1d: the lag day is Monday, so the successor starts Tuesday.
+    const dateOnly: ReflowNode[] = [
+      { id: "p", parentId: null, plannedStartAt: d("2026-06-01"), plannedAt: d("2026-06-05") },
+      { id: "s", parentId: null, plannedStartAt: d("2026-06-01"), plannedAt: d("2026-06-01"), dependsOn: ["p"], lagHours: { p: 8 } },
+    ];
+    expect(day(cascadeDependents(dateOnly, ["p"]).find((c) => c.id === "s")!.plannedStartAt)).toBe("2026-06-09");
+  });
+
+  it("afterLagMs: working days skip the weekend, hours under a day are clock hours, a lead walks back", () => {
+    const at = (s: string) => Date.parse(t(s));
+    const iso = (ms: number) => new Date(ms).toISOString();
+    expect(WORK_DAY_HOURS).toBe(8);
+    expect(iso(afterLagMs(at("2026-06-05T17:00"), 8))).toBe(t("2026-06-08T17:00"));   // Fri 17:00 + 1d → Mon 17:00
+    expect(iso(afterLagMs(at("2026-06-03T17:00"), 8))).toBe(t("2026-06-04T17:00"));   // Wed → Thu
+    expect(iso(afterLagMs(fsReadyMs(at("2026-06-05T00:00")), 8))).toBe(t("2026-06-09T00:00")); // date-only Fri + 1d → Tue
+    expect(iso(afterLagMs(at("2026-06-03T12:00"), 4))).toBe(t("2026-06-03T16:00"));   // +4h: clock hours
+    expect(iso(afterLagMs(at("2026-06-03T17:00"), 12))).toBe(t("2026-06-04T21:00"));  // 1d 4h
+    expect(iso(afterLagMs(at("2026-06-08T17:00"), -8))).toBe(t("2026-06-07T17:00"));  // Mon − 1d (the latest ready that still clears Monday)
+    expect(iso(afterLagMs(at("2026-06-03T17:00"), -16))).toBe(t("2026-06-01T17:00")); // Wed − 2d → Mon
+    expect(afterLagMs(at("2026-06-03T17:00"), 0)).toBe(at("2026-06-03T17:00"));
+    expect(afterLagMs(at("2026-06-03T17:00"), null)).toBe(at("2026-06-03T17:00"));
+    expect(afterLagMs(at("2026-06-03T17:00"), Number.NaN)).toBe(at("2026-06-03T17:00"));
+  });
+
+  it("afterLagMs: the whole-week skip agrees with a day-by-day walk, and a lag walked back then forward never ends late", () => {
+    const works = (a: number) => { const wd = new Date(a + DAY_MS - 1).getUTCDay(); return wd !== 0 && wd !== 6; };
+    const walk = (from: number, days: number, dir: 1 | -1) => {
+      let tt = from, left = days;
+      if (dir > 0) { while (left > 0) { if (works(tt)) left--; tt += DAY_MS; } }
+      else { while (left > 0) { tt -= DAY_MS; if (works(tt)) left--; } }
+      return tt;
+    };
+    for (let dd = 0; dd < 14; dd++) {
+      for (const hh of [0, 8, 17]) {
+        const from = Date.parse(d("2026-06-01")) + dd * DAY_MS + hh * 3_600_000;
+        for (let wdays = 0; wdays <= 30; wdays++) {
+          expect(afterLagMs(from, wdays * 8)).toBe(walk(from, wdays, 1));
+          expect(afterLagMs(from, -wdays * 8)).toBe(walk(from, wdays, -1));
+          for (const extra of [0, 3, 7.5]) {
+            const lag = wdays * 8 + extra;
+            expect(afterLagMs(afterLagMs(from, -lag), lag)).toBeLessThanOrEqual(from);
+          }
+        }
+      }
+    }
   });
 
   it("lag is read from the importer's attributes.source_links through the predecessor's external ref", () => {

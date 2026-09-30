@@ -24,7 +24,7 @@ import { createPortal } from "react-dom";
 import { Flag, Plus, Loader2, AlertTriangle, Check, X, Calendar, ChevronDown, Upload, ArrowRight, Eye, EyeOff, Layers } from "lucide-react";
 import {
   listMilestones, createMilestone, setMilestoneStatus, setMilestoneProgress, deleteMilestone,
-  applyMilestoneMoves, computeScheduleMetrics, setBaseline, planMilestoneDelete, currentBaselineSummary,
+  applyMilestoneMoves, computeScheduleMetrics, setBaseline, planMilestoneDelete, currentBaselineSummary, baselineHistoryAvailable,
 } from "@/lib/milestones";
 import { isImportedMilestone, isOverdueMilestone } from "@/lib/milestoneLiveness";
 import { supabase } from "@/lib/supabase";
@@ -110,8 +110,12 @@ export default function ScheduleTab({ orgId, projectId, projectName, projectStat
   // Needs `milestones` in the supabase_realtime publication (migration
   // 20261106 — until it is applied no event arrives and the lock above is
   // what stops a silent overwrite). INSERT / UPDATE carry project_id, so they
-  // are filtered server-side; a DELETE event carries only the key under RLS,
-  // so it is matched against the rows on screen.
+  // are filtered server-side, and Realtime checks RLS on them. DELETE is NOT
+  // subscribed: Supabase does not apply RLS to DELETE events, so a DELETE
+  // listener would receive the id of every milestone deleted in every
+  // workspace. A colleague's delete shows on the next reload — at once when
+  // the deleted row had sub-tasks or dependents, because deleteMilestone
+  // updates those rows (an UPDATE event in this project).
   useEffect(() => {
     let timer: ReturnType<typeof setTimeout> | null = null;
     const later = () => {
@@ -126,12 +130,6 @@ export default function ScheduleTab({ orgId, projectId, projectName, projectStat
       .on("postgres_changes",
         { event: "UPDATE", schema: "public", table: "milestones", filter: `project_id=eq.${projectId}` },
         later)
-      .on("postgres_changes",
-        { event: "DELETE", schema: "public", table: "milestones" },
-        (payload: { old?: { id?: string } }) => {
-          const id = payload.old?.id;
-          if (id && milestonesRef.current.some((m) => m.id === id)) later();
-        })
       .subscribe();
     return () => {
       if (timer) clearTimeout(timer);
@@ -239,15 +237,24 @@ export default function ScheduleTab({ orgId, projectId, projectName, projectStat
   const hasBaseline = !!baselineNow;
   const [baselineBusy, setBaselineBusy] = useState(false);
   const onSetBaseline = async () => {
-    // Name the baseline being replaced, and say it is kept (PT SAF-7 — the
-    // RPC writes it to milestone_baseline_history before overwriting).
+    // Name the baseline being replaced, and say whether it is kept (PT SAF-7):
+    // the RPC writes it to milestone_baseline_history before overwriting —
+    // but only once 20261099 is applied; before that setBaseline's legacy
+    // path overwrites it with no history, so the confirm asks the database
+    // first and never promises "kept" when it is not.
     const setOn = baselineNow?.setAt
       ? new Date(baselineNow.setAt).toLocaleDateString(undefined, { year: "numeric", month: "short", day: "numeric" })
       : null;
+    const kept = baselineNow ? await baselineHistoryAvailable({ orgId, projectId }) : null;
+    const keptLine = kept === true
+      ? "The one you replace is kept — the Report can still measure drift against it — but from now on"
+      : kept === false
+        ? "This database does not keep replaced baselines yet (the baseline-history migration is not applied): the one you replace is overwritten and cannot be recovered. From now on"
+        : "Whether the one you replace is kept could not be checked — if the baseline-history migration is not applied it is overwritten and cannot be recovered. From now on";
     const msg = baselineNow
-      ? `Replace the baseline ${setOn ? `set on ${setOn} ` : ""}(${baselineNow.rowCount} task${baselineNow.rowCount === 1 ? "" : "s"}) with the current plan? The one you replace is kept — the Report can still measure drift against it — but from now on every "vs plan" figure is measured against the new snapshot.`
+      ? `Replace the baseline ${setOn ? `set on ${setOn} ` : ""}(${baselineNow.rowCount} task${baselineNow.rowCount === 1 ? "" : "s"}) with the current plan? ${keptLine} every "vs plan" figure is measured against the new snapshot.`
       : "Snapshot the current plan as the baseline? Every view will then show how far the schedule drifts from it.";
-    if (!(await appConfirm(msg))) return;
+    if (!(await appConfirm(kept === true || !baselineNow ? msg : { message: msg, tone: "danger" }))) return;
     setBaselineBusy(true);
     try {
       const res = await setBaseline({ orgId, projectId, actorUserId: userId, actorUserEmail: userEmail, actorUserRole: userRole });
@@ -327,7 +334,7 @@ export default function ScheduleTab({ orgId, projectId, projectName, projectStat
                   onClick={onSetBaseline}
                   disabled={baselineBusy}
                   title={hasBaseline
-                    ? "Capture the current plan as the new baseline — the one it replaces is kept, and the Report can still compare against it"
+                    ? "Capture the current plan as the new baseline — once the baseline-history migration is applied the one it replaces is kept for the Report to compare against (the confirm says whether this database keeps it)"
                     : "Snapshot the current plan as the baseline — every view then shows how far you've drifted from it"}
                   className="inline-flex items-center gap-1 text-[11px] font-bold text-emerald-700 hover:text-emerald-900 bg-emerald-50 hover:bg-emerald-100 border border-emerald-200 px-2.5 py-1.5 rounded-lg shadow-sm disabled:opacity-40 transition-colors"
                 >
@@ -395,11 +402,17 @@ export default function ScheduleTab({ orgId, projectId, projectName, projectStat
               });
               if (res.unmatched.length > 0) {
                 // Rejected by the lock: name them, and reload so the board
-                // shows what is really saved.
+                // shows what is really saved. A stale view is refused whole
+                // (nothing moved); rows that did move in a race are handed
+                // back with their new locks so the board can offer an Undo.
                 const names = res.unmatched.map((id) => milestonesRef.current.find((m) => m.id === id)?.name ?? id.slice(0, 8));
-                setError(`${names.length} task${names.length === 1 ? " was" : "s were"} changed by someone else and ${names.length === 1 ? "was" : "were"} not moved: ${names.slice(0, 5).join(", ")}${names.length > 5 ? ", …" : ""}${res.matched.length > 0 ? ` (the other ${res.matched.length} moved)` : ""}. The schedule has been reloaded — check those dates and try again.`);
+                const who = `${names.slice(0, 5).join(", ")}${names.length > 5 ? ", …" : ""}`;
+                const reason = res.matched.length > 0
+                  ? `${who} ${names.length === 1 ? "was" : "were"} changed by someone else and not moved (the other ${res.matched.length} moved)`
+                  : `${who} ${names.length === 1 ? "was" : "were"} changed by someone else — nothing was moved`;
+                setError(`${names.length} task${names.length === 1 ? " was" : "s were"} changed by someone else and ${names.length === 1 ? "was" : "were"} not moved: ${names.slice(0, 5).join(", ")}${names.length > 5 ? ", …" : ""}${res.matched.length > 0 ? ` (the other ${res.matched.length} moved — Undo puts them back)` : " — nothing was moved"}. The schedule has been reloaded — check those dates and try again.`);
                 void refresh();
-                return { ok: false };
+                return { ok: false, matched: res.matched, updatedAt: res.updatedAt, error: reason };
               }
               if (res.auditError) setError(`Moved, but ${res.auditError}.`);
               // Our own write bumped updated_at: take the new values, or
@@ -412,7 +425,7 @@ export default function ScheduleTab({ orgId, projectId, projectName, projectStat
             } catch (e) {
               setError((e as Error).message);
               void refresh();
-              return { ok: false };
+              return { ok: false, error: (e as Error).message };
             }
           }}
           onSetStatus={async (id, status) => {

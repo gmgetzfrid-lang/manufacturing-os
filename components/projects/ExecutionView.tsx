@@ -59,8 +59,12 @@ import { filterMilestones, isFilterActive, EMPTY_FILTER, type ScheduleFilter } f
 
 /** What a persisted batch move reports back: whether it saved, and each
  *  moved row's updated_at after the write — the lock its Undo sends (PT
- *  SCH-18), so an Undo never overwrites a colleague's later edit. */
-export interface MoveOutcome { ok: boolean; updatedAt?: Record<string, string> }
+ *  SCH-18), so an Undo never overwrites a colleague's later edit. When the
+ *  lock rejected some rows AFTER others were written (a colleague saved in
+ *  the instant between the check and the write), `ok` is false and `matched`
+ *  names the rows that did move, so they can still be undone (PT SCH-7).
+ *  `error` is why it failed, in words — what a failed Undo says. */
+export interface MoveOutcome { ok: boolean; updatedAt?: Record<string, string>; matched?: string[]; error?: string }
 
 interface Props {
   /** The FULL list. Every figure, rollup, cycle check and reschedule reads
@@ -549,7 +553,9 @@ export default function ExecutionView({
 
   // Persist a computed batch with one Undo that restores the rows' prior
   // dates — and carries the lock the move reported, so the Undo is refused
-  // (and says so) if someone changed those rows in between (PT SCH-18).
+  // (and says why) if someone changed those rows in between (PT SCH-18). A
+  // batch the lock only partly wrote still gets an Undo for the rows that
+  // moved (PT SCH-7), so a half-applied cascade can be put back.
   const persistBatch = useCallback(async (changes: DateChange[], message: string) => {
     if (!onMoveMany) return;
     const before: DateChange[] = [];
@@ -558,14 +564,21 @@ export default function ExecutionView({
       if (!m) continue;
       before.push({ id: c.id, plannedStartAt: (m.plannedStartAt as string | undefined) ?? (m.plannedAt as string), plannedAt: m.plannedAt as string });
     }
+    const undoOf = (rows: DateChange[], stamps: Record<string, string> | undefined) => async () => {
+      const undone = await onMoveMany(rows, stamps ? { expectedUpdatedAt: stamps } : undefined);
+      if (!undone.ok) throw new Error(undone.error || "the move could not be undone");
+    };
     setBusy((s) => { const n = new Set(s); for (const c of changes) n.add(c.id); return n; });
     try {
       const res = await onMoveMany(changes);
       if (res.ok) {
-        announce(message, async () => {
-          const undone = await onMoveMany(before, res.updatedAt ? { expectedUpdatedAt: res.updatedAt } : undefined);
-          if (!undone.ok) throw new Error("the schedule changed since that move");
-        }, "default");
+        announce(message, undoOf(before, res.updatedAt), "default");
+      } else if (res.matched && res.matched.length > 0) {
+        const keep = new Set(res.matched);
+        const restore = before.filter((b) => keep.has(b.id));
+        if (restore.length > 0) {
+          announce(`Only ${restore.length} of ${changes.length} task${changes.length === 1 ? "" : "s"} moved (the rest were changed by someone else) — Undo puts ${restore.length === 1 ? "it" : "those"} back · ${message}`, undoOf(restore, res.updatedAt), "warning");
+        }
       }
     } finally {
       setBusy((s) => { const n = new Set(s); for (const c of changes) n.delete(c.id); return n; });
@@ -765,7 +778,10 @@ export default function ExecutionView({
     return () => window.removeEventListener("keydown", onKey);
   }, []);
 
-  const summaries = useMemo(() => items.filter((m) => m.isSummary && (childrenOf.get(m.id!) ?? []).length > 0), [items, childrenOf]);
+  // Phases a selection may be grouped under: not an imported one — its dates
+  // are the scheduling tool's and it would not follow tasks added here (PT
+  // SCH-13; groupTasksUnderParent refuses it too).
+  const summaries = useMemo(() => items.filter((m) => m.isSummary && (childrenOf.get(m.id!) ?? []).length > 0 && !isImportedMilestone(m)), [items, childrenOf]);
 
   // Ancestry chain for the detail panel breadcrumb (nearest parent first).
   const ancestorsOf = useCallback((m: Milestone): Milestone[] => {

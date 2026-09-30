@@ -35,9 +35,11 @@ describe("computeCriticalPath — CPM over the finish-to-start links", () => {
   });
 
   it("(a) long-lead driver: a delivery three weeks before install is critical when its link's lag makes it the driver", () => {
+    // Delivery done Tue 2026-02-10; a P6 lag of 3 working weeks (lag_hr_cnt 120 = 15 × 8 h);
+    // install starts Wed 2026-03-04 — exactly when those 15 working days run out.
     const ms: Milestone[] = [
-      mk({ id: "delivery", externalRef: "p6:1", plannedStartAt: d("2026-01-01"), plannedAt: d("2026-02-07") }),
-      mk({ id: "install", externalRef: "p6:2", plannedStartAt: d("2026-03-01"), plannedAt: d("2026-03-10"), dependsOn: ["delivery"], attributes: { source_links: "FS p6:1 +504h" } }),
+      mk({ id: "delivery", externalRef: "p6:1", plannedStartAt: d("2026-01-01"), plannedAt: d("2026-02-10") }),
+      mk({ id: "install", externalRef: "p6:2", plannedStartAt: d("2026-03-04"), plannedAt: d("2026-03-13"), dependsOn: ["delivery"], attributes: { source_links: "FS p6:1 +120h" } }),
     ];
     const r = computeCriticalPath(ms);
     expect(r.ids.has("install")).toBe(true);
@@ -47,6 +49,12 @@ describe("computeCriticalPath — CPM over the finish-to-start links", () => {
     const noLag = computeCriticalPath(ms.map((m) => (m.id === "install" ? { ...m, attributes: {} } : m)));
     expect(noLag.ids.has("delivery")).toBe(false);
     expect(noLag.floatDays.get("delivery")).toBe(21);
+    // The lag is WORKING time (PC SCHED-13): read as 120 elapsed hours (5 calendar days)
+    // an install on Mon 02-16 would satisfy it and the delivery would show 16 days of float
+    // in the plan above; as 15 working days it has not run out by 02-16 — negative float.
+    const early = computeCriticalPath(ms.map((m) => (m.id === "install" ? { ...m, plannedStartAt: d("2026-02-16"), plannedAt: d("2026-02-25") } : m)));
+    expect(early.floatDays.get("delivery")).toBeLessThan(0);
+    expect(early.ids.has("delivery")).toBe(true);
   });
 
   it("(b) parallel chains are not merged: the chain with float is off the path; an unlinked date-contiguous task is not pulled in", () => {

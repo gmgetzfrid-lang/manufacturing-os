@@ -48,9 +48,12 @@ export interface ReflowNode {
    *  exactly like a completed row — no batch engine rewrites its plan
    *  (PC SCHED-5), whatever its status reads. */
   actualAt?: string | null;
-  /** Finish-to-start lag per predecessor id, in hours (negative = lead), as
-   *  the source schedule recorded it (attributes.source_links, PT SCH-8).
-   *  A predecessor with no entry has zero lag. */
+  /** Finish-to-start lag per predecessor id, in WORKING hours (negative =
+   *  lead), as the source schedule recorded it (attributes.source_links, PT
+   *  SCH-8) — the importer's unit: 8 h a working day, 40 h a working week
+   *  (MS Project's LinkLag, P6's lag_hr_cnt). Applied through afterLagMs, as
+   *  working days Monday–Friday, never as elapsed hours (PC SCHED-13). A
+   *  predecessor with no entry has zero lag. */
   lagHours?: Record<string, number> | null;
 }
 
@@ -124,6 +127,57 @@ export function wholeDaysToClear(startMs: number, requiredMs: number): number {
   return Math.ceil((requiredMs - startMs) / DAY_MS) * DAY_MS;
 }
 
+/** Hours in one working day — the unit the importer stores lag in
+ *  (lib/scheduleParsers.ts durationTextToHours: "1d" = 8 h, "1w" = 40 h;
+ *  MS Project LinkLag / 600; P6 lag_hr_cnt). */
+export const WORK_DAY_HOURS = 8;
+
+/** Does the one-day step [a, a + 1 day) cover a working day — is the calendar
+ *  day its last instant falls in a Monday to Friday (wall-clock-as-UTC)? For
+ *  a date-only anchor (00:00) that is the day itself; for a timed one (17:00)
+ *  it is the day the step ends in, so a Friday 17:00 + 1 working day is the
+ *  next Monday 17:00, as the scheduling tool counts it. */
+function stepIsWorkday(a: number): boolean {
+  const wd = new Date(a + DAY_MS - 1).getUTCDay();
+  return wd !== 0 && wd !== 6;
+}
+
+/** The instant a finish-to-start lag of `lagHours` WORKING hours (negative =
+ *  lead) ends, counted from `readyMs` (fsReadyMs of the predecessor's finish)
+ *  — PC SCHED-13. Whole working days (8 h each) skip Saturdays and Sundays;
+ *  the hours left under a day are added as clock hours. Applying the stored
+ *  hours as elapsed time cut a "+5d" lag (stored +40 h) to 1⅔ calendar days.
+ *  There is still no project calendar: holidays are not skipped and a task
+ *  pushed past the lag may land on a weekend (the engine counts calendar
+ *  days). A negative lag (a lead) walks back the same way; walking a lag back
+ *  from an instant and forward again never ends after that instant, which is
+ *  what the critical path's backward pass relies on. */
+export function afterLagMs(readyMs: number, lagHours: number | null | undefined): number {
+  if (typeof lagHours !== "number" || !Number.isFinite(lagHours) || lagHours === 0 || !Number.isFinite(readyMs)) return readyMs;
+  const abs = Math.abs(lagHours);
+  let whole = Math.floor(abs / WORK_DAY_HOURS + 1e-9);
+  const restMs = Math.max(0, Math.round((abs - whole * WORK_DAY_HOURS) * HOUR_MS));
+  const dir = lagHours > 0 ? 1 : -1;
+  // Forward: whole days, then the hours left. Backward undoes it in reverse
+  // order (hours, then days), so walking a lead back and the lag forward
+  // again never ends after where it started.
+  let t = dir > 0 ? readyMs : readyMs - restMs;
+  // Any seven consecutive day-steps hold exactly five working days: skip whole
+  // weeks, leaving at least one working day for the day-by-day walk (which
+  // stops right after the last working day, before a trailing weekend).
+  if (whole > 5) {
+    const weeks = Math.floor((whole - 1) / 5);
+    t += dir * weeks * 7 * DAY_MS;
+    whole -= weeks * 5;
+  }
+  if (dir > 0) {
+    while (whole > 0) { if (stepIsWorkday(t)) whole--; t += DAY_MS; }
+    return t + restMs;
+  }
+  while (whole > 0) { t -= DAY_MS; if (stepIsWorkday(t)) whole--; }
+  return t;
+}
+
 /** Add whole calendar days to an instant in UTC, keeping its clock time.
  *  The one date-arithmetic helper the schedule's editors share (PT SCH-12:
  *  local-calendar setDate on a UTC value gains or loses a day across DST). */
@@ -169,6 +223,51 @@ function startMsOf(n: ReflowNode): number {
 }
 function finishMsOf(n: ReflowNode): number {
   return Date.parse(n.plannedAt);
+}
+
+/** Re-envelope every parent, deepest first, so each summary exactly covers
+ *  its children — except a LOCKED parent (an imported summary, whose dates
+ *  the scheduling tool owns; a pinned row; a row with an actual): it keeps
+ *  its stored dates, and those are what its own parent envelopes (PT SCH-13,
+ *  PC SCHED-5). Re-enveloping an imported phase whose stored span differs
+ *  from its children's put it in the change set of every drag in the
+ *  project, and the batch was then refused whole. */
+function reenvelopeParents(
+  byId: Map<string, ReflowNode>,
+  childrenByParent: Map<string, ReflowNode[]>,
+  start: Map<string, number>,
+  finish: Map<string, number>,
+): void {
+  const depthOf = (nid: string): number => {
+    let d = 0, c = byId.get(nid)?.parentId ?? null;
+    const g = new Set<string>();
+    while (c && byId.has(c) && !g.has(c)) { g.add(c); d++; c = byId.get(c)!.parentId ?? null; }
+    return d;
+  };
+  for (const pid of [...childrenByParent.keys()].sort((a, b) => depthOf(b) - depthOf(a))) {
+    if (isLocked(byId.get(pid))) continue;
+    const kids = childrenByParent.get(pid) ?? [];
+    if (kids.length === 0) continue;
+    let lo = Infinity, hi = -Infinity;
+    for (const k of kids) { lo = Math.min(lo, start.get(k.id)!); hi = Math.max(hi, finish.get(k.id)!); }
+    if (Number.isFinite(lo) && Number.isFinite(hi)) { start.set(pid, lo); finish.set(pid, hi); }
+  }
+}
+
+/** One DateChange per node whose start or finish moved. A locked node is
+ *  never in it — no engine writes an actual's, a pinned row's or an imported
+ *  row's dates (PT SCH-13, PC SCHED-5). */
+function changesFrom(nodes: ReflowNode[], start: Map<string, number>, finish: Map<string, number>): DateChange[] {
+  const changes: DateChange[] = [];
+  for (const n of nodes) {
+    if (isLocked(n)) continue;
+    const s0 = startMsOf(n), f0 = finishMsOf(n);
+    const s1 = start.get(n.id)!, f1 = finish.get(n.id)!;
+    if (s1 !== s0 || f1 !== f0) {
+      changes.push({ id: n.id, plannedStartAt: new Date(s1).toISOString(), plannedAt: new Date(f1).toISOString() });
+    }
+  }
+  return changes;
 }
 
 /**
@@ -246,41 +345,12 @@ export function computeTreeMove(
   // 2) Re-envelope EVERY parent (deepest first) so each summary exactly covers
   //    its children — including any locked leaf that stayed behind. Doing the
   //    whole tree (not just ancestors of the drag) keeps sub-parents correct
-  //    when some of their children were locked.
-  const depthOf = (nid: string): number => {
-    let d = 0, c = byId.get(nid)?.parentId ?? null;
-    const g = new Set<string>();
-    while (c && byId.has(c) && !g.has(c)) { g.add(c); d++; c = byId.get(c)!.parentId ?? null; }
-    return d;
-  };
-  for (const pid of [...childrenByParent.keys()].sort((a, b) => depthOf(b) - depthOf(a))) {
-    const kids = childrenByParent.get(pid) ?? [];
-    if (kids.length === 0) continue;
-    let lo = Infinity, hi = -Infinity;
-    for (const k of kids) {
-      lo = Math.min(lo, start.get(k.id)!);
-      hi = Math.max(hi, finish.get(k.id)!);
-    }
-    if (Number.isFinite(lo) && Number.isFinite(hi)) {
-      start.set(pid, lo);
-      finish.set(pid, hi);
-    }
-  }
+  //    when some of their children were locked. A locked parent (imported,
+  //    pinned, an actual) keeps its stored dates (PT SCH-13).
+  reenvelopeParents(byId, childrenByParent, start, finish);
 
-  // 3) Emit a change for every node whose start or finish actually moved.
-  const changes: DateChange[] = [];
-  for (const n of nodes) {
-    const s0 = startMsOf(n), f0 = finishMsOf(n);
-    const s1 = start.get(n.id)!, f1 = finish.get(n.id)!;
-    if (s1 !== s0 || f1 !== f0) {
-      changes.push({
-        id: n.id,
-        plannedStartAt: new Date(s1).toISOString(),
-        plannedAt: new Date(f1).toISOString(),
-      });
-    }
-  }
-  return changes;
+  // 3) Emit a change for every unlocked node whose start or finish moved.
+  return changesFrom(nodes, start, finish);
 }
 
 /** Days in a node's calendar span (finish − start + 1, min 1). */
@@ -293,6 +363,8 @@ function spanDays(n: ReflowNode): number {
  * Recompute EVERY parent/summary node's span to exactly envelope its
  * children, processing deepest parents first so each sees already-updated
  * child envelopes. Pure: returns one DateChange per parent whose span moved.
+ * A locked parent — an imported summary (`locked`), an actual — keeps its
+ * stored dates and is never in the result (PT SCH-13).
  *
  * Use after a direct leaf edit that did NOT go through computeTreeMove —
  * e.g. setTaskDuration, which changes a leaf's start/finish in isolation and
@@ -314,30 +386,10 @@ export function reflowAllAncestors(nodes: ReflowNode[]): DateChange[] {
   const finish = new Map<string, number>();
   for (const n of nodes) { start.set(n.id, startMsOf(n)); finish.set(n.id, finishMsOf(n)); }
 
-  // Depth from root → envelope bottom-up (a parent waits for descendants).
-  const depthOf = (id: string): number => {
-    let d = 0, c = byId.get(id)?.parentId ?? null;
-    const seen = new Set<string>();
-    while (c && byId.has(c) && !seen.has(c)) { seen.add(c); d++; c = byId.get(c)!.parentId ?? null; }
-    return d;
-  };
-  const parents = [...childrenByParent.keys()].sort((a, b) => depthOf(b) - depthOf(a));
-  for (const pid of parents) {
-    const kids = childrenByParent.get(pid)!;
-    let lo = Infinity, hi = -Infinity;
-    for (const k of kids) { lo = Math.min(lo, start.get(k.id)!); hi = Math.max(hi, finish.get(k.id)!); }
-    if (Number.isFinite(lo) && Number.isFinite(hi)) { start.set(pid, lo); finish.set(pid, hi); }
-  }
-
-  const changes: DateChange[] = [];
-  for (const n of nodes) {
-    const s0 = startMsOf(n), f0 = finishMsOf(n);
-    const s1 = start.get(n.id)!, f1 = finish.get(n.id)!;
-    if (s1 !== s0 || f1 !== f0) {
-      changes.push({ id: n.id, plannedStartAt: new Date(s1).toISOString(), plannedAt: new Date(f1).toISOString() });
-    }
-  }
-  return changes;
+  // Envelope bottom-up (a parent waits for descendants); a locked parent —
+  // an imported summary, an actual — keeps its stored dates (PT SCH-13).
+  reenvelopeParents(byId, childrenByParent, start, finish);
+  return changesFrom(nodes, start, finish);
 }
 
 /**
@@ -422,9 +474,10 @@ export function linkCyclePath(nodes: ReflowNode[], taskId: string, newPredId: st
 /** A cascade that cannot be applied safely. `cycle`: the finish-to-start
  *  links (with a pushed task carrying its sub-tasks) form a loop, so every
  *  pass would push the same tasks out again — the move is refused instead of
- *  absorbed (PT SCH-4). `runaway`: a task would move further than the whole
- *  project spans — a backstop that never lets a cascade write dates years
- *  out (further than every task laid end to end could push it). `edges` name
+ *  absorbed (PT SCH-4). `runaway`: a task would move further than any acyclic
+ *  cascade over this schedule could push it (the span plus every task laid
+ *  end to end, a day per link and every lag) — a backstop that only a loop
+ *  can reach, so it never lets a cascade write dates years out. `edges` name
  *  the loop (or the chain that ran away) in order. */
 export class CascadeRefusedError extends Error {
   readonly kind: "cycle" | "runaway";
@@ -454,13 +507,16 @@ export interface CascadePlan {
  * successor.start >= max(predecessor ready + lag), where "ready" is the
  * predecessor's finish instant — the end of its day for a date-only finish,
  * the instant itself for a timed one (fsReadyMs) — and lag is the source
- * schedule's own (ReflowNode.lagHours, default 0). A pushed task moves by
- * whole days, so it keeps its clock time (PC SCHED-13). Only ever pushes
- * FORWARD (never pulls a task earlier), carries each pushed task's subtree —
- * except the actuals inside it, which stay put (PC SCHED-5, matching
- * computeTreeMove) — and re-envelopes ancestors. A loop in the links is
- * REFUSED with its edges named (CascadeRefusedError), and so is a push
- * further than the whole schedule spans (PT SCH-4). Pure.
+ * schedule's own, in working time (ReflowNode.lagHours through afterLagMs,
+ * default 0). A pushed task moves by whole days, so it keeps its clock time
+ * (PC SCHED-13). Only ever pushes FORWARD (never pulls a task earlier),
+ * carries each pushed task's subtree — except the actuals inside it, which
+ * stay put (PC SCHED-5, matching computeTreeMove) — and re-envelopes
+ * ancestors; a locked task or phase (an actual, an imported row) is never in
+ * the result (PT SCH-13). Each task is settled once, in topological order
+ * (PT SCH-4). A loop in the links is REFUSED with its edges named
+ * (CascadeRefusedError), and so is a push further than any acyclic cascade
+ * over the schedule could go. Pure.
  */
 export function cascadeDependents(nodes: ReflowNode[], changedIds: string[]): DateChange[] {
   return planCascade(nodes, changedIds).changes;
@@ -495,19 +551,24 @@ export function planCascade(nodes: ReflowNode[], changedIds: string[]): CascadeP
 
   const start = new Map<string, number>();
   const finish = new Map<string, number>();
-  let lo = Infinity, hi = -Infinity, work = 0, lagSum = 0;
+  let lo = Infinity, hi = -Infinity, work = 0, lagSpan = 0;
   for (const n of nodes) {
     const s0 = startMsOf(n), f0 = finishMsOf(n);
     start.set(n.id, s0); finish.set(n.id, f0);
     if (Number.isFinite(s0)) lo = Math.min(lo, s0);
     if (Number.isFinite(f0)) hi = Math.max(hi, f0);
     if (Number.isFinite(s0) && Number.isFinite(f0)) work += Math.max(0, f0 - s0) + DAY_MS;
-    for (const h of Object.values(n.lagHours ?? {})) if (Number.isFinite(h) && h > 0) lagSum += h * HOUR_MS;
+    // A lag of H working hours spans at most H/8 working days × 7/5 in
+    // calendar time, plus under a week of rounding and the hours under a day
+    // (afterLagMs) — 8 days are allowed for those.
+    for (const h of Object.values(n.lagHours ?? {})) {
+      if (Number.isFinite(h) && h > 0) lagSpan += (h / WORK_DAY_HOURS * 7 / 5 + 8) * DAY_MS;
+    }
   }
   // The runaway backstop: an acyclic cascade can never push a task further
   // than the schedule's span plus every task laid end to end, a day per link
   // and every lag — so a push past that is refused, never written.
-  const bound = (Number.isFinite(lo) && Number.isFinite(hi) ? hi - lo : 0) + work + (edgeCount + 1) * DAY_MS + lagSum;
+  const bound = (Number.isFinite(lo) && Number.isFinite(hi) ? hi - lo : 0) + work + (edgeCount + 1) * DAY_MS + lagSpan;
 
   const subtreeOf = (rootId: string): string[] => {
     const out: string[] = [];
@@ -521,6 +582,20 @@ export function planCascade(nodes: ReflowNode[], changedIds: string[]): CascadeP
       for (const k of childrenByParent.get(cur) ?? []) stack.push(k.id);
     }
     return out;
+  };
+
+  // The instant `s` may start: the latest of its predecessors' ready instants
+  // plus each link's lag (working time, afterLagMs), and the predecessor that
+  // sets it.
+  const requirement = (s: ReflowNode): { req: number; from: string | null } => {
+    let req = -Infinity;
+    let from: string | null = null;
+    for (const pred of s.dependsOn ?? []) {
+      if (!finish.has(pred)) continue;
+      const r = afterLagMs(fsReadyMs(finish.get(pred)!), s.lagHours?.[pred]);
+      if (r > req) { req = r; from = pred; }
+    }
+    return { req, from };
   };
 
   // Who last moved each node: its predecessor (a link) or the ancestor it
@@ -542,84 +617,123 @@ export function planCascade(nodes: ReflowNode[], changedIds: string[]): CascadeP
   };
   const moved = new Map<string, number>(); // cumulative displacement per node
   const held = new Map<string, { id: string; predecessorId: string }>();
-
-  const queue = [...new Set(changedIds)];
-  const queued = new Set(queue);
-  const guard = (nodes.length + edgeCount) * 4 + 32;
-  let steps = 0;
-  while (queue.length) {
-    if (steps++ > guard) throw new CascadeRefusedError("runaway", causeChain(queue[0]));
-    const pid = queue.shift()!;
-    queued.delete(pid);
-    for (const sid of successors.get(pid) ?? []) {
-      const s = byId.get(sid);
-      if (!s) continue;
-      let req = -Infinity;
-      for (const pred of s.dependsOn ?? []) {
-        if (!finish.has(pred)) continue;
-        const lag = s.lagHours?.[pred];
-        req = Math.max(req, fsReadyMs(finish.get(pred)!) + (typeof lag === "number" && Number.isFinite(lag) ? lag * HOUR_MS : 0));
-      }
-      if (!Number.isFinite(req)) continue;
-      const curStart = start.get(sid)!;
-      if (!(curStart < req)) continue;
-      // A locked successor is an ACTUAL (or an imported row whose dates the
-      // scheduling tool owns) — never push it out; report the broken link.
-      if (isLocked(s)) { held.set(sid, { id: sid, predecessorId: pid }); continue; }
-      if (pid === sid) throw new CascadeRefusedError("cycle", [{ from: sid, to: sid, via: "link" }]);
-      const chain = causeChain(pid);
-      const at = chain.findIndex((e) => e.from === sid);
-      if (at >= 0) throw new CascadeRefusedError("cycle", [...chain.slice(at), { from: pid, to: sid, via: "link" }]);
-      const delta = wholeDaysToClear(curStart, req);
-      for (const t of subtreeOf(sid)) {
-        // Actuals inside the pushed subtree stay where they happened (PC
-        // SCHED-5) — the parent re-envelopes around them below.
-        if (t !== sid && isLocked(byId.get(t))) continue;
-        start.set(t, start.get(t)! + delta);
-        finish.set(t, finish.get(t)! + delta);
-        const total = (moved.get(t) ?? 0) + delta;
-        moved.set(t, total);
-        cause.set(t, t === sid ? { from: pid, via: "link" } : { from: byId.get(t)?.parentId ?? sid, via: "contains" });
-        if (total > bound) throw new CascadeRefusedError("runaway", causeChain(t));
-        // Its own dependents — and its sub-tasks' dependents — may need to move too.
-        if (!queued.has(t)) { queued.add(t); queue.push(t); }
-      }
-    }
-  }
-
-  // Re-envelope ancestors bottom-up.
-  const depthOf = (nid: string): number => {
-    let d = 0, c = byId.get(nid)?.parentId ?? null;
-    const g = new Set<string>();
-    while (c && byId.has(c) && !g.has(c)) { g.add(c); d++; c = byId.get(c)!.parentId ?? null; }
-    return d;
+  const shift = (t: string, delta: number, why: { from: string; via: "link" | "contains" }) => {
+    start.set(t, start.get(t)! + delta);
+    finish.set(t, finish.get(t)! + delta);
+    const total = (moved.get(t) ?? 0) + delta;
+    moved.set(t, total);
+    cause.set(t, why);
+    if (total > bound) throw new CascadeRefusedError("runaway", causeChain(t));
   };
-  for (const ppid of [...childrenByParent.keys()].sort((a, b) => depthOf(b) - depthOf(a))) {
-    const kids = childrenByParent.get(ppid)!;
-    let klo = Infinity, khi = -Infinity;
-    for (const kdn of kids) { klo = Math.min(klo, start.get(kdn.id)!); khi = Math.max(khi, finish.get(kdn.id)!); }
-    if (Number.isFinite(klo) && Number.isFinite(khi)) { start.set(ppid, klo); finish.set(ppid, khi); }
+
+  const seeds = [...new Set(changedIds)].filter((id) => byId.has(id));
+
+  // The part of the network this move can reach: through a link to a
+  // successor, or from a task to the sub-tasks a push of it would carry.
+  const affected = new Set<string>();
+  {
+    const stack = [...seeds];
+    while (stack.length) {
+      const cur = stack.pop()!;
+      if (affected.has(cur)) continue;
+      affected.add(cur);
+      for (const s of successors.get(cur) ?? []) stack.push(s);
+      for (const k of childrenByParent.get(cur) ?? []) stack.push(k.id);
+    }
+  }
+  const outOf = (id: string): string[] => [...(successors.get(id) ?? []), ...(childrenByParent.get(id) ?? []).map((k) => k.id)];
+  const indeg = new Map<string, number>();
+  for (const id of affected) indeg.set(id, 0);
+  for (const id of affected) for (const o of outOf(id)) if (affected.has(o)) indeg.set(o, indeg.get(o)! + 1);
+  const order = [...affected].filter((id) => indeg.get(id) === 0);
+  for (let i = 0; i < order.length; i++) {
+    for (const o of outOf(order[i])) {
+      if (!affected.has(o)) continue;
+      const d = indeg.get(o)! - 1;
+      indeg.set(o, d);
+      if (d === 0) order.push(o);
+    }
   }
 
-  const changes: DateChange[] = [];
-  for (const n of nodes) {
-    const s0 = startMsOf(n), f0 = finishMsOf(n);
-    const s1 = start.get(n.id)!, f1 = finish.get(n.id)!;
-    if (s1 !== s0 || f1 !== f0) {
-      changes.push({ id: n.id, plannedStartAt: new Date(s1).toISOString(), plannedAt: new Date(f1).toISOString() });
+  if (order.length === affected.size) {
+    // No loop anywhere the move reaches (PT SCH-4): settle each task ONCE, in
+    // topological order — every predecessor and the parent that carries it
+    // are final before it is looked at. A FIFO relaxation re-pushed a task
+    // each time a longer path reached it (a reversed fan-in of 40 tasks took
+    // ~800 steps) and its step guard refused legitimate cascades.
+    const movedSet = new Set(seeds); // the primary moves, then every task the cascade shifts
+    const carried = new Map<string, number>(); // shift inherited from pushed ancestors
+    const own = new Map<string, number>();     // this task's own push
+    for (const t of order) {
+      const n = byId.get(t)!;
+      const pid = n.parentId && byId.has(n.parentId) && affected.has(n.parentId) ? n.parentId : null;
+      const c = pid ? (carried.get(pid) ?? 0) + (own.get(pid) ?? 0) : 0;
+      carried.set(t, c);
+      const triggered = (n.dependsOn ?? []).some((p) => movedSet.has(p));
+      if (isLocked(n)) {
+        // An actual (or an imported / pinned row) is never carried or pushed
+        // — it stays where it is and a link it now breaks is reported.
+        if (triggered) {
+          const { req, from } = requirement(n);
+          if (start.get(t)! < req) held.set(t, { id: t, predecessorId: from ?? t });
+        }
+        continue;
+      }
+      if (c !== 0) { shift(t, c, { from: pid!, via: "contains" }); movedSet.add(t); }
+      if (!triggered) continue;
+      const { req, from } = requirement(n);
+      if (!(start.get(t)! < req)) continue;
+      const delta = wholeDaysToClear(start.get(t)!, req);
+      own.set(t, delta);
+      shift(t, delta, { from: from!, via: "link" });
+      movedSet.add(t);
+    }
+  } else {
+    // A loop in the links (with a pushed task carrying its sub-tasks) is
+    // somewhere the move reaches. Relax push by push and refuse the moment a
+    // push goes round the loop (its cause chain holds the task being pushed);
+    // a loop no push goes round is left alone. The displacement bound ends
+    // any relaxation; the step count is the Bellman-Ford limit behind it.
+    const queue = [...seeds];
+    const queued = new Set(queue);
+    const guard = nodes.length * (nodes.length + edgeCount) + 32;
+    let steps = 0;
+    while (queue.length) {
+      if (steps++ > guard) throw new CascadeRefusedError("runaway", causeChain(queue[0]));
+      const pid = queue.shift()!;
+      queued.delete(pid);
+      for (const sid of successors.get(pid) ?? []) {
+        const s = byId.get(sid);
+        if (!s) continue;
+        const { req } = requirement(s);
+        if (!Number.isFinite(req)) continue;
+        const curStart = start.get(sid)!;
+        if (!(curStart < req)) continue;
+        // A locked successor is an ACTUAL (or an imported row whose dates the
+        // scheduling tool owns) — never push it out; report the broken link.
+        if (isLocked(s)) { held.set(sid, { id: sid, predecessorId: pid }); continue; }
+        if (pid === sid) throw new CascadeRefusedError("cycle", [{ from: sid, to: sid, via: "link" }]);
+        const chain = causeChain(pid);
+        const at = chain.findIndex((e) => e.from === sid);
+        if (at >= 0) throw new CascadeRefusedError("cycle", [...chain.slice(at), { from: pid, to: sid, via: "link" }]);
+        const delta = wholeDaysToClear(curStart, req);
+        for (const t of subtreeOf(sid)) {
+          // Actuals inside the pushed subtree stay where they happened (PC
+          // SCHED-5) — the parent re-envelopes around them below.
+          if (t !== sid && isLocked(byId.get(t))) continue;
+          shift(t, delta, t === sid ? { from: pid, via: "link" } : { from: byId.get(t)?.parentId ?? sid, via: "contains" });
+          // Its own dependents — and its sub-tasks' dependents — may need to move too.
+          if (!queued.has(t)) { queued.add(t); queue.push(t); }
+        }
+      }
     }
   }
+
+  // Re-envelope ancestors bottom-up (a locked parent keeps its dates).
+  reenvelopeParents(byId, childrenByParent, start, finish);
+  const changes = changesFrom(nodes, start, finish);
   // A held successor that a later push satisfied after all is not held.
-  const heldOut = [...held.values()].filter((h) => {
-    const s = byId.get(h.id)!;
-    let req = -Infinity;
-    for (const pred of s.dependsOn ?? []) {
-      if (!finish.has(pred)) continue;
-      const lag = s.lagHours?.[pred];
-      req = Math.max(req, fsReadyMs(finish.get(pred)!) + (typeof lag === "number" && Number.isFinite(lag) ? lag * HOUR_MS : 0));
-    }
-    return start.get(h.id)! < req;
-  });
+  const heldOut = [...held.values()].filter((h) => start.get(h.id)! < requirement(byId.get(h.id)!).req);
   return { changes, held: heldOut };
 }
 
@@ -692,30 +806,10 @@ export function sequenceSiblings(nodes: ReflowNode[], parentId: string): DateCha
     cursor = fsReadyMs(subtreeFinish(kid.id));
   }
 
-  // Re-envelope ancestors bottom-up from the updated leaves.
-  const depthOf = (nid: string): number => {
-    let d = 0, c = byId.get(nid)?.parentId ?? null;
-    const g = new Set<string>();
-    while (c && byId.has(c) && !g.has(c)) { g.add(c); d++; c = byId.get(c)!.parentId ?? null; }
-    return d;
-  };
-  const parents = [...childrenByParent.keys()].sort((a, b) => depthOf(b) - depthOf(a));
-  for (const pid of parents) {
-    const ch = childrenByParent.get(pid)!;
-    let lo = Infinity, hi = -Infinity;
-    for (const c of ch) { lo = Math.min(lo, start.get(c.id)!); hi = Math.max(hi, finish.get(c.id)!); }
-    if (Number.isFinite(lo) && Number.isFinite(hi)) { start.set(pid, lo); finish.set(pid, hi); }
-  }
-
-  const changes: DateChange[] = [];
-  for (const n of nodes) {
-    const s0 = startMsOf(n), f0 = finishMsOf(n);
-    const s1 = start.get(n.id)!, f1 = finish.get(n.id)!;
-    if (s1 !== s0 || f1 !== f0) {
-      changes.push({ id: n.id, plannedStartAt: new Date(s1).toISOString(), plannedAt: new Date(f1).toISOString() });
-    }
-  }
-  return changes;
+  // Re-envelope ancestors bottom-up from the updated leaves (a locked parent
+  // keeps its dates — PT SCH-13).
+  reenvelopeParents(byId, childrenByParent, start, finish);
+  return changesFrom(nodes, start, finish);
 }
 
 /**
@@ -795,30 +889,10 @@ export function computeSummaryResize(
     finish.set(l.id, f);
   }
 
-  // Re-envelope parents bottom-up (deepest first) from the updated leaves.
-  const depthOf = (nid: string): number => {
-    let d = 0, c = byId.get(nid)?.parentId ?? null;
-    const g = new Set<string>();
-    while (c && byId.has(c) && !g.has(c)) { g.add(c); d++; c = byId.get(c)!.parentId ?? null; }
-    return d;
-  };
-  const parents = [...childrenByParent.keys()].sort((a, b) => depthOf(b) - depthOf(a));
-  for (const pid of parents) {
-    const kids = childrenByParent.get(pid)!;
-    let plo = Infinity, phi = -Infinity;
-    for (const kdn of kids) { plo = Math.min(plo, start.get(kdn.id)!); phi = Math.max(phi, finish.get(kdn.id)!); }
-    if (Number.isFinite(plo) && Number.isFinite(phi)) { start.set(pid, plo); finish.set(pid, phi); }
-  }
-
-  const changes: DateChange[] = [];
-  for (const n of nodes) {
-    const s0 = startMsOf(n), f0 = finishMsOf(n);
-    const s1 = start.get(n.id)!, f1 = finish.get(n.id)!;
-    if (s1 !== s0 || f1 !== f0) {
-      changes.push({ id: n.id, plannedStartAt: new Date(s1).toISOString(), plannedAt: new Date(f1).toISOString() });
-    }
-  }
-  return changes;
+  // Re-envelope parents bottom-up (deepest first) from the updated leaves (a
+  // locked parent keeps its dates — PT SCH-13).
+  reenvelopeParents(byId, childrenByParent, start, finish);
+  return changesFrom(nodes, start, finish);
 }
 
 /**
@@ -888,13 +962,14 @@ export function computeEdgeResize(
   start.set(id, s);
   finish.set(id, f);
 
-  // Reflow ancestors to envelope updated children.
+  // Reflow ancestors to envelope updated children — a locked ancestor (an
+  // imported summary, an actual) keeps its stored dates (PT SCH-13).
   let cur = node.parentId ?? null;
   const guard = new Set<string>();
   while (cur && byId.has(cur) && !guard.has(cur)) {
     guard.add(cur);
     const kids = childrenByParent.get(cur) ?? [];
-    if (kids.length > 0) {
+    if (kids.length > 0 && !isLocked(byId.get(cur))) {
       let lo = Infinity, hi = -Infinity;
       for (const k of kids) { lo = Math.min(lo, start.get(k.id)!); hi = Math.max(hi, finish.get(k.id)!); }
       if (Number.isFinite(lo) && Number.isFinite(hi)) { start.set(cur, lo); finish.set(cur, hi); }
@@ -902,15 +977,7 @@ export function computeEdgeResize(
     cur = byId.get(cur)!.parentId ?? null;
   }
 
-  const changes: DateChange[] = [];
-  for (const n of nodes) {
-    const s0 = startMsOf(n), f0 = finishMsOf(n);
-    const s1 = start.get(n.id)!, f1 = finish.get(n.id)!;
-    if (s1 !== s0 || f1 !== f0) {
-      changes.push({ id: n.id, plannedStartAt: new Date(s1).toISOString(), plannedAt: new Date(f1).toISOString() });
-    }
-  }
-  return changes;
+  return changesFrom(nodes, start, finish);
 }
 
 /** The finish-to-start lag (hours; negative = lead) the source schedule

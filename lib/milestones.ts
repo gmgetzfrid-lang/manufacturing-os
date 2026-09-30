@@ -236,8 +236,9 @@ const PATCH_COLUMN: Record<string, string> = {
 /** The fields of an IMPORTED row that belong to the scheduling tool: the
  *  next import writes every one of them back from the file (DEC-51), so an
  *  edit made here would be silently lost. They are locked here, below the UI
- *  (PT SCH-13); status, progress, actuals, who actually did the work and the
- *  app's own links stay editable. */
+ *  (PT SCH-13) — its dependency links included (the importer writes
+ *  depends_on from the file's predecessors). Status, progress, actuals and
+ *  who actually did the work stay editable. */
 const IMPORT_OWNED_PATCH_KEYS: ReadonlyArray<keyof MilestonePatch> = [
   "name", "description", "weight", "plannedAt", "plannedStartAt", "shift",
   "workOrderRef", "responsibleParty", "responsibleKind", "responsibleOrg",
@@ -339,7 +340,12 @@ export async function updateMilestone(input: UpdateMilestoneInput): Promise<Mile
       }
       const nodes: ReflowNode[] = rows.map((r) => ({ id: r.id, plannedAt: "", dependsOn: r.id === input.id ? [] : (r.depends_on ?? []) }));
       const nameOf = new Map(rows.map((r) => [r.id, r.name]));
+      // Only a link the edit ADDS can close a new loop. A link already stored
+      // is not re-judged, so a task inside a loop an old import left behind
+      // can still have an unrelated link removed or added (PT SCH-9).
+      const stored = new Set(rows.find((r) => r.id === input.id)?.depends_on ?? []);
       for (const pred of update.depends_on as string[]) {
+        if (stored.has(pred)) continue;
         const path = linkCyclePath(nodes, input.id, pred);
         if (path) throw new DependencyCycleError(path.map((id) => nameOf.get(id) ?? id), path);
         const self = nodes.find((n) => n.id === input.id);
@@ -413,6 +419,10 @@ export interface MoveBatchResult {
   count: number;
   /** "rpc" via apply_milestone_moves; "rows" on a pre-migration database. */
   via: "rpc" | "rows";
+  /** True when the batch was refused WHOLE before anything was written: a
+   *  row had changed (or gone) since the caller loaded it, so `matched` is
+   *  empty and `unmatched` names the stale rows (PT SCH-7). */
+  refused?: boolean;
   /** The batch audit row or the per-row breadcrumbs could not be written. */
   auditError?: string;
   /** Each moved row's updated_at AFTER the move, read back — what an Undo of
@@ -432,7 +442,9 @@ export class MoveConflictError extends Error {
   constructor(result: MoveBatchResult) {
     const n = result.unmatched.length;
     const moved = result.matched.length;
-    super(`${n} task${n === 1 ? " was" : "s were"} changed by someone else and ${n === 1 ? "was" : "were"} not moved${moved > 0 ? ` (the other ${moved} moved)` : ""}. Reload the schedule and try again.${result.auditError ? ` Also: ${result.auditError}.` : ""}`);
+    super(result.refused
+      ? `${n} task${n === 1 ? " was" : "s were"} changed or removed by someone else since the schedule loaded — nothing was moved. Reload the schedule and try again.`
+      : `${n} task${n === 1 ? " was" : "s were"} changed by someone else and ${n === 1 ? "was" : "were"} not moved${moved > 0 ? ` (the other ${moved} moved)` : ""}. Reload the schedule and try again.${result.auditError ? ` Also: ${result.auditError}.` : ""}`);
     this.name = "MoveConflictError";
     this.result = result;
   }
@@ -445,8 +457,13 @@ export class MoveConflictError extends Error {
  *  updates on pre-migration databases.
  *
  *  Each move carries the row's expected updated_at (the caller's loaded
- *  value, or the row as read just before the call): a row edited by someone
- *  else since then is left alone and reported in `unmatched` (PT SCH-7). Every
+ *  value, or the row as read just before the call). The rows are read first:
+ *  when any of them already differs from (or no longer has) the value its
+ *  move carries, the batch is refused WHOLE — nothing is written, `refused`
+ *  is set and `unmatched` names them — so a stale view never half-applies a
+ *  cascade. A row edited by someone else in the instant between that read
+ *  and the write is still left alone by the RPC's lock and reported in
+ *  `unmatched` beside the rows that did move (PT SCH-7). Every
  *  moved row gets a 'reschedule' breadcrumb with its before/after finish,
  *  matching updateMilestone's shape, and the batch audit row carries the
  *  before/after dates and is a CHECKED write (PC SCHED-11).
@@ -494,12 +511,23 @@ export async function applyMilestoneMoves(input: {
       imported.map((r) => r.id),
     );
   }
-  // Fail closed: without the read, a move whose caller supplied no expected
-  // updated_at would go out with the lock OFF. Refuse the batch (nothing is
-  // moved). When every move carries the caller's own lock value the read only
-  // fed the trail, so the move proceeds and the missing trail is reported.
-  if (readError && input.moves.some((m) => m.expectedUpdatedAt === undefined)) {
+  // Fail closed: the read is what the imported-row check above, the stale
+  // check below and a move without its own lock value depend on. Without it
+  // the batch is refused — nothing is moved (PT SCH-13).
+  if (readError) {
     throw new Error(`Could not read the tasks before moving them (${readError}) — nothing was moved. Try again.`);
+  }
+  // All or nothing for a stale view (PT SCH-7): a row that already differs
+  // from the lock its move carries (or is gone) would be skipped by the RPC
+  // while the rest of the cascade moved. Refuse the whole batch instead.
+  const sameStamp = (a: string | null | undefined, b: string): boolean =>
+    !!a && (a === b || Date.parse(a) === Date.parse(b));
+  const stale = input.moves.filter((m) => typeof m.expectedUpdatedAt === "string"
+    && !sameStamp(before.get(m.id)?.updated_at, m.expectedUpdatedAt)).map((m) => m.id);
+  if (stale.length > 0) {
+    const refused: MoveBatchResult = { matched: [], unmatched: stale, count: 0, via: "rpc", refused: true };
+    if ((input.onUnmatched ?? "throw") === "throw") throw new MoveConflictError(refused);
+    return refused;
   }
 
   const { data, error } = await supabase.rpc("apply_milestone_moves", {
@@ -537,7 +565,6 @@ export async function applyMilestoneMoves(input: {
 
   const result: MoveBatchResult = { matched, unmatched, count, via: "rpc" };
   const errs: string[] = [];
-  if (readError) errs.push(`breadcrumbs: the tasks could not be read before the move (${readError}), so no before-dates were recorded`);
 
   // Per-row breadcrumbs: the task's own trail shows the move, not just
   // status flips. Same shape as updateMilestone's reschedule note.
@@ -2170,14 +2197,23 @@ export async function groupTasksUnderParent(input: GroupTasksInput): Promise<Gro
   if (parentId) {
     const { data, error } = await supabase
       .from("milestones")
-      .select("id, name")
+      .select("id, name, source")
       .eq("id", parentId)
       .maybeSingle();
     if (error || !data) {
       errors.push(`Parent ${parentId.slice(0,8)} not found.`);
       return { parentId, parentName: "", childCount: 0, errors };
     }
-    parentName = (data as { name: string }).name;
+    // An imported phase's dates are the scheduling tool's: it keeps them
+    // whatever its children do (no engine re-envelopes it), so a task added
+    // under it here would sit outside its bar. Refused before any write
+    // (PT SCH-13) — group under a phase added here instead.
+    const parentRow = data as { name: string; source?: string | null };
+    if (isImportedMilestone({ source: parentRow.source ?? null })) {
+      errors.push(`“${parentRow.name}” comes from ${sourceLabel(parentRow.source)}: its dates are set there and it keeps them whatever its sub-tasks do, so tasks added here cannot be grouped under it. Nothing was grouped — create a new parent, or pick one added here.`);
+      return { parentId: "", parentName: "", childCount: 0, errors };
+    }
+    parentName = parentRow.name;
   } else {
     // Create a new summary parent. Use the EARLIEST child's planned
     // date as the parent's planned date (so the parent appears
@@ -2296,19 +2332,26 @@ export async function setTaskDuration(input: {
   // (Drag edits reflow via computeTreeMove; a direct duration set didn't,
   // leaving the parent span stale until the next drag.) Best-effort: the
   // leaf update already committed, so we don't fail the call if this slips.
+  // An imported summary (its dates are the scheduling tool's) and a row with
+  // an actual are locked: reflowAllAncestors keeps their stored dates, so
+  // this never writes them (PT SCH-13 — the same rule applyMilestoneMoves
+  // enforces).
   if (r.parent_id && r.project_id) {
     try {
       const { data: rows } = await supabase
         .from("milestones")
-        .select("id, parent_id, planned_start_at, planned_at")
+        .select("id, parent_id, planned_start_at, planned_at, source, status, actual_at")
         .eq("project_id", r.project_id);
       if (rows) {
-        const nodes: ReflowNode[] = (rows as Array<{ id: string; parent_id: string | null; planned_start_at: string | null; planned_at: string }>)
+        const nodes: ReflowNode[] = (rows as Array<{ id: string; parent_id: string | null; planned_start_at: string | null; planned_at: string; source?: string | null; status?: string; actual_at?: string | null }>)
           .map((m) => ({
             id: m.id,
             parentId: m.parent_id,
             plannedStartAt: m.id === input.id ? newStartIso : m.planned_start_at,
             plannedAt: m.planned_at,
+            status: m.status,
+            actualAt: m.actual_at ?? null,
+            locked: isImportedMilestone({ source: m.source ?? null }),
           }));
         const changes = reflowAllAncestors(nodes);
         await Promise.all(changes.map((c) =>
@@ -2463,6 +2506,23 @@ export function currentBaselineSummary(milestones: Milestone[]): { setAt: string
     if (at && (!setAt || Date.parse(at) > Date.parse(setAt))) setAt = at;
   }
   return rowCount > 0 ? { setAt, rowCount } : null;
+}
+
+/** Does this database keep a replaced baseline (milestone_baseline_history,
+ *  20261099)? true / false, or null when it could not be told (another read
+ *  error) — so a re-baseline confirm only promises "kept" when it is
+ *  (PT SAF-7): without the migration setBaseline's legacy path overwrites
+ *  the baseline with no history. */
+export async function baselineHistoryAvailable(input: { orgId: string; projectId: string }): Promise<boolean | null> {
+  const { error } = await supabase
+    .from("milestone_baseline_history")
+    .select("id")
+    .eq("org_id", input.orgId)
+    .eq("project_id", input.projectId)
+    .limit(1);
+  if (!error) return true;
+  const missing = error.code === "42P01" || error.code === "PGRST205" || /milestone_baseline_history/.test(error.message ?? "") && /does not exist|could not find/i.test(error.message ?? "");
+  return missing ? false : null;
 }
 
 /** Every baseline this project has had, newest first: the live one (from
