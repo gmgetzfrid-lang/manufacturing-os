@@ -85,6 +85,7 @@ about the system.
 | [DEC-49](#dec-49) | A URL `/api/storage/download-url` signs is an **attachment** unless a viewer asks AND the type cannot be a page (PDF, raster image — type pinned); the viewer frames only a PDF and shows images as `<img>` | low | `SEC-7`, `SEC-1` |
 | [DEC-50](#dec-50) | The money ledger: the headline is what is still **uncommitted**; approved change orders revise the budget only while their money is on the ledger; CPI forecasts only what it measured; the ledger is never deleted; the decider decides the amount and line they were shown | medium | `MON-1`, `MON-4`, `COST-2`, `COST-4`, `COST-6`, `COST-9`, `COST-10`, `COST-11` |
 | [DEC-51](#dec-51) | A schedule re-import is a **reviewed merge, never a guess**: the importer plans before it writes, keeps local progress, keys rows on content, reads dates one way for the whole file, and adopts a legacy position row only by a name unique on both sides | low | `SCH-1`, `SCH-2`, `SCH-3`, `SCH-14`, `SCHED-3`, `SCHED-4`, `SCHED-9` |
+| [DEC-52](#dec-52) | A green on a PSSR / MI / QA-QC line says who decided it: a **person** (a reason that meets the bar, uid on the row) or the **machine** (a citation the database resolves); only a person's decisions make a completion citable | low–medium | `QUAL-1`, `QUAL-2`, `QUAL-5`, `QUAL-6`, `QUAL-11`, `QUAL-12`, `SAF-1`, `SAF-4` |
 
 ---
 
@@ -1313,6 +1314,7 @@ facility with no configuration must keep working exactly as it does today.
 *Landed 2026-09-23 (document-control Round F): the hold-change and hold-aging audience is the org's `holds.release` pool read from the capability policy (`lib/holds.ts` `holdPoolFromMembers` — tokens expanded against the held collection, per-person grants included), never a literal list; the shipped wildcard is read as "no dedicated pool" and falls back to the controller tier (`isControllerRole`, what `is_org_controller` means) rather than an org-wide broadcast, so an unconfigured org's fan-out is unchanged. Which controls a person sees on the two hold surfaces is the same policy through `holdControlsFor`. See `HLD-8`, `HLD-10`, `HLD-14`.*
 *Landed 2026-09-29 (projects Round G): the change-order approval threshold is configuration — `org_configurations` key `change_order_approval_threshold` = `{ "amount": N }`, read by `loadApprovalThreshold` and by the `20261094` trigger; the decider tier above it is the controller collection (`memberHoldsAny(m, ["Admin","DocCtrl"])` / the `is_org_controller` predicate), never a facility role name. Default: no threshold until an org sets one; a malformed amount (anything but a plain non-negative number) means no threshold, in the lib and the trigger alike. See `COST-6`, `DEC-50`.*
 *Landed 2026-09-29 (projects Round G): the schedule-editing predicate — `can_edit_project_schedule(p_org, p_project)` in `20261098`, `caller_holds_any_role` over the four roles `20260907` listed inline, or the project owner — is read by `apply_milestone_moves`, `set_project_baseline` and `clear_project_baseline` (`20261099`) instead of a fresh literal in each; registered as a collection funnel in `authorityCensus.test.ts`. Aligning the read to the funnel admits one member class `20260907`'s `COALESCE(roles, ARRAY[role])` refused — a headline role among the four with a `roles[]` that holds none of them — inventoried before the apply in `20261098`'s result set. See `SCHED-4`, `SCHED-3`.*
+*Landed 2026-09-29 (projects Round G): the quality program's machine actor is a reserved sentinel, not a facility role — `MACHINE_ACTOR_SWEEP` (`"evidence sweep"`) / `MACHINE_ACTOR_ASSESSMENT` (`"AI assessment"`) in `lib/checklistEngine.ts`, written as `updated_by = NULL` + `updated_by_name = <sentinel>` by `runAutoEvidence` / `applyAssessment`; a human write always carries a uid. Checklist kinds stay seed data (`CHECKLIST_KIND_LABEL`), and the turnover subject match reads the seeded item names, never a role. See `QUAL-6`, `DEC-52`.*
 
 <a id="dec-36"></a>
 ## DEC-36 · Where the routing table lives, and how it resolves
@@ -2646,3 +2648,197 @@ repeats is added again rather than matched (its old row and progress kept
 and listed), and a unique-named one is matched by name even when the file
 moved it.
 
+<a id="dec-52"></a>
+
+## DEC-52 · The quality record's evidence contract
+
+**Decision. A green on a PSSR / MI / QA-QC line means one of two things, and
+the row says which: a PERSON decided it (a typed reason that meets the bar,
+uid on the row — a person-attached chip is evidence, not a reason), or the
+MACHINE cited the row that proves it (an admitted document, an accepted
+turnover item or a human-completed MI checklist — the database resolves the
+citation before it accepts the green) and the next sweep withdraws the green
+once that proof is gone. Any other green (a legacy one, or a note under the
+bar) is never a person's: a checklist holding one completes only as
+`'auto'`.**
+
+The defaults the projects Round G quality package (`J2 QUALITY`: `SAF-1`–`SAF-4`,
+`QUAL-1` / `2` / `5` / `6` / `7` / `8` / `11` / `12` / `13`, `PERF-7`, `UX-7` / `8` /
+`10`) adopted, recorded so nobody re-litigates them per surface:
+
+1. **Evidence register** (`SAF-1`, `QUAL-13`): only documents at `Issued` or
+   `Locked` with a `current_version_id` are admissible; `NOT_CURRENT_STATUSES`
+   (`lib/aiBoundary.ts`) and `Draft` never are; an external (intake) submission
+   counts only once its CURRENT version is `approved` (an earlier rejected
+   submission does not taint an approved current revision; a failed version
+   read admits nothing); documents attached to ACCEPTED
+   turnover items are listed first; a document whose current version the read
+   did not return is not admitted either. A title match inside that register is the
+   citation; a title match outside it is nothing. Equipment-tag binding via
+   `document_assets` is a follow-on, not built. **Departure from the P2 brief's
+   default, for the orchestrator to accept:** the brief rendered a title match as
+   "suggested", never green; here a title match inside the register is a
+   labelled MACHINE green — withdrawn when its document leaves the register,
+   re-checked at "Mark complete" (item 2), and never citable, since a completion
+   containing one is `'auto'` (item 5). A checklist can be completed on machine
+   greens; the basis restricts citation, not completion.
+2. **Retraction** (`QUAL-1`): an auto-only green whose probe no longer proves
+   it goes to `needs_evidence` on the next sweep, stale auto chips removed,
+   in one audit row per sweep whose `items[]` names each item. "Mark complete"
+   re-checks at the moment it matters: a sweep green whose document has left
+   the register (or whose proof the sweep would withdraw or re-cite) refuses
+   the completion until the sweep runs. A human chip or note is never touched.
+   The migration lists stale greens (inventory) and never rewrites them.
+3. **Bulk AI action** (`SAF-2`, `QUAL-5`): per-item review, every row unticked
+   by default, apply writes only ticked ids, the audit row carries the ids;
+   the bulk "tick every in-scope proposal" never ticks an N/A.
+   The assessment never moves a satisfied or evidence-bearing item to N/A —
+   such proposals are listed and locked; the human N/A control (with a
+   reason) is the only way.
+4. **The reason bar** (`SAF-4` / `GAP-405`): 10 non-whitespace characters, no
+   canned text — checked in the client data layer (`reasonProblem` in
+   `lib/checklists.ts` / `lib/turnover.ts`), mirrored by `appPrompt({ required,
+   minLength })`, and ENFORCED by the database (`quality_reason_ok()` and the
+   20261091 rails on waive / reject / reopen, punch void, and every checklist
+   decision a person makes — satisfied, N/A, item reopen; the service pass —
+   restores, server routes, the SQL editor — passes). A decision needs its
+   OWN reason: the note already on the row belongs to the earlier decision
+   (compared normalised — case, spacing and invisible characters do not make
+   a new one), and a standing decision keeps its reason (a turnover decision
+   its reviewer, date and reviewed document; a punch closure its closer and
+   date) until the next one; a checklist note is never cleared. The bar
+   strips Unicode whitespace and zero-width characters before measuring, in
+   the lib and in the database alike. No placeholder is ever written. Waived
+   is its own bucket.
+5. **Completion basis** (`QUAL-2`): `project_checklists.completed_basis` is
+   `'human'` only when every applicable item is green or N/A, every green
+   and every N/A carries a person's reason (a note that meets the reason bar
+   — `x` is not one, and a person-attached chip is evidence, not a reason),
+   and at least one green was decided by a person; otherwise `'auto'`. The
+   completion itself is refused by the database while the checklist has no
+   items or an applicable item is neither green nor N/A; an item is never
+   deleted on its own or moved; every item write serialises with the
+   completion (a SHARE lock on the checklist row); and a completed
+   checklist's items, kind and project are frozen until it is reopened
+   (which clears the basis). Only a `'human'` MI completion
+   is citable by another checklist. The DATABASE records it
+   (`checklist_completion_basis()`, the same rule as `completionBasis()`,
+   computed by a rail when the status moves to complete; a client value is
+   ignored), and the backfill uses the same function. A person gives a sweep
+   green their decision with **✓ Verify** and an assessment N/A with **✓ Confirm
+   N/A** (reason on the record; the sweep's chip kept; the sweep hands-off from
+   then on).
+6. **Machine actor** (`QUAL-6`, `DEC-35`): `updated_by = NULL` + a sentinel
+   name. The sweep and the assessment run in the browser under the user's
+   token, so the database bounds a machine-stamped write to what that
+   machine writes — the sweep: status (satisfied / needs evidence) and its
+   own citations, each resolving to its row (an admitted document, an
+   accepted turnover item, a human MI completion); the assessment:
+   applicability, its rationale and the status that follows, never an N/A on
+   a satisfied or evidence-bearing item; neither on an item a person decided
+   (a visible note or a person chip), neither touching text, section, seq or
+   the note — and stamps every other signed-in write with the caller's uid
+   and sign-in name (`auth.users`, which the app cannot edit); all a machine
+   write can produce is `'auto'`. A server-side sweep (service role) would
+   make the actor unforgeable — a follow-on. Provenance is carried by the existing `updated_by` / `updated_by_name`
+   pair and `evidence[].source` / `documentId`; no `satisfied_by` /
+   `satisfied_how` columns were added (a column the sweep must write breaks
+   the sweep until the migration is applied — `DEC-30`).
+7. **Turnover history** (`QUAL-11`): `turnover_review_events`, append-only and
+   written only by the database — a trigger on `turnover_items` appends one row
+   per status change in the same statement (no client INSERT); the decisions
+   made before it existed are backfilled. A rejection is a `nonconformance`
+   event, a reopen of an accepted / waived item is a `reopen` event whose OWN
+   reason (a new note that meets the bar) the database requires. Each row
+   carries the note its decision changed and the reviewer's sign-in name,
+   never the client's; a history row outlives a deleted item
+   (`item_id` is a plain column); a restore never imports the history
+   (`IMMUTABLE_TABLES`) and writes one row per restored decided item. There is
+   no separate NCR module (a follow-on capability if a facility wants
+   disposition / corrective-action tracking).
+8. **Punch record** (`QUAL-7`): `closed_by_name`, `description`, `location`,
+   `closure_note` as nullable text; photos / attachments deferred.
+9. **Checked writes** (`SAF-3` / `GAP-402` narrow): `lib/checkedWrite.ts` is the
+   one helper; every quality decision write uses it and audits only after a
+   confirmed match; the census in `lib/__tests__/checkedWrite.test.ts` holds
+   the quality files at zero raw writes and ratchets the money files until
+   `J3` converts them.
+10. **Batching** (`PERF-7`, which stays OPEN): n checked, `updated_at`-guarded
+    single-row client writes, at most 50 in flight (wall-clock ≈ ceil(n/50)
+    waves; still n requests) — not a server-side RPC, which would tie both paths
+    to a pending migration. A single-statement apply (one request per
+    assessment) is the follow-on that closes PERF-7; it must keep the per-row
+    guard.
+
+**Verification fix (2026-09-30, projects Round G).** An independent verifier
+(Postgres 16, RLS on, as the project owner) showed items 4, 5, 6 and 7 claimed
+more than 20261091 did at 13fcd5e: a machine-stamped write with the note `x`
+laundered an MI completion to `'human'`; a checklist with open items completed
+by a direct PATCH; a reopen, a waive or a void reused the note already on the
+row, and a note-only update cleared a waiver's reason; a direct reject's note
+never reached its history row, deleting a decided item deleted its history,
+and the reviewer's name was the client's. Each is now enforced as written
+above (`checklist_items_decision_rail`, `project_checklists_completion_basis_rail`,
+`checklist_completion_basis`, `turnover_items_decision_rail`,
+`punch_items_void_rail`, `turnover_items_record_review_event`,
+`quality_actor_name`; `lib/__tests__/qualityRailsMigration.test.ts`), with the
+lib mirroring the own-reason rule and keeping the sweep and the assessment off
+human territory.
+
+**Verification fix 2 (2026-09-30, projects Round G).** A second
+independent pass showed items 4–7 still claimed more than 20261091 did at
+c031239: a person chip counted as a person's decision and a made-up sweep
+citation passed, so a checklist with no reason anywhere completed as
+`'human'`; deleting an unmet line, or racing a completion, walked round the
+gate; a machine-shaped write could rewrite an item's text; a completed
+checklist could change kind; a standing acceptance's document and a standing
+void's closer and date could be rewritten; a note plus a trailing space, or a
+reason of no-break spaces, counted as a reason; a fresh `reviewed_at`
+re-attributed a carried note; and the actor's name came from a profile the
+user can edit. Items 4–7 above now say what the database enforces
+(`checklist_completion_basis`, `checklist_auto_citation_ok`,
+`checklist_items_decision_rail`, `project_checklists_completion_basis_rail`,
+`turnover_items_decision_rail`, `punch_items_void_rail`,
+`turnover_items_record_review_event`, `quality_reason_key`,
+`quality_actor_name`; `lib/__tests__/qualityRailsMigration.test.ts`), with the
+lib mirroring the reason rule, the key, the chip rule and the citation rows.
+
+**Verification fix 3 (2026-09-30, projects Round G).** A third independent
+pass found the citation rule refusing the sweep's own greens on the normal
+production document — a current version with NO provenance (the bulk
+upload's, every version before 20260823): `v.provenance = 'external'` is
+NULL there, so the predicate refused what the lib admits (the predecessor's
+app writes landed 56 of 58). It now reads `v.provenance IS NOT DISTINCT FROM
+'external'`, and every other predicate in 20261091 was audited for the same
+NULL trap (none other found — the rest read NOT NULL columns, guard with
+COALESCE / IS [NOT] DISTINCT FROM, or mean "no row, no proof" by design). The
+same pass tied every citation branch to the item's org, read a legacy
+evidence value stored as one object as a single chip (in the lib too), and
+capped an item write's wait for its checklist row at 500 ms so a delete that
+cascades into it no longer deadlocks against it. The headline above no longer
+counts a person-attached chip as a person's decision (verification fix 2
+made the database stop counting it).
+
+**Rationale.** A pre-startup safety review is signed. The audit found the
+green could come from a contractor's filename, survive the document's voiding,
+launder itself into a "complete" checklist another checklist then cites, be
+mass-N/A'd behind a count, and be recorded as done by a write the database had
+refused. Each default above closes one of those doors without weakening the
+one invariant that was sound — a human's note keeps every automated pass out.
+
+**Reversal.** Per default, by a facility's stated requirement: a stricter
+register (assets), a stricter bar (longer reasons, no accept-without-document),
+an NCR module, and — the brief's own default for item 1 — a title match shown
+as "suggested" until verified, or "Mark complete" refused while the basis
+would be `'auto'`. None of the defaults can be loosened below "a person or an
+admitted document", which is the contract itself.
+
+**Risk:** low–medium — the register is narrower than before (existing intake-
+title greens retract on the next sweep, visibly, in one audit row per sweep),
+and until migration `20261091` is applied, closing / voiding / reopening a punch
+item and adding one with a location or details fail with the migration message
+(PostgREST's schema-cache shapes included); "Mark complete", checklist void /
+reopen and turnover decisions work before it, with no basis recorded and no
+history yet — the migration's backfills record both. The same migration ties
+every project-scoped quality row's `org_id` to its project's (`QUAL-12`, header
+and siblings included), without blocking a document or party delete.

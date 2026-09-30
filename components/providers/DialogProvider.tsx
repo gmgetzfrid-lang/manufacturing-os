@@ -29,6 +29,13 @@ interface BaseOpts {
 export interface PromptOpts extends BaseOpts {
   placeholder?: string;
   defaultValue?: string;
+  /** SAF-4 / GAP-405: a blank (or whitespace) answer cannot settle the
+   *  prompt — the box shows why and stays open; Cancel is still the only
+   *  way to return null. Default off: the ~90 existing call sites keep
+   *  today's behaviour. */
+  required?: boolean;
+  /** With `required`: the minimum number of non-whitespace characters. */
+  minLength?: number;
 }
 
 type Request = { id: number } & (
@@ -74,6 +81,7 @@ export function DialogHost() {
   const [queue, setQueue] = useState<Request[]>([]);
   const current = queue[0] ?? null;
   const inputRef = useRef<HTMLInputElement>(null);
+  const [promptProblem, setPromptProblem] = useState<string | null>(null);
 
   useEffect(() => {
     enqueue = (r) => setQueue((q) => [...q, r]);
@@ -88,6 +96,7 @@ export function DialogHost() {
       if (current.kind === "alert") current.resolve();
       else if (current.kind === "confirm") current.resolve(value === true);
       else current.resolve(typeof value === "string" ? value : null);
+      setPromptProblem(null);
       setQueue((q) => q.slice(1));
     },
     [current]
@@ -104,7 +113,23 @@ export function DialogHost() {
       <form
         onSubmit={(e) => {
           e.preventDefault();
-          settle(current.kind === "prompt" ? (inputRef.current?.value ?? "") : true);
+          if (current.kind === "prompt") {
+            const value = inputRef.current?.value ?? "";
+            if (current.required) {
+              const dense = value.replace(/\s+/g, "");
+              const min = Math.max(1, current.minLength ?? 1);
+              if (dense.length < min) {
+                setPromptProblem(dense.length === 0
+                  ? "This needs an answer — it goes on the record. Cancel to back out."
+                  : `Say more — at least ${min} characters.`);
+                inputRef.current?.focus();
+                return;
+              }
+            }
+            settle(value);
+            return;
+          }
+          settle(true);
         }}
         className="p-5"
       >
@@ -131,7 +156,12 @@ export function DialogHost() {
                 defaultValue={current.defaultValue}
                 placeholder={current.placeholder}
                 className="mt-3 w-full h-9 px-3 text-sm rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] text-[var(--color-text)] placeholder:text-[var(--color-text-faint)] focus:outline-none focus:ring-2 focus:ring-[var(--color-accent-ring)]"
+                aria-invalid={promptProblem ? true : undefined}
+                onChange={() => { if (promptProblem) setPromptProblem(null); }}
               />
+            )}
+            {current.kind === "prompt" && promptProblem && (
+              <div role="alert" className="mt-1.5 text-xs font-bold text-rose-600 dark:text-rose-400">{promptProblem}</div>
             )}
           </div>
         </div>

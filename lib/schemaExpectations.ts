@@ -124,6 +124,7 @@ export const EXPECTED_TABLES: readonly TableExpectation[] = [
   { table: "ticket_number_counters", migration: "20260724_ticket_numbering.sql" },
   { table: "transmittals", migration: "20260717_transmittals.sql" },
   { table: "turnover_items", migration: "20261013_project_controls_program.sql" },
+  { table: "turnover_review_events", migration: "20261091_prj_roundG_quality_rails.sql" },
   { table: "units", migration: "20260606_operational_entity_graph.sql" },
   { table: "work_package_documents", migration: "20260825_work_packages_acks.sql" },
   { table: "work_package_prints", migration: "20261028_work_package_prints.sql" },

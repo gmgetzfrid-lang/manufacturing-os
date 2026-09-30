@@ -104,6 +104,7 @@ export const ORG_SCOPED_TABLES = [
   "project_checklists",
   "checklist_items",
   "turnover_items",
+  "turnover_review_events", // QUAL-11: append-only review history (nonconformance events) — evidence, exported
   "punch_items",
 
   // Projects + schedule

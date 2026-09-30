@@ -392,6 +392,15 @@ server-side.
 - Failures are reported, not swallowed.
 - Two concurrent sweeps cannot lose evidence.
 
+**Partial (2026-09-29, projects Round G).** `writeItemPatches` (`lib/checklists.ts`) writes both the assessment's and the sweep's patches as n checked single-row UPDATE requests, at most `WRITE_BATCH = 50` in flight (`Promise.all` per wave) — a 300-item assessment is still 300 requests, but in six concurrent waves (≈ the wall-clock of six round trips) instead of 300 sequential ones; the `items.find` inside the sweep loop is a `Map`. Every write is a checked write guarded on the row's `updated_at` as read (`.eq("updated_at", …)` or `.is("updated_at", null)`): a row someone else changed between the read and the write matches zero rows and is reported as `refused` ("N items changed while the sweep ran and were left alone — run it again") — two concurrent sweeps cannot lose a chip, and the sweep's evidence append is never applied to a stale row. Per-row failures are no longer swallowed: `failed` / `refused` counts and the first error come back and the card shows them in the error tone; the audit row carries only the ids that landed. Tests: `lib/__tests__/checklists.test.ts` `"writes are guarded on updated_at as read (a concurrent change refuses) and run in parallel batches (PERF-7)"` (120 items, every write carries the guard, one audit row with 120 ids), `"a concurrent change between read and write is a refusal, not a lost chip"`, `"a refused write (RLS zero rows) reports an error…"`.
+
+**Done-when.**
+- ✗ NOT done: "one round trip, or a small handful". Applying a 300-item assessment is still 300 requests — n checked single-row updates, ≤ 50 concurrent, each guarded on `updated_at`, so the wall-clock is ≈ ceil(n/50) waves (6 for 300) instead of 300 sequential round trips, and an assessment can still be partly applied if the tab closes between waves. Meeting the item as written needs a single-statement server-side apply (an RPC) that keeps the per-row `updated_at` guard — the follow-on recorded in DEC-52; this record stays OPEN for it. *Review fixes (projects Round G):* the first wording ("a small handful of round trips") and then a ✓ "in wall-clock" re-read the criterion instead of meeting it.
+- ✓ Failures are reported, not swallowed.
+- ✓ Two concurrent sweeps cannot lose evidence (optimistic guard on `updated_at`).
+
+**Scope / residual.** Remaining for this record: the single-statement server-side apply (an RPC keeping the per-row `updated_at` guard), not added here because it would make both the assessment and the sweep depend on a migration being applied (DEC-30) — recorded in DEC-52 as the follow-on that closes done-when 1. Done-when 2 and 3 hold now.
+
 ---
 
 ## PERF-8 · The full timeline loads on every project open, for a tab most users never click

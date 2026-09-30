@@ -13,7 +13,9 @@ import {
 } from "@/lib/projectHealth";
 import {
   validateSegmentedItems, applyAutoEvidence, rubricCoverageScore,
-  validateRubricFindings, QUALITY_MANUAL_RUBRIC,
+  validateRubricFindings, QUALITY_MANUAL_RUBRIC, completionBasis, reasonProblem, isAutoOnlyGreen, isHumanDecided,
+  isHumanGreen, isUnreasonedNa, staleAutoGreens, CANNED_REASONS, isBlockingItem, isHumanTerritory, reasonKey, normalizeEvidence,
+  isMachineActorName, MACHINE_ACTOR_SWEEP, MACHINE_ACTOR_ASSESSMENT, REASON_MIN_LENGTH,
   type ChecklistItemState, type ProjectEvidenceState,
 } from "@/lib/checklistEngine";
 import { computeCompanyScorecard, scoreBand, MIN_EVIDENCE_FOR_BAND, type CompanyEvidence } from "@/lib/companyScore";
@@ -727,6 +729,251 @@ describe("checklistEngine", () => {
       state({ miChecklistComplete: true }),
     );
     expect(res[0].status).toBe("satisfied");
+  });
+
+  // ── projects Round G (J2 QUALITY) — QUAL-1 / QUAL-2 / SAF-1 / SAF-4 / QUAL-6 ──
+
+  it("QUAL-1: satisfy on a matching title, remove the title, re-run — the item is no longer satisfied and the auto chip is dropped", () => {
+    const first = applyAutoEvidence(
+      [item({ id: "a", text: "Hydrotest complete with records" })],
+      state({ documentTitles: ["E-301 Hydrotest Report Rev 0"], documents: [{ id: "d1", label: "E-301 Hydrotest Report Rev 0", status: "Issued", rev: "0", viaTurnover: false }] }),
+    );
+    expect(first).toEqual([{ id: "a", status: "satisfied", addedEvidence: [{ label: 'Document on file: "E-301 Hydrotest Report Rev 0"', documentId: "d1", source: "auto" }] }]);
+    const again = applyAutoEvidence(
+      [item({ id: "a", text: "Hydrotest complete with records", status: "satisfied", evidence: first[0].addedEvidence })],
+      state({ documentTitles: [] }),
+    );
+    expect(again).toEqual([{ id: "a", status: "needs_evidence", addedEvidence: [], removeAutoEvidence: true, retracted: true }]);
+  });
+
+  it("QUAL-1: a stale auto chip is REPLACED by the current citation, never merely supplemented", () => {
+    const res = applyAutoEvidence(
+      [item({ id: "a", text: "Hydrotest complete", status: "satisfied", evidence: [{ label: 'Document on file: "old hydrotest"', source: "auto" }] })],
+      state({ documentTitles: ["E-301 Hydrotest Report Rev 1"] }),
+    );
+    expect(res).toEqual([{ id: "a", status: "satisfied", addedEvidence: [{ label: 'Document on file: "E-301 Hydrotest Report Rev 1"', source: "auto" }], removeAutoEvidence: true }]);
+    // an unchanged citation is left alone (no chip added, nothing removed)
+    const same = applyAutoEvidence(
+      [item({ id: "a", text: "Hydrotest complete", status: "satisfied", evidence: [{ label: 'Document on file: "E-301 Hydrotest Report Rev 1"', source: "auto" }] })],
+      state({ documentTitles: ["E-301 Hydrotest Report Rev 1"] }),
+    );
+    expect(same).toEqual([{ id: "a", status: "satisfied", addedEvidence: [] }]);
+  });
+
+  it("QUAL-1: a satisfied item with a human chip or a human note is never retracted; a satisfied item with no chips at all is left alone", () => {
+    const res = applyAutoEvidence([
+      item({ id: "h", text: "Hydrotest complete", status: "satisfied", evidence: [{ label: "gone", source: "auto" }, { label: "walked down", source: "manual" }] }),
+      item({ id: "n", text: "Hydrotest complete", status: "satisfied", evidence: [{ label: "gone", source: "auto" }], manualNote: "verified 9/14" }),
+      item({ id: "z", text: "Hydrotest complete", status: "satisfied", evidence: [] }),
+    ], state());
+    expect(res).toEqual([]);
+  });
+
+  it("QUAL-2 verification fix: a note counts as a person's reason only when it meets the bar — 'x' or a canned string launders nothing", () => {
+    // The reproduction: two N/As and one green, each carrying the note 'x'.
+    const laundered: ChecklistItemState[] = [
+      item({ id: "1", text: "Weld log", status: "na", applicability: "na", manualNote: "x" }),
+      item({ id: "2", text: "NDE", status: "na", applicability: "na", manualNote: "x" }),
+      item({ id: "3", text: "Hydrotest", status: "satisfied", manualNote: "x" }),
+    ];
+    expect(completionBasis(laundered)).toBe("auto");
+    for (const note of ["x", "ok", "decided by reviewer", "Not applicable", "   "]) {
+      expect(isHumanDecided({ manualNote: note }), note).toBe(false);
+      expect(isUnreasonedNa(item({ id: "1", status: "na", applicability: "na", manualNote: note })), note).toBe(true);
+      expect(isAutoOnlyGreen(item({ id: "1", status: "satisfied", manualNote: note })), note).toBe(true);
+      expect(isHumanGreen(item({ id: "1", status: "satisfied", manualNote: note })), note).toBe(false);
+    }
+    expect(isHumanDecided({ manualNote: "walked it down with ops on 9/14" })).toBe(true);
+    // …yet ANY visible note (a legacy short one included) keeps the automated
+    // passes out; an empty or blank one is no note
+    expect(isHumanTerritory({ manualNote: "x", evidence: [] })).toBe(true);
+    expect(isHumanTerritory({ manualNote: "", evidence: [] })).toBe(false);
+    expect(isHumanTerritory({ manualNote: " \u00a0\u200b ", evidence: [] })).toBe(false);
+    expect(isHumanTerritory({ manualNote: null, evidence: [{ label: "walked down", source: "manual" }] })).toBe(true);
+    expect(isHumanTerritory({ manualNote: null, evidence: [{ label: "x", source: "auto" }] })).toBe(false);
+    expect(applyAutoEvidence([item({ id: "a", text: "Hydrotest complete", manualNote: "x" })], state({ documentTitles: ["Hydrotest package"] }))).toEqual([]);
+  });
+
+  it("the sweep never writes on an item carrying a person's chip, green or not — the database refuses a machine write there (no chip + sweep laundering)", () => {
+    const res = applyAutoEvidence([
+      item({ id: "open", text: "Hydrotest complete", status: "open", evidence: [{ label: "Hydro chart", source: "manual" }] }),
+      item({ id: "ne", text: "Hydrotest complete", status: "needs_evidence", evidence: [{ label: "Hydro chart", source: "manual" }] }),
+    ], state({ documentTitles: ["E-301 Hydrotest Report Rev 0"] }));
+    expect(res).toEqual([]);
+  });
+
+  it("verification fix 2 (QUAL-2): a person chip launders nothing — the verifier's reproduction (a made-up sweep green, then a one-letter chip, no note anywhere) completes as auto", () => {
+    const chipped: ChecklistItemState[] = [
+      item({ id: "1", text: "MI group reviewed relief valves", status: "satisfied", evidence: [{ label: "anything at all", source: "auto" }, { label: "x", source: "manual" }] }),
+      item({ id: "2", text: "MI group reviewed piping thickness", status: "satisfied", evidence: [{ label: "anything at all", source: "auto" }, { label: "x", source: "manual" }] }),
+    ];
+    expect(completionBasis(chipped)).toBe("auto");
+    // the legacy note-less green with a chip added
+    expect(completionBasis([item({ id: "1", status: "satisfied", evidence: [{ label: "x", source: "manual" }] })])).toBe("auto");
+    // a chip WITH a reason is a person's green
+    expect(completionBasis([item({ id: "1", status: "satisfied", manualNote: "walked it down with ops on 9/14", evidence: [{ label: "x", source: "manual" }] })])).toBe("human");
+  });
+
+  it("verification fix 2 (SAF-4): the bar strips Unicode whitespace and zero-width characters exactly as quality_reason_ok does, and counts code points", () => {
+    expect(reasonProblem("\u00a0".repeat(10))).not.toBeNull();
+    expect(reasonProblem("\u200b".repeat(12))).not.toBeNull();
+    expect(reasonProblem("\u2060\u00ad\u200d".repeat(5))).not.toBeNull();
+    expect(reasonProblem("decided\u00a0by reviewer")).toMatch(/isn't a reason/);
+    expect(reasonProblem("Not\u2003Applicable\u200b")).toMatch(/isn't a reason/);
+    expect(reasonProblem("abcde\u200bfghi")).not.toBeNull();          // 9 visible characters
+    expect(reasonProblem("abcde\u00a0fghij")).toBeNull();
+    expect(reasonProblem("\u{1F600}".repeat(5))).not.toBeNull();       // 5 characters, 10 UTF-16 units
+    expect(reasonProblem("\u{1F600}".repeat(10))).toBeNull();
+    // "a NEW note" is judged on the key: case, spacing and invisible characters do not make one
+    expect(reasonKey("  Reviewed\u00a0page by page \u200b")).toBe(reasonKey("reviewed page by page"));
+    expect(reasonKey("   ")).toBeNull();
+    expect(reasonKey(null)).toBeNull();
+  });
+
+  it("verification fix 3: evidence stored as ONE object reads as a single chip (checklist_evidence in SQL), so a legacy person chip in that shape is still human territory", () => {
+    const legacy = { source: "manual" as const, label: "walkdown photo" };
+    expect(normalizeEvidence(legacy)).toEqual([legacy]);
+    expect(normalizeEvidence([legacy])).toEqual([legacy]);
+    expect(normalizeEvidence("a string")).toEqual([]);
+    expect(normalizeEvidence(null)).toEqual([]);
+    expect(isHumanTerritory({ manualNote: null, evidence: normalizeEvidence(legacy) })).toBe(true);
+    expect(applyAutoEvidence([item({ id: "a", text: "Hydrotest complete", evidence: normalizeEvidence(legacy) })], state({ documentTitles: ["E-301 Hydrotest Report"] }))).toEqual([]);
+  });
+
+  it("verification fix 2 (QUAL-6): every sweep citation names the row it rests on — a document, an accepted turnover item, or a human MI completion; a legacy chip without it is replaced", () => {
+    const withRows = state({
+      documentTitles: ["E-301 Hydrotest Report Rev 0"],
+      documents: [{ id: "d1", label: "E-301 Hydrotest Report Rev 0", status: "Issued", rev: "0", viaTurnover: false }],
+      turnoverAcceptedNames: ["Weld map & weld log"], turnoverAccepted: [{ id: "t9", name: "Weld map & weld log" }],
+      miChecklistComplete: true, miChecklistId: "cl-mi",
+    });
+    const res = applyAutoEvidence([
+      item({ id: "doc", text: "Hydrotest complete with records" }),
+      item({ id: "to", text: "Weld map included in the data book" }),
+      item({ id: "mi", text: "New equipment reviewed by the mechanical integrity group" }),
+    ], withRows);
+    expect(res.map((r) => r.addedEvidence[0])).toEqual([
+      { label: 'Document on file: "E-301 Hydrotest Report Rev 0"', documentId: "d1", source: "auto" },
+      { label: 'Turnover item accepted: "Weld map & weld log"', turnoverItemId: "t9", source: "auto" },
+      { label: "Mechanical-integrity checklist complete", checklistId: "cl-mi", source: "auto" },
+    ]);
+    // the same label with no row behind it (a legacy chip) is stale and re-cited
+    const legacy = applyAutoEvidence(
+      [item({ id: "doc", text: "Hydrotest complete with records", status: "satisfied", evidence: [{ label: 'Document on file: "E-301 Hydrotest Report Rev 0"', source: "auto" }] })],
+      withRows,
+    );
+    expect(legacy).toEqual([{ id: "doc", status: "satisfied", addedEvidence: [{ label: 'Document on file: "E-301 Hydrotest Report Rev 0"', documentId: "d1", source: "auto" }], removeAutoEvidence: true }]);
+  });
+
+  it("QUAL-2: the turnover rule needs a SUBJECT match — one accepted sign-off does not vouch for every turnover line", () => {
+    const s = state({ turnoverAcceptedNames: ["Work completion sign-off"] });
+    const generic = applyAutoEvidence([item({ id: "a", text: "Turnover / quality package received and reviewed" })], s);
+    expect(generic[0]).toEqual({ id: "a", status: "needs_evidence", addedEvidence: [] });
+    const matched = applyAutoEvidence(
+      [item({ id: "b", text: "Pressure test records included in the turnover package" })],
+      state({ turnoverAcceptedNames: ["Pressure / leak test records"] }),
+    );
+    expect(matched[0].status).toBe("satisfied");
+    expect(matched[0].addedEvidence[0].label).toBe('Turnover item accepted: "Pressure / leak test records"');
+    const weld = applyAutoEvidence(
+      [item({ id: "c", text: "Weld map included in the data book" })],
+      state({ turnoverAcceptedNames: ["NDE reports", "Weld map & weld log"] }),
+    );
+    expect(weld[0].addedEvidence[0].label).toBe('Turnover item accepted: "Weld map & weld log"');
+  });
+
+  it("QUAL-2: an MI checklist completed on auto-evidence alone does not satisfy a PSSR mechanical-integrity item (the gather sets miChecklistComplete only for a human completion)", () => {
+    // completionBasis is what setChecklistStatus records; the gather feeds
+    // miChecklistComplete only from completed_basis = 'human'.
+    const autoOnly: ChecklistItemState[] = [
+      item({ id: "1", text: "Weld log", status: "satisfied", evidence: [{ label: "x", source: "auto" }] }),
+      item({ id: "2", text: "Ops trained", status: "na", applicability: "na" }), // assessment N/A, no note
+    ];
+    expect(completionBasis(autoOnly)).toBe("auto");
+    const human: ChecklistItemState[] = [
+      item({ id: "1", text: "Weld log", status: "satisfied", evidence: [{ label: "x", source: "auto" }], manualNote: "reviewed the log — 42 welds, all traceable" }),
+      item({ id: "2", text: "Ops trained", status: "na", applicability: "na", manualNote: "no operator interface on this change" }),
+    ];
+    expect(completionBasis(human)).toBe("human");
+    // An applicable item neither green nor N/A is not a completion at all —
+    // 'auto', the same first clause checklist_completion_basis() carries (the
+    // database's completion rail refuses such a completion outright).
+    expect(completionBasis([...human, item({ id: "3", text: "Open item", status: "open" })])).toBe("auto");
+    expect(completionBasis([...human, item({ id: "3", text: "Open item", status: "needs_evidence" })])).toBe("auto");
+    expect(isBlockingItem(item({ id: "3", status: "open" }))).toBe(true);
+    expect(isBlockingItem(item({ id: "3", status: "open", applicability: "na" }))).toBe(false);
+    expect(isBlockingItem(item({ id: "3", status: "na" }))).toBe(false);
+    expect(isBlockingItem(item({ id: "3", status: "satisfied" }))).toBe(false);
+    // A person-attached chip is evidence, not a reason: alone it decides nothing.
+    expect(completionBasis([item({ id: "1", text: "x", status: "satisfied", evidence: [{ label: "walked down", source: "manual" }] })])).toBe("auto");
+    // An N/A no person gave a reason for (the assessment's: machine stamp, no
+    // note) keeps the completion 'auto' — ticking a proposal is not a reason.
+    expect(completionBasis([
+      item({ id: "1", text: "Weld log", status: "satisfied", evidence: [{ label: "x", source: "auto" }], manualNote: "verified the log against the weld map" }),
+      item({ id: "2", text: "Ops trained", status: "na", applicability: "na" }),
+    ])).toBe("auto");
+    // The one-click laundering: an MI checklist the assessment N/A'd end to
+    // end has no green at all — 'auto', never citable.
+    expect(completionBasis([
+      item({ id: "1", text: "Weld log", status: "na", applicability: "na" }),
+      item({ id: "2", text: "NDE", status: "na", applicability: "na" }),
+    ])).toBe("auto");
+    // …and even when a person gave every N/A a reason, a checklist with no
+    // human green proves nothing about mechanical integrity.
+    expect(completionBasis([item({ id: "1", text: "Weld log", status: "na", applicability: "na", manualNote: "no welding in this scope" })])).toBe("auto");
+    expect(completionBasis([])).toBe("auto");
+    expect(isUnreasonedNa(item({ id: "1", status: "na", applicability: "na" }))).toBe(true);
+    expect(isUnreasonedNa(item({ id: "1", status: "open", applicability: "na" }))).toBe(true);
+    expect(isUnreasonedNa(item({ id: "1", status: "na", applicability: "na", manualNote: "no welding in this scope" }))).toBe(false);
+    expect(isHumanGreen(item({ id: "1", status: "satisfied", manualNote: "walked it down 9/14" }))).toBe(true);
+    expect(isHumanGreen(item({ id: "1", status: "satisfied", applicability: "na", manualNote: "walked it down 9/14" }))).toBe(false);
+    expect(isAutoOnlyGreen(item({ id: "1", text: "x", status: "satisfied", evidence: [{ label: "x", source: "auto" }] }))).toBe(true);
+    expect(isAutoOnlyGreen(item({ id: "1", text: "x", status: "satisfied", applicability: "na" }))).toBe(false);
+    expect(isAutoOnlyGreen(item({ id: "1", text: "x", status: "needs_evidence" }))).toBe(false);
+    expect(isHumanDecided({ manualNote: null })).toBe(false);
+    expect(isAutoOnlyGreen(item({ id: "1", text: "x", status: "satisfied", evidence: [{ label: "walked down", source: "manual" }] }))).toBe(true);
+    const pssr = applyAutoEvidence(
+      [item({ id: "a", text: "New equipment reviewed by the mechanical integrity group" })],
+      state({ miChecklistComplete: false }),
+    );
+    expect(pssr[0].status).toBe("needs_evidence");
+  });
+
+  it("QUAL-1: staleAutoGreens — at completion, a sweep green whose proof left the register (or whose chip names a dropped document) is stale; a person's green never is", () => {
+    const docs = [{ id: "d1", label: "E-301 Hydrotest Report", status: "Issued", rev: "0", viaTurnover: false }];
+    const chip = { label: 'Document on file: "E-301 Hydrotest Report"', documentId: "d1", source: "auto" as const };
+    const green = item({ id: "a", text: "Hydrotest complete", status: "satisfied", evidence: [chip] });
+    const current = state({ documentTitles: ["E-301 Hydrotest Report"], documents: docs });
+    expect(staleAutoGreens([green], current)).toEqual([]);
+    // voided: the register no longer admits it → the sweep would withdraw it
+    expect(staleAutoGreens([green], state())).toEqual(["a"]);
+    // the cited row is gone but another document shares its title → still stale (the chip names d1)
+    const twin = state({ documentTitles: ["E-301 Hydrotest Report"], documents: [{ ...docs[0], id: "d2" }] });
+    expect(staleAutoGreens([green], twin)).toEqual(["a"]);
+    // a re-citation (the proof moved to another title) is stale too
+    const moved = state({ documentTitles: ["E-302 Hydrotest Report"], documents: [{ ...docs[0], id: "d3", label: "E-302 Hydrotest Report" }] });
+    expect(staleAutoGreens([green], moved)).toEqual(["a"]);
+    // a person's green is theirs
+    expect(staleAutoGreens([{ ...green, manualNote: "checked the chart myself 9/14" }], state())).toEqual([]);
+  });
+
+  it("SAF-4: the reason bar refuses blank, short and canned reasons and accepts a real one", () => {
+    expect(REASON_MIN_LENGTH).toBe(10);
+    // the database mirrors this list (quality_reason_ok, 20261091 — pinned in qualityRailsMigration.test.ts)
+    for (const canned of CANNED_REASONS) expect(reasonProblem(canned)).not.toBeNull();
+    expect(reasonProblem(null)).toMatch(/required/);
+    expect(reasonProblem("   ")).toMatch(/required/);
+    expect(reasonProblem("too short")).toMatch(/at least 10/);
+    expect(reasonProblem("decided by reviewer")).toMatch(/isn't a reason/);
+    expect(reasonProblem("Not applicable")).toMatch(/isn't a reason/);
+    expect(reasonProblem("No hydrotest — electrical-only scope")).toBeNull();
+  });
+
+  it("QUAL-6: the machine actor is a reserved sentinel, never a person's name", () => {
+    expect(isMachineActorName(MACHINE_ACTOR_SWEEP)).toBe(true);
+    expect(isMachineActorName(MACHINE_ACTOR_ASSESSMENT)).toBe(true);
+    expect(isMachineActorName("mreyes")).toBe(false);
+    expect(isMachineActorName(null)).toBe(false);
   });
 
   it("quality-manual rubric coverage scores confirmed areas only", () => {

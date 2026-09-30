@@ -311,12 +311,20 @@ return.
 - A successful sweep renders in a non-error tone.
 - A failed intake action renders in an error tone.
 
+**Partial (2026-09-29, projects Round G — QualityTab half).** `components/projects/QualityTab.tsx` has a `Notice` with a tone (`error` / `success` / `info`): the sweep's "nothing new to prove or demand" is `info`, a sweep that proved / demanded / withdrew items is `success` with the tallies, "Applied N; left M alone…" is `success`, refusals are `error` (`role="alert"`). The single `setErr` channel is gone; each section and each checklist card carries its own notice.
+
+**Done-when.**
+- ✓ A successful sweep renders in a non-error tone.
+- ✗ A failed intake action renders in an error tone — `components/projects/IntakePanel.tsx` :292 is P1 / DC P4's file, not edited here; this record stays OPEN for that limb.
+
+**Scope / residual.** The IntakePanel limb.
+
 ---
 
 ## UX-8 · Errors render at the top of the page while the action that raised them is far below
 
 - **Severity:** HIGH
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Verification:** CONFIRMED
 - **Blast radius:** ux
 - **Locations:**
@@ -352,6 +360,18 @@ explain why on the button.
 2. ✗ NOT DONE HERE — "Mark complete" disabled-with-reason is `QualityTab.tsx` / `lib/checklists.ts`, J2's.
 
 **Scope / residual.** OPEN for J2's QualityTab half. Inline placement beside each control is the fuller fix the P7 component-wide package can take; the shared banner is now at least reachable.
+
+**Partial (2026-09-29, projects Round G — QualityTab half).** In `components/projects/QualityTab.tsx` every notice renders inside the section or card whose control raised it (the checklist card's notice sits directly under its buttons; the turnover and punch sections have their own), and the page-level banner is reserved for a failed load with a Retry. "Mark complete" is disabled — with `aria-disabled` and a title — while the gate would refuse (no items, or N unsatisfied), and the reason is printed beside the button; the server-side refusal (`lib/checklists.ts` :218-223 gate, unchanged) is still the authority.
+
+**Done-when.**
+- ✓ An error from a quality control below the fold is visible without scrolling (rendered beside the control).
+- ✓ "Mark complete" is disabled with a visible reason when it would be refused.
+- ✗ `components/projects/CostsTab.tsx` :119-124 (and the cost panels raising into it) — P3 / J3's limb, not edited here; this record stays OPEN for that half.
+
+**Scope / residual.** The costs half (J3).
+
+
+**Integration (2026-09-30, projects Round G — J2 merged onto J3).** Both halves hold on the merged tree. An error raised on the Costs tab, including from the cost panels that report into its banner, is scrolled into view and focused (J3). A quality control's error renders beside the control that raised it (J2). "Mark complete" is disabled with a visible reason when it would be refused (J2). Both Done-when items are met.
 
 ---
 
@@ -428,6 +448,19 @@ database migration (20261013) applied."*
 - No raw Postgres string reaches a user in the Projects area (see `REL-3`).
 
 *Landed 2026-09-29 (projects Round G, J4 limb): `QuotesPanel.tsx:545`'s migration-aware message is kept as the model; the two new writes in the panel (`cost_documents.company_id`, quote-link `expires_at`) surface a named-migration message on `42703` / `PGRST204` instead of a silent success. The list-function conversion closes in P2.*
+
+**Partial (2026-09-29, projects Round G — the load-bearing safety read; PC QUAL-8).** `listChecklists`, `listChecklistItems`, `listTurnoverItems` and `listPunchItems` throw a translated error on a read failure instead of returning `[]` (`describeWriteError` in `lib/checkedWrite.ts`: a missing table or column — raw `42P01` / `42703` or PostgREST's schema-cache `PGRST205` / `PGRST204`, the shapes a pending migration actually produces through the client — → "This needs the latest database migration applied", 42501 / RLS → "You don't have permission…", else the message; *review fix (projects Round G):* the schema-cache codes were missing at first, so the pre-migration writes surfaced PostgREST's raw "Could not find the … column … in the schema cache"); `readChecklistItems` returns `{ rows, error }` for the completion gate, which now refuses on a read error (QUAL-8). `QualityTab` renders a failed load as "The quality program couldn't be loaded — <reason> · Retry" and a failed item load inside the card with Retry — never "No checklists yet". `listTurnoverReviewEvents` was the one deliberate exception (an empty history before the migration, since the items still render) — narrowed to the missing-table shapes by the second review fix below. Tests: `lib/__tests__/checklists.test.ts` `"listChecklists / listChecklistItems throw on a read error instead of returning []"`, `"before 20261091 'Mark complete' names no new column, so it lands…"` (second review fix: the completion no longer writes `completed_basis`); `lib/__tests__/turnover.test.ts` `"listTurnoverItems / listPunchItems throw on a read error"`, `"before 20261091 a close meets PostgREST's unknown-column error (PGRST204)…"` (the PGRST205 history-insert case went with the client insert — second review fix); `lib/__tests__/checkedWrite.test.ts` `"a pending migration in PostgREST's schema-cache shapes (PGRST204 / PGRST205) and raw 42703 reads as the migration message, never raw text"`.
+
+*Second review fix (projects Round G).* The first build's "never 'No checklists yet'" did not hold: `refresh()` read all four lists with `Promise.all`, so one failed read left every list at `[]` and the page showed the error banner AND, directly below it, "No checklists yet", "Nothing required yet…" and "Nothing on the punch list." with their Seed / Add controls — and one failing read hid the three that answered. `QualityTab` now reads with `Promise.allSettled`; each section renders its own data or its own "… couldn't be loaded — <reason> · Retry" (`LoadFailed`) in place of its empty state, and hides its add / seed / new controls while its list is unknown. The review history is its own read: `listTurnoverReviewEvents` (`lib/turnover.ts`) returns `[]` only for the missing-table shapes (`isMissingSchemaError`, new in `lib/checkedWrite.ts`) and throws otherwise, and the turnover section shows "Review history unavailable — <reason> · Retry" rather than a history with its nonconformance lines silently missing. Tests: `lib/__tests__/turnover.test.ts` `"the review history is empty (not an error) before the migration — in every missing-table shape"`, `"any OTHER history read failure throws…"`; `lib/__tests__/checkedWrite.test.ts` `"isMissingSchemaError is true for the pending-migration shapes only…"`.
+
+**Done-when.**
+- ✓ Empty, broken and forbidden render differently on the quality tab (empty state / "couldn't be loaded — needs the latest migration" / "you don't have permission") — per section, with no empty state under a failed read (second review fix: the first build rendered both).
+- ✗ No raw Postgres string reaches a user in the Projects area — the quality lib maps the two common codes and the rest carry the message; the costs half is REL-2 / REL-3 in P3 (J3) and the `QuotesPanel.tsx` :545 limb is P4's. This record stays OPEN for those halves.
+
+**Scope / residual.** `lib/projectReport.ts` (PC-9's) wraps these readers in its own `safe()` and is unaffected by the throw.
+
+
+**Integration (2026-09-30, projects Round G — J2 merged onto J3 and J4).** With all three merged, "empty, broken and forbidden render differently" holds on the Quality tab (J2), on the Costs tab (J3: the list functions throw, and the tab shows its failure banner), and in the bid table's new writes (J4). Still OPEN for Done-when 2: no raw Postgres string may reach a user anywhere in the Projects area. That is `REL-3`'s sweep, and not every surface has been converted.
 
 ---
 

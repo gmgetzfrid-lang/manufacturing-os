@@ -115,6 +115,7 @@ export const IMMUTABLE_TABLES: Record<string, string> = {
   // egress evidence — written only at the download egress, never by import.
   download_audits: "download audits are written only by the download egress — a restored row would name a copy holder nobody served",
   milestone_baseline_history: "prior approved-plan snapshots are written only by set_project_baseline / clear_project_baseline (projects Round G, PC SCHED-3)",
+  turnover_review_events: "the turnover review history is written only by the database's trigger on turnover_items (a restored decided item gets one row from its own stamps)",
 };
 
 /** True when `table` is append-only / self-insert-only and must not be blind-imported. */
@@ -447,7 +448,7 @@ export const RESTORE_TABLE_ORDER: string[] = [
   // Quality program: checklists before their items; turnover/punch only
   // need projects + parties + documents, all long since restored.
   "project_checklists", "checklist_items",
-  "turnover_items", "punch_items",
+  "turnover_items", "turnover_review_events", "punch_items",
   "knowledge_libraries", "knowledge_library_links", "knowledge_sources",
   "knowledge_documents", "knowledge_chunks", "knowledge_page_entities",
   "knowledge_questions",
