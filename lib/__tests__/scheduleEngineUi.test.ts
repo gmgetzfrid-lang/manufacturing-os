@@ -42,6 +42,7 @@ import TaskDetailPanel from "@/components/projects/TaskDetailPanel";
 import { useUndoableActions } from "@/components/projects/useUndoableActions";
 import { rebasePrefill, rebaseTargetIso } from "@/components/projects/RebaseScheduleModal";
 import { rowWindow, scrollTopToReveal } from "@/lib/rowWindow";
+import { msUntilNextUtcDay } from "@/components/projects/useScheduleNow";
 import type { Milestone } from "@/types/schema";
 
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
@@ -152,12 +153,91 @@ describe("SCHED-12 (limb c) · the timeline's critical-path control says what it
     const legend = [...host.querySelectorAll("span[title]")].find((s) => (s.getAttribute("title") ?? "").startsWith("On the critical path"));
     expect(legend?.getAttribute("title")).toMatch(/finish-to-start links .*working days Mon–Fri, no holiday calendar/);
   });
-  it("a plan with unfinished weekend work is measured on every day, and the button and the legend say so (third review pass)", async () => {
-    await render(board(schedule)); // the manual task runs Fri 03-06 → Sun 03-08
+  it("a plan with unfinished weekend work counts those weekend days, and the button and the legend say how many (fourth review pass)", async () => {
+    await render(board(schedule)); // the manual task runs Fri 03-06 → Sun 03-08: Sat 03-07 and Sun 03-08 carry work
     const btn = [...host.querySelectorAll("button")].find((b) => b.textContent?.includes("Critical path"));
-    expect(btn?.getAttribute("title")).toMatch(/drives the finish date \(every day, weekends included — no holiday calendar\)/);
+    expect(btn?.getAttribute("title")).toMatch(/drives the finish date \(working days Mon–Fri, plus the 2 weekend days with work planned on them — no holiday calendar\)/);
     const legend = [...host.querySelectorAll("span[title]")].find((s) => (s.getAttribute("title") ?? "").startsWith("On the critical path"));
-    expect(legend?.getAttribute("title")).toMatch(/finish-to-start links .*every day, weekends included, no holiday calendar/);
+    expect(legend?.getAttribute("title")).toMatch(/finish-to-start links .*working days Mon–Fri, plus the 2 weekend days with work planned on them, no holiday calendar/);
+  });
+});
+
+// PT SCH-5 (fourth review pass): the summary strip's `today` was fixed when
+// the board mounted, while the pulse took Date.now() on every data change — so
+// an open board read "1 overdue" in the pulse and 0 in the strip right below
+// it after a UTC midnight and a refresh. One instant (useScheduleNow) now
+// feeds the pulse, the strip, the overdue filter and the Report, and it
+// advances at each UTC midnight.
+describe("SCH-5 · one 'now' per screen: the pulse and the summary strip cannot disagree across a UTC midnight", () => {
+  afterEach(() => { vi.useRealTimers(); });
+  const counts = () => {
+    const t = (host.textContent ?? "").replace(/\s+/g, " ");
+    return { pulse: Number(t.match(/(\d+) overdue task/)?.[1] ?? 0), strip: Number(t.match(/Overdue(\d+)/)?.[1] ?? NaN) };
+  };
+  it("a refresh after midnight (before the midnight tick) moves neither count; the tick moves both together", async () => {
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout", "Date"] });
+    vi.setSystemTime(new Date("2026-03-10T23:59:00Z"));
+    const due = [
+      mk({ id: "a", name: "Due today", plannedStartAt: "2026-03-09T00:00:00Z", plannedAt: "2026-03-10T00:00:00Z" }),
+      mk({ id: "b", name: "Later", plannedStartAt: "2026-03-20T00:00:00Z", plannedAt: "2026-03-21T00:00:00Z" }),
+    ];
+    await render(board(due));
+    expect(counts()).toEqual({ pulse: 0, strip: 0 }); // due today is not overdue
+    vi.setSystemTime(new Date("2026-03-11T00:00:30Z")); // past UTC midnight; timers have not run
+    await render(board(due.map((m) => ({ ...m })))); // a realtime / own-edit refresh
+    expect(counts()).toEqual({ pulse: 0, strip: 0 }); // was { pulse: 1, strip: 0 }
+    await act(async () => { vi.advanceTimersByTime(61_000); });
+    expect(counts()).toEqual({ pulse: 1, strip: 1 });
+  });
+  it("msUntilNextUtcDay: just past the next UTC midnight, wherever the day is", () => {
+    expect(msUntilNextUtcDay(Date.parse("2026-03-10T23:59:00Z"))).toBe(61_000);
+    expect(msUntilNextUtcDay(Date.parse("2026-03-10T00:00:00Z"))).toBe(86_401_000);
+    expect(msUntilNextUtcDay(Date.parse("1969-12-31T23:00:00Z"))).toBe(3_601_000);
+  });
+  it("every surface is handed the screen's one instant (source pin)", () => {
+    const view = readFileSync(join(process.cwd(), "components/projects/ExecutionView.tsx"), "utf8");
+    expect(view).toMatch(/const nowMs = useScheduleNow\(\);/);
+    expect(view).toMatch(/filterMilestones\(items, filter, \{ now: nowMs \}\)/);
+    expect(view).toMatch(/<SchedulePulse\s+milestones=\{items\}\s+nowMs=\{nowMs\}/);
+    expect(view).toMatch(/const today = useMemo\(\(\) => startOfDayUTC\(new Date\(nowMs\)\), \[nowMs\]\);/);
+    expect(view).toMatch(/<ExecutionReportView [^>]*nowMs=\{nowMs\}/);
+    const pulse = readFileSync(join(process.cwd(), "components/projects/SchedulePulse.tsx"), "utf8");
+    expect(pulse).toMatch(/computeExecutionReport\(milestones, nowMs != null \? \{ now: new Date\(nowMs\) \} : undefined\)/);
+    const tab = readFileSync(join(process.cwd(), "components/projects/ScheduleTab.tsx"), "utf8");
+    expect(tab).toMatch(/const nowMs = useScheduleNow\(\);/);
+    expect(tab).toMatch(/<ScheduleProgress milestones=\{milestones\} metrics=\{metrics\} nowMs=\{nowMs\} \/>/);
+    expect(tab).toMatch(/filterMilestones\(ghostFiltered, planFilter, \{ now: nowMs \}\)/);
+    expect(tab).toMatch(/<MilestoneRow[\s\S]{0,300}nowMs=\{nowMs\}/);
+    expect(tab).not.toMatch(/useState<number>\(\(\) => Date\.now\(\)\)/); // no row keeps its own clock
+    const card = readFileSync(join(process.cwd(), "components/projects/ScheduleProgress.tsx"), "utf8");
+    expect(card).toMatch(/const nowMs = nowProp \?\? mountMs;/);
+    expect(card).not.toMatch(/toUtcDay\(new Date\(\)\)/);
+  });
+});
+
+// PC SCHED-5 (fourth review pass): the board's bulk "Done" stamped a selected
+// PHASE row completed + actual_at, which locks the phase for every engine —
+// after a child was reopened, the phase's own links stopped moving anything.
+// A phase's status is derived: bulk status now changes the selected leaves only.
+describe("SCHED-5 · bulk status changes leaves only — a selected phase is left to roll up", () => {
+  it("selecting a phase and one of its tasks and pressing Done sets the task alone, and says the phase was left", async () => {
+    const calls: Array<[string, string]> = [];
+    const onSetStatus = async (id: string, s: string) => { calls.push([id, s]); return true; };
+    const tree: Milestone[] = [
+      mk({ id: "P", name: "Spool 12", isSummary: true, plannedStartAt: "2026-03-02T00:00:00Z", plannedAt: "2026-03-04T00:00:00Z" }),
+      mk({ id: "c1", name: "Fit-up", parentId: "P", plannedStartAt: "2026-03-02T00:00:00Z", plannedAt: "2026-03-03T00:00:00Z" }),
+      mk({ id: "c2", name: "Weld", parentId: "P", plannedStartAt: "2026-03-04T00:00:00Z", plannedAt: "2026-03-04T00:00:00Z" }),
+    ];
+    await render(board(tree, { onSetStatus }));
+    const select = (id: string) => (host.querySelector(`#exec-row-${id} button[title="Select"]`) as HTMLButtonElement).click();
+    await act(async () => { select("P"); });
+    await act(async () => { select("c1"); });
+    expect(host.textContent).toMatch(/2 selected/);
+    const done = [...host.querySelectorAll("button")].find((b) => b.textContent?.trim() === "Done")!;
+    await act(async () => { done.click(); });
+    await act(async () => { await Promise.resolve(); });
+    expect(calls).toEqual([["c1", "completed"]]); // was [["P", "completed"], ["c1", "completed"]]
+    expect(host.textContent).toMatch(/1 phase left as it is — a phase's status rolls up from its tasks/);
   });
 });
 

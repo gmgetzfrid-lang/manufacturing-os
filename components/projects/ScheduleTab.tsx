@@ -34,6 +34,7 @@ import Spinner from "@/components/ui/Spinner";
 import HelpTooltip from "@/components/ui/HelpTooltip";
 import FirstRunHint from "@/components/ui/FirstRunHint";
 import ScheduleProgress from "@/components/projects/ScheduleProgress";
+import { useScheduleNow } from "@/components/projects/useScheduleNow";
 import ScheduleImportModal from "@/components/projects/ScheduleImportModal";
 import ScheduleEmptyState from "@/components/projects/ScheduleEmptyState";
 import ScheduleFilterBar from "@/components/projects/ScheduleFilterBar";
@@ -74,6 +75,9 @@ export default function ScheduleTab({ orgId, projectId, projectName, projectStat
 
   const [milestones, setMilestones] = useState<Milestone[]>([]);
   const [loading, setLoading] = useState(true);
+  // ONE "now" for the progress card, every row's overdue flag and the
+  // overdue filter, advanced at each UTC midnight (PT SCH-5).
+  const nowMs = useScheduleNow();
   // What the last ACTION said (a refused move, a failed delete …). A reload
   // never clears it — every handler follows its message with a reload, and a
   // realtime event reloads at any moment (PT SCH-7 / SCH-17 review): only the
@@ -156,9 +160,9 @@ export default function ScheduleTab({ orgId, projectId, projectName, projectStat
   const planFilterOn = isFilterActive(planFilter);
   const visible = useMemo(() => {
     if (!planFilterOn) return ghostFiltered;
-    const keep = filterMilestones(ghostFiltered, planFilter);
+    const keep = filterMilestones(ghostFiltered, planFilter, { now: nowMs });
     return ghostFiltered.filter((m) => m.id && keep.has(m.id));
-  }, [ghostFiltered, planFilter, planFilterOn]);
+  }, [ghostFiltered, planFilter, planFilterOn, nowMs]);
   const planGroups = useMemo(() => {
     const byId = new Set(ghostFiltered.map((m) => m.id));
     return ghostFiltered.filter((m) => !m.parentId || !byId.has(m.parentId));
@@ -292,7 +296,7 @@ export default function ScheduleTab({ orgId, projectId, projectName, projectStat
       </FirstRunHint>
 
       {/* Progress dashboard — always on top, summarizes everything */}
-      <ScheduleProgress milestones={milestones} metrics={metrics} />
+      <ScheduleProgress milestones={milestones} metrics={metrics} nowMs={nowMs} />
 
       {/* View tabs */}
       <div className="flex items-center justify-between gap-3 flex-wrap">
@@ -526,6 +530,7 @@ export default function ScheduleTab({ orgId, projectId, projectName, projectStat
                   info={m.id ? planProgress.get(m.id) : undefined}
                   canEdit={canEdit}
                   busy={busy}
+                  nowMs={nowMs}
                   onSetStatus={onSetStatus}
                   onDelete={onDelete}
                 />
@@ -597,13 +602,14 @@ export default function ScheduleTab({ orgId, projectId, projectName, projectStat
 }
 
 
-function MilestoneRow({ m, depth = 0, info, canEdit, busy, onSetStatus, onDelete }: {
+function MilestoneRow({ m, depth = 0, info, canEdit, busy, nowMs, onSetStatus, onDelete }: {
   m: Milestone; depth?: number; info?: ProgressInfo; canEdit: boolean; busy: boolean;
+  /** The tab's one "now" (useScheduleNow) — every row, the progress card and
+   *  the filter count overdue at the same instant (PT SCH-5). */
+  nowMs: number;
   onSetStatus: (id: string, s: MilestoneStatus) => void;
   onDelete: (id: string) => void;
 }) {
-  // Capture "now" once per mount — render stays pure (React 19 strict).
-  const [nowMs] = useState<number>(() => Date.now());
   // A phase/summary's status + % are DERIVED from its children — shown, not
   // set directly (so you can't mark a phase done while work under it is open).
   const isParent = info ? !info.isLeaf : !!m.isSummary;

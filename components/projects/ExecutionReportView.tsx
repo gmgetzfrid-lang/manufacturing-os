@@ -18,7 +18,13 @@ import { computeCriticalPath, pathCalendarLabel } from "@/lib/criticalPath";
 import { weightBasisLabel } from "@/lib/scheduleProgress";
 import { listBaselineCaptures, currentBaselineSummary, type BaselineCapture } from "@/lib/milestones";
 
-export default function ExecutionReportView({ milestones, orgId, projectId }: { milestones: Milestone[]; orgId?: string; projectId?: string }) {
+export default function ExecutionReportView({ milestones, orgId, projectId, nowMs }: {
+  milestones: Milestone[]; orgId?: string; projectId?: string;
+  /** The board's one "now" (epoch ms), so the Report's overdue and pace agree
+   *  with the pulse and the summary strip (PT SCH-5). Omitted: the time of
+   *  the computation. */
+  nowMs?: number;
+}) {
   // Every approved-plan capture the project has had (PT SAF-7): the live one
   // and each one a re-baseline or a clear replaced. Drift is measured against
   // the newest by default; an older one can be picked.
@@ -47,8 +53,11 @@ export default function ExecutionReportView({ milestones, orgId, projectId }: { 
   }, [live, history, milestones]);
   const chosen = captures.find((c) => c.id === captureId) ?? null;
   const r = useMemo(
-    () => computeExecutionReport(milestones, chosen && chosen.id !== "current" ? { baselineFinishById: chosen.finishById } : undefined),
-    [milestones, chosen],
+    () => computeExecutionReport(milestones, {
+      ...(chosen && chosen.id !== "current" ? { baselineFinishById: chosen.finishById } : {}),
+      ...(nowMs != null ? { now: new Date(nowMs) } : {}),
+    }),
+    [milestones, chosen, nowMs],
   );
   const critical = useMemo(() => computeCriticalPath(milestones), [milestones]);
   const criticalNames = useMemo(
@@ -142,7 +151,7 @@ export default function ExecutionReportView({ milestones, orgId, projectId }: { 
             {critical.remainingHours > 0 && <span className="text-[11px] text-[var(--color-text-muted)]">· {Math.round(critical.remainingHours)}h still to do on the chain</span>}
             <span className="ml-auto text-[10px] text-[var(--color-text-faint)]">
               {critical.linked
-                ? `from the finish-to-start links · ${pathCalendarLabel(critical.calendar)}, no holidays${critical.unlinked > 0 ? ` · ${critical.unlinked} task${critical.unlinked === 1 ? " has" : "s have"} no links` : ""}`
+                ? `from the finish-to-start links · ${pathCalendarLabel(critical.calendar, critical.workedWeekendDays.length)}, no holidays${critical.unlinked > 0 ? ` · ${critical.unlinked} task${critical.unlinked === 1 ? " has" : "s have"} no links` : ""}`
                 : "no dependency links yet — only the tasks that end at the finish are shown"}
               {critical.cycle ? ` · ${critical.cycle.length} task${critical.cycle.length === 1 ? "" : "s"} in a loop of links left out` : ""}
             </span>

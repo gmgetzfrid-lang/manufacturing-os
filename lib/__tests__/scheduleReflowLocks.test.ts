@@ -12,7 +12,7 @@
 import { describe, it, expect } from "vitest";
 import {
   computeTreeMove, cascadeDependents, sequenceSiblings, computeEdgeResize, computeSummaryResize,
-  reflowAllAncestors, reflowNodesFromMilestones, isLocked, planCascade, type ReflowNode,
+  reflowAllAncestors, reflowNodesFromMilestones, isLocked, planCascade, CascadeRefusedError, type ReflowNode,
 } from "@/lib/scheduleReflow";
 import type { Milestone } from "@/types/schema";
 
@@ -233,5 +233,86 @@ describe("SCH-13 · no engine ever writes an imported (or otherwise locked) pare
       { id: "k", parentId: "IP", plannedStartAt: t("2026-03-01T08:00"), plannedAt: t("2026-03-04T17:00"), locked: true },
     ];
     expect(reflowAllAncestors(nodes)).toEqual([{ id: "G", plannedStartAt: t("2026-03-01T08:00"), plannedAt: t("2026-03-10T17:00") }]);
+  });
+});
+
+// PC SCHED-5 (fourth review pass): a LOCKED phase is never re-enveloped, so
+// it never entered the cascade's seeds — a successor linked to the phase was
+// silently not pushed when a task inside it moved past its finish, and was not
+// reported as held either. The phase row is locked when the board's bulk
+// "Done" stamps it completed + actual_at and a child is later reopened. At
+// fdb51b1 the phase was re-enveloped and its successor pushed to 06-09 → 06-11.
+describe("SCHED-5 · a locked phase's finish-to-start links are still honoured", () => {
+  // The move exactly as the board writes it (ExecutionView withCascade): the
+  // tree move, then the cascade over the moved nodes.
+  const flow = (nodes: ReflowNode[], id: string, delta: number) => {
+    const primary = computeTreeMove(nodes, id, delta, "defer");
+    const byId = new Map(primary.map((c) => [c.id, c]));
+    const updated = nodes.map((n) => (byId.has(n.id) ? { ...n, plannedStartAt: byId.get(n.id)!.plannedStartAt, plannedAt: byId.get(n.id)!.plannedAt } : n));
+    return { primary, plan: planCascade(updated, primary.map((c) => c.id)) };
+  };
+  const probe = (): ReflowNode[] => [
+    { id: "P", plannedStartAt: iso("2026-06-01"), plannedAt: iso("2026-06-05"), status: "completed", actualAt: iso("2026-06-05") },
+    { id: "C1", parentId: "P", plannedStartAt: iso("2026-06-01"), plannedAt: iso("2026-06-03"), status: "in_progress" },
+    { id: "C2", parentId: "P", plannedStartAt: iso("2026-06-04"), plannedAt: iso("2026-06-05"), status: "completed" },
+    { id: "S", plannedStartAt: iso("2026-06-06"), plannedAt: iso("2026-06-08"), dependsOn: ["P"] },
+  ];
+
+  it("the reviewer's probe: C1 dragged +5 d past its completed phase pushes the phase's successor; the phase is not written", () => {
+    const { primary, plan } = flow(probe(), "C1", 5);
+    expect(primary.map((c) => c.id)).toEqual(["C1"]); // the locked phase keeps its stored dates
+    expect(plan.changes).toEqual([{ id: "S", plannedStartAt: iso("2026-06-09"), plannedAt: iso("2026-06-11") }]); // was []
+    expect(plan.held).toEqual([]);
+  });
+
+  it("a locked successor of the phase is reported in held instead (imported, or done)", () => {
+    for (const lock of [{ locked: true }, { status: "completed" }]) {
+      const nodes = probe().map((n) => (n.id === "S" ? { ...n, ...lock } : n));
+      const { plan } = flow(nodes, "C1", 5);
+      expect(plan.changes).toEqual([]);
+      expect(plan.held).toEqual([{ id: "S", predecessorId: "P" }]); // was [] — nothing warned
+    }
+  });
+
+  it("a move that stays inside the phase's stored finish pushes nothing", () => {
+    const { plan } = flow(probe(), "C1", 1); // C1 → 06-02..06-04, still inside 06-05
+    expect(plan.changes).toEqual([]);
+    expect(plan.held).toEqual([]);
+  });
+
+  it("an unlocked phase above the locked one waits for the task inside both (the locked phase is a fixed box, not a lid)", () => {
+    const nodes: ReflowNode[] = [
+      { id: "G", plannedStartAt: iso("2026-06-01"), plannedAt: iso("2026-06-05") },
+      { id: "IP", parentId: "G", plannedStartAt: iso("2026-06-01"), plannedAt: iso("2026-06-05"), locked: true },
+      { id: "mc", parentId: "IP", plannedStartAt: iso("2026-06-04"), plannedAt: iso("2026-06-05") },
+      { id: "S", plannedStartAt: iso("2026-06-08"), plannedAt: iso("2026-06-09"), dependsOn: ["G"] },
+    ];
+    const { primary, plan } = flow(nodes, "mc", 4); // mc → 06-08..06-09
+    expect(primary.map((c) => c.id)).toEqual(["mc"]); // G envelopes IP's stored box (unchanged); IP is never written
+    expect(find(plan.changes, "S")).toEqual({ id: "S", plannedStartAt: iso("2026-06-10"), plannedAt: iso("2026-06-11") });
+  });
+
+  it("a task the cascade pushes inside a phase makes the phase's successors look again", () => {
+    const nodes: ReflowNode[] = [
+      { id: "X", plannedStartAt: iso("2026-06-01"), plannedAt: iso("2026-06-02") },
+      { id: "P2", plannedStartAt: iso("2026-06-01"), plannedAt: iso("2026-06-03") },
+      { id: "c", parentId: "P2", plannedStartAt: iso("2026-06-03"), plannedAt: iso("2026-06-03"), dependsOn: ["X"] },
+      { id: "k", parentId: "P2", plannedStartAt: iso("2026-06-01"), plannedAt: iso("2026-06-01") },
+      { id: "S2", plannedStartAt: iso("2026-06-04"), plannedAt: iso("2026-06-04"), dependsOn: ["P2"] },
+    ];
+    const { plan } = flow(nodes, "X", 3); // X → 06-04..06-05; c → 06-06; P2 re-envelopes to 06-06
+    expect(find(plan.changes, "c")!.plannedAt).toBe(iso("2026-06-06"));
+    expect(find(plan.changes, "P2")!.plannedAt).toBe(iso("2026-06-06"));
+    expect(find(plan.changes, "S2")).toEqual({ id: "S2", plannedStartAt: iso("2026-06-07"), plannedAt: iso("2026-06-07") }); // was left starting before its phase ended
+  });
+
+  it("a loop through a phase (S waits for P, a task inside P waits for S) is refused, not pushed round", () => {
+    const nodes: ReflowNode[] = [
+      { id: "A", plannedStartAt: iso("2026-06-01"), plannedAt: iso("2026-06-02") },
+      { id: "P", plannedStartAt: iso("2026-06-01"), plannedAt: iso("2026-06-05") },
+      { id: "c", parentId: "P", plannedStartAt: iso("2026-06-03"), plannedAt: iso("2026-06-05"), dependsOn: ["A", "S"] },
+      { id: "S", plannedStartAt: iso("2026-06-06"), plannedAt: iso("2026-06-07"), dependsOn: ["P"] },
+    ];
+    expect(() => planCascade(nodes.map((n) => (n.id === "A" ? { ...n, plannedAt: iso("2026-06-04") } : n)), ["A"])).toThrow(CascadeRefusedError);
   });
 });

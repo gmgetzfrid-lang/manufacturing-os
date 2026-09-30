@@ -26,6 +26,10 @@ import { isOverdueMilestone, startOfDayUTCms } from "@/lib/milestoneLiveness";
 interface Props {
   milestones: Milestone[];
   metrics: ScheduleMetrics;
+  /** The screen's one "now" (epoch ms, useScheduleNow) — so this card's
+   *  overdue and "today" agree with every row and filter on the tab (PT
+   *  SCH-5). Omitted: the time the card mounted. */
+  nowMs?: number;
 }
 
 const STATUS_META: Record<MilestoneStatus, { label: string; tone: string; bar: string; Icon: React.ComponentType<{ className?: string }> }> = {
@@ -37,12 +41,13 @@ const STATUS_META: Record<MilestoneStatus, { label: string; tone: string; bar: s
   on_hold:     { label: "On hold",     tone: "text-amber-700",   bar: "bg-amber-500",   Icon: PauseCircle },
 };
 
-export default function ScheduleProgress({ milestones, metrics }: Props) {
+export default function ScheduleProgress({ milestones, metrics, nowMs: nowProp }: Props) {
   const total = milestones.length;
   // Days are UTC days — planned dates are stored wall-clock-as-UTC — so "today"
   // and "overdue" agree with the board, the pulse and the report in every
   // timezone (PT SCH-5: this card used LOCAL midnight, the pulse Date.now()).
-  const [nowMs] = React.useState<number>(() => Date.now());
+  const [mountMs] = React.useState<number>(() => Date.now());
+  const nowMs = nowProp ?? mountMs;
   const today = new Date(startOfDayUTCms(nowMs));
   const in14 = new Date(today.getTime() + 14 * 86400000);
   const upcoming = milestones
@@ -159,7 +164,7 @@ export default function ScheduleProgress({ milestones, metrics }: Props) {
                   <div className="min-w-0 flex-1">
                     <div className="font-bold text-[var(--color-text)] truncate">{m.name}</div>
                     <div className="text-[10px] text-[var(--color-text-muted)] inline-flex items-center gap-1">
-                      <CalendarClock className="w-2.5 h-2.5" /> {humanRelative(due)}
+                      <CalendarClock className="w-2.5 h-2.5" /> {humanRelative(due, nowMs)}
                     </div>
                   </div>
                 </li>
@@ -198,11 +203,12 @@ function humanDate(iso: string): string {
   return d.toLocaleDateString(undefined, { year: "numeric", month: "short", day: "numeric", timeZone: "UTC" });
 }
 
-function humanRelative(d: Date): string {
+function humanRelative(d: Date, nowMs: number): string {
   // Compare on UTC day boundaries so "today"/"tomorrow" line up with the
-  // UTC-rendered dates rather than drifting a day in non-UTC timezones.
+  // UTC-rendered dates rather than drifting a day in non-UTC timezones — and
+  // against the card's one "now", not a fresh clock read (PT SCH-5).
   const toUtcDay = (x: Date) => Date.UTC(x.getUTCFullYear(), x.getUTCMonth(), x.getUTCDate());
-  const diff = Math.round((toUtcDay(d) - toUtcDay(new Date())) / 86400000);
+  const diff = Math.round((toUtcDay(d) - toUtcDay(new Date(nowMs))) / 86400000);
   if (diff === 0) return "today";
   if (diff === 1) return "tomorrow";
   if (diff > 1 && diff < 7) return `in ${diff} days`;

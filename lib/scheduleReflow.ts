@@ -187,8 +187,8 @@ const WORK_EPOCH_MS = 4 * DAY_MS;
  *  from Saturday 00:00 to Monday 00:00, so a Saturday or Sunday instant reads
  *  the same as the Monday 00:00 after it. The critical path measures gaps and
  *  float on it (PC SCHED-10): a Friday finish followed by a Monday start is
- *  a hand-off, not two days of float — unless the plan has unfinished weekend
- *  work, when it counts every day (lib/criticalPath.ts `calendar`). No
+ *  a hand-off, not two days of float — and the weekend days that carry
+ *  unfinished work are added back by workingClock (lib/criticalPath.ts). No
  *  holidays (no project calendar). */
 export function workingTimeMs(ms: number): number {
   if (!Number.isFinite(ms)) return ms;
@@ -204,6 +204,36 @@ export function workingTimeMs(ms: number): number {
  *  `toMs` is earlier. Saturdays and Sundays are not counted. */
 export function workingGapMs(fromMs: number, toMs: number): number {
   return workingTimeMs(toMs) - workingTimeMs(fromMs);
+}
+
+/** Is the UTC day number `day` (floor(ms / DAY_MS)) a Saturday or a Sunday
+ *  (wall-clock-as-UTC)? */
+export function isWeekendUtcDay(day: number): boolean {
+  const wd = new Date(day * DAY_MS).getUTCDay();
+  return wd === 0 || wd === 6;
+}
+
+/** The working clock with some weekend DAYS worked (PC SCHED-10): Monday to
+ *  Friday as workingTimeMs, plus exactly the Saturdays and Sundays listed in
+ *  `workedWeekendDays` (UTC day numbers, floor(ms / DAY_MS)), each counted
+ *  whole; every other weekend day still stops the clock. With none listed it
+ *  IS workingTimeMs. A weekday in the list is ignored (it already counts). A
+ *  stored lag's length on this clock is still lagWorkingMs: a working day is
+ *  one day of the clock, whichever days count. */
+export function workingClock(workedWeekendDays?: Iterable<number>): (ms: number) => number {
+  const days = [...new Set(workedWeekendDays ?? [])]
+    .filter((d) => Number.isInteger(d) && isWeekendUtcDay(d))
+    .sort((a, b) => a - b);
+  if (days.length === 0) return workingTimeMs;
+  const worked = new Set(days);
+  return (ms: number) => {
+    if (!Number.isFinite(ms)) return ms;
+    const day = Math.floor(ms / DAY_MS);
+    // Worked weekend days wholly before this one (binary search).
+    let lo = 0, hi = days.length;
+    while (lo < hi) { const mid = (lo + hi) >> 1; if (days[mid] < day) lo = mid + 1; else hi = mid; }
+    return workingTimeMs(ms) + lo * DAY_MS + (worked.has(day) ? ms - day * DAY_MS : 0);
+  };
 }
 
 /** A stored lag (WORKING hours, negative = lead) as a length on the working
@@ -553,9 +583,14 @@ export interface CascadePlan {
  * stay put (PC SCHED-5, matching computeTreeMove) — and re-envelopes
  * ancestors; a locked task or phase (an actual, an imported row) is never in
  * the result (PT SCH-13). Each task is settled once, in topological order
- * (PT SCH-4). A loop in the links is REFUSED with its edges named
- * (CascadeRefusedError), and so is a push further than any acyclic cascade
- * over the schedule could go. Pure.
+ * (PT SCH-4). A link from a PHASE waits for all the work inside it: the
+ * phase is read at the latest current finish in its subtree, and a task that
+ * moves inside a phase makes the phase's successors look again — a locked
+ * phase (an actual, an imported or pinned summary) keeps its stored dates and
+ * is never written, but its links are still honoured, and a locked successor
+ * they now break is reported in `held` (PC SCHED-5). A loop in the links is
+ * REFUSED with its edges named (CascadeRefusedError), and so is a push
+ * further than any acyclic cascade over the schedule could go. Pure.
  */
 export function cascadeDependents(nodes: ReflowNode[], changedIds: string[]): DateChange[] {
   return planCascade(nodes, changedIds).changes;
@@ -623,18 +658,68 @@ export function planCascade(nodes: ReflowNode[], changedIds: string[]): CascadeP
     return out;
   };
 
+  // Each node's ancestors, nearest first (the tree does not change here).
+  const ancestorCache = new Map<string, string[]>();
+  const ancestorsOf = (id: string): string[] => {
+    const hit = ancestorCache.get(id);
+    if (hit) return hit;
+    const out: string[] = [];
+    const seen = new Set<string>([id]);
+    for (let c = byId.get(id)?.parentId ?? null; c && byId.has(c) && !seen.has(c); c = byId.get(c)!.parentId ?? null) {
+      seen.add(c);
+      out.push(c);
+    }
+    ancestorCache.set(id, out);
+    return out;
+  };
+  const isWithin = (id: string, anc: string) => ancestorsOf(id).includes(anc);
+
+  // A PHASE's finish-to-start links wait for all the work inside it: it is
+  // read at the latest current finish in its subtree (its own stored finish
+  // included). A locked phase — an actual, an imported or a pinned summary —
+  // keeps its stored dates and is never re-enveloped or written (PT SCH-13),
+  // so without this its links read the stored finish while a task inside it
+  // moved past it, and its successors were neither pushed nor held (PC
+  // SCHED-5, fourth review pass). Read by requirement() only, never written.
+  const readyCache = new Map<string, number>(); // cleared on every shift
+  const phaseFinish = (pred: string): number => {
+    const f = finish.get(pred)!;
+    if (!(childrenByParent.get(pred)?.length)) return f;
+    const hit = readyCache.get(pred);
+    if (hit !== undefined) return hit;
+    let hi = f;
+    for (const t of subtreeOf(pred)) { const ft = finish.get(t)!; if (ft > hi) hi = ft; }
+    readyCache.set(pred, hi);
+    return hi;
+  };
+
   // The instant `s` may start: the latest of its predecessors' ready instants
   // plus each link's lag (working time, afterLagMs), and the predecessor that
-  // sets it.
+  // sets it. A phase predecessor is read at phaseFinish — unless `s` sits
+  // inside that phase (a link from a phase to its own task), when its stored
+  // finish is used as before.
   const requirement = (s: ReflowNode): { req: number; from: string | null } => {
     let req = -Infinity;
     let from: string | null = null;
     for (const pred of s.dependsOn ?? []) {
       if (!finish.has(pred)) continue;
-      const r = afterLagMs(fsReadyMs(finish.get(pred)!), s.lagHours?.[pred]);
+      const pf = isWithin(s.id, pred) ? finish.get(pred)! : phaseFinish(pred);
+      const r = afterLagMs(fsReadyMs(pf), s.lagHours?.[pred]);
       if (r > req) { req = r; from = pred; }
     }
     return { req, from };
+  };
+
+  // The successors of the phases a node sits in: a move of the node can make
+  // each of them start before its phase is done. A successor inside that
+  // phase, or one that contains the node, is a link from a phase to its own
+  // work and is left out.
+  const viaPhases = (id: string): Array<{ sid: string; phase: string }> => {
+    const out: Array<{ sid: string; phase: string }> = [];
+    for (const a of ancestorsOf(id)) {
+      for (const sid of successors.get(a) ?? []) if (!isWithin(sid, a) && !isWithin(id, sid)) out.push({ sid, phase: a });
+    }
+    return out;
   };
 
   // Who last moved each node: its predecessor (a link) or the ancestor it
@@ -657,6 +742,7 @@ export function planCascade(nodes: ReflowNode[], changedIds: string[]): CascadeP
   const moved = new Map<string, number>(); // cumulative displacement per node
   const held = new Map<string, { id: string; predecessorId: string }>();
   const shift = (t: string, delta: number, why: { from: string; via: "link" | "contains" }) => {
+    readyCache.clear();
     start.set(t, start.get(t)! + delta);
     finish.set(t, finish.get(t)! + delta);
     const total = (moved.get(t) ?? 0) + delta;
@@ -668,7 +754,13 @@ export function planCascade(nodes: ReflowNode[], changedIds: string[]): CascadeP
   const seeds = [...new Set(changedIds)].filter((id) => byId.has(id));
 
   // The part of the network this move can reach: through a link to a
-  // successor, or from a task to the sub-tasks a push of it would carry.
+  // successor, from a task to the sub-tasks a push of it would carry, or
+  // from a task to the successors of the phases it sits in.
+  const outOf = (id: string): string[] => [
+    ...(successors.get(id) ?? []),
+    ...(childrenByParent.get(id) ?? []).map((k) => k.id),
+    ...viaPhases(id).map((v) => v.sid),
+  ];
   const affected = new Set<string>();
   {
     const stack = [...seeds];
@@ -676,11 +768,9 @@ export function planCascade(nodes: ReflowNode[], changedIds: string[]): CascadeP
       const cur = stack.pop()!;
       if (affected.has(cur)) continue;
       affected.add(cur);
-      for (const s of successors.get(cur) ?? []) stack.push(s);
-      for (const k of childrenByParent.get(cur) ?? []) stack.push(k.id);
+      for (const o of outOf(cur)) stack.push(o);
     }
   }
-  const outOf = (id: string): string[] => [...(successors.get(id) ?? []), ...(childrenByParent.get(id) ?? []).map((k) => k.id)];
   const indeg = new Map<string, number>();
   for (const id of affected) indeg.set(id, 0);
   for (const id of affected) for (const o of outOf(id)) if (affected.has(o)) indeg.set(o, indeg.get(o)! + 1);
@@ -700,7 +790,10 @@ export function planCascade(nodes: ReflowNode[], changedIds: string[]): CascadeP
     // are final before it is looked at. A FIFO relaxation re-pushed a task
     // each time a longer path reached it (a reversed fan-in of 40 tasks took
     // ~800 steps) and its step guard refused legitimate cascades.
-    const movedSet = new Set(seeds); // the primary moves, then every task the cascade shifts
+    const movedSet = new Set<string>(); // the primary moves, then every task the cascade shifts
+    const rolled = new Set<string>();   // phases with a moved task inside (see phaseFinish)
+    const markMoved = (t: string) => { movedSet.add(t); for (const a of ancestorsOf(t)) rolled.add(a); };
+    for (const sd of seeds) markMoved(sd);
     const carried = new Map<string, number>(); // shift inherited from pushed ancestors
     const own = new Map<string, number>();     // this task's own push
     for (const t of order) {
@@ -708,7 +801,7 @@ export function planCascade(nodes: ReflowNode[], changedIds: string[]): CascadeP
       const pid = n.parentId && byId.has(n.parentId) && affected.has(n.parentId) ? n.parentId : null;
       const c = pid ? (carried.get(pid) ?? 0) + (own.get(pid) ?? 0) : 0;
       carried.set(t, c);
-      const triggered = (n.dependsOn ?? []).some((p) => movedSet.has(p));
+      const triggered = (n.dependsOn ?? []).some((p) => movedSet.has(p) || (rolled.has(p) && !isWithin(t, p)));
       if (isLocked(n)) {
         // An actual (or an imported / pinned row) is never carried or pushed
         // — it stays where it is and a link it now breaks is reported.
@@ -718,14 +811,14 @@ export function planCascade(nodes: ReflowNode[], changedIds: string[]): CascadeP
         }
         continue;
       }
-      if (c !== 0) { shift(t, c, { from: pid!, via: "contains" }); movedSet.add(t); }
+      if (c !== 0) { shift(t, c, { from: pid!, via: "contains" }); markMoved(t); }
       if (!triggered) continue;
       const { req, from } = requirement(n);
       if (!(start.get(t)! < req)) continue;
       const delta = wholeDaysToClear(start.get(t)!, req);
       own.set(t, delta);
       shift(t, delta, { from: from!, via: "link" });
-      movedSet.add(t);
+      markMoved(t);
     }
   } else {
     // A loop in the links (with a pushed task carrying its sub-tasks) is
@@ -741,7 +834,10 @@ export function planCascade(nodes: ReflowNode[], changedIds: string[]): CascadeP
       if (steps++ > guard) throw new CascadeRefusedError("runaway", causeChain(queue[0]));
       const pid = queue.shift()!;
       queued.delete(pid);
-      for (const sid of successors.get(pid) ?? []) {
+      // Its own successors, and those of every phase it sits in (the link
+      // from the phase is the one a held successor is reported against).
+      const next = [...(successors.get(pid) ?? []).map((sid) => ({ sid, phase: pid })), ...viaPhases(pid)];
+      for (const { sid, phase } of next) {
         const s = byId.get(sid);
         if (!s) continue;
         const { req } = requirement(s);
@@ -750,7 +846,7 @@ export function planCascade(nodes: ReflowNode[], changedIds: string[]): CascadeP
         if (!(curStart < req)) continue;
         // A locked successor is an ACTUAL (or an imported row whose dates the
         // scheduling tool owns) — never push it out; report the broken link.
-        if (isLocked(s)) { held.set(sid, { id: sid, predecessorId: pid }); continue; }
+        if (isLocked(s)) { held.set(sid, { id: sid, predecessorId: phase }); continue; }
         if (pid === sid) throw new CascadeRefusedError("cycle", [{ from: sid, to: sid, via: "link" }]);
         const chain = causeChain(pid);
         const at = chain.findIndex((e) => e.from === sid);

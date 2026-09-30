@@ -37,13 +37,14 @@ import {
   computeTreeMove, computeEdgeResize, computeSummaryResize, sequenceSiblings, planCascade,
   reflowNodesFromMilestones, CascadeRefusedError, isLocked, type ReflowNode, type DateChange,
 } from "@/lib/scheduleReflow";
-import { computeCriticalPath, pathCalendarLabel, type PathCalendar } from "@/lib/criticalPath";
+import { computeCriticalPath, pathCalendarLabel } from "@/lib/criticalPath";
 import { isImportedMilestone, isOverdueMilestone } from "@/lib/milestoneLiveness";
 import { rowWindow, scrollTopToReveal } from "@/lib/rowWindow";
 import { resolveVisibleDepIndex } from "@/lib/scheduleDeps";
 import { buildProgressIndex, overallPercent } from "@/lib/scheduleProgress";
 import { assignGroupColors, type GroupColor } from "@/lib/scheduleColors";
 import SchedulePulse from "@/components/projects/SchedulePulse";
+import { useScheduleNow } from "@/components/projects/useScheduleNow";
 import TaskDetailPanel from "@/components/projects/TaskDetailPanel";
 import ScheduleCalendarTileView from "@/components/projects/ScheduleCalendarTileView";
 import StatusControl from "@/components/projects/StatusControl";
@@ -139,6 +140,12 @@ export default function ExecutionView({
 
   // Undo/feedback — the safety net so a new user can act fearlessly.
   const { toasts, announce, notify, dismiss, runUndo } = useUndoableActions();
+
+  // ONE "now" for every figure on the board — the pulse, the summary strip,
+  // the overdue filter, the Report and the today line — advanced at each UTC
+  // midnight, so an open board never shows two different overdue counts (PT
+  // SCH-5).
+  const nowMs = useScheduleNow();
 
   // Measure the timeline viewport so the day width can fill it edge to
   // edge instead of a hardcoded guess. Re-measures on resize.
@@ -239,8 +246,8 @@ export default function ExecutionView({
   const [filter, setFilter] = useState<ScheduleFilter>(EMPTY_FILTER);
   const filterOn = isFilterActive(filter);
   const visibleIds = useMemo(
-    () => filterMilestones(items, filter),
-    [items, filter],
+    () => filterMilestones(items, filter, { now: nowMs }),
+    [items, filter, nowMs],
   );
   // The milestones each sub-view should render (full list when neither the
   // filter nor the imported-rows toggle is on, so nothing changes for the
@@ -273,6 +280,8 @@ export default function ExecutionView({
 
   // The critical path, from the dependency links (PT SCH-15 / PC SCHED-10).
   const critical = useMemo(() => computeCriticalPath(items), [items]);
+  // The clock it was measured on, as the button and the legend name it.
+  const criticalCalendar = pathCalendarLabel(critical.calendar, critical.workedWeekendDays.length);
 
   // Group color assignment — a phase + all its children share one hue.
   const colors = useMemo(() => assignGroupColors(items), [items]);
@@ -364,7 +373,7 @@ export default function ExecutionView({
   }, [zoomFactor, fitPxPerDay]);
 
   const timelineW = domain ? domain.totalDays * pxPerDay : 0;
-  const today = useMemo(() => startOfDayUTC(new Date()), []);
+  const today = useMemo(() => startOfDayUTC(new Date(nowMs)), [nowMs]);
   const todayX = domain ? (dayDiff(domain.start, today) + 0.5) * pxPerDay : -1;
 
   // Center the viewport on "today" (or schedule start) on first paint.
@@ -454,8 +463,19 @@ export default function ExecutionView({
   // task's prior status).
   // Bulk status for an explicit id set (used by both the timeline
   // selection and the calendar selection), with one undo.
-  const bulkStatusIds = useCallback(async (ids: string[], next: MilestoneStatus) => {
-    if (!canEdit || !onSetStatus || ids.length === 0) return;
+  const bulkStatusIds = useCallback(async (selected: string[], next: MilestoneStatus) => {
+    if (!canEdit || !onSetStatus || selected.length === 0) return;
+    // Leaves only: a phase's status is DERIVED from its tasks (its row shows it
+    // read-only). Setting it here stamped the phase row itself — "Done" wrote
+    // completed + actual_at — which locks the phase for every engine, so after
+    // a child was reopened the phase's own links stopped moving anything (PC
+    // SCHED-5). A selected phase is skipped, and the board says so.
+    const ids = selected.filter((id) => (childrenOf.get(id) ?? []).length === 0);
+    const skipped = selected.length - ids.length;
+    if (skipped > 0) {
+      notify(`${skipped} phase${skipped === 1 ? "" : "s"} left as ${skipped === 1 ? "it is" : "they are"} — a phase's status rolls up from its tasks. Set the tasks inside instead.`, "warning");
+    }
+    if (ids.length === 0) return;
     const prev = new Map<string, MilestoneStatus>();
     for (const id of ids) { const m = byId.get(id); if (m) prev.set(id, m.status); }
     setOptimistic((m) => { const n = new Map(m); for (const id of ids) n.set(id, next); return n; });
@@ -500,7 +520,7 @@ export default function ExecutionView({
     } finally {
       setBusy((s) => { const n = new Set(s); for (const id of ids) n.delete(id); return n; });
     }
-  }, [canEdit, onSetStatus, byId, announce, notify]);
+  }, [canEdit, onSetStatus, byId, childrenOf, announce, notify]);
 
   // Bulk move for an explicit id set → open the confirmation sheet.
   const bulkMoveIds = useCallback((ids: string[], deltaDays: number) => {
@@ -829,6 +849,7 @@ export default function ExecutionView({
 
       <SchedulePulse
         milestones={items}
+        nowMs={nowMs}
         onShowOverdue={() => { setLayout("timeline"); setFilter((f) => ({ ...EMPTY_FILTER, overdueOnly: true, query: f.query })); }}
         onShowBlocked={() => { setLayout("timeline"); setFilter((f) => ({ ...EMPTY_FILTER, blockedOnly: true, query: f.query })); }}
       />
@@ -853,7 +874,7 @@ export default function ExecutionView({
           <button
             onClick={() => setShowCritical((v) => !v)}
             title={critical.linked
-              ? `Highlight the critical path: the unfinished tasks on the chain of finish-to-start links that drives the finish date (${pathCalendarLabel(critical.calendar)} — no holiday calendar)`
+              ? `Highlight the critical path: the unfinished tasks on the chain of finish-to-start links that drives the finish date (${criticalCalendar} — no holiday calendar)`
               : "No dependency links yet, so only the unfinished tasks that end at the finish date are highlighted — add links to see the chain that drives it"}
             className={`inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs font-bold border transition-colors ${showCritical ? "bg-rose-600 text-white border-rose-600" : "bg-[var(--color-surface)] text-rose-700 border-rose-200 hover:border-rose-400"}`}
           >
@@ -892,7 +913,7 @@ export default function ExecutionView({
       )}
 
       {layout === "report" ? (
-        <ExecutionReportView milestones={items} orgId={orgId} projectId={projectId} />
+        <ExecutionReportView milestones={items} orgId={orgId} projectId={projectId} nowMs={nowMs} />
       ) : layout === "calendar" ? (
         <ScheduleCalendarTileView
           milestones={visibleItems}
@@ -1009,7 +1030,7 @@ export default function ExecutionView({
           </div>
         </div>
 
-        <Legend calendar={critical.calendar} />
+        <Legend calendarLabel={criticalCalendar} />
       </div>
       )}
 
@@ -1616,7 +1637,7 @@ function DependencyArrows({ rows, byId, domain, pxPerDay }: {
 
 // ─── Status affordances ────────────────────────────────────────
 
-function Legend({ calendar }: { calendar: PathCalendar }) {
+function Legend({ calendarLabel }: { calendarLabel: string }) {
   const entries: Array<[MilestoneStatus, string]> = [
     ["planned", "Planned"], ["in_progress", "In progress"], ["completed", "Done"], ["on_hold", "On hold"], ["blocked", "Blocked"], ["missed", "Missed"],
   ];
@@ -1643,7 +1664,7 @@ function Legend({ calendar }: { calendar: PathCalendar }) {
         <span className="inline-flex items-center gap-1.5 text-[10px] text-[var(--color-text-muted)]" title="A milestone — a zero-duration marker">
           <span className="w-2.5 h-2.5 rotate-45 bg-slate-700 border border-white" /> Milestone
         </span>
-        <span className="inline-flex items-center gap-1.5 text-[10px] text-[var(--color-text-muted)]" title={`On the critical path — the chain of finish-to-start links that drives the finish date (${pathCalendarLabel(calendar)}, no holiday calendar; a task with no links counts only if it ends at the finish)`}>
+        <span className="inline-flex items-center gap-1.5 text-[10px] text-[var(--color-text-muted)]" title={`On the critical path — the chain of finish-to-start links that drives the finish date (${calendarLabel}, no holiday calendar; a task with no links counts only if it ends at the finish)`}>
           <span className="w-3 h-2.5 rounded-sm bg-slate-300 ring-2 ring-rose-500 ring-offset-1" /> Critical path
         </span>
         <span className="inline-flex items-center gap-1.5 text-[10px] text-[var(--color-text-muted)]" title="Finish-to-start dependency between linked tasks">
