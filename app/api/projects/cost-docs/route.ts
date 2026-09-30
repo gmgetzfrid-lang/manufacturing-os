@@ -91,14 +91,19 @@ export async function POST(req: NextRequest) {
   // The total this read starts from — the final write requires it unchanged.
   const startedTotal = doc.total_amount ?? null;
   if (!doc.file_url) return bad("This row has no stored file to read.", 404);
-  // Only live documents are readable: awarded/posted are locked (money
-  // moved), and a declined or voided document stays dead — re-reading must
-  // never resurrect a decision someone already made.
-  if (doc.status !== "draft" && doc.status !== "parsed") {
+  // Only a document nobody has read or totalled yet is readable (COST-13):
+  // awarded/posted are locked (money moved), a declined or voided document
+  // stays dead — re-reading must never resurrect a decision someone
+  // already made — and a `parsed` one already carries an extraction or a
+  // total a person typed ("type total" moves a draft to parsed), which a
+  // Read clicked from a stale table must never replace.
+  if (doc.status !== "draft") {
     return bad(
       doc.status === "awarded" || doc.status === "posted"
         ? "This document already moved money — its extraction is locked."
-        : `This document is ${doc.status} — upload it again if it should be back in play.`,
+        : doc.status === "parsed"
+          ? "This document has already been read, or its total typed by hand — nothing was changed. Refresh to see it; use \"correct total\" to change its total."
+          : `This document is ${doc.status} — upload it again if it should be back in play.`,
       409);
   }
   const looksPdf = (doc.mime_type ?? "").includes("pdf") || /\.pdf$/i.test(doc.file_name ?? "");
@@ -169,15 +174,15 @@ export async function POST(req: NextRequest) {
   // The read took seconds to minutes: the document may have been decided
   // meanwhile (a typed total, then an award that posted the commitment; an
   // invoice posted as an actual). The write carries the same status
-  // predicate as the check above, so a late read never reopens a decided
-  // document or rewrites its total — zero rows is a refusal, and nothing
-  // is audited (MON-3 / COST-13). It also requires the total the read
-  // started from: a total a person typed during the read (setManualTotal
-  // / "correct total" write `total_amount` and nothing that marks it, and
-  // leave the document open) is never overwritten by the model's figure.
+  // predicate as the check above — still a draft — so a late read never
+  // reopens a decided document or replaces a total a person typed during
+  // the read (both human-total writers move a draft to parsed) — zero rows
+  // is a refusal, and nothing is audited (MON-3 / COST-13). It also
+  // requires the total the read started from, so a total written without
+  // that status change is not overwritten either.
   const save = () => {
     const q = supabaseAdmin.from("cost_documents").update(patch)
-      .eq("id", costDocId).eq("org_id", orgId).in("status", ["draft", "parsed"]);
+      .eq("id", costDocId).eq("org_id", orgId).eq("status", "draft");
     return (startedTotal == null ? q.is("total_amount", null) : q.eq("total_amount", startedTotal)).select("id");
   };
   let { data: saved, error: updErr } = await save();

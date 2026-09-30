@@ -68,23 +68,40 @@ describe("BID-1 — one authoritative total for display, score and award", () =>
 });
 
 describe("BID-8 — typed-total bids sit in the same field", () => {
-  it("participate in price normalisation and read 'not scored', never 0, where they cannot be scored", () => {
-    const parsed = quote({ id: "p", total: 120_000, lineItems: [{ description: "Repipe exchanger circuits", total: 120_000, hours: 1200 }] });
+  const lined = (id: string, total: number, hours: number | null) =>
+    quote({ id, total, lineItems: [{ description: "Repipe exchanger circuits", total, hours }] });
+
+  it("where manpower is scored they enter price normalisation and read 'not scored', never 0", () => {
+    // Amended (verification of 2026-09-30): manpower is scored only when three bids state plausible hours.
     const typed = priceOnlyQuote({ id: "t", vendorName: "Scan Co", total: 80_000, currency: "USD" });
-    const econ = computeBidEconomics([parsed, typed]);
+    const econ = computeBidEconomics([lined("p", 120_000, 1200), lined("p2", 125_000, 1250), lined("p3", 130_000, 1300), typed]);
     const t = econ.find((e) => e.quoteId === "t")!;
     expect(t.priceOnly).toBe(true);
     expect(t.missingScope).toEqual([]);              // unknown scope is not "undisclosed" scope
     const scores = scoreBids(econ);
     const st = scores.find((s) => s.quoteId === "t")!, sp = scores.find((s) => s.quoteId === "p")!;
+    expect(sp.parts.manpower).not.toBeNull();        // this field scores manpower…
     expect(st.parts.price).toBe(100);
     expect(sp.parts.price).toBe(67);                  // the cheaper typed bid moved the parsed bid's price part
-    expect(st.parts.manpower).toBeNull();
+    expect(st.parts.manpower).toBeNull();             // …and a typed total has no hours to score
     expect(st.score).toBeNull();
     expect(st.unscored).toBe("price-only");
     expect(st.best).toBe(false);
-    // With only one SCORED bid there is no field to badge.
-    expect(sp.best).toBe(false);
+    expect(scores.find((s) => s.best)!.quoteId).toBe("p");
+  });
+
+  it("where the field compares on price alone they are scored and ranked like every other bid", () => {
+    const typed = priceOnlyQuote({ id: "t", vendorName: "Scan Co", total: 90_000, currency: "EUR" });
+    const econ = computeBidEconomics([typed, { ...lined("p", 100_000, null), currency: "EUR" }, { ...lined("q", 110_000, null), currency: "EUR" }]);
+    const scores = scoreBids(econ);
+    expect(scores.every((s) => s.parts.manpower === null && s.unscored === null)).toBe(true);
+    const st = scores.find((s) => s.quoteId === "t")!;
+    expect(st.score).toBe(100);
+    expect(st.best).toBe(true);                       // the cheapest bid — typed or read — ranks first
+    expect(scores.find((s) => s.quoteId === "p")!.score).toBe(90);
+    // Two bids, one typed: still a field of two scored bids.
+    const pair = scoreBids(computeBidEconomics([lined("p", 120_000, 1200), priceOnlyQuote({ id: "t", vendorName: "Scan Co", total: 80_000, currency: "USD" })]));
+    expect(pair.find((s) => s.quoteId === "t")!.best).toBe(true);
   });
 });
 

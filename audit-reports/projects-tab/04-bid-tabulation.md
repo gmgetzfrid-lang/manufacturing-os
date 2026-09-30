@@ -409,7 +409,9 @@ needs to live in the same table.
 - They participate in price normalization — ✓ (pinned: a cheaper typed bid moves the parsed bid's price part to 67).
 - Their unscored dimensions read as "not scored", never as 0 — ✓.
 
-**Scope / residual.** None.
+**Verification fix (2026-09-30, projects Round G).** Since COST-5's hours rule (DEC-50 (4)), manpower is scored only when at least three bids in the field state plausible hours; otherwise every bid is scored on price alone. The second verification of 2026-09-30 found typed-total bids still left out of that price-alone score: a typed €90k bid read "not scored" while a read €100k bid was badged "best value — on price alone". `scoreBids` now scores a typed-total bid like any other when the field is scored on price alone (so the cheapest bid, typed or read, can take the badge), and keeps the resolution above — a price part, "not scored" for manpower and the composite, no badge — only in a field that scores manpower, where the score cell's title says "Price only — not scored on manpower". The "typed total — price only" marker's tooltip and the footer say which case applies. Tests: `quotesPanel.test.ts` "where manpower is scored they enter price normalisation and read 'not scored', never 0" (amended to a field of three bids stating hours; the cheaper typed bid still moves the parsed bid's price part to 67) and "where the field compares on price alone they are scored and ranked like every other bid" (new); `quotesPanelRender.test.ts` "a field scored on price alone scores and badges a typed-total bid like any other" and "a field that scores manpower keeps a typed-total bid 'price only — not scored on manpower', with no badge" (new).
+
+**Scope / residual.** A typed-total row whose file was never read cannot be read afterwards: the table offers Read on drafts only, and since COST-13's second verification fix the route refuses non-drafts too (a read there would replace the typed total). It stays price-only; recorded as COST-13's Partial (`audit-reports/projects-and-cost/04-cost-and-bids.md`) with its named closer.
 
 ---
 

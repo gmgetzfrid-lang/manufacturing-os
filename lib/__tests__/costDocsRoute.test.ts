@@ -134,7 +134,7 @@ describe("POST /api/projects/cost-docs — a read that finishes after a decision
     const chain = updateChain();
     expect(chain).toContainEqual(["eq", "id", "d1"]);
     expect(chain).toContainEqual(["eq", "org_id", "o1"]);
-    expect(chain).toContainEqual(["in", "status", ["draft", "parsed"]]);
+    expect(chain).toContainEqual(["eq", "status", "draft"]);
     // …and the total it started from (none yet on a fresh draft).
     expect(chain).toContainEqual(["is", "total_amount", null]);
     expect(chain).toContainEqual(["select", "id"]);
@@ -151,12 +151,25 @@ describe("POST /api/projects/cost-docs — a read that finishes after a decision
     expect(state.calls.some((c) => c.table === "audit_logs")).toBe(false);
   });
 
-  it("an open document whose total nobody touched during the read still saves — the predicate is the total the read started from", async () => {
-    Object.assign(state.rows.cost_documents[0], { status: "parsed", total_amount: 150_000 });
+  it("a Read from a stale table on a document someone has since totalled by hand is refused before the model runs — the typed total stands", async () => {
+    // User B typed a total on the draft (it is now parsed, with no extraction); user A's table still shows it unread.
+    Object.assign(state.rows.cost_documents[0], { status: "parsed", total_amount: 162_000, parsed: null });
+    let modelCalled = false;
+    ai.duringCall = () => { modelCalled = true; };
+    const res = await post(readCostDoc, "http://x/api/projects/cost-docs", { orgId: "o1", projectId: "pr1", costDocId: "d1" });
+    expect(res.status).toBe(409);
+    expect((await res.json()).error).toMatch(/already been read, or its total typed by hand — nothing was changed/);
+    expect(modelCalled).toBe(false);
+    expect(updatePatch()).toHaveLength(0);
+    expect(state.calls.some((c) => c.table === "audit_logs")).toBe(false);
+  });
+
+  it("a draft that already carries a total saves only while that total is unchanged — the predicate is the total the read started from", async () => {
+    Object.assign(state.rows.cost_documents[0], { total_amount: 150_000 });
     const res = await post(readCostDoc, "http://x/api/projects/cost-docs", { orgId: "o1", projectId: "pr1", costDocId: "d1" });
     expect(res.status).toBe(200);
     expect(updateChain()).toContainEqual(["eq", "total_amount", 150_000]);
-    // A corrected total that changes DURING that re-read is kept, as on a draft.
+    // A total changed during the read without the status moving is kept too.
     state.calls = [];
     ai.duringCall = () => { state.rows.cost_documents[0].total_amount = 162_000; };
     expect((await post(readCostDoc, "http://x/api/projects/cost-docs", { orgId: "o1", projectId: "pr1", costDocId: "d1" })).status).toBe(409);
@@ -177,8 +190,8 @@ describe("POST /api/projects/cost-docs — a read that finishes after a decision
     ai.duringCall = () => { state.rows.cost_documents[0].status = "posted"; };
     const res = await post(readCostDoc, "http://x/api/projects/cost-docs", { orgId: "o1", projectId: "pr1", costDocId: "d1" });
     expect(res.status).toBe(409);
-    const ins = state.calls.filter((c) => c.table === "cost_documents" && c.method === "in").map((c) => c.args);
-    expect(ins).toEqual([["status", ["draft", "parsed"]], ["status", ["draft", "parsed"]]]);
+    const statusPredicates = state.calls.filter((c) => c.table === "cost_documents" && c.method === "eq" && c.args[0] === "status").map((c) => c.args);
+    expect(statusPredicates).toEqual([["status", "draft"], ["status", "draft"]]);
     expect(state.calls.some((c) => c.table === "audit_logs")).toBe(false);
   });
 });

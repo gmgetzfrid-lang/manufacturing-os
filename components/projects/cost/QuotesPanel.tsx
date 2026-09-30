@@ -513,8 +513,10 @@ function BidGroup({ group, docs: groupDocs, allDocs, accounts, companies, barred
   const weights = effectiveWeights();
   const scoredCount = [...scores.values()].filter((s) => s.score != null).length;
   // Manpower is scored for every bid or for none (COST-5): only once at
-  // least three bids in the field state plausible hours.
+  // least three bids in the field state plausible hours. Until then every
+  // bid — typed totals included — is scored on price alone.
   const manpowerScored = [...scores.values()].some((s) => s.parts.manpower != null);
+  const hasTypedTotal = econ.some((e) => e.priceOnly);
   // What stating plausible hours is worth over silence, in composite points
   // (DEC-50): the 5-point cap binds hours against hours only.
   const silenceGap = Math.round(weights.manpower * 1000) / 10;
@@ -793,7 +795,11 @@ function BidGroup({ group, docs: groupDocs, allDocs, accounts, companies, barred
                               <div className="text-[9px] font-bold text-amber-700 dark:text-amber-300" title="The quote prints no currency — restate it with a currency code (correct total) if the assumption is wrong">{bc.note}</div>
                             )}
                             {e.priceOnly && (
-                              <div className="text-[9px] font-bold text-[var(--color-text-muted)]" title="The AI couldn't read line detail from this file — it competes on price only, with no manpower or coverage score.">typed total — price only</div>
+                              <div className="text-[9px] font-bold text-[var(--color-text-muted)]" title={manpowerScored
+                                ? "The AI couldn't read line detail from this file — price only: not scored on manpower, so it carries no value score while this field scores manpower (its price still sets every rival's price part)."
+                                : currency.mixed
+                                  ? "The AI couldn't read line detail from this file — a typed total, shown in its own currency."
+                                  : "The AI couldn't read line detail from this file — this field compares every bid on price alone, so it is scored and ranked like the others."}>typed total — price only</div>
                             )}
                             <ReadExtentChip extras={ext} status={doc?.status ?? "parsed"} />
                           </td>
@@ -830,7 +836,7 @@ function BidGroup({ group, docs: groupDocs, allDocs, accounts, companies, barred
                               </span>
                             )}
                             {s && s.score == null && (
-                              <span className="text-[10px] text-[var(--color-text-faint)]" title={s.unscored === "mixed-currency" ? "Mixed-currency field — not ranked" : "Price only — no manpower or coverage detail to score"}>
+                              <span className="text-[10px] text-[var(--color-text-faint)]" title={s.unscored === "mixed-currency" ? "Mixed-currency field — not ranked" : `Price only — not scored on manpower: this field scores manpower and a typed total has no hours to score. Price ${s.parts.price} (0–100 vs the field).`}>
                                 {s.unscored === "mixed-currency" ? "not ranked" : "not scored"}
                               </span>
                             )}
@@ -897,9 +903,9 @@ function BidGroup({ group, docs: groupDocs, allDocs, accounts, companies, barred
               {currency.mixed ? (
                 <>This field mixes currencies, so no bid is scored or ranked — each price is shown in its own currency.</>
               ) : manpowerScored ? (
-                <>Value score = {Math.round(weights.price * 100)}% price + {Math.round(weights.manpower * 100)}% manpower-for-the-money, each measured against this field; labor hours are vendor-stated and AI-extracted and, between bids that state plausible hours, move the score by at most {MANPOWER_MAX_COMPOSITE_SWING} points — a bid that states none scores 0 on manpower, up to {silenceGap} points below one that does. A bid whose price per stated hour is more than {HOURS_PLAUSIBILITY_RATIO}× off this field&apos;s median is flagged and scored as not stated.</>
+                <>Value score = {Math.round(weights.price * 100)}% price + {Math.round(weights.manpower * 100)}% manpower-for-the-money, each measured against this field; labor hours are vendor-stated and AI-extracted and, between bids that state plausible hours, move the score by at most {MANPOWER_MAX_COMPOSITE_SWING} points — a bid that states none scores 0 on manpower, up to {silenceGap} points below one that does. A bid whose price per stated hour is more than {HOURS_PLAUSIBILITY_RATIO}× off this field&apos;s median is flagged and scored as not stated.{hasTypedTotal ? " A typed-total bid (price only) has no hours, so it is not scored on manpower and carries no value score here — its price still counts against every rival's." : ""}</>
               ) : (
-                <>Value score = price alone: labor hours are vendor-stated and AI-extracted, and are scored only once at least {MIN_CORROBORATING_STATEMENTS} bids in the field state hours in line with one another — here fewer do, so the hours are shown and nobody&apos;s manpower is scored.</>
+                <>Value score = price alone: labor hours are vendor-stated and AI-extracted, and are scored only once at least {MIN_CORROBORATING_STATEMENTS} bids in the field state hours in line with one another — here fewer do, so the hours are shown, nobody&apos;s manpower is scored, and every bid{hasTypedTotal ? " — typed totals included —" : ""} is scored on price.</>
               )}
               {" "}Scope coverage is not scored: declared exclusions never lower a score (as the RFQ letter promises) and &quot;check&quot; prompts are for you to verify against the PDF.
               {scoredCount < 2 ? " With fewer than two scored bids there is no field to rank, so no bid is badged." : manpowerScored ? " The cheapest bid doesn't automatically win — manpower counts too, and the exclusions are yours to weigh. You make the call." : " On price alone the cheapest bid ranks first — its exclusions and check prompts are yours to weigh. You make the call."}

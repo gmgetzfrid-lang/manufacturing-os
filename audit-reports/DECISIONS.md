@@ -1716,10 +1716,13 @@ exists; the composite is price + manpower with the weights renormalised.
 where the field can corroborate them: manpower is scored for every bid or
 for none — only when at least THREE bids in the field (one currency) state
 plausible hours; with fewer, the hours are shown per row and every bid
-compares on price alone. Once three or more bids state hours, a bid whose
-whole-price $/hr is more than 4× off the field's log-scale median is
-flagged "implausible hours — check" and scored as not stated — that bid
-only. The median is taken within one currency: a mixed-currency field is
+— a typed-total (price-only) bid included — is scored on price alone and
+can take the badge. Where manpower IS scored, a typed-total bid keeps its
+price part (which still sets every rival's) and carries no composite:
+"price only — not scored on manpower". Once three or more bids state
+hours, each bid whose whole-price $/hr is more than 4× off the field's
+log-scale median is flagged "implausible hours — check" and scored as not
+stated; a bid within 4× of it never is. The median is taken within one currency: a mixed-currency field is
 not scored and no row in it is flagged. When manpower is scored it moves
 the composite by at most 5 points between bids that state plausible hours,
 and a bid that states NONE (or implausible ones) scores 0 there — so
@@ -1782,6 +1785,16 @@ the org's full list of barred rows.**
 > second fix pass and is replaced below by what now holds. The risk line
 > said "low — pure scoring logic"; this decision also governs the award
 > gate, and the line is corrected.
+>
+> **Verification fix (2026-09-30, projects Round G).** Second verification
+> of this date (commit `2e080de`). A field scored on price alone still left
+> typed-total bids unscored, so a typed €90k bid read "not scored" while a
+> €100k bid took the badge "on price alone"; item (4) now scores them on
+> price in such a field. The rationale overclaimed what one statement
+> cannot do — it said one absurd or misread figure's hours change no other
+> bid's score, which holds only for a figure that ends up flagged — and
+> the residual now names the verifier's two counter-cases and what the
+> proposed closer would and would not stop.
 
 **Rationale.** The scorer punished the disclosure the RFQ letter promised
 to reward (a single honest exclusion cost twenty points; hiding it cost
@@ -1797,22 +1810,32 @@ an honest one; it does NOT stop a bid that states a plausible figure from
 outscoring one that states none — the letter asks for hours, and silence
 is treated as non-compliance. Hours count only where the field
 corroborates them: one or two figures cannot be checked against anything,
-so they buy nothing and no row is judged — every bid compares on price.
-With three or more statements the field's median is the reference, and no
-single statement can move it outside the range of the others' values, so
-one absurd or misread figure is flagged on its own and cannot flag bids
-whose figures agree with one another within 4×; a flagged figure is left
-out of the band's best $/hr and out of the three-statement count, so in
-such a field its hours change no other bid's score (its price competes
-like any price). What a statement CAN still do to another bid's score,
-by design: a plausible one may set the band's
-best $/hr (at most 5 composite points on the others) or be the third
-plausible statement that switches manpower on (silent bids then score 0 —
-item (4)). And where the other statements already disagree with one
-another by more than 4×, one more statement can move the median enough to
-flag one of them — recorded as `COST-5`'s residual, closer below. One
-commendation graded "Excellent" is a rating, not evidence; three points
-is the floor. Binding and gating differ on purpose: binding on an
+so they buy nothing and no row is judged — every bid, typed totals
+included, compares on price. With three or more statements the field's
+median is the reference. What holds, exactly: a row is flagged only when
+its own figure is more than 4× off that median; and when every OTHER
+statement in the field agrees with every other within 4×, one added
+statement cannot flag any of them (the median of three or more always
+lies within the range of all the values but one) — if the added figure is
+itself flagged, it is left out of the band's best $/hr and out of the
+three-statement count, so its hours change no other bid's score (its price
+competes like any price). A statement that is NOT flagged can move other
+bids, by design: it may set the band's best $/hr (at most 5 composite
+points on the others) or be the third plausible statement that switches
+manpower on — a $150k / 400 h bid ($375/h) beside $100k / 1,000 h and
+$100k / 1,100 h bids is plausible, and a silent $95k bid drops from 100
+to 62.5 and loses the badge. Where the other statements do NOT all agree
+within 4×, one added statement can do more (`COST-5`'s residual): it can
+flag several bids at once, honest ones that agree exactly included — two
+bids at $100/h beside one misread at $2,000/h leave only the misread one
+flagged, and a second $2,000/h figure moves the median to about $447/h
+and flags all four; and it can REMOVE a flag and switch manpower on —
+with $20, $100 and $500/h statements and a cheaper silent bid, the $20
+and $500 figures are flagged, manpower is off and the silent bid is
+badged at 100, and one more $20/h figure moves the median to about $45/h,
+clears the $20 flag, makes three plausible statements and drops the
+silent bid to 62.5, off the badge. One commendation graded "Excellent"
+is a rating, not evidence; three points is the floor. Binding and gating differ on purpose: binding on an
 ambiguous name would put the wrong company's record beside the price;
 clearing the do-not-use flag on the same ambiguity would let a barred
 company through because a duplicate registry row exists.
@@ -1842,10 +1865,14 @@ not take the badge from a cheaper silent bid); once three bids state
 plausible hours, any two of them differ by at most five composite points on
 manpower and a bid stating none scores 0 there (pinned, with the
 37.5-point consequence); a bid more than 4× off the median of three or
-more statements is flagged and scored as not stated, and no other row is;
-adding an absurd statement of hours to a field whose other statements
-agree changes no other bid's score (pinned with the absurd bid priced
-above the field's lowest); a mixed-currency field flags no row; a single
+more statements is flagged and scored as not stated, and a row within 4×
+of it never is; adding an absurd statement of hours to a field whose
+other statements all agree within 4× changes no other bid's score (pinned
+with the absurd bid priced above the field's lowest); in a field scored
+on price alone a typed-total bid is scored and can take the badge, and in
+a field that scores manpower it reads "price only — not scored on
+manpower" with no badge (both rendered and pinned); a mixed-currency
+field flags no row; a single
 bid or a tie carries no badge; a mixed-currency field has no scores; a registry row
 with one commendation reads "Provisional"; a barred registry row beside a
 same-normalised sibling still flags the bid and prompts for the override.
@@ -1860,12 +1887,16 @@ give an hours-silent bid the swing floor (`100 − 5 / manpowerShare`)
 instead of 0 and re-decide the pinned "cheapest does not automatically
 win" example in the same change. The thresholds (three statements, 4×)
 are constants in `lib/bidTab.ts` (`MIN_CORROBORATING_STATEMENTS`,
-`HOURS_PLAUSIBILITY_RATIO`). If one statement must never move another
-bid's standing even where the rest of the field disagrees with itself
-(`COST-5`'s residual), replace the median test with an absolute
-corroboration rule — a statement counts only when two others sit within
-4× of it — which is monotone: no added statement can un-corroborate
-another. `field_condition` attribution and
+`HOURS_PLAUSIBILITY_RATIO`). If an added statement must never flag
+another bid (`COST-5`'s residual, first case), replace the median test
+with an absolute corroboration rule — a statement counts only when two
+others sit within 4× of it — which is monotone: no added statement can
+un-corroborate another. It does NOT stop a statement from ADDING
+corroboration — clearing another bid's flag, or making the third
+plausible statement that switches manpower on and moves every other bid
+(the residual's second case, and the $150k / 400 h example) — and no rule
+can while manpower switches on at three statements: that is item (4)'s
+own trade. `field_condition` attribution and
 the five-point cap are org-level tunables once an org states a different
 reading of the reason-code contract.
 

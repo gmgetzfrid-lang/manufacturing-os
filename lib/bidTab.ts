@@ -40,8 +40,11 @@
 //     points at the default weights; DEC-50, recorded for ratification).
 //   * A best-value badge needs at least two scored bids and a unique top;
 //     a tie is a tie. A mixed-currency field is not scored at all.
-//   * A human-typed total (price-only bid) enters the price normalisation
-//     and shows "not scored" for the parts it cannot have — never a 0.
+//   * A human-typed total (price-only bid) enters the price normalisation.
+//     Where the field compares on price alone (manpower not scored for
+//     anyone) it is scored and ranked like every other bid; where manpower
+//     IS scored it shows "not scored" for the parts it cannot have — never
+//     a 0 — and carries no composite.
 //
 // Pure and unit-tested — no DB, no React. UI renders what this returns.
 
@@ -152,6 +155,9 @@ export interface BidScore {
   best: boolean;
   /** Shares the top score with another bid — rendered as a tie, no badge. */
   tied: boolean;
+  /** "price-only": a typed-total bid in a field that scores manpower — it
+   *  has no hours to score, so it carries no composite (in a field scored
+   *  on price alone it is scored like any bid). */
   unscored: null | "price-only" | "mixed-currency";
 }
 
@@ -299,7 +305,9 @@ export function computeBidEconomics(quotes: ParsedQuote[]): BidEconomics[] {
  * relative to the field (best bid = 100). Manpower is scored for every bid
  * or for none: only when at least MIN_CORROBORATING_STATEMENTS bids state
  * plausible hours. Otherwise every `parts.manpower` is null ("not scored")
- * and the score is the price part alone — every bid on the same basis.
+ * and the score is the price part alone — every bid on the same basis,
+ * typed-total (price-only) bids included. When manpower IS scored a
+ * price-only bid keeps its price part and no composite ("price-only").
  * When it is scored, a bid with unknown or implausible (`implausibleHours`)
  * hours scores a manpower part of 0; among bids that state plausible hours
  * the (vendor-stated) number moves the composite by at most
@@ -338,20 +346,24 @@ export function scoreBids(
     // The > 0 guard matters: a zero-dollar "bid" would otherwise divide to
     // Infinity and crown itself best value.
     const price = e.total > 0 && minTotal > 0 ? (minTotal / e.total) * 100 : 0;
-    if (e.priceOnly) {
-      return {
-        quoteId: e.quoteId, score: null,
-        parts: { price: Math.round(price), manpower: null, coverage: null },
-        best: false, tied: false, unscored: "price-only",
-      };
-    }
     // Too few corroborating statements: nobody's manpower is scored and the
-    // score is price alone — a lone figure never buys the gap over silence.
+    // score is price alone for EVERY bid, typed totals included — a lone
+    // figure never buys the gap over silence, and a typed total is on the
+    // same footing as a read one.
     if (minDph == null) {
       return {
         quoteId: e.quoteId, score: Math.round(price * 10) / 10,
         parts: { price: Math.round(price), manpower: null, coverage: null },
         best: false, tied: false, unscored: null,
+      };
+    }
+    // Manpower is scored for this field: a typed total has no hours to
+    // score, so it keeps its price part and no composite.
+    if (e.priceOnly) {
+      return {
+        quoteId: e.quoteId, score: null,
+        parts: { price: Math.round(price), manpower: null, coverage: null },
+        best: false, tied: false, unscored: "price-only",
       };
     }
     // Stated hours land in [floor, 100] (the 5-point swing among bids that

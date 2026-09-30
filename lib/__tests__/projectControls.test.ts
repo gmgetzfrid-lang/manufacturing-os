@@ -313,7 +313,7 @@ describe("bidTab honesty (Round G, DEC-50)", () => {
     expect(withIt.find((s) => s.best)!.quoteId).toBe("silent");
   });
 
-  it("COST-5 (a): an absurd statement added to a field changes no other bid's score, whether it makes the third statement or the fourth", () => {
+  it("COST-5 (a): an absurd statement added to a field whose other statements agree changes no other bid's score, whether it makes the third statement or the fourth", () => {
     const silent = stating("silent", 95_000, null);
     const a = stating("a", 100_000, 1000), b = stating("b", 110_000, 1150), c = stating("c", 105_000, 1000);
     for (const base of [[silent, a, b], [silent, a, b, c]]) {

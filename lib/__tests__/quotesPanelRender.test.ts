@@ -398,6 +398,33 @@ describe("COST-5 dw3 / BID-9 — what the row says, and what a typed total may b
     expect(host.textContent).toMatch(/nobody's manpower is scored/);
   });
 
+  it("BID-8: a field scored on price alone scores and badges a typed-total bid like any other — the cheapest ranks first", async () => {
+    reg.listCompanies.mockResolvedValue([]);
+    const typed = doc({ id: "typed", vendorName: "Scanned Co", currency: "EUR", totalAmount: 90_000, parsed: null });
+    await render([typed, hoursDoc("p100", "Parsed Hundred", 100_000, 0, "EUR"), hoursDoc("p110", "Parsed Tenten", 110_000, 0, "EUR")]);
+    const t = rowOf(/Scanned Co/);
+    expect(t.textContent).toMatch(/typed total — price only/);
+    expect(t.textContent).toMatch(/best value/);
+    expect(t.querySelector("td:nth-child(7)")?.textContent).toBe("100");
+    expect(rowOf(/Parsed Hundred/).textContent).not.toMatch(/best value/);
+    expect(rowOf(/Parsed Hundred/).querySelector("td:nth-child(7)")?.textContent).toBe("90");
+    expect(host.textContent).toMatch(/On price alone the cheapest bid ranks first/);
+    expect(host.textContent).toMatch(/every bid — typed totals included — is scored on price/);
+  });
+
+  it("BID-8: a field that scores manpower keeps a typed-total bid 'price only — not scored on manpower', with no badge", async () => {
+    reg.listCompanies.mockResolvedValue([]);
+    const typed = doc({ id: "typed", vendorName: "Scanned Co", currency: "EUR", totalAmount: 90_000, parsed: null });
+    await render([typed, docs[0], hoursDoc("coastal", "Coastal", 160_000, 1600, "EUR"), hoursDoc("delta", "Delta", 155_000, 1550, "EUR")]);
+    const t = rowOf(/Scanned Co/);
+    expect(t.textContent).not.toMatch(/best value/);
+    const cell = t.querySelector("td:nth-child(7) span");
+    expect(cell?.textContent).toBe("not scored");
+    expect(cell?.getAttribute("title")).toMatch(/^Price only — not scored on manpower/);
+    expect(rowOf(/Apex/).textContent).toMatch(/best value/);
+    expect(host.textContent).toMatch(/typed-total bid \(price only\) has no hours, so it is not scored on manpower/);
+  });
+
   it("a mixed-currency field marks no row, however far one currency's figures sit from another's", async () => {
     reg.listCompanies.mockResolvedValue([]);
     await render([docs[0], hoursDoc("bay", "Bayline", 140_000, 1500, "USD"), hoursDoc("coastal", "Coastal", 160_000, 1600, "USD"), hoursDoc("delta", "Delta", 145_000, 2, "USD")]);
