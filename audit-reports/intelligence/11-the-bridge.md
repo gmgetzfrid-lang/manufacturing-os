@@ -154,10 +154,10 @@ AssetCsvImportModal.tsx:130-133 — `await createAsset({ orgId, tag, description
 **Done-when.**
 1. ✓ The importer maps unit / site-code columns and passes them to createAsset.
 2. ✓ A unit is derived from an explicit unit column (or the code), and `code` via tagToCode once the unit is known — in the importer and, for already-filed assets, in planCategorization.
-3. ✓ A master list with a Unit column lands filed on import (the rows need no auto-categorize step at all — tested with 3,000 rows: 3,000 filed); a list imported with site codes only is filed at import from the code.
-4. ✓ The preview shows which operating area each row lands in.
+3. ✓ A master list with a Unit column lands filed on import, with no auto-categorize step: the planner test files 3,000 of 3,000. A list imported with site codes only is filed at import from the code. After the review fix, a row whose derived or given code another asset (or an earlier row) already carries still lands filed. The code is dropped with a note in the preview, the commit writes with the code optional in case a collision appears after the preview, and the result lists the rows that landed without a code (see `CB-10`).
+4. ✓ The preview shows which operating area each row lands in. After the review fix, row numbers are the sheet's own. `lib/xlsxData.ts` `parseWorkbook` reports each data row's real sheet row, counting the title block and skipped blank rows, and `/api/assets/parse-workbook` returns it as `rowNumbers`. "Row 10" in the preview or the failure list is therefore row 10 of the spreadsheet (route test with a title block and blank rows).
 
-**Scope / residual.** None.
+**Scope / residual.** None beyond applying 20261128.
 
 ---
 

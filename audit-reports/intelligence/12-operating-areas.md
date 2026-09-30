@@ -60,10 +60,10 @@ supabase/migrations/20260605_rls_policies_new_tables.sql:26-29 — `CREATE POLIC
 **Done-when.**
 1. ✓ assets: SELECT members (the permissive member policy), INSERT/UPDATE by the writer tier (20261045 overlays + guard), DELETE by the controller tier (20261128) — all by the role collection.
 2. ✓ asset_types and asset_photos carry the same split (20261045 + 20261128).
-3. ✓ With no live database, the refusal is proven by replay: `lib/__tests__/intelRoundGRegistry.test.ts` "registry policy census" replays every numbered migration and asserts the final DELETE overlays are 20261128's controller predicate, the 20261045 INSERT/UPDATE predicates (Viewer/Auditor excluded) are untouched, and nothing later re-opens them; the data-layer tests prove a refused UPDATE/DELETE surfaces as an error.
+3. Proved by static census; runtime test pending. The "registry policy census" in `lib/__tests__/intelRoundGRegistry.test.ts` replays the text of every numbered migration. It asserts that the final DELETE overlays carry 20261128's controller predicate, that the 20261045 INSERT/UPDATE predicates (Viewer and Auditor excluded) are untouched, and that nothing later re-opens them. The data-layer tests prove that a refused UPDATE or DELETE surfaces as an error. No database runs in the suite, so no test refuses a Viewer's JWT at runtime (42501 or zero rows). (Supplementary, not a repo test: in the review-fix pass `20261128` was applied to a scratch Postgres 16 with stubbed auth and role helpers; there a Viewer's and a Manager's asset DELETE affected 0 rows, an Admin's deleted the row and wrote `ASSET_DELETED`, and a Viewer's INSERT into `document_equipment_suggestions` was refused with 42501.)
 4. ✓ The banner text matches the policy (pinned by test).
 
-**Scope / residual.** None in this finding; apply 20261128.
+**Scope / residual.** Apply 20261128. A runtime refusal test waits for a database in the test suite.
 
 ---
 
@@ -235,14 +235,16 @@ components/assets/AssetCsvImportModal.tsx:22-27 — the four-field CANONICAL_FIE
 - [ ] UnassignedAssignPanel gets a bulk path — assign-all-matching-prefix, or a paste-a-tag→unit mapping — instead of 50 dropdowns at a time.
 - [ ] Importing a 3,000-row list with a unit column lands every asset on its operating-area card with no manual step.
 
-**Resolution (2026-09-30, intelligence Round G).** Closed with BR-4 / BR-6. The importer (`components/assets/AssetCsvImportModal.tsx`, planned by `lib/assetCategorize.ts` `planAssetImport`) gains an operating-unit column matched against the codebook unit code OR name (`resolveUnitCell`, never a guess) and a site-code column decoded through `codeToTag` when no unit column is given; the unit files the row and derives its code. The unassigned panel gets a bulk path: "every tag starting with [E] goes to [unit] → Select N matching" (`assetsMatchingTagPrefix`, the one grammar; a letters-only prefix is a whole tag prefix, so E never takes EA) selects every unassigned asset, not just the 50 shown, and "Assign all N selected" files them with derived codes. The registry is read whole (AREA-9), so a 3,000-row list is counted and shown. Tests: `lib/__tests__/assetCategorize.test.ts`.
+**Resolution (2026-09-30, intelligence Round G).** Closed with BR-4 / BR-6. The importer (`components/assets/AssetCsvImportModal.tsx`, planned by `lib/assetCategorize.ts` `planAssetImport`) gains an operating-unit column matched against the codebook unit code OR name (`resolveUnitCell`, never a guess) and a site-code column decoded through `codeToTag` when no unit column is given; the unit files the row and derives its code. The unassigned panel gets a bulk path: "every tag starting with [E] goes to [unit] → Select N matching" (`assetsMatchingTagPrefix`, the one grammar; a letters-only prefix is a whole tag prefix, so E never takes EA) selects every unassigned asset, not just the 50 shown, and "Assign all N selected" files them with derived codes. The registry is read whole (AREA-9), so a 3,000-row list is counted and shown.
+
+*Review fix (2026-09-30).* With the site-code unique index (`20261128`), a derived code that another asset already carries used to cost the whole write. The bulk "Assign all" loop stopped at the first collision, leaving earlier rows written and the rest not, without refreshing the page, and the colliding asset was not filed. The importer's commit failed the row after a preview that said Create. Now every row is attempted on its own. The derived code is optional (`updateAsset` / `createAsset` with `codeOptional`), so the asset is filed without the code and the identity review lists it (`derived_code_taken`). Failures are reported, and the page refreshes in `finally`. The import plan drops a taken code up front (`planAssetImport` `codeHolders` plus the file's own earlier rows). Tests: `lib/__tests__/assetCategorize.test.ts`, `lib/__tests__/intelRoundGRegistry.test.ts` ("a DERIVED code is optional", "the bulk filer and the importer never lose a row").
 
 **Done-when.**
 1. ✓ CANONICAL_FIELDS gains unit (code or label) and code; commit passes them to createAsset; a code-only row is decoded to its unit at import.
-2. ✓ UnassignedAssignPanel has a bulk assign-by-prefix path.
-3. ✓ A 3,000-row list with a unit column lands every asset in its operating area with no manual step (planner test: 3,000 of 3,000 filed, each with a derived code).
+2. ✓ UnassignedAssignPanel has a bulk assign-by-prefix path. It files row by row, so one refusal never stops the rest, and a taken derived code is dropped rather than failing the filing.
+3. ✓ A 3,000-row list with a unit column lands every asset in its operating area with no manual step. The planner test files 3,000 of 3,000, and planner tests with colliding codes still file every row. The commit path's retry without the code is proven on the data layer (`createAsset` / `updateAsset` with `codeOptional` against a unique-index stand-in). There is no browser test of the modal itself; its wiring is pinned by source tests.
 
-**Scope / residual.** None.
+**Scope / residual.** None beyond applying 20261128. The Bridge's own writes under the index are handed to I-11 (see `CB-10`).
 
 ---
 
