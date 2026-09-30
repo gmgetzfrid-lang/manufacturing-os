@@ -56,6 +56,19 @@ app/api/knowledge/ask/route.ts:463-468 — `const { data: stamped } = await supa
 - [ ] Either `p_model` selection is deterministic (majority stamp, or the library's recorded build model) or a mixed library refuses semantic search until rebuilt
 - [ ] A test builds a two-stamp library and asserts retrieval does not silently drop one stamp
 
+
+**Partial (2026-09-30, intelligence Round G).** Reproduced first: nothing detected a mixed library and the ask route took the corpus model from one unordered row. Landed: `20261121` `semantic_coverage_detail` reports vectors per model over the whole library; `lib/ai/embeddings.ts` `resolveCorpusModel` reads them deterministically (single / mixed / empty — never "whichever row came back first"); the panel says out loud when a library holds more than one model and that meaning search is off for it until rebuilt; `semantic_search` returns nothing for a library holding any model other than `p_model` (a mixed library is refused whatever stamp the route picks); the build refuses, before anything is spent, to add a second model's vectors (`buildModelConflict` in the embed route — 409 with both ways out — and in the drain — a day's hold), so a mixed library can no longer be created; the Rebuild dialog says vectors are never reused across models. The package decision `DEC-54` (3). The SQL was run on a scratch PostgreSQL 16 with a stand-in `vector` type (a domain over `float8[]` and a cosine operator — pgvector is not installed in this environment, so the HNSW settings themselves are not exercised there): coverage counted 40 retrievable passages of 48 (an errored document's excluded); two back-to-back claims were disjoint and never touched the errored document's chunks; a passage at 3 attempts was skipped and the fewest-attempts passages came first; `authenticated` was refused EXECUTE on the claim; `semantic_search` returned nothing for a two-model library and for a wrong model, never an errored document's vector, and reported `eligible`; all seven probes were true on the first apply and again on a second (idempotent).
+
+**Pending migration:** `supabase/migrations/20261121_intel_roundG_semantic_layer.sql` (inventory before apply: chunks and vectors; libraries holding more than one model; vectors whose model differs from the build payer's saved model; build markers, those older than 7 days and those naming no active member; chunks and vectors of documents not ready / indexing; after apply: the pgvector version and whether the iterative scan was enabled; the last row runs the recall check).
+
+**Done-when.**
+1. ✓ Coverage distinguishes vectors by `embedding_model` and the panel names a mixed library.
+2. ✗ Not at save time. Saving a different model in AI settings (`components/knowledge/AiSettingsModal.tsx` → `/api/ai/connection`, I-05's files) still does not warn. The warning arrives before any mixture can exist: the panel shows the conflict to a controller as soon as the saved model differs from the index, the build refuses with the Rebuild offer, and the drain holds. Handed to I-05: the save-time confirm.
+3. ✓ A mixed library refuses semantic search until rebuilt (deterministic whatever stamp the route reads).
+4. ✓ `lib/__tests__/embeddings.test.ts` (a two-stamp corpus resolves as mixed, in any key order), `embedStatusShape.test.ts` (the status and the 409), and the scratch PostgreSQL 16 run (the search refuses a two-model library).
+
+**Scope / residual.** The ask route still reads its corpus model from one row (`ask/route.ts:463-468`, I-03); with 20261121 applied that no longer decides which half is searched.
+
 ---
 
 <a id="sem-2"></a>
@@ -116,6 +129,17 @@ app/api/knowledge/ask/route.ts:475-478 — `for (const t of texts.slice(0, 3)) {
 - [ ] The `catch` at ask/route.ts:505 distinguishes 'no embedding key' (normal) from 'the provider rejected the corpus model' (a reportable fault) and surfaces the latter on the answer
 - [ ] The removal-confirmation copy stops promising vectors resume working with any key
 
+
+**Partial (2026-09-30, intelligence Round G).** Reproduced first (query embedded with the CURRENT connection's provider and the corpus's model; the catch at `ask/route.ts:505` returns []; the removal dialog promises vectors resume with any key). Landed: the corpus's provider is recorded by its model stamp and read by `embeddingProviderForModel`; `planQueryEmbedding(corpus, connection)` (`lib/ai/embeddings.ts`) is the shared answer to "how must a question be embedded to search this corpus": the corpus's own model on the corpus's own provider, or a reportable reason (`provider_mismatch`, `mixed`, `no_vectors`, `no_key`, `unknown_model`) instead of an empty result. A provider or model change now surfaces a blocking notice: the panel shows a controller the conflict ("This library's meaning index was built with text-embedding-3-small; your embeddings setting is voyage-3.5-lite … Use Rebuild index … or set your embedding model back"), Build is replaced by Rebuild, the build route refuses with 409 before anything is spent, and the drain holds. The Rebuild dialog says vectors are never reused across models. The package decision `DEC-54` (3).
+
+**Done-when.**
+1. Partly — the corpus's provider is recorded (its model stamp) and `planQueryEmbedding` says which provider must embed the query or reports it unavailable; ✗ the ask route (I-03's file) does not call it yet.
+2. ✓ A provider change surfaces a blocking notice (panel + 409 + drain hold).
+3. ✗ The catch at `ask/route.ts:505` is I-03's file — handed over with `planQueryEmbedding`'s reasons to report on the answer.
+4. ✗ The removal-confirmation copy is in `components/knowledge/AiSettingsModal.tsx` (I-05's file) — handed to I-05: it should say vectors work again only with a key for the provider that built them.
+
+**Scope / residual.** Handed: I-03 (route limb), I-05 (dialog copy).
+
 ---
 
 <a id="sem-4"></a>
@@ -123,7 +147,7 @@ app/api/knowledge/ask/route.ts:475-478 — `for (const t of texts.slice(0, 3)) {
 ## SEM-4 · A single un-embeddable chunk stops the build permanently — no failure tracking, no ordering, no skip
 
 - **Severity:** MEDIUM
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Verification:** CONFIRMED
 - **Locations:** `lib/knowledgeEmbedCore.ts:55-60`, `lib/knowledgeEmbedCore.ts:98-106`, `lib/knowledgeEmbedCore.ts:110-121`, `lib/knowledge.ts:902-914`, `lib/knowledgeEmbedDrain.ts:113`
 - **Independently verified:** ✓ **SURVIVES** — second independent adversarial pass. Confirmed by absence: there is no attempts/failed column, no per-passage retry, no skip list, and no ORDER BY, so the next Build re-fetches the same unembedded rows under the same predicate and fails at the same point. Only the 429 path is treated as recoverable (:100), and only the client shrinks its batch, and only for rate limits.
@@ -145,6 +169,19 @@ lib/knowledgeEmbedCore.ts:98-105 — `catch (e) { if (e instanceof AiCallError &
 - [ ] The build surfaces 'N passages could not be embedded' with the document and page, and still reports the library done for the remainder
 - [ ] Already-purchased vectors in a batch are all written even if one UPDATE errors
 
+
+**Resolution (2026-09-30, intelligence Round G).** Reproduced first, in a driven test: over the pre-20261121 queue one refused passage stopped the slice with the provider's 400 and the next three runs fetched the same batch and made no progress (`lib/__tests__/embedDrain.test.ts` "reproduction: the unclaimed queue…"). `20261121` adds `knowledge_chunks.embed_attempts` (NOT NULL DEFAULT 0) and `embed_error`; the queue (`embed_claim_batch`, `SEM-7`) orders fewest attempts first, then document / page, and skips a passage at `EMBED_MAX_ATTEMPTS` (3). `lib/knowledgeEmbedCore.ts` `embedLibrarySlice`: when the provider refuses the INPUT (400 / 413 / 422 — `lib/ai/embeddings.ts` now carries the provider's own status on the error, `isPassageRefusal`) the batch is split in halves until the refused passage stands alone (at most 16 provider calls per batch); that passage gets an attempt and its reason and KEEPS its lease, so it is asked again at most once per lease, never in a tight loop; every other passage embeds. A refusal of the key, the model or the provider (401 / 403 / 404 / 5xx / network), or a batch in which nothing embedded, blames no passage — no attempt recorded, leases given back, the slice stops with the provider's words. Every vector already paid for is written: the write-back continues past a failed row and reports the first error. `semantic_coverage_detail` reports `failed` separately from `remaining`, so refused passages never hold the library below done; the status lists up to five with document and page (`failedSamples`); the panel says "N passages could not be embedded", lists them, and offers controllers "Try them again" (`action: "retry-failed"`); Rebuild resets the counters. The SQL was run on a scratch PostgreSQL 16 with a stand-in `vector` type (a domain over `float8[]` and a cosine operator — pgvector is not installed in this environment, so the HNSW settings themselves are not exercised there): coverage counted 40 retrievable passages of 48 (an errored document's excluded); two back-to-back claims were disjoint and never touched the errored document's chunks; a passage at 3 attempts was skipped and the fewest-attempts passages came first; `authenticated` was refused EXECUTE on the claim; `semantic_search` returned nothing for a two-model library and for a wrong model, never an errored document's vector, and reported `eligible`; all seven probes were true on the first apply and again on a second (idempotent).
+
+**Pending migration:** `supabase/migrations/20261121_intel_roundG_semantic_layer.sql` (inventory before apply: chunks and vectors; libraries holding more than one model; vectors whose model differs from the build payer's saved model; build markers, those older than 7 days and those naming no active member; chunks and vectors of documents not ready / indexing; after apply: the pgvector version and whether the iterative scan was enabled; the last row runs the recall check).
+
+**Done-when.**
+1. ✓ `embed_attempts` / `embed_error` on `knowledge_chunks`; the claim skips a passage after `EMBED_MAX_ATTEMPTS`.
+2. ✓ A non-429 refusal of the input is bisected until the passage stands alone; one bad passage no longer blocks the rest ("the claim path splits the batch…").
+3. ✓ The build and the panel say "N passages could not be embedded" with document and page, and report the library done for the remainder (`embedStatusShape.test.ts` "SEM-4: refused passages are counted apart from remaining…").
+4. ✓ Every purchased vector is written even when one UPDATE fails ("a write that fails does not abandon the other vectors already paid for").
+
+**Scope / residual.** Before 20261121 is applied the slice runs the original queue unchanged (reported as `queue: "legacy"`).
+
 ---
 
 <a id="sem-5"></a>
@@ -152,7 +189,7 @@ lib/knowledgeEmbedCore.ts:98-105 — `catch (e) { if (e instanceof AiCallError &
 ## SEM-5 · Coverage and retrieval disagree about which chunks count — money is spent embedding passages semantic_search will never return
 
 - **Severity:** MEDIUM
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Verification:** CONFIRMED
 - **Locations:** `supabase/migrations/20261014_coverage_timeout_headroom.sql:20-25`, `supabase/migrations/20261007_rag_hardening.sql:91-95`, `lib/knowledgeEmbedCore.ts:56-60`, `lib/knowledgeIngest.ts:582`
 - **Independently verified:** ✓ **SURVIVES** — second independent adversarial pass. Correct: chunks of an errored document are counted in total and embedded, are paid for on the user's key, and are then excluded from every semantic_search result. Nothing resets status='error' automatically — only a manual re-ingest (drawing/route.ts:371 sets 'stale') puts those chunks back in retrieval range.
@@ -172,6 +209,18 @@ lib/knowledgeEmbedCore.ts:98-105 — `catch (e) { if (e instanceof AiCallError &
 - [ ] `semantic_coverage` and `embedLibrarySlice` apply the same document-status predicate as `semantic_search`
 - [ ] Chunks belonging to non-retrievable documents are either cleaned up or excluded from the embed queue
 - [ ] Coverage percentage is defined against the retrievable population and the definition is stated on the panel
+
+
+**Resolution (2026-09-30, intelligence Round G).** Reproduced first: `semantic_coverage` (20261014) counted every chunk; `semantic_search` (20261007) joins `knowledge_documents` and keeps `status IN ('ready','indexing')`; `embedLibrarySlice` embedded chunks of any status. `20261121` re-creates `semantic_coverage` from 20261014 with lines added only — both counts keep `document_id IN (the org's documents that are ready or indexing)` (lineDiff pinned in `lib/__tests__/embedDrain.test.ts`) — and the embed queue (`embed_claim_batch`) applies the same predicate, so the denominator, the numerator, the work queue and the retrievable set are one population. `semantic_coverage_detail` uses it too. The panel states the definition: "Counted over the passages of documents that are indexed and searchable — the same passages meaning search can return." The SQL was run on a scratch PostgreSQL 16 with a stand-in `vector` type (a domain over `float8[]` and a cosine operator — pgvector is not installed in this environment, so the HNSW settings themselves are not exercised there): coverage counted 40 retrievable passages of 48 (an errored document's excluded); two back-to-back claims were disjoint and never touched the errored document's chunks; a passage at 3 attempts was skipped and the fewest-attempts passages came first; `authenticated` was refused EXECUTE on the claim; `semantic_search` returned nothing for a two-model library and for a wrong model, never an errored document's vector, and reported `eligible`; all seven probes were true on the first apply and again on a second (idempotent).
+
+**Pending migration:** `supabase/migrations/20261121_intel_roundG_semantic_layer.sql` (inventory before apply: chunks and vectors; libraries holding more than one model; vectors whose model differs from the build payer's saved model; build markers, those older than 7 days and those naming no active member; chunks and vectors of documents not ready / indexing; after apply: the pgvector version and whether the iterative scan was enabled; the last row runs the recall check).
+
+**Done-when.**
+1. ✓ `semantic_coverage` and the embed queue apply the same document-status predicate as `semantic_search`.
+2. ✓ Chunks of non-retrievable documents are excluded from the embed queue ("chunks of a document that is not ready / indexing are never claimed or paid for"); nothing is deleted (a re-ingest brings them back into range).
+3. ✓ Coverage is defined against the retrievable population and the panel says so (`knowledgePageCopy.test.ts`).
+
+**Scope / residual.** Vectors already paid for on errored documents stay (the inventory counts them); a re-ingest makes them retrievable again or replaces them.
 
 ---
 
@@ -203,6 +252,16 @@ app/api/knowledge/ask/route.ts:465 — `.eq("org_id", orgId).eq("library_id", li
 - [ ] A library whose stamp cannot be matched is reported (count of libraries that contributed no semantic rows) rather than silently skipped
 - [ ] A test with two libraries on two model stamps asserts both contribute semantic results or the mismatch is surfaced
 
+
+**Partial (2026-09-30, intelligence Round G).** The resolution is the ask route's (`ask/route.ts:463-489`, I-03's file, which no other package edits). Landed for it: `resolveCorpusModel` + `planQueryEmbedding` (`lib/ai/embeddings.ts`, the shared helper the plan names) resolve each library's corpus model and the provider that must embed the query, per library; `semantic_coverage_detail` (20261121) gives each library's per-model vector counts in one read; `semantic_search` refuses a library holding another model and reports `eligible`. Tested per library: two libraries on two stamps each get their own plan (`lib/__tests__/embeddings.test.ts`).
+
+**Done-when.**
+1. ✗ `p_model` is still resolved once from the primary in the route — handed to I-03: resolve per searched library with `planQueryEmbedding(resolveCorpusModel(detail.models), connection)` and embed the query once per distinct (provider, model).
+2. ✗ Reporting libraries that contributed no semantic rows is a route response change — handed to I-03 (the plan's reason is the report).
+3. Partly — the helper's per-library test exists; the end-to-end route test is I-03's.
+
+**Scope / residual.** Handed to I-03 with the helper.
+
 ---
 
 <a id="sem-7"></a>
@@ -210,7 +269,7 @@ app/api/knowledge/ask/route.ts:465 — `.eq("org_id", orgId).eq("library_id", li
 ## SEM-7 · No lock or claim anywhere in the embed path — concurrent drains re-embed the same passages and multiply spend on a third party's key
 
 - **Severity:** MEDIUM
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Verification:** SUSPECTED
 - **Locations:** `lib/knowledge.ts:822-833`, `app/(protected)/knowledge/[id]/page.tsx:1151-1154`, `app/api/cron/embed-drain/route.ts:27-46`, `lib/knowledgeEmbedCore.ts:56-60`, `lib/knowledgeEmbedDrain.ts:51-56`
 - **Independently verified:** ✓ **SURVIVES** — second independent adversarial pass. Confirmed by absence across the whole path — the same unembedded rows can be selected, sent, and billed by the browser build and by one drain per member who opens the library page, all charged to the stamp owner's key (drain.ts:62-63, 123-127). The duplicate writes are idempotent, so the damage is spend, not corruption.
@@ -234,6 +293,19 @@ app/(protected)/knowledge/[id]/page.tsx:1151-1153 — `useEffect(() => { void im
 - [ ] `/api/cron/embed-drain` rate-limits user-bearer triggers
 - [ ] The 'writes are not landing' guard tolerates concurrent progress instead of reporting a wrong root cause
 
+
+**Resolution (2026-09-30, intelligence Round G).** Reproduced first, in a driven test: two overlapping slices over the unclaimed queue sent every passage to the provider twice (`embedDrain.test.ts` "reproduction: the unclaimed queue sends the same passages twice"). `20261121` adds `embed_claim_batch()` — `FOR UPDATE SKIP LOCKED` plus a 120-second lease (`embed_claimed_until`), service role only — and `embedLibrarySlice` takes every batch through it, so the browser build, every drain and the daily cron take DISJOINT passages ("two overlapping slices embed every passage exactly once"); an abandoned lease simply expires, so the resumability invariant holds. The write-back is conditional (`.is("embedding", null).select("id")`) and counts only rows it changed. The page-load nudge is debounced per tab (10 minutes, `lib/knowledge.ts` `nudgeEmbedDrain`, signature and fire-and-forget behaviour unchanged). A user-bearer trigger of `/api/cron/embed-drain` passes `minIntervalMs` (2 minutes): a library drained that recently is skipped ("recent"), so a burst of nudges costs one drain; the CRON_SECRET path and the maintenance cron call are unchanged. The "writes are not landing" guard now runs only for the pre-20261121 queue — the claim confirms each row it wrote, and concurrent progress by another driver only raises the count. The browser build waits (bounded) when every remaining passage is leased by another run instead of calling that stuck. The SQL was run on a scratch PostgreSQL 16 with a stand-in `vector` type (a domain over `float8[]` and a cosine operator — pgvector is not installed in this environment, so the HNSW settings themselves are not exercised there): coverage counted 40 retrievable passages of 48 (an errored document's excluded); two back-to-back claims were disjoint and never touched the errored document's chunks; a passage at 3 attempts was skipped and the fewest-attempts passages came first; `authenticated` was refused EXECUTE on the claim; `semantic_search` returned nothing for a two-model library and for a wrong model, never an errored document's vector, and reported `eligible`; all seven probes were true on the first apply and again on a second (idempotent).
+
+**Pending migration:** `supabase/migrations/20261121_intel_roundG_semantic_layer.sql` (inventory before apply: chunks and vectors; libraries holding more than one model; vectors whose model differs from the build payer's saved model; build markers, those older than 7 days and those naming no active member; chunks and vectors of documents not ready / indexing; after apply: the pgvector version and whether the iterative scan was enabled; the last row runs the recall check).
+
+**Done-when.**
+1. ✓ A claim with a lease makes concurrent drains disjoint.
+2. ✓ `nudgeEmbedDrain` is debounced per tab session.
+3. ✓ User-bearer triggers are rate-limited by library (`USER_TRIGGER_MIN_INTERVAL_MS`); two that still overlap stay disjoint through the claim.
+4. ✓ The guard no longer misreports concurrent progress.
+
+**Scope / residual.** The throttle is keyed on the library's last drain rather than on the user (the server keeps no per-user state); what it bounds is the spend, which is the finding's harm.
+
 ---
 
 <a id="sem-8"></a>
@@ -241,7 +313,7 @@ app/(protected)/knowledge/[id]/page.tsx:1151-1153 — `useEffect(() => { void im
 ## SEM-8 · Nothing re-arms the index after ingestion — coverage silently decays from 100% every time a document is added
 
 - **Severity:** LOW
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Verification:** CONFIRMED
 - **Locations:** `lib/knowledgeEmbedCore.ts:136-149`, `app/api/knowledge/embed/route.ts:150-154`, `app/api/knowledge/embed/route.ts:199-201`, `lib/knowledgeEmbedDrain.ts:60-70`
 - **Independently verified:** ✓ **SURVIVES, corrected** — second independent adversarial pass. Severity **MEDIUM → LOW** by this pass. The automation gap is real — ingesting documents never re-arms the drain, so new chunks stay keyword-only until someone presses Build again. 'Silently' is the part that does not hold: SemanticIndexPanel.tsx:171-173 and 226-229 recompute from live coverage and display '<covered> of <total> passages carry meaning vectors (70%)', the green check disappears, and the control reverts from 'Rebuild index' to 'Build index (~N¢)' (:197-211) — that is the panel telling the truth, not concealing it.
@@ -265,6 +337,17 @@ lib/knowledgeEmbedCore.ts:138-145 — the only writer: `export async function se
 - [ ] Non-controllers can at least see that the library's meaning index is behind its documents
 - [ ] A test asserts that adding chunks to a completed library produces a visible not-covered state
 
+
+**Resolution (2026-09-30, intelligence Round G).** Reproduced first: the only stamp setter was the manual build; the route and the drain cleared the stamp at 100%; ingestion never re-armed it. Ingestion is I-06's code, so the re-arm lives on the consent side: a controller can tick "Keep this index current as documents are added" (`action: "keep-current"`, `lib/knowledge.ts` `setKeepIndexCurrent`) — a STANDING consent on the stamp (`standing: true`), on the caller's own key and monthly cap, after the agreement gate. A standing stamp survives 100% (the route marks `completedAt`; the drain reports "current") and every later run embeds passages added by ingestion or the source-sync mirror with no button pressed; unticking withdraws it. For everyone, the drift is on the page where questions are asked: `meaningIndexDrift` renders "Meaning search covers 71% of this library — 12 passages added since the last build are found by keyword only" by the Ask box (no role gate), from the panel's live status. Tests: `embedDrain.test.ts` ("passages added later are embedded by the next run on the same consent"), `embedStatusShape.test.ts` ("SEM-8: adding chunks to a completed library produces a visible not-covered state"), `knowledgePageCopy.test.ts`.
+
+**Done-when.**
+1. ✓ A standing per-library consent keeps the stamp armed, so ingestion's new passages are picked up by the next drain; without it, the not-covered state is visible (2).
+2. ✓ The drift is shown on the library page by the Ask box, not only inside the panel.
+3. ✓ Non-controllers see the drift line and the panel's bar.
+4. ✓ A test adds chunks to a completed library and asserts the not-covered state and its words.
+
+**Scope / residual.** No migration of its own (the stamp is JSON on `knowledge_libraries.ai_features`); the drain's claim and detail reads use 20261121 when applied and fall back otherwise.
+
 ---
 
 <a id="sem-9"></a>
@@ -272,7 +355,7 @@ lib/knowledgeEmbedCore.ts:138-145 — the only writer: `export async function se
 ## SEM-9 · One global HNSW index, four post-filters and no ef_search — filtered semantic search can return far fewer rows than asked, or none
 
 - **Severity:** MEDIUM
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Verification:** SUSPECTED
 - **Locations:** `supabase/migrations/20260930_semantic_layer.sql:65-66`, `supabase/migrations/20261007_rag_hardening.sql:89-97`, `app/api/knowledge/ask/route.ts:482-489`
 - **Independently verified:** ✓ **SURVIVES** — second independent adversarial pass. Confirmed: filters are applied after the HNSW walk and nothing raises ef_search off its default 40, so a small tenant inside a large multi-tenant table can get a handful of rows or zero for a 12-row request. One mitigation the finding does not cite: 20261011_semantic_coverage_fast.sql:17 adds `knowledge_chunks_org_lib_idx (org_id, library_id)`, so for a very selective library the planner may pick an exact index-scan+sort plan instead — the recall loss is plan-dependent, not guaranteed. MEDIUM stands.
@@ -293,6 +376,19 @@ supabase/migrations/20260930_semantic_layer.sql:61-66 — the index's own ration
 - [ ] Partitioning or a partial-index-per-org strategy is evaluated so the filters are not purely post-hoc
 - [ ] `semantic_search` reports when it returned fewer than p_limit rows so short results are distinguishable from thin corpora
 - [ ] A recall check on a representative corpus asserts filtered results match an exact-scan baseline
+
+
+**Resolution (2026-09-30, intelligence Round G).** SUSPECTED, and the magnitude is not observable here (no pgvector, no production-sized table); the mechanism is pgvector's documented behaviour — HNSW walks `ef_search` (default 40) candidates BEFORE the WHERE filters — and nothing in the repo raised it (grep: no `ef_search`). `20261121` re-creates `semantic_search` from 20261007 with lines added only (lineDiff pinned in `embedDrain.test.ts`): `SET hnsw.ef_search = 200`, and — chosen by a DO block from `pg_extension`, because an older pgvector reserves the `hnsw.` prefix without it and would refuse the paste — `SET hnsw.iterative_scan = strict_order` on pgvector 0.8 or later, which keeps scanning until the filters are satisfied, in exact distance order. A new result column `eligible` reports how many vectors the org / library / model filters admit, so a short result can be told from a thin corpus. The function is dropped and re-created (the return type changed) and its grants re-stated. The paste's last row is a recall check: on the largest single-model library, one of its own vectors as the query, top 12 from the new search against an exact scan of the same filtered population (`ORDER BY (embedding <=> q) + 0` keeps the planner off the index). The SQL was run on a scratch PostgreSQL 16 with a stand-in `vector` type (a domain over `float8[]` and a cosine operator — pgvector is not installed in this environment, so the HNSW settings themselves are not exercised there): coverage counted 40 retrievable passages of 48 (an errored document's excluded); two back-to-back claims were disjoint and never touched the errored document's chunks; a passage at 3 attempts was skipped and the fewest-attempts passages came first; `authenticated` was refused EXECUTE on the claim; `semantic_search` returned nothing for a two-model library and for a wrong model, never an errored document's vector, and reported `eligible`; all seven probes were true on the first apply and again on a second (idempotent).
+
+**Pending migration:** `supabase/migrations/20261121_intel_roundG_semantic_layer.sql` (inventory before apply: chunks and vectors; libraries holding more than one model; vectors whose model differs from the build payer's saved model; build markers, those older than 7 days and those naming no active member; chunks and vectors of documents not ready / indexing; after apply: the pgvector version and whether the iterative scan was enabled; the last row runs the recall check).
+
+**Done-when.**
+1. ✓ `hnsw.ef_search` raised on the search path (a function-level SET), and the iterative scan where pgvector supports it.
+2. ✓ Evaluated and not done: a per-model partial HNSW index cannot be matched against `p_model` (a parameter of a non-inlined function); partitioning per org is a table rewrite outside this finding's scope — recorded in the migration header.
+3. ✓ `semantic_search` reports `eligible`. Reading it on the answer is the ask route's (I-03).
+4. ✓ at apply: the paste reports recall@12 against an exact-scan baseline (expect 0.90 or better; "n/a" before any library has vectors). It cannot be run here.
+
+**Scope / residual.** Whether recall was actually short in production is only known from the paste's recall row.
 
 ---
 
@@ -332,7 +428,7 @@ lib/ai/embeddings.ts:208-215 — `export async function embedQuery(…): Promise
 ## SEM-11 · Six stuck libraries permanently starve the drain: `.limit(6)`, no ordering, and markers that are never cleared on cap-reached or error
 
 - **Severity:** MEDIUM
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Verification:** SUSPECTED
 - **Locations:** `lib/knowledgeEmbedDrain.ts:51-56`, `lib/knowledgeEmbedDrain.ts:88-95`, `lib/knowledgeEmbedDrain.ts:113`, `lib/knowledgeEmbedDrain.ts:120-121`, `app/api/cron/maintenance/route.ts:292-294`
 - **Independently verified:** ✓ **SURVIVES** — second independent adversarial pass. All three cited defects are real, and the finding's own scenario is the one where the mitigation doesn't help: the page-load nudge (knowledge/[id]/page.tsx:1153 → embed-drain/route.ts:41-43) scopes to the caller's own orgs, so an org whose owner closed the tab depends on the daily cron, which is exactly the global unordered `.limit(6)` path. Note for completeness that the nudge does rescue any org where a member opens the app and that org holds fewer than 6 marked libraries.
@@ -355,6 +451,19 @@ lib/knowledgeEmbedDrain.ts:51-55 — `.not("ai_features->embedBuild", "is", null
 - [ ] Cap-reached and repeated-error libraries either release the marker or record a backoff timestamp the query skips
 - [ ] Drain results distinguish 'advanced', 'blocked (reason)', and 'starved — never selected' so the state is diagnosable
 - [ ] A stuck-marker library surfaces somewhere an admin sees it
+
+
+**Resolution (2026-09-30, intelligence Round G).** Reproduced first: the drain read `.not("ai_features->embedBuild","is",null).limit(6)` with no order, and a capped library kept its slot every run (the verifier's correction stands: the slice-error exit did reach the clear — it was the cap exit that held a slot). `lib/knowledgeEmbedDrain.ts` now reads EVERY marked library (paged, ordered by id) and works them least-recently-drained first (`lastDrainAt` on the stamp, `orderDrainQueue`). A library that cannot proceed records why and when to look again instead of holding a slot: the monthly cap until the 1st of next month (NOT released — that would abandon a paid-for build, as the verifier noted), a provider / key error with a backoff doubling from 15 minutes (capped at a day) and a release after `MAX_ERROR_RUNS` (5) failed runs, a model conflict or an unsigned agreement for a day. Each run reports every library as advanced / complete / current / blocked / released / busy / recent / starved (the budget ended before it). The panel shows a stuck build to an admin: whose key pays, when it last ran, what it waits for and until when, with "Stop it" (`action: "release"`, the payer or a controller). Tests: `embedDrain.test.ts` ("six capped libraries hold with a date and the seventh is drained in the same run", backoff and release, starved, recent, busy), `embedStatusShape.test.ts` ("SEM-11: the background build's state"). The SQL was run on a scratch PostgreSQL 16 with a stand-in `vector` type (a domain over `float8[]` and a cosine operator — pgvector is not installed in this environment, so the HNSW settings themselves are not exercised there): coverage counted 40 retrievable passages of 48 (an errored document's excluded); two back-to-back claims were disjoint and never touched the errored document's chunks; a passage at 3 attempts was skipped and the fewest-attempts passages came first; `authenticated` was refused EXECUTE on the claim; `semantic_search` returned nothing for a two-model library and for a wrong model, never an errored document's vector, and reported `eligible`; all seven probes were true on the first apply and again on a second (idempotent).
+
+**Pending migration:** `supabase/migrations/20261121_intel_roundG_semantic_layer.sql` (inventory before apply: chunks and vectors; libraries holding more than one model; vectors whose model differs from the build payer's saved model; build markers, those older than 7 days and those naming no active member; chunks and vectors of documents not ready / indexing; after apply: the pgvector version and whether the iterative scan was enabled; the last row runs the recall check).
+
+**Done-when.**
+1. ✓ Least-recently-attempted first (`lastDrainAt`), over every marker — no window.
+2. ✓ Cap-reached and failing libraries record a backoff the queue skips; repeated failure releases the stamp.
+3. ✓ Results distinguish advanced, blocked (with the reason), starved and the rest.
+4. ✓ A stuck-marker library surfaces on the panel with its reason and a Stop control.
+
+**Scope / residual.** The drain still rides the daily maintenance cron plus page nudges — no `vercel.json` entry (99 Do-not; `lib/__tests__/vercelConfig.test.ts`).
 
 ---
 
@@ -387,6 +496,17 @@ lib/knowledge.ts:122-126 states the intended contract in its own doc comment —
 - [ ] An answer produced over a library below some coverage threshold shows an explicit 'meaning search covers N% of this library' note next to the sources strip
 - [ ] A test asserts the ask response's retrieval/coverage fields reach a rendered element
 
+
+**Partial (2026-09-30, intelligence Round G).** Reproduced first (no component read `retrieval`). The page now renders it on every library answer, for every reader: `lib/knowledge.ts` `describeRetrieval(retrieval, coverage)` reads the answer's flag WITH the meaning index's coverage — the route's own figure first (`retrievalCoverage`, typed and rendered when the route sends it), otherwise the asked library's live coverage from the panel — so "hybrid" over a 3% index reads "Meaning search covers 3% of this library — passages without a meaning vector were found by keyword only" while a full index reads plainly, and "Keyword search only" says meaning search did not run and why. The chip sits in the answer card's footer (`data-retrieval`), the note directly above the sources strip (`data-retrieval-note`); neither is gated on a role. A replayed answer carries no flag and shows no chip (its "Replayed from your team's record" banner already says it was not searched now).
+
+**Done-when.**
+1. ✓ The answer surface renders the retrieval mode, for non-controllers too.
+2. Partly — 3% and 100% are distinguishable on the answer for the ASKED library (its live coverage); ✗ the per-answer figure over every library actually searched, linked ones included, has to come from the ask route (I-03's file): the type (`retrievalCoverage: { embedded, total }`) and the renderer are ready and preferred when present.
+3. ✓ Below 95% coverage the answer shows "meaning search covers N% of this library" next to the sources strip.
+4. ✓ as far as the suite goes: `lib/__tests__/knowledgePageCopy.test.ts` pins the chip and note to the rendered elements and asserts the wording at 3%, 94%, 95% and 100% (the suite has no DOM renderer).
+
+**Scope / residual.** Handed to I-03: send `retrievalCoverage` for the libraries searched.
+
 ---
 
 <a id="sem-13"></a>
@@ -417,5 +537,18 @@ components/knowledge/SemanticIndexPanel.tsx:32-35 — `/** Rough, deliberately r
 - [ ] Per-model Voyage rates replace the single `voyage-` prefix (3.5-lite, 3.5 and 3-large differ by roughly an order of magnitude)
 - [ ] The quoted pre-build estimate and the post-build ledger figure are produced by the same function
 - [ ] A test asserts the two agree within a stated tolerance for each offered model
+
+
+**Partial (2026-09-30, intelligence Round G).** SUSPECTED; reproduced as far as the repo goes: the panel quoted `CENTS_PER_1K_PASSAGES = 1` for every model while the ledger bills `estimateCostUsd(model, usage)` from `lib/ai/pricing` — the two disagree by model (for 1,000 passages of ~1,400 characters the ledger rate is ~0.7¢ on text-embedding-3-small, ~4.8¢ on text-embedding-3-large and ~7.3¢ on the Voyage placeholder, against the flat 1¢). The flat constant is gone. The embed status returns `estimate: { model, remainingUsd, fullUsd, placeholderRate }`, computed by `estimateEmbeddingCostUsd` (`lib/ai/embeddings.ts`) — `estimateCostUsd`, the SAME function the ledger uses — over the library's real character volume (`semantic_coverage_detail.remaining_chars` / `total_chars`, 20261121) for the model the caller would build with; the panel shows it on Build and Rebuild ("~8¢", "~$18.25", "under 1¢") and marks Voyage figures "estimate — this provider's rate in the app is a conservative placeholder". The package decision `DEC-54` (4).
+
+**Pending migration:** `supabase/migrations/20261121_intel_roundG_semantic_layer.sql` (inventory before apply: chunks and vectors; libraries holding more than one model; vectors whose model differs from the build payer's saved model; build markers, those older than 7 days and those naming no active member; chunks and vectors of documents not ready / indexing; after apply: the pgvector version and whether the iterative scan was enabled; the last row runs the recall check).
+
+**Done-when.**
+1. ✓ The estimate is computed from the connection's model through the ledger's price table and the library's actual character volume.
+2. ✗ Per-model Voyage rates in `lib/ai/pricing.ts` — I-05's file (GOV-6: "Voyage rate corrected from the published list"). Until then the panel labels Voyage figures an estimate.
+3. ✓ The quoted estimate and the ledger's figure come from one function (`estimateCostUsd`).
+4. ✓ `lib/__tests__/embeddings.test.ts`: for every offered model the estimate equals `estimateCostUsd` at the estimated tokens (exact), and the stated tolerance of the 4-characters-a-token estimate against a provider's own count is within 30% for ordinary prose.
+
+**Scope / residual.** Handed to I-05: the per-model Voyage rates.
 
 ---

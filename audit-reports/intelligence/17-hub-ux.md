@@ -347,6 +347,15 @@ intelligence/page.tsx:70 — `const snapKey = `intel-status-${activeOrgId}`;` an
 - [ ] /knowledge/[id] renders the Intelligence ViewTabs strip like every other surface in the tool
 - [ ] /graph passes `title="Intelligence"` so the strip is labelled identically everywhere
 
+
+**Partial (2026-09-30, intelligence Round G).** Reproduced first (`grep -n "ViewTabs" app/(protected)/knowledge/[id]/page.tsx` found nothing). `/knowledge/[id]` now renders `<ViewTabs title="Intelligence" tabs={INTELLIGENCE_VIEWS} />` at the top of the page, as `/knowledge`, `/assistant`, `/intelligence` and the rest do; the strip's own matcher highlights the Knowledge tab for `/knowledge/<id>`. The eyebrow back-link stays. Test: `lib/__tests__/knowledgePageCopy.test.ts` ("HUB-11").
+
+**Done-when.**
+1. ✓ `/knowledge/[id]` renders the Intelligence ViewTabs strip.
+2. ✗ `/graph` still renders `<ViewTabs tabs={INTELLIGENCE_VIEWS} />` without `title` (`app/(protected)/graph/page.tsx:444`) — I-14 owns that file (its lenses rewrite the same header); handed to I-14 as a one-attribute change.
+
+**Scope / residual.** Handed to I-14: `title="Intelligence"` on the graph page's strip.
+
 ---
 
 <a id="hub-12"></a>

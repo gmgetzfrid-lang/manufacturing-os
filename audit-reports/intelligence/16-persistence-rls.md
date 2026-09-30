@@ -32,7 +32,7 @@ Table by table: who can write what, and which writes carry authority.
 ## IRLS-1 · knowledge_questions is org-wide readable, so every AI answer derived from ACL-protected documents leaks to every member
 
 - **Severity:** CRITICAL
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Verification:** CONFIRMED
 - **Locations:** `supabase/migrations/20260911_knowledge_ai.sql:146-151`, `supabase/migrations/20260917_knowledge_sources.sql:73-82`, `app/api/knowledge/ask/route.ts:1739-1743`, `lib/knowledge.ts:504-527`, `lib/knowledge.ts:529-533`
 - **Independently verified:** ✓ **SURVIVES** — second independent adversarial pass. Per-asker ACL filtering is real and the code says so — ask/route.ts:160-186 builds excludedDocIds via `readableControlledDocIds(principal, dcIds)` and comments "two people can ask the same question and correctly get different answers. … Fails CLOSED". Both readers (lib/knowledge.ts:504-527 searchAskHistory, :529-533 listKnowledgeQuestions) use the RLS-bound `supabase` client filtered only by org_id/library_id, so the stored answer text is org-wide. No later migration narrows knowledge_questions_select (grep over supabase/ confirms only ALTERs adding columns).
@@ -54,6 +54,18 @@ Table by table: who can write what, and which writes carry authority.
 - [ ] knowledge_questions_select is narrowed to the asker (`user_id = auth.uid()`) plus controllers, OR history reads move behind an API route that re-runs the ACL engine against every citation before returning the answer
 - [ ] searchAskHistory and listKnowledgeQuestions no longer read knowledge_questions with the browser anon client
 - [ ] a test asserts a member with no ACL on a source-linked document cannot retrieve an answer whose citations point at it
+
+
+**Resolution (2026-09-30, intelligence Round G).** Reproduced first (see `ASK-1` / `KACL-1`, same root and same code). `20261120` re-creates `knowledge_questions_select` from 20260911's body with the author-or-controller clause ANDed (`user_id = auth.uid()` OR `is_org_controller(org_id)`), and `app/api/knowledge/history/route.ts` (new) serves the team's record — `list` (the Conversations list), `search` (ask memory, scoped to THIS library) and `thread` (reopen one conversation) — through `lib/knowledgeHistory.ts` (new): every row's citations are re-decided for the CURRENT reader through the R&P Round C1 seam (`loadPrincipal` + `readableControlledDocIds`, never a parallel evaluator; `readableKnowledgeDocIds` resolves each cited knowledge document — an upload of the reader's org is readable by design, a mirror is readable when its controlled document is, anything unresolvable (removed, held back from the AI, another org's, malformed) is not). A row citing anything unreadable is withheld whole, and so is every later turn of its conversation, because the ask sends earlier turns back as context (`planVisibleHistory`); the number withheld is returned and shown. Controllers skip the filter (DEC-43). Any read or ACL error answers 500 with no rows — never an unfiltered answer. `lib/knowledge.ts` `searchAskHistory(orgId, libraryId, …)`, `listKnowledgeQuestions(orgId, libraryId)` and the new `loadConversation` call the route; the browser no longer reads `knowledge_questions` at all. On the page, the memory card searches this library only; `openConversation` re-reads a threaded conversation through the route and keeps its thread only when every turn is the reader's own (a teammate's turns seed a NEW conversation, so the next ask is never appended to theirs); the Conversations list says how many answers it is not showing and shows a failed read as a failure. Verified on a scratch PostgreSQL 16 carrying the live policy and helper bodies (`node_visible` 20261041, `is_org_controller` 20260814, `acl_subject_in_bucket` 20260708, the 20260911 / 20260917 / 20260929 knowledge policies; the owner cascade stubbed to its document-owner arm), the whole paste applied as the user will paste it: BEFORE, a Viewer read every stored answer, every mirror row (a private document's and a dangling one included) and every mention sentence; AFTER, a Viewer reads their own answer, the upload and open-document mirrors and those documents' sentences; a Manager (who holds the FOR ALL `entity_mentions_write`) reads exactly the Viewer's sentences; an Engineer granted read on the private document reads their own answer, that mirror and its sentence; an Admin and a Viewer holding DocCtrl additively read everything (DEC-43); a non-member reads nothing and the hub count answers 0. All seven probes were true on the first apply and again on a second (idempotent).
+
+**Pending migration:** `supabase/migrations/20261120_intel_roundG_knowledge_memory_acl.sql` (inventory before apply: stored answers; answers citing a mirror of a private / hidden / private-draft document; answers citing a knowledge document that no longer exists; non-controller members; mirror rows, those of private / hidden documents and dangling ones; mention rows and those on private / hidden documents).
+
+**Done-when.**
+1. ✓ Both: the policy is narrowed to the asker plus controllers, AND history reads go through a route that re-runs the ACL engine against every citation.
+2. ✓ `searchAskHistory` and `listKnowledgeQuestions` no longer read `knowledge_questions` with the browser client.
+3. ✓ `lib/__tests__/knowledgeMemoryAcl.test.ts` ("a member with no ACL on a source-linked document cannot retrieve an answer whose citations point at it — search, list or thread").
+
+**Scope / residual.** The third display path the verifier named, the hub's recent-asks widget (`app/(protected)/intelligence/page.tsx:113`, I-05's file), now reads only the reader's own rows under the narrowed policy (all rows for a controller); I-05 relabels it.
 
 ---
 
@@ -290,7 +302,7 @@ lib/mentionIndexer.ts:136-142 — `const { error } = await supabaseAdmin.from("e
 ## IRLS-9 · entity_mentions publishes verbatim quotes from ACL-protected mirrored documents to every org member
 
 - **Severity:** LOW
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Verification:** SUSPECTED
 - **Locations:** `supabase/migrations/20260929_mention_engine.sql:73-76`, `supabase/migrations/20260929_mention_engine.sql:38`, `lib/mentionIndexer.ts:84-121`, `lib/mentions.ts:9`, `lib/mentions.ts:120-127`, `lib/mentionIndexer.ts:157-190`
 - **Independently verified:** ✓ **SURVIVES, corrected** — second independent adversarial pass. Severity **MEDIUM → LOW** by this pass. The RLS design flaw is real and correctly described, but the exploit path is unreachable today — by the batch's own IRLS-4, entity_mentions has never been written, so the backlinks panel (lib/mentions.ts:126-134 mentionsForAsset) returns an empty set and there are no snippets to leak. It is a latent exposure that goes live the moment IRLS-4's onConflict is fixed; LOW until then. (The one path that could seed rows independently is a backup restore — lib/dataRestore.ts:298 lists entity_mentions.)
@@ -312,6 +324,18 @@ lib/mentionIndexer.ts:136-142 — `const { error } = await supabaseAdmin.from("e
 - [ ] entity_mentions_read carries the same `NOT EXISTS (... source_document_id IS NOT NULL)` guard as knowledge_chunks_select, or mention reads move behind an ACL-filtering API route
 - [ ] lib/mentions.ts no longer reads context_snippet with the browser anon client for source-linked documents
 - [ ] a test asserts a member without ACL on a mirrored controlled document gets zero mention rows for it
+
+
+**Resolution (2026-09-30, intelligence Round G).** Closed with `IEDGE-6` (same policy; the package decision `DEC-54` (2)). Note on reachability: `IRLS-4` (I-08) has not landed, so `entity_mentions` may hold few or no rows; the overlay is in place before that fix opens the path, which is the order the verifier asked for ("fix both together, or fixing 4 alone opens the leak"). Verified on a scratch PostgreSQL 16 carrying the live policy and helper bodies (`node_visible` 20261041, `is_org_controller` 20260814, `acl_subject_in_bucket` 20260708, the 20260911 / 20260917 / 20260929 knowledge policies; the owner cascade stubbed to its document-owner arm), the whole paste applied as the user will paste it: BEFORE, a Viewer read every stored answer, every mirror row (a private document's and a dangling one included) and every mention sentence; AFTER, a Viewer reads their own answer, the upload and open-document mirrors and those documents' sentences; a Manager (who holds the FOR ALL `entity_mentions_write`) reads exactly the Viewer's sentences; an Engineer granted read on the private document reads their own answer, that mirror and its sentence; an Admin and a Viewer holding DocCtrl additively read everything (DEC-43); a non-member reads nothing and the hub count answers 0. All seven probes were true on the first apply and again on a second (idempotent).
+
+**Pending migration:** `supabase/migrations/20261120_intel_roundG_knowledge_memory_acl.sql` (inventory before apply: stored answers; answers citing a mirror of a private / hidden / private-draft document; answers citing a knowledge document that no longer exists; non-controller members; mirror rows, those of private / hidden documents and dangling ones; mention rows and those on private / hidden documents).
+
+**Done-when.**
+1. ✓ `entity_mentions_source_readable` (RESTRICTIVE) hides every mention of a document the reader cannot see — finer than the chunk lockdown's blanket `NOT EXISTS`, which would also hide sentences from people who may read the document.
+2. ✓ as scoped by the finding: the browser receives a mention's `context_snippet` only for a document visible to the reader at the database; never for one they cannot see (`DEC-54` (2)).
+3. ✓ A member without read on a mirrored controlled document gets zero mention rows for it — shown on the scratch PostgreSQL 16 above (the Viewer and the Manager); pinned by shape and census in `lib/__tests__/knowledgeMemoryAcl.test.ts` (no database runs in the suite).
+
+**Scope / residual.** As `IEDGE-6`.
 
 ---
 

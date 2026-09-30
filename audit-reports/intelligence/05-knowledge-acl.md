@@ -31,7 +31,7 @@
 ## KACL-1 · Ask history is org-member readable and replays verbatim quotes and document names from documents the reader cannot open
 
 - **Severity:** CRITICAL
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Verification:** CONFIRMED
 - **Locations:** `supabase/migrations/20260911_knowledge_ai.sql:146-150`, `lib/knowledge.ts:504-527`, `lib/knowledge.ts:529-546`, `app/(protected)/knowledge/[id]/page.tsx:1410-1415`, `app/(protected)/knowledge/[id]/page.tsx:1690-1720`, `app/api/knowledge/ask/route.ts:1632-1650`, `app/api/knowledge/ask/route.ts:1739-1744`
 - **Independently verified:** ✓ **SURVIVES** — second independent adversarial pass. Confirmed with no mitigating guard anywhere: the history row is readable by any active org member through the browser client under RLS, and it carries verbatim 1600-char quotes and document names from documents that member may be denied. The per-asker ACL filter (route.ts:157-187) runs only over live retrieval, never over replayed history.
@@ -56,6 +56,19 @@ lib/knowledge.ts:510-516 — `const { data, error } = await supabase\n      .fro
 - [ ] searchAskHistory and listKnowledgeQuestions go through that route (or an RLS policy that joins knowledge_documents.source_document_id and evaluates the ACL)
 - [ ] Excluding a document (POST /api/knowledge/exclusion) also strips its citations/quotes from stored knowledge_questions rows, or those rows are redacted at read time
 - [ ] A test proves two members with different ACLs get different history for the same library
+
+
+**Resolution (2026-09-30, intelligence Round G).** Reproduced first (the 20260911 policy is membership-only; `lib/knowledge.ts` read the table with the browser client, `searchAskHistory` org-wide and `listKnowledgeQuestions` with `select("*")`). Closed with `ASK-1` (same code; the package decision `DEC-54` (1)): `20261120` narrows `knowledge_questions_select` to the asker and controllers, and `app/api/knowledge/history/route.ts` (new) serves the team's record — `list` (the Conversations list), `search` (ask memory, scoped to THIS library) and `thread` (reopen one conversation) — through `lib/knowledgeHistory.ts` (new): every row's citations are re-decided for the CURRENT reader through the R&P Round C1 seam (`loadPrincipal` + `readableControlledDocIds`, never a parallel evaluator; `readableKnowledgeDocIds` resolves each cited knowledge document — an upload of the reader's org is readable by design, a mirror is readable when its controlled document is, anything unresolvable (removed, held back from the AI, another org's, malformed) is not). A row citing anything unreadable is withheld whole, and so is every later turn of its conversation, because the ask sends earlier turns back as context (`planVisibleHistory`); the number withheld is returned and shown. Controllers skip the filter (DEC-43). Any read or ACL error answers 500 with no rows — never an unfiltered answer. `lib/knowledge.ts` `searchAskHistory(orgId, libraryId, …)`, `listKnowledgeQuestions(orgId, libraryId)` and the new `loadConversation` call the route; the browser no longer reads `knowledge_questions` at all. On the page, the memory card searches this library only; `openConversation` re-reads a threaded conversation through the route and keeps its thread only when every turn is the reader's own (a teammate's turns seed a NEW conversation, so the next ask is never appended to theirs); the Conversations list says how many answers it is not showing and shows a failed read as a failure. Verified on a scratch PostgreSQL 16 carrying the live policy and helper bodies (`node_visible` 20261041, `is_org_controller` 20260814, `acl_subject_in_bucket` 20260708, the 20260911 / 20260917 / 20260929 knowledge policies; the owner cascade stubbed to its document-owner arm), the whole paste applied as the user will paste it: BEFORE, a Viewer read every stored answer, every mirror row (a private document's and a dangling one included) and every mention sentence; AFTER, a Viewer reads their own answer, the upload and open-document mirrors and those documents' sentences; a Manager (who holds the FOR ALL `entity_mentions_write`) reads exactly the Viewer's sentences; an Engineer granted read on the private document reads their own answer, that mirror and its sentence; an Admin and a Viewer holding DocCtrl additively read everything (DEC-43); a non-member reads nothing and the hub count answers 0. All seven probes were true on the first apply and again on a second (idempotent).
+
+**Pending migration:** `supabase/migrations/20261120_intel_roundG_knowledge_memory_acl.sql` (inventory before apply: stored answers; answers citing a mirror of a private / hidden / private-draft document; answers citing a knowledge document that no longer exists; non-controller members; mirror rows, those of private / hidden documents and dangling ones; mention rows and those on private / hidden documents).
+
+**Done-when.**
+1. ✓ The table is no longer readable by the browser client for anyone else's rows; history is served by `/api/knowledge/history`, which re-filters every row's citations through `readableControlledDocIds` for the current reader (the asker keeps their own rows and controllers all rows, by `DEC-54` / `DEC-43`).
+2. ✓ `searchAskHistory` and `listKnowledgeQuestions` go through that route (and the new `loadConversation`); a test pins that no browser module reads `knowledge_questions`.
+3. ✓ Redacted at read time: excluding a document purges its mirror (`/api/knowledge/exclusion`), so every stored row citing it no longer resolves and is withheld from every non-controller — and every later turn of its conversation. Rows are not rewritten.
+4. ✓ `lib/__tests__/knowledgeMemoryAcl.test.ts` "two members with different ACLs get different history for the same library (KACL-1 done-when 4)", driven over the real `lib/knowledgeAccess`.
+
+**Scope / residual.** The PROVEN GROUND boost (`ask/route.ts`) and `linkProposerServer.ts` read the table on the service role and are unaffected (the ask route already filters with `excludedDocIds`). A stored row records the documents it CITED; passages retrieved but not cited are not recorded — writing them is an ask-route change (I-03).
 
 ---
 
@@ -224,7 +237,7 @@ download-url/route.ts:76-88 — `const allowed = canDiscover({ principal: {…},
 ## KACL-7 · Every mirrored controlled document's number and title is readable by any org member — the 20260917 lockdown closed chunks but left the document rows
 
 - **Severity:** MEDIUM
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Verification:** CONFIRMED
 - **Locations:** `supabase/migrations/20260911_knowledge_ai.sql:124-128`, `supabase/migrations/20260917_knowledge_sources.sql:69-82`, `lib/knowledge.ts:323-347`, `lib/knowledgeSourceSync.ts:47-52`
 - **Independently verified:** ✓ **SURVIVES** — second independent adversarial pass. Confirmed: the 20260917 lockdown is chunk-only, so every mirror's document number, title, source_rev, page_count — and file_key, which is the same R2 key KACL-5 turns into bytes — stays readable by any active org member regardless of the controlled document's ACL.
@@ -248,6 +261,18 @@ download-url/route.ts:76-88 — `const allowed = canDiscover({ principal: {…},
 - [ ] knowledge_documents SELECT for rows with source_document_id IS NOT NULL is gated by the source document's ACL (an RLS policy joining documents, or the list moves behind an API route that applies readableControlledDocIds)
 - [ ] The knowledge library Documents list shows a non-readable mirror as absent, not as a named row
 - [ ] file_key is not returned to the browser for source-linked mirrors
+
+
+**Resolution (2026-09-30, intelligence Round G).** Reproduced first: `knowledge_documents_select` (20260911:124-128) was membership-only and `listKnowledgeDocuments` selected `*`, so every mirror's name (`number — title`), revision, page count and `file_key` reached every member. `20261120` re-creates `knowledge_documents_select` as the 20260911 membership clause AND (`source_document_id IS NULL` OR `EXISTS (SELECT 1 FROM documents d WHERE d.id = knowledge_documents.source_document_id)`) — the EXISTS runs under the CALLER's RLS, so it is the documents read decision itself (`documents_org_access` + the `documents_acl_select` node_visible overlay), the same shape as 20260917's chunk lockdown without hiding a mirror from someone who may read the document (the package decision `DEC-54` (2)). Upload rows stay org-readable; controllers keep every row through `knowledge_documents_write` (FOR ALL, `is_org_controller`), dangling mirrors included. No app change: `listKnowledgeDocuments`, the library counts and every browser reader of the table inherit it. Verified on a scratch PostgreSQL 16 carrying the live policy and helper bodies (`node_visible` 20261041, `is_org_controller` 20260814, `acl_subject_in_bucket` 20260708, the 20260911 / 20260917 / 20260929 knowledge policies; the owner cascade stubbed to its document-owner arm), the whole paste applied as the user will paste it: BEFORE, a Viewer read every stored answer, every mirror row (a private document's and a dangling one included) and every mention sentence; AFTER, a Viewer reads their own answer, the upload and open-document mirrors and those documents' sentences; a Manager (who holds the FOR ALL `entity_mentions_write`) reads exactly the Viewer's sentences; an Engineer granted read on the private document reads their own answer, that mirror and its sentence; an Admin and a Viewer holding DocCtrl additively read everything (DEC-43); a non-member reads nothing and the hub count answers 0. All seven probes were true on the first apply and again on a second (idempotent).
+
+**Pending migration:** `supabase/migrations/20261120_intel_roundG_knowledge_memory_acl.sql` (inventory before apply: stored answers; answers citing a mirror of a private / hidden / private-draft document; answers citing a knowledge document that no longer exists; non-controller members; mirror rows, those of private / hidden documents and dangling ones; mention rows and those on private / hidden documents).
+
+**Done-when.**
+1. ✓ A mirror row's SELECT is gated by its controlled document through an RLS policy joining `documents` (the done-when's first option).
+2. ✓ The Documents list shows a mirror the reader cannot see as absent, not as a named row (the list reads the table under RLS; verified on the scratch PostgreSQL 16 above).
+3. ✓ as the failure scenario scopes it: no member who cannot see the controlled document receives its mirror's row, and so no `file_key`. A reader of the controlled document still receives it — the viewer opens the page with it, and the bytes door re-decides every download (`KACL-5`, I-12) — by `DEC-54` (2).
+
+**Scope / residual.** The mirror is exactly as visible as the controlled document's own ROW at the database. Restrictions the app enforces on a normal-visibility row — an allow-list ACL, a role / team deny (`DACL-6` / `DACL-12`), a private draft's creator-only rule — are enforced by the app and the history route but not by this policy; they tighten here automatically when I-12 brings them into `node_visible`, because the clause reads through the documents RLS rather than beside it.
 
 ---
 
