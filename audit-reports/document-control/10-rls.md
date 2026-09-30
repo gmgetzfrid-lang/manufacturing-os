@@ -1,6 +1,6 @@
 # 10 · RLS & persistence — table by table
 
-**14 findings** — 2 CRITICAL · 6 HIGH · 6 MEDIUM.
+**15 findings** — 2 CRITICAL · 6 HIGH · 6 MEDIUM · 1 LOW.
 
 A policy census across the document-control schema.
 
@@ -115,7 +115,7 @@ A policy census across the document-control schema.
 ## DRLS-3 · No guard covers `documents.rev`, `revision`, `document_number` or `effective_date` — the register label can be moved without moving the file
 
 - **Severity:** HIGH
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Verification:** CONFIRMED
 - **Locations:** `supabase/schema.sql:1068-1069`, `supabase/migrations/20260822_review_completion_guard.sql:36-41`, `supabase/migrations/20260816_documents_access_change_guard.sql:81-101`, `supabase/migrations/20261011_collections_guard_and_trash.sql:38-62`, `supabase/migrations/20260819_effective_date.sql:17-28`
 - **Independently verified:** ✓ **SURVIVES** — second independent adversarial pass. The claim of absence is correct and complete — nothing in the schema or any migration keeps documents.rev/revision/document_number/effective_date consistent with current_version_id, and no check constraint or sync trigger exists. Any active member can move the register label without moving the file.
@@ -139,6 +139,17 @@ A policy census across the document-control schema.
 - [ ] A non-publisher cannot change `rev`, `revision`, `document_number` or `effective_date` on a document by any route
 - [ ] `rev`/`revision` cannot diverge from the `revision_label` of the row named by `current_version_id` — enforced at the database, not only inside `publish_revision`
 - [ ] A test PATCHes `rev` as an active member with no publish authority and asserts refusal
+
+**Resolution (2026-09-30, document-control Round F wave 2).** P3 LIFECYCLE. Reproduced against the newest definitions: `enforce_document_publish_guard` (20261105) still returns early unless the write is advancing; P5's `trg_document_hold_label_guard` (20261074) binds `rev` / `revision` only on a HELD document; nothing bound `document_number` / `effective_date` or kept `rev` equal to the current revision's label.
+- **Migration `20261131_dc_roundF_documents_rails.sql`:** `trg_document_register_rail` (BEFORE UPDATE OF rev, revision, document_number, effective_date, current_version_id, pending_version_id) — a change to any of the four register fields by anyone outside the publisher tier (`is_org_controller`, `user_can_publish_on_library`, `user_is_effective_owner` — the publish guard's population) is refused; whenever the pointer or the label moves, `rev` (and `revision`, when set) must equal the `revision_label` of the row `current_version_id` names — the review promote may carry the in-review draft's base label (`2A` promotes as `2`; `finalizeReviewedRevision` relabels next). The other direction is a sync: `trg_sync_current_version_label` (AFTER UPDATE OF revision_label ON document_versions) carries a CURRENT revision's corrected label onto its document in the same statement — which runs the rail, so only the publisher tier can relabel a current revision at all. A new, separate rail: the publish guard's body is NOT re-created (20261105 stays its newest definition). Existing divergences are inventoried, not rewritten: the rail binds the next change.
+- Tests: `lib/__tests__/dcRoundFLifecycleMigration.test.ts` — the rail's column list, ordering (pointer integrity before the service-role return; authority before consistency), the promote tolerance and the sync; and the rail transcribed and exercised, pinned line for line to the SQL: **an active member with no publish authority PATCHing `rev` is refused** (and `document_number`, `effective_date`); a publisher moving `rev` off the current label is refused; a publish-shaped write and the review promote pass; a mismatched promote is refused; an unchanged field (a metadata save re-sending the same `rev`) is not a change.
+
+**Done-when.**
+1. ✓ A non-publisher cannot change `rev`, `revision`, `document_number` or `effective_date` by any route (the rail binds every signed-in UPDATE; the service role's writes are the RPC's and the restore's).
+2. ✓ `rev` / `revision` cannot diverge from the current revision's `revision_label` — enforced at the database, on both sides.
+3. ✓ A test PATCHes `rev` as an active member with no publish authority and asserts refusal (a transcription pinned to the SQL — there is no live database in this repo; the paste's first probe verifies the rail's presence and body).
+
+**Scope / residual.** **Pending migration:** `supabase/migrations/20261131_dc_roundF_documents_rails.sql` (DEC-30). The library page's metadata editor writes `documents.rev` directly and discards the result (`saveMetadata`, P6's file): after the paste a divergent edit there is refused by the database and the page does not say so — opened as `DRLS-15` below rather than edited here.
 
 ---
 
@@ -516,7 +527,7 @@ schema.sql:1032 `RETURNS SETOF UUID LANGUAGE SQL SECURITY DEFINER AS $$` — 43 
 ## DRLS-13 · `document_supersessions` — the map of which drawing replaces which — is insert- and delete-able by any member, and both writers ignore errors
 
 - **Severity:** MEDIUM
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Verification:** CONFIRMED
 - **Locations:** `supabase/migrations/20260615_fix_missing_rls_policies.sql:71-76`, `supabase/schema.sql:189-200`, `lib/documentLifecycle/common.ts:293`, `lib/revisions.ts:1481`
 - **Independently verified:** ✓ **SURVIVES** — second independent adversarial pass. All four cited claims verified verbatim, including the 'both writers ignore errors' half, which is the part most likely to have been overstated and is not.
@@ -539,6 +550,18 @@ schema.sql:1032 `RETURNS SETOF UUID LANGUAGE SQL SECURITY DEFINER AS $$` — 43 
 - [ ] Both writers inspect the error and surface a failure
 - [ ] A test deletes a supersession row as a Viewer and asserts refusal
 
+**Resolution (2026-09-30, document-control Round F wave 2).** P3 LIFECYCLE. Reproduced: `document_supersessions_member_all` (20260615) is still the table's only policy (no later migration re-defines it); both writers discarded the result (`lib/documentLifecycle/common.ts:313`, `lib/revisions.ts:1535`).
+- **Migration `20261131`:** the FOR ALL policy is dropped; `document_supersessions_select` keeps member-wide read; `document_supersessions_insert` / `_update` require `supersession_writable(org_id, superseded_doc_id, replacement_doc_id)` — an active member with publish authority on the SUPERSEDED document (controller, library publisher or its effective owner) and both documents in the row's org (SECURITY DEFINER, search_path pinned, EXECUTE for authenticated only); `document_supersessions_delete` is the org's controllers only. The inventory counts rows whose documents are not both in the row's org (kept).
+- **Writers:** `supersedeDocument` and `markSupersededAndLink` share `writeSupersessionLineage` (checked upsert + read-back, `REV-14`); the reversal's and the compensation's lineage deletes are checked (a row left behind is named, "Document Control must delete them"), and reversal is a controller act checked before anything moves (`REV-12`).
+- Tests: `lib/__tests__/dcRoundFLifecycleMigration.test.ts` "20261131 — DRLS-13 / REV-14 …" (no FOR ALL, the four policies' shapes, the helper's body and grants, probe fragments against the body); "DRLS-13: a Viewer's DELETE … matches no policy (controller-only) — and the app treats zero rows as a failure"; `lib/__tests__/dcRoundFLifecycle.test.ts` (a refused lineage write throws; a compensation that cannot remove lineage throws).
+
+**Done-when.**
+1. ✓ Rows cannot be deleted by a non-controller, nor inserted (or re-pointed) by a member without publish authority on the superseded document.
+2. ✓ Both writers inspect the error (and the row count) and surface a failure.
+3. ✓ A test deletes a supersession row as a Viewer and asserts refusal (the policy transcribed; the app half exercised against the in-memory PostgREST).
+
+**Scope / residual.** **Pending migration:** `supabase/migrations/20261131_dc_roundF_documents_rails.sql` (DEC-30). A split / merge rolled back by a NON-controller owner cannot delete the lineage it wrote (DELETE is controller-only); the compensation reports those rows for Document Control rather than calling the rollback clean. `documents.superseded_at` / `superseded_by_user` / `supersession_reason` (the finding's chain reaction) remain governed by the publish guard's status rule — outside this finding's done-when.
+
 ---
 
 <a id="drls-14"></a>
@@ -546,7 +569,7 @@ schema.sql:1032 `RETURNS SETOF UUID LANGUAGE SQL SECURITY DEFINER AS $$` — 43 
 ## DRLS-14 · `documents.current_version_id` and `pending_version_id` have no foreign key, and the child-table cascades are asymmetric
 
 - **Severity:** MEDIUM
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Verification:** CONFIRMED
 - **Locations:** `supabase/schema.sql:144`, `supabase/migrations/20260818_review_before_publish.sql:30`, `supabase/migrations/20260825_work_packages_acks.sql:102`, `supabase/migrations/20260817_read_understood.sql:37`, `supabase/migrations/20260823_publish_contract.sql:76`
 - **Independently verified:** ✓ **SURVIVES** — second independent adversarial pass. Correct on every element. One more instance of the asymmetry that strengthens rather than weakens it: work_package_documents.pinned_version_id REFERENCES document_versions(id) with no ON DELETE clause defaults to NO ACTION, so a pinned version blocks deletion while an acknowledged one silently cascades — three different behaviours across four child tables pointing at the same parent.
@@ -570,5 +593,39 @@ schema.sql:144 `current_version_id UUID,` — the column immediately follows `st
 - [ ] `documents.current_version_id` and `pending_version_id` carry FKs to `document_versions`, after an inventory of existing dangling values is run and recorded
 - [ ] The four child tables agree on a deliberate ON DELETE semantics, with compliance evidence (`distribution_acks`, `document_acknowledgments`, `document_review_signoffs`) preserved rather than cascaded
 - [ ] A test deletes a version that a document points at and asserts the database refuses
+
+**Resolution (2026-09-30, document-control Round F wave 2).** P3 LIFECYCLE. Reproduced: no FK or rail on either pointer anywhere in the sequence; `distribution_acks.version_id` still `ON DELETE CASCADE` (20260825), `document_acknowledgments` / `document_review_signoffs.document_version_id` still bare uuids.
+- **Migration `20261131` — the pointers are trigger-enforced references (DEC-44 (P3 LIFECYCLE) §1).** On UPDATE, for EVERY caller (the service role included), a pointer that moves must name an existing revision whose `record_id` is the document (`trg_document_register_rail`); on DELETE of a revision, `trg_document_versions_pointer_rail` — a constraint trigger fired at end of statement, the NO ACTION timing, so a whole-document or whole-org cascade still passes — refuses while any document names it as current and clears a pending pointer to it (SET NULL semantics). Not declared FOREIGN KEYs, deliberately: the restore replays `documents` before `document_versions` (`RESTORE_TABLE_ORDER` — versions reference their document), so a declared FK would refuse every restored document that has a current revision; INSERT is not railed for the same reason.
+- **The child tables agree:** compliance evidence is preserved, never cascaded or orphaned — `distribution_acks.version_id` is re-added `ON DELETE NO ACTION`; `document_acknowledgments` and `document_review_signoffs` gain `…_version_fkey` (NO ACTION), added `NOT VALID` only in the world where orphaned rows already exist (every new row bound; the residue counted, never deleted). `work_package_documents.pinned_version_id` (NO ACTION) and `revision_branches.branch_version_id` (CASCADE — bookkeeping about the version, not evidence about people) are unchanged, stated. A whole-document delete still cascades through `document_id`, as before (legal hold governs that).
+- **Inventory before apply (DEC-30):** dangling and cross-document `current_version_id` / `pending_version_id`, and the orphaned evidence counts, each an aggregate row in the paste's result set.
+- Tests: `lib/__tests__/dcRoundFLifecycleMigration.test.ts` "20261131 — DRLS-3 / DRLS-14 register rail", "DRLS-14 evidence is preserved, never cascaded" (the NO ACTION re-add, the two NOT VALID worlds, no CASCADE anywhere, every FK pointing at a table restored before its child), "DEC-44 …" (no declared FK on `documents`, the restore order that makes it so); the rails exercised: a pointer to another document's revision is refused for the service role too; **deleting the revision a document names as current is refused**; deleting its pending draft clears the pointer.
+
+**Done-when.**
+1. ✓ Both pointers carry an enforced reference to `document_versions` (trigger-enforced rather than a declared FK — DEC-44 (P3 LIFECYCLE) §1, the restore order), after an inventory of dangling values that the paste records.
+2. ✓ The child tables agree on a deliberate ON DELETE semantics with compliance evidence (`distribution_acks`, `document_acknowledgments`, `document_review_signoffs`) preserved.
+3. ✓ A test deletes a revision a document points at and asserts the database refuses (the constraint trigger transcribed and pinned; the paste's third probe verifies it live).
+
+**Scope / residual.** **Pending migration:** `supabase/migrations/20261131_dc_roundF_documents_rails.sql` (DEC-30). Existing dangling pointers are counted, not repaired (a controller re-points or clears them by hand; the rail binds the next move). A revision carrying acknowledgment or sign-off evidence can no longer be deleted on its own — deliberate. The library page's delete flow (`app/(protected)/documents/[libraryId]/page.tsx`, P6's file) clears `current_version_id`, then deletes the versions, then the document: its version step is now refused when a revision carries that evidence — as it already was whenever a revision carried a download record (`download_audits.version_id` has always been NO ACTION); deleting the document row itself still cascades. A pending pointer to a deleted draft is cleared by the rail.
+
+---
+
+<a id="drls-15"></a>
+
+## DRLS-15 · The library page's metadata editor writes `documents.rev` directly and discards the result — after 20261131 a divergent revision label is refused by the database and the page says nothing
+
+- **Severity:** LOW
+- **Status:** OPEN
+- **Verification:** CONFIRMED
+- **Locations:** `app/(protected)/documents/[libraryId]/page.tsx:2662-2683`, `components/documents/MetadataEditor.tsx:188-196`, `components/documents/MetadataEditor.tsx:381-382`, `supabase/migrations/20261131_dc_roundF_documents_rails.sql`
+- **Independently verified:** — opened 2026-09-30 by document-control Round F wave 2 (P3 LIFECYCLE) while closing `DRLS-3`, per DEC-31 (the remainder of a fix that would otherwise reach into another package's file); verified against the code at `a11e1e4`, not yet challenged by a second party.
+
+**Mechanism.** `MetadataEditor` renders an editable "Rev" field for any `canEdit` user and saves `core: { title, documentNumber, rev, status }` (`MetadataEditor.tsx:193`); the page's `saveMetadata` puts `payload.rev = next.core.rev` into one `documents` UPDATE with the metadata and discards the result: `await supabase.from("documents").update(payload).eq("id", selectedDoc.id);` (`page.tsx:2682`). `DRLS-3`'s rail (`20261131`, `trg_document_register_rail`) now refuses a `rev` that differs from the current revision's label (for everyone) and any register-field change by a non-publisher — so the whole UPDATE, the metadata edits in it included, is refused and the modal closes as if it saved.
+
+**Failure scenario.** An engineer fixes a typo in a custom metadata field and, in the same dialog, "corrects" Rev 3 to 3A. The database refuses the statement (the label must be the current revision's); the dialog closes; the metadata typo is not saved either, and nothing tells them.
+
+**Done when.**
+
+- [ ] The metadata editor no longer offers `rev` as a free-text field (a revision label is corrected on the revision, `correctRevisionLabel`, which the rail keeps in step), or sends it only when unchanged.
+- [ ] `saveMetadata` checks `{ error }` and the row count and surfaces a refusal instead of closing.
 
 ---

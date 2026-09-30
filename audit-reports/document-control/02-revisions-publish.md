@@ -224,6 +224,8 @@ lib/reviewControl.ts:430 — `.update({ current_version_id: pendingId, rev: base
 
 **Scope / residual.** **Pending migration `20261070` (REV-5 rows):** intake drafts submitted before this round carry no `supersedes_version_id`. The paste's inventory row "of which with NO recorded base on a document that has a current revision (REV-5: backfilled below, audited per document)" reports how many are in flight; inside the transaction they are backfilled to the revision current at apply time (`UPDATE document_versions … FROM documents d WHERE d.pending_version_id = v.id AND v.intake_link_id IS NOT NULL AND v.review_state = 'in_review' AND v.supersedes_version_id IS NULL AND d.current_version_id IS NOT NULL`) with one `REVIEW_BASE_BACKFILLED` audit row per document (service-role shaped, `details.migration = '20261070'`); the after-apply row "pending intake drafts with NO recorded base … (REV-5; expect 0)" is the check. **Operator step:** paste `20261070` with the deploy; until it is pasted an intake approval of such a draft still succeeds (the app binds the base at approve time), so no vendor has to reject-and-resubmit — the first cut of this round refused all of them with a false "reject it" message, caught in review. A ROSTER-reviewed draft with no base is refused as `stale_base` (none exist: `submitForReview` has stamped the base since a4ea830). The mutators the verifier lists (revert / supersede / archive / split / merge) are P3's; this end closes the defect on its own, so the other end is now hygiene.
 
+*Cross-reference (2026-09-30, document-control Round F wave 2): the other end of this defect — every retirement path voiding the in-flight draft, checked — is `REV-6` (P3 LIFECYCLE, `voidPendingDraft` in `lib/revisions.ts`); with both ends landed a surviving pointer can neither publish (this finding) nor survive a retirement (`REV-6`).*
+
 ---
 
 <a id="rev-6"></a>
@@ -231,7 +233,7 @@ lib/reviewControl.ts:430 — `.update({ current_version_id: pendingId, rev: base
 ## REV-6 · `pending_version_id` is never cleared by revert, supersede, archive, split or merge — an in-flight review draft survives every retirement path and can publish itself later
 
 - **Severity:** HIGH
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Verification:** CONFIRMED
 - **Locations:** `lib/revisions.ts:627-648`, `lib/revisions.ts:1146-1312`, `lib/revisions.ts:1414-1539`, `lib/revisions.ts:1325-1355`, `lib/documentLifecycle/common.ts:253-313`, `lib/documentLifecycle/reverse.ts:104-126`, `lib/reviewControl.ts:402-439`
 - **Independently verified:** ✓ **SURVIVES** — second independent adversarial pass. Claim of absence confirmed by exhaustive search. The retirement paths deliberately mirror publish for status and lineage but omit the one line publish added for exactly this hazard, so a draft surviving a split/supersede/archive/revert can still be promoted later by finalizeReviewedRevision, which (per REV-5) writes status 'Issued' unconditionally.
@@ -255,6 +257,19 @@ lib/revisions.ts:623-626 — the comment stating the invariant: "A direct (non-b
 - [ ] Revert, supersede, archive, split and merge all void the in-flight draft (null the pointer, stamp `superseded_at`, void the roster) or refuse to run while one is open.
 - [ ] The voiding writes check `{error}` instead of swallowing it.
 - [ ] A test retires a document with an open review and asserts a subsequent last-signature cannot publish.
+
+**Resolution (2026-09-30, document-control Round F wave 2).** P3 LIFECYCLE. Reproduced on `a11e1e4` first: the only writer that cleared `pending_version_id` on a change of the controlled copy was `revUpDocument` step 3c (`lib/revisions.ts:627-648` — best-effort, every write unchecked, the whole block in `try { … } catch { }`); `archiveDocument` (`:1352-1382`), `supersedeDocument` (`:1448-1630`), `revertToVersion` (`:1159-1339`), `markSupersededAndLink` (`lib/documentLifecycle/common.ts:273-333`, split and merge) and the reversal's parking (`lib/documentLifecycle/reverse.ts:104-114`) never touched it. This is the other end of `REV-5` (P4 REVIEW, resolved): finalize now refuses a retired document and a moved base, so a surviving pointer could no longer publish — this end removes the loaded gun itself.
+- **`voidPendingDraft(documentId)`** (`lib/revisions.ts`, exported) — the one routine every path runs, CHECKED at each step and ordered so a failure part-way leaves the draft pointed at but unsignable, never a live roster nobody can find: (1) every open (`pending` / `signed`) sign-off on the draft → `void`, the returned row count compared with the rows read (an RLS refusal answers zero rows, not an error); (2) the draft stamped `superseded_at` (a draft already retired is left); (3) the pointer released by compare-and-set on the draft it read, re-read on a zero-row answer. Any refusal throws `PendingDraftVoidError` naming the state it leaves.
+- **Before the retirement write** (a refusal STOPS the operation with nothing retired): `archiveDocument`, `supersedeDocument`, `markSupersededAndLink` (split, merge) and the reversal's `parkAsSuperseded`. Each retirement's audit event carries `pendingDraftVoided`.
+- **After a publish that committed** (`revUpDocument` step 3c, replacing the best-effort block; `revertToVersion`, new): `voidPendingDraftAfterPublish` — a failure is put on the `REV_UP` / `REVERT` record (`pendingDraftVoidProblem`) and logged, never swallowed and never thrown over a publish that already landed. A BRANCH publish leaves the draft alone on purpose (the verifier's sixth path): the controlled copy did not move, so the draft's base is still current.
+- Tests: `lib/__tests__/dcRoundFLifecycle.test.ts` "REV-6 — retirement voids the in-flight review draft; a later last signature cannot publish it": archive a document with an open review → roster void, draft retired, pointer released, then the second reviewer's auto-finalize (the real `finalizeReviewedRevision`) returns `published: false` and the document stays Archived at its old revision; supersede and `markSupersededAndLink` do the same and a finalize after the split publishes nothing; a refused roster void stops the archive (status and pointer untouched); a revert records the voided draft; no draft is a no-op. Mutation-checked: removing the archive call fails two of them.
+
+**Done-when.**
+1. ✓ Revert, supersede, archive, split and merge — and the reversal that parks a split / merge's sheets — void the in-flight draft (pointer nulled, `superseded_at` stamped, roster voided).
+2. ✓ Every voiding write checks `{error}` AND the row count.
+3. ✓ The test retires a document with an open review and asserts the subsequent last signature cannot publish.
+
+**Scope / residual.** A split or merge that rolls back AFTER its draft void does not restore the draft (the author resubmits; the voided roster is on the record). Pointers already left on retired documents before this round are not backfilled here — J1's `pending_on_retired_version_count()` (20261105) reports them on every maintenance run until they are resolved by hand.
 
 ---
 
@@ -301,7 +316,7 @@ components/documents/RevUpModal.tsx:279 — `if (willReview && !asBranch) {`; Re
 ## REV-8 · A transient PostgREST schema-cache miss drops every publish to the unguarded legacy three-step path for 60 seconds — no base check, no row lock, no transaction
 
 - **Severity:** LOW
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Verification:** CONFIRMED
 - **Locations:** `lib/revisions.ts:80-87`, `lib/revisions.ts:110-120`, `lib/revisions.ts:533-551`, `lib/revisions.ts:613-619`, `lib/revisions.ts:756-835`, `lib/revisions.ts:1191-1207`, `supabase/migrations/20260823_publish_contract.sql:1-31`
 - **Independently verified:** ✓ **SURVIVES, corrected** — second independent adversarial pass. Severity **MEDIUM → LOW** by this pass. The mechanism is real — a transient PGRST202 sets a 60s flag that routes publishes to legacyRevUpAfterUpload (revisions.ts:758-835), which genuinely has no row lock and no transaction. But two of the title's claims are wrong: there IS a base check on the legacy path (the step-1b pre-flight at 453-478 runs regardless of which path follows), and it is not 'every publish' — publishRpcMissingUntil is a module-level variable in a browser-side module (lib/supabase.ts is the anon browser client; revUpDocument is only called from RevUpModal/merge.ts/setRevUp.ts), so the flag is per-tab, not per-deployment. The stated outcome ('both version rows are written') additionally requires the two drafters to pick DIFFERENT labels, since the partial unique index rejects a second active row with the same (record_id, revision_label). Residual risk is a genuine but narrow TOCTOU: the pre-flight fires before the file hash+upload, so a true concurrent race inside the upload window can still slip through.
@@ -325,6 +340,17 @@ lib/revisions.ts:83 — `if (err.code === "PGRST202" || err.code === "42883") re
 - [ ] A transient RPC error is retried against the RPC rather than downgrading to the unguarded path.
 - [ ] `legacyRevUpAfterUpload` and the legacy revert branch are removed, or gated behind an explicit deployment flag that is off in any environment where the migration is applied.
 - [ ] A publish attempted while the contract is unavailable fails loudly instead of succeeding without a base check.
+
+**Resolution (2026-09-30, document-control Round F wave 2).** P3 LIFECYCLE. Reproduced on `a11e1e4`: `publishRpcMissingUntil` (`lib/revisions.ts:111-115`) set a 60-second module flag on any PGRST202 during which `revUpDocument` fell through to `legacyRevUpAfterUpload` (`:617-623`, `:761-841` — three PostgREST calls, no row lock, no transaction) and `revertToVersion` to its legacy branch (`:1263-1303` — no base comparison of any kind, the sharpest instance).
+- **Retired, not flagged:** `legacyRevUpAfterUpload`, the revert legacy branch and the flag (with its `resetPublishRpcFlag` test hook) are deleted. `callPublishRevisionRpc` retries a transient miss (`isMissingPublishRpc`: PGRST202 / 42883) ONCE against `publish_revision` after `PUBLISH_RPC_RETRY_MS` (1.5 s — the schema-cache reload window); a miss that survives throws `PublishContractUnavailableError` ("Nothing was published: the publish contract (publish_revision) could not be reached …"). An override publish names `p_override_reason`, which only 20261130's signature has, so before that paste it is refused with the deploy-order sentence instead (`DCK-8`).
+- Tests: `lib/__tests__/dcRoundFLifecycle.test.ts` "REV-8 — no unguarded fallback": a persistent miss → two RPC calls, no version row, no pointer move, no `REV_UP` audit row; a transient miss → retried and published; the source no longer contains the legacy path, the flag or the legacy revert body. The pointer-writer census (`lib/__tests__/intakeUploadRoute.test.ts`) drops the retired leg from its pinned exemptions and its known-writer list; `lib/__tests__/sweepRoundC2.test.ts` pins its absence.
+
+**Done-when.**
+1. ✓ A transient RPC error is retried against the RPC, never downgraded.
+2. ✓ `legacyRevUpAfterUpload` and the legacy revert branch are removed (no deployment flag — the 20260823 / 20260828 contract has been applied and probe-verified since 2026-08).
+3. ✓ A publish attempted while the contract is unavailable fails loudly with nothing written to the version chain or the document.
+
+**Scope / residual.** A rev-up uploads its file before the RPC answers, so a contract outage leaves an unreferenced object in storage (the storage orphan sweep's domain — the same as any refused publish). The `revup_rollback_orphan` RPC stays in the database (authorized since `DRLS-2`); the app no longer calls it.
 
 ---
 
@@ -358,6 +384,17 @@ lib/effectiveDate.ts:91 — `const todayISO = () => new Date().toISOString().sli
 - [ ] A future effective date always produces exactly one "now in effect" announcement, on the day the badge flips.
 - [ ] The effective-date tests pass under a non-UTC `TZ`.
 
+**Partial (2026-09-30, document-control Round F wave 2).** P3 LIFECYCLE — the shared helper and every caller in this package's files. Reproduced on `a11e1e4`: `effectiveStatusFor` / `daysUntilEffective` compared against the browser's local midnight and parsed the stored date through a bare local datetime (`lib/effectiveDate.ts:23-24`, `:33-34`), while `applyEffectiveDate`'s suppression watermark and `scanEffectiveDates` used `new Date().toISOString().slice(0, 10)` (`:16`, `:45`, `:62-63`); the test built its fixtures in UTC and fed them to the local comparators.
+- **One calendar, exported with a stable name:** `effectiveTodayISO(now?, timeZone?)` and `EFFECTIVE_DATE_TIME_ZONE` (`lib/effectiveDate.ts`). The badge, the watermark and the scan all decide in it; stored dates compare as validated YYYY-MM-DD strings (an impossible date such as `2026-02-30` is `none`), never through a local-zone parse. There is no facility time-zone setting in the product, so the zone is UTC — the calendar the server paths (the cron scan, `/api/verify`) already used — and a facility zone, when it lands, changes the one constant (DEC-44 (P3 LIFECYCLE) §4).
+- Tests: `lib/__tests__/effectiveDate.test.ts` — fixtures built with `effectiveTodayISO`; "REV-9 — one definition of 'today' …": at the finding's instant (20:30 Houston, 21 Aug = 01:30 UTC, 22 Aug) the watermark suppresses exactly the dates the badge does not show as pending; the answers are identical with the runner in America/Chicago, Asia/Tokyo, UTC and Pacific/Kiritimati; the source no longer reads local midnight or parses a bare datetime, and the scan and the watermark route through the one helper.
+
+**Done-when (this pass).**
+1. ◐ The badge, the suppression watermark and the daily scan share one definition. `/api/verify` compares in the same calendar already (`app/api/verify/route.ts:139`, UTC) — so its verdict agrees today — but still spells its own inline `new Date().toISOString().slice(0, 10)`; replacing it with `effectiveTodayISO()` is the one-line consumer change the plan gives to **P8 FIELD** ("REV-9 (consumer of P3's helper)"), and the verify route is not this package's file. "Ideally the facility's configured zone": no such setting exists; the constant is the single point.
+2. ✓ In one calendar a future date is suppressed iff the badge is not pending, and the scan announces it on the day the badge flips (the scan also no longer announces a date the current version does not carry — `REV-13`).
+3. ✓ The effective-date tests pass under non-UTC `TZ` values.
+
+**Scope / residual.** Stays OPEN for the `/api/verify` line. **Closer: P8 FIELD** (document-control Round F wave 2), which then closes `REV-9` against done-when 1.
+
 ---
 
 <a id="rev-10"></a>
@@ -365,7 +402,7 @@ lib/effectiveDate.ts:91 — `const todayISO = () => new Date().toISOString().sli
 ## REV-10 · Live share tokens keep serving a Superseded, Archived or split-away document to an unauthenticated external party — neither share route checks `documents.status` and no retirement path revokes a share
 
 - **Severity:** MEDIUM
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Verification:** CONFIRMED
 - **Locations:** `app/api/share/file/route.ts:42-58`, `app/api/share/file/route.ts:103-116`, `app/api/share/resolve/route.ts:32-47`, `lib/documentShares.ts:46,61,69`, `lib/revisions.ts:1414-1539`, `lib/revisions.ts:1325-1355`, `lib/documentLifecycle/common.ts:266-281`
 - **Independently verified:** ✓ **SURVIVES** — second independent adversarial pass. Confirmed on both halves: no status check in either share route, and no retirement path revokes a share. supersedeDocument (revisions.ts:1454-1467) and markSupersededAndLink (documentLifecycle/common.ts:266-281) set status='Superseded' and never look at document_shares. Partial mitigation the finding does not mention: the delivered PDF is stamped 'UNCONTROLLED — SHARED COPY' with a /verify QR, and app/api/verify/route.ts:88 `const docRetired = d.status === 'Superseded' || d.status === 'Archived'` does return docStatus/isCurrent=false — but the share landing page never surfaces status, so the outsider only learns it by scanning the QR. MEDIUM stands.
@@ -403,6 +440,17 @@ app/api/share/file/route.ts:54-56 — `.select("id, document_number, title, name
 
 **Scope / residual.** Stays OPEN for the lifecycle half. **Closer: P3 LIFECYCLE** (document-control Round F wave 2) — revoke outstanding `document_shares` rows on archive, split and merge (the `DIST-1` pattern: live rows only, the count on the audit event), then close `REV-10` against done-when 2. The stated default "a share always serves the current revision" is DEC-46.
 
+**Resolution (2026-09-30, document-control Round F wave 2).** P3 LIFECYCLE — the lifecycle half; the route half is P1 SHARE's (Partial above: both routes refuse a Superseded / Archived / Void / Draft document with the reason, and the landing page says so). Reproduced on `a11e1e4`: only `supersedeDocument` revoked (`DIST-1`, `lib/revisions.ts:1541-1551`); `archiveDocument` (`:1352-1382`), `markSupersededAndLink` (`lib/documentLifecycle/common.ts:273-333`, split and merge) and the reversal's parking touched no `document_shares` row, so an unarchive or a reversed split / merge let the link serve again.
+- **`revokeLiveSharesForDocument(documentId, actorUserId)`** (`lib/revisions.ts`) — the `DIST-1` pattern made shared: live rows only (`.is("revoked_at", null)`, so 20261080's frozen `revoked_at` is never touched), what this actor may revoke under RLS (the creator or a controller), returning the count and any refusal. Called by `archiveDocument`, `supersedeDocument` (DIST-1's inline block re-pointed at it), `markSupersededAndLink` (split, merge) and the reversal's `parkAsSuperseded`; every one records `revokedShareLinks` and `shareRevokeError` on its own audit event. Revocation is durable (20261080), so an unarchive or a reversal no longer revives a link.
+- Tests: `lib/__tests__/dcRoundFLifecycle.test.ts` "REV-10 (lifecycle half) …": archive revokes the two live links, leaves the already-revoked one untouched, and records `revokedShareLinks: 2`; a split's supersession revokes the source's link and records it; supersede and the lifecycle module both call the shared helper.
+
+**Done-when.**
+1. ✓ (P1 SHARE) Both share routes refuse a Superseded, Archived or Void document with the reason.
+2. ✓ Superseding, archiving, splitting and merging a document REVOKE its outstanding share tokens (and a reversal's parked sheets), the count on the audit event.
+3. ✓ (P1 SHARE) A retired document's copy no longer leaves at all; a served copy's footer states the status it left with.
+
+**Scope / residual.** Links another creator minted are revoked only when the actor is a controller (RLS); the count on the audit event says how many were — the `DIST-1` stance. `components/documents/ShareLinkModal.tsx` (P1's file) still says a link "may be revoked when it is superseded, split, merged or archived" — true (the RLS caveat above), no copy change needed.
+
 ---
 
 <a id="rev-11"></a>
@@ -410,7 +458,7 @@ app/api/share/file/route.ts:54-56 — `.select("id, document_number, title, name
 ## REV-11 · Split, merge and the "link a drawing" upload create documents at status `Issued` with no publish-authority check and no review-control resolution, then start the compliance clocks on them
 
 - **Severity:** MEDIUM
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Verification:** CONFIRMED
 - **Locations:** `lib/documentLifecycle/common.ts:133-249`, `lib/documentLifecycle/common.ts:178`, `lib/revisions.ts:309-393`, `lib/revisions.ts:344`, `lib/revisions.ts:386-391`, `components/documents/DocumentLinkPicker.tsx:101-115`, `lib/documentLifecycle/split.ts:96-134`, `lib/documentLifecycle/merge.ts:107-142`
 - **Independently verified:** ✓ **SURVIVES, corrected** — second independent adversarial pass. The core claim is correct — split (split.ts:96-134), merge (merge.ts:107-142) and DocumentLinkPicker.tsx:101-115 all materialize status='Issued' Rev-0 controlled documents with released_at set, with no publish-authority check and no review-control resolution, so a require-review library is bypassed. Two factual corrections, which is why this is CORRECTED rather than clean: (1) split/merge do NOT start the compliance clocks — onDocumentIssued/onDocumentIssuedAck/recomputeRetention appear only at revisions.ts:386-391 (createDocumentWithFile) and postPublish.ts:138-143, never in createNewDocWithFirstVersion, so the cited clock behaviour applies only to the link-a-drawing path; (2) the Split/Merge entry point is UI-gated (InspectorPanel.tsx:283 `const canManage = isController || isOwner;` at :888), so the actor is a controller or the doc's owner, not an arbitrary drafter. Severity left at MEDIUM: an owner who is not a controller can still bypass a mandatory review gate this way.
@@ -435,6 +483,19 @@ lib/documentLifecycle/common.ts:178 — `status: "Issued",`; lib/revisions.ts:34
 - [ ] A newly created document's initial status is a deliberate choice, not a hardcoded `"Issued"`, and the "link a drawing" upload does not default to controlled-and-issued.
 - [ ] Split, merge and creation carry the same publish-authority check as `revUpDocument`.
 
+**Resolution (2026-09-30, document-control Round F wave 2).** P3 LIFECYCLE. Reproduced on `a11e1e4`, with the verifier's corrections: `createNewDocWithFirstVersion` hardcoded `status: "Issued"` (`lib/documentLifecycle/common.ts:196`) and neither `splitDocument` nor `mergeDocuments` resolved the review policy or ran an app-side authority check (the database's publish guard does check the first pointer write — the verifier's point 1); `createDocumentWithFile` defaulted `status: input.status ?? "Issued"` (`lib/revisions.ts:346`) and `DocumentLinkPicker` passed none, so an upload became a controlled Rev 0 with its review clock and read-&-understood roster started (`:390-392`); its first pointer write was unchecked.
+- **The initial status is a deliberate choice.** `createDocumentWithFile` takes a REQUIRED `status: "Draft" | "Issued"` (`CREATION_STATUSES`); `createNewDocWithFirstVersion` takes a required `initialStatus` and records it on the creation event. The link picker (`components/documents/DocumentLinkPicker.tsx`) files a **Draft** unless the uploader picks "Issued — a controlled Rev 0 (needs publish authority in this library)", with a line saying what issuing starts and that a require-review library refuses it. Output-template filing already passed `"Draft"`.
+- **Issuing is a publish.** `createDocumentWithFile` with `"Issued"` takes library publish authority or the target container's effective ownership (the database's own `user_is_effective_owner` with no document owner — the rung the guard reads) and resolves the governing review policy (`resolveCreationReviewGate`); the review clock and ack roster start ONLY for an issued document; the first pointer write is checked (a refusal is an error naming the half-created document, never a created document with no file).
+- **Split and merge resolve the policy and carry the publish gate.** Both run `authorizePublish` on every source (per-library authority or the source's effective owner — `HLD-2`) and resolve the review policy of the folder / library the new sheets land in (`resolveCreationReviewGate`; for a merge that extends an existing target with a rev-up, `effectiveReviewControlForDocument` + `effectiveModeForRevUp` on that target — the RevUpModal / `setLevelRevUp` resolver, no second one). A policy that REQUIRES sign-off refuses the operation before anything is written, saying how to proceed (DEC-44 (P3 LIFECYCLE) §2); `publisher_choice` / `none` proceed and the decision is RECORDED on each `CREATED_FROM_SPLIT` / `CREATED_FROM_MERGE` event (`reviewPolicy`); an unreadable policy refuses (RG-6).
+- Tests: `lib/__tests__/dcRoundFLifecycle.test.ts` "REV-11 — …": a split in a require-mode library, and with an unreadable policy, creates nothing; a `publisher_choice` split records its reason on both creation events; a split with no authority is refused by the gate; a Draft starts no clock, an Issued creation without authority (and not the container owner) inserts nothing, the container owner may issue, a require-mode library refuses an issue, a permitted issue starts the clock once; a refused pointer write throws; the picker's default and the explicit statuses are pinned. `lib/__tests__/roundEOwnership.test.ts` passes the status explicitly.
+
+**Done-when.**
+1. ✓ Split and merge resolve the effective review control for the target and either refuse (require — routing a split's sheets through review would leave the plant with no controlled copy between the supersession and the approval; DEC-44 (P3 LIFECYCLE) §2) or record why they did not route (`reviewPolicy` on the creation event).
+2. ✓ A newly created document's initial status is the caller's explicit choice; the link-a-drawing upload defaults to Draft.
+3. ✓ Split, merge and issuing creation carry the same publish-authority check as `revUpDocument`.
+
+**Scope / residual.** The library page's bulk upload (`uploadOne` in `app/(protected)/documents/[libraryId]/page.tsx`, P6's file) keeps its own status picker and is outside this finding's cited paths. Split / merge sheets still start no review cycle or ack roster (the verifier's "opposite defect" — J1's pointer census keeps its pinned exemption for `createNewDocWithFirstVersion`); not in this finding's done-when.
+
 ---
 
 <a id="rev-12"></a>
@@ -442,7 +503,7 @@ lib/documentLifecycle/common.ts:178 — `status: "Issued",`; lib/revisions.ts:34
 ## REV-12 · `reverseSplit` / `reverseMerge` restore documents to `Issued` regardless of what they were before, and reconstruct state from an audit field (`auditAt`) that is never written
 
 - **Severity:** MEDIUM
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Verification:** CONFIRMED
 - **Locations:** `lib/documentLifecycle/reverse.ts:99-100`, `lib/documentLifecycle/reverse.ts:116-126`, `lib/documentLifecycle/reverse.ts:205-206`, `lib/documentLifecycle/reverse.ts:212-223`, `lib/documentLifecycle/split.ts:93,150-153`, `lib/documentLifecycle/common.ts:93-119`, `lib/audit.ts:16-31`
 - **Independently verified:** ✓ **SURVIVES** — second independent adversarial pass. Both halves confirmed. split.ts:93 captures `priorSourceStatus` and restoreSupersededSource (common.ts:93-119) restores it correctly — but only on the in-transaction compensation path; the user-facing reverse* functions ignore it entirely and hard-code 'Issued', so a Void or Draft source comes back as a live controlled document. auditAt is never written by logRevisionEvent/logAuditAction (lib/audit.ts:16-31 writes action/resource/details only), so summarizeDerivativeWork always scans from epoch — over-inclusive rather than dangerous, but it means the 'since the split' warning text is false.
@@ -467,6 +528,18 @@ lib/documentLifecycle/reverse.ts:117-118 — "// Un-supersede the source. Restor
 - [ ] A reversal restores a document to the status it actually held, never a hardcoded `Issued`.
 - [ ] The derivative-work warning counts only events after the operation being reversed.
 
+**Resolution (2026-09-30, document-control Round F wave 2).** P3 LIFECYCLE. Reproduced on `a11e1e4`: `reverseSplit` / `reverseMerge` wrote `status: "Issued"` (`lib/documentLifecycle/reverse.ts:118-126`, `:212-221`) and read `details.auditAt ?? "1970-01-01T00:00:00Z"` (`:99`, `:205`) — a field no writer set, so the derivative-work warning counted the operation's own events.
+- **Recorded at the source.** `markSupersededAndLink` reads the source's status FRESH from the database (not the caller's possibly stale record), writes `priorStatus` and `auditAt` (the operation's own timestamp) onto the `DOC_SPLIT` / `DOC_MERGED` event, and returns the prior status so the saga's compensation restores the same value. `mergeDocuments` reads every source's status up front and records `priorStatuses` (all siblings) on each `DOC_MERGED` event, so a reversal from any one of them restores each.
+- **Restored exactly.** `reverseSplit` / `reverseMerge` restore the recorded status; a legacy event (no recorded status) is REFUSED with `PriorStatusUnknownError` — nothing moves — unless the caller names the status explicitly (`legacyRestoreStatus`, validated against `LEGACY_RESTORE_STATUSES`; DEC-44 (P3 LIFECYCLE) §3). The derivative-work warning counts from `operationInstant(ev)` — `auditAt`, else the audit row's own `timestamp` (now selected), never the epoch — and names the right operation ("since the merge"). Every write is checked (a refused park / restore / lineage delete stops with the state named); reversal is a Document Control / Admin act, checked before anything moves (it deletes supersession rows, which 20261131 reserves to them); parked sheets have their draft voided (`REV-6`) and their links revoked (`REV-10`). The compensation `restoreSupersededSource` is checked the same way, so `withCompensation` reports a failed cleanup instead of calling the rollback clean.
+- Tests: `lib/__tests__/dcRoundFLifecycle.test.ts` "REV-12 — …": a Void source's `DOC_SPLIT` records `priorStatus: "Void"` and `auditAt`; `reverseSplit` restores it to Void (the lineage rows removed, the new sheets parked) and counts work from the split's instant; a legacy split is refused with nothing moved, then restored with an explicit Draft, and an invalid explicit status is refused; `reverseMerge` restores Issued and Void siblings from one event; a non-controller is refused; `operationInstant` never falls back to the epoch; a compensation that cannot clean up throws. Mutation-checked (a hardcoded "Issued" fails two).
+
+**Done-when.**
+1. ✓ `DOC_SPLIT` / `DOC_MERGED` carry the prior status (and, for merge, every sibling's) and the event instant; the reversal reads both.
+2. ✓ A reversal restores the status the document actually held, never a hardcoded Issued (a legacy event is refused rather than guessed).
+3. ✓ The derivative-work warning counts only events after the operation.
+
+**Scope / residual.** `components/documents/lifecycle/ReverseConfirmModal.tsx` (not this package's file) offers no picker for `legacyRestoreStatus`, so a pre-Round-F split / merge is refused in the UI with the reason; a picker is a UI follow-up.
+
 ---
 
 <a id="rev-13"></a>
@@ -474,7 +547,7 @@ lib/documentLifecycle/reverse.ts:117-118 — "// Un-supersede the source. Restor
 ## REV-13 · `revertToVersion` never calls `applyEffectiveDate` — the document keeps the superseded revision's effective date, and the cron announces it coming into force
 
 - **Severity:** MEDIUM
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Verification:** CONFIRMED
 - **Locations:** `lib/revisions.ts:1146-1312`, `lib/revisions.ts:642-647`, `lib/reviewControl.ts:482-484`, `lib/effectiveDate.ts:45`, `lib/effectiveDate.ts:62-63`, `lib/docControlRegister.ts:186-187`
 - **Independently verified:** ✓ **SURVIVES** — second independent adversarial pass. Confirmed. After a revert, documents.effective_date still holds the withdrawn revision's future date with effective_notified_at NULL, so scanEffectiveDates (effectiveDate.ts:56-63, `.lte("effective_date", todayISO()).is("effective_notified_at", null)`) fires 'Now in effect: <doc> Rev <revert-label>' on that date, and docControlRegister.ts:186-187 keeps flagging the reverted doc effectivePending. The new revert version row itself carries no effective_date (revertPayload, :1172-1185), so the version and the document disagree.
@@ -499,6 +572,18 @@ lib/revisions.ts:646 — `await applyEffectiveDate({ documentId: doc.id, version
 - [ ] A revert to a revision with no effective date clears the document's pending date and its badge.
 - [ ] `scanEffectiveDates` cannot announce a date belonging to a version that is no longer current.
 
+**Resolution (2026-09-30, document-control Round F wave 2).** P3 LIFECYCLE. Reproduced on `a11e1e4`: `applyEffectiveDate` had two callers (`lib/revisions.ts:650`, `lib/reviewControl.ts:817`); `revertToVersion` (`:1159-1339`) had none, so the document kept the withdrawn revision's future date with no watermark.
+- `revertToVersion` now calls `applyEffectiveDate({ …, versionId: <the revert row>, effectiveDate: null })` after its publish: the document's date is cleared and the watermark stamped (an immediate date is never announced); a refusal goes on the `REVERT` record (`effectiveDateReconcileError`). The branch path needs none (the controlled copy does not move).
+- `scanEffectiveDates` (`lib/effectiveDate.ts`) reads the CURRENT version's own effective date and announces only when the document's denormalized copy belongs to it (`belongsToCurrentVersion`); a stale copy is watermarked instead, so no path that moved the pointer without reconciling can make the scan announce a pulled revision.
+- Tests: `lib/__tests__/dcRoundFLifecycle.test.ts` "REV-13 — …" (a revert over a document carrying 2026-12-01 leaves it null and watermarked); `lib/__tests__/effectiveDate.test.ts` "REV-13 — the scan announces only a date the CURRENT version carries".
+
+**Done-when.**
+1. ✓ Every path in this package that changes `current_version_id` reconciles the date (rev-up and finalize already did; revert now does); the scan guard covers any other path.
+2. ✓ A revert to a revision with no effective date clears the document's pending date and its badge.
+3. ✓ `scanEffectiveDates` cannot announce a date that does not belong to the current version.
+
+**Scope / residual.** The external-intake auto path (`app/api/intake/upload/route.ts`, J1's) publishes through `publish_revision` and does not call `applyEffectiveDate`; an external submission carries no effective date, and the scan guard makes a stale document date harmless there too.
+
 ---
 
 <a id="rev-14"></a>
@@ -506,7 +591,7 @@ lib/revisions.ts:646 — `await applyEffectiveDate({ documentId: doc.id, version
 ## REV-14 · `supersedeDocument` writes its lineage rows as one unchecked batch INSERT with no conflict handling, despite a comment claiming duplicate-key tolerance — a single existing pair silently drops the whole supersession record
 
 - **Severity:** MEDIUM
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Verification:** CONFIRMED
 - **Locations:** `lib/revisions.ts:1470-1482`, `lib/documentLifecycle/common.ts:283-294`, `supabase/migrations/20260526_supersede_archive.sql:28-37`, `components/documents/SupersedeModal.tsx:52-77`, `lib/revisions.ts:1432-1452`
 - **Independently verified:** ✓ **SURVIVES** — second independent adversarial pass. Confirmed exactly as claimed, including the false comment. A multi-row INSERT is atomic in Postgres, so one pre-existing pair rejects the whole statement; the return value is discarded, so SupersedeModal.tsx:52-77 reaches `onSuccess(...)` and `onClose()` with no error. The sibling function in the same codebase does it correctly, which settles that this is an oversight rather than intent. Mild mitigation: logRevisionEvent at revisions.ts:1483-1497 still records resolvedReplacementIds, so the audit log retains the lineage even when the join table does not.
@@ -530,5 +615,18 @@ lib/revisions.ts:1470-1471 — "// Record the (old → new) join rows. Idempoten
 - [ ] `supersedeDocument` upserts on the unique pair and surfaces a failure instead of discarding it.
 - [ ] Re-running a supersede with an added replacement records the new pair.
 - [ ] A document cannot be left in `Superseded` with zero lineage rows and no visible warning.
+
+**Resolution (2026-09-30, document-control Round F wave 2).** P3 LIFECYCLE. Reproduced on `a11e1e4`: `supersedeDocument` wrote lineage with a bare `insert(rows)` whose result was discarded (`lib/revisions.ts:1535`) under a comment claiming duplicate-key tolerance; the status flip ran whether or not any replacement resolved.
+- **`writeSupersessionLineage`** (`lib/revisions.ts`, shared with `markSupersededAndLink`): an upsert on the unique pair with `ignoreDuplicates` (ON CONFLICT DO NOTHING — a re-run with an added replacement records the new pair instead of losing the batch), then a read-back that every named pair is present (an RLS refusal answers zero rows); a refusal or a missing pair throws "The document is now Superseded, but … replacement link(s) were not recorded … Re-run the action with the same replacements — re-running is safe" (a re-run is idempotent end to end).
+- **Resolved before anything is written:** a replacement number that does not resolve in the library (or names the document itself) refuses the WHOLE supersede with `UnresolvedReplacementsError`; the lookup's error is checked. `SupersedeModal` shows the refusal with the unresolved numbers, and warns when NO replacement is named ("This retires the document with nothing pointing forward").
+- **Database (`20261131`):** the unique pair index is built where a database lacks it and has no duplicate pair (the DEC-30 inventory counts duplicates; nothing is deleted); the probe reads it.
+- Tests: `lib/__tests__/dcRoundFLifecycle.test.ts` "REV-14 / DRLS-13 — …": a re-run with an added replacement leaves both pairs, both upserts on the pair with `ignoreDuplicates`; an unresolved number refuses with nothing written; a refused lineage write throws the re-run sentence; the modal's warning and refusal handling are pinned. `lib/__tests__/dcRoundFLifecycleMigration.test.ts` pins the index world.
+
+**Done-when.**
+1. ✓ `supersedeDocument` upserts on the unique pair and surfaces a failure.
+2. ✓ Re-running a supersede with an added replacement records the new pair.
+3. ✓ A document can no longer be Superseded with fewer links than named without an error; a supersede that names no successor shows a visible warning before it runs, and the inventory counts the Superseded documents already carrying none.
+
+**Scope / residual.** **Pending migration:** `supabase/migrations/20261131_dc_roundF_documents_rails.sql` (DEC-30 — only where the 20260526 constraint is missing). If the inventory reports duplicate pairs the index is not built and the probe says so; reconcile by hand and re-run.
 
 ---

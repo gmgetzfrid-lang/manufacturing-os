@@ -1068,6 +1068,8 @@ For a fix that needs a schema or policy change:
 
 *Landed 2026-09-23 (document-control Round F): `20261077` applies the two-worlds rule inside one paste — the pre-apply inventory (TEMP TABLE, aggregate counts: `document_review_events` rows with NULL `org_id` and how many of those have no parent document left, live `document_versions` rows sharing a storage key, documents disposed or Archived under an open hold) is captured BEFORE the transaction, the DDL then chooses its own world — `org_id SET NOT NULL` when the backfill left nothing, otherwise a `NOT VALID` CHECK that binds every NEW row and keeps the unbackfillable residue for the record (never deleted) — and the final SELECT reports which world it chose. See `DRLS-4`, `RET-8`, `HLD-1`.*
 
+*Landed 2026-09-30 (document-control Round F wave 2, P3 LIFECYCLE): `20261131` takes the two-worlds rule to foreign keys and a unique index — the pre-apply inventory counts dangling and cross-document version pointers, documents whose `rev` differs from their current revision's label, duplicate supersession pairs and orphaned acknowledgment / sign-off evidence; the evidence FKs are added `NOT VALID` only where orphans exist (every new row bound, the residue counted, never deleted), the supersession pair index is built only where no duplicate pair exists, and existing label divergences are reported, not rewritten — the rail binds the next change. See `DRLS-3`, `DRLS-14`, `REV-14`.*
+
 <a id="dec-31"></a>
 ## DEC-31 · The scope rule
 
@@ -2036,6 +2038,8 @@ then. A stated need for owners to share widens the INSERT arm to
 
 **Risk:** low — every change narrows; a never-expiring link older than 90
 days expires on apply, which the migration's inventory counts before the fact.
+
+*Landed 2026-09-30 (document-control Round F wave 2, P3 LIFECYCLE): §3's lifecycle half — archive, split and merge now REVOKE a document's live share links as supersede did (`revokeLiveSharesForDocument`, `lib/revisions.ts`: live rows only, what the actor may revoke under RLS, the count and any refusal on the retirement's audit event), and so does a reversal that parks a split / merge's sheets; revocation is durable (20261080), so an unarchive or a reversed split / merge no longer serves a link again. See `REV-10`.*
 
 <a id="dec-47"></a>
 ## DEC-47 · Imported schedule rows are commitments everywhere
@@ -3300,3 +3304,80 @@ allowlist); the authorship rule and the contract-only promote are structural.
 
 **Risk:** medium — a trusted vendor's first revisions now wait for a person,
 and an unverifiable sheet needs a deliberate single adopt.
+
+<a id="dec-44-p3-lifecycle"></a>
+## DEC-44 · The documents-table rails: what the database references, what a creation may issue, what a reversal may restore, and which calendar decides "in effect"
+
+*Number provisional — minted by document-control Round F wave 2 (package P3 LIFECYCLE) as the brief directs; distinct from the download-record DEC-44 above. The integrator renumbers on merge (references: `REV-9`, `REV-11`, `REV-12`, `DRLS-14` in document-control, and the header of `supabase/migrations/20261131_dc_roundF_documents_rails.sql`).*
+
+**Decision. Four calls the lifecycle package had to make, each in the direction that fails safe:**
+
+1. **The version pointers are trigger-enforced references, not declared
+   foreign keys.** `documents.current_version_id` / `pending_version_id`
+   must name a revision OF THAT document whenever they move (every caller,
+   the service role included), a document's current revision cannot be
+   deleted (a constraint trigger at end of statement — the NO ACTION timing),
+   and a pending pointer to a deleted draft is cleared. A declared FK would
+   refuse every restored document: the restore replays `documents` before
+   `document_versions` (`lib/dataRestore.ts` `RESTORE_TABLE_ORDER`), because
+   versions reference their document. Compliance evidence that hangs off a
+   version (`distribution_acks`, `document_acknowledgments`,
+   `document_review_signoffs`) takes a declared NO ACTION FK — those tables
+   restore after `document_versions` — so deleting a revision with evidence
+   is refused rather than cascading or orphaning it.
+2. **A creation that issues controlled content in a library whose effective
+   policy REQUIRES sign-off is refused, not routed.** Split and merge sheets
+   and an "Issued" upload are first issues outside the database's revision
+   gate (RG-7). Routing a split's sheets through review would supersede the
+   controlled source while its replacements are unapproved — no controlled
+   copy in between — so the operation refuses and says how to proceed
+   (create as Draft, review, then retire the old document). Under
+   `publisher_choice` / `none` it proceeds and the decision is recorded on
+   the creation event. An unreadable policy refuses (RG-6).
+3. **A reversal restores only a status it can prove.** Split and merge
+   record the source's prior status (read fresh) and the operation's instant
+   on their audit event; a reversal restores exactly that. An event recorded
+   before this round carries none: the reversal refuses rather than guess —
+   restoring "Issued" is what made a Void or Draft source a controlled copy
+   again — unless the caller names the status explicitly.
+4. **"In effect" is decided in one calendar: `EFFECTIVE_DATE_TIME_ZONE`,
+   UTC, until the product has a facility time-zone setting.** The badge, the
+   suppression watermark, the daily scan and `/api/verify` compare
+   YYYY-MM-DD strings in that calendar (`effectiveTodayISO`). UTC is the
+   calendar the server paths already used, so nothing that announces or
+   verifies moves; a facility zone later changes the one constant.
+
+And the rule that makes these hang together: **the revision row is the
+source of truth for its label.** `documents.rev` / `revision` follow the
+current revision's `revision_label` (a correction on the revision is carried
+onto the document by the database), and the register fields (`rev`,
+`revision`, `document_number`, `effective_date`) are the publisher tier's.
+
+**Rationale.** Each alternative leaves a state the plant cannot trust: a
+declared FK that breaks restore is removed at the first incident; a split
+that parks its sheets in review leaves nothing controlled on the equipment;
+a guessed status resurrects a withdrawn drawing; two calendars announce a
+date nobody sees flip.
+
+**Implementation.** Migrations `20261130` (the override reason, DCK-8) and
+`20261131` (the rails, the evidence FKs, the supersession policies and
+pair index); `lib/revisions.ts` (`resolveCreationReviewGate`,
+`createDocumentWithFile`'s required status, `voidPendingDraft`,
+`revokeLiveSharesForDocument`, `writeSupersessionLineage`),
+`lib/documentLifecycle/*` (the supersede gate on split / merge, carried
+holds before the supersession, recorded prior statuses, checked reversals),
+`lib/effectiveDate.ts` (`effectiveTodayISO`).
+
+**Acceptance.** `lib/__tests__/dcRoundFLifecycle.test.ts`,
+`lib/__tests__/dcRoundFLifecycleMigration.test.ts`,
+`lib/__tests__/effectiveDate.test.ts`.
+
+**Reversal.** (1) If the restore learns to replay the pointers after the
+versions (strip on insert, patch after), the rails can become declared FKs
+with no change in behaviour. (2) A "pending split" state that supersedes on
+approval would let a require-mode library route instead of refuse. (3) A
+picker in the reversal dialog supplies the explicit status for a legacy
+event. (4) A facility zone setting replaces the constant.
+
+**Risk:** low — every rule refuses something that was allowed; nobody gains
+anything on apply.

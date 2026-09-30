@@ -76,6 +76,15 @@ supabase/migrations/20260822_review_completion_guard.sql:36-40 — `v_advancing 
 
 *Integration note (2026-09-29): P5 and P9 landed in the same wave, so the dispose gate carries its own hold read; wave 2 (or the first package to touch `lib/retention.ts` next) re-points it at `lib/holdGate.ts assertNotOnHold` — recorded here so the helper stays THE gate.*
 
+**Partial (2026-09-30, document-control Round F wave 2).** P3 LIFECYCLE — the two call sites in this package's scope (the plan's dependency note: "P5 HOLDS assertNotOnHold for correctRevisionLabel / renumber (HLD-1 call sites here)"). Reproduced on `a11e1e4`: `grep -n "holdGate\|assertNotOnHold" lib/revisions.ts lib/documentLifecycle/renumber.ts` returned nothing.
+- `correctRevisionLabel` (`lib/revisions.ts`) calls `assertNotOnHold(doc.id, { action: "correcting its revision label" })` after its authority check and before any read or write; `renumberDocument` (`lib/documentLifecycle/renumber.ts` — outside this package's listed files, touched only for this one call, as the plan's dependency note directs) calls it with "renumbering it". Both fail closed on an unreadable hold set (the helper's rule) and refuse controllers too (a hold is released, not jumped — the app's stance; 20261074 refuses non-controllers at the database for the label).
+- Split / merge over a held source run the full publish gate instead (`HLD-2`).
+- Tests: `lib/__tests__/dcRoundFLifecycle.test.ts` "HLD-1 — correctRevisionLabel and renumberDocument call the shared hold gate" (a held document's label and number are unchanged and the error is the helper's `HoldBlockedError`).
+
+**Done-when (these limbs).** (1) `correctRevisionLabel` ✓, `renumberDocument` ✓ call the shared helper; transmittal issue (P7), share-link creation (P1 — landed in its wave-2 pass), the download / doc-pack banner (P8) and the dispose gate's re-point at `lib/holdGate.ts` (`lib/retention.ts`, P9's file) are the other owners'. (2), (3) unchanged by this pass.
+
+**Scope / residual.** Stays OPEN until the remaining owners record their limbs.
+
 ---
 
 <a id="hld-2"></a>
@@ -83,7 +92,7 @@ supabase/migrations/20260822_review_completion_guard.sql:36-40 — `v_advancing 
 ## HLD-2 · Split and merge supersede a held source without any hold check, then copy the holds to the new sheets on a best-effort, error-swallowing path that is outside the compensation register
 
 - **Severity:** HIGH
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Verification:** CONFIRMED
 - **Locations:** `lib/documentLifecycle/split.ts:137-170`, `lib/documentLifecycle/merge.ts:191-224`, `lib/documentLifecycle/common.ts:253-280`, `lib/documentLifecycle/common.ts:319-377`, `lib/revisions.ts:1425-1428`
 - **Independently verified:** ✓ **SURVIVES** — second independent adversarial pass. Verified: markSupersededAndLink (common.ts:253-280) only checks `updErr` on the status flip, never document_holds. One caveat worth recording — the DB trigger DOES catch this path for non-controllers (v_advancing is true when status becomes 'Superseded'), so the unguarded supersession is specific to Admin/DocCtrl actors, which is precisely the role the finding's scenario names and the normal actor for a split.
@@ -105,6 +114,19 @@ lib/documentLifecycle/common.ts:351-364 — `const { data: insertedHold, error }
 - [ ] splitDocument and mergeDocuments run the same authorizePublish (lock + hold) gate as supersedeDocument before markSupersededAndLink, requiring an explicit controller force to proceed over a hold
 - [ ] Hold carry-over happens before the source is superseded, and a failed carry-over rolls the operation back via the existing compensation register rather than reporting a smaller count
 - [ ] copyActiveHoldsToDoc surfaces insert errors to the caller instead of `if (!error && insertedHold)`, and copyHolds:false is refused when the source has active holds
+
+**Resolution (2026-09-30, document-control Round F wave 2).** P3 LIFECYCLE. Reproduced on `a11e1e4`: `splitDocument` / `mergeDocuments` called `markSupersededAndLink` with no `authorizePublish` (`lib/documentLifecycle/split.ts:137`, `merge.ts:191`); holds were copied AFTER the supersession, outside the compensation register (`split.ts:155-170`, `merge.ts:215-227`); `copyActiveHoldsToDoc` counted only successful inserts and swallowed the rest (`common.ts:384`, `if (!error && insertedHold)`); both wizards discarded the result object, so even the smaller count reached nobody.
+- **The supersede gate.** `authorizePublish` (exported from `lib/revisions.ts`) runs on the split source and on EVERY merge source before anything is written: per-library publish authority or the source's effective owner, the lock (a foreign checkout takes a reason — the operation's reason by default, the supersede modal's rule — and the holder is told on their thread and in-app, `notifyHolderOfRetirement`, shared with supersede), and the hold — only a controller's explicit `force` passes one (the `canForceHold` rule; an override reason never jumps a hold). `copyHolds: false` is refused while a source has an active hold.
+- **Holds carry BEFORE the supersession, inside the register.** New sheets are created, the source's holds are copied onto each (split) / onto the target (merge), and only then is the source superseded; each carry registers `releaseCarriedHolds` (releases exactly the holds it placed, with a reason; the 20261073 guard writes the `HOLD_RELEASED` record), so a hold that fails to carry rolls the whole operation back — the new sheets archived, their carried holds released, the source never superseded.
+- **`copyActiveHoldsToDoc` surfaces every refusal:** the source read, the target read and each insert are checked and throw; it returns the placed hold ids.
+- Tests: `lib/__tests__/dcRoundFLifecycle.test.ts` "HLD-2 — …": a held source is refused for a non-controller with nothing written; a controller's force proceeds and every new sheet carries the hold, all hold inserts ordered before the supersession; `copyHolds: false` over a hold is refused; a failed second carry rolls back (source Issued, sheets Archived, carried holds released); a refused insert throws; a merge with a held second source creates nothing; a forced merge carries the hold. `lib/__tests__/holds.test.ts` (P5's pin on the copy's open-hold shape) still holds.
+
+**Done-when.**
+1. ✓ `splitDocument` and `mergeDocuments` run the same `authorizePublish` (lock + hold) gate as `supersedeDocument` before `markSupersededAndLink`; proceeding over a hold takes a controller's explicit force.
+2. ✓ Hold carry-over happens before the source is superseded, and a failed carry-over rolls back through the compensation register.
+3. ✓ `copyActiveHoldsToDoc` surfaces insert (and read) errors; `copyHolds: false` is refused when the source has active holds.
+
+**Scope / residual.** The Split / Merge wizards (not this package's files) pass no `force`, so from the UI a held drawing is split only after its hold is released — the fail-safe direction; the API takes `force` for a controller. HLD-1's remaining limbs are P7 / P8 (see `HLD-1`).
 
 ---
 

@@ -117,3 +117,16 @@ per-access rows fail (logged, not fatal); the counter RPC keeps its
 one-argument arity and resolves either side of the apply. The integrator
 still applies in the order above so the first external pull is attributed
 to the share.
+
+⚠ **Deploy order — the publish override and the documents rails (Round F
+wave 2, P3 LIFECYCLE; DEC-44 (P3 LIFECYCLE)).** Apply `20261130` (the
+override reason inside `publish_revision`) → `20261131` (the documents-table
+rails) before the wave-2 app deploys. Ahead of `20261130` an ordinary publish
+works unchanged (the app names `p_override_reason` only when it overrides a
+checkout), and a publish OVER another user's checkout is refused with "needs
+migration 20261130" — never published unguarded (the legacy fallback is
+gone, `REV-8`). Do not re-paste `20261105` or any earlier `publish_revision`
+migration after `20261130`: it would re-create the 11-argument overload;
+re-running `20261130` removes it. `20261131` refuses, from the moment it is
+pasted, a `rev` that differs from the current revision's label — the library
+page's metadata editor does not surface that refusal yet (`DRLS-15`).
