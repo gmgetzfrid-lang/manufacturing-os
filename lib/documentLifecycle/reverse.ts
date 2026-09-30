@@ -12,14 +12,24 @@
 //
 //   reverseSplit(splitAuditId)
 //     → mark each new doc Superseded with reason "reverted_split"
-//     → un-supersede the source doc (status back to Issued)
+//       (its in-flight review draft voided, its share links revoked)
+//     → un-supersede the source doc, back to the status it HELD before the
+//       split (REV-12: recorded on the DOC_SPLIT event as priorStatus)
 //     → write DOC_SPLIT_REVERSED audit event
 //
 //   reverseMerge(mergeAuditId)
-//     → un-supersede every source doc
+//     → un-supersede every source doc, each to the status it held
+//       (DOC_MERGED carries priorStatuses for all siblings)
 //     → mark the merge target Superseded if it was newly created
 //       by the merge (leave alone if it was an extended existing doc)
 //     → write DOC_MERGE_REVERSED
+//
+//   A split or merge recorded before Round F carries no prior status: the
+//   reversal REFUSES rather than guess one (it used to write 'Issued', which
+//   resurrected Void and Draft sources as controlled copies) unless the caller
+//   names the status explicitly. Reversal rewrites the supersession record,
+//   whose rows only Document Control / Admin may delete (20261131) — so it is
+//   their act, checked here before anything moves.
 //
 //   reverseRenumber(renumberAuditId)
 //     → set documents.document_number back to the previous value
@@ -32,6 +42,9 @@
 
 import { supabase } from "@/lib/supabase";
 import { logRevisionEvent } from "@/lib/audit";
+import { resolveActorPrincipal } from "@/lib/principal";
+import { isControllerPrincipal } from "@/lib/permissions";
+import { voidPendingDraft, revokeLiveSharesForDocument } from "@/lib/revisions";
 
 export interface ReverseResult {
   reversedDocIds: string[];
@@ -41,22 +54,125 @@ export interface ReverseResult {
 
 // ─── Shared internals ───────────────────────────────────────────
 
-async function loadAuditEvent(auditId: string): Promise<{
-  id: string; action: string; resource_id: string; details: Record<string, unknown> | null;
-} | null> {
+type AuditEventRow = {
+  id: string; action: string; resource_id: string; details: Record<string, unknown> | null; timestamp?: string | null;
+};
+
+async function loadAuditEvent(auditId: string): Promise<AuditEventRow | null> {
   const { data, error } = await supabase
     .from("audit_logs")
-    .select("id, action, resource_id, details")
+    .select("id, action, resource_id, details, timestamp")
     .eq("id", auditId)
     .maybeSingle();
   if (error) throw new Error(error.message);
-  return (data as { id: string; action: string; resource_id: string; details: Record<string, unknown> | null } | null) ?? null;
+  return (data as AuditEventRow | null) ?? null;
+}
+
+/** REV-12: the instant the reversed operation happened — the auditAt the
+ *  forward operation now records, else the audit row's own timestamp. Never
+ *  the epoch: a warning counted from 1970 counts the operation itself. */
+export function operationInstant(ev: Pick<AuditEventRow, "details" | "timestamp">): string {
+  const at = ev.details?.auditAt;
+  if (typeof at === "string" && at) return at;
+  if (ev.timestamp) return ev.timestamp;
+  throw new Error("The operation's time is not recorded — cannot tell what happened after it.");
+}
+
+/** Statuses a caller may name for a legacy (pre-Round-F) reversal whose
+ *  prior status was never recorded. */
+export const LEGACY_RESTORE_STATUSES = ["Issued", "Draft", "In Review", "Void"] as const;
+
+export class PriorStatusUnknownError extends Error {
+  constructor(label: string) {
+    super(
+      `This operation was recorded before prior statuses were captured, so the reversal can't prove what status ${label} held — ` +
+      "it will not guess (restoring Issued would make a withdrawn or draft document a controlled copy again). " +
+      "Document Control can restore it with an explicit status.",
+    );
+    this.name = "PriorStatusUnknownError";
+  }
+}
+
+/** REV-12: the status to restore — recorded on the event, else the caller's
+ *  explicit (validated) choice for a legacy event, else refuse. */
+function statusToRestore(recorded: unknown, explicit: string | undefined, label: string): string {
+  if (typeof recorded === "string" && recorded.trim()) return recorded;
+  if (explicit) {
+    if (!(LEGACY_RESTORE_STATUSES as readonly string[]).includes(explicit)) {
+      throw new Error(`Cannot restore to "${explicit}" — choose ${LEGACY_RESTORE_STATUSES.join(", ")}.`);
+    }
+    return explicit;
+  }
+  throw new PriorStatusUnknownError(label);
+}
+
+/** Reversal is a Document Control / Admin act (it deletes supersession rows,
+ *  which the database reserves to them — 20261131). */
+async function assertReversalAuthority(orgId: string, actorUserId: string, actorRole?: string): Promise<void> {
+  const principal = await resolveActorPrincipal({ uid: actorUserId, orgId, headlineRole: actorRole });
+  if (!isControllerPrincipal(principal)) {
+    throw new Error("Reversing a split or merge rewrites the supersession record — ask Document Control or an Admin.");
+  }
+}
+
+/** Park a document a reversal retires: void its in-flight review draft
+ *  (REV-6), mark it Superseded (checked), revoke its share links (REV-10). */
+async function parkAsSuperseded(docId: string, supersessionReason: string, actorUserId: string, now: string): Promise<{ revokedShareLinks: number; shareRevokeError: string | null; voidedDraft: string | null }> {
+  const voidedDraft = await voidPendingDraft(docId);
+  const { data, error } = await supabase.from("documents").update({
+    status: "Superseded",
+    superseded_at: now,
+    superseded_by_user: actorUserId,
+    supersession_reason: supersessionReason,
+    updated_at: now,
+    updated_by: actorUserId,
+  }).eq("id", docId).select("id");
+  if (error || ((data as unknown[] | null) ?? []).length === 0) {
+    throw new Error(`Reversal stopped: ${docId} could not be parked as Superseded (${error?.message ?? "the write was refused"}).`);
+  }
+  const shares = await revokeLiveSharesForDocument(docId, actorUserId);
+  return { revokedShareLinks: shares.revoked, shareRevokeError: shares.error, voidedDraft };
+}
+
+/** Un-supersede one document to the status it held (checked). */
+async function restoreStatus(docId: string, status: string, actorUserId: string, now: string): Promise<void> {
+  const { data, error } = await supabase.from("documents").update({
+    status,
+    superseded_at: null,
+    superseded_by_user: null,
+    supersession_reason: null,
+    supersession_moc: null,
+    updated_at: now,
+    updated_by: actorUserId,
+  }).eq("id", docId).select("id");
+  if (error || ((data as unknown[] | null) ?? []).length === 0) {
+    throw new Error(`Reversal stopped: ${docId} could not be restored to ${status} (${error?.message ?? "the write was refused"}).`);
+  }
+}
+
+/** Delete this operation's supersession rows (checked — a row left behind
+ *  would keep asserting a replacement the reversal undid). */
+async function deleteLineage(filter: { supersededIds: string[]; replacementIds: string[] }): Promise<void> {
+  const { error } = await supabase
+    .from("document_supersessions")
+    .delete()
+    .in("superseded_doc_id", filter.supersededIds)
+    .in("replacement_doc_id", filter.replacementIds);
+  const { data: left } = await supabase
+    .from("document_supersessions").select("id")
+    .in("superseded_doc_id", filter.supersededIds)
+    .in("replacement_doc_id", filter.replacementIds);
+  const remaining = ((left as unknown[] | null) ?? []).length;
+  if (error || remaining > 0) {
+    throw new Error(`The documents were restored, but ${remaining || "the"} supersession link(s) could not be removed${error ? ` (${error.message})` : ""} — Document Control must delete them.`);
+  }
 }
 
 /** Best-effort check for "stuff happened on these new docs after
  *  the original op." Doesn't block the reversal — it surfaces
- *  warnings the UI can show in the confirmation. */
-async function summarizeDerivativeWork(docIds: string[], sinceIso: string): Promise<string[]> {
+ *  warnings the UI can show in the confirmation. REV-12: counted from the
+ *  operation's own instant, so the operation's own events never count. */
+async function summarizeDerivativeWork(docIds: string[], sinceIso: string, opLabel: "split" | "merge" = "split"): Promise<string[]> {
   if (docIds.length === 0) return [];
   const warnings: string[] = [];
   const { data: events } = await supabase
@@ -72,7 +188,7 @@ async function summarizeDerivativeWork(docIds: string[], sinceIso: string): Prom
   for (const r of rows) counts[r.action] = (counts[r.action] ?? 0) + 1;
   const interesting = ["CHECK_OUT", "DOCUMENT_CHECKOUT", "REV_UP", "DOWNLOAD", "HOLD_OPENED"];
   for (const a of interesting) {
-    if (counts[a]) warnings.push(`${counts[a]} ${a.replace("_", " ").toLowerCase()} event${counts[a] === 1 ? "" : "s"} happened on the new docs since the split.`);
+    if (counts[a]) warnings.push(`${counts[a]} ${a.replace("_", " ").toLowerCase()} event${counts[a] === 1 ? "" : "s"} happened on the new docs since the ${opLabel}.`);
   }
   return warnings;
 }
@@ -86,6 +202,9 @@ interface ReverseSplitInput {
   actorUserId: string;
   actorEmail?: string;
   actorRole?: string;
+  /** Only for a split recorded before prior statuses were captured: the
+   *  status to restore the source to, named explicitly (REV-12). */
+  legacyRestoreStatus?: string;
 }
 
 export async function reverseSplit(input: ReverseSplitInput): Promise<ReverseResult> {
@@ -95,43 +214,31 @@ export async function reverseSplit(input: ReverseSplitInput): Promise<ReverseRes
   const replacementIds = (ev.details?.replacementDocIds as string[] | undefined) ?? [];
   if (replacementIds.length === 0) throw new Error("Split event has no replacement doc ids — cannot reverse precisely.");
 
-  // Surface what'll get parked under Superseded.
-  const auditAt = (ev.details?.auditAt as string) ?? "1970-01-01T00:00:00Z";
-  const warnings = await summarizeDerivativeWork(replacementIds, auditAt);
+  await assertReversalAuthority(input.orgId, input.actorUserId, input.actorRole);
+  const priorStatus = statusToRestore(ev.details?.priorStatus, input.legacyRestoreStatus, "the source");
+
+  // Surface what'll get parked under Superseded — work done AFTER the split.
+  const warnings = await summarizeDerivativeWork(replacementIds, operationInstant(ev), "split");
 
   const now = new Date().toISOString();
   let parked = 0;
+  let revokedShareLinks = 0;
+  const shareRevokeErrors: string[] = [];
+  const voidedDrafts: string[] = [];
   for (const newId of replacementIds) {
-    const { error } = await supabase.from("documents").update({
-      status: "Superseded",
-      superseded_at: now,
-      superseded_by_user: input.actorUserId,
-      supersession_reason: `Reverted split — ${input.reason}`,
-      updated_at: now,
-      updated_by: input.actorUserId,
-    }).eq("id", newId);
-    if (!error) parked++;
+    const r = await parkAsSuperseded(newId, `Reverted split — ${input.reason}`, input.actorUserId, now);
+    parked++;
+    revokedShareLinks += r.revokedShareLinks;
+    if (r.shareRevokeError) shareRevokeErrors.push(r.shareRevokeError);
+    if (r.voidedDraft) voidedDrafts.push(r.voidedDraft);
   }
 
-  // Un-supersede the source. Restore status to 'Issued' as the
-  // safest default — the source's history says where it was before.
-  await supabase.from("documents").update({
-    status: "Issued",
-    superseded_at: null,
-    superseded_by_user: null,
-    supersession_reason: null,
-    supersession_moc: null,
-    updated_at: now,
-    updated_by: input.actorUserId,
-  }).eq("id", sourceDocId);
+  // Un-supersede the source — to the status it actually held (REV-12).
+  await restoreStatus(sourceDocId, priorStatus, input.actorUserId, now);
 
-  // Hard-delete the join rows; the audit log retains the relationship
-  // so history is still reconstructable.
-  await supabase
-    .from("document_supersessions")
-    .delete()
-    .eq("superseded_doc_id", sourceDocId)
-    .in("replacement_doc_id", replacementIds);
+  // Delete the join rows; the audit log retains the relationship so
+  // history is still reconstructable.
+  await deleteLineage({ supersededIds: [sourceDocId], replacementIds });
 
   await logRevisionEvent({
     orgId: input.orgId,
@@ -146,6 +253,11 @@ export async function reverseSplit(input: ReverseSplitInput): Promise<ReverseRes
       reversedNewDocIds: replacementIds,
       reason: input.reason.trim(),
       derivativeWorkWarnings: warnings,
+      restoredStatus: priorStatus,
+      restoredStatusSource: typeof ev.details?.priorStatus === "string" ? "recorded" : "explicit",
+      revokedShareLinks,
+      shareRevokeErrors,
+      pendingDraftsVoided: voidedDrafts,
     },
   });
 
@@ -161,6 +273,8 @@ interface ReverseMergeInput {
   actorUserId: string;
   actorEmail?: string;
   actorRole?: string;
+  /** Only for a merge recorded before prior statuses were captured (REV-12). */
+  legacyRestoreStatus?: string;
 }
 
 export async function reverseMerge(input: ReverseMergeInput): Promise<ReverseResult> {
@@ -202,44 +316,39 @@ export async function reverseMerge(input: ReverseMergeInput): Promise<ReverseRes
     }
   }
 
-  const auditAt = (ev.details?.auditAt as string) ?? "1970-01-01T00:00:00Z";
-  const warnings = await summarizeDerivativeWork([targetDocId], auditAt);
+  await assertReversalAuthority(input.orgId, input.actorUserId, input.actorRole);
+  // REV-12: each sibling back to the status IT held. A post-Round-F event
+  // carries all of them; a legacy event carries none (refused unless named).
+  const recorded = (ev.details?.priorStatuses as Record<string, unknown> | undefined) ?? {};
+  const restoreTo = new Map<string, string>();
+  for (const sId of allSourceIds) {
+    const own = sId === sourceDocId ? (recorded[sId] ?? ev.details?.priorStatus) : recorded[sId];
+    restoreTo.set(sId, statusToRestore(own, input.legacyRestoreStatus, sId === sourceDocId ? "the source" : `merge source ${sId}`));
+  }
+
+  const warnings = await summarizeDerivativeWork([targetDocId], operationInstant(ev), "merge");
 
   const now = new Date().toISOString();
   let parked = 0;
+  let revokedShareLinks = 0;
+  let shareRevokeError: string | null = null;
+  let voidedDraft: string | null = null;
 
   // Un-supersede every source.
   for (const sId of allSourceIds) {
-    const { error } = await supabase.from("documents").update({
-      status: "Issued",
-      superseded_at: null,
-      superseded_by_user: null,
-      supersession_reason: null,
-      supersession_moc: null,
-      updated_at: now,
-      updated_by: input.actorUserId,
-    }).eq("id", sId);
-    if (error) throw new Error(error.message);
+    await restoreStatus(sId, restoreTo.get(sId)!, input.actorUserId, now);
   }
 
   // Delete the supersession join rows for this merge.
-  await supabase
-    .from("document_supersessions")
-    .delete()
-    .in("superseded_doc_id", allSourceIds)
-    .eq("replacement_doc_id", targetDocId);
+  await deleteLineage({ supersededIds: allSourceIds, replacementIds: [targetDocId] });
 
   // Park the target if newly created.
   if (targetWasNewlyCreated) {
-    const { error } = await supabase.from("documents").update({
-      status: "Superseded",
-      superseded_at: now,
-      superseded_by_user: input.actorUserId,
-      supersession_reason: `Reverted merge — ${input.reason}`,
-      updated_at: now,
-      updated_by: input.actorUserId,
-    }).eq("id", targetDocId);
-    if (!error) parked = 1;
+    const r = await parkAsSuperseded(targetDocId, `Reverted merge — ${input.reason}`, input.actorUserId, now);
+    parked = 1;
+    revokedShareLinks = r.revokedShareLinks;
+    shareRevokeError = r.shareRevokeError;
+    voidedDraft = r.voidedDraft;
     if (inferredFromLegacyHeuristic) {
       warnings.unshift("This merge predates explicit intent tracking — whether the target was newly created was inferred. It has been parked as Superseded; verify this was the merge-created document and not a pre-existing one before relying on the reversal.");
     }
@@ -263,6 +372,10 @@ export async function reverseMerge(input: ReverseMergeInput): Promise<ReverseRes
       targetIntentSource: inferredFromLegacyHeuristic ? "inferred" : "explicit",
       reason: input.reason.trim(),
       derivativeWorkWarnings: warnings,
+      restoredStatuses: Object.fromEntries(restoreTo),
+      revokedShareLinks,
+      shareRevokeError,
+      pendingDraftVoided: voidedDraft,
     },
   });
 

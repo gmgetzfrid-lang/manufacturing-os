@@ -8,6 +8,12 @@
 import { supabase } from "@/lib/supabase";
 import { uploadToPath, makeLibraryStoragePath } from "@/lib/storage";
 import { logRevisionEvent, logHoldEvent } from "@/lib/audit";
+import {
+  voidPendingDraft,
+  revokeLiveSharesForDocument,
+  writeSupersessionLineage,
+  type CreationStatus,
+} from "@/lib/revisions";
 import type { AssetTag } from "@/types/schema";
 
 export interface ActorContext {
@@ -94,7 +100,12 @@ export async function archiveRolledBackDoc(docId: string, actor: ActorContext): 
 }
 
 /** Compensation: restore a source doc that was marked Superseded back to its
- *  prior status, and drop the supersession join rows created for this op. */
+ *  prior status, and drop the supersession join rows created for this op.
+ *  Checked (REV-12 / DRLS-13): a refused restore or a lineage row that could
+ *  not be removed THROWS, so withCompensation reports it for manual cleanup
+ *  instead of calling the rollback clean. Lineage DELETE is Document
+ *  Control / Admin only at the database (20261131) — for any other actor the
+ *  leftover rows are named in the error. */
 export async function restoreSupersededSource(
   sourceDocId: string,
   priorStatus: string,
@@ -102,7 +113,7 @@ export async function restoreSupersededSource(
   actor: ActorContext,
 ): Promise<void> {
   const now = new Date().toISOString();
-  await supabase
+  const { data: restored, error: restoreErr } = await supabase
     .from("documents")
     .update({
       status: priorStatus,
@@ -113,13 +124,24 @@ export async function restoreSupersededSource(
       updated_at: now,
       updated_by: actor.actorUserId,
     })
-    .eq("id", sourceDocId);
+    .eq("id", sourceDocId)
+    .select("id");
+  if (restoreErr || ((restored as unknown[] | null) ?? []).length === 0) {
+    throw new Error(`source ${sourceDocId} is still Superseded — restore it to ${priorStatus} (${restoreErr?.message ?? "the write was refused"})`);
+  }
   if (replacementDocIds.length > 0) {
-    await supabase
+    const { error: delErr } = await supabase
       .from("document_supersessions")
       .delete()
       .eq("superseded_doc_id", sourceDocId)
       .in("replacement_doc_id", replacementDocIds);
+    const { data: left } = await supabase
+      .from("document_supersessions").select("replacement_doc_id")
+      .eq("superseded_doc_id", sourceDocId).in("replacement_doc_id", replacementDocIds);
+    const remaining = ((left as unknown[] | null) ?? []).length;
+    if (delErr || remaining > 0) {
+      throw new Error(`${remaining || replacementDocIds.length} supersession link(s) from ${sourceDocId} could not be removed${delErr ? ` (${delErr.message})` : ""} — Document Control must delete them`);
+    }
   }
 }
 
@@ -169,6 +191,10 @@ export async function createNewDocWithFirstVersion(input: {
   file: File;
   actor: ActorContext;
   actorName?: string;
+  /** REV-11: the status the new document is born with — the caller's
+   *  decision, made after it resolved the publish authority and the review
+   *  policy for the target (never a hardcoded "Issued" here). */
+  initialStatus: CreationStatus;
   /** Audit action type fired for the new doc — varies by caller
    *  (CREATED_FROM_SPLIT vs CREATED_FROM_MERGE). */
   creationAuditAction: "CREATED_FROM_SPLIT" | "CREATED_FROM_MERGE";
@@ -193,7 +219,7 @@ export async function createNewDocWithFirstVersion(input: {
       name: input.name ?? input.title,
       rev: input.initialRevLabel,
       revision: input.initialRevLabel,
-      status: "Issued",
+      status: input.initialStatus,
       asset_tags: input.assetTags,
       plant_id: input.plantId ?? null,
       unit_id: input.unitId ?? null,
@@ -262,6 +288,7 @@ export async function createNewDocWithFirstVersion(input: {
       revisionLabel: input.initialRevLabel,
       narrative: input.changeLog,
       fileHash,
+      initialStatus: input.initialStatus,
     },
   });
 
@@ -269,7 +296,20 @@ export async function createNewDocWithFirstVersion(input: {
 }
 
 /** Mark a document as superseded and link its replacements via the
- *  document_supersessions join table. Idempotent on the join rows. */
+ *  document_supersessions join table. Idempotent on the join rows.
+ *
+ *  Round F (P3 LIFECYCLE), in order:
+ *   · REV-12 — the status the source held is read FRESH from the database
+ *     (never the caller's possibly-stale record) and written onto the audit
+ *     event as `priorStatus`, with the operation's own timestamp as
+ *     `auditAt`, so a reversal restores what was there and counts only work
+ *     done after it. Returned so the caller's compensation restores the same
+ *     value.
+ *   · REV-6 — the source's in-flight review draft is voided BEFORE the
+ *     status flips (a refusal stops the operation with nothing retired).
+ *   · REV-14 / DRLS-13 — the lineage write is a checked upsert on the pair.
+ *   · REV-10 — the source's live share links are revoked, durably; the
+ *     count (and any refusal) rides on the audit event. */
 export async function markSupersededAndLink(input: {
   sourceDocId: string;
   replacementDocIds: string[];
@@ -282,11 +322,18 @@ export async function markSupersededAndLink(input: {
   sourceAuditAction: "DOC_SPLIT" | "DOC_MERGED" | "SUPERSEDE_DOC";
   /** Extra detail to record in the audit row. */
   details?: Record<string, unknown>;
-}): Promise<void> {
+}): Promise<{ priorStatus: string }> {
   const { sourceDocId, replacementDocIds, reason, mocReference, actor } = input;
   const now = new Date().toISOString();
 
-  const { error: updErr } = await supabase
+  const { data: cur, error: curErr } = await supabase
+    .from("documents").select("status").eq("id", sourceDocId).maybeSingle();
+  if (curErr || !cur) throw new Error(`Couldn't read the source document's status (${curErr?.message ?? "not found"}) — nothing was retired.`);
+  const priorStatus = String((cur as { status?: string | null }).status ?? "Issued");
+
+  const voidedDraft = await voidPendingDraft(sourceDocId);
+
+  const { data: flipped, error: updErr } = await supabase
     .from("documents")
     .update({
       status: "Superseded",
@@ -297,8 +344,12 @@ export async function markSupersededAndLink(input: {
       updated_at: now,
       updated_by: actor.actorUserId,
     })
-    .eq("id", sourceDocId);
+    .eq("id", sourceDocId)
+    .select("id");
   if (updErr) throw new Error(updErr.message);
+  if (((flipped as unknown[] | null) ?? []).length === 0) {
+    throw new Error("The source document was NOT superseded — you don't have authority to retire it.");
+  }
 
   if (replacementDocIds.length > 0) {
     const rows = replacementDocIds.map((rid) => ({
@@ -309,9 +360,10 @@ export async function markSupersededAndLink(input: {
       created_by: actor.actorUserId,
       created_at: now,
     }));
-    // ON CONFLICT DO NOTHING — partial UNIQUE on (superseded, replacement)
-    await supabase.from("document_supersessions").upsert(rows, { onConflict: "superseded_doc_id,replacement_doc_id" });
+    await writeSupersessionLineage(rows, sourceDocId, replacementDocIds);
   }
+
+  const shares = await revokeLiveSharesForDocument(sourceDocId, actor.actorUserId);
 
   // Empty version id on the audit log — supersession is a document-
   // level state change, not a version creation.
@@ -328,43 +380,58 @@ export async function markSupersededAndLink(input: {
       mocReference: mocReference?.trim() || null,
       replacementDocIds,
       ...(input.details ?? {}),
+      priorStatus,
+      auditAt: now,
+      pendingDraftVoided: voidedDraft,
+      revokedShareLinks: shares.revoked,
+      shareRevokeError: shares.error,
     },
   });
+  return { priorStatus };
 }
 
 /** Copy any ACTIVE holds from the source document onto the target,
  *  with a note describing the carry-over. Skips any reason that's
  *  already open on the target (the partial UNIQUE constraint would
- *  reject it anyway). */
+ *  reject it anyway).
+ *
+ *  HLD-2: every read and every insert is CHECKED — a hold that fails to
+ *  carry over THROWS (the caller runs this inside its compensation register,
+ *  BEFORE the source is superseded, so the whole operation rolls back rather
+ *  than laundering a stop-work signal into a smaller number). Returns the
+ *  ids it placed so a rollback can release exactly those. */
 export async function copyActiveHoldsToDoc(input: {
   sourceDocId: string;
   targetDocId: string;
   originLabel: string;        // e.g. "Sheet 3 (split)"
   actor: ActorContext;
-}): Promise<number> {
+}): Promise<{ copied: number; holdIds: string[] }> {
   const { sourceDocId, targetDocId, originLabel, actor } = input;
 
-  const { data: openHolds } = await supabase
+  const { data: openHolds, error: readErr } = await supabase
     .from("document_holds")
     .select("reason, notes, expected_release_at")
     .eq("document_id", sourceDocId)
     .is("released_at", null);
+  if (readErr) throw new Error(`Couldn't read the source's active holds (${readErr.message}) — they must carry over, so nothing was changed.`);
 
   const rows = (openHolds as Array<{ reason: string; notes: string | null; expected_release_at: string | null }>) ?? [];
-  if (rows.length === 0) return 0;
+  if (rows.length === 0) return { copied: 0, holdIds: [] };
 
   // Check existing open reasons on the target so we don't try to
   // insert duplicates (the partial unique would reject them).
-  const { data: existing } = await supabase
+  const { data: existing, error: existingErr } = await supabase
     .from("document_holds")
     .select("reason")
     .eq("document_id", targetDocId)
     .is("released_at", null);
+  if (existingErr) throw new Error(`Couldn't read the new document's holds (${existingErr.message}) — the source's holds were not carried over.`);
   const existingReasons = new Set(
     ((existing as Array<{ reason: string }>) ?? []).map((r) => r.reason)
   );
 
   let copied = 0;
+  const holdIds: string[] = [];
   for (const h of rows) {
     if (existingReasons.has(h.reason)) continue;
     const note = `Carried over from ${originLabel}.${h.notes ? ` Original notes: ${h.notes}` : ""}`;
@@ -381,23 +448,48 @@ export async function copyActiveHoldsToDoc(input: {
       })
       .select("id")
       .single();
-    if (!error && insertedHold) {
-      copied++;
-      // Mirror the hold audit event so the timeline shows it.
-      await logHoldEvent({
-        orgId: actor.orgId,
-        documentId: targetDocId,
-        holdId: (insertedHold as { id: string }).id,
-        userId: actor.actorUserId,
-        userEmail: actor.actorEmail,
-        userRole: actor.actorRole,
-        type: "HOLD_OPENED",
-        reason: h.reason,
-        details: { carriedOverFrom: sourceDocId, originLabel },
-      });
+    if (error || !insertedHold) {
+      throw new Error(`The "${h.reason}" hold could not be carried over to the new document (${error?.message ?? "the write was refused"}).`);
     }
+    copied++;
+    holdIds.push((insertedHold as { id: string }).id);
+    // Mirror the hold audit event so the timeline shows it.
+    await logHoldEvent({
+      orgId: actor.orgId,
+      documentId: targetDocId,
+      holdId: (insertedHold as { id: string }).id,
+      userId: actor.actorUserId,
+      userEmail: actor.actorEmail,
+      userRole: actor.actorRole,
+      type: "HOLD_OPENED",
+      reason: h.reason,
+      details: { carriedOverFrom: sourceDocId, originLabel },
+    });
   }
-  return copied;
+  return { copied, holdIds };
+}
+
+/** HLD-2 compensation: release exactly the holds a rolled-back operation
+ *  carried onto a document it created (the document itself is archived by
+ *  archiveRolledBackDoc). The 20261073 guard pins the release to the session
+ *  and writes the HOLD_RELEASED record. Checked: a hold left open is named. */
+export async function releaseCarriedHolds(holdIds: string[], actor: ActorContext): Promise<void> {
+  if (holdIds.length === 0) return;
+  const { data, error } = await supabase
+    .from("document_holds")
+    .update({
+      released_at: new Date().toISOString(),
+      released_by: actor.actorUserId,
+      released_by_name: actor.actorEmail ?? null,
+      released_reason: "Rolled back — the lifecycle operation that carried this hold over did not complete",
+    })
+    .in("id", holdIds)
+    .is("released_at", null)
+    .select("id");
+  const n = ((data as unknown[] | null) ?? []).length;
+  if (error || n < holdIds.length) {
+    throw new Error(`${holdIds.length - n} carried-over hold(s) on a rolled-back document are still open${error ? ` (${error.message})` : ""} — release them from the hold queue`);
+  }
 }
 
 /** Copy project_documents membership rows from source to target.

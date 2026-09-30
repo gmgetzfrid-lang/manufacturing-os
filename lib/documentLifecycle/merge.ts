@@ -9,7 +9,12 @@
 
 import { supabase } from "@/lib/supabase";
 import { logRevisionEvent } from "@/lib/audit";
-import { revUpDocument, type RevUpInput } from "@/lib/revisions";
+import {
+  revUpDocument, authorizePublish, notifyHolderOfRetirement, resolveCreationReviewGate,
+  type RevUpInput,
+} from "@/lib/revisions";
+import { effectiveReviewControlForDocument, effectiveModeForRevUp } from "@/lib/reviewControl";
+import type { PublishGuardState } from "@/lib/documentGuards";
 import type { DocumentRecord, DocumentVersion, AssetTag } from "@/types/schema";
 import {
   type ActorContext,
@@ -21,6 +26,7 @@ import {
   withCompensation,
   archiveRolledBackDoc,
   restoreSupersededSource,
+  releaseCarriedHolds,
 } from "./common";
 
 export type MergeTargetSpec =
@@ -63,8 +69,13 @@ export interface MergeDocumentsInput {
   target: MergeTargetSpec;
   reason: string;
   mocReference?: string;
+  /** HLD-2: false is REFUSED when any source has an active hold. */
   copyHolds?: boolean;
   copyProjectMembership?: boolean;
+  /** HLD-2: a controller's explicit force past an active hold on a source. */
+  force?: boolean;
+  /** Message to whoever has a source checked out. Defaults to the reason. */
+  overrideReason?: string;
   orgId: string;
   actorUserId: string;
   actorUserName?: string;
@@ -79,12 +90,99 @@ export interface MergeDocumentsResult {
   projectMembershipsCopied: number;
 }
 
+interface MergeGate {
+  preStates: Map<string, PublishGuardState>;
+  heldSourceIds: Set<string>;
+  priorStatuses: Record<string, string>;
+  reviewPolicy: string;
+}
+
 export async function mergeDocuments(input: MergeDocumentsInput): Promise<MergeDocumentsResult> {
-  return withCompensation((register) => mergeDocumentsInner(input, register));
+  const gate = await gateMerge(input);
+  return withCompensation((register) => mergeDocumentsInner(input, gate, register));
+}
+
+/** HLD-2 / REV-11 / REV-12: everything a merge must know and refuse BEFORE
+ *  it writes anything — the supersede gate on every source, the carried-hold
+ *  rule, the governing review policy of the target, and the status every
+ *  source actually holds (read fresh; recorded on each DOC_MERGED event so a
+ *  reversal restores all of them, not a hardcoded Issued). */
+async function gateMerge(input: MergeDocumentsInput): Promise<MergeGate> {
+  const {
+    sources, target, reason, copyHolds = true,
+    orgId, actorUserId, actorRole,
+  } = input;
+  if (sources.length < 2) throw new Error("A merge needs at least 2 source documents.");
+  if (!reason.trim()) throw new Error("Merge reason is required.");
+  for (const s of sources) {
+    if (!s.id) throw new Error("Every source document needs an id.");
+  }
+
+  const preStates = new Map<string, PublishGuardState>();
+  const heldSourceIds = new Set<string>();
+  for (const src of sources) {
+    const st = await authorizePublish({
+      documentId: src.id!, libraryId: src.libraryId || target.libraryId, orgId, actorUserId, actorRole,
+      overrideReason: input.overrideReason ?? reason, force: input.force,
+    });
+    preStates.set(src.id!, st);
+    if (st.activeHolds.length > 0) heldSourceIds.add(src.id!);
+  }
+  if (heldSourceIds.size > 0 && !copyHolds) {
+    const labels = sources.filter((s) => heldSourceIds.has(s.id!)).map((s) => s.documentNumber ?? s.id).join(", ");
+    throw new Error(`${labels} ${heldSourceIds.size === 1 ? "has an active hold" : "have active holds"} — a merge must carry holds onto the target. Turn "carry over holds" back on, or release the holds first.`);
+  }
+
+  let reviewPolicy: string;
+  if (target.kind === "create_new") {
+    reviewPolicy = (await resolveCreationReviewGate({
+      libraryId: target.libraryId, collectionId: null,
+      what: `the merged document ${target.documentNumber.trim()}`,
+    })).recorded;
+  } else if (target.revUp) {
+    // The extended target's rev-up publishes merged content through the
+    // contract — the same per-document review policy RevUpModal and
+    // setLevelRevUp resolve. A merge has no "route through review?"
+    // checkbox, so a policy that REQUIRES sign-off refuses here (the actor
+    // submits the revision for review, then merges without a rev-up).
+    let mode: string;
+    try {
+      const control = await effectiveReviewControlForDocument({
+        reviewControl: target.target.reviewControl ?? null,
+        collectionId: target.target.collectionId ?? null,
+        libraryId: target.libraryId,
+      });
+      mode = effectiveModeForRevUp({ control, changeType: target.revUp.changeType ?? null });
+    } catch (e) {
+      throw new Error(`Couldn't verify the review policy for ${target.target.documentNumber ?? "the merge target"} — nothing was merged: ${(e as Error).message}`);
+    }
+    if (mode === "require") {
+      throw new Error(
+        `${target.target.documentNumber ?? "The merge target"} requires reviewer sign-off for this revision — a merge can't publish it unreviewed. ` +
+        "Submit the merged revision for review first, then run the merge without a rev-up.",
+      );
+    }
+    reviewPolicy = mode === "publisher_choice"
+      ? "publisher_choice — the publisher chose to publish the merged revision directly by running the merge"
+      : "none — the governing policy does not require sign-off for this revision";
+  } else {
+    reviewPolicy = "none — the extended target's content is unchanged (no rev-up)";
+  }
+
+  const { data: rows, error: stErr } = await supabase
+    .from("documents").select("id, status").in("id", sources.map((s) => s.id!));
+  if (stErr) throw new Error(`Couldn't read the sources' statuses (${stErr.message}) — nothing was merged.`);
+  const priorStatuses: Record<string, string> = {};
+  for (const r of (rows as Array<{ id: string; status: string | null }> | null) ?? []) priorStatuses[r.id] = String(r.status ?? "Issued");
+  const missing = sources.filter((s) => !(s.id! in priorStatuses));
+  if (missing.length > 0) throw new Error(`Couldn't find ${missing.map((s) => s.documentNumber ?? s.id).join(", ")} — nothing was merged.`);
+
+  return { preStates, heldSourceIds, priorStatuses, reviewPolicy };
 }
 
 async function mergeDocumentsInner(
   input: MergeDocumentsInput,
+  gate: MergeGate,
   register: (c: Compensation) => void,
 ): Promise<MergeDocumentsResult> {
   const {
@@ -92,12 +190,6 @@ async function mergeDocumentsInner(
     copyHolds = true, copyProjectMembership = true,
     orgId, actorUserId, actorUserName, actorEmail, actorRole,
   } = input;
-
-  if (sources.length < 2) throw new Error("A merge needs at least 2 source documents.");
-  if (!reason.trim()) throw new Error("Merge reason is required.");
-  for (const s of sources) {
-    if (!s.id) throw new Error("Every source document needs an id.");
-  }
 
   const actor: ActorContext = { orgId, actorUserId, actorEmail, actorRole };
 
@@ -126,12 +218,14 @@ async function mergeDocumentsInner(
       file: target.file,
       actor,
       actorName: actorUserName,
+      initialStatus: "Issued",
       creationAuditAction: "CREATED_FROM_MERGE",
       creationDetails: {
         sourceDocumentIds: sources.map((s) => s.id),
         sourceDocumentNumbers: sources.map((s) => s.documentNumber ?? null),
         reason: reason.trim(),
         mocReference: mocReference?.trim() || null,
+        reviewPolicy: gate.reviewPolicy,
       },
     });
     targetDocumentId = r.documentId;
@@ -181,14 +275,36 @@ async function mergeDocumentsInner(
         reason: reason.trim(),
         mocReference: mocReference?.trim() || null,
         note: "Existing document extended via merge",
+        reviewPolicy: gate.reviewPolicy,
       },
     });
   }
 
-  // 2. Mark each source as Superseded, link to the target.
+  // 2. HLD-2: carry every held source's holds onto the target BEFORE any
+  //    source is superseded — inside the register, so a hold that fails to
+  //    carry rolls the merge back rather than reporting a smaller count.
+  let holdsCopied = 0;
+  if (copyHolds) {
+    for (const src of sources) {
+      if (!gate.heldSourceIds.has(src.id!)) continue;
+      const carried = await copyActiveHoldsToDoc({
+        sourceDocId: src.id!, targetDocId: targetDocumentId,
+        originLabel: `${src.documentNumber ?? "source"} (merge)`,
+        actor,
+      });
+      holdsCopied += carried.copied;
+      register({
+        describe: `release the holds carried from ${src.documentNumber ?? src.id} onto the merge target`,
+        run: () => releaseCarriedHolds(carried.holdIds, actor),
+      });
+    }
+  }
+
+  // 3. Mark each source as Superseded, link to the target. REV-12: every
+  //    DOC_MERGED event carries the statuses ALL siblings held (read fresh in
+  //    the gate), so reversing from any one of them restores each correctly.
   for (const src of sources) {
-    const priorStatus = src.status ?? "Issued";
-    await markSupersededAndLink({
+    const { priorStatus } = await markSupersededAndLink({
       sourceDocId: src.id!,
       replacementDocIds: [targetDocumentId],
       reason: reason.trim(),
@@ -203,6 +319,7 @@ async function mergeDocumentsInner(
         // (park it on reverse); false → target was an existing doc extended
         // by the merge (leave it active on reverse).
         targetWasNewlyCreated: target.kind === "create_new",
+        priorStatuses: gate.priorStatuses,
       },
     });
     // Restore this source on rollback if a subsequent source fails to supersede.
@@ -212,19 +329,9 @@ async function mergeDocumentsInner(
     });
   }
 
-  // 3. Carry over holds + project memberships from each source. Secondary
-  //    effects — reported via honest counts, not cause for full rollback.
-  let holdsCopied = 0;
+  // 4. Project memberships from each source — a secondary effect, reported
+  //    via an honest count, never cause for a rollback.
   let projectsCopied = 0;
-  if (copyHolds) {
-    for (const src of sources) {
-      holdsCopied += await copyActiveHoldsToDoc({
-        sourceDocId: src.id!, targetDocId: targetDocumentId,
-        originLabel: `${src.documentNumber ?? "source"} (merge)`,
-        actor,
-      });
-    }
-  }
   if (copyProjectMembership) {
     for (const src of sources) {
       try {
@@ -233,6 +340,15 @@ async function mergeDocumentsInner(
         });
       } catch { /* secondary effect — count stays honest, merge stands */ }
     }
+  }
+
+  for (const src of sources) {
+    const pre = gate.preStates.get(src.id!);
+    if (!pre) continue;
+    await notifyHolderOfRetirement({
+      preState: pre, documentId: src.id!, libraryId: src.libraryId || target.libraryId, orgId, actorUserId, actorEmail,
+      verb: "merged", action: "merge", reason: reason.trim(),
+    });
   }
 
   return {

@@ -441,7 +441,7 @@ describe("OWN-19 — split / merge targets are born owned by the actor, so the r
     const r = await createNewDocWithFirstVersion({
       orgId: "o1", libraryId: "L", documentNumber: "P-100-1", title: "Sheet 1", initialRevLabel: "A", changeLog: "split",
       assetTags: [], file: new File([new Uint8Array([1, 2, 3])], "s1.pdf", { type: "application/pdf" }),
-      actor, actorName: "Uma", creationAuditAction: "CREATED_FROM_SPLIT", creationDetails: { sourceDocumentId: "src" },
+      actor, actorName: "Uma", initialStatus: "Issued", creationAuditAction: "CREATED_FROM_SPLIT", creationDetails: { sourceDocumentId: "src" },
     });
     expect(r.documentId).toBe("new-lib");
     const ins = db.writes.find((w) => w.table === "documents" && w.method === "insert")!.args[0] as Record<string, unknown>;
@@ -451,7 +451,7 @@ describe("OWN-19 — split / merge targets are born owned by the actor, so the r
   it("without a display name the actor's email is the owner-name cache; the version row and promote still land", async () => {
     await createNewDocWithFirstVersion({
       orgId: "o1", libraryId: "L", documentNumber: "P-200", title: "Merged", initialRevLabel: "0", changeLog: "merge",
-      assetTags: [], file: new File([new Uint8Array([1])], "m.pdf"), actor, creationAuditAction: "CREATED_FROM_MERGE", creationDetails: {},
+      assetTags: [], file: new File([new Uint8Array([1])], "m.pdf"), actor, initialStatus: "Issued", creationAuditAction: "CREATED_FROM_MERGE", creationDetails: {},
     });
     const ins = db.writes.find((w) => w.table === "documents" && w.method === "insert")!.args[0] as Record<string, unknown>;
     expect(ins.owner_user_id).toBe("u1");

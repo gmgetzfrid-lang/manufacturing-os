@@ -1219,7 +1219,6 @@ describe("census — every writer of current_version_id runs the post-publish pi
     "lib/revisions.ts:callPublishRevisionRpc": { reason: "the one wrapper of rpc('publish_revision') in lib/revisions.ts — every call of it is censused as a writer in its caller", wrapper: true },
     "app/api/intake/upload/route.ts:publishThroughContract": { reason: "the intake door's trusted promote — POST runs the pipeline after it returns a published outcome", via: "app/api/intake/upload/route.ts:POST" },
     "lib/revisions.ts:createDocumentWithFile": { reason: "first-version seed of a brand-new document — nothing is superseded; the review clock and ack roster are seeded inline" },
-    "lib/revisions.ts:legacyRevUpAfterUpload": { reason: "revUpDocument's legacy leg — revUpDocument runs the pipeline after it returns", via: "lib/revisions.ts:revUpDocument" },
     "lib/documentLifecycle/common.ts:createNewDocWithFirstVersion": { reason: "first-version seed (document-control P3 LIFECYCLE converts it)" },
     "app/(protected)/documents/[libraryId]/page.tsx:uploadOne": { reason: "first-version seed of a bulk upload (document-control P3 LIFECYCLE converts it)" },
   };
@@ -1258,7 +1257,8 @@ describe("census — every writer of current_version_id runs the post-publish pi
   });
   it("finds the known writers (the census is not vacuous)", () => {
     const sites = new Set(writers.map((w) => w.site));
-    for (const s of ["lib/reviewControl.ts:finalizeReviewedRevision", "lib/revisions.ts:revertToVersion", "lib/revisions.ts:legacyRevUpAfterUpload", "lib/documentLifecycle/common.ts:createNewDocWithFirstVersion",
+    // (REV-8 retired lib/revisions.ts:legacyRevUpAfterUpload — the legacy leg no longer exists)
+    for (const s of ["lib/reviewControl.ts:finalizeReviewedRevision", "lib/revisions.ts:revertToVersion", "lib/documentLifecycle/common.ts:createNewDocWithFirstVersion",
       "lib/revisions.ts:callPublishRevisionRpc", "app/api/intake/upload/route.ts:publishThroughContract"]) {
       expect(sites.has(s), s).toBe(true);
     }

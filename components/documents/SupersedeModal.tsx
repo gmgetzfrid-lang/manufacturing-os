@@ -7,7 +7,7 @@
 
 import React, { useState } from "react";
 import { X, Layers, AlertTriangle, Loader2, Plus, Trash2 } from "lucide-react";
-import { supersedeDocument } from "@/lib/revisions";
+import { supersedeDocument, UnresolvedReplacementsError } from "@/lib/revisions";
 import type { DocumentRecord } from "@/types/schema";
 import IsoGuidance from "@/components/ui/IsoGuidance";
 
@@ -66,12 +66,15 @@ export default function SupersedeModal({
         // Doubles as the override message if the doc is checked out by someone else.
         overrideReason: reason,
       });
-      setUnresolved(result.unresolvedDocNumbers);
+      // REV-14: an unresolved replacement now refuses the whole supersede
+      // before anything is written (caught below), so success means every
+      // named successor is linked.
       onSuccess({ unresolvedDocNumbers: result.unresolvedDocNumbers });
       // Reset
       setReason(""); setMocRef(""); setReplacements([]); setReplacementInput("");
-      if (result.unresolvedDocNumbers.length === 0) onClose();
+      onClose();
     } catch (e) {
+      if (e instanceof UnresolvedReplacementsError) setUnresolved(e.unresolved);
       setError((e as Error).message || "Supersede failed");
     } finally {
       setBusy(false);
@@ -160,8 +163,14 @@ export default function SupersedeModal({
             )}
             {unresolved.length > 0 && (
               <div className="mt-2 p-2 bg-amber-50 border border-amber-200 rounded-lg text-[11px] text-amber-800">
-                <b>Note:</b> these document numbers couldn&apos;t be found in this library and were skipped:&nbsp;
+                <b>Not superseded:</b> these document numbers couldn&apos;t be found in this library — fix or remove them:&nbsp;
                 <span className="font-mono">{unresolved.join(", ")}</span>
+              </div>
+            )}
+            {replacements.length === 0 && (
+              <div className="mt-2 p-2 bg-amber-50 border border-amber-200 rounded-lg text-[11px] text-amber-800" data-testid="supersede-no-successor">
+                <b>No replacement named.</b> This retires the document with nothing pointing forward — anyone who finds it
+                will see it is Superseded, but not what replaced it. Add the replacement&apos;s number if there is one.
               </div>
             )}
           </div>
