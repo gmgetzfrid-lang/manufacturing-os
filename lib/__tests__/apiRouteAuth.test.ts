@@ -370,6 +370,15 @@ function docRow(over: Record<string, unknown> = {}) {
 }
 const grant = (uid: string, actions: string[]) =>
   ({ rules: [{ effect: "allow", subject: { type: "user", id: uid }, actions }] });
+const teamGrant = (team: string, actions: string[]) =>
+  ({ rules: [{ effect: "allow", subject: { type: "team", id: team }, actions }] });
+/** SEC-10: the gate reads the library → folder chain above the document
+ *  (library l1, folder c1, no ancestors). No ACL on either unless given. */
+function seedChain(libraryAcl: unknown = null, folderAcl: unknown = null) {
+  mockState.tables.libraries = { data: { id: "l1", acl: libraryAcl } };
+  mockState.single.collections = { data: { id: "c1", library_id: "l1", path_ids: [], acl: folderAcl } };
+  mockState.tables.collections = { data: [] };
+}
 
 describe("POST /api/projects/checklist — any active member, over documents THEY may read (REL-6, SEC-10)", () => {
   const load = () => import("@/app/api/projects/checklist/route");
@@ -382,6 +391,7 @@ describe("POST /api/projects/checklist — any active member, over documents THE
     mockState.tables.projects = { data: { id: "p1", name: "Unit 4" } };
     mockState.tables.documents = { data: doc };
     mockState.tables.document_versions = { data: { file_url: "orgs/o1/libraries/l1/HSE-7.pdf", file_type: "application/pdf" } };
+    seedChain();
     mockState.aiText = '{"items":[{"section":"Documentation","text":"P&IDs updated to as-built"}]}';
   }
   const nothingServed = () => {
@@ -487,6 +497,50 @@ describe("POST /api/projects/checklist — any active member, over documents THE
     expect(auditRows()).toHaveLength(0);
   });
 
+  it("SEC-10 (a): a normal document with an allow-list for team-A — a member outside team-A gets 403, nothing rendered; a team-A member is served", async () => {
+    const { POST } = await load();
+    seed(PLAIN_MEMBER, docRow({ acl: teamGrant("team-A", ["discover", "read"]) }));
+    const res = await POST(segment());
+    expect(res.status).toBe(403);
+    expect(String((await res.json()).error)).toMatch(/access to read that document/);
+    nothingServed();
+    seed(PLAIN_MEMBER, docRow({ acl: teamGrant("team-A", ["discover", "read"]) }));
+    mockState.tables.team_members = { data: [{ team_id: "team-A" }] };
+    expect((await POST(segment())).status).toBe(200);
+  });
+
+  it("SEC-10: read granted to team-A on the LIBRARY (the finding's HSE library) binds its normal documents — 403 outside team-A", async () => {
+    const { POST } = await load();
+    seed(PLAIN_MEMBER, docRow());
+    seedChain(teamGrant("team-A", ["discover", "read", "download"]));
+    expect((await POST(segment())).status).toBe(403);
+    nothingServed();
+    // The folder rung binds the same way.
+    seed(PLAIN_MEMBER, docRow());
+    seedChain(null, teamGrant("team-A", ["read"]));
+    expect((await POST(segment())).status).toBe(403);
+  });
+
+  it("SEC-10 (b): a private document whose read grant is INHERITED from its library serves a team-A member (200)", async () => {
+    const { POST } = await load();
+    seed(PLAIN_MEMBER, docRow({ visibility: "private", acl: null }));
+    seedChain(teamGrant("team-A", ["discover", "read"]));
+    mockState.tables.team_members = { data: [{ team_id: "team-A" }] };
+    expect((await POST(segment())).status).toBe(200);
+    expect(auditRows()).toHaveLength(0);
+  });
+
+  it("SEC-10: a library or folder whose ACL cannot be read is 503 — never read as 'no ACL'", async () => {
+    const { POST } = await load();
+    seed(PLAIN_MEMBER, docRow());
+    mockState.tables.libraries = { data: null, error: { message: "boom" } };
+    expect((await POST(segment())).status).toBe(503);
+    seed(PLAIN_MEMBER, docRow());
+    mockState.single.collections = { data: null, error: { message: "boom" } };
+    expect((await POST(segment())).status).toBe(503);
+    nothingServed();
+  });
+
   it("a membership read that fails is 503 — the gate never guesses", async () => {
     seed(PLAIN_MEMBER, docRow());
     mockState.tables.team_members = { data: null, error: { message: "boom" } };
@@ -534,6 +588,35 @@ describe("POST /api/projects/checklist — any active member, over documents THE
       expect(prompt).toContain("HSE-7 Incident procedure");
       expect(auditRows()).toHaveLength(0);
     });
+
+    it("the intake folder's titles are read in THIS org only, and filtered over the folder's library → folder chain", async () => {
+      seedAssess(PLAIN_MEMBER);
+      // The intake folder sits in a library whose read is team-A's only.
+      seedChain(teamGrant("team-A", ["discover", "read"]));
+      const { POST } = await load();
+      expect((await POST(assess())).status).toBe(200);
+      const prompt = String(mockState.aiCalls[0].user);
+      expect(prompt).not.toContain("P-1 General arrangement");
+      expect(prompt).toContain("No project documents on file yet.");
+      // The list read is org-scoped (a foreign intake_collection_id lists nothing of another tenant's).
+      const docCalls = mockState.calls.filter((c) => c.table === "documents");
+      const listEqs = docCalls.filter((c) => c.method === "eq").map((c) => c.args);
+      expect(listEqs).toContainEqual(["org_id", ORG]);
+      expect(listEqs).toContainEqual(["collection_id", "c1"]);
+      // …and so is every chain read.
+      const eqsOn = (table: string) => mockState.calls.filter((c) => c.table === table && c.method === "eq").map((c) => c.args);
+      expect(eqsOn("collections")).toContainEqual(["org_id", ORG]);
+      expect(eqsOn("libraries")).toContainEqual(["org_id", ORG]);
+    });
+
+    it("an intake folder whose chain cannot be read lists no titles — failing closed", async () => {
+      seedAssess(PLAIN_MEMBER);
+      mockState.tables.libraries = { data: null, error: { message: "boom" } };
+      const { POST } = await load();
+      expect((await POST(assess())).status).toBe(200);
+      const prompt = String(mockState.aiCalls[0].user);
+      expect(prompt).not.toContain("P-1 General arrangement");
+    });
   });
 });
 
@@ -548,6 +631,7 @@ describe("POST /api/companies/quality-manual — controllers only, and still bou
     mockState.tables.companies = { data: { id: "co1", name: "Acme Mechanical" } };
     mockState.tables.documents = { data: doc };
     mockState.tables.document_versions = { data: { file_url: "orgs/o1/libraries/l1/QM.pdf", file_type: "application/pdf" } };
+    seedChain();
     mockState.aiText = '{"findings":[{"area":"doc_control","covered":true,"finding":"Section 4 defines revision control"}]}';
   }
 
@@ -716,6 +800,7 @@ describe("PERF-6 — running out of time is a readable 504 naming the page cap, 
     mockState.tables.projects = { data: { id: "p1", name: "Unit 4" } };
     mockState.tables.documents = { data: docRow() };
     mockState.tables.document_versions = { data: { file_url: "orgs/o1/x.pdf", file_type: "application/pdf" } };
+    seedChain();
     mockState.aiText = '{"items":[{"section":null,"text":"Weld records on file"}]}';
   }
   afterEach(() => { vi.useRealTimers(); });

@@ -1,14 +1,20 @@
 // projects Round G — SEC-10: lib/docFileServer is the gate every
-// service-role page read of a doc-control document goes through, and it
-// must make the SAME content decision the bytes egress
-// (/api/storage/download-url) makes. A member who cannot pull a document's
-// bytes must not be able to have its pages read back to them by the
-// checklist or quality-manual readers — and a controller-only read must be
-// recorded in both places (DEC-43).
+// service-role page read of a doc-control document goes through. A member
+// the app would not let read a document must not be able to have its pages
+// read back to them by the checklist or quality-manual readers — and a
+// controller-only read must be recorded (DEC-43).
 //
-// The parity matrix below runs the real route and the real gate over the
-// same principal × document fixtures and asserts they agree, so a change to
-// either decision that the other does not share fails here.
+// Two halves:
+//   · the gate evaluates the app's own read decision over the FULL chain
+//     (library → ancestor folders → folder → document), requiring read or
+//     download wherever an ACL exists, on every visibility — the matrix in
+//     "SEC-10: the full chain" pins it case by case, and pins that the gate
+//     never serves what the library page's own read check would hide;
+//   · it is never LOOSER than the bytes egress (/api/storage/download-url):
+//     the parity matrix runs the real route and the real gate over the same
+//     principal × document fixtures and names every case where the gate is
+//     stricter. Intelligence KACL-5 brings the egress route to the same
+//     chain; when it lands, those named divergences shrink.
 
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { NextRequest } from "next/server";
@@ -16,8 +22,12 @@ import { NextRequest } from "next/server";
 const state = vi.hoisted(() => ({
   user: { id: "u1", email: "u1@example.com" } as { id: string; email?: string } | null,
   tables: {} as Record<string, { data?: unknown; error?: unknown }>,
+  // Per-table override for .maybeSingle() — collections is read both as one
+  // row (the document's folder) and as a list (its ancestors).
+  single: {} as Record<string, { data?: unknown; error?: unknown }>,
   rpc: {} as Record<string, { data?: unknown; error?: unknown }>,
   inserts: [] as Array<{ table: string; row: Record<string, unknown> }>,
+  calls: [] as Array<{ table: string; method: string; args: unknown[] }>,
 }));
 
 function chain(table: string) {
@@ -30,9 +40,10 @@ function chain(table: string) {
         return (resolve: (v: unknown) => void) => resolve({ data: r.data ?? null, error: r.error ?? null });
       }
       return (...args: unknown[]) => {
+        state.calls.push({ table, method: prop, args });
         if (prop === "insert") state.inserts.push({ table, row: args[0] as Record<string, unknown> });
         if (prop === "maybeSingle" || prop === "single") {
-          const r = result();
+          const r = state.single[table] ?? result();
           return Promise.resolve({ data: r.data ?? null, error: r.error ?? null });
         }
         return new Proxy(c, handler);
@@ -57,15 +68,18 @@ vi.mock("@aws-sdk/s3-request-presigner", () => ({ getSignedUrl: vi.fn(async () =
 
 import { GET as downloadUrl } from "@/app/api/storage/download-url/route";
 import {
-  resolveDocumentFile, documentContentDecision, discoverableDocuments, loadReaderPrincipal,
+  resolveDocumentFile, documentContentDecision, discoverableDocuments, loadReaderPrincipal, loadContainerAclChain,
   DOC_READ_DENIED, DOC_NO_FILE, DOC_ACCESS_UNVERIFIED,
 } from "@/lib/docFileServer";
-import type { Principal } from "@/lib/permissions";
+import { canWithAclChain, type Principal } from "@/lib/permissions";
+import type { AccessControl } from "@/types/schema";
 
 const ORG = "12345678-1234-1234-1234-123456789abc";
 const KEY = `orgs/${ORG}/libraries/l1/HSE-7.pdf`;
 const grant = (uid: string, actions: string[]) =>
   ({ rules: [{ effect: "allow", subject: { type: "user", id: uid }, actions }] });
+const teamGrant = (team: string, actions: string[]) =>
+  ({ rules: [{ effect: "allow", subject: { type: "team", id: team }, actions }] });
 
 const MEMBERS: Record<string, { role: string; roles: string[] }> = {
   viewer: { role: "Viewer", roles: [] },
@@ -82,13 +96,25 @@ const DOCS: Record<string, Record<string, unknown>> = {
   privateDownloadGrant: { visibility: "private", acl: grant("u1", ["download"]) },
   normalRoleDownloadDeny: { acl_index: { deny: { roles: { download: ["Viewer", "Manager"] } } } },
   privateUserDownloadDeny: { visibility: "private", acl: grant("u1", ["read"]), acl_index: { deny: { users: { download: ["u1"] } } } },
+  // The ordinary PermissionDrawer restriction: normal visibility, read
+  // granted to someone else only (an allow-list).
+  normalOthersOnly: { acl: grant("someone-else", ["discover", "read"]) },
+  normalReadGrant: { acl: grant("u1", ["read"]) },
+  // "Everyone in the org: no download" — an org-subject deny.
+  orgDownloadDeny: { acl_index: { deny: { orgs: { download: [ORG] } } } },
 };
 
 function seed(member: { role: string; roles: string[] } | null, doc: Record<string, unknown>, owner = false) {
   state.user = { id: "u1", email: "u1@example.com" };
+  state.calls = [];
+  // The container chain: library l1 → folder c1 (no ancestors), no ACL on
+  // either unless a case sets one.
+  state.single = { collections: { data: { id: "c1", library_id: "l1", path_ids: [], acl: null } } };
   state.tables = {
     org_members: { data: member ? { uid: "u1", status: "active", ...member } : null },
     team_members: { data: [] },
+    libraries: { data: { id: "l1", acl: null } },
+    collections: { data: [] },
     documents: {
       data: {
         id: "d1", document_number: "HSE-7", title: "Incident procedure", name: null,
@@ -123,25 +149,59 @@ async function gateVerdict(): Promise<{ status: number; recorded: number }> {
 
 beforeEach(() => { seed(MEMBERS.viewer, DOCS.normal); });
 
-describe("SEC-10 parity: the page-read gate and the bytes egress decide alike", () => {
+// Where the gate is STRICTER than today's egress route, by design: the
+// egress route evaluates only the document's own ACL, only for private /
+// hidden documents, and reads no org-subject deny (intelligence KACL-5). Every
+// other fixture decides — and records — alike.
+const STRICTER_THAN_EGRESS = new Set([
+  // An allow-list on a normal document binds (SEC-10's own scenario).
+  "viewer × normalOthersOnly", "manager × normalOthersOnly",
+  // …so a controller served it only by the tier is recorded (DEC-43).
+  "additiveDocCtrl × normalOthersOnly", "admin × normalOthersOnly",
+  // An org-subject download deny binds everyone, the owner included.
+  ...Object.keys(MEMBERS).flatMap((who) => [`${who} × orgDownloadDeny`, `${who} × orgDownloadDeny × effective owner`]),
+]);
+
+describe("SEC-10 parity: the page-read gate is never looser than the bytes egress", () => {
   for (const [who, member] of Object.entries(MEMBERS)) {
     for (const [what, doc] of Object.entries(DOCS)) {
       for (const owner of [false, true]) {
-        it(`${who} × ${what}${owner ? " × effective owner" : ""}`, async () => {
+        const name = `${who} × ${what}${owner ? " × effective owner" : ""}`;
+        it(name, async () => {
           seed(member, doc, owner);
           const egress = await egressVerdict();
           seed(member, doc, owner);
           const gate = await gateVerdict();
-          expect(gate.status, "served / refused").toBe(egress.status);
-          // DEC-43: a served controller-only read is recorded by both. (The
-          // egress route writes its row before its download-deny check; the
-          // gate never records a read it then refuses.)
-          if (gate.status === 200) expect(gate.recorded, "CONTROLLER_RESTRICTED_READ").toBe(egress.recorded);
+          // Never looser: what the egress route refuses, the gate refuses.
+          if (egress.status !== 200) expect(gate.status, "the egress route refuses — so must the gate").toBe(egress.status);
+          // DEC-43: a served controller-only read the egress route records,
+          // the gate records too. The gate never records a read it refuses.
+          if (gate.status === 200) expect(gate.recorded, "CONTROLLER_RESTRICTED_READ").toBeGreaterThanOrEqual(egress.recorded);
           else expect(gate.recorded).toBe(0);
+          const same = gate.status === egress.status && gate.recorded === egress.recorded;
+          expect(same, "decides exactly as the egress route unless named in STRICTER_THAN_EGRESS").toBe(!STRICTER_THAN_EGRESS.has(name));
         });
       }
     }
   }
+
+  it("the named divergences are exactly the ones observed — none stale, none unnamed", async () => {
+    const divergent = new Set<string>();
+    for (const [who, member] of Object.entries(MEMBERS)) {
+      for (const [what, doc] of Object.entries(DOCS)) {
+        for (const owner of [false, true]) {
+          seed(member, doc, owner);
+          const egress = await egressVerdict();
+          seed(member, doc, owner);
+          const gate = await gateVerdict();
+          if (gate.status !== egress.status || gate.recorded !== egress.recorded) {
+            divergent.add(`${who} × ${what}${owner ? " × effective owner" : ""}`);
+          }
+        }
+      }
+    }
+    expect(divergent).toEqual(STRICTER_THAN_EGRESS);
+  });
 
   it("the matrix is not vacuous: it contains serves, refusals and recorded controller reads", async () => {
     const seen = new Set<string>();
@@ -153,6 +213,180 @@ describe("SEC-10 parity: the page-read gate and the bytes egress decide alike", 
       }
     }
     expect(seen).toEqual(new Set(["200:0", "403:0", "200:1"]));
+  });
+});
+
+describe("SEC-10: the full chain — library → ancestor folders → folder → document", () => {
+  const VIEWER = MEMBERS.viewer;
+  function inTeam(team: string | null) {
+    state.tables.team_members = { data: team ? [{ team_id: team }] : [] };
+  }
+  const setLibrary = (acl: unknown) => { state.tables.libraries = { data: { id: "l1", acl } }; };
+  const setFolder = (acl: unknown, pathIds: string[] = []) => {
+    state.single.collections = { data: { id: "c1", library_id: "l1", path_ids: pathIds, acl } };
+  };
+  const setAncestors = (rows: Array<{ id: string; acl: unknown }>) => { state.tables.collections = { data: rows }; };
+
+  it("(a) a normal document with an allow-list for team-A: 403 outside team-A, 200 inside — the egress route serves both today (KACL-5)", async () => {
+    seed(VIEWER, { acl: teamGrant("team-A", ["discover", "read"]) });
+    expect((await gateVerdict()).status).toBe(403);
+    seed(VIEWER, { acl: teamGrant("team-A", ["discover", "read"]) });
+    expect((await egressVerdict()).status).toBe(200);
+    seed(VIEWER, { acl: teamGrant("team-A", ["discover", "read"]) });
+    inTeam("team-A");
+    expect((await gateVerdict()).status).toBe(200);
+  });
+
+  it("an allow-list on the LIBRARY binds a normal document with no ACL of its own", async () => {
+    seed(VIEWER, DOCS.normal);
+    setLibrary(teamGrant("team-A", ["discover", "read", "download"]));
+    expect((await gateVerdict()).status).toBe(403);
+    seed(VIEWER, DOCS.normal);
+    setLibrary(teamGrant("team-A", ["discover", "read", "download"]));
+    inTeam("team-A");
+    expect((await gateVerdict()).status).toBe(200);
+  });
+
+  it("an allow-list on an ANCESTOR folder binds too — every rung of path_ids is read, in order", async () => {
+    seed(VIEWER, DOCS.normal);
+    setFolder(null, ["c0"]);
+    setAncestors([{ id: "c0", acl: teamGrant("team-A", ["read"]) }]);
+    expect((await gateVerdict()).status).toBe(403);
+    seed(VIEWER, DOCS.normal);
+    setFolder(null, ["c0"]);
+    setAncestors([{ id: "c0", acl: teamGrant("team-A", ["read"]) }]);
+    inTeam("team-A");
+    expect((await gateVerdict()).status).toBe(200);
+  });
+
+  it("(b) a private document whose read grant is INHERITED from its library serves a team-A member (200) — the egress route refuses today (KACL-5)", async () => {
+    seed(VIEWER, { visibility: "private" });
+    setLibrary(teamGrant("team-A", ["discover", "read"]));
+    inTeam("team-A");
+    expect((await gateVerdict()).status).toBe(200);
+    seed(VIEWER, { visibility: "private" });
+    setLibrary(teamGrant("team-A", ["discover", "read"]));
+    inTeam("team-A");
+    expect((await egressVerdict()).status).toBe(403);
+  });
+
+  it("an inherited DISCOVER-only grant on a private document is not enough (DOCACL-5)", async () => {
+    seed(VIEWER, { visibility: "private" });
+    setFolder(teamGrant("team-A", ["discover"]));
+    inTeam("team-A");
+    expect((await gateVerdict()).status).toBe(403);
+  });
+
+  it("an org-wide library grant serves everyone the document does not deny", async () => {
+    const everyone = { rules: [{ effect: "allow", subject: { type: "org", id: ORG }, actions: ["discover", "read"] }] };
+    const denyU1 = { rules: [{ effect: "deny", subject: { type: "user", id: "u1" }, actions: ["read"] }] };
+    seed(VIEWER, DOCS.normal);
+    setLibrary(everyone);
+    expect((await gateVerdict()).status).toBe(200);
+    seed(VIEWER, { acl: denyU1 });
+    setLibrary(everyone);
+    expect((await gateVerdict()).status).toBe(403);
+  });
+
+  it("a folder that does not inherit starts the chain again (the engine's own inherit semantics)", async () => {
+    seed(VIEWER, DOCS.normal);
+    setLibrary(teamGrant("team-A", ["read"]));
+    setFolder({ inherit: false, rules: [{ effect: "allow", subject: { type: "org", id: ORG }, actions: ["read"] }] });
+    expect((await gateVerdict()).status).toBe(200);
+  });
+
+  it("a download deny in the LIVE chain binds before the index is rebuilt — an org-subject one binds an Admin", async () => {
+    seed(MEMBERS.admin, DOCS.normal);
+    setLibrary({ rules: [{ effect: "deny", subject: { type: "org", id: ORG }, actions: ["download"] }] });
+    expect((await gateVerdict()).status).toBe(403);
+    expect(restrictedReads()).toHaveLength(0);
+  });
+
+  it("DEC-43: a controller served a normal document ONLY by the tier (a library allow-list excludes them) is recorded", async () => {
+    seed(MEMBERS.additiveDocCtrl, DOCS.normal);
+    setLibrary(teamGrant("team-A", ["read"]));
+    const g = await gateVerdict();
+    expect(g).toEqual({ status: 200, recorded: 1 });
+    // …and not when the chain admits the Manager they also are.
+    seed(MEMBERS.additiveDocCtrl, DOCS.normal);
+    setLibrary({ rules: [{ effect: "allow", subject: { type: "role", id: "Manager" }, actions: ["read"] }] });
+    expect(await gateVerdict()).toEqual({ status: 200, recorded: 0 });
+  });
+
+  it("the gate never serves a document the library page's own read check hides", async () => {
+    const lib = teamGrant("team-A", ["read"]);
+    const fixtures: Array<{ doc: Record<string, unknown>; library: unknown; team: string | null }> = [];
+    for (const doc of Object.values(DOCS)) {
+      for (const library of [null, lib]) for (const team of [null, "team-A"]) fixtures.push({ doc, library, team });
+    }
+    let served = 0;
+    for (const member of Object.values(MEMBERS)) {
+      for (const f of fixtures) {
+        seed(member, f.doc);
+        setLibrary(f.library);
+        inTeam(f.team);
+        const g = await gateVerdict();
+        if (g.status !== 200) continue;
+        served++;
+        const principal: Principal = {
+          uid: "u1", role: member.role as Principal["role"], roles: member.roles as Principal["roles"],
+          orgId: ORG, teamIds: f.team ? [f.team] : [], isActiveMember: true,
+        };
+        // The library page: canWithAclChain(read) over library → folder →
+        // document, default-allow (documents/[libraryId]/page.tsx).
+        const aclChain = [f.library, null, f.doc.acl].map((a) => (a ?? undefined) as AccessControl | undefined);
+        const pageMayRead = (action: "read" | "download") => canWithAclChain({
+          principal, action, aclChain, defaultAllow: true,
+          effectiveOwnerUserId: "someone-else",
+        });
+        expect(pageMayRead("read") || pageMayRead("download")).toBe(true);
+      }
+    }
+    expect(served).toBeGreaterThan(20);
+  });
+
+  it("fails CLOSED: a library, folder or ancestor that cannot be read — or is missing — is 503, never 'no ACL'", async () => {
+    const cases: Array<[string, () => void]> = [
+      ["library read error", () => { state.tables.libraries = { data: null, error: { message: "boom" } }; }],
+      ["library missing", () => { state.tables.libraries = { data: null }; }],
+      ["folder read error", () => { state.single.collections = { data: null, error: { message: "boom" } }; }],
+      ["folder missing", () => { state.single.collections = { data: null }; }],
+      ["ancestor read error", () => { setFolder(null, ["c0"]); state.tables.collections = { data: null, error: { message: "boom" } }; }],
+      ["ancestor missing", () => { setFolder(null, ["c0", "c00"]); setAncestors([{ id: "c0", acl: null }]); }],
+    ];
+    for (const [label, breakIt] of cases) {
+      seed(MEMBERS.viewer, DOCS.normal);
+      breakIt();
+      expect(await resolveDocumentFile(ORG, "d1", { uid: "u1", channel: "test" }), label)
+        .toEqual({ ok: false, status: 503, error: DOC_ACCESS_UNVERIFIED });
+      expect(state.calls.filter((c) => c.table === "document_versions"), label).toHaveLength(0);
+    }
+  });
+
+  it("a root document (no folder) reads only its library; every chain read is org-scoped", async () => {
+    seed(VIEWER, { collection_id: null });
+    expect((await gateVerdict()).status).toBe(200);
+    expect(state.calls.filter((c) => c.table === "collections")).toHaveLength(0);
+    seed(VIEWER, DOCS.normal);
+    setFolder(null, ["c0"]);
+    setAncestors([{ id: "c0", acl: null }]);
+    await gateVerdict();
+    const orgScoped = (table: string) => state.calls
+      .filter((c) => c.table === table && c.method === "select").length
+      === state.calls.filter((c) => c.table === table && c.method === "eq" && c.args[0] === "org_id" && c.args[1] === ORG).length;
+    expect(state.calls.filter((c) => c.table === "collections" && c.method === "select")).toHaveLength(2);
+    expect(orgScoped("collections")).toBe(true);
+    expect(orgScoped("libraries")).toBe(true);
+  });
+
+  it("loadContainerAclChain: library first, then ancestors root-first, then the folder", async () => {
+    seed(VIEWER, DOCS.normal);
+    setLibrary({ rules: [], tag: "lib" });
+    setFolder({ rules: [], tag: "folder" }, ["root", "mid"]);
+    setAncestors([{ id: "mid", acl: { rules: [], tag: "mid" } }, { id: "root", acl: { rules: [], tag: "root" } }]);
+    const chainTags = (await loadContainerAclChain(ORG, { collectionId: "c1" }))
+      .map((a) => (a as unknown as { tag: string }).tag);
+    expect(chainTags).toEqual(["lib", "root", "mid", "folder"]);
   });
 });
 
@@ -213,6 +447,18 @@ describe("documentContentDecision / discoverableDocuments — pure", () => {
     expect(documentContentDecision(principal(["Manager", "DocCtrl"], "Manager"), { visibility: "hidden" }))
       .toEqual({ served: true, controllerBypass: true, downloadDenied: false });
   });
+  it("the container chain is part of the decision: a library allow-list binds a normal document; an inherited read serves a private one", () => {
+    const lib = teamGrant("t1", ["read"]) as AccessControl;
+    const other = teamGrant("t9", ["read"]) as AccessControl;
+    expect(documentContentDecision(principal(["Viewer"]), {}, [other]).served).toBe(false);
+    expect(documentContentDecision(principal(["Viewer"]), {}, [lib]).served).toBe(true);
+    expect(documentContentDecision(principal(["Viewer"]), { visibility: "private" }, [lib]).served).toBe(true);
+    expect(documentContentDecision(principal(["Viewer"]), { visibility: "private" }, []).served).toBe(false);
+    // No ACL anywhere: a normal document is open.
+    expect(documentContentDecision(principal(["Viewer"]), {}, [undefined, undefined]).served).toBe(true);
+    // An org-subject download deny in the index binds.
+    expect(documentContentDecision(principal(["Admin"]), { acl_index: { deny: { orgs: { download: [ORG] } } } }).downloadDenied).toBe(true);
+  });
   it("discoverableDocuments keeps what the reader may discover — normal, owned, or granted discover", () => {
     const rows = [
       { id: "a", visibility: "normal" },
@@ -223,6 +469,13 @@ describe("documentContentDecision / discoverableDocuments — pure", () => {
     ];
     expect(discoverableDocuments(principal(["Viewer"]), rows).map((r) => r.id)).toEqual(["a", "c", "d"]);
     expect(discoverableDocuments(principal(["Admin"]), rows).map((r) => r.id)).toEqual(["a", "b", "c", "d", "e"]);
+  });
+  it("discoverableDocuments reads the shared container chain: a library allow-list hides normal titles; an inherited discover keeps a private one", () => {
+    const rows = [{ id: "n", visibility: "normal" }, { id: "p", visibility: "private" }];
+    const others = teamGrant("t9", ["discover", "read"]) as AccessControl;
+    const mine = teamGrant("t1", ["discover"]) as AccessControl;
+    expect(discoverableDocuments(principal(["Viewer"]), rows, [others]).map((r) => r.id)).toEqual([]);
+    expect(discoverableDocuments(principal(["Viewer"]), rows, [mine]).map((r) => r.id)).toEqual(["n", "p"]);
   });
   it("loadReaderPrincipal builds the collection from the headline and the additive roles", async () => {
     seed(MEMBERS.additiveDocCtrl, DOCS.normal);

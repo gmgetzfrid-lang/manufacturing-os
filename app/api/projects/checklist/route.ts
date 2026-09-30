@@ -34,7 +34,7 @@ import { governedAiCall, GovernedCallError } from "@/lib/ai/governedCall";
 import { extractJsonBlock } from "@/lib/orchestrator/protocol";
 import { renderKnowledgePages } from "@/lib/knowledgePageRender";
 import {
-  resolveDocumentFile, loadReaderPrincipal, discoverableDocuments, DOC_ACCESS_UNVERIFIED,
+  resolveDocumentFile, loadReaderPrincipal, discoverableDocuments, loadContainerAclChain, DOC_ACCESS_UNVERIFIED,
 } from "@/lib/docFileServer";
 import { validateSegmentedItems, type SegmentedItem } from "@/lib/checklistEngine";
 import { isTimeoutError } from "@/lib/ai/providerCall";
@@ -157,20 +157,28 @@ export async function POST(req: NextRequest) {
   const safe = async <T>(p: PromiseLike<{ data: T | null }>): Promise<T | null> => {
     try { return (await p).data; } catch { return null; }
   };
-  const [sow, milestones, docRows, assets] = await Promise.all([
+  // The intake folder's documents are listed in THIS org only (the
+  // project's intake_collection_id is owner-writable, so a foreign folder id
+  // must not list another tenant's titles), and filtered over the folder's
+  // own library → folder chain; a chain that cannot be read lists nothing.
+  const intakeCollectionId = project.intake_collection_id ? String(project.intake_collection_id) : null;
+  const [sow, milestones, docRows, intakeChain, assets] = await Promise.all([
     project.sow_document_id
       ? resolveDocumentFile(orgId, String(project.sow_document_id), { uid: userId, email: userEmail, channel: "checklist_assess", labelOnly: true }).catch(() => null)
       : Promise.resolve(null),
     safe(supabaseAdmin.from("milestones").select("name, status").eq("project_id", projectId).limit(100)),
-    project.intake_collection_id
-      ? safe(supabaseAdmin.from("documents").select("title, name, document_number, visibility, acl, owner_user_id").eq("collection_id", String(project.intake_collection_id)).limit(200))
+    intakeCollectionId
+      ? safe(supabaseAdmin.from("documents").select("title, name, document_number, visibility, acl, owner_user_id").eq("org_id", orgId).eq("collection_id", intakeCollectionId).limit(200))
+      : Promise.resolve(null),
+    intakeCollectionId
+      ? loadContainerAclChain(orgId, { collectionId: intakeCollectionId }).catch(() => null)
       : Promise.resolve(null),
     safe(supabaseAdmin.from("assets").select("tag").eq("org_id", orgId).eq("archived", false).limit(300)),
   ]);
   const sowFile = sow?.ok ? sow.file : null;
   const sowRestricted = !!sow && !sow.ok && sow.status === 403;
   type DocTitleRow = { title: string | null; name: string | null; document_number: string | null; visibility?: string | null; acl?: unknown; owner_user_id?: string | null };
-  const docs = docRows ? discoverableDocuments(reader, docRows as DocTitleRow[]) : null;
+  const docs = docRows && intakeChain ? discoverableDocuments(reader, docRows as DocTitleRow[], intakeChain) : null;
 
   const goals = Array.isArray(project.goals) ? (project.goals as string[]).join("; ") : "";
   const context = [
