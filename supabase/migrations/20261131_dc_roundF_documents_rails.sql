@@ -44,7 +44,8 @@
 --            (lib/dataRestore.ts RESTORE_TABLE_ORDER — versions reference
 --            their document), so a declared FK would refuse every restored
 --            document that has a current revision. INSERT is not railed for
---            the same reason. DEC-44 records the call.
+--            the same reason. DEC-44 (P3 LIFECYCLE; provisional number,
+--            renumbered on merge) records the call.
 --            The child evidence tables now agree: distribution_acks.version_id
 --            goes from ON DELETE CASCADE to NO ACTION, and
 --            document_acknowledgments / document_review_signoffs gain the FK

@@ -228,10 +228,10 @@ describe("20261131 — DRLS-3 / DRLS-14 register rail", () => {
     expect(DEL).toContain("IF EXISTS (SELECT 1 FROM documents d WHERE d.current_version_id = OLD.id) THEN");
     expect(DEL).toContain("UPDATE documents SET pending_version_id = NULL WHERE pending_version_id = OLD.id;");
   });
-  it("DEC-44: the version pointers are NOT declared FOREIGN KEYs — the restore replays documents before document_versions", () => {
+  it("the version pointers are NOT declared FOREIGN KEYs — the restore replays documents before document_versions (the P3 LIFECYCLE decision)", () => {
     expect(stripComments(M131)).not.toMatch(/ALTER TABLE documents[^;]*REFERENCES/);
     expect(RESTORE_TABLE_ORDER.indexOf("documents")).toBeLessThan(RESTORE_TABLE_ORDER.indexOf("document_versions"));
-    expect(M131).toMatch(/DEC-44 records the call\./);
+    expect(M131).toMatch(/DEC-\d+ \(P3 LIFECYCLE; provisional number,\n--\s+renumbered on merge\) records the call\./);
   });
 });
 
