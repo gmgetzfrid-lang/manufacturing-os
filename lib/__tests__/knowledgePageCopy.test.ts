@@ -111,6 +111,11 @@ describe("ASK-6 — the assistant's words are the assistant's, and never a trap"
     expect(clarify).toContain("Aspects the assistant suggested — pick which to answer:");
     expect(clarify).toContain("onClick={() => onAnswer(safeOptions)}");
   });
+  it("the screen is one pure module (no imports) the ask route can run server-side; the page re-exports it", () => {
+    const screen = repo("lib/assistantScreen.ts");
+    expect(screen).not.toMatch(/^import /m);
+    expect(repo("lib/knowledge.ts")).toContain('export { screenAssistantRequest, ASSISTANT_REQUEST_MAX } from "@/lib/assistantScreen";');
+  });
   it("the frame names the words as the model's, not the app's", () => {
     const frame = page.slice(page.indexOf("function AssistantAskingFrame("), page.indexOf("function AssistantRequestRefused("));
     expect(frame).toContain("AI-written");
