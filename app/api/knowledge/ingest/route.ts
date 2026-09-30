@@ -8,13 +8,27 @@
 // pages_indexed. The maintenance cron drains the same queue in the
 // background (lib/knowledgeIngest is the single engine for both).
 //
-// Scanned (image-only) pages yield no text; we count them so the UI can say
-// "34 of 900 pages had no extractable text" instead of pretending.
+// Scanned (image-only) pages yield no text; we count them. The count is kept
+// on the document row (knowledge_documents.empty_pages, reset with the rest
+// of the index) and every response carries the running total as
+// emptyPagesTotal — the number behind "34 of 900 pages had no extractable
+// text" — rather than a per-batch figure nobody reads (ING-11).
+//
+// One driver at a time (ING-2): the engine claims the document per batch. A
+// POST that finds another driver mid-batch WAITS for it (never errors the
+// document) and answers `busy` with the row's progress if it is still held.
+// A file that is not a PDF is refused on its first batch, by its bytes,
+// before pdf.js sees it (ING-9).
 
 import { NextRequest, NextResponse } from "next/server";
+import { DeleteObjectCommand } from "@aws-sdk/client-s3";
+import { r2, R2_BUCKET } from "@/lib/r2";
 import { supabaseAdmin } from "@/lib/supabaseAdmin";
 import { openAiKey } from "@/lib/ai/keyVault";
-import { ingestKnowledgeDocBatch, type VisionContext } from "@/lib/knowledgeIngest";
+import {
+  ingestKnowledgeDocBatch, sniffStoredFile, notPdfMessage, type VisionContext, type IngestBatchResult,
+} from "@/lib/knowledgeIngest";
+import { memberHoldsAny } from "@/lib/roleHeld";
 import { loadOrgInstructionsBlock } from "@/lib/aiInstructionsServer";
 import { ALLOWED_PROVIDERS, estimateCostUsd, type AiUsage } from "@/lib/ai/pricing";
 import { getMonthUsage, getCapUsd, recordAskUsage } from "@/lib/ai/usageServer";
@@ -32,9 +46,17 @@ export const maxDuration = 60;
  *  being killed. */
 const INVOCATION_BUDGET_MS = 45_000;
 
+/** While another driver holds the document's claim, look again this often —
+ *  and stop waiting once less than a batch's worth of the budget is left. */
+const BUSY_POLL_MS = 1_500;
+const MIN_BATCH_MS = 15_000;
+
 function bad(msg: string, status = 400) {
   return NextResponse.json({ error: msg }, { status });
 }
+
+const pageList = (v: unknown): number[] =>
+  Array.isArray(v) ? [...new Set(v.map(Number).filter((n) => Number.isInteger(n) && n > 0))].sort((a, b) => a - b) : [];
 
 export async function POST(req: NextRequest) {
   const deadlineMs = Date.now() + INVOCATION_BUDGET_MS;
@@ -43,7 +65,7 @@ export async function POST(req: NextRequest) {
   const { data: { user }, error: authError } = await supabaseAdmin.auth.getUser(authHeader.slice(7));
   if (authError || !user) return bad("Unauthorized", 401);
 
-  let body: { documentId?: string };
+  let body: { documentId?: string; action?: string };
   try { body = await req.json(); } catch { return bad("Expected JSON body"); }
   const documentId = String(body.documentId ?? "").trim();
   if (!documentId) return bad("documentId is required");
@@ -53,19 +75,53 @@ export async function POST(req: NextRequest) {
   if (!doc) return bad("Document not found", 404);
 
   // Ingest is a controller action (same bar as adding library documents).
+  // The role COLLECTION decides, never the headline alone (ADD-1).
   const { data: member } = await supabaseAdmin
     .from("org_members").select("role, roles")
     .eq("org_id", doc.org_id as string).eq("uid", user.id).eq("status", "active")
     .maybeSingle();
-  const roles = new Set<string>([
-    (member?.role as string) ?? "", ...(((member?.roles as string[]) ?? [])),
-  ]);
-  if (!member || (!roles.has("Admin") && !roles.has("DocCtrl"))) {
+  if (!member || !memberHoldsAny(member, ["Admin", "DocCtrl"])) {
     return bad("Only Admin or Doc Control can index documents.", 403);
   }
 
+  if (body.action === "accept-partial") return acceptPartial(doc as Record<string, unknown>, user.id);
+  if (body.action) return bad("Unknown action");
+
   if (doc.status === "ready") {
     return NextResponse.json({ done: true, pageCount: doc.page_count, pagesIndexed: doc.pages_indexed });
+  }
+
+  // ── Is it a PDF at all? (ING-9) ────────────────────────────────────────
+  // The browser's .pdf check is advisory; the bytes decide, on the first
+  // batch, before pdf.js ever sees them. An uploaded non-PDF leaves nothing
+  // behind — its row and its R2 object go — and the refusal names where the
+  // file belongs. A mirrored controlled file is never deleted (the object is
+  // doc control's): its row is marked with the same plain message.
+  if (Number(doc.pages_indexed ?? 0) === 0) {
+    let kind: Awaited<ReturnType<typeof sniffStoredFile>> | null = null;
+    try { kind = await sniffStoredFile(doc.file_key as string); } catch { kind = null; }
+    if (kind && kind !== "pdf") {
+      const message = notPdfMessage(String(doc.name ?? "This file"), kind);
+      const uploaded = !doc.source_document_id && !doc.source_id &&
+        String(doc.file_key ?? "").startsWith(`orgs/${doc.org_id as string}/knowledge/`);
+      if (uploaded) {
+        const { error: delErr } = await supabaseAdmin.from("knowledge_documents").delete().eq("id", documentId);
+        if (delErr) return bad(`${message} (The upload could not be removed: ${delErr.message})`, 415);
+        await r2.send(new DeleteObjectCommand({ Bucket: R2_BUCKET, Key: doc.file_key as string }))
+          .catch(() => undefined); // the orphan sweeper reclaims an object whose delete failed
+        await supabaseAdmin.from("audit_logs").insert({
+          action: "KNOWLEDGE_DOC_REJECTED",
+          resource_type: "knowledge_document", resource_id: documentId,
+          org_id: doc.org_id, user_id: user.id,
+          details: { name: doc.name, detected: kind, reason: "not a PDF" },
+        }).then(() => undefined, () => undefined);
+        return NextResponse.json({ error: message, removed: true, detected: kind }, { status: 415 });
+      }
+      const { error: markErr } = await supabaseAdmin.from("knowledge_documents")
+        .update({ status: "error", error: message.slice(0, 500) }).eq("id", documentId);
+      if (markErr) return bad(`${message} (${markErr.message})`, 415);
+      return NextResponse.json({ error: message, removed: false, detected: kind }, { status: 415 });
+    }
   }
 
   // ── Vision fallback context ────────────────────────────────────────────
@@ -121,7 +177,7 @@ export async function POST(req: NextRequest) {
   }
 
   try {
-    const res = await ingestKnowledgeDocBatch({
+    const row = {
       id: doc.id as string,
       org_id: orgId,
       library_id: doc.library_id as string,
@@ -131,7 +187,17 @@ export async function POST(req: NextRequest) {
       pages_indexed: (doc.pages_indexed as number | null) ?? 0,
       page_count: doc.page_count as number | null,
       last_section: (doc.last_section as string | null) ?? null,
-    }, vision, deadlineMs);
+      // What the batch compares against at commit (ING-1) when it runs
+      // unclaimed on a pre-20261122 database.
+      ...("source_version_id" in doc ? { source_version_id: (doc.source_version_id as string | null) ?? null } : {}),
+    };
+    let res: IngestBatchResult = await ingestKnowledgeDocBatch(row, vision, deadlineMs);
+    // The loser WAITS (ING-2): the other driver holds the claim for one batch
+    // at most. Look again until it lets go, while a batch still fits.
+    while (res.busy && Date.now() + BUSY_POLL_MS + MIN_BATCH_MS < deadlineMs) {
+      await new Promise((r) => setTimeout(r, BUSY_POLL_MS));
+      res = await ingestKnowledgeDocBatch(row, vision, deadlineMs);
+    }
 
     if (visionUsage.inputTokens + visionUsage.outputTokens > 0) {
       await recordAskUsage({
@@ -141,32 +207,16 @@ export async function POST(req: NextRequest) {
       });
     }
 
-    if (res.done) {
-      await supabaseAdmin.from("audit_logs").insert({
-        action: "KNOWLEDGE_DOC_INDEXED",
-        resource_type: "knowledge_document", resource_id: String(doc.id),
-        org_id: doc.org_id, user_id: user.id,
-        details: { name: doc.name, pages: res.pageCount, visionPages: res.visionPages },
-      }).then(() => undefined, () => undefined);
+    if (res.done && !res.busy) await onIndexed(doc as Record<string, unknown>, user.id, res.pageCount, res.visionPages);
 
-      // Feed the GRAPH the moment indexing finishes. The mention indexer —
-      // which draws every document↔equipment edge on the graph page — had
-      // no automatic trigger at all: its API route had zero callers, so
-      // the graph only knew about documents someone manually indexed.
-      // Best-effort with a hard time cap; a slow scan never fails ingest.
-      try {
-        const { loadAliasDictionary, indexDocumentMentions } = await import("@/lib/mentionIndexer");
-        const dict = await loadAliasDictionary(String(doc.org_id));
-        if (dict.length > 0) {
-          await Promise.race([
-            indexDocumentMentions(
-              String(doc.org_id), String(doc.id), dict,
-              (doc.source_document_id as string | null) ?? null,
-            ),
-            new Promise((r) => setTimeout(r, 8_000)),
-          ]);
-        }
-      } catch { /* mention edges are a bonus — never block ingestion */ }
+    // Pages AI vision failed to read are said, not swallowed (ING-6) — on
+    // the same channel as the other reasons a page went unread.
+    if (res.visionFailedPages.length > 0) {
+      const n = res.visionFailedPages.length;
+      const note = `${n} page${n === 1 ? "" : "s"} could not be read by AI vision` +
+        (res.visionError ? ` (${res.visionError})` : "") +
+        " — retried automatically; the document is not marked ready until they are read or the partial index is accepted.";
+      visionSkipReason = visionSkipReason ? `${visionSkipReason} ${note}` : note;
     }
 
     return NextResponse.json({
@@ -183,4 +233,59 @@ export async function POST(req: NextRequest) {
       .eq("id", doc.id as string);
     return bad(`Indexing failed: ${message}`, 502);
   }
+}
+
+/** Everything that follows a document reaching 'ready': the audit row and
+ *  the mention pass that draws its document↔equipment edges. */
+async function onIndexed(doc: Record<string, unknown>, userId: string, pages: number, visionPages: number) {
+  await supabaseAdmin.from("audit_logs").insert({
+    action: "KNOWLEDGE_DOC_INDEXED",
+    resource_type: "knowledge_document", resource_id: String(doc.id),
+    org_id: doc.org_id, user_id: userId,
+    details: { name: doc.name, pages, visionPages },
+  }).then(() => undefined, () => undefined);
+
+  // Feed the GRAPH the moment indexing finishes. The mention indexer —
+  // which draws every document↔equipment edge on the graph page — had
+  // no automatic trigger at all: its API route had zero callers, so
+  // the graph only knew about documents someone manually indexed.
+  // Best-effort with a hard time cap; a slow scan never fails ingest.
+  try {
+    const { loadAliasDictionary, indexDocumentMentions } = await import("@/lib/mentionIndexer");
+    const dict = await loadAliasDictionary(String(doc.org_id));
+    if (dict.length > 0) {
+      await Promise.race([
+        indexDocumentMentions(
+          String(doc.org_id), String(doc.id), dict,
+          (doc.source_document_id as string | null) ?? null,
+        ),
+        new Promise((r) => setTimeout(r, 8_000)),
+      ]);
+    }
+  } catch { /* mention edges are a bonus — never block ingestion */ }
+}
+
+/** ING-6's explicit exit: a controller accepts a document whose remaining
+ *  pages AI vision could not read. It becomes 'ready' with those pages still
+ *  listed on the row (vision_failed_pages) — the count stays visible — and
+ *  the acceptance is audited with the page list. */
+async function acceptPartial(doc: Record<string, unknown>, userId: string) {
+  const failed = pageList(doc.vision_failed_pages);
+  if (failed.length === 0) return bad("Nothing to accept — no page is waiting on AI vision.", 409);
+  if (Number(doc.pages_indexed ?? 0) < Number(doc.page_count ?? Infinity)) {
+    return bad("Indexing has not reached the end of this document yet — let it finish first.", 409);
+  }
+  const { data, error } = await supabaseAdmin.from("knowledge_documents")
+    .update({ vision_partial_accepted: true, status: "ready", error: null })
+    .eq("id", String(doc.id)).select("id");
+  if (error) return bad(`Could not accept the partial index: ${error.message}`, 500);
+  if ((data ?? []).length === 0) return bad("Document not found", 404);
+  await supabaseAdmin.from("audit_logs").insert({
+    action: "KNOWLEDGE_DOC_PARTIAL_ACCEPTED",
+    resource_type: "knowledge_document", resource_id: String(doc.id),
+    org_id: doc.org_id, user_id: userId,
+    details: { name: doc.name, unreadPages: failed },
+  }).then(() => undefined, () => undefined);
+  await onIndexed(doc, userId, Number(doc.page_count ?? 0), Number(doc.vision_pages ?? 0));
+  return NextResponse.json({ ok: true, done: true, acceptedPages: failed });
 }
