@@ -2394,10 +2394,12 @@ narrow privilege, both enforced where the write happens:**
    compare-and-set on a still-undecided draft, checked — with an audit row
    and a notice once the replacement lands, and is never a revert target. A
    replacement that fails restores the displaced draft; a restore that cannot
-   land is audited `INTAKE_DISPLACE_UNRESOLVED` and surfaced by the cron. A
-   submission the door WITHDRAWS (a lost pointer race) is resolved the same
-   way. The health signal counts only in-review rows nothing points at and
-   nothing withdrew.
+   land is audited `INTAKE_DISPLACE_UNRESOLVED`. A submission the door
+   WITHDRAWS (a lost pointer race) is resolved the same way. The health
+   signals count STATE, on every cron run until they reach 0: in-review rows
+   nothing points at and nothing withdrew, and documents whose pending
+   revision names a retired draft (whatever wrote it — the unrestorable
+   displacement is one way there).
 4. **What the door admits**: the token travels in a header (or the query
    string) and is checked — format, rate window, existence, revocation,
    expiry, the project's existence and status, the declared size, the link's
@@ -2408,7 +2410,10 @@ narrow privilege, both enforced where the write happens:**
    per link per 15 minutes — a revision published without review or a
    replaced submission does not wait for the window, but a window holds at
    most THREE notices of any kind; every folded submission is counted, by
-   kind, into the next notice; a per-link lifetime cap of 500 submissions
+   kind, into the next notice — and a folded publish or replacement that no
+   later notice announces (the link went quiet) goes to the controllers and
+   the owner in the maintenance cron's daily digest, one per link, never
+   repeated; a per-link lifetime cap of 500 submissions
    and 5 GB. Links expire: 14 days by default, 90 at most (the database CHECK
    allows 92 days: an end-of-day LOCAL expiry picked from a UTC date lands up
    to ~91.5 days out west of UTC). A retry of the same bytes answers with the
@@ -2431,7 +2436,12 @@ narrow privilege, both enforced where the write happens:**
    clean, never bulk-adopted; adoption re-checks at the click and is offered
    to the controller tier only (the move guard's tier). A same-numbered live
    document is a collision where the number is the destination library's
-   key; in a multi-part library (a sheet set) the full key decides.
+   key; in a multi-part library (a sheet set) the full key decides between
+   the sheets INSIDE it — a sheet set shares its number within its library,
+   never across libraries, so a live same-numbered document in any OTHER
+   library still blocks until a renumber that is itself clear. An approved
+   sheet with a newer submission in review is marked and blocked like an
+   unapproved one — never "clean".
 7. **A deleted project closes its doors** — a trigger on `projects` deletes
    the project's links on every delete path. Not a foreign key: the org
    restore loads tables in `RESTORE_TABLE_ORDER` and fails a chunk on a
@@ -2500,11 +2510,14 @@ through `publish_revision` and a fresh acknowledgment roster opens; reject F
 → submit G → resend F lands in review; an HTML file named `.pdf` is refused
 before storage; the 31st upload in an hour is a 429; a retry returns the
 original record; a gone project's link opens nothing; two same-numbered sheets
-into a multi-sheet library are both taken and both adopted; a concurrent
-request never sees the upload's service-role client (`lib/__tests__/intakeUploadRoute.test.ts`,
+into a multi-sheet library are both taken and both adopted, while a live
+P-100 in ANOTHER library refuses a P-100's adoption into it until renumbered;
+a concurrent request never sees the upload's service-role client; a quiet
+link's folded publishes reach the controllers in one digest; a pending
+pointer on a retired draft is reported until resolved (`lib/__tests__/intakeUploadRoute.test.ts`,
 `lib/__tests__/intakeAutoPublishAcks.test.ts`,
 `lib/__tests__/intakeDoorMigration.test.ts`, `lib/__tests__/transitionIn.test.ts`,
-`lib/__tests__/serverClientScope.test.ts`).
+`lib/__tests__/serverClientScope.test.ts`, `lib/__tests__/intakeDoorLibs.test.ts`).
 
 **Reversal.** Per item, in configuration where it is one (the limits, the
 allowlist); the authorship rule and the contract-only promote are structural.
