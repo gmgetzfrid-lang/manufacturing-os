@@ -318,9 +318,13 @@ export async function resolveDocumentFile(
   // document the decision above was made on (record_id) and to the org: a
   // forged pointer naming another document's version — same org or not —
   // resolves no file, rather than serving B's pages under A's ACL.
-  const { data: ver } = await supabaseAdmin
+  const { data: ver, error: verError } = await supabaseAdmin
     .from("document_versions").select("file_url, file_type")
     .eq("id", versionId).eq("record_id", documentId).eq("org_id", orgId).maybeSingle();
+  // A version read that could not run is "try again", never "no file": a
+  // caller (the assess prompt) must not tell the model a document is absent
+  // because a read failed.
+  if (verError) return { ok: false, status: 503, error: DOC_ACCESS_UNVERIFIED };
   if (!ver?.file_url) return { ok: false, status: 404, error: DOC_NO_FILE };
 
   // DOCACL-3 / DEC-43: pages served ONLY because the reader is a controller

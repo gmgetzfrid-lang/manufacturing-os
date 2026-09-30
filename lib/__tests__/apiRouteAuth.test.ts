@@ -706,6 +706,25 @@ describe("POST /api/projects/checklist — any active member, over documents THE
       expect(prompt).not.toContain("No project documents on file yet.");
     });
 
+    it("a SOW whose version read fails is 'could not be checked', and one with no readable file is 'linked but has no readable file' — never 'No Summary of Work attached'", async () => {
+      const { POST } = await load();
+      // A controller may read the SOW; only the version read fails.
+      seedAssess(ADDITIVE_DOCCTRL);
+      mockState.single.document_versions = { data: null, error: { message: "boom" } };
+      expect((await POST(assess())).status).toBe(200);
+      let prompt = String(mockState.aiCalls[0].user);
+      expect(prompt).toContain("A Summary of Work is on file but could not be checked — it was not read.");
+      expect(prompt).not.toContain("No Summary of Work attached.");
+      // The same controller, a SOW with no stored file.
+      seedAssess(ADDITIVE_DOCCTRL);
+      mockState.single.document_versions = { data: null };
+      mockState.aiCalls = [];
+      expect((await POST(assess())).status).toBe(200);
+      prompt = String(mockState.aiCalls[0].user);
+      expect(prompt).toContain("A Summary of Work is linked but has no readable file — it was not read.");
+      expect(prompt).not.toContain("No Summary of Work attached.");
+    });
+
     it("a project with no SOW and an empty intake folder still says so plainly", async () => {
       seedAssess(PLAIN_MEMBER);
       mockState.tables.projects = { data: { id: "p1", name: "Unit 4", sow_document_id: null, intake_collection_id: "c1" } };

@@ -186,6 +186,9 @@ export async function POST(req: NextRequest) {
     && (sow === null || (!sow.ok && (sow.status === 503 || sow.status === 409)));
   type DocTitleRow = { title: string | null; name: string | null; document_number: string | null; visibility?: string | null; acl?: unknown; owner_user_id?: string | null };
   const docs = docRows && intakeChain ? discoverableDocuments(reader, docRows as DocTitleRow[], intakeChain) : null;
+  // A SOW that is linked but resolves no file (no version, or a pointer the
+  // gate refused to follow) is on file, not absent.
+  const sowNoFile = !!project.sow_document_id && !!sow && !sow.ok && sow.status === 404;
   const titlesUnchecked = !!intakeCollectionId
     && (docRows === null || (docRows.length > 0 && intakeChain === null));
 
@@ -200,6 +203,7 @@ export async function POST(req: NextRequest) {
       ? `Summary of Work document on file: ${sowFile.label}`
       : sowRestricted ? "A Summary of Work is on file but restricted — it was not read."
         : sowUnchecked ? "A Summary of Work is on file but could not be checked — it was not read."
+          : sowNoFile ? "A Summary of Work is linked but has no readable file — it was not read."
           : "No Summary of Work attached.",
     milestones?.length
       ? `Schedule milestones: ${(milestones as Array<{ name: string }>).map((m) => m.name).slice(0, 40).join("; ")}`
