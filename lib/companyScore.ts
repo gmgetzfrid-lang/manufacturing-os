@@ -31,7 +31,7 @@ export interface CompanyEvidence {
   punchTotal: number;
   // Cost discipline. The reason-code contract (lib/changeOrders.ts):
   // scope_gap lands on the contractor, design_error and owner_request land
-  // on us, field_condition is contractor-neutral (DEC-50). Only the
+  // on us, field_condition is contractor-neutral (DEC-48). Only the
   // contractor-attributable total enters the growth numerator.
   awardsTotal: number;                 // Σ awarded work, per party: posted commitments, else that party's contract_value
   finalCostTotal: number;              // Σ awarded + their CONTRACTOR-ATTRIBUTABLE approved COs

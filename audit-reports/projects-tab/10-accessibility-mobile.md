@@ -342,7 +342,7 @@ flex, and stack the label above the bar on narrow screens. Add `min-w-0` and
 - Neither card overflows at 375px.
 - The page body never scrolls horizontally.
 
-**Resolution (2026-09-23, projects Round G).** Both dimension rows drop their fixed widths below `sm:`: the label is `w-full sm:w-24` / `sm:w-28` (stacks above the bar on a phone), the track is `flex-1 sm:flex-none sm:w-24` / `sm:w-32` with `min-w-10`, the number keeps its `w-7` / `w-8`, and the detail wraps (`basis-full sm:basis-auto`, `truncate` on the list card, `break-words` on the profile). The list card and the profile header card carry `min-w-0 overflow-hidden`; the profile page gutter is `px-4 sm:px-6`. Pinned by source in `companiesRegistry.test.ts`.
+**Resolution (2026-09-29, projects Round G).** Both dimension rows drop their fixed widths below `sm:`: the label is `w-full sm:w-24` / `sm:w-28` (stacks above the bar on a phone), the track is `flex-1 sm:flex-none sm:w-24` / `sm:w-32` with `min-w-10`, the number keeps its `w-7` / `w-8`, and the detail wraps (`basis-full sm:basis-auto`, `truncate` on the list card, `break-words` on the profile). The list card and the profile header card carry `min-w-0 overflow-hidden`; the profile page gutter is `px-4 sm:px-6`. Pinned by source in `companiesRegistry.test.ts`.
 
 **Done-when.**
 - Neither card overflows at 375px — ✓ by construction: the only non-shrinking content on a row is the 28–32 px number; everything else flexes or wraps. Not measured in a browser (no browser in this loop).

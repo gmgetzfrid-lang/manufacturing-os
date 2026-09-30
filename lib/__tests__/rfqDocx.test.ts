@@ -105,7 +105,7 @@ describe("BID-3 — the letter's promise matches the scorer", () => {
     // COST-5: manpower is scored only when three bids state plausible hours — the letter never promises more.
     expect(xml).toContain("Price is scored, and so is manpower once at least three bids state labor hours in line with one another; scope coverage and any undeclared gaps are reviewed by our evaluators.");
     expect(xml).not.toContain("Price and manpower are scored;");
-    // The scorer has no coverage part and no gap penalty (DEC-50) — the letter must not claim either.
+    // The scorer has no coverage part and no gap penalty (DEC-48) — the letter must not claim either.
     expect(xml).not.toMatch(/compared line by line on price, manpower, and scope coverage/);
     expect(xml).not.toMatch(/count against the bid/);
   });

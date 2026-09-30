@@ -328,7 +328,7 @@ failed COMMENT blank the entire project view."*
 - An action error renders as a dismissible banner and leaves the page intact.
 - Form contents survive a failed action.
 
-**Resolution (2026-09-23, projects Round G).** `app/(protected)/companies/[id]/page.tsx` separates load errors from action errors exactly as the project page does: `error` (load) still replaces the record; a new `actionError` renders as a dismissible `role="alert"` banner above the header, and both `QualityManualPanel` and `EventsPanel` receive `setErr={setActionError}`. A failed evaluation ("add your AI key first") or event save now leaves the header, scorecard, proposal and form contents mounted. Pinned in `companiesRegistry.test.ts` ("a failed action renders as a dismissible banner and leaves the company page mounted") and, fix pass, on the RENDERED page (`companiesPagesRender.test.ts`, jsdom): a failed event save leaves the header mounted, shows the dismissible banner with the failure, and keeps the typed description in its input.
+**Resolution (2026-09-29, projects Round G).** `app/(protected)/companies/[id]/page.tsx` separates load errors from action errors exactly as the project page does: `error` (load) still replaces the record; a new `actionError` renders as a dismissible `role="alert"` banner above the header, and both `QualityManualPanel` and `EventsPanel` receive `setErr={setActionError}`. A failed evaluation ("add your AI key first") or event save now leaves the header, scorecard, proposal and form contents mounted. Pinned in `companiesRegistry.test.ts` ("a failed action renders as a dismissible banner and leaves the company page mounted") and, fix pass, on the RENDERED page (`companiesPagesRender.test.ts`, jsdom): a failed event save leaves the header mounted, shows the dismissible banner with the failure, and keeps the typed description in its input.
 
 **Done-when.**
 - An action error renders as a dismissible banner and leaves the page intact — ✓.
@@ -374,7 +374,7 @@ database migration (20261013) applied."*
 - Empty, broken and forbidden render differently.
 - No raw Postgres string reaches a user in the Projects area (see `REL-3`).
 
-*Landed 2026-09-23 (projects Round G, J4 limb): `QuotesPanel.tsx:545`'s migration-aware message is kept as the model; the two new writes in the panel (`cost_documents.company_id`, quote-link `expires_at`) surface a named-migration message on `42703` / `PGRST204` instead of a silent success. The list-function conversion closes in P2.*
+*Landed 2026-09-29 (projects Round G, J4 limb): `QuotesPanel.tsx:545`'s migration-aware message is kept as the model; the two new writes in the panel (`cost_documents.company_id`, quote-link `expires_at`) surface a named-migration message on `42703` / `PGRST204` instead of a silent success. The list-function conversion closes in P2.*
 
 ---
 

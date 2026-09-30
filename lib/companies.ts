@@ -328,7 +328,7 @@ export interface CompanyProfileData {
 
 /** Reason codes the CO module attributes to the CONTRACTOR (their miss).
  *  design_error / owner_request are ours; field_condition and other are
- *  nobody's (DEC-50) — shown on the record, excluded from the growth
+ *  nobody's (DEC-48) — shown on the record, excluded from the growth
  *  numerator. */
 export const CONTRACTOR_CO_REASONS = new Set(["scope_gap"]);
 export const OWNER_CO_REASONS = new Set(["design_error", "owner_request"]);

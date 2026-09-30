@@ -11,7 +11,7 @@
 //   * a weighted best-value score whose math is always shown, never a
 //     black box. Weights are inputs; price alone is never the verdict.
 //
-// Honesty rules (projects Round G, DEC-50 — BID-3/BID-4/BID-6/BID-7/BID-8
+// Honesty rules (projects Round G, DEC-48 — BID-3/BID-4/BID-6/BID-7/BID-8
 // and COST-5):
 //   * A DECLARED exclusion never lowers a score — the RFQ letter promises
 //     it, and a scorer that punishes disclosure teaches vendors to hide
@@ -23,7 +23,7 @@
 //     until a per-RFQ scope checklist exists; the composite is price +
 //     manpower with the weights renormalised.
 //   * Labour hours are vendor-stated and AI-extracted, so they count only
-//     where the field can corroborate them (COST-5, DEC-50). Manpower is
+//     where the field can corroborate them (COST-5, DEC-48). Manpower is
 //     scored for every bid or for none: only when at least
 //     MIN_CORROBORATING_STATEMENTS bids in the field (one currency) state
 //     PLAUSIBLE hours. With fewer, the hours are shown per row and every
@@ -37,7 +37,7 @@
 //     hours; a bid that states none (or implausible ones) scores 0 there —
 //     the letter asks for hours, silence is non-compliance — so a plausible
 //     statement is worth up to 100 × the manpower share over silence (37.5
-//     points at the default weights; DEC-50, recorded for ratification).
+//     points at the default weights; DEC-48, recorded for ratification).
 //   * A best-value badge needs at least two scored bids and a unique top;
 //     a tie is a tie. A mixed-currency field is not scored at all.
 //   * A human-typed total (price-only bid) enters the price normalisation.
@@ -150,7 +150,7 @@ export interface BidScore {
   score: number | null;
   /** Each 0..100 pre-weight; null = not scored for this bid ("not
    *  scored", never a 0). Coverage is null for every bid until a per-RFQ
-   *  scope checklist exists (DEC-50). */
+   *  scope checklist exists (DEC-48). */
   parts: { price: number | null; manpower: number | null; coverage: number | null };
   best: boolean;
   /** Shares the top score with another bid — rendered as a tie, no badge. */
@@ -312,7 +312,7 @@ export function computeBidEconomics(quotes: ParsedQuote[]): BidEconomics[] {
  * hours scores a manpower part of 0; among bids that state plausible hours
  * the (vendor-stated) number moves the composite by at most
  * MANPOWER_MAX_COMPOSITE_SWING points; against a bid that states none,
- * stating plausible hours is worth up to 100 × the manpower share (DEC-50
+ * stating plausible hours is worth up to 100 × the manpower share (DEC-48
  * — the cap is hours-vs-hours, not hours-vs-silence). Coverage is not
  * scored. A mixed-currency field is refused: every score is null.
  */
@@ -371,7 +371,7 @@ export function scoreBids(
     // band, by design and pinned ("cheapest does not automatically win",
     // in a field of three statements): silence is non-compliance with the
     // letter, and the gap to a plausible
-    // stated figure is up to 100 × manpowerShare composite points (DEC-50).
+    // stated figure is up to 100 × manpowerShare composite points (DEC-48).
     const dph = statedDph(e);
     const manpower = dph != null ? floor + (minDph / dph) * (100 - floor) : 0;
     const score = (price * weights.price + manpower * weights.manpower) / wSum;

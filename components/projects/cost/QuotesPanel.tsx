@@ -518,7 +518,7 @@ function BidGroup({ group, docs: groupDocs, allDocs, accounts, companies, barred
   const manpowerScored = [...scores.values()].some((s) => s.parts.manpower != null);
   const hasTypedTotal = econ.some((e) => e.priceOnly);
   // What stating plausible hours is worth over silence, in composite points
-  // (DEC-50): the 5-point cap binds hours against hours only.
+  // (DEC-48): the 5-point cap binds hours against hours only.
   const silenceGap = Math.round(weights.manpower * 1000) / 10;
   const notCorroborated = currency.mixed
     ? "this field mixes currencies, so no bid is scored"

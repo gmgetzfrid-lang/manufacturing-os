@@ -75,7 +75,7 @@ describe("bidTab economics", () => {
       { description: "Hydrotest and reinstate", total: 10_000, hours: 150 },
       { description: "Insulation reinstatement", total: 5_000, hours: 100 },
     ]});
-    // Re-decided by the verification of 2026-09-30 (COST-5, DEC-50): in the original two-bid field
+    // Re-decided by the verification of 2026-09-30 (COST-5, DEC-48): in the original two-bid field
     // the staffed bid is the ONLY one stating hours — nothing can corroborate its figure — so manpower
     // is scored for neither and price decides. The thin bid's exclusions are shown as facts, not scored.
     const pair = scoreBids(computeBidEconomics([cheapButThin, fullAndStaffed]), DEFAULT_WEIGHTS);
@@ -105,7 +105,7 @@ describe("bidTab economics", () => {
 
 // ── Round G scoring honesty (BID-3 / BID-4 / BID-6 / BID-7 / COST-5) ──────
 
-describe("bidTab honesty (Round G, DEC-50)", () => {
+describe("bidTab honesty (Round G, DEC-48)", () => {
   const line = (description: string, total: number, hours: number | null = null) => ({ description, total, hours });
 
   it("BID-3 / COST-5: declaring an exclusion never lowers a bid's score relative to hiding it", () => {
@@ -249,7 +249,7 @@ describe("bidTab honesty (Round G, DEC-50)", () => {
     expect(barredCompanyFor("Apex Co.", null, [sibling, { id: "a2", name: "Apex LLC", status: "inactive" }])).toBeNull();
   });
 
-  it("COST-5 / DEC-50 (recorded for ratification): once three bids state plausible hours, silence scores 0, so stating them is worth up to 100 × the manpower share; the 5-point cap binds hours against hours only", () => {
+  it("COST-5 / DEC-48 (recorded for ratification): once three bids state plausible hours, silence scores 0, so stating them is worth up to 100 × the manpower share; the 5-point cap binds hours against hours only", () => {
     const w = effectiveWeights();
     const silent = quote({ id: "silent", total: 100_000, lineItems: [line("Repipe unit 300 exchanger circuits", 100_000, null)] });
     const stated = quote({ id: "stated", total: 150_000, lineItems: [line("Repipe unit 300 exchanger circuits", 150_000, 1500)] });
@@ -268,7 +268,7 @@ describe("bidTab honesty (Round G, DEC-50)", () => {
     expect(100 * w.manpower).toBeCloseTo(37.5, 9);
     expect(si.score).toBe(62.5);
     expect(st.score).toBe(79.2);
-    // A plausible statement (1,500 h, $100/h) against silence: the badge follows the statement. Changing this is the user's call (DEC-50 reversal).
+    // A plausible statement (1,500 h, $100/h) against silence: the badge follows the statement. Changing this is the user's call (DEC-48 reversal).
     expect(scores.find((s) => s.best)!.quoteId).toBe("stated");
   });
 

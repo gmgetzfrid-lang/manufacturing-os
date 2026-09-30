@@ -77,7 +77,7 @@ about the system.
 | [DEC-40](#dec-40) | Projects link by **reference**, never by copy | medium | `GAP-114`, `PROJ-*` |
 | [DEC-42](#dec-42) | Supabase identity linking is **required**; the unique index is the backstop, not the mechanism | medium | `IDENT-1`, `IDENT-2`, `IDENT-3` |
 | [DEC-43](#dec-43) | Controllers are **unscoped by design**; a bypass-decided read of a restricted node is audited at the bytes egress | low | `DOCACL-3`, `DEC-2` |
-| [DEC-50](#dec-50) | Bids are scored on **price, and on stated hours only where three bids corroborate them** — declared exclusions never lower a score, coverage is unscored until a per-RFQ scope list exists; a bidder **binds** to a registry row only by exact/normalised name or a human link, but the **do-not-use gate** fires on any row the name could be | medium | `BID-3`, `BID-4`, `BID-6`, `BID-7`, `BID-12`, `COST-5`, `COST-7`, `MON-12` |
+| [DEC-48](#dec-48) | Bids are scored on **price, and on stated hours only where three bids corroborate them** — declared exclusions never lower a score, coverage is unscored until a per-RFQ scope list exists; a bidder **binds** to a registry row only by exact/normalised name or a human link, but the **do-not-use gate** fires on any row the name could be | medium | `BID-3`, `BID-4`, `BID-6`, `BID-7`, `BID-12`, `COST-5`, `COST-7`, `MON-12` |
 
 ---
 
@@ -1702,8 +1702,8 @@ the `Admin` branch, and an unscoped controller keeps today's behaviour.
 
 **Risk:** low.
 
-<a id="dec-50"></a>
-## DEC-50 · Bid scoring honesty and the registry's evidence floor
+<a id="dec-48"></a>
+## DEC-48 · Bid scoring honesty and the registry's evidence floor
 
 **Decision. The bid tabulation scores only what a vendor states about its
 own price and hours. (1) A DECLARED exclusion never lowers a score; it is
@@ -1742,16 +1742,12 @@ the flag: without a link, a bid is flagged when ANY registry row its name
 normalises to is barred (two rows normalising alike included), read from
 the org's full list of barred rows.**
 
-> Made during the projects Round G resolution (2026-09-23, package J4
+> Made during the projects Round G resolution (2026-09-29, package J4
 > BID-TAB-AND-REGISTRY) closing `BID-3`, `BID-4`, `BID-6`, `BID-7`,
 > `BID-12`, `COST-7` and `COST-12`'s band gate, and partially `COST-5`.
-> **Numbering.** First written as DEC-44, then renumbered DEC-47 on the
-> mistaken belief that 47 was free; it is not — DEC-47 is J7's ("Imported
-> schedule rows are commitments everywhere", merged on the integration
-> branch), DEC-46 is document-control P1's and DEC-48 is J3's, and J3's note
-> leaves 49 onward for the J2 / J4 / J6a branches. This package takes
-> DEC-50, leaving DEC-49 to J2, which merges ahead of it in the fleet's
-> order; the integrator renumbers again on any later collision. **For the
+> **Numbering.** Minted on the package branch under provisional numbers
+> and renumbered DEC-48 at merge (DEC-44 to DEC-47 were already taken on
+> the integration branch). **For the
 > user to ratify — three departures from binding defaults:** (a) the joint
 > fleet's ownership rule makes the projects-and-cost brief binding for
 > `lib/bidTab.ts`, and its COST-5 default — "100 − 15 per silent gap − 5
