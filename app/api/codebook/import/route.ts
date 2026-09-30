@@ -29,7 +29,7 @@ import { callAiModel, AiCallError, type AiProviderId, type AiCallImage } from "@
 import { ALLOWED_PROVIDERS, AGREEMENT_VERSION } from "@/lib/ai/pricing";
 import { getMonthUsage, getCapUsd, recordAskUsage } from "@/lib/ai/usageServer";
 import { ensurePdfPolyfills } from "@/lib/knowledgeText";
-import type { ProposedEntry } from "@/lib/codebook";
+import { codeProblem, type ProposedEntry } from "@/lib/codebook";
 import { parseModelJson } from "@/lib/modelJson";
 import { loadOrgInstructionsBlock } from "@/lib/aiInstructionsServer";
 import { memberHoldsAny } from "@/lib/roleHeld";
@@ -142,6 +142,15 @@ async function governedPropose(opts: {
             : undefined,
         }))
         .filter((r) => r.code.length > 0 && r.code.length <= 6 && r.label.length > 0 && r.label.length <= 80)
+        // CB-3: the shared shape guard. A row whose code the codec could never
+        // decode (a letter unit code) is NOT applicable — it travels flagged
+        // with the reason so the review list shows what the model proposed
+        // and why it cannot be used, instead of silently becoming the plant's
+        // identity decoder.
+        .map((r) => {
+          const problem = codeProblem(kind, r.code);
+          return problem ? { ...r, problem } : r;
+        })
         .slice(0, 200);
 
     return NextResponse.json({

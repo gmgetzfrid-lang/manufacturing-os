@@ -7,6 +7,8 @@ import { join } from "node:path";
 import {
   normalizeTag, splitTag, typeForTag, tagToCode, codeToTag,
   parseDrawingNumber, diffImport, tagKey,
+  typeCandidatesForTag, codeProblem, isValidCode, prefixClaimsElsewhere, siteCodeCollisions,
+  codebookProblems, explainDrawingNumberMiss,
   EMPTY_CODEBOOK, type Codebook, type CodebookEntry,
 } from "@/lib/codebook";
 import { normalizeTag as registryKey } from "@/lib/assets";
@@ -104,16 +106,28 @@ describe("tagToCode — the user's worked example", () => {
 
 describe("codeToTag — the inverse", () => {
   it("2030.22 → E-22 in unit 20", () => {
-    expect(codeToTag("2030.22", BOOK)).toEqual({ tag: "E-22", unitCode: "20", typeCode: "30" });
+    expect(codeToTag("2030.22", BOOK)).toEqual({ tag: "E-22", unitCode: "20", typeCode: "30", candidates: ["E-22"], ambiguous: false });
   });
   it("padding strips on the way back; suffix survives", () => {
-    expect(codeToTag("2050.05A", BOOK)).toEqual({ tag: "P-5A", unitCode: "20", typeCode: "50" });
+    expect(codeToTag("2050.05A", BOOK)).toEqual({ tag: "P-5A", unitCode: "20", typeCode: "50", candidates: ["P-5A"], ambiguous: false });
   });
-  it("round-trips through tagToCode", () => {
-    for (const [tag, unit] of [["E-22", "20"], ["H-3", "35"], ["EA-101", "25"], ["V-1201", "30"]] as const) {
+  it("round-trips through tagToCode — single-prefix types exactly", () => {
+    for (const [tag, unit] of [["E-22", "20"], ["H-3", "35"], ["EA-101", "25"]] as const) {
       const code = tagToCode(tag, unit, BOOK)!;
-      expect(codeToTag(code, BOOK)).toMatchObject({ tag, unitCode: unit });
+      expect(codeToTag(code, BOOK)).toMatchObject({ tag, unitCode: unit, ambiguous: false });
     }
+  });
+  it("CB-10: a multi-prefix type's inverse is AMBIGUOUS — the non-first prefix is a candidate, never silently renamed", () => {
+    // Vessels carry V and D (the fixture above): V-1 and D-1 share 2010.1.
+    for (const [tag, unit] of [["V-1201", "30"], ["D-1", "20"], ["V-1", "20"]] as const) {
+      const code = tagToCode(tag, unit, BOOK)!;
+      const back = codeToTag(code, BOOK)!;
+      expect(back.unitCode).toBe(unit);
+      expect(back.ambiguous).toBe(true);
+      expect(back.tag).toBeNull();
+      expect(back.candidates).toContain(tag);
+    }
+    expect(tagToCode("D-1", "20", BOOK)).toBe(tagToCode("V-1", "20", BOOK)); // not injective — by the site's standard
   });
   it("rejects codes the book can't place", () => {
     expect(codeToTag("9999.1", BOOK)).toBeNull();   // unknown unit+type
@@ -277,5 +291,110 @@ describe("GAP-310 — the one tag grammar", () => {
     const search = repoSrc("lib/search.ts");
     expect(search).toMatch(/import \{ tagKey \} from "@\/lib\/codebook";/);
     expect(search).not.toMatch(/normalizeTag/);
+  });
+});
+
+// ─── CB-3 — codes are digits; the shape guard is shared ─────────────────────
+
+describe("CB-3 — codeProblem / isValidCode (one guard, every entry point)", () => {
+  it("units and equipment types are 1–6 digits; leading zeros are kept", () => {
+    expect(isValidCode("unit", "20")).toBe(true);
+    expect(isValidCode("unit", "02")).toBe(true);
+    expect(isValidCode("equipment_type", "30")).toBe(true);
+    for (const bad of ["CU", "20A", "Crude", "2 0", "1234567", ""]) {
+      expect(isValidCode("unit", bad), bad).toBe(false);
+      expect(isValidCode("equipment_type", bad), bad).toBe(false);
+    }
+    expect(codeProblem("unit", "CU")).toMatch(/not numeric/);
+  });
+  it("drawing types keep their free shape (the brief's decision), capped at 6", () => {
+    expect(isValidCode("drawing_type", "02")).toBe(true);
+    expect(isValidCode("drawing_type", "PID")).toBe(true);
+    expect(isValidCode("drawing_type", "1234567")).toBe(false);
+  });
+  it("tagToCode declines a letter unit or type code instead of minting an undecodable identity", () => {
+    // Reproduction: CU30.22 was derivable and never invertible.
+    expect(tagToCode("E-22", "CU", BOOK)).toBeNull();
+    const letterType: Codebook = { ...BOOK, equipmentTypes: [entry("equipment_type", "EX", "Exchangers", ["E"])] };
+    expect(tagToCode("E-22", "20", letterType)).toBeNull();
+  });
+  it("the live preview names WHY a drawing number misses", () => {
+    expect(explainDrawingNumberMiss("CU02-D-10001", BOOK)).toMatch(/Segment 1 \(unit\) expects 2 digits but found "CU"/);
+    const withLetterUnit: Codebook = { ...BOOK, units: [...BOOK.units, entry("unit", "CU", "Crude")] };
+    expect(explainDrawingNumberMiss("CU02-D-10001", withLetterUnit)).toMatch(/Unit code "CU" is not numeric/);
+    expect(explainDrawingNumberMiss("2002-D-10001 SHT.4", BOOK)).toBeNull();
+    expect(explainDrawingNumberMiss("20", BOOK)).toMatch(/ends before segment 2 \(drawing type\)/);
+    expect(explainDrawingNumberMiss("2002-D-1", EMPTY_CODEBOOK)).toMatch(/No drawing-number segments/);
+  });
+  it("diffImport never lets an unusable code through: flagged, with the reason", () => {
+    const d = diffImport([], [
+      { kind: "unit", code: "CU", label: "Crude Unit" },
+      { kind: "unit", code: "20", label: "Crude" },
+      { kind: "unit", code: "25", label: "DHT", problem: "flagged by the route" },
+    ]);
+    expect(d.adds.map((a) => a.code)).toEqual(["20"]);
+    expect(d.rejected.map((r) => r.proposed.code)).toEqual(["CU", "25"]);
+    expect(d.rejected[0].reason).toMatch(/not numeric/);
+    expect(d.rejected[1].reason).toBe("flagged by the route");
+  });
+  it("the import route's cleaner tags a bad code with the shared guard instead of passing it as usable", () => {
+    const route = repoSrc("app/api/codebook/import/route.ts");
+    expect(route).toMatch(/import \{ codeProblem, type ProposedEntry \} from "@\/lib\/codebook";/);
+    expect(route).toContain("const problem = codeProblem(kind, r.code);");
+  });
+});
+
+// ─── CB-8 — one prefix, one equipment type ──────────────────────────────────
+
+describe("CB-8 — two types on one prefix are ambiguous, never first-by-sort", () => {
+  const TWO_E: Codebook = {
+    ...BOOK,
+    equipmentTypes: [entry("equipment_type", "30", "Exchangers", ["E"]), entry("equipment_type", "45", "Ejectors", ["E"])],
+  };
+  it("reproduction: the old first-wins pick would code every ejector as an exchanger", () => {
+    expect(typeCandidatesForTag("E-22", TWO_E).map((t) => t.label)).toEqual(["Exchangers", "Ejectors"]);
+  });
+  it("typeForTag answers null (no opinion) and tagToCode declines — reordering rows cannot re-type the plant", () => {
+    expect(typeForTag("E-22", TWO_E)).toBeNull();
+    expect(tagToCode("E-22", "20", TWO_E)).toBeNull();
+    const reversed = { ...TWO_E, equipmentTypes: [...TWO_E.equipmentTypes].reverse() };
+    expect(typeForTag("E-22", reversed)).toBeNull();
+  });
+  it("prefixClaimsElsewhere names the claimant (never the entry itself)", () => {
+    expect(prefixClaimsElsewhere(BOOK.equipmentTypes, { code: "45", tagPrefixes: ["e", "X"] }))
+      .toEqual([{ prefix: "E", code: "30", label: "Exchangers" }]);
+    expect(prefixClaimsElsewhere(BOOK.equipmentTypes, { code: "30", tagPrefixes: ["E"] })).toEqual([]);
+  });
+  it("diffImport rejects a proposal whose prefix another type holds — existing or earlier in the same proposal", () => {
+    const d = diffImport([entry("equipment_type", "30", "Exchangers", ["E"])], [
+      { kind: "equipment_type", code: "45", label: "Ejectors", tagPrefixes: ["E"] },
+      { kind: "equipment_type", code: "50", label: "Pumps", tagPrefixes: ["P"] },
+      { kind: "equipment_type", code: "55", label: "Pump skids", tagPrefixes: ["P"] },
+    ]);
+    expect(d.adds.map((a) => a.code)).toEqual(["50"]);
+    expect(d.rejected.map((r) => r.proposed.code)).toEqual(["45", "55"]);
+    expect(d.rejected[0].reason).toMatch(/prefix E is already claimed by 30 Exchangers/);
+  });
+  it("codebookProblems reports the shared prefix, the letter code and the multi-prefix number space", () => {
+    const book: Codebook = { ...BOOK, units: [...BOOK.units, entry("unit", "CU", "Crude")], equipmentTypes: [...BOOK.equipmentTypes, entry("equipment_type", "45", "Ejectors", ["E"])] };
+    const kinds = codebookProblems(book).map((p) => p.kind).sort();
+    expect(kinds).toEqual(["multi_prefix_type", "non_numeric_code", "shared_prefix"]);
+    expect(codebookProblems(EMPTY_CODEBOOK)).toEqual([]);
+  });
+});
+
+// ─── CB-10 — one site code, one asset ────────────────────────────────────────
+
+describe("CB-10 — siteCodeCollisions names the tags that would share a code", () => {
+  it("V-1 and D-1 (one type, two prefixes) and E-022 / E-22 collide; distinct tags do not", () => {
+    const c = siteCodeCollisions([
+      { id: "a", tag: "V-1", unitCode: "20" }, { id: "b", tag: "D-1", unitCode: "20" },
+      { id: "c", tag: "E-022", unitCode: "25" }, { id: "d", tag: "E-22", unitCode: "25" },
+      { id: "e", tag: "E-23", unitCode: "25" }, { id: "f", tag: "V-1", unitCode: "30" },
+    ], BOOK);
+    expect(c).toEqual([
+      { code: "2010.1", ids: ["a", "b"], tags: ["V-1", "D-1"] },
+      { code: "2530.22", ids: ["c", "d"], tags: ["E-022", "E-22"] },
+    ]);
   });
 });

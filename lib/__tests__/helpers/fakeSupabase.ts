@@ -12,8 +12,9 @@ export type Row = Record<string, unknown>;
 
 export interface FakeDb {
   tables: Record<string, Row[]>;
-  /** table → list of column tuples that must be unique (23505 on violation). */
-  unique: Record<string, string[][]>;
+  /** table → column tuples that must be unique (23505 on violation); a
+   *  named entry reports that constraint name, as Postgres does. */
+  unique: Record<string, Array<string[] | { cols: string[]; name: string; where?: (r: Row) => boolean }>>;
   /** tables whose UPDATE/DELETE silently affect zero rows and INSERT fails 42501. */
   refuseWrites: Set<string>;
   /** Every call, for assertions on query shape. */
@@ -76,10 +77,14 @@ export function makeFakeSupabase(db: FakeDb) {
     const rowsOf = () => (db.tables[table] ??= []);
     const matches = () => rowsOf().filter((r) => filters.every((f) => f(r)));
     const uniqueViolation = (candidate: Row, except?: Row) => {
-      for (const cols of db.unique[table] ?? []) {
+      for (const spec of db.unique[table] ?? []) {
+        const cols = Array.isArray(spec) ? spec : spec.cols;
+        const where = Array.isArray(spec) ? undefined : spec.where;
+        const name = Array.isArray(spec) ? `${table}_${cols.join("_")}_key` : spec.name;
         if (cols.some((c) => candidate[c] == null)) continue;
-        const clash = rowsOf().find((r) => r !== except && cols.every((c) => r[c] === candidate[c]));
-        if (clash) return { code: "23505", message: `duplicate key value violates unique constraint "${table}_${cols.join("_")}_key"` };
+        if (where && !where(candidate)) continue;
+        const clash = rowsOf().find((r) => r !== except && (!where || where(r)) && cols.every((c) => r[c] === candidate[c]));
+        if (clash) return { code: "23505", message: `duplicate key value violates unique constraint "${name}"` };
       }
       return null;
     };

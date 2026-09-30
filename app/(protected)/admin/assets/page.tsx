@@ -22,14 +22,20 @@ import { useRole } from "@/components/providers/RoleContext";
 import { supabase } from "@/lib/supabase";
 import {
   listAssets, listAssetTypes, getPhotoCounts, getCoverPhotoUrls, createAsset, createAssetType,
-  updateAsset, deleteAsset, listAssetPhotos, deletePhoto, updatePhoto,
+  updateAsset, deleteAsset, archiveAsset, listAssetPhotos, deletePhoto, updatePhoto,
   invalidateAssetCache, photoAgeCategory,
   type Asset, type AssetType, type AssetPhoto, type PhotoStatus,
 } from "@/lib/assets";
 import {
   loadCodebook, tagToCode, parseDrawingNumber, saveUnitLinks, EMPTY_CODEBOOK,
+  codeProblem, prefixClaimsElsewhere, codeToTag,
   type Codebook, type UnitResourceLink,
 } from "@/lib/codebook";
+import { isControllerRole } from "@/lib/permissions";
+import {
+  codeUnitConflict, planIdentityReview, assetsMatchingTagPrefix, type IdentityReviewRow,
+} from "@/lib/assetCategorize";
+import type { Role } from "@/types/schema";
 import { listLibraryFoldersOnce, type PickerFolder } from "@/lib/libraryCollections";
 import { getDocumentsForAssetsHydrated } from "@/lib/operationalGraph";
 import AssetPhotoCarousel from "@/components/assets/AssetPhotoCarousel";
@@ -65,9 +71,13 @@ export default function AssetsPage() {
 }
 
 function AssetsPageInner() {
-  const { activeOrgId, activeRole, roles, hasAnyRole, uid, userEmail } = useRole();
+  const { activeOrgId, activeRole, roles, uid, userEmail } = useRole();
   // ADD-1: authority by the role COLLECTION, never the headline alone.
   const isAdmin = roles.some((r) => ADMIN_ROLES.includes(r));
+  // AREA-1 / IRLS-5: the controller tier (what is_org_controller means) —
+  // deletes registry equipment and photos (20261128) and writes the Site
+  // Codebook (20261046). The writer tier above creates, edits and archives.
+  const isController = roles.some((r) => isControllerRole(r as Role));
   const router = useRouter();
   const searchParams = useSearchParams();
 
@@ -83,6 +93,9 @@ function AssetsPageInner() {
   const [search, setSearch] = useState(() => searchParams.get("tag") ?? "");
   const [typeFilter, setTypeFilter] = useState<string>("");
   const [filterMode, setFilterMode] = useState<"all" | "with_photos" | "no_photos">("all");
+  // BR-8: provenance is a filter — equipment the drawings created, awaiting
+  // a person to vouch for it.
+  const [discoveredOnly, setDiscoveredOnly] = useState(false);
   // Unit-first browsing (Site Codebook): no ?unit= param = the unit picker; a
   // unit code (or "__unassigned") = inside that unit. Living in the URL means
   // the browser back button leaves a unit the way people expect — no trap.
@@ -143,6 +156,7 @@ function AssetsPageInner() {
       const count = photoCounts.get(a.id) || 0;
       if (filterMode === "with_photos" && count === 0) return false;
       if (filterMode === "no_photos" && count > 0) return false;
+      if (discoveredOnly && a.origin !== "drawing") return false;
       if (q) {
         // Both identities are searchable: field tag (E-22) AND site code
         // (2030.22) — and forgivingly: "e22" finds E-22, "203022" finds
@@ -157,7 +171,11 @@ function AssetsPageInner() {
       }
       return true;
     });
-  }, [assets, photoCounts, typeFilter, filterMode, search, unitFilter]);
+  }, [assets, photoCounts, typeFilter, filterMode, search, unitFilter, discoveredOnly]);
+  const discoveredCount = useMemo(() => assets.filter((a) => a.origin === "drawing").length, [assets]);
+  // AREA-11 / CB-6: every asset whose stored identity disagrees with the
+  // codebook as it stands (the code names another unit; the code re-derives).
+  const identityReview = useMemo(() => planIdentityReview(assets, book), [assets, book]);
 
   // Per-unit counts for the picker cards.
   const unitCounts = useMemo(() => {
@@ -248,8 +266,8 @@ function AssetsPageInner() {
   }, [assets, book.units]);
 
   // Pinning libraries to a unit writes the unit's codebook entry — same bar
-  // as every other codebook write (RLS: Admin / DocCtrl).
-  const canEditLinks = hasAnyRole(["Admin", "DocCtrl"]);
+  // as every other codebook write (RLS: the controller tier).
+  const canEditLinks = isController;
   const currentUnit = unitFilter && unitFilter !== "__unassigned"
     ? book.units.find((u) => u.code === unitFilter) ?? null
     : null;
@@ -266,7 +284,7 @@ function AssetsPageInner() {
     [unitFilter, assets],
   );
 
-  const searchActive = search.trim().length > 0 || typeFilter !== "" || filterMode !== "all";
+  const searchActive = search.trim().length > 0 || typeFilter !== "" || filterMode !== "all" || discoveredOnly;
 
   if (!activeOrgId) return null;
 
@@ -317,8 +335,9 @@ function AssetsPageInner() {
               </button>
               {!unitFilter ? (
                 // The root IS the site — the primary act here is defining an
-                // operating area, not dropping a loose asset.
-                <button
+                // operating area, not dropping a loose asset. An area is a
+                // Site Codebook entry: the controller tier writes it.
+                canEditLinks && <button
                   onClick={() => setAddUnitOpen(true)}
                   className="inline-flex items-center gap-1.5 px-4 py-2.5 rounded-xl bg-purple-600 hover:bg-purple-500 text-white text-sm font-black shadow-lg shadow-purple-900/20"
                 >
@@ -349,7 +368,7 @@ function AssetsPageInner() {
         {!isAdmin && (
           <div className="mb-6 p-3 bg-amber-50 border border-amber-200 rounded-lg text-xs text-amber-800 flex items-start gap-2">
             <Lock className="w-4 h-4 mt-0.5 shrink-0" />
-            <span>Only Admin / Doc Control / Manager / Supervisor roles can create or edit assets. Your role: <b>{activeRole}</b>. You can still browse + view photos.</span>
+            <span>Only Admin / Doc Control / Manager / Supervisor can create, edit or archive equipment; deleting it is Admin / Doc Control only. Your role: <b>{activeRole}</b>. You can still browse + view photos.</span>
           </div>
         )}
 
@@ -437,6 +456,19 @@ function AssetsPageInner() {
             onDone={() => { invalidateAssetCache(); void refresh(); }} />
         )}
 
+        {/* AREA-11 / CB-6: stored identity that disagrees with the codebook —
+            reviewed per asset, never rewritten silently. */}
+        {isAdmin && !loading && uid && identityReview.length > 0 && (
+          <IdentityReviewPanel rows={identityReview} book={book} userId={uid}
+            onChanged={() => { invalidateAssetCache(); void refresh(); }} />
+        )}
+
+        {/* BR-8: equipment the drawings created, awaiting a person. */}
+        {isAdmin && !loading && uid && discoveredOnly && (
+          <DiscoveredReviewPanel assets={filtered} userId={uid}
+            onChanged={() => { invalidateAssetCache(); void refresh(); }} />
+        )}
+
         {/* Search + filters */}
         <div className="mb-4 flex items-center gap-2 flex-wrap">
           <div className="relative flex-1 min-w-[200px]">
@@ -459,6 +491,15 @@ function AssetsPageInner() {
               </button>
             ))}
           </div>
+          {discoveredCount > 0 && (
+            <button onClick={() => setDiscoveredOnly((v) => !v)}
+              title="Equipment the drawing sweep created (origin: drawing) — review, confirm or archive it"
+              className={`px-3 py-2.5 text-xs font-bold rounded-lg border ${discoveredOnly
+                ? "bg-sky-700 text-white border-sky-700"
+                : "bg-[var(--color-surface)] text-sky-800 border-sky-200 hover:bg-sky-50"}`}>
+              Discovered from drawings ({discoveredCount})
+            </button>
+          )}
         </div>
 
         {/* Grid */}
@@ -565,7 +606,7 @@ function AssetsPageInner() {
                       const type = types.find((t) => t.id === a.type_id);
                       const count = photoCounts.get(a.id) || 0;
                       return (
-                        <AssetCard key={a.id} asset={a} type={type} photoCount={count} coverUrl={coverUrls.get(a.id)}
+                        <AssetCard key={a.id} asset={a} type={type} photoCount={count} coverUrl={coverUrls.get(a.id)} book={book}
                           onClick={() => count > 0 ? setCarouselOpenFor(a) : setSelectedAsset(a)}
                           onEdit={isAdmin ? () => setSelectedAsset(a) : undefined}
                           onAddPhotos={isAdmin ? () => setUploaderOpenFor(a) : undefined} />
@@ -630,6 +671,7 @@ function AssetsPageInner() {
                   type={type}
                   photoCount={count}
                   coverUrl={coverUrls.get(a.id)}
+                  book={book}
                   onClick={() => count > 0 ? setCarouselOpenFor(a) : setSelectedAsset(a)}
                   onEdit={isAdmin ? () => setSelectedAsset(a) : undefined}
                   onAddPhotos={isAdmin ? () => setUploaderOpenFor(a) : undefined}
@@ -641,7 +683,7 @@ function AssetsPageInner() {
       </div>
 
       {/* Modals */}
-      {addUnitOpen && isAdmin && (
+      {addUnitOpen && canEditLinks && (
         <AddUnitModal
           orgId={activeOrgId}
           userId={uid || ""}
@@ -658,7 +700,7 @@ function AssetsPageInner() {
         <AddCategoryModal
           orgId={activeOrgId}
           userId={uid || ""}
-          existingTypeCodes={book.equipmentTypes.map((t) => t.code)}
+          existingTypes={book.equipmentTypes}
           onClose={() => setAddCategoryOpen(false)}
           onCreated={() => {
             setAddCategoryOpen(false);
@@ -677,6 +719,7 @@ function AssetsPageInner() {
           userEmail={userEmail ?? undefined}
           types={types}
           canEdit={isAdmin}
+          canDelete={isController}
           book={book}
           onClose={() => { setSelectedAsset(null); setCreating(false); }}
           onSaved={() => { void refresh(); }}
@@ -1026,6 +1069,12 @@ function UnassignedAssignPanel({ assets, book, userId, onAssigned }: {
 
   const chosen = assets.filter((a) => choices.get(a.id));
   const shown = assets.slice(0, 50);
+  // AREA-7: file a whole master list by tag prefix instead of 50 dropdowns
+  // at a time — every unassigned tag starting with the prefix (one grammar)
+  // is selected for the unit; Assign then writes them with derived codes.
+  const [bulkPrefix, setBulkPrefix] = useState("");
+  const [bulkUnit, setBulkUnit] = useState("");
+  const bulkMatches = useMemo(() => (bulkPrefix.trim() ? assetsMatchingTagPrefix(assets, bulkPrefix) : []), [assets, bulkPrefix]);
 
   return (
     <div className="mt-3 rounded-2xl border border-violet-200 bg-violet-50/60 p-4">
@@ -1034,6 +1083,23 @@ function UnassignedAssignPanel({ assets, book, userId, onAssigned }: {
         Pick a unit for each asset and hit Assign — the site code fills in automatically.
         Where the linked drawings already say which unit, it&apos;s pre-selected for you.
       </p>
+      <div className="flex items-center gap-2 flex-wrap mb-2.5 text-[11px]">
+        <span className="font-bold text-[var(--color-text)]">Bulk:</span>
+        every tag starting with
+        <input value={bulkPrefix} onChange={(e) => setBulkPrefix(e.target.value)} placeholder="E, P-1, 10-HV"
+          className="w-24 px-2 py-1 border border-[var(--color-border-strong)] rounded-lg font-mono bg-[var(--color-surface)]" />
+        goes to
+        <select value={bulkUnit} onChange={(e) => setBulkUnit(e.target.value)} disabled={busy}
+          className="px-2 py-1 border border-[var(--color-border-strong)] rounded-lg bg-[var(--color-surface)] font-bold">
+          <option value="">— unit —</option>
+          {book.units.map((u) => <option key={u.code} value={u.code}>{u.code} — {u.label}</option>)}
+        </select>
+        <button type="button" disabled={busy || !bulkUnit || bulkMatches.length === 0}
+          onClick={() => setChoices((prev) => { const next = new Map(prev); for (const a of bulkMatches) next.set(a.id, bulkUnit); return next; })}
+          className="px-2 py-1 rounded-lg border border-purple-300 bg-[var(--color-surface)] font-black text-purple-700 disabled:opacity-40">
+          Select {bulkMatches.length} matching
+        </button>
+      </div>
       <div className="space-y-1.5">
         {shown.map((a) => {
           const hint = hints.get(a.id);
@@ -1081,6 +1147,204 @@ function UnassignedAssignPanel({ assets, book, userId, onAssigned }: {
           Assign all {chosen.length} selected
         </button>
       )}
+    </div>
+  );
+}
+
+// ─── Identity review (AREA-11 / CB-6) ──────────────────────
+//
+// Stored identity that disagrees with the codebook as it stands: a site code
+// naming a different unit than the filing (AREA-11), or a code the codebook
+// now derives differently after a padding / type-code / prefix edit (CB-6).
+// Nothing is rewritten until a person accepts it, asset by asset (or the
+// shown batch) — the codebook never silently re-files the plant.
+
+function IdentityReviewPanel({ rows, book, userId, onChanged }: {
+  rows: IdentityReviewRow[]; book: Codebook; userId: string; onChanged: () => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const conflicts = rows.filter((r) => r.kind === "code_names_other_unit").length;
+  const drift = rows.length - conflicts;
+  const shown = rows.slice(0, 50);
+  const unitLabel = (code: string | null) => (code ? book.units.find((u) => u.code === code)?.label ?? null : null);
+
+  const apply = async (fixes: Array<{ assetId: string; patch: { unit_code?: string; code?: string } }>) => {
+    setBusy(true); setError(null);
+    let done = 0;
+    const failed: string[] = [];
+    for (const f of fixes) {
+      try { await updateAsset(f.assetId, f.patch, userId); done += 1; }
+      catch (e) { failed.push((e as Error).message); }
+    }
+    setBusy(false);
+    if (failed.length > 0) setError(`${done} of ${fixes.length} updated — ${failed[0]}${failed.length > 1 ? ` (+${failed.length - 1} more)` : ""}`);
+    if (done > 0) onChanged();
+  };
+
+  return (
+    <div className="mb-4 rounded-xl border border-rose-200 bg-rose-50/60 px-3.5 py-3">
+      <button type="button" onClick={() => setOpen((v) => !v)} className="w-full flex items-center gap-2 text-left">
+        <AlertTriangle className="w-4 h-4 text-rose-600 shrink-0" />
+        <span className="text-xs font-black text-[var(--color-text)] flex-1">
+          Identity review — {conflicts > 0 ? `${conflicts} site code${conflicts === 1 ? "" : "s"} naming a different unit than the filing` : ""}
+          {conflicts > 0 && drift > 0 ? " · " : ""}
+          {drift > 0 ? `${drift} code${drift === 1 ? "" : "s"} the codebook now derives differently` : ""}
+        </span>
+        <ChevronDown className={`w-4 h-4 text-rose-500 transition-transform ${open ? "" : "-rotate-90"}`} />
+      </button>
+      {open && (
+        <div className="mt-2 space-y-1.5">
+          <p className="text-[11px] text-[var(--color-text-muted)]">
+            Codes are frozen when they are written; nothing here changes until you accept it.
+          </p>
+          {shown.map((r) => (
+            <div key={r.assetId} className="flex items-center gap-2 flex-wrap bg-[var(--color-surface)] border border-[var(--color-border)] rounded-lg px-2.5 py-1.5 text-[11px]">
+              <span className="font-mono font-black w-20 shrink-0">{r.tag}</span>
+              <span className="flex-1 min-w-[12rem] text-[var(--color-text-muted)]">
+                {r.kind === "code_names_other_unit"
+                  ? <>code <b className="font-mono">{r.code}</b> names unit <b className="font-mono">{r.codeUnit}</b>{unitLabel(r.codeUnit) ? ` (${unitLabel(r.codeUnit)})` : ""}; filed under <b className="font-mono">{r.unitCode}</b></>
+                  : <>code <b className="font-mono">{r.code}</b>; the codebook now derives <b className="font-mono">{r.derivedCode}</b></>}
+              </span>
+              {r.kind === "code_names_other_unit" && r.codeUnit && (
+                <button type="button" disabled={busy} onClick={() => void apply([{ assetId: r.assetId, patch: { unit_code: r.codeUnit! } }])}
+                  className="px-2 py-0.5 rounded border border-[var(--color-border-strong)] font-bold hover:bg-[var(--color-surface-2)]">
+                  Keep the code — file under {r.codeUnit}
+                </button>
+              )}
+              {r.derivedCode && (
+                <button type="button" disabled={busy} onClick={() => void apply([{ assetId: r.assetId, patch: { code: r.derivedCode! } }])}
+                  className="px-2 py-0.5 rounded border border-[var(--color-border-strong)] font-bold hover:bg-[var(--color-surface-2)]">
+                  {r.kind === "code_names_other_unit" ? "Keep the filing — code" : "Re-derive —"} <span className="font-mono">{r.derivedCode}</span>
+                </button>
+              )}
+            </div>
+          ))}
+          {rows.length > shown.length && (
+            <div className="text-[10px] text-[var(--color-text-faint)]">Showing the first {shown.length} of {rows.length}.</div>
+          )}
+          {drift > 1 && (
+            <button type="button" disabled={busy}
+              onClick={() => void apply(shown.filter((r) => r.kind === "code_rederives" && r.derivedCode).map((r) => ({ assetId: r.assetId, patch: { code: r.derivedCode! } })))}
+              className="inline-flex items-center gap-1.5 text-[11px] font-black text-white bg-rose-600 hover:bg-rose-500 rounded-lg px-2.5 py-1 disabled:opacity-50">
+              {busy ? <Loader2 className="w-3 h-3 animate-spin" /> : <Save className="w-3 h-3" />}
+              Re-derive the {Math.min(drift, shown.filter((r) => r.kind === "code_rederives").length)} codes shown
+            </button>
+          )}
+          {error && <div className="text-[11px] text-rose-700">{error}</div>}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ─── Discovered equipment (BR-8) ────────────────────────────
+//
+// The drawing sweep records where every discovered asset came from
+// (origin 'drawing', discovered_from {documentId, pages}); this is the one
+// screen that reads it: which drawing, which pages, and a bulk way to vouch
+// for the good rows (origin → 'manual'; the provenance stays) or archive the
+// junk (the writer tier's reversible removal; deleting is a controller act).
+
+function DiscoveredReviewPanel({ assets, userId, onChanged }: {
+  assets: Asset[]; userId: string; onChanged: () => void;
+}) {
+  const discovered = useMemo(() => assets.filter((a) => a.origin === "drawing"), [assets]);
+  const [docs, setDocs] = useState<Map<string, { number: string | null; title: string | null; libraryId: string | null }>>(new Map());
+  const [picked, setPicked] = useState<Set<string>>(new Set());
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const shown = discovered.slice(0, 100);
+  const docIdsKey = useMemo(() => [...new Set(shown
+    .map((a) => String((a.discovered_from as { documentId?: unknown } | null)?.documentId ?? ""))
+    .filter(Boolean))].sort().join(","), [shown]);
+
+  useEffect(() => {
+    let alive = true;
+    const ids = docIdsKey ? docIdsKey.split(",") : [];
+    if (ids.length === 0) return;
+    void supabase.from("documents").select("id, document_number, title, library_id").in("id", ids)
+      .then(({ data }) => {
+        if (!alive) return;
+        setDocs(new Map(((data ?? []) as Array<{ id: string; document_number: string | null; title: string | null; library_id: string | null }>)
+          .map((d) => [d.id, { number: d.document_number, title: d.title, libraryId: d.library_id }])));
+      });
+    return () => { alive = false; };
+  }, [docIdsKey]);
+
+  const act = async (verb: "confirm" | "archive") => {
+    const ids = [...picked];
+    if (ids.length === 0) return;
+    if (verb === "archive" && !(await appConfirm({ message: `Archive ${ids.length} discovered asset${ids.length === 1 ? "" : "s"}? They leave the registry views and can be restored.`, confirmLabel: "Archive" }))) return;
+    setBusy(true); setError(null);
+    let done = 0;
+    const failed: string[] = [];
+    for (const id of ids) {
+      try {
+        if (verb === "confirm") await updateAsset(id, { origin: "manual" }, userId);
+        else await archiveAsset(id, userId);
+        done += 1;
+      } catch (e) { failed.push((e as Error).message); }
+    }
+    setBusy(false);
+    setPicked(new Set());
+    if (failed.length > 0) setError(`${done} of ${ids.length} done — ${failed[0]}`);
+    if (done > 0) onChanged();
+  };
+
+  if (discovered.length === 0) return null;
+  const allShownPicked = shown.every((a) => picked.has(a.id));
+
+  return (
+    <div className="mb-4 rounded-xl border border-sky-200 bg-sky-50/60 px-3.5 py-3 space-y-2">
+      <div className="text-xs font-black text-[var(--color-text)]">
+        {discovered.length} asset{discovered.length === 1 ? "" : "s"} created by the drawing sweep, not yet vouched for by a person
+      </div>
+      <p className="text-[11px] text-[var(--color-text-muted)]">
+        Confirm the real equipment (it stops being flagged; where it came from stays recorded) and archive what the sweep misread.
+      </p>
+      <div className="max-h-72 overflow-y-auto space-y-1">
+        <label className="flex items-center gap-2 text-[10px] font-bold text-[var(--color-text-muted)] px-1">
+          <input type="checkbox" checked={allShownPicked}
+            onChange={() => setPicked(allShownPicked ? new Set() : new Set(shown.map((a) => a.id)))} />
+          Select all {shown.length} shown
+        </label>
+        {shown.map((a) => {
+          const from = (a.discovered_from ?? {}) as { documentId?: string; pages?: number[] };
+          const doc = from.documentId ? docs.get(from.documentId) : undefined;
+          return (
+            <label key={a.id} className="flex items-center gap-2 bg-[var(--color-surface)] border border-[var(--color-border)] rounded-lg px-2.5 py-1.5 text-[11px] cursor-pointer">
+              <input type="checkbox" checked={picked.has(a.id)}
+                onChange={() => setPicked((prev) => { const n = new Set(prev); if (n.has(a.id)) n.delete(a.id); else n.add(a.id); return n; })} />
+              <span className="font-mono font-black w-20 shrink-0">{a.tag}</span>
+              <span className="flex-1 min-w-0 truncate text-[var(--color-text-muted)]">
+                {from.documentId ? (
+                  <Link href={doc?.libraryId ? `/documents/${doc.libraryId}?doc=${from.documentId}` : "/documents"} onClick={(e) => e.stopPropagation()}
+                    className="font-bold text-sky-800 hover:underline">
+                    {doc?.number || doc?.title || "source drawing"}
+                  </Link>
+                ) : "source drawing not recorded"}
+                {Array.isArray(from.pages) && from.pages.length > 0 ? ` · page${from.pages.length === 1 ? "" : "s"} ${from.pages.slice(0, 6).join(", ")}${from.pages.length > 6 ? "…" : ""}` : ""}
+              </span>
+            </label>
+          );
+        })}
+        {discovered.length > shown.length && (
+          <div className="text-[10px] text-[var(--color-text-faint)]">Showing the first {shown.length} of {discovered.length}.</div>
+        )}
+      </div>
+      <div className="flex items-center gap-2">
+        <button type="button" disabled={busy || picked.size === 0} onClick={() => void act("confirm")}
+          className="inline-flex items-center gap-1.5 text-[11px] font-black text-white bg-sky-700 hover:bg-sky-600 rounded-lg px-2.5 py-1 disabled:opacity-50">
+          {busy ? <Loader2 className="w-3 h-3 animate-spin" /> : <Save className="w-3 h-3" />} Confirm {picked.size || ""}
+        </button>
+        <button type="button" disabled={busy || picked.size === 0} onClick={() => void act("archive")}
+          className="inline-flex items-center gap-1.5 text-[11px] font-black text-amber-800 bg-[var(--color-surface)] border border-amber-300 hover:bg-amber-50 rounded-lg px-2.5 py-1 disabled:opacity-50">
+          <Trash2 className="w-3 h-3" /> Archive {picked.size || ""}
+        </button>
+        {error && <span className="text-[11px] text-rose-700">{error}</span>}
+      </div>
     </div>
   );
 }
@@ -1172,11 +1436,13 @@ function UnitDocuments({ assetIds, assets }: { assetIds: string[]; assets: Asset
 // ─── Asset card ────────────────────────────────────────────
 
 function AssetCard({
-  asset, type, photoCount, coverUrl, onClick, onEdit, onAddPhotos,
+  asset, type, photoCount, coverUrl, book, onClick, onEdit, onAddPhotos,
 }: {
-  asset: Asset; type?: AssetType; photoCount: number; coverUrl?: string | null;
+  asset: Asset; type?: AssetType; photoCount: number; coverUrl?: string | null; book: Codebook;
   onClick: () => void; onEdit?: () => void; onAddPhotos?: () => void;
 }) {
+  // AREA-11: the code/unit contradiction, visible on the card itself.
+  const clash = codeUnitConflict(asset, book);
 
   return (
     <div className="group bg-[var(--color-surface)] rounded-2xl border border-[var(--color-border)] shadow-sm hover:shadow-lg hover:border-[var(--color-border-strong)] transition-all overflow-hidden flex flex-col">
@@ -1211,6 +1477,22 @@ function AssetCard({
             </span>
           )}
         </div>
+        {(asset.origin === "drawing" || clash) && (
+          <div className="flex gap-1 flex-wrap mb-1">
+            {asset.origin === "drawing" && (
+              <span title="Created by the drawing sweep — not yet vouched for by a person"
+                className="text-[9px] font-black uppercase tracking-wider text-sky-800 bg-sky-50 border border-sky-200 rounded px-1.5 py-0.5">
+                Discovered
+              </span>
+            )}
+            {clash && (
+              <span title={`Site code ${asset.code} names unit ${clash.codeUnit}; the asset is filed under ${clash.unitCode}`}
+                className="text-[9px] font-black uppercase tracking-wider text-rose-800 bg-rose-50 border border-rose-200 rounded px-1.5 py-0.5">
+                Code says {clash.codeUnit} ≠ {clash.unitCode}
+              </span>
+            )}
+          </div>
+        )}
         {asset.description && (
           <div className="text-[11px] text-[var(--color-text-muted)] line-clamp-2 mb-1">{asset.description}</div>
         )}
@@ -1283,7 +1565,7 @@ function EmptyState({ onCreate, hasAny }: { onCreate?: () => void; hasAny: boole
 // ─── Edit / Create drawer ──────────────────────────────────
 
 function AssetEditDrawer({
-  asset, preset, orgId, userId, userEmail, types, canEdit, book,
+  asset, preset, orgId, userId, userEmail, types, canEdit, canDelete, book,
   onClose, onSaved, onOpenCarousel, onOpenUploader,
 }: {
   asset: Asset | null;
@@ -1294,6 +1576,8 @@ function AssetEditDrawer({
   userEmail?: string;
   types: AssetType[];
   canEdit: boolean;
+  /** AREA-1 / IRLS-5: hard delete is the controller tier; the writer tier archives. */
+  canDelete: boolean;
   book: Codebook;
   onClose: () => void;
   onSaved: () => void;
@@ -1314,6 +1598,12 @@ function AssetEditDrawer({
     const derived = unitCode ? tagToCode(tag, unitCode, book) : null;
     setSiteCode(derived ?? "");
   }, [tag, unitCode, book, asset?.code]);
+  // AREA-11: the site code carries its unit. When the filing and the code
+  // disagree, say so BEFORE saving, with both ways out — never keep both
+  // silently.
+  const codeUnit = siteCode.trim() ? (codeToTag(siteCode.trim(), book)?.unitCode ?? null) : null;
+  const identityClash = !!(unitCode && codeUnit && codeUnit !== unitCode);
+  const derivedForUnit = identityClash ? tagToCode(tag, unitCode, book) : null;
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [hasTagConflict, setHasTagConflict] = useState(false);
@@ -1397,7 +1687,7 @@ function AssetEditDrawer({
 
   const onDelete = async () => {
     if (!asset) return;
-    if (!(await appConfirm({ message: `Delete asset "${asset.tag}" and all its photos? This can't be undone.`, tone: "danger" }))) return;
+    if (!(await appConfirm({ message: `Delete asset "${asset.tag}" and all its photos, aliases and document links? This can't be undone — the deletion is recorded in the audit log.`, tone: "danger" }))) return;
     setBusy(true);
     try {
       await deleteAsset(asset.id);
@@ -1407,6 +1697,23 @@ function AssetEditDrawer({
     } catch (e) {
       const f = translatePostgresError(e, { entity: "asset" });
       setError(`${f.heading} — ${f.message}`);
+      setBusy(false);
+    }
+  };
+
+  // IRLS-5: the writer tier's removal — reversible; photos, aliases and
+  // document links stay.
+  const onArchive = async () => {
+    if (!asset) return;
+    if (!(await appConfirm({ message: `Archive "${asset.tag}"? It leaves the registry views but keeps its photos, aliases and document links, and can be restored.`, confirmLabel: "Archive" }))) return;
+    setBusy(true);
+    try {
+      await archiveAsset(asset.id, userId);
+      invalidateAssetCache();
+      onSaved();
+      onClose();
+    } catch (e) {
+      setError((e as Error).message);
       setBusy(false);
     }
   };
@@ -1511,6 +1818,29 @@ function AssetEditDrawer({
                   <input value={siteCode} onChange={(e) => setSiteCode(e.target.value)} disabled={!canEdit || busy}
                     placeholder="auto — e.g. 2030.22" className="mt-1 w-full px-3 py-2 border border-[var(--color-border-strong)] rounded-lg text-sm font-mono" />
                 </div>
+                {identityClash && (
+                  <div className="col-span-2 rounded-lg border border-rose-200 bg-rose-50 p-2 text-[11px] text-rose-800 space-y-1.5">
+                    <div>
+                      Site code <b className="font-mono">{siteCode.trim()}</b> names unit <b className="font-mono">{codeUnit}</b>
+                      {book.units.find((u) => u.code === codeUnit)?.label ? ` (${book.units.find((u) => u.code === codeUnit)?.label})` : ""},
+                      {" "}but this asset is filed under <b className="font-mono">{unitCode}</b>. Saving as-is keeps both — the QR label and doc packs would say one area, the registry another.
+                    </div>
+                    {canEdit && (
+                      <div className="flex gap-1.5 flex-wrap">
+                        {derivedForUnit && (
+                          <button type="button" onClick={() => setSiteCode(derivedForUnit)} disabled={busy}
+                            className="px-2 py-1 rounded-md bg-[var(--color-surface)] border border-rose-300 font-bold hover:bg-rose-100">
+                            Re-derive the code → <span className="font-mono">{derivedForUnit}</span>
+                          </button>
+                        )}
+                        <button type="button" onClick={() => codeUnit && setUnitCode(codeUnit)} disabled={busy}
+                          className="px-2 py-1 rounded-md bg-[var(--color-surface)] border border-rose-300 font-bold hover:bg-rose-100">
+                          Keep the code — file under <span className="font-mono">{codeUnit}</span>
+                        </button>
+                      </div>
+                    )}
+                  </div>
+                )}
               </div>
             )}
             <div className="hidden">
@@ -1570,9 +1900,11 @@ function AssetEditDrawer({
                             <button onClick={() => markPhotoStatus(p, p.status === "current" ? "needs_verification" : "current")} title="Toggle verification" className="p-1 bg-white/90 rounded hover:bg-[var(--color-surface)]">
                               <AlertTriangle className="w-3 h-3 text-amber-600" />
                             </button>
-                            <button onClick={() => onDeletePhoto(p)} title="Delete photo" className="p-1 bg-white/90 rounded hover:bg-[var(--color-surface)]">
-                              <Trash2 className="w-3 h-3 text-red-600" />
-                            </button>
+                            {canDelete && (
+                              <button onClick={() => onDeletePhoto(p)} title="Delete photo" className="p-1 bg-white/90 rounded hover:bg-[var(--color-surface)]">
+                                <Trash2 className="w-3 h-3 text-red-600" />
+                              </button>
+                            )}
                           </div>
                         )}
                       </div>
@@ -1671,9 +2003,14 @@ function AssetEditDrawer({
         </div>
 
         <div className="px-5 py-3 bg-[var(--color-surface-2)] border-t border-[var(--color-border)] flex items-center justify-between shrink-0">
-          {!isCreate && canEdit ? (
+          {!isCreate && canDelete ? (
             <button onClick={onDelete} disabled={busy} className="text-xs font-bold text-red-600 hover:text-red-700 inline-flex items-center gap-1">
               <Trash2 className="w-3 h-3" /> Delete asset
+            </button>
+          ) : !isCreate && canEdit ? (
+            <button onClick={onArchive} disabled={busy} title="Deleting equipment is Admin / Doc Control only — archiving keeps its history"
+              className="text-xs font-bold text-amber-700 hover:text-amber-800 inline-flex items-center gap-1">
+              <Trash2 className="w-3 h-3" /> Archive asset
             </button>
           ) : <div />}
           <div className="flex items-center gap-2">
@@ -1714,6 +2051,9 @@ function AddUnitModal({ orgId, userId, existingCodes, onClose, onCreated }: {
   const save = async () => {
     const c = code.trim();
     if (!c) { setError("Give the area its number/code (e.g. 20)."); return; }
+    // CB-3: the shared shape guard — a unit code is digits.
+    const shape = codeProblem("unit", c);
+    if (shape) { setError(shape); return; }
     if (existingCodes.includes(c)) { setError(`Unit ${c} already exists.`); return; }
     setBusy(true); setError(null);
     const { error: e } = await supabase.from("codebook_entries").insert({
@@ -1721,7 +2061,11 @@ function AddUnitModal({ orgId, userId, existingCodes, onClose, onCreated }: {
       meta: {}, sort: existingCodes.length, origin: "manual", created_by: userId,
     });
     setBusy(false);
-    if (e) { setError(e.message); return; }
+    if (e) {
+      setError(e.code === "42501" ? "Only Admin or Doc Control can add operating areas to the Site Codebook."
+        : e.code === "23514" ? "Unit codes are digits — the database refused a letter code." : e.message);
+      return;
+    }
     onCreated(c);
   };
 
@@ -1760,13 +2104,14 @@ function AddUnitModal({ orgId, userId, existingCodes, onClose, onCreated }: {
   );
 }
 
-function AddCategoryModal({ orgId, userId, existingTypeCodes, onClose, onCreated }: {
+function AddCategoryModal({ orgId, userId, existingTypes, onClose, onCreated }: {
   orgId: string;
   userId: string;
-  existingTypeCodes: string[];
+  existingTypes: Codebook["equipmentTypes"];
   onClose: () => void;
   onCreated: () => void;
 }) {
+  const existingTypeCodes = existingTypes.map((t) => t.code);
   const [name, setName] = useState("");
   const [prefixes, setPrefixes] = useState("");
   const [typeCode, setTypeCode] = useState("");
@@ -1789,11 +2134,21 @@ function AddCategoryModal({ orgId, userId, existingTypeCodes, onClose, onCreated
       setError(`Code ${tc} is already used by another equipment type in the Site Codebook — pick a different code or leave it blank.`);
       return;
     }
+    // CB-3: an equipment-type code is digits (it is composed into site codes).
+    const shape = tc ? codeProblem("equipment_type", tc) : null;
+    if (shape) { setError(shape); return; }
+    // CB-8: one prefix, one equipment type — a second claimant leaves every
+    // tag with that prefix uncategorized.
+    const clash = tc ? prefixClaimsElsewhere(existingTypes, { code: tc, tagPrefixes: px }) : [];
+    if (clash.length > 0) {
+      setError(`Prefix ${clash[0].prefix}- is already claimed by ${clash[0].code} ${clash[0].label} in the Site Codebook — two types on one prefix leave every ${clash[0].prefix}- tag uncategorized.`);
+      return;
+    }
     setBusy(true); setError(null);
     try {
       // Codebook FIRST — it's the write most likely to be refused (RLS
-      // requires Admin/DocCtrl on the headline role; codes collide under a
-      // unique index). Ordering it first means a refusal leaves NOTHING
+      // requires the controller tier by the role collection; codes collide
+      // under a unique index; letter codes fail the CB-3 CHECK). Ordering it first means a refusal leaves NOTHING
       // half-created, so a retry can never mint duplicate categories.
       if (tc) {
         const { error: cbErr } = await supabase.from("codebook_entries").insert({
@@ -1807,6 +2162,10 @@ function AddCategoryModal({ orgId, userId, existingTypeCodes, onClose, onCreated
         }
         if (cbErr && cbErr.code === "42501") {
           setError("Only Admin or Doc Control can teach the Site Codebook — leave the code blank to create the category alone, or ask a controller.");
+          setBusy(false); return;
+        }
+        if (cbErr && cbErr.code === "23514") {
+          setError("Equipment-type codes are digits — the database refused a letter code.");
           setBusy(false); return;
         }
         if (cbErr) { setError(cbErr.message); setBusy(false); return; }

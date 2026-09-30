@@ -116,6 +116,36 @@ export async function createAssetType(input: {
 
 // ─── Assets ─────────────────────────────────────────────────────
 
+// AREA-9: PostgREST caps every response at the project's max-rows (1,000 by
+// default) and returns the truncated page WITHOUT an error. Every registry
+// read that feeds a count pages through the whole set: a stable order (tag,
+// then id), an exact row count on the first window, and each next window
+// starting where the rows actually returned end — so the read is complete
+// whatever max-rows is configured to, and stops the moment it has them all.
+const PAGE_ROWS = 1000;
+/** Refuse rather than silently truncate past this many rows. */
+export const MAX_REGISTRY_ROWS = 200_000;
+type CountOption = { count: "exact" } | undefined;
+
+async function readAllPages<T>(
+  page: (from: number, to: number, count: CountOption) => PromiseLike<{ data: unknown; error: { message: string } | null; count?: number | null }>,
+): Promise<T[]> {
+  const out: T[] = [];
+  let total: number | null = null;
+  for (let from = 0; ; ) {
+    const res = await page(from, from + PAGE_ROWS - 1, total === null ? { count: "exact" } : undefined);
+    if (res.error) throw new Error(res.error.message);
+    if (total === null) total = typeof res.count === "number" ? res.count : Number.POSITIVE_INFINITY;
+    const rows = (res.data as T[] | null) ?? [];
+    out.push(...rows);
+    if (rows.length === 0 || out.length >= total) return out;
+    from += rows.length;
+    if (out.length >= MAX_REGISTRY_ROWS) {
+      throw new Error(`The registry holds more than ${MAX_REGISTRY_ROWS.toLocaleString("en-US")} rows — narrow the view (a unit or a type) instead of loading it whole.`);
+    }
+  }
+}
+
 export async function listAssets(params: {
   orgId: string;
   search?: string;
@@ -123,17 +153,50 @@ export async function listAssets(params: {
   libraryId?: string;
   archived?: boolean;
 }): Promise<Asset[]> {
-  let q = supabase.from("assets").select("*").eq("org_id", params.orgId);
-  if (params.typeId) q = q.eq("type_id", params.typeId);
-  if (params.libraryId) q = q.eq("library_id", params.libraryId);
-  if (params.archived === false) q = q.eq("archived", false);
-  if (params.search && params.search.trim()) {
-    const s = params.search.trim();
-    q = q.or(`tag.ilike.%${s}%,description.ilike.%${s}%,location.ilike.%${s}%`);
+  return readAllPages<Asset>((from, to, count) => {
+    let q = supabase.from("assets").select("*", count).eq("org_id", params.orgId);
+    if (params.typeId) q = q.eq("type_id", params.typeId);
+    if (params.libraryId) q = q.eq("library_id", params.libraryId);
+    if (params.archived === false) q = q.eq("archived", false);
+    if (params.search && params.search.trim()) {
+      const s = params.search.trim();
+      q = q.or(`tag.ilike.%${s}%,description.ilike.%${s}%,location.ilike.%${s}%`);
+    }
+    return q.order("tag", { ascending: true }).order("id", { ascending: true }).range(from, to);
+  });
+}
+
+/** The identity columns of every asset in the org (archived included), for
+ *  the codebook's impact counts (CB-5 / CB-6 / CB-7) — paged like listAssets. */
+export type AssetIdentity = Pick<Asset, "id" | "tag" | "unit_code" | "code" | "type_id" | "origin" | "archived">;
+export async function listAssetIdentities(orgId: string): Promise<AssetIdentity[]> {
+  return readAllPages<AssetIdentity>((from, to, count) => supabase
+    .from("assets").select("id, tag, unit_code, code, type_id, origin, archived", count)
+    .eq("org_id", orgId)
+    .order("tag", { ascending: true }).order("id", { ascending: true })
+    .range(from, to));
+}
+
+/** BR-6: the registry rows a list of tags already names, by the one
+ *  grammar (tag_normalized = tagKey), chunked so a master list's worth of
+ *  keys never builds an over-long URL. Archived rows count — a re-import
+ *  must not mint a second asset beside an archived one. */
+export async function findAssetsByTagKeys(
+  orgId: string,
+  keys: string[],
+): Promise<Map<string, Pick<Asset, "id" | "tag" | "unit_code" | "code" | "archived">>> {
+  const out = new Map<string, Pick<Asset, "id" | "tag" | "unit_code" | "code" | "archived">>();
+  const uniq = [...new Set(keys.filter(Boolean))];
+  for (let i = 0; i < uniq.length; i += 100) {
+    const { data, error } = await supabase
+      .from("assets").select("id, tag, tag_normalized, unit_code, code, archived")
+      .eq("org_id", orgId).in("tag_normalized", uniq.slice(i, i + 100));
+    if (error) throw new Error(error.message);
+    for (const r of (data as Array<Pick<Asset, "id" | "tag" | "tag_normalized" | "unit_code" | "code" | "archived">>) ?? []) {
+      out.set(r.tag_normalized, { id: r.id, tag: r.tag, unit_code: r.unit_code ?? null, code: r.code ?? null, archived: r.archived });
+    }
   }
-  const { data, error } = await q.order("tag", { ascending: true });
-  if (error) throw new Error(error.message);
-  return (data as Asset[]) ?? [];
+  return out;
 }
 
 export async function getAsset(id: string): Promise<Asset | null> {
@@ -201,24 +264,56 @@ export async function createAsset(input: {
   if (resp.error && /unit_code|column/i.test(resp.error.message)) {
     resp = await supabase.from("assets").insert(base).select("*").single();
   }
-  if (resp.error) throw new Error(resp.error.message);
+  if (resp.error) throw registryWriteError(resp.error, input.code);
   return resp.data as Asset;
 }
 
-export async function updateAsset(id: string, patch: Partial<Pick<Asset, "tag" | "type_id" | "description" | "location" | "library_id" | "archived" | "cover_photo_id" | "unit_code" | "code">>, updatedBy: string): Promise<void> {
+/** CB-10: one site code is one asset (20261128 assets_org_code_unique). A
+ *  collision on that index names the code instead of reading like a
+ *  duplicate TAG, which is what a bare 23505 would be translated to. */
+export const SITE_CODE_UNIQUE_INDEX = "assets_org_code_unique";
+
+function registryWriteError(err: { message: string; code?: string }, code?: string | null): Error {
+  if (err.message.includes(SITE_CODE_UNIQUE_INDEX)) {
+    const which = code ? `Site code ${code}` : "That site code";
+    // No .code: a translated 23505 would read "that TAG already exists".
+    return new Error(`${which} is already carried by another asset in this org — one site code is one asset. Check the code, or file this asset under a different unit.`);
+  }
+  const e = new Error(err.message);
+  if (err.code) (e as Error & { code?: string }).code = err.code;
+  return e;
+}
+
+/** AREA-1 / IRLS-5 / OWN-14: a registry write RLS refuses returns zero rows
+ *  and no error — every write here asks for the row back and says so. */
+const WRITE_REFUSED = "The asset was not saved — only Admin, Document Control, Manager or Supervisor can edit the equipment registry.";
+const DELETE_REFUSED = "The asset was not deleted — deleting registry equipment is limited to Admin and Document Control (it cascades into photos, aliases and document links). Archive it instead.";
+
+export async function updateAsset(id: string, patch: Partial<Pick<Asset, "tag" | "type_id" | "description" | "location" | "library_id" | "archived" | "cover_photo_id" | "unit_code" | "code" | "origin">>, updatedBy: string): Promise<void> {
   const update: Record<string, unknown> = {
     ...patch,
     updated_by: updatedBy,
     updated_at: new Date().toISOString(),
   };
   if (patch.tag) update.tag_normalized = normalizeTag(patch.tag);
-  const { error } = await supabase.from("assets").update(update).eq("id", id);
-  if (error) throw new Error(error.message);
+  const { data, error } = await supabase.from("assets").update(update).eq("id", id).select("id");
+  if (error) throw registryWriteError(error, patch.code);
+  if (!data || data.length === 0) throw new Error(WRITE_REFUSED);
 }
 
+/** IRLS-5: the writer tier's removal — reversible, keeps the photos, the
+ *  aliases and every document link. Hidden from the registry (listAssets
+ *  archived:false) until someone restores it. */
+export async function archiveAsset(id: string, updatedBy: string): Promise<void> {
+  await updateAsset(id, { archived: true }, updatedBy);
+}
+
+/** Hard delete: the controller tier only (20261128), audited by the
+ *  database (ASSET_DELETED, trg_assets_audit_delete). */
 export async function deleteAsset(id: string): Promise<void> {
-  const { error } = await supabase.from("assets").delete().eq("id", id);
+  const { data, error } = await supabase.from("assets").delete().eq("id", id).select("id");
   if (error) throw new Error(error.message);
+  if (!data || data.length === 0) throw new Error(DELETE_REFUSED);
 }
 
 // ─── Photos ─────────────────────────────────────────────────────
@@ -268,16 +363,20 @@ export async function getCoverPhotoUrls(
 }
 
 export async function getPhotoCounts(orgId: string, assetIds: string[]): Promise<Map<string, number>> {
-  if (assetIds.length === 0) return new Map();
-  const { data, error } = await supabase
-    .from("asset_photos")
-    .select("asset_id")
-    .eq("org_id", orgId)
-    .in("asset_id", assetIds);
-  if (error) throw new Error(error.message);
   const counts = new Map<string, number>();
-  for (const row of (data as Array<{ asset_id: string }>) ?? []) {
-    counts.set(row.asset_id, (counts.get(row.asset_id) || 0) + 1);
+  if (assetIds.length === 0) return counts;
+  // AREA-9: a whole registry's ids do not fit one URL, and a whole
+  // registry's photos do not fit one response — chunk the ids, page each chunk.
+  for (let i = 0; i < assetIds.length; i += 150) {
+    const slice = assetIds.slice(i, i + 150);
+    const rows = await readAllPages<{ asset_id: string }>((from, to, count) => supabase
+      .from("asset_photos")
+      .select("asset_id", count)
+      .eq("org_id", orgId)
+      .in("asset_id", slice)
+      .order("id", { ascending: true })
+      .range(from, to));
+    for (const row of rows) counts.set(row.asset_id, (counts.get(row.asset_id) || 0) + 1);
   }
   return counts;
 }
@@ -321,8 +420,12 @@ export async function updatePhoto(id: string, patch: Partial<Pick<AssetPhoto, "c
 }
 
 export async function deletePhoto(id: string): Promise<void> {
-  const { error } = await supabase.from("asset_photos").delete().eq("id", id);
+  // 20261128: photos follow the asset — deleting one is a controller act.
+  const { data, error } = await supabase.from("asset_photos").delete().eq("id", id).select("id");
   if (error) throw new Error(error.message);
+  if (!data || data.length === 0) {
+    throw new Error("The photo was not deleted — only Admin or Document Control can delete registry photos. Mark it superseded instead.");
+  }
 }
 
 // ─── Linked files (drawings referenced by a tag) ─────────────────
