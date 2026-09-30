@@ -2502,12 +2502,13 @@ compliance scans is unchanged and not this decision's.)
 > repeat, never a loss. The email leg is best-effort. Item 3's health
 > signals are now logged on every run, an unavailable count is reported
 > (quiet only before the migration is applied), and each affected org's
-> controller pool is nudged once a day (best-effort, through `emit()`).
+> controller pool is nudged once a day (best-effort, through `emit()`;
+> a row naming no org is reported, not nudged).
 > Item 6: a sheet whose pending revision names a retired draft is marked
 > "stuck" and sent to Document Control, not the review queue; the
 > adoption re-check is the controller's browser's, not the server's
-> (projects-and-cost `INTK-3` done-when 1 is partial, pending `SAF-13`'s
-> server-side adopt).
+> (projects-and-cost `INTK-3` done-when 1 is partial; the server-side
+> re-check is opened as `INTK-16`).
 
 **Rationale.** The door is the one place an outside party writes into document
 control. Every earlier defect had the same shape: a fact the route itself
