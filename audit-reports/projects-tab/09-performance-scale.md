@@ -51,7 +51,7 @@ more times.
 ## PERF-1 · The companies registry fires over eleven hundred queries per page view, with no cache, pagination or abort
 
 - **Severity:** HIGH
-- **Status:** RESOLVED
+- **Status:** OPEN
 - **Verification:** CONFIRMED (query counts exact; timing estimated)
 - **Blast radius:** performance / availability
 - **Locations:**
@@ -97,14 +97,14 @@ company restarts the whole sweep.
 - Navigating away stops the sweep.
 - Back does not re-run it.
 
-**Resolution (2026-09-23, projects Round G).** Three parts. (1) `lib/companies.ts` `gatherCompanyProfiles(companies)` is ONE batched gather: per evidence table, one `.in()` query per chunk of 200 ids (company ids or party ids), results bucketed client-side by company — 11 queries for a page of 150 companies with parties, 16 when their parties span two chunks, never one per company; `gatherCompanyProfile(c)` is the one-company wrapper. (2) `listCompaniesPage(orgId, { search, kind, page })` pages server-side (`COMPANY_PAGE_SIZE` 50, sorted by name, `count: "exact"`, kind `eq`, search as `name.ilike / trade.ilike` with the term sanitised of PostgREST's `,()`), on the trigram indexes 20261095 adds; `listCompanies` keeps its signature with a hard cap (`COMPANY_LIST_CAP`). (3) `app/(protected)/companies/page.tsx` loads one page, gathers evidence for that page only, and its effect cleanup flips a cancel token so a result arriving after navigation is dropped; no client cache (GAP-409). Tests: `lib/__tests__/companiesRegistry.test.ts` (query count for 1 vs 150 companies equal at 11, 300 party ids → 16, always < 200; no per-company `eq("company_id")`; the page/range/order/or calls; source pins on the page).
+**Partial (2026-09-23, projects Round G).** Three parts. (1) `lib/companies.ts` `gatherCompanyProfiles(companies)` is ONE batched gather: per evidence table, one `.in()` read per chunk of 200 ids (company ids or party ids), results bucketed client-side by company — never one query per company; `gatherCompanyProfile(c)` is the one-company wrapper. Fix pass, correctness at scale: every batched read now pages to exhaustion in 1000-row windows ORDERED BY id (`GATHER_PAGE_ROWS`, PostgREST's max-rows cap) — the first landing's `.limit(n × k)` reads were unordered and still capped at 1000 rows per response, so on a busy page (50 companies × 3 parties × 50 turnover items = 7,500 rows) most cards silently lost their Quality / Cost evidence; milestones are filtered by the companies' names IN THE DATABASE again (`responsible_party ILIKE`, per bounded name slice — `orFilterChunks`, names double-quoted so "Gulf Mechanical, Inc." stays one value, 80-id project chunks so the request line stays bounded) and matched exactly client-side, instead of every activity of every project being fetched; a source that errors contributes no rows rather than a partial set; before 20261096 the party-keyed quote read retries without `company_id` (the bid history no longer empties). Query count: 11 for one company and for a full page of 50, 13 for 150 (two more name-filter slices), 18 when 150 companies' parties span two id chunks. (2) `listCompaniesPage(orgId, { search, kind, page })` pages server-side (`COMPANY_PAGE_SIZE` 50, sorted by name, `count: "exact"`, kind `eq`, search as `name.ilike / trade.ilike` with the term sanitised of PostgREST's `,()`), on the trigram indexes 20261095 adds; `listCompanies` keeps its signature with a hard cap (`COMPANY_LIST_CAP`). (3) `app/(protected)/companies/page.tsx` loads one page, gathers evidence for that page only, and its effect cleanup flips a cancel token so a result arriving after navigation is dropped; no client cache (GAP-409). Tests: `lib/__tests__/companiesRegistry.test.ts` — its PostgREST double now enforces the 1000-row cap on every response, `range()`, `ORDER BY` and `or(ilike)`: query counts (11 / 11 / 13 / 18, always < 200; no per-company `eq("company_id")`), 7,500 turnover rows → every card keeps 120/150, a 2,500-activity schedule keeps all 1,200 of the company's milestones through the server-side name filter, the pre-migration quote read, the page/range/order/or calls.
 
 **Done-when.**
-- A `/companies` visit issues under 200 queries — ✓ (1 list + 11–16 gather, pinned).
+- A `/companies` visit issues under 200 queries — ✓ (1 list + 11–13 gather for a page, pinned) — and now returns every row, not the first thousand.
 - Navigating away stops the sweep — ✓ (there is no queue to drain: one batched gather whose result is discarded on cancel; the in-flight HTTP requests of that single round complete).
-- Back does not re-run it — **not done, by decision**: GAP-409 says "do not fix this with a client-side cache; stale company data drives award decisions", and the brief pins "one server-side batched gather per page, no cache". Back re-runs one ~11-query gather for the visible page.
+- Back does not re-run it — **not done, by decision**: GAP-409 says "do not fix this with a client-side cache; stale company data drives award decisions", and the brief pins "one server-side batched gather per page, no cache". Back re-runs one ~11-query gather for the visible page. The finding stays open on this item until the user rules on it.
 
-**Scope / residual.** The detail page re-gathers its one company through the same function (a single-id batch). The RPC alternative (`company_profiles(org_id)`) was not needed: the census test is under 20. Migrations: `20261095_prj_roundG_registry_indexes.sql`, `20261096_prj_roundG_cost_doc_links_and_extent.sql` (DEC-30: applied by hand; the code half is live without them and reads the missing columns as unknown).
+**Scope / residual.** The detail page re-gathers its one company through the same function (a single-id batch). The RPC alternative (`company_profiles(org_id)`) was not needed: the census stays under 20. Migrations: `20261095_prj_roundG_registry_indexes.sql`, `20261096_prj_roundG_cost_doc_links_and_extent.sql` (DEC-30: applied by hand; the gather runs without them — the party-keyed reads degrade to the pre-migration shape, missing columns read as unknown).
 
 ---
 
@@ -393,7 +393,7 @@ the project row lands rather than blocking on everything.
 ## PERF-9 · A 571 KB chunk containing a zip library ships to everyone who opens any project
 
 - **Severity:** MEDIUM
-- **Status:** RESOLVED
+- **Status:** OPEN
 - **Verification:** CONFIRMED (verified against the built output)
 - **Blast radius:** performance
 - **Locations:**
@@ -426,11 +426,11 @@ in `next/dynamic`.
 - PizZip is not in the project route's initial chunks.
 - Route JS is under 700 KB.
 
-**Resolution (2026-09-23, projects Round G).** `QuotesPanel.tsx` no longer imports `lib/rfqDocx` statically; `makeRfq` does `const { downloadStarterRfq } = await import("@/lib/rfqDocx")` at the click, so PizZip is a separate chunk loaded only when a starter RFQ is downloaded. No bundle-analyzer gate was added (plan default).
+**Partial (2026-09-23, projects Round G).** `QuotesPanel.tsx` no longer imports `lib/rfqDocx` statically; `makeRfq` does `const { downloadStarterRfq } = await import("@/lib/rfqDocx")` at the click, so PizZip is a separate chunk loaded only when a starter RFQ is downloaded. No bundle-analyzer gate was added (plan default).
 
 **Done-when.**
 - PizZip is not in the project route's initial chunks — ✓ by import graph (no static path from the project page to `pizzip` remains: `grep -rn "rfqDocx" components app` shows only the dynamic import).
-- Route JS is under 700 KB — **not verified here**: no `next build` was run in this package (the integrator builds); recorded as a manual check on the built manifest.
+- Route JS is under 700 KB — **not verified here**: no `next build` was run in this package (the integrator builds); the finding stays open until the built manifest shows it.
 
 **Scope / residual.** The other heavy statics named (ExecutionView, ScheduleImportModal, TaskDetailPanel) are P6a/P6b files — not touched.
 
@@ -505,7 +505,7 @@ that, not after.
 - The company-profile gather uses index scans — ✓ once 20261095 is applied (the gather's filters are exactly `party_id IN (…)` / `company_id IN (…)` / `project_id IN (…)`, all now indexed). **Pending migration:** `20261095_prj_roundG_registry_indexes.sql` (DEC-30).
 - Document type-ahead does not degrade with library size — ✓ once applied (trigram GIN on the three `ilike` columns). Pending the same migration.
 
-**Scope / residual.** `milestones.responsible_party` is still matched client-side by case-insensitive equality inside the batched gather (the rows come by `project_id IN`), so the trigram index serves the other readers of that column; it lands before P11's MON-7 as the plan requires.
+**Scope / residual.** Fix pass: the batched gather filters `milestones.responsible_party` in the database again (ILIKE on this trigram index, per bounded name slice), so the index serves the gather as well as the other readers of that column. Locking: `documents` (the core document table) and `milestones` are COUNTED before the transaction (DEC-30 inventory rows in the result) and their trigram indexes are built in it only at or below 50,000 rows; above that the build is skipped with a notice, their probes read false, and the file's foot carries the four `CREATE INDEX CONCURRENTLY` statements to paste one per run (they never block writes). Verified on a local PostgreSQL 16 both ways (small tables: every probe true; 50,011 documents: the three documents probes false, the concurrent build then succeeds). It lands before P11's MON-7 as the plan requires.
 
 ---
 
@@ -544,7 +544,7 @@ everywhere; add an explicit `order` to the snapshot query at minimum. Time-bound
 
 | ID | Severity | Status |
 |---|---|---|
-| PERF-1 | CRITICAL | RESOLVED |
+| PERF-1 | CRITICAL | OPEN |
 | PERF-2 | CRITICAL | OPEN |
 | PERF-3 | HIGH | OPEN |
 | PERF-4 | HIGH | OPEN |
@@ -552,6 +552,6 @@ everywhere; add an explicit `order` to the snapshot query at minimum. Time-bound
 | PERF-6 | HIGH | OPEN |
 | PERF-7 | HIGH | OPEN |
 | PERF-8 | HIGH | OPEN |
-| PERF-9 | MEDIUM | RESOLVED |
+| PERF-9 | MEDIUM | OPEN |
 | PERF-10 | MEDIUM | OPEN |
 | PERF-11 | MEDIUM | RESOLVED |

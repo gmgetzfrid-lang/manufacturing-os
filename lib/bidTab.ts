@@ -11,7 +11,7 @@
 //   * a weighted best-value score whose math is always shown, never a
 //     black box. Weights are inputs; price alone is never the verdict.
 //
-// Honesty rules (projects Round G, DEC-44 — BID-3/BID-4/BID-6/BID-7/BID-8
+// Honesty rules (projects Round G, DEC-47 — BID-3/BID-4/BID-6/BID-7/BID-8
 // and COST-5):
 //   * A DECLARED exclusion never lowers a score — the RFQ letter promises
 //     it, and a scorer that punishes disclosure teaches vendors to hide
@@ -24,8 +24,12 @@
 //     manpower with the weights renormalised.
 //   * Labour hours are vendor-stated and AI-extracted. Among bids that
 //     state them they move the composite by at most
-//     MANPOWER_MAX_COMPOSITE_SWING points; a bid that states none takes
-//     the floor (the letter asks for hours — silence is non-compliance).
+//     MANPOWER_MAX_COMPOSITE_SWING points. A bid that states NONE scores a
+//     manpower part of 0 (the letter asks for hours — silence is
+//     non-compliance), so stating hours at all is worth up to
+//     100 × the manpower share of the composite over silence (37.5
+//     points at the default weights) — the cap bounds hours against
+//     hours, not hours against silence (DEC-47, recorded for ratification).
 //   * A best-value badge needs at least two scored bids and a unique top;
 //     a tie is a tie. A mixed-currency field is not scored at all.
 //   * A human-typed total (price-only bid) enters the price normalisation
@@ -62,6 +66,9 @@ export interface ParsedQuote {
    *  original number visible — a correction never hides what was read. */
   totalSource?: "extracted" | "human";
   extractedTotal?: number | null;
+  /** The currency the model read, kept when a human restates the bid in
+   *  another currency (BID-7) — "corrected · AI read €150,000". */
+  extractedCurrency?: string | null;
 }
 
 export interface BidEconomics {
@@ -74,6 +81,8 @@ export interface BidEconomics {
   priceOnly: boolean;
   totalSource: "extracted" | "human";
   extractedTotal: number | null;
+  /** The currency of `extractedTotal` when it differs from `currency`. */
+  extractedCurrency: string | null;
   laborHours: number;          // Σ line hours (0 = not stated)
   blendedRate: number | null;  // labor $ / labor hours, null when hours unknown
   peakHeadcount: number | null;
@@ -107,7 +116,7 @@ export interface BidScore {
   score: number | null;
   /** Each 0..100 pre-weight; null = not scored for this bid ("not
    *  scored", never a 0). Coverage is null for every bid until a per-RFQ
-   *  scope checklist exists (DEC-44). */
+   *  scope checklist exists (DEC-47). */
   parts: { price: number | null; manpower: number | null; coverage: number | null };
   best: boolean;
   /** Shares the top score with another bid — rendered as a tie, no badge. */
@@ -163,15 +172,19 @@ export const SCOPE_MATCH_THRESHOLD = 0.5;
 function mentions(quote: ParsedQuote, item: string): boolean {
   const itemTokens = scopeTokens(item);
   if (itemTokens.size === 0) return true; // too generic to judge — never flag
-  const hay = [...quote.lineItems.map((l) => l.description), ...quote.exclusions];
-  return hay.some((h) => {
+  const covers = (h: string, isExclusion: boolean) => {
     const sim = scopeSimilarity(h, item);
     if (sim < SCOPE_MATCH_THRESHOLD) return false;
     const H = [...scopeTokens(h)];
     const shared = [...itemTokens].filter((x) => H.some((y) => sameToken(x, y))).length;
-    // A one-token item (an abbreviation like "NDE") is matched by that token.
-    return shared >= Math.min(2, itemTokens.size);
-  });
+    // A one-token item (an abbreviation like "NDE") is matched by that
+    // token. A declared exclusion is the vendor naming scope it will NOT
+    // price, so a short one ("NDE", "Insulation") covers every longer
+    // line built on it ("NDE (RT 10%)") — the smaller side sets the bar,
+    // and the row never shows "excludes: NDE" beside "check: NDE (RT 10%)".
+    return shared >= Math.min(2, itemTokens.size, isExclusion ? H.length : Infinity);
+  };
+  return quote.lineItems.some((l) => covers(l.description, false)) || quote.exclusions.some((x) => covers(x, true));
 }
 
 /** Economics per bid, computed against the whole field (for missing-scope). */
@@ -213,6 +226,7 @@ export function computeBidEconomics(quotes: ParsedQuote[]): BidEconomics[] {
       priceOnly: !!q.priceOnly,
       totalSource: q.totalSource ?? "extracted",
       extractedTotal: q.extractedTotal ?? null,
+      extractedCurrency: isoCurrency(q.extractedCurrency),
       laborHours: hours,
       blendedRate: hours > 0 && laborTotal > 0 ? laborTotal / hours : null,
       peakHeadcount: peak,
@@ -227,11 +241,13 @@ export function computeBidEconomics(quotes: ParsedQuote[]): BidEconomics[] {
 /**
  * Weighted best value, math shown. Price and manpower each score 0..100
  * relative to the field (best bid = 100). A bid with unknown labor hours
- * takes the field's WORST manpower part — undisclosed manpower never beats
- * disclosed manpower — while among bids that state hours the (vendor-
- * stated) number moves the composite by at most
- * MANPOWER_MAX_COMPOSITE_SWING points. Coverage is not scored (DEC-44).
- * A mixed-currency field is refused: every score is null.
+ * scores a manpower part of 0 — undisclosed manpower never beats disclosed
+ * manpower. Among bids that state hours the (vendor-stated) number moves
+ * the composite by at most MANPOWER_MAX_COMPOSITE_SWING points; against a
+ * bid that states none, stating any hours is worth up to 100 × the
+ * manpower share (DEC-47 — the cap is hours-vs-hours, not hours-vs-
+ * silence). Coverage is not scored. A mixed-currency field is refused:
+ * every score is null.
  */
 export function scoreBids(
   econ: BidEconomics[],
@@ -269,9 +285,14 @@ export function scoreBids(
         best: false, tied: false, unscored: "price-only",
       };
     }
+    // Stated hours land in [floor, 100] (the 5-point swing among bids that
+    // state them). Undisclosed hours score 0 — BELOW that band, by design
+    // and pinned ("cheapest does not automatically win"): silence is
+    // non-compliance with the letter, and the gap to any stated figure is
+    // up to 100 × manpowerShare composite points (DEC-47).
     const manpower = e.dollarsPerHour != null && e.dollarsPerHour > 0 && minDph != null
       ? floor + (minDph / e.dollarsPerHour) * (100 - floor)
-      : 0; // undisclosed hours = floor, by design
+      : 0;
     const score = (price * weights.price + manpower * weights.manpower) / wSum;
     return {
       quoteId: e.quoteId,
@@ -314,21 +335,68 @@ export function isoCurrency(raw: unknown): string | null {
 }
 
 /** The field's currency. Bids whose currency is unknown (null) are taken
- *  to be in the field's currency; two or more DISTINCT known currencies
- *  make the field mixed — not commensurate, not scored. */
+ *  to be in the field's currency — and RENDERED in it, marked as assumed
+ *  (`bidCurrency`); two or more DISTINCT known currencies make the field
+ *  mixed — not commensurate, not scored. */
 export function fieldCurrency(econ: Array<{ currency: string | null }>): { currency: string | null; currencies: string[]; mixed: boolean } {
   const currencies = [...new Set(econ.map((e) => e.currency).filter((c): c is string => !!c))];
   return { currency: currencies.length === 1 ? currencies[0] : null, currencies, mixed: currencies.length > 1 };
 }
 
+/** The currency a bid is shown, scored and awarded in (BID-7): its own
+ *  ISO code; else — the paper printed none — the field's single known
+ *  currency, with a note saying it was assumed, so a bid ranked beside
+ *  EUR bids is never rendered in dollars. `known: false` means no currency
+ *  can be vouched for (the field is mixed, or nothing printed one):
+ *  displayed as USD by default, never awardable into a field that needs a
+ *  specific currency. */
+export function bidCurrency(
+  own: string | null | undefined,
+  field: { currency: string | null; currencies: string[] },
+): { code: string; known: boolean; note: string | null } {
+  const code = isoCurrency(own);
+  if (code) return { code, known: true, note: null };
+  if (field.currency) return { code: field.currency, known: true, note: `currency not printed — assumed ${field.currency}` };
+  if (field.currencies.length > 1) return { code: "USD", known: false, note: "currency not printed — unknown in a mixed field" };
+  return { code: "USD", known: false, note: null };
+}
+
+/** Read a human-typed figure: "182,000", "182000 EUR", "USD 162,000.50".
+ *  The amount is the digits; a three-letter token, when present, must be
+ *  an ISO-4217 code (the restatement currency, BID-7). */
+export function parseTypedAmount(raw: string): { amount: number | null; currency: string | null; badCurrency: string | null } {
+  const token = /(?<![A-Za-z])([A-Za-z]{3})(?![A-Za-z])/.exec(raw)?.[1] ?? null;
+  const currency = token ? isoCurrency(token) : null;
+  const digits = raw.replace(/[^0-9.]/g, "");
+  const n = digits ? Number(digits) : NaN;
+  return {
+    amount: Number.isFinite(n) && n > 0 ? n : null,
+    currency,
+    badCurrency: token && !currency ? token : null,
+  };
+}
+
 // ── One authoritative total (BID-1 / GAP-407) ─────────────────────────────
 
-/** Overlay the row's human-visible total onto the extraction so display,
- *  score and award all use ONE number. The model's original stays on the
- *  quote as `extractedTotal` — a correction never hides what was read. */
-export function withHumanTotal(q: ParsedQuote, rowTotal: number | null | undefined): ParsedQuote {
-  if (rowTotal == null || !(rowTotal > 0) || rowTotal === q.total) return { ...q, totalSource: q.totalSource ?? "extracted" };
-  return { ...q, total: rowTotal, totalSource: "human", extractedTotal: q.extractedTotal ?? q.total };
+/** Overlay the row's human-visible total — and, when a human restated
+ *  the bid in another currency, the row's currency — onto the extraction
+ *  so display, score and award all use ONE figure in ONE currency. The
+ *  model's original stays on the quote as `extractedTotal` /
+ *  `extractedCurrency` — a correction never hides what was read. */
+export function withHumanTotal(q: ParsedQuote, rowTotal: number | null | undefined, rowCurrency?: string | null): ParsedQuote {
+  const readCurrency = isoCurrency(q.currency);
+  const restatedCurrency = isoCurrency(rowCurrency);
+  const currencyChanged = restatedCurrency != null && restatedCurrency !== readCurrency;
+  const totalChanged = rowTotal != null && rowTotal > 0 && rowTotal !== q.total;
+  if (!totalChanged && !currencyChanged) return { ...q, totalSource: q.totalSource ?? "extracted" };
+  return {
+    ...q,
+    total: totalChanged ? rowTotal! : q.total,
+    currency: currencyChanged ? restatedCurrency : q.currency,
+    totalSource: "human",
+    extractedTotal: q.extractedTotal ?? q.total,
+    extractedCurrency: q.extractedCurrency ?? readCurrency,
+  };
 }
 
 /** A bid whose only readable number is a human-typed total (BID-8). */
@@ -336,6 +404,7 @@ export function priceOnlyQuote(input: { id: string; vendorName: string; total: n
   return {
     id: input.id, vendorName: input.vendorName, total: input.total, currency: input.currency ?? null,
     validUntil: null, notes: null, lineItems: [], exclusions: [], priceOnly: true, totalSource: "human", extractedTotal: null,
+    extractedCurrency: null,
   };
 }
 
@@ -363,6 +432,17 @@ export function snapRfqGroup(typed: string, existing: string[]): string {
   if (!t) return "";
   const key = rfqGroupKey(t);
   return existing.find((g) => rfqGroupKey(g) === key) ?? t;
+}
+
+/** Hand the award every rival of a merged field under ONE spelling: the
+ *  posting side (lib/costDocs.awardQuote) declines rivals by exact string,
+ *  so a case/whitespace variant the table merged would otherwise be left
+ *  "under review" inside an awarded field (BID-10). Documents outside the
+ *  field are returned untouched. */
+export function alignGroupSpelling<T extends { kind: string; rfqGroup: string | null }>(docs: T[], group: string | null | undefined): T[] {
+  const key = rfqGroupKey(group);
+  if (!key || !group) return docs;
+  return docs.map((d) => (d.kind === "quote" && d.rfqGroup && d.rfqGroup !== group && rfqGroupKey(d.rfqGroup) === key ? { ...d, rfqGroup: group } : d));
 }
 
 /** Merge groups whose labels differ only by case/whitespace into one bid

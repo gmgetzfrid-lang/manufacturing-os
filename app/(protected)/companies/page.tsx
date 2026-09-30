@@ -27,6 +27,7 @@ import {
   COMPANY_KIND_LABEL, type Company, type CompanyProfileData,
 } from "@/lib/companies";
 import { scoreBand } from "@/lib/companyScore";
+import { readExtent } from "@/lib/bidTab";
 import { ScoreDial, scoreBandColor } from "@/components/ui/ChartKit";
 import { fmtMoney } from "@/lib/costs";
 
@@ -106,6 +107,10 @@ export default function CompaniesPage() {
   }, [refresh, reloadKey]);
 
   const retry = useCallback(() => setReloadKey((k) => k + 1), []);
+  // With no org the list read has nothing to re-run: Retry re-runs the
+  // resolver the only way this page can — a fresh load of the app shell
+  // (RoleContext is not this package's file and exposes no re-resolve).
+  const retryOrg = useCallback(() => { window.location.reload(); }, []);
   const pageCount = Math.max(1, Math.ceil(total / COMPANY_PAGE_SIZE));
   const shown = useMemo(() => companies, [companies]);
 
@@ -141,7 +146,7 @@ export default function CompaniesPage() {
       {shownState === "failed" && (
         <div role="alert" className="mb-4 flex items-center gap-2 rounded-xl border border-rose-500/50 bg-rose-500/[0.08] px-3 py-2.5 text-xs font-bold text-rose-700 dark:text-rose-300">
           <AlertTriangle className="w-4 h-4 shrink-0" /> <span className="min-w-0 flex-1">{shownError ?? "The registry couldn't be loaded."}</span>
-          <button onClick={retry} className="inline-flex items-center gap-1 rounded-lg border border-rose-500/40 px-2 py-1 text-[11px] font-bold hover:bg-rose-500/10">
+          <button onClick={orgFailure ? retryOrg : retry} className="inline-flex items-center gap-1 rounded-lg border border-rose-500/40 px-2 py-1 text-[11px] font-bold hover:bg-rose-500/10">
             <RotateCcw className="w-3 h-3" /> Retry
           </button>
         </div>
@@ -294,11 +299,16 @@ function CompanyCard({ company: c, profile }: { company: Company; profile: Compa
             <ShieldAlert className="w-3 h-3" /> {safety.recordables > 0 ? `${safety.recordables} recordable${safety.recordables === 1 ? "" : "s"}` : ""}{safety.recordables > 0 && safety.stopWorks > 0 ? " · " : ""}{safety.stopWorks > 0 ? `${safety.stopWorks} stop-work${safety.stopWorks === 1 ? "" : "s"}` : ""}
           </span>
         )}
-        {c.qualityManualScore != null && (
-          <span className="inline-flex items-center gap-1" title="Quality-manual coverage vs the ISO 9001-shaped rubric (human-confirmed)">
-            <BookOpenCheck className="w-3 h-3" /> QM {Math.round(c.qualityManualScore)}%
-          </span>
-        )}
+        {c.qualityManualScore != null && (() => {
+          // COST-3: a coverage figure from a partial (or unknown-extent)
+          // read never renders bare.
+          const ext = readExtent(c.qualityManualPagesRead, c.qualityManualPagesTotal);
+          return (
+            <span className="inline-flex items-center gap-1" title={`Quality-manual coverage vs the ISO 9001-shaped rubric (human-confirmed) — ${ext.label}`}>
+              <BookOpenCheck className="w-3 h-3" /> QM {Math.round(c.qualityManualScore)}%{ext.known && !ext.truncated ? "" : ` (${ext.label})`}
+            </span>
+          );
+        })()}
         {sc?.dimensions.find((d) => d.key === "responsiveness")?.score != null && (
           <span className="inline-flex items-center gap-1" title={sc.dimensions.find((d) => d.key === "responsiveness")!.detail}>
             <Timer className="w-3 h-3" /> {sc.dimensions.find((d) => d.key === "responsiveness")!.detail.split(" · ")[0]}

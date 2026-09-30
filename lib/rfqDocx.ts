@@ -8,8 +8,9 @@
 // the submission instructions with the contractor's tokened quote link.
 // The point is symmetry: the system READS inbound quotes, so it should
 // also write the outbound ask that makes those quotes comparable — asking
-// every bidder for the same price breakdown, labor hours, crew size, and
-// explicit exclusions the bid tabulation scores on.
+// every bidder for the same price breakdown, labor hours and crew size
+// the bid tabulation scores on, and the explicit exclusions its reviewers
+// weigh.
 //
 // Built with PizZip alone (a .docx is a zip of XML) — no template file,
 // no new dependency.
@@ -115,13 +116,14 @@ export function buildRfqDocumentXml(i: RfqInput): string {
       : [para("A Summary of Work will be issued with this request; it governs the scope.")]),
 
     para("2. Your quote must include", "Heading"),
-    para("Quotes are compared line by line on price, manpower, and scope coverage. To be evaluated fairly, include:"),
+    para("Price and manpower are scored; scope coverage and any undeclared gaps are reviewed by our evaluators. To be evaluated fairly, include:"),
     para("A price breakdown by scope item — not a single lump sum.", "Bullet"),
     para("Labor hours and crew size (peak headcount) per item, by craft.", "Bullet"),
-    // This promise is what the tabulation does (lib/bidTab, DEC-44): a
-    // declared exclusion never lowers a score; an undeclared gap our
-    // reviewers find is held against the bid by them.
-    para("An explicit EXCLUSIONS list — anything you are not pricing. Undeclared gaps found during evaluation count against the bid; declared exclusions do not lower your score — they are shown to our reviewers as scope we must buy elsewhere.", "Bullet"),
+    // This promise is what the tabulation does (lib/bidTab, DEC-47): the
+    // score is price + manpower; coverage is not scored, so a declared
+    // exclusion never lowers a score and an undeclared gap is a matter
+    // for the reviewers, never the scorer.
+    para("An explicit EXCLUSIONS list — anything you are not pricing. Declared exclusions do not lower your score — they are shown to our reviewers as scope we must buy elsewhere; undeclared gaps are reviewed by our evaluators.", "Bullet"),
     para("Quote validity date, and any schedule constraints or premium-time assumptions.", "Bullet"),
 
     para("3. Turnover package (required from the successful bidder)", "Heading"),

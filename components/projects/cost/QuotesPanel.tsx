@@ -18,11 +18,15 @@
 // row opens its source PDF (BID-2); every figure renders in its own
 // currency and a mixed-currency field is not ranked (BID-7); typed-total
 // bids sit in the same table, price-normalised, "not scored" where they
-// cannot be scored (BID-8); a read total can be corrected or voided (BID-9);
-// the registry match is normalised, visible and overridable by an explicit
-// company link (BID-12); a do-not-use company cannot be awarded without a
-// typed, audited override (MON-12 UI half); a truncated read is said out
-// loud and the award total must be typed back (COST-13).
+// cannot be scored (BID-8); a read total can be corrected, restated in
+// another currency or voided — through a status-guarded write, so a stale
+// tab cannot touch a document someone has since awarded (BID-9); the
+// registry match is normalised, visible and overridable by an explicit
+// company link (BID-12); Award waits for the registry and re-reads the
+// company at the click, and a do-not-use company cannot be awarded — or
+// re-linked away from — without a typed, audited override (MON-12 UI
+// half); a truncated read is said out loud and the award total must be
+// typed back from the paper (COST-13).
 
 import React, { useMemo, useState } from "react";
 import {
@@ -31,18 +35,19 @@ import {
 } from "lucide-react";
 import Link from "next/link";
 import { supabase } from "@/lib/supabase";
-import { listCompanies, type Company } from "@/lib/companies";
+import { listCompanies, getCompany, type Company } from "@/lib/companies";
 import { fmtMoney, type CostAccount, type Actor } from "@/lib/costs";
 import { getFileUrl } from "@/lib/storage";
 import {
   type CostDocument, COST_DOC_STATUS_LABEL,
-  uploadCostDoc, awardQuote, postInvoice, voidCostDoc, setManualTotal,
+  uploadCostDoc, awardQuote, postInvoice,
   parsedQuoteFrom, quoteGroups,
 } from "@/lib/costDocs";
 import {
   computeBidEconomics, scoreBids, effectiveWeights, MANPOWER_MAX_COMPOSITE_SWING,
-  withHumanTotal, priceOnlyQuote, mergeQuoteGroups, snapRfqGroup, matchCompanyByName,
-  quoteExpired, readExtent, fieldCurrency, type ParsedQuote, type BidEconomics,
+  withHumanTotal, priceOnlyQuote, mergeQuoteGroups, snapRfqGroup, matchCompanyByName, alignGroupSpelling,
+  quoteExpired, readExtent, fieldCurrency, bidCurrency, isoCurrency, parseTypedAmount,
+  type ParsedQuote, type BidEconomics,
 } from "@/lib/bidTab";
 import { appConfirm, appPrompt } from "@/components/providers/DialogProvider";
 
@@ -51,6 +56,43 @@ import { appConfirm, appPrompt } from "@/components/providers/DialogProvider";
  *  explicit registry link and the read extent. */
 interface DocExtras { companyId: string | null; pagesTotal: number | null; pagesRead: number | null }
 interface Party { id: string; name: string; companyId: string | null }
+type LoadState = "loading" | "ready" | "failed";
+
+/** A column a pending migration adds is not there yet. */
+const missingColumn = (e: { code?: string } | null | undefined) => !!e && (e.code === "42703" || e.code === "PGRST204");
+
+/** Statuses a document can still be corrected or voided from. */
+const OPEN_DOC_STATUSES = ["draft", "parsed"] as const;
+
+/**
+ * Correct, restate or void a document that is still OPEN (BID-9 / MON-3).
+ * The status predicate is in the UPDATE itself, so a stale tab can never
+ * void or re-total a quote someone has since awarded (its commitment
+ * already posted) or an invoice already posted; zero rows matched is a
+ * refusal, never a silent success. The audit row (same action names the
+ * lib writers use) follows the change and its failure is reported. This
+ * is the panel's own guarded path until lib/costDocs' voidCostDoc /
+ * setManualTotal carry the guard (PC-7).
+ */
+export async function guardedCostDocWrite(input: {
+  doc: Pick<CostDocument, "id" | "orgId">;
+  patch: Record<string, unknown>;
+  audit: { action: string; details: Record<string, unknown> };
+  actor: Actor;
+}): Promise<{ ok: true; auditError: string | null } | { ok: false; error: string }> {
+  const { data, error } = await supabase.from("cost_documents").update(input.patch)
+    .eq("id", input.doc.id).eq("org_id", input.doc.orgId).in("status", [...OPEN_DOC_STATUSES]).select("id");
+  if (error) return { ok: false, error: error.message };
+  if (!data || (data as unknown[]).length === 0) {
+    return { ok: false, error: "Someone else has already awarded, posted or voided this document — refresh to see the latest." };
+  }
+  const { error: auditErr } = await supabase.from("audit_logs").insert({
+    action: input.audit.action, resource_type: "cost", resource_id: input.doc.id,
+    org_id: input.doc.orgId, user_id: input.actor.uid, user_email: input.actor.email,
+    details: input.audit.details,
+  });
+  return { ok: true, auditError: auditErr ? auditErr.message : null };
+}
 
 const QUOTE_LINK_DEFAULT_DAYS = 90;
 const isoDateInDays = (d: number) => new Date(Date.now() + d * 86_400_000).toISOString().slice(0, 10);
@@ -86,18 +128,28 @@ export default function QuotesPanel({ orgId, projectId, canManage, actor, accoun
   // Explicit registry links + read extent per row (20261096 columns). One
   // bounded query; pre-migration the columns are absent and every row
   // reads "unknown", never "complete".
+  // A FAILED read is tracked (not swallowed): explicit links drive the
+  // do-not-use flag, so Award waits for this read to succeed. Before
+  // 20261096 the columns are absent — no link can exist yet, so that case
+  // is "ready" with every extent unknown.
   const [extras, setExtras] = useState<Map<string, DocExtras>>(new Map());
+  const [extrasState, setExtrasState] = useState<LoadState>("loading");
   React.useEffect(() => {
     let cancelled = false;
     void (async () => {
       const { data, error } = await supabase.from("cost_documents")
         .select("id, company_id, pages_total, pages_read").eq("org_id", orgId).eq("project_id", projectId).limit(500);
-      if (cancelled || error) return;
+      if (cancelled) return;
+      if (error) {
+        if (missingColumn(error)) { setExtras(new Map()); setExtrasState("ready"); } else setExtrasState("failed");
+        return;
+      }
       setExtras(new Map((((data ?? []) as Array<Record<string, unknown>>)).map((r) => [String(r.id), {
         companyId: (r.company_id as string | null) ?? null,
         pagesTotal: r.pages_total == null ? null : Number(r.pages_total),
         pagesRead: r.pages_read == null ? null : Number(r.pages_read),
       }])));
+      setExtrasState("ready");
     })();
     return () => { cancelled = true; };
   }, [orgId, projectId, docs]);
@@ -117,27 +169,60 @@ export default function QuotesPanel({ orgId, projectId, canManage, actor, accoun
     return () => { cancelled = true; };
   }, [projectId, docs]);
   // Case/whitespace variants of a group name are ONE bid field here (BID-10
-  // client half); lib/costDocs still keys the award's rival-decline on the
-  // exact string — its one-line limb is P3's.
+  // client half); lib/costDocs keys the award's rival-decline on the exact
+  // string, so the award below hands it the merged field's rivals under
+  // one spelling (the server-side lower(trim) is P3's one-line limb).
   const groups = useMemo(() => mergeQuoteGroups(quoteGroups(docs)), [docs]);
   const invoices = useMemo(() => docs.filter((d) => d.kind !== "quote" && d.status !== "void"), [docs]);
   const existingGroups = useMemo(
     () => [...new Set(docs.map((d) => d.rfqGroup).filter((g): g is string => !!g))], [docs]);
 
-  const linkCompany = async (doc: CostDocument, companyId: string | null) => {
+  /** Bind (or unbind) a bidder to a registry row. Moving a bidder AWAY
+   *  from a do-not-use company — its explicit link or its name match — is
+   *  an override like awarding it: a typed reason is required, and the
+   *  change is undone if its audit row cannot be written (MON-12). */
+  const linkCompany = async (doc: CostDocument, companyId: string | null, current: Company | null) => {
     setErr(null);
-    const { error } = await supabase.from("cost_documents").update({ company_id: companyId }).eq("id", doc.id).eq("org_id", orgId);
+    const previousLink = extras.get(doc.id)?.companyId ?? null;
+    const leavingBarred = current?.status === "do_not_use" && companyId !== current.id;
+    let reason: string | null = null;
+    if (leavingBarred) {
+      reason = (await appPrompt({
+        title: `${current!.name} is flagged DO NOT USE`,
+        message: `This bidder is ${previousLink ? "linked" : "matched by name"} to a barred company. Linking it elsewhere removes the flag from this bid — state why; the reason is recorded.`,
+        placeholder: "Reason (required)",
+      }))?.trim() || null;
+      if (!reason) { setErr(`Link unchanged — ${current!.name} is flagged do-not-use and no reason was given.`); return; }
+    }
+    const { data, error } = await supabase.from("cost_documents").update({ company_id: companyId })
+      .eq("id", doc.id).eq("org_id", orgId).select("id");
     if (error) {
-      setErr(error.code === "42703" || error.code === "PGRST204"
+      setErr(missingColumn(error)
         ? "Linking a bidder to the registry needs migration 20261096 applied."
         : `Couldn't link the company: ${error.message}`);
       return;
     }
-    await supabase.from("audit_logs").insert({
+    if (!data || (data as unknown[]).length === 0) { setErr("Couldn't link the company — the document wasn't updated (refresh; it may have been removed)."); return; }
+    const { error: auditErr } = await supabase.from("audit_logs").insert({
       action: "COST_DOC_COMPANY_LINKED", resource_type: "cost", resource_id: doc.id,
       org_id: orgId, user_id: actor.uid, user_email: actor.email,
-      details: { companyId, vendor: doc.vendorName },
-    }).then(() => undefined, () => undefined);
+      details: {
+        companyId, previousCompanyId: previousLink, vendor: doc.vendorName,
+        ...(leavingBarred ? { overrideDoNotUse: { companyId: current!.id, company: current!.name, reason } } : {}),
+      },
+    });
+    if (auditErr) {
+      if (leavingBarred) {
+        // An un-audited move away from a barred company must not stand.
+        const { error: revertErr } = await supabase.from("cost_documents").update({ company_id: previousLink }).eq("id", doc.id).eq("org_id", orgId);
+        setErr(revertErr
+          ? `The link changed but its override record failed (${auditErr.message}) and it could not be undone (${revertErr.message}) — relink it by hand.`
+          : `The override could not be recorded (${auditErr.message}) — the link was put back.`);
+        if (revertErr) setExtras((prev) => new Map(prev).set(doc.id, { ...(prev.get(doc.id) ?? { pagesTotal: null, pagesRead: null }), companyId }));
+        return;
+      }
+      setErr(`The company was linked but its audit record failed: ${auditErr.message}`);
+    }
     setExtras((prev) => new Map(prev).set(doc.id, { ...(prev.get(doc.id) ?? { pagesTotal: null, pagesRead: null }), companyId }));
   };
 
@@ -157,25 +242,90 @@ export default function QuotesPanel({ orgId, projectId, canManage, actor, accoun
     } finally { setBusy(null); }
   };
 
+  /** Record a human total — and, when a currency code is typed with it,
+   *  restate the document in that currency (BID-7). Guarded: only a
+   *  document that is still open can be changed. */
+  const saveTotal = async (doc: CostDocument, amount: number, currency: string | null): Promise<boolean> => {
+    const readQuote = parsedQuoteFrom(doc);
+    const rowCurrency = isoCurrency(doc.currency) ?? isoCurrency(readQuote?.currency);
+    const restate = currency != null && currency !== rowCurrency;
+    setBusy(doc.id);
+    const res = await guardedCostDocWrite({
+      doc, actor,
+      patch: { total_amount: amount, ...(doc.status === "draft" ? { status: "parsed" } : {}), ...(restate ? { currency } : {}) },
+      audit: {
+        action: "COST_DOC_MANUAL_TOTAL",
+        details: {
+          total: amount, currency: currency ?? rowCurrency, previousTotal: doc.totalAmount,
+          ...(readQuote ? { extractedTotal: readQuote.total } : {}),
+          ...(restate ? { restatedFrom: rowCurrency } : {}),
+        },
+      },
+    });
+    setBusy(null);
+    if (!res.ok) { setErr(res.error); return false; }
+    if (res.auditError) setErr(`The total was saved but its audit record failed: ${res.auditError}`);
+    onChanged();
+    return true;
+  };
+
   // Works for an unread scan AND a read quote whose AI total is wrong
   // (BID-9): the typed number becomes the one authoritative total; the
-  // model's original stays visible on the row.
+  // model's original stays visible on the row. A currency code typed with
+  // the figure restates the bid in that currency (BID-7).
   const typeTotal = async (doc: CostDocument) => {
-    const extracted = parsedQuoteFrom(doc)?.total ?? null;
+    const readQuote = parsedQuoteFrom(doc);
+    const extracted = readQuote?.total ?? null;
+    const readCur = isoCurrency(doc.currency) ?? isoCurrency(readQuote?.currency);
     const v = await appPrompt({
       title: extracted != null ? "Correct the total" : "Type the total from the paper",
-      message: extracted != null
-        ? `The AI read ${fmtMoney(extracted, doc.currency ?? "USD")} from ${doc.fileName ?? "this document"}. Enter the bottom-line total printed on the paper; it becomes the number the table scores and the award posts, and the AI's reading stays on the row for the record.`
-        : `The AI couldn't read (or hasn't read) ${doc.fileName ?? "this document"}. Enter its bottom-line total and it becomes the awardable number.`,
-      placeholder: "e.g. 182000",
+      message: (
+        <>
+          {extracted != null
+            ? `The AI read ${fmtMoney(extracted, readCur ?? "USD")} from ${doc.fileName ?? "this document"}. Enter the bottom-line total printed on the paper; it becomes the number the table scores and the award posts, and the AI's reading stays on the row for the record.`
+            : `The AI couldn't read (or hasn't read) ${doc.fileName ?? "this document"}. Enter its bottom-line total and it becomes the awardable number.`}
+          {" "}To restate it in another currency, type the code after the figure (e.g. 162000 USD).
+          <OpenPdfButton doc={doc} setErr={setErr} />
+        </>
+      ),
+      placeholder: "e.g. 182000 or 162000 USD",
     });
     if (!v) return;
-    const n = Number(String(v).replace(/[^0-9.]/g, ""));
-    if (!Number.isFinite(n) || n <= 0) { setErr("That didn't read as a positive number."); return; }
-    setBusy(doc.id);
-    const res = await setManualTotal({ doc, total: n, actor });
-    setBusy(null);
-    if (!res.ok) setErr(res.error ?? "Couldn't save the total."); else onChanged();
+    const typed = parseTypedAmount(String(v));
+    if (typed.badCurrency) { setErr(`"${typed.badCurrency}" isn't an ISO currency code — use e.g. USD, EUR, GBP.`); return; }
+    if (typed.amount == null) { setErr("That didn't read as a positive number."); return; }
+    await saveTotal(doc, typed.amount, typed.currency);
+  };
+
+  /** COST-13: a total from a truncated (or unknown-extent) read is typed
+   *  back from the PAPER before money moves. The prompt never prints the
+   *  expected figure — the point is to look at the document, not to copy
+   *  the screen — and a mismatch offers to record the paper's figure as
+   *  the corrected total instead (the money then waits for a fresh click). */
+  const confirmFromPaper = async (doc: CostDocument, total: number, cur: string, lead: string, what: string): Promise<boolean> => {
+    const typed = await appPrompt({
+      title: `Check the total on the paper — ${doc.vendorName ?? doc.fileName ?? "this document"}`,
+      message: (
+        <>
+          {lead ? `${lead} ` : ""}Open the PDF, find the bottom-line total printed on it, and type that figure to {what}.
+          <OpenPdfButton doc={doc} setErr={setErr} />
+        </>
+      ),
+      placeholder: "Total as printed on the paper",
+    });
+    if (typed == null) return false;
+    const parsed = parseTypedAmount(String(typed));
+    if (parsed.amount == null) { setErr("That didn't read as a number — nothing was posted."); return false; }
+    if (Math.round(parsed.amount) === Math.round(total) && (!parsed.currency || parsed.currency === cur)) return true;
+    const paper = fmtMoney(parsed.amount, parsed.currency ?? cur);
+    const fix = await appConfirm({
+      message: `The figure you typed (${paper}) doesn't match this row's total. Record ${paper} as the corrected total now? Nothing is posted — check the row, then try again.`,
+      confirmLabel: "Record as corrected total",
+      tone: "danger",
+    });
+    if (fix) await saveTotal(doc, parsed.amount, parsed.currency);
+    else setErr("Nothing was posted — the figure typed from the paper didn't match this row's total.");
+    return false;
   };
 
   return (
@@ -198,10 +348,10 @@ export default function QuotesPanel({ orgId, projectId, canManage, actor, accoun
         <QuoteLinksSection orgId={orgId} projectId={projectId} actor={actor} existingGroups={existingGroups} setErr={setErr} />
       )}
 
-      {companiesState === "failed" && (
+      {(companiesState === "failed" || extrasState === "failed") && (
         <div role="alert" className="px-4 py-2 border-b border-amber-500/40 bg-amber-500/[0.07] text-[11px] font-bold text-amber-800 dark:text-amber-300 flex items-center gap-2">
           <AlertTriangle className="w-3.5 h-3.5 shrink-0" />
-          The Known Companies registry couldn&apos;t be loaded — &quot;known&quot; and &quot;do not use&quot; flags are NOT shown on this table. Reload before awarding.
+          {companiesState === "failed" ? "The Known Companies registry" : "This project's bidder-to-company links"} couldn&apos;t be loaded — &quot;known&quot; and &quot;do not use&quot; flags may be missing from this table, so Award is withheld. Reload to try again.
         </div>
       )}
 
@@ -223,10 +373,10 @@ export default function QuotesPanel({ orgId, projectId, canManage, actor, accoun
         <div className="divide-y divide-[var(--color-border)]">
           {groups.map(({ group, docs: groupDocs }) => (
             <BidGroup key={group} group={group} docs={groupDocs} allDocs={docs}
-              accounts={accounts} companies={companies} companiesState={companiesState} extras={extras}
+              accounts={accounts} companies={companies} companiesState={companiesState} extras={extras} extrasState={extrasState}
               canManage={canManage} actor={actor} orgId={orgId}
               busy={busy} setBusy={setBusy} readDoc={readDoc} typeTotal={typeTotal} linkCompany={linkCompany}
-              onChanged={onChanged} setErr={setErr} />
+              confirmFromPaper={confirmFromPaper} onChanged={onChanged} setErr={setErr} />
           ))}
         </div>
       )}
@@ -251,7 +401,7 @@ export default function QuotesPanel({ orgId, projectId, canManage, actor, accoun
                 <FileText className="w-3.5 h-3.5 text-[var(--color-text-faint)] shrink-0" />
                 <span className="font-bold text-[var(--color-text)] truncate">{doc.vendorName ?? doc.fileName ?? "Invoice"}</span>
                 {doc.docNumber && <span className="font-mono text-[10px] text-[var(--color-text-muted)]">{doc.docNumber}</span>}
-                {doc.totalAmount != null && <span className="font-black tabular-nums text-[var(--color-text)]">{fmtMoney(doc.totalAmount, doc.currency ?? "USD")}</span>}
+                {doc.totalAmount != null && <span className="font-black tabular-nums text-[var(--color-text)]">{fmtMoney(doc.totalAmount, isoCurrency(doc.currency) ?? "USD")}</span>}
                 <OpenPdfButton doc={doc} setErr={setErr} />
                 <ReadExtentChip extras={extras.get(doc.id) ?? null} status={doc.status} />
                 <StatusChip status={doc.status} />
@@ -266,21 +416,13 @@ export default function QuotesPanel({ orgId, projectId, canManage, actor, accoun
                   <PostControls accounts={accounts} busy={busy === doc.id}
                     onPost={async (accountId) => {
                       // COST-13: an actual posted from a truncated (or
-                      // unknown-extent) read needs the amount typed back.
+                      // unknown-extent) read needs the amount typed back
+                      // from the paper — never copied from the screen.
                       const ext = readExtent(extras.get(doc.id)?.pagesRead, extras.get(doc.id)?.pagesTotal);
                       const total = doc.totalAmount ?? 0;
                       if (ext.truncated || !ext.known) {
-                        const typed = await appPrompt({
-                          title: `Confirm the amount for ${doc.vendorName ?? "this invoice"}`,
-                          message: `${ext.truncated ? `The AI ${ext.label}` : "The read extent of this invoice is unknown"} — the amount may come from an incomplete read. Type the amount due exactly as printed (${Math.round(total).toLocaleString()}) to post ${fmtMoney(total, doc.currency ?? "USD")} as an actual.`,
-                          placeholder: String(Math.round(total)),
-                        });
-                        if (typed == null) return;
-                        const n = Number(String(typed).replace(/[^0-9.]/g, ""));
-                        if (!Number.isFinite(n) || Math.round(n) !== Math.round(total)) {
-                          setErr(`The typed amount (${typed}) doesn't match ${fmtMoney(total, doc.currency ?? "USD")} — use "type total" first if the paper says something else.`);
-                          return;
-                        }
+                        const lead = `${ext.truncated ? `The AI ${ext.label}` : "The read extent of this invoice is unknown"} — the amount may come from an incomplete read.`;
+                        if (!(await confirmFromPaper(doc, total, isoCurrency(doc.currency) ?? "USD", lead, "post it as an actual"))) return;
                       }
                       setBusy(doc.id);
                       const res = await postInvoice({ doc, costAccountId: accountId, actor });
@@ -308,15 +450,16 @@ export default function QuotesPanel({ orgId, projectId, canManage, actor, accoun
 
 // ── One RFQ group: the tabulation ────────────────────────────────────────
 
-function BidGroup({ group, docs: groupDocs, allDocs, accounts, companies, companiesState, extras, canManage, actor, orgId, busy, setBusy, readDoc, typeTotal, linkCompany, onChanged, setErr }: {
+function BidGroup({ group, docs: groupDocs, allDocs, accounts, companies, companiesState, extras, extrasState, canManage, actor, orgId, busy, setBusy, readDoc, typeTotal, linkCompany, confirmFromPaper, onChanged, setErr }: {
   group: string; docs: CostDocument[]; allDocs: CostDocument[];
-  accounts: CostAccount[]; companies: Company[]; companiesState: "loading" | "ready" | "failed";
-  extras: Map<string, DocExtras>;
+  accounts: CostAccount[]; companies: Company[]; companiesState: LoadState;
+  extras: Map<string, DocExtras>; extrasState: LoadState;
   canManage: boolean; actor: Actor; orgId: string;
   busy: string | null; setBusy: (v: string | null) => void;
   readDoc: (d: CostDocument) => Promise<void>;
   typeTotal: (d: CostDocument) => Promise<void>;
-  linkCompany: (d: CostDocument, companyId: string | null) => Promise<void>;
+  linkCompany: (d: CostDocument, companyId: string | null, current: Company | null) => Promise<void>;
+  confirmFromPaper: (doc: CostDocument, total: number, cur: string, lead: string, what: string) => Promise<boolean>;
   onChanged: () => void; setErr: (m: string | null) => void;
 }) {
   const [open, setOpen] = useState(true);
@@ -328,7 +471,7 @@ function BidGroup({ group, docs: groupDocs, allDocs, accounts, companies, compan
     for (const d of groupDocs) {
       if (d.status === "void" || d.status === "draft") continue;
       const q = parsedQuoteFrom(d);
-      if (q) out.push({ doc: d, quote: withHumanTotal(q, d.totalAmount) });
+      if (q) out.push({ doc: d, quote: withHumanTotal(q, d.totalAmount, d.currency) });
       else if ((d.totalAmount ?? 0) > 0) {
         out.push({ doc: d, quote: priceOnlyQuote({ id: d.id, vendorName: d.vendorName ?? d.fileName ?? "Bid", total: d.totalAmount!, currency: d.currency }) });
       }
@@ -342,6 +485,13 @@ function BidGroup({ group, docs: groupDocs, allDocs, accounts, companies, compan
   const unread = groupDocs.filter((d) => d.status === "draft");
   const weights = effectiveWeights();
   const scoredCount = [...scores.values()].filter((s) => s.score != null).length;
+  // What stating hours at all is worth over silence, in composite points
+  // (DEC-47): the 5-point cap binds hours against hours only.
+  const silenceGap = Math.round(weights.manpower * 1000) / 10;
+  // Award waits for the registry AND the explicit-link read: an empty or
+  // failed list would silently drop the do-not-use flag (MON-12).
+  const registryGate: LoadState = companiesState === "failed" || extrasState === "failed" ? "failed"
+    : companiesState === "ready" && extrasState === "ready" ? "ready" : "loading";
 
   /** The registry row for a bid: the explicit link wins; otherwise a
    *  normalised-name match, shown as a suggestion the human can change. */
@@ -351,66 +501,111 @@ function BidGroup({ group, docs: groupDocs, allDocs, accounts, companies, compan
     return { known: matchCompanyByName(e.vendorName, companies), bound: false };
   };
 
+  /** The registry row for this bid AS IT STANDS NOW — the explicit link
+   *  re-read from the row, else a normalised-name match against a fresh
+   *  registry read. Never the in-memory list the table rendered from. */
+  const registryNow = async (doc: CostDocument, vendorName: string | null): Promise<Company | null> => {
+    const { data: row, error } = await supabase.from("cost_documents").select("company_id").eq("id", doc.id).maybeSingle();
+    if (error && !missingColumn(error)) throw new Error(error.message);
+    const boundId = (row as { company_id?: string | null } | null)?.company_id ?? null;
+    if (boundId) {
+      const bound = await getCompany(boundId);
+      if (!bound) throw new Error("the linked company record couldn't be read");
+      return bound;
+    }
+    return matchCompanyByName(vendorName, await listCompanies(orgId));
+  };
+
   const award = async (doc: CostDocument, accountId: string) => {
     const e = econ.find((x) => x.quoteId === doc.id);
     const total = e?.total ?? doc.totalAmount ?? parsedQuoteFrom(doc)?.total ?? 0;
-    const cur = e?.currency ?? doc.currency ?? "USD";
+    const bc = bidCurrency(e?.currency ?? doc.currency, currency);
+    const cur = bc.code;
     const account = accounts.find((a) => a.id === accountId);
-    const { known } = e ? registryFor(doc, e) : { known: null };
+    const budgetCur = isoCurrency(account?.currency) ?? "USD";
     const quote = entries.find((p) => p.doc.id === doc.id)?.quote ?? null;
     const extent = readExtent(extras.get(doc.id)?.pagesRead, extras.get(doc.id)?.pagesTotal);
     const expired = quoteExpired(quote?.validUntil);
 
-    // MON-12 / COST-3: a barred company is not awardable without a typed,
-    // audited reason. The posting-side refusal is lib/costDocs' (PC-7).
+    // BID-7: a mixed field is not commensurate. A bid already in the budget
+    // line's currency can be awarded; a foreign (or unprinted) one is
+    // restated first — the posting-side refusal is lib/costDocs' (P3/PC-7).
+    if (currency.mixed && (!bc.known || bc.code !== budgetCur)) {
+      setErr(`Award stopped — this field mixes ${currency.currencies.join(" and ")} and "${account?.name ?? "the budget line"}" is kept in ${budgetCur}. ${bc.known ? `Restate this ${bc.code} bid in ${budgetCur}` : "This bid's currency isn't printed — restate it"} with "correct total" (e.g. 162000 ${budgetCur}), then award.`);
+      return;
+    }
+
+    // MON-12 / COST-3: the barred-company check reads the registry at the
+    // click (never the list this table rendered from), and fails CLOSED.
+    let known: Company | null;
+    try {
+      known = await registryNow(doc, e?.vendorName ?? doc.vendorName);
+    } catch (err) {
+      setErr(`Award stopped — the Known Companies registry couldn't be checked (${(err as Error).message}). Reload and try again.`);
+      return;
+    }
+    let overrideReason: string | null = null;
     if (known?.status === "do_not_use") {
-      const reason = await appPrompt({
+      overrideReason = (await appPrompt({
         title: `${known.name} is flagged DO NOT USE`,
         message: "The registry bars this company. To award anyway, state the reason — it is recorded against this award and the company's record.",
         placeholder: "Override reason (required)",
-      });
-      if (!reason || !reason.trim()) { setErr(`Award stopped — ${known.name} is flagged do-not-use and no override reason was given.`); return; }
-      const { error } = await supabase.from("audit_logs").insert({
-        action: "COST_DOC_AWARD_OVERRIDE_DO_NOT_USE", resource_type: "cost", resource_id: doc.id,
-        org_id: orgId, user_id: actor.uid, user_email: actor.email,
-        details: { companyId: known.id, company: known.name, reason: reason.trim(), total, currency: cur, rfqGroup: group },
-      });
-      if (error) { setErr(`The override could not be recorded (${error.message}) — award stopped.`); return; }
+      }))?.trim() || null;
+      if (!overrideReason) { setErr(`Award stopped — ${known.name} is flagged do-not-use and no override reason was given.`); return; }
     }
 
     const warnings = [
       expired ? `This quote's validity date (${quote?.validUntil}) has PASSED — confirm the price with the vendor.` : null,
       extent.truncated ? `The AI ${extent.label} — the total may come from an incomplete read.` : null,
       !extent.known && quote && !quote.priceOnly ? "The read extent of this document is unknown — the total may come from an incomplete read." : null,
-      quote?.totalSource === "human" && quote.extractedTotal != null ? `Total corrected by hand from the AI's ${fmtMoney(quote.extractedTotal, cur)}.` : null,
+      quote?.totalSource === "human" && quote.extractedTotal != null ? `Total corrected by hand from the AI's ${fmtMoney(quote.extractedTotal, isoCurrency(quote.extractedCurrency) ?? cur)}.` : null,
+      bc.note ? `The ${bc.note}.` : null,
+      !currency.mixed && bc.known && bc.code !== budgetCur ? `This bid is in ${bc.code} but "${account?.name ?? "the budget line"}" is kept in ${budgetCur} — the commitment posts the ${bc.code} figure as-is unless you restate it first.` : null,
     ].filter((w): w is string => !!w);
 
     // COST-13: a truncated (or unknown-extent) read requires the total to
-    // be typed back, not just clicked through.
+    // be typed back from the paper, not just clicked through.
     if (extent.truncated || (!extent.known && quote && !quote.priceOnly)) {
-      const typed = await appPrompt({
-        title: `Confirm the award total for ${doc.vendorName ?? "this vendor"}`,
-        message: `${warnings.join(" ")} Type the total exactly as it appears on the paper (${Math.round(total).toLocaleString()}) to award "${group}" for ${fmtMoney(total, cur)} on "${account?.name ?? "the budget line"}".`,
-        placeholder: String(Math.round(total)),
-      });
-      if (typed == null) return;
-      const n = Number(String(typed).replace(/[^0-9.]/g, ""));
-      if (!Number.isFinite(n) || Math.round(n) !== Math.round(total)) {
-        setErr(`The typed total (${typed}) doesn't match ${fmtMoney(total, cur)} — correct the total first if the paper says something else.`);
-        return;
-      }
+      if (!(await confirmFromPaper(doc, total, cur, warnings.join(" "), `award "${group}" on "${account?.name ?? "the budget line"}"`))) return;
     } else if (!(await appConfirm({
       message: `${warnings.length ? warnings.join(" ") + " " : ""}Award "${group}" to ${doc.vendorName ?? "this vendor"} for ${fmtMoney(total, cur)}? This posts a commitment on "${account?.name ?? "the budget line"}" and marks the other bids not selected.`,
       tone: warnings.length ? "danger" : undefined,
     }))) return;
 
+    // The override is recorded once every confirmation has passed and
+    // BEFORE money moves (fail-closed); an award that then fails closes it
+    // with an explicit abandonment row.
+    if (known?.status === "do_not_use") {
+      const { error } = await supabase.from("audit_logs").insert({
+        action: "COST_DOC_AWARD_OVERRIDE_DO_NOT_USE", resource_type: "cost", resource_id: doc.id,
+        org_id: orgId, user_id: actor.uid, user_email: actor.email,
+        details: { companyId: known.id, company: known.name, reason: overrideReason, total, currency: cur, rfqGroup: group, costAccountId: accountId },
+      });
+      if (error) { setErr(`The override could not be recorded (${error.message}) — award stopped.`); return; }
+    }
+
+    // BID-10: every spelling of this merged field is one field, so its
+    // rivals are handed to the award under one spelling and all decline.
+    const siblings = alignGroupSpelling(allDocs, doc.rfqGroup);
+
     setBusy(doc.id);
+    let failure: string | null = null;
     try {
-      const res = await awardQuote({ doc, siblings: allDocs, costAccountId: accountId, actor });
-      if (!res.ok) setErr(res.error ?? "Couldn't award."); else onChanged();
-    } catch (e) {
-      setErr((e as Error).message);
+      const res = await awardQuote({ doc, siblings, costAccountId: accountId, actor });
+      if (!res.ok) failure = res.error ?? "Couldn't award.";
+    } catch (err) {
+      failure = (err as Error).message;
     } finally { setBusy(null); }
+    if (failure == null) { onChanged(); return; }
+    if (known?.status === "do_not_use") {
+      const { error } = await supabase.from("audit_logs").insert({
+        action: "COST_DOC_AWARD_OVERRIDE_ABANDONED", resource_type: "cost", resource_id: doc.id,
+        org_id: orgId, user_id: actor.uid, user_email: actor.email,
+        details: { companyId: known.id, company: known.name, why: failure },
+      });
+      if (error) failure = `${failure} (The do-not-use override was recorded but could not be closed: ${error.message}.)`;
+    }
+    setErr(failure);
   };
 
   const colCount = 7 + (canManage && !awarded ? 1 : 0);
@@ -448,7 +643,7 @@ function BidGroup({ group, docs: groupDocs, allDocs, accounts, companies, compan
           {currency.mixed && (
             <div role="alert" className="flex items-start gap-2 rounded-lg border border-amber-500/40 bg-amber-500/[0.07] px-3 py-2 text-[11px] font-bold text-amber-800 dark:text-amber-300">
               <AlertTriangle className="w-3.5 h-3.5 shrink-0 mt-0.5" />
-              <span>This field mixes {currency.currencies.join(" and ")}. Each price is shown in its own currency and the bids are NOT ranked against each other — restate a foreign total in the budget&apos;s currency (correct total) before awarding.</span>
+              <span>This field mixes {currency.currencies.join(" and ")}. Each price is shown in its own currency and the bids are NOT ranked against each other. Award a bid already in the budget line&apos;s currency, or restate a foreign bid first: &quot;correct total&quot; with the currency code (e.g. 162000 USD).</span>
             </div>
           )}
 
@@ -463,7 +658,7 @@ function BidGroup({ group, docs: groupDocs, allDocs, accounts, companies, compan
                     <th className="px-3 py-2 text-right" title="Total price ÷ labor hours — lower buys more hands">Price / hr</th>
                     <th className="px-3 py-2 text-right" title="Largest crew size stated">Peak crew</th>
                     <th className="px-3 py-2" title="Quote validity date as printed">Valid until</th>
-                    <th className="px-3 py-2 text-right" title={`Value score = ${Math.round(weights.price * 100)}% price + ${Math.round(weights.manpower * 100)}% manpower (hours can move it by at most ${MANPOWER_MAX_COMPOSITE_SWING} points). Scope coverage is not scored — exclusions and check prompts are shown for your judgement.`}>Value score</th>
+                    <th className="px-3 py-2 text-right" title={`Value score = ${Math.round(weights.price * 100)}% price + ${Math.round(weights.manpower * 100)}% manpower (between bids that state hours, at most ${MANPOWER_MAX_COMPOSITE_SWING} points apart on manpower; a bid stating none scores 0 there). Scope coverage is not scored — exclusions and check prompts are shown for your judgement.`}>Value score</th>
                     {canManage && !awarded && <th className="px-3 py-2" />}
                   </tr>
                 </thead>
@@ -474,8 +669,10 @@ function BidGroup({ group, docs: groupDocs, allDocs, accounts, companies, compan
                     const quote = entries.find((p) => p.doc.id === e.quoteId)?.quote;
                     const isAwarded = doc?.status === "awarded";
                     const isDeclined = doc?.status === "declined";
-                    const cur = e.currency ?? doc?.currency ?? "USD";
+                    const bc = bidCurrency(e.currency, currency);
+                    const cur = bc.code;
                     const { known, bound } = doc ? registryFor(doc, e) : { known: null, bound: false };
+                    const qmExtent = known ? readExtent(known.qualityManualPagesRead, known.qualityManualPagesTotal) : null;
                     const ext = doc ? extras.get(doc.id) ?? null : null;
                     const expired = quoteExpired(quote?.validUntil);
                     const rowActions = doc && canManage && !awarded && (doc.status === "parsed" || doc.status === "draft");
@@ -488,9 +685,9 @@ function BidGroup({ group, docs: groupDocs, allDocs, accounts, companies, compan
                             {known && (
                               <Link href={`/companies/${known.id}`}
                                 className="ml-1.5 inline-flex items-center gap-1 text-[9px] font-bold px-1.5 py-0.5 rounded border border-[var(--color-border-strong)] text-[var(--color-text-muted)] hover:text-[var(--color-accent)] hover:border-[var(--color-accent-ring)] transition-colors"
-                                title={bound ? "Linked to this Known Companies record — open it" : `Matched to "${known.name}" by name — use "change" if that is wrong`}
+                                title={`${bound ? "Linked to this Known Companies record — open it" : `Matched to "${known.name}" by name — use "change" if that is wrong`}${known.qualityManualScore != null && qmExtent ? ` · quality manual ${Math.round(known.qualityManualScore)}% coverage, ${qmExtent.label}` : ""}`}
                                 onClick={(ev) => ev.stopPropagation()}>
-                                {bound ? "known" : `matched to ${known.name}`}{known.qualityManualScore != null ? ` · QM ${Math.round(known.qualityManualScore)}%` : ""}
+                                {bound ? "known" : `matched to ${known.name}`}{known.qualityManualScore != null ? ` · QM ${Math.round(known.qualityManualScore)}%${qmExtent && (!qmExtent.known || qmExtent.truncated) ? ` (${qmExtent.label})` : ""}` : ""}
                               </Link>
                             )}
                             {known?.status === "do_not_use" && (
@@ -504,7 +701,7 @@ function BidGroup({ group, docs: groupDocs, allDocs, accounts, companies, compan
                             )}
                             {doc && canManage && companiesState === "ready" && (
                               <CompanyPicker companies={companies} value={ext?.companyId ?? null} suggestion={!bound ? known : null}
-                                onChange={(id) => void linkCompany(doc, id)} />
+                                onChange={(id) => void linkCompany(doc, id, known)} />
                             )}
                             {s?.best && !awarded && (
                               <span className="ml-1.5 text-[9px] font-black uppercase text-[var(--color-accent)]"
@@ -520,8 +717,11 @@ function BidGroup({ group, docs: groupDocs, allDocs, accounts, companies, compan
                             {fmtMoney(e.total, cur)}
                             {e.totalSource === "human" && (
                               <div className="text-[9px] font-bold text-amber-700 dark:text-amber-300" title="A human corrected this total; the AI's reading is kept for the record">
-                                corrected{e.extractedTotal != null ? ` · AI read ${fmtMoney(e.extractedTotal, cur)}` : ""}
+                                corrected{e.extractedTotal != null ? ` · AI read ${fmtMoney(e.extractedTotal, e.extractedCurrency ?? cur)}` : ""}
                               </div>
+                            )}
+                            {bc.note && (
+                              <div className="text-[9px] font-bold text-amber-700 dark:text-amber-300" title="The quote prints no currency — restate it with a currency code (correct total) if the assumption is wrong">{bc.note}</div>
                             )}
                             {e.priceOnly && (
                               <div className="text-[9px] font-bold text-[var(--color-text-muted)]" title="The AI couldn't read line detail from this file — it competes on price only, with no manpower or coverage score.">typed total — price only</div>
@@ -531,7 +731,7 @@ function BidGroup({ group, docs: groupDocs, allDocs, accounts, companies, compan
                           <td className="px-3 py-2 text-right tabular-nums">
                             {e.priceOnly ? <span className="text-[var(--color-text-faint)]">not scored</span>
                               : e.laborHours > 0 ? <span title="Vendor-stated, AI-extracted">{e.laborHours.toLocaleString()}</span>
-                              : <span className="text-[var(--color-text-faint)]" title="This bid doesn't state labor hours — undisclosed manpower scores at the field's floor.">not stated</span>}
+                              : <span className="text-[var(--color-text-faint)]" title={`This bid doesn't state labor hours — its manpower part is 0 (the RFQ asks for hours), so a bid that states any hours can score up to ${silenceGap} points higher on that alone.`}>not stated</span>}
                           </td>
                           <td className="px-3 py-2 text-right tabular-nums">{e.priceOnly ? <span className="text-[var(--color-text-faint)]">not scored</span> : e.dollarsPerHour != null ? fmtMoney(e.dollarsPerHour, cur) : "—"}</td>
                           <td className="px-3 py-2 text-right tabular-nums">{e.priceOnly ? <span className="text-[var(--color-text-faint)]">—</span> : e.peakHeadcount ?? "—"}</td>
@@ -554,12 +754,15 @@ function BidGroup({ group, docs: groupDocs, allDocs, accounts, companies, compan
                           </td>
                           {canManage && !awarded && (
                             <td className="px-3 py-2 text-right whitespace-nowrap">
-                              {rowActions && !currency.mixed && (
+                              {rowActions && registryGate === "ready" && (
                                 <PostControls accounts={accounts} busy={busy === doc.id}
                                   onPost={(accountId) => award(doc, accountId)} label="Award" />
                               )}
-                              {rowActions && currency.mixed && (
-                                <span className="text-[10px] text-[var(--color-text-muted)]" title="Restate the foreign total in the budget's currency first">not awardable — mixed currency</span>
+                              {rowActions && registryGate === "loading" && (
+                                <span className="text-[10px] text-[var(--color-text-muted)]" title="Award waits until the Known Companies registry and this bid's company link have loaded — the do-not-use check needs both">checking the registry…</span>
+                              )}
+                              {rowActions && registryGate === "failed" && (
+                                <span className="text-[10px] font-bold text-amber-700 dark:text-amber-300" title="The registry or the company links failed to load — a do-not-use flag could be missing, so Award is withheld. Reload the page.">registry unavailable — reload to award</span>
                               )}
                               {rowActions && (
                                 <>
@@ -608,7 +811,7 @@ function BidGroup({ group, docs: groupDocs, allDocs, accounts, companies, compan
           )}
           {econ.length > 0 && (
             <div className="text-[10px] text-[var(--color-text-muted)]">
-              Value score = {Math.round(weights.price * 100)}% price + {Math.round(weights.manpower * 100)}% manpower-for-the-money, each measured against this field; labor hours are vendor-stated and AI-extracted and can move the score by at most {MANPOWER_MAX_COMPOSITE_SWING} points.
+              Value score = {Math.round(weights.price * 100)}% price + {Math.round(weights.manpower * 100)}% manpower-for-the-money, each measured against this field; labor hours are vendor-stated and AI-extracted and, between bids that state them, move the score by at most {MANPOWER_MAX_COMPOSITE_SWING} points — a bid that states none scores 0 on manpower, up to {silenceGap} points below one that does.
               Scope coverage is not scored: declared exclusions never lower a score (as the RFQ letter promises) and &quot;check&quot; prompts are for you to verify against the PDF.
               {scoredCount < 2 ? " With fewer than two scored bids there is no field to rank, so no bid is badged." : " The cheapest bid doesn't automatically win — exclusions are why. You make the call."}
             </div>
@@ -743,9 +946,16 @@ function VoidButton({ doc, actor, busy, setBusy, onChanged, setErr }: {
       onClick={async () => {
         if (!(await appConfirm({ message: `Void ${doc.fileName ?? "this document"}? It stays on the record but leaves every list.`, tone: "danger" }))) return;
         setBusy(doc.id);
-        const res = await voidCostDoc({ doc, actor });
+        // Guarded: only a still-open document voids — never one a stale tab
+        // shows as open after someone awarded or posted it (BID-9 / MON-3).
+        const res = await guardedCostDocWrite({
+          doc, actor, patch: { status: "void" },
+          audit: { action: "COST_DOC_VOIDED", details: { fileName: doc.fileName, vendor: doc.vendorName } },
+        });
         setBusy(null);
-        if (!res.ok) setErr(res.error ?? "Couldn't void."); else onChanged();
+        if (!res.ok) { setErr(res.error); return; }
+        if (res.auditError) setErr(`Voided, but its audit record failed: ${res.auditError}`);
+        onChanged();
       }}
       disabled={busy}
       className="ml-auto inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-bold text-[var(--color-text-faint)] hover:text-rose-600 hover:bg-rose-500/10 transition-colors">
@@ -858,6 +1068,12 @@ function QuoteLinksSection({ orgId, projectId, actor, existingGroups, setErr }: 
     })));
   }, [projectId]);
   React.useEffect(() => { void refresh(); }, [refresh]);
+  // A typed group snaps onto an existing spelling — the documents' groups
+  // AND the groups existing links already carry (BID-10): two links minted
+  // before any quote arrives must never split one field.
+  const snapTargets = useMemo(
+    () => [...new Set([...existingGroups, ...(links ?? []).map((l) => l.rfqGroup).filter((g): g is string => !!g)])],
+    [existingGroups, links]);
 
   const create = async () => {
     if (!company.trim()) { setErr("Name the company the link is for."); return; }
@@ -871,7 +1087,7 @@ function QuoteLinksSection({ orgId, projectId, actor, existingGroups, setErr }: 
       const { data: created, error } = await supabase.from("project_intake_links").insert({
         org_id: orgId, project_id: projectId, token,
         company_name: company.trim(),
-        purpose: "quote", rfq_group: snapRfqGroup(group, existingGroups) || null,
+        purpose: "quote", rfq_group: snapRfqGroup(group, snapTargets) || null,
         expires_at: expiresAt.toISOString(),
         created_by: actor.uid,
       }).select("id").single();
@@ -881,7 +1097,7 @@ function QuoteLinksSection({ orgId, projectId, actor, existingGroups, setErr }: 
       const { error: auditErr } = await supabase.from("audit_logs").insert({
         action: "INTAKE_QUOTE_LINK_CREATED", resource_type: "project_intake_link", resource_id: String((created as { id: string }).id),
         org_id: orgId, user_id: actor.uid, user_email: actor.email,
-        details: { company: company.trim(), rfqGroup: snapRfqGroup(group, existingGroups) || null, projectId, expiresAt: expiresAt.toISOString() },
+        details: { company: company.trim(), rfqGroup: snapRfqGroup(group, snapTargets) || null, projectId, expiresAt: expiresAt.toISOString() },
       });
       if (auditErr) setErr(`The link was created but its audit record failed: ${auditErr.message}`);
       setCompany(""); setGroup(""); setExpires(isoDateInDays(QUOTE_LINK_DEFAULT_DAYS));
@@ -895,8 +1111,12 @@ function QuoteLinksSection({ orgId, projectId, actor, existingGroups, setErr }: 
     if (!(await appConfirm({ message: `Revoke ${l.companyName}'s quote link? They lose access immediately; quotes already submitted stay.`, tone: "danger" }))) return;
     setRevoking(l.id); setErr(null);
     try {
-      const { error } = await supabase.from("project_intake_links").update({ revoked_at: new Date().toISOString() }).eq("id", l.id);
+      const { data: revoked, error } = await supabase.from("project_intake_links").update({ revoked_at: new Date().toISOString() })
+        .eq("id", l.id).eq("project_id", projectId).is("revoked_at", null).select("id");
       if (error) { setErr(`Couldn't revoke: ${error.message}`); return; }
+      // Zero rows = nothing was revoked (already revoked, or not permitted):
+      // never audit a revocation that did not happen.
+      if (!revoked || (revoked as unknown[]).length === 0) { setErr(`${l.companyName}'s link was not revoked — it may already be revoked, or you may not have permission. Refresh to see its state.`); await refresh(); return; }
       const { error: auditErr } = await supabase.from("audit_logs").insert({
         action: "INTAKE_QUOTE_LINK_REVOKED", resource_type: "project_intake_link", resource_id: l.id,
         org_id: orgId, user_id: actor.uid, user_email: actor.email,
@@ -959,7 +1179,7 @@ function QuoteLinksSection({ orgId, projectId, actor, existingGroups, setErr }: 
         <input value={group} onChange={(e) => setGroup(e.target.value)} placeholder="RFQ group (optional)" list="rfq-groups-link"
           className="h-8 w-56 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-2 text-xs" />
         <datalist id="rfq-groups-link">
-          {existingGroups.map((g) => <option key={g} value={g} />)}
+          {snapTargets.map((g) => <option key={g} value={g} />)}
         </datalist>
         <label className="inline-flex items-center gap-1 text-[10px] text-[var(--color-text-muted)]" title="The link stops accepting quotes after this date. Default 90 days.">
           expires

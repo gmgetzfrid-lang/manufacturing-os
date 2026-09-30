@@ -22,7 +22,7 @@ import { useRole } from "@/components/providers/RoleContext";
 import { supabase } from "@/lib/supabase";
 import { Spinner } from "@/components/ui/Spinner";
 import {
-  getCompany, saveCompany, gatherCompanyProfile, addCompanyEvent, confirmQualityManual,
+  getCompany, saveCompany, gatherCompanyProfile, addCompanyEvent, confirmQualityManual, recordedQualityScore,
   COMPANY_KIND_LABEL, EVENT_KIND_LABEL,
   type Company, type CompanyEvent, type CompanyProfileData,
 } from "@/lib/companies";
@@ -250,10 +250,8 @@ function QualityManualPanel({ orgId, company, canManage, actorId, onChanged, set
     } finally { setEvaluating(false); }
   };
 
-  const adjustedScore = (() => {
-    const n = Number(adjusted);
-    return Number.isFinite(n) ? Math.max(0, Math.min(100, Math.round(n))) : null;
-  })();
+  // Blank is "nothing entered", never 0% (recordedQualityScore).
+  const adjustedScore = recordedQualityScore(adjusted);
 
   const confirm = async () => {
     if (!proposal || !doc) return;
@@ -360,7 +358,8 @@ function QualityManualPanel({ orgId, company, canManage, actorId, onChanged, set
                 <span className="text-[10px] text-[var(--color-text-muted)]">Review the findings — nothing lands on the record until you confirm.</span>
                 <span className="ml-auto flex items-center gap-2">
                   <button onClick={() => { setProposal(null); setAdjusted(""); }} className="text-xs font-bold text-[var(--color-text-muted)] hover:text-[var(--color-text)]">Discard</button>
-                  <button onClick={() => void confirm()} disabled={confirming}
+                  <button onClick={() => void confirm()} disabled={confirming || adjustedScore == null}
+                    title={adjustedScore == null ? "Enter the coverage percentage to record (0–100)" : undefined}
                     className="inline-flex items-center gap-1 px-3 py-1 rounded-lg bg-[var(--color-accent)] text-[var(--color-accent-fg)] text-[11px] font-black hover:bg-[var(--color-accent-hover)] disabled:opacity-50">
                     {confirming ? <Loader2 className="w-3 h-3 animate-spin" /> : <Check className="w-3 h-3" />} Confirm to record
                   </button>
@@ -578,7 +577,7 @@ function EditCompanyModal({ company, actorId, onClose, onSaved }: {
               className="px-3 py-2 border border-[var(--color-border-strong)] rounded-lg text-sm bg-[var(--color-surface)]" />
             <select value={status} onChange={(e) => setStatus(e.target.value as Company["status"])}
               className="px-2 py-2 border border-[var(--color-border-strong)] rounded-lg text-sm bg-[var(--color-surface)]"
-              title="'Do not use' keeps the record but flags the company across the app.">
+              title="'Do not use' keeps the record and flags the company on the bid tab: an award to it needs a typed, recorded override (and so does re-linking a bidder away from it). The refusal at posting is pending (P3 / PC-7).">
               <option value="active">Active</option>
               <option value="inactive">Inactive</option>
               <option value="do_not_use">Do not use</option>

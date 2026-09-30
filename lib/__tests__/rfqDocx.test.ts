@@ -97,6 +97,14 @@ describe("RFQ-2 — newlines, filenames and the due date", () => {
 describe("BID-3 — the letter's promise matches the scorer", () => {
   it("tells bidders that declared exclusions do not lower their score", () => {
     const xml = buildRfqDocumentXml(base);
-    expect(xml).toContain("declared exclusions do not lower your score");
+    expect(xml).toContain("Declared exclusions do not lower your score");
+  });
+
+  it("promises only what the scorer does: price and manpower scored, coverage and gaps reviewed by people", () => {
+    const xml = buildRfqDocumentXml(base);
+    expect(xml).toContain("Price and manpower are scored; scope coverage and any undeclared gaps are reviewed by our evaluators.");
+    // The scorer has no coverage part and no gap penalty (DEC-47) — the letter must not claim either.
+    expect(xml).not.toMatch(/compared line by line on price, manpower, and scope coverage/);
+    expect(xml).not.toMatch(/count against the bid/);
   });
 });

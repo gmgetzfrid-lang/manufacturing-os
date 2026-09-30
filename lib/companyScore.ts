@@ -10,6 +10,8 @@
 // This is what makes "cost isn't the only factor" real at selection time:
 // the bid tab shows these numbers beside every price.
 
+import { readExtent } from "@/lib/bidTab";
+
 export interface CompanyEvidence {
   // Safety (from company_events)
   recordables: number;
@@ -19,13 +21,17 @@ export interface CompanyEvidence {
   commendations: number;
   // Quality
   qualityManualScore: number | null;   // 0..100 coverage, human-confirmed
+  /** How much of the manual the evaluation saw (COST-3): a coverage
+   *  figure from a truncated or unknown-extent read never renders bare. */
+  qualityManualPagesRead?: number | null;
+  qualityManualPagesTotal?: number | null;
   turnoverAccepted: number;
   turnoverRejected: number;
   punchClosed: number;
   punchTotal: number;
   // Cost discipline. The reason-code contract (lib/changeOrders.ts):
   // scope_gap lands on the contractor, design_error and owner_request land
-  // on us, field_condition is contractor-neutral (DEC-44). Only the
+  // on us, field_condition is contractor-neutral (DEC-47). Only the
   // contractor-attributable total enters the growth numerator.
   awardsTotal: number;                 // Σ awarded work (posted commitments, or contract_value)
   finalCostTotal: number;              // Σ awarded + their CONTRACTOR-ATTRIBUTABLE approved COs
@@ -108,7 +114,8 @@ export function computeCompanyScorecard(e: CompanyEvidence): CompanyScorecard {
     }
     if (e.qualityManualScore != null) {
       parts.push(e.qualityManualScore);
-      bits.push(`quality manual covers ${Math.round(e.qualityManualScore)}%`);
+      const extent = readExtent(e.qualityManualPagesRead, e.qualityManualPagesTotal);
+      bits.push(`quality manual covers ${Math.round(e.qualityManualScore)}%${extent.known && !extent.truncated ? "" : ` (${extent.label})`}`);
     }
     if (e.punchTotal > 0) {
       parts.push((e.punchClosed / e.punchTotal) * 100);

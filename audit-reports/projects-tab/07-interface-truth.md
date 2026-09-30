@@ -328,7 +328,7 @@ failed COMMENT blank the entire project view."*
 - An action error renders as a dismissible banner and leaves the page intact.
 - Form contents survive a failed action.
 
-**Resolution (2026-09-23, projects Round G).** `app/(protected)/companies/[id]/page.tsx` separates load errors from action errors exactly as the project page does: `error` (load) still replaces the record; a new `actionError` renders as a dismissible `role="alert"` banner above the header, and both `QualityManualPanel` and `EventsPanel` receive `setErr={setActionError}`. A failed evaluation ("add your AI key first") or event save now leaves the header, scorecard, proposal and form contents mounted. Pinned in `companiesRegistry.test.ts` ("a failed action renders as a dismissible banner and leaves the company page mounted").
+**Resolution (2026-09-23, projects Round G).** `app/(protected)/companies/[id]/page.tsx` separates load errors from action errors exactly as the project page does: `error` (load) still replaces the record; a new `actionError` renders as a dismissible `role="alert"` banner above the header, and both `QualityManualPanel` and `EventsPanel` receive `setErr={setActionError}`. A failed evaluation ("add your AI key first") or event save now leaves the header, scorecard, proposal and form contents mounted. Pinned in `companiesRegistry.test.ts` ("a failed action renders as a dismissible banner and leaves the company page mounted") and, fix pass, on the RENDERED page (`companiesPagesRender.test.ts`, jsdom): a failed event save leaves the header mounted, shows the dismissible banner with the failure, and keeps the typed description in its input.
 
 **Done-when.**
 - An action error renders as a dismissible banner and leaves the page intact — ✓.

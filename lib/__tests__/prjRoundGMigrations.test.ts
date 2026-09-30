@@ -8,7 +8,7 @@
 import { describe, it, expect } from "vitest";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
-import { ISO_4217 } from "@/lib/bidTab";
+import { ISO_4217, normalizeCompanyName } from "@/lib/bidTab";
 
 const read = (f: string) => readFileSync(join(process.cwd(), "supabase", "migrations", f), "utf8");
 const m95 = read("20261095_prj_roundG_registry_indexes.sql");
@@ -27,6 +27,27 @@ describe("20261095 — registry indexes (PERF-11)", () => {
     expect(body).toMatch(/CREATE EXTENSION IF NOT EXISTS pg_trgm/);
   });
 
+  it("counts documents and milestones BEFORE the transaction and builds their trigram indexes in it only when small; the CONCURRENTLY path is comment-only", () => {
+    const beginAt = m95.indexOf("\nBEGIN;");
+    const before = m95.slice(0, beginAt);
+    expect(before).toMatch(/CREATE TEMP TABLE prj_g_index_inventory AS/);
+    const inventoryRows = stripComments(before).match(/SELECT 'inventory:[^']*'[^\n]*\n?[^\n]*/g) ?? [];
+    expect(inventoryRows).toHaveLength(2);
+    for (const r of inventoryRows) expect(r).toMatch(/COUNT\(\*\)::text/);
+    expect(before).toMatch(/FROM documents/);
+    expect(before).toMatch(/FROM milestones/);
+    // Inside the transaction the write-heavy tables are gated on their size.
+    const tx = m95.slice(beginAt, m95.indexOf("COMMIT;"));
+    expect(tx).toMatch(/IF \(SELECT COUNT\(\*\) FROM milestones\) <= 50000 THEN\s+CREATE INDEX IF NOT EXISTS milestones_responsible_party_trgm_idx/);
+    expect(tx).toMatch(/IF \(SELECT COUNT\(\*\) FROM documents\) <= 50000 THEN\s+CREATE INDEX IF NOT EXISTS documents_title_trgm_idx[\s\S]*documents_name_trgm_idx[\s\S]*documents_document_number_trgm_idx[\s\S]*ELSE/);
+    // CONCURRENTLY never runs inside the transaction; the four statements exist only as the operator's commented foot block.
+    expect(stripComments(m95)).not.toMatch(/CREATE INDEX CONCURRENTLY/);
+    const foot = m95.slice(m95.lastIndexOf("Large-table builds"));
+    for (const idx of ["milestones_responsible_party_trgm_idx", "documents_title_trgm_idx", "documents_name_trgm_idx", "documents_document_number_trgm_idx"]) {
+      expect(foot).toMatch(new RegExp(`-- CREATE INDEX CONCURRENTLY IF NOT EXISTS ${idx} ON`));
+    }
+  });
+
   it("indexes every party_id join the gather reads and every ILIKE column, trigram GIN", () => {
     for (const t of ["change_orders", "turnover_items", "punch_items", "cost_documents", "cost_entries"]) {
       expect(m95).toMatch(new RegExp(`CREATE INDEX IF NOT EXISTS ${t}_party_idx\\s+ON ${t}\\s+\\(party_id\\)`));
@@ -43,7 +64,8 @@ describe("20261095 — registry indexes (PERF-11)", () => {
     const tail = finalSelect(m95);
     expect(tail).toMatch(/AS check,\s*\n?\s*EXISTS[\s\S]*AS ok, NULL::text AS n/);
     const probes = (tail.match(/UNION ALL SELECT/g) ?? []).length;
-    expect(probes).toBe(13);
+    expect(probes).toBe(14);   // 13 probes + the inventory rows
+    expect(tail).toMatch(/UNION ALL SELECT inventory, NULL::boolean, n FROM prj_g_index_inventory;/);
     expect(tail).not.toMatch(/SELECT \*/);
   });
 });
@@ -99,9 +121,46 @@ describe("20261096 — cost-document links and read extent (COST-13 / COST-3 / C
     expect(tail).toMatch(/UNION ALL SELECT inventory, NULL::boolean, n FROM prj_g_inventory;/);
     expect((tail.match(/UNION ALL SELECT/g) ?? []).length).toBe(7);
     // The expiry backfill is present for the operator and every line of it is a comment.
-    const upd = tail.slice(tail.indexOf("UPDATE project_intake_links"));
-    for (const line of upd.trim().split("\n")) expect(line.trim().startsWith("--") || line.startsWith("UPDATE") === false || true).toBe(true);
     expect(tail).toMatch(/-- UPDATE project_intake_links\n--\s+SET expires_at = created_at \+ INTERVAL '90 days'/);
     expect(stripComments(tail)).not.toMatch(/UPDATE project_intake_links/);
+  });
+});
+
+describe("20261096 — the SQL name normaliser behaves exactly like lib/bidTab.normalizeCompanyName", () => {
+  // The expression, whitespace-normalised, exactly as both CTEs carry it:
+  // punctuation → space, collapse, TRIM, THEN strip trailing legal
+  // suffixes (the order that lets "Gulf Mechanical, Inc." lose its "inc").
+  const SUFFIX = "(\\s+(inc|incorporated|llc|ltd|limited|co|corp|corporation|company|gmbh|plc|lp|llp|pty|sa|ag|bv|nv|srl|sarl|pte|pllc|pc))+$";
+  const EXPECTED = `trim(regexp_replace(regexp_replace( trim(regexp_replace(regexp_replace(lower(replace(name, '&', ' and ')), '[^a-z0-9 ]+', ' ', 'g'), '\\s+', ' ', 'g')), '${SUFFIX}', ''), '^the\\s+', '')) AS key`;
+  const ws = (x: string) => x.replace(/\s+/g, " ").replace(/\( /g, "(").trim();
+
+  it("both CTEs carry the trim-before-suffix expression", () => {
+    const exprs = m96.match(/trim\(regexp_replace\(regexp_replace\([\s\S]*?AS key/g) ?? [];
+    expect(exprs).toHaveLength(2);
+    for (const e of exprs) expect(ws(e)).toBe(ws(EXPECTED));
+  });
+
+  // A faithful port of that expression (PostgreSQL regexp_replace without
+  // 'g' replaces the first match; with 'g' every match; [a-z] ranges are by
+  // code point, as in JS). Verified against PostgreSQL 16 on the same names.
+  const sqlNormalize = (name: string) => {
+    let s = name.replace(/&/g, " and ").toLowerCase();
+    s = s.replace(/[^a-z0-9 ]+/g, " ").replace(/\s+/g, " ").trim();
+    s = s.replace(new RegExp(SUFFIX), "");
+    s = s.replace(/^the\s+/, "");
+    return s.trim();
+  };
+
+  it("realistic letterhead forms normalise identically in SQL and TypeScript", () => {
+    const names = [
+      "Gulf Mechanical, Inc.", "Apex Co.", "Apex Inc.", "APEX", "The X Co. Ltd", "Delta & Sons Corp.",
+      "  Bayline   Industrial Services, LLC ", "O'Brien Welding Co., Inc.", "Acme Co Inc.", "3M Company",
+      "Company of Heroes Ltd.", "Alpha\tBravo Pty. Ltd.", "The Co", "Co Inc", "Inc", "The",
+    ];
+    for (const n of names) expect(sqlNormalize(n)).toBe(normalizeCompanyName(n));
+    expect(sqlNormalize("Gulf Mechanical, Inc.")).toBe("gulf mechanical");
+    expect(sqlNormalize("Apex Co.")).toBe("apex");
+    // "Apex" and "Apex Inc." are ONE key in both languages — ambiguous, so a party "Apex" never auto-binds.
+    expect(sqlNormalize("Apex")).toBe(sqlNormalize("Apex Inc."));
   });
 });

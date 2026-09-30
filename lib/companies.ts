@@ -226,6 +226,14 @@ export async function addCompanyEvent(input: {
   });
 }
 
+/** The coverage percentage a human typed to record (COST-3 dw4): 0–100,
+ *  rounded; a BLANK field is "nothing entered" (null), never 0% — Number("")
+ *  is 0 and would land a zero on the company's permanent record. */
+export function recordedQualityScore(typed: string): number | null {
+  const n = typed.trim() === "" ? NaN : Number(typed);
+  return Number.isFinite(n) ? Math.max(0, Math.min(100, Math.round(n))) : null;
+}
+
 /** Persist the HUMAN-CONFIRMED quality-manual evaluation. The AI route only
  *  ever PROPOSES a score + gaps; nothing lands on the company's record until
  *  a controller reviews the findings and calls this. */
@@ -293,7 +301,7 @@ export interface CompanyProfileData {
 
 /** Reason codes the CO module attributes to the CONTRACTOR (their miss).
  *  design_error / owner_request are ours; field_condition and other are
- *  nobody's (DEC-44) — shown on the record, excluded from the growth
+ *  nobody's (DEC-47) — shown on the record, excluded from the growth
  *  numerator. */
 export const CONTRACTOR_CO_REASONS = new Set(["scope_gap"]);
 export const OWNER_CO_REASONS = new Set(["design_error", "owner_request"]);
@@ -301,23 +309,79 @@ export const OWNER_CO_REASONS = new Set(["design_error", "owner_request"]);
 // Every batched read is chunked so a large registry never builds an
 // unbounded IN () list; the query COUNT stays a small constant per chunk.
 const IN_CHUNK = 200;
-const chunks = <T,>(xs: T[]): T[][] => {
+const chunks = <T,>(xs: T[], size = IN_CHUNK): T[][] => {
   const out: T[][] = [];
-  for (let i = 0; i < xs.length; i += IN_CHUNK) out.push(xs.slice(i, i + IN_CHUNK));
+  for (let i = 0; i < xs.length; i += size) out.push(xs.slice(i, i + size));
   return out;
 };
 
-type Row = Record<string, unknown>;
+/** PostgREST returns at most this many rows per request (max-rows). Every
+ *  batched read pages in windows of this size, ORDERED BY id so the
+ *  windows are stable, until a short page — a busy project never cuts a
+ *  company's evidence down to an arbitrary first thousand rows (PERF-1). */
+export const GATHER_PAGE_ROWS = 1000;
 
-/** Run one bounded query per chunk of ids and flatten. A failed or
- *  missing table (pre-migration) degrades to no rows for that source. */
-async function batched(ids: string[], run: (chunk: string[]) => PromiseLike<{ data: unknown; error: { message: string } | null }>): Promise<Row[]> {
-  if (ids.length === 0) return [];
-  const parts = await Promise.all(chunks(ids).map(async (c) => {
-    try { const { data, error } = await run(c); return error ? [] : ((data as Row[] | null) ?? []); } catch { return []; }
-  }));
-  return parts.flat();
+type Row = Record<string, unknown>;
+type PgError = { message: string; code?: string };
+type PageFn = (chunk: string[], from: number, to: number) => PromiseLike<{ data: unknown; error: PgError | null }>;
+
+/** A column a pending migration adds is not there yet (42703 from
+ *  Postgres, PGRST204 from PostgREST's schema cache). */
+const missingColumn = (e: PgError | null) => !!e && (e.code === "42703" || e.code === "PGRST204");
+
+/** Read one chunk to exhaustion, one window at a time. */
+async function readChunk(chunk: string[], page: PageFn): Promise<{ rows: Row[]; error: PgError | null }> {
+  const rows: Row[] = [];
+  for (let from = 0; ; from += GATHER_PAGE_ROWS) {
+    const { data, error } = await page(chunk, from, from + GATHER_PAGE_ROWS - 1);
+    if (error) return { rows: [], error };
+    const batch = (data as Row[] | null) ?? [];
+    rows.push(...batch);
+    if (batch.length < GATHER_PAGE_ROWS) return { rows, error: null };
+  }
 }
+
+/** Run one paged read per chunk of ids and flatten. The first error comes
+ *  back to the caller (so it can retry without a column a pending
+ *  migration adds); a source that errored contributes no rows at all —
+ *  never a partial set that reads as complete. */
+async function batchedRead(ids: string[], page: PageFn, size = IN_CHUNK): Promise<{ rows: Row[]; error: PgError | null }> {
+  if (ids.length === 0) return { rows: [], error: null };
+  const parts = await Promise.all(chunks(ids, size).map(async (c) => {
+    try { return await readChunk(c, page); } catch (e) { return { rows: [] as Row[], error: { message: (e as Error).message } as PgError }; }
+  }));
+  const error = parts.find((p) => p.error)?.error ?? null;
+  return { rows: error ? [] : parts.flatMap((p) => p.rows), error };
+}
+
+/** `batchedRead` for sources whose failure (a missing table pre-migration)
+ *  degrades to no rows. */
+async function batched(ids: string[], page: PageFn, size = IN_CHUNK): Promise<Row[]> {
+  return (await batchedRead(ids, page, size)).rows;
+}
+
+/** A value inside a PostgREST or() tree, double-quoted so a name's commas,
+ *  dots and parentheses ("Gulf Mechanical, Inc.") stay one value. */
+const orValue = (v: string) => `"${v.replace(/\\/g, "\\\\").replace(/"/g, '\\"')}"`;
+
+/** Split or() terms into filters that keep the request line bounded: at
+ *  most `maxTerms` terms and about `maxChars` characters each. */
+export function orFilterChunks(terms: string[], maxChars = 2400, maxTerms = 50): string[] {
+  const out: string[] = [];
+  let cur: string[] = [];
+  let len = 0;
+  for (const t of terms) {
+    if (cur.length > 0 && (cur.length >= maxTerms || len + t.length + 1 > maxChars)) { out.push(cur.join(",")); cur = []; len = 0; }
+    cur.push(t); len += t.length + 1;
+  }
+  if (cur.length > 0) out.push(cur.join(","));
+  return out;
+}
+
+/** Milestone reads carry a name filter as well as the project ids, so
+ *  their id chunk is smaller — the request line stays well under common
+ *  gateway limits. */
+const MILESTONE_PROJECT_CHUNK = 80;
 
 /** Everything the registry page and the profile page need for MANY
  *  companies in ONE batched gather — one query per evidence table per
@@ -330,29 +394,48 @@ export async function gatherCompanyProfiles(companies: Company[]): Promise<Map<s
   const companyIds = companies.map((c) => c.id);
 
   const [eventRows, partyRows] = await Promise.all([
-    batched(companyIds, (c) => supabase.from("company_events").select("*").in("company_id", c)
-      .order("event_date", { ascending: false }).limit(c.length * 200)),
-    batched(companyIds, (c) => supabase.from("project_parties").select("id, project_id, company_id, trade, contract_value").in("company_id", c)
-      .limit(c.length * 200)),
+    batched(companyIds, (c, f, t) => supabase.from("company_events").select("*").in("company_id", c)
+      .order("event_date", { ascending: false }).order("id").range(f, t)),
+    batched(companyIds, (c, f, t) => supabase.from("project_parties").select("id, project_id, company_id, trade, contract_value").in("company_id", c)
+      .order("id").range(f, t)),
   ]);
   const parties = partyRows as Array<{ id: string; project_id: string; company_id: string; trade: string | null; contract_value: number | null }>;
   const partyIds = parties.map((p) => p.id);
   const projectIds = [...new Set(parties.map((p) => p.project_id))];
 
-  const [projRows, coRows, turnRows, punchRows, quoteByParty, quoteByCompany, entryRows, intakeRows, msRows] = await Promise.all([
-    batched(projectIds, (c) => supabase.from("projects").select("id, name").in("id", c)),
-    batched(partyIds, (c) => supabase.from("change_orders").select("project_id, party_id, co_number, title, amount, reason_code, status").in("party_id", c).limit(c.length * 200)),
-    batched(partyIds, (c) => supabase.from("turnover_items").select("party_id, status").in("party_id", c).limit(c.length * 500)),
-    batched(partyIds, (c) => supabase.from("punch_items").select("party_id, status").in("party_id", c).limit(c.length * 500)),
-    batched(partyIds, (c) => supabase.from("cost_documents").select("id, project_id, party_id, company_id, rfq_group, total_amount, status, doc_date, kind").in("party_id", c).eq("kind", "quote").limit(c.length * 200)),
-    // The explicit registry link (20261096) — pre-migration this column is
-    // absent and the read degrades to the party-keyed rows above.
-    batched(companyIds, (c) => supabase.from("cost_documents").select("id, project_id, party_id, company_id, rfq_group, total_amount, status, doc_date, kind").in("company_id", c).eq("kind", "quote").limit(c.length * 200)),
+  // Quotes reach a company by its party OR by the explicit registry link
+  // (cost_documents.company_id, 20261096). Before that migration the
+  // column is absent: the party-keyed read then retries without it, so the
+  // bid history never empties while the migration is pending.
+  const QUOTE_COLS = "id, project_id, party_id, rfq_group, total_amount, status, doc_date, kind";
+  const quotesByParty = (withLink: boolean) => batchedRead(partyIds, (c, f, t) => supabase.from("cost_documents")
+    .select(withLink ? `${QUOTE_COLS}, company_id` : QUOTE_COLS).in("party_id", c).eq("kind", "quote").order("id").range(f, t));
+  // Milestones name their company in free text (responsible_party). The
+  // name filter runs in the database (ILIKE, trigram-indexed by 20261095)
+  // so only rows naming a company in this gather come back; the exact
+  // trimmed, case-folded comparison below decides whose they are.
+  const nameFilters = orFilterChunks(companies.map((c) => `responsible_party.ilike.${orValue(`*${c.name.trim()}*`)}`));
+
+  const [projRows, coRows, turnRows, punchRows, quoteByPartyRead, quoteByCompany, entryRows, intakeRows, msRows] = await Promise.all([
+    batched(projectIds, (c, f, t) => supabase.from("projects").select("id, name").in("id", c).order("id").range(f, t)),
+    batched(partyIds, (c, f, t) => supabase.from("change_orders").select("id, project_id, party_id, co_number, title, amount, reason_code, status, posted_entry_id").in("party_id", c).order("id").range(f, t)),
+    batched(partyIds, (c, f, t) => supabase.from("turnover_items").select("party_id, status").in("party_id", c).order("id").range(f, t)),
+    batched(partyIds, (c, f, t) => supabase.from("punch_items").select("party_id, status").in("party_id", c).order("id").range(f, t)),
+    quotesByParty(true),
+    batched(companyIds, (c, f, t) => supabase.from("cost_documents").select(`${QUOTE_COLS}, company_id`).in("company_id", c).eq("kind", "quote").order("id").range(f, t)),
     // Posted commitments ARE the awards (COST-12): derived, never typed.
-    batched(partyIds, (c) => supabase.from("cost_entries").select("party_id, amount").in("party_id", c).eq("entry_type", "commitment").eq("status", "posted").limit(c.length * 500)),
-    batched(projectIds, (c) => supabase.from("project_intake_links").select("project_id, company_name, submission_count, created_at, last_used_at").in("project_id", c).limit(c.length * 100)),
-    batched(projectIds, (c) => supabase.from("milestones").select("project_id, status, planned_at, actual_at, responsible_party").in("project_id", c).limit(c.length * 500)),
+    batched(partyIds, (c, f, t) => supabase.from("cost_entries").select("id, party_id, amount, reference").in("party_id", c).eq("entry_type", "commitment").eq("status", "posted").order("id").range(f, t)),
+    batched(projectIds, (c, f, t) => supabase.from("project_intake_links").select("project_id, company_name, submission_count, created_at, last_used_at").in("project_id", c).order("id").range(f, t)),
+    Promise.all(nameFilters.map((filter) => batched(projectIds, (c, f, t) => supabase.from("milestones")
+      .select("id, project_id, status, planned_at, actual_at, responsible_party").in("project_id", c).or(filter).order("id").range(f, t),
+    MILESTONE_PROJECT_CHUNK))).then((parts) => {
+      // A row naming two companies of this gather can come back from two
+      // filter slices; count it once.
+      const seen = new Set<string>();
+      return parts.flat().filter((r) => { const k = String(r.id); if (seen.has(k)) return false; seen.add(k); return true; });
+    }),
   ]);
+  const quoteByParty = missingColumn(quoteByPartyRead.error) ? (await quotesByParty(false)).rows : quoteByPartyRead.rows;
 
   const projectNames = new Map((projRows as Array<{ id: string; name: string }>).map((p) => [p.id, p.name]));
   const partyCompany = new Map(parties.map((p) => [p.id, p.company_id]));
@@ -366,6 +449,11 @@ export async function gatherCompanyProfiles(companies: Company[]): Promise<Map<s
   const eventsBy = byCompany(eventRows, (r) => String(r.company_id));
   const partiesBy = byCompany(parties as unknown as Row[], (r) => String(r.company_id));
   const cosBy = byCompany(coRows, viaParty);
+  // Commitments an approved change order posted (decideChangeOrder tags
+  // them with the CO's party and links them by posted_entry_id): CO money
+  // is growth OVER the award, never part of the base it is measured
+  // against (COST-12 / COST-7).
+  const coEntryIds = new Set(coRows.map((r) => r.posted_entry_id).filter((v) => v != null).map(String));
   const turnBy = byCompany(turnRows, viaParty);
   const punchBy = byCompany(punchRows, viaParty);
   const entriesBy = byCompany(entryRows, viaParty);
@@ -384,7 +472,8 @@ export async function gatherCompanyProfiles(companies: Company[]): Promise<Map<s
     }));
     const myParties = (partiesBy.get(company.id) ?? []) as unknown as typeof parties;
     const myProjectIds = [...new Set(myParties.map((p) => p.project_id))];
-    const cos = (cosBy.get(company.id) ?? []).map((r) => ({
+    const myCoRows = cosBy.get(company.id) ?? [];
+    const cos = myCoRows.map((r) => ({
       projectId: r.project_id as string, coNumber: r.co_number as string, title: r.title as string,
       amount: Number(r.amount ?? 0), reasonCode: r.reason_code as string, status: r.status as string,
     }));
@@ -405,9 +494,20 @@ export async function gatherCompanyProfiles(companies: Company[]): Promise<Map<s
       m.status === "completed" && m.actual_at && m.planned_at && Date.parse(m.actual_at) <= Date.parse(m.planned_at) + 86_400_000,
     ).length;
 
-    // Awards: posted commitments on their parties; the typed contract_value
-    // only when nothing has posted — and then labelled as such.
-    const postedAwards = (entriesBy.get(company.id) ?? []).reduce((s, r) => s + Number(r.amount ?? 0), 0);
+    // Awards: posted commitments on their parties that are NOT a change
+    // order's posting; the typed contract_value only when nothing has
+    // posted — and then labelled as such. An approved CO whose entry link
+    // was never written (the link write is best-effort) is matched to its
+    // entry by the CO number decideChangeOrder stamps as the reference, on
+    // the same party, for the same amount.
+    const awardEntries = (entriesBy.get(company.id) ?? []).filter((r) => !coEntryIds.has(String(r.id)));
+    for (const co of myCoRows) {
+      if (co.status !== "approved" || co.posted_entry_id != null) continue;
+      const i = awardEntries.findIndex((r) => r.party_id === co.party_id
+        && String(r.reference ?? "") === String(co.co_number ?? "") && Number(r.amount ?? 0) === Number(co.amount ?? 0));
+      if (i >= 0) awardEntries.splice(i, 1);
+    }
+    const postedAwards = awardEntries.reduce((s, r) => s + Number(r.amount ?? 0), 0);
     const typedAwards = myParties.reduce((s, p) => s + (p.contract_value ? Number(p.contract_value) : 0), 0);
     const awardsSource: CompanyProfileData["awardsSource"] = postedAwards > 0 ? "entries" : typedAwards > 0 ? "contract_value" : "none";
     const awardsTotal = awardsSource === "entries" ? postedAwards : typedAwards;
@@ -424,6 +524,8 @@ export async function gatherCompanyProfiles(companies: Company[]): Promise<Map<s
       stopWorks: events.filter((e) => e.kind === "stop_work").length,
       commendations: events.filter((e) => e.kind === "commendation").length,
       qualityManualScore: company.qualityManualScore,
+      qualityManualPagesRead: company.qualityManualPagesRead,
+      qualityManualPagesTotal: company.qualityManualPagesTotal,
       turnoverAccepted: turnover.filter((t) => t.status === "accepted").length,
       turnoverRejected: turnover.filter((t) => t.status === "rejected").length,
       punchClosed: punch.filter((p) => p.status === "done").length,

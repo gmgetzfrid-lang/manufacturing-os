@@ -1,30 +1,83 @@
 // projects Round G — PERF-1 / PERF-11 / REL-1 / UX-9 / COST-12 (registry
 // half). The Known Companies gather is ONE batched read per evidence table
 // per chunk of ids — the query count does not grow with the registry —
-// awards derive from posted commitments, an unlinked company says so, and
-// the pages carry a tri-state load and a separate action-error banner.
+// every read pages past PostgREST's row cap, awards derive from posted
+// commitments that are not change-order postings, an unlinked company says
+// so, and the pages carry a tri-state load and a separate action-error
+// banner.
 
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { readFileSync, existsSync } from "node:fs";
 import { join } from "node:path";
 
+// A PostgREST double that behaves like the real one where it matters: eq /
+// in / is / or(ilike) filters, ORDER BY, range(), the max-rows cap on EVERY
+// response (1000 — a query that doesn't page gets the first thousand and
+// no more), and a missing column refused with 42703.
 const state = vi.hoisted(() => ({
   rows: {} as Record<string, Array<Record<string, unknown>>>,
   calls: [] as Array<{ table: string; method: string; args: unknown[] }>,
+  missingColumns: {} as Record<string, string[]>,
 }));
+const MAX_ROWS = 1000;
+/** PostgREST or() value grammar: comma-separated `col.op.value`, a value
+ *  double-quoted when it carries reserved characters; like/ilike use * as %. */
+function orPredicate(expr: string): (r: Record<string, unknown>) => boolean {
+  const terms: string[] = [];
+  let cur = "", quoted = false;
+  for (let i = 0; i < expr.length; i++) {
+    const ch = expr[i];
+    if (quoted && ch === "\\") { cur += ch + expr[++i]; continue; }
+    if (ch === '"') quoted = !quoted;
+    if (ch === "," && !quoted) { terms.push(cur); cur = ""; continue; }
+    cur += ch;
+  }
+  terms.push(cur);
+  const preds = terms.map((t) => {
+    const [col, op, ...rest] = t.split(".");
+    let v = rest.join(".");
+    if (v.startsWith('"') && v.endsWith('"')) v = v.slice(1, -1).replace(/\\(.)/g, "$1");
+    if (op !== "ilike") throw new Error(`mock: unsupported or() op ${op}`);
+    const re = new RegExp(`^${v.split("").map((ch) => (ch === "*" || ch === "%" ? ".*" : ch === "_" ? "." : ch.replace(/[.+?^${}()|[\]\\]/g, "\\$&"))).join("")}$`, "is");
+    return (r: Record<string, unknown>) => re.test(String(r[col] ?? ""));
+  });
+  return (r) => preds.some((p) => p(r));
+}
 function chain(table: string) {
   const filters: Array<(r: Record<string, unknown>) => boolean> = [];
+  const orders: Array<{ col: string; asc: boolean }> = [];
+  let range: [number, number] | null = null;
   let count = false;
-  const rows = () => (state.rows[table] ?? []).filter((r) => filters.every((f) => f(r)));
+  let refused: string | null = null;
+  const matching = () => (state.rows[table] ?? []).filter((r) => filters.every((f) => f(r)));
+  const rows = () => {
+    const out = matching();
+    for (const o of [...orders].reverse()) {
+      out.sort((a, b) => { const x = String(a[o.col] ?? ""), y = String(b[o.col] ?? ""); return (x < y ? -1 : x > y ? 1 : 0) * (o.asc ? 1 : -1); });
+    }
+    const windowed = range ? out.slice(range[0], range[1] + 1) : out;
+    return windowed.slice(0, MAX_ROWS);
+  };
+  const result = () => (refused
+    ? { data: null, error: { code: "42703", message: `column ${table}.${refused} does not exist` }, count: null }
+    : { data: rows(), error: null, count: count ? matching().length : null });
   const c: Record<string, unknown> = {};
   const h: ProxyHandler<Record<string, unknown>> = {
     get(_t, prop: string) {
-      if (prop === "then") return (resolve: (v: unknown) => void) => resolve({ data: rows(), error: null, count: count ? rows().length : null });
+      if (prop === "then") return (resolve: (v: unknown) => void) => resolve(result());
       return (...args: unknown[]) => {
         state.calls.push({ table, method: prop, args });
-        if (prop === "select" && (args[1] as { count?: string } | undefined)?.count) count = true;
+        if (prop === "select") {
+          if ((args[1] as { count?: string } | undefined)?.count) count = true;
+          const cols = String(args[0] ?? "").split(",").map((x) => x.trim());
+          refused = (state.missingColumns[table] ?? []).find((m) => cols.includes(m)) ?? null;
+        }
         if (prop === "eq") filters.push((r) => r[String(args[0])] === args[1]);
         if (prop === "in") filters.push((r) => (args[1] as unknown[]).includes(r[String(args[0])]));
+        if (prop === "is") filters.push((r) => (r[String(args[0])] ?? null) === args[1]);
+        if (prop === "or") filters.push(orPredicate(String(args[0])));
+        if (prop === "order") orders.push({ col: String(args[0]), asc: (args[1] as { ascending?: boolean } | undefined)?.ascending !== false });
+        if (prop === "range") range = [Number(args[0]), Number(args[1])];
         if (prop === "maybeSingle" || prop === "single") return Promise.resolve({ data: rows()[0] ?? null, error: null });
         return new Proxy(c, h);
       };
@@ -45,10 +98,10 @@ const company = (i: number, over: Partial<Company> = {}): Company => ({
 });
 const fromCalls = () => state.calls.filter((c) => c.method === "select").length;
 
-beforeEach(() => { state.rows = {}; state.calls = []; });
+beforeEach(() => { state.rows = {}; state.calls = []; state.missingColumns = {}; });
 
 describe("PERF-1 — one batched gather per table, independent of the registry's size", () => {
-  it("150 companies with linked parties cost the same query count as one, and far under 200", async () => {
+  it("a full page of companies costs the same query count as one, and even 150 stay far under 200", async () => {
     const seed = (n: number, partiesEach: 1 | 2) => {
       state.rows = {};
       const companies = Array.from({ length: n }, (_, i) => company(i));
@@ -65,18 +118,25 @@ describe("PERF-1 — one batched gather per table, independent of the registry's
     const m1 = await gatherCompanyProfiles(one);
     const q1 = fromCalls();
     state.calls = [];
+    const m50 = await gatherCompanyProfiles(seed(50, 1));   // one registry page (COMPANY_PAGE_SIZE)
+    const q50 = fromCalls();
+    state.calls = [];
     const many = seed(150, 1);
     const m150 = await gatherCompanyProfiles(many);
     const q150 = fromCalls();
     expect(m1.size).toBe(1);
+    expect(m50.size).toBe(50);
     expect(m150.size).toBe(150);
-    expect(q1).toBe(q150);            // one query per table per chunk of ids — 150 ids is one chunk
-    expect(q150).toBe(11);
+    expect(q1).toBe(11);              // one query per table per chunk of ids
+    expect(q50).toBe(q1);             // a whole page: the same eleven
+    // 150 names split the milestone name filter into bounded slices (request-line size),
+    // two more queries — never one per company.
+    expect(q150).toBe(13);
     // 300 party ids = two chunks: the party-keyed tables run twice, nothing runs per company.
     state.calls = [];
     const m300 = await gatherCompanyProfiles(seed(150, 2));
     const q300 = fromCalls();
-    expect(q300).toBe(16);
+    expect(q300).toBe(18);
     expect(q300).toBeLessThan(200);   // PERF-1 done-when, with room to spare
     // Every company got its own evidence back out of the batch.
     for (let i = 0; i < 150; i++) {
@@ -102,24 +162,31 @@ describe("COST-12 / COST-7 — awards, attribution and the unlinked state", () =
   it("awardsTotal derives from posted commitment entries; contract_value is only a labelled fallback", async () => {
     state.rows.project_parties = [{ id: "p1", project_id: "proj1", company_id: "c0", trade: null, contract_value: 999_999 }];
     state.rows.projects = [{ id: "proj1", name: "Job" }];
+    // Every approved CO posts its own party-tagged commitment (decideChangeOrder), exactly as in production.
     state.rows.cost_entries = [
-      { party_id: "p1", amount: 400_000, entry_type: "commitment", status: "posted" },
-      { party_id: "p1", amount: 100_000, entry_type: "commitment", status: "posted" },
+      { id: "e1", party_id: "p1", amount: 400_000, reference: "Q-100", entry_type: "commitment", status: "posted" },
+      { id: "e2", party_id: "p1", amount: 100_000, reference: "Q-101", entry_type: "commitment", status: "posted" },
+      { id: "e3", party_id: "p1", amount: 125_000, reference: "CO-001", entry_type: "commitment", status: "posted" },
+      { id: "e4", party_id: "p1", amount: 20_000, reference: "CO-002", entry_type: "commitment", status: "posted" },
     ];
     // owner_request growth of 25% must NOT count against them; a scope_gap does.
     state.rows.change_orders = [
-      { project_id: "proj1", party_id: "p1", co_number: "CO-001", title: "owner add", amount: 125_000, reason_code: "owner_request", status: "approved" },
-      { project_id: "proj1", party_id: "p1", co_number: "CO-002", title: "field", amount: 20_000, reason_code: "field_condition", status: "approved" },
+      { id: "co1", project_id: "proj1", party_id: "p1", co_number: "CO-001", title: "owner add", amount: 125_000, reason_code: "owner_request", status: "approved", posted_entry_id: "e3" },
+      { id: "co2", project_id: "proj1", party_id: "p1", co_number: "CO-002", title: "field", amount: 20_000, reason_code: "field_condition", status: "approved", posted_entry_id: "e4" },
     ];
     const p = await gatherCompanyProfile(company(0));
     expect(p.awardsSource).toBe("entries");
     const cost = p.scorecard.dimensions.find((d) => d.key === "cost")!;
     expect(cost.score).toBe(100);
     expect(cost.detail).toContain("finished on their bid");
-    expect(cost.detail).toContain("1 owner-driven CO");
+    // 125k over an award base of 500k — the CO's own commitment is not in the base.
+    expect(cost.detail).toContain("1 owner-driven CO (25% growth on our side");
     expect(cost.detail).toContain("1 field-condition/other CO not scored");
 
-    state.rows.cost_entries = [];
+    // Only CO postings on the party: no award has posted, so the typed value is the (labelled) fallback.
+    state.rows.cost_entries = [
+      { id: "e3", party_id: "p1", amount: 125_000, reference: "CO-001", entry_type: "commitment", status: "posted" },
+    ];
     const q = await gatherCompanyProfile(company(0));
     expect(q.awardsSource).toBe("contract_value");
     expect(q.scorecard.dimensions.find((d) => d.key === "cost")!.detail).toContain("awards from the typed contract value");
@@ -147,6 +214,79 @@ describe("COST-12 / COST-7 — awards, attribution and the unlinked state", () =
     ];
     const p = await gatherCompanyProfile(company(0));
     expect(p.bids).toHaveLength(3);
+    expect(p.bids.filter((b) => b.won)).toHaveLength(1);
+  });
+});
+
+describe("COST-12 / COST-7 — change-order money is growth over the award, never part of its base", () => {
+  it("award $500k + an approved $125k scope_gap CO reads 25% growth — linked by posted_entry_id or, where that link was never written, by the CO number on the entry", async () => {
+    state.rows.project_parties = [{ id: "p1", project_id: "proj1", company_id: "c0", trade: null, contract_value: null }];
+    state.rows.projects = [{ id: "proj1", name: "Job" }];
+    state.rows.cost_entries = [
+      { id: "e1", party_id: "p1", amount: 500_000, reference: "RFQ-7", entry_type: "commitment", status: "posted" },
+      { id: "e2", party_id: "p1", amount: 125_000, reference: "CO-003", entry_type: "commitment", status: "posted" },
+    ];
+    state.rows.change_orders = [
+      { id: "co3", project_id: "proj1", party_id: "p1", co_number: "CO-003", title: "missed insulation", amount: 125_000, reason_code: "scope_gap", status: "approved", posted_entry_id: "e2" },
+    ];
+    const linked = (await gatherCompanyProfile(company(0))).scorecard.dimensions.find((d) => d.key === "cost")!;
+    expect(linked.detail).toMatch(/^25% cost growth over bid/);
+
+    // The best-effort link write failed: the entry is still recognised as the CO's by its reference.
+    state.rows.change_orders = [{ ...state.rows.change_orders[0], posted_entry_id: null }];
+    const unlinked = (await gatherCompanyProfile(company(0))).scorecard.dimensions.find((d) => d.key === "cost")!;
+    expect(unlinked.detail).toMatch(/^25% cost growth over bid/);
+    expect(unlinked.score).toBe(linked.score);
+  });
+});
+
+describe("PERF-1 — every batched read pages past PostgREST's 1000-row cap", () => {
+  it("50 companies × 3 parties × 50 turnover items (7,500 rows) — every card keeps its own count", async () => {
+    const companies = Array.from({ length: 50 }, (_, i) => company(i));
+    state.rows.project_parties = companies.flatMap((c, i) => [0, 1, 2].map((k) => ({ id: `p${i}-${k}`, project_id: `proj${i}`, company_id: c.id, trade: null, contract_value: null })));
+    state.rows.projects = companies.map((_, i) => ({ id: `proj${i}`, name: `Job ${i}` }));
+    state.rows.turnover_items = state.rows.project_parties.flatMap((p) => Array.from({ length: 50 }, (_, j) => ({
+      id: `${String(p.id)}-t${String(j).padStart(2, "0")}`, party_id: p.id, status: j < 40 ? "accepted" : "rejected",
+    })));
+    expect(state.rows.turnover_items).toHaveLength(7500);
+    const m = await gatherCompanyProfiles(companies);
+    for (const c of companies) {
+      expect(m.get(c.id)!.scorecard.dimensions.find((d) => d.key === "quality")!.detail).toBe("turnover 120/150 accepted");
+    }
+    // Paged in stable windows: ORDER BY id, range(0, 999), range(1000, 1999), …
+    const turnoverRanges = state.calls.filter((c) => c.table === "turnover_items" && c.method === "range").map((c) => c.args);
+    expect(turnoverRanges).toContainEqual([7000, 7999]);
+    expect(state.calls.some((c) => c.table === "turnover_items" && c.method === "order" && c.args[0] === "id")).toBe(true);
+  });
+
+  it("milestones are filtered by the company's name IN THE DATABASE and paged: a 2,500-activity schedule keeps all 1,200 of theirs", async () => {
+    const gulf = company(0, { name: "Gulf Mechanical, Inc." });
+    state.rows.project_parties = [{ id: "p1", project_id: "proj1", company_id: gulf.id, trade: null, contract_value: null }];
+    state.rows.projects = [{ id: "proj1", name: "Unit 300" }];
+    state.rows.milestones = Array.from({ length: 2500 }, (_, i) => ({
+      id: `m${String(i).padStart(5, "0")}`, project_id: "proj1",
+      // The schedule importer writes one row per activity; theirs are the LAST 1,200.
+      responsible_party: i < 1300 ? (i % 2 ? "Bayline Scaffold" : "Gulf Mechanical") : "  gulf mechanical, inc. ",
+      status: "completed", planned_at: "2026-01-10", actual_at: i % 3 === 0 ? "2026-01-20" : "2026-01-09",
+    }));
+    const p = await gatherCompanyProfile(gulf);
+    const schedule = p.scorecard.dimensions.find((d) => d.key === "schedule")!;
+    expect(schedule.detail).toBe("800/1200 milestones on time");
+    const msOr = state.calls.find((c) => c.table === "milestones" && c.method === "or")!;
+    // The comma in the name is quoted so it stays one value; "Gulf Mechanical" (another row's text) is not theirs.
+    expect(msOr.args[0]).toBe('responsible_party.ilike."*Gulf Mechanical, Inc.*"');
+  });
+
+  it("pre-20261096 (no cost_documents.company_id yet): the bid history still reads through the party", async () => {
+    state.missingColumns = { cost_documents: ["company_id"] };
+    state.rows.project_parties = [{ id: "p1", project_id: "proj1", company_id: "c0", trade: null, contract_value: null }];
+    state.rows.projects = [{ id: "proj1", name: "Job" }];
+    state.rows.cost_documents = [
+      { id: "d1", project_id: "proj1", party_id: "p1", rfq_group: "G", total_amount: 10, status: "awarded", doc_date: null, kind: "quote" },
+      { id: "d2", project_id: "proj1", party_id: "p1", rfq_group: "H", total_amount: 12, status: "declined", doc_date: null, kind: "quote" },
+    ];
+    const p = await gatherCompanyProfile(company(0));
+    expect(p.bids).toHaveLength(2);
     expect(p.bids.filter((b) => b.won)).toHaveLength(1);
   });
 });

@@ -2,11 +2,37 @@
 // BID-10 / BID-11 / COST-13), pinned on the helpers QuotesPanel renders
 // from so the screen cannot drift from them.
 
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, vi, beforeEach } from "vitest";
 import {
   computeBidEconomics, scoreBids, withHumanTotal, priceOnlyQuote, mergeQuoteGroups,
-  snapRfqGroup, rfqGroupKey, quoteExpired, readExtent, type ParsedQuote,
+  snapRfqGroup, rfqGroupKey, quoteExpired, readExtent, alignGroupSpelling, type ParsedQuote,
 } from "@/lib/bidTab";
+
+// The panel's guarded write runs against a recording supabase double: the
+// UPDATE's filters are captured, and `matched` decides how many rows the
+// status predicate lets through (0 = someone moved the document).
+const db = vi.hoisted(() => ({
+  calls: [] as Array<{ table: string; method: string; args: unknown[] }>,
+  matched: 1,
+  auditError: null as null | { message: string },
+}));
+vi.mock("@/lib/supabase", () => {
+  const chain = (table: string): unknown => {
+    const h: ProxyHandler<object> = {
+      get(_t, prop: string) {
+        if (prop === "then") {
+          const res = table === "audit_logs" ? { data: null, error: db.auditError } : { data: Array.from({ length: db.matched }, () => ({ id: "d1" })), error: null };
+          return (resolve: (v: unknown) => void) => resolve(res);
+        }
+        return (...args: unknown[]) => { db.calls.push({ table, method: prop, args }); return new Proxy({}, h); };
+      },
+    };
+    return new Proxy({}, h);
+  };
+  return { supabase: { from: (t: string) => chain(t), auth: { getSession: async () => ({ data: { session: null } }) } } };
+});
+
+import { guardedCostDocWrite } from "@/components/projects/cost/QuotesPanel";
 
 const quote = (over: Partial<ParsedQuote>): ParsedQuote => ({
   id: "q1", vendorName: "V", total: 100_000, lineItems: [], exclusions: [],
@@ -107,5 +133,53 @@ describe("COST-13 — read extent", () => {
     expect(readExtent(3, 3)).toEqual({ truncated: false, known: true, label: "all 3 pages read" });
     expect(readExtent(null, null)).toEqual({ truncated: false, known: false, label: "read extent unknown" });
     expect(readExtent(8, null).known).toBe(false);
+  });
+});
+
+describe("BID-9 / MON-3 — correct total and Void go through a status-guarded write", () => {
+  const actor = { uid: "u1", email: "u1@example.com" };
+  const doc = { id: "d1", orgId: "o1" };
+  beforeEach(() => { db.calls = []; db.matched = 1; db.auditError = null; });
+
+  it("the UPDATE carries the open-status predicate and reads back the rows it changed; the audit row follows", async () => {
+    const res = await guardedCostDocWrite({ doc, actor, patch: { status: "void" }, audit: { action: "COST_DOC_VOIDED", details: { vendor: "V" } } });
+    expect(res).toEqual({ ok: true, auditError: null });
+    const upd = db.calls.filter((c) => c.table === "cost_documents");
+    expect(upd.map((c) => c.method)).toEqual(["update", "eq", "eq", "in", "select"]);
+    expect(upd.find((c) => c.method === "in")!.args).toEqual(["status", ["draft", "parsed"]]);
+    expect(upd.find((c) => c.method === "eq" && c.args[0] === "org_id")!.args[1]).toBe("o1");
+    const audit = db.calls.find((c) => c.table === "audit_logs" && c.method === "insert")!;
+    expect((audit.args[0] as { action: string }).action).toBe("COST_DOC_VOIDED");
+  });
+
+  it("a stale tab: the document was awarded meanwhile — zero rows match, the write is refused and nothing is audited", async () => {
+    db.matched = 0;
+    const res = await guardedCostDocWrite({ doc, actor, patch: { total_amount: 1 }, audit: { action: "COST_DOC_MANUAL_TOTAL", details: {} } });
+    expect(res.ok).toBe(false);
+    expect(!res.ok && res.error).toMatch(/already awarded, posted or voided/);
+    expect(db.calls.some((c) => c.table === "audit_logs")).toBe(false);
+  });
+
+  it("a failed audit row is reported, never swallowed", async () => {
+    db.auditError = { message: "rls denied" };
+    const res = await guardedCostDocWrite({ doc, actor, patch: { total_amount: 5 }, audit: { action: "COST_DOC_MANUAL_TOTAL", details: {} } });
+    expect(res).toEqual({ ok: true, auditError: "rls denied" });
+  });
+});
+
+describe("BID-10 — the award declines rivals under every spelling of a merged field", () => {
+  it("variant-spelled rivals are handed to the award under the awarded doc's spelling; other fields are untouched", () => {
+    const docs = [
+      { id: "a", kind: "quote", rfqGroup: "Unit 300 Repipe" },
+      { id: "b", kind: "quote", rfqGroup: "unit 300  repipe" },
+      { id: "c", kind: "quote", rfqGroup: "Scaffold" },
+      { id: "i", kind: "invoice", rfqGroup: null },
+    ];
+    const aligned = alignGroupSpelling(docs, "Unit 300 Repipe");
+    // awardQuote's rival filter is exact string equality on rfq_group.
+    const rivals = aligned.filter((d) => d.id !== "a" && d.kind === "quote" && d.rfqGroup === "Unit 300 Repipe");
+    expect(rivals.map((d) => d.id)).toEqual(["b"]);
+    expect(aligned.find((d) => d.id === "c")!.rfqGroup).toBe("Scaffold");
+    expect(alignGroupSpelling(docs, null)).toBe(docs);
   });
 });

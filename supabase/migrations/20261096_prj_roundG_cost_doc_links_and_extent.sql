@@ -76,12 +76,16 @@ SELECT 'inventory: quote links with no expiry used in the last 30 days (must be 
 
 -- Normalised-name matches for the party backfill (same rule as
 -- lib/bidTab.normalizeCompanyName): unique matches are linked, ambiguous
--- ones are counted and left alone.
+-- ones are counted and left alone. Punctuation becomes a space and the
+-- string is collapsed and TRIMMED before the legal-suffix strip, so
+-- "Gulf Mechanical, Inc." and "Apex Co." lose their suffix exactly as the
+-- TypeScript rule drops them (pinned by a port of this expression in
+-- lib/__tests__/prjRoundGMigrations.test.ts).
 CREATE TEMP TABLE prj_g_party_match AS
 WITH norm AS (
   SELECT id, org_id, project_id,
          trim(regexp_replace(regexp_replace(
-           regexp_replace(regexp_replace(lower(replace(name, '&', ' and ')), '[^a-z0-9 ]+', ' ', 'g'), '\s+', ' ', 'g'),
+           trim(regexp_replace(regexp_replace(lower(replace(name, '&', ' and ')), '[^a-z0-9 ]+', ' ', 'g'), '\s+', ' ', 'g')),
            '(\s+(inc|incorporated|llc|ltd|limited|co|corp|corporation|company|gmbh|plc|lp|llp|pty|sa|ag|bv|nv|srl|sarl|pte|pllc|pc))+$', ''),
            '^the\s+', '')) AS key
     FROM project_parties
@@ -89,7 +93,7 @@ WITH norm AS (
 ), cnorm AS (
   SELECT id, org_id,
          trim(regexp_replace(regexp_replace(
-           regexp_replace(regexp_replace(lower(replace(name, '&', ' and ')), '[^a-z0-9 ]+', ' ', 'g'), '\s+', ' ', 'g'),
+           trim(regexp_replace(regexp_replace(lower(replace(name, '&', ' and ')), '[^a-z0-9 ]+', ' ', 'g'), '\s+', ' ', 'g')),
            '(\s+(inc|incorporated|llc|ltd|limited|co|corp|corporation|company|gmbh|plc|lp|llp|pty|sa|ag|bv|nv|srl|sarl|pte|pllc|pc))+$', ''),
            '^the\s+', '')) AS key
     FROM companies
