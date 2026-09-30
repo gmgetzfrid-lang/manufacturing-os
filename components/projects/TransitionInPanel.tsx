@@ -10,8 +10,12 @@
 // it is renumbered to a clear number — adoptDocument re-checks at the click
 // and refuses otherwise — where the number identifies a document in the
 // destination library; in a multi-sheet library (a tuple beyond the number)
-// sheets share numbers and the full key decides at the click. A sheet still
-// awaiting review (or never approved and rejected) cannot be adopted at all. A sheet whose checks could not run (no number, no
+// sheets INSIDE that library share numbers and the full key decides at the
+// click, while a same-numbered live document in any other library still
+// blocks. A sheet still awaiting review — never approved, or an approved
+// sheet with a newer submission in review — cannot be adopted until it is
+// decided (a never-approved rejected sheet is not listed). A sheet whose
+// checks could not run (no number, no
 // recognised equipment) is "unverifiable": single adopt only, after an
 // explicit confirmation. Adopting moves documents between folders, which
 // the database reserves for Admin / Document Control — the controls are
@@ -25,7 +29,7 @@ import {
 import { supabase } from "@/lib/supabase";
 import {
   TransitionCandidate, TransitionImpact, UnverifiableReason,
-  listTransitionCandidates, scanTransitionImpact, adoptDocument,
+  listTransitionCandidates, scanTransitionImpact, adoptDocument, blockingNumberCollision, candidateInReview,
 } from "@/lib/transitionIn";
 import { numberIsTheKey } from "@/lib/intakeLinks";
 import { useRole } from "@/components/providers/RoleContext";
@@ -105,19 +109,23 @@ export default function TransitionInPanel({ orgId, projectId, intakeCollectionId
   }, [destLib]);
 
   // INTK-5: does the number alone identify a document in the destination?
-  // Not in a multi-sheet library — there a same-numbered sheet is expected,
-  // and adoptDocument checks the full key at the click.
+  // Not in a multi-sheet library — there a same-numbered sheet INSIDE that
+  // library is expected, and adoptDocument checks the full key at the click.
+  // SAF-12: a same-numbered live document in any OTHER library still blocks.
   const numberDecides = numberIsTheKey(libs.find((l) => l.id === destLib)?.uniqueness_keys ?? null);
-  const blocksOnNumber = (impact: TransitionImpact | undefined) => !!impact?.numberCollision && numberDecides;
+  const blockingCollider = (impact: TransitionImpact | undefined) => blockingNumberCollision(impact, destLib || null, numberDecides);
+  const blocksOnNumber = (impact: TransitionImpact | undefined) => !!blockingCollider(impact);
 
-  // Bulk adoption takes only sheets that are approved AND scanned clean.
-  const bulkable = (c: TransitionCandidate) => !c.awaitingReview && !!impacts.get(c.docId)?.clean;
+  // INTK-3: a sheet with any submission still undecided — never approved,
+  // or approved with a newer submission in review — is not adoptable yet.
+  // Bulk adoption takes only sheets that are approved, decided AND scanned clean.
+  const bulkable = (c: TransitionCandidate) => !candidateInReview(c) && !!impacts.get(c.docId)?.clean;
   const cleanCount = useMemo(
-    () => candidates.filter((c) => !c.awaitingReview && !!impacts.get(c.docId)?.clean).length,
+    () => candidates.filter((c) => !candidateInReview(c) && !!impacts.get(c.docId)?.clean).length,
     [candidates, impacts],
   );
   const flaggedCount = useMemo(
-    () => candidates.filter((c) => { const i = impacts.get(c.docId); return !!c.awaitingReview || (i && !i.clean); }).length,
+    () => candidates.filter((c) => { const i = impacts.get(c.docId); return candidateInReview(c) || (i && !i.clean); }).length,
     [candidates, impacts],
   );
 
@@ -129,7 +137,8 @@ export default function TransitionInPanel({ orgId, projectId, intakeCollectionId
       const what = impact.unverifiable.map((r) => UNVERIFIABLE_TEXT[r]).join("; ");
       if (!(await appConfirm({ message: `${c.label} could not be fully checked (${what}). Adopt it into the controlled register anyway?`, tone: "danger" }))) return;
     }
-    if (impact?.numberCollision && blocksOnNumber(impact) && !renum) { setMsg(`${c.label} collides with ${impact.numberCollision.label} — renumber it before adopting.`); return; }
+    const collider = blockingCollider(impact);
+    if (collider && !renum) { setMsg(`${c.label} collides with ${collider.label} — renumber it before adopting.`); return; }
     setBusy(c.docId); setMsg(null);
     try {
       const res = await adoptDocument({
@@ -224,7 +233,7 @@ export default function TransitionInPanel({ orgId, projectId, intakeCollectionId
           const impact = impacts.get(c.docId);
           const expanded = open === c.docId;
           return (
-            <li key={c.docId} className={`rounded-xl border px-2.5 py-1.5 ${!impact ? "border-[var(--color-border)]" : impact.clean ? "border-emerald-500/30 bg-emerald-500/[0.04]" : "border-amber-500/40 bg-amber-500/[0.05]"}`}>
+            <li key={c.docId} className={`rounded-xl border px-2.5 py-1.5 ${!impact ? "border-[var(--color-border)]" : impact.clean && !candidateInReview(c) ? "border-emerald-500/30 bg-emerald-500/[0.04]" : "border-amber-500/40 bg-amber-500/[0.05]"}`}>
               <button onClick={() => setOpen(expanded ? null : c.docId)} className="w-full flex items-center gap-2 text-left">
                 {expanded ? <ChevronDown className="w-3.5 h-3.5 text-[var(--color-text-faint)] shrink-0" /> : <ChevronRight className="w-3.5 h-3.5 text-[var(--color-text-faint)] shrink-0" />}
                 <span className="text-sm font-bold text-[var(--color-text)] truncate">{c.label}</span>
@@ -242,25 +251,29 @@ export default function TransitionInPanel({ orgId, projectId, intakeCollectionId
                   {impact && impact.overlapDocs.length > 0 && (
                     <span className="inline-flex items-center gap-0.5 text-[10px] font-bold text-amber-700 dark:text-amber-400"><Layers className="w-3 h-3" /> {impact.overlapDocs.length} overlap{impact.overlapDocs.length === 1 ? "" : "s"}</span>
                   )}
-                  {c.awaitingReview && <span className="text-[10px] font-bold text-amber-700 dark:text-amber-400">{c.pendingReview ? "in review" : "not approved"}</span>}
+                  {candidateInReview(c) && <span className="text-[10px] font-bold text-amber-700 dark:text-amber-400">{c.pendingReview ? "in review" : "not approved"}</span>}
                   {impact && !impact.numberCollision && impact.unverifiable.length > 0 && (
                     <span className="text-[10px] font-bold text-[var(--color-text-muted)]" title={impact.unverifiable.map((r) => UNVERIFIABLE_TEXT[r]).join("; ")}>unverifiable</span>
                   )}
-                  {impact?.clean && !c.awaitingReview && <span className="text-[10px] font-bold text-emerald-600">clean</span>}
+                  {impact?.clean && !candidateInReview(c) && <span className="text-[10px] font-bold text-emerald-600">clean</span>}
                 </span>
               </button>
 
               {expanded && impact && (
                 <div className="mt-2 pt-2 border-t border-[var(--color-border)] space-y-2 text-xs">
-                  {impact.numberCollision && (
+                  {impact.numberCollision && (() => {
+                    const blocking = blockingCollider(impact);
+                    const shown = blocking ?? impact.numberCollision;
+                    return (
                     <div className="rounded-lg border border-rose-500/40 bg-rose-500/[0.06] px-2.5 py-1.5">
                       <b className="text-rose-700 dark:text-rose-300">Number collision:</b>{" "}
-                      <span className="text-[var(--color-text)]">{impact.numberCollision.label} (Rev {impact.numberCollision.rev ?? "—"}) already exists in the register.</span>{" "}
-                      <span className="text-[var(--color-text-muted)]">{numberDecides || !destLib
+                      <span className="text-[var(--color-text)]">{shown.label} (Rev {shown.rev ?? "—"}) already exists in the register{blocking && !numberDecides ? " in another library" : ""}.</span>{" "}
+                      <span className="text-[var(--color-text-muted)]">{blocking
                         ? "Renumber this sheet below, or resolve which one is the source of truth before adopting."
-                        : "The destination library numbers sheets separately, so a shared number is expected — adoption checks the sheet's full key."}</span>
+                        : "It is a sheet of the destination library, which numbers sheets separately, so a shared number is expected there — adoption checks the sheet's full key."}</span>
                     </div>
-                  )}
+                    );
+                  })()}
                   {impact.overlapDocs.length > 0 && (
                     <div className="rounded-lg border border-amber-500/40 bg-amber-500/[0.06] px-2.5 py-1.5 space-y-1">
                       <div><b className="text-amber-700 dark:text-amber-400">Equipment overlap</b> <span className="text-[var(--color-text-muted)]">— existing sheets carry the same equipment and likely need a tie-in revision:</span></div>
@@ -288,9 +301,11 @@ export default function TransitionInPanel({ orgId, projectId, intakeCollectionId
                       The newest proposal for this sheet was rejected — adoption moves its approved Rev {c.rev ?? "—"}.
                     </div>
                   )}
-                  {c.awaitingReview && (
+                  {candidateInReview(c) && (
                     <div className="rounded-lg border border-amber-500/40 bg-amber-500/[0.06] px-2.5 py-1.5 text-[var(--color-text)]">
-                      {c.pendingReview ? "This submission is still in review" : "This sheet has no approved revision yet"} — approve or reject it in the review queue above before it can be adopted.
+                      {c.awaitingReview
+                        ? (c.pendingReview ? "This submission is still in review" : "This sheet has no approved revision yet")
+                        : `A newer submission for this sheet is still in review (Rev ${c.rev ?? "—"} is approved)`} — approve or reject it in the review queue above before it can be adopted.
                     </div>
                   )}
 
@@ -304,9 +319,9 @@ export default function TransitionInPanel({ orgId, projectId, intakeCollectionId
                         className="h-7 w-56 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-2 text-xs"
                       />
                       <button onClick={() => void adoptOne(c)}
-                        disabled={busy === c.docId || !destLib || !!c.awaitingReview || (blocksOnNumber(impact) && !(renumber.get(c.docId) ?? "").trim())}
+                        disabled={busy === c.docId || !destLib || candidateInReview(c) || (blocksOnNumber(impact) && !(renumber.get(c.docId) ?? "").trim())}
                         title={!destLib ? "Pick the destination library above"
-                          : c.awaitingReview ? "Approve or reject the submission first"
+                          : candidateInReview(c) ? "Approve or reject the submission first"
                           : blocksOnNumber(impact) && !(renumber.get(c.docId) ?? "").trim() ? "Renumber it to a number that isn't in use first"
                           : undefined}
                         className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg bg-emerald-500 text-white text-[11px] font-black hover:bg-emerald-600 disabled:opacity-50">

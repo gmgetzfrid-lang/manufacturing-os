@@ -18,7 +18,10 @@
 //     without review, a submission that replaced one in review) still goes
 //     out — but at most FORCED_NOTICES_PER_WINDOW notices of any kind per
 //     link per window; beyond that it is folded too, counted BY KIND, and
-//     the next notice names how many were published or replaced;
+//     the next notice names how many were published or replaced — and a
+//     link that goes quiet after folding a publish or a replacement is
+//     announced anyway: the maintenance cron's flushFoldedIntakeNotices
+//     sends ONE digest per such link to the controllers and the owner;
 //   * a per-link lifetime cap (submissions and bytes) read from the link
 //     row (20261104), so one leaked token cannot grow storage without end.
 //
@@ -30,6 +33,7 @@
 // Server-only (node:crypto); the client is passed in.
 
 import { createHash } from "node:crypto";
+import { roleFilter } from "@/lib/roleHeld";
 
 export interface IntakeLimits {
   perTokenPerHour: number;
@@ -209,6 +213,101 @@ export function foldedNoticeSentence(f: FoldedCounts, tab: string): string {
   if (f.published > 0) kinds.push(`${f.published} published without review`);
   if (f.displaced > 0) kinds.push(`${f.displaced} replacing an earlier submission in review`);
   return `${f.total} more submission${f.total === 1 ? "" : "s"} arrived on this link since the last notice${kinds.length ? ` (${kinds.join(", ")})` : ""} — see the project's ${tab} tab.`;
+}
+
+/** One digest for a link whose folded publishes / replacements no notice
+ *  has announced (INTK-10 / SEC-8). */
+export interface FoldedDigest {
+  orgId: string;
+  projectId: string;
+  linkId: string;
+  company: string;
+  /** The controller pool (Admin / DocCtrl, additive roles) and the project
+   *  owner — the people accountable for a controlled revision. */
+  involved: string[];
+  folded: FoldedCounts;
+  title: string;
+  body: string;
+  link: string;
+}
+
+/** Pure: the digest's words. */
+export function foldedDigestText(company: string, projectName: string | null, f: FoldedCounts): { title: string; body: string } {
+  const parts: string[] = [];
+  if (f.published > 0) parts.push(`published ${f.published} revision${f.published === 1 ? "" : "s"} without review`);
+  if (f.displaced > 0) parts.push(`replaced ${f.displaced} submission${f.displaced === 1 ? "" : "s"} that ${f.displaced === 1 ? "was" : "were"} awaiting review`);
+  const others = f.total - f.published - f.displaced;
+  const more = others > 0 ? `, and sent ${others} more for review` : "";
+  return {
+    title: `Intake: ${company} ${parts.join(" and ")} — not announced yet`,
+    body: `${company}'s intake link${projectName ? ` on ${projectName}` : ""} ${parts.join(" and ")}${more} after the team's last notice from that link (the per-link notice cap folded them, and the link has sent nothing since). See the project's Intake tab and each document's revision history.`,
+  };
+}
+
+/** INTK-10 / SEC-8 — the folds no notice announced. A burst that ends on
+ *  folded publishes (or replacements) is otherwise reported only by the
+ *  link's NEXT notice; if the link goes quiet, the people accountable for
+ *  those controlled revisions never hear of them. The maintenance cron calls
+ *  this: for every link with suppressed_published / suppressed_displaced
+ *  rows newer than its last 'notified' row (within the attempt log's two
+ *  days), ONE digest goes to the controller pool and the project owner, and
+ *  a 'notified' row is written — so the next notice on the link never
+ *  counts them twice, and a digest is never repeated. A link whose send
+ *  fails gets no 'notified' row (the next run retries); a link that no
+ *  longer exists (its project was deleted) is counted as `gone`. Throws
+ *  when the attempt log cannot be read. */
+export async function flushFoldedIntakeNotices(client: AttemptClient, input: {
+  now?: number;
+  send: (digest: FoldedDigest) => Promise<void>;
+}): Promise<{ digests: number; failed: number; gone: number }> {
+  const out = { digests: 0, failed: 0, gone: 0 };
+  const horizon = new Date((input.now ?? Date.now()) - 2 * 24 * HOUR_MS).toISOString();
+  const { data: rows, error } = await client.from("intake_attempts")
+    .select("token_hash, link_id, created_at")
+    .in("outcome", [ATTEMPT_OUTCOME.suppressedPublished, ATTEMPT_OUTCOME.suppressedDisplaced])
+    .gte("created_at", horizon)
+    .order("created_at", { ascending: false })
+    .limit(1000);
+  if (error) throw new Error(`intake attempt log unreadable: ${error.message}`);
+  const linkOf = new Map<string, string | null>();
+  for (const r of ((rows ?? []) as Array<{ token_hash: string; link_id: string | null }>)) {
+    if (!linkOf.get(r.token_hash)) linkOf.set(r.token_hash, r.link_id ?? null);
+  }
+  for (const [tokenHash, linkId] of linkOf) {
+    const folded = await foldedSinceLastNotice(client, { tokenHash, now: input.now });
+    if (folded.published + folded.displaced === 0) continue; // announced already
+    if (!linkId) { out.gone++; continue; }
+    const { data: link, error: linkErr } = await client.from("project_intake_links")
+      .select("id, org_id, project_id, company_name").eq("id", linkId).maybeSingle();
+    if (linkErr) { out.failed++; continue; }
+    if (!link) { out.gone++; continue; }
+    const l = link as { org_id: string; project_id: string; company_name: string | null };
+    const { data: project, error: projErr } = await client.from("projects")
+      .select("name, owner_user_id").eq("id", l.project_id).eq("org_id", l.org_id).maybeSingle();
+    if (projErr) { out.failed++; continue; }
+    const { data: controllers, error: ctlErr } = await client.from("org_members")
+      .select("uid").eq("org_id", l.org_id).eq("status", "active").or(roleFilter(["Admin", "DocCtrl"]));
+    if (ctlErr) { out.failed++; continue; }
+    const p = (project ?? null) as { name: string | null; owner_user_id: string | null } | null;
+    const involved = [...new Set([
+      ...(((controllers ?? []) as Array<{ uid: string }>).map((c) => String(c.uid))),
+      ...(p?.owner_user_id ? [String(p.owner_user_id)] : []),
+    ])];
+    const company = String(l.company_name ?? "A contractor");
+    const text = foldedDigestText(company, p?.name ?? null, folded);
+    try {
+      await input.send({
+        orgId: String(l.org_id), projectId: String(l.project_id), linkId, company,
+        involved, folded, title: text.title, body: text.body, link: `/projects/${l.project_id}`,
+      });
+    } catch {
+      out.failed++;
+      continue; // no 'notified' row — the next run retries
+    }
+    await recordIntakeAttempt(client, { tokenHash, ip: "maintenance-cron", outcome: ATTEMPT_OUTCOME.notified, linkId });
+    out.digests++;
+  }
+  return out;
 }
 
 export interface LinkBudget {

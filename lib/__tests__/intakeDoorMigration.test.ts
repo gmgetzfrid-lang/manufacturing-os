@@ -218,6 +218,28 @@ describe("20261105 — the review side of the door", () => {
     expect(B).toContain("REVOKE ALL ON FUNCTION orphaned_in_review_versions_count() FROM PUBLIC, anon, authenticated;");
     expect(B).toContain("GRANT EXECUTE ON FUNCTION orphaned_in_review_versions_count() TO service_role;");
   });
+  it("INTK-4 (fix pass 3): a pending pointer on a RETIRED draft is a STATE count — service-role only, inventoried before and after, probed", () => {
+    const fn = between(B, "CREATE OR REPLACE FUNCTION pending_on_retired_version_count() RETURNS bigint", "\n$$;");
+    expect(fn).toContain("LANGUAGE sql STABLE SET search_path = public AS $$");
+    expect(fn).toContain("JOIN document_versions v ON v.id = d.pending_version_id");
+    expect(fn).toContain("WHERE v.superseded_at IS NOT NULL OR v.review_state = 'superseded';");
+    // no time window — it is reported until it reaches 0
+    expect(fn).not.toMatch(/NOW\(\)|INTERVAL|created_at|timestamp/i);
+    expect(B).toContain("REVOKE ALL ON FUNCTION pending_on_retired_version_count() FROM PUBLIC, anon, authenticated;");
+    expect(B).toContain("GRANT EXECUTE ON FUNCTION pending_on_retired_version_count() TO service_role;");
+    // the finder the cron's message points at, in the function's comment
+    expect(B).toContain("COMMENT ON FUNCTION pending_on_retired_version_count() IS");
+    expect(B).toContain("WHERE v.superseded_at IS NOT NULL OR v.review_state = ''superseded''; — then re-open the draft");
+    // inside the transaction; inventory rows before (temp table) and after (final SELECT); a probe
+    expect(B.indexOf("CREATE OR REPLACE FUNCTION pending_on_retired_version_count()")).toBeGreaterThan(B.indexOf("\nBEGIN;"));
+    expect(B.indexOf("CREATE OR REPLACE FUNCTION pending_on_retired_version_count()")).toBeLessThan(B.lastIndexOf("\nCOMMIT;"));
+    const inv = between(B, "CREATE TEMP TABLE prj_g_j1b_inventory AS", "\nBEGIN;");
+    expect(inv).toContain("'inventory: documents whose pending revision names a RETIRED draft");
+    const tail = B.slice(B.lastIndexOf("\nCOMMIT;"));
+    expect(tail).toContain("prosrc LIKE '%v.superseded_at IS NOT NULL OR v.review_state = ''superseded''%'");
+    expect(tail).toContain("AND NOT has_function_privilege('anon', 'pending_on_retired_version_count()', 'EXECUTE')");
+    expect(tail).toContain("pending_on_retired_version_count()::text");
+  });
   it("probes read prosrc verbatim (doubled quotes for a quote inside the body) and never cast inside a deparsed LIKE", () => {
     expect(B).toContain("prosrc LIKE '%IN (''in_review'', ''rejected'', ''superseded'')%'");
     expect(B).toContain("prosrc LIKE '%NULLIF(p_version->>''related_ticket_id'','''')::uuid%'");

@@ -24,8 +24,12 @@
 //      in-review versions no document points at AND nothing withdrew is
 //      reported (SAF-10's health signal — a withdrawn or displaced draft is
 //      resolved, so the signal is actionable, not permanent noise), as is
-//      any displaced draft the door retired and could not restore in the
-//      last day (INTK-4 — audit action INTAKE_DISPLACE_UNRESOLVED).
+//      every document whose pending revision still names a RETIRED draft —
+//      a state count, reported on every run until it reaches 0 (INTK-4: the
+//      door's unrestorable displacement, audit action
+//      INTAKE_DISPLACE_UNRESOLVED, is one way to get there). Folded intake
+//      publishes / replacements no notice announced get one digest per link
+//      (INTK-10 / SEC-8 — flushFoldedIntakeNotices).
 //
 // Auth: server-to-server. If CRON_SECRET is set, require it as a Bearer
 // token. Degrades gracefully if optional env vars are missing.
@@ -49,6 +53,9 @@ import { drainEmbedBacklog } from "@/lib/knowledgeEmbedDrain";
 import { runPlatformStorageAlerts } from "@/lib/storageUsage";
 import { rebuildAclIndexes, type RebuildCounts } from "@/lib/aclIndexRebuild";
 import { roleFilter } from "@/lib/roleHeld";
+import { flushFoldedIntakeNotices } from "@/lib/intakeRateLimit";
+import { runWithServerClient } from "@/lib/serverClientScope";
+import { emit } from "@/lib/notify/dispatch";
 
 export const runtime = "nodejs";
 export const maxDuration = 300;
@@ -88,7 +95,8 @@ async function handler(req: NextRequest) {
     aclIndexRebuild?: RebuildCounts;
     intakeAttemptsPruned?: number;
     orphanedInReviewVersions?: number;
-    unresolvedIntakeDisplacements?: number;
+    pendingOnRetiredVersions?: number;
+    intakeFoldedDigests?: number;
     errors: string[];
   } = {
     releasedCheckouts: 0,
@@ -175,16 +183,37 @@ async function handler(req: NextRequest) {
         result.errors.push(`review-health: ${result.orphanedInReviewVersions} in-review version(s) that no document points at and nothing withdrew — a document controller must resolve each one (mark it 'superseded' or 'rejected', or re-point its document's pending revision); find them with the query in orphaned_in_review_versions_count() (migration 20261105)`);
       }
     }
-    // INTK-4: a displaced draft the door retired for a replacement that
-    // then failed, and could not restore — its document's pending revision
-    // names a retired draft until a controller resolves it.
-    const since = new Date(Date.now() - 25 * 3600 * 1000).toISOString();
-    const { count: unresolved, error: unresolvedErr } = await sb.from("audit_logs")
-      .select("id", { count: "exact", head: true })
-      .eq("action", "INTAKE_DISPLACE_UNRESOLVED").gte("timestamp", since);
-    if (!unresolvedErr && (unresolved ?? 0) > 0) {
-      result.unresolvedIntakeDisplacements = Number(unresolved);
-      result.errors.push(`review-health: ${unresolved} intake submission(s) replaced in review could not be restored after the replacement failed (audit action INTAKE_DISPLACE_UNRESOLVED, last 25 hours) — a document controller must re-open each named draft (review_state 'in_review', superseded_at cleared) or reject it`);
+    // INTK-4: a document whose pending revision names a RETIRED draft
+    // (superseded_at stamped, or review_state 'superseded') is stuck — the
+    // Intake tab lists only in-review drafts, the portal shows "in review"
+    // for ever, and the orphan count never sees it. Counted from the rows'
+    // STATE, so it is reported on every run until it reaches 0 — never
+    // only in the day after it happened. (The door's own unrestorable
+    // displacement writes audit action INTAKE_DISPLACE_UNRESOLVED.)
+    const { data: stuck, error: stuckErr } = await sb.rpc("pending_on_retired_version_count");
+    if (!stuckErr) {
+      result.pendingOnRetiredVersions = Number(stuck ?? 0);
+      if (result.pendingOnRetiredVersions > 0) {
+        result.errors.push(`review-health: ${result.pendingOnRetiredVersions} document(s) whose pending revision names a retired draft — each stays 'in review' with nothing to review until a document controller re-opens the draft (review_state 'in_review', superseded_at cleared) or clears the document's pending revision; find them with the query in the comment on pending_on_retired_version_count() (migration 20261105); the intake door's own cases are audit action INTAKE_DISPLACE_UNRESOLVED`);
+      }
+    }
+    // INTK-10 / SEC-8: folded intake publishes / replacements that no
+    // notice announced (the link went quiet after its burst) — one digest
+    // per link to the controllers and the owner, drained at 6c.
+    if (!pruneErr) {
+      const flushed = await flushFoldedIntakeNotices(sb, {
+        send: (d) => runWithServerClient(sb, () => emit({
+          orgId: d.orgId, category: "watched", kind: d.folded.published > 0 ? "doc_superseded" : "review_requested",
+          title: d.title, body: d.body, link: d.link,
+          resource: { type: "project", id: d.projectId }, actorName: d.company,
+          audience: { involved: d.involved, followers: false },
+          metadata: { intake: true, foldedDigest: true, linkId: d.linkId, published: d.folded.published, displaced: d.folded.displaced, total: d.folded.total },
+        })),
+      });
+      result.intakeFoldedDigests = flushed.digests;
+      if (flushed.failed > 0) {
+        result.errors.push(`intake-notices: ${flushed.failed} link(s) with folded publishes or replacements could not be announced — retried on the next run`);
+      }
     }
   } catch (e) {
     result.errors.push(`intake-door: ${(e as Error).message}`);

@@ -20,6 +20,7 @@ import { computeUniquenessKey } from "@/lib/uniqueness";
 import {
   intakeLimits, DEFAULT_INTAKE_LIMITS, checkIntakeRate, linkBudgetRefusal, clientIp, sha256Hex, noticesInWindow,
   foldedSinceLastNotice, foldedNoticeSentence, noticeGoesOut, FORCED_NOTICES_PER_WINDOW, ATTEMPT_OUTCOME,
+  flushFoldedIntakeNotices, foldedDigestText, type FoldedDigest,
 } from "@/lib/intakeRateLimit";
 
 const enc = (s: string) => new TextEncoder().encode(s);
@@ -236,6 +237,127 @@ describe("intakeRateLimit — the window", () => {
     expect(noticeGoesOut(0, false)).toBe(true);
     expect(noticeGoesOut(1, false)).toBe(false);
     expect([0, 1, 2, 3, 4].map((n) => noticeGoesOut(n, true))).toEqual([true, true, true, false, false]);
+  });
+  // ── fix pass 3: a link that goes quiet after folding a publish is ──────
+  // announced anyway (INTK-10 / SEC-8) — the maintenance cron's flush.
+  describe("flushFoldedIntakeNotices — folded publishes / replacements never go unannounced", () => {
+    type Row = Record<string, unknown>;
+    const mkDb = () => {
+      const db = {
+        tables: {
+          intake_attempts: [] as Row[],
+          project_intake_links: [{ id: "L1", org_id: "o1", project_id: "p1", company_name: "Acme" }, { id: "L2", org_id: "o1", project_id: "p1", company_name: "Beta" }] as Row[],
+          projects: [{ id: "p1", org_id: "o1", name: "Unit 7", owner_user_id: "owner" }] as Row[],
+          org_members: [
+            { uid: "dc1", org_id: "o1", status: "active", controller: true },
+            { uid: "eng", org_id: "o1", status: "active", controller: false },
+            { uid: "dc-gone", org_id: "o1", status: "inactive", controller: true },
+          ] as Row[],
+        } as Record<string, Row[]>,
+        errors: {} as Record<string, { message: string } | undefined>,
+      };
+      const client = {
+        from: (table: string) => {
+          const f: Array<(r: Row) => boolean> = [];
+          let head = false; let lim: number | null = null; let insert: Row | null = null;
+          const run = () => {
+            const err = db.errors[table];
+            if (err) return { data: null, count: null, error: err };
+            if (insert) { db.tables[table].push({ ...insert, created_at: insert.created_at ?? "2026-09-30T12:00:00.000Z" }); return { data: null, error: null }; }
+            let hit = (db.tables[table] ?? []).filter((r) => f.every((fn) => fn(r)));
+            if (lim != null) hit = hit.slice(0, lim);
+            return head ? { count: hit.length, error: null } : { data: hit, error: null };
+          };
+          const self: Record<string, unknown> = new Proxy({}, {
+            get(_t, prop: string) {
+              if (prop === "then") return (res: (v: unknown) => void) => res(run());
+              return (...a: unknown[]) => {
+                if (prop === "select" && (a[1] as { head?: boolean } | undefined)?.head) head = true;
+                if (prop === "eq") f.push((r) => r[String(a[0])] === a[1]);
+                if (prop === "in") f.push((r) => (a[1] as unknown[]).includes(r[String(a[0])]));
+                if (prop === "gte") f.push((r) => String(r[String(a[0])]) >= String(a[1]));
+                if (prop === "or") f.push((r) => r.controller === true); // roleFilter(["Admin","DocCtrl"])
+                if (prop === "limit") lim = Number(a[0]);
+                if (prop === "insert") insert = a[0] as Row;
+                if (prop === "maybeSingle") { const r = run() as { data: Row[] | null; error: unknown }; return Promise.resolve({ data: r.data?.[0] ?? null, error: r.error }); }
+                return self;
+              };
+            },
+          });
+          return self;
+        },
+      };
+      return { db, client };
+    };
+    const now = Date.parse("2026-09-30T12:00:00Z");
+    const att = (token_hash: string, outcome: string, created_at: string, link_id: string | null = "L1") => ({ token_hash, outcome, created_at, link_id, ip: "203.0.113.5" });
+
+    it("the reviewer's case: three notices went, publishes 4 and 5 were folded, the link went quiet — ONE digest to the controllers and the owner, then never again", async () => {
+      const { db, client } = mkDb();
+      db.tables.intake_attempts.push(
+        att("h1", "notified", "2026-09-30T10:00:00.000Z"), att("h1", "notified", "2026-09-30T10:02:00.000Z"), att("h1", "notified", "2026-09-30T10:04:00.000Z"),
+        att("h1", "suppressed_published", "2026-09-30T10:06:00.000Z"), att("h1", "suppressed_published", "2026-09-30T10:08:00.000Z"),
+      );
+      const sent: FoldedDigest[] = [];
+      const res = await flushFoldedIntakeNotices(client, { now, send: async (d) => { sent.push(d); } });
+      expect(res).toEqual({ digests: 1, failed: 0, gone: 0 });
+      expect(sent).toHaveLength(1);
+      expect(sent[0]).toMatchObject({ orgId: "o1", projectId: "p1", linkId: "L1", company: "Acme", link: "/projects/p1", folded: { total: 2, published: 2, displaced: 0 } });
+      expect(sent[0].involved.sort()).toEqual(["dc1", "owner"]); // controllers (active) + owner — not every member
+      expect(sent[0].title).toBe("Intake: Acme published 2 revisions without review — not announced yet");
+      expect(sent[0].body).toMatch(/^Acme's intake link on Unit 7 published 2 revisions without review after the team's last notice/);
+      // a 'notified' row is written for the link — the next notice never counts them twice
+      expect(db.tables.intake_attempts.filter((r) => r.outcome === ATTEMPT_OUTCOME.notified && r.ip === "maintenance-cron")).toEqual([
+        expect.objectContaining({ token_hash: "h1", link_id: "L1" }),
+      ]);
+      // the next run finds nothing left to announce
+      const again = await flushFoldedIntakeNotices(client, { now: now + 60_000, send: async (d) => { sent.push(d); } });
+      expect(again.digests).toBe(0);
+      expect(sent).toHaveLength(1);
+    });
+    it("folds that a later notice already announced are skipped; review-only folds (listed on the Intake tab) are left to the next notice", async () => {
+      const { db, client } = mkDb();
+      db.tables.intake_attempts.push(
+        att("h1", "suppressed_published", "2026-09-30T10:06:00.000Z"), att("h1", "notified", "2026-09-30T10:30:00.000Z"),
+        att("h2", "suppressed", "2026-09-30T10:06:00.000Z", "L2"),
+      );
+      const sent: FoldedDigest[] = [];
+      expect(await flushFoldedIntakeNotices(client, { now, send: async (d) => { sent.push(d); } })).toEqual({ digests: 0, failed: 0, gone: 0 });
+      expect(sent).toEqual([]);
+    });
+    it("a replacement is announced too, with the review folds counted in the same digest", async () => {
+      const { db, client } = mkDb();
+      db.tables.intake_attempts.push(
+        att("h2", "notified", "2026-09-30T10:00:00.000Z", "L2"),
+        att("h2", "suppressed", "2026-09-30T10:03:00.000Z", "L2"),
+        att("h2", "suppressed_displaced", "2026-09-30T10:04:00.000Z", "L2"),
+      );
+      const sent: FoldedDigest[] = [];
+      await flushFoldedIntakeNotices(client, { now, send: async (d) => { sent.push(d); } });
+      expect(sent[0]).toMatchObject({ linkId: "L2", company: "Beta", folded: { total: 2, published: 0, displaced: 1 } });
+      expect(sent[0].body).toMatch(/replaced 1 submission that was awaiting review, and sent 1 more for review after the team's last notice/);
+    });
+    it("a send that fails writes no 'notified' row — the next run retries; a link that no longer exists is counted as gone", async () => {
+      const { db, client } = mkDb();
+      db.tables.intake_attempts.push(att("h1", "suppressed_published", "2026-09-30T10:06:00.000Z"), att("h9", "suppressed_published", "2026-09-30T10:06:00.000Z", "L-deleted"));
+      const failed = await flushFoldedIntakeNotices(client, { now, send: async () => { throw new Error("mail down"); } });
+      expect(failed).toEqual({ digests: 0, failed: 1, gone: 1 });
+      expect(db.tables.intake_attempts.some((r) => r.outcome === "notified")).toBe(false);
+      const retried = await flushFoldedIntakeNotices(client, { now, send: async () => undefined });
+      expect(retried).toEqual({ digests: 1, failed: 0, gone: 1 });
+    });
+    it("an unreadable attempt log throws (the cron reports it) — never a silent 'nothing to announce'", async () => {
+      const { db, client } = mkDb();
+      db.errors.intake_attempts = { message: "relation does not exist" };
+      await expect(flushFoldedIntakeNotices(client, { now, send: async () => undefined })).rejects.toThrow(/intake attempt log unreadable/);
+    });
+    it("foldedDigestText names each kind", () => {
+      expect(foldedDigestText("Acme", null, { total: 1, published: 1, displaced: 0 })).toEqual({
+        title: "Intake: Acme published 1 revision without review — not announced yet",
+        body: "Acme's intake link published 1 revision without review after the team's last notice from that link (the per-link notice cap folded them, and the link has sent nothing since). See the project's Intake tab and each document's revision history.",
+      });
+      expect(foldedDigestText("Acme", "U7", { total: 3, published: 1, displaced: 2 }).title).toBe("Intake: Acme published 1 revision without review and replaced 2 submissions that were awaiting review — not announced yet");
+    });
   });
   it("the per-link budget: submissions, then bytes", () => {
     const b = { submissionCount: 10, maxSubmissions: 10, bytesReceived: 0, maxTotalBytes: 100 };

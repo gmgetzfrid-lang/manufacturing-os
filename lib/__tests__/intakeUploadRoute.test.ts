@@ -775,8 +775,17 @@ describe("a new document", () => {
     db.tables.libraries.push({ id: "lib-dest", org_id: ORG, uniqueness_keys: ["documentNumber", "sheet"] });
     db.tables.assets = []; db.tables.document_assets = [];
     const { adoptDocument } = await import("@/lib/transitionIn");
+    const adopt = (id: string) => adoptDocument({ orgId: ORG, projectId: "p1", docId: id, libraryId: "lib-dest", collectionId: null, newNumber: null, linkAssets: [], actorId: "ctl2", actorEmail: "a@x" });
+    // SAF-12 (fix pass 3): while sheet0 — a LIVE P-100 — sits in ANOTHER
+    // library, adopting a P-100 into lib-dest would make two sources of
+    // truth for one number: refused, even though lib-dest numbers sheets
+    const refused = await adopt(ids[0]);
+    expect(refused.ok).toBe(false);
+    expect(refused.error).toMatch(/collides with P-100 \(Rev —\) in another library — renumber it/);
+    // once sheet 1 of the set lives in the destination, its siblings adopt beside it
+    Object.assign(db.tables.documents.find((d) => d.id === "sheet0")!, { library_id: "lib-dest" });
     for (const id of ids) {
-      const res = await adoptDocument({ orgId: ORG, projectId: "p1", docId: id, libraryId: "lib-dest", collectionId: null, newNumber: null, linkAssets: [], actorId: "ctl2", actorEmail: "a@x" });
+      const res = await adopt(id);
       expect(res.ok, res.error).toBe(true);
       expect(res.note).toMatch(/without a uniqueness key/);
     }
@@ -1394,12 +1403,25 @@ describe("the Intake tab, the transition-in panel and the portal", () => {
   it("TransitionInPanel: adopt controls for the controller tier only; a collision or an unapproved sheet cannot be adopted (SAF-13 / SAF-12 / INTK-3)", () => {
     const t = src("components/projects/TransitionInPanel.tsx");
     expect(t).toContain("const canAdopt = canManage && isControllerPrincipal({ role: activeRole, roles });");
-    expect(t).toMatch(/disabled=\{busy === c\.docId \|\| !destLib \|\| !!c\.awaitingReview \|\| \(blocksOnNumber\(impact\) && !\(renumber\.get\(c\.docId\) \?\? ""\)\.trim\(\)\)\}/);
-    // INTK-5: a same number blocks only where the number IS the destination's key
+    expect(t).toMatch(/disabled=\{busy === c\.docId \|\| !destLib \|\| candidateInReview\(c\) \|\| \(blocksOnNumber\(impact\) && !\(renumber\.get\(c\.docId\) \?\? ""\)\.trim\(\)\)\}/);
+    // INTK-5: a same number inside a multi-part destination is expected;
+    // SAF-12 (fix pass 3): one in ANOTHER library still blocks — the gate is
+    // the lib's blockingNumberCollision, judged against the picked destination
     expect(t).toContain("const numberDecides = numberIsTheKey(libs.find((l) => l.id === destLib)?.uniqueness_keys ?? null);");
-    expect(t).toContain("const blocksOnNumber = (impact: TransitionImpact | undefined) => !!impact?.numberCollision && numberDecides;");
+    expect(t).toContain("const blockingCollider = (impact: TransitionImpact | undefined) => blockingNumberCollision(impact, destLib || null, numberDecides);");
+    expect(t).toContain("const blocksOnNumber = (impact: TransitionImpact | undefined) => !!blockingCollider(impact);");
+    expect(t).not.toContain("!!impact?.numberCollision && numberDecides");
+    // the "shared number is expected" sentence only when nothing blocks
+    expect(t).toMatch(/\{blocking\s*\? "Renumber this sheet below[^"]*"\s*: "It is a sheet of the destination library, which numbers sheets separately/);
     expect(t).toContain('supabase.from("libraries").select("id, name, uniqueness_keys")');
-    expect(t).toContain("const bulkable = (c: TransitionCandidate) => !c.awaitingReview && !!impacts.get(c.docId)?.clean;");
+    // INTK-3 dw2 (fix pass 3): an approved sheet with a newer submission in
+    // review (pendingReview) is never clean, counted, bulk-adopted or offered
+    expect(t).toContain("const bulkable = (c: TransitionCandidate) => !candidateInReview(c) && !!impacts.get(c.docId)?.clean;");
+    expect(t).toContain("() => candidates.filter((c) => !candidateInReview(c) && !!impacts.get(c.docId)?.clean).length,");
+    expect(t).toContain("return candidateInReview(c) || (i && !i.clean);");
+    expect(t).toContain("{impact?.clean && !candidateInReview(c) && <span");
+    expect(t).toContain('{candidateInReview(c) && <span className="text-[10px] font-bold text-amber-700 dark:text-amber-400">{c.pendingReview ? "in review" : "not approved"}</span>}');
+    expect(t).not.toMatch(/!c\.awaitingReview && !!impacts/);
     expect(t).toContain("const clean = candidates.filter(bulkable);");
   });
   it("the portal sends the token in a header, renders a reference, a gone link, a closed project and a rejection reason", () => {
@@ -1423,8 +1445,17 @@ describe("the Intake tab, the transition-in panel and the portal", () => {
     // the remedy it names is one a person can run — no screen lists a version nothing points at
     expect(c).toContain("that no document points at and nothing withdrew — a document controller must resolve each one");
     expect(c).not.toMatch(/resolve them from the Intake tab/);
-    // INTK-4: a displaced draft that could not be restored is surfaced too
-    expect(c).toContain('.eq("action", "INTAKE_DISPLACE_UNRESOLVED").gte("timestamp", since)');
+    // INTK-4 (fix pass 3): a pending pointer on a retired draft is counted
+    // from STATE on every run until 0 — not from a 25-hour audit window
+    expect(c).toMatch(/sb\.rpc\("pending_on_retired_version_count"\)/);
+    expect(c).not.toContain('.eq("action", "INTAKE_DISPLACE_UNRESOLVED").gte("timestamp", since)');
+    expect(c).toContain("document(s) whose pending revision names a retired draft");
+    // INTK-10 / SEC-8 (fix pass 3): folded publishes a quiet link never
+    // announced get one digest per link, request-scoped service role, drained at 6c
+    expect(c).toContain('import { flushFoldedIntakeNotices } from "@/lib/intakeRateLimit";');
+    expect(c).toMatch(/const flushed = await flushFoldedIntakeNotices\(sb, \{\n\s+send: \(d\) => runWithServerClient\(sb, \(\) => emit\(\{/);
+    expect(c).toContain("audience: { involved: d.involved, followers: false },");
+    expect(c.indexOf("flushFoldedIntakeNotices(sb")).toBeLessThan(c.indexOf("// 6c. Drain anything"));
     const vercel = JSON.parse(src("vercel.json")) as { crons?: unknown[] };
     expect((vercel.crons ?? []).length).toBeLessThanOrEqual(2);
   });

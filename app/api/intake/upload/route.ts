@@ -481,7 +481,9 @@ export async function POST(req: NextRequest) {
    *  window — a controlled revision published without review, a pending
    *  review that was displaced — still bounded: at most
    *  FORCED_NOTICES_PER_WINDOW notices per link per window, so a burst from
-   *  a trusted (or leaked) token is never one notice per upload. */
+   *  a trusted (or leaked) token is never one notice per upload. A folded
+   *  publish or replacement the link never announces itself (it went quiet)
+   *  gets the maintenance cron's digest (flushFoldedIntakeNotices). */
   const notifyTeam = async (n: {
     kind: "review_requested" | "doc_superseded"; title: string; body: string; link: string;
     resource: { type: "document" | "project"; id: string }; followers: boolean; extraInvolved?: string[];
@@ -1209,7 +1211,7 @@ export async function POST(req: NextRequest) {
       metadata: { versionId },
       // A controlled revision published without review does not wait for
       // the window (up to the per-window cap; beyond it, it is counted by
-      // kind into the next notice).
+      // kind into the next notice — or the cron's digest if none follows).
       force: "published",
     });
   } else {

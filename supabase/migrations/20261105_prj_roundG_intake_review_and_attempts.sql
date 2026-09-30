@@ -48,7 +48,12 @@
 --   5. orphaned_in_review_versions_count() — the health signal SAF-10 asks
 --      for: in-review versions no document points at and nothing withdrew
 --      (superseded_at NULL — a withdrawn draft is resolved, not orphaned).
---      Service role only; the maintenance cron reports it.
+--      pending_on_retired_version_count() — its mirror image (INTK-4): a
+--      document whose pending revision still names a RETIRED draft
+--      (superseded_at stamped, or review_state 'superseded'), e.g. a
+--      displaced draft the door could not restore. Both count STATE, so
+--      the maintenance cron reports them on every run until they reach 0.
+--      Service role only.
 --   6. enforce_document_publish_guard, re-created from its live body
 --      (20261070) with two additions for EXTERNAL submissions only
 --      (versions carrying an intake_link_id), promoted by a signed-in user:
@@ -126,6 +131,11 @@ SELECT 'inventory: …of which external intake submissions', COUNT(*)::text
   FROM document_versions v
   LEFT JOIN documents d ON d.id = v.record_id
  WHERE v.review_state = 'in_review' AND v.superseded_at IS NULL AND v.intake_link_id IS NOT NULL AND d.pending_version_id IS DISTINCT FROM v.id
+UNION ALL
+SELECT 'inventory: documents whose pending revision names a RETIRED draft (superseded_at stamped or review_state superseded) — stuck; the cron reports the count on every run until 0', COUNT(*)::text
+  FROM documents d
+  JOIN document_versions v ON v.id = d.pending_version_id
+ WHERE v.superseded_at IS NOT NULL OR v.review_state = 'superseded'
 UNION ALL
 SELECT 'inventory: intake submissions withdrawn or displaced the older way (in_review + superseded_at, no pointer) — converted to superseded below', COUNT(*)::text
   FROM document_versions v
@@ -252,6 +262,23 @@ LANGUAGE sql STABLE SET search_path = public AS $$
 $$;
 REVOKE ALL ON FUNCTION orphaned_in_review_versions_count() FROM PUBLIC, anon, authenticated;
 GRANT EXECUTE ON FUNCTION orphaned_in_review_versions_count() TO service_role;
+
+-- The mirror image (INTK-4): a pending pointer that names a RETIRED draft.
+-- Nothing lists such a document (the Intake tab and the review panel show
+-- in-review drafts), its portal reads "in review" for ever, and the orphan
+-- count above never sees it (superseded_at is set). A state count, not a
+-- time window: reported on every cron run until it reaches 0.
+CREATE OR REPLACE FUNCTION pending_on_retired_version_count() RETURNS bigint
+LANGUAGE sql STABLE SET search_path = public AS $$
+  SELECT COUNT(*)
+    FROM documents d
+    JOIN document_versions v ON v.id = d.pending_version_id
+   WHERE v.superseded_at IS NOT NULL OR v.review_state = 'superseded';
+$$;
+REVOKE ALL ON FUNCTION pending_on_retired_version_count() FROM PUBLIC, anon, authenticated;
+GRANT EXECUTE ON FUNCTION pending_on_retired_version_count() TO service_role;
+COMMENT ON FUNCTION pending_on_retired_version_count() IS
+  'INTK-4: documents whose pending revision names a retired draft. Find them: SELECT d.id, d.document_number, v.id AS version_id, v.review_state, v.superseded_at FROM documents d JOIN document_versions v ON v.id = d.pending_version_id WHERE v.superseded_at IS NOT NULL OR v.review_state = ''superseded''; — then re-open the draft (review_state ''in_review'', superseded_at NULL) or clear the document''s pending_version_id.';
 
 -- ── 6. the publish guard: intake submissions meet the review policy and the
 --       MOC rule (SEC-13 / SEC-14) — 20261070 body + two blocks ──────────
@@ -744,6 +771,13 @@ UNION ALL SELECT 'no numbered document is left without a uniqueness_key except t
 UNION ALL SELECT 'orphaned_in_review_versions_count: service_role only',
        has_function_privilege('service_role', 'orphaned_in_review_versions_count()', 'EXECUTE')
        AND NOT has_function_privilege('authenticated', 'orphaned_in_review_versions_count()', 'EXECUTE'), NULL
+UNION ALL SELECT 'pending_on_retired_version_count counts pending pointers on retired drafts; service_role only',
+       (SELECT prosrc LIKE '%JOIN document_versions v ON v.id = d.pending_version_id%'
+               AND prosrc LIKE '%v.superseded_at IS NOT NULL OR v.review_state = ''superseded''%'
+          FROM pg_proc WHERE proname = 'pending_on_retired_version_count')
+       AND has_function_privilege('service_role', 'pending_on_retired_version_count()', 'EXECUTE')
+       AND NOT has_function_privilege('authenticated', 'pending_on_retired_version_count()', 'EXECUTE')
+       AND NOT has_function_privilege('anon', 'pending_on_retired_version_count()', 'EXECUTE'), NULL
 UNION ALL SELECT 'publish guard binds intake submissions to a required review policy (SEC-13) and the drawing-class MOC rule (SEC-14)',
        (SELECT prosrc LIKE '%send the external submission to its reviewers before publishing it%'
                AND prosrc LIKE '%publish an external submission of a drawing-class document%'
@@ -765,4 +799,6 @@ UNION ALL SELECT 'inventory: uniqueness keys backfilled by this run', NULL::bool
        (SELECT COUNT(*)::text FROM prj_g_j1b_keys c JOIN documents d ON d.id = c.id WHERE d.uniqueness_key IS NOT NULL)
 UNION ALL SELECT 'inventory: in-review versions no document points at and nothing withdrew, after apply', NULL::boolean,
        orphaned_in_review_versions_count()::text
+UNION ALL SELECT 'inventory: documents whose pending revision names a retired draft, after apply (resolve by hand; the cron reports it daily)', NULL::boolean,
+       pending_on_retired_version_count()::text
 UNION ALL SELECT inventory, NULL::boolean, n FROM prj_g_j1b_inventory;

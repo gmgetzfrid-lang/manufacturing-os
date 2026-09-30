@@ -56,7 +56,8 @@ vi.mock("@/lib/supabase", () => {
 
 import {
   extractCandidateTags, likeExact, sameNumber, scanTransitionImpact, listTransitionCandidates, adoptDocument,
-  type TransitionCandidate,
+  blockingNumberCollision, candidateInReview,
+  type TransitionCandidate, type TransitionImpact,
 } from "@/lib/transitionIn";
 
 beforeEach(() => { db.tables = {}; db.queries = []; db.errors = {}; });
@@ -143,7 +144,8 @@ describe("INTK-7 — the collision scan checks every sheet, exactly", () => {
       { id: "live", org_id: "o1", document_number: "d-25-1042", rev: "3", status: "Issued", collection_id: null },
     ]);
     const i = await scanTransitionImpact("o1", cand(), INTAKE);
-    expect(i.numberCollision).toMatchObject({ id: "live", rev: "3" });
+    expect(i.numberCollision).toMatchObject({ id: "live", rev: "3", libraryId: null });
+    expect(i.numberCollisions.map((c) => c.id)).toEqual(["live"]);
     expect(i.clean).toBe(false);
     const pct = await scanTransitionImpact("o1", cand({ number: "%" }), INTAKE);
     expect(pct.numberCollision).toBeNull(); // a bare % no longer matches everything
@@ -283,5 +285,129 @@ describe("INTK-3 / INTK-5 / SAF-12 — adoption re-checks at the click", () => {
     const res = await adopt();
     expect(res.error).toMatch(/needs Admin or Document Control/);
     expect(res.error).not.toMatch(/^Moving documents/);
+  });
+});
+
+// ── projects Round G J1 fix pass 3 — a multi-part destination does not ────
+// excuse a same-numbered live document in ANOTHER library (SAF-12 dw1 /
+// INTK-3 dw1), and a sheet with a newer submission in review is not clean.
+describe("SAF-12 / INTK-3 — blockingNumberCollision judges colliders against the destination", () => {
+  const col = (id: string, libraryId: string | null) => ({ id, label: "P-100", rev: "3", libraryId });
+  const imp = (...cs: Array<ReturnType<typeof col>>): Pick<TransitionImpact, "numberCollision" | "numberCollisions"> =>
+    ({ numberCollision: cs[0] ?? null, numberCollisions: cs });
+  it("the default tuple: ANY live same-numbered document blocks, wherever it lives", () => {
+    expect(blockingNumberCollision(imp(col("a", "lib-dest")), "lib-dest", true)?.id).toBe("a");
+    expect(blockingNumberCollision(imp(col("a", "lib-other")), "lib-dest", true)?.id).toBe("a");
+  });
+  it("a multi-part destination: a sibling INSIDE it is expected; one in another library — or in none — blocks", () => {
+    expect(blockingNumberCollision(imp(col("sib", "lib-dest")), "lib-dest", false)).toBeNull();
+    expect(blockingNumberCollision(imp(col("sib", "lib-dest"), col("x", "lib-L1")), "lib-dest", false)?.id).toBe("x");
+    expect(blockingNumberCollision(imp(col("root", null)), "lib-dest", false)?.id).toBe("root");
+  });
+  it("no destination picked yet: the number rule applies; no collision: nothing blocks", () => {
+    expect(blockingNumberCollision(imp(col("sib", "lib-dest")), null, false)?.id).toBe("sib");
+    expect(blockingNumberCollision(imp(), "lib-dest", true)).toBeNull();
+    expect(blockingNumberCollision(undefined, "lib-dest", false)).toBeNull();
+  });
+});
+
+describe("SAF-12 / INTK-3 — adopting into a multi-part library over a live number elsewhere", () => {
+  const seedCross = (register: Array<Record<string, unknown>>) => {
+    db.tables.documents = [
+      { id: "sheet1", org_id: "o1", document_number: "P-100", title: "Tie-in FE-201", rev: "A", status: "Issued", metadata: {}, library_id: "lib-intake", collection_id: INTAKE, current_version_id: "v1", pending_version_id: null },
+      ...register,
+    ];
+    db.tables.document_versions = [{ record_id: "sheet1", review_state: "approved", intake_link_id: "l1", created_at: "1" }];
+    db.tables.libraries = [
+      { id: "lib-dest", org_id: "o1", uniqueness_keys: ["documentNumber", "sheet"] },
+      { id: "lib-L1", org_id: "o1", uniqueness_keys: null },
+    ];
+    db.tables.assets = [{ id: "a1", tag: "FE-201", tag_normalized: "fe201", org_id: "o1", archived: false }];
+    db.tables.document_assets = [];
+  };
+  const adopt = (newNumber: string | null = null) => adoptDocument({
+    orgId: "o1", projectId: "p1", docId: "sheet1", libraryId: "lib-dest", collectionId: null,
+    newNumber, linkAssets: [], actorId: "u1", actorEmail: "u1@x",
+  });
+  const issuedL1 = { id: "p100-l1", org_id: "o1", document_number: "P-100", rev: "3", status: "Issued", library_id: "lib-L1", collection_id: "c-l1" };
+
+  it("the reviewer's case: P-100 Rev 3 Issued in L1 refuses adopting an intake P-100 into an ['documentNumber','sheet'] library — nothing moves", async () => {
+    seedCross([issuedL1]);
+    const scan = await scanTransitionImpact("o1", cand({ number: "P-100", label: "P-100" }), INTAKE);
+    expect(scan.unverifiable).toEqual([]); // recognised equipment: nothing 'unverifiable' to confirm
+    expect(scan.numberCollision).toMatchObject({ id: "p100-l1", libraryId: "lib-L1" });
+    expect(blockingNumberCollision(scan, "lib-dest", false)?.id).toBe("p100-l1");
+    const res = await adopt();
+    expect(res.ok).toBe(false);
+    expect(res.error).toMatch(/P-100 collides with P-100 \(Rev 3\) in another library — renumber it/);
+    expect(db.tables.documents[0]).toMatchObject({ library_id: "lib-intake", collection_id: INTAKE });
+    expect(db.tables.documents[0].uniqueness_key).toBeUndefined();
+  });
+  it("a renumber onto the other library's live number is refused; a clear renumber is adopted", async () => {
+    seedCross([issuedL1, { id: "q200", org_id: "o1", document_number: "Q-200", rev: "1", status: "Issued", library_id: "lib-L1", collection_id: "c-l1" }]);
+    expect((await adopt("Q-200")).error).toMatch(/Q-200 is already the number of Q-200 \(Rev 1\) in another library/);
+    const ok = await adopt("P-900");
+    expect(ok.ok).toBe(true);
+    expect(db.tables.documents[0]).toMatchObject({ library_id: "lib-dest", document_number: "P-900" });
+  });
+  it("a retired document elsewhere does not block; a sibling inside the destination still does not", async () => {
+    seedCross([{ ...issuedL1, status: "Superseded" }, { id: "sib", org_id: "o1", document_number: "P-100", rev: "B", status: "Issued", library_id: "lib-dest", collection_id: null }]);
+    const res = await adopt();
+    expect(res.ok).toBe(true);
+    expect(res.note).toMatch(/adopted without a uniqueness key/);
+  });
+  it("a live number elsewhere is found even behind a full window of same-numbered siblings inside the destination", async () => {
+    const siblings = Array.from({ length: 30 }, (_, k) => ({
+      id: `a-sib-${String(k).padStart(2, "0")}`, org_id: "o1", document_number: "P-100", rev: "A", status: "Issued", library_id: "lib-dest", collection_id: null,
+    }));
+    seedCross([...siblings, { ...issuedL1, id: "z-p100-l1" }]);
+    const scan = await scanTransitionImpact("o1", cand({ number: "P-100", label: "P-100" }), INTAKE);
+    expect(scan.numberCollisions).toHaveLength(25);
+    expect(scan.numberCollisions.every((c) => c.libraryId === "lib-dest")).toBe(true);
+    const res = await adopt();
+    expect(res.error).toMatch(/collides with P-100 \(Rev 3\) in another library/);
+    const q = db.queries.filter((x) => x.table === "documents" && x.ops.some(([o, a]) => o === "or" && String(a[0]).startsWith("library_id.")));
+    expect(q.length).toBeGreaterThan(0);
+    expect(q[0].ops).toContainEqual(["or", ["library_id.is.null,library_id.neq.lib-dest"]]);
+    expect(q[0].ops).toContainEqual(["or", [`collection_id.is.null,collection_id.neq.${INTAKE}`]]);
+  });
+  it("an unreadable register outside the destination refuses — never read as free", async () => {
+    seedCross([]);
+    // reads, in order: the sheet, the org-wide scan (clean), then the
+    // out-of-library look-up — which errors
+    db.errors["documents.select"] = [null, null, { message: "boom" }];
+    const res = await adopt();
+    expect(res.ok).toBe(false);
+    expect(res.error).toMatch(/Couldn't confirm P-100 is free in the other libraries/);
+    expect(db.tables.documents[0]).toMatchObject({ library_id: "lib-intake" });
+  });
+});
+
+describe("INTK-3 dw2 — a sheet with an open pending_version_id is never clean", () => {
+  it("candidateInReview: never approved, or approved with a newer submission in review", () => {
+    expect(candidateInReview({ awaitingReview: true, pendingReview: true })).toBe(true);
+    expect(candidateInReview({ awaitingReview: true, pendingReview: false })).toBe(true);
+    expect(candidateInReview({ awaitingReview: false, pendingReview: true })).toBe(true);
+    expect(candidateInReview({ awaitingReview: false, pendingReview: false })).toBe(false);
+  });
+  it("an approved sheet whose Rev B is in review lists as pendingReview, is marked in review, and adoption refuses it", async () => {
+    db.tables.documents = [
+      { id: "s", org_id: "o1", collection_id: INTAKE, library_id: "lib-intake", status: "Issued", document_number: "S-1", title: "Tie-in FE-201", rev: "A", metadata: {}, current_version_id: "vA", pending_version_id: "vB", created_at: "1" },
+    ];
+    db.tables.document_versions = [
+      { record_id: "s", review_state: "in_review", intake_link_id: "l1", created_at: "2" },
+      { record_id: "s", review_state: "approved", intake_link_id: "l1", created_at: "1" },
+    ];
+    db.tables.libraries = [{ id: "lib-dest", org_id: "o1", uniqueness_keys: null }];
+    db.tables.assets = [];
+    db.tables.document_assets = [];
+    const [c] = await listTransitionCandidates("o1", INTAKE);
+    expect(c).toMatchObject({ awaitingReview: false, pendingReview: true });
+    expect(candidateInReview(c)).toBe(true);
+    const res = await adoptDocument({
+      orgId: "o1", projectId: "p1", docId: "s", libraryId: "lib-dest", collectionId: null,
+      newNumber: null, linkAssets: [], actorId: "u1", actorEmail: null,
+    });
+    expect(res.error).toMatch(/still awaiting review/);
   });
 });

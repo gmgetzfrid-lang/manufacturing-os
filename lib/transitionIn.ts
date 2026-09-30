@@ -57,13 +57,23 @@ export interface TransitionCandidate {
 /** Why a sheet's collision check could not say "clean" (INTK-7). */
 export type UnverifiableReason = "no_number" | "no_equipment" | "check_failed";
 
+/** A live document already carrying the sheet's number. `libraryId` says
+ *  where it lives: in a multi-sheet destination a same-numbered sibling in
+ *  THAT library is expected, one anywhere else is a second source of truth
+ *  (SAF-12 / INTK-3). */
+export interface NumberCollider { id: string; label: string; rev: string | null; libraryId: string | null }
+
 export interface TransitionImpact {
   /** Candidate equipment tags found on the document's number/title. */
   tags: string[];
   /** Tags that resolve to real assets in the registry (tie-in points). */
   matchedAssets: Array<{ id: string; tag: string }>;
-  /** Existing non-superseded document with the same number — hard collision. */
-  numberCollision: { id: string; label: string; rev: string | null } | null;
+  /** Existing non-superseded document with the same number — hard collision
+   *  (the first of `numberCollisions`). */
+  numberCollision: NumberCollider | null;
+  /** Every live same-numbered document the scan read (bounded, id order) —
+   *  the panel judges them against the destination it picks. */
+  numberCollisions: NumberCollider[];
   /** Existing documents that reference the same equipment tags. */
   overlapDocs: Array<{ id: string; label: string; rev: string | null; sharedTags: string[] }>;
   /** INTK-7: what could NOT be checked. A sheet with no number was never
@@ -157,6 +167,14 @@ export async function listTransitionCandidates(
     }));
 }
 
+/** INTK-3 — a sheet with a submission still undecided: never approved, or
+ *  approved with a NEWER submission in review (an open pending_version_id).
+ *  adoptDocument refuses both, so the panel never counts such a sheet as
+ *  clean, never bulk-adopts it and never offers its Adopt button. */
+export function candidateInReview(c: Pick<TransitionCandidate, "awaitingReview" | "pendingReview">): boolean {
+  return !!c.awaitingReview || !!c.pendingReview;
+}
+
 /** Impact scan for one intake document against the existing register.
  *  Read-only. A slice that errors is recorded as `check_failed` — an
  *  unread register is never "no collision". */
@@ -169,6 +187,7 @@ export async function scanTransitionImpact(
     tags: extractCandidateTags(candidate.number, candidate.title),
     matchedAssets: [],
     numberCollision: null,
+    numberCollisions: [],
     overlapDocs: [],
     unverifiable: [],
     clean: false,
@@ -200,26 +219,10 @@ export async function scanTransitionImpact(
     out.unverifiable.push("no_number");
   } else {
     try {
-      const { data: dup, error } = await supabase
-        .from("documents")
-        .select("id, document_number, title, name, rev, status")
-        .eq("org_id", orgId)
-        .ilike("document_number", likeExact(number))
-        .neq("id", candidate.docId)
-        .or(`collection_id.is.null,collection_id.neq.${intakeCollectionId}`)
-        .not("status", "in", RETIRED)
-        .order("id", { ascending: true })
-        .limit(25);
-      if (error) failed();
-      const live = (((dup ?? []) as Array<Record<string, unknown>>))
-        .find((d) => sameNumber(d.document_number as string | null, number));
-      if (live) {
-        out.numberCollision = {
-          id: String(live.id),
-          label: String(live.document_number || live.title || live.name || "Document"),
-          rev: (live.rev as string | null) ?? null,
-        };
-      }
+      const { rows, failed: readFailed } = await liveNumberMatches(orgId, number, candidate.docId, intakeCollectionId);
+      if (readFailed) failed();
+      out.numberCollisions = rows;
+      out.numberCollision = rows[0] ?? null;
     } catch { failed(); }
   }
 
@@ -264,6 +267,56 @@ export async function scanTransitionImpact(
   return out;
 }
 
+/** Live documents carrying exactly `number` (case-insensitive), outside the
+ *  intake folder and other than `docId` — with `outsideLibraryId`, only
+ *  those that live in ANOTHER library (or in none). The status filter runs
+ *  in the database, the order is deterministic, and only exact matches are
+ *  kept. (Two `.or()` groups are two PostgREST `or` parameters, ANDed.) */
+async function liveNumberMatches(
+  orgId: string, number: string, docId: string, intakeCollectionId: string, outsideLibraryId?: string,
+): Promise<{ rows: NumberCollider[]; failed: boolean }> {
+  let q = supabase
+    .from("documents")
+    .select("id, document_number, title, name, rev, status, library_id")
+    .eq("org_id", orgId)
+    .ilike("document_number", likeExact(number))
+    .neq("id", docId)
+    .or(`collection_id.is.null,collection_id.neq.${intakeCollectionId}`);
+  if (outsideLibraryId) q = q.or(`library_id.is.null,library_id.neq.${outsideLibraryId}`);
+  const { data, error } = await q
+    .not("status", "in", RETIRED)
+    .order("id", { ascending: true })
+    .limit(25);
+  const rows = (((data ?? []) as Array<Record<string, unknown>>))
+    .filter((d) => sameNumber(d.document_number as string | null, number))
+    .map((d) => ({
+      id: String(d.id),
+      label: String(d.document_number || d.title || d.name || "Document"),
+      rev: (d.rev as string | null) ?? null,
+      libraryId: (d.library_id as string | null) ?? null,
+    }));
+  return { rows, failed: !!error };
+}
+
+/** SAF-12 / INTK-3 — the same-numbered document that blocks adopting this
+ *  sheet into `destLibraryId`, or null. Where the number alone is the
+ *  destination's key (the default tuple), ANY live same-numbered document
+ *  blocks. In a multi-part destination (number + sheet …) a same-numbered
+ *  sibling INSIDE that library is expected — the full key decides there —
+ *  but one in another library (or in none) is still two sources of truth
+ *  for one number, and blocks. With no destination picked yet the number
+ *  rule applies. */
+export function blockingNumberCollision(
+  impact: Pick<TransitionImpact, "numberCollision" | "numberCollisions"> | null | undefined,
+  destLibraryId: string | null,
+  numberDecides: boolean,
+): NumberCollider | null {
+  if (!impact?.numberCollision) return null;
+  if (numberDecides || !destLibraryId) return impact.numberCollision;
+  const all = impact.numberCollisions?.length ? impact.numberCollisions : [impact.numberCollision];
+  return all.find((c) => c.libraryId !== destLibraryId) ?? null;
+}
+
 export interface AdoptInput {
   orgId: string;
   projectId: string;
@@ -291,7 +344,9 @@ export interface AdoptInput {
  *  refused unless the sheet is renumbered to a number that is itself clear
  *  — where the number identifies a document in the destination library. In
  *  a library whose tuple is more than the number (a multi-sheet set) the
- *  full key decides instead. INTK-5: the uniqueness key is computed for the
+ *  full key decides between sheets INSIDE that library, but a live
+ *  same-numbered document in any OTHER library still refuses the adoption
+ *  (blockingNumberCollision). INTK-5: the uniqueness key is computed for the
  *  destination library, so the database's unique index sees the adopted
  *  sheet — and its refusal reaches the operator as a sentence. A tuple part
  *  the sheet does not carry (an intake sheet has no sheet field) leaves the
@@ -343,12 +398,25 @@ export async function adoptDocument(input: AdoptInput): Promise<{ ok: boolean; e
   if (impact.unverifiable.includes("check_failed")) {
     return { ok: false, error: `Couldn't confirm ${effectiveNumber ?? label} is free in the register — try again.` };
   }
-  if (impact.numberCollision && numberDecides) {
+  // In a multi-part destination the org-wide scan's window can be filled by
+  // same-numbered siblings INSIDE the destination, so a live document in
+  // another library is looked for on its own — never missed behind them.
+  let collider = blockingNumberCollision(impact, input.libraryId, numberDecides);
+  if (!collider && !numberDecides && effectiveNumber?.trim()) {
+    const outside = await liveNumberMatches(
+      input.orgId, effectiveNumber.trim(), input.docId,
+      String(before.collection_id ?? "") || "00000000-0000-0000-0000-000000000000", input.libraryId,
+    );
+    if (outside.failed) return { ok: false, error: `Couldn't confirm ${effectiveNumber} is free in the other libraries — try again.` };
+    collider = outside.rows[0] ?? null;
+  }
+  if (collider) {
+    const elsewhere = !numberDecides ? " in another library" : "";
     return {
       ok: false,
       error: newNumber
-        ? `${newNumber} is already the number of ${impact.numberCollision.label} (Rev ${impact.numberCollision.rev ?? "—"}) — pick a number that isn't in use.`
-        : `${label} collides with ${impact.numberCollision.label} (Rev ${impact.numberCollision.rev ?? "—"}) — renumber it to a number that isn't in use, or resolve which one is the source of truth first.`,
+        ? `${newNumber} is already the number of ${collider.label} (Rev ${collider.rev ?? "—"})${elsewhere} — pick a number that isn't in use.`
+        : `${label} collides with ${collider.label} (Rev ${collider.rev ?? "—"})${elsewhere} — renumber it to a number that isn't in use, or resolve which one is the source of truth first.`,
     };
   }
 
