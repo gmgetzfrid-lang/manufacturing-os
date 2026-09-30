@@ -182,6 +182,12 @@ Measured: `page.rotate=180 view=[0,0,1224,792] vp=1224x792 chars=209 items=21 / 
 - [ ] `clamp01` is replaced by a reject-and-null (a coordinate outside 0..1 is a bug signal, not a value to pin to an edge)
 - [ ] Existing `pos_source='text'` rows on rotated pages are invalidated rather than left in place, since they are cached wrong answers
 
+**Pointer (2026-09-30, intelligence Round G, I-06): the ingest half.** The fleet plan gives this finding to I-07, and I-06 records the ingest half here. No status change: DWG-3 stays OPEN for I-07.
+- **Where it is.** The normalisation the finding quotes is `norm()` in `lib/knowledgeIngest.ts` `ingestKnowledgeDocBatch`, in the drawing-entity block of `readPage`. It is now at lines 1236-1240; at the base it was 236-240. I-06 did not change it. The `getViewport({ scale: 1 })` divide, `clamp01` and the stored `pos_source: 'text'` are exactly as described above, and I-06's engine changes (the claim, the retry queue, the failure retry) do not touch that block.
+- **Where the plan fixes it.** In the plan, I-07 corrects the marks in `components/knowledge/CitedPageViewer.tsx`, computing from page metadata (/Rotate, the CropBox origin). Stored `nx`/`ny` then stay in the page's unrotated user space, and the viewer applies the transform. Criterion 2 (a quadrant test per rotation) belongs with that code.
+- **What the viewer cannot recover.** `norm()` divides by the ROTATED viewport's size. On a 90/270 page that is the unrotated height for x and width for y, so on a landscape sheet a stored value past 1 was clamped to the edge. So was a value pushed below 0 by a CropBox origin. Those marks are lost, not merely transformed. A viewer-side transform recovers every mark on a 0/180 page with a zero origin, but not every mark on a 90/270 page or a page with an offset origin. Those need ingest's divisor fixed and the documents re-indexed.
+- **If ingest is changed instead** (criterion 1, `viewport.convertToViewportPoint`): the change is confined to `norm()` and the two `nx`/`ny` pushes below it, and criterion 3 (reject and null rather than `clamp01`) goes with it. Rows already stored on rotated pages would then be wrong by construction (criterion 4). The way to re-derive them is to re-index those documents through `resetKnowledgeIndex` (DEC-54), which drops every page entity and re-reads from page 1. Note that this re-bills their AI-vision pages. The two fixes must not both apply, or the viewer would rotate coordinates that ingest had already rotated.
+
 ---
 
 <a id="dwg-4"></a>

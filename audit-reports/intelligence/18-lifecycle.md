@@ -198,7 +198,13 @@ Tests: `lib/__tests__/intelRoundGIngestMigration.test.ts`:
 - ✓ Deleting a controlled document is traced end to end: chunks, embeddings, page entities, mentions and line traces all cascade. The trace is a static test over the sequence plus the migration's live probes; there is no database in this environment to delete against.
 - ✗ Not done here. The shed's candidate query (`app/api/admin/shed/commit/route.ts`) belongs to document-control (P9 RET-6/RET-7). It still does not exclude a `file_url` referenced by a `knowledge_documents.file_key`, so the chain reaction (a shed between a rev-up and the next sync) is open.
 
-**Scope / residual.** Pending migration: `20261122_intel_roundG_ingest_integrity.sql`. `lib/dataRestore.ts` restores `documents` before `knowledge_documents` (`RESTORE_TABLE_ORDER`), so the key does not break a restore. A backup holding a mirror whose document it lacks will now refuse that one row. That belongs to I-01 phase B, which owns restore. OPEN until the shed guard lands.
+**Scope / residual.** Pending migration: `20261122_intel_roundG_ingest_integrity.sql`. OPEN until the shed guard lands.
+
+**The key and a restore** (corrected in intelligence Round G review fix pass 3). The first record said "the key does not break a restore" and "will now refuse that one row". Both are wrong. `lib/dataRestore.ts` does restore `documents` before `knowledge_documents` (`RESTORE_TABLE_ORDER`), so a consistent backup restores. But the dangling-mirror population this finding describes exists between a controlled document's delete and the next sync's REMOVE pass. A backup taken in that window, or any backup taken before `20261122`, can hold such a mirror, and once the key exists that row fails with 23503:
+- **The single-shot restore** (`app/api/admin/restore/apply/route.ts`, lines 102-122) stops at the `knowledge_documents` chunk. It then skips every later table: `knowledge_chunks`, `knowledge_page_entities`, `knowledge_questions`, `output_templates` and `output_generations`.
+- **The chunked restore** (`app/api/admin/restore/apply-table/route.ts`, lines 85-94) allows a per-row refusal only for `document_holds`. It answers 500 for the whole 500-row slice.
+
+So the whole knowledge restore aborts, not one row. **Handoff to I-01, which owns restore:** the restore must drop mirrors whose `source_document_id` is absent from the restored documents. Alternatively, it can add `knowledge_documents` to the per-row refusal set (23503) and teach the single-shot path the same per-row refusal. The migration's header and `DEC-54`'s Risk line now say this.
 
 ---
 
@@ -459,7 +465,7 @@ lib/knowledgeSourceSync.ts:303-310 `const { data, error } = await supabaseAdmin.
 - **Every source row is read.** The read is paged past PostgREST's 1,000-row cap and ordered.
 - **Oldest first.** Each library is ordered by its oldest `knowledge_sources.last_synced_at`, a new column in `20261122`. A never-synced library comes first.
 - **Orgs are interleaved.** Libraries are taken round-robin across orgs, each org's oldest first.
-- **Time-bounded.** The pass runs until its budget (45 s by default; `maxLibraries` 500) instead of `.slice(0, 25)`.
+- **Time-bounded.** The pass runs until its budget instead of `.slice(0, 25)`. The default budget is 15 s (`KNOWLEDGE_SYNC_BUDGET_MS`; `maxLibraries` 500). It was 45 s until review fix pass 3, which pushed the cron's ingest drain (40 s, run right after) past the 60 s kill window. A drain killed mid-batch loses the batch and leaves its claim standing for five minutes (ING-2).
 - **Every reconcile stamps the cursor.** `syncKnowledgeLibrarySources` stamps `last_synced_at`, from the cron or on demand, so the heartbeat reaches the others next. The exception is a library where a rev-up did not land, because it failed before the row moved or another sync re-pointed the row first. That library is set to NULL (never synced), so the next run reaches it FIRST. A rev-up that finds a batch writing the old revision no longer waits: it supersedes the batch (ING-1).
 - **Pre-migration fallback.** With no cursor column, the start rotates by the day, so the same prefix is not the only one ever reached.
 - **The result says what waits.** It reports `unsynced` (libraries left for the next run) and `deferred` (rev-ups another sync landed first).
@@ -468,6 +474,7 @@ Tests: `lib/__tests__/sourceSync.test.ts` ILIFE-13 block:
 - "reads past 1,000 source rows, never-synced libraries first, then the oldest";
 - "orgs are interleaved so one tenant's shelf count cannot starve another";
 - "stops at its time budget and says how many wait";
+- "by default it leaves the cron's ingest drain its room: a 15 s budget, not 45";
 - "without the cursor column it still rotates by the day rather than repeating one prefix";
 - and, in the ING-3 block, "a purge that fails before the row moves leaves the old version, and the library comes round FIRST next run".
 
