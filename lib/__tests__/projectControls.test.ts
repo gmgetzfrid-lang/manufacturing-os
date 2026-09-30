@@ -8,7 +8,7 @@ import { computeProjectHealth, buildCoachItems, type ProjectStateSnapshot } from
 import {
   validateSegmentedItems, applyAutoEvidence, rubricCoverageScore,
   validateRubricFindings, QUALITY_MANUAL_RUBRIC, completionBasis, reasonProblem, isAutoOnlyGreen, isHumanDecided,
-  isHumanGreen, isUnreasonedNa, staleAutoGreens, CANNED_REASONS,
+  isHumanGreen, isUnreasonedNa, staleAutoGreens, CANNED_REASONS, isBlockingItem, isHumanTerritory,
   isMachineActorName, MACHINE_ACTOR_SWEEP, MACHINE_ACTOR_ASSESSMENT, REASON_MIN_LENGTH,
   type ChecklistItemState, type ProjectEvidenceState,
 } from "@/lib/checklistEngine";
@@ -275,6 +275,36 @@ describe("checklistEngine", () => {
     expect(res).toEqual([]);
   });
 
+  it("QUAL-2 verification fix: a note counts as a person's reason only when it meets the bar — 'x' or a canned string launders nothing", () => {
+    // The reproduction: two N/As and one green, each carrying the note 'x'.
+    const laundered: ChecklistItemState[] = [
+      item({ id: "1", text: "Weld log", status: "na", applicability: "na", manualNote: "x" }),
+      item({ id: "2", text: "NDE", status: "na", applicability: "na", manualNote: "x" }),
+      item({ id: "3", text: "Hydrotest", status: "satisfied", manualNote: "x" }),
+    ];
+    expect(completionBasis(laundered)).toBe("auto");
+    for (const note of ["x", "ok", "decided by reviewer", "Not applicable", "   "]) {
+      expect(isHumanDecided({ manualNote: note, evidence: [] }), note).toBe(false);
+      expect(isUnreasonedNa(item({ id: "1", status: "na", applicability: "na", manualNote: note })), note).toBe(true);
+      expect(isAutoOnlyGreen(item({ id: "1", status: "satisfied", manualNote: note })), note).toBe(true);
+      expect(isHumanGreen(item({ id: "1", status: "satisfied", manualNote: note })), note).toBe(false);
+    }
+    expect(isHumanDecided({ manualNote: "walked it down with ops on 9/14", evidence: [] })).toBe(true);
+    // …yet ANY note (a legacy short one included) keeps the automated passes out
+    expect(isHumanTerritory({ manualNote: "x", evidence: [] })).toBe(true);
+    expect(isHumanTerritory({ manualNote: null, evidence: [{ label: "walked down", source: "manual" }] })).toBe(true);
+    expect(isHumanTerritory({ manualNote: null, evidence: [{ label: "x", source: "auto" }] })).toBe(false);
+    expect(applyAutoEvidence([item({ id: "a", text: "Hydrotest complete", manualNote: "x" })], state({ documentTitles: ["Hydrotest package"] }))).toEqual([]);
+  });
+
+  it("the sweep never writes on an item carrying a person's chip, green or not — the database refuses a machine write there (no chip + sweep laundering)", () => {
+    const res = applyAutoEvidence([
+      item({ id: "open", text: "Hydrotest complete", status: "open", evidence: [{ label: "Hydro chart", source: "manual" }] }),
+      item({ id: "ne", text: "Hydrotest complete", status: "needs_evidence", evidence: [{ label: "Hydro chart", source: "manual" }] }),
+    ], state({ documentTitles: ["E-301 Hydrotest Report Rev 0"] }));
+    expect(res).toEqual([]);
+  });
+
   it("QUAL-2: the turnover rule needs a SUBJECT match — one accepted sign-off does not vouch for every turnover line", () => {
     const s = state({ turnoverAcceptedNames: ["Work completion sign-off"] });
     const generic = applyAutoEvidence([item({ id: "a", text: "Turnover / quality package received and reviewed" })], s);
@@ -303,9 +333,17 @@ describe("checklistEngine", () => {
     const human: ChecklistItemState[] = [
       item({ id: "1", text: "Weld log", status: "satisfied", evidence: [{ label: "x", source: "auto" }], manualNote: "reviewed the log — 42 welds, all traceable" }),
       item({ id: "2", text: "Ops trained", status: "na", applicability: "na", manualNote: "no operator interface on this change" }),
-      item({ id: "3", text: "Open item", status: "open" }), // not counted toward the gate
     ];
     expect(completionBasis(human)).toBe("human");
+    // An applicable item neither green nor N/A is not a completion at all —
+    // 'auto', the same first clause checklist_completion_basis() carries (the
+    // database's completion rail refuses such a completion outright).
+    expect(completionBasis([...human, item({ id: "3", text: "Open item", status: "open" })])).toBe("auto");
+    expect(completionBasis([...human, item({ id: "3", text: "Open item", status: "needs_evidence" })])).toBe("auto");
+    expect(isBlockingItem(item({ id: "3", status: "open" }))).toBe(true);
+    expect(isBlockingItem(item({ id: "3", status: "open", applicability: "na" }))).toBe(false);
+    expect(isBlockingItem(item({ id: "3", status: "na" }))).toBe(false);
+    expect(isBlockingItem(item({ id: "3", status: "satisfied" }))).toBe(false);
     expect(completionBasis([item({ id: "1", text: "x", status: "satisfied", evidence: [{ label: "walked down", source: "manual" }] })])).toBe("human");
     // An N/A no person gave a reason for (the assessment's: machine stamp, no
     // note) keeps the completion 'auto' — ticking a proposal is not a reason.

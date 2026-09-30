@@ -12,10 +12,12 @@
 //     document register, equipment tags, milestones), propose per-item
 //     applicability: does this line apply to THIS job, or is it N/A — with
 //     the reasoning stated. Each proposal carries the item's CURRENT state
-//     (status, whether evidence is attached, whether a human decided it) so
-//     the per-item review can name the proposals that target a satisfied
-//     item (QUAL-5 / SAF-2). Returned for review; applyAssessment writes
-//     only what the reviewer ticked and never overrides a human's decision.
+//     (status, whether evidence is attached, whether a human decided it — a
+//     note or a person-attached chip, isHumanTerritory, where the database
+//     refuses a machine write) so the per-item review can name the proposals
+//     that target a satisfied item (QUAL-5 / SAF-2). Returned for review;
+//     applyAssessment writes only what the reviewer ticked and never
+//     overrides a human's decision.
 //
 // Authority: any active member can run proposals (they spend the caller's
 // own AI key, and saving is where write authority is enforced).
@@ -26,7 +28,7 @@ import { governedAiCall, GovernedCallError } from "@/lib/ai/governedCall";
 import { extractJsonBlock } from "@/lib/orchestrator/protocol";
 import { renderKnowledgePages } from "@/lib/knowledgePageRender";
 import { resolveDocumentFile } from "@/lib/docFileServer";
-import { validateSegmentedItems, type SegmentedItem } from "@/lib/checklistEngine";
+import { isHumanTerritory, validateSegmentedItems, type ChecklistItemState, type SegmentedItem } from "@/lib/checklistEngine";
 
 export const runtime = "nodejs";
 export const maxDuration = 120;
@@ -122,6 +124,10 @@ export async function POST(req: NextRequest) {
     status: string | null; evidence: unknown;
   }>);
   if (items.length === 0) return bad("This checklist has no items to assess.", 404);
+  const humanTerritory = (it: (typeof items)[number]) => isHumanTerritory({
+    manualNote: it.manual_note,
+    evidence: Array.isArray(it.evidence) ? (it.evidence as ChecklistItemState["evidence"]) : [],
+  });
 
   // The project's REAL context — the assessment grounds on what the
   // platform holds, not on typical-plant guesswork.
@@ -202,7 +208,7 @@ export async function POST(req: NextRequest) {
       rationale: String(a.rationale ?? "").slice(0, 1000),
       current: {
         text: item.text, section: item.section, status, hasEvidence,
-        humanDecided: Boolean(item.manual_note),
+        humanDecided: humanTerritory(item),
         protectedFromDowngrade: status === "satisfied" || hasEvidence,
       },
     });
@@ -210,7 +216,7 @@ export async function POST(req: NextRequest) {
   if (proposals.length === 0) return bad("The assessment returned nothing usable — try again.", 502);
   return NextResponse.json({
     proposals,
-    humanDecided: items.filter((it) => it.manual_note).length,
+    humanDecided: items.filter(humanTerritory).length,
     // QUAL-5 dw3: how many proposed N/As target an item already satisfied or evidence-bearing.
     protectedNaCount: proposals.filter((p) => p.applicability === "na" && p.current.protectedFromDowngrade).length,
   });

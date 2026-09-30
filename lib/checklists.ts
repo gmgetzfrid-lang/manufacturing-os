@@ -5,7 +5,8 @@
 // — nothing persists until the reviewer clicks save (createChecklist). The
 // assess route proposes applicability per item — applyAssessment writes ONLY
 // the proposals a person ticked one by one (SAF-2), never over a human's
-// override (manual_note marks human territory) and never a downgrade of an
+// override (a note or a person-attached chip marks human territory) and
+// never a downgrade of an
 // item that is satisfied or carries evidence (QUAL-5). runAutoEvidence is
 // the deterministic sweep: what the platform can PROVE (accepted turnover
 // matching the line's subject, an MI checklist completed on human sign-off,
@@ -19,9 +20,12 @@
 // the audit row is written only after a confirmed match. The machine paths
 // stamp a reserved actor (DEC-35: updated_by NULL + a sentinel name), so a
 // row always says whether a person or the machine set its status (QUAL-6).
-// The reason bar and the completion basis are checked here AND enforced by
-// the database (20261091): a write that bypasses this file meets the same
-// rules there.
+// The reason bar, the completion gate and the completion basis are checked
+// here AND enforced by the database (20261091): a write that bypasses this
+// file meets the same rules there — a machine-stamped write is validated
+// (sentinel name, never on a person's item, no note, no person chip), a
+// person's write is stamped with the caller, a decision needs its own reason,
+// and a completed checklist's items are frozen until it is reopened.
 
 import { supabase } from "@/lib/supabase";
 import type { Actor } from "@/lib/costs";
@@ -30,6 +34,8 @@ import { checkedWrite, describeWriteError } from "@/lib/checkedWrite";
 import {
   applyAutoEvidence,
   completionBasis,
+  isBlockingItem,
+  isHumanTerritory,
   MACHINE_ACTOR_ASSESSMENT,
   MACHINE_ACTOR_SWEEP,
   reasonProblem,
@@ -256,7 +262,8 @@ export interface AssessmentOutcome {
 
 /** Write the AI's applicability proposals a person ticked — per item, never
  *  by count (SAF-2 / GAP-404): a call with no confirmed ids writes nothing.
- *  Skips any item a human has already decided (manual_note set), and never
+ *  Skips any item in human territory (a note, or a person-attached chip —
+ *  the database refuses a machine-stamped write there), and never
  *  downgrades a satisfied or evidence-bearing item to N/A (QUAL-5).
  *  Rationale rides along so every verdict can show its reasoning. The
  *  audit row names every item written with its prior and new state. */
@@ -280,7 +287,7 @@ export async function applyAssessment(input: {
     const item = byId.get(p.itemId);
     if (!item) continue;
     if (!confirmed.has(p.itemId)) { skippedUnconfirmed += 1; continue; }
-    if (item.manualNote) { skippedHuman += 1; continue; }
+    if (isHumanTerritory(item)) { skippedHuman += 1; continue; }
     if (p.applicability === "na" && isProtectedFromDowngrade(item)) { skippedProtected += 1; continue; }
     const patch: Record<string, unknown> = {
       applicability: p.applicability,
@@ -317,10 +324,13 @@ export async function applyAssessment(input: {
 // ── Human override ───────────────────────────────────────────────────────
 
 /** Human override on one item — status, applicability, note, or manually
- *  attached evidence. A status or applicability change REQUIRES a reason
- *  that meets the bar (SAF-4 / GAP-405: no placeholder is ever invented);
- *  the note marks the item human-decided and every automated pass keeps
- *  its hands off from then on. Refused writes surface and audit nothing. */
+ *  attached evidence. A status or applicability change REQUIRES a reason of
+ *  its own that meets the bar (SAF-4 / GAP-405: no placeholder is ever
+ *  invented, and the note already on the item belongs to the earlier
+ *  decision); a note is set or replaced only with one that meets the bar and
+ *  is never cleared. The database refuses the same writes (20261091). The
+ *  note marks the item human-decided and every automated pass keeps its hands
+ *  off from then on. Refused writes surface and audit nothing. */
 export async function updateChecklistItem(input: {
   orgId: string; projectId: string;
   item: ChecklistItem;
@@ -333,12 +343,12 @@ export async function updateChecklistItem(input: {
   actor: Actor;
 }): Promise<{ ok: boolean; error?: string }> {
   const decides = input.patch.applicability !== undefined || input.patch.status !== undefined;
-  if (decides) {
+  if (decides || input.patch.manualNote !== undefined) {
     const problem = reasonProblem(input.patch.manualNote);
     if (problem) return { ok: false, error: problem };
-  } else if (input.patch.manualNote !== undefined && input.patch.manualNote !== null) {
-    const problem = reasonProblem(input.patch.manualNote);
-    if (problem) return { ok: false, error: problem };
+  }
+  if (decides && (input.patch.manualNote?.trim() || null) === input.item.manualNote) {
+    return { ok: false, error: "Give this decision its own reason — the note on the item is the earlier decision's." };
   }
   const row: Record<string, unknown> = {
     updated_at: new Date().toISOString(),
@@ -368,7 +378,9 @@ export async function updateChecklistItem(input: {
 
 /** Mark a checklist complete / open / void. Completion is gated on the
  *  items — and the gate FAILS CLOSED (QUAL-8): a failed item read or an
- *  empty checklist refuses. The evidence is re-checked at the moment it
+ *  empty checklist refuses; the database's completion rail refuses an empty
+ *  or unfinished checklist too (20261091), and freezes a completed
+ *  checklist's items until it is reopened here with status 'open'. The evidence is re-checked at the moment it
  *  matters (QUAL-1): a green resting on the sweep alone whose document has
  *  since left the register refuses the completion until the evidence check
  *  runs. What the completion rested on (QUAL-2, completed_basis) is the
@@ -386,7 +398,7 @@ export async function setChecklistStatus(input: {
     if (read.error) return { ok: false, error: `Couldn't verify the items, so the checklist stays open: ${read.error}` };
     const items = read.rows;
     if (items.length === 0) return { ok: false, error: "This checklist has no items — nothing was verified, so it cannot be completed." };
-    const blocking = items.filter((i) => i.applicability !== "na" && i.status !== "satisfied" && i.status !== "na");
+    const blocking = items.filter(isBlockingItem);   // the database's completion rail refuses the same
     if (blocking.length > 0) {
       return { ok: false, error: `${blocking.length} item${blocking.length === 1 ? " is" : "s are"} not satisfied yet — a checklist only completes when every applicable item is green or N/A.` };
     }

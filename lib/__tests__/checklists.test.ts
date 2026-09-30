@@ -137,7 +137,9 @@ describe("applyAssessment", () => {
 
   it("writes only the ticked ids; a satisfied or evidence-bearing item is never flipped to N/A, and a human-decided one is left alone", async () => {
     const out = await applyAssessment({ orgId: "o1", projectId: "p1", checklistId: "cl1", proposals, confirmedItemIds: ["a", "b", "c", "d"], actor });
-    expect(out).toMatchObject({ applied: 1, skippedHuman: 1, skippedProtected: 2, skippedUnconfirmed: 0, refused: 0, failed: 0 });
+    // c carries a note and d a person's chip: both are human territory (the
+    // database refuses a machine-stamped write there); b is protected (QUAL-5)
+    expect(out).toMatchObject({ applied: 1, skippedHuman: 2, skippedProtected: 1, skippedUnconfirmed: 0, refused: 0, failed: 0 });
     const byId = Object.fromEntries(state.tables.checklist_items.map((r) => [r.id as string, r]));
     expect(byId.a.status).toBe("na");
     expect(byId.a.applicability).toBe("na");
@@ -233,6 +235,27 @@ describe("updateChecklistItem", () => {
     expect(res.error).toMatch(/don't have permission|someone else changed/);
     expect(audits()).toHaveLength(0);
     expect(state.tables.checklist_items[0].status).toBe("open");
+  });
+
+  it("verification fix (SAF-4 / QUAL-2): a decision needs its OWN reason, and a note is never cleared — the database refuses both too", async () => {
+    const decided = mapped({ status: "satisfied", manualNote: "walked it down with ops on 9/14" });
+    state.tables.checklist_items = [row({ status: "satisfied", manual_note: "walked it down with ops on 9/14" })];
+    // the green's note reused for an N/A (or a reopen) is the earlier decision's
+    for (const patch of [{ applicability: "na" as const, status: "na" as const }, { applicability: "applies" as const, status: "open" as const }]) {
+      const res = await updateChecklistItem({ orgId: "o1", projectId: "p1", item: decided, patch: { ...patch, manualNote: "  walked it down with ops on 9/14 " }, actor });
+      expect(res.ok).toBe(false);
+      expect(res.error).toMatch(/its own reason/);
+    }
+    // clearing, or cutting a note below the bar, with no decision
+    for (const manualNote of [null, "", "x"]) {
+      const res = await updateChecklistItem({ orgId: "o1", projectId: "p1", item: decided, patch: { manualNote }, actor });
+      expect(res.ok, JSON.stringify(manualNote)).toBe(false);
+    }
+    expect(itemWrites()).toHaveLength(0);
+    expect(audits()).toHaveLength(0);
+    // a new reason lands
+    const ok = await updateChecklistItem({ orgId: "o1", projectId: "p1", item: decided, patch: { applicability: "na", status: "na", manualNote: "Line was removed from scope by MOC-114" }, actor });
+    expect(ok.ok).toBe(true);
   });
 
   it("attaching evidence alone needs no reason", async () => {

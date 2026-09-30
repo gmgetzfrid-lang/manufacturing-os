@@ -110,6 +110,7 @@ export const IMMUTABLE_TABLES: Record<string, string> = {
   distribution_acks: "distribution acknowledgments are the recipient's own act",
   document_review_signoffs: "review sign-offs are bound to the reviewer's e-signature",
   org_configurations: "the capability policy changes only through the audited, controller-gated editor",
+  turnover_review_events: "the turnover review history is written only by the database's trigger on turnover_items (a restored decided item gets one row from its own stamps)",
 };
 
 /** True when `table` is append-only / self-insert-only and must not be blind-imported. */

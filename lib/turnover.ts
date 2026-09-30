@@ -19,8 +19,12 @@
 //
 // Every decision write is a checked write (lib/checkedWrite.ts, GAP-402):
 // a refusal surfaces and audits nothing. Waive, reject, reopen and void
-// require a typed reason that meets the bar (SAF-4 / GAP-405): checked here,
-// and enforced by the database for a write that bypasses this file.
+// require a typed reason of their OWN that meets the bar (SAF-4 / GAP-405 —
+// the note already on the row belongs to the earlier decision): checked
+// here, and enforced by the database for a write that bypasses this file,
+// which also keeps a standing decision's note and reviewer (and a void's
+// reason) until the next decision, and stamps the reviewer / closer with the
+// caller's uid and profile name whatever the client sends (20261091).
 
 import { supabase } from "@/lib/supabase";
 import type { Actor } from "@/lib/costs";
@@ -180,6 +184,10 @@ async function audit(action: string, orgId: string, resourceId: string, actor: A
 
 const actorName = (actor: Actor) => actor.email?.split("@")[0] ?? null;
 
+/** The refusal when a decision would reuse the note already on the row —
+ *  that note is the earlier decision's (the database refuses it too). */
+const OWN_REASON = "Give this decision its own reason — the note on the item is the earlier decision's.";
+
 // ── Turnover items ───────────────────────────────────────────────────────
 
 /** The turnover items, or a thrown error the surface renders as "failed to
@@ -279,6 +287,7 @@ export async function reviewTurnoverItem(input: {
   if (input.status === "rejected" || input.status === "waived") {
     const problem = reasonProblem(note);
     if (problem) return { ok: false, error: problem };
+    if (note === item.reviewNote) return { ok: false, error: OWN_REASON };
   }
   const row: Record<string, unknown> = { status: input.status };
   if (input.documentId !== undefined) row.document_id = input.documentId;
@@ -300,8 +309,8 @@ export async function reviewTurnoverItem(input: {
 /** Reopen an accepted or waived item for re-review (QUAL-11): the item goes
  *  back to "received — awaiting review" and the row carries WHO reopened it,
  *  WHEN and WHY (the reason is the row's review note, which the database
- *  requires — at least 10 characters — for any move out of accepted /
- *  waived). The acceptance itself is never lost: its history row was written
+ *  requires for any move out of accepted / waived — a NEW note of at least
+ *  10 characters; the one on the row is the decision being reopened). The acceptance itself is never lost: its history row was written
  *  when it was decided (or backfilled by 20261091 for a decision made before
  *  the history existed), and the reopen appends a `reopen` row in the same
  *  statement. Authority is the write policy's (a controller or the project
@@ -316,6 +325,7 @@ export async function reopenTurnoverItem(input: {
   const reason = input.reason.trim();
   const problem = reasonProblem(reason);
   if (problem) return { ok: false, error: problem };
+  if (reason === item.reviewNote) return { ok: false, error: OWN_REASON };
   const w = await checkedWrite(supabase.from("turnover_items").update({
     status: "received",
     reviewed_at: new Date().toISOString(), reviewed_by: input.actor.uid,
@@ -400,6 +410,7 @@ export async function setPunchStatus(input: {
   if (input.status === "void") {
     const problem = reasonProblem(note);
     if (problem) return { ok: false, error: problem };
+    if (note === input.item.closureNote) return { ok: false, error: OWN_REASON };
   }
   const row: Record<string, unknown> = { status: input.status };
   if (input.status === "done" || input.status === "void") {

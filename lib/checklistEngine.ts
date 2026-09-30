@@ -89,6 +89,12 @@ export interface AutoEvidenceResult {
 // The sweep and the AI assessment stamp `updated_by = NULL` and one of these
 // names, so a row can always say whether a person or the machine set its
 // status (QUAL-6). A human write always carries a uid and never these names.
+// Both run in the browser under the user's own token, so the database
+// (20261091 checklist_items_decision_rail) validates what a machine-stamped
+// write may DO: one of these names (the SQL list is pinned to these two),
+// never on an item a person decided (isHumanTerritory), no note, no person
+// chip, and a green it sets carries an auto citation. Every other signed-in
+// write is stamped there with the caller's uid and profile name.
 export const MACHINE_ACTOR_SWEEP = "evidence sweep";
 export const MACHINE_ACTOR_ASSESSMENT = "AI assessment";
 export const isMachineActorName = (name: string | null | undefined): boolean =>
@@ -119,10 +125,26 @@ export function reasonProblem(reason: string | null | undefined): string | null 
 
 // ── Completion basis (QUAL-2) ────────────────────────────────────────────
 
-/** A person decided this item: a note (every human control writes one, with
- *  a reason that meets the bar) or a person-attached evidence chip. */
+const hasPersonChip = (it: Pick<ChecklistItemState, "evidence">): boolean =>
+  it.evidence.some((e) => e.source === "manual");
+
+/** Human territory: an item carrying any note (a legacy short one included)
+ *  or a person-attached chip. The sweep and the assessment never write on it
+ *  — the database refuses a machine-stamped write there too. */
+export const isHumanTerritory = (it: Pick<ChecklistItemState, "manualNote" | "evidence">): boolean =>
+  Boolean(it.manualNote) || hasPersonChip(it);
+
+/** A person decided this item: a note that meets the reason bar (every human
+ *  control writes one — `'x'` or a canned string is not a person's reason)
+ *  or a person-attached evidence chip. checklist_completion_basis() counts a
+ *  note only when quality_reason_ok() holds — the same bar. */
 export const isHumanDecided = (it: Pick<ChecklistItemState, "manualNote" | "evidence">): boolean =>
-  Boolean(it.manualNote) || it.evidence.some((e) => e.source === "manual");
+  reasonProblem(it.manualNote) === null || hasPersonChip(it);
+
+/** An applicable item that is neither green nor N/A — what keeps a checklist
+ *  from completing (setChecklistStatus, and the database's completion rail). */
+export const isBlockingItem = (it: Pick<ChecklistItemState, "status" | "applicability">): boolean =>
+  it.applicability !== "na" && it.status !== "satisfied" && it.status !== "na";
 
 /** A green the evidence sweep set that no person has verified yet — what a
  *  reviewer confirms ("Verify") before the completion can be citable. */
@@ -134,25 +156,28 @@ const isNa = (it: Pick<ChecklistItemState, "status" | "applicability">): boolean
   it.applicability === "na" || it.status === "na";
 
 /** An N/A no person gave a reason for — the AI assessment's (stamped with
- *  the machine actor, no note) or a legacy one. Every human N/A path writes
- *  a reason (updateChecklistItem; the database refuses a uid-stamped N/A
- *  without one), so a note-less N/A is not a person's decision. */
+ *  the machine actor, no note: the database refuses a machine note) or a
+ *  legacy one, or one whose note is under the bar. Every human N/A path
+ *  writes a reason (updateChecklistItem; the database refuses a person's
+ *  N/A without a new one that meets the bar). */
 export const isUnreasonedNa = (it: Pick<ChecklistItemState, "status" | "applicability" | "manualNote">): boolean =>
-  isNa(it) && !it.manualNote;
+  isNa(it) && reasonProblem(it.manualNote) !== null;
 
 /** A green a person decided (a note, or a person-attached chip). */
 export const isHumanGreen = (it: Pick<ChecklistItemState, "status" | "applicability" | "manualNote" | "evidence">): boolean =>
   it.status === "satisfied" && it.applicability !== "na" && isHumanDecided(it);
 
-/** 'human' only when a person stands behind the whole checklist: no green
- *  rests on the evidence sweep alone, no N/A lacks a person's reason, and at
- *  least one green was decided by a person. Otherwise 'auto'. An N/A proves
- *  nothing, so a checklist the assessment N/A'd end to end — or one with no
- *  human green at all — is never citable proof (QUAL-2). Only a 'human'
- *  completion is citable by another checklist. The database computes the
- *  stored value with the SAME rule (checklist_completion_basis(), 20261091)
- *  and ignores a client-supplied one; its backfill uses it too. */
+/** 'human' only when a person stands behind the whole checklist: every
+ *  applicable item is green or N/A, no green rests on the evidence sweep
+ *  alone, no N/A lacks a person's reason, and at least one green was decided
+ *  by a person. Otherwise 'auto'. An N/A proves nothing, so a checklist the
+ *  assessment N/A'd end to end — or one with no human green at all — is never
+ *  citable proof (QUAL-2). Only a 'human' completion is citable by another
+ *  checklist. The database computes the stored value with the SAME rule
+ *  (checklist_completion_basis(), 20261091, clause for clause) and ignores a
+ *  client-supplied one; its backfill uses it too. */
 export function completionBasis(items: ChecklistItemState[]): "human" | "auto" {
+  if (items.some(isBlockingItem)) return "auto";
   if (items.some(isAutoOnlyGreen)) return "auto";
   if (items.some(isUnreasonedNa)) return "auto";
   if (!items.some(isHumanGreen)) return "auto";
@@ -275,9 +300,8 @@ export function applyAutoEvidence(
 ): AutoEvidenceResult[] {
   const out: AutoEvidenceResult[] = [];
   for (const item of items) {
-    if (item.manualNote) continue;                       // human decided — hands off
+    if (isHumanTerritory(item)) continue;                // a note or a person's chip — hands off
     if (item.applicability === "na" || item.status === "na") continue;
-    if (item.status === "satisfied" && item.evidence.some((e) => e.source === "manual")) continue;
     const rule = EVIDENCE_RULES.find((r) => r.match.test(item.text));
     if (!rule) continue;
     const proof = rule.probe(state, item.text);

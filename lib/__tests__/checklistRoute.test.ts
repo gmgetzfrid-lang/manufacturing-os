@@ -67,8 +67,10 @@ describe("POST /api/projects/checklist — assess", () => {
     });
     expect(body.proposals[1].current).toMatchObject({ status: "satisfied", hasEvidence: true, protectedFromDowngrade: true });
     expect(body.proposals[2].current).toMatchObject({ humanDecided: true, protectedFromDowngrade: false });
-    expect(body.proposals[3].current).toMatchObject({ hasEvidence: true, protectedFromDowngrade: true });
-    expect(body.humanDecided).toBe(1);
+    // a person-attached chip is human territory too — the database refuses a
+    // machine-stamped write on it (20261091), so the review locks it
+    expect(body.proposals[3].current).toMatchObject({ hasEvidence: true, humanDecided: true, protectedFromDowngrade: true });
+    expect(body.humanDecided).toBe(2);
     // only the N/A on the satisfied item counts (the evidence-bearing one is proposed `applies`)
     expect(body.protectedNaCount).toBe(1);
   });

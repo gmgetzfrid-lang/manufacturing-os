@@ -1,7 +1,9 @@
 // projects Round G — J2 QUALITY, the turnover + punch data layer.
 //
 //   SAF-4 / GAP-405  reject, waive, reopen and void refuse a blank, short or
-//                    canned reason SERVER-SIDE; waived is its own bucket.
+//                    canned reason SERVER-SIDE, and one that merely repeats
+//                    the note already on the row (the earlier decision's —
+//                    the database refuses it too); waived is its own bucket.
 //   SAF-3 / GAP-402  an RLS-refused decision returns an error and writes no
 //                    audit row (turnover review, reopen, punch status, seed).
 //   QUAL-11          the history is the DATABASE's to write (20261091's
@@ -88,6 +90,16 @@ describe("reviewTurnoverItem — the reason bar (SAF-4) and the history (QUAL-11
     expect(audits()).toHaveLength(0);
   });
 
+  it("verification fix: reject and waive need their OWN reason — the note already on the row is the earlier decision's (the database refuses it too)", async () => {
+    const was = item({ status: "rejected", reviewNote: "Heat numbers on the MTRs do not trace to the installed spools" });
+    const res = await reviewTurnoverItem({ item: was, status: "waived", note: " Heat numbers on the MTRs do not trace to the installed spools ", actor });
+    expect(res.ok).toBe(false);
+    expect(res.error).toMatch(/its own reason/);
+    expect(state.writes).toHaveLength(0);
+    const ok = await reviewTurnoverItem({ item: was, status: "waived", note: "Spools replaced under NCR-22; the certs are moot", actor });
+    expect(ok.ok).toBe(true);
+  });
+
   it("a rejection lands with the reviewer, a fresh date and the note on the row (what the history trigger records as a NONCONFORMANCE), and audits after the confirmed match", async () => {
     const res = await reviewTurnoverItem({ item: item(), status: "rejected", note: "Heat numbers on the MTRs do not trace to the installed spools", actor });
     expect(res).toEqual({ ok: true });
@@ -155,6 +167,13 @@ describe("reopenTurnoverItem (QUAL-11)", () => {
     expect(w.filters).toContainEqual(["status", "accepted"]);
   });
 
+  it("verification fix: a reopen needs its OWN reason — the acceptance's note is not one", async () => {
+    const res = await reopenTurnoverItem({ item: item({ status: "accepted", reviewNote: "reviewed page by page" }), reason: "reviewed page by page", actor });
+    expect(res.ok).toBe(false);
+    expect(res.error).toMatch(/its own reason/);
+    expect(state.writes).toHaveLength(0);
+  });
+
   it("a refused reopen audits nothing", async () => {
     state.refuse = true;
     const res = await reopenTurnoverItem({ item: item({ status: "waived" }), reason: "The item turned out to be required after all", actor });
@@ -207,6 +226,13 @@ describe("setPunchStatus (SAF-4 / QUAL-7 / SAF-3)", () => {
       const res = await setPunchStatus({ item: punch(), status: "void", note, actor });
       expect(res.ok, JSON.stringify(note)).toBe(false);
     }
+    expect(state.writes).toHaveLength(0);
+  });
+
+  it("verification fix: void needs its OWN reason — a done item's closure note is not one", async () => {
+    const res = await setPunchStatus({ item: punch({ status: "done", closureNote: "Insulation reinstalled, verified by ops" }), status: "void", note: "Insulation reinstalled, verified by ops", actor });
+    expect(res.ok).toBe(false);
+    expect(res.error).toMatch(/its own reason/);
     expect(state.writes).toHaveLength(0);
   });
 
