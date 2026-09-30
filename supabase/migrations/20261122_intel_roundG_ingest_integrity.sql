@@ -113,7 +113,10 @@ ALTER TABLE knowledge_chunks ADD COLUMN IF NOT EXISTS source_model TEXT;
 DO $$
 BEGIN
   IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'knowledge_chunks_source_check') THEN
-    -- NOT VALID then VALIDATE: the scan runs without blocking writers.
+    -- Binds every new row at once. The VALIDATE below confirms the existing
+    -- rows (all 'text', from the default) with one read-only scan, run under
+    -- this transaction's lock on knowledge_chunks: on a very large corpus,
+    -- paste at a quiet moment. On a re-run both are no-ops.
     ALTER TABLE knowledge_chunks ADD CONSTRAINT knowledge_chunks_source_check
       CHECK (source IN ('text', 'vision')) NOT VALID;
   END IF;

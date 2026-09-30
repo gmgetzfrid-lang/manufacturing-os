@@ -74,7 +74,7 @@ describe("20261122 — the columns the code reads", () => {
     for (const n of names) expect(code).toMatch(new RegExp(`ALTER TABLE knowledge_documents ADD COLUMN IF NOT EXISTS ${n} `));
   });
 
-  it("the source CHECK is added NOT VALID then validated (no long write lock on the chunk table)", () => {
+  it("the source CHECK binds new rows and is validated over the existing ones (idempotent on a re-run)", () => {
     expect(code).toMatch(/ADD CONSTRAINT knowledge_chunks_source_check\s+CHECK \(source IN \('text', 'vision'\)\) NOT VALID;/);
     expect(code).toMatch(/ALTER TABLE knowledge_chunks VALIDATE CONSTRAINT knowledge_chunks_source_check;/);
   });
