@@ -180,11 +180,11 @@ lib/mentionIndexer.ts:136-142 — `const { error } = await supabaseAdmin.from("e
 **Pending migration:** `supabase/migrations/20261128_intel_roundG_registry_authority.sql`.
 
 **Done-when.**
-1. ✓ for DELETE: RESTRICTIVE FOR DELETE requires `is_org_controller(org_id)`. The FOR UPDATE limb on `unit_code` / `code` / `origin` was **decided otherwise (`DEC-50`)**: those columns stay with the registry WRITER tier, not the controller tier, because they are what the Operating Areas page promises Manager and Supervisor may edit. The database already enforces that tier through `assets_guard_registry` (20261045: a registry-column change by a non-writer raises), so a Requester cannot change them. No controller-only UPDATE policy was added.
+1. ✓ for DELETE: RESTRICTIVE FOR DELETE requires `is_org_controller(org_id)`. The FOR UPDATE limb on `unit_code` / `code` / `origin` was **decided otherwise (`DEC-53`)**: those columns stay with the registry WRITER tier, not the controller tier, because they are what the Operating Areas page promises Manager and Supervisor may edit. The database already enforces that tier through `assets_guard_registry` (20261045: a registry-column change by a non-writer raises), so a Requester cannot change them. No controller-only UPDATE policy was added.
 2. ✓ Both: deletion writes an audit row (database trigger, not a best-effort client call), and the writer tier archives instead, which it can undo from the Archived list or the drawer.
-3. ✓ for asset_types and asset_photos, which get the controller DELETE. For asset_files the limb was **decided otherwise (`DEC-50`)**: it keeps the writer-tier overlay from 20261045, because it is a document link rather than a registry record and un-linking is the everyday act of the File Reference modal.
+3. ✓ for asset_types and asset_photos, which get the controller DELETE. For asset_files the limb was **decided otherwise (`DEC-53`)**: it keeps the writer-tier overlay from 20261045, because it is a document link rather than a registry record and un-linking is the everyday act of the File Reference modal.
 
-**Scope / residual.** Apply 20261128. Two of the listed limbs (the controller-only UPDATE on the identity columns, and asset_files) were decided otherwise in `DEC-50`, not built; reversing that decision is `DEC-50`'s Reversal (1).
+**Scope / residual.** Apply 20261128. Two of the listed limbs (the controller-only UPDATE on the identity columns, and asset_files) were decided otherwise in `DEC-53`, not built; reversing that decision is `DEC-53`'s Reversal (1).
 
 ---
 

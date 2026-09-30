@@ -80,7 +80,7 @@ about the system.
 | [DEC-44](#dec-44) | Content egress rails: `download_audits` append-only, presigned windows ≤ 1 h, the service worker caches no API response | low | `DIST-9`, `DRLS-8`, `EGR-4`, `PKG-11`, `XEDGE-6` |
 | [DEC-45](#dec-45) | Bearer columns never leave the database in an export and never come back from a backup | low | `EGR-7`, `XEDGE-10`, `BKP-1`, `INTK-6` |
 | [DEC-47](#dec-47) | Imported schedule rows are **commitments everywhere** — one liveness predicate (`lib/milestoneLiveness.ts`) for health, coach, report and EV | low | `MON-6`, `PM-3`, `SCH-5` |
-| [DEC-50](#dec-50) | The equipment registry: writer tier edits and archives, controller tier deletes; a site code identifies the **type**, one code is one asset; codebook edits never rewrite codes | medium | `AREA-1`, `IRLS-5`, `CB-3`, `CB-5`, `CB-6`, `CB-10`, `GAP-310` |
+| [DEC-53](#dec-53) | The equipment registry: writer tier edits and archives, controller tier deletes; a site code identifies the **type**, one code is one asset; codebook edits never rewrite codes | medium | `AREA-1`, `IRLS-5`, `CB-3`, `CB-5`, `CB-6`, `CB-10`, `GAP-310` |
 
 ---
 
@@ -1306,7 +1306,7 @@ facility with no configuration must keep working exactly as it does today.
 
 *Landed 2026-09-23 (document-control Round F): the hold-change and hold-aging audience is the org's `holds.release` pool read from the capability policy (`lib/holds.ts` `holdPoolFromMembers` — tokens expanded against the held collection, per-person grants included), never a literal list; the shipped wildcard is read as "no dedicated pool" and falls back to the controller tier (`isControllerRole`, what `is_org_controller` means) rather than an org-wide broadcast, so an unconfigured org's fan-out is unchanged. Which controls a person sees on the two hold surfaces is the same policy through `holdControlsFor`. See `HLD-8`, `HLD-10`, `HLD-14`.*
 
-*Landed 2026-09-30 (intelligence Round G, I-10): the equipment registry adds no role list. Its delete tier is the controller tier (`isControllerRole` from `lib/permissions.ts` on the client, `is_org_controller` in `20261128`), and the master-list workbook route reads the registry writer tier from `ADMIN_SURFACES` "assets" `writes` through `memberHoldsAny`, which checks the whole role collection. See `AREA-1`, `IRLS-5`, `BR-4` and `DEC-50`.*
+*Landed 2026-09-30 (intelligence Round G, I-10): the equipment registry adds no role list. Its delete tier is the controller tier (`isControllerRole` from `lib/permissions.ts` on the client, `is_org_controller` in `20261128`), and the master-list workbook route reads the registry writer tier from `ADMIN_SURFACES` "assets" `writes` through `memberHoldsAny`, which checks the whole role collection. See `AREA-1`, `IRLS-5`, `BR-4` and `DEC-53`.*
 
 <a id="dec-36"></a>
 ## DEC-36 · Where the routing table lives, and how it resolves
@@ -1897,8 +1897,8 @@ same predicate, and the Schedule tab's copy changes with it.
 
 *Landed 2026-09-29 (projects Round G; review fix 2026-09-30): counting every row only helps if every consumer reads the same rows. `lib/milestoneLiveness.ts` also exports `PROJECT_MILESTONE_READ_LIMIT` (1,000). The health snapshot and the printed report both read `order("planned_at").order("id").limit(PROJECT_MILESTONE_READ_LIMIT)`, which is the subset the Costs tab's unbounded `order("planned_at")` read gets under the API's default row cap. So EV, CPI and overdue agree across surfaces, and the report discloses "first N of M" above the bound (projects-tab `MON-5`). A new project-level milestone reader imports the same bound rather than choosing its own.*
 
-<a id="dec-50"></a>
-## DEC-50 · The equipment registry's tiers, and what a site code identifies
+<a id="dec-53"></a>
+## DEC-53 · The equipment registry's tiers, and what a site code identifies
 
 **Decision. Five calls about the registry and its codebook. They were made together because each one is where the others would otherwise leak.**
 
@@ -1910,7 +1910,7 @@ same predicate, and the Schedule tab's copy changes with it.
 
 > Made during intelligence Round G (2026-09-30) under the protocol's fail-safe rule. It closes `IRLS-5`, `CB-3` and `CB-10`, and records the partial calls on `AREA-1` (its runtime refusal test), `CB-5`, `CB-6` and `GAP-310`.
 >
-> **Numbering, for the integrator (I-10).** The brief's placeholder for a new decision was DEC-44, which base `3ae0b06` already holds (with DEC-45 and DEC-47), so a placeholder would have duplicated a live anchor on this branch. The integration branch (`2a2ae73`) has since taken DEC-48 (J4) and DEC-49 (J9), so this decision is minted as **DEC-50**, the next number free there; J3's in-flight DEC-48 may claim DEC-50 first at merge. Whatever number it lands on, renumber these places together (grep `DEC-50` / `dec-50`): the anchor, the index row, this section, the DEC-35 landed line, and the citations in `intelligence/10-codebook.md`, `intelligence/12-operating-areas.md` and `intelligence/16-persistence-rls.md`. No code, migration or test cites it.
+> **Numbering.** DEC-53 on the integration branch (DEC-44 to DEC-52 were already taken when this package merged).
 >
 > **Verification fix (2026-09-30, intelligence Round G).** An independent verification found that (2) claimed more than the code did. Service-role writes did not "always land": a parallel insert the trigger cannot see was refused by the index, and the Bridge then lost the asset. A service-role UPDATE to a taken code also kept its old code and still answered UPDATE 1. (2) and the Acceptance now say what `20261128` and `lib/equipmentBridgeServer.ts` do. The UPDATE is refused with 23505 naming the holder, and the Bridge re-sends both of those writes once without the code. (4) and the Acceptance also said "every caller" / "any caller" for the in-use guard, which the service role's cascades pass; they now say "person". The decision itself is unchanged.
 
