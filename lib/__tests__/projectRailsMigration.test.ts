@@ -1,0 +1,248 @@
+// projects Round G — J8 PROJECT-MODEL migrations 20261102 (project rails)
+// and 20261103 (closeout rails). Shape pins — the enforcement is in the
+// database and cannot run here (DEC-30): one transaction each, the DEC-30
+// inventory captured BEFORE it as aggregate counts, the fixed (check, ok, n)
+// result shape, every SECURITY DEFINER function pinned, explicit
+// REVOKE / GRANT on the RPCs, the purge GUC spelled exactly as the shared
+// contract (app.record_purge = 'project:<id>'), and every re-created live
+// object byte-faithful to its newest definition except the lines the
+// finding changes (lineDiff).
+
+import { describe, it, expect } from "vitest";
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
+
+const read = (f: string) => readFileSync(join(process.cwd(), "supabase", "migrations", f), "utf8");
+const m02 = read("20261102_prj_roundG_project_rails.sql");
+const m03 = read("20261103_prj_roundG_project_closeout_rails.sql");
+const m0906 = read("20260906_projects_hardening.sql");
+const m0609 = read("20260609_phase1_normalization.sql");
+
+const stripComments = (sql: string) => sql.replace(/--[^\n]*/g, "");
+const between = (s: string, a: string, b: string) => {
+  const i = s.indexOf(a);
+  expect(i, `missing: ${a}`).toBeGreaterThanOrEqual(0);
+  const j = s.indexOf(b, i + a.length);
+  expect(j, `missing after ${a}: ${b}`).toBeGreaterThan(i);
+  return s.slice(i, j);
+};
+function lineDiff(a: string, b: string) {
+  const A = a.split("\n"), B = b.split("\n");
+  return { onlyInA: A.filter((l) => !B.includes(l)), onlyInB: B.filter((l) => !A.includes(l)) };
+}
+const finalSelect = (sql: string) => sql.slice(sql.lastIndexOf("COMMIT;"));
+
+for (const [name, sql, temp] of [
+  ["20261102", m02, "prj_g_j8_rails_inventory"],
+  ["20261103", m03, "prj_g_j8_closeout_inventory"],
+] as const) {
+  describe(`${name} — the paste-once shape`, () => {
+    it("one transaction; the inventory is captured BEFORE it, in a re-runnable temp table, as counts only", () => {
+      const body = stripComments(sql);
+      expect((body.match(/\bBEGIN;/g) ?? []).length).toBe(1);
+      expect((body.match(/\bCOMMIT;/g) ?? []).length).toBe(1);
+      const before = sql.slice(0, sql.indexOf("\nBEGIN;"));
+      expect(before).toContain(`DROP TABLE IF EXISTS pg_temp.${temp};\nCREATE TEMP TABLE ${temp} AS`);
+      const rows = stripComments(before).match(/SELECT 'inventory[^']*(?:''[^']*)*'/g) ?? [];
+      expect(rows.length).toBeGreaterThanOrEqual(5);
+      expect(stripComments(before)).toMatch(/COUNT\(/);
+      // No customer row leaves the database: the inventory and the result set select counts, never rows.
+      expect(stripComments(before)).not.toMatch(/SELECT \*/);
+      expect(stripComments(finalSelect(sql))).not.toMatch(/SELECT \*/);
+    });
+
+    it("ends in ONE SELECT of (check, ok, n): probes carry ok, the inventory carries n", () => {
+      const tail = stripComments(finalSelect(sql));
+      expect(tail).toMatch(/AS check,[\s\S]*AS ok, NULL::text AS n/);
+      expect(tail).toContain(`UNION ALL SELECT inventory, NULL::boolean, n FROM ${temp};`);
+      expect((tail.match(/;/g) ?? []).length).toBe(2); // COMMIT; + the one SELECT's terminator
+    });
+
+    it("every SECURITY DEFINER function pins search_path = public", () => {
+      const fns = stripComments(sql).match(/CREATE OR REPLACE FUNCTION[\s\S]*?AS \$\$/g) ?? [];
+      expect(fns.length).toBeGreaterThan(0);
+      for (const f of fns) {
+        if (/SECURITY DEFINER/.test(f)) expect(f, f.split("\n")[0]).toMatch(/SECURITY DEFINER SET search_path = public/);
+      }
+    });
+  });
+}
+
+describe("20261102 — SEC-2: the nine read policies", () => {
+  it("drops and re-creates each member read on project_visible_to_me; writes are untouched", () => {
+    const tx = m02.slice(m02.indexOf("\nBEGIN;"), m02.indexOf("COMMIT;"));
+    for (const [t, pol] of [["change_orders", "change_orders_member_read"], ["project_checklists", "project_checklists_member_read"],
+      ["turnover_items", "turnover_items_member_read"], ["punch_items", "punch_items_member_read"],
+      ["project_parties", "project_parties_select"], ["cost_accounts", "cost_accounts_select"],
+      ["cost_documents", "cost_documents_select"], ["cost_entries", "cost_entries_select"]]) {
+      expect(tx).toContain(`DROP POLICY IF EXISTS ${pol} ON ${t};\nCREATE POLICY ${pol} ON ${t} FOR SELECT\n  USING (project_visible_to_me(project_id));`);
+    }
+    expect(tx).toMatch(/CREATE POLICY checklist_items_member_read ON checklist_items FOR SELECT\s+USING \(EXISTS \(SELECT 1 FROM project_checklists c\s+WHERE c\.id = checklist_items\.checklist_id AND project_visible_to_me\(c\.project_id\)\)\);/);
+    expect(stripComments(tx)).not.toMatch(/_write ON|_owner_write ON/);
+  });
+});
+
+describe("20261102 — SEC-9: projects UPDATE / DELETE are byte-faithful to 20260906 plus one active-membership line", () => {
+  const ACTIVE = "  AND EXISTS (SELECT 1 FROM org_members m WHERE m.org_id = projects.org_id AND m.uid = auth.uid() AND m.status = 'active')";
+  it("projects_update_owner", () => {
+    const live = between(m0906, "CREATE POLICY projects_update_owner ON projects", ");\n");
+    const next = between(m02, "CREATE POLICY projects_update_owner ON projects", ");\n");
+    const { onlyInA, onlyInB } = lineDiff(live, next);
+    expect(onlyInA).toEqual([]);
+    expect([...new Set(onlyInB)]).toEqual([ACTIVE]);
+    expect(next.split("\n").filter((l) => l === ACTIVE)).toHaveLength(2); // USING and WITH CHECK
+  });
+  it("projects_delete_owner", () => {
+    const live = between(m0906, "CREATE POLICY projects_delete_owner ON projects", ");\n");
+    const next = between(m02, "CREATE POLICY projects_delete_owner ON projects", ");\n");
+    const { onlyInA, onlyInB } = lineDiff(live, next);
+    expect(onlyInA).toEqual([]);
+    expect(onlyInB).toEqual([ACTIVE]);
+  });
+});
+
+describe("20261102 — PM-7 / PM-9 / PM-11: the feed", () => {
+  it("the insert policy binds author, org, visibility; comments need a manager; register rows need the register's authority", () => {
+    const p = between(m02, "CREATE POLICY project_activity_insert ON project_activity FOR INSERT WITH CHECK (", ");\n");
+    expect(p).toContain("  user_id = auth.uid()");
+    expect(p).toContain("  AND org_id = project_org(project_id)");
+    expect(p).toContain("  AND project_visible_to_me(project_id)");
+    expect(p).toContain("  AND (type <> 'comment' OR is_org_controller(org_id) OR can_manage_project(project_id))");
+    expect(p).toContain("  AND (type NOT IN ('doc_added', 'doc_removed') OR is_org_controller(org_id) OR is_project_owner(project_id))");
+    expect(stripComments(m02)).not.toMatch(/CREATE POLICY \w+ ON project_activity FOR (UPDATE|ALL)/);
+  });
+  it("the stamp trigger takes identity and time from the session; the service role names its own", () => {
+    const f = between(m02, "CREATE OR REPLACE FUNCTION stamp_project_activity_author()", "$$;");
+    expect(f).toMatch(/IF v_uid IS NULL THEN\s+RETURN NEW;/);
+    expect(f).toContain("NEW.user_id := v_uid;");
+    expect(f).toContain("NEW.created_at := NOW();");
+    expect(f).toMatch(/NEW\.user_name := COALESCE\(NULLIF\(v_email, ''\),/);
+    expect(m02).toMatch(/CREATE TRIGGER trg_project_activity_stamp\s+BEFORE INSERT ON project_activity/);
+  });
+  it("last_activity_at is advanced by an AFTER INSERT trigger for every author, and backfilled", () => {
+    const f = between(m02, "CREATE OR REPLACE FUNCTION touch_project_last_activity()", "$$;");
+    expect(f).toMatch(/UPDATE projects\s+SET last_activity_at = COALESCE\(NEW\.created_at, NOW\(\)\)/);
+    expect(m02).toMatch(/CREATE TRIGGER trg_project_activity_touch_project\s+AFTER INSERT ON project_activity/);
+    expect(m02).toMatch(/UPDATE projects p\s+SET last_activity_at = a\.newest\s+FROM \(SELECT project_id, MAX\(created_at\) AS newest FROM project_activity GROUP BY project_id\) a/);
+  });
+});
+
+describe("20261102 — PM-8 / SEC-17: the register", () => {
+  it("DROPS the FOR ALL policy and creates one policy per verb", () => {
+    const tx = m02.slice(m02.indexOf("\nBEGIN;"), m02.indexOf("COMMIT;"));
+    expect(tx).toContain('DROP POLICY IF EXISTS "project_documents_member_all" ON project_documents;');
+    expect(stripComments(tx)).not.toMatch(/CREATE POLICY "?project_documents_member_all/);
+    for (const v of ["select", "insert", "update", "delete"]) expect(tx).toContain(`CREATE POLICY project_documents_${v} ON project_documents`);
+  });
+  it("checkouts_resync_project_documents is 20260609's body, now SECURITY DEFINER, plus the org-consistency guard", () => {
+    const live = between(m0609, "CREATE OR REPLACE FUNCTION checkouts_resync_project_documents()", "END$$;");
+    const next = between(m02, "CREATE OR REPLACE FUNCTION checkouts_resync_project_documents()", "END$$;");
+    const { onlyInA, onlyInB } = lineDiff(live, next);
+    expect(onlyInA).toEqual(["RETURNS trigger LANGUAGE plpgsql AS $$"]);
+    expect(onlyInB).toEqual([
+      "RETURNS trigger LANGUAGE plpgsql SECURITY DEFINER SET search_path = public AS $$",
+      "  IF project_org(NEW.project_id) IS DISTINCT FROM NEW.org_id THEN",
+    ]);
+    // the two added lines close with the file's existing `RETURN NEW; END IF;` lines
+    expect(next).toMatch(/IF project_org\(NEW\.project_id\) IS DISTINCT FROM NEW\.org_id THEN\n    RETURN NEW;\n  END IF;\n  INSERT INTO project_documents/);
+  });
+});
+
+describe("20261102 — SEC-15: transfer_project_ownership", () => {
+  const f = between(m02, "CREATE OR REPLACE FUNCTION transfer_project_ownership(", "$$;");
+  it("checks the caller (active owner or controller) and the recipient (active member), then moves every piece in one call", () => {
+    expect(f).toMatch(/IF NOT \(is_org_controller\(v_proj\.org_id\) OR user_owns_project\(p_project\)\) THEN/);
+    expect(f).toMatch(/IF NOT EXISTS \(SELECT 1 FROM org_members WHERE org_id = v_proj\.org_id AND uid = p_new_owner AND status = 'active'\) THEN\s+RAISE EXCEPTION 'The new owner must be an active member of this workspace\.'/);
+    expect(f).toMatch(/SELECT \* INTO v_proj FROM projects WHERE id = p_project FOR UPDATE;/);
+    expect(f).toMatch(/UPDATE projects\s+SET owner_user_id = p_new_owner/);
+    expect(f).toMatch(/ON CONFLICT \(project_id, user_id\) DO UPDATE SET role = 'owner';/);
+    expect(f).toMatch(/UPDATE project_members SET role = 'collaborator'\s+WHERE project_id = p_project AND user_id = v_proj\.owner_user_id AND role = 'owner';/);
+    expect(f).toContain("'ownership_transferred'");
+    expect(f).toContain("'PROJECT_OWNERSHIP_TRANSFERRED'");
+  });
+  it("is revoked from PUBLIC and anon, granted to authenticated", () => {
+    expect(m02).toContain("REVOKE ALL ON FUNCTION transfer_project_ownership(uuid, uuid, text) FROM PUBLIC;");
+    expect(m02).toContain("REVOKE ALL ON FUNCTION transfer_project_ownership(uuid, uuid, text) FROM anon;");
+    expect(m02).toContain("GRANT EXECUTE ON FUNCTION transfer_project_ownership(uuid, uuid, text) TO authenticated;");
+  });
+});
+
+describe("20261103 — PM-1: the freeze and the reopen", () => {
+  it("guards the nine regulated tables BEFORE INSERT / UPDATE / DELETE", () => {
+    const loop = between(m03, "FOREACH t IN ARRAY ARRAY['cost_entries'", "END LOOP;");
+    for (const t of ["cost_entries", "change_orders", "cost_documents", "cost_accounts", "project_checklists", "checklist_items", "turnover_items", "punch_items", "milestones"]) {
+      expect(loop).toContain(`'${t}'`);
+    }
+    expect(loop).toContain("BEFORE INSERT OR UPDATE OR DELETE ON %I FOR EACH ROW EXECUTE FUNCTION enforce_project_record_guard()");
+  });
+  it("the guard refuses a signed-in write on a closed project, reads a checklist item's project through its checklist, and passes the purge and the cascade", () => {
+    const g = between(m03, "CREATE OR REPLACE FUNCTION enforce_project_record_guard()", "$$;");
+    expect(g).toMatch(/IF v_status IN \('completed', 'cancelled', 'archived'\) AND auth\.uid\(\) IS NOT NULL THEN/);
+    expect(g).toMatch(/SELECT project_id INTO v_old_pid FROM project_checklists WHERE id = NULLIF\(v_old->>'checklist_id', ''\)::uuid;/);
+    expect(g).toContain("CONTINUE WHEN v_purge = 'project:' || v_pid::text;");
+    expect(g).toContain("CONTINUE WHEN NOT FOUND;");
+    expect(g).toMatch(/IF TG_OP = 'DELETE' AND COALESCE\(v_hold, false\) THEN/);
+  });
+  it("only reopen_project leaves a closed status; it is controller-only, needs a reason, and clears the closure fields", () => {
+    const lg = between(m03, "CREATE OR REPLACE FUNCTION enforce_project_lifecycle_guard()", "$$;");
+    expect(lg).toContain("AND COALESCE(current_setting('app.project_reopen', true), '') <> 'project:' || OLD.id::text THEN");
+    expect(lg).toMatch(/IF NEW\.legal_hold IS DISTINCT FROM OLD\.legal_hold AND NOT is_org_controller\(OLD\.org_id\) THEN/);
+    const r = between(m03, "CREATE OR REPLACE FUNCTION reopen_project(", "$$;");
+    expect(r).toMatch(/IF NOT is_org_controller\(v_proj\.org_id\) THEN/);
+    expect(r).toContain("RAISE EXCEPTION 'A reason is required to reopen a closed project.'");
+    expect(r).toContain("PERFORM set_config('app.project_reopen', 'project:' || p_project::text, true);");
+    expect(r).toContain("SET status = 'active', completed_at = NULL, cancelled_at = NULL, cancelled_reason = NULL,");
+    expect(r).toContain("'PROJECT_REOPENED'");
+    expect(m03).toContain("REVOKE ALL ON FUNCTION reopen_project(uuid, text) FROM anon;");
+    expect(m03).toContain("GRANT EXECUTE ON FUNCTION reopen_project(uuid, text) TO authenticated;");
+  });
+});
+
+describe("20261103 — PM-6 / QUAL-3: delete counts, audits, and only then deletes", () => {
+  const d = between(m03, "CREATE OR REPLACE FUNCTION delete_project_record(", "$$;");
+  it("the purge GUC is the shared contract, spelled exactly, and set only around the deletes", () => {
+    expect(d).toContain("PERFORM set_config('app.record_purge', 'project:' || p_project::text, true);");
+    expect(d).toContain("PERFORM set_config('app.record_purge', '', true);");
+    const g = between(m03, "CREATE OR REPLACE FUNCTION enforce_project_delete_guard()", "$$;");
+    expect(g).toContain("IF COALESCE(current_setting('app.record_purge', true), '') = 'project:' || OLD.id::text THEN");
+  });
+  it("refuses a held project; a project with records needs a controller AND a reason", () => {
+    expect(d).toMatch(/IF v_proj\.legal_hold THEN/);
+    expect(d).toMatch(/IF v_regulated > 0 AND NOT v_controller THEN[\s\S]*archive it instead/);
+    expect(d).toMatch(/IF v_regulated > 0 AND v_reason IS NULL THEN/);
+  });
+  it("audits counts, the snapshot and the storage keys, revokes the intake links, BEFORE the first delete", () => {
+    const auditAt = d.indexOf("INSERT INTO audit_logs");
+    const firstDelete = d.indexOf("DELETE FROM");
+    expect(auditAt).toBeGreaterThan(0);
+    expect(auditAt).toBeLessThan(firstDelete);
+    expect(d.indexOf("UPDATE project_intake_links SET revoked_at = NOW()")).toBeLessThan(firstDelete);
+    for (const k of ["'counts', v_counts", "'snapshot', v_snapshot", "'orphanedStorageKeys', v_keys", "'reason', v_reason", "'revokedIntakeLinks', v_links"]) expect(d).toContain(k);
+    expect(d).toContain("jsonb_agg(to_jsonb(x) - 'parsed')");
+  });
+  it("deletes children before the rows their ON DELETE SET NULL keys point at, then the schedule, then the project", () => {
+    const order = ["DELETE FROM checklist_items", "DELETE FROM project_checklists", "DELETE FROM turnover_items", "DELETE FROM punch_items",
+      "DELETE FROM cost_entries", "DELETE FROM change_orders", "DELETE FROM cost_documents", "DELETE FROM cost_accounts",
+      "DELETE FROM project_parties", "DELETE FROM milestones", "DELETE FROM projects"];
+    const at = order.map((s) => d.indexOf(s));
+    for (const i of at) expect(i).toBeGreaterThan(0);
+    expect([...at].sort((a, b) => a - b)).toEqual(at);
+  });
+  it("the projects delete guard refuses a project carrying records without the purge, and the legal hold always", () => {
+    const g = between(m03, "CREATE OR REPLACE FUNCTION enforce_project_delete_guard()", "$$;");
+    expect(g.indexOf("IF OLD.legal_hold THEN")).toBeLessThan(g.indexOf("app.record_purge"));
+    expect(g).toContain("v_n := project_regulated_record_count(OLD.id);");
+    expect(m03).toMatch(/ALTER TABLE projects ADD COLUMN IF NOT EXISTS legal_hold BOOLEAN NOT NULL DEFAULT false;/);
+    expect(m03).toContain("REVOKE ALL ON FUNCTION project_regulated_record_count(uuid) FROM authenticated;");
+  });
+  it("the regulated count the guard and the RPC share is the same eight tables the app's confirm calls regulated", async () => {
+    const f = between(m03, "CREATE OR REPLACE FUNCTION project_regulated_record_count(", "$$;");
+    const sqlTables = [...f.matchAll(/FROM (\w+)/g)].map((m) => m[1]);
+    const { REGULATED_RECORD_KEYS } = await import("@/lib/projects");
+    const byKey: Record<string, string> = {
+      costAccounts: "cost_accounts", costEntries: "cost_entries", costDocuments: "cost_documents", changeOrders: "change_orders",
+      checklists: "project_checklists", checklistItems: "checklist_items", turnoverItems: "turnover_items", punchItems: "punch_items",
+    };
+    expect(new Set(REGULATED_RECORD_KEYS.map((k) => byKey[k]))).toEqual(new Set(sqlTables));
+  });
+});
