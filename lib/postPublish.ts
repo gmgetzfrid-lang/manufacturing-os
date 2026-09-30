@@ -15,18 +15,23 @@
 // committed; signals must never roll it back.
 //
 // Every writer of documents.current_version_id (INTK-2 dw3), and whether it
-// runs this pipeline — lib/__tests__/intakeUploadRoute.test.ts fails the
-// build when a new writer appears that does not import it:
-//   * lib/revisions.ts — revUpDocument, revertToVersion (run it); the
-//     createDocument first-version seed (a new document's first revision:
-//     it seeds the issue clocks itself, no prior copy to supersede)
+// runs this pipeline — lib/__tests__/intakeUploadRoute.test.ts parses every
+// call site that sets the pointer and fails the build unless the SAME
+// function runs runPostPublishSideEffects or is pinned there, by
+// file:function, with its reason:
+//   * lib/revisions.ts — revertToVersion (runs it); legacyRevUpAfterUpload
+//     (pinned: its caller revUpDocument runs it — checked); the
+//     createDocumentWithFile first-version seed (pinned: a new document's
+//     first revision seeds the issue clocks itself, no prior copy to
+//     supersede)
 //   * lib/reviewControl.ts — finalizeReviewedRevision (runs it)
 //   * app/api/intake/upload/route.ts — trusted auto-publish via
-//     publish_revision (runs it)
-//   * lib/documentLifecycle/common.ts (split/merge targets) and
-//     app/(protected)/documents/[libraryId]/page.tsx (bulk upload of new
-//     documents) — first-version writers, ALLOW-LISTED in that census until
-//     document-control P3 LIFECYCLE converts them
+//     publish_revision (runs it; writes no pointer itself)
+//   * lib/documentLifecycle/common.ts createNewDocWithFirstVersion (split/
+//     merge targets) and app/(protected)/documents/[libraryId]/page.tsx
+//     uploadOne (bulk upload of new documents) — first-version writers,
+//     PINNED in that census until document-control P3 LIFECYCLE converts
+//     them
 
 import { supabase } from "@/lib/supabase";
 import { emit } from "@/lib/notify/dispatch";

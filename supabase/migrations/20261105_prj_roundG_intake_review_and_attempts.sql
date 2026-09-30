@@ -12,16 +12,26 @@
 --      prune_intake_attempts() keeps two days and is called by the ONE
 --      maintenance-cron step (no new vercel.json cron).
 --   2. document_versions.review_state admits 'superseded' (INTK-4 /
---      SAF-10): a submission displaced by a newer one from the same link is
+--      SAF-10): a submission displaced by a newer one from the same link —
+--      or withdrawn by the door because its pointer write lost a race — is
 --      RESOLVED, never left 'in_review' with nothing pointing at it.
+--      Existing intake rows already retired the older way (still
+--      'in_review', superseded_at stamped, no document pointing at them)
+--      are converted to 'superseded' here, counted in the inventory.
 --      document_versions.review_note carries the reviewer's rejection
 --      reason to the contractor's portal (SAF-9).
 --   3. Idempotency (REL-8 / INTK-13): cost_documents.file_hash; a partial
 --      UNIQUE index per (intake link, file hash) over the rows still
---      awaiting a decision — an in-review version, a draft quote — so a
---      retried upload cannot double-create even when two retries race. Each
---      index is created only in the world where no duplicate exists yet
---      (the inventory reports the count; nothing is deleted).
+--      awaiting a decision — a LIVE in-review version (superseded_at NULL:
+--      a withdrawn or displaced row never blocks a resend), a draft quote —
+--      so a retried upload cannot double-create even when two retries race.
+--      The key carries no record_id on purpose: a retried NEW-document
+--      upload creates a different document row, so a record-keyed index
+--      could not see the race REL-8 is about. The route answers the other
+--      case — the same bytes already in review on ANOTHER document — with a
+--      plain refusal, never the other document's ids. Each index is
+--      (re)created only in the world where no duplicate exists (the
+--      inventory reports the count; nothing is deleted).
 --   4. uniqueness_key backfill (INTK-5): rows with a document number and no
 --      key get the key lib/uniqueness.ts computes — the library's
 --      uniqueness_keys tuple (default: the number), each part trimmed and
@@ -30,8 +40,9 @@
 --      counted: the database never guesses which of two same-numbered
 --      drawings is the real one.
 --   5. orphaned_in_review_versions_count() — the health signal SAF-10 asks
---      for: in-review versions no document points at. Service role only;
---      the maintenance cron reports it.
+--      for: in-review versions no document points at and nothing withdrew
+--      (superseded_at NULL — a withdrawn draft is resolved, not orphaned).
+--      Service role only; the maintenance cron reports it.
 --   6. enforce_document_publish_guard, re-created from its live body
 --      (20261070) with two additions for EXTERNAL submissions only
 --      (versions carrying an intake_link_id), promoted by a signed-in user:
@@ -97,15 +108,21 @@ SELECT 'inventory: …LIVE candidates whose key collides with another live docum
         OR EXISTS (SELECT 1 FROM prj_g_j1b_keys o
                     WHERE o.library_id = c.library_id AND o.key = c.key AND o.id <> c.id AND o.live))
 UNION ALL
-SELECT 'inventory: in-review versions no document points at (INTK-4 orphans — surfaced, not auto-voided)', COUNT(*)::text
+SELECT 'inventory: in-review versions no document points at and nothing withdrew (INTK-4 orphans — surfaced, not auto-voided)', COUNT(*)::text
   FROM document_versions v
   LEFT JOIN documents d ON d.id = v.record_id
- WHERE v.review_state = 'in_review' AND d.pending_version_id IS DISTINCT FROM v.id
+ WHERE v.review_state = 'in_review' AND v.superseded_at IS NULL AND d.pending_version_id IS DISTINCT FROM v.id
 UNION ALL
 SELECT 'inventory: …of which external intake submissions', COUNT(*)::text
   FROM document_versions v
   LEFT JOIN documents d ON d.id = v.record_id
- WHERE v.review_state = 'in_review' AND v.intake_link_id IS NOT NULL AND d.pending_version_id IS DISTINCT FROM v.id
+ WHERE v.review_state = 'in_review' AND v.superseded_at IS NULL AND v.intake_link_id IS NOT NULL AND d.pending_version_id IS DISTINCT FROM v.id
+UNION ALL
+SELECT 'inventory: intake submissions withdrawn or displaced the older way (in_review + superseded_at, no pointer) — converted to superseded below', COUNT(*)::text
+  FROM document_versions v
+  LEFT JOIN documents d ON d.id = v.record_id
+ WHERE v.review_state = 'in_review' AND v.superseded_at IS NOT NULL AND v.intake_link_id IS NOT NULL
+   AND d.pending_version_id IS DISTINCT FROM v.id
 UNION ALL
 SELECT 'inventory: projects with more than one "Intake — …" folder in their intake library (INTK-13 duplicates, not merged)', COUNT(*)::text
   FROM (SELECT p.id
@@ -113,9 +130,9 @@ SELECT 'inventory: projects with more than one "Intake — …" folder in their 
           JOIN collections c ON c.library_id = p.intake_library_id AND c.name = 'Intake — ' || COALESCE(p.name, 'Project')
          GROUP BY p.id HAVING COUNT(*) > 1) x
 UNION ALL
-SELECT 'inventory: in-review intake versions sharing (link, file hash) — the in-flight idempotency index is created only at 0', COUNT(*)::text
+SELECT 'inventory: LIVE in-review intake versions sharing (link, file hash) — the in-flight idempotency index is created only at 0', COUNT(*)::text
   FROM (SELECT intake_link_id, file_hash FROM document_versions
-         WHERE intake_link_id IS NOT NULL AND file_hash IS NOT NULL AND review_state = 'in_review'
+         WHERE intake_link_id IS NOT NULL AND file_hash IS NOT NULL AND review_state = 'in_review' AND superseded_at IS NULL
          GROUP BY 1, 2 HAVING COUNT(*) > 1) x
 UNION ALL
 SELECT 'inventory: pending intake submissions in a library that REQUIRES sign-off with no roster (approval now opens one first)', COUNT(*)::text
@@ -164,17 +181,30 @@ ALTER TABLE document_versions ADD CONSTRAINT document_versions_review_state_chec
 ALTER TABLE document_versions ADD COLUMN IF NOT EXISTS review_note TEXT;
 COMMENT ON COLUMN document_versions.review_note IS
   'SAF-9: the reviewer''s reason for a rejected external submission — shown to the contractor on their portal.';
+-- Intake rows retired the older way (withdrawn, or displaced before this
+-- state existed) are resolved: nothing points at them, superseded_at is
+-- stamped, only the state still says 'in_review'.
+UPDATE document_versions v
+   SET review_state = 'superseded'
+ WHERE v.review_state = 'in_review'
+   AND v.superseded_at IS NOT NULL
+   AND v.intake_link_id IS NOT NULL
+   AND NOT EXISTS (SELECT 1 FROM documents d WHERE d.id = v.record_id AND d.pending_version_id = v.id);
 
 -- ── 3. a retried upload returns the original (REL-8 / INTK-13) ───────────
 ALTER TABLE cost_documents ADD COLUMN IF NOT EXISTS file_hash TEXT;
 DO $$
 BEGIN
+  -- Re-created (never kept from an earlier draft): the predicate is the
+  -- LIVE in-review row — a withdrawn or displaced one never blocks.
+  DROP INDEX IF EXISTS document_versions_intake_inflight_uniq;
   IF NOT EXISTS (SELECT 1 FROM (SELECT 1 FROM document_versions
                                  WHERE intake_link_id IS NOT NULL AND file_hash IS NOT NULL AND review_state = 'in_review'
+                                   AND superseded_at IS NULL
                                  GROUP BY intake_link_id, file_hash HAVING COUNT(*) > 1) x) THEN
-    CREATE UNIQUE INDEX IF NOT EXISTS document_versions_intake_inflight_uniq
+    CREATE UNIQUE INDEX document_versions_intake_inflight_uniq
       ON document_versions (intake_link_id, file_hash)
-      WHERE intake_link_id IS NOT NULL AND file_hash IS NOT NULL AND review_state = 'in_review';
+      WHERE intake_link_id IS NOT NULL AND file_hash IS NOT NULL AND review_state = 'in_review' AND superseded_at IS NULL;
   END IF;
   IF NOT EXISTS (SELECT 1 FROM (SELECT 1 FROM cost_documents
                                  WHERE intake_link_id IS NOT NULL AND file_hash IS NOT NULL AND status = 'draft'
@@ -200,12 +230,16 @@ UPDATE documents d
                   WHERE o.library_id = c.library_id AND o.key = c.key AND o.id <> c.id AND o.live)));
 
 -- ── 5. the orphan health signal (SAF-10 dw3) ─────────────────────────────
+-- A draft something WITHDREW (superseded_at stamped — the door's lost
+-- race, a roster that failed to save) is resolved, not orphaned; the signal
+-- counts only in-review rows nothing points at and nothing retired.
 CREATE OR REPLACE FUNCTION orphaned_in_review_versions_count() RETURNS bigint
 LANGUAGE sql STABLE SET search_path = public AS $$
   SELECT COUNT(*)
     FROM document_versions v
     LEFT JOIN documents d ON d.id = v.record_id
-   WHERE v.review_state = 'in_review' AND d.pending_version_id IS DISTINCT FROM v.id;
+   WHERE v.review_state = 'in_review' AND v.superseded_at IS NULL
+     AND d.pending_version_id IS DISTINCT FROM v.id;
 $$;
 REVOKE ALL ON FUNCTION orphaned_in_review_versions_count() FROM PUBLIC, anon, authenticated;
 GRANT EXECUTE ON FUNCTION orphaned_in_review_versions_count() TO service_role;
@@ -671,12 +705,24 @@ UNION ALL SELECT 'document_versions.review_note exists',
        EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = 'document_versions' AND column_name = 'review_note'), NULL
 UNION ALL SELECT 'cost_documents.file_hash exists',
        EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = 'cost_documents' AND column_name = 'file_hash'), NULL
-UNION ALL SELECT 'in-flight idempotency index on document_versions (link, file hash) WHERE in_review',
+UNION ALL SELECT 'in-flight idempotency index on document_versions (link, file hash) WHERE live in_review — or skipped because duplicates exist (see the inventory)',
        EXISTS (SELECT 1 FROM pg_indexes WHERE indexname = 'document_versions_intake_inflight_uniq'
-                AND indexdef LIKE '%UNIQUE%' AND indexdef LIKE '%in_review%'), NULL
-UNION ALL SELECT 'in-flight idempotency index on cost_documents (link, file hash) WHERE draft',
+                AND indexdef LIKE '%UNIQUE%' AND indexdef LIKE '%in_review%' AND indexdef LIKE '%superseded_at IS NULL%')
+       OR EXISTS (SELECT 1 FROM document_versions
+                   WHERE intake_link_id IS NOT NULL AND file_hash IS NOT NULL AND review_state = 'in_review' AND superseded_at IS NULL
+                   GROUP BY intake_link_id, file_hash HAVING COUNT(*) > 1), NULL
+UNION ALL SELECT 'in-flight idempotency index on cost_documents (link, file hash) WHERE draft — or skipped because duplicates exist',
        EXISTS (SELECT 1 FROM pg_indexes WHERE indexname = 'cost_documents_intake_inflight_uniq'
-                AND indexdef LIKE '%UNIQUE%' AND indexdef LIKE '%draft%'), NULL
+                AND indexdef LIKE '%UNIQUE%' AND indexdef LIKE '%draft%')
+       OR EXISTS (SELECT 1 FROM cost_documents
+                   WHERE intake_link_id IS NOT NULL AND file_hash IS NOT NULL AND status = 'draft'
+                   GROUP BY intake_link_id, file_hash HAVING COUNT(*) > 1), NULL
+UNION ALL SELECT 'no intake submission is left in_review after being withdrawn or displaced (converted to superseded)',
+       NOT EXISTS (SELECT 1 FROM document_versions v
+                    WHERE v.review_state = 'in_review' AND v.superseded_at IS NOT NULL AND v.intake_link_id IS NOT NULL
+                      AND NOT EXISTS (SELECT 1 FROM documents d WHERE d.id = v.record_id AND d.pending_version_id = v.id)), NULL
+UNION ALL SELECT 'orphan health signal counts only rows nothing withdrew',
+       (SELECT prosrc LIKE '%v.superseded_at IS NULL%' FROM pg_proc WHERE proname = 'orphaned_in_review_versions_count'), NULL
 UNION ALL SELECT 'no numbered document is left without a uniqueness_key except the skipped live collisions',
        NOT EXISTS (SELECT 1 FROM prj_g_j1b_keys c JOIN documents d ON d.id = c.id
                     WHERE d.uniqueness_key IS NULL AND c.key IS NOT NULL
@@ -708,6 +754,6 @@ UNION ALL SELECT 'authenticated may execute publish_revision; PUBLIC may not',
        AND NOT has_function_privilege('public', 'publish_revision(uuid, uuid, text, jsonb, uuid, text, boolean, boolean, text, text, boolean)', 'EXECUTE'), NULL
 UNION ALL SELECT 'inventory: uniqueness keys backfilled by this run', NULL::boolean,
        (SELECT COUNT(*)::text FROM prj_g_j1b_keys c JOIN documents d ON d.id = c.id WHERE d.uniqueness_key IS NOT NULL)
-UNION ALL SELECT 'inventory: in-review versions no document points at, after apply', NULL::boolean,
+UNION ALL SELECT 'inventory: in-review versions no document points at and nothing withdrew, after apply', NULL::boolean,
        orphaned_in_review_versions_count()::text
 UNION ALL SELECT inventory, NULL::boolean, n FROM prj_g_j1b_inventory;

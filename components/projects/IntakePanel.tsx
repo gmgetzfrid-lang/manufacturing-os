@@ -30,7 +30,15 @@ import { appConfirm, appPrompt } from "@/components/providers/DialogProvider";
 import { INTAKE_LINK_DEFAULT_DAYS, INTAKE_LINK_MAX_DAYS, intakeExpiryFor } from "@/lib/intakeLinks";
 import type { ReviewControl } from "@/types/schema";
 
-const isoDateInDays = (days: number) => new Date(Date.now() + days * 24 * 3600 * 1000).toISOString().slice(0, 10);
+// SEC-5: the date picker works in the user's LOCAL calendar (the expiry
+// is that day's end, local time — intakeExpiryFor). A UTC date is a day
+// ahead west of UTC in the evening, which offered a "90-day" maximum that
+// was really 91 and then refused it.
+const isoDateInDays = (days: number) => {
+  const d = new Date();
+  d.setDate(d.getDate() + days);
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+};
 import TransitionInPanel from "@/components/projects/TransitionInPanel";
 import { flagCollisionToDrafting, TransitionCandidate, TransitionImpact } from "@/lib/transitionIn";
 
@@ -294,15 +302,25 @@ export default function IntakePanel({ orgId, projectId, canManage, uid, userEmai
       });
       const rosterRequired = control.mode === "require";
       if (rosterRequired) {
+        // A roster is its PRIMARY slots (the guard counts primaries; a
+        // standby alternate alone reviews nothing).
+        const hasPrimary = (rows: Awaited<ReturnType<typeof listDraftRoster>>) => rows.some((r) => r.slot === "primary");
         const roster = await listDraftRoster(p.docId, p.pendingVersionId);
-        if (roster.length === 0) {
+        if (!hasPrimary(roster)) {
           if (!(await appConfirm({ message: `${p.label}'s review policy requires reviewer sign-off. Send Rev ${p.revLabel ?? ""} to its reviewers? It publishes once they have signed.` }))) return;
           await openReviewRoster({
             orgId, documentId: p.docId, libraryId, versionId: p.pendingVersionId,
             revisionLabel: p.revLabel ?? "", contentHash: null, control,
             actorId: uid, actorName: userEmail ?? null,
           });
-          setMsg(`${p.label} Rev ${p.revLabel ?? ""} was sent to its reviewers — it publishes once they sign off on the document's review panel.`);
+          // Say what actually happened: a policy that resolves nobody opens
+          // no roster (the owner and Document Control are told of the gap),
+          // and "sent to its reviewers" would loop the next Approve on the
+          // same prompt.
+          const opened = await listDraftRoster(p.docId, p.pendingVersionId);
+          setMsg(hasPrimary(opened)
+            ? `${p.label} Rev ${p.revLabel ?? ""} was sent to its reviewers — it publishes once they sign off on the document's review panel.`
+            : `No reviewer could be resolved for ${p.label}'s library — set its reviewers before this submission can be approved.`);
           await refresh();
           return;
         }
@@ -557,7 +575,7 @@ export default function IntakePanel({ orgId, projectId, canManage, uid, userEmai
                   {libs.map((l) => <option key={l.id} value={l.id}>{l.name}</option>)}
                 </select>
               )}
-              <input type="date" value={expires} onChange={(e) => setExpires(e.target.value)} min={new Date().toISOString().slice(0, 10)} max={isoDateInDays(INTAKE_LINK_MAX_DAYS)} required className="h-8 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-2 text-xs [color-scheme:light] dark:[color-scheme:dark]" title={`Expiry (required — at most ${INTAKE_LINK_MAX_DAYS} days)`} aria-label="Link expiry date" />
+              <input type="date" value={expires} onChange={(e) => setExpires(e.target.value)} min={isoDateInDays(0)} max={isoDateInDays(INTAKE_LINK_MAX_DAYS)} required className="h-8 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-2 text-xs [color-scheme:light] dark:[color-scheme:dark]" title={`Expiry (required — at most ${INTAKE_LINK_MAX_DAYS} days)`} aria-label="Link expiry date" />
             </div>
             <label className="flex items-center gap-2 text-xs text-[var(--color-text)]">
               <input type="checkbox" checked={trusted} onChange={(e) => setTrusted(e.target.checked)} />

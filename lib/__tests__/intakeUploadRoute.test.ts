@@ -7,9 +7,13 @@
 //   INTK-11 / SEC-6 / SEC-1  the bytes decide the type; the stored
 //                            ContentType is the sniffed one.
 //   INTK-1 / SEC-3 / SEC-12  authorship is documents.authored_by_link_id; an
-//                            assigned document, a never-approved one, and one
-//                            whose last submission was rejected all go to
-//                            review.
+//                            assigned document, a never-approved one, one
+//                            whose last submission was rejected, one with a
+//                            rejection against its current revision, a
+//                            rejected file resent, and one with the link's
+//                            own submission still pending all go to review
+//                            (the reject → throwaway → resend bypass is
+//                            closed).
 //   INTK-9 / SEC-11          every document read is the link's org's.
 //   INTK-2 / SAF-5 / SEC-4   the trusted promote is publish_revision acting
 //                            as the link's creator, then the post-publish
@@ -20,18 +24,29 @@
 //   SEC-13 / SEC-14          a require-review policy and the MOC gate demote.
 //   INTK-5                   a new document carries its uniqueness key; a
 //                            number already in use is refused before storage.
-//   REL-8 / INTK-13          a retry returns the original; errors carry a
-//                            reference and no database text; the redline
-//                            branch answers the same for "not yours" and
-//                            "not there"; the intake folder never forks.
+//   REL-8 / INTK-13          a retry returns the original — only a LIVE one
+//                            of the same record; a withdrawn row never
+//                            answers, another document's never leaks; a
+//                            lost retry race removes what it made; errors
+//                            carry a reference and no database text; the
+//                            redline branch answers the same for "not
+//                            yours" and "not there"; the intake folder
+//                            never forks.
+//   COST-12 / DEC-40         a quote carries the party its company names; a
+//                            new document is referenced from the project.
 //   PM-2                     a link whose project is gone opens nothing.
 //   INTK-10                  notices go through emit(), one per window.
-//   INTK-2 dw3               every writer of current_version_id runs the
-//                            post-publish pipeline or is allow-listed.
+//   INTK-10 / SEC-8 dw2      a published revision is always told; a folded
+//                            submission is counted into the next notice.
+//   INTK-2 dw3               every writer of current_version_id — per call
+//                            site, shorthand and prebuilt patches included —
+//                            runs the post-publish pipeline in the same
+//                            function or is pinned with its reason.
 
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { readFileSync, readdirSync, statSync } from "node:fs";
 import { join, relative } from "node:path";
+import ts from "typescript";
 import { NextRequest } from "next/server";
 
 type Row = Record<string, unknown>;
@@ -44,6 +59,7 @@ const db = vi.hoisted(() => ({
   rpc: {} as Record<string, (args: Record<string, unknown>) => { data: unknown; error: unknown }>,
   rpcCalls: [] as Array<{ fn: string; args: Record<string, unknown> }>,
   r2Puts: [] as Array<Record<string, unknown>>,
+  r2Deletes: [] as Array<Record<string, unknown>>,
   emits: [] as Array<Record<string, unknown>>,
   pipeline: [] as Array<{ input: Record<string, unknown>; boundToServiceRole: boolean }>,
   bound: false,
@@ -69,6 +85,7 @@ function chain(table: string) {
   let pending: { method: string; args: unknown[] } | null = null;
   let head = false;
   let limitN: number | null = null;
+  const orders: Array<[string, boolean]> = [];
   const matches = (r: Row) => filters.every(([op, col, val]) => {
     const v = col.includes("->") ? undefined : r[col];
     if (op === "eq") return col.includes("->")
@@ -83,7 +100,21 @@ function chain(table: string) {
     if (op === "or") return (val as (r: Row) => boolean)(r);
     return true;
   });
-  const rows = () => (db.tables[table] ?? []).filter(matches);
+  const rows = () => {
+    const all = db.tables[table] ?? [];
+    const hit = all.filter(matches);
+    if (orders.length === 0) return hit;
+    // ORDER BY, ties broken by insertion order in the same direction (a
+    // later insert is "newer") — the route relies on newest-first reads.
+    const pos = new Map(hit.map((r) => [r, all.indexOf(r)]));
+    return [...hit].sort((a, b) => {
+      for (const [col, asc] of orders) {
+        const x = String(a[col] ?? ""), y = String(b[col] ?? "");
+        if (x !== y) return (x < y ? -1 : 1) * (asc ? 1 : -1);
+      }
+      return ((pos.get(a) ?? 0) - (pos.get(b) ?? 0)) * (orders[0][1] ? 1 : -1);
+    });
+  };
   const errFor = (method: string) => db.errors[`${table}.${method}`]?.shift() ?? null;
   const finish = (): { data: unknown; error: unknown; count?: number | null } => {
     if (pending) {
@@ -134,6 +165,7 @@ function chain(table: string) {
             break;
           }
           case "limit": limitN = Number(args[0]); break;
+          case "order": orders.push([String(args[0]), (args[1] as { ascending?: boolean } | undefined)?.ascending !== false]); break;
           case "update": case "insert": case "upsert": case "delete": pending = { method: prop, args }; break;
           case "maybeSingle": case "single": return Promise.resolve(one(finish()));
         }
@@ -162,8 +194,11 @@ vi.mock("@/lib/supabase", () => ({
   __setServerSupabaseClient: vi.fn(() => { db.bound = true; }),
   __resetServerSupabaseClient: vi.fn(() => { db.bound = false; }),
 }));
-vi.mock("@/lib/r2", () => ({ r2: { send: vi.fn(async (cmd: { input: Row }) => { db.r2Puts.push(cmd.input); }) }, R2_BUCKET: "bucket" }));
-vi.mock("@aws-sdk/client-s3", () => ({ PutObjectCommand: class { constructor(public input: unknown) {} } }));
+vi.mock("@/lib/r2", () => ({ r2: { send: vi.fn(async (cmd: { input: Row; op: string }) => { (cmd.op === "delete" ? db.r2Deletes : db.r2Puts).push(cmd.input); }) }, R2_BUCKET: "bucket" }));
+vi.mock("@aws-sdk/client-s3", () => ({
+  PutObjectCommand: class { op = "put"; constructor(public input: unknown) {} },
+  DeleteObjectCommand: class { op = "delete"; constructor(public input: unknown) {} },
+}));
 vi.mock("@/lib/notify/dispatch", () => ({ emit: vi.fn(async (e: Row) => { db.emits.push({ ...e, boundToServiceRole: db.bound }); }) }));
 vi.mock("@/lib/postPublish", () => ({
   runPostPublishSideEffects: vi.fn(async (input: Row) => { db.pipeline.push({ input, boundToServiceRole: db.bound }); }),
@@ -215,7 +250,7 @@ const published = () => db.rpcCalls.find((c) => c.fn === "publish_revision");
 const docWrites = () => db.writes.filter((w) => w.table === "documents" || w.table === "document_versions" || w.table === "cost_documents");
 
 beforeEach(() => {
-  db.tables = {}; db.writes = []; db.errors = {}; db.rpcCalls = []; db.r2Puts = []; db.emits = []; db.pipeline = [];
+  db.tables = {}; db.writes = []; db.errors = {}; db.rpcCalls = []; db.r2Puts = []; db.r2Deletes = []; db.emits = []; db.pipeline = [];
   db.bound = false; db.seq = 0; db.user = null;
   db.rpc = {
     review_control_mode_for: () => ({ data: "none", error: null }),
@@ -405,6 +440,88 @@ describe("authorship is a fact fixed at creation", () => {
     const read = db.writes.length; // no writes at all
     expect(read).toBe(db.writes.filter((w) => w.table === "intake_attempts").length);
   });
+  it("an authorship read that FAILS is 'try again' (503) — never 'this link may not revise its own drawing' (403)", async () => {
+    seed();
+    const spy = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    // the document read succeeds; the authorship read fails transiently
+    db.errors["documents.select"] = [null, { message: "connection reset by peer" }];
+    const res = await upload({ docId: D1, revLabel: "C" });
+    expect(res.status).toBe(503);
+    const body = await res.json();
+    expect(body.error).toMatch(/could not be checked right now — try again shortly/);
+    expect(JSON.stringify(body)).not.toMatch(/connection reset/);
+    expect(db.r2Puts).toEqual([]);
+    spy.mockRestore();
+  });
+});
+
+// ── INTK-1 dw3: a rejected file is never re-published without a person ──────
+describe("a rejected submission is never re-published by resubmitting it", () => {
+  const F = enc("%PDF-1.7\n% sheet F, rejected\n");
+  const G = enc("%PDF-1.7\n% throwaway G\n");
+  const doc = () => db.tables.documents[0];
+  it("reject F → submit G (review) → submit F again, or F plus one byte: each lands IN REVIEW, publish_revision is never called", async () => {
+    seed();
+    // Step 1: F arrives while a hold demotes it, and the team rejects it.
+    db.tables.document_holds = [{ id: "h1", document_id: D1, released_at: null }];
+    const f = await (await upload({ docId: D1, revLabel: "C" }, { bytes: F, name: "f.pdf", type: "application/pdf" })).json();
+    expect(f.status).toBe("in_review");
+    db.tables.document_holds = [];
+    Object.assign(db.tables.document_versions.find((v) => v.id === f.versionId)!, { review_state: "rejected", review_note: "Wrong elevation" });
+    doc().pending_version_id = null;
+    // Step 2: a throwaway G goes to review (a rejection stands against the current revision).
+    const g = await (await upload({ docId: D1, revLabel: "C" }, { bytes: G, name: "g.pdf", type: "application/pdf" })).json();
+    expect(g.status).toBe("in_review");
+    expect(doc().pending_version_id).toBe(g.versionId);
+    // Step 3: F again — then F with a trailing byte. Neither publishes.
+    for (const bytes of [F, new Uint8Array([...F, 0x0a])]) {
+      const res = await upload({ docId: D1, revLabel: "C" }, { bytes, name: "f.pdf", type: "application/pdf" });
+      expect(res.status).toBe(200);
+      const body = await res.json();
+      expect(body.status).toBe("in_review");
+      expect(body.note).toMatch(/Automatic publication was withheld/);
+    }
+    expect(published()).toBeUndefined();
+    expect(db.pipeline).toEqual([]);
+    expect(doc().current_version_id).toBe("v-cur");
+  });
+  it("the throwaway route is closed by the pending gate on its own: with the link's own submission awaiting review, new bytes do not publish", async () => {
+    seed({ doc: { pending_version_id: "v-G" }, versions: [
+      { id: "v-old", org_id: ORG, record_id: D1, intake_link_id: LINK, review_state: "approved", created_at: "2026-01-01T00:00:00Z" },
+      // rejected long ago, against an older base — no other rule applies
+      { id: "v-F", org_id: ORG, record_id: D1, intake_link_id: LINK, review_state: "rejected", file_hash: "0".repeat(64), supersedes_version_id: "v-old", created_at: "2026-02-01T00:00:00Z" },
+      { id: "v-cur", org_id: ORG, record_id: D1, intake_link_id: LINK, review_state: "approved", supersedes_version_id: "v-old", created_at: "2026-03-01T00:00:00Z" },
+      { id: "v-G", org_id: ORG, record_id: D1, intake_link_id: LINK, review_state: "in_review", supersedes_version_id: "v-cur", file_hash: "1".repeat(64), created_at: "2026-04-01T00:00:00Z" },
+    ] });
+    const body = await (await upload({ docId: D1, revLabel: "D" })).json();
+    expect(body.status).toBe("in_review");
+    expect(body.note).toMatch(/your previous submission for this document is still awaiting review/);
+    expect(published()).toBeUndefined();
+    expect(db.tables.document_versions.find((v) => v.id === "v-G")).toMatchObject({ review_state: "superseded" });
+  });
+  it("the rejected bytes are reviewed again however long ago they were refused", async () => {
+    const { sha256Hex } = await import("@/lib/intakeRateLimit");
+    seed({ doc: { current_version_id: "v-G" }, versions: [
+      { id: "v-cur", org_id: ORG, record_id: D1, intake_link_id: LINK, review_state: "approved", created_at: "2026-01-01T00:00:00Z" },
+      { id: "v-F", org_id: ORG, record_id: D1, intake_link_id: LINK, review_state: "rejected", file_hash: sha256Hex(F), supersedes_version_id: "v-cur", created_at: "2026-02-01T00:00:00Z" },
+      { id: "v-G", org_id: ORG, record_id: D1, intake_link_id: LINK, review_state: "approved", supersedes_version_id: "v-cur", created_at: "2026-03-01T00:00:00Z" },
+    ] });
+    const body = await (await upload({ docId: D1, revLabel: "D" }, { bytes: F, name: "f.pdf", type: "application/pdf" })).json();
+    expect(body.status).toBe("in_review");
+    expect(body.note).toMatch(/this file was not accepted when it was submitted before/);
+    expect(published()).toBeUndefined();
+  });
+  it("once the team has approved a later submission, the trusted link publishes new work again — the rule waits for a person, not forever", async () => {
+    const { sha256Hex } = await import("@/lib/intakeRateLimit");
+    seed({ doc: { current_version_id: "v-G" }, versions: [
+      { id: "v-cur", org_id: ORG, record_id: D1, intake_link_id: LINK, review_state: "approved", created_at: "2026-01-01T00:00:00Z" },
+      { id: "v-F", org_id: ORG, record_id: D1, intake_link_id: LINK, review_state: "rejected", file_hash: sha256Hex(F), supersedes_version_id: "v-cur", created_at: "2026-02-01T00:00:00Z" },
+      { id: "v-G", org_id: ORG, record_id: D1, intake_link_id: LINK, review_state: "approved", supersedes_version_id: "v-cur", created_at: "2026-03-01T00:00:00Z" },
+    ] });
+    const body = await (await upload({ docId: D1, revLabel: "D" })).json();
+    expect(body.status).toBe("published");
+    expect(published()?.args).toMatchObject({ p_expected_base: "v-G" });
+  });
 });
 
 // ── The trusted promote (INTK-2 / SAF-5 / SEC-4) ────────────────────────────
@@ -469,19 +586,23 @@ describe("a displaced submission is resolved, never orphaned", () => {
       { id: "v-pend", org_id: ORG, record_id: D1, intake_link_id: LINK, review_state: "in_review", created_at: "2026-09-20T00:00:00Z" },
     ],
   });
-  it("the auto path clears only the pointer it read and marks the displaced draft 'superseded' with an audit row and a forced notice", async () => {
+  it("a trusted link with its own submission still in review does NOT auto-publish: the upload replaces it IN REVIEW — CAS on that draft, 'superseded', an audit row, a forced notice (INTK-1 dw3 / INTK-4)", async () => {
     withOwnPending();
     const { sha256Hex } = await import("@/lib/intakeRateLimit");
     db.tables.intake_attempts = [{ token_hash: sha256Hex(TOKEN), ip: "unknown", outcome: "notified", created_at: new Date().toISOString() }];
     const res = await upload({ docId: D1, revLabel: "C" });
-    expect((await res.json()).status).toBe("published");
-    const clear = db.writes.find((w) => w.table === "documents" && w.method === "update" && (w.args[0] as Row).pending_version_id === null);
-    expect(clear?.filters).toContainEqual(["eq", "pending_version_id", "v-pend"]);
+    const body = await res.json();
+    expect(body.status).toBe("in_review");
+    expect(body.note).toMatch(/previous submission for this document is still awaiting review/);
+    expect(published()).toBeUndefined();
+    expect(db.pipeline).toEqual([]);
+    const repoint = db.writes.find((w) => w.table === "documents" && w.method === "update" && (w.args[0] as Row).pending_version_id === body.versionId);
+    expect(repoint?.filters).toContainEqual(["eq", "pending_version_id", "v-pend"]);
     expect(db.tables.document_versions.find((v) => v.id === "v-pend")).toMatchObject({ review_state: "superseded" });
     // the orphan query is empty: no in_review version that the pointer does not name
     const doc = db.tables.documents[0];
     expect(db.tables.document_versions.filter((v) => v.review_state === "in_review" && doc.pending_version_id !== v.id)).toEqual([]);
-    expect(db.tables.audit_logs.find((a) => a.action === "INTAKE_SUBMISSION_DISPLACED")).toMatchObject({ details: expect.objectContaining({ displacedVersionId: "v-pend", byVersionId: "v-pub" }) });
+    expect(db.tables.audit_logs.find((a) => a.action === "INTAKE_SUBMISSION_DISPLACED")).toMatchObject({ details: expect.objectContaining({ displacedVersionId: "v-pend", byVersionId: body.versionId }) });
     // debounced submissions notwithstanding, a displacement is always told
     expect(db.emits.some((e) => String(e.body).includes("replaced their earlier submission"))).toBe(true);
   });
@@ -592,6 +713,81 @@ describe("a retry returns the original; an error names no internals", () => {
     expect(db.tables.cost_documents).toHaveLength(1);
     expect(db.tables.cost_documents[0]).toMatchObject({ mime_type: "application/pdf" });
   });
+  it("a WITHDRAWN earlier row (superseded_at stamped) is not 'already received' — the resend is taken", async () => {
+    const { sha256Hex } = await import("@/lib/intakeRateLimit");
+    seed({ doc: null });
+    db.tables.documents = [{ id: "d-old", org_id: ORG, library_id: "lib1", current_version_id: null, pending_version_id: null, status: "Draft" }];
+    db.tables.document_versions = [{ id: "v-withdrawn", org_id: ORG, record_id: "d-old", intake_link_id: LINK, file_hash: sha256Hex(PDF), review_state: "in_review", superseded_at: "2026-09-29T00:00:00Z", created_at: new Date().toISOString() }];
+    const body = await (await upload({ title: "Skid GA" })).json();
+    expect(body.duplicate).toBeUndefined();
+    expect(body.status).toBe("in_review");
+    expect(body.documentId).not.toBe("d-old");
+    expect(db.r2Puts).toHaveLength(1);
+  });
+  it("the door's own lost pointer race RESOLVES the new version ('superseded'), so the contractor's resend of the same file is taken, not answered as a duplicate", async () => {
+    seed({ link: { assigned_doc_ids: [D1], allow_auto_supersede: false }, doc: { authored_by_link_id: null } });
+    db.errors["documents.update"] = [{ message: "could not serialize access" }];
+    const spy = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    const lost = await upload({ docId: D1, revLabel: "C" });
+    expect(lost.status).toBe(409);
+    const withdrawn = db.tables.document_versions.find((v) => v.review_state !== "approved")!;
+    expect(withdrawn).toMatchObject({ review_state: "superseded" });
+    expect(withdrawn.superseded_at).toBeTruthy();
+    const again = await (await upload({ docId: D1, revLabel: "C" })).json();
+    expect(again.duplicate).toBeUndefined();
+    expect(again.status).toBe("in_review");
+    expect(db.tables.documents[0].pending_version_id).toBe(again.versionId);
+    spy.mockRestore();
+  });
+  it("the same bytes LIVE on another document answer with a sentence — never that document's ids — and nothing is stored", async () => {
+    const { sha256Hex } = await import("@/lib/intakeRateLimit");
+    const D2 = "00000000-0000-4000-8000-0000000000d2";
+    seed({ link: { assigned_doc_ids: [D2] }, doc: { pending_version_id: "v-on-A" }, versions: [
+      { id: "v-cur", org_id: ORG, record_id: D1, intake_link_id: LINK, review_state: "approved", created_at: "2026-09-01T00:00:00Z" },
+      { id: "v-on-A", org_id: ORG, record_id: D1, intake_link_id: LINK, review_state: "in_review", file_hash: sha256Hex(PDF), created_at: new Date().toISOString() },
+    ] });
+    db.tables.documents.push({ id: D2, org_id: ORG, authored_by_link_id: null, document_number: "B-200", current_version_id: "v-b", pending_version_id: null, library_id: "lib1", collection_id: "col1", checked_out_by: null, legal_hold: false });
+    const res = await upload({ docId: D2, revLabel: "C" });
+    expect(res.status).toBe(409);
+    const body = await res.json();
+    expect(body.code).toBe("same_file_in_review");
+    expect(JSON.stringify(body)).not.toContain(D1);
+    expect(JSON.stringify(body)).not.toContain("v-on-A");
+    expect(db.r2Puts).toEqual([]);
+  });
+  it("a retry that lost the in-flight index answers with the original — and removes the document and the object it made", async () => {
+    const { sha256Hex } = await import("@/lib/intakeRateLimit");
+    seed({ doc: null });
+    // The original: a new document still in its first review (sent before
+    // the pre-check window, so only the index sees it).
+    db.tables.documents = [{ id: "d-orig", org_id: ORG, library_id: "lib1", current_version_id: null, pending_version_id: "v-orig", status: "Draft" }];
+    db.tables.document_versions = [{ id: "v-orig", org_id: ORG, record_id: "d-orig", intake_link_id: LINK, file_hash: sha256Hex(PDF), review_state: "in_review", superseded_at: null, created_at: "2026-01-01T00:00:00Z" }];
+    db.errors["document_versions.insert"] = [{ code: "23505", message: 'duplicate key value violates unique constraint "document_versions_intake_inflight_uniq"' }];
+    const res = await upload({ title: "Skid GA" });
+    expect(res.status).toBe(200);
+    expect(await res.json()).toMatchObject({ duplicate: true, documentId: "d-orig", versionId: "v-orig", status: "in_review" });
+    expect(db.writes.find((w) => w.table === "documents" && w.method === "delete")).toBeDefined();
+    expect(db.tables.documents.map((d) => d.id)).toEqual(["d-orig"]); // no empty document left behind
+    expect(db.r2Deletes.map((d) => d.Key)).toEqual([db.r2Puts[0].Key]);
+    expect(db.tables.project_documents ?? []).toEqual([]);
+    expect(db.emits).toEqual([]);
+  });
+  it("a numbered new document whose retry raced its original answers with the original, never 'number already in use'", async () => {
+    const { sha256Hex } = await import("@/lib/intakeRateLimit");
+    seed({ doc: null });
+    db.tables.documents = [{ id: "d-orig", org_id: ORG, library_id: "lib1", uniqueness_key: "v-900", current_version_id: null, pending_version_id: "v-orig", status: "Draft" }];
+    db.tables.document_versions = [{ id: "v-orig", org_id: ORG, record_id: "d-orig", intake_link_id: LINK, file_hash: sha256Hex(PDF), review_state: "in_review", superseded_at: null, created_at: "2026-01-01T00:00:00Z" }];
+    // the pre-insert number check misses (the original committed after it)
+    db.tables.documents[0].uniqueness_key = "other";
+    const origInsert = db.writes.push.bind(db.writes);
+    db.writes.push = (w) => { if (w.table === "documents" && w.method === "insert") db.errors["documents.insert"] = [{ code: "23505", message: 'duplicate key value violates unique constraint "documents_uniqueness_key_live_uniq"' }]; return origInsert(w); };
+    const res = await upload({ title: "Skid GA", number: "V-900" });
+    db.writes.push = origInsert;
+    const body = await res.json();
+    expect(body).toMatchObject({ duplicate: true, documentId: "d-orig" });
+    expect(body.code).not.toBe("number_in_use");
+    expect(db.r2Deletes).toHaveLength(1);
+  });
   it("a database error reaches the portal as a sentence and a reference — never the Postgres text", async () => {
     seed({ doc: null });
     const spy = vi.spyOn(console, "error").mockImplementation(() => undefined);
@@ -637,6 +833,29 @@ describe("notices and attribution", () => {
     expect(db.emits).toHaveLength(1);
     expect(db.tables.intake_attempts.filter((a) => a.outcome === "notified")).toHaveLength(1);
   });
+  it("a controlled revision published without review is ALWAYS told — never folded into a burst of review notices", async () => {
+    seed();
+    const { sha256Hex } = await import("@/lib/intakeRateLimit");
+    db.tables.intake_attempts = [{ token_hash: sha256Hex(TOKEN), ip: "unknown", outcome: "notified", created_at: new Date().toISOString() }];
+    expect((await (await upload({ docId: D1, revLabel: "C" })).json()).status).toBe("published");
+    const told = db.emits.find((e) => e.kind === "doc_superseded") as Row & { audience: { involved: string[] } };
+    expect(told).toBeDefined();
+    expect(new Set(told.audience.involved)).toEqual(new Set(["creator1", "ctl2", "owner1"]));
+  });
+  it("a folded submission is COUNTED, and the next notice on the link says how many more arrived", async () => {
+    seed({ doc: null });
+    await upload({ title: "A" }, { bytes: enc("%PDF-1.7 a"), name: "a.pdf" });
+    await upload({ title: "B" }, { bytes: enc("%PDF-1.7 b"), name: "b.pdf" });
+    await upload({ title: "C" }, { bytes: enc("%PDF-1.7 c"), name: "c.pdf" });
+    expect(db.emits).toHaveLength(1);
+    expect(db.tables.intake_attempts.filter((a) => a.outcome === "suppressed")).toHaveLength(2);
+    // the window passes
+    for (const a of db.tables.intake_attempts) if (a.outcome === "notified") a.created_at = new Date(Date.now() - 20 * 60_000).toISOString();
+    await upload({ title: "D" }, { bytes: enc("%PDF-1.7 d"), name: "d.pdf" });
+    expect(db.emits).toHaveLength(2);
+    expect(String(db.emits[1].body)).toMatch(/2 more submissions arrived on this link since the last notice — see the project's Intake tab\./);
+    expect(String(db.emits[0].body)).not.toMatch(/more submission/);
+  });
   it("a token used from a browser signed in to the app records that session on the audit row", async () => {
     seed({ doc: null });
     db.user = { id: "insider1", email: "insider@org.test" };
@@ -651,32 +870,182 @@ describe("notices and attribution", () => {
   });
 });
 
+// ── COST-12's intake limb and DEC-40 ────────────────────────────────────────
+describe("what the door files where", () => {
+  it("a quote is filed against the project party the link's company names (COST-12 intake limb)", async () => {
+    seed({ link: { purpose: "quote" } });
+    db.tables.project_parties = [
+      { id: "party-1", org_id: ORG, project_id: "p1", name: "Vendor Co, Inc." },
+      { id: "party-2", org_id: ORG, project_id: "p1", name: "Other Mechanical" },
+      { id: "party-x", org_id: ORG, project_id: "p-other", name: "Vendor Co" },
+    ];
+    await upload({});
+    expect(db.tables.cost_documents[0]).toMatchObject({ party_id: "party-1", vendor_name: "Vendor Co", kind: "quote" });
+  });
+  it("an ambiguous or unmatched company binds no party — and an unreadable party list never refuses the quote", async () => {
+    seed({ link: { purpose: "quote" } });
+    db.tables.project_parties = [
+      { id: "party-1", org_id: ORG, project_id: "p1", name: "Vendor LLC" },
+      { id: "party-2", org_id: ORG, project_id: "p1", name: "Vendor Incorporated" },
+    ];
+    await upload({});
+    expect(db.tables.cost_documents[0]).toMatchObject({ party_id: null });
+    seed({ link: { purpose: "quote" } });
+    const spy = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    db.errors["project_parties.select"] = [{ message: "boom" }];
+    const res = await upload({}, { bytes: enc("%PDF-1.7 another quote"), name: "q.pdf" });
+    expect(res.status).toBe(200);
+    expect(db.tables.cost_documents[0]).toMatchObject({ party_id: null });
+    spy.mockRestore();
+  });
+  it("a document the door CREATES is referenced from the project (DEC-40: project_documents, never a copy); a revision writes none", async () => {
+    seed({ doc: null });
+    const body = await (await upload({ title: "Skid GA" })).json();
+    expect(db.tables.project_documents).toEqual([expect.objectContaining({ org_id: ORG, project_id: "p1", document_id: body.documentId, source: "manual" })]);
+    seed({ link: { assigned_doc_ids: [D1] }, doc: { authored_by_link_id: null } });
+    db.tables.project_documents = [];
+    await upload({ docId: D1, revLabel: "C" });
+    expect(db.tables.project_documents).toEqual([]);
+  });
+});
+
 // ── INTK-2 dw3: every writer of documents.current_version_id ────────────────
+// A census PER CALL SITE (TypeScript's parser, not a regex over the file):
+// every `.update(…)` / `.insert(…)` / `.upsert(…)` whose argument sets
+// `current_version_id` to anything but null — an inline literal, a
+// `{ current_version_id }` shorthand, a spread, or a patch object built
+// earlier in the same function (`const patch = { … }`, `patch.current_version_id
+// = …`) — must run `runPostPublishSideEffects` in the SAME function, or be
+// pinned below by file:function with the reason it is exempt. A new writer
+// anywhere, or a new pointer write added to an exempt function's file under
+// another name, fails the build.
+const KEY = "current_version_id";
+type Writer = { site: string; method: string; line: number; pipeline: boolean };
+function enclosingFn(node: ts.Node): { name: string; body: ts.Node | null } {
+  for (let n: ts.Node | undefined = node.parent; n; n = n.parent) {
+    if ((ts.isFunctionDeclaration(n) || ts.isMethodDeclaration(n)) && n.name) return { name: n.name.getText(), body: n };
+    if (ts.isArrowFunction(n) || ts.isFunctionExpression(n)) {
+      const p = n.parent;
+      if (ts.isVariableDeclaration(p) && ts.isIdentifier(p.name)) return { name: p.name.text, body: n };
+      if (ts.isPropertyAssignment(p)) return { name: p.name.getText(), body: n };
+    }
+  }
+  return { name: "<module>", body: null };
+}
+function literalSetsKey(obj: ts.ObjectLiteralExpression, scope: ts.Node): boolean {
+  return obj.properties.some((pr) => {
+    if (ts.isShorthandPropertyAssignment(pr)) return pr.name.text === KEY;
+    if (ts.isPropertyAssignment(pr)) {
+      const name = ts.isIdentifier(pr.name) || ts.isStringLiteral(pr.name) ? pr.name.text : null;
+      return name === KEY && pr.initializer.kind !== ts.SyntaxKind.NullKeyword;
+    }
+    if (ts.isSpreadAssignment(pr)) return argSetsKey(pr.expression, scope);
+    return false;
+  });
+}
+function argSetsKey(arg: ts.Expression | undefined, scope: ts.Node): boolean {
+  if (!arg) return false;
+  if (ts.isObjectLiteralExpression(arg)) return literalSetsKey(arg, scope);
+  if (ts.isArrayLiteralExpression(arg)) return arg.elements.some((e) => argSetsKey(e as ts.Expression, scope));
+  if (ts.isParenthesizedExpression(arg) || ts.isAsExpression(arg)) return argSetsKey(arg.expression, scope);
+  if (!ts.isIdentifier(arg)) return false;
+  // A patch object: its declaration in scope, or a later assignment to its key.
+  const name = arg.text;
+  let hit = false;
+  const scan = (n: ts.Node): void => {
+    if (hit) return;
+    if (ts.isVariableDeclaration(n) && ts.isIdentifier(n.name) && n.name.text === name && n.initializer && ts.isObjectLiteralExpression(n.initializer) && literalSetsKey(n.initializer, scope)) hit = true;
+    if (ts.isBinaryExpression(n) && n.operatorToken.kind === ts.SyntaxKind.EqualsToken && n.right.kind !== ts.SyntaxKind.NullKeyword) {
+      const l = n.left;
+      if (ts.isPropertyAccessExpression(l) && l.name.text === KEY && l.expression.getText() === name) hit = true;
+      if (ts.isElementAccessExpression(l) && l.expression.getText() === name && ts.isStringLiteral(l.argumentExpression) && l.argumentExpression.text === KEY) hit = true;
+    }
+    if (ts.isCallExpression(n) && n.expression.getText() === "Object.assign" && n.arguments[0]?.getText() === name
+        && n.arguments.slice(1).some((a) => ts.isObjectLiteralExpression(a) && literalSetsKey(a, scope))) hit = true;
+    ts.forEachChild(n, scan);
+  };
+  scan(scope);
+  return hit;
+}
+function pointerWriters(file: string, src: string): Writer[] {
+  const sf = ts.createSourceFile(file, src, ts.ScriptTarget.Latest, true, file.endsWith(".tsx") ? ts.ScriptKind.TSX : ts.ScriptKind.TS);
+  const out: Writer[] = [];
+  const visit = (node: ts.Node): void => {
+    if (ts.isCallExpression(node) && ts.isPropertyAccessExpression(node.expression) && ["update", "insert", "upsert"].includes(node.expression.name.text)) {
+      const { name, body } = enclosingFn(node);
+      if (argSetsKey(node.arguments[0], body ?? sf)) {
+        out.push({
+          site: `${file}:${name}`, method: node.expression.name.text,
+          line: sf.getLineAndCharacterOfPosition(node.getStart()).line + 1,
+          pipeline: /\brunPostPublishSideEffects\s*\(/.test(body ? body.getText() : ""),
+        });
+      }
+    }
+    ts.forEachChild(node, visit);
+  };
+  visit(sf);
+  return out;
+}
+
 describe("census — every writer of current_version_id runs the post-publish pipeline", () => {
   const ROOTS = ["app", "lib", "components"];
-  // First-version writers document-control P3 LIFECYCLE converts; remove an
-  // entry when its file imports the pipeline (or stops writing the pointer).
-  const ALLOW = new Set(["lib/documentLifecycle/common.ts", "app/(protected)/documents/[libraryId]/page.tsx"]);
+  // Pinned exemptions, by file:function, each with its reason. Remove an
+  // entry when its function runs the pipeline (or stops writing the pointer).
+  const EXEMPT: Record<string, { reason: string; via?: string }> = {
+    "lib/revisions.ts:createDocumentWithFile": { reason: "first-version seed of a brand-new document — nothing is superseded; the review clock and ack roster are seeded inline" },
+    "lib/revisions.ts:legacyRevUpAfterUpload": { reason: "revUpDocument's legacy leg — revUpDocument runs the pipeline after it returns", via: "lib/revisions.ts:revUpDocument" },
+    "lib/documentLifecycle/common.ts:createNewDocWithFirstVersion": { reason: "first-version seed (document-control P3 LIFECYCLE converts it)" },
+    "app/(protected)/documents/[libraryId]/page.tsx:uploadOne": { reason: "first-version seed of a bulk upload (document-control P3 LIFECYCLE converts it)" },
+  };
   const walk = (dir: string): string[] => readdirSync(dir).flatMap((f) => {
     const p = join(dir, f);
     if (f === "node_modules" || f === "__tests__") return [];
     return statSync(p).isDirectory() ? walk(p) : /\.(ts|tsx)$/.test(f) ? [p] : [];
   });
-  const writers = ROOTS.flatMap((r) => walk(join(process.cwd(), r)))
-    .filter((p) => /\.update\(\{[^}]*current_version_id:\s*(?!null\b)/.test(readFileSync(p, "utf8")))
-    .map((p) => relative(process.cwd(), p).split("\\").join("/"));
-  it("finds the known writers (the census is not vacuous)", () => {
-    expect(writers).toEqual(expect.arrayContaining(["lib/revisions.ts", "lib/reviewControl.ts", "lib/documentLifecycle/common.ts"]));
+  const sources = new Map(ROOTS.flatMap((r) => walk(join(process.cwd(), r)))
+    .map((p) => [relative(process.cwd(), p).split("\\").join("/"), readFileSync(p, "utf8")] as const)
+    .filter(([, src]) => src.includes(KEY)));
+  const writers = [...sources].flatMap(([file, src]) => pointerWriters(file, src));
+
+  it("the detector sees inline, shorthand, spread and prebuilt-patch writes — and ignores clears and reads", () => {
+    const probe = (body: string) => pointerWriters("probe.ts", `async function f(v: string, supabase: any) {\n${body}\n}`).length;
+    expect(probe(`await supabase.from("documents").update({ current_version_id: v });`)).toBe(1);
+    expect(probe(`const current_version_id = v; await supabase.from("documents").update({ current_version_id });`)).toBe(1);
+    expect(probe(`const patch = { current_version_id: v, rev: "B" }; await supabase.from("documents").update(patch);`)).toBe(1);
+    expect(probe(`const patch: Record<string, unknown> = {}; patch.current_version_id = v; await supabase.from("documents").update(patch);`)).toBe(1);
+    expect(probe(`const base = { current_version_id: v }; await supabase.from("documents").update({ ...base, updated_at: "x" });`)).toBe(1);
+    expect(probe(`const patch = {}; Object.assign(patch, { current_version_id: v }); await supabase.from("documents").update(patch);`)).toBe(1);
+    expect(probe(`await supabase.from("documents").update({ current_version_id: null });`)).toBe(0);
+    expect(probe(`const { data } = await supabase.from("documents").select("current_version_id"); await supabase.from("x").update({ id: data.current_version_id ? 1 : 0 });`)).toBe(0);
   });
-  it("each imports lib/postPublish (statically or dynamically) or is allow-listed", () => {
-    for (const w of writers) {
-      if (ALLOW.has(w)) continue;
-      expect(readFileSync(join(process.cwd(), w), "utf8"), `${w} writes current_version_id without the post-publish pipeline`).toMatch(/@\/lib\/postPublish/);
+  it("finds the known writers (the census is not vacuous)", () => {
+    const sites = new Set(writers.map((w) => w.site));
+    for (const s of ["lib/reviewControl.ts:finalizeReviewedRevision", "lib/revisions.ts:revertToVersion", "lib/revisions.ts:legacyRevUpAfterUpload", "lib/documentLifecycle/common.ts:createNewDocWithFirstVersion"]) {
+      expect(sites.has(s), s).toBe(true);
+    }
+  });
+  it("every writer runs the pipeline in the same function, or is pinned with its reason", () => {
+    const unpiped = writers.filter((w) => !w.pipeline && !EXEMPT[w.site]).map((w) => `${w.site} (${w.method}, line ${w.line})`);
+    expect(unpiped, `current_version_id written without runPostPublishSideEffects in the same function: ${unpiped.join("; ")}`).toEqual([]);
+  });
+  it("no pinned exemption is stale, and an exemption 'via' a caller is honoured by that caller", () => {
+    const sites = new Set(writers.map((w) => w.site));
+    for (const [site, e] of Object.entries(EXEMPT)) {
+      expect(sites.has(site), `stale exemption: ${site} no longer writes the pointer — remove it`).toBe(true);
+      if (e.via) {
+        const [viaFile, viaFn] = e.via.split(":");
+        const sf = ts.createSourceFile(viaFile, sources.get(viaFile) ?? "", ts.ScriptTarget.Latest, true);
+        let body = "";
+        sf.forEachChild((n) => { if (ts.isFunctionDeclaration(n) && n.name?.text === viaFn) body = n.getText(); });
+        const callee = site.split(":")[1];
+        expect(body, `${e.via} must call ${callee}`).toMatch(new RegExp(`\\b${callee}\\(`));
+        expect(body, `${e.via} must run the pipeline`).toMatch(/\brunPostPublishSideEffects\s*\(/);
+      }
     }
   });
   it("the intake route no longer writes the pointer itself — it publishes through the contract and runs the pipeline", () => {
     const r = readFileSync(join(process.cwd(), "app/api/intake/upload/route.ts"), "utf8");
-    expect(r).not.toMatch(/current_version_id:\s*versionId/);
+    expect(pointerWriters("app/api/intake/upload/route.ts", r)).toEqual([]);
     expect(r).toMatch(/await import\("@\/lib\/postPublish"\)/);
     expect(readFileSync(join(process.cwd(), "lib/postPublish.ts"), "utf8")).toMatch(/app\/api\/intake\/upload\/route\.ts/);
   });
@@ -732,6 +1101,12 @@ describe("the Intake tab, the transition-in panel and the portal", () => {
     expect(approve).toMatch(/await effectiveReviewControlForDocument\(\{/);
     expect(approve).toMatch(/const rosterRequired = control\.mode === "require";/);
     expect(approve).toMatch(/await openReviewRoster\(\{/);
+    // a policy that resolves NOBODY opens no roster — say so, never "sent to
+    // its reviewers" (which looped every later Approve on the same prompt)
+    const afterOpen = approve.slice(approve.indexOf("await openReviewRoster({"));
+    expect(afterOpen).toMatch(/const opened = await listDraftRoster\(p\.docId, p\.pendingVersionId\);\s*\n[\s\S]*?setMsg\(hasPrimary\(opened\)/);
+    expect(afterOpen).toContain("No reviewer could be resolved for ${p.label}'s library — set its reviewers before this submission can be approved.");
+    expect(approve).toContain('rows.some((r) => r.slot === "primary")');
     expect(approve).toMatch(/requireRosterComplete: rosterRequired,/);
     expect(approve).not.toMatch(/requireRosterComplete: false/);
     expect(approve).toMatch(/await effectiveDocClassForDocument\(/);
@@ -757,6 +1132,11 @@ describe("the Intake tab, the transition-in panel and the portal", () => {
     expect(p).toContain('resource_type: "project_intake_link", resource_id: String((created as { id: string }).id),');
     expect(p).not.toContain('resource_id: projectId,');
     expect(p).toContain("useState(() => isoDateInDays(INTAKE_LINK_DEFAULT_DAYS))");
+    // SEC-5: the picker's dates are LOCAL calendar dates (a UTC date is a day
+    // ahead west of UTC in the evening and offered a 91-day "maximum")
+    expect(p).toContain("d.setDate(d.getDate() + days);");
+    expect(p).not.toMatch(/toISOString\(\)\.slice\(0, 10\)/);
+    expect(p).toContain("min={isoDateInDays(0)} max={isoDateInDays(INTAKE_LINK_MAX_DAYS)}");
   });
   it("TransitionInPanel: adopt controls for the controller tier only; a collision or an unapproved sheet cannot be adopted (SAF-13 / SAF-12 / INTK-3)", () => {
     const t = src("components/projects/TransitionInPanel.tsx");
@@ -779,6 +1159,9 @@ describe("the Intake tab, the transition-in panel and the portal", () => {
     const c = src("app/api/cron/maintenance/route.ts");
     expect((c.match(/sb\.rpc\("prune_intake_attempts"\)/g) ?? []).length).toBe(1);
     expect(c).toMatch(/sb\.rpc\("orphaned_in_review_versions_count"\)/);
+    // the remedy it names is one a person can run — no screen lists a version nothing points at
+    expect(c).toContain("that no document points at and nothing withdrew — a document controller must resolve each one");
+    expect(c).not.toMatch(/resolve them from the Intake tab/);
     const vercel = JSON.parse(src("vercel.json")) as { crons?: unknown[] };
     expect((vercel.crons ?? []).length).toBeLessThanOrEqual(2);
   });

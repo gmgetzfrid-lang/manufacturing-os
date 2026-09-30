@@ -17,6 +17,7 @@ import {
 } from "@/lib/intakeLinks";
 import {
   intakeLimits, DEFAULT_INTAKE_LIMITS, checkIntakeRate, linkBudgetRefusal, clientIp, sha256Hex, noticeSentRecently,
+  suppressedSinceLastNotice, ATTEMPT_OUTCOME,
 } from "@/lib/intakeRateLimit";
 
 const enc = (s: string) => new TextEncoder().encode(s);
@@ -81,6 +82,30 @@ describe("intakeLinks — the credential's rules", () => {
     expect(intakeExpiryFor("2026-12-29", now).ok).toBe(true);
     expect(intakeExpiryFor("2027-01-15", now)).toMatchObject({ ok: false, message: expect.stringMatching(/at most 90 days/) });
   });
+  it("SEC-5: the database ceiling (92 days) admits every end-of-day local expiry the app offers — the Costs tab's UTC-date default included", () => {
+    const DAY = 24 * 3600 * 1000;
+    const ceilingMs = 92 * DAY; // 20261104's CHECK: expires_at <= created_at + 92 days
+    // QuotesPanel's default: the UTC date of now + 90 days, then that day's
+    // end in LOCAL time. West of UTC in the evening the UTC date is already
+    // tomorrow; the worst case is a local offset of -12h just before midnight.
+    for (const offsetH of [-12, -10, -8, -7, -5, -3, 0, 5.5, 9, 14]) {
+      for (const localHour of [0, 6, 12, 18, 20.5, 23.9]) {
+        const nowUtc = Date.UTC(2026, 8, 30) + (localHour - offsetH) * 3600 * 1000;
+        const utcDatePlus90 = new Date(nowUtc + 90 * DAY).toISOString().slice(0, 10);
+        const [y, m, d] = utcDatePlus90.split("-").map(Number);
+        const localEndOfDayAsUtc = Date.UTC(y, m - 1, d, 23, 59, 59) - offsetH * 3600 * 1000;
+        const span = localEndOfDayAsUtc - nowUtc;
+        expect(span, `offset ${offsetH}h at ${localHour}h local`).toBeLessThanOrEqual(ceilingMs);
+        expect(span).toBeGreaterThan(90 * DAY - DAY); // and still the 90-day policy, not less
+      }
+    }
+    // the reviewer's measurement: 18:00 PDT (UTC-7) is 91.29 days — over 91, under 92
+    const pdt = Date.UTC(2026, 8, 30, 18 + 7);
+    const target = new Date(pdt + 90 * DAY).toISOString().slice(0, 10).split("-").map(Number);
+    const span = Date.UTC(target[0], target[1] - 1, target[2], 23 + 7, 59, 59) - pdt;
+    expect(span).toBeGreaterThan(91 * DAY);
+    expect(span).toBeLessThanOrEqual(ceilingMs);
+  });
   it("closed projects: completed, cancelled, archived — not paused", () => {
     expect([...CLOSED_PROJECT_STATUSES].sort()).toEqual(["archived", "cancelled", "completed"]);
   });
@@ -125,6 +150,44 @@ describe("intakeRateLimit — the window", () => {
     const erroring = { from: () => new Proxy({}, { get: (_t, p) => p === "then" ? (r: (v: unknown) => void) => r({ count: null, error: { message: "x" } }) : () => erroring.from() }) };
     expect(await checkIntakeRate(erroring, { tokenHash: "h", ip: "1.2.3.4", limits: DEFAULT_INTAKE_LIMITS })).toEqual({ limited: false });
     expect(await noticeSentRecently(throwing, { tokenHash: "h", windowMinutes: 15 })).toBe(false);
+  });
+  it("a folded notice is counted: suppressed rows since the link's LAST notice, never rate-window attempts", async () => {
+    const rows = [
+      { token_hash: "h", outcome: "notified", created_at: "2026-09-30T10:00:00.000Z" },
+      { token_hash: "h", outcome: "suppressed", created_at: "2026-09-30T09:59:00.000Z" }, // before the last notice
+      { token_hash: "h", outcome: "suppressed", created_at: "2026-09-30T10:05:00.000Z" },
+      { token_hash: "h", outcome: "suppressed", created_at: "2026-09-30T10:09:00.000Z" },
+      { token_hash: "h", outcome: "attempt", created_at: "2026-09-30T10:09:00.000Z" },
+      { token_hash: "other", outcome: "suppressed", created_at: "2026-09-30T10:09:00.000Z" },
+    ];
+    const client = {
+      from: () => {
+        const f: Array<[string, unknown]> = [];
+        let head = false;
+        const q: Record<string, unknown> = {};
+        const self: Record<string, unknown> = new Proxy(q, {
+          get(_t, prop: string) {
+            if (prop === "then") {
+              const hit = rows.filter((r) => f.every(([op, v]) => op === "gte" ? r.created_at >= String(v) : (r as Record<string, unknown>)[op] === v));
+              return (res: (v: unknown) => void) => res(head ? { count: hit.length, error: null } : { data: hit, error: null });
+            }
+            return (...args: unknown[]) => {
+              if (prop === "select" && (args[1] as { head?: boolean } | undefined)?.head) head = true;
+              if (prop === "eq") f.push([String(args[0]), args[1]]);
+              if (prop === "gte") f.push(["gte", args[1]]);
+              return self;
+            };
+          },
+        });
+        return self;
+      },
+    };
+    expect(await suppressedSinceLastNotice(client, { tokenHash: "h", now: Date.parse("2026-09-30T10:20:00Z") })).toBe(2);
+    expect(ATTEMPT_OUTCOME.suppressed).toBe("suppressed");
+    // the rate window counts attempts only — a folded notice never throttles the contractor
+    const src = (await import("node:fs")).readFileSync((await import("node:path")).join(process.cwd(), "lib/intakeRateLimit.ts"), "utf8");
+    expect(src).toMatch(/\.eq\(col, value\)\.eq\("outcome", ATTEMPT_OUTCOME\.attempt\)/);
+    expect(await suppressedSinceLastNotice({ from: () => { throw new Error("down"); } }, { tokenHash: "h" })).toBe(0);
   });
   it("the per-link budget: submissions, then bytes", () => {
     const b = { submissionCount: 10, maxSubmissions: 10, bytesReceived: 0, maxTotalBytes: 100 };

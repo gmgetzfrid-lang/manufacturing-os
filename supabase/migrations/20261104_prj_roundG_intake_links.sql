@@ -12,29 +12,51 @@
 --      each document's FIRST version (lowest created_at): a document whose
 --      first version came through a link was born through that link; an
 --      org document the link was later ASSIGNED was not.
+--      A plain UUID with an index — NO foreign key, exactly like
+--      document_versions.intake_link_id. An FK would make an org restore
+--      fail: lib/dataRestore.ts restores `documents` before
+--      `project_intake_links`, and every intake-born document would be
+--      refused (23503) with it. A dangling id is inert — the route compares
+--      it only with the id of the LIVE link presenting its token, and a
+--      deleted link presents nothing; a restore that brings the link back
+--      brings its authorship back with it.
 --   2. trg_intake_links_assignment_guard — BEFORE INSERT OR UPDATE OF
 --      assigned_doc_ids on project_intake_links (INTK-9 / SEC-11): every
 --      newly assigned document must exist in the LINK'S org, and the writer
 --      must hold publish authority on that document's library
 --      (is_org_controller OR user_can_publish_on_library) — assigning a
 --      controlled document to an outside company is a publish-grade act, not
---      a project-ownership one. At most 500 entries. Service-role / SQL
+--      a project-ownership one — AND must be able to open the document
+--      (doc_is_visible, the read gate: an explicit deny or a restricted
+--      folder with no grant refuses a publisher too), since the portal
+--      lists every assigned document to the outside company. A controller
+--      is exempt from the read check, as from node_visible. At most 500
+--      entries. Service-role / SQL
 --      writes (no JWT) are exempt, as every rail since 20260831. A trigger,
 --      not a second permissive policy (the cluster-3 lesson).
 --   3. (section 3b) bump_intake_use(p_link uuid, p_bytes bigint DEFAULT 0) — REVOKEd from
 --      PUBLIC, anon and authenticated; EXECUTE to service_role only
 --      (INTK-14; the 20260930 pattern). The one-argument form is dropped and
 --      re-created with a byte count (the per-link storage budget, INTK-8).
---   4. project_intake_links.project_id REFERENCES projects(id) ON DELETE
---      CASCADE (PM-2): deleting a project closes its contractor doors. Two
---      worlds (DEC-30): links whose project is already gone are REVOKED
---      first (a door with no project behind it, nobody left to revoke it) and
---      the constraint is added NOT VALID — binding every new row — then
---      VALIDATEd only when no orphan remains. Orphans are never deleted: the
---      documents they submitted keep their provenance.
+--   4. A deleted project closes its contractor doors (PM-2):
+--      trg_projects_close_intake_links, AFTER DELETE ON projects, deletes the
+--      project's links in the same statement — every delete path (the app's
+--      deleteProject, an org deletion's cascade, the SQL console), which is
+--      what an ON DELETE CASCADE foreign key would do. Deliberately NOT a
+--      foreign key: an FK would refuse (23503) any backup row whose project
+--      is not there — an org restore of a backup holding a pre-existing
+--      orphan link would lose the whole project_intake_links table, and
+--      with it every cost_documents row that references a link. Links whose
+--      project is ALREADY gone are REVOKED here (a door with no project
+--      behind it, nobody left to revoke it) — never deleted: the documents
+--      they submitted keep their provenance. An FK an earlier draft of this
+--      file may have added is dropped.
 --   5. Link lifetime (SEC-5): every link created from now on must carry an
---      expiry no later than created_at + 91 days (the 90-day policy plus one
---      day for an end-of-day local expiry). Rows created before this
+--      expiry no later than created_at + 92 days — the 90-day policy plus
+--      slack for an END-OF-DAY LOCAL expiry picked from a UTC date: the
+--      Costs tab's default (UTC date of now + 90 days, 23:59:59 local) is
+--      91.3 days out for a user in California at 6 pm, so 91 days refused a
+--      legitimate mint. Rows created before this
 --      migration are grandfathered by the CHECK (a literal apply timestamp),
 --      and live DOCUMENT links with no expiry get one: 14 days from apply —
 --      a real TTL without cutting off a contractor mid-job. Quote links are
@@ -104,12 +126,14 @@ SELECT 'inventory: live links already past the 500-submission default budget', C
 BEGIN;
 
 -- ── 1. authorship, fixed at creation (INTK-1 / SEC-3 / SEC-12) ───────────
-ALTER TABLE documents ADD COLUMN IF NOT EXISTS authored_by_link_id UUID
-  REFERENCES project_intake_links(id) ON DELETE SET NULL;
+-- A plain UUID (no FK — see the header: restore order). An FK an earlier
+-- draft of this file added is dropped, so a re-run converges.
+ALTER TABLE documents ADD COLUMN IF NOT EXISTS authored_by_link_id UUID;
+ALTER TABLE documents DROP CONSTRAINT IF EXISTS documents_authored_by_link_id_fkey;
 CREATE INDEX IF NOT EXISTS documents_authored_by_link_idx
   ON documents (authored_by_link_id) WHERE authored_by_link_id IS NOT NULL;
 COMMENT ON COLUMN documents.authored_by_link_id IS
-  'INTK-1: the contractor intake link that CREATED this document (stamped once, at creation, by app/api/intake/upload). A trusted link may auto-publish only a document it authored, that it was not assigned, and that has had at least one approved revision. NULL = an org document.';
+  'INTK-1: the contractor intake link that CREATED this document (stamped once, at creation, by app/api/intake/upload). A trusted link may auto-publish only a document it authored, that it was not assigned, and that has had at least one approved revision. NULL = an org document. No FK on purpose (org restore order, like document_versions.intake_link_id): an id whose link is gone is inert.';
 
 UPDATE documents d
    SET authored_by_link_id = f.intake_link_id
@@ -159,6 +183,15 @@ BEGIN
       RAISE EXCEPTION 'Assigning a controlled document to a contractor link needs publish authority on its library — ask Document Control.'
         USING ERRCODE = 'check_violation';
     END IF;
+    -- SEC-11: the portal lists every assigned document to the outside
+    -- company, so the assigner must be able to OPEN it (the read gate —
+    -- an explicit deny or a restricted folder refuses a publisher too).
+    -- doc_is_visible reads auth.uid(), which this SECURITY DEFINER body
+    -- still carries.
+    IF NOT is_org_controller(NEW.org_id) AND NOT doc_is_visible(v_doc.doc_id) THEN
+      RAISE EXCEPTION 'You cannot assign a document you cannot open.'
+        USING ERRCODE = 'check_violation';
+    END IF;
   END LOOP;
   RETURN NEW;
 END;
@@ -200,25 +233,33 @@ REVOKE ALL ON FUNCTION bump_intake_use(uuid, bigint) FROM PUBLIC, anon, authenti
 GRANT EXECUTE ON FUNCTION bump_intake_use(uuid, bigint) TO service_role;
 
 -- ── 4. a deleted project closes its doors (PM-2) ─────────────────────────
+-- Orphans found now are revoked (never deleted). The cascade is a trigger,
+-- not a foreign key — see the header (an FK breaks org restore).
 UPDATE project_intake_links l
    SET revoked_at = NOW()
  WHERE l.revoked_at IS NULL
    AND NOT EXISTS (SELECT 1 FROM projects p WHERE p.id = l.project_id);
-DO $$
+ALTER TABLE project_intake_links DROP CONSTRAINT IF EXISTS project_intake_links_project_fk;
+
+CREATE OR REPLACE FUNCTION close_project_intake_links()
+RETURNS trigger LANGUAGE plpgsql SECURITY DEFINER SET search_path = public AS $$
 BEGIN
-  IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'project_intake_links_project_fk') THEN
-    ALTER TABLE project_intake_links ADD CONSTRAINT project_intake_links_project_fk
-      FOREIGN KEY (project_id) REFERENCES projects(id) ON DELETE CASCADE NOT VALID;
-  END IF;
-  -- Validate only in the world with no orphan left (the revoked orphans
-  -- keep the constraint NOT VALID; it still binds every new row).
-  IF NOT EXISTS (SELECT 1 FROM project_intake_links l
-                  WHERE NOT EXISTS (SELECT 1 FROM projects p WHERE p.id = l.project_id)) THEN
-    ALTER TABLE project_intake_links VALIDATE CONSTRAINT project_intake_links_project_fk;
-  END IF;
-END $$;
+  -- What ON DELETE CASCADE would do, for every path that deletes a project.
+  DELETE FROM project_intake_links WHERE project_id = OLD.id;
+  RETURN OLD;
+END;
+$$;
+REVOKE ALL ON FUNCTION close_project_intake_links() FROM PUBLIC, anon, authenticated;
+
+DROP TRIGGER IF EXISTS trg_projects_close_intake_links ON projects;
+CREATE TRIGGER trg_projects_close_intake_links
+  AFTER DELETE ON projects
+  FOR EACH ROW EXECUTE FUNCTION close_project_intake_links();
 
 -- ── 5. every new link expires, within 90 days (SEC-5) ────────────────────
+-- 92 days in the CHECK: the 90-day policy plus slack for an end-of-day
+-- LOCAL expiry picked from a UTC date (the Costs tab's default reaches
+-- ~91.5 days west of UTC; 91.3 in California at 6 pm). The app refuses more than 90.
 UPDATE project_intake_links
    SET expires_at = NOW() + INTERVAL '14 days'
  WHERE expires_at IS NULL AND revoked_at IS NULL AND COALESCE(purpose, 'documents') <> 'quote';
@@ -228,21 +269,23 @@ BEGIN
     EXECUTE format(
       'ALTER TABLE project_intake_links ADD CONSTRAINT project_intake_links_ttl CHECK ('
       || 'created_at < %L::timestamptz OR ('
-      || 'expires_at IS NOT NULL AND expires_at > created_at AND expires_at <= created_at + INTERVAL ''91 days''))',
+      || 'expires_at IS NOT NULL AND expires_at > created_at AND expires_at <= created_at + INTERVAL ''92 days''))',
       NOW());
   END IF;
 END $$;
 COMMENT ON CONSTRAINT project_intake_links_ttl ON project_intake_links IS
-  'SEC-5: a link created after 20261104 was applied must expire within 90 days (+1 day for an end-of-day local expiry). Older rows are grandfathered by the literal cutoff; live document links among them were given 14 days at apply.';
+  'SEC-5: a link created after 20261104 was applied must expire within 90 days (the CHECK allows 92: an end-of-day local expiry picked from a UTC date lands up to ~91.5 days out west of UTC). Older rows are grandfathered by the literal cutoff; live document links among them were given 14 days at apply.';
 
 COMMIT;
 
 -- ── Verification + inventory (the only result set the SQL editor shows) ──
-SELECT 'documents.authored_by_link_id exists with FK to project_intake_links (ON DELETE SET NULL)' AS check,
-       EXISTS (SELECT 1 FROM pg_constraint
-                WHERE conrelid = 'public.documents'::regclass AND contype = 'f'
-                  AND confrelid = 'public.project_intake_links'::regclass AND confdeltype = 'n'
-                  AND pg_get_constraintdef(oid) ILIKE '%(authored_by_link_id)%') AS ok,
+SELECT 'documents.authored_by_link_id exists, indexed, with NO foreign key (org restore order)' AS check,
+       EXISTS (SELECT 1 FROM information_schema.columns
+                WHERE table_name = 'documents' AND column_name = 'authored_by_link_id')
+       AND EXISTS (SELECT 1 FROM pg_indexes WHERE indexname = 'documents_authored_by_link_idx')
+       AND NOT EXISTS (SELECT 1 FROM pg_constraint
+                        WHERE conrelid = 'public.documents'::regclass AND contype = 'f'
+                          AND pg_get_constraintdef(oid) ILIKE '%(authored_by_link_id)%') AS ok,
        NULL::text AS n
 UNION ALL SELECT 'every intake-born document carries its authoring link (first version → authored_by_link_id)',
        NOT EXISTS (SELECT 1 FROM (SELECT DISTINCT ON (v.record_id) v.record_id, v.intake_link_id
@@ -253,9 +296,10 @@ UNION ALL SELECT 'every intake-born document carries its authoring link (first v
 UNION ALL SELECT 'assignment guard trigger installed on project_intake_links',
        EXISTS (SELECT 1 FROM pg_trigger WHERE tgname = 'trg_intake_links_assignment_guard'
                 AND tgrelid = 'public.project_intake_links'::regclass AND NOT tgisinternal), NULL
-UNION ALL SELECT 'assignment guard checks the org and publish authority, SECURITY DEFINER with search_path pinned',
+UNION ALL SELECT 'assignment guard checks the org, publish authority and read access, SECURITY DEFINER with search_path pinned',
        (SELECT prosecdef AND prosrc LIKE '%v_doc.org_id IS DISTINCT FROM NEW.org_id%'
                AND prosrc LIKE '%user_can_publish_on_library(v_doc.library_id, v_actor::text, NEW.org_id)%'
+               AND prosrc LIKE '%NOT doc_is_visible(v_doc.doc_id)%'
                AND array_to_string(proconfig, ',') LIKE '%search_path=public%'
           FROM pg_proc WHERE proname = 'enforce_intake_link_assignment'), NULL
 UNION ALL SELECT 'bump_intake_use(uuid) is gone; bump_intake_use(uuid, bigint) exists',
@@ -265,16 +309,22 @@ UNION ALL SELECT 'bump_intake_use: service_role may execute; PUBLIC, anon and au
        has_function_privilege('service_role', 'bump_intake_use(uuid, bigint)', 'EXECUTE')
        AND NOT has_function_privilege('anon', 'bump_intake_use(uuid, bigint)', 'EXECUTE')
        AND NOT has_function_privilege('authenticated', 'bump_intake_use(uuid, bigint)', 'EXECUTE'), NULL
-UNION ALL SELECT 'project_intake_links.project_id → projects ON DELETE CASCADE',
-       EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'project_intake_links_project_fk'
-                AND confrelid = 'public.projects'::regclass AND confdeltype = 'c'), NULL
+UNION ALL SELECT 'deleting a project deletes its links (trigger), and no FK binds project_intake_links to projects (org restore)',
+       EXISTS (SELECT 1 FROM pg_trigger WHERE tgname = 'trg_projects_close_intake_links'
+                AND tgrelid = 'public.projects'::regclass AND NOT tgisinternal)
+       AND (SELECT prosecdef AND prosrc LIKE '%DELETE FROM project_intake_links WHERE project_id = OLD.id%'
+                   AND array_to_string(proconfig, ',') LIKE '%search_path=public%'
+              FROM pg_proc WHERE proname = 'close_project_intake_links')
+       AND NOT EXISTS (SELECT 1 FROM pg_constraint
+                        WHERE conrelid = 'public.project_intake_links'::regclass AND contype = 'f'
+                          AND confrelid = 'public.projects'::regclass), NULL
 UNION ALL SELECT 'no LIVE link points at a missing project',
        NOT EXISTS (SELECT 1 FROM project_intake_links l
                     WHERE l.revoked_at IS NULL AND NOT EXISTS (SELECT 1 FROM projects p WHERE p.id = l.project_id)), NULL
-UNION ALL SELECT 'TTL CHECK installed (new links: expiry required, within 91 days of creation)',
+UNION ALL SELECT 'TTL CHECK installed (new links: expiry required, within 92 days of creation)',
        EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'project_intake_links_ttl'
                 AND pg_get_constraintdef(oid) LIKE '%expires_at IS NOT NULL%'
-                AND pg_get_constraintdef(oid) LIKE '%91 days%'), NULL
+                AND pg_get_constraintdef(oid) LIKE '%92 days%'), NULL
 UNION ALL SELECT 'no live document link is left without an expiry',
        NOT EXISTS (SELECT 1 FROM project_intake_links
                     WHERE expires_at IS NULL AND revoked_at IS NULL AND COALESCE(purpose, 'documents') <> 'quote'), NULL
@@ -282,7 +332,7 @@ UNION ALL SELECT 'per-link budget columns exist (max_submissions, max_total_byte
        (SELECT COUNT(*) = 3 FROM information_schema.columns
          WHERE table_name = 'project_intake_links'
            AND column_name IN ('max_submissions', 'max_total_bytes', 'bytes_received')), NULL
-UNION ALL SELECT 'inventory: orphan links (revoked) that keep project_intake_links_project_fk NOT VALID — 0 means it was validated',
+UNION ALL SELECT 'inventory: orphan links (project gone; revoked, kept for provenance)',
        NULL::boolean,
        (SELECT COUNT(*)::text FROM project_intake_links l
          WHERE NOT EXISTS (SELECT 1 FROM projects p WHERE p.id = l.project_id))

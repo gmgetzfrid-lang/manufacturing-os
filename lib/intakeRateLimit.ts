@@ -12,7 +12,8 @@
 //     and the link's expiry still bound the damage;
 //   * a 429 whose message the portal renders as-is;
 //   * at most one "new submission" notice per link per window, so a burst
-//     is one notice, not N (SEC-8 dw2);
+//     is one notice, not N (SEC-8 dw2) — each folded submission is counted
+//     ('suppressed'), and the next notice says how many more arrived;
 //   * a per-link lifetime cap (submissions and bytes) read from the link
 //     row (20261104), so one leaked token cannot grow storage without end.
 //
@@ -61,7 +62,10 @@ export function clientIp(req: { headers: Headers }): string {
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 type AttemptClient = { from: (table: string) => any };
 
-export const ATTEMPT_OUTCOME = { attempt: "attempt", notified: "notified" } as const;
+/** `attempt` counts toward the rate window; `notified` marks a team
+ *  notice; `suppressed` marks a submission whose notice was folded into
+ *  the window's earlier one (never counted toward the rate window). */
+export const ATTEMPT_OUTCOME = { attempt: "attempt", notified: "notified", suppressed: "suppressed" } as const;
 
 export type RateVerdict = { limited: false } | { limited: true; retryAfterSec: number; message: string };
 
@@ -130,6 +134,32 @@ export async function noticeSentRecently(client: AttemptClient, input: {
     return (count ?? 0) > 0;
   } catch {
     return false;
+  }
+}
+
+/** How many submissions on this link were folded into a notice window
+ *  since the link's last notice — the count the next notice carries, so a
+ *  burst of N uploads is never reported as one. Looks back at most two days
+ *  (the attempt log's retention). An unreadable log answers 0. */
+export async function suppressedSinceLastNotice(client: AttemptClient, input: {
+  tokenHash: string; now?: number;
+}): Promise<number> {
+  try {
+    const horizon = new Date((input.now ?? Date.now()) - 2 * 24 * HOUR_MS).toISOString();
+    const { data: sent, error: sentErr } = await client.from("intake_attempts")
+      .select("created_at")
+      .eq("token_hash", input.tokenHash).eq("outcome", ATTEMPT_OUTCOME.notified)
+      .gte("created_at", horizon);
+    if (sentErr) return 0;
+    const last = (((sent ?? []) as Array<{ created_at: string }>)).map((r) => String(r.created_at)).sort().pop() ?? horizon;
+    const { count, error } = await client.from("intake_attempts")
+      .select("id", { count: "exact", head: true })
+      .eq("token_hash", input.tokenHash).eq("outcome", ATTEMPT_OUTCOME.suppressed)
+      .gte("created_at", last);
+    if (error) return 0;
+    return typeof count === "number" ? count : 0;
+  } catch {
+    return 0;
   }
 }
 

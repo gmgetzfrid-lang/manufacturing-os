@@ -32,9 +32,18 @@
 //     review_state 'superseded', an audit row, a notice (INTK-4 / SAF-10).
 //   * Notices go through emit() (followers, intent holders, preferences,
 //     dedupe) — one per link per window (INTK-10 / SEC-8 dw2).
-//   * A retried upload of the same bytes returns the original record
-//     (REL-8 / INTK-13); every failure the portal sees is a plain sentence
-//     plus a reference id — the database message stays in the server log.
+//   * A retried upload of the same bytes returns the original record —
+//     only a LIVE one: the document still points at it, nothing withdrew
+//     it, and it is the record THIS request would have made (the same
+//     document, or a new document still in its first review). The same
+//     bytes live on another document are refused with a sentence, never
+//     answered with that document's ids (REL-8 / INTK-13). Every failure
+//     the portal sees is a plain sentence plus a reference id — the
+//     database message stays in the server log.
+//   * A quote is filed against the project party the link's company names
+//     (COST-12's intake limb); a document the door creates is referenced
+//     from the project (project_documents, DEC-40 — by reference, never a
+//     copy).
 //
 // Header: x-intake-token (or query ?token=). Fields: file, and either docId
 // (new revision of an own/assigned document), ticketId (redlines for a
@@ -43,12 +52,13 @@
 
 import { NextRequest, NextResponse } from "next/server";
 import { supabaseAdmin } from "@/lib/supabaseAdmin";
-import { PutObjectCommand } from "@aws-sdk/client-s3";
+import { PutObjectCommand, DeleteObjectCommand } from "@aws-sdk/client-s3";
 import { r2, R2_BUCKET } from "@/lib/r2";
 import { memberHoldsAny, roleFilter } from "@/lib/roleHeld";
 import { __setServerSupabaseClient, __resetServerSupabaseClient } from "@/lib/supabase";
 import { readActiveHolds, decideHoldGate } from "@/lib/holdGate";
 import { computeUniquenessKey } from "@/lib/uniqueness";
+import { matchCompanyByName } from "@/lib/bidTab";
 import { validateIntakeFile, type IntakeBranch } from "@/lib/fileSniff";
 import {
   INTAKE_TOKEN_RE, intakeTokenFromRequest, CLOSED_PROJECT_STATUSES,
@@ -56,7 +66,7 @@ import {
 } from "@/lib/intakeLinks";
 import {
   intakeLimits, sha256Hex, clientIp, checkIntakeRate, recordIntakeAttempt,
-  noticeSentRecently, readLinkBudget, linkBudgetRefusal, ATTEMPT_OUTCOME,
+  noticeSentRecently, suppressedSinceLastNotice, readLinkBudget, linkBudgetRefusal, ATTEMPT_OUTCOME,
 } from "@/lib/intakeRateLimit";
 
 export const runtime = "nodejs";
@@ -86,6 +96,12 @@ function missingColumn(e: PgError, col: string): boolean {
 // always unbinds (reference-counted: two uploads on one warm instance never
 // unbind each other's pipeline). Nothing else in this route uses the shared
 // client.
+// DEPLOY CONSTRAINT (DEC-50): the binding is module-wide. It is safe only
+// where each route runs in its own module instance (one serverless function
+// per route — the Vercel model lib/supabase.ts assumes). On a long-lived
+// shared Node process (`next start`, grouped functions) any other code
+// using the shared client during the window would run as the service role;
+// such a deploy must thread an explicit client through the pipeline first.
 let serviceClientHolds = 0;
 async function asServiceRole<T>(fn: () => Promise<T>): Promise<T> {
   if (serviceClientHolds++ === 0) __setServerSupabaseClient(supabaseAdmin);
@@ -151,23 +167,70 @@ async function putObject(key: string, bytes: Uint8Array, contentType: string): P
   }
 }
 
+/** Best-effort removal of an object this request stored and then did not
+ *  use (a retry answered with the original, a refused insert). */
+async function deleteObject(ref: string, key: string): Promise<void> {
+  try {
+    await r2.send(new DeleteObjectCommand({ Bucket: R2_BUCKET, Key: key }));
+  } catch (e) {
+    console.error(`[intake/upload] ref=${ref} unused object ${key} could not be removed: ${(e as Error).message}`);
+  }
+}
+
 /** Who authored this document: documents.authored_by_link_id (20261104),
  *  stamped only when the route CREATES a document. On a database without
  *  the column, the document's FIRST version (a fact fixed at creation —
- *  never the chain this route keeps appending to). Unreadable → null:
- *  "not authored", the fail-safe answer (review). */
-async function linkAuthorOf(docId: string, orgId: string): Promise<string | null> {
+ *  never the chain this route keeps appending to). An unreadable answer is
+ *  an ERROR (the caller answers 503, "try again") — never read as "not
+ *  authored", which would tell a contractor they may not revise their own
+ *  drawing. */
+async function linkAuthorOf(docId: string, orgId: string): Promise<{ author: string | null } | { error: string }> {
   const { data, error } = await supabaseAdmin
     .from("documents").select("authored_by_link_id").eq("id", docId).eq("org_id", orgId).maybeSingle();
-  if (!error) return ((data as { authored_by_link_id?: string | null } | null)?.authored_by_link_id as string | null) ?? null;
-  if (!missingColumn(error, "authored_by_link_id")) return null;
+  if (!error) return { author: ((data as { authored_by_link_id?: string | null } | null)?.authored_by_link_id as string | null) ?? null };
+  if (!missingColumn(error, "authored_by_link_id")) return { error: `authorship read: ${error.message}` };
   const { data: first, error: firstErr } = await supabaseAdmin
     .from("document_versions").select("intake_link_id")
     .eq("record_id", docId).eq("org_id", orgId)
     .order("created_at", { ascending: true }).order("id", { ascending: true }).limit(1);
-  if (firstErr) return null;
-  return ((first as Array<{ intake_link_id: string | null }> | null)?.[0]?.intake_link_id as string | null) ?? null;
+  if (firstErr) return { error: `first-version read: ${firstErr.message}` };
+  return { author: ((first as Array<{ intake_link_id: string | null }> | null)?.[0]?.intake_link_id as string | null) ?? null };
 }
+
+/** REL-8: is an earlier submission of the same bytes from this link the
+ *  ORIGINAL of this request — or something else that merely shares its
+ *  bytes? `original` only when it is still live (the document points at
+ *  it) and it is the record this request would have made: a revision of
+ *  the same document, or — for a new-document upload — a new document
+ *  still in its first review. A live in-review row that is NOT the
+ *  original (another document, or a row nothing points at) `blocks`: the
+ *  in-flight index would refuse the insert, and answering with its ids
+ *  would name someone else's record. A published hit that is no longer
+ *  current is neither. */
+type PriorVerdict = "original" | "blocks" | "ignore";
+async function classifyPrior(hit: { id: string; record_id: string; review_state: string | null; released_at: string | null },
+  ctx: { orgId: string; docId: string | null }): Promise<PriorVerdict | { error: string }> {
+  const { data: doc, error } = await supabaseAdmin
+    .from("documents").select("id, pending_version_id, current_version_id")
+    .eq("id", hit.record_id).eq("org_id", ctx.orgId).maybeSingle();
+  if (error) return { error: `prior submission read: ${error.message}` };
+  const d = (doc ?? null) as { pending_version_id?: string | null; current_version_id?: string | null } | null;
+  if (hit.review_state === "in_review") {
+    if (!d) return "blocks";
+    const pointed = String(d.pending_version_id ?? "") === hit.id;
+    if (ctx.docId) return hit.record_id === ctx.docId && pointed ? "original" : "blocks";
+    // A new-document upload: the original is a document still in its first
+    // review (never approved), whose pointer names the hit — or is not set
+    // yet, when the original is itself mid-write.
+    return !d.current_version_id && (pointed || d.pending_version_id == null) ? "original" : "blocks";
+  }
+  if (hit.review_state == null && hit.released_at != null) {
+    return ctx.docId && hit.record_id === ctx.docId && d && String(d.current_version_id ?? "") === hit.id ? "original" : "ignore";
+  }
+  return "ignore";
+}
+
+const SAME_FILE_ELSEWHERE = "This same file is already awaiting review through this link on another submission — send the file meant for this one, or wait until that submission is decided.";
 
 /** INTK-13 dw3: one intake folder per project, whatever the concurrency.
  *  The folder is created, then CLAIMED with a compare-and-set on the
@@ -379,14 +442,25 @@ export async function POST(req: NextRequest) {
   const changeNote = noteRaw || null;
 
   /** One notice to the project team per link per window (SEC-8 dw2) — a
-   *  burst of uploads is one notice, not N. `force` for a notice that must
-   *  not be folded into a burst (a pending review was displaced). */
+   *  burst of uploads is one notice, not N. A folded submission is COUNTED
+   *  ('suppressed'), and the next notice on the link says how many more
+   *  arrived since the last one. `force` for a notice that must never be
+   *  folded into a burst: a controlled revision published without review,
+   *  and a pending review that was displaced. */
   const notifyTeam = async (n: {
     kind: "review_requested" | "doc_superseded"; title: string; body: string; link: string;
     resource: { type: "document" | "project"; id: string }; followers: boolean; extraInvolved?: string[];
     metadata: Record<string, unknown>; force?: boolean;
   }) => {
-    if (!n.force && await noticeSentRecently(supabaseAdmin, { tokenHash, windowMinutes: limits.noticeWindowMinutes })) return;
+    if (!n.force && await noticeSentRecently(supabaseAdmin, { tokenHash, windowMinutes: limits.noticeWindowMinutes })) {
+      await recordIntakeAttempt(supabaseAdmin, { tokenHash, ip, outcome: ATTEMPT_OUTCOME.suppressed, linkId });
+      return;
+    }
+    const folded = await suppressedSinceLastNotice(supabaseAdmin, { tokenHash });
+    const where = n.link.includes("tab=costs") ? "Costs" : "Intake";
+    const body = folded > 0
+      ? `${n.body} ${folded} more submission${folded === 1 ? "" : "s"} arrived on this link since the last notice — see the project's ${where} tab.`
+      : n.body;
     const { data: controllers, error: ctlErr } = await supabaseAdmin
       .from("org_members").select("uid").eq("org_id", orgId).eq("status", "active").or(roleFilter(["Admin", "DocCtrl"]));
     if (ctlErr) console.error(`[intake/upload] ref=${ref} controller pool read failed: ${ctlErr.message}`);
@@ -400,7 +474,7 @@ export async function POST(req: NextRequest) {
         const { emit } = await import("@/lib/notify/dispatch");
         await emit({
           orgId, category: "watched", kind: n.kind,
-          title: n.title, body: n.body, link: n.link,
+          title: n.title, body, link: n.link,
           resource: n.resource, actorName: company,
           audience: { involved, followers: n.followers },
           metadata: { intake: true, ...n.metadata },
@@ -429,6 +503,23 @@ export async function POST(req: NextRequest) {
         return NextResponse.json({ ok: true, quoteId: String(priorId), status: "quote_received", duplicate: true, message: "This quote was already received — nothing new was stored." });
       }
     }
+    // COST-12 (intake limb): the quote is filed against the project party
+    // the link's company names — an exact (case-insensitive) name first,
+    // else the one party it normalises to (lib/bidTab.ts, the registry's
+    // own rule); none or several binds nothing and the Costs tab links it by
+    // hand. An unreadable party list files the quote unlinked — the quote
+    // itself is never refused for it.
+    let partyId: string | null = null;
+    {
+      const { data: parties, error: partyErr } = await supabaseAdmin
+        .from("project_parties").select("id, name").eq("project_id", projectId).eq("org_id", orgId);
+      if (partyErr) console.error(`[intake/upload] ref=${ref} project parties unreadable: ${partyErr.message}`);
+      else {
+        const named = ((parties ?? []) as Array<{ id: string; name: string | null }>)
+          .filter((p): p is { id: string; name: string } => typeof p.name === "string" && p.name.trim() !== "");
+        partyId = matchCompanyByName(company, named)?.id ?? null;
+      }
+    }
     const safeName = file.name.replace(/[^\w.\-]+/g, "_").slice(0, 120) || "quote";
     const key = `orgs/${orgId}/project-costs/${projectId}/quote-${crypto.randomUUID()}-${safeName}`;
     if (!(await putObject(key, bytes, contentType))) return fail("File storage failed — try again.", 502);
@@ -440,6 +531,7 @@ export async function POST(req: NextRequest) {
       vendor_name: company,
       rfq_group: rfqGroup,
       intake_link_id: linkId,
+      party_id: partyId,
       status: "draft",
       created_by: null,
       file_hash: fileHash,
@@ -454,9 +546,15 @@ export async function POST(req: NextRequest) {
       const { data: winner } = await supabaseAdmin.from("cost_documents").select("id")
         .eq("intake_link_id", linkId).eq("file_hash", fileHash).eq("status", "draft").limit(1);
       const winnerId = (((winner ?? []) as Array<{ id: string }>)[0]?.id) ?? null;
-      if (winnerId) return NextResponse.json({ ok: true, quoteId: String(winnerId), status: "quote_received", duplicate: true, message: "This quote was already received — nothing new was stored." });
+      if (winnerId) {
+        await deleteObject(ref, key);
+        return NextResponse.json({ ok: true, quoteId: String(winnerId), status: "quote_received", duplicate: true, message: "This quote was already received — nothing new was stored." });
+      }
     }
-    if (qErr || !qdoc) return fail("Couldn't record the quote — try again shortly.", 500, `cost_documents insert: ${qErr?.message ?? "no row"}`);
+    if (qErr || !qdoc) {
+      await deleteObject(ref, key);
+      return fail("Couldn't record the quote — try again shortly.", 500, `cost_documents insert: ${qErr?.message ?? "no row"}`);
+    }
     const quoteId = String((qdoc as { id: string }).id);
 
     await notifyTeam({
@@ -465,13 +563,13 @@ export async function POST(req: NextRequest) {
       body: `${company} submitted a quote through their intake link.${changeNote ? ` Note: ${changeNote}` : ""} Run the AI read from the project's Costs tab to tabulate it.`,
       link: `/projects/${projectId}?tab=costs`,
       resource: { type: "project", id: projectId }, followers: true,
-      metadata: { quote: true, rfqGroup, quoteId },
+      metadata: { quote: true, rfqGroup, quoteId, partyId },
     });
     await audit(ref, {
       action: "INTAKE_QUOTE_SUBMISSION",
       resource_type: "cost", resource_id: quoteId,
       org_id: orgId, user_id: null, user_email: contactEmail,
-      details: { company, projectId, rfqGroup, fileName: safeName, size: file.size, contentType, note: changeNote, appSession: session },
+      details: { company, projectId, rfqGroup, partyId, fileName: safeName, size: file.size, contentType, note: changeNote, appSession: session },
     });
     await bumpUse(ref, linkId, file.size);
 
@@ -594,31 +692,46 @@ export async function POST(req: NextRequest) {
       .eq("id", docId).eq("org_id", orgId).maybeSingle();
     if (dErr) return fail("This link's documents could not be checked right now — try again shortly.", 503, `document read: ${dErr.message}`);
     // INTK-1 / SEC-3 / SEC-12: authorship is fixed at creation — and an
-    // assigned document is never the link's own, whatever its history.
-    ownDoc = !!d && !isAssigned && (await linkAuthorOf(docId, orgId)) === linkId;
+    // assigned document is never the link's own, whatever its history. An
+    // authorship read that FAILS is "try again", never "not yours".
+    if (d && !isAssigned) {
+      const authorship = await linkAuthorOf(docId, orgId);
+      if ("error" in authorship) return fail("This link's documents could not be checked right now — try again shortly.", 503, authorship.error);
+      ownDoc = authorship.author === linkId;
+    }
     if (!isAssigned && !ownDoc) return fail("This link may only submit revisions to its own or assigned documents.", 403);
     if (!d) return fail("Document not found.", 404);
     targetDoc = d as Record<string, unknown>;
   }
 
   // ── REL-8: a retry of the same bytes returns the original record ──────
+  // Only a LIVE earlier submission counts (superseded_at NULL: a withdrawn
+  // or displaced row is not "already received"), and only the record THIS
+  // request would have made (classifyPrior). The same bytes live on
+  // another submission are refused here, before storage — the in-flight
+  // index would refuse the insert anyway, and the answer must never carry
+  // another document's ids.
   {
-    let q = supabaseAdmin
+    const { data: prior, error: priorErr } = await supabaseAdmin
       .from("document_versions").select("id, record_id, review_state, released_at, created_at")
-      .eq("intake_link_id", linkId).eq("file_hash", fileHash).gte("created_at", since);
-    if (docId) q = q.eq("record_id", docId);
-    const { data: prior, error: priorErr } = await q.order("created_at", { ascending: false }).limit(5);
+      .eq("intake_link_id", linkId).eq("file_hash", fileHash).is("superseded_at", null).gte("created_at", since)
+      .order("created_at", { ascending: false }).limit(5);
     if (!priorErr) {
-      const hit = (((prior ?? []) as Array<Record<string, unknown>>))
-        .find((v) => v.review_state === "in_review" || (v.review_state == null && v.released_at != null));
-      if (hit) {
-        const inReview = hit.review_state === "in_review";
-        return NextResponse.json({
-          ok: true, documentId: String(hit.record_id), versionId: String(hit.id), duplicate: true,
-          status: inReview ? "in_review" : "published",
-          message: "This file was already received — nothing new was stored.",
-        });
+      let blocked = false;
+      for (const raw of ((prior ?? []) as Array<Record<string, unknown>>)) {
+        const hit = { id: String(raw.id), record_id: String(raw.record_id), review_state: (raw.review_state as string | null) ?? null, released_at: (raw.released_at as string | null) ?? null };
+        const verdict = await classifyPrior(hit, { orgId, docId });
+        if (typeof verdict === "object") return fail("This link's documents could not be checked right now — try again shortly.", 503, verdict.error);
+        if (verdict === "original") {
+          return NextResponse.json({
+            ok: true, documentId: hit.record_id, versionId: hit.id, duplicate: true,
+            status: hit.review_state === "in_review" ? "in_review" : "published",
+            message: "This file was already received — nothing new was stored.",
+          });
+        }
+        if (verdict === "blocks") blocked = true;
       }
+      if (blocked) return fail(SAME_FILE_ELSEWHERE, 409, undefined, { code: "same_file_in_review" });
     }
   }
 
@@ -666,15 +779,27 @@ export async function POST(req: NextRequest) {
     autoWithheld = "this document has never had an approved revision — its first revision is always reviewed";
   }
   if (autoNow && targetDoc && docId) {
-    // A rejected submission is never re-published by resubmitting it: after
-    // a rejection, the next submission on this document is reviewed.
-    const { data: lastOwn, error: lastErr } = await supabaseAdmin
-      .from("document_versions").select("review_state")
+    // INTK-1 dw3: a rejected submission is never re-published by
+    // resubmitting it without a person deciding. After a rejection, every
+    // submission on this document is reviewed until the team approves one
+    // (a rejected submission made against the CURRENT revision still
+    // stands); the rejected bytes themselves are reviewed however long ago
+    // they were refused; and the newest own submission being rejected
+    // withholds too. The "throwaway second submission" route to the same
+    // end is closed below (a pending own submission withholds).
+    const { data: ownRows, error: ownErr } = await supabaseAdmin
+      .from("document_versions").select("id, review_state, file_hash, supersedes_version_id")
       .eq("record_id", docId).eq("intake_link_id", linkId)
-      .order("created_at", { ascending: false }).limit(1);
-    if (lastErr) { autoNow = false; autoWithheld = "the document's submission history could not be verified"; }
-    else if ((((lastOwn ?? []) as Array<{ review_state: string | null }>)[0]?.review_state) === "rejected") {
+      .order("created_at", { ascending: false }).limit(200);
+    const own = ((ownRows ?? []) as Array<{ id: string; review_state: string | null; file_hash: string | null; supersedes_version_id: string | null }>);
+    const current = String(targetDoc.current_version_id ?? "");
+    if (ownErr) { autoNow = false; autoWithheld = "the document's submission history could not be verified"; }
+    else if (own[0]?.review_state === "rejected") {
       autoNow = false; autoWithheld = "your previous submission for this document was not accepted — the next one is reviewed";
+    } else if (own.some((v) => v.review_state === "rejected" && v.file_hash === fileHash)) {
+      autoNow = false; autoWithheld = "this file was not accepted when it was submitted before — it is reviewed again";
+    } else if (own.some((v) => v.review_state === "rejected" && String(v.supersedes_version_id ?? "") === current)) {
+      autoNow = false; autoWithheld = "a submission against the current revision was not accepted — later ones are reviewed until the project team approves one";
     }
   }
   if (autoNow && targetDoc && docId) {
@@ -733,6 +858,14 @@ export async function POST(req: NextRequest) {
       if (modeErr) { autoNow = false; autoWithheld = "the library's review policy could not be verified"; }
       else if (mode === "require") { autoNow = false; autoWithheld = "this library requires reviewer sign-off"; }
     }
+    // 5. INTK-1 dw3: while the link's own earlier submission is still
+    //    awaiting review, nothing publishes — the new upload replaces it IN
+    //    REVIEW. Otherwise a rejected file could be re-published by sending
+    //    one throwaway submission (it goes to review) and then the rejected
+    //    bytes again (which would displace it and publish).
+    if (autoNow && priorPending) {
+      autoNow = false; autoWithheld = "your previous submission for this document is still awaiting review";
+    }
   }
 
   // ── A new document: the intake folder, and the number's uniqueness ────
@@ -777,6 +910,40 @@ export async function POST(req: NextRequest) {
 
   // ── Create document (new) ──
   let documentId = docId;
+  /** The document THIS request created (a new-document upload), so every
+   *  later refusal — and a retry answered with its original — removes it
+   *  with the stored object instead of leaving an empty document in the
+   *  intake folder (a transition-in candidate with no version). */
+  let createdDocId: string | null = null;
+  const discard = async () => {
+    if (createdDocId) {
+      const { error: dropErr } = await supabaseAdmin.from("documents").delete().eq("id", createdDocId).eq("org_id", orgId);
+      if (dropErr) console.error(`[intake/upload] ref=${ref} unused document ${createdDocId} could not be removed: ${dropErr.message}`);
+      createdDocId = null;
+    }
+    await deleteObject(ref, key);
+  };
+  /** REL-8 at the database: the in-flight index refused the insert — the
+   *  same bytes are already live on this link. The original (classifyPrior)
+   *  answers as the retry it is; anything else is refused with a sentence.
+   *  Either way what this request stored is removed. */
+  const answerInflight = async (detail: string) => {
+    const { data: winners, error: wErr } = await supabaseAdmin.from("document_versions")
+      .select("id, record_id, review_state, released_at")
+      .eq("intake_link_id", linkId).eq("file_hash", fileHash).eq("review_state", "in_review").is("superseded_at", null)
+      .limit(5);
+    await discard();
+    if (wErr) return fail("This link's documents could not be checked right now — try again shortly.", 503, `${detail}; in-flight read: ${wErr.message}`);
+    for (const raw of ((winners ?? []) as Array<Record<string, unknown>>)) {
+      const w = { id: String(raw.id), record_id: String(raw.record_id), review_state: "in_review", released_at: null };
+      const verdict = await classifyPrior(w, { orgId, docId });
+      if (typeof verdict === "object") return fail("This link's documents could not be checked right now — try again shortly.", 503, `${detail}; ${verdict.error}`);
+      if (verdict === "original") {
+        return NextResponse.json({ ok: true, documentId: w.record_id, versionId: w.id, duplicate: true, status: "in_review", message: "This file was already received — nothing new was stored." });
+      }
+    }
+    return fail(SAME_FILE_ELSEWHERE, 409, detail, { code: "same_file_in_review" });
+  };
   if (!documentId) {
     const docRow: Record<string, unknown> = {
       org_id: orgId, library_id: libraryId, collection_id: collectionId,
@@ -795,10 +962,21 @@ export async function POST(req: NextRequest) {
       ({ data: doc, error: docErr } = await supabaseAdmin.from("documents").insert(docRow).select("id").single());
     }
     if (docErr && String(docErr.code ?? "") === "23505") {
+      // A numbered new document whose retry raced its original: the first
+      // request holds the number, so this one is the same bytes in flight
+      // — answer with the original, never "number already in use".
+      const { data: twin } = await supabaseAdmin.from("document_versions")
+        .select("id").eq("intake_link_id", linkId).eq("file_hash", fileHash).eq("review_state", "in_review").is("superseded_at", null).limit(1);
+      if (((twin ?? []) as unknown[]).length > 0) return answerInflight(`documents insert: ${docErr.message}`);
+      await deleteObject(ref, key);
       return fail("That drawing number is already in use in this project's library — to revise that drawing use the revision form, otherwise check the number.", 409, `documents insert: ${docErr.message}`, { code: "number_in_use" });
     }
-    if (docErr || !doc) return fail("Couldn't create the document — try again shortly.", 500, `documents insert: ${docErr?.message ?? "no row"}`);
+    if (docErr || !doc) {
+      await deleteObject(ref, key);
+      return fail("Couldn't create the document — try again shortly.", 500, `documents insert: ${docErr?.message ?? "no row"}`);
+    }
     documentId = String((doc as { id: string }).id);
+    createdDocId = documentId;
   }
   const theDocId = String(documentId);
 
@@ -812,7 +990,10 @@ export async function POST(req: NextRequest) {
       creator: String(link.created_by),
       company, revLabel, key, contentType, size: file.size, changeNote, fileHash,
     });
-    if (outcome.kind === "refuse") return fail(outcome.message, outcome.status, outcome.detail);
+    if (outcome.kind === "refuse") {
+      await discard();
+      return fail(outcome.message, outcome.status, outcome.detail);
+    }
     if (outcome.kind === "demote") {
       autoWithheld = outcome.reason;
       if (outcome.detail) console.error(`[intake/upload] ref=${ref} ${outcome.detail}`);
@@ -822,10 +1003,22 @@ export async function POST(req: NextRequest) {
     }
   }
 
+  /** A lost pointer race (or a refused pointer write): the new version is
+   *  RESOLVED — 'superseded' + superseded_at, like a displaced one (the
+   *  pre-20261105 CHECK keeps the superseded_at-only shape) — so it never
+   *  sits 'in_review' with nothing pointing at it, never reads as "already
+   *  received" to the contractor's resend, and never holds the in-flight
+   *  index against it. */
   const withdraw = async (msg: string, detail?: string) => {
     if (versionId) {
-      await supabaseAdmin.from("document_versions").update({ superseded_at: nowIso }).eq("id", versionId).then(() => undefined, () => undefined);
+      let { error: wErr } = await supabaseAdmin.from("document_versions")
+        .update({ review_state: "superseded", superseded_at: nowIso }).eq("id", versionId);
+      if (wErr && String(wErr.code ?? "") === "23514") {
+        ({ error: wErr } = await supabaseAdmin.from("document_versions").update({ superseded_at: nowIso }).eq("id", versionId));
+      }
+      if (wErr) console.error(`[intake/upload] ref=${ref} withdrawn submission ${versionId} not resolved: ${wErr.message}`);
     }
+    if (createdDocId) await discard();
     return fail(msg, 409, detail);
   };
 
@@ -834,17 +1027,9 @@ export async function POST(req: NextRequest) {
     // provenance so the portal register and the review queue see it.
     const { error: stampErr } = await supabaseAdmin.from("document_versions").update({ intake_link_id: linkId }).eq("id", versionId);
     if (stampErr) console.error(`[intake/upload] ref=${ref} provenance stamp failed on ${versionId}: ${stampErr.message}`);
-    if (priorPending) {
-      // The link's own earlier (roster-free) submission is displaced by the
-      // publish — clear the pointer only if it still names that draft.
-      const { data: cleared, error: clearErr } = await supabaseAdmin.from("documents")
-        .update({ pending_version_id: null, updated_at: nowIso })
-        .eq("id", theDocId).eq("pending_version_id", priorPending).select("id");
-      if (clearErr) console.error(`[intake/upload] ref=${ref} pending pointer clear failed: ${clearErr.message}`);
-      if ((cleared as unknown[] | null)?.length) {
-        await retireDisplaced(ref, { orgId, documentId: theDocId, displacedId: priorPending, byVersionId: versionId, company, projectId, nowIso, contactEmail });
-      }
-    }
+    // No pending submission is displaced here: a trusted link with its own
+    // submission still awaiting review never auto-publishes (INTK-1 dw3) —
+    // that upload replaces it IN REVIEW, below.
     // INTK-2 / SAF-5: the same post-publish pipeline, with the same
     // arguments, as finalizeReviewedRevision — stale-copy signals, recall,
     // work-package drift, revision impact, stale proposals, the review
@@ -891,16 +1076,16 @@ export async function POST(req: NextRequest) {
       .select("id").single();
     if (verErr && String(verErr.code ?? "") === "23505") {
       const msg = `${verErr.message ?? ""} ${verErr.details ?? ""}`;
-      if (/intake_inflight/.test(msg)) {
-        // REL-8: a concurrent retry of the same bytes won — answer with it.
-        const { data: winner } = await supabaseAdmin.from("document_versions").select("id, record_id")
-          .eq("intake_link_id", linkId).eq("file_hash", fileHash).eq("review_state", "in_review").limit(1);
-        const w = (((winner ?? []) as Array<{ id: string; record_id: string }>)[0]) ?? null;
-        if (w) return NextResponse.json({ ok: true, documentId: String(w.record_id), versionId: String(w.id), duplicate: true, status: "in_review", message: "This file was already received — nothing new was stored." });
-      }
+      // REL-8: the same bytes are already live on this link — the original
+      // (a concurrent retry that won) answers; anything else is refused.
+      if (/intake_inflight/.test(msg)) return answerInflight(`version insert: ${verErr.message}`);
+      await discard();
       return fail(`Rev ${revLabel || "A"} already exists on this document — submit it with a new revision label.`, 409, `version insert: ${verErr.message}`);
     }
-    if (verErr || !ver) return fail("Couldn't record the submission — try again shortly.", 500, `version insert: ${verErr?.message ?? "no row"}`);
+    if (verErr || !ver) {
+      await discard();
+      return fail("Couldn't record the submission — try again shortly.", 500, `version insert: ${verErr?.message ?? "no row"}`);
+    }
     versionId = String((ver as { id: string }).id);
 
     // RG-10: the pointer write is COMPARE-AND-SET on the pending pointer
@@ -919,20 +1104,34 @@ export async function POST(req: NextRequest) {
     }
   }
 
+  // DEC-40: a document the door created is part of the project BY
+  // REFERENCE (project_documents, the same row "attach to project" writes)
+  // — the project's document list shows it with its live revision, never a
+  // copy. Checked: a refused reference is logged, the submission stands.
+  if (createdDocId) {
+    const { error: refErr } = await supabaseAdmin.from("project_documents").upsert(
+      { org_id: orgId, project_id: projectId, document_id: createdDocId, source: "manual", first_seen_at: nowIso, last_seen_at: nowIso },
+      { onConflict: "project_id,document_id", ignoreDuplicates: true },
+    );
+    if (refErr) console.error(`[intake/upload] ref=${ref} project reference for ${createdDocId} not written: ${refErr.message}`);
+  }
+
   // ── Notify the project team + audit ──
   const displacedNote = priorPending ? " It replaced their earlier submission, which was still awaiting review." : "";
   if (published) {
     await notifyTeam({
       kind: "doc_superseded",
       title: `Intake: ${label} published as Rev ${revLabel} by ${company}`,
-      body: `${company} published a new revision through their trusted intake link. It is now current.${displacedNote}`,
+      body: `${company} published a new revision through their trusted intake link. It is now current.`,
       link: `/projects/${projectId}`,
       resource: { type: "document", id: theDocId },
       // Followers and live intent holders heard it from the post-publish
       // pipeline's stale-copy signal already.
       followers: false,
       metadata: { versionId },
-      force: !!priorPending,
+      // A controlled revision published without review is ALWAYS told —
+      // never folded into a burst of review notices.
+      force: true,
     });
   } else {
     let intentHolders: string[] = [];

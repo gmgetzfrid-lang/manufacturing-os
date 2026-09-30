@@ -15,8 +15,9 @@
 //   * the text limits a submission is held to;
 //   * `revokeProjectIntakeLinks` — THE revoke helper. The project model
 //     (lib/projects.ts, projects Round G J8) calls it when a project is
-//     closed or deleted; 20261104's ON DELETE CASCADE is the database's own
-//     answer for a delete that bypasses the app.
+//     closed or deleted; 20261104's trg_projects_close_intake_links (a
+//     trigger, not a foreign key — an FK would break org restore) is the
+//     database's own answer for a delete that bypasses the app.
 //
 // Client-safe: no service-role import. The server passes its own client.
 
@@ -41,7 +42,9 @@ export function intakeTokenFromRequest(req: { headers: Headers; url: string }): 
 }
 
 /** Link lifetime (SEC-5 / INTK-12): default and ceiling, in days. The DB
- *  CHECK allows one extra day of slack for an end-of-day local expiry. */
+ *  CHECK (20261104) allows 92: an end-of-day LOCAL expiry picked from a
+ *  UTC date (the Costs tab's default) lands up to ~91.5 days out west of
+ *  UTC in the evening, and must not be refused. */
 export const INTAKE_LINK_DEFAULT_DAYS = 14;
 export const INTAKE_LINK_MAX_DAYS = 90;
 

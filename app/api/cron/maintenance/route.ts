@@ -21,8 +21,9 @@
 //      no date, nudges its opener and the release pool once.
 //   4c. The intake door's attempt window is pruned (INTK-8 dw4 — the door's
 //      rate limiter keeps an hour; two days are kept), and the count of
-//      in-review versions no document points at is reported (SAF-10's
-//      health signal).
+//      in-review versions no document points at AND nothing withdrew is
+//      reported (SAF-10's health signal — a withdrawn or displaced draft is
+//      resolved, so the signal is actionable, not permanent noise).
 //
 // Auth: server-to-server. If CRON_SECRET is set, require it as a Bearer
 // token. Degrades gracefully if optional env vars are missing.
@@ -165,7 +166,10 @@ async function handler(req: NextRequest) {
     if (!orphanErr) {
       result.orphanedInReviewVersions = Number(orphans ?? 0);
       if (result.orphanedInReviewVersions > 0) {
-        result.errors.push(`review-health: ${result.orphanedInReviewVersions} in-review version(s) no document points at — resolve them from the Intake tab or the document's history`);
+        // No screen lists a version nothing points at (the Intake tab and
+        // the review panel both follow the pending pointer), so the remedy
+        // named is the one a document controller can actually run.
+        result.errors.push(`review-health: ${result.orphanedInReviewVersions} in-review version(s) that no document points at and nothing withdrew — a document controller must resolve each one (mark it 'superseded' or 'rejected', or re-point its document's pending revision); find them with the query in orphaned_in_review_versions_count() (migration 20261105)`);
       }
     }
   } catch (e) {

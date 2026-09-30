@@ -718,18 +718,21 @@ describe("RG-10 — the intake route never repoints past a live review", () => {
     expect(db.tables.document_versions.find((v) => v.id === "v-new")).toMatchObject({ review_state: "in_review", supersedes_version_id: "v2" });
     expect(String((db.notified[0] as Record<string, unknown> | undefined)?.body)).toMatch(/Auto-publish was withheld: the document is under legal hold/);
   });
-  it("the trusted auto path publishes through publish_revision (base CAS in the contract) and clears only the pointer it read", () => {
+  it("the trusted auto path publishes through publish_revision (base CAS in the contract) and never runs over a pending draft", () => {
     // projects Round G J1 (INTK-2 / SAF-5): the raw two-pointer promote is
     // replaced by the publish contract — p_expected_base is the current
     // version read above, so a moved base is 'stale_base' inside the locked
-    // row; the displaced pending pointer is cleared with a CAS on exactly the
-    // draft read, and that draft is resolved (retireDisplaced).
+    // row. J1 fix pass (INTK-1 dw3): a trusted link whose own submission is
+    // still awaiting review never auto-publishes — the upload replaces that
+    // draft IN REVIEW (the CAS repoint + retireDisplaced of the review path
+    // above), so the publish branch touches no pending pointer at all.
     const r = src("app/api/intake/upload/route.ts");
     expect(r).toMatch(/supabaseAdmin\.rpc\("publish_revision", \{/);
     expect(r).toContain("expectedBase: (targetDoc.current_version_id as string | null) ?? null,");
+    expect(r).toMatch(/if \(autoNow && priorPending\) \{\s*\n\s*autoNow = false; autoWithheld = "your previous submission for this document is still awaiting review";/);
     const auto = between(r, "if (published && versionId) {", "} else {");
-    expect(auto).toContain('.eq("id", theDocId).eq("pending_version_id", priorPending).select("id");');
-    expect(auto).toMatch(/await retireDisplaced\(ref, \{/);
+    expect(auto).not.toMatch(/pending_version_id/);
+    expect(auto).not.toMatch(/retireDisplaced/);
     expect(r).not.toMatch(/\.update\(\{ current_version_id: versionId/);
   });
   it("IntakePanel's reject voids the draft's sign-off rows and surfaces a refusal", () => {
