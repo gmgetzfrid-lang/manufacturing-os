@@ -230,6 +230,8 @@ design.
 
 **Scope / residual.** Both of this finding's done-whens are met. The dialog's line in `app/(protected)/projects/[id]/page.tsx:649` is byte-identical to `CLOSEOUT_GATE_POLICY.overrideNote` but is not yet *read from* it — that one-line import is J8's and is the third done-when of projects-and-cost `QUAL-9`, which therefore stays OPEN (Partial) until J8 lands it; this finding does not close `QUAL-9` by pointer.
 
+**Verification fix (2026-09-30, projects Round G).** Pointer for J8, not fixed here (`page.tsx` is J8's and is being rewritten). The closeout-gates dialog (`app/(protected)/projects/[id]/page.tsx:636-639`) builds its four lines from `gatherProjectSnapshot`'s counts and never reads `readFailures` / `notMigrated`. A refused or not-migrated read therefore shows as a pass: `punch_items` gives "Punch list clear", `turnover_items` gives "No turnover requirements set", `project_checklists` / `checklist_items` give "Checklists clear", and `change_orders` gives "No change orders awaiting decision", each with the green check. The coach already leaves such zeros out (`lib/projectHealth.ts` `SNAPSHOT_READS`). For each gate line, the dialog should check whether the snapshot names that line's read (`SNAPSHOT_READS.punch`, `.turnover`, `.checklists` / `.checklistItems`, `.changeOrders`) in `readFailures` or `notMigrated`. If it does, the line should render "Could not read …" or "Needs migration 20261013" as unknown (neither a check nor a pass), and the dialog should not count it as clear. Listed under this fix's `filesOutsidePlan`.
+
 ---
 
 ## UX-6 · The coach names an action that doesn't exist and advertises a metric that is hard-coded null

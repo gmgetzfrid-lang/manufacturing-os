@@ -8,18 +8,41 @@
 // lessons-learned draft is auto-written from the project's exhaust (change
 // orders by reason, schedule slips, rejected turnover, punch history) so
 // closeout starts from facts, and a human edits it into the record.
+//
+// A read that FAILS is named (`readFailures`, labelled as the health
+// snapshot labels it) and its part of the page says so — a refused cost
+// read never prints as a $0 ledger, a refused schedule read never as "No
+// schedule loaded".
 
 import { supabase } from "@/lib/supabase";
 import { listAccounts, listEntries, computeCostRollup, milestonePctIndex, fmtMoney } from "@/lib/costs";
-import { listChangeOrders, summarizeChangeOrders, CO_REASON_LABEL, type CoReason } from "@/lib/changeOrders";
+import {
+  listChangeOrders, summarizeChangeOrders, approvedChangesByAccount, CO_REASON_LABEL, type CoReason,
+} from "@/lib/changeOrders";
 import { listTurnoverItems, computeTurnoverProgress } from "@/lib/turnover";
 import { listChecklists, listChecklistItems, computeChecklistProgress } from "@/lib/checklists";
 import { computeForecast } from "@/lib/costSeries";
 import { openPrintWindow } from "@/lib/evidencePack";
 import { liveMilestones, isImportedMilestone, isOverdueMilestone, PROJECT_MILESTONE_READ_LIMIT } from "@/lib/milestoneLiveness";
+import { SNAPSHOT_READS as R } from "@/lib/projectHealth";
+import { MISSING_TABLE_CODES } from "@/lib/projectSnapshot";
 
 async function safe<T>(p: PromiseLike<T>, fallback: T): Promise<T> {
   try { return await p; } catch { return fallback; }
+}
+
+/** The reads the Money section is computed from. If any of them fails, the
+ *  section prints that it could not be read — never a zero ledger, and
+ *  never a budget that silently dropped its approved change orders. */
+export const REPORT_COST_READS: readonly string[] = [R.costAccounts, R.costEntries, R.changeOrders];
+
+/** The completion audit row's read label. */
+export const REPORT_CLOSEOUT_READ = "completion record";
+
+/** "a", "a and b", "a, b and c". */
+function listJoin(xs: string[]): string {
+  if (xs.length <= 1) return xs.join("");
+  return `${xs.slice(0, -1).join(", ")} and ${xs[xs.length - 1]}`;
 }
 
 export interface ReportGateLine { text: string; ok: boolean | null }
@@ -37,6 +60,9 @@ export interface ReportData {
   project: Record<string, unknown>;
   rollup: ReturnType<typeof computeCostRollup>;
   forecastSentence: string | null;
+  /** COST-1: which part of the budget a CPI-based forecast covers — the
+   *  note the Costs tab prints beside the same sentence. */
+  forecastScopeNote: string | null;
   cos: ReturnType<typeof summarizeChangeOrders>;
   milestones: Array<{ name: string; planned_at: string | null; status: string; imported: boolean }>;
   /** How many milestone rows the project has. Larger than
@@ -49,6 +75,13 @@ export interface ReportData {
   punchOpen: number;
   parties: Array<{ name: string; kind: string | null; trade: string | null }>;
   closeout: ReportCloseout | null;
+  /** Reads that failed, by label (SNAPSHOT_READS' labels, plus
+   *  REPORT_CLOSEOUT_READ). The figures they would feed are zeros standing
+   *  in for "unknown"; the renderer and the draft say so instead of printing
+   *  them. The checklist and turnover readers (lib/checklists.ts,
+   *  lib/turnover.ts) still return [] on a refused read, so their failures
+   *  cannot be named here yet. */
+  readFailures: string[];
 }
 
 /**
@@ -88,47 +121,82 @@ export function parseGateSnapshot(details: unknown): ReportGateLine[] | null {
 }
 
 export async function gatherReportData(orgId: string, projectId: string): Promise<ReportData> {
+  const readFailures: string[] = [];
+  const fail = (label: string) => { if (!readFailures.includes(label)) readFailures.push(label); };
+  /** For a table migration 20261013 creates (`since20261013`), "relation
+   *  does not exist" is the known pre-migration state, not a failed read:
+   *  no row can exist, so the empty fallback is the truth (as the snapshot
+   *  names it in notMigrated rather than readFailures). */
+  const notYetCreated = (e: unknown, since20261013: boolean) => {
+    const code = (e as { code?: string | null } | null)?.code;
+    return since20261013 && !!code && MISSING_TABLE_CODES.has(code);
+  };
+  /** A list function that THROWS on a failed read (REL-2): the throw names
+   *  the read and yields the fallback, which the renderer then does not
+   *  print as a figure. */
+  const named = async <T>(label: string, p: PromiseLike<T>, fallback: T, since20261013 = false): Promise<T> => {
+    try { return await p; } catch (e) { if (!notYetCreated(e, since20261013)) fail(label); return fallback; }
+  };
+  /** A direct PostgREST read: a returned or thrown error names the read. */
+  const direct = async <T>(
+    label: string, q: PromiseLike<{ data: unknown; error: { code?: string | null } | null }>, fallback: T, since20261013 = false,
+  ): Promise<T> => {
+    try {
+      const r = await q;
+      if (r.error) { if (!notYetCreated(r.error, since20261013)) fail(label); return fallback; }
+      return ((r.data ?? fallback) as T);
+    } catch { fail(label); return fallback; }
+  };
   const [projRow, accounts, entries, coList, msRows, turnoverItems, checklists, punchRows, partyRows, closeoutRows] = await Promise.all([
     safe(supabase.from("projects").select("*").eq("id", projectId).maybeSingle().then((r) => r.data), null),
-    safe(listAccounts(orgId, projectId), []),
-    safe(listEntries(orgId, projectId), []),
-    safe(listChangeOrders(projectId), []),
-    // The same first rows by planned date the snapshot reads and the Costs
-    // tab's capped read returns (PROJECT_MILESTONE_READ_LIMIT), so the EV
-    // index — and the CPI — agree; the exact count discloses a larger one.
-    safe(supabase.from("milestones").select("id, name, planned_at, status, percent_complete, source", { count: "exact" })
+    named(R.costAccounts, listAccounts(orgId, projectId), []),
+    named(R.costEntries, listEntries(orgId, projectId), []),
+    // The change orders as the Costs tab reads them: listChangeOrders
+    // carries each approved CO's linked-entry status, so the approved
+    // changes below count only money that is on the ledger.
+    named(R.changeOrders, listChangeOrders(projectId), [], true),
+    // The same first rows by planned date the snapshot and the Costs tab
+    // read (PROJECT_MILESTONE_READ_LIMIT), so the EV index — and the CPI —
+    // agree; the exact count discloses a larger schedule.
+    named(R.milestones, supabase.from("milestones").select("id, name, planned_at, status, percent_complete, source", { count: "exact" })
       .eq("project_id", projectId).order("planned_at").order("id").limit(PROJECT_MILESTONE_READ_LIMIT)
-      .then((r) => (r.error
-        ? { rows: [] as Array<Record<string, unknown>>, total: 0 }
-        : { rows: (r.data ?? []) as Array<Record<string, unknown>>, total: r.count ?? (r.data ?? []).length })),
+      .then((r) => {
+        if (r.error) throw new Error(r.error.message);
+        return { rows: (r.data ?? []) as Array<Record<string, unknown>>, total: r.count ?? (r.data ?? []).length };
+      }),
       { rows: [] as Array<Record<string, unknown>>, total: 0 }),
     safe(listTurnoverItems(orgId, projectId), []),
     safe(listChecklists(orgId, projectId), []),
-    safe(supabase.from("punch_items").select("status").eq("project_id", projectId).limit(500)
-      .then((r) => (r.error ? [] : ((r.data ?? []) as Array<{ status: string }>))), []),
-    safe(supabase.from("project_parties").select("name, kind, trade").eq("project_id", projectId).limit(100)
-      .then((r) => (r.error ? [] : ((r.data ?? []) as Array<{ name: string; kind: string | null; trade: string | null }>))), []),
+    direct<Array<{ status: string }>>(R.punch,
+      supabase.from("punch_items").select("status").eq("project_id", projectId).limit(500), [], true),
+    direct<Array<{ name: string; kind: string | null; trade: string | null }>>(R.parties,
+      supabase.from("project_parties").select("name, kind, trade").eq("project_id", projectId).limit(100), []),
     // The completion override's audit row — newest first; its details carry
     // the gate snapshot once lib/projects.ts records one (SAF-14).
-    safe(supabase.from("audit_logs").select("timestamp, details")
-      .eq("resource_type", "project").eq("resource_id", projectId).eq("action", "PROJECT_COMPLETED")
-      .order("timestamp", { ascending: false }).limit(1)
-      .then((r) => (r.error ? [] : ((r.data ?? []) as Array<{ timestamp: string | null; details: unknown }>))), []),
+    direct<Array<{ timestamp: string | null; details: unknown }>>(REPORT_CLOSEOUT_READ,
+      supabase.from("audit_logs").select("timestamp, details")
+        .eq("resource_type", "project").eq("resource_id", projectId).eq("action", "PROJECT_COMPLETED")
+        .order("timestamp", { ascending: false }).limit(1), []),
   ]);
   const project = (projRow ?? {}) as Record<string, unknown>;
 
   // Every stored milestone counts — imported rows are commitments
   // (lib/milestoneLiveness). The EV index is keyed by the real milestone
-  // id so pinned accounts resolve, exactly as the Costs tab computes it.
+  // id so pinned accounts resolve, and the on-ledger approved change orders
+  // revise the budget EV is earned against — exactly the Costs tab's inputs
+  // (CostsTab.tsx: computeCostRollup(…, approvedChangesByAccount(cos))).
   const live = liveMilestones(msRows.rows as Array<Record<string, unknown> & { source?: string | null }>);
   const pctIdx = milestonePctIndex(live.map((m) => ({
     id: String(m.id), percentComplete: (m.percent_complete as number | null) ?? null, status: String(m.status ?? "planned"),
   })));
-  const rollup = computeCostRollup(accounts, entries, pctIdx);
+  const rollup = computeCostRollup(accounts, entries, pctIdx, approvedChangesByAccount(coList));
 
+  // The forecast takes the Costs tab's inputs too (CostCharts.tsx): the
+  // REVISED budget and the pinned subset CPI was measured on (COST-1).
   const dates = live.map((m) => (m.planned_at ? String(m.planned_at).slice(0, 10) : null)).filter((v): v is string => !!v).sort();
   const forecast = computeForecast({
-    budget: rollup.budget, spent: rollup.spent, cpi: rollup.cpi,
+    budget: rollup.revisedBudget, spent: rollup.spent, cpi: rollup.cpi,
+    pinnedBudget: rollup.pinnedBudget, pinnedSpent: rollup.pinnedSpent,
     scheduleStart: dates[0] ?? null, scheduleEnd: dates[dates.length - 1] ?? null,
     today: new Date().toISOString().slice(0, 10),
     fmt: (n) => fmtMoney(n, rollup.currencies[0] ?? "USD"),
@@ -150,6 +218,7 @@ export async function gatherReportData(orgId: string, projectId: string): Promis
     project,
     rollup,
     forecastSentence: forecast.sentence,
+    forecastScopeNote: forecast.scopeNote,
     cos: summarizeChangeOrders(coList),
     milestones: live.map((m) => ({
       name: String(m.name ?? ""), planned_at: (m.planned_at as string | null) ?? null, status: String(m.status ?? "planned"),
@@ -171,6 +240,7 @@ export async function gatherReportData(orgId: string, projectId: string): Promis
         gates: parseGateSnapshot(details) ?? [],
       };
     })(),
+    readFailures,
   };
 }
 
@@ -188,6 +258,32 @@ export function renderReportHtml(d: ReportData): string {
     `<tr><td class="k">${esc(label)}</td><td>${value}</td></tr>`;
   const truncated = d.milestoneTotal > d.milestones.length;
   const firstOf = `first ${d.milestones.length} of ${d.milestoneTotal} by planned date`;
+  const failed = new Set(d.readFailures);
+  const couldNotRead = `<span class="muted">Could not read</span>`;
+  const r = d.rollup;
+  const signed = (n: number) => `${n > 0 ? "+" : "−"} ${esc(money(Math.abs(n)))}`;
+
+  // Money: every figure, or — if the ledger could not be read — one line
+  // saying so. Never a $0 ledger standing in for a refused read.
+  const costFailed = d.readFailures.filter((x) => REPORT_COST_READS.includes(x));
+  const pinned = r.accounts.some((a) => !!a.account.wbsMilestoneId);
+  const moneyRows = costFailed.length > 0
+    ? row("Cost ledger", `<span class="flag">Could not read ${esc(listJoin(costFailed))}</span> — the money figures are left out, not printed as zero.`)
+    : [
+      row("Budget", `<span class="num">${esc(money(r.revisedBudget))}</span>${r.approvedChanges !== 0 ? ` <span class="muted">— ${esc(money(r.budget))} baseline ${signed(r.approvedChanges)} approved change orders</span>` : ""}`),
+      row("Committed (promised)", `<span class="num">${esc(money(r.committed))}</span>`),
+      row("Spent (real money out)", `<span class="num">${esc(money(r.spent))}</span>`),
+      row("Budget less spent", `<span class="num ${r.remainingActualsOnly < 0 ? "flag" : "ok"}">${esc(money(r.remainingActualsOnly))}</span> <span class="muted">— open commitments are not deducted</span>`),
+      row("Available (uncommitted)", `<span class="num ${r.remaining < 0 ? "flag" : "ok"}">${esc(money(r.remaining))}</span> <span class="muted">— budget less spent less ${esc(money(r.openCommitments))} of open commitments not yet invoiced, as on the Costs tab</span>`),
+      r.cpi != null
+        ? row("Cost performance (CPI)", `<span class="num">${r.cpi.toFixed(2)}</span> — ${r.cpi >= 1 ? "getting more work per dollar than planned" : "spending faster than earning"}${truncated ? ` <span class="muted">— earned value from the ${firstOf} schedule activities, as on the Costs tab</span>` : ""}`)
+        : pinned && failed.has(R.milestones)
+          ? row("Cost performance (CPI)", `${couldNotRead} <span class="muted">— the schedule its earned value comes from could not be read</span>`)
+          : "",
+      d.forecastSentence ? row("Forecast", `${esc(d.forecastSentence)}${d.forecastScopeNote ? ` <span class="muted">${esc(d.forecastScopeNote)}</span>` : ""}`) : "",
+      d.cos.approvedCount > 0 ? row("Change orders", `<span class="num">${d.cos.approvedCount} approved · ${esc(money(d.cos.approvedAmount))}</span> — ${d.cos.byReason.map((x) => `${esc(CO_REASON_LABEL[x.reason])}: ${esc(money(x.amount))}`).join("; ")}`) : "",
+      d.cos.open > 0 ? row("Awaiting decision", `<span class="flag">${d.cos.open} change order${d.cos.open === 1 ? "" : "s"} open</span>`) : "",
+    ].join("\n");
 
   return `<!DOCTYPE html><html><head><meta charset="utf-8">
 <title>Project report — ${esc(p.name)}</title>
@@ -211,18 +307,11 @@ ${p.success_criteria ? `<p><b>Success criteria:</b> ${esc(p.success_criteria)}</
 
 <h2>Money</h2>
 <table>
-${row("Budget", `<span class="num">${esc(money(d.rollup.budget))}</span>`)}
-${row("Committed (promised)", `<span class="num">${esc(money(d.rollup.committed))}</span>`)}
-${row("Spent (real money out)", `<span class="num">${esc(money(d.rollup.spent))}</span>`)}
-${row("Budget less spent", `<span class="num ${d.rollup.remaining < 0 ? "flag" : "ok"}">${esc(money(d.rollup.remaining))}</span> <span class="muted">— open commitments are not deducted</span>`)}
-${d.rollup.cpi != null ? row("Cost performance (CPI)", `<span class="num">${d.rollup.cpi.toFixed(2)}</span> — ${d.rollup.cpi >= 1 ? "getting more work per dollar than planned" : "spending faster than earning"}${truncated ? ` <span class="muted">— earned value from the ${firstOf} schedule activities, as on the Costs tab</span>` : ""}`) : ""}
-${d.forecastSentence ? row("Forecast", esc(d.forecastSentence)) : ""}
-${d.cos.approvedCount > 0 ? row("Change orders", `<span class="num">${d.cos.approvedCount} approved · ${esc(money(d.cos.approvedAmount))}</span> — ${d.cos.byReason.map((r) => `${esc(CO_REASON_LABEL[r.reason])}: ${esc(money(r.amount))}`).join("; ")}`) : ""}
-${d.cos.open > 0 ? row("Awaiting decision", `<span class="flag">${d.cos.open} change order${d.cos.open === 1 ? "" : "s"} open</span>`) : ""}
+${moneyRows}
 </table>
 
 <h2>Schedule</h2>
-${d.milestones.length === 0 ? `<p class="muted">No schedule loaded.</p>` : `
+${failed.has(R.milestones) ? `<p><span class="flag">Could not read the milestones</span> — the schedule is left out, not shown as empty.</p>` : d.milestones.length === 0 ? `<p class="muted">No schedule loaded.</p>` : `
 <p>${d.milestones.filter((m) => m.status === "completed").length}/${d.milestones.length} milestones complete${truncated ? ` <span class="muted">(${firstOf} — every figure in this section counts those)</span>` : ""}${d.overdue > 0 ? ` · <span class="flag">${d.overdue} overdue</span>` : ` · <span class="ok">nothing overdue</span>`}${d.milestones.some((m) => m.imported) ? ` · <span class="muted">${d.milestones.filter((m) => m.imported).length} imported from the schedule file</span>` : ""}</p>
 <table>${d.milestones.slice(0, 25).map((m) => row(
   m.planned_at ? new Date(m.planned_at).toLocaleDateString() : "—",
@@ -239,7 +328,7 @@ ${d.checklistLines.length ? d.checklistLines.map((c) => row(
 )).join("") : row("Checklists", `<span class="muted">None yet</span>`)}
 ${row("Turnover package", d.turnover.required === 0 ? `<span class="muted">No requirements set</span>`
   : `<span class="num">${d.turnover.accepted}/${d.turnover.required}</span> accepted${d.turnover.outstanding.length > 0 ? ` · outstanding: ${esc(d.turnover.outstanding.slice(0, 6).join(", "))}${d.turnover.outstanding.length > 6 ? "…" : ""}` : ""}`)}
-${row("Punch list", d.punchOpen === 0 ? `<span class="ok">Clear</span>` : `<span class="flag">${d.punchOpen} open</span>`)}
+${row("Punch list", failed.has(R.punch) ? couldNotRead : d.punchOpen === 0 ? `<span class="ok">Clear</span>` : `<span class="flag">${d.punchOpen} open</span>`)}
 </table>
 ${d.closeout ? `
 <h2>Closeout</h2>
@@ -250,11 +339,11 @@ ${d.closeout.gates.length > 0 ? `<p class="muted">Gate state recorded at complet
   `<span class="${g.ok == null ? "muted" : g.ok ? "ok" : "flag"}">${esc(g.text)}</span>`,
 )).join("")}</table>` : `<p class="muted">No gate snapshot was recorded with this completion — the quality figures above are today's rows, not closeout day's.</p>`}` : ""}
 
-${d.parties.length ? `<h2>Companies on the job</h2><ul>${d.parties.map((x) =>
+${failed.has(R.parties) ? `<h2>Companies on the job</h2><p>${couldNotRead}</p>` : d.parties.length ? `<h2>Companies on the job</h2><ul>${d.parties.map((x) =>
   `<li>${esc(x.name)}${x.kind ? ` <span class="muted">(${esc(x.kind)}${x.trade ? `, ${esc(x.trade)}` : ""})</span>` : ""}</li>`).join("")}</ul>` : ""}
 
 ${p.lessons_learned ? `<h2>Lessons learned</h2><p>${esc(p.lessons_learned).replace(/\n/g, "<br>")}</p>` : ""}
-<p class="muted" style="margin-top:28px">Every figure above is drawn live from the platform's records — cost entries, change orders, milestones, checklist evidence, and turnover reviews.</p>
+<p class="muted" style="margin-top:28px">Every figure above is drawn live from the platform's records — cost entries, change orders, milestones, checklist evidence, and turnover reviews.${d.readFailures.length > 0 ? ` Not read this time: ${esc(listJoin(d.readFailures))} — left out above, never printed as zero or empty.` : ""}</p>
 <script>window.print()</script>
 </body></html>`;
 }
@@ -277,10 +366,23 @@ export async function draftLessonsLearned(orgId: string, projectId: string): Pro
   const lines: string[] = [];
   const truncated = d.milestoneTotal > d.milestones.length;
   const firstOf = `the first ${d.milestones.length} of ${d.milestoneTotal} activities by planned date`;
+  const failed = new Set(d.readFailures);
+  const costFailed = d.readFailures.filter((x) => REPORT_COST_READS.includes(x));
+  const r = d.rollup;
 
-  if (d.rollup.budget > 0) {
-    const overUnder = d.rollup.remaining >= 0 ? "under" : "over";
-    lines.push(`COST: Finished ${money(Math.abs(d.rollup.remaining))} ${overUnder} the ${money(d.rollup.budget)} budget${d.rollup.cpi != null ? ` (CPI ${d.rollup.cpi.toFixed(2)}${truncated ? `; earned value from ${firstOf}` : ""})` : ""}.`);
+  if (costFailed.length > 0) {
+    lines.push(`COST: Could not read ${listJoin(costFailed)} when this draft was written — the cost outcome is left out; fill it in by hand.`);
+  } else if (r.revisedBudget > 0) {
+    // "Finished under/over" is budget less SPENT (actuals + adjustments),
+    // against the revised budget the Costs tab shows. Open commitments are
+    // money promised but not yet invoiced — named, not deducted.
+    const left = r.remainingActualsOnly;
+    const changes = r.approvedChanges !== 0
+      ? ` (${money(r.budget)} baseline ${r.approvedChanges > 0 ? "+" : "−"} ${money(Math.abs(r.approvedChanges))} approved change orders)`
+      : "";
+    const cpi = r.cpi != null ? ` (CPI ${r.cpi.toFixed(2)}${truncated ? `; earned value from ${firstOf}` : ""})` : "";
+    const open = r.openCommitments > 0 ? ` ${money(r.openCommitments)} of open commitments was not yet invoiced when this was drafted.` : "";
+    lines.push(`COST: Finished ${money(Math.abs(left))} ${left >= 0 ? "under" : "over"} the ${money(r.revisedBudget)} budget${changes} on actual spend${cpi}.${open}`);
   }
   for (const r of d.cos.byReason) {
     const why: Record<CoReason, string> = {
@@ -293,7 +395,9 @@ export async function draftLessonsLearned(orgId: string, projectId: string): Pro
     lines.push(`CHANGE ORDERS (${CO_REASON_LABEL[r.reason]}): ${r.count} for ${money(r.amount)} — ${why[r.reason]}.`);
   }
   const scheduleScope = truncated ? ` (counted over ${firstOf})` : "";
-  if (d.overdue > 0) {
+  if (failed.has(R.milestones)) {
+    lines.push("SCHEDULE: Could not read the milestones when this draft was written — check for slipped activities by hand.");
+  } else if (d.overdue > 0) {
     lines.push(`SCHEDULE: ${d.overdue} milestone${d.overdue === 1 ? "" : "s"} finished (or sat) past their planned date${scheduleScope} — check which activities slipped and why.`);
   } else if (d.milestones.length > 0) {
     lines.push(`SCHEDULE: No overdue milestones at report time${scheduleScope}.`);
@@ -310,6 +414,12 @@ export async function draftLessonsLearned(orgId: string, projectId: string): Pro
   }
   if (d.punchOpen > 0) {
     lines.push(`PUNCH: ${d.punchOpen} item${d.punchOpen === 1 ? "" : "s"} still open.`);
+  }
+  // Every other read that failed is named, so the "clean job" line below
+  // can never be written over something the draft could not see.
+  const otherFailed = d.readFailures.filter((x) => !REPORT_COST_READS.includes(x) && x !== R.milestones);
+  if (otherFailed.length > 0) {
+    lines.push(`NOT READ: ${listJoin(otherFailed)} could not be read when this draft was written — check ${otherFailed.length === 1 ? "it" : "them"} by hand.`);
   }
   if (lines.length === 0) {
     lines.push("Clean job on the record: budget held, schedule held, quality program closed out. Note anything the numbers can't see (crew, coordination, vendor performance) by hand.");

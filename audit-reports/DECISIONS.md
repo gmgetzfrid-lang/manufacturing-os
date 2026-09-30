@@ -2071,6 +2071,8 @@ same predicate, and the Schedule tab's copy changes with it.
 
 *Landed 2026-09-29 (projects Round G; review fix 2026-09-30): counting every row only helps if every consumer reads the same rows. `lib/milestoneLiveness.ts` also exports `PROJECT_MILESTONE_READ_LIMIT` (1,000). The health snapshot and the printed report both read `order("planned_at").order("id").limit(PROJECT_MILESTONE_READ_LIMIT)`, which is the subset the Costs tab's unbounded `order("planned_at")` read gets under the API's default row cap. So EV, CPI and overdue agree across surfaces, and the report discloses "first N of M" above the bound (projects-tab `MON-5`). A new project-level milestone reader imports the same bound rather than choosing its own.*
 
+*Verification fix (2026-09-30, projects Round G): the sentence above held only under the API's default row cap and with no planned-date tie at the cut, because the Costs tab ordered by `planned_at` alone. Its read now carries the same `.order("planned_at").order("id").limit(PROJECT_MILESTONE_READ_LIMIT)` (`components/projects/CostsTab.tsx:95-96`), so the snapshot, the report and the Costs tab read the same first rows by construction (source pin in `lib/__tests__/projectReport.test.ts`). The Schedule tab reads through `listMilestones` (`lib/milestones.ts`), with no `id` tiebreak and no explicit bound, so it agrees only for a schedule within the API's row cap. Bounding that read belongs to the owner of `lib/milestones.ts` (PC-3 / J6); `lib/milestoneLiveness.ts` now says so instead of claiming the Schedule tab reads the same rows.*
+
 <a id="dec-48"></a>
 ## DEC-48 · Bid scoring honesty and the registry's evidence floor
 

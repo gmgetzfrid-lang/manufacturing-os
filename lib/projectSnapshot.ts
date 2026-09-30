@@ -9,17 +9,24 @@
 // either (lib/projectHealth SNAPSHOT_READS), so the coach degrades to fewer
 // suggestions instead of a crash or a false one.
 // One round of parallel queries — the coach renders on every project open,
-// so this stays cheap: each query selects only the columns it reads. A
+// so this stays cheap: each direct query selects only the columns it reads.
+// The cost ledger (accounts, entries, change orders) is read through the
+// same list functions the Costs tab uses, so the CPI, the revised budget and
+// the approved-change total are the tab's own figures (projects-tab MON-5 /
+// COST-4). A
 // caller may opt in to sharing a round already in flight (`share: true` —
 // the coach does, for the one re-key that no write can precede: a Costs or
 // Quality tab mounting underneath it); every other gather is its own round.
 
 import { supabase } from "@/lib/supabase";
 import { listAccounts, listEntries, computeCostRollup, milestonePctIndex } from "@/lib/costs";
+import { listChangeOrders, approvedChangesByAccount, changeOrderOnLedger, type ChangeOrder } from "@/lib/changeOrders";
 import { quoteGroups, type CostDocument } from "@/lib/costDocs";
 import { computeScheduleMetrics } from "@/lib/milestones";
 import { liveMilestones, isOverdueMilestone, PROJECT_MILESTONE_READ_LIMIT } from "@/lib/milestoneLiveness";
-import { SNAPSHOT_READS as R, PROJECT_FIELDS_NOT_MIGRATED, type ProjectStateSnapshot } from "@/lib/projectHealth";
+import {
+  SNAPSHOT_READS as R, PROJECT_FIELDS_NOT_MIGRATED, RFQ_GROUPS_NOT_MIGRATED, type ProjectStateSnapshot,
+} from "@/lib/projectHealth";
 import type { Milestone, MilestoneSource, MilestoneStatus } from "@/types/schema";
 
 type Row = Record<string, unknown>;
@@ -39,8 +46,10 @@ export const SNAPSHOT_REUSE_MS = 1500;
 /** PostgREST's "column does not exist" codes. */
 const MISSING_COLUMN = new Set(["PGRST204", "42703"]);
 /** "Relation does not exist" (Postgres) / "table not in the schema cache"
- *  (PostgREST). */
-const MISSING_TABLE = new Set(["42P01", "PGRST205"]);
+ *  (PostgREST). Exported for the printed report, which treats a table
+ *  migration 20261013 has not created the same way. */
+export const MISSING_TABLE_CODES: ReadonlySet<string> = new Set(["42P01", "PGRST205"]);
+const MISSING_TABLE = MISSING_TABLE_CODES;
 
 interface MemoEntry {
   promise: Promise<ProjectStateSnapshot>;
@@ -170,12 +179,22 @@ export async function gatherProjectSnapshotUncached(
       return fallback;
     }
   };
-  /** The cost data layer's list functions: a throw names the read. NOTE
-   *  listAccounts / listEntries (lib/costs.ts) still swallow a refused read
-   *  and return [] — projects-tab REL-2 (P3) makes them surface it; until
-   *  then a refused cost read reaches this wrapper as an empty ledger. */
-  const call = async <T>(label: string, p: Promise<T>, fallback: T): Promise<T> => {
-    try { return await p; } catch (e) { if (signal?.aborted) throw e; fail(label); return fallback; }
+  /** The cost data layer's list functions (listAccounts / listEntries /
+   *  listChangeOrders) THROW on a failed read (projects-tab REL-2), so a
+   *  refused cost read is named in readFailures here and never reaches the
+   *  engine as an empty ledger. For a table migration 20261013 creates
+   *  (`since20261013`), a thrown error carrying "relation does not exist"'s
+   *  code is named in notMigrated instead, as `read` does. */
+  const call = async <T>(label: string, p: Promise<T>, fallback: T, since20261013 = false): Promise<T> => {
+    try {
+      return await p;
+    } catch (e) {
+      if (signal?.aborted) throw e;
+      const code = (e as { code?: string | null } | null)?.code;
+      if (since20261013 && code && MISSING_TABLE.has(code)) absent(label);
+      else fail(label);
+      return fallback;
+    }
   };
   const sig = <Q extends { abortSignal(s: AbortSignal): Q }>(q: Q): Q => (signal ? q.abortSignal(signal) : q);
   /** A read whose column list includes migration-20261013 columns: on a
@@ -214,16 +233,19 @@ export async function gatherProjectSnapshotUncached(
         null),
       call(R.costAccounts, listAccounts(orgId, projectId), []),
       call(R.costEntries, listEntries(orgId, projectId), []),
-      readOrLegacy<Row[]>(R.costDocuments, "RFQ groups",
+      readOrLegacy<Row[]>(R.costDocuments, RFQ_GROUPS_NOT_MIGRATED,
         () => sig(supabase.from("cost_documents").select("kind, status, rfq_group, vendor_name, file_name").eq("project_id", projectId).limit(500)),
         () => sig(supabase.from("cost_documents").select("kind, status, vendor_name, file_name").eq("project_id", projectId).limit(500)),
         []),
       read<Array<{ id: string }>>(R.parties, sig(supabase.from("project_parties")
         .select("id").eq("project_id", projectId).limit(200)), []),
-      read<Array<{ status: string; amount: number }>>(R.changeOrders, sig(supabase.from("change_orders")
-        .select("status, amount").eq("project_id", projectId).limit(500)), [], true),
-      // Ordered and bounded exactly as the report reads it (and as the
-      // Costs tab's capped read returns it), so all three see the same rows.
+      // Through listChangeOrders, as the Costs tab reads them: it carries
+      // each approved CO's linked-entry status (read by id), the input of
+      // changeOrderOnLedger — so the revised budget and the approved total
+      // count only money that is on the ledger.
+      call<ChangeOrder[]>(R.changeOrders, listChangeOrders(projectId), [], true),
+      // Ordered and bounded exactly as the report and the Costs tab read it,
+      // so all three see the same rows.
       read<Row[]>(R.milestones, sig(supabase.from("milestones")
         .select("id, parent_id, status, planned_at, percent_complete, weight, duration_hours, created_at, baseline_finish_at, source")
         .eq("project_id", projectId).order("planned_at").order("id").limit(PROJECT_MILESTONE_READ_LIMIT)), []),
@@ -243,14 +265,16 @@ export async function gatherProjectSnapshotUncached(
   const proj = (projRow ?? {}) as Row;
 
   // Schedule: every stored row counts (lib/milestoneLiveness). The cost
-  // rollup's CPI needs milestone % for pinned accounts, keyed by id.
+  // rollup's CPI needs milestone % for pinned accounts, keyed by id, and the
+  // on-ledger approved changes by account — exactly the Costs tab's inputs
+  // (CostsTab.tsx: approvedChangesByAccount(cos)), so its CPI is the tab's.
   const live = liveMilestones(msRows as Array<Row & { source?: string | null }>);
   const pctIdx = milestonePctIndex(live.map((m) => ({
     id: String(m.id),
     percentComplete: (m.percent_complete as number | null) ?? null,
     status: String(m.status ?? "planned"),
   })));
-  const rollup = computeCostRollup(accounts, entries, pctIdx);
+  const rollup = computeCostRollup(accounts, entries, pctIdx, approvedChangesByAccount(coRows));
 
   // SPI from the schedule engine's own earned-value math — the same
   // numbers the Schedule tab shows. Null until something is actually due
@@ -316,6 +340,7 @@ export async function gatherProjectSnapshotUncached(
     jobKind: (proj.job_kind as string | null) ?? null,
 
     budget: rollup.budget,
+    revisedBudget: rollup.revisedBudget,
     committed: rollup.committed,
     spent: rollup.spent,
     cpi: rollup.cpi,
@@ -327,7 +352,7 @@ export async function gatherProjectSnapshotUncached(
     pendingCostDocs: docs.filter((d) => d.status === "parsed").length,
 
     openChangeOrders: coRows.filter((c) => c.status === "proposed").length,
-    approvedCoAmount: coRows.filter((c) => c.status === "approved").reduce((s, c) => s + Number(c.amount ?? 0), 0),
+    approvedCoAmount: coRows.filter(changeOrderOnLedger).reduce((s, c) => s + c.amount, 0),
 
     milestoneCount: live.length,
     overdueMilestones: live.filter((m) => isOverdueMilestone(m as { planned_at?: string | null; status?: string | null }, now)).length,

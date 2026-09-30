@@ -27,6 +27,7 @@ import {
   type CostDocument, type LedgerOrphans,
 } from "@/lib/costDocs";
 import { listChangeOrders, approvedChangesByAccount, repairChangeOrder, type ChangeOrder } from "@/lib/changeOrders";
+import { PROJECT_MILESTONE_READ_LIMIT } from "@/lib/milestoneLiveness";
 import CostCharts, { CostGlossary } from "@/components/projects/cost/CostCharts";
 import QuotesPanel from "@/components/projects/cost/QuotesPanel";
 import ChangeOrdersPanel from "@/components/projects/cost/ChangeOrdersPanel";
@@ -87,8 +88,12 @@ export default function CostsTab({ orgId, projectId, canManage, uid, userEmail, 
         listCostDocs(orgId, projectId),
         listChangeOrders(projectId),
         listLedgerOrphans(orgId, projectId),
+        // The same first rows by planned date the health snapshot and the
+        // printed report read (id breaks planned-date ties; the bound is
+        // explicit, not the API's row cap), so EV and CPI agree across all
+        // three (lib/milestoneLiveness PROJECT_MILESTONE_READ_LIMIT).
         supabase.from("milestones").select("id, name, percent_complete, status, planned_at")
-          .eq("project_id", projectId).order("planned_at"),
+          .eq("project_id", projectId).order("planned_at").order("id").limit(PROJECT_MILESTONE_READ_LIMIT),
       ]);
       if (msErr) throw new Error(`Couldn't load the schedule for earned value: ${msErr.message}`);
       setAccounts(a);
