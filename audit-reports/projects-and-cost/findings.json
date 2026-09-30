@@ -9,17 +9,17 @@
     "audit-reports/projects-and-cost/05-intake-door.md"
   ],
   "totals": {
-    "findings": 72,
+    "findings": 73,
     "gaps": 0,
     "by_severity": {
       "CRITICAL": 2,
       "HIGH": 22,
-      "MEDIUM": 36,
+      "MEDIUM": 37,
       "LOW": 12
     },
     "by_status": {
       "RESOLVED": 48,
-      "OPEN": 24
+      "OPEN": 25
     }
   },
   "status_vocabulary": [
@@ -1153,6 +1153,36 @@
       ],
       "refuted": false,
       "summary": "A contractor with a valid link uploads a 40 MB DWG set; the platform answers 413 before the route runs. The portal now shows a readable sentence (\"The file is too large for the portal — the limit is 100 MB.\") rather than HTTP 413, but the stated limit is still not the real one.",
+      "area": "projects-and-cost",
+      "report": "audit-reports/projects-and-cost/05-intake-door.md"
+    },
+    {
+      "id": "INTK-16",
+      "title": "Adoption's collision re-check runs only in the controller's browser — a direct update of an intake sheet's library skips the cross-library number rule",
+      "severity": "MEDIUM",
+      "status": "OPEN",
+      "verification": "CONFIRMED",
+      "verification_note": "CONFIRMED (by reading; not exercised against a live database)",
+      "blast_radius": "document-control integrity",
+      "related": [
+        "INTK-3",
+        "SAF-13",
+        "SAF-12"
+      ],
+      "locations": [
+        "lib/transitionIn.ts:397-511",
+        "components/projects/TransitionInPanel.tsx:148,169",
+        "supabase/migrations/20261011_collections_guard_and_trash.sql:38-56",
+        "supabase/migrations/20260619_document_uniqueness_configurable.sql:40-42"
+      ],
+      "has_verifier_correction": false,
+      "verified_by": "adversarial-independent",
+      "challenges": [
+        "adversarial",
+        "adversarial-independent"
+      ],
+      "refuted": false,
+      "summary": "A controller, or a script under a controller's token, PATCHes documents (libraryid, collectionid) on an intake P-100 into a [\"documentNumber\",\"sheet\"] library while P-100 Rev 3 stands Issued in a default-tuple library. The move guard passes (the actor is a controller), the index is silent (another library; a NULL key), and nothing else runs: two live P-100s now stand in the controlled register, th",
       "area": "projects-and-cost",
       "report": "audit-reports/projects-and-cost/05-intake-door.md"
     },
