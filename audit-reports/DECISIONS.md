@@ -1717,8 +1717,10 @@ status and actual dates recorded in the app survive a re-import unless the
 user opts in per import; (4) identity is the source system's id where one
 exists, otherwise a hash of the row's own content — never its position and
 never its name alone; a row imported before content keys (keyed by its
-position) is adopted when its name and planned dates match, never added
-beside itself; and a keyless row whose name or dates change becomes a new
+position) is adopted when its name and planned dates match — exactly, or,
+for a row the old parser read in the importer's zone, through one zone
+offset that pairs uniquely both ways — and otherwise its file row is added
+and the plan says so (never a guess); and a keyless row whose name or dates change becomes a new
 row, the old one reported as "not in this file" — the fail-safe, said in
 words in the review panel; (5) relationship type and lag are captured on every
 link; the engine honours finish-to-start, and everything else is stored on
@@ -1727,7 +1729,8 @@ the task and reported as "not enforced" until the reflow has its own test;
 MS Project's Predecessors resolve through the ID column, and an unresolvable
 token is counted, not guessed; (8) a level-0 summary row is the root parent,
 not a sibling leaf; (9) every date form is read as wall-clock-as-UTC (never
-the importer's zone), and a day / night shift label follows its task when the
+the importer's zone; a value naming its zone — a numeric offset, or a listed
+US / European abbreviation at its fixed offset — keeps that instant), and a day / night shift label follows its task when the
 start moves into the other band (every date-writing path, one rule) — an
 unlabelled row stays unlabelled, a hand-set swing is kept, a date-only start
 (stored at 00:00Z) earns no label, and existing rows are recomputed in bulk
@@ -1769,9 +1772,19 @@ position-row adoption, `applyMilestoneMoves` / `MoveConflictError`,
 other row's identity and progress intact; a genuinely ambiguous date file
 imports nothing until asked; a re-import with no changes issues no write
 (against PostgREST's `+00:00` timestamp rendering); the first re-import of
-an unchanged keyless file imported by position adds nothing; an
+an unchanged keyless file imported by position adds nothing for rows the old
+importer stored exactly or, from a browser in another zone, through one
+offset that pairs uniquely — a row that fits more than one earlier row, or
+whose start and finish straddle a DST change in that zone, is added and the
+plan counts it; an
 SS + FF ladder creates no cycle; the anon key cannot call the batch-move or
 baseline RPCs.
+
+**Verification fix (2026-09-30, projects Round G).** Items (4) and (9) and the acceptance restated to what the code
+does: position rows the old parser read in the importer's zone are adopted
+through one zone offset only when the pairing is unique (ambiguous ones are
+added, counted and named in the plan), and a zone abbreviation is read at its
+fixed offset (PT `SCH-3`, PC `SCHED-9`).
 
 **Reversal.** Per item, by a stated requirement: a facility that wants a
 locale default for dates changes the modal's radio default, not the parser;

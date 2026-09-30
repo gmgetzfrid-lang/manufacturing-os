@@ -1073,12 +1073,25 @@ export interface ImportPlan {
   structure: { rows: number; onlyStructure: number; parents: number; linksAdded: number; linksRemoved: number };
   /** Existing rows keyed by POSITION before content keys (`csv-row:N` /
    *  `msp-row:N`), or by an earlier content key, that this file's row matches
-   *  on name + planned start + planned finish: adopted and re-keyed instead of
+   *  on name + planned start + planned finish (as instants; a position-keyed
+   *  row also through one time-zone offset — `rekeyedByZone`): adopted and re-keyed instead of
    *  added beside themselves (PT SCH-3). `rekeyedOnly` counts those whose
    *  plan and structure are otherwise unchanged — they are still written, to
    *  carry the new key. */
   rekeyed: number;
   rekeyedOnly: number;
+  /** Of `rekeyed`: position-keyed rows the parser before this round stored
+   *  in the importing browser's time zone, matched because every planned
+   *  date is off from the file's reading by one and the same zone offset (a
+   *  non-zero multiple of 15 minutes within ±14 h), uniquely both ways. Their
+   *  planned dates are rewritten to the file's reading, so they also count
+   *  as `changed`. */
+  rekeyedByZone: number;
+  /** File rows that fit a position-keyed row only under a zone offset, but
+   *  not uniquely (another row of the same name fits too): not adopted —
+   *  added as new — and named here (first 10). */
+  zoneAmbiguous: number;
+  zoneAmbiguousNames: string[];
   /** The per-file row cap the importer enforces. */
   rowCap: number;
 }
@@ -1097,23 +1110,64 @@ function shiftFromStart(plannedStartIso: string | null): "day" | "night" | null 
   return shiftForStart(plannedStartIso);
 }
 
-/** Set the hierarchy migrations (20260703 / 20260705 / 20260731) added.
- *  Determined by the existing-row read (its legacy tier) or, failing that,
- *  on the first chunk refused for an unknown column — from then on every
- *  row in the same import drops these fields so we don't keep re-trying
- *  schema we know is missing. The whole batch still lands; the hierarchy
- *  just isn't preserved until the user runs the migration. */
-const NEW_SCHEMA_FIELDS = [
-  "planned_start_at", "actual_start_at", "outline_level", "wbs", "is_summary", "shift",
-  "work_order_ref", "responsible_party", "responsible_kind", "responsible_org",
-  "location", "duration_hours", "attributes", "percent_complete",
-] as const;
-/** Columns added by 20261097 (projects Round G). Dropped first, on their own,
- *  when a database has the hierarchy migration but not that one. */
-const ROUND_G_FIELDS = ["import_batch_id"] as const;
+/** The columns of `milestones` the importer reads or writes that a migration
+ *  added, one set per migration. A database can lack any of them; each set
+ *  is detected on its own — by the existing-row read, or by the first write
+ *  refused for one of its columns — and only that set is dropped from the
+ *  read, the comparison and the writes; when the file carried data the set
+ *  would have held, a heads-up names THAT migration (20261097's batch tag is
+ *  dropped without one). The whole batch still lands. SCHEMA_FALLBACK is the order sets
+ *  are stepped down in when a refusal names no column (newest first);
+ *  `read` marks the sets the existing-row read selects. */
+const SCHEMA_SETS = {
+  "20261097": { file: "20261097_prj_roundG_import_identity.sql", read: false, columns: ["import_batch_id"] },
+  "20260715": { file: "20260715_milestone_dependencies.sql", read: true, columns: ["depends_on"] },
+  "20260731": { file: "20260731_milestone_percent_complete.sql", read: true, columns: ["percent_complete"] },
+  "20260705": {
+    file: "20260705_milestones_execution_richdata.sql", read: true,
+    columns: ["work_order_ref", "responsible_party", "responsible_kind", "responsible_org", "location", "duration_hours", "attributes"],
+  },
+  "20260703": {
+    file: "20260703_milestones_hierarchy.sql", read: true,
+    columns: ["outline_level", "wbs", "is_summary", "shift", "actual_start_at", "planned_start_at", "parent_id"],
+  },
+} as const;
+type SchemaSet = keyof typeof SCHEMA_SETS;
+const SCHEMA_FALLBACK: SchemaSet[] = ["20261097", "20260715", "20260731", "20260705", "20260703"];
 function looksLikeUnknownColumn(msg: string | undefined): boolean {
   if (!msg) return false;
   return /column .* does not exist|unknown column|could not find the/i.test(msg);
+}
+/** The column an unknown-column refusal names — Postgres
+ *  (`column "x" of relation "milestones" does not exist`,
+ *  `column milestones.x does not exist`) or PostgREST's schema cache
+ *  (`Could not find the 'x' column of 'milestones'`) — or null. */
+function refusedColumn(msg: string | undefined): string | null {
+  if (!msg) return null;
+  const m = msg.match(/column\s+(?:"?\w+"?\.)?"?(\w+)"?(?:\s+of\s+relation\s+"?\w+"?)?\s+does not exist/i)
+    ?? msg.match(/could not find the '(\w+)' column/i);
+  return m ? m[1].toLowerCase() : null;
+}
+/** The migration set a refused column belongs to, or null. */
+export function schemaSetForColumn(col: string | null): SchemaSet | null {
+  if (!col) return null;
+  for (const id of SCHEMA_FALLBACK) if ((SCHEMA_SETS[id].columns as readonly string[]).includes(col)) return id;
+  return null;
+}
+/** Mark missing the set whose column a refusal names. A refusal that names
+ *  no column (or a column of a set already dropped) drops the next set in
+ *  fallback order among `eligible`; one that names a column of no eligible
+ *  set drops nothing — no migration of this list would fix it. False when
+ *  nothing was dropped. */
+function stepDownSchema(missing: Set<SchemaSet>, msg: string | undefined, eligible: readonly SchemaSet[] = SCHEMA_FALLBACK): boolean {
+  const col = refusedColumn(msg);
+  const named = schemaSetForColumn(col);
+  if (col && (!named || !eligible.includes(named))) return false;
+  if (named && !missing.has(named)) { missing.add(named); return true; }
+  const next = SCHEMA_FALLBACK.find((id) => eligible.includes(id) && !missing.has(id));
+  if (!next) return false;
+  missing.add(next);
+  return true;
 }
 
 /** Rows of `milestones` the importer reads to plan a merge: every column a
@@ -1212,31 +1266,33 @@ function samePlanValue(column: string, stored: unknown, next: unknown): boolean 
   return a === b;
 }
 
-/** The existing-row read, by schema tier: everything; without `depends_on`
- *  (20260715 not applied); without the 20260703 / 20260705 / 20260731
- *  columns. The tier the database answers decides which writes degrade. */
-const EXISTING_READ = {
-  full: "id, external_ref, name, description, weight, outline_level, wbs, is_summary, shift, work_order_ref, responsible_party, responsible_kind, responsible_org, location, duration_hours, attributes, status, percent_complete, actual_at, actual_start_at, planned_at, planned_start_at, parent_id, depends_on, created_by, created_by_name",
-  noDeps: "id, external_ref, name, description, weight, outline_level, wbs, is_summary, shift, work_order_ref, responsible_party, responsible_kind, responsible_org, location, duration_hours, attributes, status, percent_complete, actual_at, actual_start_at, planned_at, planned_start_at, parent_id, created_by, created_by_name",
-  legacy: "id, external_ref, name, description, weight, status, actual_at, planned_at, created_by, created_by_name",
-} as const;
-type ExistingReadTier = keyof typeof EXISTING_READ;
+/** The existing-row read's columns: the base columns every database has,
+ *  plus each migration's set the database is not known to lack. */
+const EXISTING_READ_BASE = ["id", "external_ref", "name", "description", "weight", "status", "actual_at", "planned_at", "created_by", "created_by_name"] as const;
+const READ_SETS = SCHEMA_FALLBACK.filter((id) => SCHEMA_SETS[id].read);
+/** The sets a chunked insert / upsert writes (links go in the structure pass). */
+const WRITE_SETS = SCHEMA_FALLBACK.filter((id) => id !== "20260715");
+function existingReadColumns(missing: ReadonlySet<SchemaSet>): string {
+  const cols: string[] = [...EXISTING_READ_BASE];
+  for (const id of READ_SETS) if (!missing.has(id)) cols.push(...SCHEMA_SETS[id].columns);
+  return cols.join(", ");
+}
 
 /** Every existing row of this source in the import scope, in one query per
  *  page (PostgREST caps a page at 1,000 rows; the row cap is 5,000). An
- *  unknown-column refusal steps down a tier and the whole read restarts, so
- *  the degrade paths below are reachable on an older database. */
-async function fetchExistingImportRows(input: ImportParsedInput): Promise<{ rows: ExistingImportRow[]; tier: ExistingReadTier; error?: string }> {
-  const tiers: ExistingReadTier[] = ["full", "noDeps", "legacy"];
+ *  unknown-column refusal drops the ONE migration set it names (or, when it
+ *  names none, the next in fallback order) and the whole read restarts, so a
+ *  database lacking only 20260705 or only 20260731 keeps the hierarchy it
+ *  has. `missing` is filled in place. */
+async function fetchExistingImportRows(input: ImportParsedInput, missing: Set<SchemaSet>): Promise<{ rows: ExistingImportRow[]; error?: string }> {
   const PAGE = 1000;
-  let lastError = "";
-  for (const tier of tiers) {
+  for (;;) {
     const out: ExistingImportRow[] = [];
     let stepDown = false;
     for (let from = 0; ; from += PAGE) {
       let q = supabase
         .from("milestones")
-        .select(EXISTING_READ[tier])
+        .select(existingReadColumns(missing))
         .eq("org_id", input.orgId)
         .eq("source", input.source)
         .not("external_ref", "is", null);
@@ -1245,16 +1301,15 @@ async function fetchExistingImportRows(input: ImportParsedInput): Promise<{ rows
       else q = q.is("project_id", null).is("document_id", null);
       const { data, error } = await q.order("id").range(from, from + PAGE - 1);
       if (error) {
-        if (looksLikeUnknownColumn(error.message)) { stepDown = true; lastError = error.message; break; }
-        return { rows: out, tier, error: error.message };
+        if (looksLikeUnknownColumn(error.message) && stepDownSchema(missing, error.message, READ_SETS)) { stepDown = true; break; }
+        return { rows: out, error: error.message };
       }
       const page = (data ?? []) as unknown as ExistingImportRow[];
       out.push(...page);
       if (page.length < PAGE) break;
     }
-    if (!stepDown) return { rows: out, tier };
+    if (!stepDown) return { rows: out };
   }
-  return { rows: [], tier: "legacy", error: lastError };
 }
 
 /** A keyless CSV row's content key, or a position key from before content
@@ -1356,16 +1411,19 @@ export async function importMilestonesFromParsed(input: ImportParsedInput): Prom
   }
 
   // ── One read of what is already there ────────────────────────────
-  const { rows: existingRows, tier: readTier, error: readErr } = await fetchExistingImportRows(input);
+  // The migration sets the database lacks, found by the read (and, for
+  // 20261097, which the read does not select, by the first write). Each set
+  // degrades on its own: no 20260703 → the hierarchy fields are dropped and
+  // the structure pass is skipped; no 20260705 → the rich columns are
+  // dropped; no 20260731 → percent_complete is dropped (status still
+  // carries progress); no 20260715 → links are not written.
+  const missing = new Set<SchemaSet>();
+  const { rows: existingRows, error: readErr } = await fetchExistingImportRows(input, missing);
   if (readErr) {
     result.errors.push(`Could not read the existing schedule: ${readErr}. Nothing was written.`);
     return result;
   }
-  // The tier the read answered decides the writes up front: no 20260703 →
-  // the hierarchy fields are dropped; no 20260715 → links are not written.
-  let degradeRoundG = false;   // 20261097 not applied: drop import_batch_id
-  let degradeToLegacy = readTier === "legacy"; // 20260703 not applied: drop the hierarchy fields
-  let depsColumnMissing = readTier !== "full"; // 20260715 not applied: keep the hierarchy, drop the links
+  const lacks = (id: SchemaSet) => missing.has(id);
   const existingByRef = new Map<string, ExistingImportRow>();
   for (const e of existingRows) if (e.external_ref) existingByRef.set(e.external_ref, e);
   const refToId = new Map<string, string>();
@@ -1412,32 +1470,96 @@ export async function importMilestonesFromParsed(input: ImportParsedInput): Prom
       return ka.kind === "row" ? rowIndex(a.external_ref!) - rowIndex(b.external_ref!) : String(a.external_ref).localeCompare(String(b.external_ref));
     });
   }
+  const keylessKeyRow = (p: Prepared) => { const k = keylessRef(p.row.externalRef); return k && k.kind === "key" ? k : null; };
   for (const p of prepared) {
     if (p.existing) continue;
-    const k = keylessRef(p.row.externalRef);
-    if (!k || k.kind !== "key") continue;
+    const k = keylessKeyRow(p);
+    if (!k) continue;
     const list = candidates.get(`${k.tag}|${p.name.toLowerCase()}`);
     const e = list?.find((c) => !claimed.has(c.id)
       && samePlanValue("planned_at", c.planned_at, p.plannedIso)
-      && (degradeToLegacy || samePlanValue("planned_start_at", c.planned_start_at, p.plannedStartIso)));
+      && (lacks("20260703") || samePlanValue("planned_start_at", c.planned_start_at, p.plannedStartIso)));
     if (!e) continue;
     p.rekeyedFrom = e.external_ref;
     attach(p, e);
+  }
+  // Zone-shifted adoption (PT SCH-3). Before this round the parser read timed
+  // M/D/Y ("6/1/2026 8:00 AM"), weekday-prefixed ("Mon 6/1/26" — MS
+  // Project's default), year-first and written-out values with new Date(),
+  // i.e. in the importing BROWSER's zone, so a POSITION-keyed row's stored
+  // instants sit that zone's UTC offset away from the file's wall-clock-as-UTC
+  // reading and never match above. A `-row:` row (never a `-key:` one) is
+  // adopted when EVERY planned date it has — finish, and start unless the
+  // database lacks 20260703 — equals the file's reading shifted by ONE
+  // offset, non-zero, a multiple of 15 minutes, within ±14 h, and the pairing
+  // is unique both ways: the file row fits no other `-row:` row of its name
+  // under any such offset (a row the exact pass above took included), and
+  // the stored row fits no other file row (one the exact pass adopted
+  // included). Anything else is ambiguous: nothing is adopted, and the file
+  // row is counted and named in the plan (`zoneAmbiguous`) — never a guess.
+  // A row whose start and finish carry different offsets (a DST change
+  // between them in the importer's zone) fits nothing and is added.
+  const QUARTER_HOUR_MS = 15 * 60_000, MAX_ZONE_MS = 14 * 3_600_000;
+  const instantOf = (v: unknown): number | null => {
+    if (v == null || v === "") return null;
+    const t = Date.parse(String(v));
+    return Number.isFinite(t) ? t : null;
+  };
+  const zoneOffsetMs = (p: Prepared, c: ExistingImportRow): number | null => {
+    const fileFinish = instantOf(p.plannedIso), storedFinish = instantOf(c.planned_at);
+    if (fileFinish === null || storedFinish === null) return null;
+    const d = storedFinish - fileFinish;
+    if (d === 0 || Math.abs(d) > MAX_ZONE_MS || d % QUARTER_HOUR_MS !== 0) return null;
+    if (!lacks("20260703")) {
+      const fileStart = instantOf(p.plannedStartIso), storedStart = instantOf(c.planned_start_at);
+      if ((fileStart === null) !== (storedStart === null)) return null;
+      if (fileStart !== null && storedStart !== null && storedStart - fileStart !== d) return null;
+    }
+    return d;
+  };
+  const zoneFits = new Map<Prepared, ExistingImportRow[]>();
+  const zoneFitBy = new Map<string, Prepared[]>();
+  for (const p of prepared) {
+    if (p.existing && !p.rekeyedFrom) continue; // matched on its own key
+    const k = keylessKeyRow(p);
+    if (!k) continue;
+    for (const c of candidates.get(`${k.tag}|${p.name.toLowerCase()}`) ?? []) {
+      if (keylessRef(c.external_ref)?.kind !== "row" || zoneOffsetMs(p, c) === null) continue;
+      const mine = zoneFits.get(p) ?? [];
+      if (mine.length === 0) zoneFits.set(p, mine);
+      mine.push(c);
+      const theirs = zoneFitBy.get(c.id) ?? [];
+      if (theirs.length === 0) zoneFitBy.set(c.id, theirs);
+      theirs.push(p);
+    }
+  }
+  let rekeyedByZone = 0;
+  const zoneAmbiguous: Prepared[] = [];
+  for (const [p, fits] of zoneFits) {
+    if (p.existing) continue; // adopted by the exact pass
+    const c = fits[0];
+    if (fits.length === 1 && !claimed.has(c.id) && zoneFitBy.get(c.id)?.length === 1) {
+      p.rekeyedFrom = c.external_ref;
+      attach(p, c);
+      rekeyedByZone++;
+    } else {
+      zoneAmbiguous.push(p);
+    }
   }
 
   // ── The plan ──────────────────────────────────────────────────────
   const plan: ImportPlan = {
     added: 0, changed: 0, unchanged: 0, notInFile: 0, notInFileNames: [], localProgressAtRisk: [],
-    structure: { rows: 0, onlyStructure: 0, parents: 0, linksAdded: 0, linksRemoved: 0 }, rekeyed: 0, rekeyedOnly: 0, rowCap,
+    structure: { rows: 0, onlyStructure: 0, parents: 0, linksAdded: 0, linksRemoved: 0 }, rekeyed: 0, rekeyedOnly: 0,
+    rekeyedByZone, zoneAmbiguous: zoneAmbiguous.length, zoneAmbiguousNames: zoneAmbiguous.slice(0, 10).map((p) => p.name), rowCap,
   };
-  // On a legacy database only the columns it has are compared (and written).
-  const compareColumns = degradeToLegacy
-    ? PLAN_COMPARE_COLUMNS.filter((c) => !(NEW_SCHEMA_FIELDS as readonly string[]).includes(c))
-    : PLAN_COMPARE_COLUMNS;
+  // On an older database only the columns it has are compared (and written).
+  const missingColumns = new Set<string>(Array.from(missing).flatMap((id) => [...SCHEMA_SETS[id].columns]));
+  const compareColumns = PLAN_COMPARE_COLUMNS.filter((c) => !missingColumns.has(c));
   const planChanged = (p: Prepared, e: ExistingImportRow): boolean =>
     compareColumns.some((c) => !samePlanValue(c, (e as unknown as Record<string, unknown>)[c], p.planFields[c]));
   const progressWouldChange = (p: Prepared, e: ExistingImportRow): boolean =>
-    !!p.actualFields && ((!degradeToLegacy && Number(e.percent_complete ?? 0) !== (p.filePercent ?? 0)) || e.status !== p.actualFields.status);
+    !!p.actualFields && ((!lacks("20260731") && Number(e.percent_complete ?? 0) !== (p.filePercent ?? 0)) || e.status !== p.actualFields.status);
   const writeActuals = (p: Prepared): boolean => {
     if (!p.actualFields) return false;                 // the file says nothing about progress
     if (!p.existing) return true;                      // a new row takes the file's progress
@@ -1456,15 +1578,15 @@ export async function importMilestonesFromParsed(input: ImportParsedInput): Prom
     toWrite.push({ p, changed: changed || !!p.rekeyedFrom });
     // Structure the file would set on this row (a ref the file adds resolves
     // once inserted — counted as a change here, since it cannot equal a
-    // stored id). None on a legacy database: the structure pass is skipped.
+    // stored id). None without 20260703: the structure pass is skipped.
     let structureChanges = false;
-    if (!degradeToLegacy) {
+    if (!lacks("20260703")) {
       const planRef = (ref: string): string | null => refToId.get(ref) ?? (fileRefs.has(ref) ? `new:${ref}` : null);
       const e = p.existing;
       const wantParentRaw = p.row.parentExternalRef ? planRef(p.row.parentExternalRef) : null;
       const wantParent = wantParentRaw && wantParentRaw !== e.id ? wantParentRaw : null;
-      const wantDeps = depsColumnMissing ? [] : Array.from(new Set((p.row.dependsOnExternalRefs ?? []).map(planRef).filter((x): x is string => !!x && x !== e.id)));
-      const haveDeps = !depsColumnMissing && Array.isArray(e.depends_on) ? e.depends_on : [];
+      const wantDeps = lacks("20260715") ? [] : Array.from(new Set((p.row.dependsOnExternalRefs ?? []).map(planRef).filter((x): x is string => !!x && x !== e.id)));
+      const haveDeps = !lacks("20260715") && Array.isArray(e.depends_on) ? e.depends_on : [];
       const parentMoves = (e.parent_id ?? null) !== wantParent;
       const added = wantDeps.filter((d) => !haveDeps.includes(d)).length;
       const removed = haveDeps.filter((d) => !wantDeps.includes(d)).length;
@@ -1492,10 +1614,11 @@ export async function importMilestonesFromParsed(input: ImportParsedInput): Prom
   if (input.dryRun) return result;
 
   // ── Writes: chunked, cancellable, degrade-aware ───────────────────
+  // Only the sets the database lacks are dropped — read at call time, so a
+  // set a write discovers missing is dropped from every later request.
   const stripForSchema = (fields: Record<string, unknown>): Record<string, unknown> => {
     const out = { ...fields };
-    if (degradeRoundG || degradeToLegacy) for (const f of ROUND_G_FIELDS) delete out[f];
-    if (degradeToLegacy) for (const f of NEW_SCHEMA_FIELDS) delete out[f];
+    for (const id of missing) for (const f of SCHEMA_SETS[id].columns) delete out[f];
     return out;
   };
   const scope = { org_id: input.orgId, project_id: input.projectId ?? null, document_id: input.documentId ?? null, source: input.source };
@@ -1522,9 +1645,10 @@ export async function importMilestonesFromParsed(input: ImportParsedInput): Prom
   const cancelled = () => !!input.signal?.aborted;
   const rowLabel = (p: Prepared) => `Row ${p.index + 1}`;
 
-  /** Run a chunk write; on a schema error step down a tier and retry the
-   *  same chunk; on any other error isolate the bad rows one at a time so a
-   *  single unreadable row does not sink two hundred good ones. */
+  /** Run a chunk write; on a schema error drop the migration set the
+   *  refused column belongs to and retry the same chunk; on any other error
+   *  isolate the bad rows one at a time so a single unreadable row does not
+   *  sink two hundred good ones. */
   async function writeChunk(chunk: Prepared[], mode: "insert" | "upsert"): Promise<void> {
     const attempt = async () => {
       if (mode === "insert") {
@@ -1533,11 +1657,8 @@ export async function importMilestonesFromParsed(input: ImportParsedInput): Prom
       return supabase.from("milestones").upsert(chunk.map(upsertPayload), { onConflict: "id" }).select("id, external_ref");
     };
     let res = await attempt();
-    if (res.error && looksLikeUnknownColumn(res.error.message)) {
-      if (!degradeRoundG) degradeRoundG = true;
-      else degradeToLegacy = true;
+    while (res.error && looksLikeUnknownColumn(res.error.message) && stepDownSchema(missing, res.error.message, WRITE_SETS)) {
       res = await attempt();
-      if (res.error && looksLikeUnknownColumn(res.error.message) && !degradeToLegacy) { degradeToLegacy = true; res = await attempt(); }
     }
     if (!res.error) {
       const returned = (res.data ?? []) as Array<{ id: string; external_ref: string | null }>;
@@ -1592,9 +1713,23 @@ export async function importMilestonesFromParsed(input: ImportParsedInput): Prom
   // row the file carries with no parent / no predecessors gets NULL / [] —
   // stale structure never survives a re-import (PT SCH-16). Rows the file
   // does not mention are not touched.
-  if (degradeToLegacy) {
+  // Each missing set that this file carries data for gets its own heads-up,
+  // naming ITS migration.
+  const carriesRich = prepared.some((p) => ["work_order_ref", "responsible_party", "responsible_kind", "responsible_org", "location", "duration_hours"]
+    .some((c) => p.planFields[c] != null && p.planFields[c] !== "") || Object.keys((p.planFields.attributes as Record<string, unknown> | undefined) ?? {}).length > 0);
+  if (lacks("20260705") && carriesRich) {
     result.errors.push(
-      "Heads up: hierarchy migration 20260703_milestones_hierarchy.sql hasn't been applied to your database, so parent/child relationships and start dates were dropped on this import. Run the migration in Supabase SQL Editor and re-import to get the full schedule.",
+      `Heads up: migration ${SCHEMA_SETS["20260705"].file} hasn't been applied to your database, so work orders, responsible parties, locations, work hours and the file's extra columns were dropped on this import (the rest of the schedule landed). Run the migration in Supabase SQL Editor and re-import to get them.`,
+    );
+  }
+  if (lacks("20260731") && prepared.some((p) => p.filePercent != null)) {
+    result.errors.push(
+      `Heads up: migration ${SCHEMA_SETS["20260731"].file} hasn't been applied to your database, so the file's % complete values were not stored (each task's status — planned, in progress, completed — was). Run the migration in Supabase SQL Editor and re-import to get the percentages.`,
+    );
+  }
+  if (lacks("20260703")) {
+    result.errors.push(
+      `Heads up: hierarchy migration ${SCHEMA_SETS["20260703"].file} hasn't been applied to your database, so parent/child relationships and start dates were dropped on this import. Run the migration in Supabase SQL Editor and re-import to get the full schedule.`,
     );
     return result;
   }
@@ -1608,27 +1743,28 @@ export async function importMilestonesFromParsed(input: ImportParsedInput): Prom
       .map((ref) => refToId.get(ref))
       .filter((x): x is string => !!x && x !== id);
     if (p.existing) {
-      if ((p.existing.parent_id ?? null) === parent_id && (depsColumnMissing || sameDeps(p.existing.depends_on, depends_on))) continue;
-    } else if (!parent_id && (depsColumnMissing || depends_on.length === 0)) continue; // a fresh row is already NULL / []
+      if ((p.existing.parent_id ?? null) === parent_id && (lacks("20260715") || sameDeps(p.existing.depends_on, depends_on))) continue;
+    } else if (!parent_id && (lacks("20260715") || depends_on.length === 0)) continue; // a fresh row is already NULL / []
     structure.push({ id, parent_id, depends_on });
   }
   for (let i = 0; i < structure.length; i += STRUCTURE_CONCURRENCY) {
     if (cancelled()) { result.cancelled = true; result.errors.push(`Import cancelled while wiring structure (${i} of ${structure.length} done). Rows are tagged with batch ${batchId}; re-import the same file to finish.`); return result; }
     const chunk = structure.slice(i, i + STRUCTURE_CONCURRENCY);
     await Promise.all(chunk.map(async (u) => {
-      const fields: Record<string, unknown> = depsColumnMissing ? { parent_id: u.parent_id } : { parent_id: u.parent_id, depends_on: u.depends_on };
+      const fields: Record<string, unknown> = lacks("20260715") ? { parent_id: u.parent_id } : { parent_id: u.parent_id, depends_on: u.depends_on };
       let res = await supabase.from("milestones").update(fields).eq("id", u.id);
-      if (res.error && !depsColumnMissing && looksLikeUnknownColumn(res.error.message)) {
-        depsColumnMissing = true; // 20260715 not applied — keep the hierarchy, drop the links
+      const refused = res.error ? refusedColumn(res.error.message) : null;
+      if (res.error && !lacks("20260715") && looksLikeUnknownColumn(res.error.message) && (refused === null || schemaSetForColumn(refused) === "20260715")) {
+        missing.add("20260715"); // 20260715 not applied — keep the hierarchy, drop the links
         res = await supabase.from("milestones").update({ parent_id: u.parent_id }).eq("id", u.id);
       }
       if (res.error) result.errors.push(`Structure for ${u.id}: ${res.error.message}`);
     }));
     input.onProgress?.({ done: Math.min(i + chunk.length, structure.length), total: structure.length, phase: "structure" });
   }
-  if (depsColumnMissing && prepared.some((p) => (p.row.dependsOnExternalRefs?.length ?? 0) > 0)) {
+  if (lacks("20260715") && prepared.some((p) => (p.row.dependsOnExternalRefs?.length ?? 0) > 0)) {
     result.errors.push(
-      "Heads up: migration 20260715_milestone_dependencies.sql hasn't been applied to your database, so the file's predecessor links were not imported (the hierarchy was). Run the migration in Supabase SQL Editor and re-import to get the links.",
+      `Heads up: migration ${SCHEMA_SETS["20260715"].file} hasn't been applied to your database, so the file's predecessor links were not imported (the hierarchy was). Run the migration in Supabase SQL Editor and re-import to get the links.`,
     );
   }
 

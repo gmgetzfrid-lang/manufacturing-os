@@ -108,12 +108,20 @@ export default function ScheduleImportModal({
   }, [parseResult, INTERNAL_KEYS]);
 
   // A reviewed plan describes one exact change set: any change to the column
-  // review (include / rename / map-to) invalidates it, so the user reviews
-  // again before "Import N changes" can write (GAP-403 acceptance 2).
-  const updateColumn = useCallback((k: string, cfg: { include: boolean; rename: string; mapTo: string }) => {
-    setColConfig((p) => ({ ...p, [k]: cfg }));
+  // review (include / rename / map-to), the file, its reading or the
+  // progress opt-in invalidates it, so the user reviews again before "Import
+  // N changes" can write (GAP-403 acceptance 2). The token also retires a dry
+  // run still in flight: its answer describes inputs that no longer hold, so
+  // it is dropped instead of being shown as the plan.
+  const planToken = useRef(0);
+  const invalidatePlan = useCallback(() => {
+    planToken.current++;
     setPlan(null);
   }, []);
+  const updateColumn = useCallback((k: string, cfg: { include: boolean; rename: string; mapTo: string }) => {
+    setColConfig((p) => ({ ...p, [k]: cfg }));
+    invalidatePlan();
+  }, [invalidatePlan]);
 
   // Seed/refresh config whenever a new file is parsed.
   useEffect(() => {
@@ -128,7 +136,7 @@ export default function ScheduleImportModal({
     setParsing(true);
     setParseResult(null);
     setImportResult(null);
-    setPlan(null);
+    invalidatePlan();
     setParseOpts({});
     setFilename(file.name);
     try {
@@ -152,7 +160,7 @@ export default function ScheduleImportModal({
         warnings: [`Couldn't read the file: ${(e as Error).message}`],
       });
     } finally { setParsing(false); }
-  }, []);
+  }, [invalidatePlan]);
 
   // Re-parse the same bytes with an answer (date order / project choice).
   const reparse = useCallback((patch: ParseOptions) => {
@@ -160,10 +168,10 @@ export default function ScheduleImportModal({
     if (!bytes || !filename) return;
     const next = { ...parseOpts, ...patch };
     setParseOpts(next);
-    setPlan(null);
+    invalidatePlan();
     setImportResult(null);
     setParseResult(parseScheduleFileFromBytes(filename, bytes, next));
-  }, [filename, parseOpts]);
+  }, [filename, parseOpts, invalidatePlan]);
 
   const onDrop = useCallback((e: React.DragEvent) => {
     e.preventDefault();
@@ -239,12 +247,16 @@ export default function ScheduleImportModal({
       });
   }, [parseResult, orgId, projectId, userId, userName, applyColConfig, overwriteProgress]);
 
-  // Step 1: the reviewable diff. Nothing is written.
+  // Step 1: the reviewable diff. Nothing is written. While it runs the
+  // column review is locked; an answer that arrives after the inputs changed
+  // anyway ("Choose another") is stale and dropped.
   const review = useCallback(async () => {
     if (overRowCap) return;
+    const token = ++planToken.current;
     setPlanning(true);
     try {
       const res = await runImport(true);
+      if (token !== planToken.current) return;
       if (res?.plan) setPlan(res.plan);
       if (res && res.errors.length > 0) setImportResult(res);
     } finally { setPlanning(false); }
@@ -366,7 +378,7 @@ export default function ScheduleImportModal({
                   <div className="text-[11px] text-[var(--color-text-muted)]">{FORMAT_LABEL[parseResult.format]} · {parseResult.rows.length} milestone{parseResult.rows.length === 1 ? "" : "s"} found</div>
                 </div>
                 <button
-                  onClick={() => { setParseResult(null); setFilename(null); setImportResult(null); setPlan(null); }}
+                  onClick={() => { setParseResult(null); setFilename(null); setImportResult(null); invalidatePlan(); }}
                   className="text-[11px] font-bold text-[var(--color-text-muted)] hover:text-[var(--color-text)] px-2 py-1 rounded hover:bg-slate-200 transition-colors"
                   disabled={importing}
                 >
@@ -410,26 +422,26 @@ export default function ScheduleImportModal({
                     <Columns3 className="w-3.5 h-3.5 text-[var(--color-text-muted)]" />
                     <span className="text-xs font-black text-[var(--color-text)]">{detectedColumns.length} extra column{detectedColumns.length === 1 ? "" : "s"} detected</span>
                   </div>
-                  <p className="text-[11px] text-[var(--color-text-muted)] mb-2.5">Rename, drop, or map any of these to a built-in field before importing. Everything else is kept on each task as a custom field.</p>
+                  <p className="text-[11px] text-[var(--color-text-muted)] mb-2.5">Rename, drop, or map any of these to a built-in field before importing. Everything else is kept on each task as a custom field.{planning ? " Locked while the review runs." : ""}</p>
                   <div className="space-y-1.5 max-h-52 overflow-y-auto pr-1">
                     {detectedColumns.map((k) => {
                       const cfg = colConfig[k] ?? { include: true, rename: k, mapTo: "" };
                       return (
                         <div key={k} className={`flex items-center gap-2 ${cfg.include ? "" : "opacity-50"}`}>
-                          <input type="checkbox" checked={cfg.include} onChange={(e) => updateColumn(k, { ...cfg, include: e.target.checked })} className="w-3.5 h-3.5 accent-[var(--color-accent)] shrink-0" title="Include this column" />
+                          <input type="checkbox" checked={cfg.include} onChange={(e) => updateColumn(k, { ...cfg, include: e.target.checked })} disabled={planning} className="w-3.5 h-3.5 accent-[var(--color-accent)] shrink-0" title="Include this column" />
                           <span className="font-mono text-[11px] text-[var(--color-text-muted)] w-28 truncate shrink-0" title={k}>{k}</span>
                           <ArrowRight className="w-3 h-3 text-slate-300 shrink-0" />
                           <input
                             value={cfg.rename}
                             onChange={(e) => updateColumn(k, { ...cfg, rename: e.target.value })}
-                            disabled={!cfg.include || !!cfg.mapTo}
+                            disabled={planning || !cfg.include || !!cfg.mapTo}
                             placeholder={k}
                             className="flex-1 min-w-0 h-7 px-2 rounded-md border border-[var(--color-border)] text-xs disabled:bg-[var(--color-surface-2)] disabled:text-[var(--color-text-faint)]"
                           />
                           <Select
                             value={cfg.mapTo}
                             onChange={(e) => updateColumn(k, { ...cfg, mapTo: e.target.value })}
-                            disabled={!cfg.include}
+                            disabled={planning || !cfg.include}
                             className="shrink-0"
                           >
                             <option value="">Keep as field</option>
@@ -505,6 +517,11 @@ export default function ScheduleImportModal({
                       {rekeyedSummary(plan)}
                     </div>
                   )}
+                  {(plan.zoneAmbiguous ?? 0) > 0 && (
+                    <div className="text-[11px] text-amber-900">
+                      {zoneAmbiguousSummary(plan)}
+                    </div>
+                  )}
                   {plan.structure.rows > 0 && (
                     <div className="text-[11px] text-[var(--color-text-muted)]">
                       Structure changes on {plan.structure.rows} task{plan.structure.rows === 1 ? "" : "s"}: {structureSummary(plan.structure)}. The file&apos;s parents and finish-to-start links replace the board&apos;s for the tasks it carries — including links added here.
@@ -518,7 +535,7 @@ export default function ScheduleImportModal({
                         {plan.localProgressAtRisk.length > 5 && <li className="italic">+{plan.localProgressAtRisk.length - 5} more…</li>}
                       </ul>
                       <label className="inline-flex items-center gap-1.5 cursor-pointer font-bold">
-                        <input type="checkbox" checked={overwriteProgress} onChange={(e) => { setOverwriteProgress(e.target.checked); setPlan(null); }} className="accent-amber-600" />
+                        <input type="checkbox" checked={overwriteProgress} onChange={(e) => { setOverwriteProgress(e.target.checked); invalidatePlan(); }} className="accent-amber-600" />
                         Take the file&apos;s progress for these tasks
                       </label>
                     </div>
@@ -664,10 +681,23 @@ export function planChangeCount(plan: ImportPlan): number {
 }
 
 /** Rows imported before content keys (by position) that this file's rows
- *  matched on name and dates: they keep their id and progress (PT SCH-3). */
-export function rekeyedSummary(plan: Pick<ImportPlan, "rekeyed">): string {
+ *  matched on name and dates: they keep their id and progress (PT SCH-3).
+ *  Those matched through a time-zone offset are said so: their dates change. */
+export function rekeyedSummary(plan: Pick<ImportPlan, "rekeyed"> & Partial<Pick<ImportPlan, "rekeyedByZone">>): string {
   const n = plan.rekeyed;
-  return `${n} task${n === 1 ? "" : "s"} imported earlier ${n === 1 ? "was" : "were"} matched by name and dates and will be re-keyed — ${n === 1 ? "it keeps its" : "they keep their"} progress and history. A task whose name or dates changed in the file cannot be matched this way: it is added, and the earlier one is listed as not in this file.`;
+  const z = plan.rekeyedByZone ?? 0;
+  const zone = z > 0
+    ? ` ${z} of them ${z === 1 ? "was" : "were"} stored by the earlier importer in its browser's time zone — every date off by the same offset — so ${z === 1 ? "its dates are" : "their dates are"} corrected to what the file says.`
+    : "";
+  return `${n} task${n === 1 ? "" : "s"} imported earlier ${n === 1 ? "was" : "were"} matched by name and dates and will be re-keyed — ${n === 1 ? "it keeps its" : "they keep their"} progress and history.${zone} A task whose name or dates changed in the file cannot be matched this way: it is added, and the earlier one is listed as not in this file.`;
+}
+
+/** File rows that could each be an earlier position-keyed row read in
+ *  another time zone, but not uniquely: added, never guessed (PT SCH-3). */
+export function zoneAmbiguousSummary(plan: Pick<ImportPlan, "zoneAmbiguous" | "zoneAmbiguousNames">): string {
+  const n = plan.zoneAmbiguous;
+  const names = plan.zoneAmbiguousNames.slice(0, 5).join(", ") + (n > 5 ? ", …" : "");
+  return `${n} task${n === 1 ? "" : "s"} in this file (${names}) could be ${n === 1 ? "a task" : "tasks"} imported earlier under a different time-zone reading, but the match is not unique (another task of the same name fits too), so nothing is guessed: ${n === 1 ? "it is" : "they are"} added, and the earlier tasks are left as they are — any not matched otherwise is listed as not in this file.`;
 }
 
 /** "60% → 80%" / "60% → 0%" — the direction the file would move progress. */

@@ -15,9 +15,12 @@ import { createRoot, type Root } from "react-dom/client";
 
 type Call = { dryRun?: boolean; rows: Array<{ name: string; attributes?: Record<string, unknown> | null; responsibleParty?: string | null; startHasTime?: boolean }> };
 const calls = vi.hoisted(() => [] as Call[]);
+/** When set, the importer's answer waits for this — a dry run "in flight". */
+const gate = vi.hoisted(() => ({ wait: null as null | Promise<void> }));
 vi.mock("@/lib/milestones", () => ({
   importMilestonesFromParsed: vi.fn(async (input: Call) => {
     calls.push(input);
+    if (gate.wait) await gate.wait;
     return {
       inserted: 0, updated: 0, skipped: 0, errors: [], batchId: "b1",
       plan: {
@@ -42,6 +45,7 @@ let host: HTMLDivElement;
 let root: Root;
 beforeEach(() => {
   calls.length = 0;
+  gate.wait = null;
   host = document.createElement("div");
   document.body.appendChild(host);
   root = createRoot(host);
@@ -54,17 +58,21 @@ afterEach(() => {
 const buttonNamed = (re: RegExp) => Array.from(host.querySelectorAll("button")).find((b) => re.test(b.textContent ?? "")) ?? null;
 const flush = () => act(async () => { await Promise.resolve(); });
 
+async function dropFile(text: string, name: string) {
+  const input = host.querySelector('input[type="file"]') as HTMLInputElement;
+  const bytes = new TextEncoder().encode(text);
+  const file = new File([bytes], name, { type: "text/csv" });
+  Object.defineProperty(file, "arrayBuffer", { value: async () => bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength) });
+  Object.defineProperty(input, "files", { value: [file], configurable: true });
+  await act(async () => { input.dispatchEvent(new Event("change", { bubbles: true })); });
+  await flush();
+}
+
 async function openWithFile() {
   await act(async () => {
     root.render(createElement(ScheduleImportModal, { orgId: "o1", projectId: "p1", userId: "u1", onClose: () => {}, onDone: () => {} }));
   });
-  const input = host.querySelector('input[type="file"]') as HTMLInputElement;
-  const bytes = new TextEncoder().encode(csv);
-  const file = new File([bytes], "plan.csv", { type: "text/csv" });
-  Object.defineProperty(file, "arrayBuffer", { value: async () => bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength) });
-  Object.defineProperty(input, "files", { value: [file] });
-  await act(async () => { input.dispatchEvent(new Event("change", { bubbles: true })); });
-  await flush();
+  await dropFile(csv, "plan.csv");
 }
 
 async function review() {
@@ -130,5 +138,48 @@ describe("SCH-2 · a column change after 'Review changes' discards the reviewed 
     await act(async () => { buttonNamed(/Choose another/)!.click(); });
     expect(buttonNamed(/^Import \d+ changes?$/)).toBeNull();
     expect(host.textContent).toMatch(/Drop your schedule here/);
+  });
+});
+
+describe("SCH-2 · while the review's dry run is in flight the column review is locked, and a stale answer is never shown as the plan", () => {
+  const hold = () => { let release!: () => void; gate.wait = new Promise<void>((r) => { release = r; }); return () => { gate.wait = null; release(); }; };
+  const controls = () => ({
+    include: host.querySelector('input[type="checkbox"][title="Include this column"]') as HTMLInputElement,
+    rename: host.querySelector('input[placeholder="contractor"]') as HTMLInputElement,
+    mapTo: host.querySelector("select") as HTMLSelectElement,
+  });
+
+  it("include / rename / map-to are disabled until the plan arrives; the plan then describes the rows as they were sent", async () => {
+    await openWithFile();
+    const release = hold();
+    await act(async () => { buttonNamed(/Review changes/)!.click(); });
+    const c = controls();
+    expect([c.include.disabled, c.rename.disabled, c.mapTo.disabled]).toEqual([true, true, true]);
+    expect(host.textContent).toMatch(/Locked while the review runs\./);
+    await act(async () => { c.include.click(); });                 // a disabled control does not change
+    expect(c.include.checked).toBe(true);
+    await act(async () => { release(); });
+    await flush();
+    expect(buttonNamed(/^Import \d+ changes?$/), "the plan arrived").not.toBeNull();
+    expect(calls).toHaveLength(1);
+    expect(calls[0].rows[0].attributes).toEqual({ contractor: "Acme" });
+    const after = controls();
+    expect([after.include.disabled, after.rename.disabled, after.mapTo.disabled]).toEqual([false, false, false]);
+    expect(after.include.checked).toBe(true);
+  });
+
+  it("'Choose another' and a new file while the old file's dry run is in flight: the old answer is dropped — the new file offers Review, never 'Import' on a plan nobody saw for it", async () => {
+    await openWithFile();
+    const release = hold();
+    await act(async () => { buttonNamed(/Review changes/)!.click(); });
+    await act(async () => { buttonNamed(/Choose another/)!.click(); });
+    const other = ["ID,Name,Start,Finish,Contractor", "9,Demob,2026-07-01,2026-07-02,Acme"].join("\n");
+    await dropFile(other, "other.csv");
+    expect(host.textContent).toMatch(/other\.csv/);
+    await act(async () => { release(); });
+    await flush();
+    expect(buttonNamed(/^Import \d+ changes?$/), "the old file's plan is not offered for the new file").toBeNull();
+    await review();
+    expect(calls.at(-1)!.rows.map((r) => r.name)).toEqual(["Demob"]);
   });
 });

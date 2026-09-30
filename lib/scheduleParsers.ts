@@ -1361,9 +1361,11 @@ function childText(parent: Element, tag: string): string {
 //                                 dropped, the rest read per the file's convention)
 //   2026/06/01 8:00 / 2026.6.1   (year-first, as ja / zh / ko exports write it:
 //                                 always year / month / day, no question to ask)
-//   June 1, 2026 8:00 AM         (written-out month: read by Date(), then its
-//                                 WALL CLOCK re-emitted as UTC — never the
-//                                 browser's zone)
+//   June 1, 2026 8:00 AM         (written-out month: read by Date() AS UTC —
+//                                 its wall clock, never the browser's zone)
+//   June 1, 2026 8:00 AM EST     (a zone abbreviation — US, GMT / UTC, BST,
+//                                 CET / CEST — at its fixed offset, whatever
+//                                 the form before it)
 // Returns "" when the value cannot be a date under the file's convention, so
 // the caller can count and report it instead of handing Postgres a month 15.
 // A value holding a d/m/y triple is NEVER handed to `new Date()`, which always
@@ -1372,6 +1374,23 @@ function childText(parent: Element, tag: string): string {
 // on every machine (PC SCHED-9).
 export function coerceIso(s: string, conv: DateConvention = "mdy"): string {
   const raw = s.trim();
+  // A value that names its zone by abbreviation ("June 1, 2026 8:00 AM EST",
+  // "6/1/2026 17:00 (CEST)"): the rest is read like any other value — as
+  // wall-clock-as-UTC, per the file's convention — and the abbreviation's
+  // FIXED offset is applied, so it names the same instant on every machine.
+  // A value that also carries a numeric offset keeps that one (below); a rest
+  // that cannot be read makes the value unreadable ("") — counted, not guessed.
+  if (!NAMES_NUMERIC_OFFSET.test(raw)) {
+    const abbr = Array.from(raw.matchAll(ZONE_ABBREVIATION));
+    if (abbr.length > 1) return "";
+    if (abbr.length === 1) {
+      const m = abbr[0];
+      const rest = `${raw.slice(0, m.index)} ${raw.slice(m.index! + m[0].length)}`.replace(/\s+/g, " ").trim();
+      const wall = rest ? Date.parse(coerceIso(rest, conv)) : NaN;
+      if (!Number.isFinite(wall)) return "";
+      return new Date(wall - ZONE_OFFSET_MINUTES[m[1].toUpperCase()] * 60_000).toISOString();
+    }
+  }
   // The day name is dropped for the numeric forms only; the Date() fallback
   // below sees the raw value (so "June 1, 2026" keeps its month name).
   const trimmed = raw.replace(LEADING_DAY_NAME, "");
@@ -1417,16 +1436,32 @@ export function coerceIso(s: string, conv: DateConvention = "mdy"): string {
   // unreadable under the file's convention — counted, never guessed.
   if (SLASH_TRIPLE.test(raw)) return "";
   // Last resort — let Date try (written-out months such as "June 1, 2026").
-  // Date() reads an offset-less value in the BROWSER's zone, so its local
-  // wall clock is re-emitted as UTC; a value that names its own zone (GMT,
-  // UTC, ±hh:mm) keeps the instant it names.
+  // A value that names its own zone (GMT, UTC, ±hh:mm) keeps the instant it
+  // names. Any other value is read AS UTC — Date() honours a trailing "UTC" —
+  // so neither the browser's zone nor its DST gap enters the reading; only
+  // if that form is refused is the local wall clock re-emitted as UTC.
   const d = new Date(raw);
   if (!isNaN(d.getTime())) {
     if (NAMES_ITS_ZONE.test(raw)) return d.toISOString();
+    const asUtc = new Date(`${raw} UTC`);
+    if (!isNaN(asUtc.getTime())) return asUtc.toISOString();
     return new Date(Date.UTC(d.getFullYear(), d.getMonth(), d.getDate(), d.getHours(), d.getMinutes(), d.getSeconds())).toISOString();
   }
   return raw; // hand it to the importer; if invalid, Supabase will reject.
 }
+
+/** Zone abbreviations a date value may end with, at FIXED offsets (minutes
+ *  east of UTC). US zones (CST is US Central, not China), GMT / UTC, and
+ *  the UK / central-European ones (BST is British Summer Time). */
+const ZONE_OFFSET_MINUTES: Record<string, number> = {
+  EST: -300, EDT: -240, CST: -360, CDT: -300, MST: -420, MDT: -360, PST: -480, PDT: -420,
+  GMT: 0, UTC: 0, BST: 60, CET: 60, CEST: 120,
+};
+/** One of those abbreviations as a word, optionally in parentheses, and
+ *  not the "GMT" of a numeric offset ("GMT+0200"). */
+const ZONE_ABBREVIATION = /\(?\b(EST|EDT|CST|CDT|MST|MDT|PST|PDT|GMT|UTC|BST|CET|CEST)\b\)?(?!\s*[+-]\d)/gi;
+/** A value carrying a numeric offset: "08:00+02:00", "…T08:00Z", "GMT+0200". */
+const NAMES_NUMERIC_OFFSET = /\d{1,2}:\d{2}(?::\d{2})?(?:\.\d+)?\s*(?:Z|[+-]\d{2}:?\d{2})\b|\b(?:GMT|UTC)\s*[+-]\d/i;
 
 /** Year / month / day with any of / . - and an optional time ("2026/06/01",
  *  "2026.6.1 8:00", "2026/06/01 5:30 PM"). */

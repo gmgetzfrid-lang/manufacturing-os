@@ -393,6 +393,46 @@ describe("SCHED-9 · offset-less datetimes are read as wall-clock-as-UTC", () =>
     }
   });
 
+  it("a value naming its zone by abbreviation is that zone's FIXED offset — the same instant on every machine — and one that cannot be read is counted", () => {
+    const readings = ["America/Chicago", "Asia/Kolkata", "UTC"].map((zone) => inZone(zone, () => [
+      coerceIso("June 1, 2026 8:00 AM EST"),        // Date() knows EST, but the old wall-clock step re-read it per machine
+      coerceIso("June 1, 2026 8:00 AM (EST)"),      // Date() treats "(EST)" as a comment
+      coerceIso("Mon, 01 Jun 2026 08:00:00 EDT"),
+      coerceIso("June 1, 2026 8:00 AM CDT"),
+      coerceIso("June 1, 2026 8:00 AM PST"),
+      coerceIso("June 1, 2026 8:00 AM CET"),        // Date() refuses CET / CEST / BST outright
+      coerceIso("June 1, 2026 8:00 AM CEST"),
+      coerceIso("June 1, 2026 8:00 AM BST"),
+      coerceIso("June 1, 2026 8:00 AM UTC"),
+      coerceIso("6/15/2026 5:00 PM MDT"),           // the numeric forms too, per the file's convention
+      coerceIso("15/06/2026 17:00 CET", "dmy"),
+      coerceIso("2026-06-01 08:00 PDT"),
+      coerceIso("June 1, 2026 8:00 AM EST PST"),    // two zones: unreadable
+      coerceIso("sometime EST"),                    // nothing readable before the zone
+    ]));
+    expect(readings[0]).toEqual([
+      "2026-06-01T13:00:00.000Z", "2026-06-01T13:00:00.000Z", "2026-06-01T12:00:00.000Z", "2026-06-01T13:00:00.000Z",
+      "2026-06-01T16:00:00.000Z", "2026-06-01T07:00:00.000Z", "2026-06-01T06:00:00.000Z", "2026-06-01T07:00:00.000Z",
+      "2026-06-01T08:00:00.000Z", "2026-06-15T23:00:00.000Z", "2026-06-15T16:00:00.000Z", "2026-06-01T15:00:00.000Z",
+      "", "",
+    ]);
+    expect(readings[1]).toEqual(readings[0]);
+    expect(readings[2]).toEqual(readings[0]);
+    // In a file: the abbreviated value lands at its instant; an unreadable one is skipped and counted.
+    const csv = ["Task Name,Start,Finish", 'Pour,"June 1, 2026 8:00 AM EST","June 1, 2026 5:00 PM EST"', 'Cure,"June 2, 2026 8:00 AM","June 2, 2026 5:00 PM EST PST"'].join("\n");
+    const files = ["America/Chicago", "Asia/Kolkata"].map((zone) => inZone(zone, () => parseScheduleFile("plan.csv", csv)));
+    for (const res of files) {
+      expect(res.rows.map((r) => [r.name, r.plannedStartAt, r.plannedAt])).toEqual([["Pour", "2026-06-01T13:00:00.000Z", "2026-06-01T22:00:00.000Z"]]);
+      expect(res.warnings.join(" ")).toMatch(/1 row skipped \(date could not be read/);
+    }
+  });
+
+  it("a written-out month is read AS UTC, so a local DST gap does not move it (Los Angeles skips 02:00–03:00 on 2026-03-08)", () => {
+    for (const zone of ["America/Los_Angeles", "Europe/London", "UTC"]) {
+      inZone(zone, () => expect(coerceIso("March 8, 2026 2:30 AM")).toBe("2026-03-08T02:30:00.000Z"));
+    }
+  });
+
   it("a start's time of day is reported (a date-only start is not a shift reading)", () => {
     expect(hasTimeOfDay("2026-06-01")).toBe(false);
     expect(hasTimeOfDay("6/1/2026")).toBe(false);

@@ -146,7 +146,7 @@ import { parseScheduleFile } from "@/lib/scheduleParsers";
 import { shiftForStart, shiftAfterMove, filterMilestones, EMPTY_FILTER } from "@/lib/scheduleFilter";
 import type { Milestone } from "@/types/schema";
 import { countPastBaseline } from "@/components/projects/MovePreviewSheet";
-import { planChangeCount, progressChangeLabel, structureSummary, rekeyedSummary } from "@/components/projects/ScheduleImportModal";
+import { planChangeCount, progressChangeLabel, structureSummary, rekeyedSummary, zoneAmbiguousSummary } from "@/components/projects/ScheduleImportModal";
 import { isImmutableTable, isSkippedTable } from "@/lib/dataRestore";
 
 const ORG = "org-1", PROJECT = "proj-1", USER = "user-1";
@@ -161,6 +161,24 @@ beforeEach(() => {
 
 const fileA = ["Task Name,Start,Finish,% Complete", "Mobilize,2026-01-01,2026-01-02,0", "Scaffold,2026-01-03,2026-01-05,0", "Hydrotest,2026-01-06,2026-01-06,0"].join("\n");
 const rowsOf = (csv: string, name = "punch.csv") => parseScheduleFile(name, csv).rows;
+
+/** A database that lacks some columns, refusing the way PostgREST does: the
+ *  error names the FIRST missing column of the select list / the payload. */
+function lackColumns(isMissing: (col: string) => boolean) {
+  const first = (cols: string[]) => cols.find(isMissing);
+  db.failSelect = (t, cols) => {
+    const c = t === "milestones" ? first(cols.split(",").map((x) => x.trim())) : undefined;
+    return c ? `column milestones.${c} does not exist` : null;
+  };
+  db.failInsert = (t, r) => {
+    const c = t === "milestones" ? first(Object.keys(r)) : undefined;
+    return c ? `column "${c}" of relation "milestones" does not exist` : null;
+  };
+  db.failUpdate = (t, r) => {
+    const c = t === "milestones" ? first(Object.keys(r)) : undefined;
+    return c ? `column "${c}" of relation "milestones" does not exist` : null;
+  };
+}
 
 describe("SCH-2 · re-import preserves locally recorded progress by default", () => {
   it("first import lands the file's progress; a zero-progress re-import leaves the crew's 60% and in_progress alone", async () => {
@@ -391,6 +409,123 @@ describe("SCH-3 · rows imported by POSITION before content keys are adopted and
   });
 });
 
+describe("SCH-3 · position-keyed rows the OLD parser read in the importer's time zone are adopted when one offset explains every date — uniquely, or not at all", () => {
+  // Before this round, timed M/D/Y ("6/15/2026 8:00 AM"), weekday-prefixed
+  // ("Mon 6/15/26", MS Project's default) and written-out values went through
+  // new Date() — the importing browser's zone. oldReading() is exactly that
+  // fallback, run under the zone the earlier import ran in.
+  const oldReading = (value: string, zone: string): string => {
+    const tz = process.env.TZ;
+    try { process.env.TZ = zone; return new Date(value.replace(/^"|"$/g, "")).toISOString(); } finally { process.env.TZ = tz; }
+  };
+  const header = "Task Name,Start,Finish,% Complete";
+  const lines = [
+    "Mobilize,6/15/2026 8:00 AM,6/15/2026 5:00 PM,0",
+    "Scaffold,Mon 6/15/26,Wed 6/17/26,0",
+    'Hydrotest,"June 18, 2026 7:00 PM","June 19, 2026 5:00 AM",0',
+  ];
+  const splitLine = (l: string) => l.match(/("[^"]*"|[^,]+)/g)!;
+  /** What the pre-Round-G importer stored for `lines` from a browser in `zone`, read back as PostgREST renders it. */
+  const seedOld = (zone: string, from = lines, tag = "msp") => {
+    db.tables.milestones = from.map((l, i) => {
+      const [name, start, finish] = splitLine(l);
+      return {
+        id: `old${i}`, org_id: ORG, project_id: PROJECT, document_id: null, source: "csv", external_ref: `${tag}-row:${i}`,
+        name, description: null, weight: 1, outline_level: null, wbs: null, is_summary: false, shift: null,
+        work_order_ref: null, responsible_party: null, responsible_kind: null, responsible_org: null, location: null,
+        duration_hours: null, attributes: {}, status: "planned", percent_complete: 0, actual_at: null, actual_start_at: null,
+        planned_at: pgTimestamptz(oldReading(finish, zone)), planned_start_at: pgTimestamptz(oldReading(start, zone)),
+        parent_id: null, depends_on: [], created_by: "someone", created_by_name: "Earlier import",
+      } as Row;
+    });
+  };
+  const file = (from = lines) => rowsOf([header, ...from].join("\n"));
+
+  it("America/Chicago (13:00Z for '8:00 AM'): the unchanged file adds nothing — 3 re-keyed in place with their progress, dates corrected to the file, and the next re-import writes nothing", async () => {
+    seedOld("America/Chicago");
+    expect(byName("Mobilize").planned_start_at).toBe("2026-06-15T13:00:00+00:00"); // the old reading, 5 h off
+    Object.assign(byName("Scaffold"), { percent_complete: 60, status: "in_progress" });
+    const dry = await importMilestonesFromParsed({ ...scope, rows: file(), dryRun: true });
+    expect(dry.plan).toMatchObject({ added: 0, notInFile: 0, rekeyed: 3, rekeyedByZone: 3, changed: 3, unchanged: 0, zoneAmbiguous: 0 });
+    expect(rekeyedSummary(dry.plan!)).toMatch(/3 of them were stored by the earlier importer in its browser's time zone/);
+
+    const res = await importMilestonesFromParsed({ ...scope, rows: file() });
+    expect(res.errors).toEqual([]);
+    expect(res).toMatchObject({ inserted: 0, updated: 3 });
+    expect(milestones().map((r) => r.id)).toEqual(["old0", "old1", "old2"]);
+    expect(milestones().every((r) => /^msp-key:[0-9a-f]{8}$/.test(String(r.external_ref)))).toBe(true);
+    expect(byName("Mobilize")).toMatchObject({ planned_start_at: "2026-06-15T08:00:00+00:00", planned_at: "2026-06-15T17:00:00+00:00" });
+    expect(byName("Hydrotest")).toMatchObject({ planned_start_at: "2026-06-18T19:00:00+00:00", planned_at: "2026-06-19T05:00:00+00:00" });
+    expect(byName("Scaffold")).toMatchObject({ percent_complete: 60, status: "in_progress", created_by: "someone", planned_start_at: "2026-06-15T00:00:00+00:00" });
+
+    db.writes = [];
+    const again = await importMilestonesFromParsed({ ...scope, rows: file() });
+    expect(again.plan).toMatchObject({ added: 0, changed: 0, unchanged: 3, notInFile: 0, rekeyed: 0, rekeyedByZone: 0 });
+    expect(db.writes.filter((w) => w.table === "milestones")).toEqual([]);
+  });
+
+  it("Asia/Kolkata (+5:30, a half-hour offset: 02:30Z for '8:00 AM') is adopted the same way", async () => {
+    seedOld("Asia/Kolkata");
+    expect(byName("Mobilize").planned_start_at).toBe("2026-06-15T02:30:00+00:00");
+    const res = await importMilestonesFromParsed({ ...scope, rows: file() });
+    expect(res.plan).toMatchObject({ added: 0, notInFile: 0, rekeyed: 3, rekeyedByZone: 3, zoneAmbiguous: 0 });
+    expect(milestones().map((r) => r.id)).toEqual(["old0", "old1", "old2"]);
+    expect(byName("Mobilize").planned_start_at).toBe("2026-06-15T08:00:00+00:00");
+  });
+
+  it("UTC (the old reading WAS the wall clock): the exact match adopts them, nothing is read through an offset", async () => {
+    seedOld("UTC");
+    const dry = await importMilestonesFromParsed({ ...scope, rows: file(), dryRun: true });
+    expect(dry.plan).toMatchObject({ added: 0, notInFile: 0, changed: 0, unchanged: 3, rekeyed: 3, rekeyedOnly: 3, rekeyedByZone: 0, zoneAmbiguous: 0 });
+  });
+
+  it("ambiguous: two same-named tasks that each fit BOTH earlier rows under some offset are not adopted — added, counted and named; the earlier rows are untouched; a unique row beside them is still adopted", async () => {
+    const two = [
+      "Walkdown,6/15/2026 8:00 AM,6/15/2026 9:00 AM,0",
+      "Walkdown,6/15/2026 10:00 AM,6/15/2026 11:00 AM,0",
+      "Mobilize,6/15/2026 7:00 AM,6/15/2026 5:00 PM,0",
+    ];
+    seedOld("America/Chicago", two);
+    // 08:00 fits 13:00Z (+5 h) and 15:00Z (+7 h); 10:00 fits 13:00Z (+3 h) and 15:00Z (+5 h).
+    const res = await importMilestonesFromParsed({ ...scope, rows: file(two) });
+    expect(res.plan).toMatchObject({
+      added: 2, rekeyed: 1, rekeyedByZone: 1, zoneAmbiguous: 2, zoneAmbiguousNames: ["Walkdown", "Walkdown"],
+      notInFile: 2, notInFileNames: ["Walkdown", "Walkdown"],
+    });
+    expect(zoneAmbiguousSummary(res.plan!)).toMatch(/^2 tasks in this file \(Walkdown, Walkdown\) could be tasks imported earlier under a different time-zone reading, but the match is not unique/);
+    expect(byName("Mobilize")).toMatchObject({ id: "old2", planned_start_at: "2026-06-15T07:00:00+00:00" });
+    const old = milestones().filter((r) => r.id === "old0" || r.id === "old1");
+    expect(old.map((r) => [r.external_ref, r.planned_start_at])).toEqual([
+      ["msp-row:0", "2026-06-15T13:00:00+00:00"], ["msp-row:1", "2026-06-15T15:00:00+00:00"],
+    ]);
+  });
+
+  it("a shifted reading that collides with an exact match is never a second guess: the exact pairing stands (as before), the other row is ambiguous and added", async () => {
+    // 08:00 and 13:00, 5 h apart — exactly Chicago's offset in June.
+    const two = ["Walkdown,6/15/2026 8:00 AM,6/15/2026 9:00 AM,0", "Walkdown,6/15/2026 1:00 PM,6/15/2026 2:00 PM,0"];
+    seedOld("America/Chicago", two); // stored 13:00Z and 18:00Z
+    const res = await importMilestonesFromParsed({ ...scope, rows: file(two), dryRun: true });
+    expect(res.plan).toMatchObject({ added: 1, rekeyed: 1, rekeyedByZone: 0, zoneAmbiguous: 1, notInFile: 1 });
+  });
+
+  it("the fail-safe: a row whose start and finish carry DIFFERENT offsets (a DST change between them in the importer's zone) fits nothing and is added", async () => {
+    const dst = [
+      "Outage,3/6/2026 8:00 AM,3/10/2026 5:00 PM,0", // CST (-6 h) at the start, CDT (-5 h) at the finish
+      "Mobilize,3/13/2026 8:00 AM,3/13/2026 5:00 PM,0",
+    ];
+    seedOld("America/Chicago", dst);
+    const res = await importMilestonesFromParsed({ ...scope, rows: file(dst), dryRun: true });
+    expect(res.plan).toMatchObject({ added: 1, rekeyed: 1, rekeyedByZone: 1, zoneAmbiguous: 0, notInFile: 1, notInFileNames: ["Outage"] });
+  });
+
+  it("only POSITION rows are read through an offset: an earlier content-keyed row 5 h off is not adopted", async () => {
+    seedOld("America/Chicago", lines.slice(0, 1), "msp");
+    milestones()[0].external_ref = "msp-key:0badc0de";
+    const res = await importMilestonesFromParsed({ ...scope, rows: file(lines.slice(0, 1)), dryRun: true });
+    expect(res.plan).toMatchObject({ added: 1, rekeyed: 0, zoneAmbiguous: 0, notInFile: 1 });
+  });
+});
+
 describe("SCH-16 · structure is set to exactly what the file says for the rows it carries", () => {
   const linked = ["ID,Task Name,Start,Finish,Outline Level,Predecessors", "1,Phase,2026-01-01,2026-01-10,1,", "2,Design,2026-01-01,2026-01-05,2,", "3,Build,2026-01-06,2026-01-10,2,2"].join("\n");
   it("removing a predecessor upstream and re-importing clears it locally; un-parenting clears the local parent", async () => {
@@ -458,7 +593,7 @@ describe("SCH-14 · caps, chunks, progress and cancel", () => {
   });
 });
 
-describe("SCH-14 / SCH-16 · an older database: the existing-row read steps down a tier and the degrade paths run", () => {
+describe("SCH-14 / SCH-16 · an older database: the existing-row read drops each missing migration's columns on its own and the degrade paths run", () => {
   it("without 20260715 (no depends_on): the rows land, the hierarchy is wired, the links are dropped with a heads-up, and a re-import does not count links it cannot write", async () => {
     db.failSelect = (t, cols) => (t === "milestones" && /\bdepends_on\b/.test(cols) ? "column milestones.depends_on does not exist" : null);
     db.failUpdate = (t, p) => (t === "milestones" && "depends_on" in p ? "column \"depends_on\" of relation \"milestones\" does not exist" : null);
@@ -473,22 +608,52 @@ describe("SCH-14 / SCH-16 · an older database: the existing-row read steps down
     expect(again.plan!.structure).toEqual({ rows: 0, onlyStructure: 0, parents: 0, linksAdded: 0, linksRemoved: 0 });
   });
 
-  it("without 20260703 (no hierarchy columns): the rows land with the legacy columns only, the hierarchy heads-up is shown, and a re-import compares only what the database has", async () => {
-    const HIERARCHY = /\b(planned_start_at|outline_level|is_summary|percent_complete|parent_id|attributes)\b/;
-    db.failSelect = (t, cols) => (t === "milestones" && HIERARCHY.test(cols) ? "column milestones.planned_start_at does not exist" : null);
+  it("without any of 20260703 / 20260705 / 20260715 / 20260731 (a pre-hierarchy database): the rows land with the legacy columns only, each missing migration that this file needed is named, and a re-import compares only what the database has", async () => {
     const LEGACY = new Set(["id", "org_id", "project_id", "document_id", "source", "name", "description", "weight", "planned_at", "status", "actual_at", "external_ref", "created_by", "created_by_name", "updated_at", "updated_by"]);
-    db.failInsert = (t, r) => {
-      if (t !== "milestones") return null;
-      const bad = Object.keys(r).find((k) => !LEGACY.has(k));
-      return bad ? `column "${bad}" of relation "milestones" does not exist` : null;
-    };
+    lackColumns((c) => !LEGACY.has(c));
     const res = await importMilestonesFromParsed({ ...scope, rows: rowsOf(fileA) });
     expect(res.inserted).toBe(3);
-    expect(res.errors).toEqual([expect.stringMatching(/^Heads up: hierarchy migration 20260703_milestones_hierarchy\.sql hasn't been applied/)]);
+    // fileA carries a % column (20260731) and no rich columns (20260705 is not mentioned).
+    expect(res.errors).toEqual([
+      expect.stringMatching(/^Heads up: migration 20260731_milestone_percent_complete\.sql hasn't been applied/),
+      expect.stringMatching(/^Heads up: hierarchy migration 20260703_milestones_hierarchy\.sql hasn't been applied/),
+    ]);
     expect(Object.keys(byName("Scaffold")).every((k) => LEGACY.has(k))).toBe(true);
     db.writes = [];
     const again = await importMilestonesFromParsed({ ...scope, rows: rowsOf(fileA) });
     expect(again.plan).toMatchObject({ added: 0, changed: 0, unchanged: 3 });
+    expect(db.writes.filter((w) => w.table === "milestones")).toEqual([]);
+  });
+
+  it("without ONLY 20260705 (rich columns): the hierarchy it has is kept — start, outline level, parent — the rich columns are dropped, and the heads-up names 20260705, not 20260703", async () => {
+    const RICH = new Set(["work_order_ref", "responsible_party", "responsible_kind", "responsible_org", "location", "duration_hours", "attributes"]);
+    lackColumns((c) => RICH.has(c));
+    const csv = ["ID,Task Name,Start,Finish,Outline Level,Work,Resource Names", "1,Phase,2026-01-01 08:00,2026-01-10 17:00,1,,", "2,Weld,2026-01-01 08:00,2026-01-05 17:00,2,40 hrs,Crew A"].join("\n");
+    const res = await importMilestonesFromParsed({ ...scope, source: "msproject", rows: rowsOf(csv, "plan.csv") });
+    expect(res.inserted).toBe(2);
+    expect(res.errors).toEqual([expect.stringMatching(/^Heads up: migration 20260705_milestones_execution_richdata\.sql hasn't been applied/)]);
+    expect(byName("Weld")).toMatchObject({ parent_id: byName("Phase").id, outline_level: 2, planned_start_at: "2026-01-01T08:00:00+00:00", shift: "day" });
+    expect(Object.keys(byName("Weld")).some((k) => RICH.has(k))).toBe(false);
+    db.writes = [];
+    const again = await importMilestonesFromParsed({ ...scope, source: "msproject", rows: rowsOf(csv, "plan.csv") });
+    expect(again.plan).toMatchObject({ added: 0, changed: 0, unchanged: 2 });
+    expect(again.plan!.structure.rows).toBe(0);
+    expect(db.writes.filter((w) => w.table === "milestones")).toEqual([]);
+  });
+
+  it("without ONLY 20260731 (percent_complete): progress lands as status, the hierarchy is kept, the heads-up names 20260731, and a re-import still protects the crew's status", async () => {
+    lackColumns((c) => c === "percent_complete");
+    const csv = ["ID,Task Name,Start,Finish,Outline Level,% Complete", "1,Phase,2026-01-01,2026-01-10,1,0", "2,Weld,2026-01-01,2026-01-05,2,50"].join("\n");
+    const res = await importMilestonesFromParsed({ ...scope, source: "msproject", rows: rowsOf(csv, "plan.csv") });
+    expect(res.inserted).toBe(2);
+    expect(res.errors).toEqual([expect.stringMatching(/^Heads up: migration 20260731_milestone_percent_complete\.sql hasn't been applied/)]);
+    expect(byName("Weld")).toMatchObject({ status: "in_progress", parent_id: byName("Phase").id, planned_start_at: "2026-01-01T00:00:00+00:00", actual_start_at: "2026-01-01T00:00:00+00:00" });
+    expect("percent_complete" in byName("Weld")).toBe(false);
+    byName("Phase").status = "in_progress"; // the crew started it in the app
+    db.writes = [];
+    const again = await importMilestonesFromParsed({ ...scope, source: "msproject", rows: rowsOf(csv, "plan.csv") });
+    expect(again.plan).toMatchObject({ added: 0, changed: 0, unchanged: 2 });
+    expect(again.plan!.localProgressAtRisk.map((r) => r.name)).toEqual(["Phase"]);
     expect(db.writes.filter((w) => w.table === "milestones")).toEqual([]);
   });
 
@@ -748,7 +913,8 @@ describe("SCHED-3 · baseline is one RPC call each; the legacy path only when th
 describe("SCH-2 / SCH-16 · the review panel's numbers", () => {
   const plan = (over: Partial<ImportPlanT> = {}): ImportPlanT => ({
     added: 0, changed: 0, unchanged: 3, notInFile: 0, notInFileNames: [], localProgressAtRisk: [],
-    structure: { rows: 0, onlyStructure: 0, parents: 0, linksAdded: 0, linksRemoved: 0 }, rekeyed: 0, rekeyedOnly: 0, rowCap: 5000, ...over,
+    structure: { rows: 0, onlyStructure: 0, parents: 0, linksAdded: 0, linksRemoved: 0 }, rekeyed: 0, rekeyedOnly: 0,
+    rekeyedByZone: 0, zoneAmbiguous: 0, zoneAmbiguousNames: [], rowCap: 5000, ...over,
   });
   it("a file that only removes a predecessor does not read 'Import 0 changes'", () => {
     expect(planChangeCount(plan())).toBe(0);
