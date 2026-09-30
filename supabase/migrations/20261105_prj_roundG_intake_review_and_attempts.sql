@@ -285,7 +285,10 @@ COMMENT ON FUNCTION pending_on_retired_version_count() IS
 -- Both signals PER ORG, for the maintenance cron's once-a-day nudge to each
 -- org's controller pool (a count in a cron response reaches no one). The
 -- predicates are the two functions' above, verbatim; one document per org
--- (a stuck one first) gives the notice something to point at.
+-- (a stuck one first) gives the notice something to point at. The org comes
+-- from whichever row carries it (either column may be NULL); a row neither
+-- names is grouped under a NULL org, which the cron reports instead of
+-- nudging.
 CREATE OR REPLACE FUNCTION intake_review_health_by_org()
 RETURNS TABLE (org_id uuid, orphaned_in_review bigint, pending_on_retired bigint, example_document_id text)
 LANGUAGE sql STABLE SECURITY DEFINER SET search_path = public AS $$
@@ -295,13 +298,13 @@ LANGUAGE sql STABLE SECURITY DEFINER SET search_path = public AS $$
          COALESCE(MIN(h.document_id) FILTER (WHERE h.kind = 'pending_on_retired'),
                   MIN(h.document_id) FILTER (WHERE h.kind = 'orphaned'))
     FROM (
-      SELECT v.org_id, 'orphaned'::text AS kind, v.record_id::text AS document_id
+      SELECT COALESCE(v.org_id, d.org_id) AS org_id, 'orphaned'::text AS kind, v.record_id::text AS document_id
         FROM document_versions v
         LEFT JOIN documents d ON d.id = v.record_id
        WHERE v.review_state = 'in_review' AND v.superseded_at IS NULL
          AND d.pending_version_id IS DISTINCT FROM v.id
       UNION ALL
-      SELECT d.org_id, 'pending_on_retired'::text, d.id::text
+      SELECT COALESCE(d.org_id, v.org_id), 'pending_on_retired'::text, d.id::text
         FROM documents d
         JOIN document_versions v ON v.id = d.pending_version_id
        WHERE v.superseded_at IS NOT NULL OR v.review_state = 'superseded'
@@ -809,10 +812,12 @@ UNION ALL SELECT 'pending_on_retired_version_count counts pending pointers on re
        AND has_function_privilege('service_role', 'pending_on_retired_version_count()', 'EXECUTE')
        AND NOT has_function_privilege('authenticated', 'pending_on_retired_version_count()', 'EXECUTE')
        AND NOT has_function_privilege('anon', 'pending_on_retired_version_count()', 'EXECUTE'), NULL
-UNION ALL SELECT 'intake_review_health_by_org: the two health predicates per org; SECURITY DEFINER, search_path pinned; service_role only',
+UNION ALL SELECT 'intake_review_health_by_org: the two health predicates per org (the org from the version or its document); SECURITY DEFINER, search_path pinned; service_role only',
        (SELECT prosecdef AND array_to_string(proconfig, ',') LIKE '%search_path=public%'
                AND prosrc LIKE '%WHERE v.review_state = ''in_review'' AND v.superseded_at IS NULL%'
                AND prosrc LIKE '%WHERE v.superseded_at IS NOT NULL OR v.review_state = ''superseded''%'
+               AND prosrc LIKE '%COALESCE(v.org_id, d.org_id)%'
+               AND prosrc LIKE '%COALESCE(d.org_id, v.org_id)%'
           FROM pg_proc WHERE proname = 'intake_review_health_by_org')
        AND has_function_privilege('service_role', 'intake_review_health_by_org()', 'EXECUTE')
        AND NOT has_function_privilege('authenticated', 'intake_review_health_by_org()', 'EXECUTE')

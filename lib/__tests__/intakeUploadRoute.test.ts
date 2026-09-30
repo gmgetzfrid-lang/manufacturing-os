@@ -1483,6 +1483,9 @@ describe("the Intake tab, the transition-in panel and the portal", () => {
     expect(c).toMatch(/sb\.rpc\("intake_review_health_by_org"\)/);
     expect(c).toContain("const nudged = await nudgeReviewHealth(sb, {");
     expect(c).toContain('audience: { roles: ["Admin", "DocCtrl"] },');
+    // second verification: a NULL org is kept NULL (never the string "null") and reported, not nudged
+    expect(c).toContain("orgId: r.org_id == null ? null : String(r.org_id),");
+    expect(c).toContain("if (nudged.orgless > 0) intakeLine(`review-health: ${nudged.orgless} group(s) of rows name no org");
     const vercel = JSON.parse(src("vercel.json")) as { crons?: unknown[] };
     expect((vercel.crons ?? []).length).toBeLessThanOrEqual(2);
   });

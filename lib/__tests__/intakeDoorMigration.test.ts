@@ -252,6 +252,10 @@ describe("20261105 — the review side of the door", () => {
     expect(stuck).toContain("WHERE v.superseded_at IS NOT NULL OR v.review_state = 'superseded';");
     expect(fn).toContain("WHERE v.superseded_at IS NOT NULL OR v.review_state = 'superseded'\n    ) h");
     expect(fn).toContain("GROUP BY h.org_id;");
+    // second verification (item 2): either row may carry the org — never grouped under NULL when one does
+    expect(fn).toContain("SELECT COALESCE(v.org_id, d.org_id) AS org_id, 'orphaned'::text AS kind");
+    expect(fn).toContain("SELECT COALESCE(d.org_id, v.org_id), 'pending_on_retired'::text");
+    expect(fn).not.toMatch(/SELECT v\.org_id,|SELECT d\.org_id,/);
     expect(fn).not.toMatch(/NOW\(\)|INTERVAL/i); // state, not a time window
     expect(B).toContain("REVOKE ALL ON FUNCTION intake_review_health_by_org() FROM PUBLIC, anon, authenticated;");
     expect(B).toContain("GRANT EXECUTE ON FUNCTION intake_review_health_by_org() TO service_role;");
@@ -261,6 +265,8 @@ describe("20261105 — the review side of the door", () => {
     expect(tail).toContain("(SELECT prosecdef AND array_to_string(proconfig, ',') LIKE '%search_path=public%'");
     expect(tail).toContain("prosrc LIKE '%WHERE v.review_state = ''in_review'' AND v.superseded_at IS NULL%'");
     expect(tail).toContain("FROM pg_proc WHERE proname = 'intake_review_health_by_org')");
+    expect(tail).toContain("AND prosrc LIKE '%COALESCE(v.org_id, d.org_id)%'");
+    expect(tail).toContain("AND prosrc LIKE '%COALESCE(d.org_id, v.org_id)%'");
     expect(tail).toContain("AND NOT has_function_privilege('anon', 'intake_review_health_by_org()', 'EXECUTE'), NULL");
     expect(tail).toContain("(SELECT COUNT(*)::text FROM intake_review_health_by_org())");
     // the attempt log names the cron's marker

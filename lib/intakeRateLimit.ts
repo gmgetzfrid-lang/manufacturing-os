@@ -195,33 +195,43 @@ export interface FoldedCounts {
  *  since the link's last notice or cron digest, by kind — the count the
  *  next notice carries, so a burst of N uploads is never reported as one.
  *  Looks back at most two days (the attempt log's retention). An
- *  unreadable log answers zeros. */
+ *  unreadable log answers zeros (the door: a notice without the count
+ *  beats no notice); the cron reads it with readFoldedSinceLastNotice,
+ *  which throws. */
 export async function foldedSinceLastNotice(client: AttemptClient, input: {
   tokenHash: string; now?: number;
 }): Promise<FoldedCounts> {
-  const none: FoldedCounts = { total: 0, published: 0, displaced: 0 };
   try {
-    const horizon = new Date((input.now ?? Date.now()) - 2 * 24 * HOUR_MS).toISOString();
-    const { data: sent, error: sentErr } = await client.from("intake_attempts")
-      .select("created_at")
-      .eq("token_hash", input.tokenHash).in("outcome", [ATTEMPT_OUTCOME.notified, ATTEMPT_OUTCOME.digested])
-      .gte("created_at", horizon);
-    if (sentErr) return none;
-    const last = (((sent ?? []) as Array<{ created_at: string }>)).map((r) => String(r.created_at)).sort().pop() ?? horizon;
-    const countOf = async (outcome: string): Promise<number> => {
-      const { count, error } = await client.from("intake_attempts")
-        .select("id", { count: "exact", head: true })
-        .eq("token_hash", input.tokenHash).eq("outcome", outcome)
-        .gte("created_at", last);
-      return error || typeof count !== "number" ? 0 : count;
-    };
-    const review = await countOf(ATTEMPT_OUTCOME.suppressed);
-    const published = await countOf(ATTEMPT_OUTCOME.suppressedPublished);
-    const displaced = await countOf(ATTEMPT_OUTCOME.suppressedDisplaced);
-    return { total: review + published + displaced, published, displaced };
+    return await readFoldedSinceLastNotice(client, input);
   } catch {
-    return none;
+    return { total: 0, published: 0, displaced: 0 };
   }
+}
+
+/** foldedSinceLastNotice, but an unreadable log THROWS — the cron's flush
+ *  must tell "nothing to announce" from "could not read". */
+export async function readFoldedSinceLastNotice(client: AttemptClient, input: {
+  tokenHash: string; now?: number;
+}): Promise<FoldedCounts> {
+  const horizon = new Date((input.now ?? Date.now()) - 2 * 24 * HOUR_MS).toISOString();
+  const { data: sent, error: sentErr } = await client.from("intake_attempts")
+    .select("created_at")
+    .eq("token_hash", input.tokenHash).in("outcome", [ATTEMPT_OUTCOME.notified, ATTEMPT_OUTCOME.digested])
+    .gte("created_at", horizon);
+  if (sentErr) throw new Error(`intake attempt log unreadable: ${sentErr.message}`);
+  const last = (((sent ?? []) as Array<{ created_at: string }>)).map((r) => String(r.created_at)).sort().pop() ?? horizon;
+  const countOf = async (outcome: string): Promise<number> => {
+    const { count, error } = await client.from("intake_attempts")
+      .select("id", { count: "exact", head: true })
+      .eq("token_hash", input.tokenHash).eq("outcome", outcome)
+      .gte("created_at", last);
+    if (error || typeof count !== "number") throw new Error(`intake attempt log unreadable: ${error?.message ?? "no count"}`);
+    return count;
+  };
+  const review = await countOf(ATTEMPT_OUTCOME.suppressed);
+  const published = await countOf(ATTEMPT_OUTCOME.suppressedPublished);
+  const displaced = await countOf(ATTEMPT_OUTCOME.suppressedDisplaced);
+  return { total: review + published + displaced, published, displaced };
 }
 
 /** Pure: the sentence the next notice carries for what was folded. */
@@ -358,8 +368,9 @@ export interface FoldedFlush {
   /** …of which the 'digested' marker did not land: the next run announces
    *  them AGAIN (a repeat, never a loss). */
   unrecorded: number;
-  /** Links not announced — a read failed, the send threw or reported that
-   *  nothing landed. No marker is written; the next run retries. */
+  /** Links not announced — a read failed (the link's fold count included),
+   *  the send threw or reported that nothing landed. No marker is written;
+   *  the next run retries. */
   failed: number;
   /** Links that no longer exist (their project was deleted). */
   gone: number;
@@ -389,7 +400,13 @@ export async function flushFoldedIntakeNotices(client: AttemptClient, input: {
   type Group = { orgId: string; projectId: string; links: Array<FoldedLink & { tokenHash: string }> };
   const groups = new Map<string, Group>();
   for (const [tokenHash, linkId] of candidates) {
-    const folded = await foldedSinceLastNotice(client, { tokenHash, now: input.now });
+    let folded: FoldedCounts;
+    try {
+      folded = await readFoldedSinceLastNotice(client, { tokenHash, now: input.now });
+    } catch {
+      out.failed++; // unread is not "announced already" — the next run retries
+      continue;
+    }
     if (folded.published + folded.displaced === 0) continue; // announced already
     if (!linkId) { out.gone++; continue; }
     const { data: link, error: linkErr } = await client.from("project_intake_links")
@@ -467,19 +484,25 @@ export async function deliverFoldedDigest(client: NoticeClient, d: FoldedDigest,
 }
 
 /** An RPC error that means only "this function does not exist yet" (the
- *  migration is not applied): PostgREST PGRST202, Postgres 42883. Never
- *  matched on the function's name — a permission error names the function
+ *  migration is not applied): PostgREST PGRST202, or Postgres 42883 when
+ *  its message says a FUNCTION does not exist (42883 is also "operator
+ *  does not exist" — a broken body, which must be reported). Never matched
+ *  on the function's name alone — a permission error names the function
  *  too, and must be reported, not read as "not applied". */
 export function isMissingFunction(err: { code?: string | null; message: string }): boolean {
-  return /^(PGRST202|42883)$/.test(String(err.code ?? "")) || /Could not find the function/i.test(err.message);
+  const code = String(err.code ?? "");
+  if (code === "PGRST202") return true;
+  if (code === "42883") return /function .* does not exist/i.test(err.message);
+  return /Could not find the function/i.test(err.message);
 }
 
 /** One org's review rows that no screen lists (migration 20261105's
  *  intake_review_health_by_org(): the same two state predicates as
  *  orphaned_in_review_versions_count() and
- *  pending_on_retired_version_count()). */
+ *  pending_on_retired_version_count()). `orgId` is null for rows neither
+ *  the version nor its document names an org for — nobody to nudge. */
 export interface ReviewHealthOrg {
-  orgId: string;
+  orgId: string | null;
   orphanedInReview: number;
   pendingOnRetired: number;
   /** One document to point the notice at. */
@@ -510,15 +533,19 @@ export function reviewHealthNudgeText(h: ReviewHealthOrg): { title: string; body
  *  `review_overdue` notice for the org carrying metadata.reviewHealthDay
  *  (the escalateStaleCheckouts / HLD-14 shape). A dedupe read that fails
  *  does not stop the nudge (a repeat beats silence); a send that throws is
- *  counted `failed`. */
+ *  counted `failed`; a row with no org is never sent (no pool to resolve)
+ *  and is counted `orgless` for the cron to report. `nudged` counts sends
+ *  made for an org — emit() itself reports no delivery. */
 export async function nudgeReviewHealth(client: NoticeClient, input: {
   orgs: ReviewHealthOrg[];
   day: string;
-  send: (h: ReviewHealthOrg, text: { title: string; body: string }, metadata: Record<string, unknown>) => Promise<void>;
-}): Promise<{ nudged: number; skipped: number; failed: number }> {
-  const out = { nudged: 0, skipped: 0, failed: 0 };
-  for (const h of input.orgs) {
-    if (h.orphanedInReview + h.pendingOnRetired <= 0) continue;
+  send: (h: ReviewHealthOrg & { orgId: string }, text: { title: string; body: string }, metadata: Record<string, unknown>) => Promise<void>;
+}): Promise<{ nudged: number; skipped: number; failed: number; orgless: number }> {
+  const out = { nudged: 0, skipped: 0, failed: 0, orgless: 0 };
+  for (const row of input.orgs) {
+    if (row.orphanedInReview + row.pendingOnRetired <= 0) continue;
+    if (!row.orgId) { out.orgless++; continue; }
+    const h = { ...row, orgId: row.orgId };
     const { data: existing, error } = await client.from("notifications")
       .select("id").eq("org_id", h.orgId).eq("kind", REVIEW_HEALTH_KIND)
       .contains("metadata", { reviewHealthDay: input.day }).limit(1);

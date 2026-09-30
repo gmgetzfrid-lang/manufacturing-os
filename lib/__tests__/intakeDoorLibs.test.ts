@@ -262,6 +262,8 @@ describe("intakeRateLimit — the window", () => {
         } as Record<string, Row[]>,
         errors: {} as Record<string, { message: string } | undefined>,
         insertErrors: {} as Record<string, { message: string } | undefined>,
+        /** An error for exact-count (head) reads only — the fold count, not the candidate page. */
+        countErrors: {} as Record<string, { message: string } | undefined>,
         /** PostgREST's max-rows: no response carries more, whatever was asked. */
         maxRows: 1000,
         pageReads: 0,
@@ -290,7 +292,7 @@ describe("intakeRateLimit — the window", () => {
                 return 0;
               });
             }
-            if (head) return { count: hit.length, error: null };
+            if (head) return db.countErrors[table] ? { count: null, error: db.countErrors[table] } : { count: hit.length, error: null };
             hit = hit.slice(off, lim != null ? off + lim : undefined).slice(0, db.maxRows);
             return { data: hit, error: null };
           };
@@ -503,6 +505,19 @@ describe("intakeRateLimit — the window", () => {
       expect(src).toContain('.order("created_at", { ascending: true })');
       expect(src).toContain(".range(from, from + pageSize - 1);");
     });
+    it("second verification (item 3): a link whose fold count cannot be read is FAILED (retried) — never skipped as 'announced already'", async () => {
+      const { db, client } = mkDb();
+      db.tables.intake_attempts.push(att("h1", "suppressed_published", "2026-09-30T10:06:00.000Z"));
+      db.countErrors.intake_attempts = { message: "statement timeout" };
+      const sent: FoldedDigest[] = [];
+      expect(await flushFoldedIntakeNotices(client, { now, send: landing(sent) })).toEqual({ ...noDelivery, failed: 1 });
+      expect(sent).toEqual([]);
+      expect(db.tables.intake_attempts.some((r) => r.ip === "maintenance-cron")).toBe(false);
+      // the door's read of the same log still degrades to zeros (a notice without its count beats none)
+      expect(await foldedSinceLastNotice(client, { tokenHash: "h1", now })).toEqual({ total: 0, published: 0, displaced: 0 });
+      db.countErrors.intake_attempts = undefined;
+      expect(await flushFoldedIntakeNotices(client, { now, send: landing(sent) })).toEqual({ ...noDelivery, digests: 1, announced: 1 });
+    });
     it("an unreadable attempt log throws (the cron reports it) — never a silent 'nothing to announce'", async () => {
       const { db, client } = mkDb();
       db.errors.intake_attempts = { message: "relation does not exist" };
@@ -524,19 +539,19 @@ describe("intakeRateLimit — the window", () => {
         { orgId: "o3", orphanedInReview: 0, pendingOnRetired: 0, exampleDocumentId: null },
       ];
       const told: Array<{ org: string; title: string; metadata: Record<string, unknown> }> = [];
-      const send = async (h: ReviewHealthOrg, text: { title: string }, metadata: Record<string, unknown>) => {
+      const send = async (h: ReviewHealthOrg & { orgId: string }, text: { title: string }, metadata: Record<string, unknown>) => {
         told.push({ org: h.orgId, title: text.title, metadata });
         db.tables.notifications.push({ org_id: h.orgId, kind: REVIEW_HEALTH_KIND, metadata });
       };
-      expect(await nudgeReviewHealth(client, { orgs, day: "2026-09-30", send })).toEqual({ nudged: 2, skipped: 0, failed: 0 });
+      expect(await nudgeReviewHealth(client, { orgs, day: "2026-09-30", send })).toEqual({ nudged: 2, skipped: 0, failed: 0, orgless: 0 });
       expect(told.map((t) => t.org)).toEqual(["o1", "o2"]);
       expect(told[0].title).toBe("Review health: 1 document whose pending revision names a retired draft");
       expect(told[0].metadata).toMatchObject({ reviewHealth: true, reviewHealthDay: "2026-09-30", pendingOnRetired: 1 });
       // a second run the same day tells no one again; the next day it does
-      expect(await nudgeReviewHealth(client, { orgs, day: "2026-09-30", send })).toEqual({ nudged: 0, skipped: 2, failed: 0 });
-      expect(await nudgeReviewHealth(client, { orgs, day: "2026-10-01", send })).toEqual({ nudged: 2, skipped: 0, failed: 0 });
+      expect(await nudgeReviewHealth(client, { orgs, day: "2026-09-30", send })).toEqual({ nudged: 0, skipped: 2, failed: 0, orgless: 0 });
+      expect(await nudgeReviewHealth(client, { orgs, day: "2026-10-01", send })).toEqual({ nudged: 2, skipped: 0, failed: 0, orgless: 0 });
       // a send that throws is counted, not swallowed
-      expect(await nudgeReviewHealth(client, { orgs: [orgs[0]], day: "2026-10-02", send: async () => { throw new Error("x"); } })).toEqual({ nudged: 0, skipped: 0, failed: 1 });
+      expect(await nudgeReviewHealth(client, { orgs: [orgs[0]], day: "2026-10-02", send: async () => { throw new Error("x"); } })).toEqual({ nudged: 0, skipped: 0, failed: 1, orgless: 0 });
       const both = reviewHealthNudgeText({ orgId: "o", orphanedInReview: 2, pendingOnRetired: 3, exampleDocumentId: "d" });
       expect(both.title).toBe("Review health: 3 documents whose pending revision names a retired draft and 2 in-review versions no document points at");
       expect(both.body).toMatch(/pending_on_retired_version_count\(\).*orphaned_in_review_versions_count\(\).*repeats daily until the counts reach 0/);
@@ -548,6 +563,23 @@ describe("intakeRateLimit — the window", () => {
       expect(isMissingFunction({ message: "Could not find the function public.intake_review_health_by_org" })).toBe(true);
       expect(isMissingFunction({ code: "42501", message: "permission denied for function pending_on_retired_version_count" })).toBe(false);
       expect(isMissingFunction({ code: "57014", message: "canceling statement due to statement timeout" })).toBe(false);
+      // second verification (item 4): 42883 is also "operator does not exist" — a broken body, reported
+      expect(isMissingFunction({ code: "42883", message: "operator does not exist: uuid = text" })).toBe(false);
+      expect(isMissingFunction({ code: "42883", message: "function intake_review_health_by_org() does not exist" })).toBe(true);
+    });
+    it("second verification (item 2): a review-health row with NO org is never sent (no pool to resolve) — counted orgless for the cron's error line, not as a nudge", async () => {
+      const { client } = mkDb();
+      const sentTo: string[] = [];
+      const res = await nudgeReviewHealth(client, {
+        orgs: [
+          { orgId: null, orphanedInReview: 1, pendingOnRetired: 0, exampleDocumentId: "d0" },
+          { orgId: "o1", orphanedInReview: 0, pendingOnRetired: 1, exampleDocumentId: "d1" },
+        ],
+        day: "2026-09-30",
+        send: async (h) => { sentTo.push(h.orgId); },
+      });
+      expect(res).toEqual({ nudged: 1, skipped: 0, failed: 0, orgless: 1 });
+      expect(sentTo).toEqual(["o1"]);
     });
   });
   it("the per-link budget: submissions, then bytes", () => {

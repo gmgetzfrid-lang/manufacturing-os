@@ -219,7 +219,7 @@ async function handler(req: NextRequest) {
         intakeLine(`intake-door: per-org review-health counts unavailable — no controller was nudged: ${byOrgErr.message}`);
       } else {
         const orgs: ReviewHealthOrg[] = ((byOrg ?? []) as Array<Record<string, unknown>>).map((r) => ({
-          orgId: String(r.org_id), orphanedInReview: Number(r.orphaned_in_review ?? 0),
+          orgId: r.org_id == null ? null : String(r.org_id), orphanedInReview: Number(r.orphaned_in_review ?? 0),
           pendingOnRetired: Number(r.pending_on_retired ?? 0),
           exampleDocumentId: r.example_document_id == null ? null : String(r.example_document_id),
         }));
@@ -236,6 +236,7 @@ async function handler(req: NextRequest) {
         });
         result.reviewHealthNudges = nudged.nudged;
         if (nudged.failed > 0) intakeLine(`intake-door: ${nudged.failed} org(s) with review-health counts could not be nudged`);
+        if (nudged.orgless > 0) intakeLine(`review-health: ${nudged.orgless} group(s) of rows name no org (neither the version nor its document carries org_id) — counted above, no controller pool to nudge; find them with the two count functions' queries and an org_id IS NULL filter`);
       }
     }
     // INTK-10 / SEC-8: folded intake publishes / replacements that no
