@@ -15,7 +15,12 @@
 //   COST-6           self-decision refused while another decider exists; org threshold
 //   COST-8           currency mismatch refused at posting
 //   COST-9           source_document_id on every posted entry; unwind voids exactly posted_entry_id
+//   COST-13          a truncated / unknown-extent read needs the total typed back
 //   SAF-3 / REL-2    zero-row writes write no audit row; failed reads throw
+//   review fix pass 2: legacy (pre-Round-G, unlinked) entries attend their
+//   document; the orphan line waits for 20261093; approved COs whose entry
+//   is void stop revising the budget, are listed, and are repaired (link /
+//   reverse); an already-void entry does not block the unwind
 
 import { describe, it, expect, vi, beforeEach } from "vitest";
 
@@ -114,9 +119,12 @@ vi.mock("@/lib/storage", () => ({
 
 import {
   awardQuote, declineQuote, postInvoice, voidCostDoc, setManualTotal, listLedgerOrphans, repairCostDoc, costDocStatusLabel,
-  uploadCostDoc, listCostDocs, type CostDocument,
+  uploadCostDoc, listCostDocs, normalizeCurrency, type CostDocument,
 } from "@/lib/costDocs";
-import { proposeChangeOrder, decideChangeOrder, unwindChangeOrder, listChangeOrders, type ChangeOrder } from "@/lib/changeOrders";
+import {
+  proposeChangeOrder, decideChangeOrder, unwindChangeOrder, listChangeOrders, repairChangeOrder,
+  approvedChangesByAccount, parseThresholdAmount, isReversal, type ChangeOrder,
+} from "@/lib/changeOrders";
 import { voidEntry, listAccounts, listEntries, saveAccount, NO_ROW_MATCHED } from "@/lib/costs";
 
 const actor = { uid: "u-owner", email: "owner@x.test" };
@@ -526,10 +534,16 @@ describe("change orders — numbering, authority, unwind (MON-9 / COST-6 / COST-
       { id: "e-other", org_id: "o1", project_id: "p1", status: "posted", amount: 500, entry_type: "commitment" },
     );
     db.tables.change_orders.push(coRow({ status: "approved", posted_entry_id: "e-co", decided_by: "u-owner" }));
-    await unwindChangeOrder({ co: co({ status: "approved", postedEntryId: "e-co" }), note: "wrong contractor", actorId: "u-owner" });
+    await unwindChangeOrder({ co: co({ status: "approved", postedEntryId: "e-co" }), note: "wrong contractor", actorId: "u-ctl", actorName: "bob" });
     expect(db.tables.cost_entries.map((e) => e.status)).toEqual(["void", "posted"]);
-    expect(db.tables.change_orders[0]).toMatchObject({ status: "void", decision_note: "Reversed: wrong contractor" });
-    expect(audited.find((a) => a.action === "CHANGE_ORDER_VOIDED")?.details).toMatchObject({ reversedEntryId: "e-co", coNumber: "CO-001" });
+    // the reverser and the date are on the note; decided_by keeps the approver
+    expect(db.tables.change_orders[0]).toMatchObject({ status: "void", decided_by: "u-owner" });
+    expect(String(db.tables.change_orders[0].decision_note)).toMatch(/^Reversed by bob on \d{4}-\d{2}-\d{2}: wrong contractor$/);
+    const [row] = await listChangeOrders("p1");
+    expect(isReversal(row)).toBe(true);
+    expect(audited.find((a) => a.action === "CHANGE_ORDER_VOIDED")?.details).toMatchObject({
+      reversedEntryId: "e-co", coNumber: "CO-001", alreadyVoided: false, approvedBy: "u-owner",
+    });
     expect(auditRows("COST_ENTRY_VOIDED")).toHaveLength(1);
   });
 
@@ -539,6 +553,273 @@ describe("change orders — numbering, authority, unwind (MON-9 / COST-6 / COST-
     db.tables.change_orders = [coRow({ status: "approved", posted_entry_id: "missing" })];
     await expect(unwindChangeOrder({ co: co({ status: "approved", postedEntryId: "missing" }), actorId: "u-owner" }))
       .rejects.toThrow(/Couldn't void the change order's cost entry .* — the change order is still approved/);
+    expect(db.tables.change_orders[0].status).toBe("approved");
+  });
+});
+
+// ── review fix pass 2 — legacy entries, the migration gate, CO orphans ─────
+describe("legacy (pre-Round-G) entries attend their document — never a second post (MON-1 / COST-9 / COST-11)", () => {
+  // The base's addEntry never wrote source_document_id: every award / invoice
+  // posted before this branch is an UNLINKED entry of the award/invoice shape.
+  const legacyAward = (over: Row): Row => ({
+    id: "e-legacy", org_id: "o1", project_id: "p1", cost_account_id: "a1", entry_type: "commitment", amount: 1000,
+    description: "Award — Acme (G1)", reference: "Q-1", status: "posted", source_document_id: null, ...over,
+  });
+
+  it("an awarded quote whose POSTED legacy entry is unlinked is not listed, and both repairs are refused", async () => {
+    db.tables.cost_documents.push(docRow({ status: "awarded" }));
+    db.tables.cost_entries.push(legacyAward({}));
+    const o = await listLedgerOrphans("o1", "p1");
+    expect(o.available).toBe(true);
+    expect(o.docs).toEqual([]);
+    for (const action of ["repost", "revert"] as const) {
+      const res = await repairCostDoc({ doc: doc({ status: "awarded" }), action, costAccountId: "a1", actor });
+      expect(res.ok).toBe(false);
+      expect(res.error).toMatch(/an unlinked entry that looks like this document's exists .* Link it, don't re-post/i);
+    }
+    expect(entries()).toHaveLength(1);                         // no second 1,000 commitment
+    expect(db.tables.cost_documents[0].status).toBe("awarded"); // and the Award button does not come back
+    expect(auditRows("COST_DOC_REPAIRED")).toHaveLength(0);
+  });
+
+  it("a legacy award entry VOIDED by hand (the MOVED_MONEY correction) attends its document too — no re-post of the locked total", async () => {
+    db.tables.cost_documents.push(docRow({ status: "awarded" }));
+    db.tables.cost_entries.push(legacyAward({ status: "void" }));
+    expect((await listLedgerOrphans("o1", "p1")).docs).toEqual([]);
+    const res = await repairCostDoc({ doc: doc({ status: "awarded" }), action: "repost", costAccountId: "a1", actor });
+    expect(res.ok).toBe(false);
+    expect(res.error).toMatch(/voided\) — its money reached the ledger/);
+    expect(entries()).toHaveLength(1);
+  });
+
+  it("a legacy posted INVOICE attends its document; a hand-posted entry with another description does not", async () => {
+    db.tables.cost_documents.push(docRow({ id: "i1", kind: "invoice", status: "posted", doc_number: "INV-9" }));
+    db.tables.cost_entries.push({ id: "e-i", org_id: "o1", project_id: "p1", entry_type: "actual", amount: 700,
+      description: "Invoice — Acme", reference: "INV-9", status: "posted", source_document_id: null });
+    expect((await listLedgerOrphans("o1", "p1")).docs).toEqual([]);
+    db.tables.cost_entries[0].description = "Hand-posted catch-up";
+    expect((await listLedgerOrphans("o1", "p1")).docs.map((d) => d.id)).toEqual(["i1"]);
+  });
+
+  it("two awarded quotes sharing a file name ('Quote.pdf', no doc number) are the backfill's ambiguous residue — neither is listed or re-posted", async () => {
+    db.tables.cost_documents.push(
+      docRow({ id: "qa", status: "awarded", doc_number: null, file_name: "Quote.pdf", vendor_name: "Acme" }),
+      docRow({ id: "qb", status: "awarded", doc_number: null, file_name: "Quote.pdf", vendor_name: "Bravo", rfq_group: "G2" }),
+    );
+    db.tables.cost_entries.push(
+      legacyAward({ id: "ea", reference: "Quote.pdf", description: "Award — Acme (G1)" }),
+      legacyAward({ id: "eb", reference: "Quote.pdf", description: "Award — Bravo (G2)" }),
+    );
+    expect((await listLedgerOrphans("o1", "p1")).docs).toEqual([]);
+    const res = await repairCostDoc({ doc: doc({ id: "qb", status: "awarded", docNumber: null, fileName: "Quote.pdf" }), action: "repost", costAccountId: "a1", actor });
+    expect(res.ok).toBe(false);
+    expect(entries()).toHaveLength(2);
+  });
+
+  it("the orphan line waits for 20261093: with the view missing, nothing is listed (available: false)", async () => {
+    db.tables.cost_documents.push(docRow({ id: "stuck", status: "awarded" }));
+    db.fail["cost_ledger_orphans:select"] = [{ code: "PGRST205", message: "Could not find the table 'public.cost_ledger_orphans' in the schema cache" }];
+    const o = await listLedgerOrphans("o1", "p1");
+    expect(o).toEqual({ available: false, docs: [], changeOrders: [] });
+    // any other probe failure is a failed read (REL-2), never "nothing wrong"
+    db.fail["cost_ledger_orphans:select"] = [{ message: "permission denied for view cost_ledger_orphans" }];
+    await expect(listLedgerOrphans("o1", "p1")).rejects.toThrow(/Couldn't check the ledger for orphans: permission denied/);
+  });
+
+  it("the linked-entry check reads only this project's moved documents, in chunks — a large project never mis-lists a healthy award", async () => {
+    for (let i = 0; i < 250; i++) {
+      db.tables.cost_documents.push(docRow({ id: `d${i}`, status: "awarded", doc_number: `Q-${i}` }));
+      db.tables.cost_entries.push({ id: `e${i}`, org_id: "o1", project_id: "p1", status: "posted", source_document_id: `d${i}` });
+    }
+    db.tables.cost_documents.push(docRow({ id: "orphan", status: "awarded", doc_number: "Q-X" }));
+    const o = await listLedgerOrphans("o1", "p1");
+    expect(o.docs.map((d) => d.id)).toEqual(["orphan"]);
+  });
+});
+
+describe("approved change orders whose entry is gone — budget, listing, unwind and repair (COST-4 / REL-9 / COST-11 dw3)", () => {
+  it("COST-4: only an approved CO whose linked entry is POSTED revises the budget", () => {
+    const cos = [
+      co({ id: "c1", status: "approved", amount: 50_000, postedEntryId: "e1" }),   // posted → counts
+      co({ id: "c2", status: "approved", amount: 20_000, postedEntryId: "e2" }),   // voided by hand → does not
+      co({ id: "c3", status: "approved", amount: 7_000, postedEntryId: null }),    // no link → does not
+      co({ id: "c4", status: "proposed", amount: 9_000, postedEntryId: null }),
+    ];
+    const map = approvedChangesByAccount(cos, [{ id: "e1", status: "posted" }, { id: "e2", status: "void" }]);
+    expect(map.get("a1")).toBe(50_000);
+  });
+
+  it("an approved CO whose entry was voided by hand is listed (entry_void), and so are unlinked / missing ones; a posted link is not", async () => {
+    db.tables.cost_entries.push(
+      { id: "e-ok", org_id: "o1", project_id: "p1", status: "posted" },
+      { id: "e-void", org_id: "o1", project_id: "p1", status: "void" },
+    );
+    db.tables.change_orders.push(
+      coRow({ id: "c-ok", status: "approved", posted_entry_id: "e-ok" }),
+      coRow({ id: "c-void", co_number: "CO-003", status: "approved", posted_entry_id: "e-void" }),
+      coRow({ id: "c-null", co_number: "CO-004", status: "approved", posted_entry_id: null }),
+      coRow({ id: "c-gone", co_number: "CO-005", status: "approved", posted_entry_id: "e-nowhere" }),
+    );
+    const o = await listLedgerOrphans("o1", "p1");
+    expect(o.changeOrders.map((c) => [c.id, c.reason])).toEqual([["c-void", "entry_void"], ["c-null", "unlinked"], ["c-gone", "entry_missing"]]);
+  });
+
+  it("REL-9: Reverse on an approved CO whose entry is ALREADY void voids the CO (alreadyVoided) instead of putting it back", async () => {
+    db.tables.cost_entries.push({ id: "e-co", org_id: "o1", project_id: "p1", status: "void", amount: 500, entry_type: "commitment" });
+    db.tables.change_orders.push(coRow({ status: "approved", posted_entry_id: "e-co", decided_by: "u-owner" }));
+    await unwindChangeOrder({ co: co({ status: "approved", postedEntryId: "e-co" }), note: "voided by hand last year", actorId: "u-owner", actorName: "owner" });
+    expect(db.tables.change_orders[0].status).toBe("void");
+    expect(audited.find((a) => a.action === "CHANGE_ORDER_VOIDED")?.details).toMatchObject({ reversedEntryId: "e-co", alreadyVoided: true });
+    expect(auditRows("COST_ENTRY_VOIDED")).toHaveLength(0);   // nothing was voided twice
+  });
+
+  it("repairChangeOrder link: a posted commitment on the CO's line carrying its number is linked (checked, audited); anything else is refused", async () => {
+    db.tables.cost_entries.push(
+      { id: "e-right", org_id: "o1", project_id: "p1", cost_account_id: "a1", entry_type: "commitment", status: "posted", reference: "CO-001", source_document_id: null },
+      { id: "e-wrongref", org_id: "o1", project_id: "p1", cost_account_id: "a1", entry_type: "commitment", status: "posted", reference: "CO-009", source_document_id: null },
+      { id: "e-taken", org_id: "o1", project_id: "p1", cost_account_id: "a1", entry_type: "commitment", status: "posted", reference: "CO-001", source_document_id: null },
+    );
+    db.tables.change_orders.push(
+      coRow({ status: "approved", posted_entry_id: null }),
+      coRow({ id: "co-other", co_number: "CO-001-B", status: "approved", posted_entry_id: "e-taken" }),
+    );
+    await expect(repairChangeOrder({ co: { id: "co1" }, action: "link", entryId: "e-wrongref", actorId: "u-owner" }))
+      .rejects.toThrow(/That entry is not CO-001's/);
+    await expect(repairChangeOrder({ co: { id: "co1" }, action: "link", entryId: "e-taken", actorId: "u-owner" }))
+      .rejects.toThrow(/already linked to another change order/);
+    await repairChangeOrder({ co: { id: "co1" }, action: "link", entryId: "e-right", actorId: "u-owner" });
+    expect(db.tables.change_orders[0].posted_entry_id).toBe("e-right");
+    expect(audited.find((a) => a.action === "CHANGE_ORDER_REPAIRED")?.details).toMatchObject({ action: "link", entryId: "e-right", previousEntryId: null });
+    // linked to a posted entry → no longer an orphan, and a second repair is refused
+    await expect(repairChangeOrder({ co: { id: "co1" }, action: "reverse", actorId: "u-owner" })).rejects.toThrow(/entry is posted — nothing to repair/);
+  });
+
+  it("repairChangeOrder reverse: refused while a posted look-alike remains; voids the CO once none does, crediting the reverser", async () => {
+    db.tables.cost_entries.push(
+      { id: "e-void", org_id: "o1", project_id: "p1", cost_account_id: "a1", entry_type: "commitment", status: "void", reference: "CO-001", source_document_id: null },
+      { id: "e-repost", org_id: "o1", project_id: "p1", cost_account_id: "a1", entry_type: "commitment", status: "posted", reference: "CO-001", source_document_id: null },
+    );
+    db.tables.change_orders.push(coRow({ status: "approved", posted_entry_id: "e-void", decided_by: "u-owner" }));
+    await expect(repairChangeOrder({ co: { id: "co1" }, action: "reverse", actorId: "u-ctl", actorName: "bob" }))
+      .rejects.toThrow(/A posted commitment referencing CO-001 is still on the budget line — link it/);
+    expect(db.tables.change_orders[0].status).toBe("approved");
+    db.tables.cost_entries[1].status = "void";
+    await repairChangeOrder({ co: { id: "co1" }, action: "reverse", note: "voided by hand", actorId: "u-ctl", actorName: "bob" });
+    expect(db.tables.change_orders[0]).toMatchObject({ status: "void", decided_by: "u-owner" });
+    expect(String(db.tables.change_orders[0].decision_note)).toMatch(/^Reversed by bob on .*: voided by hand$/);
+    expect(audited.find((a) => a.action === "CHANGE_ORDER_VOIDED")?.details).toMatchObject({ repair: "reverse", reversedEntryId: "e-void", entryStatus: "void" });
+  });
+});
+
+describe("COST-13 posting limb — a total from a truncated (or unknown-extent) read is typed back before it posts", () => {
+  const aiRead = (over: Row): Row => docRow({ parsed: { total: 1000 }, total_amount: 1000, ...over });
+
+  it("a truncated read (pages 1–8 of 14) refuses the award; a matching typed total lets it post and the audit carries the extent", async () => {
+    db.tables.cost_documents.push(aiRead({ pages_read: 8, pages_total: 14 }));
+    const refused = await awardQuote({ doc: doc(), siblings: [], costAccountId: "a1", actor });
+    expect(refused.ok).toBe(false);
+    expect(refused.error).toMatch(/read only pages 1–8 of 14/);
+    expect(db.tables.cost_documents[0].status).toBe("parsed");
+    const wrong = await awardQuote({ doc: doc(), siblings: [], costAccountId: "a1", actor, confirmedTotal: 900 });
+    expect(wrong.error).toMatch(/doesn't match the stored total/);
+    expect(entries()).toHaveLength(0);
+    const ok = await awardQuote({ doc: doc(), siblings: [], costAccountId: "a1", actor, confirmedTotal: 1000 });
+    expect(ok.ok).toBe(true);
+    expect(auditRows("COST_DOC_AWARDED")[0].details).toMatchObject({ pagesRead: 8, pagesTotal: 14, totalConfirmed: true });
+  });
+
+  it("once the extent is recordable, UNKNOWN fails safe; a human-corrected total and a fully read document need no typed total", async () => {
+    db.tables.cost_documents.push(
+      aiRead({ id: "unk", pages_read: null, pages_total: null }),
+      aiRead({ id: "fixed", pages_read: null, pages_total: null, total_amount: 1200 }),   // typed by a human
+      aiRead({ id: "full", pages_read: 3, pages_total: 3 }),
+    );
+    const unk = await awardQuote({ doc: doc({ id: "unk" }), siblings: [], costAccountId: "a1", actor });
+    expect(unk.error).toMatch(/How much of this document the AI read is unknown/);
+    expect((await awardQuote({ doc: doc({ id: "fixed" }), siblings: [], costAccountId: "a1", actor })).ok).toBe(true);
+    expect((await awardQuote({ doc: doc({ id: "full" }), siblings: [], costAccountId: "a1", actor })).ok).toBe(true);
+    expect(auditRows("COST_DOC_AWARDED").map((r) => (r.details as Row).pagesTotal)).toEqual([null, 3]);
+  });
+
+  it("an invoice follows the same rule, and before the extent columns exist the check is a no-op (the brief's fail-open window)", async () => {
+    db.tables.cost_documents.push(docRow({ id: "i1", kind: "invoice", parsed: { total: 700 }, total_amount: 700, pages_read: 8, pages_total: 20 }));
+    const refused = await postInvoice({ doc: doc({ id: "i1", kind: "invoice" }), costAccountId: "a1", actor });
+    expect(refused.error).toMatch(/pages 1–8 of 20/);
+    const ok = await postInvoice({ doc: doc({ id: "i1", kind: "invoice" }), costAccountId: "a1", actor, confirmedTotal: 700 });
+    expect(ok.ok).toBe(true);
+    expect(auditRows("COST_DOC_POSTED")[0].details).toMatchObject({ pagesRead: 8, pagesTotal: 20, totalConfirmed: true });
+    // no pages_* keys on the row = 20261096 not applied: nothing to compare
+    db.tables.cost_documents.push(docRow({ id: "i2", kind: "invoice", parsed: { total: 50 }, total_amount: 50 }));
+    expect((await postInvoice({ doc: doc({ id: "i2", kind: "invoice" }), costAccountId: "a1", actor })).ok).toBe(true);
+  });
+});
+
+describe("MON-12 / COST-8 / MON-10 — registry lookups fail closed, currencies normalise, groups compare by key", () => {
+  it("MON-12: a failed company lookup REFUSES the award instead of passing it", async () => {
+    db.tables.cost_documents.push(docRow({ party_id: "pp1" }));
+    db.fail["project_parties:select"] = [{ message: "statement timeout" }];
+    const res = await awardQuote({ doc: doc({ partyId: "pp1" }), siblings: [], costAccountId: "a1", actor });
+    expect(res.ok).toBe(false);
+    expect(res.error).toMatch(/Couldn't check the company registry \(statement timeout\)/);
+    expect(db.tables.cost_documents[0].status).toBe("parsed");
+    db.fail["companies:select"] = [{ message: "timeout" }];
+    const byName = await awardQuote({ doc: doc(), siblings: [], costAccountId: "a1", actor });
+    expect(byName.error).toMatch(/Couldn't check the company registry/);
+    expect(entries()).toHaveLength(0);
+  });
+
+  it("MON-12: the document's own registry link (cost_documents.company_id) outranks the party and the name", async () => {
+    db.tables.companies.push({ id: "c-bad", org_id: "o1", name: "Acme Holdings", status: "do_not_use" }, { id: "c-ok", org_id: "o1", name: "Acme", status: "active" });
+    db.tables.project_parties.push({ id: "pp1", company_id: "c-ok" });
+    db.tables.cost_documents.push(docRow({ party_id: "pp1", company_id: "c-bad" }));
+    const res = await awardQuote({ doc: doc({ partyId: "pp1" }), siblings: [], costAccountId: "a1", actor });
+    expect(res.error).toMatch(/Acme Holdings is flagged DO NOT USE/);
+    const ok = await awardQuote({ doc: doc({ partyId: "pp1" }), siblings: [], costAccountId: "a1", actor, overrideReason: "Sole source" });
+    expect(ok.ok).toBe(true);
+    expect(auditRows("COST_DOC_AWARD_OVERRIDE")[0].details).toMatchObject({ companyId: "c-bad" });
+  });
+
+  it("COST-8: '$' / 'US$' read as USD, non-codes as unstated; a null account currency is USD; setManualTotal corrects the currency", async () => {
+    expect(normalizeCurrency("$")).toBe("USD");
+    expect(normalizeCurrency(" us$ ")).toBe("USD");
+    expect(normalizeCurrency("eur")).toBe("EUR");
+    expect(normalizeCurrency("Euros")).toBeNull();
+    db.tables.cost_documents.push(docRow({ id: "d-usd", currency: "$" }));
+    expect((await awardQuote({ doc: doc({ id: "d-usd" }), siblings: [], costAccountId: "a1", actor })).ok).toBe(true);
+    // an account with no currency renders as USD, so it is compared as USD
+    db.tables.cost_accounts.push({ id: "a-null", currency: null });
+    db.tables.cost_documents.push(docRow({ id: "d-eur", currency: "EUR" }));
+    const refused = await awardQuote({ doc: doc({ id: "d-eur" }), siblings: [], costAccountId: "a-null", actor });
+    expect(refused.error).toMatch(/in EUR but the budget line is in USD/);
+    // the in-app correction
+    const bad = await setManualTotal({ doc: doc({ id: "d-eur" }), total: 1000, currency: "euros", actor });
+    expect(bad.error).toMatch(/not a currency code/);
+    const fixed = await setManualTotal({ doc: doc({ id: "d-eur" }), total: 1000, currency: "usd", actor });
+    expect(fixed.ok).toBe(true);
+    expect(db.tables.cost_documents[1]).toMatchObject({ currency: "USD", total_amount: 1000 });
+    expect((await awardQuote({ doc: doc({ id: "d-eur" }), siblings: [], costAccountId: "a-null", actor })).ok).toBe(true);
+  });
+
+  it("MON-10: the award compares RFQ groups by key — 'Piping' declines the open 'piping ' bid the table shows beside it", async () => {
+    db.tables.cost_documents.push(docRow({ rfq_group: "Piping" }), docRow({ id: "r1", rfq_group: "piping ", status: "parsed" }), docRow({ id: "r2", rfq_group: "Pipe racks" }));
+    const res = await awardQuote({
+      doc: doc({ rfqGroup: "Piping" }), costAccountId: "a1", actor,
+      siblings: [doc({ rfqGroup: "Piping" }), doc({ id: "r1", rfqGroup: "piping " }), doc({ id: "r2", rfqGroup: "Pipe racks" })],
+    });
+    expect(res).toEqual({ ok: true });
+    expect(db.tables.cost_documents.map((d) => d.status)).toEqual(["awarded", "declined", "parsed"]);
+  });
+
+  it("COST-6: a malformed threshold ('10k') is NO threshold in the lib, exactly as the trigger reads it", async () => {
+    expect(parseThresholdAmount(1000)).toBe(1000);
+    expect(parseThresholdAmount(" 2500.50 ")).toBe(2500.5);
+    expect(parseThresholdAmount("10k")).toBeNull();
+    expect(parseThresholdAmount("-5")).toBeNull();
+    expect(parseThresholdAmount("1e3")).toBeNull();
+    db.tables.org_configurations.push({ org_id: "o1", key: "change_order_approval_threshold", data: { amount: "10k" } });
+    db.tables.change_orders.push(coRow({ amount: 50_000 }));
+    const out = await decideChangeOrder({ co: co({ amount: 50_000 }), decision: "approved", actorId: "u-owner" });
+    expect(out.warning).toBeNull();
     expect(db.tables.change_orders[0].status).toBe("approved");
   });
 });

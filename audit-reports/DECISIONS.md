@@ -497,7 +497,7 @@ pre-emptively.
 **Risk:** high — changes what is possible on every ticket in orgs above the
 threshold.
 
-*Landed 2026-09-23 (projects Round G): the same derivation on change orders — `decideChangeOrder` (`lib/changeOrders.ts`) refuses a proposer's own decision while the org has another eligible decider (active controller-tier holders plus the project owner, minus the actor), allows and MARKS it when nobody else can, and `enforce_change_order_decision_guard` (`20261094`) applies the rule at the database for `NEW.decided_by`. Counted from the eligible-decider set rather than the raw active-member count, since only controllers and the owner can decide a CO. See `COST-6`.*
+*Landed 2026-09-23 (projects Round G): the same derivation on change orders — `decideChangeOrder` (`lib/changeOrders.ts`) refuses a proposer's own decision while the org has another eligible decider (active controller-tier holders plus the project owner, minus the actor), allows and MARKS it when nobody else can, and `enforce_change_order_decision_guard` (`20261094`) applies the rule at the database for the SIGNED-IN caller (`auth.uid()`, which must be the recorded `decided_by`; the recorded decider only for a service write) against a proposer pinned at insert (`created_by = auth.uid()`) and never rewritten. Counted from the eligible-decider set rather than the raw active-member count, since only controllers and the owner can decide a CO. See `COST-6`, `DEC-48`.*
 
 <a id="dec-13"></a>
 ## DEC-13 · Does `policyAllows` gain a resource dimension?
@@ -1294,7 +1294,7 @@ facility with no configuration must keep working exactly as it does today.
 
 **Risk:** medium — wide, but mechanical.
 
-*Landed 2026-09-23 (projects Round G): the change-order approval threshold is configuration — `org_configurations` key `change_order_approval_threshold` = `{ "amount": N }`, read by `loadApprovalThreshold` and by the `20261094` trigger; the decider tier above it is the controller collection (`memberHoldsAny(m, ["Admin","DocCtrl"])` / the `is_org_controller` predicate), never a facility role name. Default: no threshold until an org sets one. See `COST-6`, `DEC-44`.*
+*Landed 2026-09-23 (projects Round G): the change-order approval threshold is configuration — `org_configurations` key `change_order_approval_threshold` = `{ "amount": N }`, read by `loadApprovalThreshold` and by the `20261094` trigger; the decider tier above it is the controller collection (`memberHoldsAny(m, ["Admin","DocCtrl"])` / the `is_org_controller` predicate), never a facility role name. Default: no threshold until an org sets one; a malformed amount (anything but a plain non-negative number) means no threshold, in the lib and the trigger alike. See `COST-6`, `DEC-48`.*
 
 <a id="dec-36"></a>
 ## DEC-36 · Where the routing table lives, and how it resolves
@@ -1705,52 +1705,68 @@ the `Admin` branch, and an unscoped controller keeps today's behaviour.
 
 **Risk:** low.
 
-<a id="dec-44"></a>
-## DEC-44 · The money ledger's derived figures and rails
+<a id="dec-48"></a>
+## DEC-48 · The money ledger's derived figures and rails
 
 **Decision. The cost rollup's headline is what is still UNCOMMITTED; approved
-change orders revise the budget without touching the baseline; CPI forecasts
-only what CPI measured; the ledger is never deleted; and a refusal is always
-a sentence with a repair path, never a silent success.**
+change orders revise the budget without touching the baseline, but only while
+their money is on the ledger; CPI forecasts only what CPI measured; the
+ledger is never deleted; and a refusal is always a sentence with a repair
+path, never a silent success.**
 
 > Made during projects Round G (2026-09-23) by the joint J3 MONEY-LEDGER
 > package, taking the briefs' stated defaults. Each rule below is the fail-safe
 > reading of its evidence, chosen so the packages that consume these figures
-> (health, report, charts) can proceed.
+> (health, report, charts) can proceed. *Numbered DEC-44 on the package branch
+> until the review renumbering: DEC-44/45 are the integration branch's,
+> DEC-46 is DC-P1's, DEC-47 is J7's. The J2 / J4 / J6a branches still carry
+> their own DEC-44 and need their own numbers (49 onward) at merge.*
 
 **Rules.**
 1. **Exposure** = spent + open commitments, where a commitment is drawn down
    by the actuals invoiced against it, matched by party, never below zero.
    `remaining` = revised budget − exposure, labelled *Available (uncommitted)*;
-   the actuals-only figure is secondary; `overBudget` trips on exposure
-   (`MON-4` / `COST-2`). An unmatched party over-counts exposure — the
-   conservative direction.
-2. **Revised budget** = budget + approved change orders by cost account. The
-   original budget stays the visible baseline; EV, CPI, remaining, overBudget
-   and the forecast use the revised figure; the health score's "change
-   control" part keeps scoring growth against the baseline and says so
-   (`COST-4`). No stored `budget_revised` column — derived from the ledger.
-   Every consumer must pass the approved-changes map: today only the Costs
-   tab does; `lib/projectSnapshot.ts:55` and `lib/projectReport.ts:59` call
-   `computeCostRollup` without it, so health and the lessons-learned draft
-   agree with the tab only while no change order is approved — J7 passes
-   `approvedChangesByAccount(await listChangeOrders(projectId))` (`MON-4`
-   dw3, `COST-4` dw2).
+   the actuals-only figure (revised budget − spent) is secondary and labelled
+   *unspent (actuals only)* — never "uninvoiced", which is the Committed
+   tile's open-commitment figure; `overBudget` trips on exposure (`MON-4` /
+   `COST-2`). An unmatched party over-counts exposure — the conservative
+   direction.
+2. **Revised budget** = budget + approved change orders by cost account,
+   counting ONLY an approved CO whose linked entry (`posted_entry_id`) is
+   still POSTED — an approval whose entry was voided by hand (the base's only
+   unwind), or whose link is missing, revises nothing and is listed for
+   repair (rule 7). The original budget stays the visible baseline; EV, CPI,
+   remaining, overBudget, the forecast and the S-curve's planned line use the
+   revised figure; the health score's "change control" part keeps scoring
+   growth against the baseline and says so (`COST-4`). No stored
+   `budget_revised` column — derived from the ledger. Every consumer passes
+   `approvedChangesByAccount(changeOrders, entries)`: today only the Costs
+   tab does; `lib/projectSnapshot.ts` and `lib/projectReport.ts` (J7, merged
+   without it) call `computeCostRollup` without the map, so health and the
+   lessons-learned draft agree with the tab only while no change order is
+   approved (`MON-4` dw3, `COST-4` dw2 — a follow-on).
 3. **CPI scope.** The CPI-based EAC applies to the milestone-pinned subset;
-   the unpinned remainder is carried at the run-rate when the schedule gives
-   one and the remainder has started spending, else at budget (an unstarted
-   remainder has no pace — a zero pace would drop it from the EAC); every
-   part is floored at its own spend, so an EAC is
-   never below money already spent; the split is labelled wherever the EAC is
-   printed (`COST-1`).
+   the unpinned remainder, having no earned-value evidence, is carried at its
+   BUDGET — a spend pace (when the schedule gives one) may raise it above
+   budget, never lower it below (a barely-started line's pace would otherwise
+   drop the rest of its budget and print "under budget"); every part is
+   floored at its own spend, so an EAC is never below money already spent;
+   the split is labelled wherever the EAC is printed (`COST-1`).
 4. **Change-order authority.** Self-decision is refused while another
    eligible decider exists (DEC-12's derivation over controllers + owner,
    DEC-37's one-deliverable reading), otherwise allowed and marked; the
    approval threshold is `org_configurations.change_order_approval_threshold`
    with **no default** — a shipped default that blocked every large CO would
-   strand real approvals; the marker + audit make the gap visible (`COST-6`).
+   strand real approvals; the marker + audit make the gap visible; a
+   malformed amount means no threshold (lib and trigger alike, never a cast
+   error). At the database the decider is the SIGNED-IN caller — never a
+   client-written `decided_by` / `created_by`: a session records itself as
+   the decider, the proposer is pinned at insert and never rewritten, and
+   `decided_by` changes only by the decision or its revert (`COST-6`).
 5. **No FX.** A document in another currency than its budget line is refused
-   at posting; no conversion is built (`COST-8`).
+   at posting; no conversion is built. A stored "$" / "US$" is USD, a
+   non-code is unstated, an account with no currency is USD (as rendered),
+   and `setManualTotal` corrects a document's currency (`COST-8`).
 6. **Never delete.** Every direct DELETE on the four money tables is refused
    at the database except the audited project purge (`app.record_purge =
    'project:<id>'`, the GUC contract shared with the project-purge RPC) and
@@ -1760,33 +1776,58 @@ a sentence with a repair path, never a silent success.**
    (J8's `projects` guard + `delete_project_record`), so the app's existing
    Delete-project action is never broken by this guard; until J8 lands, a
    project delete still takes its ledger with it, as before.
-7. **Repair, not correction.** A claimed-but-unposted document or an approved
-   change order with no linked entry is surfaced on the Costs tab and repaired
-   by an audited re-post or revert, never rewritten silently (`MON-1` /
-   `COST-11`). A document whose linked entry was voided by hand is attended
-   (voiding the entry is the correction for a wrong amount) and is never
-   offered a re-post of its locked total.
+7. **Repair, not correction.** A claimed-but-unposted document, or an
+   approved change order whose linked entry is missing or void, is surfaced
+   on the Costs tab and repaired by an audited action, never rewritten
+   silently (`MON-1` / `COST-11`): a document by re-post or revert
+   (`repairCostDoc`), a change order by link (to a posted commitment on its
+   line carrying its CO number) or reverse (when none remains) —
+   `repairChangeOrder`. A document is ATTENDED — never listed, never
+   re-posted — when any entry links to it (a hand-voided one was the
+   correction) or when an UNLINKED entry of its award/invoice shape stands
+   for it (pre-Round-G money carries no link; re-posting it would double it).
+   The line renders only once `20261093` (its view and backfill) has run.
 8. **Declined rivals.** A grouped award declines every still-open quote in
-   its RFQ group. An ungrouped award declines NOTHING automatically —
-   ungrouped quotes tabulate alone and are often for unrelated work (the
-   intake-link case copies a null group), and there is no declined → open
-   path — so the award's `warning` names the ungrouped quotes that stay open
-   and a competing one is declined by hand through `declineQuote` (audited,
-   `COST_DOC_DECLINED`). `declined` moved no money, so it can still be voided
-   or have its total corrected (it stays declined). The RFQ group is the
-   scope handle (`MON-10`). *(Amended in the fix pass: the first cut declined
-   every open ungrouped quote on the project, which marked unrelated scopes
-   "not selected" with no way back.)*
+   its RFQ group, the group compared by key (case-folded, whitespace
+   collapsed — the bid tab's key). An ungrouped award declines NOTHING
+   automatically — ungrouped quotes tabulate alone and are often for
+   unrelated work (the intake-link case copies a null group), and there is no
+   declined → open path — so the award's `warning` names the ungrouped quotes
+   that stay open and a competing one is declined by hand through
+   `declineQuote` (audited, `COST_DOC_DECLINED`). `declined` moved no money,
+   so it can still be voided or have its total corrected (it stays
+   declined). The RFQ group is the scope handle (`MON-10`). *(Amended in the
+   fix pass: the first cut declined every open ungrouped quote on the
+   project, which marked unrelated scopes "not selected" with no way back.)*
 9. **Do-not-use.** Awarding a company flagged `do_not_use` or `inactive`
-   needs a reasoned override, audited by company id (`MON-12`).
+   needs a reasoned override, audited by company id by the lib after the post
+   (`MON-12`). The refusal is LIB-LEVEL (the caller's session — no database
+   rail), resolves the company by `cost_documents.company_id`, then the
+   party's link, then a single exact name, and fails CLOSED on any failed
+   lookup. Callers pass `overrideReason`; they do not write their own
+   override row.
+10. **Truncated reads.** A total that came from the AI read posts only with
+    the total typed back (`confirmedTotal`, whole units) when the read was
+    truncated — or, once the extent columns exist (J4's `20261096`), of
+    unknown extent. A human-typed total needs none. Before the columns exist
+    there is nothing to read and the check is a no-op (`COST-13` posting
+    limb).
+11. **One number.** The money paths post `total_amount ?? extraction`.
+    `parsedQuoteFrom` returns the extraction unmodified (the bid tab shows
+    "corrected by hand from the AI's X" from it); the display overlay is the
+    consumer's — J4's `withHumanTotal(q, doc.totalAmount)` is the accepted
+    contract, and any new consumer that shows a total applies it (`BID-1`
+    dw1, recorded by J4).
 
 **Acceptance.** `lib/__tests__/costs.test.ts`, `lib/__tests__/costDocs.test.ts`,
 `lib/__tests__/moneyRailsMigration.test.ts`; migrations `20261093`, `20261094`.
 
-**Reversal.** Per rule: 1 and 2 are label + formula changes in `lib/costs.ts`;
-3 is `computeForecast`'s pinned branch; 4's threshold is per-org
-configuration; 6 is the two trigger functions; 8 is `awardQuote`'s group
-filter plus `declineQuote`.
+**Reversal.** Per rule: 1 and 2 are label + formula changes in `lib/costs.ts`
+and `approvedChangesByAccount`; 3 is `computeForecast`'s pinned branch; 4's
+threshold is per-org configuration and its rail the `20261094` trigger; 6 is
+the delete-guard trigger; 7 is `listLedgerOrphans`' attendance test and the
+view; 8 is `awardQuote`'s group filter plus `declineQuote`; 10 is
+`extentRefusal`.
 
 **Risk:** medium — the headline money figure changes meaning on every Costs
 tab (from budget − spent to budget − exposure); the previous figure stays

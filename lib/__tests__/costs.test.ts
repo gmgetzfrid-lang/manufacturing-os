@@ -169,14 +169,38 @@ describe("computeForecast — COST-1: CPI applies to the pinned subset only", ()
     expect(f.scopeNote).toContain("$1000");
   });
 
-  it("the unpinned remainder is carried at the run-rate when the schedule gives one, and the note says so", () => {
+  it("the unpinned remainder is carried at the run-rate only when that pace runs ABOVE its budget, and the note says so", () => {
+    const f = computeForecast({
+      budget: 2000, spent: 1200, cpi: 1.0, pinnedBudget: 1000, pinnedSpent: 400,
+      scheduleStart: "2026-01-01", scheduleEnd: "2026-03-02", today: "2026-01-31", fmt,
+    });
+    // pinned: 1000 / 1.0 = 1000; unpinned: 800 spent at 50% elapsed → a 1600 pace, above its 1000 budget.
+    expect(f.eac).toBeCloseTo(2600);
+    expect(f.scopeNote).toContain("at the current spend pace, which runs above its budget");
+  });
+
+  it("a pace BELOW budget never lowers the unpinned remainder — no earned-value evidence, so it is carried at budget", () => {
     const f = computeForecast({
       budget: 2000, spent: 600, cpi: 1.0, pinnedBudget: 1000, pinnedSpent: 400,
       scheduleStart: "2026-01-01", scheduleEnd: "2026-03-02", today: "2026-01-31", fmt,
     });
-    // pinned: 1000 / 1.0 = 1000; unpinned: 200 spent at 50% elapsed → 400.
-    expect(f.eac).toBeCloseTo(1400);
-    expect(f.scopeNote).toContain("current spend pace");
+    // unpinned: 200 spent at 50% elapsed → a 400 pace; the line is still carried at its 1000.
+    expect(f.eac).toBeCloseTo(2000);
+    expect(f.scopeNote).toContain("at budget (no earned-value evidence to project it lower)");
+  });
+
+  it("ONE dollar on the unpinned remainder does not drop the rest of it from the forecast (was EAC 1,002 — '$998 under budget')", () => {
+    const f = computeForecast({
+      budget: 2000, spent: 401, cpi: 1.0, pinnedBudget: 1000, pinnedSpent: 400,
+      scheduleStart: "2026-01-01", scheduleEnd: "2026-03-02", today: "2026-01-31", fmt,
+    });
+    expect(f.eac).toBeCloseTo(2000);
+    expect(f.varianceAtCompletion).toBeCloseTo(0);
+    expect(f.sentence).not.toMatch(/\$998 under budget/);
+    // and the spent floor still holds when the remainder is already over its budget
+    const over = computeForecast({ budget: 2000, spent: 1600, cpi: 1.0, pinnedBudget: 1000, pinnedSpent: 400, today: "2026-02-01", fmt });
+    expect(over.eac).toBeCloseTo(2200);
+    expect(over.scopeNote).toContain("at what it has already spent (above its budget)");
   });
 
   it("an unpinned remainder that has not started spending is carried at BUDGET, not at a zero pace", () => {

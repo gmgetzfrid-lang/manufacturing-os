@@ -17,8 +17,17 @@
 // included — and every compensating write is checked, so a claim that could
 // not be put back is REPORTED as stuck rather than silently stuck. The two
 // orphan states the claim-then-post design can produce (awarded/posted paper
-// with no entry; an approved CO with no posted_entry_id) are listed by
-// listLedgerOrphans and repaired by repairCostDoc — audited, never a delete.
+// with no entry; an approved CO whose entry is missing or void) are listed by
+// listLedgerOrphans and repaired by repairCostDoc / changeOrders'
+// repairChangeOrder — audited, never a delete. Entries posted before Round G
+// carry no source_document_id: an unlinked entry of the award/invoice shape
+// ("Award — …" / "Invoice — …", the document's reference) attends its
+// document, so legacy paper is never offered a second post.
+//
+// Every pre-write refusal (currency, company registry, read extent) runs
+// against the row as RE-READ inside claimDocTransition, before the claim's
+// UPDATE — never against the caller's snapshot. These refusals run in the
+// caller's session (lib code, not a database rail).
 
 import { supabase } from "@/lib/supabase";
 import { uploadToPath, deleteFile } from "@/lib/storage";
@@ -166,7 +175,15 @@ export async function uploadCostDoc(input: {
 
 /** The AI's extraction as a renderable ParsedQuote, or null when the doc
  *  hasn't been read (or the stored payload no longer validates). Vendor
- *  identity falls back to the row's own columns. */
+ *  identity falls back to the row's own columns.
+ *
+ *  BID-1 dw1 (one number drives display and award): the returned `total` is
+ *  the EXTRACTION, deliberately not overlaid with `doc.totalAmount` — the
+ *  bid tab (J4) shows "corrected by hand from the AI's X" from exactly this
+ *  value. The overlay lives at the consumer: J4's `withHumanTotal(q,
+ *  doc.totalAmount)` (lib/bidTab.ts) is the accepted contract, and every
+ *  consumer that shows a total must apply it. The money paths below post
+ *  `total_amount ?? extraction` — the same number `withHumanTotal` shows. */
 export function parsedQuoteFrom(doc: CostDocument): ParsedQuote | null {
   if (!doc.parsed) return null;
   try {
@@ -204,13 +221,22 @@ async function claimDocTransition(
   actorUid: string,
   /** Award / post stamp posted_at + posted_by; a void or a decline does not (it moved no money). */
   stampPosted = true,
-): Promise<{ ok: true; fresh: CostDocument } | { ok: false; error: string }> {
+  /** A refusal decided against the RE-READ row (typed + raw, so columns a
+   *  later migration adds are visible), run before the UPDATE: a non-null
+   *  string refuses the claim and nothing is written. */
+  guard?: (fresh: CostDocument, raw: Record<string, unknown>) => Promise<string | null>,
+): Promise<{ ok: true; fresh: CostDocument; raw: Record<string, unknown> } | { ok: false; error: string }> {
   const { data: row, error: readErr } = await supabase
     .from("cost_documents").select("*").eq("id", docId).maybeSingle();
   if (readErr || !row) return { ok: false, error: readErr?.message ?? "Document not found — it may have been removed." };
-  const fresh = mapDoc(row as Record<string, unknown>);
+  const raw = row as Record<string, unknown>;
+  const fresh = mapDoc(raw);
   if (!fromStatuses.includes(fresh.status)) {
     return { ok: false, error: `This document is already ${costDocStatusLabel(fresh.status).toLowerCase()} — refresh to see the latest.` };
+  }
+  if (guard) {
+    const refusal = await guard(fresh, raw);
+    if (refusal) return { ok: false, error: refusal };
   }
   const patch: Record<string, unknown> = stampPosted
     ? { status: to, posted_at: new Date().toISOString(), posted_by: actorUid }
@@ -223,7 +249,7 @@ async function claimDocTransition(
   if (!claimed || claimed.length === 0) {
     return { ok: false, error: "Someone else just decided this document — refresh to see the latest." };
   }
-  return { ok: true, fresh };
+  return { ok: true, fresh, raw };
 }
 
 /** Revert when money failed to post after a claim — the row goes back to
@@ -250,37 +276,166 @@ function stuckMessage(docId: string, claimedAs: CostDocStatus, postErr: string, 
   return `The money did not post (${postErr}) AND the document could not be put back (${revertErr}) — it is stuck as ${claimedAs} with no cost entry. Document ${docId}: use "Repair" on the Costs tab to re-post or revert it.`;
 }
 
+/** A stored currency as an ISO-4217-shaped code, or null when unstated or
+ *  not a code (COST-8 minor): the base parse route stored the model's free
+ *  text, so "$" / "US$" are read as USD and anything else that is not three
+ *  letters counts as unstated rather than stranding the document. */
+export function normalizeCurrency(value: string | null | undefined): string | null {
+  const s = (value ?? "").trim().toUpperCase().replace(/\s+/g, "");
+  if (!s) return null;
+  if (s === "$" || s === "US$" || s === "USD$" || s === "$US") return "USD";
+  return /^[A-Z]{3}$/.test(s) ? s : null;
+}
+
 /** COST-8: the account the money lands on must be in the document's
  *  currency. No conversion is built — a mismatch is refused, not converted
- *  at face value. Either side unstated → nothing to compare. */
+ *  at face value. An unstated (or non-code) document currency has nothing
+ *  to compare; an account with no currency is USD, exactly as the Costs tab
+ *  renders it. */
 async function currencyMismatch(doc: CostDocument, costAccountId: string): Promise<string | null> {
-  const docCur = doc.currency?.trim().toUpperCase();
+  const docCur = normalizeCurrency(doc.currency);
   if (!docCur) return null;
   const { data, error } = await supabase.from("cost_accounts").select("currency").eq("id", costAccountId).maybeSingle();
   if (error) return `Couldn't check the budget line's currency: ${error.message}`;
-  const acctCur = ((data as { currency?: string | null } | null)?.currency ?? "").trim().toUpperCase();
-  if (!acctCur || acctCur === docCur) return null;
+  const acctCur = normalizeCurrency((data as { currency?: string | null } | null)?.currency) ?? "USD";
+  if (acctCur === docCur) return null;
   return `This document is in ${docCur} but the budget line is in ${acctCur} — pick a ${docCur} budget line or correct the document's currency before posting.`;
 }
 
-/** MON-12: the company behind a quote, by the party's registry link first
- *  (project_parties.company_id) and by exact name only as a fallback. */
-async function companyBehind(doc: CostDocument): Promise<{ id: string; name: string; status: string } | null> {
-  let companyId: string | null = null;
-  if (doc.partyId) {
-    const { data } = await supabase.from("project_parties").select("company_id").eq("id", doc.partyId).maybeSingle();
-    companyId = ((data as { company_id?: string | null } | null)?.company_id) ?? null;
+type CompanyRow = { id: string; name: string; status: string };
+
+/** MON-12: the company behind a quote — the document's own registry link
+ *  first (cost_documents.company_id, J4's 20261096 column, read from the raw
+ *  row so it is simply absent before that migration), then the party's
+ *  (project_parties.company_id), then an exact name with a single match.
+ *  Any failed read is an ERROR, never "no company": the refusal must not
+ *  pass silently because a lookup timed out. */
+async function companyBehind(doc: CostDocument, raw: Record<string, unknown>): Promise<{ company: CompanyRow | null; error?: string }> {
+  const byId = async (id: string): Promise<{ company: CompanyRow | null; error?: string }> => {
+    const { data, error } = await supabase.from("companies").select("id, name, status").eq("id", id).maybeSingle();
+    if (error) return { company: null, error: error.message };
+    return { company: (data as CompanyRow | null) ?? null };
+  };
+  const docCompanyId = (raw.company_id as string | null | undefined) ?? null;
+  if (docCompanyId) {
+    const hit = await byId(docCompanyId);
+    if (hit.error || hit.company) return hit;
   }
-  if (companyId) {
-    const { data } = await supabase.from("companies").select("id, name, status").eq("id", companyId).maybeSingle();
-    if (data) return data as { id: string; name: string; status: string };
+  if (doc.partyId) {
+    const { data, error } = await supabase.from("project_parties").select("company_id").eq("id", doc.partyId).maybeSingle();
+    if (error) return { company: null, error: error.message };
+    const partyCompanyId = ((data as { company_id?: string | null } | null)?.company_id) ?? null;
+    if (partyCompanyId) {
+      const hit = await byId(partyCompanyId);
+      if (hit.error || hit.company) return hit;
+    }
   }
   const name = doc.vendorName?.trim();
-  if (!name) return null;
-  const { data } = await supabase.from("companies").select("id, name, status")
+  if (!name) return { company: null };
+  const { data, error } = await supabase.from("companies").select("id, name, status")
     .eq("org_id", doc.orgId).ilike("name", name.replace(/[%_\\]/g, (c) => `\\${c}`)).limit(2);
-  const rows = (data ?? []) as Array<{ id: string; name: string; status: string }>;
-  return rows.length === 1 ? rows[0] : null;
+  if (error) return { company: null, error: error.message };
+  const rows = (data ?? []) as CompanyRow[];
+  return { company: rows.length === 1 ? rows[0] : null };
+}
+
+/** The RFQ group as a grouping KEY — case-folded, whitespace collapsed —
+ *  the same key the bid tab tabulates by (J4's `rfqGroupKey`), so a bid the
+ *  table shows as a rival is the bid the award declines. */
+function rfqKey(s: string | null | undefined): string {
+  return (s ?? "").toLowerCase().replace(/\s+/g, " ").trim();
+}
+
+/** COST-13 posting limb: how much of the document the AI read, from the
+ *  raw row. `recorded` is false before J4's 20261096 adds the columns — the
+ *  brief's "no-op until the columns exist"; once they exist a NULL is
+ *  UNKNOWN, and unknown fails safe (it needs the typed confirmation). */
+function readExtentOf(raw: Record<string, unknown>): { recorded: boolean; pagesRead: number | null; pagesTotal: number | null } {
+  const recorded = "pages_total" in raw || "pages_read" in raw;
+  const n = (v: unknown) => (v == null || !Number.isFinite(Number(v)) ? null : Number(v));
+  return { recorded, pagesRead: n(raw.pages_read), pagesTotal: n(raw.pages_total) };
+}
+
+/** The total that would post and the AI's reading of it. A total is "from
+ *  the read" when the number that posts IS the extraction (equal counts —
+ *  fail safe); a human-typed or human-corrected total is not. */
+function postableTotal(fresh: CostDocument): { total: number | null; extracted: number | null } {
+  const extracted = fresh.kind === "quote"
+    ? parsedQuoteFrom(fresh)?.total ?? null
+    : (() => { const t = Number((fresh.parsed as { total?: unknown } | null)?.total); return Number.isFinite(t) && t > 0 ? t : null; })();
+  return { total: fresh.totalAmount ?? extracted, extracted };
+}
+
+/** COST-13: refuse to post a total read from a truncated (or, once the
+ *  extent is recordable, an unknown-extent) read unless the caller passes
+ *  `confirmedTotal` — the total typed back from the paper — equal to the
+ *  stored one (whole units, as the bid tab's typed-back prompt compares). */
+function extentRefusal(fresh: CostDocument, raw: Record<string, unknown>, confirmedTotal: number | null | undefined): string | null {
+  const { total, extracted } = postableTotal(fresh);
+  if (total == null || !(total > 0) || extracted == null || total !== extracted) return null;
+  const ext = readExtentOf(raw);
+  if (!ext.recorded) return null;
+  const truncated = ext.pagesRead != null && ext.pagesTotal != null && ext.pagesRead < ext.pagesTotal;
+  const unknown = ext.pagesRead == null || ext.pagesTotal == null;
+  if (!truncated && !unknown) return null;
+  const shown = total.toLocaleString();
+  if (confirmedTotal == null) {
+    return truncated
+      ? `The AI read only pages 1–${ext.pagesRead} of ${ext.pagesTotal} of this document, so its total (${shown}) may come from an incomplete read. Type the total from the paper to confirm it, or correct the total first.`
+      : `How much of this document the AI read is unknown, so its total (${shown}) may come from an incomplete read. Type the total from the paper to confirm it, or correct the total first.`;
+  }
+  if (!Number.isFinite(confirmedTotal) || Math.round(confirmedTotal) !== Math.round(total)) {
+    return `The confirmed total (${Number.isFinite(confirmedTotal) ? confirmedTotal.toLocaleString() : String(confirmedTotal)}) doesn't match the stored total (${shown}) — correct the total first if the paper says something else.`;
+  }
+  return null;
+}
+
+/** The reference an award / invoice entry carried before Round G (and
+ *  still carries): the document number, else the file name. */
+function docReference(d: CostDocument): string | null {
+  const ref = (d.docNumber ?? d.fileName ?? "").trim();
+  return ref || null;
+}
+
+type LegacyEntry = { id: string; project_id?: string | null; entry_type?: string | null; reference?: string | null; description?: string | null; status?: string | null };
+
+/** Does an UNLINKED entry of the award/invoice shape stand for this
+ *  document? Pre-Round-G posts never wrote source_document_id, so such an
+ *  entry (any status — a hand-voided one was the correction) means the
+ *  document's money reached the ledger; it must never be re-posted. */
+function legacyShapeMatches(d: CostDocument, e: LegacyEntry): boolean {
+  const ref = docReference(d);
+  if (!ref || (e.reference ?? "").trim() !== ref) return false;
+  if (d.kind === "quote") return e.entry_type === "commitment" && (e.description ?? "").startsWith("Award — ");
+  return e.entry_type === "actual" && (e.description ?? "").startsWith("Invoice — ");
+}
+
+/** Reads `.in(column, values)` in chunks so a large project never builds
+ *  one oversized request URL (and never silently truncates at a cap). */
+async function selectIn<T>(
+  build: (chunk: string[]) => PromiseLike<{ data: unknown; error: { message: string } | null }>,
+  values: string[],
+): Promise<{ rows: T[]; error?: string }> {
+  const rows: T[] = [];
+  for (let i = 0; i < values.length; i += 100) {
+    const { data, error } = await build(values.slice(i, i + 100));
+    if (error) return { rows, error: error.message };
+    rows.push(...((data ?? []) as T[]));
+  }
+  return { rows };
+}
+
+/** Unlinked award/invoice-shaped entries in the project whose reference is
+ *  one of these documents' references. */
+async function unlinkedLegacyEntries(projectId: string, docs: CostDocument[]): Promise<{ rows: LegacyEntry[]; error?: string }> {
+  const refs = [...new Set(docs.flatMap((d) => {
+    const raw = d.docNumber ?? d.fileName;
+    return raw ? [raw, raw.trim()] : [];
+  }).filter((r) => r))];
+  if (refs.length === 0) return { rows: [] };
+  return selectIn<LegacyEntry>((chunk) => supabase.from("cost_entries")
+    .select("id, project_id, entry_type, reference, description, status")
+    .eq("project_id", projectId).is("source_document_id", null).in("reference", chunk), refs);
 }
 
 /** MON-11: an award is one of the three controls-program events that
@@ -318,34 +473,45 @@ export async function awardQuote(input: {
   costAccountId: string;
   actor: Actor;
   /** MON-12: awarding a company flagged do-not-use (or inactive) is refused
-   *  unless a reason is given here; the override is audited by company id. */
+   *  unless a reason is given here; the override is audited by company id
+   *  (COST_DOC_AWARD_OVERRIDE, written by this function after the post — a
+   *  caller does not write its own override row). */
   overrideReason?: string | null;
+  /** COST-13: the total typed back from the paper. Required when the total
+   *  that would post came from a truncated read, or — once the read extent
+   *  is recorded (20261096) — from a read of unknown extent. */
+  confirmedTotal?: number | null;
 }): Promise<{ ok: boolean; error?: string; warning?: string }> {
   const { doc } = input;
   if (doc.kind !== "quote") return { ok: false, error: "Only quotes can be awarded." };
 
-  // Refusals that move nothing come BEFORE the claim.
-  const mismatch = await currencyMismatch(doc, input.costAccountId);
-  if (mismatch) return { ok: false, error: mismatch };
-  const company = await companyBehind(doc);
-  const flagged = company && (company.status === "do_not_use" || company.status === "inactive");
+  // Refusals that move nothing run against the RE-READ row, before the
+  // claim's UPDATE (claimDocTransition's guard).
   const override = input.overrideReason?.trim() || null;
-  if (flagged && !override) {
-    return {
-      ok: false,
-      error: company.status === "do_not_use"
+  let company: CompanyRow | null = null;
+  let flagged = false;
+  const claim = await claimDocTransition(doc.id, ["draft", "parsed"], "awarded", input.actor.uid, true, async (f, raw) => {
+    const mismatch = await currencyMismatch(f, input.costAccountId);
+    if (mismatch) return mismatch;
+    const behind = await companyBehind(f, raw);
+    if (behind.error) return `Couldn't check the company registry (${behind.error}) — try again; an award is not made without that check.`;
+    company = behind.company;
+    flagged = !!company && (company.status === "do_not_use" || company.status === "inactive");
+    if (company && flagged && !override) {
+      return company.status === "do_not_use"
         ? `${company.name} is flagged DO NOT USE in the company registry. Awarding it needs an explicit override with a reason, which goes on the audit trail.`
-        : `${company.name} is marked inactive in the company registry. Awarding it needs an explicit override with a reason, which goes on the audit trail.`,
-    };
-  }
-
-  const claim = await claimDocTransition(doc.id, ["draft", "parsed"], "awarded", input.actor.uid);
+        : `${company.name} is marked inactive in the company registry. Awarding it needs an explicit override with a reason, which goes on the audit trail.`;
+    }
+    return extentRefusal(f, raw, input.confirmedTotal);
+  });
   if (!claim.ok) return { ok: false, error: claim.error };
   const fresh = claim.fresh;
+  const extent = readExtentOf(claim.raw);
+  const awardedCompany = company as CompanyRow | null;
 
   // total_amount is the human-visible number (AI-written at parse, or typed
   // via setManualTotal) — it outranks the stored extraction.
-  const total = fresh.totalAmount ?? parsedQuoteFrom(fresh)?.total;
+  const total = postableTotal(fresh).total;
   if (total == null || !(total > 0)) {
     const back = await revertDocTransition(doc.id, fresh.status, "awarded");
     const base = "No readable total on this quote yet — run the AI read (or type the total) first.";
@@ -370,9 +536,9 @@ export async function awardQuote(input: {
     return { ok: false, error: back.ok ? postErr : stuckMessage(doc.id, "awarded", postErr, back.error ?? "unknown") };
   }
 
-  if (flagged && override) {
+  if (flagged && override && awardedCompany) {
     await audit("COST_DOC_AWARD_OVERRIDE", fresh.orgId, doc.id, input.actor, {
-      companyId: company.id, companyName: company.name, companyStatus: company.status, reason: override,
+      companyId: awardedCompany.id, companyName: awardedCompany.name, companyStatus: awardedCompany.status, reason: override,
     });
   }
 
@@ -385,10 +551,13 @@ export async function awardQuote(input: {
   // a rival someone awarded meanwhile is never clobbered. CHECKED (COST-11):
   // a failed decline is a partial outcome the caller hears about, never an
   // unconditional success.
+  // Groups compare by KEY (case-folded, whitespace collapsed), exactly as
+  // the bid tab tabulates them — "Piping" and "piping " are one scope.
   const open = (d: CostDocument) =>
     d.id !== doc.id && d.kind === "quote" && (d.status === "draft" || d.status === "parsed");
-  const rivals = fresh.rfqGroup ? input.siblings.filter((d) => open(d) && d.rfqGroup === fresh.rfqGroup) : [];
-  const ungroupedOpen = fresh.rfqGroup ? [] : input.siblings.filter((d) => open(d) && !d.rfqGroup);
+  const groupKey = rfqKey(fresh.rfqGroup);
+  const rivals = groupKey ? input.siblings.filter((d) => open(d) && rfqKey(d.rfqGroup) === groupKey) : [];
+  const ungroupedOpen = groupKey ? [] : input.siblings.filter((d) => open(d) && !rfqKey(d.rfqGroup));
   const warnings: string[] = [];
   let declined = 0;
   if (rivals.length > 0) {
@@ -410,7 +579,9 @@ export async function awardQuote(input: {
     vendor: fresh.vendorName, total, rfqGroup: fresh.rfqGroup, rivalsConsidered: rivals.map((d) => d.vendorName ?? d.id),
     rivalsDeclined: declined, ungroupedLeftOpen: ungroupedOpen.length,
     costAccountId: input.costAccountId, postedEntryId: posted.entryId ?? null,
-    companyId: company?.id ?? null, override,
+    companyId: awardedCompany?.id ?? null, override,
+    // COST-13 dw4: the read extent the posted total came from (null = not recorded / unknown).
+    pagesRead: extent.pagesRead, pagesTotal: extent.pagesTotal, totalConfirmed: input.confirmedTotal != null,
   });
   await notifyAward(fresh, total, input.actor, input.costAccountId);
   return warnings.length ? { ok: true, warning: warnings.join(" ") } : { ok: true };
@@ -440,17 +611,19 @@ export async function postInvoice(input: {
   doc: CostDocument;
   costAccountId: string;
   actor: Actor;
+  /** COST-13: the total typed back from the paper (see awardQuote). */
+  confirmedTotal?: number | null;
 }): Promise<{ ok: boolean; error?: string }> {
   const { doc } = input;
   if (doc.kind === "quote") return { ok: false, error: "Quotes are awarded, not posted — use Award." };
-  const mismatch = await currencyMismatch(doc, input.costAccountId);
-  if (mismatch) return { ok: false, error: mismatch };
 
-  const claim = await claimDocTransition(doc.id, ["draft", "parsed"], "posted", input.actor.uid);
+  const claim = await claimDocTransition(doc.id, ["draft", "parsed"], "posted", input.actor.uid, true, async (f, raw) =>
+    (await currencyMismatch(f, input.costAccountId)) ?? extentRefusal(f, raw, input.confirmedTotal));
   if (!claim.ok) return { ok: false, error: claim.error };
   const fresh = claim.fresh;
+  const extent = readExtentOf(claim.raw);
 
-  const total = fresh.totalAmount ?? (fresh.parsed as { total?: number } | null)?.total ?? null;
+  const total = postableTotal(fresh).total;
   if (total == null || !(total > 0)) {
     const back = await revertDocTransition(doc.id, fresh.status, "posted");
     const base = "No readable total on this invoice yet — run the AI read (or type the total) first.";
@@ -477,6 +650,7 @@ export async function postInvoice(input: {
 
   await audit("COST_DOC_POSTED", fresh.orgId, doc.id, input.actor, {
     vendor: fresh.vendorName, total, costAccountId: input.costAccountId, postedEntryId: posted.entryId ?? null,
+    pagesRead: extent.pagesRead, pagesTotal: extent.pagesTotal, totalConfirmed: input.confirmedTotal != null,
   });
   return { ok: true };
 }
@@ -511,11 +685,20 @@ export async function voidCostDoc(input: { doc: CostDocument; actor: Actor }): P
  *  tabulation and stays declined — a correction is not a reopen. */
 export async function setManualTotal(input: {
   doc: CostDocument; total: number; vendorName?: string | null; actor: Actor;
+  /** COST-8: the document's currency as the paper states it (an ISO code,
+   *  or "$" / "US$" for USD) — the in-app correction for a stored currency
+   *  that would otherwise strand the document at posting. */
+  currency?: string | null;
 }): Promise<{ ok: boolean; error?: string }> {
   if (!Number.isFinite(input.total) || input.total <= 0) return { ok: false, error: "Enter the document's total as a positive number." };
   if (input.doc.status === "awarded" || input.doc.status === "posted") return { ok: false, error: MOVED_MONEY };
   const patch: Record<string, unknown> = { total_amount: input.total };
   if (input.vendorName?.trim()) patch.vendor_name = input.vendorName.trim();
+  if (input.currency != null && input.currency.trim()) {
+    const code = normalizeCurrency(input.currency);
+    if (!code) return { ok: false, error: `"${input.currency.trim()}" is not a currency code — use a three-letter code such as USD, CAD or EUR.` };
+    patch.currency = code;
+  }
   const open = await supabase.from("cost_documents").update({ ...patch, status: "parsed" })
     .eq("id", input.doc.id).in("status", ["draft", "parsed"]).select("id");
   if (open.error) return { ok: false, error: open.error.message };
@@ -536,44 +719,90 @@ export async function setManualTotal(input: {
         : "Someone else just decided this document — refresh to see the latest.",
     };
   }
-  await audit("COST_DOC_MANUAL_TOTAL", input.doc.orgId, input.doc.id, input.actor, { total: input.total });
+  await audit("COST_DOC_MANUAL_TOTAL", input.doc.orgId, input.doc.id, input.actor, { total: input.total, currency: patch.currency ?? null });
   return { ok: true };
 }
 
 // ── reconciliation + repair (MON-1 / COST-11 dw3 — GAP-406's repair path) ──
 
+/** Why an approved change order needs attention: no entry linked, or the
+ *  linked entry is void (the base's only unwind was voiding it by hand), or
+ *  the linked entry cannot be found. Only a CO whose linked entry is POSTED
+ *  revises the budget (changeOrders.approvedChangesByAccount). */
+export type CoOrphanReason = "unlinked" | "entry_void" | "entry_missing";
+
 export interface LedgerOrphans {
-  /** awarded / posted documents with NO cost entry pointing at them. An
-   *  entry that was voided by hand still counts as attended: voiding the
-   *  entry is the documented correction for a wrong amount (MOVED_MONEY). */
+  /** False until migration 20261093 has run (the `cost_ledger_orphans` view
+   *  is the probe): before its COST-9 backfill the list would be noise, so
+   *  the Costs tab renders nothing. */
+  available: boolean;
+  /** awarded / posted documents whose money is on the ledger NOWHERE: no
+   *  entry links to them (any status — a hand-voided entry was the
+   *  correction), and no unlinked pre-Round-G entry of their award/invoice
+   *  shape stands for them. */
   docs: CostDocument[];
-  /** approved change orders whose posted_entry_id is null. */
-  changeOrders: Array<{ id: string; coNumber: string; title: string; amount: number }>;
+  /** approved change orders whose linked entry is missing, void or absent. */
+  changeOrders: Array<{
+    id: string; coNumber: string; title: string; amount: number;
+    costAccountId: string | null; postedEntryId: string | null; reason: CoOrphanReason;
+  }>;
+}
+
+function relationMissing(e: { code?: string; message?: string }): boolean {
+  return e.code === "42P01" || e.code === "PGRST205" || /does not exist|schema cache/i.test(e.message ?? "");
 }
 
 /** The two orphan states the claim-then-post design can produce. Read-only;
  *  the SQL view `cost_ledger_orphans` (20261093) answers the same question
- *  from the database side. A document whose linked entry exists in ANY
- *  status is attended — its entry was posted and, if void, voided on
- *  purpose — so it is never offered a re-post of its locked total. A failed
- *  read throws (REL-2). */
+ *  from the database side, and its absence means the migration (and its
+ *  backfill) has not run — the result is then `available: false`. Every
+ *  entry read is bounded to the documents / COs in question (`.in`, in
+ *  chunks), never a capped scan of the project's ledger. A failed read
+ *  throws (REL-2). */
 export async function listLedgerOrphans(orgId: string, projectId: string): Promise<LedgerOrphans> {
-  const [docsRes, entriesRes, cosRes] = await Promise.all([
+  const probe = await supabase.from("cost_ledger_orphans").select("id").eq("org_id", orgId).eq("project_id", projectId).limit(1);
+  if (probe.error) {
+    if (relationMissing(probe.error)) return { available: false, docs: [], changeOrders: [] };
+    throw new Error(`Couldn't check the ledger for orphans: ${probe.error.message}`);
+  }
+  const [docsRes, cosRes] = await Promise.all([
     supabase.from("cost_documents").select("*").eq("org_id", orgId).eq("project_id", projectId)
       .in("status", ["awarded", "posted"]).limit(500),
-    supabase.from("cost_entries").select("source_document_id").eq("org_id", orgId).eq("project_id", projectId)
-      .not("source_document_id", "is", null).limit(2000),
-    supabase.from("change_orders").select("id, co_number, title, amount").eq("org_id", orgId).eq("project_id", projectId)
-      .eq("status", "approved").is("posted_entry_id", null).limit(500),
+    supabase.from("change_orders").select("id, co_number, title, amount, cost_account_id, posted_entry_id")
+      .eq("org_id", orgId).eq("project_id", projectId).eq("status", "approved").limit(500),
   ]);
-  const failed = docsRes.error ?? entriesRes.error ?? cosRes.error;
+  const failed = docsRes.error ?? cosRes.error;
   if (failed) throw new Error(`Couldn't check the ledger for orphans: ${failed.message}`);
-  const linked = new Set(((entriesRes.data ?? []) as Array<{ source_document_id: string | null }>).map((r) => r.source_document_id));
-  const docs = ((docsRes.data ?? []) as Array<Record<string, unknown>>).map(mapDoc).filter((d) => !linked.has(d.id));
-  const changeOrders = ((cosRes.data ?? []) as Array<{ id: string; co_number: string; title: string; amount: unknown }>).map((r) => ({
-    id: r.id, coNumber: r.co_number, title: r.title, amount: Number.isFinite(Number(r.amount)) ? Number(r.amount) : 0,
-  }));
-  return { docs, changeOrders };
+  const moved = ((docsRes.data ?? []) as Array<Record<string, unknown>>).map(mapDoc);
+  const approved = (cosRes.data ?? []) as Array<{ id: string; co_number: string; title: string; amount: unknown; cost_account_id: string | null; posted_entry_id: string | null }>;
+
+  const [linkedRes, legacyRes, coEntryRes] = await Promise.all([
+    selectIn<{ source_document_id: string | null }>((chunk) => supabase.from("cost_entries")
+      .select("source_document_id").in("source_document_id", chunk), moved.map((d) => d.id)),
+    unlinkedLegacyEntries(projectId, moved),
+    selectIn<{ id: string; status: string | null }>((chunk) => supabase.from("cost_entries")
+      .select("id, status").in("id", chunk), [...new Set(approved.map((c) => c.posted_entry_id).filter((v): v is string => !!v))]),
+  ]);
+  const readErr = linkedRes.error ?? legacyRes.error ?? coEntryRes.error;
+  if (readErr) throw new Error(`Couldn't check the ledger for orphans: ${readErr}`);
+
+  const linked = new Set(linkedRes.rows.map((r) => r.source_document_id));
+  const docs = moved.filter((d) => !linked.has(d.id) && !legacyRes.rows.some((e) => legacyShapeMatches(d, e)));
+  const entryStatus = new Map(coEntryRes.rows.map((e) => [e.id, e.status]));
+  const changeOrders: LedgerOrphans["changeOrders"] = [];
+  for (const r of approved) {
+    const status = r.posted_entry_id ? entryStatus.get(r.posted_entry_id) : undefined;
+    const reason: CoOrphanReason | null = !r.posted_entry_id ? "unlinked"
+      : status === undefined ? "entry_missing"
+      : status === "posted" ? null : "entry_void";
+    if (!reason) continue;
+    changeOrders.push({
+      id: r.id, coNumber: r.co_number, title: r.title,
+      amount: Number.isFinite(Number(r.amount)) ? Number(r.amount) : 0,
+      costAccountId: r.cost_account_id ?? null, postedEntryId: r.posted_entry_id ?? null, reason,
+    });
+  }
+  return { available: true, docs, changeOrders };
 }
 
 /**
@@ -587,7 +816,9 @@ export async function listLedgerOrphans(orgId: string, projectId: string): Promi
  * a repair on a document that has since been made whole is refused. A
  * document whose linked entry was VOIDED by hand is not re-posted (the void
  * was the correction, and its total is locked); it may still be reverted,
- * since no money of its own remains on the ledger.
+ * since no money of its own remains on the ledger. A document that an
+ * UNLINKED pre-Round-G entry of its award/invoice shape stands for (any
+ * status) is refused BOTH actions — its money reached the ledger.
  */
 export async function repairCostDoc(input: {
   doc: CostDocument; action: "repost" | "revert"; costAccountId?: string | null; actor: Actor;
@@ -603,6 +834,19 @@ export async function repairCostDoc(input: {
   if (linkErr) return { ok: false, error: linkErr.message };
   const links = (linked ?? []) as Array<{ id: string; status: string | null }>;
   if (links.some((e) => e.status === "posted")) return { ok: false, error: "This document already has its cost entry — nothing to repair. Refresh." };
+  // Pre-Round-G money carries no source_document_id: an unlinked entry of
+  // this document's award/invoice shape (any status) means the money DID
+  // reach the ledger. Neither action is safe — a re-post would double it,
+  // a revert would reopen paper whose commitment stays.
+  const legacy = await unlinkedLegacyEntries(fresh.projectId, [fresh]);
+  if (legacy.error) return { ok: false, error: legacy.error };
+  const lookalike = legacy.rows.find((e) => legacyShapeMatches(fresh, e));
+  if (lookalike) {
+    return {
+      ok: false,
+      error: `An unlinked entry that looks like this document's exists (reference "${docReference(fresh)}", ${lookalike.status === "void" ? "voided" : "posted"}) — its money reached the ledger before entries carried their document link. Link it, don't re-post or revert: the 20261093 backfill links the unambiguous ones, and an ambiguous one is linked by hand.`,
+    };
+  }
 
   if (input.action === "repost") {
     if (links.length > 0) {

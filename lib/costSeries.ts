@@ -101,14 +101,15 @@ export interface Forecast {
  * schedule span. No data → honest null, never a fabricated number.
  *
  * COST-1: CPI is measured over the milestone-PINNED accounts only, so the
- * CPI branch divides only the pinned budget by it; the unpinned remainder is
- * carried at the run-rate when the schedule allows one AND it has started
- * spending, else at budget (an unstarted remainder has no pace to project —
- * carrying it at 0 would drop it from the EAC) — never below what it has
- * already spent. The EAC can therefore never fall
- * below money already spent. When the caller does not say how much of the
- * budget is pinned, CPI is applied to the whole budget as before, floored at
- * spent, and the note says so.
+ * CPI branch divides only the pinned budget by it. The unpinned remainder
+ * has no earned-value evidence, so it is carried AT ITS BUDGET — a spend
+ * pace (when the schedule gives one) may raise it above budget, never lower
+ * it below: a barely-started line ($1 at 50% elapsed) projects a pace of
+ * $2, and carrying that would drop the rest of its budget from the EAC and
+ * print "under budget" in emerald. Every part is floored at what it has
+ * already spent, so the EAC can never fall below money already spent. When
+ * the caller does not say how much of the budget is pinned, CPI is applied
+ * to the whole budget as before, floored at spent, and the note says so.
  */
 export function computeForecast(input: {
   budget: number;
@@ -145,15 +146,16 @@ export function computeForecast(input: {
       const rest = budget - pinnedBudget;
       const restSpent = spent - pinnedSpent;
       const eacPinned = Math.max(pinnedBudget / cpi, pinnedSpent);
-      const restByPace = runRateUsable && restSpent > 0;
+      const pace = runRateUsable && restSpent > 0 ? restSpent / elapsed : null;
+      const restByPace = pace != null && pace > Math.max(rest, restSpent);
       const eacRest = rest <= 0
         ? Math.max(0, restSpent)
-        : restByPace ? Math.max(restSpent / elapsed, restSpent) : Math.max(rest, restSpent);
+        : Math.max(rest, restSpent, pace ?? 0);
       eac = eacPinned + eacRest;
       const share = Math.round((pinnedBudget / budget) * 100);
       scopeNote = rest <= 0
         ? "CPI covers the whole budget — every account is pinned to a schedule task."
-        : `CPI applies to the ${share}% of budget pinned to schedule tasks (${fmt(pinnedBudget)}); the other ${fmt(rest)} is carried ${restByPace ? "at the current spend pace" : restSpent <= 0 ? "at budget (nothing spent on it yet)" : "at budget"}.`;
+        : `CPI applies to the ${share}% of budget pinned to schedule tasks (${fmt(pinnedBudget)}); the other ${fmt(rest)} is carried ${restByPace ? "at the current spend pace, which runs above its budget" : restSpent <= 0 ? "at budget (nothing spent on it yet)" : restSpent > rest ? "at what it has already spent (above its budget)" : "at budget (no earned-value evidence to project it lower)"}.`;
     }
     const vac = eac - budget;
     return {

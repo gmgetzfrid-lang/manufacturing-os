@@ -26,11 +26,11 @@ import {
   listCostDocs, parsedQuoteFrom, listLedgerOrphans, repairCostDoc, costDocStatusLabel,
   type CostDocument, type LedgerOrphans,
 } from "@/lib/costDocs";
-import { listChangeOrders, approvedChangesByAccount, type ChangeOrder } from "@/lib/changeOrders";
+import { listChangeOrders, approvedChangesByAccount, repairChangeOrder, type ChangeOrder } from "@/lib/changeOrders";
 import CostCharts, { CostGlossary } from "@/components/projects/cost/CostCharts";
 import QuotesPanel from "@/components/projects/cost/QuotesPanel";
 import ChangeOrdersPanel from "@/components/projects/cost/ChangeOrdersPanel";
-import { appConfirm } from "@/components/providers/DialogProvider";
+import { appConfirm, appPrompt } from "@/components/providers/DialogProvider";
 
 const COST_TYPES = ["labor", "material", "equipment", "subcontract", "other"] as const;
 /** COST-8: the account form offers a currency instead of hardcoding USD. */
@@ -53,7 +53,9 @@ export default function CostsTab({ orgId, projectId, canManage, uid, userEmail, 
   const [parties, setParties] = useState<CostParty[]>([]);
   const [docs, setDocs] = useState<CostDocument[]>([]);
   const [cos, setCos] = useState<ChangeOrder[]>([]);
-  const [orphans, setOrphans] = useState<LedgerOrphans>({ docs: [], changeOrders: [] });
+  const [orphans, setOrphans] = useState<LedgerOrphans>({ available: false, docs: [], changeOrders: [] });
+  // Bumped after a change-order repair so the change-orders panel re-reads.
+  const [coReload, setCoReload] = useState(0);
   const [milestones, setMilestones] = useState<Array<{ id: string; name: string; pct: number }>>([]);
   const [schedSpan, setSchedSpan] = useState<{ start: string | null; end: string | null }>({ start: null, end: null });
   const [loading, setLoading] = useState(true);
@@ -120,7 +122,8 @@ export default function CostsTab({ orgId, projectId, canManage, uid, userEmail, 
   }, [docs]);
 
   const pctIndex = useMemo(() => new Map(milestones.map((m) => [m.id, m.pct])), [milestones]);
-  const approvedChanges = useMemo(() => approvedChangesByAccount(cos), [cos]);
+  // COST-4: only an approved CO whose linked entry is still POSTED revises the budget.
+  const approvedChanges = useMemo(() => approvedChangesByAccount(cos, entries), [cos, entries]);
   const rollup = useMemo(() => computeCostRollup(accounts, entries, pctIndex, approvedChanges), [accounts, entries, pctIndex, approvedChanges]);
   const cur = rollup.currencies[0] ?? "USD";
   const mixedCurrency = rollup.currencies.length > 1;
@@ -135,7 +138,8 @@ export default function CostsTab({ orgId, projectId, canManage, uid, userEmail, 
       (e.sourceDocumentId && docLabel.get(e.sourceDocumentId) ? `from ${docLabel.get(e.sourceDocumentId)}` : null)
       ?? (coByEntry.get(e.id) ? `from ${coByEntry.get(e.id)}` : null);
   }, [docs, cos]);
-  const hasOrphans = orphans.docs.length + orphans.changeOrders.length > 0;
+  // MON-1 / COST-11: shown only once 20261093 (its view + the COST-9 backfill) has run.
+  const hasOrphans = orphans.available && orphans.docs.length + orphans.changeOrders.length > 0;
   const entriesByAccount = useMemo(() => {
     const m = new Map<string, CostEntry[]>();
     for (const e of entries) {
@@ -162,8 +166,8 @@ export default function CostsTab({ orgId, projectId, canManage, uid, userEmail, 
       {/* ── Ledger data-health (MON-1 / COST-11): the two orphan states the
              claim-then-post design can produce, with the audited repair. ── */}
       {hasOrphans && (
-        <LedgerHealth orphans={orphans} accounts={accounts} canManage={canManage} actor={actor} busy={busy} setBusy={setBusy}
-          onChanged={() => void refresh()} setErr={setErr} />
+        <LedgerHealth orphans={orphans} accounts={accounts} entries={entries} cos={cos} canManage={canManage} actor={actor} busy={busy} setBusy={setBusy}
+          onChanged={() => void refresh()} onCoRepaired={() => { setCoReload((n) => n + 1); void refresh(); }} setErr={setErr} />
       )}
 
       {/* ── Stat strip ── */}
@@ -183,7 +187,7 @@ export default function CostsTab({ orgId, projectId, canManage, uid, userEmail, 
           icon={rollup.remaining < 0 ? <TrendingDown className="w-4 h-4" /> : <TrendingUp className="w-4 h-4" />}
           label="Available" value={fmtMoney(rollup.remaining, cur)}
           tone={rollup.remaining < 0 ? "rose" : "emerald"}
-          sub={`uncommitted (budget − spent − open commitments) · ${fmtMoney(rollup.remainingActualsOnly, cur)} uninvoiced${rollup.cpi != null
+          sub={`uncommitted (budget − spent − open commitments) · ${fmtMoney(rollup.remainingActualsOnly, cur)} unspent (actuals only)${rollup.cpi != null
             ? ` · CPI ${rollup.cpi.toFixed(2)} — ${rollup.cpi >= 1
               ? `getting $${rollup.cpi.toFixed(2)} of work per $1 spent`
               : `only $${rollup.cpi.toFixed(2)} of work per $1 spent`}`
@@ -224,7 +228,7 @@ export default function CostsTab({ orgId, projectId, canManage, uid, userEmail, 
 
       {/* ── Change orders — never a silent budget edit ── */}
       <ChangeOrdersPanel orgId={orgId} projectId={projectId} canManage={canManage} actor={actor}
-        accounts={accounts} parties={parties} onMoneyMoved={() => void refresh()} setErr={setErr} />
+        accounts={accounts} parties={parties} onMoneyMoved={() => void refresh()} setErr={setErr} reloadKey={coReload} />
 
       {/* ── Accounts ── */}
       <div className="bg-[var(--color-surface)] rounded-2xl border border-[var(--color-border)] overflow-hidden shadow-sm">
@@ -359,15 +363,17 @@ function StatCard({ icon, label, value, sub, tone }: {
 }
 
 /** MON-1 / COST-11 dw3: awarded/posted paper with no cost entry, and
- *  approved change orders with no linked entry — surfaced here with the
- *  audited repair (re-post the missing entry, or revert the document). */
-function LedgerHealth({ orphans, accounts, canManage, actor, busy, setBusy, onChanged, setErr }: {
-  orphans: LedgerOrphans; accounts: CostAccount[]; canManage: boolean;
+ *  approved change orders whose linked entry is missing or void — surfaced
+ *  here with the audited repairs: re-post / revert for a document, link /
+ *  reverse for a change order. */
+function LedgerHealth({ orphans, accounts, entries, cos, canManage, actor, busy, setBusy, onChanged, onCoRepaired, setErr }: {
+  orphans: LedgerOrphans; accounts: CostAccount[]; entries: CostEntry[]; cos: ChangeOrder[]; canManage: boolean;
   actor: { uid: string; email: string | null };
   busy: string | null; setBusy: (v: string | null) => void;
-  onChanged: () => void; setErr: (m: string | null) => void;
+  onChanged: () => void; onCoRepaired: () => void; setErr: (m: string | null) => void;
 }) {
   const [accountPick, setAccountPick] = useState<Record<string, string>>({});
+  const [entryPick, setEntryPick] = useState<Record<string, string>>({});
   // A quote is un-awarded; an invoice is un-posted — the button says which.
   const revertLabel = (doc: CostDocument) => (doc.kind === "quote" ? "Revert award" : "Revert posting");
   const repair = async (doc: CostDocument, action: "repost" | "revert") => {
@@ -383,6 +389,39 @@ function LedgerHealth({ orphans, accounts, canManage, actor, busy, setBusy, onCh
     if (!res.ok) { setErr(res.error ?? "Couldn't repair the document."); return; }
     onChanged();
   };
+
+  // The entries a CO's approval would have posted: POSTED commitments on its
+  // budget line, carrying its CO number, not the paper's and not another CO's.
+  const linkedByOther = useMemo(() => new Map(cos.filter((c) => c.postedEntryId).map((c) => [c.postedEntryId as string, c.id])), [cos]);
+  const candidatesFor = (c: LedgerOrphans["changeOrders"][number]) => entries.filter((e) =>
+    e.status === "posted" && e.entryType === "commitment" && e.costAccountId === c.costAccountId && !e.sourceDocumentId
+    && (e.reference ?? "").trim() === c.coNumber && (linkedByOther.get(e.id) ?? c.id) === c.id);
+  const repairCo = async (c: LedgerOrphans["changeOrders"][number], action: "link" | "reverse") => {
+    const entryId = action === "link" ? (entryPick[c.id] || candidatesFor(c)[0]?.id || null) : null;
+    if (action === "link" && !entryId) { setErr(`Pick the cost entry ${c.coNumber} posted.`); return; }
+    let note: string | null = null;
+    if (action === "reverse") {
+      note = await appPrompt({
+        title: `Reverse ${c.coNumber}`,
+        message: "No cost entry of this change order remains on the ledger, so reversing marks it void on the record (the approver stays visible). Why?",
+        placeholder: "e.g. Its commitment was voided by hand in the accounts below",
+      });
+      if (note === null) return;
+    } else if (!(await appConfirm({ message: `Link ${c.coNumber} to the selected commitment? Its amount then counts in the revised budget. The action is audited.` }))) return;
+    setBusy(c.id); setErr(null);
+    try {
+      await repairChangeOrder({ co: { id: c.id }, action, entryId, note, actorId: actor.uid, actorName: actor.email?.split("@")[0] ?? null });
+      onCoRepaired();
+    } catch (e) {
+      setErr((e as Error).message);
+    } finally { setBusy(null); }
+  };
+  const coSentence = (c: LedgerOrphans["changeOrders"][number]) =>
+    c.reason === "entry_void"
+      ? "but its cost entry was voided — reverse it (nothing of it remains on the ledger), or link the entry that replaced it."
+      : c.reason === "entry_missing"
+        ? "but its linked cost entry cannot be found — link the right entry, or reverse it."
+        : "but no cost entry is linked to it — link the commitment it posted, or reverse it if none remains.";
   return (
     <div className="rounded-xl border border-amber-500/50 bg-amber-500/[0.06] px-3 py-2.5 text-xs text-amber-900 dark:text-amber-200 space-y-1.5">
       <div className="flex items-center gap-2 font-black">
@@ -406,11 +445,34 @@ function LedgerHealth({ orphans, accounts, canManage, actor, busy, setBusy, onCh
           )}
         </div>
       ))}
-      {orphans.changeOrders.map((c) => (
-        <div key={c.id} className="pl-6">
-          <b>{c.coNumber}</b> ({c.title}) is approved for {fmtMoney(c.amount)} but no cost entry is linked to it — find its entry in the accounts below or reverse it from the change-orders panel.
-        </div>
-      ))}
+      {orphans.changeOrders.map((c) => {
+        const candidates = candidatesFor(c);
+        return (
+          <div key={c.id} className="flex items-center gap-2 flex-wrap pl-6">
+            <span><b>{c.coNumber}</b> ({c.title}) is approved for {fmtMoney(c.amount)} {coSentence(c)} Until then it does not revise the budget.</span>
+            {canManage && (
+              <span className="inline-flex items-center gap-1.5 ml-auto">
+                {candidates.length > 0 && (
+                  <>
+                    <select value={entryPick[c.id] ?? candidates[0].id} onChange={(e) => setEntryPick((m) => ({ ...m, [c.id]: e.target.value }))}
+                      className="h-6 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-1 text-[10px] max-w-48"
+                      title={`Posted commitments on its budget line that carry ${c.coNumber}`}>
+                      {candidates.map((e) => (
+                        <option key={e.id} value={e.id}>{fmtMoney(e.amount)}{e.entryDate ? ` · ${e.entryDate}` : ""}{e.description ? ` · ${e.description}` : ""}</option>
+                      ))}
+                    </select>
+                    <button onClick={() => void repairCo(c, "link")} disabled={busy === c.id}
+                      className="px-2 py-0.5 rounded-lg bg-[var(--color-accent)] text-[var(--color-accent-fg)] text-[10px] font-black disabled:opacity-50">Link</button>
+                  </>
+                )}
+                <button onClick={() => void repairCo(c, "reverse")} disabled={busy === c.id}
+                  title={candidates.length > 0 ? `A posted commitment carrying ${c.coNumber} is still on the budget line — link it instead, or void it by hand first.` : "Marks the change order void on the record; audited."}
+                  className="px-2 py-0.5 rounded-lg border border-rose-500/50 text-rose-700 dark:text-rose-300 text-[10px] font-black disabled:opacity-50">Reverse</button>
+              </span>
+            )}
+          </div>
+        );
+      })}
     </div>
   );
 }

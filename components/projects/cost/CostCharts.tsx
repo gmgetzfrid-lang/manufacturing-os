@@ -47,8 +47,9 @@ export default function CostCharts({ rollup, entries, scheduleStart, scheduleEnd
   const { series, forecast, manpower } = useMemo(() => {
     if (!hasRealData) return { series: [], forecast: null, manpower: [] };
     const { commitments, actuals } = entriesToDated(entries);
+    // The planned line and the forecast plan against the same (revised) budget.
     const series = buildCostSeries({
-      budget: rollup.budget, scheduleStart, scheduleEnd, commitments, actuals,
+      budget: rollup.revisedBudget, scheduleStart, scheduleEnd, commitments, actuals,
     });
     const forecast = computeForecast({
       budget: rollup.revisedBudget, spent: rollup.spent, cpi: rollup.cpi,
@@ -59,7 +60,7 @@ export default function CostCharts({ rollup, entries, scheduleStart, scheduleEnd
       ? plannedManpowerSeries({ laborHours: awardedLaborHours, scheduleStart, scheduleEnd })
       : [];
     return { series, forecast, manpower };
-  }, [hasRealData, entries, rollup.budget, rollup.revisedBudget, rollup.spent, rollup.cpi, rollup.pinnedBudget, rollup.pinnedSpent, scheduleStart, scheduleEnd, awardedLaborHours, todayIso, fmt]);
+  }, [hasRealData, entries, rollup.revisedBudget, rollup.spent, rollup.cpi, rollup.pinnedBudget, rollup.pinnedSpent, scheduleStart, scheduleEnd, awardedLaborHours, todayIso, fmt]);
 
   // ── Example preview: the same components, stand-in data, watermarked ──
   if (!hasRealData) {

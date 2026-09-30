@@ -22,15 +22,22 @@
 --     NOT VALID so a live row outside the set never aborts the apply — new
 --     writes are bound immediately; the inventory below counts the old ones.
 --   COST-9 backfill: cost_entries.source_document_id was never written. Where
---     an entry's reference matches EXACTLY ONE cost document in its project
---     (commitment ↔ awarded quote, actual ↔ posted invoice) the link is set;
---     ambiguous matches are counted and left alone.
+--     an award/invoice-shaped entry's reference matches EXACTLY ONE cost
+--     document in its project (commitment ↔ awarded quote, actual ↔ posted
+--     invoice) the link is set — in ANY status: an award entry a controller
+--     voided by hand (the documented correction) is the document's too, and
+--     linking it keeps the document from ever being offered a re-post.
+--     Ambiguous matches are counted and left alone.
 --   PT MON-1 / COST-11 dw3: `cost_ledger_orphans` — the two orphan states the
---     claim-then-post design can produce (awarded/posted paper with no posted
---     entry; an approved change order with no linked entry). security_invoker,
---     so it answers under the caller's own RLS. lib/costDocs.listLedgerOrphans
---     asks the same question from the app and repairCostDoc is the audited
---     repair.
+--     claim-then-post design can produce: awarded/posted paper whose money is
+--     on the ledger nowhere (no entry links to it, in any status, AND no
+--     unlinked entry of its award/invoice shape stands for it — the
+--     backfill's ambiguous residue is attended, never re-posted), and an
+--     approved change order whose linked entry is missing or void (the base's
+--     only unwind was voiding that entry by hand). security_invoker, so it
+--     answers under the caller's own RLS. lib/costDocs.listLedgerOrphans asks
+--     the same question from the app — and shows nothing until this view
+--     exists; repairCostDoc / repairChangeOrder are the audited repairs.
 --
 -- DEC-30: the inventory is captured BEFORE the transaction (temp table,
 -- aggregate counts only — never customer rows) and reported with the probes
@@ -46,20 +53,25 @@ UNION ALL
 SELECT 'inventory (before): approved change orders with posted_entry_id NULL',
        (SELECT COUNT(*) FROM change_orders WHERE status = 'approved' AND posted_entry_id IS NULL)::text
 UNION ALL
+SELECT 'inventory (before): approved change orders whose posted_entry_id points at a void or missing entry (hand-voided — they stop revising the budget)',
+       (SELECT COUNT(*) FROM change_orders c
+         WHERE c.status = 'approved' AND c.posted_entry_id IS NOT NULL
+           AND NOT EXISTS (SELECT 1 FROM cost_entries e WHERE e.id = c.posted_entry_id AND e.status = 'posted'))::text
+UNION ALL
 SELECT 'inventory (before): cost_documents rows with a status outside the CHECK set',
        (SELECT COUNT(*) FROM cost_documents WHERE status NOT IN ('draft', 'parsed', 'awarded', 'declined', 'posted', 'void'))::text
 UNION ALL
 SELECT 'inventory (before): cost_documents rows with a kind outside the CHECK set',
        (SELECT COUNT(*) FROM cost_documents WHERE kind NOT IN ('quote', 'invoice', 'po'))::text
 UNION ALL
-SELECT 'inventory (before): award/invoice-posted entries with source_document_id NULL (COST-9 backfill candidates)',
+SELECT 'inventory (before): award/invoice-shaped entries (any status) with source_document_id NULL (COST-9 backfill candidates)',
        (SELECT COUNT(*) FROM cost_entries
-         WHERE source_document_id IS NULL AND status = 'posted'
+         WHERE source_document_id IS NULL
            AND (description LIKE 'Award — %' OR description LIKE 'Invoice — %'))::text
 UNION ALL
 SELECT 'inventory (before): of those, matched to exactly ONE document by reference (backfilled below)',
        (SELECT COUNT(*) FROM cost_entries e
-         WHERE e.source_document_id IS NULL AND e.status = 'posted'
+         WHERE e.source_document_id IS NULL
            AND (e.description LIKE 'Award — %' OR e.description LIKE 'Invoice — %')
            AND (SELECT COUNT(*) FROM cost_documents d
                  WHERE d.project_id = e.project_id
@@ -147,6 +159,7 @@ DO $$ BEGIN
 EXCEPTION WHEN duplicate_object THEN NULL; END $$;
 
 -- ── 3. COST-9: link the paper to the money where the match is unambiguous ──
+--    Any status: a hand-voided award entry is still the document's.
 UPDATE cost_entries e
    SET source_document_id = (
      SELECT d.id FROM cost_documents d
@@ -154,7 +167,7 @@ UPDATE cost_entries e
         AND e.reference = COALESCE(d.doc_number, d.file_name)
         AND ((e.entry_type = 'commitment' AND d.kind = 'quote' AND d.status = 'awarded')
           OR (e.entry_type = 'actual' AND d.kind = 'invoice' AND d.status = 'posted')))
- WHERE e.source_document_id IS NULL AND e.status = 'posted'
+ WHERE e.source_document_id IS NULL
    AND (e.description LIKE 'Award — %' OR e.description LIKE 'Invoice — %')
    AND (SELECT COUNT(*) FROM cost_documents d
          WHERE d.project_id = e.project_id
@@ -169,14 +182,22 @@ SELECT 'cost_document'::text AS kind, d.id, d.org_id, d.project_id, d.status,
   FROM cost_documents d
  WHERE d.status IN ('awarded', 'posted')
    AND NOT EXISTS (SELECT 1 FROM cost_entries e WHERE e.source_document_id = d.id)
+   AND NOT EXISTS (
+     SELECT 1 FROM cost_entries e
+      WHERE e.source_document_id IS NULL
+        AND e.project_id = d.project_id
+        AND btrim(e.reference) = btrim(COALESCE(d.doc_number, d.file_name))
+        AND ((d.kind = 'quote' AND e.entry_type = 'commitment' AND e.description LIKE 'Award — %')
+          OR (d.kind IN ('invoice', 'po') AND e.entry_type = 'actual' AND e.description LIKE 'Invoice — %')))
 UNION ALL
 SELECT 'change_order'::text, c.id, c.org_id, c.project_id, c.status,
        c.co_number || ' — ' || c.title, c.amount
   FROM change_orders c
- WHERE c.status = 'approved' AND c.posted_entry_id IS NULL;
+ WHERE c.status = 'approved'
+   AND NOT EXISTS (SELECT 1 FROM cost_entries e WHERE e.id = c.posted_entry_id AND e.status = 'posted');
 
 COMMENT ON VIEW cost_ledger_orphans IS
-  'MON-1 / COST-11: awarded/posted cost documents with no entry linked to them (an entry voided by hand counts as attended), and approved change orders with no posted_entry_id. Repair through lib/costDocs.repairCostDoc (audited), never a delete.';
+  'MON-1 / COST-11: awarded/posted cost documents whose money is on the ledger nowhere (no entry links to them in any status, and no unlinked entry of their award/invoice shape stands for them), and approved change orders whose linked entry is missing or void. Repair through lib/costDocs.repairCostDoc / lib/changeOrders.repairChangeOrder (audited), never a delete.';
 
 COMMIT;
 
@@ -207,15 +228,18 @@ SELECT 'cost_documents.status and .kind carry CHECK constraints',
          WHERE contype = 'c' AND conname IN ('cost_documents_status_check', 'cost_documents_kind_check')),
        NULL
 UNION ALL
-SELECT 'cost_ledger_orphans view exists',
-       (SELECT COUNT(*) = 1 FROM pg_views WHERE viewname = 'cost_ledger_orphans'),
+SELECT 'cost_ledger_orphans view exists, attends legacy unlinked entries and lists void-entry change orders',
+       (SELECT COUNT(*) = 1 FROM pg_views WHERE viewname = 'cost_ledger_orphans'
+           AND definition LIKE '%source_document_id IS NULL%'
+           AND definition LIKE '%Award — %'
+           AND definition LIKE '%posted_entry_id%'),
        NULL
 UNION ALL
 SELECT "check", NULL::boolean, n FROM prj_g_money_inventory
 UNION ALL
-SELECT 'inventory (after): award/invoice-posted entries still unlinked (ambiguous or no matching document — left for hand repair)', NULL,
+SELECT 'inventory (after): award/invoice-shaped entries still unlinked (ambiguous or no matching document — attended by the view, left for hand repair)', NULL,
        (SELECT COUNT(*) FROM cost_entries
-         WHERE source_document_id IS NULL AND status = 'posted'
+         WHERE source_document_id IS NULL
            AND (description LIKE 'Award — %' OR description LIKE 'Invoice — %'))::text
 UNION ALL
 SELECT 'inventory (after): rows in cost_ledger_orphans (the repair path population)', NULL,

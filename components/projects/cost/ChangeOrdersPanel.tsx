@@ -17,17 +17,19 @@ import { supabase } from "@/lib/supabase";
 import { fmtMoney, type CostAccount, type CostParty, type Actor } from "@/lib/costs";
 import {
   type ChangeOrder, type CoReason, CO_REASON_LABEL,
-  listChangeOrders, proposeChangeOrder, decideChangeOrder, unwindChangeOrder, summarizeChangeOrders,
+  listChangeOrders, proposeChangeOrder, decideChangeOrder, unwindChangeOrder, summarizeChangeOrders, isReversal,
 } from "@/lib/changeOrders";
 import { Donut } from "@/components/ui/ChartKit";
 import { appConfirm, appPrompt } from "@/components/providers/DialogProvider";
 
-export default function ChangeOrdersPanel({ orgId, projectId, canManage, actor, accounts, parties, onMoneyMoved, setErr }: {
+export default function ChangeOrdersPanel({ orgId, projectId, canManage, actor, accounts, parties, onMoneyMoved, setErr, reloadKey = 0 }: {
   orgId: string; projectId: string; canManage: boolean; actor: Actor;
   accounts: CostAccount[]; parties: CostParty[];
   /** Approval posts a cost entry — the parent refreshes its rollup. */
   onMoneyMoved: () => void;
   setErr: (m: string | null) => void;
+  /** Bumped by the parent after it repaired a change order ("Ledger needs attention"). */
+  reloadKey?: number;
 }) {
   const [cos, setCos] = useState<ChangeOrder[] | null>(null);
   const [showForm, setShowForm] = useState(false);
@@ -37,7 +39,7 @@ export default function ChangeOrdersPanel({ orgId, projectId, canManage, actor, 
     try { setCos(await listChangeOrders(projectId)); }
     catch { setCos([]); } // pre-migration: table absent — panel stays quiet
   }, [projectId]);
-  useEffect(() => { void refresh(); }, [refresh]);
+  useEffect(() => { void refresh(); }, [refresh, reloadKey]);
 
   const summary = useMemo(() => summarizeChangeOrders(cos ?? []), [cos]);
   const partyName = useMemo(() => new Map(parties.map((p) => [p.id, p.name])), [parties]);
@@ -210,7 +212,7 @@ function CoRow({ co, canManage, busy, actorId, partyName, accountLabel, accounts
         )}
         {co.status === "approved" && canManage && (
           <button onClick={() => void unwind(co)} disabled={busy}
-            title={co.postedEntryId ? "Reverse: voids exactly the cost entry this approval posted and marks the change order void." : "No cost entry is linked to this approval — see 'Ledger needs attention' above."}
+            title={co.postedEntryId ? "Reverse: voids exactly the cost entry this approval posted and marks the change order void (an entry already voided by hand is accepted)." : "No cost entry is linked to this approval — link it or reverse it under 'Ledger needs attention' above."}
             className="ml-auto inline-flex items-center gap-1 px-2 py-0.5 rounded-lg border border-[var(--color-border)] text-[var(--color-text-muted)] text-[10px] font-black hover:text-rose-600 hover:bg-rose-500/10 disabled:opacity-50 transition-colors">
             {busy ? <Loader2 className="w-3 h-3 animate-spin" /> : <Undo2 className="w-3 h-3" />} Reverse
           </button>
@@ -220,7 +222,9 @@ function CoRow({ co, canManage, busy, actorId, partyName, accountLabel, accounts
       <div className="mt-1 flex items-center gap-1.5 flex-wrap text-[10px] text-[var(--color-text-muted)]">
         <span className="inline-flex items-center gap-1"><UserRound className="w-3 h-3" /> proposed by <b>{co.createdByName ?? "—"}</b></span>
         {co.status !== "proposed" && (
-          <span className="inline-flex items-center gap-1">· {co.status} by <b>{co.decidedByName ?? "—"}</b>{co.decidedAt ? ` on ${new Date(co.decidedAt).toLocaleDateString()}` : ""}</span>
+          // A reversal keeps the approver on decided_by: credit the approval to
+          // them, and the reversal (who, when, why) is the note below.
+          <span className="inline-flex items-center gap-1">· {isReversal(co) ? "approved" : co.status} by <b>{co.decidedByName ?? "—"}</b>{co.decidedAt ? ` on ${new Date(co.decidedAt).toLocaleDateString()}` : ""}{isReversal(co) ? " · reversed" : ""}</span>
         )}
         {co.selfDecided && (
           <span className="inline-flex items-center gap-0.5 text-[9px] font-black uppercase tracking-wider text-amber-700 dark:text-amber-300 bg-amber-500/10 border border-amber-500/40 px-1.5 py-0.5 rounded"
