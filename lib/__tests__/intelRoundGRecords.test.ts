@@ -1,6 +1,6 @@
-// intelligence Round G, package I-01 phase A (records) — KACL-2 is verified
-// by pointer to roles-and-permissions EGRESS-3 (Round C1), the same code that
-// closed IEDGE-2 and ORCH-3. EGRESS-3's own proof (sweepRoundC.test.ts) is
+// intelligence Round G, package I-01 phase A (records) — KACL-2 is
+// re-verified against roles-and-permissions EGRESS-3 (Round C1), the same
+// code IEDGE-2 and ORCH-3 were closed on. EGRESS-3's own proof (sweepRoundC.test.ts) is
 // unit-level at the ACL seam: `readableControlledDocIds` is mocked. KACL-2's
 // third Done-when asks for more — "a non-controller with an ACL deny on a
 // FOLDER gets zero passages and zero matches from both tools for a document
@@ -11,7 +11,9 @@
 //
 //   * the principal is the one loadPrincipal builds (role collection, teams);
 //     an inactive or absent membership yields null and the route answers 403
-//     before any key, meter or provider is touched (Done-when 1);
+//     before any key, meter or provider is touched — and so does an ACTIVE
+//     member whose principal cannot be loaded, although the route's own
+//     member read still finds them (the `!principal` limb, Done-when 1);
 //   * a folder-level deny, and a folder restricted to a team the caller is
 //     not in, both remove the document inside the folder from find_documents
 //     AND its mirror's passages from search_documents, while a controller
@@ -23,8 +25,14 @@
 // row-capped) read of `libraries` / `collections` inside loadDcLandscape is
 // swallowed (`libsRes.data ?? []`, `foldersRes.data ?? []`), so the chain is
 // evaluated WITHOUT the missing container ACLs and a folder-denied document
-// reads as open. Opened as KACL-12 (owner I-12, lib/knowledgeAccess.ts); the
-// it.todo below is the test that lands with that fix.
+// reads as open; and loadPrincipal swallows a failed `team_members` read
+// (`teams ?? []`), so the principal carries no teams and a TEAM DENY stops
+// applying. Opened as KACL-12 (owner I-12, lib/knowledgeAccess.ts); the two
+// it.todo entries below are the tests that land with that fix.
+//
+// The stand-in honours `.order()` and `.range()` / `.limit()` (sort, then
+// slice), so a fix that pages a read until it comes back short terminates
+// here as it would against PostgREST.
 
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { NextRequest } from "next/server";
@@ -36,6 +44,9 @@ const db = vi.hoisted(() => ({
   errors: {} as Record<string, { message: string }>,
   /** Tables whose `.in(...)`-filtered reads error (the seam's own reads). */
   failIn: new Set<string>(),
+  /** "table|columns": a read of `table` selecting exactly `columns` errors —
+   *  one read of a table fails while another read of it succeeds. */
+  failSelect: new Set<string>(),
   rpc: [] as Array<Record<string, unknown>>,
   user: null as null | { id: string; email?: string },
   providerCalls: 0,
@@ -44,9 +55,31 @@ const db = vi.hoisted(() => ({
 /** A PostgREST chain that applies the filters the code under test uses. */
 function chain(table: string) {
   const preds: Array<(r: Row) => boolean> = [];
+  const orders: Array<{ col: string; asc: boolean }> = [];
+  let win: { from: number; to: number } | null = null;
+  let cap: number | null = null;
   let usedIn = false;
-  const rows = () => (db.tables[table] ?? []).filter((r) => preds.every((p) => p(r)));
-  const failed = () => db.errors[table] ?? (usedIn && db.failIn.has(table) ? { message: "statement timeout" } : null);
+  let columns = "*";
+  const cmp = (a: unknown, b: unknown) => (a == null ? (b == null ? 0 : 1) : b == null ? -1 : a < b ? -1 : a > b ? 1 : 0);
+  // PostgREST order of operations: filter, sort, then the range / limit window.
+  const rows = () => {
+    let out = (db.tables[table] ?? []).filter((r) => preds.every((p) => p(r)));
+    if (orders.length) {
+      out = [...out].sort((a, b) => {
+        for (const o of orders) {
+          const c = cmp(a[o.col], b[o.col]);
+          if (c) return o.asc ? c : -c;
+        }
+        return 0;
+      });
+    }
+    if (win) out = out.slice(win.from, win.to + 1);
+    if (cap !== null) out = out.slice(0, cap);
+    return out;
+  };
+  const failed = () => db.errors[table]
+    ?? (usedIn && db.failIn.has(table) ? { message: "statement timeout" } : null)
+    ?? (db.failSelect.has(`${table}|${columns}`) ? { message: "statement timeout" } : null);
   const result = () => (failed() ? { data: null, error: failed() } : { data: rows(), error: null });
   const c: Row = {};
   const h: ProxyHandler<Row> = {
@@ -63,12 +96,16 @@ function chain(table: string) {
             if (op === "is" && val === null) preds.push((r) => r[col] != null);
             break;
           }
+          case "select": columns = String(args[0] ?? "*"); break;
+          case "order": orders.push({ col: args[0] as string, asc: (args[1] as { ascending?: boolean } | undefined)?.ascending !== false }); break;
+          case "range": win = { from: args[0] as number, to: args[1] as number }; break;
+          case "limit": cap = args[0] as number; break;
           case "maybeSingle": case "single": {
             const out = result();
             return Promise.resolve(out.error ? out : { data: (out.data as Row[])[0] ?? null, error: null });
           }
-          // or / order / limit / range / select: the stand-in returns every
-          // row the explicit filters admit — the ACL is what is under test.
+          // or / ilike / textSearch: the stand-in admits every row the other
+          // filters admit — the ACL is what is under test, not the search.
         }
         return new Proxy(c, h);
       };
@@ -96,6 +133,7 @@ vi.mock("@/lib/ai/providerCall", () => ({
   AiCallError: class AiCallError extends Error {},
 }));
 
+import { supabaseAdmin } from "@/lib/supabaseAdmin";
 import { toolByName, type ToolContext } from "@/lib/orchestrator/tools";
 import { loadPrincipal, type KnowledgePrincipal } from "@/lib/knowledgeAccess";
 import { POST as orchestratorPOST } from "@/app/api/orchestrator/route";
@@ -155,7 +193,22 @@ const DENY_VIEWER_READ = { inherit: true, visibility: "normal", rules: [{ effect
 const ENGINEERING_ONLY = { inherit: true, visibility: "hidden", rules: [{ effect: "allow", subject: { type: "team", id: "T-eng" }, actions: ["read", "discover"] }] };
 
 beforeEach(() => {
-  db.tables = {}; db.errors = {}; db.failIn = new Set(); db.rpc = []; db.user = null; db.providerCalls = 0;
+  db.tables = {}; db.errors = {}; db.failIn = new Set(); db.failSelect = new Set(); db.rpc = []; db.user = null; db.providerCalls = 0;
+});
+
+describe("the PostgREST stand-in", () => {
+  it("sorts by .order() and windows by .range(), so a read paged until it comes back empty terminates with every row once", async () => {
+    seed(null);
+    db.tables.collections = ["F-3", "F-1", "F-2"].map((id) => ({ id, org_id: ORG }));
+    const seen: string[] = [];
+    for (let from = 0, pages = 0; ; from += 2, pages += 1) {
+      expect(pages, "the page loop terminates").toBeLessThan(5);
+      const { data } = await supabaseAdmin.from("collections").select("*").eq("org_id", ORG).order("id").range(from, from + 1);
+      if (!data?.length) break;
+      seen.push(...(data as Row[]).map((r) => r.id as string));
+    }
+    expect(seen).toEqual(["F-1", "F-2", "F-3"]);
+  });
 });
 
 describe("KACL-2 (→ R&P EGRESS-3) — Done-when 1: the principal is loadPrincipal's, and the route 403s without one", () => {
@@ -180,6 +233,24 @@ describe("KACL-2 (→ R&P EGRESS-3) — Done-when 1: the principal is loadPrinci
       expect(res.status, uid).toBe(403);
       expect(await res.json()).toEqual({ error: "Not a member of this workspace" });
     }
+    expect(db.providerCalls).toBe(0);
+  });
+
+  it("/api/orchestrator answers 403 for an ACTIVE member whose principal cannot be loaded, though its own member read finds them", async () => {
+    seed(null);
+    // loadPrincipal's read (`role, roles`) fails; the route's second read of
+    // the same row (`uid, role, display_name, email`) succeeds — so only the
+    // `!principal` limb of route.ts's guard can refuse this caller.
+    db.failSelect.add("org_members|role, roles");
+    expect(await loadPrincipal(ORG, "u-viewer")).toBeNull();
+    db.user = { id: "u-viewer" };
+    const res = await orchestratorPOST(new NextRequest("http://test/api/orchestrator", {
+      method: "POST",
+      headers: { authorization: "Bearer tok", "content-type": "application/json" },
+      body: JSON.stringify({ orgId: ORG, question: "what does the incident report say about the flare knockout drum?" }),
+    }));
+    expect(res.status).toBe(403);
+    expect(await res.json()).toEqual({ error: "Not a member of this workspace" });
     expect(db.providerCalls).toBe(0);
   });
 });
@@ -228,6 +299,7 @@ describe("KACL-2 (→ R&P EGRESS-3) — Done-when 2 and 3: a FOLDER-level ACL re
   });
 
   it.todo("KACL-12 (owner I-12): a libraries / collections read error inside loadDcLandscape fails CLOSED — today it drops the container ACL and the folder-denied document reads as open");
+  it.todo("KACL-12 (owner I-12): a team_members read error inside loadPrincipal yields no principal (or throws to a fail-closed caller) — today the principal loads with no teams, so a folder ACL [allow role Viewer read, deny team T read] reads as open to a Viewer in T");
 
   it("fails CLOSED on the mirror hop: when knowledge_documents cannot be read, every returned knowledge document is hidden", async () => {
     seed(null);

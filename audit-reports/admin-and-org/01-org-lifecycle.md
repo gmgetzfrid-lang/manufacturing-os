@@ -399,6 +399,8 @@ ViewAsSimulator.tsx:59 — `const { data } = await supabase.from("team_members")
 - [ ] The `{ error }` is destructured and a failed lookup renders "team memberships unavailable" instead of silently reporting no team access
 - [ ] A test asserts the simulator reports team-derived access for a member whose only grant is via a team
 
+*Cross-area note (2026-09-30, intelligence Round G): intelligence `DACL-5` criterion 3 is handed to the package that fixes this finding (admin-and-org P9, `components/permissions/ViewAsSimulator.tsx`) — show the member's full role collection in the picker (today `:160` shows the headline only) and, for a role rule, which held role it matches. DACL-5 stays OPEN on that limb alone.*
+
 ---
 
 <a id="org-11"></a>

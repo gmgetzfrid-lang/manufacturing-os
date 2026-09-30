@@ -588,6 +588,8 @@ different fields. **Ship them together or the form gets edited twice.**
 2. A request with equipment shows the sheets that equipment appears on.
 3. Blank never blocks submission.
 
+*Handoff (2026-09-30, intelligence Round G, I-01 phase A): this gap is [`WIRE-7`](./19-wiring.md#wire-7) criterion 1 and is handed to the drafting-flow fleet — **DF-P6 REVIEW-MODEL**, which edits `app/(protected)/requests/new/page.tsx` for `GAP-110` / `GAP-111`, so it ships with them. No drafting-flow package lists it yet; the integrator adds it to DF-P6 (or schedules it directly after). Intelligence prerequisites: `GAP-311` (I-10, merged) and `GAP-304` (I-11).*
+
 ---
 
 ## Already built — do not build these twice

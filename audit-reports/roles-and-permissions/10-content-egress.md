@@ -274,7 +274,7 @@ inventing a second answer.
    `drawing_audit_logs` has a matching write policy.
 4. Notifications the AI sends are attributed to the real caller.
 
-*Cross-area note (2026-09-30, intelligence Round G): re-verified for intelligence `KACL-2` — criteria 1, 3 and 4 hold (a folder-level deny now proven through the real seam, `lib/__tests__/intelRoundGRecords.test.ts`); the fail-closed limb does not hold when the seam's own `libraries` / `collections` read errors (`lib/knowledgeAccess.ts` `loadDcLandscape` swallows it). Opened as intelligence `KACL-12` (owner I-12); KACL-2 stays OPEN on it.*
+*Cross-area note (2026-09-30, intelligence Round G): re-verified for intelligence `KACL-2` — criteria 1, 3 and 4 hold (a folder-level deny now proven through the real seam, `lib/__tests__/intelRoundGRecords.test.ts`); the fail-closed limb does not hold when the seam's own `libraries` / `collections` read errors (`lib/knowledgeAccess.ts` `loadDcLandscape` swallows it) or its `team_members` read errors (`loadPrincipal` builds a principal with no teams, so a team deny is dropped). Opened as intelligence `KACL-12` (owner I-12); KACL-2 stays OPEN on it and intelligence `IEDGE-2` (whose criterion 2 is that limb) is re-opened on it.*
 
 ---
 
