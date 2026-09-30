@@ -57,6 +57,15 @@
 - [ ] node_visible (or a replacement) resolves the container chain — e.g. a SECURITY DEFINER walk of collections.parent_id up to libraries — instead of trusting a per-row denormalized acl_index that no writer maintains
 - [ ] A trigger (or the same chain walk) keeps documents.acl_index/visibility in sync when a parent folder's or library's ACL changes, and when a document is moved between folders (app/api/documents/move/route.ts currently touches no acl column)
 
+**Partial (2026-09-30, intelligence Round G).** Planned as a record-only close on roles-and-permissions `DB-4` + `DOCACL-4` + `OWN-20` (`DEC-10`). Re-verified against HEAD `1b71ca1`, it does **not** close: those findings made `acl_index` a maintained cache, but this finding's first sentence — `node_visible()` short-circuits on `visibility='normal'` — is unchanged in the newest body, and nothing carries a container's restriction into its children's `visibility`.
+
+**Done-when.**
+1. ✗ Restricting a folder does not hide its child documents from a direct PostgREST read. `node_visible` (6-arg; newest body `20261041_rp_phase5_node_visible_additive.sql:23-85`, live) still opens with `IF p_visibility IS NULL OR p_visibility = 'normal' THEN RETURN true;` (`:37-40`, "Fail-safe ordering is preserved"), and `documents_acl_select` passes the row's OWN `visibility` (`20261037_rp_phase3b_read_ownership_and_version_integrity.sql:109-111`, live). The drawer's "Restrict" writes `visibility` to the edited node only (`components/permissions/PermissionDrawer.tsx:310`, `.eq("id", nodeId)` at `:315`); the rebuilds write `acl_index` only (`lib/aclIndexRebuild.ts:163`, `lib/serverCollections.ts:135`, `:149`); a new document is stamped from the LIBRARY default, not its folder (`app/(protected)/documents/[libraryId]/page.tsx:2559`, `library.defaultNewVisibility ?? "normal"` — R&P `DOCACL-2` records per-node visibility as a design residual). So the child keeps `visibility='normal'`, `node_visible` returns true before it reads the (now correct) `acl_index`, and the rows come back. Mitigation that exists: a library born "Restricted" (`DOCACL-2`'s `defaultNewVisibility`) stamps its new children hidden.
+2. ◐ `node_visible` still trusts the per-row `acl_index`, but "an acl_index that no writer maintains" no longer describes it: the index is rebuilt from the live chain at save (`OWN-20`: the drawer's checked save POSTs `/api/acl/rebuild`, `PermissionDrawer.tsx:347` → `rebuildAclIndexes(…, { orgId, libraryId })`, `app/api/acl/rebuild/route.ts:114`), on a folder move (`DOCACL-4`: `app/api/collections/move/route.ts:94-100` → `rebuildSubtreeAclIndex`, `lib/serverCollections.ts:116-152`) and nightly (`DB-4`: `app/api/cron/maintenance/route.ts:161`). The chain is resolved into the index by its writers, not at read time — `DEC-10`'s choice (a rebuilt cache; the derived column deferred). That half closes on DEC-10; it does not reach a `normal` row (criterion 1).
+3. ◐ `acl_index` stays in sync when a folder's or library's ACL changes (at save) and when a FOLDER moves; a DOCUMENT moved between folders is not re-indexed at move time — `app/api/documents/move/route.ts:98-101` updates `collection_id` only — and waits for the nightly rebuild (`DEC-10`'s one-cycle window). `visibility` is never synced.
+
+**Remaining / owner.** Criterion 1 (and the read-time half of 2) is the one-predicate question `IEDGE-12` carries — "a normal-visibility document carrying an explicit read deny is refused by every path … node_visible" — and belongs to I-12 (DOCUMENT ACL BOUNDARY), which already plans the `node_visible` re-creation for `DACL-12`. I-12's plan lists "DEC-10 acl_index cache + nightly rebuild (DACL-1 closed on it)" as verified sound; for criterion 1 this re-verification says otherwise. The decision it needs is `DOCACL-2`'s — whether a restricted container restricts its `normal` children at the database (the app's chain evaluation already does), weighed against the lockout the fail-safe default exists to avoid. The document-move re-index (criterion 3) is in no fleet plan; the nightly rebuild bounds it. The download step of the failure scenario is `KACL-5`'s (also I-12).
+
 ---
 
 <a id="dacl-2"></a>
@@ -86,6 +95,15 @@ app/api/storage/delete/route.ts:26-40 — the entire authorization is `const org
 - [ ] The route resolves the key to its owning document_version/ticket and refuses when the document is under legal hold, inside retention, or when the caller lacks an admin/write grant on it
 - [ ] `assertSafeStorageKey(path)` is called before the org-prefix parse, matching download-url/upload-url/multipart
 - [ ] Object deletion writes an audit_logs row naming the key, the document and the actor
+
+**Partial (2026-09-30, intelligence Round G).** Planned as a record-only close on roles-and-permissions [`SURF-2`](../roles-and-permissions/09-non-document-surfaces.md) (whose record names this finding). Re-verified against `app/api/storage/delete/route.ts` at HEAD `1b71ca1`: criteria 2 and 3 hold; criterion 1 holds except its retention limb, so this stays OPEN.
+
+**Done-when.**
+1. ◐ The route resolves the key to its `document_versions` row (`:76-88`, `.eq("file_url", path)`) and refuses `423` when the document is under legal hold (`:95-97`) or has an unreleased `document_holds` row (`:98-100`), failing closed `503` on any lookup error (`:102-104`); the caller must be a controller of the key's org read from the role collection (`:52-70`) — stricter than "an admin/write grant on it". **Not done: "inside retention".** Nothing reads `retention_until` or `disposition_state`: a controller can destroy the bytes of a document whose retention period has not run (and is not under hold) and gets a 200. Ticket attachments are not resolved to their ticket; they carry no hold or retention state and the controller gate still applies.
+2. ✓ `assertSafeStorageKey(path)` runs before the org-prefix parse (`:41`); a non-org key is refused (`:46-49`).
+3. ✓ A `STORAGE_OBJECT_DELETE` audit row naming the key, the document, the version and the actor is written BEFORE the object is destroyed, and the delete is refused if it cannot be written (`:113-129`); a failed R2 delete marks the row (`:131-143`). Tests: `lib/__tests__/storageDeleteRoute.test.ts` (SURF-2).
+
+**Remaining / owner.** The retention refusal: resolve the document's effective `retention_until` / `disposition_state` and refuse while it is in the future, fail-closed like the hold check. No fleet plan lists `app/api/storage/delete/route.ts`; its natural owner is document-control's retention rail (`08-retention.md`, whose `RET-2` recorded this route closed on SURF-2 without that limb — cross-note added there). Unassigned; the integrator schedules it.
 
 ---
 
@@ -117,6 +135,15 @@ app/d/[number]/route.ts:6-7 comment claims `The target page enforces auth + RLS 
 - [ ] A non-match and a cross-org match are indistinguishable in the response (same redirect target, same timing)
 - [ ] /api/verify requires BOTH doc and version ids and refuses documents whose visibility is private/hidden, or is scoped to versions that were actually stamped/issued (a `verify_tokens` table keyed to a printed copy)
 
+**Partial (2026-09-30, intelligence Round G).** Planned as a record-only close on roles-and-permissions [`EGRESS-2`](../roles-and-permissions/10-content-egress.md). Re-verified at HEAD `1b71ca1`: criteria 1 and 2 hold; criterion 3 is the `/api/verify` half, which EGRESS-2 did not touch, so this stays OPEN.
+
+**Done-when.**
+1. ✓ `/d/[number]` does no database work and holds no service-role client (`app/d/[number]/route.ts:20-32`); it forwards the raw string to `/documents?d=…`, where the protected page resolves it client-side under the caller's own session (`app/(protected)/documents/page.tsx:101-108`, `searchDocuments({ orgId: activeOrgId, … })`) — scoped to the active org and ACL-enforced by RLS; a signed-out caller is sent to sign-in by the protected layout. Test: `lib/__tests__/shortLinkRoute.test.ts`.
+2. ✓ Every input gets the same redirect (`/documents`, with `?d=` only for a 2–40-character normalized string, `:26-31`) and no lookup is made, so a non-match and a cross-org match are indistinguishable in response and in timing.
+3. ✗ `/api/verify` still accepts `doc` alone (`app/api/verify/route.ts:27-31`, `(versionId && !UUID_RE.test(versionId))`), selects the document by id with no visibility, ACL or org predicate (`:35-39`) and returns its number and title (`:145-146`); no per-print token exists. The oracle that fed it UUIDs is gone (criterion 1), which removes the unauthenticated enumeration path the failure scenario uses; a UUID obtained elsewhere still yields number, title and status.
+
+**Remaining / owner.** Criterion 3 → public-surfaces **PS-VERIFY** (owns the four verify endpoints: `VFY-2` / `VFY-3` per-print semantics, `VFY-14` narrow select). It is the same limb as `DACL-8` criteria 1–2 and is handed over there with the default (answer "current / superseded" without number or title for a private or hidden document). Cross-note added on `VFY-14`.
+
 ---
 
 <a id="dacl-4"></a>
@@ -144,6 +171,15 @@ app/d/[number]/route.ts:6-7 comment claims `The target page enforces auth + RLS 
 - [ ] The document_shares INSERT policy requires the inserter to pass the same visibility/ACL predicate as `documents` SELECT (e.g. `WITH CHECK (... AND doc_is_visible(document_id))`), and ideally a `download` grant
 - [ ] /api/share/file re-checks the SHARER's live ACL at fetch time (a revoked grant kills live links) and refuses documents under legal hold or with a hard ack gate
 - [ ] Share creation is restricted by capability policy, is audited as a distribution event, and a null expiry is impossible from the UI
+
+**Partial (2026-09-30, intelligence Round G).** Planned as record-only: halves 1 / 2a on roles-and-permissions [`EGRESS-1`](../roles-and-permissions/10-content-egress.md) (`20261022`, `20261026`, `20261037` live), halves 2b / 3 on document-control wave-2 **P1 SHARE** (`DRLS-5`, `DIST-6`, `EGR-5`, `DEC-46`), which is merged on this base. Re-verified against HEAD `1b71ca1`: everything holds except two limbs of criterion 2 that P1 did not build, so this stays OPEN.
+
+**Done-when.**
+1. ✓ The INSERT policy requires the inserter to pass the same read predicate as `documents` SELECT, in the share's own org, as themselves: `document_shares_insert` (`20261037_rp_phase3b_read_ownership_and_version_integrity.sql:120-135`, live) — `created_by = auth.uid()`, active membership, and `EXISTS (… d.org_id = document_shares.org_id AND node_visible(d.visibility, d.acl_index, …))`. `20261080` (P1, **pending migration, not applied**) adds the minting tier and `document_share_refusal`. The "ideally a download grant" limb is enforced at serve time (`creatorMayShare` → `lib/downloadDeny.ts`, `lib/shareServe.ts:161`, `:196`); its mint-time half is public-surfaces `SHR-14` (OPEN, unassigned).
+2. ◐ Both public routes run `resolveShareForServing` (`lib/shareServe.ts:123-183`): the document is joined to the share's org (`:146-151`), the SHARER's live read access is re-checked at every fetch (`shareStillAuthorized`, `:157` → `lib/shareAuthorization.ts:23-40`), so a revoked grant kills live links; their minting tier and any download deny too (`creatorMayShare`, `:161`); Draft / not-current / archived documents are refused (`shareStatusRefusal`, `:163-164`) and an unreleased `document_holds` row refuses `423`, fail-closed (`assertNotOnHold`, `:166-176`). **Not done:** the documents-row **legal hold** (`documents.legal_hold`, set by `lib/retention.ts:183`) is never read on this path — `/api/verify` counts it as held (`app/api/verify/route.ts:54`), the share path does not — and there is no **hard acknowledgment gate** check (`assertAckGate`, `lib/downloads.ts:215`, guards member downloads only; `DEC-46` does not address it). The creator's ACL re-check also inherits [`KACL-12`](./05-knowledge-acl.md#kacl-12): a failed container read inside the seam widens it.
+3. ✓ (database half pending `20261080`) Creation is restricted to the minting tier `DEC-46` settled — controllers by the role collection, or a publisher granted on the library (`canMintShare` in the modal, the `20261080` INSERT arms, and `creatorMayShare` at serve time, live in code, so a link a non-minter inserts never serves); it writes a checked `SHARE_LINK_CREATED` audit row (`lib/documentShares.ts:199`) and `SHARE_LINK_REVOKED` on revoke (`:260`); "Never expires" is gone (`components/documents/ShareLinkModal.tsx:46-51`, 24 h – 90 days) and `createShareLink` refuses 0 or more than 90 days (`shareExpiryFor`, `lib/documentShares.ts:177`). Tests: `lib/__tests__/shareRoutes.test.ts`, `shareAuthorization.test.ts`, `shareResolveRoute.test.ts`.
+
+**Remaining / owner.** Two serve-time refusals — `documents.legal_hold = true`, and a document whose effective acknowledgment policy sets `hardGate` (whether that binds for the sharer or outright is the owner's call) — plus KACL-12 (I-12). P1 SHARE is merged without them and no queued package owns `lib/shareServe.ts`; unassigned — the integrator schedules them beside P1's other remainders (`SHR-14`, `DIST-15`).
 
 ---
 
@@ -174,6 +210,15 @@ lib/acl.ts:73 — `return !!ctx.role && ctx.role === (id as Role);`. app/(protec
 - [ ] SubjectContext carries the full role collection and subjectMatches tests membership in it; node_visible reads org_members.roles the same way
 - [ ] Every principal construction site passes the collection, not just activeRole
 - [ ] The Permissions drawer states which roles a rule will actually match for a given member (the ViewAsSimulator already has the shape for this)
+
+**Partial (2026-09-30, intelligence Round G).** Planned as a record-only close on roles-and-permissions `DOCACL-1` / `ADD-1` / `20261041` (live). Re-verified at HEAD `1b71ca1`: the defect itself — a grant naming a secondary role matching no one, a deny naming it biting only at download — is gone at every evaluator; criterion 3 (a statement in the UI) is not built, so this stays OPEN.
+
+**Done-when.**
+1. ✓ A role subject matches any held role: `lib/acl.ts:79-82` (`if (ctx.role && ctx.role === id) return true; return Array.isArray(ctx.roles) && ctx.roles.includes(id)`), for allow AND deny (`evaluateRules`, `:96-129`); `lib/permissions.ts` passes `roles: heldRoles(principal)` to every evaluator (`:69`, `:153`, `:180`, `:213`). `node_visible` reads `COALESCE(roles, ARRAY[role])` and matches the allow bucket against every held role (`20261041_rp_phase5_node_visible_additive.sql:48-52`, `:80-83`, live). (A role-subject DENY is not evaluated by `node_visible` for any role, headline or not — that is `DACL-12`, I-12's.)
+2. ✓ Every principal construction site passes the collection: the library page (`app/(protected)/documents/[libraryId]/page.tsx:1691-1700`), `/api/storage/download-url` (`:93-99`, `normalizeRoles`), `/api/acl/rebuild` (`:76`), the ticket page (`app/(protected)/requests/[id]/page.tsx:1081`), `lib/principal.ts:54-63`, `lib/docFileServer.ts:110-117`, `loadPrincipal` (`lib/knowledgeAccess.ts:36-50`), the simulator (`components/permissions/ViewAsSimulator.tsx:199`); the headline-authority census is pinned by `lib/__tests__/sweepRoundC1b.test.ts` (ADD-1).
+3. ✗ Neither the Permissions drawer nor the simulator states which roles a rule matches for a given member. The simulator EVALUATES with the full collection (`ViewAsSimulator.tsx:196-201`), but its member picker shows the headline only (`:160`, `{m.name} — {m.role}`) and its per-person list shows user-subject rules only (`:134`, `:272`); the drawer's role picker (`components/permissions/PermissionDrawer.tsx:626-646`) says nothing about who holds the role. The confusion this guarded against is much narrower now (a role rule reaches every holder), but the statement is not there.
+
+**Remaining / owner.** Criterion 3 only — show a member's full role collection in the simulator and, for a role rule, which held role it matches. `ViewAsSimulator.tsx` is on admin-and-org **P9** (permissions-console truth; its `ORG-10` residual touches the same component), `PermissionDrawer.tsx` on A&O **P7** (`ALOG-8`); P9 is the owner named here.
 
 ---
 
@@ -235,6 +280,8 @@ app/api/data-export/run/route.ts:18 — `const ADMIN_ROLES = ["Admin", "Manager"
 - [ ] The export manifest records which rows/files were withheld from the exporter and why
 - [ ] A test asserts the export role list and isControllerRole() cannot drift apart
 
+**Partial (2026-09-30, intelligence Round G).** Pointer — re-verified at HEAD `1b71ca1`: nothing has landed and no criterion holds. Both export routes still admit Manager — `app/api/data-export/run/route.ts:18` (`ADMIN_ROLES = ["Admin", "Manager", "DocCtrl"]`, used at `:76`) and `app/api/data-export/structured/route.ts:56` (now read from the role collection, `memberHoldsAny`) — and so does `app/api/data-export/destinations/route.ts:14`; the manifest names no withheld rows. Owner: admin-and-org **P3** (`BKP-8`, Admin-only full export per `DEC-43`); the same fix closes `ILIFE-7` and `IEDGE-10`. Landed neighbour, not a criterion here: document-control `EGR-7` redacts bearer-token columns from every dump (`DEC-45`). Cross-note on `BKP-8`.
+
 ---
 
 <a id="dacl-8"></a>
@@ -266,6 +313,15 @@ app/api/verify/route.ts:5-10 asserts the threat model — `UNAUTHENTICATED by de
 - [ ] Verify surfaces refuse documents whose visibility is private/hidden, or answer only 'current / superseded' without the title for them
 - [ ] Verification is keyed to a per-print token recorded at stamping time rather than to the durable document UUID
 - [ ] verify-package returns only documents that were actually issued in that package's distribution
+
+**Partial (2026-09-30, intelligence Round G).** Re-verified at HEAD `1b71ca1`. Closed around it: the outsider's UUID source the failure scenario names — `/d/[number]` no longer hands out document UUIDs (roles-and-permissions `EGRESS-2`; see `DACL-3`); `/api/verify-package` answers from the immutable print snapshot when the QR carries one (`app/api/verify-package/route.ts:28-34`, `:50-73`, document-control `PKG-2`) and reads documents only in the package's own org (`:84-86`); `/api/verify-hold` publishes only a predefined hold category (the note above, `HLD-7`). No verify route checks visibility, so every criterion is still open:
+
+**Done-when.**
+1. ✗ No route refuses a private or hidden document or withholds its title: `/api/verify` selects by id with no visibility column (`app/api/verify/route.ts:35-39`) and returns `docNumber` / `title` (`:145-146`); `/api/verify-package` labels every sheet `document_number || title` (`:98`); `/api/verify-hold` returns the held document's label (`app/api/verify-hold/route.ts:45-53`).
+2. ◐ Packages: a print-keyed QR verifies what was printed (`PKG-2`). Documents: `/api/verify` is still keyed on the durable document UUID with `v` optional (`:27-31`); no per-print token.
+3. ◐ With `?print=` the answer is exactly the printed sheets; without it (an older QR) it is the package's live membership (`:74-81`), not "what was actually issued in its distribution".
+
+**Remaining / owner.** Handed to public-surfaces **PS-VERIFY** (owns the four verify endpoints: `VFY-2` / `VFY-3` per-print semantics, `VFY-12` scan log, `VFY-14` narrow select) with the default this package was given: for a private or hidden document answer "current / superseded" without number or title (fail-safe — less disclosure). Cross-note added on `VFY-14`; the same limb closes `DACL-3` criterion 3.
 
 ---
 

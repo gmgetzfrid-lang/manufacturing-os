@@ -95,6 +95,8 @@ app/api/storage/delete/route.ts:42 `await r2.send(new DeleteObjectCommand({ Buck
 - [ ] the route is deleted along with lib/storage.ts:deleteFile, or
 - [ ] it is gated to Admin/DocCtrl via authorizeOrgRole, runs assertSafeStorageKey, refuses any key referenced by a document_versions row whose parent is under legal hold or whose row is the current revision, and writes an audit_logs entry
 
+*Cross-area note (2026-09-30, intelligence Round G): re-verifying intelligence `DACL-2` against `app/api/storage/delete/route.ts` found its refusals are a documents-row legal hold and an unreleased `document_holds` row only (`:76-104`) — no retention check, and no refusal of a current revision's key (this finding's second Done-when names the latter). DACL-2 stays OPEN on the retention limb.*
+
 ---
 
 <a id="ret-3"></a>

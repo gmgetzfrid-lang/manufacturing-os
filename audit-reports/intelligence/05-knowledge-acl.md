@@ -1,6 +1,6 @@
 # 05 · The knowledge ACL boundary
 
-**11 findings** — 2 CRITICAL · 3 HIGH · 6 MEDIUM.
+**12 findings** — 2 CRITICAL · 4 HIGH · 6 MEDIUM.
 
 **Your leak question, half one.** When a controlled document is indexed, does its ACL still hold at query time?
 
@@ -89,6 +89,16 @@ tools.ts:97-101 — `.eq("org_id", ctx.orgId)\n      // PILLAR A. `ai_excluded` 
 - [ ] find_document and search_documents resolve every candidate document id through readableControlledDocIds and drop non-readable rows before returning, failing closed on error
 - [ ] A test proves a non-controller with an ACL deny on a folder gets zero passages and zero matches from both tools for a document inside it
 - [ ] The claims in app/api/orchestrator/route.ts:6-8 and lib/orchestrator/tools.ts:9-13 are true, or the comments are corrected
+
+**Partial (2026-09-30, intelligence Round G).** Planned as a record-only close on roles-and-permissions [`EGRESS-3`](../roles-and-permissions/10-content-egress.md) (Round C1, `20261048` live) — the same code that closed [`IEDGE-2`](./21-edges-and-invariants.md) and [`ORCH-3`](./15-orchestrator.md). Re-verified against HEAD `1b71ca1`: criteria 1, 3 and 4 hold; criterion 2 holds at the tool layer but not end to end, so this stays OPEN. New test `lib/__tests__/intelRoundGRecords.test.ts` drives both tools through the REAL seam (`loadPrincipal`, `loadDcLandscape`, the library → folder → document chain, `lib/acl`) over an in-memory, filter-aware PostgREST stand-in — `sweepRoundC.test.ts` mocks `readableControlledDocIds`, so it could not show a FOLDER deny; this one does. Mutation check: with the two filters taken out of `lib/orchestrator/tools.ts` (the pre-EGRESS-3 shape) 4 of its 9 cases fail; restored, all pass.
+
+**Done-when.**
+1. ✓ `ToolContext.principal: KnowledgePrincipal` (`lib/orchestrator/tools.ts:27-38`), loaded by `loadPrincipal` in both routes (`app/api/orchestrator/route.ts:62-70`, `app/api/orchestrator/execute/route.ts:42-50`); the route answers 403 "Not a member of this workspace" when it is null (`route.ts:70`). Test: "/api/orchestrator answers 403 for a suspended member and for a stranger, before any provider call".
+2. ◐ `find_documents` drops every candidate the caller cannot read (`tools.ts:151-155`, through `readableIds` → `readableControlledDocIds`, `:84-90`) and `search_documents` drops every passage from a mirror of an unreadable document (`:204-213`, through `unreadableMirrors`, `:92-113`). Fail-closed holds when the seam THROWS (`:89`), when the mirror hop errors (`:112`) and when the seam's own `documents` row read errors (no rows → nothing readable) — tests "fails CLOSED …". It does **not** hold when the seam's `libraries` or `collections` read errors: `loadDcLandscape` (`lib/knowledgeAccess.ts:105-133`) coalesces a failed read to an empty map, the chain is evaluated without the missing container ACL, and a folder-denied document reads as open. Reproduced against the same stand-in: with `collections` erroring, the denied Viewer's `find_documents` returns the folder-denied document and `search_documents` its passage. Opened as [`KACL-12`](#kacl-12).
+3. ✓ A Viewer denied read on a FOLDER — by a deny rule naming their role, and by a folder restricted to a team they are not in — gets zero matches and zero passages from both tools for the document inside it, while a controller by the role collection (Requester + DocCtrl) sees both and an ACL-free fixture gives the Viewer both. Test: `intelRoundGRecords.test.ts` "KACL-2 … Done-when 2 and 3".
+4. ✓ Both claims are true for what the tools read, save for the KACL-12 window: `tools.ts:9-12` ("NOTHING WIDENS ACCESS … re-checks the caller") — every document-touching tool filters through the principal (pinned by `sweepRoundC.test.ts` "every document-touching tool asks readableIds"); `check_audit_history` and `query_equipment_by_unit` read registries every member may read at the database (`drawing_audit_logs_read`, `20260929_mention_engine.sql:156-157`; `assets_member_all`, `20260605_rls_policies_new_tables.sql:26-27`). `route.ts:6-10` claims governance parity (key, agreement, cap, meter — the verifier's reading), and the ACL now rides the same `readableControlledDocIds` seam the ask route uses; `check_permissions` says "RLS is NOT the gate" (`:299`).
+
+**Remaining / owner.** Criterion 2's fail-closed limb only, which is [`KACL-12`](#kacl-12)'s fix in `lib/knowledgeAccess.ts` — owner I-12 (DOCUMENT ACL BOUNDARY; its files include the seam's read predicate). When KACL-12 lands with its test (the `it.todo` in `intelRoundGRecords.test.ts`), this closes by pointer. `IEDGE-2` criterion 2 and `ORCH-3` rest on the same limb (note added on IEDGE-2).
 
 ---
 
@@ -372,5 +382,39 @@ lib/knowledgeAccess.ts:77 — `return visibility !== "hidden";` versus lib/permi
 - [ ] chainReadable's fallback matches canDiscover: `return visibility !== "hidden" && visibility !== "private";`
 - [ ] A test covers visibility='private' + acl NULL for both readableControlledDocIds and containerReadable
 - [ ] Whether any writer can produce visibility='private' with acl NULL is settled (grep lib/dataRestore.ts and the import paths); if none can, the divergence is still closed as defence in depth
+
+---
+
+<a id="kacl-12"></a>
+
+## KACL-12 · The ACL seam fails OPEN when it cannot read the containers: a failed (or row-capped) libraries / collections read drops the folder and library ACLs, and a folder-denied document reads as open to every AI surface and to share serving
+
+- **Severity:** HIGH
+- **Status:** OPEN
+- **Verification:** CONFIRMED
+- **Locations:** `lib/knowledgeAccess.ts:96-137`, `lib/knowledgeAccess.ts:247-276`, `lib/knowledgeAccess.ts:91`, `lib/orchestrator/tools.ts:84-90`, `app/api/knowledge/ask/route.ts:177`, `lib/shareAuthorization.ts:23-40`
+- **Opened by:** intelligence Round G, package I-01 phase A (2026-09-30), while re-verifying `KACL-2`'s fail-closed criterion against HEAD `1b71ca1`. Author-graded: reproduced by executing the code against an in-memory stand-in (below), no independent challenge yet.
+- **Owner:** I-12 (DOCUMENT ACL BOUNDARY — its files include `lib/knowledgeAccess.ts`'s read predicate). One file; every caller inherits the fix.
+
+**Mechanism.** `readableControlledDocIds` (`lib/knowledgeAccess.ts:247-276`) evaluates each document's chain from `loadDcLandscape` (`:96-137`), which reads `libraries`, `collections` and `teams` in one `Promise.all` (`:105-109`) and never looks at the three `error`s — `for (const l of libsRes.data ?? [])` (`:111`), `for (const c of foldersRes.data ?? [])` (`:125`). A failed read yields an EMPTY map, not an error. The chain is then `[lib?.acl ?? null, ...(fc?.chain.slice(1) ?? []), doc.acl]` (`:269-270`): a folder absent from the map makes `folderChain` return `null`, a library absent leaves `lib` undefined, the missing ACLs vanish, and `chainReadable`'s no-ACL fallback answers `visibility !== "hidden"` (`:91`) — readable. Only the seam's own `documents` read fails closed (no rows → nothing readable), and `containerReadable` fails the other way (a missing container is unreadable, `:201`, `:205`), so the sources picker and the flows browser are safe; documents are not. The same shape applies to row caps: neither container read pages, so where PostgREST's `max-rows` is below an org's folder count, folders past the cap are absent and their documents lose their folder ACLs (this limb SUSPECTED — the cap is a deployment setting the repository does not pin, the caveat `KACL-4` carries).
+
+**Failure scenario.** Document Control restricts the "Legal Hold / Incident" folder with a deny-read on role Viewer. During a statement timeout on the `collections` read, a Viewer asks the Assistant about the incident: `find_documents` returns INC-0042 with its open URL and `search_documents` returns "the flare knockout drum overfilled during the trip". The tools' own fail-closed catch (`lib/orchestrator/tools.ts:89`) never fires — the seam did not throw, it returned a wider set. In the same window `/api/knowledge/ask` builds its exclusion set from the same function (`route.ts:177`), and a share link minted by someone that folder denies re-checks its creator through it (`lib/shareAuthorization.ts:33`) and serves.
+
+**Evidence.**
+
+```
+lib/knowledgeAccess.ts:105-111 — `const [libsRes, foldersRes, teamsRes] = await Promise.all([ supabaseAdmin.from("libraries").select(…).eq("org_id", orgId), supabaseAdmin.from("collections").select("*").eq("org_id", orgId), … ]); … for (const l of libsRes.data ?? []) {` — no `.error` check anywhere in loadDcLandscape. Reproduced 2026-09-30 with the stand-in from lib/__tests__/intelRoundGRecords.test.ts: a Viewer under a folder deny gets [STD-0007] from find_documents; with `collections` erroring the same call returns [INC-0042, STD-0007] and search_documents returns the INC-0042 passage; a library-level deny with `libraries` erroring behaves the same.
+```
+
+**Chain reaction.** Every caller of `readableControlledDocIds`: the orchestrator's tools and answer chips (`lib/orchestrator/tools.ts`, `app/api/orchestrator/route.ts:218`), `/api/knowledge/ask` (`:177`), `/api/knowledge/drawing` (`:76`), `/api/knowledge/locate` (`:72`, `:135`), `/api/flows/browse` (`:161`), `/api/share/list` (`:56`) and share serving (`shareStillAuthorized`, `lib/shareServe.ts:157`). It undercuts the fail-closed criterion `IEDGE-2` and `ORCH-3` were closed on and the one `KACL-2` still carries. It is not `KACL-4` (the ask route's own mirror query) — both need fixing.
+
+**Remediation (illustrative).** `loadDcLandscape` throws when any of its reads errors (the callers already catch and fail closed: `tools.ts:89`, `unreadableMirrors`, `shareStillAuthorized`, the ask route's inner try) and pages both container reads with a stable `.order("id")` and `.range()` until exhausted; a document whose `collection_id` / `library_id` is missing from the loaded landscape is unreadable to a non-controller rather than evaluated without its container.
+
+**Done when.**
+
+- [ ] A libraries or collections read error inside the seam makes every controlled document unreadable for that call (or throws to a caller that fails closed) — a chain is never evaluated with a container missing
+- [ ] A document whose folder or library is absent from the loaded landscape is unreadable to a non-controller
+- [ ] The container reads page until exhausted, so an org with more folders than the row cap keeps every folder ACL
+- [ ] A test drives a folder-denied document through `readableControlledDocIds` with the container read failing and asserts it is not readable (the `it.todo` in `lib/__tests__/intelRoundGRecords.test.ts`)
 
 ---

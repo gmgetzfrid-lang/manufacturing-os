@@ -120,6 +120,8 @@ lib/orchestrator/tools.ts:133-135 — `const { data, error } = await supabaseAdm
 - [x] Failure to compute the readable set drops all source-linked results rather than passing them through
 - [x] A test drives the loop as a denied Viewer and asserts no passage from the denied document reaches the tool result
 
+*Re-verified 2026-09-30 (intelligence Round G, I-01 phase A, while recording `KACL-2`): the tool-layer fail-closed this closure rests on holds when `readableControlledDocIds` throws or cannot read the documents' own rows, but not when `loadDcLandscape` cannot read `libraries` / `collections` — that error is swallowed inside the seam, the chain is evaluated without the missing container ACL, and a folder-denied passage comes back (reproduced). Opened as [`KACL-12`](./05-knowledge-acl.md#kacl-12) (owner I-12); criterion 2 here rests on the same limb. The status is left as the owning area recorded it (`EGRESS-3`); the fix lands once, in the seam.*
+
 ---
 
 <a id="iedge-3"></a>

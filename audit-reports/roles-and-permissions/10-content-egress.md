@@ -124,6 +124,8 @@ org. **Trace that before assuming it is contained.**
 4. `/api/share/file` re-checks the ACL server-side against the creator's current
    authority before serving bytes.
 
+*Cross-area note (2026-09-30, intelligence Round G): intelligence `DACL-4` halves 1 / 2a (the INSERT read predicate, the sharer's live ACL at fetch) are verified closed on this record and on document-control P1 SHARE; DACL-4 stays OPEN only on two serve-time refusals P1 did not build (`documents.legal_hold`, a hard acknowledgment gate).*
+
 ---
 
 ## EGRESS-2 · `/d/[number]` is an unauthenticated, cross-tenant document enumeration oracle
@@ -187,6 +189,8 @@ afterwards preserves that.
 2. An authenticated request resolves only documents in the caller's own org that
    the caller can discover.
 3. A logged-in user scanning a printed QR still lands on the right document.
+
+*Cross-area note (2026-09-30, intelligence Round G): intelligence `DACL-3` criteria 1–2 are verified closed on this record; its `/api/verify` criterion (both ids required, private / hidden refused) is public-surfaces PS-VERIFY's, and DACL-3 stays OPEN on it.*
 
 ---
 
@@ -269,6 +273,8 @@ inventing a second answer.
 3. `log_audit_completion` is gated on controller authority, and
    `drawing_audit_logs` has a matching write policy.
 4. Notifications the AI sends are attributed to the real caller.
+
+*Cross-area note (2026-09-30, intelligence Round G): re-verified for intelligence `KACL-2` — criteria 1, 3 and 4 hold (a folder-level deny now proven through the real seam, `lib/__tests__/intelRoundGRecords.test.ts`); the fail-closed limb does not hold when the seam's own `libraries` / `collections` read errors (`lib/knowledgeAccess.ts` `loadDcLandscape` swallows it). Opened as intelligence `KACL-12` (owner I-12); KACL-2 stays OPEN on it.*
 
 ---
 

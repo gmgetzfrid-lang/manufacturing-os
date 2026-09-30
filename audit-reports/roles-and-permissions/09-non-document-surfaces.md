@@ -148,6 +148,8 @@ round-trip.
    refused.
 4. Every deletion writes an audit row.
 
+*Cross-area note (2026-09-30, intelligence Round G): intelligence `DACL-2` re-verified against this route — controller gate, safe key, hold refusal and the custody row hold; its "inside retention" limb is not in the route (nothing reads `retention_until`), so DACL-2 stays OPEN on that limb alone.*
+
 ---
 
 ## SURF-3 · Legal holds and retention have zero server-side enforcement
