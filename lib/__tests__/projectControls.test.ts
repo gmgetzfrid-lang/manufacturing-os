@@ -4,7 +4,10 @@ import {
   type ParsedQuote,
 } from "@/lib/bidTab";
 import { buildCostSeries, computeForecast, plannedManpowerSeries } from "@/lib/costSeries";
-import { computeProjectHealth, buildCoachItems, type ProjectStateSnapshot } from "@/lib/projectHealth";
+import {
+  computeProjectHealth, buildCoachItems, CLOSEOUT_GATE_POLICY, SNAPSHOT_READS, PROJECT_FIELDS_NOT_MIGRATED,
+  type ProjectStateSnapshot,
+} from "@/lib/projectHealth";
 import {
   validateSegmentedItems, applyAutoEvidence, rubricCoverageScore,
   validateRubricFindings, QUALITY_MANUAL_RUBRIC,
@@ -180,6 +183,146 @@ describe("projectHealth", () => {
     const idx = (id: string) => items.findIndex((i) => i.id === id);
     expect(idx("confirm-docs")).toBeGreaterThanOrEqual(0);
     expect(idx("confirm-docs")).toBeLessThan(idx("pin-ev"));
+  });
+
+  // projects-tab UX-3 / UX-4 / UX-5 / UX-6 · projects-and-cost QUAL-9 —
+  // the coach's copy describes the product that exists. Every rule fires
+  // here (the "everything missing" snapshot), so every string is checked.
+  const everyItem = () => buildCoachItems(snapshot({
+    budget: 0, spent: 0, cpi: null, accountCount: 0, accountsPinned: 0, partyCount: 0, quoteCount: 2, unawardedRfqGroups: 1,
+    pendingCostDocs: 3, milestoneCount: 0, spi: null, hasBaseline: false, hasSow: false, hasPurpose: false, hasGoals: false,
+    checklistCount: 0, checklistNeedsEvidence: 2, turnoverRequired: 4, turnoverAccepted: 1, intakeLinkCount: 0, membersCount: 1,
+  }), "p1").concat(buildCoachItems(snapshot({ budget: 50_000, partyCount: 2, intakeLinkCount: 0, milestoneCount: 3, hasBaseline: false, accountsPinned: 0 }), "p1"));
+
+  it("coach copy claims no unbuilt mechanism (UX-3 / UX-4 / UX-5 / QUAL-9)", () => {
+    const text = everyItem().map((i) => `${i.title} ${i.payoff}`).join("\n");
+    expect(text).not.toMatch(/auto-green/i);                 // nothing runs on its own (UX-3)
+    expect(text).not.toMatch(/process themselves/i);        // a human clicks Read (UX-4)
+    expect(text).not.toMatch(/gated on|is gated|blocked until/i); // gates are checks with an override (UX-5 / QUAL-9)
+    expect(text).not.toMatch(/scored on it|are scored/i);   // party_id is never set (MON-7) — no scoring claim
+    expect(text).not.toMatch(/waiting for your confirmation|confirmed quotes/i); // no confirm action exists (UX-6)
+  });
+
+  it("every coach action names a verb that exists and links to a place it can be done (UX-6)", () => {
+    const tabs = new Set(["costs", "schedule", "quality", "intake", "members", "documents", "activity"]);
+    for (const it of everyItem()) {
+      const m = /^\/projects\/p1(?:\?tab=([a-z]+))?$/.exec(it.href);
+      expect(m, it.href).not.toBeNull();
+      if (m![1]) expect(tabs.has(m![1]), it.href).toBe(true);
+    }
+    const byId = new Map(everyItem().map((i) => [i.id, i]));
+    // The verbs on the quotes panel are Award and Post as actual — not "confirm".
+    expect(byId.get("confirm-docs")!.payoff).toMatch(/award the winner/);
+    expect(byId.get("confirm-docs")!.payoff).toMatch(/post them as actual/);
+    // The evidence sweep is a button on the Quality tab, named exactly.
+    expect(byId.get("evidence")!.payoff).toContain("Check evidence we already hold");
+    expect(byId.get("evidence")!.href).toBe("/projects/p1?tab=quality");
+    // SOW / purpose have an editor (EditProjectModal), opened by the header
+    // button labelled "Edit" (page.tsx) — which renders only for the owner
+    // and Admin / DocCtrl, so the item names the control AND who has it.
+    for (const id of ["sow", "purpose"]) {
+      expect(byId.get(id)!.title).toContain("(Edit button in the header)");
+      expect(byId.get(id)!.title).not.toContain("Edit project");
+      expect(byId.get(id)!.payoff).toContain("shows for the project owner, admins and document control");
+      expect(byId.get(id)!.payoff).toContain("ask the owner");
+      expect(byId.get(id)!.href).toBe("/projects/p1");
+    }
+    // Intake copy says where each kind lands (app/api/intake/upload/route.ts:
+    // a quote-purpose link inserts a draft cost_documents row and links
+    // ?tab=costs); the AI read is a click on the Costs tab.
+    const links = byId.get("links")!.payoff;
+    expect(links).toMatch(/Documents land on the Intake tab/);
+    expect(links).toMatch(/quotes land on the Costs tab as drafts/);
+    expect(links).not.toMatch(/quotes land on the Intake tab/i);
+    expect(links).toMatch(/run the AI read there/i);
+  });
+
+  it("gate strictness has one source of truth, and the coach quotes it (QUAL-9 / UX-5)", () => {
+    expect(CLOSEOUT_GATE_POLICY.blocking).toBe(false);
+    expect(CLOSEOUT_GATE_POLICY.summary).toMatch(/not blocks/);
+    expect(CLOSEOUT_GATE_POLICY.summary).toMatch(/you can complete anyway/);
+    const turnover = everyItem().find((i) => i.id === "turnover")!;
+    expect(turnover.payoff).toBe(CLOSEOUT_GATE_POLICY.summary);
+    expect(CLOSEOUT_GATE_POLICY.overrideNote).toBe("You can complete anyway — the open items stay on the record and in the report.");
+  });
+
+  it("no copy says open items are 'recorded on the closeout' while nothing records a gate snapshot (PC-2 / SAF-14)", async () => {
+    // The writer would be transitionProjectStatus's completion audit row
+    // carrying the gate state under one of the keys the report reads
+    // (lib/projectReport parseGateSnapshot). While it carries only
+    // { reason }, the claim is an unbuilt mechanism; J8 switches the
+    // wording on when it lands the writer.
+    const fs = await import("node:fs");
+    const src = fs.readFileSync(new URL("../projects.ts", import.meta.url), "utf8");
+    const start = src.indexOf("export async function transitionProjectStatus");
+    const body = src.slice(start, src.indexOf("\nexport ", start + 10));
+    const writesSnapshot = /\b(gates|gateSnapshot|closeoutGates|closeout_gates)\s*[:,}]/.test(body);
+    const copy = [CLOSEOUT_GATE_POLICY.summary, CLOSEOUT_GATE_POLICY.overrideNote, ...everyItem().map((i) => i.payoff)].join("\n");
+    if (!writesSnapshot) expect(copy).not.toMatch(/recorded on the closeout/i);
+  });
+
+  it("a read the snapshot could not make is left out of the score, not scored as its zero (brief: 'the coach says so')", () => {
+    const R = SNAPSHOT_READS;
+    const quality = (failures: string[]) => computeProjectHealth(snapshot({
+      checklistCount: 2, checklistOpenItems: 0, checklistNeedsEvidence: 0, turnoverRequired: 0, punchOpen: 0,
+      readFailures: failures,
+    })).parts.find((p) => p.label === "Quality")!;
+    expect(quality([]).score).toBe(100);
+    expect(quality([]).detail).toBe("Checklists clear");
+    for (const r of [R.checklists, R.checklistItems, R.turnover, R.punch]) {
+      expect(quality([r])).toEqual({ label: "Quality", score: null, detail: `Could not read ${r}` });
+    }
+    const part = (label: string, failures: string[], over: Partial<ProjectStateSnapshot> = {}) =>
+      computeProjectHealth(snapshot({ ...over, readFailures: failures })).parts.find((p) => p.label === label)!;
+    expect(part("Schedule", [R.milestones]).score).toBeNull();
+    expect(part("Cost", [R.costEntries]).score).toBeNull();
+    expect(part("Cost", [R.milestones], { accountsPinned: 2 }).score).toBeNull();   // EV reads the milestones
+    expect(part("Cost", [R.milestones], { accountsPinned: 0, cpi: null }).score).not.toBeNull(); // unpinned: burn only
+    expect(part("Change control", [R.changeOrders]).score).toBeNull();
+    // The composite averages only what was read (Cost is out too: two
+    // accounts are pinned, so its earned value needs the milestones).
+    const all = computeProjectHealth(snapshot({ readFailures: [R.milestones, R.checklistItems] }));
+    expect(all.parts.filter((p) => p.score != null).map((p) => p.label)).toEqual(["Change control"]);
+    expect(all.score).toBe(100);
+  });
+
+  it("a suggestion raised by an absence is dropped when the read behind it failed or is not migrated", () => {
+    const R = SNAPSHOT_READS;
+    const empty = {
+      budget: 0, milestoneCount: 0, checklistCount: 0, hasSow: false, hasPurpose: false, hasGoals: false,
+      partyCount: 0, intakeLinkCount: 0, membersCount: 1, accountCount: 0, accountsPinned: 0, cpi: null,
+    };
+    const ids = (over: Partial<ProjectStateSnapshot>) => buildCoachItems(snapshot({ ...empty, ...over }), "p1").map((i) => i.id);
+    expect(ids({})).toEqual(expect.arrayContaining(["budget", "schedule", "sow", "purpose", "checklist", "members"]));
+    expect(ids({ readFailures: [R.costAccounts] })).not.toContain("budget");
+    expect(ids({ readFailures: [R.milestones] })).not.toContain("schedule");
+    expect(ids({ readFailures: [R.project] })).not.toContain("sow");
+    expect(ids({ readFailures: [R.project] })).not.toContain("purpose");
+    expect(ids({ readFailures: [R.checklists] })).not.toContain("checklist");
+    expect(ids({ readFailures: [R.members] })).not.toContain("members");
+    expect(ids({ budget: 10, readFailures: [R.parties] })).not.toContain("parties");
+    expect(ids({ partyCount: 2, readFailures: [R.intakeLinks] })).not.toContain("links");
+    // Not migrated: the editor's fields do not exist yet, so nothing sends anyone there.
+    const pre = ids({ notMigrated: [PROJECT_FIELDS_NOT_MIGRATED, R.checklists] });
+    expect(pre).not.toContain("sow");
+    expect(pre).not.toContain("purpose");
+    expect(pre).not.toContain("checklist");
+    expect(pre).toContain("budget"); // what WAS read still drives the coach
+  });
+
+  it("no advertised metric is hard-coded null: the schedule payoff promises SPI and the Schedule part shows it (UX-6 / PM-3)", () => {
+    const schedule = everyItem().find((i) => i.id === "schedule")!;
+    expect(schedule.payoff).toContain("SPI");
+    const part = computeProjectHealth(snapshot({ milestoneCount: 4, overdueMilestones: 0, spi: 0.8 })).parts.find((p) => p.label === "Schedule")!;
+    expect(part.detail).toContain("SPI 0.80");
+    expect(part.score).toBe(80);
+  });
+
+  it("the Cost part reads committed exposure alongside spend (COST-2 consumer)", () => {
+    const part = computeProjectHealth(snapshot({ cpi: null, budget: 100_000, spent: 40_000, committed: 60_000 })).parts.find((p) => p.label === "Cost")!;
+    expect(part.detail).toBe("40% of budget spent · 60% committed");
+    const noCommit = computeProjectHealth(snapshot({ cpi: null, budget: 100_000, spent: 40_000, committed: 0 })).parts.find((p) => p.label === "Cost")!;
+    expect(noCommit.detail).toBe("40% of budget spent");
   });
 });
 

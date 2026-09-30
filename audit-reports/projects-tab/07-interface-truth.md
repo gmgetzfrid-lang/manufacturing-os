@@ -16,7 +16,7 @@ the tool.
 ## UX-1 · Five of the wizard's six writes fail silently, and four fields are lost permanently
 
 - **Severity:** CRITICAL
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Verification:** CONFIRMED
 - **Blast radius:** data-loss
 - **Locations:**
@@ -61,6 +61,20 @@ so.
 - All four wizard-only fields are editable after creation.
 - A test asserts a failing sub-write surfaces rather than being swallowed.
 
+**Resolution (2026-09-23, projects Round G).** The five follow-up writes now run through the new `lib/projectWizardWrites.ts` (`runWizardFollowUpWrites`), which binds every error — the milestones insert loses `.then(() => undefined, () => undefined)`, the turnover seed's `{ ok: false }` counts as a failure, the extended-fields update reports a `PGRST204` / `42703` as "the database has not been migrated for …" instead of treating it as success — and returns the list of what did not save. `components/projects/ProjectWizard.tsx` keeps the project (createProject already committed) but no longer routes on a partial failure: it stays open with a `role="alert"` panel naming exactly what did not save and why, the typed rows stay in component state, **Retry unsaved** re-runs only the refused steps (`only: Set<WizardWriteStep>`), and **Open project anyway** is the explicit choice. Money is parsed by `parseMoneyInput` (strips `$ € £ ¥`, commas, spaces): `1,200,000` saves as 1200000; an unparseable amount is flagged at the field (`aria-invalid`, red border, a line naming the row) and blocks Create with a message pointing at step 4, instead of dropping the row at write time; the false comment at `:153` is gone. `components/projects/EditProjectModal.tsx` now reads and edits purpose, goals, success criteria and the Summary of Work (document search, same as the wizard); the write is checked, refuses to overwrite when the read failed, and audits before/after (`PROJECT_UPDATED`) — the coach's `sow` / `purpose` items point at it (see `UX-6`). Tests: `lib/__tests__/projectWizard.test.ts` — "a refused cost_accounts insert surfaces, named, with the rows untouched for a retry", "the milestones insert binds its error…", "a turnover seed that returns { ok: false } is a failure…", "accepts 1,200,000…", "the retry re-runs ONLY the refused steps with the retained rows". Reproduced: `ProjectWizard.tsx:149-201` at `8276cad` is quoted verbatim in the finding; the wizard-writes tests exercise the same failure shapes the finding describes.
+
+**Fix pass (2026-09-29, projects Round G review).** Three edges closed. (1) `EditProjectModal`: the Summary of Work attachment is set (`{ id, label: "Document" }`) the moment the fields become editable and only its label is filled in after the `documents` lookup, so a Save inside that lookup's latency no longer writes `sow_document_id = null` (and audits it as a deliberate removal). (2) `EditProjectModal`: when the identity fields saved but the purpose/goals/SOW write was refused, the modal keeps the saved patch (`savedIdentity`), **Save changes** retries only the refused second write (an identity field edited since is written again), the error says which half landed, and Cancel / X / backdrop become **Close** and go through `onSaved` so the page refreshes and the header shows the saved name. The modal also calls `invalidateProjectSnapshot` after its write (`PERF-3`). (3) `ProjectWizard`: in the partial-failure state the header X now asks (`appConfirm`) before discarding the retained rows and calls `onCreated()` on the way out, so the list shows the project that exists instead of inviting a duplicate. Component files are outside the vitest include; verified by reading.
+
+**Second fix pass (2026-09-30, projects Round G review).** The failure state hid every step body, so "what you typed is still here" was true only in component state: a refusal that is not transient (a CHECK or numeric-overflow rejection, an RLS denial for a non-owner creator) fails identically on **Retry unsaved**, and the only exits — **Open project anyway** or the X — then discarded rows the user had never been shown. The panel now lists, under each failed step, **What you typed** as read-only, selectable lines with a **Copy** button (`retainedRowLines(input, step, sowLabel)` in `lib/projectWizardWrites.ts`: "Piping subcontract — subcontract — 200,000 USD", "Mobilize — 2026-10-01", "Gulf Mechanical — contractor — piping", "Purpose: …" / "Goal: …" / "Job size: …" / "Summary of Work: <label>"), and the copy says to copy them and add them from the project's tabs if the same refusal comes back. Editing a refused row in place and retrying is not offered. Tests: `lib/__tests__/projectWizard.test.ts` "a data refusal fails the same way on Retry, so the typed rows are shown for every failed step" and "covers every step that carries typed input".
+
+**Done-when.**
+- A failed write is visible to the user with the data still recoverable — ✓. A transient refusal is recovered by **Retry unsaved** (rows retained in state). A persistent one fails the same way on retry; its typed rows are then shown read-only and copyable in the panel, and the user re-enters them from the project's tabs. They cannot be edited in place and retried.
+- `1,200,000` is accepted as a budget — ✓ (`parseMoneyInput`, `prepareBudgetRows`).
+- All four wizard-only fields are editable after creation — ✓ (`EditProjectModal`).
+- A test asserts a failing sub-write surfaces rather than being swallowed — ✓ (`projectWizard.test.ts`).
+
+**Scope / residual.** The banner lives in the wizard (over the projects list) rather than on the destination project page: `app/(protected)/projects/[id]/page.tsx` is J8's file, and the wizard already holds the rows the retry needs, so the failure is shown *before* routing rather than carried across a navigation. The wizard still writes purpose/goals/SOW with a direct checked `projects.update` (as before) rather than through `lib/projects.ts` (J8's); `EditProjectModal` audits its own write. `GAP-402`'s generic checked-write helper was not merged when this landed; `runWizardFollowUpWrites` is the wizard-shaped instance of it.
+
 ---
 
 ## UX-2 · Every brand-new project scores zero and is labelled Concern
@@ -99,7 +113,7 @@ parts renders as "Not enough data yet" rather than 0 · Concern.
 ## UX-3 · "Each one auto-greens the moment its document lands" — nothing runs automatically
 
 - **Severity:** HIGH
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Verification:** CONFIRMED
 - **Blast radius:** copy-truth
 - **Locations:**
@@ -131,12 +145,20 @@ unreviewed draft filename makes that problem worse, not better.
 - The copy and the behaviour agree.
 - If automated, the sweep runs after intake approval and turnover acceptance.
 
+**Resolution (2026-09-23, projects Round G).** Honest, not automated (the package's stated default — no sweep is scheduled here, and `SAF-1` is still open). `lib/projectHealth.ts` `evidence` payoff now reads: *"Nothing runs on its own — run "Check evidence we already hold" on the Quality tab; items with a matching document on file turn green with the citation attached."* — the button's exact label, the tab it is on, and what the sweep does. Test: `lib/__tests__/projectControls.test.ts` "coach copy claims no unbuilt mechanism" (no `auto-green` anywhere in coach output) and "every coach action names a verb that exists…" (the payoff names the button; the href is `?tab=quality`). Reproduced: `projectHealth.ts:225` at `8276cad` read `"Each one auto-greens the moment its document lands."`; `runAutoEvidence` has one caller, `QualityTab.tsx:324`, a button handler.
+
+**Done-when.**
+- The copy and the behaviour agree — ✓.
+- If automated, the sweep runs after intake approval and turnover acceptance — not done, by decision: nothing was automated in this package (`DEC-31`); the automated sweep is recorded as the new finding `UX-16` below for the intake (P1) and quality (P2) packages, to be built after `SAF-1`.
+
+**Scope / residual.** `UX-16` carries the "make it true" half.
+
 ---
 
 ## UX-4 · "Their documents and quotes land here and process themselves" — a human must click Read
 
 - **Severity:** HIGH
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Verification:** CONFIRMED
 - **Blast radius:** copy-truth
 - **Locations:**
@@ -161,12 +183,19 @@ prefer fixing the copy.)
 **Done when.**
 - No UI string claims quotes process themselves.
 
+**Resolution (2026-09-23, projects Round G; copy corrected 2026-09-30 after review).** `lib/projectHealth.ts` `links` payoff now says where each kind of upload lands and what the human does: *"Documents land on the Intake tab for review; quotes land on the Costs tab as drafts — run the AI read there to tabulate them."* The first wording sent quotes to the Intake tab. That was wrong: a quote-purpose link inserts a `cost_documents` row with status `draft`, which appears on the Costs tab's Quotes panel, and the intake route's own notification links `?tab=costs` (`app/api/intake/upload/route.ts:62-111`). Test: `projectControls.test.ts` "coach copy claims no unbuilt mechanism" (`process themselves` absent). The `links` assertions check that documents land on the Intake tab, that quotes land on the Costs tab as drafts and never on the Intake tab, and that the AI read happens there. Reproduced: `projectHealth.ts:243` at `8276cad` read `"Their documents and quotes land here and process themselves."`.
+
+**Done-when.**
+- No UI string claims quotes process themselves — ✓ for the coach. The second site the finding cites, `QuotesPanel.tsx:599-601`, no longer exists in that form: at `8276cad` the panel's empty state (`:120`) says submissions *"land here on their own"* — a claim about arrival (true: they land as drafts), not processing. `QuotesPanel.tsx` is P4's file and was not edited.
+
+**Scope / residual.** None.
+
 ---
 
 ## UX-5 · "Closeout is gated on acceptance; contractors are scored on it" — both halves are false
 
 - **Severity:** HIGH
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Verification:** CONFIRMED
 - **Blast radius:** copy-truth
 - **Locations:**
@@ -193,12 +222,20 @@ design.
 - The copy describes a check-with-override, not a gate.
 - The scoring claim is true, or removed until `MON-7` lands.
 
+**Resolution (2026-09-23, projects Round G; copy corrected 2026-09-30 after review).** Both halves corrected in `lib/projectHealth.ts`. Gate strictness now has one source of truth, `CLOSEOUT_GATE_POLICY` (`blocking: false`, `summary`, `overrideNote` — the dialog's exact line), and the coach's `turnover` payoff *is* `CLOSEOUT_GATE_POLICY.summary`: *"Closeout gates are checks with an override, not blocks — you can complete anyway; open items stay open on the record."* The first wording ("open items are recorded on the closeout") described a snapshot nothing writes yet: `transitionProjectStatus` records `details: { reason }` only (`lib/projects.ts`), and the report prints "No gate snapshot was recorded with this completion" for every completion today. That wording is J8's to switch on when PC-2 / `SAF-14` records the gate snapshot. The scoring claim is removed (no coach string says contractors are scored) until `MON-7` wires `party_id`. Tests: `projectControls.test.ts` "gate strictness has one source of truth, and the coach quotes it", "no copy says open items are 'recorded on the closeout' while nothing records a gate snapshot" (reads `transitionProjectStatus` and, while it writes no gate key the report can read, asserts the phrase is absent from every gate string and coach payoff), and the copy-truth test (`gated on` / `scored on it` absent). Reproduced: `projectHealth.ts:231` at `8276cad` read `"Closeout is gated on acceptance; contractors are scored on it."` against `page.tsx:649` *"You can complete anyway…"*.
+
+**Done-when.**
+- The copy describes a check-with-override, not a gate — ✓.
+- The scoring claim is true, or removed until `MON-7` lands — ✓ (removed).
+
+**Scope / residual.** Both of this finding's done-whens are met. The dialog's line in `app/(protected)/projects/[id]/page.tsx:649` is byte-identical to `CLOSEOUT_GATE_POLICY.overrideNote` but is not yet *read from* it — that one-line import is J8's and is the third done-when of projects-and-cost `QUAL-9`, which therefore stays OPEN (Partial) until J8 lands it; this finding does not close `QUAL-9` by pointer.
+
 ---
 
 ## UX-6 · The coach names an action that doesn't exist and advertises a metric that is hard-coded null
 
 - **Severity:** HIGH
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Verification:** CONFIRMED
 - **Blast radius:** copy-truth / dead ends
 - **Locations:**
@@ -234,6 +271,14 @@ for a step that already happened.
 **Done when.**
 - Every coach item names an action that exists and links to a place it can be done.
 - No advertised metric is hard-coded null.
+
+**Resolution (2026-09-23, projects Round G).** Every coach item now names an action that exists and links where it can be done. `confirm-docs`: *"N read document(s) waiting on you — Read quotes are already in the bid comparison — award the winner; read invoices post as spend when you post them as actual"* (the panel's verbs are **Award** and **Post as actual**; there is no confirm step). `sow` / `purpose` (corrected 2026-09-30 after review): *"Attach a Summary of Work (Edit button in the header)"* / *"Write the purpose & goals (Edit button in the header)"*, linking to the project page, where `EditProjectModal` now edits both (`UX-1`). The payoff adds *"The Edit button shows for the project owner, admins and document control — anyone else, ask the owner."* The header button is labelled **Edit** and renders only for `canManage` (owner, or `Admin` / `DocCtrl` via `hasAnyRole`, `page.tsx:69,135,333-338`). The first wording, "Edit project, in the header", named neither the real label nor who can see it. Both items are also left out when the database has not been migrated for those fields, or the `projects` read failed (see `PERF-3`), so the coach never sends anyone to an editor whose fields cannot be read. SPI is no longer hard-coded null: `lib/projectSnapshot.ts` computes it from `computeScheduleMetrics` (`MON-6`), so the `schedule` payoff's "(SPI)" and `computeProjectHealth`'s SPI branch are reachable in production; the test fixture's `spi: 1.0` now reflects what production produces. Tests: `projectControls.test.ts` "every coach action names a verb that exists and links to a place it can be done" (every href is `/projects/p1` or a real `?tab=`), "no advertised metric is hard-coded null…", and `projectSnapshot.test.ts` "a project whose only milestones are source='p6' has a real count, overdue and SPI". Reproduced: `projectHealth.ts:182-183` / `:208` / `:214` and `projectSnapshot.ts:120` at `8276cad` as quoted in the finding.
+
+**Done-when.**
+- Every coach item names an action that exists and links to a place it can be done — ✓. The `sow` / `purpose` items name the **Edit** button and say who has it. For a member without manage rights the action they can take is to ask the owner, and the item says so.
+- No advertised metric is hard-coded null — ✓ (`spi` computed; null only while nothing is due yet, which the coach does not advertise as a value).
+
+**Scope / residual.** The SPI glossary entry on the Costs tab (`CostsTab.tsx`, P3's file) was not touched; SPI is now a real metric so the entry is no longer for a metric that never exists. The `sow` link lands on the project page header rather than opening the modal directly — `page.tsx` (J8's) has no `?edit=` affordance. `buildCoachItems` takes no `canManage` flag, because `page.tsx` renders `<ProjectCoach>` without one. The wording is therefore true for every viewer rather than tailored to each. If J8 passes `canManage` later, a member-specific "ask the owner to …" title is a small change.
 
 ---
 
@@ -418,7 +463,7 @@ update the stale header comment.
 ## UX-12 · Creating a project costs eight clicks, five of which are pure tax
 
 - **Severity:** MEDIUM
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Verification:** CONFIRMED
 - **Blast radius:** ux
 - **Locations:**
@@ -439,6 +484,14 @@ step 0 onward. This is the single most fixable friction point in the area.
 **Done when.**
 - A project can be created in two clicks from the wizard's first step.
 - The optionality of later steps is visible without reading small grey text.
+
+**Resolution (2026-09-23, projects Round G).** Package default taken: Basics alone creates the project. `components/projects/ProjectWizard.tsx` shows a **Create project** button on every step from step 0 (primary on the first and last steps, secondary in between; enabled once name + description are typed) beside **Next**; `createNow()` records the current step as done-or-skipped and every unreached step as skipped, so the coach still resurfaces them. Optionality is visible: an **Optional** badge next to the step title from step 1 on, and the subtitle says *"Only this step is required — create the project now, or keep going."* on step 0 and *"Skip or fill in — everything here can also be added from the project page later."* after. The count: **New Project** → **Create project** = two clicks. Verified by reading (component; the vitest include is `lib/__tests__` only) — the create path is the same `finish()` the wizard tests cover via `runWizardFollowUpWrites`. Reproduced: `ProjectWizard.tsx:440-444` at `8276cad` — the only primary button was "Next" until step 5.
+
+**Done-when.**
+- A project can be created in two clicks from the wizard's first step — ✓.
+- The optionality of later steps is visible without reading small grey text — ✓ (badge + button, not only the 11px subtitle).
+
+**Scope / residual.** None.
 
 ---
 
@@ -573,22 +626,57 @@ shown on that tab), **EAC** (never rendered — the forecast is a sentence),
 
 ---
 
+## UX-16 · The evidence sweep never runs when evidence actually arrives
+
+- **Severity:** MEDIUM
+- **Status:** OPEN
+- **Verification:** CONFIRMED
+- **Blast radius:** copy-truth / workflow
+- **Locations:**
+  - `components/projects/QualityTab.tsx:324` — `runAutoEvidence`'s only caller, a button handler
+  - `lib/reviewControl.ts` — intake approval (`finalizeReviewedRevision`) — no sweep after a document is issued
+  - `lib/turnover.ts` `reviewTurnoverItem` — no sweep after an item is accepted
+- **Independently verified:** — (`author`: opened by projects Round G while resolving `UX-3`, per the sequencing note "automated sweeps … recorded as a new finding for P1/P2, per `DEC-31`"; not yet challenged)
+
+**Mechanism.** `UX-3` corrected the coach copy to say the sweep is manual. It
+is: nothing calls `runAutoEvidence` on intake approval or on turnover
+acceptance — the two moments new evidence actually arrives — so a reviewer who
+issues the hydrotest records still sees "N items need evidence" until someone
+opens the Quality tab and clicks.
+
+**Failure scenario.** Same as `UX-3`'s: the evidence lands the day before
+startup and the checklist stays red.
+
+**Remediation.** Run the sweep (scoped to the project) after an intake approval
+finalises a revision on a project document, and after a turnover item is
+accepted. **Only after `SAF-1` is closed** — automating a sweep that can green on
+an unreviewed draft filename makes that worse. Owned by the intake (P1) and
+quality (P2) packages, not the wizard/health package.
+
+**Done when.**
+- The sweep runs after intake approval and after turnover acceptance, scoped to the project.
+- `SAF-1` is `RESOLVED` first.
+- The `UX-3` coach copy is updated to describe the automated moments.
+
+---
+
 ## Report progress
 
 | ID | Severity | Status |
 |---|---|---|
-| UX-1 | CRITICAL | OPEN |
+| UX-1 | CRITICAL | RESOLVED |
 | UX-2 | HIGH | OPEN |
-| UX-3 | HIGH | OPEN |
-| UX-4 | HIGH | OPEN |
-| UX-5 | HIGH | OPEN |
-| UX-6 | HIGH | OPEN |
+| UX-3 | HIGH | RESOLVED |
+| UX-4 | HIGH | RESOLVED |
+| UX-5 | HIGH | RESOLVED |
+| UX-6 | HIGH | RESOLVED |
 | UX-7 | HIGH | OPEN |
 | UX-8 | HIGH | OPEN |
 | UX-9 | HIGH | OPEN |
 | UX-10 | HIGH | OPEN |
 | UX-11 | HIGH | OPEN |
-| UX-12 | HIGH | OPEN |
+| UX-12 | HIGH | RESOLVED |
 | UX-13 | HIGH | OPEN |
 | UX-14 | MEDIUM | OPEN |
 | UX-15 | MEDIUM | OPEN |
+| UX-16 | MEDIUM | OPEN |

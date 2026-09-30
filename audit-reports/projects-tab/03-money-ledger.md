@@ -182,12 +182,14 @@ definition.
 - "Remaining" (or its replacement) has a glossary entry.
 - The lessons-learned draft and the tile agree.
 
+**Partial (2026-09-23, projects Round G).** Report-label limb only (this package owns `lib/projectReport.ts`): the report's Money table no longer prints a bare "Remaining" — the row is labelled **"Budget less spent"** with *"— open commitments are not deducted"* beside the figure, so the paper cannot be misread as uncommitted balance. Test: `lib/__tests__/projectReport.test.ts` "the remaining figure is labelled as budget-less-spent with commitments not deducted (MON-4 report limb)". The headline tile (`CostsTab.tsx`), the `remaining` definition (`lib/costs.ts:330`), the glossary entry and the lessons-learned wording all close in P3 MONEY-LEDGER; the lessons-learned line still uses `rollup.remaining` and will follow whatever definition P3 lands.
+
 ---
 
 ## MON-5 · The printed report's cost performance index is unconditionally null, so paper and screen disagree
 
 - **Severity:** MEDIUM
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Verification:** CONFIRMED
 - **Blast radius:** correctness
 - **Locations:**
@@ -230,12 +232,23 @@ missing imported rows.
 - The forecast basis matches between the two.
 - A test asserts the report's rollup receives a non-empty index for a fixture with pinned accounts.
 
+**Resolution (2026-09-23, projects Round G).** `lib/projectReport.ts` `gatherReportData` now selects `id` on the milestone query, builds `milestonePctIndex` keyed by the real milestone id, and passes it to `computeCostRollup` — the `void pctIdx` line and the `new Map()` are gone. With `MON-6` landing in the same pass, the index carries imported rows too, so an account pinned to an imported milestone resolves. `gatherReportData` / `renderReportHtml` are exported for tests. Tests: `lib/__tests__/projectReport.test.ts` "a pinned account + a 50% milestone yields the same CPI the Costs tab computes" (report `rollup.cpi` ≡ `computeCostRollup(listAccounts, listEntries, milestonePctIndex(rows)).cpi`, the Costs tab's computation, = 1.25; the CPI row renders) and "the forecast is on the CPI basis and the lessons-learned draft carries the figure" (`At this performance…`; `(CPI 1.25)`). Reproduced against `8276cad` before editing: the new tests failed there (13 of 45 across `projectReport.test.ts` / `projectControls.test.ts`; `projectSnapshot.test.ts` could not even load — `lib/milestoneLiveness.ts` did not exist and the filter at `projectSnapshot.ts:49` was the manual-only one quoted above).
+
+**Fix pass (2026-09-30, projects Round G review).** The report's milestone query still had `.limit(500)`. With imported rows now counting, that rowset feeds the EV index, the complete/total counts and overdue, so a P6 import over 500 activities was truncated without notice. An account pinned to an activity past row 500 dropped out of EV, and the printed CPI differed from the Costs tab's. The snapshot, meanwhile, read 1,000 rows in no order. All three readers now see the same rows. The new `PROJECT_MILESTONE_READ_LIMIT` (1,000, in `lib/milestoneLiveness.ts`) is the bound. The report and the snapshot both read `order("planned_at").order("id").limit(PROJECT_MILESTONE_READ_LIMIT)`. That is the subset the Costs tab's unbounded `order("planned_at")` read receives under the API's default 1,000-row response cap. The report selects with `{ count: "exact" }` and carries `milestoneTotal`. When a schedule is larger, the Schedule section says "(first N of M by planned date — every figure in this section counts those)", and the CPI row and the lessons-learned COST/SCHEDULE lines say the earned value and overdue count cover the first N of M activities. Tests (`lib/__tests__/projectReport.test.ts`, whose mock now honours `order` / `limit` / `count` as PostgREST does): "600 activities, an account pinned to row 550: the report CPI equals the Costs-tab computation" (CPI 2.00 on both, "100/600 milestones complete"; fails on the `limit(500)` code), "a schedule larger than the bound says 'first N of M'…", and "the report's bound is the snapshot's bound" (source pin over both files). `projectSnapshot.test.ts` "reads milestones ordered by planned date and bounded like the report…".
+
+**Done-when.**
+- The printed report shows the same CPI as the Costs tab for the same project — ✓ for any schedule up to 1,000 activities: every surface reads every row, and a 600-row fixture pinned at row 550 is tested. Above 1,000, the three surfaces read the same first 1,000 by planned date (the Costs tab through the API's default cap), and the report says so ("first N of M") instead of presenting a subset as the whole. Earned value for an account pinned past row 1,000 is missing on every surface alike. Paging all readers is the "Query limits" section's work in `09-performance-scale.md`: `CostsTab.tsx` is P3's and `lib/milestones.ts` is PC-3's.
+- The forecast basis matches between the two — ✓ (both feed the same `cpi` into `computeForecast`, so both take the CPI basis when it exists).
+- A test asserts the report's rollup receives a non-empty index for a fixture with pinned accounts — ✓.
+
+**Scope / residual.** Closed by pointer from projects-and-cost `PM-12` and `COST-1` (report half). The Costs tab's own milestone read has no explicit bound (`CostsTab.tsx:66-67`, P3's). If the deployment raises the API's max-rows above 1,000, that tab reads more rows than the report, and the two agree again only for schedules up to 1,000 activities. Giving that read `.limit(PROJECT_MILESTONE_READ_LIMIT)` is a one-line change for P3.
+
 ---
 
 ## MON-6 · Imported schedules are invisible to health, the coach and the report — but visible to the Costs tab
 
 - **Severity:** HIGH
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Verification:** CONFIRMED
 - **Blast radius:** correctness
 - **Locations:**
@@ -281,6 +294,16 @@ trying to exclude, and delete the impossible `'app'` branch.
 - The coach stops nagging for a schedule that exists.
 - The Costs tab and the snapshot use the same rule.
 - A test pins an imported-only fixture.
+
+**Resolution (2026-09-23, projects Round G).** Package default taken: imported rows COUNT everywhere, exactly as on the Costs tab. New `lib/milestoneLiveness.ts` holds the one rule — `isLiveMilestone` (every stored row counts; the dead `"app"` branch and the impossible `== null` clause are gone), `liveMilestones`, `isImportedMilestone` (for view toggles only) and `isOverdueMilestone` (UTC-day, see `SCH-5`). `lib/projectSnapshot.ts` and `lib/projectReport.ts` use it; `components/projects/ScheduleTab.tsx` imports `isImportedMilestone` for its hide-imported toggle so the tab, the snapshot and the report read the same helper. The snapshot also computes `spi` from `computeScheduleMetrics` over the same rows (null until something is due, never a fabricated 1.00) and `hasBaseline` over all rows, so the baseline nag stops once `setBaseline` has run. The report prints the milestone table for an imported-only project and notes "N imported from the schedule file". Tests: `lib/__tests__/projectSnapshot.test.ts` "a project whose only milestones are source='p6' has a real count, overdue and SPI" (count 3, overdue 1, SPI 0.5, `hasBaseline` true; Schedule part scored; no `schedule` coach nag), "every stored source counts…"; `projectReport.test.ts` "an imported-only project prints the milestone table, never 'No schedule loaded'". Reproduced against `8276cad` before editing: the new tests failed there (13 of 45 across `projectReport.test.ts` / `projectControls.test.ts`; `projectSnapshot.test.ts` could not even load — `lib/milestoneLiveness.ts` did not exist and the filter at `projectSnapshot.ts:49` was the manual-only one quoted above).
+
+**Done-when.**
+- A fully-imported project reports a real milestone count, real overdue counts and a real baseline state — ✓.
+- The coach stops nagging for a schedule that exists — ✓.
+- The Costs tab and the snapshot use the same rule — ✓ (no source filter on either; the snapshot's EV index is id-keyed over every row, as `CostsTab.tsx` does).
+- A test pins an imported-only fixture — ✓.
+
+**Scope / residual.** `DEC-47` records the rule. Closed by pointer from projects-and-cost `PM-3`. `types/schema.ts` and the migration were evidence only and are untouched.
 
 ---
 
@@ -512,8 +535,8 @@ explicit override that captures a reason and writes an audit row. Decide what
 | MON-2 | CRITICAL | OPEN |
 | MON-3 | HIGH | OPEN |
 | MON-4 | HIGH | OPEN |
-| MON-5 | HIGH | OPEN |
-| MON-6 | HIGH | OPEN |
+| MON-5 | HIGH | RESOLVED |
+| MON-6 | HIGH | RESOLVED |
 | MON-7 | HIGH | OPEN |
 | MON-8 | HIGH | OPEN |
 | MON-9 | MEDIUM | OPEN |

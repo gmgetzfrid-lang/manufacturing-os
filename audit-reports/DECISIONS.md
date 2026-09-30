@@ -79,6 +79,7 @@ about the system.
 | [DEC-43](#dec-43) | Controllers are **unscoped by design**; a bypass-decided read of a restricted node is audited at the bytes egress | low | `DOCACL-3`, `DEC-2` |
 | [DEC-44](#dec-44) | Content egress rails: `download_audits` append-only, presigned windows ≤ 1 h, the service worker caches no API response | low | `DIST-9`, `DRLS-8`, `EGR-4`, `PKG-11`, `XEDGE-6` |
 | [DEC-45](#dec-45) | Bearer columns never leave the database in an export and never come back from a backup | low | `EGR-7`, `XEDGE-10`, `BKP-1`, `INTK-6` |
+| [DEC-47](#dec-47) | Imported schedule rows are **commitments everywhere** — one liveness predicate (`lib/milestoneLiveness.ts`) for health, coach, report and EV | low | `MON-6`, `PM-3`, `SCH-5` |
 
 ---
 
@@ -1843,3 +1844,52 @@ recipient, decided then.
 safe side for a credential.
 
 *Landed 2026-09-23 (document-control Round F, fix pass): "a restored transmittal has no portal token" is enforced against the insert rail — `trg_transmittals_guard` (20261027) mints a fresh token for every row inserted as `issued`, so `scrubRestoredRow` lands a formerly issued transmittal as `voided` (the register record survives, a note says why, and no link can ever be presented); a person issues a new transmittal to send again. `push_subscriptions` (per-device Web Push `endpoint` / `p256dh` / `auth`) is excluded from the export whole, and the coverage tripwire also treats `auth` / `p256dh` as bearer names, so the acceptance line holds for every exported table.*
+
+<a id="dec-47"></a>
+## DEC-47 · Imported schedule rows are commitments everywhere
+
+**Decision. A milestone row that came from a scheduling tool (`source` in
+`p6` / `msproject` / `csv` / `mpxj`) counts for every metric exactly as a
+typed row does — the health score, the coach, the printed report and the
+earned-value rollup. "Ghost" describes how the row is EDITED (read-only in
+the UI), never whether it counts. The rule is written once, in
+`lib/milestoneLiveness.ts`, and every consumer imports it.**
+
+> Made during projects Round G (2026-09-23) under the protocol's fail-safe
+> rule, closing projects-tab `MON-6` and projects-and-cost `PM-3`.
+
+**Rationale.** Two surfaces on one page disagreed: the Schedule and Costs
+tabs read every row (and told the user imported rows "still count toward the
+earned-value rollup"), while the health snapshot and the report filtered to
+`source == null || "manual" || "app"` — a NOT NULL column with a CHECK, so
+the filter collapsed to manual-only. A 400-activity P6 import scored "No
+schedule yet", was nagged to "Add a schedule" forever, and printed "No
+schedule loaded" for a job twelve activities late. The safe direction for a
+capital project is the one where the imported commitments are visible to the
+score the boss reads; a filter that hides them fails toward a confident,
+wrong page.
+
+**Implementation.** `isLiveMilestone` (every stored row), `liveMilestones`,
+`isImportedMilestone` (for view toggles only) and `isOverdueMilestone`
+(UTC-day, the storage convention) in `lib/milestoneLiveness.ts`; consumed by
+`lib/projectSnapshot.ts`, `lib/projectReport.ts` and
+`components/projects/ScheduleTab.tsx`. `spi` is computed from
+`computeScheduleMetrics` over the same rows and is `null` while nothing is
+due (never a fabricated 1.00).
+
+**Do not** reintroduce a source filter in a consumer. A surface that wants to
+HIDE imported rows from a list uses `isImportedMilestone` on the view and
+keeps its metrics over the full set.
+
+**Acceptance.** A project whose only milestones are imported reports a real
+milestone count, overdue count, baseline state and SPI; the report prints its
+milestone table; the coach does not ask for a schedule that exists
+(`lib/__tests__/projectSnapshot.test.ts`, `lib/__tests__/projectReport.test.ts`).
+
+**Reversal.** A stated facility requirement that imported rows are reference
+only — then the flag is a per-import choice stored on the row, read by the
+same predicate, and the Schedule tab's copy changes with it.
+
+**Risk:** low.
+
+*Landed 2026-09-23 (projects Round G; review fix 2026-09-30): counting every row only helps if every consumer reads the same rows. `lib/milestoneLiveness.ts` also exports `PROJECT_MILESTONE_READ_LIMIT` (1,000). The health snapshot and the printed report both read `order("planned_at").order("id").limit(PROJECT_MILESTONE_READ_LIMIT)`, which is the subset the Costs tab's unbounded `order("planned_at")` read gets under the API's default row cap. So EV, CPI and overdue agree across surfaces, and the report discloses "first N of M" above the bound (projects-tab `MON-5`). A new project-level milestone reader imports the same bound rather than choosing its own.*

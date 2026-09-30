@@ -107,7 +107,7 @@ lib/projects.ts:259-318 (transitionProjectStatus) writes status/completed_at/can
 ## PM-3 · Imported (P6 / MS Project / CSV) schedules are invisible to the health score, the coach and the printed report — which prints 'No schedule loaded' for a project the Schedule tab shows as fully scheduled
 
 - **Severity:** HIGH
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Verification:** CONFIRMED
 - **Locations:** `lib/projectSnapshot.ts:49`, `lib/projectSnapshot.ts:114-121`, `lib/projectReport.ts:54`, `lib/projectReport.ts:146-152`, `components/projects/ScheduleTab.tsx:94,122-125`, `supabase/migrations/20260614_phase7_milestones.sql:57-61`, `components/projects/ScheduleImportModal.tsx:156`
 - **Independently verified:** ✓ **SURVIVES** — second independent adversarial pass. Survives. The two consumers demonstrably disagree in-code, so this is an inconsistency rather than a deliberate policy: a fully imported P6 schedule shows on the Schedule tab with its overdue count while health scores it as absent, the coach permanently nags "Add a schedule", and the printed report asserts "No schedule loaded."
@@ -140,6 +140,16 @@ lib/projectSnapshot.ts:49 and lib/projectReport.ts:54 are byte-identical filters
 - [ ] the dead `m.source === "app"` branch and the impossible `== null` clause are removed, and the milestone-liveness predicate lives in ONE shared helper used by projectSnapshot, projectReport and the Schedule tab
 - [ ] spi is computed from the existing earned-value code in lib/milestones.ts and fed into the snapshot, so the SPI branch of computeProjectHealth and the coach's stated payoff become real — or the coach's payoff text stops promising SPI
 - [ ] a test builds a project whose only milestones have source='p6' and asserts milestoneCount > 0, overdueMilestones is correct, and the rendered report contains the milestone table
+
+**Resolution (2026-09-23, projects Round G).** Closed with projects-tab `MON-6` (same package, same pass) — that record carries the file-level detail. Package default taken: imported/ghost rows are commitments everywhere; SPI is computed rather than the payoff removed. New `lib/milestoneLiveness.ts` is the ONE predicate (`isLiveMilestone` / `liveMilestones` / `isImportedMilestone` / `isOverdueMilestone`); `lib/projectSnapshot.ts`, `lib/projectReport.ts` and — by one import — `components/projects/ScheduleTab.tsx` use it. The snapshot maps its rows into `computeScheduleMetrics` (`lib/milestones.ts`, imported only, per `DEC-31`) and reports `spi` (null while planned value is 0), so `computeProjectHealth`'s SPI branch and the coach's "(SPI)" payoff are real. The report prints the milestone table for an imported-only project and never says "No schedule loaded" for it. `s.committed` is populated (`rollup.committed`) and the Cost part's detail reads it ("40% of budget spent · 60% committed") — the `COST-2` consumer; once PC-7's exposure figure lands it is a one-line read. Tests: `lib/__tests__/projectSnapshot.test.ts` ("a project whose only milestones are source='p6' has a real count, overdue and SPI"; "SPI stays null … while nothing is due yet"; "every stored source counts…"), `lib/__tests__/projectReport.test.ts` ("an imported-only project prints the milestone table, never 'No schedule loaded'"), `projectControls.test.ts` ("the Cost part reads committed exposure…"). Reproduced against `8276cad` before editing: the new tests failed there (13 of 45 across `projectReport.test.ts` / `projectControls.test.ts`; `projectSnapshot.test.ts` could not even load — `lib/milestoneLiveness.ts` did not exist and the filter at `projectSnapshot.ts:49` was the manual-only one quoted above).
+
+**Done-when.**
+- The snapshot and report include ghost rows; the report never says "No schedule loaded" for a project with imported milestones — ✓.
+- The dead `"app"` branch and the impossible `== null` clause are removed, and the predicate lives in ONE shared helper used by projectSnapshot, projectReport and the Schedule tab — ✓ (`lib/milestoneLiveness.ts`).
+- `spi` is computed from `lib/milestones.ts` and fed into the snapshot so the SPI branch and the coach's payoff become real — ✓.
+- A test builds a project whose only milestones have `source='p6'` and asserts `milestoneCount > 0`, `overdueMilestones` correct, and the rendered report contains the milestone table — ✓ (the count/overdue/SPI assertions in `projectSnapshot.test.ts`; the rendered table in `projectReport.test.ts`).
+
+**Scope / residual.** `DEC-47`. `lib/milestones.ts` untouched (PC-3/J6).
 
 ---
 
@@ -499,7 +509,7 @@ types/schema.ts:944: `export type ProjectMemberRole = "owner" | "collaborator" |
 ## PM-12 · The printed project report can never show CPI, and its milestone percent index is keyed by array position instead of milestone id
 
 - **Severity:** MEDIUM
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Verification:** CONFIRMED
 - **Locations:** `lib/projectReport.ts:43-44`, `lib/projectReport.ts:54-59`, `lib/projectReport.ts:139-140`, `lib/projectReport.ts:192-195`, `lib/costs.ts:303-333`
 - **Independently verified:** ✓ **SURVIVES** — second independent adversarial pass. Confirmed, and the contrast is on file: components/projects/CostsTab.tsx:98 calls `computeCostRollup(accounts, entries, pctIndex)` with a real id-keyed map, and lib/projectSnapshot.ts:55 does the same — so the Costs tab and snapshot can show a CPI the printed report structurally cannot. Note the milestone query at projectReport.ts:47 doesn't even select `id`, so the index could not be keyed correctly as written.
@@ -537,6 +547,16 @@ lib/projectReport.ts:55-59 quoted verbatim above. lib/projectReport.ts:43: `supa
 - [ ] a test asserts that for a project with a pinned cost account and a 50%-complete milestone, gatherReportData().rollup.cpi is non-null and equals the Costs tab value
 - [ ] the forecast sentence and draftLessonsLearned are re-checked now that cpi is populated
 
+**Resolution (2026-09-23, projects Round G).** Closed with projects-tab `MON-5` (same package, same pass). `lib/projectReport.ts`: the milestone query selects `id`; a real id-keyed `milestonePctIndex` feeds `computeCostRollup`; `void pctIdx` and its comment are gone; the forecast now takes the CPI basis when CPI exists and `draftLessonsLearned` emits the `(CPI x.xx)` clause. Also in this pass: the closeout section renders the gate snapshot from the newest `PROJECT_COMPLETED` audit row's `details` when present (`parseGateSnapshot` reads `gates` / `gateSnapshot` / `closeoutGates` tolerantly — array of `{ text, ok }` or keyed booleans / objects) and says plainly when no snapshot was recorded, rather than passing today's rows off as closeout day's (PT `SAF-14` report half; PC-2 writes the row). Tests: `lib/__tests__/projectReport.test.ts` — "a pinned account + a 50% milestone yields the same CPI the Costs tab computes" (`rollup.cpi` = 1.25 = the Costs tab computation), "the forecast is on the CPI basis and the lessons-learned draft carries the figure", "renders the gate state recorded on the completion audit row, as recorded", "a completion without a snapshot says so…", "parseGateSnapshot reads the recorded shapes tolerantly". Reproduced against `8276cad` before editing: the new tests failed there (13 of 45 across `projectReport.test.ts` / `projectControls.test.ts`; `projectSnapshot.test.ts` could not even load — `lib/milestoneLiveness.ts` did not exist and the filter at `projectSnapshot.ts:49` was the manual-only one quoted above).
+
+**Done-when.**
+- The report's milestone query selects `id` and passes a real id-keyed index, so `rollup.cpi` matches the Costs tab and the health score — ✓.
+- The `void pctIdx` line and its comment are removed — ✓.
+- A test asserts that for a pinned account + 50%-complete milestone `gatherReportData().rollup.cpi` is non-null and equals the Costs tab value — ✓.
+- The forecast sentence and `draftLessonsLearned` are re-checked now that cpi is populated — ✓ (both tested).
+
+**Scope / residual.** The gate-snapshot shape is read tolerantly because PC-2 (J8) had not merged when this landed; if J8 stores it under another key, `parseGateSnapshot` is the one place to add it. Closes `COST-1`'s report half by pointer. *Fix pass (2026-09-30):* the first done-when ("`rollup.cpi` matches the Costs tab and the health score") had one hole. The report still read `limit(500)` while the snapshot read 1,000 unordered, so for an imported schedule over 500 activities the three surfaces used different rows. All three now read the same first `PROJECT_MILESTONE_READ_LIMIT` (1,000) rows by planned date, and the report discloses "first N of M" beyond that. Detail and tests are in projects-tab `MON-5`.
+
 ---
 
 <a id="pm-13"></a>
@@ -544,7 +564,7 @@ lib/projectReport.ts:55-59 quoted verbatim above. lib/projectReport.ts:43: `supa
 ## PM-13 · The project wizard reports success while silently discarding budget lines, milestones and contractors the user typed
 
 - **Severity:** MEDIUM
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Verification:** CONFIRMED
 - **Locations:** `components/projects/ProjectWizard.tsx:154-196`, `components/projects/ProjectWizard.tsx:141-150`, `components/projects/ProjectWizard.tsx:198-206`
 - **Independently verified:** ✓ **SURVIVES** — second independent adversarial pass. Confirmed exactly as claimed. Worth adding that the extended-fields update at :150-152 does the same for purpose/goals/success_criteria/setup_state (console.warn only) — so a wizard run can succeed visually while everything after the bare projects row is gone. cost_accounts writes are reachable for the creator (20261013:307-312 adds `cost_accounts_owner_write ... USING (user_owns_project(project_id))`), so this is a failure-path defect rather than a guaranteed one.
@@ -579,6 +599,16 @@ ProjectWizard.tsx:157-163 (`if (accErr) console.warn(...)`), :167-172 (`.then(()
 - [ ] the milestones insert stops using `.then(() => undefined, () => undefined)` and binds its error like the others
 - [ ] the user's typed rows survive a partial failure — either the whole creation is transactional, or the unsaved rows are retained so they can retry without re-typing
 - [ ] a test simulates a cost_accounts insert error and asserts the wizard surfaces it
+
+**Resolution (2026-09-23, projects Round G).** Closed with projects-tab `UX-1` (same package, same pass) — that record carries the detail. Package default taken: partial failure keeps the project and retains the typed rows in component state for a retry; not a full transaction. New `lib/projectWizardWrites.ts` (`runWizardFollowUpWrites`) binds every follow-up write's error — the milestones insert loses `.then(() => undefined, () => undefined)`; the extended-fields update reports `PGRST204` / `42703` as "the database has not been migrated…" instead of treating it as success; the turnover seed's `{ ok: false }` counts — and returns the failures. `components/projects/ProjectWizard.tsx` stays open on a partial failure with a `role="alert"` panel naming exactly what did not save and why, **Retry unsaved** re-runs only the refused steps with the retained rows, **Open project anyway** is explicit. The `company_id` write is unchanged (pre-migration retry without it preserved). Test: `lib/__tests__/projectWizard.test.ts` — "a refused cost_accounts insert surfaces, named, with the rows untouched for a retry", "the milestones insert binds its error…", "the retry re-runs ONLY the refused steps…", "company_id missing (pre-migration) retries the parties without the link". Reproduced: `ProjectWizard.tsx:141-206` at `8276cad` as quoted.
+
+**Done-when.**
+- Each follow-up write's failure is collected and shown to the user (a banner naming exactly what did not save) instead of `console.warn` — ✓ (the banner is in the wizard before routing; `page.tsx` is J8's, and the wizard holds the rows).
+- The milestones insert binds its error like the others — ✓.
+- The user's typed rows survive a partial failure — ✓. They are retained in state, and **Retry unsaved** re-runs only the refused steps; that recovers a transient refusal. A persistent refusal (CHECK / overflow / RLS) fails the same way on retry. For that case the failure panel shows each failed step's typed rows read-only with a **Copy** button (`retainedRowLines`, 2026-09-30 fix pass), so **Open project anyway** or the X no longer discard rows the user never saw. Editing a refused row in place is not offered (see projects-tab `UX-1`).
+- A test simulates a `cost_accounts` insert error and asserts the wizard surfaces it — ✓.
+
+**Scope / residual.** See `UX-1`.
 
 ---
 

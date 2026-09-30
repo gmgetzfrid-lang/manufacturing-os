@@ -187,7 +187,7 @@ matching `Modal.tsx`. Do not "fix" those.*
 ## A11Y-5 · The wizard's lookalike `Field` breaks label association, so every wizard input is unlabeled
 
 - **Severity:** MEDIUM
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Verification:** CONFIRMED
 - **Blast radius:** accessibility
 - **Locations:**
@@ -219,6 +219,13 @@ tree either, for the same reason.
 
 **Done when.**
 - Every wizard input has an accessible name matching its visible label.
+
+**Resolution (2026-09-23, projects Round G).** The wizard's lookalike `Field` is deleted; `components/projects/ProjectWizard.tsx` imports the shared `Field` from `components/ui/Field.tsx`, which wraps the control inside its `<label>` — Name, Description, MOC reference, Target completion (the date input the pass singled out), Purpose, Success criteria. The three controls that are not a single input — Job size (a button group), Visibility (a button group) and Goals (a list editor with an input and a button) — cannot legally sit inside a `<label>`, so they use a local `Group` (`role="group"` + `aria-labelledby` on the visible label); the Goals input carries `aria-label="Add a goal"`. Every repeated-row control (budget line name / cost type / amount, milestone name / date, company name / kind / trade), every icon-only button (remove row, remove goal, remove SOW, close) and the SOW search box now has an explicit accessible name matching or extending its visible label. The failure and error strips are `role="alert"`. Verified by reading (component; not in the vitest include) — the shared `Field`'s label-wrapping is pinned at `components/ui/Field.tsx:50-54`. Reproduced: `ProjectWizard.tsx:456-463` at `8276cad` rendered `<label>` as a sibling with no `htmlFor`.
+
+**Done-when.**
+- Every wizard input has an accessible name matching its visible label — ✓.
+
+**Scope / residual.** `EditProjectModal.tsx` (same package) got the same treatment for its new fields. The `UX-15` asterisks ("Name *") are now inside the label and therefore announced.
 
 ---
 
@@ -565,7 +572,7 @@ background to the one date input.
 | A11Y-2 | CRITICAL | OPEN |
 | A11Y-3 | CRITICAL | OPEN |
 | A11Y-4 | HIGH | OPEN |
-| A11Y-5 | HIGH | OPEN |
+| A11Y-5 | HIGH | RESOLVED |
 | A11Y-6 | HIGH | OPEN |
 | A11Y-7 | HIGH | OPEN |
 | A11Y-8 | HIGH | OPEN |

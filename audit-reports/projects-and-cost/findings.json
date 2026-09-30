@@ -18,7 +18,8 @@
       "LOW": 11
     },
     "by_status": {
-      "OPEN": 69
+      "OPEN": 66,
+      "RESOLVED": 3
     }
   },
   "status_vocabulary": [
@@ -333,7 +334,7 @@
       "id": "PM-3",
       "title": "Imported (P6 / MS Project / CSV) schedules are invisible to the health score, the coach and the printed report — which prints 'No schedule loaded' for a project the Schedule tab shows as fully scheduled",
       "severity": "HIGH",
-      "status": "OPEN",
+      "status": "RESOLVED",
       "verification": "CONFIRMED",
       "verification_note": null,
       "blast_radius": null,
@@ -1267,7 +1268,7 @@
       "id": "PM-12",
       "title": "The printed project report can never show CPI, and its milestone percent index is keyed by array position instead of milestone id",
       "severity": "MEDIUM",
-      "status": "OPEN",
+      "status": "RESOLVED",
       "verification": "CONFIRMED",
       "verification_note": null,
       "blast_radius": null,
@@ -1294,7 +1295,7 @@
       "id": "PM-13",
       "title": "The project wizard reports success while silently discarding budget lines, milestones and contractors the user typed",
       "severity": "MEDIUM",
-      "status": "OPEN",
+      "status": "RESOLVED",
       "verification": "CONFIRMED",
       "verification_note": null,
       "blast_radius": null,

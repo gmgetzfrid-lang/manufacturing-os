@@ -25,13 +25,18 @@ before and after.
 |---|---|
 | CRITICAL | 17 |
 | HIGH | 52 |
-| MEDIUM | 62 |
+| MEDIUM | 63 |
 | LOW | 2 |
-| **Total** | **133** |
+| **Total** | **134** |
 
 Two findings here (`BID-5`, `UX-2`) carry `Status: REFUTED` — an independent pass
 disproved them. They are kept with the reason rather than deleted (`DEC-41`);
 **do not queue them as work.**
+
+`UX-16` (the evidence sweep never runs when evidence arrives) was opened by
+projects Round G package J7 on 2026-09-30, when `UX-3` was made true by copy
+and the make-it-true-by-automation half was split out for the intake and
+quality packages.
 
 Counts are generated from the reports by
 [`../build-index.mjs`](../build-index.mjs) — see
