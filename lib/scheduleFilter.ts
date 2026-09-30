@@ -27,6 +27,37 @@ export interface ScheduleFilter {
   shifts: Array<"day" | "night" | "swing">;
 }
 
+/** Day / night from a planned start, read in UTC — schedule dates are stored
+ *  wall-clock-as-UTC (the importer attaches Z to offset-less source times),
+ *  so the label is the same on every machine (PC SCHED-9). 06:00–17:59 →
+ *  day, otherwise night. Null when there is no readable start. The single
+ *  implementation: the importer and the editors read it. */
+export function shiftForStart(plannedStartIso: string | null | undefined): "day" | "night" | null {
+  if (!plannedStartIso) return null;
+  const d = new Date(plannedStartIso);
+  if (isNaN(d.getTime())) return null;
+  const h = d.getUTCHours();
+  return (h >= 6 && h < 18) ? "day" : "night";
+}
+
+/** The stored shift after a row's start moves (PC SCHED-9) — the same rule
+ *  apply_milestone_moves (20261098) applies in SQL. Only a "day" / "night"
+ *  label whose start moves into the OTHER band is re-labelled. An unlabelled
+ *  row stays unlabelled (a date-only manual task is not night work), a
+ *  hand-set "swing" is kept, and a row with no prior start — or a move that
+ *  stays in its band — keeps what is stored (it may be a hand correction). */
+export function shiftAfterMove<S extends string | null | undefined>(
+  stored: S,
+  priorStartIso: string | null | undefined,
+  nextStartIso: string | null | undefined,
+): S | "day" | "night" {
+  if (stored !== "day" && stored !== "night") return stored;
+  const before = shiftForStart(priorStartIso);
+  const after = shiftForStart(nextStartIso);
+  if (!before || !after || before === after) return stored;
+  return after;
+}
+
 export const EMPTY_FILTER: ScheduleFilter = {
   query: "", statuses: [], groupIds: [], overdueOnly: false, blockedOnly: false, shifts: [],
 };
@@ -101,6 +132,9 @@ export function filterMilestones(
       if (Date.parse(m.plannedAt as string) >= now) return false;
     }
     if (f.blockedOnly && m.status !== "blocked" && m.status !== "on_hold") return false;
+    // The stored label only (PC SCHED-9: it follows the task when its start
+    // moves). A row with no label matches no shift — a manual date-only task
+    // is not night work because its start reads 00:00.
     if (f.shifts.length > 0 && (!m.shift || !f.shifts.includes(m.shift))) return false;
     if (groupSet.size > 0) {
       const g = topGroupOf(m);

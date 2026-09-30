@@ -114,6 +114,7 @@ export const IMMUTABLE_TABLES: Record<string, string> = {
   // XEDGE-3: the download register is the recall population (DIST-1) and the
   // egress evidence — written only at the download egress, never by import.
   download_audits: "download audits are written only by the download egress — a restored row would name a copy holder nobody served",
+  milestone_baseline_history: "prior approved-plan snapshots are written only by set_project_baseline / clear_project_baseline (projects Round G, PC SCHED-3)",
 };
 
 /** True when `table` is append-only / self-insert-only and must not be blind-imported. */

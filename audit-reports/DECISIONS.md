@@ -84,6 +84,7 @@ about the system.
 | [DEC-48](#dec-48) | Bids are scored on **price, and on stated hours only where three bids corroborate them** — declared exclusions never lower a score, coverage is unscored until a per-RFQ scope list exists; a bidder **binds** to a registry row only by exact/normalised name or a human link, but the **do-not-use gate** fires on any row the name could be | medium | `BID-3`, `BID-4`, `BID-6`, `BID-7`, `BID-12`, `COST-5`, `COST-7`, `MON-12` |
 | [DEC-49](#dec-49) | A URL `/api/storage/download-url` signs is an **attachment** unless a viewer asks AND the type cannot be a page (PDF, raster image — type pinned); the viewer frames only a PDF and shows images as `<img>` | low | `SEC-7`, `SEC-1` |
 | [DEC-50](#dec-50) | The money ledger: the headline is what is still **uncommitted**; approved change orders revise the budget only while their money is on the ledger; CPI forecasts only what it measured; the ledger is never deleted; the decider decides the amount and line they were shown | medium | `MON-1`, `MON-4`, `COST-2`, `COST-4`, `COST-6`, `COST-9`, `COST-10`, `COST-11` |
+| [DEC-51](#dec-51) | A schedule re-import is a **reviewed merge, never a guess**: the importer plans before it writes, keeps local progress, keys rows on content, reads dates one way for the whole file, and adopts a legacy position row only by a name unique on both sides | low | `SCH-1`, `SCH-2`, `SCH-3`, `SCH-14`, `SCHED-3`, `SCHED-4`, `SCHED-9` |
 
 ---
 
@@ -1311,6 +1312,7 @@ facility with no configuration must keep working exactly as it does today.
 
 *Landed 2026-09-23 (document-control Round F): the hold-change and hold-aging audience is the org's `holds.release` pool read from the capability policy (`lib/holds.ts` `holdPoolFromMembers` — tokens expanded against the held collection, per-person grants included), never a literal list; the shipped wildcard is read as "no dedicated pool" and falls back to the controller tier (`isControllerRole`, what `is_org_controller` means) rather than an org-wide broadcast, so an unconfigured org's fan-out is unchanged. Which controls a person sees on the two hold surfaces is the same policy through `holdControlsFor`. See `HLD-8`, `HLD-10`, `HLD-14`.*
 *Landed 2026-09-29 (projects Round G): the change-order approval threshold is configuration — `org_configurations` key `change_order_approval_threshold` = `{ "amount": N }`, read by `loadApprovalThreshold` and by the `20261094` trigger; the decider tier above it is the controller collection (`memberHoldsAny(m, ["Admin","DocCtrl"])` / the `is_org_controller` predicate), never a facility role name. Default: no threshold until an org sets one; a malformed amount (anything but a plain non-negative number) means no threshold, in the lib and the trigger alike. See `COST-6`, `DEC-50`.*
+*Landed 2026-09-29 (projects Round G): the schedule-editing predicate — `can_edit_project_schedule(p_org, p_project)` in `20261098`, `caller_holds_any_role` over the four roles `20260907` listed inline, or the project owner — is read by `apply_milestone_moves`, `set_project_baseline` and `clear_project_baseline` (`20261099`) instead of a fresh literal in each; registered as a collection funnel in `authorityCensus.test.ts`. Aligning the read to the funnel admits one member class `20260907`'s `COALESCE(roles, ARRAY[role])` refused — a headline role among the four with a `roles[]` that holds none of them — inventoried before the apply in `20261098`'s result set. See `SCHED-4`, `SCHED-3`.*
 
 <a id="dec-36"></a>
 ## DEC-36 · Where the routing table lives, and how it resolves
@@ -2537,3 +2539,110 @@ view; 8 is `awardQuote`'s group filter plus `declineQuote`; 10 is
 **Risk:** medium — the headline money figure changes meaning on every Costs
 tab (from budget − spent to budget − exposure); the previous figure stays
 visible as the secondary line.
+
+<a id="dec-51"></a>
+## DEC-51 · A schedule re-import is a reviewed merge, never a guess
+
+**Decision. The importer decides nothing it cannot read from the file, shows
+what it would do before it writes, and never erases what the crew recorded.
+Concretely: (1) day-first vs month-first is decided once from the file's
+date values (a CSV's start and finish columns; XML / XER dates are ISO) — a
+file that cannot decide it asks the user once, and the answer applies to
+every row, weekday-prefixed dates included; (2) a row the file does not carry is reported as "not in this
+file" and left alone — removal is a separate explicit action; (3) progress,
+status and actual dates recorded in the app survive a re-import unless the
+user opts in per import; (4) identity is the source system's id where one
+exists, otherwise a hash of the row's own content — never its position and
+never its name alone; a row imported before content keys (keyed by its
+position) is adopted — a one-time, reviewed transition — only when its
+normalised name occurs once among the position rows of its source tag and
+once in the file: it is that task whatever its dates, the file's dates are
+written and the crew's progress kept; a position row whose name repeats on
+either side is never adopted — the file's rows are added, the old rows kept
+as "not in this file", and the plan names both the adopted and the repeated
+tasks before anything is written (residual: repeated-name legacy tasks are
+duplicated rather than matched, visibly); no zone offset is inferred; and a
+keyless row whose name or dates change becomes a new
+row, the old one reported as "not in this file" — the fail-safe, said in
+words in the review panel; (5) relationship type and lag are captured on every
+link; the engine honours finish-to-start, and everything else is stored on
+the task and reported as "not enforced" until the reflow has its own test;
+(6) a file that holds several projects asks which one and never merges; (7)
+MS Project's Predecessors resolve through the ID column, and an unresolvable
+token is counted, not guessed; (8) a level-0 summary row is the root parent,
+not a sibling leaf; (9) every date form is read as wall-clock-as-UTC (never
+the importer's zone); a value that names its zone directly after its time —
+a numeric offset (after AM / PM too; a.m. / p.m. normalised) or a listed US /
+European abbreviation in upper case, at its fixed offset — is read at that
+instant; other words after the time ("est." = estimated) are ignored and
+reported; an abbreviation on a date with no time is dropped (the date stays
+00:00Z); an unreadable start, like an unreadable finish, skips and counts
+its row; and a day / night shift label follows its task when the
+start moves into the other band (every date-writing path, one rule) — an
+unlabelled row stays unlabelled, a hand-set swing is kept, a date-only start
+(stored at 00:00Z) earns no label, and existing rows are recomputed in bulk
+only on request; (10) the approved baseline is set and cleared only through
+RPCs that enforce the schedule-editing predicate, keep every prior snapshot,
+and audit themselves — a guard refuses a direct baseline write on UPDATE and
+on INSERT, and the RPCs' pass names the project and lasts only for their own
+UPDATE; (11) a batch move
+leaves a per-row reschedule breadcrumb, the same one a single edit leaves;
+(12) an import is capped at 5 MB / 5,000 rows, shows progress, can be
+cancelled, and tags every row it touched with its batch id; (13) what is
+written is what was reviewed — a change to the column review discards the
+plan — and a batch move the lock rejected is reported as an error, never a
+success.**
+
+> Made during projects Round G (2026-09-29) under the protocol's fail-safe
+> rule, taking the defaults the fleet plan proposed for `GAP-403`, `SCH-1`,
+> `SCH-2`, `SCH-3`, `SCH-8`, `SCH-14`, `SCH-16` and `SCHED-1`, `SCHED-3`,
+> `SCHED-6`, `SCHED-8`, `SCHED-9`, `SCHED-11`.
+
+**Rationale.** A weekly re-import is the normal case, and every one of these
+defaults replaces a silent guess with either the file's own evidence or a
+question the user answers once. The alternatives — a locale default for
+dates, treating an absent row as deleted, a file-name namespace for identity,
+flattening SS / FF to FS — each looked cheaper and each was a data-integrity
+defect in the audit.
+
+**Implementation.** `lib/scheduleParsers.ts` (`detectDateConvention`,
+`contentKey`, `hasTimeOfDay`, `ParsedLink`, `ParseOptions`,
+`SCHEDULE_IMPORT_LIMITS`), `lib/milestones.ts` (`importMilestonesFromParsed`
+with `dryRun` / `overwriteProgress` / `signal` / `onProgress` and the
+position-row adoption, `applyMilestoneMoves` / `MoveConflictError`,
+`setBaseline` / `clearBaseline`), `lib/scheduleFilter.ts` (`shiftForStart`,
+`shiftAfterMove`),
+`components/projects/ScheduleImportModal.tsx`, migrations `20261097`,
+`20261098`, `20261099`.
+
+**Acceptance.** Inserting a row at the top of a source file leaves every
+other row's identity and progress intact; a genuinely ambiguous date file
+imports nothing until asked; a re-import with no changes issues no write
+(against PostgREST's `+00:00` timestamp rendering); the first re-import of
+a keyless file imported by position adds nothing for tasks whose names are
+unique on both sides, whatever zone the earlier import ran in, and never
+moves a completion between tasks — a repeated name is added, its old rows
+kept, and the plan names it; an
+SS + FF ladder creates no cycle; the anon key cannot call the batch-move or
+baseline RPCs.
+
+**Verification fix (2026-09-30, projects Round G).** Items (4) and (9), the acceptance and the risk
+restated to what the code does after three verifier passes: position rows
+are adopted only by a name unique on both sides (no offset, zone or DST
+inference — each inferred rule produced wrong pairings), repeated names are
+added and their old rows kept, visibly; a zone named directly after a time
+(a numeric offset, or an upper-case listed abbreviation) is read at its
+fixed offset and other trailing words are ignored and reported (PT `SCH-3`,
+PC `SCHED-9`).
+
+**Reversal.** Per item, by a stated requirement: a facility that wants a
+locale default for dates changes the modal's radio default, not the parser;
+a facility that wants "missing = deleted" adds it as the separate explicit
+action this decision already reserves.
+
+**Risk:** low — every default fails toward asking or leaving data alone.
+Item (4)'s transition fails toward duplicates: a legacy task whose name
+repeats is added again rather than matched (its old row and progress kept
+and listed), and a unique-named one is matched by name even when the file
+moved it.
+

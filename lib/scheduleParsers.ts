@@ -21,6 +21,11 @@ export interface ParsedMilestone {
   plannedAt: string;            // ISO
   /** Scheduled START — optional but populated by every modern source. */
   plannedStartAt?: string | null;
+  /** False when the source's start carried a date but no time of day (a CSV
+   *  "2026-01-03" / "1/3/26" / "June 1, 2026"): it is stored at 00:00Z, and
+   *  that midnight is not a shift reading, so a new row gets no day / night
+   *  label (PC SCHED-9). Undefined when the parser does not say. */
+  startHasTime?: boolean;
   weight?: number;
   description?: string | null;
   /** Stable id from the source file so re-imports upsert. */
@@ -38,9 +43,14 @@ export interface ParsedMilestone {
   /** externalRef of the PARENT row in the same import batch. The
    *  importer resolves this to a real DB id after the first pass. */
   parentExternalRef?: string | null;
-  /** externalRefs of PREDECESSOR rows (finish-to-start). Resolved to ids
-   *  by the importer's dependency pass. */
+  /** externalRefs of PREDECESSOR rows the schedule engine can honour
+   *  (finish-to-start). Resolved to ids by the importer's dependency pass. */
   dependsOnExternalRefs?: string[];
+  /** EVERY relationship the source carried, with its type and lag — the
+   *  engine honours FS only, so SS / FF / SF links (and any lag) are kept
+   *  here and reported as "not enforced" rather than silently flattened to
+   *  FS (PT SCH-8). Also serialised onto attributes.source_links. */
+  links?: ParsedLink[];
   // ── Rich execution detail (optional; populated where the source
   //    carries it). Everything we can't map to a first-class field
   //    lands in `attributes` keyed by the source's own column label. ──
@@ -53,10 +63,171 @@ export interface ParsedMilestone {
   attributes?: Record<string, string | number | boolean | null> | null;
 }
 
+export type RelationshipType = "FS" | "SS" | "FF" | "SF";
+
+export interface ParsedLink {
+  predecessorExternalRef: string;
+  type: RelationshipType;
+  /** Lag in hours (negative = lead). 0 when the source carried none. */
+  lagHours: number;
+  /** The source's lag text when its unit could not be read ("+3 mons",
+   *  "+50%"): the link is kept, lagHours is 0 and this text is recorded. */
+  lagRaw?: string;
+}
+
+/** Day-first or month-first reading of slash dates such as 05/08/2026. */
+export type DateConvention = "mdy" | "dmy";
+
+export interface ParseOptions {
+  /** The user's answer when the file's slash dates are ambiguous (every
+   *  day-part ≤ 12). Ignored when the file itself fixes the convention. */
+  dateConvention?: DateConvention;
+  /** Which project to import when a P6 export holds several. */
+  projectId?: string | null;
+}
+
 export interface ParseResult {
   format: ScheduleFormat;
   rows: ParsedMilestone[];
   warnings: string[];
+  /** How slash dates were read: fixed by the file (a day-part > 12 somewhere),
+   *  chosen by the user, or not applicable (no slash dates in the file). */
+  dates?: { convention: DateConvention | null; decidedBy: "file" | "user" | "none"; sample: string | null };
+  /** True when the file's slash dates are ambiguous throughout and no
+   *  convention was supplied — rows are withheld until the user picks one. */
+  needsDateConvention?: boolean;
+  /** The column (or derivation) that keys rows for re-import matching. */
+  keyColumn?: string;
+  /** Every project the file holds (P6 XML / XER), with its row count. */
+  projects?: Array<{ id: string; name: string; rows: number }>;
+  selectedProjectId?: string | null;
+  /** True when the file holds several projects and none was chosen — rows
+   *  are withheld rather than merged into one board (PC SCHED-6). */
+  needsProjectChoice?: boolean;
+  /** Relationship census: what the engine will honour vs. what is only
+   *  recorded (PT SCH-8) and predecessor tokens that resolved to nothing. */
+  links?: { fs: number; notEnforced: number; withLag: number; unresolved: number; lagUnread?: number };
+}
+
+/** Import limits (PT SCH-14): refused with the limit named, never truncated. */
+export const SCHEDULE_IMPORT_LIMITS = { maxBytes: 5 * 1024 * 1024, maxRows: 5000 } as const;
+
+/** Row identity for a keyless CSV row: a stable hash of the row's own
+ *  content (name + planned dates) instead of its position, so inserting a
+ *  row above it cannot re-point the reference (PT SCH-3 / GAP-403). FNV-1a. */
+export function contentKey(name: string, plannedIso: string, plannedStartIso: string | null | undefined): string {
+  const src = `${name.trim().toLowerCase()}|${plannedIso}|${plannedStartIso ?? ""}`;
+  let h = 0x811c9dc5;
+  for (let i = 0; i < src.length; i++) {
+    h ^= src.charCodeAt(i);
+    h = Math.imul(h, 0x01000193) >>> 0;
+  }
+  return h.toString(16).padStart(8, "0");
+}
+
+/** A leading day name ("Mon ", "Tue. ", "Wednesday, ") — MS Project's default
+ *  date display. Dropped before a date is read. */
+const LEADING_DAY_NAME = /^[A-Za-z]{2,9}\.?,?\s+(?=\d)/;
+/** A d/m/y (or m/d/y) triple anywhere in a value. */
+const SLASH_TRIPLE = /(?<!\d)\d{1,2}[\/\-]\d{1,2}[\/\-]\d{2,4}(?!\d)/;
+
+/** Scan the file's DATE VALUES for slash dates and decide day-first vs
+ *  month-first once: any first part > 12 proves D/M/Y, any second part > 12
+ *  proves M/D/Y. Neither → genuinely ambiguous (the caller asks the user).
+ *  Both → the file contradicts itself (also asked, and reported). Never per
+ *  row. The caller passes the date columns' values only (see dateEvidence),
+ *  so a dash-separated code or a date inside a note is never evidence. */
+export function detectDateConvention(text: string): { convention: DateConvention | null; ambiguous: boolean; conflict: boolean; sample: string | null } {
+  const re = /(?<![\d\/\-])(\d{1,2})[\/\-](\d{1,2})[\/\-](\d{2,4})(?![\d\/\-])/g;
+  let dmy: string | null = null;
+  let mdy: string | null = null;
+  let any: string | null = null;
+  for (const m of text.matchAll(re)) {
+    const a = Number(m[1]); const b = Number(m[2]);
+    if (!any) any = m[0];
+    if (a > 12 && !dmy) dmy = m[0];
+    if (b > 12 && !mdy) mdy = m[0];
+    if (dmy && mdy) break;
+  }
+  if (dmy && mdy) return { convention: null, ambiguous: true, conflict: true, sample: `${dmy} vs ${mdy}` };
+  if (dmy) return { convention: "dmy", ambiguous: false, conflict: false, sample: dmy };
+  if (mdy) return { convention: "mdy", ambiguous: false, conflict: false, sample: mdy };
+  return { convention: null, ambiguous: !!any, conflict: false, sample: any };
+}
+
+/** Per-parse context threaded into every parser: the resolved date
+ *  convention and (P6) the chosen project. */
+interface ParseCtx {
+  conv: DateConvention;
+  projectId: string | null;
+}
+
+/** "PT40H0M0S" (MS Project Work / Duration) → hours. */
+export function isoDurationToHours(raw: string | null | undefined): number | null {
+  if (!raw) return null;
+  const m = raw.trim().match(/^P(?:(\d+(?:\.\d+)?)D)?(?:T(?:(\d+(?:\.\d+)?)H)?(?:(\d+(?:\.\d+)?)M)?(?:(\d+(?:\.\d+)?)S)?)?$/i);
+  if (!m) return null;
+  const h = (Number(m[1] ?? 0) * 8) + Number(m[2] ?? 0) + Number(m[3] ?? 0) / 60 + Number(m[4] ?? 0) / 3600;
+  return Number.isFinite(h) && h > 0 ? Math.round(h * 100) / 100 : null;
+}
+
+/** "40 hrs" / "5 days" / "2 wks" / "480 mins" / "40" (CSV Work / Duration)
+ *  → hours. Days are 8-hour working days, weeks 40. A trailing "?" is MS
+ *  Project's estimated-duration marker ("5 days?") — the value is read, the
+ *  marker is not a reason to drop it. */
+export function durationTextToHours(raw: string | null | undefined): number | null {
+  if (!raw) return null;
+  const m = raw.trim().match(/^(-?\d+(?:\.\d+)?)\s*(e?d(?:ays?)?|e?w(?:ks?|eeks?)?|h(?:rs?|ours?)?|m(?:ins?|inutes?)?)?\??\.?$/i);
+  if (!m) return null;
+  const n = Number(m[1]);
+  const u = (m[2] ?? "h").toLowerCase();
+  const hours = u.startsWith("ed") ? n * 24 : u.startsWith("ew") ? n * 168
+    : u.startsWith("d") ? n * 8 : u.startsWith("w") ? n * 40 : u.startsWith("m") ? n / 60 : n;
+  return Number.isFinite(hours) && hours > 0 ? Math.round(hours * 100) / 100 : null;
+}
+
+const RELATIONSHIP_WORDS: Record<string, RelationshipType> = {
+  FS: "FS", SS: "SS", FF: "FF", SF: "SF",
+  PR_FS: "FS", PR_SS: "SS", PR_FF: "FF", PR_SF: "SF",
+  "FINISH TO START": "FS", "START TO START": "SS", "FINISH TO FINISH": "FF", "START TO FINISH": "SF",
+};
+function relationshipType(raw: string | null | undefined): RelationshipType {
+  if (!raw) return "FS";
+  return RELATIONSHIP_WORDS[raw.trim().toUpperCase()] ?? "FS";
+}
+/** MS Project XML <PredecessorLink><Type>: 0 = FF, 1 = FS, 2 = SF, 3 = SS. */
+function mspLinkType(raw: string | null | undefined): RelationshipType {
+  switch ((raw ?? "").trim()) { case "0": return "FF"; case "2": return "SF"; case "3": return "SS"; default: return "FS"; }
+}
+
+/** Split every link into what the engine honours (FS → dependsOn) and what
+ *  is only recorded; serialise the recorded part onto attributes so it is
+ *  stored with the task and visible, never silently dropped. */
+function splitLinks(links: ParsedLink[], attributes: Record<string, string>): { dependsOn: string[] | undefined; notEnforced: number; withLag: number; lagUnread: number } {
+  const dependsOn: string[] = [];
+  let notEnforced = 0, withLag = 0, lagUnread = 0;
+  const recorded: string[] = [];
+  for (const l of links) {
+    const unread = l.lagRaw ? ` ${l.lagRaw} (lag not understood)` : null;
+    if (unread) lagUnread++;
+    if (l.type === "FS") {
+      if (!dependsOn.includes(l.predecessorExternalRef)) dependsOn.push(l.predecessorExternalRef);
+      if (unread) recorded.push(`FS ${l.predecessorExternalRef}${unread}`);
+      else if (l.lagHours !== 0) { withLag++; recorded.push(`FS ${l.predecessorExternalRef} ${l.lagHours > 0 ? "+" : ""}${l.lagHours}h`); }
+    } else {
+      notEnforced++;
+      recorded.push(`${l.type} ${l.predecessorExternalRef}${unread ?? (l.lagHours !== 0 ? ` ${l.lagHours > 0 ? "+" : ""}${l.lagHours}h` : "")}`);
+    }
+  }
+  if (recorded.length) attributes.source_links = recorded.join("; ");
+  return { dependsOn: dependsOn.length ? dependsOn : undefined, notEnforced, withLag, lagUnread };
+}
+function linkWarnings(census: { fs: number; notEnforced: number; withLag: number; unresolved: number; lagUnread?: number }, warnings: string[]): void {
+  if (census.notEnforced > 0) warnings.push(`${census.notEnforced} start-to-start / finish-to-finish / start-to-finish link${census.notEnforced === 1 ? "" : "s"} captured but not enforced — the schedule engine honours finish-to-start only. They are kept on each task as "source_links".`);
+  if (census.withLag > 0) warnings.push(`${census.withLag} finish-to-start link${census.withLag === 1 ? "" : "s"} carr${census.withLag === 1 ? "ies" : "y"} lag; the lag is recorded on the task but not applied by the reflow.`);
+  const lagUnread = census.lagUnread ?? 0;
+  if (lagUnread > 0) warnings.push(`${lagUnread} predecessor link${lagUnread === 1 ? "" : "s"} carr${lagUnread === 1 ? "ies" : "y"} a lag whose unit could not be read (for example months or a percentage). The link${lagUnread === 1 ? " is" : "s are"} kept and the lag text is recorded on the task as "source_links", but no lag is applied.`);
+  if (census.unresolved > 0) warnings.push(`${census.unresolved} predecessor reference${census.unresolved === 1 ? "" : "s"} pointed at a row that is not in this file and ${census.unresolved === 1 ? "was" : "were"} not linked.`);
 }
 
 export type ScheduleFormat =
@@ -125,20 +296,20 @@ export function detectFormatFromBytes(filename: string, bytes: Uint8Array): Sche
 
 // ─── Dispatcher ─────────────────────────────────────────────────
 
-export function parseScheduleFile(filename: string, text: string): ParseResult {
+export function parseScheduleFile(filename: string, text: string, opts?: ParseOptions): ParseResult {
   const format = detectFormat(filename, text);
-  return runParser(format, filename, text);
+  return runParser(format, filename, text, opts);
 }
 
 /** Byte-aware entry point. Preferred when the caller has the raw
  *  file — handles MPP detection before falling through to text. */
-export function parseScheduleFileFromBytes(filename: string, bytes: Uint8Array): ParseResult {
+export function parseScheduleFileFromBytes(filename: string, bytes: Uint8Array, opts?: ParseOptions): ParseResult {
   const format = detectFormatFromBytes(filename, bytes);
   if (format === "msproject-mpp" || format === "msproject-mpx") {
     return { format, rows: [], warnings: [xmlDemand(filename, format)] };
   }
   const text = new TextDecoder("utf-8", { fatal: false }).decode(bytes);
-  return runParser(format, filename, text);
+  return runParser(format, filename, text, opts);
 }
 
 /** The enforcement message for refused MS Project formats. Detection is kept
@@ -148,25 +319,49 @@ function xmlDemand(filename: string, format: "msproject-mpp" | "msproject-mpx"):
   const kind = format === "msproject-mpp"
     ? "a Microsoft Project binary file (.mpp)"
     : "a legacy Microsoft Project interchange file (.mpx)";
-  return `"${filename}" is ${kind}. This format is not accepted — export the XML instead: open the schedule in Microsoft Project, File → Save As → choose "XML Format (*.xml)", then drop that file here. The XML import is a true 1:1 copy (every date, dependency, resource, and the full hierarchy).`;
+  return `"${filename}" is ${kind}. This format is not accepted — export the XML instead: open the schedule in Microsoft Project, File → Save As → choose "XML Format (*.xml)", then drop that file here. The XML import carries each task's name, start and finish, % complete, outline hierarchy, resources, custom columns, work hours and finish-to-start links; other link types and lag are recorded but not enforced, and calendars, costs and baselines are not imported.`;
 }
 
-function runParser(format: ScheduleFormat, filename: string, text: string): ParseResult {
+function runParser(format: ScheduleFormat, filename: string, text: string, opts?: ParseOptions): ParseResult {
+  if (format === "msproject-mpp" || format === "msproject-mpx") {
+    return { format, rows: [], warnings: [xmlDemand(filename, format)] };
+  }
+  if (format === "unknown") {
+    return { format: "unknown", rows: [], warnings: [`Couldn't identify file type for "${filename}". Drop a .xml, .xer, or .csv exported from your PM tool.`] };
+  }
+  // Day-first vs month-first is a property of the FILE, decided once from
+  // every slash date in its DATE COLUMNS (PT SCH-1) — a code such as
+  // 1-13-100 or a date typed into a note is not evidence, and XML / XER carry
+  // ISO dates so they never reach the question. A file that cannot decide it
+  // withholds its rows until the user answers; the answer applies to every row.
+  const detected = detectDateConvention(dateEvidence(format, text));
+  let dates: NonNullable<ParseResult["dates"]>;
+  if (detected.convention) dates = { convention: detected.convention, decidedBy: "file", sample: detected.sample };
+  else if (opts?.dateConvention && detected.ambiguous) dates = { convention: opts.dateConvention, decidedBy: "user", sample: detected.sample };
+  else if (detected.ambiguous) {
+    const why = detected.conflict
+      ? `The file contradicts itself about date order (${detected.sample}).`
+      : `Every slash date in the file (e.g. ${detected.sample}) reads as either day/month or month/day.`;
+    return {
+      format, rows: [], needsDateConvention: true,
+      dates: { convention: null, decidedBy: "none", sample: detected.sample },
+      warnings: [`${why} Choose how to read dates before importing — the choice applies to every row.`],
+    };
+  } else dates = { convention: null, decidedBy: "none", sample: null };
+  const ctx: ParseCtx = { conv: dates.convention ?? "mdy", projectId: opts?.projectId ?? null };
   try {
+    let out: Omit<ParseResult, "format">;
     switch (format) {
-      case "msproject-xml": return { format, ...parseMsProjectXml(text) };
-      case "p6-xml":        return { format, ...parseP6Xml(text) };
-      case "p6-xer":        return { format, ...parseP6Xer(text) };
-      case "msproject-csv": return { format, ...parseMsProjectCsv(text) };
-      case "generic-csv":   return { format, ...parseGenericCsv(text) };
-      case "msproject-mpp":
-      case "msproject-mpx":
-        return { format, rows: [], warnings: [xmlDemand(filename, format)] };
-      default:
-        return { format: "unknown", rows: [], warnings: [`Couldn't identify file type for "${filename}". Drop a .xml, .xer, or .csv exported from your PM tool.`] };
+      case "msproject-xml": out = parseMsProjectXml(text, ctx); break;
+      case "p6-xml":        out = parseP6Xml(text, ctx); break;
+      case "p6-xer":        out = parseP6Xer(text, ctx); break;
+      case "msproject-csv": out = parseMsProjectCsv(text, ctx); break;
+      default:              out = parseGenericCsv(text, ctx); break;
     }
+    if (detected.conflict && dates.decidedBy === "user") out.warnings.unshift(`Dates read as ${dates.convention === "dmy" ? "day/month/year" : "month/day/year"} on your choice; rows whose dates cannot be read that way were skipped.`);
+    return { format, dates, ...out };
   } catch (e) {
-    return { format, rows: [], warnings: [`Parser threw: ${(e as Error).message}`] };
+    return { format, dates, rows: [], warnings: [`Parser threw: ${(e as Error).message}`] };
   }
 }
 
@@ -176,7 +371,7 @@ function runParser(format: ScheduleFormat, filename: string, text: string): Pars
 // We accept all tasks but flag Milestone=1 as weight=1 (others
 // also weight=1 unless duration extracted — keeping naive for now).
 
-function parseMsProjectXml(text: string): { rows: ParsedMilestone[]; warnings: string[] } {
+function parseMsProjectXml(text: string, ctx: ParseCtx): Omit<ParseResult, "format"> {
   const warnings: string[] = [];
   const rows: ParsedMilestone[] = [];
 
@@ -229,6 +424,18 @@ function parseMsProjectXml(text: string): { rows: ParsedMilestone[]; warnings: s
   // works for every well-formed file.
   const recentByLevel = new Map<number, string>(); // level → parent's externalRef
   let dropped = 0;
+  let unreadableDates = 0;
+  let ignoredText = 0;
+  const census = { fs: 0, notEnforced: 0, withLag: 0, unresolved: 0 };
+
+  // MSPDI exports the project-summary task as <UID>0</UID><OutlineLevel>0</
+  // OutlineLevel>. It is the ROOT of the outline, not a sibling of the level-1
+  // phases: shift every level up by one so it imports as their parent (PC
+  // SCHED-1) — a top-level leaf spanning the whole job double-counts in every
+  // rollup and seeds the critical path.
+  const hasRootRow = taskNodes.some((t) => childText(t, "OutlineLevel").trim() === "0");
+  const levelOffset = hasRootRow ? 1 : 0;
+  if (hasRootRow) warnings.push("The project-summary row (outline level 0) was imported as the root parent of the top-level phases.");
 
   for (const t of taskNodes) {
     const name = childText(t, "Name");
@@ -241,10 +448,30 @@ function parseMsProjectXml(text: string): { rows: ParsedMilestone[]; warnings: s
     const isMilestone = childText(t, "Milestone") === "1";
     const pct = Number(childText(t, "PercentComplete") || "0");
 
-    const plannedRaw = finish || start;
-    if (!name || !plannedRaw) { dropped++; continue; }
+    // Number("0") is 0 — test for NaN explicitly so level 0 survives as 0.
+    const parsedLevel = outlineLevelRaw.trim() === "" ? NaN : Number(outlineLevelRaw);
+    const outlineLevel = (Number.isFinite(parsedLevel) ? parsedLevel : 1) + levelOffset;
 
-    const outlineLevel = Number(outlineLevelRaw) || 1;
+    const plannedRaw = finish || start;
+    if (!name || !plannedRaw) {
+      dropped++;
+      // A dropped row must not leave a stale parent behind for its
+      // descendants to inherit: clear its level and everything deeper.
+      for (const k of Array.from(recentByLevel.keys())) if (k >= outlineLevel) recentByLevel.delete(k);
+      continue;
+    }
+    const plannedRead = readDate(plannedRaw, ctx.conv);
+    const startRead = start ? readDate(start, ctx.conv) : null;
+    // An unreadable Start is reported like an unreadable Finish: the row is
+    // skipped and counted, never imported without the start it carried.
+    if (!plannedRead.iso || (startRead && !startRead.iso)) {
+      unreadableDates++;
+      for (const k of Array.from(recentByLevel.keys())) if (k >= outlineLevel) recentByLevel.delete(k);
+      continue;
+    }
+    const plannedIso = plannedRead.iso;
+    if (plannedRead.ignored || startRead?.ignored) ignoredText++;
+
     const externalRef = uid ? `msp-uid:${uid}` : null;
 
     // Parent is the most recent task at outlineLevel-1.
@@ -264,12 +491,20 @@ function parseMsProjectXml(text: string): { rows: ParsedMilestone[]; warnings: s
     if (isMilestone) descParts.push("Milestone task");
     if (isSummary) descParts.push("Summary (rolls up children)");
 
-    // Predecessors → finish-to-start dependencies. MS Project stores each as
-    // <PredecessorLink><PredecessorUID>N</PredecessorUID></PredecessorLink>.
-    const dependsOnExternalRefs: string[] = [];
+    // Predecessors. MS Project stores each as <PredecessorLink><PredecessorUID>
+    // N</PredecessorUID><Type>1</Type><LinkLag>4800</LinkLag> — Type 0=FF,
+    // 1=FS, 2=SF, 3=SS; LinkLag in tenths of a minute. Every link is captured
+    // with its type and lag; only FS becomes a depends_on edge (PT SCH-8).
+    const links: ParsedLink[] = [];
     for (const link of Array.from(t.getElementsByTagNameNS("*", "PredecessorLink"))) {
       const predUid = childText(link as Element, "PredecessorUID");
-      if (predUid) dependsOnExternalRefs.push(`msp-uid:${predUid}`);
+      if (!predUid) continue;
+      const lagRaw = Number(childText(link as Element, "LinkLag") || "0");
+      links.push({
+        predecessorExternalRef: `msp-uid:${predUid}`,
+        type: mspLinkType(childText(link as Element, "Type")),
+        lagHours: Number.isFinite(lagRaw) ? Math.round(lagRaw / 600 * 100) / 100 : 0,
+      });
     }
 
     // Resource(s) responsible for this task.
@@ -288,12 +523,18 @@ function parseMsProjectXml(text: string): { rows: ParsedMilestone[]; warnings: s
 
     // Deadline (MS Project <Deadline>). Sentinel "NA"/empty/absent → ignore.
     const deadlineRaw = childText(t, "Deadline");
-    const deadlineIso = deadlineRaw && !/^NA$/i.test(deadlineRaw) ? coerceIso(deadlineRaw) : null;
+    const deadlineIso = deadlineRaw && !/^NA$/i.test(deadlineRaw) ? coerceIso(deadlineRaw, ctx.conv) : null;
     const attributes: Record<string, string> = {};
     if (deadlineIso) attributes.deadline_at = deadlineIso;
     if (isMilestone) attributes.milestone = "1"; // so the Gantt can draw a diamond
+    // Work hours (PC SCHED-2): <Work>PT40H0M0S</Work> is the effort MS Project
+    // carries; <Duration> is the span. Effort first, span as the fallback, so
+    // "effort-weighted" rollups weigh a 200-hour job as 200 hours.
     const workRaw = childText(t, "Work"); // PT40H0M0S style → keep raw for reference
     if (workRaw) attributes.work = workRaw;
+    const durationHours = isSummary ? null : (isoDurationToHours(workRaw) ?? isoDurationToHours(childText(t, "Duration")));
+    const split = splitLinks(links, attributes);
+    census.fs += split.dependsOn?.length ?? 0; census.notEnforced += split.notEnforced; census.withLag += split.withLag;
     // Per-task custom column values, keyed by the user's column name.
     for (const ea of Array.from(t.getElementsByTagNameNS("*", "ExtendedAttribute"))) {
       const fid = childText(ea as Element, "FieldID");
@@ -303,8 +544,8 @@ function parseMsProjectXml(text: string): { rows: ParsedMilestone[]; warnings: s
 
     rows.push({
       name: name.trim(),
-      plannedAt: coerceIso(plannedRaw),
-      plannedStartAt: start ? coerceIso(start) : null,
+      plannedAt: plannedIso,
+      plannedStartAt: startRead ? startRead.iso : null,
       weight: 1,
       externalRef,
       description: descParts.length > 0 ? descParts.join(" · ") : null,
@@ -313,7 +554,9 @@ function parseMsProjectXml(text: string): { rows: ParsedMilestone[]; warnings: s
       wbs: outlineNumber || null,
       isSummary,
       parentExternalRef,
-      dependsOnExternalRefs: dependsOnExternalRefs.length > 0 ? dependsOnExternalRefs : undefined,
+      dependsOnExternalRefs: split.dependsOn,
+      links: links.length > 0 ? links : undefined,
+      durationHours,
       responsibleParty,
       responsibleOrg,
       attributes: Object.keys(attributes).length > 0 ? attributes : undefined,
@@ -321,10 +564,13 @@ function parseMsProjectXml(text: string): { rows: ParsedMilestone[]; warnings: s
   }
   if (resourcesFound > 0) warnings.push(`Resources mapped onto ${resourcesFound} task${resourcesFound === 1 ? "" : "s"}.`);
   if (dropped > 0) warnings.push(`${dropped} task${dropped === 1 ? "" : "s"} skipped (missing name or date).`);
+  if (unreadableDates > 0) warnings.push(`${unreadableDates} task${unreadableDates === 1 ? "" : "s"} skipped (a start or finish date could not be read).`);
+  if (ignoredText > 0) warnings.push(ignoredTextWarning(ignoredText, "task"));
   const cleaned = dropPlaceholderLeaves(rows);
   if (cleaned.dropped > 0) warnings.push(`${cleaned.dropped} unnamed "<New Task>" placeholder row${cleaned.dropped === 1 ? "" : "s"} dropped.`);
   if (cleaned.rows.length === 0) warnings.push("No usable rows found in the MS Project XML.");
-  return { rows: cleaned.rows, warnings };
+  linkWarnings(census, warnings);
+  return { rows: cleaned.rows, warnings, keyColumn: "UID", links: census };
 }
 
 // ─── Primavera P6 XML ───────────────────────────────────────────
@@ -332,12 +578,46 @@ function parseMsProjectXml(text: string): { rows: ParsedMilestone[]; warnings: s
 // The wrapper varies (APIBusinessObjects, Project, etc.). We just
 // grab every <Activity> we can find.
 
-function parseP6Xml(text: string): { rows: ParsedMilestone[]; warnings: string[] } {
+/** ObjectId of the nearest enclosing <Project> (P6 XML nests WBS / Activity
+ *  under it; <BaselineProject> is deliberately not a match). */
+function enclosingProjectId(el: Element): string | null {
+  let cur: Node | null = el.parentNode;
+  while (cur && cur.nodeType === 1) {
+    const e = cur as Element;
+    if (e.localName === "Project") return childText(e, "ObjectId") || null;
+    cur = cur.parentNode;
+  }
+  return null;
+}
+
+function parseP6Xml(text: string, ctx: ParseCtx): Omit<ParseResult, "format"> {
   const warnings: string[] = [];
   const rows: ParsedMilestone[] = [];
 
   const doc = parseXml(text);
   if (!doc) { warnings.push("XML could not be parsed."); return { rows, warnings }; }
+
+  // ── Projects (PC SCHED-6) ──────────────────────────────────────
+  // An EPS-level or multi-project export holds several <Project> elements.
+  // Never merge them into one board: list them, and withhold rows until
+  // one is chosen. A single-project file needs no choice.
+  const allActs = Array.from(doc.getElementsByTagNameNS("*", "Activity"));
+  const projectEls = Array.from(doc.getElementsByTagNameNS("*", "Project")).filter((p) => p.localName === "Project" && childText(p, "ObjectId"));
+  const projects = projectEls.map((p) => {
+    const id = childText(p, "ObjectId");
+    return { id, name: childText(p, "Name") || childText(p, "Id") || `Project ${id}`, rows: allActs.filter((a) => enclosingProjectId(a) === id).length };
+  });
+  let selectedProjectId: string | null = null;
+  if (projects.length > 1) {
+    if (!ctx.projectId || !projects.some((p) => p.id === ctx.projectId)) {
+      return {
+        rows, projects, needsProjectChoice: true, selectedProjectId: null,
+        warnings: [`This file holds ${projects.length} projects (${projects.map((p) => p.name).join(", ")}). Choose which one to import — they are never merged into one board.`],
+      };
+    }
+    selectedProjectId = ctx.projectId;
+  } else if (projects.length === 1) selectedProjectId = projects[0].id;
+  const inProject = (el: Element) => selectedProjectId === null || enclosingProjectId(el) === selectedProjectId;
 
   // ── WBS nodes → summary rows ───────────────────────────────────
   // Primavera carries hierarchy in a separate <WBS> table. Each node
@@ -346,7 +626,7 @@ function parseP6Xml(text: string): { rows: ParsedMilestone[]; warnings: string[]
   // rows so the Execution view can group activities under their phase
   // exactly the way P6 shows them. WBS nodes carry no dates of their
   // own — rollUpSummaryDates() fills their span from descendants.
-  const wbsNodes = Array.from(doc.getElementsByTagNameNS("*", "WBS"));
+  const wbsNodes = Array.from(doc.getElementsByTagNameNS("*", "WBS")).filter(inProject);
   for (const w of wbsNodes) {
     const objId = childText(w, "ObjectId");
     if (!objId) continue;
@@ -364,29 +644,36 @@ function parseP6Xml(text: string): { rows: ParsedMilestone[]; warnings: string[]
     });
   }
 
-  // ── Relationships → finish-to-start dependencies ───────────────
+  // ── Relationships ──────────────────────────────────────────────
   // P6 XML stores activity links in <Relationship> elements pointing at the
-  // predecessor + successor ObjectIds. Index them by successor so each activity
-  // can carry its predecessors (same depends_on path as MS Project XML).
-  const predsByActObjId = new Map<string, string[]>();
+  // predecessor + successor ObjectIds, with <Type> ("Finish to Start", …)
+  // and <Lag> (hours). Index them by successor with type + lag intact; the
+  // FS ones become depends_on edges, the rest are recorded (PT SCH-8) — an
+  // SS + FF ladder between two activities must not become a cycle.
+  const linksByActObjId = new Map<string, ParsedLink[]>();
   for (const rel of Array.from(doc.getElementsByTagNameNS("*", "Relationship"))) {
     const succ = childText(rel as Element, "SuccessorActivityObjectId") || childText(rel as Element, "SuccessorObjectId");
     const pred = childText(rel as Element, "PredecessorActivityObjectId") || childText(rel as Element, "PredecessorObjectId");
     if (!succ || !pred) continue;
-    const arr = predsByActObjId.get(succ) ?? [];
-    if (!arr.includes(pred)) arr.push(pred);
-    predsByActObjId.set(succ, arr);
+    const arr = linksByActObjId.get(succ) ?? [];
+    const lag = Number(childText(rel as Element, "Lag") || "0");
+    const ref = `p6-act:${pred}`;
+    const type = relationshipType(childText(rel as Element, "Type"));
+    if (!arr.some((l) => l.predecessorExternalRef === ref && l.type === type)) arr.push({ predecessorExternalRef: ref, type, lagHours: Number.isFinite(lag) ? lag : 0 });
+    linksByActObjId.set(succ, arr);
   }
-  let relationCount = 0;
+  const census = { fs: 0, notEnforced: 0, withLag: 0, unresolved: 0 };
 
   // ── Activities → leaf rows ─────────────────────────────────────
-  const acts = Array.from(doc.getElementsByTagNameNS("*", "Activity"));
+  const acts = allActs.filter(inProject);
   if (acts.length === 0 && wbsNodes.length === 0) {
     warnings.push("No <Activity> or <WBS> elements found in the P6 XML.");
-    return { rows, warnings };
+    return { rows, warnings, projects, selectedProjectId };
   }
 
   let dropped = 0;
+  let unreadableDates = 0;
+  let ignoredText = 0;
   for (const a of acts) {
     const name = childText(a, "Name");
     const finish = childText(a, "PlannedFinishDate") || childText(a, "ExpectedFinishDate") || childText(a, "FinishDate");
@@ -397,21 +684,33 @@ function parseP6Xml(text: string): { rows: ParsedMilestone[]; warnings: string[]
     const pct    = Number(childText(a, "PercentComplete") || childText(a, "DurationPercentComplete") || "0");
     const plannedRaw = finish || start;
     if (!name || !plannedRaw) { dropped++; continue; }
-    const preds = objId ? (predsByActObjId.get(objId) ?? []) : [];
-    if (preds.length) relationCount += preds.length;
+    const plannedRead = readDate(plannedRaw, ctx.conv);
+    const startRead = start ? readDate(start, ctx.conv) : null;
+    if (!plannedRead.iso || (startRead && !startRead.iso)) { unreadableDates++; continue; }
+    const plannedIso = plannedRead.iso;
+    if (plannedRead.ignored || startRead?.ignored) ignoredText++;
+    const links = objId ? (linksByActObjId.get(objId) ?? []) : [];
+    const attributes: Record<string, string> = {};
+    const split = splitLinks(links, attributes);
+    census.fs += split.dependsOn?.length ?? 0; census.notEnforced += split.notEnforced; census.withLag += split.withLag;
+    // Planned duration is in hours in P6 XML (PC SCHED-2).
+    const durRaw = Number(childText(a, "PlannedDuration") || childText(a, "AtCompletionDuration") || "");
     rows.push({
       name: name.trim(),
-      plannedAt: coerceIso(plannedRaw),
-      plannedStartAt: start ? coerceIso(start) : null,
+      plannedAt: plannedIso,
+      plannedStartAt: startRead ? startRead.iso : null,
       weight: 1,
       externalRef: objId ? `p6-act:${objId}` : (idTxt ? `p6-id:${idTxt}` : null),
       parentExternalRef: wbsId ? `p6-wbs:${wbsId}` : null,
-      dependsOnExternalRefs: preds.length ? preds.map((p) => `p6-act:${p}`) : undefined,
+      dependsOnExternalRefs: split.dependsOn,
+      links: links.length ? links : undefined,
+      durationHours: Number.isFinite(durRaw) && durRaw > 0 ? durRaw : null,
       percentComplete: isNaN(pct) ? undefined : pct,
       wbs: idTxt || null,
+      attributes: Object.keys(attributes).length > 0 ? attributes : undefined,
     });
   }
-  if (relationCount > 0) warnings.push(`${relationCount} dependency link${relationCount === 1 ? "" : "s"} mapped from relationships.`);
+  if (census.fs > 0) warnings.push(`${census.fs} dependency link${census.fs === 1 ? "" : "s"} mapped from relationships.`);
 
   // Roll WBS spans up from activities, then compute outline depth and
   // drop any WBS branch that ended up with no dated descendants.
@@ -421,9 +720,12 @@ function parseP6Xml(text: string): { rows: ParsedMilestone[]; warnings: string[]
   const droppedSummaries = rows.length - usable.length;
 
   if (dropped > 0) warnings.push(`${dropped} activit${dropped === 1 ? "y" : "ies"} skipped (missing name or date).`);
+  if (unreadableDates > 0) warnings.push(`${unreadableDates} activit${unreadableDates === 1 ? "y" : "ies"} skipped (a start or finish date could not be read).`);
+  if (ignoredText > 0) warnings.push(ignoredTextWarning(ignoredText, "activity"));
   if (droppedSummaries > 0) warnings.push(`${droppedSummaries} empty WBS node${droppedSummaries === 1 ? "" : "s"} dropped (no dated activities beneath).`);
   if (usable.length === 0) warnings.push("No usable rows found in the P6 XML.");
-  return { rows: usable, warnings };
+  linkWarnings(census, warnings);
+  return { rows: usable, warnings, keyColumn: "ObjectId", projects, selectedProjectId, links: census };
 }
 
 // ─── Primavera P6 XER ──────────────────────────────────────────
@@ -457,7 +759,7 @@ function readXerTables(text: string): Map<string, XerTable> {
   return tables;
 }
 
-function parseP6Xer(text: string): { rows: ParsedMilestone[]; warnings: string[] } {
+function parseP6Xer(text: string, ctx: ParseCtx): Omit<ParseResult, "format"> {
   const warnings: string[] = [];
   const rows: ParsedMilestone[] = [];
 
@@ -472,6 +774,31 @@ function parseP6Xer(text: string): { rows: ParsedMilestone[]; warnings: string[]
     return -1;
   };
 
+  // ── Projects (PC SCHED-6) ──────────────────────────────────────
+  // Every TASK / PROJWBS row carries proj_id. A file with several projects
+  // lists them and withholds rows until one is chosen; rows are then
+  // filtered to that proj_id, never merged.
+  const tProj = col(task, ["proj_id"]);
+  const projTable = tables.get("PROJECT");
+  const pId = projTable ? col(projTable, ["proj_id"]) : -1;
+  const pName = projTable ? col(projTable, ["proj_short_name", "proj_name"]) : -1;
+  const projName = new Map<string, string>();
+  if (projTable && pId >= 0) for (const r of projTable.rows) { const id = r[pId]?.trim(); if (id) projName.set(id, (pName >= 0 ? r[pName]?.trim() : "") || `Project ${id}`); }
+  const taskCountByProj = new Map<string, number>();
+  if (tProj >= 0) for (const r of task.rows) { const id = r[tProj]?.trim(); if (id) taskCountByProj.set(id, (taskCountByProj.get(id) ?? 0) + 1); }
+  const projects = Array.from(taskCountByProj.entries()).map(([id, n]) => ({ id, name: projName.get(id) ?? `Project ${id}`, rows: n }));
+  let selectedProjectId: string | null = null;
+  if (projects.length > 1) {
+    if (!ctx.projectId || !projects.some((p) => p.id === ctx.projectId)) {
+      return {
+        rows, projects, needsProjectChoice: true, selectedProjectId: null,
+        warnings: [`This file holds ${projects.length} projects (${projects.map((p) => p.name).join(", ")}). Choose which one to import — they are never merged into one board.`],
+      };
+    }
+    selectedProjectId = ctx.projectId;
+  } else if (projects.length === 1) selectedProjectId = projects[0].id;
+  const inProject = (r: string[], idx: number) => selectedProjectId === null || idx < 0 || (r[idx]?.trim() ?? "") === selectedProjectId;
+
   // ── PROJWBS → summary rows ─────────────────────────────────────
   // The WBS hierarchy lives in its own table; activities reference a
   // wbs_id. Import each WBS node as a summary so activities group
@@ -483,9 +810,10 @@ function parseP6Xer(text: string): { rows: ParsedMilestone[]; warnings: string[]
     const wName   = col(wbs, ["wbs_name"]);
     const wShort  = col(wbs, ["wbs_short_name"]);
     const wProj   = col(wbs, ["proj_node_flag"]);
+    const wProjId = col(wbs, ["proj_id"]);
     for (const r of wbs.rows) {
       const id = wId >= 0 ? r[wId]?.trim() : "";
-      if (!id) continue;
+      if (!id || !inProject(r, wProjId)) continue;
       const isRoot = wProj >= 0 && /^y/i.test(r[wProj]?.trim() ?? "");
       const parent = wParent >= 0 ? r[wParent]?.trim() : "";
       rows.push({
@@ -501,27 +829,33 @@ function parseP6Xer(text: string): { rows: ParsedMilestone[]; warnings: string[]
     }
   }
 
-  // ── TASKPRED → finish-to-start dependencies ────────────────────
+  // ── TASKPRED → relationships ───────────────────────────────────
   // P6's activity links live in their own table: each row ties a successor
-  // (task_id) to a predecessor (pred_task_id). Index by successor so each task
-  // carries its predecessors through the same depends_on path as everything else.
-  const predsByTaskId = new Map<string, string[]>();
+  // (task_id) to a predecessor (pred_task_id) with pred_type (PR_FS / PR_SS /
+  // PR_FF / PR_SF) and lag_hr_cnt. Every link is kept with its type and lag;
+  // only FS becomes a depends_on edge (PT SCH-8).
+  const linksByTaskId = new Map<string, ParsedLink[]>();
   const taskpred = tables.get("TASKPRED");
   if (taskpred) {
     const pSucc = col(taskpred, ["task_id"]);
     const pPred = col(taskpred, ["pred_task_id"]);
+    const pType = col(taskpred, ["pred_type"]);
+    const pLag  = col(taskpred, ["lag_hr_cnt"]);
     if (pSucc >= 0 && pPred >= 0) {
       for (const r of taskpred.rows) {
         const succ = r[pSucc]?.trim();
         const pred = r[pPred]?.trim();
         if (!succ || !pred) continue;
-        const arr = predsByTaskId.get(succ) ?? [];
-        if (!arr.includes(pred)) arr.push(pred);
-        predsByTaskId.set(succ, arr);
+        const arr = linksByTaskId.get(succ) ?? [];
+        const ref = `p6-task:${pred}`;
+        const type = relationshipType(pType >= 0 ? r[pType] : null);
+        const lag = pLag >= 0 ? Number(r[pLag]?.trim() || "0") : 0;
+        if (!arr.some((l) => l.predecessorExternalRef === ref && l.type === type)) arr.push({ predecessorExternalRef: ref, type, lagHours: Number.isFinite(lag) ? lag : 0 });
+        linksByTaskId.set(succ, arr);
       }
     }
   }
-  let relationCount = 0;
+  const census = { fs: 0, notEnforced: 0, withLag: 0, unresolved: 0 };
 
   // ── TASK → leaf rows ───────────────────────────────────────────
   const tId     = col(task, ["task_id"]);
@@ -531,31 +865,46 @@ function parseP6Xer(text: string): { rows: ParsedMilestone[]; warnings: string[]
   const tStart  = col(task, ["target_start_date", "act_start_date", "early_start_date", "start_date"]);
   const tFinish = col(task, ["target_end_date", "act_end_date", "early_end_date", "finish_date", "end_date"]);
   const tPct    = col(task, ["phys_complete_pct", "complete_pct"]);
+  const tDrtn   = col(task, ["target_drtn_hr_cnt", "target_work_qty"]); // hours (PC SCHED-2)
   let dropped = 0;
+  let unreadableDates = 0;
+  let ignoredText = 0;
   for (const r of task.rows) {
+    if (!inProject(r, tProj)) continue;
     const name = tName >= 0 ? r[tName]?.trim() : "";
     const finish = tFinish >= 0 ? r[tFinish]?.trim() : "";
     const start  = tStart  >= 0 ? r[tStart]?.trim()  : "";
     const planned = finish || start;
     if (!name || !planned) { dropped++; continue; }
+    const plannedRead = readDate(planned, ctx.conv);
+    const startRead = start ? readDate(start, ctx.conv) : null;
+    if (!plannedRead.iso || (startRead && !startRead.iso)) { unreadableDates++; continue; }
+    const plannedIso = plannedRead.iso;
+    if (plannedRead.ignored || startRead?.ignored) ignoredText++;
     const id    = tId  >= 0 ? r[tId]?.trim()  : "";
     const wbsId = tWbs >= 0 ? r[tWbs]?.trim() : "";
     const pct   = tPct >= 0 ? Number(r[tPct]?.trim() || "0") : NaN;
-    const preds = id ? (predsByTaskId.get(id) ?? []) : [];
-    if (preds.length) relationCount += preds.length;
+    const drtn  = tDrtn >= 0 ? Number(r[tDrtn]?.trim() || "") : NaN;
+    const links = id ? (linksByTaskId.get(id) ?? []) : [];
+    const attributes: Record<string, string> = {};
+    const split = splitLinks(links, attributes);
+    census.fs += split.dependsOn?.length ?? 0; census.notEnforced += split.notEnforced; census.withLag += split.withLag;
     rows.push({
       name,
-      plannedAt: coerceIso(planned),
-      plannedStartAt: start ? coerceIso(start) : null,
+      plannedAt: plannedIso,
+      plannedStartAt: startRead ? startRead.iso : null,
       weight: 1,
       externalRef: id ? `p6-task:${id}` : null,
       parentExternalRef: wbsId ? `p6-wbs:${wbsId}` : null,
-      dependsOnExternalRefs: preds.length ? preds.map((p) => `p6-task:${p}`) : undefined,
+      dependsOnExternalRefs: split.dependsOn,
+      links: links.length ? links : undefined,
+      durationHours: Number.isFinite(drtn) && drtn > 0 ? drtn : null,
       percentComplete: isNaN(pct) ? undefined : pct,
       wbs: tCode >= 0 ? (r[tCode]?.trim() || null) : null,
+      attributes: Object.keys(attributes).length > 0 ? attributes : undefined,
     });
   }
-  if (relationCount > 0) warnings.push(`${relationCount} dependency link${relationCount === 1 ? "" : "s"} mapped from TASKPRED.`);
+  if (census.fs > 0) warnings.push(`${census.fs} dependency link${census.fs === 1 ? "" : "s"} mapped from TASKPRED.`);
 
   rollUpSummaryDates(rows);
   computeOutlineLevels(rows);
@@ -563,9 +912,12 @@ function parseP6Xer(text: string): { rows: ParsedMilestone[]; warnings: string[]
   const droppedSummaries = rows.length - usable.length;
 
   if (dropped > 0) warnings.push(`${dropped} activit${dropped === 1 ? "y" : "ies"} skipped (missing name or date).`);
+  if (unreadableDates > 0) warnings.push(`${unreadableDates} activit${unreadableDates === 1 ? "y" : "ies"} skipped (a start or finish date could not be read).`);
+  if (ignoredText > 0) warnings.push(ignoredTextWarning(ignoredText, "activity"));
   if (droppedSummaries > 0) warnings.push(`${droppedSummaries} empty WBS node${droppedSummaries === 1 ? "" : "s"} dropped (no dated activities beneath).`);
   if (usable.length === 0) warnings.push("XER parsed but no rows carried a usable date.");
-  return { rows: usable, warnings };
+  linkWarnings(census, warnings);
+  return { rows: usable, warnings, keyColumn: "task_id", projects, selectedProjectId, links: census };
 }
 
 // ─── MS Project CSV ────────────────────────────────────────────
@@ -576,101 +928,195 @@ function parseP6Xer(text: string): { rows: ParsedMilestone[]; warnings: string[]
 // We accept comma OR tab delimited (MS Project Save As often uses
 // tabs depending on the locale).
 
-function parseMsProjectCsv(text: string): { rows: ParsedMilestone[]; warnings: string[] } {
-  return parseCsvLikeWithSynonyms(text, {
-    name:     ["task name", "name"],
-    planned:  ["finish", "finish date", "end", "due date", "due", "planned_at"],
-    start:    ["start", "start date", "planned_start", "planned start"],
-    id:       ["unique id", "uid", "id", "task id"],
-    pct:      ["% complete", "percent complete", "complete"],
-    desc:     ["notes", "description"],
-    outline:  ["outline level", "outline_level", "level"],
-    wbs:      ["wbs"],
-    pred:     ["predecessors", "predecessor", "preds"],
-  }, "msp");
+const MSP_CSV_SPEC: SynonymSpec = {
+  name:     ["task name", "name"],
+  planned:  ["finish", "finish date", "end", "due date", "due", "planned_at"],
+  start:    ["start", "start date", "planned_start", "planned start"],
+  // Unique ID is the stable key; ID is the outline position, which MS
+  // Project renumbers on every insert (PT SCH-3) — but ID is the numbering
+  // the Predecessors column uses (PC SCHED-8), so links resolve through it.
+  id:       ["unique id", "uid"],
+  seq:      ["id", "task id"],
+  predVia:  "seq",
+  pct:      ["% complete", "percent complete", "complete"],
+  desc:     ["notes", "description"],
+  outline:  ["outline level", "outline_level", "level"],
+  wbs:      ["wbs"],
+  pred:     ["predecessors", "predecessor", "preds"],
+  work:     ["work", "work hours", "duration", "hours"],
+};
+
+function parseMsProjectCsv(text: string, ctx: ParseCtx): Omit<ParseResult, "format"> {
+  return parseCsvLikeWithSynonyms(text, MSP_CSV_SPEC, "msp", ctx);
 }
 
 // ─── Generic CSV (our own convention, still backward-compatible) ─
 
-function parseGenericCsv(text: string): { rows: ParsedMilestone[]; warnings: string[] } {
-  return parseCsvLikeWithSynonyms(text, {
-    name:     ["name", "task name", "milestone", "title"],
-    planned:  ["planned_at", "due", "due date", "finish", "finish date", "end", "date"],
-    start:    ["planned_start_at", "planned_start", "start", "start date"],
-    id:       ["external_ref", "id", "ref"],
-    pct:      ["% complete", "percent complete", "complete"],
-    desc:     ["description", "notes"],
-    weight:   ["weight"],
-    outline:  ["outline level", "outline_level", "level"],
-    wbs:      ["wbs"],
-    pred:     ["predecessors", "predecessor", "preds", "depends_on", "depends on"],
-  }, "csv");
+const GENERIC_CSV_SPEC: SynonymSpec = {
+  name:     ["name", "task name", "milestone", "title"],
+  planned:  ["planned_at", "due", "due date", "finish", "finish date", "end", "date"],
+  start:    ["planned_start_at", "planned_start", "start", "start date"],
+  id:       ["external_ref", "id", "ref"],
+  predVia:  "key",
+  pct:      ["% complete", "percent complete", "complete"],
+  desc:     ["description", "notes"],
+  weight:   ["weight"],
+  outline:  ["outline level", "outline_level", "level"],
+  wbs:      ["wbs"],
+  pred:     ["predecessors", "predecessor", "preds", "depends_on", "depends on"],
+  work:     ["work", "work hours", "duration_hours", "hours", "duration"],
+};
+
+function parseGenericCsv(text: string, ctx: ParseCtx): Omit<ParseResult, "format"> {
+  return parseCsvLikeWithSynonyms(text, GENERIC_CSV_SPEC, "csv", ctx);
+}
+
+/** Non-blank lines, delimiter (tab beats comma) and header of a CSV-like file. */
+function csvLayout(text: string): { lines: string[]; delim: string; rawHeader: string[]; header: string[] } {
+  const lines = text.split(/\r?\n/).filter((l) => l.trim().length > 0);
+  const sampleLine = lines[0] ?? "";
+  const delim = sampleLine.includes("\t") ? "\t" : ",";
+  const rawHeader = csvSplit(sampleLine, delim).map((h) => h.trim().replace(/^"|"$/g, ""));
+  return { lines, delim, rawHeader, header: rawHeader.map((h) => h.toLowerCase()) };
+}
+
+function findColumn(header: string[], cands: string[]): number {
+  for (const c of cands) { const i = header.indexOf(c); if (i >= 0) return i; }
+  return -1;
+}
+
+/** The text detectDateConvention reads: the values of the start and finish
+ *  columns for a CSV, nothing for XML / XER (their dates are ISO). */
+function dateEvidence(format: ScheduleFormat, text: string): string {
+  const syn = format === "msproject-csv" ? MSP_CSV_SPEC : format === "generic-csv" ? GENERIC_CSV_SPEC : null;
+  if (!syn) return "";
+  const { lines, delim, header } = csvLayout(text);
+  const cols = [syn.start ? findColumn(header, syn.start) : -1, findColumn(header, syn.planned)].filter((i) => i >= 0);
+  const values: string[] = [];
+  for (let i = 1; i < lines.length; i++) {
+    const cells = csvSplit(lines[i], delim);
+    for (const c of cols) { const v = cells[c]?.trim().replace(/^"|"$/g, ""); if (v) values.push(v); }
+  }
+  return values.join("\n");
 }
 
 interface SynonymSpec {
   name: string[];
   planned: string[];
   start?: string[];
+  /** The stable row key. */
   id?: string[];
+  /** The sequential (outline-position) id, when the format has both. */
+  seq?: string[];
+  /** Which numbering the predecessors column uses. */
+  predVia: "seq" | "key";
   pct?: string[];
   desc?: string[];
   weight?: string[];
   outline?: string[];
   wbs?: string[];
   pred?: string[];
+  work?: string[];
 }
 
-function parseCsvLikeWithSynonyms(text: string, syn: SynonymSpec, refTag: string): { rows: ParsedMilestone[]; warnings: string[] } {
+/** "2FS+1d" / "3SS-2h" / "4" → predecessor token, type and lag hours. When
+ *  the id / type prefix reads but the lag's unit does not ("2FS+3 mons",
+ *  "2FS+50%"), the link is kept with lagHours 0 and the raw lag text in
+ *  lagRaw — the relationship is real even when its lag is not (PT SCH-8). */
+function parsePredToken(tok: string): { id: string; type: RelationshipType; lagHours: number; lagRaw?: string } | null {
+  const m = tok.trim().match(/^(\d+)\s*(FS|SS|FF|SF)?\s*(.*)$/i);
+  if (!m) return null;
+  const type = relationshipType(m[2]);
+  const rest = m[3].trim();
+  if (!rest) return { id: m[1], type, lagHours: 0 };
+  if (!/^[+-]/.test(rest)) return null; // not a lag at all — the token is unreadable
+  // A trailing "?" is MS Project's estimated-duration marker ("1FS+1 day?").
+  const lag = rest.match(/^([+-])\s*(\d+(?:\.\d+)?)\s*(e?d(?:ays?)?|e?w(?:ks?|eeks?)?|h(?:rs?|ours?)?|m(?:ins?|inutes?)?)?\??\.?$/i);
+  const hours = lag ? (Number(lag[2]) === 0 ? 0 : durationTextToHours(`${lag[2]}${lag[3] ?? "h"}`)) : null;
+  if (!lag || hours === null) return { id: m[1], type, lagHours: 0, lagRaw: rest };
+  return { id: m[1], type, lagHours: hours * (lag[1] === "-" ? -1 : 1) };
+}
+
+function parseCsvLikeWithSynonyms(text: string, syn: SynonymSpec, refTag: string, ctx: ParseCtx): Omit<ParseResult, "format"> {
   const warnings: string[] = [];
   const rows: ParsedMilestone[] = [];
-  const lines = text.split(/\r?\n/).filter((l) => l.trim().length > 0);
+  // Auto-detect delimiter — tab beats comma if both appear.
+  const { lines, delim, rawHeader, header } = csvLayout(text);
   if (lines.length < 2) { warnings.push("File needs a header row plus at least one data row."); return { rows, warnings }; }
 
-  // Auto-detect delimiter — tab beats comma if both appear.
-  const sampleLine = lines[0];
-  const delim = sampleLine.includes("\t") ? "\t" : ",";
-  const header = csvSplit(sampleLine, delim).map((h) => h.toLowerCase().trim().replace(/^"|"$/g, ""));
-
-  const findCol = (cands: string[]): number => {
-    for (const c of cands) { const i = header.indexOf(c); if (i >= 0) return i; }
-    return -1;
-  };
+  const findCol = (cands: string[]): number => findColumn(header, cands);
 
   const iName    = findCol(syn.name);
   const iPlanned = findCol(syn.planned);
   const iStart   = syn.start   ? findCol(syn.start)   : -1;
   const iId      = syn.id      ? findCol(syn.id)      : -1;
+  const iSeq     = syn.seq     ? findCol(syn.seq)     : -1;
   const iPct     = syn.pct     ? findCol(syn.pct)     : -1;
   const iDesc    = syn.desc    ? findCol(syn.desc)    : -1;
   const iWeight  = syn.weight  ? findCol(syn.weight)  : -1;
   const iOutline = syn.outline ? findCol(syn.outline) : -1;
   const iWbs     = syn.wbs     ? findCol(syn.wbs)     : -1;
   const iPred    = syn.pred    ? findCol(syn.pred)    : -1;
+  const iWork    = syn.work    ? findCol(syn.work)    : -1;
 
   if (iName < 0 || iPlanned < 0) {
     warnings.push(`Couldn't find required columns. Expected something like "${syn.name[0]}" and "${syn.planned[0]}" — got: ${header.join(", ")}`);
     return { rows, warnings };
   }
 
+  // Row identity (PT SCH-3). The stable id column when the file has one;
+  // the sequential id (with a warning — it renumbers on insert) when that is
+  // all there is; otherwise a hash of the row's own content, so a row
+  // inserted above cannot re-point any other row's reference, and two
+  // different files cannot collide on a position.
+  const iKey = iId >= 0 ? iId : iSeq;
+  let keyColumn: string;
+  if (iId >= 0) keyColumn = rawHeader[iId];
+  else if (iSeq >= 0) {
+    keyColumn = rawHeader[iSeq];
+    warnings.push(`Rows are keyed on the "${rawHeader[iSeq]}" column, which MS Project renumbers when rows are inserted — add "Unique ID" to the export so re-imports match the right rows.`);
+  } else keyColumn = "content (name + dates)";
+  const iPredVia = syn.predVia === "seq" ? iSeq : iKey;
+  if (iPred >= 0 && iPredVia < 0) {
+    warnings.push(`Predecessor links were not imported: the "${rawHeader[iPred]}" column refers to the ID column, which this file does not carry.`);
+  }
+
   // Columns we've claimed for first-class fields. Everything else is
   // an org-specific column (WO#, contractor, area, …) and gets carried
   // into attributes keyed by its header so nothing is silently lost.
-  const claimed = new Set([iName, iPlanned, iStart, iId, iPct, iDesc, iWeight, iOutline, iWbs, iPred].filter((x) => x >= 0));
+  const claimed = new Set([iName, iPlanned, iStart, iId, iSeq, iPct, iDesc, iWeight, iOutline, iWbs, iPred, iWork].filter((x) => x >= 0));
   const extraCols = header.map((h, idx) => ({ h, idx })).filter((c) => c.idx >= 0 && !claimed.has(c.idx) && c.h);
   const resourceCol = findCol(["resource names", "resource_names", "resources", "resource"]);
   const woCol = extraCols.find((c) => /work\s*order|^wo$|wo\s*#|wo[_-]?num|order\s*#/i.test(c.h))?.idx ?? -1;
   const locCol = extraCols.find((c) => /location|area|unit|equipment|tag/i.test(c.h))?.idx ?? -1;
 
   let dropped = 0;
-  let rowIndex = 0; // stable index used for synthetic refs / hierarchy
+  let unreadableDates = 0;
+  let ignoredText = 0;
+  let duplicateKeys = 0;
+  const seenRefs = new Set<string>();
+  // Predecessor tokens are resolved AFTER every row is read, through the
+  // numbering the column actually uses (PC SCHED-8): a file with both Unique
+  // ID and ID keys rows on Unique ID but its Predecessors are IDs.
+  const refByPredId = new Map<string, string>();
+  const pendingPreds: Array<{ row: ParsedMilestone; tokens: string[]; attributes: Record<string, string> }> = [];
   for (let i = 1; i < lines.length; i++) {
     const cells = csvSplit(lines[i], delim);
     const cell = (idx: number) => (idx >= 0 ? cells[idx]?.trim().replace(/^"|"$/g, "") : "");
     const name = cell(iName);
     const planned = cell(iPlanned);
     if (!name || !planned) { dropped++; continue; }
+    const plannedRead = readDate(planned, ctx.conv);
     const startRaw = cell(iStart);
-    const id     = cell(iId);
+    const startRead = startRaw ? readDate(startRaw, ctx.conv) : null;
+    // An unreadable Start is reported like an unreadable Finish: the row is
+    // skipped and counted, never imported without the start it carried.
+    if (!plannedRead.iso || (startRead && !startRead.iso)) { unreadableDates++; continue; }
+    const plannedIso = plannedRead.iso;
+    const startIso = startRead ? startRead.iso : null;
+    if (plannedRead.ignored || startRead?.ignored) ignoredText++;
+    const startHasTime = startIso ? hasTimeOfDay(startRaw) : undefined;
+    const id     = cell(iKey);
     const pctRaw = iPct >= 0 ? cells[iPct]?.trim().replace(/[%"]/g, "") : "";
     const desc   = cell(iDesc);
     const wRaw   = cell(iWeight);
@@ -684,41 +1130,63 @@ function parseCsvLikeWithSynonyms(text: string, syn: SynonymSpec, refTag: string
     for (const c of extraCols) { const v = cell(c.idx); if (v) attributes[c.h] = v; }
     const resources = resourceCol >= 0 ? cell(resourceCol) : "";
 
-    // Predecessors column → finish-to-start deps. Values look like "2",
-    // "2,3", or "2FS,3SS+1d"; take the leading id of each token. Only
-    // resolvable when the file has an id column (so refs line up); otherwise
-    // they're left for the user to wire up manually rather than mis-linked.
-    let dependsOnExternalRefs: string[] | undefined;
-    if (iPred >= 0 && iId >= 0) {
-      const raw = cell(iPred);
-      if (raw) {
-        const predIds = raw
-          .split(/[;,]/)
-          .map((tok) => tok.trim().match(/^\d+/)?.[0])
-          .filter((x): x is string => !!x);
-        if (predIds.length) dependsOnExternalRefs = predIds.map((p) => `${refTag}:${p}`);
-      }
+    let externalRef = id ? `${refTag}:${id}` : `${refTag}-key:${contentKey(name, plannedIso, startIso)}`;
+    if (seenRefs.has(externalRef)) {
+      // Two rows with the same key (or identical content): keep both, but
+      // never let the second silently overwrite the first on import.
+      duplicateKeys++;
+      let n = 2;
+      while (seenRefs.has(`${externalRef}#${n}`)) n++;
+      externalRef = `${externalRef}#${n}`;
     }
+    seenRefs.add(externalRef);
+    const predId = cell(iPredVia);
+    if (predId && !refByPredId.has(predId)) refByPredId.set(predId, externalRef);
 
-    rows.push({
+    const row: ParsedMilestone = {
       name,
-      plannedAt: coerceIso(planned),
-      plannedStartAt: startRaw ? coerceIso(startRaw) : null,
+      plannedAt: plannedIso,
+      plannedStartAt: startIso,
+      ...(startHasTime !== undefined ? { startHasTime } : {}),
       weight: isNaN(weight) ? 1 : weight,
-      // Always give CSV rows a stable ref so hierarchy can be wired up
-      // even when the file has no id column.
-      externalRef: id ? `${refTag}:${id}` : `${refTag}-row:${rowIndex}`,
+      externalRef,
       description: desc || null,
       percentComplete: isNaN(pct) ? undefined : pct,
       outlineLevel,
       wbs: wbsRaw || null,
-      dependsOnExternalRefs,
+      durationHours: iWork >= 0 ? durationTextToHours(cell(iWork)) : null,
       workOrderRef: woCol >= 0 ? cell(woCol) || null : null,
       responsibleParty: resources || null,
       location: locCol >= 0 ? cell(locCol) || null : null,
       attributes: Object.keys(attributes).length > 0 ? attributes : undefined,
-    });
-    rowIndex++;
+    };
+    rows.push(row);
+    if (iPred >= 0 && iPredVia >= 0) {
+      const raw = cell(iPred);
+      if (raw) pendingPreds.push({ row, tokens: raw.split(/[;,]/).map((t) => t.trim()).filter(Boolean), attributes });
+    }
+  }
+
+  // Predecessors → links. Values look like "2", "2,3", or "2FS,3SS+1d". A
+  // token that names no row in this file is counted and reported, never
+  // guessed; only FS links become depends_on edges (PT SCH-8).
+  const census = { fs: 0, notEnforced: 0, withLag: 0, unresolved: 0, lagUnread: 0 };
+  for (const p of pendingPreds) {
+    const links: ParsedLink[] = [];
+    for (const tok of p.tokens) {
+      const parsed = parsePredToken(tok);
+      const ref = parsed ? refByPredId.get(parsed.id) : undefined;
+      if (!parsed || !ref || ref === p.row.externalRef) { census.unresolved++; continue; }
+      if (!links.some((l) => l.predecessorExternalRef === ref && l.type === parsed.type)) {
+        links.push({ predecessorExternalRef: ref, type: parsed.type, lagHours: parsed.lagHours, ...(parsed.lagRaw ? { lagRaw: parsed.lagRaw } : {}) });
+      }
+    }
+    if (links.length === 0) continue;
+    const split = splitLinks(links, p.attributes);
+    census.fs += split.dependsOn?.length ?? 0; census.notEnforced += split.notEnforced; census.withLag += split.withLag; census.lagUnread += split.lagUnread;
+    p.row.dependsOnExternalRefs = split.dependsOn;
+    p.row.links = links;
+    if (Object.keys(p.attributes).length > 0) p.row.attributes = p.attributes;
   }
 
   // If the export carried an outline-level column, rebuild the WBS
@@ -732,7 +1200,11 @@ function parseCsvLikeWithSynonyms(text: string, syn: SynonymSpec, refTag: string
   }
 
   if (dropped > 0) warnings.push(`${dropped} row${dropped === 1 ? "" : "s"} skipped (missing name or date).`);
-  return { rows, warnings };
+  if (unreadableDates > 0) warnings.push(`${unreadableDates} row${unreadableDates === 1 ? "" : "s"} skipped (a start or finish date could not be read as ${ctx.conv === "dmy" ? "day/month/year" : "month/day/year"}).`);
+  if (ignoredText > 0) warnings.push(ignoredTextWarning(ignoredText, "row"));
+  if (duplicateKeys > 0) warnings.push(`${duplicateKeys} row${duplicateKeys === 1 ? "" : "s"} share${duplicateKeys === 1 ? "s" : ""} a key with an earlier row and ${duplicateKeys === 1 ? "was" : "were"} given a "#n" suffix so neither overwrites the other.`);
+  linkWarnings(census, warnings);
+  return { rows, warnings, keyColumn, links: census };
 }
 
 // ─── Hierarchy helpers (shared across P6 + CSV) ─────────────────
@@ -904,29 +1376,219 @@ function childText(parent: Element, tag: string): string {
 
 // Coerce a bunch of common date strings to an ISO instant. Accepts:
 //   2026-08-15
-//   2026-08-15T00:00:00
+//   2026-08-15T08:00:00          (offset-less → read as wall-clock-as-UTC, "Z" attached)
+//   2026-08-15T08:00:00+02:00    (offset kept)
 //   2026-08-15 00:00
-//   8/15/2026
-//   15/08/2026 (ambiguous — we treat as M/D/Y if first part ≤ 12)
-function coerceIso(s: string): string {
-  const trimmed = s.trim();
-  if (/^\d{4}-\d{2}-\d{2}T/.test(trimmed)) return trimmed;
+//   8/15/2026 / 15/08/2026       (day-first vs month-first is decided once for the
+//                                 whole file by detectDateConvention — never per row)
+//   Mon 6/1/26 / Tue. 15/08/2026 (MS Project's default display: the day name is
+//                                 dropped, the rest read per the file's convention)
+//   2026/06/01 8:00 / 2026.6.1   (year-first, as ja / zh / ko exports write it:
+//                                 always year / month / day, no question to ask)
+//   June 1, 2026 8:00 AM         (written-out month: read by Date() AS UTC —
+//                                 its wall clock, never the browser's zone)
+//   June 1, 2026 8:00 AM EST     (a zone abbreviation — US, GMT / UTC, BST,
+//                                 CET / CEST — at its fixed offset, whatever
+//                                 the form before it)
+// Returns "" when the value cannot be a date under the file's convention, so
+// the caller can count and report it instead of handing Postgres a month 15.
+// A value holding a d/m/y triple is NEVER handed to `new Date()`, which always
+// reads month-first in the browser's zone whatever the file decided (PT SCH-1).
+// Every branch emits wall-clock-as-UTC ("…Z"), so the same file reads the same
+// on every machine (PC SCHED-9).
+export function coerceIso(s: string, conv: DateConvention = "mdy"): string {
+  return readDate(s, conv).iso;
+}
+
+/** A date cell's reading: the ISO instant ("" when unreadable) and any text
+ *  after its time of day that was ignored because it is not a time zone
+ *  ("est." = estimated, "(approx)", "Eastern") — the parsers count those
+ *  rows and say so. */
+export interface DateReading { iso: string; ignored: string | null }
+
+export function readDate(s: string, conv: DateConvention = "mdy"): DateReading {
+  // One spelling of AM / PM for every branch and for Date(): "8:00a.m.",
+  // "8:00 am", "8:00AM" → "8:00 AM".
+  const raw = s.trim().replace(AM_PM, (_m, d: string, ap: string) => `${d} ${ap.toUpperCase()}M `).replace(/\s+/g, " ").trim()
+    .replace(HOUR_ONLY, "$1:00 $2"); // "8 AM" → "8:00 AM"
+  // The day name is dropped for the numeric forms only; the Date() fallback
+  // below sees the value with it (so "June 1, 2026" keeps its month name).
+  const trimmed = raw.replace(LEADING_DAY_NAME, "");
+  if (ISO_DATETIME.test(trimmed)) {
+    // Schedule dates are stored wall-clock-as-UTC. MS Project / P6 XML write
+    // local wall-clock times with NO offset; JS would read those as browser-
+    // local and the importer's shift label would drift by the importer's UTC
+    // offset (PC SCHED-9). Attach Z so the reading matches the convention; an
+    // offset the value carries is kept as written.
+    return { iso: /(?:Z|[+-]\d{2}:?\d{2})$/i.test(trimmed) ? trimmed : `${trimmed}Z`, ignored: null };
+  }
+  // What follows the time of day. Directly after it, a numeric offset
+  // ("8:00 PM +02:00", "08:00 GMT+0200", "8:00 -0500") or an UPPER-CASE
+  // listed abbreviation ("8:00 AM EST", "17:00 (CEST)", "Z") is the value's
+  // zone: the date and time are read like any other value (wall-clock-as-
+  // UTC, per the file's convention) and that FIXED offset applied — the same
+  // instant on every machine. Any other trailing words ("est.", "(est)",
+  // "approx", "Eastern") are not a zone: ignored and reported, the time read
+  // as written. Unreadable (""): an offset beyond ±14 h, or a second zone or
+  // more date-like text after a zone.
+  const time = raw.match(TIME_OF_DAY);
+  if (time) {
+    const end = time.index! + time[0].length;
+    const tail = raw.slice(end);
+    if (tail.trim()) {
+      const num = tail.match(NUMERIC_ZONE);
+      const abbr = num ? null : tail.match(ABBR_ZONE);
+      const offsetMin: number | null | undefined = num ? numericZoneMinutes(num) : abbr ? ZONE_OFFSET_MINUTES[abbr[1]] : undefined;
+      if (offsetMin === null) return { iso: "", ignored: null };
+      const leftover = tail.slice(num ? num[0].length : abbr ? abbr[0].length : 0).trim();
+      // A number standing on its own ("June 1, 2026") is more date; a digit
+      // inside a word ("EST5EDT") is not.
+      const moreDate = /(?:^|[^A-Za-z0-9])\d/.test(leftover);
+      if (offsetMin !== undefined || !moreDate) {
+        if (offsetMin !== undefined && (moreDate || ZONE_WORD.test(leftover))) return { iso: "", ignored: null };
+        const inner = readDate(raw.slice(0, end), conv);
+        if (!inner.iso) return { iso: "", ignored: null };
+        const ignored = leftover || null;
+        if (offsetMin === undefined) return { iso: inner.iso, ignored };
+        const wall = Date.parse(inner.iso);
+        if (!Number.isFinite(wall)) return { iso: "", ignored: null };
+        return { iso: new Date(wall - offsetMin * 60_000).toISOString(), ignored };
+      }
+      // Date-like text after the time ("8:00 AM June 1, 2026"): read below as written.
+    }
+  }
+  // An upper-case abbreviation anywhere else: with a time of day in the value
+  // it is not attached to that time, so the value is unreadable; on a date
+  // alone ("6/1/2026 EST") there is no time to offset — it is dropped and the
+  // date stays a date-only 00:00Z value.
+  if (ZONE_WORD.test(raw)) {
+    if (hasTimeOfDay(raw)) return { iso: "", ignored: null };
+    const rest = raw.replace(ZONE_WORD_ALL, " ").replace(/\s+/g, " ").trim();
+    const out = rest ? readDate(rest, conv).iso : "";
+    return { iso: Number.isFinite(Date.parse(out)) ? out : "", ignored: null };
+  }
+  // Whatever no branch can turn into an instant is unreadable ("") — counted
+  // by the parsers like a bad finish, never handed on as text.
+  const iso = readPlainDate(raw, trimmed, conv);
+  return { iso: iso && Number.isFinite(Date.parse(iso)) ? iso : "", ignored: null };
+}
+
+/** A time of day no clock shows ("25:99", "13:00 PM"): the value is
+ *  unreadable, never rolled over into another day. */
+function badClock(hh: number, mm: number, ss: number, ampm: string | null): boolean {
+  if (mm > 59 || ss > 59) return true;
+  return ampm ? hh < 1 || hh > 12 : hh > 23;
+}
+
+/** The zone-free branches of readDate. */
+function readPlainDate(raw: string, trimmed: string, conv: DateConvention): string {
   if (/^\d{4}-\d{2}-\d{2}$/.test(trimmed)) return `${trimmed}T00:00:00Z`;
   // "2026-08-15 00:00" / "2026-08-15 00:00:00"
   const m1 = trimmed.match(/^(\d{4}-\d{2}-\d{2})[ T](\d{2}):(\d{2})(?::(\d{2}))?$/);
-  if (m1) return `${m1[1]}T${m1[2]}:${m1[3]}:${m1[4] ?? "00"}Z`;
-  // M/D/YYYY or D/M/YYYY (assume the first form when ambiguous)
-  const m2 = trimmed.match(/^(\d{1,2})[\/\-](\d{1,2})[\/\-](\d{2,4})$/);
+  if (m1) return badClock(Number(m1[2]), Number(m1[3]), Number(m1[4] ?? 0), null) ? "" : `${m1[1]}T${m1[2]}:${m1[3]}:${m1[4] ?? "00"}Z`;
+  // M/D/YYYY or D/M/YYYY, per the FILE's convention (PT SCH-1).
+  const m2 = trimmed.match(/^(\d{1,2})[\/\-](\d{1,2})[\/\-](\d{2,4})(?:\s+(\d{1,2}):(\d{2})(?::(\d{2}))?\s*([AaPp][Mm])?)?$/);
   if (m2) {
     const a = Number(m2[1]); const b = Number(m2[2]);
     const yRaw = Number(m2[3]); const y = yRaw < 100 ? 2000 + yRaw : yRaw;
-    const month = a; const day = b; // M/D first
-    return `${y.toString().padStart(4, "0")}-${month.toString().padStart(2, "0")}-${day.toString().padStart(2, "0")}T00:00:00Z`;
+    const month = conv === "dmy" ? b : a;
+    const day = conv === "dmy" ? a : b;
+    if (month < 1 || month > 12 || day < 1 || day > 31) return "";
+    let hh = m2[4] ? Number(m2[4]) : 0;
+    const mm = m2[5] ? Number(m2[5]) : 0;
+    const ss = m2[6] ? Number(m2[6]) : 0;
+    if (badClock(hh, mm, ss, m2[7] ?? null)) return "";
+    if (m2[7]) { const pm = /p/i.test(m2[7]); if (pm && hh < 12) hh += 12; if (!pm && hh === 12) hh = 0; }
+    const pad = (n: number) => n.toString().padStart(2, "0");
+    return `${y.toString().padStart(4, "0")}-${pad(month)}-${pad(day)}T${pad(hh)}:${pad(mm)}:${pad(ss)}Z`;
   }
-  // Last resort — let Date try.
-  const d = new Date(trimmed);
-  if (!isNaN(d.getTime())) return d.toISOString();
-  return trimmed; // hand it to the importer; if invalid, Supabase will reject.
+  // Year-first ("2026/06/01 8:00", "2026.6.1", "2026-6-1"): always Y/M/D.
+  const m3 = trimmed.match(YEAR_FIRST);
+  if (m3) {
+    const y = Number(m3[1]); const month = Number(m3[2]); const day = Number(m3[3]);
+    if (month < 1 || month > 12 || day < 1 || day > 31) return "";
+    let hh = m3[4] ? Number(m3[4]) : 0;
+    const mm = m3[5] ? Number(m3[5]) : 0;
+    const ss = m3[6] ? Number(m3[6]) : 0;
+    if (badClock(hh, mm, ss, m3[7] ?? null)) return "";
+    if (m3[7]) { const pm = /p/i.test(m3[7]); if (pm && hh < 12) hh += 12; if (!pm && hh === 12) hh = 0; }
+    const pad = (n: number) => n.toString().padStart(2, "0");
+    return `${y.toString().padStart(4, "0")}-${pad(month)}-${pad(day)}T${pad(hh)}:${pad(mm)}:${pad(ss)}Z`;
+  }
+  // A d/m/y triple that did not match above (trailing text, a stray token):
+  // unreadable under the file's convention — counted, never guessed.
+  if (SLASH_TRIPLE.test(raw)) return "";
+  // Last resort — let Date try (written-out months such as "June 1, 2026").
+  // A value that names its own zone (GMT, UTC, ±hh:mm) keeps the instant it
+  // names. Any other value is read AS UTC — Date() honours a trailing "UTC" —
+  // so neither the browser's zone nor its DST gap enters the reading; only
+  // if that form is refused is the local wall clock re-emitted as UTC.
+  const d = new Date(raw);
+  if (!isNaN(d.getTime())) {
+    if (NAMES_ITS_ZONE.test(raw)) return d.toISOString();
+    const asUtc = new Date(`${raw} UTC`);
+    if (!isNaN(asUtc.getTime())) return asUtc.toISOString();
+    return new Date(Date.UTC(d.getFullYear(), d.getMonth(), d.getDate(), d.getHours(), d.getMinutes(), d.getSeconds())).toISOString();
+  }
+  return ""; // no branch reads it: unreadable, counted by the caller
+}
+
+/** Zone abbreviations recognised after a time of day, at FIXED offsets
+ *  (minutes east of UTC). US zones (CST is US Central, not China), GMT / UTC,
+ *  and the UK / central-European ones (BST is British Summer Time). Upper
+ *  case only: "est." in a schedule means "estimated". */
+const ZONE_OFFSET_MINUTES: Record<string, number> = {
+  Z: 0, EST: -300, EDT: -240, CST: -360, CDT: -300, MST: -420, MDT: -360, PST: -480, PDT: -420,
+  GMT: 0, UTC: 0, BST: 60, CET: 60, CEST: 120,
+};
+const ZONE_ABBRS = "EST|EDT|CST|CDT|MST|MDT|PST|PDT|GMT|UTC|BST|CET|CEST";
+/** "8:00a.m.", "8:00 am", "8:00AM", "8 PM" → the digit, then "AM" / "PM"
+ *  (a lower-case letter after it is a word, not a marker). */
+const AM_PM = /(\d)\s*([AaPp])\.?\s?[Mm]\.?(?![a-z])/g;
+/** A 12-hour time without minutes, once AM / PM is normalised ("8 AM"). */
+const HOUR_ONLY = /(?<![\d:.\/-])(\d{1,2}) (AM|PM)(?![A-Za-z])/g;
+/** A time of day, with AM / PM once normalised. */
+const TIME_OF_DAY = /(?<![\d:])\d{1,2}:\d{2}(?::\d{2}(?:\.\d+)?)?(?: (?:AM|PM))?/;
+/** Directly after the time: a numeric offset, optionally after GMT / UTC
+ *  ("+02:00", "-0500", "+2", "GMT+0200", "UTC-5"). */
+const NUMERIC_ZONE = /^\s*(?:(?:GMT|UTC)\s*)?([+-])(\d{1,2})(?::?(\d{2}))?(?![\d/.:])/;
+/** Directly after the time: "Z" or a listed abbreviation, upper case only,
+ *  optionally in parentheses. */
+const ABBR_ZONE = new RegExp(String.raw`^\s*\(?(Z|` + ZONE_ABBRS + String.raw`)\)?(?![A-Za-z0-9])`);
+/** The offset (minutes east of UTC) a NUMERIC_ZONE match names, or null when
+ *  it is not a real offset (beyond ±14 h, or minutes ≥ 60). */
+function numericZoneMinutes(m: RegExpMatchArray): number | null {
+  const h = Number(m[2]), min = m[3] ? Number(m[3]) : 0;
+  if (h > 14 || min >= 60 || h * 60 + min > 14 * 60) return null;
+  return (m[1] === "-" ? -1 : 1) * (h * 60 + min);
+}
+/** An upper-case zone abbreviation as a word, anywhere in the value. */
+const ZONE_WORD = new RegExp(String.raw`(?<![A-Za-z])\(?(?:` + ZONE_ABBRS + String.raw`)\)?(?![A-Za-z])`);
+const ZONE_WORD_ALL = new RegExp(ZONE_WORD.source, "g");
+/** ISO 8601 date and time, with or without an offset ("2026-08-15T08:00:00",
+ *  "…T08:00:00.000Z", "…T08:00+02:00"). */
+const ISO_DATETIME = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(?::\d{2}(?:\.\d+)?)?(?:Z|[+-]\d{2}:?\d{2})?$/i;
+
+/** Year / month / day with any of / . - and an optional time ("2026/06/01",
+ *  "2026.6.1 8:00", "2026/06/01 5:30 PM"). */
+const YEAR_FIRST = /^(\d{4})[\/.\-](\d{1,2})[\/.\-](\d{1,2})(?:[ T](\d{1,2}):(\d{2})(?::(\d{2}))?\s*([AaPp][Mm])?)?$/;
+/** A date string that names its own zone: "… GMT", "… UTC", or a time —
+ *  an AM / PM between allowed — followed by "Z" / "±hh:mm" ("08:00+02:00").
+ *  A bare "-2026" is a year. (Zones right after a time are read above; this
+ *  guards the Date() fallback.) */
+const NAMES_ITS_ZONE = /\b(?:GMT|UTC)\b|\d{1,2}:\d{2}(?::\d{2})?(?:\.\d+)?(?:\s*[AaPp]\.?[Mm]\.?)?\s*(?:Z|[+-]\d{1,2}(?::?\d{2})?)\b/i;
+
+/** The warning for rows whose date carried words after its time of day
+ *  that are not a time zone (read as written, the words ignored). */
+function ignoredTextWarning(n: number, noun: "row" | "task" | "activity"): string {
+  const nouns = noun === "activity" ? (n === 1 ? "activity" : "activities") : `${noun}${n === 1 ? "" : "s"}`;
+  return `${n} ${nouns} had words after a date's time of day that are not a time zone (for example "est." or "approx"): they were ignored and the time read as written.`;
+}
+
+/** True when a date cell carries a time of day ("8:00", "2026-06-01T08:00").
+ *  A date-only start is stored at 00:00Z, which is not a shift reading. */
+export function hasTimeOfDay(raw: string | null | undefined): boolean {
+  return !!raw && (/\d{1,2}:\d{2}/.test(raw) || /(?<![\d:.\/-])\d{1,2}\s*[AaPp]\.?\s?[Mm]\.?(?![a-z])/.test(raw));
 }
 
 // Same minimal CSV split as before, but parameterizable by delim.

@@ -26,9 +26,24 @@ interface Props {
   onCancel: () => void;
   onConfirm: (mode: MoveMode) => void;
   busy?: boolean;
+  /** The computed change set for a mode — every row the move rewrites
+   *  (cascaded dependents, a dragged phase's descendants), each with its
+   *  new finish and its baseline finish. When given, the baseline warning
+   *  counts over it (PC SCHED-3 / PT SCH-4); without it only the dragged
+   *  targets are counted. */
+  changeSetFor?: (mode: MoveMode) => BaselineCheckRow[];
 }
 
-export default function MovePreviewSheet({ targets, deltaDays, onCancel, onConfirm, busy }: Props) {
+/** A row the baseline warning reads: its finish after the move and its
+ *  approved-plan finish. */
+export interface BaselineCheckRow { plannedAt: string; baselineFinishAt?: string | null }
+
+/** How many rows would finish past their approved baseline. Pure. */
+export function countPastBaseline(rows: BaselineCheckRow[]): number {
+  return rows.filter((r) => r.baselineFinishAt && Date.parse(r.plannedAt) > Date.parse(r.baselineFinishAt)).length;
+}
+
+export default function MovePreviewSheet({ targets, deltaDays, onCancel, onConfirm, busy, changeSetFor }: Props) {
   const primary = targets[0];
   // Default mode: if ANY moved task is in-progress and we're slipping
   // later, default to extend; else defer.
@@ -80,8 +95,19 @@ export default function MovePreviewSheet({ targets, deltaDays, onCancel, onConfi
     if (mode === "extend" && targets.some((t) => t.status === "completed")) {
       w.push("Some selected tasks are already Done — extending a finished task is unusual.");
     }
+    // Baseline drift (PC SCHED-3 / PT SCH-4): say so before the move commits, the way the single-task form does —
+    // over the computed change set when the caller hands it over, else over the dragged targets.
+    const pastBaseline = changeSetFor
+      ? countPastBaseline(changeSetFor(mode))
+      : deltaDays > 0
+        ? countPastBaseline(targets.map((t) => {
+            const finish = Date.parse(t.plannedAt as string) + deltaDays * 86400000;
+            return { plannedAt: Number.isFinite(finish) ? new Date(finish).toISOString() : "", baselineFinishAt: t.baselineFinishAt as string | null | undefined };
+          }))
+        : 0;
+    if (pastBaseline > 0) w.push(`${pastBaseline} task${pastBaseline === 1 ? "" : "s"} would finish past the approved baseline.`);
     return w;
-  }, [targets, deltaDays, mode, nowMs]);
+  }, [targets, deltaDays, mode, nowMs, changeSetFor]);
 
   return (
     <div className="fixed inset-0 z-[260] flex items-end sm:items-start sm:items-center justify-center overflow-y-auto p-4" onClick={onCancel}>

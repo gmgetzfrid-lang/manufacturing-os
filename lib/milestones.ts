@@ -20,6 +20,8 @@ import { supabase } from "@/lib/supabase";
 import { logMilestoneEvent, logAuditAction } from "@/lib/audit";
 import { reflowAllAncestors, type ReflowNode } from "@/lib/scheduleReflow";
 import { effectiveWeight, leafPercent } from "@/lib/scheduleProgress";
+import { shiftForStart, shiftAfterMove } from "@/lib/scheduleFilter";
+import { SCHEDULE_IMPORT_LIMITS } from "@/lib/scheduleParsers";
 import type {
   Milestone, MilestoneStatus, MilestoneSource, MilestoneNote, MilestoneAttributes,
 } from "@/types/schema";
@@ -244,11 +246,24 @@ export async function updateMilestone(input: UpdateMilestoneInput): Promise<Mile
   // name must never be nulled.
   if ("name" in input.patch && input.patch.name) update.name = input.patch.name.trim();
 
-  // Snapshot the prior finish so we can log a human reschedule note.
+  // Snapshot the prior finish so we can log a human reschedule note, and the
+  // stored shift + start so a date move can re-label it.
   let priorFinish: string | null = null;
-  if ("plannedAt" in input.patch) {
-    const { data: before } = await supabase.from("milestones").select("planned_at").eq("id", input.id).maybeSingle();
+  let priorShift: string | null = null;
+  let priorStart: string | null = null;
+  if ("plannedAt" in input.patch || "plannedStartAt" in input.patch) {
+    const { data: before } = await supabase.from("milestones").select("planned_at, planned_start_at, shift").eq("id", input.id).maybeSingle();
     priorFinish = (before as { planned_at: string } | null)?.planned_at ?? null;
+    priorStart = (before as { planned_start_at: string | null } | null)?.planned_start_at ?? null;
+    priorShift = (before as { shift: string | null } | null)?.shift ?? null;
+  }
+  // Shift follows the task (PC SCHED-9): a day / night label whose start
+  // moves into the other band is re-labelled — the RPC's rule, one helper.
+  // An explicit shift in the same patch wins; an unlabelled row, a hand-set
+  // "swing" and a move within the band keep what is stored.
+  if ("plannedStartAt" in input.patch && !("shift" in input.patch) && typeof update.planned_start_at === "string") {
+    const next = shiftAfterMove(priorShift, priorStart, update.planned_start_at);
+    if (next !== priorShift) update.shift = next;
   }
 
   const { data, error } = await supabase.from("milestones").update(update).eq("id", input.id).select("*").single();
@@ -286,27 +301,100 @@ export async function updateMilestone(input: UpdateMilestoneInput): Promise<Mile
   return m;
 }
 
-/** Persist a batch of reflowed date changes ATOMICALLY via the 20260907
- *  RPC — all rows move or none do (a cascading drag used to fire N browser
- *  writes; a mid-batch failure left the schedule half-moved). Falls back to
- *  per-row updates on pre-migration databases. One audit entry per batch. */
+export interface MoveBatchResult {
+  /** Ids the database changed. */
+  matched: string[];
+  /** Ids whose row was edited by someone else since the caller loaded it
+   *  (expected updated_at no longer matches) — refresh and tell the user. */
+  unmatched: string[];
+  /** True count of rows changed (the RPC's ROW_COUNT, not the request size). */
+  count: number;
+  /** "rpc" via apply_milestone_moves; "rows" on a pre-migration database. */
+  via: "rpc" | "rows";
+  /** The batch audit row or the per-row breadcrumbs could not be written. */
+  auditError?: string;
+}
+
+/** Thrown by applyMilestoneMoves (by default) when the optimistic lock
+ *  rejected some moves: the caller's optimistic dates for those rows were
+ *  never saved, so a silent success would leave the board showing them. The
+ *  moves that matched ARE saved (breadcrumbs and audit written); `result`
+ *  carries both lists. */
+export class MoveConflictError extends Error {
+  readonly result: MoveBatchResult;
+  constructor(result: MoveBatchResult) {
+    const n = result.unmatched.length;
+    const moved = result.matched.length;
+    super(`${n} task${n === 1 ? " was" : "s were"} changed by someone else and ${n === 1 ? "was" : "were"} not moved${moved > 0 ? ` (the other ${moved} moved)` : ""}. Reload the schedule and try again.${result.auditError ? ` Also: ${result.auditError}.` : ""}`);
+    this.name = "MoveConflictError";
+    this.result = result;
+  }
+}
+
+/** Persist a batch of reflowed date changes ATOMICALLY via the
+ *  apply_milestone_moves RPC (20260907, re-created in 20261098) — all rows
+ *  move or none do (a cascading drag used to fire N browser writes; a
+ *  mid-batch failure left the schedule half-moved). Falls back to per-row
+ *  updates on pre-migration databases.
+ *
+ *  Each move carries the row's expected updated_at (the caller's loaded
+ *  value, or the row as read just before the call): a row edited by someone
+ *  else since then is left alone and reported in `unmatched` (PT SCH-7). Every
+ *  moved row gets a 'reschedule' breadcrumb with its before/after finish,
+ *  matching updateMilestone's shape, and the batch audit row carries the
+ *  before/after dates and is a CHECKED write (PC SCHED-11).
+ *
+ *  Rejected moves THROW a MoveConflictError by default (after the trail is
+ *  written), so a caller that applied its dates optimistically and reads only
+ *  success / failure shows an error and refreshes instead of a success. A
+ *  caller that renders `unmatched` itself passes `onUnmatched: "return"`. */
 export async function applyMilestoneMoves(input: {
   orgId: string;
   projectId: string;
-  moves: Array<{ id: string; plannedStartAt: string; plannedAt: string }>;
+  moves: Array<{ id: string; plannedStartAt: string; plannedAt: string; expectedUpdatedAt?: string | null }>;
   actorUserId: string;
   actorUserName?: string;
   actorUserEmail?: string;
   actorUserRole?: string;
-}): Promise<void> {
-  if (input.moves.length === 0) return;
-  const { error } = await supabase.rpc("apply_milestone_moves", {
+  /** "throw" (default): a MoveConflictError when any move was rejected.
+   *  "return": hand the rejected ids back in `unmatched` for the caller to show. */
+  onUnmatched?: "throw" | "return";
+}): Promise<MoveBatchResult> {
+  if (input.moves.length === 0) return { matched: [], unmatched: [], count: 0, via: "rpc" };
+  const ids = input.moves.map((m) => m.id);
+
+  // The rows as they stand: before/after for the trail, and the lock value
+  // for any move whose caller did not supply one.
+  type BeforeRow = { id: string; planned_at: string; planned_start_at: string | null; updated_at: string | null; status: MilestoneStatus };
+  const before = new Map<string, BeforeRow>();
+  let readError: string | null = null;
+  for (let i = 0; i < ids.length && !readError; i += 200) {
+    const { data, error: readErr } = await supabase
+      .from("milestones")
+      .select("id, planned_at, planned_start_at, updated_at, status")
+      .in("id", ids.slice(i, i + 200));
+    if (readErr) { readError = readErr.message; break; }
+    for (const r of (data ?? []) as BeforeRow[]) before.set(r.id, r);
+  }
+  // Fail closed: without the read, a move whose caller supplied no expected
+  // updated_at would go out with the lock OFF. Refuse the batch (nothing is
+  // moved). When every move carries the caller's own lock value the read only
+  // fed the trail, so the move proceeds and the missing trail is reported.
+  if (readError && input.moves.some((m) => m.expectedUpdatedAt === undefined)) {
+    throw new Error(`Could not read the tasks before moving them (${readError}) — nothing was moved. Try again.`);
+  }
+
+  const { data, error } = await supabase.rpc("apply_milestone_moves", {
     p_org: input.orgId,
     p_project: input.projectId,
-    p_moves: input.moves.map((m) => ({ id: m.id, start: m.plannedStartAt, finish: m.plannedAt })),
+    p_moves: input.moves.map((m) => ({
+      id: m.id, start: m.plannedStartAt, finish: m.plannedAt,
+      expected_updated_at: m.expectedUpdatedAt !== undefined ? m.expectedUpdatedAt : (before.get(m.id)?.updated_at ?? null),
+    })),
   });
   if (error) {
-    // PGRST202 = function not deployed yet — keep working, row by row.
+    // PGRST202 = function not deployed yet — keep working, row by row
+    // (updateMilestone writes its own breadcrumb per row).
     if (error.code === "PGRST202" || /apply_milestone_moves/.test(error.message ?? "")) {
       await Promise.all(input.moves.map((m) => updateMilestone({
         id: m.id,
@@ -314,16 +402,68 @@ export async function applyMilestoneMoves(input: {
         updatedBy: input.actorUserId, updatedByName: input.actorUserName,
         updatedByEmail: input.actorUserEmail, updatedByRole: input.actorUserRole,
       })));
-      return;
+      return { matched: ids, unmatched: [], count: ids.length, via: "rows" };
     }
     throw new Error(error.message);
   }
-  await supabase.from("audit_logs").insert({
+  // 20260907 returned an INT; 20261098 returns {matched, unmatched, count}.
+  let matched: string[] = ids;
+  let unmatched: string[] = [];
+  let count = ids.length;
+  if (data && typeof data === "object") {
+    const d = data as { matched?: string[]; unmatched?: string[]; count?: number };
+    matched = Array.isArray(d.matched) ? d.matched : ids;
+    unmatched = Array.isArray(d.unmatched) ? d.unmatched : [];
+    count = typeof d.count === "number" ? d.count : matched.length;
+  } else if (typeof data === "number") count = data;
+
+  const result: MoveBatchResult = { matched, unmatched, count, via: "rpc" };
+  const errs: string[] = [];
+  if (readError) errs.push(`breadcrumbs: the tasks could not be read before the move (${readError}), so no before-dates were recorded`);
+
+  // Per-row breadcrumbs: the task's own trail shows the move, not just
+  // status flips. Same shape as updateMilestone's reschedule note.
+  const matchedSet = new Set(matched);
+  const notes: Array<Record<string, unknown>> = [];
+  for (const m of input.moves) {
+    if (!matchedSet.has(m.id)) continue;
+    const b = before.get(m.id);
+    if (!b || b.planned_at === m.plannedAt) continue;
+    const days = Math.round((Date.parse(m.plannedAt) - Date.parse(b.planned_at)) / 86400000);
+    if (days === 0) continue;
+    notes.push({
+      org_id: input.orgId, milestone_id: m.id, kind: "reschedule", status_at: b.status,
+      body: `Finish ${days > 0 ? `+${days}` : days} day${Math.abs(days) === 1 ? "" : "s"} → ${new Date(m.plannedAt).toLocaleDateString()}`,
+      created_by: input.actorUserId, created_by_name: input.actorUserName ?? null,
+    });
+  }
+  for (let i = 0; i < notes.length; i += 200) {
+    const { error: noteErr } = await supabase.from("milestone_notes").insert(notes.slice(i, i + 200));
+    if (noteErr) { errs.push(`breadcrumbs: ${noteErr.message}`); break; }
+  }
+
+  // The batch audit row: before/after per moved row, never silently lost.
+  const SHOWN = 50;
+  const shownMoves = input.moves.filter((m) => matchedSet.has(m.id)).slice(0, SHOWN).map((m) => {
+    const b = before.get(m.id);
+    return { id: m.id, before: b ? { start: b.planned_start_at, finish: b.planned_at } : null, after: { start: m.plannedStartAt, finish: m.plannedAt } };
+  });
+  const auditRow = {
     action: "MILESTONES_RESCHEDULED",
     resource_type: "project", resource_id: input.projectId,
     org_id: input.orgId, user_id: input.actorUserId, user_email: input.actorUserEmail ?? null,
-    details: { count: input.moves.length, ids: input.moves.map((m) => m.id).slice(0, 50) },
-  }).then(() => undefined, () => undefined);
+    details: {
+      count, requested: input.moves.length, unmatched: unmatched.length,
+      shown: shownMoves.length, total: matched.length, truncated: matched.length > SHOWN,
+      moves: shownMoves,
+    },
+  };
+  let auditRes = await supabase.from("audit_logs").insert(auditRow);
+  if (auditRes.error) auditRes = await supabase.from("audit_logs").insert(auditRow); // one retry
+  if (auditRes.error) errs.push(`audit: ${auditRes.error.message}`);
+  if (errs.length) result.auditError = errs.join("; ");
+  if (unmatched.length > 0 && (input.onUnmatched ?? "throw") === "throw") throw new MoveConflictError(result);
+  return result;
 }
 
 export interface SetMilestoneStatusInput {
@@ -740,6 +880,13 @@ export interface ImportResult {
   updated: number;
   skipped: number;
   errors: string[];
+  /** The merge plan (always computed; the only output of a dryRun). */
+  plan?: ImportPlan;
+  /** Tag written onto every row this import inserted or updated, so a
+   *  cancelled or interrupted import is visible and reversible. */
+  batchId?: string;
+  /** True when the caller aborted mid-way: rows written so far carry batchId. */
+  cancelled?: boolean;
 }
 
 export async function importGhostMilestones(input: ImportGhostMilestonesInput): Promise<ImportResult> {
@@ -857,6 +1004,10 @@ export interface ParsedMilestoneRow {
   name: string;
   plannedAt: string;
   plannedStartAt?: string | null;
+  /** False when the source's start had no time of day (stored at 00:00Z):
+   *  a new row then gets no day / night label (PC SCHED-9). When absent, a
+   *  bare "YYYY-MM-DD" start is read the same way. */
+  startHasTime?: boolean;
   weight?: number;
   /** Source schedule's progress (MS Project %Complete, P6 physical %, CSV
    *  "% complete"). Drives the imported status + percent_complete. */
@@ -890,6 +1041,59 @@ export interface ImportParsedInput {
   rows: ParsedMilestoneRow[];
   createdBy: string;
   createdByName?: string;
+  /** Compute the merge plan and write NOTHING (GAP-403: show the diff first). */
+  dryRun?: boolean;
+  /** Opt-in: let the file's % complete / status / actual dates replace
+   *  progress the crew recorded in the app. Off by default (PT SCH-2). */
+  overwriteProgress?: boolean;
+  /** Tag for this import's writes; generated when absent. */
+  batchId?: string;
+  /** Cancel between chunks. Rows already written keep their batchId. */
+  signal?: AbortSignal;
+  onProgress?: (p: { done: number; total: number; phase: "rows" | "structure" }) => void;
+}
+
+/** What a re-import would do, computed BEFORE anything is written. Rows the
+ *  file does not mention are reported, never deleted (a filtered export is
+ *  not a deletion — GAP-403). */
+export interface ImportPlan {
+  added: number;
+  changed: number;
+  unchanged: number;
+  /** Rows already in the project (same source) that this file does not carry. */
+  notInFile: number;
+  notInFileNames: string[];
+  /** Existing rows whose progress on the board (recorded in the app or set
+   *  by an earlier import) differs from the file's. */
+  localProgressAtRisk: Array<{ id: string; name: string; localPercent: number; localStatus: MilestoneStatus; filePercent: number | null }>;
+  /** Existing rows whose parent or predecessor links this file changes (PT
+   *  SCH-16 sets structure to exactly what the file says — a link added in
+   *  the app to an imported row is removed if the file does not carry it).
+   *  `onlyStructure` counts rows whose plan fields are otherwise unchanged. */
+  structure: { rows: number; onlyStructure: number; parents: number; linksAdded: number; linksRemoved: number };
+  /** Existing rows re-keyed instead of added beside themselves (PT SCH-3):
+   *  a row keyed by POSITION before content keys (`csv-row:N` /
+   *  `msp-row:N`) adopted by its unique name (`positionAdopted`), or a row
+   *  under an earlier content key whose name and planned dates match exactly.
+   *  `rekeyedOnly` counts those whose plan and structure are otherwise
+   *  unchanged — they are still written, to carry the new key. */
+  rekeyed: number;
+  rekeyedOnly: number;
+  /** Position-keyed rows adopted: each task name (normalised: trimmed,
+   *  inner spaces collapsed, case-folded) occurs ONCE among the position
+   *  rows of its source tag and ONCE in this file, so the row is that task
+   *  whatever its dates — the file's planned dates are written, the crew's
+   *  progress is kept as on any re-import. Names: the first 20. */
+  positionAdopted: number;
+  positionAdoptedNames: string[];
+  /** Position-keyed rows NOT adopted because their name repeats — among the
+   *  position rows or in this file: they are kept as they are (listed as not
+   *  in this file) and the file's rows of that name are added. Names: the
+   *  first 10. */
+  positionRepeated: number;
+  positionRepeatedNames: string[];
+  /** The per-file row cap the importer enforces. */
+  rowCap: number;
 }
 
 function coerceIsoMaybe(s: string | null | undefined): string | null {
@@ -899,42 +1103,264 @@ function coerceIsoMaybe(s: string | null | undefined): string | null {
   return /^\d{4}-\d{2}-\d{2}$/.test(trimmed) ? `${trimmed}T00:00:00Z` : trimmed;
 }
 
-/** Heuristic shift assignment based on a planned start hour.
- *  6am-6pm → day, 6pm-6am → night. Null until plannedStartAt is known. */
+/** Heuristic shift assignment based on a planned start hour, read in UTC
+ *  (wall-clock-as-UTC storage). 6am-6pm → day, 6pm-6am → night. Null until
+ *  plannedStartAt is known. One implementation, shared with the filter. */
 function shiftFromStart(plannedStartIso: string | null): "day" | "night" | null {
-  if (!plannedStartIso) return null;
-  const d = new Date(plannedStartIso);
-  if (isNaN(d.getTime())) return null;
-  const h = d.getUTCHours();
-  return (h >= 6 && h < 18) ? "day" : "night";
+  return shiftForStart(plannedStartIso);
 }
 
-/** Set the hierarchy migration (20260703) has applied. Determined
- *  lazily on first INSERT failure caused by an unknown column —
- *  once we hit it, every subsequent row in the same import drops
- *  the new fields so we don't keep re-trying schema we know is
- *  missing. The whole batch still lands; the hierarchy just isn't
- *  preserved until the user runs the migration. */
-const NEW_SCHEMA_FIELDS = [
-  "planned_start_at", "outline_level", "wbs", "is_summary", "shift",
-  "work_order_ref", "responsible_party", "responsible_kind", "responsible_org",
-  "location", "duration_hours", "attributes", "percent_complete",
-] as const;
+/** The columns of `milestones` the importer reads or writes that a migration
+ *  added, one set per migration. A database can lack any of them; each set
+ *  is detected on its own — by the existing-row read, or by the first write
+ *  refused for one of its columns — and only that set is dropped from the
+ *  read, the comparison and the writes; when the file carried data the set
+ *  would have held, a heads-up names THAT migration (20261097's batch tag is
+ *  dropped without one). The whole batch still lands. SCHEMA_FALLBACK is the order sets
+ *  are stepped down in when a refusal names no column (newest first);
+ *  `read` marks the sets the existing-row read selects. */
+const SCHEMA_SETS = {
+  "20261097": { file: "20261097_prj_roundG_import_identity.sql", read: false, columns: ["import_batch_id"] },
+  "20260715": { file: "20260715_milestone_dependencies.sql", read: true, columns: ["depends_on"] },
+  "20260731": { file: "20260731_milestone_percent_complete.sql", read: true, columns: ["percent_complete"] },
+  "20260705": {
+    file: "20260705_milestones_execution_richdata.sql", read: true,
+    columns: ["work_order_ref", "responsible_party", "responsible_kind", "responsible_org", "location", "duration_hours", "attributes"],
+  },
+  "20260703": {
+    file: "20260703_milestones_hierarchy.sql", read: true,
+    columns: ["outline_level", "wbs", "is_summary", "shift", "actual_start_at", "planned_start_at", "parent_id"],
+  },
+} as const;
+type SchemaSet = keyof typeof SCHEMA_SETS;
+const SCHEMA_FALLBACK: SchemaSet[] = ["20261097", "20260715", "20260731", "20260705", "20260703"];
 function looksLikeUnknownColumn(msg: string | undefined): boolean {
   if (!msg) return false;
   return /column .* does not exist|unknown column|could not find the/i.test(msg);
 }
+/** The column an unknown-column refusal names — Postgres
+ *  (`column "x" of relation "milestones" does not exist`,
+ *  `column milestones.x does not exist`) or PostgREST's schema cache
+ *  (`Could not find the 'x' column of 'milestones'`) — or null. */
+function refusedColumn(msg: string | undefined): string | null {
+  if (!msg) return null;
+  const m = msg.match(/column\s+(?:"?\w+"?\.)?"?(\w+)"?(?:\s+of\s+relation\s+"?\w+"?)?\s+does not exist/i)
+    ?? msg.match(/could not find the '(\w+)' column/i);
+  return m ? m[1].toLowerCase() : null;
+}
+/** The migration set a refused column belongs to, or null. */
+export function schemaSetForColumn(col: string | null): SchemaSet | null {
+  if (!col) return null;
+  for (const id of SCHEMA_FALLBACK) if ((SCHEMA_SETS[id].columns as readonly string[]).includes(col)) return id;
+  return null;
+}
+/** Mark missing the set whose column a refusal names. A refusal that names
+ *  no column (or a column of a set already dropped) drops the next set in
+ *  fallback order among `eligible`; one that names a column of no eligible
+ *  set drops nothing — no migration of this list would fix it. False when
+ *  nothing was dropped. */
+function stepDownSchema(missing: Set<SchemaSet>, msg: string | undefined, eligible: readonly SchemaSet[] = SCHEMA_FALLBACK): boolean {
+  const col = refusedColumn(msg);
+  const named = schemaSetForColumn(col);
+  if (col && (!named || !eligible.includes(named))) return false;
+  if (named && !missing.has(named)) { missing.add(named); return true; }
+  const next = SCHEMA_FALLBACK.find((id) => eligible.includes(id) && !missing.has(id));
+  if (!next) return false;
+  missing.add(next);
+  return true;
+}
 
+/** Rows of `milestones` the importer reads to plan a merge: every column a
+ *  plan field writes (so "unchanged" means unchanged), plus actuals and
+ *  structure. */
+interface ExistingImportRow {
+  id: string;
+  external_ref: string | null;
+  name: string;
+  description: string | null;
+  weight: number | null;
+  outline_level: number | null;
+  wbs: string | null;
+  is_summary: boolean | null;
+  shift: string | null;
+  work_order_ref: string | null;
+  responsible_party: string | null;
+  responsible_kind: string | null;
+  responsible_org: string | null;
+  location: string | null;
+  duration_hours: number | null;
+  attributes: Record<string, unknown> | null;
+  status: MilestoneStatus;
+  percent_complete: number | null;
+  actual_at: string | null;
+  actual_start_at: string | null;
+  planned_at: string;
+  planned_start_at: string | null;
+  parent_id: string | null;
+  depends_on: string[] | null;
+  created_by: string;
+  created_by_name: string | null;
+}
+
+const IMPORT_CHUNK = 200;
+const STRUCTURE_CONCURRENCY = 25;
+
+function newBatchId(): string {
+  const c = (globalThis as { crypto?: { randomUUID?: () => string } }).crypto;
+  if (c?.randomUUID) return c.randomUUID();
+  return `batch-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`;
+}
+
+/** True when the row carries progress recorded in the app (or by an earlier
+ *  import) that a plan-only re-import must not erase. */
+function hasLocalProgress(r: ExistingImportRow): boolean {
+  return (Number(r.percent_complete ?? 0) > 0) || r.status !== "planned" || !!r.actual_at || !!r.actual_start_at;
+}
+
+function sameDeps(a: string[] | null | undefined, b: string[]): boolean {
+  const x = Array.isArray(a) ? a : [];
+  if (x.length !== b.length) return false;
+  const set = new Set(x);
+  return b.every((v) => set.has(v));
+}
+
+/** Every plan column the importer writes (import_batch_id aside), compared
+ *  against the stored row so an identical re-import writes nothing. */
+const PLAN_COMPARE_COLUMNS = [
+  "name", "description", "weight", "planned_at", "planned_start_at",
+  "outline_level", "wbs", "is_summary", "shift",
+  "work_order_ref", "responsible_party", "responsible_kind", "responsible_org",
+  "location", "duration_hours", "attributes",
+] as const;
+const INSTANT_COLUMNS = new Set<string>(["planned_at", "planned_start_at"]);
+const NUMBER_COLUMNS = new Set<string>(["weight", "outline_level", "duration_hours"]);
+
+/** JSON with object keys sorted, so key order never reads as a change. */
+function canonicalJson(v: unknown): string {
+  if (Array.isArray(v)) return `[${v.map(canonicalJson).join(",")}]`;
+  if (v && typeof v === "object") {
+    return `{${Object.keys(v as Record<string, unknown>).sort().map((k) => `${JSON.stringify(k)}:${canonicalJson((v as Record<string, unknown>)[k])}`).join(",")}}`;
+  }
+  return JSON.stringify(v ?? null);
+}
+
+/** Stored value vs. the value the importer would write, per column type:
+ *  timestamps as instants (PostgREST returns `…+00:00`, the parser `…Z`),
+ *  numerics as numbers, attributes as canonical JSON, text with "" = null. */
+function samePlanValue(column: string, stored: unknown, next: unknown): boolean {
+  if (INSTANT_COLUMNS.has(column)) {
+    const a = stored == null || stored === "" ? null : String(stored);
+    const b = next == null || next === "" ? null : String(next);
+    if (a === null || b === null) return a === b;
+    const ta = Date.parse(a), tb = Date.parse(b);
+    return Number.isFinite(ta) && Number.isFinite(tb) ? ta === tb : a === b;
+  }
+  if (NUMBER_COLUMNS.has(column)) {
+    if (stored == null || next == null) return (stored == null) === (next == null);
+    return Number(stored) === Number(next);
+  }
+  if (column === "is_summary") return !!stored === !!next;
+  if (column === "attributes") return canonicalJson(stored ?? {}) === canonicalJson(next ?? {});
+  const a = stored == null || stored === "" ? null : stored;
+  const b = next == null || next === "" ? null : next;
+  return a === b;
+}
+
+/** The existing-row read's columns: the base columns every database has,
+ *  plus each migration's set the database is not known to lack. */
+const EXISTING_READ_BASE = ["id", "external_ref", "name", "description", "weight", "status", "actual_at", "planned_at", "created_by", "created_by_name"] as const;
+const READ_SETS = SCHEMA_FALLBACK.filter((id) => SCHEMA_SETS[id].read);
+/** The sets a chunked insert / upsert writes (links go in the structure pass). */
+const WRITE_SETS = SCHEMA_FALLBACK.filter((id) => id !== "20260715");
+function existingReadColumns(missing: ReadonlySet<SchemaSet>): string {
+  const cols: string[] = [...EXISTING_READ_BASE];
+  for (const id of READ_SETS) if (!missing.has(id)) cols.push(...SCHEMA_SETS[id].columns);
+  return cols.join(", ");
+}
+
+/** Every existing row of this source in the import scope, in one query per
+ *  page (PostgREST caps a page at 1,000 rows; the row cap is 5,000). An
+ *  unknown-column refusal drops the ONE migration set it names (or, when it
+ *  names none, the next in fallback order) and the whole read restarts, so a
+ *  database lacking only 20260705 or only 20260731 keeps the hierarchy it
+ *  has. `missing` is filled in place. */
+async function fetchExistingImportRows(input: ImportParsedInput, missing: Set<SchemaSet>): Promise<{ rows: ExistingImportRow[]; error?: string }> {
+  const PAGE = 1000;
+  for (;;) {
+    const out: ExistingImportRow[] = [];
+    let stepDown = false;
+    for (let from = 0; ; from += PAGE) {
+      let q = supabase
+        .from("milestones")
+        .select(existingReadColumns(missing))
+        .eq("org_id", input.orgId)
+        .eq("source", input.source)
+        .not("external_ref", "is", null);
+      if (input.projectId) q = q.eq("project_id", input.projectId);
+      else if (input.documentId) q = q.eq("document_id", input.documentId);
+      else q = q.is("project_id", null).is("document_id", null);
+      const { data, error } = await q.order("id").range(from, from + PAGE - 1);
+      if (error) {
+        if (looksLikeUnknownColumn(error.message) && stepDownSchema(missing, error.message, READ_SETS)) { stepDown = true; break; }
+        return { rows: out, error: error.message };
+      }
+      const page = (data ?? []) as unknown as ExistingImportRow[];
+      out.push(...page);
+      if (page.length < PAGE) break;
+    }
+    if (!stepDown) return { rows: out };
+  }
+}
+
+/** A keyless CSV row's content key, or a position key from before content
+ *  keys: `csv-key:…` / `msp-row:12` → { tag: "csv" | "msp", kind }. */
+function keylessRef(ref: string | null | undefined): { tag: string; kind: "row" | "key" } | null {
+  const m = ref?.match(/^([a-z0-9]+)-(row|key):/i);
+  return m ? { tag: m[1].toLowerCase(), kind: m[2].toLowerCase() as "row" | "key" } : null;
+}
+
+/**
+ * File-upload importer (GAP-403's engine half).
+ *
+ *   * Identity: rows match on external_ref within (org, project, source) — the
+ *     20260704 unique index — so a re-import updates the same rows.
+ *   * Plan vs. actuals: planned dates, names, structure and links come from
+ *     the file; percent_complete / status / actual_* on a row with local
+ *     progress are left alone unless overwriteProgress is set (PT SCH-2).
+ *   * Structure is set to exactly what the file says for rows the file
+ *     carries — parent and predecessors cleared when the file has none —
+ *     while rows the file does not mention are left untouched (PT SCH-16).
+ *   * One read of the existing rows, chunked inserts / upserts, chunked
+ *     structure updates, a row cap, progress and cancel (PT SCH-14).
+ *   * dryRun returns the plan and writes nothing (GAP-403 acceptance 2).
+ */
 export async function importMilestonesFromParsed(input: ImportParsedInput): Promise<ImportResult> {
-  const result: ImportResult = { inserted: 0, updated: 0, skipped: 0, errors: [] };
-  let degradeToLegacy = false; // flipped on first unknown-column error
+  const batchId = input.batchId ?? newBatchId();
+  const result: ImportResult = { inserted: 0, updated: 0, skipped: 0, errors: [], batchId };
+  const rowCap = SCHEDULE_IMPORT_LIMITS.maxRows;
+  if (input.rows.length > rowCap) {
+    result.errors.push(`This file has ${input.rows.length.toLocaleString()} rows; the import limit is ${rowCap.toLocaleString()} rows per file. Split the schedule (for example by phase) and import the parts separately. Nothing was written.`);
+    return result;
+  }
 
-  // Pass 1: write every row WITHOUT parent_id. We can't resolve
-  // parent UUIDs yet because the parent rows are also in this same
-  // batch and may not have ids until they're inserted. Track each
-  // row's externalRef → DB id in a map for pass 2.
-  const refToId = new Map<string, string>();
-
+  // ── Normalise every row once ─────────────────────────────────────
+  type Prepared = {
+    index: number;
+    row: ParsedMilestoneRow;
+    name: string;
+    plannedIso: string;
+    plannedStartIso: string | null;
+    dateOnlyStart: boolean;
+    planFields: Record<string, unknown>;
+    /** What the file says about progress — undefined when it says nothing. */
+    actualFields: Record<string, unknown> | undefined;
+    filePercent: number | null;
+    existing: ExistingImportRow | null;
+    id: string | null;
+    /** The existing row's old external_ref when this row adopted it (SCH-3). */
+    rekeyedFrom: string | null;
+  };
+  const prepared: Prepared[] = [];
   for (let i = 0; i < input.rows.length; i++) {
     const r = input.rows[i];
     const name = r.name?.trim();
@@ -943,171 +1369,369 @@ export async function importMilestonesFromParsed(input: ImportParsedInput): Prom
     if (!planned) { result.skipped++; continue; }
     const plannedIso = coerceIsoMaybe(planned)!;
     const plannedStartIso = coerceIsoMaybe(r.plannedStartAt ?? null);
+    // A start with no time of day is stored at 00:00Z; that midnight is not a
+    // shift reading, so it earns no day / night label (PC SCHED-9).
+    const dateOnlyStart = !!plannedStartIso && (r.startHasTime === false
+      || (r.startHasTime === undefined && /^\d{4}-\d{2}-\d{2}$/.test((r.plannedStartAt ?? "").trim())));
     const weight = Number(r.weight ?? 1);
 
     // Carry the source schedule's progress through: MS Project %Complete, P6
     // physical %, or a CSV "% complete" column. Derive the workflow status from
-    // it (100 ⇒ completed, >0 ⇒ in_progress, else planned) so an imported,
-    // partially-done schedule lands with its real progress instead of resetting
-    // everything to 0% / planned.
-    const importPct = r.percentComplete != null && Number.isFinite(r.percentComplete)
-      ? Math.max(0, Math.min(100, Math.round(r.percentComplete)))
-      : 0;
+    // it (100 ⇒ completed, >0 ⇒ in_progress, else planned). A file that carries
+    // no progress at all claims nothing about it.
+    const fileClaims = r.percentComplete != null && Number.isFinite(r.percentComplete);
+    const importPct = fileClaims ? Math.max(0, Math.min(100, Math.round(r.percentComplete as number))) : 0;
     const importStatus: MilestoneStatus = importPct >= 100 ? "completed" : importPct > 0 ? "in_progress" : "planned";
-
-    const baseFields: Record<string, unknown> = {
-      name,
-      description: r.description ?? null,
-      weight: isNaN(weight) ? 1 : weight,
-      planned_at: plannedIso,
-      // status + actuals are core columns (always present); percent_complete is
-      // stripped automatically on a pre-migration DB via NEW_SCHEMA_FIELDS.
+    const actualFields: Record<string, unknown> = {
       status: importStatus,
       percent_complete: importPct,
       actual_at: importStatus === "completed" ? plannedIso : null,
       actual_start_at: importPct > 0 ? (plannedStartIso ?? plannedIso) : null,
     };
-    if (!degradeToLegacy) {
-      baseFields.planned_start_at = plannedStartIso;
-      baseFields.outline_level = r.outlineLevel ?? null;
-      baseFields.wbs = r.wbs ?? null;
-      baseFields.is_summary = !!r.isSummary;
-      baseFields.shift = shiftFromStart(plannedStartIso);
-      baseFields.work_order_ref = r.workOrderRef ?? null;
-      baseFields.responsible_party = r.responsibleParty ?? null;
-      baseFields.responsible_kind = r.responsibleKind ?? null;
-      baseFields.responsible_org = r.responsibleOrg ?? null;
-      baseFields.location = r.location ?? null;
-      baseFields.duration_hours = r.durationHours ?? null;
-      baseFields.attributes = r.attributes && Object.keys(r.attributes).length > 0 ? r.attributes : {};
-    }
+    const planFields: Record<string, unknown> = {
+      name,
+      description: r.description ?? null,
+      weight: isNaN(weight) ? 1 : weight,
+      planned_at: plannedIso,
+      planned_start_at: plannedStartIso,
+      outline_level: r.outlineLevel ?? null,
+      wbs: r.wbs ?? null,
+      is_summary: !!r.isSummary,
+      shift: dateOnlyStart ? null : shiftFromStart(plannedStartIso),
+      work_order_ref: r.workOrderRef ?? null,
+      responsible_party: r.responsibleParty ?? null,
+      responsible_kind: r.responsibleKind ?? null,
+      responsible_org: r.responsibleOrg ?? null,
+      location: r.location ?? null,
+      duration_hours: r.durationHours ?? null,
+      attributes: r.attributes && Object.keys(r.attributes).length > 0 ? r.attributes : {},
+      import_batch_id: batchId,
+    };
+    prepared.push({ index: i, row: r, name, plannedIso, plannedStartIso, dateOnlyStart, planFields, actualFields: fileClaims ? actualFields : undefined, filePercent: fileClaims ? importPct : null, existing: null, id: null, rekeyedFrom: null });
+  }
 
-    try {
-      if (r.externalRef) {
-        // Scope the existing-row lookup to project_id (or document_id)
-        // so cross-project re-imports of the same .mpp insert new rows
-        // instead of clobbering rows on a different project. Fixes the
-        // bug where importing the same schedule to a second project
-        // left the new project empty.
-        let q = supabase
-          .from("milestones")
-          .select("id")
-          .eq("org_id", input.orgId)
-          .eq("source", input.source)
-          .eq("external_ref", r.externalRef);
-        if (input.projectId) q = q.eq("project_id", input.projectId);
-        else if (input.documentId) q = q.eq("document_id", input.documentId);
-        else q = q.is("project_id", null).is("document_id", null);
-        const { data: existing } = await q.maybeSingle();
-        if (existing) {
-          const id = (existing as { id: string }).id;
-          refToId.set(r.externalRef, id);
-          let updateRes = await supabase.from("milestones").update({
-            ...baseFields,
-            updated_at: new Date().toISOString(),
-            updated_by: input.createdBy,
-          }).eq("id", id);
-          if (updateRes.error && looksLikeUnknownColumn(updateRes.error.message)) {
-            degradeToLegacy = true;
-            const legacyFields = { ...baseFields };
-            for (const f of NEW_SCHEMA_FIELDS) delete legacyFields[f];
-            updateRes = await supabase.from("milestones").update({
-              ...legacyFields,
-              updated_at: new Date().toISOString(),
-              updated_by: input.createdBy,
-            }).eq("id", id);
-          }
-          if (updateRes.error) result.errors.push(`Row ${i + 1}: ${updateRes.error.message}`);
-          else result.updated++;
-          continue;
-        }
+  // ── One read of what is already there ────────────────────────────
+  // The migration sets the database lacks, found by the read (and, for
+  // 20261097, which the read does not select, by the first write). Each set
+  // degrades on its own: no 20260703 → the hierarchy fields are dropped and
+  // the structure pass is skipped; no 20260705 → the rich columns are
+  // dropped; no 20260731 → percent_complete is dropped (status still
+  // carries progress); no 20260715 → links are not written.
+  const missing = new Set<SchemaSet>();
+  const { rows: existingRows, error: readErr } = await fetchExistingImportRows(input, missing);
+  if (readErr) {
+    result.errors.push(`Could not read the existing schedule: ${readErr}. Nothing was written.`);
+    return result;
+  }
+  const lacks = (id: SchemaSet) => missing.has(id);
+  const existingByRef = new Map<string, ExistingImportRow>();
+  for (const e of existingRows) if (e.external_ref) existingByRef.set(e.external_ref, e);
+  const refToId = new Map<string, string>();
+  const fileRefs = new Set<string>();
+  const claimed = new Set<string>();
+  const attach = (p: Prepared, e: ExistingImportRow) => {
+    p.existing = e; p.id = e.id; claimed.add(e.id);
+    if (p.row.externalRef) refToId.set(p.row.externalRef, e.id);
+    // An existing row's shift follows the same rule as a drag (PC SCHED-9):
+    // re-labelled only when its start moves into the other band; a
+    // hand-set label, swing or an unlabelled row is not recomputed, and a
+    // date-only start (no band to read) keeps what is stored.
+    p.planFields.shift = p.dateOnlyStart
+      ? (e.shift ?? null)
+      : shiftAfterMove(e.shift ?? null, e.planned_start_at, p.plannedStartIso);
+  };
+  for (const p of prepared) {
+    if (!p.row.externalRef) continue;
+    fileRefs.add(p.row.externalRef);
+    const e = existingByRef.get(p.row.externalRef);
+    if (e) attach(p, e);
+  }
+  // Adoption (PT SCH-3): a keyless file row whose content key matches no
+  // existing row may be a row imported earlier — under an earlier content key
+  // (`csv-key:…`), or before content keys by its POSITION (`csv-row:N`).
+  //   * Earlier content key: adopted when name and planned dates match
+  //     exactly (this round's parser wrote it), first unclaimed by key.
+  //   * Position row: adopted ONLY when its normalised name occurs once among
+  //     the position rows of its tag and once in this file — then it is that
+  //     task whatever its dates (the old parser may have read them in the
+  //     importing browser's zone; the file's dates are written, the crew's
+  //     progress is kept as on any re-import). A repeated name — on either
+  //     side — is never adopted: its file rows are added, its earlier rows kept
+  //     and listed as not in this file, and the plan says so. No offset, zone
+  //     or DST inference: nothing can move a completion between tasks.
+  // Every lookup is a map built once, so the step is linear in the rows.
+  const normName = (n: unknown) => String(n ?? "").trim().replace(/\s+/g, " ").toLowerCase();
+  const rowIndex = (ref: string) => Number(ref.slice(ref.indexOf(":") + 1)) || 0;
+  const keylessKeyRow = (p: Prepared) => { const k = keylessRef(p.row.externalRef); return k && k.kind === "key" ? k : null; };
+  const instantKey = (v: unknown): string => {
+    if (v == null || v === "") return "";
+    const t = Date.parse(String(v));
+    return Number.isFinite(t) ? String(t) : String(v);
+  };
+  const exactKey = (tag: string, name: unknown, planned: unknown, start: unknown) =>
+    `${tag}|${normName(name)}|${instantKey(planned)}|${lacks("20260703") ? "" : instantKey(start)}`;
+  const byExactKey = new Map<string, ExistingImportRow[]>();
+  const positionByName = new Map<string, ExistingImportRow[]>();
+  for (const e of existingRows) {
+    const k = keylessRef(e.external_ref);
+    if (!k || claimed.has(e.id) || fileRefs.has(e.external_ref!)) continue;
+    const map = k.kind === "key" ? byExactKey : positionByName;
+    const key = k.kind === "key" ? exactKey(k.tag, e.name, e.planned_at, e.planned_start_at) : `${k.tag}|${normName(e.name)}`;
+    const list = map.get(key) ?? [];
+    if (list.length === 0) map.set(key, list);
+    list.push(e);
+  }
+  for (const list of byExactKey.values()) list.sort((a, b) => String(a.external_ref).localeCompare(String(b.external_ref)));
+  for (const p of prepared) {
+    if (p.existing) continue;
+    const k = keylessKeyRow(p);
+    if (!k) continue;
+    const e = byExactKey.get(exactKey(k.tag, p.name, p.plannedIso, p.plannedStartIso))?.find((c) => !claimed.has(c.id));
+    if (!e) continue;
+    p.rekeyedFrom = e.external_ref;
+    attach(p, e);
+  }
+  const fileNameCount = new Map<string, number>();
+  for (const p of prepared) fileNameCount.set(normName(p.name), (fileNameCount.get(normName(p.name)) ?? 0) + 1);
+  const positionAdopted: Prepared[] = [];
+  for (const p of prepared) {
+    if (p.existing) continue;
+    const k = keylessKeyRow(p);
+    if (!k) continue;
+    const rows = positionByName.get(`${k.tag}|${normName(p.name)}`);
+    if (!rows || rows.length !== 1 || fileNameCount.get(normName(p.name)) !== 1 || claimed.has(rows[0].id)) continue;
+    p.rekeyedFrom = rows[0].external_ref;
+    attach(p, rows[0]);
+    positionAdopted.push(p);
+  }
+  // Position rows whose name is in this file but repeats: kept, not matched.
+  const positionRepeated: ExistingImportRow[] = [];
+  for (const [key, rows] of positionByName) {
+    const inFile = fileNameCount.get(key.slice(key.indexOf("|") + 1)) ?? 0;
+    if (inFile === 0 || (rows.length === 1 && inFile === 1)) continue;
+    for (const e of rows) if (!claimed.has(e.id)) positionRepeated.push(e);
+  }
+  positionRepeated.sort((a, b) => rowIndex(a.external_ref!) - rowIndex(b.external_ref!));
+
+  // ── The plan ──────────────────────────────────────────────────────
+  const plan: ImportPlan = {
+    added: 0, changed: 0, unchanged: 0, notInFile: 0, notInFileNames: [], localProgressAtRisk: [],
+    structure: { rows: 0, onlyStructure: 0, parents: 0, linksAdded: 0, linksRemoved: 0 }, rekeyed: 0, rekeyedOnly: 0,
+    positionAdopted: positionAdopted.length, positionAdoptedNames: positionAdopted.slice(0, 20).map((p) => p.name),
+    positionRepeated: positionRepeated.length, positionRepeatedNames: positionRepeated.slice(0, 10).map((e) => e.name), rowCap,
+  };
+  // On an older database only the columns it has are compared (and written).
+  const missingColumns = new Set<string>(Array.from(missing).flatMap((id) => [...SCHEMA_SETS[id].columns]));
+  const compareColumns = PLAN_COMPARE_COLUMNS.filter((c) => !missingColumns.has(c));
+  const planChanged = (p: Prepared, e: ExistingImportRow): boolean =>
+    compareColumns.some((c) => !samePlanValue(c, (e as unknown as Record<string, unknown>)[c], p.planFields[c]));
+  const progressWouldChange = (p: Prepared, e: ExistingImportRow): boolean =>
+    !!p.actualFields && ((!lacks("20260731") && Number(e.percent_complete ?? 0) !== (p.filePercent ?? 0)) || e.status !== p.actualFields.status);
+  const writeActuals = (p: Prepared): boolean => {
+    if (!p.actualFields) return false;                 // the file says nothing about progress
+    if (!p.existing) return true;                      // a new row takes the file's progress
+    if (!hasLocalProgress(p.existing)) return true;    // nothing local to protect
+    return !!input.overwriteProgress;                  // explicit opt-in only
+  };
+  const toWrite: Array<{ p: Prepared; changed: boolean }> = [];
+  for (const p of prepared) {
+    if (!p.existing) { plan.added++; toWrite.push({ p, changed: true }); continue; }
+    const progressAtRisk = hasLocalProgress(p.existing) && progressWouldChange(p, p.existing);
+    if (progressAtRisk) plan.localProgressAtRisk.push({ id: p.existing.id, name: p.existing.name, localPercent: Number(p.existing.percent_complete ?? 0), localStatus: p.existing.status, filePercent: p.filePercent });
+    const changed = planChanged(p, p.existing) || (writeActuals(p) && progressWouldChange(p, p.existing));
+    if (changed) plan.changed++; else plan.unchanged++;
+    // A re-keyed row is written even when nothing else changed: it carries
+    // the new key.
+    toWrite.push({ p, changed: changed || !!p.rekeyedFrom });
+    // Structure the file would set on this row (a ref the file adds resolves
+    // once inserted — counted as a change here, since it cannot equal a
+    // stored id). None without 20260703: the structure pass is skipped.
+    let structureChanges = false;
+    if (!lacks("20260703")) {
+      const planRef = (ref: string): string | null => refToId.get(ref) ?? (fileRefs.has(ref) ? `new:${ref}` : null);
+      const e = p.existing;
+      const wantParentRaw = p.row.parentExternalRef ? planRef(p.row.parentExternalRef) : null;
+      const wantParent = wantParentRaw && wantParentRaw !== e.id ? wantParentRaw : null;
+      const wantDeps = lacks("20260715") ? [] : Array.from(new Set((p.row.dependsOnExternalRefs ?? []).map(planRef).filter((x): x is string => !!x && x !== e.id)));
+      const haveDeps = !lacks("20260715") && Array.isArray(e.depends_on) ? e.depends_on : [];
+      const parentMoves = (e.parent_id ?? null) !== wantParent;
+      const added = wantDeps.filter((d) => !haveDeps.includes(d)).length;
+      const removed = haveDeps.filter((d) => !wantDeps.includes(d)).length;
+      if (parentMoves || added > 0 || removed > 0) {
+        structureChanges = true;
+        plan.structure.rows++;
+        if (!changed) plan.structure.onlyStructure++;
+        if (parentMoves) plan.structure.parents++;
+        plan.structure.linksAdded += added;
+        plan.structure.linksRemoved += removed;
       }
-      let insertRes = await supabase.from("milestones").insert({
-        org_id: input.orgId,
-        project_id: input.projectId ?? null,
-        document_id: input.documentId ?? null,
-        ...baseFields,
-        source: input.source,
-        external_ref: r.externalRef ?? null,
-        created_by: input.createdBy,
-        created_by_name: input.createdByName ?? null,
-      }).select("id").maybeSingle();
-      if (insertRes.error && looksLikeUnknownColumn(insertRes.error.message)) {
-        // Schema migration hasn't been applied — drop the new fields
-        // and retry. Hierarchy will be lost until the user runs
-        // 20260703_milestones_hierarchy.sql, but the import lands.
-        degradeToLegacy = true;
-        const legacyFields = { ...baseFields };
-        for (const f of NEW_SCHEMA_FIELDS) delete legacyFields[f];
-        insertRes = await supabase.from("milestones").insert({
-          org_id: input.orgId,
-          project_id: input.projectId ?? null,
-          document_id: input.documentId ?? null,
-          ...legacyFields,
-          source: input.source,
-          external_ref: r.externalRef ?? null,
-          created_by: input.createdBy,
-          created_by_name: input.createdByName ?? null,
-        }).select("id").maybeSingle();
+    }
+    if (p.rekeyedFrom) {
+      plan.rekeyed++;
+      if (!changed && !structureChanges) plan.rekeyedOnly++;
+    }
+  }
+  for (const e of existingRows) {
+    if (e.external_ref && !fileRefs.has(e.external_ref) && !claimed.has(e.id)) {
+      plan.notInFile++;
+      if (plan.notInFileNames.length < 10) plan.notInFileNames.push(e.name);
+    }
+  }
+  result.plan = plan;
+  if (input.dryRun) return result;
+
+  // ── Writes: chunked, cancellable, degrade-aware ───────────────────
+  // Only the sets the database lacks are dropped — read at call time, so a
+  // set a write discovers missing is dropped from every later request.
+  const stripForSchema = (fields: Record<string, unknown>): Record<string, unknown> => {
+    const out = { ...fields };
+    for (const id of missing) for (const f of SCHEMA_SETS[id].columns) delete out[f];
+    return out;
+  };
+  const scope = { org_id: input.orgId, project_id: input.projectId ?? null, document_id: input.documentId ?? null, source: input.source };
+  const insertPayload = (p: Prepared) => stripForSchema({
+    ...scope, ...p.planFields, ...(p.actualFields ?? {}),
+    external_ref: p.row.externalRef ?? null,
+    created_by: input.createdBy, created_by_name: input.createdByName ?? null,
+  });
+  const updateFields = (p: Prepared) => stripForSchema({
+    ...p.planFields, ...(writeActuals(p) ? p.actualFields : {}),
+    ...(p.rekeyedFrom ? { external_ref: p.row.externalRef } : {}),
+    updated_at: new Date().toISOString(), updated_by: input.createdBy,
+  });
+  // The upsert's INSERT half must be a complete row (NOT NULL columns), so the
+  // existing row's provenance travels with it unchanged.
+  const upsertPayload = (p: Prepared) => ({
+    id: p.id!, ...scope, external_ref: p.row.externalRef ?? null,
+    created_by: p.existing!.created_by, created_by_name: p.existing!.created_by_name,
+    ...updateFields(p),
+  });
+  const total = toWrite.filter((w) => w.changed).length;
+  let done = 0;
+  const report = (phase: "rows" | "structure") => input.onProgress?.({ done, total, phase });
+  const cancelled = () => !!input.signal?.aborted;
+  const rowLabel = (p: Prepared) => `Row ${p.index + 1}`;
+
+  /** Run a chunk write; on a schema error drop the migration set the
+   *  refused column belongs to and retry the same chunk; on any other error
+   *  isolate the bad rows one at a time so a single unreadable row does not
+   *  sink two hundred good ones. */
+  async function writeChunk(chunk: Prepared[], mode: "insert" | "upsert"): Promise<void> {
+    const attempt = async () => {
+      if (mode === "insert") {
+        return supabase.from("milestones").insert(chunk.map(insertPayload)).select("id, external_ref");
       }
-      if (insertRes.error) {
-        result.errors.push(`Row ${i + 1}: ${insertRes.error.message}`);
-        continue;
+      return supabase.from("milestones").upsert(chunk.map(upsertPayload), { onConflict: "id" }).select("id, external_ref");
+    };
+    let res = await attempt();
+    while (res.error && looksLikeUnknownColumn(res.error.message) && stepDownSchema(missing, res.error.message, WRITE_SETS)) {
+      res = await attempt();
+    }
+    if (!res.error) {
+      const returned = (res.data ?? []) as Array<{ id: string; external_ref: string | null }>;
+      for (const r of returned) if (r.external_ref && !refToId.has(r.external_ref)) refToId.set(r.external_ref, r.id);
+      for (const p of chunk) {
+        if (mode === "insert") { result.inserted++; if (p.row.externalRef) p.id = refToId.get(p.row.externalRef) ?? null; }
+        else result.updated++;
       }
-      if (insertRes.data && r.externalRef) {
-        refToId.set(r.externalRef, (insertRes.data as { id: string }).id);
-      }
-      result.inserted++;
-    } catch (e) {
-      result.errors.push(`Row ${i + 1}: ${(e as Error).message}`);
+      return;
+    }
+    // Not a schema problem: isolate per row.
+    for (const p of chunk) {
+      const one = mode === "insert"
+        ? await supabase.from("milestones").insert(insertPayload(p)).select("id").maybeSingle()
+        : await supabase.from("milestones").update(updateFields(p)).eq("id", p.id!).select("id").maybeSingle();
+      if (one.error) { result.errors.push(`${rowLabel(p)}: ${one.error.message}`); continue; }
+      if (mode === "insert") {
+        result.inserted++;
+        const id = (one.data as { id: string } | null)?.id ?? null;
+        p.id = id;
+        if (id && p.row.externalRef) refToId.set(p.row.externalRef, id);
+      } else result.updated++;
     }
   }
 
-  // Pass 2: resolve parent_id wherever both parent and child landed.
-  // Done as a separate loop because the parent might appear AFTER the
-  // child in the input order (rare but happens with some MS Project
-  // exports). Skipped rows have nothing to resolve. Skipped entirely
-  // when we've degraded to legacy schema — parent_id column doesn't
-  // exist there either.
-  if (!degradeToLegacy) {
-    const updates: Array<{ id: string; parent_id: string }> = [];
-    for (const r of input.rows) {
-      if (!r.externalRef || !r.parentExternalRef) continue;
-      const childId = refToId.get(r.externalRef);
-      const parentId = refToId.get(r.parentExternalRef);
-      if (!childId || !parentId) continue;
-      if (childId === parentId) continue; // safety
-      updates.push({ id: childId, parent_id: parentId });
+  const inserts = toWrite.filter((w) => w.changed && !w.p.existing).map((w) => w.p);
+  const upserts = toWrite.filter((w) => w.changed && !!w.p.existing).map((w) => w.p);
+  // A bulk write sends the UNION of its rows' keys and fills a missing key
+  // with NULL, so rows that carry status / percent_complete / actual_* and
+  // rows that do not must never share a request (status is NOT NULL, and an
+  // upsert would null a protected row's progress). One key set per request.
+  const byKeySet = (list: Prepared[], carriesActuals: (p: Prepared) => boolean): Prepared[][] =>
+    [list.filter(carriesActuals), list.filter((p) => !carriesActuals(p))].filter((g) => g.length > 0);
+  const groups: Array<readonly ["insert" | "upsert", Prepared[]]> = [
+    ...byKeySet(inserts, (p) => !!p.actualFields).map((g) => ["insert", g] as const),
+    ...byKeySet(upserts, writeActuals).map((g) => ["upsert", g] as const),
+  ];
+  report("rows");
+  for (const [mode, list] of groups) {
+    for (let i = 0; i < list.length; i += IMPORT_CHUNK) {
+      if (cancelled()) { result.cancelled = true; result.errors.push(`Import cancelled after ${done} of ${total} rows. Rows written so far are tagged with batch ${batchId}.`); return result; }
+      const chunk = list.slice(i, i + IMPORT_CHUNK);
+      try { await writeChunk(chunk, mode); }
+      catch (e) { for (const p of chunk) result.errors.push(`${rowLabel(p)}: ${(e as Error).message}`); }
+      done += chunk.length;
+      report("rows");
     }
-    if (updates.length > 0) {
-      await Promise.all(updates.map((u) =>
-        supabase.from("milestones").update({ parent_id: u.parent_id }).eq("id", u.id)
-      ));
-    }
+  }
 
-    // Pass 3: resolve finish-to-start dependencies (predecessor external refs
-    // → ids). Degrades silently if the depends_on column isn't migrated yet.
-    const depUpdates: Array<{ id: string; depends_on: string[] }> = [];
-    for (const r of input.rows) {
-      if (!r.externalRef || !r.dependsOnExternalRefs?.length) continue;
-      const id = refToId.get(r.externalRef);
-      if (!id) continue;
-      const predIds = r.dependsOnExternalRefs
-        .map((ref) => refToId.get(ref))
-        .filter((x): x is string => !!x && x !== id);
-      if (predIds.length > 0) depUpdates.push({ id, depends_on: predIds });
-    }
-    if (depUpdates.length > 0) {
-      await Promise.all(depUpdates.map(async (u) => {
-        const res = await supabase.from("milestones").update({ depends_on: u.depends_on }).eq("id", u.id);
-        if (res.error && !looksLikeUnknownColumn(res.error.message)) {
-          result.errors.push(`Dependencies for ${u.id}: ${res.error.message}`);
-        }
-      }));
-    }
-  } else {
+  // ── Structure: exactly what the file says, for the rows it carries ─
+  // parent_id and depends_on are resolved now that every row has an id. A
+  // row the file carries with no parent / no predecessors gets NULL / [] —
+  // stale structure never survives a re-import (PT SCH-16). Rows the file
+  // does not mention are not touched.
+  // Each missing set that this file carries data for gets its own heads-up,
+  // naming ITS migration.
+  const carriesRich = prepared.some((p) => ["work_order_ref", "responsible_party", "responsible_kind", "responsible_org", "location", "duration_hours"]
+    .some((c) => p.planFields[c] != null && p.planFields[c] !== "") || Object.keys((p.planFields.attributes as Record<string, unknown> | undefined) ?? {}).length > 0);
+  if (lacks("20260705") && carriesRich) {
     result.errors.push(
-      "Heads up: hierarchy migration 20260703_milestones_hierarchy.sql hasn't been applied to your database, so parent/child relationships and start dates were dropped on this import. Run the migration in Supabase SQL Editor and re-import to get the full schedule.",
+      `Heads up: migration ${SCHEMA_SETS["20260705"].file} hasn't been applied to your database, so work orders, responsible parties, locations, work hours and the file's extra columns were dropped on this import (the rest of the schedule landed). Run the migration in Supabase SQL Editor and re-import to get them.`,
+    );
+  }
+  if (lacks("20260731") && prepared.some((p) => p.filePercent != null)) {
+    result.errors.push(
+      `Heads up: migration ${SCHEMA_SETS["20260731"].file} hasn't been applied to your database, so the file's % complete values were not stored (each task's status — planned, in progress, completed — was). Run the migration in Supabase SQL Editor and re-import to get the percentages.`,
+    );
+  }
+  if (lacks("20260703")) {
+    result.errors.push(
+      `Heads up: hierarchy migration ${SCHEMA_SETS["20260703"].file} hasn't been applied to your database, so parent/child relationships and start dates were dropped on this import. Run the migration in Supabase SQL Editor and re-import to get the full schedule.`,
+    );
+    return result;
+  }
+  const structure: Array<{ id: string; parent_id: string | null; depends_on: string[] }> = [];
+  for (const p of prepared) {
+    const id = p.id ?? (p.row.externalRef ? refToId.get(p.row.externalRef) ?? null : null);
+    if (!id) continue;
+    const parentId = p.row.parentExternalRef ? (refToId.get(p.row.parentExternalRef) ?? null) : null;
+    const parent_id = parentId && parentId !== id ? parentId : null;
+    const depends_on = (p.row.dependsOnExternalRefs ?? [])
+      .map((ref) => refToId.get(ref))
+      .filter((x): x is string => !!x && x !== id);
+    if (p.existing) {
+      if ((p.existing.parent_id ?? null) === parent_id && (lacks("20260715") || sameDeps(p.existing.depends_on, depends_on))) continue;
+    } else if (!parent_id && (lacks("20260715") || depends_on.length === 0)) continue; // a fresh row is already NULL / []
+    structure.push({ id, parent_id, depends_on });
+  }
+  for (let i = 0; i < structure.length; i += STRUCTURE_CONCURRENCY) {
+    if (cancelled()) { result.cancelled = true; result.errors.push(`Import cancelled while wiring structure (${i} of ${structure.length} done). Rows are tagged with batch ${batchId}; re-import the same file to finish.`); return result; }
+    const chunk = structure.slice(i, i + STRUCTURE_CONCURRENCY);
+    await Promise.all(chunk.map(async (u) => {
+      const fields: Record<string, unknown> = lacks("20260715") ? { parent_id: u.parent_id } : { parent_id: u.parent_id, depends_on: u.depends_on };
+      let res = await supabase.from("milestones").update(fields).eq("id", u.id);
+      const refused = res.error ? refusedColumn(res.error.message) : null;
+      if (res.error && !lacks("20260715") && looksLikeUnknownColumn(res.error.message) && (refused === null || schemaSetForColumn(refused) === "20260715")) {
+        missing.add("20260715"); // 20260715 not applied — keep the hierarchy, drop the links
+        res = await supabase.from("milestones").update({ parent_id: u.parent_id }).eq("id", u.id);
+      }
+      if (res.error) result.errors.push(`Structure for ${u.id}: ${res.error.message}`);
+    }));
+    input.onProgress?.({ done: Math.min(i + chunk.length, structure.length), total: structure.length, phase: "structure" });
+  }
+  if (lacks("20260715") && prepared.some((p) => (p.row.dependsOnExternalRefs?.length ?? 0) > 0)) {
+    result.errors.push(
+      `Heads up: migration ${SCHEMA_SETS["20260715"].file} hasn't been applied to your database, so the file's predecessor links were not imported (the hierarchy was). Run the migration in Supabase SQL Editor and re-import to get the links.`,
     );
   }
 
@@ -1458,6 +2082,18 @@ export async function setTaskDuration(input: {
 // drift ("planned vs now") becomes glanceable. One call snapshots the
 // whole project. Re-running re-baselines (e.g. after a formal
 // re-plan). clearBaseline removes it.
+//
+// Both are ONE RPC call (20261099): set_project_baseline / clear_project_
+// baseline apply as a single statement (no half-applied baseline), enforce
+// the same authority as apply_milestone_moves at the data layer, write the
+// prior snapshot to milestone_baseline_history before overwriting it, and
+// audit themselves. A BEFORE UPDATE trigger refuses direct writes to the
+// baseline_* columns outside those RPCs (PC SCHED-3 / PT SAF-7). On a
+// database without the migration the legacy per-row path still runs, so
+// the button keeps working — the rail is the migration.
+
+const RPC_MISSING = (error: { code?: string; message?: string }, fn: string) =>
+  error.code === "PGRST202" || new RegExp(fn).test(error.message ?? "");
 
 export async function setBaseline(input: {
   orgId: string;
@@ -1465,14 +2101,24 @@ export async function setBaseline(input: {
   actorUserId: string;
   actorUserEmail?: string;
   actorUserRole?: string;
-}): Promise<{ ok: boolean; count: number; error?: string }> {
-  const { data: rows, error } = await supabase
+}): Promise<{ ok: boolean; count: number; error?: string; via: "rpc" | "legacy"; historyId?: string | null }> {
+  const { data, error } = await supabase.rpc("set_project_baseline", { p_org: input.orgId, p_project: input.projectId });
+  if (!error) {
+    const d = (data ?? {}) as { count?: number; history_id?: string | null };
+    const count = Number(d.count ?? 0);
+    if (count === 0) return { ok: false, count: 0, error: "No tasks to baseline.", via: "rpc" };
+    return { ok: true, count, via: "rpc", historyId: d.history_id ?? null };
+  }
+  if (!RPC_MISSING(error, "set_project_baseline")) return { ok: false, count: 0, error: error.message, via: "rpc" };
+
+  // Legacy path (20261099 not applied): per-row writes, client-side audit.
+  const { data: rows, error: readErr } = await supabase
     .from("milestones")
     .select("id, planned_at, planned_start_at")
     .eq("org_id", input.orgId)
     .eq("project_id", input.projectId);
-  if (error) return { ok: false, count: 0, error: error.message };
-  if (!rows || rows.length === 0) return { ok: false, count: 0, error: "No tasks to baseline." };
+  if (readErr) return { ok: false, count: 0, error: readErr.message, via: "legacy" };
+  if (!rows || rows.length === 0) return { ok: false, count: 0, error: "No tasks to baseline.", via: "legacy" };
 
   const now = new Date().toISOString();
   let count = 0;
@@ -1495,20 +2141,45 @@ export async function setBaseline(input: {
     userId: input.actorUserId,
     userEmail: input.actorUserEmail,
     userRole: input.actorUserRole,
-    details: { count },
+    details: { count, requested: rows.length, partial: errors.length > 0 },
   }).catch(() => { /* audit is best-effort */ });
 
-  return { ok: errors.length === 0, count, error: errors[0] };
+  return {
+    ok: errors.length === 0, count, via: "legacy",
+    error: errors.length > 0 ? `Baseline applied to ${count} of ${rows.length} tasks — ${errors[0]}` : undefined,
+  };
 }
 
+/** Remove the project's baseline. Audited (SCHEDULE_BASELINE_CLEARED) and,
+ *  through the RPC, preserved in milestone_baseline_history first. */
 export async function clearBaseline(input: {
   orgId: string;
   projectId: string;
   actorUserId: string;
-}): Promise<{ ok: boolean; error?: string }> {
-  const { error } = await supabase.from("milestones").update({
+  actorUserEmail?: string;
+  actorUserRole?: string;
+}): Promise<{ ok: boolean; count: number; error?: string; via: "rpc" | "legacy" }> {
+  const { data, error } = await supabase.rpc("clear_project_baseline", { p_org: input.orgId, p_project: input.projectId });
+  if (!error) {
+    const d = (data ?? {}) as { count?: number };
+    return { ok: true, count: Number(d.count ?? 0), via: "rpc" };
+  }
+  if (!RPC_MISSING(error, "clear_project_baseline")) return { ok: false, count: 0, error: error.message, via: "rpc" };
+
+  const { data: cleared, error: updErr } = await supabase.from("milestones").update({
     baseline_start_at: null, baseline_finish_at: null, baseline_set_at: null, baseline_set_by: null,
-  }).eq("org_id", input.orgId).eq("project_id", input.projectId);
-  if (error) return { ok: false, error: error.message };
-  return { ok: true };
+  }).eq("org_id", input.orgId).eq("project_id", input.projectId).select("id");
+  if (updErr) return { ok: false, count: 0, error: updErr.message, via: "legacy" };
+  const count = (cleared ?? []).length;
+  await logAuditAction({
+    action: "SCHEDULE_BASELINE_CLEARED",
+    resourceType: "project",
+    resourceId: input.projectId,
+    orgId: input.orgId,
+    userId: input.actorUserId,
+    userEmail: input.actorUserEmail,
+    userRole: input.actorUserRole,
+    details: { count },
+  }).catch(() => { /* audit is best-effort */ });
+  return { ok: true, count, via: "legacy" };
 }
