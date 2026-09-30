@@ -15,21 +15,41 @@
 //     and never overrides a human's decision.
 //
 // Authority: any active member can run proposals (they spend the caller's
-// own AI key, and saving is where write authority is enforced).
+// own AI key, and saving is where write authority is enforced) — but only
+// over documents THEY may read. The reads below run as the service role, so
+// SEC-10: the document's pages come through lib/docFileServer, which makes
+// the caller's own content decision first (a member the ACL excludes gets
+// 403, and a controller-only read is recorded, DEC-43), and the project's
+// document titles are filtered to what the caller may discover before they
+// reach the model.
+//
+// PERF-6: the route answers before its own function limit — the render is
+// abandoned at the deadline, the model is budgeted from the time left, and
+// running out of time is a readable 504 that names the page cap, never the
+// platform's bare "HTTP 504".
 
 import { NextRequest, NextResponse } from "next/server";
 import { supabaseAdmin } from "@/lib/supabaseAdmin";
 import { governedAiCall, GovernedCallError } from "@/lib/ai/governedCall";
 import { extractJsonBlock } from "@/lib/orchestrator/protocol";
 import { renderKnowledgePages } from "@/lib/knowledgePageRender";
-import { resolveDocumentFile } from "@/lib/docFileServer";
+import {
+  resolveDocumentFile, loadReaderPrincipal, discoverableDocuments, loadContainerAclChain, DOC_ACCESS_UNVERIFIED,
+} from "@/lib/docFileServer";
 import { validateSegmentedItems, type SegmentedItem } from "@/lib/checklistEngine";
+import { isTimeoutError } from "@/lib/ai/providerCall";
+import {
+  routeDeadline, beforeDeadline, aiBudgetMs, tooLargeToReadMessage, DEADLINE_PASSED,
+} from "@/lib/routeDeadline";
+import type { Principal } from "@/lib/permissions";
 
 export const runtime = "nodejs";
 export const maxDuration = 120;
 
 const bad = (error: string, status: number) => NextResponse.json({ error }, { status });
 const MAX_PAGES = 10;
+const AI_TIMEOUT_MS = 90_000;
+const ASSESS_OUT_OF_TIME = "The assessment did not finish in time — try again.";
 
 const SEGMENT_SYSTEM =
   "You read industrial checklists (PSSR, mechanical integrity, QA/QC) from printed pages and split them into discrete checkable items.\n" +
@@ -41,6 +61,7 @@ const SEGMENT_SYSTEM =
   'Return STRICT JSON: {"items":[{"section":"Documentation","text":"P&IDs updated to reflect as-built condition"}]}';
 
 export async function POST(req: NextRequest) {
+  const deadline = routeDeadline(maxDuration);
   let body: {
     orgId?: string; projectId?: string; action?: string;
     documentId?: string; checklistId?: string;
@@ -57,6 +78,7 @@ export async function POST(req: NextRequest) {
   const { data: userData, error: userErr } = await supabaseAdmin.auth.getUser(token);
   if (userErr || !userData?.user) return bad("Not signed in", 401);
   const userId = userData.user.id;
+  const userEmail = userData.user.email ?? null;
 
   const [{ data: member }, { data: project }] = await Promise.all([
     supabaseAdmin.from("org_members").select("status").eq("org_id", orgId).eq("uid", userId).maybeSingle(),
@@ -71,11 +93,17 @@ export async function POST(req: NextRequest) {
   if (action === "segment") {
     const documentId = (body.documentId ?? "").trim();
     if (!documentId) return bad("documentId required", 400);
-    const file = await resolveDocumentFile(orgId, documentId);
-    if (!file) return bad("That document has no stored file to read.", 404);
+    const resolved = await resolveDocumentFile(orgId, documentId, { uid: userId, email: userEmail, channel: "checklist_segment" });
+    if (!resolved.ok) return bad(resolved.error, resolved.status);
+    const file = resolved.file;
 
-    const images = await renderKnowledgePages(file.fileKey, Array.from({ length: MAX_PAGES }, (_, i) => i + 1), MAX_PAGES);
+    const rendered = await beforeDeadline(
+      renderKnowledgePages(file.fileKey, Array.from({ length: MAX_PAGES }, (_, i) => i + 1), MAX_PAGES), deadline);
+    if (rendered === DEADLINE_PASSED) return bad(tooLargeToReadMessage(MAX_PAGES), 504);
+    const images = rendered;
     if (images.length === 0) return bad("The pages could not be rendered for reading — is it a PDF?", 502);
+    const budget = aiBudgetMs(deadline, AI_TIMEOUT_MS);
+    if (budget === null) return bad(tooLargeToReadMessage(MAX_PAGES), 504);
 
     let text: string;
     try {
@@ -85,11 +113,12 @@ export async function POST(req: NextRequest) {
         user: `Document: ${file.label}\nPages attached in order: ${images.map((i) => i.page).join(", ")}`,
         images: images.map((i) => ({ base64: i.base64, mediaType: i.mediaType })),
         maxTokens: 4000,
-        timeoutMs: 90_000,
+        timeoutMs: budget,
       });
       text = out.text;
     } catch (e) {
       if (e instanceof GovernedCallError) return bad(e.message, e.status);
+      if (isTimeoutError(e)) return bad(tooLargeToReadMessage(MAX_PAGES), 504);
       return bad((e as Error).message, 502);
     }
 
@@ -101,7 +130,7 @@ export async function POST(req: NextRequest) {
     } catch (e) {
       return bad((e as Error).message, 422);
     }
-    return NextResponse.json({ items, pagesRead: images.map((i) => i.page), sourceLabel: file.label });
+    return NextResponse.json({ items, pagesRead: images.map((i) => i.page), pageCap: MAX_PAGES, sourceLabel: file.label });
   }
 
   // ── assess ──────────────────────────────────────────────────────────────
@@ -118,18 +147,50 @@ export async function POST(req: NextRequest) {
   if (items.length === 0) return bad("This checklist has no items to assess.", 404);
 
   // The project's REAL context — the assessment grounds on what the
-  // platform holds, not on typical-plant guesswork.
+  // platform holds, not on typical-plant guesswork. SEC-10: only what the
+  // CALLER may see reaches the model (its rationale comes back to them) —
+  // the SOW's label only when they may read it, and the project's document
+  // titles only where they may discover them.
+  let reader: Principal | null;
+  try { reader = await loadReaderPrincipal(orgId, userId); } catch { return bad(DOC_ACCESS_UNVERIFIED, 503); }
+  if (!reader) return bad("Not a member of this workspace.", 403);
   const safe = async <T>(p: PromiseLike<{ data: T | null }>): Promise<T | null> => {
     try { return (await p).data; } catch { return null; }
   };
-  const [sowFile, milestones, docs, assets] = await Promise.all([
-    project.sow_document_id ? resolveDocumentFile(orgId, String(project.sow_document_id)).catch(() => null) : Promise.resolve(null),
+  // The intake folder's documents are listed in THIS org only (the
+  // project's intake_collection_id is owner-writable, so a foreign folder id
+  // must not list another tenant's titles), and filtered over the folder's
+  // own library → folder chain; a chain that cannot be read lists nothing.
+  const intakeCollectionId = project.intake_collection_id ? String(project.intake_collection_id) : null;
+  const [sow, milestones, docRows, intakeChain, assets] = await Promise.all([
+    project.sow_document_id
+      ? resolveDocumentFile(orgId, String(project.sow_document_id), { uid: userId, email: userEmail, channel: "checklist_assess", labelOnly: true }).catch(() => null)
+      : Promise.resolve(null),
     safe(supabaseAdmin.from("milestones").select("name, status").eq("project_id", projectId).limit(100)),
-    project.intake_collection_id
-      ? safe(supabaseAdmin.from("documents").select("title, name, document_number").eq("collection_id", String(project.intake_collection_id)).limit(200))
+    intakeCollectionId
+      ? safe(supabaseAdmin.from("documents").select("title, name, document_number, visibility, acl, owner_user_id").eq("org_id", orgId).eq("collection_id", intakeCollectionId).limit(200))
+      : Promise.resolve(null),
+    intakeCollectionId
+      ? loadContainerAclChain(orgId, { collectionId: intakeCollectionId }).catch(() => null)
       : Promise.resolve(null),
     safe(supabaseAdmin.from("assets").select("tag").eq("org_id", orgId).eq("archived", false).limit(300)),
   ]);
+  const sowFile = sow?.ok ? sow.file : null;
+  const sowRestricted = !!sow && !sow.ok && sow.status === 403;
+  // A check that could not RUN is not an absence: a SOW whose access could
+  // not be verified (a lookup error, a broken folder chain, a thrown read),
+  // and intake documents whose titles could not be filtered, are told to
+  // the model as on file but unread — never as "none", which would ground
+  // an N/A proposal on a false premise.
+  const sowUnchecked = !!project.sow_document_id
+    && (sow === null || (!sow.ok && (sow.status === 503 || sow.status === 409)));
+  type DocTitleRow = { title: string | null; name: string | null; document_number: string | null; visibility?: string | null; acl?: unknown; owner_user_id?: string | null };
+  const docs = docRows && intakeChain ? discoverableDocuments(reader, docRows as DocTitleRow[], intakeChain) : null;
+  // A SOW that is linked but resolves no file (no version, or a pointer the
+  // gate refused to follow) is on file, not absent.
+  const sowNoFile = !!project.sow_document_id && !!sow && !sow.ok && sow.status === 404;
+  const titlesUnchecked = !!intakeCollectionId
+    && (docRows === null || (docRows.length > 0 && intakeChain === null));
 
   const goals = Array.isArray(project.goals) ? (project.goals as string[]).join("; ") : "";
   const context = [
@@ -138,13 +199,19 @@ export async function POST(req: NextRequest) {
     project.purpose ? `Purpose: ${String(project.purpose)}` : "",
     goals ? `Goals: ${goals}` : "",
     project.success_criteria ? `Success criteria: ${String(project.success_criteria)}` : "",
-    sowFile ? `Summary of Work document on file: ${sowFile.label}` : "No Summary of Work attached.",
+    sowFile
+      ? `Summary of Work document on file: ${sowFile.label}`
+      : sowRestricted ? "A Summary of Work is on file but restricted — it was not read."
+        : sowUnchecked ? "A Summary of Work is on file but could not be checked — it was not read."
+          : sowNoFile ? "A Summary of Work is linked but has no readable file — it was not read."
+          : "No Summary of Work attached.",
     milestones?.length
       ? `Schedule milestones: ${(milestones as Array<{ name: string }>).map((m) => m.name).slice(0, 40).join("; ")}`
       : "No schedule loaded.",
     docs?.length
-      ? `Project documents on file: ${(docs as Array<{ title: string | null; name: string | null; document_number: string | null }>).map((d) => [d.document_number, d.title ?? d.name].filter(Boolean).join(" ")).slice(0, 60).join("; ")}`
-      : "No project documents on file yet.",
+      ? `Project documents on file: ${docs.map((d) => [d.document_number, d.title ?? d.name].filter(Boolean).join(" ")).slice(0, 60).join("; ")}`
+      : titlesUnchecked ? "Project documents may be on file but could not be checked — their titles were not read."
+        : "No project documents on file yet.",
     assets?.length ? `Known equipment tags (sample): ${(assets as Array<{ tag: string }>).map((a) => a.tag).slice(0, 60).join(", ")}` : "",
   ].filter(Boolean).join("\n");
 
@@ -158,6 +225,8 @@ export async function POST(req: NextRequest) {
     "- ref is the 8-character id printed before each item.\n" +
     'Return STRICT JSON: {"assessments":[{"ref":"a1b2c3d4","applicability":"applies","rationale":"…"}]}';
 
+  const budget = aiBudgetMs(deadline, AI_TIMEOUT_MS);
+  if (budget === null) return bad(ASSESS_OUT_OF_TIME, 504);
   let text: string;
   try {
     const out = await governedAiCall({
@@ -165,11 +234,12 @@ export async function POST(req: NextRequest) {
       system: ASSESS_SYSTEM,
       user: `PROJECT CONTEXT:\n${context}\n\nCHECKLIST "${String(checklist.title)}" (${String(checklist.kind)}) ITEMS:\n${itemList}`,
       maxTokens: 4000,
-      timeoutMs: 90_000,
+      timeoutMs: budget,
     });
     text = out.text;
   } catch (e) {
     if (e instanceof GovernedCallError) return bad(e.message, e.status);
+    if (isTimeoutError(e)) return bad(ASSESS_OUT_OF_TIME, 504);
     return bad((e as Error).message, 502);
   }
 

@@ -8,6 +8,28 @@ import { supabase } from '@/lib/supabase';
 import { recordIntent } from '@/lib/intents';
 import { appAlert } from '@/components/providers/DialogProvider';
 import BackupViewer from '@/components/archive/BackupViewer';
+import { inlineTypeForKey, viewerRenderKind } from '@/lib/presignedDisposition';
+
+type RenderKind = 'pdf' | 'image';
+type Granted = { disposition?: string; contentType?: string | null };
+
+/** SEC-1: when the bytes could not be fetched here (CORS, the network), may
+ *  the URL itself be shown? Only when its type is known to be viewable: the
+ *  route's own INLINE grant (the type is pinned on the URL), or a legacy
+ *  absolute URL on ANOTHER origin whose path NAMES a PDF or a raster image
+ *  (a `.pdf` goes to the PDF frame, an image to an <img>). Never an
+ *  attachment, never a same-origin URL, never a legacy URL whose name is
+ *  anything else — an `.html` there would render as a page in the frame. */
+function directStreamKind(resolved: string, granted: Granted | null): RenderKind | null {
+  if (granted) return granted.disposition === 'inline' ? viewerRenderKind(granted.contentType)?.kind ?? null : null;
+  try {
+    const u = new URL(resolved);
+    if ((u.protocol === 'https:' || u.protocol === 'http:') && u.origin !== window.location.origin) {
+      return viewerRenderKind(inlineTypeForKey(u.pathname))?.kind ?? null;
+    }
+  } catch { /* not an absolute URL */ }
+  return null;
+}
 
 interface SecureDocViewerProps {
   url: string;
@@ -34,6 +56,11 @@ export default function SecureDocViewer({
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [blobUrl, setBlobUrl] = useState<string | null>(null);
+  // SEC-1: what the URL above may be rendered AS — decided from the type the
+  // file arrived with, never assumed. `unviewable` names a type we refuse to
+  // frame at all.
+  const [blobKind, setBlobKind] = useState<RenderKind | null>(null);
+  const [unviewable, setUnviewable] = useState<string | null>(null);
   // Binary shed to an offline space archive — show the provide-the-zip prompt.
   const [archivedInfo, setArchivedInfo] = useState<{ archiveId: string | null; root: string | null; fileName: string } | null>(null);
   const viewerId = userEmail ?? uid ?? "USER_UNKNOWN";
@@ -97,19 +124,25 @@ export default function SecureDocViewer({
       setLoading(true);
       setError(null);
       setArchivedInfo(null);
+      setUnviewable(null);
       let resolvedUrl = url;
+      // SEC-7: what the route signed — an inline URL carries its pinned type.
+      let granted: Granted | null = null;
       try {
         // If url is a storage path (not a full URL), resolve it to a presigned URL first
         if (url && !url.startsWith('http://') && !url.startsWith('https://') && !url.startsWith('blob:')) {
           const { data: { session } } = await supabase.auth.getSession();
           if (session?.access_token) {
+            // SEC-7 / DEC-49: the viewer is a reviewed inline caller — the
+            // route grants inline only for a PDF or a raster image.
             const res = await fetch(
-              `/api/storage/download-url?path=${encodeURIComponent(url)}&expiresIn=3600`,
+              `/api/storage/download-url?path=${encodeURIComponent(url)}&expiresIn=3600&inline=1`,
               { headers: { authorization: `Bearer ${session.access_token}` } }
             );
             if (res.ok) {
-              const { url: signedUrl } = await res.json();
-              resolvedUrl = signedUrl;
+              const body = await res.json() as { url: string } & Granted;
+              resolvedUrl = body.url;
+              granted = { disposition: body.disposition, contentType: body.contentType ?? null };
             } else if (res.status === 409) {
               // Shed to an offline space archive — prompt instead of streaming.
               const body = await res.json().catch(() => null) as { archived?: boolean; archiveId?: string | null; root?: string | null; fileName?: string } | null;
@@ -122,6 +155,14 @@ export default function SecureDocViewer({
                 setLoading(false);
                 return;
               }
+            } else {
+              // The route refused (no access, no such file): say so — never
+              // fall through to framing the bare storage path.
+              if (active) {
+                setError(res.status === 403 ? 'You do not have access to this file.' : 'This file could not be opened.');
+                setLoading(false);
+              }
+              return;
             }
           }
         }
@@ -135,9 +176,22 @@ export default function SecureDocViewer({
             URL.revokeObjectURL(blobUrlRef.current);
             blobUrlRef.current = null;
           }
-          const objUrl = URL.createObjectURL(blob);
+          // SEC-1: render ONLY a PDF or a raster image, re-typed to exactly
+          // that type. The type the bytes arrived with was, for an intake
+          // upload, whatever the uploader claimed; an HTML or SVG file is
+          // never put in a frame on this origin.
+          const view = viewerRenderKind(blob.type);
+          if (!view) {
+            setBlobUrl(null);
+            setBlobKind(null);
+            setUnviewable(blob.type || 'unknown type');
+            setLoading(false);
+            return;
+          }
+          const objUrl = URL.createObjectURL(new Blob([blob], { type: view.type }));
           blobUrlRef.current = objUrl;
           setBlobUrl(objUrl);
+          setBlobKind(view.kind);
           setLoading(false);
         }
       } catch (e: unknown) {
@@ -147,7 +201,10 @@ export default function SecureDocViewer({
             URL.revokeObjectURL(blobUrlRef.current);
             blobUrlRef.current = null;
           }
-          setBlobUrl(resolvedUrl);
+          const kind = directStreamKind(resolvedUrl, granted);
+          setBlobUrl(kind ? resolvedUrl : null);
+          setBlobKind(kind);
+          if (!kind) setUnviewable(granted?.contentType || 'unknown type');
           setLoading(false);
         }
       }
@@ -270,12 +327,35 @@ export default function SecureDocViewer({
             <h3 className="text-lg font-bold text-red-500">Access Denied</h3>
             <p className="text-sm font-mono mt-2 text-red-300/70 max-w-md text-center">{error}</p>
           </div>
-        ) : blobUrl ? (
+        ) : blobUrl && blobKind === 'pdf' ? (
+          // SEC-1: only a file typed application/pdf reaches this frame
+          // (re-typed to exactly that), so the browser's PDF viewer renders
+          // it and no HTML parser ever does. It carries no `sandbox`:
+          // Chromium blocks its PDF viewer in any sandboxed frame, which
+          // would blank every controlled drawing. It is the ONLY frame here.
           <iframe 
             src={`${blobUrl}#toolbar=0&navpanes=0&scrollbar=0&zoom=${zoomLevel}`} 
             className="w-full h-full border-none bg-slate-200" 
             title={`Secure View - ${docNumber}`}
           />
+        ) : blobUrl && blobKind === 'image' ? (
+          // SEC-1: a raster image is an <img>, never a frame — an image
+          // element runs no script whatever the bytes are, and has no
+          // document or origin of its own.
+          <div className="w-full h-full flex items-center justify-center bg-slate-200 overflow-auto">
+            {/* eslint-disable-next-line @next/next/no-img-element -- a blob: URL of fetched bytes the optimizer cannot process */}
+            <img
+              src={blobUrl}
+              alt={`Secure View - ${docNumber}`}
+              className="max-w-full max-h-full object-contain"
+            />
+          </div>
+        ) : unviewable ? (
+          <div className="flex flex-col items-center justify-center h-full text-slate-400 px-6 text-center">
+            <XCircle className="w-12 h-12 mb-2 opacity-40" />
+            <p className="text-sm font-bold">Preview is available for PDFs and images only</p>
+            <p className="text-xs mt-1 text-slate-500">This file ({unviewable}) is not shown here — download it to open it.</p>
+          </div>
         ) : (
           <div className="flex flex-col items-center justify-center h-full text-slate-600">
             <XCircle className="w-12 h-12 mb-2 opacity-20" />

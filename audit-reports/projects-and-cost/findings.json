@@ -18,8 +18,8 @@
       "LOW": 11
     },
     "by_status": {
-      "OPEN": 66,
-      "RESOLVED": 3
+      "OPEN": 65,
+      "RESOLVED": 4
     }
   },
   "status_vocabulary": [
@@ -1613,7 +1613,7 @@
       "id": "COST-7",
       "title": "Cost-discipline scoring blames the contractor for owner-request and design-error change orders, contradicting the reason-code contract the CO module states",
       "severity": "LOW",
-      "status": "OPEN",
+      "status": "RESOLVED",
       "verification": "SUSPECTED",
       "verification_note": null,
       "blast_radius": null,

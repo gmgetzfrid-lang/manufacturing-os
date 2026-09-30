@@ -11,6 +11,8 @@
 // Generated from supabase/migrations (CREATE TABLE scan) + curated column
 // probes for feature-critical ALTERs. When a new migration creates a table,
 // add it here — the health panel is only as honest as this list.
+// lib/__tests__/schemaExpectations.test.ts is the tripwire: a migration that
+// creates a table with no row here fails the suite (REL-7).
 
 export interface TableExpectation {
   table: string;
@@ -40,10 +42,14 @@ export const EXPECTED_TABLES: readonly TableExpectation[] = [
   { table: "asset_photos", migration: "20260603_asset_registry.sql" },
   { table: "asset_types", migration: "20260603_asset_registry.sql" },
   { table: "assets", migration: "20260603_asset_registry.sql" },
+  { table: "change_orders", migration: "20261013_project_controls_program.sql" },
+  { table: "checklist_items", migration: "20261013_project_controls_program.sql" },
   { table: "checkout_episodes", migration: "20260729_checkout_episodes.sql" },
   { table: "checkout_messages", migration: "20260620_checkout_activity_thread.sql" },
   { table: "codebook_config", migration: "20260928_site_codebook.sql" },
   { table: "codebook_entries", migration: "20260928_site_codebook.sql" },
+  { table: "companies", migration: "20261013_project_controls_program.sql" },
+  { table: "company_events", migration: "20261013_project_controls_program.sql" },
   { table: "cost_accounts", migration: "20260819_orphan_tables_backfill.sql" },
   { table: "cost_documents", migration: "20260819_orphan_tables_backfill.sql" },
   { table: "cost_entries", migration: "20260819_orphan_tables_backfill.sql" },
@@ -61,6 +67,7 @@ export const EXPECTED_TABLES: readonly TableExpectation[] = [
   { table: "document_review_events", migration: "20260630_review_cycles.sql" },
   { table: "document_review_signoffs", migration: "20260818_review_before_publish.sql" },
   { table: "document_shares", migration: "20260623_document_shares.sql" },
+  { table: "document_share_accesses", migration: "20261081_dc_roundF_share_access_log.sql" },
   { table: "document_supersessions", migration: "20260526_supersede_archive.sql" },
   { table: "drawing_audit_logs", migration: "20260929_mention_engine.sql" },
   { table: "e_signatures", migration: "20260720_e_signatures.sql" },
@@ -94,12 +101,14 @@ export const EXPECTED_TABLES: readonly TableExpectation[] = [
   { table: "platform_settings", migration: "20260920_per_user_keys_real_limits.sql" },
   { table: "plot_plans", migration: "20260719_plot_plans_and_whiteboard.sql" },
   { table: "project_activity", migration: "20260527_projects_and_collaboration.sql" },
+  { table: "project_checklists", migration: "20261013_project_controls_program.sql" },
   { table: "project_documents", migration: "20260609_phase1_normalization.sql" },
   { table: "project_intake_links", migration: "20260902_project_intake.sql" },
   { table: "project_members", migration: "20260527_projects_and_collaboration.sql" },
   { table: "project_parties", migration: "20260819_orphan_tables_backfill.sql" },
   { table: "projects", migration: "20260527_projects_and_collaboration.sql" },
   { table: "proposed_links", migration: "20260807_link_proposals.sql" },
+  { table: "punch_items", migration: "20261013_project_controls_program.sql" },
   { table: "push_subscriptions", migration: "20260804_push_subscriptions.sql" },
   { table: "recently_viewed_docs", migration: "20260806_intelligence_layer.sql" },
   { table: "revision_branches", migration: "20260823_publish_contract.sql" },
@@ -113,6 +122,7 @@ export const EXPECTED_TABLES: readonly TableExpectation[] = [
   { table: "ticket_comments", migration: "20260726_ticket_comments.sql" },
   { table: "ticket_number_counters", migration: "20260724_ticket_numbering.sql" },
   { table: "transmittals", migration: "20260717_transmittals.sql" },
+  { table: "turnover_items", migration: "20261013_project_controls_program.sql" },
   { table: "units", migration: "20260606_operational_entity_graph.sql" },
   { table: "work_package_documents", migration: "20260825_work_packages_acks.sql" },
   { table: "work_package_prints", migration: "20261028_work_package_prints.sql" },
@@ -139,4 +149,12 @@ export const EXPECTED_COLUMNS: readonly ColumnExpectation[] = [
   { table: "tickets", column: "deliverable_rev", migration: "20260827_ticket_deliverable_rev.sql (repair: 20261039)", feature: "Autonomous deliverable revision labels" },
   { table: "tickets", column: "draft_iteration", migration: "20260827_ticket_deliverable_rev.sql (repair: 20261039)", feature: "Autonomous deliverable revision labels" },
   { table: "tickets", column: "engineer_review_reason", migration: "20260528_engineer_review_routing.sql (repair: 20261039)", feature: "Engineer routing (scoped review, final approval)" },
+  // REL-7: the project-controls program. Without these rows a database that
+  // never received 20261013 reported healthy while the Costs and Quality
+  // tabs rendered empty, cheerful screens.
+  { table: "cost_documents", column: "rfq_group", migration: "20261013_project_controls_program.sql", feature: "Bid tabulation — quotes grouped per RFQ" },
+  { table: "cost_documents", column: "intake_link_id", migration: "20261013_project_controls_program.sql", feature: "Quotes submitted through a vendor intake link" },
+  { table: "project_intake_links", column: "purpose", migration: "20261013_project_controls_program.sql", feature: "Quote intake links (purpose = quote)" },
+  { table: "project_intake_links", column: "rfq_group", migration: "20261013_project_controls_program.sql", feature: "Quote intake links tied to an RFQ group" },
+  { table: "cost_entries", column: "created_by_name", migration: "20261013_project_controls_program.sql", feature: "Cost ledger — who posted each entry" },
 ];

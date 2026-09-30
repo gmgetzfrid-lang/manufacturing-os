@@ -25,9 +25,9 @@ before and after.
 |---|---|
 | CRITICAL | 17 |
 | HIGH | 52 |
-| MEDIUM | 63 |
+| MEDIUM | 64 |
 | LOW | 2 |
-| **Total** | **134** |
+| **Total** | **135** |
 
 Two findings here (`BID-5`, `UX-2`) carry `Status: REFUTED` — an independent pass
 disproved them. They are kept with the reason rather than deleted (`DEC-41`);
@@ -37,6 +37,8 @@ disproved them. They are kept with the reason rather than deleted (`DEC-41`);
 projects Round G package J7 on 2026-09-30, when `UX-3` was made true by copy
 and the make-it-true-by-automation half was split out for the intake and
 quality packages.
+`SEC-18` (two presigned-GET issuers sign no disposition: `/api/storage/resolve`
+and the data-export envelope) was opened by package J9 on 2026-09-30.
 
 Counts are generated from the reports by
 [`../build-index.mjs`](../build-index.mjs) — see

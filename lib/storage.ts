@@ -135,12 +135,24 @@ function signedUrlMargin(seconds: number): number {
 const RESIGN_RETRY_MIN_MS = 15_000;
 const RESIGN_RETRY_MAX_MS = 60_000;
 
+/** SEC-7 / DEC-49: an INLINE URL and an ATTACHMENT URL for the same path
+ *  are different URLs (the route signs the disposition into them), so they
+ *  are cached apart. The inline entry's key starts with a NUL, which no
+ *  storage key can contain (assertSafeStorageKey refuses control bytes). */
+const INLINE_KEY_PREFIX = "\u0000inline\u0000";
+function signedUrlKey(path: string, inline: boolean): string {
+  return inline ? INLINE_KEY_PREFIX + path : path;
+}
+function peekEntry(key: string): SignedUrl | undefined {
+  const cached = signedUrlCache.get(key);
+  return cached && cached.expiresAt - Date.now() > cached.margin ? cached : undefined;
+}
+
 /** Synchronous read of a still-live cached URL for `path` — the render-time
  *  seed for an image component; `undefined` when there is none (expired
  *  entries are not returned: an <img> mounted on one would 403). */
 export function peekSignedUrl(path: string): SignedUrl | undefined {
-  const cached = signedUrlCache.get(path);
-  return cached && cached.expiresAt - Date.now() > cached.margin ? cached : undefined;
+  return peekEntry(signedUrlKey(path, false));
 }
 
 /** Test hook. */
@@ -149,10 +161,11 @@ export function clearSignedUrlCache(): void {
   signedUrlInflight.clear();
 }
 
-async function getPresignedDownloadUrlEntry(path: string, expiresIn = PRESIGNED_MAX_SECONDS): Promise<SignedUrl> {
-  const live = peekSignedUrl(path);
+async function getPresignedDownloadUrlEntry(path: string, expiresIn = PRESIGNED_MAX_SECONDS, inline = false): Promise<SignedUrl> {
+  const key = signedUrlKey(path, inline);
+  const live = peekEntry(key);
   if (live) return live;
-  const inflight = signedUrlInflight.get(path);
+  const inflight = signedUrlInflight.get(key);
   if (inflight) return inflight;
   const p = (async () => {
     // Counted from BEFORE the request, so the client's idea of the window is
@@ -160,7 +173,7 @@ async function getPresignedDownloadUrlEntry(path: string, expiresIn = PRESIGNED_
     const now = Date.now();
     const token = await getAuthToken();
     const res = await fetch(
-      `/api/storage/download-url?path=${encodeURIComponent(path)}&expiresIn=${expiresIn}`,
+      `/api/storage/download-url?path=${encodeURIComponent(path)}&expiresIn=${expiresIn}${inline ? "&inline=1" : ""}`,
       { headers: { authorization: `Bearer ${token}` } }
     );
     if (!res.ok) {
@@ -192,15 +205,15 @@ async function getPresignedDownloadUrlEntry(path: string, expiresIn = PRESIGNED_
       ? granted
       : Math.min(expiresIn, PRESIGNED_MAX_SECONDS);
     const entry: SignedUrl = { url, expiresAt: now + seconds * 1000, margin: signedUrlMargin(seconds) };
-    signedUrlCache.set(path, entry);
+    signedUrlCache.set(key, entry);
     return entry;
   })();
-  signedUrlInflight.set(path, p);
-  try { return await p; } finally { signedUrlInflight.delete(path); }
+  signedUrlInflight.set(key, p);
+  try { return await p; } finally { signedUrlInflight.delete(key); }
 }
 
-async function getPresignedDownloadUrl(path: string, expiresIn = PRESIGNED_MAX_SECONDS): Promise<string> {
-  return (await getPresignedDownloadUrlEntry(path, expiresIn)).url;
+async function getPresignedDownloadUrl(path: string, expiresIn = PRESIGNED_MAX_SECONDS, inline = false): Promise<string> {
+  return (await getPresignedDownloadUrlEntry(path, expiresIn, inline)).url;
 }
 
 /** Thrown when the download-url route REFUSED to sign `path` (a 4xx other
@@ -300,12 +313,13 @@ export type ResolvedFile =
   | { kind: "archived"; archiveId: string | null; root: string | null; fileName: string };
 
 /** Like resolveFileUrl, but distinguishes "shed to an offline archive" from a
- *  plain failure so viewers can show the provide-the-zip prompt. */
+ *  plain failure so viewers can show the provide-the-zip prompt. A viewer
+ *  resolver: asks for an INLINE URL, as resolveFileUrl does. */
 export async function resolveFileUrlDetailed(value: string, expiresIn = 3600): Promise<ResolvedFile | null> {
   if (!value) return null;
   if (/^https?:\/\//.test(value) || value.startsWith("blob:")) return { kind: "url", url: value };
   try {
-    const url = await getPresignedDownloadUrl(value, expiresIn);
+    const url = await getPresignedDownloadUrl(value, expiresIn, true);
     return { kind: "url", url };
   } catch (e) {
     if (e instanceof ArchivedFileError) return { kind: "archived", ...e.info };
@@ -316,19 +330,36 @@ export async function resolveFileUrlDetailed(value: string, expiresIn = 3600): P
 /** Public helper for any UI that needs to display an R2 object by its
  *  storage path. Returns a presigned URL valid for the window the server
  *  granted (at most `expiresIn`, itself capped at the shared ceiling — the
- *  server clamps, the client caches what was granted). Cached + deduped. */
-export async function getSignedUrlForPath(path: string, expiresIn = PRESIGNED_MAX_SECONDS): Promise<string> {
-  return getPresignedDownloadUrl(path, expiresIn);
+ *  server clamps, the client caches what was granted). Cached + deduped.
+ *
+ *  SEC-7 / DEC-49: the URL is an ATTACHMENT by default. That is right for
+ *  an <img>, a CSS background, fetch(), pdf.js and a download — none of them
+ *  honours the disposition. A caller that puts the URL in a FRAME or a new
+ *  TAB (a PDF preview, "open in new tab") opts in with `{ inline: true }`;
+ *  the route grants inline only for a PDF or a raster image, with its
+ *  Content-Type pinned, and signs anything else as an attachment anyway. */
+export async function getSignedUrlForPath(
+  path: string,
+  expiresIn = PRESIGNED_MAX_SECONDS,
+  opts: { inline?: boolean } = {},
+): Promise<string> {
+  return getPresignedDownloadUrl(path, expiresIn, opts.inline === true);
 }
 
 /** Resolve a stored file reference — either an absolute http(s)/blob URL or an
  *  R2 storage path — to a usable, cached presigned URL. Viewers should use this
- *  instead of each rolling their own getSession + fetch on every open. */
+ *  instead of each rolling their own getSession + fetch on every open.
+ *
+ *  SEC-7 / DEC-49: this is the VIEWERS' resolver, so it asks for an INLINE
+ *  URL (its callers — MultiDocViewer, CompareRevisionsModal, the review
+ *  gate's draft preview — frame or open the document). The route grants
+ *  inline only for a PDF or a raster image; anything else still arrives as
+ *  an attachment. */
 export async function resolveFileUrl(value: string, expiresIn = 3600): Promise<string | null> {
   if (!value) return null;
   if (/^https?:\/\//.test(value) || value.startsWith("blob:")) return value;
   try {
-    return await getPresignedDownloadUrl(value, expiresIn);
+    return await getPresignedDownloadUrl(value, expiresIn, true);
   } catch {
     return null;
   }

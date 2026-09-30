@@ -119,7 +119,8 @@ export default function CitedPageViewer({
   useEffect(() => {
     let cancelled = false;
     setUrl(null);
-    getSignedUrlForPath(view.fileKey)
+    // SEC-7 / DEC-49: "open in new tab" shows this URL — a reviewed inline caller.
+    getSignedUrlForPath(view.fileKey, undefined, { inline: true })
       .then((u) => { if (!cancelled) setUrl(u); })
       .catch((e) => { if (!cancelled) setError((e as Error).message); });
     return () => { cancelled = true; };

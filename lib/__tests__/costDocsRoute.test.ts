@@ -55,7 +55,7 @@ vi.mock("@/lib/knowledgePageRender", () => ({
     pages.slice(0, Math.min(max, state.images)).map((page) => ({ page, mediaType: "image/png", base64: "" }))),
 }));
 vi.mock("@/lib/pdfPageCount", () => ({ countPdfPages: vi.fn(async () => state.pagesTotal) }));
-vi.mock("@/lib/docFileServer", () => ({ resolveDocumentFile: vi.fn(async () => ({ fileKey: "orgs/o1/manual.pdf", label: "QM-1" })) }));
+vi.mock("@/lib/docFileServer", () => ({ resolveDocumentFile: vi.fn(async () => ({ ok: true, file: { documentId: "doc1", fileKey: "orgs/o1/manual.pdf", label: "QM-1" } })) }));
 
 import { POST as readCostDoc } from "@/app/api/projects/cost-docs/route";
 import { POST as evaluateManual } from "@/app/api/companies/quality-manual/route";

@@ -8,6 +8,7 @@ import { normalizeRoles } from "@/lib/roleCapabilities";
 import { assertSafeStorageKey } from "@/lib/storageKey";
 import { resolvePresignedLifetime } from "@/lib/presignedLifetime";
 import { memberDownloadDenied, type DownloadDenyIndex } from "@/lib/downloadDeny";
+import { presignedGetDisposition, wantsInline } from "@/lib/presignedDisposition";
 import type { AccessControl, NodeVisibility, Role } from "@/types/schema";
 
 export async function GET(req: NextRequest) {
@@ -197,9 +198,16 @@ export async function GET(req: NextRequest) {
     );
   }
 
+  // SEC-7 / SEC-1 (DEC-49): the URL is an ATTACHMENT unless the caller asks
+  // for inline (`?inline=1` — the in-app viewers) AND the key names a PDF or
+  // a raster image; an inline URL also pins that Content-Type, so what the
+  // uploader declared is never what the browser renders. The answer says
+  // which it got, so a viewer never frames an attachment.
+  const disposition = presignedGetDisposition(path, wantsInline(req.nextUrl.searchParams.get("inline")));
   const command = new GetObjectCommand({
     Bucket: R2_BUCKET,
     Key: path,
+    ...disposition.overrides,
   });
 
   const url = await getSignedUrl(r2, command, { expiresIn: lifetime.seconds });
@@ -209,7 +217,12 @@ export async function GET(req: NextRequest) {
   // header is the contract every other cache honours). `expiresIn` is what
   // was GRANTED, so a caller can record the real window, not what it asked.
   return NextResponse.json(
-    { url, expiresIn: lifetime.seconds },
+    {
+      url,
+      expiresIn: lifetime.seconds,
+      disposition: disposition.inline ? "inline" : "attachment",
+      contentType: disposition.contentType,
+    },
     { headers: { "Cache-Control": "no-store" } },
   );
 }

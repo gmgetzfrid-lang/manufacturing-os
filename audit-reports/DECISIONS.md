@@ -82,6 +82,7 @@ about the system.
 | [DEC-46](#dec-46) | External share links are **controlled distribution**: controllers or granted publishers mint, 90-day maximum, a withdrawn or held document is refused, every access recorded (IP controller-only), a link always serves the current revision | low | `DRLS-5`, `DRLS-7`, `DIST-6`, `DIST-7`, `EGR-3`, `EGR-5`, `SHR-3`, `SHR-10` |
 | [DEC-47](#dec-47) | Imported schedule rows are **commitments everywhere** — one liveness predicate (`lib/milestoneLiveness.ts`) for health, coach, report and EV | low | `MON-6`, `PM-3`, `SCH-5` |
 | [DEC-48](#dec-48) | Bids are scored on **price, and on stated hours only where three bids corroborate them** — declared exclusions never lower a score, coverage is unscored until a per-RFQ scope list exists; a bidder **binds** to a registry row only by exact/normalised name or a human link, but the **do-not-use gate** fires on any row the name could be | medium | `BID-3`, `BID-4`, `BID-6`, `BID-7`, `BID-12`, `COST-5`, `COST-7`, `MON-12` |
+| [DEC-49](#dec-49) | A URL `/api/storage/download-url` signs is an **attachment** unless a viewer asks AND the type cannot be a page (PDF, raster image — type pinned); the viewer frames only a PDF and shows images as `<img>` | low | `SEC-7`, `SEC-1` |
 
 ---
 
@@ -1720,6 +1721,8 @@ the `Admin` branch, and an unscoped controller keeps today's behaviour.
 
 **Risk:** low.
 
+*Landed 2026-09-30 (projects Round G): service-role PAGE reads are a second bytes egress. `lib/docFileServer.ts` `resolveDocumentFile` — used by the checklist reader and the quality-manual reviewer, and required to name its reader — makes the app's own read decision over the full library → folder → document chain (read or download wherever an ACL exists, on every visibility) and writes the same `CONTROLLER_RESTRICTED_READ` row when a controller is served a document only by the controller tier — a normal document restricted by an allow-list included — with `details.channel` naming the route. A read it then refuses (a download deny) and a label-only read write none, and the version it serves must belong to the document it decided on — a forged pointer to another document's version resolves nothing, so no row describes a read of the wrong document through a pointer. One case remains (`SEC-10` residual 5, `file_url` aliasing): a version of A whose `file_url` is B's storage key is served under A's decision, and its row names A while `details.path` is B's key. `lib/__tests__/docFileServer.test.ts` runs the egress route and the gate over the same principals and documents and asserts the gate is never looser and records at least what the egress route records, naming each case where it is stricter until intelligence `KACL-5` brings the egress route to the same chain (projects-tab `SEC-10`). `/api/flows/read` renders a knowledge mirror's `file_key` — the controlled version's key — as the service role with no such row; that is recorded as a residual under `SEC-10` for the intelligence package that owns the route.*
+
 <a id="dec-44"></a>
 ## DEC-44 · The download record, the presigned window, and the worker's cache
 
@@ -2267,3 +2270,85 @@ currency cannot be vouched for is not awarded into a budget line kept in
 another currency without a restatement (a wrong call posts a commitment
 in the wrong currency). Both gate limbs are pinned by rendered tests
 (`quotesPanelRender.test.ts`).
+
+<a id="dec-49"></a>
+## DEC-49 · A presigned download is an attachment unless a viewer asks and the type cannot be a page
+
+**Decision. Every presigned GET that `/api/storage/download-url` issues — and
+so every URL `lib/storage`'s helpers hand the app — is signed with a
+Content-Disposition. It is an ATTACHMENT by default. It is INLINE only when
+the caller explicitly asks (`?inline=1`) AND the key names a type a browser
+shows in a viewer rather than as a page — PDF, PNG, JPEG, GIF, WebP — and an
+inline URL pins its Content-Type to that type. SVG, HTML, XML, script, text and
+anything unknown are attachments whatever the caller asks. Two other issuers
+still sign bare GETs and are known exceptions until their owners adopt the
+same helper: `/api/storage/resolve` (the archive-aware opener) and
+`lib/dataExport.ts` (the data-export envelope's per-file URLs) — both
+projects-tab `SEC-18`. The in-app viewer frames only a file that arrived
+typed as a PDF, re-typed to exactly that type; a PDF frame is not sandboxed,
+because Chromium will not run its PDF viewer in a sandboxed frame; a raster
+image is shown as an `<img>`, never framed; nothing else is shown. When the
+bytes cannot be fetched, a legacy absolute URL on another origin is shown only
+when its path names a PDF (the frame) or a raster image (an `<img>`) — such a
+URL was not signed by the route, so the type it is served with is the stored
+one (`SEC-18`'s class).**
+
+> Made during projects Round G (2026-09-30, package J9) under the protocol's
+> fail-safe rule, closing projects-tab `SEC-7` and the egress limb of `SEC-1`.
+> It delivers the download-disposition item of projects-and-cost `INTK-11`
+> for URLs this route issues; that record's owner should cross-reference it.
+> **Numbering.** DEC-49 on the integration branch (DEC-44 to DEC-48 were
+> already taken when this package merged).
+
+**Rationale.** A presigned URL signed with no overrides is served with the
+object's stored type, and for an intake upload that is whatever the uploader
+declared — so the browser renders an HTML "drawing" as a page. One parameter
+defuses the delivery half of the chain (report `11`: "the highest
+value-per-line change in the whole audit"). Inline is still needed — the
+document viewers frame PDFs and open them in new tabs — so it is an opt-in the
+route bounds: a caller may ask for inline, but it can never get an HTML page
+inline, because the route decides by the key's type and pins what the browser
+will see. The viewer gate is the same rule on the client: the type the bytes
+arrived with decides what they may be rendered as, and they are re-typed to
+exactly that type, so no HTML parser ever sees them. Sandboxing the PDF frame
+was rejected because it blanks every controlled drawing in Chrome; the type
+gate carries that frame instead.
+
+**Implementation.** `lib/presignedDisposition.ts` (`presignedGetDisposition`,
+`wantsInline`, `INLINE_TYPES_BY_EXTENSION`, `viewerRenderKind`);
+`app/api/storage/download-url/route.ts` spreads the overrides and answers
+`disposition` / `contentType`; `lib/storage.ts` — `getSignedUrlForPath(path,
+expiresIn, { inline })` is an attachment by default, the viewer resolvers
+`resolveFileUrl` / `resolveFileUrlDetailed` ask for inline, and inline and
+attachment URLs are cached apart; `components/viewers/SecureDocViewer.tsx`.
+Reviewed inline callers: `SecureDocViewer`; `resolveFileUrl`'s callers
+(`MultiDocViewer`, `CompareRevisionsModal`, `ReviewGateSection`'s draft
+preview); the ticket file viewer's PDF frame
+(`app/(protected)/requests/[id]/page.tsx`, the `FileViewerModal` region
+drafting-flow DF-P10 owns for `PHYS-2`, `PHYS-9`, `EVID-5`, `EDGE-2` and
+`AUTHZ-12` — its rewrite must keep
+`getSignedUrlForPath(file.url, undefined, { inline: true })`); the cited-page
+viewer's new-tab link (`components/knowledge/CitedPageViewer.tsx`, which
+intelligence I-07 edits for `DWG-3` and I-12's `KACL-5` cites — keep
+`getSignedUrlForPath(view.fileKey, undefined, { inline: true })`). Both are
+source-pinned in `lib/__tests__/presignedDisposition.test.ts`. A census there
+fails for any presigned-GET issuer under `app/api` or `lib` that signs no
+disposition (two named exceptions, `/api/storage/resolve` and
+`lib/dataExport.ts` — projects-tab `SEC-18`).
+
+**Do not** frame or open a signed URL without `{ inline: true }` (it will
+download instead), and do not add a type a browser renders as a document (SVG,
+HTML, XML) to the inline list.
+
+**Acceptance.** `download-url` without `inline` signs
+`response-content-disposition=attachment; filename="…"`; with `inline=1` on a
+`.pdf` it signs `inline` and `response-content-type=application/pdf`; with
+`inline=1` on `.html` or `.svg` it signs `attachment`; the viewer frames only
+a file that arrived typed as a PDF and shows a raster image as an `<img>`.
+
+**Reversal.** Serving untrusted uploads from a separate origin (report `11`
+item 9, `GAP-401`) would let the inline list widen; a Chromium that runs its
+PDF viewer in sandboxed frames would let the PDF frame take `sandbox=""` too.
+
+**Risk:** low — every change narrows; the viewers that frame keep working
+through the opt-in.
