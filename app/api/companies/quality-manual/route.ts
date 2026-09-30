@@ -10,7 +10,16 @@
 // (lib/companies.confirmQualityManual), matching every other AI writer in
 // this app.
 //
-// Authority: Admin / DocCtrl — companies are org-level records.
+// Authority: Admin / DocCtrl — companies are org-level records. The manual
+// is read as the service role, so SEC-10: lib/docFileServer makes the
+// caller's own content decision first — an explicit download deny binds a
+// controller too, and a manual served ONLY because of the controller tier
+// is recorded (DEC-43 CONTROLLER_RESTRICTED_READ).
+//
+// PERF-6: the route answers before its own function limit, and a read that
+// runs out of time is a readable 504 naming the page cap. The page cap is
+// surfaced on success too — a manual longer than the cap was judged on its
+// first pages only, and the response says so.
 
 import { NextRequest, NextResponse } from "next/server";
 import { supabaseAdmin } from "@/lib/supabaseAdmin";
@@ -20,14 +29,20 @@ import { renderKnowledgePages } from "@/lib/knowledgePageRender";
 import { resolveDocumentFile } from "@/lib/docFileServer";
 import { QUALITY_MANUAL_RUBRIC, validateRubricFindings, rubricCoverageScore } from "@/lib/checklistEngine";
 import { memberHoldsAny } from "@/lib/roleHeld";
+import { isTimeoutError } from "@/lib/ai/providerCall";
+import {
+  routeDeadline, beforeDeadline, aiBudgetMs, tooLargeToReadMessage, DEADLINE_PASSED,
+} from "@/lib/routeDeadline";
 
 export const runtime = "nodejs";
 export const maxDuration = 120;
 
 const bad = (error: string, status: number) => NextResponse.json({ error }, { status });
 const MAX_PAGES = 10;
+const AI_TIMEOUT_MS = 90_000;
 
 export async function POST(req: NextRequest) {
+  const deadline = routeDeadline(maxDuration);
   let body: { orgId?: string; companyId?: string; documentId?: string };
   try { body = await req.json(); } catch { return bad("Bad JSON", 400); }
   const orgId = (body.orgId ?? "").trim();
@@ -53,10 +68,16 @@ export async function POST(req: NextRequest) {
     .from("companies").select("id, name").eq("id", companyId).eq("org_id", orgId).maybeSingle();
   if (!company) return bad("Company not found.", 404);
 
-  const file = await resolveDocumentFile(orgId, documentId);
-  if (!file) return bad("That document has no stored file to read.", 404);
-  const images = await renderKnowledgePages(file.fileKey, Array.from({ length: MAX_PAGES }, (_, i) => i + 1), MAX_PAGES);
+  const resolved = await resolveDocumentFile(orgId, documentId, { uid: userId, email: userData.user.email ?? null, channel: "quality_manual" });
+  if (!resolved.ok) return bad(resolved.error, resolved.status);
+  const file = resolved.file;
+  const rendered = await beforeDeadline(
+    renderKnowledgePages(file.fileKey, Array.from({ length: MAX_PAGES }, (_, i) => i + 1), MAX_PAGES), deadline);
+  if (rendered === DEADLINE_PASSED) return bad(tooLargeToReadMessage(MAX_PAGES), 504);
+  const images = rendered;
   if (images.length === 0) return bad("The pages could not be rendered for reading — is it a PDF?", 502);
+  const budget = aiBudgetMs(deadline, AI_TIMEOUT_MS);
+  if (budget === null) return bad(tooLargeToReadMessage(MAX_PAGES), 504);
 
   const rubricText = QUALITY_MANUAL_RUBRIC
     .map((a) => `- ${a.key}: ${a.label} — expect: ${a.hint}`).join("\n");
@@ -78,11 +99,12 @@ export async function POST(req: NextRequest) {
       user: `Company: ${String(company.name)}\nManual document: ${file.label}\nPages attached in order: ${images.map((i) => i.page).join(", ")}\n\nRUBRIC AREAS:\n${rubricText}`,
       images: images.map((i) => ({ base64: i.base64, mediaType: i.mediaType })),
       maxTokens: 2500,
-      timeoutMs: 90_000,
+      timeoutMs: budget,
     });
     text = out.text;
   } catch (e) {
     if (e instanceof GovernedCallError) return bad(e.message, e.status);
+    if (isTimeoutError(e)) return bad(tooLargeToReadMessage(MAX_PAGES), 504);
     return bad((e as Error).message, 502);
   }
 
@@ -102,6 +124,9 @@ export async function POST(req: NextRequest) {
     findings,
     gaps: findings.filter((f) => !f.covered).map((f) => ({ area: f.area, finding: f.finding })),
     pagesRead: images.map((i) => i.page),
-    note: "Proposal only — confirm to put it on the company's record.",
+    pageCap: MAX_PAGES,
+    note: images.length >= MAX_PAGES
+      ? `Proposal only — confirm to put it on the company's record. Only the first ${MAX_PAGES} pages were read; a longer manual may cover more than this shows.`
+      : "Proposal only — confirm to put it on the company's record.",
   });
 }
