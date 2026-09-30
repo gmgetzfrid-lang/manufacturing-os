@@ -19,6 +19,15 @@
 // BROWSER as a loop of small server batches — free-tier hosting kills long
 // requests, and every committed batch is permanent, so an interrupted build
 // resumes exactly where it stopped.
+//
+// Round G (I-02): the price is the ledger's own (lib/ai/pricing, per model,
+// over the library's real text — SEM-13); coverage is defined against the
+// passages search can return (SEM-5); a library holding two embedding models,
+// or a build that would create one, is said out loud (SEM-1 / SEM-3);
+// passages the provider refused are listed, not left to stall the build
+// (SEM-4); the background build says who pays and why it is waiting
+// (SEM-11); and a controller can keep the index current as documents arrive
+// (SEM-8).
 
 import React, { useCallback, useEffect, useRef, useState } from "react";
 import { Brain, Loader2, AlertTriangle, Check, Square, RefreshCw } from "lucide-react";
@@ -26,18 +35,27 @@ import { useToast } from "@/components/providers/ToastProvider";
 import { appConfirm } from "@/components/providers/DialogProvider";
 import { Button } from "@/components/ui/Button";
 import {
-  semanticStatus, buildSemanticIndex, resetSemanticIndex, type SemanticProgress,
+  semanticStatus, buildSemanticIndex, resetSemanticIndex, retryFailedPassages,
+  setKeepIndexCurrent, releaseBackgroundBuild, acceptAiAgreement,
+  type SemanticProgress, type AgreementRequiredError,
 } from "@/lib/knowledge";
 
-/** Rough, deliberately rounded UP so nobody is surprised by their provider's
- *  invoice. Embedding rates are a fraction of chat rates at every provider;
- *  this is a floor-of-magnitude estimate, not a quote. */
-const CENTS_PER_1K_PASSAGES = 1;
+/** A dollar figure a person can read: cents under a dollar, never "$0.00"
+ *  for a real (tiny) cost. */
+export function formatEmbedCost(usd: number): string {
+  if (!(usd > 0)) return "";
+  if (usd < 0.01) return "under 1¢";
+  if (usd < 1) return `~${Math.ceil(usd * 100)}¢`;
+  return `~$${usd.toFixed(2)}`;
+}
 
-export default function SemanticIndexPanel({ orgId, libraryId, isController }: {
+export default function SemanticIndexPanel({ orgId, libraryId, isController, onStatus }: {
   orgId: string;
   libraryId: string;
   isController: boolean;
+  /** The page reads coverage too — the drift line and each answer's
+   *  retrieval note (SEM-8 / SEM-12). */
+  onStatus?: (status: SemanticProgress | null) => void;
 }) {
   const { showToast } = useToast();
   const key = `${orgId}:${libraryId}`;
@@ -68,25 +86,58 @@ export default function SemanticIndexPanel({ orgId, libraryId, isController }: {
   const status = ready ? state.status : null;
   const unavailable = ready ? state.unavailable : null;
 
+  useEffect(() => { onStatus?.(status); }, [status, onStatus]);
+
+  /** A first build asks for the acceptable-use agreement (428): show it,
+   *  record acceptance, and go on — once. */
+  const withAgreement = async <T,>(run: () => Promise<T>): Promise<T | null> => {
+    try {
+      return await run();
+    } catch (e) {
+      const err = e as AgreementRequiredError;
+      if (!err.agreementRequired) throw e;
+      const agreed = await appConfirm({
+        title: "Before your first build — the ground rules",
+        message: err.agreementText ??
+          "Passages of your documents are sent to your embeddings provider. Never index passwords, "
+          + "financial details, or personal identity information.",
+        confirmLabel: "I agree",
+      });
+      if (!agreed) return null;
+      await acceptAiAgreement(orgId);
+      return run();
+    }
+  };
+
   const build = async ({ keepBuildingState = false } = {}) => {
     if (!keepBuildingState) setBuilding(true);
     setBuildNote(null);
     stopRef.current = false;
     try {
-      const final = await buildSemanticIndex(
+      const final = await withAgreement(() => buildSemanticIndex(
         orgId, libraryId,
         (p) => setState((s) => ({ ...s, key, status: p, unavailable: null })),
         () => stopRef.current,
-      );
+      ));
+      if (!final) return;
+      const refusedNote = (final.failed ?? 0) > 0
+        ? ` ${final.failed} passage(s) could not be embedded — listed below.`
+        : "";
       if (final.error) {
         setBuildNote({ tone: "err", text: final.error });
         showToast({ type: "error", title: final.error, duration: 15000 });
       } else if (final.done) {
-        setBuildNote({ tone: "ok", text: "Meaning index complete — every passage carries a vector." });
+        const text = (final.failed ?? 0) > 0
+          ? `Meaning index complete for every passage the provider accepted.${refusedNote}`
+          : "Meaning index complete — every passage carries a vector.";
+        setBuildNote({ tone: "ok", text });
         showToast({ type: "success", title: "Meaning index complete." });
       } else if (stopRef.current) {
         setBuildNote({ tone: "ok", text: `Stopped — ${final.remaining} passage(s) left. Resume any time.` });
         showToast({ type: "success", title: `Stopped — ${final.remaining} passage(s) left. Resume any time.` });
+      } else if ((final.busy ?? 0) > 0) {
+        const text = `The background build is embedding the remaining ${final.remaining} passage(s) — it continues without this tab.`;
+        setBuildNote({ tone: "ok", text });
       } else {
         // Ended without finishing, erroring, or being stopped — a silent
         // no-op is the one outcome that must never pass without comment.
@@ -94,25 +145,35 @@ export default function SemanticIndexPanel({ orgId, libraryId, isController }: {
         setBuildNote({ tone: "err", text });
         showToast({ type: "warning", title: text, duration: 15000 });
       }
+      if (final.backgroundNote) showToast({ type: "warning", title: final.backgroundNote, duration: 15000 });
     } catch (e) {
       const message = (e as Error).message;
       // 412 = no embeddings key. That's a setup step, not a failure — show it
       // where the user is looking rather than as a toast they'll dismiss.
       if (/embeddings key/i.test(message)) setNeedsKey(message);
-      else showToast({ type: "error", title: message });
+      else setBuildNote({ tone: "err", text: message });
     } finally {
       setBuilding(false);
       void load();
     }
   };
 
+  const model = status?.connection?.model ?? null;
+  const fullCost = formatEmbedCost(status?.estimate?.fullUsd ?? 0);
+  const remainingCost = formatEmbedCost(status?.estimate?.remainingUsd ?? 0);
+  const estimateNote = status?.estimate?.placeholderRate
+    ? " (estimate — this provider's rate in the app is a conservative placeholder)"
+    : " (estimate)";
+
   const rebuild = async () => {
     const ok = await appConfirm({
       title: "Rebuild the meaning index?",
       message:
-        `This clears all ${status?.total.toLocaleString()} vectors and re-embeds every passage `
-        + `on your key — roughly ${fullCents}¢. Do it after ingestion or the embedding model `
-        + "changes, so older documents are indexed the same way as new ones. "
+        `This clears all ${status?.total.toLocaleString()} passages' vectors and re-embeds every one on your key`
+        + (model ? ` with ${model}` : "")
+        + (fullCost ? ` — ${fullCost}${estimateNote}` : "")
+        + ". Vectors from one embedding model are never reused by another, so switching models always means a rebuild. "
+        + "Do it after ingestion or the embedding model changes, so older documents are indexed the same way as new ones. "
         + "Meaning-based search is degraded until the rebuild finishes; keyword search is unaffected.",
       confirmLabel: "Rebuild",
     });
@@ -126,6 +187,18 @@ export default function SemanticIndexPanel({ orgId, libraryId, isController }: {
     } catch (e) {
       setBuildNote({ tone: "err", text: (e as Error).message });
       setBuilding(false);
+    }
+  };
+
+  const act = async (run: () => Promise<unknown>, done: string) => {
+    try {
+      const out = await withAgreement(run);
+      if (out === null) return;
+      showToast({ type: "success", title: done });
+    } catch (e) {
+      showToast({ type: "error", title: (e as Error).message });
+    } finally {
+      void load();
     }
   };
 
@@ -162,8 +235,8 @@ export default function SemanticIndexPanel({ orgId, libraryId, isController }: {
         This library has no indexed passages. If the documents are already uploaded, they were
         read as having almost no text — the usual cause is an AutoCAD export drawn with SHX fonts,
         or a scan, where every tag is line-work rather than text. Turn on{" "}
-        <b>&ldquo;These are CAD exports or scans&rdquo;</b> in Library AI setup, run{" "}
-        <b>Rebuild index</b> under Drawing intelligence, then come back here.
+        <b>&ldquo;Text doesn&apos;t extract from these files — index every page as an image&rdquo;</b> in
+        Library AI setup, run <b>Re-index all</b> in the Documents header, then come back here.
       </>
     ));
   }
@@ -171,8 +244,10 @@ export default function SemanticIndexPanel({ orgId, libraryId, isController }: {
   const covered = status.coveredNow ?? 0;
   const pct = status.total > 0 ? Math.round((covered / status.total) * 100) : 0;
   const complete = status.remaining === 0;
-  const estCents = Math.ceil((status.remaining / 1000) * CENTS_PER_1K_PASSAGES);
-  const fullCents = Math.ceil((status.total / 1000) * CENTS_PER_1K_PASSAGES);
+  const failed = status.failed ?? 0;
+  const conflict = status.conflict ?? null;
+  const bg = status.background ?? null;
+  const canRelease = !!bg && (isController || bg.mine);
 
   return (
     <div className="mt-4 rounded-2xl border border-[var(--color-border)] bg-[var(--color-surface)] p-4">
@@ -194,20 +269,21 @@ export default function SemanticIndexPanel({ orgId, libraryId, isController }: {
             <Button size="sm" variant="secondary" onClick={() => { stopRef.current = true; }}>
               <Square className="w-3.5 h-3.5" /> Stop
             </Button>
-          ) : complete ? (
+          ) : complete || conflict || status.mixed ? (
             // A finished index is not a permanent one. Chunking changes when
             // ingestion improves and models get swapped; without this the
             // upgrade would reach only documents added afterwards and the
             // library would sit half-indexed under two regimes with nothing
-            // on screen saying so.
+            // on screen saying so. A model conflict or a mixed index has only
+            // this way forward: Build would mix two vector spaces.
             <Button size="sm" variant="secondary" onClick={() => void rebuild()}>
               <RefreshCw className="w-3.5 h-3.5" /> Rebuild index
-              {fullCents > 0 && <span className="opacity-70"> (~{fullCents}¢)</span>}
+              {fullCost && <span className="opacity-70"> ({fullCost})</span>}
             </Button>
           ) : (
             <Button size="sm" variant="secondary" onClick={() => void build()}>
               <Brain className="w-3.5 h-3.5" /> Build index
-              {estCents > 0 && <span className="opacity-70"> (~{estCents}¢)</span>}
+              {remainingCost && <span className="opacity-70"> ({remainingCost})</span>}
             </Button>
           )
         )}
@@ -222,12 +298,31 @@ export default function SemanticIndexPanel({ orgId, libraryId, isController }: {
 
       <div className="mt-1.5 flex items-center gap-2 text-[11px] text-[var(--color-text-muted)]">
         {building && <Loader2 className="w-3 h-3 animate-spin" />}
-        {complete && <Check className="w-3 h-3 text-emerald-600" />}
+        {complete && !status.mixed && <Check className="w-3 h-3 text-emerald-600" />}
         <span>
           <b className="text-[var(--color-text)]">{covered.toLocaleString()}</b> of{" "}
           {status.total.toLocaleString()} passages carry meaning vectors ({pct}%).
         </span>
       </div>
+      <p className="mt-0.5 text-[10px] text-[var(--color-text-faint)]">
+        Counted over the passages of documents that are indexed and searchable — the same passages meaning search can return.
+        {status.estimate && (isController || bg?.mine) && (
+          <> Prices are for {status.estimate.model}{estimateNote}, from the same rates the usage ledger bills.</>
+        )}
+      </p>
+
+      {status.mixed && (
+        <div className="mt-2 rounded-xl border border-amber-300 dark:border-amber-800 bg-amber-50/60 dark:bg-amber-950/20 px-3 py-2 text-[11px] text-amber-900 dark:text-amber-200">
+          <b>This index mixes embedding models</b> ({Object.entries(status.models ?? {}).map(([m, n]) => `${m}: ${n.toLocaleString()}`).join(" · ")}).
+          Vectors from different models can&apos;t be compared, so meaning search is off for this library until it is rebuilt under one model.
+          {isController ? " Rebuild index re-embeds every passage with your current setting." : " An Admin or Doc Control can rebuild it."}
+        </div>
+      )}
+      {!status.mixed && conflict && isController && (
+        <div className="mt-2 rounded-xl border border-amber-300 dark:border-amber-800 bg-amber-50/60 dark:bg-amber-950/20 px-3 py-2 text-[11px] text-amber-900 dark:text-amber-200">
+          {conflict}
+        </div>
+      )}
 
       {building && status.rateLimited && (
         <div className="mt-2 rounded-xl border border-amber-300 dark:border-amber-800 bg-amber-50/60 dark:bg-amber-950/20 px-3 py-2 text-[11px] text-amber-900 dark:text-amber-200">
@@ -246,6 +341,72 @@ export default function SemanticIndexPanel({ orgId, libraryId, isController }: {
             : "border-rose-300 dark:border-rose-800 bg-rose-50/60 dark:bg-rose-950/20 text-rose-800 dark:text-rose-200"}`}>
           {buildNote.text}
         </div>
+      )}
+
+      {failed > 0 && (
+        <div className="mt-2 rounded-xl border border-rose-300 dark:border-rose-800 bg-rose-50/60 dark:bg-rose-950/20 px-3 py-2 text-[11px] text-rose-800 dark:text-rose-200">
+          <b>{failed.toLocaleString()} passage{failed === 1 ? "" : "s"} could not be embedded</b> — the provider refused
+          {failed === 1 ? " it" : " them"} every time, so the build skips {failed === 1 ? "it" : "them"} and the rest of the
+          library is still built. {failed === 1 ? "It is" : "They are"} found by keyword search only.
+          {(status.failedSamples ?? []).length > 0 && (
+            <ul className="mt-1 list-disc pl-4">
+              {(status.failedSamples ?? []).map((s, i) => (
+                <li key={i}>
+                  {s.documentName.replace(/\.pdf$/i, "")} · p.{s.page}
+                  {s.error ? <span className="opacity-80"> — {s.error.slice(0, 160)}</span> : null}
+                </li>
+              ))}
+            </ul>
+          )}
+          {isController && !building && (
+            <button className="mt-1.5 font-black underline"
+              onClick={() => void act(() => retryFailedPassages(orgId, libraryId), "Queued the refused passages for another try.")}>
+              Try them again
+            </button>
+          )}
+        </div>
+      )}
+
+      {bg && (
+        <div className="mt-2 rounded-xl border border-[var(--color-border)] bg-[var(--color-surface-2)] px-3 py-2 text-[11px] text-[var(--color-text-muted)]">
+          <b className="text-[var(--color-text)]">
+            {bg.standing ? "Kept current in the background" : "Background build"}
+          </b>{" "}
+          — runs on {bg.mine ? "your" : "another member's"} embeddings key and monthly cap
+          {bg.lastDrainAt ? `, last run ${new Date(bg.lastDrainAt).toLocaleString()}` : ""}.
+          {bg.blockedUntil && new Date(bg.blockedUntil).getTime() > Date.now() && (
+            <span className="block mt-0.5 text-amber-800 dark:text-amber-300 font-bold">
+              Waiting until {new Date(bg.blockedUntil).toLocaleString()} —{" "}
+              {bg.blockedReason === "cap" ? "the monthly AI budget is reached; it resets on the 1st"
+                : bg.blockedReason === "model_conflict" ? "the payer's embedding model no longer matches this index"
+                : bg.blockedReason === "agreement" ? "the payer has not accepted the current AI agreement"
+                : "the last runs failed"}
+              {bg.lastError ? `: ${bg.lastError.slice(0, 200)}` : "."}
+            </span>
+          )}
+          {canRelease && !building && (
+            <button className="ml-1 font-black underline"
+              onClick={() => void act(() => releaseBackgroundBuild(orgId, libraryId), "Background build stopped.")}>
+              Stop it
+            </button>
+          )}
+        </div>
+      )}
+
+      {isController && !building && !status.mixed && (
+        <label className="mt-2 flex items-start gap-2 text-[11px] text-[var(--color-text-muted)] cursor-pointer">
+          <input type="checkbox" className="accent-violet-600 w-3.5 h-3.5 mt-0.5"
+            checked={!!bg?.standing && bg.mine}
+            onChange={(e) => void act(
+              () => setKeepIndexCurrent(orgId, libraryId, e.target.checked),
+              e.target.checked ? "This library's meaning index will be kept current." : "No longer kept current in the background.",
+            )} />
+          <span>
+            <b className="text-[var(--color-text)]">Keep this index current as documents are added</b> — new passages are
+            embedded in the background on your embeddings key, within your monthly cap. Without it, passages added after a
+            build stay keyword-only until someone builds again.
+          </span>
+        </label>
       )}
 
       {needsKey && (

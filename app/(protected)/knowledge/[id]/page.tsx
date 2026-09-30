@@ -17,6 +17,7 @@ import dynamic from "next/dynamic";
 import { useRole } from "@/components/providers/RoleContext";
 import { useToast } from "@/components/providers/ToastProvider";
 import { PageShell, PageHeaderBar } from "@/components/ui/PageShell";
+import ViewTabs, { INTELLIGENCE_VIEWS } from "@/components/navigation/ViewTabs";
 import { Button } from "@/components/ui/Button";
 import { Textarea } from "@/components/ui/Field";
 import { Spinner } from "@/components/ui/Spinner";
@@ -26,8 +27,8 @@ import {
   getKnowledgeLibrary, listKnowledgeDocuments, addKnowledgeDocument,
   ingestKnowledgeDocument, deleteKnowledgeDocument, deleteKnowledgeLibrary,
   askKnowledgeLibrary, listKnowledgeQuestions, loadConversation, listLibraryLinks, acceptAiAgreement,
-  parseNeedPrompt,
-  type AgreementRequiredError,
+  parseNeedPrompt, describeRetrieval, meaningIndexDrift, screenAssistantRequest,
+  type AgreementRequiredError, type SemanticProgress,
   type KnowledgeLibrary, type KnowledgeDocument, type KnowledgeAnswer,
   type KnowledgeQuestion, type KnowledgeCitation, type AskMode,
   type KnowledgeLibraryLink,
@@ -530,6 +531,41 @@ function AskProgress() {
   );
 }
 
+// ASK-6: text the MODEL wrote is shown as the assistant's words — quoted,
+// labelled, in a container that is not the app's own chrome — never as the
+// app speaking, and never as a bare action label.
+function AssistantAskingFrame({ tone, children }: { tone: "sky" | "indigo"; children: React.ReactNode }) {
+  const ring = tone === "sky"
+    ? "border-sky-300 dark:border-sky-800 bg-sky-50/40 dark:bg-sky-950/10"
+    : "border-indigo-300 dark:border-indigo-800 bg-indigo-50/40 dark:bg-indigo-950/10";
+  return (
+    <div className={`mt-4 rounded-2xl border-2 border-dashed ${ring} p-4 animate-rise`} data-assistant-authored="true">
+      <div className="flex items-center gap-2 mb-2">
+        <span className="inline-flex items-center gap-1 text-[9px] font-black uppercase tracking-[0.18em] px-1.5 py-0.5 rounded bg-[var(--color-surface-2)] border border-[var(--color-border)] text-[var(--color-text-muted)]">
+          <Sparkles className="w-3 h-3" /> AI-written
+        </span>
+        <span className="text-[11px] font-bold text-[var(--color-text-muted)]">
+          The assistant is asking — the words below are the AI model&apos;s, not this app&apos;s.
+        </span>
+      </div>
+      {children}
+    </div>
+  );
+}
+
+/** What the screen refuses, in place of the input or the buttons. */
+function AssistantRequestRefused({ reason }: { reason: string }) {
+  return (
+    <div className="mt-4 rounded-2xl border-2 border-rose-300 dark:border-rose-800 bg-rose-50/60 dark:bg-rose-950/20 p-4 text-xs text-rose-800 dark:text-rose-200">
+      <div className="font-black flex items-center gap-1.5"><AlertTriangle className="w-4 h-4" /> The AI asked for something this app never collects</div>
+      <p className="mt-1">
+        Its request was not shown because {reason}. Nothing was sent. Don&apos;t type passwords, keys, account or
+        identity details anywhere in response — ask the question again, or tell your admin if it repeats.
+      </p>
+    </div>
+  );
+}
+
 // Clarify round (opt-in library feature): the AI found the answer across
 // several distinct aspects and asks WHICH before answering — select all that
 // apply, or take everything. One round max: the re-ask always carries focus.
@@ -539,6 +575,10 @@ function ClarifyCard({ prompt, options, onAnswer }: {
   onAnswer: (focus: string[]) => void;
 }) {
   const [selected, setSelected] = useState<Set<string>>(new Set());
+  const promptCheck = screenAssistantRequest(prompt);
+  // An aspect is a short label the model proposed; one that fails the same
+  // screen is dropped, and too few left means no card at all.
+  const safeOptions = options.filter((o) => screenAssistantRequest(o).ok).map((o) => o.slice(0, 80));
   const toggle = (o: string) => {
     setSelected((prev) => {
       const next = new Set(prev);
@@ -546,37 +586,34 @@ function ClarifyCard({ prompt, options, onAnswer }: {
       return next;
     });
   };
+  if (!promptCheck.ok) return <AssistantRequestRefused reason={promptCheck.reason} />;
+  if (safeOptions.length < 2) return <AssistantRequestRefused reason="its choices were not plain aspects of the question" />;
   return (
-    <div className="mt-4 rounded-2xl border-2 border-sky-300 dark:border-sky-800 bg-sky-50/60 dark:bg-sky-950/20 p-4 animate-rise">
-      <div className="flex items-start gap-2.5">
-        <div className="w-7 h-7 rounded-lg bg-sky-600 flex items-center justify-center shrink-0">
-          <Sparkles className="w-3.5 h-3.5 text-white" />
-        </div>
-        <div className="min-w-0 flex-1">
-          <div className="text-xs font-black text-[var(--color-text)]">One thing before I answer</div>
-          <p className="text-xs text-[var(--color-text)] mt-1">{prompt}</p>
-          <div className="mt-2.5 flex flex-wrap gap-1.5">
-            {options.map((o) => (
-              <button key={o} type="button" onClick={() => toggle(o)}
-                className={`text-[11px] font-black px-2.5 py-1.5 rounded-lg border transition-colors ${
-                  selected.has(o)
-                    ? "border-sky-600 bg-sky-600 text-white"
-                    : "border-[var(--color-border)] bg-[var(--color-surface)] text-[var(--color-text)] hover:border-sky-400"}`}>
-                {o}
-              </button>
-            ))}
-          </div>
-          <div className="mt-3 flex items-center gap-2 flex-wrap">
-            <Button size="sm" onClick={() => onAnswer([...selected])} disabled={selected.size === 0}>
-              <Send className="w-3.5 h-3.5" /> Answer selected ({selected.size})
-            </Button>
-            <Button size="sm" variant="secondary" onClick={() => onAnswer(options)}>
-              Answer all of it
-            </Button>
-          </div>
-        </div>
+    <AssistantAskingFrame tone="sky">
+      <blockquote className="border-l-2 border-sky-400 pl-3 text-xs italic text-[var(--color-text)] whitespace-pre-wrap">
+        &ldquo;{prompt}&rdquo;
+      </blockquote>
+      <div className="mt-2.5 text-[10px] font-bold text-[var(--color-text-muted)]">Aspects the assistant suggested — pick which to answer:</div>
+      <div className="mt-1 flex flex-wrap gap-1.5">
+        {safeOptions.map((o) => (
+          <button key={o} type="button" onClick={() => toggle(o)} aria-label={`AI-suggested aspect: ${o}`}
+            className={`text-[11px] font-bold italic px-2.5 py-1.5 rounded-lg border border-dashed transition-colors ${
+              selected.has(o)
+                ? "border-sky-600 bg-sky-600 text-white"
+                : "border-[var(--color-border)] bg-[var(--color-surface)] text-[var(--color-text)] hover:border-sky-400"}`}>
+            {o}
+          </button>
+        ))}
       </div>
-    </div>
+      <div className="mt-3 flex items-center gap-2 flex-wrap">
+        <Button size="sm" onClick={() => onAnswer([...selected])} disabled={selected.size === 0}>
+          <Send className="w-3.5 h-3.5" /> Answer the selected aspects ({selected.size})
+        </Button>
+        <Button size="sm" variant="secondary" onClick={() => onAnswer(safeOptions)}>
+          Answer all of them
+        </Button>
+      </div>
+    </AssistantAskingFrame>
   );
 }
 
@@ -588,29 +625,30 @@ function NeedCard({ prompt, onProvide }: {
   onProvide: (values: string) => void;
 }) {
   const [value, setValue] = useState("");
+  const check = screenAssistantRequest(prompt);
+  if (!check.ok) return <AssistantRequestRefused reason={check.reason} />;
   return (
-    <div className="mt-4 rounded-2xl border-2 border-indigo-300 dark:border-indigo-800 bg-indigo-50/60 dark:bg-indigo-950/20 p-4 animate-rise">
-      <div className="flex items-start gap-2.5">
-        <div className="w-7 h-7 rounded-lg bg-indigo-600 flex items-center justify-center shrink-0">
-          <Sparkles className="w-3.5 h-3.5 text-white" />
-        </div>
-        <div className="min-w-0 flex-1">
-          <div className="text-xs font-black text-[var(--color-text)]">I need a value from you to run this calculation</div>
-          <p className="text-xs text-[var(--color-text)] mt-1 whitespace-pre-wrap">{prompt}</p>
-          <div className="mt-2.5 flex items-end gap-2">
-            <Textarea value={value} onChange={(e) => setValue(e.target.value)} rows={1}
-              placeholder='e.g. "test temperature = 150°F, design pressure = 285 psig"'
-              onKeyDown={(e) => {
-                if (e.key === "Enter" && (e.metaKey || e.ctrlKey) && value.trim()) onProvide(value.trim());
-              }}
-              className="flex-1 text-xs" />
-            <Button size="sm" onClick={() => onProvide(value.trim())} disabled={!value.trim()}>
-              <Send className="w-3.5 h-3.5" /> Calculate
-            </Button>
-          </div>
-        </div>
+    <AssistantAskingFrame tone="indigo">
+      <div className="text-[10px] font-bold text-[var(--color-text-muted)]">To finish a calculation, the assistant asks for an input value:</div>
+      <blockquote className="mt-1 border-l-2 border-indigo-400 pl-3 text-xs italic text-[var(--color-text)] whitespace-pre-wrap">
+        &ldquo;{prompt}&rdquo;
+      </blockquote>
+      <p className="mt-2 text-[11px] font-bold text-rose-700 dark:text-rose-400">
+        Never enter passwords, keys, account numbers or personal data here — what you type is sent to the AI provider
+        and saved with this question. Engineering values only.
+      </p>
+      <div className="mt-2 flex items-end gap-2">
+        <Textarea value={value} onChange={(e) => setValue(e.target.value)} rows={1}
+          placeholder='e.g. "test temperature = 150°F, design pressure = 285 psig"'
+          onKeyDown={(e) => {
+            if (e.key === "Enter" && (e.metaKey || e.ctrlKey) && value.trim()) onProvide(value.trim());
+          }}
+          className="flex-1 text-xs" />
+        <Button size="sm" onClick={() => onProvide(value.trim())} disabled={!value.trim()}>
+          <Send className="w-3.5 h-3.5" /> Calculate
+        </Button>
       </div>
-    </div>
+    </AssistantAskingFrame>
   );
 }
 
@@ -700,9 +738,12 @@ function SourceCard({ citation, onOpen, delay }: {
 
 /** The full answer experience: question echo → hero answer card → basis →
  *  check callout → source cards. Cards, air, hierarchy — never a wall. */
-function AnswerExperience({ question, answer, onCite, onOpenTag, onOpenDoc }: {
+function AnswerExperience({ question, answer, onCite, onOpenTag, onOpenDoc, coverage }: {
   question: string;
   answer: KnowledgeAnswer;
+  /** The asked library's meaning-index coverage — read with the answer's
+   *  retrieval flag, so "hybrid" over a 3% index never reads like 100%. */
+  coverage?: { embedded: number; total: number } | null;
   onCite: (c: KnowledgeCitation) => void;
   /** Open a sheet in the viewer with a tag ringed (equipment table rows). */
   onOpenTag?: (documentId: string, page: number, tag: string, documentName: string) => void;
@@ -710,6 +751,9 @@ function AnswerExperience({ question, answer, onCite, onOpenTag, onOpenDoc }: {
   onOpenDoc?: (d: DocLink) => void;
 }) {
   const blocks = parseAnswerBlocks(answer.answer);
+  // SEM-12: how the passages were found, for every reader. A replayed answer
+  // carries no flag (it was not searched now) and shows none.
+  const retrieval = describeRetrieval(answer.retrieval, answer.retrievalCoverage ?? coverage ?? null);
   const hero = blocks.find((b) => b.type === "hero");
   const rest = blocks.filter((b) => b !== hero);
   // Imperatives (! lines) stay visible even collapsed — never hide a MUST or
@@ -912,6 +956,15 @@ function AnswerExperience({ question, answer, onCite, onOpenTag, onOpenDoc }: {
                 <Waypoints className="w-3 h-3" /> Shape the graph
               </button>
             )}
+            {retrieval && (
+              <span data-retrieval={answer.retrieval}
+                title={retrieval.note ?? undefined}
+                className={`inline-flex items-center gap-1 text-[10px] font-black px-2 py-1 rounded-lg border ${retrieval.keywordOnly
+                  ? "border-amber-300 dark:border-amber-800 text-amber-800 dark:text-amber-300 bg-amber-50/60 dark:bg-amber-950/20"
+                  : "border-[var(--color-border)] text-[var(--color-text-muted)]"}`}>
+                <Search className="w-3 h-3" /> {retrieval.label}
+              </span>
+            )}
             <span className="font-bold ml-auto">{answer.provider} · {answer.model}</span>
             <span>·</span>
             <span>{libraryCitations.length} source{libraryCitations.length === 1 ? "" : "s"} below</span>
@@ -958,6 +1011,11 @@ function AnswerExperience({ question, answer, onCite, onOpenTag, onOpenDoc }: {
           used to render 60 equal flat cards — a pile nobody could
           prioritize. Now: the top documents lead, each group opens on tap,
           and the long tail waits behind "Show all". */}
+      {retrieval?.note && (
+        <div className="rounded-xl border border-amber-300 dark:border-amber-800 bg-amber-50/60 dark:bg-amber-950/20 px-3 py-2 text-[11px] text-amber-900 dark:text-amber-200 flex items-start gap-2" data-retrieval-note="true">
+          <Search className="w-3.5 h-3.5 shrink-0 mt-0.5" /> <span>{retrieval.note}</span>
+        </div>
+      )}
       {sourceGroups.length > 0 && (
         <>
           <div className="text-[9px] font-black uppercase tracking-[0.2em] text-[var(--color-text-muted)] pt-1">
@@ -1237,6 +1295,13 @@ export default function KnowledgeLibraryPage() {
   const mountedRef = useRef(true);
   useEffect(() => () => { mountedRef.current = false; }, []);
   const [viewer, setViewer] = useState<ViewerTarget | null>(null);
+  // The meaning index's live coverage, reported by SemanticIndexPanel: the
+  // drift line (SEM-8) and each answer's retrieval note (SEM-12) read it.
+  const [semanticStatus, setSemanticStatus] = useState<SemanticProgress | null>(null);
+  const libraryCoverage = semanticStatus && semanticStatus.total > 0
+    ? { embedded: semanticStatus.coveredNow ?? 0, total: semanticStatus.total }
+    : null;
+  const drift = meaningIndexDrift(semanticStatus);
   const [links, setLinks] = useState<KnowledgeLibraryLink[]>([]);
   const [showAiSetup, setShowAiSetup] = useState(false);
 
@@ -1639,6 +1704,7 @@ export default function KnowledgeLibraryPage() {
 
   return (
     <PageShell>
+      <ViewTabs title="Intelligence" tabs={INTELLIGENCE_VIEWS} />
       <PageHeaderBar
         icon={BookOpen}
         eyebrow={<button onClick={() => router.push("/knowledge")} className="inline-flex items-center gap-1 hover:underline"><ArrowLeft className="w-3 h-3" /> Knowledge</button>}
@@ -1719,6 +1785,11 @@ export default function KnowledgeLibraryPage() {
             {asking ? <Loader2 className="w-4 h-4 animate-spin" /> : <Send className="w-4 h-4" />} Ask
           </Button>
         </div>
+        {mode === "library" && drift && (
+          <p className="mt-2 text-[11px] font-bold text-amber-700 dark:text-amber-400 flex items-center gap-1.5" data-meaning-drift="true">
+            <Search className="w-3.5 h-3.5 shrink-0" /> {drift}
+          </p>
+        )}
         {mode === "library" && readyDocs === 0 && (
           <p className="mt-2 text-[11px] text-amber-700 dark:text-amber-400 font-bold">
             {docs.some((d) => d.status === "pending" || d.status === "stale" || d.status === "indexing")
@@ -1811,7 +1882,7 @@ export default function KnowledgeLibraryPage() {
           <div className="space-y-6 mb-2">
             {thread.slice(0, -1).map((t, i) => (
               <div key={i} className="opacity-90">
-                <AnswerExperience question={t.question} answer={t.answer} onCite={openCitation} onOpenDoc={openMentionedDoc} />
+                <AnswerExperience question={t.question} answer={t.answer} coverage={libraryCoverage} onCite={openCitation} onOpenDoc={openMentionedDoc} />
               </div>
             ))}
           </div>
@@ -1842,7 +1913,7 @@ export default function KnowledgeLibraryPage() {
             </div>
           ) : (
             <>
-            <AnswerExperience question={lastQuestion} answer={answer} onCite={openCitation} onOpenDoc={openMentionedDoc}
+            <AnswerExperience question={lastQuestion} answer={answer} coverage={libraryCoverage} onCite={openCitation} onOpenDoc={openMentionedDoc}
               onOpenTag={(documentId, page, tag, documentName) => {
                 const doc = docs.find((d) => d.id === documentId);
                 if (!doc) { showToast({ type: "error", title: "That sheet is no longer in the library." }); return; }
@@ -2000,7 +2071,7 @@ export default function KnowledgeLibraryPage() {
               onRebuilt={() => void refresh()} />
           )}
           {activeOrgId && (
-            <SemanticIndexPanel orgId={activeOrgId} libraryId={libraryId} isController={isController} />
+            <SemanticIndexPanel orgId={activeOrgId} libraryId={libraryId} isController={isController} onStatus={setSemanticStatus} />
           )}
         </div>
 
