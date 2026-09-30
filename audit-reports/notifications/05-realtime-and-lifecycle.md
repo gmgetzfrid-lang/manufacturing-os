@@ -428,4 +428,6 @@ const channel = supabase
 - [ ] any missing table is added by a checked-in migration using the idempotent `IF NOT EXISTS (SELECT 1 FROM pg_publication_tables ...)` pattern already at 20260727_checkout_activity_fix.sql:50-54
 - [ ] a test (or the existing lib/schemaExpectations.ts tripwire) asserts that every realtime-subscribed table name in the codebase has a corresponding publication statement in supabase/
 
+**Cross-reference (2026-09-30, projects Round G).** The milestones half is addressed by `supabase/migrations/20261106_prj_roundG_milestones_realtime.sql` (J6b SCHEDULE-ENGINE, projects-tab PT SCH-7): it adds `milestones` to `supabase_realtime` idempotently with the 20260727 `IF NOT EXISTS (SELECT 1 FROM pg_publication_tables …)` pattern, and a DEC-30 inventory row records whether it had already been added by hand in the dashboard (done-when 1 for this table is that row). `components/projects/ScheduleTab.tsx` now listens to INSERT / UPDATE only, because Supabase delivers DELETE events without an RLS check. Pinned by `lib/__tests__/scheduleEngineMigration.test.ts`. Not done here: `table_views` (`lib/tableViews.ts`) and the repo-wide tripwire (done-when 3). RT-12 stays OPEN for its owner.
+
 ---
