@@ -1769,18 +1769,20 @@ path, never a silent success.**
    client-written `decided_by` / `created_by`: a session records itself as
    the decider, the proposer is pinned at insert and never rewritten, and
    `decided_by` changes only by the decision or its revert (`COST-6`).
-   *(Verification fix, 2026-09-30, three passes.)* A signed-in caller's
+   *(Verification fix, 2026-09-30, four passes.)* A signed-in caller's
    INSERT is only the app's proposal: proposed, proposer = caller, no
    decision and no link (`posted_entry_id`, `decided_by`, `decided_at`,
    `decided_by_name`, `decision_note` NULL), `org_id` = the project's org.
    A signed-in caller's UPDATE is only one of the app's update steps, and
-   each step may change only the columns it writes — every other column of
-   the row must stay as it was: the budget-line pick (proposed → proposed:
+   each step may change only the columns it writes — every other pinned
+   business column of the row must stay as it was (`updated_at` /
+   `updated_by` are not pinned): the budget-line pick (proposed → proposed:
    `cost_account_id`); the decision (proposed → approved / rejected / void:
    status and the decision fields, recording the caller; void runs neither
    rule — it moves no money; an approval needs a row with no link yet); the
    entry link (approved → approved: `posted_entry_id`); the unwind and the
-   repair reverse (approved → void: status and the note); and the
+   repair reverse (approved → void: status and the note, refused while the
+   linked entry is still posted); and the
    failed-post revert (approved → proposed: status and the decision fields,
    cleared, only by the approver while no unlinked posted commitment
    carrying the CO's number is on its line). Rejected and void are
@@ -1792,12 +1794,17 @@ path, never a silent success.**
    edited by a signed-in caller — its status moves only posted → void, and
    no other column changes (`20261093`) — so a posted commitment cannot be
    renamed out of the revert's look-alike test. `decideChangeOrder` binds a
-   decision to the amount the decider was shown (compare-and-swap on
-   amount). The service role keeps its pass (it bypasses the insert policy;
-   the guards let it through). Still open at the database: which budget
-   line a proposed CO names (the id is not tied to its project);
-   `decided_at` is the caller's clock; rows written before the rail are
-   counted by the inventory, not rewritten.
+   decision to the amount AND the budget line the decider was shown
+   (compare-and-swap on both). The service role keeps its pass (it
+   bypasses the insert policy; the guards let it through). Still open at
+   the database: which budget line a proposed CO names (it may be
+   re-picked until the decision, and the id is not tied to its project —
+   only the lib binds the decision to the line shown); `decided_at` is the
+   caller's clock; `updated_at` / `updated_by` are writable; another
+   BEFORE UPDATE trigger that writes a pinned column would make the guards
+   refuse (counted before apply, not handled); deleting a party that
+   entries or COs reference is refused (no app path deletes one); rows
+   written before the rail are counted by the inventory, not rewritten.
 5. **No FX.** A document in another currency than its budget line is refused
    at posting; no conversion is built. A stored "$" / "US$" is USD, a
    non-code is unstated, an account with no currency is USD (as rendered),
