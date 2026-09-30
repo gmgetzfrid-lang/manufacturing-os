@@ -2375,7 +2375,14 @@ project that carries cost or quality records is archived, not deleted.**
    cost_entries, change_orders, cost_documents, cost_accounts,
    project_checklists, checklist_items, turnover_items, punch_items and
    milestones. The service role keeps its pass (the intake door's own
-   refusal is its package's).
+   refusal is its package's). Deleting what a frozen row cites is not a
+   write to the record: the FK's ON DELETE SET NULL, an UPDATE one trigger
+   level down that only nulls SET NULL references, passes, so a drawing
+   a closed project's schedule cites can still be deleted. A server route
+   that writes a regulated row through the admin client on a user's
+   behalf refuses a closed project itself, because the database sees the
+   service role. `/api/projects/cost-docs` is the one such route, and its
+   owner adds the check.
 3. **Reopening is a controller's audited act.** Only Admin / Document
    Control, with a reason; it clears completed_at / cancelled_at /
    cancelled_reason and writes `PROJECT_REOPENED`. A project owner cannot
@@ -2392,7 +2399,11 @@ project that carries cost or quality records is archived, not deleted.**
    engine for projects beyond the hold. The purge is the ONE pass through the
    money and quality delete guards: `app.record_purge = 'project:<id>'`. It
    never deletes a checklist item on its own: items leave with their
-   checklist by cascade, the only way out the quality rail allows.
+   checklist by cascade, the only way out the quality rail allows. The
+   company events logged against a deleted project are KEPT, unlinked, and
+   recorded in the snapshot. A PRIVATE project's events stay private after
+   the delete: they are marked before the FK unlinks them, on every delete
+   path, and only controllers read them from then on.
 5. **Releasing checkouts at closure** runs per session: the actor's own, and
    everyone else's the release guard lets them release (a controller: all);
    the rest stay active and are named ("still held by X"). The maintenance
@@ -2400,23 +2411,26 @@ project that carries cost or quality records is archived, not deleted.**
 6. **Roster roles mean something.** An observer sees the project; it cannot
    manage it (20261047) or post to its feed. `owner` is set only by the
    ownership transfer. The document register:
-   - **Attach.** Anyone who manages the project (`can_manage_project`: owner,
-     Admin, Manager, roster owner or collaborator) or a controller may
-     attach a document — the fleet plan's predicate. This lets the split /
-     merge carry-over (`lib/documentLifecycle/common.ts`, document-control)
-     and `adoptDocument`'s register link (`lib/transitionIn.ts`, PC-1 / J1)
-     land for a project's managers.
-   - **Detach, or move a link.** Only the project owner or a controller: a
-     detach drops a document's later history from the timeline. The card
-     offers Attach and Detach to that same pair, and `doc_added` /
-     `doc_removed` feed rows need it too.
+   - **Attach, or update a link in place.** Anyone who manages the project
+     (`can_manage_project`: owner, Admin, Manager, roster owner or
+     collaborator) or a controller may attach a document, or re-upsert a
+     link — the fleet plan's predicate — in a project they can SEE. This
+     lets the split / merge carry-over (`lib/documentLifecycle/common.ts`,
+     document-control) and `adoptDocument`'s register link
+     (`lib/transitionIn.ts`, PC-1 / J1) land for a project's managers,
+     over an existing row too.
+   - **A link never moves.** A trigger refuses an UPDATE that changes a
+     link's project or document, since that is a detach by another name.
+   - **Detach.** Only the project owner or a controller: a detach drops a
+     document's later history from the timeline. The card offers Attach and
+     Detach to that same pair, and `doc_added` / `doc_removed` feed rows
+     need it too.
    - **Checkouts.** A collaborator's OWN checkout, under a project they can
      see, still links through the definer trigger — never someone else's
      session, never a project the caller cannot see.
-   - **Still refused.** A document owner who does not manage the project,
-     and a merge upsert that meets an existing row (the UPDATE path), are
+   - **Still refused.** A document owner who does not manage the project is
      still refused, and the carry-over swallows it. Its owner surfaces the
-     refusal or upserts with DO NOTHING.
+     refusal.
 7. **The project timeline's vocabulary is one map** (`lib/timeline.ts`
    `PROJECT_EVENT_VOCABULARY`): awards, change-order proposals and
    decisions, checklist rulings, turnover reviews, punch closes and schedule
@@ -2467,3 +2481,10 @@ users, by design.
 - *The register's INSERT follows the fleet plan (`can_manage_project`); UPDATE and DELETE stay owner-or-controller (item 6, PM-8 / SEC-17).*
 - *A project status UPDATE that RLS filters to zero rows is a refusal, not a closure (PM-1 / PM-4).*
 - *The register and timeline reads are complete or fail: paged, with id lists chunked at 100 (UX-11, SAF-6).*
+
+*Landed 2026-09-30 (projects Round G, J8 third review fix pass):*
+- *The freeze passes an FK ON DELETE SET NULL (item 2): deleting a document a closed project's milestone, turnover item or checklist cites no longer fails after the library page has stripped its revisions. The references are read from `pg_constraint` (PM-1).*
+- *`/api/projects/cost-docs` is named as the one user-initiated service-role writer the freeze does not see; its owner adds the status check (PM-1 residual).*
+- *A private project's company events stay private after its delete, kept and snapshotted (item 4; SEC-2, PM-6).*
+- *The register's UPDATE follows the plan; a trigger keeps links from moving; attach and update need project visibility (item 6; PM-8, SEC-17, SAF-17).*
+- *The timeline's id lists are read whole (SAF-6, SAF-17).*
