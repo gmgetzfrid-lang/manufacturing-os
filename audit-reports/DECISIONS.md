@@ -1708,10 +1708,14 @@ the `Admin` branch, and an unscoped controller keeps today's behaviour.
 ## DEC-44 · The quality record's evidence contract
 
 **Decision. A green on a PSSR / MI / QA-QC line means one of two things, and
-the row says which: a PERSON decided it (a typed reason or a person-attached
-chip, uid on the row), or the MACHINE proved it against an admitted document
-and will withdraw the green the moment that proof is gone. Nothing else is
-green.**
+the row says which: a PERSON decided it (a typed reason that meets the bar,
+uid on the row — a person-attached chip is evidence, not a reason), or the
+MACHINE cited the row that proves it (an admitted document, an accepted
+turnover item or a human-completed MI checklist — the database resolves the
+citation before it accepts the green) and the next sweep withdraws the green
+once that proof is gone. Any other green (a legacy one, or a note under the
+bar) is never a person's: a checklist holding one completes only as
+`'auto'`.**
 
 The defaults the projects Round G quality package (`J2 QUALITY`: `SAF-1`–`SAF-4`,
 `QUAL-1` / `2` / `5` / `6` / `7` / `8` / `11` / `12` / `13`, `PERF-7`, `UX-7` / `8` /
@@ -1853,6 +1857,22 @@ user can edit. Items 4–7 above now say what the database enforces
 `turnover_items_record_review_event`, `quality_reason_key`,
 `quality_actor_name`; `lib/__tests__/qualityRailsMigration.test.ts`), with the
 lib mirroring the reason rule, the key, the chip rule and the citation rows.
+
+**Verification fix 3 (2026-09-30, projects Round G).** A third independent
+pass found the citation rule refusing the sweep's own greens on the normal
+production document — a current version with NO provenance (the bulk
+upload's, every version before 20260823): `v.provenance = 'external'` is
+NULL there, so the predicate refused what the lib admits (the predecessor's
+app writes landed 56 of 58). It now reads `v.provenance IS NOT DISTINCT FROM
+'external'`, and every other predicate in 20261091 was audited for the same
+NULL trap (none other found — the rest read NOT NULL columns, guard with
+COALESCE / IS [NOT] DISTINCT FROM, or mean "no row, no proof" by design). The
+same pass tied every citation branch to the item's org, read a legacy
+evidence value stored as one object as a single chip (in the lib too), and
+capped an item write's wait for its checklist row at 500 ms so a delete that
+cascades into it no longer deadlocks against it. The headline above no longer
+counts a person-attached chip as a person's decision (verification fix 2
+made the database stop counting it).
 
 **Rationale.** A pre-startup safety review is signed. The audit found the
 green could come from a contractor's filename, survive the document's voiding,
