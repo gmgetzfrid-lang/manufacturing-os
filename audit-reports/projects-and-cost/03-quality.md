@@ -161,7 +161,7 @@ lib/projects.ts:604-610 — `checkout_sessions`, `markup_requests`, `milestones`
 - The confirmation enumerates the quality records, with counts — ✓.
 - PROJECT_DELETED carries the counts of checklists, items, turnover and punch items — ✓ (the snapshot of the rows rides in `PURGE_PROJECT_SNAPSHOT`, audit viewers only).
 - A project carrying any completed checklist or accepted turnover item cannot be hard-deleted — archive, or an explicit second confirmation with a reason — ✓ (stricter: ANY cost or quality row; controller + reason).
-- A BEFORE DELETE guard covers the four quality tables, and retention / legal hold reaches quality records — ✓ in the minimal form (`projects.legal_hold`); a retention-policy engine for projects is not built (`DEC-44` default: the full retention model stays a follow-on).
+- A BEFORE DELETE guard covers the four quality tables, and retention / legal hold reaches quality records — ✓ in the minimal form (`projects.legal_hold`); a retention-policy engine for projects is not built (`DEC-54` default: the full retention model stays a follow-on).
 
 **Scope / residual.** Retention periods for project records (as documents have) — not in this finding's minimal form. *Second fix pass (2026-09-30):* dw3's controller path did not survive the merge with projects Round G J2. `delete_project_record` deleted `checklist_items` directly, and J2's `checklist_items_decision_rail` (20261091) refuses a signed-in item DELETE outside a cascade. So on the integrated tree no project with a checklist item could be deleted, not even by a controller with a reason. The purge now deletes the checklists, and their items go by cascade one trigger level down, which J2's rail admits (details and probe in `PM-6`).
 

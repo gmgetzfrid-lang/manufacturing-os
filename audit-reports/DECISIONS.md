@@ -2355,13 +2355,13 @@ PDF viewer in sandboxed frames would let the PDF frame take `sandbox=""` too.
 **Risk:** low — every change narrows; the viewers that frame keep working
 through the opt-in.
 
-<a id="dec-44-j8"></a>
-## DEC-44 · Closing, reopening and deleting a project
+<a id="dec-54-j8"></a>
+## DEC-54 · Closing, reopening and deleting a project
 
 > Made during projects Round G (2026-09-30), package J8 PROJECT-MODEL, under
 > the protocol's fail-safe rule, taking the fleet plan's stated defaults.
-> Numbered DEC-44 on the package branch; the integrator renumbers it on
-> merge (DEC-44…DEC-49 are taken on the integration branch).
+> Numbered DEC-54 at merge (DEC-44 to DEC-53 were already taken on the
+> integration branch).
 
 **Decision. A closed project is a closed record; the door closes with it; a
 project that carries cost or quality records is archived, not deleted.**
