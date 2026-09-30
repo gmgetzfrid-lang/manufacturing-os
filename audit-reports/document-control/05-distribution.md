@@ -1,6 +1,6 @@
 # 05 · Distribution, acknowledgment & recall
 
-**14 findings** — 3 CRITICAL · 6 HIGH · 5 MEDIUM.
+**15 findings** — 3 CRITICAL · 6 HIGH · 6 MEDIUM.
 
 Who was told, who acknowledged, and whether either is provable.
 
@@ -269,10 +269,13 @@ lib/acknowledgments.ts:79 quoted verbatim; 20260722_member_roles_collection.sql:
 
 **Done-when.**
 1. ✓ (pending migration for the database half) INSERT requires the caller to read the document (kept from 20261037) AND to be a controller or a granted publisher of its library; the UI gate lives in `ShareLinkModal` (the Inspector's Share button opens a modal that explains and offers no Create box) — `InspectorPanel.tsx` is not in this package's files. "Never expires" is removed outright and the 90-day ceiling is enforced by the trigger on INSERT and on every change of `expires_at`, from a `created_at` the database stamps and never lets move (neither a client-supplied `created_at` on INSERT nor an UPDATE of it can extend a link).
-2. ✓ `/api/share/resolve` and `/api/share/file` refuse `NOT_CURRENT_STATUSES` (and Draft, archived, held) — `DRLS-5` — and honour visibility / `acl_index` through the creator's current read decision (`shareStillAuthorized`, `EGRESS-1`).
+2. ✓ `/api/share/resolve` and `/api/share/file` refuse `NOT_CURRENT_STATUSES` (and Draft, archived, held) — `DRLS-5` — and honour visibility / `acl_index` against the creator at every request: the READ decision (`shareStillAuthorized`, `EGRESS-1`) and, since the 2026-09-30 verification fix, the explicit deny-DOWNLOAD rule (`creatorMayShare` → `lib/downloadDeny.ts memberDownloadDenied`, the helper `/api/storage/download-url` itself now calls; a named creator, or an unreadable role / team set while a deny exists, gets `410`). The deny-download rule is NOT in the INSERT policy — no SQL predicate for it exists — so such a creator can still mint a row that never serves: public-surfaces `SHR-14`.
 3. ◐ Creating and revoking a share write `audit_logs` rows (`SHARE_LINK_CREATED` / `SHARE_LINK_REVOKED`, resource = the document) — checked writes: a refused row is reported to the caller as a warning, not swallowed. An org-level surface listing every live public link is **not built** — that is a new admin screen outside this package's files; opened as `DIST-15` per DEC-31 (no wave-2 package owns it; the integrator schedules it — see `DIST-15`).
 
 **Scope / residual.** Same defect as public-surfaces `SHR-4` — fixed once, recorded there too. The effective owner is NOT in the minting tier by the stated default (controllers + granted publishers), although `user_can_publish_doc` admits owners for versions; DEC-46 records the choice. Product defaults landed as DEC-46.
+
+**Verification fix (2026-09-30, document-control Round F wave 2).** An independent check of `f1ce4c7` found criterion 2 ticked over a gap: "honour visibility / acl_index" held for the READ decision only — a publisher granted on the library but denied download on the document could mint a link and it served (public-surfaces `SHR-3` criterion 3, ◐ there). Closed at serve time in code (`lib/downloadDeny.ts`, `lib/shareServe.ts:196-226`, `app/api/storage/download-url/route.ts:153-167`; the test "an explicit ACL download deny naming the CREATOR stops the link serving …" in `lib/__tests__/shareRoutes.test.ts` and `lib/__tests__/downloadDeny.test.ts`); criterion 2 now states exactly that, and the mint-time remainder is public-surfaces `SHR-14` (OPEN). `tsc` 0, `eslint` 0, full `vitest` green (195 files / 2602 tests).
+
 
 ---
 
@@ -595,7 +598,7 @@ lib/staleCopies.ts:197 `category: "status"`; lib/notify/dispatch.ts:53 the mappi
 - **Severity:** MEDIUM
 - **Status:** OPEN
 - **Verification:** SUSPECTED
-- **Locations:** `lib/documentShares.ts:216-231`, `app/api/share/list/route.ts:61-66`, `components/documents/ShareLinkModal.tsx:278`
+- **Locations:** `lib/documentShares.ts:216-231`, `app/api/share/list/route.ts:61-66`, `components/documents/ShareLinkModal.tsx:283`
 - **Opened by:** document-control Round F wave 2 (P1 SHARE, 2026-09-23) as the DEC-31 remainder of `DIST-6` / public-surfaces `SHR-4` (their third criterion). Author-graded: no independent challenge yet.
 - **Owner:** unassigned — no wave-2 package's files include an admin surface for share links (P1 SHARE's are the share routes, the modal and the landing page). The integrator schedules it into the next document-control round; it depends only on what wave 2 lands (`revokeShareLink`'s checked, audited revoke; `20261066`'s SELECT policy).
 
@@ -610,5 +613,7 @@ lib/staleCopies.ts:197 `category: "status"`; lib/notify/dispatch.ts:53 the mappi
 - [ ] A controller-tier page lists every non-revoked share link in the org with document, creator, expiry and access count, and marks the ones whose creator is no longer an active member
 - [ ] Bulk revoke (selected rows; all links by one creator; all links on one document / library) goes through `revokeShareLink` so each revocation is audited
 - [ ] A test drives the listing decision (controller sees all; non-controller refused) and the bulk revoke's per-row audit rows
+
+**Verification fix (2026-09-30, document-control Round F wave 2).** Records only: the Locations citation for the modal's list header moved `:278` → `:283` (the modal's context-load catch grew); this finding was never counted when it was opened — this report's header (now 15 findings, 6 MEDIUM) and `README.md` (148 findings, 65 MEDIUM; row 05 = 15) now include it. Status unchanged.
 
 ---

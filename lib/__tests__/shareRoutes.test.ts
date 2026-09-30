@@ -41,6 +41,13 @@
 // document_share_refusal answers only for a document the caller can read;
 // the audit writes on mint / revoke are checked (auditWarning); the modal
 // says "couldn't confirm" for a refusal it could not read.
+//
+// Verification fix: an explicit ACL download deny naming the share's CREATOR
+// stops the link serving (creatorMayShare over lib/downloadDeny.ts, the rule
+// /api/storage/download-url applies to members — SHR-3 criterion 3); the
+// 20261080 INSERT rail has no download-deny arm (no SQL predicate exists —
+// SHR-14). 20261081 upgrades a draft-era table in place and empties
+// access_last_ip. The modal's failed context read leaves no confirmed refusal.
 
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { readFileSync, readdirSync } from "node:fs";
@@ -82,6 +89,8 @@ const state = vi.hoisted(() => ({
   // the share creator's org_members row (the serve-time tier check)
   creatorMember: { role: "DocCtrl", roles: ["DocCtrl"] } as Row | null,
   creatorMemberError: null as null | { message: string },
+  // the creator's teams (the download-deny check reads them only when the index carries a download deny)
+  teams: { data: [] as Row[], error: null as null | { message: string } },
   auditError: null as null | string,
   updateRows: [] as Row[],
   calls: [] as Array<{ table: string; method: string; args: unknown[] }>,
@@ -111,6 +120,7 @@ function makeClient() {
       }
       if (op === "update") return { data: state.updateRows, error: null };
       if (table === "document_holds") return state.holds;
+      if (table === "team_members") return state.teams;
       if (table === "document_versions") return { data: state.latest, error: null };
       return { data: null, error: null };
     };
@@ -186,6 +196,7 @@ beforeEach(() => {
   state.docError = null;
   state.creatorMember = { role: "DocCtrl", roles: ["DocCtrl"] };
   state.creatorMemberError = null;
+  state.teams = { data: [], error: null };
   state.auditError = null;
   state.updateRows = [];
   state.calls = [];
@@ -494,6 +505,54 @@ describe("GET /api/share/file — refuses before any byte leaves", () => {
     expect(body.indexOf("await creatorMayShare(sb, s, d)")).toBeGreaterThan(body.indexOf("await shareStillAuthorized("));
     expect(body.indexOf("await creatorMayShare(sb, s, d)")).toBeLessThan(body.indexOf("shareStatusRefusal(d)"));
     expect(serve).toMatch(/memberHoldsAny\(member as \{ role\?: unknown; roles\?: unknown \}, SHARE_CONTROLLER_ROLES\)/);
+  });
+  it("an explicit ACL download deny naming the CREATOR stops the link serving (SHR-3 criterion 3): by uid, any role in the collection, or team; controllers not exempt (the member route's rule); fail-closed; a deny naming someone else serves", async () => {
+    const denyDownload = (deny: Row) => issuedDoc({ acl_index: { allow: {}, deny } });
+    const err = vi.spyOn(console, "error").mockImplementation(() => {});
+    for (const [label, setup] of [
+      ["the creator's uid", () => { state.doc = denyDownload({ users: { download: ["u1"] } }); }],
+      ["an ADDITIVE role in the creator's collection", () => { state.creatorMember = { role: "Engineer-2", roles: ["Engineer-2", "Contractor"] }; state.doc = denyDownload({ roles: { download: ["Contractor"] } }); }],
+      ["one of the creator's teams", () => { state.teams = { data: [{ team_id: "t-field" }], error: null }; state.doc = denyDownload({ teams: { download: ["t-field"] } }); }],
+      ["a controller named by uid (the member download route exempts no one)", () => { state.creatorMember = { role: "Admin", roles: ["Admin"] }; state.doc = denyDownload({ users: { download: ["u1"] } }); }],
+      ["the creator's teams unreadable while a download deny exists (fail-closed)", () => { state.teams = { data: [], error: { message: "down" } }; state.doc = denyDownload({ users: { download: ["someone-else"] } }); }],
+    ] as Array<[string, () => void]>) {
+      // a granted publisher: the tier alone would serve
+      state.creatorMember = { role: "Engineer-2", roles: ["Engineer-2"] }; state.rpcResult = { data: true, error: null };
+      state.teams = { data: [], error: null }; state.inserts = [];
+      setup();
+      r2.send.mockClear();
+      const res = await fileGet();
+      expect(res.status, label).toBe(410);
+      expect(await res.json(), label).toEqual({ error: "revoked" });
+      expect(r2.send, label).not.toHaveBeenCalled();
+      expect(inserted("download_audits"), label).toHaveLength(0);
+      expect(inserted("document_share_accesses"), label).toEqual([expect.objectContaining({ kind: "refused", reason: "authority_lapsed" })]);
+      expect((await resolveGet()).status, label).toBe(410);
+    }
+    err.mockRestore();
+    // a download deny naming someone else, a READ-only deny entry, or no index at all: the link serves
+    for (const doc of [
+      denyDownload({ users: { download: ["u2"] }, roles: { download: ["Viewer"] }, teams: { download: ["t-other"] } }),
+      denyDownload({ users: { read: ["u1"] } }),
+      issuedDoc({ acl_index: null }),
+    ]) {
+      state.doc = doc; state.creatorMember = { role: "Engineer-2", roles: ["Engineer-2"] }; state.rpcResult = { data: true, error: null };
+      state.teams = { data: [{ team_id: "t-field" }], error: null };
+      expect((await fileGet()).status).toBe(200);
+    }
+    // the documents read carries the index; the check is the member route's own helper, asked inside creatorMayShare
+    const sel = state.calls.filter((c) => c.table === "documents" && c.method === "select").at(-1);
+    expect(String(sel?.args[0])).toMatch(/\bacl_index\b/);
+    const serve = src("lib/shareServe.ts");
+    expect(serve).toContain('import { memberDownloadDenied, type DownloadDenyIndex } from "@/lib/downloadDeny";');
+    const may = serve.slice(serve.indexOf("export async function creatorMayShare"));
+    expect(may.indexOf("await memberDownloadDenied(sb, { orgId: s.org_id, uid: s.created_by, aclIndex: d.acl_index ?? null })"))
+      .toBeLessThan(may.indexOf("memberHoldsAny(member"));
+    expect(may).toMatch(/if \(download\.unreadable\) \{[\s\S]*?return false;\s*\n\s*\}\s*\n\s*if \(download\.denied\) return false;/);
+    const route = src("app/api/storage/download-url/route.ts");
+    expect(route).toContain('import { memberDownloadDenied, type DownloadDenyIndex } from "@/lib/downloadDeny";');
+    expect(route).toMatch(/const \{ denied \} = await memberDownloadDenied\(supabaseAdmin, \{/);
+    expect(route).not.toMatch(/dl\.users\?\.download/); // the inline copy is gone: one rule, two callers
   });
   it("a refused attempt on a KNOWN share leaves one 'refused' access row with the reason, IP and UA (SHR-10); an unknown token leaves none", async () => {
     const cases: Array<[Row, Row | null, boolean, string, number]> = [
@@ -930,8 +989,10 @@ describe("20261081 — the per-access record and the pinned counter", () => {
     const { onlyInA, onlyInB } = lineDiff(live, next);
     expect(onlyInA).toEqual(["RETURNS void LANGUAGE sql SECURITY DEFINER AS $$"]);
     expect(onlyInB).toEqual(["RETURNS void LANGUAGE sql SECURITY DEFINER SET search_path = public AS $$"]);
-    // the accessor IP never lands on document_shares (readable by every member who can read the document)
-    expect(code).not.toMatch(/access_last_ip\s*=/);
+    // the accessor IP never lands on document_shares (readable by every member who can read the document):
+    // the only assignment to the column is the apply-time clear
+    expect([...code.matchAll(/access_last_ip\s*=\s*([^\s;]+)/g)].map((x) => x[1])).toEqual(["NULL"]);
+    expect(code).toMatch(/UPDATE document_shares SET access_last_ip = NULL WHERE access_last_ip IS NOT NULL;/);
     expect(code).toMatch(/COMMENT ON COLUMN document_shares\.access_last_ip IS\s*\n\s*'Unused by design/);
     expect(code).toMatch(/REVOKE ALL ON FUNCTION bump_share_access\(uuid\) FROM PUBLIC;/);
     expect(code).toMatch(/REVOKE ALL ON FUNCTION bump_share_access\(uuid\) FROM anon;/);
@@ -942,6 +1003,35 @@ describe("20261081 — the per-access record and the pinned counter", () => {
     expect(tail).toMatch(/to_regprocedure\('bump_share_access\(uuid, text\)'\) IS NULL/);
     expect(tail).toMatch(/prosrc NOT LIKE '%access_last_ip%'/);
     expect(tail).toMatch(/indexname = 'document_share_accesses_resolve_bound'/);
+  });
+
+  it("idempotent over a paste of an EARLIER draft: the draft-era table is brought to this shape before any index names a new column; the DEC-30 inventory is captured before the transaction; ONE final result set", () => {
+    const create = code.indexOf("CREATE TABLE IF NOT EXISTS document_share_accesses (");
+    const firstIndex = code.indexOf("CREATE INDEX IF NOT EXISTS document_share_accesses_share_idx");
+    const upgrade = code.slice(create, firstIndex);
+    for (const col of ["reason TEXT", "refused_minute TIMESTAMPTZ", "resolve_minute TIMESTAMPTZ"]) {
+      expect(upgrade).toContain(`ALTER TABLE document_share_accesses ADD COLUMN IF NOT EXISTS ${col};`);
+    }
+    // a draft-era open satisfies the shape CHECK before it is added (its own created_at as its key)
+    expect(upgrade).toMatch(/UPDATE document_share_accesses SET resolve_minute = created_at\s*\n\s*WHERE kind = 'resolve' AND resolve_minute IS NULL;/);
+    expect(upgrade.indexOf("UPDATE document_share_accesses SET resolve_minute")).toBeLessThan(upgrade.indexOf("DO $$"));
+    // each constraint add is GUARDED by pg_constraint (a re-run is a no-op); the first draft's kind CHECK is replaced only when it lacks 'refused'
+    for (const name of ["document_share_accesses_refused_shape", "document_share_accesses_resolve_shape"]) {
+      expect(upgrade).toMatch(new RegExp(`IF NOT EXISTS \\(SELECT 1 FROM pg_constraint[\\s\\S]*?conname = '${name}'\\) THEN\\s*\\n\\s*ALTER TABLE document_share_accesses ADD CONSTRAINT ${name}`));
+    }
+    expect(upgrade).toMatch(/conname = 'document_share_accesses_kind_check'\s*\n\s*AND pg_get_constraintdef\(oid\) NOT LIKE '%refused%'\) THEN/);
+    expect(upgrade).toMatch(/ADD CONSTRAINT document_share_accesses_kind_check\s*\n\s*CHECK \(kind IN \('resolve', 'download', 'refused'\)\);/);
+    // the resolve bound comes after the upgrade
+    expect(code.indexOf("document_share_accesses_resolve_bound")).toBeGreaterThan(code.indexOf("ADD COLUMN IF NOT EXISTS resolve_minute"));
+    // DEC-30: the rows the clear empties are counted before BEGIN; the tail carries them and the probe
+    const head = code.slice(0, code.indexOf("BEGIN;"));
+    expect(head).toMatch(/CREATE TEMP TABLE dc_round_f_81_before AS[\s\S]*COUNT\(\*\)::text AS n\s*\n\s*FROM document_shares\s*\n\s*WHERE access_last_ip IS NOT NULL;/);
+    const tail = code.slice(code.indexOf("\nCOMMIT;") + "\nCOMMIT;".length);
+    expect(tail).toContain("SELECT inventory, NULL, n FROM dc_round_f_81_before");
+    expect(tail).toMatch(/'no share carries access_last_ip \(cleared on apply; nothing writes it\)',\s*\n\s*\(SELECT COUNT\(\*\) = 0 FROM document_shares WHERE access_last_ip IS NOT NULL\)/);
+    // ONE statement after COMMIT: the final SELECT (string literals blanked before counting semicolons)
+    expect(tail.replace(/'(?:[^']|'')*'/g, "''").trim().split(";").filter((x) => x.trim()).length).toBe(1);
+    expect(tail.trim().startsWith("SELECT")).toBe(true);
   });
 
   it("the numbered sequence's LAST definition of each share object is this package's", () => {
@@ -986,7 +1076,7 @@ describe("ShareLinkModal / the landing page — the stated model", () => {
     expect(m.indexOf("refusal && !refusalConfirmed ?")).toBeLessThan(m.indexOf(': refusal ? "not serving now'));
     expect(m).toMatch(/\{refusalConfirmed\s*\n\s*\? <span>No new link can be created, and existing links are not serving: \{refusal\}<\/span>\s*\n\s*: <span>No new link can be created: \{refusal\} Whether existing links are serving couldn&rsquo;t be confirmed/);
     // what a row cannot know (its creator's current authority) is stated, not guessed
-    expect(m).toMatch(/A link serves on its creator&rsquo;s current authority: it also stops serving if they leave the organisation, can no longer read this document, or no longer hold Document Control \/ Admin or a publish grant on this library\./);
+    expect(m).toMatch(/A link serves on its creator&rsquo;s current authority: it also stops serving if they leave the organisation, can no longer read this document, are denied download on it, or no longer hold Document Control \/ Admin or a publish grant on this library\./);
     // EGRESS-8 path: an unreadable document loads no context (no "Document not found" banner), and a list
     // failure never marks the caller as a non-minter
     const refresh = between(m, "const refresh = useCallback(async () => {", "}, [documentId, orgId, createdBy, isController]);");
@@ -994,6 +1084,12 @@ describe("ShareLinkModal / the landing page — the stated model", () => {
     expect(refresh.indexOf("if (!readableNow) {")).toBeLessThan(refresh.indexOf("await loadShareDocumentContext(documentId)"));
     expect(refresh).toContain("catch (e) { setListError((e as Error).message); }");
     expect(refresh).not.toMatch(/setCanMint\(false\)/);
+    // a failed context read never leaves an earlier read's CONFIRMED refusal standing: the refusal is reset
+    // to an unconfirmed one, so the banner and "resolves to" say "couldn't confirm", never "not serving"
+    const failed = refresh.slice(refresh.indexOf("await loadShareDocumentContext(documentId)"));
+    const catchBody = failed.slice(failed.indexOf("} catch (e) {"), failed.indexOf("} finally"));
+    expect(catchBody).toContain("setError((e as Error).message); setCanMint(null); setServed(null);");
+    expect(catchBody).toMatch(/setRefusal\("Couldn't confirm the document's state; it is treated as unshareable\."\);\s*\n\s*setRefusalConfirmed\(false\);/);
     const { DURATION_OPTIONS } = await import("@/components/documents/ShareLinkModal");
     expect(DURATION_OPTIONS.every((o) => o.days > 0 && o.days <= SHARE_MAX_DAYS)).toBe(true);
     expect(Math.max(...DURATION_OPTIONS.map((o) => o.days))).toBe(SHARE_MAX_DAYS);

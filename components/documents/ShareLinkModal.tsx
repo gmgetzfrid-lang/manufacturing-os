@@ -115,8 +115,13 @@ export default function ShareLinkModal({
         setRefusal(why?.reason ?? null);
         setRefusalConfirmed(why?.confirmed ?? true);
       } catch (e) {
-        // Unknown document state: neither "you may not mint" nor a Create box.
+        // Unknown document state: neither "you may not mint" nor a Create box
+        // — and never a CONFIRMED refusal left over from an earlier read: the
+        // refusal reads as unconfirmed ("couldn't confirm"), as it would from
+        // shareRefusalState's own failed read.
         setError((e as Error).message); setCanMint(null); setServed(null);
+        setRefusal("Couldn't confirm the document's state; it is treated as unshareable.");
+        setRefusalConfirmed(false);
       }
     } finally { setLoading(false); }
   }, [documentId, orgId, createdBy, isController]);
@@ -367,7 +372,7 @@ export default function ShareLinkModal({
             )}
             {!loading && shares.length > 0 && (
               <div className="mt-2 text-[10px] text-[var(--color-text-muted)]">
-                A link serves on its creator&rsquo;s current authority: it also stops serving if they leave the organisation, can no longer read this document, or no longer hold Document Control / Admin or a publish grant on this library.
+                A link serves on its creator&rsquo;s current authority: it also stops serving if they leave the organisation, can no longer read this document, are denied download on it, or no longer hold Document Control / Admin or a publish grant on this library.
               </div>
             )}
           </div>

@@ -13,11 +13,14 @@
 //   1. token shape → share row → revoked / expired (410)
 //   2. the document, org-joined (EGRESS-1) — a cross-org share is a 404
 //   3. the CREATOR's current authority (EGRESS-1 dw4) — lapsed is a 410:
-//      they can still read the document (shareStillAuthorized) AND still
-//      hold the minting tier (DEC-46 §1 — a controller by the role
-//      collection, or a granted publisher of the document's library:
-//      creatorMayShare). A link minted before the tier existed, or by a
-//      publisher whose grant was since withdrawn, stops serving.
+//      they can still read the document (shareStillAuthorized), are not
+//      named by an explicit ACL download deny on it (the member download
+//      route's rule, lib/downloadDeny.ts — SHR-3), AND still hold the
+//      minting tier (DEC-46 §1 — a controller by the role collection, or a
+//      granted publisher of the document's library): creatorMayShare. A
+//      link minted before the tier existed, by a publisher whose grant was
+//      since withdrawn, or by a creator a download deny now names, stops
+//      serving.
 //   4. the document's control status: a Draft, a Superseded / Void /
 //      Archived document (NOT_CURRENT_STATUSES — the shared set, never an
 //      inline list) or one with archived_at set is REFUSED with the reason
@@ -50,6 +53,7 @@ import type { supabase } from "@/lib/supabase";
 import { assertNotOnHold, isHoldBlockedError, type HoldBlockedError } from "@/lib/holdGate";
 import { publicHoldReason, PUBLIC_HOLD_REASON_FALLBACK } from "@/lib/holds";
 import { memberHoldsAny } from "@/lib/roleHeld";
+import { memberDownloadDenied, type DownloadDenyIndex } from "@/lib/downloadDeny";
 import { shareStillAuthorized } from "@/lib/shareAuthorization";
 import { resolveServedVersion, shareStatusRefusal, versionServable, type ServableVersion } from "@/lib/shareRules";
 
@@ -80,6 +84,8 @@ export interface ShareDocument {
   archived_at: string | null;
   current_version_id: string | null;
   library_id: string | null;
+  /** Chain-resolved; the creator's download deny is read from it. */
+  acl_index?: DownloadDenyIndex;
 }
 
 export type { ServableVersion };
@@ -139,7 +145,7 @@ export async function resolveShareForServing(sb: ShareServeClient, token: string
   // document and 404s before any byte is fetched.
   const { data: doc } = await sb
     .from("documents")
-    .select("id, document_number, title, name, rev, status, archived_at, current_version_id, library_id")
+    .select("id, document_number, title, name, rev, status, archived_at, current_version_id, library_id, acl_index")
     .eq("id", s.document_id)
     .eq("org_id", s.org_id)
     .maybeSingle();
@@ -149,9 +155,9 @@ export async function resolveShareForServing(sb: ShareServeClient, token: string
   // Serve only on the creator's CURRENT authority (EGRESS-1 dw4): if they
   // left the org or lost read access to this document, the link is dead.
   if (!(await shareStillAuthorized(s.org_id, s.created_by, d.id))) return refuseKnown(410, { error: "revoked" }, "authority_lapsed");
-  // ... and on their CURRENT sharing authority (DEC-46 §1): the tier that
-  // lets a copy out is checked when the copy leaves, not only when the link
-  // was minted.
+  // ... and on their CURRENT sharing authority (DEC-46 §1): no download
+  // deny names them, and the tier that lets a copy out is checked when the
+  // copy leaves, not only when the link was minted.
   if (!(await creatorMayShare(sb, s, d))) return refuseKnown(410, { error: "revoked" }, "authority_lapsed");
 
   const withdrawn = shareStatusRefusal(d);
@@ -176,13 +182,17 @@ export async function resolveShareForServing(sb: ShareServeClient, token: string
   return { ok: true, share: s, doc: d, version };
 }
 
-/** May the share's creator STILL let this document out? The minting tier
- *  (DEC-46 §1, 20261080's INSERT arm) re-asked at serve time: an active
- *  member holding Admin / DocCtrl in the role COLLECTION (memberHoldsAny —
- *  never the headline alone), else a publisher granted on the document's
- *  library, asked of the database's own evaluator
+/** May the share's creator STILL let this document out? An active member
+ *  whom no explicit ACL download deny on the document names — the rule the
+ *  member download route applies (lib/downloadDeny.ts memberDownloadDenied,
+ *  by uid, any role in the collection, or team; controllers not exempt, as
+ *  on that route) — AND who holds the minting tier (DEC-46 §1, 20261080's
+ *  INSERT arm) re-asked at serve time: Admin / DocCtrl in the role
+ *  COLLECTION (memberHoldsAny — never the headline alone), else a publisher
+ *  granted on the document's library, asked of the database's own evaluator
  *  (user_can_publish_on_library, which applies the library's publish
- *  denies). Fails CLOSED on any read error. */
+ *  denies). Fails CLOSED on any read error. The download deny is checked
+ *  here only: 20261080's INSERT rail has no download-deny arm (SHR-14). */
 export async function creatorMayShare(sb: ShareServeClient, s: ShareRow, d: ShareDocument): Promise<boolean> {
   if (!s.created_by) return false;
   const { data: member, error } = await sb
@@ -197,6 +207,12 @@ export async function creatorMayShare(sb: ShareServeClient, s: ShareRow, d: Shar
     return false;
   }
   if (!member) return false;
+  const download = await memberDownloadDenied(sb, { orgId: s.org_id, uid: s.created_by, aclIndex: d.acl_index ?? null });
+  if (download.unreadable) {
+    console.error("[share] creator's roles / teams unreadable against a download deny — share refused", { share: s.id });
+    return false;
+  }
+  if (download.denied) return false;
   if (memberHoldsAny(member as { role?: unknown; roles?: unknown }, SHARE_CONTROLLER_ROLES)) return true;
   if (!d.library_id) return false;
   const { data: canPublish, error: rpcError } = await sb.rpc("user_can_publish_on_library", {

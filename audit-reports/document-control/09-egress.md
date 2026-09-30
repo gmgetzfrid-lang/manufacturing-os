@@ -121,7 +121,7 @@ Both clauses test `document_shares.org_id`. Nothing correlates `document_shares.
 - [ ] A share cannot be created for a document the creator cannot read — the ACL/visibility check from /api/storage/download-url:64-90 runs at share-creation time, at resolve time, or both
 - [ ] createShareLink checks the returned {error} (see the unchecked-write finding) so a policy rejection surfaces to the user instead of appearing to succeed
 
-**Resolution (2026-09-23, document-control Round F wave 2).** **Record-only close — resolved by roles-and-permissions `EGRESS-1`** (Round D, 2026-08-24) and re-verified against the current tree: `20261022_document_shares_acl_scope.sql:44-57` correlates the two columns in the INSERT `WITH CHECK` (`d.id = document_shares.document_id AND d.org_id = document_shares.org_id`, plus `node_visible` — the creator must be able to read it); `20261026` binds `created_by = auth.uid()` and makes `document_id` / `org_id` / `created_by` immutable by trigger; `20261037:119-135` re-states the policy with the 6-arg `node_visible` (the newest live body, byte-carried again by `supabase/migrations/20261080_dc_roundF_share_minting_and_revocation.sql`, which only ADDS arms); both public routes org-join the document (`.eq("org_id", share.org_id)`, now in the shared `lib/shareServe.ts:140-145`, asserted by `lib/__tests__/shareResolveRoute.test.ts` and `lib/__tests__/shareRoutes.test.ts`); `createShareLink` throws on `{ error }` (`lib/documentShares.ts:169-207`). The 20261022 / 20261026 headers record them applied and verified live on 2026-08-24.
+**Resolution (2026-09-23, document-control Round F wave 2).** **Record-only close — resolved by roles-and-permissions `EGRESS-1`** (Round D, 2026-08-24) and re-verified against the current tree: `20261022_document_shares_acl_scope.sql:44-57` correlates the two columns in the INSERT `WITH CHECK` (`d.id = document_shares.document_id AND d.org_id = document_shares.org_id`, plus `node_visible` — the creator must be able to read it); `20261026` binds `created_by = auth.uid()` and makes `document_id` / `org_id` / `created_by` immutable by trigger; `20261037:119-135` re-states the policy with the 6-arg `node_visible` (the newest live body, byte-carried again by `supabase/migrations/20261080_dc_roundF_share_minting_and_revocation.sql`, which only ADDS arms); both public routes org-join the document (`.eq("org_id", share.org_id)`, now in the shared `lib/shareServe.ts:146-151`, asserted by `lib/__tests__/shareResolveRoute.test.ts` and `lib/__tests__/shareRoutes.test.ts`); `createShareLink` throws on `{ error }` (`lib/documentShares.ts:169-207`). The 20261022 / 20261026 headers record them applied and verified live on 2026-08-24.
 
 **Done-when.**
 1. ✓ (20261022, re-created 20261037 / 20261080) the WITH CHECK correlates `document_id` with `org_id` and the membership test.
@@ -130,6 +130,8 @@ Both clauses test `document_shares.org_id`. Nothing correlates `document_shares.
 4. ✓ `createShareLink` checks the returned error (and now maps a policy refusal to a sentence — `DIST-6`).
 
 **Scope / residual.** None. Same as public-surfaces `SHR-1` (recorded there) and intelligence `DACL-4`.
+
+**Verification fix (2026-09-30, document-control Round F wave 2).** Citation only: the org-joined documents lookup moved from `lib/shareServe.ts:140-145` to `:146-151` when public-surfaces `SHR-3`'s serve-time download-deny check landed above it; the code and this finding's status are unchanged.
 
 ---
 

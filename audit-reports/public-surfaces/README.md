@@ -22,12 +22,12 @@ The four unauthenticated verify endpoints, share links and the short link, the p
 
 ## Findings
 
-**54 findings** — 4 CRITICAL, 13 HIGH, 20 MEDIUM, 17 LOW.
+**55 findings** — 4 CRITICAL, 13 HIGH, 20 MEDIUM, 18 LOW.
 
 | # | Report | n | Note |
 |---|---|---|---|
 | 01 | [The public verify endpoints](./01-verify-endpoints.md) | 14 |  |
-| 02 | [Share links & the short link](./02-share-links.md) | 13 |  |
+| 02 | [Share links & the short link](./02-share-links.md) | 14 |  |
 | 03 | [The physical bridge — QR, labels, stamps, print](./03-physical-bridge.md) | 13 |  |
 | 04 | [Offline, the service worker & the field device](./04-offline-pwa.md) | 14 |  |
 

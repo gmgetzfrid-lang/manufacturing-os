@@ -1861,9 +1861,15 @@ rules are the publish rules:**
    the modal (`canMintShare`), which explains rather than hides — and
    re-asked at SERVE time (`creatorMayShare`, `lib/shareServe.ts`): a link
    serves only while its creator still holds the tier (and can still read
-   the document), so a link a Viewer minted before 20261080, or one whose
-   publisher has since lost the grant, stops serving at the wave-2 deploy
-   rather than living out its expiry. Nothing is grandfathered.
+   the document, and is not named by an explicit ACL download deny on it —
+   the rule `/api/storage/download-url` applies to members, one helper for
+   both: `lib/downloadDeny.ts`), so a link a Viewer minted before 20261080,
+   one whose publisher has since lost the grant, or one whose creator is
+   denied download, stops serving at the wave-2 deploy rather than living
+   out its expiry. Nothing is grandfathered. The download deny is a
+   SERVE-time check only: the database has no download-deny predicate, so
+   the INSERT policy and the modal do not refuse such a mint — the row
+   inserts and never serves (`SHR-14`, OPEN).
 2. **How long:** every share expires. "Never expires" is removed; 30 days is
    the default and 90 the ceiling, enforced by trigger on INSERT and on any
    change to `expires_at` (a never-expiring legacy row is capped at
@@ -1915,8 +1921,9 @@ rules are the publish rules:**
    downloads are one per copy served (each is a distribution). The
    accessor's IP is CONTROLLER-ONLY: it lives on `document_share_accesses`
    and nowhere else — never on `document_shares`, whose rows every member
-   who can read the document can read (`access_last_ip` stays unwritten,
-   commented as such; `bump_share_access` carries no IP). Pruning the trail
+   who can read the document can read (`access_last_ip` is emptied on apply
+   by `20261081` and stays unwritten, commented as such;
+   `bump_share_access` carries no IP). Pruning the trail
    (the plan's default: 90 days) is the retention owner's (the `RET-*`
    findings / `08-retention.md`), not this decision's; until a retention
    rule names it, rows are kept and the bounds above are the only brake. No
@@ -1948,10 +1955,19 @@ rules are the publish rules:**
 > writers — P8 FIELD), `SHR-11` (`PHYS-11` — PS-STAMP), `SHR-12` (the
 > `schemaExpectations` row — integrator follow-up), `PHYS-8` (the drafting
 > limb — PKG-5 / P8), `PHYS-13` (the viewer QR — PS-STAMP). Opened:
-> `DIST-15` (the org-wide inventory — unassigned). Not this package's,
+> `DIST-15` (the org-wide inventory — unassigned), `SHR-14` (the mint-time
+> download-deny arm — unassigned; opened 2026-09-30). Not this package's,
 > though in the same `SHR-` range: `SHR-8` (PS-STAMP), `SHR-9` (PKG-1). The
 > defaults were stated to the system's owner on 2026-09-17 and applied
 > unless overridden.
+>
+> **Verification fix (2026-09-30, document-control Round F wave 2).** An
+> independent check of `f1ce4c7` found `SHR-3` listed Closed here while its
+> deny-download criterion was ◐. The serve-time half is now built (§1:
+> `creatorMayShare` asks `lib/downloadDeny.ts` for the creator), so `SHR-3`
+> stays in the Closed list on what holds; the mint-time half has no SQL
+> predicate to call and is opened as `SHR-14`. §5 now records that
+> `20261081` empties `access_last_ip`.
 
 **Rationale.** A share link is the one channel that hands a controlled
 drawing to someone with no account, no ACL and no recall path. Every other
@@ -1962,7 +1978,8 @@ token exist". Aligning it with the publish tier and the not-current set makes
 
 **Implementation.** `lib/shareRules.ts` (the rules, plus
 `resolveServedVersion`, which reads only through the caller's client),
-`lib/shareServe.ts` (server), `lib/documentShares.ts` (client mint path),
+`lib/shareServe.ts` (server), `lib/downloadDeny.ts` (the deny-download rule,
+shared with `/api/storage/download-url`), `lib/documentShares.ts` (client mint path),
 `components/documents/ShareLinkModal.tsx`, `app/share/[token]/page.tsx`,
 `app/api/share/{resolve,file}/route.ts`; migrations `20261080`
 (minting tier, refusal rail, durable revocation, 90-day ceiling) and
@@ -1979,9 +1996,10 @@ exactly one `download_audits` row with `share_id` before the bytes;
 `UPDATE document_shares SET revoked_at = NULL` on a revoked row raises; a
 signed-in member calling `document_share_refusal` on another org's document,
 or on a private / hidden document of their own org they cannot read, gets
-`not_found`; a link whose creator no longer holds the minting tier answers
-410 on both routes; after a resolve, `document_shares.access_last_ip` is
-still NULL and the IP is on the `document_share_accesses` row; a second open
+`not_found`; a link whose creator no longer holds the minting tier, or whom
+an explicit ACL download deny on the document names, answers 410 on both
+routes; after the apply and after a resolve, `document_shares.access_last_ip`
+is NULL on every row and the IP is on the `document_share_accesses` row; a second open
 from the same IP in the same minute adds no row.
 
 **Reversal.** A stated need for a longer-lived external link (a customer
