@@ -7,18 +7,26 @@
 -- legacy, unclaimed path) on a database that has not applied this yet.
 --
 --   1. THE INGEST CLAIM (ING-2 / ING-1). knowledge_documents.ingest_claimed_by
---      / ingest_claimed_at: every ingest batch, the rev-up refresh and the
---      drawing rebuild take the document with one conditional UPDATE first; a
---      claim older than five minutes is free again. Backfill: none — every
---      row starts unclaimed.
+--      / ingest_claimed_at: every ingest batch and the rev-up refresh take the
+--      document with one conditional UPDATE first (the drawing rebuild is to
+--      take it once I-07 moves it onto resetKnowledgeIndex; today it resets
+--      without it); a claim older than five minutes is free again. Backfill:
+--      none — every row starts unclaimed. ingest_failures: failed batches in
+--      a row (ING-8) — a failed batch is retried automatically after a
+--      back-off, and only the third failure in a row makes the document
+--      'error'; a committed batch zeroes it.
 --   2. HONEST COUNTERS. empty_pages (pages with no extractable text, kept per
 --      document — ING-11); vision_failed_pages (pages whose AI-vision read
---      failed, retried before the document may be 'ready' — ING-6),
---      vision_retry_after (when those pages are next tried: a back-off after
---      the provider refused a whole retry pass, so a failed retry never
---      errors the document) and vision_partial_accepted (a controller's
---      explicit "accept the partial index"). The shared reset zeroes all of
---      them with vision_pages (ING-12).
+--      failed, retried before the document may be 'ready' — ING-6; the
+--      array's order is the retry queue, least recently tried first),
+--      vision_retry_tried (the pages whose retry failed again since the last
+--      back-off: the retry pass backs off only once every waiting page has
+--      had its try), vision_retry_after (when the document's waiting work is
+--      next tried: a back-off after the provider refused a whole retry round,
+--      so a failed retry never errors the document — and, despite its name,
+--      after a failed batch too, ING-8) and vision_partial_accepted (a
+--      controller's explicit "accept the partial index"). The shared reset
+--      zeroes all of them with vision_pages (ING-12).
 --   3. THE CHUNKER GENERATION (ING-4 / ING-7). knowledge_libraries.chunk_version
 --      (1 = the current chunker, the default for every library; 2 = the
 --      table-aware, page-bridging chunker, chosen per library by an explicit
@@ -40,6 +48,15 @@
 --      mentions, cached line traces (each already cascades from
 --      knowledge_documents). Mirrors that ALREADY name no document are
 --      deleted first, in this paste (the decision's default; counted below).
+--      RESTORE: a backup taken before this paste — or between a controlled
+--      document's delete and the next sync's REMOVE pass — can hold such a
+--      mirror. Once this key exists, restoring that backup fails on it
+--      (23503): the single-shot restore stops at knowledge_documents and
+--      skips every table after it, and the chunked restore refuses the whole
+--      slice. Until the restore drops mirrors whose document it did not
+--      restore (a handoff to I-01, which owns restore), such a backup's
+--      knowledge tables (and the output tables restored after them) do not
+--      come back.
 --   7. REV-UP RESIDUE (ING-3). Page entities and chunks on pages past their
 --      document's page count (left by a revision with fewer sheets) are
 --      deleted; they describe sheets that no longer exist.
@@ -70,8 +87,11 @@ UNION ALL
 SELECT 'knowledge documents with vision_pages > 0 (their chunks predate the source column and read ''text'')', COUNT(*)
   FROM knowledge_documents WHERE vision_pages > 0
 UNION ALL
-SELECT 'knowledge documents in ''indexing'' (the claim backfill population: all start unclaimed)', COUNT(*)
-  FROM knowledge_documents WHERE status = 'indexing'
+SELECT 'knowledge documents in ''indexing'' created in the last day (the claim backfill population, likely live: all start unclaimed)', COUNT(*)
+  FROM knowledge_documents WHERE status = 'indexing' AND created_at >= now() - interval '1 day'
+UNION ALL
+SELECT 'knowledge documents in ''indexing'' created over a day ago (no recent progress likely — the row has no progress timestamp; all start unclaimed, so the next driver resumes them)', COUNT(*)
+  FROM knowledge_documents WHERE status = 'indexing' AND created_at < now() - interval '1 day'
 UNION ALL
 SELECT 'page-entity rows past their document''s page count (deleted by 7)', COUNT(*)
   FROM knowledge_page_entities e JOIN knowledge_documents d ON d.id = e.document_id
@@ -93,11 +113,13 @@ BEGIN;
 -- ── 1. the ingest claim ─────────────────────────────────────────────────────
 ALTER TABLE knowledge_documents ADD COLUMN IF NOT EXISTS ingest_claimed_by TEXT;
 ALTER TABLE knowledge_documents ADD COLUMN IF NOT EXISTS ingest_claimed_at TIMESTAMPTZ;
+ALTER TABLE knowledge_documents ADD COLUMN IF NOT EXISTS ingest_failures INTEGER NOT NULL DEFAULT 0;
 
 -- ── 2. honest counters ──────────────────────────────────────────────────────
 ALTER TABLE knowledge_documents ADD COLUMN IF NOT EXISTS empty_pages INTEGER NOT NULL DEFAULT 0;
 ALTER TABLE knowledge_documents ADD COLUMN IF NOT EXISTS vision_failed_pages INTEGER[] NOT NULL DEFAULT '{}';
 ALTER TABLE knowledge_documents ADD COLUMN IF NOT EXISTS vision_retry_after TIMESTAMPTZ;
+ALTER TABLE knowledge_documents ADD COLUMN IF NOT EXISTS vision_retry_tried INTEGER[] NOT NULL DEFAULT '{}';
 ALTER TABLE knowledge_documents ADD COLUMN IF NOT EXISTS vision_partial_accepted BOOLEAN NOT NULL DEFAULT FALSE;
 
 -- ── 3. the chunker generation ───────────────────────────────────────────────
@@ -153,16 +175,16 @@ DELETE FROM knowledge_chunks c
 COMMIT;
 
 -- ── Verification (read-only) + inventory — ONE result set ───────────────────
-SELECT 'knowledge_documents carries the ingest claim (ingest_claimed_by, ingest_claimed_at)' AS check,
-       (SELECT COUNT(*) = 2 FROM information_schema.columns
+SELECT 'knowledge_documents carries the ingest claim and the failure count (ingest_claimed_by, ingest_claimed_at, ingest_failures)' AS check,
+       (SELECT COUNT(*) = 3 FROM information_schema.columns
          WHERE table_schema = 'public' AND table_name = 'knowledge_documents'
-           AND column_name IN ('ingest_claimed_by', 'ingest_claimed_at')) AS ok,
+           AND column_name IN ('ingest_claimed_by', 'ingest_claimed_at', 'ingest_failures')) AS ok,
        NULL::text AS n
 UNION ALL
-SELECT 'knowledge_documents carries the counters (empty_pages, vision_failed_pages, vision_retry_after, vision_partial_accepted, chunk_version)',
-       (SELECT COUNT(*) = 5 FROM information_schema.columns
+SELECT 'knowledge_documents carries the counters (empty_pages, vision_failed_pages, vision_retry_tried, vision_retry_after, vision_partial_accepted, chunk_version)',
+       (SELECT COUNT(*) = 6 FROM information_schema.columns
          WHERE table_schema = 'public' AND table_name = 'knowledge_documents'
-           AND column_name IN ('empty_pages', 'vision_failed_pages', 'vision_retry_after', 'vision_partial_accepted', 'chunk_version')),
+           AND column_name IN ('empty_pages', 'vision_failed_pages', 'vision_retry_tried', 'vision_retry_after', 'vision_partial_accepted', 'chunk_version')),
        NULL
 UNION ALL
 SELECT 'knowledge_libraries.chunk_version defaults to 1 and admits only 1 or 2',

@@ -58,7 +58,7 @@ const docRow = (over: Row = {}): Row => ({
   pages_indexed: 0, page_count: null, last_section: null, created_by: "u-ctrl", created_at: "2026-09-30", error: null,
   source_id: null, source_document_id: null, source_version_id: null, source_rev: null,
   vision_pages: 0, empty_pages: 0, vision_failed_pages: [], vision_partial_accepted: false, chunk_version: null,
-  vision_retry_after: null, ingest_claimed_by: null, ingest_claimed_at: null, ...over,
+  vision_retry_after: null, vision_retry_tried: [], ingest_failures: 0, ingest_claimed_by: null, ingest_claimed_at: null, ...over,
 });
 const seed = (doc: Row, members: Row[] = [{ org_id: "o1", uid: "u-ctrl", role: "Viewer", roles: ["Viewer", "DocCtrl"], status: "active" }]) =>
   resetDb({
@@ -144,8 +144,11 @@ describe("ING-9 — the server checks the bytes before pdf.js", () => {
     r2.objects.set(KEY, new TextEncoder().encode("%PDF-1.7\n" + "garbage ".repeat(200)));
     const res = await post({ documentId: DOC });
     expect(res.status).toBe(502);
-    expect((await res.json()).error).toMatch(/^Indexing failed: /);
-    expect(rowsOf("knowledge_documents")[0]).toMatchObject({ status: "error" });
+    const body = await res.json();
+    expect(body.error).toMatch(/^Indexing failed: /);
+    // No retry can mend a damaged file (ING-8): straight to 'error'.
+    expect(body.retryAfter).toBeNull();
+    expect(rowsOf("knowledge_documents")[0]).toMatchObject({ status: "error", vision_retry_after: null });
     expect(r2.deleted).toEqual([]);
   });
 
@@ -208,6 +211,34 @@ describe("ING-1 — a failure or an acceptance never lands on a re-pointed revis
     expect(rowsOf("audit_logs")).toEqual([expect.objectContaining({
       action: "KNOWLEDGE_DOC_PARTIAL_ACCEPTED", details: expect.objectContaining({ fileKey: REV3.file_key, sourceVersionId: "ver-3" }),
     })]);
+  });
+});
+
+describe("ING-8 — a failed batch is retried automatically, and says when", () => {
+  const sheets = [drawingSheet(1, ["V-101", "P-201A", "E-301"]), drawingSheet(2, ["V-102", "P-202A", "E-302"])];
+
+  it("a transient failure answers 502 with when it is retried; the document stays 'indexing' and searchable", async () => {
+    seed(docRow({ status: "indexing", pages_indexed: 1, page_count: 2 }));
+    db.tables.knowledge_chunks = [{ id: "c1", document_id: DOC, org_id: "o1", library_id: "kl-1", page: 1, seq: 0, content: "sheet 1" }];
+    r2.objects.set(KEY, await makePdf(sheets));
+    db.hooks.push((op) => op.table === "knowledge_page_entities" && op.kind === "insert"
+      ? { error: { code: "08006", message: "connection reset by peer" } } : undefined);
+    const res = await post({ documentId: DOC });
+    expect(res.status).toBe(502);
+    const body = await res.json();
+    expect(body.error).toMatch(/^Indexing failed: entity insert failed: connection reset by peer/);
+    expect(Date.parse(body.retryAfter)).toBeGreaterThan(Date.now());
+    expect(rowsOf("knowledge_documents")[0]).toMatchObject({ status: "indexing", pages_indexed: 1, ingest_failures: 1, vision_retry_after: body.retryAfter });
+    expect(rowsOf("knowledge_chunks").map((c) => c.id)).toEqual(["c1"]);
+
+    // The next POST inside the back-off: 409 with the reason, nothing done.
+    db.hooks = [];
+    const again = await post({ documentId: DOC });
+    expect(again.status).toBe(409);
+    const blocked = await again.json();
+    expect(blocked).toMatchObject({ failureRetryBlocked: true, failureRetryAfter: body.retryAfter });
+    expect(blocked.error).toMatch(/^entity insert failed: connection reset by peer — indexing is tried again automatically/);
+    expect(rowsOf("knowledge_documents")[0]).toMatchObject({ status: "indexing", pages_indexed: 1, ingest_claimed_by: null });
   });
 });
 
@@ -292,6 +323,19 @@ describe("ING-6 — failed vision pages on the response, and the explicit way ou
     expect(rowsOf("knowledge_documents")[0]).toMatchObject({ status: "indexing", vision_partial_accepted: false, ingest_claimed_by: null });
   });
 
+  it("accept-partial on a document already accepted is refused: no second audit row, no second Bridge pass", async () => {
+    seed(docRow({ status: "indexing", pages_indexed: 3, page_count: 3, vision_failed_pages: [2] }));
+    expect((await post({ documentId: DOC, action: "accept-partial" })).status).toBe(200);
+    vi.mocked(computeForKnowledgeDoc).mockClear();
+    const again = await post({ documentId: DOC, action: "accept-partial" });
+    expect(again.status).toBe(409);
+    expect((await again.json()).error).toMatch(/already accepted/);
+    expect(rowsOf("audit_logs").map((a) => a.action)).toEqual(["KNOWLEDGE_DOC_PARTIAL_ACCEPTED", "KNOWLEDGE_DOC_INDEXED"]);
+    await new Promise((r) => setTimeout(r, 10));
+    expect(vi.mocked(computeForKnowledgeDoc)).not.toHaveBeenCalled();
+    expect(rowsOf("knowledge_documents")[0]).toMatchObject({ status: "ready", vision_partial_accepted: true, ingest_claimed_by: null });
+  });
+
   it("accept-partial refuses when nothing waits, or indexing has not finished", async () => {
     seed(docRow({ status: "indexing", pages_indexed: 3, page_count: 3 }));
     expect((await post({ documentId: DOC, action: "accept-partial" })).status).toBe(409);
@@ -304,6 +348,21 @@ describe("ING-6 — failed vision pages on the response, and the explicit way ou
     const res = await post({ documentId: DOC, action: "accept-partial" }, "viewer");
     expect(res.status).toBe(403);
     expect(rowsOf("knowledge_documents")[0].vision_partial_accepted).toBe(false);
+  });
+
+  it("on a database without 20261122 the note does not promise a retry: the page was indexed with its text layer only", async () => {
+    seed(docRow());
+    const legacyCols = ["ingest_claimed_by", "ingest_claimed_at", "empty_pages", "vision_failed_pages", "vision_partial_accepted", "chunk_version", "vision_retry_after", "vision_retry_tried", "ingest_failures"];
+    db.missingColumns.knowledge_documents = legacyCols;
+    db.tables.knowledge_documents = [Object.fromEntries(Object.entries(docRow()).filter(([k]) => !legacyCols.includes(k)))];
+    r2.objects.set(KEY, await makePdf([null, prosePage("bolting")]));
+    db.tables.ai_connections = [{ org_id: "o1", user_id: "u-ctrl", provider: "anthropic", model: "m", api_key: "k" }];
+    const { transcribePageImage } = await import("@/lib/knowledgeVision");
+    vi.mocked(transcribePageImage).mockRejectedValueOnce(new Error("provider 529 overloaded"));
+    const body = await (await post({ documentId: DOC })).json();
+    expect(body).toMatchObject({ legacy: true, visionFailedPages: [1] });
+    expect(body.visionSkipReason).toMatch(/1 page could not be read by AI vision \(provider 529 overloaded\) — indexed with the text layer only: this database cannot hold them for a retry/);
+    expect(body.visionSkipReason).not.toMatch(/retried automatically/);
   });
 
   it("the response says how many pages AI vision could not read", async () => {

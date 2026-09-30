@@ -16,16 +16,21 @@
 //
 // One driver at a time (ING-2): the engine claims the document per batch. A
 // POST that finds another driver mid-batch WAITS for it (never errors the
-// document) and answers `busy` with the row's progress if it is still held.
+// document) and answers `busy` with the row's progress if it is still held,
+// and `retryAfterMs`: at most how long until that claim is free (a claim a
+// killed invocation left behind stands for the whole TTL) — a caller that
+// keeps meeting `busy` is waiting, not stalled.
 // A file that is not a PDF is refused on its first batch (ING-9 — the
 // engine checks, whichever driver gets there first: another format's bytes
 // before pdf.js sees them, a file with no PDF header once pdf.js cannot open
 // it either; refuseNonPdf is the one refusal). A failed batch is written
 // onto the document only while the row is still the file it read (ING-1 —
-// markIngestFailed). Pages AI vision could not
-// read that cannot be retried right now (no key, or the provider refused
-// again) answer 409 with the plain reason — the document keeps its index
-// and stays 'indexing', never 'error' (ING-6).
+// markIngestFailed), and is retried automatically after a back-off, a
+// bounded number of times, before the document becomes 'error' (ING-8). Pages
+// AI vision could not read that cannot be retried right now (no key, or the
+// provider refused again), and a failed batch still waiting out its back-off,
+// answer 409 with the plain reason — the document keeps its index and its
+// status, never 'error' (ING-6, ING-8).
 
 import { randomUUID } from "node:crypto";
 import { NextRequest, NextResponse } from "next/server";
@@ -203,36 +208,43 @@ export async function POST(req: NextRequest) {
     if (res.done && !res.busy) await onIndexed(doc as Record<string, unknown>, user.id, res.pageCount, res.visionPages);
 
     // Pages AI vision failed to read are said, not swallowed (ING-6) — on
-    // the same channel as the other reasons a page went unread.
+    // the same channel as the other reasons a page went unread. A database
+    // without 20261122 (`legacy`) has nowhere to hold them for a retry: the
+    // page was indexed with its text layer only, and the note says so.
     if (res.visionFailedPages.length > 0) {
       const n = res.visionFailedPages.length;
       const note = `${n} page${n === 1 ? "" : "s"} could not be read by AI vision` +
         (res.visionError ? ` (${res.visionError})` : "") +
-        " — retried automatically; the document is not marked ready until they are read or the partial index is accepted.";
+        (res.legacy
+          ? " — indexed with the text layer only: this database cannot hold them for a retry until migration 20261122 is applied."
+          : " — retried automatically; the document is not marked ready until they are read or the partial index is accepted.");
       visionSkipReason = visionSkipReason ? `${visionSkipReason} ${note}` : note;
     }
 
     const visionCostUsd = visionUsage.inputTokens + visionUsage.outputTokens > 0
       ? estimateCostUsd(visionModel || vision!.model, visionUsage)
       : 0;
-    if (res.visionRetryBlocked) {
-      // Nothing failed and nothing was lost: the reason is on the row and
-      // here. A non-2xx stops the caller's loop with this message instead of
-      // a misleading "stalled" one; the document stays 'indexing'.
+    if (res.visionRetryBlocked || res.failureRetryBlocked) {
+      // Nothing failed now and nothing was lost: the reason is on the row
+      // and here. A non-2xx stops the caller's loop with this message instead
+      // of a misleading "stalled" one; the document keeps its status.
       return NextResponse.json({
-        ...res, visionSkipReason, visionCostUsd, error: res.visionRetryMessage,
+        ...res, visionSkipReason, visionCostUsd, error: res.visionRetryMessage ?? res.failureRetryMessage,
       }, { status: 409 });
     }
     return NextResponse.json({ ...res, visionSkipReason, visionCostUsd });
   } catch (e) {
     const message = (e as Error).message;
     // Only onto the row the failing batch read: a batch a rev-up superseded
-    // mid-flight never stamps 'error' on the new revision (ING-1).
-    await markIngestFailed({
+    // mid-flight never stamps anything on the new revision (ING-1). Under
+    // the bound it is retried automatically (ING-8): `retryAfter` says when.
+    const failed = await markIngestFailed({
       id: doc.id as string, file_key: doc.file_key as string, pages_indexed: (doc.pages_indexed as number | null) ?? 0,
+      status: doc.status as string,
       ...("source_version_id" in doc ? { source_version_id: (doc.source_version_id as string | null) ?? null } : {}),
+      ...("ingest_failures" in doc ? { ingest_failures: (doc.ingest_failures as number | null) ?? 0 } : {}),
     }, e);
-    return bad(`Indexing failed: ${message}`, 502);
+    return NextResponse.json({ error: `Indexing failed: ${message}`, retryAfter: failed.retryAfter }, { status: 502 });
   }
 }
 
@@ -282,6 +294,11 @@ async function acceptPartial(doc: Record<string, unknown>, userId: string) {
     if (lease.kind === "claimed") await releaseIngestLease(id, driver);
     return bad(msg, status);
   };
+  // Already accepted (a double click, a client's retry): nothing to record
+  // twice — no second audit row, no second Bridge pass.
+  if (row.vision_partial_accepted === true || row.status === "ready") {
+    return refuse("This partial index was already accepted — the document is ready.");
+  }
   if (failed.length === 0) return refuse("Nothing to accept — no page is waiting on AI vision.");
   if (Number(row.pages_indexed ?? 0) < Number(row.page_count ?? Infinity)) {
     return refuse("Indexing has not reached the end of this document yet — let it finish first.");
@@ -299,6 +316,7 @@ async function acceptPartial(doc: Record<string, unknown>, userId: string) {
   const known = new Set(Object.keys(row));
   const update = Object.fromEntries(Object.entries({
     vision_partial_accepted: true, status: "ready", error: null, vision_retry_after: null,
+    vision_retry_tried: [], ingest_failures: 0,
     ingest_claimed_by: null, ingest_claimed_at: null,
   }).filter(([k]) => known.has(k)));
   let q = supabaseAdmin.from("knowledge_documents").update(update)

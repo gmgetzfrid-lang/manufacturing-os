@@ -47,7 +47,7 @@ vi.mock("@/lib/ai/usageServer", () => ({ getMonthUsage: vi.fn(), getCapUsd: vi.f
 vi.mock("@/lib/aiInstructionsServer", () => ({ loadOrgInstructionsBlock: vi.fn(async () => "") }));
 vi.mock("@/lib/ai/keyVault", () => ({ openAiKey: (k: string) => k }));
 
-import { syncKnowledgeLibrarySources, syncAllKnowledgeSources } from "@/lib/knowledgeSourceSync";
+import { syncKnowledgeLibrarySources, syncAllKnowledgeSources, KNOWLEDGE_SYNC_BUDGET_MS } from "@/lib/knowledgeSourceSync";
 import { ingestKnowledgeDocBatch, resetKnowledgeIndex, drainKnowledgeIngestQueue } from "@/lib/knowledgeIngest";
 
 const MIRROR = "kd-1";
@@ -69,7 +69,7 @@ const landscape = (): Record<string, Row[]> => ({
     status: "ready", pages_indexed: 3, page_count: 3, last_section: null, created_by: null, created_at: "2026-09-01", error: null,
     source_id: "src-1", source_document_id: "dc-1", source_version_id: "ver-3", source_rev: "3",
     vision_pages: 3, empty_pages: 1, vision_failed_pages: [2], vision_partial_accepted: true, chunk_version: null,
-    vision_retry_after: null, ingest_claimed_by: null, ingest_claimed_at: null,
+    vision_retry_after: null, vision_retry_tried: [], ingest_failures: 0, ingest_claimed_by: null, ingest_claimed_at: null,
   }],
   knowledge_chunks: [1, 2, 3].map((p) => ({ id: `c${p}`, document_id: MIRROR, org_id: "o1", library_id: "kl-1", page: p, seq: 0, content: `rev 3 sheet ${p}` })),
   knowledge_page_entities: [1, 2, 3].map((p) => ({ id: `e${p}`, document_id: MIRROR, org_id: "o1", library_id: "kl-1", page: p, kind: "equipment", tag: `V-14${p}` })),
@@ -262,7 +262,7 @@ describe("ING-3 / DWG-1 — a rev-up drops the whole derived index", () => {
   });
 
   it("on a database without 20261122 the reset still clears the index and resets the old counters", async () => {
-    const cols = ["ingest_claimed_by", "ingest_claimed_at", "empty_pages", "vision_failed_pages", "vision_partial_accepted", "chunk_version", "vision_retry_after"];
+    const cols = ["ingest_claimed_by", "ingest_claimed_at", "empty_pages", "vision_failed_pages", "vision_partial_accepted", "chunk_version", "vision_retry_after", "vision_retry_tried", "ingest_failures"];
     db.missingColumns.knowledge_documents = cols;
     for (const c of cols) delete mirror()[c];
     const res = await resetKnowledgeIndex([MIRROR], { rowUpdate: () => ({ file_key: "x.pdf" }) });
@@ -323,6 +323,24 @@ describe("ILIFE-13 — every library is reached", () => {
     const out = await syncAllKnowledgeSources({ deadlineMs: Date.now() - 1 });
     expect(out.libraries).toBe(0);
     expect(out.unsynced).toBe(30);
+  });
+
+  it("by default it leaves the cron's ingest drain its room: a 15 s budget, not 45", async () => {
+    // The cron runs the drain (40 s) right after the sync, inside a 60 s kill
+    // window: a 45 s sync pushed the drain past it, which loses its batch and
+    // leaves its claim standing for five minutes.
+    expect(KNOWLEDGE_SYNC_BUDGET_MS).toBe(15_000);
+    manyLibraries(30, () => "o1", () => null);
+    const t0 = Date.now();
+    let now = t0;
+    const clock = vi.spyOn(Date, "now").mockImplementation(() => now);
+    // Each library "takes" 4 s.
+    db.hooks.push((op) => { if (op.table === "knowledge_sources" && op.kind === "update") now += 4_000; });
+    try {
+      const out = await syncAllKnowledgeSources();
+      expect(out.libraries).toBe(4);                      // 0, 4, 8, 12 s — the fifth would start at 16 s
+      expect(out.unsynced).toBe(26);
+    } finally { clock.mockRestore(); }
   });
 
   it("without the cursor column it still rotates by the day rather than repeating one prefix", async () => {

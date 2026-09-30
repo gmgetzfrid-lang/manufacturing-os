@@ -344,6 +344,14 @@ export async function syncKnowledgeLibrarySources(libraryId: string): Promise<So
   return out;
 }
 
+/** The sync's default time budget. The maintenance cron runs the ingest
+ *  drain right after it, with its own 40 s deadline, inside the platform's
+ *  60 s kill window — a sync that took 45 s pushed the drain past the kill,
+ *  which loses the batch it is writing and leaves its claim standing for
+ *  INGEST_LEASE_TTL_MS. Fifteen seconds leaves the drain its room; the
+ *  rotation (oldest first) reaches every library over successive runs. */
+export const KNOWLEDGE_SYNC_BUDGET_MS = 15_000;
+
 /** Cron entry: sync every knowledge library that has sources — oldest
  *  first, fair across orgs, bounded by time (ILIFE-13).
  *
@@ -364,7 +372,7 @@ export async function syncAllKnowledgeSources(
 }> {
   const o = typeof opts === "number" ? { maxLibraries: opts } : opts;
   const maxLibraries = o.maxLibraries ?? 500;
-  const deadlineMs = o.deadlineMs ?? Date.now() + 45_000;
+  const deadlineMs = o.deadlineMs ?? Date.now() + KNOWLEDGE_SYNC_BUDGET_MS;
   const out = { libraries: 0, added: 0, refreshed: 0, removed: 0, deferred: 0, unsynced: 0, errors: [] as string[] };
 
   type SourceCursor = { library_id: string; org_id: string; last_synced_at?: string | null };

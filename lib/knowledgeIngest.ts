@@ -22,12 +22,19 @@
 // source_version_id it read, and the pages_indexed it started from. A batch
 // that loses that race withdraws the rows it wrote and reports `superseded`;
 // a driver that finds the claim held reports `busy` — neither ever errors the
-// document. The rev-up refresh and the drawing rebuild take the SAME claim
-// through resetKnowledgeIndex below; a rev-up that finds a batch writing the
-// OLD file does not wait for it — it re-points the row, and that batch's
-// compare-and-set then misses and withdraws what it wrote. The claim lasts
-// one batch, never a document, so the self-imposed deadline below still
-// bounds everything.
+// document. The rev-up refresh takes the SAME claim through
+// resetKnowledgeIndex below (the drawing rebuild is to take it too, once I-07
+// moves app/api/knowledge/drawing/route.ts onto resetKnowledgeIndex; today it
+// resets without it); a rev-up that finds a batch writing the OLD file does
+// not wait for it — it re-points the row, and that batch's compare-and-set
+// then misses and withdraws what it wrote. The claim lasts one batch, never a
+// document, so the self-imposed deadline below still bounds everything.
+//
+// A batch that fails for real (ING-8) is retried AUTOMATICALLY, a bounded
+// number of times: the failure is written on the row with a back-off
+// (markIngestFailed), the document keeps its status — an 'indexing' document
+// stays retrievable — and only after INGEST_FAILURE_MAX_ATTEMPTS failures in a
+// row does it become 'error', for a person.
 
 import { randomUUID } from "node:crypto";
 import { GetObjectCommand, DeleteObjectCommand } from "@aws-sdk/client-s3";
@@ -101,8 +108,18 @@ export interface IngestBatchResult {
   visionFailedPages: number[];
   /** The provider's message for the last failed vision read, if any. */
   visionError: string | null;
+  /** Failed pages a vision-retry batch (ING-6) tried to read again, read or
+   *  not. A retry batch that read none of them may still have moved on: the
+   *  pages it tried go to the back of the queue, so the next batch tries the
+   *  ones waiting longest. */
+  visionRetryAttempts: number;
   /** Another driver holds this document's claim — nothing was done (ING-2). */
   busy: boolean;
+  /** With `busy`: at most how long (ms) until that claim is free. A live
+   *  batch lets go sooner; a claim an invocation the platform killed left
+   *  behind frees itself only then (INGEST_LEASE_TTL_MS), so a caller that
+   *  keeps finding the document busy is waiting, not stalled. */
+  retryAfterMs: number | null;
   /** The row moved under this batch (re-pointed at a new revision, deleted,
    *  or the claim was lost): its writes were withdrawn (ING-1). */
   superseded: boolean;
@@ -115,6 +132,17 @@ export interface IngestBatchResult {
   visionRetryMessage: string | null;
   /** When the failed pages are next tried (ISO), when a back-off holds. */
   visionRetryAfter: string | null;
+  /** An earlier batch of this document failed for real (ING-8) and is
+   *  waiting out its back-off: nothing was done. The document keeps its
+   *  index and its status; the failure is on its row (`error`), and any
+   *  driver tries it again after `failureRetryAfter`. */
+  failureRetryBlocked: boolean;
+  failureRetryMessage: string | null;
+  failureRetryAfter: string | null;
+  /** The batch ran unclaimed, on a database without migration 20261122: no
+   *  claim, and nowhere to hold a failed vision page for a retry (ING-6) —
+   *  such a page is committed with its text layer only. */
+  legacy: boolean;
   /** The stored file is not a PDF at all (ING-9): nothing was indexed; the
    *  caller refuses it through refuseNonPdf. */
   notPdf: SniffedKind | null;
@@ -148,8 +176,15 @@ type KnowledgeDocRow = {
   vision_partial_accepted?: boolean | null;
   /** Which chunker wrote this document's chunks (NULL = 1). */
   chunk_version?: number | null;
-  /** Failed vision pages are not retried before this (ING-6 back-off). */
+  /** Nothing waiting on this document is tried before this: failed vision
+   *  pages after a refused retry pass (ING-6), or the next batch after a
+   *  failed one (ING-8). */
   vision_retry_after?: string | null;
+  /** Failed vision pages whose retry failed again since the last back-off —
+   *  the current round (ING-6). */
+  vision_retry_tried?: number[] | null;
+  /** Failed batches in a row (ING-8); a committed batch zeroes it. */
+  ingest_failures?: number | null;
   /** The controlled document a mirror reflects (for the mention pass). */
   source_document_id?: string | null;
   error?: string | null;
@@ -220,14 +255,19 @@ export async function releaseIngestLease(documentId: string, driver: string): Pr
   return !error;
 }
 
-const pageList = (v: unknown): number[] =>
-  Array.isArray(v) ? [...new Set(v.map(Number).filter((n) => Number.isInteger(n) && n > 0))].sort((a, b) => a - b) : [];
+/** A page list, in queue order (duplicates and junk dropped). The order of
+ *  vision_failed_pages is the retry queue: least recently tried first. */
+const pageQueue = (v: unknown): number[] =>
+  Array.isArray(v) ? [...new Set(v.map(Number).filter((n) => Number.isInteger(n) && n > 0))] : [];
+/** The same pages in page order — what a person reads. */
+const pageList = (v: unknown): number[] => pageQueue(v).sort((a, b) => a - b);
 
 /** The columns 20261122 adds to knowledge_documents — stripped from a write
  *  on a database that has not applied it yet. */
 const INGEST_COLUMNS_20261122 = [
   "ingest_claimed_by", "ingest_claimed_at", "empty_pages", "vision_failed_pages",
-  "vision_partial_accepted", "chunk_version", "vision_retry_after",
+  "vision_partial_accepted", "chunk_version", "vision_retry_after", "vision_retry_tried",
+  "ingest_failures",
 ];
 
 // ── The shared reset (ING-3 / DWG-1 / ING-12) ─────────────────────────────
@@ -249,11 +289,14 @@ const RESET_ROW = {
   status: "stale", error: null, pages_indexed: 0, page_count: null, last_section: null,
   vision_pages: 0, empty_pages: 0, vision_failed_pages: [] as number[],
   vision_partial_accepted: false, chunk_version: null, vision_retry_after: null,
+  vision_retry_tried: [] as number[], ingest_failures: 0,
 };
 
-/** THE reset of a knowledge document's derived index — the one both the
- *  rev-up refresh (lib/knowledgeSourceSync.ts) and the drawing
- *  intelligence "Rebuild index" call, so neither can forget a table again.
+/** THE reset of a knowledge document's derived index — the one the rev-up
+ *  refresh (lib/knowledgeSourceSync.ts) and the library re-index call, and
+ *  the drawing intelligence "Rebuild index" is to call once I-07 moves
+ *  app/api/knowledge/drawing/route.ts onto it (today that rebuild resets
+ *  without the claim), so none can forget a table again.
  *  Under the document's ingest claim, in order:
  *
  *    1. on a rev-up (`purgeLineTraces`), the cached line traces drawn over
@@ -490,12 +533,23 @@ export interface IngestRead {
   /** Absent when the row carries no such column (a pre-20260917 database). */
   sourceVersionId?: string | null;
   pagesIndexed: number;
+  /** The row's status as read. */
+  status?: string;
+  /** Failed batches in a row as read (ING-8); absent on a database without
+   *  20261122, which has nowhere to count them. */
+  failures?: number;
 }
 
-const readOf = (row: { file_key: string; source_version_id?: string | null; pages_indexed?: number | null }): IngestRead => ({
+type ReadableRow = {
+  file_key: string; source_version_id?: string | null; pages_indexed?: number | null;
+  status?: string | null; ingest_failures?: number | null;
+};
+const readOf = (row: ReadableRow): IngestRead => ({
   fileKey: row.file_key,
   pagesIndexed: Number(row.pages_indexed ?? 0),
   ...(row.source_version_id !== undefined ? { sourceVersionId: row.source_version_id ?? null } : {}),
+  ...(typeof row.status === "string" ? { status: row.status } : {}),
+  ...("ingest_failures" in row ? { failures: Number(row.ingest_failures ?? 0) } : {}),
 });
 
 /** THE refusal of a stored file that is not a PDF — one rule for both
@@ -547,35 +601,102 @@ export async function refuseNonPdf(
 }
 
 /** A batch that failed for real — carrying what it read, so the caller that
- *  records the failure writes it only onto that row (`markIngestFailed`). */
+ *  records the failure writes it only onto that row (`markIngestFailed`).
+ *  `permanent`: retrying cannot help (the stored file is a damaged PDF), so
+ *  the document goes straight to 'error'. */
 export class IngestBatchError extends Error {
-  constructor(message: string, readonly read: IngestRead) {
+  constructor(message: string, readonly read: IngestRead, readonly permanent = false) {
     super(message);
     this.name = "IngestBatchError";
   }
 }
 
-/** Record a failed batch on its document: `status: 'error'` with the
- *  message — the route's and the cron drain's one failure write. It is a
- *  compare-and-set on what the batch read (the file, the version and the
- *  resume point; the caller's copy when the batch never got as far as
- *  reading the row), so a batch a rev-up superseded mid-flight can never
- *  stamp its failure onto the re-pointed revision (ING-1). `marked` is false
- *  when the row had moved and was left alone. */
+/** Failed batches in a row that are retried automatically (ING-8). The
+ *  bound is on re-billing: a batch that fails after its page loop has read
+ *  up to its vision budget, and each retry reads those pages again — so at
+ *  most this many times, then the document is 'error' and a person decides. */
+export const INGEST_FAILURE_MAX_ATTEMPTS = 3;
+
+/** How long a failed batch waits before any driver tries it again: ten
+ *  minutes after the first failure, thirty after the second. Long enough
+ *  that the app-shell indicator (every open tab, every two minutes) and the
+ *  library page cannot hot-retry a failure; short enough that a transient
+ *  one (a connection reset, a statement timeout under load) heals the same
+ *  hour, on the cron or the next tab that looks. */
+export const ingestFailureBackoffMs = (attempt: number): number =>
+  10 * 60_000 * 3 ** Math.max(0, attempt - 1);
+
+/** The plain-language record of a failed batch that will be retried. */
+export function ingestFailureMessage(cause: string, attempt: number, retryAfterMs: number, searchable: boolean): string {
+  const mins = Math.max(1, Math.round(retryAfterMs / 60_000));
+  return `${cause} — indexing is tried again automatically in about ${mins} minutes ` +
+    `(attempt ${attempt} of ${INGEST_FAILURE_MAX_ATTEMPTS}).` +
+    (searchable ? " The pages indexed so far stay searchable meanwhile." : "");
+}
+
+/** Record a failed batch on its document — the route's and the cron drain's
+ *  one failure write (ING-8).
+ *
+ *    - Under the bound (INGEST_FAILURE_MAX_ATTEMPTS failures in a row), the
+ *      failure is RETRIED AUTOMATICALLY: the row keeps a queued status — an
+ *      'indexing' document (pages already indexed) stays 'indexing', so it
+ *      stays in Ask; one with nothing indexed yet stays 'pending' / 'stale'
+ *      — and carries the message, the count (`ingest_failures`) and a back-off
+ *      (`vision_retry_after`, ingestFailureBackoffMs) that every driver
+ *      honours before it tries the document again. A committed batch clears
+ *      all three.
+ *    - At the bound, for a failure retrying cannot mend (a damaged PDF), or
+ *      on a database without 20261122 (nowhere to count): `status: 'error'`
+ *      with the message, for a person to re-run.
+ *
+ *  It is a compare-and-set on what the batch read (the file, the version,
+ *  the resume point and the failure count; the caller's copy when the batch
+ *  never got as far as reading the row), so a batch a rev-up superseded mid-
+ *  flight can never stamp its failure onto the re-pointed revision (ING-1),
+ *  and two failures cannot count as one. `marked` is false when the row had
+ *  moved and was left alone; `retryAfter` says when it is tried again. */
 export async function markIngestFailed(
-  doc: { id: string; file_key: string; source_version_id?: string | null; pages_indexed?: number | null },
+  doc: ReadableRow & { id: string },
   e: unknown,
-): Promise<{ marked: boolean; error: string | null }> {
-  const message = (e instanceof Error ? e.message : String(e)).slice(0, 500);
+  nowMs: number = Date.now(),
+): Promise<{ marked: boolean; retryAfter: string | null; error: string | null }> {
+  const cause = (e instanceof Error ? e.message : String(e));
   const read = e instanceof IngestBatchError ? e.read : readOf(doc);
-  let q = supabaseAdmin.from("knowledge_documents")
-    .update({ status: "error", error: message })
-    .eq("id", doc.id).eq("file_key", read.fileKey).eq("pages_indexed", read.pagesIndexed);
-  if (read.sourceVersionId !== undefined) {
-    q = read.sourceVersionId === null ? q.is("source_version_id", null) : q.eq("source_version_id", read.sourceVersionId);
-  }
-  const { data, error } = await q.select("id");
-  return { marked: !error && (data ?? []).length > 0, error: error ? error.message : null };
+  const permanent = e instanceof IngestBatchError && e.permanent;
+  const attempt = (read.failures ?? 0) + 1;
+  const retry = read.failures !== undefined && !permanent && attempt < INGEST_FAILURE_MAX_ATTEMPTS;
+  const wait = ingestFailureBackoffMs(attempt);
+  const retryAfter = retry ? new Date(nowMs + wait).toISOString() : null;
+  const legacyUpdate = { status: "error", error: cause.slice(0, 500) };
+  const update: Record<string, unknown> = read.failures === undefined ? legacyUpdate
+    : retry
+      ? {
+        // A queued status, never 'error': an 'indexing' document stays in
+        // Ask; one with nothing indexed yet stays out of it.
+        status: read.pagesIndexed > 0 ? "indexing" : read.status === "stale" ? "stale" : "pending",
+        error: ingestFailureMessage(cause, attempt, wait, read.pagesIndexed > 0).slice(0, 500),
+        ingest_failures: attempt, vision_retry_after: retryAfter,
+      }
+      : {
+        ...legacyUpdate,
+        error: (attempt >= INGEST_FAILURE_MAX_ATTEMPTS && !permanent
+          ? `${cause} — indexing failed ${attempt} times in a row; re-run it once the cause is fixed.`
+          : cause).slice(0, 500),
+        ingest_failures: attempt, vision_retry_after: null,
+      };
+  const write = (patch: Record<string, unknown>, withCount: boolean) => {
+    let q = supabaseAdmin.from("knowledge_documents").update(patch)
+      .eq("id", doc.id).eq("file_key", read.fileKey).eq("pages_indexed", read.pagesIndexed);
+    if (read.sourceVersionId !== undefined) {
+      q = read.sourceVersionId === null ? q.is("source_version_id", null) : q.eq("source_version_id", read.sourceVersionId);
+    }
+    if (withCount && read.failures !== undefined) q = q.eq("ingest_failures", read.failures);
+    return q.select("id");
+  };
+  let { data, error } = await write(update, true);
+  if (error && isMissingColumn(error)) ({ data, error } = await write(legacyUpdate, false));
+  const marked = !error && (data ?? []).length > 0;
+  return { marked, retryAfter: marked ? retryAfter : null, error: error ? error.message : null };
 }
 
 // ── Re-index a library with a chosen chunker (ING-4 / ING-7) ──────────────
@@ -751,13 +872,22 @@ export async function ingestKnowledgeDocBatch(
       emptyPages: 0,
       emptyPagesTotal: Number(row.empty_pages ?? 0),
       visionPages: 0, visionBudgetSpent: false, stoppedForTime: false,
-      visionFailedPages: failedNow, visionError: null,
-      busy: false, superseded: false,
-      visionRetryBlocked: false, visionRetryMessage: null, visionRetryAfter: null, notPdf: null,
+      visionFailedPages: failedNow, visionError: null, visionRetryAttempts: 0,
+      busy: false, retryAfterMs: null, superseded: false,
+      visionRetryBlocked: false, visionRetryMessage: null, visionRetryAfter: null,
+      failureRetryBlocked: false, failureRetryMessage: null, failureRetryAfter: null,
+      legacy: lease.kind === "unlocked", notPdf: null,
       ...flags,
     };
   };
-  if (lease.kind === "busy") return idle(lease.row, { busy: true });
+  if (lease.kind === "busy") {
+    // How long the holder's claim can still stand — the whole TTL at most.
+    const at = Date.parse(String(lease.row.ingest_claimed_at ?? ""));
+    const retryAfterMs = Number.isFinite(at)
+      ? Math.min(INGEST_LEASE_TTL_MS, Math.max(0, at + INGEST_LEASE_TTL_MS - Date.now()))
+      : INGEST_LEASE_TTL_MS;
+    return idle(lease.row, { busy: true, retryAfterMs });
+  }
   if (lease.kind === "gone") return idle(doc as unknown as Record<string, unknown>, { done: false, superseded: true });
   const claimed = lease.kind === "claimed" ? lease.row : null;
   const leased = claimed !== null;
@@ -795,11 +925,19 @@ export async function ingestKnowledgeDocBatch(
      *  back but files the document behind fresh work in the cron's queue;
      *  a back-off after a refused pass). Written with the batch's compare-
      *  and-set, releasing the claim in the same statement. */
-    const park = async (message: string, retryAfter: string): Promise<IngestBatchResult> => {
+    const park = async (
+      message: string, retryAfter: string,
+      queue?: { failed: number[]; tried: number[]; attempts: number },
+    ): Promise<IngestBatchResult> => {
       if (claimed) {
         const known = new Set(Object.keys(claimed));
         const update = Object.fromEntries(Object.entries({
           error: message.slice(0, 500), vision_retry_after: retryAfter,
+          // Not a failed batch (ING-8): its reads ran and their outcome is
+          // recorded here.
+          ingest_failures: 0,
+          // The rotated queue and the round, when a retry pass ran.
+          ...(queue ? { vision_failed_pages: queue.failed, vision_retry_tried: queue.tried } : {}),
           ingest_claimed_by: null, ingest_claimed_at: null,
         }).filter(([k]) => known.has(k)));
         const { data, error } = await cas(supabaseAdmin.from("knowledge_documents").update(update)).select("id");
@@ -807,11 +945,29 @@ export async function ingestKnowledgeDocBatch(
         if ((data ?? []).length === 0) return idle(asRow, { superseded: true });
         released = true;
       }
-      return idle(asRow, {
+      return idle(queue ? { ...asRow, vision_failed_pages: queue.failed } : asRow, {
         visionRetryBlocked: true, visionRetryMessage: message,
         visionRetryAfter: Date.parse(retryAfter) > Date.now() ? retryAfter : null,
+        visionRetryAttempts: queue?.attempts ?? 0,
       });
     };
+
+    // ── A failed batch waiting out its back-off (ING-8) ──────────────────
+    //    Nothing to do and nothing to write: the failure and when it is next
+    //    tried are on the row already. Checked before anything is
+    //    downloaded, by every driver alike.
+    if (claimed && Number(cur.ingest_failures ?? 0) > 0) {
+      const after = Date.parse(String(cur.vision_retry_after ?? ""));
+      if (Number.isFinite(after) && after > Date.now()) {
+        released = await releaseIngestLease(doc.id, driver);
+        return idle(claimed, {
+          failureRetryBlocked: true,
+          failureRetryMessage: typeof claimed.error === "string" && claimed.error
+            ? claimed.error : "The last indexing attempt failed; it is tried again automatically.",
+          failureRetryAfter: String(cur.vision_retry_after),
+        });
+      }
+    }
 
     // ── The vision retry queue, before anything is downloaded (ING-6) ────
     //    The main pass is through and pages wait on AI vision. A back-off
@@ -867,9 +1023,9 @@ export async function ingestKnowledgeDocBatch(
     } catch (e) {
       // No header where one belongs, and pdf.js cannot open it either: not
       // a PDF. A file that carried the header is a damaged PDF — a real
-      // failure, reported as one.
+      // failure, reported as one, and one no retry can mend (ING-8).
       if (sniffed === "text" || sniffed === "unknown") return await refuse(sniffed);
-      throw e;
+      throw new IngestBatchError(e instanceof Error ? e.message : String(e), readOf(cur), true);
     }
     const pageCount = pdf.numPages;
 
@@ -897,10 +1053,17 @@ export async function ingestKnowledgeDocBatch(
     // upload: every counter restarts from zero here, so no reset path can
     // carry the last generation's vision_pages / empty_pages / failed pages
     // into this one (ING-12, ING-11), even one that forgot to zero them.
-    const failedBefore = genStart ? [] : pageList(cur.vision_failed_pages);
-    const failed = new Set<number>(failedBefore);
+    //
+    // The row's list is a QUEUE, least recently tried first: a page whose
+    // retry fails again goes to the back, so pages that fail every time can
+    // never keep the ones behind them from being tried. `vision_retry_tried`
+    // holds the pages whose retry failed since the last back-off (the round):
+    // the retry pass backs off only once every waiting page has had its try.
+    const queueBefore = genStart ? [] : pageQueue(cur.vision_failed_pages);
+    const failed = new Set<number>(queueBefore);
+    const tried = new Set<number>(genStart ? [] : pageQueue(cur.vision_retry_tried).filter((p) => failed.has(p)));
     const accepted = !genStart && cur.vision_partial_accepted === true;
-    const retryMode = from >= pageCount && failedBefore.length > 0 && !accepted;
+    const retryMode = from >= pageCount && queueBefore.length > 0 && !accepted;
     const baseVisionPages = genStart ? 0 : Number(cur.vision_pages ?? 0);
     const baseEmptyPages = genStart ? 0 : Number(cur.empty_pages ?? 0);
 
@@ -908,10 +1071,15 @@ export async function ingestKnowledgeDocBatch(
     // with — its chunk boundaries never mix — and a document (re)starting at
     // its first page takes its library's current choice. Unclaimed (a
     // database without 20261122) there is nowhere to record it: chunker 1.
+    // A library read that FAILS is not a choice: only a database without the
+    // column falls back to chunker 1 — any other error stops the batch (it is
+    // retried, ING-8), rather than stamping chunker 1 on a chunker-2
+    // library's document, which the next re-index would reset and re-bill.
     let chunkVersion: ChunkerVersion = chunkerVersionOf(cur.chunk_version);
     if (claimed && !retryMode && from === 0) {
       const { data: lib, error: libErr } = await supabaseAdmin
         .from("knowledge_libraries").select("chunk_version").eq("id", cur.library_id).maybeSingle();
+      if (libErr && !isMissingColumn(libErr)) throw new Error(`library chunker could not be read: ${libErr.message}`);
       chunkVersion = libErr ? CHUNKER_LEGACY : chunkerVersionOf((lib as { chunk_version?: unknown } | null)?.chunk_version);
     }
     const tableAware = chunkVersion === CHUNKER_TABLE_AWARE;
@@ -1197,6 +1365,13 @@ export async function ingestKnowledgeDocBatch(
 
     // Pages rewritten by the retry pass, and whether each now holds text.
     const retried = new Map<number, boolean>();
+    // Pages the retry pass tried and could not read again, in the order
+    // tried — they go to the back of the queue.
+    const failedAgain: number[] = [];
+    let attempted = 0;
+    // The retry pass's round ran out: every waiting page failed again since
+    // the last back-off — the next one starts at this commit (ING-6).
+    let roundBackoff: { message: string; after: string } | null = null;
     if (!retryMode) {
       let carried = await storedTail(from);
       for (let p = from + 1; p <= to; p++) {                 // pdf.js pages are 1-based
@@ -1222,9 +1397,18 @@ export async function ingestKnowledgeDocBatch(
       //    pages whose vision call failed. No key = nothing can retry them
       //    here: said on the row, never an error (normally caught above,
       //    before the download).
-      if (!vision) return await park(visionRetryMessage(failedBefore, null), new Date().toISOString());
-      let attempted = 0;
-      for (const p of failedBefore) {
+      if (!vision) return await park(visionRetryMessage(pageList(queueBefore), null), new Date().toISOString());
+      const backoff = () => new Date(Date.now() + VISION_RETRY_BACKOFF_MS).toISOString();
+      // Least recently tried first; a page that already failed this round
+      // waits for the next one.
+      const candidates = queueBefore.filter((p) => !tried.has(p));
+      if (candidates.length === 0) {
+        // Every waiting page failed again this round (normally the batch that
+        // finished the round backed off already): back off now.
+        return await park(visionRetryMessage(pageList(queueBefore), "the provider refused the last retry"),
+          backoff(), { failed: queueBefore, tried: [], attempts: 0 });
+      }
+      for (const p of candidates) {
         if (deadlineMs && Date.now() >= deadlineMs) { stoppedForTime = true; break; }
         const step = await readPage(p, true);
         if (step.stop) {
@@ -1233,8 +1417,9 @@ export async function ingestKnowledgeDocBatch(
         }
         attempted++;
         const read = step.page;
-        if (read.visionFailed) { visionError = read.visionFailed; continue; }
+        if (read.visionFailed) { visionError = read.visionFailed; failedAgain.push(p); tried.add(p); continue; }
         failed.delete(p);
+        tried.delete(p);
         entityRows.push(...read.entities);
         // The section in force where this page begins: the last one written
         // on an earlier page.
@@ -1246,14 +1431,35 @@ export async function ingestKnowledgeDocBatch(
         rows.push(...built.rows);
         retried.set(p, built.hadText);
       }
-      if (attempted > 0 && retried.size === 0) {
-        // Every retry this pass failed again: back off and say so on the row
-        // — the document keeps its index and stays retrievable; the pages
-        // are tried again after the back-off, or a person accepts the
-        // partial index.
-        return await park(visionRetryMessage(failedBefore, visionError),
-          new Date(Date.now() + VISION_RETRY_BACKOFF_MS).toISOString());
+      // The queue after this pass: pages not tried keep their place at the
+      // front, pages that failed again go to the back.
+      const again = new Set(failedAgain);
+      const queueAfter = [...queueBefore.filter((p) => failed.has(p) && !again.has(p)), ...failedAgain];
+      const roundDone = queueAfter.length > 0 && queueAfter.every((p) => tried.has(p));
+      if (roundDone && retried.size === 0) {
+        // Every waiting page failed again since the last back-off: back off
+        // and say so on the row — the document keeps its index and stays
+        // retrievable; the pages are tried again after the back-off, or a
+        // person accepts the partial index.
+        return await park(visionRetryMessage(pageList(queueAfter), visionError), backoff(),
+          { failed: queueAfter, tried: [], attempts: attempted });
       }
+      if (roundDone) {
+        // Pages were read, and the rest have all had their try: the commit
+        // below records the reads AND starts the back-off.
+        // (This batch's own tries may all have read: the cause is then the
+        // earlier refusal, which the row no longer spells out.)
+        roundBackoff = {
+          message: visionRetryMessage(pageList(queueAfter), visionError ?? "the provider refused the last retry"),
+          after: backoff(),
+        };
+        tried.clear();
+      }
+      // Otherwise pages behind the ones that failed again are still waiting
+      // for their try this round: the commit records the rotated queue and
+      // the next batch — no back-off — tries them.
+      failed.clear();
+      for (const p of queueAfter) failed.add(p);
     }
 
     // Everything below advances only as far as the last FULLY processed page
@@ -1266,12 +1472,45 @@ export async function ingestKnowledgeDocBatch(
     // Rows this batch wrote — withdrawn if it turns out to be superseded.
     const insertedChunkIds: string[] = [];
     const insertedEntityIds: string[] = [];
-    const withdraw = async () => {
+    /** Delete exactly the rows this batch inserted. Each delete is checked
+     *  and tried once more; what still fails is returned, never dropped. */
+    const withdraw = async (): Promise<string[]> => {
+      const left: string[] = [];
       for (const [table, ids] of [["knowledge_chunks", insertedChunkIds], ["knowledge_page_entities", insertedEntityIds]] as const) {
         for (let i = 0; i < ids.length; i += 200) {
-          await supabaseAdmin.from(table).delete().in("id", ids.slice(i, i + 200));
+          const slice = ids.slice(i, i + 200);
+          let { error } = await supabaseAdmin.from(table).delete().in("id", slice);
+          if (error) ({ error } = await supabaseAdmin.from(table).delete().in("id", slice));
+          if (error) left.push(`${slice.length} ${table} rows: ${error.message}`);
         }
       }
+      return left;
+    };
+    /** Withdraw, and say so when it could not be done. Under the claim the
+     *  rows a failed withdrawal leaves are cleared before anything else is
+     *  written over them: a re-pointed row's next batch starts a new index
+     *  generation, whose first batch clears the whole derived index, and a
+     *  row that did not move re-clears this batch's range before it writes.
+     *  Unclaimed (a database without 20261122) no batch does a full clear,
+     *  so a row that moved to another file is re-queued through the shared
+     *  reset — every derived row goes, and the new file is read from its
+     *  first page. Returns the failure, or null. */
+    const withdrawOrRequeue = async (): Promise<string | null> => {
+      const left = await withdraw();
+      if (left.length === 0) return null;
+      let note = left.join("; ");
+      if (!leased) {
+        const { data: now } = await supabaseAdmin.from("knowledge_documents").select("*").eq("id", cur.id).maybeSingle();
+        const row = now as Record<string, unknown> | null;
+        const moved = !!row && (row.file_key !== cur.file_key ||
+          (cur.source_version_id !== undefined && "source_version_id" in row && (row.source_version_id ?? null) !== (cur.source_version_id ?? null)));
+        if (moved) {
+          const res = await resetKnowledgeIndex([cur.id]);
+          note += res.reset.length > 0 ? " — the document was re-queued for a full re-index"
+            : ` — it could not be re-queued (${res.errors.join("; ") || "another driver held it"})`;
+        }
+      }
+      return `rows this batch wrote could not be withdrawn: ${note}`;
     };
     const collide = (e: DbError) =>
       !!e && (e.code === "23505" || e.code === "23503" || /duplicate key|violates foreign key/i.test(e.message ?? ""));
@@ -1442,19 +1681,24 @@ export async function ingestKnowledgeDocBatch(
       }
     } catch (e) {
       if (e instanceof IngestSuperseded) {
-        await withdraw();
+        const left = await withdrawOrRequeue();
+        if (left) throw new Error(`superseded (${e.message}), and ${left}`);
         return idle(cur as unknown as Record<string, unknown>, { superseded: true });
       }
       // A real failure writes nothing either: what this batch inserted goes
       // with it (the next attempt rewrites the range anyway), so a batch a
       // rev-up superseded mid-flight leaves none of the old file's rows
       // under the re-pointed revision.
-      await withdraw().catch(() => undefined);
+      const left = await withdrawOrRequeue().catch((w: unknown) => `withdrawal failed: ${(w as Error).message}`);
+      if (left) throw new Error(`${(e as Error).message}; and ${left}`);
       throw e;
     }
 
     // ── Commit: compare-and-set on what this batch read (ING-1) ──────────
-    const failedAfter = [...failed].sort((a, b) => a - b);
+    // The row stores the retry queue (least recently tried first); a person
+    // reads the pages in page order.
+    const failedQueue = [...failed];
+    const failedAfter = [...failedQueue].sort((a, b) => a - b);
     const done = reached >= pageCount && (failedAfter.length === 0 || accepted);
     const emptyTotal = Math.max(0, baseEmptyPages + emptyDelta);
     const docUpdate: Record<string, unknown> = {
@@ -1472,12 +1716,17 @@ export async function ingestKnowledgeDocBatch(
         ...docUpdate,
         vision_pages: baseVisionPages + visionPages,
         empty_pages: emptyTotal,
-        vision_failed_pages: failedAfter,
+        vision_failed_pages: failedQueue,
+        vision_retry_tried: failedQueue.filter((p) => tried.has(p)),
         // A controller's acceptance is written only by accept-partial (under
         // its own claim) and cleared only by a new generation — a batch never
         // writes back a copy it read.
         ...(genStart ? { vision_partial_accepted: false } : {}),
-        vision_retry_after: null,
+        // A committed batch is not a failed one (ING-8), and holds no one
+        // back — unless it finished a vision-retry round (ING-6).
+        ingest_failures: 0,
+        vision_retry_after: roundBackoff?.after ?? null,
+        ...(roundBackoff ? { error: roundBackoff.message.slice(0, 500) } : {}),
         chunk_version: chunkVersion,
         ingest_claimed_by: null, ingest_claimed_at: null,
       };
@@ -1497,7 +1746,8 @@ export async function ingestKnowledgeDocBatch(
       // The row moved under this batch — a rev-up re-pointed it, it was
       // deleted, or the claim was lost. What this batch wrote describes a
       // file the row no longer names: withdraw it, and never touch the row.
-      await withdraw();
+      const left = await withdrawOrRequeue();
+      if (left) throw new Error(`superseded (the document moved before this batch committed), and ${left}`);
       return idle(cur as unknown as Record<string, unknown>, { superseded: true });
     }
     released = leased;
@@ -1526,9 +1776,12 @@ export async function ingestKnowledgeDocBatch(
       pagesReadable: Math.max(0, reached - failedAfter.length),
       emptyPages, emptyPagesTotal: leased ? emptyTotal : emptyPages,
       visionPages, visionBudgetSpent, stoppedForTime,
-      visionFailedPages: failedAfter, visionError,
-      busy: false, superseded: false,
-      visionRetryBlocked: false, visionRetryMessage: null, visionRetryAfter: null, notPdf: null,
+      visionFailedPages: failedAfter, visionError, visionRetryAttempts: attempted,
+      busy: false, retryAfterMs: null, superseded: false,
+      // A commit that finished a retry round says when the rest is tried.
+      visionRetryBlocked: false, visionRetryMessage: roundBackoff?.message ?? null, visionRetryAfter: roundBackoff?.after ?? null,
+      failureRetryBlocked: false, failureRetryMessage: null, failureRetryAfter: null,
+      legacy: !leased, notPdf: null,
     };
   } catch (e) {
     // A real failure leaves carrying what this batch read, so the caller's
@@ -1652,8 +1905,9 @@ export async function drainKnowledgeIngestQueue(opts: {
         const res = await ingestKnowledgeDocBatch(row, sponsor.ctx, opts.deadlineMs);
         // Someone else is indexing it, or it moved under us: not ours now.
         // Failed vision pages this run cannot retry: said on the row, and
-        // the document keeps its index — never an error (ING-6).
-        if (res.busy || res.superseded || res.visionRetryBlocked) break;
+        // the document keeps its index — never an error (ING-6). A failed
+        // batch still waiting out its back-off (ING-8): a later run.
+        if (res.busy || res.superseded || res.visionRetryBlocked || res.failureRetryBlocked) break;
         if (res.notPdf) {
           // The same refusal the interactive route gives (ING-9): an upload
           // leaves nothing behind, a mirror is marked with the message —
@@ -1669,15 +1923,21 @@ export async function drainKnowledgeIngestQueue(opts: {
         // after one batch: four pages a day for a drawing set waiting on
         // forty.
         const reread = Math.max(0, waitingBefore - res.visionFailedPages.length);
-        budget -= processed + reread;
+        // A retry batch whose tries all failed again still moved the queue
+        // on (those pages go to the back; the next batch tries the ones
+        // behind them) — that is work too, and it spent vision calls.
+        budget -= processed + Math.max(reread, res.visionRetryAttempts);
         out.pagesIndexed += processed + reread;
         if (res.done) { out.completed++; break; }
-        // No pages moved = out of time (or stuck). Either way, hand the rest
+        // Nothing moved = out of time (or stuck). Either way, hand the rest
         // to the next run rather than spinning on the same page range.
-        if (processed + reread <= 0 || budget <= 0 || Date.now() > opts.deadlineMs) break;
+        if ((processed + reread <= 0 && res.visionRetryAttempts <= 0) || budget <= 0 || Date.now() > opts.deadlineMs) break;
         row = {
           ...row, pages_indexed: res.resumeAt, page_count: res.pageCount, status: "indexing",
           vision_failed_pages: res.visionFailedPages,
+          // The commit zeroed the failure count; the copy follows it, so a
+          // later failure write compares against what the row holds.
+          ...("ingest_failures" in row ? { ingest_failures: 0 } : {}),
         };
       }
     } catch (e) {

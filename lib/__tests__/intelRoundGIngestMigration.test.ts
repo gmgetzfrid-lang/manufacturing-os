@@ -30,7 +30,7 @@ describe("20261122 — the one-paste shape", () => {
     const inventory = code.slice(temp, begin);
     // Aggregates only — never a customer row.
     const branches = inventory.split(/\bUNION ALL\b/);
-    expect(branches.length).toBe(9);
+    expect(branches.length).toBe(10);
     for (const b of branches) expect(b).toMatch(/COUNT\(/);
     const tail = code.slice(commit + "\nCOMMIT;".length).trim();
     expect(tail.startsWith("SELECT")).toBe(true);
@@ -39,6 +39,18 @@ describe("20261122 — the one-paste shape", () => {
     expect((tail.match(/;/g) ?? []).length).toBe(1);
     // Probes carry ok with n NULL; inventory rows carry ok NULL with n text.
     expect(tail).toMatch(/SELECT 'inventory \(before\): ' \|\| what, NULL, n::text FROM _intel_g22_before;$/);
+  });
+
+  it("the inventory splits 'indexing' documents by age — the lock backfill's likely-live and no-recent-progress populations", () => {
+    const inventory = code.slice(code.indexOf("CREATE TEMP TABLE IF NOT EXISTS _intel_g22_before"), code.indexOf("\nBEGIN;"));
+    expect(inventory).toMatch(/status = 'indexing' AND created_at >= now\(\) - interval '1 day'/);
+    expect(inventory).toMatch(/status = 'indexing' AND created_at < now\(\) - interval '1 day'/);
+  });
+
+  it("the header says what the key does to a restore of an older backup (ILIFE-5), and does not claim the drawing rebuild takes the claim", () => {
+    expect(sql).toMatch(/RESTORE: a backup taken before this paste/);
+    expect(sql).toMatch(/single-shot restore stops at knowledge_documents/);
+    expect(sql).toMatch(/the drawing rebuild is to\s+--\s+take it once I-07 moves it onto resetKnowledgeIndex/);
   });
 
   it("defines no function, policy or trigger (nothing for DB-8 or the search_path pin to track)", () => {
@@ -51,9 +63,11 @@ describe("20261122 — the columns the code reads", () => {
   const cols: Array<[string, string]> = [
     ["knowledge_documents", "ingest_claimed_by TEXT"],
     ["knowledge_documents", "ingest_claimed_at TIMESTAMPTZ"],
+    ["knowledge_documents", "ingest_failures INTEGER NOT NULL DEFAULT 0"],
     ["knowledge_documents", "empty_pages INTEGER NOT NULL DEFAULT 0"],
     ["knowledge_documents", "vision_failed_pages INTEGER[] NOT NULL DEFAULT '{}'"],
     ["knowledge_documents", "vision_retry_after TIMESTAMPTZ"],
+    ["knowledge_documents", "vision_retry_tried INTEGER[] NOT NULL DEFAULT '{}'"],
     ["knowledge_documents", "vision_partial_accepted BOOLEAN NOT NULL DEFAULT FALSE"],
     ["knowledge_documents", "chunk_version SMALLINT"],
     ["knowledge_libraries", "chunk_version SMALLINT NOT NULL DEFAULT 1"],
@@ -70,7 +84,8 @@ describe("20261122 — the columns the code reads", () => {
     const list = /const INGEST_COLUMNS_20261122 = \[([\s\S]*?)\];/.exec(lib)![1];
     const names = [...list.matchAll(/"([a-z_]+)"/g)].map((m) => m[1]);
     expect(names.sort()).toEqual(
-      ["chunk_version", "empty_pages", "ingest_claimed_at", "ingest_claimed_by", "vision_failed_pages", "vision_partial_accepted", "vision_retry_after"],
+      ["chunk_version", "empty_pages", "ingest_claimed_at", "ingest_claimed_by", "ingest_failures", "vision_failed_pages",
+        "vision_partial_accepted", "vision_retry_after", "vision_retry_tried"],
     );
     for (const n of names) expect(code).toMatch(new RegExp(`ALTER TABLE knowledge_documents ADD COLUMN IF NOT EXISTS ${n} `));
   });
