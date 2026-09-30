@@ -579,11 +579,15 @@ export default function ExecutionView({
         if (restore.length > 0) {
           announce(`Only ${restore.length} of ${changes.length} task${changes.length === 1 ? "" : "s"} moved (the rest were changed by someone else) — Undo puts ${restore.length === 1 ? "it" : "those"} back · ${message}`, undoOf(restore, res.updatedAt), "warning");
         }
+      } else {
+        // Refused whole (a stale view, a lock, an error): nothing moved and the
+        // bar snaps back on the reload — say why on the board itself (PT SCH-7).
+        notify(res.error ? `Not moved: ${res.error}` : "Nothing was moved.", "warning");
       }
     } finally {
       setBusy((s) => { const n = new Set(s); for (const c of changes) n.delete(c.id); return n; });
     }
-  }, [onMoveMany, byId, announce]);
+  }, [onMoveMany, byId, announce, notify]);
 
   // Why a task cannot be moved here, or null.
   const lockReason = useCallback((m: Milestone | undefined): string | null => {
@@ -849,7 +853,7 @@ export default function ExecutionView({
           <button
             onClick={() => setShowCritical((v) => !v)}
             title={critical.linked
-              ? "Highlight the critical path: the unfinished tasks on the chain of finish-to-start links that drives the finish date (calendar days — no working calendar)"
+              ? "Highlight the critical path: the unfinished tasks on the chain of finish-to-start links that drives the finish date (working days Mon–Fri — no holiday calendar)"
               : "No dependency links yet, so only the unfinished tasks that end at the finish date are highlighted — add links to see the chain that drives it"}
             className={`inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs font-bold border transition-colors ${showCritical ? "bg-rose-600 text-white border-rose-600" : "bg-[var(--color-surface)] text-rose-700 border-rose-200 hover:border-rose-400"}`}
           >
@@ -1639,7 +1643,7 @@ function Legend() {
         <span className="inline-flex items-center gap-1.5 text-[10px] text-[var(--color-text-muted)]" title="A milestone — a zero-duration marker">
           <span className="w-2.5 h-2.5 rotate-45 bg-slate-700 border border-white" /> Milestone
         </span>
-        <span className="inline-flex items-center gap-1.5 text-[10px] text-[var(--color-text-muted)]" title="On the critical path — the chain of finish-to-start links that drives the finish date (calendar days, no working calendar; a task with no links counts only if it ends at the finish)">
+        <span className="inline-flex items-center gap-1.5 text-[10px] text-[var(--color-text-muted)]" title="On the critical path — the chain of finish-to-start links that drives the finish date (working days Mon–Fri, no holiday calendar; a task with no links counts only if it ends at the finish)">
           <span className="w-3 h-2.5 rounded-sm bg-slate-300 ring-2 ring-rose-500 ring-offset-1" /> Critical path
         </span>
         <span className="inline-flex items-center gap-1.5 text-[10px] text-[var(--color-text-muted)]" title="Finish-to-start dependency between linked tasks">

@@ -74,7 +74,13 @@ export default function ScheduleTab({ orgId, projectId, projectName, projectStat
 
   const [milestones, setMilestones] = useState<Milestone[]>([]);
   const [loading, setLoading] = useState(true);
+  // What the last ACTION said (a refused move, a failed delete …). A reload
+  // never clears it — every handler follows its message with a reload, and a
+  // realtime event reloads at any moment (PT SCH-7 / SCH-17 review): only the
+  // next action, or Dismiss, does. A failed LOAD is its own message, cleared
+  // by the next load that works.
   const [error, setError] = useState<string | null>(null);
+  const [loadError, setLoadError] = useState<string | null>(null);
   const [showGhost, setShowGhost] = useState(true);
   const [adding, setAdding] = useState(false);
   const [importOpen, setImportOpen] = useState(false);
@@ -90,11 +96,11 @@ export default function ScheduleTab({ orgId, projectId, projectName, projectStat
   // loading state on the very first load (initialized true), then keep the view
   // mounted and let the data update in place.
   const refresh = useCallback(async () => {
-    setError(null);
     try {
       const list = await listMilestones({ orgId, projectId, includeGhost: true });
       setMilestones(list);
-    } catch (e) { setError((e as Error).message); }
+      setLoadError(null);
+    } catch (e) { setLoadError((e as Error).message); }
     finally { setLoading(false); }
   }, [orgId, projectId]);
 
@@ -205,7 +211,7 @@ export default function ScheduleTab({ orgId, projectId, projectName, projectStat
   const planProgress = useMemo(() => buildProgressIndex(milestones), [milestones]);
 
   const onSetStatus = async (id: string, status: MilestoneStatus) => {
-    setBusy(true);
+    setBusy(true); setError(null);
     try {
       await setMilestoneStatus({
         id, status,
@@ -227,7 +233,7 @@ export default function ScheduleTab({ orgId, projectId, projectName, projectStat
     if (plan.dependents.length > 0) parts.push(`${plan.dependents.length} task${plan.dependents.length === 1 ? "" : "s"} that depend${plan.dependents.length === 1 ? "s" : ""} on it will lose that link.`);
     if (target && isImportedMilestone(target)) parts.push(`It came from ${target.source}: the next import of a file that still contains it adds it back.`);
     if (!(await appConfirm({ message: parts.join(" "), tone: "danger" }))) return;
-    setBusy(true);
+    setBusy(true); setError(null);
     try { await deleteMilestone(id, userId); await refresh(); }
     catch (e) { setError((e as Error).message); void refresh(); }
     finally { setBusy(false); }
@@ -255,7 +261,7 @@ export default function ScheduleTab({ orgId, projectId, projectName, projectStat
       ? `Replace the baseline ${setOn ? `set on ${setOn} ` : ""}(${baselineNow.rowCount} task${baselineNow.rowCount === 1 ? "" : "s"}) with the current plan? ${keptLine} every "vs plan" figure is measured against the new snapshot.`
       : "Snapshot the current plan as the baseline? Every view will then show how far the schedule drifts from it.";
     if (!(await appConfirm(kept === true || !baselineNow ? msg : { message: msg, tone: "danger" }))) return;
-    setBaselineBusy(true);
+    setBaselineBusy(true); setError(null);
     try {
       const res = await setBaseline({ orgId, projectId, actorUserId: userId, actorUserEmail: userEmail, actorUserRole: userRole });
       if (!res.ok) setError(res.error ?? "Couldn't set baseline.");
@@ -267,9 +273,15 @@ export default function ScheduleTab({ orgId, projectId, projectName, projectStat
 
   return (
     <div className="space-y-4">
-      {error && (
-        <div className="flex items-center gap-2 text-xs text-red-700 bg-red-50 border border-red-200 rounded-lg px-3 py-2">
-          <AlertTriangle className="w-3.5 h-3.5" /> {error}
+      {(error || loadError) && (
+        <div role="alert" className="flex items-center gap-2 text-xs text-red-700 bg-red-50 border border-red-200 rounded-lg px-3 py-2">
+          <AlertTriangle className="w-3.5 h-3.5 shrink-0" />
+          <span className="flex-1 min-w-0">{[error, loadError].filter(Boolean).join(" · ")}</span>
+          {error && (
+            <button type="button" onClick={() => setError(null)} aria-label="Dismiss this message" className="shrink-0 p-0.5 rounded hover:bg-red-100">
+              <X className="w-3.5 h-3.5" />
+            </button>
+          )}
         </div>
       )}
 
@@ -376,6 +388,7 @@ export default function ScheduleTab({ orgId, projectId, projectName, projectStat
           onRefresh={refresh}
           onMoveMany={async (changes, opts): Promise<MoveOutcome> => {
             if (changes.length === 0) return { ok: true };
+            setError(null);
             // The lock: each row's updated_at as this view loaded it (an Undo
             // passes the value its move reported) — PT SCH-7 / SCH-18.
             const loaded = new Map(milestonesRef.current.map((m) => [m.id, m.updatedAt ?? null]));
@@ -429,6 +442,7 @@ export default function ScheduleTab({ orgId, projectId, projectName, projectStat
             }
           }}
           onSetStatus={async (id, status) => {
+            setError(null);
             try {
               await setMilestoneStatus({
                 id, status,
@@ -443,6 +457,7 @@ export default function ScheduleTab({ orgId, projectId, projectName, projectStat
             }
           }}
           onSetProgress={async (id, percent) => {
+            setError(null);
             try {
               await setMilestoneProgress({
                 id, percentComplete: percent,

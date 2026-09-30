@@ -90,3 +90,72 @@ describe("ScheduleTab — the lock, the named rejections and the live channel (P
     expect(tab).toMatch(/const planProgress = useMemo\(\(\) => buildProgressIndex\(milestones\), \[milestones\]\);/);
   });
 });
+
+// ── PT SCH-17 (review fix): 20261107 — a phase delete is all or nothing ────
+const del = readFileSync(join(process.cwd(), "supabase", "migrations", "20261107_prj_roundG_milestone_delete.sql"), "utf8");
+const delLib = readFileSync(join(process.cwd(), "lib", "milestones.ts"), "utf8");
+
+describe("20261107 — delete_milestone_keep_subtree: promote, unlink and delete in one transaction, the DELETE checked (PT SCH-17)", () => {
+  it("one script: inventory temp table before BEGIN, BEGIN … COMMIT, then ONE final SELECT with (check, ok, n)", () => {
+    const temp = del.indexOf("CREATE TEMP TABLE");
+    const begin = del.indexOf("\nBEGIN;");
+    const commit = del.indexOf("\nCOMMIT;");
+    expect(temp).toBeGreaterThan(0);
+    expect(begin).toBeGreaterThan(temp);
+    expect(commit).toBeGreaterThan(begin);
+    const tail = del.slice(commit + "\nCOMMIT;".length);
+    expect(tail).toMatch(/AS check,\s*\n/);
+    expect(tail).toMatch(/ AS ok,\s*\n\s+NULL::text AS n/);
+    expect(tail).toMatch(/UNION ALL\s*\nSELECT "check", NULL::boolean, n FROM prj_roundg_milestone_delete_inventory;\s*$/);
+    // exactly one statement after COMMIT (a ';' inside a probe's LIKE literal is not one)
+    expect((tail.replace(/'(?:[^']|'')*'/g, "''").match(/;/g) ?? []).length).toBe(1);
+    const code = del.replace(/--[^\n]*/g, "").replace(/\$\$[\s\S]*?\$\$/g, "$$$$").replace(/'(?:[^']|'')*'/g, "''");
+    expect(code.match(/(?<!AS |")\bcheck\b(?!")/g) ?? []).toEqual([]);
+  });
+  it("the inventory is aggregate counts only (no customer rows)", () => {
+    const inv = del.slice(del.indexOf("CREATE TEMP TABLE"), del.indexOf("\nBEGIN;"));
+    expect(inv).toMatch(/COUNT\(\*\)::text/);
+    expect(inv).not.toMatch(/SELECT \*/);
+  });
+  it("SECURITY INVOKER (RLS — the delete guard — still decides), search_path pinned, EXECUTE revoked from PUBLIC and anon", () => {
+    expect(del).toMatch(/CREATE OR REPLACE FUNCTION delete_milestone_keep_subtree\(p_id uuid\)\nRETURNS jsonb\nLANGUAGE plpgsql SECURITY INVOKER SET search_path = public AS \$\$/);
+    expect(del).not.toMatch(/SECURITY DEFINER/);
+    expect(del).toMatch(/REVOKE ALL ON FUNCTION delete_milestone_keep_subtree\(uuid\) FROM PUBLIC, anon;\nGRANT EXECUTE ON FUNCTION delete_milestone_keep_subtree\(uuid\) TO authenticated, service_role;/);
+    const body = del.slice(del.indexOf("\nBEGIN;"), del.indexOf("\nCOMMIT;"));
+    expect(body).not.toMatch(/CREATE POLICY|DROP POLICY|CREATE TRIGGER|ALTER TABLE/);
+  });
+  it("the order inside: promote the children, unlink the dependents, then DELETE — and 0 rows deleted RAISEs (rolling both back)", () => {
+    const fn = del.slice(del.indexOf("CREATE OR REPLACE FUNCTION delete_milestone_keep_subtree"), del.indexOf("REVOKE ALL ON FUNCTION"));
+    const promote = fn.indexOf("SET parent_id = v_new_parent");
+    const unlink = fn.indexOf("WHERE x.e <> to_jsonb(p_id::text)");
+    const delAt = fn.indexOf("DELETE FROM milestones WHERE id = p_id;");
+    expect(promote).toBeGreaterThan(0);
+    expect(unlink).toBeGreaterThan(promote);
+    expect(delAt).toBeGreaterThan(unlink);
+    expect(fn.slice(delAt)).toMatch(/^DELETE FROM milestones WHERE id = p_id;\n\s+GET DIAGNOSTICS v_n = ROW_COUNT;\n\s+IF v_n = 0 THEN\n\s+RAISE EXCEPTION 'You cannot delete this task — nothing was changed'\n\s+USING ERRCODE = '42501'/);
+    expect(fn).not.toMatch(/EXCEPTION\s+WHEN/); // nothing swallows the raise
+    // The dependents are scoped like the client's read: the project, or the org for a row with no project.
+    expect(fn).toMatch(/CASE WHEN v_row\.project_id IS NOT NULL THEN d\.project_id = v_row\.project_id\s+ELSE d\.org_id = v_row\.org_id END/);
+  });
+  it("the probes: exists, invoker, pinned, the checked delete, anon refused, authenticated granted, the guard still RESTRICTIVE", () => {
+    for (const probe of [
+      "'delete_milestone_keep_subtree(uuid) exists' AS check",
+      "AND NOT p.prosecdef",
+      "p.proconfig @> ARRAY['search_path=public']",
+      "p.prosrc LIKE '%GET DIAGNOSTICS v_n = ROW_COUNT;%'",
+      "NOT has_function_privilege('anon', 'public.delete_milestone_keep_subtree(uuid)', 'EXECUTE')",
+      "has_function_privilege('authenticated', 'public.delete_milestone_keep_subtree(uuid)', 'EXECUTE')",
+      "AND permissive = 'RESTRICTIVE' AND cmd = 'DELETE'",
+    ]) expect(del).toContain(probe);
+  });
+  it("the client calls it first, and its fallback deletes FIRST with the row read back (source pin)", () => {
+    const fnSrc = delLib.slice(delLib.indexOf("export async function deleteMilestone("), delLib.indexOf("// ─── Reads ──"));
+    const rpc = fnSrc.indexOf('supabase.rpc("delete_milestone_keep_subtree", { p_id: id })');
+    const delFirst = fnSrc.indexOf('.delete().eq("id", id).select("id")');
+    const firstUpdate = fnSrc.indexOf(".update(");
+    expect(rpc).toBeGreaterThan(0);
+    expect(delFirst).toBeGreaterThan(rpc);
+    expect(firstUpdate).toBeGreaterThan(delFirst);
+    expect(fnSrc).toMatch(/if \(!Array\.isArray\(gone\) \|\| gone\.length === 0\) throw new MilestoneDeleteRefusedError\(m\.name\);/);
+  });
+});

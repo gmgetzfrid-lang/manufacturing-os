@@ -900,11 +900,32 @@ export function planMilestoneDelete(
 
 /** Delete one milestone WITHOUT orphaning its subtree (PT SCH-17): its direct
  *  children move up to its parent, every depends_on link to it is removed,
- *  then the row goes — each step a CHECKED write that stops the delete on a
- *  refusal — and the audit row records the prior structure (the parent, each
- *  promoted child, each dependent's links before) so it is recoverable.
- *  Deleting an imported row is allowed (removal is its own explicit action,
- *  DEC-51); the next import of a file that still carries it brings it back. */
+ *  and the row goes — ALL OR NOTHING, and never a silent no-op. A delete the
+ *  database refuses (the RESTRICTIVE milestones_delete_guard: Admin /
+ *  Manager, the row's creator, or someone who manages the project) matches
+ *  no row and returns no error; it used to run AFTER the children had been
+ *  moved and the links stripped, and the audit log then said it was deleted.
+ *
+ *  The work is done by delete_milestone_keep_subtree (20261107, SECURITY
+ *  INVOKER — RLS still decides): one transaction that raises, rolling back
+ *  the re-parent and the unlink, when the DELETE matches no row. On a
+ *  database without it the same steps run here in the CHECKED order: the
+ *  DELETE first, with the deleted row read back (none back = refused, nothing
+ *  changed); the foreign key's ON DELETE SET NULL has then detached the
+ *  children, which are moved under the row's parent; the links go last. A
+ *  step that fails after the delete is named with what already happened.
+ *  The MILESTONE_DELETED audit row is written only once the row is gone, and
+ *  records the prior structure (the parent, each promoted child, each
+ *  dependent's links before) so it is recoverable. Deleting an imported row
+ *  is allowed (removal is its own explicit action, DEC-51); the next import
+ *  of a file that still carries it brings it back. */
+export class MilestoneDeleteRefusedError extends Error {
+  constructor(name: string, detail?: string) {
+    super(`“${name}” was not deleted — you do not have the right to delete it (Admin or Manager, its creator, or someone who manages this project may), or it is already gone${detail ? ` (${detail})` : ""}. Nothing was changed.`);
+    this.name = "MilestoneDeleteRefusedError";
+  }
+}
+
 export async function deleteMilestone(id: string, actorUserId: string): Promise<{ reparented: number; unlinked: number }> {
   const { data: row, error: readErr } = await supabase.from("milestones").select("*").eq("id", id).maybeSingle();
   if (readErr) throw new Error(readErr.message);
@@ -912,9 +933,65 @@ export async function deleteMilestone(id: string, actorUserId: string): Promise<
   const m = rowToMilestone(row as MilestoneRow);
   const newParent = m.parentId && m.parentId !== id ? m.parentId : null;
 
-  // The rows this delete touches: its direct children, and its dependents.
-  // A database without the hierarchy (20260703) or the links (20260715) has
-  // no children / dependents to look after — the column is simply absent.
+  const audit = async (
+    children: Array<{ id: string; name: string }>,
+    dependents: Array<{ id: string; name: string; depends_on: string[] }>,
+    incomplete: string[],
+  ) => {
+    const res = pickResource(m);
+    const SHOWN = 50;
+    await logMilestoneEvent({
+      orgId: m.orgId,
+      milestoneId: m.id!,
+      resourceType: res.resourceType,
+      resourceId: res.resourceId,
+      userId: actorUserId,
+      type: "MILESTONE_DELETED",
+      name: m.name,
+      details: {
+        // The prior structure, so it is recoverable from the audit row.
+        priorParentId: m.parentId ?? null,
+        childrenMovedTo: newParent,
+        children: children.slice(0, SHOWN).map((c) => ({ id: c.id, name: c.name })),
+        childCount: children.length,
+        dependents: dependents.slice(0, SHOWN).map((d) => ({ id: d.id, name: d.name, dependsOnBefore: d.depends_on ?? [] })),
+        dependentCount: dependents.length,
+        dependsOn: m.dependsOn ?? [],
+        plannedStartAt: m.plannedStartAt ?? null, plannedAt: m.plannedAt, source: m.source,
+        ...(incomplete.length > 0 ? { incomplete } : {}),
+      },
+    });
+  };
+
+  // 1. The all-or-nothing RPC (20261107).
+  const { data: rpcData, error: rpcErr } = await supabase.rpc("delete_milestone_keep_subtree", { p_id: id });
+  // Not deployed yet: PostgREST's PGRST202, or Postgres' undefined_function.
+  // (A permission error names the function too — that is a refusal, not absence.)
+  const rpcMissing = !!rpcErr && (rpcErr.code === "PGRST202" || rpcErr.code === "42883"
+    || /could not find the function|function [^ ]*delete_milestone_keep_subtree[^ ]* does not exist/i.test(rpcErr.message ?? ""));
+  if (rpcErr && !rpcMissing) {
+    // The RPC runs in one transaction: whatever it refused, nothing changed.
+    if (rpcErr.code === "42501") throw new MilestoneDeleteRefusedError(m.name);
+    throw new Error(`Could not delete “${m.name}” (${rpcErr.message}) — nothing was changed.`);
+  }
+  if (!rpcErr) {
+    const out = rpcData as null | {
+      deleted?: boolean;
+      children?: Array<{ id: string; name: string }>;
+      dependents?: Array<{ id: string; name: string; depends_on_before?: string[] | null }>;
+    };
+    if (!out || typeof out.deleted !== "boolean") throw new Error(`The delete of “${m.name}” gave no answer — reload the schedule to see whether it went.`);
+    if (!out.deleted) return { reparented: 0, unlinked: 0 }; // already gone
+    const children = out.children ?? [];
+    const dependents = (out.dependents ?? []).map((d) => ({ id: d.id, name: d.name, depends_on: [...(d.depends_on_before ?? [])] }));
+    await audit(children, dependents, []);
+    return { reparented: children.length, unlinked: dependents.length };
+  }
+
+  // 2. Fallback (no 20261107): the same steps, the DELETE first and checked.
+  // The rows it touches, read BEFORE anything is written. A database without
+  // the hierarchy (20260703) or the links (20260715) has no children /
+  // dependents to look after — the column is simply absent.
   const { data: kidRows, error: kidErr } = await supabase.from("milestones").select("id, name").eq("parent_id", id);
   if (kidErr && !looksLikeUnknownColumn(kidErr.message)) throw new Error(`Could not read the sub-tasks (${kidErr.message}) — nothing was deleted.`);
   const children = (kidErr ? [] : (kidRows ?? [])) as Array<{ id: string; name: string }>;
@@ -922,52 +999,40 @@ export async function deleteMilestone(id: string, actorUserId: string): Promise<
   depQ = m.projectId ? depQ.eq("project_id", m.projectId) : depQ.eq("org_id", m.orgId);
   const { data: depRows, error: depErr } = await depQ;
   if (depErr && !looksLikeUnknownColumn(depErr.message)) throw new Error(`Could not read the tasks that depend on it (${depErr.message}) — nothing was deleted.`);
-  // Snapshot each dependent's links BEFORE anything is written — the audit
-  // row records them as they were.
   const dependents = ((depErr ? [] : (depRows ?? [])) as Array<{ id: string; name: string; depends_on: string[] | null }>)
     .filter((r) => r.id !== id)
     .map((r) => ({ id: r.id, name: r.name, depends_on: [...(r.depends_on ?? [])] }));
 
+  const { data: gone, error: delErr } = await supabase.from("milestones").delete().eq("id", id).select("id");
+  if (delErr) throw new Error(`Could not delete “${m.name}” (${delErr.message}) — nothing was changed.`);
+  if (!Array.isArray(gone) || gone.length === 0) throw new MilestoneDeleteRefusedError(m.name);
+
+  // The row is gone. Its children were detached by ON DELETE SET NULL: move
+  // them under its parent; then remove the links. Each failure is named with
+  // what already happened, after the audit row is written.
+  const incomplete: string[] = [];
   const now = new Date().toISOString();
-  if (children.length > 0) {
-    const { error: upErr } = await supabase.from("milestones")
+  const plural = (n: number) => `${n} sub-task${n === 1 ? "" : "s"}`;
+  if (children.length > 0 && newParent) {
+    const { data: moved, error: upErr } = await supabase.from("milestones")
       .update({ parent_id: newParent, updated_at: now, updated_by: actorUserId })
-      .eq("parent_id", id);
-    if (upErr) throw new Error(`Could not move the ${children.length} sub-task${children.length === 1 ? "" : "s"} up a level (${upErr.message}) — nothing was deleted.`);
+      .in("id", children.map((c) => c.id))
+      .select("id");
+    if (upErr) incomplete.push(`its ${plural(children.length)} could not be moved up a level (${upErr.message}) — they are at the top level now`);
+    else if (!Array.isArray(moved) || moved.length < children.length) {
+      const n = children.length - (Array.isArray(moved) ? moved.length : 0);
+      incomplete.push(`${plural(n)} could not be moved up a level — ${n === 1 ? "it is" : "they are"} at the top level now`);
+    }
   }
   for (const d of dependents) {
     const next = (d.depends_on ?? []).filter((x) => x !== id);
     const { error: linkErr } = await supabase.from("milestones")
       .update({ depends_on: next, updated_at: now, updated_by: actorUserId })
       .eq("id", d.id);
-    if (linkErr) throw new Error(`Could not remove the link from “${d.name}” (${linkErr.message}) — the task was not deleted${children.length > 0 ? "; its sub-tasks already moved up a level" : ""}.`);
+    if (linkErr) incomplete.push(`the link from “${d.name}” could not be removed (${linkErr.message}) — it still names the deleted task; remove it in that task's links`);
   }
-
-  const { error: delErr } = await supabase.from("milestones").delete().eq("id", id);
-  if (delErr) throw new Error(delErr.message);
-
-  const res = pickResource(m);
-  const SHOWN = 50;
-  await logMilestoneEvent({
-    orgId: m.orgId,
-    milestoneId: m.id!,
-    resourceType: res.resourceType,
-    resourceId: res.resourceId,
-    userId: actorUserId,
-    type: "MILESTONE_DELETED",
-    name: m.name,
-    details: {
-      // The prior structure, so it is recoverable from the audit row.
-      priorParentId: m.parentId ?? null,
-      childrenMovedTo: newParent,
-      children: children.slice(0, SHOWN).map((c) => ({ id: c.id, name: c.name })),
-      childCount: children.length,
-      dependents: dependents.slice(0, SHOWN).map((d) => ({ id: d.id, name: d.name, dependsOnBefore: d.depends_on ?? [] })),
-      dependentCount: dependents.length,
-      dependsOn: m.dependsOn ?? [],
-      plannedStartAt: m.plannedStartAt ?? null, plannedAt: m.plannedAt, source: m.source,
-    },
-  });
+  await audit(children, dependents, incomplete);
+  if (incomplete.length > 0) throw new Error(`“${m.name}” was deleted, but ${incomplete.join("; ")}.`);
   return { reparented: children.length, unlinked: dependents.length };
 }
 

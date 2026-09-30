@@ -178,6 +178,43 @@ export function afterLagMs(readyMs: number, lagHours: number | null | undefined)
   return t;
 }
 
+// Monday 1970-01-05 00:00 UTC — the working clock's origin.
+const WORK_EPOCH_MS = 4 * DAY_MS;
+
+/** The WORKING clock: milliseconds of Monday-to-Friday time (wall-clock-as-
+ *  UTC) elapsed since a fixed Monday. It runs through every weekday — the
+ *  evening and the night included, like the calendar-day engine — and stops
+ *  from Saturday 00:00 to Monday 00:00, so a Saturday or Sunday instant reads
+ *  the same as the Monday 00:00 after it. The critical path measures gaps and
+ *  float on it (PC SCHED-10): a Friday finish followed by a Monday start is
+ *  a hand-off, not two days of float. No holidays (no project calendar). */
+export function workingTimeMs(ms: number): number {
+  if (!Number.isFinite(ms)) return ms;
+  const since = ms - WORK_EPOCH_MS;
+  const day = Math.floor(since / DAY_MS);
+  const week = Math.floor(day / 7);
+  const dow = day - week * 7; // 0 = Monday … 6 = Sunday
+  const inDay = since - day * DAY_MS;
+  return week * 5 * DAY_MS + (dow < 5 ? dow * DAY_MS + inDay : 5 * DAY_MS);
+}
+
+/** Working time from `fromMs` to `toMs` on the working clock — negative when
+ *  `toMs` is earlier. Saturdays and Sundays are not counted. */
+export function workingGapMs(fromMs: number, toMs: number): number {
+  return workingTimeMs(toMs) - workingTimeMs(fromMs);
+}
+
+/** A stored lag (WORKING hours, negative = lead) as a length on the working
+ *  clock — what afterLagMs walks: a whole working day per WORK_DAY_HOURS,
+ *  then the hours left under a day as clock hours. */
+export function lagWorkingMs(lagHours: number | null | undefined): number {
+  if (typeof lagHours !== "number" || !Number.isFinite(lagHours) || lagHours === 0) return 0;
+  const abs = Math.abs(lagHours);
+  const whole = Math.floor(abs / WORK_DAY_HOURS + 1e-9);
+  const restMs = Math.max(0, Math.round((abs - whole * WORK_DAY_HOURS) * HOUR_MS));
+  return (lagHours > 0 ? 1 : -1) * (whole * DAY_MS + restMs);
+}
+
 /** Add whole calendar days to an instant in UTC, keeping its clock time.
  *  The one date-arithmetic helper the schedule's editors share (PT SCH-12:
  *  local-calendar setDate on a UTC value gains or loses a day across DST). */

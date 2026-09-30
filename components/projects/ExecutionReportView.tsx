@@ -142,7 +142,7 @@ export default function ExecutionReportView({ milestones, orgId, projectId }: { 
             {critical.remainingHours > 0 && <span className="text-[11px] text-[var(--color-text-muted)]">· {Math.round(critical.remainingHours)}h still to do on the chain</span>}
             <span className="ml-auto text-[10px] text-[var(--color-text-faint)]">
               {critical.linked
-                ? `from the finish-to-start links · calendar days, no working calendar${critical.unlinked > 0 ? ` · ${critical.unlinked} task${critical.unlinked === 1 ? " has" : "s have"} no links` : ""}`
+                ? `from the finish-to-start links · working days Mon–Fri, no holidays${critical.unlinked > 0 ? ` · ${critical.unlinked} task${critical.unlinked === 1 ? " has" : "s have"} no links` : ""}`
                 : "no dependency links yet — only the tasks that end at the finish are shown"}
               {critical.cycle ? ` · ${critical.cycle.length} task${critical.cycle.length === 1 ? "" : "s"} in a loop of links left out` : ""}
             </span>

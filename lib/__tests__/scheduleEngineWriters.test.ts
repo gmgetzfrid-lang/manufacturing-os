@@ -12,7 +12,10 @@
 //   PT SCH-18 / SCH-7 — applyMilestoneMoves reads back each moved row's new
 //     updated_at: the lock an Undo of that move sends.
 //   PT SCH-17 — deleting a phase promotes its children, removes every link to
-//     it, records the prior structure, and stops on a refused step.
+//     it, records the prior structure — all or nothing: through the
+//     delete_milestone_keep_subtree RPC (20261107), or, without it, the
+//     DELETE first and checked. A delete RLS filters to 0 rows changes
+//     nothing and writes no MILESTONE_DELETED row.
 //   PT SCH-12 — setTaskDuration does its arithmetic in UTC.
 //   PT SAF-7  — every captured baseline is listed for drift, newest first.
 //
@@ -27,6 +30,9 @@ const db = vi.hoisted(() => ({
   rpcImpl: null as null | ((fn: string, args: Record<string, unknown>) => { data: unknown; error: unknown }),
   failUpdate: null as null | ((table: string, payload: Row, filters: Array<[string, string, unknown]>) => string | null),
   failSelect: null as null | ((table: string) => { message: string; code?: string } | null),
+  // Row-level security on DELETE: false = the policy filters the row out
+  // (PostgREST then deletes nothing and returns no error).
+  deleteAllowed: null as null | ((table: string, row: Row) => boolean),
   clock: 0,
 }));
 
@@ -61,8 +67,12 @@ function builder(table: string) {
     }
     if (state.op === "delete") {
       db.writes.push({ table, method: "delete", payload: null, filters: state.filters.slice() });
-      db.tables[table] = t.filter((r) => !match(r));
-      return { data: null, error: null };
+      const removed = t.filter((r) => match(r) && (db.deleteAllowed ? db.deleteAllowed(table, r) : true));
+      db.tables[table] = t.filter((r) => !removed.includes(r));
+      // milestones.parent_id REFERENCES milestones(id) ON DELETE SET NULL.
+      if (table === "milestones") for (const r of db.tables[table]) if (removed.some((x) => x.id === r.parent_id)) r.parent_id = null;
+      // With .select() PostgREST returns the deleted rows — none when RLS filtered them.
+      return { data: removed, error: null };
     }
     db.writes.push({ table, method: "update", payload: state.payload, filters: state.filters.slice() });
     const err = db.failUpdate?.(table, state.payload as Row, state.filters);
@@ -110,7 +120,7 @@ vi.mock("@/lib/audit", () => ({
 import {
   updateMilestone, applyMilestoneMoves, setTaskDuration, groupTasksUnderParent, deleteMilestone,
   planMilestoneDelete, listBaselineCaptures, currentBaselineSummary, baselineHistoryAvailable,
-  ImportedRowLockedError, DependencyCycleError, MoveConflictError,
+  ImportedRowLockedError, DependencyCycleError, MoveConflictError, MilestoneDeleteRefusedError,
 } from "@/lib/milestones";
 import { computeTreeMove, reflowNodesFromMilestones } from "@/lib/scheduleReflow";
 import type { Milestone } from "@/types/schema";
@@ -120,7 +130,7 @@ const ms = () => db.tables.milestones ?? [];
 const row = (o: Row): Row => ({ org_id: ORG, project_id: PROJECT, status: "planned", source: "manual", depends_on: [], ...o });
 
 beforeEach(() => {
-  db.tables = {}; db.writes = []; db.rpcImpl = null; db.failUpdate = null; db.failSelect = null;
+  db.tables = {}; db.writes = []; db.rpcImpl = null; db.failUpdate = null; db.failSelect = null; db.deleteAllowed = null;
   audited.length = 0;
 });
 
@@ -347,28 +357,102 @@ describe("SCH-17 · deleting a phase never orphans its subtree", () => {
       descendants: 3, newParentId: "root", dependents: [{ id: "x", name: "Handover" }],
     });
   });
-  it("children move up to the phase's parent, the link to it is removed, the audit row records the prior structure", async () => {
-    seed();
-    const res = await deleteMilestone("P", USER);
-    expect(res).toEqual({ reparented: 2, unlinked: 1 });
-    expect(ms().find((r) => r.id === "P")).toBeUndefined();
-    expect(ms().find((r) => r.id === "k1")!.parent_id).toBe("root");
-    expect(ms().find((r) => r.id === "k2")!.parent_id).toBe("root");
-    expect(ms().find((r) => r.id === "g1")!.parent_id).toBe("k2");   // grandchildren keep their parent
-    expect(ms().find((r) => r.id === "x")!.depends_on).toEqual(["k1"]); // no dangling id
-    const a = audited.find((e) => e.type === "MILESTONE_DELETED")!;
-    expect(a.details).toMatchObject({
-      priorParentId: "root", childrenMovedTo: "root", childCount: 2,
-      children: [{ id: "k1", name: "Step 1" }, { id: "k2", name: "Step 2" }],
-      dependents: [{ id: "x", name: "Handover", dependsOnBefore: ["P", "k1"] }],
+  const missing = () => { db.rpcImpl = (fn) => (fn === "delete_milestone_keep_subtree" ? { data: null, error: { code: "PGRST202", message: "Could not find the function public.delete_milestone_keep_subtree(p_id) in the schema cache" } } : { data: null, error: null }); };
+  const deletedAudit = () => audited.filter((e) => e.type === "MILESTONE_DELETED");
+
+  describe("through delete_milestone_keep_subtree (20261107: one transaction, the DELETE checked)", () => {
+    it("calls the RPC with the id; the audit row records the structure it reports; the client writes nothing itself", async () => {
+      seed();
+      const calls: Array<[string, Record<string, unknown>]> = [];
+      db.rpcImpl = (fn, args) => {
+        calls.push([fn, args]);
+        return { data: { deleted: true, reparented: 2, unlinked: 1, prior_parent_id: "root", new_parent_id: "root",
+          children: [{ id: "k1", name: "Step 1" }, { id: "k2", name: "Step 2" }],
+          dependents: [{ id: "x", name: "Handover", depends_on_before: ["P", "k1"] }] }, error: null };
+      };
+      expect(await deleteMilestone("P", USER)).toEqual({ reparented: 2, unlinked: 1 });
+      expect(calls).toEqual([["delete_milestone_keep_subtree", { p_id: "P" }]]);
+      expect(db.writes).toEqual([]);
+      expect(deletedAudit()[0].details).toMatchObject({
+        priorParentId: "root", childrenMovedTo: "root", childCount: 2,
+        children: [{ id: "k1", name: "Step 1" }, { id: "k2", name: "Step 2" }],
+        dependents: [{ id: "x", name: "Handover", dependsOnBefore: ["P", "k1"] }], dependentCount: 1,
+      });
+    });
+    it("a delete the guard refuses (42501, rolled back in the database) — the message says nothing changed; no audit row", async () => {
+      seed();
+      db.rpcImpl = () => ({ data: null, error: { code: "42501", message: "You cannot delete this task — nothing was changed" } });
+      const err = await deleteMilestone("P", USER).then(() => null, (e: unknown) => e);
+      expect(err).toBeInstanceOf(MilestoneDeleteRefusedError);
+      expect((err as Error).message).toMatch(/^“Phase 1” was not deleted — you do not have the right to delete it .* Nothing was changed\.$/);
+      expect(db.writes).toEqual([]);
+      expect(deletedAudit()).toEqual([]);
+    });
+    it("a permission error that names the function is a refusal, never 'not deployed' — no fallback delete runs", async () => {
+      seed();
+      db.rpcImpl = () => ({ data: null, error: { code: "42501", message: "permission denied for function delete_milestone_keep_subtree" } });
+      await expect(deleteMilestone("P", USER)).rejects.toBeInstanceOf(MilestoneDeleteRefusedError);
+      expect(db.writes).toEqual([]);
+    });
+    it("already gone: nothing to do, no audit row; no answer at all is an error, never a success", async () => {
+      seed();
+      db.rpcImpl = () => ({ data: { deleted: false, reparented: 0, unlinked: 0, children: [], dependents: [] }, error: null });
+      expect(await deleteMilestone("P", USER)).toEqual({ reparented: 0, unlinked: 0 });
+      expect(deletedAudit()).toEqual([]);
+      db.rpcImpl = () => ({ data: null, error: null });
+      await expect(deleteMilestone("P", USER)).rejects.toThrow(/gave no answer — reload the schedule/);
+      expect(deletedAudit()).toEqual([]);
     });
   });
-  it("a refused re-parent stops the delete — the phase is still there", async () => {
-    seed();
-    db.failUpdate = (_t, p) => ("parent_id" in p ? "permission denied" : null);
-    await expect(deleteMilestone("P", USER)).rejects.toThrow(/Could not move the 2 sub-tasks up a level \(permission denied\) — nothing was deleted/);
-    expect(ms().find((r) => r.id === "P")).toBeDefined();
-    expect(db.writes.filter((w) => w.method === "delete")).toEqual([]);
+
+  describe("without 20261107: the DELETE runs first and is checked", () => {
+    it("children move up to the phase's parent, the link to it is removed, the audit row records the prior structure", async () => {
+      seed(); missing();
+      const res = await deleteMilestone("P", USER);
+      expect(res).toEqual({ reparented: 2, unlinked: 1 });
+      expect(db.writes[0]).toMatchObject({ table: "milestones", method: "delete", filters: [["id", "eq", "P"]] }); // the delete is the FIRST write
+      expect(ms().find((r) => r.id === "P")).toBeUndefined();
+      expect(ms().find((r) => r.id === "k1")!.parent_id).toBe("root");
+      expect(ms().find((r) => r.id === "k2")!.parent_id).toBe("root");
+      expect(ms().find((r) => r.id === "g1")!.parent_id).toBe("k2");   // grandchildren keep their parent
+      expect(ms().find((r) => r.id === "x")!.depends_on).toEqual(["k1"]); // no dangling id
+      const a = deletedAudit()[0];
+      expect(a.details).toMatchObject({
+        priorParentId: "root", childrenMovedTo: "root", childCount: 2,
+        children: [{ id: "k1", name: "Step 1" }, { id: "k2", name: "Step 2" }],
+        dependents: [{ id: "x", name: "Handover", dependsOnBefore: ["P", "k1"] }],
+      });
+      expect((a.details as Record<string, unknown>).incomplete).toBeUndefined();
+    });
+    it("REVIEW BLOCKER: a delete RLS filters to 0 rows changes NOTHING — children, links as they were; no MILESTONE_DELETED row", async () => {
+      seed(); missing();
+      db.deleteAllowed = (t, r) => !(t === "milestones" && r.id === "P"); // milestones_delete_guard refuses this caller
+      const err = await deleteMilestone("P", USER).then(() => null, (e: unknown) => e);
+      expect(err).toBeInstanceOf(MilestoneDeleteRefusedError);
+      expect((err as Error).message).toMatch(/Nothing was changed\.$/);
+      expect(ms().find((r) => r.id === "P")).toBeDefined();
+      expect(ms().find((r) => r.id === "k1")!.parent_id).toBe("P");
+      expect(ms().find((r) => r.id === "k2")!.parent_id).toBe("P");
+      expect(ms().find((r) => r.id === "x")!.depends_on).toEqual(["P", "k1"]);
+      expect(db.writes.filter((w) => w.method === "update")).toEqual([]);
+      expect(deletedAudit()).toEqual([]);
+    });
+    it("a top-level phase: its children are left at the top level (the foreign key detached them); only the links are written", async () => {
+      seed(); missing();
+      db.tables.milestones.find((r) => r.id === "P")!.parent_id = null;
+      expect(await deleteMilestone("P", USER)).toEqual({ reparented: 2, unlinked: 1 });
+      expect(ms().find((r) => r.id === "k1")!.parent_id).toBeNull();
+      expect(db.writes.filter((w) => w.method === "update" && "parent_id" in (w.payload as Row))).toEqual([]);
+    });
+    it("a step that fails AFTER the delete says what already happened, and the audit row is still written (with what is incomplete)", async () => {
+      seed(); missing();
+      db.failUpdate = (_t, p) => ("parent_id" in p ? "permission denied" : null);
+      await expect(deleteMilestone("P", USER)).rejects.toThrow(/^“Phase 1” was deleted, but its 2 sub-tasks could not be moved up a level \(permission denied\) — they are at the top level now\.$/);
+      expect(ms().find((r) => r.id === "P")).toBeUndefined();
+      expect(ms().find((r) => r.id === "x")!.depends_on).toEqual(["k1"]); // the links still went
+      const a = deletedAudit()[0];
+      expect((a.details as Record<string, unknown>).incomplete).toEqual(["its 2 sub-tasks could not be moved up a level (permission denied) — they are at the top level now"]);
+    });
   });
 });
 

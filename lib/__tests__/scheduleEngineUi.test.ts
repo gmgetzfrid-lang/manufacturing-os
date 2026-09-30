@@ -144,12 +144,12 @@ describe("PERF-5 · the board renders a window of rows, not every row", () => {
 });
 
 describe("SCHED-12 (limb c) · the timeline's critical-path control says what it is", () => {
-  it("the button and the legend name the links and the calendar caveat", async () => {
+  it("the button and the legend name the links and the calendar caveat (working days Mon–Fri, no holidays)", async () => {
     await render(board(schedule));
     const btn = [...host.querySelectorAll("button")].find((b) => b.textContent?.includes("Critical path"));
-    expect(btn?.getAttribute("title")).toMatch(/chain of finish-to-start links that drives the finish date \(calendar days — no working calendar\)/);
+    expect(btn?.getAttribute("title")).toMatch(/chain of finish-to-start links that drives the finish date \(working days Mon–Fri — no holiday calendar\)/);
     const legend = [...host.querySelectorAll("span[title]")].find((s) => (s.getAttribute("title") ?? "").startsWith("On the critical path"));
-    expect(legend?.getAttribute("title")).toMatch(/finish-to-start links .*calendar days, no working calendar/);
+    expect(legend?.getAttribute("title")).toMatch(/finish-to-start links .*working days Mon–Fri, no holiday calendar/);
   });
 });
 
@@ -289,12 +289,20 @@ describe("SCH-7 / SCH-18 · a partly written batch can be undone, and a failed U
     // the Undo was refused for a reason that is not a concurrent edit — and says so
     expect(host.textContent).toMatch(/Couldn't undo: permission denied for table milestones — Only 1 of 2 tasks moved/);
   });
-  it("a batch that moved nothing offers no Undo", async () => {
+  it("a batch that moved nothing offers no Undo — and says why on the board (review: it snapped back silently)", async () => {
     await render(board(phase, { onMoveMany: async () => ({ ok: false, matched: [], error: "Weld was changed by someone else — nothing was moved" }) }));
     const seq = host.querySelector('button[title^="Sequence sub-tasks end-to-end"]') as HTMLButtonElement;
     await act(async () => { seq.click(); });
     await act(async () => { await Promise.resolve(); });
     expect([...host.querySelectorAll("button")].some((b) => b.textContent?.trim() === "Undo")).toBe(false);
+    expect(host.textContent).toMatch(/Not moved: Weld was changed by someone else — nothing was moved/);
+  });
+  it("a refusal with no reason still says nothing moved", async () => {
+    await render(board(phase, { onMoveMany: async () => ({ ok: false }) }));
+    const seq = host.querySelector('button[title^="Sequence sub-tasks end-to-end"]') as HTMLButtonElement;
+    await act(async () => { seq.click(); });
+    await act(async () => { await Promise.resolve(); });
+    expect(host.textContent).toMatch(/Nothing was moved\./);
   });
   it("PT SCH-13: an imported phase is not offered as a parent to group under (source pin; groupTasksUnderParent refuses it too)", () => {
     const src = readFileSync(join(process.cwd(), "components/projects/ExecutionView.tsx"), "utf8");

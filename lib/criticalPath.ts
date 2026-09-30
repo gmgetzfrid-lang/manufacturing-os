@@ -7,48 +7,60 @@
 // engine honours, merged parallel chains into one seam, dropped any driver
 // more than 14 days back, and counted a 90%-done task's hours in full.
 //
-// What this computes: a backward pass over the SCHEDULED network. Each leaf
-// keeps its planned dates; the latest it could be ready without delaying the
-// project finish is
+// What this computes: a backward pass over the SCHEDULED network of the
+// unfinished leaves. Each leaf keeps its planned dates; the latest it could be
+// ready without delaying the finish is
 //
-//     lateReady(n) = min over successors s of (lateStart(s) − lag(n→s)),
-//                    or the project finish when n has no successor
+//     lateReady(n) = min over unfinished successors s of (lateStart(s) − lag(n→s)),
+//                    or the finish when n has none
 //     lateStart(s) = lateReady(s) − occupied(s)
 //
-// and its TOTAL FLOAT is lateReady(n) − ready(n) (reported per leaf).
-// "Ready" is the instant a finish-to-start successor may start
+// and its TOTAL FLOAT is lateReady(n) − ready(n) (reported per leaf). "The
+// finish" here is the latest ready instant of an UNFINISHED leaf: a task that
+// is done (completed, or carrying an actual finish) no longer gates anything,
+// so a completed inspection that still carries the latest planned date does
+// not empty the path, and a finished successor does not constrain its
+// predecessors. "Ready" is the instant a finish-to-start successor may start
 // (scheduleReflow.fsReadyMs: the end of the day for a date-only finish, the
 // instant for a timed one), and lag is the source schedule's own
-// (attributes.source_links, PT SCH-8), stored in WORKING hours and counted
-// as working days Monday–Friday (scheduleReflow.afterLagMs, the rule the
-// cascade applies) — "+5d" is five working days, not 40 elapsed hours.
+// (attributes.source_links, PT SCH-8), stored in WORKING hours and counted as
+// working days Monday–Friday (scheduleReflow.afterLagMs, the rule the cascade
+// applies) — "+5d" is five working days, not 40 elapsed hours.
+//
+// Every gap, occupancy and float is measured on the WORKING clock
+// (scheduleReflow.workingTimeMs: Monday to Friday, the clock stopped over the
+// weekend) — the calendar lag already runs on. Measured in calendar days, a
+// Friday finish followed by a Monday start is two days of "float", so every
+// weekly hand-off broke the chain and the path stopped at the last weekend.
+// Float is reported in working days.
 //
 // The PATH is the chain of DRIVING links traced back from the finish —
 // Primavera's "longest path": start from the unfinished leaves that are ready
-// within the tolerance of the project finish, and follow each predecessor
-// link whose successor starts within the tolerance of that predecessor being
-// ready (+ lag). Per-link, because with no working calendar the calendar-day
-// float of a chain of 08:00–17:00 tasks grows by an overnight gap at every
-// hand-off; a driving link is judged on its own gap (default tolerance: under
-// one calendar day, so the evening-finish / morning-start hand-off drives).
+// within the tolerance of the finish, and follow each predecessor link whose
+// successor starts within the tolerance of that predecessor being ready
+// (+ lag). Per-link, because with no project calendar the float of a chain of
+// 08:00–17:00 tasks grows by an overnight gap at every hand-off; a driving link
+// is judged on its own gap (default tolerance: under one working day, so the
+// evening-finish / morning-start hand-off and the Friday-to-Monday one drive).
 //
-// Calendar days, no working calendar: a weekend gap between two linked tasks
-// is not driving. A leaf with no links only counts when it ends at the
-// finish. Summaries are envelopes: a link to or from a phase applies to
-// every leaf inside it. A loop in the links is reported and left out. Pure.
+// No project calendar: holidays are not skipped. A leaf with no links only
+// counts when it ends at the finish. Summaries are envelopes: a link to or
+// from a phase applies to every leaf inside it. A loop in the links is
+// reported and left out. Pure.
 
 import type { Milestone } from "@/types/schema";
-import { DAY_MS, afterLagMs, fsReadyMs, reflowNodesFromMilestones } from "@/lib/scheduleReflow";
+import { DAY_MS, afterLagMs, fsReadyMs, lagWorkingMs, reflowNodesFromMilestones, workingGapMs, workingTimeMs } from "@/lib/scheduleReflow";
 import { leafPercent } from "@/lib/scheduleProgress";
 
 export interface CriticalPathResult {
   /** Unfinished leaf ids on the driving chain(s) back from the finish — what gates it. */
   ids: Set<string>;
-  /** The project finish (ISO): the latest leaf finish. */
+  /** The schedule's envelope (ISO): the latest leaf finish, finished tasks included. */
   finish: string | null;
   /** Hours still to do on the path: Σ planned hours × (100 − % complete) / 100. */
   remainingHours: number;
-  /** Total float per unfinished leaf, in days (leaves in a loop are absent). */
+  /** Total float per unfinished leaf, in WORKING days — Monday to Friday
+   *  (leaves in a loop are absent). */
   floatDays: Map<string, number>;
   /** Whether any finish-to-start link connects two leaves at all. */
   linked: boolean;
@@ -121,17 +133,19 @@ export function computeCriticalPath(
     }
   }
 
+  // Ready instants (calendar) and, on the working clock, ready / occupied.
   const ready = new Map<string, number>();
-  const occupied = new Map<string, number>();
-  let projectReady = -Infinity, projectFinish = -Infinity;
+  const readyW = new Map<string, number>();
+  const occupiedW = new Map<string, number>();
+  let projectFinish = -Infinity;
   for (const id of leafIds) {
     const m = byId.get(id)!;
     const f = finishMs(m);
     const s = Number.isFinite(startMs(m)) ? startMs(m) : f;
     const r = fsReadyMs(f);
     ready.set(id, r);
-    occupied.set(id, Math.max(0, r - s));
-    projectReady = Math.max(projectReady, r);
+    readyW.set(id, workingTimeMs(r));
+    occupiedW.set(id, Math.max(0, workingGapMs(s, r)));
     projectFinish = Math.max(projectFinish, f);
   }
 
@@ -155,42 +169,53 @@ export function computeCriticalPath(
   const inOrder = new Set(order);
   const cycle = leafIds.filter((id) => !inOrder.has(id));
 
-  const lateReady = new Map<string, number>();
+  // Unfinished and analysable: not completed, no actual finish, not in a loop.
+  const open = (id: string) => {
+    const m = byId.get(id)!;
+    return m.status !== "completed" && !m.actualAt && inOrder.has(id);
+  };
+  // The finish the float is measured against: the latest ready instant of an
+  // UNFINISHED leaf (a completed task's planned date gates nothing).
+  let projectReadyW = -Infinity;
+  for (const id of order) if (open(id)) projectReadyW = Math.max(projectReadyW, readyW.get(id)!);
+
+  const lateReady = new Map<string, number>(); // working clock
   for (let i = order.length - 1; i >= 0; i--) {
     const id = order[i];
-    let lr = projectReady;
+    if (!open(id)) continue;
+    let lr = projectReadyW;
     for (const [s, lag] of succ.get(id) ?? []) {
       const sLate = lateReady.get(s);
-      if (sLate === undefined) continue; // a successor inside a loop does not constrain
-      lr = Math.min(lr, afterLagMs(sLate - occupied.get(s)!, -lag));
+      if (sLate === undefined) continue; // a finished successor, or one inside a loop, does not constrain
+      lr = Math.min(lr, sLate - occupiedW.get(s)! - lagWorkingMs(lag));
     }
     lateReady.set(id, lr);
   }
 
   const floatDays = new Map<string, number>();
   let unlinked = 0;
-  const open = (id: string) => byId.get(id)!.status !== "completed" && inOrder.has(id);
   for (const id of order) {
     if (!open(id)) continue;
-    floatDays.set(id, Math.round(((lateReady.get(id)! - ready.get(id)!) / DAY_MS) * 10) / 10);
+    floatDays.set(id, Math.round(((lateReady.get(id)! - readyW.get(id)!) / DAY_MS) * 10) / 10);
     if (!hasPred.has(id) && !succ.has(id)) unlinked++;
   }
 
-  // The driving chain(s), traced back from the finish through driving links.
+  // The driving chain(s), traced back from the finish through driving links,
+  // each gap measured in working time.
   const preds = new Map<string, Array<{ p: string; lag: number }>>();
   for (const [p, row] of succ) for (const [sId, lag] of row) {
     const arr = preds.get(sId) ?? []; arr.push({ p, lag }); preds.set(sId, arr);
   }
   const ids = new Set<string>();
-  const stack = leafIds.filter((id) => open(id) && projectReady - ready.get(id)! < tolerance);
+  const stack = leafIds.filter((id) => open(id) && projectReadyW - readyW.get(id)! < tolerance);
   while (stack.length) {
     const id = stack.pop()!;
     if (ids.has(id)) continue;
     ids.add(id);
-    const start = ready.get(id)! - occupied.get(id)!;
+    const startW = readyW.get(id)! - occupiedW.get(id)!;
     for (const { p, lag } of preds.get(id) ?? []) {
       if (!open(p) || ids.has(p)) continue;
-      if (start - afterLagMs(ready.get(p)!, lag) < tolerance) stack.push(p);
+      if (startW - workingTimeMs(afterLagMs(ready.get(p)!, lag)) < tolerance) stack.push(p);
     }
   }
   let remainingHours = 0;
