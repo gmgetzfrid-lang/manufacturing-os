@@ -425,7 +425,10 @@ async function writeFeatures(libraryId: string, feats: Record<string, unknown>):
 /** Set / clear the background-continuation marker on a library. Starting a
  *  build in the UI records WHO consented to spend their key; the cron only
  *  ever continues builds carrying that consent. A new consent clears any
- *  hold; a standing consent survives only when the same person renews it.
+ *  hold; a standing consent survives only when the same person renews it,
+ *  and another member's standing consent is never replaced by a plain build
+ *  (only by an explicit `standing` choice, or by clearing it) — the drain
+ *  continues the build on the consent that is already standing.
  *  Returns the write error, if any — a consent that did not record is said. */
 export async function setEmbedBuildMarker(
   libraryId: string, userId: string | null, opts?: { standing?: boolean },
@@ -433,6 +436,9 @@ export async function setEmbedBuildMarker(
   const { feats, error } = await readFeatures(libraryId);
   if (error) return error;
   const prior = parseEmbedBuildMarker(feats.embedBuild);
+  if (userId && opts?.standing === undefined && prior?.valid && prior.standing && prior.userId !== userId) {
+    return null;
+  }
   if (userId) {
     const standing = opts?.standing ?? (prior?.userId === userId && prior.standing === true);
     feats.embedBuild = { userId, at: new Date().toISOString(), ...(standing ? { standing: true } : {}) };

@@ -227,6 +227,19 @@ describe("Round G — the controls", () => {
     expect((await (await POST(req({ action: "keep-current", on: false }))).json()).standing).toBe(false);
     expect((admin.state.tables.knowledge_libraries[0].ai_features as Row).embedBuild).toBeUndefined();
   });
+  it("a plain build never replaces another member's standing consent; an explicit keep-current does", async () => {
+    const OTHER = "0d000000-0000-4000-8000-0000000000bb";
+    const { setEmbedBuildMarker } = await import("@/lib/knowledgeEmbedCore");
+    admin.state.tables.knowledge_libraries[0].ai_features = { embedBuild: { userId: OTHER, at: "2026-09-01T00:00:00Z", standing: true } };
+    expect(await setEmbedBuildMarker(LIB, ME)).toBeNull();
+    expect((admin.state.tables.knowledge_libraries[0].ai_features as { embedBuild: Row }).embedBuild).toMatchObject({ userId: OTHER, standing: true });
+    expect(await setEmbedBuildMarker(LIB, ME, { standing: true })).toBeNull();
+    expect((admin.state.tables.knowledge_libraries[0].ai_features as { embedBuild: Row }).embedBuild).toMatchObject({ userId: ME, standing: true });
+    // a non-standing prior consent is replaced by the new builder, as before
+    admin.state.tables.knowledge_libraries[0].ai_features = { embedBuild: { userId: OTHER, at: "2026-09-01T00:00:00Z" } };
+    await setEmbedBuildMarker(LIB, ME);
+    expect((admin.state.tables.knowledge_libraries[0].ai_features as { embedBuild: Row }).embedBuild).toMatchObject({ userId: ME });
+  });
   it("release: the payer or a controller may stop a background build; another member may not", async () => {
     admin.state.tables.knowledge_libraries[0].ai_features = { embedBuild: { userId: "0d000000-0000-4000-8000-0000000000bb", at: "2026-09-01T00:00:00Z" } };
     principal.isController = false;
