@@ -303,7 +303,7 @@ trying to exclude, and delete the impossible `'app'` branch.
 - The Costs tab and the snapshot use the same rule — ✓ (no source filter on either; the snapshot's EV index is id-keyed over every row, as `CostsTab.tsx` does).
 - A test pins an imported-only fixture — ✓.
 
-**Scope / residual.** `DEC-44` records the rule. Closed by pointer from projects-and-cost `PM-3`. `types/schema.ts` and the migration were evidence only and are untouched.
+**Scope / residual.** `DEC-47` records the rule. Closed by pointer from projects-and-cost `PM-3`. `types/schema.ts` and the migration were evidence only and are untouched.
 
 ---
 

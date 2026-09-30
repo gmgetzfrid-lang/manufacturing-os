@@ -149,7 +149,7 @@ lib/projectSnapshot.ts:49 and lib/projectReport.ts:54 are byte-identical filters
 - `spi` is computed from `lib/milestones.ts` and fed into the snapshot so the SPI branch and the coach's payoff become real — ✓.
 - A test builds a project whose only milestones have `source='p6'` and asserts `milestoneCount > 0`, `overdueMilestones` correct, and the rendered report contains the milestone table — ✓ (the count/overdue/SPI assertions in `projectSnapshot.test.ts`; the rendered table in `projectReport.test.ts`).
 
-**Scope / residual.** `DEC-44`. `lib/milestones.ts` untouched (PC-3/J6).
+**Scope / residual.** `DEC-47`. `lib/milestones.ts` untouched (PC-3/J6).
 
 ---
 
