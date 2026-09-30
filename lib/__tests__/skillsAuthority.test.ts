@@ -16,6 +16,15 @@
 //   * 20261125 — the paste contract, a policy census for both skill tables,
 //     byte-fidelity of the re-created policies (lineDiff), the guards and the
 //     audit trigger.
+//   * fix pass — the audit never copies a PRIVATE skill's words into
+//     audit_logs (every member reads it): skills_audit's details builder is
+//     TRANSCRIBED below, pinned line by line to the SQL, and driven through a
+//     private create, a share request, a private edit, a publish and an
+//     unshare. The guards clear a built-in's author on every write and hold
+//     a restored, unapproved org-wide row for a controller; the controller
+//     tier for ANOTHER user is is_org_controller_for (is_org_controller's
+//     body, lineDiff-pinned); the controllers' new read of private skills is
+//     declared and counted.
 
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { readFileSync, readdirSync } from "node:fs";
@@ -323,14 +332,14 @@ describe("20261125 — paste contract, guards, audit", () => {
     expect(body).toMatch(/OR \(NEW\.visibility = 'org' AND OLD\.visibility IS DISTINCT FROM 'org'\) THEN/);
     expect(body).toMatch(/IF NEW\.enabled AND NOT OLD\.enabled THEN NEW\.disabled_reason := NULL; END IF;/);
   });
-  it("the audit: person-initiated only, definer with a pinned search_path, the text whenever it is written or published", () => {
+  it("the audit: person-initiated only, definer with a pinned search_path, the text only while the row is org-visible", () => {
     const f = body.slice(body.indexOf("CREATE OR REPLACE FUNCTION skills_audit()"));
     expect(f).toMatch(/RETURNS trigger LANGUAGE plpgsql SECURITY DEFINER SET search_path = public AS \$\$/);
     expect(f).toMatch(/IF auth\.uid\(\) IS NULL THEN RETURN NULL; END IF;/);
     expect(f).toMatch(/'SKILL_CREATED'/);
     expect(f).toMatch(/'SKILL_UPDATED'/);
     expect(f).toMatch(/'SKILL_DELETED'/);
-    expect(f).toMatch(/v_details \|\| jsonb_build_object\('instructions', v_row->'instructions', 'patterns', v_row->'config'->'patterns'\)/);
+    expect(f).toMatch(/IF v_shown THEN\s+v_details := v_details \|\| jsonb_build_object\('instructions', v_row->'instructions', 'patterns', v_row->'config'->'patterns'\);/);
     // display only — the collection is recorded, authority was already decided
     expect(f).toMatch(/array_to_string\(COALESCE\(roles, ARRAY\[role\]\), ', '\)/);
     expect(body).toMatch(/CREATE TRIGGER trg_answer_skills_audit\s+AFTER INSERT OR UPDATE OR DELETE ON answer_skills/);
@@ -341,6 +350,165 @@ describe("20261125 — paste contract, guards, audit", () => {
     for (const m of tail.matchAll(/(?:qual|with_check|column_default) (?:NOT )?LIKE '([^']|'')*'/g)) expect(m[0]).not.toMatch(/::/);
     expect(tail).toMatch(/skill_pattern_issue\('\(a\+\)\+b'\) IS NOT NULL/);
     expect(tail).toMatch(/skill_pattern_issue\('\\bWO-\\d\{5\}\\b'\) IS NULL/);
+  });
+});
+
+// ── skills_audit's details, transcribed (every line pinned to the SQL) ─────
+type AuditRow = { org_id: string; visibility: string; name: string; description?: string | null; instructions?: string; config?: { patterns?: string[] }; enabled?: boolean; share_requested?: boolean; builtin_key?: string | null; created_by?: string | null };
+const md5 = (x: string) => `md5:${x.length}:${x.slice(0, 3)}`; // a stand-in: only its presence matters here
+function auditDetails(op: "INSERT" | "UPDATE" | "DELETE", oldRow: AuditRow | null, newRow: AuditRow | null): Record<string, unknown> | null {
+  const vRow = (newRow ?? oldRow)!;
+  const vShown = vRow.visibility === "org";
+  const vWas = oldRow?.visibility === "org";
+  const changed: string[] = [];
+  let prev: Record<string, unknown> | undefined;
+  if (op === "UPDATE") {
+    for (const k of ["name", "description", "instructions", "config", "enabled", "visibility", "share_requested", "builtin_key", "created_by"] as const) {
+      if (JSON.stringify(newRow![k]) !== JSON.stringify(oldRow![k])) changed.push(k);
+    }
+    if (changed.length === 0) return null;
+    prev = {};
+    for (const k of changed) {
+      const o = oldRow as Record<string, unknown>;
+      prev[k] = vWas || !["name", "description", "instructions", "config"].includes(k) ? o[k]
+        : k === "instructions" ? { withheld: "private", length: String(o.instructions ?? "").length, md5: md5(String(o.instructions ?? "")) }
+        : k === "config" ? { withheld: "private", patterns: oldRow!.config?.patterns?.length }
+        : { withheld: "private" };
+    }
+  }
+  let d: Record<string, unknown> = {
+    name: vShown ? vRow.name : vWas ? oldRow!.name : undefined,
+    visibility: vRow.visibility, changed, previous: prev,
+  };
+  if (!vShown && !vWas) d = { ...d, text_withheld: "private" };
+  if (op === "INSERT" || changed.includes("instructions") || changed.includes("config") || (changed.includes("visibility") && vShown)) {
+    d = vShown
+      ? { ...d, instructions: vRow.instructions, patterns: vRow.config?.patterns }
+      : { ...d, instructions_length: vRow.instructions?.length, instructions_md5: vRow.instructions === undefined ? undefined : md5(vRow.instructions), pattern_count: vRow.config?.patterns?.length };
+  }
+  return JSON.parse(JSON.stringify(d)); // jsonb_strip_nulls
+}
+
+describe("fix pass (blocker) — a private skill's words never reach audit_logs", () => {
+  const f = sql25.slice(sql25.indexOf("CREATE OR REPLACE FUNCTION skills_audit()"), sql25.indexOf("DROP TRIGGER IF EXISTS trg_answer_skills_audit"));
+  it("the transcription above IS the function's logic", () => {
+    for (const line of [
+      "v_shown := COALESCE(v_row->>'visibility' = 'org', false);",
+      "v_was := COALESCE(v_old->>'visibility' = 'org', false);",
+      "WHEN v_was OR k NOT IN ('name', 'description', 'instructions', 'config') THEN v_old->k",
+      "WHEN k = 'instructions' THEN jsonb_build_object('withheld', 'private',",
+      "'length', length(v_old->>'instructions'), 'md5', md5(v_old->>'instructions'))",
+      "WHEN k = 'config' THEN jsonb_build_object('withheld', 'private',",
+      "ELSE jsonb_build_object('withheld', 'private')",
+      "'name', CASE WHEN v_shown THEN v_row->'name' WHEN v_was THEN v_old->'name' END,",
+      "IF NOT v_shown AND NOT v_was THEN",
+      "v_details := v_details || jsonb_build_object('text_withheld', 'private');",
+      "IF TG_OP = 'INSERT' OR 'instructions' = ANY(v_changed) OR 'config' = ANY(v_changed)",
+      "OR ('visibility' = ANY(v_changed) AND v_shown) THEN",
+      "v_details := v_details || jsonb_build_object('instructions', v_row->'instructions', 'patterns', v_row->'config'->'patterns');",
+      "'instructions_length', length(v_row->>'instructions'), 'instructions_md5', md5(v_row->>'instructions'),",
+      "v_row->>'id', v_org, auth.uid(), v_email, v_role, jsonb_strip_nulls(v_details));",
+    ]) expect(f, line).toContain(line);
+    // the only paths from a row's words into details are the gated ones above
+    expect(f.match(/v_row->'instructions'/g)).toHaveLength(1);
+    expect(f.match(/v_row->'name'/g)).toHaveLength(1);
+    expect(f.match(/v_old->k/g)).toHaveLength(1);
+    expect(f).not.toMatch(/v_row->'description'/);
+  });
+  const secret = "APPLIES WHEN asked about the Smith dispute. My personal working notes.";
+  const priv: AuditRow = { org_id: ORG, visibility: "private", name: "Smith dispute notes", description: "mine", instructions: secret, share_requested: false };
+  const words = (d: unknown) => JSON.stringify(d);
+  it("a member's private create records that it happened — not its name, description or text", () => {
+    const d = auditDetails("INSERT", null, priv)!;
+    expect(words(d)).not.toContain("Smith");
+    expect(words(d)).not.toContain("working notes");
+    expect(d).toMatchObject({ text_withheld: "private", instructions_length: secret.length, instructions_md5: expect.any(String) });
+  });
+  it("a share request and a private edit record no words — the previous text is withheld too", () => {
+    expect(words(auditDetails("UPDATE", priv, { ...priv, share_requested: true }))).not.toContain("Smith");
+    const edited = auditDetails("UPDATE", priv, { ...priv, instructions: `${secret} More private notes.`, name: "Smith v2" })!;
+    expect(words(edited)).not.toContain("Smith");
+    expect(edited.previous).toMatchObject({ instructions: { withheld: "private", length: secret.length }, name: { withheld: "private" } });
+  });
+  it("a private connection skill records its pattern count, not its patterns", () => {
+    const d = auditDetails("INSERT", null, { org_id: ORG, visibility: "private", name: "Permits", config: { patterns: ["\\bPERMIT-\\d{4}\\b"] } })!;
+    expect(words(d)).not.toContain("PERMIT");
+    expect(d.pattern_count).toBe(1);
+  });
+  it("a controller's publish records the text that now rides every prompt (PR-3 done-when 3)", () => {
+    const d = auditDetails("UPDATE", priv, { ...priv, visibility: "org", share_requested: false })!;
+    expect(d).toMatchObject({ name: "Smith dispute notes", instructions: secret });
+  });
+  it("an unshare names the skill the org could read, and copies no text", () => {
+    const pub = { ...priv, visibility: "org" };
+    const d = auditDetails("UPDATE", pub, { ...pub, visibility: "private" })!;
+    expect(d.name).toBe("Smith dispute notes");
+    expect(d.instructions).toBeUndefined();
+  });
+  it("the org-wide create keeps the full text; a private delete names nothing", () => {
+    expect(auditDetails("INSERT", null, { ...priv, visibility: "org" })).toMatchObject({ instructions: secret, name: "Smith dispute notes" });
+    expect(words(auditDetails("DELETE", priv, null))).not.toContain("Smith");
+  });
+});
+
+describe("fix pass — restored backups, the controller helper, the declared widening", () => {
+  const body = sql25.replace(/--[^\n]*/g, "");
+  it("both guards clear a built-in's author on EVERY write, before the service role's early return", () => {
+    for (const fn of ["link_rules_guard", "answer_skills_guard"]) {
+      const f = body.slice(body.indexOf(`CREATE OR REPLACE FUNCTION ${fn}()`), body.indexOf("$$;", body.indexOf(`CREATE OR REPLACE FUNCTION ${fn}()`)));
+      const clear = f.indexOf("IF NEW.builtin_key IS NOT NULL THEN NEW.created_by := NULL; END IF;");
+      const early = f.indexOf("IF auth.uid() IS NULL THEN RETURN NEW; END IF;");
+      expect(clear, fn).toBeGreaterThan(-1);
+      expect(clear, fn).toBeLessThan(early);
+      // a restored org-wide custom row nobody approved, by a non-controller, waits for a controller;
+      // the helper sits in a NESTED IF, so a person's write never initialises it (clients may not execute it)
+      expect(f, fn).toMatch(/IF TG_OP = 'INSERT' AND auth\.uid\(\) IS NULL AND NEW\.builtin_key IS NULL AND NEW\.visibility = 'org'\s+AND NEW\.shared_by IS NULL THEN\s+IF NOT is_org_controller_for\(NEW\.org_id, NEW\.created_by\) THEN\s+NEW\.visibility := 'private'; NEW\.share_requested := true;\s+END IF;\s+END IF;/);
+      // …and before the sharing stamp, which then clears shared_by for the now-private row
+      expect(f.indexOf("is_org_controller_for"), fn).toBeLessThan(f.indexOf("IF NEW.visibility = 'private' THEN"));
+    }
+  });
+  it("DEC-35: is_org_controller_for is is_org_controller's body with p_uid for auth.uid(), definer, pinned, not callable by clients", () => {
+    const fnBlock = (sql: string, header: string) => {
+      const start = sql.indexOf(header);
+      expect(start, header).toBeGreaterThan(-1);
+      return sql.slice(start, sql.indexOf("$$;", start) + 3);
+    };
+    const base = fnBlock(mig("20260814_documents_delete_controllers.sql"), "CREATE OR REPLACE FUNCTION is_org_controller(p_org uuid)");
+    const mine = fnBlock(sql25, "CREATE OR REPLACE FUNCTION is_org_controller_for(p_org uuid, p_uid uuid)");
+    const { onlyInA, onlyInB } = lineDiff(base, mine);
+    expect(onlyInA).toEqual([
+      "CREATE OR REPLACE FUNCTION is_org_controller(p_org uuid)",
+      "RETURNS boolean LANGUAGE sql STABLE SECURITY DEFINER AS $$",
+      "    WHERE uid = auth.uid()",
+    ]);
+    expect(onlyInB).toEqual([
+      "CREATE OR REPLACE FUNCTION is_org_controller_for(p_org uuid, p_uid uuid)",
+      "RETURNS boolean LANGUAGE sql STABLE SECURITY DEFINER SET search_path = public AS $$",
+      "    WHERE uid = p_uid",
+    ]);
+    for (const r of ["PUBLIC", "anon", "authenticated"]) expect(body).toContain(`REVOKE ALL ON FUNCTION is_org_controller_for(uuid, uuid) FROM ${r};`);
+    expect(body).toContain("GRANT EXECUTE ON FUNCTION is_org_controller_for(uuid, uuid) TO service_role;");
+  });
+  it("the data step decides by the helper; the inventory's spelled-out predicate is is_org_controller's text", () => {
+    const begin = body.indexOf("BEGIN;");
+    const dataStep = body.slice(body.indexOf("UPDATE answer_skills s SET visibility"), body.indexOf("DROP POLICY IF EXISTS answer_skills_select"));
+    expect(dataStep.match(/AND NOT is_org_controller_for\((s|r)\.org_id, (s|r)\.created_by\);/g)).toHaveLength(2);
+    expect(dataStep).not.toMatch(/'Admin'|'DocCtrl'/);
+    // the inventory runs before the helper exists: its literal is the controller predicate, m.-qualified
+    const predicate = "(role IN ('Admin', 'DocCtrl') OR roles && ARRAY['Admin', 'DocCtrl']::text[])";
+    expect(mig("20260814_documents_delete_controllers.sql")).toContain(`      AND ${predicate}`);
+    const inventory = body.slice(0, begin);
+    expect(inventory.split(predicate.replace("(role", "(m.role").replace("OR roles", "OR m.roles")).length - 1).toBe(2);
+    expect(inventory.split(`NOT ${predicate}`).length - 1).toBe(1);
+    // and a probe pins it after apply
+    expect(body).toContain("prosrc LIKE '%(role IN (''Admin'', ''DocCtrl'') OR roles && ARRAY[''Admin'', ''DocCtrl'']::text[])%'");
+  });
+  it("the controllers' new read of private skills is declared in the header and counted per table", () => {
+    expect(sql25).toMatch(/WIDENS ONE READ: controllers \(the\s+-- is_org_controller tier\) now read every PRIVATE skill of their org/);
+    expect(sql25).not.toMatch(/nobody gains/);
+    const inventory = body.slice(0, body.indexOf("BEGIN;"));
+    expect(inventory).toMatch(/'answer_skills private custom packs newly readable by controllers \(WIDENING[^']*', COUNT\(\*\)\s+FROM answer_skills WHERE builtin_key IS NULL AND visibility = 'private'/);
+    expect(inventory).toMatch(/'link_rules private custom skills newly readable by controllers \(WIDENING[^']*', COUNT\(\*\)\s+FROM link_rules WHERE builtin_key IS NULL AND visibility = 'private'/);
   });
 });
 

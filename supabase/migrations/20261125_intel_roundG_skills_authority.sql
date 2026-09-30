@@ -11,7 +11,9 @@
 --
 -- What this file changes (apply after 20261016):
 --   1. Authority (DEC-35: the controller tier is is_org_controller — no role
---      list). A member authors PRIVATE skills; only a controller publishes
+--      list; is_org_controller_for asks the same question about another
+--      user, for the data step and the restore guard). A member authors
+--      PRIVATE skills; only a controller publishes
 --      org-wide or flips a row to 'org'. A member may ASK to share
 --      (share_requested): the row stays private — it rides only its author
 --      and the engine does not run it — and controllers (who read every
@@ -22,7 +24,8 @@
 --   2. Built-ins belong to nobody: created_by NULL, managed by controllers,
 --      never deleted by a person (every seeder restores a missing one — turn
 --      it off instead). Built-ins already carrying a member's uid are
---      released (HUB-2, LNK-7).
+--      released (HUB-2, LNK-7), and the guards clear the author of a
+--      built-in on EVERY write — a restored pre-20261125 backup included.
 --   3. Existing org-wide custom rows whose author is not an active controller
 --      go back to private with a share request, so a controller reviews them
 --      before they reach anyone else again (fail-safe; nothing is deleted).
@@ -30,30 +33,47 @@
 --   4. New custom rows default to 'private' (GOV-2).
 --   5. Guards (BEFORE INSERT OR UPDATE). Sharing is stamped by the database,
 --      not claimed by the client; updated_at is stamped on every update;
---      re-enabling a connection skill clears the engine's note. For a
---      PERSON's write (the service role's seeding and the org restore pass):
+--      re-enabling a connection skill clears the engine's note. A
+--      service-role INSERT of an org-wide custom row nobody approved (the
+--      org restore of a pre-20261125 backup) whose author is not an active
+--      controller arrives private with a share request — the data step's
+--      rule, at the door. For a PERSON's write (the service role's seeding
+--      and the org restore pass):
 --        answer_skills — a new or changed pack, or one being published, is
 --          40-4000 characters and says when it applies (APPLIES WHEN).
 --        link_rules — a new or changed config holds at most 8 patterns of
 --          1-200 characters in the bounded subset compileSkillPatterns
 --          (lib/linkProposalLogic.ts) enforces with the same rules: no
 --          repeated group holding a repeat, an alternation or another group;
---          no lookaround, named group, inline flag or backreference; no
---          unbounded repeat of '.'; no two unbounded repeats side by side;
---          at most 2 unbounded repeats; no repeat bound over 100.
+--          no lookaround, named group, inline flag or backreference; a
+--          repeat bounded above 10 counts as unbounded; no unbounded repeat
+--          of '.'; no two unbounded repeats with only optional atoms between
+--          them; at most 2 unbounded repeats; no repeat bound over 100.
 --          minCoCitations is 1-50. A PATCH of config can no longer bypass
---          the Studio's validation (LNK-6).
+--          the Studio's validation (LNK-6). The subset is a filter, not a
+--          proof of linear time: the engine runs patterns in a worker it
+--          terminates on a hard deadline (lib/customSkillRunner.ts).
 --   6. link_rules.disabled_reason — the engine's note when a skill overran
 --      its per-document time budget and was switched off (LNK-6).
 --   7. Audit (PR-3, LNK-7, GOV-2): every person-initiated create / change /
 --      delete of a skill writes an audit_logs row naming the actor, the skill
 --      and what changed — with the pack text or patterns whenever they are
---      written or published.
+--      written or published AND the row is (or was) org-visible. audit_logs
+--      is readable by every active member of the org, so a PRIVATE skill's
+--      words never go there: its name, description, text and patterns are
+--      recorded as withheld, with the pack's length and md5 and the pattern
+--      count.
 --
 -- NARROWS (members lose org-wide publishing and built-in management;
--- controllers lose built-in DELETE); nobody gains. Pre-apply inventory
+-- controllers lose built-in DELETE) and WIDENS ONE READ: controllers (the
+-- is_org_controller tier) now read every PRIVATE skill of their org — the
+-- share requests are theirs to decide, and a decision that leaves a row
+-- private must read back. The inventory counts, per table, the private
+-- custom skills that become controller-readable. Pre-apply inventory
 -- (DEC-30) is captured into a TEMP TABLE before the transaction: aggregate
--- counts only. Single paste: inventory -> BEGIN/DDL/COMMIT -> ONE SELECT
+-- counts only. The inventory runs before is_org_controller_for exists, so
+-- it spells the controller predicate out; a probe pins that text to
+-- is_org_controller's and is_org_controller_for's bodies. Single paste: inventory -> BEGIN/DDL/COMMIT -> ONE SELECT
 -- (check text, ok boolean, n text) — the editor shows only the last result.
 -- Every SECURITY DEFINER function pins SET search_path = public. Idempotent.
 -- ─────────────────────────────────────────────────────────────────────────────
@@ -96,7 +116,13 @@ UNION ALL
 SELECT 'active members who are not controllers (lose org-wide skill publishing; keep private authoring and share requests)', COUNT(*)
   FROM org_members
  WHERE status = 'active'
-   AND NOT (role IN ('Admin', 'DocCtrl') OR roles && ARRAY['Admin', 'DocCtrl']::text[]);
+   AND NOT (role IN ('Admin', 'DocCtrl') OR roles && ARRAY['Admin', 'DocCtrl']::text[])
+UNION ALL
+SELECT 'answer_skills private custom packs newly readable by controllers (WIDENING: controllers read every skill of the org)', COUNT(*)
+  FROM answer_skills WHERE builtin_key IS NULL AND visibility = 'private'
+UNION ALL
+SELECT 'link_rules private custom skills newly readable by controllers (WIDENING: controllers read every skill of the org)', COUNT(*)
+  FROM link_rules WHERE builtin_key IS NULL AND visibility = 'private';
 
 BEGIN;
 
@@ -112,20 +138,37 @@ ALTER TABLE link_rules ADD COLUMN IF NOT EXISTS disabled_reason TEXT;
 ALTER TABLE answer_skills ALTER COLUMN visibility SET DEFAULT 'private';
 ALTER TABLE link_rules ALTER COLUMN visibility SET DEFAULT 'private';
 
+-- ── 0b. DEC-35: the controller tier, asked about ANOTHER user ───────────────
+-- is_org_controller reads auth.uid() only, so it cannot say whether a skill's
+-- AUTHOR is a controller. This is its body with p_uid for auth.uid() — a
+-- probe pins the two together. Not callable by clients (it would answer for
+-- any user of any org); the data step runs as the migration owner and the
+-- restore guard as the service role.
+CREATE OR REPLACE FUNCTION is_org_controller_for(p_org uuid, p_uid uuid)
+RETURNS boolean LANGUAGE sql STABLE SECURITY DEFINER SET search_path = public AS $$
+  SELECT EXISTS (
+    SELECT 1 FROM org_members
+    WHERE uid = p_uid
+      AND org_id = p_org
+      AND status = 'active'
+      AND (role IN ('Admin', 'DocCtrl') OR roles && ARRAY['Admin', 'DocCtrl']::text[])
+  );
+$$;
+REVOKE ALL ON FUNCTION is_org_controller_for(uuid, uuid) FROM PUBLIC;
+REVOKE ALL ON FUNCTION is_org_controller_for(uuid, uuid) FROM anon;
+REVOKE ALL ON FUNCTION is_org_controller_for(uuid, uuid) FROM authenticated;
+GRANT EXECUTE ON FUNCTION is_org_controller_for(uuid, uuid) TO service_role;
+
 -- ── 1. data: built-ins belong to nobody; unreviewed org-wide rows go back ───
 UPDATE answer_skills SET created_by = NULL WHERE builtin_key IS NOT NULL AND created_by IS NOT NULL;
 UPDATE link_rules SET created_by = NULL WHERE builtin_key IS NOT NULL AND created_by IS NOT NULL;
 
 UPDATE answer_skills s SET visibility = 'private', share_requested = true, updated_at = now()
  WHERE s.builtin_key IS NULL AND s.visibility = 'org' AND s.shared_by IS NULL
-   AND NOT EXISTS (SELECT 1 FROM org_members m
-                    WHERE m.org_id = s.org_id AND m.uid = s.created_by AND m.status = 'active'
-                      AND (m.role IN ('Admin', 'DocCtrl') OR m.roles && ARRAY['Admin', 'DocCtrl']::text[]));
+   AND NOT is_org_controller_for(s.org_id, s.created_by);
 UPDATE link_rules r SET visibility = 'private', share_requested = true, updated_at = now()
  WHERE r.builtin_key IS NULL AND r.visibility = 'org' AND r.shared_by IS NULL
-   AND NOT EXISTS (SELECT 1 FROM org_members m
-                    WHERE m.org_id = r.org_id AND m.uid = r.created_by AND m.status = 'active'
-                      AND (m.role IN ('Admin', 'DocCtrl') OR m.roles && ARRAY['Admin', 'DocCtrl']::text[]));
+   AND NOT is_org_controller_for(r.org_id, r.created_by);
 
 -- ── 2. authority (IEDGE-3 / GOV-2 / IRLS-3 / ORCH-2 / PR-3 / HUB-2 / LNK-7) ─
 -- Members see org skills and their own; controllers see every skill of the
@@ -217,13 +260,18 @@ CREATE POLICY link_rules_delete ON link_rules FOR DELETE USING (
 -- ── 3. LNK-6: the bounded pattern subset, at the database ───────────────────
 -- Mirrors patternSafetyIssue() in lib/linkProposalLogic.ts rule for rule, on
 -- the same normalised text (escapes -> E, character classes -> C, '(?:' ->
--- '('). It never refuses what the app accepts; the app additionally compiles
--- each pattern and refuses one that matches empty text.
+-- '('; a repeat bounded above 10 -> '*' or '+'; the adjacency view drops
+-- what can match nothing). It never refuses what the app accepts; the app
+-- additionally compiles each pattern and refuses one that matches empty
+-- text. A filter, not a proof: the engine's worker deadline bounds a run.
 CREATE OR REPLACE FUNCTION skill_pattern_issue(p text)
 RETURNS text LANGUAGE plpgsql IMMUTABLE SET search_path = public AS $$
 DECLARE
-  s   text;
-  raw text;
+  s    text;
+  raw  text;
+  u    text;
+  v    text;
+  prev text;
 BEGIN
   IF p IS NULL OR btrim(p) = '' THEN RETURN 'empty pattern'; END IF;
   IF length(p) > 200 THEN RETURN 'longer than 200 characters'; END IF;
@@ -236,11 +284,30 @@ BEGIN
   IF s ~ '\([^()]*[*+?{|][^()]*\)[*+{]' OR s ~ '\)[^()]*\)[*+{]' THEN
     RETURN 'a repeated group may not contain a repeat, an alternation or another group';
   END IF;
-  IF s ~ '\.([*+]|\{[0-9]+,\})' THEN RETURN 'an unbounded repeat of "." is not supported'; END IF;
-  IF s ~ '([*+]|\{[0-9]+,\})\??[^()|*+?{}]([*+]|\{[0-9]+,\})' THEN
+  -- A repeat whose upper bound is above 10 backtracks like an unbounded one.
+  u := regexp_replace(s, '\{0+,0*(1[1-9]|[2-9][0-9]|[1-9][0-9]{2,})\}', '*', 'g');
+  u := regexp_replace(u, '\{0*[1-9][0-9]*,0*(1[1-9]|[2-9][0-9]|[1-9][0-9]{2,})\}', '+', 'g');
+  IF u ~ '\.([*+]|\{[0-9]+,\})' THEN RETURN 'an unbounded repeat of "." is not supported'; END IF;
+  -- The adjacency view: whatever can match nothing is dropped, so two
+  -- repeats with only optional atoms between them are side by side.
+  v := u;
+  LOOP
+    prev := v;
+    v := regexp_replace(v, '\(\|([^()]*)\)', '(\1)?', 'g');
+    v := regexp_replace(v, '\(([^()]*)\|\)', '(\1)?', 'g');
+    v := regexp_replace(v, '\(([^()]*)\|\|([^()]*)\)', '(\1|\2)?', 'g');
+    v := regexp_replace(v, '\([^()]*([*+]|\{[0-9]+,\})[^()]*\)(\?|\{0+(,[0-9]+)?\})', 'C*', 'g');
+    v := regexp_replace(v, '\([^()]*\)(\?|\{0+(,[0-9]+)?\})', '', 'g');
+    v := regexp_replace(v, '[^()|*+?{}](\?|\{0+(,[0-9]+)?\})', '', 'g');
+    v := regexp_replace(v, '\(\)', '', 'g');
+    v := regexp_replace(v, '\([^()]*\)([*+{])', 'C\1', 'g');
+    v := regexp_replace(v, '\(([^()|]*)\)([^*+?{]|$)', '\1\2', 'g');
+    EXIT WHEN v = prev;
+  END LOOP;
+  IF v ~ '([*+]|\{[0-9]+,\})\??[^()|*+?{}]([*+]|\{[0-9]+,\})' THEN
     RETURN 'two unbounded repeats may not sit side by side';
   END IF;
-  IF (SELECT COUNT(*) FROM regexp_matches(s, '[*+]|\{[0-9]+,\}', 'g')) > 2 THEN
+  IF (SELECT COUNT(*) FROM regexp_matches(u, '[*+]|\{[0-9]+,\}', 'g')) > 2 THEN
     RETURN 'more than 2 unbounded repeats';
   END IF;
   IF EXISTS (SELECT 1 FROM regexp_matches(s, '\{([0-9]+)(,([0-9]*))?\}', 'g') AS m(g)
@@ -262,6 +329,18 @@ BEGIN
     NEW.updated_at := now();
     -- Re-enabling a skill the engine switched off clears the engine's note.
     IF NEW.enabled AND NOT OLD.enabled THEN NEW.disabled_reason := NULL; END IF;
+  END IF;
+  -- A built-in belongs to nobody, whoever writes it (a restored backup too).
+  IF NEW.builtin_key IS NOT NULL THEN NEW.created_by := NULL; END IF;
+  -- The service role's INSERT of an org-wide custom row nobody approved (a
+  -- restored pre-20261125 backup) waits for a controller, as the data step
+  -- decided for the rows already here. (Nested: a person's write never
+  -- reaches the helper, which clients may not execute.)
+  IF TG_OP = 'INSERT' AND auth.uid() IS NULL AND NEW.builtin_key IS NULL AND NEW.visibility = 'org'
+     AND NEW.shared_by IS NULL THEN
+    IF NOT is_org_controller_for(NEW.org_id, NEW.created_by) THEN
+      NEW.visibility := 'private'; NEW.share_requested := true;
+    END IF;
   END IF;
   -- Sharing is stamped by the database: who approved, and when.
   IF NEW.visibility = 'private' THEN
@@ -317,6 +396,18 @@ CREATE OR REPLACE FUNCTION answer_skills_guard()
 RETURNS trigger LANGUAGE plpgsql SET search_path = public AS $$
 BEGIN
   IF TG_OP = 'UPDATE' THEN NEW.updated_at := now(); END IF;
+  -- A built-in belongs to nobody, whoever writes it (a restored backup too).
+  IF NEW.builtin_key IS NOT NULL THEN NEW.created_by := NULL; END IF;
+  -- The service role's INSERT of an org-wide custom row nobody approved (a
+  -- restored pre-20261125 backup) waits for a controller, as the data step
+  -- decided for the rows already here. (Nested: a person's write never
+  -- reaches the helper, which clients may not execute.)
+  IF TG_OP = 'INSERT' AND auth.uid() IS NULL AND NEW.builtin_key IS NULL AND NEW.visibility = 'org'
+     AND NEW.shared_by IS NULL THEN
+    IF NOT is_org_controller_for(NEW.org_id, NEW.created_by) THEN
+      NEW.visibility := 'private'; NEW.share_requested := true;
+    END IF;
+  END IF;
   IF NEW.visibility = 'private' THEN
     NEW.shared_by := NULL; NEW.shared_at := NULL;
   ELSIF TG_OP = 'INSERT' OR OLD.visibility IS DISTINCT FROM 'org' THEN
@@ -346,6 +437,11 @@ CREATE TRIGGER trg_answer_skills_guard
   FOR EACH ROW EXECUTE FUNCTION answer_skills_guard();
 
 -- ── 5. PR-3 / LNK-7 / GOV-2: every person's change to a skill is recorded ───
+-- audit_logs is readable by every active member of the org
+-- (audit_logs_org_access), so the words of a PRIVATE skill never go there:
+-- name, description, pack text and patterns are recorded only while the
+-- row is (or, for the previous values, was) org-visible; otherwise they are
+-- marked withheld, with the pack's length and md5 and the pattern count.
 CREATE OR REPLACE FUNCTION skills_audit()
 RETURNS trigger LANGUAGE plpgsql SECURITY DEFINER SET search_path = public AS $$
 DECLARE
@@ -359,6 +455,8 @@ DECLARE
   v_email   text;
   v_role    text;
   v_details jsonb;
+  v_shown   boolean;
+  v_was     boolean;
 BEGIN
   -- The service role's writes (seeding, the org restore, the engine switching
   -- a skill off) are not a person's act; an org already gone has nowhere to record.
@@ -366,26 +464,50 @@ BEGIN
   v_row := COALESCE(v_new, v_old);
   v_org := (v_row->>'org_id')::uuid;
   IF NOT EXISTS (SELECT 1 FROM orgs WHERE id = v_org) THEN RETURN NULL; END IF;
+  -- The row as it stands (as it stood, for a delete) is org-visible; the row
+  -- before this change was.
+  v_shown := COALESCE(v_row->>'visibility' = 'org', false);
+  v_was := COALESCE(v_old->>'visibility' = 'org', false);
   IF TG_OP = 'UPDATE' THEN
     FOREACH v_key IN ARRAY ARRAY['name', 'description', 'instructions', 'config', 'enabled', 'visibility', 'share_requested', 'builtin_key', 'created_by'] LOOP
       IF (v_new->v_key) IS DISTINCT FROM (v_old->v_key) THEN v_changed := v_changed || v_key; END IF;
     END LOOP;
     IF array_length(v_changed, 1) IS NULL THEN RETURN NULL; END IF;
-    SELECT jsonb_object_agg(k, v_old->k) INTO v_prev FROM unnest(v_changed) AS k;
+    SELECT jsonb_object_agg(k, CASE
+             WHEN v_was OR k NOT IN ('name', 'description', 'instructions', 'config') THEN v_old->k
+             WHEN k = 'instructions' THEN jsonb_build_object('withheld', 'private',
+               'length', length(v_old->>'instructions'), 'md5', md5(v_old->>'instructions'))
+             WHEN k = 'config' THEN jsonb_build_object('withheld', 'private',
+               'patterns', CASE WHEN jsonb_typeof(v_old->'config'->'patterns') = 'array'
+                                THEN jsonb_array_length(v_old->'config'->'patterns') END)
+             ELSE jsonb_build_object('withheld', 'private')
+           END) INTO v_prev FROM unnest(v_changed) AS k;
   END IF;
   SELECT email, array_to_string(COALESCE(roles, ARRAY[role]), ', ') INTO v_email, v_role FROM org_members
    WHERE org_id = v_org AND uid = auth.uid() AND status = 'active' LIMIT 1;
   v_details := jsonb_build_object(
     'kind', CASE TG_TABLE_NAME WHEN 'answer_skills' THEN 'reasoning' ELSE 'connection' END,
-    'name', v_row->'name', 'builtin_key', v_row->'builtin_key',
+    'name', CASE WHEN v_shown THEN v_row->'name' WHEN v_was THEN v_old->'name' END,
+    'builtin_key', v_row->'builtin_key',
     'author', v_row->'created_by', 'author_name', v_row->'created_by_name',
     'visibility', v_row->'visibility', 'enabled', v_row->'enabled',
     'share_requested', v_row->'share_requested',
     'changed', to_jsonb(v_changed), 'previous', v_prev);
-  -- The text itself whenever it is written or published: what rode the prompt.
+  IF NOT v_shown AND NOT v_was THEN
+    v_details := v_details || jsonb_build_object('text_withheld', 'private');
+  END IF;
+  -- The text itself whenever it is written or published: what rode the
+  -- prompt — only where the org can already read it.
   IF TG_OP = 'INSERT' OR 'instructions' = ANY(v_changed) OR 'config' = ANY(v_changed)
-     OR ('visibility' = ANY(v_changed) AND v_row->>'visibility' = 'org') THEN
-    v_details := v_details || jsonb_build_object('instructions', v_row->'instructions', 'patterns', v_row->'config'->'patterns');
+     OR ('visibility' = ANY(v_changed) AND v_shown) THEN
+    IF v_shown THEN
+      v_details := v_details || jsonb_build_object('instructions', v_row->'instructions', 'patterns', v_row->'config'->'patterns');
+    ELSE
+      v_details := v_details || jsonb_build_object(
+        'instructions_length', length(v_row->>'instructions'), 'instructions_md5', md5(v_row->>'instructions'),
+        'pattern_count', CASE WHEN jsonb_typeof(v_row->'config'->'patterns') = 'array'
+                              THEN jsonb_array_length(v_row->'config'->'patterns') END);
+    END IF;
   END IF;
   INSERT INTO audit_logs (action, resource_type, resource_id, org_id, user_id, user_email, user_role, details)
   VALUES (CASE TG_OP WHEN 'INSERT' THEN 'SKILL_CREATED' WHEN 'DELETE' THEN 'SKILL_DELETED' ELSE 'SKILL_UPDATED' END,
@@ -463,11 +585,23 @@ SELECT 'guard + audit triggers installed on both tables',
                 OR (tgrelid = 'link_rules'::regclass AND tgname IN ('trg_link_rules_guard', 'trg_link_rules_audit')))),
        NULL
 UNION ALL
-SELECT 'search_path pinned on skill_pattern_issue, link_rules_guard, answer_skills_guard, skills_audit (definer)',
-       (SELECT COUNT(*) = 4 FROM pg_proc
-         WHERE proname IN ('skill_pattern_issue', 'link_rules_guard', 'answer_skills_guard', 'skills_audit')
+SELECT 'search_path pinned on skill_pattern_issue, link_rules_guard, answer_skills_guard, skills_audit, is_org_controller_for (the last two definer)',
+       (SELECT COUNT(*) = 5 FROM pg_proc
+         WHERE proname IN ('skill_pattern_issue', 'link_rules_guard', 'answer_skills_guard', 'skills_audit', 'is_org_controller_for')
            AND array_to_string(proconfig, ',') LIKE '%search_path=public%')
-       AND (SELECT prosecdef FROM pg_proc WHERE proname = 'skills_audit'),
+       AND (SELECT prosecdef FROM pg_proc WHERE proname = 'skills_audit')
+       AND (SELECT prosecdef FROM pg_proc WHERE proname = 'is_org_controller_for'),
+       NULL
+UNION ALL
+SELECT 'DEC-35: is_org_controller_for is is_org_controller for another user (same predicate; the inventory spells the same text), and clients cannot call it',
+       (SELECT prosrc LIKE '%(role IN (''Admin'', ''DocCtrl'') OR roles && ARRAY[''Admin'', ''DocCtrl'']::text[])%'
+               AND prosrc LIKE '%uid = auth.uid()%'
+          FROM pg_proc WHERE proname = 'is_org_controller')
+       AND (SELECT prosrc LIKE '%(role IN (''Admin'', ''DocCtrl'') OR roles && ARRAY[''Admin'', ''DocCtrl'']::text[])%'
+                   AND prosrc LIKE '%uid = p_uid%'
+              FROM pg_proc WHERE proname = 'is_org_controller_for')
+       AND NOT has_function_privilege('authenticated', 'public.is_org_controller_for(uuid, uuid)', 'EXECUTE')
+       AND NOT has_function_privilege('anon', 'public.is_org_controller_for(uuid, uuid)', 'EXECUTE'),
        NULL
 UNION ALL
 SELECT 'LNK-6: the bounded subset refuses nested repeats, lookarounds, backreferences, unbounded dots, side-by-side or 3+ unbounded repeats and huge bounds; accepts identifier patterns',
@@ -479,6 +613,12 @@ SELECT 'LNK-6: the bounded subset refuses nested repeats, lookarounds, backrefer
        AND skill_pattern_issue('\d{1,5000}') IS NOT NULL
        AND skill_pattern_issue('\w+\s+\w+') IS NOT NULL
        AND skill_pattern_issue('\b[A-Z]+-\d+-\d+\b') IS NOT NULL
+       AND skill_pattern_issue('\d+-?\d+X') IS NOT NULL
+       AND skill_pattern_issue('\w+\s?\w+') IS NOT NULL
+       AND skill_pattern_issue('\d{0,100}\d{0,100}\d{0,100}\d{0,100}X') IS NOT NULL
+       AND skill_pattern_issue('[A-Z0-9]{1,100}[A-Z0-9]{1,100}[A-Z0-9]{1,100}#') IS NOT NULL
+       AND skill_pattern_issue('\d+(\d+)?X') IS NOT NULL
+       AND skill_pattern_issue('\d+(-|)\d+X') IS NOT NULL
        AND skill_pattern_issue('\bWO-\d{5}\b') IS NULL
        AND skill_pattern_issue('\b(?:WO|PTW)-\d{4,6}\b') IS NULL
        AND skill_pattern_issue('\b[A-Z]{2,4}-\d+\b') IS NULL
@@ -486,23 +626,35 @@ SELECT 'LNK-6: the bounded subset refuses nested repeats, lookarounds, backrefer
        AND skill_pattern_issue('(\d{3}-)?\d{4}') IS NULL,
        NULL
 UNION ALL
-SELECT 'link_rules_guard validates config for a person (8 patterns, the subset) and lets the service role through',
+SELECT 'link_rules_guard validates config for a person (8 patterns, the subset), clears a built-in''s author on every write, holds a restored unapproved org-wide row for a controller',
        (SELECT prosrc LIKE '%skill_pattern_issue(v_elem #>> ''{}'')%'
                AND prosrc LIKE '%jsonb_array_length(v_patterns) > 8%'
                AND prosrc LIKE '%IF auth.uid() IS NULL THEN RETURN NEW; END IF;%'
+               AND prosrc LIKE '%IF NEW.builtin_key IS NOT NULL THEN NEW.created_by := NULL; END IF;%'
+               AND prosrc LIKE '%IF NOT is_org_controller_for(NEW.org_id, NEW.created_by) THEN%'
+               AND position('IF NEW.builtin_key IS NOT NULL THEN NEW.created_by := NULL;' in prosrc)
+                   < position('IF auth.uid() IS NULL THEN RETURN NEW;' in prosrc)
           FROM pg_proc WHERE proname = 'link_rules_guard'),
        NULL
 UNION ALL
-SELECT 'answer_skills_guard requires APPLIES WHEN and 40-4000 characters on a new, changed or published pack',
+SELECT 'answer_skills_guard requires APPLIES WHEN and 40-4000 characters on a new, changed or published pack; built-in author cleared; restored unapproved org-wide row held',
        (SELECT prosrc LIKE '%NEW.instructions !~* ''applies when''%'
                AND prosrc LIKE '%length(NEW.instructions) > 4000%'
+               AND prosrc LIKE '%IF NEW.builtin_key IS NOT NULL THEN NEW.created_by := NULL; END IF;%'
+               AND prosrc LIKE '%IF NOT is_org_controller_for(NEW.org_id, NEW.created_by) THEN%'
+               AND position('IF NEW.builtin_key IS NOT NULL THEN NEW.created_by := NULL;' in prosrc)
+                   < position('IF auth.uid() IS NULL THEN RETURN NEW;' in prosrc)
           FROM pg_proc WHERE proname = 'answer_skills_guard'),
        NULL
 UNION ALL
-SELECT 'skills_audit records person-initiated SKILL_CREATED / SKILL_UPDATED / SKILL_DELETED with the text',
+SELECT 'skills_audit records person-initiated SKILL_CREATED / SKILL_UPDATED / SKILL_DELETED; the text only while the row is org-visible, a private skill''s words withheld',
        (SELECT prosrc LIKE '%IF auth.uid() IS NULL THEN RETURN NULL; END IF;%'
                AND prosrc LIKE '%''SKILL_CREATED''%' AND prosrc LIKE '%''SKILL_DELETED''%' AND prosrc LIKE '%''SKILL_UPDATED''%'
-               AND prosrc LIKE '%''instructions'', v_row->''instructions''%'
+               AND prosrc LIKE '%v_shown := COALESCE(v_row->>''visibility'' = ''org'', false);%'
+               AND prosrc LIKE '%IF v_shown THEN%v_details := v_details || jsonb_build_object(''instructions'', v_row->''instructions''%'
+               AND prosrc LIKE '%''instructions_md5'', md5(v_row->>''instructions'')%'
+               AND prosrc LIKE '%WHEN v_was OR k NOT IN (''name'', ''description'', ''instructions'', ''config'') THEN v_old->k%'
+               AND prosrc LIKE '%''name'', CASE WHEN v_shown THEN v_row->''name'' WHEN v_was THEN v_old->''name'' END%'
           FROM pg_proc WHERE proname = 'skills_audit'),
        NULL
 UNION ALL

@@ -18,13 +18,17 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import { extractDrawingRefs } from "@/lib/drawingText";
 import { normalizeTag } from "@/lib/codebook";
 import {
-  proposeOpcContinuity, proposeSharedEquipment, runCustomSkill,
+  proposeOpcContinuity, proposeSharedEquipment, customSkillDrafts,
   proposeCoCitations, compileSkillPatterns, mergeDrafts, filterDrafts,
   dropAlreadyQueued, rankDrafts, planBatch, splitByAutoApply, refKey,
-  orderPair, carrierOrder, BUILTIN_SKILLS, SKILL_DOC_BUDGET_MS,
+  orderPair, carrierOrder, BUILTIN_SKILLS, SKILL_DOC_BUDGET_MS, MAX_MATCHES_PER_TEXT,
   type ProposalDraft, type OpcOccurrence, type TagOccurrence,
   type TextOccurrence, type CoCitationRow, type KnownPairs, type ProposalTier,
 } from "@/lib/linkProposalLogic";
+// Types only: the worker runner is node-only and this module is reachable
+// from browser bundles (the publish pipeline's sweep), so the server route
+// hands the matcher in (LNK-6).
+import type { SkillMatcherFactory } from "@/lib/customSkillRunner";
 
 const BATCH = 400;
 const CHUNK = 150;
@@ -46,8 +50,10 @@ const READ_CAP = {
  *  sweep adds guesses only while there is room, so no single run buries the
  *  strong findings under hundreds of weak ones. */
 export const MAX_PENDING_INFERRED = 150;
-/** LNK-6: the wall-clock all custom skills together may spend in one run. */
-const CUSTOM_RUN_BUDGET_MS = 15_000;
+/** LNK-6: the wall-clock all custom skills together may spend in one run —
+ *  enforced by the matcher's watchdog, inside a skill as well as between
+ *  skills. */
+export const CUSTOM_RUN_BUDGET_MS = 15_000;
 const QUESTION_WINDOW = 400;
 
 /** What each skill had to work with — so "found nothing" can explain
@@ -193,7 +199,14 @@ async function readPaged<T>(
 export async function runLinkProposers(
   admin: SupabaseClient,
   orgId: string,
-  opts?: { now?: () => number },
+  opts?: {
+    now?: () => number;
+    /** LNK-6: runs custom-skill patterns under a hard deadline (the
+     *  /api/links/propose route passes workerSkillMatcher()). Without one,
+     *  no custom skill runs — the engine never matches a member-authored
+     *  pattern on the request thread. */
+    matcher?: SkillMatcherFactory;
+  },
 ): Promise<ProposerRun> {
   const notes: string[] = [];
   const errors: string[] = [];
@@ -395,7 +408,9 @@ export async function runLinkProposers(
   // org authored as a skill, matched against the indexed text of controlled
   // documents. Bounded per pass, and only fetched when a skill needs it.
   const textOccurrences: TextOccurrence[] = [];
-  if (customRules.length > 0 && mirrorRows.length > 0) {
+  if (customRules.length > 0 && !opts?.matcher) {
+    notes.push("Custom skills did not run — this pass has no bounded matcher for member-authored patterns.");
+  } else if (customRules.length > 0 && mirrorRows.length > 0) {
     let capped = false;
     for (let i = 0; i < mirrorRows.length && !capped; i += 25) {
       const slice = mirrorRows.slice(i, i + 25);
@@ -426,33 +441,54 @@ export async function runLinkProposers(
   }
   const customDrafts: ProposalDraft[] = [];
   const disabledSkills: string[] = [];
-  const customStarted = now();
-  for (const rule of customRules) {
-    if (now() - customStarted > CUSTOM_RUN_BUDGET_MS) {
-      notes.push(`Custom skills stopped after ${Math.round(CUSTOM_RUN_BUDGET_MS / 1000)} s this pass — the remaining skills run next time.`);
-      break;
+  if (customRules.length > 0 && textOccurrences.length > 0 && opts?.matcher) {
+    // LNK-6: the patterns run in a worker under a per-document budget, a
+    // hard per-text ceiling and the run's budget — the matcher terminates
+    // the worker whatever the regex is doing, so one pattern cannot hold
+    // the request.
+    const matcher = opts.matcher(textOccurrences.map((o) => o.text), textOccurrences.map((o) => o.documentId));
+    const customStarted = now();
+    try {
+      for (const rule of customRules) {
+        const left = CUSTOM_RUN_BUDGET_MS - (now() - customStarted);
+        if (left <= 0) {
+          notes.push(`Custom skills stopped after ${Math.round(CUSTOM_RUN_BUDGET_MS / 1000)} s this pass — the remaining skills run next time.`);
+          break;
+        }
+        const { regexes, errors: compileErrors } = compileSkillPatterns(rule.config?.patterns ?? []);
+        if (compileErrors.length > 0) notes.push(`Skill “${rule.name}”: ${compileErrors[0]}`);
+        if (regexes.length === 0) continue;
+        const res = await matcher.match(regexes.map((r) => r.source), {
+          softDocMs: SKILL_DOC_BUDGET_MS, budgetMs: left, maxMatches: MAX_MATCHES_PER_TEXT,
+        });
+        if (res.error) {
+          notes.push(`Custom skills did not run to the end — ${res.error}.`);
+          break;
+        }
+        if (res.overBudget) {
+          // LNK-6: never silently skipped — switched off, with the reason on
+          // the skill itself, and said here. Its partial output is not queued.
+          const reason = res.overBudget.hard
+            ? `Switched off by the engine: one match ran for more than ${res.overBudget.ms} ms on one document and was stopped (the budget is ${SKILL_DOC_BUDGET_MS} ms per document). Simplify the pattern, then switch it back on.`
+            : `Switched off by the engine: it took ${res.overBudget.ms} ms on one document (the budget is ${SKILL_DOC_BUDGET_MS} ms). Simplify the pattern, then switch it back on.`;
+          const { error: offErr } = await admin.from("link_rules")
+            .update({ enabled: false, disabled_reason: reason })
+            .eq("id", rule.id).eq("org_id", orgId);
+          disabledSkills.push(rule.name);
+          notes.push(offErr
+            ? `Skill “${rule.name}” overran its time budget and did not run to the end; it could not be switched off (${offErr.message}).`
+            : `Skill “${rule.name}” overran its time budget on one document and was switched off.`);
+          continue;
+        }
+        customDrafts.push(...customSkillDrafts({ id: rule.id, name: rule.name }, textOccurrences, res.found, identityIndex));
+        if (res.budgetSpent) {
+          notes.push(`Custom skills stopped after ${Math.round(CUSTOM_RUN_BUDGET_MS / 1000)} s this pass — “${rule.name}” ran part of the text; it and the remaining skills run next time.`);
+          break;
+        }
+      }
+    } finally {
+      await matcher.close();
     }
-    const { regexes, errors: compileErrors } = compileSkillPatterns(rule.config?.patterns ?? []);
-    if (compileErrors.length > 0) notes.push(`Skill “${rule.name}”: ${compileErrors[0]}`);
-    if (regexes.length === 0) continue;
-    const res = runCustomSkill(
-      { id: rule.id, name: rule.name, regexes }, textOccurrences, identityIndex,
-      { budgetMs: SKILL_DOC_BUDGET_MS, now },
-    );
-    if (res.overBudget) {
-      // LNK-6: never silently skipped — switched off, with the reason on the
-      // skill itself, and said here. Its partial output is not queued.
-      const reason = `Switched off by the engine: it took ${res.overBudget.ms} ms on one document (the budget is ${SKILL_DOC_BUDGET_MS} ms). Simplify the pattern, then switch it back on.`;
-      const { error: offErr } = await admin.from("link_rules")
-        .update({ enabled: false, disabled_reason: reason })
-        .eq("id", rule.id).eq("org_id", orgId);
-      disabledSkills.push(rule.name);
-      notes.push(offErr
-        ? `Skill “${rule.name}” overran its time budget and did not run to the end; it could not be switched off (${offErr.message}).`
-        : `Skill “${rule.name}” overran its time budget on one document and was switched off.`);
-      continue;
-    }
-    customDrafts.push(...res.drafts);
   }
 
   // ── Co-citation: the team's own questions as evidence ─────────────────
@@ -558,10 +594,17 @@ export async function runLinkProposers(
 
   const open = filterDrafts(drafts, known);
   const fresh = rankDrafts(dropAlreadyQueued(mergeDrafts(open), known.pending));
-  const { count: pendingInferred } = await admin
+  // LNK-10: the ceiling fails CLOSED — a count that cannot be read admits
+  // no new guesses this pass (strong and provable proposals still queue).
+  const { count: pendingInferred, error: countErr } = await admin
     .from("proposed_links").select("id", { count: "exact", head: true })
     .eq("org_id", orgId).eq("status", "pending").eq("tier", "inferred");
-  const inferredRoom = Math.max(0, MAX_PENDING_INFERRED - (pendingInferred ?? 0));
+  const inferredRoom = countErr || pendingInferred === null || pendingInferred === undefined
+    ? 0
+    : Math.max(0, MAX_PENDING_INFERRED - pendingInferred);
+  if (countErr) {
+    notes.push(`The queue's inferred proposals could not be counted (${countErr.message}) — no new inferred proposals were added this pass.`);
+  }
   const plan = planBatch(fresh, { batch: BATCH, inferredRoom });
   if (plan.heldInferred > 0) {
     notes.push(`${plan.heldInferred} inferred proposal${plan.heldInferred === 1 ? " is" : "s are"} waiting for room — the queue holds ${MAX_PENDING_INFERRED} inferred at a time; decide some and run again.`);
@@ -660,7 +703,9 @@ export async function runLinkProposers(
     autoApplied,
     skipped: candidatePairs.size - fresh.length,
     evidenceLost,
-    more: plan.more,
+    // A pass that failed a write must not be repeated by the slice driver:
+    // the same write would fail again (the error is on the run).
+    more: plan.more && errors.length === 0,
     heldInferred: plan.heldInferred,
     fellBackToQueue,
     disabledSkills,
@@ -670,9 +715,21 @@ export async function runLinkProposers(
   };
 }
 
-/** Publish-time housekeeping: a pending proposal was derived from text on a
- *  revision that no longer is the current one — a ghost of a drawing that
- *  no longer says that. Stale it so review never acts on stale evidence.
+/** Publish-time housekeeping: a pending proposal whose evidence was read
+ *  from THIS document at a revision that is no longer its current one — a
+ *  ghost of a drawing that no longer says that. Stale it so review never
+ *  acts on stale evidence (the next run re-derives it from the new text —
+ *  LNK-1).
+ *
+ *  `source_rev` is a revision of the document the evidence was read from,
+ *  which is either endpoint (an off-page connector or a custom skill reads
+ *  one side's text). The proposers record that document as
+ *  `evidence.sourceDocumentId`; a row whose evidence came from the OTHER
+ *  endpoint is left alone — its own publish sweeps it. A row written before
+ *  the proposers recorded it is staled only when its revision matches
+ *  neither endpoint's current one (whichever side it was read from has
+ *  moved on); when it matches the other endpoint it may be current, so it
+ *  stays.
  *
  *  Deliberately does NOT touch approved links: at publish time the new
  *  revision hasn't been re-extracted yet, so "did the evidence survive?"
@@ -681,17 +738,59 @@ export async function invalidateProposalsForRevision(
   admin: SupabaseClient,
   input: { orgId: string; documentId: string; newRev: string | null },
 ): Promise<{ staled: number; error: string | null }> {
-  const { data, error } = await admin
+  type Row = {
+    id: string; document_id: string; target_document_id: string;
+    source_rev: string | null; evidence: { sourceDocumentId?: string } | null;
+  };
+  const read = await readPaged<Row>((from, to) => admin
     .from("proposed_links")
-    .update({ status: "stale" })
+    .select("id, document_id, target_document_id, source_rev, evidence")
     .eq("org_id", input.orgId)
     .eq("status", "pending")
     .or(`document_id.eq.${input.documentId},target_document_id.eq.${input.documentId}`)
     .not("source_rev", "is", null)
     .neq("source_rev", input.newRev ?? "")
-    .select("id");
-  if (error) return { staled: 0, error: error.message };
-  return { staled: (data ?? []).length, error: null };
+    .order("id", { ascending: true })
+    .range(from, to), Number.POSITIVE_INFINITY);
+  if (read.error) return { staled: 0, error: read.error.message };
+
+  const otherOf = (r: Row) => (r.document_id === input.documentId ? r.target_document_id : r.document_id);
+  const legacy = read.rows.filter((r) => !r.evidence?.sourceDocumentId);
+  const otherRev = new Map<string, string | null>();
+  const otherIds = [...new Set(legacy.map(otherOf))];
+  if (otherIds.length > 0) {
+    let revErr: string | null = null;
+    await inChunks(otherIds, async (slice) => {
+      const { data, error } = await admin.from("documents").select("id, rev").eq("org_id", input.orgId).in("id", slice);
+      if (error) revErr ??= error.message;
+      for (const d of (data as Array<{ id: string; rev: string | null }> | null) ?? []) otherRev.set(d.id, d.rev);
+      return [];
+    });
+    if (revErr) return { staled: 0, error: revErr };
+  }
+  const ids = read.rows.filter((r) => {
+    const src = r.evidence?.sourceDocumentId;
+    if (src) return src === input.documentId;
+    const other = otherOf(r);
+    return !otherRev.has(other) || otherRev.get(other) !== r.source_rev;
+  }).map((r) => r.id);
+  if (ids.length === 0) return { staled: 0, error: null };
+
+  let staled = 0;
+  let writeErr: string | null = null;
+  await inChunks(ids, async (slice) => {
+    const { data, error } = await admin
+      .from("proposed_links")
+      .update({ status: "stale" })
+      .eq("org_id", input.orgId)
+      .eq("status", "pending")
+      .in("id", slice)
+      .select("id");
+    if (error) writeErr ??= error.message;
+    staled += ((data as unknown[] | null) ?? []).length;
+    return [];
+  });
+  return { staled, error: writeErr };
 }
 
 /** After re-extraction: system-applied links whose stated evidence no longer

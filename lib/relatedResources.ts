@@ -18,12 +18,15 @@ export const LINK_ORIGINS = ["human", "system", "proposed", "shaped"] as const;
 export type LinkOrigin = (typeof LINK_ORIGINS)[number];
 
 /** The chip a non-human link carries, from the declared set. A value the
- *  app does not know renders as unknown — never as "approved". */
+ *  app does not know renders as unknown — never as "approved". The graph
+ *  wizard's legacy 'user' IS 'shaped' (20261126 backfills it; until that
+ *  migration is applied, the rows still carry 'user'). */
 export function originBadge(origin: string | null | undefined): { label: string; title: string } | null {
   switch (origin ?? "human") {
     case "human": return null;
     case "system": return { label: "auto", title: "Applied automatically — provable connection" };
     case "proposed": return { label: "approved", title: "Approved from a proposal" };
+    case "user":
     case "shaped": return { label: "from answer", title: "Linked while shaping the graph from an AI answer — not reviewed in the proposal queue" };
     default: return { label: "origin?", title: `Unrecognised origin “${origin}” — how this link was made is not known` };
   }
@@ -60,7 +63,11 @@ export interface RelatedResource {
 /** Every curated link on a document — the ones it carries AND the document
  *  links carried by the other end (LNK-13): an approved connection is
  *  carried by one of its two documents, and both documents' Related panels
- *  show it with the same provenance and evidence. */
+ *  show it with the same provenance and evidence. A link CARRIED by a
+ *  document the viewer cannot read is not listed (as listBacklinks never
+ *  listed it): its evidence and its unpin control belong to that document.
+ *  A link this document carries to a document the viewer cannot read stays
+ *  listed with no `target` (the panel says "restricted document"). */
 export async function listRelatedResources(documentId: string): Promise<RelatedResource[]> {
   const { data, error } = await supabase
     .from("document_related_resources").select("*")
@@ -70,32 +77,38 @@ export async function listRelatedResources(documentId: string): Promise<RelatedR
     if (error.code === "42P01" || /does not exist/i.test(error.message)) return [];
     throw new Error(error.message);
   }
-  const rows: RelatedResource[] = [];
-  const seen = new Set<string>();
+  const candidates: RelatedResource[] = [];
   for (const r of (data as RelatedResource[]) ?? []) {
     const out = r.document_id === documentId;
     if (!out && r.kind !== "document") continue;
     const other = out ? r.target_document_id : r.document_id;
-    // One entry per other document: a pair linked both ways (a manual pin
-    // made before the carrier rule) is still one relationship.
-    if (r.kind === "document" && other) {
-      if (seen.has(other)) continue;
-      seen.add(other);
-    }
-    rows.push({ ...r, direction: out ? "out" : "in", other_document_id: r.kind === "document" ? other : null });
+    candidates.push({ ...r, direction: out ? "out" : "in", other_document_id: r.kind === "document" ? other : null });
   }
-  const ids = rows.filter((r) => r.kind === "document" && r.other_document_id)
-    .map((r) => r.other_document_id as string);
+  const ids = [...new Set(candidates.filter((r) => r.kind === "document" && r.other_document_id)
+    .map((r) => r.other_document_id as string))];
+  const byId = new Map<string, { document_number: string | null; title: string | null; library_id: string }>();
   if (ids.length > 0) {
+    // Read through the viewer's own documents RLS: what does not come back
+    // is a document they cannot read.
     const { data: docs } = await supabase
       .from("documents").select("id, document_number, title, library_id").in("id", ids);
-    const byId = new Map((docs ?? []).map((d) => [
-      (d as { id: string }).id,
-      d as { document_number: string | null; title: string | null; library_id: string },
-    ]));
-    for (const r of rows) {
-      if (r.other_document_id) r.target = byId.get(r.other_document_id) ?? null;
+    for (const d of docs ?? []) {
+      byId.set((d as { id: string }).id, d as { document_number: string | null; title: string | null; library_id: string });
     }
+  }
+  const rows: RelatedResource[] = [];
+  const seen = new Set<string>();
+  for (const r of candidates) {
+    if (r.other_document_id) r.target = byId.get(r.other_document_id) ?? null;
+    // An inbound link from a document the viewer cannot read: not theirs to see.
+    if (r.direction === "in" && !r.target) continue;
+    // One entry per other document: a pair linked both ways (a manual pin
+    // made before the carrier rule) is still one relationship.
+    if (r.kind === "document" && r.other_document_id) {
+      if (seen.has(r.other_document_id)) continue;
+      seen.add(r.other_document_id);
+    }
+    rows.push(r);
   }
   return rows;
 }

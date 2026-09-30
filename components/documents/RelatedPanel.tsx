@@ -187,7 +187,10 @@ export default function RelatedPanel({
                       {r.label && <span className="font-normal text-[var(--color-text-muted)]"> · {r.label}</span>}
                     </Link>
                   ) : (
-                    <span className="flex-1 text-xs text-[var(--color-text-faint)] italic">missing document</span>
+                    <span className="flex-1 text-xs text-[var(--color-text-faint)] italic"
+                      title={r.other_document_id ? "A document you cannot open" : undefined}>
+                      {r.other_document_id ? "restricted document" : "missing document"}
+                    </span>
                   )}
                 </>
               ) : (

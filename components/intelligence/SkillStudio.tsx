@@ -11,11 +11,12 @@
 //
 // Phase 2 — PROVE & PUBLISH: the draft lands in an editor whose live tester
 // runs the EXACT compiler the engine runs — what matches here is what the
-// engine will match, and a pattern outside the bounded subset is refused
-// here before it can hang anything (LNK-6). Then choose sharing (DEC-55): a
-// member saves the skill as theirs and may ask a document controller to
-// share it; only a controller publishes org-wide. The database enforces
-// the same (20261125).
+// engine will match, and a pattern outside the bounded subset (the known
+// catastrophic shapes) is refused here before anything compiles it; the
+// engine itself runs patterns under a hard deadline (LNK-6). Then choose
+// sharing (DEC-55): a member saves the skill as theirs and may ask a
+// document controller to share it; only a controller publishes org-wide.
+// The database enforces the same (20261125).
 
 import React, { useMemo, useState } from "react";
 import {

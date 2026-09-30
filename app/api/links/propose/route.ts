@@ -14,6 +14,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { supabaseAdmin } from "@/lib/supabaseAdmin";
 import { runLinkProposers } from "@/lib/linkProposerServer";
+import { workerSkillMatcher } from "@/lib/customSkillRunner";
 import { memberHoldsAny } from "@/lib/roleHeld";
 
 export const runtime = "nodejs";
@@ -41,7 +42,8 @@ export async function POST(req: NextRequest) {
   }
 
   try {
-    const result = await runLinkProposers(supabaseAdmin, orgId);
+    // LNK-6: custom-skill patterns run in a worker under a hard deadline.
+    const result = await runLinkProposers(supabaseAdmin, orgId, { matcher: workerSkillMatcher() });
     return NextResponse.json(result);
   } catch (e) {
     return NextResponse.json({ error: (e as Error).message }, { status: 500 });

@@ -228,7 +228,8 @@ SELECT 'proposed_links_read (membership) still present; proposed_links_write / e
        AND (SELECT COUNT(*) = 2 FROM pg_policies
              WHERE (tablename, policyname) IN (('proposed_links', 'proposed_links_write'), ('entity_mentions', 'entity_mentions_write'))
                AND qual LIKE '%caller_holds_any_role(org_id%' AND with_check LIKE '%caller_holds_any_role(org_id%'
-               AND qual NOT LIKE '%m.role IN%'),
+               -- a role literal deparses as "role = ANY (ARRAY[...])", never as "IN"
+               AND qual NOT LIKE '%role = ANY%' AND with_check NOT LIKE '%role = ANY%'),
        NULL
 UNION ALL
 SELECT 'inventory (before): ' || what, NULL, n::text FROM _intel_g26_before

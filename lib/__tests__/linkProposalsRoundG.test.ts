@@ -3,7 +3,9 @@
 //
 //   * LNK-1  — a stale proposal re-enters the queue when the next run
 //              re-derives it from the new revision; publish-time staling runs
-//              on the service role through /api/links/invalidate (LNK-11).
+//              on the service role through /api/links/invalidate (LNK-11),
+//              for a caller who could publish the document, and retires only
+//              proposals whose evidence came from THAT document.
 //   * LNK-8  — a dismissal blocks the (pair, skill) that produced it, never
 //              another skill's evidence; a dismissal can be reopened.
 //   * LNK-12 — pending proposals are in the block-set: two runs over 528
@@ -14,8 +16,10 @@
 //   * LNK-10 — ranked before the slice; the queue holds a bounded number of
 //              'inferred' proposals; one shared item proposes nothing.
 //   * LNK-5 / LNK-6 — private connection skills do not run; the bounded
-//              pattern subset; a skill that overruns its per-document budget
-//              is switched off with the reason on the row.
+//              pattern subset (a filter — the worker runner's deadline is the
+//              guarantee: lib/__tests__/customSkillRunner.test.ts); a skill
+//              whose match overruns is switched off with the reason on the
+//              row; without a bounded matcher no custom skill runs.
 //   * LNK-3 / IRLS-2 / WIRE-2 — provable links apply against the plain
 //              index (once, carried by the lower document number); a failed
 //              apply is an ERROR and the draft falls back to the queue.
@@ -36,7 +40,12 @@ import { NextRequest } from "next/server";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { newFakeDb, makeFakeSupabase, type FakeDb, type Row } from "./helpers/fakeSupabase";
 
-const db = vi.hoisted(() => ({ ref: null as unknown as FakeDb, caller: null as unknown as FakeDb }));
+const db = vi.hoisted(() => ({
+  ref: null as unknown as FakeDb,
+  caller: null as unknown as FakeDb,
+  /** The service role's rpc answers, by function name. */
+  rpc: {} as Record<string, (args: Record<string, unknown>) => unknown>,
+}));
 vi.mock("@/lib/supabase", async () => {
   const { makeFakeSupabase, newFakeDb: fresh } = await import("./helpers/fakeSupabase");
   db.ref = fresh();
@@ -49,10 +58,14 @@ vi.mock("@/lib/supabaseAdmin", async () => {
     get: (_t, p: string) => {
       if (p === "auth") {
         return {
-          getUser: async (t: string) => (t === "tok-member" || t === "tok-outsider"
-            ? { data: { user: { id: t === "tok-member" ? "u-member" : "u-outsider" } }, error: null }
+          // "tok-<name>" is the signed-in user "u-<name>".
+          getUser: async (t: string) => (t.startsWith("tok-")
+            ? { data: { user: { id: `u-${t.slice(4)}` } }, error: null }
             : { data: { user: null }, error: { message: "bad token" } }),
         };
+      }
+      if (p === "rpc") {
+        return async (fn: string, args: Record<string, unknown>) => ({ data: db.rpc[fn]?.(args) ?? false, error: null });
       }
       return (makeFakeSupabase(db.ref) as Record<string, unknown>)[p];
     },
@@ -76,6 +89,7 @@ import {
   type ProposalDraft,
 } from "@/lib/linkProposalLogic";
 import { runLinkProposers, invalidateProposalsForRevision, MAX_PENDING_INFERRED } from "@/lib/linkProposerServer";
+import { workerSkillMatcher, type SkillMatcherFactory } from "@/lib/customSkillRunner";
 import {
   listProposals, approveProposal, dismissProposal, reopenProposal, PROPOSER_LABELS,
   type LinkProposal,
@@ -91,6 +105,7 @@ const ORG = "o1";
 beforeEach(() => {
   Object.assign(db.ref, newFakeDb());
   db.caller = newFakeDb();
+  db.rpc = {};
   db.ref.unique = {
     document_related_resources: [["document_id", "target_document_id"]],
     proposed_links: [["document_id", "target_document_id", "proposer"]],
@@ -129,6 +144,22 @@ describe("LNK-6 — the bounded pattern subset (the same rules as 20261125 skill
       expect(patternSafetyIssue(p), p).not.toBeNull();
     }
   });
+  it("fix pass: repeats separated only by optional atoms are side by side; a bound above 10 counts as unbounded", () => {
+    // The reviewer's four (each ran 5-135 s in one exec), and their cousins.
+    for (const p of [
+      "\\d+-?\\d+X", "\\w+\\s?\\w+", "\\d{0,100}\\d{0,100}\\d{0,100}\\d{0,100}X",
+      "[A-Z0-9]{1,100}[A-Z0-9]{1,100}[A-Z0-9]{1,100}#",
+      "\\d+(-)?\\d+", "\\d+(-|)\\d+X", "\\d+(|-)\\d+", "\\d+(-?)\\d+", "(\\d+)-?(\\d+)X",
+      "\\d+(\\d+)?X", "(ab)+(ab)+X", "\\d{1,11}\\d{1,11}", "\\d+[-]{0,5}\\d+", ".{1,20}x",
+      "\\d{1,20}-\\d{1,20}-\\d{1,20}",
+    ]) {
+      expect(patternSafetyIssue(p), p).not.toBeNull();
+    }
+    // Bounded small repeats and a mandatory separator stay allowed.
+    for (const p of ["\\d{1,10}\\d{1,10}", ".{0,3}\\d{5}", "\\b[A-Z]{2,4}-\\d{4,6}\\b", "\\d+-\\d+"]) {
+      expect(patternSafetyIssue(p), p).toBeNull();
+    }
+  });
   it("accepts identifier conventions", () => {
     for (const p of [
       "\\bWO-\\d{5}\\b", "\\b(?:WO|PTW)-\\d{4,6}\\b", "\\b[A-Z]{2,4}-\\d+\\b", "\\b[A-Z]+-\\d+\\b",
@@ -156,18 +187,41 @@ describe("LNK-6 — the bounded pattern subset (the same rules as 20261125 skill
       "s := replace(s, '(?:', '(');",
       "IF position('(?' in s) > 0 THEN RETURN 'lookarounds, named groups and inline flags are not supported'; END IF;",
       "IF s ~ '\\([^()]*[*+?{|][^()]*\\)[*+{]' OR s ~ '\\)[^()]*\\)[*+{]' THEN",
-      "IF s ~ '\\.([*+]|\\{[0-9]+,\\})' THEN RETURN 'an unbounded repeat of \"\\.\" is not supported'; END IF;".replace('"\\."', '"."'),
-      "IF s ~ '([*+]|\\{[0-9]+,\\})\\??[^()|*+?{}]([*+]|\\{[0-9]+,\\})' THEN",
-      "IF (SELECT COUNT(*) FROM regexp_matches(s, '[*+]|\\{[0-9]+,\\}', 'g')) > 2 THEN",
+      "u := regexp_replace(s, '\\{0+,0*(1[1-9]|[2-9][0-9]|[1-9][0-9]{2,})\\}', '*', 'g');",
+      "u := regexp_replace(u, '\\{0*[1-9][0-9]*,0*(1[1-9]|[2-9][0-9]|[1-9][0-9]{2,})\\}', '+', 'g');",
+      "IF u ~ '\\.([*+]|\\{[0-9]+,\\})' THEN RETURN 'an unbounded repeat of \".\" is not supported'; END IF;",
+      "v := regexp_replace(v, '\\(\\|([^()]*)\\)', '(\\1)?', 'g');",
+      "v := regexp_replace(v, '\\(([^()]*)\\|\\)', '(\\1)?', 'g');",
+      "v := regexp_replace(v, '\\(([^()]*)\\|\\|([^()]*)\\)', '(\\1|\\2)?', 'g');",
+      "v := regexp_replace(v, '\\([^()]*([*+]|\\{[0-9]+,\\})[^()]*\\)(\\?|\\{0+(,[0-9]+)?\\})', 'C*', 'g');",
+      "v := regexp_replace(v, '\\([^()]*\\)(\\?|\\{0+(,[0-9]+)?\\})', '', 'g');",
+      "v := regexp_replace(v, '[^()|*+?{}](\\?|\\{0+(,[0-9]+)?\\})', '', 'g');",
+      "v := regexp_replace(v, '\\(\\)', '', 'g');",
+      "v := regexp_replace(v, '\\([^()]*\\)([*+{])', 'C\\1', 'g');",
+      "v := regexp_replace(v, '\\(([^()|]*)\\)([^*+?{]|$)', '\\1\\2', 'g');",
+      "EXIT WHEN v = prev;",
+      "IF v ~ '([*+]|\\{[0-9]+,\\})\\??[^()|*+?{}]([*+]|\\{[0-9]+,\\})' THEN",
+      "IF (SELECT COUNT(*) FROM regexp_matches(u, '[*+]|\\{[0-9]+,\\}', 'g')) > 2 THEN",
       "WHERE g[1]::numeric > 100 OR (COALESCE(g[3], '') <> '' AND g[3]::numeric > 100)) THEN",
     ]) {
       expect(fn, frag).toContain(frag);
     }
-    // The JS twin carries the same regex sources.
+    // The JS twin carries the same regex sources, step for step.
     const js = repo("lib/linkProposalLogic.ts");
     for (const frag of [
       "/\\([^()]*[*+?{|][^()]*\\)[*+{]/", "/\\)[^()]*\\)[*+{]/", "/\\.([*+]|\\{[0-9]+,\\})/",
-      "/([*+]|\\{[0-9]+,\\})\\??[^()|*+?{}]([*+]|\\{[0-9]+,\\})/", "/[*+]|\\{[0-9]+,\\}/g",
+      'const WIDE_BOUND = "0*(1[1-9]|[2-9][0-9]|[1-9][0-9]{2,})";',
+      ".replace(/\\(\\|([^()]*)\\)/g, \"($1)?\")",
+      ".replace(/\\(([^()]*)\\|\\)/g, \"($1)?\")",
+      ".replace(/\\(([^()]*)\\|\\|([^()]*)\\)/g, \"($1|$2)?\")",
+      ".replace(/\\([^()]*([*+]|\\{[0-9]+,\\})[^()]*\\)(\\?|\\{0+(,[0-9]+)?\\})/g, \"C*\")",
+      ".replace(/\\([^()]*\\)(\\?|\\{0+(,[0-9]+)?\\})/g, \"\")",
+      ".replace(/[^()|*+?{}](\\?|\\{0+(,[0-9]+)?\\})/g, \"\")",
+      ".replace(/\\(\\)/g, \"\")",
+      ".replace(/\\([^()]*\\)([*+{])/g, \"C$1\")",
+      ".replace(/\\(([^()|]*)\\)([^*+?{]|$)/g, \"$1$2\")",
+      "/([*+]|\\{[0-9]+,\\})\\??[^()|*+?{}]([*+]|\\{[0-9]+,\\})/.test(adjacencyView(u))",
+      "(u.match(/[*+]|\\{[0-9]+,\\}/g) ?? []).length > 2",
       "/\\{([0-9]+)(,([0-9]*))?\\}/g",
     ]) {
       expect(js, frag).toContain(frag);
@@ -294,19 +348,58 @@ describe("LNK-1 / LNK-11 — a stale proposal re-enters the queue from the new r
   });
 });
 
+describe("LNK-1 — the sweep retires only proposals whose evidence came from the published document", () => {
+  const prop = (id: string, a: string, b: string, rev: string, src?: string): Row => ({
+    id, org_id: ORG, document_id: a, target_document_id: b, proposer: "opc", status: "pending", source_rev: rev,
+    tier: "strong", confidence: 0.6, evidence: src ? { summary: "x", sourceDocumentId: src } : { summary: "x" },
+  });
+  beforeEach(() => {
+    t("documents").push(docRow("A", "SH-A", "3"), docRow("B", "SH-B", "5"), docRow("C", "SH-C", "2"));
+  });
+  it("sheet A (rev 3) refers to B: re-issuing B leaves the proposal; re-issuing A retires it", async () => {
+    t("proposed_links").push(prop("p1", "A", "B", "3", "A"));
+    expect(await invalidateProposalsForRevision(admin(), { orgId: ORG, documentId: "B", newRev: "5" })).toEqual({ staled: 0, error: null });
+    expect(t("proposed_links")[0].status).toBe("pending");
+    (t("documents").find((d) => d.id === "A") as Row).rev = "4";
+    expect(await invalidateProposalsForRevision(admin(), { orgId: ORG, documentId: "A", newRev: "4" })).toEqual({ staled: 1, error: null });
+    expect(t("proposed_links")[0].status).toBe("stale");
+  });
+  it("a proposal written before the source was recorded: kept while its revision matches the other endpoint's, retired when it matches neither", async () => {
+    t("proposed_links").push(prop("legacy-b", "A", "B", "5"), prop("legacy-none", "A", "C", "1"));
+    const res = await invalidateProposalsForRevision(admin(), { orgId: ORG, documentId: "A", newRev: "3" });
+    expect(res).toEqual({ staled: 1, error: null });
+    expect(Object.fromEntries(t("proposed_links").map((r) => [r.id, r.status]))).toEqual({ "legacy-b": "pending", "legacy-none": "stale" });
+  });
+  it("the proposers record where the evidence was read", async () => {
+    t("documents").push(docRow("sheet", "P-12", "7"), docRow("p13", "P-13"));
+    mirror("sheet", { refs: ["P-13"] });
+    await runLinkProposers(admin(), ORG);
+    const link = t("document_related_resources")[0] as Row & { evidence: { sourceDocumentId?: string } };
+    expect(link.evidence.sourceDocumentId).toBe("sheet");
+  });
+});
+
 describe("/api/links/invalidate — who may trigger the sweep, and against which revision", () => {
   const post = (token: string | null, body: unknown) => invalidateRoute(new NextRequest("http://t/api/links/invalidate", {
     method: "POST", body: JSON.stringify(body),
     headers: token ? { authorization: `Bearer ${token}` } : {},
   }));
+  const sheet: Row = { ...docRow("sheet", "P-12", "4"), library_id: "L1", collection_id: null, owner_user_id: "u-owner" };
   beforeEach(() => {
-    t("documents").push(docRow("sheet", "P-12", "4"));
-    db.caller.tables.documents = [docRow("sheet", "P-12", "4")];
-    t("org_members").push({ org_id: ORG, uid: "u-member", status: "active" });
-    t("proposed_links").push(
-      { id: "p1", org_id: ORG, document_id: "sheet", target_document_id: "x", proposer: "opc", status: "pending", source_rev: "3" },
-      { id: "p2", org_id: ORG, document_id: "sheet", target_document_id: "y", proposer: "opc", status: "pending", source_rev: "4" },
+    t("documents").push({ ...sheet });
+    db.caller.tables.documents = [{ ...sheet }];
+    t("org_members").push(
+      { org_id: ORG, uid: "u-member", role: "Supervisor", roles: ["Supervisor"], status: "active" },
+      { org_id: ORG, uid: "u-viewer", role: "Viewer", roles: ["Viewer"], status: "active" },
+      { org_id: ORG, uid: "u-granted", role: "Engineer-2", roles: ["Engineer-2"], status: "active" },
+      { org_id: ORG, uid: "u-owner", role: "Drafter", roles: ["Drafter"], status: "active" },
     );
+    t("proposed_links").push(
+      { id: "p1", org_id: ORG, document_id: "sheet", target_document_id: "x", proposer: "opc", status: "pending", source_rev: "3", evidence: { summary: "s", sourceDocumentId: "sheet" } },
+      { id: "p2", org_id: ORG, document_id: "sheet", target_document_id: "y", proposer: "opc", status: "pending", source_rev: "4", evidence: { summary: "s", sourceDocumentId: "sheet" } },
+    );
+    db.rpc.user_can_publish_on_library = (a) => a.p_uid === "u-granted" && a.p_library === "L1";
+    db.rpc.user_is_effective_owner = (a) => a.p_uid === a.p_doc_owner;
   });
   it("401 without a session", async () => {
     expect((await post(null, { documentId: "sheet" })).status).toBe(401);
@@ -317,6 +410,19 @@ describe("/api/links/invalidate — who may trigger the sweep, and against which
   });
   it("403 for a caller who is not an active member of the document's org", async () => {
     expect((await post("tok-outsider", { documentId: "sheet" })).status).toBe(403);
+  });
+  it("403 for a member who can read the document but could not publish it — a reader cannot empty the queue", async () => {
+    const res = await post("tok-viewer", { documentId: "sheet" });
+    expect(res.status).toBe(403);
+    expect(t("proposed_links").map((r) => r.status)).toEqual(["pending", "pending"]);
+  });
+  it("the proposal-writer tier, a library publish grant and the effective owner may sweep", async () => {
+    for (const tok of ["tok-member", "tok-granted", "tok-owner"]) {
+      for (const r of t("proposed_links")) r.status = "pending";
+      const res = await post(tok, { documentId: "sheet" });
+      expect(res.status, tok).toBe(200);
+      expect(await res.json(), tok).toEqual({ staled: 1 });
+    }
   });
   it("stales against the document's CURRENT revision (a client value is never read)", async () => {
     const res = await post("tok-member", { documentId: "sheet", newRev: "999" });
@@ -338,13 +444,13 @@ describe("LNK-8 / LNK-5 — dismissals block one skill; private skills do not ru
     setup("org");
     t("proposed_links").push({ id: "old", org_id: ORG, document_id: "a", target_document_id: "b", proposer: "tag",
       tier: "inferred", confidence: 0.59, status: "dismissed", evidence: {} });
-    const run = await runLinkProposers(admin(), ORG);
+    const run = await runLinkProposers(admin(), ORG, { matcher: workerSkillMatcher() });
     expect(run.proposed).toBe(1);
     expect(pending().map((r) => r.proposer)).toEqual(["rule:r1"]);
   });
   it("a private connection skill never runs over the org's corpus (and its name reaches no evidence)", async () => {
     setup("private");
-    const run = await runLinkProposers(admin(), ORG);
+    const run = await runLinkProposers(admin(), ORG, { matcher: workerSkillMatcher() });
     expect(pending().map((r) => r.proposer)).toEqual(["tag"]);
     expect(JSON.stringify(t("proposed_links"))).not.toContain("Work orders");
     expect(run.notes.join(" ")).toMatch(/1 private connection skill was not run/);
@@ -359,19 +465,68 @@ describe("LNK-8 / LNK-5 — dismissals block one skill; private skills do not ru
 });
 
 describe("LNK-6 — an overrunning skill is switched off with the reason, never silently skipped", () => {
-  it("disabled in the table with disabled_reason; its partial output is not queued", async () => {
+  const setup = (pattern: string, text: string) => {
     t("documents").push(docRow("a", "DOC-A"), docRow("b", "WO-10023"));
     t("link_rules").push({ id: "r1", org_id: ORG, builtin_key: null, name: "Work orders", kind: "reference",
-      config: { patterns: ["\\bWO-\\d{5}\\b"] }, enabled: true, visibility: "org", created_by: "u1" });
-    mirror("a", { text: "Repairs per WO-10023 completed." });
-    let clock = 0;
-    const run = await runLinkProposers(admin(), ORG, { now: () => (clock += 40) });
+      config: { patterns: [pattern] }, enabled: true, visibility: "org", created_by: "u1" });
+    mirror("a", { text });
+  };
+  it("a match inside the subset that never returns is stopped by the worker's deadline; the skill is switched off, its output not queued", async () => {
+    // \w+a\w+Q is inside the bounded subset and cubic on a run of letters:
+    // only the worker's hard ceiling can stop it (DEC-55).
+    setup("\\w+a\\w+Q", `WO-10023 ${"a".repeat(5_000)}`);
+    const t0 = Date.now();
+    const run = await runLinkProposers(admin(), ORG, { matcher: workerSkillMatcher({ hardDocMs: 300 }) });
+    expect(Date.now() - t0).toBeLessThan(8_000);
     const rule = t("link_rules").find((r) => r.id === "r1")!;
     expect(rule.enabled).toBe(false);
-    expect(String(rule.disabled_reason)).toMatch(/budget is 50 ms/);
+    expect(String(rule.disabled_reason)).toMatch(/one match ran for more than \d+ ms on one document and was stopped/);
     expect(run.disabledSkills).toEqual(["Work orders"]);
     expect(run.notes.join(" ")).toMatch(/overran its time budget/);
     expect(pending().filter((r) => String(r.proposer).startsWith("rule:"))).toHaveLength(0);
+  }, 20_000);
+  it("a soft overrun (read between matches) says how long it took", async () => {
+    setup("\\bWO-\\d{5}\\b", "Repairs per WO-10023 completed.");
+    const soft: SkillMatcherFactory = () => ({
+      match: async () => ({ found: [], overBudget: { index: 0, ms: 73, hard: false }, budgetSpent: false, error: null }),
+      close: async () => {},
+    });
+    await runLinkProposers(admin(), ORG, { matcher: soft });
+    expect(String(t("link_rules").find((r) => r.id === "r1")!.disabled_reason)).toMatch(/it took 73 ms on one document \(the budget is 50 ms\)/);
+  });
+  it("the run's budget reached inside a skill keeps what it found and says the rest runs next time", async () => {
+    setup("\\bWO-\\d{5}\\b", "Repairs per WO-10023 completed.");
+    const spent: SkillMatcherFactory = () => ({
+      match: async () => ({ found: [["WO-10023"]], overBudget: null, budgetSpent: true, error: null }),
+      close: async () => {},
+    });
+    const run = await runLinkProposers(admin(), ORG, { matcher: spent });
+    expect(t("link_rules").find((r) => r.id === "r1")!.enabled).toBe(true);
+    expect(run.notes.join(" ")).toMatch(/ran part of the text; it and the remaining skills run next time/);
+    expect(pending().map((r) => r.proposer)).toContain("rule:r1");
+  });
+  it("without a bounded matcher no member-authored pattern runs, and the run says so", async () => {
+    setup("\\bWO-\\d{5}\\b", "Repairs per WO-10023 completed.");
+    const run = await runLinkProposers(admin(), ORG);
+    expect(run.notes.join(" ")).toMatch(/Custom skills did not run — this pass has no bounded matcher/);
+    expect(pending().filter((r) => String(r.proposer).startsWith("rule:"))).toHaveLength(0);
+    expect(run.inputs.chunksScanned).toBe(0);
+  });
+  it("a worker that cannot run is a note, never a crash", async () => {
+    setup("\\bWO-\\d{5}\\b", "Repairs per WO-10023 completed.");
+    const broken: SkillMatcherFactory = () => ({
+      match: async () => ({ found: [], overBudget: null, budgetSpent: false, error: "the custom-skill worker could not start (x)" }),
+      close: async () => {},
+    });
+    const run = await runLinkProposers(admin(), ORG, { matcher: broken });
+    expect(run.notes.join(" ")).toMatch(/Custom skills did not run to the end — the custom-skill worker could not start/);
+    expect(t("link_rules").find((r) => r.id === "r1")!.enabled).toBe(true);
+  });
+  it("the propose route hands the engine the worker matcher", () => {
+    expect(repo("app/api/links/propose/route.ts")).toMatch(/runLinkProposers\(supabaseAdmin, orgId, \{ matcher: workerSkillMatcher\(\) \}\)/);
+    // the engine never imports the node-only runner (it is reachable from browser bundles)
+    expect(repo("lib/linkProposerServer.ts")).toMatch(/import type \{ SkillMatcherFactory \} from "@\/lib\/customSkillRunner";/);
+    expect(repo("lib/linkProposerServer.ts")).not.toMatch(/^import \{[^}]*\} from "@\/lib\/customSkillRunner"/m);
   });
 });
 
@@ -387,6 +542,43 @@ describe("LNK-10 — the queue holds a bounded number of guesses", () => {
     expect(run.heldInferred).toBe(1);
     expect(run.more).toBe(false);
     expect(run.notes.join(" ")).toMatch(/waiting for room/);
+  });
+});
+
+describe("fix pass — the inferred ceiling fails closed; a failed write stops the slice driver", () => {
+  it("a count that cannot be read admits no new inferred proposals, and says so", async () => {
+    t("documents").push(docRow("a", null), docRow("b", null));
+    shareTags(["a", "b"], ["E-1", "E-2"]);
+    const orig = makeFakeSupabase(db.ref);
+    // proposed_links answers the head count (select with { head: true }) with an error.
+    const failedCount: unknown = new Proxy({}, { get: (_x, q: string) => (q === "then"
+      ? (res: (x: unknown) => void) => res({ data: null, count: null, error: { message: "count boom" } })
+      : () => failedCount) });
+    const broken = {
+      ...orig,
+      from: (tbl: string) => {
+        const b = orig.from(tbl) as unknown as Record<string, (...a: unknown[]) => unknown>;
+        if (tbl !== "proposed_links") return b;
+        return new Proxy(b, {
+          get: (tt, p: string) => (p === "select"
+            ? (cols: string, o?: { head?: boolean }) => (o?.head ? failedCount : tt.select(cols, o))
+            : tt[p]),
+        });
+      },
+    } as unknown as SupabaseClient;
+    const run = await runLinkProposers(broken, ORG);
+    expect(run.proposed).toBe(0);
+    expect(run.heldInferred).toBe(1);
+    expect(run.notes.join(" ")).toMatch(/could not be counted \(count boom\) — no new inferred proposals were added/);
+  });
+  it("a queue write that fails returns more: false, so the 12-pass driver does not repeat it", async () => {
+    const ids = Array.from({ length: 33 }, (_, i) => `d${String(i).padStart(2, "0")}`);
+    t("documents").push(...ids.map((id) => docRow(id, null)));
+    shareTags(ids, ["E-1", "E-2", "E-3"]);
+    db.ref.refuseWrites.add("proposed_links");
+    const run = await runLinkProposers(admin(), ORG);
+    expect(run.errors[0]).toMatch(/Queue write failed/);
+    expect(run.more).toBe(false);
   });
 });
 
@@ -506,12 +698,34 @@ describe("LNK-13 / LNK-9 — an approved link reads the same from both documents
     expect(originBadge("human")).toBeNull();
     expect(originBadge("system")?.label).toBe("auto");
     expect(originBadge("shaped")?.label).toBe("from answer");
-    expect(originBadge("user")?.label).toBe("origin?");
+    // legacy 'user' IS 'shaped' — until 20261126 backfills it, the rows still say 'user'
+    expect(originBadge("user")?.label).toBe("from answer");
+    expect(originBadge("bogus")?.label).toBe("origin?");
     expect(repo("components/graph/GraphShapeWizard.tsx")).toMatch(/origin: "shaped",/);
     expect(repo("components/graph/GraphShapeWizard.tsx")).not.toMatch(/origin: "user"/);
     const panel = repo("components/documents/RelatedPanel.tsx");
     expect(panel).toMatch(/const badge = originBadge\(r\.origin\);/);
     expect(panel).not.toMatch(/r\.origin === "system" \? "auto" : "approved"/);
+  });
+  it("a link carried by a document the viewer cannot read is not listed; one to such a document says restricted", async () => {
+    // "hidden" is not in the viewer's documents read (RLS), yet links touch it.
+    t("document_related_resources").push(
+      { id: "in-hidden", org_id: ORG, document_id: "hidden", target_document_id: "aa", kind: "document", origin: "system",
+        evidence: { summary: "Off-page connector 44-098 continues onto PD-4471" }, sort_order: 0, created_at: "1" },
+      { id: "out-hidden", org_id: ORG, document_id: "aa", target_document_id: "hidden2", kind: "document", origin: "human", sort_order: 1, created_at: "2" },
+    );
+    const list = await listRelatedResources("aa");
+    expect(list.map((r) => r.id)).toEqual(["out-hidden"]);
+    expect(list[0]).toMatchObject({ direction: "out", other_document_id: "hidden2", target: null });
+    const panel = repo("components/documents/RelatedPanel.tsx");
+    expect(panel).toMatch(/\{r\.other_document_id \? "restricted document" : "missing document"\}/);
+  });
+  it("an unreadable inbound carrier no longer hides the outbound row to the same document", async () => {
+    t("document_related_resources").push(
+      { id: "in", org_id: ORG, document_id: "hidden", target_document_id: "aa", kind: "document", sort_order: 0, created_at: "1" },
+      { id: "out", org_id: ORG, document_id: "aa", target_document_id: "hidden", kind: "document", sort_order: 1, created_at: "2" },
+    );
+    expect((await listRelatedResources("aa")).map((r) => r.id)).toEqual(["out"]);
   });
   it("an unpin RLS refuses is reported (checked write)", async () => {
     t("document_related_resources").push({ id: "l1", org_id: ORG, document_id: "aa", target_document_id: "zz", kind: "document" });

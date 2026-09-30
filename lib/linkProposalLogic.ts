@@ -27,7 +27,13 @@ export interface ProposalDraft {
   proposer: ProposerKind;
   tier: ProposalTier;
   confidence: number;
-  evidence: { summary: string; detail?: string; tags?: string[]; page?: number; rule?: string };
+  evidence: {
+    summary: string; detail?: string; tags?: string[]; page?: number; rule?: string;
+    /** LNK-1: the document whose text the evidence was read from — the
+     *  endpoint `sourceRev` is a revision OF. The publish-time sweep stales
+     *  a proposal only when THIS document moved to another revision. */
+    sourceDocumentId?: string;
+  };
   sourceRev?: string | null;
 }
 
@@ -118,6 +124,7 @@ export function proposeOpcContinuity(
               ? undefined
               : `${owners.length} documents carry the number ${ref} — confirm which one this continues onto.`,
             page: occ.page,
+            sourceDocumentId: occ.documentId,
           },
           sourceRev: occ.sourceRev ?? null,
         };
@@ -285,22 +292,62 @@ export interface TextOccurrence {
  *  on a person's write — 20261125 link_rules_guard). */
 export const MAX_SKILL_PATTERNS = 8;
 
+/** LNK-6: an upper repeat bound above 10 — such a repeat backtracks like an
+ *  unbounded one, so the side-by-side and count rules treat it as one. */
+const WIDE_BOUND = "0*(1[1-9]|[2-9][0-9]|[1-9][0-9]{2,})";
+const WIDE_FROM_ZERO = new RegExp(`\\{0+,${WIDE_BOUND}\\}`, "g");
+const WIDE_FROM_ONE = new RegExp(`\\{0*[1-9][0-9]*,${WIDE_BOUND}\\}`, "g");
+
+/** LNK-6: the normalised pattern as the adjacency rule sees it — whatever
+ *  can match nothing is dropped, so two repeats with only optional atoms
+ *  between them are side by side. Repeated until nothing changes:
+ *    a group with an empty branch is optional; an optional group holding an
+ *    unbounded repeat is one optional unbounded atom (`C*`); any other
+ *    optional group or atom (`?`, `{0,n}`) is dropped; an empty group is
+ *    dropped; a repeated group (a plain run, by the group rule) is one atom;
+ *    a plain group with no alternation is its contents. */
+function adjacencyView(u: string): string {
+  let v = u;
+  for (let prev = ""; v !== prev; ) {
+    prev = v;
+    v = v
+      .replace(/\(\|([^()]*)\)/g, "($1)?")
+      .replace(/\(([^()]*)\|\)/g, "($1)?")
+      .replace(/\(([^()]*)\|\|([^()]*)\)/g, "($1|$2)?")
+      .replace(/\([^()]*([*+]|\{[0-9]+,\})[^()]*\)(\?|\{0+(,[0-9]+)?\})/g, "C*")
+      .replace(/\([^()]*\)(\?|\{0+(,[0-9]+)?\})/g, "")
+      .replace(/[^()|*+?{}](\?|\{0+(,[0-9]+)?\})/g, "")
+      .replace(/\(\)/g, "")
+      .replace(/\([^()]*\)([*+{])/g, "C$1")
+      .replace(/\(([^()|]*)\)([^*+?{]|$)/g, "$1$2");
+  }
+  return v;
+}
+
 /**
- * LNK-6 (DEC-55): the bounded, backtracking-safe subset a Connection Skill
- * pattern must stay inside. A pattern is data a member authors and the
- * engine runs over the whole corpus on one thread, so the dangerous shapes
- * are refused before anything compiles it — here, in the Studio's live
- * tester, and (the same rules, on the same normalised text) in the
- * database's skill_pattern_issue(), so a direct PATCH of `config` cannot
- * bypass them. Returns the reason, or null when the pattern is inside it.
+ * LNK-6 (DEC-55): the bounded pattern subset a Connection Skill pattern must
+ * stay inside. A pattern is data a member authors and the engine runs over
+ * the whole corpus, so the known catastrophic shapes are refused before
+ * anything compiles it — here, in the Studio's live tester, and (the same
+ * rules, on the same normalised text) in the database's
+ * skill_pattern_issue(), so a direct PATCH of `config` cannot bypass them.
+ * Returns the reason, or null when the pattern is inside it.
+ *
+ * The subset is a FILTER, not a proof of linear time: a pattern inside it
+ * can still backtrack for seconds on a pathological text (two repeats
+ * around a separator both of them match, e.g. `\w+a\w+X` over a long run of
+ * letters). What bounds a run is the engine's hard deadline — custom skills
+ * run in a worker thread that is terminated when one text or the run
+ * overruns (lib/customSkillRunner.ts).
  *
  * Normalisation: an escape (`\d`, `\.`) is one atom `E`; a character class
- * is one atom `C`; `(?:` is a plain group. Then, in order:
+ * is one atom `C`; `(?:` is a plain group. A repeat whose upper bound is
+ * above 10 counts as unbounded. Then, in order:
  *   backreferences; lookarounds / named groups / inline flags; a repeated
  *   group holding a repeat, an alternation or another group (the
  *   exponential class); an unbounded repeat of `.`; two unbounded repeats
- *   side by side (the polynomial class); more than 2 unbounded repeats; a
- *   repeat bound above 100.
+ *   with nothing but optional atoms between them (the polynomial class);
+ *   more than 2 unbounded repeats; a repeat bound above 100.
  */
 export function patternSafetyIssue(pattern: string): string | null {
   const p = pattern ?? "";
@@ -315,11 +362,12 @@ export function patternSafetyIssue(pattern: string): string | null {
   if (/\([^()]*[*+?{|][^()]*\)[*+{]/.test(s) || /\)[^()]*\)[*+{]/.test(s)) {
     return "a repeated group may not contain a repeat, an alternation or another group";
   }
-  if (/\.([*+]|\{[0-9]+,\})/.test(s)) return "an unbounded repeat of \".\" is not supported";
-  if (/([*+]|\{[0-9]+,\})\??[^()|*+?{}]([*+]|\{[0-9]+,\})/.test(s)) {
+  const u = s.replace(WIDE_FROM_ZERO, "*").replace(WIDE_FROM_ONE, "+");
+  if (/\.([*+]|\{[0-9]+,\})/.test(u)) return "an unbounded repeat of \".\" is not supported";
+  if (/([*+]|\{[0-9]+,\})\??[^()|*+?{}]([*+]|\{[0-9]+,\})/.test(adjacencyView(u))) {
     return "two unbounded repeats may not sit side by side";
   }
-  if ((s.match(/[*+]|\{[0-9]+,\}/g) ?? []).length > 2) return "more than 2 unbounded repeats";
+  if ((u.match(/[*+]|\{[0-9]+,\}/g) ?? []).length > 2) return "more than 2 unbounded repeats";
   for (const m of s.matchAll(/\{([0-9]+)(,([0-9]*))?\}/g)) {
     if (Number(m[1]) > 100 || (m[3] && Number(m[3]) > 100)) return "a repeat bound above 100 is not supported";
   }
@@ -359,7 +407,9 @@ export function compileSkillPatterns(patterns: string[]): {
   return { regexes, errors };
 }
 
-const MAX_MATCHES_PER_TEXT = 20;
+/** At most this many matches per pattern per text (a sloppy pattern is not
+ *  allowed to flood one page). The worker runner applies the same cap. */
+export const MAX_MATCHES_PER_TEXT = 20;
 
 /** Run one custom reference skill over indexed text. A match becomes a link
  *  only when the matched identifier resolves to a real document number —
@@ -373,29 +423,100 @@ export function proposeCustomReferences(
   return runCustomSkill(rule, occurrences, identityIndex).drafts;
 }
 
-/** LNK-6 (DEC-55): the time one skill may spend on one document's text. */
+/** LNK-6 (DEC-55): the time one skill may spend on one document's text,
+ *  read between matches. The hard ceiling on a single match that never
+ *  returns is the worker runner's (lib/customSkillRunner.ts). */
 export const SKILL_DOC_BUDGET_MS = 50;
 
-/** proposeCustomReferences under a per-document time budget. The clock is
- *  read between matches: a skill whose time on one document passes the
- *  budget stops there and reports the overrun, so the caller switches it
- *  off with a note instead of letting it hold the run (the bounded pattern
- *  subset keeps any single match from running away). */
+/** Fold the matches one skill found in one text into the best draft per
+ *  pair — the resolution step, shared by the in-thread run below and the
+ *  engine's worker run (customSkillDrafts). `seen` is per text. */
+function addSkillMatch(
+  best: Map<string, ProposalDraft>,
+  rule: { id: string; name: string },
+  occ: TextOccurrence,
+  matched: string,
+  seen: Set<string>,
+  identityIndex: Map<string, string[]>,
+): void {
+  const key = refKey(matched);
+  if (!key || seen.has(key)) return;
+  seen.add(key);
+  const owners = identityIndex.get(key);
+  if (!owners || owners.length === 0 || owners.length > 2) return;
+  for (const target of owners) {
+    if (target === occ.documentId) continue;
+    const [a, b] = orderPair(occ.documentId, target);
+    const pairKey = `${a}|${b}`;
+    const unique = owners.length === 1;
+    const draft: ProposalDraft = {
+      documentId: a,
+      targetDocumentId: b,
+      proposer: `rule:${rule.id}`,
+      tier: unique ? "strong" : "inferred",
+      confidence: unique ? 0.75 : 0.45,
+      evidence: {
+        summary: `Text references “${matched}”`,
+        detail: unique
+          ? `Found by the “${rule.name}” skill.`
+          : `Found by the “${rule.name}” skill — ${owners.length} documents carry this number.`,
+        page: occ.page,
+        rule: rule.name,
+        sourceDocumentId: occ.documentId,
+      },
+      sourceRev: occ.sourceRev ?? null,
+    };
+    const existing = best.get(pairKey);
+    if (!existing || draft.confidence > existing.confidence) best.set(pairKey, draft);
+  }
+}
+
+/** The drafts one skill's matches make, from matches found elsewhere (the
+ *  engine's worker run): `found[i]` holds the strings matched in
+ *  `occurrences[i]`, in match order; a text with no entry was not run. */
+export function customSkillDrafts(
+  rule: { id: string; name: string },
+  occurrences: TextOccurrence[],
+  found: ReadonlyArray<readonly string[] | undefined>,
+  identityIndex: Map<string, string[]>,
+): ProposalDraft[] {
+  const best = new Map<string, ProposalDraft>();
+  occurrences.forEach((occ, i) => {
+    const seen = new Set<string>();
+    for (const matched of found[i] ?? []) addSkillMatch(best, rule, occ, matched, seen, identityIndex);
+  });
+  return [...best.values()];
+}
+
+/** proposeCustomReferences under a per-document time budget and a run
+ *  deadline, both read between matches on THIS thread: a skill whose time
+ *  on one document passes the budget stops there and reports the overrun
+ *  (the caller switches it off with a note); one that reaches `deadline`
+ *  (in `now()` units) stops and says so. Neither can interrupt a single
+ *  match — the engine therefore runs custom skills through the worker
+ *  runner, which can; this in-thread form serves the author's live tester. */
 export function runCustomSkill(
   rule: { id: string; name: string; regexes: RegExp[] },
   occurrences: TextOccurrence[],
   identityIndex: Map<string, string[]>,
-  opts?: { budgetMs?: number; now?: () => number },
-): { drafts: ProposalDraft[]; overBudget: { documentId: string; ms: number } | null } {
+  opts?: { budgetMs?: number; now?: () => number; deadline?: number },
+): {
+  drafts: ProposalDraft[];
+  overBudget: { documentId: string; ms: number } | null;
+  deadlineHit: boolean;
+} {
   const budget = opts?.budgetMs ?? Number.POSITIVE_INFINITY;
+  const deadline = opts?.deadline ?? Number.POSITIVE_INFINITY;
   const now = opts?.now ?? (() => Date.now());
   const spent = new Map<string, number>();
   const best = new Map<string, ProposalDraft>();
   for (const occ of occurrences) {
     const started = now();
-    const over = (): { documentId: string; ms: number } | null => {
-      const ms = (spent.get(occ.documentId) ?? 0) + (now() - started);
-      return ms > budget ? { documentId: occ.documentId, ms: Math.round(ms) } : null;
+    const stop = (): { documentId: string; ms: number } | "deadline" | null => {
+      const t = now();
+      const ms = (spent.get(occ.documentId) ?? 0) + (t - started);
+      if (ms > budget) return { documentId: occ.documentId, ms: Math.round(ms) };
+      return t >= deadline ? "deadline" : null;
     };
     const seen = new Set<string>();
     for (const re of rule.regexes) {
@@ -406,45 +527,18 @@ export function runCustomSkill(
         count += 1;
         // Zero-width safety: never loop in place.
         if (m.index === re.lastIndex) re.lastIndex += 1;
-        const late = over();
-        if (late) return { drafts: [...best.values()], overBudget: late };
-        const matched = m[0];
-        const key = refKey(matched);
-        if (!key || seen.has(key)) continue;
-        seen.add(key);
-        const owners = identityIndex.get(key);
-        if (!owners || owners.length === 0 || owners.length > 2) continue;
-        for (const target of owners) {
-          if (target === occ.documentId) continue;
-          const [a, b] = orderPair(occ.documentId, target);
-          const pairKey = `${a}|${b}`;
-          const unique = owners.length === 1;
-          const draft: ProposalDraft = {
-            documentId: a,
-            targetDocumentId: b,
-            proposer: `rule:${rule.id}`,
-            tier: unique ? "strong" : "inferred",
-            confidence: unique ? 0.75 : 0.45,
-            evidence: {
-              summary: `Text references “${matched}”`,
-              detail: unique
-                ? `Found by the “${rule.name}” skill.`
-                : `Found by the “${rule.name}” skill — ${owners.length} documents carry this number.`,
-              page: occ.page,
-              rule: rule.name,
-            },
-            sourceRev: occ.sourceRev ?? null,
-          };
-          const existing = best.get(pairKey);
-          if (!existing || draft.confidence > existing.confidence) best.set(pairKey, draft);
-        }
+        const late = stop();
+        if (late === "deadline") return { drafts: [...best.values()], overBudget: null, deadlineHit: true };
+        if (late) return { drafts: [...best.values()], overBudget: late, deadlineHit: false };
+        addSkillMatch(best, rule, occ, m[0], seen, identityIndex);
       }
-      const o = over();
-      if (o) return { drafts: [...best.values()], overBudget: o };
+      const o = stop();
+      if (o === "deadline") return { drafts: [...best.values()], overBudget: null, deadlineHit: true };
+      if (o) return { drafts: [...best.values()], overBudget: o, deadlineHit: false };
     }
     spent.set(occ.documentId, (spent.get(occ.documentId) ?? 0) + (now() - started));
   }
-  return { drafts: [...best.values()], overBudget: null };
+  return { drafts: [...best.values()], overBudget: null, deadlineHit: false };
 }
 
 // ── Co-citation: questions answered from two documents together ──────────
