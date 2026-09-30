@@ -26,7 +26,8 @@ import { r2, R2_BUCKET } from "@/lib/r2";
 import { supabaseAdmin } from "@/lib/supabaseAdmin";
 import { openAiKey } from "@/lib/ai/keyVault";
 import {
-  ingestKnowledgeDocBatch, sniffStoredFile, notPdfMessage, type VisionContext, type IngestBatchResult,
+  ingestKnowledgeDocBatch, sniffStoredFile, notPdfMessage, reindexLibraryChunks,
+  type VisionContext, type IngestBatchResult,
 } from "@/lib/knowledgeIngest";
 import { memberHoldsAny } from "@/lib/roleHeld";
 import { loadOrgInstructionsBlock } from "@/lib/aiInstructionsServer";
@@ -65,8 +66,9 @@ export async function POST(req: NextRequest) {
   const { data: { user }, error: authError } = await supabaseAdmin.auth.getUser(authHeader.slice(7));
   if (authError || !user) return bad("Unauthorized", 401);
 
-  let body: { documentId?: string; action?: string };
+  let body: { documentId?: string; action?: string; libraryId?: string; chunker?: number };
   try { body = await req.json(); } catch { return bad("Expected JSON body"); }
+  if (body.action === "reindex") return reindex(String(body.libraryId ?? "").trim(), body.chunker, user.id);
   const documentId = String(body.documentId ?? "").trim();
   if (!documentId) return bad("documentId is required");
 
@@ -288,4 +290,46 @@ async function acceptPartial(doc: Record<string, unknown>, userId: string) {
   }).then(() => undefined, () => undefined);
   await onIndexed(doc, userId, Number(doc.page_count ?? 0), Number(doc.vision_pages ?? 0));
   return NextResponse.json({ ok: true, done: true, acceptedPages: failed });
+}
+
+/** "Re-index with table-aware chunking" (ING-4 / ING-7): the explicit,
+ *  per-library switch to chunker 2 (or back to 1). Controller-only, like
+ *  indexing itself. Every document of the library is reset through the one
+ *  shared reset and re-indexes from its first page; a document being
+ *  indexed at that moment is reported busy, not reset under its batch. The
+ *  response says how many AI-vision pages will be read again. */
+async function reindex(libraryId: string, chunker: unknown, userId: string) {
+  if (!libraryId) return bad("libraryId is required");
+  if (chunker !== 1 && chunker !== 2) return bad("chunker must be 1 or 2");
+  const { data: lib } = await supabaseAdmin
+    .from("knowledge_libraries").select("id, org_id, name").eq("id", libraryId).maybeSingle();
+  if (!lib) return bad("Library not found", 404);
+  const { data: member } = await supabaseAdmin
+    .from("org_members").select("role, roles")
+    .eq("org_id", lib.org_id as string).eq("uid", userId).eq("status", "active")
+    .maybeSingle();
+  if (!member || !memberHoldsAny(member, ["Admin", "DocCtrl"])) {
+    return bad("Only Admin or Doc Control can re-index a library.", 403);
+  }
+  let out: Awaited<ReturnType<typeof reindexLibraryChunks>>;
+  try {
+    out = await reindexLibraryChunks(libraryId, chunker);
+  } catch (e) {
+    const message = (e as Error).message;
+    return bad(message, /needs migration/.test(message) ? 424 : 500);
+  }
+  await supabaseAdmin.from("audit_logs").insert({
+    action: "KNOWLEDGE_LIBRARY_REINDEXED",
+    resource_type: "knowledge_library", resource_id: libraryId,
+    org_id: lib.org_id, user_id: userId,
+    details: {
+      name: lib.name, chunker, reset: out.reset.length, busy: out.busy.length,
+      errors: out.errors.length, visionPagesToReread: out.visionPagesToReread,
+    },
+  }).then(() => undefined, () => undefined);
+  return NextResponse.json({
+    ok: out.errors.length === 0, chunker,
+    reset: out.reset.length, busy: out.busy.length, errors: out.errors.slice(0, 20),
+    visionPagesToReread: out.visionPagesToReread,
+  }, { status: out.errors.length === 0 ? 200 : 207 });
 }

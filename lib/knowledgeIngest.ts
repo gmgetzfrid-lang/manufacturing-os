@@ -32,7 +32,8 @@ import { r2, R2_BUCKET } from "@/lib/r2";
 import { supabaseAdmin } from "@/lib/supabaseAdmin";
 import { openAiKey } from "@/lib/ai/keyVault";
 import { chunkPageText, splitPageIntoSections, ensurePdfPolyfills, CAPTION_RE,
-  sanitizeStorageText, truncateSafe,
+  sanitizeStorageText, truncateSafe, splitTables, pageLinesFromTextItems, pageTail, carriedTailMarker,
+  chunkerVersionOf, CHUNKER_LEGACY, CHUNKER_TABLE_AWARE, type ChunkerVersion, type PdfTextItem,
 } from "@/lib/knowledgeText";
 import {
   isDrawingLikePage, extractEquipmentTags, extractDrawingRefs, extractTitleBlock,
@@ -123,6 +124,8 @@ type KnowledgeDocRow = {
   empty_pages?: number | null;
   vision_failed_pages?: number[] | null;
   vision_partial_accepted?: boolean | null;
+  /** Which chunker wrote this document's chunks (NULL = 1). */
+  chunk_version?: number | null;
 };
 
 // ── The ingest claim (ING-2) ─────────────────────────────────────────────
@@ -357,6 +360,42 @@ export function notPdfMessage(name: string, kind: SniffedKind): string {
   }
 }
 
+// ── Re-index a library with a chosen chunker (ING-4 / ING-7) ──────────────
+
+export interface LibraryReindex extends KnowledgeIndexReset {
+  chunker: ChunkerVersion;
+  /** Pages the previous index read with AI vision — read (and billed)
+   *  again by the re-index. Said up front. */
+  visionPagesToReread: number;
+}
+
+/** The explicit per-library switch between chunkers: record the library's
+ *  choice, then reset every one of its documents through the shared reset
+ *  so each re-indexes from its first page under the new chunker. Never run
+ *  automatically — every chunk boundary in the library changes, and vision-
+ *  read pages are read again. The meaning (embedding) index follows the new
+ *  chunks as its own pipeline re-embeds them. */
+export async function reindexLibraryChunks(libraryId: string, chunker: ChunkerVersion): Promise<LibraryReindex> {
+  const { error: libErr } = await supabaseAdmin
+    .from("knowledge_libraries").update({ chunk_version: chunker }).eq("id", libraryId);
+  if (libErr) throw new Error(isMissingColumn(libErr)
+    ? "Choosing a chunker needs migration 20261122_intel_roundG_ingest_integrity.sql — apply it first."
+    : `library: ${libErr.message}`);
+  const ids: string[] = [];
+  let visionPagesToReread = 0;
+  for (let from = 0; ; from += 1000) {
+    const { data, error } = await supabaseAdmin.from("knowledge_documents")
+      .select("id, vision_pages").eq("library_id", libraryId)
+      .order("id", { ascending: true }).range(from, from + 999);
+    if (error) throw new Error(`documents: ${error.message}`);
+    const page = (data ?? []) as Array<{ id: string; vision_pages: number | null }>;
+    for (const d of page) { ids.push(d.id); visionPagesToReread += Number(d.vision_pages ?? 0); }
+    if (page.length < 1000) break;
+  }
+  const res = await resetKnowledgeIndex(ids);
+  return { ...res, chunker, visionPagesToReread };
+}
+
 /** Thrown inside a batch when its writes collide with another writer's
  *  (duplicate chunk key, the document row deleted underneath it): the batch
  *  withdraws what it wrote and reports `superseded` rather than erroring
@@ -453,10 +492,38 @@ export async function ingestKnowledgeDocBatch(
     const accepted = cur.vision_partial_accepted === true;
     const retryMode = from >= pageCount && failedBefore.length > 0 && !accepted;
 
+    // Which chunker (ING-4 / ING-7): a document keeps the one it started
+    // with — its chunk boundaries never mix — and a document (re)starting at
+    // its first page takes its library's current choice. Unclaimed (a
+    // database without 20261122) there is nowhere to record it: chunker 1.
+    let chunkVersion: ChunkerVersion = chunkerVersionOf(cur.chunk_version);
+    if (claimed && !retryMode && from === 0) {
+      const { data: lib, error: libErr } = await supabaseAdmin
+        .from("knowledge_libraries").select("chunk_version").eq("id", cur.library_id).maybeSingle();
+      chunkVersion = libErr ? CHUNKER_LEGACY : chunkerVersionOf((lib as { chunk_version?: unknown } | null)?.chunk_version);
+    }
+    const tableAware = chunkVersion === CHUNKER_TABLE_AWARE;
+    /** Chunker 2 carries the unfinished sentence at the foot of a page into
+     *  the next (ING-7). Across a batch boundary it is read back from the
+     *  last chunk stored for the previous page — prose chunks are single
+     *  lines, so a chunk with a line break is a table and carries nothing. */
+    const storedTail = async (page: number): Promise<{ text: string; fromPage: number } | null> => {
+      if (!tableAware || page < 1) return null;
+      const { data } = await supabaseAdmin.from("knowledge_chunks")
+        .select("content").eq("document_id", cur.id).eq("page", page)
+        .order("seq", { ascending: false }).limit(1);
+      const last = ((data ?? []) as Array<{ content: string }>)[0]?.content ?? "";
+      const text = last.includes("\n") ? "" : pageTail(last);
+      return text ? { text, fromPage: page } : null;
+    };
+
     const entityRows: Array<Record<string, unknown>> = [];
     type TextItem = { str?: string; hasEOL?: boolean; transform?: number[] };
     type PageRead = {
       lines: string[];
+      /** What the chunker reads: `lines`, except that chunker 2 rebuilds a
+       *  text-layer page with its column gaps measured (ING-4). */
+      chunkLines: string[];
       visionRead: boolean;
       visionModel: string | null;
       /** The provider's message when the vision read failed (not a timeout). */
@@ -471,19 +538,14 @@ export async function ingestKnowledgeDocBatch(
       const page = await pdf.getPage(p);
       const content = await page.getTextContent();
       // Rebuild LINES (not one long string): heading detection needs them.
-      let lines: string[] = [];
-      let buf = "";
-      for (const item of content.items as TextItem[]) {
-        buf += item.str ?? "";
-        if (item.hasEOL) { lines.push(buf.trim()); buf = ""; }
-        else buf += " ";
-      }
-      if (buf.trim()) lines.push(buf.trim());
       // Broken font CMaps put LONE SURROGATES / control bytes in the text
       // layer; unsanitized they reach the chunk insert and Postgres refuses
       // the whole batch ("invalid input syntax for type json"). Scrub at the
       // source so every consumer (chunks, tags, captions) gets clean text.
-      lines = lines.map(sanitizeStorageText);
+      let lines: string[] = pageLinesFromTextItems(content.items as PdfTextItem[]).map(sanitizeStorageText);
+      let chunkLines: string[] = tableAware
+        ? pageLinesFromTextItems(content.items as PdfTextItem[], { columnGaps: true }).map(sanitizeStorageText)
+        : lines;
 
       // ── VISION FALLBACK: this page can't be read from its text layer.
       //    AutoCAD SHX text plots as LINE-WORK (tags exist as strokes, not
@@ -529,6 +591,7 @@ export async function ingestKnowledgeDocBatch(
             if (transcript.length >= TEXTLESS_PAGE_MAX_CHARS) {
               lines = transcript.split("\n")
                 .map((l) => sanitizeStorageText(l.trim())).filter(Boolean);
+              chunkLines = lines;
               visionRead = true;
               visionModel = out.model;
               visionPages++;
@@ -663,14 +726,29 @@ export async function ingestKnowledgeDocBatch(
         });
       }
 
-      return { stop: null, page: { lines, visionRead, visionModel, visionFailed, entities } };
+      return { stop: null, page: { lines, chunkLines, visionRead, visionModel, visionFailed, entities } };
     };
 
     /** Chunk one read page. Every row says how its text was obtained —
      *  'text' (the PDF's own text layer) or 'vision' (an AI transcription,
-     *  with the model that wrote it) — GOV-9. */
-    const chunkRowsFor = (p: number, read: PageRead, carry: string | null) => {
-      const { segments, lastSection } = splitPageIntoSections(read.lines, carry);
+     *  with the model that wrote it) — GOV-9. Chunker 2 keeps line
+     *  structure (tables stay whole — ING-4) and opens the page with the
+     *  previous page's unfinished sentence, marked with where it came from
+     *  (ING-7); it also returns this page's own unfinished sentence. */
+    const chunkRowsFor = (p: number, read: PageRead, carry: string | null, carried: { text: string; fromPage: number } | null) => {
+      const { segments, lastSection } = tableAware
+        ? splitPageIntoSections(read.chunkLines, carry, { keepLines: true })
+        : splitPageIntoSections(read.lines, carry);
+      let tail = "";
+      if (tableAware && segments.length > 0) {
+        // Only a page that continues the same section continues a sentence.
+        if (carried && segments[0].section === carry) {
+          segments[0] = { ...segments[0], text: `${carriedTailMarker(carried.fromPage)} ${carried.text}\n${segments[0].text}` };
+        }
+        const parts = splitTables(segments[segments.length - 1].text);
+        const last = parts[parts.length - 1];
+        if (last?.kind === "prose") tail = pageTail(last.text);
+      }
       const out: Array<Record<string, unknown>> = [];
       let seq = 0;
       for (const seg of segments) {
@@ -683,12 +761,13 @@ export async function ingestKnowledgeDocBatch(
           });
         }
       }
-      return { rows: out, lastSection, hadText: out.length > 0 };
+      return { rows: out, lastSection, hadText: out.length > 0, tail: tail ? { text: tail, fromPage: p } : null };
     };
 
     // Pages rewritten by the retry pass, and whether each now holds text.
     const retried = new Map<number, boolean>();
     if (!retryMode) {
+      let carried = await storedTail(from);
       for (let p = from + 1; p <= to; p++) {                 // pdf.js pages are 1-based
         if (deadlineMs && Date.now() >= deadlineMs) { stoppedForTime = true; break; }
         const step = await readPage(p, false);
@@ -701,7 +780,8 @@ export async function ingestKnowledgeDocBatch(
         if (read.visionFailed) { failed.add(p); visionError = read.visionFailed; }
         else failed.delete(p);
         lastCompletedPage = p;
-        const built = chunkRowsFor(p, read, section);
+        const built = chunkRowsFor(p, read, section, carried);
+        carried = built.tail;
         section = built.lastSection;
         rows.push(...built.rows);
         if (!built.hadText) emptyPages++;
@@ -730,7 +810,7 @@ export async function ingestKnowledgeDocBatch(
           .select("section").eq("document_id", cur.id).lt("page", p)
           .order("page", { ascending: false }).order("seq", { ascending: false }).limit(1);
         const carry = ((prev ?? []) as Array<{ section: string | null }>)[0]?.section ?? null;
-        const built = chunkRowsFor(p, read, carry);
+        const built = chunkRowsFor(p, read, carry, await storedTail(p - 1));
         rows.push(...built.rows);
         retried.set(p, built.hadText);
       }
@@ -960,6 +1040,7 @@ export async function ingestKnowledgeDocBatch(
         vision_pages: Number(cur.vision_pages ?? 0) + visionPages,
         empty_pages: emptyTotal,
         vision_failed_pages: failedAfter,
+        chunk_version: chunkVersion,
         ingest_claimed_by: null, ingest_claimed_at: null,
       };
       const update = Object.fromEntries(Object.entries(full).filter(([k]) => known.has(k)));

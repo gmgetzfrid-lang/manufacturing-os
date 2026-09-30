@@ -382,3 +382,84 @@ describe("ING-11 / GOV-9 — the row's counters and each chunk's provenance", ()
     expect(rowsOf("knowledge_chunks").length).toBeGreaterThan(0);
   });
 });
+
+describe("ING-4 / ING-7 — chunker 2 through the engine", () => {
+  const TORQUE_TRANSCRIPT = [
+    "DRAWING NO: 025-STD-0003", "SHEET: 1 OF 1", "REV: 2",
+    "The following torques apply to flanged joints in this service and shall be verified.",
+    "TABLE 3 — BOLT TORQUE", "Size | Torque | Notes", '1/2" | 45 ft-lb | dry', '3/4" | 100 ft-lb | dry', '1" | 175 ft-lb | dry',
+    "Torques shall be applied in a star pattern in three passes.",
+  ].join("\n");
+  const library = (chunk_version: number) => { db.tables.knowledge_libraries = [{ id: "kl-1", org_id: "o1", chunk_version }]; };
+  // A provision that straddles the page break — the finding's own example.
+  const STRADDLE_A: PageSpec = [
+    "Welding of low alloy piping shall follow the qualified procedure for the joint.",
+    "Preheat shall be maintained at not less than 175F for P-No. 5 materials over",
+  ];
+  const STRADDLE_B: PageSpec = [
+    "1/2 in. nominal thickness, except where the procedure qualification permits a lower value.",
+    "Interpass temperature shall not exceed 600F for these materials in any pass.",
+  ];
+  const WHOLE = "Preheat shall be maintained at not less than 175F for P-No. 5 materials over 1/2 in. nominal thickness, except where the procedure qualification permits a lower value.";
+  const contents = () => rowsOf("knowledge_chunks").map((c) => String(c.content));
+
+  it("a vision-read table is ONE chunk with its rows on separate lines; the document is stamped chunker 2", async () => {
+    const doc = await seed([null]);
+    library(2);
+    vision.impl = async () => ({ text: TORQUE_TRANSCRIPT, usage: { inputTokens: 1, outputTokens: 1 }, model: "vision-tier" });
+    const res = await ingestKnowledgeDocBatch(asArg(doc), visionCtx());
+    expect(res.done).toBe(true);
+    const table = contents().filter((c) => c.includes("BOLT TORQUE"));
+    expect(table).toHaveLength(1);
+    expect(table[0].split("\n")).toEqual([
+      "TABLE 3 — BOLT TORQUE", "Size | Torque | Notes", '1/2" | 45 ft-lb | dry', '3/4" | 100 ft-lb | dry', '1" | 175 ft-lb | dry',
+    ]);
+    expect(docRow().chunk_version).toBe(2);
+  });
+
+  it("chunker 1 (every library's default) is unchanged: the same page is one flattened chunk", async () => {
+    const doc = await seed([null]);
+    library(1);
+    vision.impl = async () => ({ text: TORQUE_TRANSCRIPT, usage: { inputTokens: 1, outputTokens: 1 }, model: "vision-tier" });
+    await ingestKnowledgeDocBatch(asArg(doc), visionCtx());
+    expect(contents().every((c) => !c.includes("\n"))).toBe(true);
+    expect(contents().some((c) => c.includes('TABLE 3 — BOLT TORQUE Size | Torque | Notes 1/2" | 45 ft-lb | dry'))).toBe(true);
+    expect(docRow().chunk_version).toBe(1);
+  });
+
+  it("a sentence straddling a page break appears intact in one chunk under chunker 2 — and in none under chunker 1", async () => {
+    let doc = await seed([STRADDLE_A, STRADDLE_B]);
+    library(2);
+    await ingestKnowledgeDocBatch(asArg(doc));
+    const carried = contents().find((c) => c.includes(WHOLE));
+    expect(carried).toBeTruthy();
+    expect(carried!.startsWith("[cont. from p. 1] Preheat shall be maintained")).toBe(true);
+    expect(rowsOf("knowledge_chunks").find((c) => String(c.content) === carried)?.page).toBe(2);
+
+    doc = await seed([STRADDLE_A, STRADDLE_B]);
+    library(1);
+    await ingestKnowledgeDocBatch(asArg(doc));
+    expect(contents().some((c) => c.includes(WHOLE))).toBe(false);
+  });
+
+  it("the carried sentence crosses a batch boundary too (read back from the stored last chunk of page 50)", async () => {
+    const pages: PageSpec[] = Array.from({ length: 49 }, (_, i) => prosePage(`topic ${i}`));
+    pages.push(STRADDLE_A, STRADDLE_B);
+    const doc = await seed(pages);
+    library(2);
+    const first = await ingestKnowledgeDocBatch(asArg(doc));
+    expect(first.resumeAt).toBe(50);
+    const second = await ingestKnowledgeDocBatch(asArg(docRow()));
+    expect(second.done).toBe(true);
+    const onPage51 = rowsOf("knowledge_chunks").filter((c) => c.page === 51).map((c) => String(c.content));
+    expect(onPage51.some((c) => c.startsWith("[cont. from p. 50]") && c.includes(WHOLE))).toBe(true);
+  });
+
+  it("a document keeps the chunker it started with when its library switches mid-way", async () => {
+    const doc = await seed([STRADDLE_A, STRADDLE_B], { status: "indexing", pages_indexed: 1, page_count: 2, chunk_version: 1 });
+    library(2);
+    await ingestKnowledgeDocBatch(asArg(doc));
+    expect(docRow().chunk_version).toBe(1);
+    expect(contents().some((c) => c.startsWith("[cont."))).toBe(false);
+  });
+});

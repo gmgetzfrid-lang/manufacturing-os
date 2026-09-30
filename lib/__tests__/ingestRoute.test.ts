@@ -154,3 +154,53 @@ describe("ING-6 — failed vision pages on the response, and the explicit way ou
     expect(rowsOf("knowledge_documents")[0]).toMatchObject({ status: "indexing", vision_failed_pages: [1] });
   });
 });
+
+describe("ING-4 / ING-7 — 'Re-index with table-aware chunking' is an explicit per-library action", () => {
+  const library = () => {
+    seed(docRow({ status: "ready", pages_indexed: 3, page_count: 3, vision_pages: 2, chunk_version: 1 }));
+    db.tables.knowledge_documents.push(docRow({ id: "kd-10", status: "ready", pages_indexed: 1, page_count: 1, vision_pages: 1 }));
+    db.tables.knowledge_libraries = [{ id: "kl-1", org_id: "o1", name: "Standards", chunk_version: 1 }];
+    db.tables.knowledge_chunks = [{ id: "c1", document_id: DOC, org_id: "o1", library_id: "kl-1", page: 1, seq: 0, content: "old" }];
+    db.tables.entity_mentions = [];
+  };
+
+  it("a controller switches the library to chunker 2: every document resets and re-reads, the vision cost is said", async () => {
+    library();
+    const res = await post({ action: "reindex", libraryId: "kl-1", chunker: 2 });
+    expect(res.status).toBe(200);
+    expect(await res.json()).toMatchObject({ ok: true, chunker: 2, reset: 2, busy: 0, visionPagesToReread: 3 });
+    expect(db.tables.knowledge_libraries[0].chunk_version).toBe(2);
+    expect(rowsOf("knowledge_chunks")).toHaveLength(0);
+    for (const d of rowsOf("knowledge_documents")) {
+      expect(d).toMatchObject({ status: "stale", pages_indexed: 0, vision_pages: 0, chunk_version: null });
+    }
+    expect(rowsOf("audit_logs").map((a) => a.action)).toEqual(["KNOWLEDGE_LIBRARY_REINDEXED"]);
+  });
+
+  it("a document mid-batch is reported busy, not reset under its batch", async () => {
+    library();
+    Object.assign(rowsOf("knowledge_documents")[1], { status: "indexing", ingest_claimed_by: "ingest:x", ingest_claimed_at: new Date().toISOString() });
+    const body = await (await post({ action: "reindex", libraryId: "kl-1", chunker: 2 })).json();
+    expect(body).toMatchObject({ reset: 1, busy: 1 });
+    expect(rowsOf("knowledge_documents")[1]).toMatchObject({ status: "indexing", pages_indexed: 1 });
+  });
+
+  it("refuses a non-controller, an unknown chunker and an unknown library", async () => {
+    library();
+    db.tables.org_members.push({ org_id: "o1", uid: "u-viewer", role: "Viewer", roles: ["Viewer"], status: "active" });
+    expect((await post({ action: "reindex", libraryId: "kl-1", chunker: 2 }, "viewer")).status).toBe(403);
+    expect((await post({ action: "reindex", libraryId: "kl-1", chunker: 3 })).status).toBe(400);
+    expect((await post({ action: "reindex", libraryId: "nope", chunker: 2 })).status).toBe(404);
+    expect(db.tables.knowledge_libraries[0].chunk_version).toBe(1);
+    expect(rowsOf("knowledge_chunks")).toHaveLength(1);
+  });
+
+  it("a database without 20261122 is told which migration to apply", async () => {
+    library();
+    db.missingColumns.knowledge_libraries = ["chunk_version"];
+    const res = await post({ action: "reindex", libraryId: "kl-1", chunker: 2 });
+    expect(res.status).toBe(424);
+    expect((await res.json()).error).toMatch(/needs migration 20261122_intel_roundG_ingest_integrity\.sql/);
+    expect(rowsOf("knowledge_chunks")).toHaveLength(1);
+  });
+});
