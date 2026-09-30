@@ -426,7 +426,7 @@ database migration (20261013) applied."*
 ## UX-11 · The Documents tab shows two divergent lists and badges the wrong one
 
 - **Severity:** HIGH
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Verification:** CONFIRMED
 - **Blast radius:** ux / correctness
 - **Locations:**
@@ -467,6 +467,17 @@ update the stale header comment.
 - The badge counts what the tab shows.
 - Approved intake documents are visible in the Documents tab.
 - ACL-hidden rows are disclosed as a count.
+
+**Resolution (2026-09-30, projects Round G).** Reproduced at `2a2ae73`: the badge was `checkouts.length` (sessions), the card silently dropped ACL-hidden rows, and an approved-but-unadopted intake sheet appeared nowhere outside the Intake tab. Now the register card is the Documents tab's PRIMARY list, fed by `lib/projects.ts` `listProjectDocuments`: the `project_documents` rows plus the contractor intake documents that were APPROVED (they carry a `current_version_id`; a pending submission is not listed) in the project's intake folder but not adopted (`approved intake` badge); each row is a live reference with a DEC-40 "Not current" marker for a superseded / void / archived document; linked documents the viewer's permissions hide are disclosed ("N linked documents are hidden by your permissions"). The checkout list below is the secondary "checkouts under this project" section. The tab badge is `documentsTabCount` — DISTINCT documents across the register, approved intake and checkouts, plus the disclosed hidden count — never a session count. Help text and the page's header comment (seven tabs) rewritten.
+- Commits: `7ca202f`, `9363ebb`
+- Tests: `projects.test.ts` "UX-11 — the register the Documents tab shows, and its badge" (hidden count, approved-intake read filtered on `current_version_id`, the not-current marker, ten sessions of one drawing badge as one); `projectPageRoundG.test.ts` "renders approved intake rows, marks the not-current one, and discloses what permissions hide", "the tab badge counts distinct documents".
+
+**Done-when.**
+- The badge counts what the tab shows — ✓.
+- Approved intake documents are visible in the Documents tab — ✓.
+- ACL-hidden rows are disclosed as a count — ✓.
+
+**Scope / residual.** When projects-and-cost PC-1 / J1 (drafting `PROJ-5`) writes a `project_documents` row on intake approval, those documents simply move from the intake section into the register; the listing de-duplicates.
 
 ---
 
@@ -547,7 +558,7 @@ the vendor, and spending an AI call on the read**.
 ## UX-14 · The observer role is a label with no behaviour
 
 - **Severity:** MEDIUM
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Verification:** CONFIRMED (exhaustive grep — two non-marketing occurrences)
 - **Blast radius:** governance
 - **Locations:**
@@ -572,6 +583,16 @@ distinction it does not make.
 
 **Done when.**
 - The role has enforced behaviour, or it no longer appears in the picker.
+
+**Resolution (2026-09-30, projects Round G).** Record-only for the database half, per the plan: roles-and-permissions `SURF-11` / 20261047 re-created `can_manage_project` so an `observer` is on the roster to SEE, never to manage (verified in the file: `COALESCE(pm.role, 'collaborator') IN ('owner', 'collaborator')`). This package added the behaviour the role still lacked (projects-and-cost `PM-11`, default taken — keep the option, enforce it): `supabase/migrations/20261102_prj_roundG_project_rails.sql`'s `project_activity_insert` refuses a `comment` unless the author is a controller or `can_manage_project` (so an observer cannot post); the page's `canComment` excludes observers (`isMember && myRosterRole !== "observer"`), and the picker says what each role means ("Observer — can see, cannot manage or comment"). Authority never comes from a roster row's role (`isOwner` reads `owner_user_id`).
+- Commits: `e0c1aa2`, `9363ebb`
+- Tests: `projectPageRoundG.test.ts` "authority is projects.owner_user_id; an observer gets no comment box; the observer option says what it means"; `projects.test.ts` "an observer's refused comment is 'not posted'"; `projectsRls.test.ts` "the insert binds the author…" (the comment branch).
+- Pending migration: `supabase/migrations/20261102_prj_roundG_project_rails.sql` (the database half of the comment refusal).
+
+**Done-when.**
+- The role has enforced behaviour, or it no longer appears in the picker — ✓ enforced (cannot manage — 20261047; cannot comment — UI now, database after `supabase/migrations/20261102_prj_roundG_project_rails.sql`).
+
+**Scope / residual.** Observers still receive project notifications (members ∪ watchers fan-out) — notifications area `PROD-4` owns the audiences; not changed here.
 
 ---
 
@@ -684,9 +705,9 @@ quality (P2) packages, not the wizard/health package.
 | UX-8 | HIGH | OPEN |
 | UX-9 | HIGH | RESOLVED |
 | UX-10 | HIGH | OPEN |
-| UX-11 | HIGH | OPEN |
+| UX-11 | HIGH | RESOLVED |
 | UX-12 | HIGH | RESOLVED |
 | UX-13 | HIGH | OPEN |
-| UX-14 | MEDIUM | OPEN |
+| UX-14 | MEDIUM | RESOLVED |
 | UX-15 | MEDIUM | OPEN |
 | UX-16 | MEDIUM | OPEN |

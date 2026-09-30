@@ -111,7 +111,7 @@ company restarts the whole sweep.
 ## PERF-2 · Exporting all projects is 360 sequential round trips behind a button that gives no feedback
 
 - **Severity:** HIGH
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Verification:** CONFIRMED (round-trip count exact; timing estimated)
 - **Blast radius:** availability / ux
 - **Locations:**
@@ -140,6 +140,17 @@ memory.
 - The export cannot be started twice concurrently.
 - Progress is visible.
 - The round-trip count is independent of the project count.
+
+**Resolution (2026-09-30, projects Round G).** Reproduced: `exportAllProjectsToCsv` awaited `loadProjectBundle` per project (three serial waves each), the button had no busy state. `lib/projectExport.ts` now reads in bulk per batch of `EXPORT_PROJECT_BATCH` = 100 projects (the decided default, `DEC-44`): one `checkout_sessions` read and one `project_documents` read (in parallel), then the referenced documents in chunks of 200, grouped in memory; progress is reported per batch; an `AbortSignal` stops it between batches (`ExportCancelledError`, nothing downloaded); a refused read fails the export instead of shipping an empty section. The Export All button (`app/(protected)/projects/page.tsx`) is disabled while a run is in flight (a second click is a no-op), shows "Exporting n/N…" and offers Cancel. Cells go through `lib/csvSafe` (`PM-10`).
+- Commit: `f4c65a9`
+- Tests: `lib/__tests__/projectExport.test.ts` "3 projects and 99 projects cost the same number of reads; 150 costs one more batch", "progress is reported and a cancel stops the export", "a refused read fails the export", "the Export All button cannot start a second run and shows progress with a cancel".
+
+**Done-when.**
+- The export cannot be started twice concurrently — ✓.
+- Progress is visible — ✓.
+- The round-trip count is independent of the project count — ✓ within a batch of 100 (1 + 3 reads per batch — 7 for 150 projects, against 450 before).
+
+**Scope / residual.** The CSV is still built in memory (streaming is the remediation's "very large orgs" note; not needed at the counts this area measured).
 
 ---
 
@@ -424,6 +435,17 @@ the project row lands rather than blocking on everything.
 - The header paints before the tab data arrives.
 - No query runs twice in one load.
 
+**Partial (2026-09-30, projects Round G).** Two of three done-whens landed. `app/(protected)/projects/[id]/page.tsx`: `refresh()` no longer fetches the timeline — an effect loads `getProjectTimeline` when the Activity tab is shown (and again after a write marks it stale; a newer request supersedes an older one); `job_kind` comes from the SAME project row (`lib/projects.ts` `getProjectForPage`) instead of a fifth round trip; the duplicate `project_activity` read (`listActivity` beside the timeline) is gone (the Activity badge is the timeline's length); the header paints as soon as the project row lands (members and checkouts load after), and later refreshes update in place instead of blanking the page.
+- Commit: `9363ebb`
+- Tests: `projectPageRoundG.test.ts` "refresh() does not fetch the timeline or re-read job_kind; the Activity tab's effect does".
+
+**Done-when.**
+- Opening the Documents tab does not fetch the timeline — ✓.
+- The header paints before the tab data arrives — ✓.
+- No query runs twice in one load — **not done**: the coach (`components/projects/ProjectCoach.tsx` → `lib/projectSnapshot.ts`, J7's files) still reads `projects` and `project_members` beside the page's own reads. Removing that needs the page to hand its rows to the coach — a change in J7's component and gather, not in this package's files.
+
+**Scope / residual.** The remaining limb is one prop through `ProjectCoach` and an optional pre-read argument to `gatherProjectSnapshot`.
+
 ---
 
 ## PERF-9 · A 571 KB chunk containing a zip library ships to everyone who opens any project
@@ -581,7 +603,7 @@ everywhere; add an explicit `order` to the snapshot query at minimum. Time-bound
 | ID | Severity | Status |
 |---|---|---|
 | PERF-1 | CRITICAL | OPEN |
-| PERF-2 | CRITICAL | OPEN |
+| PERF-2 | CRITICAL | RESOLVED |
 | PERF-3 | HIGH | OPEN |
 | PERF-4 | HIGH | OPEN |
 | PERF-5 | HIGH | OPEN |

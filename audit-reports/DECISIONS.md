@@ -1582,6 +1582,8 @@ already-solved problem, not a change to this rule.
 
 **Risk:** medium.
 
+*Landed 2026-09-30 (projects Round G): the project's Documents tab lists the register as live references — `lib/projects.ts` `listProjectDocuments` reads each linked document's CURRENT row (number, rev, status) and marks a superseded / void / archived one "Not current" (`NOT_CURRENT_STATUSES`); approved contractor documents not yet adopted are listed from the intake folder by reference; no bytes are copied. See projects-tab `UX-11`.*
+
 ---
 
 ### DEC-41 · Verification grade is a field, not a caveat
@@ -2352,3 +2354,84 @@ PDF viewer in sandboxed frames would let the PDF frame take `sandbox=""` too.
 
 **Risk:** low — every change narrows; the viewers that frame keep working
 through the opt-in.
+
+<a id="dec-44-j8"></a>
+## DEC-44 · Closing, reopening and deleting a project
+
+> Made during projects Round G (2026-09-30), package J8 PROJECT-MODEL, under
+> the protocol's fail-safe rule, taking the fleet plan's stated defaults.
+> Numbered DEC-44 on the package branch; the integrator renumbers it on
+> merge (DEC-44…DEC-49 are taken on the integration branch).
+
+**Decision. A closed project is a closed record; the door closes with it; a
+project that carries cost or quality records is archived, not deleted.**
+
+1. **Closing revokes the door.** Completing, cancelling or archiving a
+   project REVOKES its contractor intake links — first, so a refused
+   revocation leaves the project open — rather than suspending them.
+   Reopening does not restore them; new links are minted.
+2. **Closing freezes the regulated record.** For a signed-in writer, the
+   database refuses writes to a completed / cancelled / archived project's
+   cost_entries, change_orders, cost_documents, cost_accounts,
+   project_checklists, checklist_items, turnover_items, punch_items and
+   milestones. The service role keeps its pass (the intake door's own
+   refusal is its package's).
+3. **Reopening is a controller's audited act.** Only Admin / Document
+   Control, with a reason; it clears completed_at / cancelled_at /
+   cancelled_reason and writes `PROJECT_REOPENED`. A project owner cannot
+   reopen their own closed project.
+4. **Deleting.** A project carrying ANY cost or quality row cannot be
+   hard-deleted by its owner — it is archived. A controller may delete it
+   only with a stated reason, through one audited transaction that records
+   the counts, a snapshot of the rows and the storage keys, and revokes the
+   intake links first. `projects.legal_hold` (controller-set) blocks every
+   delete of the project and of its regulated rows. No retention-policy
+   engine for projects beyond the hold. The purge is the ONE pass through the
+   money and quality delete guards: `app.record_purge = 'project:<id>'`.
+5. **Releasing checkouts at closure** runs per session: the actor's own, and
+   everyone else's the release guard lets them release (a controller: all);
+   the rest stay active and are named ("still held by X"). The maintenance
+   sweep releases a checkout still on a closed project 24h after closure.
+6. **Roster roles mean something.** An observer sees the project; it cannot
+   manage it (20261047) or post to its feed. `owner` is set only by the
+   ownership transfer. The document register is written by the project owner
+   or a controller (not by collaborators — the findings' contract; a
+   collaborator's checkout still links through the definer trigger).
+7. **The project timeline's vocabulary is one map** (`lib/timeline.ts`
+   `PROJECT_EVENT_VOCABULARY`): awards, change-order proposals and
+   decisions, checklist rulings, turnover reviews, punch closes and schedule
+   hits / misses are shown; individual cost entries and checklist item edits
+   are not; an unclassified action is shown.
+8. **Exports.** A formula-leading CSV cell is written as an
+   apostrophe-prefixed quoted cell (BOM and extension unchanged); the org-wide
+   project export reads in batches of 100 projects, with progress and cancel.
+
+**Rationale.** Each is the direction that fails safe for a PSM-regulated
+record: an open door on a cancelled project can publish a controlled
+revision (PM-1); a silent cascade destroys the PSSR record an OSHA auditor
+asks for (PM-6 / QUAL-3); a one-batch release that one refusal aborts tells
+a drafter a lock was freed when it was not (PM-4).
+
+**Implementation.** `supabase/migrations/20261102_prj_roundG_project_rails.sql`
+(feed, register, visibility, ownership transfer),
+`supabase/migrations/20261103_prj_roundG_project_closeout_rails.sql`
+(freeze, reopen, delete); `lib/projects.ts`, `lib/timeline.ts`,
+`lib/csvSafe.ts`, `lib/projectExport.ts`, the project page and its
+Documents card. See projects-and-cost `PM-1`, `PM-4`, `PM-6`, `PM-10`,
+`PM-11`, `QUAL-3`; projects-tab `SEC-9`, `SEC-17`, `SAF-6`, `UX-14`,
+`PERF-2`.
+
+**Do not** make the closed-project freeze a client check, let a project
+owner reopen their own project, or add a second purge GUC name.
+
+**Acceptance.** Pinned by `lib/__tests__/projects.test.ts`,
+`projectRailsMigration.test.ts`, `projectsRls.test.ts`, `timeline.test.ts`,
+`projectExport.test.ts` and `projectPageRoundG.test.ts`; live once 20261102
+and 20261103 are applied (DEC-30).
+
+**Reversal.** A stated facility need to edit a closed project's record
+without reopening it — then a named, audited correction path per table, not a
+hole in the freeze.
+
+**Risk:** medium — the freeze makes closed projects read-only for signed-in
+users, by design.

