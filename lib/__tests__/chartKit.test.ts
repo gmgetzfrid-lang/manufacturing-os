@@ -369,6 +369,12 @@ describe("CHART-2 · Spent and Committed differ by hue from the validated scale 
     expect([0, 1, 2, 3, 4, 5].map(vizCat)).toEqual([1, 2, 3, 4, 5, 6].map((n) => `var(--viz-cat-${n})`));
     expect(vizCat(9)).toBe("var(--viz-cat-6)"); // never cycles, never an undefined slot
     expect(vizCat(-1)).toBe("var(--viz-cat-1)");
+    // A computed slot that went bad still names a slot (the fourth review:
+    // vizCat(NaN) returned undefined, an unpainted mark).
+    expect(vizCat(NaN)).toBe("var(--viz-cat-1)");
+    expect(vizCat(Infinity)).toBe("var(--viz-cat-6)");
+    expect(vizCat(-Infinity)).toBe("var(--viz-cat-1)");
+    expect(vizCat(2.9)).toBe("var(--viz-cat-3)");
     const src = read("components/dashboard/viz.tsx");
     for (let n = 1; n <= 6; n++) expect(src).toContain(`"var(--viz-cat-${n})"`);
     expect(src).not.toMatch(/--viz-cat-\$\{/);
@@ -444,12 +450,16 @@ describe("REL-10 · stand-in data is marked in the figure itself", () => {
     expect(barPct(0, 100)).toBe(0);
     expect(barPct(-5, 100)).toBe(0);
     expect(barPct(5, 0)).toBe(0);
-    expect(barPct(1, 1_000)).toBe(2); // any positive value stays visible
+    expect(barPct(1, 1_000)).toBe(0.1); // the plain share: no floor unless asked
+    expect(barPct(1, 1_000, 2)).toBe(2); // a floor keeps a positive value visible
+    expect(barPct(0, 1_000, 2)).toBe(0); // …but never draws a stub for nothing
     expect(barPct(150, 100)).toBe(100); // capped at the track
     const doc = render(React.createElement(BarList, { fmt: usd, items: [
       { label: "Nothing yet", value: 0, slot: 0 },
       { label: "Spent", value: 100, slot: 0 },
       { label: "Own budget", value: 30, of: 120, ghost: { value: 60, slot: 1 }, slot: 0 },
+      { label: "Tiny share", value: 1, of: 100, ghost: { value: 0.5, slot: 1 }, slot: 0 },
+      { label: "Tiny spend", value: 1, slot: 0 },
     ] }));
     const w = (label: string, kind = "value") =>
       parseFloat(doc.querySelector<HTMLElement>(`[title^="${label} · "] [data-bar="${kind}"]`)!.style.width);
@@ -457,6 +467,12 @@ describe("REL-10 · stand-in data is marked in the figure itself", () => {
     expect(w("Spent")).toBe(100);
     expect(w("Own budget")).toBe(25);
     expect(w("Own budget", "ghost")).toBe(50);
+    // Against its own whole a bar is the plain share — 1% of a budget draws
+    // 1%, as the accounts table's bar does; against the list's biggest value
+    // a positive bar keeps its 2% floor.
+    expect(w("Tiny share")).toBe(1);
+    expect(w("Tiny share", "ghost")).toBe(0.5);
+    expect(w("Tiny spend")).toBe(2);
   });
 });
 

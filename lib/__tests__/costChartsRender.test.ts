@@ -13,7 +13,7 @@
 import { describe, it, expect } from "vitest";
 import React from "react";
 import { renderToStaticMarkup } from "react-dom/server";
-import CostCharts, { COST_GLOSSARY_TERMS, BURN_LINES_SHOWN } from "@/components/projects/cost/CostCharts";
+import CostCharts, { COST_GLOSSARY_TERMS, BURN_LINES_SHOWN, accountCurrency } from "@/components/projects/cost/CostCharts";
 import { computeCostRollup, type CostAccount, type CostEntry } from "@/lib/costs";
 
 function render(el: React.ReactElement): Document {
@@ -186,10 +186,84 @@ describe("REL-11 · the real interface draws what the example promises", () => {
     expect(single.querySelector("[data-burn-scale]")!.textContent).not.toContain("its own currency");
   });
 
+  it("a legacy line with no currency is USD, as the rollup counts it — never the project's first currency", () => {
+    // The fourth review's case: the first line is CAD, an older line has
+    // currency NULL. The list printed it as CA$ while the rollup (and the
+    // mixed-currency banner) counted it as USD.
+    const accounts = [
+      account({ id: "a1", code: "01-100", name: "Piping", budget: 190_000, currency: "CAD" }),
+      account({ id: "a2", code: "01-200", name: "Legacy", budget: 20_000, currency: null }),
+    ];
+    const entries = [
+      entry({ id: "e1", costAccountId: "a1", amount: 50_000 }),
+      entry({ id: "e2", costAccountId: "a2", amount: 12_000 }),
+    ];
+    const rollup = computeCostRollup(accounts, entries, new Map(), new Map());
+    expect(rollup.currencies).toEqual(["CAD", "USD"]);
+    // One rule: the helper names each line's currency as the rollup counts it.
+    expect(accounts.map(accountCurrency)).toEqual(["CAD", "USD"]);
+    expect(accountCurrency({ currency: "cad" })).toBe("CAD");
+    const doc = charts(accounts, entries);
+    const legacy = burnRow(doc, "01-200 Legacy");
+    expect(legacy.getAttribute("title")).toBe("01-200 Legacy · $12,000");
+    expect(legacy.textContent).toContain("of $20,000 budget");
+    expect(legacy.textContent).not.toContain("CA$");
+    expect(burnRow(doc, "01-100 Piping").getAttribute("title")).toBe("01-100 Piping · CA$50,000");
+    expect(doc.querySelector("[data-burn-scale]")!.textContent).toContain("Each line is in its own currency.");
+  });
+
   it("more lines than the list shows point at the accounts table", () => {
     const accounts = Array.from({ length: BURN_LINES_SHOWN + 3 }, (_, i) => account({ id: `a${i}`, code: `0${i}`, name: `Line ${i}`, budget: 1_000 * (i + 1) }));
     const doc = charts(accounts, []);
-    expect(doc.body.textContent).toContain(`The ${BURN_LINES_SHOWN} lines furthest through their budgets, of ${BURN_LINES_SHOWN + 3}`);
+    const cut = doc.querySelector("[data-burn-cut]")!.textContent!;
+    expect(cut).toContain(`Showing ${BURN_LINES_SHOWN} of ${BURN_LINES_SHOWN + 3}: lines over budget first, then lines with money but no budget, then the lines furthest through their budgets.`);
+    expect(cut).toContain("Every line is in the accounts table below.");
+    expect(cut).not.toContain("didn't fit"); // no alarm was cut
+  });
+
+  it("the cut never drops an alarm: an over-committed line and an unbudgeted line with spend lead the list", () => {
+    // The fourth review's probe: nine lines half through their budgets, then
+    // a line with $250,000 committed on a $100,000 budget and nothing
+    // invoiced (over budget on exposure — DEC-50's early-job alarm), and a
+    // line with $400,000 spent on no budget. Ordered on spent ÷ budget alone,
+    // the list showed eight "Half" lines and neither alarm.
+    const halves = Array.from({ length: 9 }, (_, i) => account({ id: `h${i}`, code: `0${i}`, name: `Half ${i}`, budget: 100_000 }));
+    const accounts = [
+      ...halves,
+      account({ id: "oc", code: "90", name: "OverCommitted", budget: 100_000 }),
+      account({ id: "ub", code: "91", name: "Unbudgeted", budget: 0 }),
+    ];
+    const entries = [
+      ...halves.map((a, i) => entry({ id: `x${i}`, costAccountId: a.id, amount: 50_000 })),
+      entry({ id: "c1", costAccountId: "oc", entryType: "commitment", amount: 250_000 }),
+      entry({ id: "u1", costAccountId: "ub", amount: 400_000 }),
+    ];
+    const doc = charts(accounts, entries);
+    const rows = [...doc.querySelectorAll<HTMLElement>("[data-bar='value']")].map((b) => b.closest<HTMLElement>("[title]")!.getAttribute("title")!);
+    expect(rows).toHaveLength(BURN_LINES_SHOWN);
+    // Over budget first, then money with no budget, then the rest.
+    expect(rows[0]).toBe("90 OverCommitted · $0.00");
+    expect(rows[1]).toBe("91 Unbudgeted · $400,000");
+    expect(rows.slice(2).every((t) => t.startsWith("0"))).toBe(true);
+    const oc = burnRow(doc, "90 OverCommitted");
+    expect(oc.textContent).toContain("over budget"); // the accounts table's flag for the same line
+    expect(bar(oc, "value").style.background).toBe("var(--viz-down)");
+    expect(width(oc, "ghost")).toBe(100);
+    expect(burnRow(doc, "91 Unbudgeted").textContent).toContain("no budget set");
+    const cut = doc.querySelector("[data-burn-cut]")!.textContent!;
+    expect(cut).toContain(`Showing ${BURN_LINES_SHOWN} of 11: lines over budget first`);
+    expect(cut).not.toContain("didn't fit");
+  });
+
+  it("alarms beyond the cut are counted under the list, never dropped silently", () => {
+    // Ten lines over budget: eight fit, and the list says two more did not.
+    const accounts = Array.from({ length: 10 }, (_, i) => account({ id: `o${i}`, code: `${10 + i}`, name: `Over ${i}`, budget: 1_000 }));
+    const entries = accounts.map((a, i) => entry({ id: `x${i}`, costAccountId: a.id, amount: 1_100 + i * 10 }));
+    const doc = charts(accounts, entries);
+    // Within the alarms, the line furthest over its budget first.
+    const first = doc.querySelector<HTMLElement>("[data-bar='value']")!.closest("[title]")!.getAttribute("title");
+    expect(first).toBe("19 Over 9 · $1,190.00");
+    expect(doc.querySelector("[data-burn-cut]")!.textContent).toContain("2 more lines are over budget or unbudgeted and didn't fit.");
   });
 
   it("a budget-only project (no schedule, no entries) gets an explanation, not a blank region", () => {

@@ -52,26 +52,55 @@ export function entriesToDated(entries: CostEntry[]): { commitments: DatedAmount
  *  the accounts table below. */
 export const BURN_LINES_SHOWN = 8;
 
-/** One budget line as the burn list reads it. */
-interface BurnLine { label: string; spent: number; committed: number; budget: number; overBudget: boolean }
+/** A budget line's currency, read as the cost rollup reads it
+ *  (computeCostRollup's `currencies` in lib/costs): a legacy line with no
+ *  currency is USD — never the project's first currency. One rule for the
+ *  burn list, the accounts table and the account detail, so a line prints in
+ *  the currency the mixed-currency banner counts it in. */
+export function accountCurrency(account: { currency: string | null }): string {
+  return (account.currency ?? "USD").toUpperCase();
+}
 
-/** REL-11: the burn order — the lines furthest through their own budgets
- *  first (then the most committed of their budgets); lines with no budget,
- *  which have no burn to measure, after them, those with money on them first.
+/** One budget line as the burn list reads it. `exposure` is the rollup's
+ *  spent + open commitments, the figure `overBudget` trips on. */
+interface BurnLine { label: string; spent: number; committed: number; exposure: number; budget: number; overBudget: boolean }
+
+/** REL-11: the burn list's tiers. The alarms come first, so the list never
+ *  cuts one off to show a line that is merely further along:
+ *  0 — over budget on exposure (DEC-50 rule 1's alarm, which an
+ *      over-committed line trips before a dollar is invoiced);
+ *  1 — money on a line with no budget to hold it (infinitely through a
+ *      budget of nothing);
+ *  2 — every other line with a budget;
+ *  3 — no budget and no money: nothing to measure. */
+function burnTier(line: BurnLine): 0 | 1 | 2 | 3 {
+  if (line.overBudget) return 0;
+  if (line.budget > 0) return 2;
+  return line.spent > 0 || line.committed > 0 ? 1 : 3;
+}
+
+/** An alarm line: over budget, or money with no budget. */
+function isBurnAlarm(line: BurnLine): boolean {
+  return burnTier(line) <= 1;
+}
+
+/** REL-11: the burn order — the tiers above; within a tier with budgets, the
+ *  line furthest through its own budget on exposure first (then on spent).
  *  A share of the line's own budget compares across currencies; a raw amount
- *  would not. */
+ *  would not, so lines without a budget keep the accounts table's order. */
 function byBurn(a: BurnLine, b: BurnLine): number {
-  const aHas = a.budget > 0, bHas = b.budget > 0;
-  if (aHas !== bHas) return aHas ? -1 : 1;
-  if (!aHas) return Number(b.spent > 0 || b.committed > 0) - Number(a.spent > 0 || a.committed > 0);
-  return b.spent / b.budget - a.spent / a.budget || b.committed / b.budget - a.committed / a.budget;
+  const ta = burnTier(a), tb = burnTier(b);
+  if (ta !== tb) return ta - tb;
+  if (!(a.budget > 0 && b.budget > 0)) return 0;
+  return Math.max(b.spent, b.exposure) / b.budget - Math.max(a.spent, a.exposure) / a.budget
+    || b.spent / b.budget - a.spent / a.budget;
 }
 
 /** REL-11: one row of the burn list — the line's spent against its OWN
  *  budget (the account bars' scale in the table below), what is committed as
  *  the paler bar behind it, and every figure in the line's own currency
- *  (`f`). Over budget on exposure, the bar takes the alarm colour, as the
- *  account bar does. */
+ *  (`f`). Over budget on exposure, the bar takes the alarm colour and the
+ *  flag the accounts table prints for the same line ("over budget"). */
 function burnItem(line: BurnLine, f: (n: number) => string, example = false): BarItem {
   const tag = example ? " (example)" : "";
   return {
@@ -81,7 +110,7 @@ function burnItem(line: BurnLine, f: (n: number) => string, example = false): Ba
     sublabel: line.budget > 0
       ? `${f(line.committed)} committed · of ${f(line.budget)} budget${tag}`
       : `${f(line.committed)} committed · no budget set${tag}`,
-    flag: line.budget > 0 && line.spent > line.budget ? "over budget" : line.overBudget ? "over-committed" : undefined,
+    flag: line.overBudget ? "over budget" : undefined,
   };
 }
 
@@ -146,12 +175,15 @@ export default function CostCharts({ rollup, entries, scheduleStart, scheduleEnd
           budget={ex.budget} budgetLabel="Budget" plannedHint={null}
           forecast={exForecast} crew={exCrew}
           burn={ex.accounts
-            .map((a): BurnLine => ({
-              label: `${a.code} ${a.name}`, spent: a.spent, committed: a.committed, budget: a.budget,
+            .map((a): BurnLine => {
               // The rollup's exposure for a line with one party: spent plus
               // the commitment not yet invoiced.
-              overBudget: a.budget > 0 && Math.max(a.spent, a.committed) > a.budget,
-            }))
+              const exposure = Math.max(a.spent, a.committed);
+              return {
+                label: `${a.code} ${a.name}`, spent: a.spent, committed: a.committed, exposure, budget: a.budget,
+                overBudget: a.budget > 0 && exposure > a.budget,
+              };
+            })
             .sort(byBurn).map((l) => burnItem(l, fmt, true))}
           burnTotal={ex.accounts.length} />
       </ExampleFrame>
@@ -176,16 +208,18 @@ export default function CostCharts({ rollup, entries, scheduleStart, scheduleEnd
 
   // REL-11: burn by budget line, for real — each line against its own
   // (revised) budget and in its own currency, as the accounts table below
-  // formats it; the lines furthest through their budgets first.
+  // formats it; the alarms first, then the lines furthest through their
+  // budgets. Any alarm the cut still leaves out is counted under the list.
   const burnLines = rollup.accounts
     .map((r) => ({
       label: [r.account.code, r.account.name].filter(Boolean).join(" "),
-      spent: r.spent, committed: r.committed, budget: r.revisedBudget, overBudget: r.overBudget,
-      currency: r.account.currency ?? cur,
+      spent: r.spent, committed: r.committed, exposure: r.exposure, budget: r.revisedBudget, overBudget: r.overBudget,
+      currency: accountCurrency(r.account),
     }))
     .sort(byBurn);
   const burn: BarItem[] = burnLines.slice(0, BURN_LINES_SHOWN)
     .map((l) => burnItem(l, (n) => fmtMoney(n, l.currency)));
+  const burnAlarmsHidden = burnLines.slice(BURN_LINES_SHOWN).filter(isBurnAlarm).length;
 
   return (
     <div className="rounded-2xl border border-[var(--color-border)] bg-[var(--color-surface)] p-4 shadow-sm">
@@ -193,13 +227,13 @@ export default function CostCharts({ rollup, entries, scheduleStart, scheduleEnd
         fmt={fmt} tickFmt={tickFmt} todayIso={todayIso}
         budget={rollup.revisedBudget} budgetLabel={rollup.approvedChanges !== 0 ? "Revised budget" : "Budget"}
         plannedHint={plannedHint} forecast={forecast} crew={crew} burn={burn} burnTotal={burnLines.length}
-        mixedCurrency={rollup.currencies.length > 1} />
+        burnAlarmsHidden={burnAlarmsHidden} mixedCurrency={rollup.currencies.length > 1} />
     </div>
   );
 }
 
 /** The one layout both the real picture and the example draw through. */
-function CostPictures({ series, emptyReason = "no-dates", fmt, tickFmt, todayIso, budget, budgetLabel, plannedHint, forecast, crew, burn, burnTotal, mixedCurrency = false, example = false }: {
+function CostPictures({ series, emptyReason = "no-dates", fmt, tickFmt, todayIso, budget, budgetLabel, plannedHint, forecast, crew, burn, burnTotal, burnAlarmsHidden = 0, mixedCurrency = false, example = false }: {
   series: SCurvePoint[];
   /** Why `series` is empty: no dates to draw across, or dates but no money
    *  (no budget, nothing posted). */
@@ -214,6 +248,8 @@ function CostPictures({ series, emptyReason = "no-dates", fmt, tickFmt, todayIso
   crew: PlannedCrew | null;
   burn: BarItem[];
   burnTotal: number;
+  /** Alarm lines (over budget, or money with no budget) past the cut. */
+  burnAlarmsHidden?: number;
   /** The budget lines are in more than one currency: each burn row is in its own. */
   mixedCurrency?: boolean;
   example?: boolean;
@@ -262,8 +298,12 @@ function CostPictures({ series, emptyReason = "no-dates", fmt, tickFmt, todayIso
                 {mixedCurrency ? " Each line is in its own currency." : ""}
               </div>
               {burnTotal > burn.length && (
-                <div className="mt-1 text-[10px] text-[var(--color-text-muted)]">
-                  The {burn.length} lines furthest through their budgets, of {burnTotal} — every line is in the accounts table below.
+                <div data-burn-cut className="mt-1 text-[10px] text-[var(--color-text-muted)]">
+                  Showing {burn.length} of {burnTotal}: lines over budget first, then lines with money but no budget, then the lines furthest through their budgets.
+                  {burnAlarmsHidden > 0
+                    ? ` ${burnAlarmsHidden} more ${burnAlarmsHidden === 1 ? "line is" : "lines are"} over budget or unbudgeted and didn't fit.`
+                    : ""}
+                  {" "}Every line is in the accounts table below.
                 </div>
               )}
             </div>

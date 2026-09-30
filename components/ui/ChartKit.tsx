@@ -317,7 +317,8 @@ export interface BarItem {
   slot?: number;
   /** Scale this bar against its OWN whole (e.g. the line's budget), capped
    *  at full width, instead of against the list's largest value. A whole of
-   *  zero or less draws no bar. */
+   *  zero or less draws no bar. The width is the plain share, with no
+   *  minimum, so it matches any other bar drawn against the same whole. */
   of?: number;
   /** A paler bar behind the first on the same scale (e.g. committed). */
   ghost?: { value: number; slot: number };
@@ -331,11 +332,13 @@ export interface BarItem {
 
 /** A bar's width in %: nothing for nothing (draw only what the data holds —
  *  a zero or negative value, or no whole to measure it against, draws no
- *  stub), at least 2% for any positive value so it stays visible, capped at
- *  the full track. */
-export function barPct(value: number, whole: number): number {
+ *  stub), capped at the full track. `floor` keeps a positive value visible
+ *  (the list's biggest-value scale uses 2%); a bar scaled to its own whole
+ *  (`of`) takes no floor, so 1% of a budget draws 1% — as the accounts
+ *  table's bar for the same line does. */
+export function barPct(value: number, whole: number, floor = 0): number {
   if (!(value > 0) || !(whole > 0)) return 0;
-  return Math.max(2, Math.min(100, (value / whole) * 100));
+  return Math.max(floor, Math.min(100, (value / whole) * 100));
 }
 
 export function BarList({ items, fmt, example = false, className = "" }: {
@@ -349,6 +352,9 @@ export function BarList({ items, fmt, example = false, className = "" }: {
     return example ? `${v} (example)` : v;
   };
   const max = Math.max(1, ...items.map((i) => i.value));
+  // Against the list's largest value, a positive bar stays visible (2%);
+  // against its own whole, it is the plain share.
+  const pct = (value: number, it: BarItem) => it.of != null ? barPct(value, it.of) : barPct(value, max, 2);
   return (
     <div className={`space-y-2 ${className}`}>
       {items.map((it, i) => (
@@ -363,11 +369,11 @@ export function BarList({ items, fmt, example = false, className = "" }: {
           <div className="relative mt-0.5 h-2 rounded-full bg-[var(--viz-track)] overflow-hidden">
             {it.ghost && (
               <div data-bar="ghost" className="absolute inset-y-0 left-0 rounded-full transition-[width] duration-500"
-                style={{ width: `${barPct(it.ghost.value, it.of ?? max)}%`, background: vizCat(it.ghost.slot), opacity: 0.4 }} />
+                style={{ width: `${pct(it.ghost.value, it)}%`, background: vizCat(it.ghost.slot), opacity: 0.4 }} />
             )}
             <div data-bar="value" className="absolute inset-y-0 left-0 rounded-full transition-[width] duration-500"
               style={{
-                width: `${barPct(it.value, it.of ?? max)}%`,
+                width: `${pct(it.value, it)}%`,
                 background: it.alarm ? "var(--viz-down)" : it.slot != null ? vizCat(it.slot) : "var(--color-accent)",
                 // Opaque over a ghost, so the two never blend into a third colour.
                 opacity: it.highlight || it.ghost ? 1 : 0.75,

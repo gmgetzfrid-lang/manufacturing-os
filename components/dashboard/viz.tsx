@@ -24,8 +24,10 @@ const VIZ_CAT = [
 ] as const;
 
 /** Fixed-order categorical color for slot i (0-based). Never cycles — callers
- *  must fold overflow into "Other" before slot 6. */
-export const vizCat = (i: number): string => VIZ_CAT[Math.min(Math.max(0, Math.trunc(i)), 5)];
+ *  must fold overflow into "Other" before slot 6. Every input names a slot:
+ *  past the end is the last, and below the start — or NaN, which fails both
+ *  comparisons — is the first. */
+export const vizCat = (i: number): string => VIZ_CAT[i >= 5 ? 5 : i >= 1 ? Math.trunc(i) : 0];
 
 // ── Day bucketing (shared by sparkline/bars callers) ─────────────────────────
 

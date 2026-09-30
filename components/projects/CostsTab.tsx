@@ -27,7 +27,8 @@ import {
   type CostDocument, type LedgerOrphans,
 } from "@/lib/costDocs";
 import { listChangeOrders, approvedChangesByAccount, repairChangeOrder, type ChangeOrder } from "@/lib/changeOrders";
-import CostCharts, { CostGlossary } from "@/components/projects/cost/CostCharts";
+import CostCharts, { CostGlossary, accountCurrency } from "@/components/projects/cost/CostCharts";
+import { barPct } from "@/components/ui/ChartKit";
 import { scheduleSpanFromMilestones } from "@/lib/costSeries";
 import { vizCat } from "@/components/dashboard/viz";
 import QuotesPanel from "@/components/projects/cost/QuotesPanel";
@@ -298,7 +299,9 @@ export default function CostsTab({ orgId, projectId, canManage, uid, userEmail, 
           <div className="divide-y divide-[var(--color-border)]">
             {rollup.accounts.map((r) => {
               const isOpen = openAccount === r.account.id;
-              const rowPct = r.revisedBudget > 0 ? Math.min(100, (r.spent / r.revisedBudget) * 100) : 0;
+              // The burn list's scale and currency rule for the same line (REL-11).
+              const rowPct = barPct(r.spent, r.revisedBudget);
+              const lineCur = accountCurrency(r.account);
               const accEntries = entriesByAccount.get(r.account.id) ?? [];
               return (
                 <div key={r.account.id} className={r.overBudget ? "bg-rose-500/[0.04]" : undefined}>
@@ -318,7 +321,7 @@ export default function CostsTab({ orgId, projectId, canManage, uid, userEmail, 
                           </span>
                         )}
                         {r.earnedValue !== null && (
-                          <span className="text-[9px] font-bold text-[var(--color-text-muted)]" title="Earned value from the pinned schedule task">EV {fmtMoney(r.earnedValue, r.account.currency ?? cur)}</span>
+                          <span className="text-[9px] font-bold text-[var(--color-text-muted)]" title="Earned value from the pinned schedule task">EV {fmtMoney(r.earnedValue, lineCur)}</span>
                         )}
                       </div>
                       <div className="mt-1.5 relative h-1.5 rounded-full bg-[var(--color-surface-2)] overflow-hidden max-w-md">
@@ -326,12 +329,12 @@ export default function CostsTab({ orgId, projectId, canManage, uid, userEmail, 
                       </div>
                     </div>
                     <div className="shrink-0 text-right">
-                      <div className="text-sm font-black tabular-nums text-[var(--color-text)]">{fmtMoney(r.spent, r.account.currency ?? cur)}</div>
+                      <div className="text-sm font-black tabular-nums text-[var(--color-text)]">{fmtMoney(r.spent, lineCur)}</div>
                       <div className="text-[10px] tabular-nums text-[var(--color-text-muted)]">
-                        of {fmtMoney(r.revisedBudget, r.account.currency ?? cur)}{r.approvedChanges !== 0 ? ` (revised from ${fmtMoney(r.account.budget, r.account.currency ?? cur)})` : ""}
+                        of {fmtMoney(r.revisedBudget, lineCur)}{r.approvedChanges !== 0 ? ` (revised from ${fmtMoney(r.account.budget, lineCur)})` : ""}
                       </div>
                       <div className={`text-[10px] tabular-nums font-bold ${r.remaining < 0 ? "text-rose-600" : "text-[var(--color-text-muted)]"}`}>
-                        {fmtMoney(r.remaining, r.account.currency ?? cur)} uncommitted
+                        {fmtMoney(r.remaining, lineCur)} uncommitted
                       </div>
                     </div>
                   </button>
@@ -521,7 +524,7 @@ function AccountDetail({ orgId, projectId, actor, rollup: r, entries, parties, m
   const a = r.account;
   const [budgetDraft, setBudgetDraft] = useState(String(a.budget));
   const [pinDraft, setPinDraft] = useState(a.wbsMilestoneId ?? "");
-  const cur = a.currency ?? "USD";
+  const cur = accountCurrency(a);
 
   const saveBudget = async () => {
     const n = Number(budgetDraft);

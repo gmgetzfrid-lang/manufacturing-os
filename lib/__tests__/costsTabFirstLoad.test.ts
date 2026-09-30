@@ -205,32 +205,63 @@ describe("CHART-2 · the tab's bars wear the S-curve's series colours", () => {
     expect(host.querySelector('svg [data-series="committed"]')?.getAttribute("stroke")).toBe("var(--viz-cat-2)");
   });
 
-  it("the burn list and the accounts table agree on every line: the same currency, the same scale", async () => {
+  it("the burn list and the accounts table agree on every line: the same currency, the same scale, the same flag", async () => {
     // REL-11 (third review): the list printed a CAD line in the project's
     // first currency and scaled every bar to the biggest spender, while the
     // table below prints the line's own currency and scales to its budget.
+    // Fourth review: a line over budget on exposure alone read "over budget"
+    // in the table and "over-committed" in the list; a line 1% through its
+    // budget drew 1% in the table and 2% in the list; and a legacy line with
+    // no currency printed in the project's first currency (CAD here) though
+    // the rollup counts it as USD.
     reads.listAccounts.mockResolvedValueOnce([
-      { ...account, budget: 190_000 },
       { ...account, id: "a2", code: "01-200", name: "Scaffolding", budget: 42_000, currency: "CAD" },
+      { ...account, budget: 190_000 },
+      { ...account, id: "a3", code: "01-300", name: "Legacy", budget: 30_000, currency: null },
+      { ...account, id: "a4", code: "01-400", name: "Tiny", budget: 100_000, currency: "CAD" },
+      { ...account, id: "a5", code: "01-500", name: "Exposure", budget: 100_000, currency: "CAD" },
     ]);
     reads.listEntries.mockResolvedValueOnce([
       entry({ id: "x1", amount: 50_000 }),
       entry({ id: "x2", costAccountId: "a2", amount: 45_000 }),
+      entry({ id: "x3", costAccountId: "a3", amount: 12_000 }),
+      entry({ id: "x4", costAccountId: "a4", amount: 1_000 }),
+      // $60k invoiced by party B, an $80k commitment to party A with nothing
+      // invoiced against it: exposure $140k on a $100k budget, spent $60k.
+      entry({ id: "x5", costAccountId: "a5", partyId: "pB", amount: 60_000 }),
+      entry({ id: "c5", costAccountId: "a5", partyId: "pA", entryType: "commitment", amount: 80_000 }),
     ]);
     await mount();
     const tableRow = (name: string) =>
       [...host.querySelectorAll("button")].find((b) => b.querySelector("span.font-bold")?.textContent === name)!;
     const listRow = (label: string) => host.querySelector<HTMLElement>(`[title^="${label} · "]`)!;
-    for (const [name, label, money] of [["Piping", "01-100 Piping", "$50,000"], ["Scaffolding", "01-200 Scaffolding", "CA$45,000"]]) {
+    const cases: Array<[string, string, string, number, boolean]> = [
+      // name, list label, money, bar width %, over budget
+      ["Piping", "01-100 Piping", "$50,000", (50_000 / 190_000) * 100, false],
+      ["Scaffolding", "01-200 Scaffolding", "CA$45,000", 100, true],
+      ["Legacy", "01-300 Legacy", "$12,000", 40, false],
+      ["Tiny", "01-400 Tiny", "CA$1,000.00", 1, false],
+      ["Exposure", "01-500 Exposure", "CA$60,000", 60, true],
+    ];
+    for (const [name, label, money, pct, over] of cases) {
       const t = tableRow(name), l = listRow(label);
       expect(t.textContent).toContain(money);
       expect(l.getAttribute("title")).toBe(`${label} · ${money}`);
       const tableW = parseFloat(t.querySelector<HTMLElement>('div[data-series="spent"]')!.style.width);
       const listW = parseFloat(l.querySelector<HTMLElement>('[data-bar="value"]')!.style.width);
+      expect(tableW).toBeCloseTo(pct, 6);
       expect(listW).toBeCloseTo(tableW, 6);
+      // One flag word per state, in both places.
+      expect(t.textContent!.includes("over budget")).toBe(over);
+      expect(l.textContent!.includes("over budget")).toBe(over);
+      expect(l.textContent).not.toContain("over-committed");
     }
     expect(listRow("01-200 Scaffolding").textContent).toContain("of CA$42,000 budget");
     expect(listRow("01-100 Piping").textContent).not.toContain("CA$");
+    expect(tableRow("Legacy").textContent).not.toContain("CA$");
+    expect(listRow("01-300 Legacy").textContent).not.toContain("CA$");
+    // The mixed-currency banner counts the legacy line as USD, as both print it.
+    expect(host.textContent).toContain("Accounts use mixed currencies (CAD, USD)");
   });
 
   it("over budget, Spent turns rose on both bars (the alarm wins over the series colour)", async () => {
