@@ -19,7 +19,7 @@ import { Button } from "@/components/ui/Button";
 import { Spinner } from "@/components/ui/Spinner";
 import { listProjects } from "@/lib/projects";
 import ProjectWizard from "@/components/projects/ProjectWizard";
-import { exportAllProjectsToCsv } from "@/lib/projectExport";
+import { exportAllProjectsToCsv, ExportCancelledError, type ExportProgress } from "@/lib/projectExport";
 import StaleCheckoutBanner from "@/components/projects/StaleCheckoutBanner";
 import type { Project, ProjectStatus, Timestamp } from "@/types/schema";
 
@@ -52,6 +52,25 @@ export default function ProjectsPage() {
     return () => clearTimeout(t);
   }, [search]);
   const [showCreate, setShowCreate] = useState(false);
+  // PERF-2: one export at a time, with progress and a way out. The button
+  // is disabled while a run is in flight, so an impatient second click
+  // cannot start a second sweep on top of the first.
+  const [exportProgress, setExportProgress] = useState<ExportProgress | null>(null);
+  const exportAbort = useRef<AbortController | null>(null);
+  const runExportAll = async () => {
+    if (!activeOrgId || exportAbort.current) return;
+    const ctrl = new AbortController();
+    exportAbort.current = ctrl;
+    setExportProgress({ done: 0, total: 0 });
+    try {
+      await exportAllProjectsToCsv(activeOrgId, { signal: ctrl.signal, onProgress: (p) => setExportProgress(p) });
+    } catch (e) {
+      if (!(e instanceof ExportCancelledError)) await appAlert({ message: (e as Error).message, tone: "danger" });
+    } finally {
+      exportAbort.current = null;
+      setExportProgress(null);
+    }
+  };
   // Status counts come from a separate all-statuses query so the badges are
   // right no matter which tab is selected (they used to be derived from the
   // already-filtered list, i.e. wrong on every tab but "All").
@@ -102,16 +121,21 @@ export default function ProjectsPage() {
             <>
               <Button
                 variant="secondary"
-                onClick={async () => {
-                  if (!activeOrgId) return;
-                  try { await exportAllProjectsToCsv(activeOrgId); }
-                  catch (e) { await appAlert({ message: (e as Error).message, tone: "danger" }); }
-                }}
-                disabled={!activeOrgId || projects.length === 0}
+                onClick={() => void runExportAll()}
+                disabled={!activeOrgId || projects.length === 0 || exportProgress !== null}
+                loading={exportProgress !== null}
                 title="Download every project + associated documents + active checkouts as a CSV (Excel opens it natively)."
               >
-                <Download className="w-4 h-4" /> Export All
+                <Download className="w-4 h-4" />
+                {exportProgress
+                  ? (exportProgress.total > 0 ? `Exporting ${exportProgress.done}/${exportProgress.total}…` : "Exporting…")
+                  : "Export All"}
               </Button>
+              {exportProgress && (
+                <Button variant="secondary" onClick={() => exportAbort.current?.abort()} title="Stop the export — nothing is downloaded.">
+                  Cancel export
+                </Button>
+              )}
               <Button onClick={() => setShowCreate(true)}>
                 <Plus className="w-4 h-4" /> New Project
               </Button>
