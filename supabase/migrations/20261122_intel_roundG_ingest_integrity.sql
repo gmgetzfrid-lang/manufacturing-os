@@ -13,9 +13,12 @@
 --      row starts unclaimed.
 --   2. HONEST COUNTERS. empty_pages (pages with no extractable text, kept per
 --      document — ING-11); vision_failed_pages (pages whose AI-vision read
---      failed, retried before the document may be 'ready' — ING-6) and
---      vision_partial_accepted (a controller's explicit "accept the partial
---      index"). The shared reset zeroes all of them with vision_pages (ING-12).
+--      failed, retried before the document may be 'ready' — ING-6),
+--      vision_retry_after (when those pages are next tried: a back-off after
+--      the provider refused a whole retry pass, so a failed retry never
+--      errors the document) and vision_partial_accepted (a controller's
+--      explicit "accept the partial index"). The shared reset zeroes all of
+--      them with vision_pages (ING-12).
 --   3. THE CHUNKER GENERATION (ING-4 / ING-7). knowledge_libraries.chunk_version
 --      (1 = the current chunker, the default for every library; 2 = the
 --      table-aware, page-bridging chunker, chosen per library by an explicit
@@ -94,6 +97,7 @@ ALTER TABLE knowledge_documents ADD COLUMN IF NOT EXISTS ingest_claimed_at TIMES
 -- ── 2. honest counters ──────────────────────────────────────────────────────
 ALTER TABLE knowledge_documents ADD COLUMN IF NOT EXISTS empty_pages INTEGER NOT NULL DEFAULT 0;
 ALTER TABLE knowledge_documents ADD COLUMN IF NOT EXISTS vision_failed_pages INTEGER[] NOT NULL DEFAULT '{}';
+ALTER TABLE knowledge_documents ADD COLUMN IF NOT EXISTS vision_retry_after TIMESTAMPTZ;
 ALTER TABLE knowledge_documents ADD COLUMN IF NOT EXISTS vision_partial_accepted BOOLEAN NOT NULL DEFAULT FALSE;
 
 -- ── 3. the chunker generation ───────────────────────────────────────────────
@@ -155,10 +159,10 @@ SELECT 'knowledge_documents carries the ingest claim (ingest_claimed_by, ingest_
            AND column_name IN ('ingest_claimed_by', 'ingest_claimed_at')) AS ok,
        NULL::text AS n
 UNION ALL
-SELECT 'knowledge_documents carries the counters (empty_pages, vision_failed_pages, vision_partial_accepted, chunk_version)',
-       (SELECT COUNT(*) = 4 FROM information_schema.columns
+SELECT 'knowledge_documents carries the counters (empty_pages, vision_failed_pages, vision_retry_after, vision_partial_accepted, chunk_version)',
+       (SELECT COUNT(*) = 5 FROM information_schema.columns
          WHERE table_schema = 'public' AND table_name = 'knowledge_documents'
-           AND column_name IN ('empty_pages', 'vision_failed_pages', 'vision_partial_accepted', 'chunk_version')),
+           AND column_name IN ('empty_pages', 'vision_failed_pages', 'vision_retry_after', 'vision_partial_accepted', 'chunk_version')),
        NULL
 UNION ALL
 SELECT 'knowledge_libraries.chunk_version defaults to 1 and admits only 1 or 2',

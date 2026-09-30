@@ -10,13 +10,16 @@
 // (23503 on insert, CASCADE on delete), and a database that has NOT applied
 // a migration yet (missingColumns → PGRST204, missingTables → 42P01).
 // `hooks` run before each statement: a test uses them to inject a failure or
-// to act as a second writer at an exact point in a batch.
+// to act as a second writer at an exact point in a batch. `asyncHooks` run
+// (and are awaited) before each statement too — for a second writer whose
+// whole multi-statement operation must land at that exact point. `upsert`
+// (onConflict) and `order(…, { nullsFirst })` follow PostgREST.
 
 export type Row = Record<string, unknown>;
 export type DbErr = { code: string; message: string };
 export type Op = {
   table: string;
-  kind: "select" | "insert" | "update" | "delete";
+  kind: "select" | "insert" | "update" | "delete" | "upsert";
   payload?: Row | Row[];
   returning: boolean;
   columns: string[] | "*";
@@ -28,6 +31,7 @@ export const db = {
   missingColumns: {} as Record<string, string[]>,
   missingTables: [] as string[],
   hooks: [] as Array<(op: Op, filters: FilterSpec[]) => { error: DbErr } | void>,
+  asyncHooks: [] as Array<(op: Op, filters: FilterSpec[]) => Promise<void>>,
   ops: [] as Array<Op & { filters: FilterSpec[] }>,
   seq: 0,
 };
@@ -50,6 +54,7 @@ export function resetDb(tables: Record<string, Row[]> = {}): void {
   db.missingColumns = {};
   db.missingTables = [];
   db.hooks = [];
+  db.asyncHooks = [];
   db.ops = [];
   db.seq = 0;
 }
@@ -59,6 +64,13 @@ export const rowsOf = (t: string): Row[] => db.tables[t] ?? [];
 const cmp = (a: unknown, b: unknown): number => {
   if (typeof a === "number" && typeof b === "number") return a - b;
   return String(a).localeCompare(String(b));
+};
+/** ORDER BY with Postgres's NULL placement (NULLS LAST ascending unless
+ *  asked otherwise). */
+const orderCmp = (a: unknown, b: unknown, asc: boolean, nullsFirst: boolean): number => {
+  const an = a == null, bn = b == null;
+  if (an || bn) return an && bn ? 0 : (an ? -1 : 1) * (nullsFirst ? 1 : -1);
+  return (asc ? 1 : -1) * cmp(a, b);
 };
 
 function matches(spec: FilterSpec): Filter {
@@ -102,7 +114,8 @@ function project(r: Row, columns: string[] | "*"): Row {
 
 class Builder implements PromiseLike<{ data: unknown; error: DbErr | null; count?: number }> {
   private filters: FilterSpec[] = [];
-  private orders: Array<[string, boolean]> = [];
+  private orders: Array<[string, boolean, boolean]> = [];
+  private conflict: string[] = [];
   private rangeSpec: [number, number] | null = null;
   private limitN: number | null = null;
   private op: Op;
@@ -117,6 +130,11 @@ class Builder implements PromiseLike<{ data: unknown; error: DbErr | null; count
     return this;
   }
   insert(rows: Row | Row[]) { this.op.kind = "insert"; this.op.payload = rows; return this; }
+  upsert(rows: Row | Row[], opts?: { onConflict?: string }) {
+    this.op.kind = "upsert"; this.op.payload = rows;
+    this.conflict = (opts?.onConflict ?? "id").split(",").map((c) => c.trim());
+    return this;
+  }
   update(patch: Row) { this.op.kind = "update"; this.op.payload = patch; return this; }
   delete() { this.op.kind = "delete"; return this; }
   eq(col: string, value: unknown) { this.filters.push({ col, op: "eq", value }); return this; }
@@ -132,7 +150,11 @@ class Builder implements PromiseLike<{ data: unknown; error: DbErr | null; count
     this.filters.push({ col, op: "notis", value }); return this;
   }
   or(expr: string) { this.filters.push({ col: "", op: "or", value: expr }); return this; }
-  order(col: string, opts?: { ascending?: boolean }) { this.orders.push([col, opts?.ascending !== false]); return this; }
+  order(col: string, opts?: { ascending?: boolean; nullsFirst?: boolean }) {
+    const asc = opts?.ascending !== false;
+    this.orders.push([col, asc, opts?.nullsFirst ?? !asc]);
+    return this;
+  }
   range(from: number, to: number) { this.rangeSpec = [from, to]; return this; }
   limit(n: number) { this.limitN = n; return this; }
   maybeSingle() { this.singleMode = "maybe"; return this; }
@@ -183,6 +205,15 @@ class Builder implements PromiseLike<{ data: unknown; error: DbErr | null; count
       all.push(...incoming.map(strip));
       return { data: this.op.returning ? incoming.map((r) => project(r, this.op.columns)) : null, error: null };
     }
+    if (this.op.kind === "upsert") {
+      const out: Row[] = [];
+      for (const p of payloads) {
+        const hit = all.find((r) => this.conflict.every((c) => r[c] === p[c]));
+        if (hit) { Object.assign(hit, strip(p)); out.push(hit); }
+        else { const r = strip({ id: (p.id as string) ?? `${table}-${++db.seq}`, ...p }); all.push(r); out.push(r); }
+      }
+      return { data: this.op.returning ? out.map((r) => project(r, this.op.columns)) : null, error: null };
+    }
     if (this.op.kind === "update") {
       const hit = all.filter(pred);
       for (const r of hit) Object.assign(r, this.op.payload as Row);
@@ -200,8 +231,8 @@ class Builder implements PromiseLike<{ data: unknown; error: DbErr | null; count
       return { data: this.op.returning ? hit.map((r) => project(r, this.op.columns)) : null, error: null };
     }
     let out = all.filter(pred);
-    for (const [col, asc] of [...this.orders].reverse()) {
-      out = [...out].sort((a, b) => (asc ? 1 : -1) * cmp(a[col], b[col]));
+    for (const [col, asc, nullsFirst] of [...this.orders].reverse()) {
+      out = [...out].sort((a, b) => orderCmp(a[col], b[col], asc, nullsFirst));
     }
     if (this.rangeSpec) out = out.slice(this.rangeSpec[0], this.rangeSpec[1] + 1);
     if (this.limitN !== null) out = out.slice(0, this.limitN);
@@ -217,6 +248,13 @@ class Builder implements PromiseLike<{ data: unknown; error: DbErr | null; count
   ): PromiseLike<A | B> {
     // A real round trip is asynchronous: yield first, so two drivers
     // awaiting in parallel interleave statement by statement.
+    if (db.asyncHooks.length > 0) {
+      const op = this.op, filters = [...this.filters];
+      return (async () => {
+        for (const h of [...db.asyncHooks]) await h(op, filters);
+        return this.run();
+      })().then(onfulfilled, onrejected);
+    }
     return Promise.resolve().then(() => this.run()).then(onfulfilled, onrejected);
   }
 }

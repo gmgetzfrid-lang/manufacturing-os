@@ -18,15 +18,19 @@
 // POST that finds another driver mid-batch WAITS for it (never errors the
 // document) and answers `busy` with the row's progress if it is still held.
 // A file that is not a PDF is refused on its first batch, by its bytes,
-// before pdf.js sees it (ING-9).
+// before pdf.js sees it (ING-9 — the engine checks, whichever driver gets
+// there first; refuseNonPdf is the one refusal). Pages AI vision could not
+// read that cannot be retried right now (no key, or the provider refused
+// again) answer 409 with the plain reason — the document keeps its index
+// and stays 'indexing', never 'error' (ING-6).
 
+import { randomUUID } from "node:crypto";
 import { NextRequest, NextResponse } from "next/server";
-import { DeleteObjectCommand } from "@aws-sdk/client-s3";
-import { r2, R2_BUCKET } from "@/lib/r2";
 import { supabaseAdmin } from "@/lib/supabaseAdmin";
 import { openAiKey } from "@/lib/ai/keyVault";
 import {
-  ingestKnowledgeDocBatch, sniffStoredFile, notPdfMessage, reindexLibraryChunks,
+  ingestKnowledgeDocBatch, refuseNonPdf, reindexLibraryChunks, rebuildDocumentMentions,
+  claimIngestLease, releaseIngestLease,
   type VisionContext, type IngestBatchResult,
 } from "@/lib/knowledgeIngest";
 import { memberHoldsAny } from "@/lib/roleHeld";
@@ -66,9 +70,11 @@ export async function POST(req: NextRequest) {
   const { data: { user }, error: authError } = await supabaseAdmin.auth.getUser(authHeader.slice(7));
   if (authError || !user) return bad("Unauthorized", 401);
 
-  let body: { documentId?: string; action?: string; libraryId?: string; chunker?: number };
+  let body: { documentId?: string; action?: string; libraryId?: string; chunker?: number; dryRun?: boolean };
   try { body = await req.json(); } catch { return bad("Expected JSON body"); }
-  if (body.action === "reindex") return reindex(String(body.libraryId ?? "").trim(), body.chunker, user.id);
+  if (body.action === "reindex") {
+    return reindex(String(body.libraryId ?? "").trim(), body.chunker, user.id, body.dryRun === true, deadlineMs);
+  }
   const documentId = String(body.documentId ?? "").trim();
   if (!documentId) return bad("documentId is required");
 
@@ -91,39 +97,6 @@ export async function POST(req: NextRequest) {
 
   if (doc.status === "ready") {
     return NextResponse.json({ done: true, pageCount: doc.page_count, pagesIndexed: doc.pages_indexed });
-  }
-
-  // ── Is it a PDF at all? (ING-9) ────────────────────────────────────────
-  // The browser's .pdf check is advisory; the bytes decide, on the first
-  // batch, before pdf.js ever sees them. An uploaded non-PDF leaves nothing
-  // behind — its row and its R2 object go — and the refusal names where the
-  // file belongs. A mirrored controlled file is never deleted (the object is
-  // doc control's): its row is marked with the same plain message.
-  if (Number(doc.pages_indexed ?? 0) === 0) {
-    let kind: Awaited<ReturnType<typeof sniffStoredFile>> | null = null;
-    try { kind = await sniffStoredFile(doc.file_key as string); } catch { kind = null; }
-    if (kind && kind !== "pdf") {
-      const message = notPdfMessage(String(doc.name ?? "This file"), kind);
-      const uploaded = !doc.source_document_id && !doc.source_id &&
-        String(doc.file_key ?? "").startsWith(`orgs/${doc.org_id as string}/knowledge/`);
-      if (uploaded) {
-        const { error: delErr } = await supabaseAdmin.from("knowledge_documents").delete().eq("id", documentId);
-        if (delErr) return bad(`${message} (The upload could not be removed: ${delErr.message})`, 415);
-        await r2.send(new DeleteObjectCommand({ Bucket: R2_BUCKET, Key: doc.file_key as string }))
-          .catch(() => undefined); // the orphan sweeper reclaims an object whose delete failed
-        await supabaseAdmin.from("audit_logs").insert({
-          action: "KNOWLEDGE_DOC_REJECTED",
-          resource_type: "knowledge_document", resource_id: documentId,
-          org_id: doc.org_id, user_id: user.id,
-          details: { name: doc.name, detected: kind, reason: "not a PDF" },
-        }).then(() => undefined, () => undefined);
-        return NextResponse.json({ error: message, removed: true, detected: kind }, { status: 415 });
-      }
-      const { error: markErr } = await supabaseAdmin.from("knowledge_documents")
-        .update({ status: "error", error: message.slice(0, 500) }).eq("id", documentId);
-      if (markErr) return bad(`${message} (${markErr.message})`, 415);
-      return NextResponse.json({ error: message, removed: false, detected: kind }, { status: 415 });
-    }
   }
 
   // ── Vision fallback context ────────────────────────────────────────────
@@ -189,6 +162,7 @@ export async function POST(req: NextRequest) {
       pages_indexed: (doc.pages_indexed as number | null) ?? 0,
       page_count: doc.page_count as number | null,
       last_section: (doc.last_section as string | null) ?? null,
+      source_document_id: (doc.source_document_id as string | null) ?? null,
       // What the batch compares against at commit (ING-1) when it runs
       // unclaimed on a pre-20261122 database.
       ...("source_version_id" in doc ? { source_version_id: (doc.source_version_id as string | null) ?? null } : {}),
@@ -199,6 +173,14 @@ export async function POST(req: NextRequest) {
     while (res.busy && Date.now() + BUSY_POLL_MS + MIN_BATCH_MS < deadlineMs) {
       await new Promise((r) => setTimeout(r, BUSY_POLL_MS));
       res = await ingestKnowledgeDocBatch(row, vision, deadlineMs);
+    }
+
+    // ── Not a PDF at all (ING-9): the bytes said so before pdf.js saw them.
+    //    An upload leaves nothing behind; a mirror is marked (refuseNonPdf).
+    if (res.notPdf) {
+      const refused = await refuseNonPdf(doc as Record<string, unknown>, res.notPdf, user.id);
+      if (refused.error) return bad(`${refused.message} (${refused.error})`, 415);
+      return NextResponse.json({ error: refused.message, removed: refused.removed, detected: res.notPdf }, { status: 415 });
     }
 
     if (visionUsage.inputTokens + visionUsage.outputTokens > 0) {
@@ -221,13 +203,18 @@ export async function POST(req: NextRequest) {
       visionSkipReason = visionSkipReason ? `${visionSkipReason} ${note}` : note;
     }
 
-    return NextResponse.json({
-      ...res,
-      visionSkipReason,
-      visionCostUsd: visionUsage.inputTokens + visionUsage.outputTokens > 0
-        ? estimateCostUsd(visionModel || vision!.model, visionUsage)
-        : 0,
-    });
+    const visionCostUsd = visionUsage.inputTokens + visionUsage.outputTokens > 0
+      ? estimateCostUsd(visionModel || vision!.model, visionUsage)
+      : 0;
+    if (res.visionRetryBlocked) {
+      // Nothing failed and nothing was lost: the reason is on the row and
+      // here. A non-2xx stops the caller's loop with this message instead of
+      // a misleading "stalled" one; the document stays 'indexing'.
+      return NextResponse.json({
+        ...res, visionSkipReason, visionCostUsd, error: res.visionRetryMessage,
+      }, { status: 409 });
+    }
+    return NextResponse.json({ ...res, visionSkipReason, visionCostUsd });
   } catch (e) {
     const message = (e as Error).message;
     await supabaseAdmin.from("knowledge_documents")
@@ -237,8 +224,10 @@ export async function POST(req: NextRequest) {
   }
 }
 
-/** Everything that follows a document reaching 'ready': the audit row and
- *  the mention pass that draws its document↔equipment edges. */
+/** The audit row for a document reaching 'ready'. (The mention pass that
+ *  draws its document↔equipment edges runs where the document becomes
+ *  'ready' — inside the engine for a batch, so the cron drain gets it too,
+ *  and in acceptPartial below.) */
 async function onIndexed(doc: Record<string, unknown>, userId: string, pages: number, visionPages: number) {
   await supabaseAdmin.from("audit_logs").insert({
     action: "KNOWLEDGE_DOC_INDEXED",
@@ -246,59 +235,79 @@ async function onIndexed(doc: Record<string, unknown>, userId: string, pages: nu
     org_id: doc.org_id, user_id: userId,
     details: { name: doc.name, pages, visionPages },
   }).then(() => undefined, () => undefined);
-
-  // Feed the GRAPH the moment indexing finishes. The mention indexer —
-  // which draws every document↔equipment edge on the graph page — had
-  // no automatic trigger at all: its API route had zero callers, so
-  // the graph only knew about documents someone manually indexed.
-  // Best-effort with a hard time cap; a slow scan never fails ingest.
-  try {
-    const { loadAliasDictionary, indexDocumentMentions } = await import("@/lib/mentionIndexer");
-    const dict = await loadAliasDictionary(String(doc.org_id));
-    if (dict.length > 0) {
-      await Promise.race([
-        indexDocumentMentions(
-          String(doc.org_id), String(doc.id), dict,
-          (doc.source_document_id as string | null) ?? null,
-        ),
-        new Promise((r) => setTimeout(r, 8_000)),
-      ]);
-    }
-  } catch { /* mention edges are a bonus — never block ingestion */ }
 }
 
 /** ING-6's explicit exit: a controller accepts a document whose remaining
  *  pages AI vision could not read. It becomes 'ready' with those pages still
  *  listed on the row (vision_failed_pages) — the count stays visible — and
- *  the acceptance is audited with the page list. */
+ *  the acceptance is audited with the page list. It takes the document's
+ *  ingest claim like any writer, so a retry batch in flight can neither be
+ *  overwritten by it nor undo it: the acceptance and the claim's release
+ *  are one UPDATE. */
 async function acceptPartial(doc: Record<string, unknown>, userId: string) {
-  const failed = pageList(doc.vision_failed_pages);
-  if (failed.length === 0) return bad("Nothing to accept — no page is waiting on AI vision.", 409);
-  if (Number(doc.pages_indexed ?? 0) < Number(doc.page_count ?? Infinity)) {
-    return bad("Indexing has not reached the end of this document yet — let it finish first.", 409);
+  if (pageList(doc.vision_failed_pages).length === 0) return bad("Nothing to accept — no page is waiting on AI vision.", 409);
+  const driver = `accept:${randomUUID()}`;
+  let lease: Awaited<ReturnType<typeof claimIngestLease>>;
+  try { lease = await claimIngestLease(String(doc.id), driver); }
+  catch (e) { return bad(`Could not accept the partial index: ${(e as Error).message}`, 500); }
+  if (lease.kind === "gone") return bad("Document not found", 404);
+  if (lease.kind === "busy") {
+    return bad("This document is being indexed right now — try again in a moment.", 409);
   }
-  const { data, error } = await supabaseAdmin.from("knowledge_documents")
-    .update({ vision_partial_accepted: true, status: "ready", error: null })
-    .eq("id", String(doc.id)).select("id");
-  if (error) return bad(`Could not accept the partial index: ${error.message}`, 500);
-  if ((data ?? []).length === 0) return bad("Document not found", 404);
+  // The row as claimed: the freshest page list and progress.
+  const row = lease.kind === "claimed" ? lease.row : doc;
+  const failed = pageList(row.vision_failed_pages);
+  const refuse = async (msg: string) => {
+    if (lease.kind === "claimed") await releaseIngestLease(String(doc.id), driver);
+    return bad(msg, 409);
+  };
+  if (failed.length === 0) return refuse("Nothing to accept — no page is waiting on AI vision.");
+  if (Number(row.pages_indexed ?? 0) < Number(row.page_count ?? Infinity)) {
+    return refuse("Indexing has not reached the end of this document yet — let it finish first.");
+  }
+  const known = new Set(Object.keys(row));
+  const update = Object.fromEntries(Object.entries({
+    vision_partial_accepted: true, status: "ready", error: null, vision_retry_after: null,
+    ingest_claimed_by: null, ingest_claimed_at: null,
+  }).filter(([k]) => known.has(k)));
+  let q = supabaseAdmin.from("knowledge_documents").update(update).eq("id", String(doc.id));
+  if (lease.kind === "claimed") q = q.eq("ingest_claimed_by", driver);
+  const { data, error } = await q.select("id");
+  if (error) {
+    if (lease.kind === "claimed") await releaseIngestLease(String(doc.id), driver);
+    return bad(`Could not accept the partial index: ${error.message}`, 500);
+  }
+  if ((data ?? []).length === 0) return bad("The document changed while it was being accepted — reload and try again.", 409);
   await supabaseAdmin.from("audit_logs").insert({
     action: "KNOWLEDGE_DOC_PARTIAL_ACCEPTED",
     resource_type: "knowledge_document", resource_id: String(doc.id),
     org_id: doc.org_id, user_id: userId,
     details: { name: doc.name, unreadPages: failed },
   }).then(() => undefined, () => undefined);
-  await onIndexed(doc, userId, Number(doc.page_count ?? 0), Number(doc.vision_pages ?? 0));
+  await onIndexed(doc, userId, Number(row.page_count ?? 0), Number(row.vision_pages ?? 0));
+  await rebuildDocumentMentions({
+    id: String(doc.id), org_id: String(doc.org_id),
+    source_document_id: (doc.source_document_id as string | null) ?? null,
+  });
   return NextResponse.json({ ok: true, done: true, acceptedPages: failed });
 }
 
 /** "Re-index with table-aware chunking" (ING-4 / ING-7): the explicit,
  *  per-library switch to chunker 2 (or back to 1). Controller-only, like
- *  indexing itself. Every document of the library is reset through the one
- *  shared reset and re-indexes from its first page; a document being
- *  indexed at that moment is reported busy, not reset under its batch. The
- *  response says how many AI-vision pages will be read again. */
-async function reindex(libraryId: string, chunker: unknown, userId: string) {
+ *  indexing itself.
+ *
+ *    - `dryRun: true` changes NOTHING and answers what a run would do: the
+ *      documents it would reset and the AI-vision pages they would re-read
+ *      (and bill) — the number to confirm before anything is deleted.
+ *    - A real run records the intent in the audit log FIRST (a run that
+ *      cannot be recorded does not start), then resets the library's
+ *      documents through the one shared reset until this invocation's
+ *      deadline, and answers `remaining`: run it again to continue. A
+ *      document already on the chosen chunker (or not yet indexed) is
+ *      skipped, so a re-run never resets — or re-bills — one twice, and a
+ *      document being indexed at that moment is reported busy and picked up
+ *      by the next run. */
+async function reindex(libraryId: string, chunker: unknown, userId: string, dryRun: boolean, deadlineMs: number) {
   if (!libraryId) return bad("libraryId is required");
   if (chunker !== 1 && chunker !== 2) return bad("chunker must be 1 or 2");
   const { data: lib } = await supabaseAdmin
@@ -311,25 +320,40 @@ async function reindex(libraryId: string, chunker: unknown, userId: string) {
   if (!member || !memberHoldsAny(member, ["Admin", "DocCtrl"])) {
     return bad("Only Admin or Doc Control can re-index a library.", 403);
   }
-  let out: Awaited<ReturnType<typeof reindexLibraryChunks>>;
-  try {
-    out = await reindexLibraryChunks(libraryId, chunker);
-  } catch (e) {
+  const failed = (e: unknown) => {
     const message = (e as Error).message;
     return bad(message, /needs migration/.test(message) ? 424 : 500);
+  };
+  let plan: Awaited<ReturnType<typeof reindexLibraryChunks>>;
+  try {
+    plan = await reindexLibraryChunks(libraryId, chunker, { dryRun: true });
+  } catch (e) { return failed(e); }
+  if (dryRun) {
+    return NextResponse.json({
+      ok: true, dryRun: true, chunker,
+      documents: plan.documents, toReset: plan.toReset, visionPagesToReread: plan.visionPagesToReread,
+    });
   }
-  await supabaseAdmin.from("audit_logs").insert({
+
+  // The intent, recorded before anything is reset.
+  const { error: auditErr } = await supabaseAdmin.from("audit_logs").insert({
     action: "KNOWLEDGE_LIBRARY_REINDEXED",
     resource_type: "knowledge_library", resource_id: libraryId,
     org_id: lib.org_id, user_id: userId,
     details: {
-      name: lib.name, chunker, reset: out.reset.length, busy: out.busy.length,
-      errors: out.errors.length, visionPagesToReread: out.visionPagesToReread,
+      name: lib.name, chunker, documents: plan.documents,
+      toReset: plan.toReset, visionPagesToReread: plan.visionPagesToReread,
     },
-  }).then(() => undefined, () => undefined);
+  });
+  if (auditErr) return bad(`The re-index could not be recorded, so nothing was changed: ${auditErr.message}`, 500);
+
+  let out: Awaited<ReturnType<typeof reindexLibraryChunks>>;
+  try {
+    out = await reindexLibraryChunks(libraryId, chunker, { deadlineMs });
+  } catch (e) { return failed(e); }
   return NextResponse.json({
     ok: out.errors.length === 0, chunker,
     reset: out.reset.length, busy: out.busy.length, errors: out.errors.slice(0, 20),
-    visionPagesToReread: out.visionPagesToReread,
+    toReset: out.toReset, visionPagesToReread: out.visionPagesToReread, remaining: out.remaining,
   }, { status: out.errors.length === 0 ? 200 : 207 });
 }

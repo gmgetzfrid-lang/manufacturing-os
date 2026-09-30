@@ -26,9 +26,12 @@ export interface SourceSyncSummary {
   added: number;
   refreshed: number;
   removed: number;
-  /** Rev-ups found while that mirror was being indexed: the refresh waits
-   *  for the batch to finish and happens on the next pass (the two share
-   *  the ingest claim — ING-1). */
+  /** Rev-ups this pass could not land: another sync re-pointed the mirror
+   *  first. A rev-up that finds a batch still writing the OLD revision is
+   *  NOT deferred — it re-points the row, and that batch's compare-and-set
+   *  misses and withdraws what it wrote (ING-1). A library with a deferred
+   *  or failed refresh is left never-synced, so the next run reaches it
+   *  first. */
   deferred: number;
   /** Sources whose document-control container no longer exists (IRLS-7):
    *  their mirrors are removed below; the source row itself is reported. */
@@ -226,6 +229,9 @@ export async function syncKnowledgeLibrarySources(libraryId: string): Promise<So
   // finish well inside serverless time limits (Vercel Hobby kills at 60s —
   // row-at-a-time inserts were the old 504).
   const toInsert: Array<Record<string, unknown>> = [];
+  // A refresh that did not land (deferred, or failed before the row moved):
+  // this library must come round again first, not last (ILIFE-13).
+  let unsettled = false;
   for (const [dcDocId, { sourceId, doc }] of wanted) {
     const version = versionById.get(doc.current_version_id as string);
     if (!version?.file_url || !isPdf(version.file_url, version.file_type)) {
@@ -262,10 +268,13 @@ export async function syncKnowledgeLibrarySources(libraryId: string): Promise<So
       // entities, machine mentions and cached traces the old revision's
       // sheets produced — before this, the tags of a superseded revision
       // stayed live under the new revision's label. The reset takes the
-      // document's ingest claim, so it never lands under a batch still
-      // writing the old file (ING-1); that case is deferred to the next pass.
+      // document's ingest claim; if a batch holds it, writing the OLD file,
+      // the row is re-pointed anyway (`supersedeBusy`) — that batch's
+      // compare-and-set then misses and withdraws what it wrote, so the
+      // superseded revision is never completed to 'ready' (ING-1).
       const res = await resetKnowledgeIndex([existing.id as string], {
         purgeLineTraces: true,
+        supersedeBusy: true,
         rowUpdate: () => ({
           name: displayName(doc),
           file_key: version.file_url,
@@ -275,9 +284,14 @@ export async function syncKnowledgeLibrarySources(libraryId: string): Promise<So
           source_rev: version.revision_label,
         }),
       });
-      if (res.busy.length > 0) out.deferred++;
-      else if (res.errors.length > 0) out.errors.push(`refresh ${displayName(doc)}: ${res.errors.join("; ")}`);
-      else if (res.reset.length > 0) out.refreshed++;
+      if (res.reset.length > 0) out.refreshed++;
+      if (res.busy.length > 0) { out.deferred++; unsettled = true; }
+      if (res.errors.length > 0) {
+        out.errors.push(`refresh ${displayName(doc)}: ${res.errors.join("; ")}`);
+        // A failure after the row moved is backstopped by the re-index; one
+        // before it left the old version in place — come back first.
+        if (res.reset.length === 0) unsettled = true;
+      }
     }
   }
 
@@ -311,12 +325,13 @@ export async function syncKnowledgeLibrarySources(libraryId: string): Promise<So
   }
 
   // The rotation cursor (ILIFE-13): this library was reconciled now, by the
-  // cron or on demand, so the heartbeat reaches the others first. A
-  // pre-20261122 database has no column; the rotation then falls back to a
-  // daily offset (syncAllKnowledgeSources).
+  // cron or on demand, so the heartbeat reaches the others first — unless a
+  // rev-up here did not land, in which case it is marked never-synced and
+  // the next run reaches it FIRST. A pre-20261122 database has no column;
+  // the rotation then falls back to a daily offset (syncAllKnowledgeSources).
   {
     const { error } = await supabaseAdmin.from("knowledge_sources")
-      .update({ last_synced_at: new Date().toISOString() }).eq("library_id", libraryId);
+      .update({ last_synced_at: unsettled ? null : new Date().toISOString() }).eq("library_id", libraryId);
     if (error && !isMissingColumn(error)) out.errors.push(`last synced: ${error.message}`);
   }
 

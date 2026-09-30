@@ -53,6 +53,7 @@ describe("20261122 — the columns the code reads", () => {
     ["knowledge_documents", "ingest_claimed_at TIMESTAMPTZ"],
     ["knowledge_documents", "empty_pages INTEGER NOT NULL DEFAULT 0"],
     ["knowledge_documents", "vision_failed_pages INTEGER[] NOT NULL DEFAULT '{}'"],
+    ["knowledge_documents", "vision_retry_after TIMESTAMPTZ"],
     ["knowledge_documents", "vision_partial_accepted BOOLEAN NOT NULL DEFAULT FALSE"],
     ["knowledge_documents", "chunk_version SMALLINT"],
     ["knowledge_libraries", "chunk_version SMALLINT NOT NULL DEFAULT 1"],
@@ -69,7 +70,7 @@ describe("20261122 — the columns the code reads", () => {
     const list = /const INGEST_COLUMNS_20261122 = \[([\s\S]*?)\];/.exec(lib)![1];
     const names = [...list.matchAll(/"([a-z_]+)"/g)].map((m) => m[1]);
     expect(names.sort()).toEqual(
-      ["chunk_version", "empty_pages", "ingest_claimed_at", "ingest_claimed_by", "vision_failed_pages", "vision_partial_accepted"],
+      ["chunk_version", "empty_pages", "ingest_claimed_at", "ingest_claimed_by", "vision_failed_pages", "vision_partial_accepted", "vision_retry_after"],
     );
     for (const n of names) expect(code).toMatch(new RegExp(`ALTER TABLE knowledge_documents ADD COLUMN IF NOT EXISTS ${n} `));
   });

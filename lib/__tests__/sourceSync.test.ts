@@ -5,8 +5,16 @@
 //                  the shared reset, zeroes vision_pages (ING-12), keeps a
 //                  person's explicit mention, and — re-ingested — a revision
 //                  with fewer sheets carries nothing past its last page
-//   ING-1          the refresh never lands under a batch holding the claim:
-//                  it is deferred to the next pass
+//   ING-1          a refresh that finds a batch writing the OLD revision
+//                  re-points the row at once; that batch's commit misses and
+//                  withdraws, so the superseded revision never reaches
+//                  'ready'. A refresh that did not land leaves its library
+//                  never-synced, so the next run reaches it first
+//   ING-3          the reset queues the row BEFORE deleting, so an
+//                  interrupted reset never leaves a 'ready' row without its
+//                  chunks; the re-index's first batch clears what is left
+//   mentions       a cron-drained rev-up gets its document↔equipment edges
+//                  back when the re-index reaches 'ready'
 //   IRLS-7         a source whose container is gone is reported
 //   ILIFE-13       the cron reaches every library: paged past 1,000 source
 //                  rows, oldest first, orgs interleaved, time-bounded, with
@@ -35,7 +43,7 @@ vi.mock("@/lib/aiInstructionsServer", () => ({ loadOrgInstructionsBlock: vi.fn(a
 vi.mock("@/lib/ai/keyVault", () => ({ openAiKey: (k: string) => k }));
 
 import { syncKnowledgeLibrarySources, syncAllKnowledgeSources } from "@/lib/knowledgeSourceSync";
-import { ingestKnowledgeDocBatch, resetKnowledgeIndex } from "@/lib/knowledgeIngest";
+import { ingestKnowledgeDocBatch, resetKnowledgeIndex, drainKnowledgeIngestQueue } from "@/lib/knowledgeIngest";
 
 const MIRROR = "kd-1";
 const landscape = (): Record<string, Row[]> => ({
@@ -56,7 +64,7 @@ const landscape = (): Record<string, Row[]> => ({
     status: "ready", pages_indexed: 3, page_count: 3, last_section: null, created_by: null, created_at: "2026-09-01", error: null,
     source_id: "src-1", source_document_id: "dc-1", source_version_id: "ver-3", source_rev: "3",
     vision_pages: 3, empty_pages: 1, vision_failed_pages: [2], vision_partial_accepted: true, chunk_version: null,
-    ingest_claimed_by: null, ingest_claimed_at: null,
+    vision_retry_after: null, ingest_claimed_by: null, ingest_claimed_at: null,
   }],
   knowledge_chunks: [1, 2, 3].map((p) => ({ id: `c${p}`, document_id: MIRROR, org_id: "o1", library_id: "kl-1", page: p, seq: 0, content: `rev 3 sheet ${p}` })),
   knowledge_page_entities: [1, 2, 3].map((p) => ({ id: `e${p}`, document_id: MIRROR, org_id: "o1", library_id: "kl-1", page: p, kind: "equipment", tag: `V-14${p}` })),
@@ -101,21 +109,82 @@ describe("ING-3 / DWG-1 — a rev-up drops the whole derived index", () => {
     expect(rowsOf("knowledge_page_entities").some((e) => String(e.tag).startsWith("V-14"))).toBe(false);
   });
 
-  it("a failed entity purge skips the refresh (the row keeps the old version, so the next pass repeats it)", async () => {
+  it("the row is queued BEFORE the index is deleted: a purge that fails part-way never leaves a 'ready' row without its chunks", async () => {
+    // Chunks go, then the entity delete fails — the old order left the row
+    // 'ready' with pages_indexed 3 and nothing under it for Ask.
     db.hooks.push((op) => op.table === "knowledge_page_entities" && op.kind === "delete"
       ? { error: { code: "57014", message: "statement timeout" } } : undefined);
     const out = await syncKnowledgeLibrarySources("kl-1");
-    expect(out.refreshed).toBe(0);
-    expect(out.errors.join(" ")).toMatch(/refresh 025-PID-0101 — Crude P&ID: kd-1: page entities: statement timeout/);
-    expect(mirror()).toMatchObject({ source_version_id: "ver-3", ingest_claimed_by: null });
+    expect(out.refreshed).toBe(1);
+    expect(out.errors.join(" ")).toMatch(/refresh 025-PID-0101 — Crude P&ID: kd-1: page entities: statement timeout \(the row is queued; the re-index's first batch clears what is left\)/);
+    expect(mirror()).toMatchObject({ status: "stale", pages_indexed: 0, source_version_id: "ver-4", ingest_claimed_by: null });
+    expect(rowsOf("knowledge_chunks")).toHaveLength(0);
+    // The re-index's first batch clears the old revision's tags it left.
+    db.hooks = [];
+    r2.objects.set("orgs/o1/dc/rev4.pdf", await makePdf([drawingSheet(1, ["V-101", "P-201A", "E-301"])]));
+    await ingestKnowledgeDocBatch(mirror() as unknown as Parameters<typeof ingestKnowledgeDocBatch>[0]);
+    expect(rowsOf("knowledge_page_entities").some((e) => String(e.tag).startsWith("V-14"))).toBe(false);
   });
 
-  it("ING-1: a mirror mid-batch is deferred, not reset under the batch", async () => {
-    Object.assign(mirror(), { status: "indexing", ingest_claimed_by: "ingest:x", ingest_claimed_at: new Date().toISOString() });
+  it("a purge that fails before the row moves leaves the old version, and the library comes round FIRST next run", async () => {
+    db.hooks.push((op) => op.table === "knowledge_line_traces" && op.kind === "delete"
+      ? { error: { code: "57014", message: "statement timeout" } } : undefined);
     const out = await syncKnowledgeLibrarySources("kl-1");
-    expect(out).toMatchObject({ refreshed: 0, deferred: 1 });
+    expect(out.refreshed).toBe(0);
+    expect(out.errors.join(" ")).toMatch(/kd-1: line traces: statement timeout/);
+    expect(mirror()).toMatchObject({ status: "ready", source_version_id: "ver-3", ingest_claimed_by: null });
     expect(rowsOf("knowledge_chunks")).toHaveLength(3);
-    expect(mirror().source_version_id).toBe("ver-3");
+    // Never-synced sorts first in the cron's rotation.
+    expect(rowsOf("knowledge_sources")[0].last_synced_at).toBeNull();
+  });
+
+  it("ING-1: a rev-up that finds a batch writing the old revision re-points the row at once — Rev 3 never reaches 'ready'", async () => {
+    // The mirror is mid-re-index of Rev 3 (its first batch) when Rev 4 is
+    // published and the sync runs, start to finish, before that batch commits.
+    r2.objects.set("orgs/o1/dc/rev3.pdf", await makePdf([drawingSheet(1, ["V-141", "P-241A", "E-341"])]));
+    Object.assign(mirror(), { status: "stale", pages_indexed: 0, page_count: null });
+    db.tables.knowledge_chunks = [];
+    db.tables.knowledge_page_entities = [];
+    let sync: Awaited<ReturnType<typeof syncKnowledgeLibrarySources>> | null = null;
+    let running = false;
+    db.asyncHooks.push(async (op, filters) => {
+      if (running || sync || op.table !== "knowledge_documents" || op.kind !== "update") return;
+      if (!filters.some((f) => f.col === "pages_indexed")) return;   // the batch's compare-and-set
+      running = true;
+      sync = await syncKnowledgeLibrarySources("kl-1");
+      running = false;
+    });
+    const res = await ingestKnowledgeDocBatch(mirror() as unknown as Parameters<typeof ingestKnowledgeDocBatch>[0]);
+    expect(sync).toMatchObject({ refreshed: 1, deferred: 0, errors: [] });
+    expect(res).toMatchObject({ superseded: true, done: false });
+    expect(mirror()).toMatchObject({ status: "stale", source_version_id: "ver-4", source_rev: "4", file_key: "orgs/o1/dc/rev4.pdf", ingest_claimed_by: null });
+    expect(rowsOf("knowledge_chunks")).toHaveLength(0);
+    expect(rowsOf("knowledge_page_entities")).toHaveLength(0);
+    // It landed, so the library is stamped as reconciled.
+    expect(String(rowsOf("knowledge_sources")[0].last_synced_at)).toMatch(/^20/);
+  });
+
+  it("a cron-drained rev-up gets its document↔equipment mentions back when the re-index reaches 'ready'", async () => {
+    db.tables.assets = [
+      { id: "a-v101", org_id: "o1", tag: "V-101", archived: false },
+      { id: "a-p201a", org_id: "o1", tag: "P-201A", archived: false },
+    ];
+    db.tables.asset_aliases = [];
+    r2.objects.set("orgs/o1/dc/rev4.pdf", await makePdf([
+      drawingSheet(1, ["V-101", "P-201A", "E-301"]), drawingSheet(2, ["V-102", "P-202A", "E-302"]),
+    ]));
+    await syncKnowledgeLibrarySources("kl-1");
+    // The reset dropped the machine mention; the pin stays.
+    expect(rowsOf("entity_mentions").map((m) => m.id)).toEqual(["m-human"]);
+    const out = await drainKnowledgeIngestQueue({ maxPages: 100, deadlineMs: Date.now() + 30_000 });
+    expect(out.completed).toBe(1);
+    expect(mirror().status).toBe("ready");
+    const machine = rowsOf("entity_mentions").filter((m) => m.is_explicit === false);
+    expect(machine).toEqual(expect.arrayContaining([
+      expect.objectContaining({ asset_id: "a-v101", knowledge_document_id: MIRROR, document_id: "dc-1", page: 1 }),
+      expect.objectContaining({ asset_id: "a-p201a", knowledge_document_id: MIRROR, document_id: "dc-1", page: 1 }),
+    ]));
+    expect(rowsOf("entity_mentions").some((m) => m.id === "m-human")).toBe(true);
   });
 
   it("the shared reset without a file change keeps cached traces (a rebuild of the same file)", async () => {
@@ -127,7 +196,7 @@ describe("ING-3 / DWG-1 — a rev-up drops the whole derived index", () => {
   });
 
   it("on a database without 20261122 the reset still clears the index and resets the old counters", async () => {
-    const cols = ["ingest_claimed_by", "ingest_claimed_at", "empty_pages", "vision_failed_pages", "vision_partial_accepted", "chunk_version"];
+    const cols = ["ingest_claimed_by", "ingest_claimed_at", "empty_pages", "vision_failed_pages", "vision_partial_accepted", "chunk_version", "vision_retry_after"];
     db.missingColumns.knowledge_documents = cols;
     for (const c of cols) delete mirror()[c];
     const res = await resetKnowledgeIndex([MIRROR], { rowUpdate: () => ({ file_key: "x.pdf" }) });

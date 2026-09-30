@@ -127,33 +127,46 @@ function gapBetween(a: PdfTextItem, b: PdfTextItem): string {
   return gap > size * COLUMN_GAP_EM ? COLUMN_GAP : " ";
 }
 
+/** A sentence end: a stop followed by a capital — so "P-No. 5" and "1/2 in.
+ *  nominal" (the abbreviations standards are full of) are not one. */
+const SENTENCE_END_RE = /[.!?]["')\]]*\s+(?=[A-Z])/g;
+
 /** The unfinished sentence at the foot of a page — what chunker 2 carries
  *  into the first chunk of the next page (ING-7), the way last_section
  *  carries the heading. Empty when the page ends on a sentence end (the
  *  provision is complete). Otherwise the text after the last sentence end
- *  (a stop followed by a capital) in the final `max` characters, or — with
- *  no sentence end that close — the last `max` characters from a word
- *  start. Surrogate-safe. Pure. */
+ *  in the final `max` characters, or — with no sentence end that close —
+ *  the last `max` characters from a word start. Surrogate-safe. Pure.
+ *
+ *  Only PROSE carries. A page with no sentence end anywhere is a title
+ *  block, a tag list or a label run, not a sentence that breaks off; a
+ *  tail with no lowercase word is labels too (a drawing transcript's
+ *  "V-101 SUCTION DRUM P-201A CHARGE PUMP"); and a tail that already holds
+ *  a carried marker would stack one page's carry onto the next. All three
+ *  carry nothing. */
 export function pageTail(text: string, max = 400): string {
   const t = text.replace(/\s+/g, " ").trim();
   if (!t || /[.!?:;]["')\]]*$/.test(t)) return "";
+  if (!new RegExp(SENTENCE_END_RE.source).test(t)) return "";
   const window = t.slice(Math.max(0, t.length - max));
-  // A sentence end is a stop followed by a capital — so "P-No. 5" and
-  // "1/2 in. nominal" (the abbreviations standards are full of) do not cut
-  // the carried sentence short.
-  const ends = [...window.matchAll(/[.!?]["')\]]*\s+(?=[A-Z])/g)];
+  const ends = [...window.matchAll(SENTENCE_END_RE)];
   const last = ends[ends.length - 1];
   let tail = last ? window.slice(last.index! + last[0].length) : window;
   if (!last && t.length > max) {
     const sp = tail.indexOf(" ");
     tail = sp >= 0 ? tail.slice(sp + 1) : tail;
   }
-  return tail.slice(alignStart(tail, 0)).trim();
+  tail = tail.slice(alignStart(tail, 0)).trim();
+  if (!/[a-z]{2,}/.test(tail) || hasCarriedMarker(tail)) return "";
+  return tail;
 }
 
 /** The marker a carried tail wears, so a reader checking page N can see the
  *  words that came from page N-1. */
 export const carriedTailMarker = (fromPage: number): string => `[cont. from p. ${fromPage}]`;
+
+/** True when text holds a carried marker (a carry is never carried on). */
+export const hasCarriedMarker = (text: string): boolean => /\[cont\. from p\. \d+\]/.test(text);
 
 /** Split page text into TABLE blocks and prose runs, BEFORE any whitespace
  *  collapse. This exists because the old pipeline collapsed all whitespace

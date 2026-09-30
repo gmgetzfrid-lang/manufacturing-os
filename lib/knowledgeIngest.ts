@@ -23,21 +23,24 @@
 // that loses that race withdraws the rows it wrote and reports `superseded`;
 // a driver that finds the claim held reports `busy` — neither ever errors the
 // document. The rev-up refresh and the drawing rebuild take the SAME claim
-// through resetKnowledgeIndex below. The claim lasts one batch, never a
-// document, so the self-imposed deadline below still bounds everything.
+// through resetKnowledgeIndex below; a rev-up that finds a batch writing the
+// OLD file does not wait for it — it re-points the row, and that batch's
+// compare-and-set then misses and withdraws what it wrote. The claim lasts
+// one batch, never a document, so the self-imposed deadline below still
+// bounds everything.
 
 import { randomUUID } from "node:crypto";
-import { GetObjectCommand } from "@aws-sdk/client-s3";
+import { GetObjectCommand, DeleteObjectCommand } from "@aws-sdk/client-s3";
 import { r2, R2_BUCKET } from "@/lib/r2";
 import { supabaseAdmin } from "@/lib/supabaseAdmin";
 import { openAiKey } from "@/lib/ai/keyVault";
 import { chunkPageText, splitPageIntoSections, ensurePdfPolyfills, CAPTION_RE,
   sanitizeStorageText, truncateSafe, splitTables, pageLinesFromTextItems, pageTail, carriedTailMarker,
-  chunkerVersionOf, CHUNKER_LEGACY, CHUNKER_TABLE_AWARE, type ChunkerVersion, type PdfTextItem,
+  hasCarriedMarker, chunkerVersionOf, CHUNKER_LEGACY, CHUNKER_TABLE_AWARE, type ChunkerVersion, type PdfTextItem,
 } from "@/lib/knowledgeText";
 import {
   isDrawingLikePage, extractEquipmentTags, extractDrawingRefs, extractTitleBlock,
-  parseOpcBoxes, pageNeedsVision, TEXTLESS_PAGE_MAX_CHARS,
+  parseOpcBoxes, pageNeedsVision, TEXTLESS_PAGE_MAX_CHARS, MIN_TAGS_THIN_PAGE,
 } from "@/lib/drawingText";
 import { transcribePageImage } from "@/lib/knowledgeVision";
 import { isTimeoutError, type AiProviderId } from "@/lib/ai/providerCall";
@@ -69,12 +72,14 @@ export interface VisionContext {
 export interface IngestBatchResult {
   done: boolean;
   pageCount: number;
-  /** Pages the index actually holds: the resume point less the pages whose
-   *  AI-vision read failed and waits for a retry (ING-6). What a progress
-   *  bar shows. */
+  /** Where the next batch starts — knowledge_documents.pages_indexed. The
+   *  meaning this field has always had: clients detect a stall on it. */
   pagesIndexed: number;
-  /** Where the next batch starts — knowledge_documents.pages_indexed. */
+  /** The same resume point, named for what it is. */
   resumeAt: number;
+  /** Pages the index holds a real read of: the resume point less the pages
+   *  whose AI-vision read failed and waits for a retry (ING-6). */
+  pagesReadable: number;
   /** Pages in THIS batch that yielded no text at all. */
   emptyPages: number;
   /** The document's running total of pages with no extractable text
@@ -99,6 +104,18 @@ export interface IngestBatchResult {
   /** The row moved under this batch (re-pointed at a new revision, deleted,
    *  or the claim was lost): its writes were withdrawn (ING-1). */
   superseded: boolean;
+  /** The failed vision pages could not be retried by this driver — no AI
+   *  key, the provider refused every retry again, or an earlier refusal's
+   *  back-off has not run out (ING-6). Nothing was lost: the document stays
+   *  'indexing', retrievable, with `visionRetryMessage` on its row. */
+  visionRetryBlocked: boolean;
+  /** The plain-language reason, also written to the row's `error`. */
+  visionRetryMessage: string | null;
+  /** When the failed pages are next tried (ISO), when a back-off holds. */
+  visionRetryAfter: string | null;
+  /** The stored file is not a PDF at all (ING-9): nothing was indexed; the
+   *  caller refuses it through refuseNonPdf. */
+  notPdf: SniffedKind | null;
 }
 
 /** Time to leave on the clock before starting a vision page. Rendering a
@@ -126,6 +143,11 @@ type KnowledgeDocRow = {
   vision_partial_accepted?: boolean | null;
   /** Which chunker wrote this document's chunks (NULL = 1). */
   chunk_version?: number | null;
+  /** Failed vision pages are not retried before this (ING-6 back-off). */
+  vision_retry_after?: string | null;
+  /** The controlled document a mirror reflects (for the mention pass). */
+  source_document_id?: string | null;
+  error?: string | null;
 };
 
 // ── The ingest claim (ING-2) ─────────────────────────────────────────────
@@ -200,7 +222,7 @@ const pageList = (v: unknown): number[] =>
  *  on a database that has not applied it yet. */
 const INGEST_COLUMNS_20261122 = [
   "ingest_claimed_by", "ingest_claimed_at", "empty_pages", "vision_failed_pages",
-  "vision_partial_accepted", "chunk_version",
+  "vision_partial_accepted", "chunk_version", "vision_retry_after",
 ];
 
 // ── The shared reset (ING-3 / DWG-1 / ING-12) ─────────────────────────────
@@ -219,29 +241,48 @@ export interface KnowledgeIndexReset {
 const RESET_ROW = {
   status: "stale", error: null, pages_indexed: 0, page_count: null, last_section: null,
   vision_pages: 0, empty_pages: 0, vision_failed_pages: [] as number[],
-  vision_partial_accepted: false, chunk_version: null,
+  vision_partial_accepted: false, chunk_version: null, vision_retry_after: null,
 };
 
 /** THE reset of a knowledge document's derived index — the one both the
  *  rev-up refresh (lib/knowledgeSourceSync.ts) and the drawing
  *  intelligence "Rebuild index" call, so neither can forget a table again.
- *  Under the document's ingest claim, in order: every chunk (and with it
- *  the chunk's embedding), every page entity (tags, refs, sheet identity,
- *  anchors, vision positions), the MACHINE-derived entity mentions (a
- *  person's explicit pin survives — a re-index is not a decision), and —
- *  when the file itself changed — the cached line traces drawn over the old
- *  sheet. Then the row: 'stale', counters to zero (vision_pages included —
- *  ING-12), plus `rowUpdate` (the rev-up's new file_key / version / rev).
- *  Deletes run first and the row last, so a failure leaves the row pointing
- *  at the old version and the next pass simply repeats the whole reset. A
- *  document being indexed right now is reported `busy`, never reset under
- *  the batch writing it. */
+ *  Under the document's ingest claim, in order:
+ *
+ *    1. on a rev-up (`purgeLineTraces`), the cached line traces drawn over
+ *       the old sheet — a pure cache, dropped while the row still names the
+ *       old file, so a failure here leaves everything as it was and the
+ *       next pass repeats the whole reset;
+ *    2. THE ROW, before any derived row goes: 'stale', counters to zero
+ *       (vision_pages included — ING-12), plus `rowUpdate` (the rev-up's new
+ *       file_key / version / rev). An interrupted reset therefore leaves a
+ *       queued row, never a 'ready' one whose chunks are gone;
+ *    3. every chunk (and with it the chunk's embedding), every page entity
+ *       (tags, refs, sheet identity, anchors, vision positions) and the
+ *       MACHINE-derived entity mentions (a person's explicit pin survives —
+ *       a re-index is not a decision). A delete that fails here is reported,
+ *       and is not lost: the row is already queued, and the first batch of
+ *       the new index generation clears every chunk and page entity of the
+ *       document before it writes (ingestKnowledgeDocBatch), while the
+ *       mention pass replaces the machine mentions when it reaches 'ready'.
+ *
+ *  A document another driver is indexing at that moment is reported `busy`
+ *  and left alone — unless `supersedeBusy` (the rev-up): a batch writing the
+ *  OLD file must not keep serving it until the next pass, and it need not be
+ *  waited for, because re-pointing the row makes its compare-and-set miss
+ *  (it withdraws what it wrote). That re-point is itself a compare-and-set
+ *  on the file and version the row named. A same-file reset (a rebuild, a
+ *  library re-index) cannot be seen by the compare-and-set of a batch that
+ *  started at page 0, so it always waits its turn. */
 export async function resetKnowledgeIndex(
   documentIds: string[],
   opts: {
     rowUpdate?: (documentId: string) => Record<string, unknown>;
     /** The file changed (rev-up): cached traces of the old sheet go too. */
     purgeLineTraces?: boolean;
+    /** The file changed (rev-up): re-point the row even under a running
+     *  batch, whose commit then misses and withdraws (ING-1). */
+    supersedeBusy?: boolean;
   } = {},
 ): Promise<KnowledgeIndexReset> {
   const out: KnowledgeIndexReset = { reset: [], busy: [], errors: [] };
@@ -254,40 +295,45 @@ export async function resetKnowledgeIndex(
       out.errors.push(`${id}: ${(e as Error).message}`);
       continue;
     }
-    if (lease.kind === "busy") { out.busy.push(id); continue; }
     if (lease.kind === "gone") continue;
-    const claimedRow = lease.kind === "claimed" ? lease.row : null;
-    const leased = claimedRow !== null;
-    const fail = async (what: string, message: string | undefined) => {
-      out.errors.push(`${id}: ${what}: ${message ?? "failed"}`);
-      if (leased) await releaseIngestLease(id, driver);
-    };
+    if (lease.kind === "busy" && !opts.supersedeBusy) { out.busy.push(id); continue; }
+    const held = lease.kind === "claimed";
+    const seen = lease.kind === "claimed" || lease.kind === "busy" ? lease.row : null;
+    const release = async () => { if (held) await releaseIngestLease(id, driver); };
 
-    const { error: chunkErr } = await supabaseAdmin
-      .from("knowledge_chunks").delete().eq("document_id", id);
-    if (chunkErr) { await fail("chunks", chunkErr.message); continue; }
-    const { error: entErr } = await supabaseAdmin
-      .from("knowledge_page_entities").delete().eq("document_id", id);
-    if (entErr && !isMissingTable(entErr)) { await fail("page entities", entErr.message); continue; }
-    const { error: menErr } = await supabaseAdmin
-      .from("entity_mentions").delete().eq("knowledge_document_id", id).eq("is_explicit", false);
-    if (menErr && !isMissingTable(menErr)) { await fail("mentions", menErr.message); continue; }
+    // 1. The old sheet's cached traces (rev-up only), while the row still
+    //    names the old file.
     if (opts.purgeLineTraces) {
       const { error: trErr } = await supabaseAdmin
         .from("knowledge_line_traces").delete().eq("document_id", id);
-      if (trErr && !isMissingTable(trErr)) { await fail("line traces", trErr.message); continue; }
+      if (trErr && !isMissingTable(trErr)) {
+        out.errors.push(`${id}: line traces: ${trErr.message}`);
+        await release();
+        continue;
+      }
     }
 
+    // 2. The row: queued and zeroed (and re-pointed) FIRST. Under our own
+    //    claim the claim is kept through the deletes; under someone else's
+    //    (supersedeBusy) theirs is left exactly as it is.
     const full: Record<string, unknown> = { ...RESET_ROW, ...(opts.rowUpdate?.(id) ?? {}) };
     let updErr: DbError = null;
     let wrote = 0;
-    if (claimedRow) {
-      const known = new Set(Object.keys(claimedRow));
-      const update = Object.fromEntries(Object.entries({
-        ...full, ingest_claimed_by: null, ingest_claimed_at: null,
-      }).filter(([k]) => known.has(k)));
-      const { data, error } = await supabaseAdmin.from("knowledge_documents")
-        .update(update).eq("id", id).eq("ingest_claimed_by", driver).select("id");
+    if (seen) {
+      const known = new Set(Object.keys(seen));
+      const update = Object.fromEntries(Object.entries(full).filter(([k]) => known.has(k)));
+      let q = supabaseAdmin.from("knowledge_documents").update(update).eq("id", id);
+      if (held) {
+        q = q.eq("ingest_claimed_by", driver);
+      } else {
+        // The row as we saw it — a concurrent sync that already re-pointed it
+        // wins, and this pass leaves it alone.
+        q = q.eq("file_key", String(seen.file_key));
+        if ("source_version_id" in seen) {
+          q = seen.source_version_id == null ? q.is("source_version_id", null) : q.eq("source_version_id", seen.source_version_id);
+        }
+      }
+      const { data, error } = await q.select("id");
       updErr = error; wrote = (data ?? []).length;
     } else {
       // Pre-20261122: no claim, no new counters. Strip what the database
@@ -305,9 +351,31 @@ export async function resetKnowledgeIndex(
         if (!error || !isMissingColumn(error)) break;
       }
     }
-    if (updErr) { await fail("row", updErr.message); continue; }
-    if (wrote === 0) { out.errors.push(`${id}: row: the claim was lost before the reset committed`); continue; }
+    if (updErr) { out.errors.push(`${id}: row: ${updErr.message}`); await release(); continue; }
+    if (wrote === 0) {
+      if (held) out.errors.push(`${id}: row: the claim was lost before the reset committed`);
+      else out.busy.push(id);                       // someone else moved it first
+      await release();
+      continue;
+    }
+
+    // 3. The derived index. Each step checked; a failure is reported and
+    //    the next generation's first batch clears what is left.
+    const left: string[] = [];
+    const { error: chunkErr } = await supabaseAdmin
+      .from("knowledge_chunks").delete().eq("document_id", id);
+    if (chunkErr) left.push(`chunks: ${chunkErr.message}`);
+    const { error: entErr } = await supabaseAdmin
+      .from("knowledge_page_entities").delete().eq("document_id", id);
+    if (entErr && !isMissingTable(entErr)) left.push(`page entities: ${entErr.message}`);
+    const { error: menErr } = await supabaseAdmin
+      .from("entity_mentions").delete().eq("knowledge_document_id", id).eq("is_explicit", false);
+    if (menErr && !isMissingTable(menErr)) left.push(`mentions: ${menErr.message}`);
+    await release();
     out.reset.push(id);
+    if (left.length > 0) {
+      out.errors.push(`${id}: ${left.join("; ")} (the row is queued; the re-index's first batch clears what is left)`);
+    }
   }
   return out;
 }
@@ -360,40 +428,109 @@ export function notPdfMessage(name: string, kind: SniffedKind): string {
   }
 }
 
+/** THE refusal of a stored file that is not a PDF — one rule for both
+ *  drivers that can meet it first (the interactive route and the cron
+ *  drain). An UPLOAD (no source, its key under the org's knowledge prefix)
+ *  leaves nothing behind: its row and its R2 object go, and the refusal is
+ *  audited. A MIRRORED controlled file is never deleted — the object is
+ *  doc control's — so its row is marked 'error' with the same plain message.
+ *  `actorUserId` is null when the cron met it. */
+export async function refuseNonPdf(
+  row: Record<string, unknown>, kind: SniffedKind, actorUserId: string | null,
+): Promise<{ message: string; removed: boolean; error: string | null }> {
+  const id = String(row.id);
+  const message = notPdfMessage(String(row.name ?? "This file"), kind);
+  const uploaded = !row.source_document_id && !row.source_id &&
+    String(row.file_key ?? "").startsWith(`orgs/${String(row.org_id)}/knowledge/`);
+  if (uploaded) {
+    const { error: delErr } = await supabaseAdmin.from("knowledge_documents").delete().eq("id", id);
+    if (delErr) return { message, removed: false, error: `The upload could not be removed: ${delErr.message}` };
+    await r2.send(new DeleteObjectCommand({ Bucket: R2_BUCKET, Key: String(row.file_key) }))
+      .catch(() => undefined); // the orphan sweeper reclaims an object whose delete failed
+    await supabaseAdmin.from("audit_logs").insert({
+      action: "KNOWLEDGE_DOC_REJECTED",
+      resource_type: "knowledge_document", resource_id: id,
+      org_id: row.org_id, user_id: actorUserId,
+      details: { name: row.name, detected: kind, reason: "not a PDF", by: actorUserId ? "ingest" : "maintenance" },
+    }).then(() => undefined, () => undefined);
+    return { message, removed: true, error: null };
+  }
+  const { error: markErr } = await supabaseAdmin.from("knowledge_documents")
+    .update({ status: "error", error: message.slice(0, 500) }).eq("id", id);
+  return { message, removed: false, error: markErr ? markErr.message : null };
+}
+
 // ── Re-index a library with a chosen chunker (ING-4 / ING-7) ──────────────
 
 export interface LibraryReindex extends KnowledgeIndexReset {
   chunker: ChunkerVersion;
-  /** Pages the previous index read with AI vision — read (and billed)
-   *  again by the re-index. Said up front. */
+  /** Nothing was changed: the numbers below are what a real run would do. */
+  dryRun: boolean;
+  /** Documents in the library. */
+  documents: number;
+  /** Documents the re-index resets: every one holding an index written by
+   *  the OTHER chunker. A document already on the chosen chunker, or with
+   *  nothing indexed yet (its first batch takes the library's choice), is
+   *  skipped — so running the action again resumes it, and never resets a
+   *  document twice. */
+  toReset: number;
+  /** AI-vision pages those documents hold — read (and billed) again by the
+   *  re-index. A dry run reports it before anything is deleted. */
   visionPagesToReread: number;
+  /** Documents still to reset after this call — not reached before the
+   *  deadline, busy, or failed. Run the action again to continue. */
+  remaining: number;
 }
 
-/** The explicit per-library switch between chunkers: record the library's
- *  choice, then reset every one of its documents through the shared reset
- *  so each re-indexes from its first page under the new chunker. Never run
+/** The explicit per-library switch between chunkers. Never run
  *  automatically — every chunk boundary in the library changes, and vision-
- *  read pages are read again. The meaning (embedding) index follows the new
- *  chunks as its own pipeline re-embeds them. */
-export async function reindexLibraryChunks(libraryId: string, chunker: ChunkerVersion): Promise<LibraryReindex> {
-  const { error: libErr } = await supabaseAdmin
-    .from("knowledge_libraries").update({ chunk_version: chunker }).eq("id", libraryId);
-  if (libErr) throw new Error(isMissingColumn(libErr)
-    ? "Choosing a chunker needs migration 20261122_intel_roundG_ingest_integrity.sql — apply it first."
-    : `library: ${libErr.message}`);
-  const ids: string[] = [];
-  let visionPagesToReread = 0;
+ *  read pages are read (and billed) again — so a `dryRun` answers first,
+ *  changing nothing: how many documents would reset and how many vision
+ *  pages they would re-read. A real run records the library's choice, then
+ *  resets each document that needs it through the shared reset, one at a
+ *  time, until `deadlineMs`; each re-indexes from its first page under the
+ *  new chunker. The meaning (embedding) index follows the new chunks as its
+ *  own pipeline re-embeds them. */
+export async function reindexLibraryChunks(
+  libraryId: string, chunker: ChunkerVersion,
+  opts: { dryRun?: boolean; deadlineMs?: number } = {},
+): Promise<LibraryReindex> {
+  const needsMigration = "Choosing a chunker needs migration 20261122_intel_roundG_ingest_integrity.sql — apply it first.";
+  const docs: Array<{ id: string; vision_pages: number | null; chunk_version: number | null; pages_indexed: number | null }> = [];
   for (let from = 0; ; from += 1000) {
     const { data, error } = await supabaseAdmin.from("knowledge_documents")
-      .select("id, vision_pages").eq("library_id", libraryId)
+      .select("id, vision_pages, chunk_version, pages_indexed").eq("library_id", libraryId)
       .order("id", { ascending: true }).range(from, from + 999);
-    if (error) throw new Error(`documents: ${error.message}`);
-    const page = (data ?? []) as Array<{ id: string; vision_pages: number | null }>;
-    for (const d of page) { ids.push(d.id); visionPagesToReread += Number(d.vision_pages ?? 0); }
+    if (error) throw new Error(isMissingColumn(error) ? needsMigration : `documents: ${error.message}`);
+    const page = (data ?? []) as typeof docs;
+    docs.push(...page);
     if (page.length < 1000) break;
   }
-  const res = await resetKnowledgeIndex(ids);
-  return { ...res, chunker, visionPagesToReread };
+  const todo = docs.filter((d) => Number(d.pages_indexed ?? 0) > 0 && chunkerVersionOf(d.chunk_version) !== chunker);
+  const visionPagesToReread = todo.reduce((n, d) => n + Number(d.vision_pages ?? 0), 0);
+  const out: LibraryReindex = {
+    reset: [], busy: [], errors: [], chunker, dryRun: opts.dryRun === true,
+    documents: docs.length, toReset: todo.length, visionPagesToReread, remaining: todo.length,
+  };
+  if (opts.dryRun) {
+    const { error } = await supabaseAdmin.from("knowledge_libraries").select("chunk_version").eq("id", libraryId).maybeSingle();
+    if (error) throw new Error(isMissingColumn(error) ? needsMigration : `library: ${error.message}`);
+    return out;
+  }
+
+  // The library's choice first: a document reset below re-indexes under it.
+  const { error: libErr } = await supabaseAdmin
+    .from("knowledge_libraries").update({ chunk_version: chunker }).eq("id", libraryId);
+  if (libErr) throw new Error(isMissingColumn(libErr) ? needsMigration : `library: ${libErr.message}`);
+  for (const d of todo) {
+    if (opts.deadlineMs && Date.now() >= opts.deadlineMs) break;
+    const res = await resetKnowledgeIndex([d.id]);
+    out.reset.push(...res.reset);
+    out.busy.push(...res.busy);
+    out.errors.push(...res.errors);
+  }
+  out.remaining = todo.length - out.reset.length;
+  return out;
 }
 
 /** Thrown inside a batch when its writes collide with another writer's
@@ -402,20 +539,54 @@ export async function reindexLibraryChunks(libraryId: string, chunker: ChunkerVe
  *  the document (ING-2 criterion 3). */
 class IngestSuperseded extends Error {}
 
-/** The plain-language refusal when failed vision pages cannot be retried. */
+/** How long failed vision pages wait after a retry pass in which the
+ *  provider refused every one of them again (ING-6). A provider that is
+ *  rate-limiting or overloaded is not asked again on the very next batch —
+ *  by any driver — and the rest of the document stays searchable meanwhile. */
+export const VISION_RETRY_BACKOFF_MS = 30 * 60_000;
+
+/** The plain-language reason failed vision pages were not retried. */
 export function visionRetryMessage(pages: number[], cause: string | null): string {
   const list = pages.slice(0, 12).join(", ") + (pages.length > 12 ? ", …" : "");
   const what = `AI vision could not read ${pages.length} page${pages.length === 1 ? "" : "s"} (p. ${list})`;
+  const meanwhile = "The rest of the document is searchable meanwhile.";
   return cause
-    ? `${what}: ${cause}. Re-run indexing to retry them, or accept the partial index.`
-    : `${what}, and retrying needs an AI key with budget left. Add one in AI settings and re-run indexing, or accept the partial index.`;
+    ? `${what}: ${cause}. They are tried again automatically in about ${Math.round(VISION_RETRY_BACKOFF_MS / 60_000)} minutes. ${meanwhile} Or accept the partial index.`
+    : `${what}, and retrying needs an AI key with budget left. ${meanwhile} Add one in AI settings and re-run indexing, or accept the partial index.`;
 }
 
-/** Ingest the next PAGE_BATCH pages of one knowledge document. Throws on
- *  failure — callers decide whether to mark the row errored (the API route
- *  does; the cron records and moves on). Never throws for contention: a
- *  document someone else is indexing comes back `busy`, a document that
- *  moved under the batch comes back `superseded`. */
+/** Everything that follows a document reaching 'ready': the mention pass
+ *  that draws its document↔equipment edges on the graph. Every reset drops
+ *  a document's machine mentions, so they are rebuilt wherever it becomes
+ *  'ready' again — the interactive route, the cron drain, an accepted
+ *  partial index. Best-effort with a hard time cap: a slow scan never fails
+ *  or stalls ingestion. */
+export async function rebuildDocumentMentions(
+  doc: { id: string; org_id: string; source_document_id?: string | null },
+  capMs = 8_000,
+): Promise<void> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    const { loadAliasDictionary, indexDocumentMentions } = await import("@/lib/mentionIndexer");
+    const dict = await loadAliasDictionary(doc.org_id);
+    if (dict.length === 0) return;
+    await Promise.race([
+      indexDocumentMentions(doc.org_id, doc.id, dict, doc.source_document_id ?? null),
+      new Promise((r) => { timer = setTimeout(r, capMs); }),
+    ]);
+  } catch { /* mention edges are a bonus — never block ingestion */ }
+  finally { if (timer) clearTimeout(timer); }
+}
+
+/** Ingest the next PAGE_BATCH pages of one knowledge document. Throws on a
+ *  real failure — callers decide whether to mark the row errored (the API
+ *  route does; the cron records and moves on). Never throws for contention:
+ *  a document someone else is indexing comes back `busy`, a document that
+ *  moved under the batch comes back `superseded`. Never throws for a vision
+ *  retry that cannot run or failed again either (`visionRetryBlocked`): the
+ *  document keeps its index and stays 'indexing' — retrievable — with the
+ *  reason on its row. A stored file that is not a PDF comes back `notPdf`
+ *  before pdf.js sees it. */
 export async function ingestKnowledgeDocBatch(
   doc: KnowledgeDocRow,
   vision?: VisionContext,
@@ -437,13 +608,15 @@ export async function ingestKnowledgeDocBatch(
     return {
       done: row.status === "ready",
       pageCount: Number(row.page_count ?? 0),
-      pagesIndexed: Math.max(0, resumeAt - failedNow.length),
+      pagesIndexed: resumeAt,
       resumeAt,
+      pagesReadable: Math.max(0, resumeAt - failedNow.length),
       emptyPages: 0,
       emptyPagesTotal: Number(row.empty_pages ?? 0),
       visionPages: 0, visionBudgetSpent: false, stoppedForTime: false,
       visionFailedPages: failedNow, visionError: null,
       busy: false, superseded: false,
+      visionRetryBlocked: false, visionRetryMessage: null, visionRetryAfter: null, notPdf: null,
       ...flags,
     };
   };
@@ -460,6 +633,86 @@ export async function ingestKnowledgeDocBatch(
       return idle(claimed, { done: true });
     }
 
+    const from = Number(cur.pages_indexed ?? 0);           // 0-based next page
+    // A batch that starts at page 0 starts a NEW index generation (below).
+    const genStart = from === 0;
+    const asRow = (claimed ?? (cur as unknown as Record<string, unknown>));
+
+    /** Compare-and-set on what this batch read (ING-1): the row must still
+     *  be the file and version this batch read — a rev-up re-points both —
+     *  and, under a claim, still ours and still where this batch started. */
+    const cas = (q: ReturnType<ReturnType<typeof supabaseAdmin.from>["update"]>) => {
+      let out = q.eq("id", cur.id).eq("file_key", cur.file_key);
+      if (cur.source_version_id !== undefined) {
+        out = cur.source_version_id === null ? out.is("source_version_id", null) : out.eq("source_version_id", cur.source_version_id);
+      }
+      if (leased) out = out.eq("ingest_claimed_by", driver).eq("pages_indexed", from);
+      return out;
+    };
+
+    /** Failed vision pages this driver cannot retry now (ING-6): no key, or
+     *  the provider refused every retry again. NOT an ingest failure — the
+     *  document keeps its whole index and stays 'indexing' (retrievable),
+     *  and the row says why (`error`) and when the pages are next tried
+     *  (`vision_retry_after`: now when there was no key, which holds no one
+     *  back but files the document behind fresh work in the cron's queue;
+     *  a back-off after a refused pass). Written with the batch's compare-
+     *  and-set, releasing the claim in the same statement. */
+    const park = async (message: string, retryAfter: string): Promise<IngestBatchResult> => {
+      if (claimed) {
+        const known = new Set(Object.keys(claimed));
+        const update = Object.fromEntries(Object.entries({
+          error: message.slice(0, 500), vision_retry_after: retryAfter,
+          ingest_claimed_by: null, ingest_claimed_at: null,
+        }).filter(([k]) => known.has(k)));
+        const { data, error } = await cas(supabaseAdmin.from("knowledge_documents").update(update)).select("id");
+        if (error) throw new Error(error.message);
+        if ((data ?? []).length === 0) return idle(asRow, { superseded: true });
+        released = true;
+      }
+      return idle(asRow, {
+        visionRetryBlocked: true, visionRetryMessage: message,
+        visionRetryAfter: Date.parse(retryAfter) > Date.now() ? retryAfter : null,
+      });
+    };
+
+    // ── The vision retry queue, before anything is downloaded (ING-6) ────
+    //    The main pass is through and pages wait on AI vision. A back-off
+    //    still running: nothing to do, nothing to write — the reason is
+    //    already on the row. No vision context (a keyless controller's tab,
+    //    the cron without a sponsored key): nothing can retry them here.
+    {
+      const waiting = pageList(cur.vision_failed_pages);
+      const storedCount = Number(cur.page_count ?? 0);
+      if (claimed && !genStart && storedCount > 0 && from >= storedCount && waiting.length > 0 &&
+          cur.vision_partial_accepted !== true) {
+        const after = Date.parse(String(cur.vision_retry_after ?? ""));
+        if (Number.isFinite(after) && after > Date.now()) {
+          released = await releaseIngestLease(doc.id, driver);
+          return idle(claimed, {
+            visionRetryBlocked: true,
+            visionRetryMessage: typeof claimed.error === "string" && claimed.error
+              ? claimed.error : visionRetryMessage(waiting, "the provider refused the last retry"),
+            visionRetryAfter: String(cur.vision_retry_after),
+          });
+        }
+        if (!vision) return await park(visionRetryMessage(waiting, null), new Date().toISOString());
+      }
+    }
+
+    // ── Is it a PDF at all? (ING-9) — the bytes decide, on a generation's
+    //    first batch, before pdf.js ever sees them; whichever driver gets
+    //    there first. The caller refuses it (refuseNonPdf). An unreadable
+    //    head falls through to the download, whose own failure is real.
+    if (genStart) {
+      let kind: SniffedKind | null = null;
+      try { kind = await sniffStoredFile(cur.file_key); } catch { kind = null; }
+      if (kind && kind !== "pdf") {
+        if (claimed) released = await releaseIngestLease(doc.id, driver);
+        return idle(asRow, { notPdf: kind });
+      }
+    }
+
     // Pull the PDF from R2 (each batch re-downloads; simple and stateless).
     const obj = await r2.send(new GetObjectCommand({ Bucket: R2_BUCKET, Key: cur.file_key }));
     const bytes = new Uint8Array(await new Response(obj.Body as ReadableStream).arrayBuffer());
@@ -468,7 +721,6 @@ export async function ingestKnowledgeDocBatch(
     const pdf = await getDocumentProxy(bytes);
     const pageCount = pdf.numPages;
 
-    const from = Number(cur.pages_indexed ?? 0);           // 0-based next page
     const to = Math.min(from + PAGE_BATCH, pageCount);
     let emptyPages = 0;
     let visionPages = 0;
@@ -493,7 +745,6 @@ export async function ingestKnowledgeDocBatch(
     // upload: every counter restarts from zero here, so no reset path can
     // carry the last generation's vision_pages / empty_pages / failed pages
     // into this one (ING-12, ING-11), even one that forgot to zero them.
-    const genStart = from === 0;
     const failedBefore = genStart ? [] : pageList(cur.vision_failed_pages);
     const failed = new Set<number>(failedBefore);
     const accepted = !genStart && cur.vision_partial_accepted === true;
@@ -515,7 +766,9 @@ export async function ingestKnowledgeDocBatch(
     /** Chunker 2 carries the unfinished sentence at the foot of a page into
      *  the next (ING-7). Across a batch boundary it is read back from the
      *  last chunk stored for the previous page — prose chunks are single
-     *  lines, so a chunk with a line break is a table and carries nothing. */
+     *  lines, so a chunk with a line break is a table and carries nothing,
+     *  and a page that declared a title block (a drawing sheet) carries
+     *  nothing either. */
     const storedTail = async (page: number): Promise<{ text: string; fromPage: number } | null> => {
       if (!tableAware || page < 1) return null;
       const { data } = await supabaseAdmin.from("knowledge_chunks")
@@ -523,7 +776,11 @@ export async function ingestKnowledgeDocBatch(
         .order("seq", { ascending: false }).limit(1);
       const last = ((data ?? []) as Array<{ content: string }>)[0]?.content ?? "";
       const text = last.includes("\n") ? "" : pageTail(last);
-      return text ? { text, fromPage: page } : null;
+      if (!text) return null;
+      const { data: sheet, error: sheetErr } = await supabaseAdmin.from("knowledge_page_entities")
+        .select("id").eq("document_id", cur.id).eq("page", page).eq("kind", "self").limit(1);
+      if (!sheetErr && (sheet ?? []).length > 0) return null;
+      return { text, fromPage: page };
     };
 
     const entityRows: Array<Record<string, unknown>> = [];
@@ -738,25 +995,38 @@ export async function ingestKnowledgeDocBatch(
       return { stop: null, page: { lines, chunkLines, visionRead, visionModel, visionFailed, entities } };
     };
 
+    /** A drawing sheet has no sentence to finish — its foot is a title
+     *  block or a tag list — so the carry (ING-7, prose only) neither leaves
+     *  nor enters one: a page that declared a title block (a 'self' entity,
+     *  text layer or vision transcript alike), or a sparse page dense with
+     *  tags. */
+    const sheetLike = (read: PageRead): boolean => {
+      if (read.entities.some((e) => e.kind === "self")) return true;
+      if (!isDrawingLikePage(read.lines.join("\n"))) return false;
+      return read.entities.filter((e) => e.kind === "equipment" || e.kind === "ref").length >= MIN_TAGS_THIN_PAGE;
+    };
+
     /** Chunk one read page. Every row says how its text was obtained —
      *  'text' (the PDF's own text layer) or 'vision' (an AI transcription,
      *  with the model that wrote it) — GOV-9. Chunker 2 keeps line
-     *  structure (tables stay whole — ING-4) and opens the page with the
-     *  previous page's unfinished sentence, marked with where it came from
-     *  (ING-7); it also returns this page's own unfinished sentence. */
+     *  structure (tables stay whole — ING-4) and opens a prose page with the
+     *  previous prose page's unfinished sentence, marked with where it came
+     *  from (ING-7); it also returns this page's own unfinished sentence. */
     const chunkRowsFor = (p: number, read: PageRead, carry: string | null, carried: { text: string; fromPage: number } | null) => {
       const { segments, lastSection } = tableAware
         ? splitPageIntoSections(read.chunkLines, carry, { keepLines: true })
         : splitPageIntoSections(read.lines, carry);
       let tail = "";
-      if (tableAware && segments.length > 0) {
-        // Only a page that continues the same section continues a sentence.
-        if (carried && segments[0].section === carry) {
-          segments[0] = { ...segments[0], text: `${carriedTailMarker(carried.fromPage)} ${carried.text}\n${segments[0].text}` };
-        }
+      if (tableAware && segments.length > 0 && !sheetLike(read)) {
+        // This page's OWN unfinished sentence, taken before anything is
+        // prepended — a carry is never carried on.
         const parts = splitTables(segments[segments.length - 1].text);
         const last = parts[parts.length - 1];
         if (last?.kind === "prose") tail = pageTail(last.text);
+        // Only a page that continues the same section continues a sentence.
+        if (carried && segments[0].section === carry && !hasCarriedMarker(carried.text)) {
+          segments[0] = { ...segments[0], text: `${carriedTailMarker(carried.fromPage)} ${carried.text}\n${segments[0].text}` };
+        }
       }
       const out: Array<Record<string, unknown>> = [];
       let seq = 0;
@@ -797,9 +1067,10 @@ export async function ingestKnowledgeDocBatch(
       }
     } else {
       // ── RETRY PASS (ING-6): the main pass is through; re-read only the
-      //    pages whose vision call failed. No key = nothing can retry them,
-      //    and that is said out loud rather than parked forever.
-      if (!vision) throw new Error(visionRetryMessage(failedBefore, null));
+      //    pages whose vision call failed. No key = nothing can retry them
+      //    here: said on the row, never an error (normally caught above,
+      //    before the download).
+      if (!vision) return await park(visionRetryMessage(failedBefore, null), new Date().toISOString());
       let attempted = 0;
       for (const p of failedBefore) {
         if (deadlineMs && Date.now() >= deadlineMs) { stoppedForTime = true; break; }
@@ -824,9 +1095,12 @@ export async function ingestKnowledgeDocBatch(
         retried.set(p, built.hadText);
       }
       if (attempted > 0 && retried.size === 0) {
-        // Every retry this pass failed again: stop and say so — the caller
-        // records it on the row; a person re-runs or accepts the partial.
-        throw new Error(visionRetryMessage(failedBefore, visionError));
+        // Every retry this pass failed again: back off and say so on the row
+        // — the document keeps its index and stays retrievable; the pages
+        // are tried again after the back-off, or a person accepts the
+        // partial index.
+        return await park(visionRetryMessage(failedBefore, visionError),
+          new Date(Date.now() + VISION_RETRY_BACKOFF_MS).toISOString());
       }
     }
 
@@ -835,6 +1109,7 @@ export async function ingestKnowledgeDocBatch(
     const reached = retryMode ? from : lastCompletedPage;
     const rewrite = retryMode ? [...retried.keys()] : [];
     const touched = retryMode ? rewrite.length > 0 : reached > from;
+    const fullClear = genStart && leased;
 
     // Rows this batch wrote — withdrawn if it turns out to be superseded.
     const insertedChunkIds: string[] = [];
@@ -857,9 +1132,12 @@ export async function ingestKnowledgeDocBatch(
         // range that now yields nothing no longer keeps the last run's text
         // (belt) — and the unique (document, page, seq) index is the
         // suspenders. A failed clear stops the batch: rewriting over rows
-        // that are still there is how duplicates were born.
+        // that are still there is how duplicates were born. The FIRST batch
+        // of a new index generation, under the claim, clears the document's
+        // whole derived index instead: nothing of the last generation (an
+        // interrupted reset's leftovers included) outlives it.
         let del = supabaseAdmin.from("knowledge_chunks").delete().eq("document_id", cur.id);
-        del = retryMode ? del.in("page", rewrite) : del.gte("page", from + 1).lte("page", reached);
+        del = retryMode ? del.in("page", rewrite) : fullClear ? del : del.gte("page", from + 1).lte("page", reached);
         const { data: cleared, error: delErr } = await del.select("page");
         if (delErr) throw new Error(`chunk cleanup failed: ${delErr.message}`);
         if (retryMode) {
@@ -946,7 +1224,7 @@ export async function ingestKnowledgeDocBatch(
       let entitiesLive = true;
       if (touched) {
         let del = supabaseAdmin.from("knowledge_page_entities").delete().eq("document_id", cur.id);
-        del = retryMode ? del.in("page", rewrite) : del.gte("page", from + 1).lte("page", reached);
+        del = retryMode ? del.in("page", rewrite) : fullClear ? del : del.gte("page", from + 1).lte("page", reached);
         const { error: delErr } = await del;
         if (delErr) {
           if (isMissingTable(delErr)) entitiesLive = false;
@@ -1031,17 +1309,6 @@ export async function ingestKnowledgeDocBatch(
     };
     let committed = 0;
     let updErr: DbError = null;
-    const cas = (q: ReturnType<ReturnType<typeof supabaseAdmin.from>["update"]>) => {
-      // The row must still be the file and version this batch read — a
-      // rev-up re-points both — and, under a claim, still ours and still
-      // where this batch started.
-      let out = q.eq("id", cur.id).eq("file_key", cur.file_key);
-      if (cur.source_version_id !== undefined) {
-        out = cur.source_version_id === null ? out.is("source_version_id", null) : out.eq("source_version_id", cur.source_version_id);
-      }
-      if (leased) out = out.eq("ingest_claimed_by", driver).eq("pages_indexed", from);
-      return out;
-    };
     if (claimed) {
       const known = new Set(Object.keys(claimed));
       const full: Record<string, unknown> = {
@@ -1049,7 +1316,11 @@ export async function ingestKnowledgeDocBatch(
         vision_pages: baseVisionPages + visionPages,
         empty_pages: emptyTotal,
         vision_failed_pages: failedAfter,
-        vision_partial_accepted: accepted,
+        // A controller's acceptance is written only by accept-partial (under
+        // its own claim) and cleared only by a new generation — a batch never
+        // writes back a copy it read.
+        ...(genStart ? { vision_partial_accepted: false } : {}),
+        vision_retry_after: null,
         chunk_version: chunkVersion,
         ingest_claimed_by: null, ingest_claimed_at: null,
       };
@@ -1082,6 +1353,9 @@ export async function ingestKnowledgeDocBatch(
       void import("@/lib/equipmentBridgeServer")
         .then((m) => m.computeForKnowledgeDoc(supabaseAdmin, cur.id))
         .catch(() => undefined);
+      // …and the mention pass, on both paths too: the reset that queued this
+      // index generation dropped the document's machine mentions.
+      await rebuildDocumentMentions(cur);
     }
 
     if (!leased && (visionPages > 0 || genStart)) {
@@ -1099,12 +1373,14 @@ export async function ingestKnowledgeDocBatch(
 
     return {
       done, pageCount,
-      pagesIndexed: Math.max(0, reached - failedAfter.length),
+      pagesIndexed: reached,
       resumeAt: reached,
+      pagesReadable: Math.max(0, reached - failedAfter.length),
       emptyPages, emptyPagesTotal: leased ? emptyTotal : emptyPages,
       visionPages, visionBudgetSpent, stoppedForTime,
       visionFailedPages: failedAfter, visionError,
       busy: false, superseded: false,
+      visionRetryBlocked: false, visionRetryMessage: null, visionRetryAfter: null, notPdf: null,
     };
   } finally {
     if (leased && !released) await releaseIngestLease(doc.id, driver);
@@ -1174,15 +1450,21 @@ export async function drainKnowledgeIngestQueue(opts: {
   const out = { docsTouched: 0, pagesIndexed: 0, completed: 0, errors: [] as string[] };
   // 'indexing' is also the state an interactive driver leaves a row in
   // between its batches, so a row someone holds the claim on is skipped
-  // here rather than raced (ING-2). A pre-20261122 database has no claim
-  // columns: the legacy selector.
+  // here rather than raced (ING-2). A document whose failed vision pages
+  // wait on a retry (ING-6) stays 'indexing' too: its vision_retry_after
+  // files it behind every document with real work (never-stamped first),
+  // so twenty of them can never hold the queue's head. A pre-20261122
+  // database has neither column: the legacy selector.
   const cutoff = new Date(Date.now() - INGEST_LEASE_TTL_MS).toISOString();
   const select = (claimFilter: boolean) => {
     let q = supabaseAdmin
       .from("knowledge_documents")
       .select("*")
       .in("status", ["pending", "stale", "indexing"]);
-    if (claimFilter) q = q.or(`ingest_claimed_at.is.null,ingest_claimed_at.lt."${cutoff}"`);
+    if (claimFilter) {
+      q = q.or(`ingest_claimed_at.is.null,ingest_claimed_at.lt."${cutoff}"`)
+        .order("vision_retry_after", { ascending: true, nullsFirst: true });
+    }
     return q.order("created_at", { ascending: true }).limit(20);
   };
   let { data: queued, error } = await select(true);
@@ -1215,7 +1497,16 @@ export async function drainKnowledgeIngestQueue(opts: {
         // cron's window would be killed mid-flight and lose its pages.
         const res = await ingestKnowledgeDocBatch(row, sponsor.ctx, opts.deadlineMs);
         // Someone else is indexing it, or it moved under us: not ours now.
-        if (res.busy || res.superseded) break;
+        // Failed vision pages this run cannot retry: said on the row, and
+        // the document keeps its index — never an error (ING-6).
+        if (res.busy || res.superseded || res.visionRetryBlocked) break;
+        if (res.notPdf) {
+          // The same refusal the interactive route gives (ING-9): an upload
+          // leaves nothing behind, a mirror is marked with the message.
+          const refused = await refuseNonPdf(doc as unknown as Record<string, unknown>, res.notPdf, null);
+          out.errors.push(`${doc.name}: ${refused.message}${refused.error ? ` (${refused.error})` : ""}`);
+          break;
+        }
         const processed = res.resumeAt - (row.pages_indexed ?? 0);
         budget -= processed;
         out.pagesIndexed += processed;

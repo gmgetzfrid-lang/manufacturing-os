@@ -5,8 +5,12 @@
 //          batch with a message naming the importer; an upload leaves no row
 //          and no object behind; a mirrored file is marked, never deleted
 //   ING-2  the loser waits for the claim instead of erroring the document
-//   ING-6  failed vision pages are said on the response; a controller can
-//          accept the partial index explicitly (audited)
+//   ING-6  failed vision pages are said on the response; a retry that cannot
+//          run answers 409 with the reason and never errors the document; a
+//          controller can accept the partial index explicitly (audited,
+//          under the claim, so a retry in flight cannot undo it)
+//   ING-4  the per-library re-index: a dry run first, the intent audited
+//          before anything is reset, bounded, resumable, never twice
 //   ADD-1  the controller gate reads the role collection
 
 import { describe, it, expect, vi, beforeEach } from "vitest";
@@ -30,13 +34,13 @@ vi.mock("@/lib/r2", () => ({
 }));
 vi.mock("@/lib/knowledgeVision", () => ({ transcribePageImage: vi.fn() }));
 vi.mock("@/lib/equipmentBridgeServer", () => ({ computeForKnowledgeDoc: vi.fn(async () => undefined) }));
-vi.mock("@/lib/mentionIndexer", () => ({ loadAliasDictionary: vi.fn(async () => []), indexDocumentMentions: vi.fn() }));
+vi.mock("@/lib/mentionIndexer", () => ({ loadAliasDictionary: vi.fn(async () => []), indexDocumentMentions: vi.fn(async () => undefined) }));
 vi.mock("@/lib/ai/usageServer", () => ({ getMonthUsage: vi.fn(async () => ({ spentUsd: 0 })), getCapUsd: vi.fn(async () => 0), recordAskUsage: vi.fn() }));
 vi.mock("@/lib/aiInstructionsServer", () => ({ loadOrgInstructionsBlock: vi.fn(async () => "") }));
 vi.mock("@/lib/ai/keyVault", () => ({ openAiKey: (k: string) => k }));
 
 import { POST } from "@/app/api/knowledge/ingest/route";
-import { sniffBytes } from "@/lib/knowledgeIngest";
+import { sniffBytes, reindexLibraryChunks } from "@/lib/knowledgeIngest";
 
 const DOC = "kd-9";
 const post = (body: unknown, token = "good") => POST(new NextRequest("http://x/api/knowledge/ingest", {
@@ -48,7 +52,7 @@ const docRow = (over: Row = {}): Row => ({
   pages_indexed: 0, page_count: null, last_section: null, created_by: "u-ctrl", created_at: "2026-09-30", error: null,
   source_id: null, source_document_id: null, source_version_id: null, source_rev: null,
   vision_pages: 0, empty_pages: 0, vision_failed_pages: [], vision_partial_accepted: false, chunk_version: null,
-  ingest_claimed_by: null, ingest_claimed_at: null, ...over,
+  vision_retry_after: null, ingest_claimed_by: null, ingest_claimed_at: null, ...over,
 });
 const seed = (doc: Row, members: Row[] = [{ org_id: "o1", uid: "u-ctrl", role: "Viewer", roles: ["Viewer", "DocCtrl"], status: "active" }]) =>
   resetDb({
@@ -127,6 +131,51 @@ describe("ING-6 — failed vision pages on the response, and the explicit way ou
     expect(rowsOf("audit_logs").map((a) => a.action)).toEqual(["KNOWLEDGE_DOC_PARTIAL_ACCEPTED", "KNOWLEDGE_DOC_INDEXED"]);
   });
 
+  it("a keyless controller's POST on a document awaiting a vision retry: 409 with the reason; the document stays 'indexing' and searchable", async () => {
+    // Controller B has no AI key; the app-shell indicator drives every
+    // 'indexing' document. It used to throw, and the route wrote 'error' —
+    // dropping the whole document out of Ask.
+    seed(docRow({ status: "indexing", pages_indexed: 2, page_count: 2, vision_failed_pages: [1] }));
+    db.tables.knowledge_chunks = [{ id: "c-2", document_id: DOC, org_id: "o1", library_id: "kl-1", page: 2, seq: 0, content: "bolting text" }];
+    const res = await post({ documentId: DOC });
+    expect(res.status).toBe(409);
+    const body = await res.json();
+    expect(body.error).toMatch(/AI vision could not read 1 page \(p\. 1\), and retrying needs an AI key/);
+    expect(body).toMatchObject({ visionRetryBlocked: true, done: false });
+    expect(rowsOf("knowledge_documents")[0]).toMatchObject({ status: "indexing", pages_indexed: 2, ingest_claimed_by: null });
+    expect(String(rowsOf("knowledge_documents")[0].error)).toBe(body.error);
+    expect(rowsOf("knowledge_chunks")).toHaveLength(1);
+  });
+
+  it("accept-partial takes the claim: refused while a retry batch holds it, and nothing is written", async () => {
+    seed(docRow({
+      status: "indexing", pages_indexed: 3, page_count: 3, vision_failed_pages: [2],
+      ingest_claimed_by: "ingest:retry", ingest_claimed_at: new Date().toISOString(),
+    }));
+    const res = await post({ documentId: DOC, action: "accept-partial" });
+    expect(res.status).toBe(409);
+    expect((await res.json()).error).toMatch(/being indexed right now/);
+    expect(rowsOf("knowledge_documents")[0]).toMatchObject({ status: "indexing", vision_partial_accepted: false, ingest_claimed_by: "ingest:retry" });
+    expect(rowsOf("audit_logs")).toHaveLength(0);
+  });
+
+  it("an accepted partial index is not undone by a batch that runs afterwards; its mentions are rebuilt", async () => {
+    seed(docRow({ status: "indexing", pages_indexed: 3, page_count: 3, vision_failed_pages: [2], vision_retry_after: new Date(Date.now() + 60_000).toISOString() }));
+    const { loadAliasDictionary, indexDocumentMentions } = await import("@/lib/mentionIndexer");
+    vi.mocked(loadAliasDictionary).mockResolvedValueOnce([{ assetId: "a1", alias: "V-101", origin: "tag" }]);
+    const res = await post({ documentId: DOC, action: "accept-partial" });
+    expect(res.status).toBe(200);
+    expect(rowsOf("knowledge_documents")[0]).toMatchObject({
+      status: "ready", vision_partial_accepted: true, vision_retry_after: null, ingest_claimed_by: null,
+    });
+    expect(vi.mocked(indexDocumentMentions)).toHaveBeenCalledWith("o1", DOC, [{ assetId: "a1", alias: "V-101", origin: "tag" }], null);
+    // A late driver finds it 'ready' and writes nothing back.
+    r2.objects.set(KEY, await makePdf([prosePage("a"), null, prosePage("c")]));
+    const late = await post({ documentId: DOC });
+    expect(await late.json()).toMatchObject({ done: true });
+    expect(rowsOf("knowledge_documents")[0]).toMatchObject({ status: "ready", vision_partial_accepted: true });
+  });
+
   it("accept-partial refuses when nothing waits, or indexing has not finished", async () => {
     seed(docRow({ status: "indexing", pages_indexed: 3, page_count: 3 }));
     expect((await post({ documentId: DOC, action: "accept-partial" })).status).toBe(409);
@@ -164,25 +213,78 @@ describe("ING-4 / ING-7 — 'Re-index with table-aware chunking' is an explicit 
     db.tables.entity_mentions = [];
   };
 
-  it("a controller switches the library to chunker 2: every document resets and re-reads, the vision cost is said", async () => {
+  it("a dry run says what the re-index would reset and re-bill — before anything is changed", async () => {
+    library();
+    const res = await post({ action: "reindex", libraryId: "kl-1", chunker: 2, dryRun: true });
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual({ ok: true, dryRun: true, chunker: 2, documents: 2, toReset: 2, visionPagesToReread: 3 });
+    expect(db.tables.knowledge_libraries[0].chunk_version).toBe(1);
+    expect(rowsOf("knowledge_chunks")).toHaveLength(1);
+    expect(rowsOf("knowledge_documents").every((d) => d.status === "ready")).toBe(true);
+    expect(rowsOf("audit_logs")).toHaveLength(0);
+  });
+
+  it("a controller switches the library to chunker 2: the intent is audited first, then every document resets", async () => {
     library();
     const res = await post({ action: "reindex", libraryId: "kl-1", chunker: 2 });
     expect(res.status).toBe(200);
-    expect(await res.json()).toMatchObject({ ok: true, chunker: 2, reset: 2, busy: 0, visionPagesToReread: 3 });
+    expect(await res.json()).toMatchObject({ ok: true, chunker: 2, reset: 2, busy: 0, toReset: 2, visionPagesToReread: 3, remaining: 0 });
     expect(db.tables.knowledge_libraries[0].chunk_version).toBe(2);
     expect(rowsOf("knowledge_chunks")).toHaveLength(0);
     for (const d of rowsOf("knowledge_documents")) {
       expect(d).toMatchObject({ status: "stale", pages_indexed: 0, vision_pages: 0, chunk_version: null });
     }
-    expect(rowsOf("audit_logs").map((a) => a.action)).toEqual(["KNOWLEDGE_LIBRARY_REINDEXED"]);
+    expect(rowsOf("audit_logs")).toEqual([expect.objectContaining({
+      action: "KNOWLEDGE_LIBRARY_REINDEXED",
+      details: expect.objectContaining({ chunker: 2, toReset: 2, visionPagesToReread: 3 }),
+    })]);
+    // The audit row precedes the first change of any kind.
+    const at = (pred: (o: (typeof db.ops)[number]) => boolean) => db.ops.findIndex(pred);
+    const audit = at((o) => o.table === "audit_logs" && o.kind === "insert");
+    const flip = at((o) => o.table === "knowledge_libraries" && o.kind === "update");
+    const firstReset = at((o) => o.table === "knowledge_documents" && o.kind === "update");
+    expect(audit).toBeGreaterThan(-1);
+    expect(audit).toBeLessThan(flip);
+    expect(flip).toBeLessThan(firstReset);
+
+    // Run again: every document is already queued for chunker 2 — nothing
+    // is reset twice, nothing re-billed.
+    const again = await (await post({ action: "reindex", libraryId: "kl-1", chunker: 2 })).json();
+    expect(again).toMatchObject({ reset: 0, toReset: 0, visionPagesToReread: 0, remaining: 0 });
   });
 
-  it("a document mid-batch is reported busy, not reset under its batch", async () => {
+  it("a run that cannot record its intent changes nothing", async () => {
+    library();
+    db.hooks.push((op) => op.table === "audit_logs" && op.kind === "insert"
+      ? { error: { code: "42501", message: "permission denied for table audit_logs" } } : undefined);
+    const res = await post({ action: "reindex", libraryId: "kl-1", chunker: 2 });
+    expect(res.status).toBe(500);
+    expect((await res.json()).error).toMatch(/could not be recorded, so nothing was changed/);
+    expect(db.tables.knowledge_libraries[0].chunk_version).toBe(1);
+    expect(rowsOf("knowledge_chunks")).toHaveLength(1);
+  });
+
+  it("a document mid-batch is reported busy, not reset under its batch — and the next run picks it up", async () => {
     library();
     Object.assign(rowsOf("knowledge_documents")[1], { status: "indexing", ingest_claimed_by: "ingest:x", ingest_claimed_at: new Date().toISOString() });
     const body = await (await post({ action: "reindex", libraryId: "kl-1", chunker: 2 })).json();
-    expect(body).toMatchObject({ reset: 1, busy: 1 });
+    expect(body).toMatchObject({ reset: 1, busy: 1, remaining: 1 });
     expect(rowsOf("knowledge_documents")[1]).toMatchObject({ status: "indexing", pages_indexed: 1 });
+    Object.assign(rowsOf("knowledge_documents")[1], { ingest_claimed_by: null, ingest_claimed_at: null });
+    const next = await (await post({ action: "reindex", libraryId: "kl-1", chunker: 2 })).json();
+    expect(next).toMatchObject({ reset: 1, busy: 0, toReset: 1, visionPagesToReread: 1, remaining: 0 });
+    expect(rowsOf("knowledge_documents")[1]).toMatchObject({ status: "stale", pages_indexed: 0 });
+  });
+
+  it("bounded by a deadline: it stops between documents and says how many remain", async () => {
+    library();
+    const out = await reindexLibraryChunks("kl-1", 2, { deadlineMs: Date.now() - 1 });
+    expect(out).toMatchObject({ toReset: 2, remaining: 2, reset: [] });
+    expect(db.tables.knowledge_libraries[0].chunk_version).toBe(2);
+    expect(rowsOf("knowledge_documents").every((d) => d.status === "ready")).toBe(true);
+    const rest = await reindexLibraryChunks("kl-1", 2, {});
+    expect(rest).toMatchObject({ toReset: 2, remaining: 0 });
+    expect(rest.reset).toHaveLength(2);
   });
 
   it("refuses a non-controller, an unknown chunker and an unknown library", async () => {

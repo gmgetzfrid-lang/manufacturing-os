@@ -7,7 +7,7 @@ import { makePdf } from "./knowledgePdfFixtures";
 import {
   chunkPageText, parseSearchQueries, parseRefineQueries, parseFollowupPlan,
   extractCitationNumbers, mergeRetrieved, mergeRetrievedRRF, isSectionHeading, splitPageIntoSections,
-  truncateSafe, parseAnswerBlocks, splitTables, pageLinesFromTextItems, pageTail, carriedTailMarker,
+  truncateSafe, parseAnswerBlocks, splitTables, pageLinesFromTextItems, pageTail, carriedTailMarker, hasCarriedMarker,
   chunkerVersionOf, type PdfTextItem, explodeRunOn, proofTerms, highlightQuote, ensurePdfPolyfills, sanitizeStorageText, type RetrievedChunk,
 } from "../knowledgeText";
 
@@ -810,16 +810,33 @@ describe("ING-7 — the unfinished sentence at the foot of a page", () => {
     expect(pageTail("See Table 3:")).toBe("");
     expect(pageTail("Bolts shall be tightened. Preheat shall be maintained at not less than 175F for P-No. 5 materials over"))
       .toBe("Preheat shall be maintained at not less than 175F for P-No. 5 materials over");
-    const long = "word ".repeat(200).trim();
+    const long = "Scope follows. Then " + "word ".repeat(200).trim();
     const tail = pageTail(long, 100);
     expect(tail.length).toBeLessThanOrEqual(100);
     expect(tail.startsWith("word")).toBe(true);
+    expect(tail.length).toBeGreaterThan(50);
     expect(pageTail("")).toBe("");
+  });
+
+  it("carries prose only: a page with no sentence end, a label run, or a carry is never carried", () => {
+    // The reviewer's probe: a vision-transcribed drawing sheet. Before, the
+    // whole title block and tag list came back as the "unfinished sentence".
+    const sheet = "DRAWING NO: 025-PID-0101\nSHEET: 1 OF 3\nREV: 4\nV-101 SUCTION DRUM\nP-201A CHARGE PUMP\nE-301 FEED EXCHANGER";
+    expect(pageTail(sheet)).toBe("");
+    // Sentence-like notes on a drawing still end in labels, not a sentence.
+    expect(pageTail("NOTES: 1. ALL DIMENSIONS IN MM. 2. SEE DWG 025-PID-0102. V-101 SUCTION DRUM P-201A CHARGE PUMP")).toBe("");
+    // Prose with no sentence end anywhere is a fragment, not a page foot.
+    expect(pageTail("word ".repeat(40).trim())).toBe("");
+    // A tail holding a carried marker is not carried on (no stacking).
+    expect(pageTail("Scope follows. [cont. from p. 3] preheat shall be kept above the stated value for")).toBe("");
+    expect(hasCarriedMarker("[cont. from p. 12] the rest")).toBe(true);
+    expect(hasCarriedMarker("see p. 12")).toBe(false);
   });
 
   it("never starts on half a surrogate pair", () => {
     const astral = "\u{1D5E3}";
-    const tail = pageTail(("x" + astral).repeat(300), 101);
+    const tail = pageTail("Rules apply. The value is " + ("ab" + astral).repeat(300), 101);
+    expect(tail.length).toBeGreaterThan(0);
     expect((tail as string & { isWellFormed(): boolean }).isWellFormed()).toBe(true);
   });
 
