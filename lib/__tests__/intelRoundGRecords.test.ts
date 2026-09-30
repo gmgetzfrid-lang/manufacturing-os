@@ -25,17 +25,30 @@
 // row-capped) read of `libraries` / `collections` inside loadDcLandscape is
 // swallowed (`libsRes.data ?? []`, `foldersRes.data ?? []`), so the chain is
 // evaluated WITHOUT the missing container ACLs and a folder-denied document
-// reads as open; and loadPrincipal swallows a failed `team_members` read
-// (`teams ?? []`), so the principal carries no teams and a TEAM DENY stops
-// applying. Opened as KACL-12 (owner I-12, lib/knowledgeAccess.ts); the two
-// it.todo entries below are the tests that land with that fix.
+// reads as open — and with only `libraries` failing, a FOLDER under a
+// library-level deny is a readable container too (folderChain drops the
+// missing library's ACL); and loadPrincipal swallows a failed `team_members`
+// read (`teams ?? []`), so the principal carries no teams and a TEAM DENY
+// stops applying. Opened as KACL-12 (owner I-12, lib/knowledgeAccess.ts); the
+// three it.todo entries below are the tests that land with that fix. The
+// stand-in honours `.order()` and `.range()` / `.limit()` (filter, sort, then
+// window, as PostgREST does), so when the container reads start paging, the
+// first of them exercises the real paging loop here.
 //
-// The stand-in honours `.order()` and `.range()` / `.limit()` (sort, then
-// slice), so a fix that pages a read until it comes back short terminates
-// here as it would against PostgREST.
+// ILIFE-6 criterion 3 (the orphan collector must never miss a reference —
+// deleteOrphans is irreversible) does NOT hold at HEAD either, and the last
+// block drives the real collectReferencedKeys to show it: it pages by OFFSET
+// (`.order("id").range(from, from + 999)`) and counts after the loop, so a row
+// the scan already read, deleted before the next window, shifts that window by
+// one; the first row of the next window is never read and the count still
+// agrees. That case is an `it.fails` — it asserts what criterion 3 requires,
+// fails at HEAD, and starts failing the suite the day keyset paging (owner
+// admin-and-org P2, BKP-2) makes it hold, so whoever lands the fix flips it to
+// `it`.
 
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { NextRequest } from "next/server";
+import type { SupabaseClient } from "@supabase/supabase-js";
 
 type Row = Record<string, unknown>;
 
@@ -127,16 +140,19 @@ vi.mock("@/lib/supabase", () => ({ supabase: { from: (t: string) => chain(t), rp
 vi.mock("@/lib/inAppNotifications", () => ({ notify: vi.fn(async () => {}) }));
 vi.mock("@/lib/audit", () => ({ logAuditAction: vi.fn(async () => {}), logRevisionEvent: vi.fn(async () => {}), logHoldEvent: vi.fn(async () => {}) }));
 vi.mock("@/lib/notify/dispatch", () => ({ emit: vi.fn(async () => {}) }));
+// lib/storageOrphans (ILIFE-6 block) builds its S3 client at import; the
+// collector under test never touches the bucket.
+vi.mock("@/lib/r2", () => ({ r2: { send: vi.fn(async () => ({})) }, R2_BUCKET: "test-bucket" }));
 // The route must refuse before a provider is ever called.
 vi.mock("@/lib/ai/providerCall", () => ({
   callAiModel: vi.fn(async () => { db.providerCalls += 1; return { text: "", usage: { inputTokens: 0, outputTokens: 0 } }; }),
   AiCallError: class AiCallError extends Error {},
 }));
 
-import { supabaseAdmin } from "@/lib/supabaseAdmin";
 import { toolByName, type ToolContext } from "@/lib/orchestrator/tools";
 import { loadPrincipal, type KnowledgePrincipal } from "@/lib/knowledgeAccess";
 import { POST as orchestratorPOST } from "@/app/api/orchestrator/route";
+import { collectReferencedKeys } from "@/lib/storageOrphans";
 
 const ORG = "o1";
 const LIB = "L-ops";
@@ -194,21 +210,6 @@ const ENGINEERING_ONLY = { inherit: true, visibility: "hidden", rules: [{ effect
 
 beforeEach(() => {
   db.tables = {}; db.errors = {}; db.failIn = new Set(); db.failSelect = new Set(); db.rpc = []; db.user = null; db.providerCalls = 0;
-});
-
-describe("the PostgREST stand-in", () => {
-  it("sorts by .order() and windows by .range(), so a read paged until it comes back empty terminates with every row once", async () => {
-    seed(null);
-    db.tables.collections = ["F-3", "F-1", "F-2"].map((id) => ({ id, org_id: ORG }));
-    const seen: string[] = [];
-    for (let from = 0, pages = 0; ; from += 2, pages += 1) {
-      expect(pages, "the page loop terminates").toBeLessThan(5);
-      const { data } = await supabaseAdmin.from("collections").select("*").eq("org_id", ORG).order("id").range(from, from + 1);
-      if (!data?.length) break;
-      seen.push(...(data as Row[]).map((r) => r.id as string));
-    }
-    expect(seen).toEqual(["F-1", "F-2", "F-3"]);
-  });
 });
 
 describe("KACL-2 (→ R&P EGRESS-3) — Done-when 1: the principal is loadPrincipal's, and the route 403s without one", () => {
@@ -298,7 +299,8 @@ describe("KACL-2 (→ R&P EGRESS-3) — Done-when 2 and 3: a FOLDER-level ACL re
     expect(passageDocs(await run("search_documents", { query: "knockout drum" }, viewer))).toEqual(["Site note"]);
   });
 
-  it.todo("KACL-12 (owner I-12): a libraries / collections read error inside loadDcLandscape fails CLOSED — today it drops the container ACL and the folder-denied document reads as open");
+  it.todo("KACL-12 (owner I-12): a libraries / collections read error inside loadDcLandscape fails CLOSED — today it drops the container ACL and the folder-denied document reads as open; with the fix, both container reads page (.order(\"id\") and .range() / .limit() until a short page) and this runs that loop against the stand-in over more folders than one window");
+  it.todo("KACL-12 (owner I-12): a libraries read error never makes a folder under a library-level deny a readable CONTAINER — today containerReadable(\"folder\") answers true (folderChain builds [lib?.acl ?? null, ...lineage] with the library missing), so the sources picker and add-source re-check, /api/flows/browse and /api/area/knowledge-status name the folder");
   it.todo("KACL-12 (owner I-12): a team_members read error inside loadPrincipal yields no principal (or throws to a fail-closed caller) — today the principal loads with no teams, so a folder ACL [allow role Viewer read, deny team T read] reads as open to a Viewer in T");
 
   it("fails CLOSED on the mirror hop: when knowledge_documents cannot be read, every returned knowledge document is hidden", async () => {
@@ -306,5 +308,89 @@ describe("KACL-2 (→ R&P EGRESS-3) — Done-when 2 and 3: a FOLDER-level ACL re
     const viewer = await ctxFor("u-viewer");
     db.errors.knowledge_documents = { message: "timeout" };
     expect(passageDocs(await run("search_documents", { query: "knockout drum" }, viewer))).toEqual([]);
+  });
+});
+
+describe("ILIFE-6 criterion 3 (→ admin-and-org P2, BKP-2): the orphan reference scan under a concurrent delete", () => {
+  /** A service-role client for collectReferencedKeys: `document_versions`
+   *  holds `rows`, every other source is empty. Reads apply .order("id") and
+   *  the .range() / .gt() / .limit() window to the table AS IT IS when the read
+   *  runs; a head count answers the table's size at that moment. `afterFirst`
+   *  runs once the first window of document_versions has been served — the
+   *  concurrent write lands between two windows. */
+  function collectorClient(rows: Row[], afterFirst?: (live: Row[]) => void) {
+    const live = rows.map((r) => ({ ...r }));
+    let windows = 0;
+    const from = (table: string) => {
+      const src = () => (table === "document_versions" ? live : []);
+      let head = false;
+      let ordered = false;
+      let win: { from: number; to: number } | null = null;
+      let after: string | null = null;
+      let cap: number | null = null;
+      const q: Row = {};
+      const h: ProxyHandler<Row> = {
+        get(_t, prop: string) {
+          if (prop === "then") {
+            return (resolve: (v: unknown) => void) => {
+              if (head) return resolve({ data: null, count: src().length, error: null });
+              let out = [...src()];
+              if (after !== null) out = out.filter((r) => String(r.id) > (after as string));
+              if (ordered) out.sort((a, b) => (String(a.id) < String(b.id) ? -1 : 1));
+              if (win) out = out.slice(win.from, win.to + 1);
+              if (cap !== null) out = out.slice(0, cap);
+              if (table === "document_versions") {
+                windows += 1;
+                if (windows === 1) afterFirst?.(live);
+              }
+              resolve({ data: out, error: null });
+            };
+          }
+          return (...args: unknown[]) => {
+            switch (prop) {
+              case "select": head = (args[1] as { head?: boolean } | undefined)?.head === true; break;
+              case "order": ordered = args[0] === "id"; break;
+              case "range": win = { from: args[0] as number, to: args[1] as number }; break;
+              case "gt": after = String(args[1]); break;
+              case "limit": cap = args[0] as number; break;
+            }
+            return new Proxy(q, h);
+          };
+        },
+      };
+      return new Proxy(q, h);
+    };
+    return { client: { from } as unknown as SupabaseClient, live, windows: () => windows };
+  }
+  const versions = (n: number): Row[] =>
+    Array.from({ length: n }, (_, i) => {
+      const id = `v${String(i + 1).padStart(5, "0")}`;
+      return { id, file_url: `orgs/${ORG}/documents/${id}.pdf`, source_file_key: null };
+    });
+
+  it("with nothing changing mid-scan, every reference across two 1000-row windows is collected", async () => {
+    const h = collectorClient(versions(1500));
+    const keys = await collectReferencedKeys(h.client);
+    expect(h.windows()).toBe(2);
+    expect(keys.size).toBe(1500);
+    expect(versions(1500).every((r) => keys.has(r.file_url as string))).toBe(true);
+  });
+
+  // ✗ at HEAD (lib/storageOrphans.ts:104-131): OFFSET windows + a count taken
+  // after the loop. Deleting v00010 after window 1 moves every later row up
+  // one place, window 2 (offset 1000) starts at v01002, v01001 is never read,
+  // and 1,499 paged = 1,499 counted, so nothing aborts — the collector returns
+  // a set missing a LIVE reference, which deleteOrphans would delete. Flip to
+  // `it` when keyset paging lands.
+  it.fails("a row deleted after the first window never hides a live reference in the next one — the scan returns every live key or aborts", async () => {
+    const h = collectorClient(versions(1500), (live) => { live.splice(9, 1); });
+    const outcome = await collectReferencedKeys(h.client).then(
+      (keys) => {
+        const missed = h.live.filter((r) => !keys.has(r.file_url as string)).map((r) => r.id);
+        return missed.length ? `returned without ${missed.join(", ")}` : "complete";
+      },
+      () => "aborted",
+    );
+    expect(["complete", "aborted"], outcome).toContain(outcome);
   });
 });

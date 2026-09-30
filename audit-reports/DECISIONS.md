@@ -3110,3 +3110,46 @@ house rules the dataviz method already states.
 
 **Risk:** low — presentation only; no stored value changes. The visible
 change: Spent is drawn in the categorical blue instead of the brand accent.
+
+<a id="dec-56"></a>
+## DEC-56 · The orphan sweep's reference collector stays bucket-wide
+
+**Decision. The storage orphan sweep confines its WALK and its DELETE SET to
+the caller's `orgs/<orgId>/` prefix, and never its REFERENCE SET.**
+`collectReferencedKeys` reads every tenant's reference columns, and a key that
+any row in the deployment references is never an orphan. Scoping the
+reference queries to the caller's org is declined; this is intelligence
+`ILIFE-8` Done-when 1's second limb, and the rule document-control `RET-7`
+Done-when 2 already states.
+
+> Made during intelligence Round G (2026-09-30), package I-01 phase A, under
+> the protocol's fail-safe rule, to back a declined limb with a decision
+> rather than with another finding's Done-when (`DEC-29` rule 3).
+> *Numbering: the next free number on this base (DEC-44 to DEC-55 are taken);
+> the integrator renumbers on a collision.*
+
+**Rationale.** A deletion from the bucket cannot be undone. Once the walk is
+confined to the caller's prefix (`RET-7`), no other org's key can become a
+candidate, so an org-scoped reference set would withhold nothing from anyone.
+Its only effect would be to delete an object under this org's prefix that
+another org's row still points at. The price of the bucket-wide read is that
+a row in another org can keep one of this org's objects from being reclaimed:
+a storage cost, never a loss.
+
+**Consequences.** The collector's output must not leave the server as a
+cross-tenant aggregate. Today the scan's `referencedKeys` count does
+(`lib/storageOrphans.ts:187`, returned by `app/api/admin/orphans/route.ts:30`);
+that is `ILIFE-8`'s residual, owner admin-and-org P2 (`BKP-2`). This decision
+says nothing about the collector's completeness, which is `ILIFE-6`
+criterion 3 (keyset paging, same owner).
+
+**Acceptance.** `collectReferencedKeys` carries no org filter
+(`lib/storageOrphans.ts:20-23`, `:38`); `scanOrphans` / `deleteOrphans` take an
+`orgId` and act only inside its prefix (`:152-201`); the two-org fixture in
+`lib/__tests__/dcRoundFShed.test.ts` deletes only the caller's orphan.
+
+**Reversal.** If storage keys become strictly per-org by construction (the
+database refuses a row whose key is under another org's prefix), the collector
+may be scoped for speed. Nothing else changes.
+
+**Risk:** low. It keeps the current behaviour and closes no door.

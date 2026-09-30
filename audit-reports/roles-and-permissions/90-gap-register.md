@@ -477,6 +477,8 @@ requester at closure that the document is still un-revised.
 
 **Related findings:** `LIFE-1`, `LIFE-2`, `LIFE-5`, `LIFE-6`, `LIFE-11`.
 
+*Handoff (2026-09-30, intelligence Round G): intelligence `WIRE-9` criterion 3 — the document's version history shows "Rev 3 — from DR-0142" — is the display half of the provenance this gap writes (acceptance 1): `related_ticket_id` is written since `20261049` and mapped onto each version (`lib/revisions.ts:965`), but no component renders it. WIRE-9 is `INVALID` by `DEC-23`; this criterion does not depend on that fork, so it is handed here. No plan lists it; the integrator assigns it.*
+
 ---
 
 <a id="gap-7"></a>

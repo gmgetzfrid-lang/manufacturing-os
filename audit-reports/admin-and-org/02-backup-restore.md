@@ -88,7 +88,7 @@ lib/storageOrphans.ts:11-13 promises the opposite — "the reference collector q
 - [ ] a test enumerates every storage-key column in the schema and fails when either collector is missing one (the binary analogue of exportCoverage.test.ts)
 - [ ] orphan deletion refuses to run when the reference collector's source list is smaller than the schema's storage-key column set
 
-*Cross-area note (2026-09-30, intelligence Round G): intelligence `ILIFE-1` (the same `cost_documents` gap) closes by pointer when this lands, and also asks that the orphan purge's audit row record the deleted KEYS. Intelligence `ILIFE-6`'s open half rides this package's export contract: `dumpTable` (`lib/dataExport.ts:315`) pages with no `.order`, and the manifest has no per-table count reconciliation.*
+*Cross-area note (2026-09-30, intelligence Round G): intelligence `ILIFE-1` (the same `cost_documents` gap) closes by pointer when this lands, and also asks that the orphan purge's audit row record the deleted KEYS. Intelligence `ILIFE-6`'s open halves ride this package: the export contract (`dumpTable`, `lib/dataExport.ts:315`, pages with no `.order`, and the manifest has no per-table count reconciliation), and this finding's collector — `collectReferencedKeys` pages by OFFSET with a count taken after the loop, so a concurrent delete skips a live reference the count cannot see (ILIFE-6 criterion 3, reproduced; the fix is keyset paging, `.gt("id", lastId)`). Intelligence `ILIFE-8`'s residual is here too: the orphan scan returns `referencedKeys`, a platform-wide count, to one org (`app/api/admin/orphans/route.ts:30`, `lib/storageOrphans.ts:187`) — count only keys under the caller's prefix, or drop the field (`DEC-56`).*
 
 ---
 

@@ -323,9 +323,9 @@ Closed under roles-and-permissions [`LIFE-2`](../roles-and-permissions/07-docume
 **Done-when.**
 1. ✓ (overtaken, by `GAP-6` rather than this finding's mechanism) the publish path stamps `related_ticket_id` when a revision comes from a ticket deliverable.
 2. — Declined by `DEC-23`: the call sites must NOT pass it; the parameter was removed so re-arming the waiver takes a deliberate signature change.
-3. ✗ Not built, and not queued from here: the inspector's history does not render "Rev 3 — from DR-0142". `relatedTicketId` is mapped onto the version (`lib/revisions.ts:965`, `app/(protected)/documents/[libraryId]/page.tsx:2000`) but no component displays it; "which revisions came out of DR-0142?" is answerable from the version row and from the hand-back's change log naming the ticket (`GAP-6` acceptance 1). A display nicety, not this finding's defect (the waiver).
+3. ✗ Not built: the inspector's history does not render "Rev 3 — from DR-0142". `relatedTicketId` is mapped onto the version (`lib/revisions.ts:965`, `app/(protected)/documents/[libraryId]/page.tsx:2000`) but no component displays it; "which revisions came out of DR-0142?" is answerable only from the version row and from the hand-back's change log naming the ticket (`GAP-6` acceptance 1). This criterion does not depend on the `DEC-23` fork, so it is handed on rather than dropped: it is the display half of the provenance roles-and-permissions [`GAP-6`](../roles-and-permissions/90-gap-register.md) writes, and a handoff line is added there. No plan lists it; the integrator assigns it (the version history is `components/documents/VersionHistoryPanel.tsx`).
 
-**Scope / residual.** None as a defect. The `DEC-23` section carries a `Landed` note for this closure.
+**Scope / residual.** None as a defect. Criterion 3's display is handed to roles-and-permissions beside `GAP-6` (above). The `DEC-23` section carries a `Landed` note for this closure.
 
 ---
 

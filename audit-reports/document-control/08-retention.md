@@ -303,7 +303,7 @@ lib/storageOrphans.ts:127-129 `const res = await r2.send(new ListObjectsV2Comman
 
 **Scope / residual.** Objects outside every `orgs/<uuid>/` prefix (legacy layout, if any exist) are now reachable by no tenant's sweep — an operator-level inventory (`ListObjectsV2` without prefix, counting keys not under `orgs/`) belongs to admin-and-org `BKP-2`/`BKP-9`, which own the collector side; the storage page's orphan section wording ("files in storage") is unchanged.
 
-*Cross-area note (2026-09-30, intelligence Round G): intelligence `ILIFE-8` (the same bucket-wide sweep) is closed by pointer to this resolution.*
+*Cross-area note (2026-09-30, intelligence Round G): intelligence `ILIFE-8` (the same bucket-wide sweep) is closed by pointer to this resolution, its reference-query limb declined by `DEC-56` (this finding's Done-when 2, made a decision). Done-when 3 ("the GET response reports only the caller's org's totals") does not fully hold: the GET spreads the whole scan (`app/api/admin/orphans/route.ts:30`), including `referencedKeys: referenced.size` (`lib/storageOrphans.ts:187`), a count of the keys every tenant references. Recorded as an ILIFE-8 residual (owner admin-and-org P2, `BKP-2`); the status is left to document-control.*
 
 ---
 

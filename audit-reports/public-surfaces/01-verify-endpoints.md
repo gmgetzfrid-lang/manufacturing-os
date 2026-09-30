@@ -451,6 +451,6 @@ app/api/verify-hold/route.ts:29 — `.select("id, document_id, reason, notes, op
 - [ ] The row is typed with an explicit interface rather than Record<string, unknown>, so a spread cannot compile
 - [ ] revision_count is either used in the ticket verdict or dropped from the select
 
-*Cross-area note (2026-09-30, intelligence Round G): handed over from intelligence `DACL-8` (and `DACL-3` criterion 3) — no verify route checks visibility. The default carried with it: for a private or hidden document answer "current / superseded" without the number or title (fail-safe, less disclosure). DACL-8 also asks `/api/verify` to require the version id or a per-print token.*
+*Cross-area note (2026-09-30, intelligence Round G): handed over from intelligence `DACL-8` (and `DACL-3` criterion 3) — no verify route checks visibility. The default carried with it: for a private or hidden document answer "current / superseded" without the number or title (fail-safe, less disclosure). DACL-8 also asks `/api/verify` to require the version id or a per-print token. No VFY finding covers the private / hidden refusal and PS-VERIFY's plan does not list it yet; the integrator adds it (or public-surfaces opens a VFY finding).*
 
 ---

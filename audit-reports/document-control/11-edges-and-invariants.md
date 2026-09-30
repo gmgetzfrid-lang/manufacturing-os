@@ -560,6 +560,8 @@ lib/storageOrphans.ts:95 `const { data, error } = await sb.from(table).select(se
 - [ ] collectReferencedKeys cross-checks its per-table row count against a `head:true, count:'exact'` query and aborts if they disagree
 - [ ] deleteOrphans refuses to run when any source table's paged total differs from its counted total
 
+*Cross-area note (2026-09-30, intelligence Round G): re-verifying intelligence `ILIFE-6` (its criterion 3: "a missed reference must be impossible") found that the collector comment's "the per-table count cross-check below turns any remaining drift into a loud abort" (`lib/storageOrphans.ts:101-103`) does not hold for deletes: the windows are OFFSET windows, so deleting a row the scan has already read moves every later row up one place, the next window skips a live row, and the count taken after the loop equals the paged total (reproduced against the real collector, `lib/__tests__/intelRoundGRecords.test.ts`). Keyset paging (`.gt("id", lastId)`) closes the shift. The status is left to document-control; ILIFE-6 stays OPEN on it (owner admin-and-org P2, `BKP-2`).*
+
 ---
 
 <a id="xedge-14"></a>
