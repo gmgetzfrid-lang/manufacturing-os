@@ -164,6 +164,22 @@ describe("SCH-4 · the move sheet counts what will be written, and shows a refus
     expect(host.textContent).toMatch(/1 dependent task is done or imported, so it stays put and will now start before this finishes: Hydrotest/);
     expect([...host.querySelectorAll("button")].some((b) => b.textContent?.trim() === "Shift 3 tasks")).toBe(true);
   });
+  it("PC SCHED-3 (dw4): a cascaded dependent pushed past ITS baseline is counted from the plan, though the dragged task has none", async () => {
+    await render(React.createElement(MovePreviewSheet, {
+      targets, deltaDays: 2, onCancel: () => undefined, onConfirm: () => undefined,
+      planFor: () => ({ rows: [
+        { id: "a", name: "Weld", plannedAt: "2026-03-12T00:00:00Z", baselineFinishAt: null },
+        { id: "b", name: "NDE", plannedAt: "2026-03-14T00:00:00Z", baselineFinishAt: "2026-03-13T00:00:00Z" },
+      ], held: [], refusal: null }),
+    }));
+    expect(host.textContent).toMatch(/1 task would finish past the approved baseline\./);
+  });
+  it("ExecutionView hands the sheet the plan it will write (source pin)", () => {
+    const src = readFileSync(join(process.cwd(), "components/projects/ExecutionView.tsx"), "utf8");
+    expect(src).toMatch(/<MovePreviewSheet[\s\S]{0,300}planFor=\{planFor\}/);
+    expect(src).toMatch(/const plan = changesFor\(pm, mode\);/);          // the commit writes the same computation
+    expect(src).toMatch(/const p = changesFor\(pendingMove, mode\);/);   // …the sheet previews
+  });
   it("a loop: the refusal is shown, Confirm is disabled", async () => {
     await render(React.createElement(MovePreviewSheet, {
       targets, deltaDays: 1, onCancel: () => undefined, onConfirm: () => undefined,

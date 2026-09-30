@@ -326,9 +326,17 @@ export async function updateMilestone(input: UpdateMilestoneInput): Promise<Mile
       ?? ((await supabase.from("milestones").select("project_id").eq("id", input.id).maybeSingle()).data as { project_id: string | null } | null)?.project_id
       ?? null;
     if (projectId) {
-      const { data: all, error: allErr } = await supabase.from("milestones").select("id, name, depends_on").eq("project_id", projectId);
-      if (allErr) throw new Error(`Could not check the new link for loops (${allErr.message}) — nothing was saved.`);
-      const rows = (all ?? []) as Array<{ id: string; name: string; depends_on: string[] | null }>;
+      // Every row, paged past PostgREST's 1,000-row default — a truncated
+      // read would miss the loop on a large schedule.
+      const rows: Array<{ id: string; name: string; depends_on: string[] | null }> = [];
+      for (let from = 0; ; from += 1000) {
+        const { data: page, error: allErr } = await supabase.from("milestones").select("id, name, depends_on")
+          .eq("project_id", projectId).order("id").range(from, from + 999);
+        if (allErr) throw new Error(`Could not check the new link for loops (${allErr.message}) — nothing was saved.`);
+        const got = (page ?? []) as Array<{ id: string; name: string; depends_on: string[] | null }>;
+        rows.push(...got);
+        if (got.length < 1000) break;
+      }
       const nodes: ReflowNode[] = rows.map((r) => ({ id: r.id, plannedAt: "", dependsOn: r.id === input.id ? [] : (r.depends_on ?? []) }));
       const nameOf = new Map(rows.map((r) => [r.id, r.name]));
       for (const pred of update.depends_on as string[]) {

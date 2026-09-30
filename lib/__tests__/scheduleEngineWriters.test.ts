@@ -31,7 +31,7 @@ const db = vi.hoisted(() => ({
 }));
 
 function builder(table: string) {
-  const state = { op: "select" as "select" | "insert" | "update" | "delete", payload: null as unknown, filters: [] as Array<[string, string, unknown]>, single: false, limit: null as number | null, order: null as null | [string, boolean] };
+  const state = { op: "select" as "select" | "insert" | "update" | "delete", payload: null as unknown, filters: [] as Array<[string, string, unknown]>, single: false, limit: null as number | null, order: null as null | [string, boolean], range: null as null | [number, number] };
   const match = (r: Row) => state.filters.every(([col, op, val]) => {
     switch (op) {
       case "eq": return r[col] === val;
@@ -48,6 +48,8 @@ function builder(table: string) {
       let out = t.filter(match);
       if (state.order) { const [c, asc] = state.order; out = out.slice().sort((a, b) => (String(a[c]) < String(b[c]) ? -1 : 1) * (asc ? 1 : -1)); }
       if (state.limit != null) out = out.slice(0, state.limit);
+      // PostgREST's default row cap: an unranged read returns at most 1,000 rows.
+      out = state.range ? out.slice(state.range[0], state.range[1] + 1) : out.slice(0, 1000);
       return { data: state.single ? (out[0] ?? null) : out, error: null };
     }
     if (state.op === "insert") {
@@ -82,6 +84,7 @@ function builder(table: string) {
           case "contains": state.filters.push([args[0] as string, "contains", args[1]]); break;
           case "order": state.order = [args[0] as string, (args[1] as { ascending?: boolean } | undefined)?.ascending !== false]; break;
           case "limit": state.limit = args[0] as number; break;
+          case "range": state.range = [args[0] as number, args[1] as number]; break;
           case "maybeSingle": case "single": state.single = true; return Promise.resolve(exec());
           default: break;
         }
@@ -186,6 +189,16 @@ describe("SCH-9 · a new link is checked for loops over the WHOLE project, from 
     expect(db.writes).toEqual([]);
     await updateMilestone({ id: "c", patch: { dependsOn: ["b", "a"] }, updatedBy: USER });
     expect(ms().find((r) => r.id === "c")!.depends_on).toEqual(["b", "a"]);
+  });
+  it("on a 2,500-row project the loop through row #2,400 is still caught (the read is paged past the 1,000-row cap)", async () => {
+    const filler = Array.from({ length: 2497 }, (_, i) => row({ id: `f${String(i).padStart(4, "0")}`, name: `F${i}`, planned_at: "2026-06-01T00:00:00Z" }));
+    db.tables.milestones = [
+      ...filler,
+      row({ id: "za", name: "Start", planned_at: "2026-06-01T00:00:00Z" }),
+      row({ id: "zb", name: "Middle", planned_at: "2026-06-02T00:00:00Z", depends_on: ["za"] }),
+      row({ id: "zc", name: "End", planned_at: "2026-06-03T00:00:00Z", depends_on: ["zb"] }),
+    ];
+    await expect(updateMilestone({ id: "za", patch: { dependsOn: ["zc"] }, updatedBy: USER })).rejects.toThrow(/Start → Middle → End → Start/);
   });
 });
 
