@@ -145,6 +145,7 @@ const asRecord = (d: Row) => ({
 const pdf = (n: string) => new File([new Uint8Array([1, 2, 3])], n, { type: "application/pdf" });
 
 beforeEach(() => {
+  vi.clearAllMocks();
   state.db = newFakeDb();
   state.db.unique.document_supersessions = [["superseded_doc_id", "replacement_doc_id"]];
   state.rpc.mockReset();
@@ -508,9 +509,16 @@ describe("REV-11 — creation status is a deliberate choice; issuing is a publis
     expect(onDocumentIssuedAck).not.toHaveBeenCalled();
 
     state.canControl = false;
+    state.rpc.mockResolvedValue({ data: false, error: null }); // not the folder / library owner either
     await expect(createDocumentWithFile({ orgId: ORG, libraryId: LIB, documentNumber: "L-2", file: pdf("l.pdf"), status: "Issued", actorUserId: ME }))
       .rejects.toThrow(/authority to issue/);
     expect(T("documents").some((r) => r.document_number === "L-2")).toBe(false);
+    expect(state.rpc).toHaveBeenCalledWith("user_is_effective_owner", { p_doc_owner: null, p_collection: null, p_library: LIB, p_uid: ME });
+    // the library's effective owner may issue (the rung the publish guard reads)
+    state.rpc.mockResolvedValue({ data: true, error: null });
+    const owned = await createDocumentWithFile({ orgId: ORG, libraryId: LIB, documentNumber: "L-2B", file: pdf("l.pdf"), status: "Issued", actorUserId: ME });
+    expect(docRow(owned.documentId).status).toBe("Issued");
+    vi.mocked(onDocumentIssued).mockClear();
 
     state.canControl = true; state.reviewMode = "require";
     await expect(createDocumentWithFile({ orgId: ORG, libraryId: LIB, documentNumber: "L-3", file: pdf("l.pdf"), status: "Issued", actorUserId: ME }))

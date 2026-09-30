@@ -584,10 +584,20 @@ export async function createDocumentWithFile(input: {
 
   let reviewPolicy: string | null = null;
   if (input.status === "Issued") {
-    // Same authority population as a rev-up of a document in this library: a
-    // brand-new document has no owner yet, so it is library publish authority.
+    // Same authority population as a rev-up of a document in this library:
+    // library publish authority, or effective ownership — which, for a
+    // document with no owner of its own yet, is the folder / library owner
+    // cascade (asked of the database's own user_is_effective_owner, the rung
+    // the publish guard will read on the first pointer write).
     const principal: Principal = await resolveActorPrincipal({ uid: input.actorUserId, orgId: input.orgId, headlineRole: input.actorRole });
-    if (!(await resolveCanControlLibrary(input.libraryId, principal))) {
+    let authorized = await resolveCanControlLibrary(input.libraryId, principal);
+    if (!authorized) {
+      const { data: owns, error: ownErr } = await supabase.rpc("user_is_effective_owner", {
+        p_doc_owner: null, p_collection: input.collectionId ?? null, p_library: input.libraryId, p_uid: input.actorUserId,
+      });
+      authorized = !ownErr && owns === true;
+    }
+    if (!authorized) {
       throw new Error("You don't have authority to issue controlled documents in this library — create it as a Draft, or ask an Admin or Doc Control.");
     }
     reviewPolicy = (await resolveCreationReviewGate({ libraryId: input.libraryId, collectionId: input.collectionId ?? null, what: `${docNum}` })).recorded;
