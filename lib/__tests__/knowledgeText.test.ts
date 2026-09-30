@@ -4,8 +4,8 @@
 import { describe, it, expect } from "vitest";
 import {
   chunkPageText, parseSearchQueries, parseRefineQueries, parseFollowupPlan,
-  extractCitationNumbers, mergeRetrieved, isSectionHeading, splitPageIntoSections,
-  parseAnswerBlocks, explodeRunOn, proofTerms, highlightQuote, ensurePdfPolyfills, sanitizeStorageText, type RetrievedChunk,
+  extractCitationNumbers, mergeRetrieved, mergeRetrievedRRF, isSectionHeading, splitPageIntoSections,
+  truncateSafe, parseAnswerBlocks, explodeRunOn, proofTerms, highlightQuote, ensurePdfPolyfills, sanitizeStorageText, type RetrievedChunk,
 } from "../knowledgeText";
 
 describe("chunkPageText", () => {
@@ -273,6 +273,45 @@ describe("mergeRetrieved", () => {
     const merged = mergeRetrieved([many], 14, 50);
     expect(merged).toHaveLength(14);
     for (const c of merged) expect(c.content.length).toBeLessThanOrEqual(50);
+  });
+});
+
+// ASK-11: both merges cut chunk text to maxChars. A table chunk can run to
+// 2800 chars, and a raw .slice(0, 1600) through an astral pair left a lone
+// surrogate — which the ask route's own truncateSafe(c.content, 1600) cannot
+// catch (the string is already exactly 1600 long), so it rode into the
+// knowledge_questions citations JSONB and Postgres refused the row.
+describe("merge truncation is surrogate-safe (ASK-11)", () => {
+  const ASTRAL = "\u{1D5E3}"; // one astral character = two UTF-16 units
+  const isWellFormed = (s: string) => (s as string & { isWellFormed(): boolean }).isWellFormed();
+  // An astral pair straddling index 1600: units 1599 (high) and 1600 (low).
+  const straddling = (id: string): RetrievedChunk => ({
+    id, document_id: "d1", page: 3, rank: 1, content: "x".repeat(1599) + ASTRAL + " | 45 ft-lb | dry".repeat(60),
+  });
+
+  it("mergeRetrievedRRF never leaves half a pair at the cut", () => {
+    const [c] = mergeRetrievedRRF([[straddling("a")]]);
+    expect(c.content.length).toBeLessThanOrEqual(1600);
+    expect(isWellFormed(c.content)).toBe(true);
+  });
+
+  it("mergeRetrieved never leaves half a pair at the cut", () => {
+    const [c] = mergeRetrieved([[straddling("b")]]);
+    expect(c.content.length).toBeLessThanOrEqual(1600);
+    expect(isWellFormed(c.content)).toBe(true);
+  });
+
+  it("the citation the ask route persists round-trips through JSON intact", () => {
+    // Exactly what route.ts builds for the knowledge_questions insert:
+    // quote = truncateSafe(c.content, 1600) over the merged chunk.
+    const merged = mergeRetrievedRRF([[straddling("c")], [straddling("d")]]);
+    const citations = merged.map((c, i) => ({ n: i + 1, documentId: c.document_id, page: c.page, quote: truncateSafe(c.content, 1600) }));
+    const body = JSON.stringify(citations);
+    // A lone surrogate serialises as an unpaired \udXXX escape — the exact
+    // text Postgres rejects with "invalid input syntax for type json".
+    expect(body).not.toMatch(/\\ud[89ab][0-9a-f]{2}(?!\\ud[c-f])/i);
+    expect(JSON.parse(body)).toEqual(citations);
+    for (const c of citations) expect(isWellFormed(c.quote)).toBe(true);
   });
 });
 

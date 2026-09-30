@@ -619,7 +619,12 @@ export function mergeRetrievedRRF(
   return [...score.values()]
     .sort((a, b) => b.s - a.s || a.chunk.id.localeCompare(b.chunk.id))
     .slice(0, cap)
-    .map(({ chunk }) => ({ ...chunk, content: chunk.content.slice(0, maxChars) }));
+    // truncateSafe, never a raw slice (ASK-11): a table chunk can run to
+    // 2800 chars, and a cut at exactly maxChars through an astral pair left
+    // a lone surrogate that rode into the knowledge_questions citations
+    // JSONB — where the downstream truncateSafe(c.content, 1600) is a no-op
+    // because the string is already that long.
+    .map(({ chunk }) => ({ ...chunk, content: truncateSafe(chunk.content, maxChars) }));
 }
 
 /** Merge multi-query search results: dedupe by chunk id keeping best rank,
@@ -638,7 +643,7 @@ export function mergeRetrieved(
   return [...best.values()]
     .sort((a, b) => b.rank - a.rank)
     .slice(0, cap)
-    .map((c) => ({ ...c, content: c.content.slice(0, maxChars) }));
+    .map((c) => ({ ...c, content: truncateSafe(c.content, maxChars) }));
 }
 
 /** pdf.js (bundled inside unpdf) calls Math.sumPrecise in some font/geometry
