@@ -180,6 +180,8 @@ export const EXPORT_EXCLUDED_TABLES: Record<string, string> = {
     "cached AI line traces over drawing sheets — regenerated on demand from the drawings themselves; no authored data lives here",
   signup_attempts:
     "global anti-abuse log keyed on client IP (not org-scoped) — rolling rate-limit window with no customer data; nothing to restore",
+  intake_attempts:
+    "the contractor intake door's rate-limit window (hashed token, client IP; 20261105) — a two-day rolling anti-abuse log, service-role only, no customer data; nothing to restore",
   push_subscriptions:
     "per-device Web Push credentials (endpoint, p256dh, auth) — secrets never leave the database, and a push registration is machine-specific and never restored; each device re-subscribes",
   document_share_accesses:

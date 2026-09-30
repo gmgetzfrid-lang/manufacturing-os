@@ -19,6 +19,10 @@
 //   6. Compliance clocks per org — including the hold aging sweep (HLD-14):
 //      a hold past its expected release, or open past HOLD_AGING_DAYS with
 //      no date, nudges its opener and the release pool once.
+//   4c. The intake door's attempt window is pruned (INTK-8 dw4 — the door's
+//      rate limiter keeps an hour; two days are kept), and the count of
+//      in-review versions no document points at is reported (SAF-10's
+//      health signal).
 //
 // Auth: server-to-server. If CRON_SECRET is set, require it as a Bearer
 // token. Degrades gracefully if optional env vars are missing.
@@ -79,6 +83,8 @@ async function handler(req: NextRequest) {
     platformStorage?: { r2Pct: number; dbPct: number; alerts: number };
     embedDrain?: { libraries: number; embedded: number };
     aclIndexRebuild?: RebuildCounts;
+    intakeAttemptsPruned?: number;
+    orphanedInReviewVersions?: number;
     errors: string[];
   } = {
     releasedCheckouts: 0,
@@ -141,6 +147,29 @@ async function handler(req: NextRequest) {
     if (!error) result.prunedIntents = ((data as unknown[]) ?? []).length;
   } catch (e) {
     result.errors.push(`intent-prune: ${(e as Error).message}`);
+  }
+
+  // 4c. INTAKE DOOR housekeeping (INTK-8 dw4, SAF-10 dw3) — one step, on
+  //     this cron (a third vercel.json cron entry fails deployment). No-op
+  //     on a database without 20261105.
+  try {
+    const { data: pruned, error: pruneErr } = await sb.rpc("prune_intake_attempts");
+    if (pruneErr) {
+      if (!/prune_intake_attempts|PGRST202|42883/i.test(`${pruneErr.code ?? ""} ${pruneErr.message}`)) {
+        result.errors.push(`intake-attempts: ${pruneErr.message}`);
+      }
+    } else {
+      result.intakeAttemptsPruned = Number(pruned ?? 0);
+    }
+    const { data: orphans, error: orphanErr } = await sb.rpc("orphaned_in_review_versions_count");
+    if (!orphanErr) {
+      result.orphanedInReviewVersions = Number(orphans ?? 0);
+      if (result.orphanedInReviewVersions > 0) {
+        result.errors.push(`review-health: ${result.orphanedInReviewVersions} in-review version(s) no document points at — resolve them from the Intake tab or the document's history`);
+      }
+    }
+  } catch (e) {
+    result.errors.push(`intake-door: ${(e as Error).message}`);
   }
 
   // 5. Stale-checkout escalation. Sessions active for 14+ days notify the

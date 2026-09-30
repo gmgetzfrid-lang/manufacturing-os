@@ -8,9 +8,25 @@
 // current_version_id and told nobody.
 //
 // Callers: revUpDocument (direct publish), revertToVersion,
-// finalizeReviewedRevision (review-approved promote). Everything here is
-// fire-and-forget best-effort — the publish already committed; signals must
-// never roll it back.
+// finalizeReviewedRevision (review-approved promote), and the external
+// intake door's trusted auto-publish (app/api/intake/upload/route.ts —
+// INTK-2 / SAF-5, which runs it server-side under the service role with
+// `settle: true`). Everything here is best-effort — the publish already
+// committed; signals must never roll it back.
+//
+// Every writer of documents.current_version_id (INTK-2 dw3), and whether it
+// runs this pipeline — lib/__tests__/intakeUploadRoute.test.ts fails the
+// build when a new writer appears that does not import it:
+//   * lib/revisions.ts — revUpDocument, revertToVersion (run it); the
+//     createDocument first-version seed (a new document's first revision:
+//     it seeds the issue clocks itself, no prior copy to supersede)
+//   * lib/reviewControl.ts — finalizeReviewedRevision (runs it)
+//   * app/api/intake/upload/route.ts — trusted auto-publish via
+//     publish_revision (runs it)
+//   * lib/documentLifecycle/common.ts (split/merge targets) and
+//     app/(protected)/documents/[libraryId]/page.tsx (bulk upload of new
+//     documents) — first-version writers, ALLOW-LISTED in that census until
+//     document-control P3 LIFECYCLE converts them
 
 import { supabase } from "@/lib/supabase";
 import { emit } from "@/lib/notify/dispatch";
@@ -78,6 +94,12 @@ export interface PostPublishInput {
    *  already ran them, or the change isn't an issue (branch publishes never
    *  come through here). */
   skipComplianceClocks?: boolean;
+  /** Await EVERY side effect before returning (default: the signals are
+   *  fired and forgotten, only the compliance clocks are awaited). A
+   *  server route that swaps the shared client for the service role around
+   *  this call (the intake door) sets it, so no signal outlives the swap
+   *  and silently runs as anon. */
+  settle?: boolean;
 }
 
 /**
@@ -89,7 +111,11 @@ export interface PostPublishInput {
  * All best-effort; failures log, never throw.
  */
 export async function runPostPublishSideEffects(input: PostPublishInput): Promise<void> {
-  void notifySuperseded({
+  // Each fire-and-forget signal is still started exactly as before; the list
+  // only matters when the caller asked to `settle`.
+  const signals: Array<Promise<unknown>> = [];
+  const fire = (p: Promise<unknown>) => { signals.push(p); };
+  fire(notifySuperseded({
     orgId: input.orgId,
     documentId: input.documentId,
     libraryId: input.libraryId,
@@ -97,13 +123,13 @@ export async function runPostPublishSideEffects(input: PostPublishInput): Promis
     newRev: input.newRev,
     actorUserId: input.actorUserId,
     actorName: input.actorName,
-  });
+  }));
 
   // DIST-1: notifySuperseded reaches live intent holders and followers — but
   // the people who provably HOLD a copy are in download_audits, a population
   // the fan-out never touched. The one recall channel used to be a human
   // finding the inspector's button; it now fires on every publish.
-  void (async () => {
+  fire((async () => {
     try {
       const { data: docRow } = await supabase
         .from("documents")
@@ -115,9 +141,9 @@ export async function runPostPublishSideEffects(input: PostPublishInput): Promis
       // DIST-4: obligations on the OUTGOING revision no longer bind — close
       // them so the inbox, the cron, the register and the inspector agree.
       // (Whoever must confirm the NEW revision gets a fresh request.)
-      void import("@/lib/distributionAcks").then(({ closeStaleAcksForDocument }) =>
+      fire(import("@/lib/distributionAcks").then(({ closeStaleAcksForDocument }) =>
         closeStaleAcksForDocument(input.documentId, currentVersionId),
-      ).catch(() => { /* best-effort */ });
+      ).catch(() => { /* best-effort */ }));
       const { getDocumentRecall, nudgeStaleHolders } = await import("@/lib/staleCopies");
       // DIST-9 dw3: an UNREADABLE record is not "nobody is stale" — the
       // nudge writes a DISTRIBUTION_RECALL row saying it could not be
@@ -137,9 +163,9 @@ export async function runPostPublishSideEffects(input: PostPublishInput): Promis
         source: "auto",
       });
     } catch { /* best-effort */ }
-  })();
+  })());
 
-  void import("@/lib/workPackages").then(({ notifyPackagesOfRevUp }) =>
+  fire(import("@/lib/workPackages").then(({ notifyPackagesOfRevUp }) =>
     notifyPackagesOfRevUp({
       orgId: input.orgId,
       documentId: input.documentId,
@@ -148,13 +174,13 @@ export async function runPostPublishSideEffects(input: PostPublishInput): Promis
       actorUserId: input.actorUserId,
       actorName: input.actorName,
     }),
-  ).catch(() => { /* non-blocking */ });
+  ).catch(() => { /* non-blocking */ }));
 
   // Revision impact: walk one hop out along the real link web (continuation
   // sheets, shared equipment, curated pins) and warn anyone actively drafting
   // against a connected document. The blind spot watching can't cover — you
   // are working on sheet 13 and sheet 12 just changed under you.
-  void import("@/lib/revisionImpact").then(({ notifyConnectedWork }) =>
+  fire(import("@/lib/revisionImpact").then(({ notifyConnectedWork }) =>
     notifyConnectedWork({
       orgId: input.orgId,
       documentId: input.documentId,
@@ -164,14 +190,14 @@ export async function runPostPublishSideEffects(input: PostPublishInput): Promis
       actorUserId: input.actorUserId,
       actorName: input.actorName,
     }),
-  ).catch(() => { /* non-blocking */ });
+  ).catch(() => { /* non-blocking */ }));
 
   // Proposals derived from the revision this one replaces are ghosts of a
   // drawing that no longer says that — retire them rather than let review
   // act on stale evidence.
-  void import("@/lib/linkProposals").then(({ staleProposalsForDocument }) =>
+  fire(import("@/lib/linkProposals").then(({ staleProposalsForDocument }) =>
     staleProposalsForDocument(input.documentId, input.newRev),
-  ).catch(() => { /* non-blocking */ });
+  ).catch(() => { /* non-blocking */ }));
 
   if (!input.skipComplianceClocks) {
     try {
@@ -181,6 +207,15 @@ export async function runPostPublishSideEffects(input: PostPublishInput): Promis
       await onDocumentIssuedAck({ orgId: input.orgId, documentId: input.documentId, actorId: input.actorUserId, actorName: input.actorEmail ?? input.actorName });
     } catch { /* best-effort */ }
     try { await recomputeRetention(input.documentId); } catch { /* best-effort */ }
+  }
+  if (input.settle) {
+    // A signal may start another (the recall block closes stale acks from
+    // inside itself) — settle until no new signal was added.
+    for (let done = 0; done < signals.length;) {
+      const batch = signals.slice(done);
+      done = signals.length;
+      await Promise.allSettled(batch);
+    }
   }
 }
 

@@ -11,10 +11,14 @@ import React, { useCallback, useEffect, useState } from "react";
 import {
   UploadCloud, FileText, Loader2, AlertTriangle, CheckCircle2, Clock, Building2, Pen,
 } from "lucide-react";
+import { supabase } from "@/lib/supabase";
+import { INTAKE_TOKEN_HEADER, LINK_GONE_MESSAGE, PROJECT_CLOSED_MESSAGE } from "@/lib/intakeLinks";
 
 interface IntakeItem {
   docId: string; label: string; rev: string | null; status: string | null;
   pendingReview: boolean; lastOutcome?: "rejected" | "approved" | null;
+  /** SAF-9: why the last submission was not accepted. */
+  rejectionReason?: string | null;
   updatedAt: string | null;
 }
 interface RedlineRequest {
@@ -33,6 +37,35 @@ interface Resolved {
   purpose?: "documents" | "quote";
   rfqGroup?: string | null;
   quotes?: SubmittedQuote[];
+  /** When the link stops working (SEC-5). */
+  expiresAt?: string | null;
+}
+
+type DoorBody = { ok?: boolean; message?: string; note?: string; error?: string; ref?: string } | null;
+
+/** POST a submission. The link's token travels in a header, never in the
+ *  body — the server checks it before reading a byte of the upload
+ *  (INTK-8). A browser that is also signed in to the app sends that session
+ *  too, so an insider using a contractor's link is recorded as themselves
+ *  (SEC-16). */
+async function postToDoor(token: string, form: FormData): Promise<{ res: Response; body: DoorBody }> {
+  const headers: Record<string, string> = { [INTAKE_TOKEN_HEADER]: token };
+  try {
+    const { data } = await supabase.auth.getSession();
+    if (data.session?.access_token) headers.Authorization = `Bearer ${data.session.access_token}`;
+  } catch { /* no app session — the ordinary contractor case */ }
+  const res = await fetch("/api/intake/upload", { method: "POST", body: form, headers });
+  const body = (await res.json().catch(() => null)) as DoorBody;
+  return { res, body };
+}
+
+/** The sentence the contractor sees for a refused upload: the server's own
+ *  plain message (a 429 names its limit; a gone link says so), plus the
+ *  reference the project team can look up (INTK-13). Never a bare status. */
+function doorError(res: Response, body: DoorBody): string {
+  if (body?.error) return `${body.error}${body.ref ? ` (reference ${body.ref})` : ""}`;
+  if (res.status === 413) return "The file is too large for the portal — the limit is 100 MB.";
+  return "The upload didn't go through — try again shortly. If it keeps failing, contact your project contact.";
 }
 
 // Module-level so its identity is stable across renders — defined inside the
@@ -48,7 +81,7 @@ function Shell({ children }: { children: React.ReactNode }) {
 
 export default function IntakePortal({ params }: { params: Promise<{ token: string }> }) {
   const { token } = React.use(params);
-  const [state, setState] = useState<"loading" | "ok" | "revoked" | "expired" | "notfound" | "error">("loading");
+  const [state, setState] = useState<"loading" | "ok" | "revoked" | "expired" | "notfound" | "link_gone" | "project_closed" | "error">("loading");
   const [data, setData] = useState<Resolved | null>(null);
   const [msg, setMsg] = useState<{ tone: "ok" | "err"; text: string } | null>(null);
 
@@ -70,7 +103,9 @@ export default function IntakePortal({ params }: { params: Promise<{ token: stri
       const res = await fetch(`/api/intake/resolve?token=${encodeURIComponent(token)}`);
       if (!res.ok) {
         const body = (await res.json().catch(() => null)) as { error?: string } | null;
-        setState(body?.error === "revoked" ? "revoked" : body?.error === "expired" ? "expired" : res.status === 404 ? "notfound" : "error");
+        setState(body?.error === "revoked" ? "revoked" : body?.error === "expired" ? "expired"
+          : body?.error === "link_gone" ? "link_gone" : body?.error === "project_closed" ? "project_closed"
+          : res.status === 404 ? "notfound" : "error");
         return;
       }
       setData((await res.json()) as Resolved);
@@ -86,15 +121,13 @@ export default function IntakePortal({ params }: { params: Promise<{ token: stri
     setBusy(true); setMsg(null);
     try {
       const form = new FormData();
-      form.set("token", token);
       form.set("file", file);
       if (mode === "rev") { form.set("docId", targetDoc); form.set("revLabel", revLabel.trim()); }
       else { form.set("title", title.trim()); if (number.trim()) form.set("number", number.trim()); if (revLabel.trim()) form.set("revLabel", revLabel.trim()); }
       if (changeNote.trim()) form.set("changeNote", changeNote.trim());
-      const res = await fetch("/api/intake/upload", { method: "POST", body: form });
-      const body = (await res.json().catch(() => null)) as { ok?: boolean; message?: string; error?: string } | null;
-      if (!res.ok || !body?.ok) throw new Error(body?.error || `HTTP ${res.status}`);
-      setMsg({ tone: "ok", text: body.message ?? "Submitted." });
+      const { res, body } = await postToDoor(token, form);
+      if (!res.ok || !body?.ok) throw new Error(doorError(res, body));
+      setMsg({ tone: "ok", text: `${body.message ?? "Submitted."}${body.note ? ` ${body.note}` : ""}` });
       setFile(null); setTitle(""); setNumber(""); setRevLabel(""); setChangeNote("");
       await refresh();
     } catch (e) {
@@ -107,12 +140,10 @@ export default function IntakePortal({ params }: { params: Promise<{ token: stri
     setRedlineBusy(ticketRef); setMsg(null);
     try {
       const form = new FormData();
-      form.set("token", token);
       form.set("file", f);
       form.set("ticketId", ticketRef);
-      const res = await fetch("/api/intake/upload", { method: "POST", body: form });
-      const body = (await res.json().catch(() => null)) as { ok?: boolean; message?: string; error?: string } | null;
-      if (!res.ok || !body?.ok) throw new Error(body?.error || `HTTP ${res.status}`);
+      const { res, body } = await postToDoor(token, form);
+      if (!res.ok || !body?.ok) throw new Error(doorError(res, body));
       setMsg({ tone: "ok", text: body.message ?? "Redlines sent." });
       await refresh();
     } catch (e) {
@@ -124,6 +155,8 @@ export default function IntakePortal({ params }: { params: Promise<{ token: stri
   if (state !== "ok" || !data) {
     const text = state === "revoked" ? "This link has been revoked. Contact your project contact for a fresh one."
       : state === "expired" ? "This link has expired. Contact your project contact for a fresh one."
+      : state === "link_gone" ? LINK_GONE_MESSAGE
+      : state === "project_closed" ? PROJECT_CLOSED_MESSAGE
       : state === "notfound" ? "This link doesn't exist — it may have been mistyped."
       : "Something went wrong opening this link. Try again shortly.";
     return <Shell><div className="text-center"><AlertTriangle className="w-8 h-8 text-amber-500 mx-auto mb-2" /><p className="text-sm text-[var(--color-text-muted)]">{text}</p></div></Shell>;
@@ -136,12 +169,10 @@ export default function IntakePortal({ params }: { params: Promise<{ token: stri
       setBusy(true); setMsg(null);
       try {
         const form = new FormData();
-        form.set("token", token);
         form.set("file", file);
         if (changeNote.trim()) form.set("changeNote", changeNote.trim());
-        const res = await fetch("/api/intake/upload", { method: "POST", body: form });
-        const body = (await res.json().catch(() => null)) as { ok?: boolean; message?: string; error?: string } | null;
-        if (!res.ok || !body?.ok) throw new Error(body?.error || `HTTP ${res.status}`);
+        const { res, body } = await postToDoor(token, form);
+        if (!res.ok || !body?.ok) throw new Error(doorError(res, body));
         setMsg({ tone: "ok", text: body.message ?? "Quote received." });
         setFile(null); setChangeNote("");
         await refresh();
@@ -158,6 +189,7 @@ export default function IntakePortal({ params }: { params: Promise<{ token: stri
             <h1 className="text-base font-black text-[var(--color-text)] truncate">{data.projectName}{data.orgName ? ` · ${data.orgName}` : ""}</h1>
             <div className="text-xs text-[var(--color-text-muted)]">
               Submitting as <b>{data.companyName}</b>{data.rfqGroup ? <> · scope: <b>{data.rfqGroup}</b></> : null}
+              {data.expiresAt ? <> · link valid until {new Date(data.expiresAt).toLocaleDateString()}</> : null}
             </div>
           </div>
         </div>
@@ -213,7 +245,7 @@ export default function IntakePortal({ params }: { params: Promise<{ token: stri
         <div className="min-w-0">
           <div className="text-[10px] font-black text-[var(--color-text-muted)] uppercase tracking-widest">Drawing &amp; file submission portal</div>
           <h1 className="text-base font-black text-[var(--color-text)] truncate">{data.projectName}{data.orgName ? ` · ${data.orgName}` : ""}</h1>
-          <div className="text-xs text-[var(--color-text-muted)]">Submitting as <b>{data.companyName}</b>{data.allowAutoSupersede ? " · trusted: your revisions publish immediately" : " · submissions are reviewed before becoming current"}</div>
+          <div className="text-xs text-[var(--color-text-muted)]">Submitting as <b>{data.companyName}</b>{data.allowAutoSupersede ? " · trusted: once one of your own documents has been approved, your later revisions of it can publish immediately (drawings assigned to you are always reviewed)" : " · submissions are reviewed before becoming current"}{data.expiresAt ? ` · link valid until ${new Date(data.expiresAt).toLocaleDateString()}` : ""}</div>
         </div>
       </div>
 
@@ -241,8 +273,8 @@ export default function IntakePortal({ params }: { params: Promise<{ token: stri
           <input value={changeNote} onChange={(e) => setChangeNote(e.target.value)} placeholder="What changed? (goes on the record)" className="w-full h-9 rounded-lg border border-[var(--color-border-strong)] px-2.5 text-sm bg-[var(--color-surface)]" />
           <label className="flex items-center gap-2 rounded-lg border border-dashed border-[var(--color-border-strong)] px-3 py-2.5 cursor-pointer hover:border-[var(--color-accent-ring)]">
             <UploadCloud className="w-4 h-4 text-[var(--color-accent)]" />
-            <span className="text-sm text-[var(--color-text-muted)] truncate">{file ? file.name : "Choose the file (PDF, DWG, ZIP… up to 100 MB)"}</span>
-            <input type="file" className="hidden" onChange={(e) => setFile(e.target.files?.[0] ?? null)} />
+            <span className="text-sm text-[var(--color-text-muted)] truncate">{file ? file.name : "Choose the file (PDF, DWG, DXF or ZIP, up to 100 MB)"}</span>
+            <input type="file" accept=".pdf,.dwg,.dxf,.zip" className="hidden" onChange={(e) => setFile(e.target.files?.[0] ?? null)} />
           </label>
           <button onClick={() => void submit()} disabled={busy} className="w-full inline-flex items-center justify-center gap-2 h-10 rounded-xl bg-[var(--color-accent)] text-[var(--color-accent-fg)] text-sm font-black hover:bg-[var(--color-accent-hover)] disabled:opacity-50">
             {busy ? <Loader2 className="w-4 h-4 animate-spin" /> : <UploadCloud className="w-4 h-4" />} Submit
@@ -271,7 +303,7 @@ export default function IntakePortal({ params }: { params: Promise<{ token: stri
                 <label className={`ml-auto inline-flex items-center gap-1 px-2.5 py-1 rounded-lg border border-amber-500/50 text-amber-700 font-black cursor-pointer hover:bg-amber-500/10 ${redlineBusy === r.ticketRef ? "opacity-50 pointer-events-none" : ""}`}>
                   {redlineBusy === r.ticketRef ? <Loader2 className="w-3 h-3 animate-spin" /> : <UploadCloud className="w-3 h-3" />}
                   Upload redlines
-                  <input type="file" className="hidden" onChange={(e) => { void submitRedline(r.ticketRef, e.target.files?.[0] ?? null); e.target.value = ""; }} />
+                  <input type="file" accept=".pdf,.dwg,.dxf,.zip" className="hidden" onChange={(e) => { void submitRedline(r.ticketRef, e.target.files?.[0] ?? null); e.target.value = ""; }} />
                 </label>
               </li>
             ))}
@@ -285,15 +317,20 @@ export default function IntakePortal({ params }: { params: Promise<{ token: stri
         {data.items.length === 0 && <div className="text-xs italic text-[var(--color-text-faint)]">Nothing yet — your first submission will appear here.</div>}
         <ul className="divide-y divide-[var(--color-border)] rounded-xl border border-[var(--color-border)] overflow-hidden">
           {data.items.map((i) => (
-            <li key={i.docId} className="flex items-center gap-2 px-3 py-2 text-sm">
-              <FileText className="w-4 h-4 text-blue-500 shrink-0" />
-              <span className="font-bold text-[var(--color-text)] truncate">{i.label}</span>
-              <span className="text-xs text-[var(--color-text-muted)]">Rev {i.rev ?? "—"}</span>
-              {i.pendingReview
-                ? <span className="ml-auto inline-flex items-center gap-1 text-[11px] font-bold text-amber-700"><Clock className="w-3 h-3" /> in review</span>
-                : i.lastOutcome === "rejected"
-                  ? <span className="ml-auto inline-flex items-center gap-1 text-[11px] font-bold text-rose-700"><AlertTriangle className="w-3 h-3" /> not accepted — resubmit</span>
-                  : <span className="ml-auto inline-flex items-center gap-1 text-[11px] font-bold text-emerald-700"><CheckCircle2 className="w-3 h-3" /> current</span>}
+            <li key={i.docId} className="px-3 py-2 text-sm">
+              <div className="flex items-center gap-2">
+                <FileText className="w-4 h-4 text-blue-500 shrink-0" />
+                <span className="font-bold text-[var(--color-text)] truncate">{i.label}</span>
+                <span className="text-xs text-[var(--color-text-muted)]">Rev {i.rev ?? "—"}</span>
+                {i.pendingReview
+                  ? <span className="ml-auto inline-flex items-center gap-1 text-[11px] font-bold text-amber-700"><Clock className="w-3 h-3" /> in review</span>
+                  : i.lastOutcome === "rejected"
+                    ? <span className="ml-auto inline-flex items-center gap-1 text-[11px] font-bold text-rose-700"><AlertTriangle className="w-3 h-3" /> not accepted — resubmit</span>
+                    : <span className="ml-auto inline-flex items-center gap-1 text-[11px] font-bold text-emerald-700"><CheckCircle2 className="w-3 h-3" /> current</span>}
+              </div>
+              {!i.pendingReview && i.lastOutcome === "rejected" && i.rejectionReason && (
+                <div className="mt-1 ml-6 text-xs text-[var(--color-text-muted)]">Reviewer&apos;s reason: {i.rejectionReason}</div>
+              )}
             </li>
           ))}
         </ul>

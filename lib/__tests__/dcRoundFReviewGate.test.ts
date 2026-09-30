@@ -113,11 +113,20 @@ function chain(table: string) {
   };
   return new Proxy(c, h);
 }
-vi.mock("@/lib/supabase", () => ({ supabase: { from: (t: string) => chain(t), rpc: async () => ({ data: null, error: null }) } }));
+vi.mock("@/lib/supabase", () => ({
+  supabase: { from: (t: string) => chain(t), rpc: async () => ({ data: null, error: null }) },
+  // The intake route binds the shared client to the service role around the
+  // post-publish pipeline and emit() (projects Round G J1).
+  __setServerSupabaseClient: vi.fn(), __resetServerSupabaseClient: vi.fn(),
+}));
 vi.mock("@/lib/supabaseAdmin", () => ({ supabaseAdmin: { from: (t: string) => chain(t), rpc: () => Promise.resolve({ data: null, error: null }) } }));
 vi.mock("@/lib/r2", () => ({ r2: { send: vi.fn(async () => undefined) }, R2_BUCKET: "test-bucket" }));
 vi.mock("@aws-sdk/client-s3", () => ({ PutObjectCommand: class { constructor(public input: unknown) {} } }));
-vi.mock("@/lib/inAppNotifications", () => ({ notify: vi.fn(async (n: Record<string, unknown>) => { db.notified.push(n); }) }));
+vi.mock("@/lib/inAppNotifications", () => ({
+  notify: vi.fn(async (n: Record<string, unknown>) => { db.notified.push(n); }),
+  // emit() fans out through notifyMany (the intake route's notices).
+  notifyMany: vi.fn(async (n: Record<string, unknown>) => { db.notified.push(n); }),
+}));
 vi.mock("@/lib/audit", () => ({
   logAuditAction: vi.fn(async (e: Record<string, unknown>) => { db.audited.push(e); }),
   logRevisionEvent: vi.fn(async () => undefined),
@@ -615,46 +624,53 @@ describe("REV-7 — a branch is still a publish", () => {
 
 // ── RG-10 · the external intake door ────────────────────────────────────────
 describe("RG-10 — the intake route never repoints past a live review", () => {
+  // Document ids are UUIDs — the door refuses anything else before a read (J1).
+  const D1 = "00000000-0000-4000-8000-0000000000d1";
   const TOKEN = "abcdefghijklmnop1234";
-  const link = { id: "lnk1", org_id: "o1", project_id: "p1", company_name: "Vendor", contact_email: "v@x", allow_auto_supersede: true, expires_at: null, revoked_at: null, assigned_doc_ids: ["d1"], created_by: "ctl1", token: TOKEN, purpose: "documents", rfq_group: null };
+  // projects Round G J1: a trusted link's OWN document is authored_by_link_id
+  // (never inferred from the version chain) and is NOT assigned; an assigned
+  // document always goes through review.
+  const link = { id: "lnk1", org_id: "o1", project_id: "p1", company_name: "Vendor", contact_email: "v@x", allow_auto_supersede: true, expires_at: null, revoked_at: null, assigned_doc_ids: [] as string[], created_by: "ctl1", token: TOKEN, purpose: "documents", rfq_group: null };
   const seed = () => {
     db.tables.project_intake_links = [link];
-    db.tables.projects = [{ id: "p1", name: "Proj", owner_user_id: "own1", intake_library_id: "lib1", intake_collection_id: "col1" }];
+    db.tables.projects = [{ id: "p1", org_id: "o1", status: "active", name: "Proj", owner_user_id: "own1", intake_library_id: "lib1", intake_collection_id: "col1" }];
     db.tables.org_members = [{ org_id: "o1", uid: "ctl1", status: "active", role: "DocCtrl", roles: ["DocCtrl"], email: "c@x" }];
     db.insertIds.document_versions = "v-new";
   };
   const post = (fields: Record<string, string>) => {
     const fd = new FormData();
-    fd.set("token", TOKEN);
-    fd.set("file", new File([new Uint8Array([1, 2, 3])], "sheet.pdf", { type: "application/pdf" }));
+    // The bytes decide the type (J1 SEC-6): a real PDF header.
+    fd.set("file", new File([new TextEncoder().encode("%PDF-1.7\n%sheet\n")], "sheet.pdf", { type: "application/pdf" }));
     for (const [k, v] of Object.entries(fields)) fd.set(k, v);
-    return intakeUpload(new NextRequest("http://x/api/intake/upload", { method: "POST", body: fd }));
+    // The token travels in a header, checked before the body is read (J1 INTK-8).
+    return intakeUpload(new NextRequest("http://x/api/intake/upload", { method: "POST", body: fd, headers: { "x-intake-token": TOKEN } }));
   };
+  const ownDoc = (over: Record<string, unknown>) => ({ id: D1, org_id: "o1", authored_by_link_id: "lnk1", document_number: "P-101", rev: "2", current_version_id: "v2", library_id: "lib1", checked_out_by: null, legal_hold: false, ...over });
 
   it("409 when the current pending draft carries any pending/signed roster row — even on a trusted, link-authored document", async () => {
     seed();
-    db.tables.document_versions = [{ id: "v-prev", record_id: "d1", intake_link_id: "lnk1" }]; // link-authored
-    db.tables.documents = [{ id: "d1", document_number: "P-101", rev: "2", current_version_id: "v2", pending_version_id: "v2A", library_id: "lib1", checked_out_by: null, legal_hold: false }];
+    db.tables.document_versions = [{ id: "v-prev", org_id: "o1", record_id: D1, intake_link_id: "lnk1" }];
+    db.tables.documents = [ownDoc({ pending_version_id: "v2A" })]; // link-authored
     db.tables.document_review_signoffs = [{ id: "r1", document_version_id: "v2A", status: "signed" }];
-    const res = await post({ docId: "d1", revLabel: "3" });
+    const res = await post({ docId: D1, revLabel: "3" });
     expect(res.status).toBe(409);
     expect((await res.json()).error).toMatch(/reviewer sign-off is in progress/);
     expect(db.writes.filter((w) => w.table === "documents" || w.table === "document_versions")).toEqual([]);
   });
   it("an unreadable roster refuses (fail closed)", async () => {
     seed();
-    db.tables.document_versions = [{ id: "v-prev", record_id: "d1", intake_link_id: "lnk1" }];
-    db.tables.documents = [{ id: "d1", document_number: "P-101", rev: "2", current_version_id: "v2", pending_version_id: "v2A", library_id: "lib1", checked_out_by: null, legal_hold: false }];
+    db.tables.document_versions = [{ id: "v-prev", org_id: "o1", record_id: D1, intake_link_id: "lnk1" }];
+    db.tables.documents = [ownDoc({ pending_version_id: "v2A" })];
     db.errors["document_review_signoffs.select"] = [{ message: "boom" }];
-    const res = await post({ docId: "d1", revLabel: "3" });
+    const res = await post({ docId: D1, revLabel: "3" });
     expect(res.status).toBe(503);
   });
   it("the ordinary path stamps the base it was made against and compare-and-sets the pending pointer from NULL", async () => {
     seed();
-    db.tables.project_intake_links = [{ ...link, allow_auto_supersede: false }];
+    db.tables.project_intake_links = [{ ...link, allow_auto_supersede: false, assigned_doc_ids: [D1] }];
     db.tables.document_versions = [];
-    db.tables.documents = [{ id: "d1", document_number: "P-101", rev: "2", current_version_id: "v2", pending_version_id: null, library_id: "lib1", checked_out_by: null, legal_hold: false }];
-    const res = await post({ docId: "d1", revLabel: "3" });
+    db.tables.documents = [{ id: D1, org_id: "o1", document_number: "P-101", rev: "2", current_version_id: "v2", pending_version_id: null, library_id: "lib1", checked_out_by: null, legal_hold: false }];
+    const res = await post({ docId: D1, revLabel: "3" });
     expect(res.status).toBe(200);
     const ins = db.writes.find((w) => w.table === "document_versions" && w.method === "insert");
     expect(ins?.args[0]).toMatchObject({ supersedes_version_id: "v2", review_state: "in_review", intake_link_id: "lnk1" });
@@ -664,9 +680,9 @@ describe("RG-10 — the intake route never repoints past a live review", () => {
   });
   it("a pointer that moved between the read and the write withdraws the new version with 409", async () => {
     seed();
-    db.tables.project_intake_links = [{ ...link, allow_auto_supersede: false }];
+    db.tables.project_intake_links = [{ ...link, allow_auto_supersede: false, assigned_doc_ids: [D1] }];
     db.tables.document_versions = [];
-    db.tables.documents = [{ id: "d1", document_number: "P-101", rev: "2", current_version_id: "v2", pending_version_id: null, library_id: "lib1", checked_out_by: null, legal_hold: false }];
+    db.tables.documents = [{ id: D1, org_id: "o1", document_number: "P-101", rev: "2", current_version_id: "v2", pending_version_id: null, library_id: "lib1", checked_out_by: null, legal_hold: false }];
     const original = db.tables.documents;
     let reads = 0;
     Object.defineProperty(db.tables, "documents", {
@@ -674,7 +690,7 @@ describe("RG-10 — the intake route never repoints past a live review", () => {
       get() { reads += 1; return reads >= 2 ? [{ ...original[0], pending_version_id: "v-race" }] : original; },
       set(v) { Object.defineProperty(db.tables, "documents", { value: v, writable: true, configurable: true }); },
     });
-    const res = await post({ docId: "d1", revLabel: "3" });
+    const res = await post({ docId: D1, revLabel: "3" });
     expect(res.status).toBe(409);
     expect((await res.json()).error).toMatch(/just went into review/);
     const retire = db.writes.find((w) => w.table === "document_versions" && w.method === "update");
@@ -683,28 +699,38 @@ describe("RG-10 — the intake route never repoints past a live review", () => {
   });
   it("a trusted link DEMOTED from auto-publish repoints over its own roster-free earlier draft (CAS on that pointer), retires it, and says why the promote was withheld", async () => {
     seed();
-    db.tables.document_versions = [{ id: "v-prev", record_id: "d1", intake_link_id: "lnk1", superseded_at: null }]; // the link's own pending, roster-free draft
-    db.tables.documents = [{ id: "d1", document_number: "P-101", rev: "2", current_version_id: "v2", pending_version_id: "v-prev", library_id: "lib1", checked_out_by: null, legal_hold: true }];
-    const res = await post({ docId: "d1", revLabel: "3" });
+    db.tables.document_versions = [{ id: "v-prev", org_id: "o1", record_id: D1, intake_link_id: "lnk1", review_state: "in_review", superseded_at: null }]; // the link's own pending, roster-free draft
+    db.tables.documents = [ownDoc({ pending_version_id: "v-prev", legal_hold: true })];
+    const res = await post({ docId: D1, revLabel: "3" });
     expect(res.status).toBe(200);
     const ptr = db.writes.find((w) => w.table === "documents" && w.method === "update");
     expect(ptr?.args[0]).toMatchObject({ pending_version_id: "v-new" });
     expect(ptr?.args[0]).not.toHaveProperty("current_version_id"); // demoted: queued for review, never promoted
     expect(ptr?.filters).toContainEqual(["eq", "pending_version_id", "v-prev"]);
     expect(ptr?.filters).not.toContainEqual(["is", "pending_version_id", null]);
+    // INTK-4 / SAF-10 (J1): the displaced draft is RESOLVED — review_state
+    // 'superseded' + superseded_at — never left 'in_review'.
     const retire = db.writes.find((w) => w.table === "document_versions" && w.method === "update" && w.filters.some(([, c, v]) => c === "id" && v === "v-prev"));
+    expect(retire?.args[0]).toMatchObject({ review_state: "superseded" });
     expect(retire?.args[0]).toHaveProperty("superseded_at");
-    expect(retire?.filters).toContainEqual(["is", "superseded_at", null]);
+    expect(retire?.filters).toContainEqual(["eq", "review_state", "in_review"]);
+    expect(db.tables.document_versions.find((v) => v.id === "v-prev")).toMatchObject({ review_state: "superseded" });
     expect(db.tables.document_versions.find((v) => v.id === "v-new")).toMatchObject({ review_state: "in_review", supersedes_version_id: "v2" });
-    expect(String((db.tables.notifications?.[0] as Record<string, unknown> | undefined)?.body)).toMatch(/Auto-publish was withheld: the document is under legal hold/);
+    expect(String((db.notified[0] as Record<string, unknown> | undefined)?.body)).toMatch(/Auto-publish was withheld: the document is under legal hold/);
   });
-  it("the trusted auto path CASes both pointers and retires the link's own roster-free earlier draft", () => {
+  it("the trusted auto path publishes through publish_revision (base CAS in the contract) and clears only the pointer it read", () => {
+    // projects Round G J1 (INTK-2 / SAF-5): the raw two-pointer promote is
+    // replaced by the publish contract — p_expected_base is the current
+    // version read above, so a moved base is 'stale_base' inside the locked
+    // row; the displaced pending pointer is cleared with a CAS on exactly the
+    // draft read, and that draft is resolved (retireDisplaced).
     const r = src("app/api/intake/upload/route.ts");
-    const auto = between(r, "if (autoNow) {\n    const prevCurrent", "} else {");
-    expect(auto).toContain('promote = priorPending ? promote.eq("pending_version_id", priorPending) : promote.is("pending_version_id", null);');
-    expect(auto).toContain('promote = prevCurrent ? promote.eq("current_version_id", prevCurrent) : promote.is("current_version_id", null);');
-    expect(auto).toMatch(/if \(!promoted \|\| promoted\.length === 0\) return withdraw\(/);
-    expect(auto).toMatch(/\.eq\("id", priorPending\)\.is\("superseded_at", null\)/);
+    expect(r).toMatch(/supabaseAdmin\.rpc\("publish_revision", \{/);
+    expect(r).toContain("expectedBase: (targetDoc.current_version_id as string | null) ?? null,");
+    const auto = between(r, "if (published && versionId) {", "} else {");
+    expect(auto).toContain('.eq("id", theDocId).eq("pending_version_id", priorPending).select("id");');
+    expect(auto).toMatch(/await retireDisplaced\(ref, \{/);
+    expect(r).not.toMatch(/\.update\(\{ current_version_id: versionId/);
   });
   it("IntakePanel's reject voids the draft's sign-off rows and surfaces a refusal", () => {
     const p = src("components/projects/IntakePanel.tsx");

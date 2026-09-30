@@ -883,9 +883,14 @@ describe("POST /api/intake/upload — the token is the only credential (REL-6; t
   const load = () => import("@/app/api/intake/upload/route");
   const TOKEN = "a".repeat(32);
   function upload(fields: Record<string, string | File>): NextRequest {
+    // projects Round G J1 (INTK-8): the token travels in a header and is
+    // checked before the body is read — never a multipart field.
     const fd = new FormData();
-    for (const [k, v] of Object.entries(fields)) fd.set(k, v);
-    return req("http://test/api/intake/upload", { method: "POST", body: fd });
+    let token = "";
+    for (const [k, v] of Object.entries(fields)) {
+      if (k === "token") token = String(v); else fd.set(k, v);
+    }
+    return req("http://test/api/intake/upload", { method: "POST", body: fd, headers: { "x-intake-token": token } });
   }
   const pdf = () => new File([new Uint8Array([0x25, 0x50, 0x44, 0x46])], "a.pdf", { type: "application/pdf" });
   const LINK = { id: "l1", org_id: ORG, project_id: "p1", company_name: "Acme", contact_email: null, allow_auto_supersede: false, expires_at: null, revoked_at: null, assigned_doc_ids: [], created_by: "u9" };
