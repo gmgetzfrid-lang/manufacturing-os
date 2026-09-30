@@ -20,7 +20,11 @@
 //              only while the entry is posted, posted_entry_id tied to the
 //              CO's own commitment and never repointed away from a posted
 //              entry, identity and decided money frozen; the service role
-//              keeps its pass.
+//              keeps its pass. Second verification pass: the INSERT policy
+//              admits a CO only as the app proposes it (no decision, no
+//              link, org = its project's org); void → approved no longer
+//              exists (the unwind voids the entry first); an approval needs
+//              a row with no link; a void cost entry stays void (20261093).
 //
 // Every migration is ONE script whose final statement is a single SELECT of
 // (check, ok, n): probes carry ok, inventory rows carry n.
@@ -112,6 +116,18 @@ describe("20261093 — money rails", () => {
     expect(header).not.toMatch(/deleting a\s+--\s+project through PostgREST now fails/);
   });
 
+  it("second verification pass: a VOID cost entry stays void for a signed-in caller (BEFORE UPDATE, SECURITY DEFINER, service role passes)", () => {
+    const fn = between(m93, "CREATE OR REPLACE FUNCTION enforce_cost_entry_void_terminal()", "COMMENT ON FUNCTION");
+    expect(fn).toContain("RETURNS trigger LANGUAGE plpgsql SECURITY DEFINER SET search_path = public AS $$");
+    expect(fn).toContain("IF auth.uid() IS NOT NULL AND OLD.status = 'void' AND NEW.status IS DISTINCT FROM 'void' THEN");
+    expect(fn).toContain("USING ERRCODE = 'check_violation'");
+    expect(m93).toMatch(/DROP TRIGGER IF EXISTS trg_cost_entries_void_terminal ON cost_entries;\s*CREATE TRIGGER trg_cost_entries_void_terminal\s+BEFORE UPDATE ON cost_entries\s+FOR EACH ROW\s+EXECUTE FUNCTION enforce_cost_entry_void_terminal\(\);/);
+    // the header says why: the app only ever voids (lib/costs.voidEntry)
+    const header = m93.slice(0, m93.indexOf("CREATE TEMP TABLE"));
+    expect(header).toMatch(/a VOID cost entry stays void/);
+    expect(header).toMatch(/lib\/costs\.voidEntry \(posted → void\); nothing in\s+--\s+the app un-voids an entry/);
+  });
+
   it("BEFORE DELETE row triggers on all four money tables", () => {
     for (const t of ["cost_entries", "change_orders", "cost_documents", "cost_accounts"]) {
       const re = new RegExp(
@@ -159,10 +175,14 @@ describe("20261093 — money rails", () => {
     expect(view).toContain("WHERE c.status = 'approved'\n   AND NOT EXISTS (SELECT 1 FROM cost_entries e WHERE e.id = c.posted_entry_id AND e.status = 'posted');");
   });
 
-  it("final statement: 5 probes + the inventory + 2 after-rows, fixed (check, ok, n) shape, read-only", () => {
+  it("final statement: 6 probes + the inventory + 2 after-rows, fixed (check, ok, n) shape, read-only", () => {
     const fin = finalSelect(m93);
     expect(fin).toMatch(/AS check,[\s\S]*AS ok,[\s\S]*AS n/);
-    expect((fin.match(/UNION ALL/g) ?? []).length).toBe(7);
+    expect((fin.match(/UNION ALL/g) ?? []).length).toBe(8);
+    // second verification pass: the void-terminal rail on cost_entries is probed
+    expect(fin).toContain("prosrc LIKE '%auth.uid() IS NOT NULL AND OLD.status = ''void'' AND NEW.status IS DISTINCT FROM ''void''%'");
+    expect(fin).toContain("proname = 'enforce_cost_entry_void_terminal' AND pronargs = 0");
+    expect(fin).toContain("t.tgname = 'trg_cost_entries_void_terminal'");
     expect(fin).toContain('SELECT "check", NULL::boolean, n FROM prj_g_money_inventory');
     expect(fin).toMatch(/proname = 'enforce_cost_ledger_delete_guard' AND pronargs = 0/);
     expect(fin).toContain("prosrc LIKE '%app.record_purge%'");
@@ -185,7 +205,16 @@ describe("20261094 — change-order authority", () => {
     expect(m94).toContain("DROP POLICY IF EXISTS change_orders_write ON change_orders;");
     // created_by is pinned to the caller at insert — a NULL or forged proposer
     // can never slip past the self-decision rule
-    expect(m94).toMatch(/CREATE POLICY change_orders_insert ON change_orders FOR INSERT\s+WITH CHECK \(status = 'proposed' AND created_by = auth\.uid\(\) AND \(is_org_controller\(org_id\) OR user_owns_project\(project_id\)\)\);/);
+    // …born with no decision and no link, in its project's org (second verification pass: a row
+    // inserted with a posted_entry_id or a decider carried them past every UPDATE rule)
+    expect(m94).toContain(
+      "CREATE POLICY change_orders_insert ON change_orders FOR INSERT\n"
+      + "  WITH CHECK (status = 'proposed' AND created_by = auth.uid()\n"
+      + "              AND posted_entry_id IS NULL AND decided_by IS NULL AND decided_at IS NULL\n"
+      + "              AND decided_by_name IS NULL AND decision_note IS NULL\n"
+      + "              AND org_id = project_org(project_id)\n"
+      + "              AND (is_org_controller(org_id) OR user_owns_project(project_id)));",
+    );
     expect(m94).toMatch(/CREATE POLICY change_orders_update ON change_orders FOR UPDATE\s+USING \(is_org_controller\(org_id\) OR user_owns_project\(project_id\)\)\s+WITH CHECK \(is_org_controller\(org_id\) OR user_owns_project\(project_id\)\);/);
     expect(m94).not.toMatch(/CREATE POLICY \w+ ON change_orders FOR (ALL|DELETE)/);
     expect(m94).not.toMatch(/DROP POLICY IF EXISTS change_orders_member_read/);
@@ -198,7 +227,9 @@ describe("20261094 — change-order authority", () => {
     expect(onlyInA).toEqual(["CREATE POLICY change_orders_write ON change_orders FOR ALL"]);
     expect(onlyInB).toEqual(["CREATE POLICY change_orders_update ON change_orders FOR UPDATE"]);
     const pred = "is_org_controller(org_id) OR user_owns_project(project_id)";
-    expect(m94).toContain(`WITH CHECK (status = 'proposed' AND created_by = auth.uid() AND (${pred}))`);
+    expect(m94).toContain(`              AND (${pred}));`);
+    // project_org is the schema's existing SECURITY DEFINER helper (20260913)
+    expect(read("20260913_projects_rls_recursion_fix.sql")).toContain("CREATE OR REPLACE FUNCTION project_org(p_project uuid)");
   });
 
   it("the decision guard is SECURITY DEFINER with search_path pinned; the rules fire on proposed → approved/rejected", () => {
@@ -214,7 +245,7 @@ describe("20261094 — change-order authority", () => {
     expect(fn).toContain("c.key = 'change_order_approval_threshold'");
     expect(fn).toContain("abs(NEW.amount) > v_threshold");
     expect(fn).toContain("WHERE uid = v_decider");
-    expect((fn.match(/USING ERRCODE = 'check_violation'/g) ?? []).length).toBe(11);
+    expect((fn.match(/USING ERRCODE = 'check_violation'/g) ?? []).length).toBe(12);
     // no apostrophe inside a string literal (the probe rule): the two messages are plain
     expect(fn).not.toMatch(/'[^'\n]*''[^'\n]*'/);
     expect(m94).toMatch(/CREATE TRIGGER trg_change_orders_decision_guard\s+BEFORE UPDATE ON change_orders\s+FOR EACH ROW\s+EXECUTE FUNCTION enforce_change_order_decision_guard\(\);/);
@@ -254,12 +285,11 @@ describe("20261094 — change-order authority", () => {
   it("rejected and void are TERMINAL for a signed-in caller; approved -> rejected does not exist (verifier: void-then-approve, rejection flip)", () => {
     const b = signedIn();
     // the transition ladder, in order: proposed; approved -> approved | void;
-    // approved -> proposed; void -> approved (put-back); terminal; else refused
+    // approved -> proposed; terminal; else refused
     const ladder = [
       "    IF OLD.status = 'proposed' THEN",
       "    ELSIF OLD.status = 'approved' AND NEW.status IN ('approved', 'void') THEN",
       "    ELSIF OLD.status = 'approved' AND NEW.status = 'proposed' THEN",
-      "    ELSIF OLD.status = 'void' AND NEW.status = 'approved'",
       "    ELSIF OLD.status IN ('rejected', 'void') THEN",
       "    ELSE\n      RAISE EXCEPTION 'An approved change order is reversed (void), never rejected.",
     ];
@@ -276,7 +306,7 @@ describe("20261094 — change-order authority", () => {
 
   it("approved -> proposed is ONLY the failed-post revert: by the approver, no link, no posted look-alike on its line", () => {
     const b = signedIn();
-    const revert = between(b, "    ELSIF OLD.status = 'approved' AND NEW.status = 'proposed' THEN", "    ELSIF OLD.status = 'void' AND NEW.status = 'approved'");
+    const revert = between(b, "    ELSIF OLD.status = 'approved' AND NEW.status = 'proposed' THEN", "    ELSIF OLD.status IN ('rejected', 'void') THEN");
     expect(revert).toContain("IF OLD.decided_by IS DISTINCT FROM v_uid");
     expect(revert).toContain("OR OLD.posted_entry_id IS NOT NULL OR NEW.posted_entry_id IS NOT NULL");
     // repairChangeOrder's look-alike: posted, unlinked commitment carrying the number on the CO's line
@@ -286,13 +316,16 @@ describe("20261094 — change-order authority", () => {
     expect(revert).toContain("AND NOT EXISTS (SELECT 1 FROM change_orders o WHERE o.posted_entry_id = e.id AND o.id <> OLD.id)");
   });
 
-  it("void -> approved is ONLY the unwind put-back: same link, and that entry still POSTED", () => {
+  it("second verification pass: void -> approved does not exist for a signed-in caller (no put-back branch); an approval needs a row with no link", () => {
     const b = signedIn();
-    expect(b).toContain(
-      "    ELSIF OLD.status = 'void' AND NEW.status = 'approved'\n"
-      + "          AND OLD.posted_entry_id IS NOT NULL AND NEW.posted_entry_id = OLD.posted_entry_id\n"
-      + "          AND EXISTS (SELECT 1 FROM cost_entries e WHERE e.id = OLD.posted_entry_id AND e.status = 'posted') THEN",
-    );
+    // the verifier's chain: insert with a preset link, withdraw to void, "put back" to approved
+    expect(b).not.toMatch(/OLD\.status = 'void' AND NEW\.status = 'approved'/);
+    expect(b).not.toMatch(/NEW\.status = 'approved' AND OLD\.status = 'void'/);
+    const terminal = between(b, "    ELSIF OLD.status IN ('rejected', 'void') THEN", "    ELSE\n");
+    expect(terminal).toContain("RAISE EXCEPTION 'A % change order is final");
+    // a link carried into an approval (a row inserted before this rail) is refused
+    const decision = between(b, "    IF OLD.status = 'proposed' THEN", "    ELSIF OLD.status = 'approved' AND NEW.status IN ('approved', 'void') THEN");
+    expect(decision).toContain("IF NEW.status = 'approved' AND NEW.posted_entry_id IS NOT NULL THEN");
   });
 
   it("posted_entry_id: set only on an approved CO, never cleared, tied to its OWN commitment (repairChangeOrder's link tie), never repointed away from a posted entry", () => {
@@ -324,9 +357,15 @@ describe("20261094 — change-order authority", () => {
     const header = m94.slice(0, m94.indexOf("BEGIN;"));
     expect(header).toMatch(/service role \/ SQL editor \(auth\.uid\(\) IS NULL\) keeps its pass/);
     // the header enumerates every app write the guard admits
-    for (const w of ["proposed → proposed", "proposed → approved | rejected | void", "approved → approved", "approved → void", "approved → proposed", "void → approved", "rejected and void are TERMINAL"]) {
+    for (const w of ["proposed → proposed", "proposed → approved | rejected | void", "approved → approved", "approved → void", "approved → proposed", "void → approved does not exist", "rejected and void are TERMINAL"]) {
       expect(header, w).toContain(w);
     }
+    // the INSERT half is stated as the policy enforces it, and the service role's bypass is deliberate
+    expect(header).toMatch(/NO decision and NO link yet \(posted_entry_id, decided_by, decided_at,\s+--\s+decided_by_name and decision_note all NULL/);
+    expect(header).toMatch(/`org_id = project_org\(project_id\)`/);
+    expect(header).toMatch(/The service\s+--\s+role bypasses RLS, so a service-role restore \(lib\/dataRestore\) still\s+--\s+re-inserts rows with their decision history — deliberately\./);
+    // and it no longer promises a put-back
+    expect(header).not.toMatch(/put-back when voiding/);
   });
 
   it("a malformed threshold means NO threshold — parsed defensively in the guard and the inventory, never a raw cast", () => {
@@ -350,14 +389,22 @@ describe("20261094 — change-order authority", () => {
     expect(fn).not.toMatch(/role = 'Admin'|role = 'DocCtrl'/);
   });
 
-  it("final statement: 10 probes + 7 inventory rows, deparsed-safe, read-only", () => {
+  it("final statement: 10 probes + 9 inventory rows, deparsed-safe, read-only", () => {
     const fin = finalSelect(m94);
-    expect((fin.match(/UNION ALL/g) ?? []).length).toBe(16);
+    expect((fin.match(/UNION ALL/g) ?? []).length).toBe(18);
+    // second verification pass: the insert probe reads the deparsed WITH CHECK by its words
+    for (const w of ["posted_entry_id IS NULL", "decided_by IS NULL", "decided_at IS NULL", "decided_by_name IS NULL", "decision_note IS NULL", "org_id = project_org(project_id)"]) {
+      expect(fin, w).toContain(`with_check LIKE '%${w}%'`);
+    }
+    // the put-back is proven ABSENT, and the approve-with-a-link refusal present
+    expect(fin).toContain("prosrc NOT LIKE '%OLD.status = ''void'' AND NEW.status = ''approved''%'");
+    expect(fin).toContain("prosrc LIKE '%IF NEW.status = ''approved'' AND NEW.posted_entry_id IS NOT NULL THEN%'");
+    expect(fin).toMatch(/proposed change orders already carrying a link or a decision/);
+    expect(fin).toMatch(/change orders whose org_id is not their project org/);
     // verification fix: the terminal-state refusal and the posted_entry_id rule are probed in the body
     expect(fin).toContain("prosrc LIKE '%ELSIF OLD.status IN (''rejected'', ''void'') THEN%'");
     expect(fin).toContain("prosrc LIKE '%change order is final%'");
     expect(fin).toContain("prosrc LIKE '%IF OLD.decided_by IS DISTINCT FROM v_uid%'");
-    expect(fin).toContain("prosrc LIKE '%ELSIF OLD.status = ''void'' AND NEW.status = ''approved''%'");
     expect(fin).toContain("prosrc LIKE '%IF NEW.posted_entry_id IS DISTINCT FROM OLD.posted_entry_id THEN%'");
     expect(fin).toContain("prosrc LIKE '%IF OLD.status <> ''approved'' OR NEW.status <> ''approved'' OR NEW.posted_entry_id IS NULL%'");
     expect(fin).toContain("prosrc LIKE '%AND btrim(e.reference) = NEW.co_number)%'");
@@ -367,6 +414,9 @@ describe("20261094 — change-order authority", () => {
     const body = between(m94, "RETURNS trigger LANGUAGE plpgsql SECURITY DEFINER SET search_path = public AS $$", "$$;");
     for (const [, pat] of fin.matchAll(/prosrc LIKE '%((?:[^']|'')*)%'/g)) {
       expect(body, pat).toContain(pat.replace(/''/g, "'"));
+    }
+    for (const [, pat] of fin.matchAll(/prosrc NOT LIKE '%((?:[^']|'')*)%'/g)) {
+      expect(body, pat).not.toContain(pat.replace(/''/g, "'"));
     }
     // two new aggregate inventories: links that do not tie, voids whose entry is still posted
     expect(fin).toMatch(/posted_entry_id is not a commitment of their own/);

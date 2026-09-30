@@ -34,10 +34,20 @@ export default function ChangeOrdersPanel({ orgId, projectId, canManage, actor, 
   const [cos, setCos] = useState<ChangeOrder[] | null>(null);
   const [showForm, setShowForm] = useState(false);
   const [busy, setBusy] = useState<string | null>(null);
+  /** REL-2: a failed read is said out loud — never the "No change orders"
+   *  empty state (listChangeOrders throws on the COs or their entries). */
+  const [loadErr, setLoadErr] = useState<string | null>(null);
 
   const refresh = useCallback(async () => {
-    try { setCos(await listChangeOrders(projectId)); }
-    catch { setCos([]); } // pre-migration: table absent — panel stays quiet
+    try {
+      setCos(await listChangeOrders(projectId));
+      setLoadErr(null);
+    } catch (e) {
+      const msg = (e as Error).message ?? "unknown error";
+      setCos([]);
+      // pre-migration: the table is absent — the panel stays quiet
+      setLoadErr(/does not exist|schema cache|could not find the table/i.test(msg) ? null : msg);
+    }
   }, [projectId]);
   useEffect(() => { void refresh(); }, [refresh, reloadKey]);
 
@@ -135,7 +145,14 @@ export default function ChangeOrdersPanel({ orgId, projectId, canManage, actor, 
           onDone={() => { setShowForm(false); void refresh(); }} onCancel={() => setShowForm(false)} />
       )}
 
-      {(cos ?? []).length === 0 ? (
+      {loadErr ? (
+        <div role="alert" className="px-4 py-4 flex items-center gap-2 text-xs font-bold text-rose-700 dark:text-rose-300">
+          <AlertTriangle className="w-4 h-4 shrink-0" />
+          <span>Couldn&apos;t load the change orders ({loadErr}) — the approved-change figures are not shown.</span>
+          <button onClick={() => void refresh()}
+            className="ml-auto px-2 py-0.5 rounded-md border border-rose-500/40 text-[11px] hover:bg-rose-500/[0.08]">Retry</button>
+        </div>
+      ) : (cos ?? []).length === 0 ? (
         <div className="px-4 py-6 text-center text-xs text-[var(--color-text-muted)]">
           No change orders. When scope grows (or shrinks), propose it here with a reason —
           the budget only ever changes on the record.

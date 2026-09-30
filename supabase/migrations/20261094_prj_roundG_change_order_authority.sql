@@ -6,51 +6,63 @@
 -- could flip it to approved in the same breath, for any amount — and DELETE
 -- it. This migration:
 --
---   1. SPLITS the grant. `change_orders_insert` admits a row only in status
---      'proposed' and only with `created_by = auth.uid()` — the proposer is
---      the signed-in caller, never a client-chosen (or NULL) uid;
---      `change_orders_update` carries the same controller-or-owner predicate
---      on USING and WITH CHECK (byte-carried from 20261013 so the two cannot
---      drift); NO policy admits DELETE (20261093's guard refuses it
---      regardless). Reads (`change_orders_member_read`, 20261013) are untouched.
+--   1. SPLITS the grant. `change_orders_insert` admits a row only as the app
+--      proposes it: status 'proposed', `created_by = auth.uid()` (the
+--      proposer is the signed-in caller, never a client-chosen or NULL uid),
+--      NO decision and NO link yet (posted_entry_id, decided_by, decided_at,
+--      decided_by_name and decision_note all NULL — a row born with a link
+--      or a decider would carry them past every UPDATE rule below), and
+--      `org_id = project_org(project_id)` (the row's org IS its project's
+--      org, so the controller test, the eligible-decider count and the
+--      threshold are read for the right org); `change_orders_update` carries
+--      the same controller-or-owner predicate on USING and WITH CHECK
+--      (byte-carried from 20261013 so the two cannot drift); NO policy admits
+--      DELETE (20261093's guard refuses it regardless). Reads
+--      (`change_orders_member_read`, 20261013) are untouched. The service
+--      role bypasses RLS, so a service-role restore (lib/dataRestore) still
+--      re-inserts rows with their decision history — deliberately.
 --   2. Adds `enforce_change_order_decision_guard`, a BEFORE UPDATE trigger —
 --      a TRIGGER, not a second permissive policy (DRLS-1: a permissive policy
 --      ORs, it never narrows). On EVERY update: the proposer (created_by) is
 --      never rewritten, and the decider (decided_by) is written only by the
 --      decision itself (proposed → decided) or cleared by its revert
 --      (→ proposed).
---      A SIGNED-IN caller (auth.uid() set) may make exactly the writes
---      lib/changeOrders.ts makes, and no others:
+--      A SIGNED-IN caller's UPDATE (auth.uid() set) may make exactly the
+--      updates lib/changeOrders.ts makes, and no others:
 --        · proposed → proposed — the budget-line pick before an approval
 --          (ChangeOrdersPanel); decided_by stays empty.
 --        · proposed → approved | rejected | void — the decision
 --          (decideChangeOrder). It records the caller: NEW.decided_by must be
 --          auth.uid(). approved / rejected run the two rules below; void (a
 --          proposer withdrawing, or anyone closing the paper) moves no money
---          and runs neither, exactly as the lib.
+--          and runs neither, exactly as the lib. An approval needs a row with
+--          no link yet (a row inserted with one before this rail cannot be
+--          approved as it is).
 --        · approved → approved — the posted_entry_id link (decideChangeOrder
 --          after the post; repairChangeOrder link).
---        · approved → void — the unwind (unwindChangeOrder) and the repair
---          reverse (repairChangeOrder); the approver stays decided_by.
+--        · approved → void — the unwind (unwindChangeOrder, which voids the
+--          CO's entry FIRST and then the CO) and the repair reverse
+--          (repairChangeOrder); the approver stays decided_by.
 --        · approved → proposed — ONLY revertDecision after a failed post: by
 --          the caller who approved (OLD.decided_by = auth.uid()), with no
 --          posted_entry_id and no unlinked posted commitment of this CO (its
 --          number, on its budget line) on the ledger.
---        · void → approved — ONLY unwindChangeOrder's put-back when voiding
---          the CO's entry failed: the CO keeps its posted_entry_id and that
---          entry is still POSTED, so it returns to the approval its recorded
---          approver made, backed by money on the ledger.
---        · everything else is refused: rejected and void are TERMINAL, and
---          approved → rejected does not exist.
---      Also for a signed-in caller: a change order's org, project and number
---      are never rewritten; its amount and budget line are frozen once it is
---      decided; decided_at / decided_by_name move only with the decision or
---      its revert; posted_entry_id is written only on an approved CO
---      (approved → approved), never cleared, to a POSTED commitment of the
---      same project and budget line whose reference is the CO number, with no
---      source document and no other change order's link (repairChangeOrder's
---      link tie), and is repointed only away from a void or missing entry
---      (the repair link path) — never away from a posted one.
+--        · everything else is refused: rejected and void are TERMINAL (no
+--          update of any column; void → approved does not exist — the
+--          unwind never needs a put-back), and approved → rejected does not
+--          exist.
+--      Also for a signed-in caller's UPDATE: a change order's org, project
+--      and number are never rewritten; its amount and budget line are frozen
+--      once it is decided; decided_at / decided_by_name move only with the
+--      decision or its revert; posted_entry_id is written only on an
+--      approved CO (approved → approved), never cleared, to a POSTED
+--      commitment of the same project and budget line whose reference is the
+--      CO number, with no source document and no other change order's link
+--      (repairChangeOrder's link tie), and is repointed only away from a void
+--      or missing entry (the repair link path) — never away from a posted
+--      one. NOT pinned here: a decided CO's reason code, party, title and
+--      description, and the linked entry's own columns (cost_entries has only
+--      20261093's rails: never deleted, void is terminal).
 --      The service role / SQL editor (auth.uid() IS NULL) keeps its pass on
 --      the transitions and the link; it is held to the two pins above and,
 --      on proposed → approved/rejected, to the two rules below judged on the
@@ -92,7 +104,11 @@ DROP POLICY IF EXISTS change_orders_write ON change_orders;
 
 DROP POLICY IF EXISTS change_orders_insert ON change_orders;
 CREATE POLICY change_orders_insert ON change_orders FOR INSERT
-  WITH CHECK (status = 'proposed' AND created_by = auth.uid() AND (is_org_controller(org_id) OR user_owns_project(project_id)));
+  WITH CHECK (status = 'proposed' AND created_by = auth.uid()
+              AND posted_entry_id IS NULL AND decided_by IS NULL AND decided_at IS NULL
+              AND decided_by_name IS NULL AND decision_note IS NULL
+              AND org_id = project_org(project_id)
+              AND (is_org_controller(org_id) OR user_owns_project(project_id)));
 
 DROP POLICY IF EXISTS change_orders_update ON change_orders;
 CREATE POLICY change_orders_update ON change_orders FOR UPDATE
@@ -100,7 +116,7 @@ CREATE POLICY change_orders_update ON change_orders FOR UPDATE
   WITH CHECK (is_org_controller(org_id) OR user_owns_project(project_id));
 
 COMMENT ON POLICY change_orders_insert ON change_orders IS
-  'COST-6: a change order is BORN proposed, proposed by the signed-in caller (created_by = auth.uid()); the controller-or-owner predicate is 20261013''s, carried byte-for-byte.';
+  'COST-6: a change order is BORN proposed, proposed by the signed-in caller (created_by = auth.uid()), with no decision and no link yet, in its project''s org (org_id = project_org(project_id)); the controller-or-owner predicate is 20261013''s, carried byte-for-byte. The service role bypasses RLS (restores keep their history).';
 COMMENT ON POLICY change_orders_update ON change_orders IS
   'COST-6: decisions and unwinds by the controller or the project owner; the decision itself is guarded by enforce_change_order_decision_guard. No policy admits DELETE (20261093).';
 
@@ -149,6 +165,12 @@ BEGIN
         RAISE EXCEPTION 'A change order is decided by the signed-in caller: decided_by must be the caller. COST-6, 20261094'
           USING ERRCODE = 'check_violation';
       END IF;
+      -- An approval starts with no link: the link is written after the post
+      -- (approved -> approved, tied below), never carried in from before.
+      IF NEW.status = 'approved' AND NEW.posted_entry_id IS NOT NULL THEN
+        RAISE EXCEPTION 'A change order is approved before its cost entry is linked; this one already carries a link, so it cannot be approved as it is. COST-6, 20261094'
+          USING ERRCODE = 'check_violation';
+      END IF;
     ELSIF OLD.status = 'approved' AND NEW.status IN ('approved', 'void') THEN
       -- The link (approved -> approved); the unwind and the repair reverse
       -- (approved -> void). The approval record stays as decided (below).
@@ -168,14 +190,9 @@ BEGIN
         RAISE EXCEPTION 'An approved change order goes back to proposed only when its approval posted no money, and only by the caller who approved it. COST-6, 20261094'
           USING ERRCODE = 'check_violation';
       END IF;
-    ELSIF OLD.status = 'void' AND NEW.status = 'approved'
-          AND OLD.posted_entry_id IS NOT NULL AND NEW.posted_entry_id = OLD.posted_entry_id
-          AND EXISTS (SELECT 1 FROM cost_entries e WHERE e.id = OLD.posted_entry_id AND e.status = 'posted') THEN
-      -- unwindChangeOrder's put-back: voiding the entry failed, so the CO
-      -- returns to the approval its recorded approver made, still backed by
-      -- that posted entry.
-      NULL;
     ELSIF OLD.status IN ('rejected', 'void') THEN
+      -- Terminal: no update of any column, and no way back to approved (the
+      -- unwind voids the entry first, so it never needs a put-back).
       RAISE EXCEPTION 'A % change order is final: nothing on it changes any more. COST-6, 20261094', OLD.status
         USING ERRCODE = 'check_violation';
     ELSE
@@ -260,7 +277,7 @@ END;
 $$;
 
 COMMENT ON FUNCTION enforce_change_order_decision_guard() IS
-  'COST-6: created_by is never rewritten and decided_by only by the decision or its revert. A signed-in caller makes only the app writes: proposed -> proposed | approved | rejected | void (the decision records the caller as decided_by), approved -> approved (the link) | void (unwind, repair reverse), approved -> proposed only by its approver while no money of it is on the ledger (the failed-post revert), void -> approved only while its linked entry is still posted (the unwind put-back); rejected and void are otherwise terminal. Org, project and number never change; amount and budget line freeze once decided; posted_entry_id is set only on an approved CO, to its own posted commitment (same project and line, reference = its number, no source document, no other CO linked), never away from a posted entry. On proposed -> approved/rejected a self-decision is refused while another eligible decider exists, and an approval above org_configurations.change_order_approval_threshold (malformed = none) by a non-controller. The service role keeps its pass on the transitions and the link.';
+  'COST-6: created_by is never rewritten and decided_by only by the decision or its revert. A signed-in caller''s UPDATE makes only the app writes: proposed -> proposed | approved | rejected | void (the decision records the caller as decided_by; an approval needs a row with no link yet), approved -> approved (the link) | void (unwind, repair reverse), approved -> proposed only by its approver while no money of it is on the ledger (the failed-post revert); rejected and void are terminal (void -> approved does not exist). Org, project and number never change; amount and budget line freeze once decided; posted_entry_id is set only on an approved CO, to its own posted commitment (same project and line, reference = its number, no source document, no other CO linked), never away from a posted entry. On proposed -> approved/rejected a self-decision is refused while another eligible decider exists, and an approval above org_configurations.change_order_approval_threshold (malformed = none) by a non-controller. The service role keeps its pass on the transitions and the link. The INSERT half (born proposed, no decision, no link, in its project org) is change_orders_insert.';
 
 DROP TRIGGER IF EXISTS trg_change_orders_decision_guard ON change_orders;
 CREATE TRIGGER trg_change_orders_decision_guard
@@ -278,10 +295,16 @@ SELECT 'change_orders_write (FOR ALL) is gone' AS check,
        (SELECT COUNT(*) = 0 FROM pg_policies WHERE tablename = 'change_orders' AND policyname = 'change_orders_write') AS ok,
        NULL::text AS n
 UNION ALL
-SELECT 'change_orders_insert is FOR INSERT and admits only status = proposed, proposed by the caller, for the controller or the owner',
+SELECT 'change_orders_insert is FOR INSERT and admits only status = proposed, proposed by the caller, with no decision and no link, in its project org, for the controller or the owner',
        (SELECT cmd = 'INSERT'
            AND with_check LIKE '%proposed%'
            AND with_check LIKE '%created_by = auth.uid()%'
+           AND with_check LIKE '%posted_entry_id IS NULL%'
+           AND with_check LIKE '%decided_by IS NULL%'
+           AND with_check LIKE '%decided_at IS NULL%'
+           AND with_check LIKE '%decided_by_name IS NULL%'
+           AND with_check LIKE '%decision_note IS NULL%'
+           AND with_check LIKE '%org_id = project_org(project_id)%'
            AND with_check LIKE '%is_org_controller(org_id)%'
            AND with_check LIKE '%user_owns_project(project_id)%'
           FROM pg_policies WHERE tablename = 'change_orders' AND policyname = 'change_orders_insert'),
@@ -312,14 +335,14 @@ SELECT 'decision guard is SECURITY DEFINER with search_path pinned, judges the c
           FROM pg_proc WHERE proname = 'enforce_change_order_decision_guard' AND pronargs = 0),
        NULL
 UNION ALL
-SELECT 'decision guard: for a signed-in caller rejected and void are TERMINAL; only the failed-post revert (approved to proposed, by its approver) and the unwind put-back (void to approved, entry still posted) step back',
+SELECT 'decision guard: for a signed-in caller rejected and void are TERMINAL (no void to approved branch); only the failed-post revert (approved to proposed, by its approver) steps back; an approval needs a row with no link',
        (SELECT prosrc LIKE '%IF v_uid IS NOT NULL THEN%'
            AND prosrc LIKE '%ELSIF OLD.status IN (''rejected'', ''void'') THEN%'
            AND prosrc LIKE '%change order is final%'
+           AND prosrc NOT LIKE '%OLD.status = ''void'' AND NEW.status = ''approved''%'
            AND prosrc LIKE '%ELSIF OLD.status = ''approved'' AND NEW.status = ''proposed'' THEN%'
            AND prosrc LIKE '%IF OLD.decided_by IS DISTINCT FROM v_uid%'
-           AND prosrc LIKE '%ELSIF OLD.status = ''void'' AND NEW.status = ''approved''%'
-           AND prosrc LIKE '%WHERE e.id = OLD.posted_entry_id AND e.status = ''posted''%'
+           AND prosrc LIKE '%IF NEW.status = ''approved'' AND NEW.posted_entry_id IS NOT NULL THEN%'
           FROM pg_proc WHERE proname = 'enforce_change_order_decision_guard' AND pronargs = 0),
        NULL
 UNION ALL
@@ -373,7 +396,16 @@ SELECT 'inventory: change orders whose posted_entry_id is not a commitment of th
                               AND e.cost_account_id = c.cost_account_id AND e.entry_type = 'commitment'
                               AND btrim(e.reference) = c.co_number))::text
 UNION ALL
-SELECT 'inventory: void change orders whose linked entry is still POSTED (a reversal whose entry void failed — the only void a signed-in caller can put back to approved)', NULL,
+SELECT 'inventory: void change orders whose linked entry is still POSTED (a reversal that did not void its entry — the CO stays void; void the entry by hand)', NULL,
        (SELECT COUNT(*) FROM change_orders c
          WHERE c.status = 'void'
-           AND EXISTS (SELECT 1 FROM cost_entries e WHERE e.id = c.posted_entry_id AND e.status = 'posted'))::text;
+           AND EXISTS (SELECT 1 FROM cost_entries e WHERE e.id = c.posted_entry_id AND e.status = 'posted'))::text
+UNION ALL
+SELECT 'inventory: proposed change orders already carrying a link or a decision (inserted before this rail — cannot be approved as they are; reject or void them)', NULL,
+       (SELECT COUNT(*) FROM change_orders
+         WHERE status = 'proposed'
+           AND (posted_entry_id IS NOT NULL OR decided_by IS NOT NULL OR decided_at IS NOT NULL))::text
+UNION ALL
+SELECT 'inventory: change orders whose org_id is not their project org (inserted before this rail)', NULL,
+       (SELECT COUNT(*) FROM change_orders c JOIN projects p ON p.id = c.project_id
+         WHERE c.org_id IS DISTINCT FROM p.org_id)::text;

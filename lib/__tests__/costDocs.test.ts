@@ -559,7 +559,7 @@ describe("change orders — numbering, authority, unwind (MON-9 / COST-6 / COST-
     expect(auditRows("COST_ENTRY_VOIDED")).toHaveLength(1);
   });
 
-  it("an unwind with no linked entry is refused and points at the reconciliation line; a failed void puts the CO back", async () => {
+  it("an unwind with no linked entry is refused and points at the reconciliation line; a failed void changes nothing", async () => {
     db.tables.change_orders.push(coRow({ status: "approved", posted_entry_id: null }));
     await expect(unwindChangeOrder({ co: co({ status: "approved" }), actorId: "u-owner" })).rejects.toThrow(/no linked cost entry/);
     // a linked entry that cannot be found is refused BEFORE anything is written
@@ -567,14 +567,39 @@ describe("change orders — numbering, authority, unwind (MON-9 / COST-6 / COST-
     await expect(unwindChangeOrder({ co: co({ status: "approved", postedEntryId: "missing" }), actorId: "u-owner" }))
       .rejects.toThrow(/linked cost entry can't be found — it is listed under "Ledger needs attention"/);
     expect(db.tables.change_orders[0].status).toBe("approved");
-    // a void that fails while the entry is still posted puts the CO back
+    // the money moves FIRST: a void that fails leaves the CO untouched (no put-back needed)
     db.tables.cost_entries.push({ id: "e-co", org_id: "o1", project_id: "p1", status: "posted", amount: 500, entry_type: "commitment" });
     db.tables.change_orders = [coRow({ status: "approved", posted_entry_id: "e-co" })];
     db.fail["cost_entries:update"] = [{ message: "void refused" }];
     await expect(unwindChangeOrder({ co: co({ status: "approved", postedEntryId: "e-co" }), actorId: "u-owner" }))
-      .rejects.toThrow(/Couldn't void the change order's cost entry \(void refused\) — the change order is still approved/);
-    expect(db.tables.change_orders[0].status).toBe("approved");
+      .rejects.toThrow(/Couldn't void CO-001's cost entry \(void refused\) — nothing was changed; the change order is still approved/);
+    expect(db.tables.change_orders[0]).toMatchObject({ status: "approved", decision_note: null });
+    expect(db.tables.cost_entries[0].status).toBe("posted");
     expect(audited.filter((a) => a.action === "CHANGE_ORDER_VOIDED")).toHaveLength(0);
+  });
+
+  it("second verification fix: the unwind voids the entry BEFORE the CO — a CO claim that then fails is said out loud and leaves a listed orphan, never a void CO over posted money", async () => {
+    db.tables.cost_entries.push({ id: "e-co", org_id: "o1", project_id: "p1", status: "posted", amount: 500, entry_type: "commitment" });
+    db.tables.change_orders.push(coRow({ status: "approved", posted_entry_id: "e-co", decided_by: "u-ctl" }));
+    db.fail["change_orders:update"] = [{ message: "claim refused" }];
+    await expect(unwindChangeOrder({ co: co({ status: "approved", postedEntryId: "e-co" }), actorId: "u-owner" }))
+      .rejects.toThrow(/CO-001's cost entry is void, but the change order could not be marked void \(claim refused\) — it no longer revises the budget and is listed under "Ledger needs attention"/);
+    expect(db.tables.cost_entries[0].status).toBe("void");
+    expect(db.tables.change_orders[0].status).toBe("approved");
+    expect((await listLedgerOrphans("o1", "p1")).changeOrders.map((c) => [c.id, c.reason])).toEqual([["co1", "entry_void"]]);
+    // …and Reverse finishes it: the entry is already void, no look-alike remains
+    await unwindChangeOrder({ co: co({ status: "approved", postedEntryId: "e-co" }), actorId: "u-owner", actorName: "owner" });
+    expect(db.tables.change_orders[0].status).toBe("void");
+    expect(audited.find((a) => a.action === "CHANGE_ORDER_VOIDED")?.details).toMatchObject({ alreadyVoided: true, approvedBy: "u-ctl" });
+    expect(auditRows("COST_ENTRY_VOIDED")).toHaveLength(1);   // voided once
+    // a concurrent reversal that already won is named as such
+    const rival = coRow({ id: "co2", co_number: "CO-002", posted_entry_id: "e-co" });
+    const seen = ["approved", "void"];   // our read sees approved; the rival's claim lands before ours
+    Object.defineProperty(rival, "status", { get: () => (seen.length > 1 ? seen.shift() : seen[0]), enumerable: true });
+    db.tables.change_orders = [rival];
+    db.denyUpdate.add("change_orders");   // our compare-and-swap matches nothing
+    await expect(unwindChangeOrder({ co: co({ id: "co2", coNumber: "CO-002", status: "approved", postedEntryId: "e-co" }), actorId: "u-owner" }))
+      .rejects.toThrow(/Someone else just reversed CO-002 — refresh/);
   });
 });
 
@@ -743,7 +768,7 @@ describe("approved change orders whose entry is gone — budget, listing, unwind
     );
     db.tables.change_orders.push(coRow({ status: "approved", posted_entry_id: "e-co", decided_by: "u-owner" }));
     await expect(unwindChangeOrder({ co: co({ status: "approved", postedEntryId: "e-co" }), actorId: "u-owner" }))
-      .rejects.toThrow(/CO-001's own entry is already void, but a posted commitment referencing CO-001 is still on the budget line — link it/);
+      .rejects.toThrow(/CO-001's own entry is void, but a posted commitment referencing CO-001 is still on the budget line — link it/);
     expect(db.tables.change_orders[0]).toMatchObject({ status: "approved", decision_note: null });
     expect(audited.filter((a) => a.action === "CHANGE_ORDER_VOIDED")).toHaveLength(0);
     // once the look-alike is gone the reverse goes through, exactly as the repair's reverse

@@ -16,13 +16,14 @@
 // approve. Both rules are re-checked by `enforce_change_order_decision_guard`
 // (20261094) at the database, so the UI is never the only gate — the trigger
 // judges the SIGNED-IN caller (auth.uid()), never a client-written
-// decided_by / created_by, and admits for a signed-in caller exactly the
-// writes this file makes: the decision (proposed → approved | rejected |
-// void, recording the caller), the entry link, the unwind / repair reverse
-// (approved → void), the failed-post revert (approved → proposed, by the
-// approver, no money posted) and the unwind's put-back (void → approved,
-// entry still posted). Rejected and void are otherwise terminal; the link
-// ties to the CO's own commitment. Default: no threshold until the org sets
+// decided_by / created_by, and admits for a signed-in caller's UPDATE
+// exactly the updates this file makes: the decision (proposed → approved |
+// rejected | void, recording the caller), the entry link, the unwind /
+// repair reverse (approved → void) and the failed-post revert (approved →
+// proposed, by the approver, no money posted). Rejected and void are
+// terminal; the link ties to the CO's own commitment. The insert policy
+// admits a CO only as proposeChangeOrder writes it (proposed, no decision,
+// no link, in its project's org). Default: no threshold until the org sets
 // one — a shipped default that blocked every large CO would strand real
 // approvals; the marker + audit make the gap visible instead. A malformed
 // threshold value (anything but a plain non-negative number) means no
@@ -433,21 +434,24 @@ async function notifyApproval(co: ChangeOrder, actorId: string, actorName: strin
 }
 
 /**
- * Unwind an APPROVED change order in one action (REL-9 / COST-9): the CO
- * goes to void on the record and EXACTLY the entry it posted
- * (posted_entry_id) is voided — never a hunt through the entry list. The CO
- * is claimed first (compare-and-swap, so two unwinds cannot race) and put
- * back if the entry could not be voided (the one void → approved write the
- * 20261094 guard admits: the entry is still posted). An entry that is
- * ALREADY void (the base's only unwind was voiding it by hand on the Costs
- * tab) is not a failure: no money of the CO remains, so the CO is voided and
- * the audit row says `alreadyVoided` — but only after the look-alike check
- * repairChangeOrder's reverse applies: while a posted, unlinked commitment
- * carrying the CO number is on its budget line (a hand re-post of its
- * money), the unwind is refused — link it first. A linked entry that cannot
- * be found is refused before anything is written (the repair line handles
- * it). Recorded as CHANGE_ORDER_VOIDED with the entry id; the note names
- * the reverser and the date (decided_by keeps the approver).
+ * Unwind an APPROVED change order in one action (REL-9 / COST-9): EXACTLY
+ * the entry it posted (posted_entry_id) is voided — never a hunt through the
+ * entry list — and the CO goes to void on the record. The money moves
+ * FIRST: the entry is voided, then the CO is claimed with a compare-and-swap
+ * (approved → void). A void is terminal at the database (20261093 for the
+ * entry, 20261094 for the CO), so there is no put-back: a failed entry void
+ * changes nothing (the CO stays approved), and a CO claim that fails after
+ * the entry was voided leaves an approved CO whose entry is void — it stops
+ * revising the budget and is listed under "Ledger needs attention", where
+ * Reverse finishes it. An entry that is ALREADY void (voided by hand on the
+ * Costs tab, or by a concurrent unwind) is not a failure — but only after
+ * the look-alike check repairChangeOrder's reverse applies: while a posted,
+ * unlinked commitment carrying the CO number is on its budget line (a hand
+ * re-post of its money), the unwind is refused — link it first. A linked
+ * entry that cannot be found is refused before anything is written.
+ * Recorded as CHANGE_ORDER_VOIDED with the entry id (`alreadyVoided` when
+ * this call did not void it); the note names the reverser and the date
+ * (decided_by keeps the approver).
  */
 export async function unwindChangeOrder(input: {
   co: ChangeOrder; note?: string | null; actorId: string; actorName?: string | null;
@@ -460,44 +464,55 @@ export async function unwindChangeOrder(input: {
   if (!co.postedEntryId) {
     throw new Error(`${co.coNumber} has no linked cost entry to reverse — it is listed under "Ledger needs attention" on the Costs tab: link its entry there, or reverse it there when no entry of it remains.`);
   }
-  // The linked entry as it stands, BEFORE anything is written.
-  const { data: linkedRow, error: linkedErr } = await supabase.from("cost_entries").select("id, status").eq("id", co.postedEntryId).maybeSingle();
-  if (linkedErr) throw new Error(`Couldn't read ${co.coNumber}'s cost entry: ${linkedErr.message}`);
-  const linked = (linkedRow as { id: string; status: string | null } | null) ?? null;
-  if (!linked) {
-    throw new Error(`${co.coNumber}'s linked cost entry can't be found — it is listed under "Ledger needs attention" on the Costs tab: link its entry there, or reverse it there when no entry of it remains.`);
-  }
-  const entryAlreadyVoid = linked.status !== "posted";
-  if (entryAlreadyVoid) {
-    // Same rule as repairChangeOrder's reverse: a posted look-alike means
-    // money of this CO is still on the ledger, unlinked.
+  const entryId = co.postedEntryId;
+  const readEntry = async () => {
+    const { data, error: eErr } = await supabase.from("cost_entries").select("id, status").eq("id", entryId).maybeSingle();
+    if (eErr) throw new Error(`Couldn't read ${co.coNumber}'s cost entry: ${eErr.message}`);
+    return (data as { id: string; status: string | null } | null) ?? null;
+  };
+  // Same rule as repairChangeOrder's reverse: with the CO's own entry void,
+  // a posted look-alike means money of this CO is still on the ledger.
+  const refuseWhileLookalike = async () => {
     const look = await lookalikeEntries(co);
     if (look.error) throw new Error(`Couldn't check ${co.coNumber}'s entries: ${look.error}`);
     if (look.rows.length > 0) {
-      throw new Error(`${co.coNumber}'s own entry is already void, but a posted commitment referencing ${co.coNumber} is still on the budget line — link it under "Ledger needs attention" on the Costs tab (then Reverse voids it with the change order), or void it by hand first.`);
+      throw new Error(`${co.coNumber}'s own entry is void, but a posted commitment referencing ${co.coNumber} is still on the budget line — link it under "Ledger needs attention" on the Costs tab (then Reverse voids it with the change order), or void it by hand first.`);
+    }
+  };
+
+  // The linked entry as it stands, BEFORE anything is written.
+  const linked = await readEntry();
+  if (!linked) {
+    throw new Error(`${co.coNumber}'s linked cost entry can't be found — it is listed under "Ledger needs attention" on the Costs tab: link its entry there, or reverse it there when no entry of it remains.`);
+  }
+  let alreadyVoided = linked.status !== "posted";
+  if (alreadyVoided) {
+    await refuseWhileLookalike();
+  } else {
+    // Money first: void exactly the linked entry.
+    const voided = await voidEntry({ orgId: co.orgId, entryId, actor: { uid: input.actorId, email: input.actorName ?? null } });
+    if (!voided.ok) {
+      // Zero rows matched: it may have been voided meanwhile — re-read it.
+      const now = await readEntry().catch(() => null);
+      if (now?.status !== "void") {
+        throw new Error(`Couldn't void ${co.coNumber}'s cost entry (${voided.error ?? "unknown"}) — nothing was changed; the change order is still approved.`);
+      }
+      alreadyVoided = true;
+      await refuseWhileLookalike();
     }
   }
+
+  // Then the record: claim approved → void.
   const { data: claimed, error } = await supabase.from("change_orders").update({
     status: "void",
     decision_note: reversalNote(input.actorName, input.note),
   }).eq("id", co.id).eq("status", "approved").select("id");
-  if (error) throw new Error(error.message);
-  if (!claimed || claimed.length === 0) throw new Error("Someone else just changed this change order — refresh to see the outcome.");
-
-  let alreadyVoided = entryAlreadyVoid;
-  if (!entryAlreadyVoid) {
-    const voided = await voidEntry({ orgId: co.orgId, entryId: co.postedEntryId, actor: { uid: input.actorId, email: input.actorName ?? null } });
-    if (!voided.ok) {
-      // Zero rows matched: the entry may have been voided meanwhile — re-read it.
-      const { data: entry, error: entryErr } = await supabase.from("cost_entries").select("id, status").eq("id", co.postedEntryId).maybeSingle();
-      alreadyVoided = !entryErr && (entry as { status?: string } | null)?.status === "void";
-      if (!alreadyVoided) {
-        const { data: back, error: backErr } = await supabase.from("change_orders")
-          .update({ status: "approved", decision_note: co.decisionNote }).eq("id", co.id).eq("status", "void").select("id");
-        const restored = !backErr && !!back && back.length > 0;
-        throw new Error(`Couldn't void the change order's cost entry (${voided.error ?? "unknown"})${restored ? " — the change order is still approved." : ` AND the change order could not be put back — ${co.coNumber} reads void while its entry ${co.postedEntryId} is still posted. Void that entry by hand.`}`);
-      }
+  if (error || !claimed || claimed.length === 0) {
+    const { data: after } = await supabase.from("change_orders").select("status").eq("id", co.id).maybeSingle();
+    if ((after as { status?: string } | null)?.status === "void") {
+      throw new Error(`Someone else just reversed ${co.coNumber} — refresh to see the outcome.`);
     }
+    throw new Error(`${co.coNumber}'s cost entry is void, but the change order could not be marked void${error ? ` (${error.message})` : ""} — it no longer revises the budget and is listed under "Ledger needs attention" on the Costs tab: Reverse it there.`);
   }
 
   await logAuditAction({

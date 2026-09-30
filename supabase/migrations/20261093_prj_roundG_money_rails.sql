@@ -18,6 +18,15 @@
 --     So the app's existing Delete-project action keeps working exactly as
 --     before this migration, while a direct DELETE on a cost row — its
 --     project still present — is refused.
+--   COST-10 / COST-6 (verification fix): a VOID cost entry stays void.
+--     `enforce_cost_entry_void_terminal` is a BEFORE UPDATE trigger on
+--     cost_entries that refuses, for a signed-in caller (auth.uid() set),
+--     any update that takes a void entry out of void. The app's only
+--     cost_entries update is lib/costs.voidEntry (posted → void); nothing in
+--     the app un-voids an entry, and un-voiding one brought a reversed
+--     change order's money back onto the ledger without a new decision. The
+--     service role (auth.uid() IS NULL — a restore) keeps its pass. Other
+--     columns of an entry are not pinned here.
 --   PT MON-8 dw3 / REL-4: CHECK constraints on cost_documents.status and kind,
 --     NOT VALID so a live row outside the set never aborts the apply — new
 --     writes are bound immediately; the inventory below counts the old ones.
@@ -147,6 +156,28 @@ CREATE TRIGGER trg_cost_accounts_delete_guard
   FOR EACH ROW
   EXECUTE FUNCTION enforce_cost_ledger_delete_guard();
 
+-- ── 1b. a void cost entry stays void (signed-in callers) ───────────────────
+CREATE OR REPLACE FUNCTION enforce_cost_entry_void_terminal()
+RETURNS trigger LANGUAGE plpgsql SECURITY DEFINER SET search_path = public AS $$
+BEGIN
+  -- The service role (auth.uid() IS NULL) keeps its pass.
+  IF auth.uid() IS NOT NULL AND OLD.status = 'void' AND NEW.status IS DISTINCT FROM 'void' THEN
+    RAISE EXCEPTION 'A void cost entry stays void: post a new entry instead. (COST-10, 20261093)'
+      USING ERRCODE = 'check_violation';
+  END IF;
+  RETURN NEW;
+END;
+$$;
+
+COMMENT ON FUNCTION enforce_cost_entry_void_terminal() IS
+  'COST-10 / COST-6: BEFORE UPDATE guard on cost_entries. A signed-in caller never takes a void entry out of void (the app only ever voids: lib/costs.voidEntry); the service role keeps its pass.';
+
+DROP TRIGGER IF EXISTS trg_cost_entries_void_terminal ON cost_entries;
+CREATE TRIGGER trg_cost_entries_void_terminal
+  BEFORE UPDATE ON cost_entries
+  FOR EACH ROW
+  EXECUTE FUNCTION enforce_cost_entry_void_terminal();
+
 -- ── 2. MON-8 / REL-4: the database rejects an unmapped status or kind ──────
 DO $$ BEGIN
   ALTER TABLE cost_documents ADD CONSTRAINT cost_documents_status_check
@@ -214,6 +245,15 @@ SELECT 'delete guard honours ONLY the purge GUC, the audited service-role path a
        (SELECT prosrc LIKE '%app.record_purge%' AND prosrc LIKE '%service_role%' AND prosrc LIKE '%COST_ROW_PURGED%'
                AND prosrc LIKE '%NOT EXISTS (SELECT 1 FROM projects WHERE id = OLD.project_id)%'
           FROM pg_proc WHERE proname = 'enforce_cost_ledger_delete_guard' AND pronargs = 0),
+       NULL
+UNION ALL
+SELECT 'a void cost entry stays void for a signed-in caller: SECURITY DEFINER guard with search_path pinned, BEFORE UPDATE row trigger on cost_entries',
+       (SELECT prosecdef AND array_to_string(proconfig, ',') LIKE '%search_path=public%'
+               AND prosrc LIKE '%auth.uid() IS NOT NULL AND OLD.status = ''void'' AND NEW.status IS DISTINCT FROM ''void''%'
+          FROM pg_proc WHERE proname = 'enforce_cost_entry_void_terminal' AND pronargs = 0)
+       AND (SELECT COUNT(*) = 1 FROM pg_trigger t
+             WHERE NOT t.tgisinternal AND t.tgname = 'trg_cost_entries_void_terminal'
+               AND (t.tgtype & 2) = 2 AND (t.tgtype & 16) = 16 AND (t.tgtype & 1) = 1),
        NULL
 UNION ALL
 SELECT 'BEFORE DELETE triggers on all four money tables',
