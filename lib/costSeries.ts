@@ -219,22 +219,35 @@ export function computeForecast(input: {
   return none;
 }
 
-/** Planned manpower loading: the awarded quote's labor hours spread evenly
- *  over the schedule span, bucketed by week — the crew-size curve supers
- *  argue from. Headcount = hours/week ÷ 40. */
-export function plannedManpowerSeries(input: {
+/** CHART-3: the planned crew as the ONE number an awarded bid's labor hours
+ *  hold — an average over the schedule span. A bid states hours, not when
+ *  they are worked, so the weekly "curve" this replaced was the same value
+ *  repeated (1,980 h over 90 days drew thirteen identical 3.8 bars) and, for
+ *  small hours, thirteen zero stubs; no variation is invented here. Crew =
+ *  hours per week ÷ 40. Null when there is nothing to average. */
+export interface PlannedCrew {
+  laborHours: number;
+  /** Whole days in the schedule span. */
+  days: number;
+  /** The span in weeks (fractional — a partial last week counts as part). */
+  weeks: number;
+  /** People on site on average, at 40 hours per person-week. */
+  averageCrew: number;
+}
+
+export function plannedCrewAverage(input: {
   laborHours: number;
   scheduleStart: string;
   scheduleEnd: string;
-}): Array<{ weekOf: string; headcount: number }> {
+}): PlannedCrew | null {
   const s = toMs(input.scheduleStart);
   const e = toMs(input.scheduleEnd);
-  if (!Number.isFinite(s) || !Number.isFinite(e) || e <= s || input.laborHours <= 0) return [];
-  const weeks = Math.max(1, Math.ceil((e - s) / (7 * DAY)));
-  const perWeek = input.laborHours / weeks;
-  const out: Array<{ weekOf: string; headcount: number }> = [];
-  for (let w = 0; w < weeks; w++) {
-    out.push({ weekOf: iso(s + w * 7 * DAY), headcount: Math.round((perWeek / 40) * 10) / 10 });
-  }
-  return out;
+  if (!Number.isFinite(s) || !Number.isFinite(e) || e <= s || !(input.laborHours > 0)) return null;
+  const weeks = (e - s) / (7 * DAY);
+  return {
+    laborHours: input.laborHours,
+    days: Math.round((e - s) / DAY),
+    weeks,
+    averageCrew: input.laborHours / weeks / 40,
+  };
 }

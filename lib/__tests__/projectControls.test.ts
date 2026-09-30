@@ -8,7 +8,7 @@ import {
   companyCandidatesByName, barredCompanyFor, MIN_CORROBORATING_STATEMENTS, HOURS_PLAUSIBILITY_RATIO,
   type ParsedQuote,
 } from "@/lib/bidTab";
-import { buildCostSeries, computeForecast, plannedManpowerSeries, scheduleSpanFromMilestones } from "@/lib/costSeries";
+import { buildCostSeries, computeForecast, plannedCrewAverage, scheduleSpanFromMilestones } from "@/lib/costSeries";
 import {
   computeProjectHealth, buildCoachItems, CLOSEOUT_GATE_POLICY, SNAPSHOT_READS, PROJECT_FIELDS_NOT_MIGRATED,
   type ProjectStateSnapshot,
@@ -524,6 +524,8 @@ describe("costSeries", () => {
     const f = computeForecast({ budget: 121_000, spent: 10_000, cpi: null, scheduleStart: span.start, scheduleEnd: span.end, today: "2026-07-01", fmt: String });
     expect(f.basis).toBe("run_rate");
     expect(f.eac).toBeCloseTo(10_000 / (30 / 121), 6);
+    // The crew figure takes the same span (CostCharts passes one pair to all three).
+    expect(plannedCrewAverage({ laborHours: 1_210, scheduleStart: span.start!, scheduleEnd: span.end! })!.days).toBe(121);
   });
 
   it("MON-2: the Costs tab reads each milestone's start and derives its span through the shared helper", () => {
@@ -562,10 +564,21 @@ describe("costSeries", () => {
     expect(s[0]).toMatchObject({ date: "2026-01-10", committed: 7, actual: 0 });
   });
 
-  it("planned manpower spreads hours across weeks at 40h heads", () => {
-    const series = plannedManpowerSeries({ laborHours: 800, scheduleStart: "2026-01-01", scheduleEnd: "2026-01-29" });
-    expect(series).toHaveLength(4);
-    expect(series[0].headcount).toBe(5); // 200h/wk / 40
+  it("CHART-3: the planned crew is one average at 40h per person-week — no invented curve", () => {
+    const four = plannedCrewAverage({ laborHours: 800, scheduleStart: "2026-01-01", scheduleEnd: "2026-01-29" })!;
+    expect(four).toEqual({ laborHours: 800, days: 28, weeks: 4, averageCrew: 5 }); // 200h/wk / 40
+    // The audit's measured case: 1,980 h over 90 days — one number, not thirteen equal bars.
+    const measured = plannedCrewAverage({ laborHours: 1_980, scheduleStart: "2026-06-01", scheduleEnd: "2026-08-30" })!;
+    expect(measured.days).toBe(90);
+    expect(measured.averageCrew).toBeCloseTo(1_980 / (90 / 7) / 40, 9);
+    // Tiny hours stay a real (small) number, not a row of zero-height stubs.
+    const tiny = plannedCrewAverage({ laborHours: 40, scheduleStart: "2026-01-01", scheduleEnd: "2027-01-01" })!;
+    expect(tiny.averageCrew).toBeGreaterThan(0);
+    expect(tiny.averageCrew).toBeLessThan(0.1);
+    // Nothing to average → null.
+    expect(plannedCrewAverage({ laborHours: 0, scheduleStart: "2026-01-01", scheduleEnd: "2026-02-01" })).toBeNull();
+    expect(plannedCrewAverage({ laborHours: 100, scheduleStart: "2026-02-01", scheduleEnd: "2026-02-01" })).toBeNull();
+    expect(plannedCrewAverage({ laborHours: 100, scheduleStart: "nope", scheduleEnd: "2026-02-01" })).toBeNull();
   });
 });
 
