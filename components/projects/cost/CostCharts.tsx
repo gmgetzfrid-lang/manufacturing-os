@@ -126,8 +126,9 @@ export default function CostCharts({ rollup, entries, scheduleStart, scheduleEnd
   // schedule span — the hint says which, every time the line is absent.
   const noBudget = !(rollup.revisedBudget > 0);
   const noSchedule = !scheduleStart || !scheduleEnd;
-  // DEC-52: a schedule with no budget and no money posted draws flat lines on
-  // a zero axis — nothing to read. Say so instead of drawing it.
+  // Draw only what the data holds (the cost charts' decision in DECISIONS.md):
+  // a schedule with no budget and no money posted draws flat lines on a zero
+  // axis — nothing to read. Say so instead of drawing it.
   const noMoney = noBudget && series.every((p) => p.planned == null && p.committed === 0 && p.actual === 0);
   const plannedHint = !noMoney && series.length >= 2 && !series.some((p) => p.planned != null)
     ? noBudget && noSchedule

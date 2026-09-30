@@ -14,7 +14,7 @@ import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { renderToStaticMarkup } from "react-dom/server";
 import {
-  SCurveChart, sCurveScale, sCurveTodayX, sCurveTodayLabel, SCURVE_VIEWBOX, scoreBandColor, ScoreDial, BarList,
+  SCurveChart, sCurveScale, sCurveTodayX, sCurveTodayLabel, sCurveLabelWidth, SCURVE_VIEWBOX, scoreBandColor, ScoreDial, BarList,
   type SCurvePoint,
 } from "@/components/ui/ChartKit";
 import { vizCat, MiniBars } from "@/components/dashboard/viz";
@@ -189,7 +189,7 @@ describe("CHART-5 · today at today, labelled; gridlines with values; a budget l
   });
 });
 
-describe("CHART-5 / DEC-52 · the axis and labels say only what the data holds (review fix)", () => {
+describe("CHART-5 · draw only what the data holds: the axis and labels say nothing the data does not (review fix)", () => {
   it("a chart with no money in it labels only the zero gridline — never an invented '$1'", () => {
     expect(sCurveScale([0, 0, 0]).ticks).toEqual([0]);
     expect(sCurveScale([]).ticks).toEqual([0]);
@@ -223,7 +223,60 @@ describe("CHART-5 / DEC-52 · the axis and labels say only what the data holds (
     }
     // Mid-span it stays above the plot, centred on the marker.
     expect(sCurveTodayLabel(300)).toEqual({ x: 300, y: 9, anchor: "middle" });
+    expect(sCurveTodayLabel(300, "$3,000,000")).toEqual({ x: 300, y: 9, anchor: "middle" });
     expect(sCurveTodayLabel(590).anchor).toBe("end");
+  });
+
+  it("the room the Today label needs is the top label actually drawn — a long locale label cannot cover it", () => {
+    // The axis labels come from Intl in the VIEWER's locale, so the top
+    // gridline's label can be much longer than "$300K": "3.000 Tsd. $",
+    // "CA$3M", "300万 US$". The label must clear whatever is drawn there.
+    expect(sCurveLabelWidth("$3M")).toBeLessThan(sCurveLabelWidth("3.000 Tsd. $"));
+    expect(sCurveLabelWidth("300万")).toBeGreaterThan(sCurveLabelWidth("3000"));
+    // Same marker position, different top label: centred beside a short one,
+    // dropped inside the plot beside a long one.
+    expect(sCurveTodayLabel(70, "$3M").anchor).toBe("middle");
+    expect(sCurveTodayLabel(70, "3.000 Tsd. $").anchor).toBe("start");
+    expect(sCurveTodayLabel(70, "300万 US$").anchor).toBe("start");
+    // No label at the top (a money-less chart labels only $0, at the bottom).
+    expect(sCurveTodayLabel(40, "").anchor).toBe("middle");
+
+    const long = buildCostSeries({
+      budget: 3_000_000, scheduleStart: "2026-01-01", scheduleEnd: "2028-12-30",
+      commitments: [{ date: "2026-02-01", amount: 1_000_000 }], actuals: [{ date: "2026-03-01", amount: 200_000 }],
+    });
+    const deTick = (n: number) => `${(n / 1000).toLocaleString("de-DE")}\u00a0Tsd.\u00a0$`;
+    const shortTick = (n: number) => (n === 0 ? "$0" : `$${n / 1_000_000}M`);
+    let dropped = 0, centred = 0;
+    for (const tickFmt of [deTick, shortTick]) {
+      for (const today of ["2026-03-20", "2026-04-15", "2026-04-27", "2026-05-20", "2026-07-01"]) {
+        const doc = render(React.createElement(SCurveChart, { points: long, fmt: usd, tickFmt, todayIso: today }));
+        const top = [...doc.querySelectorAll('[data-mark="grid-label"]')].reduce((a, b) =>
+          Number(a.getAttribute("y")) <= Number(b.getAttribute("y")) ? a : b);
+        const t = doc.querySelector('[data-mark="today"] text')!;
+        const tx = Number(t.getAttribute("x"));
+        if (Number(t.getAttribute("y")) === Number(top.getAttribute("y"))) {
+          // Same baseline: the centred "Today" (±14) starts right of the label's end.
+          centred++;
+          const topEnd = Number(top.getAttribute("x")) + sCurveLabelWidth(top.textContent ?? "");
+          expect(t.getAttribute("text-anchor")).not.toBe("start");
+          expect(tx - 14).toBeGreaterThanOrEqual(topEnd + 2);
+        } else {
+          // Dropped inside the plot: a full line below the top label.
+          dropped++;
+          expect(t.getAttribute("text-anchor")).toBe("start");
+          expect(Number(t.getAttribute("y")) - 9).toBeGreaterThanOrEqual(Number(top.getAttribute("y")));
+        }
+      }
+    }
+    // Both branches were exercised, and the long German label pushed at least
+    // one position inside that the short label left centred.
+    expect(dropped).toBeGreaterThan(0);
+    expect(centred).toBeGreaterThan(0);
+    const at = (tickFmt: (n: number) => string) => render(React.createElement(SCurveChart, { points: long, fmt: usd, tickFmt, todayIso: "2026-04-27" }))
+      .querySelector('[data-mark="today"] text')!.getAttribute("text-anchor");
+    expect(at(shortTick)).toBe("middle");
+    expect(at(deTick)).toBe("start");
   });
 });
 

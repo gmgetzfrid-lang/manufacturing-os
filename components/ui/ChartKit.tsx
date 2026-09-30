@@ -52,8 +52,8 @@ function niceStep(range: number): number {
  * domain now spans [min(0, data), max(1, data, budget)], widened to clean tick
  * values, and every projected value lands inside the plot. With no money in
  * the data at all, the floor of 1 only gives the scale a height: the one
- * gridline is zero, never an invented "$1" (DEC-52: draw only what the data
- * holds).
+ * gridline is zero, never an invented "$1" (the cost charts' decision in
+ * DECISIONS.md: draw only what the data holds).
  */
 export function sCurveScale(values: number[]): { lo: number; hi: number; ticks: number[]; py: (v: number) => number } {
   const finite = values.filter(Number.isFinite);
@@ -89,17 +89,26 @@ export function sCurveTodayX(points: SCurvePoint[], todayIso: string | null | un
 // makes them unreadable.
 const HALO = { stroke: "var(--color-surface)", strokeWidth: 3, paintOrder: "stroke" } as const;
 
-/** The top-left corner the top gridline's label occupies (it sits at
- *  x = PAD_L + 2 on the "Today" label's baseline): a compact figure such as
- *  "$300K" plus the half-width of a centred "Today". A today marker this close
- *  to the left edge drops its label just inside the plot instead. */
-const TOP_LABEL_ROOM = 56;
+/** A generous estimate of a 9-unit label's advance: about 0.62 em for Latin
+ *  digits and letters, a full em for CJK and full-width glyphs. The top
+ *  gridline's label comes from Intl in the viewer's locale ("$300K",
+ *  "300.000 $", "CA$1.5M", "30万 US$"), so its width is measured, not assumed. */
+export function sCurveLabelWidth(text: string): number {
+  let w = 0;
+  for (const ch of text) w += (ch.codePointAt(0) ?? 0) >= 0x2e80 ? 9 : 5.6;
+  return w;
+}
+/** Half the width of the centred 9-unit bold "Today". */
+const TODAY_HALF_W = 14;
 
 /** Where the "Today" label goes: above the plot, centred on the marker —
- *  or, early in the span, just inside the plot beside it, clear of the top
- *  gridline's label (which is drawn later, haloed, and would cover it). */
-export function sCurveTodayLabel(todayX: number): { x: number; y: number; anchor: "start" | "middle" | "end" } {
-  if (todayX < PAD_L + TOP_LABEL_ROOM) return { x: todayX + 3, y: PAD_T + 10, anchor: "start" };
+ *  or, when that would overlap the top gridline's label (drawn at
+ *  x = PAD_L + 2 on the same baseline, later and haloed, so it would cover
+ *  "Today"), just inside the plot beside the marker. `topLabel` is the text
+ *  that gridline label actually shows; empty when no label sits at the top. */
+export function sCurveTodayLabel(todayX: number, topLabel = ""): { x: number; y: number; anchor: "start" | "middle" | "end" } {
+  const topLabelEnd = PAD_L + 2 + sCurveLabelWidth(topLabel);
+  if (todayX - TODAY_HALF_W < topLabelEnd + 2) return { x: todayX + 3, y: PAD_T + 10, anchor: "start" };
   return { x: todayX, y: PAD_T - 3, anchor: todayX > VB_W - PAD_R - 20 ? "end" : "middle" };
 }
 
@@ -161,9 +170,12 @@ export function SCurveChart({ points, fmt, tickFmt, todayIso, budget, budgetLabe
   const hasPlanned = points.some((p) => p.planned != null);
   const last = points[n - 1];
   const todayX = sCurveTodayX(points, todayIso);
-  const todayLabel = todayX != null ? sCurveTodayLabel(todayX) : null;
   const money = (v: number) => (example ? `${fmt(v)} (example)` : fmt(v));
   const tick = tickFmt ?? fmt;
+  // The label on the top gridline, if one sits on the "Today" baseline.
+  const topTick = ticks[ticks.length - 1];
+  const topLabel = py(topTick) <= PAD_T + 0.5 ? tick(topTick) : "";
+  const todayLabel = todayX != null ? sCurveTodayLabel(todayX, topLabel) : null;
   const budgetY = ref != null ? py(ref) : null;
 
   return (
