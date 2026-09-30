@@ -80,7 +80,7 @@ about the system.
 | [DEC-44](#dec-44) | Content egress rails: `download_audits` append-only, presigned windows ≤ 1 h, the service worker caches no API response | low | `DIST-9`, `DRLS-8`, `EGR-4`, `PKG-11`, `XEDGE-6` |
 | [DEC-45](#dec-45) | Bearer columns never leave the database in an export and never come back from a backup | low | `EGR-7`, `XEDGE-10`, `BKP-1`, `INTK-6` |
 | [DEC-47](#dec-47) | Imported schedule rows are **commitments everywhere** — one liveness predicate (`lib/milestoneLiveness.ts`) for health, coach, report and EV | low | `MON-6`, `PM-3`, `SCH-5` |
-| [DEC-48](#dec-48) | A presigned download is an **attachment** unless a viewer asks AND the type cannot be a page (PDF, raster image — type pinned); the viewer frames only those | low | `SEC-7`, `SEC-1`, `INTK-11` |
+| [DEC-49](#dec-49) | A URL `/api/storage/download-url` signs is an **attachment** unless a viewer asks AND the type cannot be a page (PDF, raster image — type pinned); the viewer frames only a PDF and shows images as `<img>` | low | `SEC-7`, `SEC-1` |
 
 ---
 
@@ -1719,7 +1719,7 @@ the `Admin` branch, and an unscoped controller keeps today's behaviour.
 
 **Risk:** low.
 
-*Landed 2026-09-30 (projects Round G): service-role PAGE reads are a second bytes egress. `lib/docFileServer.ts` `resolveDocumentFile` — used by the checklist reader and the quality-manual reviewer, and required to name its reader — makes the egress route's content decision and writes the same `CONTROLLER_RESTRICTED_READ` row when a controller is served a restricted document only by the controller tier, with `details.channel` naming the route. A read it then refuses (a download deny) and a label-only read write none. `lib/__tests__/docFileServer.test.ts` runs the egress route and the gate over the same principals and documents and asserts they serve, refuse and record alike (projects-tab `SEC-10`).*
+*Landed 2026-09-30 (projects Round G): service-role PAGE reads are a second bytes egress. `lib/docFileServer.ts` `resolveDocumentFile` — used by the checklist reader and the quality-manual reviewer, and required to name its reader — makes the app's own read decision over the full library → folder → document chain (read or download wherever an ACL exists, on every visibility) and writes the same `CONTROLLER_RESTRICTED_READ` row when a controller is served a document only by the controller tier — a normal document restricted by an allow-list included — with `details.channel` naming the route. A read it then refuses (a download deny) and a label-only read write none. `lib/__tests__/docFileServer.test.ts` runs the egress route and the gate over the same principals and documents and asserts the gate is never looser and records at least what the egress route records, naming each case where it is stricter until intelligence `KACL-5` brings the egress route to the same chain (projects-tab `SEC-10`). `/api/flows/read` renders a knowledge mirror's `file_key` — the controlled version's key — as the service role with no such row; that is recorded as a residual under `SEC-10` for the intelligence package that owns the route.*
 
 <a id="dec-44"></a>
 ## DEC-44 · The download record, the presigned window, and the worker's cache
@@ -1897,23 +1897,32 @@ same predicate, and the Schedule tab's copy changes with it.
 
 *Landed 2026-09-29 (projects Round G; review fix 2026-09-30): counting every row only helps if every consumer reads the same rows. `lib/milestoneLiveness.ts` also exports `PROJECT_MILESTONE_READ_LIMIT` (1,000). The health snapshot and the printed report both read `order("planned_at").order("id").limit(PROJECT_MILESTONE_READ_LIMIT)`, which is the subset the Costs tab's unbounded `order("planned_at")` read gets under the API's default row cap. So EV, CPI and overdue agree across surfaces, and the report discloses "first N of M" above the bound (projects-tab `MON-5`). A new project-level milestone reader imports the same bound rather than choosing its own.*
 
-<a id="dec-48"></a>
-## DEC-48 · A presigned download is an attachment unless a viewer asks and the type cannot be a page
+<a id="dec-49"></a>
+## DEC-49 · A presigned download is an attachment unless a viewer asks and the type cannot be a page
 
-**Decision. Every presigned GET is signed with a Content-Disposition. It is
-an ATTACHMENT by default. It is INLINE only when the caller explicitly asks
-(`?inline=1`) AND the key names a type a browser shows in a viewer rather than
-as a page — PDF, PNG, JPEG, GIF, WebP — and an inline URL pins its
-Content-Type to that type. SVG, HTML, XML, script, text and anything unknown
-are attachments whatever the caller asks. The in-app viewer frames only a file
-that arrived typed as a PDF or a raster image, re-typed to exactly that type;
-an image frame is sandboxed with no tokens; a PDF frame is not sandboxed,
-because Chromium will not run its PDF viewer in a sandboxed frame; nothing
-else is framed.**
+**Decision. Every presigned GET that `/api/storage/download-url` issues — and
+so every URL `lib/storage`'s helpers hand the app — is signed with a
+Content-Disposition. It is an ATTACHMENT by default. It is INLINE only when
+the caller explicitly asks (`?inline=1`) AND the key names a type a browser
+shows in a viewer rather than as a page — PDF, PNG, JPEG, GIF, WebP — and an
+inline URL pins its Content-Type to that type. SVG, HTML, XML, script, text and
+anything unknown are attachments whatever the caller asks. Two other issuers
+still sign bare GETs and are known exceptions until their owners adopt the
+same helper: `/api/storage/resolve` (the archive-aware opener) and
+`lib/dataExport.ts` (the data-export envelope's per-file URLs) — both
+projects-tab `SEC-18`. The in-app viewer frames only a file that arrived
+typed as a PDF, re-typed to exactly that type; a PDF frame is not sandboxed,
+because Chromium will not run its PDF viewer in a sandboxed frame; a raster
+image is shown as an `<img>`, never framed; nothing else is shown. When the
+bytes cannot be fetched, a legacy absolute URL on another origin is shown only
+when its path names a PDF (the frame) or a raster image (an `<img>`) — such a
+URL was not signed by the route, so the type it is served with is the stored
+one (`SEC-18`'s class).**
 
 > Made during projects Round G (2026-09-30, package J9) under the protocol's
-> fail-safe rule, closing projects-tab `SEC-7` and the egress limb of `SEC-1`
-> (projects-and-cost `INTK-11` points its disposition half here).
+> fail-safe rule, closing projects-tab `SEC-7` and the egress limb of `SEC-1`.
+> It delivers the download-disposition item of projects-and-cost `INTK-11`
+> for URLs this route issues; that record's owner should cross-reference it.
 
 **Rationale.** A presigned URL signed with no overrides is served with the
 object's stored type, and for an intake upload that is whatever the uploader
@@ -1938,10 +1947,18 @@ expiresIn, { inline })` is an attachment by default, the viewer resolvers
 attachment URLs are cached apart; `components/viewers/SecureDocViewer.tsx`.
 Reviewed inline callers: `SecureDocViewer`; `resolveFileUrl`'s callers
 (`MultiDocViewer`, `CompareRevisionsModal`, `ReviewGateSection`'s draft
-preview); the ticket file viewer's PDF frame; the cited-page viewer's new-tab
-link. A census in `lib/__tests__/presignedDisposition.test.ts` fails for any
-presigned-GET issuer under `app/api` that signs no disposition (one named
-exception, `/api/storage/resolve` — projects-tab `SEC-18`).
+preview); the ticket file viewer's PDF frame
+(`app/(protected)/requests/[id]/page.tsx`, the `FileViewerModal` region
+drafting-flow DF-P10 owns for `PHYS-2`, `PHYS-9`, `EVID-5`, `EDGE-2` and
+`AUTHZ-12` — its rewrite must keep
+`getSignedUrlForPath(file.url, undefined, { inline: true })`); the cited-page
+viewer's new-tab link (`components/knowledge/CitedPageViewer.tsx`, which
+intelligence I-07 edits for `DWG-3` and I-12's `KACL-5` cites — keep
+`getSignedUrlForPath(view.fileKey, undefined, { inline: true })`). Both are
+source-pinned in `lib/__tests__/presignedDisposition.test.ts`. A census there
+fails for any presigned-GET issuer under `app/api` or `lib` that signs no
+disposition (two named exceptions, `/api/storage/resolve` and
+`lib/dataExport.ts` — projects-tab `SEC-18`).
 
 **Do not** frame or open a signed URL without `{ inline: true }` (it will
 download instead), and do not add a type a browser renders as a document (SVG,
@@ -1950,8 +1967,8 @@ HTML, XML) to the inline list.
 **Acceptance.** `download-url` without `inline` signs
 `response-content-disposition=attachment; filename="…"`; with `inline=1` on a
 `.pdf` it signs `inline` and `response-content-type=application/pdf`; with
-`inline=1` on `.html` or `.svg` it signs `attachment`; the viewer never frames
-a file that did not arrive typed as a PDF or a raster image.
+`inline=1` on `.html` or `.svg` it signs `attachment`; the viewer frames only
+a file that arrived typed as a PDF and shows a raster image as an `<img>`.
 
 **Reversal.** Serving untrusted uploads from a separate origin (report `11`
 item 9, `GAP-401`) would let the inline list widen; a Chromium that runs its
