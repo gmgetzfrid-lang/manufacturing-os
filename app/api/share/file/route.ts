@@ -1,6 +1,6 @@
 // GET /api/share/file?token=<share token>
 //
-// Streams the shared document's current published file, stamped SERVER-SIDE
+// Streams the shared document's CURRENT published file, stamped SERVER-SIDE
 // (uncontrolled watermark, rev footer, verify QR) before a single byte leaves.
 //
 // Why server-side: the old flow handed the browser a raw presigned R2 URL and
@@ -11,9 +11,26 @@
 // outsiders. Here the bytes are pulled bucket→server (no CORS in play) and
 // stamped with the same applyStampToPdfDoc as internal downloads.
 //
-// Auth: possession of the unguessable token, exactly like /api/share/resolve.
-// The download_audits row is written HERE (an actual download), while resolve
-// keeps the access-counter bump (link opened).
+// Auth: possession of the unguessable token, exactly like /api/share/resolve
+// — and the SAME decision (lib/shareServe.ts): org-joined document, the
+// creator's current authority, a Draft / Superseded / Void / Archived or
+// HELD document refused with the reason, and a version that is published,
+// not a branch, not superseded.
+//
+// The distribution record: the download_audits row is written HERE, before
+// the bytes go, attributed to the SHARE (share_id, user_id NULL, source —
+// DEC-44 §1) so recall can tell an outside holder from the sharer. It is
+// checked and FAILS CLOSED: a controlled copy does not leave the building
+// unrecorded (DIST-7 / EGR-3 / SHR-5 / PHYS-8).
+//
+// Deploy order: the record's share-attributed shape needs 20261068's
+// columns (share_id, source, nullable user_id); apply 20261068 → 20261080 →
+// 20261081 before this route deploys. If it deploys first anyway, a refusal
+// that IS the missing migration is logged as exactly that and the record is
+// retried ONCE in the pre-20261068 shape (the real columns only, attributed
+// to the sharer as the table required then) — the copy is recorded and
+// served, never refused wholesale. Only when that retry also fails, or the
+// first refusal is anything else, is the download refused 503 "unrecorded".
 
 import { NextRequest, NextResponse } from "next/server";
 import { createClient } from "@supabase/supabase-js";
@@ -22,7 +39,7 @@ import { r2, R2_BUCKET } from "@/lib/r2";
 import { PDFDocument } from "pdf-lib";
 import { applyStampToPdfDoc } from "@/lib/stamping";
 import { publicOrigin } from "@/lib/publicOrigin";
-import { shareStillAuthorized } from "@/lib/shareAuthorization";
+import { recordShareAccess, requestMeta, resolveShareForServing, servedLabels, shareFooterNotice } from "@/lib/shareServe";
 
 export const maxDuration = 60;
 
@@ -34,64 +51,21 @@ export async function GET(req: NextRequest) {
     return NextResponse.json({ error: "Share downloads unavailable" }, { status: 503 });
   }
   const token = (req.nextUrl.searchParams.get("token") ?? "").trim();
-  if (!/^[A-Za-z0-9_-]{16,128}$/.test(token)) {
-    return NextResponse.json({ error: "invalid" }, { status: 400 });
-  }
 
   const sb = createClient(supabaseUrl, serviceRoleKey, { auth: { persistSession: false } });
 
-  const { data: share } = await sb
-    .from("document_shares")
-    .select("id, org_id, document_id, expires_at, revoked_at, created_by")
-    .eq("token", token)
-    .maybeSingle();
-  if (!share) return NextResponse.json({ error: "notfound" }, { status: 404 });
-  if (share.revoked_at) return NextResponse.json({ error: "revoked" }, { status: 410 });
-  if (share.expires_at && new Date(share.expires_at as string).getTime() < Date.now()) {
-    return NextResponse.json({ error: "expired" }, { status: 410 });
+  const meta = requestMeta(req);
+  const resolved = await resolveShareForServing(sb, token, meta);
+  if (!resolved.ok) return NextResponse.json(resolved.body, { status: resolved.status });
+  const { share, doc, version } = resolved;
+  if (!version) {
+    await recordShareAccess(sb, { share, documentId: doc.id, versionId: null, kind: "refused", reason: "nofile", ...meta });
+    return NextResponse.json({ error: "nofile" }, { status: 404 });
   }
-
-  // Join document to the share's org — a cross-org share (EGRESS-1) yields no
-  // document and 404s before any byte is fetched.
-  const { data: doc } = await sb
-    .from("documents")
-    .select("id, document_number, title, name, rev, current_version_id")
-    .eq("id", share.document_id as string)
-    .eq("org_id", share.org_id as string)
-    .maybeSingle();
-  if (!doc) return NextResponse.json({ error: "notfound" }, { status: 404 });
-
-  // Serve only on the creator's CURRENT authority (EGRESS-1 Done-when 4): if
-  // they left the org or lost read access to this document, the link is dead.
-  if (!(await shareStillAuthorized(share.org_id as string, share.created_by as string | null, doc.id as string))) {
-    return NextResponse.json({ error: "revoked" }, { status: 410 });
-  }
-
-  // Resolve the current PUBLISHED version's file (never an in-review draft) —
-  // same resolution order as /api/share/resolve.
-  let storagePath: string | null = null;
-  let versionId: string | null = (doc.current_version_id as string | null) ?? null;
-  if (versionId) {
-    const { data: v } = await sb.from("document_versions").select("file_url").eq("id", versionId).maybeSingle();
-    storagePath = (v?.file_url as string | null) ?? null;
-  }
-  if (!storagePath) {
-    const { data: latest } = await sb
-      .from("document_versions")
-      .select("id, file_url")
-      .eq("record_id", doc.id as string)
-      .or("review_state.is.null,review_state.eq.approved")
-      .order("created_at", { ascending: false })
-      .limit(1);
-    if (latest?.length) {
-      storagePath = (latest[0] as { file_url: string }).file_url;
-      versionId = (latest[0] as { id: string }).id;
-    }
-  }
-  if (!storagePath) return NextResponse.json({ error: "nofile" }, { status: 404 });
 
   // Pull the bytes server-side — an absolute URL (legacy rows) via fetch, a
   // storage key straight from the bucket. No CORS on either path.
+  const storagePath = version.storagePath;
   let source: Uint8Array;
   try {
     if (/^https?:\/\//i.test(storagePath)) {
@@ -109,8 +83,10 @@ export async function GET(req: NextRequest) {
     return NextResponse.json({ error: "unavailable" }, { status: 502 });
   }
 
-  const label = String(doc.document_number || doc.title || doc.name || "document");
-  const rev = (doc.rev as string | null) ?? null;
+  // The revision printed on the copy is the SERVED version's own label (SHR-7).
+  const { label, rev } = servedLabels(doc, version);
+  const origin = publicOrigin();
+  const verifyUrl = origin ? `${origin}/verify/${doc.id}?v=${version.id}` : undefined;
 
   let outBytes: Uint8Array = source;
   let stamped = false;
@@ -120,10 +96,8 @@ export async function GET(req: NextRequest) {
       userLabel: "shared-link",
       timestamp: new Date(),
       watermarkText: "UNCONTROLLED — SHARED COPY",
-      footerNotice: `${label} Rev ${rev ?? "?"} at time of download — scan the QR to confirm it is still current.`,
-      verifyUrl: versionId && publicOrigin()
-        ? `${publicOrigin()}/verify/${doc.id as string}?v=${versionId}`
-        : undefined,
+      footerNotice: shareFooterNotice({ label, rev, status: doc.status ?? null, verifyUrl }),
+      verifyUrl,
     });
     outBytes = await pdfDoc.save();
     stamped = true;
@@ -134,21 +108,44 @@ export async function GET(req: NextRequest) {
     console.warn("[share/file] stamping failed — delivering unstamped", (e as Error).message);
   }
 
-  // The distribution record: this is the actual download (resolve only counts
-  // the link being opened).
-  try {
-    await sb.from("download_audits").insert({
-      org_id: share.org_id,
-      document_id: doc.id,
-      version_id: versionId,
-      user_id: (share.created_by as string | null) ?? null, // attributed to the sharer — the outsider has no account
-      user_email: null,
-      created_at: new Date().toISOString(),
-      expires_at: (share.expires_at as string | null) ?? new Date(Date.now() + 30 * 86_400_000).toISOString(),
-      watermark_policy_id: null,
-      source: stamped ? "share_link" : "share_link_unstamped",
+  // The distribution record, BEFORE the bytes leave. Attributed to the share
+  // (DEC-44 §1): user_id NULL, share_id set, the channel in `source`. A
+  // checked write — a refusal (column drift, a missing migration, RLS) is
+  // logged loudly and the copy does NOT go out unrecorded.
+  const base = {
+    org_id: share.org_id,
+    document_id: doc.id,
+    version_id: version.id,
+    user_email: null,
+    created_at: new Date().toISOString(),
+    expires_at: share.expires_at ?? new Date(Date.now() + 30 * 86_400_000).toISOString(),
+    watermark_policy_id: null,
+  };
+  let { error: auditError } = await sb.from("download_audits").insert({
+    ...base,
+    user_id: null,
+    source: stamped ? "share_link" : "share_link_unstamped",
+    share_id: share.id,
+  });
+  if (auditError && missingRecordColumn(auditError)) {
+    // 20261068 is not applied yet: the table has no share_id / source and
+    // user_id is NOT NULL. Record the copy in the shape the table has — the
+    // pre-DEC-44 attribution to the sharer — rather than lock every outside
+    // recipient out until the paste lands.
+    console.error("[share/file] DEPLOY ORDER: download_audits lacks the 20261068 columns (share_id / source) — apply 20261068 → 20261080 → 20261081; recording this share download in the pre-20261068 shape (attributed to the sharer)", {
+      share: share.id, document: doc.id, version: version.id, stamped, message: auditError.message,
     });
-  } catch { /* pre-migration column drift — never block the share */ }
+    ({ error: auditError } = await sb.from("download_audits").insert({ ...base, user_id: share.created_by }));
+  }
+  if (auditError) {
+    console.error("[share/file] download_audits insert failed — share download refused, nothing left the building", {
+      share: share.id, document: doc.id, version: version.id, message: auditError.message,
+    });
+    await recordShareAccess(sb, { share, documentId: doc.id, versionId: version.id, kind: "refused", reason: "unrecorded", ...meta });
+    return NextResponse.json({ error: "unrecorded" }, { status: 503 });
+  }
+
+  await recordShareAccess(sb, { share, documentId: doc.id, versionId: version.id, kind: "download", ...meta });
 
   const safe = (s: string) => s.replace(/[^\w.\-]+/g, "_");
   const filename = `${safe(label)}_Rev${safe(rev ?? "0")}.pdf`;
@@ -159,4 +156,15 @@ export async function GET(req: NextRequest) {
       "Cache-Control": "no-store",
     },
   });
+}
+
+/** A refused record write that is the unapplied 20261068, not a transient:
+ *  PostgREST's unknown-column (PGRST204) / Postgres' undefined_column (42703),
+ *  a message naming one of the columns 20261068 adds, or the pre-20261068
+ *  NOT NULL on user_id refusing a share's (user-less) row. Only this earns
+ *  the one pre-20261068-shape retry; anything else refuses the download. */
+function missingRecordColumn(e: { code?: string; message?: string }): boolean {
+  const msg = e.message ?? "";
+  return e.code === "PGRST204" || e.code === "42703" || /\b(share_id|source)\b/.test(msg)
+    || (e.code === "23502" && /\buser_id\b/.test(msg));
 }

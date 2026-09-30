@@ -15,17 +15,17 @@
     "audit-reports/document-control/11-edges-and-invariants.md"
   ],
   "totals": {
-    "findings": 147,
+    "findings": 148,
     "gaps": 0,
     "by_severity": {
       "CRITICAL": 18,
       "HIGH": 53,
-      "MEDIUM": 64,
+      "MEDIUM": 65,
       "LOW": 12
     },
     "by_status": {
-      "RESOLVED": 93,
-      "OPEN": 54
+      "RESOLVED": 100,
+      "OPEN": 48
     }
   },
   "status_vocabulary": [
@@ -662,7 +662,7 @@
       "id": "DIST-6",
       "title": "Any active org member — including a Viewer — can mint a never-expiring public link to any document, bypassing the document ACL, with no role gate and no audit record",
       "severity": "HIGH",
-      "status": "OPEN",
+      "status": "RESOLVED",
       "verification": "CONFIRMED",
       "verification_note": null,
       "blast_radius": null,
@@ -690,7 +690,7 @@
       "id": "DIST-7",
       "title": "Share-link downloads are never written to download_audits: the insert names a `source` column that does not exist, and the error is discarded",
       "severity": "HIGH",
-      "status": "OPEN",
+      "status": "RESOLVED",
       "verification": "CONFIRMED",
       "verification_note": null,
       "blast_radius": null,
@@ -825,7 +825,7 @@
       "id": "DRLS-5",
       "title": "`/api/share/resolve` falls back to the newest version row regardless of branch or superseded state, and never checks the document's status, archive or hold",
       "severity": "HIGH",
-      "status": "OPEN",
+      "status": "RESOLVED",
       "verification": "CONFIRMED",
       "verification_note": null,
       "blast_radius": null,
@@ -876,7 +876,7 @@
       "id": "DRLS-7",
       "title": "`document_shares`: revocation is not durable and the external-access audit trail is deletable by any member",
       "severity": "HIGH",
-      "status": "OPEN",
+      "status": "RESOLVED",
       "verification": "CONFIRMED",
       "verification_note": null,
       "blast_radius": null,
@@ -926,7 +926,7 @@
       "id": "EGR-2",
       "title": "document_shares WITH CHECK validates org_id but never that document_id belongs to that org — cross-tenant byte exfiltration via /api/share/file",
       "severity": "HIGH",
-      "status": "OPEN",
+      "status": "RESOLVED",
       "verification": "CONFIRMED",
       "verification_note": null,
       "blast_radius": null,
@@ -953,7 +953,7 @@
       "id": "EGR-3",
       "title": "download_audits has no `source` column — every external share-link download fails its audit insert silently, so the PSM distribution record is empty for outsiders",
       "severity": "HIGH",
-      "status": "OPEN",
+      "status": "RESOLVED",
       "verification": "CONFIRMED",
       "verification_note": null,
       "blast_radius": null,
@@ -1941,7 +1941,7 @@
         "public/sw.js:114-120",
         "public/sw.js:156-177",
         "public/sw.js:203-220",
-        "app/api/share/file/route.ts:145-151",
+        "app/api/share/file/route.ts:152-158",
         "app/api/storage/download-url/route.ts:144-153"
       ],
       "has_verifier_correction": false,
@@ -2279,6 +2279,30 @@
       "report": "audit-reports/document-control/05-distribution.md"
     },
     {
+      "id": "DIST-15",
+      "title": "No org-wide inventory of live public share links, and no bulk revoke — a controller can only find a link by opening the modal on the right document",
+      "severity": "MEDIUM",
+      "status": "OPEN",
+      "verification": "SUSPECTED",
+      "verification_note": null,
+      "blast_radius": null,
+      "related": [],
+      "locations": [
+        "lib/documentShares.ts:216-231",
+        "app/api/share/list/route.ts:61-66",
+        "components/documents/ShareLinkModal.tsx:283"
+      ],
+      "has_verifier_correction": false,
+      "verified_by": "adversarial",
+      "challenges": [
+        "adversarial"
+      ],
+      "refuted": false,
+      "summary": "A PSM auditor asks for every external link outstanding on the unit's P&IDs. The controller has to open each document's share modal in turn, or export the org backup (documentshares is in ORGSCOPEDTABLES, tokens redacted per DEC-45) and read the JSON. A contractor's seat is removed: their links already stop serving at the next resolve (shareStillAuthorized), but nothing shows the controller which l",
+      "area": "document-control",
+      "report": "audit-reports/document-control/05-distribution.md"
+    },
+    {
       "id": "DRLS-9",
       "title": "Any member can close out `revision_branches` debt without merging anything",
       "severity": "MEDIUM",
@@ -2465,7 +2489,7 @@
       "id": "EGR-5",
       "title": "A share link always serves the CURRENT version and ignores document status and active holds — a voided or held drawing keeps flowing to outsiders",
       "severity": "MEDIUM",
-      "status": "OPEN",
+      "status": "RESOLVED",
       "verification": "CONFIRMED",
       "verification_note": null,
       "blast_radius": null,
@@ -3694,7 +3718,7 @@
       "locations": [
         "supabase/migrations/20260818_followups_rls.sql:95-102",
         "supabase/migrations/20260818_followups_rls.sql:107-117",
-        "app/api/share/resolve/route.ts:83",
+        "app/api/share/resolve/route.ts:59",
         "supabase/migrations/20261013_project_controls_program.sql:56-58"
       ],
       "has_verifier_correction": false,

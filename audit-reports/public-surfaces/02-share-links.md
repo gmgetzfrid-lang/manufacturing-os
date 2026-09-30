@@ -1,6 +1,6 @@
 # 02 · Share links & the short link
 
-**13 findings** — 1 CRITICAL · 4 HIGH · 8 MEDIUM.
+**14 findings** — 1 CRITICAL · 4 HIGH · 8 MEDIUM · 1 LOW.
 
 Token entropy, expiry, revocation, and whether a share respects a hold.
 
@@ -30,7 +30,7 @@ Token entropy, expiry, revocation, and whether a share respects a hold.
 ## SHR-1 · Share rows carry no org-consistency constraint and both public routes resolve the document org-blind with the service role — a member of org A can mint a public internet link to any org B document whose UUID they can obtain
 
 - **Severity:** CRITICAL
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Verification:** CONFIRMED
 - **Locations:** `supabase/migrations/20260623_document_shares.sql:38-54`, `lib/documentShares.ts:46-54`, `app/api/share/resolve/route.ts:32-58`, `app/api/share/file/route.ts:42-58`, `app/d/[number]/route.ts:26-46`
 - **Independently verified:** ✓ **SURVIVES** — second independent adversarial pass. Every link in the chain holds: the RLS WITH CHECK validates the attacker's own org_id while leaving document_id unvalidated, and neither public route re-checks the pairing before service-role-reading the version's storage key and streaming the bytes from R2. The UUID needed to weaponize it is handed out unauthenticated by app/d/[number]/route.ts (SHR-2). CRITICAL stands — this is cross-tenant exfiltration via a public URL.
@@ -54,6 +54,17 @@ Token entropy, expiry, revocation, and whether a share respects a hold.
 - [ ] document_shares carries a DB-level guarantee that document_id belongs to org_id (composite FK against documents(id, org_id) with a matching unique index, or a BEFORE INSERT/UPDATE trigger that rejects the mismatch)
 - [ ] app/api/share/resolve/route.ts and app/api/share/file/route.ts both filter the documents lookup by `.eq("org_id", share.org_id)` and 404 on mismatch
 - [ ] a test inserts a share row whose document_id belongs to a different org than org_id and asserts the insert is rejected by the database, not just by the UI
+
+**Resolution (2026-09-29, document-control Round F wave 2).** **Record-only close — resolved by roles-and-permissions `EGRESS-1`** (Round D, 2026-08-24; document-control `EGR-2` carries the same close), re-verified in the current tree: `20261022_document_shares_acl_scope.sql:44-57` makes the INSERT `WITH CHECK` require `d.id = document_shares.document_id AND d.org_id = document_shares.org_id` (plus the creator's read decision); `20261026` binds `created_by = auth.uid()` and makes `document_id` / `org_id` / `created_by` immutable by a BEFORE UPDATE trigger (now BEFORE INSERT OR UPDATE, `supabase/migrations/20261080_dc_roundF_share_minting_and_revocation.sql`, the body byte-carried); `20261037:119-135` is the newest live INSERT body and `supabase/migrations/20261080_dc_roundF_share_minting_and_revocation.sql` carries it byte-for-byte while adding arms; both public routes org-join the document lookup — `lib/shareServe.ts:146-151` `.eq("id", s.document_id).eq("org_id", s.org_id)` — and 404 a miss before the org name or a byte is read. The `/d/[number]` supplier of foreign UUIDs is `SHR-2` (→ `EGRESS-2`, PS-VERIFY).
+
+**Done-when.**
+1. ✓ (20261022 / 20261037, applied 2026-08-24 per the file headers) The WITH CHECK correlates the pair, and the 20261026 trigger keeps the pair immutable afterwards. It is a policy + trigger rather than a composite FK: a service-role writer bypasses the policy (not the trigger) — no service-role path inserts shares (the restore lands rows revoked, DEC-45).
+2. ✓ Both routes filter by `org_id` and 404 on mismatch (`lib/__tests__/shareResolveRoute.test.ts`, `lib/__tests__/shareRoutes.test.ts`).
+3. ◐ No live database in the loop; the rejection is proven statically — the policy text is pinned (`lineDiff` in `lib/__tests__/shareRoutes.test.ts` shows the 20261037 body intact under 20261080) and the routes' org-join is driven end-to-end. The 20261022 header records the live apply.
+
+**Scope / residual.** None.
+
+**Verification fix (2026-09-30, document-control Round F wave 2).** Citation only: the org-joined documents lookup moved from `lib/shareServe.ts:140-145` to `:146-151` when `SHR-3`'s serve-time download-deny check landed above it; the code and this finding's status are unchanged.
 
 ---
 
@@ -109,7 +120,7 @@ app/d/[number]/route.ts:26-32 `const { data: rows } = await supabaseAdmin.from("
 ## SHR-3 · A share link ignores every access control the internal download path enforces: holds, document status (Void/Superseded/Archived), private/hidden visibility, and explicit ACL deny-download
 
 - **Severity:** HIGH
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Verification:** CONFIRMED
 - **Locations:** `app/api/share/file/route.ts:42-81`, `app/api/share/resolve/route.ts:32-58`, `app/api/storage/download-url/route.ts:47-113`, `app/api/verify/route.ts:88`
 - **Independently verified:** ✓ **SURVIVES, corrected** — second independent adversarial pass. The core claim is right and HIGH is right: an ACL that explicitly denies download, and private/hidden visibility, are both enforced on the internal byte-issuing route and both absent from the share route — and RLS lets any member mint the share regardless of that ACL. The correction is factual scope: HOLDS and STATUS are not enforced on the internal download path either. Holds only block advancing a document (lib/documentGuards.ts:138-146 'Active holds block advancing', backstopped by 20260713_document_publish_guard.sql, which guards only current_version_id/Superseded transitions), and 'Void' appears in lib/downloads.ts:62-63 solely as a badge tone. So the share link does not bypass a hold/status download gate — no such gate exists anywhere.
@@ -135,6 +146,25 @@ file/route.ts:47-51 is the entire authorization: `if (!share) return ... 404; if
 - [ ] both routes evaluate visibility and the acl_index deny-download rules against the SHARER's principal at resolve time, mirroring app/api/storage/download-url/route.ts:47-113
 - [ ] the /share landing page shows the document's control status, not just number/title/rev
 
+**Resolution (2026-09-29, document-control Round F wave 2).** Same fix as document-control `DRLS-5` / `EGR-5` / `DIST-6` — the shared `lib/shareServe.ts` decision both routes run: `documents.status` + `archived_at` read; `Draft`, `NOT_CURRENT_STATUSES` (Void / Superseded / Archived) or an archived record refused `410 withdrawn` with the reason; an open `document_holds` row refused `423 on_hold` via `lib/holdGate.ts assertNotOnHold` (fail-closed on a read error) — and because the landing page is unauthenticated, the refusal names only the hold's predefined CATEGORY (`publicShareHoldReason` over `lib/holds.ts publicHoldReason`, the HLD-7 / VFY-6 rule `/api/verify-hold` follows), never the operator's free-text reason or a database error (that detail is logged server-side); the creator's CURRENT visibility / `acl_index` READ decision re-evaluated every resolve by `shareStillAuthorized` (R&P `EGRESS-1`, `lib/shareAuthorization.ts:23-40`, mirrors `lib/knowledgeAccess` — the read decision `/api/storage/download-url` enforces for private / hidden documents) so a read deny landing on the sharer kills the link, and the creator's CURRENT minting tier re-asked too (`creatorMayShare`: a controller by the role collection or a granted publisher of the library, else `410`); and minting refused for the same document states at the database (`supabase/migrations/20261080_dc_roundF_share_minting_and_revocation.sql` `document_share_refusal`) and in the app. The landing page shows the control status beside the revision and states the always-current rule.
+- Files: `lib/shareServe.ts`, `lib/shareRules.ts`, `app/api/share/resolve/route.ts`, `app/api/share/file/route.ts`, `app/share/[token]/page.tsx`, `supabase/migrations/20261080_dc_roundF_share_minting_and_revocation.sql`
+- Tests: `lib/__tests__/shareRoutes.test.ts` (the `DRLS-5` cases; "revoked / expired / cross-org / lapsed-authority refusals are unchanged and come before the status gate"; "an active hold refuses (423 on_hold) with only the hold's PUBLIC category …"; "publicShareHoldReason: predefined categories only …").
+- Reproduced: base `file/route.ts:47-62` — the whole authorization was `revoked_at` / `expires_at` / org-join / `shareStillAuthorized`; `status` not selected; no `document_holds` reference under `app/api/share/**`.
+- Verified: `tsc` 0, `eslint` 0 on every touched file, full `vitest` green (194 files / 2595 tests, re-run after the second review fix pass).
+
+**Done-when.**
+1. ✓ Both routes fetch `status` and refuse Void / Superseded / Archived / Draft before any metadata or byte leaves.
+2. ✓ Both routes check for an open `document_holds` row (`released_at IS NULL`) and refuse while one exists — or while the hold set cannot be read.
+3. ✓ Visibility and the `acl_index` READ decision are evaluated against the SHARER's principal at resolve time (`shareStillAuthorized`, already since `EGRESS-1`; now on the one shared path), the sharer must still hold the minting tier, and — since the 2026-09-30 verification fix — the explicit ACL *deny-download* rule the internal route honours is evaluated against the SHARER too, by the same helper that route now calls (`lib/downloadDeny.ts memberDownloadDenied`, asked inside `creatorMayShare`, `lib/shareServe.ts:210-215`): a creator named by uid, by any role in their collection, or by a team gets `410` on both routes before any byte or metadata leaves, and so does one whose roles / teams cannot be read while a download deny exists (fail-closed). This criterion is about resolve time and holds in full; the MINT side (the INSERT policy still admits such a creator's row, which then never serves) is `SHR-14`.
+4. ✓ The `/share` page renders `Rev X · <status>`, the always-current statement, and the withdrawn / on-hold states with the server's reason — for a hold, the predefined category only (a free-text reason reads "under an active hold"; an unreadable hold set reads "could not be confirmed").
+
+**Scope / residual.** The mint-time rail is `supabase/migrations/20261080_dc_roundF_share_minting_and_revocation.sql` (pending apply — `DIST-6`). It has no download-deny arm: there is no SQL download-deny predicate to call (the database decides visibility and publish authority; members' downloads are refused only by `/api/storage/download-url`), so a granted publisher denied download on a document can still INSERT a share row for it — a row that never serves. Opened as `SHR-14` (DEC-31); nothing of it is claimed here.
+
+**Verification fix (2026-09-30, document-control Round F wave 2).** An independent check of `f1ce4c7` found this finding RESOLVED while criterion 3 was ◐: a publisher granted on the library but DENIED DOWNLOAD on document X could mint a link to X, and the link served. Closed at SERVE time, in code: the member route's inline deny-download block is now `lib/downloadDeny.ts` (`memberDownloadDenied` over `downloadDeniedTo` — `acl_index.deny.{users,roles,teams}.download` against the uid, every role in the collection via `normalizeRoles` (a missing row reads as Viewer), and the teams; controllers not exempt, as on that route); `app/api/storage/download-url/route.ts:153-167` calls it (same evaluation, same fail-open posture on a read error); `creatorMayShare` (`lib/shareServe.ts:196-226`) calls the same helper for the share's CREATOR before the tier check and refuses on `denied` or `unreadable`, so both routes answer `410 revoked` (`authority_lapsed` on the access trail); `resolveShareForServing` selects `acl_index` with the document (`lib/shareServe.ts:148`). NOT closed at MINT time — see Scope / residual and `SHR-14`. Criterion 3 re-marked ✓ on what now holds; Status stays RESOLVED.
+- Files: `lib/downloadDeny.ts` (new), `lib/shareServe.ts`, `app/api/storage/download-url/route.ts`
+- Tests: `lib/__tests__/shareRoutes.test.ts` — "an explicit ACL download deny naming the CREATOR stops the link serving (SHR-3 criterion 3) …" (by uid, by an additive role, by team, a controller named by uid, an unreadable team set; a deny naming someone else, a read-only entry and no index all serve; the route and `creatorMayShare` share the helper) — it fails against `f1ce4c7`'s `lib/shareServe.ts` (200 where 410 is expected); `lib/__tests__/downloadDeny.test.ts` (the rule, and the member route through it — 403 for uid / additive role / team / controller, fail-open posture unchanged); `lib/__tests__/rpPhase5Additive.test.ts` (the CHAIN-1 headline-seed source pin re-pointed at the helper).
+- Verified: `tsc` 0, `eslint` 0 on every touched file, full `vitest` green (195 files / 2602 tests).
+
 ---
 
 <a id="shr-4"></a>
@@ -142,7 +172,7 @@ file/route.ts:47-51 is the entire authorization: `if (!share) return ... 404; if
 ## SHR-4 · Any active org member — including a Viewer — can mint a never-expiring public internet link to a controlled drawing, and no one can ever enumerate or bulk-revoke it
 
 - **Severity:** HIGH
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Verification:** CONFIRMED
 - **Locations:** `components/documents/InspectorPanel.tsx:574-580`, `components/documents/ShareLinkModal.tsx:27-33`, `components/documents/ShareLinkModal.tsx:61-73`, `lib/documentShares.ts:41-45`, `lib/documentShares.ts:59-66`, `supabase/migrations/20260623_document_shares.sql:20`
 - **Also surfaced independently as** [`DIST-6`](../document-control/05-distribution.md#dist-6) — two lenses found this separately. Fix once.
@@ -170,6 +200,19 @@ InspectorPanel.tsx:575-580 `<button onClick={() => setShareOpen(true)} title="Ge
 - [ ] listShareLinks and revokeShareLink destructure and surface `{ error }`; a failed list renders an error state, never the empty state
 - [ ] a document transitioning to Superseded / Void / Archived, or its creator being deactivated, revokes or disables its outstanding share links
 
+**Resolution (2026-09-29, document-control Round F wave 2).** Same defect as document-control `DIST-6` — fixed once; that record carries the full description. Summary: minting is the controller tier (by the role collection) or a granted publisher of the document's library, enforced in the modal (`canMintShare`, `useRole().hasAnyRole`) and by the INSERT policy (`supabase/migrations/20261080_dc_roundF_share_minting_and_revocation.sql`: `is_org_controller OR user_can_publish_on_library`); "Never expires" is removed (`DURATION_OPTIONS` 1 / 7 / 30 / 90 days; `shareExpiryFor` refuses 0 and >90; the trigger enforces the 90-day ceiling on INSERT and on any `expires_at` change, measured from a `created_at` the database stamps (`now()` on a live INSERT, whatever the client sent) and never lets move, with up to an hour of browser-clock skew clamped to the ceiling rather than refused; the backfill caps live rows); `listShareLinks` / `revokeShareLink` were already checked writes (`EGRESS-7` / `EGRESS-8`, re-verified) and now write audit rows; a document transitioning to Superseded / Void / Archived stops serving (`DRLS-5`) and supersede revokes (`DIST-1`); a deactivated creator's links die at the next resolve (`shareStillAuthorized` → `loadPrincipal` returns null for a non-active member → 410), and so do the links of a creator who no longer holds the minting tier (`creatorMayShare`, `lib/shareServe.ts` — a Viewer-minted never-expiring link from before `20261080` stops serving at the wave-2 deploy); both audit writes are checked (a refused row is reported to the caller as `auditWarning`).
+- Files / Tests / Reproduced / Verified: see `DIST-6`.
+- Pending migration: `supabase/migrations/20261080_dc_roundF_share_minting_and_revocation.sql` — **not applied**.
+
+**Done-when.**
+1. ✓ (pending migration for the DB half) An explicit capability — controller or library publish grant — enforced in the modal and by RLS on INSERT.
+2. ✓ "Never expires" removed; the 90-day maximum enforced server-side by trigger, on the database's clock (`created_at := now()` on a live INSERT; `created_at` immutable on UPDATE) — a client-supplied or later-moved `created_at` cannot extend it.
+3. ✗ An org-level admin view of every live link with bulk revoke — not built (a new admin screen outside this package's files); opened as document-control `DIST-15` (DEC-31).
+4. ✓ `listShareLinks` throws (the modal renders its own list-error banner, never "None yet.") and `revokeShareLink` throws on error or on zero rows for a LIVE row — verified (`EGRESS-7` / `EGRESS-8`); revoking a row that is already revoked is a no-op success with no second audit row (the update is filtered `.is("revoked_at", null)` and re-reads on zero rows).
+5. ✓ Status transitions DISABLE the link (it answers `withdrawn` while the status is not current); supersede also revokes (`DIST-1`); split / merge / archive do not revoke yet (`REV-10`'s lifecycle half, P3 LIFECYCLE). Creator deactivation: `shareStillAuthorized` fails closed → 410; so does a creator who lost the minting tier (`creatorMayShare`).
+
+**Scope / residual.** `DIST-15` (criterion 3) — no wave-2 package owns it; the integrator schedules it (see `DIST-15`'s owner line).
+
 ---
 
 <a id="shr-5"></a>
@@ -178,9 +221,9 @@ InspectorPanel.tsx:575-580 `<button onClick={() => setShareOpen(true)} title="Ge
 - **Also surfaced independently as** [`DIST-7`](../document-control/05-distribution.md#dist-7) — two areas found this separately. Fix once. **DIST-7's pass rated this CONFIRMED** on the same evidence; treat the `SUSPECTED` above as superseded.
 
 - **Severity:** HIGH
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Verification:** SUSPECTED
-- **Locations:** `app/api/share/file/route.ts:129-141`, `app/api/share/file/route.ts:139`, `supabase/schema.sql:789-799`, `app/api/share/file/route.ts:15-16`
+- **Locations:** `app/api/share/file/route.ts:129-141`, `app/api/share/file/route.ts:120`, `supabase/schema.sql:789-799`, `app/api/share/file/route.ts:15-16`
 - **Independently verified:** ✓ **SURVIVES** — second independent adversarial pass. Correct, and the 'doubly swallowed' characterization is precise: supabase-js resolves with `{ error }` instead of throwing, so PostgREST's PGRST204 rejection is discarded by the ignored return value, and the bare `catch {}` would have eaten it anyway. No console.warn, no metric — the route header comment at :15-16 ('The download_audits row is written HERE') describes behavior that never occurs.
 
 **Mechanism.** file/route.ts:130-140 inserts into download_audits with `source: stamped ? "share_link" : "share_link_unstamped"`. download_audits has no `source` column: schema.sql:789-799 defines exactly id, org_id, document_id, version_id, user_id, user_email, created_at, expires_at, watermark_policy_id, and grep across every .sql in the repo finds no ALTER TABLE adding one (the only other download_audits line in supabase/ is the RLS enable at schema.sql:1022 and the policy at 1090). Every other writer in the codebase omits it — lib/downloads.ts:132-141 and lib/docPack.ts:112-123 both insert the nine real columns only; app/api/share/file/route.ts:139 is the sole call site that sends `source`. PostgREST rejects an unknown column with PGRST204 and inserts nothing. The error is then swallowed twice over: supabase-js resolves with `{ error }` instead of throwing, so the `try { ... } catch { }` at lines 129/141 catches nothing and the returned error object is never destructured or checked — and the catch block is empty with only the comment `/* pre-migration column drift — never block the share */`, so even a genuine throw would print nothing. The request proceeds to line 145 and returns the PDF.
@@ -204,6 +247,18 @@ file/route.ts:130-140 `await sb.from("download_audits").insert({ org_id: share.o
 - [ ] user_id is not silently null for a NOT NULL column — the external pull is attributed distinguishably from the sharer's own downloads (e.g. a share_id column, or a sentinel actor), so getDocumentRecall does not merge outsiders into the sharer
 - [ ] a test drives GET /api/share/file end to end and asserts exactly one download_audits row exists afterward
 
+**Resolution (2026-09-29, document-control Round F wave 2).** Same defect as document-control `DIST-7` / `EGR-3` — fixed once; those records carry the description. `20261068` (P2 EGRESS) added `source` / `share_id` / `transmittal_id` and made `user_id` nullable behind an attribution CHECK; `app/api/share/file/route.ts` writes `user_id: null, share_id, source` with the served `version_id`, checks `{ error }`, logs a refusal and refuses the download `503 unrecorded` BEFORE any byte leaves — except that the refusal which IS the unapplied `20261068` is logged as the deploy order and retried once in the pre-20261068 shape (sharer-attributed, as before), so a deploy ahead of the paste records and serves rather than locking every outside recipient out (`DIST-7`).
+- Tests: `lib/__tests__/shareRoutes.test.ts` — "happy path: the record lands BEFORE the bytes …" asserts exactly one `download_audits` row after a GET with the exact keys; "ahead of 20261068 … retried ONCE in the pre-20261068 shape"; "a download_audits write refused in BOTH shapes refuses the download (503 unrecorded)"; "a refusal that is NOT the missing migration … is not retried".
+- Pending migration: `supabase/migrations/20261068_dc_roundF_download_audits_record.sql` (P2 — **not applied**).
+
+**Done-when.**
+1. ✓ `source` added by migration (and `schema.sql` is the pre-migration baseline by convention — the numbered sequence is the source of truth).
+2. ✓ `{ error }` destructured and checked; a failure is logged loudly and refuses the download (the missing-migration refusal first earns one retry in the table's older shape).
+3. ✓ `user_id` is NULL by design behind `CHECK download_audits_attributed`; the pull is attributed by `share_id`, so `getDocumentRecall` keys it `share:<id>` and flags it external — never merged into the sharer.
+4. ✓ The test drives `GET /api/share/file` through the route with a Proxy-chain service client and asserts exactly one `download_audits` insert (no live database in the loop; the insert is captured, not executed).
+
+**Scope / residual.** Historical gap documented under `EGR-3`.
+
 ---
 
 <a id="shr-6"></a>
@@ -211,7 +266,7 @@ file/route.ts:130-140 `await sb.from("download_audits").insert({ org_id: share.o
 ## SHR-6 · "never an in-review draft" is enforced only on the fallback branch — the primary current_version_id path applies no review_state filter at all
 
 - **Severity:** MEDIUM
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Verification:** SUSPECTED
 - **Locations:** `app/api/share/resolve/route.ts:52-71`, `app/api/share/file/route.ts:60-80`, `lib/reviewControl.ts:429-446`
 - **Independently verified:** ✓ **SURVIVES** — second independent adversarial pass. The code reads exactly as claimed — the comment 'Resolve the current PUBLISHED version's file (never an in-review draft)' sits directly above the branch that does not check. MEDIUM is right: reaching it requires the unchecked relabel at reviewControl.ts:445 to fail after the promote at :429 succeeded, which is a narrow window, but the filter's absence on the primary branch means nothing else would catch it.
@@ -237,6 +292,20 @@ resolve/route.ts:52-58 `// Resolve the current PUBLISHED version's file (never a
 - [ ] reviewControl.ts:445's update checks its `{ error }` so a failed approve does not silently leave an in_review row as current
 - [ ] a test points current_version_id at an in_review version and asserts /api/share/file returns an error rather than the draft
 
+**Resolution (2026-09-29, document-control Round F wave 2).** The resolution logic is ONE helper, `lib/shareServe.ts resolveShareForServing` — both routes import it and neither carries a version query any more; its version step is `lib/shareRules.ts resolveServedVersion`, which the share modal's "resolves to" also runs (P4's `dcRoundFReviewGate.test.ts` source pin was re-pointed at it). The `current_version_id` branch selects `id, file_url, revision_label, review_state, is_branch, superseded_at` and serves only when `versionServable` holds (review_state null / `approved`, not a branch, not superseded, has a file); a current row that fails with a file present is refused — `version: null` → resolve answers `fileUrl: null`, file answers `404 nofile` — and the fallback is NOT consulted (the pointer names an unpublished row: an anomaly to refuse, not to paper over). The failure window itself is closed by P4 (`RG-12`, wave 1): the approve-stamp update after the promote checks its error — `lib/reviewControl.ts:766` `const { data: relabeled, error: relabelErr } = …update({ review_state: "approved", … })` (verified).
+- Files: `lib/shareServe.ts`, `lib/shareRules.ts` (`versionServable`, `resolveServedVersion`), both routes; `lib/__tests__/dcRoundFReviewGate.test.ts` (one source pin re-pointed)
+- Tests: `lib/__tests__/shareRoutes.test.ts` — "a current pointer at an in_review row (SHR-6 failure window) is NOT served and NOT fallen past; a branch / superseded current row likewise" (asserts no fallback `order()` ran and no bucket read), "a version serves only when it has a file, is null/approved, not a branch and not superseded".
+- Reproduced: base `file/route.ts:73-77` selected `file_url` only on the primary branch; the filter lived at `:83` inside `if (!storagePath)`; the test fails against the base files.
+- Verified: `tsc` 0, `eslint` 0 on every touched file, full `vitest` green (194 files / 2595 tests, re-run after the second review fix pass).
+
+**Done-when.**
+1. ✓ The `current_version_id` branch selects `review_state` (with `is_branch`, `superseded_at`) and refuses a version that is not null / approved. `released_at` is not selected: `review_state` is the field the publish contract writes and the fallback already filters on; adding `released_at` would refuse legacy null-`review_state` rows that predate the field.
+2. ✓ One shared helper; the routes cannot drift.
+3. ✓ Landed by P4 `RG-12` (`lib/reviewControl.ts:766` checks `relabelErr`).
+4. ✓ The test points `current_version_id` at an `in_review` row and asserts `/api/share/file` answers 404, serves nothing, and does not fall back.
+
+**Scope / residual.** None.
+
 ---
 
 <a id="shr-7"></a>
@@ -244,7 +313,7 @@ resolve/route.ts:52-58 `// Resolve the current PUBLISHED version's file (never a
 ## SHR-7 · A share link is bound to the document, not the revision — it silently follows every rev-up, and the stamped footer's rev comes from documents.rev rather than the version actually served
 
 - **Severity:** LOW
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Verification:** CONFIRMED
 - **Locations:** `supabase/migrations/20260623_document_shares.sql:16`, `app/api/share/file/route.ts:62-80`, `app/api/share/file/route.ts:102-117`, `components/documents/ShareLinkModal.tsx:133-135`
 - **Independently verified:** ✓ **SURVIVES, corrected** — second independent adversarial pass. Severity **MEDIUM → LOW** by this pass. The always-current behavior is real but is the documented design, not a defect: the migration header states the route 'generates a presigned download URL for the current version's storage path', and ShareLinkModal.tsx:133-135 promises only that 'Anyone with the resulting URL can open the document until it expires or you revoke it' — no revision pinning is claimed. The stamped copy also names the rev it actually contains and carries a verify QR. The 'footer rev comes from documents.rev rather than the version served' half is false on the primary path and can only diverge on the rare fallback branch (current_version_id set but its file_url null), so I'd drop this to LOW.
@@ -269,6 +338,25 @@ resolve/route.ts:52-58 `// Resolve the current PUBLISHED version's file (never a
 - [ ] the stamped footer's revision is read from the version actually streamed (document_versions.revision_label for versionId), not from documents.rev
 - [ ] the existing-links list in ShareLinkModal shows which revision the link currently resolves to
 - [ ] the download filename at file/route.ts:144 uses the same version-derived label as the footer
+
+**Resolution (2026-09-29, document-control Round F wave 2).** The model is stated, everywhere the person meets it, and recorded as DEC-46: **a share always serves the CURRENT revision, no version pinning.** The modal's Create box says so ("today Rev X; if the document is revved, the same link serves the new revision"), every live link row says what the DOCUMENT serves right now as the ROUTES would decide it — "resolves to Rev X" from the served row's own label, "no published file to serve", or "not serving now" when the document is withdrawn / held (the modal's `loadShareDocumentContext` runs `lib/shareRules.ts resolveServedVersion`, the same function `lib/shareServe.ts` calls for both routes, and the refusal comes from `shareRefusalState`, the same status + hold rule) — and "couldn't confirm whether it is serving" when that refusal is only the modal's own failed read (a documents or hold read error: minting is refused, but the service-role routes may be serving). What a row does NOT compute is the per-link half of the routes' decision — whether that link's creator still holds the authority it serves on (`shareStillAuthorized`, `creatorMayShare`); the list states it instead ("A link serves on its creator's current authority: it also stops serving if they leave the organisation, can no longer read this document, are denied download on it, or no longer hold Document Control / Admin or a publish grant on this library."), the landing page says "This link always serves the **current** revision at the moment you download — it is not pinned to the revision it was shared at" beside `Rev X · <status>`, and the stamped footer reads `<label> Rev <served> (<status>) at time of download — a share always serves the current revision.` The label-mismatch half: `servedLabels` (`lib/shareServe.ts`) takes the revision from the SERVED row's `document_versions.revision_label` (`documents.rev` only when the row has no label) and both the footer and the `Content-Disposition` filename use it — the test serves a document whose `rev` is `A` from a version labelled `B` and asserts `P-101_RevB.pdf` and a `Rev B` footer.
+- Files: `lib/shareServe.ts`, `lib/shareRules.ts` (`resolveServedVersion`), `lib/documentShares.ts` (`loadShareDocumentContext` → `served`; `shareRefusalState` → `confirmed`), `app/api/share/file/route.ts`, `app/api/share/resolve/route.ts`, `components/documents/ShareLinkModal.tsx`, `app/share/[token]/page.tsx`, `audit-reports/DECISIONS.md` (DEC-46)
+- Tests: `lib/__tests__/shareRoutes.test.ts` — "happy path … the copy names the SERVED version's label" (filename + footer), "returns the served version's rev label …" (resolve), "loadShareDocumentContext resolves what a link serves by the ROUTES' rule (SHR-7) …" (label `B` not `rev` `A`; an in-review current row → nothing, as the server answers `nofile`; a read error → unknown), "shareRefusalState says whether a refusal is CONFIRMED … or only UNCONFIRMED …", the modal / page source pins (the unconfirmed branch precedes "not serving now"; the creator-authority sentence under the list).
+- Reproduced: base `file/route.ts:113` `const rev = (doc.rev …)` feeding the footer at `:123` and the filename at `:154`; the modal's only description at `:149` never named a revision.
+- Verified: `tsc` 0, `eslint` 0 on every touched file, full `vitest` green (194 files / 2595 tests, re-run after the second review fix pass).
+
+**Done-when.**
+1. ✓ Intent stated explicitly: always current — in the modal, on the landing page, on the copy, and as DEC-46.
+2. ✓ The footer's revision is the served version's `revision_label`.
+3. ✓ Every live link row shows the revision the document currently resolves to — computed by the routes' own resolution (`resolveServedVersion`), not `documents.rev`. It reads "no published file" / "not serving now" when the DOCUMENT is one the server would answer `nofile` / refuse for, and "couldn't confirm" when the modal's own read failed. It is not a per-link verdict: a link whose creator has lapsed (left, lost read access, is denied download, lost the minting tier) is refused `410` by the server while its row still names the document's revision — the list says so in words rather than claiming the row is exact.
+4. ✓ The filename uses the same version-derived label as the footer.
+
+**Scope / residual.** None.
+
+**Verification fix (2026-09-30, document-control Round F wave 2).** Two corrections to the modal. (a) Its context-load `catch` (`components/documents/ShareLinkModal.tsx:117-125`) cleared `canMint` and `served` but left `refusal` / `refusalConfirmed` from the previous read, so a CONFIRMED refusal ("existing links are not serving: …") could survive a later failed read; the catch now sets the unconfirmed refusal ("Couldn't confirm the document's state; it is treated as unshareable.", `refusalConfirmed` false), so the banner says whether existing links serve couldn't be confirmed. (b) The creator-authority sentence under the list now also names a download deny ("… can no longer read this document, are denied download on it, or …"), the check `SHR-3`'s verification fix added at serve time; the quote in the Resolution above is updated to the shipped text.
+- Files: `components/documents/ShareLinkModal.tsx`
+- Tests: `lib/__tests__/shareRoutes.test.ts` — the modal source pin ("the modal offers no never-expires option …") now asserts the catch body resets the refusal to the unconfirmed one, and the extended sentence. A source pin, not a rendered-component test.
+- Verified: `tsc` 0, `eslint` 0 on every touched file, full `vitest` green (195 files / 2602 tests).
 
 ---
 
@@ -311,7 +399,7 @@ file/route.ts:109-117 — the StampOptions object contains no sourceBytes key. s
 - **Severity:** LOW
 - **Status:** OPEN
 - **Verification:** CONFIRMED
-- **Locations:** `public/sw.js:196-213`, `public/sw.js:113-118`, `app/api/share/file/route.ts:145-151`, `app/layout.tsx:93`, `components/pwa/ServiceWorkerManager.tsx:30-33`
+- **Locations:** `public/sw.js:196-213`, `public/sw.js:113-118`, `app/api/share/file/route.ts:152-158`, `app/layout.tsx:93`, `components/pwa/ServiceWorkerManager.tsx:30-33`
 - **Independently verified:** ✓ **SURVIVES, corrected** — second independent adversarial pass. Severity **MEDIUM → LOW** by this pass. The caching is real, but the finding's framing overstates the consequence: the branch is NETWORK-FIRST, so an online recipient always gets the live 410 for a revoked link — the cache is served only when the fetch throws (offline). And the recipient already saved the stamped PDF to their filesystem via the anchor at page.tsx:75-81, so the SW copy adds essentially no exposure beyond the file they legitimately hold. LOW.
 
 **Mechanism.** ServiceWorkerManager is mounted in the ROOT layout (app/layout.tsx:103 `<ServiceWorkerManager />`), not the (protected) layout, so it registers /sw.js for every visitor to /share/[token] — including outsiders with no account. The page fetches the file with `fetch(data.fileUrl)` (share/[token]/page.tsx:67), a same-origin non-navigate GET to /api/share/file. sw.js routes it: not cross-origin (line 118 guard passes), no _rsc header (line 145-152), not mode 'navigate', and /api/share/file matches neither the /_next/static prefix nor the static-extension regex at line 172-175 — so it falls through to the final 'Other same-origin GETs → network-first with cache fallback' handler at lines 196-213, which calls `cachePut(RUNTIME_CACHE, request, res)` on every successful response. cachePut (lines 113-118) gates only on `response.ok` and `response.type === "opaque"`; it never inspects Cache-Control. The route sets `"Cache-Control": "no-store"` at file/route.ts:149 specifically to prevent this, and the Cache API ignores it. The identical path caches /api/share/resolve's JSON. Both entries survive until VERSION is bumped (sw.js:36), because activate only deletes caches not starting with the current VERSION (lines 54-64).
@@ -342,9 +430,9 @@ sw.js:196-213 `event.respondWith((async () => { try { const res = await fetch(re
 ## SHR-10 · The recipient of a shared controlled document is never identified or logged — access_last_ip is a dead column and the routes capture nothing about who pulled the file
 
 - **Severity:** MEDIUM
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Verification:** CONFIRMED
-- **Locations:** `supabase/migrations/20260623_document_shares.sql:27`, `app/api/share/file/route.ts:129-140`, `app/api/share/resolve/route.ts:83`, `supabase/migrations/20260623_document_shares.sql:8-10`
+- **Locations:** `supabase/migrations/20260623_document_shares.sql:27`, `app/api/share/file/route.ts:129-140`, `app/api/share/resolve/route.ts:59`, `supabase/migrations/20260623_document_shares.sql:8-10`
 - **Independently verified:** ✓ **SURVIVES** — second independent adversarial pass. Claim of absence confirmed by repo-wide search. The only recipient-side data captured is a count and a timestamp; the download_audits row that /api/share/file writes is attributed to the SHARER, so the distribution record cannot distinguish one recipient from four.
 
 **Mechanism.** document_shares declares `access_last_ip TEXT` (20260623:27) under an `-- Audit` heading. Two differently-shaped searches — grep for access_last_ip across .ts/.tsx/.sql, and a repo-wide grep excluding node_modules — return exactly one hit: the CREATE TABLE line itself. Nothing writes it. bump_share_access (20260818:97-99) updates only access_count and access_last_at. Neither route reads any request header — no x-forwarded-for, no user-agent, no referer — and neither takes any recipient identity: there is no email gate, no name prompt, no acknowledgement step on the landing page (share/[token]/page.tsx renders only a download button). The one record that would have carried an actor, download_audits, sets `user_id: share.created_by` and `user_email: null` (file/route.ts:134-135), i.e. it names the internal sharer, not the outsider — and that insert fails outright anyway. So the total recorded fact about an external distribution is an integer that went up.
@@ -367,6 +455,27 @@ sw.js:196-213 `event.respondWith((async () => { try { const res = await fetch(re
 - [ ] each access records what can honestly be captured — timestamp, IP, user-agent — as a row per access, not just a counter
 - [ ] a share can optionally require the recipient to identify themselves before the file is released, so 'who received this revision' is answerable
 - [ ] the distribution record distinguishes an external share pull from the sharer's own internal download
+
+**Resolution (2026-09-29, document-control Round F wave 2).** What can honestly be captured is captured, per access, and nothing is pretended. `supabase/migrations/20261081_dc_roundF_share_access_log.sql` creates `document_share_accesses` (`share_id`, `org_id`, `document_id`, `version_id`, `kind` ∈ {`resolve`, `download`, `refused`}, `reason` (refused rows only), `ip`, `user_agent`, `refused_minute`, `created_at`; RLS on; one controller-only SELECT policy; no member write policy — service-role written; attribution uuids, not FKs, so the trail outlives the share) and re-creates `bump_share_access(uuid)` pinned at its existing arity, writing NO IP. The accessor's IP lives ONLY on `document_share_accesses` (controllers read it): `document_shares` rows are readable by every member who can read the document (`/api/share/list`, `20261066`), so writing `access_last_ip` there would hand an outside recipient's IP to Viewers. `access_last_ip` therefore stays unwritten, and `20261081` sets its `COMMENT` to say it is unused by design and where the trail is. It is not dropped: older backups carry the key and the restore upserts it. `lib/shareServe.ts requestMeta` reads the first `x-forwarded-for` hop (else `x-real-ip`) and the user agent, bounded (64 / 512 chars); `recordShareAccess` writes one row per resolve (link opened) and per download (bytes left), checked and logged loudly on failure. A REFUSED attempt on a known share is recorded too — `resolveShareForServing(sb, token, meta)` writes a `kind: "refused"` row with the reason (`revoked`, `expired`, `notfound` (cross-org), `authority_lapsed`, `withdrawn`, `on_hold`) before returning the refusal, and the bytes route adds `nofile` and `unrecorded` — so someone still using a revoked link, and from where, is on the trail. Refused rows are bounded to one per share per minute: the route stamps `refused_minute` and `20261081`'s partial unique index `document_share_accesses_refused_bound (share_id, refused_minute) WHERE kind = 'refused'` refuses the rest (the `23505` is treated as the bound working, not logged). Served opens are bounded the same way, because a live token can be looped as easily as a dead one: `resolve_minute` plus `document_share_accesses_resolve_bound (share_id, COALESCE(ip, ''), resolve_minute) WHERE kind = 'resolve'` — one open per share per client IP per minute (a missing IP is one bucket). Download rows are NOT bounded: each is a copy that left, paired with its `download_audits` row (the bytes route stamps and streams a PDF per request, so a loop there is a real distribution, recorded as one). An unknown token has no share to attribute to and writes nothing. The `download_audits` row is attributed by `share_id` with `user_id` NULL (`DIST-7`), so an external pull never appears as the sharer. Recipient identification is NOT added — by the stated default (DEC-46): possession of the token is the whole authorization and the record says what it knows (IP, UA, when, which version) rather than a name nobody verified.
+- Files: `supabase/migrations/20261081_dc_roundF_share_access_log.sql`, `lib/shareServe.ts`, `app/api/share/resolve/route.ts`, `app/api/share/file/route.ts`, `lib/exportTables.ts` (backup decision for the new table — excluded, with the reason)
+- Tests: `lib/__tests__/shareRoutes.test.ts` — "requestMeta takes the first forwarded-for hop and the user agent, bounded, never identity", "happy path … the access row: IP + UA, kind download, no identity", "a refused attempt on a KNOWN share leaves one 'refused' access row with the reason, IP and UA …", "refused rows are BOUNDED to one per share per minute and served opens to one per share per client IP per minute … a download row is never bounded", "returns the served version's rev label … records the open (IP on the controller-only trail); bumps the counter WITHOUT the IP", "document_share_accesses: RLS on, one controller SELECT policy, no member write policy, attribution uuids not FKs" (both bound indexes, both shape CHECKs), "bump_share_access keeps its arity … no IP, service_role only" (and the `access_last_ip` column comment).
+- Reproduced: repo-wide, `access_last_ip` appeared only in `20260623:27`; no `req.headers.get` under `app/api/share/**` on the base commit.
+- Verified: `tsc` 0, `eslint` 0 on every touched file, full `vitest` green (194 files / 2595 tests, re-run after the second review fix pass).
+- Pending migration: `supabase/migrations/20261081_dc_roundF_share_access_log.sql` — **not applied**.
+
+**Done-when.**
+1. ✓ Superseded by the trail (pending migration): the column is neither populated nor dropped. Populating it would put an outside accessor's IP on a row every member who can read the document can read; the IP lives on the controller-only `document_share_accesses` row instead, and `20261081` sets the column's `COMMENT` to "Unused by design … The per-access IP trail is document_share_accesses", so the schema no longer advertises it as an audit field — and empties any value an earlier draft's two-argument counter left in it (`UPDATE document_shares SET access_last_ip = NULL WHERE access_last_ip IS NOT NULL`, counted before the transaction). (Dropping it would break the restore of older backups, which carry the key.)
+2. ✓ (pending migration) One row per access — timestamp, IP, user agent, kind, version — in `document_share_accesses`, including every refused attempt on a known share (with the reason; bounded to one per share per minute); served opens bounded to one per share per client IP per minute; downloads one per copy.
+3. ✗ By decision (DEC-46): no recipient identification step. The honest answer to "who received this revision" is the share's note plus the per-access trail; a name typed by the accessor would be unverified and the product default rejects it.
+4. ✓ An external share pull is a `download_audits` row with `share_id` and `user_id` NULL — distinguishable from the sharer's own downloads (`lib/staleCopies.ts` flags it `external`).
+
+**Scope / residual.** No prune job for `document_share_accesses` is added (the cron route is not this package's file; the plan notes' default was "pruned at 90 days"). What bounds growth today: refused rows at most one per share per minute, opens at most one per share per client IP per minute, downloads one per copy actually served — so a loop from one client adds at most two rows a minute per share, but many clients (or many forwarded-for values, if the platform passes a client-supplied header through) still add rows, and nothing removes them. A retention rule — the 90-day prune — belongs with the download record's, the `RET-*` owner (`document-control/08-retention.md`), recorded in DEC-46 §5; until one names it, rows are kept.
+
+**Verification fix (2026-09-30, document-control Round F wave 2).** `supabase/migrations/20261081_dc_roundF_share_access_log.sql` is now idempotent over a paste of either earlier draft of itself (neither was handed out, but a draft-era table made the file fail: `CREATE TABLE IF NOT EXISTS` skipped it and the `resolve_minute` index then named a missing column). Before any index, it runs `ADD COLUMN IF NOT EXISTS` for `reason`, `refused_minute` and `resolve_minute`, gives a draft-era open its own `created_at` as its `resolve_minute` (so it satisfies the shape CHECK and never collides under the per-minute bound), and adds `document_share_accesses_refused_shape` / `_resolve_shape` only when `pg_constraint` lacks them, replacing the first draft's kind CHECK only when it does not admit `refused` (lines 82-117). It also empties `document_shares.access_last_ip` (line 163) — the column is unused and must not hold an outsider's IP; a DEC-30 temp inventory counts those rows BEFORE the transaction, and the final SELECT (still the one result set) adds the probes "no share carries access_last_ip" and "every column the routes write exists". Not run against a database (DEC-30: applied by hand).
+- Files: `supabase/migrations/20261081_dc_roundF_share_access_log.sql`
+- Tests: `lib/__tests__/shareRoutes.test.ts` — "idempotent over a paste of an EARLIER draft …" (the upgrade precedes every index, each constraint add is guarded, the inventory precedes BEGIN, one statement after COMMIT) and "bump_share_access keeps its arity …" (the only assignment to `access_last_ip` is the clear to NULL).
+- Verified: `tsc` 0, `eslint` 0 on every touched file, full `vitest` green (195 files / 2602 tests).
+- Pending migration: `supabase/migrations/20261081_dc_roundF_share_access_log.sql` — **not applied**.
 
 ---
 
@@ -401,6 +510,22 @@ file/route.ts:109-117 `await applyStampToPdfDoc(pdfDoc, { userLabel: "shared-lin
 - [ ] stamping.ts logs when verifyUrl is absent, not only when QR generation throws
 - [ ] .env.example documents NEXT_PUBLIC_SITE_URL as required for share/print verification
 
+**Partial (2026-09-29, document-control Round F wave 2).** Item 1 landed; items 2–4 are `PHYS-11`'s (PS-STAMP's files), so the finding stays OPEN. The share footer is built by `shareFooterNotice` (`lib/shareServe.ts:240`) and the scan instruction is CONDITIONAL on the verify URL actually being passed to the stamp: with an origin, `… a share always serves the current revision. Scan the QR to confirm it is still current.`; without one, `… Verify the current revision with the issuing organisation before use.` — no copy ever tells its reader to scan a QR that is not there. The route computes `verifyUrl` once (`publicOrigin()` → `${origin}/verify/<doc>?v=<version>`, `undefined` when the origin is empty) and passes the same value to the footer and to `applyStampToPdfDoc`. `lib/publicOrigin.ts`, `lib/stamping.ts` and `.env.example` are PS-STAMP's files this wave (`PHYS-11`) and are untouched here.
+- Files: `lib/shareServe.ts`, `app/api/share/file/route.ts`
+- Tests: `lib/__tests__/shareRoutes.test.ts` — "the footer instructs a scan ONLY when a verify URL was stamped …", "with no public origin there is no verify URL and the footer never says 'scan' (SHR-11)".
+- Reproduced: base `file/route.ts:123-126` — the footer literal `… scan the QR to confirm it is still current.` was unconditional while `verifyUrl` was `versionId && publicOrigin() ? … : undefined`.
+- Verified: `tsc` 0, `eslint` 0 on every touched file, full `vitest` green (194 files / 2595 tests, re-run after the second review fix pass).
+
+**Done-when (this pass).**
+1. ✓ The footer text is conditional on the QR being stamped.
+2. — Not done here: `publicOrigin()`'s server fallback (production URL) is `PHYS-11` / PS-STAMP (`lib/publicOrigin.ts` is theirs). The share route now fails HONESTLY in that world (a copy without a scan instruction) rather than loudly; PS-STAMP's fallback removes the world.
+3. — Not done here: `lib/stamping.ts` logging when `verifyUrl` is absent — `PHYS-11` / PS-STAMP.
+4. — Not done here: `.env.example` documentation — PS-STAMP.
+
+**Scope / residual.** Stays OPEN for items 2–4. **Closer: PS-STAMP** (public-surfaces, this wave) — `PHYS-11` (the server-side `publicOrigin()` fallback, the `lib/stamping.ts` warning when `verifyUrl` is absent, the `.env.example` note); whoever lands `PHYS-11` closes `SHR-11` by pointer (the same shape as `SHR-12` and `PHYS-13`: OPEN, the closer named).
+
+**Verification fix (2026-09-30, document-control Round F wave 2).** Citation only: `shareFooterNotice` moved from `lib/shareServe.ts:224` to `:240` when `SHR-3`'s serve-time download-deny check landed above it; the code and this finding's status are unchanged.
+
 ---
 
 <a id="shr-12"></a>
@@ -410,7 +535,7 @@ file/route.ts:109-117 `await applyStampToPdfDoc(pdfDoc, { userLabel: "shared-lin
 - **Severity:** LOW
 - **Status:** OPEN
 - **Verification:** CONFIRMED
-- **Locations:** `supabase/migrations/20260818_followups_rls.sql:95-102`, `app/api/share/resolve/route.ts:83`, `components/documents/ShareLinkModal.tsx:205`, `app/share/[token]/page.tsx:141`
+- **Locations:** `supabase/migrations/20260818_followups_rls.sql:95-102`, `app/api/share/resolve/route.ts:59`, `components/documents/ShareLinkModal.tsx:205`, `app/share/[token]/page.tsx:141`
 - **Independently verified:** ✓ **SURVIVES, corrected** — second independent adversarial pass. Severity **MEDIUM → LOW** by this pass. Every factual element checks out. I lower it to LOW on impact: the real distribution record is the download_audits row written independently by app/api/share/file/route.ts:129-140, so a missing RPC degrades a convenience counter (stuck at 0) rather than destroying the audit trail; and the search_path gap is only exploitable by a role that can create objects in a schema it can prepend, which Supabase's authenticated/anon roles cannot do on `public` by default.
 
 **Mechanism.** The function is declared `CREATE OR REPLACE FUNCTION bump_share_access(p_share uuid) RETURNS void LANGUAGE sql SECURITY DEFINER AS $$ ... $$;` with no `SET search_path` clause — grep for search_path across 20260818_followups_rls.sql returns nothing, while ten-plus other functions in the same migration tree do set it (20260812_per_library_publish_authority.sql:37, 20260816_owner_publish_access.sql:10, 20260824_team_departments.sql:19, 20260831_capability_policy_and_rails.sql:44 and :81, 20260901_db_hard_enforcement.sql:29, and standalone `SET search_path = public` lines in 20260724, 20260726, 20260806, 20260810). The migration also issues no REVOKE, so EXECUTE defaults to PUBLIC — the anon role can call it. Separately, the caller swallows the outcome: resolve/route.ts:83 is `try { await sb.rpc("bump_share_access", { p_share: share.id }); } catch { /* best-effort */ }` — supabase-js resolves with `{ error }` rather than throwing, so the catch is unreachable for the failure mode that matters and the returned error is never destructured. If the function is missing from a given database (it lives in a migration named for an unrelated feature, 'followups_rls'), every resolve silently no-ops.
@@ -434,6 +559,21 @@ file/route.ts:109-117 `await applyStampToPdfDoc(pdfDoc, { userLabel: "shared-lin
 - [ ] the rpc call in resolve/route.ts destructures and logs `{ error }` instead of relying on an unreachable catch
 - [ ] lib/schemaExpectations.ts checks for the function, not only the document_shares table
 
+**Partial (2026-09-29, document-control Round F wave 2).** Items 1–3 landed; item 4 (the `lib/schemaExpectations.ts` row) did not, so the finding stays OPEN. `supabase/migrations/20261081_dc_roundF_share_access_log.sql` re-creates `bump_share_access(p_share uuid)` at its EXISTING arity — the 20260818 body byte-carried, only the CREATE-time `SET search_path = public` added, no IP (the accessor IP is controller-only, `SHR-10`) — so a route already deployed keeps resolving its `{ p_share }` call across the apply (a changed arity would have dropped the function it calls); a two-argument twin from an earlier draft of the file is dropped if present; `SECURITY DEFINER SET search_path = public`, with `REVOKE ALL … FROM PUBLIC, anon, authenticated` and `GRANT EXECUTE … TO service_role` (its only caller is the service-role resolve route; `20261027` had granted `authenticated`, which nothing used). `app/api/share/resolve/route.ts:59-60` destructures `{ error: bumpError }` from the RPC and `console.error`s it with the share id — a missing function or a refused call is visible, and the resolve still succeeds (the counter is a convenience; the record is `download_audits` + `document_share_accesses`). The old arity had already been pinned by `20261020`'s `ALTER FUNCTION` (document-control `DIST-14`, Phase 7f) — this file is the CREATE-time pin plus the grant correction.
+- Files: `supabase/migrations/20261081_dc_roundF_share_access_log.sql`, `app/api/share/resolve/route.ts`
+- Tests: `lib/__tests__/shareRoutes.test.ts` — "bump_share_access keeps its arity (a deployed route's call resolves across the apply): the 20260818 body byte-carried, only the CREATE-time pin added, no IP, service_role only", "a refused counter RPC is logged, never swallowed, and does not fail the resolve"; `lib/__tests__/searchPathPin.test.ts` census green.
+- Reproduced: `20260818_followups_rls.sql:95-102` quoted (no `SET search_path`); base `resolve/route.ts:96` `try { await sb.rpc(...) } catch { /* best-effort */ }` — the returned error never read.
+- Verified: `tsc` 0, `eslint` 0 on every touched file, full `vitest` green (194 files / 2595 tests, re-run after the second review fix pass).
+- Pending migration: `supabase/migrations/20261081_dc_roundF_share_access_log.sql` — **not applied**.
+
+**Done-when.**
+1. ✓ (pending migration) Re-created with `SET search_path = public`.
+2. ✓ (pending migration) EXECUTE revoked from PUBLIC / anon / authenticated, granted to `service_role` only — the apply-time probe checks `has_function_privilege` for all three.
+3. ✓ The RPC's `{ error }` is destructured and logged.
+4. ✗ Not done — `lib/schemaExpectations.ts` is not in this package's files (public-surfaces PS-VERIFY edits it this wave for its `verify_scans` row), so no `bump_share_access(uuid)` / `document_share_accesses` expectation was added.
+
+**Scope / residual.** Item 4 keeps this finding OPEN. Owner: the integrator's tracked follow-up — PS-VERIFY edits `lib/schemaExpectations.ts` this wave but its brief does not list `SHR-12`, so nothing assigns it. Whoever adds the expectation (the function `bump_share_access(uuid)` and the `document_share_accesses` table, both from `20261081`) closes `SHR-12`.
+
 ---
 
 <a id="shr-13"></a>
@@ -441,7 +581,7 @@ file/route.ts:109-117 `await applyStampToPdfDoc(pdfDoc, { userLabel: "shared-lin
 ## SHR-13 · download_audits is protected by a FOR ALL policy with only USING — any active org member can rewrite or delete the distribution record for their org
 
 - **Severity:** MEDIUM
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Verification:** CONFIRMED
 - **Locations:** `supabase/schema.sql:1089-1091`, `supabase/schema.sql:1022`, `app/api/share/file/route.ts:129-140`, `lib/staleCopies.ts:124-137`
 - **Independently verified:** ✓ **SURVIVES** — second independent adversarial pass. I grepped all of supabase/ for `download_audits`: only three hits (table DDL :789, RLS enable :1022, this policy :1090). No migration adds a restrictive policy or revokes UPDATE/DELETE, so any active org member can delete or rewrite their org's distribution records from the browser client. Claim of absence confirmed.
@@ -465,5 +605,39 @@ schema.sql:1022 `ALTER TABLE download_audits ENABLE ROW LEVEL SECURITY;` and sch
 - [ ] download_audits splits its policy: SELECT scoped to the org, INSERT with an explicit WITH CHECK, and UPDATE/DELETE denied to ordinary members (a restrictive policy or a trigger making the table append-only)
 - [ ] a test confirms a non-admin org member cannot DELETE or UPDATE a download_audits row
 - [ ] the same review is applied to document_shares' own FOR ALL policy, whose USING clause lets any active member revoke, un-revoke, or rewrite expires_at on any share in the org
+
+**Resolution (2026-09-29, document-control Round F wave 2).** **Record-only close.** The `download_audits` half is closed by `20261068` (document-control P2 EGRESS, wave 1 — DEC-44 §1, `DIST-9` / `DRLS-8`): the FOR ALL policy is dropped and exactly `download_audits_select FOR SELECT` + `download_audits_insert_own FOR INSERT WITH CHECK (org_id IN (SELECT my_org_ids()) AND user_id = auth.uid())` remain — no member UPDATE or DELETE; `lib/__tests__/downloadAudits.test.ts` replays `schema.sql` + every numbered migration and proves the live set. The `document_shares` half (criterion 3) is closed by `20261022` (per-verb split: UPDATE / DELETE creator-or-controller — verified) plus `supabase/migrations/20261080_dc_roundF_share_minting_and_revocation.sql` (revocation durable by trigger, `expires_at` capped, DELETE controller-only — `DRLS-7`). Drafting-flow `EVID-5` is the owning record for the policy shape; this is the cited increment.
+
+**Done-when.**
+1. ✓ (20261068, pending apply) SELECT org-scoped; INSERT with an explicit WITH CHECK; no UPDATE / DELETE policy for members.
+2. ◐ Static: the policy census in `downloadAudits.test.ts` proves no UPDATE / DELETE / ALL policy survives the replayed sequence, and 20261068's apply-time probe asserts the same against `pg_policies`; `DRLS-8`'s record carries the live confirming query.
+3. ✓ (20261022 applied 2026-08-24; 20261080 pending) `document_shares` is per-verb, un-revoke and re-dating are refused by trigger, DELETE is controller-only.
+
+**Scope / residual.** None beyond the pending applies.
+
+---
+
+<a id="shr-14"></a>
+
+## SHR-14 · The share INSERT rail does not refuse a creator who is denied download on the document — the mint succeeds, the modal offers it, and the link never serves
+
+- **Severity:** LOW
+- **Status:** OPEN
+- **Verification:** SUSPECTED
+- **Locations:** `supabase/migrations/20261080_dc_roundF_share_minting_and_revocation.sql:150-177`, `lib/documentShares.ts:105-115`, `components/documents/ShareLinkModal.tsx:165`, `lib/downloadDeny.ts:65-86`, `lib/shareServe.ts:210-215`
+- **Opened by:** document-control Round F wave 2 verification fix (P1 SHARE, 2026-09-30) as the DEC-31 remainder of `SHR-3` — the mint-time half of its deny-download limb (the serve-time half is closed; `SHR-3`'s criteria are resolve-time only). Author-graded: no independent challenge yet.
+- **Owner:** unassigned — it needs a SQL download-deny predicate, and none exists: the database decides visibility (`node_visible`) and publish authority, never download, and members' downloads are refused only by `/api/storage/download-url` through `lib/downloadDeny.ts`. The integrator schedules it; it depends only on what wave 2 lands (`20261080`'s INSERT policy, `lib/downloadDeny.ts`).
+
+**Mechanism.** `document_shares_insert` (`20261080:150-177`) admits a row when the caller is an active member, can read the document (`node_visible`), is a controller or a granted publisher of the library (`user_can_publish_on_library`), and `document_share_refusal` is NULL. None of those reads `acl_index.deny.*.download`. The modal's gate matches the policy, not the download rule: `canMintShare` (`lib/documentShares.ts:105-115`) asks only the controller tier / the publish RPC, and `showCreate` (`ShareLinkModal.tsx:165`) is `readable && canMint === true && refusal === null`. So a publisher granted on the library but denied download on one document by uid, role or team sees the Create box, mints, and gets a row. Since the `SHR-3` verification fix the row can never SERVE — `creatorMayShare` asks `memberDownloadDenied` for the creator (`lib/shareServe.ts:210-215`) and both routes answer `410 revoked` with an `authority_lapsed` access row — so no copy leaves. What remains is a dead link that looks live to its creator.
+
+**Failure scenario.** A lead engineer holds a publish grant on the Piping library; a restricted vendor-proprietary isometric in it carries a download deny for their team. They open its share modal: Create is offered, the row lists "resolves to Rev C", and they email the link to a fabricator. The fabricator's first click lands on "Link revoked — The owner has revoked this share" (`app/share/[token]/page.tsx:117-118`) — nobody revoked it — and the engineer, seeing the link live in the modal, has no in-app way to learn why (the list's sentence names a download deny as one reason a link can stop serving, but does not say which link). The trail records the refused attempt.
+
+**Remediation (illustrative).** A SQL twin of `lib/downloadDeny.ts` — e.g. `user_download_denied(p_acl_index jsonb, p_uid uuid, p_org uuid) RETURNS boolean`, `STABLE SECURITY DEFINER SET search_path = public`, reading `org_members.role` / `roles` (active) and `team_members` exactly as `memberDownloadDenied` does, controllers not exempt — added to `document_shares_insert` as `AND NOT user_download_denied(d.acl_index, auth.uid(), document_shares.org_id)` (joined through the same `documents d` row) and asked by the modal beside `canMintShare`, so the Create box explains instead of minting a dead link. A shape test pins the SQL rule to the TypeScript one (the pattern `document_share_refusal` ↔ `NOT_CURRENT_STATUSES` uses).
+
+**Done when.**
+
+- [ ] A SQL predicate mirrors `lib/downloadDeny.ts` (uid, any role in the collection, team; a missing role set reads as Viewer; controllers not exempt), SECURITY DEFINER with `search_path` pinned, and a test pins the two rules together
+- [ ] `document_shares_insert` refuses a mint when that predicate names the creator; the migration's final SELECT probes it and its pre-apply inventory counts live shares whose creator a download deny names (those already answer `410` at serve time)
+- [ ] The modal's mint gate asks the same predicate and says why instead of offering the Create box
 
 ---

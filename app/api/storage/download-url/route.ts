@@ -7,6 +7,7 @@ import { canServeContent, controllerBypassDecided } from "@/lib/permissions";
 import { normalizeRoles } from "@/lib/roleCapabilities";
 import { assertSafeStorageKey } from "@/lib/storageKey";
 import { resolvePresignedLifetime } from "@/lib/presignedLifetime";
+import { memberDownloadDenied, type DownloadDenyIndex } from "@/lib/downloadDeny";
 import type { AccessControl, NodeVisibility, Role } from "@/types/schema";
 
 export async function GET(req: NextRequest) {
@@ -152,24 +153,14 @@ export async function GET(req: NextRequest) {
         // Explicit DOWNLOAD deny rules bind here too — URL issuance is the
         // enforcement point for bytes, so an ACL "deny download" must not be
         // routable around via a hand-built request. acl_index is
-        // chain-resolved, so inherited denies are covered.
-        const idx = (doc?.acl_index as { deny?: { users?: Record<string, string[]>; roles?: Record<string, string[]>; teams?: Record<string, string[]> } } | null) ?? null;
-        const dl = idx?.deny;
-        if (doc && dl && ((dl.users?.download?.length ?? 0) > 0 || (dl.roles?.download?.length ?? 0) > 0 || (dl.teams?.download?.length ?? 0) > 0)) {
-          const [{ data: mem2 }, { data: teams2 }] = await Promise.all([
-            supabaseAdmin.from("org_members").select("role, roles").eq("org_id", orgId).eq("uid", user.id).eq("status", "active").maybeSingle(),
-            supabaseAdmin.from("team_members").select("team_id").eq("uid", user.id),
-          ]);
-          // `??` only caught null: a row with roles: [] dropped the headline and
-          // every role-based download deny stopped matching. normalizeRoles
-          // seeds from the headline unconditionally.
-          const heldRoles: string[] = normalizeRoles(mem2?.roles, mem2?.role);
-          if (heldRoles.length === 0) heldRoles.push("Viewer");
-          const teamIds2 = (teams2 ?? []).map((t) => t.team_id as string);
-          const denied =
-            (dl.users?.download ?? []).includes(user.id) ||
-            heldRoles.some((r) => (dl.roles?.download ?? []).includes(r)) ||
-            teamIds2.some((t) => (dl.teams?.download ?? []).includes(t));
+        // chain-resolved, so inherited denies are covered. The rule is
+        // lib/downloadDeny.ts — the one the public share routes apply to a
+        // link's creator (SHR-3). A read error keeps this route's fail-open
+        // posture: the evaluation runs on what was read, as it always did.
+        if (doc) {
+          const { denied } = await memberDownloadDenied(supabaseAdmin, {
+            orgId, uid: user.id, aclIndex: (doc.acl_index as DownloadDenyIndex) ?? null,
+          });
           if (denied) {
             return NextResponse.json({ error: "Downloading this document is denied for your account" }, { status: 403 });
           }

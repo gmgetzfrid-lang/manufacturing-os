@@ -298,7 +298,7 @@ app/api/storage/download-url/route.ts:11-13 — `const authHeader = req.headers.
 - **Severity:** LOW
 - **Status:** OPEN
 - **Verification:** CONFIRMED
-- **Locations:** `public/sw.js:214-215`, `app/api/share/file/route.ts:129-141`, `app/api/share/resolve/route.ts:83`, `app/api/transmittal/route.ts:76-83`
+- **Locations:** `public/sw.js:214-215`, `app/api/share/file/route.ts:129-141`, `app/api/share/resolve/route.ts:59`, `app/api/transmittal/route.ts:76-83`
 - **Independently verified:** ✓ **SURVIVES, corrected** — second independent adversarial pass. Severity **MEDIUM → LOW** by this pass. True as far as it goes — nothing in sw.js reports a cache hit back to the server — but the branch is network-first, so a replay is only possible on a device that already performed an ONLINE fetch of the identical URL, which did write the audit row; the trail can under-count, never show zero. The transmittal leg is weaker still: /api/transmittal?file= returns only `{url}` from a 300-second presigned R2 link (:71-74), so a cached copy hands back a dead URL and no download actually occurs offline. Impact is a bounded undercount, not a missing record.
 
 **Mechanism.** In a PSM/document-control system the distribution record is the deliverable, not a side effect. Three of the cached routes write it inside the request:
@@ -386,7 +386,7 @@ components/providers/RoleContext.tsx:270-281 quoted above — the loop's scope i
 - **Severity:** LOW
 - **Status:** OPEN
 - **Verification:** SUSPECTED
-- **Locations:** `public/sw.js:116-120`, `public/sw.js:160-162`, `public/sw.js:209-210`, `app/api/share/file/route.ts:145-151`, `lib/supabase.ts:64-104`
+- **Locations:** `public/sw.js:116-120`, `public/sw.js:160-162`, `public/sw.js:209-210`, `app/api/share/file/route.ts:152-158`, `lib/supabase.ts:64-104`
 - **Independently verified:** ✓ **SURVIVES, corrected** — second independent adversarial pass. Severity **MEDIUM → LOW** by this pass. The mechanical claim is correct and repo-wide search confirms no eviction anywhere. The stated consequence is the speculative part: it needs the origin to reach hundreds of MB and the browser to run a whole-origin eviction, and the outcome is a forced re-login (lib/supabase.ts:76-77 puts the session in localStorage), not data loss or a wrong document. LOW.
 
 **Mechanism.** Two branches write to RUNTIME_CACHE on every success — the navigate branch (sw.js:160-162) for every page the user visits, and the generic branch (sw.js:209-210) for every same-origin GET. `cachePut` applies no size test, no count limit, and no expiry, and nothing anywhere trims the cache: the only deletion in the file is the VERSION filter in activate (sw.js:56-62), which never fires because VERSION is a hand-edited literal that does not change on deploy.
@@ -557,7 +557,7 @@ public/sw.js:43-50 quoted above — a single `.catch(() => undefined)` wrapping 
 - **Severity:** LOW
 - **Status:** OPEN
 - **Verification:** CONFIRMED
-- **Locations:** `public/sw.js:116-120`, `app/api/share/file/route.ts:145-151`, `app/api/data-export/structured/route.ts:17`, `app/api/admin/shed/route.ts:204`, `app/api/admin/ticket-shed/route.ts:256`, `app/api/version/route.ts:20`
+- **Locations:** `public/sw.js:116-120`, `app/api/share/file/route.ts:152-158`, `app/api/data-export/structured/route.ts:17`, `app/api/admin/shed/route.ts:204`, `app/api/admin/ticket-shed/route.ts:256`, `app/api/version/route.ts:20`
 - **Independently verified:** ✓ **SURVIVES, corrected** — second independent adversarial pass. Severity **MEDIUM → LOW** by this pass. Survives on the facts, but two of the six cited locations are unreachable: app/api/admin/shed/route.ts:204 and app/api/admin/ticket-shed/route.ts:256 are inside POST handlers (:93 and :101), and sw.js:124 `if (request.method !== "GET") return;` means the worker never sees them. The headline harm is also mostly pre-existing — /api/share/file is served `Content-Disposition: attachment` (:148) and the page writes it to disk via an `<a download>`, so the contractor has the PDF on the tablet either way; the genuine residual is an invisible copy that outlives share revocation. LOW.
 
 **Mechanism.** `cachePut` is the single write path for both caches and its whole gate is:

@@ -8,16 +8,17 @@
     "audit-reports/public-surfaces/04-offline-pwa.md"
   ],
   "totals": {
-    "findings": 54,
+    "findings": 55,
     "gaps": 0,
     "by_severity": {
       "CRITICAL": 4,
       "HIGH": 13,
       "MEDIUM": 20,
-      "LOW": 17
+      "LOW": 18
     },
     "by_status": {
-      "OPEN": 54
+      "OPEN": 47,
+      "RESOLVED": 8
     }
   },
   "status_vocabulary": [
@@ -93,7 +94,7 @@
       "id": "SHR-1",
       "title": "Share rows carry no org-consistency constraint and both public routes resolve the document org-blind with the service role — a member of org A can mint a public internet link to any org B document whose UUID they can obtain",
       "severity": "CRITICAL",
-      "status": "OPEN",
+      "status": "RESOLVED",
       "verification": "CONFIRMED",
       "verification_note": null,
       "blast_radius": null,
@@ -394,7 +395,7 @@
       "id": "SHR-3",
       "title": "A share link ignores every access control the internal download path enforces: holds, document status (Void/Superseded/Archived), private/hidden visibility, and explicit ACL deny-download",
       "severity": "HIGH",
-      "status": "OPEN",
+      "status": "RESOLVED",
       "verification": "CONFIRMED",
       "verification_note": null,
       "blast_radius": null,
@@ -420,7 +421,7 @@
       "id": "SHR-4",
       "title": "Any active org member — including a Viewer — can mint a never-expiring public internet link to a controlled drawing, and no one can ever enumerate or bulk-revoke it",
       "severity": "HIGH",
-      "status": "OPEN",
+      "status": "RESOLVED",
       "verification": "CONFIRMED",
       "verification_note": null,
       "blast_radius": null,
@@ -448,14 +449,14 @@
       "id": "SHR-5",
       "title": "Every external share download writes ZERO rows to download_audits — the insert names a `source` column that does not exist, and the failure is doubly swallowed",
       "severity": "HIGH",
-      "status": "OPEN",
+      "status": "RESOLVED",
       "verification": "SUSPECTED",
       "verification_note": null,
       "blast_radius": null,
       "related": [],
       "locations": [
         "app/api/share/file/route.ts:129-141",
-        "app/api/share/file/route.ts:139",
+        "app/api/share/file/route.ts:120",
         "supabase/schema.sql:789-799",
         "app/api/share/file/route.ts:15-16"
       ],
@@ -749,7 +750,7 @@
       "id": "SHR-6",
       "title": "\"never an in-review draft\" is enforced only on the fallback branch — the primary current_version_id path applies no review_state filter at all",
       "severity": "MEDIUM",
-      "status": "OPEN",
+      "status": "RESOLVED",
       "verification": "SUSPECTED",
       "verification_note": null,
       "blast_radius": null,
@@ -801,7 +802,7 @@
       "id": "SHR-10",
       "title": "The recipient of a shared controlled document is never identified or logged — access_last_ip is a dead column and the routes capture nothing about who pulled the file",
       "severity": "MEDIUM",
-      "status": "OPEN",
+      "status": "RESOLVED",
       "verification": "CONFIRMED",
       "verification_note": null,
       "blast_radius": null,
@@ -809,7 +810,7 @@
       "locations": [
         "supabase/migrations/20260623_document_shares.sql:27",
         "app/api/share/file/route.ts:129-140",
-        "app/api/share/resolve/route.ts:83",
+        "app/api/share/resolve/route.ts:59",
         "supabase/migrations/20260623_document_shares.sql:8-10"
       ],
       "has_verifier_correction": true,
@@ -854,7 +855,7 @@
       "id": "SHR-13",
       "title": "download_audits is protected by a FOR ALL policy with only USING — any active org member can rewrite or delete the distribution record for their org",
       "severity": "MEDIUM",
-      "status": "OPEN",
+      "status": "RESOLVED",
       "verification": "CONFIRMED",
       "verification_note": null,
       "blast_radius": null,
@@ -1072,7 +1073,7 @@
       "locations": [
         "public/sw.js:214-215",
         "app/api/share/file/route.ts:129-141",
-        "app/api/share/resolve/route.ts:83",
+        "app/api/share/resolve/route.ts:59",
         "app/api/transmittal/route.ts:76-83"
       ],
       "has_verifier_correction": true,
@@ -1099,7 +1100,7 @@
         "public/sw.js:116-120",
         "public/sw.js:160-162",
         "public/sw.js:209-210",
-        "app/api/share/file/route.ts:145-151",
+        "app/api/share/file/route.ts:152-158",
         "lib/supabase.ts:64-104"
       ],
       "has_verifier_correction": true,
@@ -1203,7 +1204,7 @@
       "related": [],
       "locations": [
         "public/sw.js:116-120",
-        "app/api/share/file/route.ts:145-151",
+        "app/api/share/file/route.ts:152-158",
         "app/api/data-export/structured/route.ts:17",
         "app/api/admin/shed/route.ts:204",
         "app/api/admin/ticket-shed/route.ts:256",
@@ -1251,7 +1252,7 @@
       "id": "SHR-7",
       "title": "A share link is bound to the document, not the revision — it silently follows every rev-up, and the stamped footer's rev comes from documents.rev rather than the version actually served",
       "severity": "LOW",
-      "status": "OPEN",
+      "status": "RESOLVED",
       "verification": "CONFIRMED",
       "verification_note": null,
       "blast_radius": null,
@@ -1285,7 +1286,7 @@
       "locations": [
         "public/sw.js:196-213",
         "public/sw.js:113-118",
-        "app/api/share/file/route.ts:145-151",
+        "app/api/share/file/route.ts:152-158",
         "app/layout.tsx:93",
         "components/pwa/ServiceWorkerManager.tsx:30-33"
       ],
@@ -1311,7 +1312,7 @@
       "related": [],
       "locations": [
         "supabase/migrations/20260818_followups_rls.sql:95-102",
-        "app/api/share/resolve/route.ts:83",
+        "app/api/share/resolve/route.ts:59",
         "components/documents/ShareLinkModal.tsx:205",
         "app/share/[token]/page.tsx:141"
       ],
@@ -1323,6 +1324,32 @@
       ],
       "refuted": false,
       "summary": "An instance is provisioned where 20260818followupsrls.sql has not been applied — plausible, since the share feature's own migration is 20260623 and nothing in lib/schemaExpectations.ts checks for the function (it registers the table only, schemaExpectations.ts:63). Every /share resolve calls a nonexistent RPC, PostgREST returns PGRST202, supabase-js resolves with an error nobody reads, and accessc",
+      "area": "public-surfaces",
+      "report": "audit-reports/public-surfaces/02-share-links.md"
+    },
+    {
+      "id": "SHR-14",
+      "title": "The share INSERT rail does not refuse a creator who is denied download on the document — the mint succeeds, the modal offers it, and the link never serves",
+      "severity": "LOW",
+      "status": "OPEN",
+      "verification": "SUSPECTED",
+      "verification_note": null,
+      "blast_radius": null,
+      "related": [],
+      "locations": [
+        "supabase/migrations/20261080_dc_roundF_share_minting_and_revocation.sql:150-177",
+        "lib/documentShares.ts:105-115",
+        "components/documents/ShareLinkModal.tsx:165",
+        "lib/downloadDeny.ts:65-86",
+        "lib/shareServe.ts:210-215"
+      ],
+      "has_verifier_correction": false,
+      "verified_by": "adversarial",
+      "challenges": [
+        "adversarial"
+      ],
+      "refuted": false,
+      "summary": "A lead engineer holds a publish grant on the Piping library; a restricted vendor-proprietary isometric in it carries a download deny for their team. They open its share modal: Create is offered, the row lists \"resolves to Rev C\", and they email the link to a fabricator. The fabricator's first click lands on \"Link revoked — The owner has revoked this share\" (app/share/[token]/page.tsx:117-118) — no",
       "area": "public-surfaces",
       "report": "audit-reports/public-surfaces/02-share-links.md"
     },

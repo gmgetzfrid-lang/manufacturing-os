@@ -182,6 +182,8 @@ export const EXPORT_EXCLUDED_TABLES: Record<string, string> = {
     "global anti-abuse log keyed on client IP (not org-scoped) — rolling rate-limit window with no customer data; nothing to restore",
   push_subscriptions:
     "per-device Web Push credentials (endpoint, p256dh, auth) — secrets never leave the database, and a push registration is machine-specific and never restored; each device re-subscribes",
+  document_share_accesses:
+    "per-access IP / user-agent trail behind a share link's counter (P1 SHARE, 20261081) — service-role written, controller-readable; the exported distribution record of what LEFT is download_audits; a restored share is revoked (DEC-45) so its access trail has nothing to attach to",
 };
 
 /** EGR-7 / XEDGE-10: columns whose VALUE is a live credential. The same rule

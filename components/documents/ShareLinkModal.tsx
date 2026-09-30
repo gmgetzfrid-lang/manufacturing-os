@@ -2,6 +2,21 @@
 
 // ShareLinkModal — generate + manage time-limited public share links
 // for a single document. Mounted from the inspector toolbar.
+//
+// Round F (P1 SHARE): minting is a controller-tier act (Admin / DocCtrl by
+// collection) or a granted publisher of the library — the same authority
+// that issues what the link serves; anyone else sees why the box is absent.
+// The never-expiring option is gone and 90 days is the ceiling (lib/shareRules). A
+// Draft / Superseded / Void / Archived or held document is refused with the
+// reason before anything is inserted (and by the database if not). A share
+// always serves the CURRENT revision — stated here and on the landing page;
+// every link row says which revision the DOCUMENT resolves to today, by the
+// same rule the public routes run (lib/shareRules resolveServedVersion), or
+// that the document is not serving and why. What the modal cannot see per
+// row — whether that link's creator still holds the authority it serves on
+// — is stated under the list rather than guessed; and a refusal this
+// browser could not confirm (a failed read) says "couldn't confirm", never
+// "not serving".
 
 import React, { useCallback, useEffect, useState } from "react";
 import {
@@ -9,8 +24,11 @@ import {
   CheckCircle2, ExternalLink, Eye, QrCode,
 } from "lucide-react";
 import {
-  createShareLink, listShareLinks, revokeShareLink, type DocumentShare,
+  createShareLink, listShareLinks, revokeShareLink, loadShareDocumentContext, canMintShare,
+  shareRefusalState, SHARE_MAX_DAYS, type DocumentShare, type ShareServedState,
 } from "@/lib/documentShares";
+import { useRole } from "@/components/providers/RoleContext";
+import { publicOrigin } from "@/lib/publicOrigin";
 import QrBadge from "@/components/ui/QrBadge";
 import { appConfirm } from "@/components/providers/DialogProvider";
 
@@ -24,66 +42,140 @@ interface Props {
   createdByName?: string;
 }
 
-const DURATION_OPTIONS = [
+/** Every option expires; the last one is the ceiling. Exported for the test. */
+export const DURATION_OPTIONS = [
   { label: "24 hours", days: 1 },
   { label: "7 days", days: 7 },
   { label: "30 days (default)", days: 30 },
-  { label: "90 days", days: 90 },
-  { label: "Never expires", days: 0 },
+  { label: `${SHARE_MAX_DAYS} days (maximum)`, days: SHARE_MAX_DAYS },
 ];
 
 export default function ShareLinkModal({
   isOpen, onClose, orgId, documentId, documentLabel,
   createdBy, createdByName,
 }: Props) {
+  const { hasAnyRole } = useRole();
+  const isController = hasAnyRole(["Admin", "DocCtrl"]);
   const [shares, setShares] = useState<DocumentShare[]>([]);
   // EGRESS-8: whether the caller can read the document. When not, the server
   // lists only the caller's own links and withholds every token — nothing
   // below renders a URL it cannot use, and no new link can be created.
   const [readable, setReadable] = useState(true);
+  // Who may mint (controller tier / granted publisher) and why the document
+  // cannot be shared right now (status / archive / hold) — null = shareable.
+  const [canMint, setCanMint] = useState<boolean | null>(null);
+  const [refusal, setRefusal] = useState<string | null>(null);
+  // false when the refusal is only "couldn't read it from here" — minting is
+  // still refused, but the routes (service role) may be serving the links.
+  const [refusalConfirmed, setRefusalConfirmed] = useState(true);
+  const [currentRev, setCurrentRev] = useState<string | null>(null);
+  const [docStatus, setDocStatus] = useState<string | null>(null);
+  // What a link serves right now, by the routes' own rule (SHR-7).
+  const [served, setServed] = useState<ShareServedState | null>(null);
   const [loading, setLoading] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  // The listing's own failure, kept apart from the document context: a list
+  // error says nothing about who may mint.
+  const [listError, setListError] = useState<string | null>(null);
+  // A link change that stood but whose audit row was refused (non-fatal).
+  const [auditNotice, setAuditNotice] = useState<string | null>(null);
   const [note, setNote] = useState("");
   const [days, setDays] = useState<number>(30);
   const [copied, setCopied] = useState<string | null>(null);
   const [qrFor, setQrFor] = useState<string | null>(null);
 
   const refresh = useCallback(async () => {
-    setLoading(true); setError(null);
+    setLoading(true); setError(null); setListError(null);
     try {
-      const listing = await listShareLinks(documentId);
-      setReadable(listing.readable);
-      setShares(listing.shares);
-    } catch (e) { setError((e as Error).message); }
-    finally { setLoading(false); }
-  }, [documentId]);
+      let readableNow = true;
+      try {
+        const listing = await listShareLinks(documentId);
+        readableNow = listing.readable;
+        setReadable(listing.readable);
+        setShares(listing.shares);
+      } catch (e) { setListError((e as Error).message); }
+      if (!readableNow) {
+        // EGRESS-8: the caller cannot read the document, so the documents
+        // read would come back empty ("Document not found") — there is no
+        // context to load and nothing to mint. The amber notice says so.
+        setCanMint(null); setRefusal(null); setRefusalConfirmed(true); setCurrentRev(null); setDocStatus(null); setServed(null);
+        return;
+      }
+      try {
+        const ctx = await loadShareDocumentContext(documentId);
+        setCurrentRev(ctx.rev);
+        setDocStatus(ctx.status);
+        setServed(ctx.served);
+        const [allowed, why] = await Promise.all([
+          canMintShare({ orgId, uid: createdBy, libraryId: ctx.libraryId, isController }),
+          shareRefusalState(documentId),
+        ]);
+        setCanMint(allowed);
+        setRefusal(why?.reason ?? null);
+        setRefusalConfirmed(why?.confirmed ?? true);
+      } catch (e) {
+        // Unknown document state: neither "you may not mint" nor a Create box
+        // — and never a CONFIRMED refusal left over from an earlier read: the
+        // refusal reads as unconfirmed ("couldn't confirm"), as it would from
+        // shareRefusalState's own failed read.
+        setError((e as Error).message); setCanMint(null); setServed(null);
+        setRefusal("Couldn't confirm the document's state; it is treated as unshareable.");
+        setRefusalConfirmed(false);
+      }
+    } finally { setLoading(false); }
+  }, [documentId, orgId, createdBy, isController]);
 
   useEffect(() => { if (isOpen) void refresh(); }, [isOpen, refresh]);
 
   if (!isOpen) return null;
 
   const create = async () => {
-    setBusy(true); setError(null);
+    setBusy(true); setError(null); setAuditNotice(null);
     try {
-      await createShareLink({
+      const made = await createShareLink({
         orgId, documentId, expiresInDays: days,
         note: note.trim() || undefined,
         createdBy, createdByName,
       });
       setNote("");
       await refresh();
+      setAuditNotice(made.auditWarning);
     } catch (e) { setError((e as Error).message); }
     finally { setBusy(false); }
   };
 
   const revoke = async (id: string) => {
     if (!(await appConfirm({ title: "Revoke share link", message: "Revoke this share link? Anyone using it loses access immediately.", tone: "danger" }))) return;
-    try { await revokeShareLink(id, createdBy); await refresh(); }
+    setAuditNotice(null);
+    try {
+      const done = await revokeShareLink(id, createdBy);
+      await refresh();
+      setAuditNotice(done.auditWarning);
+    }
     catch (e) { setError((e as Error).message); }
   };
 
-  const baseUrl = typeof window !== "undefined" ? `${window.location.origin}/share/` : "/share/";
+  // PHYS-13: the copied link and the QR carry the PUBLIC origin — a link
+  // minted on a preview deploy must not dead-end an outsider on a Vercel
+  // login. publicOrigin() falls back to the browser origin only when
+  // NEXT_PUBLIC_SITE_URL is unset (see lib/publicOrigin.ts).
+  const origin = publicOrigin();
+  const baseUrl = origin ? `${origin}/share/` : "/share/";
+  const showCreate = readable && canMint === true && refusal === null;
+  // What the DOCUMENT resolves to today — the same answer for every row (a
+  // share always serves the current revision), stated the way the public
+  // routes would decide it: refused with the reason, no published file, or
+  // the served revision's own label. An UNCONFIRMED refusal (this browser's
+  // read failed) is said as exactly that. A per-link lapse (its creator
+  // left, lost read access or the sharing tier) is the server's to decide
+  // and is stated under the list.
+  const resolvesTo: string | null = !readable || served === null ? null
+    : refusal && !refusalConfirmed ? "couldn't confirm whether it is serving"
+    : refusal ? "not serving now — see above"
+    : served.kind === "served" ? `resolves to Rev ${served.rev || "0"}`
+    : served.kind === "none" ? "no published file to serve"
+    : "couldn't confirm which revision it serves";
 
   return (
     <div className="fixed inset-0 z-[300] bg-slate-900/60 backdrop-blur-sm animate-in fade-in flex items-start sm:items-center justify-center overflow-y-auto p-4">
@@ -92,7 +184,11 @@ export default function ShareLinkModal({
           <div className="p-2 rounded-lg bg-teal-100 text-teal-700"><LinkIcon className="w-5 h-5" /></div>
           <div className="flex-1 min-w-0">
             <div className="text-sm font-black text-[var(--color-text)]">Share link</div>
-            <div className="text-xs text-[var(--color-text-muted)] truncate">{documentLabel ?? documentId.slice(0, 8)}</div>
+            <div className="text-xs text-[var(--color-text-muted)] truncate">
+              {documentLabel ?? documentId.slice(0, 8)}
+              {currentRev !== null && <> · Rev {currentRev || "0"}</>}
+              {docStatus && <> · {docStatus}</>}
+            </div>
           </div>
           <button onClick={onClose} className="p-2 rounded-lg hover:bg-[var(--color-surface-2)] text-[var(--color-text-faint)] hover:text-[var(--color-text)]">
             <X className="w-4 h-4" />
@@ -106,6 +202,18 @@ export default function ShareLinkModal({
             </div>
           )}
 
+          {auditNotice && (
+            <div className="rounded-lg bg-amber-50 border border-amber-200 p-3 text-xs text-amber-900 flex items-start gap-2">
+              <AlertTriangle className="w-4 h-4 mt-0.5 shrink-0" /> {auditNotice}
+            </div>
+          )}
+
+          {listError && (
+            <div className="rounded-lg bg-red-50 border border-red-200 p-3 text-xs text-red-800 flex items-start gap-2">
+              <AlertTriangle className="w-4 h-4 mt-0.5 shrink-0" /> Couldn&rsquo;t load the existing links: {listError}
+            </div>
+          )}
+
           {!readable && (
             <div className="rounded-lg bg-amber-50 border border-amber-200 p-3 text-xs text-amber-900 flex items-start gap-2">
               <AlertTriangle className="w-4 h-4 mt-0.5 shrink-0" />
@@ -116,7 +224,26 @@ export default function ShareLinkModal({
             </div>
           )}
 
-          {readable && <div className="rounded-xl border border-[var(--color-border)] p-3 space-y-2">
+          {readable && !loading && canMint === false && (
+            <div className="rounded-lg bg-slate-50 border border-[var(--color-border)] p-3 text-xs text-[var(--color-text-muted)] flex items-start gap-2">
+              <AlertTriangle className="w-4 h-4 mt-0.5 shrink-0" />
+              <span>
+                Sharing a document outside the organisation is a Document Control / Admin act, or one for a publisher granted on this library.
+                Ask a controller to mint the link; existing links are listed below.
+              </span>
+            </div>
+          )}
+
+          {readable && !loading && refusal && (
+            <div className="rounded-lg bg-amber-50 border border-amber-200 p-3 text-xs text-amber-900 flex items-start gap-2">
+              <AlertTriangle className="w-4 h-4 mt-0.5 shrink-0" />
+              {refusalConfirmed
+                ? <span>No new link can be created, and existing links are not serving: {refusal}</span>
+                : <span>No new link can be created: {refusal} Whether existing links are serving couldn&rsquo;t be confirmed from here &mdash; the server decides at each open and download.</span>}
+            </div>
+          )}
+
+          {showCreate && <div className="rounded-xl border border-[var(--color-border)] p-3 space-y-2">
             <div className="text-[10px] font-black text-[var(--color-text)] uppercase tracking-widest">Create new</div>
             <input
               value={note}
@@ -146,7 +273,9 @@ export default function ShareLinkModal({
               </button>
             </div>
             <div className="text-[10px] text-[var(--color-text-muted)]">
-              Anyone with the resulting URL can open the document until it expires or you revoke it. Every access is counted.
+              Anyone with the resulting URL can download a stamped, uncontrolled copy until the link expires (at most {SHARE_MAX_DAYS} days) or you revoke it.
+              A share always serves the <b>current</b> revision &mdash; today {served?.kind === "served" ? <>Rev {served.rev || "0"}</> : served?.kind === "none" ? <>no published file</> : <>unconfirmed</>}; if the document is revved, the same link serves the new revision.
+              A link stops serving while the document is held, withdrawn or archived, and may be revoked when it is superseded, split, merged or archived. Every download is recorded on the distribution record.
             </div>
           </div>}
 
@@ -224,11 +353,12 @@ export default function ShareLinkModal({
                       <div className="mt-2 text-[10px] text-[var(--color-text-muted)] flex flex-wrap items-center gap-x-3 gap-y-1">
                         {s.note && <span className="italic text-[var(--color-text-muted)]">&ldquo;{s.note}&rdquo;</span>}
                         {s.createdByName && <span>by {s.createdByName}</span>}
+                        {!dead && resolvesTo && <span title="A share always serves the current revision">{resolvesTo}</span>}
                         {s.expiresAt && (
                           <span>{isExpired ? "expired" : "expires"} {new Date(s.expiresAt).toLocaleDateString()}</span>
                         )}
                         {isRevoked && <span className="text-rose-700">revoked</span>}
-                        <span className="inline-flex items-center gap-0.5"><Eye className="w-2.5 h-2.5" /> {s.accessCount}</span>
+                        <span className="inline-flex items-center gap-0.5" title="Times the link was opened"><Eye className="w-2.5 h-2.5" /> {s.accessCount}</span>
                       </div>
                       {qrFor === s.id && usable && url && (
                         <div className="mt-2 flex justify-center animate-in fade-in">
@@ -239,6 +369,11 @@ export default function ShareLinkModal({
                   );
                 })}
               </ul>
+            )}
+            {!loading && shares.length > 0 && (
+              <div className="mt-2 text-[10px] text-[var(--color-text-muted)]">
+                A link serves on its creator&rsquo;s current authority: it also stops serving if they leave the organisation, can no longer read this document, are denied download on it, or no longer hold Document Control / Admin or a publish grant on this library.
+              </div>
             )}
           </div>
         </div>

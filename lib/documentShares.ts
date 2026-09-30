@@ -2,8 +2,30 @@
 //
 // Tokenized public share links for a single document. Token is a
 // 32-char url-safe random string (collision-safe at this scale).
+//
+// Minting (document-control Round F, P1 SHARE — DIST-6 / SHR-4 / EGR-5):
+//   * WHO: the controller tier (Admin / DocCtrl by collection) or a granted
+//     publisher of the document's library — the same authority that issues
+//     the revision the link will serve. `canMintShare` asks the database's
+//     own evaluator (user_can_publish_on_library); the INSERT policy
+//     (20261080) is the rail.
+//   * WHAT: a Draft, a Superseded / Void / Archived or archived-record
+//     document, or one under an active hold, is REFUSED with the reason
+//     (`describeShareRefusal` — status via lib/shareRules, holds via
+//     lib/holdGate, fail-closed). The database refuses the same set
+//     (document_share_refusal, 20261080).
+//   * HOW LONG: never-expires is gone; 90 days is the ceiling (lib/shareRules).
+//   * RECORD: creating and revoking a share writes an audit_logs row — a
+//     checked write: if it is refused the link change still stands, and the
+//     caller is handed `auditWarning` to say so (never a silent success).
+// A share always serves the CURRENT issued revision — there is no pinning.
 
 import { supabase } from "@/lib/supabase";
+import { logAuditAction } from "@/lib/audit";
+import { assertNotOnHold, isHoldBlockedError } from "@/lib/holdGate";
+import { SHARE_DEFAULT_DAYS, SHARE_MAX_DAYS, resolveServedVersion, shareExpiryFor, shareStatusRefusal } from "@/lib/shareRules";
+
+export { SHARE_DEFAULT_DAYS, SHARE_MAX_DAYS };
 
 export interface DocumentShare {
   id: string;
@@ -32,30 +54,156 @@ function randomToken(len = 32): string {
     .slice(0, len);
 }
 
+/** What a link to this document serves right now, by the SAME rule the
+ *  public routes run (lib/shareRules resolveServedVersion — SHR-7):
+ *  `served` is the revision label a download would carry, `none` means no
+ *  published file can be served, `unknown` means the version read failed. */
+export type ShareServedState =
+  | { kind: "served"; rev: string | null }
+  | { kind: "none" }
+  | { kind: "unknown"; error: string };
+
+/** What the modal needs to know about the document before offering a link:
+ *  the revision a link serves today (resolved as the routes resolve it), its
+ *  control status, and the library whose publish grants decide who may
+ *  mint. Throws on a read error — an unknown state must not render as
+ *  "shareable". */
+export async function loadShareDocumentContext(documentId: string): Promise<{
+  rev: string | null; status: string | null; archivedAt: string | null; libraryId: string | null;
+  served: ShareServedState;
+}> {
+  const { data, error } = await supabase
+    .from("documents")
+    .select("rev, status, archived_at, library_id, current_version_id")
+    .eq("id", documentId)
+    .maybeSingle();
+  if (error) throw new Error(error.message || "Couldn't read the document");
+  if (!data) throw new Error("Document not found");
+  const rev = (data.rev as string | null) ?? null;
+  const resolved = await resolveServedVersion(supabase, {
+    id: documentId, current_version_id: (data.current_version_id as string | null) ?? null,
+  });
+  const served: ShareServedState = resolved.error
+    ? { kind: "unknown", error: resolved.error }
+    : resolved.version
+      // the label a download carries: the served row's own, documents.rev only as the fallback (servedLabels)
+      ? { kind: "served", rev: resolved.version.revLabel ?? rev }
+      : { kind: "none" };
+  return {
+    rev,
+    status: (data.status as string | null) ?? null,
+    archivedAt: (data.archived_at as string | null) ?? null,
+    libraryId: (data.library_id as string | null) ?? null,
+    served,
+  };
+}
+
+/** May this member mint an external share on this document? Controllers
+ *  (the caller passes the collection-derived answer from useRole) always;
+ *  otherwise the library's granted publishers, asked of the database's own
+ *  evaluator so the app and the INSERT policy agree. Fails CLOSED. */
+export async function canMintShare(input: {
+  orgId: string; uid: string; libraryId: string | null; isController: boolean;
+}): Promise<boolean> {
+  if (input.isController) return true;
+  if (!input.libraryId) return false;
+  const { data, error } = await supabase.rpc("user_can_publish_on_library", {
+    p_library: input.libraryId, p_uid: input.uid, p_org: input.orgId,
+  });
+  if (error) return false;
+  return data === true;
+}
+
+export const SHARE_MINT_REFUSED =
+  "This link was not created. Only Document Control / Admin or a granted publisher of this library can share a document outside the organisation, and only an issued document that is not on hold.";
+
+/** Why this document cannot be shared right now, or null — and whether
+ *  that is CONFIRMED (the document's status / archive flag / an open hold,
+ *  the same set the public routes refuse) or only UNCONFIRMED (this
+ *  browser's read of the document or of its holds failed: minting is still
+ *  refused — fail-closed — but the service-role routes may well be serving
+ *  its existing links, so nothing may say they are not). */
+export type ShareRefusalState = { reason: string; confirmed: boolean };
+
+export async function shareRefusalState(documentId: string): Promise<ShareRefusalState | null> {
+  const { data, error } = await supabase
+    .from("documents")
+    .select("status, archived_at")
+    .eq("id", documentId)
+    .maybeSingle();
+  if (error) return { reason: `Couldn't confirm the document's status (${error.message}); it is treated as unshareable.`, confirmed: false };
+  if (!data) return { reason: "Document not found.", confirmed: false };
+  const byStatus = shareStatusRefusal({ status: data.status as string | null, archived_at: data.archived_at as string | null });
+  if (byStatus) return { reason: byStatus, confirmed: true };
+  try {
+    await assertNotOnHold(documentId, { action: "sharing it outside the organisation" });
+  } catch (e) {
+    if (isHoldBlockedError(e)) return { reason: e.message, confirmed: !e.unreadable };
+    throw e;
+  }
+  return null;
+}
+
+/** Why this document cannot be shared right now, or null (fail-closed: an
+ *  unreadable document or hold set is a refusal). */
+export async function describeShareRefusal(documentId: string): Promise<string | null> {
+  return (await shareRefusalState(documentId))?.reason ?? null;
+}
+
+/** The sentence a caller shows when the link change stood but its
+ *  audit_logs row was refused. */
+export function shareAuditUnwritten(what: "created" | "revoked", detail: string): string {
+  return `The link was ${what}, but its audit record could not be written (${detail}). Tell Document Control so the record can be completed.`;
+}
+
+const isPolicyRefusal = (e: { code?: string; message?: string }) =>
+  e.code === "42501" || /row-level security|violates row-level/i.test(e.message ?? "");
+
+/** 20261080's anchor guard refusing the expiry: the database measures the
+ *  90-day ceiling on ITS clock and clamps up to an hour of browser-clock
+ *  skew, so reaching this means the expiry was missing or far past it. */
+export const SHARE_EXPIRY_REFUSED =
+  `This link was not created: a share link must expire within ${SHARE_MAX_DAYS} days of being created, measured on the server's clock. If this computer's clock is set well ahead, correct it and try again.`;
+const isExpiryRefusal = (e: { message?: string }) => /must expire within 90 days of its creation/.test(e.message ?? "");
+
 export async function createShareLink(input: {
   orgId: string;
   documentId: string;
-  expiresInDays?: number;   // default 30
+  expiresInDays?: number;   // default SHARE_DEFAULT_DAYS; 1..SHARE_MAX_DAYS
   note?: string;
   createdBy: string;
   createdByName?: string;
-}): Promise<DocumentShare> {
-  const expiresAt = input.expiresInDays === undefined
-    ? new Date(Date.now() + 30 * 86_400_000).toISOString()
-    : input.expiresInDays === 0
-      ? null
-      : new Date(Date.now() + input.expiresInDays * 86_400_000).toISOString();
+}): Promise<DocumentShare & { auditWarning: string | null }> {
+  const expiry = shareExpiryFor(input.expiresInDays);
+  if (!expiry.ok) throw new Error(expiry.reason);
+  const refusal = await describeShareRefusal(input.documentId);
+  if (refusal) throw new Error(refusal);
   const { data, error } = await supabase.from("document_shares").insert({
     token: randomToken(),
     org_id: input.orgId,
     document_id: input.documentId,
     created_by: input.createdBy,
     created_by_name: input.createdByName ?? null,
-    expires_at: expiresAt,
+    expires_at: expiry.expiresAt,
     note: input.note ?? null,
   }).select("*").single();
-  if (error) throw error;
-  return rowToShare(data as Record<string, unknown>);
+  if (error) {
+    throw new Error(
+      isPolicyRefusal(error) ? SHARE_MINT_REFUSED
+        : isExpiryRefusal(error) ? SHARE_EXPIRY_REFUSED
+        : (error.message || "Failed to create the share link"),
+    );
+  }
+  const share = rowToShare(data as Record<string, unknown>);
+  const { error: auditError } = await logAuditAction({
+    action: "SHARE_LINK_CREATED",
+    resourceId: input.documentId,
+    resourceType: "document",
+    orgId: input.orgId,
+    userId: input.createdBy,
+    details: { shareId: share.id, expiresAt: share.expiresAt, note: share.note },
+  });
+  return { ...share, auditWarning: auditError ? shareAuditUnwritten("created", auditError) : null };
 }
 
 export interface ShareLinkListing {
@@ -82,20 +230,41 @@ export async function listShareLinks(documentId: string): Promise<ShareLinkListi
   return { readable: out.readable === true, shares: (out.shares ?? []).map(rowToShare) };
 }
 
-export async function revokeShareLink(id: string, actorUserId: string): Promise<void> {
+export async function revokeShareLink(id: string, actorUserId: string): Promise<{ auditWarning: string | null }> {
   // .select() back the touched row: under the per-verb policies (20261022)
   // only the creator or an org controller matches the UPDATE, and RLS turns a
   // non-match into a 0-row success — error === null while the public token
   // keeps serving bytes. Zero rows here MUST throw, or the modal reports a
   // revocation that never happened (EGRESS-7).
+  // Only a LIVE row is touched (.is revoked_at null): 20261080 refuses any
+  // change to revoked_at once set, so a double click, a stale modal or a
+  // second controller revoking concurrently would otherwise hit the guard.
   const { data, error } = await supabase.from("document_shares").update({
     revoked_at: new Date().toISOString(),
     revoked_by: actorUserId,
-  }).eq("id", id).select("id");
+  }).eq("id", id).is("revoked_at", null).select("id, org_id, document_id");
   if (error) throw error;
   if (!data || data.length === 0) {
+    // Zero rows: already revoked (the outcome asked for — a no-op, and no
+    // second audit row), or the policy refused the caller.
+    const { data: current, error: readError } = await supabase
+      .from("document_shares")
+      .select("id, revoked_at")
+      .eq("id", id)
+      .maybeSingle();
+    if (!readError && (current as { revoked_at?: string | null } | null)?.revoked_at) return { auditWarning: null };
     throw new Error("This link was not revoked — only its creator or a Document Control/Admin can revoke it.");
   }
+  const row = data[0] as { org_id?: string; document_id?: string };
+  const { error: auditError } = await logAuditAction({
+    action: "SHARE_LINK_REVOKED",
+    resourceId: row.document_id ?? id,
+    resourceType: "document",
+    orgId: row.org_id,
+    userId: actorUserId,
+    details: { shareId: id },
+  });
+  return { auditWarning: auditError ? shareAuditUnwritten("revoked", auditError) : null };
 }
 
 function rowToShare(r: Record<string, unknown>): DocumentShare {
