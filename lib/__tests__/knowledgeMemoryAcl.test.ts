@@ -7,9 +7,12 @@
 //     through the real seam (loadPrincipal + readableControlledDocIds — the
 //     real lib/knowledgeAccess runs below, only the service-role client is a
 //     stand-in), withholds a row citing anything unreadable, and every later
-//     turn of its conversation. Two members with different ACLs get different
-//     history for the same library; a controller gets all of it (DEC-43); an
-//     error answers nothing.
+//     turn of its conversation; a library answer citing NO document (no [n]
+//     marker, invented markers stripped, a "Nothing matches" row naming the
+//     asker's indexing gaps) proves nothing about its sources and is shown to
+//     its asker only. Two members with different ACLs get different history
+//     for the same library; a controller gets all of it (DEC-43); an error
+//     answers nothing.
 //   * KACL-7 / IEDGE-6 / IRLS-9 — the mirror-row and mention policies, pinned
 //     by shape (and verified against a scratch PostgreSQL 16 — see the
 //     finding records); the backlinks panel counts what it may not show.
@@ -128,6 +131,12 @@ function seed() {
       q({ question: "T2-turn2: relief valve detail from the restricted sheet", citations: [cite(K_PRIV)], thread_id: T2, user_id: V }),
       // Another library of the same org — never leaks into this one.
       q({ question: "Q-otherlib: relief valve set points elsewhere", citations: [cite(K_UP)], library_id: "0b000000-0000-4000-8000-000000000099" }),
+      // E's answer built from the restricted P&ID's passages with no [n]
+      // marker (or with invented markers the ask route stripped): citations [].
+      q({ question: "Q-uncited: relief valve set points, answered without a marker", answer: "PSV-2001 is set at 285 psig.", citations: [] }),
+      // E's "Nothing matches" row (stored with no mode): its text names E's
+      // own indexing gaps — a restricted document's number and title.
+      q({ question: "Q-nomatch: relief valve set points nowhere", answer: "Nothing in this library matches the question.\n! Indexing gap: PID-2001 Restricted Unit P&ID", citations: [], mode: null }),
     ],
   };
 }
@@ -150,23 +159,41 @@ describe("the rule — an answer is as restricted as its most restricted source"
     expect(citedKnowledgeDocIds({ not: "an array" })).toEqual([]);
     expect(citedKnowledgeDocIds(null)).toEqual([]);
   });
-  it("a row citing any unreadable document is withheld whole; a row with no document citations is shown", () => {
+  it("a row citing any unreadable document is withheld whole; a web answer (no document citations) is shown", () => {
     const rows: StoredAnswerRow[] = [
-      { id: "r1", library_id: LIB, question: "a", created_at: "1", citations: [cite(K_OPEN), cite(K_PRIV)] },
-      { id: "r2", library_id: LIB, question: "b", created_at: "2", citations: [cite(K_OPEN)] },
-      { id: "r3", library_id: LIB, question: "c", created_at: "3", citations: [{ url: "https://x" }] },
+      { id: "r1", library_id: LIB, question: "a", created_at: "1", citations: [cite(K_OPEN), cite(K_PRIV)], mode: "library" },
+      { id: "r2", library_id: LIB, question: "b", created_at: "2", citations: [cite(K_OPEN)], mode: "library" },
+      { id: "r3", library_id: LIB, question: "c", created_at: "3", citations: [{ url: "https://x" }], mode: "internet" },
     ];
-    const plan = planVisibleHistory(rows, [], new Set([K_OPEN]));
+    const plan = planVisibleHistory(rows, [], new Set([K_OPEN]), V);
     expect(plan.visible.map((r) => r.id)).toEqual(["r2", "r3"]);
     expect(plan.withheld.map((r) => r.id)).toEqual(["r1"]);
+  });
+  it("a LIBRARY answer citing no document is its asker's alone — withheld from every other non-controller, whatever its mode column says short of 'internet'", () => {
+    const rows: StoredAnswerRow[] = [
+      { id: "u1", library_id: LIB, question: "no marker", created_at: "1", citations: [], mode: "library", user_id: E },
+      { id: "u2", library_id: LIB, question: "nothing matches (pre-mode row)", created_at: "2", citations: [], mode: null, user_id: E },
+      { id: "u3", library_id: LIB, question: "no citations field at all", created_at: "3", user_id: E },
+      { id: "u4", library_id: LIB, question: "web", created_at: "4", citations: [], mode: "internet", user_id: E },
+    ];
+    expect(planVisibleHistory(rows, [], new Set(), V).withheld.map((r) => r.id)).toEqual(["u1", "u2", "u3"]);
+    expect(planVisibleHistory(rows, [], new Set(), E).visible.map((r) => r.id)).toEqual(["u1", "u2", "u3", "u4"]);
+    // no reader → nobody's own
+    expect(planVisibleHistory(rows, [], new Set(), null).visible.map((r) => r.id)).toEqual(["u4"]);
+    // and it taints the rest of its conversation for everyone else
+    const t = (id: string, at: string, citations: unknown[], user_id: string): StoredAnswerRow =>
+      ({ id, library_id: LIB, thread_id: T1, question: id, created_at: at, citations, mode: "library", user_id });
+    const turns = [t("a", "1", [cite(K_OPEN)], E), t("b", "2", [], E), t("c", "3", [cite(K_OPEN)], E)];
+    expect(planVisibleHistory(turns, turns, new Set([K_OPEN]), V).visible.map((r) => r.id)).toEqual(["a"]);
+    expect(planVisibleHistory(turns, turns, new Set([K_OPEN]), E).visible.map((r) => r.id)).toEqual(["a", "b", "c"]);
   });
   it("a conversation is withheld from its first unreadable turn onward (later turns carried it as context); earlier turns stay", () => {
     const t = (id: string, at: string, docId: string): StoredAnswerRow => ({ id, library_id: LIB, thread_id: T1, question: id, created_at: at, citations: [cite(docId)] });
     const turns = [t("t1", "1", K_OPEN), t("t2", "2", K_PRIV), t("t3", "3", K_OPEN), t("t4", "4", K_UP)];
     // Only the listed row t3 is asked about; the other turns decide it.
-    const plan = planVisibleHistory([turns[2]], turns, new Set([K_OPEN, K_UP]));
+    const plan = planVisibleHistory([turns[2]], turns, new Set([K_OPEN, K_UP]), V);
     expect(plan.withheld.map((r) => r.id)).toEqual(["t3"]);
-    const all = planVisibleHistory(turns, turns, new Set([K_OPEN, K_UP]));
+    const all = planVisibleHistory(turns, turns, new Set([K_OPEN, K_UP]), V);
     expect(all.visible.map((r) => r.id)).toEqual(["t1"]);
     expect(all.withheld.map((r) => r.id)).toEqual(["t2", "t3", "t4"]);
   });
@@ -203,7 +230,7 @@ describe("/api/knowledge/history — the team's record, re-decided per reader", 
     admin.state.user = { id: E };
     const engineer = await questionsOf(await post({ orgId: ORG, libraryId: LIB, action: "list" }));
     expect(viewer).toEqual(["Q-open", "Q-upload", "Q-web", "T2-turn1"]);
-    expect(engineer).toEqual(["Q-open", "Q-priv", "Q-upload", "Q-web", "T1-turn1", "T1-turn2", "T2-turn1", "T2-turn2"]);
+    expect(engineer).toEqual(["Q-nomatch", "Q-open", "Q-priv", "Q-uncited", "Q-upload", "Q-web", "T1-turn1", "T1-turn2", "T2-turn1", "T2-turn2"]);
     expect(viewer).not.toContain("Q-priv");
     // nothing from another library, another org's document, or a removed document
     for (const list of [viewer, engineer]) {
@@ -216,8 +243,23 @@ describe("/api/knowledge/history — the team's record, re-decided per reader", 
     admin.state.user = { id: V };
     const res = await post({ orgId: ORG, libraryId: LIB, action: "list" });
     const text = await res.text();
-    expect(JSON.parse(text).withheld).toBe(6);                      // priv, gone, foreign, T1×2, T2-turn2
+    expect(JSON.parse(text).withheld).toBe(8);                      // priv, gone, foreign, T1×2, T2-turn2, uncited, nomatch
     expect(text).not.toContain("PSV-2001 set at 285 psig");
+  });
+  it("a library answer with no citations reaches no other member — list or search — and a 'Nothing matches' row's indexing gap never leaks (ASK-1 / KACL-1 / IEDGE-5)", async () => {
+    admin.state.user = { id: V };
+    const list = await (await post({ orgId: ORG, libraryId: LIB, action: "list" })).text();
+    expect(list).not.toContain("PSV-2001 is set at 285 psig");
+    expect(list).not.toContain("PID-2001 Restricted Unit P&ID");
+    const search = await (await post({ orgId: ORG, libraryId: LIB, action: "search", query: "relief valve set points", limit: 20 })).text();
+    expect(search).not.toContain("Q-uncited");
+    expect(search).not.toContain("Q-nomatch");
+    // its asker still sees both
+    admin.state.user = { id: E };
+    const mine = await (await post({ orgId: ORG, libraryId: LIB, action: "list" })).json();
+    const own = mine.rows.filter((r: { question: string }) => /^Q-(uncited|nomatch)/.test(r.question));
+    expect(own).toHaveLength(2);
+    expect(own.every((r: { mine: boolean }) => r.mine)).toBe(true);
   });
   it("a member with no ACL on a source-linked document cannot retrieve an answer whose citations point at it — search, list or thread (IRLS-1 / IEDGE-5)", async () => {
     admin.state.user = { id: V };
@@ -244,7 +286,7 @@ describe("/api/knowledge/history — the team's record, re-decided per reader", 
     admin.state.user = { id: A };
     const body = await (await post({ orgId: ORG, libraryId: LIB, action: "list" })).json();
     expect(body.withheld).toBe(0);
-    expect(body.rows).toHaveLength(10);
+    expect(body.rows).toHaveLength(12);
   });
   it("fails closed: a non-member is 403, an ACL read error is 500 with NO rows, a bad token is 401", async () => {
     admin.state.user = { id: X };
@@ -314,10 +356,13 @@ describe("the knowledge page — memory card, conversations, reopen", () => {
   it("the memory card searches THIS library through the route", () => {
     expect(page).toContain("const past = await searchAskHistory(activeOrgId, libraryId, q, 3);");
   });
-  it("openConversation re-reads a thread through the route and keeps the thread only when every turn is the reader's own", () => {
+  it("openConversation re-reads a thread through the route and keeps the thread only when every turn is the reader's own and none was withheld", () => {
     const fn = page.slice(page.indexOf("const openConversation = async (rows: KnowledgeQuestion[]) => {"), page.indexOf("const onFiles = async"));
     expect(fn).toContain("const page = await loadConversation(activeOrgId, libraryId, threadKey);");
-    expect(fn).toContain("const own = ordered.every((q) => q.mine === true);");
+    expect(fn).toContain("withheldTurns = page.withheld;");
+    // a turn withheld from the reader's own thread would withhold every new
+    // answer appended after it, so such a thread seeds a new one
+    expect(fn).toContain("const own = withheldTurns === 0 && ordered.every((q) => q.mine === true);");
     expect(fn).toContain("setThreadId(own && ordered[0]?.threadId ? ordered[0].threadId : crypto.randomUUID());");
     expect(fn).toContain("Nothing in this conversation is visible to you");
   });
@@ -339,10 +384,18 @@ describe("IEDGE-6 — the backlinks panel counts the mentions it may not show", 
   it("pre-migration (no RPC) it says nothing rather than guessing", async () => {
     expect(await mentionAccessGap(ORG, "as1")).toBeNull();
   });
-  it("the line reads naturally with and without visible rows; nothing when nothing is withheld", () => {
+  it("the line counts PAGES — the unit both sides of the subtraction count (one entity_mentions row per document page) — never 'mentions', the header's summed mention_count", () => {
     expect(describeWithheldMentions(0, true, "P-204A")).toBeNull();
-    expect(describeWithheldMentions(1, true, "P-204A")).toBe("1 further mention is in documents you don't have access to.");
-    expect(describeWithheldMentions(3, false, "P-204A")).toBe("3 mentions of P-204A are in documents you don't have access to.");
+    expect(describeWithheldMentions(1, true, "P-204A")).toBe("1 further page mentioning P-204A is in documents you don't have access to.");
+    expect(describeWithheldMentions(3, false, "P-204A")).toBe("3 pages mentioning P-204A are in documents you don't have access to.");
+    expect(describeWithheldMentions(2, true, "P-204A")).not.toMatch(/\bmentions?\b/);
+    // the unique index that makes a row a page
+    expect(strip(mig("20260929_mention_engine.sql"))).toContain(
+      "ON entity_mentions (asset_id, COALESCE(knowledge_document_id, document_id), page);");
+    // both counts are row counts: the definer RPC counts rows, the reader's own read counts rows
+    expect(strip(mig("20261120_intel_roundG_knowledge_memory_acl.sql"))).toContain(
+      "THEN (SELECT COUNT(*) FROM entity_mentions WHERE org_id = p_org_id AND asset_id = p_asset_id)");
+    expect(repo("lib/mentions.ts")).toContain('supabase.from("entity_mentions").select("id", { count: "exact", head: true })');
   });
   it("MentionsPanel renders it and never shows 'nothing mentions' while mentions are withheld", () => {
     const panel = repo("components/assets/MentionsPanel.tsx");

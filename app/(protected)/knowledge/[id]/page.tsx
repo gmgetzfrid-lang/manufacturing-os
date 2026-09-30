@@ -1576,15 +1576,19 @@ export default function KnowledgeLibraryPage() {
    *  the history route, every turn re-checked for THIS reader (a turn after a
    *  withheld one is withheld too); pre-thread rows load as single-turn
    *  conversations. Continuing keeps the thread only when every turn is the
-   *  reader's own — a teammate's conversation seeds a NEW one, so the next
-   *  ask is filed under the reader, never appended to someone else's. */
+   *  reader's own AND none was withheld — a teammate's conversation, or one
+   *  with a turn the reader can no longer see, seeds a NEW one, so the next
+   *  ask is filed under the reader and never lands behind a withheld turn
+   *  (which would withhold it too). */
   const openConversation = async (rows: KnowledgeQuestion[]) => {
     const threadKey = rows.find((r) => r.threadId)?.threadId ?? null;
     let source = rows;
+    let withheldTurns = 0;
     if (threadKey && activeOrgId) {
       try {
         const page = await loadConversation(activeOrgId, libraryId, threadKey);
         source = page.questions;
+        withheldTurns = page.withheld;
         if (page.withheld > 0) {
           showToast({
             type: "warning",
@@ -1611,7 +1615,7 @@ export default function KnowledgeLibraryPage() {
       } as KnowledgeAnswer,
     }));
     setThread(turns);
-    const own = ordered.every((q) => q.mine === true);
+    const own = withheldTurns === 0 && ordered.every((q) => q.mine === true);
     setThreadId(own && ordered[0]?.threadId ? ordered[0].threadId : crypto.randomUUID());
     setAnswer(turns[turns.length - 1]?.answer ?? null);
     setLastQuestion(turns[turns.length - 1]?.question ?? "");

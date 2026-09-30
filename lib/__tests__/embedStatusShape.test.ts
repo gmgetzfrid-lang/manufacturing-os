@@ -10,11 +10,15 @@
 // model (SEM-13) and the background build's state (SEM-11); and the build
 // refuses, before spending anything, to mix a second model into a library,
 // to run for someone who has not accepted the agreement, or for a library of
-// another org.
+// another org. The fix pass adds: refused passages' document names reach
+// controllers only; a Rebuild ends another member's background consent
+// first, so the drain never re-embeds a whole library on a key whose owner
+// consented to something else; and saving Library AI setup never erases the
+// standing consent that shares its JSON column.
 
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { NextRequest } from "next/server";
-import { freshAdminState, type Row } from "./helpers/knowledgeFakeAdmin";
+import { freshAdminState, installMarkerRpc, type Row } from "./helpers/knowledgeFakeAdmin";
 
 const admin = vi.hoisted(() => ({ state: null as unknown as import("./helpers/knowledgeFakeAdmin").FakeAdminState }));
 vi.mock("@/lib/supabaseAdmin", async () => {
@@ -33,6 +37,18 @@ vi.mock("@/lib/ai/usageServer", () => ({
   recordAskUsage: vi.fn(async () => undefined),
 }));
 vi.mock("@/lib/ai/keyVault", () => ({ openAiKey: (v: unknown) => v }));
+// The browser client, for saveLibraryAiFeatures (lib/knowledge.ts).
+const browser = vi.hoisted(() => ({ state: null as unknown as import("./helpers/knowledgeFakeAdmin").FakeAdminState }));
+vi.mock("@/lib/supabase", async () => {
+  const { makeFakeAdmin: make, freshAdminState: fresh } = await import("./helpers/knowledgeFakeAdmin");
+  browser.state ??= fresh();
+  const proxy = new Proxy({}, {
+    get: (_t, p: string) => (p === "auth"
+      ? { getSession: async () => ({ data: { session: { access_token: "tok" } } }) }
+      : (make(browser.state) as Record<string, unknown>)[p]),
+  });
+  return { supabase: proxy };
+});
 
 import { estimateEmbeddingCostUsd } from "@/lib/ai/embeddings";
 
@@ -57,6 +73,9 @@ beforeEach(() => {
   admin.state.tables.knowledge_libraries = [{ id: LIB, org_id: ORG, ai_features: {} }];
   admin.state.tables.ai_connections = [{ org_id: ORG, user_id: ME, provider: "anthropic", api_key: "k", embedding_provider: "voyage", embedding_model: "voyage-3.5-lite", embedding_api_key: "pa" }];
   admin.state.tables.ai_key_agreements = [{ org_id: ORG, user_id: ME, scope: "use", agreement_version: "2026-07-v2" }];
+  installMarkerRpc(admin.state);            // 20261121 applied (one test below takes it away)
+  browser.state ??= freshAdminState();
+  Object.assign(browser.state, freshAdminState());
   vi.stubGlobal("fetch", vi.fn(async () => { throw new Error("no provider call expected"); }));
 });
 afterEach(() => { vi.unstubAllGlobals(); });
@@ -166,7 +185,19 @@ describe("Round G — what the status says out loud", () => {
     const after = await (await POST(statusReq())).json();
     expect(after).toMatchObject({ done: false, remaining: 12, coveredNow: 30, total: 42 });
     const { meaningIndexDrift } = await import("@/lib/knowledge");
-    expect(meaningIndexDrift(after)).toBe("Meaning search covers 71% of this library — 12 passages added since the last build are found by keyword only.");
+    expect(meaningIndexDrift(after)).toBe("Meaning search covers 71% of this library — 12 passages don't carry a meaning vector yet and are found by keyword only.");
+  });
+  it("refused passages' names go to controllers only — a non-controller gets the count, and the service-role name read never runs for them", async () => {
+    withDetail({ remaining: 0 });
+    principal.isController = false;
+    const { POST } = await import("@/app/api/knowledge/embed/route");
+    const body = await (await POST(statusReq())).json();
+    expect(body.failed).toBe(2);
+    expect(body.failedSamples).toEqual([]);
+    expect(JSON.stringify(body)).not.toContain("EP-5-6-2");
+    expect(admin.state.calls.some((c) => c.table === "knowledge_chunks" && c.method === "select" && String(c.args[0]).includes("knowledge_documents(name)"))).toBe(false);
+    principal.isController = true;
+    expect((await (await POST(statusReq())).json()).failedSamples).toHaveLength(1);
   });
 });
 
@@ -186,6 +217,20 @@ describe("Round G — the build refuses before spending anything", () => {
     expect(body.error).toMatch(/Use Rebuild index to switch the whole library/);
     expect(fetch).not.toHaveBeenCalled();
     expect((admin.state.tables.knowledge_libraries[0].ai_features as Row).embedBuild).toBeUndefined();
+  });
+  it("the claim hands out nothing because another model's vectors landed first: the build names the model conflict, not a stale schema cache", async () => {
+    let n = 0;
+    admin.state.rpc.semantic_coverage_detail = () => ({
+      data: [{ total: 10, embedded: n++ === 0 ? 0 : 3, remaining: n === 1 ? 10 : 7, failed: 0, leased: 0, remaining_chars: 100, total_chars: 200,
+        models: n === 1 ? {} : { "text-embedding-3-small": 3 } }],
+      error: null,
+    });
+    admin.state.rpc.embed_claim_batch = () => ({ data: [], error: null });
+    const { POST } = await import("@/app/api/knowledge/embed/route");
+    const body = await (await POST(req({}))).json();
+    expect(body.error).toMatch(/was built with text-embedding-3-small; your embeddings setting is voyage-3.5-lite/);
+    expect(body.error).not.toMatch(/schema cache/);
+    expect(fetch).not.toHaveBeenCalled();
   });
   it("an unsigned acceptable-use agreement is 428 with the text (local gate until the shared one lands)", async () => {
     admin.state.tables.ai_key_agreements = [];
@@ -240,6 +285,18 @@ describe("Round G — the controls", () => {
     await setEmbedBuildMarker(LIB, ME);
     expect((admin.state.tables.knowledge_libraries[0].ai_features as { embedBuild: Row }).embedBuild).toMatchObject({ userId: ME });
   });
+  it("before 20261121 (no marker function) the marker writes fall back to the whole-blob write and still keep every toggle", async () => {
+    delete admin.state.rpc.embed_build_marker_write;
+    admin.state.tables.knowledge_libraries[0].ai_features = { decoder: "PID", embedBuild: { userId: ME, at: "2026-09-01T00:00:00Z" } };
+    const { setEmbedBuildMarker, patchEmbedBuildMarker } = await import("@/lib/knowledgeEmbedCore");
+    expect(await patchEmbedBuildMarker(LIB, { lastDrainAt: "2026-09-30T00:00:00Z" }, { userId: ME, at: "2026-09-01T00:00:00Z" })).toBeNull();
+    expect(admin.state.tables.knowledge_libraries[0].ai_features).toEqual({ decoder: "PID", embedBuild: { userId: ME, at: "2026-09-01T00:00:00Z", lastDrainAt: "2026-09-30T00:00:00Z" } });
+    // an expectation that no longer holds changes nothing
+    expect(await setEmbedBuildMarker(LIB, null, { expect: { userId: ME, at: "1999-01-01T00:00:00Z" } })).toBeNull();
+    expect((admin.state.tables.knowledge_libraries[0].ai_features as Row).embedBuild).toBeTruthy();
+    expect(await setEmbedBuildMarker(LIB, null)).toBeNull();
+    expect(admin.state.tables.knowledge_libraries[0].ai_features).toEqual({ decoder: "PID" });
+  });
   it("release: the payer or a controller may stop a background build; another member may not", async () => {
     admin.state.tables.knowledge_libraries[0].ai_features = { embedBuild: { userId: "0d000000-0000-4000-8000-0000000000bb", at: "2026-09-01T00:00:00Z" } };
     principal.isController = false;
@@ -249,10 +306,94 @@ describe("Round G — the controls", () => {
     expect((await (await POST(req({ action: "release" }))).json()).released).toBe(true);
     expect((admin.state.tables.knowledge_libraries[0].ai_features as Row).embedBuild).toBeUndefined();
   });
+  it("a Rebuild ends ANOTHER member's standing consent first — the drain then spends nothing on their key (SEM-8 / SEM-11)", async () => {
+    const A = "0d000000-0000-4000-8000-0000000000bb";
+    admin.state.tables.org_members = [{ org_id: ORG, uid: A, status: "active" }, { org_id: ORG, uid: ME, status: "active" }];
+    admin.state.tables.ai_connections.push({ org_id: ORG, user_id: A, provider: "anthropic", api_key: "k", embedding_provider: "voyage", embedding_model: "voyage-3.5-lite", embedding_api_key: "pa-A" });
+    admin.state.tables.ai_key_agreements.push({ org_id: ORG, user_id: A, scope: "use", agreement_version: "2026-07-v2" });
+    admin.state.tables.knowledge_libraries[0].ai_features = { visionAllPages: true, embedBuild: { userId: A, at: "2026-09-01T00:00:00Z", standing: true } };
+    admin.state.tables.knowledge_chunks = Array.from({ length: 5 }, (_, i) => ({ id: `c${i}`, org_id: ORG, library_id: LIB, embedding: "[0]", embedding_model: "voyage-3.5-lite", embed_attempts: 0 }));
+    const { POST } = await import("@/app/api/knowledge/embed/route");
+    const res = await (await POST(req({ action: "reset" }))).json();
+    expect(res.backgroundCleared).toBe(true);
+    const feats = admin.state.tables.knowledge_libraries[0].ai_features as Row;
+    expect(feats.embedBuild).toBeUndefined();
+    expect(feats.visionAllPages).toBe(true);                               // the toggles are untouched
+    // the next drain has nothing to continue on A's key
+    const { drainEmbedBacklog } = await import("@/lib/knowledgeEmbedDrain");
+    const out = await drainEmbedBacklog({ scopeOrgIds: null, budgetMs: 200_000 });
+    expect(out.drained).toEqual([]);
+    expect(fetch).not.toHaveBeenCalled();
+  });
+  it("a Rebuild keeps the CALLER's own consent (they pay for both), and ends another member's plain background build too", async () => {
+    const { POST } = await import("@/app/api/knowledge/embed/route");
+    admin.state.tables.knowledge_libraries[0].ai_features = { embedBuild: { userId: ME, at: "2026-09-01T00:00:00Z", standing: true } };
+    expect((await (await POST(req({ action: "reset" }))).json()).backgroundCleared).toBe(false);
+    expect((admin.state.tables.knowledge_libraries[0].ai_features as { embedBuild: Row }).embedBuild).toMatchObject({ userId: ME, standing: true });
+    admin.state.tables.knowledge_libraries[0].ai_features = { embedBuild: { userId: "0d000000-0000-4000-8000-0000000000bb", at: "2026-09-01T00:00:00Z" } };
+    expect((await (await POST(req({ action: "reset" }))).json()).backgroundCleared).toBe(true);
+    expect((admin.state.tables.knowledge_libraries[0].ai_features as Row).embedBuild).toBeUndefined();
+  });
+  it("the panel's Rebuild dialog says so before it runs", async () => {
+    const { readFileSync } = await import("node:fs");
+    const panel = readFileSync("components/knowledge/SemanticIndexPanel.tsx", "utf8");
+    expect(panel).toContain("const others = status?.background && !status.background.mine ? status.background : null;");
+    expect(panel).toContain("It also ends another member's consent to keep this index current on their key");
+    expect(panel).toContain("It also stops the background build running on another member's key");
+  });
   it("reset clears vectors AND the refusal counters and leases (a rebuild starts clean)", async () => {
     admin.state.tables.knowledge_chunks = [{ id: "a", org_id: ORG, library_id: LIB, embedding: "[0]", embedding_model: "m", embed_attempts: 3, embed_error: "x", embed_claimed_until: "2099-01-01" }];
     const { POST } = await import("@/app/api/knowledge/embed/route");
     expect((await POST(req({ action: "reset" }))).status).toBe(200);
     expect(admin.state.tables.knowledge_chunks[0]).toMatchObject({ embedding: null, embedding_model: null, embed_attempts: 0, embed_error: null, embed_claimed_until: null });
+  });
+});
+
+describe("SEM-8 — saving Library AI setup never erases the standing consent", () => {
+  const LIBROW = () => ({ id: LIB, org_id: ORG, ai_features: { visionAllPages: false, decoder: "PID", embedBuild: { userId: ME, at: "2026-09-01T00:00:00Z", standing: true } } as Row });
+  it("with 20261121: one RPC replaces the toggles and keeps embedBuild (transcribed from the SQL); a refused save is an error", async () => {
+    browser.state.tables.knowledge_libraries = [LIBROW()];
+    browser.state.rpc.knowledge_library_save_ai_features = (a) => {
+      const lib = browser.state.tables.knowledge_libraries.find((l) => l.id === a.p_library_id);
+      if (!lib) return { data: false, error: null };
+      const cur = lib.ai_features as Row;
+      const next: Row = { ...(a.p_features as Row) };
+      delete next.embedBuild;
+      lib.ai_features = "embedBuild" in cur ? { ...next, embedBuild: cur.embedBuild } : next;
+      return { data: true, error: null };
+    };
+    const { saveLibraryAiFeatures } = await import("@/lib/knowledge");
+    // the modal sends only its toggles — and a stray embedBuild is never taken from a caller
+    await saveLibraryAiFeatures(LIB, { clarifyFacets: true, visionAllPages: true, embedBuild: { userId: "x" } } as never);
+    expect(browser.state.tables.knowledge_libraries[0].ai_features).toEqual({
+      clarifyFacets: true, visionAllPages: true, embedBuild: { userId: ME, at: "2026-09-01T00:00:00Z", standing: true },
+    });
+    const sent = browser.state.calls.find((c) => c.table === "rpc:knowledge_library_save_ai_features")!.args[0] as Row;
+    expect(sent.p_features).toEqual({ clarifyFacets: true, visionAllPages: true });
+    expect(browser.state.calls.some((c) => c.table === "knowledge_libraries" && c.method === "update")).toBe(false);
+    browser.state.rpc.knowledge_library_save_ai_features = () => ({ data: false, error: null });
+    await expect(saveLibraryAiFeatures(LIB, { clarifyFacets: false })).rejects.toThrow(/was not saved/);
+  });
+  it("before 20261121: the marker is read and carried over; a save that changed no row is an error", async () => {
+    browser.state.tables.knowledge_libraries = [LIBROW()];
+    const { saveLibraryAiFeatures } = await import("@/lib/knowledge");
+    await saveLibraryAiFeatures(LIB, { visionAllPages: true });
+    expect(browser.state.tables.knowledge_libraries[0].ai_features).toEqual({
+      visionAllPages: true, embedBuild: { userId: ME, at: "2026-09-01T00:00:00Z", standing: true },
+    });
+    browser.state.tables.knowledge_libraries = [];
+    await expect(saveLibraryAiFeatures(LIB, { visionAllPages: true })).rejects.toThrow(/was not saved/);
+  });
+  it("after a save the drain still finds the standing consent (the checkbox stays ticked)", async () => {
+    browser.state.tables.knowledge_libraries = [LIBROW()];
+    browser.state.rpc.knowledge_library_save_ai_features = (a) => {
+      const lib = browser.state.tables.knowledge_libraries[0];
+      lib.ai_features = { ...(a.p_features as Row), embedBuild: (lib.ai_features as Row).embedBuild };
+      return { data: true, error: null };
+    };
+    const { saveLibraryAiFeatures } = await import("@/lib/knowledge");
+    await saveLibraryAiFeatures(LIB, { visionAllPages: true });
+    const { parseEmbedBuildMarker } = await import("@/lib/knowledgeEmbedCore");
+    expect(parseEmbedBuildMarker((browser.state.tables.knowledge_libraries[0].ai_features as Row).embedBuild)).toMatchObject({ userId: ME, standing: true, valid: true });
   });
 });

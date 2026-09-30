@@ -17,6 +17,12 @@
 //     readableControlledDocIds admits its controlled document;
 //   - anything else (a knowledge document since deleted or held back from the
 //     AI, another org's id, a malformed id) — NOT readable: nothing proves it.
+// A library answer that cites NO document proves nothing about its sources:
+// the model may have answered from retrieved passages without a [n] marker
+// (or with invented markers the ask route stripped), and a "Nothing matches"
+// row names the asker's own indexing gaps. The row records only what it
+// cites, so such a row is shown to its asker alone (and to controllers). An
+// internet-mode answer (web sources only) is shown to everyone.
 // A conversation carries its earlier turns into every later answer (the ask
 // sends them back as context), so once a turn is withheld every later turn
 // of the same thread is withheld too.
@@ -69,14 +75,23 @@ const byTime = (a: StoredAnswerRow, b: StoredAnswerRow) =>
  * may read? `threadRows` are the other turns of the same conversations (any
  * order; duplicates of `rows` are fine) — a turn after a withheld turn is
  * withheld, because the earlier answer rode along as its context.
+ * `readerUid` is the reader: a library answer citing no document is shown to
+ * its asker only (null = nobody's own — every such row is withheld).
  */
 export function planVisibleHistory(
   rows: readonly StoredAnswerRow[],
   threadRows: readonly StoredAnswerRow[],
   readable: ReadonlySet<string>,
+  readerUid: string | null,
 ): { visible: StoredAnswerRow[]; withheld: StoredAnswerRow[] } {
-  const citesUnreadable = (r: StoredAnswerRow) =>
-    citedKnowledgeDocIds(r.citations).some((id) => !readable.has(id));
+  const citesUnreadable = (r: StoredAnswerRow) => {
+    const cited = citedKnowledgeDocIds(r.citations);
+    if (cited.some((id) => !readable.has(id))) return true;
+    // Nothing cited: a web answer is safe; a library answer proves nothing
+    // about the passages it was built from, so only its asker sees it.
+    if (cited.length === 0 && r.mode !== "internet") return !readerUid || r.user_id !== readerUid;
+    return false;
+  };
 
   const tainted = new Set<string>();
   const threads = new Map<string, StoredAnswerRow[]>();
@@ -104,8 +119,13 @@ export function planVisibleHistory(
 
 /**
  * Which of these knowledge-document ids may the principal read now? Throws on
- * any read error — the caller fails CLOSED (serves nothing) rather than
- * serving an unfiltered answer.
+ * a failed read of knowledge_documents — the caller fails CLOSED (serves
+ * nothing) rather than serving an unfiltered answer. A failed read of the
+ * controlled documents themselves admits none of them (closed). One seam read
+ * is not yet closed: loadDcLandscape (lib/knowledgeAccess, not this
+ * package's file) ignores a failed libraries / folders read, so a document
+ * restricted ONLY by its library or folder ACL is then judged by its own ACL
+ * — handed to the seam's owner.
  */
 export async function readableKnowledgeDocIds(
   principal: KnowledgePrincipal,

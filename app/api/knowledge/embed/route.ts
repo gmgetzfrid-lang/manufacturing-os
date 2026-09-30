@@ -24,6 +24,15 @@
 // from the vectors already in the library is refused before anything is
 // spent — Rebuild (reset) is the way to switch, and the status says so.
 // Nothing is ever re-used across models.
+//
+// A REBUILD IS THE REBUILDER'S. Reset clears another member's background
+// consent first (a plain build or a standing "keep current"), so a full
+// rebuild is never continued on a key whose owner consented to something
+// else; the panel's Rebuild dialog says so before it runs.
+//
+// Refused passages are reported to controllers with their document and page;
+// every other reader gets the count only — a mirror's name is its controlled
+// document's number and title, which the reader may not be allowed to see.
 
 import { NextRequest, NextResponse } from "next/server";
 import { supabaseAdmin } from "@/lib/supabaseAdmin";
@@ -37,7 +46,7 @@ import {
 import { openAiKey } from "@/lib/ai/keyVault";
 import {
   embedLibrarySlice, setEmbedBuildMarker, patchEmbedBuildMarker, parseEmbedBuildMarker,
-  loadEmbedDetail, failedPassageSamples, embedAgreementSigned, type EmbedDetail,
+  loadEmbedDetail, failedPassageSamples, embedAgreementSigned, expectationOf, type EmbedDetail,
 } from "@/lib/knowledgeEmbedCore";
 
 export const runtime = "nodejs";
@@ -81,14 +90,16 @@ async function readMarker(libraryId: string) {
   return parseEmbedBuildMarker((data?.ai_features as Record<string, unknown> | null)?.embedBuild);
 }
 
-/** Everything the panel shows beyond the bar — shared by status and build. */
-async function detailFields(orgId: string, libraryId: string, userId: string, detail: EmbedDetail | null, connection: EmbeddingConnection | null) {
+/** Everything the panel shows beyond the bar — shared by status and build.
+ *  The refused passages' document names (read on the service role) go to
+ *  controllers only: everyone else gets the count. */
+async function detailFields(orgId: string, libraryId: string, userId: string, detail: EmbedDetail | null, connection: EmbeddingConnection | null, isController: boolean) {
   const marker = await readMarker(libraryId);
   const conflict = detail && connection ? buildModelConflict(detail.corpus, connection) : null;
   const passagesLeft = detail ? detail.remaining : 0;
   return {
     failed: detail?.failed ?? 0,
-    failedSamples: detail && detail.failed > 0 ? await failedPassageSamples(orgId, libraryId) : [],
+    failedSamples: isController && detail && detail.failed > 0 ? await failedPassageSamples(orgId, libraryId) : [],
     busy: detail?.leased ?? 0,
     models: detail?.models ?? {},
     mixed: detail?.corpus.state === "mixed",
@@ -163,7 +174,7 @@ export async function POST(req: NextRequest) {
       done: remaining === 0,
       error: null,
       spentThisRun: 0,
-      ...(await detailFields(orgId, libraryId, user.id, detail, connection)),
+      ...(await detailFields(orgId, libraryId, user.id, detail, connection, principal.isController)),
     });
   }
 
@@ -175,7 +186,8 @@ export async function POST(req: NextRequest) {
     if (!principal.isController && marker.userId !== user.id) {
       return bad("Only the member whose key pays, or Admin / Doc Control, can stop this background build.", 403);
     }
-    const err = await setEmbedBuildMarker(libraryId, null);
+    // Only the build the caller was allowed to stop — not one started since.
+    const err = await setEmbedBuildMarker(libraryId, null, { expect: expectationOf(marker) });
     if (err) return bad(`Couldn't stop the background build: ${err}`, 500);
     return NextResponse.json({ released: true });
   }
@@ -195,7 +207,20 @@ export async function POST(req: NextRequest) {
   // worse and no button exists to fix it. The build path only ever fills
   // rows where embedding IS NULL, which is exactly why emptying them is the
   // whole of a rebuild. Refusal counts and leases reset with the vectors.
+  //
+  // Another member's background consent is cleared FIRST (SEM-8 / SEM-11):
+  // they consented to continue their build, or to keep new passages current
+  // on their key — not to pay for a full rebuild someone else started. Their
+  // running drain stops at its next batch; the rebuild that follows records
+  // the caller's own consent. The caller's own consent is left as it is.
   if (body.action === "reset") {
+    let backgroundCleared = false;
+    const prior = await readMarker(libraryId);
+    if (prior && prior.userId !== user.id) {
+      const clearErr = await setEmbedBuildMarker(libraryId, null, { expect: expectationOf(prior) });
+      if (clearErr) return bad(`Couldn't stop another member's background build before the rebuild: ${clearErr}`, 500);
+      backgroundCleared = true;
+    }
     let { error } = await supabaseAdmin
       .from("knowledge_chunks")
       .update({ embedding: null, embedding_model: null, embed_attempts: 0, embed_error: null, embed_claimed_until: null })
@@ -220,6 +245,7 @@ export async function POST(req: NextRequest) {
       done: false,
       error: null,
       spentThisRun: 0,
+      backgroundCleared,
     });
   }
 
@@ -267,8 +293,8 @@ export async function POST(req: NextRequest) {
       const detail = await loadEmbedDetail(orgId, libraryId);
       const left = detail ? detail.remaining : stats.total - stats.embedded;
       const err = left === 0
-        ? await setEmbedBuildMarker(libraryId, null)
-        : await patchEmbedBuildMarker(libraryId, { standing: undefined });
+        ? await setEmbedBuildMarker(libraryId, null, { expect: expectationOf(marker) })
+        : await patchEmbedBuildMarker(libraryId, { standing: undefined }, expectationOf(marker));
       if (err) return bad(`Couldn't withdraw the standing consent: ${err}`, 500);
     }
     return NextResponse.json({ standing: false });
@@ -317,7 +343,12 @@ export async function POST(req: NextRequest) {
   let lastError = slice.error;
   const detailAfter = await loadEmbedDetail(orgId, libraryId);
   const remainingBefore = detailBefore ? detailBefore.remaining : stats.total - stats.embedded;
-  if (slice.fetchedNone && remainingBefore > 0 && !(detailBefore && detailBefore.leased >= detailBefore.remaining)) {
+  const conflictAfter = detailAfter ? buildModelConflict(detailAfter.corpus, embedding) : null;
+  if (slice.fetchedNone && conflictAfter && !lastError) {
+    // The claim hands out nothing while the library holds another model's
+    // vectors (another driver's landed first): that, not the cache.
+    lastError = conflictAfter.message;
+  } else if (slice.fetchedNone && remainingBefore > 0 && !(detailBefore && detailBefore.leased >= detailBefore.remaining)) {
     // Coverage says passages lack vectors, yet the fetch returned none —
     // the classic symptom of a stale PostgREST schema cache after the
     // embedding column was rebuilt. Say so; silence here reads as "done".
@@ -356,8 +387,8 @@ export async function POST(req: NextRequest) {
   // — unless the consent is standing (keep the index current), which stays.
   if (remaining === 0 && !lastError) {
     const marker = await readMarker(libraryId);
-    if (marker?.standing) await patchEmbedBuildMarker(libraryId, { completedAt: new Date().toISOString() });
-    else await setEmbedBuildMarker(libraryId, null);
+    if (marker?.standing) await patchEmbedBuildMarker(libraryId, { completedAt: new Date().toISOString() }, expectationOf(marker));
+    else if (marker) await setEmbedBuildMarker(libraryId, null, { expect: expectationOf(marker) });
   }
   return NextResponse.json({
     embedded,
@@ -375,6 +406,6 @@ export async function POST(req: NextRequest) {
     model: embedding.model,
     refused: slice.refused,
     ...(markerError ? { backgroundNote: `The background continuation could not be recorded (${markerError}) — keep this page open until the build finishes.` } : {}),
-    ...(await detailFields(orgId, libraryId, user.id, detailAfter, embedding)),
+    ...(await detailFields(orgId, libraryId, user.id, detailAfter, embedding, principal.isController)),
   });
 }

@@ -24,6 +24,11 @@
 // stops the slice and blames no passage. Every vector already paid for is
 // written, even when one write fails.
 //
+// ONE MODEL PER LIBRARY, AT THE QUEUE (SEM-1). The claim carries the model
+// the slice embeds with and hands out nothing while the library holds a
+// vector under any other model, so a driver on a stale connection cannot
+// add a second vector space once the first vector of a rebuild has landed.
+//
 // Before 20261121 is applied the claim function does not exist: the slice
 // falls back to the original unclaimed queue so building keeps working.
 
@@ -54,6 +59,9 @@ export interface EmbedSliceResult {
   refused: number;
   /** "claim" = the 20261121 queue ran; "legacy" = it isn't applied yet. */
   queue: "claim" | "legacy";
+  /** Why the slice stopped before a batch at its caller's request
+   *  (`beforeBatch`), or null. */
+  stopReason: string | null;
 }
 
 interface ClaimedChunk {
@@ -92,8 +100,12 @@ export async function embedLibrarySlice(opts: {
   /** Abort the in-flight provider call at this many ms — must leave room
    *  for the write-back inside the caller's platform limit. */
   hardStopMs: number;
+  /** Asked before EVERY batch is claimed: a reason to stop (nothing more is
+   *  claimed or spent), or null to go on. The background drain uses it to
+   *  stop the moment the consent it runs on is withdrawn or replaced. */
+  beforeBatch?: () => Promise<string | null>;
 }): Promise<EmbedSliceResult> {
-  const { orgId, libraryId, connection, batchSize, budgetMs, hardStopMs } = opts;
+  const { orgId, libraryId, connection, batchSize, budgetMs, hardStopMs, beforeBatch } = opts;
   const startedAt = Date.now();
   const usage = { inputTokens: 0, outputTokens: 0 };
   let embedded = 0;
@@ -101,6 +113,7 @@ export async function embedLibrarySlice(opts: {
   let rateLimited = false;
   let fetchedNone = false;
   let lastError: string | null = null;
+  let stopReason: string | null = null;
   // Switched to "legacy" inside claim() when 20261121 is not applied.
   let queue = "claim" as "claim" | "legacy";
   let stop = false;
@@ -113,6 +126,7 @@ export async function embedLibrarySlice(opts: {
       const { data, error } = await supabaseAdmin.rpc("embed_claim_batch", {
         p_org_id: orgId, p_library_id: libraryId, p_limit: batchSize,
         p_lease_seconds: LEASE_SECONDS, p_max_attempts: EMBED_MAX_ATTEMPTS,
+        p_model: connection.model,
       });
       if (!error) {
         return ((data ?? []) as ClaimedChunk[])
@@ -255,6 +269,10 @@ export async function embedLibrarySlice(opts: {
   };
 
   while (!stop && elapsed() < budgetMs) {
+    if (beforeBatch) {
+      stopReason = await beforeBatch().catch((e: unknown) => `couldn't confirm the build may go on: ${(e as Error)?.message ?? "unknown error"}`);
+      if (stopReason) break;
+    }
     const batch = await claim();
     if (!batch) break;
     if (batch.length === 0) {
@@ -289,7 +307,7 @@ export async function embedLibrarySlice(opts: {
     if (lastError) break;
   }
 
-  return { embedded, rateLimited, fetchedNone, error: lastError, usage, refused, queue };
+  return { embedded, rateLimited, fetchedNone, error: lastError, usage, refused, queue, stopReason };
 }
 
 // ── What the build knows about a library (20261121) ─────────────────────────
@@ -355,14 +373,17 @@ export async function failedPassageSamples(
 
 /** How many chunks in the library still need a vector. With 20261121: the
  *  retrievable passages still in the queue (refused-out ones excluded) — the
- *  same population the claim serves. Before it: the plain null count. */
-export async function unembeddedCount(orgId: string, libraryId: string): Promise<number> {
+ *  same population the claim serves. Before it: the plain null count.
+ *  NULL when neither read succeeded: the count is UNKNOWN, never 0 — a
+ *  caller must not read a failed read as "complete" (DEC-54 (5)). */
+export async function unembeddedCount(orgId: string, libraryId: string): Promise<number | null> {
   const detail = await loadEmbedDetail(orgId, libraryId);
   if (detail) return detail.remaining;
-  const { count } = await supabaseAdmin
+  const { count, error } = await supabaseAdmin
     .from("knowledge_chunks").select("id", { count: "exact", head: true })
     .eq("org_id", orgId).eq("library_id", libraryId).is("embedding", null);
-  return count ?? 0;
+  if (error || typeof count !== "number") return null;
+  return count;
 }
 
 // ── The consent marker (ai_features.embedBuild) ─────────────────────────────
@@ -373,6 +394,14 @@ export async function unembeddedCount(orgId: string, libraryId: string): Promise
 // then survives 100% and the drain embeds new passages on the same key and
 // under the same cap. The rest is the drain's bookkeeping (SEM-11): when it
 // last looked, and why it is holding off.
+//
+// The marker shares ai_features with the Library AI toggles, so it is never
+// written by replacing the whole blob: embed_build_marker_write (20261121)
+// sets, patches or clears the `embedBuild` key alone, atomically, and only
+// while the marker is still the one the writer read (`expect`) — so a drain
+// never reverts a Library AI save made while it ran, never books its run
+// against a consent recorded after it looked, and never clears it.
+// saveLibraryAiFeatures keeps the marker the same way from the other side.
 
 export interface EmbedBuildMarker {
   userId: string;
@@ -422,44 +451,101 @@ async function writeFeatures(libraryId: string, feats: Record<string, unknown>):
   return error ? error.message : null;
 }
 
-/** Set / clear the background-continuation marker on a library. Starting a
- *  build in the UI records WHO consented to spend their key; the cron only
- *  ever continues builds carrying that consent. A new consent clears any
- *  hold; a standing consent survives only when the same person renews it,
- *  and another member's standing consent is never replaced by a plain build
- *  (only by an explicit `standing` choice, or by clearing it) — the drain
- *  continues the build on the consent that is already standing.
- *  Returns the write error, if any — a consent that did not record is said. */
-export async function setEmbedBuildMarker(
-  libraryId: string, userId: string | null, opts?: { standing?: boolean },
+/** The marker a writer read: a write goes through only while the stored
+ *  marker still names this member (and, when known, was recorded at `at`). */
+export interface MarkerExpectation { userId: string | null; at: string | null }
+
+/** The expectation for a marker as read — empty fields expect nothing. */
+export const expectationOf = (m: { userId?: string; at?: string } | null | undefined): MarkerExpectation =>
+  ({ userId: m?.userId || null, at: m?.at || null });
+
+/** Set, patch or clear ai_features.embedBuild ALONE (20261121's atomic
+ *  write); before 20261121, the whole-blob read-modify-write it replaces. */
+async function writeMarker(
+  libraryId: string,
+  change: { set: Record<string, unknown> | null } | { patch: Record<string, unknown>; drop: string[] },
+  expect?: MarkerExpectation | null,
 ): Promise<string | null> {
-  const { feats, error } = await readFeatures(libraryId);
-  if (error) return error;
-  const prior = parseEmbedBuildMarker(feats.embedBuild);
-  if (userId && opts?.standing === undefined && prior?.valid && prior.standing && prior.userId !== userId) {
-    return null;
-  }
-  if (userId) {
-    const standing = opts?.standing ?? (prior?.userId === userId && prior.standing === true);
-    feats.embedBuild = { userId, at: new Date().toISOString(), ...(standing ? { standing: true } : {}) };
+  const isPatch = "patch" in change;
+  const { error } = await supabaseAdmin.rpc("embed_build_marker_write", {
+    p_library_id: libraryId,
+    p_marker: isPatch ? change.patch : change.set,
+    p_patch: isPatch,
+    p_drop: isPatch ? change.drop : [],
+    p_expect_user: expect?.userId ?? null,
+    p_expect_at: expect?.at ?? null,
+  });
+  if (!error) return null;
+  if (!missingDbObject(error)) return error.message;
+  // 20261121 not applied: the original whole-blob write, with the same checks.
+  const { feats, error: readErr } = await readFeatures(libraryId);
+  if (readErr) return readErr;
+  const cur = feats.embedBuild && typeof feats.embedBuild === "object" ? feats.embedBuild as Record<string, unknown> : null;
+  if (expect?.userId && cur?.userId !== expect.userId) return null;
+  if (expect?.at && cur?.at !== expect.at) return null;
+  if (isPatch) {
+    if (!cur) return null;
+    const next: Record<string, unknown> = { ...cur, ...change.patch };
+    for (const k of change.drop) delete next[k];
+    feats.embedBuild = next;
+  } else if (change.set) {
+    feats.embedBuild = change.set;
   } else {
     delete feats.embedBuild;
   }
   return writeFeatures(libraryId, feats);
 }
 
-/** Merge drain bookkeeping into the existing marker (never creates one). */
-export async function patchEmbedBuildMarker(
-  libraryId: string, patch: Partial<EmbedBuildMarker>,
+/** The library's marker now, or the read error (never guessed). */
+export async function readEmbedBuildMarker(
+  libraryId: string,
+): Promise<{ marker: ReturnType<typeof parseEmbedBuildMarker>; error: string | null }> {
+  const { feats, error } = await readFeatures(libraryId);
+  if (error) return { marker: null, error };
+  return { marker: parseEmbedBuildMarker(feats.embedBuild), error: null };
+}
+
+/** Set / clear the background-continuation marker on a library. Starting a
+ *  build in the UI records WHO consented to spend their key; the cron only
+ *  ever continues builds carrying that consent. A new consent clears any
+ *  hold; a standing consent survives only when the same person renews it,
+ *  and another member's standing consent is never replaced by a plain build
+ *  (only by an explicit `standing` choice, or by clearing it) — the drain
+ *  continues the build on the consent that is already standing. A Rebuild
+ *  (reset) clears another member's marker first, so a rebuild is never
+ *  continued on a consent given for something else.
+ *  `expect` makes the write conditional on the marker the caller read.
+ *  Returns the write error, if any — a consent that did not record is said. */
+export async function setEmbedBuildMarker(
+  libraryId: string, userId: string | null, opts?: { standing?: boolean; expect?: MarkerExpectation },
 ): Promise<string | null> {
+  if (!userId) return writeMarker(libraryId, { set: null }, opts?.expect);
   const { feats, error } = await readFeatures(libraryId);
   if (error) return error;
-  const cur = feats.embedBuild;
-  if (!cur || typeof cur !== "object") return null;
-  const next: Record<string, unknown> = { ...(cur as Record<string, unknown>), ...patch };
-  for (const [k, v] of Object.entries(next)) if (v === undefined || v === null) delete next[k];
-  feats.embedBuild = next;
-  return writeFeatures(libraryId, feats);
+  const prior = parseEmbedBuildMarker(feats.embedBuild);
+  if (opts?.standing === undefined && prior?.valid && prior.standing && prior.userId !== userId) {
+    return null;
+  }
+  const standing = opts?.standing ?? (prior?.userId === userId && prior.standing === true);
+  return writeMarker(
+    libraryId,
+    { set: { userId, at: new Date().toISOString(), ...(standing ? { standing: true } : {}) } },
+    opts?.expect,
+  );
+}
+
+/** Merge drain bookkeeping into the existing marker (never creates one); an
+ *  undefined / null field is removed. `expect` as for setEmbedBuildMarker. */
+export async function patchEmbedBuildMarker(
+  libraryId: string, patch: Partial<EmbedBuildMarker>, expect?: MarkerExpectation,
+): Promise<string | null> {
+  const set: Record<string, unknown> = {};
+  const drop: string[] = [];
+  for (const [k, v] of Object.entries(patch)) {
+    if (v === undefined || v === null) drop.push(k);
+    else set[k] = v;
+  }
+  return writeMarker(libraryId, { patch: set, drop }, expect);
 }
 
 /** The acceptable-use agreement, checked locally until I-05's aiGates lands:

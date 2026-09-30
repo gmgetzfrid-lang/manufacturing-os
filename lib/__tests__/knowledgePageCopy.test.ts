@@ -68,13 +68,18 @@ describe("SEM-12 — the retrieval mode reaches every reader, with the coverage 
 });
 
 describe("SEM-8 — drift from 100% is on the page, for everyone", () => {
-  it("meaningIndexDrift speaks only when a built index has fallen behind", () => {
+  it("meaningIndexDrift speaks only when a built index has fallen behind — and never claims WHY (added since a build, or a build stopped part-way)", () => {
     expect(meaningIndexDrift(null)).toBeNull();
     expect(meaningIndexDrift({ total: 0, coveredNow: 0, remaining: 0 })).toBeNull();
     expect(meaningIndexDrift({ total: 100, coveredNow: 0, remaining: 100 })).toBeNull();       // never built: the panel says so
     expect(meaningIndexDrift({ total: 100, coveredNow: 100, remaining: 0 })).toBeNull();
     expect(meaningIndexDrift({ total: 1_000, coveredNow: 700, remaining: 300 })).toBe(
-      "Meaning search covers 70% of this library — 300 passages added since the last build are found by keyword only.");
+      "Meaning search covers 70% of this library — 300 passages don't carry a meaning vector yet and are found by keyword only.");
+    // a first build stopped at 30%: nothing was "added since the last build"
+    const stopped = meaningIndexDrift({ total: 25_000, coveredNow: 7_500, remaining: 17_500 })!;
+    expect(stopped).not.toMatch(/added since/);
+    expect(meaningIndexDrift({ total: 10, coveredNow: 9, remaining: 1 })).toBe(
+      "Meaning search covers 90% of this library — 1 passage doesn't carry a meaning vector yet and is found by keyword only.");
   });
   it("the Ask box shows it with no role gate", () => {
     expect(page).toContain("const drift = meaningIndexDrift(semanticStatus);");

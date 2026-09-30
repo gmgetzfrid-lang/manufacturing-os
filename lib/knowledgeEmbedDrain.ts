@@ -12,7 +12,12 @@
 //
 // A stamp is trusted only as far as it holds up (GOV-14 limb): a userId that
 // is not a uuid, or names nobody who is still an active member of the
-// library's org, is released rather than spent on.
+// library's org, is released rather than spent on. It is re-read before
+// EVERY batch: a consent withdrawn or replaced mid-run (Stop, a Rebuild by
+// another member) stops the run before anything more is spent on it. Every
+// write to the stamp is conditional on the stamp still being the one this
+// run read, and a failed read never releases or completes one: a count the
+// drain could not read is unknown, never 0.
 //
 // NO LIBRARY STARVES ANOTHER (SEM-11). Every marked library is read (paged —
 // no fixed window), and they are worked least-recently-drained first
@@ -36,7 +41,8 @@ import { openAiKey } from "@/lib/ai/keyVault";
 import { getMonthUsage, getCapUsd, recordAskUsage } from "@/lib/ai/usageServer";
 import {
   embedLibrarySlice, setEmbedBuildMarker, patchEmbedBuildMarker, parseEmbedBuildMarker,
-  loadEmbedDetail, unembeddedCount, embedAgreementSigned, type EmbedBuildMarker,
+  loadEmbedDetail, unembeddedCount, embedAgreementSigned, readEmbedBuildMarker, expectationOf,
+  type EmbedBuildMarker,
 } from "@/lib/knowledgeEmbedCore";
 
 /** Per-slice loop budget / in-flight hard stop, relative to slice start. */
@@ -136,6 +142,8 @@ export async function drainEmbedBacklog(opts: {
     for (let i = 0; i < queue.length; i++) {
       const lib = queue[i];
       const m = lib.marker;
+      // Every write below applies only to the stamp this run read.
+      const expect = expectationOf(m);
       const record = (d: Omit<DrainedLibrary, "libraryId">) => drained.push({ libraryId: lib.id, ...d });
 
       // A hold with a date: cap, backoff, conflict, agreement.
@@ -171,22 +179,27 @@ export async function drainEmbedBacklog(opts: {
         consentOk = !!member;
       }
       if (!consentOk) {
-        await setEmbedBuildMarker(lib.id, null);
+        await setEmbedBuildMarker(lib.id, null, { expect });
         record({ embedded: 0, remaining: -1, outcome: "released", note: "the build's consent names no active member of this workspace — stamp released" });
         continue;
       }
 
       // Claim the rotation slot before spending anything.
-      await patchEmbedBuildMarker(lib.id, { lastDrainAt: new Date().toISOString() });
+      await patchEmbedBuildMarker(lib.id, { lastDrainAt: new Date().toISOString() }, expect);
 
       const detail = await loadEmbedDetail(lib.org_id, lib.id);
       const remainingBefore = detail ? detail.remaining : await unembeddedCount(lib.org_id, lib.id);
+      if (remainingBefore === null) {
+        // Unknown is not 0: spend nothing, keep the stamp, look again next run.
+        record({ embedded: 0, remaining: -1, outcome: "blocked", note: "couldn't read the library's coverage — nothing spent, the stamp stays" });
+        continue;
+      }
       if (remainingBefore === 0) {
         if (m.standing) {
-          await patchEmbedBuildMarker(lib.id, { completedAt: m.completedAt ?? new Date().toISOString() });
+          await patchEmbedBuildMarker(lib.id, { completedAt: m.completedAt ?? new Date().toISOString() }, expect);
           record({ embedded: 0, remaining: 0, outcome: "current" });
         } else {
-          await setEmbedBuildMarker(lib.id, null);
+          await setEmbedBuildMarker(lib.id, null, { expect });
           record({ embedded: 0, remaining: 0, outcome: "complete" });
         }
         continue;
@@ -207,14 +220,14 @@ export async function drainEmbedBacklog(opts: {
         embedding_api_key: openAiKey(conn.embedding_api_key),
       });
       if (!connection) {
-        await setEmbedBuildMarker(lib.id, null);
+        await setEmbedBuildMarker(lib.id, null, { expect });
         record({ embedded: 0, remaining: remainingBefore, outcome: "released", note: "no embedding key — stamp cleared" });
         continue;
       }
 
-      const hold = async (reason: NonNullable<EmbedBuildMarker["blockedReason"]>, until: string, note: string) => {
-        await patchEmbedBuildMarker(lib.id, { blockedReason: reason, blockedUntil: until, lastError: note });
-        record({ embedded: 0, remaining: remainingBefore, outcome: "blocked", note: `${note} — next look ${until}` });
+      const hold = async (reason: NonNullable<EmbedBuildMarker["blockedReason"]>, until: string, note: string, embeddedSoFar = 0) => {
+        await patchEmbedBuildMarker(lib.id, { blockedReason: reason, blockedUntil: until, lastError: note }, expect);
+        record({ embedded: embeddedSoFar, remaining: remainingBefore, outcome: "blocked", note: `${note} — next look ${until}` });
       };
 
       // The acceptable-use agreement (local gate until the shared one lands).
@@ -238,11 +251,22 @@ export async function drainEmbedBacklog(opts: {
         continue;
       }
 
+      // The consent is re-read before every batch: withdrawn or replaced
+      // (Stop, another member's Rebuild) or unreadable, nothing more is spent.
+      let consentLost = null as "withdrawn" | "unverified" | null;
+      const beforeBatch = async (): Promise<string | null> => {
+        const { marker: cur, error } = await readEmbedBuildMarker(lib.id);
+        if (error) { consentLost = "unverified"; return `couldn't re-read the build's consent: ${error}`; }
+        if (!cur || cur.userId !== userId) { consentLost = "withdrawn"; return "the build's consent was withdrawn or replaced during this run"; }
+        return null;
+      };
+
       // Slice until this library is done, rate-limits us out of the window,
       // or the budget says stop. 429s wait out the provider's minute.
       let embedded = 0;
       let paced = false;
       let sliceError: string | null = null;
+      let stopReason: string | null = null;
       const usage = { inputTokens: 0, outputTokens: 0 };
       for (;;) {
         const left = budgetMs - (Date.now() - startedAt);
@@ -252,9 +276,11 @@ export async function drainEmbedBacklog(opts: {
           batchSize: paced ? PACED_BATCH : FULL_BATCH,
           budgetMs: Math.min(SLICE_BUDGET_MS, left - 15_000),
           hardStopMs: Math.min(SLICE_HARD_STOP_MS, left - 10_000),
+          beforeBatch,
         });
         embedded += slice.embedded;
         usage.inputTokens += slice.usage.inputTokens;
+        if (slice.stopReason) { stopReason = slice.stopReason; break; }
         if (slice.error) { sliceError = slice.error; break; }
         if (slice.rateLimited) {
           paced = true;
@@ -272,29 +298,47 @@ export async function drainEmbedBacklog(opts: {
         });
       }
 
+      if (stopReason) {
+        // Someone else's decision now governs the stamp: touch nothing.
+        record({
+          embedded, remaining: -1, outcome: consentLost === "withdrawn" ? "released" : "blocked",
+          note: `${stopReason} — stopped; nothing more is spent on it`,
+        });
+        continue;
+      }
       if (sliceError) {
         const runs = (m.errorRuns ?? 0) + 1;
         if (runs >= MAX_ERROR_RUNS) {
-          await setEmbedBuildMarker(lib.id, null);
+          await setEmbedBuildMarker(lib.id, null, { expect });
           record({ embedded, remaining: -1, outcome: "released", note: `released after ${runs} failed runs: ${sliceError}` });
         } else {
           const until = new Date(Date.now() + errorBackoffMs(runs)).toISOString();
-          await patchEmbedBuildMarker(lib.id, { blockedReason: "error", blockedUntil: until, lastError: sliceError, errorRuns: runs });
+          await patchEmbedBuildMarker(lib.id, { blockedReason: "error", blockedUntil: until, lastError: sliceError, errorRuns: runs }, expect);
           record({ embedded, remaining: -1, outcome: "blocked", note: `${sliceError} — retry after ${until}` });
         }
         continue;
       }
       if ((m.errorRuns ?? 0) > 0 || m.blockedReason) {
-        await patchEmbedBuildMarker(lib.id, { errorRuns: undefined, blockedReason: undefined, blockedUntil: undefined, lastError: undefined });
+        await patchEmbedBuildMarker(lib.id, { errorRuns: undefined, blockedReason: undefined, blockedUntil: undefined, lastError: undefined }, expect);
       }
 
-      const remainingAfter = await unembeddedCount(lib.org_id, lib.id);
-      if (remainingAfter === 0) {
+      // A second model appeared while this run worked (the claim then hands
+      // out nothing): hold it here rather than report an idle "advanced".
+      const detailAfter = await loadEmbedDetail(lib.org_id, lib.id);
+      const conflictAfter = detailAfter ? buildModelConflict(detailAfter.corpus, connection) : null;
+      if (conflictAfter) {
+        await hold("model_conflict", new Date(Date.now() + RECHECK_HOLD_MS).toISOString(), conflictAfter.message, embedded);
+        continue;
+      }
+      const remainingAfter = detailAfter ? detailAfter.remaining : await unembeddedCount(lib.org_id, lib.id);
+      if (remainingAfter === null) {
+        record({ embedded, remaining: -1, outcome: "blocked", note: "couldn't read the library's coverage after the run — the stamp stays" });
+      } else if (remainingAfter === 0) {
         if (m.standing) {
-          await patchEmbedBuildMarker(lib.id, { completedAt: new Date().toISOString() });
+          await patchEmbedBuildMarker(lib.id, { completedAt: new Date().toISOString() }, expect);
           record({ embedded, remaining: 0, outcome: "current" });
         } else {
-          await setEmbedBuildMarker(lib.id, null);
+          await setEmbedBuildMarker(lib.id, null, { expect });
           record({ embedded, remaining: 0, outcome: "complete" });
         }
       } else {

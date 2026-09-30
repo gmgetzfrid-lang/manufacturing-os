@@ -14,10 +14,13 @@
 // re-checked for the CURRENT reader through loadPrincipal +
 // readableControlledDocIds (lib/knowledgeHistory). A row citing anything the
 // reader cannot read is withheld whole, with every later turn of its
-// conversation. Controllers read all memory (DEC-43).
+// conversation; a library answer citing no document is shown to its asker
+// only. Controllers read all memory (DEC-43).
 //
-// Fails CLOSED: any read or ACL error answers an error and no rows — never an
-// unfiltered answer.
+// Fails CLOSED on a failed read of the stored answers, of the cited knowledge
+// documents or of the controlled documents: an error and no rows — never an
+// unfiltered answer. (The seam's library / folder landscape read does not yet
+// fail closed — see readableKnowledgeDocIds.)
 
 import { NextRequest, NextResponse } from "next/server";
 import { supabaseAdmin } from "@/lib/supabaseAdmin";
@@ -133,7 +136,7 @@ export async function POST(req: NextRequest) {
       }
       const cited = [...rows, ...threadRows].flatMap((r) => citedKnowledgeDocIds(r.citations));
       const readable = await readableKnowledgeDocIds(principal, cited);
-      const plan = planVisibleHistory(rows, threadRows, readable);
+      const plan = planVisibleHistory(rows, threadRows, readable, user.id);
       const unchecked = (r: StoredAnswerRow) =>
         !!r.thread_id && unseenAfter.has(r.thread_id) && r.created_at > (unseenAfter.get(r.thread_id) as string);
       visible = plan.visible.filter((r) => !unchecked(r));

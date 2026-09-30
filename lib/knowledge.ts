@@ -295,17 +295,47 @@ export async function saveLibraryAiInstructions(libraryId: string, instructions:
   if (error) throw new Error(error.message);
 }
 
-/** Save the library's AI feature toggles (controllers; RLS enforces). */
+/** Save the library's AI feature toggles (controllers; RLS enforces).
+ *
+ *  The toggles are replaced as a set, but ai_features also carries the
+ *  meaning index's background-build marker (`embedBuild` — who pays, and a
+ *  standing "keep current" consent, SEM-8), which this save must never
+ *  erase: knowledge_library_save_ai_features (20261121) replaces every key
+ *  EXCEPT embedBuild in one statement, so a drain writing the marker at the
+ *  same moment is not reverted either. Before 20261121 the marker is carried
+ *  over by reading it first. A save that changed nothing (no permission, or
+ *  no such library) is an error, never a silent success. */
 export async function saveLibraryAiFeatures(libraryId: string, features: KnowledgeAiFeatures): Promise<void> {
-  const { error } = await supabase.from("knowledge_libraries")
-    .update({ ai_features: features }).eq("id", libraryId);
-  if (error) {
+  const toggles = { ...(features as Record<string, unknown>) };
+  delete toggles.embedBuild;
+  const fail = (error: { code?: string; message: string }): never => {
     throw new Error(
       error.code === "PGRST204" || /ai_features/.test(error.message)
         ? "AI features need migration 20260918 — run it in Supabase first."
         : error.message,
     );
+  };
+  const notSaved = "Library AI setup was not saved — only Admin or Doc Control can change it.";
+
+  const rpc = await supabase.rpc("knowledge_library_save_ai_features", { p_library_id: libraryId, p_features: toggles });
+  if (!rpc.error) {
+    if (rpc.data !== true) throw new Error(notSaved);
+    return;
   }
+  const missing = rpc.error.code === "PGRST202" || rpc.error.code === "42883"
+    || /Could not find the function|does not exist/i.test(rpc.error.message);
+  if (!missing) fail(rpc.error);
+
+  // 20261121 not applied: keep the marker by reading it first.
+  const { data: cur, error: readErr } = await supabase.from("knowledge_libraries")
+    .select("ai_features").eq("id", libraryId).maybeSingle();
+  if (readErr) fail(readErr);
+  const marker = ((cur as { ai_features?: Record<string, unknown> | null } | null)?.ai_features ?? {}).embedBuild;
+  const { data, error } = await supabase.from("knowledge_libraries")
+    .update({ ai_features: marker !== undefined ? { ...toggles, embedBuild: marker } : toggles })
+    .eq("id", libraryId).select("id");
+  if (error) fail(error);
+  if (!Array.isArray(data) || data.length === 0) throw new Error(notSaved);
 }
 
 export async function listLibraryLinks(libraryId: string): Promise<KnowledgeLibraryLink[]> {
@@ -884,6 +914,7 @@ export interface SemanticProgress {
   retryAfterMs?: number;
   /** Passages the provider refused every time — skipped, with where they are. */
   failed?: number;
+  /** Where they are — for controllers only; other readers get the count. */
   failedSamples?: Array<{ documentName: string; page: number; error: string | null }>;
   /** Passages another run is embedding right now (SEM-7: the queue is a claim). */
   busy?: number;
@@ -906,6 +937,9 @@ export interface SemanticProgress {
   } | null;
   /** The background continuation could not be recorded this time. */
   backgroundNote?: string;
+  /** Reset: another member's background build / standing consent was ended
+   *  so the rebuild runs on the caller's own key. */
+  backgroundCleared?: boolean;
 }
 
 /** Coverage only — spends nothing, so it's safe to call on page load. */
@@ -980,13 +1014,16 @@ export async function releaseBackgroundBuild(orgId: string, libraryId: string): 
 }
 
 /** SEM-8: the one-line drift statement every reader sees on the library page
- *  — null when the index is complete, not built at all, or unknown. */
+ *  — null when the index is complete, not built at all, or unknown. It says
+ *  what is true either way — passages added since a build, or a build that
+ *  was stopped part-way — without claiming which. */
 export function meaningIndexDrift(status: Pick<SemanticProgress, "total" | "coveredNow" | "remaining"> | null): string | null {
   if (!status || status.total <= 0) return null;
   const covered = status.coveredNow ?? 0;
   if (covered <= 0 || status.remaining <= 0) return null;
   const pct = Math.floor((covered / status.total) * 100);
-  return `Meaning search covers ${pct}% of this library — ${status.remaining.toLocaleString()} passage${status.remaining === 1 ? "" : "s"} added since the last build ${status.remaining === 1 ? "is" : "are"} found by keyword only.`;
+  const one = status.remaining === 1;
+  return `Meaning search covers ${pct}% of this library — ${status.remaining.toLocaleString()} passage${one ? "" : "s"} ${one ? "doesn't" : "don't"} carry a meaning vector yet and ${one ? "is" : "are"} found by keyword only.`;
 }
 
 /** Embed one batch. The server stops on a time budget rather than trying to

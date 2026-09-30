@@ -189,11 +189,12 @@ export async function evidenceForEdge(
 }
 
 /**
- * How many of this equipment's mentions the reader is NOT shown — they sit in
- * documents the reader cannot open. A count only (no document, page or
- * sentence), from entity_mentions_total_for_asset (20261120) against the
- * reader's own visible count. Null when it can't be told (pre-migration, or
- * a read failed) — the caller then says nothing rather than guessing.
+ * How many of this equipment's mention ROWS (one per document page) the
+ * reader is NOT shown — they sit in documents the reader cannot open. A count
+ * only (no document, page or sentence), from entity_mentions_total_for_asset
+ * (20261120, a row count) against the reader's own visible row count — the
+ * same unit on both sides. Null when it can't be told (pre-migration, or a
+ * read failed) — the caller then says nothing rather than guessing.
  */
 export async function mentionAccessGap(
   orgId: string, assetId: string,
@@ -209,12 +210,14 @@ export async function mentionAccessGap(
   return { total, visible, withheld: Math.max(0, total - visible) };
 }
 
-/** The line a backlinks panel shows for mentions it may not display. */
+/** The line a backlinks panel shows for mentions it may not display.
+ *  `withheld` counts entity_mentions ROWS — one per page of a document
+ *  (entity_mentions_unique_idx) — so the line speaks of pages, never of
+ *  "mentions": the panel's header sums mention_count, a different unit. */
 export function describeWithheldMentions(withheld: number, anyVisible: boolean, tag: string): string | null {
   if (withheld <= 0) return null;
-  const n = `${withheld} ${anyVisible ? "further " : ""}mention${withheld === 1 ? "" : "s"}`;
-  const of = anyVisible ? "" : ` of ${tag}`;
-  return `${n}${of} ${withheld === 1 ? "is" : "are"} in documents you don't have access to.`;
+  const n = `${withheld} ${anyVisible ? "further " : ""}page${withheld === 1 ? "" : "s"}`;
+  return `${n} mentioning ${tag} ${withheld === 1 ? "is" : "are"} in documents you don't have access to.`;
 }
 
 /** Is the mention engine installed and populated for this org? Drives the

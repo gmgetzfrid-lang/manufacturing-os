@@ -11,7 +11,16 @@
 //     first; cap / error / conflict / agreement holds carry a date instead of
 //     a slot; repeated failure releases; outcomes name what happened,
 //     including "starved".
-//   * SEM-8 — a standing consent survives 100% and keeps the index current.
+//   * SEM-8 — a standing consent survives 100% and keeps the index current;
+//     the drain's stamp writes touch the embedBuild key alone and only the
+//     stamp it read, so a Library AI save or a consent recorded mid-run is
+//     never reverted or cleared.
+//   * SEM-11 / DEC-54 (5) — a count the drain could not read is unknown,
+//     never 0: nothing is released or completed on a failed read; a consent
+//     withdrawn or replaced mid-run (another member's Rebuild) stops the run
+//     before the next batch.
+//   * SEM-1 — the claim hands out nothing while the library holds another
+//     model's vectors.
 //   * GOV-14 limb — a stamp naming no active member is released, never spent.
 //   * 20261121 — the paste contract, byte fidelity against 20261014 / 20261007,
 //     and the census. (The SQL itself was run against a scratch PostgreSQL 16:
@@ -23,7 +32,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { readFileSync, readdirSync } from "node:fs";
 import { join } from "node:path";
-import { freshAdminState, type FakeAdminState, type Row } from "./helpers/knowledgeFakeAdmin";
+import { freshAdminState, installMarkerRpc, type FakeAdminState, type Row } from "./helpers/knowledgeFakeAdmin";
 
 const admin = vi.hoisted(() => ({ state: null as unknown as import("./helpers/knowledgeFakeAdmin").FakeAdminState }));
 vi.mock("@/lib/supabaseAdmin", async () => {
@@ -66,6 +75,11 @@ function installRpcs(state: FakeAdminState) {
   const retrievable = (c: Row) => ["ready", "indexing"].includes(String(docs().get(c.document_id as string)?.status));
   state.rpc.embed_claim_batch = (a) => {
     const now = Date.now();
+    // Nothing while the library holds a vector under another model.
+    if (a.p_model != null && (state.tables.knowledge_chunks ?? []).some((c) =>
+      c.library_id === a.p_library_id && c.embedding != null && c.embedding_model !== a.p_model)) {
+      return { data: [], error: null };
+    }
     const picked = (state.tables.knowledge_chunks ?? [])
       .filter((c) => c.org_id === a.p_org_id && c.library_id === a.p_library_id && c.embedding == null && retrievable(c)
         && Number(c.embed_attempts ?? 0) < Number(a.p_max_attempts)
@@ -89,7 +103,7 @@ function installRpcs(state: FakeAdminState) {
         embedded: pop.filter((c) => c.embedding != null).length,
         remaining: open.filter((c) => Number(c.embed_attempts ?? 0) < max).length,
         failed: open.filter((c) => Number(c.embed_attempts ?? 0) >= max).length,
-        leased: open.filter((c) => c.embed_claimed_until && Date.parse(String(c.embed_claimed_until)) > Date.now()).length,
+        leased: open.filter((c) => Number(c.embed_attempts ?? 0) < max && c.embed_claimed_until && Date.parse(String(c.embed_claimed_until)) > Date.now()).length,
         remaining_chars: open.filter((c) => Number(c.embed_attempts ?? 0) < max).reduce((n, c) => n + String(c.content).length, 0),
         total_chars: pop.reduce((n, c) => n + String(c.content).length, 0),
         models,
@@ -97,6 +111,7 @@ function installRpcs(state: FakeAdminState) {
       error: null,
     };
   };
+  installMarkerRpc(state);
 }
 
 const chunk = (i: number, over: Row = {}): Row => ({
@@ -386,6 +401,140 @@ describe("GOV-14 limb — a failed membership read never releases a consent", ()
   });
 });
 
+describe("DEC-54 (5) — a count the drain could not read is unknown, never 0", () => {
+  it("reproduction of the old `count ?? 0`: both coverage reads fail BEFORE the run → nothing spent, the plain stamp stays, the run says why (it used to clear the stamp as 'complete')", async () => {
+    seedDrainWorld();
+    admin.state.tables.knowledge_libraries = [marked(LIB, { userId: PAYER, at: "2026-09-01T00:00:00Z" })];
+    admin.state.tables.knowledge_chunks = [chunk(1), chunk(2)];
+    admin.state.rpc.semantic_coverage_detail = () => ({ data: null, error: { message: "canceling statement due to statement timeout" } });
+    admin.state.failReads.knowledge_chunks = { message: "canceling statement due to statement timeout" };
+    const out = await drainEmbedBacklog({ scopeOrgIds: null, budgetMs: 200_000 });
+    expect(out.drained[0]).toMatchObject({ outcome: "blocked", note: "couldn't read the library's coverage — nothing spent, the stamp stays" });
+    expect((admin.state.tables.knowledge_libraries[0].ai_features as { embedBuild: Row }).embedBuild).toMatchObject({ userId: PAYER });
+    expect(provider.inputs).toHaveLength(0);
+  });
+  it("both reads fail AFTER a successful slice → the stamp stays (blocked), never cleared as 'complete' on a guess", async () => {
+    seedDrainWorld();
+    admin.state.tables.knowledge_libraries = [marked(LIB, { userId: PAYER, at: "2026-09-01T00:00:00Z" })];
+    admin.state.tables.knowledge_chunks = [chunk(1), chunk(2)];
+    const real = admin.state.rpc.semantic_coverage_detail;
+    let n = 0;
+    admin.state.rpc.semantic_coverage_detail = (a) => {
+      if (++n === 1) return real(a);
+      admin.state.failReads.knowledge_chunks = { message: "timeout" };
+      return { data: null, error: { message: "timeout" } };
+    };
+    const out = await drainEmbedBacklog({ scopeOrgIds: null, budgetMs: 200_000 });
+    expect(out.drained[0]).toMatchObject({ outcome: "blocked", embedded: 2, note: "couldn't read the library's coverage after the run — the stamp stays" });
+    expect((admin.state.tables.knowledge_libraries[0].ai_features as { embedBuild: Row }).embedBuild).toBeTruthy();
+  });
+  it("unembeddedCount answers null (not 0) when neither read succeeds", async () => {
+    const { unembeddedCount } = await import("@/lib/knowledgeEmbedCore");
+    admin.state.tables.knowledge_chunks = [chunk(1)];
+    expect(await unembeddedCount(ORG, LIB)).toBe(1);
+    admin.state.rpc.semantic_coverage_detail = () => ({ data: null, error: { message: "timeout" } });
+    expect(await unembeddedCount(ORG, LIB)).toBe(1);                    // the plain count still answers
+    admin.state.failReads.knowledge_chunks = { message: "timeout" };
+    expect(await unembeddedCount(ORG, LIB)).toBeNull();
+  });
+});
+
+describe("SEM-8 / SEM-11 — the consent is re-read before every batch", () => {
+  const withProviderHook = (hook: (call: number) => void) => {
+    const inner = fetch;
+    let call = 0;
+    vi.stubGlobal("fetch", vi.fn(async (url: string, init: RequestInit) => {
+      const res = await (inner as unknown as (u: string, i: RequestInit) => Promise<unknown>)(url, init);
+      hook(++call);
+      return res;
+    }));
+  };
+  it("another member's Rebuild clears the payer's stamp mid-run: the drain stops before its next batch — nothing more on the payer's key", async () => {
+    seedDrainWorld();
+    admin.state.tables.knowledge_libraries = [marked(LIB, { userId: PAYER, at: "2026-09-01T00:00:00Z", standing: true })];
+    admin.state.tables.knowledge_chunks = Array.from({ length: 100 }, (_, i) => chunk(i + 1));
+    // the reset lands while the first batch is at the provider
+    withProviderHook((call) => { if (call === 1) delete (admin.state.tables.knowledge_libraries[0].ai_features as Row).embedBuild; });
+    const out = await drainEmbedBacklog({ scopeOrgIds: null, budgetMs: 200_000 });
+    expect(provider.inputs).toHaveLength(64);                              // the batch in flight, and no other
+    expect(out.drained[0]).toMatchObject({ outcome: "released", embedded: 64 });
+    expect(out.drained[0].note).toBe("the build's consent was withdrawn or replaced during this run — stopped; nothing more is spent on it");
+    expect((admin.state.tables.knowledge_libraries[0].ai_features as Row).embedBuild).toBeUndefined();   // the drain re-creates nothing
+  });
+  it("a stamp replaced by another member's consent mid-run: the run stops and leaves the new stamp exactly as recorded", async () => {
+    seedDrainWorld();
+    const B = "0d000000-0000-4000-8000-0000000000bb";
+    admin.state.tables.knowledge_libraries = [marked(LIB, { userId: PAYER, at: "2026-09-01T00:00:00Z" })];
+    admin.state.tables.knowledge_chunks = Array.from({ length: 100 }, (_, i) => chunk(i + 1));
+    withProviderHook((call) => {
+      if (call === 1) (admin.state.tables.knowledge_libraries[0].ai_features as Row).embedBuild = { userId: B, at: "2026-09-30T12:00:00Z" };
+    });
+    const out = await drainEmbedBacklog({ scopeOrgIds: null, budgetMs: 200_000 });
+    expect(out.drained[0].outcome).toBe("released");
+    expect(provider.inputs).toHaveLength(64);
+    expect((admin.state.tables.knowledge_libraries[0].ai_features as Row).embedBuild).toEqual({ userId: B, at: "2026-09-30T12:00:00Z" });
+  });
+  it("a consent the payer renewed mid-run (a new instant) is not cleared at 100% — every stamp write is conditional on the stamp the run read", async () => {
+    seedDrainWorld();
+    admin.state.tables.knowledge_libraries = [marked(LIB, { userId: PAYER, at: "2026-09-01T00:00:00Z" })];
+    admin.state.tables.knowledge_chunks = [chunk(1), chunk(2)];
+    withProviderHook((call) => {
+      if (call === 1) (admin.state.tables.knowledge_libraries[0].ai_features as Row).embedBuild = { userId: PAYER, at: "2026-09-30T12:00:00Z", standing: true };
+    });
+    const out = await drainEmbedBacklog({ scopeOrgIds: null, budgetMs: 200_000 });
+    expect(out.drained[0].outcome).toBe("complete");
+    expect((admin.state.tables.knowledge_libraries[0].ai_features as Row).embedBuild).toEqual({ userId: PAYER, at: "2026-09-30T12:00:00Z", standing: true });
+  });
+  it("the drain never writes the whole ai_features blob: a Library AI toggle saved mid-run survives, and every stamp write names the stamp it read", async () => {
+    seedDrainWorld();
+    admin.state.tables.knowledge_libraries = [{ id: LIB, org_id: ORG, ai_features: { visionAllPages: false, embedBuild: { userId: PAYER, at: "2026-09-01T00:00:00Z", standing: true } } }];
+    admin.state.tables.knowledge_chunks = [chunk(1), chunk(2)];
+    withProviderHook((call) => {
+      if (call !== 1) return;
+      // knowledge_library_save_ai_features: every toggle replaced, the stamp kept
+      const lib = admin.state.tables.knowledge_libraries[0];
+      lib.ai_features = { visionAllPages: true, embedBuild: (lib.ai_features as Row).embedBuild };
+    });
+    const out = await drainEmbedBacklog({ scopeOrgIds: null, budgetMs: 200_000 });
+    expect(out.drained[0].outcome).toBe("current");
+    const feats = admin.state.tables.knowledge_libraries[0].ai_features as Row;
+    expect(feats.visionAllPages).toBe(true);
+    expect(feats.embedBuild).toMatchObject({ userId: PAYER, standing: true, completedAt: expect.any(String) });
+    expect(admin.state.calls.filter((c) => c.table === "knowledge_libraries" && c.method === "update")).toEqual([]);
+    const writes = admin.state.calls.filter((c) => c.table === "rpc:embed_build_marker_write").map((c) => c.args[0] as Row);
+    expect(writes.length).toBeGreaterThan(0);
+    expect(writes.every((w) => w.p_expect_user === PAYER && w.p_expect_at === "2026-09-01T00:00:00Z")).toBe(true);
+  });
+});
+
+describe("SEM-1 — the claim hands out nothing while another model is in the library", () => {
+  it("a driver on another model embeds nothing and spends nothing; the claim is asked with the driver's model", async () => {
+    admin.state.tables.knowledge_chunks = [chunk(1, { embedding: "[0]", embedding_model: "text-embedding-3-small" }), chunk(2), chunk(3)];
+    const out = await slice();
+    expect(out).toMatchObject({ embedded: 0, fetchedNone: true, error: null });
+    expect(provider.inputs).toHaveLength(0);
+    const claim = admin.state.calls.find((c) => c.table === "rpc:embed_claim_batch")!;
+    expect(claim.args[0]).toMatchObject({ p_model: "voyage-3.5-lite" });
+  });
+  it("another model's vectors land mid-run (a rebuild on another key): the drain stops claiming and holds the library as a model conflict", async () => {
+    seedDrainWorld();
+    admin.state.tables.knowledge_libraries = [marked(LIB, { userId: PAYER, at: "2026-09-01T00:00:00Z" })];
+    admin.state.tables.knowledge_chunks = Array.from({ length: 100 }, (_, i) => chunk(i + 1));
+    const inner = fetch;
+    let call = 0;
+    vi.stubGlobal("fetch", vi.fn(async (url: string, init: RequestInit) => {
+      const res = await (inner as unknown as (u: string, i: RequestInit) => Promise<unknown>)(url, init);
+      if (++call === 1) admin.state.tables.knowledge_chunks.push(chunk(900, { embedding: "[0]", embedding_model: "text-embedding-3-small" }));
+      return res;
+    }));
+    const out = await drainEmbedBacklog({ scopeOrgIds: null, budgetMs: 200_000 });
+    expect(provider.inputs).toHaveLength(64);
+    expect(out.drained[0]).toMatchObject({ outcome: "blocked", embedded: 64 });
+    expect(out.drained[0].note).toMatch(/already mixes/);
+    expect(parseEmbedBuildMarker((admin.state.tables.knowledge_libraries[0].ai_features as Row).embedBuild)).toMatchObject({ blockedReason: "model_conflict" });
+  });
+});
+
 describe("SEM-8 — a standing consent keeps the index current", () => {
   it("at 100% a standing stamp stays (outcome current); a plain one clears (complete)", async () => {
     seedDrainWorld();
@@ -524,7 +673,50 @@ describe("20261121 — the paste contract, byte fidelity, the census", () => {
     expect(body).toContain("REVOKE ALL ON FUNCTION semantic_search(UUID, UUID, vector, INT, TEXT) FROM public, anon;");
     expect(body).toContain("GRANT EXECUTE ON FUNCTION semantic_search(UUID, UUID, vector, INT, TEXT) TO authenticated;");
   });
-  it("the claim: SKIP LOCKED + lease, retrievable only, attempts under the limit, fewest attempts first; service role only", () => {
+  it("the service role's EXECUTE is re-stated on every re-created read function (the ask route and the build call them as service_role), and the paste probes it", () => {
+    for (const sig of ["semantic_search(UUID, UUID, vector, INT, TEXT)", "semantic_coverage_detail(UUID, UUID, INTEGER)", "semantic_coverage(UUID, UUID)"]) {
+      expect(body).toContain(`GRANT EXECUTE ON FUNCTION ${sig} TO service_role;`);
+    }
+    expect(tail).toContain("AND has_function_privilege('service_role', 'semantic_search(uuid, uuid, vector, integer, text)', 'EXECUTE')");
+    expect(tail).toContain("AND has_function_privilege('service_role', 'semantic_coverage_detail(uuid, uuid, integer)', 'EXECUTE')");
+  });
+  it("leased counts only passages still claimable: a refused-out passage that keeps its lease is not 'busy'", () => {
+    const fn = body.slice(body.indexOf("CREATE OR REPLACE FUNCTION semantic_coverage_detail("), body.indexOf("REVOKE ALL ON FUNCTION semantic_coverage_detail"));
+    expect(fn).toContain("COUNT(*) FILTER (WHERE NOT has_vec AND embed_attempts < p_max_attempts AND embed_claimed_until > now())::BIGINT,");
+    expect(tail).toContain("AND prosrc LIKE '%embed_attempts < p_max_attempts AND embed_claimed_until > now()%'");
+  });
+  it("the marker is written alone: embed_build_marker_write touches only the embedBuild key, conditionally; the toggles save keeps it", () => {
+    const w = body.slice(body.indexOf("CREATE OR REPLACE FUNCTION embed_build_marker_write("), body.indexOf("REVOKE ALL ON FUNCTION embed_build_marker_write"));
+    expect(w).toContain("LANGUAGE sql VOLATILE SECURITY INVOKER");
+    expect(w).toContain("SET search_path = public");
+    expect(w).toContain("WHEN p_patch THEN jsonb_set(l.ai_features, '{embedBuild}',");
+    expect(w).toContain("((l.ai_features -> 'embedBuild') - p_drop) || COALESCE(p_marker, '{}'::jsonb))");
+    expect(w).toContain("WHEN p_marker IS NULL THEN COALESCE(l.ai_features, '{}'::jsonb) - 'embedBuild'");
+    expect(w).toContain("ELSE COALESCE(l.ai_features, '{}'::jsonb) || jsonb_build_object('embedBuild', p_marker)");
+    expect(w).toContain("AND (NOT p_patch OR jsonb_typeof(l.ai_features -> 'embedBuild') = 'object')");
+    expect(w).toContain("AND (p_expect_user IS NULL OR l.ai_features -> 'embedBuild' ->> 'userId' = p_expect_user)");
+    expect(w).toContain("AND (p_expect_at IS NULL OR l.ai_features -> 'embedBuild' ->> 'at' = p_expect_at)");
+    expect(body).toContain("REVOKE ALL ON FUNCTION embed_build_marker_write(UUID, JSONB, BOOLEAN, TEXT[], TEXT, TEXT) FROM public, anon, authenticated;");
+    expect(body).toContain("GRANT EXECUTE ON FUNCTION embed_build_marker_write(UUID, JSONB, BOOLEAN, TEXT[], TEXT, TEXT) TO service_role;");
+    const save = body.slice(body.indexOf("CREATE OR REPLACE FUNCTION knowledge_library_save_ai_features("), body.indexOf("REVOKE ALL ON FUNCTION knowledge_library_save_ai_features"));
+    expect(save).toContain("LANGUAGE sql VOLATILE SECURITY INVOKER");
+    expect(save).toContain("SET ai_features = (COALESCE(p_features, '{}'::jsonb) - 'embedBuild')");
+    expect(save).toContain("|| CASE WHEN l.ai_features ? 'embedBuild'");
+    expect(save).toContain("THEN jsonb_build_object('embedBuild', l.ai_features -> 'embedBuild')");
+    expect(body).toContain("GRANT EXECUTE ON FUNCTION knowledge_library_save_ai_features(UUID, JSONB) TO authenticated;");
+    // the app calls them with the SQL's own parameter names
+    const core = repo("lib/knowledgeEmbedCore.ts");
+    for (const p of ["p_library_id: libraryId,", "p_patch: isPatch,", "p_drop: isPatch ? change.drop : [],", "p_expect_user: expect?.userId ?? null,", "p_expect_at: expect?.at ?? null,"]) {
+      expect(core).toContain(p);
+    }
+    expect(repo("lib/knowledge.ts")).toContain('supabase.rpc("knowledge_library_save_ai_features", { p_library_id: libraryId, p_features: toggles })');
+  });
+  it("DEC-30: the model-mismatch inventory is also emitted per library (aggregate counts, grouped by library_id)", () => {
+    const inv = strip(m.slice(m.indexOf("CREATE TEMP TABLE"), m.indexOf("\nBEGIN;")));
+    expect(inv).toContain("SELECT '  of those, in library ' || c.library_id::text, COUNT(*)");
+    expect(inv).toContain("GROUP BY c.library_id");
+  });
+  it("the claim: SKIP LOCKED + lease, retrievable only, attempts under the limit, fewest attempts first, nothing while another model is in the library; service role only", () => {
     const fn = body.slice(body.indexOf("CREATE OR REPLACE FUNCTION embed_claim_batch("), body.indexOf("REVOKE ALL ON FUNCTION embed_claim_batch"));
     expect(fn).toContain("LANGUAGE sql VOLATILE SECURITY INVOKER");
     expect(fn).toContain("SET search_path = public");
@@ -532,11 +724,18 @@ describe("20261121 — the paste contract, byte fidelity, the census", () => {
     expect(fn).toContain("AND d.status IN ('ready', 'indexing')");
     expect(fn).toContain("AND c.embed_attempts < p_max_attempts");
     expect(fn).toContain("AND (c.embed_claimed_until IS NULL OR c.embed_claimed_until < now())");
+    expect(fn).toContain("p_model         TEXT DEFAULT NULL");
+    expect(fn).toContain("AND (p_model IS NULL OR NOT EXISTS (");
+    expect(fn).toContain("AND o.embedding_model IS DISTINCT FROM p_model))");
     expect(fn).toContain("ORDER BY c.embed_attempts, c.document_id, c.page, c.seq, c.id");
-    expect(body).toContain("REVOKE ALL ON FUNCTION embed_claim_batch(UUID, UUID, INTEGER, INTEGER, INTEGER) FROM public, anon, authenticated;");
-    expect(body).toContain("GRANT EXECUTE ON FUNCTION embed_claim_batch(UUID, UUID, INTEGER, INTEGER, INTEGER) TO service_role;");
-    // the app asks for the same limit the SQL skips at
-    expect(repo("lib/knowledgeEmbedCore.ts")).toContain("p_lease_seconds: LEASE_SECONDS, p_max_attempts: EMBED_MAX_ATTEMPTS,");
+    expect(body).toContain("DROP FUNCTION IF EXISTS embed_claim_batch(UUID, UUID, INTEGER, INTEGER, INTEGER);");
+    expect(body.indexOf("DROP FUNCTION IF EXISTS embed_claim_batch(")).toBeLessThan(body.indexOf("CREATE OR REPLACE FUNCTION embed_claim_batch("));
+    expect(body).toContain("REVOKE ALL ON FUNCTION embed_claim_batch(UUID, UUID, INTEGER, INTEGER, INTEGER, TEXT) FROM public, anon, authenticated;");
+    expect(body).toContain("GRANT EXECUTE ON FUNCTION embed_claim_batch(UUID, UUID, INTEGER, INTEGER, INTEGER, TEXT) TO service_role;");
+    // the app asks for the same limit the SQL skips at, with the model it embeds with
+    const core = repo("lib/knowledgeEmbedCore.ts");
+    expect(core).toContain("p_lease_seconds: LEASE_SECONDS, p_max_attempts: EMBED_MAX_ATTEMPTS,");
+    expect(core).toContain("p_model: connection.model,");
   });
   it("the columns are additive (fast default), and no function here is SECURITY DEFINER", () => {
     expect(body).toContain("ALTER TABLE knowledge_chunks ADD COLUMN IF NOT EXISTS embed_attempts INTEGER NOT NULL DEFAULT 0;");
@@ -545,10 +744,10 @@ describe("20261121 — the paste contract, byte fidelity, the census", () => {
     expect(body).not.toMatch(/SECURITY DEFINER/);
     expect(body).not.toMatch(/\bUPDATE knowledge_chunks SET embedding\b|DELETE FROM/);
   });
-  it("census: 20261121 is the last definer of semantic_search, semantic_coverage, semantic_coverage_detail and embed_claim_batch", () => {
+  it("census: 20261121 is the last definer of semantic_search, semantic_coverage, semantic_coverage_detail, embed_claim_batch and the two marker-safe writers", () => {
     const files = readdirSync(join(process.cwd(), "supabase", "migrations")).filter((f) => /^\d{8}.*\.sql$/.test(f)).sort();
     const last = (re: RegExp) => files.filter((f) => re.test(strip(mig(f)))).pop();
-    for (const name of ["semantic_search", "semantic_coverage", "semantic_coverage_detail", "embed_claim_batch"]) {
+    for (const name of ["semantic_search", "semantic_coverage", "semantic_coverage_detail", "embed_claim_batch", "embed_build_marker_write", "knowledge_library_save_ai_features"]) {
       expect(last(new RegExp(`CREATE (OR REPLACE )?FUNCTION ${name}\\(`))).toBe(FILE);
     }
   });

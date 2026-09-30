@@ -166,6 +166,9 @@ export default function SemanticIndexPanel({ orgId, libraryId, isController, onS
     : " (estimate)";
 
   const rebuild = async () => {
+    // A rebuild is the rebuilder's: another member's background consent is
+    // ended first (the route does it), and the dialog says so beforehand.
+    const others = status?.background && !status.background.mine ? status.background : null;
     const ok = await appConfirm({
       title: "Rebuild the meaning index?",
       message:
@@ -173,6 +176,11 @@ export default function SemanticIndexPanel({ orgId, libraryId, isController, onS
         + (model ? ` with ${model}` : "")
         + (fullCost ? ` — ${fullCost}${estimateNote}` : "")
         + ". Vectors from one embedding model are never reused by another, so switching models always means a rebuild. "
+        + (others
+          ? (others.standing
+            ? "It also ends another member's consent to keep this index current on their key — the rebuild is paid by you, and they can turn it back on afterwards. "
+            : "It also stops the background build running on another member's key — the rebuild is paid by you. ")
+          : "")
         + "Do it after ingestion or the embedding model changes, so older documents are indexed the same way as new ones. "
         + "Meaning-based search is degraded until the rebuild finishes; keyword search is unaffected.",
       confirmLabel: "Rebuild",

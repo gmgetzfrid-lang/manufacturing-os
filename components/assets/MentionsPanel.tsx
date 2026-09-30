@@ -17,8 +17,9 @@
 //   * Never dead-end. Every row goes somewhere, on the page it came from.
 //   * Never leak and never hide silently. A mention's sentence shows only to
 //     people who can open its document (20261120); the rest are counted —
-//     "N further mentions are in documents you don't have access to" — so an
-//     empty-looking panel is never mistaken for "nothing mentions this".
+//     "N further pages mentioning P-101 are in documents you don't have
+//     access to" — so an empty-looking panel is never mistaken for "nothing
+//     mentions this".
 
 import React, { useEffect, useState } from "react";
 import Link from "next/link";
