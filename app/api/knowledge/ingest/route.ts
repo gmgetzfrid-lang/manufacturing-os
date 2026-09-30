@@ -17,9 +17,12 @@
 // One driver at a time (ING-2): the engine claims the document per batch. A
 // POST that finds another driver mid-batch WAITS for it (never errors the
 // document) and answers `busy` with the row's progress if it is still held.
-// A file that is not a PDF is refused on its first batch, by its bytes,
-// before pdf.js sees it (ING-9 — the engine checks, whichever driver gets
-// there first; refuseNonPdf is the one refusal). Pages AI vision could not
+// A file that is not a PDF is refused on its first batch (ING-9 — the
+// engine checks, whichever driver gets there first: another format's bytes
+// before pdf.js sees them, a file with no PDF header once pdf.js cannot open
+// it either; refuseNonPdf is the one refusal). A failed batch is written
+// onto the document only while the row is still the file it read (ING-1 —
+// markIngestFailed). Pages AI vision could not
 // read that cannot be retried right now (no key, or the provider refused
 // again) answer 409 with the plain reason — the document keeps its index
 // and stays 'indexing', never 'error' (ING-6).
@@ -29,7 +32,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { supabaseAdmin } from "@/lib/supabaseAdmin";
 import { openAiKey } from "@/lib/ai/keyVault";
 import {
-  ingestKnowledgeDocBatch, refuseNonPdf, reindexLibraryChunks, rebuildDocumentMentions,
+  ingestKnowledgeDocBatch, refuseNonPdf, reindexLibraryChunks, onDocumentReady, markIngestFailed,
   claimIngestLease, releaseIngestLease,
   type VisionContext, type IngestBatchResult,
 } from "@/lib/knowledgeIngest";
@@ -175,10 +178,16 @@ export async function POST(req: NextRequest) {
       res = await ingestKnowledgeDocBatch(row, vision, deadlineMs);
     }
 
-    // ── Not a PDF at all (ING-9): the bytes said so before pdf.js saw them.
-    //    An upload leaves nothing behind; a mirror is marked (refuseNonPdf).
+    // ── Not a PDF at all (ING-9). An upload leaves nothing behind; a
+    //    mirror is marked (refuseNonPdf) — unless a rev-up re-pointed the
+    //    row since the file was checked: then nothing is refused, and the
+    //    answer is the same as any batch the rev-up superseded.
     if (res.notPdf) {
-      const refused = await refuseNonPdf(doc as Record<string, unknown>, res.notPdf, user.id);
+      const refused = await refuseNonPdf(doc as Record<string, unknown>, res.notPdf, user.id, res.notPdfRead);
+      if (refused.superseded) {
+        const { notPdfRead: _read, ...pub } = res;
+        return NextResponse.json({ ...pub, notPdf: null, superseded: true, done: false });
+      }
       if (refused.error) return bad(`${refused.message} (${refused.error})`, 415);
       return NextResponse.json({ error: refused.message, removed: refused.removed, detected: res.notPdf }, { status: 415 });
     }
@@ -217,17 +226,20 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ ...res, visionSkipReason, visionCostUsd });
   } catch (e) {
     const message = (e as Error).message;
-    await supabaseAdmin.from("knowledge_documents")
-      .update({ status: "error", error: message.slice(0, 500) })
-      .eq("id", doc.id as string);
+    // Only onto the row the failing batch read: a batch a rev-up superseded
+    // mid-flight never stamps 'error' on the new revision (ING-1).
+    await markIngestFailed({
+      id: doc.id as string, file_key: doc.file_key as string, pages_indexed: (doc.pages_indexed as number | null) ?? 0,
+      ...("source_version_id" in doc ? { source_version_id: (doc.source_version_id as string | null) ?? null } : {}),
+    }, e);
     return bad(`Indexing failed: ${message}`, 502);
   }
 }
 
-/** The audit row for a document reaching 'ready'. (The mention pass that
- *  draws its document↔equipment edges runs where the document becomes
- *  'ready' — inside the engine for a batch, so the cron drain gets it too,
- *  and in acceptPartial below.) */
+/** The audit row for a document reaching 'ready'. (The Bridge and the
+ *  mention pass run where the document becomes 'ready' — inside the engine
+ *  for a batch, so the cron drain gets them too, and in acceptPartial below,
+ *  both through onDocumentReady.) */
 async function onIndexed(doc: Record<string, unknown>, userId: string, pages: number, visionPages: number) {
   await supabaseAdmin.from("audit_logs").insert({
     action: "KNOWLEDGE_DOC_INDEXED",
@@ -239,16 +251,25 @@ async function onIndexed(doc: Record<string, unknown>, userId: string, pages: nu
 
 /** ING-6's explicit exit: a controller accepts a document whose remaining
  *  pages AI vision could not read. It becomes 'ready' with those pages still
- *  listed on the row (vision_failed_pages) — the count stays visible — and
- *  the acceptance is audited with the page list. It takes the document's
- *  ingest claim like any writer, so a retry batch in flight can neither be
- *  overwritten by it nor undo it: the acceptance and the claim's release
- *  are one UPDATE. */
+ *  listed on the row (vision_failed_pages) — the count stays visible.
+ *
+ *    - It takes the document's ingest claim like any writer, so a retry
+ *      batch in flight can neither be overwritten by it nor undo it: the
+ *      acceptance and the claim's release are one UPDATE.
+ *    - The decision is audited FIRST, as a checked write naming the file it
+ *      is about: an acceptance that cannot be recorded changes nothing.
+ *    - The UPDATE is a compare-and-set on the row as claimed — its file,
+ *      version and resume point. A rev-up may re-point the row even under
+ *      this claim (ING-1), and accepting Rev 3's unread pages must never
+ *      stamp Rev 4 'ready' with nothing indexed: that answers 409.
+ *    - An accepted document feeds the Bridge and the mention pass exactly as
+ *      one the engine completed (onDocumentReady). */
 async function acceptPartial(doc: Record<string, unknown>, userId: string) {
   if (pageList(doc.vision_failed_pages).length === 0) return bad("Nothing to accept — no page is waiting on AI vision.", 409);
+  const id = String(doc.id);
   const driver = `accept:${randomUUID()}`;
   let lease: Awaited<ReturnType<typeof claimIngestLease>>;
-  try { lease = await claimIngestLease(String(doc.id), driver); }
+  try { lease = await claimIngestLease(id, driver); }
   catch (e) { return bad(`Could not accept the partial index: ${(e as Error).message}`, 500); }
   if (lease.kind === "gone") return bad("Document not found", 404);
   if (lease.kind === "busy") {
@@ -257,37 +278,44 @@ async function acceptPartial(doc: Record<string, unknown>, userId: string) {
   // The row as claimed: the freshest page list and progress.
   const row = lease.kind === "claimed" ? lease.row : doc;
   const failed = pageList(row.vision_failed_pages);
-  const refuse = async (msg: string) => {
-    if (lease.kind === "claimed") await releaseIngestLease(String(doc.id), driver);
-    return bad(msg, 409);
+  const refuse = async (msg: string, status = 409) => {
+    if (lease.kind === "claimed") await releaseIngestLease(id, driver);
+    return bad(msg, status);
   };
   if (failed.length === 0) return refuse("Nothing to accept — no page is waiting on AI vision.");
   if (Number(row.pages_indexed ?? 0) < Number(row.page_count ?? Infinity)) {
     return refuse("Indexing has not reached the end of this document yet — let it finish first.");
   }
+  const { error: auditErr } = await supabaseAdmin.from("audit_logs").insert({
+    action: "KNOWLEDGE_DOC_PARTIAL_ACCEPTED",
+    resource_type: "knowledge_document", resource_id: id,
+    org_id: doc.org_id, user_id: userId,
+    details: {
+      name: doc.name, unreadPages: failed, fileKey: row.file_key,
+      sourceVersionId: row.source_version_id ?? null, sourceRev: row.source_rev ?? null,
+    },
+  });
+  if (auditErr) return refuse(`The acceptance could not be recorded, so nothing was changed: ${auditErr.message}`, 500);
   const known = new Set(Object.keys(row));
   const update = Object.fromEntries(Object.entries({
     vision_partial_accepted: true, status: "ready", error: null, vision_retry_after: null,
     ingest_claimed_by: null, ingest_claimed_at: null,
   }).filter(([k]) => known.has(k)));
-  let q = supabaseAdmin.from("knowledge_documents").update(update).eq("id", String(doc.id));
+  let q = supabaseAdmin.from("knowledge_documents").update(update)
+    .eq("id", id).eq("file_key", String(row.file_key)).eq("pages_indexed", Number(row.pages_indexed ?? 0));
+  if ("source_version_id" in row) {
+    q = row.source_version_id == null ? q.is("source_version_id", null) : q.eq("source_version_id", row.source_version_id as string);
+  }
   if (lease.kind === "claimed") q = q.eq("ingest_claimed_by", driver);
   const { data, error } = await q.select("id");
-  if (error) {
-    if (lease.kind === "claimed") await releaseIngestLease(String(doc.id), driver);
-    return bad(`Could not accept the partial index: ${error.message}`, 500);
+  if (error) return refuse(`Could not accept the partial index: ${error.message}`, 500);
+  if ((data ?? []).length === 0) {
+    return refuse("The document changed while it was being accepted (a new revision, or indexing moved on) — reload and try again.");
   }
-  if ((data ?? []).length === 0) return bad("The document changed while it was being accepted — reload and try again.", 409);
-  await supabaseAdmin.from("audit_logs").insert({
-    action: "KNOWLEDGE_DOC_PARTIAL_ACCEPTED",
-    resource_type: "knowledge_document", resource_id: String(doc.id),
-    org_id: doc.org_id, user_id: userId,
-    details: { name: doc.name, unreadPages: failed },
-  }).then(() => undefined, () => undefined);
   await onIndexed(doc, userId, Number(row.page_count ?? 0), Number(row.vision_pages ?? 0));
-  await rebuildDocumentMentions({
-    id: String(doc.id), org_id: String(doc.org_id),
-    source_document_id: (doc.source_document_id as string | null) ?? null,
+  await onDocumentReady({
+    id, org_id: String(doc.org_id),
+    source_document_id: (row.source_document_id as string | null) ?? null,
   });
   return NextResponse.json({ ok: true, done: true, acceptedPages: failed });
 }

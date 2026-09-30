@@ -10,6 +10,11 @@
 //                  withdraws, so the superseded revision never reaches
 //                  'ready'. A refresh that did not land leaves its library
 //                  never-synced, so the next run reaches it first
+//   ING-1          a second sync that read the mirror before the first one
+//                  re-pointed it (the publish-triggered sync and the cron's,
+//                  say) never resets the NEW revision: not under its first
+//                  batch (which would end 'ready' with no chunks), and not
+//                  between its batches (which would re-bill its vision pages)
 //   ING-3          the reset queues the row BEFORE deleting, so an
 //                  interrupted reset never leaves a 'ready' row without its
 //                  chunks; the re-index's first batch clears what is left
@@ -162,6 +167,67 @@ describe("ING-3 / DWG-1 — a rev-up drops the whole derived index", () => {
     expect(rowsOf("knowledge_page_entities")).toHaveLength(0);
     // It landed, so the library is stamped as reconciled.
     expect(String(rowsOf("knowledge_sources")[0].last_synced_at)).toMatch(/^20/);
+  });
+
+  /** Sync C reads the mirror while it still names Rev 3, then is held at
+   *  its reset's claim — exactly the window in which sync A re-points it. */
+  const staleSync = () => {
+    let claims = 0;
+    let open!: () => void;
+    const gate = new Promise<void>((r) => { open = r; });
+    db.asyncHooks.push(async (op) => {
+      if (op.table !== "knowledge_documents" || op.kind !== "update") return;
+      if (!String((op.payload as Row).ingest_claimed_by ?? "").startsWith("reset:")) return;
+      if (++claims === 1) await gate;
+    });
+    const run = syncKnowledgeLibrarySources("kl-1");
+    return { run, parked: () => claims >= 1, release: () => open() };
+  };
+  const REV4 = () => makePdf([drawingSheet(1, ["V-101", "P-201A", "E-301"]), drawingSheet(2, ["V-102", "P-202A", "E-302"])]);
+
+  it("ING-1: a second sync that read Rev 3 lands under Rev 4's first batch — it resets nothing, and the batch's pages stay", async () => {
+    r2.objects.set("orgs/o1/dc/rev4.pdf", await REV4());
+    const c = staleSync();
+    await vi.waitFor(() => expect(c.parked()).toBe(true));
+    // Sync A re-points the mirror at Rev 4 while C is held.
+    expect(await syncKnowledgeLibrarySources("kl-1")).toMatchObject({ refreshed: 1, deferred: 0, errors: [] });
+    expect(mirror()).toMatchObject({ source_version_id: "ver-4", status: "stale", pages_indexed: 0 });
+    // Rev 4's first batch runs; C lands just before its commit (the probe:
+    // the batch's compare-and-set still matched, and the row ended 'ready'
+    // with every chunk gone).
+    let cOut: Awaited<ReturnType<typeof syncKnowledgeLibrarySources>> | null = null;
+    db.asyncHooks.push(async (op, filters) => {
+      if (cOut || op.table !== "knowledge_documents" || op.kind !== "update") return;
+      if (!filters.some((f) => f.col === "pages_indexed")) return;       // the batch's compare-and-set
+      c.release();
+      cOut = await c.run;
+    });
+    const res = await ingestKnowledgeDocBatch(mirror() as unknown as Parameters<typeof ingestKnowledgeDocBatch>[0]);
+    expect(cOut).toMatchObject({ refreshed: 0, deferred: 1, errors: [] });
+    expect(res).toMatchObject({ done: true, superseded: false });
+    expect(mirror()).toMatchObject({ status: "ready", pages_indexed: 2, page_count: 2, source_version_id: "ver-4", ingest_claimed_by: null });
+    expect(rowsOf("knowledge_chunks").length).toBeGreaterThan(0);
+    expect(rowsOf("knowledge_page_entities").map((e) => e.tag)).toEqual(expect.arrayContaining(["V-101", "V-102"]));
+    // C did not land: its library comes round first next run, and finds
+    // nothing to do.
+    expect(rowsOf("knowledge_sources")[0].last_synced_at).toBeNull();
+    expect(await syncKnowledgeLibrarySources("kl-1")).toMatchObject({ refreshed: 0, deferred: 0 });
+    expect(mirror().status).toBe("ready");
+  });
+
+  it("ING-1: the same stale sync after Rev 4 was re-indexed (no batch running) leaves it alone — nothing re-reset, nothing re-billed", async () => {
+    r2.objects.set("orgs/o1/dc/rev4.pdf", await REV4());
+    const c = staleSync();
+    await vi.waitFor(() => expect(c.parked()).toBe(true));
+    await syncKnowledgeLibrarySources("kl-1");
+    await ingestKnowledgeDocBatch(mirror() as unknown as Parameters<typeof ingestKnowledgeDocBatch>[0]);
+    mirror().vision_pages = 2;                                   // as if its sheets were read by vision
+    const chunks = rowsOf("knowledge_chunks").length;
+    expect(mirror()).toMatchObject({ status: "ready", source_version_id: "ver-4" });
+    c.release();
+    expect(await c.run).toMatchObject({ refreshed: 0, deferred: 1, errors: [] });
+    expect(mirror()).toMatchObject({ status: "ready", pages_indexed: 2, vision_pages: 2, source_version_id: "ver-4" });
+    expect(rowsOf("knowledge_chunks")).toHaveLength(chunks);
   });
 
   it("a cron-drained rev-up gets its document↔equipment mentions back when the re-index reaches 'ready'", async () => {

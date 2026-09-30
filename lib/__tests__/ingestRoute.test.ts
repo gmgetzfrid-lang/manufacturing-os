@@ -3,12 +3,17 @@
 //
 //   ING-9  the bytes decide: a renamed spreadsheet is refused on its first
 //          batch with a message naming the importer; an upload leaves no row
-//          and no object behind; a mirrored file is marked, never deleted
+//          and no object behind (the refusal audited first); a mirrored file
+//          is marked, never deleted. A file with no header in its first KB is
+//          refused only if pdf.js cannot open it either
+//   ING-1  a batch a rev-up superseded that then fails never stamps 'error'
+//          on the new revision; an acceptance cannot land on it either
 //   ING-2  the loser waits for the claim instead of erroring the document
 //   ING-6  failed vision pages are said on the response; a retry that cannot
 //          run answers 409 with the reason and never errors the document; a
-//          controller can accept the partial index explicitly (audited,
-//          under the claim, so a retry in flight cannot undo it)
+//          controller can accept the partial index explicitly (audited
+//          first, under the claim, so a retry in flight cannot undo it; the
+//          Bridge and the mention pass follow, as for any 'ready' document)
 //   ING-4  the per-library re-index: a dry run first, the intent audited
 //          before anything is reset, bounded, resumable, never twice
 //   ADD-1  the controller gate reads the role collection
@@ -16,7 +21,7 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { NextRequest } from "next/server";
 import { db, resetDb, rowsOf, type Row } from "./knowledgeFakeDb";
-import { makePdf, prosePage } from "./knowledgePdfFixtures";
+import { makePdf, prosePage, drawingSheet } from "./knowledgePdfFixtures";
 
 const r2 = vi.hoisted(() => ({ objects: new Map<string, Uint8Array>(), deleted: [] as string[] }));
 vi.mock("@/lib/supabaseAdmin", async () => ({ supabaseAdmin: (await import("./knowledgeFakeDb")).fakeAdmin }));
@@ -40,7 +45,8 @@ vi.mock("@/lib/aiInstructionsServer", () => ({ loadOrgInstructionsBlock: vi.fn(a
 vi.mock("@/lib/ai/keyVault", () => ({ openAiKey: (k: string) => k }));
 
 import { POST } from "@/app/api/knowledge/ingest/route";
-import { sniffBytes, reindexLibraryChunks } from "@/lib/knowledgeIngest";
+import { sniffBytes, reindexLibraryChunks, resetKnowledgeIndex } from "@/lib/knowledgeIngest";
+import { computeForKnowledgeDoc } from "@/lib/equipmentBridgeServer";
 
 const DOC = "kd-9";
 const post = (body: unknown, token = "good") => POST(new NextRequest("http://x/api/knowledge/ingest", {
@@ -106,6 +112,103 @@ describe("ING-9 — the server checks the bytes before pdf.js", () => {
     expect(body).toMatchObject({ done: true, busy: false, emptyPagesTotal: 0 });
     expect(rowsOf("knowledge_documents")[0].status).toBe("ready");
   });
+
+  it("a PDF behind a long preamble (no header in its first KB) is still a PDF: pdf.js opens it, and it indexes", async () => {
+    seed(docRow());
+    const pdf = await makePdf([prosePage("bolting")]);
+    const preamble = new TextEncoder().encode("X-Scanner: mail gateway preamble line\r\n".repeat(60));
+    const bytes = new Uint8Array(preamble.length + pdf.length);
+    bytes.set(preamble); bytes.set(pdf, preamble.length);
+    expect(sniffBytes(bytes.subarray(0, 1024))).toBe("text");
+    r2.objects.set(KEY, bytes);
+    const res = await post({ documentId: DOC });
+    expect(res.status).toBe(200);
+    expect(await res.json()).toMatchObject({ done: true });
+    expect(rowsOf("knowledge_documents")[0].status).toBe("ready");
+    expect(r2.deleted).toEqual([]);
+  });
+
+  it("a CSV renamed .pdf (no header, and pdf.js cannot open it) is refused once pdf.js has tried — nothing left behind", async () => {
+    seed(docRow());
+    r2.objects.set(KEY, new TextEncoder().encode("tag,description,unit\nV-101,Drum,2010\n".repeat(20)));
+    const res = await post({ documentId: DOC });
+    expect(res.status).toBe(415);
+    expect((await res.json()).error).toMatch(/is not a PDF \(it looks like a text or CSV file\)\. To load an equipment list/);
+    expect(rowsOf("knowledge_documents")).toHaveLength(0);
+    expect(r2.deleted).toEqual([KEY]);
+    expect(rowsOf("audit_logs").map((a) => a.action)).toEqual(["KNOWLEDGE_DOC_REJECTED"]);
+  });
+
+  it("a damaged file that does carry the PDF header is an indexing failure, not a refusal: nothing is deleted", async () => {
+    seed(docRow());
+    r2.objects.set(KEY, new TextEncoder().encode("%PDF-1.7\n" + "garbage ".repeat(200)));
+    const res = await post({ documentId: DOC });
+    expect(res.status).toBe(502);
+    expect((await res.json()).error).toMatch(/^Indexing failed: /);
+    expect(rowsOf("knowledge_documents")[0]).toMatchObject({ status: "error" });
+    expect(r2.deleted).toEqual([]);
+  });
+
+  it("a refusal that cannot be audited deletes nothing", async () => {
+    seed(docRow());
+    r2.objects.set(KEY, XLSX_HEAD);
+    db.hooks.push((op) => op.table === "audit_logs" && op.kind === "insert"
+      ? { error: { code: "42501", message: "permission denied for table audit_logs" } } : undefined);
+    const res = await post({ documentId: DOC });
+    expect(res.status).toBe(415);
+    expect((await res.json()).error).toMatch(/The refusal could not be recorded, so the upload was kept: permission denied/);
+    expect(rowsOf("knowledge_documents")).toHaveLength(1);
+    expect(r2.deleted).toEqual([]);
+  });
+});
+
+describe("ING-1 — a failure or an acceptance never lands on a re-pointed revision", () => {
+  const REV3 = { source_id: "src-1", source_document_id: "dc-1", source_version_id: "ver-3", source_rev: "3", file_key: "orgs/o1/dc/rev3.pdf" };
+  const REV4 = { file_key: "orgs/o1/dc/rev4.pdf", source_version_id: "ver-4", source_rev: "4" };
+  const supersede = () => resetKnowledgeIndex([DOC], {
+    purgeLineTraces: true, supersedeBusy: true,
+    expect: () => ({ source_version_id: "ver-3" }), rowUpdate: () => REV4,
+  });
+
+  it("the route: a Rev 3 batch superseded mid-flight that then fails answers 502 — and the Rev 4 row is not marked 'error'", async () => {
+    seed(docRow({ ...REV3, status: "stale" }));
+    r2.objects.set(REV3.file_key, await makePdf([drawingSheet(1, ["V-101", "P-201A", "E-301"])]));
+    let reset: Awaited<ReturnType<typeof resetKnowledgeIndex>> | null = null;
+    db.asyncHooks.push(async (op) => {
+      if (reset || op.table !== "knowledge_page_entities" || op.kind !== "insert") return;
+      reset = await supersede();
+    });
+    db.hooks.push((op) => op.table === "knowledge_page_entities" && op.kind === "insert"
+      ? { error: { code: "08006", message: "connection reset by peer" } } : undefined);
+    const res = await post({ documentId: DOC });
+    expect(res.status).toBe(502);
+    expect(reset).toEqual({ reset: [DOC], busy: [], errors: [] });
+    expect(rowsOf("knowledge_documents")[0]).toMatchObject({ status: "stale", error: null, pages_indexed: 0, ...REV4, ingest_claimed_by: null });
+    expect(rowsOf("knowledge_chunks")).toHaveLength(0);
+  });
+
+  it("accept-partial: a rev-up that re-points the row under the acceptance wins — Rev 4 is never 'ready' with nothing indexed", async () => {
+    seed(docRow({ ...REV3, status: "indexing", pages_indexed: 3, page_count: 3, vision_failed_pages: [2] }));
+    vi.mocked(computeForKnowledgeDoc).mockClear();
+    db.tables.knowledge_chunks = [1, 3].map((p) => ({ id: `c${p}`, document_id: DOC, org_id: "o1", library_id: "kl-1", page: p, seq: 0, content: `rev 3 page ${p}` }));
+    let reset: Awaited<ReturnType<typeof resetKnowledgeIndex>> | null = null;
+    db.asyncHooks.push(async (op) => {
+      if (reset || op.table !== "knowledge_documents" || op.kind !== "update" || (op.payload as Row).vision_partial_accepted !== true) return;
+      reset = await supersede();
+    });
+    const res = await post({ documentId: DOC, action: "accept-partial" });
+    expect(res.status).toBe(409);
+    expect((await res.json()).error).toMatch(/changed while it was being accepted/);
+    expect(reset).toEqual({ reset: [DOC], busy: [], errors: [] });
+    expect(rowsOf("knowledge_documents")[0]).toMatchObject({
+      status: "stale", pages_indexed: 0, vision_partial_accepted: false, ...REV4, ingest_claimed_by: null,
+    });
+    expect(vi.mocked(computeForKnowledgeDoc)).not.toHaveBeenCalled();
+    // The decision was recorded first, naming the file it was about.
+    expect(rowsOf("audit_logs")).toEqual([expect.objectContaining({
+      action: "KNOWLEDGE_DOC_PARTIAL_ACCEPTED", details: expect.objectContaining({ fileKey: REV3.file_key, sourceVersionId: "ver-3" }),
+    })]);
+  });
 });
 
 describe("ING-2 — the loser waits", () => {
@@ -159,12 +262,15 @@ describe("ING-6 — failed vision pages on the response, and the explicit way ou
     expect(rowsOf("audit_logs")).toHaveLength(0);
   });
 
-  it("an accepted partial index is not undone by a batch that runs afterwards; its mentions are rebuilt", async () => {
+  it("an accepted partial index is not undone by a batch that runs afterwards; its mentions are rebuilt and it feeds the Bridge", async () => {
     seed(docRow({ status: "indexing", pages_indexed: 3, page_count: 3, vision_failed_pages: [2], vision_retry_after: new Date(Date.now() + 60_000).toISOString() }));
     const { loadAliasDictionary, indexDocumentMentions } = await import("@/lib/mentionIndexer");
     vi.mocked(loadAliasDictionary).mockResolvedValueOnce([{ assetId: "a1", alias: "V-101", origin: "tag" }]);
+    vi.mocked(computeForKnowledgeDoc).mockClear();
     const res = await post({ documentId: DOC, action: "accept-partial" });
     expect(res.status).toBe(200);
+    // The equipment Bridge, as for a document the engine completed.
+    await vi.waitFor(() => expect(vi.mocked(computeForKnowledgeDoc)).toHaveBeenCalledWith(expect.anything(), DOC));
     expect(rowsOf("knowledge_documents")[0]).toMatchObject({
       status: "ready", vision_partial_accepted: true, vision_retry_after: null, ingest_claimed_by: null,
     });
@@ -174,6 +280,16 @@ describe("ING-6 — failed vision pages on the response, and the explicit way ou
     const late = await post({ documentId: DOC });
     expect(await late.json()).toMatchObject({ done: true });
     expect(rowsOf("knowledge_documents")[0]).toMatchObject({ status: "ready", vision_partial_accepted: true });
+  });
+
+  it("an acceptance that cannot be audited changes nothing", async () => {
+    seed(docRow({ status: "indexing", pages_indexed: 3, page_count: 3, vision_failed_pages: [2] }));
+    db.hooks.push((op) => op.table === "audit_logs" && op.kind === "insert"
+      ? { error: { code: "42501", message: "permission denied for table audit_logs" } } : undefined);
+    const res = await post({ documentId: DOC, action: "accept-partial" });
+    expect(res.status).toBe(500);
+    expect((await res.json()).error).toMatch(/could not be recorded, so nothing was changed/);
+    expect(rowsOf("knowledge_documents")[0]).toMatchObject({ status: "indexing", vision_partial_accepted: false, ingest_claimed_by: null });
   });
 
   it("accept-partial refuses when nothing waits, or indexing has not finished", async () => {

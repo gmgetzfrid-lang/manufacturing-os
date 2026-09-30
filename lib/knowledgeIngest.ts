@@ -73,7 +73,9 @@ export interface IngestBatchResult {
   done: boolean;
   pageCount: number;
   /** Where the next batch starts — knowledge_documents.pages_indexed. The
-   *  meaning this field has always had: clients detect a stall on it. */
+   *  meaning this field has always had: clients detect a stall on it. A
+   *  vision-retry batch (ING-6) does not move it — its progress is the fall
+   *  in `visionFailedPages`, which a stall detector must count too. */
   pagesIndexed: number;
   /** The same resume point, named for what it is. */
   resumeAt: number;
@@ -116,6 +118,9 @@ export interface IngestBatchResult {
   /** The stored file is not a PDF at all (ING-9): nothing was indexed; the
    *  caller refuses it through refuseNonPdf. */
   notPdf: SniffedKind | null;
+  /** With `notPdf`: the file the check looked at — what the refusal
+   *  compares against (refuseNonPdf's `read`). Server-side only. */
+  notPdfRead?: IngestRead;
 }
 
 /** Time to leave on the clock before starting a vision page. Rendering a
@@ -230,8 +235,10 @@ const INGEST_COLUMNS_20261122 = [
 export interface KnowledgeIndexReset {
   /** Documents whose derived index is gone and that are queued ('stale'). */
   reset: string[];
-  /** Documents another driver was indexing at that moment — left untouched;
-   *  a later pass resets them. */
+  /** Documents left untouched: another driver was indexing them at that
+   *  moment (a later pass resets them), or — with `expect` — the row no
+   *  longer says what the caller read (another writer moved it first; the
+   *  caller's view is stale and a later pass reconciles from the row). */
   busy: string[];
   errors: string[];
 }
@@ -273,7 +280,17 @@ const RESET_ROW = {
  *  (it withdraws what it wrote). That re-point is itself a compare-and-set
  *  on the file and version the row named. A same-file reset (a rebuild, a
  *  library re-index) cannot be seen by the compare-and-set of a batch that
- *  started at page 0, so it always waits its turn. */
+ *  started at page 0, so it always waits its turn.
+ *
+ *  `expect` is what the CALLER read the row as (the rev-up passes the
+ *  version it saw). The reset happens only while the row still says that,
+ *  checked before anything is deleted and compared again by the row's own
+ *  UPDATE on every path, claimed or superseding. A second sync that read the
+ *  mirror before the first one re-pointed it would otherwise supersede the
+ *  NEW revision's own first batch — whose commit would still match — and
+ *  leave the document 'ready' with no chunks; or re-reset a partly
+ *  re-indexed new revision and re-bill its vision pages (ING-1). Such a row
+ *  is reported `busy` and left exactly as it is. */
 export async function resetKnowledgeIndex(
   documentIds: string[],
   opts: {
@@ -283,10 +300,27 @@ export async function resetKnowledgeIndex(
     /** The file changed (rev-up): re-point the row even under a running
      *  batch, whose commit then misses and withdraws (ING-1). */
     supersedeBusy?: boolean;
+    /** Columns the row must still hold, as the caller read them (e.g.
+     *  `{ source_version_id }`); a row that moved is left alone (`busy`). */
+    expect?: (documentId: string) => Record<string, unknown>;
   } = {},
 ): Promise<KnowledgeIndexReset> {
   const out: KnowledgeIndexReset = { reset: [], busy: [], errors: [] };
   for (const id of documentIds) {
+    const want = Object.entries(opts.expect?.(id) ?? {});
+    /** The row no longer says what the caller read. */
+    const drifted = (row: Record<string, unknown>) =>
+      want.some(([k, v]) => k in row && (row[k] ?? null) !== (v ?? null));
+    /** The caller's reading, compared by the UPDATE itself (columns the
+     *  database has — `row` is a full row as read). */
+    const expectOn = <Q extends { eq: (c: string, v: unknown) => Q; is: (c: string, v: null) => Q }>(q: Q, row: Record<string, unknown> | null): Q => {
+      let o = q;
+      for (const [k, v] of want) {
+        if (!row || !(k in row)) continue;
+        o = v == null ? o.is(k, null) : o.eq(k, v);
+      }
+      return o;
+    };
     const driver = `reset:${randomUUID()}`;
     let lease: IngestLease;
     try {
@@ -296,10 +330,25 @@ export async function resetKnowledgeIndex(
       continue;
     }
     if (lease.kind === "gone") continue;
-    if (lease.kind === "busy" && !opts.supersedeBusy) { out.busy.push(id); continue; }
     const held = lease.kind === "claimed";
     const seen = lease.kind === "claimed" || lease.kind === "busy" ? lease.row : null;
     const release = async () => { if (held) await releaseIngestLease(id, driver); };
+    // Pre-20261122 (no claim, no row back): read the row to compare.
+    let probe: Record<string, unknown> | null = null;
+    if (!seen && want.length > 0) {
+      const { data, error } = await supabaseAdmin.from("knowledge_documents").select("*").eq("id", id).maybeSingle();
+      if (error) { out.errors.push(`${id}: ${error.message}`); continue; }
+      if (!data) continue;
+      probe = data as Record<string, unknown>;
+    }
+    // Moved since the caller read it: not this reset's to touch — before
+    // anything, line traces included, is deleted.
+    if ((seen && drifted(seen)) || (probe && drifted(probe))) {
+      await release();
+      out.busy.push(id);
+      continue;
+    }
+    if (lease.kind === "busy" && !opts.supersedeBusy) { out.busy.push(id); continue; }
 
     // 1. The old sheet's cached traces (rev-up only), while the row still
     //    names the old file.
@@ -333,6 +382,8 @@ export async function resetKnowledgeIndex(
           q = seen.source_version_id == null ? q.is("source_version_id", null) : q.eq("source_version_id", seen.source_version_id);
         }
       }
+      // …and, on every path, still what the caller read.
+      q = expectOn(q, seen);
       const { data, error } = await q.select("id");
       updErr = error; wrote = (data ?? []).length;
     } else {
@@ -345,16 +396,18 @@ export async function resetKnowledgeIndex(
           !INGEST_COLUMNS_20261122.includes(k) && k !== "vision_pages" && k !== "last_section")),
       ];
       for (const update of ladder) {
-        const { data, error } = await supabaseAdmin.from("knowledge_documents")
-          .update(update).eq("id", id).select("id");
+        const { data, error } = await expectOn(supabaseAdmin.from("knowledge_documents")
+          .update(update).eq("id", id), probe).select("id");
         updErr = error; wrote = (data ?? []).length;
         if (!error || !isMissingColumn(error)) break;
       }
     }
     if (updErr) { out.errors.push(`${id}: row: ${updErr.message}`); await release(); continue; }
     if (wrote === 0) {
-      if (held) out.errors.push(`${id}: row: the claim was lost before the reset committed`);
-      else out.busy.push(id);                       // someone else moved it first
+      // Someone else moved it first (re-pointed it, or — under an `expect` —
+      // it no longer says what the caller read): left alone.
+      if (held && want.length === 0) out.errors.push(`${id}: row: the claim was lost before the reset committed`);
+      else out.busy.push(id);
       await release();
       continue;
     }
@@ -428,36 +481,101 @@ export function notPdfMessage(name: string, kind: SniffedKind): string {
   }
 }
 
+/** What a batch read: the file, the version and the resume point. A writer
+ *  that records something about that batch on the document (a failure, a
+ *  refusal) compares against it, so it lands only on the row the batch read
+ *  — never on a row a rev-up re-pointed at a new revision since (ING-1). */
+export interface IngestRead {
+  fileKey: string;
+  /** Absent when the row carries no such column (a pre-20260917 database). */
+  sourceVersionId?: string | null;
+  pagesIndexed: number;
+}
+
+const readOf = (row: { file_key: string; source_version_id?: string | null; pages_indexed?: number | null }): IngestRead => ({
+  fileKey: row.file_key,
+  pagesIndexed: Number(row.pages_indexed ?? 0),
+  ...(row.source_version_id !== undefined ? { sourceVersionId: row.source_version_id ?? null } : {}),
+});
+
 /** THE refusal of a stored file that is not a PDF — one rule for both
  *  drivers that can meet it first (the interactive route and the cron
  *  drain). An UPLOAD (no source, its key under the org's knowledge prefix)
- *  leaves nothing behind: its row and its R2 object go, and the refusal is
- *  audited. A MIRRORED controlled file is never deleted — the object is
- *  doc control's — so its row is marked 'error' with the same plain message.
- *  `actorUserId` is null when the cron met it. */
+ *  leaves nothing behind: the refusal is audited FIRST — one that cannot be
+ *  recorded destroys nothing — then its row and its R2 object go. A MIRRORED
+ *  controlled file is never deleted — the object is doc control's — so its
+ *  row is marked 'error' with the same plain message. Both writes compare
+ *  against `read`, the file the sniff looked at: a row a rev-up re-pointed
+ *  meanwhile is left alone (`superseded`). `actorUserId` is null when the
+ *  cron met it. */
 export async function refuseNonPdf(
-  row: Record<string, unknown>, kind: SniffedKind, actorUserId: string | null,
-): Promise<{ message: string; removed: boolean; error: string | null }> {
+  row: Record<string, unknown>, kind: SniffedKind, actorUserId: string | null, read?: IngestRead,
+): Promise<{ message: string; removed: boolean; superseded: boolean; error: string | null }> {
   const id = String(row.id);
   const message = notPdfMessage(String(row.name ?? "This file"), kind);
+  const fileKey = read?.fileKey ?? String(row.file_key ?? "");
+  const version: string | null | undefined = read
+    ? read.sourceVersionId
+    : "source_version_id" in row ? ((row.source_version_id as string | null) ?? null) : undefined;
   const uploaded = !row.source_document_id && !row.source_id &&
-    String(row.file_key ?? "").startsWith(`orgs/${String(row.org_id)}/knowledge/`);
+    fileKey.startsWith(`orgs/${String(row.org_id)}/knowledge/`);
   if (uploaded) {
-    const { error: delErr } = await supabaseAdmin.from("knowledge_documents").delete().eq("id", id);
-    if (delErr) return { message, removed: false, error: `The upload could not be removed: ${delErr.message}` };
-    await r2.send(new DeleteObjectCommand({ Bucket: R2_BUCKET, Key: String(row.file_key) }))
-      .catch(() => undefined); // the orphan sweeper reclaims an object whose delete failed
-    await supabaseAdmin.from("audit_logs").insert({
+    const { error: auditErr } = await supabaseAdmin.from("audit_logs").insert({
       action: "KNOWLEDGE_DOC_REJECTED",
       resource_type: "knowledge_document", resource_id: id,
       org_id: row.org_id, user_id: actorUserId,
-      details: { name: row.name, detected: kind, reason: "not a PDF", by: actorUserId ? "ingest" : "maintenance" },
-    }).then(() => undefined, () => undefined);
-    return { message, removed: true, error: null };
+      details: { name: row.name, fileKey, detected: kind, reason: "not a PDF", by: actorUserId ? "ingest" : "maintenance" },
+    });
+    if (auditErr) {
+      return { message, removed: false, superseded: false, error: `The refusal could not be recorded, so the upload was kept: ${auditErr.message}` };
+    }
+    let del = supabaseAdmin.from("knowledge_documents").delete().eq("id", id).eq("file_key", fileKey);
+    if (version !== undefined) del = version === null ? del.is("source_version_id", null) : del.eq("source_version_id", version);
+    const { data: gone, error: delErr } = await del.select("id");
+    if (delErr) return { message, removed: false, superseded: false, error: `The upload could not be removed: ${delErr.message}` };
+    if ((gone ?? []).length === 0) return { message, removed: false, superseded: true, error: null };
+    await r2.send(new DeleteObjectCommand({ Bucket: R2_BUCKET, Key: fileKey }))
+      .catch(() => undefined); // the orphan sweeper reclaims an object whose delete failed
+    return { message, removed: true, superseded: false, error: null };
   }
-  const { error: markErr } = await supabaseAdmin.from("knowledge_documents")
-    .update({ status: "error", error: message.slice(0, 500) }).eq("id", id);
-  return { message, removed: false, error: markErr ? markErr.message : null };
+  let mark = supabaseAdmin.from("knowledge_documents")
+    .update({ status: "error", error: message.slice(0, 500) }).eq("id", id).eq("file_key", fileKey);
+  if (version !== undefined) mark = version === null ? mark.is("source_version_id", null) : mark.eq("source_version_id", version);
+  const { data: marked, error: markErr } = await mark.select("id");
+  if (markErr) return { message, removed: false, superseded: false, error: markErr.message };
+  return { message, removed: false, superseded: (marked ?? []).length === 0, error: null };
+}
+
+/** A batch that failed for real — carrying what it read, so the caller that
+ *  records the failure writes it only onto that row (`markIngestFailed`). */
+export class IngestBatchError extends Error {
+  constructor(message: string, readonly read: IngestRead) {
+    super(message);
+    this.name = "IngestBatchError";
+  }
+}
+
+/** Record a failed batch on its document: `status: 'error'` with the
+ *  message — the route's and the cron drain's one failure write. It is a
+ *  compare-and-set on what the batch read (the file, the version and the
+ *  resume point; the caller's copy when the batch never got as far as
+ *  reading the row), so a batch a rev-up superseded mid-flight can never
+ *  stamp its failure onto the re-pointed revision (ING-1). `marked` is false
+ *  when the row had moved and was left alone. */
+export async function markIngestFailed(
+  doc: { id: string; file_key: string; source_version_id?: string | null; pages_indexed?: number | null },
+  e: unknown,
+): Promise<{ marked: boolean; error: string | null }> {
+  const message = (e instanceof Error ? e.message : String(e)).slice(0, 500);
+  const read = e instanceof IngestBatchError ? e.read : readOf(doc);
+  let q = supabaseAdmin.from("knowledge_documents")
+    .update({ status: "error", error: message })
+    .eq("id", doc.id).eq("file_key", read.fileKey).eq("pages_indexed", read.pagesIndexed);
+  if (read.sourceVersionId !== undefined) {
+    q = read.sourceVersionId === null ? q.is("source_version_id", null) : q.eq("source_version_id", read.sourceVersionId);
+  }
+  const { data, error } = await q.select("id");
+  return { marked: !error && (data ?? []).length > 0, error: error ? error.message : null };
 }
 
 // ── Re-index a library with a chosen chunker (ING-4 / ING-7) ──────────────
@@ -545,14 +663,17 @@ class IngestSuperseded extends Error {}
  *  by any driver — and the rest of the document stays searchable meanwhile. */
 export const VISION_RETRY_BACKOFF_MS = 30 * 60_000;
 
-/** The plain-language reason failed vision pages were not retried. */
+/** The plain-language reason failed vision pages were not retried. It
+ *  offers only what a person can do from the app today: the acceptance of a
+ *  partial index has no button yet (I-02's library page), so it is named as
+ *  something to ask an admin for, not an action. */
 export function visionRetryMessage(pages: number[], cause: string | null): string {
   const list = pages.slice(0, 12).join(", ") + (pages.length > 12 ? ", …" : "");
   const what = `AI vision could not read ${pages.length} page${pages.length === 1 ? "" : "s"} (p. ${list})`;
   const meanwhile = "The rest of the document is searchable meanwhile.";
   return cause
-    ? `${what}: ${cause}. They are tried again automatically in about ${Math.round(VISION_RETRY_BACKOFF_MS / 60_000)} minutes. ${meanwhile} Or accept the partial index.`
-    : `${what}, and retrying needs an AI key with budget left. ${meanwhile} Add one in AI settings and re-run indexing, or accept the partial index.`;
+    ? `${what}: ${cause}. They are tried again automatically in about ${Math.round(VISION_RETRY_BACKOFF_MS / 60_000)} minutes. ${meanwhile} If they stay unreadable, ask an admin to accept the partial index.`
+    : `${what}, and retrying needs an AI key with budget left. ${meanwhile} Add one in AI settings and re-run indexing, or ask an admin to accept the partial index.`;
 }
 
 /** Everything that follows a document reaching 'ready': the mention pass
@@ -578,9 +699,25 @@ export async function rebuildDocumentMentions(
   finally { if (timer) clearTimeout(timer); }
 }
 
+/** Everything that follows a document reaching 'ready', wherever it gets
+ *  there — a batch's commit on either door, or an accepted partial index:
+ *  the drawing→equipment Bridge (freshly extracted tags flow toward the
+ *  source document's equipment column and the registry; fire-and-forget and
+ *  dynamically imported, so a Bridge failure can never break indexing), and
+ *  the mention pass the reset that queued this index generation dropped. */
+export async function onDocumentReady(
+  doc: { id: string; org_id: string; source_document_id?: string | null },
+): Promise<void> {
+  void import("@/lib/equipmentBridgeServer")
+    .then((m) => m.computeForKnowledgeDoc(supabaseAdmin, doc.id))
+    .catch(() => undefined);
+  await rebuildDocumentMentions(doc);
+}
+
 /** Ingest the next PAGE_BATCH pages of one knowledge document. Throws on a
- *  real failure — callers decide whether to mark the row errored (the API
- *  route does; the cron records and moves on). Never throws for contention:
+ *  real failure — an IngestBatchError carrying the file, version and resume
+ *  point it read; both callers record it with markIngestFailed, which
+ *  compares against exactly that. Never throws for contention:
  *  a document someone else is indexing comes back `busy`, a document that
  *  moved under the batch comes back `superseded`. Never throws for a vision
  *  retry that cannot run or failed again either (`visionRetryBlocked`): the
@@ -700,17 +837,23 @@ export async function ingestKnowledgeDocBatch(
       }
     }
 
-    // ── Is it a PDF at all? (ING-9) — the bytes decide, on a generation's
-    //    first batch, before pdf.js ever sees them; whichever driver gets
-    //    there first. The caller refuses it (refuseNonPdf). An unreadable
-    //    head falls through to the download, whose own failure is real.
+    // ── Is it a PDF at all? (ING-9) — on a generation's first batch,
+    //    whichever driver gets there first; the caller refuses it
+    //    (refuseNonPdf, comparing against the file read here). The bytes of
+    //    another format's container (a spreadsheet or document, an image)
+    //    are refused before pdf.js ever sees them. A head with no "%PDF-" in
+    //    its first KB is NOT proof: pdf.js opens a PDF behind a long
+    //    preamble (a scanner's or a mail gateway's), so such a file is
+    //    refused only if pdf.js cannot open it either. An unreadable head
+    //    falls through to the download, whose own failure is real.
+    let sniffed: SniffedKind | null = null;
+    const refuse = async (kind: SniffedKind): Promise<IngestBatchResult> => {
+      if (claimed) released = await releaseIngestLease(doc.id, driver);
+      return idle(asRow, { notPdf: kind, notPdfRead: readOf(cur) });
+    };
     if (genStart) {
-      let kind: SniffedKind | null = null;
-      try { kind = await sniffStoredFile(cur.file_key); } catch { kind = null; }
-      if (kind && kind !== "pdf") {
-        if (claimed) released = await releaseIngestLease(doc.id, driver);
-        return idle(asRow, { notPdf: kind });
-      }
+      try { sniffed = await sniffStoredFile(cur.file_key); } catch { sniffed = null; }
+      if (sniffed === "office" || sniffed === "image") return await refuse(sniffed);
     }
 
     // Pull the PDF from R2 (each batch re-downloads; simple and stateless).
@@ -718,7 +861,16 @@ export async function ingestKnowledgeDocBatch(
     const bytes = new Uint8Array(await new Response(obj.Body as ReadableStream).arrayBuffer());
 
     const { getDocumentProxy, renderPageAsImage } = await import("unpdf");
-    const pdf = await getDocumentProxy(bytes);
+    let pdf: Awaited<ReturnType<typeof getDocumentProxy>>;
+    try {
+      pdf = await getDocumentProxy(bytes);
+    } catch (e) {
+      // No header where one belongs, and pdf.js cannot open it either: not
+      // a PDF. A file that carried the header is a damaged PDF — a real
+      // failure, reported as one.
+      if (sniffed === "text" || sniffed === "unknown") return await refuse(sniffed);
+      throw e;
+    }
     const pageCount = pdf.numPages;
 
     const to = Math.min(from + PAGE_BATCH, pageCount);
@@ -1293,6 +1445,11 @@ export async function ingestKnowledgeDocBatch(
         await withdraw();
         return idle(cur as unknown as Record<string, unknown>, { superseded: true });
       }
+      // A real failure writes nothing either: what this batch inserted goes
+      // with it (the next attempt rewrites the range anyway), so a batch a
+      // rev-up superseded mid-flight leaves none of the old file's rows
+      // under the re-pointed revision.
+      await withdraw().catch(() => undefined);
       throw e;
     }
 
@@ -1345,18 +1502,9 @@ export async function ingestKnowledgeDocBatch(
     }
     released = leased;
 
-    if (done) {
-      // The drawing→equipment bridge: freshly extracted tags flow toward the
-      // source document's equipment column + the registry. Fire-and-forget and
-      // dynamically imported — bridge failures can NEVER break indexing, and
-      // this fires on both the interactive and cron ingest paths.
-      void import("@/lib/equipmentBridgeServer")
-        .then((m) => m.computeForKnowledgeDoc(supabaseAdmin, cur.id))
-        .catch(() => undefined);
-      // …and the mention pass, on both paths too: the reset that queued this
-      // index generation dropped the document's machine mentions.
-      await rebuildDocumentMentions(cur);
-    }
+    // The Bridge and the mention pass, on both the interactive and the cron
+    // paths (and on an accepted partial index — the route).
+    if (done) await onDocumentReady(cur);
 
     if (!leased && (visionPages > 0 || genStart)) {
       // Pre-20261122 database: the running total the UI shows ("14 pages
@@ -1367,7 +1515,7 @@ export async function ingestKnowledgeDocBatch(
         .from("knowledge_documents").select("vision_pages").eq("id", cur.id).maybeSingle();
       await supabaseAdmin.from("knowledge_documents")
         .update({ vision_pages: (genStart ? 0 : Number(now?.vision_pages ?? 0)) + visionPages })
-        .eq("id", cur.id)
+        .eq("id", cur.id).eq("file_key", cur.file_key)
         .then(() => undefined, () => undefined);
     }
 
@@ -1382,6 +1530,11 @@ export async function ingestKnowledgeDocBatch(
       busy: false, superseded: false,
       visionRetryBlocked: false, visionRetryMessage: null, visionRetryAfter: null, notPdf: null,
     };
+  } catch (e) {
+    // A real failure leaves carrying what this batch read, so the caller's
+    // failure write (markIngestFailed) lands only on that row.
+    if (e instanceof IngestBatchError) throw e;
+    throw new IngestBatchError(e instanceof Error ? e.message : String(e), readOf(cur));
   } finally {
     if (leased && !released) await releaseIngestLease(doc.id, driver);
   }
@@ -1489,10 +1642,11 @@ export async function drainKnowledgeIngestQueue(opts: {
     if (!sponsor.ctx && sponsor.forceAllPages) continue;
 
     out.docsTouched++;
+    let row: KnowledgeDocRow = doc;
     try {
       // Batch until this doc finishes or budget/deadline runs out.
-      let row: KnowledgeDocRow = doc;
       for (;;) {
+        const waitingBefore = pageList(row.vision_failed_pages).length;
         // Same deadline the drain itself respects: a batch that overruns the
         // cron's window would be killed mid-flight and lose its pages.
         const res = await ingestKnowledgeDocBatch(row, sponsor.ctx, opts.deadlineMs);
@@ -1502,27 +1656,34 @@ export async function drainKnowledgeIngestQueue(opts: {
         if (res.busy || res.superseded || res.visionRetryBlocked) break;
         if (res.notPdf) {
           // The same refusal the interactive route gives (ING-9): an upload
-          // leaves nothing behind, a mirror is marked with the message.
-          const refused = await refuseNonPdf(doc as unknown as Record<string, unknown>, res.notPdf, null);
-          out.errors.push(`${doc.name}: ${refused.message}${refused.error ? ` (${refused.error})` : ""}`);
+          // leaves nothing behind, a mirror is marked with the message —
+          // unless the row was re-pointed since the file was checked.
+          const refused = await refuseNonPdf(doc as unknown as Record<string, unknown>, res.notPdf, null, res.notPdfRead);
+          if (!refused.superseded) out.errors.push(`${doc.name}: ${refused.message}${refused.error ? ` (${refused.error})` : ""}`);
           break;
         }
         const processed = res.resumeAt - (row.pages_indexed ?? 0);
-        budget -= processed;
-        out.pagesIndexed += processed;
+        // A vision-retry batch (ING-6) does not move the resume point — the
+        // failed pages it read back are its progress. Counting only the
+        // resume point read every successful retry as "stuck" and stopped
+        // after one batch: four pages a day for a drawing set waiting on
+        // forty.
+        const reread = Math.max(0, waitingBefore - res.visionFailedPages.length);
+        budget -= processed + reread;
+        out.pagesIndexed += processed + reread;
         if (res.done) { out.completed++; break; }
         // No pages moved = out of time (or stuck). Either way, hand the rest
         // to the next run rather than spinning on the same page range.
-        if (processed <= 0 || budget <= 0 || Date.now() > opts.deadlineMs) break;
-        row = { ...row, pages_indexed: res.resumeAt, page_count: res.pageCount, status: "indexing" };
+        if (processed + reread <= 0 || budget <= 0 || Date.now() > opts.deadlineMs) break;
+        row = {
+          ...row, pages_indexed: res.resumeAt, page_count: res.pageCount, status: "indexing",
+          vision_failed_pages: res.visionFailedPages,
+        };
       }
     } catch (e) {
-      const message = (e as Error).message;
-      out.errors.push(`${doc.name}: ${message}`);
-      await supabaseAdmin.from("knowledge_documents")
-        .update({ status: "error", error: message.slice(0, 500) })
-        .eq("id", doc.id)
-        .then(() => undefined, () => undefined);
+      out.errors.push(`${doc.name}: ${(e as Error).message}`);
+      // Only onto the row the failing batch read (ING-1).
+      await markIngestFailed(row, e).catch(() => undefined);
     }
     if (visionUsage.inputTokens + visionUsage.outputTokens > 0 && sponsor.ctx && doc.created_by) {
       await recordAskUsage({

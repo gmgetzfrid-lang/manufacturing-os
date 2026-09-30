@@ -16,7 +16,11 @@
 //          'error' — and backs off instead of hammering the provider
 //   ING-11 empty pages accumulate on the row; GOV-9 each chunk says how its
 //          text was obtained
-//   ING-9  the drain refuses a non-PDF the same way the route does
+//   ING-9  the drain refuses a non-PDF the same way the route does — and
+//          refuses nothing on a row re-pointed since the file was checked
+//   ING-1  a batch a rev-up superseded that then fails for real stamps
+//          nothing on the new revision and leaves none of its rows; the
+//          drain counts a vision retry's re-read pages as progress (ING-6)
 //   ING-3  a new index generation's first batch clears everything the last
 //          one left; ING-7 the carry never touches a drawing sheet
 
@@ -67,6 +71,7 @@ import {
   ingestKnowledgeDocBatch, drainKnowledgeIngestQueue, claimIngestLease, resetKnowledgeIndex,
   INGEST_LEASE_TTL_MS, VISION_RETRY_BACKOFF_MS, visionRetryMessage, type VisionContext,
 } from "@/lib/knowledgeIngest";
+import { AGREEMENT_VERSION } from "@/lib/ai/pricing";
 
 const DOC = "kd-1";
 const baseDoc = (over: Row = {}): Row => ({
@@ -272,6 +277,50 @@ describe("ING-1 — compare-and-set at commit", () => {
   });
 });
 
+describe("ING-1 — a superseded batch's failure never lands on the new revision", () => {
+  const REV4 = { file_key: "orgs/o1/dc/rev4.pdf", source_version_id: "ver-4", source_rev: "4" };
+  const mirrorAtRev3 = () => seed([drawingSheet(1, ["V-101", "P-201A", "E-301"]), drawingSheet(2, ["V-102", "P-202A", "E-302"])], {
+    status: "stale", source_id: "src-1", source_document_id: "dc-1", source_version_id: "ver-3", source_rev: "3",
+  });
+  const entityInsertFails = () => db.hooks.push((op) => op.table === "knowledge_page_entities" && op.kind === "insert"
+    ? { error: { code: "08006", message: "connection reset by peer" } } : undefined);
+
+  it("the cron drain: a Rev 3 batch superseded mid-flight hits a real failure — the Rev 4 row stays queued, not 'error', with none of Rev 3's rows", async () => {
+    await mirrorAtRev3();
+    // The rev-up lands just before the batch writes its chunks; its entity
+    // insert then fails on a transient error.
+    let reset: Awaited<ReturnType<typeof resetKnowledgeIndex>> | null = null;
+    db.asyncHooks.push(async (op) => {
+      if (reset || op.table !== "knowledge_chunks" || op.kind !== "insert") return;
+      reset = await resetKnowledgeIndex([DOC], {
+        purgeLineTraces: true, supersedeBusy: true,
+        expect: () => ({ source_version_id: "ver-3" }), rowUpdate: () => REV4,
+      });
+    });
+    entityInsertFails();
+    const out = await drainKnowledgeIngestQueue({ maxPages: 100, deadlineMs: Date.now() + 30_000 });
+    expect(reset).toEqual({ reset: [DOC], busy: [], errors: [] });
+    expect(out.errors.join(" ")).toMatch(/entity insert failed: connection reset by peer/);
+    // It used to write {status:'error'} onto the Rev 4 row by id alone —
+    // out of Ask and out of every queue until a person re-ran it.
+    expect(docRow()).toMatchObject({ status: "stale", error: null, pages_indexed: 0, ...REV4, ingest_claimed_by: null });
+    // …and the Rev 3 chunks it wrote after the reset are withdrawn with it.
+    expect(rowsOf("knowledge_chunks")).toHaveLength(0);
+    expect(rowsOf("knowledge_page_entities")).toHaveLength(0);
+  });
+
+  it("a real failure on the row the batch read still marks that document 'error', with the message", async () => {
+    await mirrorAtRev3();
+    entityInsertFails();
+    const out = await drainKnowledgeIngestQueue({ maxPages: 100, deadlineMs: Date.now() + 30_000 });
+    expect(out.errors).toHaveLength(1);
+    expect(docRow()).toMatchObject({ status: "error", source_version_id: "ver-3", pages_indexed: 0 });
+    expect(String(docRow().error)).toMatch(/^entity insert failed: connection reset by peer/);
+    // A failed batch writes nothing: its chunks went with it.
+    expect(rowsOf("knowledge_chunks")).toHaveLength(0);
+  });
+});
+
 describe("ING-3 / DWG-1 — no superseded tags survive a re-read", () => {
   it("a re-read that extracts nothing still clears the range's old entities", async () => {
     const doc = await seed([null, null], { status: "stale" });
@@ -464,6 +513,32 @@ describe("ING-6 — a failed vision page is never silently 'read'", () => {
     expect(rowsOf("knowledge_documents").filter((d) => d.status === "error")).toHaveLength(0);
   });
 
+  it("the cron drain keeps going while vision retries succeed: a retry batch's re-read pages are its progress", async () => {
+    // Twenty sheets whose vision reads all failed, now readable. Each retry
+    // batch reads four (the per-batch budget) and leaves the resume point
+    // where it was — the drain used to read that as "stuck" and stop after
+    // one batch: four pages a day.
+    const failed = Array.from({ length: 20 }, (_, i) => i + 1);
+    await seed(Array.from({ length: 20 }, () => null), {
+      status: "indexing", pages_indexed: 20, page_count: 20, vision_failed_pages: failed,
+    });
+    db.tables.knowledge_libraries = [{ id: "kl-1", org_id: "o1", ai_features: {} }];
+    db.tables.ai_connections = [{ org_id: "o1", user_id: "u1", provider: "anthropic", model: "m", api_key: "k" }];
+    db.tables.ai_key_agreements = [{ id: "ag-1", org_id: "o1", user_id: "u1", scope: "use", agreement_version: AGREEMENT_VERSION }];
+    vision.impl = async (page) => ({ text: transcript(page), usage: { inputTokens: 1, outputTokens: 1 }, model: "vision-tier" });
+    const out = await drainKnowledgeIngestQueue({ maxPages: 100, deadlineMs: Date.now() + 120_000 });
+    expect(out).toMatchObject({ completed: 1, pagesIndexed: 20, errors: [] });
+    expect(vision.calls).toHaveLength(20);
+    expect(docRow()).toMatchObject({ status: "ready", vision_failed_pages: [], error: null });
+  });
+
+  it("the parked message offers only what the app can do today", () => {
+    for (const m of [visionRetryMessage([1, 2], "provider 529 overloaded"), visionRetryMessage([1], null)]) {
+      expect(m).toMatch(/ask an admin to accept the partial index\.$/);
+      expect(m).not.toMatch(/Or accept the partial index/);
+    }
+  });
+
   it("an accepted partial index is 'ready' with the unread pages still listed", async () => {
     const doc = await seed([null], { status: "indexing", pages_indexed: 1, page_count: 1, vision_failed_pages: [1], vision_partial_accepted: true });
     const res = await ingestKnowledgeDocBatch(asArg(doc));
@@ -495,6 +570,22 @@ describe("ING-9 — the cron drain refuses a non-PDF exactly as the route does",
     expect(r2.deleted).toEqual([]);
     expect(docRow()).toMatchObject({ status: "error" });
     expect(String(docRow().error)).toMatch(/^Only PDF files can be indexed/);
+  });
+
+  it("a mirror re-pointed at a new revision after its file was checked is not refused: the new revision stays queued", async () => {
+    const doc = baseDoc({ file_key: "orgs/o1/dc/list.pdf", source_id: "src-1", source_document_id: "dc-1", source_version_id: "ver-3" });
+    resetDb({ knowledge_documents: [doc], knowledge_chunks: [], knowledge_page_entities: [], audit_logs: [] });
+    r2.objects.set("orgs/o1/dc/list.pdf", XLSX);
+    // A sync re-points the row between the check and the refusal.
+    db.hooks.push((op) => {
+      if (op.table !== "knowledge_documents" || op.kind !== "update") return;
+      const p = op.payload as Row;
+      if (!("ingest_claimed_by" in p) || p.ingest_claimed_by !== null || "status" in p) return;   // the batch's release
+      Object.assign(docRow(), { file_key: "orgs/o1/dc/list-rev4.pdf", source_version_id: "ver-4", status: "stale" });
+    });
+    const out = await drainKnowledgeIngestQueue({ maxPages: 100, deadlineMs: Date.now() + 30_000 });
+    expect(out.errors).toEqual([]);
+    expect(docRow()).toMatchObject({ status: "stale", error: null, source_version_id: "ver-4" });
   });
 });
 

@@ -27,11 +27,13 @@ export interface SourceSyncSummary {
   refreshed: number;
   removed: number;
   /** Rev-ups this pass could not land: another sync re-pointed the mirror
-   *  first. A rev-up that finds a batch still writing the OLD revision is
-   *  NOT deferred — it re-points the row, and that batch's compare-and-set
-   *  misses and withdraws what it wrote (ING-1). A library with a deferred
-   *  or failed refresh is left never-synced, so the next run reaches it
-   *  first. */
+   *  first (the row no longer names the version this pass read — it may
+   *  already be re-indexing the new revision, which this pass must not
+   *  reset again). A rev-up that finds a batch still writing the OLD
+   *  revision is NOT deferred — it re-points the row, and that batch's
+   *  compare-and-set misses and withdraws what it wrote (ING-1). A library
+   *  with a deferred or failed refresh is left never-synced, so the next run
+   *  reaches it first and reconciles from the row as it then is. */
   deferred: number;
   /** Sources whose document-control container no longer exists (IRLS-7):
    *  their mirrors are removed below; the source row itself is reported. */
@@ -271,10 +273,14 @@ export async function syncKnowledgeLibrarySources(libraryId: string): Promise<So
       // document's ingest claim; if a batch holds it, writing the OLD file,
       // the row is re-pointed anyway (`supersedeBusy`) — that batch's
       // compare-and-set then misses and withdraws what it wrote, so the
-      // superseded revision is never completed to 'ready' (ING-1).
+      // superseded revision is never completed to 'ready' (ING-1). Only
+      // while the row still names the version THIS pass read (`expect`):
+      // a second sync that read the mirror before the first re-pointed it
+      // must never reset the new revision's index under its own first batch.
       const res = await resetKnowledgeIndex([existing.id as string], {
         purgeLineTraces: true,
         supersedeBusy: true,
+        expect: () => ({ source_version_id: (existing.source_version_id as string | null) ?? null }),
         rowUpdate: () => ({
           name: displayName(doc),
           file_key: version.file_url,
