@@ -39,7 +39,7 @@ and the make-it-true-by-automation half was split out for the intake and
 quality packages.
 `SEC-18` (two presigned-GET issuers sign no disposition: `/api/storage/resolve`
 and the data-export envelope) was opened by package J9 on 2026-09-30.
-`SEC-19` (audit rows about a private project stay readable org-wide) was opened
+`SEC-20` (audit rows about a private project stay readable org-wide) was opened
 by package J8 on 2026-09-30.
 
 Counts are generated from the reports by
