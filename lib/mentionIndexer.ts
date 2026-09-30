@@ -55,6 +55,14 @@ export async function loadAliasDictionary(orgId: string): Promise<AliasEntry[]> 
   return dict;
 }
 
+/** WIRE-2: a mention-index failure is logged where it happens, so a caller
+ *  that treats mention edges as a bonus (the ingest route) cannot make it
+ *  invisible — and then thrown to the caller. */
+function fail(message: string, knowledgeDocumentId: string): never {
+  console.error("[mentionIndexer]", message, { knowledgeDocumentId });
+  throw new Error(message);
+}
+
 interface ChunkRow {
   document_id: string;
   page: number;
@@ -90,7 +98,7 @@ export async function indexDocumentMentions(
       .order("page", { ascending: true })
       .order("seq", { ascending: true })
       .range(from, from + CHUNK_PAGE - 1);
-    if (error) throw new Error(`mention index: ${error.message}`);
+    if (error) fail(`mention index: ${error.message}`, knowledgeDocumentId);
     const rows = (data ?? []) as ChunkRow[];
     for (const c of rows) {
       byPage.set(c.page, `${byPage.get(c.page) ?? ""}\n${c.content}`);
@@ -130,15 +138,34 @@ export async function indexDocumentMentions(
     .eq("org_id", orgId)
     .eq("knowledge_document_id", knowledgeDocumentId)
     .eq("is_explicit", false);
-  if (delErr) throw new Error(`mention index cleanup: ${delErr.message}`);
+  if (delErr) fail(`mention index cleanup: ${delErr.message}`, knowledgeDocumentId);
 
+  // IRLS-4 / WIRE-2: the conflict target is the PLAIN unique index
+  // (asset_id, knowledge_document_id, page) 20261126 creates — the old
+  // COALESCE expression index could never be inferred (42P10 on every
+  // batch). After the delete above the only rows left for this document are
+  // explicit pins, so a conflict means a person's pin already holds that
+  // (asset, page): DO NOTHING keeps it (an update would have overwritten a
+  // human decision with machine text). A database without the plain index
+  // yet answers 42P10: the batch is written with plain inserts instead, a
+  // pinned (asset, page) skipped row by row. The count is rows actually
+  // written; a failure is logged here and thrown — never swallowed.
   for (let i = 0; i < rows.length; i += WRITE_BATCH) {
     const batch = rows.slice(i, i + WRITE_BATCH);
-    const { error } = await supabaseAdmin
+    const { data, error } = await supabaseAdmin
       .from("entity_mentions")
-      .upsert(batch, { onConflict: "asset_id,knowledge_document_id,page", ignoreDuplicates: false });
-    if (error) throw new Error(`mention index write: ${error.message}`);
-    result.mentionsWritten += batch.length;
+      .upsert(batch, { onConflict: "asset_id,knowledge_document_id,page", ignoreDuplicates: true })
+      .select("id");
+    if (!error) { result.mentionsWritten += ((data as unknown[] | null) ?? []).length; continue; }
+    if (error.code !== "42P10") fail(`mention index write: ${error.message}`, knowledgeDocumentId);
+    const plain = await supabaseAdmin.from("entity_mentions").insert(batch).select("id");
+    if (!plain.error) { result.mentionsWritten += ((plain.data as unknown[] | null) ?? []).length; continue; }
+    if (plain.error.code !== "23505") fail(`mention index write: ${plain.error.message}`, knowledgeDocumentId);
+    for (const row of batch) {
+      const one = await supabaseAdmin.from("entity_mentions").insert(row).select("id");
+      if (!one.error) { result.mentionsWritten += ((one.data as unknown[] | null) ?? []).length; continue; }
+      if (one.error.code !== "23505") fail(`mention index write: ${one.error.message}`, knowledgeDocumentId);
+    }
   }
 
   result.assetsTouched = touched.size;

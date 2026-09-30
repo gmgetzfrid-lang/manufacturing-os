@@ -133,7 +133,10 @@ export default function GraphShapeWizard({
             target_document_id: cb.id,
             kind: "document",
             label: r.label.slice(0, 120),
-            origin: "user",
+            // LNK-9: a declared provenance value (lib/relatedResources
+            // LINK_ORIGINS) — accepted by this person while shaping an AI
+            // answer, never through the proposal queue.
+            origin: "shaped",
             proposer: "answer",
             evidence: { summary: r.label, detail: evidenceDetail(r), rule: "Shaped from an answer" },
             created_by: userId,

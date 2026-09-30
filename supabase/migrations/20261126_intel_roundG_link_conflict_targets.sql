@@ -1,0 +1,242 @@
+-- ─────────────────────────────────────────────────────────────────────────────
+-- intelligence Round G (I-08) — conflict targets the API can use, the link
+-- provenance set, and proposals only for documents you can read.
+--
+-- What this file changes (apply after 20261125):
+--   1. LNK-3 / IRLS-2 / WIRE-2 — document_related_resources' only unique
+--      index on the pair was PARTIAL (WHERE target_document_id IS NOT NULL),
+--      which ON CONFLICT cannot infer through PostgREST: every "provable
+--      connections apply themselves" batch answered 42P10. It is replaced by
+--      a PLAIN unique index on (document_id, target_document_id). URL rows
+--      (target_document_id NULL) stay unconstrained — NULLs are distinct in
+--      a plain unique index, which is all the partial predicate ever did.
+--      The partial index guaranteed the non-NULL pairs unique already, so
+--      the new index cannot fail to build.
+--   2. IRLS-4 / WIRE-2 — entity_mentions' only unique key was the
+--      EXPRESSION (asset_id, COALESCE(knowledge_document_id, document_id),
+--      page), which the indexer's ON CONFLICT (asset_id,
+--      knowledge_document_id, page) could never infer: the mention engine
+--      has never written a row. It becomes two indexes with the same
+--      meaning: a PLAIN unique (asset_id, knowledge_document_id, page) — the
+--      indexer's conflict target — and, for rows with no knowledge document
+--      (a pin on a controlled document), a unique (asset_id, document_id,
+--      page) over exactly those rows (never used as a conflict target). One
+--      controlled document may be mirrored in several knowledge libraries
+--      (20260919), so the document branch cannot be constrained for rows
+--      that carry a knowledge document. Built only when no key is
+--      duplicated today (the expression index makes that impossible — the
+--      inventory proves it); otherwise the old index stays and the
+--      inventory names the count. Nothing is rewritten or deleted.
+--   3. LNK-9 — document_related_resources.origin is the declared set the
+--      Related panel renders: 'human', 'system', 'proposed', 'shaped'
+--      (lib/relatedResources.ts LINK_ORIGINS). The graph wizard's legacy
+--      'user' becomes 'shaped' (backfilled, and normalised by a BEFORE
+--      trigger so a backup taken before this file restores whole). The
+--      CHECK is added NOT VALID — it binds every new row — and VALIDATEd
+--      when no row outside the set remains (the inventory counts any).
+--   4. LNK-4 — proposed_links rows were readable by every active member,
+--      evidence and all, whatever the ACL says about the two documents. A
+--      RESTRICTIVE SELECT policy now requires BOTH endpoints to be readable
+--      by the caller — the subqueries run under the caller's own documents
+--      RLS (documents_acl_select), the same predicate the documents list
+--      uses. RESTRICTIVE because proposed_links_write is FOR ALL: its USING
+--      would otherwise grant SELECT on every row to the writer tier. The
+--      engine and the publish-time sweep run on the service role and are
+--      unaffected. proposed_links_write / entity_mentions_write already read
+--      the role collection (20261046, caller_holds_any_role) — verified
+--      below, not re-created. entity_mentions_read belongs to another
+--      package (I-02) and is not touched.
+--
+-- NARROWS (members lose proposals whose documents they cannot read); nobody
+-- gains. Pre-apply inventory (DEC-30) is captured into a TEMP TABLE before
+-- the transaction: aggregate counts only. Single paste: inventory ->
+-- BEGIN/DDL/COMMIT -> ONE SELECT (check text, ok boolean, n text) — the
+-- editor shows only the last result. Every function pins SET search_path =
+-- public. Idempotent.
+-- ─────────────────────────────────────────────────────────────────────────────
+
+-- ── Pre-apply inventory (aggregate only; captured BEFORE the DDL) ───────────
+CREATE TEMP TABLE IF NOT EXISTS _intel_g26_before AS
+SELECT 'document_related_resources rows with NULL target_document_id (URL links; unconstrained by the plain index, as before)' AS what, COUNT(*) AS n
+  FROM document_related_resources WHERE target_document_id IS NULL
+UNION ALL
+SELECT 'of those, kind = ''document'' rows with no target (dangling; left as they are)', COUNT(*)
+  FROM document_related_resources WHERE target_document_id IS NULL AND kind = 'document'
+UNION ALL
+SELECT 'document pairs linked in both directions (one relationship, two rows; the Related panel lists it once)', COUNT(*)
+  FROM document_related_resources a
+ WHERE a.target_document_id IS NOT NULL AND a.document_id < a.target_document_id
+   AND EXISTS (SELECT 1 FROM document_related_resources b
+                WHERE b.document_id = a.target_document_id AND b.target_document_id = a.document_id)
+UNION ALL
+SELECT 'document_related_resources rows with origin ''user'' (the graph wizard; become ''shaped'')', COUNT(*)
+  FROM document_related_resources WHERE origin = 'user'
+UNION ALL
+SELECT 'document_related_resources rows with any other origin outside human/system/proposed/shaped (the CHECK stays NOT VALID while > 0)', COUNT(*)
+  FROM document_related_resources WHERE origin NOT IN ('human', 'system', 'proposed', 'shaped', 'user')
+UNION ALL
+SELECT 'entity_mentions rows', COUNT(*) FROM entity_mentions
+UNION ALL
+SELECT 'entity_mentions rows sharing (asset, knowledge document, page) with another row (no plain index while > 0)', COUNT(*)
+  FROM entity_mentions a
+ WHERE a.knowledge_document_id IS NOT NULL
+   AND EXISTS (SELECT 1 FROM entity_mentions b
+                WHERE b.asset_id = a.asset_id AND b.knowledge_document_id = a.knowledge_document_id
+                  AND b.page = a.page AND b.id <> a.id)
+UNION ALL
+SELECT 'entity_mentions rows with no knowledge document sharing (asset, document, page) with another such row (no plain index while > 0)', COUNT(*)
+  FROM entity_mentions a
+ WHERE a.knowledge_document_id IS NULL
+   AND EXISTS (SELECT 1 FROM entity_mentions b
+                WHERE b.knowledge_document_id IS NULL AND b.asset_id = a.asset_id
+                  AND b.document_id = a.document_id AND b.page = a.page AND b.id <> a.id)
+UNION ALL
+SELECT 'proposed_links rows in status ''stale'' (re-enter the queue when the next run re-derives them — DEC-55)', COUNT(*)
+  FROM proposed_links WHERE status = 'stale'
+UNION ALL
+SELECT 'proposed_links rows waiting for review (now readable only by members who can read both documents)', COUNT(*)
+  FROM proposed_links WHERE status = 'pending';
+
+BEGIN;
+
+-- ── 1. LNK-3 / IRLS-2: a plain conflict target for applied links ───────────
+CREATE UNIQUE INDEX IF NOT EXISTS document_related_resources_doc_target_uniq
+  ON document_related_resources (document_id, target_document_id);
+DROP INDEX IF EXISTS document_related_resources_doc_target_idx;
+
+-- ── 2. IRLS-4 / WIRE-2: plain keys for the mention engine ──────────────────
+DO $$
+BEGIN
+  IF EXISTS (SELECT 1 FROM entity_mentions a
+              WHERE a.knowledge_document_id IS NOT NULL
+                AND EXISTS (SELECT 1 FROM entity_mentions b
+                             WHERE b.asset_id = a.asset_id AND b.knowledge_document_id = a.knowledge_document_id
+                               AND b.page = a.page AND b.id <> a.id))
+     OR EXISTS (SELECT 1 FROM entity_mentions a
+                 WHERE a.knowledge_document_id IS NULL
+                   AND EXISTS (SELECT 1 FROM entity_mentions b
+                                WHERE b.knowledge_document_id IS NULL AND b.asset_id = a.asset_id
+                                  AND b.document_id = a.document_id AND b.page = a.page AND b.id <> a.id)) THEN
+    RAISE NOTICE 'entity_mentions carries duplicate keys — the plain indexes were not built; resolve the rows the inventory counts, then re-run this file.';
+  ELSE
+    CREATE UNIQUE INDEX IF NOT EXISTS entity_mentions_kdoc_page_uniq
+      ON entity_mentions (asset_id, knowledge_document_id, page);
+    CREATE UNIQUE INDEX IF NOT EXISTS entity_mentions_doc_page_uniq
+      ON entity_mentions (asset_id, document_id, page)
+      WHERE knowledge_document_id IS NULL;
+    DROP INDEX IF EXISTS entity_mentions_unique_idx;
+  END IF;
+END $$;
+
+-- ── 3. LNK-9: the declared provenance set ──────────────────────────────────
+CREATE OR REPLACE FUNCTION document_related_resources_origin_normalize()
+RETURNS trigger LANGUAGE plpgsql SET search_path = public AS $$
+BEGIN
+  -- The graph wizard wrote 'user' before 'shaped' was declared; a backup
+  -- taken then restores as the value the panel understands.
+  IF NEW.origin = 'user' THEN NEW.origin := 'shaped'; END IF;
+  RETURN NEW;
+END;
+$$;
+
+DROP TRIGGER IF EXISTS trg_document_related_resources_origin ON document_related_resources;
+CREATE TRIGGER trg_document_related_resources_origin
+  BEFORE INSERT OR UPDATE OF origin ON document_related_resources
+  FOR EACH ROW EXECUTE FUNCTION document_related_resources_origin_normalize();
+
+UPDATE document_related_resources SET origin = 'shaped' WHERE origin = 'user';
+
+ALTER TABLE document_related_resources DROP CONSTRAINT IF EXISTS document_related_resources_origin_check;
+ALTER TABLE document_related_resources
+  ADD CONSTRAINT document_related_resources_origin_check
+  CHECK (origin IN ('human', 'system', 'proposed', 'shaped')) NOT VALID;
+DO $$
+BEGIN
+  IF NOT EXISTS (SELECT 1 FROM document_related_resources
+                  WHERE origin NOT IN ('human', 'system', 'proposed', 'shaped')) THEN
+    ALTER TABLE document_related_resources VALIDATE CONSTRAINT document_related_resources_origin_check;
+  END IF;
+END $$;
+
+-- ── 4. LNK-4: a proposal is readable only with both of its documents ───────
+DROP POLICY IF EXISTS proposed_links_read_endpoints ON proposed_links;
+CREATE POLICY proposed_links_read_endpoints ON proposed_links
+  AS RESTRICTIVE FOR SELECT
+  USING (
+    EXISTS (SELECT 1 FROM documents d WHERE d.id = proposed_links.document_id)
+    AND EXISTS (SELECT 1 FROM documents d WHERE d.id = proposed_links.target_document_id)
+  );
+
+COMMIT;
+
+-- ── Verification (read-only) + inventory — ONE result set ───────────────────
+SELECT 'document_related_resources: a PLAIN unique index on (document_id, target_document_id) — the auto-apply conflict target' AS check,
+       EXISTS (SELECT 1 FROM pg_indexes
+                WHERE tablename = 'document_related_resources'
+                  AND indexname = 'document_related_resources_doc_target_uniq'
+                  AND indexdef LIKE 'CREATE UNIQUE INDEX%(document_id, target_document_id)'
+                  AND indexdef NOT LIKE '%WHERE%') AS ok,
+       NULL::text AS n
+UNION ALL
+SELECT 'document_related_resources: the partial pair index is gone',
+       NOT EXISTS (SELECT 1 FROM pg_indexes
+                    WHERE tablename = 'document_related_resources'
+                      AND indexname = 'document_related_resources_doc_target_idx'),
+       NULL
+UNION ALL
+SELECT 'entity_mentions: PLAIN unique (asset_id, knowledge_document_id, page) — the indexer''s conflict target',
+       EXISTS (SELECT 1 FROM pg_indexes
+                WHERE tablename = 'entity_mentions' AND indexname = 'entity_mentions_kdoc_page_uniq'
+                  AND indexdef LIKE 'CREATE UNIQUE INDEX%(asset_id, knowledge_document_id, page)'
+                  AND indexdef NOT LIKE '%WHERE%'),
+       NULL
+UNION ALL
+SELECT 'entity_mentions: rows with no knowledge document unique on (asset_id, document_id, page); the COALESCE index is gone',
+       EXISTS (SELECT 1 FROM pg_indexes
+                WHERE tablename = 'entity_mentions' AND indexname = 'entity_mentions_doc_page_uniq'
+                  AND indexdef LIKE '%(asset_id, document_id, page) WHERE (knowledge_document_id IS NULL)')
+       AND NOT EXISTS (SELECT 1 FROM pg_indexes
+                        WHERE tablename = 'entity_mentions' AND indexname = 'entity_mentions_unique_idx'),
+       NULL
+UNION ALL
+SELECT 'LNK-9: origin normaliser installed (''user'' -> ''shaped''), search_path pinned',
+       EXISTS (SELECT 1 FROM pg_trigger WHERE tgname = 'trg_document_related_resources_origin'
+                AND tgrelid = 'document_related_resources'::regclass AND NOT tgisinternal)
+       AND (SELECT prosrc LIKE '%IF NEW.origin = ''user'' THEN NEW.origin := ''shaped''; END IF;%'
+                   AND array_to_string(proconfig, ',') LIKE '%search_path=public%'
+              FROM pg_proc WHERE proname = 'document_related_resources_origin_normalize'),
+       NULL
+UNION ALL
+SELECT 'LNK-9: origin CHECK over human / system / proposed / shaped binds every new row',
+       EXISTS (SELECT 1 FROM pg_constraint
+                WHERE conname = 'document_related_resources_origin_check'
+                  AND conrelid = 'document_related_resources'::regclass
+                  AND pg_get_constraintdef(oid) LIKE '%''human''%''system''%''proposed''%''shaped''%'),
+       NULL
+UNION ALL
+SELECT 'LNK-4: proposed_links SELECT is RESTRICTIVE on both endpoints being readable (documents RLS)',
+       EXISTS (SELECT 1 FROM pg_policies
+                WHERE tablename = 'proposed_links' AND policyname = 'proposed_links_read_endpoints'
+                  AND permissive = 'RESTRICTIVE' AND cmd = 'SELECT'
+                  AND qual LIKE '%FROM documents d%'
+                  AND qual LIKE '%proposed_links.document_id%'
+                  AND qual LIKE '%proposed_links.target_document_id%'),
+       NULL
+UNION ALL
+SELECT 'proposed_links_read (membership) still present; proposed_links_write / entity_mentions_write read the role collection (20261046)',
+       EXISTS (SELECT 1 FROM pg_policies WHERE tablename = 'proposed_links' AND policyname = 'proposed_links_read')
+       AND (SELECT COUNT(*) = 2 FROM pg_policies
+             WHERE (tablename, policyname) IN (('proposed_links', 'proposed_links_write'), ('entity_mentions', 'entity_mentions_write'))
+               AND qual LIKE '%caller_holds_any_role(org_id%' AND with_check LIKE '%caller_holds_any_role(org_id%'
+               AND qual NOT LIKE '%m.role IN%'),
+       NULL
+UNION ALL
+SELECT 'inventory (before): ' || what, NULL, n::text FROM _intel_g26_before
+UNION ALL
+SELECT 'inventory (after): origin CHECK validated (true = every row inside the declared set)', NULL,
+       COALESCE((SELECT convalidated FROM pg_constraint
+                  WHERE conname = 'document_related_resources_origin_check'
+                    AND conrelid = 'document_related_resources'::regclass), false)::text
+UNION ALL
+SELECT 'inventory (after): entity_mentions plain indexes built (true = the mention engine can write)', NULL,
+       (to_regclass('public.entity_mentions_kdoc_page_uniq') IS NOT NULL)::text;

@@ -4,7 +4,7 @@
 // select (incl. head counts), eq / neq / in / is / ilike / or (col.op.value
 // terms), textSearch (substring over string columns), order, limit, range,
 // maybeSingle / single, insert / update / delete / upsert with returning
-// selects, unique keys (23505) and an RLS switch that makes a table's writes
+// selects, not (is / eq), and(...) inside or, unique keys (23505) and an RLS switch that makes a table's writes
 // affect zero rows (PostgREST's silent refusal) or refuse an insert (42501).
 // Not a database — it exists to prove what the app code does with answers.
 
@@ -52,6 +52,9 @@ function likeToRegex(pattern: string): RegExp {
 }
 
 function orTerm(term: string): Filter {
+  // and(t1,t2,…) — every inner term (I-08: the either-direction pair read).
+  const and = term.match(/^and\((.*)\)$/i);
+  if (and) { const inner = splitOr(and[1]).map(orTerm); return (r) => inner.every((t) => t(r)); }
   // col.op.value — value may itself contain dots (a site code "2030.22").
   const m = term.match(/^([a-z_]+)\.(eq|ilike|like|in|is)\.(.*)$/i);
   if (!m) return () => false;
@@ -201,6 +204,14 @@ export function makeFakeSupabase(db: FakeDb) {
             case "delete": op = "delete"; return self;
             case "eq": { const [k, v] = args as [string, unknown]; filters.push((r) => r[k] === v); return self; }
             case "neq": { const [k, v] = args as [string, unknown]; filters.push((r) => r[k] !== v); return self; }
+            case "not": {
+              // .not(col, "is", null) / .not(col, "eq", v) — the two shapes the
+              // intelligence modules use (I-08).
+              const [k, o, v] = args as [string, string, unknown];
+              if (o === "is") filters.push((r) => (v === null ? r[k] != null : r[k] !== v));
+              else if (o === "eq") filters.push((r) => r[k] !== v);
+              return self;
+            }
             case "in": { const [k, v] = args as [string, unknown[]]; filters.push((r) => v.includes(r[k])); return self; }
             case "is": { const [k, v] = args as [string, unknown]; filters.push((r) => (v === null ? r[k] == null : r[k] === v)); return self; }
             case "ilike": { const [k, p] = args as [string, string]; const re = likeToRegex(p); filters.push((r) => re.test(String(r[k] ?? ""))); return self; }

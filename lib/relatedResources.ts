@@ -7,6 +7,28 @@
 
 import { supabase } from "@/lib/supabase";
 
+/** LNK-9: the declared provenance values — exactly the set the database's
+ *  CHECK admits (20261126) and the Related panel renders:
+ *    'human'    a person pinned it on a document;
+ *    'system'   the engine applied it as provable (one reference, one owner);
+ *    'proposed' a person approved a discovered connection in review;
+ *    'shaped'   a person accepted it while shaping the graph from an AI
+ *               answer — reviewed by that person, never by the queue. */
+export const LINK_ORIGINS = ["human", "system", "proposed", "shaped"] as const;
+export type LinkOrigin = (typeof LINK_ORIGINS)[number];
+
+/** The chip a non-human link carries, from the declared set. A value the
+ *  app does not know renders as unknown — never as "approved". */
+export function originBadge(origin: string | null | undefined): { label: string; title: string } | null {
+  switch (origin ?? "human") {
+    case "human": return null;
+    case "system": return { label: "auto", title: "Applied automatically — provable connection" };
+    case "proposed": return { label: "approved", title: "Approved from a proposal" };
+    case "shaped": return { label: "from answer", title: "Linked while shaping the graph from an AI answer — not reviewed in the proposal queue" };
+    default: return { label: "origin?", title: `Unrecognised origin “${origin}” — how this link was made is not known` };
+  }
+}
+
 export interface RelatedResource {
   id: string;
   document_id: string;
@@ -16,31 +38,54 @@ export interface RelatedResource {
   label: string;
   sort_order: number;
   created_by_name: string | null;
-  /** Provenance — how this link came to exist:
-   *  'human' typed it, 'system' applied it as provable, 'proposed' means a
-   *  person approved a discovered connection. */
-  origin?: "human" | "system" | "proposed";
+  /** Provenance — how this link came to exist (LINK_ORIGINS). A string, not
+   *  the union: rows written before 20261126 may carry anything. */
+  origin?: string | null;
   proposer?: string | null;
   evidence?: { summary?: string; detail?: string; tags?: string[] } | null;
   approved_by_name?: string | null;
   /** Set when a later revision removed the evidence this link was built on.
    *  The link stays; the system just stops pretending nothing changed. */
   evidence_lost_at?: string | null;
-  /** Hydrated for kind=document. */
+  /** LNK-13: 'out' — carried by this document; 'in' — carried by the other
+   *  document and pointing here. A document↔document link reads the same
+   *  from both ends; only which row carries it differs. */
+  direction?: "out" | "in";
+  /** The OTHER document of a document link, from this document's side. */
+  other_document_id?: string | null;
+  /** Hydrated for kind=document — the other document. */
   target?: { document_number: string | null; title: string | null; library_id: string } | null;
 }
 
+/** Every curated link on a document — the ones it carries AND the document
+ *  links carried by the other end (LNK-13): an approved connection is
+ *  carried by one of its two documents, and both documents' Related panels
+ *  show it with the same provenance and evidence. */
 export async function listRelatedResources(documentId: string): Promise<RelatedResource[]> {
   const { data, error } = await supabase
     .from("document_related_resources").select("*")
-    .eq("document_id", documentId).order("sort_order").order("created_at");
+    .or(`document_id.eq.${documentId},target_document_id.eq.${documentId}`)
+    .order("sort_order").order("created_at");
   if (error) {
     if (error.code === "42P01" || /does not exist/i.test(error.message)) return [];
     throw new Error(error.message);
   }
-  const rows = (data as RelatedResource[]) ?? [];
-  const ids = rows.filter((r) => r.kind === "document" && r.target_document_id)
-    .map((r) => r.target_document_id as string);
+  const rows: RelatedResource[] = [];
+  const seen = new Set<string>();
+  for (const r of (data as RelatedResource[]) ?? []) {
+    const out = r.document_id === documentId;
+    if (!out && r.kind !== "document") continue;
+    const other = out ? r.target_document_id : r.document_id;
+    // One entry per other document: a pair linked both ways (a manual pin
+    // made before the carrier rule) is still one relationship.
+    if (r.kind === "document" && other) {
+      if (seen.has(other)) continue;
+      seen.add(other);
+    }
+    rows.push({ ...r, direction: out ? "out" : "in", other_document_id: r.kind === "document" ? other : null });
+  }
+  const ids = rows.filter((r) => r.kind === "document" && r.other_document_id)
+    .map((r) => r.other_document_id as string);
   if (ids.length > 0) {
     const { data: docs } = await supabase
       .from("documents").select("id, document_number, title, library_id").in("id", ids);
@@ -49,11 +94,15 @@ export async function listRelatedResources(documentId: string): Promise<RelatedR
       d as { document_number: string | null; title: string | null; library_id: string },
     ]));
     for (const r of rows) {
-      if (r.target_document_id) r.target = byId.get(r.target_document_id) ?? null;
+      if (r.other_document_id) r.target = byId.get(r.other_document_id) ?? null;
     }
   }
   return rows;
 }
+
+/** Refusals the database returns without an error are reported (checked
+ *  writes — IRLS-10's related-resource limb). */
+const REFUSED = "That link was not changed — your role cannot edit related links on this document.";
 
 export async function addRelatedResource(input: {
   orgId: string; documentId: string;
@@ -62,7 +111,7 @@ export async function addRelatedResource(input: {
   userId: string; userName?: string;
   sortOrder?: number;
 }): Promise<void> {
-  const { error } = await supabase.from("document_related_resources").insert({
+  const { data, error } = await supabase.from("document_related_resources").insert({
     org_id: input.orgId,
     document_id: input.documentId,
     kind: input.kind,
@@ -72,13 +121,19 @@ export async function addRelatedResource(input: {
     sort_order: input.sortOrder ?? 0,
     created_by: input.userId,
     created_by_name: input.userName ?? null,
-  });
-  if (error) throw new Error(error.message);
+  }).select("id");
+  if (error) {
+    if (error.code === "23505") throw new Error("Those two documents are already linked.");
+    if (error.code === "42501") throw new Error(REFUSED);
+    throw new Error(error.message);
+  }
+  if (((data as unknown[] | null) ?? []).length === 0) throw new Error(REFUSED);
 }
 
 export async function removeRelatedResource(id: string): Promise<void> {
-  const { error } = await supabase.from("document_related_resources").delete().eq("id", id);
+  const { data, error } = await supabase.from("document_related_resources").delete().eq("id", id).select("id");
   if (error) throw new Error(error.message);
+  if (((data as unknown[] | null) ?? []).length === 0) throw new Error(REFUSED);
 }
 
 // ── Backlinks — the other direction of the web ─────────────────────────────

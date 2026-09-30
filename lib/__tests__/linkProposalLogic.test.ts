@@ -92,11 +92,15 @@ describe("proposeSharedEquipment", () => {
     expect(out).toHaveLength(0);
   });
 
-  it("treats a single shared tag as inferred, several as strong", () => {
+  it("LNK-10: one shared item proposes nothing (it shows under Found automatically); two are inferred, several strong", () => {
     const one = proposeSharedEquipment([
       { documentId: "a", tag: "e101" }, { documentId: "b", tag: "e101" },
     ]);
-    expect(one[0].tier).toBe("inferred");
+    expect(one).toHaveLength(0);
+    const two = proposeSharedEquipment(
+      ["e101", "p202"].flatMap((tag) => [{ documentId: "a", tag }, { documentId: "b", tag }]),
+    );
+    expect(two[0].tier).toBe("inferred");
 
     const many = proposeSharedEquipment(
       ["e101", "p202", "v303"].flatMap((tag) => [
@@ -126,6 +130,8 @@ describe("proposeSharedEquipment", () => {
     const out = proposeSharedEquipment([
       { documentId: "a", tag: "e101", viaAlias: "Exchanger 101" },
       { documentId: "b", tag: "e101", viaAlias: "Exchanger 101" },
+      { documentId: "a", tag: "p202", viaAlias: "Feed pump" },
+      { documentId: "b", tag: "p202", viaAlias: "Feed pump" },
     ]);
     expect(out[0].proposer).toBe("alias");
     expect(out[0].evidence.detail).toContain("Exchanger 101");
@@ -137,6 +143,8 @@ describe("proposeSharedEquipment", () => {
     const out = proposeSharedEquipment([
       { documentId: "a", tag: "e101" },
       { documentId: "b", tag: "e101", viaAlias: "Exchanger 101" },
+      { documentId: "a", tag: "p202" },
+      { documentId: "b", tag: "p202", viaAlias: "Feed pump" },
     ]);
     expect(out[0].proposer).toBe("alias");
     expect(out[0].evidence.detail).toContain("Exchanger 101");
@@ -146,6 +154,8 @@ describe("proposeSharedEquipment", () => {
     const out = proposeSharedEquipment([
       { documentId: "a", tag: "e101" },
       { documentId: "b", tag: "e101" },
+      { documentId: "a", tag: "p202" },
+      { documentId: "b", tag: "p202" },
     ]);
     expect(out[0].proposer).toBe("tag");
   });

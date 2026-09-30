@@ -18,19 +18,41 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import { extractDrawingRefs } from "@/lib/drawingText";
 import { normalizeTag } from "@/lib/codebook";
 import {
-  proposeOpcContinuity, proposeSharedEquipment, proposeCustomReferences,
+  proposeOpcContinuity, proposeSharedEquipment, runCustomSkill,
   proposeCoCitations, compileSkillPatterns, mergeDrafts, filterDrafts,
-  splitByAutoApply, refKey, orderPair, BUILTIN_SKILLS,
+  dropAlreadyQueued, rankDrafts, planBatch, splitByAutoApply, refKey,
+  orderPair, carrierOrder, BUILTIN_SKILLS, SKILL_DOC_BUDGET_MS,
   type ProposalDraft, type OpcOccurrence, type TagOccurrence,
-  type TextOccurrence, type CoCitationRow,
+  type TextOccurrence, type CoCitationRow, type KnownPairs, type ProposalTier,
 } from "@/lib/linkProposalLogic";
 
 const BATCH = 400;
 const CHUNK = 150;
 const CHUNK_SCAN_CAP = 2400;
+/** One PostgREST window. The project's max-rows may be lower; paging walks
+ *  on from wherever a window actually ended, and stops at an empty one. */
+const PAGE_ROWS = 1000;
+/** LNK-2: the ceilings one run reads to. Reaching one is reported on the
+ *  run (inputs.saturated + a note) — never a silent, arbitrary slice. */
+const READ_CAP = {
+  documents: 50_000,
+  mirroredDocs: 50_000,
+  extractedRefs: 200_000,
+  equipmentLinks: 200_000,
+  aliases: 50_000,
+  systemLinks: 50_000,
+} as const;
+/** LNK-10: how many 'inferred' proposals the review queue holds at once. A
+ *  sweep adds guesses only while there is room, so no single run buries the
+ *  strong findings under hundreds of weak ones. */
+export const MAX_PENDING_INFERRED = 150;
+/** LNK-6: the wall-clock all custom skills together may spend in one run. */
+const CUSTOM_RUN_BUDGET_MS = 15_000;
+const QUESTION_WINDOW = 400;
 
 /** What each skill had to work with — so "found nothing" can explain
- *  itself instead of looking broken. Zeroes here ARE the diagnosis. */
+ *  itself instead of looking broken. Zeroes here ARE the diagnosis;
+ *  `saturated` names every input that reached its ceiling (LNK-2). */
 export interface ProposerInputs {
   documents: number;
   withNumbers: number;
@@ -42,17 +64,31 @@ export interface ProposerInputs {
   customSkills: number;
   chunksScanned: number;
   skillsInstalled: boolean;
+  saturated: string[];
 }
 
 export interface ProposerRun {
   scanned: number;
+  /** Rows actually inserted, re-opened or changed in the queue this pass. */
   proposed: number;
+  /** Links actually written by this pass (a pair already linked is not). */
   autoApplied: number;
   skipped: number;
   /** System links whose stated evidence no longer holds (link kept, marked). */
   evidenceLost: number;
+  /** More NEW work fits a next pass; false once a pass finds nothing new. */
   more: boolean;
+  /** 'inferred' proposals waiting for room in the queue (LNK-10). */
+  heldInferred: number;
+  /** Provable connections that could not be applied and were queued for a
+   *  person instead of vanishing (IRLS-2). */
+  fellBackToQueue: number;
+  /** Connection Skills the engine switched off this pass (LNK-6). */
+  disabledSkills: string[];
   notes: string[];
+  /** Failures the operator must see — rendered as an error, not a note
+   *  (LNK-3: a failed auto-apply is loud). */
+  errors: string[];
   inputs: ProposerInputs;
 }
 
@@ -66,9 +102,15 @@ interface RuleRow {
   visibility: string;
 }
 
+type PgError = { code?: string; message: string };
+const isMissingTable = (e: PgError | null | undefined) =>
+  !!e && (e.code === "42P01" || /does not exist/i.test(e.message ?? ""));
+
 /** Load the org's Connection Skills, seeding any missing built-ins. Returns
- *  null when the migration hasn't run — the engine then behaves exactly as
- *  it did before skills existed. */
+ *  null when the table is missing (the migration hasn't run) or unreadable —
+ *  the engine then runs the built-in detectors with defaults. The two cases
+ *  say different things (IRLS-12). Built-ins are seeded with no author:
+ *  they belong to the org and only controllers manage them (HUB-2 / LNK-7). */
 async function loadRules(
   admin: SupabaseClient, orgId: string, notes: string[],
 ): Promise<RuleRow[] | null> {
@@ -78,7 +120,9 @@ async function loadRules(
     .eq("org_id", orgId)
     .limit(200);
   if (res.error) {
-    notes.push("Connection Skills not installed — run the connection-skills migration to author your own detectors. Built-in detectors ran with defaults.");
+    notes.push(isMissingTable(res.error)
+      ? "Connection Skills not installed — run the connection-skills migration to author your own detectors. Built-in detectors ran with defaults."
+      : `Connection Skills could not be read (${res.error.message}) — built-in detectors ran with defaults and no custom skill ran.`);
     return null;
   }
   const rows = (res.data as RuleRow[]) ?? [];
@@ -98,6 +142,7 @@ async function loadRules(
         config: b.config,
         enabled: true,
         visibility: "org",
+        created_by: null,
       })),
     );
     if (!error) {
@@ -124,55 +169,95 @@ async function inChunks<T>(
   return out;
 }
 
+/** LNK-2: read a query to completion in stable-ordered windows (the caller
+ *  orders it), up to `cap` rows. PostgREST truncates a response at its
+ *  max-rows WITHOUT an error, so a single `.limit()` is an arbitrary slice;
+ *  this walks on from where each window actually ended and stops at an
+ *  empty one. `saturated` says the cap, not the data, ended the read. */
+async function readPaged<T>(
+  page: (from: number, to: number) => PromiseLike<{ data: unknown; error: PgError | null }>,
+  cap: number,
+): Promise<{ rows: T[]; error: PgError | null; saturated: boolean }> {
+  const rows: T[] = [];
+  for (let from = 0; ; ) {
+    const res = await page(from, from + PAGE_ROWS - 1);
+    if (res.error) return { rows, error: res.error, saturated: false };
+    const got = (res.data as T[] | null) ?? [];
+    if (got.length === 0) return { rows, error: null, saturated: false };
+    rows.push(...got);
+    if (rows.length >= cap) return { rows: rows.slice(0, cap), error: null, saturated: true };
+    from += got.length;
+  }
+}
+
 export async function runLinkProposers(
   admin: SupabaseClient,
   orgId: string,
+  opts?: { now?: () => number },
 ): Promise<ProposerRun> {
   const notes: string[] = [];
+  const errors: string[] = [];
+  const now = opts?.now ?? (() => Date.now());
+  const saturated: string[] = [];
+  const ceiling = (name: string, cap: number, what: string) => {
+    saturated.push(name);
+    notes.push(`Read the first ${cap.toLocaleString("en-US")} ${what} — the rest were not considered this pass.`);
+  };
 
   // ── The org's rulebook. Built-ins seed themselves; a disabled skill is
   // simply skipped. Pre-migration orgs run the classic defaults.
   const rules = await loadRules(admin, orgId, notes);
   const builtinEnabled = (key: string): boolean =>
     rules === null ? true : (rules.find((r) => r.builtin_key === key)?.enabled ?? true);
-  const customRules = (rules ?? []).filter((r) =>
+  // LNK-5 (DEC-55): only ORG-WIDE custom skills run. A private skill is its
+  // author's draft — proven in the Studio's live tester — until a controller
+  // shares it; it never runs over the org's corpus and its name never lands
+  // in org-readable evidence.
+  const referenceRules = (rules ?? []).filter((r) =>
     !r.builtin_key && r.kind === "reference" && r.enabled &&
     (r.config?.patterns?.length ?? 0) > 0);
+  const customRules = referenceRules.filter((r) => r.visibility === "org");
+  const privateSkipped = referenceRules.length - customRules.length;
+  if (privateSkipped > 0) {
+    notes.push(`${privateSkipped} private connection skill${privateSkipped === 1 ? " was" : "s were"} not run — a private skill is a draft until a controller shares it org-wide.`);
+  }
 
   const inputs: ProposerInputs = {
     documents: 0, withNumbers: 0, mirroredDocs: 0, extractedRefs: 0,
     registryAssets: 0, equipmentLinks: 0, citedQuestions: 0,
     customSkills: customRules.length, chunksScanned: 0,
-    skillsInstalled: rules !== null,
+    skillsInstalled: rules !== null, saturated,
   };
+  const emptyRun = (): ProposerRun => ({
+    scanned: inputs.documents, proposed: 0, autoApplied: 0, skipped: 0, evidenceLost: 0,
+    more: false, heldInferred: 0, fellBackToQueue: 0, disabledSkills: [], notes, errors, inputs,
+  });
 
   // ── Controlled documents: identity index + revision, excluding anything
   // carved out of AI reading. ai_excluded is a young column; if it isn't
   // there yet the select would fail wholesale, so fall back gracefully.
-  let docRows: Array<{ id: string; document_number: string | null; rev: string | null }> = [];
-  const withFlag = await admin
+  type DocRow = { id: string; document_number: string | null; rev: string | null };
+  let docRead = await readPaged<DocRow & { ai_excluded?: boolean }>((from, to) => admin
     .from("documents")
     .select("id, document_number, rev, ai_excluded")
     .eq("org_id", orgId)
     .eq("ai_excluded", false)
-    .limit(5000);
-  if (withFlag.error) {
-    const plain = await admin
+    .order("id", { ascending: true })
+    .range(from, to), READ_CAP.documents);
+  if (docRead.error) {
+    docRead = await readPaged<DocRow>((from, to) => admin
       .from("documents").select("id, document_number, rev")
-      .eq("org_id", orgId).limit(5000);
-    if (plain.error) throw new Error(plain.error.message);
-    docRows = (plain.data as typeof docRows) ?? [];
+      .eq("org_id", orgId).order("id", { ascending: true }).range(from, to), READ_CAP.documents);
+    if (docRead.error) throw new Error(docRead.error.message);
     notes.push("Per-document AI exclusions not applied — run the link-proposal migration.");
-  } else {
-    docRows = ((withFlag.data as Array<{ id: string; document_number: string | null; rev: string | null; ai_excluded: boolean }>) ?? [])
-      .map(({ id, document_number, rev }) => ({ id, document_number, rev }));
   }
+  if (docRead.saturated) ceiling("documents", READ_CAP.documents, "controlled documents");
+  const docRows: DocRow[] = docRead.rows.map(({ id, document_number, rev }) => ({ id, document_number, rev }));
   inputs.documents = docRows.length;
-  if (docRows.length === 0) {
-    return { scanned: 0, proposed: 0, autoApplied: 0, skipped: 0, evidenceLost: 0, more: false, notes, inputs };
-  }
+  if (docRows.length === 0) return emptyRun();
 
   const revById = new Map(docRows.map((d) => [d.id, d.rev]));
+  const docById = new Map(docRows.map((d) => [d.id, d]));
   const identityIndex = new Map<string, string[]>();
   for (const d of docRows) {
     if (!d.document_number) continue;
@@ -184,33 +269,45 @@ export async function runLinkProposers(
   const allowed = new Set(docRows.map((d) => d.id));
 
   // ── Off-page connector occurrences. Entities hang off knowledge_documents,
-  // which mirror controlled documents via source_document_id.
+  // which mirror controlled documents via source_document_id. LNK-2: every
+  // mirror is read (the old 800-row slice bounded three of the four skills).
   const opcOccurrences: OpcOccurrence[] = [];
-  const kdocs = await admin
+  const kdocs = await readPaged<{ id: string; source_document_id: string }>((from, to) => admin
     .from("knowledge_documents")
     .select("id, source_document_id")
     .eq("org_id", orgId)
     .not("source_document_id", "is", null)
-    .limit(BATCH * 2);
-  const mirrorRows = (kdocs.data as Array<{ id: string; source_document_id: string }> | null) ?? [];
+    .order("id", { ascending: true })
+    .range(from, to), READ_CAP.mirroredDocs);
+  const mirrorRows = kdocs.rows;
+  if (kdocs.saturated) ceiling("mirroredDocs", READ_CAP.mirroredDocs, "knowledge documents that mirror controlled documents");
   const sourceByKdoc = new Map(mirrorRows.map((k) => [k.id, k.source_document_id]));
   inputs.mirroredDocs = mirrorRows.length;
 
   if (kdocs.error) {
     notes.push("Drawing entities unavailable — off-page continuity skipped.");
   } else if (mirrorRows.length > 0 && builtinEnabled("opc_continuity")) {
-    const entities = await inChunks<{ document_id: string; kind: string; tag: string; raw: string | null; page: number }>(
+    type EntityRow = { document_id: string; kind: string; tag: string; raw: string | null; page: number };
+    let entityFailed = false;
+    let entityTotal = 0;
+    const entities = await inChunks<EntityRow>(
       mirrorRows.map((k) => k.id),
       async (slice) => {
-        const { data, error } = await admin
+        if (entityTotal >= READ_CAP.extractedRefs) return [];
+        const r = await readPaged<EntityRow>((from, to) => admin
           .from("knowledge_page_entities")
           .select("document_id, kind, tag, raw, page")
           .in("document_id", slice)
-          .in("kind", ["opc", "ref"]);
-        if (error) return [];
-        return (data as Array<{ document_id: string; kind: string; tag: string; raw: string | null; page: number }>) ?? [];
+          .in("kind", ["opc", "ref"])
+          .order("id", { ascending: true })
+          .range(from, to), READ_CAP.extractedRefs - entityTotal);
+        if (r.error) { entityFailed = true; return []; }
+        entityTotal += r.rows.length;
+        return r.rows;
       },
     );
+    if (entityFailed) notes.push("Some drawing entities could not be read — off-page continuity is partial this pass.");
+    if (entityTotal >= READ_CAP.extractedRefs) ceiling("extractedRefs", READ_CAP.extractedRefs, "extracted drawing references");
     for (const e of entities) {
       const sourceDoc = sourceByKdoc.get(e.document_id);
       if (!sourceDoc || !allowed.has(sourceDoc)) continue;
@@ -233,12 +330,15 @@ export async function runLinkProposers(
   // ── Shared equipment. document_assets is the already-normalized bridge
   // between controlled documents and the registry; aliases widen it.
   const tagOccurrences: TagOccurrence[] = [];
-  const { data: linkRows } = await admin
+  const linkRead = await readPaged<{ document_id: string; asset_id: string; tag_text: string | null }>((from, to) => admin
     .from("document_assets")
     .select("document_id, asset_id, tag_text")
     .eq("org_id", orgId)
-    .limit(20000);
-  const links = (linkRows as Array<{ document_id: string; asset_id: string; tag_text: string | null }> | null) ?? [];
+    .order("id", { ascending: true })
+    .range(from, to), READ_CAP.equipmentLinks);
+  if (linkRead.error) notes.push(`Equipment links unavailable (${linkRead.error.message}) — Shared equipment skipped.`);
+  if (linkRead.saturated) ceiling("equipmentLinks", READ_CAP.equipmentLinks, "document–equipment links");
+  const links = linkRead.rows;
   inputs.equipmentLinks = links.length;
   {
     const { count } = await admin
@@ -257,12 +357,14 @@ export async function runLinkProposers(
     for (const a of rows) assetTag.set(a.id, normalizeTag(a.tag));
   }
   const aliasByAsset = new Map<string, string[]>();
-  const { data: aliasRows, error: aliasErr } = await admin
-    .from("asset_aliases").select("asset_id, alias").eq("org_id", orgId).limit(5000);
-  if (aliasErr) {
+  const aliasRead = await readPaged<{ asset_id: string; alias: string }>((from, to) => admin
+    .from("asset_aliases").select("asset_id, alias").eq("org_id", orgId)
+    .order("id", { ascending: true }).range(from, to), READ_CAP.aliases);
+  if (aliasRead.error) {
     notes.push("Aliases unavailable — run the link-proposal migration to widen matching.");
   } else {
-    for (const r of (aliasRows as Array<{ asset_id: string; alias: string }>) ?? []) {
+    if (aliasRead.saturated) ceiling("aliases", READ_CAP.aliases, "equipment aliases");
+    for (const r of aliasRead.rows) {
       (aliasByAsset.get(r.asset_id) ?? aliasByAsset.set(r.asset_id, []).get(r.asset_id)!).push(r.alias);
     }
   }
@@ -297,13 +399,16 @@ export async function runLinkProposers(
     let capped = false;
     for (let i = 0; i < mirrorRows.length && !capped; i += 25) {
       const slice = mirrorRows.slice(i, i + 25);
-      const { data, error } = await admin
+      const { rows: data, error } = await readPaged<{ document_id: string; page: number; content: string }>((from, to) => admin
         .from("knowledge_chunks")
         .select("document_id, page, content")
         .in("document_id", slice.map((k) => k.id))
-        .limit(CHUNK_SCAN_CAP - inputs.chunksScanned);
+        .order("document_id", { ascending: true })
+        .order("page", { ascending: true })
+        .order("seq", { ascending: true })
+        .range(from, to), CHUNK_SCAN_CAP - inputs.chunksScanned);
       if (error) { notes.push("Indexed text unavailable — custom skills skipped this pass."); break; }
-      for (const c of (data as Array<{ document_id: string; page: number; content: string }>) ?? []) {
+      for (const c of data) {
         const src = sourceByKdoc.get(c.document_id);
         if (!src || !allowed.has(src)) continue;
         textOccurrences.push({
@@ -311,18 +416,43 @@ export async function runLinkProposers(
           sourceRev: revById.get(src) ?? null,
         });
       }
-      inputs.chunksScanned += (data ?? []).length;
+      inputs.chunksScanned += data.length;
       if (inputs.chunksScanned >= CHUNK_SCAN_CAP) capped = true;
     }
-    if (capped) notes.push(`Custom skills scanned the first ${CHUNK_SCAN_CAP} indexed pages this pass.`);
+    if (capped) {
+      saturated.push("chunksScanned");
+      notes.push(`Custom skills scanned the first ${CHUNK_SCAN_CAP} indexed pages this pass — pages beyond that were not read.`);
+    }
   }
   const customDrafts: ProposalDraft[] = [];
+  const disabledSkills: string[] = [];
+  const customStarted = now();
   for (const rule of customRules) {
-    const { regexes, errors } = compileSkillPatterns(rule.config?.patterns ?? []);
-    if (errors.length > 0) notes.push(`Skill “${rule.name}”: ${errors[0]}`);
+    if (now() - customStarted > CUSTOM_RUN_BUDGET_MS) {
+      notes.push(`Custom skills stopped after ${Math.round(CUSTOM_RUN_BUDGET_MS / 1000)} s this pass — the remaining skills run next time.`);
+      break;
+    }
+    const { regexes, errors: compileErrors } = compileSkillPatterns(rule.config?.patterns ?? []);
+    if (compileErrors.length > 0) notes.push(`Skill “${rule.name}”: ${compileErrors[0]}`);
     if (regexes.length === 0) continue;
-    customDrafts.push(...proposeCustomReferences(
-      { id: rule.id, name: rule.name, regexes }, textOccurrences, identityIndex));
+    const res = runCustomSkill(
+      { id: rule.id, name: rule.name, regexes }, textOccurrences, identityIndex,
+      { budgetMs: SKILL_DOC_BUDGET_MS, now },
+    );
+    if (res.overBudget) {
+      // LNK-6: never silently skipped — switched off, with the reason on the
+      // skill itself, and said here. Its partial output is not queued.
+      const reason = `Switched off by the engine: it took ${res.overBudget.ms} ms on one document (the budget is ${SKILL_DOC_BUDGET_MS} ms). Simplify the pattern, then switch it back on.`;
+      const { error: offErr } = await admin.from("link_rules")
+        .update({ enabled: false, disabled_reason: reason })
+        .eq("id", rule.id).eq("org_id", orgId);
+      disabledSkills.push(rule.name);
+      notes.push(offErr
+        ? `Skill “${rule.name}” overran its time budget and did not run to the end; it could not be switched off (${offErr.message}).`
+        : `Skill “${rule.name}” overran its time budget on one document and was switched off.`);
+      continue;
+    }
+    customDrafts.push(...res.drafts);
   }
 
   // ── Co-citation: the team's own questions as evidence ─────────────────
@@ -336,9 +466,14 @@ export async function runLinkProposers(
       .eq("org_id", orgId)
       .not("citations", "is", null)
       .order("created_at", { ascending: false })
-      .limit(400);
+      .limit(QUESTION_WINDOW);
+    const questions = (qs as Array<{ question: string | null; citations: unknown }>) ?? [];
+    if (questions.length >= QUESTION_WINDOW) {
+      saturated.push("citedQuestions");
+      notes.push(`Answered-together read the latest ${QUESTION_WINDOW} answered questions.`);
+    }
     const coRows: CoCitationRow[] = [];
-    for (const q of (qs as Array<{ question: string | null; citations: unknown }>) ?? []) {
+    for (const q of questions) {
       const cites = Array.isArray(q.citations) ? q.citations : [];
       const ids = new Set<string>();
       for (const c of cites) {
@@ -354,62 +489,142 @@ export async function runLinkProposers(
   }
 
   // ── Reason ────────────────────────────────────────────────────────────
-  const drafts = mergeDrafts([
+  const drafts: ProposalDraft[] = [
     ...proposeOpcContinuity(opcOccurrences, identityIndex),
     ...(builtinEnabled("shared_equipment") ? proposeSharedEquipment(tagOccurrences) : []),
     ...customDrafts,
     ...coDrafts,
-  ]);
+  ];
+  const candidatePairs = new Set(drafts.map((d) => `${d.documentId}|${d.targetDocumentId}`));
+  const candidateDocs = [...new Set(drafts.flatMap((d) => [d.documentId, d.targetDocumentId]))];
 
-  // Already linked, or already decided (including dismissals — a rejected
-  // pair must never come back to nag).
-  const linked = new Set<string>();
-  const { data: existing } = await admin
-    .from("document_related_resources")
-    .select("document_id, target_document_id")
-    .eq("org_id", orgId).not("target_document_id", "is", null).limit(20000);
-  for (const r of (existing as Array<{ document_id: string; target_document_id: string }>) ?? []) {
-    const [a, b] = orderPair(r.document_id, r.target_document_id);
-    linked.add(`${a}|${b}`);
+  // What is already known about THESE pairs — read by targeted query on the
+  // candidate documents, to completion (LNK-2: a bulk read truncated at
+  // 20,000 rows let dismissed pairs come back). A read that fails stops the
+  // pass before anything is written: without the decisions, a dismissed
+  // pair would be proposed again.
+  const known: Required<KnownPairs> = {
+    linked: new Set(), decided: new Set(), dismissed: new Set(), pending: new Map(),
+  };
+  let readFailed: string | null = null;
+  for (const col of ["document_id", "target_document_id"] as const) {
+    await inChunks(candidateDocs, async (slice) => {
+      const r = await readPaged<{ document_id: string; target_document_id: string }>((from, to) => admin
+        .from("document_related_resources")
+        .select("document_id, target_document_id")
+        .eq("org_id", orgId).not("target_document_id", "is", null)
+        .in(col, slice)
+        .order("id", { ascending: true })
+        .range(from, to), Number.POSITIVE_INFINITY);
+      if (r.error) readFailed ??= r.error.message;
+      for (const x of r.rows) {
+        const [a, b] = orderPair(x.document_id, x.target_document_id);
+        known.linked.add(`${a}|${b}`);
+      }
+      return [];
+    });
   }
-  const decided = new Set<string>();
-  const { data: priors } = await admin
-    .from("proposed_links")
-    .select("document_id, target_document_id, status")
-    .eq("org_id", orgId).limit(20000);
-  for (const r of (priors as Array<{ document_id: string; target_document_id: string; status: string }>) ?? []) {
-    if (r.status === "pending") continue; // refreshed below, not blocked
-    decided.add(`${r.document_id}|${r.target_document_id}`);
+  // proposed_links stores every pair smallest-id-first, so the pair's first
+  // id finds all of its rows.
+  const firstIds = [...new Set(drafts.map((d) => d.documentId))];
+  await inChunks(firstIds, async (slice) => {
+    type Prior = { document_id: string; target_document_id: string; proposer: string; status: string; tier: ProposalTier; confidence: number };
+    const r = await readPaged<Prior>((from, to) => admin
+      .from("proposed_links")
+      .select("document_id, target_document_id, proposer, status, tier, confidence")
+      .eq("org_id", orgId)
+      .in("document_id", slice)
+      .order("id", { ascending: true })
+      .range(from, to), Number.POSITIVE_INFINITY);
+    if (r.error) readFailed ??= r.error.message;
+    for (const x of r.rows) {
+      const pair = `${x.document_id}|${x.target_document_id}`;
+      if (!candidatePairs.has(pair)) continue;
+      // LNK-1: approved settles the pair; dismissed blocks that skill's
+      // opinion only (LNK-8); pending is already queued (LNK-12); STALE is
+      // none of these — its revision was superseded, so it is re-derived.
+      if (x.status === "approved") known.decided.add(pair);
+      else if (x.status === "dismissed") known.dismissed.add(`${pair}|${x.proposer}`);
+      else if (x.status === "pending") {
+        known.pending.set(`${pair}|${x.proposer}`, { tier: x.tier, confidence: Number(x.confidence) });
+      }
+    }
+    return [];
+  });
+  if (readFailed) {
+    errors.push(`Existing links and decisions could not be read (${readFailed}) — nothing was written this pass, so no dismissed connection comes back.`);
+    return emptyRun();
   }
 
-  const fresh = filterDrafts(drafts, { linked, decided });
-  const capped = fresh.slice(0, BATCH);
-  const { autoApply, queue } = splitByAutoApply(capped);
+  const open = filterDrafts(drafts, known);
+  const fresh = rankDrafts(dropAlreadyQueued(mergeDrafts(open), known.pending));
+  const { count: pendingInferred } = await admin
+    .from("proposed_links").select("id", { count: "exact", head: true })
+    .eq("org_id", orgId).eq("status", "pending").eq("tier", "inferred");
+  const inferredRoom = Math.max(0, MAX_PENDING_INFERRED - (pendingInferred ?? 0));
+  const plan = planBatch(fresh, { batch: BATCH, inferredRoom });
+  if (plan.heldInferred > 0) {
+    notes.push(`${plan.heldInferred} inferred proposal${plan.heldInferred === 1 ? " is" : "s are"} waiting for room — the queue holds ${MAX_PENDING_INFERRED} inferred at a time; decide some and run again.`);
+  }
+  const { autoApply, queue } = splitByAutoApply(plan.take);
 
   // ── Write ─────────────────────────────────────────────────────────────
+  // LNK-3 / IRLS-2: provable links apply against the plain (document_id,
+  // target_document_id) unique index (20261126) — the carrier is the lower
+  // document number (LNK-13). If the batch cannot be written (a database
+  // without that index answers 42P10), each row is inserted on its own; a
+  // pair already linked is skipped; a row that still fails goes to the
+  // review queue for a person instead of vanishing, and the run says so as
+  // an ERROR.
   let autoApplied = 0;
+  let fellBackToQueue = 0;
+  const queueDrafts = [...queue];
   if (autoApply.length > 0) {
-    const rows = autoApply.map((d) => ({
-      org_id: orgId,
-      document_id: d.documentId,
-      target_document_id: d.targetDocumentId,
-      kind: "document",
-      label: d.evidence.summary.slice(0, 120),
-      origin: "system",
-      proposer: d.proposer,
-      evidence: d.evidence,
-      sort_order: 0,
-    }));
-    const { error } = await admin
+    const rowFor = (d: ProposalDraft) => {
+      const [carrier, other] = carrierOrder(
+        { id: d.documentId, document_number: docById.get(d.documentId)?.document_number },
+        { id: d.targetDocumentId, document_number: docById.get(d.targetDocumentId)?.document_number },
+      );
+      return {
+        org_id: orgId,
+        document_id: carrier,
+        target_document_id: other,
+        kind: "document",
+        label: d.evidence.summary.slice(0, 120),
+        origin: "system",
+        proposer: d.proposer,
+        evidence: d.evidence,
+        sort_order: 0,
+      };
+    };
+    const { data, error } = await admin
       .from("document_related_resources")
-      .upsert(rows, { onConflict: "document_id,target_document_id", ignoreDuplicates: true });
-    if (error) notes.push(`Auto-apply skipped: ${error.message}`);
-    else autoApplied = rows.length;
+      .upsert(autoApply.map(rowFor), { onConflict: "document_id,target_document_id", ignoreDuplicates: true })
+      .select("id");
+    if (!error) {
+      autoApplied = ((data as unknown[] | null) ?? []).length;
+    } else {
+      if (error.code === "42P10") {
+        notes.push("Provable links were applied one by one — the 20261126 migration (plain link index) is not applied yet.");
+      }
+      let lastError: string | null = null;
+      for (const d of autoApply) {
+        const one = await admin.from("document_related_resources").insert(rowFor(d)).select("id");
+        if (!one.error) { autoApplied += ((one.data as unknown[] | null) ?? []).length; continue; }
+        if (one.error.code === "23505") continue; // already linked
+        lastError = one.error.message;
+        queueDrafts.push(d);
+        fellBackToQueue += 1;
+      }
+      if (fellBackToQueue > 0) {
+        errors.push(`${fellBackToQueue} provable connection${fellBackToQueue === 1 ? "" : "s"} could not be applied (${lastError}) — queued for review instead.`);
+      }
+    }
   }
 
   let proposed = 0;
-  if (queue.length > 0) {
-    const rows = queue.map((d) => ({
+  if (queueDrafts.length > 0) {
+    const rows = queueDrafts.map((d) => ({
       org_id: orgId,
       document_id: d.documentId,
       target_document_id: d.targetDocumentId,
@@ -420,11 +635,14 @@ export async function runLinkProposers(
       source_rev: d.sourceRev ?? null,
       status: "pending",
     }));
-    const { error } = await admin
+    // LNK-1: a stale row for the same (pair, skill) flips back to pending
+    // with the current revision — the upsert refreshes it in place.
+    const { data, error } = await admin
       .from("proposed_links")
-      .upsert(rows, { onConflict: "document_id,target_document_id,proposer", ignoreDuplicates: false });
-    if (error) notes.push(`Queue write failed: ${error.message}`);
-    else proposed = rows.length;
+      .upsert(rows, { onConflict: "document_id,target_document_id,proposer", ignoreDuplicates: false })
+      .select("id");
+    if (error) errors.push(`Queue write failed: ${error.message}`);
+    else proposed = ((data as unknown[] | null) ?? []).length;
   }
 
   // Evidence audit against the facts as they stand right now.
@@ -433,17 +651,22 @@ export async function runLinkProposers(
     (currentTagsByDoc.get(o.documentId) ?? currentTagsByDoc.set(o.documentId, new Set()).get(o.documentId)!)
       .add(o.tag);
   }
-  const evidenceLost = await flagLostEvidence(admin, orgId, currentTagsByDoc);
+  const evidenceLost = await flagLostEvidence(admin, orgId, currentTagsByDoc, () =>
+    ceiling("systemLinks", READ_CAP.systemLinks, "system-applied links for the evidence audit"));
 
   return {
     scanned: docRows.length,
     proposed,
     autoApplied,
-    skipped: drafts.length - fresh.length,
+    skipped: candidatePairs.size - fresh.length,
     evidenceLost,
-    more: fresh.length > capped.length,
+    more: plan.more,
+    heldInferred: plan.heldInferred,
+    fellBackToQueue,
+    disabledSkills,
     notes,
-    inputs,
+    errors,
+    inputs: { ...inputs, customSkills: customRules.length - disabledSkills.length },
   };
 }
 
@@ -457,7 +680,7 @@ export async function runLinkProposers(
 export async function invalidateProposalsForRevision(
   admin: SupabaseClient,
   input: { orgId: string; documentId: string; newRev: string | null },
-): Promise<{ staled: number }> {
+): Promise<{ staled: number; error: string | null }> {
   const { data, error } = await admin
     .from("proposed_links")
     .update({ status: "stale" })
@@ -467,8 +690,8 @@ export async function invalidateProposalsForRevision(
     .not("source_rev", "is", null)
     .neq("source_rev", input.newRev ?? "")
     .select("id");
-  if (error) return { staled: 0 };
-  return { staled: (data ?? []).length };
+  if (error) return { staled: 0, error: error.message };
+  return { staled: (data ?? []).length, error: null };
 }
 
 /** After re-extraction: system-applied links whose stated evidence no longer
@@ -482,19 +705,23 @@ async function flagLostEvidence(
   admin: SupabaseClient,
   orgId: string,
   currentTagsByDoc: Map<string, Set<string>>,
+  onCeiling: () => void,
 ): Promise<number> {
-  const { data, error } = await admin
+  type SysLink = {
+    id: string; document_id: string; target_document_id: string | null;
+    evidence: { tags?: string[] } | null;
+  };
+  const read = await readPaged<SysLink>((from, to) => admin
     .from("document_related_resources")
     .select("id, document_id, target_document_id, evidence, origin, evidence_lost_at")
     .eq("org_id", orgId).eq("origin", "system").is("evidence_lost_at", null)
-    .limit(5000);
-  if (error) return 0;
+    .order("id", { ascending: true })
+    .range(from, to), READ_CAP.systemLinks);
+  if (read.error) return 0;
+  if (read.saturated) onCeiling();
 
   const lost: string[] = [];
-  for (const r of (data as Array<{
-    id: string; document_id: string; target_document_id: string | null;
-    evidence: { tags?: string[] } | null;
-  }>) ?? []) {
+  for (const r of read.rows) {
     const tags = r.evidence?.tags;
     if (!tags || tags.length === 0 || !r.target_document_id) continue;
     const a = currentTagsByDoc.get(r.document_id);

@@ -12,6 +12,7 @@
 // fire-and-forget best-effort — the publish already committed; signals must
 // never roll it back.
 
+import type { SupabaseClient } from "@supabase/supabase-js";
 import { supabase } from "@/lib/supabase";
 import { emit } from "@/lib/notify/dispatch";
 import { onDocumentIssued } from "@/lib/reviewCycles";
@@ -78,6 +79,10 @@ export interface PostPublishInput {
    *  already ran them, or the change isn't an issue (branch publishes never
    *  come through here). */
   skipComplianceClocks?: boolean;
+  /** LNK-11: a SERVER-side caller passes its service-role client so the
+   *  proposal sweep runs in-process; a browser caller leaves it out and the
+   *  sweep runs through /api/links/invalidate. */
+  serviceClient?: SupabaseClient;
 }
 
 /**
@@ -168,10 +173,21 @@ export async function runPostPublishSideEffects(input: PostPublishInput): Promis
 
   // Proposals derived from the revision this one replaces are ghosts of a
   // drawing that no longer says that — retire them rather than let review
-  // act on stale evidence.
-  void import("@/lib/linkProposals").then(({ staleProposalsForDocument }) =>
-    staleProposalsForDocument(input.documentId, input.newRev),
-  ).catch(() => { /* non-blocking */ });
+  // act on stale evidence. LNK-1 / LNK-11: the sweep runs on the service role
+  // (org-scoped), so it no longer depends on the publisher's role; a stale
+  // proposal re-enters the queue when the next run re-derives it from the new
+  // revision. A sweep that could not run is logged, never silently zero.
+  void (async () => {
+    const res = input.serviceClient
+      ? await import("@/lib/linkProposerServer").then(({ invalidateProposalsForRevision }) =>
+          invalidateProposalsForRevision(input.serviceClient!, {
+            orgId: input.orgId, documentId: input.documentId, newRev: input.newRev,
+          }))
+      : await import("@/lib/linkProposals").then(({ requestProposalInvalidation }) =>
+          requestProposalInvalidation(input.documentId));
+    if (res.error) console.warn("[postPublish] proposal invalidation did not run (non-blocking)", res.error);
+    else if (res.staled > 0) console.info("[postPublish] link proposals retired for the new revision", { documentId: input.documentId, staled: res.staled });
+  })().catch((e) => console.warn("[postPublish] proposal invalidation failed (non-blocking)", e));
 
   if (!input.skipComplianceClocks) {
     try {

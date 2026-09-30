@@ -11,17 +11,38 @@
 //
 // Phase 2 — PROVE & PUBLISH: the draft lands in an editor whose live tester
 // runs the EXACT compiler the engine runs — what matches here is what the
-// engine will match. Then choose sharing: org-wide or private. Either way a
-// custom skill's findings only ever queue for review.
+// engine will match, and a pattern outside the bounded subset is refused
+// here before it can hang anything (LNK-6). Then choose sharing (DEC-55): a
+// member saves the skill as theirs and may ask a document controller to
+// share it; only a controller publishes org-wide. The database enforces
+// the same (20261125).
 
 import React, { useMemo, useState } from "react";
 import {
   X, Plus, Loader2, Sparkles, FlaskConical, CheckCircle2, AlertTriangle,
-  Users, Lock, Wand2, PenLine, ArrowLeft,
+  Users, Lock, Wand2, PenLine, ArrowLeft, Send,
 } from "lucide-react";
 import { supabase } from "@/lib/supabase";
-import { createLinkRule, testSkillPatterns, type LinkRuleVisibility } from "@/lib/linkRules";
-import { createAnswerSkill } from "@/lib/answerSkills";
+import { createLinkRule, testSkillPatterns } from "@/lib/linkRules";
+import { createAnswerSkill, answerSkillIssue } from "@/lib/answerSkills";
+import { useRole } from "@/components/providers/RoleContext";
+import {
+  isSkillController, studioSharingChoices, sharingColumns, type StudioSharing,
+} from "@/lib/skillAuthority";
+
+/** What each sharing choice means — the copy states what is enforced. */
+const SHARING_COPY: Record<"reasoning" | "connection", Record<StudioSharing, { label: string; help: string }>> = {
+  reasoning: {
+    private: { label: "Just me", help: "Rides only your own questions." },
+    request: { label: "Ask to share", help: "Rides only your questions until a document controller shares it org-wide." },
+    org: { label: "Share org-wide", help: "Rides every member's questions as org-authored configuration — it shapes reasoning and reporting; the citation, safety and tool rules still win." },
+  },
+  connection: {
+    private: { label: "Just me", help: "A draft: the tester above runs it; the engine does not run it until it is shared org-wide." },
+    request: { label: "Ask to share", help: "A draft until a document controller shares it; then the engine runs it and its findings queue for review." },
+    org: { label: "Share org-wide", help: "The engine runs it on every “Find connections”; its findings only ever QUEUE for review." },
+  },
+};
 
 export type StudioKind = "connection" | "reasoning";
 
@@ -45,7 +66,10 @@ export default function SkillStudio({ orgId, userId, userName, kind = "connectio
   const [instructions, setInstructions] = useState("");
   const [patternsRaw, setPatternsRaw] = useState("");
   const [sample, setSample] = useState("");
-  const [visibility, setVisibility] = useState<LinkRuleVisibility>("org");
+  const { roles } = useRole();
+  const choices = studioSharingChoices(isSkillController(roles));
+  // GOV-2: nothing defaults to org-wide.
+  const [sharing, setSharing] = useState<StudioSharing>("private");
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -90,13 +114,16 @@ export default function SkillStudio({ orgId, userId, userName, kind = "connectio
     finally { setDrafting(false); }
   };
 
+  const reasoningIssue = kind === "reasoning" && instructions.trim().length > 0 ? answerSkillIssue(instructions) : null;
+
   const save = async () => {
     setSaving(true); setError(null);
     try {
+      const { visibility, share_requested: shareRequested } = sharingColumns(choices.includes(sharing) ? sharing : "private");
       if (kind === "reasoning") {
-        await createAnswerSkill({ orgId, name, description, instructions, visibility, userId, userName });
+        await createAnswerSkill({ orgId, name, description, instructions, visibility, shareRequested, userId, userName });
       } else {
-        await createLinkRule({ orgId, name, description, patterns, visibility, userId, userName });
+        await createLinkRule({ orgId, name, description, patterns, visibility, shareRequested, userId, userName });
       }
       onCreated();
     } catch (e) { setError((e as Error).message); }
@@ -199,10 +226,10 @@ export default function SkillStudio({ orgId, userId, userName, kind = "connectio
                   placeholder={"APPLIES WHEN the question asks about torque values. Otherwise ignore this skill.\n- State the lubrication condition the value assumes.\n- Warn when the passage does not say."}
                   rows={7}
                   className="mt-1 w-full px-3 py-2 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-sm leading-relaxed" />
-                {instructions.trim().length > 0 && !/applies when/i.test(instructions) && (
-                  <div className="mt-1 text-[11px] text-amber-700">
-                    Start with &ldquo;APPLIES WHEN …&rdquo; — the pack rides every question and must gate itself.
-                  </div>
+                {/* IEDGE-3: enforced, not hinted — Publish stays off until the
+                    pack says when it applies (the database refuses it too). */}
+                {reasoningIssue && (
+                  <div className="mt-1 text-[11px] text-amber-700">{reasoningIssue}</div>
                 )}
               </div>
             )}
@@ -249,23 +276,20 @@ export default function SkillStudio({ orgId, userId, userName, kind = "connectio
             <div>
               <label className="text-[10px] font-black uppercase tracking-wider text-[var(--color-text-muted)]">Sharing</label>
               <div className="mt-1 flex items-center gap-2">
-                <button type="button" onClick={() => setVisibility("org")}
-                  className={`flex-1 inline-flex items-center justify-center gap-1.5 px-3 py-2 rounded-lg border text-[11px] font-black ${visibility === "org"
-                    ? "border-violet-400 text-violet-700 bg-violet-50 dark:bg-violet-950/40"
-                    : "border-[var(--color-border-strong)] text-[var(--color-text-muted)]"}`}>
-                  <Users className="w-3.5 h-3.5" /> Share org-wide
-                </button>
-                <button type="button" onClick={() => setVisibility("private")}
-                  className={`flex-1 inline-flex items-center justify-center gap-1.5 px-3 py-2 rounded-lg border text-[11px] font-black ${visibility === "private"
-                    ? "border-violet-400 text-violet-700 bg-violet-50 dark:bg-violet-950/40"
-                    : "border-[var(--color-border-strong)] text-[var(--color-text-muted)]"}`}>
-                  <Lock className="w-3.5 h-3.5" /> Just me
-                </button>
+                {choices.map((c) => {
+                  const Icon = c === "org" ? Users : c === "request" ? Send : Lock;
+                  return (
+                    <button key={c} type="button" onClick={() => setSharing(c)}
+                      className={`flex-1 inline-flex items-center justify-center gap-1.5 px-3 py-2 rounded-lg border text-[11px] font-black ${sharing === c
+                        ? "border-violet-400 text-violet-700 bg-violet-50 dark:bg-violet-950/40"
+                        : "border-[var(--color-border-strong)] text-[var(--color-text-muted)]"}`}>
+                      <Icon className="w-3.5 h-3.5" /> {SHARING_COPY[kind][c].label}
+                    </button>
+                  );
+                })}
               </div>
               <p className="mt-1 text-[10px] text-[var(--color-text-faint)]">
-                {kind === "reasoning"
-                  ? "Org-wide rides every member's questions; private rides only yours. It shapes reasoning and reporting — never the citation or safety rules."
-                  : "Either way its findings only ever QUEUE for review — custom skills never apply links by themselves."}
+                {SHARING_COPY[kind][choices.includes(sharing) ? sharing : "private"].help}
               </p>
             </div>
 
@@ -281,7 +305,7 @@ export default function SkillStudio({ orgId, userId, userName, kind = "connectio
               </button>
               <button onClick={() => void save()}
                 disabled={saving || !name.trim() || (kind === "reasoning"
-                  ? instructions.trim().length < 40
+                  ? answerSkillIssue(instructions) !== null
                   : patterns.length === 0 || test.errors.length > 0)}
                 className="inline-flex items-center gap-1.5 px-3.5 py-2 rounded-lg text-xs font-black text-white bg-violet-600 hover:bg-violet-500 disabled:opacity-50">
                 {saving ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Plus className="w-3.5 h-3.5" />}

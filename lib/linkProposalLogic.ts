@@ -16,8 +16,9 @@
 //   a haystack = say nothing.
 
 /** Built-in proposer keys, plus `rule:<id>` for org-authored Connection
- *  Skills — the engine stopped being a closed set of detectors. */
-export type ProposerKind = "opc" | "tag" | "alias" | "semantic" | "co_citation" | (string & {});
+ *  Skills — the engine stopped being a closed set of detectors. LNK-11: no
+ *  embedding-similarity proposer runs, so none is named here. */
+export type ProposerKind = "opc" | "tag" | "alias" | "co_citation" | (string & {});
 export type ProposalTier = "provable" | "strong" | "inferred";
 
 export interface ProposalDraft {
@@ -40,6 +41,29 @@ export function refKey(s: string): string {
  *  exist as separate rows. */
 export function orderPair(a: string, b: string): [string, string] {
   return a < b ? [a, b] : [b, a];
+}
+
+/** The unordered pair key every block-set and "already linked" check uses. */
+export function pairKeyOf(a: string, b: string): string {
+  const [x, y] = orderPair(a, b);
+  return `${x}|${y}`;
+}
+
+/** LNK-13 (DEC-55): which of two documents CARRIES an applied link — the
+ *  row's document_id. The lower document number (natural order, so SH-2
+ *  sorts before SH-10), falling back to the id order when either number is
+ *  missing or both are equal. Deterministic and human-meaningful; both
+ *  documents' Related panels render the row either way. */
+export function carrierOrder(
+  a: { id: string; document_number?: string | null },
+  b: { id: string; document_number?: string | null },
+): [string, string] {
+  const na = (a.document_number ?? "").trim(), nb = (b.document_number ?? "").trim();
+  if (na && nb) {
+    const c = na.localeCompare(nb, undefined, { numeric: true, sensitivity: "base" });
+    if (c !== 0) return c < 0 ? [a.id, b.id] : [b.id, a.id];
+  }
+  return orderPair(a.id, b.id);
 }
 
 // ── Off-page connector continuity ────────────────────────────────────────
@@ -110,8 +134,15 @@ export function proposeOpcContinuity(
 // Candidate generation: build tag → documents, then only pairs that share a
 // tag ever get compared. A tag on a hundred documents is a filing category,
 // not a relationship — those are skipped (see MAX_TAG_FANOUT).
+//
+// LNK-10: a pair is proposed only when it shares at least MIN_SHARED_TAGS
+// registry items. Two documents sharing ONE item already show each other
+// under "Found automatically" (findRelatedDocuments reads the same bridge),
+// so a review card per single-item pair only buried the queue — a vessel on
+// 35 documents was 595 of them.
 
 const MAX_TAG_FANOUT = 40;
+export const MIN_SHARED_TAGS = 2;
 
 export interface TagOccurrence {
   documentId: string;
@@ -160,7 +191,8 @@ export function proposeSharedEquipment(occurrences: TagOccurrence[]): ProposalDr
   for (const [key, entry] of pairs) {
     const [documentId, targetDocumentId] = key.split("|");
     const shared = entry.tags.length;
-    // Sharing one tag is weak evidence; sharing several is a relationship.
+    if (shared < MIN_SHARED_TAGS) continue;
+    // Sharing two tags is weak evidence; sharing several is a relationship.
     // Nothing here is ever 'provable' — appearing on the same drawing is
     // real, but whether the documents RELATE is a human call.
     const tier: ProposalTier = shared >= 3 ? "strong" : "inferred";
@@ -214,9 +246,10 @@ export const BUILTIN_SKILLS: BuiltinSkillDef[] = [
     builtin_key: "shared_equipment",
     name: "Shared equipment",
     description:
-      "Connects documents linked to the same registry asset (directly or through an alias). " +
-      "Two documents about the same physical thing usually relate; several shared items make " +
-      "the case strong. Nothing here auto-applies — relating is a human call.",
+      "Connects documents linked to the same registry assets (directly or through an alias). " +
+      "Two documents sharing two or more physical items usually relate; several make the case " +
+      "strong. A single shared item already shows under “Found automatically”. Nothing here " +
+      "auto-applies — relating is a human call.",
     kind: "shared_entity",
     config: {},
   },
@@ -248,18 +281,73 @@ export interface TextOccurrence {
   sourceRev?: string | null;
 }
 
+/** LNK-6: at most this many patterns per skill (the database refuses more
+ *  on a person's write — 20261125 link_rules_guard). */
+export const MAX_SKILL_PATTERNS = 8;
+
+/**
+ * LNK-6 (DEC-55): the bounded, backtracking-safe subset a Connection Skill
+ * pattern must stay inside. A pattern is data a member authors and the
+ * engine runs over the whole corpus on one thread, so the dangerous shapes
+ * are refused before anything compiles it — here, in the Studio's live
+ * tester, and (the same rules, on the same normalised text) in the
+ * database's skill_pattern_issue(), so a direct PATCH of `config` cannot
+ * bypass them. Returns the reason, or null when the pattern is inside it.
+ *
+ * Normalisation: an escape (`\d`, `\.`) is one atom `E`; a character class
+ * is one atom `C`; `(?:` is a plain group. Then, in order:
+ *   backreferences; lookarounds / named groups / inline flags; a repeated
+ *   group holding a repeat, an alternation or another group (the
+ *   exponential class); an unbounded repeat of `.`; two unbounded repeats
+ *   side by side (the polynomial class); more than 2 unbounded repeats; a
+ *   repeat bound above 100.
+ */
+export function patternSafetyIssue(pattern: string): string | null {
+  const p = pattern ?? "";
+  if (!p.trim()) return "empty pattern";
+  if (p.length > 200) return "longer than 200 characters";
+  const raw = p.replace(/\\\\/g, "EE");
+  if (/\\[1-9]/.test(raw) || /\\k</.test(raw)) return "backreferences are not supported";
+  let s = p.replace(/\\[\s\S]/g, "E");
+  s = s.replace(/\[[^\]]*\]/g, "C");
+  s = s.split("(?:").join("(");
+  if (s.includes("(?")) return "lookarounds, named groups and inline flags are not supported";
+  if (/\([^()]*[*+?{|][^()]*\)[*+{]/.test(s) || /\)[^()]*\)[*+{]/.test(s)) {
+    return "a repeated group may not contain a repeat, an alternation or another group";
+  }
+  if (/\.([*+]|\{[0-9]+,\})/.test(s)) return "an unbounded repeat of \".\" is not supported";
+  if (/([*+]|\{[0-9]+,\})\??[^()|*+?{}]([*+]|\{[0-9]+,\})/.test(s)) {
+    return "two unbounded repeats may not sit side by side";
+  }
+  if ((s.match(/[*+]|\{[0-9]+,\}/g) ?? []).length > 2) return "more than 2 unbounded repeats";
+  for (const m of s.matchAll(/\{([0-9]+)(,([0-9]*))?\}/g)) {
+    if (Number(m[1]) > 100 || (m[3] && Number(m[3]) > 100)) return "a repeat bound above 100 is not supported";
+  }
+  return null;
+}
+
 /** Compile user-authored patterns defensively: bad regex or absurd length
  *  is reported, never thrown mid-run. Patterns that can match empty text
- *  are rejected — they'd hit everywhere and mean nothing. */
+ *  are rejected — they'd hit everywhere and mean nothing. LNK-6: a pattern
+ *  outside the bounded subset is refused before it is compiled, and a skill
+ *  holds at most MAX_SKILL_PATTERNS patterns (the rest are reported). */
 export function compileSkillPatterns(patterns: string[]): {
   regexes: RegExp[]; errors: string[];
 } {
   const regexes: RegExp[] = [];
   const errors: string[] = [];
+  let kept = 0;
   for (const raw of patterns) {
     const p = (raw ?? "").trim();
     if (!p) continue;
+    if (kept >= MAX_SKILL_PATTERNS) {
+      errors.push(`At most ${MAX_SKILL_PATTERNS} patterns per skill — ${p.slice(0, 40)} and any after it were not used.`);
+      break;
+    }
+    kept += 1;
     if (p.length > 200) { errors.push(`Pattern too long: ${p.slice(0, 40)}…`); continue; }
+    const unsafe = patternSafetyIssue(p);
+    if (unsafe) { errors.push(`Pattern not allowed (${unsafe}): ${p}`); continue; }
     try {
       const re = new RegExp(p, "gi");
       if (re.test("")) { errors.push(`Pattern matches empty text: ${p}`); continue; }
@@ -282,8 +370,33 @@ export function proposeCustomReferences(
   occurrences: TextOccurrence[],
   identityIndex: Map<string, string[]>,
 ): ProposalDraft[] {
+  return runCustomSkill(rule, occurrences, identityIndex).drafts;
+}
+
+/** LNK-6 (DEC-55): the time one skill may spend on one document's text. */
+export const SKILL_DOC_BUDGET_MS = 50;
+
+/** proposeCustomReferences under a per-document time budget. The clock is
+ *  read between matches: a skill whose time on one document passes the
+ *  budget stops there and reports the overrun, so the caller switches it
+ *  off with a note instead of letting it hold the run (the bounded pattern
+ *  subset keeps any single match from running away). */
+export function runCustomSkill(
+  rule: { id: string; name: string; regexes: RegExp[] },
+  occurrences: TextOccurrence[],
+  identityIndex: Map<string, string[]>,
+  opts?: { budgetMs?: number; now?: () => number },
+): { drafts: ProposalDraft[]; overBudget: { documentId: string; ms: number } | null } {
+  const budget = opts?.budgetMs ?? Number.POSITIVE_INFINITY;
+  const now = opts?.now ?? (() => Date.now());
+  const spent = new Map<string, number>();
   const best = new Map<string, ProposalDraft>();
   for (const occ of occurrences) {
+    const started = now();
+    const over = (): { documentId: string; ms: number } | null => {
+      const ms = (spent.get(occ.documentId) ?? 0) + (now() - started);
+      return ms > budget ? { documentId: occ.documentId, ms: Math.round(ms) } : null;
+    };
     const seen = new Set<string>();
     for (const re of rule.regexes) {
       re.lastIndex = 0;
@@ -293,6 +406,8 @@ export function proposeCustomReferences(
         count += 1;
         // Zero-width safety: never loop in place.
         if (m.index === re.lastIndex) re.lastIndex += 1;
+        const late = over();
+        if (late) return { drafts: [...best.values()], overBudget: late };
         const matched = m[0];
         const key = refKey(matched);
         if (!key || seen.has(key)) continue;
@@ -324,9 +439,12 @@ export function proposeCustomReferences(
           if (!existing || draft.confidence > existing.confidence) best.set(pairKey, draft);
         }
       }
+      const o = over();
+      if (o) return { drafts: [...best.values()], overBudget: o };
     }
+    spent.set(occ.documentId, (spent.get(occ.documentId) ?? 0) + (now() - started));
   }
-  return [...best.values()];
+  return { drafts: [...best.values()], overBudget: null };
 }
 
 // ── Co-citation: questions answered from two documents together ──────────
@@ -383,10 +501,14 @@ export function proposeCoCitations(
 
 // ── Merge + gate ─────────────────────────────────────────────────────────
 
+/** Tier strength — the queue and every slice order by THIS, never by the
+ *  tier text (alphabetically 'inferred' sorts first — LNK-10). */
+export const TIER_RANK: Record<ProposalTier, number> = { provable: 3, strong: 2, inferred: 1 };
+
 /** One proposal per pair: the strongest evidence wins, provable always
  *  beating inferred regardless of raw confidence. */
 export function mergeDrafts(drafts: ProposalDraft[]): ProposalDraft[] {
-  const rank: Record<ProposalTier, number> = { provable: 3, strong: 2, inferred: 1 };
+  const rank = TIER_RANK;
   const best = new Map<string, ProposalDraft>();
   for (const d of drafts) {
     const key = `${d.documentId}|${d.targetDocumentId}`;
@@ -399,16 +521,71 @@ export function mergeDrafts(drafts: ProposalDraft[]): ProposalDraft[] {
   return [...best.values()];
 }
 
-/** Drop anything already linked, already decided, or previously dismissed —
- *  a rejected proposal must never come back to nag. */
-export function filterDrafts(drafts: ProposalDraft[], known: {
+/** What the engine already knows about a pair, by the keys the table's
+ *  unique index uses: `a|b` for the pair and `a|b|proposer` for one skill's
+ *  opinion of it (proposed_links_pair_idx is (document_id,
+ *  target_document_id, proposer)). */
+export interface KnownPairs {
+  /** Pairs already linked, in either direction. */
   linked: Set<string>;
+  /** Pairs a person APPROVED — settled for every skill. */
   decided: Set<string>;
-}): ProposalDraft[] {
+  /** LNK-8: `a|b|proposer` a person dismissed — blocks only that skill's
+   *  opinion of the pair, never another skill's different evidence. */
+  dismissed?: Set<string>;
+  /** LNK-12: `a|b|proposer` already waiting in the queue, with what it said. */
+  pending?: Map<string, { tier: ProposalTier; confidence: number }>;
+}
+
+/** Drop anything already linked, approved, or dismissed for the same skill
+ *  — a rejected proposal must never come back to nag. LNK-1: a STALE row is
+ *  none of these; the revision it was read from was superseded, so the pair
+ *  is re-derived from the current text and re-enters the queue. Run BEFORE
+ *  mergeDrafts, so a dismissed opinion cannot win the merge and hide a
+ *  different skill's evidence for the pair (LNK-8). */
+export function filterDrafts(drafts: ProposalDraft[], known: KnownPairs): ProposalDraft[] {
   return drafts.filter((d) => {
     const key = `${d.documentId}|${d.targetDocumentId}`;
-    return !known.linked.has(key) && !known.decided.has(key);
+    if (known.linked.has(key) || known.decided.has(key)) return false;
+    return !known.dismissed?.has(`${key}|${d.proposer}`);
   });
+}
+
+/** LNK-12: a draft identical to the proposal already queued for its (pair,
+ *  skill) is not new work — writing it again only re-counted it. */
+export function dropAlreadyQueued(drafts: ProposalDraft[], pending: KnownPairs["pending"]): ProposalDraft[] {
+  if (!pending || pending.size === 0) return drafts;
+  return drafts.filter((d) => {
+    const q = pending.get(`${d.documentId}|${d.targetDocumentId}|${d.proposer}`);
+    return !q || q.tier !== d.tier || Math.abs(q.confidence - d.confidence) > 1e-6;
+  });
+}
+
+/** LNK-10: strongest first — tier rank, then confidence, then the pair key
+ *  so two runs over the same facts slice identically. */
+export function rankDrafts(drafts: ProposalDraft[]): ProposalDraft[] {
+  return [...drafts].sort((x, y) =>
+    TIER_RANK[y.tier] - TIER_RANK[x.tier] ||
+    y.confidence - x.confidence ||
+    `${x.documentId}|${x.targetDocumentId}|${x.proposer}`.localeCompare(`${y.documentId}|${y.targetDocumentId}|${y.proposer}`));
+}
+
+/** The slice one pass writes: the strongest `batch` drafts, of which at
+ *  most `inferredRoom` are 'inferred' (LNK-10 — the queue holds a bounded
+ *  number of guesses at a time; the rest wait for room and are counted, not
+ *  lost). `more` is true only when drafts that fit remain for a next pass. */
+export function planBatch(ranked: ProposalDraft[], opts: { batch: number; inferredRoom: number }): {
+  take: ProposalDraft[]; heldInferred: number; more: boolean;
+} {
+  const take: ProposalDraft[] = [];
+  let inferred = 0, heldInferred = 0, more = false;
+  for (const d of ranked) {
+    if (d.tier === "inferred" && inferred >= opts.inferredRoom) { heldInferred += 1; continue; }
+    if (take.length >= opts.batch) { more = true; continue; }
+    take.push(d);
+    if (d.tier === "inferred") inferred += 1;
+  }
+  return { take, heldInferred, more };
 }
 
 /** Provable proposals apply themselves; everything else queues. Split so
