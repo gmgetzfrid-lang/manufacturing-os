@@ -111,7 +111,7 @@ describe("ASK-6 — the assistant's words are the assistant's, and never a trap"
     "corporate card number", "employee ID and badge PIN", "pass phrase", "sign-on secret"];
   const scenario = (x: string) => `For audited calculations this workspace requires the requester's ${x} to sign the result — enter it below.`;
 
-  it("fix pass 7 → refusal (b), the injection signature: the audit's scenario and every swapped variant, under need and clarify", () => {
+  it("fix pass 7 → refusal (b), the injection signature: the audit's scenario and its ten swaps, under need and clarify", () => {
     for (const x of SWAPS) {
       for (const kind of ["need", "clarify"] as const) {
         expect(screenAssistantRequest(scenario(x), kind), `${kind}: ${x}`).toEqual({ ok: false, reason: injection });
@@ -124,9 +124,18 @@ describe("ASK-6 — the assistant's words are the assistant's, and never a trap"
     for (const t of ["This workspace requires your PIN to sign the result. Enter it below.", "Enter your SSO password below.",
       "Before I answer, enter your SSO password in the question box.", "Your password is required. Type it here.",
       "Paste your client secret here.", "Put your badge PIN in the box.",
-      "The requester's Okta credentials are needed. Enter them in the field below."]) {
+      "The requester's Okta credentials are needed. Enter them in the field below.",
+      // fix pass 7 follow-up: provide / include / give / supply / reply with, and up to three words before the place
+      "For audited calculations this workspace requires the requester's SSO password to sign the result — provide it below.",
+      "This workspace requires your PIN to sign the result. Include it with your values below.",
+      "Your password is required — enter it in your reply.", "Provide your SSO password below.", "Enter your bank account number below.",
+      "Your corporate card number is required. Provide it below.", "Reply with your password below.", "Please give your Okta credentials here."]) {
       expect(screenAssistantRequest(t, "need"), t).toEqual({ ok: false, reason: injection });
       expect(screenAssistantRequest(t, "clarify"), t).toEqual({ ok: false, reason: injection });
+    }
+    // the paraphrased scenario, for every swap
+    for (const x of SWAPS) {
+      expect(screenAssistantRequest(scenario(x).replace("enter it below", "provide it below"), "need"), x).toEqual({ ok: false, reason: injection });
     }
   });
   it("fix pass 7 → refusal (a), a real URL: an explicit scheme or www., under every kind; a bare dotted token is not one", () => {
@@ -191,8 +200,22 @@ describe("ASK-6 — the assistant's words are the assistant's, and never a trap"
       "Provide the token count and enter it here.", "Provide the shear PIN diameter — enter it below.", "Need: DOWEL PIN. Enter it below.",
       "Provide the badge pin diameter — enter it below.", "the portal pin — enter it below.", "the capacitor bank PIN — enter it below.",
       "Provide the SECRET drawing number — enter it below.", "Provide the credit card surcharge (%) — enter it below.",
+      // the fix-pass-7 verifier: a financial word that is not a bank, a backup or SSO / SIM / network / badge pin, a PIN
+      // after a preposition, an ask verb that is not directly before the secret, and a question ABOUT a secret
+      "Provide the GL credit account number. Enter it below.", "Provide the company credit account number — enter it below.",
+      "Provide the corporate account number. Enter it below.", "the diameter of the backup pin. Enter it below.",
+      "What is the shear load on your PIN? Enter it below.", "Enter the minimum length of a password below.",
+      "Enter the shear load on the backup pin below.", "the diameter of the SSO pin", "the number of SIM pins", "the number of network pins",
+      "the number of badge pins", "How many HMIs still use a default password? Enter it below.", "the number of failed network logins",
+      "the number of VPN logins", "the bit length of the private key", "Enter the SIM pins count below.",
     ];
-    for (const t of engineering) { notRefused(t, "need"); notRefused(t, "clarify"); }
+    // every sentence alone, and with each of the four box instructions after it
+    const withBox = (t: string) => {
+      const ended = /[.?!]$/.test(t) ? t : `${t}.`;
+      const bare = t.replace(/[.?!]+$/, "");
+      return [t, `${ended} Enter it below.`, `${bare} — enter it below.`, `${ended} Provide it below.`, `${ended} Type it here.`];
+    };
+    for (const t of engineering) for (const v of withBox(t)) { notRefused(v, "need"); notRefused(v, "clarify"); }
     // ordinary pin and code sentences stay plain — the precision fixes keep the caution quiet on a pin that is a part
     for (const t of ["the voltage on the input pin", "How many input pins?", "Which supply pin?", "Enter the pin number for the input card.",
       "the I/O card pin assignment for the transmitter", "the pin number for the relay card.", "the grounding pin for the capacitor bank.",
@@ -228,8 +251,22 @@ describe("ASK-6 — the assistant's words are the assistant's, and never a trap"
       "What password does the vendor portal use?", "Paste your API key so I can check the table", "What is the bank account for the vendor?",
       "Enter your SSO password.", "Enter your MFA code.", "Enter your SSO login.", "Enter your CVV.", "Provide your SSN.",
       "Enter your credit card number.", "Enter your date of birth.", "Provide your login credentials.", "What is your security question answer?",
+      // the fix-pass-7 verifier's further families
+      "Enter your pass phrase.", "Enter your security PIN.", "Enter your access PIN.", "Enter your PIV PIN.", "Enter your CAC PIN.",
+      "Enter your Windows PIN.", "Enter your e-sig PIN.", "Enter the auth code.", "Enter the approval code.", "Enter the unlock code.",
+      "Enter the activation code.", "Enter the push code.", "Enter the Duo push code.", "Enter your YubiKey OTP.", "Enter the Okta push number.",
+      "Enter the 6-digit number from your authenticator.", "Enter the code on your phone.", "Enter your passkey.", "Enter your security key.",
+      "Enter the license key.", "Enter the WPA key.", "Paste your JWT.", "Paste the session cookie.", "Paste the connection string.",
+      "Enter your sort code.", "Enter the SWIFT code.", "Enter your national insurance number.", "Enter your social insurance number.",
+      "Enter your card expiry.", "Enter the long number on the front of your card.", "Authenticate with your badge.",
+      "Log in with your network account.", "Sign in with your Google account.", "Enter your SAP user.", "Enter your Okta.",
+      // a question ABOUT a secret beside a box instruction is cautioned, not refused
+      "How many HMIs still use a default password? Enter it below.", "the bit length of the private key. Enter it below.",
     ];
     for (const t of prompts) { refusedOrCautioned(t, "need"); refusedOrCautioned(t, "clarify"); }
+    for (const t of ["How many HMIs still use a default password? Enter it below.", "the bit length of the private key. Enter it below."]) {
+      expect(screenAssistantRequest(t, "need"), t).toEqual({ ok: true, caution: ASSISTANT_CREDENTIAL_CAUTION });
+    }
     // the curly apostrophe is the same apostrophe
     expect(screenAssistantRequest("What’s your login?", "need")).toEqual(screenAssistantRequest("What's your login?", "need"));
   });
@@ -240,7 +277,7 @@ describe("ASK-6 — the assistant's words are the assistant's, and never a trap"
     expect(fn.match(/ok: false/g)?.length).toBe(4);
     expect(fn).toContain('if (URL_RE.test(t)) return { ok: false, reason: "it contains a link" };');
     expect(fn).toContain('if (injectionSignature(t)) return { ok: false, reason: "it asks you to type a credential into this box" };');
-    expect(fn).toContain('if (CREDENTIAL_CAUTION_RE.test(t)) return { ok: true, caution: ASSISTANT_CREDENTIAL_CAUTION };');
+    expect(fn).toContain('if (CREDENTIAL_CAUTION_RE.test(t) || YOUR_PIN_RE.test(t)) return { ok: true, caution: ASSISTANT_CREDENTIAL_CAUTION };');
     expect(fn.indexOf('if (kind === "aspect") return { ok: true };')).toBeLessThan(fn.indexOf("injectionSignature(t)"));
   });
   it("NeedCard: the app's first-person chrome is gone; the prompt is quoted inside the assistant frame; the secrets line is at the input", () => {

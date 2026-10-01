@@ -11,25 +11,29 @@
 // real engineering sentence (a clevis pin, a PIN code that is a postal code,
 // the employer social security rate, VB.NET, an SSO slam-shut valve), and the
 // page had no screen at all before ASK-6. So the screen refuses in exactly two
-// cases, and everything else that touches a credential is a CAUTION — an amber
-// line beside the text that never takes the input or the buttons away:
+// cases; a text that matches the caution list instead gets a CAUTION — an
+// amber line beside the text that never takes the input or the buttons away:
 //
 //   REFUSE ({ ok: false }) —
 //     (a) a real URL: an explicit http:// / https:// scheme, or a token
 //         starting "www.". A bare dotted token ("Std.Dev.", "VB.NET",
 //         "Smith Mfg.Co.", "acme.com") is not one; a lower-case bare domain
 //         is a caution.
-//     (b) the injection signature: a secret named as the reader's (or as a
-//         credential by its own name) AND an instruction to put it in this
-//         box, in the same sentence or the next one — "…requires the
-//         requester's SSO password to sign the result — enter it below."
+//     (b) the injection signature: a secret named as the reader's, qualified
+//         as a credential, or a credential by its own name, AND an
+//         instruction to put it in this box, in the same sentence or the
+//         next one — "…requires the requester's SSO password to sign the
+//         result — enter it below." A sentence asking ABOUT a secret (how
+//         many, the length of, the default) is not one.
 //   Besides those two, only an empty text or one longer than
 //   ASSISTANT_REQUEST_MAX is not shown (a length guard, not a vocabulary rule).
 //
-//   CAUTION ({ ok: true, caution }) — a password / passcode, a PIN or a
-//   one-time / MFA / verification / recovery code, credentials or a login,
-//   keys, secrets and tokens, card / account / routing numbers, an IBAN, an
-//   SSN, a date of birth, a security question… Recall over precision, except
+//   CAUTION ({ ok: true, caution }) — when the text matches the caution list
+//   (CREDENTIAL_CAUTION_RE, YOUR_PIN_RE, and BARE_DOMAIN_RE for the link
+//   caution): named families of passwords, PINs and codes, credentials and
+//   logins, keys, secrets, tokens and cookies, card / account / bank numbers
+//   and identity numbers. It is a list, so a credential phrased in words it
+//   does not hold comes back plain. It prefers recall to precision, except
 //   that a pin that is a part ("the clevis pin diameter", "the input pin")
 //   stays plain.
 //
@@ -55,51 +59,87 @@ export const ASSISTANT_LINK_CAUTION =
 const URL_RE = /\bhttps?:\/\/\S|(?:^|[^\w.@/-])www\.[\w-]/i;
 
 // ── REFUSE (b): the injection signature ─────────────────────────────────────
-// Where "this box" is: "below", "here", "in the box / field below"…
-const BOX_PLACE = String.raw`(?:in\s+)?(?:below|here)|(?:in|into|inside)\s+(?:the|this)\s+(?:[\w-]+\s+)?(?:box|field|input|space|form|area|prompt)`;
+// Where "this box" is: "below", "here", "in the box / field below", "in your
+// reply"…
+const BOX_PLACE = String.raw`(?:in\s+)?(?:below|here)|(?:in|into|inside)\s+(?:the|this)\s+(?:[\w-]+\s+)?(?:box|field|input|space|form|area|prompt)|(?:in|with)\s+(?:your|the|this)\s+(?:reply|answer|response|message)`;
 // A secret noun counts only where it heads its phrase (end of clause, a dash,
 // "to sign / so I can", "is required", or the box itself) — never "the
 // password policy", "your pin diameter", "your login count".
 const HEAD_END = String.raw`(?=\s*(?:$|[.?!,;:)–—]|(?:to\s+(?:sign|approve|authori[sz]e|confirm|continue|proceed|unlock|verify|authenticate|log|access|complete|submit|release)|so\s+(?:i|we|that|the)|(?:is|are|was|were|will\s+be)\s+(?:required|needed|necessary|mandatory)|now|please|${BOX_PLACE})\b))`;
 // Named as the reader's own, or the requester's / the signer's…
 const POSSESSOR = String.raw`(?:your|my|(?:the\s+)?(?:requester|requestor|user|reader|employee|approver|signer|signatory|account\s+holder|cardholder)'s)`;
-// …or qualified as a credential ("network login", "e-signature PIN"). SSO is
-// only a qualifier: alone it is also a slam-shut valve. No word that also
-// names a part's place ("bank", "root", "portal") qualifies.
-const QUALIFIER = String.raw`(?:e-?signature|electronic\s+signature|digital\s+signature|signing|badge|employee|network|domain|corporate|company|okta|sign-?on|single\s+sign-on|sso|windows|vpn|active\s+directory|banking|debit|credit|atm|sim|personal|login|admin(?:istrator)?)`;
+// …or qualified as a credential. Which qualifiers count depends on the noun
+// (`qualifies` below): SSO, SIM, network or badge make a "login" or a capital
+// "PIN" a credential, but "the SSO pin" and "the number of SIM pins" are
+// parts; "credit" makes a card number one, not "the GL credit account number".
+const QUALIFIER = String.raw`(?:e-?signature|electronic\s+signature|digital\s+signature|signing|badge|employee|network|domain|corporate|company|okta|sign-?on|single\s+sign-on|sso|windows|vpn|active\s+directory|online|banking|bank|payment|debit|credit|atm|sim|personal|login|admin(?:istrator)?)`;
+const GENERAL_QUAL_RE = /\b(?:e-?signature|electronic\s+signature|digital\s+signature|signing|badge|employee|network|domain|corporate|company|okta|sign-?on|single\s+sign-on|sso|windows|vpn|active\s+directory|online|banking|debit|credit|atm|sim|personal|login|admin(?:istrator)?)\b/i;
+const LOWER_PIN_QUAL_RE = /\b(?:e-?signature|electronic\s+signature|digital\s+signature|signing|atm|debit|credit|banking)\b/i;
+const CARD_QUAL_RE = /\b(?:credit|debit|corporate|company|bank|banking|atm|payment)\b/i;
+const ACCOUNT_QUAL_RE = /\b(?:bank|banking)\b/i;
 // Credentials by their own name — they count with no possessor.
-const STRONG_NOUN = String.raw`pass(?:word|code)s?|pass\s?phrases?|private\s+keys?|secret\s+access\s+keys?|client\s+secrets?|(?:mfa|2fa|two-factor|multi-factor|one-time|authenticator|recovery|backup)\s+(?:codes?|passwords?|pins?)`;
-// Words that are a credential only when someone's or qualified. A lower-case
-// "pin" counts only when qualified ("badge pin"); "your pin" is a part.
+const STRONG_NOUN = String.raw`pass(?:word|code)s?|pass\s?phrases?|private\s+keys?|secret\s+access\s+keys?|client\s+secrets?|(?:mfa|2fa|two-factor|multi-factor|one-time|authenticator)\s+(?:codes?|passwords?|pins?)|(?:recovery|backup)\s+(?:codes?|passwords?)`;
+// Words that are a credential only when someone's or qualified.
 const WEAK_NOUN = String.raw`pins?|log-?ins?|log-?ons?|sign-?ins?|sign-?ons?|tokens?|secrets?|access\s+(?:keys?|codes?)|(?:verification|security)\s+codes?|card\s+numbers?|account\s+numbers?|credentials?`;
 const SECRET_PHRASE_RE = new RegExp(
   String.raw`\b(${POSSESSOR}\s+)?((?:${QUALIFIER}\s+){0,2})(${STRONG_NOUN}|${WEAK_NOUN})${HEAD_END}`, "gi");
 const STRONG_RE = new RegExp(String.raw`^(?:${STRONG_NOUN})$`, "i");
+
+/** Does the qualifier make this noun a credential? */
+function qualifies(noun: string, qual: string): boolean {
+  if (!qual.trim()) return false;
+  if (/^account\s+numbers?$/i.test(noun)) return ACCOUNT_QUAL_RE.test(qual);
+  if (/^card\s+numbers?$/i.test(noun)) return CARD_QUAL_RE.test(qual);
+  if (/^pins?$/i.test(noun) && !/^PINs?$/.test(noun)) return LOWER_PIN_QUAL_RE.test(qual); // a lower-case pin
+  return GENERAL_QUAL_RE.test(qual);
+}
+// A possessor after a preposition is where a part sits, not whose secret it
+// is: "the shear load on your PIN".
+const PREPOSITION_BEFORE_RE = /\b(?:on|of|in|between|through|to|for|at|from|with|against|into|onto|across|under|over|around|behind|beside|inside)\s+(?:the\s+)?$/i;
+// A question ABOUT a secret — how many, how long, the default — is not a
+// request for it: "How many HMIs still use a default password?", "the bit
+// length of the private key", "the number of failed network logins".
+const ABOUT_SECRET_RE = /\b(?:how\s+many|number\s+of|count\s+of|length\s+of|characters\s+in|bit\s+length|default)\b/i;
 // An instruction to put it in THIS box: "enter it below", "paste them here",
-// "put it in the box", "enter it in the field below"…
+// "put it in the box", "provide it below", "include it with your values
+// below", "enter it in your reply"…
 const BOX_RE = new RegExp(
-  String.raw`\b(?:enter|type|paste|put|input|write|key|fill|add|insert|drop)\s+(?:it|them|this|that|these|those)\s+(?:${BOX_PLACE})\b`, "i");
-// …or the secret itself named as the object: "Enter your SSO password below."
-const ASKED_BEFORE_RE = /\b(?:enter|type|paste|put|input|write|key|provide|give|submit|supply)\b/i;
+  String.raw`\b(?:enter|type|paste|put|input|write|key|fill|add|insert|drop|provide|include|give|supply|reply\s+with)\s+(?:it|them|this|that|these|those)(?:\s+[\w-]+){0,3}?\s+(?:${BOX_PLACE})\b`, "i");
+// …or the secret itself as the object of an ask verb, with the place right
+// after it: "Enter your SSO password below." — the verb directly before the
+// phrase, only a determiner or qualifiers between ("Enter the minimum length
+// of a password below." is not one).
+const ASKED_BEFORE_RE = new RegExp(
+  String.raw`\b(?:enter|type|paste|put|input|write|key|provide|give|submit|reply\s+with|tell\s+me)\s+(?:(?:your|my|the|a|an)\s+)?(?:${QUALIFIER}\s+){0,2}$`, "i");
 const PLACE_AFTER_RE = new RegExp(String.raw`^\s+(?:${BOX_PLACE})\b`, "i");
 
 /** Does this sentence name a secret (as defined above)? Returns whether it is
  *  also put in the box in the same breath ("Enter your PIN below."). */
 function secretIn(sentence: string): { named: boolean; placed: boolean } {
+  if (ABOUT_SECRET_RE.test(sentence)) return { named: false, placed: false };
   let named = false;
   for (const m of sentence.matchAll(SECRET_PHRASE_RE)) {
-    const [, poss, qual, noun = ""] = m; // the possessor, the qualifiers, the noun
+    const [, poss = "", qual = "", noun = ""] = m; // the possessor, the qualifiers, the noun
+    const at = m.index ?? 0;
+    const isPin = /pins?$/i.test(noun);
+    const owned = !!poss && !(isPin && PREPOSITION_BEFORE_RE.test(sentence.slice(0, at)));
     const strong = STRONG_RE.test(noun);
-    const qualified = !!qual?.trim();
-    if (!strong && !poss && !qualified) continue;
-    if (/^pins?$/i.test(noun) && !/^PINs?$/.test(noun) && !qualified) continue; // "your pin" is a part
+    const lowerPin = /^pins?$/.test(noun);
+    if (!strong && !qualifies(noun, qual) && !(owned && !lowerPin && ownable(noun, qual))) continue;
     named = true;
-    const end = (m.index ?? 0) + m[0].length;
-    if (PLACE_AFTER_RE.test(sentence.slice(end)) && ASKED_BEFORE_RE.test(sentence.slice(0, m.index ?? 0))) {
+    if (PLACE_AFTER_RE.test(sentence.slice(at + m[0].length)) && ASKED_BEFORE_RE.test(sentence.slice(0, at))) {
       return { named, placed: true };
     }
   }
   return { named, placed: false };
+}
+/** A possessed noun counts — except an account / card number with a
+ *  qualifier that is not a financial one ("your GL credit account number"). */
+function ownable(noun: string, qual: string): boolean {
+  if (!qual.trim()) return true;
+  if (/^account\s+numbers?$/i.test(noun)) return ACCOUNT_QUAL_RE.test(qual);
+  if (/^card\s+numbers?$/i.test(noun)) return CARD_QUAL_RE.test(qual);
+  return true;
 }
 
 function injectionSignature(t: string): boolean {
@@ -112,7 +152,7 @@ function injectionSignature(t: string): boolean {
   return false;
 }
 
-// ── CAUTION: everything else that touches a credential ──────────────────────
+// ── CAUTION: the caution list ────────────────────────────────────────────────
 // Asking the reader to hand something over. "your" is looked at, never
 // consumed, so "what's your MFA code?" still reaches "your".
 const ASK_VERBS = String.raw`enter|type (?:in|it|them|the)|type(?= your)|provide|paste|give|share|send|supply|submit|input|confirm(?= your)|reply with|tell me|what(?:'s| is| are)(?= your)`;
@@ -148,6 +188,14 @@ const CREDENTIAL_CAUTION_RE = new RegExp([
   String.raw`\bcredit[\s-]?cards?\b|\b(?:debit|payment|bank)[\s-]?card numbers?\b|\bcvv2?\b|\bcvc\b|\bcard verification (?:value|code)\b`,
   String.raw`\b(?:your|my) (?:[\w-]+ ){0,2}(?:card|account|routing) numbers?\b|\b(?:your|my) bank(?:ing)? details\b`,
   String.raw`\bbank accounts?\b|\b(?:bank(?:'s)?|aba|ach) routing numbers?\b|\biban\b`,
+  String.raw`\bpass\s+phrases?\b|\bpass ?keys?\b|\bsecurity keys?\b|\blicen[cs]e keys?\b|\bproduct keys?\b|\bwpa2? keys?\b|\bwi-?fi (?:passwords?|keys?)\b`,
+  String.raw`\b(?:your|my) (?:security|access|piv|cac|windows|e-?sig(?:nature)?|smart ?card|login|sign-?in|user|personal|network|badge|employee|signing|approval|device|phone|sim|card) pins?\b`,
+  String.raw`\b(?:auth|authori[sz]ation|authentication|approval|unlock|activation|push|login|sign-?in|2-?step|two-?step) codes?\b|\bduo (?:push|code|mobile|passcode)\b|\byubikey\b|\bokta push\b|\bpush numbers?\b`,
+  String.raw`\b(?:numbers?|codes?|digits|otp) (?:from|on|in|shown on|displayed on) your (?:authenticator|phone|mobile|device|token|app|email|inbox|key ?fob)\b`,
+  String.raw`\bjwts?\b|\bsession (?:cookies?|ids?|tokens?)\b|\bconnection strings?\b`,
+  String.raw`\bsort codes?\b|\bswift(?: ?\/ ?bic)? codes?\b|\bbic codes?\b|\bnational insurance(?: numbers?)?\b|\bsocial insurance(?: numbers?)?\b`,
+  String.raw`\bcard expir(?:y|ation)(?: dates?)?\b|\bexpir(?:y|ation) dates? (?:of|on) your (?:[\w-]+ )?card\b|\b(?:long )?(?:number|digits) on (?:the (?:front|back) of )?your (?:[\w-]+ )?card\b`,
+  String.raw`\b(?:authenticate|log ?in|log ?on|sign ?in|sign ?on)(?: to [\w-]+)? (?:with|using) your\b|\byour (?:sap|okta|citrix|azure|entra|google|microsoft|ad|domain|windows|vpn) (?:user(?: ?name| ?id)?|account|id|login|logon)\b|\byour okta\b`,
   // the reader's own login asked for, and a login / SSO / MFA word beside an ask verb
   String.raw`\b(?:${ASK_VERBS})\b[^.?!\n]{0,60}\b(?:log-?ins?|log-?ons?|sign-?ins?|sign-?ons?|sso|mfa|2fa|two[\s-]factor)\b`,
   // a PIN, OTP or code in a phrase that can make it a credential (PIN code is also an Indian postal code)
@@ -165,6 +213,8 @@ const CREDENTIAL_CAUTION_RE = new RegExp([
   // the whole of what is asked: "Enter your PIN.", "What is the OTP?", "PIN?", "Enter the verification code."
   String.raw`${CLAUSE_START}(?:${ASK_LEAD}\s+)?(?:(?:your|my|the|a|an)\s+)?(?:\d+[\s-]?digit\s+(?:${PIN}|codes?)|(?:pin|otp)s?(?:\s+numbers?)?|(?:verification|security|confirmation|access)\s+codes?)${CLAUSE_END}`,
 ].join("|"), "i");
+// "your <word> PIN" in capitals: "your PIV PIN", "your Windows PIN".
+const YOUR_PIN_RE = /\b[Yy]our [\w-]+ PINs?\b|\bYOUR [\w-]+ PINs?\b/;
 // A bare domain, written the way a web address is ("acme.com",
 // "portal.vendor.io/login") — lower case, so "VB.NET" and "Mfg.Co." are not.
 const BARE_DOMAIN_RE = /\b[a-z0-9][a-z0-9-]*(?:\.[a-z0-9-]+)*\.(?:com|net|org|io|ai|co|app|dev|ru|cn)\b/;
@@ -179,7 +229,7 @@ export function screenAssistantRequest(
   if (URL_RE.test(t)) return { ok: false, reason: "it contains a link" };
   if (kind === "aspect") return { ok: true };
   if (injectionSignature(t)) return { ok: false, reason: "it asks you to type a credential into this box" };
-  if (CREDENTIAL_CAUTION_RE.test(t)) return { ok: true, caution: ASSISTANT_CREDENTIAL_CAUTION };
+  if (CREDENTIAL_CAUTION_RE.test(t) || YOUR_PIN_RE.test(t)) return { ok: true, caution: ASSISTANT_CREDENTIAL_CAUTION };
   if (BARE_DOMAIN_RE.test(t)) return { ok: true, caution: ASSISTANT_LINK_CAUTION };
   return { ok: true };
 }

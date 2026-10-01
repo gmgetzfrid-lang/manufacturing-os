@@ -292,35 +292,47 @@ Fix pass 6 (2026-09-30, superseded by fix pass 7): split the screen into a refus
 What `screenAssistantRequest` (`lib/assistantScreen.ts`) now does, exactly. Curly apostrophes (‘ ’ ʼ) are normalised to ' before any matching.
 - **Refused (`{ ok: false }`) in exactly two cases:**
   - (a) **A real URL**, under every kind: an explicit `http://` / `https://` scheme, or a token starting `www.` (`URL_RE`). A bare dotted token ("Std.Dev.", "VB.NET", "Smith Mfg.Co.") is not a URL. A lower-case bare domain ("acme.com") gets the link caution instead.
-  - (b) **The injection signature**, under `"need"` and `"clarify"`: a secret noun AND an instruction to put it in this box, in the same sentence or the next one (`injectionSignature`). The secret noun must head its phrase (end of clause, a dash, "to sign / so I can", "is required", or the box itself), and it must be one of three kinds:
-    - a credential by its own name: password, passcode, pass phrase, private key, secret access key, client secret, or an MFA / 2FA / one-time / authenticator / recovery / backup code;
-    - a PIN in capitals, login, sign-in, sign-on, token, secret, access key or code, verification or security code, card or account number, or credentials, named as the reader's or the requester's ("your", "the requester's", "the signer's"…);
-    - one of those nouns qualified as a credential ("network login", "e-signature PIN", "badge PIN", "Okta credentials", "corporate card number", "sign-on secret").
+  - (b) **The injection signature**, under `"need"` and `"clarify"`: a secret noun AND an instruction to put it in this box, in the same sentence or the next one (`injectionSignature`). The secret noun must head its phrase: the end of a clause, a dash, "to sign / so I can", "is required", or the box itself. It must be one of these kinds:
+    - a credential by its own name: password, passcode, pass phrase, private key, secret access key, client secret, an MFA / 2FA / one-time / authenticator code, or a recovery / backup code or password;
+    - a PIN in capitals, login, sign-in, sign-on, token, secret, access key or code, verification or security code, card or account number, or credentials, named as the reader's or the requester's ("your", "the requester's", "the signer's"…). A PIN whose possessor follows a preposition ("the shear load on your PIN") is a part, not the reader's PIN;
+    - one of those nouns qualified as a credential, where the qualifier must fit the noun (`qualifies`):
+      - an account number only after a bank / banking qualifier;
+      - a card number only after credit / debit / corporate / company / bank / banking / ATM / payment;
+      - a lower-case pin only after e-signature / signing / ATM / debit / credit / banking;
+      - anything else after the credential qualifiers (SSO, network, badge, Okta, sign-on, VPN, SIM, Windows, domain …).
+      
+      So "network login", "e-signature PIN", "badge PIN", "Okta credentials", "corporate card number" and "sign-on secret" count. "the GL credit account number", "the diameter of the SSO pin" and "the number of SIM pins" do not.
     
-    The box instruction is one of two forms. The first is a verb (enter, type, paste, put, input, write, key, fill, add, insert, drop) with it / them / this / that / these / those and a place: below, here, or in / into the box / field / input / space / form ("enter it below", "put it in the box", "enter them in the field below"). The second is the secret itself as the object of an ask verb, followed directly by that place ("Enter your SSO password below."). The audit's SSO-password scenario is refused, and so is each of its swapped variants: SSO login, network login, PIN, e-signature PIN, Okta credentials, domain credentials, corporate card number, employee ID and badge PIN, pass phrase, sign-on secret. SSO alone is not a secret noun, because it is also a slam-shut valve. A lower-case "pin" counts only when qualified ("your pin" is a part).
+    A sentence that asks ABOUT a secret ("how many", "number of", "count of", "length of", "characters in", "bit length", "default") never counts, so "How many HMIs still use a default password? Enter it below." is cautioned, not refused.
+    
+    The box instruction takes one of two forms:
+    - A verb (enter, type, paste, put, input, write, key, fill, add, insert, drop, provide, include, give, supply, reply with) with it / them / this / that / these / those, up to three words, and a place. The place is below, here, in / into the box / field / input / space / form, or in / with your reply / answer / response / message. Examples: "enter it below", "provide it below", "include it with your values below", "enter it in your reply".
+    - The secret itself as the object of an ask verb. The verb (enter, type, paste, put, input, write, key, provide, give, submit, reply with, tell me) must stand directly before the phrase, with only a determiner or credential qualifiers between, and the place directly after: "Enter your SSO password below." So "Enter the minimum length of a password below." is not one.
+    
+    The audit's SSO-password scenario is refused, and so are its ten swaps (SSO login, network login, PIN, e-signature PIN, Okta credentials, domain credentials, corporate card number, employee ID and badge PIN, pass phrase, sign-on secret), each also paraphrased as "— provide it below". SSO alone is not a secret noun, because it is also a slam-shut valve.
   
   Besides these two, an empty text and one longer than `ASSISTANT_REQUEST_MAX` (raised to 1000 characters) are not shown. That is a length guard, not a vocabulary rule.
-- **Cautioned (`{ ok: true, caution }`), never blocking the input or the buttons:** everything else that touches a credential (`CREDENTIAL_CAUTION_RE`, `ASSISTANT_CREDENTIAL_CAUTION`: "This question mentions a password, PIN, code or other credential. This app never needs your credentials. If that is what it is asking for, don't enter it."). It merges every former refusing rule and the former PIN and login cautions:
-  - password / passcode / pass word / pwd / pw;
-  - MFA / 2FA / authenticator / recovery / backup / Okta Verify / RSA codes, and verification / security / access codes;
-  - API / secret / private / access / SSH keys, client and API secrets, tokens;
-  - credentials, "your … login / logon / sign-in / username", and two-word "sign in / log in details";
-  - e-signature / badge / employee PINs, and "your employee / badge ID";
-  - SSN / social security, date of birth, security question, maiden name, passport / licence / national / tax ID;
-  - credit card, CVV / CVC, and "your card / account / routing number", bank account, IBAN, bank details;
+- **Cautioned (`{ ok: true, caution }`), never blocking the input or the buttons:** a text is cautioned when it matches the caution list (`CREDENTIAL_CAUTION_RE` and `YOUR_PIN_RE`, with `ASSISTANT_CREDENTIAL_CAUTION`: "This question mentions a password, PIN, code or other credential. This app never needs your credentials. If that is what it is asking for, don't enter it."). It is a list of named families, so a credential phrased in words it does not hold comes back plain. It merges every former refusing rule and the former PIN and login cautions, and holds:
+  - password / passcode / pass phrase / pass word / pwd / pw, passkey, security / licence / product / WPA / Wi-Fi keys;
+  - MFA / 2FA / authenticator / recovery / backup / Okta Verify / RSA codes; auth / approval / unlock / activation / push / login codes, Duo push, YubiKey, Okta push number; verification / security / access codes; "the number / code from (or on) your authenticator / phone / device";
+  - API / secret / private / access / SSH keys, client and API secrets, tokens, JWTs, session cookies, connection strings;
+  - credentials, "your … login / logon / sign-in / username", two-word "sign in / log in details", "authenticate / log in / sign in with your …", "your SAP / Okta / Windows … user / account";
+  - e-signature / badge / employee PINs, "your security / access / PIV / CAC / Windows / e-sig … PIN" (and "your <word> PIN" in capitals), "your employee / badge ID";
+  - SSN / social security, national / social insurance number, date of birth, security question, maiden name, passport / licence / national / tax ID;
+  - credit card, CVV / CVC, card expiry, the number on your card, "your card / account / routing number", bank account, IBAN, sort code, SWIFT / BIC code, bank details;
   - an ask verb beside login / sign-in / SSO / MFA;
   - every PIN / OTP / digit-code rule from fix pass 6, with the verifier's precision fixes (NEW-1, NEW-2, NEW-4), so a pin that is a part stays plain: "the voltage on the input pin", "the clearance between your pin and the bore (mm)", "Need: DOWEL PIN".
   
-  A lower-case bare domain gets a second caution, `ASSISTANT_LINK_CAUTION`. The caution tier prefers recall to precision. For example, "Provide the employer social security tax rate…", "Provide the credit card surcharge (%)…" and "Enter your SSO and creep relief set pressures (mbar)." are shown with the credential caution, and their inputs stay enabled.
+  A lower-case bare domain gets a second caution, `ASSISTANT_LINK_CAUTION`. The list prefers recall to precision. For example, "Provide the employer social security tax rate…", "Provide the credit card surcharge (%)…" and "Enter your SSO and creep relief set pressures (mbar)." are shown with the credential caution, and their inputs stay enabled.
 - **No other rule blocks input.** `"clarify"` gets the same two refusals and the same cautions as `"need"`. An `"aspect"` label is dropped only for a real URL or its length, and is never cautioned ("Mean and Std.Dev.", "VB.NET scripts" and "PIN code rules" are kept). `NeedCard` and `ClarifyCard` render the caution as an amber line inside `AssistantAskingFrame` with the input, Calculate and the aspect buttons enabled. The Need input's never-enter line is unchanged.
 
 Tests:
 - `lib/__tests__/knowledgePageCopy.test.ts` has six "fix pass 7 →" tests:
-  - the injection signature: the scenario and all eleven swaps, under need and clarify, with straight and curly apostrophes, plus the next-sentence and secret-as-object forms;
+  - the injection signature: the original scenario and its ten swaps, under need and clarify, with straight and curly apostrophes; the "— provide it below" paraphrase of each; the next-sentence, secret-as-object, "include it with your values below" and "enter it in your reply" forms;
   - a real URL: "https://evil.example/collect" and "www.vendor.com/ds123" under every kind; the bare-domain caution; kept aspects;
   - the length (at least 1000) and empty guards;
-  - every engineering sentence from both verifiers and all earlier passes, alone and beside "enter it below", is `{ ok: true }`, and the ordinary pin / dotted-token / routing / card-number ones are exactly plain;
-  - every plain credential prompt from the verifier, including "What’s your login?" with the curly apostrophe, and every earlier credential prompt is refused or cautioned under need and clarify;
+  - every engineering sentence from the fix-pass-5, fix-pass-6 and fix-pass-7 verifiers and all earlier passes (92 sentences) is `{ ok: true }` under need and clarify. Each runs alone and with each of four box instructions after it ("… Enter it below.", "… — enter it below.", "… Provide it below.", "… Type it here."), so 460 texts per kind. The ordinary pin / dotted-token / routing / card-number ones are exactly plain;
+  - every plain credential prompt from both verifiers, including "What’s your login?" with the curly apostrophe and the fix-pass-7 verifier's further families, and every earlier credential prompt (112 in all) is refused or cautioned under need and clarify. A question about a secret beside "Enter it below." is exactly cautioned;
   - a source check that the function's only `ok: false` returns are the empty, length, URL and injection ones.
   
   These replace the earlier ASK-6 screen tests (fix passes 3 to 6) and carry over their sentences.
@@ -328,9 +340,18 @@ Tests:
 
 All of the fix-pass-7 tests fail against the fix-pass-6 screen.
 
+*Fix pass 7 follow-up (2026-09-30, intelligence Round G).* An independent verifier found five refusals of engineering sentences in refusal (b):
+- "Provide the GL credit account number. Enter it below." (a credit qualifier on an account number);
+- "the diameter of the backup pin. Enter it below." (`backup pin` was a strong noun);
+- "What is the shear load on your PIN? Enter it below." (a possessor after a preposition);
+- "Enter the minimum length of a password below." and "Enter the shear load on the backup pin below." (the ask verb was searched anywhere before the phrase);
+- "the diameter of the SSO pin", "the number of SIM / network / badge pins", "How many HMIs still use a default password?", "the number of failed network / VPN logins" and "the bit length of the private key", each beside a box instruction.
+
+Each is fixed as stated above: noun-specific qualifiers, no `pins?` after recovery / backup, the preposition check, the anchored ask verb, the lower-case pin qualifiers, and the about-a-secret rule. The verifier also found two gaps, both closed: the box instruction now takes provide / include / give / supply / reply with and up to three words before the place, and the caution list gains the families listed above. Every sentence the verifier named is in the tests on the side it belongs.
+
 **Done-when.**
 1. ✓ Need and clarify text render inside a visually distinct "the assistant is asking" container that is not app chrome.
-2. Partly. At the page, the screen refuses a prompt before anything can be typed in exactly two cases: a real URL, or a secret plus an instruction to type it into this box. It also refuses an empty prompt or one over 1000 characters. Every other credential mention is cautioned, and the input stays enabled (fix pass 7). ✗ Validating and rejecting the prompt SERVER-SIDE, before it is relayed, belongs to the ask route (I-03's file; the plan's "clarify/need text sanitised as data (ASK-6 route half)"). `screenAssistantRequest` is ready for it.
+2. Partly. At the page, the screen refuses a prompt before anything can be typed in exactly two cases: a real URL, or a secret plus an instruction to type it into this box. It also refuses an empty prompt or one over 1000 characters. A prompt that matches the caution list is cautioned, and the input stays enabled (fix pass 7). ✗ Validating and rejecting the prompt SERVER-SIDE, before it is relayed, belongs to the ask route (I-03's file; the plan's "clarify/need text sanitised as data (ASK-6 route half)"). `screenAssistantRequest` is ready for it.
 3. ✓ The Need input carries the explicit never-enter line at the point of entry.
 
 **Scope / residual.** Handed to I-03: run `screenAssistantRequest` in `/api/knowledge/ask` with the matching kind (`"need"` on `**Need:**` text, `"clarify"` / `"aspect"` on `plan.clarify`'s question and options). Reject rather than relay only on `{ ok: false }` (the two refusals and the length guard). A `caution` is relayed with the text and never rejected (fix pass 7).

@@ -6,8 +6,8 @@
 // an input. Both are framed as the assistant's words and screened by
 // lib/assistantScreen.ts, which refuses in exactly two cases — a real URL,
 // or a secret plus an instruction to put it in this box — shown in place of
-// the card. Anything else that touches a credential is an amber caution
-// beside the text, and the input / buttons stay enabled.
+// the card. A text that matches the screen's caution list gets an amber
+// caution beside it, and the input / buttons stay enabled.
 
 import React, { useState } from "react";
 import { Sparkles, Send, AlertTriangle } from "lucide-react";
@@ -126,7 +126,7 @@ export function NeedCard({ prompt, onProvide }: {
 }) {
   const [value, setValue] = useState("");
   // A Need prompt opens an input: refused only for a real URL or a secret it
-  // asks to have typed into this box; any other credential it mentions is a
+  // asks to have typed into this box; a match on the caution list is a
   // caution above the input, never a refusal.
   const check = screenAssistantRequest(prompt, "need");
   if (!check.ok) return <AssistantRequestRefused reason={check.reason} />;
