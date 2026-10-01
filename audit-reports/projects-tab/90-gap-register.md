@@ -181,6 +181,13 @@ comment claims a guard the code lacks; make the code true or the comment go.
 2. Re-import presents a reviewable diff before writing.
 3. An ambiguous date is rejected with a named column, never guessed.
 
+**Partial (2026-10-01, projects Round G — record reconcile, J13).** Built by projects Round G package J6a SCHEDULE-IMPORT (merge `e48ab68`; `SCH-1`, `SCH-2` and `SCH-3` RESOLVED) and verified against HEAD `4dd0df7`. Acceptance 3 holds only in part, so this spec is not marked built.
+1. ✓ Inserting a row at the top of the source file leaves every other row's identity and progress intact, and a test pins exactly this. A keyless row is keyed on its content, never its position (`lib/scheduleParsers.ts`, PT `SCH-3`). `lib/milestones.ts` `importMilestonesFromParsed` keeps progress recorded in the app. Tests: `scheduleImportWriters.test.ts` "SCH-3 · a row inserted at the top leaves every other row's identity AND progress intact (GAP-403 acceptance 1)" (:322), exit 0 (64 passed); `scheduleParsers.test.ts` "SCH-3 · row identity is content, not position" (:520), exit 0 (52 passed).
+2. ✓ Re-import presents a reviewable diff before writing. A dry run builds the `ImportPlan` (added, changed, unchanged, not in the file, progress at risk), and `components/projects/ScheduleImportModal.tsx` shows a "Review changes" step before "Import N changes". An import never deletes. Tests: `scheduleImportModalReview.test.ts` (:91, :144), exit 0 (5 passed).
+3. Partly. **Never guessed — ✓.** A file whose slash dates could be read in either order withholds every row (`lib/scheduleParsers.ts:341-349`: `needsDateConvention`, `rows: []`) until the user picks day/month or month/day on a radio with no default (`ScheduleImportModal.tsx:461-470`). A date that is impossible under the chosen order skips its row, and the skip is counted (`scheduleParsers.ts:1203`). Test: `scheduleParsers.test.ts` "SCH-1 · day/month is decided once from the whole file, never per row" (:210). **"With a named column" — not met.** The prompt names a sample value ("Every slash date (e.g. 06/01/2026) …", `scheduleParsers.ts:342-344` and the modal at :464). The skip warning says "a start or finish date could not be read" (:1203). Neither message names the header of the column the date came from. Owed: carry the start / finish column's header into both messages, or rule that the file-level prompt meets this criterion.
+
+On the "Do not infer identity from the task name" rule: a keyless row's content key includes its name, and legacy position rows are adopted once by a name that is unique on both sides (PT `SCH-3`, which records the duplication residual). This spec's Scope allows a deterministic key where the source has no id; a file with a real id column is keyed on that column.
+
 ---
 
 <a id="gap-404"></a>
@@ -223,6 +230,16 @@ And for bulk AI action: **per-item review, not a count.** A confirmation that sa
    cannot write.
 3. Every satisfied item records who or what satisfied it, and how.
 
+**Status: BUILT (2026-10-01, projects Round G — record reconcile, J13).** Built by projects Round G package J2 QUALITY (merge `798ca2f`; `SAF-1`, `SAF-2`, `QUAL-1`, `QUAL-2`, `QUAL-6` and `QUAL-13` resolved; `DEC-52`). Verified against HEAD `4dd0df7`.
+1. ✓ An item cannot go green on a string alone. The evidence register admits only documents at `Issued` or `Locked` with a current version, outside `NOT_CURRENT_STATUSES`, and, for a document that came through the intake door, only once its CURRENT version is approved (`lib/checklists.ts:125`, `:667-755`). A sweep green must carry a citation that the DATABASE resolves to one of three rows: an admitted document, an accepted turnover item or a human-completed MI checklist. That is `checklist_auto_citation_ok` (`supabase/migrations/20261091_prj_roundG_quality_rails.sql:792`), enforced by `checklist_items_decision_rail` (:820-969); these are the only definitions. A person's green needs the person's own reason (the same rail). Tests: `checklists.test.ts` "an unreviewed Draft with a matching title does NOT enter the register; …" (:476) and "an external (intake) submission counts only once its version is approved" (:490), exit 0 (39 passed); `qualityRailsMigration.test.ts` "a sweep green's citation must RESOLVE to its row …" (:511), exit 0 (40 passed).
+2. ✓ A bulk AI action requires per-item review, and a test asserts a count-only path cannot write. `applyAssessment` writes only `confirmedItemIds` (`lib/checklists.ts:453-472`). `AssessmentReview` (`components/projects/QualityTab.tsx:698`) lists every proposal, unticked by default. Test: `checklists.test.ts` "a count-only call (no confirmed ids) writes NOTHING and audits nothing" (:139).
+3. ✓ Every satisfied item records who or what satisfied it, and how.
+   - A person's write is stamped by the database with the caller's uid and sign-in name (`20261091:936-937`: `updated_by := auth.uid()`, `quality_actor_name`), and it carries the person's reason.
+   - A machine write has `updated_by` NULL and one of two sentinel names. It is bounded to that machine's own columns and carries its citation (`evidence[].source` / `documentId`) (:871-931).
+   - See `DEC-52` item 6.
+
+Inside the register the match is still a title match. `DEC-52` item 1 records it as a labelled MACHINE green that cannot be cited (a completion holding one is `'auto'`), and names the stricter "suggested until verified" form as its reversal. Binding by equipment tag (`document_assets`) is a follow-on, not built.
+
 ---
 
 <a id="gap-405"></a>
@@ -249,6 +266,24 @@ constrain.
 1. A blank or whitespace reason is rejected server-side on every closeout route.
 2. The reason is recorded, attributed and visible on the closeout record.
 3. A test enumerates every route to a green gate and asserts each rejects blank.
+
+**Status: BUILT (2026-10-01, projects Round G — record reconcile, J13).** Built by projects Round G package J2 QUALITY (merge `798ca2f`; `SAF-4` resolved; `DEC-52` item 4). Verified against HEAD `4dd0df7`. The routes to a green closeout gate are SAF-4's three controls (checklist N/A, turnover waive, punch void) and every other checklist decision a person makes.
+1. ✓ A blank or whitespace reason is rejected server-side on every route to a green gate. The rails live in `supabase/migrations/20261091_prj_roundG_quality_rails.sql`, the only definitions:
+   - `quality_reason_ok` (:308): at least 10 characters after Unicode whitespace and zero-width characters are stripped, and no canned text;
+   - `turnover_items_decision_rail` (:647-700): a waive, a reject and any reopen each need their OWN new reason;
+   - `punch_items_void_rail` (:702-750): a void needs a reason;
+   - `checklist_items_decision_rail` (:820-969): satisfied, N/A and item reopen each need a reason.
+
+   The lib mirrors the bar (`lib/checklistEngine.ts:138`, `:161` `reasonProblem`), and the prompt cannot settle on a blank (`appPrompt({ required, minLength })`, `components/projects/QualityTab.tsx:105`). Pending migration: `20261091` (DEC-30). Until it is applied, the client data layer's check is the only one.
+2. ✓ The reason is recorded, attributed and visible on the record. It is stored in `review_note`, `closure_note` or `manual_note`. The database stamps the reviewer, closer or actor from `auth.uid()` and `quality_actor_name`, never from the client, and appends every turnover decision to `turnover_review_events`. The Quality tab shows it on the item: `components/projects/QualityTab.tsx:809-811` (checklist), `:1156-1159` (turnover), `:1357-1374` (punch). The printed report carries counts, not the reasons.
+3. ✓ Tests enumerate every route to a green gate and assert that each rejects a blank. They are split by table rather than kept in one file:
+   - `checklists.test.ts` "refuses a blank, short or canned reason on N/A, satisfied and reopen — nothing written, nothing audited" (:214);
+   - `turnover.test.ts` "reject and waive refuse a blank, whitespace, short or canned reason …" (:87), "only an accepted or waived item can be reopened, and only with a real reason" (:150), and "void refuses a blank or canned reason; nothing written" (:231);
+   - `qualityRailsMigration.test.ts`: the turnover, punch and checklist rails (:418, :438, :449-536) and `quality_reason_ok` (:397).
+
+   Exit 0 for each file (39, 23 and 40 passed).
+
+Outside this spec, because it is not a route to a green gate: completing the PROJECT over red gates takes an optional reason ("Reason (optional)", `app/(protected)/projects/[id]/page.tsx:779`; `lib/projects.ts:537` records `reason || null`). The gates stay red, and their state is recorded in `PROJECT_COMPLETED` and printed (PT `SAF-14`). This area's README lists that override as sound (`README.md:189`).
 
 ---
 
@@ -312,6 +347,11 @@ findings once the number is unambiguous.
 2. AI-parsed and human-corrected are visually distinct.
 3. Every bid row opens its quote.
 
+**Status: BUILT (2026-10-01, projects Round G — record reconcile, J13).** Built by projects Round G package J4 BIDTAB (merge `0a8cc63`; `BID-1`, `BID-2`, `BID-3` and `BID-4` resolved). Verified against HEAD `4dd0df7`.
+1. ✓ One total drives both the score and the award, and a test asserts they cannot differ. Every bid-table entry goes through `withHumanTotal` (`lib/bidTab.ts:536`, applied by `bidFromRow` at `components/projects/cost/QuotesPanel.tsx:1058`). So the Price column, the value score's normalisation and the award confirm (`award`, :580) all read the row's `total_amount`, which is the figure `lib/costDocs.awardQuote` re-reads and posts (`postableTotal`). Test: `quotesPanel.test.ts` "display and award agree after setManualTotal: the row's total overlays the extraction and re-normalises the field" (:43), exit 0 (13 passed).
+2. ✓ AI-parsed and human-corrected totals are visually distinct. A corrected row reads "corrected · AI read $X" in amber, and the AI's figure is kept as `extractedTotal` (`QuotesPanel.tsx:822-824`). The award confirm also says that the total was corrected by hand (:628).
+3. ✓ Every bid row opens its quote. `OpenPdfButton` (:977) sits on read rows, typed-total rows, the not-yet-read strip and the invoice list (:312, :341, :436, :726, :777) and uses the existing presigned path. A row with no file says "no file".
+
 ---
 
 <a id="gap-408"></a>
@@ -338,6 +378,11 @@ timeline.
 1. Change orders, checklist completions, turnover and punch closure appear.
 2. Each links to its record.
 3. The event vocabulary is one list, extended deliberately.
+
+**Partial (2026-10-01, projects Round G — record reconcile, J13).** Mostly built by projects Round G package J8 PROJECT-MODEL as `SAF-6` (merge `a388d22`) and verified against HEAD `4dd0df7`. Acceptance 2 does not hold, so this spec is not marked built.
+1. ✓ Change orders, checklist completions, turnover and punch closure appear. `lib/timeline.ts` `getProjectTimeline` reads the project-scoped audit rows (:711-712) and the cost documents' audit rows (:745) through the vocabulary. Test: `timeline.test.ts` "an award, an approved change order, a turnover acceptance and a checklist ruling all appear; noise and mirrored rows do not" (:98), exit 0 (10 passed).
+2. ✗ **Each links to its record: not built.** The Activity tab renders a controls event (`components/documents/TimelineFeed.tsx:139-187`, `TimelineRow`) as a summary line with a time, an actor and a kind tag, and nothing to click. The event does not carry its record as its resource either: a project-scoped row's `resource_id` is the project (`lib/timeline.ts:711-712`), and a cost row's is the cost document. Owed: a per-action link on the controls vocabulary's milestone events, rendered by the Activity tab. The link should go to the change order, checklist, turnover item or punch item, or at least to its tab (`?tab=costs` / `?tab=quality`).
+3. ✓ The event vocabulary is one list, extended deliberately: `PROJECT_EVENT_VOCABULARY` (`lib/timeline.ts:407`), with every action classified as milestone, noise or mirrored. An unclassified action is shown (:477). Test: `timeline.test.ts` "the vocabulary is ONE map; an unclassified action is SHOWN, never silently dropped" (:131), exit 0.
 
 ---
 
@@ -402,6 +447,13 @@ contrast pass on both themes.
 2. No compliance surface conveys status by colour alone. A test asserts the
    accessible name of a status cell includes its state.
 3. Both themes pass contrast on the milestone and checklist surfaces.
+
+**Status: BUILT (2026-10-01, projects Round G — record reconcile, J13).** Built by two projects Round G packages: J4 BIDTAB built the registry (PT `PERF-1`'s first two done-whens, merge `0a8cc63`), and J8 PROJECT-MODEL built the export (PT `PERF-2`, merge `a388d22`). Verified against HEAD `4dd0df7`.
+1. ✓ Registry page load issues a bounded number of queries, independent of row count. `/companies` reads one page on the server (`lib/companies.ts:128` `listCompaniesPage`, `COMPANY_PAGE_SIZE` 50, :92). It then gathers that page's evidence in one batched pass (`gatherCompanyProfiles`, :414): per table, one `.in()` read per chunk of ids, paged past PostgREST's 1,000-row cap (`app/(protected)/companies/page.tsx:83-93`). A cancel token is set on unmount (:101-106). One company and a full page both cost 11 queries; the count grows only when one page's evidence spans more id chunks or more 1,000-row windows, never per company.
+2. ✓ Export batches, reports progress, and is cancellable. `lib/projectExport.ts` reads in batches of `EXPORT_PROJECT_BATCH` = 100 (:32), reports progress per batch (:47, :99) and checks an `AbortSignal` between batches (:49). The Export All button is disabled while a run is in flight and shows "Exporting n/N…" with Cancel (`app/(protected)/projects/page.tsx:131-136`). Tests: `projectExport.test.ts` "3 projects and 99 projects cost the same number of reads …" (:92), "progress is reported and a cancel stops the export before anything is built" (:115), and "the Export All button cannot start a second run and shows progress with a cancel" (:158), exit 0 (12 passed).
+3. ✓ A test asserts the query count does not grow with the number of companies: `companiesRegistry.test.ts` "a full page of companies costs the same query count as one, and even 150 stay far under 200" (:104; 11 queries for 1 company and 11 for 50, which is a page), and "the gather never issues a per-company query …" (:150), exit 0 (18 passed).
+
+PT `PERF-1` stays OPEN on one item only: "Back does not re-run it". That item is held for the user to rule on (`audit-reports/fleet-plans/projects-joint.json`, `userHeld.PERF-1`). Meeting it would take the client-side cache this spec forbids ("Do not fix this with a client-side cache … stale company data drives award decisions"). Today, Back re-runs one gather of about 11 queries for the visible page. Nothing is owed under this spec.
 
 ---
 
