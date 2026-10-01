@@ -156,10 +156,10 @@ export default function ReviewGateSection({ doc, orgId, canManage, onChanged }: 
     if (!doc.id) return;
     setBusy(true);
     try {
-      const res = await finalizeReviewedRevision({
-        orgId, documentId: doc.id, actorId: uid, actorName: userEmail, actorEmail: userEmail ?? null,
-        ...(forceHold ? { forceHold: true, overrideReason: holdReason.trim() || null } : {}),
-      });
+      // The call without a force is exactly the call it always was.
+      const res = forceHold
+        ? await finalizeReviewedRevision({ orgId, documentId: doc.id, actorId: uid, actorName: userEmail, actorEmail: userEmail ?? null, forceHold: true, overrideReason: holdReason.trim() || null })
+        : await finalizeReviewedRevision({ orgId, documentId: doc.id, actorId: uid, actorName: userEmail, actorEmail: userEmail ?? null });
       if (!res.published) {
         // REV-20 (P14 final review): the hold refused a controller's promote —
         // offer the recorded force (nothing was changed); any other refusal,
