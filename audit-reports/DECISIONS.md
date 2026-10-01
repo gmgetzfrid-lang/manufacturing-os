@@ -4455,7 +4455,10 @@ against.
    saying "nothing was changed". A sentence placed after a lead-in that says
    what happened ("X was saved / approved / published, but Y …") is the
    reason alone (`embed: true`; `userFacingCaughtError` whenever it keeps a
-   lead-in) — never "nothing was changed" after a write that landed. Code
+   lead-in) — never "nothing was changed" after a write that landed; a
+   reason placed INSIDE the caller's own sentence (in parentheses) is a
+   clause — `clause: true`, or `asClause` for text already translated — with
+   no full stop of its own and never the caller's tail twice. Code
    that must read the driver text to decide (schema step-down, missing-RPC
    probes) reads the raw error before translating.
 3. **A contractor's Known Company link is set once (`MON-7`, `COST-12`).** An
@@ -4474,9 +4477,14 @@ against.
    item count for the company bound to the item's contractor; an unassigned
    item or one whose contractor is unlinked counts for nobody — the
    dimension stays Unrated (null), never 0. An item's contractor is set on
-   add, on seed, or later on its row: an unassigned item at any status, an
-   assigned one changed only while undecided (a standing decision never
-   moves to another company's record) — app-level too (`MON-13`).
+   add, on seed, or later on its row: while the item is undecided its pick
+   is its write and can be changed; once decided an assigned contractor
+   stays (a standing decision never moves to another company's record); an
+   unassigned decided item is named only through **Assign** and a confirm
+   that names the item, the contractor, its Known Company and says the name
+   is permanent — and never while it is **rejected** (no reopen, so a wrong
+   name could never be corrected; it is named once its resubmission is
+   accepted) — app-level too (`MON-13`).
 4. **Accept is confirmed (`A11Y-8`).** The brief's default was "Accept opens
    the same reason dialog as Reject"; the code already routes Accept through
    the reviewed-document pick and the e-signature ceremony (`DEC-66`), a
@@ -4492,7 +4500,16 @@ against.
    registered its own window listener, so with nested modals one Escape
    closed all of them; now a confirm opened from a dialog closes alone and
    the dialog under it stays. Single-modal Escape / backdrop /
-   non-dismissable behaviour is unchanged. An Escape already handled
+   non-dismissable behaviour is unchanged except that an Escape a control
+   inside the panel already handled no longer closes it, and the listener
+   sits on `document` instead of `window`. Before J10 only two consumers
+   imported `Modal` (`DialogHost` and the plot-plans "New plot plan"
+   dialog); neither nested a `Modal` nor held a control that handles Escape,
+   so for them one Escape still closes the open dialog — the change reaches
+   only J10's own nested flows (each dialog's discard confirm, the
+   status-transition confirm). If it is not ratified, Escape returns to
+   every open `Modal` on `window`, topmost-only stays for the focus trap,
+   and each J10 discard confirm needs a re-entry guard. An Escape already handled
    (`defaultPrevented`) by something INSIDE the modal's panel — an open
    `HelpTooltip`, an editor — is theirs; one handled only by a page-level
    handler outside the panel cannot stop the topmost modal cancelling (the
@@ -4518,7 +4535,9 @@ covers the terms on the tab and nothing else), `userFacingError.test.ts`
 the Projects / Companies data layer, every kind read-worded, and the census
 that no landed-write lead-in is followed by "nothing was changed"),
 `mon7Scorecard.test.ts` (with a seeded, accepted package assigned on its
-rows) and
+rows; a rejected item never named), `qualityTabContractorAssign.test.ts`
+(item 3 on the rendered tab: a decided item's pick writes nothing, Assign
+asks first) and
 `costsContractorLink.test.ts` (link once, never re-point, the recorded reason,
 accepted turnover reaches the company, every dimension scores on a full
 fixture), `a11yProjects.test.ts` "A11Y-8", `modalFocus.test.ts` (item 5: the
@@ -4541,3 +4560,5 @@ dialog to close on one Escape closes its own stack in its handler.
 *Landed 2026-10-01 (projects Round G, J10 review fix): item 2 now holds at the screen as well as the data layer — `userFacingCaughtError` translates a caught error where it is shown (keeping a library's lead-in, replacing only the driver fragment), and a screen census over every Projects / Companies component and page and the vendor portal pins it; item 3 is stated as an app-level rule and the wizard's name-bound links pass it (`checkPartyCompanyLink`); item 5 (the shared Modal's topmost-only Escape, and HelpTooltip's in-front rule) is recorded as the intended change it is. No migration.*
 
 *Landed 2026-10-01 (projects Round G, J10 second review fix): item 2 — the review fix's claim that a partial success is never worded "nothing was changed" was false (every write sentence ended with it, appended after landed-write lead-ins); the embedded reason (`userFacingError(err, { embed: true })`) is now used at every such site and by `userFacingCaughtError` whenever it keeps a lead-in, and the READ table words every kind as a load; item 3 — "J12's" trigger was a misattribution (J12's brief holds none): the database enforcement is the new finding projects-tab `MON-13`, unassigned, and the item-contractor rule is added (seed picker, row assignment, decided items keep their contractor); item 5 — Escape honours `defaultPrevented` only from inside the panel, keys are read on `document`, a handled Tab and a Tab in a foreign overlay are left alone, and the item is marked for the integrator's ratification. No migration.*
+
+*Landed 2026-10-01 (projects Round G, J10 third review fix): item 2 — a reason inside the caller's own sentence is a clause (`clause: true` / `asClause`), so "Could not delete “X” (…) — nothing was changed." reads once and never "….)" (a mutation-checked census over the area); item 3 — a decided item's contractor is never written by the select's change: an unassigned accepted / waived turnover item or closed / voided punch item is named only through Assign and a confirm (item, contractor, Known Company, permanence), a rejected one not at all until its resubmission is accepted (the library refuses it too), and an item whose contractor was later set inactive still names it; item 5 — STILL NOT RATIFIED: the integrator ratifies it explicitly before merge (or reverts it as described above); the record now states exactly what changed (nested Escape, an Escape handled inside the panel, `document` instead of `window`) and that no pre-J10 consumer nested a `Modal`. No migration.*

@@ -596,6 +596,8 @@ lib/companies.ts:284 — `const awardsTotal = parties.reduce((s, p) => s + (p.co
 
 *Second review fix (2026-10-01, projects Round G).* Done-when 3's "turnover/punch creation carries the responsible party" was ticked while the main creation path — `seedTurnoverItems`, called by the wizard and by the Quality tab's **Seed required contents** — wrote none, and no screen could assign one later. Now the seed takes a contractor picked beside the button, and every turnover and punch row carries an assignment control (`lib/turnover.ts` `assignTurnoverContractor` / `assignPunchContractor`: same-project contractor, an unassigned item at any status, an assigned one only while undecided, guarded, checked and audited). Tests: `mon7Scorecard.test.ts` (+5 — a seeded, accepted package assigned on its rows moves Quality off Unrated; see projects-tab `MON-7`).
 
+*Third review fix (2026-10-01, projects Round G).* The row control wrote a DECIDED item's contractor on the select's change — one keystroke, no confirmation — and a rejected item's attribution could never be corrected. Now an undecided item's pick is its write; a decided, unassigned item (accepted / waived turnover, closed / voided punch) is named only through **Assign** and a confirm naming the item, the contractor, its Known Company and that it is permanent; a rejected item is not named until its resubmission is accepted (`lib/turnover.ts` refuses it too). An item assigned to a contractor later set inactive still names it (only the add / seed / Assign pickers hide inactive contractors). Tests: `qualityTabContractorAssign.test.ts` (rendered), `mon7Scorecard.test.ts` (see projects-tab `MON-7`).
+
 ---
 
 <a id="cost-13"></a>
