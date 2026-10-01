@@ -716,7 +716,7 @@ lib/publicOrigin.ts:8-11 — `// point at the PUBLIC production domain. \`window
 ## TRX-15 · A PDF over 64 MiB leaves the transmittal portal unstamped, and the portal page holds every download in memory
 
 - **Severity:** LOW
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Assigned:** document-control P8 FIELD (a stamping consumer; after PS-STAMP merges) — by the integrator, 2026-10-01 (fleet plan `audit-reports/fleet-plans/`).
 - **Verification:** CONFIRMED (by reading; the bound and the fallback are pinned in `lib/__tests__/transmittalPortalRoute.test.ts`)
 - **Blast radius:** document-control integrity (an uncontrolled copy without its marking)
@@ -735,6 +735,37 @@ lib/publicOrigin.ts:8-11 — `// point at the PUBLIC production domain. \`window
 **Done when.**
 - Every PDF served by the portal carries the stamp, whatever its size — or a PDF that cannot be stamped is refused at issue with the reason.
 - The portal page does not hold a download in memory.
+
+**Resolution (2026-10-01, document-control Round F wave 2).** P8 FIELD, a stamping consumer. `lib/stamping.ts` is consumed as PS-STAMP left it; narrow edits to P7's route and page. Reproduced at `55e281d`:
+- `app/api/transmittal/route.ts` piped a PDF over `PORTAL_STAMP_MAX_BYTES` (64 MiB) through unstamped (`unstampedReason: "oversize"`), and delivered a PDF the stamper refused unstamped too ("stamping failed — delivering unstamped").
+- The portal page read every download with `res.blob()`.
+
+What landed in the route:
+- **A PDF leaves stamped or not at all.** Over the bound, the first read stops at the PDF header: `hashBody(body, { stopIfPdf: true })` releases the body, and the rest is never read. A PDF the stamper refuses (encrypted, malformed) is caught the same way. Both answer `422 { error: "unstampable", reason: "oversize" | "stamp_failed" }`.
+- **Nothing is recorded as delivered on a refusal.** The refusal goes on the issuer's trail (`TRANSMITTAL_PORTAL_UNSTAMPABLE_REFUSED` in `audit_logs`, attributed to the issuer, with the version, the reason and the bound).
+- **Only a file that is not a PDF leaves unstamped.** A large one is still hash-verified chunk by chunk, re-read pinned by `If-Match` and piped (DEC-61 §5), recorded `unstampedReason: "not_pdf"`.
+- **The snapshot flags such files.** Each item gets `releasedUnmarked` (one read of the pinned versions, `isPdfFile`, scoped to the transmittal's org; `null` = unknown), so the page can still say which files leave without the marking.
+
+What landed on the page:
+- **No download is held in memory.** The page points a hidden frame at the route with `&nav=1`, and the browser streams the `Content-Disposition: attachment` response straight to disk; no `fetch().blob()`, no object URL.
+- **A refusal is still explained.** In `&nav=1` mode the route answers a refusal as plain-text JSON carrying its status, which renders in the frame; the page reads it back (`frameRefusal`) and explains it ("This PDF is too large for the portal to mark as an UNCONTROLLED copy, so it was not released …"). Without `&nav=1` the JSON answer is unchanged for every other caller.
+- The standing note and the per-item "Not a PDF — released as issued, WITHOUT the UNCONTROLLED marking" line replace the response-header notice the page can no longer read.
+
+Tests: `lib/__tests__/transmittalPortalRoute.test.ts`:
+- "TRX-15 — a PDF leaves the portal stamped or not at all": an oversize PDF is refused with the rest unread and no record but the trail row; a stamper refusal is refused; the route has no unstamped-PDF branch; `&nav=1` refusals are plain text with the status, while the JSON callers are unchanged; the page holds nothing in memory.
+- "TRX-15 — the snapshot flags a pinned file that is not a PDF".
+- The size tests now carry a large NON-PDF through the pinned pipe.
+
+`lib/__tests__/dcRoundFTransmittals.test.ts` (P7's test): its response-header pin is re-pointed at the per-item notice.
+
+**Done-when.**
+1. ✓ Every PDF served by the portal carries the stamp, whatever its size: a PDF that cannot be stamped is not served. It is refused at DOWNLOAD with the reason, on the issuer's trail; it is not refused at ISSUE. The done-when's second branch ("refused at issue") would need the issue gate (`lib/transmittals.ts`, P7's file) to open and parse every PDF in the browser at issue time.
+2. ✓ The portal page does not hold a download in memory.
+
+**Scope / residual.**
+- The issuer learns of an unstampable PDF from the trail row and from the recipient, not at issue. An issue-time check is a `lib/transmittals.ts` (P7) follow-up.
+- Behaviour change: a PDF under the bound that pdf-lib cannot stamp, and that went out unstamped before, is now refused.
+- The page's "your browser is saving the file" line shows after 8 s. A refusal that lands later replaces it.
 
 ---
 

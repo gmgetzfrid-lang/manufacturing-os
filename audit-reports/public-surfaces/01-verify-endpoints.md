@@ -763,7 +763,7 @@ grep -n "visibility" app/api/verify*/route.ts → no match
 ## VFY-17 · The pack print gate admits a legacy EMPTY-status document that the verify allow-list refuses — a just-printed pack can never scan green
 
 - **Severity:** LOW
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Verification:** CONFIRMED
 - **Locations:** `lib/docPack.ts` (`filterPackDocs` — `if (status && status !== "Issued" && status !== "Locked")`), `lib/verifyVerdict.ts` (`documentStanding` — an empty status is `not_issued`), `app/api/verify-package/route.ts` (the per-sheet state)
 - **Independently verified:** — opened 2026-10-01 by public-surfaces Round F (PS-VERIFY) from the review of `VFY-1` (its residual), per DEC-31; verified against the branch, not yet challenged by a second party.
@@ -786,6 +786,22 @@ lib/verifyVerdict.ts — if (IN_FORCE_STATUSES.has(s)) return "in_force"; return
 
 **Owner.** Document-control P8 FIELD (`lib/docPack.ts` is its file; PS-VERIFY may not edit it this round).
 
+**Resolution (2026-10-01, document-control Round F wave 2).** Document-control P8 FIELD (`lib/docPack.ts`). Reproduced at `55e281d`: `filterPackDocs` refused a status only `if (status && status !== "Issued" && status !== "Locked")`, so an empty or NULL status passed the print gate (the base test "tolerates a legacy row with no status at all" pinned it), while `documentStanding` read the same row as `not_issued`.
+- **The print gate IS the verify allow-list.** `filterPackDocs` decides "in force" with `documentStanding` (`lib/verifyVerdict.ts`) — Issued / Locked only, retirement from `NOT_CURRENT_STATUSES` — with no status list of its own.
+  - An empty / NULL / blank status is refused with "no status — not an issued, controlled revision" (code `not_issued`), which the printer sees in the toast and which the print snapshot records as left out (`VFY-19`).
+  - A withdrawn status is refused with code `withdrawn`.
+  - "IFC", "In Review" or any other value is still refused with its own name, as before (`VFY-20` stays open on the vocabulary).
+- Tests:
+  - public-surfaces `lib/__tests__/verifyPackageSnapshot.test.ts` "VFY-17 — the pack print gate and the verify allow-list agree on an EMPTY status": `""` / `null` / `undefined` are refused at print and `not_issued` at verify, Issued passes both, and the gate carries no parallel status literal.
+  - `lib/__tests__/docPackFilter.test.ts`: the base "tolerates a legacy row" test is inverted to "refuses a legacy row with no status at all".
+  - `dcRoundFField.test.ts` "VFY-17 — the builder refuses an empty-status sheet".
+
+**Done-when.**
+1. ✓ `filterPackDocs` refuses an empty / NULL status with a reason the printer sees, so the print gate and the verify allow-list agree.
+2. ✓ A test pins an empty-status document refused at print and `not_issued` at verify.
+
+**Scope / residual.** None for this finding. A legacy empty-status sheet is now left out of every pack until its status is set; the toast and the scan say why.
+
 ---
 
 <a id="vfy-18"></a>
@@ -793,7 +809,7 @@ lib/verifyVerdict.ts — if (IN_FORCE_STATUSES.has(s)) return "in_force"; return
 ## VFY-18 · A print whose snapshot insert fails still ships, with a bare-package cover QR that can never read green — and the packages page reports success
 
 - **Severity:** LOW
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Verification:** CONFIRMED
 - **Locations:** `lib/workPackages.ts` (`recordPackagePrint` — returns null on any insert error), `app/(protected)/packages/page.tsx` (`buildCoverAfter` passes `printId` null to `buildPackageCover`), `app/api/verify-package/route.ts` (a QR with no print id is `unconfirmed_print`)
 - **Independently verified:** — opened 2026-10-01 by public-surfaces Round F (PS-VERIFY) from the review of `VFY-2` (its residual), per DEC-31; verified against the branch, not yet challenged by a second party.
@@ -817,6 +833,19 @@ app/api/verify-package/route.ts — else if (!printConfirmed) verdict = "unconfi
 
 **Owner.** Document-control P8 FIELD (`lib/workPackages.ts` and the packages page are its files; PS-VERIFY may not edit them this round).
 
+**Resolution (2026-10-01, document-control Round F wave 2).** Document-control P8 FIELD (`lib/workPackages.ts`, the packages page). Reproduced at `55e281d`: `recordPackagePrint` answered `null` on an insert error or a throw, and the page built the cover with `printId` null, so the pack shipped with a bare-package QR (grey "CAN'T CONFIRM WHICH PRINTING" on every scan) under a success toast.
+- **The print stops.** `recordPackagePrint` is a checked write. A refused or failed insert, or one that returns no id, throws `PackagePrintNotRecordedError`: "The pack was NOT printed: its print record could not be written (…), so its cover QR could never be verified in the field. Nothing was downloaded and no pins moved — try again …".
+  - It is thrown from the cover step (`buildCoverAfter`), which runs before the PDF is saved. So no PDF is produced, no download is triggered, no `download_audits` row is written and no pin moves (PKG-6's order).
+  - The page's catch shows it as "Couldn't print the pack".
+  - The pre-migration "return null" tolerance is gone: `work_package_prints` has been live since `20261028` (applied 2026-08-24).
+- Tests: `lib/__tests__/dcRoundFField.test.ts` "VFY-18 — a print whose snapshot cannot be written stops before anything is downloaded": a refused insert throws, while a written one returns its id; thrown from the cover step, it leaves no download, no record and no pins; the page no longer calls the snapshot best-effort.
+
+**Done-when.**
+1. ✓ When the snapshot cannot be written, the print stops before the PDF is produced (the first branch), never a plain success.
+2. ✓ A test pins the null-snapshot path.
+
+**Scope / residual.** None for this finding. Document-control `PKG-6`'s recorded residual ("`recordPackagePrint` stays best-effort") no longer holds.
+
 ---
 
 <a id="vfy-19"></a>
@@ -824,7 +853,7 @@ app/api/verify-package/route.ts — else if (!printConfirmed) verdict = "unconfi
 ## VFY-19 · The print snapshot does not record which package sheets the print gate LEFT OUT, so the pack verdict cannot tell "left out at print" from "added since printing"
 
 - **Severity:** LOW
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Verification:** CONFIRMED
 - **Locations:** `app/(protected)/packages/page.tsx` (`handlePrintPack` → `recordPackagePrint({ sheets: includedSheets … })` — `assessment.skipped` and `result.skipped` reach only the toast), `lib/workPackages.ts` (`recordPackagePrint`; `addDocumentToPackage` stamps `added_at: new Date().toISOString()`), `lib/docPack.ts` (`filterPackDocs` / `assessPackDocs` / the builder's "no current file" and fetch-failure skips), `app/api/verify-package/route.ts` (`notInPack` / `notPrintable`)
 - **Independently verified:** — opened 2026-10-01 by public-surfaces Round F (PS-VERIFY, second review fix pass) from the review of `VFY-2` done-when 4, per DEC-31; verified against the branch, not yet challenged by a second party.
@@ -849,6 +878,35 @@ app/api/verify-package/route.ts — const offPaperIds = printConfirmed && !snaps
 - [ ] A test pins the three cases: skipped at print, added since, and a pre-change snapshot (no skipped list) which keeps the present-tense split
 
 **Owner.** Document-control P8 FIELD (`lib/workPackages.ts`, `lib/docPack.ts` and the packages page are its files; the route half is a few lines in `app/api/verify-package/route.ts` once the snapshot carries the list — whoever owns the verify routes that round).
+
+**Resolution (2026-10-01, document-control Round F wave 2).** Document-control P8 FIELD. The record shape is coordinated with `/api/verify-package`; the route half is a narrow edit to PS-VERIFY's merged files. Reproduced at `55e281d`: the page passed only `includedSheets` to `recordPackagePrint`. `assessment.skipped` and the builder's skips reached the toast and nothing else, so the route could not tell "left out at print" from "added since".
+- **The record — no migration.** The print snapshot's existing `sheets` JSONB (`work_package_prints.sheets`, `20261028`) now carries:
+  - every printed sheet with `printed: true`;
+  - every package sheet that print LEFT OUT with `printed: false`, a code and the reason the printer saw (`leftOutReason`, never published), plus the revision the builder tried when it got that far. The codes (`lib/packLeftOut.ts`): `not_issued` / `withdrawn` / `on_hold` / `hold_unknown` / `unreadable` / `ack_required` / `no_file` / `fetch_failed` / `unreadable_pdf`.
+  - `printSnapshotSheets` (`lib/workPackages.ts`) builds it, and `recordPackagePrint` takes `leftOut`. The page passes the gate's refusals and the builder's own (`buildCoverAfter` now receives the builder's skips; `mergeLeftOut` dedupes by document).
+  - A snapshot written before this change has no `printed` key anywhere — the marker that tells the two apart.
+- **The route** (`app/api/verify-package/route.ts`, the narrowest edit):
+  - It reads `printed: false` entries as left out, never as paper.
+  - From a marker snapshot, each package sheet missing from the paper also carries WHEN: `leftOutAtPrint: <code>` when the snapshot lists it, `addedSincePrint: true` when it does not. The snapshot's own entries are the package's membership as the printer saw it.
+  - A file the print could not read as a PDF, which is still the current revision, is amber `not_pdf` (a re-print cannot carry it either) instead of red on every re-print.
+  - An older snapshot keeps the present-tense split with neither field, and nothing says "added since".
+  - Only the code is published, never the printer's free text (DEC-65's facts-only contract).
+- **The page** (`app/verify-package/[packageId]/page.tsx`) appends, from `missingSheetWhen` (`lib/packLeftOut.ts`), "— left out of this printing — its file could not be fetched when printed" or "— added since this pack was printed". `lib/verifyPresent.ts`: the two optional fields are added to the `notInPack` / `notPrintable` types only; the verdicts and headlines are unchanged.
+- Tests:
+  - public-surfaces `lib/__tests__/verifyPackageSnapshot.test.ts` "VFY-19 — the snapshot records what the print LEFT OUT …" (six), covering the three cases the done-when names:
+    - skipped at print: a fetch failure printable now is red with `leftOutAtPrint`; a hold that still holds is amber with the reason and the when; an unreadable PDF still current is amber `not_pdf`, and red once a new revision lands;
+    - added since: printable is red, not printable is amber, both `addedSincePrint`;
+    - a pre-change snapshot: no when-fields, no "added".
+    - Also the page's words, and that the free text is never published.
+  - The PS-VERIFY pin "the page never says 'added … since printing'" is re-pointed at the route's gated fields.
+  - `dcRoundFField.test.ts` "VFY-19 — the snapshot records the sheets the print left out, with a code" (the snapshot shape, `recordPackagePrint` writes it, `mergeLeftOut`, the page's wiring).
+
+**Done-when.**
+1. ✓ The print snapshot records the sheets left out of that printing with their reason (in the snapshot's own `sheets` array, `printed: false`, rather than a sibling column — no migration), written by the same `recordPackagePrint` call from `assessment.skipped` and the builder's skips.
+2. ✓ `/api/verify-package` reads it. A missing sheet the snapshot lists as skipped is reported "left out of this printing — <reason>". A missing sheet it does not list is reported "added to the package since printing", judged against the snapshot's own member list.
+3. ✓ A test pins the three cases: skipped at print, added since, and a pre-change snapshot that keeps the present-tense split.
+
+**Scope / residual.** "The snapshot's own member list" is the package membership as the printing page loaded it. A sheet added in another tab between that page load and the print click reads "added since this pack was printed" although it joined a minute before. That direction is never wrong about the paper — the sheet is not in it.
 
 ---
 

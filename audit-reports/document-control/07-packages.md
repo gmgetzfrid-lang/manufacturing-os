@@ -281,7 +281,7 @@ app/(protected)/packages/page.tsx:156-176 — `try { await refreshWorkPackage(pk
 ## PKG-7 · A member document the requester cannot read is silently erased from every work-package computation — it reads as never-drifted, its pin is NULLed on refresh, and it vanishes from the pack while the cover sheet still lists it
 
 - **Severity:** HIGH
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Verification:** CONFIRMED
 - **Locations:** `lib/workPackages.ts:83-107`, `lib/workPackages.ts:199-221`, `lib/workPackages.ts:155-170`, `lib/docPack.ts:51-55`, `lib/docPack.ts:77-83`, `app/(protected)/packages/page.tsx:161-176`
 - **Independently verified:** ✓ **SURVIVES** — second independent adversarial pass. Confirmed at HIGH — a hidden member is silently a permanent 'fresh' sheet, its pin is destroyed by the very refresh the print flow performs, and the printed cover lists a sheet the PDF does not contain with no skip warning to the operator.
@@ -305,6 +305,23 @@ lib/workPackages.ts:99-106 — `const pinned = (m.pinned_version_id as string | 
 - [ ] every consumer compares the requested id set against the returned rows and surfaces the difference: `drifted` is 'unknown' (not false) for an unreadable member, refresh refuses to write rather than NULLing a pin, createWorkPackage errors, and docPack records an explicit skipped entry
 - [ ] the cover sheet is built from the documents actually merged, not from the member list
 - [ ] a test with an ACL-hidden member proves no pin is destroyed and no sheet is silently omitted
+
+**Resolution (2026-10-01, document-control Round F wave 2).** P8 FIELD. Reproduced at `55e281d`: `listWorkPackages` derived `drifted` from an undefined document (`current = null` → always false), `refreshWorkPackage` wrote `pinned_version_id: (d?.current_version_id …) ?? null` for a member whose document it could not read, `createWorkPackage` built member rows from the documents it could read and dropped the rest, and `buildAndDownloadDocPack` looped over the RLS-filtered rows with no entry for a requested id that did not come back. The new PKG-7 tests fail against that code (DEC-29).
+- **Every consumer compares the requested ids with the rows returned.**
+  - `lib/docPack.ts` `accountForRequested` (pure) returns the rows in the caller's order and one explicit skip per missing id: label "Restricted document", code `unreadable`, reason "you cannot open this document, so it could not be checked or printed — ask Document Control". `assessPackDocs` and `buildAndDownloadDocPack` both read through it (`readAndGatePackDocs`). A documents read that ERRORS throws ("nothing was printed") instead of reading as an empty pack.
+  - `lib/workPackages.ts`: `memberFreshness` answers `fresh` / `drifted` / `unknown`. `WorkPackageDoc` gains `readable` and `freshness`, `WorkPackage` gains `unknownCount`. An unreadable member is labelled "Restricted document" (not the bare "Document"), is never `drifted` and never fresh; a failed documents read leaves every member `unknown`.
+  - `refreshWorkPackage` checks its member and document reads, writes only the members whose document this person can read, and then throws naming how many pins were NOT moved. A pin is never NULLed.
+  - `createWorkPackage` reads the chosen documents FIRST and refuses, with nothing created, when any of them cannot be read.
+- **The cover is built from the merged sheets** (`buildCoverAfter(includedSheets, skipped)`, PKG-6's hook). The unreadable member appears in the toast's left-out list and on the print snapshot as left out (`VFY-19`).
+- `/packages` shows a slate "Unknown · N" pill instead of "Fresh", and "status unknown to you" on the member's row.
+- Tests: `lib/__tests__/dcRoundFField.test.ts` "PKG-7 — …" (six): the pack's explicit skip and the cover's sheet set; order, de-duplication and missing ids; a failed read throws; the `unknown` list state; refresh never writes the hidden member's pin; create refuses with nothing inserted.
+
+**Done-when.**
+1. ✓ Every consumer compares the requested ids against the returned rows: `drifted` is `unknown` (not false) for an unreadable member; refresh refuses to write rather than NULLing a pin; `createWorkPackage` errors; docPack records an explicit skipped entry.
+2. ✓ The cover sheet is built from the documents actually merged.
+3. ✓ A test with an ACL-hidden member proves no pin is destroyed and no sheet is silently omitted.
+
+**Scope / residual.** A refresh still MOVES the readable members' pins and then reports the ones it could not move (left exactly as they were). That is a partial refresh, said in the error, not all-or-nothing. `components/documents/AddToPackageButton.tsx` (not this package's file) calls `listWorkPackages` and is unaffected by the new fields.
 
 ---
 
@@ -361,7 +378,7 @@ app/api/verify-package/route.ts:56 — `const retired = d?.status === "Supersede
 ## PKG-9 · Doc packs bypass the hard read-&-understood acknowledgment gate that every single-document download and print enforces
 
 - **Severity:** HIGH
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Verification:** CONFIRMED
 - **Locations:** `lib/downloads.ts:153-215`, `lib/downloads.ts:217-218`, `lib/downloads.ts:261-262`, `lib/docPack.ts:40-140`
 - **Independently verified:** ✓ **SURVIVES** — second independent adversarial pass. Confirmed and reachable from both entry points: app/(protected)/assets/[tag]/page.tsx:129-130 and app/(protected)/packages/page.tsx:159-169 both dynamic-import buildAndDownloadDocPack directly. The pack even replicates the audit/intent side-effects of a single download (lib/docPack.ts:114-133), which shows it was written to mirror downloadDocumentPdf — it just skipped the one blocking check.
@@ -386,6 +403,21 @@ lib/downloads.ts:198-210 — `if (!policy?.enabled || !policy.hardGate) return; 
 - [ ] the gate lives in one shared helper both the single-document and pack paths call
 - [ ] a hard-gated document with an outstanding signature cannot be obtained through any pack button
 
+**Resolution (2026-10-01, document-control Round F wave 2).** P8 FIELD. Reproduced at `55e281d`: `lib/docPack.ts` never called `assertAckGate` (`lib/downloads.ts`, called only by `downloadDocumentPdf` and `printDocumentPdf`), and the book viewer's merged book (`components/viewers/MultiDocViewer.tsx` `assembleStampedBook`) did not either.
+- **One shared helper.** `ackGatedDocumentIds(docs, userId)` (`lib/downloads.ts`) is the gate. It holds the effective-policy memo (moved in unchanged) and makes one `document_acknowledgments` read for the hard-gated subset. Its callers:
+  - `assertAckGate` (the single download and print) is now a one-line caller of it.
+  - `lib/docPack.ts` `readAndGatePackDocs` runs it per sheet after the status and hold gate, before any fetch.
+  - The book viewer refuses a book containing a gated sheet, naming it, before anything is stamped.
+- **Both pack buttons.** `assessPackDocs(ids, { userId })` (the `/packages` pre-print gate) and `buildAndDownloadDocPack` (the `/packages` build and the asset hub's "Print doc pack") both apply it. A gated sheet is skipped with "read-&-understood sign-off outstanding — sign it before taking a copy" (code `ack_required`) and never merged.
+- Tests: `dcRoundFField.test.ts` "PKG-9 — …": a gated sheet is left out and never stamped; `assessPackDocs` applies the gate before any side-effect and passes the sheet once signed; the single download still refuses through the same helper, and the three callers are pinned; the gate fails open on a broken policy read.
+
+**Done-when.**
+1. ✓ `buildAndDownloadDocPack` runs the same ack gate per document and reports gated documents in `skipped` with a clear reason.
+2. ✓ The gate lives in one shared helper (`ackGatedDocumentIds`) that the single-document, pack and book paths call.
+3. ✓ A hard-gated document with an outstanding signature cannot be obtained through any pack button: `/packages` "Print pack", the asset hub's "Print doc pack", and the viewer's merged book.
+
+**Scope / residual.** The posture the verifier named is unchanged: the gate is client-side and fails OPEN on a policy or acknowledgment read error, because a broken read must not brick every copy. A server-side gate would need the bytes route (`/api/storage/download-url`, not this package's file) to know which copy it signs for.
+
 ---
 
 <a id="pkg-10"></a>
@@ -393,7 +425,7 @@ lib/downloads.ts:198-210 — `if (!policy?.enabled || !policy.hardGate) return; 
 ## PKG-10 · Downloading a SUPERSEDED revision stamps the CURRENT revision number on it and names the file after the current revision
 
 - **Severity:** HIGH
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Verification:** CONFIRMED
 - **Locations:** `lib/downloads.ts:80-88`, `lib/downloads.ts:71-76`, `components/documents/VersionHistoryPanel.tsx:151-159`, `lib/downloads.ts:228-240`
 - **Independently verified:** ✓ **SURVIVES** — second independent adversarial pass. Confirmed: no caller overrides ctx.filename for a historical revision, and the stamp options at lib/downloads.ts:228-240 pass `footerNotice: buildFooterNotice(ctx.doc, ctx.userId)` unchanged. The only thing that does honour the version is the QR (buildVerifyUrl uses `ctx.versionId ?? ctx.doc.currentVersionId`), so the scan verdict and the printed footer contradict each other on the same sheet.
@@ -415,6 +447,25 @@ lib/downloads.ts:82 — `parts.push(\`Rev ${doc.rev ?? "?"} at time of issue —
 - [ ] buildFooterNotice and defaultFilename take the revision label of the version actually being delivered, falling back to doc.rev only when no versionId was supplied
 - [ ] downloading a non-current version additionally stamps a SUPERSEDED / NOT CURRENT banner
 - [ ] a baked-markup download is never treated as a controlled copy
+
+**Resolution (2026-10-01, document-control Round F wave 2).** P8 FIELD. Reproduced at `55e281d`:
+- Done-when 1 has held since `REV-1` (2026-08-24): `defaultFilename` and `buildFooterNotice` read `servedRev(ctx)` = `versionRev ?? doc.rev`, and `VersionHistoryPanel` passes `versionRev` / `versionIsCurrent` (verified).
+- Done-when 2 was half-met: a non-current copy's footer said "SUPERSEDED REVISION — Rev N …", but its diagonal watermark still read "UNCONTROLLED — FOR REVIEW ONLY".
+- Done-when 3 was open in the book viewer, as DEC-64 §5 records. `MultiDocViewer` `runDocAction` baked the redlines and handed them to `downloadDocumentPdf`, where `determineControlState` gave the checkout holder the raw, unstamped controlled pass-through.
+
+What landed:
+- **`copyControlState(ctx, hold)`** (`lib/downloads.ts`) is the copy rule both copy paths now apply. A copy with markups baked in (`DownloadContext.markedUp`) is uncontrolled. So is a copy of a held document (`HLD-1`). Anything else falls through to `determineControlState`, unchanged (a non-current version is uncontrolled since `REV-1`). `MultiDocViewer` sets `markedUp` whenever it bakes.
+- **`copyWatermark`**: a non-current copy is watermarked "SUPERSEDED — NOT CURRENT", beside its existing SUPERSEDED footer line and `_Rev<served>` filename.
+- Tests: `dcRoundFField.test.ts` "PKG-10: a copy with baked markups is never the controlled master; a non-current copy is watermarked SUPERSEDED": the holder's marked-up download is stamped; an old revision gets the SUPERSEDED watermark, its own Rev in the filename and the SUPERSEDED footer; the viewer passes the flag. The `REV-1` pins in `downloadsRevLabel.test.ts` are unchanged and green.
+
+**Done-when.**
+1. ✓ `buildFooterNotice` and `defaultFilename` take the delivered version's label, falling back to `doc.rev` only without one (since `REV-1`; verified).
+2. ✓ A non-current copy additionally carries a SUPERSEDED / NOT CURRENT watermark.
+3. ✓ A baked-markup download is never treated as a controlled copy: the book viewer now; `FullScreenViewer` since PS-STAMP (`PHYS-5`, DEC-64 §5).
+
+**Scope / residual.**
+- The book viewer's "This sheet" button still skips its confirmation dialog for the checkout holder when the sheet has markups. `activeControlled` is the synchronous rule, so the person is not shown the dialog explaining the stamp, although the copy is stamped regardless.
+- `FullScreenViewer`'s confirmation text (not this package's file) still names the "UNCONTROLLED — FOR REVIEW ONLY" watermark, although an old-revision or held copy is now watermarked SUPERSEDED / ON HOLD.
 
 ---
 
@@ -466,7 +517,7 @@ app/api/storage/download-url/route.ts:144 — `const expiresIn = parseInt(req.ne
 ## PKG-12 · A doc pack has no size or time limit anywhere, merges in browser memory, rasterizes every page of every document, and prints a cover sheet that lists only the first 24 of N sheets in an order that need not match the PDF
 
 - **Severity:** MEDIUM
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Verification:** CONFIRMED
 - **Locations:** `lib/docPack.ts:40-140`, `app/(protected)/assets/[tag]/page.tsx:57`, `lib/stamping.ts:68-70`, `lib/stamping.ts:256-257`, `lib/physicalBridge.ts:262-270`, `lib/workPackages.ts:75-79`
 - **Independently verified:** ✓ **SURVIVES, corrected** — second independent adversarial pass. The unbounded in-memory merge, the 24-item cover truncation and the order mismatch are all real. One sub-claim is overstated and should be corrected: stamping does NOT rasterize every page of every document — lib/stamping.ts:70 `const MAX_ANALYZED_PAGES = 40;` and :112 `const pageCount = Math.min(doc.numPages, MAX_ANALYZED_PAGES);` cap ink analysis at 40 pages per document (later pages reuse the last analysis, lib/stamping.ts:268). Also app/(protected)/assets/[tag]/page.tsx:57 `.limit(500)` puts an implicit 500-document ceiling on the asset-hub path (the work-package path has none). MEDIUM stands.
@@ -501,6 +552,34 @@ lib/docPack.ts:40-50 — the signature takes `documentIds: string[]` with no cap
 3. ✓ The cover lists every sheet, with continuation pages.
 
 **Scope / residual.** Stays OPEN for done-when 1 and 2 → document-control P8 FIELD (`lib/docPack.ts`, `lib/workPackages.ts`, `app/(protected)/packages/page.tsx`); adding page numbers needs docPack to hand the cover each sheet's page count.
+
+**Resolution (2026-10-01, document-control Round F wave 2).** P8 FIELD closes done-when 1 and 2, which PS-VERIFY's Partial left here. Reproduced at `55e281d`: `buildAndDownloadDocPack` took an unbounded `documentIds`. Its `documents` read had no order and the merge followed the read. The `listWorkPackages` member read had no `.order()`. `PackSheetRef` carried no page count, so the cover could not number its entries.
+- **The budget** (stated default, provisional DEC-44 (P8 FIELD)): `PACK_MAX_SHEETS` 150, `PACK_MAX_PAGES` 1000, `PACK_MAX_BYTES` 150 MB (`lib/docPack.ts`).
+  - The sheet count is refused before a single fetch (`packSheetBudgetRefusal`).
+  - Pages and bytes are checked as each sheet is loaded, before it is stamped or merged. The first sheet that crosses either refuses the whole pack.
+  - `PackTooLargeError` carries `parts` / `perPack`, and its message offers the split: "Split it into N packs of at most M sheets each". A sheet over the budget on its own is told to be downloaded alone. `splitPackIds` makes the parts.
+  - A refusal comes before the cover hook, so nothing is recorded, downloaded or re-pinned.
+- **Deterministic order.**
+  - The merged order is the caller's id order (`accountForRequested`), no longer the unordered documents read.
+  - `listWorkPackages` orders members by `added_at`, then `id`, so `/packages` lists, gates and prints in one order.
+  - The cover lists `includedSheets`, the merged pack's actual page order (PKG-6).
+- **A page number per entry.** `PackSheetRef.pageCount` and `coverEntryLabels(sheets, coverPages)` give entries like "P-101 · pp. 3–4". The cover's own pages are counted from `coverContentsChunks`, and a long label is shortened so the page reference stays visible. `/packages` passes these labels to `buildPackageCover`; `lib/physicalBridge.ts` (PS-VERIFY's file) is unchanged.
+- Tests: `dcRoundFField.test.ts` "PKG-12 — …" (five):
+  - over the sheet budget: no fetch, no record, the split offered;
+  - over the page budget mid-assembly: no cover, snapshot, download, record or pins;
+  - one sheet over the budget;
+  - the caller's order kept, with page counts;
+  - the cover's page labels and the ordered member read.
+
+**Done-when.**
+1. ✓ docPack enforces an explicit cap — document count, cumulative pages and cumulative bytes — and refuses above it with a clear message offering a split. The split is an instruction with the counts; there is no one-click "print as N packs" button.
+2. ✓ Both reads give a deterministic order (the documents in the caller's order, the members by `added_at`, `id`), and the cover is generated from the merged pack's actual page order with a page reference per entry.
+3. ✓ (PS-VERIFY, 2026-10-01) The cover lists every sheet, with continuation pages.
+
+**Scope / residual.**
+- The asset hub's `.limit(500)` read (`app/(protected)/assets/[tag]/page.tsx`, PS-VERIFY's file) is unchanged. docPack now refuses any pack over 150 sheets with the split, whichever page calls it.
+- Ink analysis still caps at 40 pages per document (`lib/stamping.ts`, PS-STAMP's file), as the verifier noted.
+- The budget values are a stated default (provisional DEC-44 (P8 FIELD) — the integrator renumbers).
 
 ---
 

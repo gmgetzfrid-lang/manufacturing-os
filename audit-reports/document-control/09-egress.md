@@ -286,7 +286,7 @@ app/api/share/file/route.ts:54-55 — the select list contains no `status` and n
 ## EGR-6 · Share revocation and every download-audit write ignore supabase-js {error} — a revoked link can stay live and a failed distribution record reads as success
 
 - **Severity:** LOW
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Verification:** SUSPECTED
 - **Locations:** `lib/documentShares.ts:68-73`, `lib/documentShares.ts:59-66`, `lib/downloads.ts:131-146`, `lib/docPack.ts:114-123`, `components/viewers/MultiDocViewer.tsx:747`
 - **Independently verified:** ✓ **SURVIVES, corrected** — second independent adversarial pass. Severity **MEDIUM → LOW** by this pass. REFUTED in its headline mechanism: the share panel is NOT optimistic — it re-fetches after revoke, and the row is rendered from the server value (`const isRevoked = !!s.revokedAt` at line 148, showing "revoked" only at line 204), so a rejected UPDATE leaves the link visibly still live rather than reading as revoked. What survives is the narrower, already-covered point that every download-audit write discards its {error} (the same swallowing that makes EGR-3 silent), so I'd drop this to LOW as a code-hygiene finding.
@@ -333,6 +333,30 @@ lib/documentShares.ts:68-73 — the full body of revokeShareLink; no `const { er
 4. ✗ `MultiDocViewer` null-`org_id` handling — P8 FIELD (with drafting-flow `EVID-5`, whose verifier found the scenario speculative: `orgId` is populated on every doc the viewer loads). Not done here.
 
 **Scope / residual.** Stays OPEN for items 3 and 4. **Closer: P8 FIELD** (document-control Round F wave 2) — the `lib/downloads.ts`, `lib/docPack.ts` and `components/viewers/MultiDocViewer.tsx` insert checks — which closes `EGR-6` against items 3 and 4 (citing drafting-flow `EVID-5`).
+
+**Resolution (2026-10-01, document-control Round F wave 2).** P8 FIELD closes items 3 and 4, the insert checks in `lib/downloads.ts`, `lib/docPack.ts` and `components/viewers/MultiDocViewer.tsx`. Items 1 and 2 are P1 SHARE's (Partial above). This also covers drafting-flow `EVID-5` for these three call sites. Reproduced at `55e281d`:
+- `logDownloadAudit` wrapped `await supabase.from("download_audits").insert(…)` in a try/catch that supabase-js never triggers.
+- docPack fired `void supabase.from("download_audits").insert({…}).then(() => {}, () => {})` once per sheet.
+- The book viewer wrote `try { await supabase.from("download_audits").insert(rows); } catch (e) { console.error(e); }`, sending `org_id: e.doc.orgId ?? null`, and recorded every sheet in scope, including ones that failed to merge.
+
+What landed:
+- **`logDownloadAudit`** (`lib/downloads.ts`) destructures `{ error }` and returns `DownloadAuditResult` (`{ recorded: true }` or `{ recorded: false, error }`). A refusal or throw is logged loudly ("[download_audits] REFUSED — this copy is missing from the distribution record"). A row with no `org_id` or document id is never sent (`download_audits.org_id` is required since `20261068`); it is reported instead.
+- **`downloadDocumentPdf` / `printDocumentPdf`** throw `DownloadUnrecordedError` when the record could not be written, AFTER the copy is delivered (auditing still never blocks a download). Each caller's error line then says "The copy was delivered, but it could NOT be recorded on the distribution record (…) … Tell Document Control." instead of reading as a clean success. In the book viewer, the holder's direct "This sheet" download (no dialog) raises the same message as an alert.
+- **The doc pack** (`lib/docPack.ts` `recordPackDownloads`) writes ONE checked insert for the sheets actually merged, after the download is triggered (a failed build records nothing). It returns `unrecorded` (the labels), and both pack buttons say it: the `/packages` toast turns into a warning, and the asset hub's note gets a narrow edit to `app/(protected)/assets/[tag]/page.tsx` (PS-VERIFY's file).
+- **The book viewer** records only the sheets that made it into the book, never sends a row without an organization, checks `{ error }`, and keeps its dialog open with the "NOT on the distribution record" message when the write is refused.
+- Tests: `dcRoundFField.test.ts` "EGR-6 — the pack's distribution record …" (one insert, after the download, merged sheets only; a refused record reported per sheet and the swallow gone; a failed build records nothing) and "HLD-1 / PKG-10 / EGR-6 — the single-document copy" (`DownloadUnrecordedError` after delivery; `logDownloadAudit`'s outcome and the no-organization refusal; the book viewer's checked write).
+
+**Done-when.**
+1. ✓ (P1 SHARE, `EGRESS-7`) `revokeShareLink` is a checked write that surfaces failure.
+2. ✓ (P1 SHARE, `EGRESS-8`) `listShareLinks` surfaces its error.
+3. ✓ Every `download_audits` write in this package's files checks `{ error }` and logs loudly, and a failed write is never indistinguishable from a successful one: the caller is told, after delivery.
+4. ✓ `MultiDocViewer` skips rows with a null `org_id` (reported as unrecorded) rather than submitting writes RLS would refuse.
+
+**Scope / residual.** Writers outside this package's files keep their own shape:
+- `components/viewers/FullScreenViewer.tsx`'s markup export calls `logDownloadAudit` and ignores the returned outcome. The write is checked and logged, but the person is not told.
+- `components/assets/FileReferenceModal.tsx` and `app/(protected)/requests/[id]/page.tsx` are drafting-flow `EVID-5`'s.
+
+`DIST-9`'s done-when 2 (P2's record: "`lib/downloads.ts` `logDownloadAudit` destructures and checks `{ error }`") is met by this pass. The integrator sets `DIST-9` per its Partial.
 
 ---
 

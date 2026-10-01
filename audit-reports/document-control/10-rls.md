@@ -438,6 +438,33 @@ schema.sql:1090 `CREATE POLICY "download_audits_org_access" ON download_audits F
 - [ ] A re-pin records that the package had gone stale, rather than erasing the signal
 - [ ] A test re-pins another member's package as a Viewer and asserts refusal
 
+**Partial (2026-10-01, document-control Round F wave 2).** P8 FIELD — the app half. **The database half needs a migration, which this package did not write** (the brief expected none: "if one is needed, stop and say so"). Reproduced at `55e281d`, newest definitions in the migration sequence:
+- `work_package_documents` UPDATE / DELETE were narrowed to the package owner or a controller by `20261032` (`PKG-5`, applied 2026-08-24).
+- `work_packages` keeps the `20260825` member-level `work_packages_org_update` / `_org_delete` policies — no later migration re-creates them — so any active member can still close or delete a package through PostgREST.
+- `refreshWorkPackage` erased the stale signal: no record of what had drifted.
+- `setWorkPackageStatus` treated a zero-row update as success.
+
+What landed:
+- **A re-pin records the signal it resolves** (`lib/workPackages.ts` `refreshWorkPackage`). Before any pin moves, the members whose pin differs from the current revision are written to `audit_logs` as `WORK_PACKAGE_REPINNED` (`resource_type: "work_package"`; `details.moved` = `[{ documentId, fromVersionId, fromRev, toVersionId, toRev }]`, `staleCount`, `reason`: `refresh` / `print`; the actor is passed by the page, else the signed-in user). If that record cannot be written, NO pin moves. A fresh package re-checked writes no record.
+- **A refused close is said** (`setWorkPackageStatus`): the write selects its row back, and zero rows is "only its owner or Document Control can close it", never "closed".
+- **The page offers the actions only to those who may take them.** `/packages` shows "Refresh pins" and "Close" to the package owner or a controller, the tier taken from the role COLLECTION (`isControllerPrincipal({ role: activeRole, roles })`, replacing `hasAnyRole(["Admin", "DocCtrl"])`). A non-owner's print still proceeds with pins untouched (PKG-5's behaviour).
+- Tests: `dcRoundFField.test.ts` "DRLS-10 — …":
+  - the record precedes every pin write and carries from → to for the drifted members only;
+  - a refused record moves nothing;
+  - a fresh re-check writes none;
+  - a Viewer's re-pin of another member's package is refused (zero rows) and said;
+  - a zero-row close is a refusal;
+  - a census over the migration sequence proves the newest pin UPDATE / DELETE policies require the owner or a controller;
+  - the page's affordance pins.
+
+**Done-when.**
+1. ✓ Re-pinning is limited to the package owner and controllers (`20261032`, verified by the census test).
+2. ✗ **Not done — needs a migration.** Closing or deleting a `work_packages` row is still member-level in the database. The UI no longer offers Close to others, and the lib reports a refusal, but a direct PostgREST PATCH or DELETE by any active member succeeds. The fix re-creates `work_packages_org_update` / `work_packages_org_delete` (newest definition `20260825`) with the `20261032` pin predicate: `p.owner_user_id = auth.uid()` or a controller (`is_org_controller`). It should come with a DEC-30 inventory of open packages by owner. Numbers `20261143`+ are free.
+3. ◐ The app's re-pin records the stale signal before resolving it. A re-pin made outside the app (a direct PATCH by the owner or a controller) leaves no record; a database-side record would ride the same migration (a trigger on `work_package_documents` UPDATE of `pinned_version_id`).
+4. ✓ A test re-pins another member's package as a Viewer and asserts refusal, at the lib level against the policy's zero-row answer, with the live policy pinned by the census.
+
+**Scope / residual.** Stays OPEN for done-when 2, and for 3's database half — one migration, to be assigned by the integrator.
+
 ---
 
 <a id="drls-11"></a>
