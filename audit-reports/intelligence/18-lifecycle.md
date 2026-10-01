@@ -256,7 +256,7 @@ Tests: `lib/__tests__/storageKeyRegistry.test.ts`, "ILIFE-5 — keysReferencedOu
 ```
 Both sit inside the existing `try` that answers 503 (produce: the GET / POST catch; commit: "… Nothing was freed.") on a read error. With them, a revision whose key a mirror names is never claimed and never freed, and is counted in `sharedSkipped`. Test shape: `lib/__tests__/dcRoundFShed.test.ts`'s RET-8 cases, with a `knowledge_documents` row naming the key.
 
-*Added at the review fix pass:* **the second call site, the direct storage delete.** The brief named document-control P14's `lib/retention.ts` and `app/api/storage/delete/route.ts`. `lib/retention.ts` frees no bytes: no `DeleteObject`, `deleteFile` or storage-delete call; it marks records. The route does free bytes. It refuses a key a held or retained revision names (`file_url` / `source_file_key`), but it never asks whether a knowledge mirror still names it. So a Controller's delete of a superseded revision's file kills a 'ready' mirror's source in the same way. The hunk, for the route's owner (document-control), goes after the hold / retention `try` and before the custody row:
+*Added at the review fix pass:* **the second call site, the direct storage delete.** The brief named `lib/retention.ts` and `app/api/storage/delete/route.ts` as document-control P14's. (*Corrected at the final review fix pass:* P14's brief does not list this change; the hunk is handed off, see the Resolution's Scope / residual below.) `lib/retention.ts` frees no bytes: no `DeleteObject`, `deleteFile` or storage-delete call; it marks records. The route does free bytes. It refuses a key a held or retained revision names (`file_url` / `source_file_key`), but it never asks whether a knowledge mirror still names it. So a Controller's delete of a superseded revision's file kills a 'ready' mirror's source in the same way. The hunk, for the route's owner (document-control), goes after the hold / retention `try` and before the custody row:
 ```diff
 --- app/api/storage/delete/route.ts   (after the hold / retention refusal, before the STORAGE_OBJECT_DELETE custody row)
 +import { keysReferencedOutside } from "@/lib/storageKeyRegistry";
@@ -295,9 +295,17 @@ Mutation-checked: with the two route hunks removed, all three fail.
 **Done-when.**
 1. ✓ — intelligence Round G (`20261122`, pending paste).
 2. ✓ — the same.
-3. ✓ — the shed's candidate selection (preview and produce) excludes any `file_url` a `knowledge_documents.file_key` still names, and so does its commit.
+3. ✓ — the shed's candidate selection (preview and produce) excludes any `file_url` a `knowledge_documents.file_key` still names, and so does its commit. **RESOLVED on this criterion's wording only.** A second door still frees a key that a knowledge mirror names. `app/api/storage/delete/route.ts` (`DELETE`) checks holds and retention, writes the custody row and deletes the object, and never calls `keysReferencedOutside`. So a Controller's delete of a superseded revision's file still destroys the bytes that a 'ready' mirror points at. That door is OPEN, below.
 
-**Scope / residual.** The direct storage delete (`app/api/storage/delete/route.ts`, the second call site found at the first review fix pass) frees bytes too, but it is outside this finding's criteria. That route is in the brief of document-control **P14**, which runs in parallel and which this package may not edit. So the hunk recorded above ("the second call site") is handed to P14 by name, and the handoff is recorded in `audit-reports/document-control/99-fix-sequencing.md`. Migration `20261122` (criteria 1 and 2) is still to be pasted.
+**Scope / residual.** The direct storage delete (`app/api/storage/delete/route.ts`, the second call site found at the first review fix pass) frees bytes too. It is outside this finding's criteria and outside this package's brief, and it is still open. *Corrected at the final review fix pass:* this said the route is in document-control P14's brief and handed its hunk to P14 by name, but P14's brief does not list it. The hunk recorded above ("the second call site") is handed off; the integrator assigns the owner at the P2 merge (proposed: admin-and-org P3, after document-control P14 merges). The handoff is recorded in `audit-reports/document-control/99-fix-sequencing.md`. Migration `20261122` (criteria 1 and 2) is still to be pasted.
+
+**Final review fix pass (2026-10-01, admin-and-org Round G, P2).** The guard could fail open on a capped read. `keysReferencedOutside` read `.select(column).in(column, <200 keys>)` and trusted whatever came back. A PostgREST max-rows cut (1,000 rows by default) is silent, and a hit it cuts off is a referenced object that the shed then frees. The read now asks for `count: "exact"` and throws "… refusing to proceed" in two cases: when the count is above the rows returned, or, with no count in the answer, when a page is as large as the default cap. Both shed callers already turn the throw into a 503 that frees nothing (`refineSelection` for preview and produce; the RET-8 block, "… Nothing was freed.", for commit).
+
+Tests:
+- `lib/__tests__/storageKeyRegistry.test.ts`, "a read a server row cap cut short refuses …": a stand-in capped at 5 rows over 12 hits refuses, a countless full page of 1,000 refuses, and under the cap every hit returns.
+- `lib/__tests__/dcRoundFShed.test.ts`, "fails CLOSED when a server row cap cuts the mirror read short …": preview, produce and commit answer 503, with nothing claimed, stamped or deleted.
+
+Negative control: with `lib/storageKeyRegistry.ts` as at `45f0c1b`, both fail. `lib/shedKeyGuard.ts sharedLiveKeys` (RET-8, document-control's file, not this package's) has the same unpaged `.in()` shape over `document_versions` and is unchanged. It is noted for its owner.
 
 ---
 
@@ -387,7 +395,7 @@ Tests:
 **Done-when.**
 1. ✓ — every exported table (109) pages by keyset on a unique key. The collector does too (`BKP-2`).
 2. ✓ — an exact count is taken before and after each read. A read short of both is read again, and a second short read makes the backup INCOMPLETE and names the counts, for every exported table, the user-scoped one included. The limit of counts taken around a read is unchanged. A row already read is deleted while a row lands behind the cursor, so both counts equal the rows read and nothing is flagged. Only a single-snapshot read could tell that apart from a skip.
-3. ◐ — the collector pages by keyset. The purge-side re-check now has a named owner: document-control **P14**, which already owns the other byte-freeing door (`app/api/storage/delete/route.ts`). The handoff is recorded in `audit-reports/document-control/99-fix-sequencing.md`. The hunk goes in `lib/storageOrphans.ts deleteOrphans`, before each `DeleteObjects` batch:
+3. ◐ — the collector pages by keyset. The purge-side re-check is handed off; the integrator assigns the owner at the P2 merge (proposed: admin-and-org P3, after document-control P14 merges). *Corrected at the final review fix pass:* this said document-control P14 owns it, as the owner of the other byte-freeing door (`app/api/storage/delete/route.ts`); P14's brief lists neither. The handoff is recorded in `audit-reports/document-control/99-fix-sequencing.md`. The hunk goes in `lib/storageOrphans.ts deleteOrphans`, before each `DeleteObjects` batch:
    ```diff
    +    // ILIFE-6 criterion 3: re-check every candidate just before it is deleted. The scan read the reference set page by
    +    // page, so a reference that moved behind its cursor can be missing; one statement per column sees one snapshot.
@@ -398,7 +406,21 @@ Tests:
    ```
    A read error there stops the purge before that batch, with nothing deleted. The test shape is `lib/__tests__/dcRoundFShed.test.ts`'s orphan block: a key the scan missed but a row names at re-check time is kept.
 
-**Scope / residual.** OPEN on criterion 3's purge-side re-check (document-control P14). The export half has no open criterion. The restore preview says the same thing for a short table as for a failed one ("some tables were not exported", `lib/dataRestore.ts planRestore`, which this package does not own). The manifest's `tables[]` says which kind each table is.
+**Scope / residual.** OPEN on criterion 3's purge-side re-check, which is handed off; the integrator assigns the owner at the P2 merge (proposed: admin-and-org P3, after document-control P14 merges). The export half has no open criterion. The restore preview says the same thing for a short table as for a failed one ("some tables were not exported", `lib/dataRestore.ts planRestore`, which this package does not own). The manifest's `tables[]` says which kind each table is.
+
+**Final review fix pass (2026-10-01, admin-and-org Round G, P2).** The user-scoped table's read was one request. `notification_preferences` was read with a single `.in("user_id", <every member id>)`. A workspace of about 400 members makes that a ~15 KB URL, which the server refuses (414, or a header-size refusal). Since the second review fix pass records that failure as a table error, every such workspace's backup would have been stamped INCOMPLETE. The table is now read through `org_members` exactly as a parent-keyed child is read (`lib/dataExport.ts dumpThroughParent`, the loop `dumpOrgTable` already used, factored out):
+- `PARENT_ID_CHUNK` (150) member ids per read, with the rows of every slice kept;
+- a slice whose read comes up short twice makes the table `short`, with that slice's counts;
+- a short `org_members` read makes the table `short` too;
+- a failed `org_members` read, or a failed slice, makes the table an error. Before this, a failed `org_members` read left the table clean and empty.
+
+Tests in `lib/__tests__/exportContractRoundTrip.test.ts`, "notification_preferences is read through the members …". The stand-in refuses an id list over 8 KB, as the server refuses the URL.
+- With 400 members, the table is read as three slices of at most 150 ids, every member's row arrives, and the backup is COMPLETE.
+- A short slice marks the table short, names the slice's 9-of-10 counts, and keeps the other slices' rows.
+- A short `org_members` read marks the table short.
+- A failed slice, and a failed `org_members` read, fail the table.
+
+Negative control: with `lib/dataExport.ts` as at `45f0c1b`, four of the five fail. The failed-slice case holds both ways and pins the behaviour. Criterion 2's ✓ is unchanged.
 
 ---
 
