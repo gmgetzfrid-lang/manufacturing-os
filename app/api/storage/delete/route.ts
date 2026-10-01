@@ -3,7 +3,10 @@ import { DeleteObjectCommand } from "@aws-sdk/client-s3";
 import { r2, R2_BUCKET } from "@/lib/r2";
 import { supabaseAdmin } from "@/lib/supabaseAdmin";
 import { assertSafeStorageKey } from "@/lib/storageKey";
-import { retentionStatusFor } from "@/lib/retentionPolicy";
+import {
+  retentionStatusFor, resolveEffectiveRetentionPolicy, computeRetentionUntil, retentionBasisISO,
+} from "@/lib/retentionPolicy";
+import type { RetentionPolicy } from "@/types/schema";
 
 // Deleting a stored object destroys the bytes of a controlled record and is
 // irreversible. This route is held to the same bar as /api/admin/purge:
@@ -13,7 +16,7 @@ import { retentionStatusFor } from "@/lib/retentionPolicy";
 //   - the key is traversal-checked (assertSafeStorageKey), as the download
 //     route already does;
 //   - a key belonging to a document under legal hold, an unreleased hold, or
-//     inside its retention period is refused, FAIL CLOSED — the opposite of
+//     inside its EFFECTIVE retention period is refused, FAIL CLOSED — the opposite of
 //     the download route's fail-open, because destruction cannot be undone by
 //     a later correct read. "Belonging" means named by any document_versions
 //     row as its rendered file (file_url) OR its native source
@@ -22,6 +25,31 @@ import { retentionStatusFor } from "@/lib/retentionPolicy";
 // (Audit finding SURF-2 / document-control RET-2 / intelligence DACL-2.)
 
 const CONTROLLER_ROLES = new Set(["Admin", "DocCtrl"]);
+
+/** The owning document's columns the hold and retention refusals read. */
+interface OwnerDoc {
+  legal_hold?: boolean | null;
+  retention_until?: string | null;
+  disposition_state?: string | null;
+  retention_policy?: RetentionPolicy | null;
+  collection_id?: string | null;
+  library_id?: string | null;
+  created_at?: string | null;
+  updated_at?: string | null;
+  effective_date?: string | null;
+}
+const OWNER_DOC_COLUMNS =
+  "legal_hold, retention_until, disposition_state, retention_policy, collection_id, library_id, created_at, updated_at, effective_date";
+
+/** A container's retention policy, read CHECKED: a failed read throws (the
+ *  caller refuses 503) rather than resolving to "no policy" and clearing a
+ *  record that its folder or library still retains. */
+async function containerRetentionPolicy(table: "collections" | "libraries", id: string | null | undefined): Promise<RetentionPolicy | null> {
+  if (!id) return null;
+  const { data, error } = await supabaseAdmin.from(table).select("retention_policy").eq("id", id).maybeSingle();
+  if (error) throw error;
+  return ((data as { retention_policy?: RetentionPolicy | null } | null)?.retention_policy) ?? null;
+}
 
 export async function DELETE(req: NextRequest) {
   const authHeader = req.headers.get("authorization");
@@ -104,28 +132,69 @@ export async function DELETE(req: NextRequest) {
         versionId = ownerVersionId;
       }
       const [{ data: doc, error: docErr }, { data: holds, error: holdErr }] = await Promise.all([
-        supabaseAdmin.from("documents").select("legal_hold, retention_until, disposition_state").eq("id", ownerId).maybeSingle(),
+        supabaseAdmin.from("documents").select(OWNER_DOC_COLUMNS).eq("id", ownerId).maybeSingle(),
         supabaseAdmin.from("document_holds").select("id").eq("document_id", ownerId).is("released_at", null).limit(1),
       ]);
       if (docErr) throw docErr;
       if (holdErr) throw holdErr;
-      const row = doc as { legal_hold?: boolean | null; retention_until?: string | null; disposition_state?: string | null } | null;
+      const row = doc as OwnerDoc | null;
       if (row?.legal_hold) {
         return NextResponse.json({ error: "This document is under legal hold; its files cannot be deleted." }, { status: 423 });
       }
       if ((holds ?? []).length > 0) {
         return NextResponse.json({ error: "This document has an active hold; release it before deleting files." }, { status: 423 });
       }
-      // Retention: P9's materialized retention_until / disposition_state, read
-      // through the one shared verdict (the register's and the pill's).
-      // "active" is a retention period that has not run; an unparseable date
-      // also reads as active, so it refuses too.
-      if (retentionStatusFor({ retentionUntil: row?.retention_until ?? null, dispositionState: row?.disposition_state ?? null }) === "active") {
-        const until = row?.retention_until ? ` until ${String(row.retention_until).slice(0, 10)}` : "";
-        return NextResponse.json(
-          { error: `This document is under retention${until}; its files cannot be deleted before the retention period ends.` },
-          { status: 423 },
-        );
+      // Retention, judged TWO ways and refused if EITHER says it is in force
+      // (a disposed record is past both — its disposition was the explicit,
+      // logged controller action):
+      //   (1) the materialized retention_until / disposition_state, through
+      //       the one shared verdict (the register's and the pill's) —
+      //       "active" is a period that has not run, and an unparseable date
+      //       also reads as active;
+      //   (2) the EFFECTIVE retention, resolved now from the document → folder
+      //       → library policy by P9's pure resolver (the rules
+      //       recomputeRetention and reclockRetentionForDocs clock with). The
+      //       materialized row is written best-effort elsewhere — a re-clock
+      //       can be refused or never reach a row — so a row that was never
+      //       clocked, or carries a stale earlier date under an extended
+      //       policy, must not read as clear. In force means the computed date
+      //       is after today (the re-clock's "active"); a policy in force whose
+      //       date cannot be computed (no readable basis date) refuses too.
+      // Either container read failing throws → 503.
+      if (row && row.disposition_state !== "disposed") {
+        const storedActive =
+          retentionStatusFor({ retentionUntil: row.retention_until ?? null, dispositionState: row.disposition_state ?? null }) === "active";
+        const [folderPolicy, libPolicy] = await Promise.all([
+          containerRetentionPolicy("collections", row.collection_id),
+          containerRetentionPolicy("libraries", row.library_id),
+        ]);
+        const policy = resolveEffectiveRetentionPolicy(row.retention_policy ?? null, folderPolicy, libPolicy);
+        const effectiveUntil = policy
+          ? computeRetentionUntil(
+              retentionBasisISO(policy, {
+                created_at: row.created_at ?? null,
+                updated_at: row.updated_at ?? null,
+                effective_date: row.effective_date ?? null,
+              }),
+              policy,
+            )
+          : null;
+        const today = new Date().toISOString().slice(0, 10);
+        const unclockable = !!policy?.years && effectiveUntil === null;
+        const effectiveActive = unclockable || (effectiveUntil !== null && effectiveUntil > today);
+        if (storedActive || effectiveActive) {
+          // Name the later of the two dates in force (an unreadable stored
+          // date is refused but not quoted).
+          const dates = [
+            storedActive && row.retention_until ? String(row.retention_until).slice(0, 10) : null,
+            effectiveActive ? effectiveUntil : null,
+          ].filter((d): d is string => !!d && /^\d{4}-\d{2}-\d{2}$/.test(d)).sort();
+          const until = dates.length ? ` until ${dates[dates.length - 1]}` : "";
+          return NextResponse.json(
+            { error: `This document is under retention${until}; its files cannot be deleted before the retention period ends.` },
+            { status: 423 },
+          );
+        }
       }
     }
   } catch {

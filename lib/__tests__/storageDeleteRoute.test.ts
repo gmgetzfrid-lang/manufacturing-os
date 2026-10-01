@@ -12,6 +12,12 @@
 // the filter, which is why it could not see that the route resolved a key by
 // `file_url` alone — a revision's native source (`source_file_key`) matched
 // nothing, skipped the hold checks and was destroyed with a 200 (DACL-2).
+//
+// Retention is judged on the document's EFFECTIVE policy (document → folder →
+// library, P9's pure resolver) as well as its materialized retention_until /
+// disposition_state: those columns are written best-effort, so a row never
+// clocked under an in-force policy, or left with a stale earlier date after
+// the policy was extended, must still be refused.
 
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { readFileSync } from "node:fs";
@@ -140,6 +146,14 @@ function revision(doc: Row = {}, holds: Row[] = []) {
 
 /** An ISO date `days` from today. */
 const iso = (days: number) => new Date(Date.now() + days * 86_400_000).toISOString().slice(0, 10);
+/** An ISO timestamp `days` from now (a document's created_at / updated_at). */
+const ts = (days: number) => new Date(Date.now() + days * 86_400_000).toISOString();
+/** `basis` plus `years`, as a date — the retention date a policy clocks to. */
+const plusYears = (basis: string, years: number) => {
+  const d = new Date(basis);
+  d.setFullYear(d.getFullYear() + years);
+  return d.toISOString().slice(0, 10);
+};
 
 beforeEach(() => {
   state.user = { id: "u1", email: "u1@example.com" };
@@ -397,15 +411,138 @@ describe("DACL-2 criterion 1 (b): a document inside its retention period is refu
     expect(((await res.json()) as { error: string }).error).toMatch(/legal hold/);
   });
 
-  it("the route reads retention through the ONE shared verdict, and never imports the browser client", async () => {
+  it("the route reads retention through the ONE shared verdict and P9's ONE resolver, and never imports the browser client", async () => {
     const policy = await import("@/lib/retentionPolicy");
     const retention = await import("@/lib/retention");
     // The register and the pill import it from lib/retention; the route from
     // the pure module. Same function object — not a parallel reading.
     expect(retention.retentionStatusFor).toBe(policy.retentionStatusFor);
+    expect(retention.resolveEffectiveRetentionPolicy).toBe(policy.resolveEffectiveRetentionPolicy);
+    expect(retention.computeRetentionUntil).toBe(policy.computeRetentionUntil);
     const src = readFileSync(resolve(__dirname, "../../app/api/storage/delete/route.ts"), "utf8");
-    expect(src).toMatch(/import \{ retentionStatusFor \} from "@\/lib\/retentionPolicy";/);
+    expect(src).toMatch(
+      /import \{\s*retentionStatusFor, resolveEffectiveRetentionPolicy, computeRetentionUntil, retentionBasisISO,\s*\} from "@\/lib\/retentionPolicy";/,
+    );
+    // No second copy of the date arithmetic or the inheritance rule.
+    expect(src).not.toMatch(/setFullYear/);
     expect(src).not.toMatch(/from "@\/lib\/supabase"/);
     expect(src).not.toMatch(/from "@\/lib\/retention"/);
+  });
+});
+
+describe("DACL-2 criterion 1 (b): the EFFECTIVE retention — a row never clocked, or stale, is judged by its policy", () => {
+  const TEN_YEARS = { enabled: true, years: 10, basis: "created", action: "destroy" } as const;
+  /** doc1 in library l1 (and folder c1 when `folder` is given), with the
+   *  given library / folder policies; `doc` overrides document columns. */
+  function inLibrary(doc: Row, libPolicy: Row | null, folder?: { policy: Row | null }) {
+    revision({ library_id: "l1", collection_id: folder ? "c1" : null, created_at: ts(-30), updated_at: ts(-30), ...doc });
+    state.rows.libraries = [{ id: "l1", retention_policy: libPolicy }];
+    state.rows.collections = folder ? [{ id: "c1", retention_policy: folder.policy }] : [];
+  }
+
+  for (const [label, key] of [["rendered file", RENDERED], ["native source", SOURCE]] as const) {
+    it(`an UNCLOCKED row (retention_until / disposition_state NULL) under an in-force library policy: the ${label} is refused 423, nothing deleted, no custody row`, async () => {
+      member("Admin");
+      const created = ts(-30);
+      inLibrary({ created_at: created, retention_until: null, disposition_state: null }, TEN_YEARS);
+      const res = await del(key);
+      expect(res.status).toBe(423);
+      expect(((await res.json()) as { error: string }).error).toContain(plusYears(created, 10));
+      expect(state.r2sends).toBe(0);
+      expect(state.audits).toHaveLength(0);
+    });
+  }
+
+  it("a STALE row (a retention_until already run) under an extended policy is refused 423, naming the policy's later date", async () => {
+    member("Admin");
+    const created = ts(-730);
+    inLibrary({ created_at: created, retention_until: iso(-10), disposition_state: "active" }, TEN_YEARS);
+    const res = await del(SOURCE);
+    expect(res.status).toBe(423);
+    expect(((await res.json()) as { error: string }).error).toContain(plusYears(created, 10));
+    expect(state.r2sends).toBe(0);
+    expect(state.audits).toHaveLength(0);
+  });
+
+  it("a row the scan flagged 'eligible' before the policy was extended is refused 423 too", async () => {
+    member("Admin");
+    inLibrary({ created_at: ts(-730), retention_until: iso(-10), disposition_state: "eligible" }, TEN_YEARS);
+    expect((await del(RENDERED)).status).toBe(423);
+    expect(state.r2sends).toBe(0);
+  });
+
+  it("a folder policy in force refuses when the library has none", async () => {
+    member("Admin");
+    inLibrary({}, null, { policy: { enabled: true, years: 7 } });
+    expect((await del(SOURCE)).status).toBe(423);
+    expect(state.r2sends).toBe(0);
+  });
+
+  it("a defined-but-disabled folder policy stops inheritance (P9's rule): the library's policy does not refuse", async () => {
+    member("Admin");
+    // control: the same document with no folder policy is refused by the library's
+    inLibrary({}, TEN_YEARS, { policy: null });
+    expect((await del(SOURCE)).status).toBe(423);
+    inLibrary({}, TEN_YEARS, { policy: { enabled: false } });
+    const res = await del(SOURCE);
+    expect(res.status).toBe(200);
+    expect(state.r2sends).toBe(1);
+  });
+
+  it("the document's own policy wins: a run-out document policy clears it under a ten-year library policy, an in-force one refuses under none", async () => {
+    member("Admin");
+    inLibrary({ created_at: ts(-730), retention_policy: { enabled: true, years: 1 } }, TEN_YEARS);
+    expect((await del(SOURCE)).status).toBe(200);
+    inLibrary({ created_at: ts(-30), retention_policy: { enabled: true, years: 1 } }, null);
+    expect((await del(SOURCE)).status).toBe(423);
+    expect(state.r2sends).toBe(1);
+  });
+
+  it("an effective retention that has run does not refuse", async () => {
+    member("Admin");
+    inLibrary({ created_at: ts(-11 * 366), retention_until: null, disposition_state: null }, TEN_YEARS);
+    const res = await del(SOURCE);
+    expect(res.status).toBe(200);
+    expect(state.r2sends).toBe(1);
+  });
+
+  it("a policy in force whose date cannot be computed (no readable basis date) refuses — fail closed; a policy with no length does not", async () => {
+    member("Admin");
+    for (const created of [null, "not-a-date"]) {
+      inLibrary({ created_at: created, updated_at: null }, TEN_YEARS);
+      expect((await del(SOURCE)).status, String(created)).toBe(423);
+    }
+    expect(state.r2sends).toBe(0);
+    // control: an enabled policy with no years is "no retention" (describeRetentionPolicy)
+    inLibrary({ created_at: null, updated_at: null }, { enabled: true });
+    expect((await del(SOURCE)).status).toBe(200);
+  });
+
+  it("a DISPOSED record is not refused under an in-force policy — disposition was the explicit controller action", async () => {
+    member("Admin");
+    inLibrary({ retention_until: iso(3000), disposition_state: "disposed" }, TEN_YEARS);
+    const res = await del(RENDERED);
+    expect(res.status).toBe(200);
+    expect(state.r2sends).toBe(1);
+  });
+
+  for (const table of ["libraries", "collections"] as const) {
+    it(`a ${table} retention_policy read error refuses 503 — fail closed, nothing deleted, no custody row`, async () => {
+      member("Admin");
+      inLibrary({}, null, { policy: null });
+      state.errors[table] = { message: "statement timeout" };
+      const res = await del(SOURCE);
+      expect(res.status).toBe(503);
+      expect(state.r2sends).toBe(0);
+      expect(state.audits).toHaveLength(0);
+    });
+  }
+
+  it("the policies are read by the document's own folder and library ids", async () => {
+    member("Admin");
+    inLibrary({}, null, { policy: null });
+    await del(SOURCE);
+    expect(state.eqs).toContain("collections|id=c1");
+    expect(state.eqs).toContain("libraries|id=l1");
   });
 });

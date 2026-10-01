@@ -39,15 +39,16 @@
 // limb itself (more folders than one window) is KACL-12 Done-when 4 and is not
 // reproduced here.
 //
-// DACL-2 criterion 1 (a key belonging to a held document is refused) does not
-// hold for a revision's NATIVE SOURCE file at HEAD: /api/storage/delete
-// resolves the key to its version by `file_url` alone, so a `source_file_key`
-// matches no row, the hold checks never run, and the bytes are destroyed with
-// a 200. SURF-2's own test (storageDeleteRoute.test.ts) uses a filter-blind
-// stand-in that answers every document_versions read with the row, so it could
-// not see this; the filter-aware stand-in here does. Two `it.fails` (owner:
-// document-control's retention rail — fleet package P11 STORAGE-DELETE — which flips them when the route resolves
-// both columns as upload-url does).
+// DACL-2 criterion 1 (a key belonging to a held document is refused) did not
+// hold for a revision's NATIVE SOURCE file when this file was written:
+// /api/storage/delete resolved the key to its version by `file_url` alone, so
+// a `source_file_key` matched no row, the hold checks never ran, and the bytes
+// were destroyed with a 200. SURF-2's own test (storageDeleteRoute.test.ts)
+// then used a filter-blind stand-in that answered every document_versions read
+// with the row, so it could not see this; the filter-aware stand-in here did.
+// The two cases were held as `it.fails` until document-control fleet package
+// P11 STORAGE-DELETE (2026-10-01), which resolves the key against both
+// columns as upload-url does; they are now plain `it`.
 //
 // ILIFE-6 criterion 3 (the orphan collector must never miss a reference —
 // deleteOrphans is irreversible) does NOT hold at HEAD either, and the last
@@ -458,16 +459,16 @@ describe("DACL-2 criterion 1 (→ document-control retention rail): the hold ref
     return `${res.status}${vi.mocked(r2.send).mock.calls.length ? " deleted" : ""}`;
   }
 
-  // ✗ at HEAD (app/api/storage/delete/route.ts:79-84): `.eq("file_url",
-  // path)` is the only lookup, so the source key matches nothing, documentId
-  // stays null, the legal_hold / document_holds checks (:86-101) are skipped
-  // and the route answers 200 after DeleteObject. The rendered file is the
-  // control: it is refused 423 with nothing sent. Flip each to `it` when the
-  // route resolves the key against both columns (upload-url's pattern,
-  // app/api/storage/upload-url/route.ts:60) — DACL-2's Remaining / owner and
-  // document-control RET-2's cross-note name the flip.
+  // Held as `it.fails` until P11 STORAGE-DELETE (2026-10-01). Before it,
+  // `.eq("file_url", path)` was the route's only lookup, so the source key
+  // matched nothing, documentId stayed null, the legal_hold / document_holds
+  // checks were skipped and the route answered 200 after DeleteObject. P11
+  // resolves the key against both columns (upload-url's pattern,
+  // app/api/storage/upload-url/route.ts:60), so the native-source cases are
+  // now plain `it`. The rendered file is the control: it is refused 423 with
+  // nothing sent.
   for (const hold of ["legal_hold", "document_holds"] as const) {
-    // The control, as a plain test: the rendered file is refused today.
+    // The control, as a plain test: the rendered file was refused before P11 too.
     it(`control: a document held by ${hold}: its rendered file is refused 423 with nothing sent`, async () => {
       seedHeld(hold);
       expect(await attempt(RENDERED)).toBe("423");
