@@ -59,7 +59,7 @@ vi.mock("@/lib/inAppNotifications", () => ({ notify: vi.fn(async () => undefined
 
 import {
   openHold, HOLD_REASON_CODES, PREDEFINED_HOLD_REASONS, OTHER_HOLD_REASON, isHoldReasonCode, holdReasonLabel,
-  publicHoldReason, PUBLIC_HOLD_REASON_FALLBACK,
+  publicHoldReason, PUBLIC_HOLD_REASON_FALLBACK, openHoldKey,
 } from "@/lib/holds";
 
 const root = process.cwd();
@@ -118,6 +118,15 @@ describe("VFY-6 — the hold reason is a code; free text lives in the note", () 
     expect(holdReasonLabel({ reason: "Other", notes: null })).toBe("Other");
     expect(holdReasonLabel({ reason: "Client Review", notes: "x" })).toBe("Client Review");
     expect(holdReasonLabel({ reason: "Other", notes: "y".repeat(300) })).toHaveLength(127); // "Other: " + 119 + "…"
+  });
+  it("openHoldKey is the 20261152 index's key: an Other hold by its btrim'd note, every other reason by the reason alone (P15 review fix)", () => {
+    expect(openHoldKey({ reason: "Other", notes: "Awaiting legal" })).not.toBe(openHoldKey({ reason: "Other", notes: "Pending survey" }));
+    expect(openHoldKey({ reason: "Other", notes: "  Awaiting legal  " })).toBe(openHoldKey({ reason: "Other", notes: "Awaiting legal" }));
+    expect(openHoldKey({ reason: "Other", notes: null })).toBe(openHoldKey({ reason: "Other", notes: "" }));
+    expect(openHoldKey({ reason: "Client Review", notes: "a" })).toBe(openHoldKey({ reason: "Client Review", notes: "b" }));
+    expect(openHoldKey({ reason: "Awaiting legal", notes: "a" })).toBe("Awaiting legal"); // a legacy free-text reason: by reason, as before
+    // the index the key mirrors (keep the two in step)
+    expect(src("supabase/migrations/20261152_dc_roundF_hold_other_reason.sql")).toContain("(document_id, reason, (CASE WHEN reason = 'Other' THEN COALESCE(btrim(notes), '') ELSE '' END))");
   });
   it("the public surfaces still say only the category — an Other hold and a legacy free-text one alike", () => {
     expect(publicHoldReason("Other")).toBe(PUBLIC_HOLD_REASON_FALLBACK);

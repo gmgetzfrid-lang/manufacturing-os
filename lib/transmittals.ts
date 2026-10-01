@@ -68,6 +68,17 @@ export const PORTAL_LINK_DAYS = 90;
  *  own constant (a route module cannot export it); a test pins them equal. */
 export const PORTAL_STAMP_MAX_BYTES = 64 * 1024 * 1024;
 
+/** TRX-16: the issue-time stamp check's total time budget across a
+ *  transmittal's items (lib/transmittalStampCheck.ts, server-side) — here so
+ *  the browser's wait can be bounded by it. */
+export const STAMP_CHECK_TIME_BUDGET_MS = 60_000;
+
+/** TRX-16 (P15 review fix): how long the issuer's browser waits for the
+ *  check — the server's budget plus room for the item in flight when it ran
+ *  out and the round trip. Past it the issue goes ahead unchecked (logged),
+ *  as for any check that cannot run; the route's own ceiling is 120 s. */
+export const STAMP_CHECK_CLIENT_TIMEOUT_MS = STAMP_CHECK_TIME_BUDGET_MS + 20_000;
+
 export interface TransmittalItem {
   documentId: string;
   number: string;
@@ -956,7 +967,15 @@ export class UnstampableItemsError extends Error {
 /** TRX-16: ask the server (`/api/transmittal/stamp-check`) whether the
  *  portal can stamp each of a DRAFT's files — a size bound plus a pdf-lib
  *  load, done where the files are, so the browser never fetches them. */
-export async function checkTransmittalStampability(id: string): Promise<{ ok: true; items: ItemStampCheck[] } | { ok: false; error: string }> {
+export async function checkTransmittalStampability(
+  id: string,
+  opts?: { timeoutMs?: number },
+): Promise<{ ok: true; items: ItemStampCheck[] } | { ok: false; error: string }> {
+  // P15 review fix: the wait is bounded (STAMP_CHECK_CLIENT_TIMEOUT_MS) — a
+  // check that does not answer in time is a check that could not run.
+  const timeoutMs = opts?.timeoutMs ?? STAMP_CHECK_CLIENT_TIMEOUT_MS;
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
   try {
     const { data: { session } } = await supabase.auth.getSession();
     if (!session?.access_token) return { ok: false, error: "Not signed in" };
@@ -964,15 +983,24 @@ export async function checkTransmittalStampability(id: string): Promise<{ ok: tr
       method: "POST",
       headers: { "Content-Type": "application/json", Authorization: `Bearer ${session.access_token}` },
       body: JSON.stringify({ transmittalId: id }),
+      signal: controller.signal,
     });
     const out = (await res.json().catch(() => ({}))) as { items?: unknown; error?: string };
     if (!res.ok) return { ok: false, error: out.error || `the check answered ${res.status}` };
     if (!Array.isArray(out.items)) return { ok: false, error: "the check returned no items" };
     return { ok: true, items: out.items as ItemStampCheck[] };
   } catch (e) {
+    if (controller.signal.aborted) return { ok: false, error: `the check did not answer within ${Math.round(timeoutMs / 1000)} s` };
     return { ok: false, error: (e as Error)?.message || String(e) };
+  } finally {
+    clearTimeout(timer);
   }
 }
+
+/** TRX-16 (P15 review fix): what the issue is doing, for the composer —
+ *  `checking` while the server loads and test-stamps each file (up to
+ *  STAMP_CHECK_CLIENT_TIMEOUT_MS), `issuing` once the issue write starts. */
+export type IssuePhase = "checking" | "issuing";
 
 /** TRX-10: everything the issue flow needs to tell the person truthfully. */
 export interface IssueOutcome {
@@ -1003,7 +1031,7 @@ export interface IssueOutcome {
 export async function issueTransmittal(
   id: string,
   actor: TransmittalActor,
-  opts?: { acceptedUnstampable?: ItemStampCheck[] },
+  opts?: { acceptedUnstampable?: ItemStampCheck[]; onPhase?: (phase: IssuePhase) => void },
 ): Promise<IssueOutcome> {
   const draft = await getTransmittal(id);
   if (!draft) throw new Error("That transmittal no longer exists.");
@@ -1011,6 +1039,7 @@ export async function issueTransmittal(
   await assertItemsIssuable(draft.orgId, draft.items);
   const accepted = opts?.acceptedUnstampable ?? null;
   if (!accepted) {
+    opts?.onPhase?.("checking");
     const check = await checkTransmittalStampability(id);
     if (!check.ok) {
       console.warn(`[transmittals] the issue-time stamp check could not run for ${draft.number} — issuing without it (DEC-61 §5 still governs the portal):`, check.error);
@@ -1018,6 +1047,7 @@ export async function issueTransmittal(
       throw new UnstampableItemsError(unstampableItems(check.items));
     }
   }
+  opts?.onPhase?.("issuing");
 
   const now = new Date().toISOString();
   const { data, error } = await supabase

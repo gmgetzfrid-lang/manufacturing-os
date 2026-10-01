@@ -47,7 +47,8 @@ vi.mock("@/lib/audit", () => ({
 
 import {
   issueTransmittal, describeUnstampable, unstampableItems, UnstampableItemsError, PORTAL_STAMP_MAX_BYTES,
-  type ItemStampCheck,
+  checkTransmittalStampability, STAMP_CHECK_TIME_BUDGET_MS, STAMP_CHECK_CLIENT_TIMEOUT_MS,
+  type ItemStampCheck, type IssuePhase,
 } from "@/lib/transmittals";
 
 const ORG = "org-a";
@@ -146,7 +147,49 @@ describe("TRX-16 — the composer asks the issuer", () => {
     expect(page).toContain("UnstampableItemsError,");
     expect(page).toMatch(/if \(!\(e instanceof UnstampableItemsError\)\) throw e;/);
     expect(page).toMatch(/appConfirm\(\{ title: "Files the portal cannot mark", message: <span className="whitespace-pre-line">\{e\.message\}<\/span>, confirmLabel: "Issue anyway" \}\)/);
-    expect(page).toContain("outcome = await issueTransmittal(draft.id, actor, { acceptedUnstampable: e.items });");
+    expect(page).toContain("outcome = await issueTransmittal(draft.id, actor, { acceptedUnstampable: e.items, onPhase: setIssuePhase });");
     expect(page).toContain('await onSaved({ kind: "issue-failed", draft, error: "Not issued — fix the file(s) the portal cannot mark, then issue again." });');
+  });
+  it("P15 review fix: the composer says the files are being checked while the check runs, then that it is issuing; the phase clears when it ends", () => {
+    expect(page).toContain("outcome = await issueTransmittal(draft.id, actor, { onPhase: setIssuePhase });");
+    expect(page).toMatch(/const footerHint = saving === "issue" && issuePhase === "checking"\s*\n\s*\? "Checking each file the recipient's portal will stamp — large PDFs take a moment…"\s*\n\s*: saving === "issue" && issuePhase === "issuing" \? "Issuing…"/);
+    expect(page).toMatch(/setIssuePhase\(null\); \/\/ the check answered; the issuer decides/);
+    expect(page).toMatch(/\} finally \{\s*\n\s*setSaving\(null\);\s*\n\s*setIssuePhase\(null\);/);
+  });
+});
+
+describe("TRX-16 (P15 review fix) — the issuer's wait for the check is bounded and announced", () => {
+  it("the client timeout sits above the server's budget (the route's ceiling is 120 s)", () => {
+    expect(STAMP_CHECK_TIME_BUDGET_MS).toBe(60_000);
+    expect(STAMP_CHECK_CLIENT_TIMEOUT_MS).toBeGreaterThan(STAMP_CHECK_TIME_BUDGET_MS);
+    expect(STAMP_CHECK_CLIENT_TIMEOUT_MS).toBeLessThan(120_000);
+    // the server check reads the same budget (one constant)
+    const server = readFileSync(join(process.cwd(), "lib/transmittalStampCheck.ts"), "utf8");
+    expect(server).toMatch(/import \{ PORTAL_STAMP_MAX_BYTES, STAMP_CHECK_TIME_BUDGET_MS, portalKeyAllowed/);
+    expect(server).not.toMatch(/STAMP_CHECK_TIME_BUDGET_MS = /);
+  });
+  it("a check that does not answer in time is aborted and reads as a check that could not run — the issue proceeds, logged", async () => {
+    fetchMock.mockImplementation((url: string, init?: RequestInit) => {
+      if (url !== "/api/transmittal/stamp-check") return Promise.resolve(new Response(JSON.stringify({ ok: true }), { status: 200 }));
+      return new Promise((_res, rej) => {
+        init?.signal?.addEventListener("abort", () => rej(Object.assign(new Error("The operation was aborted."), { name: "AbortError" })));
+      });
+    });
+    const r = await checkTransmittalStampability("t1", { timeoutMs: 5 });
+    expect(r).toEqual({ ok: false, error: "the check did not answer within 0 s" });
+    expect((stampCalls()[0][1] as RequestInit).signal).toBeInstanceOf(AbortSignal);
+  });
+  it("issueTransmittal reports its phases: checking, then issuing — and only issuing when the issuer already accepted", async () => {
+    const phases: IssuePhase[] = [];
+    await issueTransmittal("t1", actor, { onPhase: (p) => phases.push(p) });
+    expect(phases).toEqual(["checking", "issuing"]);
+    const again: IssuePhase[] = [];
+    await issueTransmittal("t1", actor, { acceptedUnstampable: [ENCRYPTED], onPhase: (p) => again.push(p) });
+    expect(again).toEqual(["issuing"]);
+    // a stopped issue never reports issuing
+    stampAnswer = { status: 200, body: { items: [OK, ENCRYPTED] } };
+    const stopped: IssuePhase[] = [];
+    await expect(issueTransmittal("t1", actor, { onPhase: (p) => stopped.push(p) })).rejects.toBeInstanceOf(UnstampableItemsError);
+    expect(stopped).toEqual(["checking"]);
   });
 });

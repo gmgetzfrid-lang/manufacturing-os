@@ -343,12 +343,17 @@ clocks before the `DOCUMENT_CREATED` record so the record carries
 
 ⚠ **Paste order — P15 SURFACE REMAINDERS (2026-10-01).** One one-paste
 migration, `20261152_dc_roundF_hold_other_reason.sql` (public-surfaces
-`VFY-6`): independent of every other pending migration; paste it BEFORE or
-WITH the app carrying P15. It re-creates `20260612`'s open-reason unique
+`VFY-6`): independent of every other pending migration; paste it **BEFORE
+deploying the app carrying P15 — a hard prerequisite** (it is safe under
+today's app). It re-creates `20260612`'s open-reason unique
 index so an open "Other" hold is keyed by its note — the P15 picker writes
 the "Other" code with the description in the note instead of free text in
-`reason`, and without the paste a document can hold only one open "Other"
-hold at a time (a second is refused with a sentence that says so). Widening
+`reason`. If the app ran ahead of the paste, a document could hold only one
+open "Other" hold at a time: a second custom hold — two different free-text
+reasons are placeable today — would be refused, and a split / merge /
+reversal carrying two "Other" holds onto one document would be refused and
+rolled back (fail closed). The integrator orders it so in
+`MIGRATION-PASTE-ORDER.md` (before the P15 deploy). Widening
 (uniqueness only); its result set carries the DEC-30 inventory of the
 custom-reason holds placed before P15 (kept, never rewritten). The P15 app
 also asks `user_download_denied` (`20261140`, P12's) from the share modal;

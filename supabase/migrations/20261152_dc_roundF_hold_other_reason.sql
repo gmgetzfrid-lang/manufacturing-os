@@ -10,8 +10,11 @@
 --          predefined reasons or "Other"), and an "Other" hold carries what
 --          it is for in its NOTE (`notes`, which no public surface
 --          publishes). The column itself keeps no CHECK: holds placed before
---          P15 keep their text, and a lifecycle copy (split / merge) carries
---          a source's hold across as it is.
+--          P15 keep their text, and a lifecycle copy (split / merge /
+--          reversal) carries a source's legacy reason across unchanged —
+--          skipping a hold already open on the target by THIS index's key
+--          (lib/holds.ts openHoldKey), so two different "Other" holds are
+--          both carried.
 --
 --          What this file does: the partial unique index
 --          document_holds_open_reason_uniq (20260612: one OPEN hold per
@@ -32,10 +35,14 @@
 -- public verify surfaces already publish them only as "On hold"), how many
 -- of those are open, documents with two or more open custom-reason holds,
 -- and open "Other" holds.
--- HOW TO APPLY: any time — before or with the app carrying P15 (until it is
--- pasted the app works, with one open "Other" hold per document at a time;
--- a second is refused with a sentence that says so). Independent of every
--- other pending migration. Single paste: temp-table inventory ->
+-- HOW TO APPLY: BEFORE deploying the app carrying P15 — a hard prerequisite.
+-- Without it a second open "Other" hold on one document is refused (two
+-- different custom holds, placeable today as two free-text reasons, would
+-- collide on the shared code), and a split / merge / reversal that carries
+-- two "Other" holds onto one document is refused and rolled back (fails
+-- closed — never a dropped hold). Safe under the app that runs today (it
+-- writes free text, which this index keys exactly as before). Independent
+-- of every other pending migration. Single paste: temp-table inventory ->
 -- BEGIN / DDL / COMMIT -> one SELECT (check text, ok boolean, n text).
 -- REVERSAL: re-create the 20260612 index (document_id, reason) WHERE
 -- released_at IS NULL — possible only while no document has two open

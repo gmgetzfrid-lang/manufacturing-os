@@ -12,12 +12,23 @@
 // statusSelectOptions); the gates and what the database calls an issue
 // (20261144 is_controlled_issue_status, lib/issueStatus.ts) are unchanged.
 //
+// P15 review fix: the database counts IFC as an issue already, so moving an
+// existing IFC row to Issued (or Locked) is NOT an issue transition there —
+// 20261144's guard never sees it (no publisher tier, hold or review limb),
+// yet it is the change that puts the document in force at the gates. The
+// editors treat it as one (isUnguardedEntryIntoForce): they say so before
+// the save and check the hold themselves. The database limb is REV-21.
+//
 // Each editor keeps its own list otherwise (DEC-31: fix the finding). One
 // test (lib/__tests__/dcRoundFP15StatusVocabulary.test.ts) pins every list:
 // each offered status is either in force at both the print gate and the
 // verify allow-list, or refused by both.
 //
-// Pure and dependency-free: the client editors import it.
+// Pure: it imports only the shared status predicates (lib/issueStatus,
+// lib/verifyVerdict — both I/O-free); the client editors import it.
+
+import { isControlledIssueStatus } from "@/lib/issueStatus";
+import { IN_FORCE_STATUSES } from "@/lib/verifyVerdict";
 
 /** Retired from the editors (DEC-44 (P15)): never offered for a new choice.
  *  The other option — adding it to DocumentStatus, filterPackDocs and
@@ -58,7 +69,34 @@ export function notOfferedStatusNote(offered: readonly string[], current: string
   const cur = (current ?? "").trim();
   if (!cur || offered.includes(current ?? "")) return null;
   if (RETIRED_STATUS_OPTIONS.has(cur)) {
-    return `"${cur}" is no longer offered: the field pack does not print it and the verify page reads it as STATUS NOT RECOGNISED, because it is not an issued status. Choose a listed status to replace it — Issued is the in-force one.`;
+    return `"${cur}" is no longer offered: the field pack does not print it and the verify page reads it as STATUS NOT RECOGNISED, because it is not an issued status. It is kept unless you choose another; choosing Issued puts the revision in force, so do it only for a revision that was reviewed — the save checks the hold first.`;
   }
   return `"${cur}" is not one of this editor's statuses; it is kept unless you choose another.`;
 }
+
+/** P15 review fix (VFY-20 / DEC-44 (P15) §4): does this status change put a
+ *  document's current revision IN FORCE (IN_FORCE_STATUSES — the field pack
+ *  prints it, a scan reads it green) out of a status the database ALREADY
+ *  counts as an issue but no gate reads as in force — an existing IFC row,
+ *  or any other status outside the vocabulary? The database's issue guard
+ *  (20261144 v_issuing — isIssueTransition) does not see such a change:
+ *  IFC → Issued is issue-to-issue there, so no publisher-tier, hold or
+ *  review limb runs. The editors that can make it (the metadata editor and
+ *  the bulk editor — Document Control only, so the publisher tier holds)
+ *  treat it as an issue: they say so before the save and refuse it over an
+ *  active hold (lib/holdGate.ts, fail closed), as the database does for a
+ *  controller's issue. A document with no current revision has nothing to
+ *  put in force. Compared as the gates compare (exactly): " Issued" is not
+ *  in force there. */
+export function isUnguardedEntryIntoForce(input: {
+  fromStatus: string | null | undefined; toStatus: string | null | undefined; hasCurrentRevision: boolean;
+}): boolean {
+  const from = input.fromStatus ?? "";
+  return input.hasCurrentRevision
+    && isControlledIssueStatus(from)
+    && !IN_FORCE_STATUSES.has(from)
+    && IN_FORCE_STATUSES.has(input.toStatus ?? "");
+}
+
+/** The action the hold refusal names (lib/holdGate.ts holdRefusalMessage). */
+export const ENTRY_INTO_FORCE_ACTION = "putting it in force";

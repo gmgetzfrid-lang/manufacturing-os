@@ -45,9 +45,13 @@ export const OTHER_HOLD_REASON: HoldReason = "Other";
 
 /** VFY-6 (P15): the reason CODES this module writes — the predefined
  *  reasons and "Other". The column itself has no CHECK (holds placed before
- *  P15 may carry operator text, and lifecycle copies carry a source's reason
- *  across as it is); openHold, the one app door that places a hold, writes
- *  nothing else, so the free-text path into `reason` is closed. */
+ *  P15 may carry operator text, and a lifecycle copy carries a source's
+ *  legacy reason across unchanged); openHold, the one app door that places a
+ *  hold, writes nothing else, so the free-text path into `reason` is closed
+ *  in the app. Not at the database: a direct PostgREST insert could still
+ *  store text, and a member with UPDATE on an open hold can rewrite its note
+ *  unaudited (20261073 pins only document, reason and placer) — VFY-6's
+ *  recorded residual. */
 export const HOLD_REASON_CODES: readonly HoldReason[] = [...PREDEFINED_HOLD_REASONS, OTHER_HOLD_REASON];
 
 export function isHoldReasonCode(reason: string | null | undefined): boolean {
@@ -62,6 +66,19 @@ export function holdReasonLabel(h: { reason: string; notes?: string | null }): s
   const note = (h.notes ?? "").trim();
   if (h.reason !== OTHER_HOLD_REASON || !note) return h.reason;
   return `${OTHER_HOLD_REASON}: ${note.length > 120 ? `${note.slice(0, 119)}…` : note}`;
+}
+
+/** VFY-6 (P15 review fix): an OPEN hold's identity as the open-reason unique
+ *  index keys it (20261152 document_holds_open_reason_uniq: the document,
+ *  the reason, and for an "Other" hold its note, btrim'd — spaces only, as
+ *  Postgres trims). Every reason but "Other" is one open hold per document;
+ *  two "Other" holds are one hold only when their notes match. The
+ *  lifecycle carry (copyActiveHoldsToDoc) skips a hold already open on the
+ *  target by THIS key — never by the reason alone, which would drop the
+ *  second of two different custom holds now that both are "Other". */
+export function openHoldKey(h: { reason: string; notes?: string | null }): string {
+  if (h.reason !== OTHER_HOLD_REASON) return h.reason;
+  return `${OTHER_HOLD_REASON}\u0000${(h.notes ?? "").replace(/^ +| +$/g, "")}`;
 }
 
 /** HLD-7 / VFY-6: what an UNAUTHENTICATED surface may say about a hold's

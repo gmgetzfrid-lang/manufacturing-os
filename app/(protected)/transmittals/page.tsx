@@ -45,7 +45,7 @@ import {
   revokeTransmittalLink, transmittalStatusMeta, isTransmittalIssuable, TRANSMITTAL_PURPOSES,
   transmittalPortalUrl, portalOriginConfigured, portalLinkAvailable, portalLinkState, mayTransmit, mayDeleteDraft, itemIssueBlocker,
   legalHoldNotice, PORTAL_LINK_DAYS, UnstampableItemsError,
-  type Transmittal, type TransmittalItem, type IssueFacts, type IssueOutcome,
+  type Transmittal, type TransmittalItem, type IssueFacts, type IssueOutcome, type IssuePhase,
 } from "@/lib/transmittals";
 import { loadCapabilityPolicy, type CapabilityPolicy } from "@/lib/capabilityPolicy";
 import { isControllerPrincipal } from "@/lib/permissions";
@@ -536,6 +536,8 @@ function TransmittalComposer({ orgId, editing, preloadDoc, actor, policy, princi
     return base;
   });
   const [saving, setSaving] = useState<null | "draft" | "issue">(null);
+  // TRX-16 (P15 review fix): what the issue is doing, said in the footer.
+  const [issuePhase, setIssuePhase] = useState<IssuePhase | null>(null);
 
   // Document picker.
   const [pq, setPq] = useState("");
@@ -638,7 +640,10 @@ function TransmittalComposer({ orgId, editing, preloadDoc, actor, policy, princi
   const issuable = !!facts && isTransmittalIssuable({ items, recipientName, recipientCompany }, facts);
   const canIssue = policy !== null && mayTransmit(policy, principal, items.map((i) => facts?.get(i.documentId)?.libraryId ?? null));
   const blockers = facts ? items.map((i) => ({ id: i.documentId, why: itemIssueBlocker(i, facts.get(i.documentId)) })).filter((b) => b.why) : [];
-  const footerHint = !basicsReady ? "Add a document + recipient to issue"
+  const footerHint = saving === "issue" && issuePhase === "checking"
+    ? "Checking each file the recipient's portal will stamp — large PDFs take a moment…"
+    : saving === "issue" && issuePhase === "issuing" ? "Issuing…"
+    : !basicsReady ? "Add a document + recipient to issue"
     : !facts ? "Checking the documents…"
     : blockers.length > 0 ? blockers[0].why!
     : !canIssue ? "Saving a draft is open to everyone; issuing needs transmit authority (the \"Issue transmittals\" capability) — a Document Controller can issue your draft."
@@ -676,9 +681,10 @@ function TransmittalComposer({ orgId, editing, preloadDoc, actor, policy, princi
       // TRX-10: the outcome carries the row the database wrote.
       let outcome: IssueOutcome;
       try {
-        outcome = await issueTransmittal(draft.id, actor);
+        outcome = await issueTransmittal(draft.id, actor, { onPhase: setIssuePhase });
       } catch (e) {
         if (!(e instanceof UnstampableItemsError)) throw e;
+        setIssuePhase(null); // the check answered; the issuer decides
         // TRX-16: warned at issue, before anything was sent — the issuer
         // fixes the file(s) or issues anyway (DEC-61 §5: released unmarked,
         // recorded so; the acceptance goes on the TRANSMITTAL_ISSUED row).
@@ -686,13 +692,14 @@ function TransmittalComposer({ orgId, editing, preloadDoc, actor, policy, princi
           await onSaved({ kind: "issue-failed", draft, error: "Not issued — fix the file(s) the portal cannot mark, then issue again." });
           return;
         }
-        outcome = await issueTransmittal(draft.id, actor, { acceptedUnstampable: e.items });
+        outcome = await issueTransmittal(draft.id, actor, { acceptedUnstampable: e.items, onPhase: setIssuePhase });
       }
       await onSaved({ kind: "issued", outcome });
     } catch (e) {
       await onSaved({ kind: "issue-failed", draft, error: (e as Error).message });
     } finally {
       setSaving(null);
+      setIssuePhase(null);
     }
   };
 

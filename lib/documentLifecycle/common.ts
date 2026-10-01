@@ -8,6 +8,7 @@
 import { supabase } from "@/lib/supabase";
 import { uploadToPath, makeLibraryStoragePath } from "@/lib/storage";
 import { logRevisionEvent, logHoldEvent, logAuditAction } from "@/lib/audit";
+import { OTHER_HOLD_REASON, holdReasonLabel, openHoldKey } from "@/lib/holds";
 import {
   voidPendingDraftAfterPublish,
   revokeLiveSharesForDocument,
@@ -557,9 +558,15 @@ export async function completeSourceRetirement(input: {
 }
 
 /** Copy any ACTIVE holds from the source document onto the target,
- *  with a note describing the carry-over. Skips any reason that's
- *  already open on the target (the partial UNIQUE constraint would
- *  reject it anyway).
+ *  with a note describing the carry-over. Skips a hold that is already
+ *  open on the target, keyed the way the partial UNIQUE index keys it
+ *  (`openHoldKey`, 20261152): the reason — and for an "Other" hold its
+ *  note, so two different custom holds (both "Other" since VFY-6) are both
+ *  carried, never the second dropped. Each carried "Other" note names its
+ *  source ("Carried over from <label>. …"), so holds from two sources never
+ *  share a key. Before 20261152 is pasted the old (document, reason) index
+ *  refuses a second open "Other" hold: the carry THROWS (below) and the
+ *  operation rolls back — fails closed, never a dropped hold.
  *
  *  HLD-2: every read and every insert is CHECKED — a hold that fails to
  *  carry over THROWS (the caller runs this inside its compensation register,
@@ -584,24 +591,26 @@ export async function copyActiveHoldsToDoc(input: {
   const rows = (openHolds as Array<{ reason: string; notes: string | null; expected_release_at: string | null }>) ?? [];
   if (rows.length === 0) return { copied: 0, holdIds: [] };
 
-  // Check existing open reasons on the target so we don't try to
-  // insert duplicates (the partial unique would reject them).
+  // The holds already open on the target, by the unique index's key
+  // (openHoldKey — VFY-6: an "Other" hold by its note too), so a hold that
+  // is already there is not inserted twice.
   const { data: existing, error: existingErr } = await supabase
     .from("document_holds")
-    .select("reason")
+    .select("reason, notes")
     .eq("document_id", targetDocId)
     .is("released_at", null);
   if (existingErr) throw new Error(`Couldn't read the new document's holds (${existingErr.message}) — the source's holds were not carried over.`);
-  const existingReasons = new Set(
-    ((existing as Array<{ reason: string }>) ?? []).map((r) => r.reason)
+  const openKeys = new Set(
+    ((existing as Array<{ reason: string; notes: string | null }>) ?? []).map((r) => openHoldKey(r))
   );
 
   let copied = 0;
   const holdIds: string[] = [];
   try {
     for (const h of rows) {
-      if (existingReasons.has(h.reason)) continue;
       const note = `Carried over from ${originLabel}.${h.notes ? ` Original notes: ${h.notes}` : ""}`;
+      const key = openHoldKey({ reason: h.reason, notes: note });
+      if (openKeys.has(key)) continue;
       const { data: insertedHold, error } = await supabase
         .from("document_holds")
         .insert({
@@ -616,8 +625,14 @@ export async function copyActiveHoldsToDoc(input: {
         .select("id")
         .single();
       if (error || !insertedHold) {
-        throw new Error(`The "${h.reason}" hold could not be carried over to the new document (${error?.message ?? "the write was refused"}).`);
+        // VFY-6: before 20261152 a document holds one open "Other" hold at a
+        // time — said so, and the operation rolls back (nothing dropped).
+        if (error?.code === "23505" && h.reason === OTHER_HOLD_REASON) {
+          throw new Error(`The "${holdReasonLabel(h)}" hold could not be carried over to the new document: it already has an open "${OTHER_HOLD_REASON}" hold, and until database update 20261152 is applied a document holds one at a time. Apply 20261152 (a prerequisite of this version) and try again.`);
+        }
+        throw new Error(`The "${holdReasonLabel(h)}" hold could not be carried over to the new document (${error?.message ?? "the write was refused"}).`);
       }
+      openKeys.add(key);
       copied++;
       holdIds.push((insertedHold as { id: string }).id);
       // Mirror the hold audit event so the timeline shows it.

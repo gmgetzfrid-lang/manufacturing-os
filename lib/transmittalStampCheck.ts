@@ -27,10 +27,11 @@ import { PDFDocument } from "pdf-lib";
 import { r2, R2_BUCKET } from "@/lib/r2";
 import { applyStampToPdfDoc } from "@/lib/stamping";
 import type { supabase } from "@/lib/supabase";
-import { PORTAL_STAMP_MAX_BYTES, portalKeyAllowed, type ItemStampCheck, type TransmittalItem } from "@/lib/transmittals";
+import { PORTAL_STAMP_MAX_BYTES, STAMP_CHECK_TIME_BUDGET_MS, portalKeyAllowed, type ItemStampCheck, type TransmittalItem } from "@/lib/transmittals";
 
-/** The check's total time budget across a transmittal's items. */
-export const STAMP_CHECK_TIME_BUDGET_MS = 60_000;
+/** The check's total time budget across a transmittal's items (defined in
+ *  lib/transmittals.ts, so the issuer's browser bounds its wait by it). */
+export { STAMP_CHECK_TIME_BUDGET_MS };
 
 /** Any client with `.from()` — the route's service-role client. */
 type Reader = Pick<typeof supabase, "from">;

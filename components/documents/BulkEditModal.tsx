@@ -18,6 +18,15 @@
 // is complete). The modal says how many selected rows that is before the
 // apply; each row is still its own write, so a refused row is named with the
 // database's reason and every other row keeps its change.
+//
+// VFY-20 / DEC-44 (P15) review fix: a row whose status the database already
+// counts as an issue but no gate reads as in force (an existing IFC row)
+// moved to Issued / Locked is PUT IN FORCE by the write, and the database's
+// guard does not see it (isUnguardedEntryIntoForce). The modal names those
+// rows before the apply and checks each one's hold itself (lib/holdGate.ts,
+// fail closed) — a held row is refused and named; the publisher tier holds
+// (the Bulk Edit button is Document Control's only). REV-21 is the database
+// limb.
 
 import React, { useState } from "react";
 import {
@@ -26,7 +35,8 @@ import {
 import { supabase } from "@/lib/supabase";
 import { computeUniquenessKey } from "@/lib/uniqueness";
 import { isIssueTransition, isIssueRefusal } from "@/lib/issueStatus";
-import { BULK_EDIT_STATUS_OPTIONS } from "@/lib/documentStatusOptions";
+import { BULK_EDIT_STATUS_OPTIONS, isUnguardedEntryIntoForce, ENTRY_INTO_FORCE_ACTION } from "@/lib/documentStatusOptions";
+import { assertNotOnHold } from "@/lib/holdGate";
 import type { DocumentRecord, LibraryConfig, MetadataFieldDefinition } from "@/types/schema";
 
 interface BulkEditModalProps {
@@ -61,6 +71,11 @@ export default function BulkEditModal({
   const issuingRows = target.kind === "status"
     ? docs.filter((d) => isIssueTransition({ fromStatus: d.status, toStatus: newValue, hasCurrentRevision: !!d.currentVersionId }))
     : [];
+  // P15 review fix: the selected rows this status change puts IN FORCE with
+  // no database check (an existing IFC row → Issued / Locked).
+  const enteringForceRows = target.kind === "status"
+    ? docs.filter((d) => isUnguardedEntryIntoForce({ fromStatus: d.status, toStatus: newValue, hasCurrentRevision: !!d.currentVersionId }))
+    : [];
 
   const customCols = (library.customColumns ?? []).filter((c) => !["title", "rev", "status", "documentNumber"].includes(c.key));
   const selectOptions = target.kind === "custom" && target.def.type === "select" ? (target.def.options ?? []) : null;
@@ -70,10 +85,14 @@ export default function BulkEditModal({
     setResults(null);
     const failed: Array<{ doc: string; reason: string; issue: boolean }> = [];
     const issuingIds = new Set(issuingRows.map((d) => d.id));
+    const enteringForceIds = new Set(enteringForceRows.map((d) => d.id));
     let ok = 0;
     const now = new Date().toISOString();
     for (const doc of docs) {
       try {
+        // P15 review fix: the hold the database does not check for this row
+        // (an unreadable hold state refuses it too); the row is not written.
+        if (doc.id && enteringForceIds.has(doc.id)) await assertNotOnHold(doc.id, { action: ENTRY_INTO_FORCE_ACTION });
         const updates: Record<string, unknown> = { updated_at: now, updated_by: actorUserId };
         if (target.kind === "status") {
           updates.status = newValue;
@@ -188,6 +207,13 @@ export default function BulkEditModal({
             // REV-18: say which rows this ISSUES before the apply.
             <div data-testid="bulk-issue-note" className="rounded-lg bg-amber-50 border border-amber-200 p-3 text-xs text-amber-900">
               {issuingRows.length} of the selected row{issuingRows.length === 1 ? "" : "s"} ({issuingRows.slice(0, 5).map((d) => d.documentNumber || d.title || d.id).join(", ")}{issuingRows.length > 5 ? `, +${issuingRows.length - 5} more` : ""}) {issuingRows.length === 1 ? "is" : "are"} not issued yet: setting {newValue} issues {issuingRows.length === 1 ? "its" : "their"} current revision as a controlled copy. The database refuses a row on hold, and — in a library that requires reviewer sign-off — a row whose revision was not reviewed, unless you are Document Control. A refused row is named after the apply; the others keep the change.
+            </div>
+          )}
+
+          {!results && enteringForceRows.length > 0 && (
+            // P15 review fix: say which rows this puts in force with no database check.
+            <div data-testid="bulk-entry-into-force-note" className="rounded-lg bg-amber-50 border border-amber-200 p-3 text-xs text-amber-900">
+              {enteringForceRows.length} of the selected row{enteringForceRows.length === 1 ? "" : "s"} ({enteringForceRows.slice(0, 5).map((d) => d.documentNumber || d.title || d.id).join(", ")}{enteringForceRows.length > 5 ? `, +${enteringForceRows.length - 5} more` : ""}) {enteringForceRows.length === 1 ? "has a status" : "have statuses"} no gate reads as in force ({[...new Set(enteringForceRows.map((d) => d.status?.trim() ? d.status : "empty"))].join(", ")}): setting {newValue} puts {enteringForceRows.length === 1 ? "its" : "their"} current revision in force — the field pack prints it and a scan reads it as current. The database does not check this change, so each row&apos;s hold is checked first and a held row is refused (named after the apply); the revision&apos;s review is not checked.
             </div>
           )}
 

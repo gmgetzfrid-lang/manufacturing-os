@@ -19,6 +19,7 @@ import { Spinner } from "@/components/ui/Spinner";
 import { MiniBars } from "@/components/ui/Sparkline";
 import DocControlQueue from "@/components/documents/DocControlQueue";
 import ProtectionRecord from "@/components/documents/ProtectionRecord";
+import { isRecognisedStatus } from "@/lib/verifyVerdict";
 
 // Aging-distribution colors (cool → hot) for the per-column trail.
 const AGE_BUCKET_COLORS = ["#34d399", "#fde047", "#fbbf24", "#fb7185"]; // new, 7d, 30d, 90d+
@@ -32,7 +33,7 @@ function agingBuckets(items: { updatedAt: string | null }[]) {
   return b;
 }
 
-interface BoardDoc {
+export interface BoardDoc {
   id: string;
   number: string;
   title: string;
@@ -62,8 +63,14 @@ const COLUMN_DOT: Record<Column, string> = {
   "Superseded": "bg-rose-500",
 };
 
-function lifecycleOf(d: BoardDoc): Column {
+export function lifecycleOf(d: BoardDoc): Column {
   if (d.status === "Superseded" || d.issueType === "Void") return "Superseded";
+  // VFY-20 / DEC-44 (P15): a status no gate recognises (an existing "IFC"
+  // row, or any other value outside the vocabulary) is not issued — the
+  // field pack does not print it and a scan reads STATUS NOT RECOGNISED — so
+  // its revision's issue type never puts it in a construction-ready column.
+  // It sits in the board's not-issued catch-all, its card naming the status.
+  if (!isRecognisedStatus(d.status)) return "Draft";
   if (d.issueType === "As-Built") return "As-Built";
   if (d.issueType === "Issued for Construction") return "IFC";
   if (d.issueType === "Internal Review") return "In Review";
@@ -235,6 +242,12 @@ export default function LifecycleBoard() {
                         <div className="flex items-center gap-1.5 mt-1.5">
                           <span className={`text-[9px] font-bold px-1.5 py-0.5 rounded ${chip.cls}`} title={`${days} days in this state`}>{chip.label}</span>
                           {d.checkedOutByName && <span className="text-[9px] font-bold text-blue-700 inline-flex items-center gap-0.5"><Lock className="w-2.5 h-2.5" />{d.checkedOutByName}</span>}
+                          {!isRecognisedStatus(d.status) && (
+                            // VFY-20 / DEC-44 (P15): shown as what it is — not in force.
+                            <span data-testid="board-status-not-recognised" className="text-[9px] font-bold px-1.5 py-0.5 rounded bg-amber-100 text-amber-800" title="Not a status the field pack prints or a scan reads as issued — Document Control sets a listed status">
+                              {d.status} · not in force
+                            </span>
+                          )}
                         </div>
                       </Link>
                     );
