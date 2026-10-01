@@ -1636,8 +1636,11 @@ export async function previewRestoreChunk(
 export const RESTORE_ADDITIVE_NOTE =
   "A restore only ADDS records. A record whose id (or key) already exists in this workspace is kept exactly as it is — " +
   "a restore cannot overwrite, repair or roll back a record that was changed or damaged after the backup. " +
-  "The one exception is a ticket or document numbering counter, which is raised (never lowered) to the backup's value so no number is issued twice; " +
-  "where this workspace's number prefix differs from the backup's, that leaves a gap in its numbering.";
+  "The one exception the restore itself makes is a ticket or document numbering counter, which is raised (never lowered) to the backup's value so no number is issued twice — " +
+  "when the backup carries its counters (one made before 2026-08-18, or an incomplete export, may not); " +
+  "where this workspace's number prefix differs from the backup's, that leaves a gap in its numbering. " +
+  "Restored records still run the database's own bookkeeping (for example a project's last-activity time), " +
+  "and choosing the backup's workspace name renames this workspace.";
 
 /** BKP-5 (fix pass) — what the page says about records whose key another workspace holds. */
 export const RESTORE_HELD_ELSEWHERE_NOTE =

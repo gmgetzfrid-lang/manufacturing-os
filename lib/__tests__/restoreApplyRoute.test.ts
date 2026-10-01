@@ -1654,8 +1654,12 @@ describe("BKP-5 (fix pass 5) — a numbering counter held here is advanced past 
 
   it("fix pass 6 — what the Admin consents to names the counter exception, and the gap trade-off", () => {
     expect(RESTORE_ADDITIVE_NOTE).toMatch(/kept exactly as it is/);
-    expect(RESTORE_ADDITIVE_NOTE).toMatch(/The one exception is a ticket or document numbering counter, which is raised \(never lowered\) to the backup's value so no number is issued twice/);
+    expect(RESTORE_ADDITIVE_NOTE).toMatch(/The one exception the restore itself makes is a ticket or document numbering counter, which is raised \(never lowered\) to the backup's value so no number is issued twice/);
     expect(RESTORE_ADDITIVE_NOTE).toMatch(/number prefix differs from the backup's, that leaves a gap/);
+    // integrator (final review): the guarantee is conditional, and the database's own bookkeeping and a rename are named
+    expect(RESTORE_ADDITIVE_NOTE).toMatch(/when the backup carries its counters \(one made before 2026-08-18, or an incomplete export, may not\)/);
+    expect(RESTORE_ADDITIVE_NOTE).toMatch(/Restored records still run the database's own bookkeeping/);
+    expect(RESTORE_ADDITIVE_NOTE).toMatch(/choosing the backup's workspace name renames this workspace/);
     const page = readFileSync(join(process.cwd(), "app/(protected)/admin/restore/page.tsx"), "utf8");
     expect(page).toMatch(/KEPT EXACTLY AS THEY ARE — not overwritten, not repaired \(the one exception, a numbering counter, is described below\)\. `/);
     expect(page.indexOf("${RESTORE_ADDITIVE_NOTE} This can't be auto-undone.")).toBeGreaterThan(page.indexOf("await previewChunkedRestore("));
