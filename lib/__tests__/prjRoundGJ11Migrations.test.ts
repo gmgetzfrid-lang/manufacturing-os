@@ -226,6 +226,9 @@ describe("20261142 — SEC-20: audit_logs_admin_trail re-created from its NEWEST
       "20261045_rp_phase6_admin_gates_team_fk_reviewer_independence.sql",
       "20261063_rp_roundE_audit_view_capability.sql",
       "20261142_prj_roundG_project_audit_rows.sql",
+      // SEC-21 (J12) re-creates it from 20261142's body with one more
+      // clause; that lineDiff is prjRoundGJ12Migration.test.ts's.
+      "20261157_prj_roundG_server_remainders.sql",
     ]);
   });
   it("lineDiff: nothing of 20261063's body is lost; only the comment and the project clause (its type test inline) are added", () => {
