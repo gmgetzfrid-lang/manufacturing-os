@@ -22,11 +22,11 @@ Org lifecycle and membership, export/backup/restore, the audit log and admin rai
 
 ## Findings
 
-**55 findings** — 5 CRITICAL, 17 HIGH, 27 MEDIUM, 6 LOW.
+**56 findings** — 5 CRITICAL, 17 HIGH, 28 MEDIUM, 6 LOW.
 
 | # | Report | n | Note |
 |---|---|---|---|
-| 01 | [Org lifecycle, membership & teams](./01-org-lifecycle.md) | 13 |  |
+| 01 | [Org lifecycle, membership & teams](./01-org-lifecycle.md) | 14 | `ORG-14` opened at the projects Round G J2b integration, 2026-10-01 |
 | 02 | [Export, backup, restore & portability](./02-backup-restore.md) | 14 |  |
 | 03 | [The audit log & admin rails](./03-audit-log.md) | 14 | The critic — spans all four areas from this run. |
 | 04 | [Billing, quotas & platform limits](./04-billing.md) | 14 |  |

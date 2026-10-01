@@ -37,7 +37,8 @@
 //     org_capability_allows_for — read the SAME shape with the SAME rule.
 //     projects Round G (QUAL-4, 20261136) adds ONE resource key, projectId,
 //     so a rule can name a single project: that is how "this project's
-//     Safety lead signs its quality records" is said (quality.sign_off).
+//     Safety lead signs its quality records" is said (quality.sign_off —
+//     the one capability a rule may scope to a project, PROJECT_SCOPED_CAPS).
 
 import { supabase } from "@/lib/supabase";
 import { MANAGEMENT_ROLES } from "@/lib/managementRoles";
@@ -202,6 +203,29 @@ export interface CapabilityResource {
  *  (projectId: 20261136, which re-created the evaluator with it). */
 export const RESOURCE_KEYS = ["requestType", "unit", "libraryId", "discipline", "projectId"] as const;
 export type ResourceKey = (typeof RESOURCE_KEYS)[number];
+
+/** The capabilities a rule may scope to ONE project (QUAL-4, 20261136) —
+ *  the only ones any evaluator is ever handed a projectId for. A projectId
+ *  condition on any other capability is refused at save
+ *  (validateCapabilityPolicy): it could never match there, and the SQL
+ *  evaluator before 20261136 (20261132) reads four keys, not five, so it
+ *  would read such a rule as UNCONDITIONAL — its tokens would become the
+ *  base list of a capability the database enforces with it (holds,
+ *  force-release, the audit trail, transmittal.issue): a widening wherever
+ *  they name more than the base list. A quality.sign_off rule is harmless
+ *  under 20261132: no policy or function consults that capability until
+ *  20261136 re-creates the evaluator and the policies that read it, in one
+ *  transaction. The policy route still refuses to store a project-scoped
+ *  rule until the live database proves it reads the key
+ *  (app/api/admin/capability-policy/route.ts). */
+export const PROJECT_SCOPED_CAPS: ReadonlySet<CapabilityId> = new Set<CapabilityId>(["quality.sign_off"]);
+
+/** Does the policy carry a rule conditioned on a project? (The policy route
+ *  probes the live evaluator before storing one.) */
+export function policyHasProjectScopedRule(policy: CapabilityPolicy | null | undefined): boolean {
+  return Object.values(policy?.caps ?? {}).some((entry) =>
+    isRuleArray(entry) && entry.some((r) => (r?.when?.projectId?.length ?? 0) > 0));
+}
 
 /** `when`: every listed key must match (AND across keys, OR within a list).
  *  A clause with no non-empty list is unconditional. */
@@ -509,6 +533,14 @@ export function validateCapabilityPolicy(policy: CapabilityPolicy): string | nul
       for (const r of v) {
         for (const k of Object.keys(r.when ?? {})) {
           if (!(RESOURCE_KEYS as readonly string[]).includes(k)) return `${def.label}: a rule conditions on an unknown resource key "${k}"`;
+        }
+        // QUAL-4: only a capability evaluated per project may be scoped to
+        // one (PROJECT_SCOPED_CAPS). Anywhere else the rule never matches —
+        // and the database's evaluator before 20261136 would read it as
+        // unconditional, widening the capability for everyone it names.
+        if ((r.when?.projectId?.length ?? 0) > 0 && !PROJECT_SCOPED_CAPS.has(def.id)) {
+          const scoped = CAPABILITY_DEFS.filter((d) => PROJECT_SCOPED_CAPS.has(d.id)).map((d) => `"${d.label}"`).join(", ");
+          return `${def.label}: a rule cannot be scoped to a project — only ${scoped} is decided per project. Anywhere else the rule would never match, and a database without 20261136 would read it as unconditional — applying it everywhere.`;
         }
       }
     }

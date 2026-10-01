@@ -97,7 +97,7 @@ about the system.
 | [DEC-61](#dec-61) | A transmittal is a **formal issue**: members draft, the `transmittal.issue` capability (default Admin + DocCtrl, per item library) issues / voids / revokes / records receipt; the database writes the as-sent snapshot — of the document's **current** revision only — and freezes it; nothing issued is deleted; the portal link expires (90 days) and is revocable without voiding; the portal serves stamped, hash-verified, recorded bytes | medium | `TRX-1`–`TRX-14`, `EGR-8`, `XEDGE-5` |
 | [DEC-62](#dec-62) | **Only a controller publishes a skill org-wide**; members author private skills and ask for one to be shared, and an approval binds to the version shown; built-ins have no author and are never deleted; custom link patterns stay inside a safe subset with a hard deadline; the link engine remembers decisions (a stale proposal re-enters, a dismissal blocks only the pair and proposer that produced it); a link is read only by whoever can read both documents | medium | `IEDGE-3`, `GOV-2`, `IRLS-3`, `ORCH-2`, `PR-3`, `HUB-2`, `HUB-8`, `LNK-1`–`LNK-13`, `IRLS-2`, `IRLS-4`, `IRLS-15`, `WIRE-2` |
 | [DEC-63](#dec-63) | The documents-table rails: the version pointers are **trigger-enforced references**, not declared FKs (the restore replays documents first); a creation may **issue** only with publish authority and a review policy that does not require sign-off; a reversal restores only the **recorded** prior status; one effective-date calendar decides "in effect" | medium | `REV-9`, `REV-11`, `REV-12`, `REV-16`, `REV-17`, `DRLS-3`, `DRLS-13`, `DRLS-14` |
-| [DEC-44 (provisional)](#dec-44-quality-signoff) | A quality sign-off is **granted per project** (`quality.sign_off`, the capability policy's resource dimension), **separated** from the record's author whenever someone else could sign, and **signed** with the existing e-signature ceremony — the database binds the signature to the completion, acceptance or waiver; a grant never deletes, and a signed record is a controller's to undo or delete | medium | `QUAL-4`, `QUAL-14`, `QUAL-15` |
+| [DEC-44 (provisional)](#dec-44-quality-signoff) | A quality sign-off is **granted per project** (`quality.sign_off`, the capability policy's resource dimension), **separated** from the record's author whenever someone else could sign, and **signed** with the existing e-signature ceremony — the database binds the signature to the completion, acceptance or waiver; a grant never deletes, and a signed record is a controller's to undo or delete (as is voiding any checklist) | medium | `QUAL-4`, `QUAL-14`, `QUAL-15`, `ORG-14` |
 
 ---
 
@@ -567,7 +567,7 @@ model worse. See `GAP-1`.
 
 *Landed 2026-10-01 (document-control Round F wave 2, P7 TRANSMITTALS): the resource dimension decides transmit authority. `transmittal.issue` (default `["Admin","DocCtrl"]`) is evaluated once per item's `libraryId` — by `trg_transmittals_guard` through `org_capability_allows_for` (20261133; the CASE row is 20261132, re-created from 20261063 and lineDiff-pinned), and by `mayTransmit` / `evaluateTransmitAuthority` in `lib/transmittals.ts` for the page and the routes — so an org can say "only DocCtrl may transmit from the IFC library". See `TRX-1`, `DEC-61`.*
 
-*Landed 2026-10-01 (projects Round G, J2b): the resource dimension gains a fifth key, `projectId` — `RESOURCE_KEYS` / `CapabilityResource` in `lib/capabilityPolicy.ts` and both rule passes of `org_capability_allows_for` (`20261136`, re-created from `20261132` with the two key lists widened and the `quality.sign_off` CASE row, lineDiff-pinned) — so a rule can name one project: "Safety signs this project's quality records". A stored rule that named `projectId` before read as unconditional in SQL; the migration's inventory counts them (expect 0). Personal grants stay unscoped (WF-13 row 6). The console preserves a project-scoped rule but cannot author one yet (`QUAL-14`). See `QUAL-4`.*
+*Landed 2026-10-01 (projects Round G, J2b): the resource dimension gains a fifth key, `projectId` — `RESOURCE_KEYS` / `CapabilityResource` in `lib/capabilityPolicy.ts` and both rule passes of `org_capability_allows_for` (`20261136`, re-created from `20261132` with the two key lists widened and the `quality.sign_off` CASE row, lineDiff-pinned) — so a rule can name one project: "Safety signs this project's quality records". A stored rule that named `projectId` before read as unconditional in SQL; the migration's inventory counts them (expect 0). The key is allowed on `quality.sign_off` alone (`PROJECT_SCOPED_CAPS`; the J2b integration): `validateCapabilityPolicy` refuses it on any other capability — nothing evaluates another capability with a project, and `20261132`'s evaluator, live until the paste, would read such a rule as unconditional — and the policy route stores a project-scoped rule only once the live database answers a probe for `20261136` (fail closed). Personal grants stay unscoped (WF-13 row 6). The console preserves a project-scoped rule but cannot author one yet (`QUAL-14`). See `QUAL-4`.*
 
 <a id="dec-14"></a>
 ## DEC-14 · `CANCELED`, `NEW`, `PENDING_ENG_INITIAL`
@@ -3820,7 +3820,9 @@ the order is in `document-control/99-fix-sequencing.md`).
    policy says — so its default is `[]` (the first build's
    `["Admin","DocCtrl"]` drew controller cells in the permissions grid that
    unticked nothing). It is resolved per project through the capability
-   policy's resource dimension (`projectId`, `DEC-13`). A discipline
+   policy's resource dimension (`projectId`, `DEC-13` — a key allowed on
+   this capability alone, and stored by the policy route only once the
+   live evaluator reads it). A discipline
    reviewer is granted it — org-wide (the role grid, a personal grant) or
    for one project (a scoped rule) — and may then write that project's
    checklists, turnover and punch under every J2 rail.
@@ -3858,11 +3860,17 @@ the order is in `document-control/99-fix-sequencing.md`).
    out of `complete` clears the completion record and checklists keep no
    history, so anyone else's would erase a second person's sign-off with no
    reason and no signature (an org always keeps an active Admin, so this is
-   never a dead end). A checklist anyone signed (completed now, or reopened
-   or voided by a controller since — its `e_signatures` row is the test),
-   an accepted or waived turnover item and a required turnover item are
-   deleted only by a controller — or with their project. Voiding an OPEN
-   checklist stays a writer's act; closeout's blindness to it is `QUAL-15`.
+   never a dead end). A checklist ever signed off (completed now, or
+   completed before a controller reopened or voided it — the rail's
+   durable mark, `ever_completed_signature_id`, is the test, never a bare
+   `e_signatures` row, which the signing route mints for any resource an
+   active member names), an accepted or waived turnover item and a required
+   turnover item are deleted only by a controller — or with their project.
+   Voiding ANY checklist is a controller's too: a void takes it out of
+   every closeout count, so the author the separation rule refused could
+   otherwise void it away (`QUAL-15`'s void half; checklists carry no
+   reason column). Closeout's blindness to an open, unsigned checklist is
+   the rest of `QUAL-15`.
 
 **Rationale.** A PSSR requires the operating and maintenance
 representatives' confirmation; the program let only controllers and the
@@ -3889,10 +3897,10 @@ while a controller exists, and can when alone (marked); the owner who
 seeded a turnover item can neither accept nor waive it while a controller
 exists; a completion, acceptance or waiver without the signer's fresh
 signature on that record is refused by the database; a grantee's delete is
-refused; nobody but a controller voids, reopens or deletes a checklist a
-second person signed off; the tab shows controls exactly to those the
-policies admit and holds an author's sign-off until the separation count
-is known.
+refused; nobody but a controller voids any checklist, or reopens or
+deletes one a second person signed off; the tab shows controls exactly to
+those the policies admit (re-reading the decision on every refresh) and
+holds an author's sign-off until the separation count is known.
 
 **Reversal.** Per default: a facility that wants a stricter rule (a second
 signature even when alone, a named role slot per checklist kind) adds it as
@@ -3903,12 +3911,15 @@ configuration; per-item e-signatures are a follow-on. None may fall below
 accept or waive turnover they seeded (every wizard-seeded item), while a
 controller (or a granted reviewer) is on the project: on such a project a
 second person decides every item of the package, and the migration's AFTER
-row counts the undecided ones. The owner can no longer reopen, void or
-delete a completed checklist, delete a checklist anyone signed or a
-required or decided turnover item, or move a checklist or turnover item to
-another project (none of which the product ever did). The View-as
+row counts the undecided ones. The owner can no longer reopen or delete a
+completed checklist, void any checklist, delete a checklist ever signed off
+or a required or decided turnover item, or move a checklist or turnover
+item to another project (none of which the product ever did). A checklist
+completed before `20261136` carries no durable mark, so once a controller
+reopens or voids it the owner may delete it, as before. The View-as
 simulator shows the capability's own answer, so it shows a controller or
-the owner without `quality.sign_off` while the database admits them. Until `20261136` is applied the database grants no
+the owner without `quality.sign_off` while the database admits them
+(`ORG-14`, admin-and-org). Until `20261136` is applied the database grants no
 one new and does not bind the signature (the lib already signs and
 separates). A project-scoped grant is role-wide and API-authored only
 (`QUAL-14`); closeout does not yet require the signed completion

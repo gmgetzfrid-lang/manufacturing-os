@@ -81,9 +81,13 @@
 --      an org always keeps an active Admin, so this is never a dead end):
 --      anyone else's move out of complete would erase the second person's
 --      completion record with no reason and no signature (checklists keep no
---      history table) — NARROWS the owner and grantees; no product path
---      reopens or voids a checklist; the status change is stamped (status_changed_at, the
---      database's clock); a move to complete
+--      history table); and ANY checklist is voided only by a controller
+--      (QUAL-15: a void takes it out of every count closeout reads, so the
+--      author the separation rule refused could otherwise void it away;
+--      checklists carry no reason column, so none is asked) — both NARROW the
+--      owner and grantees; no product path reopens or voids a checklist; the
+--      status change is stamped (status_changed_at, the database's clock); a
+--      move to complete
 --        * is refused for the AUTHOR while another eligible signer exists
 --          (quality_other_signers > 0); with none it is allowed and MARKED
 --          (completed_single_signer = true) — DEC-12 / DEC-37, no toggle;
@@ -97,7 +101,10 @@
 --        * records completed_by, completed_by_name (the signature's signer
 --          name), completed_at, completed_signature_id and the marker — the
 --          database's values, a client's are ignored; a standing completion
---          keeps them; any other status clears them (the signature row stays).
+--          keeps them; any other status clears them (the signature row stays);
+--        * and stamps ever_completed_signature_id with the same signature: the
+--          DURABLE mark that this checklist was signed off, which no reopen or
+--          void clears and no signed-in client sets — the delete rail reads it.
 --      turnover_items_signoff_rail — the creator is the caller at insert and is
 --      never rewritten; an item is never BORN accepted or waived; a required
 --      item is never unmarked and no item moves to another project (either
@@ -118,10 +125,12 @@
 --    project_checklists, turnover_items and punch_items): the FOR ALL
 --    policies' new disjunct would admit DELETE as well, so the rail refuses a
 --    grantee's delete (except createChecklist taking back its own item-less
---    header) and keeps a signed sign-off — a checklist that carries a
---    signature (completed now, or signed before a controller reopened or
---    voided it: its e_signatures row is the only trace), an accepted or
---    waived turnover item — and a required turnover item to controllers
+--    header) and keeps a signed sign-off — a checklist that is complete or
+--    was ever signed off (ever_completed_signature_id, the rail's durable
+--    mark — never a bare e_signatures row: /api/signatures/sign mints one for
+--    any resource an active member names, and a refused completion leaves an
+--    orphan), an accepted or waived turnover item — and a required turnover
+--    item to controllers
 --    (NARROWS the owner there; no product path deletes one). An FK cascade
 --    and delete_project_record's audited purge pass.
 --
@@ -134,7 +143,9 @@
 -- controller other than the owner — the only other writer the policies
 -- admitted before this file) and, the plan's literal reading, on projects
 -- with another active project member — plus accepted or waived items whose
--- reviewer created them. Nothing is rewritten: the rails
+-- reviewer created them, and checklists that are not complete but carry a
+-- signature row (the durable mark is set from the next recorded completion;
+-- nothing derives it for them — see the row). Nothing is rewritten: the rails
 -- bind the next completion / acceptance / waiver. The AFTER rows ask the new
 -- helpers whom they admit and how many undecided records now need a second
 -- signer (every open, received or rejected turnover item counts — a seeded
@@ -230,6 +241,14 @@ SELECT 'BEFORE (informational): accepted or waived turnover items whose reviewer
        (SELECT COUNT(*) FROM turnover_items t
          WHERE t.status IN ('accepted', 'waived') AND t.reviewed_by IS NOT NULL AND t.created_by IS NOT NULL
            AND t.reviewed_by::text = t.created_by::text)::text
+UNION ALL
+SELECT 'BEFORE (informational): checklists not complete that carry an e_signatures row on them (an orphan of a refused completion, a signature minted outside a completion, or a completion later reopened or voided) — the delete rail reads the durable mark this file adds, set from the next recorded completion, never a bare signature row, so these stay the owner''s to delete as before',
+       (SELECT COUNT(*) FROM project_checklists c
+         WHERE c.status IS DISTINCT FROM 'complete'
+           AND EXISTS (SELECT 1 FROM e_signatures e
+                        WHERE e.org_id = c.org_id
+                          AND e.resource_type = 'project_checklist'
+                          AND e.resource_id = c.id))::text
 UNION ALL
 SELECT 'BEFORE: completed checklists (all)',
        (SELECT COUNT(*) FROM project_checklists WHERE status = 'complete')::text
@@ -523,6 +542,7 @@ ALTER TABLE project_checklists ADD COLUMN IF NOT EXISTS completed_by_name TEXT;
 ALTER TABLE project_checklists ADD COLUMN IF NOT EXISTS completed_at TIMESTAMPTZ;
 ALTER TABLE project_checklists ADD COLUMN IF NOT EXISTS completed_signature_id UUID;
 ALTER TABLE project_checklists ADD COLUMN IF NOT EXISTS completed_single_signer BOOLEAN;
+ALTER TABLE project_checklists ADD COLUMN IF NOT EXISTS ever_completed_signature_id UUID;
 ALTER TABLE turnover_items ADD COLUMN IF NOT EXISTS reviewed_signature_id UUID;
 ALTER TABLE turnover_items ADD COLUMN IF NOT EXISTS reviewed_single_signer BOOLEAN;
 
@@ -532,6 +552,8 @@ COMMENT ON COLUMN project_checklists.completed_signature_id IS
   'QUAL-4: the e_signatures row (resource_type project_checklist) the completion rests on — written by project_checklists_signoff_rail, never by a client.';
 COMMENT ON COLUMN project_checklists.completed_single_signer IS
   'QUAL-4 / DEC-12: true when the author completed it because nobody else on the project could sign it off — allowed, and marked on the record.';
+COMMENT ON COLUMN project_checklists.ever_completed_signature_id IS
+  'QUAL-4: the signature of the latest completion project_checklists_signoff_rail recorded — set at every completion it records, never cleared by a reopen or void, never set by a signed-in client. quality_records_delete_rail keeps a checklist carrying it for controllers to delete.';
 COMMENT ON COLUMN turnover_items.reviewed_signature_id IS
   'QUAL-4: the e_signatures row (resource_type turnover_item) a standing acceptance or waiver rests on — written by turnover_items_signoff_rail, never by a client.';
 COMMENT ON COLUMN turnover_items.reviewed_single_signer IS
@@ -562,6 +584,7 @@ BEGIN
     NEW.completed_at := NULL;
     NEW.completed_signature_id := NULL;
     NEW.completed_single_signer := NULL;
+    NEW.ever_completed_signature_id := NULL;
     RETURN NEW;
   END IF;
 
@@ -586,7 +609,19 @@ BEGIN
     RAISE EXCEPTION 'A completed checklist is a signed sign-off — only Admin / Document Control reopens or voids it. Nothing was changed. QUAL-4, 20261136'
       USING ERRCODE = 'check_violation';
   END IF;
+  -- QUAL-15: a void takes a checklist out of every count closeout reads,
+  -- with no reason on record (checklists carry no reason column) — so the
+  -- author the separation rule refused could void their PSSR away. Voiding
+  -- is a controller's, like undoing a completion; no product path voids one.
+  IF NEW.status = 'void' AND OLD.status IS DISTINCT FROM 'void'
+     AND NOT is_org_controller(OLD.org_id) THEN
+    RAISE EXCEPTION 'Voiding a checklist takes it out of the project''s closeout with no reason on record — only Admin / Document Control voids one. Nothing was changed. QUAL-15, 20261136'
+      USING ERRCODE = 'check_violation';
+  END IF;
   NEW.status_changed_at := CASE WHEN NEW.status IS DISTINCT FROM OLD.status THEN NOW() ELSE OLD.status_changed_at END;
+  -- The durable mark of a sign-off is the database's: kept through every
+  -- reopen and void, set only below, when a completion is recorded.
+  NEW.ever_completed_signature_id := OLD.ever_completed_signature_id;
 
   IF NEW.status = 'complete' AND OLD.status IS DISTINCT FROM 'complete' THEN
     -- DEC-12 / DEC-37: the author does not sign their own checklist off
@@ -620,6 +655,7 @@ BEGIN
     NEW.completed_at := NOW();
     NEW.completed_signature_id := v_sig;
     NEW.completed_single_signer := (OLD.created_by IS NOT NULL AND OLD.created_by = v_uid);
+    NEW.ever_completed_signature_id := v_sig;
   ELSIF NEW.status = 'complete' THEN
     -- A standing completion keeps its sign-off until a controller reopens it.
     IF NEW.completed_by IS DISTINCT FROM OLD.completed_by
@@ -631,7 +667,8 @@ BEGIN
         USING ERRCODE = 'check_violation';
     END IF;
   ELSE
-    -- Not complete: no completion record (the signature row itself stays).
+    -- Not complete: no completion record (the signature row itself stays,
+    -- and so does ever_completed_signature_id, the durable mark).
     NEW.completed_by := NULL;
     NEW.completed_by_name := NULL;
     NEW.completed_at := NULL;
@@ -643,7 +680,7 @@ END;
 $$;
 
 COMMENT ON FUNCTION project_checklists_signoff_rail() IS
-  'QUAL-4: the author is the caller at insert and never rewritten; a checklist never moves to another project; a completed checklist is reopened or voided only by a controller; a move to complete is refused for the author while another eligible signer exists (allowed and marked single-signer otherwise) and needs the completer''s own e-signature on this checklist from the last 15 minutes and after the last status change; the completion record is the database''s.';
+  'QUAL-4: the author is the caller at insert and never rewritten; a checklist never moves to another project; a completed checklist is reopened or voided only by a controller, and any checklist is voided only by a controller (QUAL-15); a move to complete is refused for the author while another eligible signer exists (allowed and marked single-signer otherwise) and needs the completer''s own e-signature on this checklist from the last 15 minutes and after the last status change; the completion record is the database''s, and so is ever_completed_signature_id, the durable mark of a sign-off that no reopen or void clears.';
 
 DROP TRIGGER IF EXISTS trg_project_checklists_signoff_rail ON project_checklists;
 CREATE TRIGGER trg_project_checklists_signoff_rail
@@ -750,12 +787,14 @@ CREATE TRIGGER trg_turnover_items_signoff_rail
 -- ── 6. Deleting a quality record: never the grant's, never a signed one ─────
 -- The four write policies are FOR ALL, so the sign-off disjunct would admit
 -- DELETE too. A grant writes a project's quality records; it does not delete
--- them. A signed sign-off (a checklist that carries a signature — completed
--- now, or signed before a controller reopened or voided it; an accepted or
--- waived turnover item) and a required turnover item are deleted by a
--- controller only: they leave by a controller's reopen or void, a signed
--- waiver, or with their project. A checklist keeps no history table, so its
--- signature row is the test, not only its current status. (A reopened
+-- them. A signed sign-off (a checklist that is complete or was ever signed
+-- off — completed now, or completed before a controller reopened or voided
+-- it; an accepted or waived turnover item) and a required turnover item are
+-- deleted by a controller only: they leave by a controller's reopen or void,
+-- a signed waiver, or with their project. A checklist keeps no history table,
+-- so the rail's durable mark (ever_completed_signature_id) is the test, not
+-- only its current status — and never a bare e_signatures row, which the
+-- signing route mints for any resource an active member names. (A reopened
 -- turnover item's signed decision outlives it in turnover_review_events,
 -- which has no foreign key.) The owner's delete of anything else (20261013)
 -- stands. The service pass, an FK cascade (one trigger level down) and
@@ -780,12 +819,8 @@ BEGIN
   IF is_org_controller(OLD.org_id) THEN RETURN OLD; END IF;
 
   IF TG_TABLE_NAME = 'project_checklists'
-     AND (v_status = 'complete'
-          OR EXISTS (SELECT 1 FROM e_signatures e
-                      WHERE e.org_id = OLD.org_id
-                        AND e.resource_type = 'project_checklist'
-                        AND e.resource_id = OLD.id)) THEN
-    RAISE EXCEPTION 'This checklist carries a signed sign-off (completed, or signed before it was reopened or voided) — only Admin / Document Control deletes one. Nothing was changed. QUAL-4, 20261136'
+     AND (v_status = 'complete' OR v_old->>'ever_completed_signature_id' IS NOT NULL) THEN
+    RAISE EXCEPTION 'This checklist carries a signed sign-off (completed, or completed before it was reopened or voided) — only Admin / Document Control deletes one. Nothing was changed. QUAL-4, 20261136'
       USING ERRCODE = 'insufficient_privilege';
   END IF;
   IF TG_TABLE_NAME = 'turnover_items'
@@ -809,7 +844,7 @@ END;
 $$;
 
 COMMENT ON FUNCTION quality_records_delete_rail() IS
-  'QUAL-4: a quality.sign_off grant never deletes a project''s checklists, turnover or punch (only its own item-less checklist header, the create rollback); a checklist that carries a signature (completed, or signed before a reopen or void), an accepted or waived turnover item and a required turnover item are deleted by a controller only. The service pass, an FK cascade and delete_project_record''s purge pass.';
+  'QUAL-4: a quality.sign_off grant never deletes a project''s checklists, turnover or punch (only its own item-less checklist header, the create rollback); a checklist that is complete or was ever signed off (ever_completed_signature_id, kept through a reopen or void), an accepted or waived turnover item and a required turnover item are deleted by a controller only. The service pass, an FK cascade and delete_project_record''s purge pass.';
 
 DROP TRIGGER IF EXISTS trg_project_checklists_signoff_delete_rail ON project_checklists;
 CREATE TRIGGER trg_project_checklists_signoff_delete_rail
@@ -938,10 +973,10 @@ SELECT 'the four write policies apply TO authenticated only — anon never evalu
            AND roles::text[] = ARRAY['authenticated']::text[]),
        NULL::text
 UNION ALL
-SELECT 'the sign-off record columns exist (6 on project_checklists, 2 on turnover_items)',
+SELECT 'the sign-off record columns exist (7 on project_checklists — the durable mark ever_completed_signature_id among them — 2 on turnover_items)',
        ((SELECT COUNT(*) FROM information_schema.columns
           WHERE table_schema = 'public' AND table_name = 'project_checklists'
-            AND column_name IN ('status_changed_at', 'completed_by', 'completed_by_name', 'completed_at', 'completed_signature_id', 'completed_single_signer')) = 6
+            AND column_name IN ('status_changed_at', 'completed_by', 'completed_by_name', 'completed_at', 'completed_signature_id', 'completed_single_signer', 'ever_completed_signature_id')) = 7
         AND (SELECT COUNT(*) FROM information_schema.columns
               WHERE table_schema = 'public' AND table_name = 'turnover_items'
                 AND column_name IN ('reviewed_signature_id', 'reviewed_single_signer')) = 2),
@@ -958,9 +993,13 @@ SELECT 'both sign-off rails fire BEFORE INSERT OR UPDATE, beside J2''s rails (co
                AND t.tgname IN ('trg_project_checklists_completion_basis', 'trg_turnover_items_decision_rail', 'trg_project_checklists_org_matches_project')),
        NULL::text
 UNION ALL
-SELECT 'the checklist rail refuses the author''s own completion while others can sign, requires a fresh signature on the checklist, keeps a completed checklist''s reopen or void to controllers, and never moves a checklist to another project',
+SELECT 'the checklist rail refuses the author''s own completion while others can sign, requires a fresh signature on the checklist, keeps a completed checklist''s reopen or void — and any checklist''s void (QUAL-15) — to controllers, keeps the durable sign-off mark through every reopen and void, and never moves a checklist to another project',
        (SELECT prosrc LIKE '%v_others := quality_other_signers(NEW.org_id, NEW.project_id, v_uid);%'
               AND prosrc LIKE '%IF OLD.status = ''complete'' AND NEW.status IS DISTINCT FROM ''complete''%AND NOT is_org_controller(OLD.org_id) THEN%'
+              AND prosrc LIKE '%IF NEW.status = ''void'' AND OLD.status IS DISTINCT FROM ''void''%AND NOT is_org_controller(OLD.org_id) THEN%'
+              AND prosrc LIKE '%NEW.ever_completed_signature_id := NULL;%'
+              AND prosrc LIKE '%NEW.ever_completed_signature_id := OLD.ever_completed_signature_id;%'
+              AND prosrc LIKE '%NEW.ever_completed_signature_id := v_sig;%'
               AND prosrc LIKE '%IF NEW.project_id IS DISTINCT FROM OLD.project_id THEN%'
               AND prosrc LIKE '%e.resource_type = ''project_checklist''%'
               AND prosrc LIKE '%e.signer_user_id = v_uid%'
@@ -986,7 +1025,7 @@ SELECT 'the turnover rail treats an acceptance AND a waiver as a sign-off (the c
           FROM pg_proc WHERE proname = 'turnover_items_signoff_rail' AND pronargs = 0),
        NULL::text
 UNION ALL
-SELECT 'the delete rail fires BEFORE DELETE on project_checklists, turnover_items and punch_items: a grant never deletes; a signed sign-off (a checklist carrying a signature, completed or not) or a required turnover item is a controller''s to delete; cascade and purge pass',
+SELECT 'the delete rail fires BEFORE DELETE on project_checklists, turnover_items and punch_items: a grant never deletes; a signed sign-off (a checklist complete or ever signed off — the durable mark, never a bare signature row) or a required turnover item is a controller''s to delete; cascade and purge pass',
        (SELECT COUNT(*) = 3 FROM pg_trigger t
          WHERE NOT t.tgisinternal
            AND ((t.tgname = 'trg_project_checklists_signoff_delete_rail' AND t.tgrelid = 'project_checklists'::regclass)
@@ -996,8 +1035,8 @@ SELECT 'the delete rail fires BEFORE DELETE on project_checklists, turnover_item
        AND (SELECT prosrc LIKE '%IF pg_trigger_depth() > 1 THEN RETURN OLD; END IF;%'
                    AND prosrc LIKE '%current_setting(''app.record_purge'', true)%'
                    AND prosrc LIKE '%IF is_org_controller(OLD.org_id) THEN RETURN OLD; END IF;%'
-                   AND prosrc LIKE '%v_status = ''complete''%'
-                   AND prosrc LIKE '%OR EXISTS (SELECT 1 FROM e_signatures e%e.resource_type = ''project_checklist''%e.resource_id = OLD.id%'
+                   AND prosrc LIKE '%AND (v_status = ''complete'' OR v_old->>''ever_completed_signature_id'' IS NOT NULL) THEN%'
+                   AND prosrc NOT LIKE '%FROM e_signatures%'
                    AND prosrc LIKE '%v_status IN (''accepted'', ''waived'') OR COALESCE((v_old->>''required'')::boolean, true)%'
                    AND prosrc LIKE '%IF NOT user_owns_project(OLD.project_id) THEN%'
                    AND prosecdef AND array_to_string(proconfig, ',') LIKE '%search_path=public%'

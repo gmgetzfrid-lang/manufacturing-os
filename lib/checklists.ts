@@ -39,8 +39,11 @@
 // author of a checklist does not sign it off while another eligible signer
 // exists (DEC-12 / DEC-37); with nobody else it is allowed and marked
 // single-signer. Checked here for a readable refusal; enforced there. A
-// completed checklist is reopened or voided by a controller only, and one
-// that carries a signature is deleted by a controller only (20261136).
+// completed checklist is reopened by a controller only, ANY checklist is
+// voided by a controller only (QUAL-15: a void takes it out of closeout),
+// and one that was ever signed off is deleted by a controller only — the
+// database keeps that mark on the row (ever_completed_signature_id) from
+// the first completion it records, through any reopen or void (20261136).
 
 import { supabase } from "@/lib/supabase";
 import type { Actor } from "@/lib/costs";
@@ -575,7 +578,10 @@ export async function updateChecklistItem(input: {
  *  and records who completed it. Undoing a completion — reopening or voiding
  *  a COMPLETED checklist — is a controller's alone from 20261136 (the
  *  completion record is cleared and checklists keep no history, so anyone
- *  else could otherwise erase a second person's signed sign-off); the
+ *  else could otherwise erase a second person's signed sign-off), and so is
+ *  voiding an OPEN one (QUAL-15: a void takes the checklist out of every
+ *  count closeout reads — the author refused the sign-off could otherwise
+ *  void it away; checklists have no reason column, so none is asked); the
  *  database refuses anyone else and that refusal comes back here as the
  *  error, with nothing audited. No product surface reopens or voids one. */
 export async function setChecklistStatus(input: {

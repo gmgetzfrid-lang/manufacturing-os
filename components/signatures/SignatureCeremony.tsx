@@ -17,7 +17,7 @@ import SignaturePad from "@/components/signatures/SignaturePad";
 const INTENTS: SignatureIntent[] = ["Approved", "Reviewed", "Acknowledged", "Witnessed", "Rejected"];
 
 export default function SignatureCeremony({
-  signerName, defaultIntent = "Approved", defaultStatement, resourceLabel, busy,
+  signerName, defaultIntent = "Approved", defaultStatement, resourceLabel, busy, error,
   allowDrawn = true, defaultMode = "draw", lockIntent = false, onCancel, onSign,
 }: {
   signerName: string;
@@ -25,6 +25,9 @@ export default function SignatureCeremony({
   defaultStatement?: string;
   resourceLabel?: string;
   busy?: boolean;
+  /** Why the caller's last attempt with this signature failed — shown inside
+   *  the ceremony, for a caller that keeps it open to let the signer retry. */
+  error?: string | null;
   /** Offer the touchpad-drawn mode (default true). */
   allowDrawn?: boolean;
   /** Which capture mode to open in when both are available. */
@@ -192,6 +195,12 @@ export default function SignatureCeremony({
             <span className="text-xs text-[var(--color-text-muted)]">I understand this electronic signature is legally binding and will be permanently recorded with my name, role, and timestamp.</span>
           </label>
         </div>
+
+        {error && (
+          <div role="alert" className="mx-5 mb-3 rounded-lg border border-rose-300 bg-rose-50 px-3 py-2 text-xs font-bold text-rose-800 dark:border-rose-500/50 dark:bg-rose-950/40 dark:text-rose-200">
+            {error}
+          </div>
+        )}
 
         <div className="flex justify-end gap-2 px-5 py-4 border-t border-[var(--color-border)]">
           <button onClick={() => !busy && onCancel()} className="px-4 py-2 rounded-lg text-sm font-bold text-[var(--color-text-muted)] hover:bg-[var(--color-surface-2)]">Cancel</button>

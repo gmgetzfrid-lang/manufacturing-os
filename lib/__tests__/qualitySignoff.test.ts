@@ -62,7 +62,8 @@ vi.mock("@/lib/eSignatures", () => ({
 }));
 
 import {
-  CAPABILITY_DEFS, RESOURCE_KEYS, policyAllows, validateCapabilityPolicy, type CapabilityPolicy,
+  CAPABILITY_DEFS, PROJECT_SCOPED_CAPS, RESOURCE_KEYS, policyAllows, policyHasProjectScopedRule, validateCapabilityPolicy,
+  type CapabilityPolicy,
 } from "@/lib/capabilityPolicy";
 import {
   loadSignoffAuthority, setChecklistStatus, signoffSeparation, QUALITY_SIGNOFF_INTENT, QUALITY_SIGNOFF_RESOURCE,
@@ -112,6 +113,48 @@ describe("quality.sign_off — the capability (dw1, DEC-13 / DEC-35)", () => {
     expect(RESOURCE_KEYS).toContain("projectId");
     const policy: CapabilityPolicy = { caps: { "quality.sign_off": [{ tokens: ["Admin", "DocCtrl"] }, { tokens: ["Admin", "DocCtrl", "Safety"], when: { projectId: ["p1"] } }] } };
     expect(validateCapabilityPolicy(policy)).toBeNull();
+  });
+
+  // J2b integration: a projectId rule anywhere else never matches in TS — and
+  // the evaluator before 20261136 (20261132) reads four keys, so it would read
+  // such a rule as UNCONDITIONAL (a widening of whatever it names).
+  it("projectId is allowed on quality.sign_off ONLY — a project-scoped rule on any other capability is refused, naming why", () => {
+    expect([...PROJECT_SCOPED_CAPS]).toEqual(["quality.sign_off"]);
+    expect(validateCapabilityPolicy({ caps: { "quality.sign_off": [{ tokens: ["Safety"], when: { projectId: ["p1"] } }] } })).toBeNull();
+    const refused = validateCapabilityPolicy({ caps: { "ticket.assign": [{ tokens: ["Admin"] }, { tokens: ["Admin", "Viewer"], when: { projectId: ["p1"] } }] } });
+    expect(refused).toBe('Assign drafters: a rule cannot be scoped to a project — only "Sign off quality records" is decided per project. Anywhere else the rule would never match, and a database without 20261136 would read it as unconditional — applying it everywhere.');
+    for (const d of CAPABILITY_DEFS.filter((x) => x.id !== "quality.sign_off")) {
+      const tokens = d.critical ? ["Admin"] : ["*"];
+      expect(validateCapabilityPolicy({ caps: { [d.id]: [{ tokens, when: { projectId: ["p1"] } }] } }), d.id).toMatch(/a rule cannot be scoped to a project/);
+      // combined with another key it is still refused
+      expect(validateCapabilityPolicy({ caps: { [d.id]: [{ tokens, when: { requestType: ["ISO"], projectId: ["p1"] } }] } }), d.id).toMatch(/a rule cannot be scoped to a project/);
+    }
+    // an empty projectId list is no condition (both evaluators skip it) — not refused
+    expect(validateCapabilityPolicy({ caps: { "ticket.assign": [{ tokens: ["Admin"], when: { projectId: [] } }] } })).toBeNull();
+    // the route's probe trigger
+    expect(policyHasProjectScopedRule({ caps: { "quality.sign_off": [{ tokens: ["Safety"], when: { projectId: ["p1"] } }] } })).toBe(true);
+    expect(policyHasProjectScopedRule({ caps: { "quality.sign_off": ["Safety"], "ticket.assign": [{ tokens: ["Admin"], when: { requestType: ["ISO"] } }] } })).toBe(false);
+    expect(policyHasProjectScopedRule({})).toBe(false);
+    expect(policyHasProjectScopedRule(null)).toBe(false);
+  });
+
+  it("the policy route refuses to store a project-scoped rule until the live database reads projectId (20261136 probed, fail closed)", () => {
+    const route = src("app/api/admin/capability-policy/route.ts");
+    expect(route).toContain('const { error } = await supabaseAdmin.rpc("quality_signoff_granted_for", { p_org: orgId, p_project: NIL_UUID, p_uid: NIL_UUID });');
+    expect(route).toContain('if (op === "save" && policyHasProjectScopedRule(after)) {');
+    // the probe runs after validation (which refuses projectId off the allowlist) and before the write
+    expect(route.indexOf("const invalid = validateCapabilityPolicy(after);")).toBeLessThan(route.indexOf("policyHasProjectScopedRule(after)"));
+    expect(route.indexOf("policyHasProjectScopedRule(after)")).toBeLessThan(route.indexOf('.from("org_configurations")\n      .update('));
+    // the probed function is created inside 20261136's one transaction — with the evaluator that reads projectId
+    const begin = m136.indexOf("\nBEGIN;"), commit = m136.indexOf("\nCOMMIT;");
+    for (const marker of ["CREATE OR REPLACE FUNCTION quality_signoff_granted_for(", "CREATE OR REPLACE FUNCTION org_capability_allows_for("]) {
+      expect(m136.indexOf(marker), marker).toBeGreaterThan(begin);
+      expect(m136.indexOf(marker), marker).toBeLessThan(commit);
+    }
+    expect(m136).toContain("GRANT EXECUTE ON FUNCTION quality_signoff_granted_for(uuid, uuid, uuid) TO service_role;");
+    // why the allowlist alone closes the window: before 20261136 nothing in SQL consults quality.sign_off
+    const earlier = numbered.filter((f) => f < M136).filter((f) => read(f).includes("'quality.sign_off'"));
+    expect(earlier).toEqual([]);
   });
 
   it("a Safety-role member granted the capability on one project may sign off that project's records and no other", () => {
@@ -286,6 +329,18 @@ describe("setChecklistStatus('complete') — QUAL-4", () => {
       expect((await setChecklistStatus({ orgId: "o1", projectId: "p1", checklist: checklist(), status, actor: actorOf(OW) })).ok).toBe(true);
     }
     expect(ceremony.calls).toHaveLength(0);
+  });
+
+  // QUAL-15's void half (J2b integration): voiding takes a checklist out of
+  // every count closeout reads, so the author the separation rule refused
+  // could void it away — 20261136 keeps every void to controllers.
+  it("voiding ANY checklist is a controller's: the database's refusal of the owner comes back as the error, nothing audited", async () => {
+    state.writeError = { message: "Voiding a checklist takes it out of the project's closeout with no reason on record — only Admin / Document Control voids one. Nothing was changed. QUAL-15, 20261136", code: "23514" };
+    const res = await setChecklistStatus({ orgId: "o1", projectId: "p1", checklist: checklist(), status: "void", actor: actorOf(OW) });
+    expect(res.ok).toBe(false);
+    expect(res.error).toMatch(/only Admin \/ Document Control voids one/);
+    expect(audits()).toHaveLength(0);
+    expect(state.tables.project_checklists[0].status).toBe("open");
   });
 
   // The review's major: a second person's signed completion could be voided or
@@ -603,7 +658,7 @@ describe("20261136 — the sign-off helpers and rails", () => {
       move,
       undo,
       "NEW.status_changed_at := CASE WHEN NEW.status IS DISTINCT FROM OLD.status",
-      "-- Not complete: no completion record (the signature row itself stays).",
+      "-- Not complete: no completion record (the signature row itself stays,",
     ];
     let at = -1;
     for (const line of order) { const i = r.indexOf(line); expect(i, line).toBeGreaterThan(at); at = i; }
@@ -615,6 +670,38 @@ describe("20261136 — the sign-off helpers and rails", () => {
     expect(tab).toContain('setChecklistStatus({ orgId, projectId, checklist, status: "complete"');
     // an org always keeps an active Admin (the last-Admin guard), so a controller exists to undo one
     expect(read("20260831_capability_policy_and_rails.sql")).toContain("CREATE OR REPLACE FUNCTION prevent_last_admin_removal()");
+  });
+  it("the checklist rail (QUAL-15 void half): ANY move to void is a controller's — after the completion-undo rule, before anything is stamped", () => {
+    const r = fnBody(m136, "CREATE OR REPLACE FUNCTION project_checklists_signoff_rail()");
+    const voidRule = "  IF NEW.status = 'void' AND OLD.status IS DISTINCT FROM 'void'\n     AND NOT is_org_controller(OLD.org_id) THEN\n    RAISE EXCEPTION 'Voiding a checklist takes it out of the project''s closeout with no reason on record — only Admin / Document Control voids one. Nothing was changed. QUAL-15, 20261136'\n      USING ERRCODE = 'check_violation';";
+    expect(r).toContain(voidRule);
+    expect(r.indexOf(voidRule)).toBeGreaterThan(r.indexOf("IF OLD.status = 'complete' AND NEW.status IS DISTINCT FROM 'complete'"));
+    expect(r.indexOf(voidRule)).toBeLessThan(r.indexOf("NEW.status_changed_at := CASE WHEN NEW.status IS DISTINCT FROM OLD.status"));
+    // the service pass (restores, server routes) still passes first
+    expect(r.indexOf("IF v_uid IS NULL THEN RETURN NEW; END IF;")).toBeLessThan(r.indexOf(voidRule));
+    // checklists carry no reason column, so the void asks none (the schema was checked: 20261013's table, 20261091 and 20261136's columns)
+    const ddl = m13.slice(m13.indexOf("CREATE TABLE IF NOT EXISTS project_checklists ("), m13.indexOf(");", m13.indexOf("CREATE TABLE IF NOT EXISTS project_checklists (")));
+    expect(ddl).not.toMatch(/reason|note/i);
+    const added = numbered.flatMap((f) => [...read(f).matchAll(/ALTER TABLE project_checklists ADD COLUMN IF NOT EXISTS (\w+)/g)].map((m) => m[1]));
+    expect(added.filter((c) => /reason|note/i.test(c))).toEqual([]);
+  });
+  it("the checklist rail keeps a DURABLE sign-off mark: ever_completed_signature_id is cleared at insert, set to the completion's signature, and carried through every reopen and void — never a client's value", () => {
+    const r = fnBody(m136, "CREATE OR REPLACE FUNCTION project_checklists_signoff_rail()");
+    expect(m136).toContain("ALTER TABLE project_checklists ADD COLUMN IF NOT EXISTS ever_completed_signature_id UUID;");
+    const insert = r.slice(r.indexOf("IF TG_OP = 'INSERT' THEN"), r.indexOf("RETURN NEW;", r.indexOf("IF TG_OP = 'INSERT' THEN")));
+    expect(insert).toContain("NEW.ever_completed_signature_id := NULL;");
+    // carried from OLD on every signed-in update, before the status branches
+    const keep = "  NEW.ever_completed_signature_id := OLD.ever_completed_signature_id;";
+    expect(r).toContain(keep);
+    expect(r.indexOf(keep)).toBeLessThan(r.indexOf("IF NEW.status = 'complete' AND OLD.status IS DISTINCT FROM 'complete' THEN"));
+    // set only where a completion is recorded
+    expect(r.split("NEW.ever_completed_signature_id := v_sig;").length - 1).toBe(1);
+    const recorded = r.slice(r.indexOf("NEW.completed_signature_id := v_sig;"), r.indexOf("ELSIF NEW.status = 'complete' THEN"));
+    expect(recorded).toContain("NEW.ever_completed_signature_id := v_sig;");
+    // nothing else assigns it (the not-complete branch clears the completion record, not the mark)
+    expect((r.match(/NEW\.ever_completed_signature_id :=/g) ?? []).length).toBe(3);
+    const notComplete = r.slice(r.indexOf("-- Not complete: no completion record"), r.indexOf("RETURN NEW;", r.indexOf("-- Not complete: no completion record")));
+    expect(notComplete).not.toContain("ever_completed_signature_id :=");
   });
   it("the turnover rail: creator stamped and never rewritten; never born accepted or waived; self-acceptance AND self-waiver refused while others can sign; a fresh signature on THIS item, newer than its last history row", () => {
     const r = fnBody(m136, "CREATE OR REPLACE FUNCTION turnover_items_signoff_rail()");
@@ -660,14 +747,21 @@ describe("20261136 — the sign-off helpers and rails", () => {
       "IF is_org_controller(OLD.org_id) THEN RETURN OLD; END IF;",
       "IF TG_TABLE_NAME = 'project_checklists'\n     AND (v_status = 'complete'",
       // the review: void (or reopen) then delete erased a signed completion —
-      // a checklist that EVER carried a signature is a controller's to delete
-      "OR EXISTS (SELECT 1 FROM e_signatures e\n                      WHERE e.org_id = OLD.org_id\n                        AND e.resource_type = 'project_checklist'\n                        AND e.resource_id = OLD.id)) THEN",
+      // a checklist that was EVER signed off is a controller's to delete. The
+      // integration fix: the test is the rail's durable mark, never a bare
+      // e_signatures row (/api/signatures/sign mints one for any resource an
+      // active member names; a refused completion leaves an orphan)
+      "     AND (v_status = 'complete' OR v_old->>'ever_completed_signature_id' IS NOT NULL) THEN",
       "AND (v_status IN ('accepted', 'waived') OR COALESCE((v_old->>'required')::boolean, true)) THEN",
       "IF NOT user_owns_project(OLD.project_id) THEN",
       "AND NOT EXISTS (SELECT 1 FROM checklist_items i WHERE i.checklist_id = OLD.id) THEN",
     ];
     let at = -1;
     for (const line of order) { const i = r.indexOf(line); expect(i, line).toBeGreaterThan(at); at = i; }
+    expect(r).not.toContain("e_signatures");
+    // turnover keeps its status test: it never read e_signatures (a reopened
+    // item's signed decision lives on in turnover_review_events, J2)
+    expect(r).toContain("AND (v_status IN ('accepted', 'waived') OR COALESCE((v_old->>'required')::boolean, true)) THEN");
     // the purge GUC is 20261103's, set by delete_project_record
     expect(read("20261103_prj_roundG_project_closeout_rails.sql")).toContain("PERFORM set_config('app.record_purge', 'project:' || p_project::text, true);");
     for (const t of ["project_checklists", "turnover_items", "punch_items"]) {
@@ -691,14 +785,24 @@ describe("20261136 — the sign-off helpers and rails", () => {
       "punch_items_write is the ONLY permissive write policy on punch_items",
       "the four write policies apply TO authenticated only",
       "the sign-off record columns exist",
-      "keeps a completed checklist's reopen or void to controllers, and never moves a checklist to another project",
+      "keeps a completed checklist's reopen or void — and any checklist's void (QUAL-15) — to controllers, keeps the durable sign-off mark through every reopen and void, and never moves a checklist to another project",
       "both sign-off rails fire BEFORE INSERT OR UPDATE",
       "the turnover rail treats an acceptance AND a waiver as a sign-off",
       "never moves an item to another project",
       "the delete rail fires BEFORE DELETE on project_checklists, turnover_items and punch_items",
-      "a signed sign-off (a checklist carrying a signature, completed or not)",
+      "a signed sign-off (a checklist complete or ever signed off — the durable mark, never a bare signature row)",
+      "the sign-off record columns exist (7 on project_checklists — the durable mark ever_completed_signature_id among them — 2 on turnover_items)",
     ]) expect(tail, label.replace(/'/g, "''")).toContain(label.replace(/'/g, "''"));
     expect(tail).not.toContain("anon cannot execute the evaluator;");
+    // the probes pin the void rule, the durable mark and the delete rail's test
+    expect(tail).toContain("AND prosrc LIKE '%IF NEW.status = ''void'' AND OLD.status IS DISTINCT FROM ''void''%AND NOT is_org_controller(OLD.org_id) THEN%'");
+    expect(tail).toContain("AND prosrc LIKE '%NEW.ever_completed_signature_id := v_sig;%'");
+    expect(tail).toContain("AND prosrc LIKE '%AND (v_status = ''complete'' OR v_old->>''ever_completed_signature_id'' IS NOT NULL) THEN%'");
+    expect(tail).toContain("AND prosrc NOT LIKE '%FROM e_signatures%'");
+    expect(tail).not.toContain("OR EXISTS (SELECT 1 FROM e_signatures e%");
+    // the inventory names the signed-but-not-complete checklists the mark is not derived for
+    expect(m136.slice(m136.indexOf("CREATE TEMP TABLE prj_roundg_signoff_before AS"), m136.indexOf("\nBEGIN;")))
+      .toContain("BEFORE (informational): checklists not complete that carry an e_signatures row on them");
     // the AFTER count includes open items (every seeded item is born open)
     expect(tail).toContain("WHERE t.status NOT IN ('accepted', 'waived') AND t.created_by IS NOT NULL");
     expect(tail).not.toContain("t.status IN ('received', 'rejected')");
@@ -724,7 +828,7 @@ describe("QualityTab census — controls from the decision (dw4)", () => {
   const tab = src("components/projects/QualityTab.tsx");
 
   it("reads the database's decision and passes it — never the page's canManage — to every section", () => {
-    expect(tab).toContain("void loadSignoffAuthority(orgId, projectId, actor).then((a) => { if (!cancelled) setAuthority(a); });");
+    expect(tab).toContain("const a = await loadSignoffAuthority(orgId, projectId, actor);");
     expect(tab).toContain("const canSignOff = authority && !authority.error ? authority.maySign : canManage;");
     const top = tab.slice(tab.indexOf("export default function QualityTab("), tab.indexOf("\nfunction LoadFailed("));
     for (const section of ["ChecklistsSection", "TurnoverSection", "PunchSection"]) {
@@ -737,6 +841,50 @@ describe("QualityTab census — controls from the decision (dw4)", () => {
     expect(top.match(/canManage=\{canManage\}/g)).toBeNull();
     expect((top.match(/\bcanManage\b(?!=)/g) ?? []).length).toBe(3);   // the destructure, its type, the fallback
   });
+  // J2b integration: the decision was read once on mount — Retry and every
+  // onChanged re-read the lists but never the decision.
+  it("refresh() — mount, Retry and every section's onChanged — re-reads the sign-off decision beside the lists; only the newest answer lands", () => {
+    const loader = tab.slice(tab.indexOf("const loadAuthority = useCallback(async () => {"), tab.indexOf("}, [orgId, projectId, actor]);", tab.indexOf("const loadAuthority = useCallback(")));
+    expect(loader).toContain("const seq = ++authoritySeq.current;");
+    expect(loader).toContain("const a = await loadSignoffAuthority(orgId, projectId, actor);");
+    expect(loader).toContain("if (seq === authoritySeq.current) setAuthority(a);");
+    const refresh = tab.slice(tab.indexOf("const refresh = useCallback(async () => {"), tab.indexOf("useEffect(() => { void refresh(); }, [refresh]);"));
+    expect(refresh).toContain("void loadAuthority();");
+    expect(refresh.indexOf("void loadAuthority();")).toBeLessThan(refresh.indexOf("await Promise.allSettled(["));
+    expect(refresh).toContain("}, [orgId, projectId, loadAuthority]);");
+    // the decision is read in ONE place — no separate mount-only effect remains
+    expect((tab.match(/loadSignoffAuthority\(/g) ?? []).length).toBe(1);
+    // Retry and onChanged are refresh
+    expect(tab).toContain("const retry = () => void refresh();");
+    const top = tab.slice(tab.indexOf("export default function QualityTab("), tab.indexOf("\nfunction LoadFailed("));
+    expect((top.match(/onChanged=\{retry\}/g) ?? []).length).toBe(3);
+  });
+  it("the fallback notice names everyone the fallback admits: the project owner, Admin and Document Control", () => {
+    expect(tab).toContain("<Notice notice={info(`Couldn't read who may sign off on this project (${authority.error}) — the controls shown are the ones the project owner, Admin and Document Control always have.`)} />");
+    expect(tab).not.toContain("the project owner's and Document Control's");
+    // the fallback it describes: the page's canManage = owner || Admin / DocCtrl
+    expect(src("app/(protected)/projects/[id]/page.tsx")).toContain('const isAdmin = hasAnyRole(["Admin", "DocCtrl"]);');
+    expect(src("app/(protected)/projects/[id]/page.tsx")).toContain("const canManage = isOwner || isAdmin;");
+  });
+  // J2b integration: the turnover ceremony closed before reviewTurnoverItem
+  // ran, so a failed signature dropped the reviewer's document pick or reason.
+  it("the turnover ceremony stays open (busy) until the decision lands — a failure keeps the pick / reason and says why inside the ceremony", () => {
+    const sign = tab.slice(tab.indexOf("{signingDecision?.item.id === it.id && ("), tab.indexOf("</li>", tab.indexOf("{signingDecision?.item.id === it.id && (")));
+    expect(sign).not.toMatch(/const pending = signingDecision;\s*setSigningDecision\(null\);/);
+    expect(sign).toContain("if (res?.ok) setSigningDecision((cur) => (cur === pending ? null : cur));");
+    expect(sign).toContain('else if (res) setSigningError(res.error ?? "Couldn\'t update.");');
+    expect(sign).toContain("error={signingError}");
+    expect(sign).toContain("busy={busy === it.id}");
+    expect(sign).toContain("onCancel={() => { if (busy !== it.id) { setSigningError(null); setSigningDecision(null); } }}");
+    // review hands the write's result back (null: the reject prompt was cancelled)
+    expect(tab).toContain("return finish(await reviewTurnoverItem({ item, status, note,");
+    // the ceremony renders the caller's error, as an alert
+    const c = src("components/signatures/SignatureCeremony.tsx");
+    expect(c).toContain("error?: string | null;");
+    expect(c).toMatch(/\{error && \(\s*<div role="alert"/);
+    // ChecklistCard's ceremony likewise stays open while complete() runs
+    expect(tab).toContain('onCancel={() => { if (busy !== "complete") setSigning(false); }}');
+  });
   it("Mark complete and turnover Accept / Waive go through the signing ceremony and pass its output to the lib", () => {
     expect(tab).toContain('<button onClick={() => setSigning(true)} disabled={busy != null || completeBlocked}');
     expect(tab).toContain("setChecklistStatus({ orgId, projectId, checklist, status: \"complete\", actor, signoff: signed })");
@@ -747,7 +895,7 @@ describe("QualityTab census — controls from the decision (dw4)", () => {
     expect(tab).not.toContain('review(it, "waived")');
     expect(tab).toContain("const problem = reasonProblem(note);");
     expect(tab).toContain("setSigningDecision({ item, status: \"waived\", note: note.trim() });");
-    expect(tab).toContain("else void review(pending.item, \"waived\", undefined, signed, pending.note);");
+    expect(tab).toContain(": review(pending.item, \"waived\", undefined, signed, pending.note);");
     expect((tab.match(/<SignatureCeremony/g) ?? []).length).toBe(2);
     expect((tab.match(/lockIntent/g) ?? []).length).toBe(2);
   });

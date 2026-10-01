@@ -1,6 +1,6 @@
 # 01 · Org lifecycle, membership & teams
 
-**13 findings** — 2 CRITICAL · 1 HIGH · 10 MEDIUM.
+**14 findings** — 2 CRITICAL · 1 HIGH · 7 MEDIUM · 4 LOW (`ORG-14` opened at the projects Round G J2b integration, 2026-10-01; the split now counts the four findings the independent pass lowered to LOW, which the line had kept as MEDIUM).
 
 Signup, invitation, removal, last-admin protection, and what offboarding orphans.
 
@@ -508,5 +508,31 @@ Separately, `updateTeam` writes `supervisor_user_id` with no validation that the
 - [ ] `my_team_ids()` and `node_visible`'s team lookup filter by the org in question, matching `user_can_publish_on_library`
 - [ ] `updateTeam` validates that `supervisorUserId` is an active member of the team's org
 - [ ] Team membership and supervisor changes write audit_logs rows
+
+---
+
+<a id="org-14"></a>
+
+## ORG-14 · The "View as" simulator reports that Admin, Document Control and the project owner cannot sign off quality records — and cannot show a project-scoped grantee at all — while the database admits all of them
+
+- **Severity:** MEDIUM
+- **Severity rationale:** The author's estimate (an upper bound, like every unchallenged grade here). The same harm class as `ORG-10`, whose verifier set MEDIUM: the screen built to certify effective access gives a wrong compliance answer, fail-closed — it under-reports, so nobody gains access from it. Mitigated, not removed, by the permissions grid: the `quality.sign_off` row's description names the standing holders, but the simulator itself does not.
+- **Status:** OPEN
+- **Assigned:** admin-and-org P9 (permissions console truth) — by the integrator, 2026-10-01
+- **Verification:** CONFIRMED (by reading)
+- **Locations:** `components/permissions/ViewAsSimulator.tsx:142-148` (the capability list is `policyAllows(policy, d.id, who.role, who.roles, who.uid, resource)` for every `CAPABILITY_DEFS` row, with `resource` a request type or nothing — never a project), `components/permissions/ViewAsSimulator.tsx:157` ("computed with the SAME evaluators the app enforces with"), `components/permissions/ViewAsSimulator.tsx:185` (the only standing rights it mentions are ticket identity rights), `lib/capabilityPolicy.ts:168-170` (`quality.sign_off`, `defaultRoles: []`), `supabase/migrations/20261136_prj_roundG_quality_signoff.sql:428-437` (`quality_signer_eligible`: a controller, the owner, or the capability for that project)
+- **Related:** `QUAL-4`, `QUAL-14`, `ORG-10`, `ALOG-14`, `DEC-13`
+- **Independently verified:** — (`author`: opened 2026-10-01 at the J2b integration of projects Round G, per `DEC-31`, from the package's final review; not yet challenged)
+
+**Mechanism.** `QUAL-4` (`20261136`) made `quality.sign_off` the capability that grants quality sign-off BEYOND its standing holders: Admin and Document Control write and sign off a project's checklists, turnover and punch by the four write policies' `is_org_controller` clause, and the project owner by the owner disjunct, whatever the policy says — so the capability's shipped default is `[]`. The simulator answers each capability with `policyAllows` alone, so for an Admin, a Document Control member or a project owner (with no grant) it draws "Sign off quality records" unticked. It also has no project to evaluate against: its resource is `{ requestType }` from the request-type picker or nothing, so a rule scoped to one project (`{ tokens: ["Safety"], when: { projectId: [<id>] } }` — the per-project grant `QUAL-4` exists to allow) never matches there, and the granted Safety lead is drawn unticked as well. The page's subtitle says the answers are "computed with the SAME evaluators the app enforces with"; for this capability the database's answer is `quality_signer_eligible` (controller, owner, or the capability for that project), which the simulator does not reproduce, and its footnote names only the ticket identity rights.
+
+**Failure scenario.** An Admin preparing a PSSR access review asks the console who can sign off project X's quality records. View-as on the project owner, on a Document Control member and on the Safety lead granted on project X shows "Sign off quality records" unticked for all three. The Admin records that none of them can sign off; in fact each can complete X's checklists and accept or waive its turnover, and the owner and Document Control can on every project they can see. The access review is wrong for exactly the people who sign.
+
+**Remediation.** Illustrative: for a capability with standing holders, have the simulator say so beside the verdict ("Admin / Document Control and each project's owner sign off whatever this row says") or compute the standing clause the way `quality_signer_eligible` does; give the capability list a project picker for the capabilities evaluated per project (`PROJECT_SCOPED_CAPS` in `lib/capabilityPolicy.ts`) and pass `{ projectId }`; or ask the database (`quality_signoff_status` answers for the caller only today — a per-member question would need a service-side read, since `quality_signer_eligible` answers for any uid and is closed to clients).
+
+**Done when.**
+- The simulator does not report an Admin, a Document Control member or a project's owner as unable to sign off quality records the database lets them sign off.
+- A member granted `quality.sign_off` on one project is shown as holding it for that project (and not for another).
+- A test compares the simulator's quality sign-off answer against `quality_signer_eligible`'s rule for a controller, an owner, a project-scoped grantee and an ungranted member.
 
 ---

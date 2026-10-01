@@ -17,7 +17,10 @@
 //      expiry is stored as ISO 8601, and the server stamps
 //      grantedBy / grantedAt;
 //   4. validateCapabilityPolicy runs on the RESULT; expired grants are pruned
-//      on every write and the pruning is named in the audit row (WF-16);
+//      on every write and the pruning is named in the audit row (WF-16); a
+//      rule scoped to a project (quality.sign_off only — PROJECT_SCOPED_CAPS)
+//      is stored only once the live database reads projectId (QUAL-4,
+//      20261136 — probed, fail closed);
 //   5. the write is compare-and-set on the row's updated_at (two concurrent
 //      grant writes cannot lose one another — WF-16 done-when 2);
 //   6. this process's policy cache is invalidated (WF-10) and a before/after
@@ -35,6 +38,7 @@ import { supabaseAdmin } from "@/lib/supabaseAdmin";
 import {
   CAPABILITY_DEFS, RESOURCE_KEYS, baseTokensFor, grantActive, isRuleArray, normalizeCapabilityEntry,
   parseStoredCapabilityPolicy, ruleIsConditional, validateCapabilityPolicy, invalidateCapabilityPolicy,
+  policyHasProjectScopedRule,
   type CapabilityId, type CapabilityPolicy, type UserGrant,
 } from "@/lib/capabilityPolicy";
 import { memberHoldsAny } from "@/lib/roleHeld";
@@ -79,6 +83,29 @@ function canonicalEntry(policy: CapabilityPolicy, id: CapabilityId): string {
     return [{ tokens, when: Object.fromEntries(keys.map((k) => [k, asSet(r.when?.[k] ?? [])])) }];
   });
   return JSON.stringify({ base, rules });
+}
+
+const NIL_UUID = "00000000-0000-0000-0000-000000000000";
+
+/** QUAL-4: does the LIVE database read a rule's projectId? Only the
+ *  evaluator 20261136 re-created does; the one before it (20261132) reads
+ *  four keys and would take a project-scoped rule as unconditional.
+ *  validateCapabilityPolicy already confines the key to quality.sign_off,
+ *  which nothing in the database consults before 20261136 — so the
+ *  allowlist alone closes that window — and this probe keeps a scoped rule
+ *  out of the stored policy until the database can read it, so 20261136's
+ *  inventory ("stored rules conditioned on a projectId", expect 0) stays
+ *  true. quality_signoff_granted_for exists only once 20261136 committed:
+ *  it is created in the same transaction that re-creates the evaluator.
+ *  Read-only and cheap — the nil project matches no row. Anything but a
+ *  clean answer refuses the save (fail closed, DEC-16). */
+async function liveEvaluatorReadsProjectId(orgId: string): Promise<string | null> {
+  const { error } = await supabaseAdmin.rpc("quality_signoff_granted_for", { p_org: orgId, p_project: NIL_UUID, p_uid: NIL_UUID });
+  if (!error) return null;
+  const missing = error.code === "PGRST202" || (error.code === "42883" && /function .* does not exist/i.test(error.message ?? ""));
+  return missing
+    ? "A rule scoped to a project needs migration 20261136 (the database does not read projectId yet, and would apply the rule everywhere) — nothing was saved."
+    : `Couldn't confirm the database reads project-scoped rules (${error.message || "the check failed"}) — nothing was saved.`;
 }
 
 export async function POST(req: NextRequest) {
@@ -179,6 +206,12 @@ export async function POST(req: NextRequest) {
   // every policy and grant write.
   const invalid = validateCapabilityPolicy(after);
   if (invalid) return bad(invalid, 400);
+  // QUAL-4: a project-scoped rule is stored only once the live evaluator
+  // reads projectId (20261136); before that it would read as unconditional.
+  if (op === "save" && policyHasProjectScopedRule(after)) {
+    const notLive = await liveEvaluatorReadsProjectId(orgId);
+    if (notLive) return bad(notLive, 409);
+  }
 
   // Compare-and-set on the stamp we read: a concurrent write (a second
   // grant, another admin's save) is refused, not silently overwritten.

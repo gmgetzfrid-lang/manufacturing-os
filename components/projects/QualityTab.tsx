@@ -40,7 +40,7 @@
 //   marked. Until the database says how many others could sign, the author's
 //   sign-off waits (and says why) — never a guessed "nobody else".
 
-import React, { useCallback, useEffect, useMemo, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   ClipboardCheck, FileText, Loader2, Sparkles, Search, X, Plus, Check,
   ChevronDown, ChevronRight, AlertTriangle, ShieldCheck, PackageCheck,
@@ -118,12 +118,16 @@ export default function QualityTab({ orgId, projectId, canManage, uid, userEmail
 }) {
   const actor: Actor = useMemo(() => ({ uid, email: userEmail ?? null }), [uid, userEmail]);
   const { member } = useRole();
-  /** QUAL-4: the database's sign-off decision for this project. */
+  /** QUAL-4: the database's sign-off decision for this project — read with
+   *  the lists on every refresh (mount, Retry, after each change), so a grant,
+   *  a revocation or a new eligible signer is seen without a page reload. */
   const [authority, setAuthority] = useState<SignoffAuthority | null>(null);
-  useEffect(() => {
-    let cancelled = false;
-    void loadSignoffAuthority(orgId, projectId, actor).then((a) => { if (!cancelled) setAuthority(a); });
-    return () => { cancelled = true; };
+  /** Only the newest read may land: an older answer never overwrites it. */
+  const authoritySeq = useRef(0);
+  const loadAuthority = useCallback(async () => {
+    const seq = ++authoritySeq.current;
+    const a = await loadSignoffAuthority(orgId, projectId, actor);
+    if (seq === authoritySeq.current) setAuthority(a);
   }, [orgId, projectId, actor]);
   // QUAL-4 done-when 4: the write controls follow the decision the policies
   // apply. Until it answers — or when it cannot be read — they follow the
@@ -148,6 +152,9 @@ export default function QualityTab({ orgId, projectId, canManage, uid, userEmail
   const [loading, setLoading] = useState(true);
 
   const refresh = useCallback(async () => {
+    // The sign-off decision is re-read beside the lists (it never throws:
+    // a failed read comes back as authority.error and the controls fall back).
+    void loadAuthority();
     // allSettled: one failing read never hides the three that answered, and
     // a denied policy or a missing migration is a failure to load — never
     // "No checklists yet" (UX-10).
@@ -166,7 +173,7 @@ export default function QualityTab({ orgId, projectId, canManage, uid, userEmail
     setLoading(false);
     onDataChanged?.();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [orgId, projectId]);
+  }, [orgId, projectId, loadAuthority]);
   useEffect(() => { void refresh(); }, [refresh]);
 
   if (loading) return <div className="py-12 flex justify-center"><Loader2 className="w-5 h-5 animate-spin text-[var(--color-accent)]" /></div>;
@@ -175,7 +182,7 @@ export default function QualityTab({ orgId, projectId, canManage, uid, userEmail
   return (
     <div className="space-y-4">
       {authority?.error && (
-        <Notice notice={info(`Couldn't read who may sign off on this project (${authority.error}) — the controls shown are the project owner's and Document Control's.`)} />
+        <Notice notice={info(`Couldn't read who may sign off on this project (${authority.error}) — the controls shown are the ones the project owner, Admin and Document Control always have.`)} />
       )}
       <ChecklistsSection orgId={orgId} projectId={projectId} canManage={canSignOff} actor={actor} signoff={signoff}
         checklists={checklists} loadError={loadErrors.checklists} onRetry={retry} onChanged={retry} />
@@ -958,6 +965,9 @@ function TurnoverSection({ orgId, projectId, canManage, actor, signoff, items, e
   const [signingDecision, setSigningDecision] = useState<
     { item: TurnoverItem; status: "accepted"; documentId?: string } | { item: TurnoverItem; status: "waived"; note: string } | null
   >(null);
+  /** Why the open ceremony's last signing failed — said inside the ceremony,
+   *  which stays open (and keeps the decision) until a signing lands. */
+  const [signingError, setSigningError] = useState<string | null>(null);
   const [reviewedDocs, setReviewedDocs] = useState<Record<string, { label: string; status: string | null; rev: string | null; libraryId: string | null }>>({});
   const progress = useMemo(() => computeTurnoverProgress(items), [items]);
   const documentIds = useMemo(() => [...new Set(items.map((i) => i.documentId).filter((x): x is string => Boolean(x)))].sort().join(","), [items]);
@@ -996,12 +1006,15 @@ function TurnoverSection({ orgId, projectId, canManage, actor, signoff, items, e
     onChanged();
   };
 
-  const finish = (res: { ok: boolean; error?: string }) => {
+  /** Settles a write and hands its result back, so a caller closes what it
+   *  opened only once the write landed. */
+  const finish = (res: { ok: boolean; error?: string }): { ok: boolean; error?: string } => {
     setBusy(null);
     if (!res.ok) setNotice(failure(res.error ?? "Couldn't update.")); else { setNotice(null); onChanged(); }
+    return res;
   };
 
-  const review = async (item: TurnoverItem, status: TurnoverItem["status"], documentId?: string | null, signed?: SignoffInput, waiverNote?: string) => {
+  const review = async (item: TurnoverItem, status: TurnoverItem["status"], documentId?: string | null, signed?: SignoffInput, waiverNote?: string): Promise<{ ok: boolean; error?: string } | null> => {
     let note: string | null = waiverNote ?? null;
     if (status === "rejected") {
       note = await promptReason(
@@ -1009,10 +1022,10 @@ function TurnoverSection({ orgId, projectId, canManage, actor, signoff, items, e
         "Why is it not acceptable? The contractor sees this reason, it lands on their record, and it is kept as a nonconformance.",
         "Reason (at least 10 characters)",
       );
-      if (note === null) return;
+      if (note === null) return null;
     }
     setBusy(item.id); setNotice(null);
-    finish(await reviewTurnoverItem({ item, status, note, ...(documentId !== undefined ? { documentId } : {}), actor, ...(signed ? { signoff: signed } : {}) }));
+    return finish(await reviewTurnoverItem({ item, status, note, ...(documentId !== undefined ? { documentId } : {}), actor, ...(signed ? { signoff: signed } : {}) }));
   };
 
   // QUAL-4: a waiver clears the item from the package as an acceptance does,
@@ -1178,13 +1191,25 @@ function TurnoverSection({ orgId, projectId, canManage, actor, signoff, items, e
                       ? `I, ${signoff.signerName}, have reviewed "${it.name}" and accept it for this project's turnover package, and affirm this as my electronic signature.`
                       : `I, ${signoff.signerName}, waive "${it.name}" for this project's turnover package — ${signingDecision.note} — and affirm this as my electronic signature.`}
                     busy={busy === it.id}
-                    onCancel={() => { if (busy !== it.id) setSigningDecision(null); }}
+                    error={signingError}
+                    onCancel={() => { if (busy !== it.id) { setSigningError(null); setSigningDecision(null); } }}
                     onSign={(_intent, statement, signatureImage, reauth) => {
+                      // The ceremony stays open, busy, while the decision is
+                      // written, and closes only once it lands: a refused or
+                      // failed signature keeps the reviewer's document pick
+                      // or waiver reason, says why inside the ceremony, and
+                      // lets them sign again or cancel (as ChecklistCard keeps
+                      // its ceremony open until complete() has its answer).
                       const pending = signingDecision;
-                      setSigningDecision(null);
+                      setSigningError(null);
                       const signed: SignoffInput = { statement, signatureImage: signatureImage ?? null, reauth: reauth ?? null, signerName: signoff.signerName };
-                      if (pending.status === "accepted") void review(pending.item, "accepted", pending.documentId, signed);
-                      else void review(pending.item, "waived", undefined, signed, pending.note);
+                      const decided = pending.status === "accepted"
+                        ? review(pending.item, "accepted", pending.documentId, signed)
+                        : review(pending.item, "waived", undefined, signed, pending.note);
+                      void decided.then((res) => {
+                        if (res?.ok) setSigningDecision((cur) => (cur === pending ? null : cur));
+                        else if (res) setSigningError(res.error ?? "Couldn't update.");
+                      });
                     }}
                   />
                 )}

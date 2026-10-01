@@ -60,6 +60,9 @@ const state = vi.hoisted(() => ({
   auditError: null as null | { message: string },
   session: null as null | { access_token: string },
   browserRows: {} as Record<string, Array<Record<string, unknown>>>,
+  /** QUAL-4: what the service client's rpc answers (the route's projectId probe). */
+  rpcResult: { data: false, error: null } as { data: unknown; error: null | { message: string; code?: string } },
+  rpcCalls: [] as Array<{ fn: string; args: Record<string, unknown> }>,
 }));
 function chain(table: string, rowsOf: () => Array<Record<string, unknown>>) {
   const filters: Array<[string, unknown]> = [];
@@ -95,6 +98,7 @@ vi.mock("@/lib/supabaseAdmin", () => ({
   supabaseAdmin: {
     auth: { getUser: vi.fn(async () => state.user ? { data: { user: state.user }, error: null } : { data: { user: null }, error: { message: "bad" } }) },
     from: (t: string) => chain(t, () => state.rows[t] ?? []),
+    rpc: async (fn: string, args: Record<string, unknown>) => { state.rpcCalls.push({ fn, args }); return state.rpcResult; },
   },
 }));
 vi.mock("@/lib/supabase", () => ({
@@ -121,6 +125,7 @@ const updates = (table: string) => state.calls.filter((c) => c.table === table &
 beforeEach(() => {
   __resetCapabilityPolicyCache();
   state.user = null; state.rows = {}; state.calls = []; state.conflict = false; state.auditError = null; state.session = null; state.browserRows = {};
+  state.rpcResult = { data: false, error: null }; state.rpcCalls = [];
 });
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -558,6 +563,67 @@ describe("WF-11 — the policy route: who may write, and what", () => {
     expect(cp).not.toMatch(/\.upsert\(/);
     expect(cp).not.toMatch(/from\("audit_logs"\)/);
     expect(state.calls.filter((c) => c.table === "org_configurations" && (c.method === "update" || c.method === "upsert" || c.method === "insert"))).toHaveLength(0);
+  });
+});
+
+// QUAL-4 (projects Round G, J2b integration): a rule scoped to a project.
+// Only quality.sign_off may carry one (PROJECT_SCOPED_CAPS), and the route
+// stores one only once the live evaluator reads projectId — 20261132's reads
+// four keys and would take the rule as unconditional.
+describe("QUAL-4 — the policy route and a project-scoped rule", () => {
+  beforeEach(seedPolicyOrg);
+  const SCOPED = { "quality.sign_off": [{ tokens: ["Safety"], when: { projectId: ["p1"] } }] };
+
+  it("a projectId rule on any capability but quality.sign_off is refused (400) before anything is probed or written", async () => {
+    state.user = { id: "a1" };
+    for (const caps of [
+      { "ticket.assign": [{ tokens: ["Admin"] }, { tokens: ["Admin", "Viewer"], when: { projectId: ["p1"] } }] },
+      { "transmittal.issue": [{ tokens: ["*"], when: { projectId: ["p1"] } }] },
+      { "holds.release": [{ tokens: ["*"] }, { tokens: ["Admin"], when: { projectId: ["p1"], requestType: ["ISO"] } }] },
+    ]) {
+      const res = await policy({ op: "save", orgId: "o1", caps });
+      expect(res.status, JSON.stringify(caps)).toBe(400);
+      expect((await res.json()).error).toMatch(/a rule cannot be scoped to a project — only "Sign off quality records" is decided per project/);
+    }
+    expect(state.rpcCalls).toHaveLength(0);
+    expect(updates("org_configurations")).toHaveLength(0);
+    expect(inserts("audit_logs")).toHaveLength(0);
+  });
+
+  it("before 20261136 (the probe's function is missing) a quality.sign_off project rule is refused (409) — nothing written, nothing audited", async () => {
+    state.user = { id: "a1" };
+    state.rpcResult = { data: null, error: { message: "Could not find the function public.quality_signoff_granted_for(p_org, p_project, p_uid) in the schema cache", code: "PGRST202" } };
+    const res = await policy({ op: "save", orgId: "o1", caps: SCOPED });
+    expect(res.status).toBe(409);
+    expect((await res.json()).error).toMatch(/needs migration 20261136/);
+    expect(state.rpcCalls).toEqual([{ fn: "quality_signoff_granted_for", args: { p_org: "o1", p_project: "00000000-0000-0000-0000-000000000000", p_uid: "00000000-0000-0000-0000-000000000000" } }]);
+    expect(updates("org_configurations")).toHaveLength(0);
+    expect(inserts("audit_logs")).toHaveLength(0);
+    // a raw undefined_function is the same answer
+    state.rpcResult = { data: null, error: { message: "function quality_signoff_granted_for(uuid, uuid, uuid) does not exist", code: "42883" } };
+    expect((await policy({ op: "save", orgId: "o1", caps: SCOPED })).status).toBe(409);
+  });
+
+  it("a probe that cannot answer refuses too (fail closed); once 20261136 answers, the rule is stored and audited", async () => {
+    state.user = { id: "a1" };
+    state.rpcResult = { data: null, error: { message: "upstream timeout", code: "PGRST000" } };
+    const refused = await policy({ op: "save", orgId: "o1", caps: SCOPED });
+    expect(refused.status).toBe(409);
+    expect((await refused.json()).error).toMatch(/Couldn't confirm the database reads project-scoped rules \(upstream timeout\)/);
+    expect(updates("org_configurations")).toHaveLength(0);
+    state.rpcResult = { data: false, error: null };
+    const ok = await policy({ op: "save", orgId: "o1", caps: SCOPED });
+    expect(ok.status).toBe(200);
+    expect(updates("org_configurations")[0].data).toEqual({ caps: SCOPED, grants: [LIVE_V2] });
+    expect(inserts("audit_logs")).toHaveLength(1);
+  });
+
+  it("a save with no project-scoped rule never probes (every existing save is unchanged)", async () => {
+    state.user = { id: "m1" };
+    state.rpcResult = { data: null, error: { message: "Could not find the function", code: "PGRST202" } };
+    const res = await policy({ op: "save", orgId: "o1", caps: { "ticket.assign": ["Admin", "DocCtrl"], "quality.sign_off": ["Safety"] } });
+    expect(res.status).toBe(200);
+    expect(state.rpcCalls).toHaveLength(0);
   });
 });
 
