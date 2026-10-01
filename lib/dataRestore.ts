@@ -1108,9 +1108,30 @@ export function restoreRowLabel(table: string, row: Record<string, unknown>): st
   return parts.every(isKeyValue) ? parts.join("/") : null;
 }
 
+/** admin-and-org BKP-15: the code a process flow carries when the database
+ *  refuses it because one of its ends names no equipment of the workspace
+ *  (or no Site Codebook unit) — 20261155's process_flows_guard, which binds
+ *  every writer, the restore included. Such a flow was already dangling in
+ *  the backup (a flow kept by DEC-80 item 3 when the guard was pasted), or
+ *  its equipment was not restored here. It is reported as what it is, apart
+ *  from the rows the database refused for a real fault. */
+export const DANGLING_FLOW_CODE = "flow_endpoint_missing";
+
+/** BKP-15: a refusal's restore code — the database's SQLSTATE, except a
+ *  process flow refused by the endpoint check, which is a dangling flow. */
+export function restoreRefusalCode(table: string, code: string, message: string): string {
+  return table === "process_flows" && code === "23503" && /^process_flows_endpoint:/.test(message) ? DANGLING_FLOW_CODE : code;
+}
+
+/** BKP-15: is this refusal a dangling process flow (reported on its own line)? */
+export function isDanglingFlowRefusal(r: Pick<RestoreRowRefusal, "code">): boolean {
+  return r.code === DANGLING_FLOW_CODE;
+}
+
 /** What a refusal code means, for the restore page. */
 export function restoreRefusalLabel(code: string): string {
   switch (code) {
+    case DANGLING_FLOW_CODE: return "a process flow whose equipment or unit is not in this workspace — not restored (it was dangling in the backup, or its equipment was not restored here)";
     case "parent_outside_workspace": return "points at a row that is not in this workspace";
     case "23505": return "a unique key it carries is already in use";
     case "23503": return "references a row that is not there";
@@ -1497,7 +1518,7 @@ export async function applyRestoreChunk(
     const code = String(up.error.code ?? "");
     if (!ROW_LEVEL_SQLSTATES.has(code)) return { error: up.error.message, code };
     if (rows.length === 1) {
-      refused.push({ id: label(rows[0]), code, message: up.error.message });
+      refused.push({ id: label(rows[0]), code: restoreRefusalCode(table, code, up.error.message), message: up.error.message });
       return null;
     }
     if (bisectLeft < 2) {
@@ -1694,7 +1715,11 @@ export interface ChunkedRestoreResult {
   totalHeldElsewhere: number;
   totalUncounted: number;
   totalFiltered: number;
+  /** Rows the database refused, less the dangling process flows below. */
   totalRefused: number;
+  /** BKP-15: process flows not restored because an end names no equipment or
+   *  unit here (DANGLING_FLOW_CODE) — counted apart from a real refusal. */
+  totalDanglingFlows: number;
   totalCleared: number;
   totalAdvanced: number;
   tables: RestoreTableOutcome[];
@@ -1789,7 +1814,7 @@ export async function runChunkedRestore(params: {
     idRemap, createdUsers: num(begin.body?.createdUsers), linkedUsers: num(begin.body?.linkedUsers),
     placeholdersWithoutProfile: num(begin.body?.placeholdersWithoutProfile),
     unmappedMembers: num(begin.body?.unmappedMembers),
-    totalInserted: 0, totalExisting: 0, totalHeldElsewhere: 0, totalUncounted: 0, totalFiltered: 0, totalRefused: 0, totalCleared: 0, totalAdvanced: 0,
+    totalInserted: 0, totalExisting: 0, totalHeldElsewhere: 0, totalUncounted: 0, totalFiltered: 0, totalRefused: 0, totalDanglingFlows: 0, totalCleared: 0, totalAdvanced: 0,
     tables: [], stoppedAt: null, notAttempted: [],
   };
   let rowsDone = 0;
@@ -1826,7 +1851,9 @@ export async function runChunkedRestore(params: {
     result.totalHeldElsewhere += t.heldElsewhere;
     result.totalUncounted += t.uncounted;
     result.totalFiltered += t.filtered;
-    result.totalRefused += t.refused.length;
+    const dangling = t.refused.filter(isDanglingFlowRefusal).length;
+    result.totalRefused += t.refused.length - dangling;
+    result.totalDanglingFlows += dangling;
     result.totalCleared += t.cleared.length;
     result.totalAdvanced += t.advanced;
     if (t.error) {
