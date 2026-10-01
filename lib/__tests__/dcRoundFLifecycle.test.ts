@@ -110,7 +110,8 @@ vi.mock("@/lib/supabase", () => ({
     return {
       ...base,
       from: (t: string) => readFailable(t, base.from(t) as unknown as Record<string, (...a: unknown[]) => unknown>),
-      rpc: (...a: unknown[]) => state.rpc(...a),
+      // RG-12 (P14): a database before 20261151 has no finalize_reviewed_promote — PostgREST answers PGRST202 and the app keeps its three checked writes, which these tests pin.
+      rpc: (...a: unknown[]) => (a[0] === "finalize_reviewed_promote" ? Promise.resolve({ data: null, error: { code: "PGRST202", message: "Could not find the function public.finalize_reviewed_promote" } }) : state.rpc(...a)),
     };
   },
 }));

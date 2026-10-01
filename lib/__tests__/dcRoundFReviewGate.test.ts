@@ -115,7 +115,8 @@ function chain(table: string) {
   return new Proxy(c, h);
 }
 vi.mock("@/lib/supabase", () => ({
-  supabase: { from: (t: string) => chain(t), rpc: async () => ({ data: null, error: null }) },
+  // RG-12 (P14): a database before 20261151 has no finalize_reviewed_promote — PostgREST answers PGRST202 and the app keeps its three checked writes, which these tests pin.
+  supabase: { from: (t: string) => chain(t), rpc: async (fn?: string) => (fn === "finalize_reviewed_promote" ? { data: null, error: { code: "PGRST202", message: "Could not find the function public.finalize_reviewed_promote" } } : { data: null, error: null }) },
   // The intake route scopes the shared client to the service role around the
   // post-publish pipeline and emit() (projects Round G J1,
   // lib/serverClientScope.ts registers its request-scoped reader here).

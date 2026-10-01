@@ -15,9 +15,10 @@
 // Draft is pre-selected only on the guard's evidence, never by default.
 
 import React, { useEffect, useState } from "react";
-import { X, Archive, AlertTriangle, Loader2, ArchiveRestore } from "lucide-react";
+import { X, Archive, AlertTriangle, Loader2, ArchiveRestore, Check } from "lucide-react";
 import {
   archiveDocument, unarchiveDocument, unarchiveRestoreDefault, UNARCHIVE_RESTORE_STATUSES,
+  type StatusIssueOutcome,
 } from "@/lib/revisions";
 import { isIssueRefusal, ISSUE_REFUSAL } from "@/lib/issueStatus";
 import { resolveActorPrincipal } from "@/lib/principal";
@@ -25,6 +26,18 @@ import { isControllerPrincipal } from "@/lib/permissions";
 import type { DocumentRecord } from "@/types/schema";
 
 type RestoreStatus = (typeof UNARCHIVE_RESTORE_STATUSES)[number];
+
+/** REV-19 (P14 final review): what of a landed un-archive's issue did not
+ *  complete — unarchiveDocument's StatusIssueOutcome (the review clock /
+ *  acknowledgment roster that did not start, the issue record that could not
+ *  be written). The dialog says so before it closes, as the Split / Merge
+ *  wizards show REV-15's complianceClockWarnings (LifecycleFollowUps). */
+type RestoreFollowUps = { clockErrors: string[]; recordError: string | null };
+function restoreFollowUps(outcome: StatusIssueOutcome | null | undefined): RestoreFollowUps | null {
+  const clockErrors = outcome?.complianceClockErrors ?? [];
+  const recordError = outcome?.recordError ?? null;
+  return clockErrors.length > 0 || recordError ? { clockErrors, recordError } : null;
+}
 
 /** REV-18 (P13 final review fix): what is still open after the guard refused
  *  a restore to Issued. The Draft restore is offered only where it would
@@ -79,6 +92,7 @@ export default function ArchiveConfirmModal({
   // records nothing, Issued — the default before 20261144).
   const [restoreStatus, setRestoreStatus] = useState<RestoreStatus>("Issued");
   const [basis, setBasis] = useState<"loading" | "issued" | "not-issued" | "unknown">("loading");
+  const [followUps, setFollowUps] = useState<RestoreFollowUps | null>(null);
 
   useEffect(() => {
     if (!isOpen || mode !== "unarchive") return;
@@ -105,7 +119,11 @@ export default function ArchiveConfirmModal({
         await archiveDocument({ doc, reason, orgId, actorUserId, actorEmail, actorRole });
         onSuccess();
       } else {
-        await unarchiveDocument({ doc, reason, orgId, actorUserId, actorEmail, actorRole, restoreStatus });
+        const outcome = await unarchiveDocument({ doc, reason, orgId, actorUserId, actorEmail, actorRole, restoreStatus });
+        // The restore landed; what did not follow it is said before the
+        // dialog closes (Done finishes it — onSuccess, then onClose).
+        const pending = restoreFollowUps(outcome);
+        if (pending) { setFollowUps(pending); return; }
         onSuccess(restoreStatus);
       }
       setReason("");
@@ -121,6 +139,38 @@ export default function ArchiveConfirmModal({
       setBusy(false);
     }
   };
+
+  if (followUps) {
+    const n = followUps.clockErrors.length + (followUps.recordError ? 1 : 0);
+    const done = () => { onSuccess(restoreStatus); setReason(""); setFollowUps(null); onClose(); };
+    return (
+      <div className="fixed inset-0 z-[210] bg-slate-900/60 backdrop-blur-sm animate-in fade-in flex items-start sm:items-center justify-center overflow-y-auto p-4">
+        <div role="alertdialog" aria-label="The restore completed with follow-up steps outstanding" className="w-full max-w-md bg-[var(--color-surface)] rounded-2xl shadow-2xl border border-[var(--color-border)] overflow-hidden">
+          <div className="px-6 py-4 border-b border-[var(--color-border)] bg-[var(--color-surface-2)] flex items-center gap-2">
+            <AlertTriangle className="w-5 h-5 text-amber-600" />
+            <div className="text-sm font-black text-[var(--color-text)]">
+              Restored as {restoreStatus} — {n} follow-up step{n === 1 ? "" : "s"} did not complete
+            </div>
+          </div>
+          <div className="px-6 py-5 space-y-3 text-xs text-[var(--color-text)]">
+            <p>
+              The restore stands and is not rolled back — do not restore it again.
+              {followUps.clockErrors.length > 0 && !followUps.recordError && <> What did not complete is recorded on the document&apos;s history; Document Control can set it from the document.</>}
+            </p>
+            <ul data-testid="restore-follow-ups" className="ml-5 list-disc space-y-1 max-h-64 overflow-y-auto">
+              {followUps.clockErrors.map((m, i) => <li key={i}>{m}</li>)}
+              {followUps.recordError && <li>The issue record could not be written ({followUps.recordError}), so this issue is not on the document&apos;s history.</li>}
+            </ul>
+          </div>
+          <div className="px-6 py-3 bg-[var(--color-surface-2)] border-t border-[var(--color-border)] flex justify-end">
+            <button type="button" onClick={done} className="inline-flex items-center gap-1.5 text-xs font-bold bg-amber-600 hover:bg-amber-700 text-white px-3 py-2 rounded-lg">
+              <Check className="w-3.5 h-3.5" /> Done
+            </button>
+          </div>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="fixed inset-0 z-[210] bg-slate-900/60 backdrop-blur-sm animate-in fade-in flex items-start sm:items-center justify-center overflow-y-auto p-4">

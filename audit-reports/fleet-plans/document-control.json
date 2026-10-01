@@ -549,9 +549,29 @@
    "when": "after the user ratifies DEC-77 / REV-21, and after P14 merges (P14 re-creates the guard in 20261151)",
    "dependsOn": [
     "the user's ratification of DEC-77 \u00a74",
-    "P14 merged"
+    "P14 merged",
+    "P17 merged (P17 re-creates the guard first; start from its body)"
    ],
    "sequencingNotes": "Added by the integrator 2026-10-01 at the P15 merge (DEC-31 remainder)."
+  },
+  {
+   "name": "P17 GUARD & EDITOR FOLLOW-UPS \u2014 the controller hold passes REV-20 left open, the owner-must-approve rule at the database, the bulk editor's status change through changeDocumentStatus",
+   "findings": [
+    "REV-22 (opened by P14 RECORDS & REVIEW REMAINDERS 2026-10-01: a controller's bare pointer move on a held, already-issued document and the bare un-supersede of an unstamped held Superseded document still pass the hold unrecorded \u2014 judge them by the recorded-force rule 20261151 gave the pointer-and-issue write)",
+    "RG-14 (opened by P14 RECORDS & REVIEW REMAINDERS 2026-10-01: the database completion gate does not read ownerMustApprove, so a roster opened through PostgREST without the owner's slot completes \u2014 the gate re-created from its newest body requires the owner slot when the effective policy sets it)",
+    "REV-19 (remainder re-owned by the integrator 2026-10-01 at the P14 merge: the bulk editor's limb \u2014 components/documents/BulkEditModal.tsx routes an issuing status change through lib/revisions.ts changeDocumentStatus so the compliance clocks start and the issue is recorded; the library page's metadata-editor limb is identity-and-session IS-P1's)"
+   ],
+   "files": [
+    "one migration re-creating enforce_document_publish_guard (from 20261151, the newest) and the review completion gate (from its newest body) \u2014 lineDiff tests; DEC-30 inventory of counts only; DRLS-16",
+    "components/documents/BulkEditModal.tsx (REV-19 bulk limb)",
+    "lib/revisions.ts changeDocumentStatus (callers only; no behaviour change for the un-archive door)"
+   ],
+   "migrationsLikely": 1,
+   "when": "now (P14 merged); BEFORE P16, which re-creates the same guard after the user's DEC-77 ratification",
+   "dependsOn": [
+    "P14 merged (20261151 is the newest guard and publish_revision; finalize_reviewed_promote's recorded force)"
+   ],
+   "sequencingNotes": "Added by the integrator 2026-10-01 at the P14 merge (DEC-31 remainders). P16 (REV-21) re-creates the same guard after this package: it starts from this package's body."
   }
  ],
  "crossAreaFileOverlaps": [
@@ -574,6 +594,7 @@
   "VFY-20": "ratify DEC-77 (IFC stays out of the editors, existing IFC rows read not-in-force) or choose its Reversal (teach every gate IFC together); run VFY-20's read-only IFC count",
   "REV-21": "ratify the database limb with DEC-77 \u00a74 (the guard judges a move INTO Issued / Locked from outside them as an issue, or the IFC rows are moved under your decision); then document-control P16 runs",
   "XEDGE-12": "allow cdn.sheetjs.com in the environment's network policy (so a session can vendor SheetJS >= 0.20.2), or ratify exceljs and the loss of legacy .xls imports",
-  "TRX-15": "ratify the DEC-61 \u00a75 amendment and check one hidden-frame download on iOS Safari and Firefox"
+  "TRX-15": "ratify the DEC-61 \u00a75 amendment and check one hidden-frame download on iOS Safari and Firefox",
+  "DRLS-14": "ratify DEC-79 (or its stricter reading: refuse while ANY evidence row exists), then paste 20261149 once identity-and-session IS-P1's bulk-delete check is deployed"
  }
 }

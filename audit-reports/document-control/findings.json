@@ -15,17 +15,17 @@
     "audit-reports/document-control/11-edges-and-invariants.md"
   ],
   "totals": {
-    "findings": 160,
+    "findings": 162,
     "gaps": 0,
     "by_severity": {
       "CRITICAL": 19,
       "HIGH": 54,
       "MEDIUM": 71,
-      "LOW": 16
+      "LOW": 18
     },
     "by_status": {
-      "RESOLVED": 140,
-      "OPEN": 20
+      "RESOLVED": 146,
+      "OPEN": 16
     }
   },
   "status_vocabulary": [
@@ -1002,7 +1002,7 @@
       "id": "HLD-1",
       "title": "A hold is a hard block only on \"advance\" transitions; download, transmittal, distribution-ack, share link, checkout, revision-label correction, renumber and disposal all proceed unguarded",
       "severity": "HIGH",
-      "status": "OPEN",
+      "status": "RESOLVED",
       "verification": "CONFIRMED",
       "verification_note": null,
       "blast_radius": null,
@@ -1356,7 +1356,7 @@
       "id": "RET-2",
       "title": "/api/storage/delete lets any active member destroy any object in their org — no role check, no safe-key gate, no records-management check, and zero callers",
       "severity": "HIGH",
-      "status": "OPEN",
+      "status": "RESOLVED",
       "verification": "CONFIRMED",
       "verification_note": null,
       "blast_radius": null,
@@ -2379,7 +2379,7 @@
       "id": "DRLS-10",
       "title": "Any member can re-pin or close a work package, so a STALE field package silently reads FRESH",
       "severity": "MEDIUM",
-      "status": "OPEN",
+      "status": "RESOLVED",
       "verification": "CONFIRMED",
       "verification_note": null,
       "blast_radius": null,
@@ -2992,7 +2992,7 @@
       "id": "RET-11",
       "title": "RetentionPolicy.action ('review' | 'archive' | 'destroy') is edited, stored and inherited but never read by anything",
       "severity": "MEDIUM",
-      "status": "OPEN",
+      "status": "RESOLVED",
       "verification": "CONFIRMED",
       "verification_note": null,
       "blast_radius": null,
@@ -4127,7 +4127,7 @@
       "id": "REV-20",
       "title": "A controller's single write that moves the pointer and makes the status an issue passes an active hold unrecorded; so does an unstamped retirement's exit",
       "severity": "LOW",
-      "status": "OPEN",
+      "status": "RESOLVED",
       "verification": "CONFIRMED",
       "verification_note": "CONFIRMED (the P13 final review, read from `20261144`'s guard body; the hold limbs were exercised on PostgreSQL 16 by the package)",
       "blast_radius": null,
@@ -4142,6 +4142,30 @@
       ],
       "refuted": false,
       "summary": "A Document Controller, through PostgREST (not the app, which goes through publishrevision), PATCHes a held Draft's currentversionid and status to Issued in one request. The hold is passed and no override reason is recorded. Or a drawing archived last month, before the paste, while under a stop-work hold is restored straight to Issued by a controller.",
+      "area": "document-control",
+      "report": "audit-reports/document-control/02-revisions-publish.md"
+    },
+    {
+      "id": "REV-22",
+      "title": "A controller still passes an active hold unrecorded in two writes REV-20 leaves open: a bare pointer move on a held document already in an issue status, and the un-supersede of a document superseded before 20261144",
+      "severity": "LOW",
+      "status": "OPEN",
+      "verification": "CONFIRMED",
+      "verification_note": "CONFIRMED (read from `20261151`'s guard body; both writes exercised on a throwaway PostgreSQL 16 by P14's review fix — `REV-20`'s R14-5 and the transcription cases — and pinned by the guard's transcription in `lib/__tests__/dcRoundFReversalOverCarriedHold.test.ts`)",
+      "blast_radius": null,
+      "related": [],
+      "locations": [
+        "supabase/migrations/20261151_dc_roundF_promote_transaction_and_hold_override.sql",
+        "lib/documentLifecycle/reverse.ts",
+        "lib/reviewControl.ts"
+      ],
+      "has_verifier_correction": false,
+      "verified_by": "author",
+      "challenges": [
+        "author"
+      ],
+      "refuted": false,
+      "summary": "A Document Controller inserts a Minor revision row through PostgREST, then PATCHes documents.currentversionid of held, Issued drawing P-200 to it, in a library that is not in require mode. The hold is passed, with no REVHOLDOVERRIDDEN and no record. Or a controller PATCHes P-150 — superseded last year, before 20261144, and under a stop-work hold now — straight back to Issued.",
       "area": "document-control",
       "report": "audit-reports/document-control/02-revisions-publish.md"
     },
@@ -4202,7 +4226,7 @@
       "id": "RG-12",
       "title": "finalizeReviewedRevision's post-promote writes are unchecked; a failure leaves the newly controlled revision filtered out of every 'latest approved' query, so viewers serve the superseded drawing",
       "severity": "LOW",
-      "status": "OPEN",
+      "status": "RESOLVED",
       "verification": "CONFIRMED",
       "verification_note": null,
       "blast_radius": null,
@@ -4248,6 +4272,30 @@
       ],
       "refuted": false,
       "summary": "A facility whose numbering standard has no letter revisions — or one where 'A', 'B', 'C' are already the issued-for-review revision letters in the title block — configures review control expecting to turn the suffix off, because both the migration comment and the TypeScript type say the option exists. It has no effect: every in-review draft is labelled baseRev + a letter. Where the base rev is its",
+      "area": "document-control",
+      "report": "audit-reports/document-control/03-review-gate.md"
+    },
+    {
+      "id": "RG-14",
+      "title": "The database completion gate does not know an owner-must-approve policy — a roster opened without the owner's row completes without the owner",
+      "severity": "LOW",
+      "status": "OPEN",
+      "verification": "CONFIRMED",
+      "verification_note": "CONFIRMED (read from `20261151`'s `enforce_document_publish_guard` — the completion count reads the roster's rows only — and `20261070`'s `doc_review_signoff_insert` policy)",
+      "blast_radius": null,
+      "related": [],
+      "locations": [
+        "supabase/migrations/20261151_dc_roundF_promote_transaction_and_hold_override.sql",
+        "supabase/migrations/20261070_dc_roundF_review_gate_slots.sql",
+        "lib/reviewControl.ts"
+      ],
+      "has_verifier_correction": false,
+      "verified_by": "author",
+      "challenges": [
+        "author"
+      ],
+      "refuted": false,
+      "summary": "A library publisher who is not the owner opens a roster directly through PostgREST with no owner:<uid> row. The reviewers sign, the per-slot count is complete, and the guard admits the publish in a require-mode library without the owner's signature, although the effective policy sets ownerMustApprove.",
       "area": "document-control",
       "report": "audit-reports/document-control/03-review-gate.md"
     },

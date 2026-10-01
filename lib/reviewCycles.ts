@@ -87,6 +87,186 @@ export async function effectivePolicyForDocument(doc: {
   return resolveEffectivePolicy(doc.reviewPolicy ?? null, folderPolicy, (lib?.review_policy as ReviewPolicy) ?? null);
 }
 
+// ── GAP-9: field-verification currency — the SAME cycle machinery ───────────
+//
+// A walkdown attestation (`checkout_sessions.outcome = 'field_verified'`) is
+// CURRENT for the cadence the document's review policies set
+// (`fieldVerifyIntervalCount` / `fieldVerifyIntervalUnit`, resolved on its own
+// by resolveVerificationPolicy: the most specific level that DEFINES a cadence
+// — P14 review fix), and goes due-soon / overdue through reviewStatusFor with
+// that level's own lead days — no third currency implementation. A `discrepancy` reported after the last
+// verification supersedes it, whatever the cadence (GAP-9 acceptance 2).
+
+/** The check-in register outcomes the currency reads. */
+export const FIELD_OUTCOMES = ["field_verified", "discrepancy"] as const;
+
+/** One register row (a checkout session with a recorded outcome). */
+export interface FieldOutcomeRow {
+  outcome: string | null; ended_at: string | null; user_name?: string | null;
+  outcome_ref?: { rev?: string | null } | null;
+}
+
+/** `current` / `due_soon` / `overdue` — the cadence's verdict (reviewStatusFor);
+ *  `verified` — verified, and no cadence applies; `never` — a cadence applies
+ *  and nothing was ever verified; `discrepancy` — a discrepancy reported after
+ *  the last verification (or with none) supersedes it; `unknown` — the
+ *  register or the policy could not be read (never shown as "never"). */
+export type FieldVerificationStatus = "current" | "due_soon" | "overdue" | "verified" | "never" | "discrepancy" | "unknown";
+
+export interface FieldVerification {
+  /** The last walkdown attestation: when, against which revision, by whom. */
+  verifiedAt: string | null; rev: string | null; by: string | null;
+  supersededBy: { at: string | null; by: string | null } | null;
+  /** When the last verification stops being current (null: no cadence, or never verified). */
+  nextVerificationDate: string | null;
+  status: FieldVerificationStatus;
+  /** The cadence in words ("Every 3 years"), null when none applies. */
+  cadence: string | null;
+  /** Why the status is `unknown`. */
+  unknownReason?: string;
+}
+
+/** True when the policy sets a field-verification cadence. */
+export function hasVerificationCadence(p?: ReviewPolicy | null): boolean {
+  return !!p && p.enabled && !!p.fieldVerifyIntervalCount && !!p.fieldVerifyIntervalUnit;
+}
+
+/** GAP-9 (P14 review fix): does this level DECIDE the verification cadence —
+ *  set one, or opt out of review altogether (`enabled: false`)? A level that
+ *  sets a review cycle but no cadence decides nothing about it. */
+export function decidesVerificationCadence(p?: ReviewPolicy | null): boolean {
+  return !!p && (!p.enabled || hasVerificationCadence(p));
+}
+
+/** GAP-9 (P14 review fix): the policy whose field-verification cadence governs
+ *  a document — resolved ON ITS OWN, not as part of the review cycle's
+ *  wholesale policy: the most specific level (document > folder > library)
+ *  that DEFINES a cadence wins, and a level that opts out (`enabled: false`)
+ *  stops inheritance as it does for the cycle. A document given its own
+ *  review cycle in the inspector (ReviewSection, which offers no cadence) so
+ *  keeps the cadence its folder or library sets, instead of silently losing
+ *  it (a stale walkdown shown as plain "Field-verified" rather than overdue).
+ *  null: no cadence applies. */
+export function resolveVerificationPolicy(
+  docPolicy?: ReviewPolicy | null,
+  folderPolicy?: ReviewPolicy | null,
+  libraryPolicy?: ReviewPolicy | null,
+): ReviewPolicy | null {
+  for (const p of [docPolicy, folderPolicy, libraryPolicy]) {
+    if (decidesVerificationCadence(p)) return hasVerificationCadence(p) ? p! : null;
+  }
+  return null;
+}
+
+/** The date the last verification stops being current — computeNextReviewDate's
+ *  rule applied to the verification cadence. */
+export function computeNextVerificationDate(lastVerifiedISO: string | null, policy: ReviewPolicy | null): string | null {
+  if (!lastVerifiedISO || !policy || !hasVerificationCadence(policy)) return null;
+  return addInterval(lastVerifiedISO, policy.fieldVerifyIntervalCount!, policy.fieldVerifyIntervalUnit!);
+}
+
+/** The verification cadence in words, through describeInterval. */
+export function describeVerificationCadence(p?: ReviewPolicy | null): string | null {
+  if (!p || !hasVerificationCadence(p)) return null;
+  return describeInterval({ enabled: true, intervalCount: p.fieldVerifyIntervalCount, intervalUnit: p.fieldVerifyIntervalUnit });
+}
+
+/** Pure: the document's field-verification currency from its register rows
+ *  and its effective policy. NULL when there is nothing to say (never
+ *  verified, no discrepancy, and no cadence asks for one). */
+export function summarizeFieldVerification(rows: FieldOutcomeRow[], policy: ReviewPolicy | null): FieldVerification | null {
+  const byTime = rows
+    .filter((r) => r.outcome === "field_verified" || r.outcome === "discrepancy")
+    .sort((a, b) => (b.ended_at ?? "").localeCompare(a.ended_at ?? ""));
+  const last = byTime.find((r) => r.outcome === "field_verified") ?? null;
+  const lastAt = last?.ended_at ?? null;
+  const later = byTime.find((r) => r.outcome === "discrepancy" && (r.ended_at ?? "") > (lastAt ?? "")) ?? null;
+  const cadenceOn = hasVerificationCadence(policy);
+  if (!last && !later && !cadenceOn) return null;
+  const next = computeNextVerificationDate(lastAt, policy);
+  let status: FieldVerificationStatus;
+  if (later) status = "discrepancy";
+  else if (!last) status = "never";
+  else if (!cadenceOn) status = "verified";
+  else status = reviewStatusFor(next, policy?.leadDays ?? 30) as FieldVerificationStatus;
+  return {
+    verifiedAt: lastAt, rev: last?.outcome_ref?.rev ?? null, by: last?.user_name ?? null,
+    supersededBy: later ? { at: later.ended_at ?? null, by: later.user_name ?? null } : null,
+    nextVerificationDate: next, status, cadence: describeVerificationCadence(policy),
+  };
+}
+
+/** The currency when it could not be read: the facts we have, never "never". */
+export function unknownFieldVerification(reason: string, known?: FieldVerification | null): FieldVerification {
+  return {
+    verifiedAt: known?.verifiedAt ?? null, rev: known?.rev ?? null, by: known?.by ?? null,
+    supersededBy: known?.supersededBy ?? null, nextVerificationDate: null, status: "unknown", cadence: null, unknownReason: reason,
+  };
+}
+
+const isoDay = (iso: string | null) => (iso ? iso.slice(0, 10) : "");
+
+/** GAP-9: the currency's words and tone — pure, so the pill, the register
+ *  column and its CSV say the same thing. */
+export function verificationPillText(v: FieldVerification): { full: string; short: string; tone: "ok" | "warn" | "bad" | "neutral" } {
+  const days = daysUntilReview(v.nextVerificationDate);
+  switch (v.status) {
+    case "current": return { full: `Field-verified · current to ${isoDay(v.nextVerificationDate)}`, short: "Verified", tone: "ok" };
+    case "due_soon": return { full: days != null ? `Field verification due in ${days}d` : "Field verification due", short: days != null ? `Verify ${days}d` : "Verify soon", tone: "warn" };
+    case "overdue": return { full: days != null ? `Field verification overdue ${Math.abs(days)}d` : "Field verification overdue", short: days != null ? `Verify overdue ${Math.abs(days)}d` : "Verify overdue", tone: "bad" };
+    case "never": return { full: "Never field-verified", short: "Never verified", tone: "warn" };
+    case "discrepancy": return { full: "Field discrepancy — supersedes the last verification", short: "Discrepancy", tone: "bad" };
+    case "verified": return { full: `Field-verified ${isoDay(v.verifiedAt)}`, short: `Verified ${isoDay(v.verifiedAt)}`, tone: "neutral" };
+    default: return { full: "Field verification unknown", short: "Verify ?", tone: "neutral" };
+  }
+}
+
+/** Hover text: who verified, when, against which revision; what superseded it. */
+export function verificationPillTitle(v: FieldVerification): string {
+  const parts: string[] = [];
+  if (v.verifiedAt) {
+    parts.push(`Last field-verified${v.rev ? ` against Rev ${v.rev}` : ""} on ${isoDay(v.verifiedAt)}${v.by ? ` by ${v.by}` : ""}.`);
+  } else {
+    parts.push("No field verification on record.");
+  }
+  if (v.supersededBy) parts.push(`Superseded by a field discrepancy${v.supersededBy.by ? ` reported by ${v.supersededBy.by}` : ""}${v.supersededBy.at ? ` on ${isoDay(v.supersededBy.at)}` : ""}.`);
+  if (v.cadence) parts.push(`Verification cadence: ${v.cadence.toLowerCase()}${v.nextVerificationDate ? ` — current to ${isoDay(v.nextVerificationDate)}` : ""}.`);
+  if (v.status === "unknown" && v.unknownReason) parts.push(`Currency unknown: ${v.unknownReason}.`);
+  return parts.join(" ");
+}
+
+/** One document's field-verification currency, every read CHECKED: a failed
+ *  register read or a failed policy read answers `unknown` (with whatever
+ *  facts were read) — never "never verified" and never "current". The
+ *  cadence is resolveVerificationPolicy's: a level is read only while every
+ *  more specific one decides nothing about it. */
+export async function loadFieldVerification(doc: {
+  id: string; reviewPolicy?: ReviewPolicy | null; collectionId?: string | null; libraryId: string;
+}): Promise<FieldVerification | null> {
+  const { data, error } = await supabase
+    .from("checkout_sessions").select("*")
+    .eq("document_id", doc.id).in("outcome", [...FIELD_OUTCOMES])
+    .order("ended_at", { ascending: false }).limit(50);
+  if (error) return unknownFieldVerification(`the check-in register could not be read (${error.message})`);
+  const rows = (data ?? []) as FieldOutcomeRow[];
+  const own = doc.reviewPolicy ?? null;
+  let folderPolicy: ReviewPolicy | null = null;
+  let libPolicy: ReviewPolicy | null = null;
+  if (!decidesVerificationCadence(own)) {
+    if (doc.collectionId) {
+      const { data: col, error: colErr } = await supabase.from("collections").select("review_policy").eq("id", doc.collectionId).maybeSingle();
+      if (colErr) return unknownFieldVerification(`the folder's review policy could not be read (${colErr.message})`, summarizeFieldVerification(rows, null));
+      folderPolicy = (col?.review_policy as ReviewPolicy | null) ?? null;
+    }
+    if (!decidesVerificationCadence(folderPolicy)) {
+      const { data: lib, error: libErr } = await supabase.from("libraries").select("review_policy").eq("id", doc.libraryId).maybeSingle();
+      if (libErr) return unknownFieldVerification(`the library's review policy could not be read (${libErr.message})`, summarizeFieldVerification(rows, null));
+      libPolicy = (lib?.review_policy as ReviewPolicy | null) ?? null;
+    }
+  }
+  return summarizeFieldVerification(rows, resolveVerificationPolicy(own, folderPolicy, libPolicy));
+}
+
 // ── Writes ───────────────────────────────────────────────────────────────────
 
 /** Recompute and persist a single document's next_review_date from its effective

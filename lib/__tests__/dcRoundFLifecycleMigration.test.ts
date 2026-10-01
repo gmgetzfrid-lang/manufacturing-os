@@ -175,7 +175,14 @@ describe("20261130 — publish_revision re-created from 20261105 with the DCK-8 
   it("20261130 is the newest publish_revision; it leaves the publish guard alone (20261105's body, re-created next by P12's 20261139 for REV-17)", () => {
     const files = readdirSync(dir).filter((f) => /^\d{8}.*\.sql$/.test(f)).sort();
     const newest = (fn: RegExp) => files.filter((f) => fn.test(stripComments(mig(f)))).pop();
-    expect(newest(/CREATE OR REPLACE FUNCTION publish_revision\(/)).toBe("20261130_dc_roundF_publish_override_reason.sql");
+    // 20261130 re-created publish_revision from 20261105; the next re-creation
+    // (document-control Round F wave 3, P14 — REV-20's recorded hold force)
+    // starts from 20261130's body, its own lineDiff in
+    // dcRoundFPromoteTransaction.test.ts.
+    const pubDefs = files.filter((f) => /CREATE OR REPLACE FUNCTION publish_revision\(/.test(stripComments(mig(f))));
+    const at105p = pubDefs.indexOf("20261105_prj_roundG_intake_review_and_attempts.sql");
+    expect(pubDefs.slice(at105p + 1, at105p + 3)).toEqual(["20261130_dc_roundF_publish_override_reason.sql", "20261151_dc_roundF_promote_transaction_and_hold_override.sql"]);
+    expect(newest(/CREATE OR REPLACE FUNCTION publish_revision\(/)! >= "20261130_dc_roundF_publish_override_reason.sql").toBe(true);
     // P12 WAVE-2 RESIDUALS (REV-17) re-creates the guard from 20261105's body + one block (its own lineDiff test),
     // and P13 STATUS-TRANSITION (REV-18) re-creates it next from 20261139's (dcRoundFStatusTransition.test.ts)
     const guardDefs = files.filter((f) => /CREATE OR REPLACE FUNCTION enforce_document_publish_guard\(\)/.test(stripComments(mig(f))));

@@ -184,14 +184,23 @@ export default function LibraryAdminPage() {
     if (!libraryToDelete) return;
     setDeleting(true);
     try {
-      const { error } = await supabase.from("libraries").delete().eq("id", libraryToDelete.id!);
-      if (error) throw error;
+      // DRLS-14 (P14 final review): one checked delete. A refusal — 20261149's
+      // guard on a document the library holds that carries a person's
+      // confirmation, acknowledgment or sign-off, a legal hold, RLS — is shown
+      // in the database's own words, as /documents shows it; a delete that
+      // matched no row is a refusal too, never a silent success.
+      const { data: deleted, error } = await supabase.from("libraries").delete().eq("id", libraryToDelete.id!).select("id");
+      if (error) throw new Error(error.message);
+      if (!deleted || deleted.length === 0) {
+        throw new Error("the database deleted nothing (you may not have permission to delete this library); nothing was changed.");
+      }
       setLibraries((prev) => prev.filter((l) => l.id !== libraryToDelete.id));
       setIsDeleteModalOpen(false);
       setLibraryToDelete(null);
     } catch (e) {
       console.error(e);
-      await appAlert({ message: "Failed to delete library.", tone: "danger" });
+      const why = (e as { message?: unknown } | null)?.message;
+      await appAlert({ message: `Delete failed: ${typeof why === "string" && why ? why : "the library was not deleted."}`, tone: "danger" });
     } finally {
       setDeleting(false);
     }

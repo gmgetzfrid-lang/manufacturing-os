@@ -27,6 +27,7 @@ import RetentionSection from "@/components/documents/RetentionSection";
 import OriginSection from "@/components/documents/OriginSection";
 import EffectivePill from "@/components/documents/EffectivePill";
 import ReviewPill from "@/components/documents/ReviewPill";
+import VerificationPill, { useFieldVerification } from "@/components/documents/VerificationPill";
 import RetentionPill from "@/components/documents/RetentionPill";
 import OriginBadge from "@/components/documents/OriginBadge";
 import CollapsibleSection from "@/components/ui/CollapsibleSection";
@@ -315,6 +316,9 @@ export default function InspectorPanel({
     }
   };
   const [compareOpen, setCompareOpen] = useState(false);
+
+  // GAP-9: field-verification currency, read CHECKED (VerificationPill's hook).
+  const fieldVerification = useFieldVerification(selectedDoc);
 
   // Ownership grant (Phase 2): the document's effective owner may manage it —
   // publish/supersede/archive/edit — even without a controller role or library
@@ -781,6 +785,7 @@ export default function InspectorPanel({
           summary={
             <>
               <ReviewPill nextReviewDate={selectedDoc.nextReviewDate} compact />
+              <VerificationPill verification={fieldVerification} compact />
               <RetentionPill retentionUntil={selectedDoc.retentionUntil} dispositionState={selectedDoc.dispositionState} legalHold={selectedDoc.legalHold} compact />
               {selectedDoc.origin === "external" && (
                 <OriginBadge origin="external" source={selectedDoc.externalSource} reference={selectedDoc.externalReference} />

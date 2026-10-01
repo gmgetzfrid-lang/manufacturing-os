@@ -104,11 +104,11 @@ describe("DRLS-16: no SECURITY DEFINER function with a NULL-uid branch is execut
     expect(refusesNullUid(defs.get("post_ticket_comment")!.body)).toBe(false);
     // publish_revision lets a NULL uid name its actor (the service-role path), so it is NOT a
     // refuser — its `ELSIF p_actor IS NULL THEN RAISE` must not read as one — and it passes only
-    // because 20261130 revokes anon after re-creating it.
+    // because the migration that re-creates it (20261130; since P14, 20261151) revokes anon
+    // after re-creating it, in the same file.
     expect(refusesNullUid(defs.get("publish_revision")!.body)).toBe(false);
-    expect(anonRevokedAfter("publish_revision", defs.get("publish_revision")!)).toBe(
-      "20261130_dc_roundF_publish_override_reason.sql",
-    );
+    expect(defs.get("publish_revision")!.file >= "20261130_dc_roundF_publish_override_reason.sql").toBe(true);
+    expect(anonRevokedAfter("publish_revision", defs.get("publish_revision")!)).toBe(defs.get("publish_revision")!.file);
   });
 
   it("post_ticket_comment's only anon revoke is the hotfix (its newest body, 20260810, never revoked anon)", () => {

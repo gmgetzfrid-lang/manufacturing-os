@@ -5,6 +5,15 @@
 // off with a touchpad signature; the owner/DocCtrl (canManage) can activate an
 // alternate and — once every required sign-off is in — publish the approved
 // revision (2A -> Rev 2). When nothing is in review it shows the effective mode.
+//
+// REV-20 (P14 final review): after 20261151 the publish guard refuses a
+// controller's review promote of a held Draft / In Review document unless it
+// carries the recorded override. When — and only when — the hold refused the
+// promote, a controller (the role collection) is offered "Proceed over the
+// active hold" (the HLD-2 acknowledgement, HeldSourceNotice); the publish
+// then passes the force, which finalize_reviewed_promote records
+// (REV_HOLD_OVERRIDDEN) in the same transaction. Anyone else is told to
+// release the hold (finalizeReasonMessage).
 
 import React, { useCallback, useEffect, useState } from "react";
 import { appAlert } from "@/components/providers/DialogProvider";
@@ -17,9 +26,10 @@ import SignatureCeremony from "@/components/signatures/SignatureCeremony";
 import type { SigningCredential } from "@/lib/eSignatures";
 import {
   listDraftRoster, recordReviewSignoff, activateAlternate,
-  finalizeReviewedRevision, finalizeReasonMessage, effectiveReviewControlForDocument, evaluateSlotCompletion,
+  finalizeReviewedRevision, finalizeReasonMessage, isFinalizeHoldRefusal, effectiveReviewControlForDocument, evaluateSlotCompletion,
   type ReviewSignoffRow,
 } from "@/lib/reviewControl";
+import HeldSourceNotice from "@/components/documents/lifecycle/HeldSourceNotice";
 import type { DocumentRecord, ReviewControl } from "@/types/schema";
 import { describeProjectSweep } from "@/lib/checklists";
 
@@ -43,6 +53,12 @@ export default function ReviewGateSection({ doc, orgId, canManage, onChanged }: 
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState(false);
   const [signing, setSigning] = useState(false);
+  // REV-20 (P14 final review): the document whose promote the hold refused
+  // (a controller is then offered the recorded force), the acknowledgement,
+  // and the optional reason recorded with it.
+  const [holdRefusedFor, setHoldRefusedFor] = useState<string | null>(null);
+  const [holdAck, setHoldAck] = useState(false);
+  const [holdReason, setHoldReason] = useState("");
 
   const load = useCallback(async () => {
     if (!doc.id) return;
@@ -136,12 +152,26 @@ export default function ReviewGateSection({ doc, orgId, canManage, onChanged }: 
     const url = await resolveFileUrl(draftFileUrl);
     if (url) window.open(url, "_blank", "noopener");
   };
-  const publish = async () => {
+  const publish = async (forceHold = false) => {
     if (!doc.id) return;
     setBusy(true);
     try {
-      const res = await finalizeReviewedRevision({ orgId, documentId: doc.id, actorId: uid, actorName: userEmail, actorEmail: userEmail ?? null });
-      if (!res.published) { await appAlert({ tone: "danger", message: finalizeReasonMessage(res.reason) }); }
+      // The call without a force is exactly the call it always was.
+      const res = forceHold
+        ? await finalizeReviewedRevision({ orgId, documentId: doc.id, actorId: uid, actorName: userEmail, actorEmail: userEmail ?? null, forceHold: true, overrideReason: holdReason.trim() || null })
+        : await finalizeReviewedRevision({ orgId, documentId: doc.id, actorId: uid, actorName: userEmail, actorEmail: userEmail ?? null });
+      if (!res.published) {
+        // REV-20 (P14 final review): the hold refused a controller's promote —
+        // offer the recorded force (nothing was changed); any other refusal,
+        // and anyone else's, is said as before.
+        if (!forceHold && isController && isFinalizeHoldRefusal(res.reason)) {
+          setHoldRefusedFor(doc.id); setHoldAck(false); setHoldReason("");
+        } else {
+          await appAlert({ tone: "danger", message: finalizeReasonMessage(res.reason) });
+        }
+      } else {
+        setHoldRefusedFor(null); setHoldAck(false); setHoldReason("");
+      }
       // UX-16: the publish swept the open checklists of the projects citing
       // this document; a sweep that could not finish is said, never silent.
       const swept = res.published && res.evidenceSweep ? describeProjectSweep(res.evidenceSweep) : null;
@@ -249,6 +279,33 @@ export default function ReviewGateSection({ doc, orgId, canManage, onChanged }: 
             >
               {busy ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <ArrowUpFromLine className="w-3.5 h-3.5" />} Publish approved revision
             </button>
+          )}
+          {canManage && isController && holdRefusedFor === doc.id && (
+            <div data-testid="review-hold-force" className="space-y-2">
+              <div className="text-[11px] text-amber-900">
+                This document has an active hold, so the reviewed revision was not published and nothing was changed. Release the hold, or proceed over it as Document Control — the override is recorded on the document&apos;s history.
+              </div>
+              <HeldSourceNotice
+                decision={{ kind: "acknowledge", text: "Proceed over the active hold: publish the reviewed revision while the hold stays open." }}
+                readError={null}
+                ack={holdAck}
+                setAck={setHoldAck}
+              />
+              <input
+                value={holdReason}
+                onChange={(e) => setHoldReason(e.target.value)}
+                placeholder="Why (optional — recorded with the override)"
+                aria-label="Reason for proceeding over the hold"
+                className="w-full text-[11px] rounded-lg border border-amber-300 bg-white px-2 py-1.5"
+              />
+              <button
+                onClick={() => void publish(true)}
+                disabled={busy || !holdAck || !complete}
+                className="w-full inline-flex items-center justify-center gap-1.5 px-3 py-2 rounded-lg bg-amber-600 text-white text-xs font-black shadow hover:bg-amber-500 disabled:opacity-40 disabled:cursor-not-allowed"
+              >
+                {busy ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <ArrowUpFromLine className="w-3.5 h-3.5" />} Publish over the hold
+              </button>
+            </div>
           )}
           <div className="text-[10px] text-[var(--color-text-muted)]">The current Rev {doc.rev || "—"} stays the controlled copy until this draft is approved &amp; published.</div>
         </>

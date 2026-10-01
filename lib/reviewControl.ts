@@ -18,12 +18,13 @@ import { supabase } from "@/lib/supabase";
 import { notify } from "@/lib/inAppNotifications";
 import { logAuditAction } from "@/lib/audit";
 import { recordSignature, type SigningCredential } from "@/lib/eSignatures";
-import { effectiveOwnerForDocument, resolveEffectiveOwner, getOrgControllers, teamSupervisorMap } from "@/lib/ownership";
+import { effectiveOwnerForDocument, resolveEffectiveOwner, getOrgControllers, teamSupervisorMap, type LibraryOwnerCols, type TeamSupervisorLookup } from "@/lib/ownership";
 import { applyEffectiveDate } from "@/lib/effectiveDate";
 import type { ReviewControl, ReviewControlMode } from "@/types/schema";
 import { heldRoles, roleFilter } from "@/lib/roleHeld";
 import { loadContainerChain, firstDefinedInChain, folderChainFromMap, type ContainerChain } from "@/lib/containerChain";
 import { NOT_CURRENT_STATUSES } from "@/lib/aiBoundary";
+import { ISSUE_REFUSAL } from "@/lib/issueStatus";
 
 type Level = "library" | "collection" | "document";
 const uniq = (xs: string[]) => Array.from(new Set(xs.filter(Boolean)));
@@ -122,7 +123,51 @@ export const slotGroupKey = {
   person: (uid: string) => `person:${uid}`,
   role: (role: string) => `role:${role}`,
   team: (teamId: string) => `team:${teamId}`,
+  /** GAP-4: the effective owner's own slot under `ownerMustApprove`. No
+   *  policy entry pairs an alternate with it, so only the owner fills it. */
+  owner: (uid: string) => `owner:${uid}`,
 };
+
+/** GAP-4: how the owner-must-approve slot landed on a roster. `rostered` —
+ *  the effective owner is a required primary in their own slot; `author` —
+ *  the owner authored the revision and DEC-21 skips an author (a reviewer
+ *  never signs their own work); `no_owner` — no active owner resolves, so
+ *  nobody holds it and the roster gap notice says so. NULL: not required. */
+export type OwnerSlotOutcome = "rostered" | "author" | "no_owner" | null;
+
+/** GAP-4: place the effective owner on a freshly expanded roster as a
+ *  REQUIRED primary in a slot of their own. An owner the policy already
+ *  resolved as a primary keeps one row (re-slotted: only their own
+ *  signature fills it, so a role's or a person's alternate can't approve
+ *  for them); an owner resolved only as an alternate is promoted (primary
+ *  wins, as in expandReviewers). Pure — openReviewRoster resolves the owner. */
+export function placeOwnerSlot(input: {
+  primaries: Reviewer[]; alternates: Reviewer[];
+  owner: { userId: string | null; name: string | null };
+  /** The revision's author when DEC-21 skips authors (independent review
+   *  required); NULL when the library opted out. */
+  skipAuthorUid: string | null;
+}): { primaries: Reviewer[]; alternates: Reviewer[]; outcome: Exclude<OwnerSlotOutcome, null>; warning: string | null } {
+  const { primaries, alternates, owner, skipAuthorUid } = input;
+  if (!owner.userId) {
+    return {
+      primaries, alternates, outcome: "no_owner",
+      warning: "Owner approval: the review policy requires the owner's approval, but no active owner resolves for this document — set an owner (this revision's roster has no owner slot)",
+    };
+  }
+  if (skipAuthorUid && owner.userId === skipAuthorUid) return { primaries, alternates, outcome: "author", warning: null };
+  const ownerUid = owner.userId;
+  const known = primaries.find((p) => p.uid === ownerUid) ?? alternates.find((a) => a.uid === ownerUid) ?? null;
+  const ownerRow: Reviewer = {
+    uid: ownerUid, name: known?.name ?? owner.name ?? null, role: "Owner (must approve)", source: "person", groupKey: slotGroupKey.owner(ownerUid),
+  };
+  return {
+    primaries: [ownerRow, ...primaries.filter((p) => p.uid !== ownerUid)],
+    alternates: alternates.filter((a) => a.uid !== ownerUid),
+    outcome: "rostered",
+    warning: null,
+  };
+}
 
 async function expandSet(
   orgId: string, ids: string[], roles: string[], teams: string[], warnings: string[], label: string,
@@ -359,6 +404,68 @@ async function withdrawStrandedSubmission(input: { documentId: string; versionId
   return problems;
 }
 
+/** GAP-4 (P14 review fix): the effective owner an owner-must-approve roster
+ *  slots, read CHECKED at every rung. The same rows as
+ *  effectiveOwnerForDocument (lib/ownership.ts) — the document's, its
+ *  folder's and its library's owner, the library's owning team's
+ *  supervisor, and the active membership of each candidate — resolved
+ *  through the ONE chain (resolveEffectiveOwner, OWN-16), but a read that
+ *  answers an error, or finds no row where the rung points, THROWS instead
+ *  of resolving past that rung. effectiveOwnerForDocument reads the folder,
+ *  library and team unchecked and treats an unreadable membership as
+ *  "everyone is active" — fit for a notification route, not for naming the
+ *  person whose approval a revision cannot publish without: a transient
+ *  error there rosters the library owner in the folder owner's slot, opens
+ *  the roster with no owner slot at all, or rosters a departed owner the
+ *  review can never complete without. */
+async function readOwnerForApproval(input: { orgId: string; documentId: string; libraryId: string }): Promise<{ userId: string | null; name: string | null }> {
+  const unread = (what: string, error: { message?: string } | null): Error =>
+    new Error(`${what} could not be read: ${error?.message || "no row was returned"}`);
+  const { data: doc, error: docErr } = await supabase.from("documents")
+    .select("owner_user_id, owner_name, collection_id").eq("id", input.documentId).maybeSingle();
+  if (docErr || !doc) throw unread("the document's own owner", docErr);
+  const docOwner = { owner_user_id: (doc.owner_user_id as string | null) ?? null, owner_name: (doc.owner_name as string | null) ?? null };
+  const collectionId = (doc.collection_id as string | null) ?? null;
+  let folderOwner: { owner_user_id: string | null; owner_name: string | null } | null = null;
+  if (collectionId) {
+    const { data: col, error: colErr } = await supabase.from("collections")
+      .select("owner_user_id, owner_name").eq("id", collectionId).maybeSingle();
+    if (colErr || !col) throw unread("the folder's owner", colErr);
+    folderOwner = { owner_user_id: (col.owner_user_id as string | null) ?? null, owner_name: (col.owner_name as string | null) ?? null };
+  }
+  const { data: lib, error: libErr } = await supabase.from("libraries")
+    .select("owner_user_id, owner_name, owner_team_id").eq("id", input.libraryId).maybeSingle();
+  if (libErr || !lib) throw unread("the library's owner", libErr);
+  const libOwner = lib as LibraryOwnerCols;
+  const teamId = libOwner.owner_team_id ?? null;
+  let supervisor: string | null = null;
+  let teamName: string | null = null;
+  if (teamId) {
+    const { data: team, error: teamErr } = await supabase.from("teams")
+      .select("supervisor_user_id, name").eq("id", teamId).maybeSingle();
+    if (teamErr || !team) throw unread("the owning team's supervisor", teamErr);
+    supervisor = (team.supervisor_user_id as string | null) ?? null;
+    teamName = (team.name as string | null) ?? null;
+  }
+  const candidates = uniq([docOwner.owner_user_id ?? "", folderOwner?.owner_user_id ?? "", libOwner.owner_user_id ?? "", supervisor ?? ""]);
+  const active = new Set<string>();
+  const memberName = new Map<string, string | null>();
+  if (candidates.length > 0) {
+    const { data: members, error: memErr } = await supabase.from("org_members")
+      .select("uid, display_name, email").eq("org_id", input.orgId).eq("status", "active").in("uid", candidates);
+    if (memErr) throw unread("whether the owner is an active member", memErr);
+    for (const m of (members ?? []) as Array<Record<string, unknown>>) {
+      active.add(m.uid as string);
+      memberName.set(m.uid as string, (m.display_name as string) || (m.email as string) || null);
+    }
+  }
+  const teams: TeamSupervisorLookup | null = teamId
+    ? new Map([[teamId, { userId: supervisor, name: supervisor ? (memberName.get(supervisor) ?? teamName) : null }]])
+    : null;
+  const eff = resolveEffectiveOwner(docOwner, folderOwner, libOwner, active, teams);
+  return { userId: eff.userId, name: eff.name };
+}
+
 /** Open a fresh reviewer roster for an in-review draft: primaries active + notified,
  *  alternates inactive (they wait for the timeout or a manual activation). Flags a
  *  gap to owner + Admin/DocCtrl if no primary reviewer resolves.
@@ -366,7 +473,11 @@ async function withdrawStrandedSubmission(input: { documentId: string; versionId
  *  RG-7: a roster write that FAILS throws after withdrawing the submission —
  *  the caller's success message is reachable only after a confirmed roster.
  *  RG-8: the draft's author is skipped from the roster (DEC-21, unless the
- *  library opted out of independent review). */
+ *  library opted out of independent review).
+ *  GAP-4: under `ownerMustApprove` the effective owner is a required primary
+ *  in their own slot (placeOwnerSlot); an owner that cannot be read — at any
+ *  rung of the chain (readOwnerForApproval) — withdraws the submission like
+ *  a roster that cannot be saved. */
 export async function openReviewRoster(input: {
   orgId: string; documentId: string; libraryId: string; versionId: string;
   revisionLabel: string; contentHash: string | null; control: ReviewControl;
@@ -378,11 +489,55 @@ export async function openReviewRoster(input: {
   const { data: verRow } = await supabase.from("document_versions").select("created_by").eq("id", input.versionId).maybeSingle();
   if (verRow?.created_by) authorUid = String(verRow.created_by);
   const requireIndependent = await libraryRequiresIndependentReviewer(input.documentId);
-  const { primaries, alternates, warnings, authorSkipped } = await expandReviewers(input.orgId, input.control, {
+  const expanded = await expandReviewers(input.orgId, input.control, {
     excludeUid: requireIndependent ? authorUid : null,
   });
+  let { primaries, alternates, authorSkipped } = expanded;
+  const { warnings } = expanded;
   const nowIso = new Date().toISOString();
   const link = `/documents/${input.libraryId}?doc=${input.documentId}`;
+  /** RG-7: a roster that cannot be opened WITHDRAWS the submission and
+   *  throws — nothing is left "in review" with a roster nobody can trust. */
+  const withdrawAndThrow = async (what: string, cause: string): Promise<never> => {
+    const problems = await withdrawStrandedSubmission({ documentId: input.documentId, versionId: input.versionId, nowIso });
+    await logAuditAction({
+      action: "REVIEW_ROSTER_FAILED", resourceType: "document", resourceId: input.documentId,
+      orgId: input.orgId, userId: input.actorId ?? "",
+      details: { revision: input.revisionLabel, versionId: input.versionId, error: cause, withdrawn: problems.length === 0, problems },
+    }).catch(() => {});
+    throw new Error(
+      `${what} (${cause}). ` +
+      (problems.length
+        ? `The submission could NOT be fully withdrawn — ${problems.join("; ")} — a document controller must clear the stranded draft.`
+        : "The submission was withdrawn: nothing is in review. Fix the cause and submit again."),
+    );
+  };
+  // GAP-4 (R&P): an owner-must-approve policy rosters the document's
+  // effective owner as a REQUIRED primary in a slot of their own — on rosters
+  // opened from now on only (an open roster is never changed). The database
+  // completion gate counts primary rows per slot group, so the owner's row is
+  // required there too with no change to the guard. The owner is read
+  // CHECKED at every rung (readOwnerForApproval — P14 review fix): an owner
+  // we could not read must never open a roster without them, or with
+  // someone else in their slot.
+  let ownerSlot: OwnerSlotOutcome = null;
+  if (input.control.ownerMustApprove === true) {
+    let owner: { userId: string | null; name: string | null } | null = null;
+    let ownerUnread = "the owner could not be resolved";
+    try {
+      owner = await readOwnerForApproval({ orgId: input.orgId, documentId: input.documentId, libraryId: input.libraryId });
+    } catch (e) {
+      ownerUnread = (e as Error).message;
+    }
+    if (!owner) {
+      return await withdrawAndThrow("The reviewer roster could not be opened: the document's owner, who must approve it, could not be read", ownerUnread);
+    }
+    const placed = placeOwnerSlot({ primaries, alternates, owner, skipAuthorUid: requireIndependent ? authorUid : null });
+    ({ primaries, alternates } = placed);
+    ownerSlot = placed.outcome;
+    if (placed.outcome === "author") authorSkipped = true;
+    if (placed.warning) warnings.push(placed.warning);
+  }
   const rows = [
     ...primaries.map((r) => ({ r, slot: "primary" as const, activated: true })),
     ...alternates.map((r) => ({ r, slot: "alternate" as const, activated: false })),
@@ -408,24 +563,15 @@ export async function openReviewRoster(input: {
       // was about to be told "reviewers have been notified", the draft could
       // never finalize, and the completion guard would be inert over it.
       console.warn("[reviewControl] roster insert failed", upsertErr.message);
-      const problems = await withdrawStrandedSubmission({ documentId: input.documentId, versionId: input.versionId, nowIso });
-      await logAuditAction({
-        action: "REVIEW_ROSTER_FAILED", resourceType: "document", resourceId: input.documentId,
-        orgId: input.orgId, userId: input.actorId ?? "",
-        details: { revision: input.revisionLabel, versionId: input.versionId, error: upsertErr.message, withdrawn: problems.length === 0, problems },
-      }).catch(() => {});
-      throw new Error(
-        `The reviewer roster could not be saved (${upsertErr.message}). ` +
-        (problems.length
-          ? `The submission could NOT be fully withdrawn — ${problems.join("; ")} — a document controller must clear the stranded draft.`
-          : "The submission was withdrawn: nothing is in review. Fix the cause and submit again."),
-      );
+      await withdrawAndThrow("The reviewer roster could not be saved", upsertErr.message);
     }
     await Promise.all(primaries.filter((r) => r.uid !== input.actorId).map((r) =>
       notify({
         orgId: input.orgId, userId: r.uid, kind: "review_requested",
         title: `Review requested: ${input.revisionLabel}`,
-        body: "A draft revision is waiting for your sign-off before it can publish.",
+        body: r.groupKey === slotGroupKey.owner(r.uid)
+          ? "A draft revision is waiting for your sign-off before it can publish — as the document's owner, your approval is required."
+          : "A draft revision is waiting for your sign-off before it can publish.",
         link, resourceType: "document", resourceId: input.documentId,
         actorUserId: input.actorId ?? undefined, actorName: input.actorName ?? undefined,
       })
@@ -433,7 +579,7 @@ export async function openReviewRoster(input: {
     await logAuditAction({
       action: "REVIEW_REQUESTED", resourceType: "document", resourceId: input.documentId,
       orgId: input.orgId, userId: input.actorId ?? "",
-      details: { revision: input.revisionLabel, primaries: primaries.length, alternates: alternates.length, authorSkipped: authorSkipped ? authorUid : null },
+      details: { revision: input.revisionLabel, primaries: primaries.length, alternates: alternates.length, authorSkipped: authorSkipped ? authorUid : null, ownerSlot },
     }).catch(() => {});
   }
   if (primaries.length === 0 && authorSkipped) {
@@ -656,6 +802,19 @@ export async function reviewCompletionForDraft(
   return { requiredPrimaries, signed, complete, independent, roster };
 }
 
+/** REV-19 (P14 final review): a draft's per-slot completion read CHECKED,
+ *  for a caller that RECORDS the answer (lib/revisions.ts recordStatusIssue).
+ *  reviewCompletionForDraft's read is unchecked — a failed read is an empty
+ *  roster, so "incomplete", which fails closed for a publish but is a guess
+ *  on a record; this one throws instead, so the record can say "unknown".
+ *  Completion only, as reviewCompletionForDraft answers it with no actor. */
+export async function draftRosterCompleteChecked(documentId: string, versionId: string): Promise<boolean> {
+  const { data, error } = await supabase.from("document_review_signoffs").select("*")
+    .eq("document_id", documentId).eq("document_version_id", versionId);
+  if (error) throw new Error(`Couldn't read the review sign-offs (${error.message}).`);
+  return evaluateSlotCompletion(((data ?? []) as Array<Record<string, unknown>>).map(rowToSignoff)).complete;
+}
+
 /** DEC-21 policy lookup: defaults ON wherever a roster is configured; a
  *  library sets `requireIndependentReviewer: false` to opt out. Fail-safe:
  *  an unreadable library keeps the requirement. */
@@ -700,8 +859,29 @@ export function finalizeReasonMessage(reason: string | undefined): string {
     case "conflict": return "The document changed while you were publishing — reload and try again.";
     case "no_pending_draft": return "There is no draft in review on this document.";
     case "not_found": return "The document could not be found.";
-    default: return `Couldn't publish: ${reason ?? "unknown"}`;
+    default:
+      // REV-20 (P14 review fix): the publish guard refuses a held document's
+      // promote — a controller's in the new-door sentence (which also names
+      // publish_revision's recorded override: a NEW version's door, not this
+      // reviewed draft's), anyone else's in the publisher tier's. Where no
+      // force is offered — anyone below a controller, and the intake approve
+      // — the person is told what they can do: release the hold, then
+      // publish again. (P14 final review: a controller in the inspector is
+      // offered the review promote's own recorded force instead —
+      // isFinalizeHoldRefusal, ReviewGateSection.)
+      if (isFinalizeHoldRefusal(reason)) {
+        return "This document has an active hold, so the reviewed revision was not published and nothing was changed. Release the hold, then publish the reviewed revision — its sign-offs stand.";
+      }
+      return `Couldn't publish: ${reason ?? "unknown"}`;
   }
+}
+
+/** REV-20 (P14 final review): the review promote was refused by an active
+ *  hold — either of the publish guard's hold sentences (a controller's, which
+ *  names the recorded override; the publisher tier's). The inspector offers a
+ *  controller the recorded force on exactly this refusal. */
+export function isFinalizeHoldRefusal(reason: string | undefined): boolean {
+  return !!reason && (reason.includes(ISSUE_REFUSAL.newDoorHold) || reason.includes(ISSUE_REFUSAL.publishHold));
 }
 
 /** Publish an approved in-review draft: promote it to current, drop the letter
@@ -717,6 +897,17 @@ export async function finalizeReviewedRevision(input: {
    *  the review. The DB publish guard still verifies authority + holds, and
    *  its completion gate only binds when roster rows exist. */
   requireRosterComplete?: boolean;
+  /** REV-20 (P14 final review): Document Control's recorded force past an
+   *  active hold. finalize_reviewed_promote (20261151) honours it only for a
+   *  controller while a hold is active, sets the publish guard's
+   *  transaction-local flag around its own promote and records
+   *  REV_HOLD_OVERRIDDEN in the same transaction; anyone else's is ignored
+   *  (the guard refuses them as before). The inspector offers it to a
+   *  controller only after the hold refused the promote. A database without
+   *  the function takes the three-step path, which carries no force. */
+  forceHold?: boolean;
+  /** Recorded with the force (optional, as publish_revision's). */
+  overrideReason?: string | null;
 }): Promise<{ published: boolean; reason?: string; evidenceSweep?: import("@/lib/checklists").ProjectSweepOutcome & { projects: number } }> {
   const { data: docRow } = await supabase.from("documents")
     .select("id, library_id, rev, status, current_version_id, pending_version_id").eq("id", input.documentId).maybeSingle();
@@ -754,58 +945,29 @@ export async function finalizeReviewedRevision(input: {
   if (draftBase !== previousVersionId && !(draftBase === null && intakeApproval)) return { published: false, reason: "stale_base" };
   const nowIso = new Date().toISOString();
 
-  // Promote FIRST — this is the update the publish-guard trigger inspects
-  // (authority, active holds, review completion). Nothing else is mutated
-  // until it commits, so a guard rejection leaves history untouched.
-  // CAS on pending_version_id AND current_version_id: when two "last"
-  // reviewers sign concurrently, both read complete=true and both reach this
-  // line — the promote clears pending_version_id, so exactly one matches; the
-  // loser matches zero rows and must NOT re-run the relabel/supersede/
-  // side-effect pipeline (the publish trigger does not reject a same-value
-  // promote, so without the CAS the loser would double-fire every supersede
-  // notification and roster rebuild). The base half (REV-5) makes the
-  // expected-base check atomic with the write.
-  let promoteQuery = supabase.from("documents")
-    .update({ current_version_id: pendingId, rev: baseRev, revision: baseRev, status: "Issued", pending_version_id: null, updated_at: nowIso, updated_by: input.actorId })
-    .eq("id", input.documentId)
-    .eq("pending_version_id", pendingId);
-  promoteQuery = previousVersionId ? promoteQuery.eq("current_version_id", previousVersionId) : promoteQuery.is("current_version_id", null);
-  const { data: promoted, error: docErr } = await promoteQuery.select("id");
-  if (docErr) return { published: false, reason: docErr.message };
-  if (!promoted || promoted.length === 0) {
-    // Zero rows: either a concurrent finalizer already promoted this exact
-    // draft (the revision IS published; nothing left to do) or the document
-    // moved under us between the read and the write (the pointer is still
-    // set) — never assume the happy case.
-    const { data: again } = await supabase.from("documents").select("pending_version_id").eq("id", input.documentId).maybeSingle();
-    if ((again?.pending_version_id as string | null) === pendingId) return { published: false, reason: "conflict" };
-    return { published: true };
-  }
-
-  // Bookkeeping after the point of no return: relabel the approved draft,
-  // retire the prior rev, and close out sign-off rows that were still pending
-  // (e.g. a standby alternate) so the scan/inbox never chase a published draft.
-  // EGRESS-6/OWN-14: these were bare awaits — a refusal here leaves the
-  // document promoted while the version row still reads '2A · in review',
-  // with nothing surfaced anywhere. Checked now: a failure names exactly the
-  // inconsistent state it leaves so someone fixes it, instead of nobody
-  // knowing it exists.
-  const { data: relabeled, error: relabelErr } = await supabase.from("document_versions")
-    .update({ review_state: "approved", revision_label: baseRev, released_at: nowIso, supersedes_version_id: previousVersionId, updated_at: nowIso })
-    .eq("id", pendingId)
-    .select("id");
-  if (relabelErr || !relabeled || relabeled.length === 0) {
-    throw new Error(
-      `The document was promoted, but the approved draft could not be relabeled to Rev ${baseRev}` +
-      ` (${relabelErr?.message ?? "the write was refused"}). Version history is inconsistent — a document controller should correct the revision label.`,
-    );
-  }
-  if (previousVersionId) {
-    const { error: supErr } = await supabase.from("document_versions")
-      .update({ superseded_at: nowIso }).eq("id", previousVersionId).select("id");
-    if (supErr) {
-      throw new Error(`The new revision is published, but the prior revision could not be marked superseded: ${supErr.message}`);
-    }
+  // RG-12: the promote and its bookkeeping (relabel / approve the draft,
+  // supersede the prior revision) in ONE transaction. finalize_reviewed_promote
+  // (20261151) runs these same three writes as the CALLER (SECURITY INVOKER:
+  // the publish guard and the row-level policies decide them exactly as they
+  // decide promoteThreeStep's) and rolls the promote back when a bookkeeping
+  // write matches no row, so current_version_id never names a row still
+  // in_review. Only a database without the function (before the paste:
+  // PGRST202 / 42883) takes the three separately checked writes.
+  const atomic = await promoteReviewedDraftAtomically({
+    documentId: input.documentId, pendingId, previousVersionId, baseRev, actorId: input.actorId ?? null,
+    forceHold: input.forceHold === true, overrideReason: input.overrideReason ?? null,
+  });
+  if (atomic.outcome === "refused") return { published: false, reason: atomic.reason };
+  if (atomic.outcome === "no_match") return await afterZeroRowPromote(input.documentId, pendingId);
+  if (atomic.outcome === "unavailable") {
+    // No force on this path (P14 final review): separate PostgREST writes
+    // cannot carry the transaction-local flag or record the override with
+    // the promote. Before the paste the guard has no REV-20 limb, so it
+    // decides this promote as it always has.
+    const early = await promoteThreeStep({
+      documentId: input.documentId, pendingId, previousVersionId, baseRev, actorId: input.actorId, nowIso,
+    });
+    if (early) return early;
   }
   {
     const { error: voidErr } = await supabase.from("document_review_signoffs")
@@ -883,6 +1045,108 @@ export async function finalizeReviewedRevision(input: {
     } catch { /* best-effort: never fails a landed publish */ }
   }
   return { published: true };
+}
+
+/** RG-12: what finalize_reviewed_promote (20261151) answered. `unavailable`:
+ *  the database has no such function yet (PGRST202 / 42883) — the caller
+ *  takes the three-step promote; `refused`: the call raised (the publish
+ *  guard, a row-level refusal, a bookkeeping write that matched no row — all
+ *  rolled back) or answered something unrecognised. */
+async function promoteReviewedDraftAtomically(p: {
+  documentId: string; pendingId: string; previousVersionId: string | null; baseRev: string; actorId: string | null;
+  forceHold?: boolean; overrideReason?: string | null;
+}): Promise<{ outcome: "promoted" | "no_match" | "unavailable" } | { outcome: "refused"; reason: string }> {
+  const { data, error } = await supabase.rpc("finalize_reviewed_promote", {
+    p_document_id: p.documentId,
+    p_pending_id: p.pendingId,
+    p_expected_current: p.previousVersionId,
+    p_base_rev: p.baseRev,
+    p_actor: p.actorId,
+    // REV-20 (P14 final review): sent only with a force, so the call without
+    // one is exactly the five named arguments it always was.
+    ...(p.forceHold ? { p_force_hold: true, p_override_reason: p.overrideReason?.trim() || null } : {}),
+  });
+  if (error) {
+    const code = (error as { code?: string | null }).code ?? "";
+    const msg = error.message ?? "";
+    if (code === "PGRST202" || code === "42883" || /could not find the function/i.test(msg)) return { outcome: "unavailable" };
+    return { outcome: "refused", reason: msg || "The publish was refused." };
+  }
+  if (data === "promoted" || data === "no_match") return { outcome: data };
+  return { outcome: "refused", reason: `The publish could not be confirmed (the database answered ${JSON.stringify(data ?? null)}); reload the document to see whether the revision was published.` };
+}
+
+/** The promote matched no row: either a concurrent finalizer already
+ *  promoted this exact draft (the revision IS published; nothing left to do)
+ *  or the document moved under us between the read and the write (the
+ *  pointer is still set) — never assume the happy case. */
+async function afterZeroRowPromote(documentId: string, pendingId: string): Promise<{ published: boolean; reason?: string }> {
+  const { data: again } = await supabase.from("documents").select("pending_version_id").eq("id", documentId).maybeSingle();
+  if ((again?.pending_version_id as string | null) === pendingId) return { published: false, reason: "conflict" };
+  return { published: true };
+}
+
+/** The promote and its bookkeeping as three separately checked writes — the
+ *  path for a database without finalize_reviewed_promote (before 20261151).
+ *  Returns an answer when the publish stops here (a refusal, or a zero-row
+ *  promote), null when it landed; throws when the promote landed and the
+ *  bookkeeping did not (the incident RG-12 names). */
+async function promoteThreeStep(p: {
+  documentId: string; pendingId: string; previousVersionId: string | null; baseRev: string; actorId?: string | null; nowIso: string;
+}): Promise<{ published: boolean; reason?: string } | null> {
+  // Promote FIRST — this is the update the publish-guard trigger inspects
+  // (authority, active holds, review completion). Nothing else is mutated
+  // until it commits, so a guard rejection leaves history untouched.
+  // CAS on pending_version_id AND current_version_id: when two "last"
+  // reviewers sign concurrently, both read complete=true and both reach this
+  // line — the promote clears pending_version_id, so exactly one matches; the
+  // loser matches zero rows and must NOT re-run the relabel/supersede/
+  // side-effect pipeline (the publish trigger does not reject a same-value
+  // promote, so without the CAS the loser would double-fire every supersede
+  // notification and roster rebuild). The base half (REV-5) makes the
+  // expected-base check atomic with the write.
+  const { documentId, pendingId, previousVersionId, baseRev, nowIso } = p;
+  let promoteQuery = supabase.from("documents")
+    .update({ current_version_id: pendingId, rev: baseRev, revision: baseRev, status: "Issued", pending_version_id: null, updated_at: nowIso, updated_by: p.actorId })
+    .eq("id", documentId)
+    .eq("pending_version_id", pendingId);
+  promoteQuery = previousVersionId ? promoteQuery.eq("current_version_id", previousVersionId) : promoteQuery.is("current_version_id", null);
+  const { data: promoted, error: docErr } = await promoteQuery.select("id");
+  if (docErr) return { published: false, reason: docErr.message };
+  if (!promoted || promoted.length === 0) {
+    // Zero rows: either a concurrent finalizer already promoted this exact
+    // draft (the revision IS published; nothing left to do) or the document
+    // moved under us between the read and the write (the pointer is still
+    // set) — never assume the happy case.
+    return await afterZeroRowPromote(p.documentId, p.pendingId);
+  }
+
+  // Bookkeeping after the point of no return: relabel the approved draft,
+  // retire the prior rev, and close out sign-off rows that were still pending
+  // (e.g. a standby alternate) so the scan/inbox never chase a published draft.
+  // EGRESS-6/OWN-14: these were bare awaits — a refusal here leaves the
+  // document promoted while the version row still reads '2A · in review',
+  // with nothing surfaced anywhere. Checked now: a failure names exactly the
+  // inconsistent state it leaves so someone fixes it, instead of nobody
+  // knowing it exists.
+  const { data: relabeled, error: relabelErr } = await supabase.from("document_versions")
+    .update({ review_state: "approved", revision_label: baseRev, released_at: nowIso, supersedes_version_id: previousVersionId, updated_at: nowIso })
+    .eq("id", pendingId)
+    .select("id");
+  if (relabelErr || !relabeled || relabeled.length === 0) {
+    throw new Error(
+      `The document was promoted, but the approved draft could not be relabeled to Rev ${baseRev}` +
+      ` (${relabelErr?.message ?? "the write was refused"}). Version history is inconsistent — a document controller should correct the revision label.`,
+    );
+  }
+  if (previousVersionId) {
+    const { error: supErr } = await supabase.from("document_versions")
+      .update({ superseded_at: nowIso }).eq("id", previousVersionId).select("id");
+    if (supErr) {
+      throw new Error(`The new revision is published, but the prior revision could not be marked superseded: ${supErr.message}`);
+    }
+  }
+  return null;
 }
 
 // ── Daily scan: activate alternates on timeout + escalate ─────────────────────

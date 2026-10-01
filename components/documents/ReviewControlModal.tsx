@@ -78,6 +78,20 @@ function PickRow({ orgId, label, people, setPeople, roles, setRoles, allTeams, t
   );
 }
 
+/** The editor's "no reviewer" warning. A gated policy with no primary
+ *  reviewer strands every revision. GAP-4 (P14 review fix): so does one whose
+ *  ONLY approver is the owner, for every revision the owner authors where a
+ *  reviewer never signs their own work (DEC-21 — the author is skipped, so the
+ *  roster opens empty and the publish is refused). `authorSkipped` is that
+ *  independence rule as the editor knows it (a folder policy cannot see its
+ *  library's opt-out, so it assumes the default: on). */
+export function noReviewerWarning(input: { gated: boolean; ownerMustApprove: boolean; hasPrimaries: boolean; authorSkipped: boolean }): string | null {
+  if (!input.gated || input.hasPrimaries) return null;
+  if (!input.ownerMustApprove) return "Add at least one primary reviewer (person, role, or department), or a rev can never publish.";
+  if (!input.authorSkipped) return null;
+  return "Only the owner approves under this policy, so a revision the owner authors has no reviewer (a reviewer never signs their own work) and can never publish. Add at least one primary reviewer (person, role, or department).";
+}
+
 export default function ReviewControlModal({ level, id, orgId, name, uid, userName, onClose, onSaved }: {
   level: "library" | "collection";
   id: string;
@@ -104,6 +118,8 @@ export default function ReviewControlModal({ level, id, orgId, name, uid, userNa
   const [allTeams, setAllTeams] = useState<Team[]>([]);
   const [timeoutDays, setTimeoutDays] = useState(7);
   const [requireIndependent, setRequireIndependent] = useState(true);
+  // GAP-4: the effective owner must sign every revision submitted from now on.
+  const [ownerMustApprove, setOwnerMustApprove] = useState(false);
   // RG-4: which slot each NAMED alternate stands in for (alternate uid → slot
   // group key). Role / department alternates are paired by construction.
   const [alternateBacks, setAlternateBacks] = useState<Record<string, string>>({});
@@ -151,6 +167,7 @@ export default function ReviewControlModal({ level, id, orgId, name, uid, userNa
         setViewerTeams(c.draftViewerTeamIds ?? []);
         setTimeoutDays(c.timeoutDays ?? 7);
         setRequireIndependent(c.requireIndependentReviewer !== false);
+        setOwnerMustApprove(c.ownerMustApprove === true);
         setAlternateBacks(c.alternateBacks ?? {});
         const [rp, ap, vp] = await Promise.all([resolvePeople(c.reviewerIds), resolvePeople(c.alternateIds), resolvePeople(c.draftViewerIds)]);
         if (alive) { setReviewers(rp); setAlternates(ap); setViewers(vp); }
@@ -179,6 +196,7 @@ export default function ReviewControlModal({ level, id, orgId, name, uid, userNa
         draftViewerIds: viewers.map((p) => p.uid), draftViewerRoles: viewerRoles, draftViewerTeamIds: viewerTeams,
         timeoutDays,
         ...(level === "library" ? { requireIndependentReviewer: requireIndependent } : {}),
+        ...(ownerMustApprove ? { ownerMustApprove: true } : {}),
       };
       await setReviewControlPolicy({ level, id, orgId, control, actorId: uid, actorName: userName });
       // Doc-class declaration rides the same Save — written only when it
@@ -205,7 +223,11 @@ export default function ReviewControlModal({ level, id, orgId, name, uid, userNa
   };
 
   const gated = mode !== "none";
-  const noReviewers = gated && reviewers.length === 0 && reviewerRoles.length === 0 && reviewerTeams.length === 0;
+  const noReviewerText = noReviewerWarning({
+    gated, ownerMustApprove,
+    hasPrimaries: reviewers.length > 0 || reviewerRoles.length > 0 || reviewerTeams.length > 0,
+    authorSkipped: level !== "library" || requireIndependent,
+  });
   // The slots a named alternate can stand in for: each named primary, each
   // primary role, each primary department (the keys lib/reviewControl.ts
   // stamps on roster rows as slot_group).
@@ -275,6 +297,10 @@ export default function ReviewControlModal({ level, id, orgId, name, uid, userNa
               <>
                 <div className="text-[10px] text-[var(--color-text-muted)] -mb-1">A Minor/Correction change skips the gate (and is recorded as skipping it). A rev raised from a drafting ticket never skips it (DEC-23).</div>
                 <PickRow orgId={orgId} label="Primary reviewers (every resolved primary is a slot that must be signed)" people={reviewers} setPeople={setReviewers} roles={reviewerRoles} setRoles={setReviewerRoles} allTeams={allTeams} teamIds={reviewerTeams} setTeamIds={setReviewerTeams} />
+                <label className="flex items-start gap-2 text-[11px] text-[var(--color-text-muted)] cursor-pointer select-none" title="GAP-4: ownership means being the approver of revision and supersession.">
+                  <input type="checkbox" checked={ownerMustApprove} onChange={(e) => setOwnerMustApprove(e.target.checked)} className="mt-0.5" />
+                  <span><span className="font-bold text-[var(--color-text)]">The owner must approve.</span> Every revision submitted from now on also needs the document&apos;s effective owner to sign it themselves — a slot of their own that no alternate can fill. Reviews already in progress keep the roster they opened with.</span>
+                </label>
                 {(level !== "library" || requireIndependent) && (
                   <div className="text-[10px] text-[var(--color-text-muted)]">A reviewer who authors a revision is skipped on that revision&apos;s roster and cannot sign it — a reviewer never signs their own work (DEC-21).</div>
                 )}
@@ -311,7 +337,7 @@ export default function ReviewControlModal({ level, id, orgId, name, uid, userNa
                   <span className="text-[11px] text-[var(--color-text-muted)]">days</span>
                 </div>
                 <PickRow orgId={orgId} label="Extra draft viewers (besides reviewers + owner + DocCtrl)" people={viewers} setPeople={setViewers} roles={viewerRoles} setRoles={setViewerRoles} allTeams={allTeams} teamIds={viewerTeams} setTeamIds={setViewerTeams} />
-                {noReviewers && <div className="text-[11px] text-amber-600">Add at least one primary reviewer (person, role, or department), or a rev can never publish.</div>}
+                {noReviewerText && <div className="text-[11px] text-amber-600">{noReviewerText}</div>}
               </>
             )}
 

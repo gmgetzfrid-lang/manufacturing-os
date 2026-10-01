@@ -30,7 +30,7 @@ Whether a hold blocks every path or only the ones somebody remembered.
 ## HLD-1 · A hold is a hard block only on "advance" transitions; download, transmittal, distribution-ack, share link, checkout, revision-label correction, renumber and disposal all proceed unguarded
 
 - **Severity:** HIGH
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Assigned:** document-control P14 RECORDS & REVIEW REMAINDERS (limb 1: `disposeDocument` onto `lib/holdGate.ts`) and P15 SURFACE REMAINDERS (limb 2: the markup export's hold line in `FullScreenViewer.tsx`) — by the integrator, 2026-10-01 (at the I-05 merge: the packages that left these limbs have merged, and the plan named no next owner for either file; fleet plan `audit-reports/fleet-plans/`).
 - **Verification:** CONFIRMED
 - **Locations:** `supabase/migrations/20260822_review_completion_guard.sql:36-40`, `supabase/migrations/20260822_review_completion_guard.sql:77-86`, `lib/documentGuards.ts:138-148`, `lib/revisions.ts:1051-1118`, `lib/retention.ts:151-158`, `lib/downloads.ts`, `lib/transmittals.ts`, `lib/distributionAcks.ts`, `lib/documentShares.ts`, `lib/documentLifecycle/renumber.ts`
@@ -118,6 +118,20 @@ Every other door now calls the shared gate. The share link (P1) and the transmit
 **Done-when (this limb).** (2) ✓ The markup export, like the download, print and book, stamps a held document's copy with the hold. (1) — `disposeDocument`'s call onto the shared helper is limb 1 (P14), not done here. (3) unchanged.
 
 **Scope / residual.** Stays OPEN for limb 1 only (P14 records it). File: `components/viewers/FullScreenViewer.tsx`.
+**Partial (2026-10-01, document-control Round F wave 3).** Package **P14 RECORDS & REVIEW REMAINDERS** — limb 1 of the two re-owned at the I-05 merge: the dispose gate onto the shared helper. Reproduced on `4dd0df7`: `lib/retention.ts` imported `listActiveHoldsForDocument` from `lib/holds.ts` and `disposeDocument` read holds through it (the 2026-09-29 integration note's "wave 2 unifies this onto `lib/holdGate.ts`" had not happened).
+- `lib/retention.ts` `disposeDocument` now asks THE gate: `decideHoldGate(await readActiveHolds(input.documentId), "disposing it")`, before anything is read or written for the disposal. P9's behaviour is kept: a known hold answers `{ ok: false, reason: "active_hold" }` with nothing written (the panel's "release the hold first" wording is unchanged); an unreadable hold set still throws — now the gate's `HoldBlockedError` (`code: "on_hold"`, `unreadable: true`, naming the read error and "disposing it"). The `lib/holds.ts` import is gone from the file.
+- Tests: `lib/__tests__/dcRoundFP14Remainders.test.ts` "HLD-1 (the dispose limb) — …": the gate is `lib/holdGate.ts` and is asked before the disposal write (source pin); a known hold → `active_hold`, nothing written; an unreadable hold set → `HoldBlockedError` (unreadable), nothing written; **regression** — a clear document is disposed as before. P9's `dcRoundFRecords.test.ts` dispose cases pass unchanged (`active_hold`; the read error's message still names it).
+
+**Done-when (this limb).** (1) ✓ `disposeDocument` now calls the shared gate (`readActiveHolds` + `decideHoldGate`, the decision `assertNotOnHold` makes, keeping the dispose gate's `active_hold` answer for a known hold). (2) and (3) unchanged by this pass.
+
+**Scope / residual.** Stays OPEN for limb 2 only — `components/viewers/FullScreenViewer.tsx`'s markup export carries no hold line — owned by document-control P15 SURFACE REMAINDERS (running in parallel; this package does not edit that file). Every other door now calls the shared gate.
+
+**Resolution (2026-10-01, the integrator at the document-control P14 merge).** P15 landed limb 2 (merged `b9cdfdc`) and P14 limb 1 (this merge), so every done-when now holds in code, checked at the merge by grepping each door for the shared gate:
+1. ✓ The shared gate (`lib/holdGate.ts` — `assertNotOnHold`, or `readActiveHolds` + `decideHoldGate` where a caller keeps its own answer) is called by `correctRevisionLabel` and `renumberDocument` (P3), `disposeDocument` (P14), the transmittal issue (P7), the distribution-ack assignment (P5) and share-link creation (P1).
+2. ✓ Download, print and book stamp a HOLD banner (P8), so does the markup export (P15), and the doc pack refuses a held sheet (`PKG-4`).
+3. ✓ `20261074`'s label rails and `20261077`'s archive / dispose rail refuse those writes on a held document for a non-controller.
+
+RESOLVED pending the pastes of `20261074` and `20261077` (`MIGRATION-PASTE-ORDER.md`), by the repo's convention for pending pastes. The two scope notes above ("Stays OPEN for limb 1 / limb 2 only") are superseded by this block.
 
 ---
 
