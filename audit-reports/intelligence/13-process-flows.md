@@ -276,7 +276,7 @@ lib/orgGraph.ts:174 `const key = a < b ? `${a}|${b}|${type}` : `${b}|${a}|${type
 - [ ] Directional edge types (`flow`, `supersession`) dedupe on the ordered key `a|b|type`, not the symmetric one
 - [ ] A test builds a two-row recycle loop and asserts both edges survive
 
-**Resolution (2026-10-01, intelligence Round G).** Reproduced first (DEC-29): `lib/__tests__/orgGraph.test.ts` run against the base commit's `lib/orgGraph.ts` (57609d2) fails 22 of its 23 cases, each on a finding's own mechanism — here a two-row recycle loop assembled to one edge. What landed in `lib/orgGraph.ts`: `DIRECTED_EDGE_TYPES = {flow, supersession}`; `addEdge` dedupes those on the ordered key `a|b|type` (a = the source), every other type on the unordered pair. Proposed flows are counted in a truncation (GM-8).
+**Resolution (2026-10-01, intelligence Round G).** Reproduced first (DEC-29): `lib/__tests__/orgGraph.test.ts` run against the base commit's `lib/orgGraph.ts` (57609d2) fails 23 of its 24 cases, each on a finding's own mechanism — here a two-row recycle loop assembled to one edge. What landed in `lib/orgGraph.ts`: `DIRECTED_EDGE_TYPES = {flow, supersession}`; `addEdge` dedupes those on the ordered key `a|b|type` (a = the source), every other type on the unordered pair. Proposed flows are counted in a truncation (GM-8).
 
 Tests: `lib/__tests__/orgGraph.test.ts` — T-401 → P-402 and P-402 → T-401 both survive, each keeping its direction; supersession too; related still dedupes as a pair.
 
