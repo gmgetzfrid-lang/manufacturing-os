@@ -167,3 +167,64 @@ export function userFacingError(err: unknown, opts: { action?: "read" | "write";
 export function userFacingReadError(err: unknown, context?: string): string {
   return userFacingError(err, { action: "read", context });
 }
+
+/** Driver wording that sits just BEFORE the part a template matches (the
+ *  foreign-key and schema-cache texts name the table first). */
+const DRIVER_PREAMBLE = /(?:(?:insert or update|update or delete) on table "[^"]*"|Could not (?:find|choose)\b[\s\S]*?)\s*$/i;
+/** What must never reach the screen around a replaced fragment. */
+const LEAKS = /"[a-z_][\w.]*"|'[a-z_][\w.]*'|\brelation\b|\bconstraint\b|\bpolicy\b|\bschema\b|\bPGRST|\bSQLSTATE|\bpublic\.|row-level/i;
+
+/** Where the leftmost known driver template starts inside `msg`, or -1. */
+function driverFragmentAt(msg: string): number {
+  let at = -1;
+  for (const r of RULES) {
+    if (!r.text) continue;
+    const m = r.text.exec(msg);
+    if (m && (at < 0 || m.index < at)) at = m.index;
+  }
+  return at;
+}
+
+/**
+ * A CAUGHT error's text for the screen (projects REL-3), for a call site
+ * that shows whatever a library threw. A library outside the translated set
+ * may wrap raw driver text in its own sentence — "The new revision is
+ * published, but the prior revision could not be marked superseded: <driver
+ * text>". Translating the whole would drop what DID happen and claim nothing
+ * changed, so the library's lead-in is kept and only the driver fragment is
+ * replaced by its plain sentence (what follows a parenthesised fragment, or a
+ * new sentence after it, is kept too). A lead-in or tail that would itself
+ * name a table, column or policy is dropped. A message with no driver text
+ * passes through untouched; a bare driver message becomes its sentence. The
+ * raw detail is logged exactly as userFacingError logs it.
+ */
+export function userFacingCaughtError(err: unknown, opts: { action?: "read" | "write"; context?: string } = {}): string {
+  const kind = classifyDbError(err);
+  const e = normalize(err);
+  const msg = (e.message ?? "").trim();
+  if (kind === "passthrough") return msg;
+  const sentence = userFacingError(err, opts);
+  const at = driverFragmentAt(msg);
+  if (at <= 0) return sentence;
+  const before = msg.slice(0, at).replace(DRIVER_PREAMBLE, "");
+  const paren = /\(\s*$/.test(before);
+  const lead = before.replace(/[\s:;,(—–-]+$/, "").trim();
+  if (!lead || LEAKS.test(lead) || driverFragmentAt(lead) >= 0) return sentence;
+  let rest = "";
+  if (paren) {
+    // the fragment runs to the parenthesis that closes it
+    let depth = 1, i = at;
+    for (; i < msg.length && depth > 0; i++) {
+      if (msg[i] === "(") depth++;
+      else if (msg[i] === ")") depth--;
+    }
+    rest = depth === 0 ? msg.slice(i).trim() : "";
+  } else {
+    // the fragment runs to the end, or to a new sentence after it
+    const next = /\.\s+(?=[A-Z])/.exec(msg.slice(at));
+    rest = next ? msg.slice(at + next.index + next[0].length).trim() : "";
+  }
+  if (rest && (LEAKS.test(rest) || driverFragmentAt(rest) >= 0)) rest = "";
+  if (paren) return `${lead} (${sentence.replace(/\.$/, "")})${rest ? `${/^[.,;:]/.test(rest) ? "" : " "}${rest}` : "."}`;
+  return `${lead}: ${sentence}${rest ? ` ${rest.replace(/^[.,;:\s]+/, "")}` : ""}`;
+}

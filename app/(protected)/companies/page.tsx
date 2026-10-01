@@ -12,6 +12,7 @@
 // evidence doesn't exist yet.
 
 import React, { useCallback, useEffect, useMemo, useState } from "react";
+import { userFacingCaughtError } from "@/lib/userFacingError";
 import Link from "next/link";
 import {
   HardHat, Plus, Search, Loader2, AlertTriangle, Check, Phone, Mail,
@@ -96,7 +97,7 @@ export default function CompaniesPage() {
       if (!ctl.cancelled) setProfiles(gathered);
     } catch (e) {
       if (ctl.cancelled) return;
-      setError((e as Error).message);
+      setError(userFacingCaughtError(e, { action: "read", context: "companies" }));
       setState("failed");
     }
   }, [activeOrgId, debounced, kindFilter, page]);
@@ -353,7 +354,7 @@ function AddCompanyModal({ orgId, actorId, onClose, onCreated }: {
       });
       onCreated();
     } catch (e) {
-      setError((e as Error).message);
+      setError(userFacingCaughtError(e, { context: "companies" }));
     } finally { setBusy(false); }
   };
 
@@ -368,8 +369,8 @@ function AddCompanyModal({ orgId, actorId, onClose, onCreated }: {
     <Modal onClose={() => void dismiss()} size="md" dismissable={!busy} className="overflow-hidden">
         <ModalHeader icon={HardHat} title="Add a known company"
           subtitle="Their record builds itself from real work — this is just the front of the file."
-          onClose={busy ? undefined : onClose} />
-        <div className="px-6 py-5 space-y-3 overflow-y-auto">
+          onClose={busy ? undefined : () => void dismiss()} />
+        <div className="px-6 py-5 space-y-3 overflow-y-auto min-h-0">
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
             <input value={name} onChange={(e) => setName(e.target.value)} placeholder="Company name *" autoFocus aria-label="Company name (required)"
               className="px-3 py-2 border border-[var(--color-border-strong)] rounded-lg text-sm bg-[var(--color-surface)]" />
@@ -399,7 +400,7 @@ function AddCompanyModal({ orgId, actorId, onClose, onCreated }: {
           )}
         </div>
         <div className="px-6 py-3 bg-[var(--color-surface-2)] border-t border-[var(--color-border)] flex items-center justify-end gap-2 shrink-0">
-          <button onClick={onClose} disabled={busy} className="px-3 py-2 rounded-lg text-xs font-bold text-[var(--color-text)] bg-[var(--color-surface)] border border-[var(--color-border)] hover:bg-[var(--color-surface-2)] disabled:opacity-50">Cancel</button>
+          <button onClick={() => void dismiss()} disabled={busy} className="px-3 py-2 rounded-lg text-xs font-bold text-[var(--color-text)] bg-[var(--color-surface)] border border-[var(--color-border)] hover:bg-[var(--color-surface-2)] disabled:opacity-50">Cancel</button>
           <button onClick={() => void submit()} disabled={busy || !name.trim()}
             className="inline-flex items-center gap-1.5 px-3 py-2 rounded-lg text-xs font-bold text-[var(--color-accent-fg)] bg-[var(--color-accent)] hover:bg-[var(--color-accent-hover)] disabled:opacity-60">
             {busy ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Check className="w-3.5 h-3.5" />} Add company

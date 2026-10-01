@@ -383,6 +383,21 @@ describe("A11Y-13 — the cited pairs clear 4.5 : 1 in both themes", () => {
       expect(src(f), f).not.toMatch(/text-rose-700"/);
     }
   });
+  it("review fix: an N/A checklist row and a closed punch row are set back by the muted text token, their mark and (punch) a strike — never whole-row opacity, which took their text under 4.5 : 1", () => {
+    const muted = hex("#64748b"), mutedDark = hex("#94a3b8");   // --color-text-muted, light / dark
+    // the old recipe: the row's muted line at opacity-50 / -55 over the card
+    expect(ratio(over(muted, 0.5, T.white), T.white)).toBeLessThan(4.5);
+    expect(ratio(over(mutedDark, 0.55, T.surfaceDark), T.surfaceDark)).toBeLessThan(4.5);
+    expect(ratio(over(T.text, 0.5, T.white), T.white)).toBeLessThan(4.5);
+    // the new one: the muted token at full strength clears 4.5 : 1 in both themes
+    expect(ratio(muted, T.white)).toBeGreaterThanOrEqual(4.5);
+    expect(ratio(mutedDark, T.surfaceDark)).toBeGreaterThanOrEqual(4.5);
+    const q = src("components/projects/QualityTab.tsx");
+    expect(q).not.toContain('${na ? "opacity-50" : ""}');
+    expect(q).not.toContain('${it.status !== "open" ? "opacity-55" : ""}');
+    expect(q).toContain('<div className={na ? "text-[var(--color-text-muted)]" : "text-[var(--color-text)]"}>{item.text}</div>');
+    expect(q).toContain('<span className={it.status !== "open" ? "text-[var(--color-text-muted)] line-through" : "text-[var(--color-text)]"}>{it.title}</span>');
+  });
   it("every date input in the Projects area follows the theme", () => {
     const offenders: string[] = [];
     for (const f of PROJECT_SURFACES) {

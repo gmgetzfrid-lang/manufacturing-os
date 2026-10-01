@@ -16,7 +16,7 @@
 // Costs tab, not here (INTK-12).
 
 import React, { useCallback, useEffect, useRef, useState } from "react";
-import { userFacingError, userFacingReadError } from "@/lib/userFacingError";
+import { userFacingError, userFacingReadError, userFacingCaughtError } from "@/lib/userFacingError";
 import {
   Link2, Loader2, Check, X, UploadCloud, Copy, Ban, ShieldCheck, Clock,
   FilePlus2, Search, RotateCcw,
@@ -186,7 +186,7 @@ export default function IntakePanel({ orgId, projectId, canManage, uid, userEmai
         setPending([]);
       }
     } catch (e) {
-      setMsg(`Couldn't load intake data: ${(e as Error).message}`);
+      setMsg(`Couldn't load intake data: ${userFacingCaughtError(e, { action: "read", context: "IntakePanel load" })}`);
     } finally { setLoading(false); }
   }, [orgId, projectId, setMsg]);
   useEffect(() => { void refresh(); }, [refresh]);
@@ -230,7 +230,7 @@ export default function IntakePanel({ orgId, projectId, canManage, uid, userEmai
         ? `Link created, but its audit record failed: ${userFacingError(auditErr)}`
         : "Link created — copy it below now and send it to the company. Its address is shown only this once; if it is lost, re-issue the link.",
       auditErr ? "error" : "success");
-    } catch (e) { setMsg((e as Error).message); }
+    } catch (e) { setMsg(userFacingCaughtError(e, { context: "IntakePanel" })); }
     finally { setBusy(null); }
   };
 
@@ -317,7 +317,7 @@ export default function IntakePanel({ orgId, projectId, canManage, uid, userEmai
       setAssignQ(""); setAssignResults([]);
       await refresh();
       if (addedLabel) setMsg(`${addedLabel} assigned to ${l.companyName} — revisions they submit will come to review.`, "success");
-    } catch (e) { setMsg((e as Error).message); }
+    } catch (e) { setMsg(userFacingCaughtError(e, { context: "IntakePanel" })); }
     finally { setBusy(null); }
   };
 
@@ -417,7 +417,7 @@ export default function IntakePanel({ orgId, projectId, canManage, uid, userEmai
         + (swept ? ` ${swept.text}` : ""),
       landed && (!swept || swept.ok) ? "success" : "error");
       await refresh();
-    } catch (e) { setMsg((e as Error).message); }
+    } catch (e) { setMsg(userFacingCaughtError(e, { context: "IntakePanel" })); }
     finally { setBusy(null); }
   };
 
@@ -469,7 +469,7 @@ export default function IntakePanel({ orgId, projectId, canManage, uid, userEmai
         : `${p.label} Rev ${p.revLabel ?? ""} rejected — the company sees it as not accepted, with your reason, on their portal.`,
       auditErr ? "error" : "success");
       await refresh();
-    } catch (e) { setMsg((e as Error).message); }
+    } catch (e) { setMsg(userFacingCaughtError(e, { context: "IntakePanel" })); }
     finally { setBusy(null); }
   };
 

@@ -39,7 +39,7 @@ import {
 } from "lucide-react";
 import Link from "next/link";
 import { supabase } from "@/lib/supabase";
-import { userFacingError, userFacingReadError } from "@/lib/userFacingError";
+import { userFacingError, userFacingReadError, userFacingCaughtError } from "@/lib/userFacingError";
 import { useAiReadiness, aiBlocked, AiPreconditionNote } from "@/components/projects/AiPrecondition";
 import { saveAccount } from "@/lib/costs";
 import { newIntakeToken, intakePortalPath, linkCredentialView, firstReadWithColumns, reissueIntakeLink } from "@/lib/intakeLinks";
@@ -49,7 +49,7 @@ import { getFileUrl } from "@/lib/storage";
 import {
   type CostDocument, COST_DOC_STATUS_LABEL,
   uploadCostDoc, awardQuote, postInvoice,
-  parsedQuoteFrom, quoteGroups,
+  parsedQuoteFrom, quoteGroups, normalizeCurrency,
 } from "@/lib/costDocs";
 import {
   computeBidEconomics, scoreBids, effectiveWeights, MANPOWER_MAX_COMPOSITE_SWING, MIN_CORROBORATING_STATEMENTS, HOURS_PLAUSIBILITY_RATIO,
@@ -269,7 +269,7 @@ export default function QuotesPanel({ orgId, projectId, canManage, actor, accoun
       if (!res.ok) throw new Error(body?.error || `HTTP ${res.status}`);
       onChanged();
     } catch (e) {
-      setErr((e as Error).message);
+      setErr(userFacingCaughtError(e, { context: "QuotesPanel read" }));
     } finally { setBusy(null); }
   };
 
@@ -479,7 +479,7 @@ export default function QuotesPanel({ orgId, projectId, canManage, actor, accoun
                       const res = await postInvoice({ doc, costAccountId: accountId, actor, confirmedTotal });
                       setBusy(null);
                       if (!res.ok) setErr(res.error ?? "Couldn't post."); else onChanged();
-                    }} label="Post as actual" />
+                    }} label="Post as actual" currency={doc.currency} costType="material" />
                 )}
                 {canManage && typedTotalUnread(doc) && (
                   <ReadButton busy={busy === doc.id} onClick={() => void readDoc(doc)} />
@@ -628,7 +628,7 @@ function BidGroup({ group, docs: groupDocs, allDocs, accounts, companies, barred
     try {
       barred = await barredNow(doc, e?.vendorName ?? doc.vendorName);
     } catch (err) {
-      setErr(`Award stopped — the Known Companies registry couldn't be checked (${(err as Error).message}). Reload and try again.`);
+      setErr(`Award stopped — the Known Companies registry couldn't be checked (${userFacingCaughtError(err, { action: "read", context: "QuotesPanel registry" }).replace(/\.$/, "")}). Reload and try again.`);
       return;
     }
     let overrideReason: string | null = null;
@@ -705,7 +705,7 @@ function BidGroup({ group, docs: groupDocs, allDocs, accounts, companies, barred
       }
       if (!res.ok) failure = res.error ?? "Couldn't award.";
     } catch (err) {
-      failure = (err as Error).message;
+      failure = userFacingCaughtError(err, { context: "QuotesPanel award" });
     } finally { setBusy(null); }
     if (failure == null) { onChanged(); return; }
     if (overridden) {
@@ -905,7 +905,7 @@ function BidGroup({ group, docs: groupDocs, allDocs, accounts, companies, barred
                             <td className="px-3 py-2 text-right whitespace-nowrap">
                               {rowActions && registryGate === "ready" && (
                                 <PostControls accounts={accounts} busy={busy === doc.id}
-                                  onPost={(accountId) => award(doc, accountId)} label="Award" />
+                                  onPost={(accountId) => award(doc, accountId)} label="Award" currency={doc.currency} />
                               )}
                               {rowActions && registryGate === "loading" && (
                                 <span className="text-[10px] text-[var(--color-text-muted)]" title="Award waits until the Known Companies registry and this bid's company link have loaded — the do-not-use check needs both">checking the registry…</span>
@@ -1006,7 +1006,7 @@ function OpenPdfButton({ doc, setErr }: { doc: CostDocument; setErr: (m: string 
           const url = await getFileUrl(doc.fileUrl!);
           window.open(url, "_blank", "noopener,noreferrer");
         } catch (e) {
-          setErr(`Couldn't open ${doc.fileName ?? "the PDF"}: ${(e as Error).message}`);
+          setErr(`Couldn't open ${doc.fileName ?? "the PDF"}: ${userFacingCaughtError(e, { action: "read", context: "QuotesPanel PDF" })}`);
         } finally { setBusy(false); }
       }}
       title={`Open ${doc.fileName ?? "the source PDF"} — review the paper before you award on the number`}
@@ -1101,14 +1101,18 @@ function ReadButton({ busy, onClick }: { busy: boolean; onClick: () => void }) {
   );
 }
 
-function PostControls({ accounts, busy, onPost, label }: {
+function PostControls({ accounts, busy, onPost, label, currency, costType }: {
   accounts: CostAccount[]; busy: boolean;
   onPost: (accountId: string) => void | Promise<void>; label: string;
+  /** The document's currency and the cost type its line should carry — the
+   *  in-place budget line is made to take this post (COST-15 refuses a
+   *  line in another currency). */
+  currency?: string | null; costType?: string;
 }) {
   const [picked, setAccountId] = useState("");
   // A single line is the obvious target — also once it was just created here.
   const accountId = picked || (accounts.length === 1 ? accounts[0].id : "");
-  if (accounts.length === 0) return <CreateBudgetLineInline label={label} />;
+  if (accounts.length === 0) return <CreateBudgetLineInline label={label} currency={currency} costType={costType} />;
   return (
     <span className="inline-flex items-center gap-1">
       <select value={accountId} onChange={(e) => setAccountId(e.target.value)}
@@ -1124,14 +1128,23 @@ function PostControls({ accounts, busy, onPost, label }: {
   );
 }
 
+/** The cost types a budget line takes (the Costs tab's own list). */
+const INLINE_COST_TYPES = ["labor", "material", "equipment", "subcontract", "other"] as const;
+
 /** UX-13: "needs a budget line" offers the fix where the need is met — a
  *  name and an optional budget, created right here — instead of a hover
- *  title sending the user past the change-orders panel and back. */
-function CreateBudgetLineInline({ label }: { label: string }) {
+ *  title sending the user past the change-orders panel and back. The line
+ *  is made to TAKE the post: in the document's currency (COST-15 refuses a
+ *  line in another one — an account with no currency is USD) and with the
+ *  cost type the caller names (a subcontract for an award; an invoice picks
+ *  its own), both shown and changeable. */
+function CreateBudgetLineInline({ label, currency, costType = "subcontract" }: { label: string; currency?: string | null; costType?: string }) {
   const ctx = React.useContext(BudgetLineContext);
   const [open, setOpen] = useState(false);
   const [name, setName] = useState("");
   const [budget, setBudget] = useState("");
+  const [cur, setCur] = useState(() => normalizeCurrency(currency) ?? "USD");
+  const [type, setType] = useState(costType);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
   if (!ctx) return <span className="text-[10px] text-[var(--color-text-muted)]">needs a budget line — create one in the accounts below</span>;
@@ -1147,8 +1160,10 @@ function CreateBudgetLineInline({ label }: { label: string }) {
     if (!name.trim()) { setError("Name the budget line."); return; }
     const b = budget.trim() ? Number(budget.replace(/[,$\s]/g, "")) : 0;
     if (!Number.isFinite(b) || b < 0) { setError("Budget must be a non-negative number."); return; }
+    const code = normalizeCurrency(cur);
+    if (!code) { setError(`"${cur.trim()}" is not a currency code — use a three-letter code such as USD, CAD or EUR.`); return; }
     setSaving(true); setError(null);
-    const res = await saveAccount({ orgId: ctx.orgId, projectId: ctx.projectId, patch: { name: name.trim(), budget: b, costType: "subcontract" }, actor: ctx.actor });
+    const res = await saveAccount({ orgId: ctx.orgId, projectId: ctx.projectId, patch: { name: name.trim(), budget: b, costType: type, currency: code }, actor: ctx.actor });
     setSaving(false);
     if (!res.ok) { setError(res.error ?? "Couldn't create the budget line."); return; }
     setOpen(false); setName(""); setBudget("");
@@ -1160,6 +1175,12 @@ function CreateBudgetLineInline({ label }: { label: string }) {
         className="h-6 w-36 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-1.5 text-[10px]" />
       <input value={budget} onChange={(e) => setBudget(e.target.value)} placeholder="Budget (optional)" aria-label="New budget line budget" inputMode="decimal"
         className="h-6 w-24 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-1.5 text-[10px] font-mono" />
+      <input value={cur} onChange={(e) => setCur(e.target.value)} aria-label="New budget line currency" maxLength={4}
+        className="h-6 w-12 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-1.5 text-[10px] font-mono uppercase" />
+      <select value={type} onChange={(e) => setType(e.target.value)} aria-label="New budget line cost type"
+        className="h-6 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-1 text-[10px]">
+        {INLINE_COST_TYPES.map((t) => <option key={t} value={t}>{t}</option>)}
+      </select>
       <button type="button" onClick={() => void create()} disabled={saving}
         className="inline-flex items-center gap-1 px-2 py-0.5 rounded-lg bg-[var(--color-accent)] text-[var(--color-accent-fg)] text-[10px] font-black disabled:opacity-50">
         {saving ? <Loader2 className="w-3 h-3 animate-spin" /> : <Plus className="w-3 h-3" />} Create
@@ -1350,7 +1371,7 @@ function QuoteLinksSection({ orgId, projectId, actor, existingGroups, setErr }: 
       setCompany(""); setGroup(""); setExpires(isoDateInDays(QUOTE_LINK_DEFAULT_DAYS));
       await refresh();
     } catch (e) {
-      setErr((e as Error).message);
+      setErr(userFacingCaughtError(e, { context: "QuotesPanel quote link" }));
     } finally { setSaving(false); }
   };
 
@@ -1436,7 +1457,7 @@ function QuoteLinksSection({ orgId, projectId, actor, existingGroups, setErr }: 
         turnoverItems: (((to ?? []) as Array<{ name: string }>)).map((t) => t.name),
       });
     } catch (e) {
-      setErr((e as Error).message);
+      setErr(userFacingCaughtError(e, { context: "QuotesPanel starter RFQ" }));
     }
   };
 

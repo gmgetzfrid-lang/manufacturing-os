@@ -28,6 +28,7 @@ import {
 } from "@/lib/milestones";
 import { isImportedMilestone, isOverdueMilestone } from "@/lib/milestoneLiveness";
 import { supabase } from "@/lib/supabase";
+import { userFacingCaughtError } from "@/lib/userFacingError";
 import type { Milestone, MilestoneStatus } from "@/types/schema";
 import { appConfirm } from "@/components/providers/DialogProvider";
 import Spinner from "@/components/ui/Spinner";
@@ -105,7 +106,7 @@ export default function ScheduleTab({ orgId, projectId, projectName, projectStat
       const list = await listMilestones({ orgId, projectId, includeGhost: true });
       setMilestones(list);
       setLoadError(null);
-    } catch (e) { setLoadError((e as Error).message); }
+    } catch (e) { setLoadError(userFacingCaughtError(e, { action: "read", context: "ScheduleTab" })); }
     finally { setLoading(false); }
   }, [orgId, projectId]);
 
@@ -224,7 +225,7 @@ export default function ScheduleTab({ orgId, projectId, projectName, projectStat
         actorUserName: userName, actorUserEmail: userEmail, actorUserRole: userRole,
       });
       await refresh();
-    } catch (e) { setError((e as Error).message); }
+    } catch (e) { setError(userFacingCaughtError(e, { context: "ScheduleTab" })); }
     finally { setBusy(false); }
   };
 
@@ -240,7 +241,7 @@ export default function ScheduleTab({ orgId, projectId, projectName, projectStat
     if (!(await appConfirm({ message: parts.join(" "), tone: "danger" }))) return;
     setBusy(true); setError(null);
     try { await deleteMilestone(id, userId); await refresh(); }
-    catch (e) { setError((e as Error).message); void refresh(); }
+    catch (e) { setError(userFacingCaughtError(e, { context: "ScheduleTab" })); void refresh(); }
     finally { setBusy(false); }
   };
 
@@ -271,7 +272,7 @@ export default function ScheduleTab({ orgId, projectId, projectName, projectStat
       const res = await setBaseline({ orgId, projectId, actorUserId: userId, actorUserEmail: userEmail, actorUserRole: userRole });
       if (!res.ok) setError(res.error ?? "Couldn't set baseline.");
       await refresh();
-    } catch (e) { setError((e as Error).message); }
+    } catch (e) { setError(userFacingCaughtError(e, { context: "ScheduleTab" })); }
     finally { setBaselineBusy(false); }
   };
 
@@ -445,9 +446,9 @@ export default function ScheduleTab({ orgId, projectId, projectName, projectStat
               } else void refresh();
               return { ok: true, updatedAt: res.updatedAt };
             } catch (e) {
-              setError((e as Error).message);
+              setError(userFacingCaughtError(e, { context: "ScheduleTab" }));
               void refresh();
-              return { ok: false, error: (e as Error).message };
+              return { ok: false, error: userFacingCaughtError(e, { context: "ScheduleTab" }) };
             }
           }}
           onSetStatus={async (id, status) => {
@@ -461,7 +462,7 @@ export default function ScheduleTab({ orgId, projectId, projectName, projectStat
               await refresh();
               return true;
             } catch (e) {
-              setError((e as Error).message);
+              setError(userFacingCaughtError(e, { context: "ScheduleTab" }));
               return false;
             }
           }}
@@ -476,7 +477,7 @@ export default function ScheduleTab({ orgId, projectId, projectName, projectStat
               await refresh();
               return true;
             } catch (e) {
-              setError((e as Error).message);
+              setError(userFacingCaughtError(e, { context: "ScheduleTab" }));
               return false;
             }
           }}
@@ -829,7 +830,7 @@ function AddMilestoneForm({
         createdByRole: userRole,
       });
       onCreated();
-    } catch (e) { setError((e as Error).message); }
+    } catch (e) { setError(userFacingCaughtError(e, { context: "ScheduleTab" })); }
     finally { setBusy(false); }
   };
 

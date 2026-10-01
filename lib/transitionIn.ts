@@ -19,7 +19,7 @@
 // untouched — adoption moves the document, it never rewrites history.
 
 import { supabase } from "@/lib/supabase";
-import { userFacingError, userFacingReadError } from "@/lib/userFacingError";
+import { userFacingError, userFacingReadError, userFacingCaughtError } from "@/lib/userFacingError";
 import { normalizeTag } from "@/lib/assets";
 import { generateTicketNumber } from "@/lib/ticketNumber";
 import { resolveTicketRecipients } from "@/lib/ticketRouting";
@@ -755,6 +755,6 @@ export async function flagCollisionToDrafting(
 
     return { ok: true, ticketNumber };
   } catch (e) {
-    return { ok: false, error: (e as Error).message };
+    return { ok: false, error: userFacingCaughtError(e, { context: "flagCollisionToDrafting" }) };
   }
 }

@@ -14,7 +14,7 @@ import {
   GitPullRequestArrow, Plus, Loader2, Check, X as XIcon, AlertTriangle, Undo2, UserRound,
 } from "lucide-react";
 import { supabase } from "@/lib/supabase";
-import { userFacingError } from "@/lib/userFacingError";
+import { userFacingError, userFacingCaughtError } from "@/lib/userFacingError";
 import { fmtMoney, type CostAccount, type CostParty, type Actor } from "@/lib/costs";
 import {
   type ChangeOrder, type CoReason, CO_REASON_LABEL,
@@ -44,10 +44,15 @@ export default function ChangeOrdersPanel({ orgId, projectId, canManage, actor, 
       setCos(await listChangeOrders(projectId));
       setLoadErr(null);
     } catch (e) {
-      const msg = (e as Error).message ?? "unknown error";
       setCos([]);
-      // pre-migration: the table is absent — the panel stays quiet
-      setLoadErr(/does not exist|schema cache|could not find the table/i.test(msg) ? null : msg);
+      // pre-migration: the table is absent — the panel stays quiet. Decided
+      // on the driver CODE listChangeOrders carries (42P01 / PGRST205); its
+      // message is already the translated sentence, which names no table
+      // (REL-3). The text test stays for a thrower that kept the raw text.
+      const code = (e as { code?: string | null }).code ?? null;
+      const raw = (e as Error)?.message ?? "";
+      const missingTable = code === "42P01" || code === "PGRST205" || /does not exist|schema cache|could not find the table/i.test(raw);
+      setLoadErr(missingTable ? null : (raw ? userFacingCaughtError(e, { action: "read", context: "ChangeOrdersPanel" }) : "unknown error"));
     }
   }, [projectId]);
   useEffect(() => { void refresh(); }, [refresh, reloadKey]);
@@ -93,7 +98,7 @@ export default function ChangeOrdersPanel({ orgId, projectId, canManage, actor, 
       // COST-11: a partial outcome (money posted, link not saved) is said out loud.
       if (out?.warning) setErr(out.warning);
     } catch (e) {
-      setErr((e as Error).message);
+      setErr(userFacingCaughtError(e, { context: "ChangeOrdersPanel" }));
     } finally { setBusy(null); }
   };
 
@@ -108,7 +113,7 @@ export default function ChangeOrdersPanel({ orgId, projectId, canManage, actor, 
       await refresh();
       onMoneyMoved();
     } catch (e) {
-      setErr((e as Error).message);
+      setErr(userFacingCaughtError(e, { context: "ChangeOrdersPanel" }));
     } finally { setBusy(null); }
   };
 
@@ -303,7 +308,7 @@ function ProposeForm({ orgId, projectId, actor, accounts, parties, onDone, onCan
       });
       onDone();
     } catch (e) {
-      setError((e as Error).message);
+      setError(userFacingCaughtError(e, { context: "ChangeOrdersPanel" }));
     } finally { setSaving(false); }
   };
 

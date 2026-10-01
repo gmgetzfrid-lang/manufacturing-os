@@ -41,6 +41,7 @@
 import { supabase } from "@/lib/supabase";
 import type { Actor } from "@/lib/costs";
 import { checkedWrite, describeWriteError, isMissingSchemaError } from "@/lib/checkedWrite";
+import { userFacingCaughtError } from "@/lib/userFacingError";
 import { reasonKey, reasonProblem } from "@/lib/checklistEngine";
 import {
   captureQualitySignoff, loadSignoffAuthority, signoffSeparation, QUALITY_SIGNOFF_RESOURCE, type SignoffInput,
@@ -250,7 +251,7 @@ export async function seedTurnoverItems(input: {
 }): Promise<{ ok: boolean; error?: string; added: number }> {
   let existing: TurnoverItem[];
   try { existing = await listTurnoverItems(input.orgId, input.projectId); }
-  catch (e) { return { ok: false, error: (e as Error).message, added: 0 }; }
+  catch (e) { return { ok: false, error: userFacingCaughtError(e, { action: "read", context: "seedTurnoverItems" }), added: 0 }; }
   const have = new Set(existing.map((i) => i.name.toLowerCase()));
   const rows = seedsForJobKind(input.jobKind)
     .filter((s) => !have.has(s.name.toLowerCase()))

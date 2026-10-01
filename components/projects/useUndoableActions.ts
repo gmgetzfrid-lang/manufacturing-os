@@ -11,6 +11,7 @@
 // had neither feedback nor undo.
 
 import { useCallback, useEffect, useRef, useState } from "react";
+import { userFacingCaughtError } from "@/lib/userFacingError";
 
 export interface UndoableToast {
   id: number;
@@ -20,6 +21,10 @@ export interface UndoableToast {
   undo?: () => void | Promise<void>;
   /** Tone for the icon/accent. */
   tone?: "default" | "success" | "warning";
+  /** The action's own message, kept once an Undo has failed — the failed
+   *  toast prefixes it with the reason, and a translated reason can itself
+   *  contain " — " (REL-3), so the prefix is never parsed back off. */
+  baseMessage?: string;
 }
 
 const TIMEOUT_MS = 7000;
@@ -101,9 +106,9 @@ export function useUndoableActions() {
       dismiss(t.id);
     } catch (e) {
       running.current.delete(t.id);
-      const reason = (e as Error)?.message || "please refresh and try again";
-      const base = t.message.replace(/^Couldn't undo: .*? — /, "");
-      const failed: UndoableToast = { ...t, tone: "warning", message: `Couldn't undo: ${reason} — ${base}` };
+      const reason = ((e as Error)?.message ? userFacingCaughtError(e, { context: "useUndoableActions" }) : "please refresh and try again").replace(/\.$/, "");
+      const base = t.baseMessage ?? t.message;
+      const failed: UndoableToast = { ...t, tone: "warning", baseMessage: base, message: `Couldn't undo: ${reason} — ${base}` };
       const current = toastsRef.current;
       commit(current.some((x) => x.id === t.id) ? current.map((x) => (x.id === t.id ? failed : x)) : [...current, failed].slice(-MAX_TOASTS));
       arm(t.id, FAILED_UNDO_MS);

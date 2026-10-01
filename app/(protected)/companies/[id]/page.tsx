@@ -20,6 +20,7 @@ import {
 } from "lucide-react";
 import { useRole } from "@/components/providers/RoleContext";
 import { supabase } from "@/lib/supabase";
+import { userFacingCaughtError } from "@/lib/userFacingError";
 import { Spinner } from "@/components/ui/Spinner";
 import { Modal, ModalHeader } from "@/components/ui/Modal";
 import { appConfirm } from "@/components/providers/DialogProvider";
@@ -75,7 +76,7 @@ export default function CompanyProfilePage() {
         const p = await gatherCompanyProfile(c);
         if (!cancelled) setProfile(p);
       } catch (e) {
-        if (!cancelled) { setError((e as Error).message); setLoading(false); }
+        if (!cancelled) { setError(userFacingCaughtError(e, { action: "read", context: "company profile" })); setLoading(false); }
       }
     })();
     return () => { cancelled = true; };
@@ -255,7 +256,7 @@ function QualityManualPanel({ orgId, company, canManage, actorId, onChanged, set
       });
       setAdjusted(String(body.score));
     } catch (e) {
-      setErr((e as Error).message);
+      setErr(userFacingCaughtError(e, { context: "company profile" }));
     } finally { setEvaluating(false); }
   };
 
@@ -278,7 +279,7 @@ function QualityManualPanel({ orgId, company, canManage, actorId, onChanged, set
       setProposal(null); setDoc(null); setQuery(""); setAdjusted("");
       onChanged();
     } catch (e) {
-      setErr((e as Error).message);
+      setErr(userFacingCaughtError(e, { context: "company profile" }));
     } finally { setConfirming(false); }
   };
 
@@ -413,7 +414,7 @@ function EventsPanel({ orgId, company, events, canManage, actorId, actorName, on
       await addCompanyEvent({ orgId, companyId: company.id, kind, eventDate: date, description: desc, actorId, actorName });
       setDesc(""); onChanged();
     } catch (e) {
-      setErr((e as Error).message);
+      setErr(userFacingCaughtError(e, { context: "company profile" }));
     } finally { setBusy(false); }
   };
 
@@ -564,7 +565,7 @@ function EditCompanyModal({ company, actorId, onClose, onSaved }: {
       });
       onSaved();
     } catch (e) {
-      setError((e as Error).message);
+      setError(userFacingCaughtError(e, { context: "company profile" }));
     } finally { setBusy(false); }
   };
 
@@ -579,8 +580,8 @@ function EditCompanyModal({ company, actorId, onClose, onSaved }: {
 
   return (
     <Modal onClose={() => void dismiss()} size="md" dismissable={!busy} className="overflow-hidden">
-        <ModalHeader title={`Edit ${company.name}`} onClose={busy ? undefined : onClose} />
-        <div className="px-6 py-5 space-y-3 overflow-y-auto">
+        <ModalHeader title={`Edit ${company.name}`} onClose={busy ? undefined : () => void dismiss()} />
+        <div className="px-6 py-5 space-y-3 overflow-y-auto min-h-0">
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
             <input value={name} onChange={(e) => setName(e.target.value)} placeholder="Company name *" aria-label="Company name (required)"
               className="px-3 py-2 border border-[var(--color-border-strong)] rounded-lg text-sm bg-[var(--color-surface)]" />
@@ -623,7 +624,7 @@ function EditCompanyModal({ company, actorId, onClose, onSaved }: {
           )}
         </div>
         <div className="px-6 py-3 bg-[var(--color-surface-2)] border-t border-[var(--color-border)] flex items-center justify-end gap-2 shrink-0">
-          <button onClick={onClose} disabled={busy} className="px-3 py-2 rounded-lg text-xs font-bold text-[var(--color-text)] bg-[var(--color-surface)] border border-[var(--color-border)] hover:bg-[var(--color-surface-2)] disabled:opacity-50">Cancel</button>
+          <button onClick={() => void dismiss()} disabled={busy} className="px-3 py-2 rounded-lg text-xs font-bold text-[var(--color-text)] bg-[var(--color-surface)] border border-[var(--color-border)] hover:bg-[var(--color-surface-2)] disabled:opacity-50">Cancel</button>
           <button onClick={() => void submit()} disabled={busy || !name.trim()}
             className="inline-flex items-center gap-1.5 px-3 py-2 rounded-lg text-xs font-bold text-[var(--color-accent-fg)] bg-[var(--color-accent)] hover:bg-[var(--color-accent-hover)] disabled:opacity-60">
             {busy ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Check className="w-3.5 h-3.5" />} Save

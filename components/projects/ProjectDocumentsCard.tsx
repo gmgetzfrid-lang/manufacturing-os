@@ -21,7 +21,7 @@
 
 import React, { useCallback, useEffect, useRef, useState } from "react";
 import Link from "next/link";
-import { userFacingError } from "@/lib/userFacingError";
+import { userFacingError, userFacingCaughtError } from "@/lib/userFacingError";
 import { FileStack, Search, Plus, X, Loader2, ExternalLink, EyeOff } from "lucide-react";
 import { supabase } from "@/lib/supabase";
 import { writeActivity, listProjectDocuments, type ProjectDocumentRow, type ProjectDocumentRegister } from "@/lib/projects";
@@ -62,7 +62,7 @@ export default function ProjectDocumentsCard({ orgId, projectId, canManage, uid,
       setHidden(register.hiddenByPermissions);
       onLoaded?.(register);
     } catch (e) {
-      setErr((e as Error).message);
+      setErr(userFacingCaughtError(e, { action: "read", context: "ProjectDocumentsCard" }));
     } finally { setLoading(false); }
     // onLoaded is a parent callback; the register is keyed on the project.
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -114,7 +114,7 @@ export default function ProjectDocumentsCard({ orgId, projectId, canManage, uid,
       setQ(""); setResults([]);
       await refresh();
       if (feedErr) setErr(`${doc.label} was attached, but ${feedErr.charAt(0).toLowerCase()}${feedErr.slice(1)}`);
-    } catch (e) { setErr((e as Error).message); }
+    } catch (e) { setErr(userFacingCaughtError(e, { context: "ProjectDocumentsCard" })); }
     finally { setBusy(null); }
   };
 
@@ -136,7 +136,7 @@ export default function ProjectDocumentsCard({ orgId, projectId, canManage, uid,
       const feedErr = await activity("doc_removed", `${r.label} removed from the project`, r.docId);
       await refresh();
       if (feedErr) setErr(`${r.label} was removed, but ${feedErr.charAt(0).toLowerCase()}${feedErr.slice(1)}`);
-    } catch (e) { setErr((e as Error).message); }
+    } catch (e) { setErr(userFacingCaughtError(e, { context: "ProjectDocumentsCard" })); }
     finally { setBusy(null); }
   };
 

@@ -49,7 +49,7 @@ import { supabase } from "@/lib/supabase";
 import type { Actor } from "@/lib/costs";
 import { NOT_CURRENT_STATUSES } from "@/lib/aiBoundary";
 import { checkedWrite, describeWriteError } from "@/lib/checkedWrite";
-import { userFacingReadError } from "@/lib/userFacingError";
+import { userFacingReadError, userFacingCaughtError } from "@/lib/userFacingError";
 import { recordSignature, type SigningCredential } from "@/lib/eSignatures";
 import { isControllerPrincipal } from "@/lib/permissions";
 import type { Role } from "@/types/schema";
@@ -242,7 +242,7 @@ export async function loadSignoffAuthority(orgId: string, projectId: string, act
       return { maySign: false, otherSigners: null, source: "database", error: describeWriteError(error) };
     }
   } catch (e) {
-    return { maySign: false, otherSigners: null, source: "database", error: (e as Error)?.message || "the sign-off check failed" };
+    return { maySign: false, otherSigners: null, source: "database", error: (e as Error)?.message ? userFacingCaughtError(e, { action: "read", context: "signoff check" }) : "the sign-off check failed" };
   }
   const [membersRes, projectRes] = await Promise.all([
     supabase.from("org_members").select("uid, role, roles").eq("org_id", orgId).eq("status", "active"),
@@ -318,7 +318,7 @@ export async function captureQualitySignoff(input: {
     });
     return { ok: true, signatureId: sig.id };
   } catch (e) {
-    return { ok: false, error: `Your signature wasn't recorded, so nothing was signed off: ${(e as Error)?.message || "the signing ceremony failed"}` };
+    return { ok: false, error: `Your signature wasn't recorded, so nothing was signed off: ${(e as Error)?.message ? userFacingCaughtError(e, { context: "captureQualitySignoff" }) : "the signing ceremony failed"}` };
   }
 }
 
@@ -877,7 +877,7 @@ export async function runProjectEvidenceSweep(input: {
     }
     return out;
   } catch (e) {
-    return { ...EMPTY_PROJECT_SWEEP, error: (e as Error).message };
+    return { ...EMPTY_PROJECT_SWEEP, error: userFacingCaughtError(e, { context: "evidence sweep" }) };
   }
 }
 
@@ -914,7 +914,7 @@ export async function sweepEvidenceForDocument(input: {
     if (failedRead && !out.error) out.error = `the projects citing this document could not all be read (${userFacingReadError(failedRead, "sweepEvidenceForDocument")})`;
     return out;
   } catch (e) {
-    return { ...EMPTY_PROJECT_SWEEP, projects: 0, error: (e as Error).message };
+    return { ...EMPTY_PROJECT_SWEEP, projects: 0, error: userFacingCaughtError(e, { context: "evidence sweep" }) };
   }
 }
 

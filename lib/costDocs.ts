@@ -34,7 +34,7 @@ import { uploadToPath, deleteFile } from "@/lib/storage";
 import { addEntry, type Actor } from "@/lib/costs";
 import { validateParsedQuote, type ParsedQuote } from "@/lib/bidTab";
 import { emit } from "@/lib/notify/dispatch";
-import { userFacingError, userFacingReadError } from "@/lib/userFacingError";
+import { userFacingError, userFacingReadError, userFacingCaughtError } from "@/lib/userFacingError";
 
 export type CostDocKind = "quote" | "invoice" | "po";
 export type CostDocStatus = "draft" | "parsed" | "awarded" | "declined" | "posted" | "void";
@@ -267,7 +267,7 @@ async function revertDocTransition(docId: string, backTo: CostDocStatus, from: C
     if (!data || data.length === 0) return { ok: false, error: "the row was not in the claimed state any more" };
     return { ok: true };
   } catch (e) {
-    return { ok: false, error: (e as Error).message };
+    return { ok: false, error: userFacingCaughtError(e, { context: "revertDocTransition" }) };
   }
 }
 
@@ -722,12 +722,12 @@ export async function setManualTotal(input: {
   }
   const open = await supabase.from("cost_documents").update({ ...patch, status: "parsed" })
     .eq("id", input.doc.id).in("status", ["draft", "parsed"]).select("id");
-  if (open.error) return { ok: false, error: userFacingReadError(open.error, "declineQuote") };
+  if (open.error) return { ok: false, error: userFacingError(open.error, { context: "setManualTotal" }) };
   let hit = open.data ?? [];
   if (hit.length === 0) {
     const dec = await supabase.from("cost_documents").update(patch)
       .eq("id", input.doc.id).eq("status", "declined").select("id");
-    if (dec.error) return { ok: false, error: userFacingError(dec.error, { context: "declineQuote" }) };
+    if (dec.error) return { ok: false, error: userFacingError(dec.error, { context: "setManualTotal" }) };
     hit = dec.data ?? [];
   }
   if (hit.length === 0) {

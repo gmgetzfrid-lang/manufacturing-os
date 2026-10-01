@@ -516,7 +516,8 @@ describe("PM-7 / PM-9 — the feed write is checked and no longer touches projec
     const from = supabase.from;
     (supabase as { from: unknown }).from = () => { throw new Error("fetch failed"); };
     try {
-      await expect(writeActivity({ projectId: "p1", orgId: "o1", type: "checkout_added" })).resolves.toBe("The project activity row was not written: fetch failed");
+      // (REL-3: a dropped connection reads as one, never the driver's text)
+      await expect(writeActivity({ projectId: "p1", orgId: "o1", type: "checkout_added" })).resolves.toBe("The project activity row was not written: Couldn't reach the server — check your connection and try again.");
     } finally {
       (supabase as { from: unknown }).from = from;
     }

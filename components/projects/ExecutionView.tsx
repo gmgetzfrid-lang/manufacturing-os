@@ -25,6 +25,7 @@
 // WBS — all write through to the same audited mutations.
 
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { userFacingCaughtError } from "@/lib/userFacingError";
 import {
   ChevronDown, ChevronRight as ChevronRightIcon, ChevronLeft,
   CalendarDays, CircleCheck, Loader2,
@@ -1736,7 +1737,7 @@ function GroupTasksModal({
       });
       if (res.errors.length > 0) setError(res.errors.join(" · "));
       else onDone();
-    } catch (e) { setError((e as Error).message); }
+    } catch (e) { setError(userFacingCaughtError(e, { context: "ExecutionView" })); }
     finally { setBusy(false); }
   };
 

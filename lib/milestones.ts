@@ -17,7 +17,7 @@
 // as a separate enhancement.
 
 import { supabase } from "@/lib/supabase";
-import { userFacingError, userFacingReadError } from "@/lib/userFacingError";
+import { userFacingError, userFacingReadError, userFacingCaughtError } from "@/lib/userFacingError";
 import { logMilestoneEvent, logAuditAction } from "@/lib/audit";
 import { reflowAllAncestors, startForDuration, linkCyclePath, outlineLoop, type ReflowNode } from "@/lib/scheduleReflow";
 import { chooseWeightBasis, weightFor, leafPercent, type WeightBasis } from "@/lib/scheduleProgress";
@@ -1298,7 +1298,7 @@ export async function importGhostMilestones(input: ImportGhostMilestonesInput): 
       if (error) result.errors.push(`Row ${i+1}: ${userFacingError(error, { context: "milestones" })}`);
       else result.inserted++;
     } catch (e) {
-      result.errors.push(`Row ${i+1}: ${(e as Error).message}`);
+      result.errors.push(`Row ${i+1}: ${userFacingCaughtError(e, { context: "milestones" })}`);
     }
   }
   return result;
@@ -2003,7 +2003,7 @@ export async function importMilestonesFromParsed(input: ImportParsedInput): Prom
       if (cancelled()) { result.cancelled = true; result.errors.push(`Import cancelled after ${done} of ${total} rows. Rows written so far are tagged with batch ${batchId}.`); return result; }
       const chunk = list.slice(i, i + IMPORT_CHUNK);
       try { await writeChunk(chunk, mode); }
-      catch (e) { for (const p of chunk) result.errors.push(`${rowLabel(p)}: ${(e as Error).message}`); }
+      catch (e) { const why = userFacingCaughtError(e, { context: "schedule import" }); for (const p of chunk) result.errors.push(`${rowLabel(p)}: ${why}`); }
       done += chunk.length;
       report("rows");
     }

@@ -20,13 +20,14 @@ import {
 } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { supabase } from "@/lib/supabase";
-import { userFacingError, classifyDbError } from "@/lib/userFacingError";
+import { userFacingError, classifyDbError, userFacingCaughtError } from "@/lib/userFacingError";
 import { createProject } from "@/lib/projects";
 import { seedTurnoverItems } from "@/lib/turnover";
+import { checkPartyCompanyLink } from "@/lib/costs";
 import { listCompanies, type Company } from "@/lib/companies";
 import { Field } from "@/components/ui/Field";
 import { Modal } from "@/components/ui/Modal";
-import { appConfirm } from "@/components/providers/DialogProvider";
+import { appAlert, appConfirm } from "@/components/providers/DialogProvider";
 import { COMPANY_KINDS, COMPANY_KIND_LABEL } from "@/lib/projectVocabulary";
 import {
   prepareBudgetRows, runWizardFollowUpWrites, summarizeWizardFailures, retainedRowLines,
@@ -194,7 +195,13 @@ export default function ProjectWizard({ orgId, actorUserId, actorEmail, actorRol
     seedTurnover: () => seedTurnoverItems({
       orgId, projectId, jobKind, actor: { uid: actorUserId, email: actorEmail ?? null },
     }),
+    checkPartyLink: (partyName, companyId) => checkPartyCompanyLink(orgId, partyName, companyId),
   });
+  /** A contractor saved without the company link its name matched is said
+   *  before the wizard moves on (DEC-44 (J10) item 3). */
+  const sayNotes = async (notes: string[]) => {
+    if (notes.length > 0) await appAlert({ title: notes.length === 1 ? "A contractor was added without its company link" : "Some contractors were added without their company link", message: notes.join(" ") });
+  };
 
   const finish = async (finalSkips: Record<string, boolean>) => {
     if (!name.trim()) { setStep(0); setError("Project name is required."); pendingFocus.current = "name"; return; }
@@ -221,13 +228,14 @@ export default function ProjectWizard({ orgId, actorUserId, actorEmail, actorRol
       }
       setSetupStateForRetry(setupState);
 
-      const { failures: failed } = await runWizardFollowUpWrites(writeInput(setupState, projectId), writeDeps(projectId));
+      const { failures: failed, notes } = await runWizardFollowUpWrites(writeInput(setupState, projectId), writeDeps(projectId));
+      await sayNotes(notes);
       if (failed.length > 0) { setFailures(failed); return; }
 
       onCreated();
       router.push(`/projects/${projectId}`);
     } catch (e) {
-      setError((e as Error).message);
+      setError(userFacingCaughtError(e, { context: "ProjectWizard" }));
       pendingFocus.current = "error";
     } finally { setBusy(false); }
   };
@@ -238,14 +246,15 @@ export default function ProjectWizard({ orgId, actorUserId, actorEmail, actorRol
     setBusy(true); setError(null);
     try {
       const only = new Set<WizardWriteStep>(failures.map((f) => f.step));
-      const { failures: failed } = await runWizardFollowUpWrites(writeInput(setupStateForRetry, createdProjectId), writeDeps(createdProjectId), only);
+      const { failures: failed, notes } = await runWizardFollowUpWrites(writeInput(setupStateForRetry, createdProjectId), writeDeps(createdProjectId), only);
+      await sayNotes(notes);
       setFailures(failed);
       if (failed.length === 0) {
         onCreated();
         router.push(`/projects/${createdProjectId}`);
       }
     } catch (e) {
-      setError((e as Error).message);
+      setError(userFacingCaughtError(e, { context: "ProjectWizard" }));
     } finally { setBusy(false); }
   };
 
@@ -255,9 +264,9 @@ export default function ProjectWizard({ orgId, actorUserId, actorEmail, actorRol
     router.push(`/projects/${createdProjectId}`);
   };
 
-  /** The header X. In the partial-failure state the project already exists
-   *  (the list must show it) and the retained rows are about to be lost, so
-   *  the user confirms, and the list refreshes on the way out. */
+  /** Leaving in the partial-failure state: the project already exists (the
+   *  list must show it) and the retained rows are about to be lost, so the
+   *  user confirms, and the list refreshes on the way out. */
   const closeWizard = async () => {
     if (failures.length > 0 && createdProjectId) {
       const ok = await appConfirm({
@@ -270,9 +279,10 @@ export default function ProjectWizard({ orgId, actorUserId, actorEmail, actorRol
     onClose();
   };
 
-  /** Escape / a click on the backdrop (A11Y-4). Nothing typed is lost to a
-   *  stray key or click: with rows typed, the wizard asks first; in the
-   *  partial-failure state it is the header X's own confirm. */
+  /** Every way out — Escape, a click on the backdrop, the header X (A11Y-4).
+   *  Nothing typed is lost to a stray key or click: with rows typed, the
+   *  wizard asks first; in the partial-failure state it is closeWizard's
+   *  confirm. */
   const typedSomething = !!(name.trim() || description.trim() || moc.trim() || targetDate || purpose.trim() || goals.length
     || successCriteria.trim() || sowDoc || budgetRows.some((r) => r.name.trim() || r.budget.trim())
     || milestoneRows.some((r) => r.name.trim() || r.date) || partyRows.some((r) => r.name.trim() || r.trade.trim()));
@@ -289,7 +299,7 @@ export default function ProjectWizard({ orgId, actorUserId, actorEmail, actorRol
   return (
     <Modal onClose={() => void dismissWizard()} size="lg" dismissable={!busy} ariaLabelledBy={titleId} className="overflow-hidden">
         {/* Header + stepper */}
-        <div className="px-6 py-4 border-b border-[var(--color-border)]">
+        <div className="px-6 py-4 border-b border-[var(--color-border)] shrink-0">
           <div className="flex items-center gap-3">
             <div className="p-2 bg-[var(--color-accent-soft)] rounded-lg"><Icon className="w-5 h-5 text-[var(--color-accent)]" /></div>
             <div className="flex-1 min-w-0">
@@ -303,7 +313,7 @@ export default function ProjectWizard({ orgId, actorUserId, actorEmail, actorRol
                   : "Skip or fill in — everything here can also be added from the project page later."} Skipped steps come back as coach suggestions, never lost.
               </div>
             </div>
-            <button onClick={() => void closeWizard()} disabled={busy} aria-label="Close" className="p-2 rounded-lg hover:bg-[var(--color-surface-2)] text-[var(--color-text-faint)] hover:text-[var(--color-text)]"><X className="w-4 h-4" /></button>
+            <button onClick={() => void dismissWizard()} disabled={busy} aria-label="Close" className="p-2 rounded-lg hover:bg-[var(--color-surface-2)] text-[var(--color-text-faint)] hover:text-[var(--color-text)]"><X className="w-4 h-4" /></button>
           </div>
           {/* A11Y-8: the progress bar is a picture of "Step N of 6", not a
               control — out of the tab order (Back is the keyboard path), the
@@ -320,7 +330,7 @@ export default function ProjectWizard({ orgId, actorUserId, actorEmail, actorRol
           </ol>
         </div>
 
-        <div className="px-6 py-5 space-y-4 max-h-[60vh] overflow-y-auto">
+        <div className="px-6 py-5 space-y-4 max-h-[60vh] overflow-y-auto min-h-0">
           {failures.length > 0 && createdProjectId && (
             <div role="alert" className="rounded-xl border border-amber-500/50 bg-amber-500/[0.08] p-4 text-xs text-[var(--color-text)]">
               <div className="flex items-start gap-2">
@@ -556,7 +566,7 @@ export default function ProjectWizard({ orgId, actorUserId, actorEmail, actorRol
         </div>
 
         {/* Footer */}
-        <div className="px-6 py-3 bg-[var(--color-surface-2)] border-t border-[var(--color-border)] flex items-center gap-2">
+        <div className="px-6 py-3 bg-[var(--color-surface-2)] border-t border-[var(--color-border)] flex items-center gap-2 shrink-0">
           {failures.length > 0 && createdProjectId ? (
             <span className="ml-auto flex items-center gap-2">
               <button onClick={openAnyway} disabled={busy}

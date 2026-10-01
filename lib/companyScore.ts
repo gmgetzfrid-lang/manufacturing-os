@@ -160,7 +160,10 @@ export function computeCompanyScorecard(e: CompanyEvidence): CompanyScorecard {
           ownerBit, neutralBit,
           e.awardsSource === "contract_value" ? "awards from the typed contract value" : null,
           e.awardsSource === "mixed"
-            ? `awards from posted commitments on ${e.awardsPostedPartyCount ?? "some"} project${e.awardsPostedPartyCount === 1 ? "" : "s"} and the typed contract value on ${e.awardsTypedPartyCount ?? "others"}`
+            // The counts are contractor rows (project_parties) — one company
+            // can be two contractors on one project — so they are named as
+            // contractor records, never as projects.
+            ? `awards from posted commitments on ${e.awardsPostedPartyCount ?? "some"} contractor record${e.awardsPostedPartyCount === 1 ? "" : "s"} and the typed contract value on ${e.awardsTypedPartyCount ?? "others"}`
             : null,
         ].filter(Boolean).join(" · "),
       });

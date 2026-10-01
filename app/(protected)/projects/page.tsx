@@ -7,6 +7,7 @@
 // Default sort is most-recent-activity. Filters across status / owner / text.
 
 import React, { useCallback, useEffect, useRef, useState } from "react";
+import { userFacingCaughtError } from "@/lib/userFacingError";
 import Link from "next/link";
 import {
   Briefcase, Plus, Search, Lock, Globe, AlertTriangle,
@@ -65,7 +66,7 @@ export default function ProjectsPage() {
     try {
       await exportAllProjectsToCsv(activeOrgId, { signal: ctrl.signal, onProgress: (p) => setExportProgress(p) });
     } catch (e) {
-      if (!(e instanceof ExportCancelledError)) await appAlert({ message: (e as Error).message, tone: "danger" });
+      if (!(e instanceof ExportCancelledError)) await appAlert({ message: userFacingCaughtError(e, { context: "projects list" }), tone: "danger" });
     } finally {
       exportAbort.current = null;
       setExportProgress(null);
@@ -100,7 +101,7 @@ export default function ProjectsPage() {
       setTabCounts(counts);
       hasLoadedOnce.current = true;
     } catch (e) {
-      setError((e as Error).message || "Failed to load projects");
+      setError((e as Error)?.message ? userFacingCaughtError(e, { action: "read", context: "projects list" }) : "Failed to load projects");
     } finally {
       setLoading(false);
     }

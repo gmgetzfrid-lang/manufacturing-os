@@ -34,7 +34,7 @@ import { logAuditAction } from "@/lib/audit";
 import { addEntry, voidEntry, NO_ROW_MATCHED } from "@/lib/costs";
 import { memberHoldsAny } from "@/lib/roleHeld";
 import { emit } from "@/lib/notify/dispatch";
-import { userFacingError, userFacingReadError } from "@/lib/userFacingError";
+import { userFacingError, userFacingReadError, userFacingCaughtError } from "@/lib/userFacingError";
 
 /** org_configurations key: `{ "amount": <number> }`. */
 export const CO_APPROVAL_THRESHOLD_KEY = "change_order_approval_threshold";
@@ -441,7 +441,7 @@ async function revertDecision(coId: string): Promise<{ ok: boolean; error?: stri
     if (!data || data.length === 0) return { ok: false, error: "the row was not in the claimed state any more" };
     return { ok: true };
   } catch (e) {
-    return { ok: false, error: (e as Error).message };
+    return { ok: false, error: userFacingCaughtError(e, { context: "revertChangeOrderClaim" }) };
   }
 }
 

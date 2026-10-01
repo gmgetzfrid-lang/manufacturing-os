@@ -19,7 +19,7 @@
 // broken tab is never pixel-identical to an empty one.
 
 import { supabase } from "@/lib/supabase";
-import { userFacingError, userFacingReadError } from "@/lib/userFacingError";
+import { userFacingError, userFacingReadError, userFacingCaughtError } from "@/lib/userFacingError";
 import { listBarredCompanies } from "@/lib/companies";
 import { barredCompanyFor } from "@/lib/bidTab";
 
@@ -183,13 +183,34 @@ async function partyLinkCheck(orgId: string, name: string, companyId: string, ov
 > {
   let barred: { id: string; name: string } | null;
   try { barred = barredCompanyFor(name, null, await listBarredCompanies(orgId)); }
-  catch (e) { return { refused: { error: `Couldn't check the company registry (${(e as Error).message}) — nothing was linked.` } }; }
+  catch (e) { return { refused: { error: `Couldn't check the company registry (${userFacingCaughtError(e, { action: "read", context: "partyLinkCheck" }).replace(/\.$/, "")}) — nothing was linked.` } }; }
   if (!barred || barred.id === companyId) return { refused: null, overrideDoNotUse: null };
   if (overrideReason) return { refused: null, overrideDoNotUse: { companyId: barred.id, company: barred.name, reason: overrideReason } };
   return { refused: {
     error: `"${name}" could be ${barred.name}, flagged DO NOT USE in the registry. Linking it to another company needs a reason, which goes on the record.`,
     needsOverride: { companyId: barred.id, company: barred.name },
   } };
+}
+
+/**
+ * The same rule for a link written WITHOUT a way to ask for a reason — the
+ * project wizard binds its contractor rows to Known Companies by exact name
+ * (lib/projectWizardWrites). A link that would need a recorded reason, or
+ * one the registry could not be read to check, is not written: the caller
+ * adds the contractor unlinked and shows the note, and the link is made
+ * later on the Costs tab, where the reason is asked for. This is an
+ * app-level rule (DEC-44 (J10) item 3) — the database does not enforce it.
+ */
+export async function checkPartyCompanyLink(orgId: string, name: string, companyId: string): Promise<{ ok: true } | { ok: false; note: string }> {
+  const chk = await partyLinkCheck(orgId, name, companyId, null);
+  if (!chk.refused) return { ok: true };
+  const barred = chk.refused.needsOverride;
+  return {
+    ok: false,
+    note: barred
+      ? `"${name}" was added without a company link: the name could be ${barred.company}, flagged DO NOT USE in the registry. Link it on the project's Costs tab, where the link records a reason.`
+      : `"${name}" was added without a company link: ${chk.refused.error.replace(/ — nothing was linked\.$/, "")}. Link it on the project's Costs tab.`,
+  };
 }
 
 export async function saveParty(input: {

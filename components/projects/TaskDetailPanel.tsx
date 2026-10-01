@@ -8,6 +8,7 @@
 // activity trail.
 
 import React, { useCallback, useEffect, useMemo, useState } from "react";
+import { userFacingCaughtError } from "@/lib/userFacingError";
 import {
   X as XIcon, Pencil, Trash2, Loader2, Save, Clock, MapPin, Hash,
   User, HardHat, AlertTriangle, Sun, Moon, Sunset,
@@ -146,7 +147,7 @@ export default function TaskDetailPanel({
     setDeleteError(null);
     try {
       await deleteMilestone(m.id, userId);
-    } catch (e) { setDeleteError((e as Error).message); onChanged(); return; }
+    } catch (e) { setDeleteError(userFacingCaughtError(e, { context: "TaskDetailPanel" })); onChanged(); return; }
     onChanged();
     onClose();
   }, [m, subtasks, allTasks, imported, userId, onChanged, onClose]);
@@ -538,7 +539,7 @@ function EditForm({
         updatedBy: userId, updatedByName: userName, updatedByEmail: userEmail, updatedByRole: userRole,
       });
       onDone();
-    } catch (e) { setError((e as Error).message); }
+    } catch (e) { setError(userFacingCaughtError(e, { context: "TaskDetailPanel" })); }
     finally { setSaving(false); }
   };
 
@@ -751,7 +752,7 @@ function DependencyEditor({
     try {
       await updateMilestone({ id: milestone.id, patch: { dependsOn: next }, updatedBy: userId });
       onChanged();
-    } catch (e) { setError((e as Error).message); }
+    } catch (e) { setError(userFacingCaughtError(e, { context: "TaskDetailPanel" })); }
     finally { setSaving(false); }
   };
 
@@ -832,7 +833,7 @@ function AssigneeEditor({ milestone, canEdit, userId, onChanged }: {
         updatedBy: userId,
       });
       onChanged();
-    } catch (e) { await appAlert({ message: (e as Error).message, tone: "danger" }); }
+    } catch (e) { await appAlert({ message: userFacingCaughtError(e, { context: "TaskDetailPanel" }), tone: "danger" }); }
     finally { setSaving(false); }
   };
 

@@ -18,7 +18,7 @@ import {
   Landmark, HardHat, Scale, TrendingUp, TrendingDown, AlertTriangle, Ban,
 } from "lucide-react";
 import { supabase } from "@/lib/supabase";
-import { userFacingReadError } from "@/lib/userFacingError";
+import { userFacingReadError, userFacingCaughtError } from "@/lib/userFacingError";
 import {
   CostAccount, CostEntry, CostParty, CostEntryType,
   listAccounts, listEntries, listParties, saveAccount, addEntry, voidEntry, saveParty, linkPartyToCompany,
@@ -123,7 +123,7 @@ export default function CostsTab({ orgId, projectId, canManage, uid, userEmail, 
       setSchedSpan(scheduleSpanFromMilestones(rows));
       setLoaded(true);
     } catch (e) {
-      setErr((e as Error).message);
+      setErr(userFacingCaughtError(e, { action: "read", context: "CostsTab" }));
     } finally { setLoading(false); }
     onDataChanged?.();
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -460,7 +460,7 @@ function LedgerHealth({ orphans, accounts, entries, cos, canManage, actor, busy,
       await repairChangeOrder({ co: { id: c.id }, action, entryId, note, actorId: actor.uid, actorName: actor.email?.split("@")[0] ?? null });
       onCoRepaired();
     } catch (e) {
-      setErr((e as Error).message);
+      setErr(userFacingCaughtError(e, { context: "CostsTab" }));
     } finally { setBusy(null); }
   };
   const coSentence = (c: LedgerOrphans["changeOrders"][number]) =>
@@ -787,7 +787,7 @@ function PartiesPanel({ orgId, projectId, actor, parties, canManage, onChanged }
     let cancelled = false;
     listCompanies(orgId)
       .then((companies) => { if (!cancelled) setRegistry({ state: "ready", companies }); })
-      .catch((e: unknown) => { if (!cancelled) setRegistry({ state: "failed", error: (e as Error).message }); });
+      .catch((e: unknown) => { if (!cancelled) setRegistry({ state: "failed", error: userFacingCaughtError(e, { action: "read", context: "CostsTab" }) }); });
     return () => { cancelled = true; };
   }, [orgId]);
   const companies = registry.state === "ready" ? registry.companies : [];

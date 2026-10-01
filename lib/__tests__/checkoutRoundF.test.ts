@@ -530,6 +530,6 @@ describe("DCK-9 — the project release is a check-in with an outcome, a CHECK_I
     const page = src("app/(protected)/projects/[id]/page.tsx");
     expect(page).toMatch(/const \{ releaseError(, activityError)? \} = await transitionProjectStatus\(\{/);
     expect(page).toMatch(/await refresh\(\);\s*\n(\s*\/\/.*\n)*\s*if \(releaseError\) setActionError\(releaseError\);/);
-    expect(page).toMatch(/setActionError\(\(e as Error\)\.message\);\s*\n(\s*\/\/.*\n)*\s*await refresh\(\)\.catch\(\(\) => undefined\);/);
+    expect(page).toMatch(/setActionError\(userFacingCaughtError\(e, \{ context: "project page" \}\)\);\s*\n(\s*\/\/.*\n)*\s*await refresh\(\)\.catch\(\(\) => undefined\);/);
   });
 });

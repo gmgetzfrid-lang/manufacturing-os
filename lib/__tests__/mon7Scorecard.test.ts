@@ -83,7 +83,7 @@ function chain(table: string) {
 vi.mock("@/lib/supabase", () => ({ supabase: { from: (t: string) => chain(t) } }));
 vi.mock("@/lib/audit", () => ({ logAuditAction: vi.fn(async () => undefined) }));
 
-import { saveParty, linkPartyToCompany, listParties } from "@/lib/costs";
+import { saveParty, linkPartyToCompany, listParties, checkPartyCompanyLink } from "@/lib/costs";
 import { addTurnoverItem, addPunchItem } from "@/lib/turnover";
 import { gatherCompanyProfile, type Company } from "@/lib/companies";
 
@@ -156,6 +156,28 @@ describe("MON-7 dw1 / COST-12 dw1 — a contractor added on the Costs tab appear
     const r = await linkPartyToCompany({ orgId: "o1", partyId: unlinked.id, companyId: "c1", actor });
     expect(r.needsOverride).toEqual({ companyId: "c9", company: "Apex Industrial" });
     expect((await listParties("o1", "p1")).find((p) => p.id === unlinked.id)!.companyId).toBeNull();
+  });
+});
+
+describe("DEC-44 (J10) item 3 — the wizard's name-bound link meets the same do-not-use rule", () => {
+  it("a link that would need a reason is refused with a note (the wizard adds the contractor unlinked); a clean one passes; the barred company itself passes", async () => {
+    // "Apex Industrial LLC" normalises to the do-not-use "Apex Industrial";
+    // bound by name to the clean "Apex Holdings" it would carry awards past the flag.
+    const refused = await checkPartyCompanyLink("o1", "Apex Industrial LLC", "c8");
+    expect(refused.ok).toBe(false);
+    expect(!refused.ok && refused.note).toMatch(/^"Apex Industrial LLC" was added without a company link: the name could be Apex Industrial, flagged DO NOT USE in the registry\. Link it on the project's Costs tab, where the link records a reason\.$/);
+    expect(await checkPartyCompanyLink("o1", "Gulf Mechanical", "c1")).toEqual({ ok: true });
+    expect(await checkPartyCompanyLink("o1", "Apex Industrial", "c9")).toEqual({ ok: true });
+    // nothing was written by the check
+    expect(db.writes).toEqual([]);
+  });
+
+  it("the wizard wires the check into its writes (a required dependency — the rule cannot be skipped by omission)", () => {
+    const w = readFileSync(join(process.cwd(), "components/projects/ProjectWizard.tsx"), "utf8");
+    expect(w).toContain("checkPartyLink: (partyName, companyId) => checkPartyCompanyLink(orgId, partyName, companyId),");
+    const lib = readFileSync(join(process.cwd(), "lib/projectWizardWrites.ts"), "utf8");
+    expect(lib).toContain("checkPartyLink(name: string, companyId: string): Promise<{ ok: true } | { ok: false; note: string }>;");
+    expect(lib).toContain("const chk = await deps.checkPartyLink(r.name, r.companyId);");
   });
 });
 

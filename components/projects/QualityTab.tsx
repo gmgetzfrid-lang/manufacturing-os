@@ -47,6 +47,7 @@ import {
   ListChecks, Ban, Wand2, Info, CheckCircle2, RotateCcw,
 } from "lucide-react";
 import { supabase } from "@/lib/supabase";
+import { userFacingCaughtError } from "@/lib/userFacingError";
 import { listParties, type Actor, type CostParty } from "@/lib/costs";
 import {
   type Checklist, type ChecklistItem, type ChecklistKind, type AssessmentProposal, CHECKLIST_KIND_LABEL,
@@ -335,7 +336,7 @@ function NewChecklistFlow({ orgId, projectId, actor, onDone, onCancel, notify }:
       setProposed(body.items);
       setTitle(body.sourceLabel ?? doc.label);
     } catch (e) {
-      notify(failure((e as Error).message));
+      notify(failure(userFacingCaughtError(e, { context: "QualityTab" })));
     } finally { setReading(false); }
   };
 
@@ -474,7 +475,7 @@ function ChecklistCard({ orgId, projectId, checklist, canManage, actor, signoff,
         setDocs({}); setDocsChecked(true);
       }
     } catch (e) {
-      setItems([]); setItemsError((e as Error).message);
+      setItems([]); setItemsError(userFacingCaughtError(e, { action: "read", context: "QualityTab" }));
     }
   }, [checklist.id]);
   useEffect(() => { if (open && items == null) void loadItems(); }, [open, items, loadItems]);
@@ -512,7 +513,7 @@ function ChecklistCard({ orgId, projectId, checklist, canManage, actor, signoff,
       // is applied that the reviewer has not seen and chosen.
       setReview({ proposals: body.proposals, ticked: new Set() });
     } catch (e) {
-      setNotice(failure((e as Error).message));
+      setNotice(failure(userFacingCaughtError(e, { context: "QualityTab" })));
     } finally { setBusy(null); }
   };
 
@@ -535,7 +536,7 @@ function ChecklistCard({ orgId, projectId, checklist, canManage, actor, signoff,
       if (out.skippedUnconfirmed > 0) parts.push(`${out.skippedUnconfirmed} unticked`);
       setNotice(success(`${parts.join("; ")}.`));
     } catch (e) {
-      setNotice(failure((e as Error).message));
+      setNotice(failure(userFacingCaughtError(e, { context: "QualityTab" })));
     } finally { setBusy(null); }
   };
 
@@ -555,7 +556,7 @@ function ChecklistCard({ orgId, projectId, checklist, canManage, actor, signoff,
         setNotice(success(`Evidence sweep: ${parts.join(", ")}.`));
       }
     } catch (e) {
-      setNotice(failure((e as Error).message));
+      setNotice(failure(userFacingCaughtError(e, { context: "QualityTab" })));
     } finally { setBusy(null); }
   };
 
@@ -835,11 +836,14 @@ function ChecklistItemRow({ orgId, projectId, item, docs, docsChecked, canManage
   };
 
   return (
-    <li className={`px-3 py-2 text-xs ${na ? "opacity-50" : ""}`}>
+    // A11Y-13 / GAP-410: an N/A row is set back by its mark ("Not
+    // applicable") and the muted text token — never whole-row opacity,
+    // which took its text under 4.5 : 1 in both themes.
+    <li className="px-3 py-2 text-xs">
       <div className="flex flex-wrap sm:flex-nowrap items-start gap-2">
         <StatusMark spec={CHECKLIST_STATUS_MARKS[na ? "na" : item.status] ?? CHECKLIST_STATUS_MARKS.open} className="mt-px" />
         <div className="min-w-0 flex-1">
-          <div className="text-[var(--color-text)]">{item.text}</div>
+          <div className={na ? "text-[var(--color-text-muted)]" : "text-[var(--color-text)]"}>{item.text}</div>
           {item.aiRationale && (
             <div className="mt-0.5 text-[10px] text-[var(--color-text-muted)]">
               <span className="font-bold">Assessment:</span> {item.aiRationale}
@@ -1417,10 +1421,13 @@ function PunchSection({ orgId, projectId, canManage, actor, items, loadError, on
             // — an item due today is due, not late.
             const overdue = it.status === "open" && it.dueDate && new Date(`${it.dueDate}T23:59:59`).getTime() < now;
             return (
-              <li key={it.id} className={`px-4 py-2 text-xs ${it.status !== "open" ? "opacity-55" : ""}`}>
+              // A11Y-13 / GAP-410: a closed row is set back by its mark, its
+              // "done / voided by" label, a strike and the muted text token —
+              // never whole-row opacity (below 4.5 : 1 in both themes).
+              <li key={it.id} className="px-4 py-2 text-xs">
                 <div className="flex items-center gap-2 flex-wrap">
                   <StatusMark spec={PUNCH_STATUS_MARKS[it.status === "done" ? "done" : it.status === "void" ? "void" : overdue ? "overdue" : "open"]} />
-                  <span className={`text-[var(--color-text)] ${it.status !== "open" ? "line-through" : ""}`}>{it.title}</span>
+                  <span className={it.status !== "open" ? "text-[var(--color-text-muted)] line-through" : "text-[var(--color-text)]"}>{it.title}</span>
                   {it.location && <span className="text-[10px] font-bold text-[var(--color-text-muted)]">@ {it.location}</span>}
                   {it.partyId && contractorName.get(it.partyId) && <span className="text-[10px] text-[var(--color-text-muted)]">· {contractorName.get(it.partyId)}</span>}
                   {it.dueDate && it.status === "open" && (

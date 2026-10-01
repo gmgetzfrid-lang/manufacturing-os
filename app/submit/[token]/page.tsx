@@ -13,6 +13,7 @@ import {
 } from "lucide-react";
 import { supabase } from "@/lib/supabase";
 import { putWithXhr, UploadCancelledError } from "@/lib/storage";
+import { userFacingCaughtError } from "@/lib/userFacingError";
 import { INTAKE_TOKEN_HEADER, INTAKE_BEGUN_HEADER, LINK_GONE_MESSAGE, LINK_INVALID_MESSAGE, PROJECT_CLOSED_MESSAGE } from "@/lib/intakeLinks";
 
 interface IntakeItem {
@@ -209,7 +210,7 @@ export default function IntakePortal({ params }: { params: Promise<{ token: stri
       setFile(null); setTitle(""); setNumber(""); setRevLabel(""); setChangeNote("");
       await refresh();
     } catch (e) {
-      setMsg({ tone: "err", text: (e as Error).message });
+      setMsg({ tone: "err", text: userFacingCaughtError(e, { context: "portal" }) });
     } finally { setBusy(false); }
   };
 
@@ -222,7 +223,7 @@ export default function IntakePortal({ params }: { params: Promise<{ token: stri
       setMsg({ tone: "ok", text: body.message ?? "Redlines sent." });
       await refresh();
     } catch (e) {
-      setMsg({ tone: "err", text: (e as Error).message });
+      setMsg({ tone: "err", text: userFacingCaughtError(e, { context: "portal" }) });
     } finally { setRedlineBusy(null); }
   };
 
@@ -249,7 +250,7 @@ export default function IntakePortal({ params }: { params: Promise<{ token: stri
         setFile(null); setChangeNote("");
         await refresh();
       } catch (e) {
-        setMsg({ tone: "err", text: (e as Error).message });
+        setMsg({ tone: "err", text: userFacingCaughtError(e, { context: "portal" }) });
       } finally { setBusy(false); }
     };
     return (

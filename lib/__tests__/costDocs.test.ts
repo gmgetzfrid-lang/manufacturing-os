@@ -211,6 +211,17 @@ describe("void + manual total decide against the DATABASE row (MON-3 / COST-14)"
     expect(db.tables.cost_documents[1]).toMatchObject({ status: "parsed", total_amount: 250 });
   });
 
+  it("review fix: a refused manual-total UPDATE reads as a refused WRITE (never as a failed read), logged under setManualTotal", async () => {
+    db.tables.cost_documents.push(docRow({ status: "parsed", total_amount: 1000 }));
+    db.fail["cost_documents:update"] = [{ message: 'new row violates row-level security policy for table "cost_documents"', code: "42501" }];
+    const errSpy = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    const res = await setManualTotal({ doc: doc({ status: "parsed" }), total: 5, actor });
+    expect(res).toEqual({ ok: false, error: "You don't have permission to do this — nothing was changed." });
+    expect(String(errSpy.mock.calls[0]?.[0])).toContain("setManualTotal");
+    errSpy.mockRestore();
+    expect(db.tables.cost_documents[0].total_amount).toBe(1000);
+  });
+
   it("a DECLINED document moved no money: it can be voided, and a typed total corrects it WITHOUT reopening it", async () => {
     db.tables.cost_documents.push(docRow({ status: "declined", total_amount: 1000 }), docRow({ id: "d2", status: "declined" }));
     const fixed = await setManualTotal({ doc: doc({ status: "declined" }), total: 900, actor });

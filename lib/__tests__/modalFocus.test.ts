@@ -440,7 +440,7 @@ describe("A11Y-4 — the five modals compose the shared Modal", () => {
     const page = src("app/(protected)/projects/[id]/page.tsx");
     expect(page).toContain('import { Modal, ModalHeader } from "@/components/ui/Modal";');
     expect(page).not.toMatch(/fixed inset-0 z-\[200\]/);
-    expect(page).toContain('<ModalHeader title="Lessons learned" onClose={lessonsBusy ? undefined : () => setLessonsDraft(null)}');
+    expect(page).toContain('<ModalHeader title="Lessons learned" onClose={lessonsBusy ? undefined : () => void discardLessons()}');
     expect(page).toMatch(/<Modal size="md" dismissable=\{!transitionBusy\}/);
     expect(page).toContain("onClose={transitionBusy ? undefined : () => { setPendingStatus(null); setStatusReason(\"\"); setActionError(null); }} />");
     expect(page).toContain('{actionError && <div role="alert" className="mt-2 text-xs font-bold text-rose-700 dark:text-rose-300">{actionError}</div>}');
@@ -448,5 +448,121 @@ describe("A11Y-4 — the five modals compose the shared Modal", () => {
       expect(src(f), f).not.toMatch(/fixed inset-0 z-\[200\]/);
       expect(src(f), f).toMatch(/<Modal /);
     }
+  });
+
+  // Review fix: the shared panel is max-h-[90vh] with overflow hidden, so a
+  // composed dialog whose middle does not scroll clips its own footer — the
+  // Save path A11Y-4's failure scenario names. Each of the five: the region
+  // between header and footer scrolls (overflow-y-auto + min-h-0, so the
+  // flex column can shrink it) and the header and footer never shrink.
+  it("every composed modal's middle region is a scroll container, and its header and footer never shrink (Save stays on screen on a short viewport)", () => {
+    const page = src("app/(protected)/projects/[id]/page.tsx");
+    const lessons = page.slice(page.indexOf('<ModalHeader title="Lessons learned"'), page.indexOf("Save to project"));
+    expect(lessons).toContain('<div className="px-6 py-4 overflow-y-auto min-h-0">');
+    expect(lessons).toMatch(/border-t border-\[var\(--color-border\)\] flex items-center justify-end gap-2 shrink-0">/);
+    const transition = page.slice(page.indexOf("{/* TRANSITION CONFIRM */}"));
+    expect(transition).toContain('<div className="overflow-y-auto min-h-0">');
+    expect(transition).toMatch(/border-t border-\[var\(--color-border\)\] flex items-center justify-end gap-2 shrink-0">/);
+    const wizard = src("components/projects/ProjectWizard.tsx");
+    expect(wizard).toContain('<div className="px-6 py-5 space-y-4 max-h-[60vh] overflow-y-auto min-h-0">');
+    expect(wizard).toContain('<div className="px-6 py-4 border-b border-[var(--color-border)] shrink-0">');
+    expect(wizard).toContain('border-t border-[var(--color-border)] flex items-center gap-2 shrink-0">');
+    for (const f of ["app/(protected)/companies/page.tsx", "app/(protected)/companies/[id]/page.tsx"]) {
+      expect(src(f), f).toContain('<div className="px-6 py-5 space-y-3 overflow-y-auto min-h-0">');
+      expect(src(f), f).toMatch(/flex items-center justify-end gap-2 shrink-0">/);
+    }
+    // ModalHeader itself never shrinks
+    expect(src("components/ui/Modal.tsx")).toContain('<div className="flex items-start gap-3 px-5 py-4 border-b border-[var(--color-border)] shrink-0">');
+  });
+
+  it("rendered: the wizard's and the company dialogs' panels are header / scrolling middle / fixed footer", async () => {
+    await act(async () => { root.render(h(ProjectWizard, { orgId: "o1", actorUserId: "u1", onClose: vi.fn(), onCreated: vi.fn() })); });
+    const panel = dialogs()[0].children[1] as HTMLElement;
+    expect(panel.className).toContain("max-h-[90vh]");
+    const [header, middle, footer] = [...panel.children] as HTMLElement[];
+    expect(header.className).toContain("shrink-0");
+    expect(middle.className).toMatch(/overflow-y-auto.*min-h-0/);
+    expect(footer.className).toContain("shrink-0");
+  });
+
+  it("every way out of a dialog with typed input asks first — the header X and Cancel too, not only Escape and the backdrop", async () => {
+    // the lessons-learned editor (source: the page needs the whole project to render)
+    const page = src("app/(protected)/projects/[id]/page.tsx");
+    expect(page).toContain('<Modal size="lg" dismissable={!lessonsBusy} className="overflow-hidden" onClose={() => void discardLessons()}>');
+    expect(page).toContain("<button onClick={() => void discardLessons()} disabled={lessonsBusy}");
+    expect(page).not.toContain("<button onClick={() => setLessonsDraft(null)} disabled={lessonsBusy}");
+    // the wizard's header X
+    const confirm = vi.fn(() => false);
+    vi.stubGlobal("confirm", confirm);
+    const onClose = vi.fn();
+    await act(async () => { root.render(h(ProjectWizard, { orgId: "o1", actorUserId: "u1", onClose, onCreated: vi.fn() })); });
+    const name = document.activeElement as HTMLInputElement;
+    const setValue = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!;
+    await act(async () => { setValue.call(name, "Unit 300 turnaround"); name.dispatchEvent(new Event("input", { bubbles: true })); });
+    await act(async () => { (dialogs()[0].querySelector('button[aria-label="Close"]') as HTMLButtonElement).click(); });
+    await flush();
+    expect(confirm).toHaveBeenCalledTimes(1);
+    expect(onClose).not.toHaveBeenCalled();
+    // Add company: typed, then the X and Cancel each ask; a "no" keeps the dialog
+    act(() => root.unmount());
+    root = createRoot(host);
+    confirm.mockClear();
+    role.value = { activeOrgId: "o1", uid: "u1", hasAnyRole: () => true, loading: false, membershipState: "member" };
+    comp.listCompaniesPage.mockResolvedValue({ rows: [], total: 0, page: 0, pageSize: 50 });
+    comp.gatherCompanyProfiles.mockResolvedValue(new Map());
+    await act(async () => { root.render(h(CompaniesPage)); });
+    await flush();
+    await act(async () => { byText("button", /Add company/)!.click(); });
+    const field = dialogs()[0].querySelector('input[aria-label="Company name (required)"]') as HTMLInputElement;
+    await act(async () => { setValue.call(field, "Apex Industrial"); field.dispatchEvent(new Event("input", { bubbles: true })); });
+    await act(async () => { (dialogs()[0].querySelector('button[aria-label="Close"]') as HTMLButtonElement).click(); });
+    await flush();
+    await act(async () => { byText("button", /^Cancel$/, dialogs()[0])!.click(); });
+    await flush();
+    expect(confirm).toHaveBeenCalledTimes(2);
+    expect(dialogs()).toHaveLength(1);
+  });
+});
+
+describe("HelpTooltip — Escape belongs to what is in front (review fix)", () => {
+  it("a note left open on the page BEHIND a dialog does not swallow the dialog's Escape: one Escape closes the dialog (and the note)", async () => {
+    const onClose = vi.fn();
+    function Page() {
+      const [open, setOpen] = useState(false);
+      return h("div", null,
+        tip("What each export contains", "Explained."),
+        h("button", { id: "open-dialog", onClick: () => setOpen(true) }, "Lessons learned"),
+        open && modal({ onClose: () => { onClose(); setOpen(false); } }, h(ModalHeader, { title: "Lessons learned" }), h(ModalBody, null, h("textarea", null))),
+      );
+    }
+    await act(async () => { root.render(h(Page)); });
+    const trigger = document.querySelector('button[aria-label="What each export contains"]') as HTMLButtonElement;
+    await act(async () => { trigger.click(); });   // opened without moving focus (no mousedown later)
+    expect(trigger.getAttribute("aria-expanded")).toBe("true");
+    await act(async () => { (document.getElementById("open-dialog") as HTMLButtonElement).click(); });
+    expect(dialogs()).toHaveLength(1);
+    let e!: KeyboardEvent;
+    await act(async () => { e = key("Escape"); });
+    await flush();
+    expect(onClose).toHaveBeenCalledTimes(1);
+    expect(dialogs()).toHaveLength(0);
+    expect(trigger.getAttribute("aria-expanded")).toBe("false");
+    expect(e.defaultPrevented).toBe(false);
+  });
+
+  it("with no dialog open, the note still takes Escape and marks it; focus moving elsewhere closes it", async () => {
+    await act(async () => { root.render(h("div", null, tip("What this does", "Explained."), h("button", { id: "next" }, "Next"))); });
+    const trigger = document.querySelector('button[aria-label="What this does"]') as HTMLButtonElement;
+    trigger.focus();
+    await act(async () => { trigger.click(); });
+    let e!: KeyboardEvent;
+    await act(async () => { e = key("Escape"); });
+    expect(e.defaultPrevented).toBe(true);
+    expect(trigger.getAttribute("aria-expanded")).toBe("false");
+    // Tab away: focus leaves the note, so it closes (never left open behind a dialog that opens next)
+    await act(async () => { trigger.click(); });
+    expect(trigger.getAttribute("aria-expanded")).toBe("true");
+    await act(async () => { (document.getElementById("next") as HTMLButtonElement).focus(); });
+    expect(trigger.getAttribute("aria-expanded")).toBe("false");
   });
 });

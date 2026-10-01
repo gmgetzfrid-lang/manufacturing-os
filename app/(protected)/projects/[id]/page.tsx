@@ -63,6 +63,7 @@ import ScheduleTab from "@/components/projects/ScheduleTab";
 import HelpTooltip from "@/components/ui/HelpTooltip";
 import { Modal, ModalHeader } from "@/components/ui/Modal";
 import { supabase } from "@/lib/supabase";
+import { userFacingCaughtError } from "@/lib/userFacingError";
 import { applyEmailLookup } from "@/lib/identity";
 import type {
   Project, ProjectMember, ProjectMemberRole, CheckoutSession, ProjectStatus, Timestamp,
@@ -149,10 +150,17 @@ export default function ProjectDetailPage() {
   const [jobKind, setJobKind] = useState<string | null>(null);
   // Lessons-learned editor
   const [lessonsDraft, setLessonsDraft] = useState<string | null>(null);
-  // A11Y-4: what the editor opened with — Escape / the backdrop ask before
-  // discarding edits, and close at once when nothing changed.
+  // A11Y-4: what the editor opened with — every way out (Escape, the
+  // backdrop, the header X, Cancel) asks before discarding edits, and closes
+  // at once when nothing changed.
   const [lessonsSeed, setLessonsSeed] = useState<string | null>(null);
   const [lessonsBusy, setLessonsBusy] = useState(false);
+  const discardLessons = async () => {
+    if (lessonsBusy) return;
+    if (lessonsDraft !== null && lessonsDraft !== lessonsSeed
+      && !(await appConfirm({ title: "Discard your edits?", message: "The lessons-learned text you changed has not been saved.", confirmLabel: "Discard", tone: "danger" }))) return;
+    setLessonsDraft(null);
+  };
   // Coach re-gathers when page data changes.
   const [coachKey, setCoachKey] = useState(0);
 
@@ -218,7 +226,7 @@ export default function ProjectDetailPage() {
       }
       setCoachKey((k) => k + 1);
     } catch (e) {
-      setError((e as Error).message || "Failed to load project");
+      setError((e as Error)?.message ? userFacingCaughtError(e, { action: "read", context: "project page" }) : "Failed to load project");
     } finally {
       setLoading(false);
     }
@@ -248,7 +256,7 @@ export default function ProjectDetailPage() {
     setTimelineFresh(true);
     getProjectTimeline({ projectId, limit: 200 })
       .then((tl) => { if (mine === timelineReq.current) setTimeline(tl); })
-      .catch((e) => { if (mine === timelineReq.current) setTimelineError((e as Error).message || "The timeline could not be loaded."); });
+      .catch((e) => { if (mine === timelineReq.current) setTimelineError((e as Error)?.message ? userFacingCaughtError(e, { action: "read", context: "project page" }) : "The timeline could not be loaded."); });
   }, [tab, timelineFresh, projectId]);
 
   // PM-1: a controller reopens a closed project — a distinct, audited action.
@@ -266,7 +274,7 @@ export default function ProjectDetailPage() {
       await reopenProject({ projectId: project.id, orgId: project.orgId, reason, actorUserId: uid, actorEmail: userEmail ?? undefined });
       await refresh();
     } catch (e) {
-      setActionError((e as Error).message);
+      setActionError(userFacingCaughtError(e, { context: "project page" }));
     }
   };
 
@@ -277,7 +285,7 @@ export default function ProjectDetailPage() {
     if (!project?.id || !uid) return;
     let counts;
     try { counts = await countProjectRecords(project.id); }
-    catch (e) { await appAlert({ message: `The project's records could not be counted, so nothing was deleted: ${(e as Error).message}`, tone: "danger" }); return; }
+    catch (e) { await appAlert({ message: `The project's records could not be counted, so nothing was deleted: ${userFacingCaughtError(e, { action: "read", context: "project page" })}`, tone: "danger" }); return; }
     const lines = describeProjectRecords(counts);
     const regulated = regulatedRecordTotal(counts);
     const list = lines.length ? `\n\nThis would permanently destroy:\n• ${lines.join("\n• ")}` : "\n\nNo cost, quality or schedule records are attached.";
@@ -312,7 +320,7 @@ export default function ProjectDetailPage() {
     try {
       await deleteProject({ projectId: project.id, actorUserId: uid, actorEmail: userEmail ?? undefined, actorRole: activeRole ?? undefined, reason });
       router.push("/projects");
-    } catch (e) { await appAlert({ message: (e as Error).message, tone: "danger" }); }
+    } catch (e) { await appAlert({ message: userFacingCaughtError(e, { context: "project page" }), tone: "danger" }); }
   };
 
   const handlePostComment = async () => {
@@ -329,7 +337,7 @@ export default function ProjectDetailPage() {
       setCommentDraft("");
       await refresh();
     } catch (e) {
-      setActionError((e as Error).message);
+      setActionError(userFacingCaughtError(e, { context: "project page" }));
     } finally { setPosting(false); }
   };
 
@@ -359,7 +367,7 @@ export default function ProjectDetailPage() {
       if (releaseError) setActionError(releaseError);
       else if (activityError) setActionError(`The project is ${pendingStatus}, but ${activityError.charAt(0).toLowerCase()}${activityError.slice(1)}`);
     } catch (e) {
-      setActionError((e as Error).message);
+      setActionError(userFacingCaughtError(e, { context: "project page" }));
       // The status may have changed before the throw; render the database's
       // state, never the pre-click one beside the message.
       await refresh().catch(() => undefined);
@@ -449,7 +457,7 @@ export default function ProjectDetailPage() {
               onClick={async () => {
                 if (!project.id || !project.orgId) return;
                 try { await exportProjectToCsv(project.id, project.orgId); }
-                catch (e) { await appAlert({ message: (e as Error).message, tone: "danger" }); }
+                catch (e) { await appAlert({ message: userFacingCaughtError(e, { context: "project page" }), tone: "danger" }); }
               }}
             />
             {canManage && (
@@ -465,7 +473,7 @@ export default function ProjectDetailPage() {
               onClick={async () => {
                 if (!project.id) return;
                 try { await openProjectEvidencePack(project.id); }
-                catch (e) { await appAlert({ message: (e as Error).message, tone: "danger" }); }
+                catch (e) { await appAlert({ message: userFacingCaughtError(e, { context: "project page" }), tone: "danger" }); }
               }}
             />
             <ActionButton
@@ -474,7 +482,7 @@ export default function ProjectDetailPage() {
               onClick={async () => {
                 if (!project.id || !project.orgId) return;
                 try { await openProjectReport(project.orgId, project.id); }
-                catch (e) { await appAlert({ message: (e as Error).message, tone: "danger" }); }
+                catch (e) { await appAlert({ message: userFacingCaughtError(e, { context: "project page" }), tone: "danger" }); }
               }}
             />
             {canManage && (project.status === "completed" || project.status === "active" || project.status === "paused") && (
@@ -491,7 +499,7 @@ export default function ProjectDetailPage() {
                     setLessonsSeed(seed);
                     setLessonsDraft(seed);
                   } catch (e) {
-                    await appAlert({ message: (e as Error).message, tone: "danger" });
+                    await appAlert({ message: userFacingCaughtError(e, { context: "project page" }), tone: "danger" });
                   } finally { setLessonsBusy(false); }
                 }}
               />
@@ -701,19 +709,20 @@ export default function ProjectDetailPage() {
       {/* Lessons-learned editor — auto-drafted from the project's exhaust
           (change orders by reason, slips, rejections), edited by a human. */}
       {lessonsDraft !== null && (
-        <Modal size="lg" dismissable={!lessonsBusy} className="overflow-hidden"
-          onClose={() => void (async () => {
-            if (lessonsDraft !== lessonsSeed && !(await appConfirm({ title: "Discard your edits?", message: "The lessons-learned text you changed has not been saved.", confirmLabel: "Discard", tone: "danger" }))) return;
-            setLessonsDraft(null);
-          })()}>
-            <ModalHeader title="Lessons learned" onClose={lessonsBusy ? undefined : () => setLessonsDraft(null)}
+        <Modal size="lg" dismissable={!lessonsBusy} className="overflow-hidden" onClose={() => void discardLessons()}>
+            {/* A11Y-4: every way out — Escape, the backdrop, the header X and
+                Cancel — asks before discarding edited text. The middle
+                scrolls (min-h-0) and the footer never shrinks, so Save stays
+                on screen on a short viewport or after the textarea is
+                dragged taller. */}
+            <ModalHeader title="Lessons learned" onClose={lessonsBusy ? undefined : () => void discardLessons()}
               subtitle="Drafted from this project's own records — change orders, slips, rejections. Edit it into what the next job should know; it saves to the project and prints on the report." />
-            <div className="px-6 py-4">
+            <div className="px-6 py-4 overflow-y-auto min-h-0">
               <textarea value={lessonsDraft} onChange={(e) => setLessonsDraft(e.target.value)} rows={12} aria-label="Lessons learned"
                 className="w-full px-3 py-2 border border-[var(--color-border-strong)] rounded-lg text-xs font-mono resize-y focus:ring-2 focus:ring-[var(--color-accent-ring)] outline-none" />
             </div>
-            <div className="px-6 py-3 bg-[var(--color-surface-2)] border-t border-[var(--color-border)] flex items-center justify-end gap-2">
-              <button onClick={() => setLessonsDraft(null)} disabled={lessonsBusy}
+            <div className="px-6 py-3 bg-[var(--color-surface-2)] border-t border-[var(--color-border)] flex items-center justify-end gap-2 shrink-0">
+              <button onClick={() => void discardLessons()} disabled={lessonsBusy}
                 className="px-3 py-2 rounded-lg text-xs font-bold text-[var(--color-text)] bg-[var(--color-surface)] border border-[var(--color-border)] hover:bg-[var(--color-surface-2)] disabled:opacity-50">Cancel</button>
               <button
                 onClick={async () => {
@@ -758,7 +767,7 @@ export default function ProjectDetailPage() {
                 ? "Active checkouts on this project will be released. A checkout you are not allowed to release stays with its holder, and you will be told who still holds what. The project's contractor intake links are revoked, and its cost, quality and schedule records become read-only until an Admin / Document Control reopens it."
                 : "No checkouts will be affected."}
               onClose={transitionBusy ? undefined : () => { setPendingStatus(null); setStatusReason(""); setActionError(null); }} />
-            <div className="overflow-y-auto">
+            <div className="overflow-y-auto min-h-0">
             {/* Closeout gates — what a finished job should have closed out.
                 Warnings, not walls: the owner can complete anyway, on the record. */}
             {pendingStatus === "completed" && gates && (() => {
@@ -801,7 +810,7 @@ export default function ProjectDetailPage() {
               {actionError && <div role="alert" className="mt-2 text-xs font-bold text-rose-700 dark:text-rose-300">{actionError}</div>}
             </div>
             </div>
-            <div className="px-6 py-3 bg-[var(--color-surface-2)] border-t border-[var(--color-border)] flex items-center justify-end gap-2">
+            <div className="px-6 py-3 bg-[var(--color-surface-2)] border-t border-[var(--color-border)] flex items-center justify-end gap-2 shrink-0">
               <button onClick={() => { setPendingStatus(null); setStatusReason(""); setActionError(null); }} disabled={transitionBusy} className="px-3 py-2 rounded-lg text-xs font-bold text-[var(--color-text)] bg-[var(--color-surface)] border border-[var(--color-border)] hover:bg-[var(--color-surface-2)] disabled:opacity-50">Cancel</button>
               <button onClick={handleTransition} disabled={transitionBusy} className="inline-flex items-center gap-1.5 px-3 py-2 rounded-lg text-xs font-bold text-[var(--color-accent-fg)] bg-[var(--color-accent)] hover:bg-[var(--color-accent-hover)] disabled:opacity-60">
                 {transitionBusy && <Loader2 className="w-3.5 h-3.5 animate-spin" />}
@@ -1047,7 +1056,7 @@ function MembersTab({
       setAddEmail(""); setAddResp(""); setAddRole("collaborator");
       onAdded();
     } catch (e) {
-      setError((e as Error).message);
+      setError(userFacingCaughtError(e, { context: "project page" }));
     } finally { setBusy(false); }
   };
 
@@ -1058,7 +1067,7 @@ function MembersTab({
       await updateMember({ projectId: project.id!, userId: m.userId, responsibility: next, actorUserId });
       setEditingResp((p) => { const n = { ...p }; delete n[m.userId]; return n; });
       onAdded();
-    } catch (e) { await appAlert({ message: (e as Error).message, tone: "danger" }); }
+    } catch (e) { await appAlert({ message: userFacingCaughtError(e, { context: "project page" }), tone: "danger" }); }
   };
 
   const makeOwner = async (m: ProjectMember) => {
@@ -1070,7 +1079,7 @@ function MembersTab({
         actorUserId, actorEmail,
       });
       onAdded();
-    } catch (e) { await appAlert({ message: (e as Error).message, tone: "danger" }); }
+    } catch (e) { await appAlert({ message: userFacingCaughtError(e, { context: "project page" }), tone: "danger" }); }
   };
 
   return (
@@ -1161,7 +1170,7 @@ function MembersTab({
                         try {
                           await removeMember({ projectId: project.id!, orgId: project.orgId, userId: m.userId, userName: m.userName ?? undefined, userEmail: m.userEmail ?? undefined, actorUserId, actorEmail });
                           onAdded();
-                        } catch (e) { await appAlert({ message: (e as Error).message, tone: "danger" }); }
+                        } catch (e) { await appAlert({ message: userFacingCaughtError(e, { context: "project page" }), tone: "danger" }); }
                       }}
                       title="Remove from project"
                       className="opacity-60 sm:opacity-0 group-hover:opacity-100 transition-opacity p-1.5 rounded-md text-[var(--color-text-faint)] hover:text-rose-700 dark:hover:text-rose-300 hover:bg-rose-500/10"

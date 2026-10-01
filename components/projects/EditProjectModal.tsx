@@ -10,7 +10,7 @@
 import React, { useEffect, useState } from "react";
 import { X, Loader2, Check, Pencil, Lock, Globe, Target, Plus, FileText, Search } from "lucide-react";
 import { supabase } from "@/lib/supabase";
-import { userFacingReadError } from "@/lib/userFacingError";
+import { userFacingError, userFacingReadError, userFacingCaughtError } from "@/lib/userFacingError";
 import { updateProjectMeta } from "@/lib/projects";
 import { logAuditAction } from "@/lib/audit";
 import { invalidateProjectSnapshot } from "@/lib/projectSnapshot";
@@ -168,7 +168,7 @@ export default function EditProjectModal({ project, actorUserId, actorEmail, act
             updated_at: new Date().toISOString(),
             updated_by: actorUserId,
           }).eq("id", project.id!);
-          if (extErr) throw new Error(`Name, description, MOC, target date and visibility were saved, but purpose / goals / Summary of Work were not: ${extErr.message}. Save changes retries just those.`);
+          if (extErr) throw new Error(`Name, description, MOC, target date and visibility were saved, but purpose / goals / Summary of Work were not: ${userFacingError(extErr, { context: "EditProjectModal" }).replace(/\.$/, "")}. Save changes retries just those.`);
           await logAuditAction({
             action: "PROJECT_UPDATED",
             resourceId: project.id!, resourceType: "project",
@@ -182,7 +182,7 @@ export default function EditProjectModal({ project, actorUserId, actorEmail, act
       // before this write (lib/projectSnapshot memo).
       invalidateProjectSnapshot(project.orgId, project.id!);
       onSaved();
-    } catch (e) { setError((e as Error).message); }
+    } catch (e) { setError(userFacingCaughtError(e, { context: "EditProjectModal" })); }
     finally { setBusy(false); }
   };
 

@@ -71,18 +71,32 @@ export function aiReadinessFrom(f: AiFacts): AiReadiness {
 
 type Fetcher = (url: string) => Promise<Response>;
 
+/** A precondition that disables a button: the server is certain to refuse. */
+export function aiReadinessRefuses(r: AiReadiness): boolean {
+  return r.state === "no_key" || r.state === "over_cap";
+}
+
+/** "Ready" / "unknown" are shared by every button on the page for a minute.
+ *  A refusal — a missing key, an unsigned agreement, a spent budget — is
+ *  kept only long enough for the buttons mounting together to share one
+ *  read: the person may be fixing it right now (a key saved in another tab,
+ *  a cap raised by an administrator), and a button must never stay
+ *  disabled on a stale answer. */
 const TTL_MS = 60_000;
-const cache = new Map<string, { at: number; value: Promise<AiReadiness> }>();
+const REFUSAL_TTL_MS = 3_000;
+const cache = new Map<string, { at: number; value: Promise<AiReadiness>; ttl: number }>();
 
 /** Forget what was read (a key was just saved, or a test). */
-export function clearAiReadinessCache(): void { cache.clear(); }
+export function clearAiReadinessCache(orgId?: string): void {
+  if (orgId) cache.delete(orgId); else cache.clear();
+}
 
-/** Read the three facts for `orgId` (one request each, shared by every
- *  button on the page for a minute) and derive the precondition. Never
- *  throws: a failed read is "unknown". */
-export function fetchAiReadiness(orgId: string, fetcher: Fetcher, now = Date.now()): Promise<AiReadiness> {
+/** Read the three facts for `orgId` (one request each, shared by the
+ *  buttons on the page) and derive the precondition. Never throws: a failed
+ *  read is "unknown". `fresh` skips the cache (a re-check on focus). */
+export function fetchAiReadiness(orgId: string, fetcher: Fetcher, now = Date.now(), opts: { fresh?: boolean } = {}): Promise<AiReadiness> {
   const hit = cache.get(orgId);
-  if (hit && now - hit.at < TTL_MS) return hit.value;
+  if (!opts.fresh && hit && now - hit.at < hit.ttl) return hit.value;
   const read = async <T,>(path: string): Promise<T | null> => {
     try {
       const res = await fetcher(`${path}?orgId=${encodeURIComponent(orgId)}`);
@@ -98,6 +112,12 @@ export function fetchAiReadiness(orgId: string, fetcher: Fetcher, now = Date.now
     ]);
     return aiReadinessFrom({ connection, agreement, usage });
   })();
-  cache.set(orgId, { at: now, value });
+  const entry = { at: now, value, ttl: TTL_MS };
+  cache.set(orgId, entry);
+  // A refusal is not kept: once the answer is known, its entry shrinks to
+  // the short window (only while it is still the one cached).
+  void value.then((r) => {
+    if (r.state !== "ready" && r.state !== "unknown" && cache.get(orgId) === entry) entry.ttl = REFUSAL_TTL_MS;
+  });
   return value;
 }

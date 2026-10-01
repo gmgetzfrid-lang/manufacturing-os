@@ -17,7 +17,17 @@ import { createRoot, type Root } from "react-dom/client";
 const co = vi.hoisted(() => ({ listChangeOrders: vi.fn(), decideChangeOrder: vi.fn() }));
 const dlg = vi.hoisted(() => ({ appConfirm: vi.fn(), appPrompt: vi.fn() }));
 
-vi.mock("@/lib/supabase", () => ({ supabase: { from: () => ({}) } }));
+const db = vi.hoisted(() => ({ next: { data: [] as unknown, error: null as unknown } }));
+vi.mock("@/lib/supabase", () => {
+  // every chain resolves to db.next — enough for the REAL listChangeOrders
+  const chain = (): unknown => new Proxy({}, {
+    get(_t, prop: string) {
+      if (prop === "then") return (resolve: (v: unknown) => void) => resolve(db.next);
+      return () => chain();
+    },
+  });
+  return { supabase: { from: () => chain() } };
+});
 vi.mock("@/lib/audit", () => ({ logAuditAction: vi.fn() }));
 vi.mock("@/lib/notify/dispatch", () => ({ emit: vi.fn() }));
 vi.mock("@/components/providers/DialogProvider", () => ({ appConfirm: dlg.appConfirm, appPrompt: dlg.appPrompt }));
@@ -67,9 +77,12 @@ async function renderPanel() {
 describe("ChangeOrdersPanel — a failed read is said out loud (REL-2), never an empty panel", () => {
   it("a failed read renders an alert with the reason and a Retry, not the empty state", async () => {
     co.listChangeOrders.mockRejectedValueOnce(new Error("Couldn't read the change orders' cost entries: statement timeout"));
+    const errSpy = vi.spyOn(console, "error").mockImplementation(() => undefined);
     await renderPanel();
+    errSpy.mockRestore();
     const alert = host.querySelector('[role="alert"]');
-    expect(alert?.textContent).toMatch(/Couldn't load the change orders \(Couldn't read the change orders' cost entries: statement timeout\)/);
+    // REL-3: driver text that reached the panel is translated at the screen; the lead-in stays
+    expect(alert?.textContent).toMatch(/Couldn't load the change orders \(Couldn't read the change orders' cost entries: The database took too long to answer — try again\.\)/);
     expect(host.textContent).not.toMatch(/No change orders/);
     // Retry reloads
     co.listChangeOrders.mockResolvedValueOnce([]);
@@ -86,6 +99,36 @@ describe("ChangeOrdersPanel — a failed read is said out loud (REL-2), never an
     await renderPanel();
     expect(host.querySelector('[role="alert"]')).toBeNull();
     expect(host.textContent).toMatch(/No change orders/);
+  });
+
+  it("REL-3 (review fix): through the REAL listChangeOrders — whose error carries the translated sentence and the driver CODE — an absent table (42P01 / PGRST205) still keeps the panel quiet; a refused read is said in plain words", async () => {
+    const real = await vi.importActual<typeof import("@/lib/changeOrders")>("@/lib/changeOrders");
+    const errSpy = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    try {
+      for (const error of [
+        { message: 'relation "public.change_orders" does not exist', code: "42P01" },
+        { message: "Could not find the table 'public.change_orders' in the schema cache", code: "PGRST205" },
+      ]) {
+        db.next = { data: null, error };
+        co.listChangeOrders.mockImplementationOnce(real.listChangeOrders);
+        act(() => root.unmount());
+        root = createRoot(host);
+        await renderPanel();
+        expect(host.querySelector('[role="alert"]'), error.code).toBeNull();
+        expect(host.textContent).toMatch(/No change orders/);
+      }
+      db.next = { data: null, error: { message: "permission denied for table change_orders", code: "42501" } };
+      co.listChangeOrders.mockImplementationOnce(real.listChangeOrders);
+      act(() => root.unmount());
+      root = createRoot(host);
+      await renderPanel();
+      const alert = host.querySelector('[role="alert"]');
+      expect(alert?.textContent).toMatch(/Couldn't load the change orders \(You don't have permission to see this\.\)/);
+      expect(alert?.textContent).not.toMatch(/change_orders|permission denied for/);
+    } finally {
+      errSpy.mockRestore();
+      db.next = { data: [], error: null };
+    }
   });
 
   it("COST-4: approved COs whose entry is not posted are named beside the approved total, which excludes them", async () => {

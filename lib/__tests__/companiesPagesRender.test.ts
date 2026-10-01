@@ -83,7 +83,8 @@ describe("REL-1 — /companies with no resolvable organization", () => {
     lib.gatherCompanyProfiles.mockResolvedValue(new Map());
     await act(async () => { root.render(React.createElement(CompaniesPage)); });
     await flush();
-    expect(host.querySelector('[role="alert"]')?.textContent).toMatch(/statement timeout/);
+    // REL-3: the screen says it in plain words — never the driver's text
+    expect(host.querySelector('[role="alert"]')?.textContent).toMatch(/The database took too long to answer — try again\./);
     await act(async () => { byText("button", /Retry/)!.click(); });
     await flush();
     expect(lib.listCompaniesPage).toHaveBeenCalledTimes(2);
@@ -124,7 +125,8 @@ describe("UX-9 — a failed action on the company profile", () => {
     await flush();
 
     const alert = host.querySelector('[role="alert"]');
-    expect(alert?.textContent).toMatch(/row-level security/);
+    expect(alert?.textContent).toMatch(/You don't have permission to do this — nothing was changed\./);   // REL-3: never the policy text
+    expect(alert?.textContent).not.toMatch(/row-level security/);
     expect(host.querySelector("h1")?.textContent).toMatch(/Apex Industrial/);   // still mounted
     expect((host.querySelector('input[placeholder^="What happened?"]') as HTMLInputElement).value).toBe("Crane swing near miss at E-301");
     // Dismissible.

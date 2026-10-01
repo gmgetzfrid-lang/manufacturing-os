@@ -6,7 +6,7 @@
 // always see everything for audit purposes).
 
 import { supabase } from "@/lib/supabase";
-import { userFacingError, userFacingReadError } from "@/lib/userFacingError";
+import { userFacingError, userFacingReadError, userFacingCaughtError } from "@/lib/userFacingError";
 import { normalizeRoles } from "@/lib/roleCapabilities";
 import { isControllerPrincipal } from "@/lib/permissions";
 import { SNAPSHOT_READS, type ProjectStateSnapshot } from "@/lib/projectHealth";
@@ -215,7 +215,7 @@ export async function writeActivity(input: WriteActivityInput): Promise<string |
     });
     return error ? `The project activity row was not written: ${userFacingError(error, { context: "projects" })}` : null;
   } catch (e) {
-    return `The project activity row was not written: ${(e as Error).message}`;
+    return `The project activity row was not written: ${userFacingCaughtError(e, { context: "projects" })}`;
   }
 }
 
@@ -503,7 +503,7 @@ export async function transitionProjectStatus(input: StatusTransitionInput): Pro
         ?? await (await import("@/lib/projectSnapshot")).gatherProjectSnapshotUncached(input.orgId, input.projectId);
       gates = closeoutGateLines(snap);
     } catch (e) {
-      gateSnapshotError = (e as Error).message;
+      gateSnapshotError = userFacingCaughtError(e, { action: "read", context: "closeout gates" });
     }
   }
 
@@ -999,7 +999,7 @@ export async function postComment(input: {
       body: input.body.trim(),
     });
   } catch (e) {
-    throw new Error(`Your comment was not posted: ${(e as Error).message.replace(/^The project activity row was not written: /, "")}`);
+    throw new Error(`Your comment was not posted: ${userFacingCaughtError(e, { context: "projects" }).replace(/^The project activity row was not written: /, "")}`);
   }
   const trimmed = input.body.trim();
   await notifyProjectAudience({

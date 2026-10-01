@@ -15,6 +15,7 @@ import { finishMySession } from "@/lib/checkoutEpisodes";
 import { logCheckoutEvent } from "@/lib/audit";
 import { useRole } from "@/components/providers/RoleContext";
 import { supabase } from "@/lib/supabase";
+import { userFacingCaughtError } from "@/lib/userFacingError";
 import type { CheckoutSession } from "@/types/schema";
 
 interface StaleCheckoutBannerProps {
@@ -106,7 +107,9 @@ export default function StaleCheckoutBanner({ userId }: StaleCheckoutBannerProps
       });
       await refresh();
     } catch (e) {
-      setReleaseError(`Couldn't release ${row.docNumber || "the checkout"}: ${(e as Error).message}`);
+      // REL-3: lib/checkoutEpisodes (Document Control's) hands back the
+      // driver's text; the Projects screen translates it here.
+      setReleaseError(`Couldn't release ${row.docNumber || "the checkout"}: ${userFacingCaughtError(e, { context: "StaleCheckoutBanner release" })}`);
     } finally { setReleasingId(null); }
   };
 

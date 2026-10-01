@@ -20,6 +20,7 @@
 // client until the user clicks "Import N milestones".
 
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { userFacingCaughtError } from "@/lib/userFacingError";
 import {
   Upload, FileUp, X, Loader2, CheckCircle2, AlertTriangle,
   FileText, Calendar as CalIcon,
@@ -157,7 +158,7 @@ export default function ScheduleImportModal({
       setParseResult({
         format: "unknown",
         rows: [],
-        warnings: [`Couldn't read the file: ${(e as Error).message}`],
+        warnings: [`Couldn't read the file: ${userFacingCaughtError(e, { context: "ScheduleImportModal" })}`],
       });
     } finally { setParsing(false); }
   }, [invalidatePlan]);
