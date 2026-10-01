@@ -3892,11 +3892,11 @@ screen, so what it says and where its QR points are decided in one place
 > fail-safe rule in *How to use this file*. Closed: `PHYS-5`, `PHYS-11`,
 > `PHYS-12`, `SHR-8`, `SHR-11`, document-control `PKG-13`, `TRX-14`. Partial,
 > left OPEN with the owners named: `PHYS-9` (the drafting caller, DF-P10),
-> `PHYS-13` and `XEDGE-5` (the remaining copy-link builders). *Numbered
-> DEC-64 as the fleet brief instructs. That is a placeholder: this base
-> already has a DEC-64 (the download record), so the integrator renumbers
-> this entry at merge. Every "DEC-64 (public-surfaces PS-STAMP)" this package
-> added refers to this entry.*
+> `PHYS-13` and `XEDGE-5` (the remaining copy-link builders). *Minted on
+> its branch as a placeholder DEC-44, as the fleet brief instructs (that base
+> already had a DEC-44, the download record); the integrator renumbered it
+> DEC-64 at merge (2026-10-01). Every "DEC-64 (public-surfaces PS-STAMP)" in
+> the records refers to this entry.*
 
 **Rationale.** In a plant a QR badge or a printed stamp is what a person
 trusts when they cannot check the database. A QR that dead-ends on a Vercel
