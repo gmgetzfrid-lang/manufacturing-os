@@ -16,6 +16,8 @@
 //     which referenced numbers exist NOWHERE in the library — the
 //     broken/missing-reference audit, computed deterministically.
 
+import { csvCell } from "@/lib/csvSafe";
+
 export const SPARSE_PAGE_MAX_CHARS = 2000;
 
 /** Drawing pages are text-sparse; prose pages are dense. This single
@@ -551,8 +553,8 @@ export function auditDrawingRefs(
 
 // ── CSV register ───────────────────────────────────────────────────────────
 
-const csvCell = (s: string): string =>
-  /[",\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
+// PM-15: cells are encoded by lib/csvSafe's csvCell (PM-10) — a tag or a
+// sheet name read off a drawing is written as text, never a live formula.
 
 /** The equipment register as CSV (opens straight into Excel): one row per
  *  distinct tag with category, occurrence count, and the sheets it's on. */

@@ -16,6 +16,7 @@ import { getReviewSummaries, type ReviewSummary } from "@/lib/reviewControl";
 import { effectiveStatusFor } from "@/lib/effectiveDate";
 import { retentionStatusFor } from "@/lib/retention";
 import { describeOrigin } from "@/lib/documentOrigin";
+import { csvCell } from "@/lib/csvSafe";
 
 export interface RegisterRow {
   id: string;
@@ -215,10 +216,8 @@ export function filterRegister(rows: RegisterRow[], filter: RegisterFilter, libr
 
 // ── CSV export (pure) ────────────────────────────────────────────────────────
 
-function csvCell(v: string | number | null | undefined): string {
-  const s = v == null ? "" : String(v);
-  return /[",\n\r]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
-}
+// PM-15: cells are encoded by lib/csvSafe's csvCell (PM-10) — a document
+// titled `=HYPERLINK(...)` is written as text, never a live formula.
 
 /** The master register as CSV — the artifact an auditor asks to be handed. */
 export function registerToCsv(rows: RegisterRow[]): string {

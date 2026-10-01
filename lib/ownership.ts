@@ -9,6 +9,7 @@
 import { supabase } from "@/lib/supabase";
 import { notify } from "@/lib/inAppNotifications";
 import { logAuditAction } from "@/lib/audit";
+import { csvCell } from "@/lib/csvSafe";
 
 type Level = "library" | "collection" | "document";
 interface OwnerCols { owner_user_id?: string | null; owner_name?: string | null }
@@ -132,10 +133,8 @@ export interface OwnershipRegisterRow {
   source: Level | "team" | null;
 }
 
-function csvCell(v: string | null | undefined): string {
-  const s = v == null ? "" : String(v);
-  return /[",\n\r]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
-}
+// PM-15: cells are encoded by lib/csvSafe's csvCell (PM-10) — an owner or
+// node name led by = + - @ is written as text, never a live formula.
 
 /** The ownership register as CSV — who is accountable for every library,
  *  folder and controlled document, and where that authority comes from. */
