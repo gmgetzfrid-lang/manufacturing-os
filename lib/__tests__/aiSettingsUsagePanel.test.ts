@@ -30,7 +30,7 @@ vi.mock("@/components/providers/ToastProvider", () => ({ useToast: () => toast }
 vi.mock("@/lib/supabaseAdmin", () => ({ supabaseAdmin: {} }));
 vi.mock("@/components/providers/DialogProvider", () => ({ appConfirm: vi.fn(async () => true) }));
 
-import { UsagePanel, KeyStorageNotice, opBreakdown, UNPRICED_CALL_DISPLAY_USD } from "@/components/knowledge/AiSettingsModal";
+import { UsagePanel, KeyStorageNotice, opBreakdown, tokenLine, UNPRICED_CALL_DISPLAY_USD } from "@/components/knowledge/AiSettingsModal";
 import { UNPRICED_CALL_USD } from "@/lib/ai/usageServer";
 
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
@@ -178,6 +178,36 @@ describe("UsagePanel", () => {
     kn.getAiUsage.mockReset();
   });
 
+  it("GOV-10: a refused save is said in the server's words and the panel re-reads what is stored (a 409 can follow a change that landed)", async () => {
+    const team = [{ userId: "u1", name: "Ada", spentUsd: 10, asks: 1, calls: 2, inputTokens: 1, outputTokens: 1, capUsd: 10, locked: false, hasOverride: false, byOp: {} }];
+    kn.getAiUsage.mockResolvedValue({ ...base, spentUsd: 10, percent: 100, orgCapUsd: 10, team, canManageCaps: true, selfFollowsDefault: true });
+    await render(React.createElement(UsagePanel, { orgId: "o1" }));
+    const reads = kn.getAiUsage.mock.calls.length;
+    kn.setAiCap.mockRejectedValueOnce(new Error("The default monthly cap is now $100, but your own cap rose to $100 while it was being saved — another cap change landed at the same time — so it was put back at $10."));
+    await setDefaultCap("100");
+    expect(toast.showToast.mock.calls.at(-1)?.[0]).toMatchObject({ type: "error" });
+    expect(lastToast()).toMatch(/so it was put back at \$10/);
+    await act(async () => { await Promise.resolve(); });
+    expect(kn.getAiUsage.mock.calls.length).toBeGreaterThan(reads);
+    kn.getAiUsage.mockReset();
+  });
+
+  it("GOV-1: the token line is chat tokens — the meaning index's embedding tokens are counted apart, never extrapolated with them (the review's figures)", async () => {
+    // $1.00 of embeddings bought 50M tokens; $5.00 of questions bought 1M; cap $10.
+    kn.getAiUsage.mockResolvedValueOnce({
+      ...base, spentUsd: 6, percent: 60, capUsd: 10, inputTokens: 50_900_000, outputTokens: 100_000, asks: 40, calls: 41,
+      byOp: {
+        knowledgeAsk: { spentUsd: 5, calls: 40, inputTokens: 900_000, outputTokens: 100_000 },
+        knowledgeEmbed: { spentUsd: 1, calls: 1, inputTokens: 50_000_000, outputTokens: 0 },
+      },
+    });
+    await render(React.createElement(UsagePanel, { orgId: "o1" }));
+    // 1M so far; the $4 left buys ~0.8M more at $5 per 1M — never "51.0M of ~85.0M"
+    expect(host.textContent).toMatch(/1\.0M of ~1\.8M tokens/);
+    expect(host.textContent).toMatch(/50\.0M meaning-index tokens/);
+    expect(host.textContent).not.toMatch(/85\.0M/);
+  });
+
   it("GOV-4: calls recorded without a cost are said, with the figure the server counts each at", async () => {
     expect(UNPRICED_CALL_DISPLAY_USD).toBe(UNPRICED_CALL_USD);
     kn.getAiUsage.mockResolvedValueOnce({ ...base, spentUsd: 2, percent: 20, calls: 2, unpricedCalls: 2 });
@@ -207,6 +237,27 @@ describe("KeyStorageNotice (GOV-12)", () => {
   it("says keys are encrypted when they are", async () => {
     await render(React.createElement(KeyStorageNotice, { storage: { encrypted: true, plaintextRefused: true, yoursUnsealed: 0 } }));
     expect(host.textContent).toMatch(/encrypted at rest with the server's EXPORT_ENCRYPTION_KEY/);
+  });
+});
+
+describe("tokenLine (GOV-1: a token is not one price)", () => {
+  const u = { inputTokens: 0, outputTokens: 0, spentUsd: 0, capUsd: 10, locked: false, byOp: {} };
+  it("with no embedding spend it is the month's tokens over the whole cap, as before", () => {
+    expect(tokenLine({ ...u, inputTokens: 18_000, outputTokens: 2_000, spentUsd: 1, byOp: { knowledgeAsk: { spentUsd: 1, calls: 3, inputTokens: 18_000, outputTokens: 2_000 } } }))
+      .toEqual({ chatTokens: 20_000, embeddingTokens: 0, estChatTokenBudget: 200_000 });
+  });
+  it("embedding tokens are taken out of the figure and its rate; what is left of the cap is spent at the chat rate", () => {
+    expect(tokenLine({
+      ...u, inputTokens: 50_900_000, outputTokens: 100_000, spentUsd: 6,
+      byOp: { knowledgeAsk: { spentUsd: 5, calls: 1, inputTokens: 900_000, outputTokens: 100_000 }, knowledgeEmbed: { spentUsd: 1, calls: 1, inputTokens: 50_000_000, outputTokens: 0 } },
+    })).toEqual({ chatTokens: 1_000_000, embeddingTokens: 50_000_000, estChatTokenBudget: 1_800_000 });
+  });
+  it("no estimate when it can't be made honestly: a lock, no chat spend, or a meaning-index line without its tokens (an older server)", () => {
+    expect(tokenLine({ ...u, capUsd: 0, locked: true, inputTokens: 10, spentUsd: 1, byOp: { knowledgeAsk: { spentUsd: 1, calls: 1, inputTokens: 10, outputTokens: 0 } } }).estChatTokenBudget).toBeNull();
+    expect(tokenLine({ ...u, inputTokens: 5_000, spentUsd: 0.1, byOp: { knowledgeEmbed: { spentUsd: 0.1, calls: 1, inputTokens: 5_000, outputTokens: 0 } } }))
+      .toEqual({ chatTokens: 0, embeddingTokens: 5_000, estChatTokenBudget: null });
+    expect(tokenLine({ ...u, inputTokens: 51_000_000, spentUsd: 6, byOp: { knowledgeAsk: { spentUsd: 5, calls: 1 }, knowledgeEmbed: { spentUsd: 1, calls: 1 } } }))
+      .toEqual({ chatTokens: 51_000_000, embeddingTokens: 0, estChatTokenBudget: null });
   });
 });
 

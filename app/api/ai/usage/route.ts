@@ -27,6 +27,17 @@
 // is not made. The target is a uuid in any spelling Postgres accepts; the
 // route uses the uid the database returns, never the request's spelling,
 // so `{ userId: <your own uid in upper case> }` is still your own cap.
+// The ban holds at WRITE time, not only when the request is read: clearing
+// your own override is refused outright while another holder exists (a
+// lower figure is set directly — it is never needed, and racing it against
+// a default raise used to delete the hold after it was written); a write
+// the caller's own cap was decided from — the workspace default, their own
+// override — is guarded by the figure it was decided from (a figure that
+// changed underneath answers 409 and changes nothing); and after every
+// write that can move the caller's own cap the route reads it again — one
+// that ended above where it started is put back, audited `compensated`,
+// and answered 409. What the response says about the setter's own cap
+// (`selfHeldAtUsd`) is that re-read, never the intent.
 // Every change is audited and notifies the other holders and the person
 // whose cap moved. A cap table that cannot be read refuses (503) — the team
 // view and the "previous figure" never fall back to $10.
@@ -138,14 +149,49 @@ async function auditCapChange(orgId: string, auth: Auth, details: Record<string,
 const SOLE_AUDIT_FAILED = "Couldn't write the audit record that raising your own cap without a second signature needs, so nothing was changed";
 
 /** The stored workspace default (display figure: 0 = locked), $10 when no
- *  row exists; an error when the table cannot be read. */
-async function readOrgDefault(orgId: string): Promise<{ ok: true; capUsd: number } | { ok: false; error: string }> {
+ *  row exists; an error when the table cannot be read. `stored` is the
+ *  column's value as read — what a write decided from it is guarded by. */
+async function readOrgDefault(orgId: string): Promise<
+  { ok: true; capUsd: number; exists: boolean; stored: number | string | null; tableMissing: boolean } | { ok: false; error: string }
+> {
   const { data, error } = await supabaseAdmin.from("ai_usage_limits")
     .select("monthly_cap_usd").eq("org_id", orgId).is("user_id", null).maybeSingle();
   if (error && !limitsTableMissing(error)) return { ok: false, error: error.message };
-  const raw = Number((data as { monthly_cap_usd?: number | string } | null)?.monthly_cap_usd);
-  return { ok: true, capUsd: Number.isFinite(raw) && raw >= 0 ? raw : DEFAULT_MONTHLY_CAP_USD };
+  const stored = (data as { monthly_cap_usd?: number | string | null } | null)?.monthly_cap_usd ?? null;
+  const raw = Number(stored);
+  return {
+    ok: true,
+    capUsd: stored !== null && Number.isFinite(raw) && raw >= 0 ? raw : DEFAULT_MONTHLY_CAP_USD,
+    exists: !!data, stored, tableMissing: !!error,
+  };
 }
+
+/** GOV-10: the caller's own cap now (display figure: 0 = locked); null when
+ *  it cannot be read. */
+async function readOwnCap(orgId: string, auth: Auth): Promise<number | null> {
+  try { return displayCapUsd(await getCapUsd(orgId, auth.userId)); }
+  catch (e) {
+    if (e instanceof GovernedCallError) return null;
+    throw e;
+  }
+}
+
+/** GOV-10: put the caller's own cap back at `capUsd` — their own override,
+ *  updated or written. The reason when it could not be. */
+async function holdOwnCapAt(orgId: string, auth: Auth, capUsd: number): Promise<string | null> {
+  const fields = { monthly_cap_usd: capUsd, updated_by: auth.userId, updated_at: new Date().toISOString() };
+  const { data: own, error: readError } = await supabaseAdmin.from("ai_usage_limits")
+    .select("id").eq("org_id", orgId).eq("user_id", auth.userId).maybeSingle();
+  if (readError) return readError.message;
+  const { error } = own
+    ? await supabaseAdmin.from("ai_usage_limits").update(fields).eq("org_id", orgId).eq("user_id", auth.userId)
+    : await supabaseAdmin.from("ai_usage_limits").insert({ org_id: orgId, user_id: auth.userId, ...fields });
+  return error ? (error.message || "the write was refused") : null;
+}
+
+const fmtCap = (v: number) => (v === 0 ? "$0 (locked)" : `$${v}`);
+/** A unique-index refusal: another request wrote the same row first. */
+const isUniqueViolation = (e: { code?: string } | null) => e?.code === "23505";
 
 const monthLabel = () =>
   new Date().toLocaleDateString("en-US", { month: "long", year: "numeric", timeZone: "UTC" });
@@ -312,7 +358,9 @@ export async function POST(req: NextRequest) {
 
   // The cap that applies to the target before this change (display figure:
   // 0 = locked) — the self-raise test and the notice both read it.
+  const selfTarget = targetUserId !== null && sameUid(targetUserId, auth.userId);
   let previousCapUsd: number | null = null;
+  let orgDefault: Extract<Awaited<ReturnType<typeof readOrgDefault>>, { ok: true }> | null = null;
   if (targetUserId) {
     try { previousCapUsd = displayCapUsd(await getCapUsd(orgId, targetUserId)); }
     catch (e) {
@@ -323,12 +371,12 @@ export async function POST(req: NextRequest) {
     const prev = await readOrgDefault(orgId);
     if (!prev.ok) return bad(`Couldn't read the current default cap, so nothing was changed: ${prev.error}`, 503);
     previousCapUsd = prev.capUsd;
+    orgDefault = prev;
   }
   // GOV-10: nobody raises their OWN cap — not by an override, not by
   // clearing one onto a higher default. Lowering it is always allowed.
   // (Display figures compare directly: 0 = locked is the lowest.)
-  const selfRaise = (next: number) =>
-    targetUserId !== null && sameUid(targetUserId, auth.userId) && previousCapUsd !== null && next > previousCapUsd;
+  const selfRaise = (next: number) => selfTarget && previousCapUsd !== null && next > previousCapUsd;
   const SELF_RAISE = "You can't raise your own monthly AI cap — another person with the “Manage AI spend caps” permission has to.";
   /** GOV-10: the second signature a self-raise needs exists only when
    *  someone else holds ai.manage_caps. A SOLE holder (a one-person
@@ -348,16 +396,25 @@ export async function POST(req: NextRequest) {
 
   // Clearing a per-user override — the person falls back to the org default.
   if (targetUserId && body.capUsd === null) {
+    // GOV-10: clearing your OWN override is refused while anyone else holds
+    // the capability, whatever the two figures read now. It is never needed
+    // — a lower figure is set directly — and a clear is only as good as the
+    // default it was compared with: racing one against a default raise
+    // deleted the hold the raise had just written, leaving the holder on
+    // the raised default. A sole holder may clear it (audited below).
+    if (selfTarget) {
+      const v = await soleHolderVerdict();
+      if (!v.ok) return v.res;
+      if (!v.sole) {
+        return bad("You can't clear your own monthly AI cap override while another person has the “Manage AI spend caps” permission — set a lower figure for yourself directly, or ask them to change it.", 403);
+      }
+    }
     // The self-raise test reads the default: unreadable → nothing changes.
     const def = await readOrgDefault(orgId);
     if (!def.ok) return bad(`Couldn't read the default cap, so the override was not cleared: ${def.error}`, 503);
     const fallback = def.capUsd;
-    if (selfRaise(fallback)) {
-      const v = await soleHolderVerdict();
-      if (!v.ok) return v.res;
-      if (!v.sole) return bad(SELF_RAISE, 403);
-      soleHolder = true;
-    }
+    // Only a sole holder reaches a self-raise here.
+    if (selfRaise(fallback)) soleHolder = true;
     const details = { targetUserId, cleared: true, previousCapUsd, ...(soleHolder ? { soleHolder: true } : {}) };
     if (soleHolder) {
       const auditError = await auditCapChange(orgId, auth, details);
@@ -386,11 +443,27 @@ export async function POST(req: NextRequest) {
     if (!v.sole) return bad(SELF_RAISE, 403);
     soleHolder = true;
   }
+  if (orgDefault?.tableMissing) {
+    return bad("The ai_usage_limits table doesn't exist yet — run migration 20260916 in Supabase first.", 424);
+  }
+
+  // GOV-10: the caller's own cap before this change — what it is read
+  // against after every write that can move it (their own override, or the
+  // workspace default).
+  let ownBeforeUsd: number | null = selfTarget ? previousCapUsd : null;
+  if (!targetUserId) {
+    ownBeforeUsd = await readOwnCap(orgId, auth);
+    if (ownBeforeUsd === null) {
+      return bad("Couldn't read your own cap, so the default was not changed — AI caps can't be read right now.", 503);
+    }
+  }
 
   // GOV-10: raising the WORKSPACE default must not raise the setter's own
   // cap. A setter whose cap follows the default (no override of their own)
   // is held where they are — an override at the previous default, written
-  // and audited BEFORE the default moves, so a failure changes nothing.
+  // and audited BEFORE the default moves. The default row was read above,
+  // so the only step left after the hold is the write itself, and a write
+  // that fails (or finds the default changed) takes the hold back out.
   // Raising it later takes another holder, like any other self-raise. A
   // sole holder is not held: they follow the default like everyone else.
   let pinnedSelfAtUsd: number | null = null;
@@ -409,25 +482,33 @@ export async function POST(req: NextRequest) {
         updated_by: auth.userId, updated_at: new Date().toISOString(),
       });
       if (pinError) {
-        return bad(`Couldn't hold your own cap at its current figure, so the default was not raised: ${pinError.message}`, 500);
+        return bad(
+          `Couldn't hold your own cap at its current figure, so the default was not raised: ${pinError.message}`,
+          isUniqueViolation(pinError) ? 409 : 500,
+        );
       }
       pinnedSelfAtUsd = previousCapUsd;
       await auditCapChange(orgId, auth, { targetUserId: auth.userId, capUsd: previousCapUsd, previousCapUsd, heldOnDefaultRaise: true });
     }
   }
 
-  const readQ = supabaseAdmin.from("ai_usage_limits").select("id").eq("org_id", orgId);
-  const { data: existing, error: readError } = targetUserId
-    ? await readQ.eq("user_id", targetUserId).maybeSingle()
-    : await readQ.is("user_id", null).maybeSingle();
-  if (readError) {
-    const missing = readError.code === "42P01" || /does not exist/i.test(readError.message);
-    return bad(
-      missing
-        ? "The ai_usage_limits table doesn't exist yet — run migration 20260916 in Supabase first."
-        : `Couldn't read the current cap: ${readError.message}`,
-      missing ? 424 : 500,
-    );
+  // Whether the row exists: the default's was read above; a person's here.
+  let rowExists: boolean;
+  if (targetUserId) {
+    const { data: existing, error: readError } = await supabaseAdmin.from("ai_usage_limits")
+      .select("id").eq("org_id", orgId).eq("user_id", targetUserId).maybeSingle();
+    if (readError) {
+      const missing = limitsTableMissing(readError);
+      return bad(
+        missing
+          ? "The ai_usage_limits table doesn't exist yet — run migration 20260916 in Supabase first."
+          : `Couldn't read the current cap: ${readError.message}`,
+        missing ? 424 : 500,
+      );
+    }
+    rowExists = !!existing;
+  } else {
+    rowExists = orgDefault!.exists;
   }
   const details = {
     ...(targetUserId ? { targetUserId } : {}), capUsd, previousCapUsd,
@@ -439,22 +520,95 @@ export async function POST(req: NextRequest) {
     const auditError = await auditCapChange(orgId, auth, details);
     if (auditError) return bad(`${SOLE_AUDIT_FAILED}: ${auditError}`, 503);
   }
+  // GOV-10: the write is guarded by the figure the decision above was made
+  // from — the default as read (every default change), or the caller's own
+  // cap as read (their own override). A row that no longer carries it
+  // matches nothing: the figure changed underneath this request, and
+  // writing over it could hand the caller a cap nobody signed for (another
+  // holder lowers it, this request "lowers" it less). A row written first
+  // by another request is the unique index's refusal — the same conflict.
   const fields = { monthly_cap_usd: capUsd, updated_by: auth.userId, updated_at: new Date().toISOString() };
-  const { error } = existing
-    ? await supabaseAdmin.from("ai_usage_limits").update(fields).eq("id", existing.id as string)
-    : await supabaseAdmin.from("ai_usage_limits").insert({ org_id: orgId, user_id: targetUserId, ...fields });
-  if (error) {
+  let saveError: { code?: string; message: string } | null = null;
+  let conflict = false;
+  if (rowExists) {
+    let write = supabaseAdmin.from("ai_usage_limits").update(fields).eq("org_id", orgId);
+    write = targetUserId ? write.eq("user_id", targetUserId) : write.is("user_id", null);
+    if (!targetUserId) write = write.eq("monthly_cap_usd", orgDefault!.stored as number | string);
+    else if (selfTarget) write = write.eq("monthly_cap_usd", previousCapUsd as number);
+    const { data: written, error } = await write.select("id");
+    saveError = error;
+    conflict = !error && (!targetUserId || selfTarget) && ((written as unknown[] | null) ?? []).length === 0;
+  } else {
+    const { error } = await supabaseAdmin.from("ai_usage_limits").insert({ org_id: orgId, user_id: targetUserId, ...fields });
+    saveError = error;
+  }
+  if (saveError || conflict) {
+    conflict = conflict || isUniqueViolation(saveError);
+    const why = saveError?.message || "the cap changed while this was being saved";
     // The audit row already says it happened: say it did not.
-    if (soleHolder) await auditCapChange(orgId, auth, { ...details, notApplied: true, error: error.message });
-    return bad(`Couldn't save the cap: ${error.message}`, 500);
+    if (soleHolder) await auditCapChange(orgId, auth, { ...details, notApplied: true, error: why });
+    // The setter's hold was written for a default raise that did not happen:
+    // take it back out (only as written — a figure someone has changed since
+    // is theirs), and say so on the log.
+    if (pinnedSelfAtUsd !== null) {
+      const { error: undoError } = await supabaseAdmin.from("ai_usage_limits").delete()
+        .eq("org_id", orgId).eq("user_id", auth.userId).eq("monthly_cap_usd", pinnedSelfAtUsd);
+      await auditCapChange(orgId, auth, {
+        targetUserId: auth.userId, capUsd: pinnedSelfAtUsd, previousCapUsd: pinnedSelfAtUsd, heldOnDefaultRaise: true,
+        ...(undoError ? { defaultNotRaised: true, holdKept: undoError.message } : { notApplied: true }), error: why,
+      });
+    }
+    if (conflict) {
+      return bad(
+        targetUserId
+          ? "That cap changed while you were saving it (another change landed at the same time), so nothing was changed — reload the caps and try again."
+          : "The workspace default changed while you were saving it (another change landed at the same time), so nothing was changed — reload the caps and try again.",
+        409, { conflict: true },
+      );
+    }
+    return bad(`Couldn't save the cap: ${why}`, 500);
   }
 
   if (!soleHolder) await auditCapChange(orgId, auth, details);
+
+  // GOV-10: every write that can move the caller's own cap is checked by
+  // reading it again. One that ended ABOVE where it started — another
+  // change took the hold out between this request's steps — is put back at
+  // the starting figure and answered 409 (unless the caller is the sole
+  // holder, whose raise needs nobody). What the response says about the
+  // setter's own cap is this re-read, never the intent.
+  let ownAfterUsd: number | null = null;
+  if (!targetUserId || selfTarget) {
+    ownAfterUsd = await readOwnCap(orgId, auth);
+    if (ownAfterUsd !== null && ownBeforeUsd !== null && ownAfterUsd > ownBeforeUsd && !soleHolder) {
+      const v = await soleHolderVerdict();
+      if (!(v.ok && v.sole)) {
+        const holdError = await holdOwnCapAt(orgId, auth, ownBeforeUsd);
+        await auditCapChange(orgId, auth, {
+          targetUserId: auth.userId, capUsd: ownBeforeUsd, previousCapUsd: ownAfterUsd, compensated: true,
+          ...(holdError ? { notApplied: true, error: holdError } : {}),
+        });
+        const ownNowUsd = await readOwnCap(orgId, auth);
+        await notifyCapChange(orgId, auth, caps.policy, { targetUserId, capUsd, previousCapUsd });
+        const saved = targetUserId ? "Your cap was saved" : `The default monthly cap is now ${fmtCap(capUsd)}`;
+        const moved = `${saved}, but your own cap rose to ${fmtCap(ownAfterUsd)} while it was being saved — another cap change landed at the same time`;
+        return bad(
+          holdError
+            ? `${moved}, and it could not be put back at ${fmtCap(ownBeforeUsd)} (${holdError}). Tell another person who manages AI caps.`
+            : `${moved} — so it was put back at ${fmtCap(ownBeforeUsd)}. Nobody raises their own cap; reload the caps, and ask another person who manages AI caps if yours should be higher.`,
+          holdError ? 500 : 409,
+          { conflict: true, compensated: true, capUsd, ...(ownNowUsd !== null ? { selfCapUsd: ownNowUsd } : {}) },
+        );
+      }
+    }
+  }
+
   await notifyCapChange(orgId, auth, caps.policy, { targetUserId, capUsd, previousCapUsd });
 
   return NextResponse.json({
     ok: true, capUsd, locked: capUsd === 0,
-    ...(pinnedSelfAtUsd !== null ? { selfHeldAtUsd: pinnedSelfAtUsd } : {}),
+    // The setter was held on a default raise: where their cap reads NOW.
+    ...(pinnedSelfAtUsd !== null && ownAfterUsd !== null ? { selfHeldAtUsd: ownAfterUsd } : {}),
     // GOV-10: said, not silent — the setter's own cap moved with no second
     // signature because nobody else holds the capability.
     ...(soleHolder ? { soleHolder: true } : {}),

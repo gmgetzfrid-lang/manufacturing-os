@@ -61,17 +61,16 @@ const carriesAllFive = (s: string) => missingGates(s).length === 0;
 const PENDING: Record<string, string> = {
   "app/api/flows/read/route.ts": "I-09 — flows/read adopts aiGates (GOV-11 / PR-12 limb; a local agreement check until it lands)",
   "app/api/knowledge/locate/route.ts": "I-07 — locate adopts aiGates with the refine-pass metering (GOV-8 / DWG-5)",
-  // Sends page images on the uploader's key through lib/knowledgeVision with
-  // key + allowlist + cap but no agreement (the GOV-11 verifier's sixth
-  // route). I-06 merged without that limb; the integrator re-assigns it.
-  "app/api/knowledge/ingest/route.ts": "I-06 — the interactive ingest route's vision context checks the agreement (GOV-11 limb; reassign at integration)",
+  // app/api/knowledge/ingest/route.ts left this list in I-05's fix pass 5:
+  // its vision context now checks the agreement (the GOV-11 verifier's sixth
+  // route), so it is INLINE — checked below.
 };
 /** lib code that calls a provider for a caller that runs the gates. */
 const HELPERS: Record<string, string> = {
   "lib/ai/providerCall.ts": "the provider client itself",
   "lib/ai/embeddings.ts": "the embeddings client itself",
   "lib/ai/governedCall.ts": "governedAiCall — runs assertAiGates (checked below)",
-  "lib/knowledgeVision.ts": "page transcription for the ingest engine: the drain gates the sponsor's key (loadSponsorVision); the interactive route builds its own VisionContext and is classified on its own below (PENDING)",
+  "lib/knowledgeVision.ts": "page transcription for the ingest engine: the drain gates the sponsor's key (loadSponsorVision); the interactive route builds its own VisionContext and is classified on its own below (INLINE)",
   "lib/knowledgeEmbedCore.ts": "the embed slice for /api/knowledge/embed and the drain, which gate the payer",
   "lib/knowledgeIngest.ts": "the ingest drain's sponsor path (loadSponsorVision: key, allowlist, agreement, cap)",
 };
@@ -112,6 +111,19 @@ describe("GOV-11 / PR-12 — every provider call is behind the gates, or named",
     // the connection probes waive the agreement — in writing, and only there
     expect(src("app/api/ai/connection/route.ts")).toMatch(/requireAgreement: false, \/\/ liveness probe, no org content \(GOV-11 done-when 4\)/);
     expect(src("app/api/templates/generate/route.ts")).not.toMatch(/requireAgreement: false/);
+  });
+
+  it("the interactive ingest route's vision context carries all five gates — the agreement included (GOV-11 limb, no longer PENDING)", () => {
+    const f = "app/api/knowledge/ingest/route.ts";
+    expect(PENDING[f]).toBeUndefined();
+    expect(usesGates(src(f))).toBe(false);
+    expect(missingGates(src(f))).toEqual([]);
+    // the agreement is read for the requester, at the current version, before the VisionContext is built
+    const s = src(f);
+    const agreementAt = s.indexOf('.from("ai_key_agreements")');
+    expect(agreementAt).toBeGreaterThan(0);
+    expect(s.slice(agreementAt, agreementAt + 300)).toMatch(/\.eq\("user_id", user\.id\)[\s\S]*\.eq\("agreement_version", AGREEMENT_VERSION\)/);
+    expect(agreementAt).toBeLessThan(s.indexOf("vision = {"));
   });
 
   it("PENDING names real provider callers, each with its owner", () => {

@@ -30,6 +30,11 @@ const db = vi.hoisted(() => ({
   seq: 0,
   /** The browser session's bearer for lib/knowledge's client calls. */
   sessionToken: "",
+  /** Awaited before each query runs — a test that interleaves two requests
+   *  holds one at a chosen step (GOV-10 at write time). */
+  hook: null as null | ((q: { table: string; action: string; payload: unknown }) => Promise<void> | void),
+  /** Called once a query has run. */
+  after: null as null | ((q: { table: string; action: string; payload: unknown }) => void),
 }));
 
 vi.mock("@/lib/supabase", () => ({
@@ -73,7 +78,8 @@ vi.mock("@/lib/supabaseAdmin", () => {
         return { data: null, error: null };
       }
       const hit = rows.filter((r) => filters.every((f) => f(r)));
-      if (action === "update") { for (const r of hit) Object.assign(r, payload); return { data: null, error: null }; }
+      // An update answers the rows it matched (what `.update().select()` returns).
+      if (action === "update") { for (const r of hit) Object.assign(r, payload); return { data: hit.map((r) => ({ id: r.id ?? null })), error: null }; }
       if (action === "delete") { db.tables[table] = rows.filter((r) => !hit.includes(r)); return { data: null, error: null }; }
       const out = range ? hit.slice(range[0], range[1] + 1) : hit;
       return { data: one ? (out[0] ?? null) : out, error: null };
@@ -91,7 +97,12 @@ vi.mock("@/lib/supabaseAdmin", () => {
       limit: () => { limited = true; return b; },
       single: () => { one = true; return b; },
       maybeSingle: () => { one = true; return b; },
-      then: (res: (v: unknown) => unknown, rej?: (e: unknown) => unknown) => Promise.resolve(exec()).then(res, rej),
+      then: (res: (v: unknown) => unknown, rej?: (e: unknown) => unknown) => (async () => {
+        if (db.hook) await db.hook({ table, action, payload });
+        const out = exec();
+        db.after?.({ table, action, payload });
+        return out;
+      })().then(res, rej),
     };
     return b;
   }
@@ -121,6 +132,8 @@ const notices = () => db.tables.notifications ?? [];
 beforeEach(() => {
   db.seq = 0;
   db.errors = {};
+  db.hook = null;
+  db.after = null;
   db.tables = {
     org_members: [
       { org_id: ORG, uid: ADMIN, role: "Admin", roles: ["Admin"], status: "active", display_name: "Ada" },
@@ -339,6 +352,9 @@ describe("GOV-4 — an unreadable cap table refuses; nobody is shown, or audited
   });
 
   it("clearing an override refuses (503) when the default it would fall back to cannot be read (the self-raise test reads it)", async () => {
+    // A SOLE holder clearing their own: with another holder, clearing your
+    // own override is refused before anything is read (GOV-10, write time).
+    db.tables.org_members = db.tables.org_members.filter((m) => m.uid !== ADMIN2);
     db.tables.ai_usage_limits = [{ org_id: ORG, user_id: null, monthly_cap_usd: 50 }, { org_id: ORG, user_id: ADMIN, monthly_cap_usd: 10 }];
     db.errors["ai_usage_limits:select:nolimit"] = { message: "connection reset" };
     expect((await post(ADMIN, { capUsd: null, userId: ADMIN })).status).toBe(503);
@@ -473,6 +489,168 @@ describe("GOV-10 — a SOLE holder's own raise is recorded before it is made", (
       { targetUserId: ADMIN, cleared: true, previousCapUsd: 5, soleHolder: true, notApplied: true, error: "permission denied" },
     ]);
     expect(notices()).toHaveLength(0);
+  });
+});
+
+describe("GOV-10 — the ban holds at WRITE time: two requests at once never raise your own cap", () => {
+  const limitsOf = (uid: string | null) => db.tables.ai_usage_limits.filter((l) => (l.user_id ?? null) === uid).map((l) => l.monthly_cap_usd);
+  const capDetails = () => db.tables.audit_logs.filter((a) => a.action === "AI_CAP_CHANGED").map((a) => a.details);
+
+  it("the review's race: clearing your own override at the moment you raise the default you follow — the clear is refused, the hold stays, and both answers match what is stored", async () => {
+    // $10 default, ADMIN follows it, ADMIN2 also holds ai.manage_caps.
+    db.tables.ai_usage_limits = [{ org_id: ORG, user_id: null, monthly_cap_usd: 10 }];
+    // The interleaving that used to win: the clear's delete is held until the
+    // raise has written ADMIN's hold, and the raise's default write is held
+    // until the clear reaches its delete (or is answered without one).
+    let pinWritten!: () => void;
+    const pinned = new Promise<void>((r) => { pinWritten = r; });
+    let clearAtDelete!: () => void;
+    const atDelete = new Promise<void>((r) => { clearAtDelete = r; });
+    let clearAnswered!: () => void;
+    const answered = new Promise<void>((r) => { clearAnswered = r; });
+    let deletes = 0;
+    db.hook = async ({ table, action }) => {
+      if (table !== "ai_usage_limits") return;
+      if (action === "delete") { deletes += 1; clearAtDelete(); await pinned; }
+      if (action === "update") await Promise.race([atDelete, answered]);
+    };
+    db.after = ({ table, action }) => { if (table === "ai_usage_limits" && action === "insert") pinWritten(); };
+
+    const [raise, clear] = await Promise.all([
+      post(ADMIN, { capUsd: 100 }),
+      post(ADMIN, { capUsd: null, userId: ADMIN }).finally(() => clearAnswered()),
+    ]);
+    db.hook = null;
+    db.after = null;
+
+    expect(clear.status).toBe(403);
+    expect(String(clear.json.error)).toMatch(/can't clear your own monthly AI cap override while another person has the “Manage AI spend caps” permission/);
+    expect(deletes).toBe(0);
+    expect(raise.status).toBe(200);
+    expect(raise.json).toMatchObject({ ok: true, capUsd: 100, selfHeldAtUsd: 10 });
+    // What is stored is what the answers say: the default moved, ADMIN did not.
+    expect(limitsOf(null)).toEqual([100]);
+    expect(limitsOf(ADMIN)).toEqual([10]);
+    expect((await get(ADMIN)).json).toMatchObject({ capUsd: 10, selfFollowsDefault: false });
+    expect((await get(ENG)).json).toMatchObject({ capUsd: 100 });
+    expect(capDetails()).toEqual([
+      { targetUserId: ADMIN, capUsd: 10, previousCapUsd: 10, heldOnDefaultRaise: true },
+      { capUsd: 100, previousCapUsd: 10 },
+    ]);
+  });
+
+  it("clearing your own override is refused while another holder exists even when it would LOWER your cap — a lower figure is set directly", async () => {
+    db.tables.ai_usage_limits = [{ org_id: ORG, user_id: null, monthly_cap_usd: 5 }, { org_id: ORG, user_id: ADMIN, monthly_cap_usd: 10 }];
+    const r = await post(ADMIN, { capUsd: null, userId: ADMIN });
+    expect(r.status).toBe(403);
+    expect(String(r.json.error)).toMatch(/set a lower figure for yourself directly/);
+    expect(limitsOf(ADMIN)).toEqual([10]);
+    expect(db.tables.audit_logs).toHaveLength(0);
+    // the lower figure, set directly
+    expect((await post(ADMIN, { capUsd: 5, userId: ADMIN })).status).toBe(200);
+    expect(limitsOf(ADMIN)).toEqual([5]);
+    // another holder may clear it
+    expect((await post(ADMIN2, { capUsd: null, userId: ADMIN })).status).toBe(200);
+    expect(limitsOf(ADMIN)).toEqual([]);
+  });
+
+  it("a hold another change takes out between the hold and the default write: the re-read finds your cap risen, puts it back, audits it compensated, and answers 409", async () => {
+    db.tables.ai_usage_limits = [{ org_id: ORG, user_id: null, monthly_cap_usd: 10 }];
+    let other: { status: number; json: Row } | null = null;
+    db.hook = async ({ table, action }) => {
+      if (table !== "ai_usage_limits" || action !== "update") return;
+      db.hook = null;
+      // ADMIN's hold is written; before the default moves, another holder
+      // clears it (a change of theirs, by design allowed).
+      other = await post(ADMIN2, { capUsd: null, userId: ADMIN });
+    };
+    const r = await post(ADMIN, { capUsd: 100 });
+    expect(other!.status).toBe(200);
+    expect(r.status).toBe(409);
+    expect(r.json).toMatchObject({ conflict: true, compensated: true, capUsd: 100, selfCapUsd: 10 });
+    expect(String(r.json.error)).toMatch(/The default monthly cap is now \$100, but your own cap rose to \$100 while it was being saved .* put back at \$10/);
+    expect(r.json.selfHeldAtUsd).toBeUndefined();
+    expect(limitsOf(null)).toEqual([100]);
+    expect(limitsOf(ADMIN)).toEqual([10]);
+    expect((await get(ADMIN)).json).toMatchObject({ capUsd: 10 });
+    expect(capDetails()).toEqual([
+      { targetUserId: ADMIN, capUsd: 10, previousCapUsd: 10, heldOnDefaultRaise: true },
+      { targetUserId: ADMIN, cleared: true, previousCapUsd: 10 },
+      { capUsd: 100, previousCapUsd: 10 },
+      { targetUserId: ADMIN, capUsd: 10, previousCapUsd: 100, compensated: true },
+    ]);
+  });
+
+  it("the default changed underneath a 'lowering' (another holder lowered it further): the guarded write matches nothing — 409, nothing changed, nobody raised", async () => {
+    // ADMIN follows a $100 default. ADMIN2 lowers it to $10 while ADMIN's
+    // request, which read $100, "lowers" it to $99 — written over ADMIN2's
+    // figure that would have raised everyone, ADMIN included, back up.
+    db.tables.ai_usage_limits = [{ org_id: ORG, user_id: null, monthly_cap_usd: 100 }];
+    let other: { status: number; json: Row } | null = null;
+    db.hook = async ({ table, action }) => {
+      if (table !== "ai_usage_limits" || action !== "update") return;
+      db.hook = null;
+      other = await post(ADMIN2, { capUsd: 10 });
+    };
+    const r = await post(ADMIN, { capUsd: 99 });
+    expect(other!.status).toBe(200);
+    expect(r.status).toBe(409);
+    expect(r.json.conflict).toBe(true);
+    expect(String(r.json.error)).toMatch(/The workspace default changed while you were saving it .* nothing was changed/);
+    expect(limitsOf(null)).toEqual([10]);
+    expect((await get(ADMIN)).json).toMatchObject({ capUsd: 10 });
+    expect(capDetails()).toEqual([{ capUsd: 10, previousCapUsd: 100 }]); // ADMIN2's alone
+  });
+
+  it("your own override changed underneath your own 'lowering': the guarded write matches nothing — 409, the other holder's figure stands", async () => {
+    db.tables.ai_usage_limits = [{ org_id: ORG, user_id: null, monthly_cap_usd: 10 }, { org_id: ORG, user_id: ADMIN, monthly_cap_usd: 50 }];
+    db.hook = async ({ table, action }) => {
+      if (table !== "ai_usage_limits" || action !== "update") return;
+      db.hook = null;
+      expect((await post(ADMIN2, { capUsd: 5, userId: ADMIN })).status).toBe(200);
+    };
+    const r = await post(ADMIN, { capUsd: 45, userId: ADMIN });
+    expect(r.status).toBe(409);
+    expect(String(r.json.error)).toMatch(/That cap changed while you were saving it/);
+    expect(limitsOf(ADMIN)).toEqual([5]);
+    expect(capDetails()).toEqual([{ targetUserId: ADMIN, capUsd: 5, previousCapUsd: 50 }]);
+  });
+
+  it("a default write that fails after the hold was written takes the hold back out — the setter still follows the default, and the log says the hold was not applied", async () => {
+    db.tables.ai_usage_limits = [{ org_id: ORG, user_id: null, monthly_cap_usd: 10 }];
+    db.errors["ai_usage_limits:update"] = { message: "canceling statement due to statement timeout" };
+    const r = await post(ADMIN, { capUsd: 50 });
+    expect(r.status).toBe(500);
+    expect(String(r.json.error)).toMatch(/Couldn't save the cap: canceling statement/);
+    expect(limitsOf(ADMIN)).toEqual([]);
+    expect(limitsOf(null)).toEqual([10]);
+    expect(capDetails()).toEqual([
+      { targetUserId: ADMIN, capUsd: 10, previousCapUsd: 10, heldOnDefaultRaise: true },
+      { targetUserId: ADMIN, capUsd: 10, previousCapUsd: 10, heldOnDefaultRaise: true, notApplied: true, error: "canceling statement due to statement timeout" },
+    ]);
+    delete db.errors["ai_usage_limits:update"];
+    expect((await get(ADMIN)).json).toMatchObject({ capUsd: 10, selfFollowsDefault: true });
+    expect(notices()).toHaveLength(0);
+  });
+
+  it("…and so does a default write that finds the default changed (409); a hold another request wrote first is the same conflict", async () => {
+    db.tables.ai_usage_limits = [{ org_id: ORG, user_id: null, monthly_cap_usd: 10 }];
+    db.hook = async ({ table, action }) => {
+      if (table !== "ai_usage_limits" || action !== "update") return;
+      db.hook = null;
+      // the other holder lowers it first (no hold for a lowering)
+      expect((await post(ADMIN2, { capUsd: 8 })).status).toBe(200);
+    };
+    const r = await post(ADMIN, { capUsd: 50 });
+    expect(r.status).toBe(409);
+    expect(limitsOf(ADMIN)).toEqual([]);
+    expect(limitsOf(null)).toEqual([8]);
+    expect(capDetails().at(-1)).toMatchObject({ targetUserId: ADMIN, heldOnDefaultRaise: true, notApplied: true });
+    // the unique index's refusal of a hold: the same conflict, nothing changed
+    db.errors["ai_usage_limits:insert"] = { code: "23505", message: "duplicate key value violates unique constraint \"ai_usage_limits_user_idx\"" };
+    const dup = await post(ADMIN, { capUsd: 50 });
+    expect(dup.status).toBe(409);
+    expect(limitsOf(null)).toEqual([8]);
   });
 });
 

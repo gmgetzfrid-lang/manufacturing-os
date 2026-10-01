@@ -55,6 +55,7 @@ import {
 import { computeForKnowledgeDoc } from "@/lib/equipmentBridgeServer";
 import { transcribePageImage } from "@/lib/knowledgeVision";
 import { getMonthUsage, getCapUsd } from "@/lib/ai/usageServer";
+import { AGREEMENT_VERSION } from "@/lib/ai/pricing";
 
 const DOC = "kd-9";
 const post = (body: unknown, token = "good") => POST(new NextRequest("http://x/api/knowledge/ingest", {
@@ -72,6 +73,9 @@ const seed = (doc: Row, members: Row[] = [{ org_id: "o1", uid: "u-ctrl", role: "
   resetDb({
     knowledge_documents: [doc], knowledge_chunks: [], knowledge_page_entities: [], org_members: members,
     knowledge_libraries: [{ id: "kl-1", org_id: "o1", ai_features: {} }], ai_connections: [], audit_logs: [],
+    // GOV-11 (I-05): page vision also needs the signed agreement — the
+    // member here has accepted the current version.
+    ai_key_agreements: [{ id: "ag-1", org_id: "o1", user_id: "u-ctrl", scope: "use", agreement_version: AGREEMENT_VERSION }],
   });
 const XLSX_HEAD = new Uint8Array([0x50, 0x4b, 0x03, 0x04, 0x14, 0x00, 0x06, 0x00, ...new Array(200).fill(0x41)]);
 

@@ -81,7 +81,11 @@ export function monthStartIso(now = new Date()): string {
   return new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 1)).toISOString();
 }
 
-export interface OpUsage { spentUsd: number; calls: number }
+/** One op line. Tokens are per line because a token is not one price:
+ *  an embedding token costs a fraction of a chat token, so a figure built
+ *  from the month's total tokens mixes the two (the AI settings meter reads
+ *  the chat lines only). */
+export interface OpUsage { spentUsd: number; calls: number; inputTokens: number; outputTokens: number }
 
 export interface MonthUsage {
   /** Every op, settled calls plus in-flight reservations. */
@@ -134,7 +138,7 @@ export function rollupUsage(rows: UsageRow[]): MonthUsage {
   let askInput = 0;
   for (const r of rows) {
     const op = r.op || "unknown";
-    const line = (out.byOp[op] ??= { spentUsd: 0, calls: 0 });
+    const line = (out.byOp[op] ??= { spentUsd: 0, calls: 0, inputTokens: 0, outputTokens: 0 });
     if (isReservationRow(r)) {
       const reserved = Number(r.est_cost_usd) || 0;
       out.spentUsd += reserved;
@@ -158,6 +162,8 @@ export function rollupUsage(rows: UsageRow[]): MonthUsage {
     line.spentUsd += cost;
     out.inputTokens += r.input_tokens ?? 0;
     out.outputTokens += r.output_tokens ?? 0;
+    line.inputTokens += r.input_tokens ?? 0;
+    line.outputTokens += r.output_tokens ?? 0;
     if (r.ok !== false) {
       out.calls += 1;
       line.calls += 1;

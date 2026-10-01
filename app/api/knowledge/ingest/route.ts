@@ -49,7 +49,7 @@ import {
 } from "@/lib/knowledgeIngest";
 import { memberHoldsAny } from "@/lib/roleHeld";
 import { loadOrgInstructionsBlock } from "@/lib/aiInstructionsServer";
-import { ALLOWED_PROVIDERS, estimateCostUsd, type AiUsage } from "@/lib/ai/pricing";
+import { ALLOWED_PROVIDERS, AGREEMENT_VERSION, estimateCostUsd, type AiUsage } from "@/lib/ai/pricing";
 import { getMonthUsage, getCapUsd, recordAskUsage } from "@/lib/ai/usageServer";
 import { isAiUsageUnavailable } from "@/lib/ai/gateError";
 import type { AiProviderId } from "@/lib/ai/providerCall";
@@ -148,8 +148,9 @@ export async function POST(req: NextRequest) {
   // ── Vision fallback context ────────────────────────────────────────────
   // Pages with no text layer (AutoCAD SHX exports, scans) get READ by the
   // model. It spends THIS user's key — the person who triggered indexing —
-  // metered as its own op and stopped at their monthly cap. No key or no
-  // headroom just means text-only indexing, never a failure.
+  // metered as its own op and stopped at their monthly cap. No key, no
+  // signed agreement or no headroom just means text-only indexing, never a
+  // failure.
   const orgId = doc.org_id as string;
   // Library option: read EVERY page with vision (drawing sets where even the
   // text layer can't be trusted).
@@ -167,8 +168,29 @@ export async function POST(req: NextRequest) {
       .from("ai_connections").select("provider, model, api_key")
       .eq("org_id", orgId).eq("user_id", user.id).maybeSingle();
     const usable = !!conn && ALLOWED_PROVIDERS.includes(conn.provider as AiProviderId);
+    // GOV-11: page images are org content sent to the provider — the same
+    // acceptance the drain's sponsor path (loadSponsorVision) and every other
+    // content route require, at the current AGREEMENT_VERSION. Unsigned (or
+    // an older version) skips vision only; an acceptance record that cannot
+    // be read is never taken as signed. A database without the table is
+    // pre-agreement, as in loadSponsorVision.
+    let agreement: "signed" | "unsigned" | "unreadable" = "unsigned";
+    if (usable) {
+      const { data: agree, error: agreeError } = await supabaseAdmin
+        .from("ai_key_agreements").select("id")
+        .eq("org_id", orgId).eq("user_id", user.id)
+        .eq("scope", "use").eq("agreement_version", AGREEMENT_VERSION).limit(1);
+      const agreementTableMissing = !!agreeError && (agreeError.code === "42P01" || /does not exist/i.test(agreeError.message));
+      agreement = agreementTableMissing || (!agreeError && (agree ?? []).length > 0) ? "signed"
+        : agreeError ? "unreadable" : "unsigned";
+    }
     if (!usable) {
       visionSkipReason = "Add your AI key in AI settings to read pages that have no text layer.";
+    } else if (agreement === "unsigned") {
+      visionSkipReason = "Accept the AI acceptable-use agreement to read pages that have no text layer — they are sent " +
+        "to your AI provider as images (ask any question in Knowledge to be prompted).";
+    } else if (agreement === "unreadable") {
+      visionSkipReason = "Your AI acceptable-use agreement can't be checked right now, so pages without a text layer were skipped.";
     } else {
       // GOV-4: a ledger that cannot be read refuses the AI step only — the
       // text layer still indexes (no headroom is text-only, never a failure).

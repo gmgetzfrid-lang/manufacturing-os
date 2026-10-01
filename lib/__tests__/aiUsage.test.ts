@@ -121,7 +121,10 @@ describe("GOV-1 / SEM-2 / ORCH-5 / GOV-5 — every op counts toward the month", 
     expect(m.spentUsd).toBe(7.15);
     expect(m.calls).toBe(5);
     expect(m.asks).toBe(1);
-    expect(m.byOp.knowledgeEmbed).toEqual({ spentUsd: 0.4, calls: 1 });
+    expect(m.byOp.knowledgeEmbed).toEqual({ spentUsd: 0.4, calls: 1, inputTokens: 1000, outputTokens: 0 });
+    // tokens per line (an embedding token is not a chat token), summing to the month's
+    expect(m.byOp.knowledgeAsk).toMatchObject({ inputTokens: 1000, outputTokens: 100 });
+    expect(Object.values(m.byOp).reduce((n, l) => n + l.inputTokens + l.outputTokens, 0)).toBe(m.inputTokens + m.outputTokens);
     expect(m.byOp.orchestrator.spentUsd).toBe(3);
     // the read carries no op filter at all
     expect(db.calls.some((c) => c.op === "eq" && c.args[0] === "op")).toBe(false);

@@ -138,6 +138,50 @@ describe("GOV-4 — an unreadable ledger skips the AI step, never the indexing",
   });
 });
 
+describe("GOV-11 — the interactive ingest route sends page images only for a member who accepted the agreement", () => {
+  const ingest = () => ingestPOST(new NextRequest("http://x/api/knowledge/ingest", {
+    method: "POST", headers: { authorization: "Bearer good", "content-type": "application/json" }, body: JSON.stringify({ documentId: "kd-1" }),
+  }));
+
+  it("unsigned (or signed an older version): the text layer indexes, vision is skipped with the reason, no page image leaves", async () => {
+    ledger.down = false;
+    for (const agreements of [[], [{ id: "ag-0", org_id: "o1", user_id: "u-ctrl", scope: "use", agreement_version: "2026-07-v2" }]]) {
+      seed([docRow("kd-1")]);
+      db.tables.ai_key_agreements = agreements;
+      r2.objects.set(KEY("kd-1"), await makePdf([prosePage("bolting"), null]));
+      vi.mocked(transcribePageImage).mockClear();
+      const res = await ingest();
+      expect(res.status).toBe(200);
+      const body = await res.json();
+      expect(body.visionSkipReason).toMatch(/^Accept the AI acceptable-use agreement to read pages that have no text layer/);
+      expect(vi.mocked(transcribePageImage)).not.toHaveBeenCalled();
+      expect(rowsOf("knowledge_chunks").length).toBeGreaterThan(0);
+    }
+  });
+
+  it("an acceptance record that cannot be read is never taken as signed", async () => {
+    ledger.down = false;
+    seed([docRow("kd-1")]);
+    db.hooks.push((op) => (op.table === "ai_key_agreements" ? { error: { code: "57014", message: "canceling statement due to statement timeout" } } : undefined));
+    r2.objects.set(KEY("kd-1"), await makePdf([prosePage("bolting"), null]));
+    vi.mocked(transcribePageImage).mockClear();
+    const body = await (await ingest()).json();
+    expect(body.visionSkipReason).toMatch(/agreement can't be checked right now/);
+    expect(vi.mocked(transcribePageImage)).not.toHaveBeenCalled();
+  });
+
+  it("signed at the current version: the textless page is read with vision", async () => {
+    ledger.down = false;
+    seed([docRow("kd-1")]);
+    r2.objects.set(KEY("kd-1"), await makePdf([prosePage("bolting"), null]));
+    vi.mocked(transcribePageImage).mockClear();
+    const body = await (await ingest()).json();
+    // (this suite's provider refuses every page — the reason is that, not the agreement)
+    expect(String(body.visionSkipReason ?? "")).not.toMatch(/agreement/);
+    expect(vi.mocked(transcribePageImage)).toHaveBeenCalled();
+  });
+});
+
 describe("GOV-4 — the codebook import answers the ledger's 503 sentence, not a 500", () => {
   it("an unreadable ledger refuses the import call before the provider, with its own status and words", async () => {
     seed([]);

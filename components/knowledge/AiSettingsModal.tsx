@@ -66,8 +66,11 @@ export const UNPRICED_CALL_DISPLAY_USD = 1;
 // What /api/ai/usage sends beyond lib/knowledge's AiUsageSummary (which
 // carries every op's spend, the locked flag and who may set caps — GOV-1 /
 // GOV-3 / GOV-10): the cost-less calls and the viewer's own cap standing.
-type OpLine = { spentUsd: number; calls: number };
+type OpLine = { spentUsd: number; calls: number; inputTokens?: number; outputTokens?: number };
 type UsageView = AiUsageSummary & {
+  /** GOV-1: each op line carries its own tokens (an embedding token is not
+   *  priced like a chat token). */
+  byOp?: Record<string, OpLine>;
   /** GOV-4: calls recorded without a cost — each counted at a fixed
    *  conservative figure inside spentUsd. */
   unpricedCalls?: number;
@@ -88,6 +91,37 @@ const OP_LABELS: Record<string, string> = {
   skillAssist: "Skill Studio", quoteParse: "Quotes & invoices", invoiceParse: "Quotes & invoices",
   connectionTest: "Key checks",
 };
+/** Ops whose tokens are EMBEDDING tokens — cents per million against
+ *  dollars for a chat token, so never extrapolated together with them. */
+const EMBEDDING_OPS = new Set(["knowledgeEmbed"]);
+
+/** The meter's token line (GOV-1 sums every op's tokens into the month):
+ *  the chat-model tokens so far and roughly how many the rest of the cap
+ *  buys at the rate they were bought at — embedding tokens apart, counted
+ *  but never extrapolated. No estimate when it can't be made honestly: a
+ *  lock, no chat spend yet, or a meaning-index line without its tokens. */
+export function tokenLine(usage: Pick<UsageView, "inputTokens" | "outputTokens" | "spentUsd" | "capUsd" | "locked" | "byOp">):
+  { chatTokens: number; embeddingTokens: number; estChatTokenBudget: number | null } {
+  const total = usage.inputTokens + usage.outputTokens;
+  let embeddingTokens = 0;
+  let embeddingSpent = 0;
+  let split = true;
+  for (const [op, line] of Object.entries(usage.byOp ?? {})) {
+    if (!EMBEDDING_OPS.has(op)) continue;
+    if (typeof line.inputTokens !== "number" || typeof line.outputTokens !== "number") { split = false; continue; }
+    embeddingTokens += line.inputTokens + line.outputTokens;
+    embeddingSpent += line.spentUsd;
+  }
+  if (!split) return { chatTokens: total, embeddingTokens: 0, estChatTokenBudget: null };
+  const chatTokens = Math.max(0, total - embeddingTokens);
+  const chatSpent = usage.spentUsd - embeddingSpent;
+  const headroom = Math.max(0, usage.capUsd - usage.spentUsd);
+  const estChatTokenBudget = usage.locked !== true && usage.capUsd > 0 && chatSpent > 0.0001 && chatTokens > 0
+    ? Math.round(chatTokens + headroom * (chatTokens / chatSpent))
+    : null;
+  return { chatTokens, embeddingTokens, estChatTokenBudget };
+}
+
 /** Spend per feature, largest first, same-named lines merged. */
 export function opBreakdown(byOp: Record<string, OpLine> | undefined): Array<{ label: string; spentUsd: number }> {
   const merged = new Map<string, number>();
@@ -553,12 +587,10 @@ export function UsagePanel({ orgId }: { orgId: string }) {
     );
   }
 
-  const totalTokens = usage.inputTokens + usage.outputTokens;
-  // "20k of ~200k": extrapolate the month's token budget from what the
-  // spend so far actually bought at the models really being used.
-  const estTokenBudget = usage.spentUsd > 0.0001 && usage.capUsd > 0
-    ? Math.round(totalTokens * (usage.capUsd / usage.spentUsd))
-    : null;
+  // "20k of ~200k": the chat tokens so far, and roughly what the rest of
+  // the cap buys at the rate they were bought at — never mixed with the
+  // meaning index's far cheaper embedding tokens (GOV-1 sums both).
+  const { chatTokens, embeddingTokens, estChatTokenBudget } = tokenLine(usage);
   const hot = usage.percent >= 80;
   // GOV-3: a $0 cap is LOCKED — the server refuses every AI call for it.
   const locked = usage.locked === true;
@@ -591,6 +623,9 @@ export function UsagePanel({ orgId }: { orgId: string }) {
       setTick((t) => t + 1);
     } catch (e) {
       showToast({ type: "error", title: (e as Error).message });
+      // GOV-10: a refused save can still have moved something (a default
+      // that landed while your own cap was put back) — show what is stored.
+      setTick((t) => t + 1);
     } finally { setSavingCap(false); }
   };
 
@@ -614,6 +649,7 @@ export function UsagePanel({ orgId }: { orgId: string }) {
       setTick((t) => t + 1);
     } catch (e) {
       showToast({ type: "error", title: (e as Error).message });
+      setTick((t) => t + 1);
     } finally { setSavingUser(null); }
   };
 
@@ -633,9 +669,12 @@ export function UsagePanel({ orgId }: { orgId: string }) {
       </div>
       <div className="flex flex-wrap gap-x-4 gap-y-1 text-[11px] text-[var(--color-text-muted)]">
         <span>
-          <b className="text-[var(--color-text)]">{fmtTok(totalTokens)}</b>
-          {estTokenBudget ? <> of ~{fmtTok(estTokenBudget)}</> : null} tokens
+          <b className="text-[var(--color-text)]">{fmtTok(chatTokens)}</b>
+          {estChatTokenBudget ? <> of ~{fmtTok(estChatTokenBudget)}</> : null} tokens
         </span>
+        {embeddingTokens > 0 && (
+          <span><b className="text-[var(--color-text)]">{fmtTok(embeddingTokens)}</b> meaning-index tokens</span>
+        )}
         <span><b className="text-[var(--color-text)]">{usage.asks}</b> questions</span>
         {typeof usage.calls === "number" && (
           <span><b className="text-[var(--color-text)]">{usage.calls}</b> AI calls in all</span>
