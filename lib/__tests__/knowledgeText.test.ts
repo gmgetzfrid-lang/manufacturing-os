@@ -2,10 +2,13 @@
 // chunking, model-output parsing, citation extraction, retrieval merging.
 
 import { describe, it, expect } from "vitest";
+import { readFileSync } from "node:fs";
+import { makePdf } from "./knowledgePdfFixtures";
 import {
   chunkPageText, parseSearchQueries, parseRefineQueries, parseFollowupPlan,
-  extractCitationNumbers, mergeRetrieved, isSectionHeading, splitPageIntoSections,
-  parseAnswerBlocks, explodeRunOn, proofTerms, highlightQuote, ensurePdfPolyfills, sanitizeStorageText, type RetrievedChunk,
+  extractCitationNumbers, mergeRetrieved, mergeRetrievedRRF, isSectionHeading, splitPageIntoSections,
+  truncateSafe, parseAnswerBlocks, splitTables, pageLinesFromTextItems, pageTail, carriedTailMarker, hasCarriedMarker,
+  chunkerVersionOf, type PdfTextItem, explodeRunOn, proofTerms, highlightQuote, ensurePdfPolyfills, sanitizeStorageText, type RetrievedChunk,
 } from "../knowledgeText";
 
 describe("chunkPageText", () => {
@@ -273,6 +276,45 @@ describe("mergeRetrieved", () => {
     const merged = mergeRetrieved([many], 14, 50);
     expect(merged).toHaveLength(14);
     for (const c of merged) expect(c.content.length).toBeLessThanOrEqual(50);
+  });
+});
+
+// ASK-11: both merges cut chunk text to maxChars. A table chunk can run to
+// 2800 chars, and a raw .slice(0, 1600) through an astral pair left a lone
+// surrogate — which the ask route's own truncateSafe(c.content, 1600) cannot
+// catch (the string is already exactly 1600 long), so it rode into the
+// knowledge_questions citations JSONB and Postgres refused the row.
+describe("merge truncation is surrogate-safe (ASK-11)", () => {
+  const ASTRAL = "\u{1D5E3}"; // one astral character = two UTF-16 units
+  const isWellFormed = (s: string) => (s as string & { isWellFormed(): boolean }).isWellFormed();
+  // An astral pair straddling index 1600: units 1599 (high) and 1600 (low).
+  const straddling = (id: string): RetrievedChunk => ({
+    id, document_id: "d1", page: 3, rank: 1, content: "x".repeat(1599) + ASTRAL + " | 45 ft-lb | dry".repeat(60),
+  });
+
+  it("mergeRetrievedRRF never leaves half a pair at the cut", () => {
+    const [c] = mergeRetrievedRRF([[straddling("a")]]);
+    expect(c.content.length).toBeLessThanOrEqual(1600);
+    expect(isWellFormed(c.content)).toBe(true);
+  });
+
+  it("mergeRetrieved never leaves half a pair at the cut", () => {
+    const [c] = mergeRetrieved([[straddling("b")]]);
+    expect(c.content.length).toBeLessThanOrEqual(1600);
+    expect(isWellFormed(c.content)).toBe(true);
+  });
+
+  it("the citation the ask route persists round-trips through JSON intact", () => {
+    // Exactly what route.ts builds for the knowledge_questions insert:
+    // quote = truncateSafe(c.content, 1600) over the merged chunk.
+    const merged = mergeRetrievedRRF([[straddling("c")], [straddling("d")]]);
+    const citations = merged.map((c, i) => ({ n: i + 1, documentId: c.document_id, page: c.page, quote: truncateSafe(c.content, 1600) }));
+    const body = JSON.stringify(citations);
+    // A lone surrogate serialises as an unpaired \udXXX escape — the exact
+    // text Postgres rejects with "invalid input syntax for type json".
+    expect(body).not.toMatch(/\\ud[89ab][0-9a-f]{2}(?!\\ud[c-f])/i);
+    expect(JSON.parse(body)).toEqual(citations);
+    for (const c of citations) expect(isWellFormed(c.quote)).toBe(true);
   });
 });
 
@@ -601,5 +643,208 @@ describe("parseAnswerBlocks — paragraph runs above structure", () => {
     const blocks = parseAnswerBlocks("One intro paragraph with a citation [1].\n- a bullet [1]");
     expect(blocks[0].type).toBe("text");
     expect(blocks[1].type).toBe("bullet");
+  });
+});
+
+// ── ING-4 / ING-7: chunker 2 (intelligence Round G, I-06) ──────────────────
+//
+// 99-fix-sequencing.md: "re-run [the table-chunking demonstration] against a
+// real ingested document before changing the chunker". These run the REAL
+// path — a PDF written by pdf-lib, read back through unpdf's text layer,
+// lines rebuilt exactly as ingestion rebuilds them — not chunkPageText on a
+// hand-made newline string. The re-run found one thing the transcription
+// missed: even with its lines kept, a text-layer row such as
+// `1/2"   45 ft-lb   dry` was not a table line (a multi-word middle cell
+// failed the old two-gap pattern), so the fix is the line join AND the row
+// test, and it ships as a chunker a library opts into.
+
+async function realPageItems(bytes: Uint8Array): Promise<PdfTextItem[][]> {
+  ensurePdfPolyfills();
+  const { getDocumentProxy } = await import("unpdf");
+  const pdf = await getDocumentProxy(bytes);
+  const out: PdfTextItem[][] = [];
+  for (let p = 1; p <= pdf.numPages; p++) out.push((await (await pdf.getPage(p)).getTextContent()).items as PdfTextItem[]);
+  return out;
+}
+/** Exactly what ingestion does to one page, for either chunker. */
+function ingestChunks(items: PdfTextItem[], chunker: 1 | 2): string[] {
+  const lines = pageLinesFromTextItems(items, { columnGaps: chunker === 2 }).map(sanitizeStorageText);
+  const { segments } = splitPageIntoSections(lines, null, { keepLines: chunker === 2 });
+  return segments.flatMap((seg) => chunkPageText(seg.text));
+}
+const TORQUE_PAGE: Array<string | Array<[number, string]>> = [
+  "5.3 Bolting",
+  "The following torques apply to flanged joints in this service and shall be verified.",
+  "TABLE 3 - BOLT TORQUE",
+  [[60, "Size"], [200, "Torque"], [340, "Notes"]],
+  [[60, '1/2"'], [200, "45 ft-lb"], [340, "dry"]],
+  [[60, '3/4"'], [200, "100 ft-lb"], [340, "dry"]],
+  [[60, '1"'], [200, "175 ft-lb"], [340, "dry"]],
+  [[60, '1.5"'], [200, "300 ft-lb"], [340, "lubricated"]],
+  "Torques shall be applied in a star pattern in three passes.",
+];
+
+describe("ING-4 — the table path is reachable from ingestion (chunker 2)", () => {
+  it("re-run on a REAL extracted PDF: chunker 1 still flattens the table (unchanged), chunker 2 keeps it whole", async () => {
+    const [items] = await realPageItems(await makePdf([TORQUE_PAGE]));
+    const v1 = ingestChunks(items, 1);
+    expect(v1).toHaveLength(1);
+    expect(v1[0]).toContain('TABLE 3 - BOLT TORQUE Size Torque Notes 1/2" 45 ft-lb dry 3/4" 100 ft-lb dry');
+    expect(v1[0]).not.toContain("\n");
+    const v2 = ingestChunks(items, 2);
+    const table = v2.find((c) => c.startsWith("TABLE 3"));
+    expect(table).toBe([
+      "TABLE 3 - BOLT TORQUE",
+      "Size   Torque   Notes",
+      '1/2"   45 ft-lb   dry',
+      '3/4"   100 ft-lb   dry',
+      '1"   175 ft-lb   dry',
+      '1.5"   300 ft-lb   lubricated',
+    ].join("\n"));
+    // The prose around it is still chunked as prose.
+    expect(v2.some((c) => c.startsWith("The following torques apply"))).toBe(true);
+  });
+
+  it("the repo's real P&ID fixtures: chunker 2 invents no table and loses no word", async () => {
+    for (const f of ["fixtures/PID-Legend.pdf", "fixtures/2002-D 2001_SHT09_R39_12-31-24.pdf"]) {
+      const pages = await realPageItems(new Uint8Array(readFileSync(f)));
+      for (const items of pages) {
+        const v1 = ingestChunks(items, 1), v2 = ingestChunks(items, 2);
+        for (const c of v2) expect(c.includes("\n"), f).toBe(false);
+        const words = (cs: string[]) => cs.join(" ").replace(/\s+/g, " ").trim();
+        expect(words(v2), f).toBe(words(v1));
+      }
+    }
+  });
+
+  it("a vision-transcribed table (' | ' separators) comes out as ONE chunk with a line break between rows", () => {
+    const transcript = [
+      "The following torques apply to flanged joints in this service and shall be verified.",
+      "TABLE 3 — BOLT TORQUE",
+      "Size | Torque | Notes",
+      '1/2" | 45 ft-lb | dry',
+      '3/4" | 100 ft-lb | dry',
+      '1" | 175 ft-lb | dry',
+      "Torques shall be applied in a star pattern in three passes.",
+    ];
+    const { segments } = splitPageIntoSections(transcript, null, { keepLines: true });
+    const chunks = segments.flatMap((s) => chunkPageText(s.text));
+    const table = chunks.filter((c) => c.includes("BOLT TORQUE"));
+    expect(table).toHaveLength(1);
+    expect(table[0].split("\n")).toEqual([
+      "TABLE 3 — BOLT TORQUE", "Size | Torque | Notes", '1/2" | 45 ft-lb | dry', '3/4" | 100 ft-lb | dry', '1" | 175 ft-lb | dry',
+    ]);
+    // Chunker 1 on the same lines: one line per segment, no table (unchanged).
+    const legacy = splitPageIntoSections(transcript, null).segments.flatMap((s) => chunkPageText(s.text));
+    expect(legacy.every((c) => !c.includes("\n"))).toBe(true);
+  });
+
+  it("splitPageIntoSections: keepLines joins with a line break; the default join is unchanged", () => {
+    const lines = ["intro line one", "5.3 Pipe Supports", "row a", "row b"];
+    expect(splitPageIntoSections(lines, null).segments.map((s) => s.text)).toEqual(["intro line one", "row a row b"]);
+    expect(splitPageIntoSections(lines, null, { keepLines: true }).segments.map((s) => s.text)).toEqual(["intro line one", "row a\nrow b"]);
+  });
+
+  it("a text-layer row with multi-word cells is a table line; every row the old pattern accepted still is", () => {
+    const OLD = /\S(\s{2,})\S+(\s{2,})\S/;
+    const samples = [
+      'NPS 2      3.0 m      2.1 m', '1/2"   45 ft-lb   dry', "a  b  c", "Size   Torque   Notes", "x    y", "one  two",
+      "A | B | C", "Sentence one.  Sentence two", "tag  V-101  drum  2010", "  leading   a   b  ",
+    ];
+    const isTable = (l: string) => splitTables([l, l, l].join("\n")).some((p) => p.kind === "table");
+    for (const l of samples) if (OLD.test(l)) expect(isTable(l), l).toBe(true);
+    expect(isTable('1/2"   45 ft-lb   dry')).toBe(true);        // the old pattern refused this row
+    expect(OLD.test('1/2"   45 ft-lb   dry')).toBe(false);
+    expect(isTable("x    y")).toBe(false);                    // two cells is not a table
+    expect(isTable("plain prose with single spaces only")).toBe(false);
+  });
+
+  it("the FIGURE 5-1 span table now really is its own chunk (the older test passed on the prose path)", () => {
+    const t = ["FIGURE 5-1  SPAN LIMITS", "NPS 2      3.0 m      2.1 m", "NPS 4      4.3 m      3.0 m", "NPS 6      5.2 m      3.7 m"].join("\n");
+    const chunks = chunkPageText(`intro text that is long enough to matter here\n${t}`);
+    expect(chunks.find((c) => c.startsWith("FIGURE 5-1"))?.split("\n")).toHaveLength(4);
+  });
+});
+
+describe("pageLinesFromTextItems — the line rebuild", () => {
+  /** The rebuild ingestion has always done, inline, before this round. */
+  const legacy = (items: PdfTextItem[]) => {
+    const lines: string[] = [];
+    let buf = "";
+    for (const item of items) {
+      buf += item.str ?? "";
+      if (item.hasEOL) { lines.push(buf.trim()); buf = ""; }
+      else buf += " ";
+    }
+    if (buf.trim()) lines.push(buf.trim());
+    return lines;
+  };
+  const at = (str: string, x: number, width: number, hasEOL = false, size = 10): PdfTextItem =>
+    ({ str, hasEOL, width, transform: [size, 0, 0, size, x, 700] });
+
+  it("chunker 1 is byte-for-byte the legacy rebuild", () => {
+    const items: PdfTextItem[] = [
+      at("Size", 60, 19), at(" ", 79, 120), at("Torque", 200, 31), at(" ", 231, 108), at("Notes", 340, 26, true),
+      { str: "no geometry" }, { str: "", hasEOL: true }, at("  padded  ", 60, 40, true), at("tail", 60, 20),
+    ];
+    expect(pageLinesFromTextItems(items)).toEqual(legacy(items));
+    expect(pageLinesFromTextItems(items, {})).toEqual(legacy(items));
+  });
+
+  it("chunker 2 measures gaps: a column gap is three spaces, a word gap one, a whitespace item nothing", () => {
+    const row = [at("1/2\"", 60, 17), at(" ", 77, 122), at("45 ft-lb", 200, 30), at(" ", 230, 110), at("dry", 340, 14, true)];
+    expect(pageLinesFromTextItems(row, { columnGaps: true })).toEqual(['1/2"   45 ft-lb   dry']);
+    // Word-per-item prose with pdf.js's whitespace items between the words:
+    // the legacy join made it look like a table row.
+    const prose = [at("Preheat", 60, 36), at(" ", 96, 3), at("shall", 99, 22), at(" ", 121, 3), at("be", 124, 11), at(" ", 135, 3), at("kept", 138, 20, true)];
+    expect(legacy(prose)).toEqual(["Preheat   shall   be   kept"]);
+    expect(pageLinesFromTextItems(prose, { columnGaps: true })).toEqual(["Preheat shall be kept"]);
+    // No geometry: one space, never a guessed column.
+    expect(pageLinesFromTextItems([{ str: "a" }, { str: "b", hasEOL: true }], { columnGaps: true })).toEqual(["a b"]);
+  });
+});
+
+describe("ING-7 — the unfinished sentence at the foot of a page", () => {
+  it("is empty when the page ends a sentence; otherwise the words after the last sentence end", () => {
+    expect(pageTail("Bolts shall be tightened. Records shall be kept.")).toBe("");
+    expect(pageTail("See Table 3:")).toBe("");
+    expect(pageTail("Bolts shall be tightened. Preheat shall be maintained at not less than 175F for P-No. 5 materials over"))
+      .toBe("Preheat shall be maintained at not less than 175F for P-No. 5 materials over");
+    const long = "Scope follows. Then " + "word ".repeat(200).trim();
+    const tail = pageTail(long, 100);
+    expect(tail.length).toBeLessThanOrEqual(100);
+    expect(tail.startsWith("word")).toBe(true);
+    expect(tail.length).toBeGreaterThan(50);
+    expect(pageTail("")).toBe("");
+  });
+
+  it("carries prose only: a page with no sentence end, a label run, or a carry is never carried", () => {
+    // The reviewer's probe: a vision-transcribed drawing sheet. Before, the
+    // whole title block and tag list came back as the "unfinished sentence".
+    const sheet = "DRAWING NO: 025-PID-0101\nSHEET: 1 OF 3\nREV: 4\nV-101 SUCTION DRUM\nP-201A CHARGE PUMP\nE-301 FEED EXCHANGER";
+    expect(pageTail(sheet)).toBe("");
+    // Sentence-like notes on a drawing still end in labels, not a sentence.
+    expect(pageTail("NOTES: 1. ALL DIMENSIONS IN MM. 2. SEE DWG 025-PID-0102. V-101 SUCTION DRUM P-201A CHARGE PUMP")).toBe("");
+    // Prose with no sentence end anywhere is a fragment, not a page foot.
+    expect(pageTail("word ".repeat(40).trim())).toBe("");
+    // A tail holding a carried marker is not carried on (no stacking).
+    expect(pageTail("Scope follows. [cont. from p. 3] preheat shall be kept above the stated value for")).toBe("");
+    expect(hasCarriedMarker("[cont. from p. 12] the rest")).toBe(true);
+    expect(hasCarriedMarker("see p. 12")).toBe(false);
+  });
+
+  it("never starts on half a surrogate pair", () => {
+    const astral = "\u{1D5E3}";
+    const tail = pageTail("Rules apply. The value is " + ("ab" + astral).repeat(300), 101);
+    expect(tail.length).toBeGreaterThan(0);
+    expect((tail as string & { isWellFormed(): boolean }).isWellFormed()).toBe(true);
+  });
+
+  it("wears a marker naming the page it came from; the version reader defaults to 1", () => {
+    expect(carriedTailMarker(12)).toBe("[cont. from p. 12]");
+    expect(chunkerVersionOf(2)).toBe(2);
+    expect(chunkerVersionOf(null)).toBe(1);
+    expect(chunkerVersionOf("2")).toBe(2);
+    expect(chunkerVersionOf(7)).toBe(1);
   });
 });

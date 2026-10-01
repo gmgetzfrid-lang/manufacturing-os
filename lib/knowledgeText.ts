@@ -36,9 +36,137 @@ export const CAPTION_RE = /^\s*(TABLE|FIGURE|FIG\.?|CHART|DETAIL)\s+([A-Z]?\d[\w
 
 /** Lines that read as TABLE ROWS: vision transcripts render tables with
  *  " | " separators; text-layer extractions keep column alignment as runs
- *  of spaces. Two signals, either is enough. */
+ *  of spaces. Two signals, either is enough.
+ *
+ *  Three or more CELLS, not "two gaps around one token": a real text-layer
+ *  row reads `1/2"   45 ft-lb   dry`, and the older pattern
+ *  (\S\s{2,}\S+\s{2,}\S) refused it because the middle cell has a space in
+ *  it — re-running the ING-4 demonstration on a real extracted PDF found no
+ *  text-layer table detected even with its lines intact. Splitting on runs
+ *  of 2+ spaces accepts every row the old pattern did, plus multi-word
+ *  cells. Only newline-bearing input reaches this (the legacy chunker hands
+ *  chunkPageText one line per segment, so its output is unchanged). */
 const isTableLine = (l: string): boolean =>
-  l.split(" | ").length >= 3 || /\S(\s{2,})\S+(\s{2,})\S/.test(l);
+  l.split(" | ").length >= 3 || l.trim().split(/\s{2,}/).length >= 3;
+
+// ── Chunker generations (ING-4 / ING-7) ────────────────────────────────────
+//
+// 1 — the chunker every existing index was built with: a page's lines are
+//     joined with spaces before chunking, so tables never survive as tables
+//     and nothing crosses a page break.
+// 2 — table-aware and page-bridging: lines stay lines (splitTables sees real
+//     rows and chunkPageText keeps a table as one chunk), text-layer column
+//     gaps are kept as gaps, and the unfinished sentence at the foot of a
+//     page is carried into the first chunk of the next.
+// A library moves from 1 to 2 only by an explicit re-index of that library
+// (knowledge_libraries.chunk_version, migration 20261122) — every chunk
+// boundary changes, so it is never automatic, and a document never mixes
+// the two (knowledge_documents.chunk_version is stamped when it starts).
+export type ChunkerVersion = 1 | 2;
+export const CHUNKER_LEGACY: ChunkerVersion = 1;
+export const CHUNKER_TABLE_AWARE: ChunkerVersion = 2;
+export const chunkerVersionOf = (v: unknown): ChunkerVersion => (Number(v) === 2 ? 2 : 1);
+
+/** A pdf.js text item, as getTextContent returns it. */
+export type PdfTextItem = { str?: string; hasEOL?: boolean; transform?: number[]; width?: number; height?: number };
+
+/** A horizontal gap wider than this many font-sizes between two text items
+ *  on one line is a COLUMN gap, not a word gap (a word space is ~0.25). */
+const COLUMN_GAP_EM = 1;
+/** What a column gap becomes in the rebuilt line: 3 spaces, the shape
+ *  splitTables reads as a cell boundary. */
+const COLUMN_GAP = "   ";
+
+/** Rebuild a page's LINES from its text items.
+ *
+ *  Chunker 1 (the default): byte-for-byte the rebuild ingestion has always
+ *  done — items joined with a space, a line per hasEOL.
+ *
+ *  Chunker 2 (`columnGaps`): the gap between two items is MEASURED. pdf.js
+ *  emits a whitespace-only item for most gaps, and the legacy join turns
+ *  both a column gap and an ordinary word gap between separately drawn
+ *  words into the same run of spaces — so a table row and a line of
+ *  word-per-item prose looked alike. Here whitespace-only items are dropped
+ *  and each gap is judged by its width: wider than a font-size is a column
+ *  (three spaces), anything else one space. Missing geometry falls back to
+ *  one space. Pure. */
+export function pageLinesFromTextItems(items: PdfTextItem[], opts: { columnGaps?: boolean } = {}): string[] {
+  const lines: string[] = [];
+  let buf = "";
+  if (!opts.columnGaps) {
+    for (const item of items) {
+      buf += item.str ?? "";
+      if (item.hasEOL) { lines.push(buf.trim()); buf = ""; }
+      else buf += " ";
+    }
+    if (buf.trim()) lines.push(buf.trim());
+    return lines;
+  }
+  let prev: PdfTextItem | null = null;
+  for (const item of items) {
+    const str = item.str ?? "";
+    if (str.trim() === "") {
+      if (item.hasEOL) { lines.push(buf.trim()); buf = ""; prev = null; }
+      continue;
+    }
+    if (prev) buf += gapBetween(prev, item);
+    buf += str;
+    prev = item;
+    if (item.hasEOL) { lines.push(buf.trim()); buf = ""; prev = null; }
+  }
+  if (buf.trim()) lines.push(buf.trim());
+  return lines;
+}
+
+function gapBetween(a: PdfTextItem, b: PdfTextItem): string {
+  const ta = a.transform, tb = b.transform;
+  if (!ta || !tb || typeof a.width !== "number") return " ";
+  const size = Math.hypot(ta[0] ?? 0, ta[1] ?? 0) || a.height || 0;
+  if (!size) return " ";
+  const gap = tb[4] - (ta[4] + a.width);
+  return gap > size * COLUMN_GAP_EM ? COLUMN_GAP : " ";
+}
+
+/** A sentence end: a stop followed by a capital — so "P-No. 5" and "1/2 in.
+ *  nominal" (the abbreviations standards are full of) are not one. */
+const SENTENCE_END_RE = /[.!?]["')\]]*\s+(?=[A-Z])/g;
+
+/** The unfinished sentence at the foot of a page — what chunker 2 carries
+ *  into the first chunk of the next page (ING-7), the way last_section
+ *  carries the heading. Empty when the page ends on a sentence end (the
+ *  provision is complete). Otherwise the text after the last sentence end
+ *  in the final `max` characters, or — with no sentence end that close —
+ *  the last `max` characters from a word start. Surrogate-safe. Pure.
+ *
+ *  Only PROSE carries. A page with no sentence end anywhere is a title
+ *  block, a tag list or a label run, not a sentence that breaks off; a
+ *  tail with no lowercase word is labels too (a drawing transcript's
+ *  "V-101 SUCTION DRUM P-201A CHARGE PUMP"); and a tail that already holds
+ *  a carried marker would stack one page's carry onto the next. All three
+ *  carry nothing. */
+export function pageTail(text: string, max = 400): string {
+  const t = text.replace(/\s+/g, " ").trim();
+  if (!t || /[.!?:;]["')\]]*$/.test(t)) return "";
+  if (!new RegExp(SENTENCE_END_RE.source).test(t)) return "";
+  const window = t.slice(Math.max(0, t.length - max));
+  const ends = [...window.matchAll(SENTENCE_END_RE)];
+  const last = ends[ends.length - 1];
+  let tail = last ? window.slice(last.index! + last[0].length) : window;
+  if (!last && t.length > max) {
+    const sp = tail.indexOf(" ");
+    tail = sp >= 0 ? tail.slice(sp + 1) : tail;
+  }
+  tail = tail.slice(alignStart(tail, 0)).trim();
+  if (!/[a-z]{2,}/.test(tail) || hasCarriedMarker(tail)) return "";
+  return tail;
+}
+
+/** The marker a carried tail wears, so a reader checking page N can see the
+ *  words that came from page N-1. */
+export const carriedTailMarker = (fromPage: number): string => `[cont. from p. ${fromPage}]`;
+
+/** True when text holds a carried marker (a carry is never carried on). */
+export const hasCarriedMarker = (text: string): boolean => /\[cont\. from p\. \d+\]/.test(text);
 
 /** Split page text into TABLE blocks and prose runs, BEFORE any whitespace
  *  collapse. This exists because the old pipeline collapsed all whitespace
@@ -294,15 +422,20 @@ export interface PageSegment {
 
 /** Walk a page's lines, splitting at section headings. carrySection is the
  *  heading in force when the page begins (sections span pages). Returns the
- *  segments plus the heading in force when the page ends. */
+ *  segments plus the heading in force when the page ends.
+ *
+ *  `keepLines` (chunker 2): a segment keeps its line structure ("\n") so
+ *  splitTables can see table rows. Without it the lines are joined with a
+ *  space — chunker 1, where a segment is one line and no table is ever
+ *  found (ING-4: the table machinery was unreachable from ingestion). */
 export function splitPageIntoSections(
-  lines: string[], carrySection: string | null,
+  lines: string[], carrySection: string | null, opts: { keepLines?: boolean } = {},
 ): { segments: PageSegment[]; lastSection: string | null } {
   const segments: PageSegment[] = [];
   let section = carrySection;
   let buf: string[] = [];
   const flush = () => {
-    const text = buf.join(" ").trim();
+    const text = buf.join(opts.keepLines ? "\n" : " ").trim();
     if (text.length > 0) segments.push({ section, text });
     buf = [];
   };
@@ -619,7 +752,12 @@ export function mergeRetrievedRRF(
   return [...score.values()]
     .sort((a, b) => b.s - a.s || a.chunk.id.localeCompare(b.chunk.id))
     .slice(0, cap)
-    .map(({ chunk }) => ({ ...chunk, content: chunk.content.slice(0, maxChars) }));
+    // truncateSafe, never a raw slice (ASK-11): a table chunk can run to
+    // 2800 chars, and a cut at exactly maxChars through an astral pair left
+    // a lone surrogate that rode into the knowledge_questions citations
+    // JSONB — where the downstream truncateSafe(c.content, 1600) is a no-op
+    // because the string is already that long.
+    .map(({ chunk }) => ({ ...chunk, content: truncateSafe(chunk.content, maxChars) }));
 }
 
 /** Merge multi-query search results: dedupe by chunk id keeping best rank,
@@ -638,7 +776,7 @@ export function mergeRetrieved(
   return [...best.values()]
     .sort((a, b) => b.rank - a.rank)
     .slice(0, cap)
-    .map((c) => ({ ...c, content: c.content.slice(0, maxChars) }));
+    .map((c) => ({ ...c, content: truncateSafe(c.content, maxChars) }));
 }
 
 /** pdf.js (bundled inside unpdf) calls Math.sumPrecise in some font/geometry

@@ -54,6 +54,21 @@ CREATE POLICY org_ai_instructions_write ON org_ai_instructions FOR ALL
 -- Q&A already lands in knowledge_questions; make the whole org's history
 -- full-text searchable so answers are findable and repeat questions can be
 -- answered from memory before spending an AI call.
+--
+-- IRLS-6 (intelligence Round G): knowledge_questions is CREATED by
+-- 20260911_knowledge_ai.sql, later in filename order. Replayed in order on a
+-- fresh database, this ALTER raised 42P01 and, pasted as one script, took
+-- every table in this file down with it (org_ai_instructions,
+-- document_related_resources, recently_viewed_docs, library_numbering) — and
+-- 20260807 then failed on the missing document_related_resources. It now runs
+-- only where the table already exists (every live deployment, where the
+-- statements are unchanged and idempotent); on a fresh replay the SAME column
+-- and indexes are added by 20261123_intel_roundG_knowledge_questions_order.sql,
+-- after 20260911. The statements are byte-for-byte the originals
+-- (lib/__tests__/intelRoundGMigrationOrder.test.ts).
+DO $$
+BEGIN
+  IF to_regclass('public.knowledge_questions') IS NOT NULL THEN
 ALTER TABLE knowledge_questions
   ADD COLUMN IF NOT EXISTS search_tsv tsvector
   GENERATED ALWAYS AS (
@@ -63,6 +78,8 @@ CREATE INDEX IF NOT EXISTS knowledge_questions_tsv_idx
   ON knowledge_questions USING GIN (search_tsv);
 CREATE INDEX IF NOT EXISTS knowledge_questions_org_recent_idx
   ON knowledge_questions (org_id, created_at DESC);
+  END IF;
+END $$;
 
 -- ── Curated related resources ─────────────────────────────────────────────
 CREATE TABLE IF NOT EXISTS document_related_resources (

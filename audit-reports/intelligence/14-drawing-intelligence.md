@@ -65,6 +65,23 @@ lib/knowledgeSourceSync.ts:259 — `source_rev: version.revision_label,` (the ho
 - [ ] `recordAudit` reads the revision from `knowledge_documents.source_rev` (what was indexed), not `documents.rev` (what is current), and refuses to record when the two disagree
 - [ ] A sheet whose `source_version_id` differs from the controlled doc's `current_version_id` is reported as 'skipped' with a reason, never 'passed'
 
+**Partial (2026-09-30, intelligence Round G).** Criteria 1 and 2 landed with ING-3, and both were reproduced first against the pre-fix code. A re-read that extracted nothing left both old entity rows and still stamped the document `ready`.
+
+- **The refresh.** `lib/knowledgeSourceSync.ts` drops the document's page entities, machine mentions and cached traces through `resetKnowledgeIndex` (`lib/knowledgeIngest.ts`). Every failed purge is reported in the sync's errors, as `chunkErr` was, and none is lost:
+  - A trace purge that fails runs before the row moves. The refresh is skipped, the row keeps the old version, and the library is marked never-synced, so the next run repeats it first.
+  - A chunk, entity or mention purge that fails runs after the row is queued at the new revision (ING-3's order, so an interrupted reset never leaves a `ready` row with no chunks). The re-index's first batch clears every chunk and entity row of the document before it writes.
+- **The ingest.** In `ingestKnowledgeDocBatch` the entity range clear moved OUTSIDE the `entityRows.length > 0` guard and no longer swallows its own error. A missing table skips the tag layer; any other failure stops the batch before `pages_indexed` moves.
+
+Tests: `lib/__tests__/ingestLock.test.ts` ("a re-read that extracts nothing still clears the range's old entities", "a failed range clear stops the batch before pages_indexed moves", "a new index generation's first batch clears everything the last one left…"), and `lib/__tests__/sourceSync.test.ts` ("the row is queued BEFORE the index is deleted…", "a purge that fails before the row moves leaves the old version…").
+
+**Done-when.**
+- ✓ The refresh deletes `knowledge_page_entities` alongside `knowledge_chunks`. A failure is reported like `chunkErr`, and the entities it leaves are cleared by the re-index's first batch.
+- ✓ The entity delete runs outside the `entityRows.length > 0` guard and its error is checked.
+- ✗ Not done here. `recordAudit` should read the revision from `knowledge_documents.source_rev` and refuse to record when that disagrees with the current revision. That code is in `app/api/knowledge/drawing/route.ts` and `lib/drawingAuditLog.ts`, which are I-07's files (DWG-6 / DWG-13 key the verdict by revision).
+- ✗ Not done here. A sheet whose `source_version_id` differs from the controlled document's `current_version_id` is not yet reported as `skipped`. That is the same file, handed to I-07.
+
+**Scope / residual.** With criteria 1 and 2 in place, a rev-up no longer leaves Rev C's tags under Rev D. The audit therefore reads the current revision's extraction, or none if the sheet is still re-indexing. But the revision it FILES is still `documents.rev`. OPEN until I-07 lands criteria 3 and 4.
+
 ---
 
 <a id="dwg-2"></a>
@@ -164,6 +181,12 @@ Measured: `page.rotate=180 view=[0,0,1224,792] vp=1224x792 chars=209 items=21 / 
 - [ ] A test renders each of /Rotate 0, 90, 180, 270 with a known glyph position and asserts nx/ny land in the correct quadrant
 - [ ] `clamp01` is replaced by a reject-and-null (a coordinate outside 0..1 is a bug signal, not a value to pin to an edge)
 - [ ] Existing `pos_source='text'` rows on rotated pages are invalidated rather than left in place, since they are cached wrong answers
+
+**Pointer (2026-09-30, intelligence Round G, I-06): the ingest half.** The fleet plan gives this finding to I-07, and I-06 records the ingest half here. No status change: DWG-3 stays OPEN for I-07.
+- **Where it is.** The normalisation the finding quotes is `norm()` in `lib/knowledgeIngest.ts` `ingestKnowledgeDocBatch`, in the drawing-entity block of `readPage`. It is now at lines 1236-1240; at the base it was 236-240. I-06 did not change it. The `getViewport({ scale: 1 })` divide, `clamp01` and the stored `pos_source: 'text'` are exactly as described above, and I-06's engine changes (the claim, the retry queue, the failure retry) do not touch that block.
+- **Where the plan fixes it.** In the plan, I-07 corrects the marks in `components/knowledge/CitedPageViewer.tsx`, computing from page metadata (/Rotate, the CropBox origin). Stored `nx`/`ny` then stay in the page's unrotated user space, and the viewer applies the transform. Criterion 2 (a quadrant test per rotation) belongs with that code.
+- **What the viewer cannot recover.** `norm()` divides by the ROTATED viewport's size. On a 90/270 page that is the unrotated height for x and width for y, so on a landscape sheet a stored value past 1 was clamped to the edge. So was a value pushed below 0 by a CropBox origin. Those marks are lost, not merely transformed. A viewer-side transform recovers every mark on a 0/180 page with a zero origin, but not every mark on a 90/270 page or a page with an offset origin. Those need ingest's divisor fixed and the documents re-indexed.
+- **If ingest is changed instead** (criterion 1, `viewport.convertToViewportPoint`): the change is confined to `norm()` and the two `nx`/`ny` pushes below it, and criterion 3 (reject and null rather than `clamp01`) goes with it. Rows already stored on rotated pages would then be wrong by construction (criterion 4). The way to re-derive them is to re-index those documents through `resetKnowledgeIndex` (DEC-58), which drops every page entity and re-reads from page 1. Note that this re-bills their AI-vision pages. The two fixes must not both apply, or the viewer would rotate coordinates that ingest had already rotated.
 
 ---
 

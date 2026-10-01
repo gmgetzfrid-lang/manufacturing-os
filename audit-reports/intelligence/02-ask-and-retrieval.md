@@ -412,4 +412,18 @@ lib/knowledgeText.ts:166-168 — `export function truncateSafe(s: string, n: num
 - [ ] the knowledge_questions insert checks r.error unconditionally and surfaces a non-column failure rather than silently returning questionId: null
 - [ ] a test with an astral-boundary chunk proves the persisted citations round-trip
 
+**Partial (2026-09-30, intelligence Round G).** Reproduced first (DEC-29). The three new tests failed against the pre-fix `lib/knowledgeText.ts`: a chunk carrying an astral pair at units 1599/1600 came out of both merges with a lone high surrogate. The citation built from it serialised as an unpaired `\ud835` escape, the text Postgres rejects as "invalid input syntax for type json". What landed: `mergeRetrievedRRF` and `mergeRetrieved` cut with `truncateSafe(…, maxChars)` instead of `.slice(0, maxChars)`.
+
+Tests: `lib/__tests__/knowledgeText.test.ts` "merge truncation is surrogate-safe (ASK-11)":
+- "mergeRetrievedRRF never leaves half a pair at the cut";
+- "mergeRetrieved never leaves half a pair at the cut";
+- "the citation the ask route persists round-trips through JSON intact". This test builds the citation exactly as the route does, `quote: truncateSafe(c.content, 1600)` over the merged chunk, and proves the JSON body has no unpaired surrogate and round-trips.
+
+**Done-when.**
+- ✓ Both `mergeRetrievedRRF` and `mergeRetrieved` use `truncateSafe` instead of `.slice(0, maxChars)`.
+- ✗ Not done here. The `knowledge_questions` insert in `app/api/knowledge/ask/route.ts` still recognises only missing-column failures. The plan makes I-03 that file's sole owner, so this is handed over. The cause this finding traced can no longer reach that insert through the merges.
+- ✓ A test with an astral-boundary chunk proves the persisted citation shape round-trips.
+
+**Scope / residual.** No migration. OPEN until I-03 checks the insert's error unconditionally and surfaces a non-column failure.
+
 ---

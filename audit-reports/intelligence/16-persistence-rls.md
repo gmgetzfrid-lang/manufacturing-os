@@ -216,6 +216,25 @@ lib/mentionIndexer.ts:136-142 — `const { error } = await supabaseAdmin.from("e
 - [ ] a fresh-database replay of migrations in filename order completes with zero errors
 - [ ] /api/admin/schema-health is run against a fresh install and reports every EXPECTED_TABLE present
 
+**Partial (2026-09-30, intelligence Round G).** Code complete, pending verification: criteria 2 and 3 need a fresh-database replay that this environment cannot run. Confirmed first with a static in-order replay of every numbered migration against the `schema.sql` baseline. It found exactly one ALTER reaching a table that is created later: `20260806` → `knowledge_questions`, which `20260911` creates. What landed:
+
+- In `supabase/migrations/20260806_intelligence_layer.sql`, the ALTER and its two indexes now run inside `DO $$ … IF to_regclass('public.knowledge_questions') IS NOT NULL THEN … END IF; END $$;`. The statements are byte-for-byte the originals. Every live deployment already has the table, so the file behaves as before there. On a fresh replay the file no longer rolls back.
+- New `supabase/migrations/20261123_intel_roundG_knowledge_questions_order.sql` carries the SAME statements after `20260911`, inside one transaction, and ends in one verification SELECT (`check, ok, n`): the column exists as a STORED generated column over question and answer, and both indexes exist. On a live database it is three no-ops.
+- Neither file defines a function, policy or trigger, so DB-8's `lib/__tests__/migrationSourceOfTruth.test.ts` accepts both.
+
+Tests: `lib/__tests__/intelRoundGMigrationOrder.test.ts`:
+- "no ALTER TABLE reaches a table the sequence creates later (unguarded)", the in-order replay census;
+- "the census catches the pre-fix shape — it is not vacuous";
+- "20260806 runs the statements only when the table exists, byte-for-byte the originals";
+- "20261123 carries the same statements after 20260911, inside one transaction", which runs a lineDiff against the originals.
+
+**Done-when.**
+- ✓ The `knowledge_questions` ALTER and its two indexes are guarded in `20260806` with the `to_regclass` DO block AND carried by a migration dated after `20260911`.
+- ✗ Not verified: a fresh-database replay of the migrations in filename order completing with zero errors. This environment has no database. The static in-order replay census over every numbered migration finds no remaining ALTER-before-CREATE, but it is a stand-in, not the replay.
+- ✗ Not verified: running `/api/admin/schema-health` against a fresh install. Same reason; it belongs to the same replay.
+
+**Scope / residual.** Pending migration: `20261123_intel_roundG_knowledge_questions_order.sql`. On live deployments it is a no-op, and its SELECT confirms the column and indexes. The census only checks ALTER-before-CREATE ordering; other fresh-replay hazards (a function body referencing a later table, say) are outside it. I-07's DWG-9 (`20261009_trace_method.sql`) is the same class, in a separate file. OPEN until someone replays the numbered sequence into an empty project and runs schema-health against it.
+
 ---
 
 <a id="irls-7"></a>
@@ -245,6 +264,20 @@ lib/mentionIndexer.ts:136-142 — `const { error } = await supabaseAdmin.from("e
 - [ ] deleting a controlled document synchronously removes its knowledge mirror and chunks (a trigger or a call in the delete path), rather than waiting for the cron
 - [ ] knowledge_sources gains either a real FK per source_type via two nullable columns, or a scheduled orphan sweep that reports dangling sources
 - [ ] process_flows endpoints referencing assets are validated against the registry on read, so an edge to a deleted asset is shown as broken rather than drawn
+
+**Partial (2026-09-30, intelligence Round G).** Confirmed first by reading. Its mirror and chunk half is ILIFE-5's fix.
+
+- **The delete cascades.** `20261122` §6 adds `knowledge_documents.source_document_id REFERENCES documents(id) ON DELETE CASCADE`, after purging mirrors that name no document in the same paste. Deleting a controlled document now removes its mirror and everything derived from it synchronously, instead of waiting for the cron.
+- **Dangling sources are reported.** `knowledge_sources.source_id` stays a polymorphic pointer; the design choice is kept. The sync (`syncKnowledgeLibrarySources`, run by the maintenance cron and on demand) now reports every source whose document-control library or folder no longer exists: `danglingSources` in the summary, and an error line the cron surfaces, `dangling source "…": its document-control folder no longer exists — unlink it from this library`. That source's mirrors fall out of `wanted` and are removed on the same pass.
+
+Tests: `lib/__tests__/intelRoundGIngestMigration.test.ts` (the key and the cascade trace), and `lib/__tests__/sourceSync.test.ts` ("a source whose library was deleted is named, and its mirrors leave").
+
+**Done-when.**
+- ✓ Deleting a controlled document synchronously removes its knowledge mirror and chunks, through the foreign key.
+- ✓ The criterion's second branch holds: the scheduled sync reports dangling sources.
+- ✗ Not done here. Validating `process_flows` endpoints against the registry on read belongs to process flows and graph assembly (I-09 / I-13), not ingestion.
+
+**Scope / residual.** Pending migration: `20261122_intel_roundG_ingest_integrity.sql`. OPEN until the `process_flows` read-time validation lands.
 
 ---
 
