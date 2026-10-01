@@ -971,22 +971,18 @@ export default function FullScreenViewer({
   };
 
   // ─── Download with markup baked in ────────────────────────────────────
-  // Applies the same UNCONTROLLED-COPY watermark + footer + audit row as a
-  // plain Download when the user does not hold a checkout, so the markup
-  // export never bypasses the document-control gate.
+  // ALWAYS applies the UNCONTROLLED-COPY watermark + footer + verify QR and
+  // records an uncontrolled copy — the checkout holder included (PHYS-5).
+  // The controlled-copy exemption (lib/downloads.ts determineControlState)
+  // is for the UNMODIFIED master; a sheet with redlines burned in is by
+  // definition not the controlled revision, so it never leaves unmarked
+  // (the precedent: VersionHistoryPanel forces the stamp on every
+  // non-authoritative copy).
   const downloadWithMarkup = async () => {
     if (!resolvedUrl) return;
     setMarkupBusy(true); setMarkupError(null);
-    // Recompute control state from props at the moment of execution rather
-    // than relying on a captured closure — defends against any stale React
-    // batching and makes the decision tree easier to debug.
-    const liveState: "controlled" | "uncontrolled" =
-      docRecord && currentUserId
-        ? determineControlState(docRecord, currentUserId, viewingIsCurrent)
-        : "uncontrolled";
-    const stampNow = liveState !== "controlled";
     console.warn("[FullScreenViewer] downloadWithMarkup", {
-      liveState, stampNow, hasDocRecord: !!docRecord, currentUserId,
+      hasDocRecord: !!docRecord, currentUserId,
       checkedOutBy: docRecord?.checkedOutBy,
     });
 
@@ -1020,25 +1016,23 @@ export default function FullScreenViewer({
         page.drawImage(img, { x: 0, y: 0, width, height });
       }
 
-      // 2. Apply UNCONTROLLED stamp on top if the user doesn't hold checkout
+      // 2. Apply the UNCONTROLLED stamp on top — unconditionally (PHYS-5):
+      //    markups are never part of the controlled revision.
       const now = new Date();
       const expiresAt = new Date(now.getTime() + 24 * 3600 * 1000);
-      let suffix = "_markup";
-      if (stampNow) {
-        await applyStampToPdfDoc(pdfDoc, {
-          sourceBytes: pdfBytes ?? undefined,
-          userLabel: currentUserEmail ?? undefined,
-          email: currentUserEmail ?? undefined,
-          timestamp: now,
-          expiresAt,
-          watermarkText: "UNCONTROLLED — FOR REVIEW ONLY",
-          footerNotice: `${docNumber || title || "Document"} Rev ${rev ?? "?"} WITH MARKUPS at time of export — markups are not part of the controlled revision.`,
-          verifyUrl: docRecord?.id && servedVersionId && publicOrigin()
-            ? `${publicOrigin()}/verify/${docRecord.id}?v=${servedVersionId}`
-            : undefined,
-        });
-        suffix = "_markup_UNCONTROLLED";
-      }
+      await applyStampToPdfDoc(pdfDoc, {
+        sourceBytes: pdfBytes ?? undefined,
+        userLabel: currentUserEmail ?? undefined,
+        email: currentUserEmail ?? undefined,
+        timestamp: now,
+        expiresAt,
+        watermarkText: "UNCONTROLLED — FOR REVIEW ONLY",
+        footerNotice: `${docNumber || title || "Document"} Rev ${rev ?? "?"} WITH MARKUPS at time of export — markups are not part of the controlled revision.`,
+        verifyUrl: docRecord?.id && servedVersionId && publicOrigin()
+          ? `${publicOrigin()}/verify/${docRecord.id}?v=${servedVersionId}`
+          : undefined,
+      });
+      const suffix = "_markup_UNCONTROLLED";
 
       // 3. Save + trigger local download
       const bytes = await pdfDoc.save();
@@ -1050,15 +1044,17 @@ export default function FullScreenViewer({
       window.document.body.appendChild(a); a.click(); window.document.body.removeChild(a);
       URL.revokeObjectURL(u);
 
-      // 4. Audit log — same row shape as a plain Download
+      // 4. Audit log — same row shape as a plain uncontrolled Download: a
+      //    markup export is ALWAYS an uncontrolled copy (PHYS-5), so the
+      //    ledger never records an unmarked redline as a controlled copy.
       if (docRecord && currentUserId) {
         await logDownloadAudit({
           doc: docRecord,
           versionId: servedVersionId,
           userId: currentUserId,
           userEmail: currentUserEmail ?? null,
-          state: liveState,
-          expiresAt: stampNow ? expiresAt : null,
+          state: "uncontrolled",
+          expiresAt,
         });
         // Marking up is the most edit-like act in the viewer — record it so
         // overlap advisories and provenance see the work. But marking up an
@@ -1100,7 +1096,9 @@ export default function FullScreenViewer({
     const live = determineControlState(docRecord, currentUserId, viewingIsCurrent);
     console.warn("[FullScreenViewer] live control state:", live);
     if (live === "controlled") {
-      // User holds checkout → raw bake, no stamp, no modal
+      // The checkout holder skips the "you don't have this checked out"
+      // modal — but the export is STILL stamped and recorded uncontrolled
+      // (PHYS-5: markups are never the controlled master).
       void downloadWithMarkup();
       return;
     }
