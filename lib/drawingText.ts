@@ -748,6 +748,17 @@ export interface RefAudit {
    *  bucket that can indicate a genuine drafting error — still called
    *  one-way, not broken, because plenty of continuation notes are. */
   oneWay: Array<{ from: string; to: string; count: number }>;
+  /** The target is loaded but was NOT read whole (pages AI vision never
+   *  read, a document still being indexed, or one whose indexing failed),
+   *  and no reference back stands on what was read of it. Whether it
+   *  references back was not checked: absence of evidence, never one-way
+   *  (review fix pass 4). `unread` says why. */
+  oneWayUnread: Array<{ from: string; to: string; count: number; unread: string }>;
+  /** In scope and not found — but a sheet of the library that was not read
+   *  whole may hold it (it is a sheet of that document's drawing, or that
+   *  document's own number was never read). Not a gap until that document
+   *  is read whole; `maybeIn` names it, with why (review fix pass 4). */
+  missingUnread: Array<{ ref: string; referencedBy: string[]; count: number; maybeIn: string[] }>;
 }
 
 /** Every number a sheet answers to: what its title block declared (kind
@@ -848,6 +859,12 @@ export function auditDrawingRefs(
   /** Site decoder (parseUnitMap) — names the unit each out-of-scope series
    *  belongs to, so "load these" reads as units, not bare numbers. */
   unitMap?: UnitMap | null,
+  /** By document id: the documents NOT read whole, each with why ("page(s)
+   *  2 never read", "its indexing failed"). What such a sheet holds may sit
+   *  on a page nobody read, so its silence is never evidence: a reference
+   *  back that is not found there, or a sheet of its drawing that is not
+   *  found, is unchecked — never one-way, never a gap (review fix pass 4). */
+  incomplete?: ReadonlyMap<string, string>,
 ): RefAudit {
   const { identityByDoc, identity, resolveDoc } = refResolver(docs, selfTagsByDoc);
   const nameById = new Map(docs.map((d) => [d.id, d.name]));
@@ -897,24 +914,41 @@ export function auditDrawingRefs(
     }
   }
 
-  // One-way: A points at B (both loaded) and B never points back at A.
+  // One-way: A points at B (both loaded) and B never points back at A — on
+  // a B that was read whole. On a B that was not, the reference back may
+  // stand on a page nobody read: unchecked, never one-way.
   const oneWay: RefAudit["oneWay"] = [];
+  const oneWayUnread: RefAudit["oneWayUnread"] = [];
   for (const link of links.values()) {
     if (links.has(`${link.to}→${link.from}`)) continue;
-    oneWay.push({
-      from: nameById.get(link.from) ?? "Sheet",
-      to: nameById.get(link.to) ?? "Sheet",
-      count: link.count,
-    });
+    const entry = { from: nameById.get(link.from) ?? "Sheet", to: nameById.get(link.to) ?? "Sheet", count: link.count };
+    const unread = incomplete?.get(link.to);
+    if (unread) oneWayUnread.push({ ...entry, unread });
+    else oneWay.push(entry);
   }
+
+  // A missing sheet may yet be in a document that was not read whole: a
+  // sheet of that document's own drawing (its page was never read), or
+  // anything at all when that document's number was never read (no title
+  // block declared, none in its filename).
+  const bareSheet = (r: string) => r.replace(/-SH\d+$/, "");
+  const partly = docs.filter((d) => incomplete?.has(d.id));
+  const mayHold = (ref: string): string[] => partly
+    .filter((d) => {
+      const numbered = (selfTagsByDoc?.get(d.id) ?? []).length > 0 || extractDrawingRefs(d.name).length > 0;
+      return !numbered || (identityByDoc.get(d.id) ?? []).some((t) => seriesMatch(bareSheet(t), bareSheet(ref)));
+    })
+    .map((d) => `${d.name} (${incomplete!.get(d.id)})`);
+  const missingAll = [...missingMap.entries()]
+    .map(([ref, v]) => ({ ref, referencedBy: [...v.referencedBy].sort().slice(0, 6), count: v.count, maybeIn: mayHold(ref) }))
+    .sort((a, b) => b.count - a.count);
 
   return {
     resolved,
     totalRefs,
     seriesInScope: scope,
-    missingInSeries: [...missingMap.entries()]
-      .map(([ref, v]) => ({ ref, referencedBy: [...v.referencedBy].sort().slice(0, 6), count: v.count }))
-      .sort((a, b) => b.count - a.count),
+    missingInSeries: missingAll.filter((m) => m.maybeIn.length === 0).map(({ maybeIn: _maybeIn, ...m }) => m),
+    missingUnread: missingAll.filter((m) => m.maybeIn.length > 0),
     outOfScope: [...outMap.entries()]
       .map(([series, v]) => {
         const unit = unitMap ? unitOfRef(series, unitMap.prefixLen) : null;
@@ -928,6 +962,7 @@ export function auditDrawingRefs(
       })
       .sort((a, b) => b.count - a.count),
     oneWay: oneWay.sort((a, b) => b.count - a.count),
+    oneWayUnread: oneWayUnread.sort((a, b) => b.count - a.count),
   };
 }
 
@@ -1111,16 +1146,19 @@ export interface OpcEntity {
 
 export interface OpcAudit {
   boxCount: number;
-  /** Box leaves a sheet naming a loaded destination whose box numbers WERE
-   *  read, and none of them is this box. */
+  /** Box leaves a sheet naming a loaded destination that was read whole and
+   *  whose box numbers WERE read, and none of them is this box. */
   unreturned: Array<{ box: string; from: string; to: string; line: string }>;
   /** Box leaves a sheet naming a loaded destination whose box numbers were
    *  never read — a text layer (which prints a pennant, not a box token), a
    *  sheet read by AI vision before connector boxes were transcribed, or a
-   *  same-drawing connector whose source declared no drawing number. The
-   *  pairing could not be checked: absence of evidence, so it keeps the
-   *  sheet from passing and never makes it broken (DWG-4 / DWG-8). */
-  unpaired: Array<{ box: string; from: string; to: string; line: string }>;
+   *  same-drawing connector whose source declared no drawing number — or a
+   *  destination that was not read whole, where this box is not among the
+   *  boxes read (`unread` says why: pages AI vision never read, a document
+   *  still indexing or failed). The pairing could not be checked: absence of
+   *  evidence, so it keeps the sheet from passing and never makes it broken
+   *  (DWG-4 / DWG-8; review fix pass 4). */
+  unpaired: Array<{ box: string; from: string; to: string; line: string; unread?: string }>;
   /** Box names no destination at all — broken by definition, since nothing
    *  on the sheet tells the reader where to continue. Only POSITIVE evidence
    *  can say that: a contract line whose destination reads NONE or is empty
@@ -1143,6 +1181,10 @@ export function auditOpcBoxes(
   /** Sheet identities declared by each document's own title block. */
   selfByDoc: ReadonlyMap<string, string[]>,
   nameById: ReadonlyMap<string, string>,
+  /** By document id: the documents NOT read whole, each with why ("page(s)
+   *  2 never read", "its indexing failed"). A box missing from what was read
+   *  of such a sheet may stand on a page nobody read (review fix pass 4). */
+  incomplete?: ReadonlyMap<string, string>,
 ): OpcAudit {
   const opcByDoc = new Map<string, Set<string>>();
   for (const o of opcRows) {
@@ -1235,10 +1277,15 @@ export function auditOpcBoxes(
       targetsByDoc.set(o.document_id, paired);
       const entry = { box: o.tag, from, to: nameById.get(target) ?? "Sheet", line: raw };
       const boxes = opcByDoc.get(target);
+      const unread = incomplete?.get(target);
       // A target with no box numbers read cannot say whether the box comes
-      // back — never evidence that it does not.
-      if (!boxes) unpaired.push(entry);
-      else if (!boxes.has(o.tag)) unreturned.push(entry);
+      // back — never evidence that it does not. Nor can a target that was
+      // not read whole: the box may stand on a page nobody read, and filing
+      // it `unreturned` would record `broken_connectors` — never lowered at
+      // that revision — against a sheet that carries it (review fix pass 4).
+      if (boxes?.has(o.tag)) continue;
+      if (!boxes || unread) unpaired.push(unread ? { ...entry, unread } : entry);
+      else unreturned.push(entry);
     }
   }
 

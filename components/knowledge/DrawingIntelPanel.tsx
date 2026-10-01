@@ -39,8 +39,9 @@ type Intel = DrawingIntel & {
   truncated?: boolean;
   notCounted?: string[];
   opcUnknown?: Array<{ box: string; sheet: string; page: number; line: string }>;
-  /** Boxes whose continuation sheet has no box numbers read (DWG-4). */
-  opcUnpaired?: Array<{ box: string; from: string; to: string; line: string }>;
+  /** Boxes whose continuation sheet has no box numbers read (DWG-4), or
+   *  was not read whole (`unread` says why — review fix pass 4). */
+  opcUnpaired?: Array<{ box: string; from: string; to: string; line: string; unread?: string }>;
   opcPairing?: "ok" | "no-boxes";
   /** "counts": before 20261124, chunks counted but never read (DWG-11). */
   textStats?: "measured" | "counts";
@@ -54,9 +55,6 @@ type RecordResult = Awaited<ReturnType<typeof recordDrawingAudit>> & {
   /** Series this library holds no more than one drawing number of: gaps in
    *  them not judged (DWG-6). */
   seriesNotJudged?: string[];
-  /** Sheets being indexed right now: no verdict was re-decided by a change
-   *  in the sheets it points at (DWG-13). */
-  indexingNow?: string[];
   /** Before 20261124: recorded on the org-wide key, and why that matters. */
   notice?: string;
 };
@@ -119,7 +117,6 @@ export default function DrawingIntelPanel({ orgId, libraryId, isController, refr
     alreadyRecorded: NonNullable<RecordResult["alreadyRecorded"]>;
     notRecorded: NonNullable<RecordResult["notRecorded"]>;
     seriesNotJudged: string[];
-    indexingNow: string[];
     notice: string | null;
   } | null>(null);
   const [showUnknown, setShowUnknown] = useState(false);
@@ -210,7 +207,9 @@ export default function DrawingIntelPanel({ orgId, libraryId, isController, refr
 
   // Commit the audit. The value isn't the verdict on screen — that's already
   // here — it's the RECORD: next time somebody asks whether this sheet was
-  // checked at this revision, there's an answer instead of a re-read.
+  // checked at this revision, there's an answer instead of a re-read. While
+  // a sheet of the library is being indexed the route refuses (409) and
+  // records nothing; its message, naming the sheets, is the toast.
   const record = async () => {
     setBusy("record");
     try {
@@ -219,7 +218,6 @@ export default function DrawingIntelPanel({ orgId, libraryId, isController, refr
         recorded: res.recorded, counts: res.counts,
         alreadyRecorded: res.alreadyRecorded ?? [], notRecorded: res.notRecorded ?? [],
         seriesNotJudged: res.seriesNotJudged ?? [],
-        indexingNow: res.indexingNow ?? [],
         notice: res.notice ?? null,
       });
       showToast({
@@ -306,13 +304,6 @@ export default function DrawingIntelPanel({ orgId, libraryId, isController, refr
               Gaps were not judged in {recorded.seriesNotJudged.slice(0, 4).join(", ")}
               {recorded.seriesNotJudged.length > 4 ? "…" : ""} — this library holds no more than one drawing number of
               {recorded.seriesNotJudged.length === 1 ? " that series" : " each of those series"}, so it can&rsquo;t say what the series is missing.
-            </div>
-          )}
-          {recorded.indexingNow.length > 0 && (
-            <div className="mt-0.5 text-amber-800 dark:text-amber-300">
-              <b>{recorded.indexingNow.length}</b> sheet(s) are being indexed right now
-              ({recorded.indexingNow.slice(0, 3).join(", ")}{recorded.indexingNow.length > 3 ? "…" : ""}) — no verdict was
-              re-decided by a change in the sheets it points at. Record again once indexing finishes.
             </div>
           )}
           {recorded.notice && (
@@ -512,15 +503,15 @@ export default function DrawingIntelPanel({ orgId, libraryId, isController, refr
             className="inline-flex items-center gap-1 text-[11px] font-black text-amber-600 hover:underline">
             {showUnpaired ? <ChevronDown className="w-3.5 h-3.5" /> : <ChevronRight className="w-3.5 h-3.5" />}
             <AlertTriangle className="w-3.5 h-3.5" />
-            {intel.opcUnpaired!.length} connector box(es) not paired — their continuation sheet has no box numbers read
+            {intel.opcUnpaired!.length} connector box(es) not paired — their continuation sheet has no box numbers read, or was not read whole
           </button>
           {showUnpaired && (
             <div className="mt-1.5 rounded-xl border border-amber-300 dark:border-amber-800 overflow-hidden">
               <p className="px-3 py-2 text-[10px] text-amber-900 dark:text-amber-200 border-b border-amber-200 dark:border-amber-900">
                 The sheet each of these continues on carries no box numbers in the index — a text layer prints a
                 pennant, not a box number, and a sheet read by AI vision before connector boxes were transcribed has
-                none either. Whether the box comes back could not be checked: <b>not counted as broken</b>, worth a
-                look on that sheet.
+                none either — or was not read whole, and the box is not on what was read of it. Whether the box comes
+                back could not be checked: <b>not counted as broken</b>, worth a look on that sheet.
               </p>
               <ul className="divide-y divide-[var(--color-border)] max-h-48 overflow-y-auto">
                 {intel.opcUnpaired!.map((o, i) => (
@@ -530,6 +521,7 @@ export default function DrawingIntelPanel({ orgId, libraryId, isController, refr
                       <span className="font-bold text-[var(--color-text)]">{o.from}</span>
                       {" → "}
                       <span className="font-bold text-[var(--color-text)]">{o.to}</span>
+                      {o.unread && <> (not read whole: {o.unread})</>}
                       <span className="block truncate" title={o.line}>{o.line}</span>
                     </span>
                   </li>
@@ -714,8 +706,9 @@ export default function DrawingIntelPanel({ orgId, libraryId, isController, refr
                 <b>Drawing, no tags</b> with thin text and no references to other drawings usually means an AutoCAD
                 export with SHX fonts — the title block extracts, the tags plot as line-work. A drawing sheet whose
                 text gave references but no equipment (a legend, cover or index sheet) is fine as it is.
-                {" "}<b>Rebuild index</b> with your AI key saved first: such pages are read by AI vision page by page,
-                each page billed to your key. Only if that leaves them unread:
+                {" "}<b>Rebuild index</b> with your AI key saved first: such pages are usually read by AI vision page by
+                page, each page billed to your key (a page whose title block or notes read like sentences can be passed
+                over). If that leaves them unread:
                 {" "}<b>&ldquo;Text doesn&apos;t extract from these files — index every page as an image&rdquo;</b> in
                 Library AI setup makes AI vision read <b>every page of every document</b> in this library on the next
                 rebuild, and bills each page to your key — turn it on only if most of the library is SHX.

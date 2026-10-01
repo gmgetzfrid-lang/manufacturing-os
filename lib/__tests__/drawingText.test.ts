@@ -790,6 +790,62 @@ describe("DWG-4 — the connector line contract between the vision prompt and th
     expect(audit.oneWay).toEqual([{ from: "025-PID-0106.pdf", to: "025-PID-0107.pdf", count: 1 }]);
   });
 
+  // Review fix pass 4: a sheet that was not read whole (pages AI vision never
+  // read, still indexing, failed) is no evidence of what it lacks. The box,
+  // or the reference back, may stand on a page nobody read; filing it
+  // `unreturned` recorded `broken_connectors`, never lowered at that revision.
+  it("a box not on what was read of a sheet not read whole is unpaired with the reason — never unreturned (review fix pass 4)", () => {
+    const self = new Map([["a", ["025-PID-0104", "025-PID-0104-SH1"]], ["b", ["025-PID-0105", "025-PID-0105-SH1"]]]);
+    const names = new Map([["a", "025-PID-0104.pdf"], ["b", "025-PID-0105.pdf"]]);
+    const line = "OPC 14: DWG 025-PID-0105 SH 1 — TO V-1402";
+    // 0105: page 1 read (box 7), page 2 waits on AI vision — box 14 is there.
+    const rows = [{ document_id: "a", page: 1, tag: "14", raw: line }, { document_id: "b", page: 1, tag: "7", raw: "OPC 7: DWG 025-PID-0199 — TO V-7" }];
+    const partly = auditOpcBoxes(rows, self, names, new Map([["b", "page(s) 2 never read"]]));
+    expect(partly.unreturned).toEqual([]);
+    expect(partly.noRef).toEqual([]);
+    expect(partly.unpaired).toEqual([{ box: "14", from: "025-PID-0104.pdf", to: "025-PID-0105.pdf", line, unread: "page(s) 2 never read" }]);
+    // The verdict still depends on 0105: re-judged once it is read whole.
+    expect(partly.targetsByDoc.get("a")).toEqual(["b"]);
+    // Read whole and still without box 14: that one is unreturned.
+    expect(auditOpcBoxes(rows, self, names).unreturned).toEqual([expect.objectContaining({ box: "14", to: "025-PID-0105.pdf" })]);
+    // A box that IS on what was read pairs, whole or not.
+    const found = auditOpcBoxes([...rows, { document_id: "b", page: 1, tag: "14", raw: "OPC 14: DWG 025-PID-0104 — FROM V-1401" }],
+      self, names, new Map([["b", "page(s) 2 never read"]]));
+    expect(found.unpaired).toEqual([]);
+    expect(found.unreturned).toEqual([]);
+    // No box numbers read at all on a sheet not read whole: unpaired, with why.
+    expect(auditOpcBoxes([rows[0]], self, names, new Map([["b", "its indexing failed"]])).unpaired)
+      .toEqual([expect.objectContaining({ box: "14", unread: "its indexing failed" })]);
+  });
+
+  it("a reference back, or a sheet, not found on a sheet not read whole is unchecked — never one-way, never a gap (review fix pass 4)", () => {
+    const docs = [{ id: "a", name: "025-PID-0104.pdf" }, { id: "b", name: "025-PID-0105.pdf" }];
+    const self = new Map([["a", ["025-PID-0104"]], ["b", ["025-PID-0105", "025-PID-0105-SH1"]]]);
+    // 0104 points at 0105 (SH1 read) and at 0105 SH2 (its page never read),
+    // and at 025-PID-0199, which is not in the library at all.
+    const refs = new Map([["a", ["025-PID-0105", "025-PID-0105-SH2", "025-PID-0199"]]]);
+    const partly = auditDrawingRefs(docs, refs, self, null, new Map([["b", "page(s) 2 never read"]]));
+    expect(partly.oneWay).toEqual([]);
+    expect(partly.oneWayUnread).toEqual([{ from: "025-PID-0104.pdf", to: "025-PID-0105.pdf", count: 1, unread: "page(s) 2 never read" }]);
+    expect(partly.missingInSeries.map((m) => m.ref)).toEqual(["025-PID-0199"]);
+    expect(partly.missingUnread).toEqual([
+      { ref: "025-PID-0105-SH2", referencedBy: ["025-PID-0104.pdf"], count: 1, maybeIn: ["025-PID-0105.pdf (page(s) 2 never read)"] },
+    ]);
+    // Read whole: the same references are one-way and missing, as before.
+    const whole = auditDrawingRefs(docs, refs, self);
+    expect(whole.oneWay).toEqual([{ from: "025-PID-0104.pdf", to: "025-PID-0105.pdf", count: 1 }]);
+    expect(whole.missingInSeries.map((m) => m.ref).sort()).toEqual(["025-PID-0105-SH2", "025-PID-0199"]);
+    expect(whole.oneWayUnread).toEqual([]);
+    expect(whole.missingUnread).toEqual([]);
+    // A document whose number was never read (no title block declared, none
+    // in its filename) that is not read whole may be any sheet: no gap.
+    const scan = auditDrawingRefs([...docs, { id: "s", name: "scan_003.pdf" }], refs, self, null, new Map([["s", "its indexing failed"]]));
+    expect(scan.missingInSeries).toEqual([]);
+    expect(scan.missingUnread.map((m) => [m.ref, m.maybeIn])).toEqual(expect.arrayContaining([
+      ["025-PID-0199", ["scan_003.pdf (its indexing failed)"]],
+    ]));
+  });
+
   it("the prompt says how to write a sheet-only connector, and never to invent a box number (review fix pass 2)", () => {
     // A same-drawing continuation: SAME with its sheet — parsed as such.
     expect(VISION_SYSTEM).toContain(`'OPC 14: DWG ${OPC_SAME_DRAWING} SH 4 — TO V-1402'`);

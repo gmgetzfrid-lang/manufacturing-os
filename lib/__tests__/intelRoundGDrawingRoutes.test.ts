@@ -133,6 +133,7 @@ import { POST as locatePOST } from "@/app/api/knowledge/locate/route";
 import { recordAskUsage, getCapUsd } from "@/lib/ai/usageServer";
 import { estimateCostUsd, AGREEMENT_VERSION } from "@/lib/ai/pricing";
 import { INGEST_LEASE_TTL_MS } from "@/lib/knowledgeIngest";
+import { pageNeedsVision, extractEquipmentTags, extractDrawingRefs, isDrawingLikePage } from "@/lib/drawingText";
 
 const CTRL = [{ org_id: "o1", uid: "u-ctrl", role: "Viewer", roles: ["Viewer", "DocCtrl"], status: "active" }];
 const get = (q: string) => drawingGET(new NextRequest(`http://x/api/knowledge/drawing?${q}`, { headers: { authorization: "Bearer good" } }));
@@ -362,7 +363,9 @@ describe("DWG-13 — an unrevised sheet is never re-audited, and the response sa
     expect(rows101).toHaveLength(1);
     expect(rows101[0]).toMatchObject({ revision_code: "", status: "passed" });
     // …but a sheet that cannot be read right now never erases its verdict.
-    db.tables.knowledge_documents.find((d) => d.id === "u-102")!.status = "indexing";
+    // (Its indexing failed: a sheet still being indexed refuses the whole
+    // record — review fix pass 4.)
+    db.tables.knowledge_documents.find((d) => d.id === "u-102")!.status = "error";
     db.tables.knowledge_page_entities.push(ent("u-102", "opc", "4", 1, { raw: "OPC 4: DWG NONE — TO FLARE" }));
     const third = await record("kl-1");
     expect(logRows().find((r) => r.sheet_number === "025-PID-0102")).toMatchObject({ status: "passed" });
@@ -382,14 +385,23 @@ describe("DWG-13 — an unrevised sheet is never re-audited, and the response sa
 
   it("a 'skipped' verdict is re-audited once the sheet can be read — re-stamped, never lowered", async () => {
     twoLibraries();
-    db.tables.knowledge_documents.find((d) => d.id === "c-106")!.status = "indexing";
+    // Its indexing failed (a sheet still being indexed refuses the whole
+    // record — review fix pass 4); it declares its number, so its skip is
+    // filed under it.
+    db.tables.knowledge_documents.find((d) => d.id === "c-106")!.status = "error";
     await record("kl-1");
     const first = logRows().find((r) => r.library_id === "kl-1" && r.sheet_number === "025-PID-0106")!;
     expect(first.status).toBe("skipped");
     first.audited_at = "2026-09-01T00:00:00.000Z";
     db.tables.knowledge_documents.find((d) => d.id === "c-106")!.status = "ready";
     const again = await record("kl-1");
-    expect(again.body.recorded).toBe(1);
+    // 0106 is re-audited — and so are 0104 and 0105: the set they were
+    // judged against held a sheet not read whole, and now does not (review
+    // fix pass 4). Same verdicts, re-stamped.
+    expect(again.body.recorded).toBe(3);
+    expect(logRows().filter((r) => r.library_id === "kl-1").map((r) => [r.sheet_number, r.status]).sort())
+      .toEqual([["025-PID-0104", "passed"], ["025-PID-0105", "passed"], ["025-PID-0106", "passed"]]);
+    expect((await record("kl-1")).body.recorded).toBe(0);
     const now = logRows().find((r) => r.library_id === "kl-1" && r.sheet_number === "025-PID-0106")!;
     expect(now.status).toBe("passed");
     expect(now.audited_at).not.toBe("2026-09-01T00:00:00.000Z");
@@ -578,23 +590,38 @@ describe("the lens tells parked, drawing and prose sheets apart", () => {
     expect(by("x-1")).toMatchObject({ verdict: "text-no-tags", looksLike: "drawing", shxLike: true });
     expect(by("x-2")).toMatchObject({ verdict: "text-no-tags", looksLike: "prose", shxLike: false });
     const said = body.suggestions.join(" ");
-    // The cheaper remedy first: a keyed rebuild reads such pages page by page.
-    expect(said).toMatch(/1 sheet\(s\) look like SHX exports[\s\S]*Hit "Rebuild index" with your AI key saved: a page like that is read by AI vision during indexing, page by page/);
-    // No key has been used in this library: the every-page switch is not offered.
-    expect(said).not.toMatch(/index every page as an image/);
+    // The cheaper remedy first: a keyed rebuild USUALLY reads such pages page
+    // by page — not always (review fix pass 4).
+    expect(said).toMatch(/1 sheet\(s\) look like SHX exports[\s\S]*Hit "Rebuild index" with your AI key saved: a page with almost no text and no tags is usually read by AI vision during indexing, page by page/);
+    expect(said).not.toMatch(/a page like that is read by AI vision/);
+    // …then the one remaining remedy, conditionally, with its billing.
+    expect(said).toMatch(/If a rebuild with your key saved still leaves these sheets unread, the remaining switch is library-wide[\s\S]*index every page as an image/);
     expect(said).not.toMatch(/normal for prose documents/);
   });
 
-  it("the library-wide every-page switch is offered only once a keyed rebuild has evidently left SHX sheets unread (review fix pass 3)", async () => {
+  it("an all-SHX library whose title blocks read like sentences: no page is vision-read on a rebuild, and the every-page switch is still offered (review fix pass 4)", async () => {
+    // The reviewer's probe: an SHX title block's "DRAWING NO. … REV. … DWG.
+    // … CHK'D." has more than two sentence enders, so pageNeedsVision passes
+    // the page over; numbered notes do the same. No document here was ever
+    // vision-read — fix pass 3 then never offered the only remedy.
+    const titleBlock = "DRAWING NO. 025-PID-0104\nREV. A\nSCALE NTS\nDWG. BY JS\nCHK'D. AB\nTITLE CRUDE UNIT PIPING AND INSTRUMENT DIAGRAM\nACME REFINING CO";
+    const tags = extractEquipmentTags(titleBlock).length + extractDrawingRefs(titleBlock).length;
+    expect(tags).toBe(1);
+    expect(isDrawingLikePage(titleBlock)).toBe(true);
+    expect(pageNeedsVision(titleBlock, tags)).toBe(false);
     seed({
-      knowledge_documents: [kdoc("x-1"), kdoc("v-1", { vision_pages: 3 })],
-      knowledge_page_entities: [ent("x-1", "self", "025-PID-0104"), ent("x-1", "ref", "025-PID-0104-SH1"), ent("v-1", "equipment", "V-1")],
-      knowledge_chunks: [chunk("x-1", "DRAWING NO: 025-PID-0104 SHEET 1 GENERAL ARRANGEMENT"), chunk("v-1", "V-1 SUCTION DRUM")],
+      knowledge_documents: [kdoc("x-1", { name: "025-PID-0104.pdf" }), kdoc("x-2", { name: "025-PID-0105.pdf" })],
+      knowledge_page_entities: [
+        ent("x-1", "self", "025-PID-0104"), ent("x-1", "ref", "025-PID-0104"),
+        ent("x-2", "self", "025-PID-0105"), ent("x-2", "ref", "025-PID-0105"),
+      ],
+      knowledge_chunks: [chunk("x-1", titleBlock), chunk("x-2", titleBlock.replace("0104", "0105"))],
     });
     const body = await (await get("orgId=o1&libraryId=kl-1")).json();
-    expect(body.sheets.find((s: { id: string }) => s.id === "x-1")).toMatchObject({ shxLike: true });
+    expect(body.sheets.map((s: { shxLike: boolean }) => s.shxLike)).toEqual([true, true]);
     const said = body.suggestions.join(" ");
-    expect(said).toMatch(/Hit "Rebuild index" with your AI key saved[\s\S]*1 document\(s\) here were read by AI vision[\s\S]*if a rebuild with your key saved still leaves these sheets unread[\s\S]*Text doesn't extract from these files — index every page as an image/);
+    expect(said).toMatch(/2 sheet\(s\) look like SHX exports[\s\S]*usually read by AI vision[\s\S]*a page whose title block or notes read like sentences can be passed over/);
+    expect(said).toMatch(/If a rebuild with your key saved still leaves these sheets unread[\s\S]*Text doesn't extract from these files — index every page as an image/);
     // The switch is library-wide and bills: said plainly.
     expect(said).toMatch(/reads EVERY page of EVERY document in this library with AI vision and bills each page to your key/);
   });
@@ -885,7 +912,12 @@ describe("DWG-13 — 'already recorded' means the row covered this sheet, from t
     seed({
       knowledge_documents: [
         kdoc("s-1", { name: "2002-D-2001 SH1.pdf", source_document_id: "d-s1", source_version_id: "v-s1", source_rev: "0" }),
-        kdoc("s-2", { name: "2002-D-2001 SH2.pdf", source_document_id: "d-s2", source_version_id: "v-s2", source_rev: "0", status: "indexing" }),
+        // Parked: waiting on AI vision for its page (a sheet still being
+        // indexed refuses the whole record — review fix pass 4).
+        kdoc("s-2", {
+          name: "2002-D-2001 SH2.pdf", source_document_id: "d-s2", source_version_id: "v-s2", source_rev: "0", status: "indexing",
+          vision_failed_pages: [1], vision_retry_after: "2026-10-01T05:00:00Z", error: "1 page could not be read by AI vision (overloaded)",
+        }),
       ],
       knowledge_page_entities: [
         ent("s-1", "self", "2002-D-2001"), ent("s-1", "self", "2002-D-2001-SH1"), ent("s-1", "equipment", "V-1"),
@@ -905,7 +937,9 @@ describe("DWG-13 — 'already recorded' means the row covered this sheet, from t
     expect((logRows()[0].audit_details as { coverage: Record<string, string> }).coverage).toHaveProperty("s-1");
     expect((logRows()[0].audit_details as { coverage: Record<string, string> }).coverage).not.toHaveProperty("s-2");
     // SH2 finishes indexing — and carries a connector that names nowhere.
-    db.tables.knowledge_documents.find((d) => d.id === "s-2")!.status = "ready";
+    Object.assign(db.tables.knowledge_documents.find((d) => d.id === "s-2")!, {
+      status: "ready", vision_failed_pages: [], vision_retry_after: null, error: null,
+    });
     db.tables.knowledge_page_entities.push(ent("s-2", "opc", "15", 1, { raw: "OPC 15: DWG NONE — TO FLARE" }));
     const again = await record("kl-1");
     expect(again.body.alreadyRecorded).toEqual([]);
@@ -992,22 +1026,169 @@ describe("DWG-13 — a verdict that depends on a neighbour is re-judged when the
     expect((tank104.audit_details as { missingReferences: string[] }).missingReferences.join(" ")).toMatch(/025-PID-0107/);
   });
 
-  it("while a sheet is being indexed, no verdict is re-decided by its half-built index — and the response says so", async () => {
+  it("while a sheet is being indexed nothing is recorded (409, naming it) — a sheet re-audited for its own change is never judged against the half-built one (review fix pass 4)", async () => {
+    // The reviewer's probe: box 14 carried both ways; 0104 recorded passed.
     twoLibraries();
-    db.tables.knowledge_page_entities.push(ent("c-104", "opc", "14", 1, { raw: "OPC 14: DWG 025-PID-0105 SH 1 — TO V-1402" }));
+    db.tables.knowledge_page_entities.push(
+      ent("c-104", "opc", "14", 1, { raw: "OPC 14: DWG 025-PID-0105 SH 1 — TO V-1402" }),
+      ent("c-105", "opc", "14", 1, { raw: "OPC 14: DWG 025-PID-0104 SH 1 — FROM V-1401" }),
+    );
     await record("kl-1");
-    // 0105 is mid-rebuild: some of its boxes are back, it is not finished.
-    db.tables.knowledge_documents.find((d) => d.id === "c-105")!.status = "indexing";
-    db.tables.knowledge_page_entities.push(ent("c-105", "opc", "7", 1, { raw: "OPC 7: DWG 025-PID-0199 — TO V-7" }));
+    expect(logRows().find((r) => r.sheet_number === "025-PID-0104")).toMatchObject({ revision_code: "C", status: "passed" });
+    // A library-wide rebuild: 0105 is reset (queued, its entities cleared by
+    // resetKnowledgeIndex); 0104 is already re-read, with one extra row — so
+    // 0104 would be re-audited for its OWN change.
+    const saved105 = db.tables.knowledge_page_entities.filter((e) => e.document_id === "c-105");
+    db.tables.knowledge_page_entities = db.tables.knowledge_page_entities.filter((e) => e.document_id !== "c-105");
+    db.tables.knowledge_documents.find((d) => d.id === "c-105")!.status = "stale";
+    db.tables.knowledge_page_entities.push(ent("c-104", "equipment", "P-7"));
+    const before = JSON.stringify(logRows());
     const during = await record("kl-1");
+    expect(during.status).toBe(409);
     expect(during.body.indexingNow).toEqual(["025-PID-0105.pdf"]);
-    expect(during.body.alreadyRecorded.map((a: { sheetNumber: string }) => a.sheetNumber)).toContain("025-PID-0104");
-    expect(logRows().find((r) => r.sheet_number === "025-PID-0104")).toMatchObject({ status: "flagged" });
-    // Finished: 0104 is re-judged against what 0105 now holds.
+    expect(during.body.error).toMatch(/1 sheet\(s\) are being indexed right now \(025-PID-0105\.pdf\) — nothing was recorded[\s\S]*Record the audit once indexing finishes/);
+    // Nothing written: no false "never references back" filed against 0104,
+    // and no row under 0105's filename.
+    expect(JSON.stringify(logRows())).toBe(before);
+    expect(logRows().map((r) => r.sheet_number)).not.toContain("025-PID-0105.pdf");
+    // 0105 finishes with identical rows: 0104 is re-audited for its own
+    // change, against a whole 0105 — passed, as it is.
+    db.tables.knowledge_page_entities.push(...saved105);
     db.tables.knowledge_documents.find((d) => d.id === "c-105")!.status = "ready";
     const after = await record("kl-1");
-    expect(after.body.indexingNow).toBeUndefined();
-    expect(logRows().find((r) => r.sheet_number === "025-PID-0104")).toMatchObject({ status: "broken_connectors" });
+    expect(after.status).toBe(200);
+    expect(after.body.keptStored).toEqual([]);
+    expect(logRows().find((r) => r.sheet_number === "025-PID-0104")).toMatchObject({ revision_code: "C", status: "passed" });
+    expect(logRows().map((r) => r.sheet_number)).not.toContain("025-PID-0105.pdf");
+  });
+});
+
+describe("DWG-4 / DWG-13 — a neighbour not read whole is no evidence of what it lacks (review fix pass 4)", () => {
+  /** 0105 parked: page 1 read (box 7), page 2 waits on AI vision. */
+  const park0105 = () => Object.assign(db.tables.knowledge_documents.find((d) => d.id === "c-105")!, {
+    status: "indexing", page_count: 2, pages_indexed: 2, vision_failed_pages: [2], vision_retry_after: "2026-10-01T05:00:00Z",
+    error: "1 page could not be read by AI vision (overloaded)",
+  });
+
+  it("a box on a parked neighbour's unread page is unpaired, never broken_connectors — and is re-judged once the page is read", async () => {
+    // The reviewer's probe.
+    twoLibraries();
+    park0105();
+    db.tables.knowledge_page_entities.push(
+      ent("c-104", "opc", "14", 1, { raw: "OPC 14: DWG 025-PID-0105 SH 1 — TO V-1402" }),
+      ent("c-105", "opc", "7", 1, { raw: "OPC 7: DWG 025-PID-0199 — TO V-7" }),
+    );
+    // The lens says it…
+    const lens = await (await get("orgId=o1&libraryId=kl-1")).json();
+    expect(lens.opcUnreturned).toEqual([]);
+    expect(lens.opcUnpaired).toEqual([expect.objectContaining({ box: "14", to: "025-PID-0105.pdf", unread: "page(s) 2 never read" })]);
+    // …and so does the record: a parked sheet is no reason to refuse it.
+    const first = await record("kl-1");
+    expect(first.status).toBe(200);
+    const row = logRows().find((r) => r.sheet_number === "025-PID-0104")!;
+    expect(row).toMatchObject({ revision_code: "C", status: "flagged" });
+    const details = row.audit_details as { brokenConnectors: string[]; unpairedConnectors: string[] };
+    expect(details.brokenConnectors).toEqual([]);
+    expect(details.unpairedConnectors[0]).toMatch(/Connector 14 continues to 025-PID-0105\.pdf, which was not read whole \(page\(s\) 2 never read\)/);
+    // 0105 itself is skipped — and nobody accepted its partial index: its
+    // finding says it waits on AI vision (review fix pass 4, minor).
+    const r105 = logRows().find((r) => r.sheet_number === "025-PID-0105")!;
+    expect(r105.status).toBe("skipped");
+    expect((r105.audit_details as { unreadPages: string[] }).unreadPages[0]).toMatch(/Page\(s\) 2 were never read by AI vision \(waiting on AI vision\)/);
+    const said105 = first.body.sheets.find((x: { sheetNumber: string }) => x.sheetNumber === "025-PID-0105");
+    expect(said105.findings.join(" ")).not.toMatch(/accepted/);
+    // The retry reads page 2: box 14 is there. 0104 is re-judged (its
+    // neighbour changed) — passed now; the stored flagged, a true finding
+    // when it was filed, is never lowered at that revision.
+    Object.assign(db.tables.knowledge_documents.find((d) => d.id === "c-105")!, {
+      status: "ready", vision_failed_pages: [], vision_retry_after: null, error: null,
+    });
+    db.tables.knowledge_page_entities.push(ent("c-105", "opc", "14", 2, { raw: "OPC 14: DWG 025-PID-0104 SH 1 — FROM V-1401" }));
+    const second = await record("kl-1");
+    expect(second.body.keptStored).toEqual([expect.objectContaining({ sheetNumber: "025-PID-0104", stored: "flagged", computed: "passed" })]);
+    expect(logRows().find((r) => r.sheet_number === "025-PID-0104")!.status).toBe("flagged");
+    expect(logRows().map((r) => r.status)).not.toContain("broken_connectors");
+  });
+
+  it("an accepted partial index: a box, or a reference back, that may stand on its unread page is never broken or one-way", async () => {
+    twoLibraries();
+    // 0105 accepted with page 2 unread; its reference back to 0104 is on page
+    // 2, so only 0106's reference stands; box 14 is on page 2 too.
+    Object.assign(db.tables.knowledge_documents.find((d) => d.id === "c-105")!, {
+      page_count: 2, pages_indexed: 2, vision_failed_pages: [2], vision_partial_accepted: true,
+    });
+    db.tables.knowledge_page_entities = db.tables.knowledge_page_entities.filter((e) =>
+      !(e.document_id === "c-105" && e.kind === "ref" && e.tag === "025-PID-0104"));
+    db.tables.knowledge_page_entities.push(
+      ent("c-104", "opc", "14", 1, { raw: "OPC 14: DWG 025-PID-0105 SH 1 — TO V-1402" }),
+      ent("c-105", "opc", "7", 1, { raw: "OPC 7: DWG 025-PID-0199 — TO V-7" }),
+    );
+    const lens = await (await get("orgId=o1&libraryId=kl-1")).json();
+    expect(lens.audit.oneWay).toEqual([]);
+    expect(lens.audit.oneWayUnread).toEqual([expect.objectContaining({ from: "025-PID-0104.pdf", to: "025-PID-0105.pdf", unread: "page(s) 2 never read" })]);
+    expect(lens.suggestions.join(" ")).toMatch(/1 reference\(s\) could not be checked: they need a sheet that was not read whole \(025-PID-0105\.pdf — page\(s\) 2 never read\)/);
+    await record("kl-1");
+    const row = logRows().find((r) => r.sheet_number === "025-PID-0104")!;
+    expect(row.status).toBe("flagged");
+    const details = row.audit_details as { brokenConnectors: string[]; oneWay: string[]; uncheckedReferences: string[]; unpairedConnectors: string[] };
+    expect(details.brokenConnectors).toEqual([]);
+    expect(details.oneWay).toEqual([]);
+    expect(details.uncheckedReferences).toEqual([
+      "References 025-PID-0105.pdf, which was not read whole (page(s) 2 never read) — whether it references back was not checked",
+    ]);
+    expect(details.unpairedConnectors[0]).toMatch(/not read whole \(page\(s\) 2 never read\)/);
+    // The accepted sheet's own finding says it was accepted.
+    const r105 = logRows().find((r) => r.sheet_number === "025-PID-0105")!;
+    expect(r105.status).toBe("flagged");
+    expect((r105.audit_details as { unreadPages: string[] }).unreadPages[0]).toMatch(/\(partial index accepted\)/);
+  });
+
+  it("a sheet not found in what was read of the set is no gap while the sheet that may hold it is parked — and is judged once it is read whole", async () => {
+    twoLibraries();
+    park0105();
+    // 0106 points only at 0105's sheet 2 — on the page nobody read yet.
+    const ref106 = db.tables.knowledge_page_entities.find((e) => e.document_id === "c-106" && e.kind === "ref")!;
+    ref106.tag = ref106.raw = "025-PID-0105-SH2";
+    const lens = await (await get("orgId=o1&libraryId=kl-1")).json();
+    expect(lens.audit.missingInSeries).toEqual([]);
+    expect(lens.audit.missingUnread).toEqual([expect.objectContaining({ ref: "025-PID-0105-SH2", maybeIn: ["025-PID-0105.pdf (page(s) 2 never read)"] })]);
+    await record("kl-1");
+    const first = logRows().find((r) => r.sheet_number === "025-PID-0106")!;
+    expect(first.status).toBe("flagged");
+    expect((first.audit_details as { missingReferences: string[]; uncheckedReferences: string[] }))
+      .toMatchObject({ missingReferences: [], uncheckedReferences: [expect.stringMatching(/References 025-PID-0105-SH2, which was not found in what was read of the set — it may be in 025-PID-0105\.pdf \(page\(s\) 2 never read\)/)] });
+    // Page 2 is read — and is not sheet 2 after all. 0106 points at no sheet
+    // of 0105, so only the set says what changed: it is re-judged.
+    Object.assign(db.tables.knowledge_documents.find((d) => d.id === "c-105")!, {
+      status: "ready", vision_failed_pages: [], vision_retry_after: null, error: null,
+    });
+    const again = await record("kl-1");
+    expect(again.body.alreadyRecorded.map((a: { sheetNumber: string }) => a.sheetNumber)).not.toContain("025-PID-0106");
+    const now = logRows().find((r) => r.sheet_number === "025-PID-0106")!;
+    expect(now.status).toBe("flagged");
+    expect((now.audit_details as { missingReferences: string[]; uncheckedReferences: string[] }))
+      .toMatchObject({ missingReferences: ["References 025-PID-0105-SH2, which isn't in the set"], uncheckedReferences: [] });
+  });
+
+  it("a sheet that is not ready and declares no drawing number is reported, never filed under its filename (review fix pass 4, minor)", async () => {
+    twoLibraries();
+    // 0106 waits on AI vision for page 1 — its title block — so it declares
+    // nothing yet.
+    Object.assign(db.tables.knowledge_documents.find((d) => d.id === "c-106")!, {
+      status: "indexing", vision_failed_pages: [1], vision_retry_after: "2026-10-01T05:00:00Z", error: "1 page could not be read by AI vision",
+    });
+    db.tables.knowledge_page_entities = db.tables.knowledge_page_entities.filter((e) => !(e.document_id === "c-106" && e.kind === "self"));
+    const res = await record("kl-1");
+    expect(res.status).toBe(200);
+    expect(res.body.notRecorded).toEqual([expect.objectContaining({
+      name: "025-PID-0106.pdf", status: "skipped", reason: expect.stringMatching(/still waiting to finish indexing — its drawing number is not read yet/),
+    })]);
+    expect(logRows().map((r) => r.sheet_number)).not.toContain("025-PID-0106.pdf");
+    // A failed one says so.
+    Object.assign(db.tables.knowledge_documents.find((d) => d.id === "c-106")!, { status: "error", vision_retry_after: null });
+    const failed = await record("kl-1");
+    expect(failed.body.notRecorded).toEqual([expect.objectContaining({ reason: expect.stringMatching(/its indexing failed before its drawing number was read/) })]);
+    expect(logRows().map((r) => r.sheet_number)).not.toContain("025-PID-0106.pdf");
   });
 });
 

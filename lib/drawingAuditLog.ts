@@ -77,11 +77,23 @@ export interface AuditFindings {
   unreadableConnectors?: Array<{ sheet: string; box: string }>;
   /** Connectors whose box could not be paired: the sheet they continue on
    *  has no box numbers read (a text layer, or a sheet read before connector
-   *  boxes were transcribed). Absence of evidence — never broken (DWG-4). */
-  unpairedConnectors?: Array<{ from: string; to: string; box: string }>;
-  /** Pages AI vision never read on a sheet whose partial index was
-   *  accepted: nothing on them — connectors included — was audited. */
-  unreadPages?: Array<{ sheet: string; pages: readonly number[] }>;
+   *  boxes were transcribed), or was not read whole and the box is not on
+   *  what was read of it (`unread` says why — review fix pass 4). Absence of
+   *  evidence — never broken (DWG-4). */
+  unpairedConnectors?: Array<{ from: string; to: string; box: string; unread?: string }>;
+  /** References whose check needed a sheet that was not read whole: the
+   *  target was not found to reference back on what was read of it
+   *  (`to`), or a sheet in scope was not found and may be in such a
+   *  document (`ref`, `maybeIn`). Unchecked — never one-way, never a gap
+   *  (review fix pass 4). */
+  oneWayUnread?: Array<{ from: string; to: string; unread: string }>;
+  missingUnread?: Array<{ ref: string; referencedBy: string[]; maybeIn: readonly string[] }>;
+  /** Pages AI vision never read: nothing on them — connectors included —
+   *  was audited. `why` says whose decision left them unread: "partial index
+   *  accepted" (the default) only for a controller's accepted partial index;
+   *  a sheet still waiting on AI vision, or whose indexing failed, says so
+   *  (review fix pass 4). */
+  unreadPages?: Array<{ sheet: string; pages: readonly number[]; why?: string }>;
 }
 
 export interface SheetVerdict {
@@ -98,7 +110,10 @@ export interface SheetVerdict {
     unreadableConnectors: string[];
     /** Connectors whose box could not be paired (DWG-4). */
     unpairedConnectors: string[];
-    /** Pages never read (an accepted partial index). */
+    /** References not checked because a sheet they need was not read whole
+     *  (review fix pass 4). */
+    uncheckedReferences: string[];
+    /** Pages never read by AI vision, and why. */
     unreadPages: string[];
   };
   /** The documents this verdict covers, each with the basis it was computed
@@ -149,14 +164,26 @@ export function verdictsForSheets(
   }
   const unpaired = new Map<string, string[]>();
   for (const c of findings.unpairedConnectors ?? []) {
-    push(unpaired, c.from,
-      `Connector ${c.box} continues to ${c.to}, whose box numbers were never read — the pairing was not checked; check the box on that sheet`);
+    push(unpaired, c.from, c.unread
+      ? `Connector ${c.box} continues to ${c.to}, which was not read whole (${c.unread}) — the box is not on what was read of it, so the pairing was not checked; check the box on that sheet`
+      : `Connector ${c.box} continues to ${c.to}, whose box numbers were never read — the pairing was not checked; check the box on that sheet`);
+  }
+  const unchecked = new Map<string, string[]>();
+  for (const o of findings.oneWayUnread ?? []) {
+    push(unchecked, o.from,
+      `References ${o.to}, which was not read whole (${o.unread}) — whether it references back was not checked`);
+  }
+  for (const m of findings.missingUnread ?? []) {
+    for (const by of m.referencedBy) {
+      push(unchecked, by,
+        `References ${m.ref}, which was not found in what was read of the set — it may be in ${m.maybeIn.join("; ")}, not read whole`);
+    }
   }
   const unreadPages = new Map<string, string[]>();
   for (const u of findings.unreadPages ?? []) {
     if (u.pages.length === 0) continue;
     push(unreadPages, u.sheet,
-      `Page(s) ${u.pages.join(", ")} were never read by AI vision (partial index accepted) — nothing on them was audited`);
+      `Page(s) ${u.pages.join(", ")} were never read by AI vision (${u.why ?? "partial index accepted"}) — nothing on them was audited`);
   }
 
   return sheets.map((s) => {
@@ -165,14 +192,16 @@ export function verdictsForSheets(
     const w = oneWay.get(s.name) ?? [];
     const u = unreadable.get(s.name) ?? [];
     const q = unpaired.get(s.name) ?? [];
+    const c = unchecked.get(s.name) ?? [];
     const p = unreadPages.get(s.name) ?? [];
-    // An unreadable destination, a pairing nobody could check, or a page
-    // nobody read, is absence of evidence: it keeps a sheet from "passing",
-    // and never makes it "broken".
+    // An unreadable destination, a pairing nobody could check, a reference
+    // whose check needed a sheet nobody read whole, or a page nobody read, is
+    // absence of evidence: it keeps a sheet from "passing", and never makes
+    // it "broken".
     const status: AuditStatus = !s.indexed
       ? "skipped"
       : b.length > 0 ? "broken_connectors"
-      : (m.length > 0 || w.length > 0 || u.length > 0 || q.length > 0 || p.length > 0) ? "flagged"
+      : (m.length > 0 || w.length > 0 || u.length > 0 || q.length > 0 || c.length > 0 || p.length > 0) ? "flagged"
       : "passed";
     return {
       documentId: s.documentId,
@@ -181,7 +210,8 @@ export function verdictsForSheets(
       revision: s.revision,
       status,
       details: {
-        brokenConnectors: b, missingReferences: m, oneWay: w, unreadableConnectors: u, unpairedConnectors: q, unreadPages: p,
+        brokenConnectors: b, missingReferences: m, oneWay: w, unreadableConnectors: u, unpairedConnectors: q,
+        uncheckedReferences: c, unreadPages: p,
       },
     };
   });
@@ -298,17 +328,11 @@ export function indexFingerprint(index: {
  *  returned, is read off THAT sheet — and the set it was judged against
  *  (`set`, a digest of every number the library's sheets answer to: what is
  *  missing, and which series are held). Written as
- *  "<own>+<neighbourhood digest>", so the sheet's own part can still be
- *  compared alone (basisIndexPart) while a neighbour is being indexed. */
+ *  "<own>+<neighbourhood digest>"; compared whole. Nothing is recorded while
+ *  a sheet of the library is being indexed (the route refuses — review fix
+ *  pass 4), so no basis is ever taken from a half-built neighbour. */
 export function verdictBasis(own: string, neighbours: readonly string[], set: string): string {
   return `${own}+${digest(`${[...neighbours].sort().join("\n")}\u0002${set}`)}`;
-}
-
-/** The sheet's own index part of a recorded basis. A coverage entry written
- *  before verdictBasis is the bare indexFingerprint — all of it. */
-export function basisIndexPart(basis: string): string {
-  const cut = basis.indexOf("+");
-  return cut >= 0 ? basis.slice(0, cut) : basis;
 }
 
 /**
@@ -340,12 +364,12 @@ export function basisIndexPart(basis: string): string {
  * A row with no coverage (written before this rule, or by another writer)
  * is not done: it is audited once more, never lowered.
  *
- * `indexOnly`: while any sheet of the library is being indexed, its index
- * is half-built, and a neighbour's half-built index must never re-decide a
- * verdict (it would file "unpaired" or a gap that is not there, and a known
- * revision's verdict is never lowered again). Then only each sheet's OWN
- * index is compared (basisIndexPart), as before review fix pass 3; the
- * neighbours are compared again once indexing settles.
+ * The caller never asks while a sheet of the library is being indexed: a
+ * half-built index would decide verdicts — its own, or one that points at
+ * it — that a known revision could never lower again, so the route refuses
+ * to record until indexing finishes (review fix pass 4; fix pass 3's
+ * own-index-only comparison still let a sheet re-audited for any other
+ * reason be judged against the half-built one).
  */
 export function sheetsNeedingAudit(
   sheets: readonly AuditSheet[],
@@ -354,7 +378,6 @@ export function sheetsNeedingAudit(
     coverage?: Readonly<Record<string, string>> | null;
   }>,
   fingerprints: ReadonlyMap<string, string>,
-  opts: { indexOnly?: boolean } = {},
 ): AuditSheet[] {
   const done = new Map<string, Readonly<Record<string, string>>>();
   for (const a of priorAudits) {
@@ -369,11 +392,8 @@ export function sheetsNeedingAudit(
   const out: AuditSheet[] = [];
   for (const [key, group] of byKey) {
     const covered = done.get(key);
-    const same = (stored: string | undefined, now: string | undefined) =>
-      stored !== undefined && now !== undefined &&
-      (opts.indexOnly ? basisIndexPart(stored) === basisIndexPart(now) : stored === now);
     const whole = !!covered && group.every((s) =>
-      s.revision !== "" && fingerprints.has(s.documentId) && same(covered[s.documentId], fingerprints.get(s.documentId)));
+      s.revision !== "" && fingerprints.has(s.documentId) && covered[s.documentId] === fingerprints.get(s.documentId));
     if (!whole) out.push(...group);
   }
   // Input order, whatever the grouping.

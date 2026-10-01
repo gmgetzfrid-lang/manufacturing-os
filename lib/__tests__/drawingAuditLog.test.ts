@@ -8,7 +8,7 @@ import { describe, it, expect } from "vitest";
 import {
   verdictsForSheets, sheetsNeedingAudit, verdictRows, RANK, wouldLowerSeverity,
   seriesHeldBySet, seriesNotJudged, missingWithinHeldSeries, mayReplaceStored, AUDIT_SET_LIST_MAX,
-  indexFingerprint, digest, verdictBasis, basisIndexPart, type AuditSheet, type AuditFindings,
+  indexFingerprint, digest, verdictBasis, type AuditSheet, type AuditFindings,
 } from "@/lib/drawingAuditLog";
 import { sheetIdentities } from "@/lib/drawingText";
 
@@ -195,12 +195,9 @@ describe("verdictBasis — a verdict stands only while its neighbours and its se
     expect(verdictBasis("own-a", ["b:fp-b"], "set-1")).not.toBe(base);
     // A sheet added that makes a gap judgeable (or fills one).
     expect(verdictBasis("own-a", ["b:fp-b", "c:fp-c"], "set-2")).not.toBe(base);
-    expect(basisIndexPart(base)).toBe("own-a");
-    // A coverage entry written before verdictBasis is the bare fingerprint.
-    expect(basisIndexPart("fp-old")).toBe("fp-old");
   });
 
-  it("sheetsNeedingAudit: a neighbour's change re-audits the sheet; while indexing runs, only the sheet's own index counts", () => {
+  it("sheetsNeedingAudit: a neighbour's change re-audits the sheet, and so does its own (the basis is compared whole)", () => {
     const k1 = sheet({ documentId: "k-1", sheetNumber: "P-1" });
     const stored = verdictBasis("own-a", ["k-2:fp-b"], "set-1");
     const prior = [{ sheet_number: "P-1", revision_code: "C", status: "flagged", coverage: { "k-1": stored } }];
@@ -208,16 +205,13 @@ describe("verdictBasis — a verdict stands only while its neighbours and its se
     // k-2 re-read (its boxes transcribed at last): k-1 is re-judged.
     const now = new Map([["k-1", verdictBasis("own-a", ["k-2:fp-b2"], "set-1")]]);
     expect(sheetsNeedingAudit([k1], prior, now)).toEqual([k1]);
-    // …but not against a half-built index while something is being indexed.
-    expect(sheetsNeedingAudit([k1], prior, now, { indexOnly: true })).toEqual([]);
-    // Its own index changed: re-audited either way.
+    // Its own index changed: re-audited.
     const own = new Map([["k-1", verdictBasis("own-z", ["k-2:fp-b"], "set-1")]]);
-    expect(sheetsNeedingAudit([k1], prior, own, { indexOnly: true })).toEqual([k1]);
+    expect(sheetsNeedingAudit([k1], prior, own)).toEqual([k1]);
     // A row written before review fix pass 3 (a bare fingerprint) is audited
-    // once more — and, while indexing runs, compared on its own index.
+    // once more.
     const old = [{ ...prior[0], coverage: { "k-1": "own-a" } }];
     expect(sheetsNeedingAudit([k1], old, new Map([["k-1", stored]]))).toEqual([k1]);
-    expect(sheetsNeedingAudit([k1], old, new Map([["k-1", stored]]), { indexOnly: true })).toEqual([]);
   });
 });
 
@@ -262,6 +256,42 @@ describe("unread pages keep a sheet from passing (an accepted partial index)", (
     expect(v.details.unreadPages[0]).toMatch(/Page\(s\) 5, 6 were never read by AI vision/);
     const [clean] = verdictsForSheets([sheet()], { ...NOTHING, unreadPages: [{ sheet: "PID-44-012.pdf", pages: [] }] });
     expect(clean.status).toBe("passed");
+  });
+
+  it("says whose decision left them unread: 'accepted' only for an accepted partial index (review fix pass 4)", () => {
+    const [accepted] = verdictsForSheets([sheet()], { ...NOTHING, unreadPages: [{ sheet: "PID-44-012.pdf", pages: [5], why: "partial index accepted" }] });
+    expect(accepted.details.unreadPages[0]).toMatch(/\(partial index accepted\)/);
+    const [waiting] = verdictsForSheets([sheet()], { ...NOTHING, unreadPages: [{ sheet: "PID-44-012.pdf", pages: [2], why: "waiting on AI vision" }] });
+    expect(waiting.details.unreadPages[0]).toMatch(/Page\(s\) 2 were never read by AI vision \(waiting on AI vision\)/);
+    expect(waiting.details.unreadPages[0]).not.toMatch(/accepted/);
+  });
+});
+
+describe("a check that needed a sheet nobody read whole is unchecked — never broken, never one-way, never a gap (review fix pass 4)", () => {
+  it("a box not on what was read of its target is unpaired with the reason; the sheet is flagged, never broken", () => {
+    const [v] = verdictsForSheets([sheet()], {
+      ...NOTHING, unpairedConnectors: [{ from: "PID-44-012.pdf", to: "025-PID-0105.pdf", box: "14", unread: "page(s) 2 never read" }],
+    });
+    expect(v.status).toBe("flagged");
+    expect(v.details.unpairedConnectors[0]).toMatch(
+      /Connector 14 continues to 025-PID-0105\.pdf, which was not read whole \(page\(s\) 2 never read\) — the box is not on what was read of it, so the pairing was not checked/);
+    expect(v.details.unpairedConnectors[0]).not.toMatch(/whose box numbers were never read/);
+    expect(v.details.brokenConnectors).toEqual([]);
+  });
+
+  it("a reference back, or a sheet, not found on a sheet not read whole is an unchecked reference — flagged, with the reason", () => {
+    const [v] = verdictsForSheets([sheet()], {
+      ...NOTHING,
+      oneWayUnread: [{ from: "PID-44-012.pdf", to: "025-PID-0105.pdf", unread: "page(s) 2 never read" }],
+      missingUnread: [{ ref: "025-PID-0105-SH2", referencedBy: ["PID-44-012.pdf"], maybeIn: ["025-PID-0105.pdf (page(s) 2 never read)"] }],
+    });
+    expect(v.status).toBe("flagged");
+    expect(v.details.oneWay).toEqual([]);
+    expect(v.details.missingReferences).toEqual([]);
+    expect(v.details.uncheckedReferences).toEqual([
+      "References 025-PID-0105.pdf, which was not read whole (page(s) 2 never read) — whether it references back was not checked",
+      "References 025-PID-0105-SH2, which was not found in what was read of the set — it may be in 025-PID-0105.pdf (page(s) 2 never read), not read whole",
+    ]);
   });
 });
 

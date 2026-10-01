@@ -20,7 +20,9 @@
 //                                           re-audited — the response lists
 //                                           it as already recorded (DWG-13);
 //                                           one whose revision is unknown
-//                                           ("") always is
+//                                           ("") always is. Refused (409)
+//                                           while any sheet of the library
+//                                           is being indexed
 //   POST { orgId, libraryId, action:"rebuild", cursor? }
 //                                         → re-extract everything through
 //                                           the ONE reset of a document's
@@ -343,6 +345,29 @@ const isParked = (d: DocRow) =>
   !!d.vision_retry_after || (d.error != null && d.error !== "" && d.status !== "error");
 const isReadyHere = (d: DocRow) => d.status === "ready" && !isParked(d);
 
+/** By document id: the documents whose index is NOT whole, each with why —
+ *  pages AI vision never read (parked, an accepted partial index, a failed
+ *  run), a document whose indexing failed, or one not finished indexing.
+ *  What such a sheet holds may stand on a page nobody read, so its silence
+ *  is never evidence: a box or a reference back not found on what was read
+ *  of it is unchecked, never `unreturned` or one-way, and a sheet of its
+ *  drawing not found is no gap (DWG-4 / DWG-13, review fix pass 4). */
+function notReadWhole(docs: readonly DocRow[]): Map<string, string> {
+  const out = new Map<string, string>();
+  for (const d of docs) {
+    const failed = [...(d.vision_failed_pages ?? [])].sort((a, b) => a - b);
+    if (failed.length > 0) out.set(d.id, `page(s) ${failed.join(", ")} never read`);
+    else if (d.status === "error") out.set(d.id, "its indexing failed");
+    else if (!isReadyHere(d)) out.set(d.id, "not finished indexing");
+  }
+  return out;
+}
+
+/** Sheets being indexed right now: queued or mid-read. A parked sheet waits
+ *  with what it has, and a failed one is finished; neither is in flight. */
+const indexingNowOf = (docs: readonly DocRow[]) =>
+  docs.filter((d) => d.status !== "ready" && d.status !== "error" && !isParked(d));
+
 /** Index maps the census, audit and readout share. */
 function indexMaps(index: IndexRead) {
   const selfByDoc = new Map<string, string[]>();
@@ -417,18 +442,26 @@ export async function GET(req: NextRequest) {
 
   // ── Census + reference audit + suggestions ─────────────────────────────
   const census = buildEquipmentCensus(equipment.map((e) => ({ tag: e.tag, count: e.occurrences })), prefixLabels);
+  // Sheets not read whole: their silence is not evidence — the SAME rule the
+  // record applies (review fix pass 4).
+  const incomplete = notReadWhole(docs);
   const refAudit = auditDrawingRefs(
-    docs.map((d) => ({ id: d.id, name: d.name })), refsByDoc, selfByDoc, unitMap,
+    docs.map((d) => ({ id: d.id, name: d.name })), refsByDoc, selfByDoc, unitMap, incomplete,
   );
   // A gap is judged only inside a series this library holds — the SAME rule
   // the record applies (DWG-6), so the lens never calls "a gap in the set"
   // what the record refuses to judge. The series not judged are named.
   const identities = new Map(docs.map((d) => [d.id, sheetIdentities(d.name, selfByDoc.get(d.id) ?? [])]));
   const notJudged = seriesNotJudged(identities);
-  const audit = { ...refAudit, missingInSeries: missingWithinHeldSeries(refAudit.missingInSeries, seriesHeldBySet(identities)) };
+  const held = seriesHeldBySet(identities);
+  const audit = {
+    ...refAudit,
+    missingInSeries: missingWithinHeldSeries(refAudit.missingInSeries, held),
+    missingUnread: missingWithinHeldSeries(refAudit.missingUnread, held),
+  };
 
   // ── OPC box pairing (best-effort) ──────────────────────────────────────
-  const opc = auditOpcBoxes(index.opc, selfByDoc, nameById);
+  const opc = auditOpcBoxes(index.opc, selfByDoc, nameById, incomplete);
   const {
     boxCount: opcBoxCount, unreturned: opcUnreturned, unpaired: opcUnpaired, noRef: opcNoRef, unknown: opcUnknown,
   } = opc;
@@ -574,25 +607,25 @@ export async function GET(req: NextRequest) {
   const proseNoTags = sheets.filter((s) => s.looksLike === "prose");
   const shxNoTags = sheets.filter((s) => s.shxLike);
   if (shxNoTags.length > 0) {
-    // The cheaper remedy first: a thin page with no tags is read by AI
-    // vision page by page on any rebuild with a key saved (pageNeedsVision).
-    // The library-wide every-page switch bills every page of every document,
-    // so it is offered only once a key has evidently been used here (some
-    // document was read by AI vision) and these sheets are still unread —
-    // said plainly (DEC-59 item 1, review fix pass 3).
-    const visionReadHere = docs.filter((d) => Number(d.vision_pages ?? 0) > 0).length;
+    // The cheaper remedy first: a thin page with no tags is USUALLY read by
+    // AI vision page by page on a rebuild with a key saved — not always:
+    // pageNeedsVision passes over a page whose text reads like sentences,
+    // and an SHX title block's "DRAWING NO. … REV. … CHK'D." or its numbered
+    // notes do. So the library-wide every-page switch, the one remedy for
+    // such a sheet, is always named after it, conditionally and with its
+    // billing said plainly (DEC-59 item 1; review fix pass 4 — fix pass 3
+    // offered it only once another document had been vision-read, and an
+    // all-SHX library never was).
     suggestions.push(
       `${shxNoTags.length} sheet(s) look like SHX exports — capital lettering, thin text, nothing but their own ` +
       "title block's number, and no equipment tags or references to other drawings in their text layer: their tags " +
       "are most likely line-work, invisible to text extraction. Hit \"Rebuild index\" with your AI key saved: a " +
-      "page like that is read by AI vision during indexing, page by page, and each page read bills to your key." +
-      (visionReadHere > 0
-        ? ` ${visionReadHere} document(s) here were read by AI vision, so a key has been used in this library: if a ` +
-          "rebuild with your key saved still leaves these sheets unread, the remaining switch is library-wide — " +
-          "\"Text doesn't extract from these files — index every page as an image\" in Library AI setup, then " +
-          "\"Rebuild index\", reads EVERY page of EVERY document in this library with AI vision and bills each page " +
-          "to your key. Turn it on only if most of this library is like these sheets."
-        : ""),
+      "page with almost no text and no tags is usually read by AI vision during indexing, page by page, and each " +
+      "page read bills to your key (a page whose title block or notes read like sentences can be passed over). If " +
+      "a rebuild with your key saved still leaves these sheets unread, the remaining switch is library-wide — " +
+      "\"Text doesn't extract from these files — index every page as an image\" in Library AI setup, then " +
+      "\"Rebuild index\", reads EVERY page of EVERY document in this library with AI vision and bills each page " +
+      "to your key. Turn it on only if most of this library is like these sheets.",
     );
   }
   if (readyDocs > 0 && !hasEntities && proseNoTags.length > 0 && drawingNoTags.length === 0) {
@@ -678,8 +711,20 @@ export async function GET(req: NextRequest) {
   if (opcUnpaired.length > 0) {
     suggestions.push(
       `${opcUnpaired.length} connector box(es) could not be paired: the sheet each continues on has no box ` +
-      "numbers read (a text layer, or a sheet read by AI vision before connector boxes were transcribed). " +
-      "They are NOT counted as broken — check those boxes on the sheet (listed below).",
+      "numbers read (a text layer, or a sheet read by AI vision before connector boxes were transcribed), or was " +
+      "not read whole and the box is not on what was read of it. They are NOT counted as broken — check those " +
+      "boxes on the sheet (listed below).",
+    );
+  }
+  // References whose check needs a sheet that was not read whole (review
+  // fix pass 4): never one-way, never a gap — said, with the sheets.
+  const uncheckedRefs = audit.oneWayUnread.length + audit.missingUnread.length;
+  if (uncheckedRefs > 0) {
+    const partly = docs.filter((d) => incomplete.has(d.id));
+    suggestions.push(
+      `${uncheckedRefs} reference(s) could not be checked: they need a sheet that was not read whole ` +
+      `(${partly.slice(0, 4).map((d) => `${d.name} — ${incomplete.get(d.id)}`).join("; ")}${partly.length > 4 ? "; …" : ""}). ` +
+      "They are NOT counted as one-way or missing; once that sheet is read whole they are judged.",
     );
   }
   if (opcNoRef.length > 0) {
@@ -943,11 +988,21 @@ const sameRev = (a: string, b: string) => a.trim().toUpperCase() === b.trim().to
  *     sheet its connectors and references resolve to, and the set. A
  *     sibling sheet's verdict never stands for a sheet that was skipped or
  *     added since; a rebuild that changed a sheet's index re-audits it; so
- *     does a change in a sheet it points at, or in the set. While any sheet
- *     is being indexed, only each sheet's own index is compared — a
- *     half-built neighbour never re-decides a verdict. A sheet whose
+ *     does a change in a sheet it points at, or in the set. A sheet whose
  *     revision is unknown ("") always is audited: "unrevised" cannot be
  *     established for it, and its row takes the latest verdict.
+ *   * Nothing is recorded while any sheet of the library is being indexed
+ *     (queued or mid-read): 409, naming them (review fix pass 4). A half-
+ *     built index has lost its rows — references to it no longer resolve,
+ *     its boxes are gone — and any sheet judged against it (re-audited for
+ *     its own change, or new) would file a one-way, a gap or a box that is
+ *     not there, which a known revision could never lower again.
+ *   * A sheet that is not read whole (pages AI vision never read: parked,
+ *     an accepted partial index, a failed run; or a failed document) is
+ *     no evidence: a box, or a reference back, not found on what was read
+ *     of it is unchecked — `unpaired`, never `unreturned`, never one-way —
+ *     and a sheet of its drawing that is not found is no gap (review fix
+ *     pass 4). Broken stays exactly what the sheet itself shows.
  *   * A stored verdict under a known revision is never replaced by a less
  *     severe one (RANK — mayReplaceStored).
  *   * A gap ("isn't in the set") is judged only inside a series the library
@@ -957,7 +1012,10 @@ const sameRev = (a: string, b: string) => a.trim().toUpperCase() === b.trim().to
  *     are out of the set's scope. The series not judged are named on the
  *     record.
  *   * Pages AI vision never read (an accepted partial index) keep a sheet
- *     from passing.
+ *     from passing; the finding says why they are unread.
+ *   * A sheet that is not ready and declares no drawing number has no key
+ *     yet: it is reported under notRecorded, never filed under its filename
+ *     (review fix pass 4).
  *   * Nothing is recorded from a partial read of the index (DWG-11).
  *   * Before 20261124 (no library_id) the verdicts are still recorded, on
  *     the org-wide key that database has: prior rows read org-wide, the
@@ -971,6 +1029,25 @@ async function recordAudit(orgId: string, libraryId: string, userId: string) {
   const { docs, error: docErr } = await loadVisibleDocs(orgId, userId, libraryId);
   if (docErr) return bad(docErr, docErr === "Not a member of this workspace" ? 403 : 500);
   if (docs.length === 0) return NextResponse.json({ recorded: 0, counts: {}, sheets: [], alreadyRecorded: [], notRecorded: [] });
+
+  // Nothing is recorded while a sheet of the library is being indexed (DWG-
+  // 13, review fix pass 4). Its index is half-built: references to it no
+  // longer resolve, its boxes and its references back are gone. Any sheet
+  // judged against it — re-audited for its own change, or new — would file
+  // a one-way, a gap or a box that is not there, and a verdict at a known
+  // revision is never lowered (RANK), so the false finding would stand for
+  // good. Comparing only each sheet's own index (fix pass 3) did not stop
+  // that: it chose which sheets are re-audited, not what they are judged on.
+  const indexingNow = indexingNowOf(docs);
+  if (indexingNow.length > 0) {
+    const names = indexingNow.map((d) => d.name);
+    return NextResponse.json({
+      error: `${names.length} sheet(s) are being indexed right now (${names.slice(0, 4).join(", ")}${names.length > 4 ? ", …" : ""}) ` +
+        "— nothing was recorded: a verdict judged against a half-built index would be filed for good. Record the " +
+        "audit once indexing finishes.",
+      indexingNow: names,
+    }, { status: 409 });
+  }
 
   const index = await loadEntityIndex(docs.map((d) => d.id));
   if (index.error === "migration-missing") {
@@ -1014,8 +1091,12 @@ async function recordAudit(orgId: string, libraryId: string, userId: string) {
 
   const nameById = new Map(docs.map((d) => [d.id, d.name]));
   const { selfByDoc, refsByDoc } = indexMaps(index);
-  const audit = auditDrawingRefs(docs.map((d) => ({ id: d.id, name: d.name })), refsByDoc, selfByDoc);
-  const opc = auditOpcBoxes(index.opc, selfByDoc, nameById);
+  // A sheet not read whole is no evidence of what it lacks (review fix pass
+  // 4): what is not found on it is unchecked, never a defect of the sheet
+  // that points at it.
+  const incomplete = notReadWhole(docs);
+  const audit = auditDrawingRefs(docs.map((d) => ({ id: d.id, name: d.name })), refsByDoc, selfByDoc, null, incomplete);
+  const opc = auditOpcBoxes(index.opc, selfByDoc, nameById, incomplete);
 
   // The set's scope (DWG-6): the series this library holds. A sheet in a
   // series it does not hold is still recorded; gaps in that series are not
@@ -1037,19 +1118,19 @@ async function recordAudit(orgId: string, libraryId: string, userId: string) {
   const ownPrint = new Map(docs.map((d) => [d.id, indexFingerprint({
     rows: rowsByDoc.get(d.id) ?? [], opc: opcByDoc.get(d.id) ?? [], unreadPages: d.vision_failed_pages ?? [],
   })]));
-  const setPrint = digest([...new Set([...identities.values()].flat())].sort().join("\n"));
+  // The set as judged: every number its sheets answer to — and, while any
+  // is not read whole, which (review fix pass 4): a sheet "not found in what
+  // was read of the set" is re-judged once the document that may hold it is
+  // read whole, whether or not that document's own numbers change.
+  const partlyRead = [...incomplete].map(([id, why]) => `${id}:${why}`).sort();
+  const setPrint = digest([...new Set([...identities.values()].flat())].sort().join("\n") +
+    (partlyRead.length > 0 ? `\u0002${partlyRead.join("\n")}` : ""));
   const refTargets = drawingRefTargets(docs.map((d) => ({ id: d.id, name: d.name })), refsByDoc, selfByDoc);
   const fingerprints = new Map(docs.map((d) => {
     const near = new Set([...(refTargets.get(d.id) ?? []), ...(opc.targetsByDoc.get(d.id) ?? [])]);
     near.delete(d.id);
     return [d.id, verdictBasis(ownPrint.get(d.id) ?? "", [...near].map((n) => `${n}:${ownPrint.get(n) ?? ""}`), setPrint)];
   }));
-  // A sheet being indexed right now (queued or mid-read — a parked sheet
-  // waits with a whole index) has a half-built index: no verdict is re-
-  // decided by it. Each sheet is then compared on its own index only, and
-  // against its neighbours once indexing settles.
-  const indexingNow = docs.filter((d) => d.status !== "ready" && d.status !== "error" && !isParked(d));
-
   // The controlled documents the mirrors stand for: current version + rev.
   const mirrored = [...new Set(docs.map((d) => d.source_document_id).filter((id): id is string => !!id))];
   const ctrlById = new Map<string, { rev: string; current_version_id: string | null }>();
@@ -1093,6 +1174,20 @@ async function recordAudit(orgId: string, libraryId: string, userId: string) {
         continue;
       }
     }
+    // A sheet that is not ready and declared no drawing number has no key
+    // yet: filed under its filename, its `skipped` would be a row under a
+    // number the sheet does not have — never re-recorded, never removed,
+    // and not the number the lens will show once it is read (DWG-10). It is
+    // reported instead (review fix pass 4).
+    if (!isReadyHere(d) && !declaredSheetIdentity(selfByDoc.get(d.id) ?? []).base) {
+      notRecorded.push({
+        name: d.name, sheetNumber, revision, status: "skipped",
+        reason: d.status === "error"
+          ? "its indexing failed before its drawing number was read — re-index it"
+          : "it is still waiting to finish indexing — its drawing number is not read yet",
+      });
+      continue;
+    }
     sheets.push({
       documentId: d.id,
       controlledDocumentId: d.source_document_id,
@@ -1111,8 +1206,7 @@ async function recordAudit(orgId: string, libraryId: string, userId: string) {
     return c && typeof c === "object" && !Array.isArray(c) ? c as Record<string, string> : null;
   };
   const priorRows = prior.rows.map((r) => ({ ...r, coverage: coverageOf(r.audit_details) }));
-  const needing = new Set(sheetsNeedingAudit(sheets, priorRows, fingerprints, { indexOnly: indexingNow.length > 0 })
-    .map((s) => s.documentId));
+  const needing = new Set(sheetsNeedingAudit(sheets, priorRows, fingerprints).map((s) => s.documentId));
   const alreadyRecorded = sheets.filter((s) => !needing.has(s.documentId)).map((s) => {
     const p = priorRows.find((r) => r.sheet_number === s.sheetNumber && r.revision_code === s.revision && r.status !== "skipped");
     return { name: s.name, sheetNumber: s.sheetNumber, revision: s.revision, status: p?.status ?? "recorded" };
@@ -1125,11 +1219,24 @@ async function recordAudit(orgId: string, libraryId: string, userId: string) {
       .map((m) => ({ ref: m.ref, referencedBy: m.referencedBy })),
     oneWay: audit.oneWay.map((o) => ({ from: o.from, to: o.to })),
     unreadableConnectors: opc.unknown.map((u) => ({ sheet: u.sheet, box: u.box })),
-    unpairedConnectors: opc.unpaired.map((u) => ({ from: u.from, to: u.to, box: u.box })),
-    // An accepted partial index: the pages nobody read are not a clean bill.
+    unpairedConnectors: opc.unpaired.map((u) => ({ from: u.from, to: u.to, box: u.box, unread: u.unread })),
+    // Checks that needed a sheet nobody read whole: unchecked, never one-way
+    // and never a gap (review fix pass 4).
+    oneWayUnread: audit.oneWayUnread.map((o) => ({ from: o.from, to: o.to, unread: o.unread })),
+    missingUnread: missingWithinHeldSeries(audit.missingUnread, heldSeries)
+      .map((m) => ({ ref: m.ref, referencedBy: m.referencedBy, maybeIn: m.maybeIn })),
+    // The pages nobody read are not a clean bill — and the finding says
+    // whose decision left them unread: only a controller's accepted partial
+    // index is "accepted" (review fix pass 4).
     unreadPages: docs
       .filter((d) => (d.vision_failed_pages ?? []).length > 0)
-      .map((d) => ({ sheet: d.name, pages: [...(d.vision_failed_pages ?? [])].sort((a, b) => a - b) })),
+      .map((d) => ({
+        sheet: d.name,
+        pages: [...(d.vision_failed_pages ?? [])].sort((a, b) => a - b),
+        why: d.vision_partial_accepted && d.status === "ready" && !isParked(d) ? "partial index accepted"
+          : d.status === "error" ? "its indexing failed"
+          : "waiting on AI vision",
+      })),
   });
 
   // Two sheets of one set can declare the same number; the unique index would
@@ -1206,7 +1313,8 @@ async function recordAudit(orgId: string, libraryId: string, userId: string) {
       sheetNumber: v.sheetNumber, revision: v.revision, status: v.status,
       findings: [
         ...v.details.brokenConnectors, ...v.details.missingReferences, ...v.details.oneWay,
-        ...v.details.unreadableConnectors, ...v.details.unpairedConnectors, ...v.details.unreadPages,
+        ...v.details.unreadableConnectors, ...v.details.unpairedConnectors, ...v.details.uncheckedReferences,
+        ...v.details.unreadPages,
       ],
     })),
     // DWG-13: what was NOT re-audited, and why.
@@ -1216,9 +1324,6 @@ async function recordAudit(orgId: string, libraryId: string, userId: string) {
     // DWG-6: series the library holds no more than one number of — gaps in
     // them not judged.
     seriesNotJudged: notJudged,
-    // DWG-13: sheets being indexed right now — no verdict was re-decided by
-    // a change in the sheets it points at until they finish.
-    ...(indexingNow.length > 0 ? { indexingNow: indexingNow.map((d) => d.name) } : {}),
     // Before 20261124: recorded on the org-wide key, one verdict per sheet
     // and revision across every library.
     ...(legacyKey ? {

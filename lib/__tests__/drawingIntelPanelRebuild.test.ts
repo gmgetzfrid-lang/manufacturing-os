@@ -107,18 +107,34 @@ describe("the lens and the record name what they did not judge (review fix pass 
     expect(host.textContent).toMatch(/Gaps are not judged in 025-PID — this library holds no more than one drawing number of that series/);
   });
 
-  it("the record says which sheets were being indexed, and that no verdict was re-decided by them", async () => {
-    ui.recordDrawingAudit.mockResolvedValue({
-      recorded: 0, counts: {}, sheets: [], alreadyRecorded: [{ name: "A.pdf", sheetNumber: "025-PID-0104", revision: "C", status: "flagged" }],
-      notRecorded: [], seriesNotJudged: ["040-TK"], indexingNow: ["025-PID-0105.pdf"],
-    });
-    await render();
+  const pressRecord = async () => {
     const button = [...host.querySelectorAll("button")].find((b) => b.textContent?.includes("Record audit"));
     expect(button).toBeTruthy();
     await act(async () => { button!.click(); });
     await act(async () => { await new Promise((r) => setTimeout(r, 0)); });
-    expect(host.textContent).toMatch(/1 sheet\(s\) are being indexed right now \(025-PID-0105\.pdf\) — no verdict was\s*re-decided by a change in the sheets it points at/);
+  };
+
+  it("the record names the series it did not judge, in the record's own words", async () => {
+    ui.recordDrawingAudit.mockResolvedValue({
+      recorded: 0, counts: {}, sheets: [], alreadyRecorded: [{ name: "A.pdf", sheetNumber: "025-PID-0104", revision: "C", status: "flagged" }],
+      notRecorded: [], seriesNotJudged: ["040-TK"],
+    });
+    await render();
+    await pressRecord();
     expect(host.textContent).toMatch(/this library holds no more than one drawing number of\s*that series/);
     expect(host.textContent).not.toMatch(/holds only one sheet of/);
+    // A success never claims a sheet was being indexed: then nothing is
+    // recorded at all (review fix pass 4).
+    expect(host.textContent).not.toMatch(/being indexed right now/);
+  });
+
+  it("while a sheet is being indexed the record is refused: the route's message is the toast, and nothing is shown as recorded (review fix pass 4)", async () => {
+    const message = "1 sheet(s) are being indexed right now (025-PID-0105.pdf) — nothing was recorded: a verdict judged " +
+      "against a half-built index would be filed for good. Record the audit once indexing finishes.";
+    ui.recordDrawingAudit.mockRejectedValue(Object.assign(new Error(message), { indexingNow: ["025-PID-0105.pdf"] }));
+    await render();
+    await pressRecord();
+    expect(ui.showToast.mock.calls.map((c) => c[0])).toContainEqual({ type: "error", title: message });
+    expect(host.textContent).not.toMatch(/Audit recorded/);
   });
 });
