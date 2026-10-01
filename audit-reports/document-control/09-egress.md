@@ -349,16 +349,26 @@ What landed:
   - `components/viewers/FullScreenViewer.tsx` `runDocAction`: the checkout holder's direct download / print opens no dialog, and `actionError` renders only inside the `pending` dialog, so an unrecorded controlled copy was still silent. It now raises the message as an alert when no dialog is open (`if (!pending) void appAlert(message)`), as `MultiDocViewer` does.
   - `components/documents/VersionHistoryPanel.tsx` `handleDownload` put the message into the load-error state, which replaces the WHOLE panel (the version list and the backfill controls) until it remounts — after a download that succeeded. It now has its own `downloadError`, shown inline above the list (`role="alert"`).
   - Test: "every caller SAYS a delivered-but-unrecorded copy where the person can see it".
+- **Fix pass 4 (review findings).**
+  - **The markup export now says a refused record.** `components/viewers/FullScreenViewer.tsx`'s markup export called `logDownloadAudit` and dropped its outcome, so the person was never told. It now reads `{ recorded }` and raises the same words a single download uses (`new DownloadUnrecordedError(audit.error).message`) as an alert after the copy is delivered. The test is in "every caller SAYS …".
+  - **Done-when 3 is stated for what it covers.** The pass-3 record read as if every `download_audits` write in the repository were checked. It is not. Three writers outside this package still discard `{ error }`:
+    - `app/(protected)/requests/[id]/page.tsx:607`: `void supabase.from("download_audits").insert(…)`;
+    - `app/(protected)/requests/[id]/page.tsx:689`: the same pattern;
+    - `components/assets/FileReferenceModal.tsx:189`: `try { await …insert(rows) } catch …`.
+
+    All three belong to drafting-flow `EVID-5` (OPEN), whose done-when 3 ("no download or print record is written with `void` or a discarded promise") is exactly this. `99-fix-sequencing.md` names P8 as `EGR-6`'s closer for items 3 and 4 "citing drafting-flow `EVID-5`". `EGR-6` is therefore resolved for items 3 and 4 in this package's files, and closed by pointer to `EVID-5` for those three sites. Done-when 3 is NOT met repo-wide until `EVID-5` lands.
 
 **Done-when.**
 1. ✓ (P1 SHARE, `EGRESS-7`) `revokeShareLink` is a checked write that surfaces failure.
 2. ✓ (P1 SHARE, `EGRESS-8`) `listShareLinks` surfaces its error.
-3. ✓ Every `download_audits` write in this package's files checks `{ error }` and logs loudly, and a failed write is never indistinguishable from a successful one: the person is told, after delivery, by every caller of the download / print paths (the book viewer, the full-screen viewer — an alert when no dialog is open — and version history, inline).
+3. ✓ in this package's files; NOT met repo-wide. Every `download_audits` write in this package's files checks `{ error }` and logs loudly, and a failed write is never indistinguishable from a successful one. The person is told, after delivery, by:
+   - every caller of the download / print paths: the book viewer, the full-screen viewer (an alert when no dialog is open) and version history (inline);
+   - the full-screen viewer's markup export (fix pass 4).
+
+   The three writers outside this package (`requests/[id]/page.tsx:607` and `:689`, `FileReferenceModal.tsx:189`) still swallow `{ error }`. They are closed here by pointer to drafting-flow `EVID-5` (OPEN), which owns them.
 4. ✓ `MultiDocViewer` skips rows with a null `org_id` (reported as unrecorded) rather than submitting writes RLS would refuse.
 
-**Scope / residual.** Writers outside this package's files keep their own shape:
-- `components/viewers/FullScreenViewer.tsx`'s markup export calls `logDownloadAudit` and ignores the returned outcome. The write is checked and logged, but the person is not told.
-- `components/assets/FileReferenceModal.tsx` and `app/(protected)/requests/[id]/page.tsx` are drafting-flow `EVID-5`'s.
+**Scope / residual.** Writers outside this package's files keep their own shape until drafting-flow `EVID-5` lands: `app/(protected)/requests/[id]/page.tsx` (two `void … insert` calls) and `components/assets/FileReferenceModal.tsx` (a try / catch that supabase-js never triggers). A refused write there still reads as success, with no record. The full-screen viewer's markup export, named here at fix pass 3, now says a refused record (fix pass 4).
 
 `DIST-9`'s done-when 2 (P2's record: "`lib/downloads.ts` `logDownloadAudit` destructures and checks `{ error }`") is met by this pass. The integrator sets `DIST-9` per its Partial.
 

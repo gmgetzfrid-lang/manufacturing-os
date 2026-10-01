@@ -189,30 +189,42 @@ the page fixes.
   new policies).
 
 ⚠ **Deploy order — the field pack (Round F wave 2, P8 FIELD; DEC-44 (P8
-FIELD), provisional label).** Three things precede the P8 app deploy, in
-this order (added at P8's third review fix pass):
+FIELD), provisional label).** Rewritten at P8's fourth review fix pass. The
+ratification now gates a switch in the code, not the deploy:
 
-1. **Paste `20261143`** (`work_packages` close / delete narrowed to the
-   owner or a controller — `DRLS-10`) and **read its MEASURE rows**: the
-   packages and asset tags the field-pack budget reaches (over 150 printable
-   sheets; over 150 MB of recorded file size together), the single files
-   over 150 MB, the files with no recorded size, and the live transmittal
-   PDFs over 64 MiB (`TRX-15`). Applied first, the narrowing is already in
-   force for the old page (a non-owner's Close matches no row until the app
-   deploys — the file's header says so).
-2. **The user ratifies DEC-44 (P8 FIELD) §2 against those counts** — the
+1. **Deploy the P8 app.** The field-pack budget (`PKG-12`) ships OFF:
+   `NEXT_PUBLIC_FIELD_PACK_BUDGET` is unset, and packs build as they did
+   before P8. Nothing waits on the ratification, and nothing waits on
+   PS-VERIFY. P8 now adds no verdict rule to `/api/verify-package`, only the
+   VFY-19 when-fields; its two amber rules were withdrawn.
+2. **Paste `20261143` WITH that deploy or just AFTER it, never before.**
+   It narrows `work_packages` close / delete to the owner or a controller
+   (`DRLS-10`). Pasted ahead of the app, it meets the old `/packages` page,
+   which offers Close to every member and reads a zero-row close as success.
+   A planner who does not own the package would be told "Package closed"
+   while it stays open and reappears on reload. The P8 page offers Close
+   only to the owner or a controller and reports a refused close.
+   **Read the MEASURE rows** in its result set:
+   - the packages and asset tags the field-pack budget would reach (over 150
+     printable sheets; over 150 MB of recorded file size together);
+   - the single files over 150 MB;
+   - the files with no recorded size;
+   - the live transmittal PDFs over 64 MiB (`TRX-15`).
+3. **The user ratifies DEC-44 (P8 FIELD) §2 against those counts.** The
    150-sheet / 1000-page / 150 MB budget is a stated default, not a measured
-   one, and it removes a capability that worked before (one pack of a large
-   work package, on a desktop too) with no override. Ratify it, change the
-   three constants (`lib/docPack.ts`), or ask for the device-aware variant
-   (refuse only where `navigator.deviceMemory` is low, warn elsewhere). The
-   counted owners are told before the refusal tells them.
-3. **PS-VERIFY's owner signs off the two amber verdict rules** P8 added to
-   `app/api/verify-package/route.ts` (public-surfaces `VFY-19`): a
-   still-current sheet the print left out as `unreadable_pdf` reads amber
-   `not_pdf`, one left out as `too_large` reads amber `too_large`. Without
-   the sign-off, delete the two `sameRevision` lines before merge (both
-   return to red; see `VFY-19` for what that costs `too_large`).
+   one, and once on it removes a capability that worked before, with no
+   override: one pack of a large work package, on a desktop too, and any
+   work-package pack holding a file too large for any pack. The user can
+   ratify it, change the three constants (`lib/docPack.ts`), or ask for the
+   device-aware variant (refuse only where `navigator.deviceMemory` is low,
+   warn elsewhere). Tell the counted owners first.
+4. **Then switch it on.** Set `NEXT_PUBLIC_FIELD_PACK_BUDGET=on` and
+   redeploy: a `NEXT_PUBLIC_` value is built into the bundle.
+
+For PS-VERIFY's owner, not a P8 prerequisite: whether a still-current
+sheet a print could not read as a PDF (`unreadable_pdf` on the snapshot)
+should read amber rather than red at the cover scan (public-surfaces
+`VFY-19`'s residual).
 
 `TRX-15`'s stricter portal rule (a PDF goes out stamped or not at all) is not
 in this deploy: it is armed per item only by `TRX-16`'s issue-time mark, and
