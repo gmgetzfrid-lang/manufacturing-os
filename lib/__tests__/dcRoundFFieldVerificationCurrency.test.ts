@@ -238,8 +238,8 @@ describe("GAP-9 — the register shows it beside the other pills and hands it to
     expect(byId.get("old")?.fieldVerification).toMatchObject({ status: "current" });
     const ranges = state.db.calls.filter((c) => c.table === "checkout_sessions" && c.method === "range").map((c) => c.args);
     expect(ranges).toEqual([[0, 999], [500, 1499]]);
-    // the exact count rides on every page's select
-    expect(state.db.calls.filter((c) => c.table === "checkout_sessions" && c.method === "select").every((c) => (c.args[1] as { count?: string } | undefined)?.count === "exact")).toBe(true);
+    // the exact count is asked until an answer carries it — the first page — and not on the pages after (P14 final review)
+    expect(state.db.calls.filter((c) => c.table === "checkout_sessions" && c.method === "select").map((c) => (c.args[1] as { count?: string } | undefined)?.count)).toEqual(["exact", undefined]);
   });
 
   it("P14 review fix — the read is bounded by the register's OWN documents (chunked), never every walkdown in the org", async () => {
