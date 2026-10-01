@@ -400,7 +400,7 @@ lib/revisions.ts:544: `p_override_lock: lockedByOther,`
 2. ✓ The function records the override itself (`REV_LOCK_OVERRIDDEN` in `audit_logs`, same transaction), so an override that bypasses the app is on the document's record.
 3. ✓ Override eligibility is re-derived from `org_members` / library authority / effective ownership inside the function.
 
-**Scope / residual.** **Pending migration:** `supabase/migrations/20261130_dc_roundF_publish_override_reason.sql` (DEC-30 — the database half does not exist until pasted; paste it before the wave-2 app deploys). ⚠ Re-pasting 20261105 or an earlier `publish_revision` migration afterwards would re-create the 11-argument overload; re-running 20261130 removes it. Timeline renderers show `REV_LOCK_OVERRIDDEN` with their generic row (no icon mapping — not this package's files).
+**Scope / residual.** **Pending migration:** `supabase/migrations/20261130_dc_roundF_publish_override_reason.sql` (DEC-30 — the database half does not exist until pasted; paste it before the wave-2 app deploys). ⚠ Re-pasting 20261105 or an earlier `publish_revision` migration afterwards would re-create the 11-argument overload; re-running 20261130 removes it. Timeline renderers show `REV_LOCK_OVERRIDDEN` with their generic row (no icon mapping — not this package's files). ⚠ **The LIVE 11-argument `publish_revision` was never revoked from `anon`** — no migration did, and the function reads a NULL `auth.uid()` as a service-role call that may name any actor — so anyone with the public anon key can publish as any member until it is closed. That is its own CRITICAL finding, **`DRLS-16`** (`10-rls.md`), with a one-statement hotfix to paste now, independent of the wave-2 deploy; `20261130` closes it for the new signature.
 
 ---
 

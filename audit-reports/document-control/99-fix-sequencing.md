@@ -127,6 +127,35 @@ checkout), and a publish OVER another user's checkout is refused with "needs
 migration 20261130" — never published unguarded (the legacy fallback is
 gone, `REV-8`). Do not re-paste `20261105` or any earlier `publish_revision`
 migration after `20261130`: it would re-create the 11-argument overload;
-re-running `20261130` removes it. `20261131` refuses, from the moment it is
-pasted, a `rev` that differs from the current revision's label — the library
-page's metadata editor does not surface that refusal yet (`DRLS-15`).
+re-running `20261130` removes it.
+
+**Prerequisites of `20261131`** — ship these first (the integrator assigns
+them; both live in the library page, P6 CHECKOUT's file), or accept the
+breakage for the window between the paste and the fix:
+
+- `DRLS-15` — from the moment `20261131` is pasted it refuses a `rev` that
+  differs from the current revision's label, as one whole statement: the
+  library page's `saveMetadata` sends `rev` with every other edit and
+  discards the error, so any metadata save that changes Rev silently loses
+  ALL its edits, and the bulk editor's "Revision" field fails on every row.
+  Fix: check `{ error }` and the row count, and stop sending `rev` (or send
+  it only unchanged); drop Revision from the bulk editor.
+- `DRLS-17` — `20261131` makes acknowledgment and sign-off evidence a NO
+  ACTION reference on its revision, so the page's delete flow (pointer
+  cleared, then versions deleted, then the document) stops at the version
+  step and leaves a live document with no current file. Fix: delete the
+  document row directly, or pre-check and refuse before any write.
+
+⚠ **Paste NOW, independent of wave 2 — `DRLS-16` (CRITICAL).** The live
+11-argument `publish_revision` was never revoked from `anon`, and it reads a
+NULL `auth.uid()` as a service-role call that may name any actor. The
+one-statement hotfix and its check are in the `DRLS-16` record
+(`10-rls.md`); `20261130` later drops the signature and grants the new one
+without `anon`.
+
+**Operator step — `REV-9`.** Set `NEXT_PUBLIC_FACILITY_TIME_ZONE` (the
+facility's IANA zone, e.g. `America/Chicago`; documented in `.env.example`)
+on every deployment before the wave-2 app ships: unset, effective dates are
+decided in UTC, which flips a date early for every site west of UTC.
+`REV-9` closes when every deployment names its zone and P8 swaps
+`/api/verify`'s inline date for `effectiveTodayISO()`.
