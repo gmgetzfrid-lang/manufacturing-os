@@ -5,7 +5,7 @@
 // SLA date helpers. Pure functions, exercised heavily because a regression here
 // silently mis-routes notifications.
 
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import {
   extractMentionUids,
   tokenizeMentions,
@@ -14,7 +14,104 @@ import {
   defaultSlaTargetDate,
   DEFAULT_SLA_DAYS,
   ticketUrl,
+  queueEmail,
+  type QueueEmailInput,
 } from "@/lib/notifications";
+import { categoryToEventType, type NotifCategory } from "@/lib/notify/dispatch";
+
+// ── A small database for queueEmail (notifications Round G, N1) ────────────
+// Two tables and one function, with the RLS each one really has:
+//   notification_preferences — notif_prefs_own: a signed-in caller sees ONLY
+//     their own row (20260605:111-115); the service role sees every row.
+//   email_notifications — email_notif_select_own_or_admin: a member sees the
+//     rows addressed to them (20261047:219-225); the service role sees all.
+//   email_gate() — SECURITY DEFINER (20261148): it sees every row whoever
+//     calls it. Its rules are written out here independently of the app's
+//     helper; notificationPrefs.test.ts pins the migration's CASE to them.
+const world = vi.hoisted(() => ({
+  actor: "a0000000-0000-4000-8000-000000000001",
+  ctx: "client" as "client" | "service",
+  prefs: new Map<string, Record<string, unknown>>(),
+  emails: [] as Array<Record<string, unknown>>,
+  rpc: "deployed" as "deployed" | "missing" | "missing-42883" | "error",
+  rpcCalls: [] as Array<{ fn: string; args: Record<string, unknown> }>,
+  insertError: null as null | { code: string; message: string },
+}));
+
+vi.mock("@/lib/supabase", () => {
+  type Row = Record<string, unknown>;
+  const GATED: Record<string, string> = {
+    comment_mention: "email_on_mention",
+    assignment: "email_on_assignment",
+    engineer_review_requested: "email_on_assignment",
+    ticket_status_changed: "email_on_status_change",
+    ticket_approved: "email_on_status_change",
+    ticket_revision_requested: "email_on_status_change",
+    ticket_closed: "email_on_status_change",
+    watcher_activity: "email_on_watched_activity",
+    sla_warning: "email_on_sla_warning",
+  };
+  const visible = (table: string): Row[] => {
+    if (table === "notification_preferences") {
+      const rows = [...world.prefs.values()];
+      return world.ctx === "service" ? rows : rows.filter((r) => r.user_id === world.actor);
+    }
+    if (table === "email_notifications") {
+      return world.ctx === "service" ? world.emails : world.emails.filter((r) => r.to_user_id === world.actor);
+    }
+    return [];
+  };
+  function from(table: string) {
+    const filters: Array<(r: Row) => boolean> = [];
+    let lim = Infinity;
+    const run = () => visible(table).filter((r) => filters.every((f) => f(r))).slice(0, lim);
+    const q: Record<string, unknown> = {};
+    Object.assign(q, {
+      select: () => q,
+      eq: (c: string, v: unknown) => { filters.push((r) => r[c] === v); return q; },
+      gte: (c: string, v: unknown) => { filters.push((r) => String(r[c]) >= String(v)); return q; },
+      limit: (n: number) => { lim = n; return q; },
+      maybeSingle: async () => ({ data: run()[0] ?? null, error: null }),
+      then: (res: (v: unknown) => unknown, rej?: (e: unknown) => unknown) =>
+        Promise.resolve({ data: run(), error: null }).then(res, rej),
+      insert: async (row: Row) => {
+        if (world.insertError) return { data: null, error: world.insertError };
+        world.emails.push({ ...row, created_at: new Date().toISOString() });
+        return { data: null, error: null };
+      },
+    });
+    return q;
+  }
+  async function rpc(fn: string, args: Record<string, unknown>) {
+    world.rpcCalls.push({ fn, args });
+    if (world.rpc === "missing") {
+      return { data: null, error: { code: "PGRST202", message: `Could not find the function public.${fn}(p_event_type, p_org, p_resource_id, p_to_user) in the schema cache` } };
+    }
+    if (world.rpc === "missing-42883") {
+      return { data: null, error: { code: "42883", message: `function public.${fn}(uuid, uuid, text, text) does not exist` } };
+    }
+    if (world.rpc === "error") {
+      return { data: null, error: { code: "57014", message: "canceling statement due to statement timeout" } };
+    }
+    if (fn !== "email_gate") return { data: null, error: { code: "PGRST202", message: "unknown" } };
+    const p = world.prefs.get(args.p_to_user as string);
+    if (p) {
+      if (p.email_enabled === false) return { data: false, error: null };
+      if (p.digest_frequency === "never") return { data: false, error: null };
+      const col = GATED[args.p_event_type as string];
+      if (col && p[col] === false) return { data: false, error: null };
+    }
+    if (args.p_resource_id) {
+      const since = Date.now() - 60_000;
+      const dupe = world.emails.some((e) => e.to_user_id === args.p_to_user && e.event_type === args.p_event_type
+        && e.resource_id === args.p_resource_id && e.org_id === args.p_org && Date.parse(e.created_at as string) >= since);
+      if (dupe) return { data: false, error: null };
+    }
+    return { data: true, error: null };
+  }
+  const client = { from, rpc, auth: { getSession: async () => ({ data: { session: null } }) } };
+  return { supabase: client };
+});
 
 const U1 = "11111111-1111-1111-1111-111111111111";
 const U2 = "22222222-2222-2222-2222-222222222222";
@@ -95,5 +192,184 @@ describe("SLA date helpers", () => {
 describe("ticketUrl", () => {
   it("falls back to an app-relative path with no window (server/test)", () => {
     expect(ticketUrl("abc-123")).toBe("/requests/abc-123");
+  });
+});
+
+// ─── queueEmail: the preference gate that can see the recipient ──────────
+// DELIV-2 / DELIV-9 (notifications Round G, N1). The first two blocks are the
+// reproduction: on the pre-N1 tree queueEmail read the recipient's row and the
+// dedupe window through the CALLER's RLS, so from the browser an opt-out and a
+// duplicate were both invisible.
+
+const ORG = "0a000000-0000-4000-8000-00000000000a";
+const B = "b0000000-0000-4000-8000-00000000000b";
+const C = "c0000000-0000-4000-8000-00000000000c";
+const DOC1 = "d1000000-0000-4000-8000-0000000000d1";
+const DOC2 = "d2000000-0000-4000-8000-0000000000d2";
+const ALL_ON = {
+  email_enabled: true, email_on_mention: true, email_on_assignment: true, email_on_status_change: true,
+  email_on_watched_activity: true, email_on_sla_warning: true, digest_frequency: "instant",
+};
+
+const mail = (over: Partial<QueueEmailInput> = {}): QueueEmailInput => ({
+  orgId: ORG, toUserId: B, toEmail: "b@example.test", subject: "Subject", bodyText: "Body",
+  resourceType: "document", resourceId: DOC1, eventType: "comment_mention", ...over,
+});
+const setPrefs = (uid: string, over: Record<string, unknown>) => world.prefs.set(uid, { user_id: uid, ...ALL_ON, ...over });
+
+let warn: ReturnType<typeof vi.spyOn>;
+let err: ReturnType<typeof vi.spyOn>;
+beforeEach(() => {
+  world.ctx = "client";
+  world.prefs.clear();
+  world.emails.length = 0;
+  world.rpc = "deployed";
+  world.rpcCalls.length = 0;
+  world.insertError = null;
+  warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+  err = vi.spyOn(console, "error").mockImplementation(() => undefined);
+});
+afterEach(() => {
+  warn.mockRestore();
+  err.mockRestore();
+});
+
+describe("DELIV-2 — an opt-out is honoured whoever queues the email", () => {
+  it("email_enabled = false, queued from another member's browser: nothing is queued", async () => {
+    setPrefs(B, { email_enabled: false });
+    await queueEmail(mail());
+    expect(world.emails).toHaveLength(0);
+  });
+
+  it("a per-event toggle off suppresses that event only; digest_frequency 'never' suppresses all", async () => {
+    setPrefs(B, { email_on_mention: false });
+    await queueEmail(mail({ eventType: "comment_mention" }));
+    expect(world.emails).toHaveLength(0);
+    await queueEmail(mail({ eventType: "assignment" }));
+    expect(world.emails.map((e) => e.event_type)).toEqual(["assignment"]);
+
+    setPrefs(C, { digest_frequency: "never" });
+    await queueEmail(mail({ toUserId: C, toEmail: "c@example.test", eventType: "assignment", resourceId: DOC2 }));
+    expect(world.emails.filter((e) => e.to_user_id === C)).toHaveLength(0);
+  });
+
+  it("the gate is asked through email_gate with the org, the recipient, the event and the resource", async () => {
+    await queueEmail(mail());
+    expect(world.rpcCalls).toEqual([
+      { fn: "email_gate", args: { p_org: ORG, p_to_user: B, p_event_type: "comment_mention", p_resource_id: DOC1 } },
+    ]);
+  });
+});
+
+describe("DELIV-9 — the 60-second dedupe sees the recipient's rows", () => {
+  it("the same event for the same resource twice within 60 s from the browser: one email", async () => {
+    await queueEmail(mail());
+    await queueEmail(mail());
+    expect(world.emails).toHaveLength(1);
+  });
+
+  it("two DIFFERENT resources within 60 s are two emails", async () => {
+    await queueEmail(mail({ resourceId: DOC1 }));
+    await queueEmail(mail({ resourceId: DOC2 }));
+    expect(world.emails.map((e) => e.resource_id)).toEqual([DOC1, DOC2]);
+  });
+
+  it("the same resource under two different events is two emails; two recipients are two emails", async () => {
+    await queueEmail(mail({ eventType: "comment_mention" }));
+    await queueEmail(mail({ eventType: "watcher_activity" }));
+    await queueEmail(mail({ toUserId: C, toEmail: "c@example.test" }));
+    expect(world.emails).toHaveLength(3);
+  });
+
+  it("an email with no resource is never deduped (the pre-N1 window never matched one either)", async () => {
+    await queueEmail(mail({ resourceId: undefined, resourceType: undefined, eventType: "system" }));
+    await queueEmail(mail({ resourceId: undefined, resourceType: undefined, eventType: "system" }));
+    expect(world.emails).toHaveLength(2);
+    expect(world.rpcCalls.every((c) => c.args.p_resource_id === null)).toBe(true);
+  });
+});
+
+describe("REGRESSION — every email queued before the switch is still queued when preferences allow it", () => {
+  const CATEGORIES: NotifCategory[] = ["mention", "assignment", "status", "watched", "sla", "system", "recall", "safety"];
+  const EVENTS = [...new Set([
+    ...CATEGORIES.map(categoryToEventType),
+    "comment_mention", "assignment", "engineer_review_requested", "ticket_status_changed", "ticket_approved",
+    "ticket_revision_requested", "ticket_closed", "watcher_activity", "sla_warning", "compliance_digest",
+  ])];
+
+  for (const ctx of ["client", "service"] as const) {
+    for (const row of ["no row", "all on"] as const) {
+      it(`${ctx} context, ${row}: each of ${EVENTS.length} event types queues exactly the row it queued before`, async () => {
+        world.ctx = ctx;
+        if (row === "all on") setPrefs(B, {});
+        for (const [i, eventType] of EVENTS.entries()) {
+          const resourceId = `e${String(i).padStart(7, "0")}-0000-4000-8000-000000000000`;
+          await queueEmail(mail({ eventType, resourceId, metadata: { i } }));
+        }
+        expect(world.emails).toHaveLength(EVENTS.length);
+        world.emails.forEach((e, i) => {
+          const { created_at: _c, ...rest } = e;
+          expect(rest).toEqual({
+            org_id: ORG, to_user_id: B, to_email: "b@example.test", subject: "Subject", body_text: "Body",
+            body_html: null, resource_type: "document", resource_id: `e${String(i).padStart(7, "0")}-0000-4000-8000-000000000000`,
+            event_type: EVENTS[i], metadata: { i }, status: "queued",
+          });
+        });
+        expect(warn).not.toHaveBeenCalled();
+      });
+    }
+  }
+
+  it("recall and safety mail ignores every per-category toggle (only the master switch and 'never' stop it)", async () => {
+    setPrefs(B, { email_on_mention: false, email_on_assignment: false, email_on_status_change: false, email_on_watched_activity: false, email_on_sla_warning: false });
+    await queueEmail(mail({ eventType: categoryToEventType("recall"), resourceId: DOC1 }));
+    await queueEmail(mail({ eventType: categoryToEventType("safety"), resourceId: DOC2 }));
+    expect(world.emails.map((e) => e.event_type)).toEqual(["safety_recall", "safety_alert"]);
+  });
+});
+
+describe("a gate that cannot answer is never a silent all-on", () => {
+  it("email_gate errors: the email is still queued (a dropped compliance email is worse), stamped pref_gate='unverified', and a warning is logged", async () => {
+    world.rpc = "error";
+    setPrefs(B, { email_enabled: false });
+    await queueEmail(mail({ metadata: { kind: "x" } }));
+    expect(world.emails).toHaveLength(1);
+    expect(world.emails[0].metadata).toEqual({ kind: "x", pref_gate: "unverified" });
+    expect(warn).toHaveBeenCalledWith(expect.stringMatching(/email_gate.*unverified/));
+  });
+
+  it("email_gate not deployed yet (PGRST202): today's read runs, with a warning — the service role still honours the opt-out", async () => {
+    world.rpc = "missing";
+    world.ctx = "service";
+    setPrefs(B, { email_enabled: false });
+    await queueEmail(mail());
+    expect(world.emails).toHaveLength(0);
+    setPrefs(B, {});
+    await queueEmail(mail());
+    await queueEmail(mail());
+    expect(world.emails).toHaveLength(1);
+    expect(world.emails[0].metadata).toBeNull();
+    expect(warn).toHaveBeenCalledWith(expect.stringMatching(/20261148/));
+  });
+
+  it("email_gate not deployed (42883) from the browser: queued as before, but stamped unverified (the read could not see the recipient's row)", async () => {
+    world.rpc = "missing-42883";
+    setPrefs(B, { email_enabled: false });
+    await queueEmail(mail());
+    expect(world.emails).toHaveLength(1);
+    expect(world.emails[0].metadata).toEqual({ pref_gate: "unverified" });
+    expect(warn).toHaveBeenCalledWith(expect.stringMatching(/20261148/));
+  });
+
+  it("a refused insert is logged as an error, never reported as queued", async () => {
+    world.insertError = { code: "42501", message: "new row violates row-level security policy" };
+    await expect(queueEmail(mail())).resolves.toBeUndefined();
+    expect(world.emails).toHaveLength(0);
+    expect(err).toHaveBeenCalledWith(expect.stringMatching(/queueEmail/), expect.objectContaining({ code: "42501" }));
+  });
+
+  it("link rides on the row for the drain to render (N6), and nothing else changes", async () => {
+    await queueEmail(mail({ link: "https://app.example.test/documents/x" }));
+    expect(world.emails[0].metadata).toEqual({ link: "https://app.example.test/documents/x" });
   });
 });

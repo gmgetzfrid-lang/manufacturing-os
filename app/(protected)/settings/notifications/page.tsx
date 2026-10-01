@@ -4,73 +4,85 @@
 //
 // Backed by the notification_preferences table. Users can toggle email
 // for each category independently (mentions, assignments, status
-// changes, watcher activity, SLA warnings) and pick a digest frequency.
+// changes, watcher activity, SLA warnings) and pick a delivery cadence.
 // In-app bell notifications are always on — they're the persistent
-// inbox; the email side is the opt-in noise layer.
+// inbox; the email side is the opt-in noise layer. Pop-up toasts (the
+// ephemeral echo of a new bell item) have their own switch, toast_enabled.
+//
+// One vocabulary (notifications Round G, N1): the values, defaults and
+// cadence list come from lib/notificationPrefs.ts, which a test pins to the
+// digest_frequency CHECK. The page used to write 'immediate', which the
+// CHECK refuses, so a member with no row could never save (NEDGE-2).
 
 import React, { useEffect, useState } from "react";
 import {
   Bell, Mail, Save, Check, AlertTriangle, ArrowLeft,
-  AtSign, UserPlus, Activity, AlertOctagon, Briefcase,
+  AtSign, UserPlus, Activity, AlertOctagon, Briefcase, MessageSquare,
 } from "lucide-react";
 import Link from "next/link";
 import { useRole } from "@/components/providers/RoleContext";
 import { supabase } from "@/lib/supabase";
+import {
+  PREF_DEFAULTS, OFFERED_DIGEST_FREQUENCIES, DIGEST_LABELS, TOAST_PREFERENCE_HONOURED,
+  prefsFromRow, isCheckViolation, isMissingColumnError,
+  type NotificationPrefs,
+} from "@/lib/notificationPrefs";
 import { PageShell, PageHeaderBar } from "@/components/ui/PageShell";
 import { Button } from "@/components/ui/Button";
 import { Spinner } from "@/components/ui/Spinner";
 
-interface Prefs {
-  email_enabled: boolean;
-  email_on_mention: boolean;
-  email_on_assignment: boolean;
-  email_on_status_change: boolean;
-  email_on_watched_activity: boolean;
-  email_on_sla_warning: boolean;
-  digest_frequency: "immediate" | "hourly" | "daily" | "never";
-}
+type Prefs = NotificationPrefs;
+type PgError = { code?: string; message: string; details?: string };
 
-const DEFAULTS: Prefs = {
-  email_enabled: true,
-  email_on_mention: true,
-  email_on_assignment: true,
-  email_on_status_change: true,
-  email_on_watched_activity: true,
-  email_on_sla_warning: true,
-  digest_frequency: "immediate",
-};
+/** A save the database refused, worded for the person: a CHECK violation is
+ *  the page and the schema disagreeing about an allowed value (the NEDGE-2
+ *  class) — say so, with the constraint's own message, so the next drift is
+ *  diagnosable rather than a raw dump. */
+function saveFailure(err: PgError): string {
+  if (isCheckViolation(err)) {
+    return `The server refused a preference value (check constraint): ${err.message}. Nothing was saved — the page and the database disagree about an allowed value; please report this.`;
+  }
+  return err.message;
+}
 
 export default function NotificationSettingsPage() {
   const { uid } = useRole();
-  const [prefs, setPrefs] = useState<Prefs>(DEFAULTS);
+  const [prefs, setPrefs] = useState<Prefs>({ ...PREF_DEFAULTS });
   const [loading, setLoading] = useState(true);
+  const [loadFailed, setLoadFailed] = useState(false);
   const [saving, setSaving] = useState(false);
   const [saved, setSaved] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [notice, setNotice] = useState<string | null>(null);
+  // A stored cadence the page no longer offers ('hourly' / 'daily': accepted
+  // by the CHECK, never implemented — email went out immediately).
+  const [legacyCadence, setLegacyCadence] = useState<string | null>(null);
 
   useEffect(() => {
     if (!uid) return;
     (async () => {
       setLoading(true);
       try {
-        const { data } = await supabase
+        const { data, error: loadErr } = await supabase
           .from("notification_preferences")
           .select("*")
           .eq("user_id", uid)
           .maybeSingle();
+        if (loadErr) throw loadErr;
         if (data) {
-          setPrefs({
-            email_enabled: data.email_enabled ?? true,
-            email_on_mention: data.email_on_mention ?? true,
-            email_on_assignment: data.email_on_assignment ?? true,
-            email_on_status_change: data.email_on_status_change ?? true,
-            email_on_watched_activity: data.email_on_watched_activity ?? true,
-            email_on_sla_warning: data.email_on_sla_warning ?? true,
-            digest_frequency: (data.digest_frequency as Prefs["digest_frequency"]) ?? "immediate",
-          });
+          const row = data as Record<string, unknown>;
+          const loaded = prefsFromRow(row);
+          if (!(OFFERED_DIGEST_FREQUENCIES as readonly string[]).includes(loaded.digest_frequency)) {
+            setLegacyCadence(DIGEST_LABELS[loaded.digest_frequency]);
+            loaded.digest_frequency = "instant";
+          }
+          setPrefs(loaded);
         }
       } catch (e) {
-        setError((e as Error).message);
+        // Never fall back to the defaults silently: saving them would
+        // overwrite a row that exists but could not be read.
+        setLoadFailed(true);
+        setError(`Your saved preferences could not be loaded: ${(e as Error).message}`);
       } finally {
         setLoading(false);
       }
@@ -78,17 +90,27 @@ export default function NotificationSettingsPage() {
   }, [uid]);
 
   const save = async () => {
-    if (!uid) return;
-    setSaving(true); setError(null); setSaved(false);
+    if (!uid || loadFailed) return;
+    setSaving(true); setError(null); setSaved(false); setNotice(null);
     try {
-      const { error: upsertErr } = await supabase
+      let { error: upsertErr } = await supabase
         .from("notification_preferences")
         .upsert({ user_id: uid, ...prefs }, { onConflict: "user_id" });
+      if (upsertErr && isMissingColumnError(upsertErr, "toast_enabled")) {
+        // The database has not had 20261148 pasted yet: save everything else.
+        const { toast_enabled, ...rest } = prefs;
+        ({ error: upsertErr } = await supabase
+          .from("notification_preferences")
+          .upsert({ user_id: uid, ...rest }, { onConflict: "user_id" }));
+        if (!upsertErr && toast_enabled === false) {
+          setNotice("Your email preferences were saved; the pop-up setting was not saved — the database update that adds it has not been applied yet.");
+        }
+      }
       if (upsertErr) throw upsertErr;
       setSaved(true);
       setTimeout(() => setSaved(false), 2500);
     } catch (e) {
-      setError((e as Error).message);
+      setError(saveFailure(e as PgError));
     } finally {
       setSaving(false);
     }
@@ -117,8 +139,13 @@ export default function NotificationSettingsPage() {
         </div>
 
         {error && (
-          <div className="mb-4 rounded-xl border border-red-200 bg-red-50 p-3 text-xs text-red-800 flex items-start gap-2">
+          <div role="alert" className="mb-4 rounded-xl border border-red-200 bg-red-50 p-3 text-xs text-red-800 flex items-start gap-2">
             <AlertTriangle className="w-4 h-4 mt-0.5 shrink-0" /> {error}
+          </div>
+        )}
+        {notice && (
+          <div role="status" className="mb-4 rounded-xl border border-amber-200 bg-amber-50 p-3 text-xs text-amber-900 flex items-start gap-2">
+            <AlertTriangle className="w-4 h-4 mt-0.5 shrink-0" /> {notice}
           </div>
         )}
 
@@ -130,7 +157,7 @@ export default function NotificationSettingsPage() {
               <div className="text-sm font-black text-[var(--color-text)]">Email notifications</div>
               <div className="text-xs text-[var(--color-text-muted)] mt-0.5">Master switch. Off here means no email regardless of the per-event toggles below.</div>
             </div>
-            <Toggle on={prefs.email_enabled} onChange={(v) => setPrefs({ ...prefs, email_enabled: v })} />
+            <Toggle label="Email notifications" on={prefs.email_enabled} onChange={(v) => setPrefs({ ...prefs, email_enabled: v })} />
           </div>
         </div>
 
@@ -146,23 +173,42 @@ export default function NotificationSettingsPage() {
         {/* Digest cadence */}
         <div className="bg-[var(--color-surface)] rounded-2xl border border-[var(--color-border)] shadow-sm p-5 mt-4">
           <div className="text-sm font-black text-[var(--color-text)] mb-1">Delivery cadence</div>
-          <div className="text-xs text-[var(--color-text-muted)] mb-3">Currently the backend honors immediate vs. never. Hourly/daily digests are wired into the schema and will batch when implemented.</div>
+          <div className="text-xs text-[var(--color-text-muted)] mb-3">Immediately sends each email as it happens; Never turns event email off. (The master switch above also stops the daily compliance digest.)</div>
+          {legacyCadence && (
+            <div className="text-xs text-amber-800 mb-3">Your saved cadence “{legacyCadence}” was never implemented — email has been sent immediately. Saving stores Immediately.</div>
+          )}
           <div className="flex flex-wrap gap-2">
-            {(["immediate", "hourly", "daily", "never"] as const).map((opt) => (
+            {OFFERED_DIGEST_FREQUENCIES.map((opt) => (
               <button
                 key={opt}
+                type="button"
+                aria-pressed={prefs.digest_frequency === opt}
                 onClick={() => setPrefs({ ...prefs, digest_frequency: opt })}
                 className={`px-3 py-1.5 rounded-lg text-xs font-bold border transition-colors ${prefs.digest_frequency === opt ? "bg-[var(--color-accent)] text-[var(--color-accent-fg)] border-[var(--color-accent)]" : "bg-[var(--color-surface)] text-[var(--color-text)] border-[var(--color-border)] hover:bg-[var(--color-surface-2)]"}`}
               >
-                {opt[0].toUpperCase() + opt.slice(1)}
+                {DIGEST_LABELS[opt]}
               </button>
             ))}
           </div>
         </div>
 
+        {/* In-app */}
+        <div className="bg-[var(--color-surface)] rounded-2xl border border-[var(--color-border)] shadow-sm divide-y divide-[var(--color-border)] mt-4">
+          <div className="px-5 py-4 flex items-start gap-3">
+            <Bell className="w-5 h-5 text-[var(--color-text-muted)] shrink-0 mt-0.5" />
+            <div className="flex-1">
+              <div className="text-sm font-black text-[var(--color-text)]">In-app</div>
+              <div className="text-xs text-[var(--color-text-muted)] mt-0.5">Bell notifications are always on — they are the record of what needs your attention, and nothing here turns them off.</div>
+            </div>
+          </div>
+          {TOAST_PREFERENCE_HONOURED && (
+            <PrefRow icon={MessageSquare} title="Pop-up toasts" hint="A brief card in the corner when a new bell notification arrives. Off: the bell still counts it." on={prefs.toast_enabled} onChange={(v) => setPrefs({ ...prefs, toast_enabled: v })} />
+          )}
+        </div>
+
         <div className="mt-6 flex items-center justify-end gap-3">
           {saved && <span className="inline-flex items-center gap-1 text-xs font-bold text-emerald-700"><Check className="w-3.5 h-3.5" /> Saved</span>}
-          <Button onClick={save} loading={saving}>
+          <Button onClick={save} loading={saving} disabled={loadFailed}>
             {!saving && <Save className="w-4 h-4" />}
             Save preferences
           </Button>
@@ -186,14 +232,18 @@ function PrefRow({ icon: Icon, title, hint, on, onChange }: PrefRowProps) {
         <div className="text-sm font-bold text-[var(--color-text)]">{title}</div>
         <div className="text-xs text-[var(--color-text-muted)] mt-0.5">{hint}</div>
       </div>
-      <Toggle on={on} onChange={onChange} />
+      <Toggle label={title} on={on} onChange={onChange} />
     </div>
   );
 }
 
-function Toggle({ on, onChange }: { on: boolean; onChange: (v: boolean) => void }) {
+function Toggle({ label, on, onChange }: { label: string; on: boolean; onChange: (v: boolean) => void }) {
   return (
     <button
+      type="button"
+      role="switch"
+      aria-checked={on}
+      aria-label={label}
       onClick={() => onChange(!on)}
       className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors shrink-0 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-accent-ring)] focus-visible:ring-offset-2 ${on ? "bg-emerald-500" : "bg-slate-300"}`}
     >

@@ -3,7 +3,10 @@
 //
 // Every workflow event that should notify users goes through queueEmail(),
 // which:
-//   1. Honors the recipient's per-user preferences (skip if they opted out)
+//   1. Asks email_gate() (20261148, SECURITY DEFINER) whether the RECIPIENT's
+//      preferences allow this email and whether the same email for the same
+//      resource was queued in the last 60 seconds — evaluated where the
+//      recipient's row is visible, whoever is calling (DELIV-2, DELIV-9)
 //   2. Writes a row to `email_notifications` (status='queued')
 //   3. Hits /api/notifications/send-queued to flush new rows immediately
 //      so the recipient sees the email within seconds, not minutes
@@ -12,6 +15,7 @@
 // produced by MentionableTextarea.
 
 import { supabase } from "@/lib/supabase";
+import { emailAllowedByPrefs, isMissingEmailGate } from "@/lib/notificationPrefs";
 
 export type QueueEmailInput = {
   orgId: string;
@@ -24,13 +28,11 @@ export type QueueEmailInput = {
   resourceId?: string;
   eventType: string;
   metadata?: Record<string, unknown>;
+  /** Absolute call-to-action URL for the message. Carried on the row as
+   *  metadata.link for the drain's renderer (N6); nothing reads it yet. */
+  link?: string;
 };
 
-/**
- * Drop an email into the queue. Honors notification preferences if the user
- * has set them (defaults to all-on). Fires-and-forgets a fetch to the
- * send-queued endpoint so delivery feels instant.
- */
 /** Kick the email drain from the browser, authenticated with the current
  *  user's session so the (auth-gated) send-queued route accepts it. Best-
  *  effort and browser-only: a failure just defers delivery to the cron. */
@@ -47,34 +49,76 @@ export async function kickEmailDrain(): Promise<Response | null> {
   }
 }
 
-export async function queueEmail(input: QueueEmailInput): Promise<void> {
-  try {
-    // Look up the user's preferences. Missing row = defaults (all on).
-    const { data: prefs } = await supabase
-      .from("notification_preferences")
-      .select("*")
-      .eq("user_id", input.toUserId)
-      .maybeSingle();
+/** The gate's answer. 'unverified' = it could not be evaluated where the
+ *  recipient's row is visible; the email is sent (a dropped compliance email
+ *  is worse than an unwanted one) and the row says so in metadata.pref_gate. */
+type GateVerdict = "send" | "suppress" | "unverified";
 
-    if (prefs?.email_enabled === false) return;
-    if (prefs?.digest_frequency === "never") return;
-    if (!shouldSendForEvent(prefs, input.eventType)) return;
+async function evaluateEmailGate(input: QueueEmailInput): Promise<GateVerdict> {
+  const { data, error } = await supabase.rpc("email_gate", {
+    p_org: input.orgId,
+    p_to_user: input.toUserId,
+    p_event_type: input.eventType,
+    p_resource_id: input.resourceId || null,
+  });
+  if (!error) return data === false ? "suppress" : "send";
+  if (isMissingEmailGate(error)) {
+    console.warn(
+      "queueEmail: email_gate() is not deployed (paste migration 20261148) — falling back to the caller-side preference read, which cannot see another member's opt-out",
+    );
+    return legacyEmailGate(input);
+  }
+  console.warn(
+    `queueEmail: email_gate failed (${error.code ?? "?"}: ${error.message}) — sending anyway, stamped pref_gate=unverified`,
+  );
+  return "unverified";
+}
 
-    // Dedupe: if the same recipient got the same event for the same resource
-    // within the last 60 seconds, suppress this one (prevents burst-spam when
-    // a workflow action triggers multiple watchers + assignments simultaneously).
+/** The pre-20261148 gate, unchanged in effect: the recipient's row and the
+ *  60-second window read through the CALLER's client. Under the service role
+ *  that is authoritative; from a browser RLS hides another member's row, so a
+ *  missing row is reported as 'unverified' rather than read as all-on. */
+async function legacyEmailGate(input: QueueEmailInput): Promise<GateVerdict> {
+  const { data: prefs, error: prefsErr } = await supabase
+    .from("notification_preferences")
+    .select("*")
+    .eq("user_id", input.toUserId)
+    .maybeSingle();
+  if (!emailAllowedByPrefs(prefs ?? null, input.eventType)) return "suppress";
+
+  if (input.resourceId) {
     const sixtySecAgo = new Date(Date.now() - 60_000).toISOString();
     const { data: dupes } = await supabase
       .from("email_notifications")
       .select("id")
       .eq("to_user_id", input.toUserId)
       .eq("event_type", input.eventType)
-      .eq("resource_id", input.resourceId || "")
+      .eq("resource_id", input.resourceId)
       .gte("created_at", sixtySecAgo)
       .limit(1);
-    if (dupes && dupes.length > 0) return;
+    if (dupes && dupes.length > 0) return "suppress";
+  }
+  return prefs && !prefsErr ? "send" : "unverified";
+}
 
-    await supabase.from("email_notifications").insert({
+/**
+ * Drop an email into the queue. Honors the recipient's notification
+ * preferences (no row = the defaults, all on) and the 60-second dedupe through
+ * email_gate(). Fires-and-forgets a fetch to the send-queued endpoint so
+ * delivery feels instant.
+ */
+export async function queueEmail(input: QueueEmailInput): Promise<void> {
+  try {
+    // The recipient's preferences + the 60-second dedupe (same recipient, same
+    // event, same resource), evaluated by email_gate() where both are visible.
+    const verdict = await evaluateEmailGate(input);
+    if (verdict === "suppress") return;
+
+    const metadata: Record<string, unknown> = { ...(input.metadata ?? {}) };
+    if (input.link) metadata.link = input.link;
+    if (verdict === "unverified") metadata.pref_gate = "unverified";
+
+    const { error: insErr } = await supabase.from("email_notifications").insert({
       org_id: input.orgId,
       to_user_id: input.toUserId,
       to_email: input.toEmail,
@@ -84,9 +128,13 @@ export async function queueEmail(input: QueueEmailInput): Promise<void> {
       resource_type: input.resourceType || null,
       resource_id: input.resourceId || null,
       event_type: input.eventType,
-      metadata: input.metadata || null,
+      metadata: Object.keys(metadata).length > 0 ? metadata : null,
       status: "queued",
     });
+    if (insErr) {
+      console.error("queueEmail: the email was not queued:", insErr);
+      return;
+    }
 
     // Best-effort kick the sender. If this fails the row is still safely
     // queued — the maintenance cron drains the queue as the authoritative
@@ -105,24 +153,9 @@ export async function queueEmail(input: QueueEmailInput): Promise<void> {
 // migration 20261047 makes a client INSERT with metadata.external = true
 // impossible. The legitimate path is /api/transmittal/send-email.
 
-function shouldSendForEvent(
-  prefs: Record<string, unknown> | null,
-  eventType: string
-): boolean {
-  if (!prefs) return true;
-  switch (eventType) {
-    case "comment_mention":           return prefs.email_on_mention !== false;
-    case "assignment":
-    case "engineer_review_requested": return prefs.email_on_assignment !== false;
-    case "ticket_status_changed":
-    case "ticket_approved":
-    case "ticket_revision_requested":
-    case "ticket_closed":             return prefs.email_on_status_change !== false;
-    case "watcher_activity":          return prefs.email_on_watched_activity !== false;
-    case "sla_warning":               return prefs.email_on_sla_warning !== false;
-    default:                          return true;
-  }
-}
+// shouldSendForEvent moved to lib/notificationPrefs.ts (notifications Round G,
+// N1) with the rest of the preference rule, so queueEmail, email_gate() and
+// the compliance digest share one definition.
 
 // ─── MENTION PARSING ─────────────────────────────────────────────────────
 // Mentions are stored in comment text as @[Display Name](uuid). This lets
