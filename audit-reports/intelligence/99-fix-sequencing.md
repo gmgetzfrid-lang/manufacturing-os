@@ -348,6 +348,52 @@ from `20261056` with `'ai.manage_caps'` added to its critical list
 (`ai.manage_caps` is `critical: true`). A later package that re-creates the
 guard starts from `20261137`'s body.
 
+**MERGE notes — I-05's limbs in other packages' files** (I-05 fix pass 11;
+the integrator confirms at I-05's merge that no running owner branch
+conflicts with them). Each owner that next edits the file keeps the limb:
+
+- `lib/knowledgeIngest.ts` (I-06's, merged; I-06b next). Keep the GOV-4
+  catch in the drain's `loadSponsorVision`: an unreadable ledger withholds
+  vision only, and the drain goes on. Keep `opts.noVisionReason` and its
+  third argument to `visionRetryMessage`. Keep the vision-page hold
+  (`visionHeld` → `vision_failed_pages`): a page that needs vision is never
+  consumed text-only while the reason can be fixed. Keep the uploader's
+  agreement read, which returns that reason.
+- `app/api/knowledge/ingest/route.ts` (I-06's, merged; I-06b next). Keep:
+  - the GOV-4 catch around `getMonthUsage` / `getCapUsd` (vision skipped,
+    never a 500);
+  - the GOV-11 read of `ai_key_agreements` at `AGREEMENT_VERSION`, where an
+    unreadable record is never taken as signed;
+  - `noVisionReason` passed to the batch;
+  - a read-every-page library's 428 (agreement fields) or 409, written
+    without touching the row.
+- `lib/knowledge.ts` (I-02's, merged; I-02b). Keep the additive types:
+  `AiUsageSummary` gains `locked` / `calls` / `byOp` / `canManageCaps`.
+  Keep `aiUsageLockedReason`. Keep `setAiCap`, which returns the POST's
+  answer (`AiCapSetResult`). AI settings types what POST adds beyond that
+  (`selfCapUsd`, `selfCapSetByAnother`, `selfCapOwnLowering`, `unchanged`)
+  locally, as `CapSetView`. The `ownVisionKeyProblem` MERGE GATE above
+  still applies.
+- `app/api/admin/purge/route.ts` (A&O P7's; N6 edits its status filters).
+  Keep `cutoffFor`: the `ai_usage_events` cutoff is never later than
+  `monthStartIso()`. Keep the relabelled target and the per-table cutoff in
+  the preview and the `DATA_PURGE` row (`purgeLedgerFloor.test.ts`).
+
+**GOV-10 → `GOV-15` at I-05's merge** (integrator's decision, 2026-10-01).
+GOV-10 is recorded as a Partial, Status OPEN: the self-raise ban holds for
+sequential requests. Races between two or more cap changes in flight are
+`GOV-15`, "a cap change is one database transaction", which the integrator
+opens with its own package. That package writes one SECURITY DEFINER
+function, `search_path` pinned, with DRLS-16's revoke and grant. It locks
+the default and override rows, then decides, writes and audits. It
+REPLACES the route's app-side machinery: `capChangesSince`, `signedFigure`,
+`holdOwnCapAt`, `recheckOwnCap`, the guarded writes, re-reads and
+put-backs, and `writeId` / `limitRowId`. It does not extend them. Its
+inputs are the residual under GOV-10's "What the race machinery leaves
+open" and "Noted for `GOV-15`". The same package (or `GOV-13`'s) moves
+`readMonthRows` off offset paging: a keyset cursor on (`created_at`, `id`),
+or one server-side sum.
+
 ---
 
 ## Do not do these
