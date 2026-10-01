@@ -82,8 +82,10 @@ export interface AuditFindings {
    *  boxes were transcribed), or was not read whole and the box is not on
    *  what was read of it (`unread` says why — review fix pass 4), or is a
    *  page of a document read whole on which no box numbers were read (`why`
-   *  says which — review fix pass 5). Absence of evidence — never broken
-   *  (DWG-4). */
+   *  says which — review fix pass 5), or may be a page of it whose drawing
+   *  number and box numbers were both never read, or is declared by no
+   *  document while one still being read may hold it (`why` says which —
+   *  review fix pass 6). Absence of evidence — never broken (DWG-4). */
   unpairedConnectors?: Array<{ from: string; to: string; box: string; unread?: string; why?: string; waitsOn?: readonly string[] }>;
   /** References whose check needed a sheet that was not read whole: the
    *  target was not found to reference back on what was read of it
@@ -475,8 +477,14 @@ export function storedProvisional(details: unknown): { settledStatus: string } |
  * replaces a provisional row down to that row's settled status: what was
  * filed while a neighbour was unread heals once it is read.
  *
- * Under an unknown revision ("") the latest computation is written, as
- * before — except `skipped`, which never erases a verdict. `neverLower`
+ * Under an unknown revision ("") a SETTLED computation is written, as
+ * before — the latest verdict is the only one that can be about the drawing
+ * in front of us — except `skipped`, which never erases a verdict. A
+ * provisional one follows the same rule as at a known revision over a
+ * settled row: it never overwrites it for what is unsettled in it (review
+ * fix pass 6 — fix pass 5 wrote any computation there, so a verdict waiting
+ * on a parked neighbour overwrote a verified `broken_connectors` with
+ * `flagged`); over a provisional row, the latest is written. `neverLower`
  * applies the known-revision rule whatever the revision (a row another
  * library filed on the org-wide key, before 20261124).
  */
@@ -486,15 +494,14 @@ export function replaceDecision(
   opts: { neverLower?: boolean } = {},
 ): "write" | "keep" | "wait" {
   if (!stored) return "write";
-  if (stored.revision_code === "" && !opts.neverLower) {
-    return next.status !== "skipped" || stored.status === "skipped" ? "write" : "keep";
-  }
+  const latestWins = stored.revision_code === "" && !opts.neverLower;
   const floor = stored.provisional ? stored.provisional.settledStatus : stored.status;
   if (next.provisional) {
     const settledNow = next.provisional.settledStatus;
-    if (stored.provisional) return wouldLowerSeverity(floor, settledNow) ? "wait" : "write";
+    if (stored.provisional) return !latestWins && wouldLowerSeverity(floor, settledNow) ? "wait" : "write";
     return !wouldLowerSeverity(floor, settledNow) && floor !== settledNow ? "write" : "wait";
   }
+  if (latestWins) return next.status !== "skipped" || stored.status === "skipped" ? "write" : "keep";
   return wouldLowerSeverity(floor, next.status) ? "keep" : "write";
 }
 

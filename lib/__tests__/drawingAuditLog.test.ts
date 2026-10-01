@@ -365,9 +365,20 @@ describe("a finding that waits on a sheet not read whole FOR NOW is provisional 
     // A provisional row takes a newer provisional verdict that settles no less.
     expect(replaceDecision(storedProv, provisionalFlagged)).toBe("write");
     expect(replaceDecision({ ...storedProv, provisional: { settledStatus: "flagged" } }, provisionalFlagged)).toBe("wait");
-    // Unknown revision: the latest computation, as before; never a skip.
-    expect(replaceDecision({ revision_code: "", status: "passed" }, provisionalFlagged)).toBe("write");
+    // Unknown revision: the latest SETTLED computation, as before; never a
+    // skip. A provisional one never overwrites a settled row for what is
+    // unsettled in it there either (review fix pass 6, the reviewer's probe
+    // B: fix pass 5 let a verdict waiting on a parked neighbour overwrite a
+    // verified broken_connectors with flagged).
+    expect(replaceDecision({ revision_code: "", status: "passed" }, { status: "flagged" })).toBe("write");
+    expect(replaceDecision({ revision_code: "", status: "broken_connectors" }, { status: "passed" })).toBe("write");
     expect(replaceDecision({ revision_code: "", status: "passed" }, { status: "skipped" })).toBe("keep");
+    expect(replaceDecision({ revision_code: "", status: "broken_connectors" }, provisionalFlagged)).toBe("wait");
+    expect(replaceDecision({ revision_code: "", status: "passed" }, provisionalFlagged)).toBe("wait");
+    expect(replaceDecision({ revision_code: "", status: "passed" }, { status: "broken_connectors", provisional: { settledStatus: "broken_connectors" } })).toBe("write");
+    // …and over a provisional unrevised row, the latest is written.
+    expect(replaceDecision({ revision_code: "", status: "flagged", provisional: { settledStatus: "flagged" } }, provisionalFlagged)).toBe("write");
+    expect(replaceDecision({ revision_code: "", status: "flagged", provisional: { settledStatus: "passed" } }, { status: "passed" })).toBe("write");
     // Another library's row on the org-wide key: never lowered, whatever its revision.
     expect(replaceDecision({ revision_code: "", status: "flagged" }, { status: "passed" }, { neverLower: true })).toBe("keep");
     // mayReplaceStored is the settled-over-settled case.
