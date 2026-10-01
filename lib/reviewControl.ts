@@ -122,7 +122,51 @@ export const slotGroupKey = {
   person: (uid: string) => `person:${uid}`,
   role: (role: string) => `role:${role}`,
   team: (teamId: string) => `team:${teamId}`,
+  /** GAP-4: the effective owner's own slot under `ownerMustApprove`. No
+   *  policy entry pairs an alternate with it, so only the owner fills it. */
+  owner: (uid: string) => `owner:${uid}`,
 };
+
+/** GAP-4: how the owner-must-approve slot landed on a roster. `rostered` —
+ *  the effective owner is a required primary in their own slot; `author` —
+ *  the owner authored the revision and DEC-21 skips an author (a reviewer
+ *  never signs their own work); `no_owner` — no active owner resolves, so
+ *  nobody holds it and the roster gap notice says so. NULL: not required. */
+export type OwnerSlotOutcome = "rostered" | "author" | "no_owner" | null;
+
+/** GAP-4: place the effective owner on a freshly expanded roster as a
+ *  REQUIRED primary in a slot of their own. An owner the policy already
+ *  resolved as a primary keeps one row (re-slotted: only their own
+ *  signature fills it, so a role's or a person's alternate can't approve
+ *  for them); an owner resolved only as an alternate is promoted (primary
+ *  wins, as in expandReviewers). Pure — openReviewRoster resolves the owner. */
+export function placeOwnerSlot(input: {
+  primaries: Reviewer[]; alternates: Reviewer[];
+  owner: { userId: string | null; name: string | null };
+  /** The revision's author when DEC-21 skips authors (independent review
+   *  required); NULL when the library opted out. */
+  skipAuthorUid: string | null;
+}): { primaries: Reviewer[]; alternates: Reviewer[]; outcome: Exclude<OwnerSlotOutcome, null>; warning: string | null } {
+  const { primaries, alternates, owner, skipAuthorUid } = input;
+  if (!owner.userId) {
+    return {
+      primaries, alternates, outcome: "no_owner",
+      warning: "Owner approval: the review policy requires the owner's approval, but no active owner resolves for this document — set an owner (this revision's roster has no owner slot)",
+    };
+  }
+  if (skipAuthorUid && owner.userId === skipAuthorUid) return { primaries, alternates, outcome: "author", warning: null };
+  const ownerUid = owner.userId;
+  const known = primaries.find((p) => p.uid === ownerUid) ?? alternates.find((a) => a.uid === ownerUid) ?? null;
+  const ownerRow: Reviewer = {
+    uid: ownerUid, name: known?.name ?? owner.name ?? null, role: "Owner (must approve)", source: "person", groupKey: slotGroupKey.owner(ownerUid),
+  };
+  return {
+    primaries: [ownerRow, ...primaries.filter((p) => p.uid !== ownerUid)],
+    alternates: alternates.filter((a) => a.uid !== ownerUid),
+    outcome: "rostered",
+    warning: null,
+  };
+}
 
 async function expandSet(
   orgId: string, ids: string[], roles: string[], teams: string[], warnings: string[], label: string,
@@ -366,7 +410,10 @@ async function withdrawStrandedSubmission(input: { documentId: string; versionId
  *  RG-7: a roster write that FAILS throws after withdrawing the submission —
  *  the caller's success message is reachable only after a confirmed roster.
  *  RG-8: the draft's author is skipped from the roster (DEC-21, unless the
- *  library opted out of independent review). */
+ *  library opted out of independent review).
+ *  GAP-4: under `ownerMustApprove` the effective owner is a required primary
+ *  in their own slot (placeOwnerSlot); an owner that cannot be read
+ *  withdraws the submission like a roster that cannot be saved. */
 export async function openReviewRoster(input: {
   orgId: string; documentId: string; libraryId: string; versionId: string;
   revisionLabel: string; contentHash: string | null; control: ReviewControl;
@@ -378,11 +425,55 @@ export async function openReviewRoster(input: {
   const { data: verRow } = await supabase.from("document_versions").select("created_by").eq("id", input.versionId).maybeSingle();
   if (verRow?.created_by) authorUid = String(verRow.created_by);
   const requireIndependent = await libraryRequiresIndependentReviewer(input.documentId);
-  const { primaries, alternates, warnings, authorSkipped } = await expandReviewers(input.orgId, input.control, {
+  const expanded = await expandReviewers(input.orgId, input.control, {
     excludeUid: requireIndependent ? authorUid : null,
   });
+  let { primaries, alternates, authorSkipped } = expanded;
+  const { warnings } = expanded;
   const nowIso = new Date().toISOString();
   const link = `/documents/${input.libraryId}?doc=${input.documentId}`;
+  /** RG-7: a roster that cannot be opened WITHDRAWS the submission and
+   *  throws — nothing is left "in review" with a roster nobody can trust. */
+  const withdrawAndThrow = async (what: string, cause: string): Promise<never> => {
+    const problems = await withdrawStrandedSubmission({ documentId: input.documentId, versionId: input.versionId, nowIso });
+    await logAuditAction({
+      action: "REVIEW_ROSTER_FAILED", resourceType: "document", resourceId: input.documentId,
+      orgId: input.orgId, userId: input.actorId ?? "",
+      details: { revision: input.revisionLabel, versionId: input.versionId, error: cause, withdrawn: problems.length === 0, problems },
+    }).catch(() => {});
+    throw new Error(
+      `${what} (${cause}). ` +
+      (problems.length
+        ? `The submission could NOT be fully withdrawn — ${problems.join("; ")} — a document controller must clear the stranded draft.`
+        : "The submission was withdrawn: nothing is in review. Fix the cause and submit again."),
+    );
+  };
+  // GAP-4 (R&P): an owner-must-approve policy rosters the document's
+  // effective owner as a REQUIRED primary in a slot of their own — on rosters
+  // opened from now on only (an open roster is never changed). The database
+  // completion gate counts primary rows per slot group, so the owner's row is
+  // required there too with no change to the guard. The owner is read
+  // CHECKED: an owner we could not read must never open a roster without them.
+  let ownerSlot: OwnerSlotOutcome = null;
+  if (input.control.ownerMustApprove === true) {
+    const { data: od, error: odErr } = await supabase.from("documents")
+      .select("owner_user_id, owner_name, collection_id").eq("id", input.documentId).maybeSingle();
+    if (odErr || !od) {
+      await withdrawAndThrow("The reviewer roster could not be opened: the document's owner, who must approve it, could not be read", odErr?.message ?? "the document was not found");
+    }
+    const owner = await effectiveOwnerForDocument({
+      ownerUserId: (od?.owner_user_id as string | null) ?? null,
+      ownerName: (od?.owner_name as string | null) ?? null,
+      collectionId: (od?.collection_id as string | null) ?? null,
+      libraryId: input.libraryId,
+      orgId: input.orgId,
+    });
+    const placed = placeOwnerSlot({ primaries, alternates, owner, skipAuthorUid: requireIndependent ? authorUid : null });
+    ({ primaries, alternates } = placed);
+    ownerSlot = placed.outcome;
+    if (placed.outcome === "author") authorSkipped = true;
+    if (placed.warning) warnings.push(placed.warning);
+  }
   const rows = [
     ...primaries.map((r) => ({ r, slot: "primary" as const, activated: true })),
     ...alternates.map((r) => ({ r, slot: "alternate" as const, activated: false })),
@@ -408,24 +499,15 @@ export async function openReviewRoster(input: {
       // was about to be told "reviewers have been notified", the draft could
       // never finalize, and the completion guard would be inert over it.
       console.warn("[reviewControl] roster insert failed", upsertErr.message);
-      const problems = await withdrawStrandedSubmission({ documentId: input.documentId, versionId: input.versionId, nowIso });
-      await logAuditAction({
-        action: "REVIEW_ROSTER_FAILED", resourceType: "document", resourceId: input.documentId,
-        orgId: input.orgId, userId: input.actorId ?? "",
-        details: { revision: input.revisionLabel, versionId: input.versionId, error: upsertErr.message, withdrawn: problems.length === 0, problems },
-      }).catch(() => {});
-      throw new Error(
-        `The reviewer roster could not be saved (${upsertErr.message}). ` +
-        (problems.length
-          ? `The submission could NOT be fully withdrawn — ${problems.join("; ")} — a document controller must clear the stranded draft.`
-          : "The submission was withdrawn: nothing is in review. Fix the cause and submit again."),
-      );
+      await withdrawAndThrow("The reviewer roster could not be saved", upsertErr.message);
     }
     await Promise.all(primaries.filter((r) => r.uid !== input.actorId).map((r) =>
       notify({
         orgId: input.orgId, userId: r.uid, kind: "review_requested",
         title: `Review requested: ${input.revisionLabel}`,
-        body: "A draft revision is waiting for your sign-off before it can publish.",
+        body: r.groupKey === slotGroupKey.owner(r.uid)
+          ? "A draft revision is waiting for your sign-off before it can publish — as the document's owner, your approval is required."
+          : "A draft revision is waiting for your sign-off before it can publish.",
         link, resourceType: "document", resourceId: input.documentId,
         actorUserId: input.actorId ?? undefined, actorName: input.actorName ?? undefined,
       })
@@ -433,7 +515,7 @@ export async function openReviewRoster(input: {
     await logAuditAction({
       action: "REVIEW_REQUESTED", resourceType: "document", resourceId: input.documentId,
       orgId: input.orgId, userId: input.actorId ?? "",
-      details: { revision: input.revisionLabel, primaries: primaries.length, alternates: alternates.length, authorSkipped: authorSkipped ? authorUid : null },
+      details: { revision: input.revisionLabel, primaries: primaries.length, alternates: alternates.length, authorSkipped: authorSkipped ? authorUid : null, ownerSlot },
     }).catch(() => {});
   }
   if (primaries.length === 0 && authorSkipped) {

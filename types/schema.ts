@@ -240,6 +240,15 @@ export interface ReviewControl {
    *  at least one signed PRIMARY must be someone else. Defaults ON wherever a
    *  required-review roster is configured; `false` opts a library out. */
   requireIndependentReviewer?: boolean;
+  /** GAP-4 (R&P): ownership means being the approver of revision and
+   *  supersession. When the EFFECTIVE policy sets this, every roster opened
+   *  from then on carries the document's effective owner as a REQUIRED
+   *  primary in a slot of their own (`owner:<uid>` — no alternate stands in
+   *  for it). Rosters already open are never changed. Off unless set: it is
+   *  a per-policy choice, not a global rule. The owner who AUTHORED the
+   *  revision is skipped under DEC-21 like any author (a reviewer never
+   *  signs their own work); no active owner rosters nobody and says so. */
+  ownerMustApprove?: boolean;
 }
 
 /** A retention policy — how long a controlled record must be kept before it's
