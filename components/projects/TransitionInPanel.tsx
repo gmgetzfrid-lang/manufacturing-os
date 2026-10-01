@@ -206,7 +206,7 @@ export default function TransitionInPanel({ orgId, projectId, intakeCollectionId
         </button>
       </div>
 
-      {msg && <div className="rounded-xl border border-[var(--color-border)] bg-[var(--color-surface-2)]/50 px-3 py-2 text-xs font-bold text-[var(--color-text)]">{msg}</div>}
+      <div aria-live="polite">{msg && <div role="status" className="rounded-xl border border-[var(--color-border)] bg-[var(--color-surface-2)]/50 px-3 py-2 text-xs font-bold text-[var(--color-text)]">{msg}</div>}</div>
 
       {canManage && !canAdopt && (
         <div className="rounded-xl border border-[var(--color-border)] bg-[var(--color-surface-2)]/40 px-3 py-2 text-xs text-[var(--color-text-muted)]">

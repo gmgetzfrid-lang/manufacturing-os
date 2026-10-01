@@ -155,7 +155,7 @@ export default function ProjectDocumentsCard({ orgId, projectId, canManage, uid,
         )}
       </div>
 
-      {err && <div className="px-4 py-2 text-[11px] font-bold text-rose-700 bg-rose-500/[0.07] border-b border-rose-500/30">{err}</div>}
+      {err && <div role="alert" className="px-4 py-2 text-[11px] font-bold text-rose-700 dark:text-rose-300 bg-rose-500/[0.07] border-b border-rose-500/30">{err}</div>}
       {hidden > 0 && (
         <div className="px-4 py-2 text-[11px] text-[var(--color-text-muted)] border-b border-[var(--color-border)] inline-flex items-center gap-1.5 w-full">
           <EyeOff className="w-3.5 h-3.5 shrink-0" />

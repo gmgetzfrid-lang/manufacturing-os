@@ -37,6 +37,7 @@ import IntakePortal from "@/app/submit/[token]/page";
 import HelpTooltip from "@/components/ui/HelpTooltip";
 import { StatusMark, StatusLegend, CHECKLIST_STATUS_MARKS, PUNCH_STATUS_MARKS, RUBRIC_MARKS, type StatusMarkSpec } from "@/components/projects/StatusMark";
 import { CostGlossary } from "@/components/projects/cost/CostCharts";
+import UndoToastHost from "@/components/projects/UndoToastHost";
 
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -328,6 +329,17 @@ const T = {
 };
 
 describe("A11Y-13 — the cited pairs clear 4.5 : 1 in both themes", () => {
+  it("every date / time input on the Projects surfaces follows the theme (color-scheme), not only the cited one", () => {
+    const unthemed: string[] = [];
+    for (const f of PROJECT_SURFACES) {
+      const s = src(f);
+      for (const m of s.matchAll(/<input\b/g)) {
+        const tag = s.slice(m.index, s.indexOf("/>", m.index));
+        if (/type="(date|datetime-local|time)"/.test(tag) && !tag.includes("dark:[color-scheme:dark]")) unthemed.push(`${f}@${m.index}`);
+      }
+    }
+    expect(unthemed).toEqual([]);
+  });
   it("amber text on the amber-500/15 chip is the 800 step in light and the 300 step in dark (was 700 at 4.47 : 1)", () => {
     expect(ratio(T.amber800, over(T.amber500, 0.15, T.white))).toBeGreaterThanOrEqual(4.5);
     expect(ratio(T.amber300, over(T.amber500, 0.15, T.surfaceDark))).toBeGreaterThanOrEqual(4.5);
@@ -416,6 +428,22 @@ describe("A11Y-7 — the selected filter and tab are visible in both themes and 
 });
 
 describe("A11Y-6 / UX-7 — results are announced, and an intake failure reads as an error", () => {
+  it("area census: every Projects / Companies / portal file that sets a message renders it in an alert or a live region", () => {
+    const silent = PROJECT_SURFACES.filter((f) => {
+      const s = src(f);
+      return /\bset(Err|Error|Notice|Msg)\(/.test(s) && !/role="alert"|role=\{|aria-live=/.test(s);
+    });
+    expect(silent).toEqual([]);
+  });
+  it("the schedule board's undo toasts land in a live region that stays mounted; a warning is assertive", async () => {
+    const T = UndoToastHost as unknown as React.FC<Record<string, unknown>>;
+    await act(async () => { root.render(React.createElement(T, { toasts: [], onUndo: () => {}, onDismiss: () => {} })); });
+    const region = host.querySelector('[aria-live="polite"]');
+    expect(region).not.toBeNull();
+    await act(async () => { root.render(React.createElement(T, { toasts: [{ id: 1, message: "Moved 3 tasks", tone: "warning" }], onUndo: () => {}, onDismiss: () => {} })); });
+    expect(region!.querySelector('[role="alert"]')?.textContent).toContain("Moved 3 tasks");
+    expect(host.querySelector('button[aria-label="Dismiss"]')).not.toBeNull();
+  });
   it("the intake notice carries a tone: setMsg is an error unless the site says otherwise, and the banner is alert / status in a live region", () => {
     const p = src("components/projects/IntakePanel.tsx");
     expect(p).toContain('const setMsg = useCallback((text: string | null, tone: "error" | "success" | "info" = "error") => {');

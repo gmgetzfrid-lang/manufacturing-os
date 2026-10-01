@@ -1775,7 +1775,7 @@ function GroupTasksModal({
               {childNames.length > 12 && <li className="text-[10px] text-[var(--color-text-muted)] italic">+{childNames.length - 12} more</li>}
             </ul>
           </div>
-          {error && <div className="text-xs text-rose-700 bg-rose-50 border border-rose-200 rounded-md p-2">{error}</div>}
+          {error && <div role="alert" className="text-xs text-rose-700 dark:text-rose-300 bg-rose-500/[0.08] border border-rose-500/40 rounded-md p-2">{error}</div>}
         </div>
         <div className="px-5 py-3 border-t border-[var(--color-border)] bg-slate-50/60 flex items-center justify-end gap-2">
           <button onClick={onClose} disabled={busy} className="text-sm text-[var(--color-text-muted)] hover:text-[var(--color-text)] px-3 py-1.5 transition-colors">Cancel</button>
@@ -1823,7 +1823,7 @@ function SetDurationModal({ task, actorUserId, onClose, onDone }: { task: Milest
           <label className="text-[10px] font-bold uppercase tracking-widest text-[var(--color-text-muted)]">Days the task runs</label>
           <input type="number" min={1} max={365} value={days} onChange={(e) => setDays(Math.max(1, Math.min(365, Number(e.target.value) || 1)))} className="w-full px-3 py-2 text-sm border border-[var(--color-border-strong)] rounded-md outline-none focus:ring-2 focus:ring-[var(--color-accent-ring)]/30" />
           <div className="text-[11px] text-[var(--color-text-muted)]">Ends on <b>{fmtDateUTC(finish)}</b>. {days > 1 ? `Starts ${days - 1} day${days - 1 === 1 ? "" : "s"} earlier.` : "Single-day task."}</div>
-          {error && <div className="text-xs text-rose-700 bg-rose-50 border border-rose-200 rounded-md p-2">{error}</div>}
+          {error && <div role="alert" className="text-xs text-rose-700 dark:text-rose-300 bg-rose-500/[0.08] border border-rose-500/40 rounded-md p-2">{error}</div>}
         </div>
         <div className="px-5 py-3 border-t border-[var(--color-border)] bg-slate-50/60 flex items-center justify-end gap-2">
           <button onClick={onClose} disabled={busy} className="text-sm text-[var(--color-text-muted)] hover:text-[var(--color-text)] px-3 py-1.5 transition-colors">Cancel</button>

@@ -555,8 +555,8 @@ function EditForm({
       <fieldset disabled={imported} className="space-y-3 disabled:opacity-60">
       <L label="Task name"><input value={name} onChange={(e) => setName(e.target.value)} className={cls("name")} /><Note err={v.errors.name} warn={v.warnings.name} /></L>
       <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
-        <L label="Start (schedule time)"><input type="datetime-local" value={start} onChange={(e) => setStart(e.target.value)} className={cls("start")} /><Note err={v.errors.start} warn={v.warnings.start} /></L>
-        <L label="Finish (schedule time)"><input type="datetime-local" value={finish} onChange={(e) => setFinish(e.target.value)} className={cls("finish")} /><Note err={v.errors.finish} warn={v.warnings.finish} /></L>
+        <L label="Start (schedule time)"><input type="datetime-local" value={start} onChange={(e) => setStart(e.target.value)} className={`${cls("start")} bg-[var(--color-surface)] [color-scheme:light] dark:[color-scheme:dark]`} /><Note err={v.errors.start} warn={v.warnings.start} /></L>
+        <L label="Finish (schedule time)"><input type="datetime-local" value={finish} onChange={(e) => setFinish(e.target.value)} className={`${cls("finish")} bg-[var(--color-surface)] [color-scheme:light] dark:[color-scheme:dark]`} /><Note err={v.errors.finish} warn={v.warnings.finish} /></L>
       </div>
       <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
         <L label="Work hours"><input type="number" min={0} value={durationHours} onChange={(e) => setDurationHours(e.target.value)} className={cls("durationHours")} /><Note err={v.errors.durationHours} warn={v.warnings.durationHours} /></L>
