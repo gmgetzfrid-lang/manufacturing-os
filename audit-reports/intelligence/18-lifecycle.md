@@ -54,6 +54,8 @@ lib/storageOrphans.ts:41-44 `// Each source: [label, query, extractor]. Tables a
 - [ ] A test enumerates every table/column in supabase/ that stores an R2 key and asserts each appears in collectReferencedKeys — the binaries analogue of exportCoverage.test.ts, which storageOrphans.ts:43 already calls for by name
 - [ ] Deleting orphans records the deleted KEYS (not just counts) in the audit row so a mistaken purge is at least diagnosable
 
+**Partial (2026-09-30, intelligence Round G).** Pointer — re-verified at HEAD `1b71ca1`: no criterion holds. `collectReferencedKeys` still has no `cost_documents` source (`lib/storageOrphans.ts:47-93` — document_versions, knowledge_documents, asset_photos, tickets, markup_requests, plot_plans, libraries, collections, users, org_configurations, output_templates), no key-column tripwire exists, and the purge's audit row records counts and scope, not keys (`app/api/admin/orphans/route.ts:50-55`). What changed around it: the sweep's walk and delete set are confined to the caller's org prefix (document-control `RET-7`; `ILIFE-8`'s listing half — ILIFE-8 itself stays OPEN on its `referencedKeys` residual), so the gap's blast radius is now the caller's own org; and the collector pages in id order (document-control `XEDGE-13`), but its post-loop count does not catch a concurrent delete (`ILIFE-6` criterion 3, ✗). Owner: admin-and-org **P2** (`BKP-2` — the storage-key registry including `cost_documents.file_url`, and its tripwire); criterion 3 (keys in the audit row) is this finding's addition, carried to `BKP-2` by a cross-note.
+
 ---
 
 <a id="ilife-2"></a>
@@ -85,6 +87,8 @@ lib/dataRestore.ts:292-298 `"asset_aliases", "proposed_links", "link_rules", "an
 - [ ] knowledge_libraries, knowledge_sources and knowledge_documents appear in RESTORE_TABLE_ORDER before process_flows and entity_mentions
 - [ ] A test derives FK dependencies from supabase/migrations and asserts every referenced table's index in RESTORE_TABLE_ORDER is strictly less than its referrer's (this class of bug is not caught by the existing exportCoverage test, which only checks membership)
 - [ ] A restore of a backup containing an AI-read flow (source_document_id non-null) and mentions with knowledge_document_id set lands both tables with zero errors
+
+**Partial (2026-09-30, intelligence Round G).** Pointer — re-verified at HEAD `1b71ca1`: unchanged. `RESTORE_TABLE_ORDER` still places `process_flows` (`lib/dataRestore.ts:417`) and `entity_mentions` (`:421`) before `knowledge_libraries` / `knowledge_sources` / `knowledge_documents` (`:452-453`), and no test derives FK order from the migrations. This residual is intelligence **I-01 phase B**: move the three knowledge tables ahead of the two referrers and add the FK-order test (every referenced table's index below its referrer's, derived from `supabase/migrations`), as a narrow edit on the version of `lib/dataRestore.ts` that admin-and-org **P1** (`ORG-1` / `BKP-3` / `BKP-5` / `BKP-12`) rewrites — after P1 merges, never before; P1 owns `planRestore` and `CONFLICT_TARGETS`, phase B touches only the order array. Cross-note on `BKP-12`.
 
 ---
 
@@ -119,6 +123,8 @@ lib/clientBackup.ts:124 `zip.file("data.json", JSON.stringify(envelope, null, 2)
 - [ ] A test asserts round-trip: the ZIP entry names clientBackup writes satisfy the restore page's manifest and tables regexes
 - [ ] Multi-part backups have a documented restore procedure (which part carries records, how files/ from parts 2..N get re-uploaded)
 
+**Partial (2026-09-30, intelligence Round G).** Pointer — re-verified at HEAD `1b71ca1`: unchanged. `lib/clientBackup.ts:124` writes the envelope as `data.json`; the restore page's ZIP branch still requires `manifest.json` (`app/(protected)/admin/restore/page.tsx:115`). Owner: admin-and-org **P1** (`BKP-7` — one archive layout, both producers; `BKP-10` — per-part manifests). This finding's round-trip test (clientBackup's entry names satisfy the restore page's regexes) and the documented multi-part procedure ride `BKP-7`; cross-note there.
+
 ---
 
 <a id="ilife-4"></a>
@@ -150,6 +156,8 @@ app/(protected)/admin/restore/page.tsx:200-209 `const body = await res.json().ca
 - [ ] The chunked restore in restore/page.tsx stops at the first table failure and reports the remaining tables as skipped, matching the /apply route's documented contract
 - [ ] /api/admin/restore/apply is either deleted or wired as the small-backup path, so its abort logic is not dead code
 - [ ] The restore result UI states the consequence of a failed table ("stopped at <table>; N tables not attempted"), not just a list of names
+
+**Partial (2026-09-30, intelligence Round G).** Pointer — re-verified at HEAD `1b71ca1`: unchanged. The chunked loop records a failed table and moves on (`app/(protected)/admin/restore/page.tsx:190-208` — `if (!res.ok) { tableFailed = true; break; }` breaks the chunk loop only); `/api/admin/restore/apply` still exists with no caller; the result panel lists failed tables without the consequence (`:451`). Owner: admin-and-org **P1** — `BKP-5` criterion 2 is this finding's criterion 1, and `ORG-1` / `BKP-3` decide the fate of `/apply` (criterion 2). Cross-note on `BKP-5`.
 
 ---
 
@@ -213,6 +221,12 @@ lib/dataExport.ts:299-311 `while (true) { let q = sb.from(table).select("*").ran
 - [ ] dataExport records a COUNT(*) per table taken in the same read and flags a mismatch against rows.length as a manifest error, so a short page cannot report complete:true
 - [ ] collectReferencedKeys pages deterministically — a missed reference must be impossible, not merely unlikely, given deleteOrphans is irreversible
 
+**Partial (2026-09-30, intelligence Round G).** Neither half is closed. Re-verified at HEAD `1b71ca1`.
+- *Orphan sweep.* Document-control [`XEDGE-13`](../document-control/11-edges-and-invariants.md) (Phase 6) made `collectReferencedKeys` page every source `.order("id", { ascending: true }).range(from, from + 999)` (`lib/storageOrphans.ts:104-120`) and compare the rows paged with an exact per-table `count` taken after the loop, aborting on a mismatch (`:121-131`) — criterion 1 ✓ for the sweeper. Criterion 3 ✗: those are still OFFSET windows, and a count taken after the scan cannot rule out a skip. When a row the scan has already read is deleted before the next window, every later row moves up one place, the first row of the next window is never read, and the count equals the paged total, so nothing aborts; a delete plus an insert balances the count the same way. Reproduced against the real collector: `lib/__tests__/intelRoundGRecords.test.ts` "ILIFE-6 criterion 3 …" — 1,500 `document_versions` rows, `v00010` deleted after the first window, and `collectReferencedKeys` returns without error and without `v01001`'s key (an `it.fails`: it asserts what this criterion requires, and fails the suite once the fix makes it hold, so the fixer flips it). In production the collector is bucket-wide, so a delete by ANY tenant in any of the 11 source tables during a purge can hide a live reference, and `deleteOrphans` (`:195-210`) then permanently deletes that object if it sits under the caller's prefix and is older than 7 days. The fix is keyset pagination — `.gt("id", lastId).order("id", { ascending: true }).limit(1000)` — so a delete never moves a window. Keyset alone still lets one case balance the count (a row already read is deleted while a row is inserted behind the cursor, since ids are random UUIDs), so "impossible" also needs the owner to re-check each candidate key against the source columns just before `DeleteObjects`, or to read the reference set in one snapshot. Cross-note on `XEDGE-13`, whose status is document-control's.
+- *Export.* `dumpTable` still pages `select("*").range(…)` with no `.order` (`lib/dataExport.ts:315`), and the manifest's `complete` is still `failedTables.length === 0` (`:262`) with no per-table count reconciliation — criterion 1 (for the export) and criterion 2 open.
+
+Owner of both halves: admin-and-org **P2** — `BKP-2` owns the reference collector, and the export contract is `lib/dataExport.ts`; cross-note on `BKP-2`. A&O P2's plan does not carry criterion 3 today (it lists "BKP-2 pagination half ← DC XEDGE-13" as already resolved), so the integrator adds the keyset fix to it together with the two test edits the fix forces: flip `intelRoundGRecords.test.ts` "ILIFE-6 criterion 3 …" from `it.fails` to `it` (it fails the suite until flipped — the tripwire is deliberate), and update `destructiveDeletes.test.ts`'s fake, which answers only `.range`. The `BKP-2` cross-note names both edits, so the package that lands the fix reads them in the record it is assigned.
+
 ---
 
 <a id="ilife-7"></a>
@@ -244,6 +258,8 @@ app/api/data-export/structured/route.ts:55-57 `if (!['Admin', 'Manager', 'DocCtr
 - [ ] Either /api/data-export/structured is narrowed to Admin (matching dataExport.ts's stated precondition and the Admin-only restore), or the contract comment and the role list are reconciled with a written rationale for why Manager/DocCtrl may read RLS-bypassing dumps
 - [ ] Destination creation/editing is Admin-only regardless of who may trigger a one-off export
 - [ ] The DATA_EXPORT audit row records the exporter's role and whether presigned URLs were minted, so an after-the-fact review can see the scope
+
+**Partial (2026-09-30, intelligence Round G).** Pointer — re-verified at HEAD `1b71ca1`: unchanged. `/api/data-export/structured` still admits Admin / Manager / DocCtrl (`app/api/data-export/structured/route.ts:56`, by the role collection since `ADD-1`), `/api/data-export/run` and `/api/data-export/destinations` the same (`run/route.ts:18`, `destinations/route.ts:14`), and the `DATA_EXPORT` row (`lib/dataExport.ts:189-196`) records counts only — no role, no presigned-URL flag. Owner: admin-and-org **P3** (`BKP-8`, Admin-only full export per `DEC-43`); criteria 2 (destinations Admin-only) and 3 (the audit row's role and presign fields) are this finding's additions, carried by a cross-note on `BKP-8`. The same fix closes `DACL-7` and `IEDGE-10`.
 
 ---
 
@@ -277,6 +293,17 @@ app/api/admin/orphans/route.ts:42-46 `const actor = await authorizeOrgRole(req, 
 - [ ] A caller's reclaim can be shown, in a two-org fixture, to leave the other org's unreferenced objects untouched
 - [ ] Keys outside `orgs/<orgId>/` are refused as delete candidates even if they somehow reach the delete batch
 
+**Partial (2026-09-30, intelligence Round G).** Pointer, held OPEN on the package's fix pass 3 (the first recording marked it RESOLVED). The listing half is fixed as document-control [`RET-7`](../document-control/08-retention.md) (Round F package P9, merged on this base; no migration), but criterion 1's reference-query limb is declined by `DEC-57`, not met, and the harm this finding's verifier correction names first — (a), cross-tenant disclosure including "bucket-wide totals" — survives as `referencedKeys`, which no queued plan scopes (Scope / residual). `DEC-29` needs every criterion; a decision that declines a limb does not stand in for the residual. Re-verified against HEAD `1b71ca1`: `scanOrphans(sb, orgId)` refuses to walk without an org (`lib/storageOrphans.ts:152-153`), lists R2 with `Prefix: orgs/<orgId>/` (`:154`, `:163-165`), skips any key outside the prefix even if a listing returns one (`:171`), counts `totalObjects` / `totalBytes` for the prefix only (`:172-173`) and reports the prefix as `scope` (`referencedKeys` is still a bucket-wide count — Scope / residual); `deleteOrphans(sb, orgId)` re-scans and sends only in-prefix keys to `DeleteObjects` (`:195-201`); `/api/admin/orphans` passes the caller's authorized org to both (`app/api/admin/orphans/route.ts:28`, `:49`) and records the `scope` in its audit row (`:54`). Tests: `lib/__tests__/dcRoundFShed.test.ts` "orphan sweep — RET-7 confined to the caller's org prefix" (three cases). No code in this package.
+
+**Done-when.**
+1. ◐ listing scoped — both functions take the org, and the R2 listing is scoped to `orgs/<orgId>/` (`:152-154`, `:163-165`). **Reference-query scoping declined by `DEC-57`** (as `WIRE-9`'s declined limb cites `DEC-23`) — this limb is not met as written and is not ticked. `collectReferencedKeys` stays bucket-wide (`lib/storageOrphans.ts:20-23`, `:38`) so a key ANY tenant's row references is protected: with the walk confined to the caller's prefix, scoping the reference queries could only add deletions (an object under this org's prefix that another org's row points at), never keep another org's key out of view. Document-control [`RET-7`](../document-control/08-retention.md) Done-when 2 asks for the same thing ("the reference collector still runs org-wide (a cross-org reference must protect a key)"); `DEC-57` makes it a decision.
+2. ✓ Two-org fixture: `dcRoundFShed.test.ts` lists `orgs/<ORG>/orphan.pdf` and `orgs/<OTHER>/their-orphan.pdf`; `deleteOrphans(…, ORG)` deletes only the first, and the scan reports none of the other org's keys or bytes (it does report one platform-wide aggregate, `referencedKeys` — Scope / residual).
+3. ✓ A key outside the prefix is refused as a candidate even if it reaches the batch (`:171`, `:201`).
+
+**Remaining / owner.** Scope `referencedKeys` to the caller's prefix (count only referenced keys under `orgs/<orgId>/`), or drop it from the scan's result. Owner: admin-and-org **P2** (`BKP-2`, which owns the collector; cross-note there). A&O P2's plan lists `BKP-2` for the storage-key registry, not this field, so the integrator adds it. This then closes by pointer, criterion 1's reference-query limb recorded as declined by `DEC-57`.
+
+**Scope / residual.** The cost-documents gap the failure scenario couples to is `ILIFE-1` (OPEN, admin-and-org P2 `BKP-2`), as is recording the deleted keys in the audit row. Objects outside every `orgs/<uuid>/` prefix are reachable by no tenant's sweep (`RET-7`'s own residual, admin-and-org `BKP-2` / `BKP-9`). The GET still returns `referencedKeys: referenced.size` (`lib/storageOrphans.ts:187`, spread whole into the response by `app/api/admin/orphans/route.ts:30`): the number of storage keys every tenant on the deployment references, handed to one org's Admin / DocCtrl — part of the "bucket-wide totals" disclosure this finding's verifier correction named as harm (a). None of this finding's criteria names it, but it is what survives of that harm, so this finding stays OPEN on it (Remaining / owner). Cross-notes on `BKP-2` and on document-control `RET-7`, whose Done-when 3 ("the GET response reports only the caller's org's totals") it contradicts. The collector's completeness under a concurrent delete is `ILIFE-6` criterion 3 (✗), not this finding: the prefix confinement holds whatever the collector misses.
+
 ---
 
 <a id="ilife-9"></a>
@@ -309,6 +336,8 @@ lib/dataRestore.ts:336-348 `export const CONFLICT_TARGETS: Record<string, string
 - [ ] A test asserts that for every exported table, conflictTargetFor(table) names columns that actually exist in that table's CREATE TABLE (parsing supabase/ the way exportCoverage.test.ts already does) — the current test only checks the table name is real
 - [ ] Re-running a restore twice into the same workspace produces zero failed tables
 
+**Partial (2026-09-30, intelligence Round G).** Pointer — re-verified at HEAD `1b71ca1`: `CONFLICT_TARGETS` (`lib/dataRestore.ts:461-468`) still has its six entries and none for `codebook_config`, `library_numbering` or `recently_viewed_docs`; `conflictTargetFor` still defaults to `"id"` (`:471-473`). Owner: admin-and-org **P1** (`BKP-12`, whose criteria name the same tables plus `document_equipment_suggestions`, and the "conflict target names real key columns" tripwire). Cross-note on `BKP-12`.
+
 ---
 
 <a id="ilife-10"></a>
@@ -338,6 +367,8 @@ lib/dataRestore.ts:345-348 `/** The ON CONFLICT target to use when additively re
 - [ ] CONFLICT_TARGETS names the real business key for process_flows, entity_mentions (or the restore pre-filters duplicates) and proposed_links
 - [ ] A restore into a workspace that has already re-indexed mentions completes with zero failed tables and preserves every is_explicit row
 - [ ] Chunk-level failures do not abandon the rest of the table — a duplicate row is skipped, not fatal to its 500-row batch
+
+**Partial (2026-09-30, intelligence Round G).** Pointer, with the business keys handed to admin-and-org **P1** (`BKP-12`; `CONFLICT_TARGETS` is P1's). Re-verified at HEAD `1b71ca1`: the three tables still restore `ON CONFLICT (id)` (`lib/dataRestore.ts:471-473`). Their real unique keys, from the migrations: `process_flows (org_id, from_kind, from_ref, to_kind, to_ref)` (`20261017_process_flows.sql:36`); `proposed_links (document_id, target_document_id, proposer)` (`proposed_links_pair_idx`, `20260807_link_proposals.sql:68-69`); and `entity_mentions (asset_id, COALESCE(knowledge_document_id, document_id), page)` (`entity_mentions_unique_idx`, `20260929_mention_engine.sql:59-60`) — an EXPRESSION index, which cannot be named as an `onConflict` column list, so that table needs the restore to pre-filter duplicates on the key and must keep every `is_explicit` row. Default carried with the handover: no new unique indexes from this package; P1 decides the entries and the pre-filter (intelligence I-08 is adding conflict targets for `WIRE-2` in parallel — build on whatever is live). Criterion 3 (a duplicate skipped, not fatal to its 500-row chunk) sits next to `BKP-12` criterion 3. Cross-note on `BKP-12`.
 
 ---
 
@@ -371,6 +402,8 @@ lib/dataExport.ts:300 `let q = sb.from(table).select("*").range(from, from + pag
 - [ ] The export path streams rows rather than building one JSON string, or the envelope size is measured and reported so an oversized backup is a visible warning not a hang
 - [ ] A restore of an export taken without embeddings leaves knowledge_libraries in a state the embed drain will rebuild, verified end to end
 
+**Partial (2026-09-30, intelligence Round G).** Pointer — re-verified at HEAD `1b71ca1`: unchanged. `knowledge_chunks` is exported (`lib/exportTables.ts:143`) through `dumpTable`'s `select("*")` (`lib/dataExport.ts:315`), so `embedding` rides every dump, and nothing measures the envelope. This residual is intelligence **I-01 phase B** — an explicit column list for `knowledge_chunks` omitting `embedding`, a manifest note that the meaning index rebuilds through the embed drain, and the exception declared (not silent) in `lib/__tests__/exportCoverage.test.ts` — landing on the version of `lib/dataExport.ts` / `lib/exportTables.ts` that admin-and-org **P2** rewrites, after P2 merges. Criterion 2 (streaming, or a measured size warning) is P2's export contract; criterion 3 is verified with phase B.
+
 ---
 
 <a id="ilife-12"></a>
@@ -402,6 +435,8 @@ lib/schemaExpectations.ts:10-13 `// Generated from supabase/migrations (CREATE T
 - [ ] A test discovers CREATE TABLE names from supabase/ (reuse discoverCreatedTables from exportCoverage.test.ts) and asserts every one appears in EXPECTED_TABLES, and that every EXPECTED_TABLES entry exists — the phantom `statements` fails today
 - [ ] process_flows, link_rules, answer_skills and knowledge_line_traces are probed with their correct migration filenames
 - [ ] EXPECTED_COLUMNS gains the feature-critical ALTERs from 20261015/16/17 so a half-applied intelligence migration is visible
+
+**Partial (2026-09-30, intelligence Round G).** Re-verified at HEAD `1b71ca1`. Half of criterion 1 landed under projects Round G **J9** (`REL-7`): `lib/__tests__/schemaExpectations.test.ts` scans every `CREATE TABLE` in `supabase/migrations` and fails when one is missing from `EXPECTED_TABLES` (`:155-159`) — but it grandfathers `answer_skills`, `link_rules`, `process_flows`, `knowledge_line_traces` and `document_markups` (`:71`) and does not assert the reverse, so the phantom `{ table: "statements" }` is still listed (`lib/schemaExpectations.ts:118`). Criterion 2 (the intelligence tables probed with their migration files) and criterion 3 (`EXPECTED_COLUMNS` for the 20261015/16/17 ALTERs) are open. Owner: admin-and-org **P2** (`BKP-14` — delete `statements`, regenerate the list, empty the grandfather set); cross-note there. `knowledge_line_traces` is retired (`20261007_retire_line_traces.sql`), so its row should record the retirement rather than probe for a table that must not exist (the `IRLS-12` verifier correction).
 
 ---
 

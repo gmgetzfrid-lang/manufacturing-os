@@ -82,7 +82,9 @@
     "lib/schemaExpectations.ts (delete the phantom statements row; regenerate \u2014 112 CREATE TABLE names)",
     "lib/__tests__/exportCoverage.test.ts",
     "app/data-portability/page.tsx",
-    "new migration: narrow/drop export_destinations member SELECT policy (20260605:134-144)"
+    "new migration: narrow/drop export_destinations member SELECT policy (20260605:134-144)",
+    "lib/__tests__/intelRoundGRecords.test.ts \u2014 the ILIFE-6 `it.fails` tripwire (offset paging in collectReferencedKeys): flip it to `it` when keyset paging lands (added at the intelligence I-01A merge)",
+    "lib/__tests__/destructiveDeletes.test.ts \u2014 its stand-in answers only `.range`; extend it for keyset paging"
    ],
    "migrationsLikely": 1,
    "dependsOn": [

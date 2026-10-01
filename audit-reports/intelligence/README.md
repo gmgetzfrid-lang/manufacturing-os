@@ -56,9 +56,11 @@ It is not a missing brain. It is a missing memory.
 
 ## Findings
 
-**258 findings** — 9 CRITICAL, 58 HIGH, 145 MEDIUM, 46 LOW — plus **12 gap specs**.
+**259 findings** — 9 CRITICAL, 59 HIGH, 145 MEDIUM, 46 LOW — plus **12 gap specs**.
 
 > **One finding here carries `Status: REFUTED`** — `IEDGE-9`. An independent pass disproved it; the reason is on the finding. Kept rather than deleted (`DEC-41`). **Do not queue it as work.**
+
+> **`WIRE-9` carries `Status: INVALID`** (2026-09-30, intelligence Round G I-01A): the waiver it wanted reachable was declined by `DEC-23`; the record keeps the reason (`DEC-41`). **Do not queue it as work.** `IEDGE-2` was re-opened on the same pass (its seam limb fails open — `KACL-12`, owner I-12).
 
 | # | Report | n | Focus |
 |---|---|---|---|
@@ -66,7 +68,7 @@ It is not a missing brain. It is a missing memory.
 | 02 | [Ask & retrieval](./02-ask-and-retrieval.md) | 11 | Ranking, grounding, citation verification, the injection surface |
 | 03 | [Semantic layer](./03-semantic-layer.md) | 13 | Coverage, drift, chunks that never embed |
 | 04 | [AI governance](./04-ai-governance.md) | 14 | Keys, allowlist, metering, calls that bypass governance |
-| 05 | [**Knowledge ACL**](./05-knowledge-acl.md) | 11 | **Your leak question, half one** |
+| 05 | [**Knowledge ACL**](./05-knowledge-acl.md) | 12 | **Your leak question, half one** — `KACL-12` opened by intelligence Round G (I-01A), 2026-09-30 |
 | 06 | [**Document ACL leaks**](./06-document-acl-leaks.md) | 12 | **Your leak question, half two** |
 | 07 | [Graph model](./07-graph-model.md) | 14 | Every edge, every cap, what is not modelled |
 | 08 | [**Graph pivots**](./08-graph-pivots.md) | 14 | **Your pivot complaint**, traced to the render layer |

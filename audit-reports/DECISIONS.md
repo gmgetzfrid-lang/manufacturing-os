@@ -57,7 +57,7 @@ about the system.
 | [DEC-20](#dec-20) | Implement **both** a DELETE policy and a real suspend | high | `SURF-1`, `OWN-12`, `SURF-16` |
 | [DEC-21](#dec-21) | Reviewer independence is a per-library policy, default **on** where a roster exists | medium | `DEL-5`, `WF-14` |
 | [DEC-22](#dec-22) | The hand-back is an explicit guarded action routed through `revUpDocument` | high | `LIFE-1`, `GAP-6` |
-| [DEC-23](#dec-23) | **Delete the `related_ticket_id` review waiver outright** | medium | `LIFE-2`, `LIFE-12`, `GAP-6` |
+| [DEC-23](#dec-23) | **Delete the `related_ticket_id` review waiver outright** | medium | `LIFE-2`, `LIFE-12`, `GAP-6`, `WIRE-9` |
 | [DEC-24](#dec-24) | Markup persists server-side, keyed to document + version + user + session | medium | `LIFE-3`, `LIFE-8`, `GAP-7` |
 | [DEC-25](#dec-25) | A ticket cannot close silently over its own open hold. Never auto-release | medium | `LIFE-6` |
 | [DEC-26](#dec-26) | An `ASBUILT` ticket defaults the resulting version to `issue_type: "As-Built"` | low | `LIFE-11` |
@@ -90,6 +90,7 @@ about the system.
 | [DEC-54](#dec-54) | A closed project is a **closed record**: closing releases its checkouts and closes its intake door, reopening is explicit and audited, and a project carrying cost or quality records is archived — deleted only by a controller with a reason, its rows snapshotted first | medium | `PM-1`, `PM-4`, `PM-6`, `PM-11`, `SEC-9`, `SEC-15`, `SEC-17`, `SAF-6` |
 | [DEC-55](#dec-55) | The cost charts draw **only what the data holds and say what they are**: series identity is a validated categorical pair plus shape; one number is shown as a number; example data only on an empty project, every figure marked; the example shows only what the real view draws | low | `CHART-2`, `CHART-3`, `CHART-4`, `REL-10`, `REL-11` |
 | [DEC-56](#dec-56) | The external door: a contractor link is a **bounded credential** and a trusted link a **narrow privilege**, both enforced where the write happens — authorship fixed at creation, the trusted promote is the publish contract, a displaced submission is resolved, what the door admits is bounded, a deleted project closes its doors, a uniqueness key is written only when complete | medium | `INTK-1`–`INTK-5`, `INTK-7`–`INTK-11`, `INTK-13`, `PM-2`, `SEC-1`, `SEC-3`–`SEC-6`, `SEC-8`, `SEC-11`–`SEC-14`, `SAF-5`, `SAF-10`–`SAF-13`, `SAF-15`, `REL-8` |
+| [DEC-57](#dec-57) | The orphan sweep's **reference collector stays bucket-wide**: the walk and the delete set are confined to the caller's `orgs/<orgId>/` prefix, the reference set never is | low | `ILIFE-8`, `RET-7`, `BKP-2` |
 
 ---
 
@@ -879,6 +880,8 @@ redline caused this revision?" answerable.
 the narrow roster-plus-hash condition — never as "a ticket id exists."
 
 **Risk:** medium.
+
+*Landed 2026-09-30 (intelligence Round G): intelligence `WIRE-9` — the same waiver, whose remediation ("both call sites pass relatedTicketId") was the other branch of this fork — is recorded `INVALID` on this decision, with the contradicting code quoted (`lib/reviewControl.ts:74-85`, `effectiveModeForRevUp` has no `relatedTicketId` parameter) and kept in the corpus with the reason (`DEC-41`). The provenance write this decision keeps is live since `GAP-6` / `20261049`.*
 
 <a id="dec-24"></a>
 ## DEC-24 · Where does markup live?
@@ -3300,3 +3303,51 @@ allowlist); the authorship rule and the contract-only promote are structural.
 
 **Risk:** medium — a trusted vendor's first revisions now wait for a person,
 and an unverifiable sheet needs a deliberate single adopt.
+
+<a id="dec-57"></a>
+## DEC-57 · The orphan sweep's reference collector stays bucket-wide
+
+**Decision. The storage orphan sweep confines its WALK and its DELETE SET to
+the caller's `orgs/<orgId>/` prefix, and never its REFERENCE SET.**
+`collectReferencedKeys` reads every tenant's reference columns, and a key that
+any row in the deployment references is never an orphan. Scoping the
+reference queries to the caller's org is declined; this is intelligence
+`ILIFE-8` Done-when 1's second limb, and the rule document-control `RET-7`
+Done-when 2 already states.
+
+> Made during intelligence Round G (2026-09-30), package I-01 phase A, under
+> the fail-safe rule in *How to use this file* (a call no `DEC-` covers is made
+> on the option that fails safe, written into the record, and added here as the
+> next free number), so that a declined limb rests on a decision rather than
+> on another finding's Done-when. A decision is not a ticked criterion: it
+> does not satisfy `DEC-29` rule 3 (every Done-when holds), and `ILIFE-8`
+> stays OPEN until its `referencedKeys` residual is scoped or dropped.
+> *Numbered DEC-57 at merge (DEC-44 to DEC-56 were already taken on the
+> integration branch).*
+
+**Rationale.** A deletion from the bucket cannot be undone. Once the walk is
+confined to the caller's prefix (`RET-7`), no other org's key can become a
+candidate, so an org-scoped reference set would withhold nothing from anyone.
+Its only effect would be to delete an object under this org's prefix that
+another org's row still points at. The price of the bucket-wide read is that
+a row in another org can keep one of this org's objects from being reclaimed:
+a storage cost, never a loss.
+
+**Consequences.** The collector's output must not leave the server as a
+cross-tenant aggregate. Today the scan's `referencedKeys` count does
+(`lib/storageOrphans.ts:187`, returned by `app/api/admin/orphans/route.ts:30`);
+that is `ILIFE-8`'s residual, owner admin-and-org P2 (`BKP-2`), and `ILIFE-8`
+stays OPEN on it. This decision
+says nothing about the collector's completeness, which is `ILIFE-6`
+criterion 3 (keyset paging, same owner).
+
+**Acceptance.** `collectReferencedKeys` carries no org filter
+(`lib/storageOrphans.ts:20-23`, `:38`); `scanOrphans` / `deleteOrphans` take an
+`orgId` and act only inside its prefix (`:152-201`); the two-org fixture in
+`lib/__tests__/dcRoundFShed.test.ts` deletes only the caller's orphan.
+
+**Reversal.** If storage keys become strictly per-org by construction (the
+database refuses a row whose key is under another org's prefix), the collector
+may be scoped for speed. Nothing else changes.
+
+**Risk:** low. It keeps the current behaviour and closes no door.

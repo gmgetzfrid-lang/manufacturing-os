@@ -95,6 +95,8 @@ app/api/storage/delete/route.ts:42 `await r2.send(new DeleteObjectCommand({ Buck
 - [ ] the route is deleted along with lib/storage.ts:deleteFile, or
 - [ ] it is gated to Admin/DocCtrl via authorizeOrgRole, runs assertSafeStorageKey, refuses any key referenced by a document_versions row whose parent is under legal hold or whose row is the current revision, and writes an audit_logs entry
 
+*Cross-area note (2026-09-30, intelligence Round G; corrected by its fix pass 3): re-verifying intelligence `DACL-2` against `app/api/storage/delete/route.ts` found its refusals are a documents-row legal hold and an unreleased `document_holds` row only (`:76-104`), and only for a key matching a version's `file_url` — the lookup is `.eq("file_url", path)` alone (`:79-84`), so a revision's native source file (`document_versions.source_file_key`, `lib/revisions.ts:504-510`) resolves to no document and is destroyed with a 200 even when its document is held. This finding's second Done-when ("refuses any key referenced by a document_versions row whose parent is under legal hold or whose row is the current revision") therefore does not hold for source keys, nor for a current revision's key (the route has no such refusal), and there is no retention check; this record's RESOLVED over-claims both limbs — the status is left to document-control and both limbs are on the integrator's list for it. DACL-2 stays OPEN on retention AND the source-key hold bypass (the fix resolves the key against both columns, as `app/api/storage/upload-url/route.ts:60` already does). The bypass is reproduced by two `it.fails` in `lib/__tests__/intelRoundGRecords.test.ts` ("DACL-2 criterion 1 …": a held document's rendered file `423`, its native source `200` and deleted); the package that lands the two-column lookup flips them to `it`.*
+
 ---
 
 <a id="ret-3"></a>
@@ -300,6 +302,8 @@ lib/storageOrphans.ts:127-129 `const res = await r2.send(new ListObjectsV2Comman
 - ✓ the GET reports only the caller's org's totals and keys (`scope` says which prefix).
 
 **Scope / residual.** Objects outside every `orgs/<uuid>/` prefix (legacy layout, if any exist) are now reachable by no tenant's sweep — an operator-level inventory (`ListObjectsV2` without prefix, counting keys not under `orgs/`) belongs to admin-and-org `BKP-2`/`BKP-9`, which own the collector side; the storage page's orphan section wording ("files in storage") is unchanged.
+
+*Cross-area note (2026-09-30, intelligence Round G; corrected by its fix pass 3): intelligence `ILIFE-8` (the same bucket-wide sweep) cites this resolution for its listing half and its reference-query limb is declined by `DEC-57` (this finding's Done-when 2, made a decision), but ILIFE-8 stays OPEN on the `referencedKeys` residual below. Done-when 3 ("the GET response reports only the caller's org's totals") does not fully hold: the GET spreads the whole scan (`app/api/admin/orphans/route.ts:30`), including `referencedKeys: referenced.size` (`lib/storageOrphans.ts:187`), a count of the keys every tenant references. Recorded as an ILIFE-8 residual (owner admin-and-org P2, `BKP-2`); the status is left to document-control.*
 
 ---
 

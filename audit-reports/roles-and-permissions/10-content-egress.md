@@ -124,6 +124,8 @@ org. **Trace that before assuming it is contained.**
 4. `/api/share/file` re-checks the ACL server-side against the creator's current
    authority before serving bytes.
 
+*Cross-area note (2026-09-30, intelligence Round G): intelligence `DACL-4` halves 1 / 2a (the INSERT read predicate, the sharer's live ACL at fetch) are verified closed on this record and on document-control P1 SHARE; DACL-4 stays OPEN on two serve-time refusals P1 did not build (`documents.legal_hold`, a hard acknowledgment gate), plus the KACL-12 inheritance (I-12: the creator's read re-check widens when the seam's container or `team_members` read fails) and the database half of its criterion 3 (`20261080`, pending apply).*
+
 ---
 
 ## EGRESS-2 · `/d/[number]` is an unauthenticated, cross-tenant document enumeration oracle
@@ -187,6 +189,8 @@ afterwards preserves that.
 2. An authenticated request resolves only documents in the caller's own org that
    the caller can discover.
 3. A logged-in user scanning a printed QR still lands on the right document.
+
+*Cross-area note (2026-09-30, intelligence Round G): intelligence `DACL-3` criteria 1–2 are verified closed on this record; its `/api/verify` criterion (both ids required, private / hidden refused) is public-surfaces PS-VERIFY's, and DACL-3 stays OPEN on it.*
 
 ---
 
@@ -269,6 +273,8 @@ inventing a second answer.
 3. `log_audit_completion` is gated on controller authority, and
    `drawing_audit_logs` has a matching write policy.
 4. Notifications the AI sends are attributed to the real caller.
+
+*Cross-area note (2026-09-30, intelligence Round G): re-verified for intelligence `KACL-2` — KACL-2's criteria 1 and 3 hold (a folder-level deny now proven through the real seam, `lib/__tests__/intelRoundGRecords.test.ts`), and its criteria 2 and 4 hold only outside the seam's read failures; the fail-closed limb does not hold when the seam's own `libraries` / `collections` read errors (`lib/knowledgeAccess.ts` `loadDcLandscape` swallows it) or its `team_members` read errors (`loadPrincipal` builds a principal with no teams, so a team deny is dropped). Opened as intelligence `KACL-12` (owner I-12); KACL-2 stays OPEN on it and intelligence `IEDGE-2` (whose criterion 2 is that limb) is re-opened on it. This record's own Resolution ("Everything fails CLOSED: if the readable set cannot be computed nothing controlled is readable") and its criterion 1 do not hold inside the seam either (KACL-12); the status is left to roles-and-permissions.*
 
 ---
 

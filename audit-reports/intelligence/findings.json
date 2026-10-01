@@ -25,18 +25,19 @@
     "audit-reports/intelligence/21-edges-and-invariants.md"
   ],
   "totals": {
-    "findings": 258,
+    "findings": 259,
     "gaps": 12,
     "by_severity": {
       "CRITICAL": 9,
-      "HIGH": 58,
+      "HIGH": 59,
       "MEDIUM": 145,
       "LOW": 46
     },
     "by_status": {
-      "OPEN": 242,
-      "RESOLVED": 14,
-      "REFUTED": 2
+      "OPEN": 243,
+      "RESOLVED": 13,
+      "REFUTED": 2,
+      "INVALID": 1
     }
   },
   "status_vocabulary": [
@@ -190,7 +191,7 @@
       "id": "IEDGE-2",
       "title": "Orchestrator read tools run on the service role and honour only the ai_excluded flag — never the per-asker ACL — so the Assistant answers any member from restricted documents",
       "severity": "CRITICAL",
-      "status": "RESOLVED",
+      "status": "OPEN",
       "verification": "CONFIRMED",
       "verification_note": null,
       "blast_radius": null,
@@ -1478,6 +1479,36 @@
       ],
       "refuted": false,
       "summary": "A document is restricted by an allow-list rule on its folder (read granted to team \"Process Engineering\", visibility left normal). A Viewer opens the knowledge library, gets the filekey from the org-member-readable knowledgedocuments row (or from a leaked history citation's documentId), and requests /api/storage/download-url?path=<filekey>. The document is normal-visibility so the private/hidden b",
+      "area": "intelligence",
+      "report": "audit-reports/intelligence/05-knowledge-acl.md"
+    },
+    {
+      "id": "KACL-12",
+      "title": "The ACL seam fails OPEN when its own reads fail: a failed (or row-capped) libraries / collections read drops the folder and library ACLs, a failed team_members read drops the caller's teams and with them every team deny, and a denied document reads as open to every AI surface and to share serving",
+      "severity": "HIGH",
+      "status": "OPEN",
+      "verification": "CONFIRMED",
+      "verification_note": null,
+      "blast_radius": null,
+      "related": [],
+      "locations": [
+        "lib/knowledgeAccess.ts:96-137",
+        "lib/knowledgeAccess.ts:36-50",
+        "lib/knowledgeAccess.ts:247-276",
+        "lib/knowledgeAccess.ts:188-205",
+        "lib/knowledgeAccess.ts:91",
+        "lib/orchestrator/tools.ts:84-90",
+        "app/api/knowledge/ask/route.ts:177",
+        "lib/shareAuthorization.ts:23-40",
+        "lib/knowledgeSourceSync.ts:75"
+      ],
+      "has_verifier_correction": false,
+      "verified_by": "hardening-pass",
+      "challenges": [
+        "hardening-pass"
+      ],
+      "refuted": false,
+      "summary": "Document Control restricts the \"Legal Hold / Incident\" folder with a deny-read on role Viewer. During a statement timeout on the collections read, a Viewer asks the Assistant about the incident: finddocuments returns INC-0042 with its open URL and searchdocuments returns \"the flare knockout drum overfilled during the trip\". The tools' own fail-closed catch (lib/orchestrator/tools.ts:89) never fire",
       "area": "intelligence",
       "report": "audit-reports/intelligence/05-knowledge-acl.md"
     },
@@ -6899,7 +6930,7 @@
       "id": "WIRE-9",
       "title": "document_versions.related_ticket_id is read in two places, written in none — and the review-gate escape hatch it feeds is unreachable twice over",
       "severity": "LOW",
-      "status": "OPEN",
+      "status": "INVALID",
       "verification": "CONFIRMED",
       "verification_note": null,
       "blast_radius": null,

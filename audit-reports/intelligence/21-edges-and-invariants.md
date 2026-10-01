@@ -94,7 +94,7 @@ app/api/graph/ask/route.ts:83 — `const { data: rawHits, error: askErr } = awai
 ## IEDGE-2 · Orchestrator read tools run on the service role and honour only the ai_excluded flag — never the per-asker ACL — so the Assistant answers any member from restricted documents
 
 - **Severity:** CRITICAL
-- **Status:** RESOLVED
+- **Status:** OPEN
 
 **Resolution (2026-09-02, fixed under roles-and-permissions Phase 6 Round C1 as [`EGRESS-3`](../roles-and-permissions/10-content-egress.md) — the owning record; this one points there).** `ToolContext` carries the caller's ACL principal (`loadPrincipal`: role collection, teams, controller tier) and every read tool filters through `readableControlledDocIds` — `find_documents`, `search_documents` (mirror hop), `equipment_mentions` (mirror hop + direct `document_id`) and `trace_pid_lines` (graph built only from readable sheets). The readable set is evaluated per tool call through that one seam rather than cached once per run — same answer, and the failure path is the one asked for: if the set or the mirror hop cannot be computed, every source-linked result is dropped. `lib/__tests__/sweepRoundC.test.ts` drives each tool and the whole loop as a denied Viewer and asserts no passage from the denied document reaches the tool result or the next prompt. The intelligence area is unclaimed; its own pass re-verifies against these criteria (`DEC-29`: the reproduction here is unit-level, at the ACL seam, not a live tenant).
 
@@ -117,8 +117,17 @@ lib/orchestrator/tools.ts:133-135 — `const { data, error } = await supabaseAdm
 **Done when.**
 
 - [x] ToolContext gains the caller's readable-document set (computed once per run via loadPrincipal + readableControlledDocIds) and search_documents, find_documents and equipment_mentions all filter against it — *evaluated per call through the same seam, see the resolution*
-- [x] Failure to compute the readable set drops all source-linked results rather than passing them through
+- [ ] Failure to compute the readable set drops all source-linked results rather than passing them through — *re-opened 2026-09-30: holds at the tool layer, not inside the seam; see the Partial below*
 - [x] A test drives the loop as a denied Viewer and asserts no passage from the denied document reaches the tool result
+
+**Partial (2026-09-30, intelligence Round G).** Re-opened. Re-verified against HEAD `1b71ca1` while recording [`KACL-2`](./05-knowledge-acl.md#kacl-2) (the same defect, report `05`): the 2026-09-02 closure under `EGRESS-3` holds at the tool layer, but this finding's criterion 2 does not hold end to end, and `DEC-29` needs every criterion individually.
+
+**Done-when.**
+1. ✓ Every read tool filters through the caller's principal, evaluated per call through `readableControlledDocIds` (`lib/orchestrator/tools.ts:84-113`); `find_documents`, `search_documents`, `equipment_mentions` and `trace_pid_lines` all use it (pinned by `sweepRoundC.test.ts` "every document-touching tool asks readableIds").
+2. ✗ The tools drop everything when the seam THROWS (`tools.ts:89`, `:112`) and when its own `documents` read errors, but the seam does not throw when its other reads fail: `loadDcLandscape` swallows a `libraries` / `collections` error (the chain is evaluated without the missing container ACL) and `loadPrincipal` swallows a `team_members` error (the principal has no teams, so a team deny is dropped). Either way the readable set comes back WIDER, not failed, and a denied passage reaches the tool result — reproduced for both limbs by the `KACL-12` block's `it.fails` cases in `lib/__tests__/intelRoundGRecords.test.ts` (each fails at HEAD on the leak; I-12 flips them to `it` when the seam fails closed). Opened as [`KACL-12`](./05-knowledge-acl.md#kacl-12).
+3. ✓ `sweepRoundC.test.ts` drives each tool and the loop as a denied Viewer at the ACL seam; `intelRoundGRecords.test.ts` adds a FOLDER-level deny through the real seam (both tools return nothing from the denied document; a controller sees it).
+
+**Remaining / owner.** Criterion 2 only = `KACL-12` (owner I-12, `lib/knowledgeAccess.ts`). This closes by pointer together with `KACL-2`, when KACL-12 is RESOLVED with every one of its Done-when holding (the container limb and the `team_members` limb). No plan package is told to record that close: the intelligence plan still lists this finding as RESOLVED by pointer, and I-12's list does not name it, so the integrator assigns IEDGE-2 and the KACL-2 pointer close to I-12 (to record when KACL-12 lands) or to I-01 phase B. `ORCH-3` (report `15`), whose criteria ask for the filter but not its failure mode, stays RESOLVED with a note.
 
 ---
 
@@ -353,6 +362,8 @@ app/api/data-export/structured/route.ts:56-58 — `if (!["Admin", "Manager", "Do
 - [ ] The export role list matches the ACL controller definition (Admin/DocCtrl), or a non-controller export is filtered to content the exporter can read
 - [ ] A full-fidelity backup export is a distinct, audited, Admin-only capability separate from any Manager-facing data pull
 - [ ] The audit_logs entry for an export records which role ran it and whether it was ACL-filtered
+
+**Partial (2026-09-30, intelligence Round G).** Pointer — re-verified at HEAD `1b71ca1`: no criterion has landed. `/api/data-export/structured` still admits Admin / Manager / DocCtrl (`app/api/data-export/structured/route.ts:56`, by the role collection), `/api/data-export/run` the same (`run/route.ts:18`, `:76`); `knowledge_documents` and `knowledge_chunks` are still dumped by org id with no ACL filter (`lib/exportTables.ts:142-143`); the `DATA_EXPORT` row records counts only (`lib/dataExport.ts:189-196`). Landed neighbour, not one of these criteria: document-control `EGR-7` (P10) redacts bearer-token columns from every dump (`DEC-45`). Owner: admin-and-org **P3** (`BKP-8` — Admin-only full export; ACL-restricted content excluded, or the export refused, for a role that cannot read it all); the same fix closes `DACL-7` and `ILIFE-7`. Cross-note on `BKP-8`.
 
 ---
 

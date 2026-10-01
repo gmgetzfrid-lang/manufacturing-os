@@ -398,6 +398,22 @@
     "DEC-30: none required (no migration); the priceId\u2192plan map is configuration the user must supply \u2014 leave a documented map with the existing ids"
    ],
    "sequencingNotes": "Sequencing item 7 folds the remaining XEDGE-* in as extensions of listed findings: XEDGE-3 extends SURF-8 (closed), XEDGE-9/XEDGE-10 extend the export findings, XEDGE-12 extends XEDGE-1 (closed). Admin-and-org P1\u2013P4 run AFTER this package merges and build on it."
+  },
+  {
+   "name": "P11 STORAGE-DELETE \u2014 follow-up from intelligence I-01A: the hold and retention refusals reach a revision's native source file",
+   "findings": [
+    "intelligence DACL-2 criterion 1 (the source_file_key hold bypass and the 'inside retention' limb; records in audit-reports/intelligence/06-document-acl-leaks.md, cross-notes on document-control RET-2 and roles-and-permissions SURF-2)"
+   ],
+   "files": [
+    "app/api/storage/delete/route.ts \u2014 resolve the key against BOTH document_versions.file_url and source_file_key (upload-url's pattern, app/api/storage/upload-url/route.ts:60) before the legal_hold / document_holds / retention checks",
+    "lib/__tests__/storageDeleteRoute.test.ts",
+    "lib/__tests__/intelRoundGRecords.test.ts \u2014 flip the two DACL-2 `it.fails` tripwires to `it`"
+   ],
+   "migrationsLikely": 0,
+   "dependsOn": [
+    "P9 RECORDS (merged): retention_until / disposition_state are the fields the retention limb reads"
+   ],
+   "sequencingNotes": "Added by the integrator at the I-01A merge (2026-10-01): no fleet plan owned the storage-delete route. Small; schedule with wave 2."
   }
  ],
  "crossAreaFileOverlaps": [

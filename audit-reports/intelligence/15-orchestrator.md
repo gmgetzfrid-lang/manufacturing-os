@@ -125,6 +125,8 @@ tools.ts:6-13 header: "NOTHING WIDENS ACCESS. Every handler is org-scoped and re
 - [x] check_permissions derives readable/editable from the same ACL chain the UI and RLS use, so its answer matches what the user would see in the library
 - [x] a test creates a private document with no grant for a Viewer and asserts that each read tool returns zero rows for that user — *denied at the ACL seam under mock, see the resolution*
 
+*Re-verified 2026-09-30 (intelligence Round G, I-01 phase A): the three criteria above hold as written, so this stays RESOLVED; the resolution's "(fail closed)" holds at the tool layer only — the seam returns a WIDER set, rather than failing, when its `libraries` / `collections` or `team_members` read errors ([`KACL-12`](./05-knowledge-acl.md#kacl-12), owner I-12). That limb is tracked on [`KACL-2`](./05-knowledge-acl.md#kacl-2) and [`IEDGE-2`](./21-edges-and-invariants.md#iedge-2), both OPEN on it.*
+
 ---
 
 <a id="orch-4"></a>

@@ -697,7 +697,9 @@
         "KACL-3",
         "KACL-5",
         "KACL-11",
-        "IEDGE-12"
+        "IEDGE-12",
+        "KACL-12 (opened 2026-09-30 by I-01A: loadDcLandscape / loadPrincipal swallow container and team read errors and fail OPEN)",
+        "IEDGE-2 (re-opened 2026-09-30 by I-01A on the same seam limb as KACL-12)"
       ],
       "severityMix": "0 CRITICAL / 2 HIGH / 5 MEDIUM / 1 LOW",
       "files": [
@@ -708,7 +710,8 @@
         "app/(protected)/documents/[libraryId]/page.tsx: refuse to render children whose ancestry could not be resolved (DACL-9); explicit 'restricted — request access' state (DACL-6 criterion 2) — AFTER DC P6 CHECKOUT, DC wave-2 (RG-12/XEDGE-5) and identity IS-P1 merge",
         "app/(protected)/documents/page.tsx: library gate on the one model (DACL-10) — AFTER identity IS-P1 (:187 computeCanRead)",
         "new migration 2026NNNN_intel_node_visible_deny_and_libraries.sql: 6-arg node_visible body from 20261041 extended so role/team deny of read/discover binds before any allow (DACL-12 remaining half) with the 20261041 probe shape; RESTRICTIVE SELECT on libraries via node_visible after DEC-30 inventory (DACL-10); read_access/visible_to writes retired as enforcement (the wizard/console copy is A&O P8 / ALOG-13's)",
-        "lib/__tests__/acl.test.ts (extend) + a SQL matrix test mirroring it (DACL-12 / DACL-6 criterion 3); knowledgeAccess.test.ts, downloadUrlAcl.test.ts (new); a test proving the ask route and the download endpoint agree on one document/principal pair (IEDGE-12 criterion 3)"
+        "lib/__tests__/acl.test.ts (extend) + a SQL matrix test mirroring it (DACL-12 / DACL-6 criterion 3); knowledgeAccess.test.ts, downloadUrlAcl.test.ts (new); a test proving the ask route and the download endpoint agree on one document/principal pair (IEDGE-12 criterion 3)",
+        "lib/__tests__/intelRoundGRecords.test.ts — the four KACL-12 `it.fails` tripwires: flip each to `it` as the fix lands (added at the I-01A merge)"
       ],
       "migrationsLikely": 1,
       "dependsOn": [
