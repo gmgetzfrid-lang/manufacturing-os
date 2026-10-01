@@ -10,7 +10,7 @@
 // current revision's (the database refuses any other), so it is corrected on
 // the revision itself, never set across rows.
 //
-// REV-18: setting an issue status (Issued, IFC, …) on a row that has a
+// REV-18: setting an issue status (Issued, Locked, …) on a row that has a
 // current revision and is not issued yet (Draft / In Review / Superseded /
 // Void / Archived) ISSUES that revision — a guarded write at the database
 // (20261144: the publisher tier, never over an active hold, and under a
@@ -26,6 +26,7 @@ import {
 import { supabase } from "@/lib/supabase";
 import { computeUniquenessKey } from "@/lib/uniqueness";
 import { isIssueTransition, isIssueRefusal } from "@/lib/issueStatus";
+import { BULK_EDIT_STATUS_OPTIONS } from "@/lib/documentStatusOptions";
 import type { DocumentRecord, LibraryConfig, MetadataFieldDefinition } from "@/types/schema";
 
 interface BulkEditModalProps {
@@ -42,7 +43,9 @@ type TargetField =
   | { kind: "status" }
   | { kind: "custom"; def: MetadataFieldDefinition };
 
-const STATUS_OPTIONS = ["Draft", "In Review", "Issued", "IFC", "Superseded", "Archived"];
+// VFY-20 / DEC-44 (P15): the offered statuses live in lib/documentStatusOptions
+// (no "IFC" — not a status the print gate or the verify page treat as issued).
+const STATUS_OPTIONS = BULK_EDIT_STATUS_OPTIONS;
 
 export default function BulkEditModal({
   isOpen, onClose, docs, library, actorUserId, onApplied,

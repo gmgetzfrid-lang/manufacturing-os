@@ -20,6 +20,7 @@ import {
 } from "lucide-react";
 import { parseFilename, detectBulkHints, type ParsedFilename } from "@/lib/filenameParser";
 import { computeUniquenessKey } from "@/lib/uniqueness";
+import { STAGING_STATUS_OPTIONS } from "@/lib/documentStatusOptions";
 
 export interface CustomColumnDef {
   key: string;
@@ -45,7 +46,7 @@ interface MetadataStagingModalProps {
   files: File[];
   customColumns?: CustomColumnDef[];
   defaultStatus?: string;
-  statusOptions?: string[];
+  statusOptions?: readonly string[];
   onCancel: () => void;
   /** `signal` aborts the in-flight transfers when the user presses Stop.
    *  Implementations should pass it to uploadToPath and treat
@@ -65,7 +66,9 @@ interface MetadataStagingModalProps {
   onAddSheetAndUseForUniqueness?: () => Promise<void>;
 }
 
-const DEFAULT_STATUS_OPTIONS = ["Draft", "In Review", "Issued", "IFC", "Superseded"];
+// VFY-20 / DEC-44 (P15): the offered statuses live in lib/documentStatusOptions
+// (no "IFC" — not a status the print gate or the verify page treat as issued).
+const DEFAULT_STATUS_OPTIONS: readonly string[] = STAGING_STATUS_OPTIONS;
 
 export default function MetadataStagingModal({
   isOpen, files, customColumns = [], defaultStatus = "Issued",

@@ -7,8 +7,7 @@ import CheckoutStatusCell from "./CheckoutStatusCell";
 import AssetTagChip from "@/components/assets/AssetTagChip";
 import { isIssueTransition, isIssueRefusal } from "@/lib/issueStatus";
 import { requestUnitCodeDecode } from "@/lib/unitCodeClient";
-
-const DOCUMENT_STATUSES = ["Draft", "Issued", "Superseded", "Void", "Archived", "Locked"];
+import { METADATA_EDITOR_STATUS_OPTIONS, statusSelectOptions, notOfferedStatusNote } from "@/lib/documentStatusOptions";
 
 // ── Inline pill editor used for tags/multi columns ──────────────────────────
 function TagInput({
@@ -452,10 +451,19 @@ export default function MetadataEditor(props: {
                   className={fieldClass}
                 >
                   <option value="">Select…</option>
-                  {DOCUMENT_STATUSES.map((s) => (
-                    <option key={s} value={s}>{s}</option>
+                  {/* VFY-20 / DEC-44 (P15): the offered statuses, plus the
+                      document's own when it is one no editor offers (an
+                      existing IFC row) — shown as what it is, never as
+                      "Select…", and kept unless another is chosen. */}
+                  {statusSelectOptions(METADATA_EDITOR_STATUS_OPTIONS, document.status).map((o) => (
+                    <option key={o.value} value={o.value}>{o.label}</option>
                   ))}
                 </select>
+                {notOfferedStatusNote(METADATA_EDITOR_STATUS_OPTIONS, status) && (
+                  <p data-testid="status-not-offered-note" className="text-[10px] text-amber-800 mt-1">
+                    {notOfferedStatusNote(METADATA_EDITOR_STATUS_OPTIONS, status)}
+                  </p>
+                )}
                 {issuing && (
                   // REV-18: the issue is a guarded write — say so before the save.
                   <p data-testid="issue-transition-note" className="text-[10px] text-amber-800 mt-1">
