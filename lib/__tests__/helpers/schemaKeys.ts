@@ -1,0 +1,120 @@
+// lib/__tests__/helpers/schemaKeys.ts
+//
+// A census of supabase/ (schema.sql + the numbered migrations, in order) for
+// the restore tripwires (admin-and-org Round G, P1): each table's columns and
+// its ON CONFLICT-eligible keys — the PRIMARY KEY, every UNIQUE constraint
+// (inline or table-level, CREATE or ALTER … ADD) and every NON-partial
+// plain-column UNIQUE INDEX still standing after later DROP INDEX statements.
+// A partial or expression index is no ON CONFLICT arbiter, so it is not a key
+// here. Comments are stripped; statements apply in source order within a file.
+import { readFileSync, readdirSync } from "node:fs";
+import { join } from "node:path";
+
+export interface TableShape { columns: Set<string>; keys: string[][] }
+
+function matchParen(src: string, open: number): number {
+  let depth = 0;
+  for (let i = open; i < src.length; i++) {
+    const ch = src[i];
+    if (ch === "'") { const j = src.indexOf("'", i + 1); if (j < 0) return -1; i = j; continue; }
+    if (ch === "(") depth++;
+    else if (ch === ")") { depth--; if (depth === 0) return i; }
+  }
+  return -1;
+}
+function splitTop(body: string): string[] {
+  const out: string[] = []; let depth = 0; let cur = "";
+  for (let i = 0; i < body.length; i++) {
+    const ch = body[i];
+    if (ch === "'") {
+      const j = body.indexOf("'", i + 1);
+      if (j < 0) { cur += body.slice(i); break; } // unterminated literal: keep the rest as-is
+      cur += body.slice(i, j + 1); i = j; continue;
+    }
+    if (ch === "(") depth++;
+    if (ch === ")") depth--;
+    if (ch === "," && depth === 0) { out.push(cur.trim()); cur = ""; continue; }
+    cur += ch;
+  }
+  if (cur.trim()) out.push(cur.trim());
+  return out;
+}
+const ident = (s: string) => s.replace(/"/g, "").trim().toLowerCase();
+const colList = (s: string) => s.split(",").map(ident);
+
+export function censusSchema(root = join(process.cwd(), "supabase")): Map<string, TableShape> {
+  const files = [join(root, "schema.sql"), ...readdirSync(join(root, "migrations")).filter((n) => /^\d{8}.*\.sql$/.test(n)).sort().map((n) => join(root, "migrations", n))];
+  const tables = new Map<string, TableShape>();
+  const namedIdx = new Map<string, { table: string; key: string[] }>();
+  const get = (t: string) => { if (!tables.has(t)) tables.set(t, { columns: new Set(), keys: [] }); return tables.get(t)!; };
+  const addKey = (t: string, k: string[]) => { const s = get(t); if (!s.keys.some((x) => x.length === k.length && x.every((c, i) => c === k[i]))) s.keys.push(k); };
+  const colDef = (t: string, def: string) => {
+    const m = def.match(/^"?([a-z_][a-z0-9_]*)"?\s+/i);
+    if (!m) return;
+    const c = m[1].toLowerCase();
+    get(t).columns.add(c);
+    if (/\bPRIMARY\s+KEY\b/i.test(def)) addKey(t, [c]);
+    if (/\bUNIQUE\b/i.test(def) && !/\bUNIQUE\s*\(/i.test(def)) addKey(t, [c]);
+  };
+  const constraint = (t: string, def: string) => {
+    const pk = def.match(/PRIMARY\s+KEY\s*\(([^)]*)\)/i);
+    if (pk) addKey(t, colList(pk[1]));
+    const uq = def.match(/\bUNIQUE\s*(?:NULLS\s+NOT\s+DISTINCT\s*)?\(([^)]*)\)/i);
+    if (uq) addKey(t, colList(uq[1]));
+  };
+  for (const f of files) {
+    const src = readFileSync(f, "utf8").replace(/--[^\n]*/g, "");
+    // Statements are applied in source order (a file may drop and re-create an index).
+    const events: Array<{ pos: number; run: () => void }> = [];
+    const createRe = /CREATE\s+TABLE\s+(?:IF\s+NOT\s+EXISTS\s+)?(?:public\.)?"?([a-z_][a-z0-9_]*)"?\s*\(/gi;
+    for (const m of src.matchAll(createRe)) {
+      events.push({ pos: m.index ?? 0, run: () => {
+        const t = m[1].toLowerCase();
+        const open = (m.index ?? 0) + m[0].length - 1;
+        const close = matchParen(src, open);
+        if (close < 0) return;
+        get(t);
+        for (const el of splitTop(src.slice(open + 1, close))) {
+          if (/^(CONSTRAINT|PRIMARY|UNIQUE|CHECK|FOREIGN|EXCLUDE|LIKE)\b/i.test(el)) constraint(t, el);
+          else colDef(t, el);
+        }
+      } });
+    }
+    const alterRe = /ALTER\s+TABLE\s+(?:IF\s+EXISTS\s+)?(?:ONLY\s+)?(?:public\.)?"?([a-z_][a-z0-9_]*)"?\s+([\s\S]*?);/gi;
+    for (const m of src.matchAll(alterRe)) {
+      events.push({ pos: m.index ?? 0, run: () => {
+        const t = m[1].toLowerCase();
+        for (const act of splitTop(m[2])) {
+          const add = act.match(/^ADD\s+COLUMN\s+(?:IF\s+NOT\s+EXISTS\s+)?([\s\S]*)$/i);
+          if (add) { colDef(t, add[1]); continue; }
+          if (/^ADD\s+(CONSTRAINT\s+\S+\s+)?(PRIMARY\s+KEY|UNIQUE)\b/i.test(act)) constraint(t, act);
+        }
+      } });
+    }
+    const idxRe = /CREATE\s+UNIQUE\s+INDEX\s+(?:CONCURRENTLY\s+)?(?:IF\s+NOT\s+EXISTS\s+)?"?([a-z_][a-z0-9_]*)"?\s+ON\s+(?:ONLY\s+)?(?:public\.)?"?([a-z_][a-z0-9_]*)"?\s*(?:USING\s+\w+\s*)?\(/gi;
+    for (const m of src.matchAll(idxRe)) {
+      events.push({ pos: m.index ?? 0, run: () => {
+        const open = (m.index ?? 0) + m[0].length - 1;
+        const close = matchParen(src, open);
+        if (close < 0) return;
+        const cols = src.slice(open + 1, close);
+        const partial = /^\s*WHERE\b/i.test(src.slice(close + 1, close + 200));
+        if (partial || !/^[\s"a-z0-9_,]+$/i.test(cols)) return; // partial / expression: never an ON CONFLICT arbiter
+        const key = colList(cols);
+        namedIdx.set(m[1].toLowerCase(), { table: m[2].toLowerCase(), key });
+        addKey(m[2].toLowerCase(), key);
+      } });
+    }
+    for (const m of src.matchAll(/DROP\s+INDEX\s+(?:CONCURRENTLY\s+)?(?:IF\s+EXISTS\s+)?(?:public\.)?"?([a-z_][a-z0-9_]*)"?/gi)) {
+      events.push({ pos: m.index ?? 0, run: () => {
+        const hit = namedIdx.get(m[1].toLowerCase());
+        if (!hit) return;
+        const s = get(hit.table);
+        s.keys = s.keys.filter((k) => !(k.length === hit.key.length && k.every((c, i) => c === hit.key[i])));
+        namedIdx.delete(m[1].toLowerCase());
+      } });
+    }
+    for (const e of events.sort((a, b) => a.pos - b.pos)) e.run();
+  }
+  return tables;
+}

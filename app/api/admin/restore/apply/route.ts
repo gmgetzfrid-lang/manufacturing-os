@@ -6,17 +6,24 @@
 //   1. org-name choice (only if the admin picked the backup's name)
 //   2. create inactive "restored" placeholders for unknown emails (no auth, no
 //      seat) and build the full old→new uid map
-//   3. insert every importable table in FK order, remapping org_id + uid,
-//      preserving all other ids so foreign keys resolve; existing ids are
+//   3. insert every importable table in FK order through the SAME shared
+//      function the chunked /apply-table uses (lib/dataRestore.ts
+//      applyRestoreChunk): uids remapped, org_id FORCED to this workspace,
+//      only export-contract tables, org-less rows bounded by their parent,
+//      all other ids preserved so foreign keys resolve; existing ids are
 //      skipped (additive, re-runnable)
-//   4. audit
+//   4. audit (checked — a restore whose trail cannot be written must not
+//      look complete)
+//
+// ORG-1 / BKP-3: an envelope carrying rows for a table that is not on the
+// backup contract is refused with 400 before anything is written.
 //
 // Binaries are NOT re-uploaded here — a referenced file that isn't in storage
 // will simply prompt for its archive when opened (Machine A).
 
 import { NextRequest, NextResponse } from "next/server";
 import { authorizeOrgRole } from "@/lib/serverAuth";
-import { planRestore, remapRow, orderTablesForRestore, mergeNewUserUids, conflictTargetFor, type RestoreEnvelopeLike, type CurrentMember, restoredMemberRoles, restoredMemberHeadline } from "@/lib/dataRestore";
+import { planRestore, orderTablesForRestore, mergeNewUserUids, applyRestoreChunk, type RestoreEnvelopeLike, type CurrentMember, type RestoreRowRefusal, restoredMemberRoles, restoredMemberHeadline } from "@/lib/dataRestore";
 
 export const runtime = "nodejs";
 
@@ -46,6 +53,16 @@ export async function POST(req: NextRequest) {
     .filter((m) => m.email).map((m) => ({ uid: m.uid, email: m.email as string }));
   const plan = planRestore(envelope, { orgId, orgName, members });
 
+  // ORG-1: no arbitrary table writes. Refused before ANY write (org name,
+  // placeholders, rows) so a hostile envelope changes nothing.
+  const offContract = plan.counts.tables.filter((t) => t.offContract && t.rows > 0).map((t) => t.name);
+  if (offContract.length > 0) {
+    return NextResponse.json(
+      { error: `Not part of the backup contract, never restored: ${offContract.join(", ")}. Nothing was written.`, offContract },
+      { status: 400 },
+    );
+  }
+
   // 1) Org-name choice.
   if (plan.orgNameCollision && parsed.orgNameChoice === "backup") {
     await sb.from("orgs").update({ name: plan.orgNameCollision.backupName }).eq("id", orgId);
@@ -73,43 +90,21 @@ export async function POST(req: NextRequest) {
   // 3) Insert records in FK order.
   const importable = plan.counts.tables.filter((t) => t.willImport && t.rows > 0).map((t) => t.name);
   const order = orderTablesForRestore(importable);
-  const results: Array<{ name: string; inserted: number; error?: string }> = [];
+  const results: Array<{ name: string; inserted: number; error?: string; refused?: RestoreRowRefusal[] }> = [];
   let totalInserted = 0;
   for (const name of order) {
-    const rows = (envelope.tables[name] as Record<string, unknown>[] | undefined) ?? [];
+    const raw = envelope.tables[name];
+    const rows = (Array.isArray(raw) ? raw : []) as Record<string, unknown>[];
     if (!rows.length) continue;
-    let mapped = rows.map((r) => remapRow(r, idRemap));
-    // Never resurrect comments onto a ticket that's since been archived to a stub
-    // — a stale backup would otherwise re-insert ticket_comments rows while the
-    // ticket's JSONB stays cleared, re-creating the split-brain archival avoids.
-    if (name === "ticket_comments" && mapped.length) {
-      const ticketIds = Array.from(new Set(mapped.map((r) => r.ticket_id).filter(Boolean))) as string[];
-      const archived = new Set<string>();
-      for (let i = 0; i < ticketIds.length; i += 500) {
-        const { data } = await sb
-          .from("tickets").select("id")
-          .in("id", ticketIds.slice(i, i + 500)).eq("org_id", orgId).not("archived_at", "is", null);
-        for (const t of ((data ?? []) as Array<{ id: string }>)) archived.add(t.id);
-      }
-      if (archived.size) mapped = mapped.filter((r) => !archived.has(r.ticket_id as string));
-    }
-    let inserted = 0; let error: string | undefined;
-    for (let i = 0; i < mapped.length; i += 500) {
-      const chunk = mapped.slice(i, i + 500);
-      // Skip-on-conflict so a re-run is safe. Each table's real conflict
-      // target matters: composite-key tables (favorites, team_members, …)
-      // error on "id" and would lose re-runnability via the insert fallback.
-      const up = await sb.from(name).upsert(chunk, { onConflict: conflictTargetFor(name), ignoreDuplicates: true, count: "exact" });
-      if (up.error) {
-        const ins = await sb.from(name).insert(chunk, { count: "exact" });
-        if (ins.error) { error = ins.error.message; break; }
-        inserted += ins.count ?? chunk.length;
-      } else {
-        inserted += up.count ?? chunk.length;
-      }
+    let inserted = 0; let error: string | undefined; const refused: RestoreRowRefusal[] = [];
+    for (let i = 0; i < rows.length; i += 500) {
+      const r = await applyRestoreChunk(sb, { orgId, table: name, rows: rows.slice(i, i + 500), idRemap });
+      inserted += r.inserted;
+      refused.push(...r.refused);
+      if (!r.ok) { error = r.error ?? "restore write failed"; break; }
     }
     // Report what actually landed — earlier chunks committed even on failure.
-    results.push({ name, inserted, error });
+    results.push({ name, inserted, error, ...(refused.length ? { refused } : {}) });
     totalInserted += inserted;
     if (error) {
       // STOP. Tables are FK-ordered parents-before-children: continuing after
@@ -124,18 +119,25 @@ export async function POST(req: NextRequest) {
     }
   }
 
-  // 4) Audit.
-  try {
-    await sb.from("audit_logs").insert({
-      action: "DATA_RESTORE", resource_id: orgId, resource_type: "org", org_id: orgId,
-      user_id: actor.userId, user_email: actor.email,
-      details: {
-        schemaVersion: plan.schemaVersion, createdUsers,
-        linkedUsers: plan.counts.matchedUsers, totalInserted,
-        tables: results.map((r) => ({ name: r.name, inserted: r.inserted, error: r.error })),
-      },
-    });
-  } catch { /* best-effort */ }
+  // 4) Audit — checked (ALOG-8): the DATA_RESTORE row is the only record of
+  // what this restore wrote, so a failure to write it is surfaced, never
+  // swallowed.
+  const { error: auditErr } = await sb.from("audit_logs").insert({
+    action: "DATA_RESTORE", resource_id: orgId, resource_type: "org", org_id: orgId,
+    user_id: actor.userId, user_email: actor.email,
+    details: {
+      schemaVersion: plan.schemaVersion, createdUsers,
+      linkedUsers: plan.counts.matchedUsers, totalInserted,
+      backupOrgId: envelope.manifest.orgId ?? null,
+      tables: results.map((r) => ({ name: r.name, inserted: r.inserted, error: r.error, ...(r.refused ? { refused: r.refused.length } : {}) })),
+    },
+  });
+  if (auditErr) {
+    return NextResponse.json(
+      { error: `Records were written but the restore audit row failed: ${auditErr.message}`, totalInserted, tables: results },
+      { status: 500 },
+    );
+  }
 
   const failed = results.filter((r) => r.error);
   return NextResponse.json({

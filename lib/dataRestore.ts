@@ -19,7 +19,8 @@
 
 import { heldRoles } from "@/lib/roleHeld";
 import { primaryRole } from "@/lib/roleCapabilities";
-import { REDACT_COLUMNS } from "@/lib/exportTables";
+import { ORG_SCOPED_TABLES, USER_SCOPED_FOR_ORG_TABLES, REDACT_COLUMNS } from "@/lib/exportTables";
+import type { SupabaseClient } from "@supabase/supabase-js";
 import type { Role } from "@/types/schema";
 
 export interface RestoreEnvelopeLike {
@@ -60,6 +61,10 @@ export interface TablePlanItem {
   rows: number;
   willImport: boolean;
   reason?: string;
+  /** ORG-1: the name is not on the backup contract (nor a reconciled /
+   *  append-only table the contract once carried) — never written, and the
+   *  single-shot apply refuses an envelope that carries rows for it. */
+  offContract?: boolean;
 }
 
 export interface RestorePlan {
@@ -121,6 +126,55 @@ export const IMMUTABLE_TABLES: Record<string, string> = {
 /** True when `table` is append-only / self-insert-only and must not be blind-imported. */
 export function isImmutableTable(table: string): boolean {
   return table in IMMUTABLE_TABLES;
+}
+
+// ── The restore boundary (admin-and-org ORG-1 / BKP-3) ───────────────────
+// The ONLY tables a restore may ever write are the export contract's
+// (lib/exportTables.ts). Both restore routes write with the service-role
+// client, which bypasses RLS, so the contract — not the uploaded envelope's
+// keys — decides what is attempted.
+export const RESTORE_CONTRACT_TABLES: ReadonlySet<string> = new Set<string>([
+  ...ORG_SCOPED_TABLES, ...USER_SCOPED_FOR_ORG_TABLES,
+]);
+
+/** True when `table` is on the backup contract (exported, hence restorable
+ *  unless it is reconciled or append-only). */
+export function isRestoreContractTable(table: string): boolean {
+  return RESTORE_CONTRACT_TABLES.has(table);
+}
+
+export const OFF_CONTRACT_REASON = "not part of the backup contract — never imported";
+
+/** Contract tables that carry NO org_id column. Forcing org_id cannot bound
+ *  them, so a restored row lands only when its parent row is already a row of
+ *  the target workspace (BKP-3 Done-when 3; DEC-44, admin-and-org Round G).
+ *  lib/__tests__/restoreApplyRoute.test.ts proves against supabase/ that every
+ *  other restorable contract table has an org_id column. */
+export const ORG_LESS_RESTORE_PARENTS: Readonly<Record<string, { column: string; parent: string }>> = {
+  project_members: { column: "project_id", parent: "projects" },
+  curated_collection_items: { column: "collection_id", parent: "curated_collections" },
+};
+
+/** Why `table` may not be written by a restore, or null when it may. The
+ *  messages are the chunked route's, unchanged. */
+export function restoreTableRefusal(table: string): string | null {
+  if (!table || !isRestoreContractTable(table)) return `Table "${table}" is not part of the backup contract.`;
+  if (isImmutableTable(table)) {
+    // SURF-8: append-only / self-insert-only tables cannot be blind-imported.
+    return `Table "${table}" is append-only (${IMMUTABLE_TABLES[table]}); it is never restored by import.`;
+  }
+  if (table in SKIP_TABLES) return `Table "${table}" is reconciled, never blind-imported.`;
+  return null;
+}
+
+/** FORCE the org boundary on a remapped row: whatever the backup (or a
+ *  hostile client) claims, a restored row belongs to the authorized
+ *  workspace. Set even when the row omits the key, so a hand-made row cannot
+ *  land with a NULL or defaulted org. Org-less tables are bound by their
+ *  parent instead (ORG_LESS_RESTORE_PARENTS). Returns a new object. */
+export function bindRestoredRow(table: string, row: Record<string, unknown>, orgId: string): Record<string, unknown> {
+  if (table in ORG_LESS_RESTORE_PARENTS) return row;
+  return { ...row, org_id: orgId };
 }
 
 /** SURF-8 done-when 3: a restored placeholder never carries a privileged role
@@ -201,8 +255,11 @@ export function planRestore(env: RestoreEnvelopeLike, current: CurrentOrgContext
   let totalRows = 0;
   for (const [name, rows] of Object.entries(env.tables)) {
     const n = Array.isArray(rows) ? rows.length : 0;
-    const skip = SKIP_TABLES[name] ?? IMMUTABLE_TABLES[name]; // SURF-8: immutable tables are never planned in
-    tables.push({ name, rows: n, willImport: !skip, reason: skip });
+    // SURF-8: immutable tables are never planned in. ORG-1: neither is any
+    // name the envelope carries that is not on the backup contract.
+    const offContract = !isRestoreContractTable(name) && !(name in SKIP_TABLES) && !(name in IMMUTABLE_TABLES);
+    const skip = SKIP_TABLES[name] ?? IMMUTABLE_TABLES[name] ?? (offContract ? OFF_CONTRACT_REASON : undefined);
+    tables.push({ name, rows: n, willImport: !skip, reason: skip, ...(offContract ? { offContract: true } : {}) });
     if (!skip) totalRows += n;
   }
   tables.sort((a, b) => b.rows - a.rows);
@@ -492,4 +549,136 @@ export function mergeNewUserUids(
   created: Record<string, string>,
 ): RestorePlan["idRemap"] {
   return { orgId: { ...idRemap.orgId }, uid: { ...idRemap.uid, ...created } };
+}
+
+// ── The shared restore write (ORG-1 / BKP-3 Done-when 2) ─────────────────
+// ONE function writes a slice of one table for BOTH restore routes — the
+// chunked /apply-table the UI uses and the single-shot /apply — so the two
+// paths cannot diverge again (the single-shot route had lost the org
+// boundary and the table allowlist the chunked one enforces).
+
+type RestoreDb = Pick<SupabaseClient, "from">;
+
+/** One row the restore did not write, and why. */
+export interface RestoreRowRefusal { id: string | null; code: string; message: string }
+
+export interface RestoreChunkResult {
+  ok: boolean;
+  /** When !ok: the HTTP status to answer (400 contract refusal, 500 database failure). */
+  status?: number;
+  error?: string;
+  /** Rows written. Earlier sub-chunks stay written when a later one fails. */
+  inserted: number;
+  /** Rows not written, each with its reason (a database refusal of that single
+   *  row, or a parent that is not a row of this workspace). */
+  refused: RestoreRowRefusal[];
+  /** Rows left after the restore's own filters (comments of a ticket archived
+   *  since the backup are dropped). */
+  rowsAfterFilters: number;
+}
+
+/** Codes a single document_holds row may be refused with (HLD-9, 20261073):
+ *  the row's org differs from its document's (23514) or the document is gone
+ *  (23503). One such row must not sink the legitimate holds sharing its chunk. */
+const ROW_REFUSAL_CODES: ReadonlySet<string> = new Set(["23514", "23503"]);
+const ROW_REFUSAL_TABLES: ReadonlySet<string> = new Set(["document_holds"]);
+
+/** A readable identity for a row in a report — its id, or its conflict-key values. */
+export function restoreRowLabel(table: string, row: Record<string, unknown>): string | null {
+  if (typeof row.id === "string") return row.id;
+  const parts = conflictTargetFor(table).split(",").map((c) => row[c.trim()]);
+  return parts.every((p) => typeof p === "string" || typeof p === "number") ? parts.join("/") : null;
+}
+
+/** Write one slice of one table into `orgId` additively (existing keys are
+ *  skipped). Never throws for a database refusal; the caller answers with
+ *  `status` / `error` when `ok` is false. Order of rules:
+ *    1. the table must be on the backup contract and not reconciled / append-only;
+ *    2. every row is remapped (uids, org paths, bearer scrub) and bound to `orgId`;
+ *    3. comments of a ticket archived since the backup are dropped;
+ *    4. a row of an org-less table lands only under a parent of this workspace;
+ *    5. upsert on the table's real conflict target. */
+export async function applyRestoreChunk(
+  sb: RestoreDb,
+  params: { orgId: string; table: string; rows: ReadonlyArray<Record<string, unknown>>; idRemap: RestorePlan["idRemap"] },
+): Promise<RestoreChunkResult> {
+  const { orgId, table, idRemap } = params;
+  const refused: RestoreRowRefusal[] = [];
+  const fail = (status: number, error: string, inserted = 0, rowsAfterFilters = 0): RestoreChunkResult =>
+    ({ ok: false, status, error, inserted, refused, rowsAfterFilters });
+
+  const refusal = restoreTableRefusal(table);
+  if (refusal) return fail(400, refusal);
+  if (!orgId) return fail(400, "No target workspace.");
+
+  let mapped = params.rows.map((r) => bindRestoredRow(table, remapRow(r, idRemap), orgId));
+
+  // Never resurrect comments onto a ticket that's since been archived to a
+  // stub — the JSONB stays cleared, so re-inserting rows would split-brain it.
+  if (table === "ticket_comments" && mapped.length) {
+    const ticketIds = Array.from(new Set(mapped.map((r) => r.ticket_id).filter((v): v is string => typeof v === "string")));
+    const archived = new Set<string>();
+    for (let i = 0; i < ticketIds.length; i += 500) {
+      const { data, error } = await sb
+        .from("tickets").select("id")
+        .in("id", ticketIds.slice(i, i + 500)).eq("org_id", orgId).not("archived_at", "is", null);
+      if (error) return fail(500, `Could not check for archived tickets: ${error.message}`);
+      for (const t of ((data ?? []) as Array<{ id: string }>)) archived.add(t.id);
+    }
+    if (archived.size) mapped = mapped.filter((r) => !archived.has(r.ticket_id as string));
+  }
+  const rowsAfterFilters = mapped.length;
+
+  // BKP-3 Done-when 3: an org-less row is bounded by its parent. The parent
+  // is read in THIS workspace (FK order restores parents first); a row whose
+  // parent is elsewhere — or missing — is refused, never written.
+  const parentRule = ORG_LESS_RESTORE_PARENTS[table];
+  if (parentRule && mapped.length) {
+    const parentIds = Array.from(new Set(mapped.map((r) => r[parentRule.column]).filter((v): v is string => typeof v === "string")));
+    const inOrg = new Set<string>();
+    for (let i = 0; i < parentIds.length; i += 200) {
+      const { data, error } = await sb
+        .from(parentRule.parent).select("id")
+        .in("id", parentIds.slice(i, i + 200)).eq("org_id", orgId);
+      if (error) return fail(500, `Could not check the ${parentRule.parent} rows these ${table} rows belong to: ${error.message}`, 0, rowsAfterFilters);
+      for (const p of ((data ?? []) as Array<{ id: string }>)) inOrg.add(p.id);
+    }
+    mapped = mapped.filter((r) => {
+      const parentId = r[parentRule.column];
+      if (typeof parentId === "string" && inOrg.has(parentId)) return true;
+      refused.push({
+        id: restoreRowLabel(table, r),
+        code: "parent_outside_workspace",
+        message: `${parentRule.column} ${typeof parentId === "string" ? parentId : "(none)"} is not a ${parentRule.parent} row of this workspace`,
+      });
+      return false;
+    });
+  }
+
+  let inserted = 0;
+  for (let i = 0; i < mapped.length; i += 500) {
+    const chunk = mapped.slice(i, i + 500);
+    const up = await sb.from(table).upsert(chunk, { onConflict: conflictTargetFor(table), ignoreDuplicates: true, count: "exact" });
+    if (up.error) {
+      const ins = await sb.from(table).insert(chunk, { count: "exact" });
+      if (ins.error) {
+        if (!(ROW_REFUSAL_TABLES.has(table) && ROW_REFUSAL_CODES.has(String(ins.error.code ?? "")))) {
+          return fail(500, ins.error.message, inserted, rowsAfterFilters);
+        }
+        for (const row of chunk) {
+          const one = await sb.from(table).upsert([row], { onConflict: conflictTargetFor(table), ignoreDuplicates: true, count: "exact" });
+          if (!one.error) { inserted += one.count ?? 1; continue; }
+          if (!ROW_REFUSAL_CODES.has(String(one.error.code ?? ""))) {
+            return fail(500, one.error.message, inserted, rowsAfterFilters);
+          }
+          refused.push({ id: typeof row.id === "string" ? row.id : null, code: String(one.error.code), message: one.error.message });
+        }
+        continue;
+      }
+      inserted += ins.count ?? chunk.length;
+    } else {
+      inserted += up.count ?? chunk.length;
+    }
+  }
+  return { ok: true, inserted, refused, rowsAfterFilters };
 }

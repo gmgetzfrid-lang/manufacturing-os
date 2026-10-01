@@ -97,7 +97,7 @@ lib/storageOrphans.ts:11-13 promises the opposite — "the reference collector q
 ## BKP-3 · /api/admin/restore/apply does not force the org boundary that /apply-table does — rows whose org_id isn't the backup's land in whatever org the file names
 
 - **Severity:** HIGH
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Verification:** CONFIRMED
 - **Locations:** `app/api/admin/restore/apply/route.ts:79-111`, `app/api/admin/restore/apply-table/route.ts:52-58`, `lib/dataRestore.ts:200-218`, `app/api/admin/restore/apply/route.ts:75`
 - **Independently verified:** ✓ **SURVIVES** — second independent adversarial pass. Verified by direct comparison of the two routes; the org-forcing line exists in apply-table and has no counterpart in apply. Admin of org A can write forged rows into org B, and into any table name the envelope invents.
@@ -119,6 +119,17 @@ app/api/admin/restore/apply/route.ts:82 `let mapped = rows.map((r) => remapRow(r
 - [ ] apply applies the same `m.org_id = orgId` overwrite and the same `IMPORTABLE.has(table)` allowlist as apply-table
 - [ ] apply and apply-table share one function so the two paths cannot diverge again
 - [ ] tables with no org_id column (project_members, curated_collection_items, access_requests) are validated against a parent row in the target org before insert, since forcing org_id cannot bound them
+
+**Resolution (2026-10-01, admin-and-org Round G).** Package P1, one commit with `ORG-1` (same mechanism; see its resolution for the reproduction on HEAD `bcbf3e8`). Both restore routes now write through `lib/dataRestore.ts applyRestoreChunk`: the export-contract allowlist (`restoreTableRefusal`), the forced org boundary (`bindRestoredRow` after `remapRow`), the archived-ticket comment filter (now a checked read — an unreadable `tickets` read fails the chunk instead of resurrecting comments), and the conflict-target upsert are one code path, so the two routes cannot diverge again. Org-less rows (Done-when 3, plan default recorded as `DEC-44` (admin-and-org Round G — provisional number)): the census of `supabase/` finds exactly two restorable contract tables with no `org_id` column — `project_members` (parent `projects` via `project_id`) and `curated_collection_items` (parent `curated_collections` via `collection_id`); `access_requests` has carried `org_id` since `20261023` (`ALTER TABLE access_requests ADD COLUMN … org_id`) and needs no parent rule. `ORG_LESS_RESTORE_PARENTS` names them; before writing, the shared function reads the parents in THIS workspace (`.in("id", …).eq("org_id", orgId)`, a checked read — an unreadable parent table fails the chunk closed) and refuses every row whose parent is elsewhere or missing, reported per row as `parent_outside_workspace` in the response and in the `RESTORE_CHUNK` audit row; nothing is invented on the row (no `org_id` column is added).
+- Files: `lib/dataRestore.ts`, `app/api/admin/restore/apply/route.ts`, `app/api/admin/restore/apply-table/route.ts`.
+- Tests: `lib/__tests__/restoreApplyRoute.test.ts` — "names exactly the contract tables with no org_id column (census of supabase/)" (fails when a new org-less table is added without a parent rule; `lib/__tests__/helpers/schemaKeys.ts` is the census), "a project_members row lands only under a project of THIS workspace; one under a foreign project is refused, never written", "curated_collection_items are bounded by their collection the same way, on the single-shot route too", "an unreadable parent fails the chunk closed", "the same rows land identically through /apply-table and /apply", "applyRestoreChunk itself refuses a non-contract or append-only table before any read or write".
+
+**Done-when.**
+- [x] apply applies the same `m.org_id = orgId` overwrite and the same `IMPORTABLE.has(table)` allowlist as apply-table ✓ (one function).
+- [x] apply and apply-table share one function so the two paths cannot diverge again ✓ (`applyRestoreChunk`).
+- [x] tables with no org_id column are validated against a parent row in the target org before insert ✓ — `project_members`, `curated_collection_items` (`access_requests` carries `org_id`; the census test proves the list is exactly the org-less restorable tables).
+
+**Scope / residual.** Until admin-and-org P2 lands `BKP-4` (parent-keyed export of the org-less tables), the export dumps both tables by `org_id`, fails, and carries them empty — so in practice no backup has rows for them yet; the rule is in place for when it does. Foreign-key values other than the parent column are not checked (see `ORG-1`'s residual).
 
 ---
 

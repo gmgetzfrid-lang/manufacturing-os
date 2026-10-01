@@ -594,7 +594,9 @@ describe("HLD-9 — /api/admin/restore/apply-table retries a refused document_ho
     expect(state.rows.audit_logs.find((r) => r.action === "RESTORE_CHUNK")?.details).not.toHaveProperty("refused");
     // the migration header and the route both state the consequence
     expect(mig("20261073_dc_roundF_document_holds_integrity.sql")).toMatch(/delete it BEFORE\n-- any restore of document_holds from a backup taken before this paste/);
-    expect(src("app/api/admin/restore/apply-table/route.ts")).toMatch(/const rowRefusalTables = new Set\(\["document_holds"\]\);/);
+    // admin-and-org ORG-1 / BKP-3: the write moved into the ONE function both restore routes share.
+    expect(src("lib/dataRestore.ts")).toMatch(/const ROW_REFUSAL_TABLES: ReadonlySet<string> = new Set\(\["document_holds"\]\);/);
+    expect(src("app/api/admin/restore/apply-table/route.ts")).toMatch(/await applyRestoreChunk\(sb, \{ orgId, table, rows, idRemap \}\)/);
   });
 });
 

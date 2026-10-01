@@ -274,6 +274,8 @@ app/api/admin/purge/route.ts:173-184 — `// Purging is itself an audited action
 - [ ] PermissionDrawer refuses to claim a permission change was audited when it could not resolve an actor id.
 - [ ] A test proves that a rejected audit insert on a purge or an ACL change is observable somewhere.
 
+**Partial (2026-10-01, admin-and-org Round G).** P1's site only — `app/api/admin/restore/apply/route.ts`. Reproduced on HEAD `bcbf3e8`: the `DATA_RESTORE` insert sat in `try { await sb.from("audit_logs").insert({…}); } catch { /* best-effort */ }` (`:128-138`), dead against a resolved `{ error }`. Now a checked write: `const { error: auditErr } = await sb.from("audit_logs").insert(…)`, and a rejected insert answers **500** "Records were written but the restore audit row failed: …" with the per-table counts of what was written — never a silent success. The row also names the backup org (`backupOrgId`) and per-table refusal counts. The chunked path's `RESTORE_BEGIN` / `RESTORE_CHUNK` rows were already checked (document-control `XEDGE-3`, R&P `SURF-8`). Test: `lib/__tests__/restoreApplyRoute.test.ts` "a rejected audit insert is surfaced as a 500 naming what was written — never a silent success", "writes DATA_RESTORE naming the backup and per-table counts". Done-when 1 holds for this one of the nine sites; the purge, archive-cancel, shed, ticket-shed, orphans and the two permission writers belong to admin-and-org P7 (`ALOG-8` purge / archive-cancel / PermissionDrawer sites) and R&P `WF-11` (policy writer). Status stays OPEN for P7.
+
 ---
 
 <a id="alog-9"></a>
