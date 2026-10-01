@@ -151,14 +151,25 @@ describe("POST /api/projects/cost-docs — a read that finishes after a decision
     expect(state.calls.some((c) => c.table === "audit_logs")).toBe(false);
   });
 
-  it("a Read from a stale table on a document someone has since totalled by hand is refused before the model runs — the typed total stands", async () => {
+  it("a Read from a stale table on a document someone has since totalled by hand never replaces the typed total — the extraction lands beside it (COST-15)", async () => {
     // User B typed a total on the draft (it is now parsed, with no extraction); user A's table still shows it unread.
     Object.assign(state.rows.cost_documents[0], { status: "parsed", total_amount: 162_000, parsed: null });
+    const res = await post(readCostDoc, "http://x/api/projects/cost-docs", { orgId: "o1", projectId: "pr1", costDocId: "d1" });
+    expect(res.status).toBe(200);
+    const [patch] = updatePatch();
+    expect(patch).not.toHaveProperty("total_amount");
+    expect(patch).not.toHaveProperty("status");
+    expect((patch.parsed as { total: number }).total).toBe(182_000);
+    expect(state.rows.cost_documents[0].total_amount).toBe(162_000);
+  });
+
+  it("a parsed document that already carries an extraction is refused before the model runs", async () => {
+    Object.assign(state.rows.cost_documents[0], { status: "parsed", total_amount: 182_000, parsed: { total: 182_000, lineItems: [] } });
     let modelCalled = false;
     ai.duringCall = () => { modelCalled = true; };
     const res = await post(readCostDoc, "http://x/api/projects/cost-docs", { orgId: "o1", projectId: "pr1", costDocId: "d1" });
     expect(res.status).toBe(409);
-    expect((await res.json()).error).toMatch(/already been read, or its total typed by hand — nothing was changed/);
+    expect((await res.json()).error).toMatch(/already been read — nothing was changed/);
     expect(modelCalled).toBe(false);
     expect(updatePatch()).toHaveLength(0);
     expect(state.calls.some((c) => c.table === "audit_logs")).toBe(false);
@@ -227,5 +238,85 @@ describe("POST /api/companies/quality-manual — the proposal carries how much w
     expect(body.pagesTotal).toBe(62);
     expect(body.truncated).toBe(true);
     expect(typeof body.score).toBe("number");
+  });
+});
+
+describe("POST /api/projects/cost-docs — a total typed before any read can still have its line items read (COST-15)", () => {
+  const typed = () => Object.assign(state.rows.cost_documents[0], { status: "parsed", total_amount: 175_000, currency: "USD", parsed: null });
+  const updateChain = () => {
+    const i = state.calls.findIndex((c) => c.table === "cost_documents" && c.method === "update");
+    return state.calls.slice(i, i + 7).map((c) => [c.method, ...c.args]);
+  };
+
+  it("reads a parsed row with no extraction and saves the extraction BESIDE the typed total — total, currency and status untouched", async () => {
+    typed();
+    const res = await post(readCostDoc, "http://x/api/projects/cost-docs", { orgId: "o1", projectId: "pr1", costDocId: "d1" });
+    expect(res.status).toBe(200);
+    const body = await res.json();
+    expect(body).toMatchObject({ totalKept: 175_000, extractedTotal: 182_000 });
+    const [patch] = updatePatch();
+    expect(Object.keys(patch).sort()).toEqual(["pages_read", "pages_total", "parsed", "vendor_name"]);
+    const parsed = patch.parsed as { total: number; lineItems: Array<{ hours: number }> };
+    expect(parsed.total).toBe(182_000);
+    expect(parsed.lineItems[0].hours).toBe(1800);
+    // The typed total survives the read.
+    expect(state.rows.cost_documents[0].total_amount).toBe(175_000);
+    expect(state.rows.cost_documents[0].status).toBe("parsed");
+    const d = auditDetails();
+    expect(d).toMatchObject({ besideTypedTotal: true, total: 175_000, totalKept: 175_000, extractedTotal: 182_000 });
+  });
+
+  it("the save's predicate is the state the read started from: still parsed, still no extraction, the same total", async () => {
+    typed();
+    await post(readCostDoc, "http://x/api/projects/cost-docs", { orgId: "o1", projectId: "pr1", costDocId: "d1" });
+    const chain = updateChain();
+    expect(chain).toContainEqual(["eq", "status", "parsed"]);
+    expect(chain).toContainEqual(["is", "parsed", null]);
+    expect(chain).toContainEqual(["eq", "total_amount", 175_000]);
+    expect(chain).not.toContainEqual(["eq", "status", "draft"]);
+  });
+
+  it("awarded, corrected or read by someone else while the model read it: 409, nothing written over, nothing audited", async () => {
+    for (const meanwhile of [
+      { status: "awarded" },
+      { total_amount: 171_000 },
+      { parsed: { total: 182_000, lineItems: [] } },
+    ]) {
+      state.calls = [];
+      typed();
+      ai.duringCall = () => { Object.assign(state.rows.cost_documents[0], meanwhile); };
+      const res = await post(readCostDoc, "http://x/api/projects/cost-docs", { orgId: "o1", projectId: "pr1", costDocId: "d1" });
+      expect(res.status, JSON.stringify(meanwhile)).toBe(409);
+      expect((await res.json()).error).toMatch(/decided, read, or its total changed while it was being read — nothing was changed/);
+      expect(state.calls.some((c) => c.table === "audit_logs")).toBe(false);
+    }
+  });
+
+  it("an invoice whose amount was typed: the read lands beside it — never its amount, number or date", async () => {
+    state.rows.cost_documents[0].kind = "invoice";
+    Object.assign(state.rows.cost_documents[0], { status: "parsed", total_amount: 4_000, parsed: null, doc_number: null });
+    state.aiText = JSON.stringify({ vendorName: "X", total: 4100, currency: "USD", docNumber: "INV-1", docDate: "2026-09-01" });
+    const res = await post(readCostDoc, "http://x/api/projects/cost-docs", { orgId: "o1", projectId: "pr1", costDocId: "d1" });
+    expect(res.status).toBe(200);
+    const [patch] = updatePatch();
+    for (const k of ["total_amount", "currency", "doc_number", "doc_date", "status"]) expect(patch, k).not.toHaveProperty(k);
+    expect((patch.parsed as { total: number }).total).toBe(4100);
+  });
+
+  it("a declined, void, awarded or posted document is still not readable", async () => {
+    for (const status of ["declined", "void", "awarded", "posted"]) {
+      state.calls = [];
+      Object.assign(state.rows.cost_documents[0], { status, total_amount: 1, parsed: null });
+      const res = await post(readCostDoc, "http://x/api/projects/cost-docs", { orgId: "o1", projectId: "pr1", costDocId: "d1" });
+      expect(res.status, status).toBe(409);
+      expect(updatePatch(), status).toHaveLength(0);
+    }
+  });
+
+  it("the Costs tab offers Read on a parsed row with no extraction — in the bid table and the invoice list", async () => {
+    const { readFileSync } = await import("node:fs");
+    const src = readFileSync("components/projects/cost/QuotesPanel.tsx", "utf8");
+    expect(src).toMatch(/function typedTotalUnread\(doc: CostDocument\): boolean \{\n\s+return doc\.status === "parsed" && doc\.parsed == null;/);
+    expect(src.match(/typedTotalUnread\(doc\) && \(\s*(<div className="mt-0\.5">)?<ReadButton busy=\{busy === doc\.id\} onClick=\{\(\) => void readDoc\(doc\)\} \/>/g)).toHaveLength(2);
   });
 });

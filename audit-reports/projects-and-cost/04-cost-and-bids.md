@@ -689,7 +689,7 @@ lib/costDocs.ts:312-315 — `if (doc.status === "awarded" || doc.status === "pos
 ## COST-15 · A quote whose total was typed before any read can never have its line items read
 
 - **Severity:** LOW
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Assigned:** projects J11 PROJECTS RESIDUALS — by the integrator, 2026-10-01 (fleet plan `audit-reports/fleet-plans/`).
 - **Verification:** CONFIRMED
 - **Locations:** `app/api/projects/cost-docs/route.ts:100`, `components/projects/cost/QuotesPanel.tsx:437`, `components/projects/cost/QuotesPanel.tsx:694`
@@ -704,3 +704,15 @@ lib/costDocs.ts:312-315 — `if (doc.status === "awarded" || doc.status === "pos
 - A test pins that the typed total survives the read.
 
 Workaround until then: void the row, upload the file again, Read it, and correct the total if needed.
+
+**Resolution (2026-10-01, projects Round G).** Package J11 PROJECTS RESIDUALS. Reproduced first: at `55e281d` `app/api/projects/cost-docs/route.ts:100` refused every non-draft with 409 (a `parsed` row "has already been read, or its total typed by hand"), and the bid table offered Read only on drafts (`QuotesPanel.tsx:437`, `:723`) — a typed-total row was price-only for good; the new route cases fail 7 of 18 against that code.
+- `app/api/projects/cost-docs/route.ts` — a `parsed` row with NO extraction (`parsed IS NULL`: a total typed before any read) is readable (`besideTypedTotal`). The read runs as before (validation, ISO currency, extent) and is saved BESIDE the typed total: the write carries only `parsed`, `pages_total` / `pages_read` (and a vendor name the row lacks) — never `total_amount`, `currency`, `status`, `doc_number` or `doc_date`. Its predicate is the state the read started from — `status = 'parsed'`, `parsed IS NULL`, the same `total_amount` — so an award, a corrected total or another read meanwhile is a 409 with nothing written and nothing audited (the COST-13 / MON-3 rule, kept). The audit row records `besideTypedTotal`, the kept total and the extracted total; the response returns both. A `parsed` row that already carries an extraction, and declined / void / awarded / posted rows, are refused exactly as before.
+- `components/projects/cost/QuotesPanel.tsx` — `typedTotalUnread(doc)` (`parsed`, no extraction) offers Read on the bid table's price-only row and on the invoice list. After the read the row's typed total still overlays the extraction (`withHumanTotal`, BID-1): it stays the scored and awarded number, and a differing read shows as "corrected · AI read $X" — shown, not applied.
+Tests — `lib/__tests__/costDocsRoute.test.ts`: the COST-13 case "a Read from a stale table on a document someone has since totalled by hand…" now pins the new rule (the typed total is never replaced; the extraction lands beside it); new — "a parsed document that already carries an extraction is refused before the model runs", "reads a parsed row with no extraction and saves the extraction BESIDE the typed total — total, currency and status untouched" (the typed total survives the read), "the save's predicate is the state the read started from…", "awarded, corrected or read by someone else while the model read it: 409…", "an invoice whose amount was typed: the read lands beside it — never its amount, number or date", "a declined, void, awarded or posted document is still not readable", and a source pin that the Costs tab offers Read on both lists.
+
+**Done-when.**
+- A `parsed` row with no extraction offers Read, and the route saves the extraction beside the typed total without replacing it (the typed total stays authoritative; a mismatch is shown, not applied) — ✓.
+- A test pins that the typed total survives the read — ✓.
+
+**Scope / residual.** None. The workaround in the record (void, re-upload, read) is no longer needed.
+

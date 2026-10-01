@@ -85,24 +85,29 @@ export async function POST(req: NextRequest) {
   const doc = docRow as {
     id: string; kind: string; status: string;
     file_url: string | null; file_name: string | null; mime_type: string | null;
-    vendor_name: string | null; total_amount?: number | null;
+    vendor_name: string | null; total_amount?: number | null; parsed?: unknown;
   } | null;
   if (!doc) return bad("Cost document not found.", 404);
   // The total this read starts from — the final write requires it unchanged.
   const startedTotal = doc.total_amount ?? null;
   if (!doc.file_url) return bad("This row has no stored file to read.", 404);
-  // Only a document nobody has read or totalled yet is readable (COST-13):
-  // awarded/posted are locked (money moved), a declined or voided document
-  // stays dead — re-reading must never resurrect a decision someone
-  // already made — and a `parsed` one already carries an extraction or a
-  // total a person typed ("type total" moves a draft to parsed), which a
-  // Read clicked from a stale table must never replace.
-  if (doc.status !== "draft") {
+  // Only a document nobody has read yet is readable (COST-13): awarded /
+  // posted are locked (money moved), a declined or voided document stays
+  // dead — re-reading must never resurrect a decision someone already made
+  // — and a `parsed` one that carries an extraction was read already.
+  // COST-15: a `parsed` row with NO extraction is a total someone typed
+  // before any read ("type total" moves a draft to parsed). It is readable,
+  // and the read is saved BESIDE that total — the extraction (line items,
+  // manpower, exclusions) and its extent land, the typed total and the
+  // status stay exactly as they are (the typed total is authoritative; the
+  // bid table shows a differing read as "AI read …", never applies it).
+  const besideTypedTotal = doc.status === "parsed" && doc.parsed == null;
+  if (doc.status !== "draft" && !besideTypedTotal) {
     return bad(
       doc.status === "awarded" || doc.status === "posted"
         ? "This document already moved money — its extraction is locked."
         : doc.status === "parsed"
-          ? "This document has already been read, or its total typed by hand — nothing was changed. Refresh to see it; use \"correct total\" to change its total."
+          ? "This document has already been read — nothing was changed. Refresh to see it; use \"correct total\" to change its total."
           : `This document is ${doc.status} — upload it again if it should be back in play.`,
       409);
   }
@@ -145,6 +150,8 @@ export async function POST(req: NextRequest) {
     // the model actually saw. Unknown stays NULL — never "complete".
     pages_total: pagesTotal, pages_read: pagesRead.length,
   };
+  /** The total the model read (audited beside a typed total it did not replace). */
+  let extractedTotal: number | null = null;
   if (isQuote) {
     let quote;
     try { quote = validateParsedQuote(raw, costDocId); } catch (e) { return bad((e as Error).message, 422); }
@@ -155,6 +162,7 @@ export async function POST(req: NextRequest) {
     patch.parsed = quote;
     patch.total_amount = quote.total;
     patch.currency = quote.currency;
+    extractedTotal = quote.total;
     // The submission channel's identity outranks the model's reading of a
     // letterhead — only fill vendor_name when the row has none.
     if (!doc.vendor_name && quote.vendorName !== "Unknown vendor") patch.vendor_name = quote.vendorName;
@@ -163,12 +171,21 @@ export async function POST(req: NextRequest) {
     const total = typeof r.total === "number" && Number.isFinite(r.total) ? r.total : null;
     if (total == null || total <= 0) return bad("Couldn't read an amount due from the invoice.", 422);
     patch.total_amount = total;
+    extractedTotal = total;
     patch.currency = isoCurrency(r.currency);
     if (typeof r.docNumber === "string" && r.docNumber.trim()) patch.doc_number = r.docNumber.trim().slice(0, 60);
     if (typeof r.docDate === "string" && /^\d{4}-\d{2}-\d{2}$/.test(r.docDate)) patch.doc_date = r.docDate;
     if (!doc.vendor_name && typeof r.vendorName === "string" && r.vendorName.trim()) {
       patch.vendor_name = r.vendorName.trim().slice(0, 200);
     }
+  }
+
+  // COST-15: beside a typed total, the read writes ONLY the extraction and
+  // its extent (and a vendor name the row lacks) — never the total, its
+  // currency, the status or the invoice's number / date, all of which the
+  // person who typed the total stands behind.
+  if (besideTypedTotal) {
+    for (const k of ["status", "total_amount", "currency", "doc_number", "doc_date"]) delete patch[k];
   }
 
   // The read took seconds to minutes: the document may have been decided
@@ -180,9 +197,14 @@ export async function POST(req: NextRequest) {
   // is a refusal, and nothing is audited (MON-3 / COST-13). It also
   // requires the total the read started from, so a total written without
   // that status change is not overwritten either.
+  // Beside a typed total (COST-15) the predicate is the state the read
+  // started from — still `parsed`, still no extraction, the same total — so
+  // an award, a second read or a corrected total meanwhile is never
+  // overwritten.
   const save = () => {
-    const q = supabaseAdmin.from("cost_documents").update(patch)
-      .eq("id", costDocId).eq("org_id", orgId).eq("status", "draft");
+    const base = supabaseAdmin.from("cost_documents").update(patch)
+      .eq("id", costDocId).eq("org_id", orgId);
+    const q = besideTypedTotal ? base.eq("status", "parsed").is("parsed", null) : base.eq("status", "draft");
     return (startedTotal == null ? q.is("total_amount", null) : q.eq("total_amount", startedTotal)).select("id");
   };
   let { data: saved, error: updErr } = await save();
@@ -195,7 +217,9 @@ export async function POST(req: NextRequest) {
   }
   if (updErr) return bad(`The read succeeded but saving it failed: ${updErr.message}`, 500);
   if (!saved || (saved as unknown[]).length === 0) {
-    return bad("This document was decided, or its total typed by hand, while it was being read — nothing was changed. Refresh to see the latest.", 409);
+    return bad(besideTypedTotal
+      ? "This document was decided, read, or its total changed while it was being read — nothing was changed. Refresh to see the latest."
+      : "This document was decided, or its total typed by hand, while it was being read — nothing was changed. Refresh to see the latest.", 409);
   }
 
   await supabaseAdmin.from("audit_logs").insert({
@@ -203,11 +227,16 @@ export async function POST(req: NextRequest) {
     resource_type: "cost", resource_id: costDocId,
     org_id: orgId, user_id: userId, user_email: userData.user.email ?? null,
     details: {
-      kind: doc.kind, fileName: doc.file_name, total: patch.total_amount ?? null,
+      kind: doc.kind, fileName: doc.file_name,
+      total: besideTypedTotal ? startedTotal : (patch.total_amount ?? null),
       currency: patch.currency ?? null,
+      ...(besideTypedTotal ? { besideTypedTotal: true, extractedTotal, totalKept: startedTotal } : {}),
       pagesRead, pagesTotal, truncated: pagesTotal != null ? pagesRead.length < pagesTotal : null,
     },
   }).then(() => undefined, () => undefined);
 
-  return NextResponse.json({ parsed: patch.parsed, pagesRead, pagesTotal });
+  return NextResponse.json({
+    parsed: patch.parsed, pagesRead, pagesTotal,
+    ...(besideTypedTotal ? { totalKept: startedTotal, extractedTotal } : {}),
+  });
 }

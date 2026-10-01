@@ -462,6 +462,9 @@ export default function QuotesPanel({ orgId, projectId, canManage, actor, accoun
                       if (!res.ok) setErr(res.error ?? "Couldn't post."); else onChanged();
                     }} label="Post as actual" />
                 )}
+                {canManage && typedTotalUnread(doc) && (
+                  <ReadButton busy={busy === doc.id} onClick={() => void readDoc(doc)} />
+                )}
                 {canManage && doc.status === "parsed" && (
                   <button onClick={() => void typeTotal(doc)} title="Correct the amount by hand"
                     className="inline-flex items-center gap-0.5 text-[10px] font-bold text-[var(--color-text-muted)] hover:text-[var(--color-text)]">
@@ -830,6 +833,13 @@ function BidGroup({ group, docs: groupDocs, allDocs, accounts, companies, barred
                                   ? "The AI couldn't read line detail from this file — a typed total, shown in its own currency."
                                   : "The AI couldn't read line detail from this file — this field compares every bid on price alone, so it is scored and ranked like the others."}>typed total — price only</div>
                             )}
+                            {/* COST-15: a total typed before any read can still have its
+                                line items read — the extraction lands BESIDE the typed
+                                total, which stays the scored and awarded number (a
+                                differing read shows as "AI read …"). */}
+                            {doc && canManage && !awarded && typedTotalUnread(doc) && (
+                              <div className="mt-0.5"><ReadButton busy={busy === doc.id} onClick={() => void readDoc(doc)} /></div>
+                            )}
                             <ReadExtentChip extras={ext} status={doc?.status ?? "parsed"} />
                           </td>
                           <td className="px-3 py-2 text-right tabular-nums">
@@ -1026,6 +1036,13 @@ function CompanyPicker({ companies, value, suggestion, onChange }: {
       ))}
     </select>
   );
+}
+
+/** COST-15: a document whose total was typed before any read — `parsed`
+ *  with no extraction. The route reads it and saves the extraction beside
+ *  the typed total (never replacing it). */
+function typedTotalUnread(doc: CostDocument): boolean {
+  return doc.status === "parsed" && doc.parsed == null;
 }
 
 function ReadButton({ busy, onClick }: { busy: boolean; onClick: () => void }) {
