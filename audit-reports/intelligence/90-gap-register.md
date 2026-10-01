@@ -69,6 +69,7 @@ to and reads from, where each fact carries three things it does not carry today:
 | [GAP-312](#gap-312) | The drafting request gets an equipment field | **BUILD** | M | `GAP-304`, `GAP-311` |
 | [GAP-313](#gap-313) | A server-assembled graph (GM-12's follow-up) | **BUILD** | M | a per-caller document ACL on the server (I-12) |
 | [GAP-314](#gap-314) | The unit decode at create time — `documents.unit_code` stays current without a run | **BUILD_NARROW** | S | `GAP-305` |
+| [GAP-315](#gap-315) | Confirmed topology as a reasoning input (FLOW-14's follow-up) | **BUILD LATER** | M | `20261155` applied (`DEC-44 (I-09)`) |
 
 ---
 
@@ -405,6 +406,8 @@ Tests: `lib/__tests__/scope.test.ts` — containment by every rule and nothing o
 
 **Scope / residual.** I-09 AREA-6 (the place), then I-14 (the picker, the URL, saved scopes). Both read `lib/scope.ts`; neither needs a change here. The mapping and the decode (GAP-305) must be applied and run for the decoded / filed rules to find anything.
 
+*Landed 2026-10-01 (intelligence Round G, I-09 — the operating-area limb, `AREA-6`).* The operating area consumes the scope through its URL key. `components/assets/UnitOpsPanels.tsx` `unitGraphHref(code)` builds `/graph?scope=<formatScopeParam({ kind: "unit", code })>&focus=cbunit:<code>`. The unit hub's FlowPanel and the area panel's header carry it: the place is the first delivery (DEC-67 item 6). FlowPanel's own flow list keeps the area's filing set (`assets.unit_code`, every page), not `resolveScope`, whose document rules a flow list does not need. Acceptance 2 holds once the graph page reads `?scope=` (I-14); acceptance 1 (the picker) and 3 (saved, nameable scopes) stay I-14's.
+
 ---
 
 <a id="gap-307"></a>
@@ -685,6 +688,30 @@ The org graph is assembled in the browser on every mount — about fourteen requ
 1. ◐ For the doors document-control owns — `createDocumentWithFile` (upload through the link picker, output templates), split / merge sheets, the CSV import, `renumberDocument`, `reverseRenumber` and the metadata editor's renumber — ✓, except that the link picker and the template filing report a decode that did not run only to the console (above — still owed). **Not done here (other packages' files):** the library page's bulk upload (`uploadOne`) and its inline document-number edit (`saveInlineDocNumber`) — `app/(protected)/documents/[libraryId]/page.tsx`, edited next by identity `IS-P1` / intelligence `I-12`: each should call `requestUnitCodeDecode` after its write (`"upload"` / `"renumber"`); the external intake door (`app/api/intake/upload/route.ts`, projects' file, service role — it can call `decodeDocumentUnitCodes` directly after its insert); the transition-in adoption that renumbers (`lib/transitionIn.ts`, projects'); and the Bridge at ingest (intelligence I-11, which reuses `lib/unitCodeDecode.ts`).
 2. ✗ Not this package's: the /admin/scope staleness count (how many documents are undecoded since the last run) is intelligence I-11's.
 3. ✓ `dcRoundFUnitCodeDecode.test.ts` creates and renumbers a document and asserts the decode.
+
+---
+
+<a id="gap-315"></a>
+## GAP-315 · Confirmed topology as a reasoning input
+
+**Verdict: BUILD LATER** · Effort: **M** · Depends on: `20261155` applied (`DEC-44 (I-09)`) · Opened 2026-10-01 by intelligence Round G, I-09, from `FLOW-14`'s decision.
+
+Confirmed `process_flows` rows are the plant's human-asserted topology. Since `20261155`, a confirmed row is one the controller tier drew or decided. Yet nothing that reasons reads them. The orchestrator's `trace_pid_lines` builds its edges from page co-occurrence (`lib/orchestrator/tools.ts` `loadLineGraph`), and revision impact never fans out by process.
+
+### Build
+1. `flowsToLineEdges(orgId)` — confirmed rows only, mapped to `lib/pidTrace` `LineEdge[]`. An asset end resolves to its tag through the registry, a unit end to its codebook unit; `lineId` is the flow id, `drawingId` the source document.
+2. `loadLineGraph` merges them with page co-occurrence. Each edge's `basis` says which it is: "a confirmed flow" or "on the same sheet".
+3. The graph scopes to `traceNeighbourhood` from a unit or an asset (what it feeds, what feeds it).
+
+### Do not
+- Read a `proposed` or `dismissed` row. A proposal never reaches a reasoning surface.
+- Let a flow-derived answer drive a hold, an MOC or a compliance artifact.
+- Infer a flow from co-occurrence and store it.
+
+### Acceptance
+1. "What is between P-101 and E-204?" names the confirmed flows on the path, and labels any co-occurrence step as such.
+2. A proposal between the two is never used.
+3. The graph shows a unit's upstream and downstream set from confirmed flows.
 
 ---
 

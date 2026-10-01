@@ -107,7 +107,7 @@ lib/equipmentBridgeServer.ts:272 `const { error: updErr } = await admin.from("do
 ## WIRE-3 · plants/units/systems is a scaffold nothing is ever filed into — six FK columns are declared, indexed, read, and never written
 
 - **Severity:** HIGH
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Assigned:** intelligence I-09 (lib/search.ts) and I-14 (the lens UI) — by the integrator, 2026-10-01 (orphan sweep: the package that left this remainder has merged; fleet plan `audit-reports/fleet-plans/`).
 - **Verification:** CONFIRMED
 - **Locations:** `supabase/migrations/20260606_operational_entity_graph.sql:105-119`, `lib/assets.ts:170-202,206-215`, `lib/documentLifecycle/common.ts:181-182`, `lib/orgGraph.ts:253-261,321-325`, `lib/search.ts:176-184,540-542`
@@ -145,6 +145,23 @@ Tests: `lib/__tests__/orgGraph.test.ts`, `lib/__tests__/intelRoundGUnitIdentity.
 3. ✓ A unit identity survives the prune in a real org: a mapped unit is `cbunit:<code>` with its plant edge, paper and equipment; an unmapped units row keeps its unit → plant edge.
 
 **Scope / residual.** Remaining limb (for whoever next owns `lib/search.ts` — I-10 last edited it): let `searchDocuments`' unitId filter also match documents.unit_code = the code that unit is mapped to, or drop the plant / unit / system parameters no caller passes. Apply 20261138.
+
+**Resolution (2026-10-01, intelligence Round G, I-09 — the `lib/search.ts` limb).** Reproduced first: `searchDocuments({ unitId })` filtered `documents.unit_id` only, a column no UI writes, so it returned nothing for a real unit. `plantId` and `systemId` did the same.
+
+What landed in `lib/search.ts`:
+- `unitDocumentFilter(unitId)`: an operational unit's documents are the ones filed to it OR decoded to the Site Codebook unit it is mapped to — `unit_id.eq.<id>,unit_code.eq."<code>"` (`units.codebook_code`, `documents.unit_code`, `20261138`, DEC-67).
+- `plantDocumentFilter(plantId)` does the same over the codes of the plant's mapped units: `plant_id.eq.<id>,unit_code.in.(…)`.
+- An unmapped unit or plant, or a database before `20261138`, keeps the filed column alone, as before.
+- `systemId` is removed from `searchDocuments`: a system has no decoded identity and nothing files a document to one, so the filter could only ever return nothing. No caller passed it. `searchAssets` keeps its scope filters (the projected `assets.unit_id`, I-13).
+
+Tests: `lib/__tests__/searchUnitDocuments.test.ts` (a mapped unit finds its filed and decoded documents; a plant finds its own and its mapped units' decoded documents; unmapped or pre-migration falls back; no `systemId` on documents).
+
+**Done-when.**
+1. ✓ (I-13, DEC-67) The graph joins the two unit identities through the mapping.
+2. ✓ `lib/search.ts`'s unit and plant filters return the unit's and plant's documents for a mapped org; the system filter, which could not, is removed.
+3. ✓ (I-13) A unit survives the prune.
+
+**Scope / residual.** Pending migration `20261138` (the mapping and the decode). The decode must have run for decoded documents to be found. The "sibling documents in the same system" narrowing in `lib/search.ts` still reads `documents.system_id` / `unit_id` / `plant_id`. That is a ranking aid, not a filter this finding names.
 
 ---
 
@@ -229,7 +246,7 @@ lib/orgGraph.ts:23 `export type GraphNodeType = "document" | "asset" | "unit" | 
 ## WIRE-6 · The PFD reader can only ever connect the first 300 assets, chosen in unspecified order, with no warning
 
 - **Severity:** MEDIUM
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Verification:** CONFIRMED
 - **Locations:** `app/api/flows/read/route.ts:58-73,167-181`
 - **Also surfaced independently as** [`AREA-5`](./12-operating-areas.md#area-5) — two lenses found this separately. Fix once.
@@ -252,6 +269,13 @@ app/api/flows/read/route.ts:59 `supabaseAdmin.from("assets").select("id, tag").e
 - [ ] the roster is scoped to the drawing's decoded unit (parseDrawingNumber on the source document number) rather than an arbitrary 300
 - [ ] the response reports rosterSize / rosterTruncated and the modal shows it
 - [ ] the assets query carries a deterministic ORDER BY
+
+**Resolution (2026-10-01, intelligence Round G).** Same root as `FLOW-4` / `AREA-5`; see `FLOW-4`.
+
+**Done-when.**
+1. ✓ The roster is scoped to the drawing's decoded unit: `documents.unit_code`, the drawing number decoded by the codebook and written by `20261138`'s backfill. It is not re-parsed at read time (DEC-67: the decode is written, never inferred). The launching unit's equipment comes first.
+2. ✓ The response reports `roster.assetsListed` / `assetsTotal` / `assetsOmitted`, and the modal's note names the omission.
+3. ✓ The assets query is ordered by tag and id, and paged.
 
 ---
 
@@ -371,7 +395,7 @@ Closed under roles-and-permissions [`LIFE-2`](../roles-and-permissions/07-docume
 ## WIRE-10 · process_flows endpoints are untyped TEXT with no FK and no index — the plant's topology dangles the moment an asset is deleted
 
 - **Severity:** LOW
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Verification:** CONFIRMED
 - **Locations:** `supabase/migrations/20261017_process_flows.sql:16-37`, `lib/assets.ts:216-219`, `lib/orgGraph.ts:284-289`, `app/api/flows/read/route.ts:152-165`
 - **Independently verified:** ✓ **SURVIVES, corrected** — second independent adversarial pass. Severity **MEDIUM → LOW** by this pass. The dangling-row and silent-drop halves are correct — nothing anywhere deletes process_flows rows when an asset dies (repo-wide grep: process_flows is touched only by lib/processFlows.ts, app/api/flows/read, lib/orgGraph.ts, exportTables/dataRestore). But the 'no index' half is wrong: `UNIQUE (org_id, from_kind, from_ref, to_kind, to_ref)` (line 36) creates a btree whose leading columns cover from-side lookups, and no query in the repo filters by ref at all (every read is `.eq("org_id", …)`). Impact is also narrower than stated: once the asset is gone the hop is genuinely unrepresentable, so the residue is stale rows in exports/proposal lists rather than a wrong topology — LOW.
@@ -393,5 +417,20 @@ Closed under roles-and-permissions [`LIFE-2`](../roles-and-permissions/07-docume
 - [ ] orphan process_flows rows are detectable (a nightly integrity check, or a real FK on an asset-endpoint column)
 - [ ] the settled-pair query filters to status IN ('confirmed','dismissed')
 - [ ] orgGraph reports dropped flow endpoints in `truncations` instead of silently skipping them
+
+**Resolution (2026-10-01, intelligence Round G).** Same root as `FLOW-6`; see `FLOW-6` and `FLOW-2` for the migration and the scratch PostgreSQL 16 cases. Decision: `DEC-44 (I-09)` item 3 — a validation trigger and a cleanup on asset delete, no FK on the polymorphic text column.
+
+What landed (`20261155`):
+- `process_flows_guard()` checks, for every writer, the service role included: an `asset` end names an asset of the same org; a `unit` end names a Site Codebook unit (`codebook_entries`, kind `unit`) of the same org; the two ends differ. Refusals are 23503 / 23514 with the end named. This runs on INSERT and when an endpoint changes, so existing dangling rows can still be decided or removed.
+- The asset-delete cleanup (`FLOW-6`).
+- `process_flows_to_idx` on the to-side endpoint.
+- The pre-apply inventory counts rows whose asset end or unit end resolves to nothing.
+
+**Done-when.**
+1. ✓ Orphan rows are detectable: counted in the paste's result set (before and after), and shown as gone on every review surface (`resolveAssetEndpoints`). No new one can be written (the guard) or left by a delete (the cleanup).
+2. ✓ The reader's settled pairs are the decided ones (confirmed, dismissed on the revision read); a pending pair is "awaiting review" (`AREA-3` / `IEDGE-8`).
+3. ✓ Landed with I-13: `lib/orgGraph.ts` counts a flow edge whose end is not on the map in `truncations` (see `FLOW-6`).
+
+**Scope / residual.** Pending migration `20261155`.
 
 ---

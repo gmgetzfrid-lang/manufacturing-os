@@ -31,7 +31,7 @@
 ## FLOW-1 · AI flow proposals for equipment with no operating-area code can never be reviewed — the only decision surface renders inside a selected Site Codebook unit
 
 - **Severity:** HIGH
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Verification:** CONFIRMED
 - **Locations:** `app/(protected)/admin/assets/page.tsx:580-583`, `components/assets/UnitOpsPanels.tsx:119-143`, `components/assets/UnitOpsPanels.tsx:150-154`, `app/api/flows/read/route.ts:57-71`
 - **Independently verified:** ✓ **SURVIVES** — second independent adversarial pass. Confirmed: the only accept/dismiss surface in the codebase lives inside FlowPanel, FlowPanel only renders for a selected real unit, and a proposal whose endpoints both have unit_code = null matches no unit's filter. AreaKnowledgePanel.tsx:106-114 also touches flows but only counts `f.status === "confirmed"` — read-only, no decision. assets.unit_code is a plain nullable TEXT column (20260928_site_codebook.sql:78), so the CSV-import-before-categorize path really does leave proposals unreachable.
@@ -56,6 +56,22 @@ app/(protected)/admin/assets/page.tsx:580 `{unitFilter && unitFilter !== "__unas
 - [ ] FlowPanel is given the unit's full asset set, not the search-filtered `filtered` array
 - [ ] The read response reports how many proposals landed outside the caller's current unit, and links to where they can be decided
 
+**Resolution (2026-10-01, intelligence Round G).** Reproduced first: FlowPanel was mounted only for a real unit (`unitFilter !== "__unassigned"`), was handed the search-filtered `filtered` list, and the read route reported nothing about where its proposals landed.
+
+What landed:
+- `components/assets/UnitOpsPanels.tsx` `FlowReviewQueue` lists every proposed flow in the plant, newest first, whatever unit it touches. Each row shows its unit(s), or "no operating area". There is an "only equipment in no operating area" filter, confirm / dismiss for the controller tier, and Withdraw for the author. It is mounted on the operating-areas page's all-equipment and `__unassigned` views (anchor `#plant-flow-review`).
+- `FlowPanel` takes the unit's FULL equipment list (`areaAssets` — every asset filed to the unit from the page's complete registry read, never the search / type / photo filtered view). It counts proposals that touch nothing in the unit, with a link to the plant-wide list.
+- `app/api/flows/read/route.ts` takes the launching `unitCode` and answers `outsideUnit`: how many of the landed proposals touch neither the unit's equipment nor the unit. The modal adds: "N of the proposals are outside this unit — they are listed under Proposed flows across the plant (All equipment)."
+
+Tests: `lib/__tests__/flowPanelRender.test.ts` ("the plant-wide list shows a proposal between equipment no operating area holds"; "proposals touching nothing in this unit are counted with a link …"; "the operating-areas page gives the panel the unit's FULL equipment …"), `lib/__tests__/flowsReadRoute.test.ts` ("a read launched from Crude (20) says how many of its proposals touch nothing in Crude").
+
+**Done-when.**
+1. ✓ A plant-wide proposed-flows review surface exists on the operating-areas page, independent of unit selection.
+2. ✓ FlowPanel is given the unit's full asset set.
+3. ✓ The read response reports how many proposals landed outside the caller's unit, and the modal says where they can be decided.
+
+**Scope / residual.** `app/(protected)/admin/assets/page.tsx` (I-10's, merged) mounts the queue and passes `areaAssets`; listed under filesOutsidePlan.
+
 ---
 
 <a id="flow-2"></a>
@@ -63,7 +79,7 @@ app/(protected)/admin/assets/page.tsx:580 `{unitFilter && unitFilter !== "__unas
 ## FLOW-2 · Any active member can write a confirmed flow straight into the org's shared process map — the RLS INSERT policy has no controller gate and no status gate
 
 - **Severity:** HIGH
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Verification:** CONFIRMED
 - **Locations:** `supabase/migrations/20261017_process_flows.sql:49-54`, `lib/processFlows.ts:52-70`, `app/(protected)/graph/page.tsx:334-346`
 - **Also surfaced independently as** [`AREA-3`](./12-operating-areas.md#area-3) — two lenses found this separately. Fix once.
@@ -87,6 +103,38 @@ migration:50-54, the full WITH CHECK — compare the UPDATE policy two lines bel
 - [ ] A CHECK or policy prevents a client insert from claiming `origin='ai'` or setting `source_document_id`/`evidence`
 - [ ] The graph's Connect-mode flow branch is gated on the same capability server-side, not just visually
 
+**Resolution (2026-10-01, intelligence Round G).** Reproduced first (DEC-29): `20261017`'s `process_flows_insert` is the active-member check plus `created_by = auth.uid()`, and the scratch database below accepted a Viewer's `status 'confirmed'` insert before `20261155` was applied. Decision: `DEC-44 (I-09)` item 1, the plan's default — a non-controller's hand-drawn flow lands as `proposed`; a controller's lands `confirmed`, exactly as before.
+
+What landed — `supabase/migrations/20261155_intel_roundG_process_flows_authority.sql`:
+- `process_flows_guard()` (BEFORE INSERT OR UPDATE, invoker rights, `search_path` pinned). For a person's insert it sets `status := 'proposed'` unless `is_org_controller(org_id)`. It refuses `origin` other than `manual` and any `source_document_id`, `source_page`, `source_version_id` or `evidence` (42501, `process_flows_origin` / `process_flows_provenance`). It stamps `created_by`, `created_by_name` (the member's address), `created_at`, and `decided_*` on a confirmed row. The reader (the service role) passes the person rules and is held to the endpoint and source checks.
+- `process_flows_insert` is re-created from `20261017`'s text plus three clauses: `(status = 'proposed' OR is_org_controller(org_id))`, `origin = 'manual'`, `source_document_id IS NULL`.
+- `process_flows_update` / `_delete`: the controller tier, or the author while the row is still `proposed`. A member can withdraw their own proposal but cannot self-accept it or change a decided row.
+- `lib/processFlows.ts` `createManualFlow` reads back what landed: `"confirmed"`, `"exists"` (23505, as before), or a thrown `FlowProposedNotice` ("Saved as a proposed flow — a document controller … confirms it …"). So the graph's Connect (I-14's page, unedited) shows the sentence instead of drawing a proposal as part of the map. A guard refusal reads as a sentence (`flowWriteMessage`).
+
+Scratch PostgreSQL 16.13 run (stub `auth.uid()` from a GUC; `anon` / `authenticated` / `service_role` (BYPASSRLS); `org_members` / `assets` / `codebook_entries` / `knowledge_documents` with member RLS; `20260814`'s `is_org_controller`; `20261017` verbatim; then the paste). Every probe was true and the inventory was filled: 6 flows, 2 confirmed by no controller, 1 AI-attributed by a non-controller, 1 dangling asset end, 1 non-codebook unit end, 1 cross-workspace source, 1 two-way pair. Cases:
+- A Viewer's `confirmed` insert landed `proposed`, `created_by_name` the member's address (a forged name was overwritten), `decided_*` null.
+- A Viewer's forged `origin 'ai'` + source + page, and `evidence` alone, were refused (42501). A forged `decided_by` / `decided_by_name` on a proposal was nulled.
+- A Viewer's self-accept was refused (`process_flows_decide`). Their label edit on their own proposal landed. Edit and delete of their own legacy confirmed row matched 0 rows (RLS).
+- A Supervisor's confirm of an AI proposal matched 0 rows.
+- An Admin's draw landed `confirmed`, decided by the Admin. A Manager holding DocCtrl additively confirmed a proposal with a forged decider; the decider recorded was the Manager.
+- Retargeting an endpoint was refused (`process_flows_fixed`).
+- A unit ref `U100` not in the codebook, another org's asset, a non-uuid asset ref and a self-loop were refused (23503 / 23514).
+- The service role's AI proposal with provenance landed. Its cross-workspace source was refused, and a missing asset was refused. `ON CONFLICT DO NOTHING` on an existing pair wrote nothing.
+- A controller's dismissal, then the service role's re-proposal on a new revision, landed (`IEDGE-8`).
+- A dangling legacy row could still be dismissed and deleted.
+- A Viewer's asset delete matched 0 rows. An Admin's asset delete removed its 3 flows (`FLOW-6`).
+- A non-member's insert was refused. A Viewer withdrew their own proposal.
+- A re-paste was clean, with every probe true.
+
+Tests: `lib/__tests__/intelRoundGProcessFlowsMigration.test.ts` (each re-created policy is `20261017`'s text plus only the authority clauses, by lineDiff against the newest earlier definer found by scanning the sequence; both functions new, invoker, pinned; the one-paste shape), `lib/__tests__/processFlowsLib.test.ts` ("createManualFlow — FLOW-2 …").
+
+**Done-when.**
+1. ✓ A non-controller may insert only `status = 'proposed'`: the guard downgrades, and the policy refuses anything else.
+2. ✓ A person's insert cannot claim `origin = 'ai'` or carry `source_document_id` / `source_page` / `evidence` (refused, and the policy requires `origin = 'manual'`, no source).
+3. ✓ The Connect flow branch is gated server-side by the same tier. The database decides and the client is told (`FlowProposedNotice`). The affordance stays open to every member by the decision: anyone may propose.
+
+**Scope / residual.** **Pending migration:** `supabase/migrations/20261155_intel_roundG_process_flows_authority.sql` (hand-applied, one paste; its result set carries the pre-apply inventory and every probe). Until it is pasted the database still accepts a member's confirmed flow. The app half (reader authority, checked writes, `FlowProposedNotice`) holds either way. Existing confirmed rows drawn by non-controllers are counted and kept (DEC-30); nothing is rewritten. Handoff to I-14 (`app/(protected)/graph/page.tsx`, GPV-7's region): `completeConnect` may catch `FlowProposedNotice` and show its message as a notice rather than an error. It already shows it and does not draw the edge.
+
 ---
 
 <a id="flow-3"></a>
@@ -94,7 +142,7 @@ migration:50-54, the full WITH CHECK — compare the UPDATE policy two lines bel
 ## FLOW-3 · Manager and Supervisor see every flow control and none of them work: the button 403s, and Confirm/Dismiss/Delete fail silently against RLS
 
 - **Severity:** MEDIUM
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Verification:** CONFIRMED
 - **Locations:** `app/(protected)/admin/assets/page.tsx:56`, `app/(protected)/admin/assets/page.tsx:69`, `components/assets/UnitOpsPanels.tsx:179-184`, `components/assets/UnitOpsPanels.tsx:150-159`, `app/api/flows/read/route.ts:42-48`, `supabase/migrations/20261017_process_flows.sql:56-64`
 - **Independently verified:** ✓ **SURVIVES, corrected** — second independent adversarial pass. Severity **HIGH → MEDIUM** by this pass. The mechanism is exactly right — Manager/Supervisor get controls the server rejects, and the Confirm/Dismiss path fails with no error at all. Two things pull the severity down to MEDIUM: it fails CLOSED (no unauthorized write occurs), and 'none of them work' is overstated — the `created_by = auth.uid()` arm means a Manager can still delete or edit a flow they drew themselves on the graph; only rows created by someone else (i.e. the AI proposals) silently no-op. This is a broken-authority/UX defect, not a security or data-loss one.
@@ -119,6 +167,23 @@ assets/page.tsx:56 `const ADMIN_ROLES = ["Admin", "DocCtrl", "Manager", "Supervi
 - [ ] `decideFlow` / `deleteFlow` use `.select()` and treat a zero-row result as a permission error the user sees
 - [ ] FlowPanel's `isAdmin` is derived from the same capability the server enforces, so no control renders that cannot act
 
+**Resolution (2026-10-01, intelligence Round G).** Reproduced first: the page passed `isAdmin`, which includes Manager and Supervisor, to FlowPanel; `decideFlow` / `deleteFlow` checked only `error`, so an UPDATE that RLS filtered to 0 rows resolved silently; the route named `["Admin", "DocCtrl"]` in a literal list.
+
+What landed:
+- `app/api/flows/read/route.ts` resolves authority through `lib/permissions` `isControllerPrincipal` over the role COLLECTION (`normalizeRoles(roles, role)`). That is `is_org_controller`'s set, with no role list in the file (DEC-35). A membership read that fails is 503, never a guess.
+- `lib/processFlows.ts`: `decideFlow` and `deleteFlow` are checked writes (`.select("id")`). Zero rows is an error the person reads (`FLOW_DECIDE_REFUSED` / `FLOW_DELETE_REFUSED`), and a guard refusal is its sentence.
+- `components/assets/UnitOpsPanels.tsx`: `FlowPanel` takes `isController`, and the operating-areas page passes its existing `isController` (the controller tier by collection). A Manager or Supervisor sees no reader button and no confirm / dismiss / remove controls. They see "a document controller decides", and a Withdraw button on their own proposal, which the policy allows.
+- A refused decision is shown on the panel.
+
+Tests: `lib/__tests__/flowsReadRoute.test.ts` ("a member with DocCtrl held additively … reads flows"; "Manager, Supervisor and Viewer are refused …, before any render or call"), `lib/__tests__/processFlowsLib.test.ts` ("decideFlow / deleteFlow — FLOW-3 …"), `lib/__tests__/flowPanelRender.test.ts` ("a non-controller sees no reader and no decision controls …"; "a decision the database filtered out is said …"), `lib/__tests__/sweepRoundC1b.test.ts` (the collection census now admits `isControllerPrincipal`).
+
+**Done-when.**
+1. ✓ The route resolves authority through `isControllerPrincipal` over the additive collection, with no role-name array. The plan names this helper as DEC-35's expression; a capability id is the DC P7 alternative and was not taken.
+2. ✓ `decideFlow` / `deleteFlow` use `.select()` and treat zero rows as a refusal the user sees.
+3. ✓ FlowPanel's controls are drawn from the same tier the route and the database (`20261155`) enforce.
+
+**Scope / residual.** `app/(protected)/admin/assets/page.tsx` (I-10's, merged) changed by one prop name to pass `isController`; listed under filesOutsidePlan.
+
 ---
 
 <a id="flow-4"></a>
@@ -126,7 +191,7 @@ assets/page.tsx:56 `const ADMIN_ROLES = ["Admin", "DocCtrl", "Manager", "Supervi
 ## FLOW-4 · The grounding roster is silently truncated to an arbitrary 300 assets — on a real plant the model is told most of the equipment does not exist
 
 - **Severity:** HIGH
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Verification:** CONFIRMED
 - **Locations:** `app/api/flows/read/route.ts:57-71`, `app/api/flows/read/route.ts:92-104`
 - **Independently verified:** ✓ **SURVIVES** — second independent adversarial pass. Confirmed: an arbitrary, unordered 300 of up to 4000 assets, with nothing tying the roster to the unit or document being read and no warning anywhere in the response (:174-181 returns only proposed/skippedSettled/pagesRead). The failure is doubly silent — the model is simply told the rest of the plant does not exist, and the 'no new flows found' note at :179 misattributes the result to the drawing.
@@ -149,6 +214,23 @@ route.ts:68 verbatim: `assets.slice(0, 300).forEach((a, i) => roster.push({ ref:
 - [ ] When the roster is truncated, the response says so and names the count omitted
 - [ ] The asset query is ordered so the same document read twice grounds on the same roster
 
+**Resolution (2026-10-01, intelligence Round G).** Reproduced first on the base route: a 350-asset registry whose crude-unit tags sort last left every crude tag off the roster (`assets.slice(0, 300)` of an unordered `.limit(4000)`). The test "FLOW-4: Crude's equipment past an arbitrary 300" failed on the base route and passes now. Decision: `DEC-44 (I-09)` item 4, the plan's default.
+
+What landed — `lib/flowsRead.ts` `buildRoster` / `rosterPrompt`, used by `app/api/flows/read/route.ts`:
+- The registry is read whole, in pages, ordered by tag then id.
+- The roster takes, up to the same 300-item budget: the launching unit's equipment first (the unit panel sends `unitCode`), then the equipment of the unit the drawing's number decodes to (`documents.unit_code`, written by `20261138`'s decode — never re-decoded at read time, DEC-67), then the rest by tag. Every Site Codebook unit stays on the roster (read whole, in pages).
+- The model is told how many registry items are NOT listed, and that a tag missing from the roster cannot be connected.
+- The answer carries `roster` (`assetsListed` / `assetsTotal` / `assetsOmitted`, the launching unit's listed / omitted, the drawing's unit). The note names the omission.
+
+Tests: `lib/__tests__/flowsRead.test.ts` ("a 3,200-asset plant read from the Crude Unit: every Crude tag is on the roster …"; "the unit the drawing's number decodes to comes next …"; "deterministic …"), `lib/__tests__/flowsReadRoute.test.ts` ("350 registry assets read from the Crude Unit …"; "the assets are read in pages, ordered …").
+
+**Done-when.**
+1. ✓ The roster is scoped by relevance: the launching unit first, then the drawing's decoded unit.
+2. ✓ When truncated, the response and the prompt say so and name the count omitted.
+3. ✓ The asset query is ordered, so the same document read twice from the same unit grounds on the same roster.
+
+**Scope / residual.** The budget stays 300 items, so the token cost of a read is unchanged. A unit with more than 300 items of its own is cut at 300 (its own count omitted is reported). A drawing whose number has not been decoded (`20261138` not applied, or the decode not run) skips the second tier.
+
 ---
 
 <a id="flow-5"></a>
@@ -156,7 +238,7 @@ route.ts:68 verbatim: `assets.slice(0, 300).forEach((a, i) => roster.push({ ref:
 ## FLOW-5 · A dismissed flow can be re-proposed: the 'settled' guard reads an arbitrary 4000-row slice with no ORDER BY, and the dismissal contract is stated in a comment the code cannot keep
 
 - **Severity:** MEDIUM
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Verification:** CONFIRMED
 - **Locations:** `app/api/flows/read/route.ts:81-88`, `app/api/flows/read/route.ts:9-10`, `lib/processFlows.ts:72-73`, `lib/processFlows.ts:36-48`
 - **Independently verified:** ✓ **SURVIVES** — second independent adversarial pass. Both halves verified. Note the failure is all-or-nothing: because it is a single multi-row insert with no upsert clause, one resurrected dismissed pair discards every other valid proposal from that read and the user is charged for the AI call regardless (usage is metered at :133, before the insert).
@@ -181,6 +263,17 @@ route.ts:83-84 `.from("process_flows").select("from_kind, from_ref, to_kind, to_
 - [ ] A dismissal blocks the reversed pair too, or the UI explains why the reverse is a separate decision
 - [ ] A test asserts that a dismissed pair survives a second read of the same document
 
+**Resolution (2026-10-01, intelligence Round G).** Reproduced first: the settled set was `.limit(4000)` with no order. On the base route a dismissal on an older revision blocked the revised drawing (the base-route test "IEDGE-8 …" failed, as stated).
+
+What landed: `app/api/flows/read/route.ts` reads the org's flows WHOLE, in id order, in pages. `lib/flowsRead.ts` `planFlowProposals` classifies each found pair against them (`AREA-3`); a dismissal sticks unless a new revision of the same drawing is read (`IEDGE-8`). The direction question is answered in the UI: the dismiss button says "Not a real flow — the reader won't propose this direction again for this revision of the drawing (the reverse direction, e.g. a recycle, is a separate flow)". A dismissal of A→B does not block B→A, which is pinned.
+
+Tests: `lib/__tests__/flowsReadRoute.test.ts` ("a dismissed pair survives a second read of the same document (same revision)"; "the prior flows are read whole in pages (no 4,000-row slice): a dismissal on row 4,500 still holds"), `lib/__tests__/flowsRead.test.ts` ("FLOW-5: a dismissed A→B does not block B→A …").
+
+**Done-when.**
+1. ✓ The settled lookup is paged to completion with a deterministic order.
+2. ✓ The UI explains that the reverse is a separate decision (the dismiss control's title); the schema keeps A→B and B→A distinct (recycles, `FLOW-8`).
+3. ✓ A test asserts a dismissed pair survives a second read of the same document.
+
 ---
 
 <a id="flow-6"></a>
@@ -188,7 +281,7 @@ route.ts:83-84 `.from("process_flows").select("from_kind, from_ref, to_kind, to_
 ## FLOW-6 · A flow can reference a deleted asset forever: no FK, no cleanup, and the endpoint renders as a bare ellipsis
 
 - **Severity:** MEDIUM
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Verification:** CONFIRMED
 - **Locations:** `supabase/migrations/20261017_process_flows.sql:17-20`, `lib/assets.ts:216-219`, `app/(protected)/admin/assets/page.tsx:1402`, `components/assets/UnitOpsPanels.tsx:147-148`, `lib/orgGraph.ts:171`
 - **Independently verified:** ✓ **SURVIVES** — second independent adversarial pass. Every leg holds. The graph side is worse than 'a bare ellipsis': orgGraph.ts:171 `if (a === b || !nodes.has(a) || !nodes.has(b)) return;` makes addEdge silently drop the whole flow, so the same dead row shows as an unnamed chip in the unit hub and as nothing at all on the Process lens — with no path to notice or clean it up.
@@ -213,6 +306,23 @@ migration:17-20 — `from_kind TEXT NOT NULL CHECK (...), from_ref TEXT NOT NULL
 - [ ] `endpointLabel` distinguishes 'loading' from 'this equipment no longer exists' and offers to remove the flow
 - [ ] The graph reports dropped flow edges in `truncations` rather than dropping them in silence
 
+**Resolution (2026-10-01, intelligence Round G).** Reproduced first: `deleteAsset` removed nothing from `process_flows`, and FlowPanel rendered an unresolved asset end as "…". The scratch database's inventory counted the dangling row the base schema let stand. Decision: `DEC-44 (I-09)` item 3 (the plan's WIRE-10 default) — no foreign key on a polymorphic text column; a trigger and a read-time check instead.
+
+What landed:
+- `20261155`: `assets_process_flows_cleanup()` (AFTER DELETE ON assets, invoker rights, `search_path` pinned) removes the deleted asset's flows under the deleting person's RLS. Asset DELETE is the controller tier's since `20261128`, and a controller may delete any flow. The scratch case: an Admin's delete of E-201 removed its 3 flows; a Viewer's delete matched no row.
+- The guard refuses a NEW flow to equipment that does not exist (`WIRE-10`).
+- The asset editor's confirmations say what happens to flows. Delete: "…and the N process flows it is part of", or "(they could not be counted)". Archive: the flows are kept but leave the map while it is archived. Both use `lib/processFlows.ts` `countAssetFlows`, which answers null — never 0 — when it cannot read.
+- FlowPanel and the plant-wide list resolve every asset end against the registry (`resolveAssetEndpoints`). An end is "…" while loading, the tag (marked "(archived)") when it exists, and "equipment no longer exists" in red when it does not. A controller gets a remove button on such a chip, and no confirm button on a proposal to nothing. A failed registry read says "equipment (not checked)", never "gone".
+
+Tests: `lib/__tests__/flowPanelRender.test.ts` ("'equipment no longer exists', marked, with a remove button …"), `lib/__tests__/processFlowsLib.test.ts` ("resolveAssetEndpoints …"; "countAssetFlows …"), `lib/__tests__/intelRoundGProcessFlowsMigration.test.ts` (the cleanup's shape).
+
+**Done-when.**
+1. ✓ Deleting an asset removes its flows (`20261155`), and the confirmation says how many. Archiving keeps them, says how many leave the map, and restoring brings them back.
+2. ✓ The endpoint label distinguishes loading from "equipment no longer exists", and offers removal.
+3. ✓ Landed with I-13 (`lib/orgGraph.ts`, not this package's file). A flow edge whose end is not on the map is counted in `truncations` ("N links lead to equipment, documents or units not on this map …", the `severed` count, flow among its types), never dropped in silence.
+
+**Scope / residual.** Pending migration `20261155`. Rows that already dangle are counted in its inventory and kept (DEC-30). They show as gone and a controller removes them. The confirmations are in `app/(protected)/admin/assets/page.tsx` (I-10's, merged; filesOutsidePlan).
+
 ---
 
 <a id="flow-7"></a>
@@ -220,7 +330,7 @@ migration:17-20 — `from_kind TEXT NOT NULL CHECK (...), from_ref TEXT NOT NULL
 ## FLOW-7 · A permanently failed PDF ingest reports 'Indexing… the Read button appears when it finishes (usually under a minute)' forever, and hides the stored error
 
 - **Severity:** MEDIUM
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Verification:** CONFIRMED
 - **Locations:** `lib/flowsBrowse.ts:183-185`, `components/assets/UnitOpsPanels.tsx:427`, `lib/knowledgeIngest.ts:582`, `lib/knowledge.ts:64`, `lib/__tests__/flowsBrowse.test.ts:121-138`
 - **Independently verified:** ✓ **SURVIVES** — second independent adversarial pass. Confirmed, and worse than stated: lib/knowledgeIngest.ts:539 selects `.in("status", ["pending", "stale", "indexing"])`, so an 'error' doc is NEVER re-picked-up — the spinner really is forever. app/api/flows/browse/route.ts:60 selects only `id, name, library_id, page_count, status, source_document_id`, so the stored error message never even leaves the server.
@@ -244,6 +354,20 @@ flowsBrowse.ts:183-185 verbatim: `const state: DcDocState = mirror ? (mirror.sta
 - [ ] `DcDocState` gains an `ingest_failed` member; flowsBrowse maps `status === "error"` to it
 - [ ] The browse route selects `knowledge_documents.error` and passes the message through to the row hint
 - [ ] A test asserts a mirror with `status: "error"` never renders as `indexing`
+
+**Resolution (2026-10-01, intelligence Round G).** Reproduced first: `assembleFlowsBrowse` mapped every non-ready mirror to `indexing`, and the browse route never selected `knowledge_documents.error`.
+
+What landed:
+- `lib/flowsBrowse.ts`: `DcDocState` gains `ingest_failed`, and `mirrorState(status)` maps `error` to it (`pending` / `indexing` / `stale` stay `indexing`). A failed row carries the stored `error`. Direct uploads carry the same state and error, so a failed or pending upload is no longer offered as ready.
+- `app/api/flows/browse/route.ts` selects `error` (and orders the paged read by name, then id).
+- The picker shows "Indexing failed" with the reason ("Indexing failed: <the stored error>") and no spinner. The hint says the failure will not finish on its own.
+
+Tests: `lib/__tests__/flowsBrowse.test.ts` ("FLOW-7 — a failed ingest is named, with its reason …": a mirror with `status: "error"` is `ingest_failed` with its error and never `indexing`; uploads carry state).
+
+**Done-when.**
+1. ✓ `DcDocState` has `ingest_failed`; `status === "error"` maps to it.
+2. ✓ The browse route selects `error` and the row's hint prints it.
+3. ✓ A test asserts an `error` mirror never renders as `indexing`.
 
 ---
 
@@ -293,7 +417,7 @@ Tests: `lib/__tests__/orgGraph.test.ts` — T-401 → P-402 and P-402 → T-401 
 ## FLOW-9 · Flow edges are capped at 8000 in an unordered fetch and the cap is never announced; the unit panel loads only the oldest 4000 flows org-wide
 
 - **Severity:** MEDIUM
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Verification:** CONFIRMED
 - **Locations:** `lib/orgGraph.ts:132-134`, `lib/orgGraph.ts:164-167`, `lib/orgGraph.ts:75-94`, `lib/processFlows.ts:36-48`
 - **Independently verified:** ✓ **SURVIVES** — second independent adversarial pass. Confirmed by repo-wide check: `grep -n truncations lib/orgGraph.ts` shows no push for `flows.capped`, so the flow cap is genuinely silent. FlowPanel (UnitOpsPanels.tsx:121, 172-174) renders `${confirmed.length} confirmed` straight off that oldest-4000 slice with no cap warning.
@@ -317,6 +441,17 @@ lib/processFlows.ts:41-42 `.order("created_at", { ascending: true }).limit(4000)
 - [ ] `pageRows` orders by a stable key so a cap yields a defensible subset
 
 *Handoff (2026-10-01, intelligence Round G, I-13): the `lib/orgGraph.ts` half has landed — `flows.capped` (and `related` / `supersessions`) push a truncation that says what was read of how many, and `pageRows` pages in keyset order (`id` ascending, `gt` the last id), so a capped flow read is a stable, defensible subset (GM-13 / GM-3). Criterion 2 (`lib/processFlows.ts` `listProcessFlows`) remains I-09's.*
+
+**Resolution (2026-10-01, intelligence Round G).** The `lib/orgGraph.ts` half landed with I-13 (the handoff above). This package's half is criterion 2. Reproduced first: `listProcessFlows` was `.order("created_at", { ascending: true }).limit(4000)` — the oldest 4,000.
+
+What landed: `lib/processFlows.ts` `listProcessFlowsPaged` reads every non-dismissed flow newest first (`created_at`, then `id`, descending), in pages of 1,000, up to `FLOW_READ_CAP` (20,000), and says when it stops (`truncated`). FlowPanel prints "This workspace holds more than 20,000 flows — the oldest are not listed here", and keeps showing confirmed chips oldest-first, as before. `listProcessFlows` (the area panel's count) is the same read.
+
+Tests: `lib/__tests__/processFlowsLib.test.ts` ("listProcessFlowsPaged — FLOW-9: newest first, paged, the cap said").
+
+**Done-when.**
+1. ✓ (I-13) `flows.capped`, `related` and `supersessions` push truncations.
+2. ✓ `listProcessFlows` orders newest first and pages; the review queue never loses the newest proposals.
+3. ✓ (I-13) `pageRows` pages in keyset order.
 
 ---
 
@@ -357,7 +492,7 @@ OrgGraph2D.tsx:202 verbatim: `if (st.showArrows && (alpha > 0.3) && (e.type === 
 ## FLOW-11 · MAX_PAGES=6 truncation is never reported, and the zero-result message blames the drawing for a book the reader only opened the first six pages of
 
 - **Severity:** LOW
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Verification:** CONFIRMED
 - **Locations:** `app/api/flows/read/route.ts:27`, `app/api/flows/read/route.ts:73-79`, `app/api/flows/read/route.ts:174-181`, `components/assets/UnitOpsPanels.tsx:394-396`, `lib/knowledgePageRender.ts:30`, `lib/knowledgePageRender.ts:39-52`
 - **Independently verified:** ✓ **SURVIVES, corrected** — second independent adversarial pass. Severity **MEDIUM → LOW** by this pass. The substantive defect stands: on the zero-result path the route returns `pagesRead` and the UI throws it away, so the user is told the drawing is at fault with no hint that only pages 1-6 were opened. But 'never reported' is overstated — UnitOpsPanels.tsx:567 places the cap in the picker itself (`placeholder="Pages (optional): 1-4 or 2,5,9 — up to 6 per read"`) and shows `reads p. …` for an explicit selection, so the cap is disclosed even though the failure message ignores it.
@@ -382,6 +517,20 @@ route.ts:27 `const MAX_PAGES = 6;`; route.ts:76-77 the `Math.min(doc.page_count 
 - [ ] `skippedSettled` and a new `skippedUngrounded` count are surfaced in the result message
 - [ ] A partial render (fewer images than pages requested) is reported rather than absorbed
 
+**Resolution (2026-10-01, intelligence Round G).** Reproduced first on the base route: a 40-page book read by default answered "No new flows found — the drawing may not print flow arrows between known tags…", with no "6 of 40" (`expected 'No new flows found — …' to match /of 40/`).
+
+What landed:
+- `lib/knowledgePageRender.ts` `renderKnowledgePagesReport` says what became of every page asked for: rendered, past the document's end, failed to render, or not started before the deadline. It also reports the document's page count.
+- `app/api/flows/read/route.ts` answers `pagesRequested`, `pagesRead`, `pagesTotal`, `pagesFailed`, `pagesNotRead`, `truncated` and the skip counts (`skippedUngrounded` is new: handles the roster never offered).
+- `lib/flowsRead.ts` `readNote` names every reason on BOTH branches: "Read pages 1–6 of 40. Only the first pages are read by default — enter the pages that show the flow (up to 6 per read) to read the rest. … No new flows were proposed. Not proposed: …". The modal prints the note on success and on zero. The sentence that blamed the drawing is gone.
+
+Tests: `lib/__tests__/flowsRead.test.ts` ("readNote — every reason a read came back short is named, on both branches"), `lib/__tests__/flowsReadRoute.test.ts` ("a 40-page book read by default …"; "a page that failed to render and one past the end are reported, not absorbed"), `lib/__tests__/knowledgePageRender.test.ts` ("out of range, failed and rendered pages are each named …").
+
+**Done-when.**
+1. ✓ The response has `pagesTotal` and `truncated`; the modal prints "Read pages 1–6 of 40" on both branches.
+2. ✓ `skippedSettled` (by reason) and `skippedUngrounded` are in the message.
+3. ✓ A partial render (failed or not-started pages) is reported, not absorbed.
+
 ---
 
 <a id="flow-12"></a>
@@ -389,7 +538,7 @@ route.ts:27 `const MAX_PAGES = 6;`; route.ts:76-77 the `Math.min(doc.page_count 
 ## FLOW-12 · One duplicate pair destroys the entire read: proposals are inserted as an unguarded batch while createManualFlow explicitly tolerates 23505
 
 - **Severity:** MEDIUM
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Verification:** CONFIRMED
 - **Locations:** `app/api/flows/read/route.ts:169-173`, `app/api/flows/read/route.ts:82-88`, `lib/processFlows.ts:69`, `supabase/migrations/20261017_process_flows.sql:36`
 - **Independently verified:** ✓ **SURVIVES** — second independent adversarial pass. Confirmed, and the window is wider than the concurrency race described: the `settled` snapshot at route.ts:82-84 is `.select(...).eq("org_id", orgId).limit(4000)` with no ORDER BY, so on an org past ~4000 flow rows a single reader can miss an already-decided pair and abort its own whole batch after paying for the vision call.
@@ -414,6 +563,20 @@ route.ts:170 `const { error } = await supabaseAdmin.from("process_flows").insert
 - [ ] The response distinguishes `proposed`, `skippedSettled`, and `skippedDuplicate` counts
 - [ ] `recordAskUsage` is not the last word on a run whose write failed — either the failure is reported alongside the charge, or the write happens before the meter
 
+**Resolution (2026-10-01, intelligence Round G).** Reproduced first on the base route: with one pair already in the table, the batch insert failed and the route answered 500 after the call had been metered (`expected 500 to be 200`).
+
+What landed in `app/api/flows/read/route.ts`:
+- New proposals are written with `upsert(…, { onConflict: "org_id,from_kind,from_ref,to_kind,to_ref", ignoreDuplicates: true })`. A pair someone wrote while the read ran is skipped and counted (`skippedDuplicate`, and in `skippedPairs`).
+- A batch the database refuses for any other reason (an endpoint deleted since the roster was read — `20261155`'s guard) is written one row at a time: the good rows land, the bad ones are counted (`writeFailed`) with the first error.
+- When nothing could be written the answer is a 500 that says so WITH the charge: "The drawing was read (the call was charged to your key), but writing the proposals failed: …".
+
+Tests: `lib/__tests__/flowsReadRoute.test.ts` ("FLOW-12 — one colliding pair never costs the read": the race, the row-by-row fallback, the 500 that names the charge).
+
+**Done-when.**
+1. ✓ The write is an upsert with ignore, then per row; a colliding pair is skipped and the rest land.
+2. ✓ The response distinguishes `proposed`, `skippedSettled` (`skippedConfirmed` + `skippedDismissed`), `skippedPending` and `skippedDuplicate`.
+3. ✓ The meter is not the last word: the call is metered by `governedAiCall` (`PR-12`), and a write failure is reported with the charge, as a 500 when nothing landed and in the note when some did.
+
 ---
 
 <a id="flow-13"></a>
@@ -421,7 +584,7 @@ route.ts:170 `const { error } = await supabaseAdmin.from("process_flows").insert
 ## FLOW-13 · PFD pages are rendered at 1400px — the width tuned for standards tables, below the 1800px the ingester uses precisely so 'small tags stay legible'
 
 - **Severity:** LOW
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Verification:** SUSPECTED
 - **Locations:** `lib/knowledgePageRender.ts:19-20`, `lib/knowledgePageRender.ts:42-45`, `lib/knowledgeIngest.ts:161-163`, `app/api/flows/read/route.ts:78`
 - **Independently verified:** ✓ **SURVIVES, corrected** — second independent adversarial pass. Severity **MEDIUM → LOW** by this pass. The factual contrast is exactly as stated — the flow reader reuses the deep-read width tuned for standards tables, while the ingester deliberately renders 1800px for tag legibility. Downgraded because this is a tuning constant with a plausible but unmeasured effect, not a defined failure: nothing shows the model actually misses tags at 1400px, and the reader's grounding roster (route.ts:67-71, 146-148) still blocks any tag it did not have on the roster.
@@ -445,6 +608,19 @@ knowledgePageRender.ts:20 `const RENDER_WIDTH = 1400;          // readable table
 - [ ] `renderKnowledgePages` takes an explicit width and the flows reader passes at least the ingester's 1800, or tiles a large sheet into overlapping quadrants
 - [ ] A fixture PFD with known tags exists and a test asserts the parser+grounding path yields the expected pairs from a canned model response
 - [ ] The read response reports the render width/DPI used so a poor result can be diagnosed rather than guessed at
+
+**Resolution (2026-10-01, intelligence Round G).** Reproduced first: the renderer took no width, so the flows reader rendered at the standards-tuned 1,400 px (the base-route case "FLOW-13: rendered at the ingester's 1800 px" failed: `expected { max: 6 } to have property "width"`). The quality effect stays SUSPECTED; no provider was run, as the finding says.
+
+What landed: `lib/knowledgePageRender.ts` takes `width` (`renderKnowledgePagesReport(fileKey, pages, { width })`). The default stays 1,400 px for the deep-read callers (ask, checklist, quality manual, cost docs — unchanged, pinned). `DRAWING_RENDER_WIDTH` = 1,800, the ingester's drawing width, is what `/api/flows/read` passes. The answer carries `renderWidth`.
+
+Tests: `lib/__tests__/knowledgePageRender.test.ts` ("a drawing reader renders at 1800 px; the default stays 1400 …"), `lib/__tests__/flowsReadRoute.test.ts` ("… rendered at 1800 px").
+
+**Done-when.**
+1. ✓ The renderer takes an explicit width; the flows reader passes the ingester's 1,800 px.
+2. ✓ A canned model response over a fixed roster is driven through the parser and the grounding path, and the expected pairs come out: `flowsReadRoute.test.ts` (regression pin, settled set, write cases) and `flowsRead.test.ts`. There is no binary PDF fixture: the renderer is mocked, because model output quality cannot be observed here.
+3. ✓ The response reports the render width (`renderWidth`).
+
+**Scope / residual.** Whether 1,800 px reads more tags than 1,400 px is a model-quality question to confirm against a real provider (SUSPECTED, unchanged).
 
 ---
 
@@ -477,5 +653,21 @@ tools.ts:370-376 verbatim start: `const { data, error } = await supabaseAdmin.fr
 - [ ] A `flowsToLineEdges(orgId)` adapter exists that maps confirmed process_flows into `LineEdge[]` with tag-normalised endpoints
 - [ ] `loadLineGraph` merges confirmed flows with page co-occurrence and the `basis` string distinguishes the two sources per edge
 - [ ] The graph gains a scope-to-reachable-set filter driven by `traceNeighbourhood`, so selecting a unit shows what it feeds and what feeds it
+
+**Partial (2026-10-01, intelligence Round G).** Re-verified at the base commit `38b371c`. Nothing outside drawing reads `process_flows`: `lib/orchestrator/tools.ts` `loadLineGraph` reads `knowledge_page_entities` only, and `lib/impact.ts` / `lib/revisionImpact.ts` hold no reference. Decision: `DEC-44 (I-09)` item 2, the plan's default — **not built in this package.** The integration is the follow-up gap [`GAP-315`](./90-gap-register.md#gap-315) ("confirmed topology as a reasoning input").
+
+The rules it must keep, now that this package has made confirmed flows controller-asserted (`20261155`):
+- Only `confirmed` flows are ever consumed; a proposal never reaches a reasoning surface (99-fix-sequencing "Do not").
+- A flow-derived answer says which edges are confirmed flows and which are page co-occurrence.
+- Nothing AI-derived drives a hold or an MOC.
+
+The adapter's input is now trustworthy: a confirmed row was drawn or decided by the controller tier.
+
+**Done-when.**
+1. ✗ Not done here: the `flowsToLineEdges` adapter (GAP-315).
+2. ✗ Not done here: `loadLineGraph` lives in `lib/orchestrator/**` (I-19's, running).
+3. ✗ Not done here: the graph's reachable-set scope filter is the graph page (I-14) over `lib/pidTrace` `traceNeighbourhood`.
+
+**Scope / residual.** OPEN, pointing at `GAP-315`. Owners: the orchestrator package for `loadLineGraph`, I-14 for the graph, whoever builds GAP-315 for the adapter.
 
 ---

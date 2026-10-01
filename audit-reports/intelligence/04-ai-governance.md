@@ -999,7 +999,7 @@ Noted for `GOV-15` in fix pass 11 (concurrency: out of this package's scope, and
 ## GOV-11 · Five of the nine provider-calling routes skip the acceptable-use agreement gate the app calls a precondition
 
 - **Severity:** MEDIUM
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Assigned:** intelligence I-09 PROCESS FLOWS & OPERATING AREAS (done-when 2's flows/read limb) — by the integrator, 2026-10-01 (at the I-05 merge: the package that left this remainder has merged; fleet plan `audit-reports/fleet-plans/`).
 - **Verification:** CONFIRMED
 - **Locations:** `app/api/flows/read/route.ts:106-133`, `app/api/knowledge/locate/route.ts:172-193`, `app/api/templates/generate/route.ts:177-201`, `app/api/knowledge/embed/route.ts:128-149`, `app/api/ai/connection/route.ts:126-156`, `lib/ai/pricing.ts:30-33`
@@ -1062,6 +1062,20 @@ Two searches agree on the gate's five locations: `grep -rn 'ai_key_agreements' -
 4. ✓ The connection probes are exempted in writing and send a fixed sentence, never org content.
 
 **Scope / residual.** OPEN until flows/read (I-09) runs the agreement gate (locate's local gate landed with I-07; *integrator, I-05 merge*); each adopts `assertAiGates` in its own file. The ingest route checks it since fix pass 5 (inline; its move onto `assertAiGates` goes with the reservation work, `GOV-13`). Since fix pass 7 a page that needs vision is held, never consumed, while the reason is one someone can fix, on both drivers. The library page and the app-shell indicator (I-02 / I-02b) do not yet prompt for the agreement from the ingest route's 428 or 409. Both answers carry `agreementRequired` and `agreementText`, as the ask route's 428 does. Until a client prompts, the member accepts by asking any question in Knowledge, as the sentence says.
+
+**Resolution (2026-10-01, intelligence Round G, I-09 — the flows/read limb).** Reproduced first on the base route: an unsigned member's pages were sent to the provider ("GOV-11: an unsigned member's pages are sent": the base route answered 200 with a provider call made).
+
+What landed: `app/api/flows/read/route.ts` runs `lib/ai/aiGates` `assertAiGates({ orgId, userId, op: "flowRead" })` before it renders a page — own key, allowlist, the signed agreement at `AGREEMENT_VERSION`, and the cap over every op, a $0 lock included. Then it calls the model once through `governedAiCall` with its page images, which re-runs the gates, reserves the call's worst case and settles it. A refusal is the gate's own status with its `details`: 428 with `agreementRequired` / `agreementText` / `agreementVersion`, 402 with `locked`, 503 when the ledger cannot be read. Nothing is rendered or sent. The modal prompts for the agreement on the 428 (`appConfirm` with the text, then `acceptAiAgreement`, then the read once more), as the semantic index panel does. The census lists the route as GATED; its PENDING line is gone.
+
+Tests: `lib/__tests__/flowsReadRoute.test.ts` ("GOV-11 / PR-12 — the gates run before any render …": unsigned 428 with the text and nothing rendered; a $0 lock 402 and an unreadable ledger 503 before the render; a signed member under their cap gets gates → render → one governed call with the pages), `lib/__tests__/aiGateCensus.test.ts` ("flows/read is GATED (I-09 …)").
+
+**Done-when.**
+1. ✓ (I-05).
+2. ✓ Every route that spends a member's key now runs the agreement check: flows/read (here), locate (I-07's local gate; `PR-12` records its 200), templates (I-05), the ingest route and embed (inline), ask / orchestrator / codebook import (inline). The connection probes are exempted in writing (I-05).
+3. ✓ (I-05) The census classifies every caller. flows/read is GATED.
+4. ✓ (I-05).
+
+**Scope / residual.** The follow-ups I-05 recorded stay with their owners: the library page and the indicator prompting on the ingest route's 428 (I-02 / I-02b), and the INLINE routes adopting `assertAiGates`.
 
 ---
 
