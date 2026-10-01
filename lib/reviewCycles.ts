@@ -90,8 +90,11 @@ export async function effectivePolicyForDocument(doc: {
 // ── Writes ───────────────────────────────────────────────────────────────────
 
 /** Recompute and persist a single document's next_review_date from its effective
- *  policy and basis date. Returns the new date (or null when no cycle applies). */
-export async function recomputeDocument(documentId: string): Promise<string | null> {
+ *  policy and basis date. Returns the new date (or null when no cycle applies).
+ *  REV-15: `writeErrors`, when given, collects the next_review_date write's
+ *  error (the write is otherwise unchecked, as it always was); without it the
+ *  behaviour is unchanged. */
+export async function recomputeDocument(documentId: string, writeErrors?: string[]): Promise<string | null> {
   const { data: doc } = await supabase
     .from("documents")
     .select("id, library_id, collection_id, review_policy, last_reviewed_at, updated_at, created_at")
@@ -105,7 +108,9 @@ export async function recomputeDocument(documentId: string): Promise<string | nu
   });
   const basis = (doc.last_reviewed_at as string) || (doc.updated_at as string) || (doc.created_at as string) || new Date().toISOString();
   const next = computeNextReviewDate(basis, eff);
-  await supabase.from("documents").update({ next_review_date: next }).eq("id", documentId);
+  const saved = await supabase.from("documents").update({ next_review_date: next }).eq("id", documentId);
+  const saveErr = (saved as { error?: { message?: string } | null } | undefined)?.error;
+  if (saveErr) writeErrors?.push(`the next review date could not be saved (${saveErr.message ?? "the write was refused"})`);
   return next;
 }
 
@@ -162,15 +167,25 @@ async function insertReviewEvent(row: Record<string, unknown>): Promise<void> {
 }
 
 /** Called when a document is (re)issued — a new revision IS a review, so the
- *  clock resets to "reviewed now". Safe to call from the publish paths. */
+ *  clock resets to "reviewed now". Safe to call from the publish paths.
+ *  Its one checked write is the certification event, which throws when it
+ *  cannot be written (DRLS-4).
+ *  REV-15: `writeErrors`, when given, collects the error of each of the two
+ *  clock writes this function does NOT throw on — the reset of the review
+ *  basis (last_reviewed_at) and the next_review_date; without it the
+ *  behaviour is unchanged (those two errors go unreported, as they always
+ *  did). */
 export async function onDocumentIssued(input: {
   orgId?: string | null; documentId: string; userId?: string | null; userName?: string | null;
+  writeErrors?: string[];
 }): Promise<void> {
   const now = new Date().toISOString();
-  await supabase.from("documents")
+  const reset = await supabase.from("documents")
     .update({ last_reviewed_at: now, last_reviewed_by: input.userId ?? null, review_notified_at: null })
     .eq("id", input.documentId);
-  const next = await recomputeDocument(input.documentId);
+  const resetErr = (reset as { error?: { message?: string } | null } | undefined)?.error;
+  if (resetErr) input.writeErrors?.push(`the review clock could not be reset to this issue (${resetErr.message ?? "the write was refused"})`);
+  const next = await recomputeDocument(input.documentId, input.writeErrors);
   if (next) {
     await insertReviewEvent({
       org_id: input.orgId ?? null, document_id: input.documentId, action: "issued",

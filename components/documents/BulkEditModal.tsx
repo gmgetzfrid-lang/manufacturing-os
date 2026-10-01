@@ -1,10 +1,14 @@
 "use client";
 
 // BulkEditModal — apply a single metadata change across many documents
-// in one submit. The user picks a target field (status, a custom column,
-// or a built-in like rev) and a new value; the modal writes the update
-// to every selected doc, recomputes uniqueness_key if relevant, and
-// surfaces per-doc errors so a single failure doesn't blank the result.
+// in one submit. The user picks a target field (status or a custom column)
+// and a new value; the modal writes the update to every selected doc,
+// recomputes uniqueness_key if relevant, and surfaces per-doc errors so a
+// single failure doesn't blank the result.
+//
+// DRLS-15: Revision is not a bulk field. A document's revision label is its
+// current revision's (the database refuses any other), so it is corrected on
+// the revision itself, never set across rows.
 
 import React, { useState } from "react";
 import {
@@ -26,7 +30,6 @@ interface BulkEditModalProps {
 
 type TargetField =
   | { kind: "status" }
-  | { kind: "rev" }
   | { kind: "custom"; def: MetadataFieldDefinition };
 
 const STATUS_OPTIONS = ["Draft", "In Review", "Issued", "IFC", "Superseded", "Archived"];
@@ -55,8 +58,6 @@ export default function BulkEditModal({
         const updates: Record<string, unknown> = { updated_at: now, updated_by: actorUserId };
         if (target.kind === "status") {
           updates.status = newValue;
-        } else if (target.kind === "rev") {
-          updates.rev = newValue;
         } else if (target.kind === "custom") {
           // Custom field lives in metadata jsonb
           const meta = { ...(doc.metadata ?? {}) };
@@ -65,21 +66,23 @@ export default function BulkEditModal({
         }
         // If this change affects a uniqueness-key contributing field,
         // recompute and write the new key so the constraint stays valid.
-        const fieldKey = target.kind === "status" ? "status" : target.kind === "rev" ? "rev" : target.def.key;
+        const fieldKey = target.kind === "status" ? "status" : target.def.key;
         const keys = library.uniquenessKeys?.length ? library.uniquenessKeys : ["documentNumber"];
         if (keys.includes(fieldKey)) {
           updates.uniqueness_key = computeUniquenessKey({
             documentNumber: doc.documentNumber,
             title: doc.title,
-            rev: target.kind === "rev" ? newValue : doc.rev,
+            rev: doc.rev,
             status: target.kind === "status" ? newValue : doc.status,
             customFields: target.kind === "custom"
               ? { ...(doc.metadata as Record<string, unknown> ?? {}), [target.def.key]: newValue }
               : (doc.metadata as Record<string, unknown> ?? {}),
           }, library.uniquenessKeys);
         }
-        const { error } = await supabase.from("documents").update(updates).eq("id", doc.id);
+        // Checked: an error, or a write the database filtered to no row, is a failure on this row.
+        const { data: written, error } = await supabase.from("documents").update(updates).eq("id", doc.id).select("id");
         if (error) throw error;
+        if (!written || written.length === 0) throw new Error("refused — the database updated nothing (no edit access to this document)");
         ok += 1;
       } catch (e) {
         failed.push({ doc: doc.documentNumber || doc.title || doc.id || "?", reason: (e as Error).message });
@@ -113,8 +116,6 @@ export default function BulkEditModal({
                 const v = e.target.value;
                 if (v === "status") {
                   setTarget({ kind: "status" }); setNewValue(STATUS_OPTIONS[0]);
-                } else if (v === "rev") {
-                  setTarget({ kind: "rev" }); setNewValue("");
                 } else {
                   const key = v.replace(/^custom:/, "");
                   const def = customCols.find((c) => c.key === key);
@@ -128,7 +129,6 @@ export default function BulkEditModal({
               disabled={busy}
             >
               <option value="status">Status</option>
-              <option value="rev">Revision</option>
               {customCols.map((c) => (
                 <option key={c.key} value={`custom:${c.key}`}>{c.label} (custom)</option>
               ))}

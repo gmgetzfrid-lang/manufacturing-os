@@ -15,17 +15,17 @@
     "audit-reports/document-control/11-edges-and-invariants.md"
   ],
   "totals": {
-    "findings": 155,
+    "findings": 156,
     "gaps": 0,
     "by_severity": {
       "CRITICAL": 19,
-      "HIGH": 53,
+      "HIGH": 54,
       "MEDIUM": 69,
       "LOW": 14
     },
     "by_status": {
-      "RESOLVED": 126,
-      "OPEN": 29
+      "RESOLVED": 131,
+      "OPEN": 25
     }
   },
   "status_vocabulary": [
@@ -1630,6 +1630,31 @@
       "report": "audit-reports/document-control/02-revisions-publish.md"
     },
     {
+      "id": "REV-18",
+      "title": "Moving a document from Draft / In Review to Issued is a write no guard sees — any active member issues an unreviewed revision by changing the status, whatever the library's review policy",
+      "severity": "HIGH",
+      "status": "OPEN",
+      "verification": "CONFIRMED",
+      "verification_note": "CONFIRMED (read from the newest guard and the documents policies; the guard half exercised on a throwaway PostgreSQL 16)",
+      "blast_radius": null,
+      "related": [],
+      "locations": [
+        "supabase/migrations/20261105_prj_roundG_intake_review_and_attempts.sql",
+        "supabase/schema.sql",
+        "components/documents/BulkEditModal.tsx",
+        "components/documents/MetadataEditor.tsx"
+      ],
+      "has_verifier_correction": false,
+      "verified_by": "author",
+      "challenges": [
+        "author"
+      ],
+      "refuted": false,
+      "summary": "In a library whose policy requires sign-off, an engineer creates \"P-101 Rev 0\" as a Draft (admitted), then — or any Viewer, through PostgREST — PATCHes {\"status\": \"Issued\"}. The register shows a controlled Issued drawing whose only revision was never reviewed; /api/verify answers CURRENT for it, a share link can now be minted for it, the compliance clocks never started, and nothing recorded the is",
+      "area": "document-control",
+      "report": "audit-reports/document-control/02-revisions-publish.md"
+    },
+    {
       "id": "RG-3",
       "title": "A review policy set on an intermediate folder is silently ignored — only the document's immediate parent folder is consulted",
       "severity": "HIGH",
@@ -2305,7 +2330,7 @@
       "id": "DIST-15",
       "title": "No org-wide inventory of live public share links, and no bulk revoke — a controller can only find a link by opening the modal on the right document",
       "severity": "MEDIUM",
-      "status": "OPEN",
+      "status": "RESOLVED",
       "verification": "SUSPECTED",
       "verification_note": null,
       "blast_radius": null,
@@ -2329,7 +2354,7 @@
       "id": "DRLS-9",
       "title": "Any member can close out `revision_branches` debt without merging anything",
       "severity": "MEDIUM",
-      "status": "OPEN",
+      "status": "RESOLVED",
       "verification": "CONFIRMED",
       "verification_note": null,
       "blast_radius": null,
@@ -2488,7 +2513,7 @@
       "id": "DRLS-15",
       "title": "The library page's metadata editor writes `documents.rev` directly and discards the result — after 20261131 a divergent revision label is refused by the database and the page says nothing",
       "severity": "MEDIUM",
-      "status": "OPEN",
+      "status": "RESOLVED",
       "verification": "CONFIRMED",
       "verification_note": null,
       "blast_radius": null,
@@ -2514,7 +2539,7 @@
       "id": "DRLS-17",
       "title": "The library page's delete flow clears the current-revision pointer before deleting the versions — after `20261131` a revision with acknowledgment or sign-off evidence stops it part-way, leaving a live document with no current file",
       "severity": "MEDIUM",
-      "status": "OPEN",
+      "status": "RESOLVED",
       "verification": "CONFIRMED",
       "verification_note": null,
       "blast_radius": null,
@@ -3275,7 +3300,7 @@
       "id": "REV-17",
       "title": "The database admits a non-controller's first issue in a library whose policy requires sign-off — the require-mode refusal of a new document's Rev 0 is enforced by the app only",
       "severity": "MEDIUM",
-      "status": "OPEN",
+      "status": "RESOLVED",
       "verification": "CONFIRMED",
       "verification_note": null,
       "blast_radius": null,

@@ -119,6 +119,12 @@ export interface MetadataEditorSavePayload {
   core?: {
     title?: string;
     documentNumber?: string;
+    /** DRLS-15: sent ONLY for a document with no current revision (a
+     *  register row with no file, e.g. a CSV import) — its label is the
+     *  register's own, and nothing else in the app corrects it. A document
+     *  with a current revision never sends it: the label is that revision's,
+     *  corrected on the revision (`correctRevisionLabel`, the history panel),
+     *  and the database keeps the document's label in step. */
     rev?: string;
     status?: string;
   };
@@ -137,6 +143,7 @@ export default function MetadataEditor(props: {
   /** Active org id — required for asset-tag chips to be clickable. */
   orgId?: string;
   onCheckout?: (doc: DocumentRecord) => void;
+  /** Rejects with a message when the save was refused; the dialog stays open and shows it. */
   onSave: (payload: MetadataEditorSavePayload) => Promise<void>;
 }) {
   const { isOpen, onClose, document, columns, onSave, userRole, userRoles, currentUserId, currentUserEmail, orgId, onCheckout } = props;
@@ -150,6 +157,7 @@ export default function MetadataEditor(props: {
   // ── Core fields state ───────────────────────────────────────────────────────
   const [title, setTitle] = useState("");
   const [documentNumber, setDocumentNumber] = useState("");
+  // DRLS-15: editable only on a pointerless register row (no current revision).
   const [rev, setRev] = useState("");
   const [status, setStatus] = useState("");
 
@@ -160,6 +168,8 @@ export default function MetadataEditor(props: {
   );
   const [draft, setDraft] = useState<Record<string, MetadataValue>>(initialMetadata);
   const [saving, setSaving] = useState(false);
+  // DRLS-15: a refused save keeps the dialog open and says why.
+  const [saveError, setSaveError] = useState<string | null>(null);
 
   // Sync when document or open state changes
   useEffect(() => {
@@ -169,9 +179,16 @@ export default function MetadataEditor(props: {
     setRev(document.rev ?? "");
     setStatus(document.status ?? "");
     setDraft((document.metadata ?? {}) as Record<string, MetadataValue>);
+    setSaveError(null);
   }, [document, isOpen]);
 
   if (!isOpen || !document) return null;
+
+  // DRLS-15: a document with a current revision shows that revision's label
+  // read-only; one with none (a register row with no file) keeps its label
+  // editable — 20261131's register rail checks the label against the current
+  // revision only when there is one, and admits a publisher's change otherwise.
+  const hasCurrentRevision = !!document.currentVersionId;
 
   const applyIngestion = () => {
     if (!canEdit) return;
@@ -187,12 +204,17 @@ export default function MetadataEditor(props: {
   const save = async () => {
     if (!canEdit) return;
     setSaving(true);
+    setSaveError(null);
     try {
+      // DRLS-15: the revision label only for a document with no current
+      // revision — otherwise it is the revision's, not this dialog's to set.
       await onSave({
         metadata: draft,
-        core: { title, documentNumber, rev, status },
+        core: hasCurrentRevision ? { title, documentNumber, status } : { title, documentNumber, rev, status },
       });
       onClose();
+    } catch (e) {
+      setSaveError((e as Error)?.message || "The save was refused — nothing was saved.");
     } finally {
       setSaving(false);
     }
@@ -377,13 +399,29 @@ export default function MetadataEditor(props: {
               </div>
               <div>
                 <label className="text-xs font-bold text-[var(--color-text-muted)]">Revision</label>
-                <input
-                  value={rev}
-                  onChange={(e) => canEdit && setRev(e.target.value)}
-                  disabled={!canEdit}
-                  className={fieldClass}
-                  placeholder="e.g. A, 0, 1"
-                />
+                {hasCurrentRevision ? (
+                  <>
+                    {/* DRLS-15: read-only — the label is the current revision's. */}
+                    <input
+                      value={document.rev ?? ""}
+                      readOnly
+                      disabled
+                      className={fieldClass}
+                    />
+                    <p className="text-[10px] text-[var(--color-text-faint)] mt-1">
+                      The current revision&apos;s label. Correct it on the revision in the history panel; the document follows.
+                    </p>
+                  </>
+                ) : (
+                  // DRLS-15: no current revision — the register's own label, editable here.
+                  <input
+                    value={rev}
+                    onChange={(e) => canEdit && setRev(e.target.value)}
+                    disabled={!canEdit}
+                    className={fieldClass}
+                    placeholder="e.g. A, 0, 1"
+                  />
+                )}
               </div>
               <div>
                 <label className="text-xs font-bold text-[var(--color-text-muted)]">Status</label>
@@ -429,6 +467,11 @@ export default function MetadataEditor(props: {
         </div>
 
         {/* Footer */}
+        {saveError && (
+          <div role="alert" className="px-6 py-3 border-t border-red-200 bg-red-50 text-xs text-red-800">
+            {saveError}
+          </div>
+        )}
         <div className="px-6 py-4 border-t border-[var(--color-border)] bg-[var(--color-surface-2)] flex items-center justify-end gap-2 shrink-0">
           <button
             onClick={onClose}

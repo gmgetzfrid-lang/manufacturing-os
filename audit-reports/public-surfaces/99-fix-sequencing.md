@@ -86,3 +86,12 @@ header — never cache RSC payloads, never synthesize a server error. Read them
 before editing, and do not solve staleness by disabling the cache: offline is a
 feature for a plant with poor coverage, and the fix is that a cached verdict must
 say it is cached and how old it is.
+
+⚠ **Deploy note — `SHR-11` (document-control P12, 2026-10-01).** Before
+deploying the app carrying P12, set `NEXT_PUBLIC_SITE_URL` on every
+self-hosted deployment (the Docker image, `next start`; it is a **build
+argument**). Without it every external share download answers
+`503 unverifiable`: under `next start` the request URL the route sees is the
+server's bind address (`http://localhost:3000`), and the route refuses rather
+than issue a copy whose verify QR no recipient can open. The same note is in
+`document-control/99-fix-sequencing.md`.

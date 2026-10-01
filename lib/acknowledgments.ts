@@ -313,9 +313,13 @@ interface DocForAck {
  *  revision. Stale-rev pending rows are voided; when the doc is Issued under an
  *  enabled policy, missing assignees are added (and notified). Gaps are flagged
  *  to the owner + Admin/DocCtrl — never silently dropped. Safe to call on issue,
- *  on policy change, and idempotently thereafter. */
+ *  on policy change, and idempotently thereafter.
+ *  REV-15: `writeErrors`, when given, also collects each roster write's error —
+ *  the stale-revision void, the no-policy void and the roster insert — as the
+ *  error the write answered; without it the behaviour is unchanged. */
 export async function recomputeDocumentAck(input: {
   orgId: string; documentId: string; actorId?: string | null; actorName?: string | null; notifyNew?: boolean;
+  writeErrors?: string[];
 }): Promise<void> {
   const { data: docRow } = await supabase
     .from("documents")
@@ -331,7 +335,10 @@ export async function recomputeDocumentAck(input: {
     const { error: voidErr } = await supabase.from("document_acknowledgments")
       .update({ status: "void", updated_at: nowIso })
       .eq("document_id", doc.id).eq("status", "pending").not("document_version_id", "eq", versionId);
-    if (voidErr) console.warn("[acks] voiding stale-revision ack rows failed (may need the 20260830 policy migration):", voidErr.message);
+    if (voidErr) {
+      console.warn("[acks] voiding stale-revision ack rows failed (may need the 20260830 policy migration):", voidErr.message);
+      input.writeErrors?.push(`the acknowledgment rows of an older revision could not be voided (${voidErr.message})`);
+    }
   }
 
   const policy = await effectiveAckPolicyForDocument({
@@ -340,7 +347,9 @@ export async function recomputeDocumentAck(input: {
 
   // No policy (or opted out) → void any remaining pending rows and stop.
   if (!policy || !policy.enabled) {
-    await supabase.from("document_acknowledgments").update({ status: "void", updated_at: nowIso }).eq("document_id", doc.id).eq("status", "pending");
+    const voided = await supabase.from("document_acknowledgments").update({ status: "void", updated_at: nowIso }).eq("document_id", doc.id).eq("status", "pending");
+    const voidAllErr = (voided as { error?: { message?: string } | null } | undefined)?.error;
+    if (voidAllErr) input.writeErrors?.push(`the pending acknowledgment rows could not be voided (${voidAllErr.message ?? "the write was refused"})`);
     return;
   }
   // Only Issued documents carry a live acknowledgment roster.
@@ -373,6 +382,7 @@ export async function recomputeDocumentAck(input: {
       // be notified with nothing to sign and completion could never be reached.
       console.warn("[ack] roster insert failed", upsertErr.message);
       warnings.push(`the acknowledgment roster could not be saved (${upsertErr.message})`);
+      input.writeErrors?.push(`the acknowledgment roster could not be saved (${upsertErr.message})`);
     } else {
       if (input.notifyNew !== false) {
         await Promise.all(fresh.filter((a) => a.uid !== input.actorId).map((a) =>
@@ -412,13 +422,21 @@ export async function recomputeDocumentAck(input: {
 
 /** Called from the publish paths when a rev is issued — opens/refreshes the
  *  read-&-understood roster for the new revision. Best-effort; never blocks
- *  publish. */
+ *  publish (it never throws).
+ *  REV-15: `writeErrors`, when given, collects each roster write's error
+ *  (recomputeDocumentAck) and, when the recompute threw part-way, that error
+ *  (which this function still swallows); without it the behaviour is
+ *  unchanged (logged only). */
 export async function onDocumentIssuedAck(input: {
   orgId: string; documentId: string; actorId?: string | null; actorName?: string | null;
+  writeErrors?: string[];
 }): Promise<void> {
   try {
-    await recomputeDocumentAck({ orgId: input.orgId, documentId: input.documentId, actorId: input.actorId, actorName: input.actorName });
-  } catch (e) { console.warn("[ack] onDocumentIssued failed", e); }
+    await recomputeDocumentAck({ orgId: input.orgId, documentId: input.documentId, actorId: input.actorId, actorName: input.actorName, writeErrors: input.writeErrors });
+  } catch (e) {
+    console.warn("[ack] onDocumentIssued failed", e);
+    input.writeErrors?.push(`opening the acknowledgment roster stopped on an error (${(e as Error)?.message ?? String(e)})`);
+  }
 }
 
 // ── Signing ──────────────────────────────────────────────────────────────────

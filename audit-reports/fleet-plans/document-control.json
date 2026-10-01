@@ -458,13 +458,15 @@
   {
    "name": "P13 STATUS-TRANSITION \u2014 a status change that makes a document a controlled issue is a guarded write (REV-18)",
    "findings": [
-    "REV-18 (HIGH, opened by P12 2026-10-01: Draft / In Review \u2192 Issued moves no pointer, so enforce_document_publish_guard never sees it; any active member issues an unreviewed revision by changing the status) \u2014 and its addendum: a first file attached by a Minor / Correction rev-up onto a pointerless issued row (ask resolveCreationReviewGate up front), and REV-17's document-level 'none' override question"
+    "REV-18 (HIGH, opened by P12 2026-10-01: Draft / In Review \u2192 Issued moves no pointer, so enforce_document_publish_guard never sees it; any active member issues an unreviewed revision by changing the status) \u2014 and its addendum: a first file attached by a Minor / Correction rev-up onto a pointerless issued row (ask resolveCreationReviewGate up front), and REV-17's document-level 'none' override question",
+    "REV-15 remainder (integration 2026-10-01): a split / merge sheet whose compliance clocks fail to start records why on a persisted event, and the lifecycle wizards show complianceClockWarnings"
    ],
    "files": [
     "new migration re-creating enforce_document_publish_guard from its NEWEST body (20261139, P12) with a lineDiff test: a status change into anything isControlledIssueStatus calls an issue, on a document with a current revision, is the publisher tier's only (controller, library publisher, effective owner), never over an active hold, and in a require-mode library only for a controller or when the current revision carries a complete roster; DEC-30 inventory of documents issued that way (counts only)",
     "components/documents/MetadataEditor.tsx, components/documents/BulkEditModal.tsx \u2014 surface the refusal",
     "lib/reviewControl.ts (effectiveModeForRevUp) / lib/revisions.ts revUpDocument \u2014 a document with no current revision is a first issue in the rev-up path",
-    "tests pinning the transition rule, its exemptions and the inventory"
+    "tests pinning the transition rule, its exemptions and the inventory",
+    "lib/documentLifecycle/common.ts / split.ts / merge.ts and components/documents/lifecycle/* \u2014 REV-15's remainder only"
    ],
    "migrationsLikely": 1,
    "dependsOn": [

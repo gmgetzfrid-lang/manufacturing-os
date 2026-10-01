@@ -17,8 +17,8 @@
       "LOW": 24
     },
     "by_status": {
-      "OPEN": 34,
-      "RESOLVED": 27,
+      "OPEN": 33,
+      "RESOLVED": 28,
       "WONTFIX": 1
     }
   },
@@ -853,7 +853,7 @@
       "id": "SHR-11",
       "title": "The verify QR the shared copy promises is silently omitted whenever NEXT_PUBLIC_SITE_URL is unset — while the footer printed on the page tells the reader to scan it",
       "severity": "MEDIUM",
-      "status": "OPEN",
+      "status": "RESOLVED",
       "verification": "SUSPECTED",
       "verification_note": null,
       "blast_radius": null,

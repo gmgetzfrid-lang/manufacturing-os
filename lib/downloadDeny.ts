@@ -13,10 +13,10 @@
 //     CREATOR, so a link never lets out a copy its creator may not download
 //     (public-surfaces SHR-3, criterion 3).
 //
-// There is no SQL twin. The database decides visibility (node_visible) and
-// publish authority, never download, so the share INSERT policy (20261080)
-// does not refuse a mint by a creator who is denied download: that row is
-// inserted and can never serve. Public-surfaces SHR-14 records the remainder.
+// The SQL twin is user_download_denied (20261140, public-surfaces SHR-14):
+// the share INSERT policy asks it for the creator, so a mint by a creator
+// who is denied download is refused instead of inserted as a link that can
+// never serve. A shape test pins the two rules together — change both.
 
 import type { supabase } from "@/lib/supabase";
 import { normalizeRoles } from "@/lib/roleCapabilities";

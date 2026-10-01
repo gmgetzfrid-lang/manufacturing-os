@@ -161,7 +161,7 @@ themselves app changes.)*
 **Order.**
 
 0. Paste the `DRLS-16` hotfix now (below) — migration `20261129_dc_hotfix_anon_execute.sql` — independent of everything else.
-1. Deploy the `DRLS-15` and `DRLS-17` page fixes (assigned 2026-10-01 to package P12 WAVE-2 RESIDUALS, which ships them first).
+1. Deploy the `DRLS-15` and `DRLS-17` page fixes (assigned 2026-10-01 to package P12 WAVE-2 RESIDUALS, which ships them first). *Landed 2026-10-01 in P12's first commit (both RESOLVED in code): the metadata and bulk editors no longer write `rev` for a document with a current revision (the integration fix keeps it editable on a register row with none, which `20261131`'s rail admits) and the save is checked; the delete flow is one checked statement on the document row. Step 3 waits only for the app carrying that commit to be deployed.*
 2. Paste `20261130` (the override reason inside `publish_revision`).
 3. Paste `20261131` (the documents-table rails) — only now (rule 1).
 4. Deploy the wave-2 app immediately after (rule 2 met), to keep the window
@@ -205,3 +205,54 @@ future migration that re-opens the shape.
 DONE — public-surfaces PS-VERIFY (2026-10-01, `REV-9`'s Partial block,
 public-surfaces `VFY-4`); P8 does not redo it. Public-surfaces `VFY-4`
 stays OPEN on the same operator limb.
+
+⚠ **Paste order — P12 WAVE-2 RESIDUALS (2026-10-01).** Two one-paste
+migrations; each pastes cleanly in any order relative to `20261129`–`20261131`
+and to the other:
+
+- `20261139_dc_roundF_first_issue_and_branch_closeout.sql` (`REV-17`,
+  `DRLS-9`) — after `20261105` (the publish guard's base) and `20261061`
+  (the branch policy's base). It re-creates `enforce_document_publish_guard`:
+  **never re-paste `20261105` (or any earlier guard migration) after it**, or
+  the first-issue block is dropped. Deploy the app carrying `REV-15`'s bulk
+  upload change with or before it, so a refused first issue is asked up
+  front instead of leaving a document with no file. **`REV-17`'s INSERT
+  door closes only once `20261131` is live too:** the guard fires BEFORE
+  UPDATE, so until `20261131`'s `trg_document_insert_pointer_rail` a member
+  can INSERT a document already pointing at a revision and reach the issue as
+  a non-first pointer move (see `REV-17`'s scope). Even with `20261131` live
+  the refusal is not complete: a Draft first pointer followed by a status
+  change to Issued bypasses it — `REV-18` (assigned to P13
+  STATUS-TRANSITION). After the paste, a Minor /
+  Correction rev-up that attaches the FIRST file to a pointerless issued
+  register row in a require-mode library is refused with the creation
+  sentence (`REV-17` / `REV-18`).
+- `20261140_dc_roundF_share_download_deny_rail.sql` (`SHR-14`) — after
+  `20261080` (the share INSERT policy's base); it reads `role_rank`
+  (`20261046`), which its final SELECT probes.
+
+Both narrow; their result sets carry the DEC-30 inventories to read back
+into the records.
+
+⚠ **Deploy note — P12 (operators, public-surfaces `SHR-11`).** Before
+deploying the app carrying P12, a self-hosted deployment (the Docker image,
+`next start`) must set `NEXT_PUBLIC_SITE_URL` to its public address — a
+**build argument** of the image (`--build-arg NEXT_PUBLIC_SITE_URL=…`, or
+`docker-compose.yml`'s `NEXT_PUBLIC_SITE_URL`). Without it every external
+share download answers `503 unverifiable`: under `next start` the request URL
+the route sees is the server's bind address (`http://localhost:3000`), which
+no outside recipient can open, and the route refuses rather than issue a copy
+whose verify QR cannot work. (Before P12 such a deployment served a copy with
+no QR.) Vercel deployments are unaffected while the project exposes its
+system environment variables (the production domain answers).
+
+**Library page — lines P12 owns outside `uploadOne` (for identity `IS-P1`
+and intelligence `I-12`, which edit `app/(protected)/documents/[libraryId]/page.tsx`
+next).** In `handleStagedUpload`: the `landedShortfalls` declaration right
+before `uploadOne`, and the one `notes.push` that reports it in the batch
+report (after the "not started because you stopped the upload" note). Keep
+both when rebasing; `REV-15`'s tests pin them. The P12 integration fix also
+edits `saveMetadata` (one of the three named functions: `rev` only for a
+document with no current revision) and, inside `uploadOne`, starts the
+clocks before the `DOCUMENT_CREATED` record so the record carries
+`complianceClockErrors`.

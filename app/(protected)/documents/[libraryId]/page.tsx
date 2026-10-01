@@ -1258,38 +1258,25 @@ export default function LibraryExplorerPage() {
 
     setError(null);
     try {
-      // Foreign keys require us to delete versions BEFORE the parent
-      // document — otherwise the constraint rejects the delete and
-      // the UI silently does nothing. Order matters:
-      //   1. Null out documents.current_version_id (it FKs to versions)
-      //   2. Delete every document_versions row pointing to this doc
-      //   3. Delete the document itself
-      // We log every step so a failure is visible in the console.
+      // DRLS-17: ONE statement, never "clear the pointer first". Deleting the
+      // document row takes its revisions with it (document_versions.record_id
+      // ON DELETE CASCADE) and their evidence through each table's own
+      // document_id cascade; current_version_id is not a declared FK, so
+      // nothing has to be detached first. A refusal anywhere (a legal hold, a
+      // work package pinning a revision, RLS) refuses the whole statement, so
+      // the document is left exactly as it was — never a live document with
+      // no current file.
       const docId = selectedDoc.id;
-      console.log("[delete] starting doc delete", docId);
-
-      // Step 1: detach current_version pointer (avoids circular FK)
-      const { error: e1 } = await supabase
-        .from("documents")
-        .update({ current_version_id: null })
-        .eq("id", docId);
-      if (e1) throw new Error(`Couldn't clear current version pointer: ${e1.message}`);
-
-      // Step 2: delete child versions
-      const { error: e2 } = await supabase
-        .from("document_versions")
-        .delete()
-        .eq("record_id", docId);
-      if (e2) throw new Error(`Couldn't delete revisions: ${e2.message}`);
-
-      // Step 3: delete the document
-      const { error: e3 } = await supabase
+      const { data: deleted, error: delErr } = await supabase
         .from("documents")
         .delete()
-        .eq("id", docId);
-      if (e3) throw new Error(`Couldn't delete document: ${e3.message}`);
+        .eq("id", docId)
+        .select("id");
+      if (delErr) throw new Error(`the database refused it, so nothing was changed: ${delErr.message}`);
+      if (!deleted || deleted.length === 0) {
+        throw new Error("the database deleted nothing (you may not have permission to delete this document); nothing was changed.");
+      }
 
-      console.log("[delete] success", docId);
       setDocuments(prev => prev.filter(d => d.id !== docId));
       setSelectedDoc(null);
       setSelectedVersion(null);
@@ -2509,10 +2496,27 @@ export default function LibraryExplorerPage() {
       });
 
       // ── Upload + insert one file ─────────────────────────────────
+      // What a LANDED file left undone (its creation record, its review clock /
+      // acknowledgment roster) — reported with the batch, never as a failure.
+      const landedShortfalls: string[] = [];
       const uploadOne = async (entry: { item: StagedItem; docNumber: string }) => {
         const { item, docNumber } = entry;
         const file = item.file;
         const subPath = pathByFile.get(file) ?? [];
+        // REV-15 / REV-17 / DEC-63 §2: a first revision born in a controlled
+        // status ISSUES it. In a library whose policy requires sign-off only a
+        // controller may (the database refuses anyone else's first pointer
+        // write) — asked BEFORE anything is uploaded or inserted, so a refusal
+        // leaves nothing half-created; the decision goes on the creation record.
+        const { isControlledIssueStatus, resolveCreationReviewGate, startIssuedDocumentClocks } = await import("@/lib/revisions");
+        const { logAuditAction } = await import("@/lib/audit");
+        const issues = isControlledIssueStatus(item.status || "Issued");
+        const gate = issues
+          ? await resolveCreationReviewGate({
+              libraryId, collectionId: targetFolderFor(file), what: docNumber,
+              actor: { orgId: activeOrgId, actorUserId: uid, actorRole: activeRole ?? undefined },
+            })
+          : null;
         // PKG-3: salted per-upload name — the raw filename made the key a pure
         // function of (org, library, folder, name), so a second same-named
         // upload silently overwrote the first document's bytes while the
@@ -2583,7 +2587,54 @@ export default function LibraryExplorerPage() {
 
         if (verErr || !newVersion) throw new Error(verErr?.message || "Failed to create document version");
 
-        await supabase.from("documents").update({ current_version_id: newVersion.id }).eq("id", newDoc.id);
+        // Checked, as every first pointer write is: a refusal (the publish
+        // guard) or a zero-row answer fails this file in the batch report —
+        // a document with no current file never reads as uploaded.
+        const { data: promoted, error: ptrErr } = await supabase
+          .from("documents").update({ current_version_id: newVersion.id }).eq("id", newDoc.id).select("id");
+        if (ptrErr || !promoted || promoted.length === 0) {
+          throw new Error(`${docNumber} was created but its file could not be attached (${ptrErr?.message ?? "the write was refused"}) — ask Doc Control to remove it or attach its file.`);
+        }
+        // ── The document, its file and its pointer are COMMITTED. Nothing
+        // below may reject this file: the batch would report a landed
+        // document as "did NOT upload" and a re-stage would mint a duplicate
+        // controlled document. Each shortfall is a note on the batch instead.
+        // REV-15: an issued first revision starts its review clock and its
+        // read-&-understood roster — the one call createDocumentWithFile makes
+        // — BEFORE the creation record, so the record says what did not start:
+        // a start that threw (caught here, as split / merge catch it) and every
+        // write error the helper reports. The document stands either way.
+        const clockProblems: string[] = [];
+        if (issues) {
+          try {
+            const writeErrors = await startIssuedDocumentClocks({ orgId: activeOrgId, documentId: newDoc.id, actorUserId: uid, actorName: userEmail ?? null });
+            clockProblems.push(...writeErrors);
+          } catch (e) {
+            clockProblems.push(`the start failed (${(e as Error)?.message ?? String(e)})`);
+          }
+        }
+        // The creation is on the record — with, for an issue, the review
+        // policy decision and who made it (createDocumentWithFile's row), and
+        // what of the compliance clocks did not start (`complianceClockErrors`).
+        const { error: creationAuditError } = await logAuditAction({
+          action: "DOCUMENT_CREATED",
+          resourceId: newDoc.id,
+          resourceType: "document",
+          orgId: activeOrgId,
+          userId: uid,
+          userEmail: userEmail ?? undefined,
+          userRole: activeRole ?? undefined,
+          details: {
+            versionId: newVersion.id, documentNumber: docNumber, revisionLabel: item.rev.trim() || "0",
+            initialStatus: status, reviewPolicyMode: gate?.mode ?? null, reviewPolicy: gate?.recorded ?? null,
+            via: "bulk_upload",
+            complianceClockErrors: clockProblems.length > 0 ? clockProblems : null,
+          },
+        });
+        if (creationAuditError) landedShortfalls.push(`the creation record of ${docNumber} could not be written (${creationAuditError})`);
+        if (clockProblems.length > 0) {
+          landedShortfalls.push(`the review clock / acknowledgment roster of ${docNumber} did not fully start (${clockProblems.join("; ")}) — Document Control can set it from the document`);
+        }
       };
 
       // ── Run in capped-concurrency chunks ──────────────────────────
@@ -2629,6 +2680,9 @@ export default function LibraryExplorerPage() {
       if (notStarted > 0) {
         notes.push(`${notStarted} file${notStarted === 1 ? " was" : "s were"} not started because you stopped the upload.`);
       }
+      if (landedShortfalls.length > 0) {
+        notes.push(`${landedShortfalls.length} follow-up step${landedShortfalls.length === 1 ? "" : "s"} did not complete on documents that DID upload — do not re-upload them: ${landedShortfalls.slice(0, 3).join("; ")}${landedShortfalls.length > 3 ? `, +${landedShortfalls.length - 3} more` : ""}. Tell Document Control so they can be completed.`);
+      }
       if (failures.length > 0 || notStarted > 0) {
         if (failures.length > 0) {
           const sample = failures.slice(0, 3).map((f) => `${f.name} (${f.reason})`).join("; ");
@@ -2661,6 +2715,13 @@ export default function LibraryExplorerPage() {
 
   const saveMetadata = async (next: { metadata: Record<string, MetadataValue>; core?: { title?: string; documentNumber?: string; rev?: string; status?: string } }) => {
     if (!selectedDoc?.id) return;
+    // DRLS-15: `rev` only for a document with NO current revision (a register
+    // row with no file — its label is its own, and the database's register
+    // rail checks a label against the current revision only when there is
+    // one). Otherwise never: the label is the current revision's (corrected
+    // on the revision; the database keeps the document in step and refuses a
+    // divergent one, which would sink every other edit in this statement).
+    const revEditable = !selectedDoc.currentVersionId && next.core?.rev !== undefined;
     const payload: Record<string, unknown> = {
       metadata: next.metadata,
       updated_at: new Date().toISOString(),
@@ -2668,18 +2729,25 @@ export default function LibraryExplorerPage() {
     };
     if (next.core?.title !== undefined) payload.title = next.core.title;
     if (next.core?.documentNumber !== undefined) payload.document_number = next.core.documentNumber;
-    if (next.core?.rev !== undefined) payload.rev = next.core.rev;
+    if (revEditable) payload.rev = next.core?.rev;
     if (next.core?.status !== undefined) payload.status = next.core.status;
     // Recompute uniqueness_key from the freshest field values so that
     // edits to any uniqueness-contributing field stay consistent.
     payload.uniqueness_key = computeUniquenessKey({
       documentNumber: next.core?.documentNumber ?? selectedDoc.documentNumber,
       title: next.core?.title ?? selectedDoc.title,
-      rev: next.core?.rev ?? selectedDoc.rev,
+      rev: revEditable ? next.core?.rev : selectedDoc.rev,
       status: next.core?.status ?? selectedDoc.status,
       customFields: next.metadata as Record<string, unknown>,
     }, library?.uniquenessKeys);
-    await supabase.from("documents").update(payload).eq("id", selectedDoc.id);
+    // Checked: a refusal, or a write the database filtered to no row, is
+    // thrown — the editor stays open and shows it (it never closes as saved).
+    const { data: saved, error: saveErr } = await supabase
+      .from("documents").update(payload).eq("id", selectedDoc.id).select("id");
+    if (saveErr) throw new Error(`Save refused — nothing was saved: ${saveErr.message}`);
+    if (!saved || saved.length === 0) {
+      throw new Error("Save refused — nothing was saved: the database updated no document (you may no longer have edit access to it).");
+    }
   };
 
   const saveInlineDocNumber = async (docId: string, nextValue: string) => {

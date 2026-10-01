@@ -50,6 +50,7 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
+import ts from "typescript";
 import { newFakeDb, makeFakeSupabase, type FakeDb, type Row } from "./helpers/fakeSupabase";
 
 const state = vi.hoisted(() => ({
@@ -1693,5 +1694,225 @@ describe("REV-10 (review fix 4) — only LIVE links (unrevoked and unexpired, P1
     expect(err.mock.calls.some((c) => /2 share link\(s\) are still live/.test(String(c[0])))).toBe(true);
     err.mockRestore();
     expect(src("lib/revisions.ts")).toMatch(/RETIRER'S BROWSER/);
+  });
+});
+
+// ─── REV-15 (P12 WAVE-2 RESIDUALS) ────────────────────────────────────────
+describe("REV-15 — split / merge sheets and the bulk upload start the review clock and the ack roster, through the ONE path", () => {
+  const sheet = (n: string) => ({ documentNumber: n, title: n, assetTags: [], file: pdf(`${n}.pdf`), initialRevLabel: "0", changeLog: "" });
+  const started = () => vi.mocked(onDocumentIssued).mock.calls.map((c) => (c[0] as { documentId: string }).documentId).sort();
+  const rostered = () => vi.mocked(onDocumentIssuedAck).mock.calls.map((c) => (c[0] as { documentId: string }).documentId).sort();
+
+  it("a split starts the clock and the roster of EVERY new sheet — after the saga committed (after DOC_SPLIT), attributed to the actor", async () => {
+    const s = seedDoc("k1");
+    let splitRecordedWhenStarted = false;
+    vi.mocked(onDocumentIssued).mockImplementation(async () => { splitRecordedWhenStarted = audit("DOC_SPLIT").length === 1; });
+    const r = await splitDocument({ source: asRecord(s), libraryId: LIB, targets: [sheet("K1A"), sheet("K1B")], reason: "declutter", orgId: ORG, actorUserId: ME, actorEmail: "me@x" });
+    expect(started()).toEqual([...r.newDocumentIds].sort());
+    expect(rostered()).toEqual([...r.newDocumentIds].sort());
+    expect(splitRecordedWhenStarted).toBe(true); // the irreversible half had run: the operation could no longer roll back
+    expect(vi.mocked(onDocumentIssued).mock.calls[0][0]).toMatchObject({ orgId: ORG, userId: ME, userName: "me@x" });
+    expect(vi.mocked(onDocumentIssuedAck).mock.calls[0][0]).toMatchObject({ orgId: ORG, actorId: ME, actorName: "me@x" });
+    expect(r.complianceClockWarnings).toEqual([]);
+    // the source's clocks are not restarted — it is retired, not issued
+    expect(started()).not.toContain("k1");
+  });
+
+  it("a split that ROLLS BACK starts no clock and opens no roster (nobody is asked to acknowledge an archived sheet)", async () => {
+    const s = seedDoc("k2");
+    state.db.refuseWrites.add("document_supersessions");
+    await expect(splitDocument({ source: asRecord(s), libraryId: LIB, targets: [sheet("K2A"), sheet("K2B")], reason: "x", orgId: ORG, actorUserId: ME }))
+      .rejects.toThrow(/rolled back/);
+    expect(onDocumentIssued).not.toHaveBeenCalled();
+    expect(onDocumentIssuedAck).not.toHaveBeenCalled();
+  });
+
+  it("a clock that fails to start leaves the split standing and is returned per sheet — never swallowed, never a rollback", async () => {
+    const s = seedDoc("k3");
+    vi.mocked(onDocumentIssued).mockImplementationOnce(async () => { throw new Error("review policy unreadable"); });
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const r = await splitDocument({ source: asRecord(s), libraryId: LIB, targets: [sheet("K3A"), sheet("K3B")], reason: "x", orgId: ORG, actorUserId: ME });
+    warn.mockRestore();
+    expect(docRow("k3").status).toBe("Superseded");
+    expect(r.complianceClockWarnings).toHaveLength(1);
+    expect(r.complianceClockWarnings[0]).toMatch(/review clock \/ acknowledgment roster of document .* did not start \(review policy unreadable\)/);
+    expect(started()).toHaveLength(2); // the second sheet still started
+  });
+
+  it("a clock / roster write error the helpers REPORT (they do not throw on it) is returned per sheet too — the split stands", async () => {
+    const s = seedDoc("k3r");
+    let n = 0;
+    vi.mocked(onDocumentIssued).mockImplementation(async (i) => { if (n++ === 0) i.writeErrors?.push("the next review date could not be saved (refused)"); });
+    vi.mocked(onDocumentIssuedAck).mockImplementation(async (i) => { if (n === 1) i.writeErrors?.push("the acknowledgment roster could not be saved (refused)"); });
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const r = await splitDocument({ source: asRecord(s), libraryId: LIB, targets: [sheet("K3RA"), sheet("K3RB")], reason: "x", orgId: ORG, actorUserId: ME });
+    warn.mockRestore();
+    expect(docRow("k3r").status).toBe("Superseded");
+    expect(r.complianceClockWarnings).toEqual([
+      `The review clock / acknowledgment roster of document ${r.newDocumentIds[0]} did not fully start (the next review date could not be saved (refused); the acknowledgment roster could not be saved (refused)); Document Control can set it from the document.`,
+    ]);
+    expect(started()).toHaveLength(2);
+    expect(rostered()).toHaveLength(2);
+    vi.mocked(onDocumentIssued).mockImplementation(async () => {});
+    vi.mocked(onDocumentIssuedAck).mockImplementation(async () => {});
+  });
+
+  it("startIssuedDocumentClocks hands both helpers ONE sink and returns what they reported; it still throws as onDocumentIssued throws (and then opens no roster)", async () => {
+    const { startIssuedDocumentClocks } = await import("@/lib/revisions");
+    vi.mocked(onDocumentIssued).mockImplementationOnce(async (i) => { i.writeErrors?.push("clock"); });
+    vi.mocked(onDocumentIssuedAck).mockImplementationOnce(async (i) => { i.writeErrors?.push("roster"); });
+    await expect(startIssuedDocumentClocks({ orgId: ORG, documentId: "dX", actorUserId: ME, actorName: "me@x" })).resolves.toEqual(["clock", "roster"]);
+    const sink = (vi.mocked(onDocumentIssued).mock.calls[0][0] as { writeErrors?: string[] }).writeErrors;
+    expect((vi.mocked(onDocumentIssuedAck).mock.calls[0][0] as { writeErrors?: string[] }).writeErrors).toBe(sink);
+    await expect(startIssuedDocumentClocks({ orgId: ORG, documentId: "dY", actorUserId: ME })).resolves.toEqual([]);
+    vi.mocked(onDocumentIssuedAck).mockClear();
+    vi.mocked(onDocumentIssued).mockImplementationOnce(async () => { throw new Error("certification event refused"); });
+    await expect(startIssuedDocumentClocks({ orgId: ORG, documentId: "dZ", actorUserId: ME })).rejects.toThrow("certification event refused");
+    expect(onDocumentIssuedAck).not.toHaveBeenCalled();
+  });
+
+  it("createDocumentWithFile (an existing caller) is unchanged: it resolves with the same keys, its creation record still precedes the clock start, and a reported error does not change its answer", async () => {
+    state.canControl = true;
+    let createdWhenStarted = -1;
+    vi.mocked(onDocumentIssued).mockImplementationOnce(async (i) => {
+      createdWhenStarted = audit("DOCUMENT_CREATED").length;
+      i.writeErrors?.push("the next review date could not be saved (refused)");
+    });
+    const res = await createDocumentWithFile({ orgId: ORG, libraryId: LIB, documentNumber: "NEW-1", file: pdf("n.pdf"), status: "Issued", actorUserId: ME, actorEmail: "me@x" });
+    expect(Object.keys(res).sort()).toEqual(["creationAuditError", "documentId", "reviewPolicy", "status"]);
+    expect(createdWhenStarted).toBe(1);
+    expect(audit("DOCUMENT_CREATED")[0].details).not.toHaveProperty("complianceClockErrors");
+  });
+
+  it("a merge into a NEW target starts its clock and roster after the saga; an extended target (rev-up through the pipeline, or none) starts none here", async () => {
+    const a = seedDoc("k4"); const b = seedDoc("k5");
+    const r = await mergeDocuments({
+      sources: [asRecord(a), asRecord(b)],
+      target: { kind: "create_new", documentNumber: "K-NEW", title: "m", assetTags: [], file: pdf("m.pdf"), initialRevLabel: "0", changeLog: "", libraryId: LIB },
+      reason: "combine", orgId: ORG, actorUserId: ME,
+    });
+    expect(started()).toEqual([r.targetDocumentId]);
+    expect(rostered()).toEqual([r.targetDocumentId]);
+    expect(r.complianceClockWarnings).toEqual([]);
+
+    vi.mocked(onDocumentIssued).mockClear(); vi.mocked(onDocumentIssuedAck).mockClear();
+    const t = seedDoc("k6"); const c = seedDoc("k7");
+    const kept = await mergeDocuments({
+      sources: [asRecord(t), asRecord(c)],
+      target: { kind: "extend_existing", target: asRecord(t), libraryId: LIB, assetTagsUnion: [] },
+      reason: "absorb", orgId: ORG, actorUserId: ME,
+    });
+    expect(onDocumentIssued).not.toHaveBeenCalled();
+    expect(kept.complianceClockWarnings).toEqual([]);
+  });
+
+  it("createDocumentWithFile, split / merge and the bulk upload share startIssuedDocumentClocks — no parallel clock path", () => {
+    const rev = src("lib/revisions.ts");
+    // the helper is the only caller of the two clock functions in lib/revisions.ts
+    const helper = rev.slice(rev.indexOf("export async function startIssuedDocumentClocks"), rev.indexOf("export async function startIssuedDocumentClocks") + 900);
+    expect(helper).toMatch(/await onDocumentIssued\(\{ orgId: input\.orgId, documentId: input\.documentId, userId: input\.actorUserId, userName: input\.actorName, writeErrors \}\);/);
+    expect(helper).toMatch(/await onDocumentIssuedAck\(\{ orgId: input\.orgId, documentId: input\.documentId, actorId: input\.actorUserId, actorName: input\.actorName, writeErrors \}\);/);
+    expect(helper).toMatch(/return writeErrors;/);
+    expect(rev.match(/await onDocumentIssued\(/g)).toHaveLength(1);
+    expect(rev.match(/await onDocumentIssuedAck\(/g)).toHaveLength(1);
+    expect(rev).toMatch(/if \(input\.status === "Issued"\) \{\s*\/\/ REV-15[^\n]*\n\s*await startIssuedDocumentClocks\(\{ orgId: input\.orgId, documentId, actorUserId: input\.actorUserId, actorName: input\.actorEmail \}\);/);
+    for (const f of ["lib/documentLifecycle/split.ts", "lib/documentLifecycle/merge.ts", "lib/documentLifecycle/common.ts"]) {
+      expect(src(f), f).not.toMatch(/onDocumentIssued(Ack)?\(/);
+    }
+  });
+
+  it("the bulk upload (uploadOne): an issued file is gated BEFORE anything is written, its pointer write is checked, its clocks started, and its creation recorded with what did not start", () => {
+    const page = src("app/(protected)/documents/[libraryId]/page.tsx");
+    const start = page.indexOf("      const uploadOne = async (");
+    const body = page.slice(start, page.indexOf("\n      };", start));
+    const at = (needle: string) => { const i = body.indexOf(needle); expect(i, needle).toBeGreaterThan(-1); return i; };
+    const gate = at("? await resolveCreationReviewGate({");
+    expect(at("const issues = isControlledIssueStatus(item.status || \"Issued\");")).toBeLessThan(gate);
+    // the gate precedes the upload and every insert
+    expect(gate).toBeLessThan(at("const uploadResult = await uploadToPath("));
+    expect(gate).toBeLessThan(at('await supabase.from("documents").insert({'));
+    // the first pointer write is checked (error + rows) and throws into the batch report
+    const ptr = at('.from("documents").update({ current_version_id: newVersion.id }).eq("id", newDoc.id).select("id");');
+    expect(at("if (ptrErr || !promoted || promoted.length === 0) {")).toBeGreaterThan(ptr);
+    // the clocks follow the checked write; the creation record follows them and
+    // carries the decision AND what of the clocks did not start (REV-15 done-when 1)
+    const clocks = at("const writeErrors = await startIssuedDocumentClocks({ orgId: activeOrgId, documentId: newDoc.id, actorUserId: uid, actorName: userEmail ?? null });");
+    const rec = at('action: "DOCUMENT_CREATED",');
+    expect(body).toMatch(/initialStatus: status, reviewPolicyMode: gate\?\.mode \?\? null, reviewPolicy: gate\?\.recorded \?\? null,/);
+    expect(clocks).toBeGreaterThan(ptr);
+    expect(rec).toBeGreaterThan(clocks);
+    expect(body).toMatch(/if \(issues\) \{\s*try \{\s*const writeErrors = await startIssuedDocumentClocks\([^;]*;\s*clockProblems\.push\(\.\.\.writeErrors\);\s*\} catch \(e\) \{\s*clockProblems\.push\(`the start failed \(/);
+    expect(body).toMatch(/complianceClockErrors: clockProblems\.length > 0 \? clockProblems : null,/);
+    expect(at("if (clockProblems.length > 0) {")).toBeGreaterThan(rec);
+    expect(body).toMatch(/if \(clockProblems\.length > 0\) \{\s*landedShortfalls\.push\(`the review clock \/ acknowledgment roster of \$\{docNumber\} did not fully start \(\$\{clockProblems\.join\("; "\)\}\)/);
+    // a refused creation record and an unstarted clock are reported with the batch, never dropped
+    expect(page).toMatch(/if \(landedShortfalls\.length > 0\) \{\s*notes\.push\(`\$\{landedShortfalls\.length\} follow-up step/);
+    expect(page).toMatch(/did not complete on documents that DID upload — do not re-upload them/);
+  });
+
+  it("the bulk upload (uploadOne): once the pointer write has landed NOTHING can reject the file — a clock that fails to start, or a refused creation record, is a note, never a 'did NOT upload' (no duplicate on re-stage)", () => {
+    const file = "app/(protected)/documents/[libraryId]/page.tsx";
+    const sf = ts.createSourceFile(file, src(file), ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX);
+    let fn: ts.ArrowFunction | null = null;
+    const find = (n: ts.Node): void => {
+      if (ts.isVariableDeclaration(n) && n.name.getText() === "uploadOne" && n.initializer && ts.isArrowFunction(n.initializer)) fn = n.initializer;
+      if (!fn) ts.forEachChild(n, find);
+    };
+    find(sf);
+    expect(fn, "uploadOne not found").not.toBeNull();
+    const stmts = ((fn as unknown as ts.ArrowFunction).body as ts.Block).statements;
+    const ptrCheck = stmts.findIndex((st) => ts.isIfStatement(st) && st.expression.getText() === "ptrErr || !promoted || promoted.length === 0");
+    expect(ptrCheck, "the checked pointer write").toBeGreaterThan(0);
+    // the pointer write's own refusal still throws (nothing landed for that file)
+    expect((stmts[ptrCheck] as ts.IfStatement).thenStatement.getText()).toMatch(/^\{\s*throw new Error\(/);
+    const after = stmts.slice(ptrCheck + 1);
+    expect(after.length).toBeGreaterThanOrEqual(3);
+    const insideTry = (n: ts.Node, stop: ts.Node): boolean => {
+      for (let p: ts.Node | undefined = n; p && p !== stop; p = p.parent) {
+        if (p.parent && ts.isTryStatement(p.parent) && p.parent.tryBlock === p && p.parent.catchClause) return true;
+      }
+      return false;
+    };
+    const awaited: string[] = [];
+    for (const st of after) {
+      const scan = (n: ts.Node): void => {
+        expect(ts.isThrowStatement(n), `a throw after the pointer write: ${n.getText()}`).toBe(false);
+        if (ts.isAwaitExpression(n)) {
+          const callee = ts.isCallExpression(n.expression) ? n.expression.expression.getText() : n.expression.getText();
+          awaited.push(callee);
+          // logAuditAction never throws (pinned below); every other await is caught
+          if (callee !== "logAuditAction") expect(insideTry(n, st), `uncaught await after the pointer write: ${n.getText().slice(0, 80)}`).toBe(true);
+        }
+        if (ts.isTryStatement(n)) {
+          const handler = n.catchClause!.block.getText();
+          // the catch only notes the failure (clockProblems reaches the record and the batch report)
+          expect(handler).toMatch(/(landedShortfalls|clockProblems)\.push\(/);
+          expect(handler).not.toMatch(/\bthrow\b|\bawait\b/);
+        }
+        ts.forEachChild(n, scan);
+      };
+      scan(st);
+    }
+    expect(awaited).toEqual(["startIssuedDocumentClocks", "logAuditAction"]);
+    // no dynamic import after the commit point either (a chunk-load failure would reject the file)
+    expect(after.map((st) => st.getText()).join("\n")).not.toMatch(/import\(/);
+    // logAuditAction answers { error } and never throws: its whole body is one try / catch that returns
+    const audit = ts.createSourceFile("lib/audit.ts", src("lib/audit.ts"), ts.ScriptTarget.Latest, true);
+    let logBody: ts.Block | undefined;
+    audit.forEachChild((n) => { if (ts.isFunctionDeclaration(n) && n.name?.text === "logAuditAction") logBody = n.body; });
+    expect(logBody!.statements).toHaveLength(1);
+    const only = logBody!.statements[0];
+    expect(ts.isTryStatement(only) && !!only.catchClause).toBe(true);
+    expect((only as ts.TryStatement).catchClause!.block.getText()).toMatch(/return \{ error: /);
+  });
+});
+
+describe("REV-15 / REV-17 — which statuses ISSUE a first revision (one predicate the app and the database share)", () => {
+  it("work in progress and the not-current statuses do not; everything else does", async () => {
+    const { isControlledIssueStatus, WORK_IN_PROGRESS_STATUSES } = await import("@/lib/revisions");
+    const { NOT_CURRENT_STATUSES } = await import("@/lib/aiBoundary");
+    expect([...WORK_IN_PROGRESS_STATUSES]).toEqual(["Draft", "In Review"]);
+    for (const s of ["Draft", "In Review", ...NOT_CURRENT_STATUSES]) expect(isControlledIssueStatus(s), s).toBe(false);
+    for (const s of ["Issued", "IFC", "Locked", "Approved for Construction", "", null, undefined]) expect(isControlledIssueStatus(s), String(s)).toBe(true);
   });
 });

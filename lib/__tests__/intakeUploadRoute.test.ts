@@ -1126,22 +1126,32 @@ describe("what the door files where", () => {
 const KEY = "current_version_id";
 /** SQL functions that set documents.current_version_id themselves. */
 const POINTER_RPCS = new Set(["publish_revision"]);
-type Writer = { site: string; method: string; line: number; pipeline: boolean };
-/** Does this function CALL the pipeline? Syntax-tree calls only. */
-function callsPipeline(body: ts.Node | null): boolean {
+type Writer = { site: string; method: string; line: number; pipeline: boolean; clocks: boolean };
+/** Does this function CALL `name`? Syntax-tree calls only. */
+function callsFn(body: ts.Node | null, name: string): boolean {
   if (!body) return false;
   let hit = false;
   const scan = (n: ts.Node): void => {
     if (hit) return;
     if (ts.isCallExpression(n)) {
       const callee = n.expression;
-      if ((ts.isIdentifier(callee) && callee.text === "runPostPublishSideEffects")
-        || (ts.isPropertyAccessExpression(callee) && callee.name.text === "runPostPublishSideEffects")) { hit = true; return; }
+      if ((ts.isIdentifier(callee) && callee.text === name)
+        || (ts.isPropertyAccessExpression(callee) && callee.name.text === name)) { hit = true; return; }
     }
     ts.forEachChild(n, scan);
   };
   scan(body);
   return hit;
+}
+/** Does this function CALL the pipeline? Syntax-tree calls only. */
+function callsPipeline(body: ts.Node | null): boolean {
+  return callsFn(body, "runPostPublishSideEffects");
+}
+/** REV-15: the ONE clock-start path for an issued first revision (lib/revisions.ts),
+ *  or the split / merge wrapper that calls it per new document after the saga. */
+const CLOCK_STARTERS = ["startIssuedDocumentClocks", "startClocksForIssuedDocuments"];
+function startsClocks(body: ts.Node | null): boolean {
+  return CLOCK_STARTERS.some((n) => callsFn(body, n));
 }
 function enclosingFn(node: ts.Node): { name: string; body: ts.Node | null } {
   for (let n: ts.Node | undefined = node.parent; n; n = n.parent) {
@@ -1194,7 +1204,7 @@ function pointerWriters(file: string, src: string, rpcWrappers: ReadonlySet<stri
   const out: Writer[] = [];
   const push = (node: ts.CallExpression, method: string) => {
     const { name, body } = enclosingFn(node);
-    out.push({ site: `${file}:${name}`, method, line: sf.getLineAndCharacterOfPosition(node.getStart()).line + 1, pipeline: callsPipeline(body) });
+    out.push({ site: `${file}:${name}`, method, line: sf.getLineAndCharacterOfPosition(node.getStart()).line + 1, pipeline: callsPipeline(body), clocks: startsClocks(body) });
   };
   const visit = (node: ts.Node): void => {
     if (ts.isCallExpression(node) && ts.isPropertyAccessExpression(node.expression) && ["update", "insert", "upsert"].includes(node.expression.name.text)) {
@@ -1218,12 +1228,17 @@ describe("census — every writer of current_version_id runs the post-publish pi
   const ROOTS = ["app", "lib", "components"];
   // Pinned exemptions, by file:function, each with its reason. Remove an
   // entry when its function runs the pipeline (or stops writing the pointer).
-  const EXEMPT: Record<string, { reason: string; via?: string; wrapper?: boolean }> = {
+  // A FIRST-version seed supersedes nothing, so the pipeline (stale-copy
+  // recall, pin drift, impact) has nothing to say — but an ISSUED first
+  // revision still starts its compliance clocks (REV-15): `clocks` names
+  // where, "self" or the callers that run them after their saga commits,
+  // and the census checks each one really calls the one clock-start path.
+  const EXEMPT: Record<string, { reason: string; via?: string; wrapper?: boolean; clocks?: "self" | string[] }> = {
     "lib/revisions.ts:callPublishRevisionRpc": { reason: "the one wrapper of rpc('publish_revision') in lib/revisions.ts — every call of it is censused as a writer in its caller", wrapper: true },
     "app/api/intake/upload/route.ts:publishThroughContract": { reason: "the intake door's trusted promote — POST runs the pipeline after it returns a published outcome", via: "app/api/intake/upload/route.ts:POST" },
-    "lib/revisions.ts:createDocumentWithFile": { reason: "first-version seed of a brand-new document — nothing is superseded; the review clock and ack roster are seeded inline" },
-    "lib/documentLifecycle/common.ts:createNewDocWithFirstVersion": { reason: "first-version seed of a split / merge sheet — nothing is superseded by the pointer write itself; the review clock and ack roster it does NOT start are open finding document-control REV-15 (unassigned)" },
-    "app/(protected)/documents/[libraryId]/page.tsx:uploadOne": { reason: "first-version seed of a bulk upload — the review clock and ack roster it does NOT start are open finding document-control REV-15 (unassigned; the library page's half)" },
+    "lib/revisions.ts:createDocumentWithFile": { reason: "first-version seed of a brand-new document — nothing is superseded; an issued one starts its review clock and ack roster through startIssuedDocumentClocks (REV-15)", clocks: "self" },
+    "lib/documentLifecycle/common.ts:createNewDocWithFirstVersion": { reason: "first-version seed of a split / merge sheet — nothing is superseded by the pointer write itself; it runs inside the saga, so its callers start the review clock and ack roster (startClocksForIssuedDocuments) once the operation can no longer roll back (REV-15)", clocks: ["lib/documentLifecycle/split.ts:splitDocument", "lib/documentLifecycle/merge.ts:finishMerge"] },
+    "app/(protected)/documents/[libraryId]/page.tsx:uploadOne": { reason: "first-version seed of a bulk upload — nothing is superseded; an issued one starts its review clock and ack roster through startIssuedDocumentClocks after its checked pointer write (REV-15)", clocks: "self" },
   };
   const walk = (dir: string): string[] => readdirSync(dir).flatMap((f) => {
     const p = join(dir, f);
@@ -1269,6 +1284,37 @@ describe("census — every writer of current_version_id runs the post-publish pi
   it("every writer runs the pipeline in the same function, or is pinned with its reason", () => {
     const unpiped = writers.filter((w) => !w.pipeline && !EXEMPT[w.site]).map((w) => `${w.site} (${w.method}, line ${w.line})`);
     expect(unpiped, `current_version_id written without runPostPublishSideEffects in the same function: ${unpiped.join("; ")}`).toEqual([]);
+  });
+  it("every first-version seed starts the compliance clocks through the one path — in itself, or in the callers it names (REV-15)", () => {
+    const seeds = Object.entries(EXEMPT).filter(([, e]) => e.clocks);
+    expect(seeds.map(([site]) => site).sort()).toEqual([
+      "app/(protected)/documents/[libraryId]/page.tsx:uploadOne",
+      "lib/documentLifecycle/common.ts:createNewDocWithFirstVersion",
+      "lib/revisions.ts:createDocumentWithFile",
+    ]);
+    for (const [site, e] of seeds) {
+      if (e.clocks === "self") {
+        const own = writers.filter((w) => w.site === site);
+        expect(own.length, site).toBeGreaterThan(0);
+        expect(own.every((w) => w.clocks), `${site} must call startIssuedDocumentClocks itself`).toBe(true);
+        continue;
+      }
+      // inside the saga: it must NOT start them itself (a rollback would leave a roster for an archived sheet) …
+      expect(writers.filter((w) => w.site === site).some((w) => w.clocks), `${site} starts clocks inside the saga`).toBe(false);
+      // … and every caller it names does, after the saga
+      for (const via of e.clocks as string[]) {
+        const [viaFile, viaFn] = via.split(":");
+        const sf = ts.createSourceFile(viaFile, readFileSync(join(process.cwd(), viaFile), "utf8"), ts.ScriptTarget.Latest, true);
+        let fn: ts.Node | null = null;
+        sf.forEachChild((n) => { if (ts.isFunctionDeclaration(n) && n.name?.text === viaFn) fn = n; });
+        expect(fn, `${via} not found`).not.toBeNull();
+        expect(startsClocks(fn), `${via} must start the clocks`).toBe(true);
+      }
+    }
+    // the wrapper is the one path, not a parallel one
+    const common = readFileSync(join(process.cwd(), "lib/documentLifecycle/common.ts"), "utf8");
+    expect(common).toMatch(/export async function startClocksForIssuedDocuments[\s\S]*?await startIssuedDocumentClocks\(/);
+    expect(common).not.toMatch(/onDocumentIssued(Ack)?\(/);
   });
   it("no pinned exemption is stale, and an exemption 'via' a caller is honoured by that caller", () => {
     const sites = new Set(writers.map((w) => w.site));
