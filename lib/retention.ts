@@ -28,7 +28,9 @@ import type { RetentionPolicy } from "@/types/schema";
 export {
   resolveEffectiveRetentionPolicy, computeRetentionUntil,
   scheduledActionFor, scheduledActionLabel, disposeActionFor, describeRetentionPolicy,
+  retentionStatusFor,
 } from "@/lib/retentionPolicy";
+export type { RetentionStatus } from "@/lib/retentionPolicy";
 
 type Level = "library" | "collection" | "document";
 interface PolicyCols { retention_policy?: RetentionPolicy | null }
@@ -50,23 +52,6 @@ export async function effectiveRetentionPolicyForDocument(doc: {
   const { data: lib, error: libErr } = await supabase.from("libraries").select("retention_policy").eq("id", doc.libraryId).maybeSingle();
   if (libErr) throw new Error(`Could not read the library's retention policy: ${libErr.message}`);
   return resolveEffectiveRetentionPolicy(doc.retentionPolicy ?? null, folder, (lib as PolicyCols)?.retention_policy ?? null);
-}
-
-export type RetentionStatus = "none" | "active" | "eligible" | "disposed" | "hold";
-
-/** Pill/state for a document. Legal hold wins (it's the loudest); then disposed;
- *  then eligible (past retention); then active (retained); else none. */
-export function retentionStatusFor(input: { retentionUntil?: string | null; dispositionState?: string | null; legalHold?: boolean | null }): RetentionStatus {
-  if (input.legalHold) return "hold";
-  if (input.dispositionState === "disposed") return "disposed";
-  if (input.dispositionState === "eligible") return "eligible";
-  if (input.retentionUntil) {
-    const today = new Date(); today.setHours(0, 0, 0, 0);
-    const due = new Date(`${input.retentionUntil.slice(0, 10)}T00:00:00`);
-    if (!Number.isNaN(due.getTime()) && due.getTime() <= today.getTime()) return "eligible";
-    return "active";
-  }
-  return "none";
 }
 
 // ── Recompute denormalized state ─────────────────────────────────────────────

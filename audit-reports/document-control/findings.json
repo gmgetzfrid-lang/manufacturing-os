@@ -24,8 +24,8 @@
       "LOW": 14
     },
     "by_status": {
-      "RESOLVED": 123,
-      "OPEN": 32
+      "RESOLVED": 122,
+      "OPEN": 33
     }
   },
   "status_vocabulary": [
@@ -1357,7 +1357,7 @@
       "id": "RET-2",
       "title": "/api/storage/delete lets any active member destroy any object in their org — no role check, no safe-key gate, no records-management check, and zero callers",
       "severity": "HIGH",
-      "status": "RESOLVED",
+      "status": "OPEN",
       "verification": "CONFIRMED",
       "verification_note": null,
       "blast_radius": null,

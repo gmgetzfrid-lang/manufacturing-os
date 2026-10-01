@@ -26,6 +26,26 @@ export function computeRetentionUntil(basisISO: string | null, policy: Retention
   return d.toISOString().slice(0, 10);
 }
 
+export type RetentionStatus = "none" | "active" | "eligible" | "disposed" | "hold";
+
+/** Pill/state for a document. Legal hold wins (it's the loudest); then disposed;
+ *  then eligible (past retention); then active (retained); else none.
+ *  (Moved here from lib/retention.ts, which re-exports it, so the storage
+ *  delete route reads the same verdict as the register and the pill without
+ *  importing the browser client — intelligence DACL-2.) */
+export function retentionStatusFor(input: { retentionUntil?: string | null; dispositionState?: string | null; legalHold?: boolean | null }): RetentionStatus {
+  if (input.legalHold) return "hold";
+  if (input.dispositionState === "disposed") return "disposed";
+  if (input.dispositionState === "eligible") return "eligible";
+  if (input.retentionUntil) {
+    const today = new Date(); today.setHours(0, 0, 0, 0);
+    const due = new Date(`${input.retentionUntil.slice(0, 10)}T00:00:00`);
+    if (!Number.isNaN(due.getTime()) && due.getTime() <= today.getTime()) return "eligible";
+    return "active";
+  }
+  return "none";
+}
+
 // ── RET-11: the scheduled end-of-life action ─────────────────────────────────
 // RetentionPolicy.action ('review' | 'archive' | 'destroy') was edited, stored
 // and inherited but read by nothing: a records schedule configured "then

@@ -131,7 +131,8 @@ app-side, no migration: `RET-1` (the space-saver ignored legal holds — the
 hold guarded row DELETEs while the shed deleted R2 bytes → candidates exclude
 held parents and commit re-checks, both fail closed, so a hold placed between
 produce and commit still protects the bytes), `RET-2` (marked resolved — the
-cross-area `SURF-2` fix already closed every limb), `XEDGE-4` (a retention
+cross-area `SURF-2` fix already closed every limb; *re-opened 2026-10-01 at P11
+STORAGE-DELETE: its current-revision limb was never built — OPEN with a Partial*), `XEDGE-4` (a retention
 policy with no prefix purged the customer's ENTIRE bucket by age → the purge
 refuses an empty prefix, deletes only this app's `manufacturing-os-export-…zip`
 archives, reports scanned/deleted into diagnostics, and both destination

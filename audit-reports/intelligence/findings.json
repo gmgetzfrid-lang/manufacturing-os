@@ -34,8 +34,8 @@
       "LOW": 48
     },
     "by_status": {
-      "OPEN": 209,
-      "RESOLVED": 50,
+      "OPEN": 208,
+      "RESOLVED": 51,
       "REFUTED": 2,
       "INVALID": 1
     }
@@ -491,7 +491,7 @@
       "id": "DACL-2",
       "title": "/api/storage/delete permanently destroys R2 objects with only an org-membership check — no ACL, no controller role, no legal-hold guard, and (uniquely) no storage-key validation",
       "severity": "HIGH",
-      "status": "OPEN",
+      "status": "RESOLVED",
       "verification": "CONFIRMED",
       "verification_note": null,
       "blast_radius": null,

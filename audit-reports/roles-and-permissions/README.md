@@ -427,7 +427,7 @@ lockouts result — so both were completed. Migration `20261025` (apply after
 | Item | Outcome |
 |---|---|
 | `EGRESS-2` (CRITICAL) | **RESOLVED** — `/d/[number]` no longer resolves documents; it forwards to the protected page, which resolves client-side under RLS |
-| `SURF-2` (CRITICAL) | **RESOLVED** — storage delete requires controller authority, safe key, fail-closed hold check, audit row (also closes `document-control/RET-2`, `intelligence/DACL-2`) |
+| `SURF-2` (CRITICAL) | **RESOLVED** — storage delete requires controller authority, safe key, fail-closed hold check, audit row (also closes `intelligence/DACL-2` — its source-file and retention limbs landed with document-control P11 STORAGE-DELETE, 2026-10-01; `document-control/RET-2` was re-opened there for its current-revision limb) |
 | `EGRESS-1` (CRITICAL) | **RESOLVED** — cross-org share leak confirmed then closed: org-join + creator-authority re-check in both routes, per-verb RLS migration |
 | `SURF-5` (HIGH) | **RESOLVED** Done-when 1–2 (cross-tenant drain); Done-when 3 (queue-insert lockdown) split to `SURF-17` |
 | `EGRESS-5` / `DEC-19` (HIGH) | **RESOLVED** — org-scoped policy, rate-limited public door, org_id drift fixed, pending-requests card on `/admin/users` |
