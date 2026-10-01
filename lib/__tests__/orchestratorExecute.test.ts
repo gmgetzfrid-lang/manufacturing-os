@@ -682,10 +682,9 @@ describe("ORCH-1 criterion 3 / DEC-68 — log_audit_completion writes ORG-WIDE r
 
   it("before 20261124 (no library_id column) it writes on the org-wide key that database has, and never writes over a library's row there", async () => {
     db.missingColumns.drawing_audit_logs = ["library_id"];
-    db.tables.drawing_audit_logs.push({ id: "v1", org_id: ORG, sheet_number: "025-PID-0103", revision_code: "", status: "broken_connectors", audit_details: { libraryId: "KL-1" } });
+    db.tables.drawing_audit_logs.push({ id: "v1", org_id: ORG, sheet_number: "025-PID-0103", revision_code: "C", status: "broken_connectors", audit_details: { libraryId: "KL-1" } });
     const ctx = await ctxOf("u-dc");
-    const refused = await toolByName("log_audit_completion")!.run({ sheet_number: "025-PID-0103", revision: "", status: "passed" }, ctx);
-    // revision "" is treated as given here (the tool is called directly).
+    const refused = await toolByName("log_audit_completion")!.run({ sheet_number: "025-PID-0103", revision: "C", status: "passed" }, ctx);
     expect(String((refused.data as { error?: string }).error)).toMatch(/belongs to a library's drawing audit[\s\S]*migration 20261124/);
     expect(refused.pending).toBeUndefined();
     const fp = fingerprint("log_audit_completion", { sheet_number: "025-PID-0103", revision: "D", status: "passed", document_id: "d-1" });
@@ -727,6 +726,71 @@ describe("ORCH-1 criterion 3 / DEC-68 — log_audit_completion writes ORG-WIDE r
     expect((await toolByName("log_audit_completion")!.run({ sheet_number: "025-PID-0103", revision: "C", status: "flagged" }, { ...ctx, approved: new Set([fp]) })).data).toMatchObject({ status: "logged" });
     expect(rowsOf("drawing_audit_logs")[0]).toMatchObject({ status: "flagged" });
   });
+
+  it("a blank revision (or sheet) is refused — never filed under the unknown revision, where the latest verdict wins; at proposal, and at execute through the real routes", async () => {
+    // An org-wide `flagged` row under the unknown revision: a `passed` filed
+    // there would replace it (replaceDecision: latest wins under "").
+    db.tables.drawing_audit_logs.push(verdict({ revision_code: "", status: "flagged" }));
+    const ctx = await ctxOf("u-dc");
+    for (const params of [
+      { sheet_number: "025-PID-0103", revision: "", status: "passed" },
+      { sheet_number: "025-PID-0103", revision: "  ", status: "passed" },
+      { sheet_number: " ", revision: "C", status: "passed" },
+    ]) {
+      const fp = fingerprint("log_audit_completion", params);
+      const out = await toolByName("log_audit_completion")!.run(params, { ...ctx, approved: new Set([fp]) });
+      expect(out.pending, JSON.stringify(params)).toBeUndefined();
+      expect(out.data, JSON.stringify(params)).toMatchObject({ error: expect.stringMatching(/revision are required — a revision code, not blank/) });
+    }
+    // The model sends revision " ": validateParams passes it (not "") and
+    // trims it to "" — the tool refuses, so no card is ever offered…
+    net.script = [JSON.stringify({ tool_name: "log_audit_completion", parameters: { sheet_number: "025-PID-0103", revision: " ", status: "passed" } }), "Couldn't record it."];
+    expect(pendingOf((await ask("dc", "record 0103 as passed")).body)).toHaveLength(0);
+    // …and a stored proposal carrying one (planted, as a stale card would) is
+    // refused at execute: 409, nothing written.
+    db.tables.orchestrator_proposals.push({
+      id: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa", org_id: ORG, user_id: "u-dc", run_id: "r-1", tool: "log_audit_completion",
+      parameters: { sheet_number: "025-PID-0103", revision: " ", status: "passed" },
+      fingerprint: fingerprint("log_audit_completion", { sheet_number: "025-PID-0103", revision: "", status: "passed" }),
+      summary: "Record 025-PID-0103 rev  as passed", created_at: new Date().toISOString(),
+      expires_at: new Date(Date.now() + 60_000).toISOString(), executed_at: null, dismissed_at: null,
+    });
+    const res = await execute("dc", { proposalId: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa" });
+    expect(res.status).toBe(409);
+    expect(rowsOf("drawing_audit_logs")).toEqual([expect.objectContaining({ revision_code: "", status: "flagged" })]);
+    expect(db.ops.filter((o) => o.table === "drawing_audit_logs" && o.kind === "upsert")).toHaveLength(0);
+  });
+
+  it("after 20261124, an ORG-WIDE row a library's audit filed (its mirror gone, so the backfill left library_id NULL) keeps its findings, document and coverage — the confirmed verdict is merged over them, never replaces them", async () => {
+    const libraryDetails = {
+      knowledgeDocumentId: "11111111-1111-4111-8111-111111111111", libraryId: "KL-gone", by: "u-auditor",
+      brokenConnectors: [{ tag: "OPC-7", box: "B-4" }], missingReferences: [], coverage: { pages: 3, read: 3 },
+      set: { count: 2, digest: "abc", truncated: false, sheets: ["025-PID-0103", "025-PID-0104"] },
+      provisional: { waitingOn: ["025-PID-0104.pdf"], settledStatus: "flagged" }, waitingFindings: { brokenConnectors: [0] },
+    };
+    db.tables.drawing_audit_logs.push(verdict({ status: "broken_connectors", document_id: "d-1", audit_details: libraryDetails }));
+    const ctx = await ctxOf("u-dc");
+    // Below what it settled (flagged) is still refused, and the row is untouched.
+    const lower = await toolByName("log_audit_completion")!.run({ sheet_number: "025-PID-0103", revision: "C", status: "passed" }, ctx);
+    expect(String((lower.data as { error?: string }).error)).toMatch(/already recorded as flagged/);
+    expect(rowsOf("drawing_audit_logs")[0].audit_details).toEqual(libraryDetails);
+    // The controller confirms broken_connectors, checked by hand: propose → execute once.
+    net.script = [JSON.stringify({ tool_name: "log_audit_completion", parameters: { sheet_number: "025-PID-0103", revision: "C", status: "broken_connectors", details: "checked by hand" } }), "Proposed."];
+    const [card] = pendingOf((await ask("dc", "record 0103 rev C broken, checked by hand")).body);
+    const res = await execute("dc", { proposalId: card.proposalId });
+    expect(res.status).toBe(200);
+    const rows = rowsOf("drawing_audit_logs");
+    expect(rows).toHaveLength(1);
+    const { provisional: _p, waitingFindings: _w, by: _by, ...kept } = libraryDetails;
+    expect(rows[0]).toMatchObject({ library_id: null, status: "broken_connectors", document_id: "d-1" });
+    // Everything the library's audit found survives; the person's note and
+    // name are on top; the provisional marker is gone — a confirmed verdict
+    // at or above what it settled settles it (replaceDecision's rule).
+    expect(rows[0].audit_details).toEqual({ ...kept, note: "checked by hand", by: "u-dc", byName: "Dana Control", source: "orchestrator" });
+    const h = (await toolByName("check_audit_history")!.run({ sheet_number: "025-PID-0103", revision: "C" }, ctx)).data as { audited: boolean; recommendation: string };
+    expect(h.audited).toBe(true);
+    expect(h.recommendation).toMatch(/Already audited at this revision \(broken_connectors\)/);
+  });
 });
 
 describe("DEC-68 handoff — check_audit_history never answers 'already audited' for a provisional row", () => {
@@ -748,6 +812,39 @@ describe("DEC-68 handoff — check_audit_history never answers 'already audited'
     expect(h.history[0]).toMatchObject({ provisional: true, settled_status: "passed", waiting_on: ["025-PID-0104.pdf"], scope: "library" });
     // Summarised: the stored set list never reaches the model.
     expect(JSON.stringify(h.history)).not.toContain("S-499");
+  });
+
+  it("a settled row in one library and a PROVISIONAL row in another at the same revision (DWG-6): never 'skip it', and the severity counts what the provisional row settled", async () => {
+    // 025-PID-0103 rev C mirrored into the plant-wide library (settled
+    // `passed`) and into Unit 12's (a verified broken connector, waiting on 0104).
+    db.tables.drawing_audit_logs.push(
+      row({ library_id: "KL-plant", status: "passed", audit_details: { libraryId: "KL-plant" } }),
+      row({ library_id: "KL-u12", status: "broken_connectors", audited_at: "2026-09-02T00:00:00Z", audit_details: { libraryId: "KL-u12", provisional: { waitingOn: ["025-PID-0104.pdf"], settledStatus: "broken_connectors" } } }),
+    );
+    const h = await history("C") as unknown as { audited: boolean; provisional_pending?: boolean; recommendation: string; history: Array<Record<string, unknown>> };
+    expect(h.audited).toBe(false);
+    expect(h.provisional_pending).toBe(true);
+    expect(h.recommendation).toMatch(/PROVISIONAL/);
+    expect(h.recommendation).toMatch(/1 of the 2 records here is settled/);
+    expect(h.recommendation).toMatch(/settled so far as broken_connectors/);
+    expect(h.recommendation).toMatch(/Do not skip it until 025-PID-0104\.pdf is read/);
+    expect(h.recommendation).not.toMatch(/Already audited|Skip it unless|\(passed\)/);
+    expect(h.history).toHaveLength(2);
+    // The settled floor is the most severe of both: a settled `flagged` beside
+    // a provisional row that settled only `passed` reads as flagged.
+    db.tables.drawing_audit_logs = [
+      row({ library_id: "KL-plant", status: "flagged", audit_details: {} }),
+      row({ library_id: "KL-u12", status: "broken_connectors", audit_details: { provisional: { waitingOn: [], settledStatus: "passed" } } }),
+    ];
+    const h2 = await history("C") as unknown as { audited: boolean; provisional_pending?: boolean; recommendation: string };
+    expect(h2).toMatchObject({ audited: false, provisional_pending: true });
+    expect(h2.recommendation).toMatch(/settled so far as flagged/);
+    expect(h2.recommendation).toMatch(/Do not skip it until what it waits on is read/);
+    // Settled everywhere: plainly audited, no pending flag.
+    db.tables.drawing_audit_logs = [row({ library_id: "KL-plant", status: "passed", audit_details: {} })];
+    const h3 = await history("C") as unknown as { audited: boolean; provisional_pending?: boolean };
+    expect(h3.audited).toBe(true);
+    expect(h3.provisional_pending).toBeUndefined();
   });
 
   it("a settled row is 'already audited'; a skipped row is not", async () => {

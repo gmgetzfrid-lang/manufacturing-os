@@ -433,18 +433,35 @@ const checkAuditHistory: ToolDef = {
     } else if (!args.revision) {
       recommendation = `Audited before (latest: rev ${history[0].revision || "unknown"}). `
         + "Ask which revision is in front of you before deciding.";
+    } else if (waiting.length > 0) {
+      // A provisional row ANYWHERE at this revision means the sheet is not
+      // settled — also when another scope's row is (DWG-6: one sheet judged
+      // in two libraries). Its severity counts what each provisional row
+      // settled, so a verified finding still waiting on a neighbour is never
+      // reported as the other library's `passed`, and it is never "skip it".
+      const names = [...new Set(waiting.flatMap((h) => h.waiting_on ?? []))];
+      const what = names.length > 0 ? names.join(", ") : "a document that is not read whole yet";
+      const floor = severest([...settled, ...waiting.map((h) => ({ ...h, status: h.settled_status ?? h.status }))]);
+      recommendation = "The verdict at this revision is PROVISIONAL — not settled"
+        + (settled.length > 0
+          ? ` (${settled.length} of the ${settled.length + waiting.length} records here ${settled.length === 1 ? "is" : "are"} settled; the rest are not)`
+          : "")
+        + `. It is waiting on ${what} (settled so far as ${floor}). `
+        + `Do not skip it until ${names.length > 0 ? names.join(", ") : "what it waits on"} is read — then audit it again.`;
     } else if (settled.length > 0) {
       recommendation = `Already audited at this revision (${severest(settled)}). Skip it unless the drawing has been revised since.`;
-    } else if (waiting.length > 0) {
-      const names = [...new Set(waiting.flatMap((h) => h.waiting_on ?? []))];
-      recommendation = "The verdict at this revision is PROVISIONAL — not settled. It is waiting on "
-        + (names.length > 0 ? names.join(", ") : "a document that is not read whole yet")
-        + ` (settled so far as ${severest(waiting.map((h) => ({ ...h, status: h.settled_status ?? h.status })))}). `
-        + "Do not skip it: audit it again once what it waits on is read.";
     } else {
       recommendation = "Recorded only as skipped (it could not be read) — audit it.";
     }
-    return { data: { audited: settled.length > 0, history, recommendation } };
+    // `audited` means "settled — re-auditing is wasted work": never while a
+    // provisional row waits (DEC-68 handoff), whatever else is settled.
+    return {
+      data: {
+        audited: settled.length > 0 && waiting.length === 0,
+        ...(waiting.length > 0 ? { provisional_pending: true } : {}),
+        history, recommendation,
+      },
+    };
   },
 };
 
@@ -781,11 +798,28 @@ async function storedOrgWideVerdict(orgId: string, sheet: string, revision: stri
 
 /** Did a library's drawing audit file this row? Its details name the
  *  library, or the knowledge document it judged — the key 20261124 backfills
- *  library_id from. Only a pre-20261124 read can return such a row here. */
+ *  library_id from. On the pre-20261124 key such a row is refused
+ *  (LIBRARY_ROW_ON_LEGACY_KEY); after 20261124 the org-wide read returns one
+ *  only when its mirror is gone, and its details are kept (keptDetails). */
 function filedByLibrary(details: unknown): boolean {
   const k = (details as { knowledgeDocumentId?: unknown } | null)?.knowledgeDocumentId;
   return !!libraryOf(details) || (typeof k === "string" && k.length > 0);
 }
+
+/** What of a stored row's audit_details a confirmed record keeps: all of
+ *  it — findings, knowledge document, library, coverage, set — except the
+ *  provisional marker and its waiting positions. A person's confirmed
+ *  verdict at or above what the row settled (lowersStored) settles it, as a
+ *  settled computation does in the drawing route (replaceDecision: a
+ *  settled `next` replaces a provisional row). */
+function keptDetails(details: unknown): Record<string, unknown> {
+  if (!details || typeof details !== "object" || Array.isArray(details)) return {};
+  const { provisional: _provisional, waitingFindings: _waiting, ...kept } = details as Record<string, unknown>;
+  return kept;
+}
+
+/** Said when sheet_number or revision is blank. */
+const BLANK_KEY = "sheet_number and revision are required — a revision code, not blank. Nothing was recorded.";
 
 /** Said when the only row at this key is a library's (before 20261124). */
 const LIBRARY_ROW_ON_LEGACY_KEY =
@@ -796,9 +830,9 @@ const LIBRARY_ROW_ON_LEGACY_KEY =
 /** Would writing `status` over the stored ORG-WIDE verdict lower what it
  *  settled? The drawing layer's own rule (lib/drawingAuditLog
  *  replaceDecision, RANK): a known revision's verdict is never lowered; a
- *  provisional row's floor is what it settled. (A row a library filed is
- *  never written here at all — LIBRARY_ROW_ON_LEGACY_KEY.) Returns the
- *  refusal, or null to write. */
+ *  provisional row's floor is what it settled. (On the pre-20261124 key a
+ *  row a library filed is never written at all — LIBRARY_ROW_ON_LEGACY_KEY.)
+ *  Returns the refusal, or null to write. */
 function lowersStored(
   stored: { status: string; revision_code: string; audit_details: unknown } | null,
   status: AuditStatus,
@@ -840,8 +874,15 @@ const logAuditCompletion: ToolDef = {
     if (!holdsControllerTier(ctx)) {
       return { data: { error: "Only Admin or Document Control can record an audit completion.", forbidden: true } };
     }
-    const sheet = String(args.sheet_number);
-    const revision = String(args.revision);
+    const sheet = String(args.sheet_number ?? "");
+    const revision = String(args.revision ?? "");
+    // A verdict is recorded against a sheet AT a revision. A blank one
+    // (validateParams trims " " to "") would file an org-wide row under the
+    // unknown revision, where the latest verdict wins (replaceDecision) and a
+    // lower one replaces a higher one. A person has no reason to record that.
+    if (!sheet.trim() || !revision.trim()) {
+      return { data: { error: BLANK_KEY } };
+    }
     // Never lower a verdict already settled for this key (DEC-68) — checked
     // before proposing, and again when the confirmation runs.
     const stored = await storedOrgWideVerdict(ctx.orgId, sheet, revision);
@@ -899,12 +940,20 @@ const logAuditCompletion: ToolDef = {
     // the org-wide key that database has. document_id is sent only when it
     // resolved: an upsert over an existing row then keeps the document that
     // row already names instead of overwriting it with NULL (ORCH-11).
+    // audit_details is MERGED over the stored row's, never replaced: after
+    // 20261124 the org-wide row may be one a library's drawing audit filed
+    // whose mirror is gone (the backfill left library_id NULL), and its
+    // findings, knowledge document and coverage are the only copy
+    // (keptDetails). Re-read at execute, so it is what is there then.
     const row = {
       org_id: ctx.orgId, sheet_number: sheet,
       ...(documentId ? { document_id: documentId } : {}),
       revision_code: revision, status,
       audited_at: new Date().toISOString(),
-      audit_details: { note: details, by: ctx.userId, byName: ctx.actorName, source: "orchestrator" },
+      audit_details: {
+        ...keptDetails(stored.row?.audit_details),
+        note: details, by: ctx.userId, byName: ctx.actorName, source: "orchestrator",
+      },
     };
     const { error } = stored.legacy
       ? await supabaseAdmin.from("drawing_audit_logs").upsert(row, { onConflict: "org_id,sheet_number,revision_code" })
