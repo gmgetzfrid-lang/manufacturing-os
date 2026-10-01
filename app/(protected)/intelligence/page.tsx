@@ -12,7 +12,7 @@
 // whose source failed says so, with a retry (HUB-7). The card rules live in
 // lib/hubStatus.ts.
 
-import React, { useEffect, useState } from "react";
+import React, { useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import {
   Bot, BookOpen, Waypoints, GitPullRequest, Settings2, Gauge, Compass,
@@ -82,8 +82,14 @@ export default function IntelligencePage() {
   const isAdmin = hasAnyRole(["Admin"]);
   const isController = isControllerPrincipal({ role: activeRole, roles });
   const [status, setStatus] = useState<Status | null>(null);
+  /** HUB-10: the `uid|org` the status in state belongs to — the board never
+   *  paints a status for anyone else, even for the frame before it resets. */
+  const [statusFor, setStatusFor] = useState<string | null>(null);
   const [reloadTick, setReloadTick] = useState(0);
   const retry = () => setReloadTick((t) => t + 1);
+  /** HUB-10: whose status is on screen (`uid|org`). Only a Retry for the
+   *  SAME person and workspace keeps it; any other change starts over. */
+  const shownFor = useRef<string | null>(null);
 
   // SUB-500ms CONTRACT. What actually made this page "take forever":
   //   (a) the WHOLE page (even static cards) waited on one Promise.all,
@@ -101,6 +107,9 @@ export default function IntelligencePage() {
     if (!activeOrgId || !uid) return;
     let cancelled = false;
     const snapKey = hubSnapshotKey(uid, activeOrgId);
+    const identity = `${uid}|${activeOrgId}`;
+    const sameIdentity = shownFor.current === identity;
+    shownFor.current = identity;
     queueMicrotask(() => {
       if (cancelled) return;
       let snap: Status | null = null;
@@ -115,7 +124,12 @@ export default function IntelligencePage() {
       } catch { /* no snapshot */ }
       // A snapshot IS known data (last known) for the sources it knew; a
       // retry keeps what is on screen and clears the failures it re-asks.
-      setStatus((prev) => prev
+      // HUB-10: a different uid or workspace (an account switched in another
+      // tab, a workspace change) never inherits what is on screen — it starts
+      // from ITS OWN snapshot, so the next patch can never save the last
+      // person's figures under the new person's key.
+      setStatusFor(identity);
+      setStatus((prev) => prev && sameIdentity
         ? { ...prev, ...NO_FAILURES }
         : { ...EMPTY_STATUS, ...(snap ?? {}), ...NO_FAILURES });
     });
@@ -224,7 +238,7 @@ export default function IntelligencePage() {
 
   if (!activeOrgId) return <div className="p-8 text-sm text-slate-500">Select a workspace to continue.</div>;
 
-  const s = status ?? EMPTY_STATUS;
+  const s = (status && statusFor === `${uid}|${activeOrgId}` ? status : null) ?? EMPTY_STATUS;
   const meaning = meaningIndexCard(s.chunksTotal, s.chunksEmbedded);
   const kFix = knowledgeFix({ isController, libraries: s.libraries, firstLibraryId: s.firstLibraryId });
   const mFix = meaningIndexFix({ isController, chunksTotal: s.chunksTotal, libraries: s.libraries, firstLibraryId: s.firstLibraryId });

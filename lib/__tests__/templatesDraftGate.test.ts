@@ -3,9 +3,12 @@
 //   GOV-11 / PR-12  drafting runs behind lib/ai/aiGates: the signed
 //                   agreement (428 with the text to sign), own key, cap
 //   GOV-13          each document's call is reserved before and settled after
-//   PR-6            a reply that is not the requested fields FAILS the batch,
-//                   naming the row — never a document with blank AI sections;
-//                   a field the model wrote as "" is kept
+//   PR-6            a reply that is not the requested fields fails THAT row —
+//                   never a document with blank AI sections: the rows drafted
+//                   before it are kept (paid for), the row is named in
+//                   skippedRows, the next slice starts after it (a row that
+//                   always fails cannot hold the batch); a field the model
+//                   wrote as "" is kept
 
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { NextRequest } from "next/server";
@@ -16,6 +19,7 @@ const db = vi.hoisted(() => ({
   seq: 0,
 }));
 const ai = vi.hoisted(() => ({ replies: [] as string[], calls: 0 }));
+const sheet = vi.hoisted(() => ({ rows: [{ Name: "A" }, { Name: "B" }, { Name: "C" }] as Array<Record<string, string>> }));
 
 vi.mock("@/lib/supabaseAdmin", () => {
   function builder(table: string) {
@@ -66,7 +70,7 @@ vi.mock("@/lib/knowledgeAccess", () => ({
 }));
 vi.mock("@/lib/r2Bytes", () => ({ fetchBytes: vi.fn(async () => Buffer.from([])) }));
 vi.mock("@/lib/xlsxData", () => ({
-  parseWorkbook: vi.fn(() => ({ headers: ["Name"], rows: [{ Name: "A" }, { Name: "B" }, { Name: "C" }], sheetNames: ["S"] })),
+  parseWorkbook: vi.fn(() => ({ headers: ["Name"], rows: sheet.rows, sheetNames: ["S"] })),
 }));
 vi.mock("@/lib/ai/providerCall", async (orig) => {
   const real = await orig<typeof import("@/lib/ai/providerCall")>();
@@ -82,11 +86,11 @@ vi.mock("@/lib/ai/providerCall", async (orig) => {
 import { POST } from "@/app/api/templates/generate/route";
 import { AGREEMENT_VERSION } from "@/lib/ai/pricing";
 
-const draft = async () => {
+const draft = async (extra: Row = {}) => {
   const r = await POST(new NextRequest("https://app/api/templates/generate", {
     method: "POST",
     headers: { authorization: "Bearer t", "content-type": "application/json" },
-    body: JSON.stringify({ orgId: "orgA", templateId: "tpl1", action: "draft", sourceFileKey: "orgs/orgA/output-data/d.xlsx" }),
+    body: JSON.stringify({ orgId: "orgA", templateId: "tpl1", action: "draft", sourceFileKey: "orgs/orgA/output-data/d.xlsx", ...extra }),
   }));
   return { status: r.status, json: await r.json() as Row };
 };
@@ -111,6 +115,7 @@ beforeEach(() => {
   };
   ai.replies = [];
   ai.calls = 0;
+  sheet.rows = [{ Name: "A" }, { Name: "B" }, { Name: "C" }];
 });
 
 describe("GOV-11 / PR-12 — drafting is gated like every other AI call", () => {
@@ -163,24 +168,68 @@ describe("GOV-13 — each document reserved, then settled", () => {
   });
 });
 
-describe("PR-6 — an unreadable draft fails, it never blanks", () => {
-  it("a reply whose JSON does not parse fails the batch, naming the row — no documents, nothing blank", async () => {
+describe("PR-6 — an unreadable draft fails its row, never blanks it, and never throws away what was paid for", () => {
+  it("a reply whose JSON does not parse: the rows before it come back, the row is named and left out, the next slice starts after it", async () => {
     ai.replies = ['{"body":"b1","closing":"c1"}', '{"body":"b2","closing":'];
     const r = await draft();
-    expect(r.status).toBe(502);
-    expect(String(r.json.error)).toMatch(/draft for row 2 couldn't be read — the reply's JSON did not parse/);
-    expect(String(r.json.error)).toMatch(/nothing was left blank/);
-    expect(r.json.documents).toBeUndefined();
+    expect(r.status).toBe(200);
+    // row 1 was drafted and paid for — kept
+    expect((r.json.documents as Array<{ values: Row; sourceRow: number }>).map((d) => [d.sourceRow, d.values.body])).toEqual([[1, "b1"]]);
+    // row 2 produced no document — never one with blank AI sections — and is named
+    expect(r.json.skippedRows).toEqual([{ row: 2, reason: "the reply's JSON did not parse (a reply cut off at its length limit does this)" }]);
+    expect(String(r.json.stopped)).toMatch(/draft for row 2 couldn't be read — the reply's JSON did not parse/);
+    expect(String(r.json.stopped)).toMatch(/Row 2 was left out — no document with blank AI sections was made/);
+    // the slice stopped at the failing row; the next one starts AFTER it
+    expect(ai.calls).toBe(2);
+    expect(r.json.nextOffset).toBe(2);
     // the failed call was still metered (its tokens were spent), as a failed draft
     expect(ledger().map((x) => x.ok)).toEqual([true, false]);
     expect(ledger()[1]).toMatchObject({ input_tokens: 1000, output_tokens: 200 });
   });
 
-  it("a reply with no JSON object, or one that leaves a field out, fails too", async () => {
+  it("a row that is unreadable on EVERY try cannot hold the batch: each slice moves past it and pays only for new rows", async () => {
+    // 25-row slices over 30 rows; row 20's reply is always cut off.
+    sheet.rows = Array.from({ length: 30 }, (_, i) => ({ Name: `R${i + 1}` }));
+    const ok = (n: number) => `{"body":"b${n}","closing":"c${n}"}`;
+    ai.replies = [...Array.from({ length: 19 }, (_, i) => ok(i + 1)), '{"body":"b20","closing":'];
+    const first = await draft();
+    expect((first.json.documents as Row[])).toHaveLength(19);
+    expect(first.json.nextOffset).toBe(20);
+    expect((first.json.skippedRows as Row[]).map((x) => x.row)).toEqual([20]);
+    expect(ai.calls).toBe(20);
+    // the next slice starts at row 21 — rows 1-19 are not drafted (or paid for) again
+    ai.replies = Array.from({ length: 10 }, (_, i) => ok(i + 21));
+    const second = await draft({ rowOffset: first.json.nextOffset });
+    expect((second.json.documents as Array<{ sourceRow: number }>).map((d) => d.sourceRow)).toEqual([21, 22, 23, 24, 25, 26, 27, 28, 29, 30]);
+    expect(second.json.nextOffset).toBeNull();
+    expect(ai.calls).toBe(30);
+    expect(ledger()).toHaveLength(30);
+  });
+
+  it("a failing FIRST row still moves the batch on: no documents, the row named, nextOffset past it", async () => {
     ai.replies = ["Sorry, I can't help with that."];
-    expect(String((await draft()).json.error)).toMatch(/row 1 couldn't be read — the reply held no JSON object/);
+    const r = await draft();
+    expect(r.status).toBe(200);
+    expect(r.json.documents).toEqual([]);
+    expect(r.json.skippedRows).toEqual([{ row: 1, reason: "the reply held no JSON object" }]);
+    expect(r.json.nextOffset).toBe(1);
+  });
+
+  it("a reply with no JSON object, or one that leaves a field out, fails its row too", async () => {
+    ai.replies = ["Sorry, I can't help with that."];
+    expect(String((await draft()).json.stopped)).toMatch(/row 1 couldn't be read — the reply held no JSON object/);
     ai.replies = ['{"body":"b1"}'];
-    expect(String((await draft()).json.error)).toMatch(/the reply left out closing/);
+    expect(String((await draft()).json.stopped)).toMatch(/the reply left out closing/);
+  });
+
+  it("the summary document (one call) answers 502 naming it — nothing blank, nothing else paid for", async () => {
+    db.tables.output_templates[0].mode = "summary";
+    ai.replies = ['{"body":"b1","closing":'];
+    const r = await draft();
+    expect(r.status).toBe(502);
+    expect(String(r.json.error)).toMatch(/draft for the summary document couldn't be read/);
+    expect(String(r.json.error)).toMatch(/nothing was left blank/);
+    expect(ai.calls).toBe(1);
   });
 
   it("a field the model wrote as \"\" is its answer and is kept; prose around the object is tolerated", async () => {

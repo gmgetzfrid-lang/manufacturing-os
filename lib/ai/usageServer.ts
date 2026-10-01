@@ -13,7 +13,9 @@
 //
 // FAIL CLOSED (GOV-4): a ledger or cap read that errors throws
 // AiUsageUnavailableError (503) instead of reading as $0 spent — a gate that
-// cannot read the spend refuses. A $0 cap LOCKS (GOV-3): see LOCKED_CAP_USD.
+// cannot read the spend refuses. A row written without a cost counts at
+// UNPRICED_CALL_USD — over-counted, never $0, never a lock. A $0 cap LOCKS
+// (GOV-3): see LOCKED_CAP_USD.
 //
 // RESERVE, THEN CALL (GOV-13 / ORCH-7): reserveWithinCap writes the worst
 // case of the pending call as a ledger row BEFORE the provider is called,
@@ -59,6 +61,19 @@ export class AiUsageUnavailableError extends GovernedCallError {
   }
 }
 
+/** GOV-4: what one metering row written WITHOUT a cost or token counts is
+ *  counted at. recordAskUsage writes such a row only when its full insert is
+ *  refused for a column — a database without 20260916's cost columns, or a
+ *  PostgREST schema cache gone stale after an unrelated migration — so the
+ *  call happened and its price is unknown. It is priced as a frontier-rate
+ *  call (an unknown model prices as frontier) with a 120,000-token prompt and
+ *  a 16,000-token reply: $1.00, deliberately above what one call, one vision
+ *  batch or one assistant run costs at the app's own limits. The month is
+ *  over-counted, never under — and the member keeps working: a hard refusal
+ *  would lock every gated feature until the 1st over a row nobody in the app
+ *  can clear (the table is service-role only). */
+export const UNPRICED_CALL_USD = estimateCostUsd("", { inputTokens: 120_000, outputTokens: 16_000 });
+
 /** First instant of the current UTC month — the ledger boundary. */
 export function monthStartIso(now = new Date()): string {
   return new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 1)).toISOString();
@@ -79,9 +94,9 @@ export interface MonthUsage {
   avgPromptTokens: number;
   /** Worst-case cost of calls reserved but not yet settled (inside spentUsd). */
   reservedUsd: number;
-  /** Rows that carry neither a cost nor token counts (written by the
-   *  pre-migration fallback insert) — spend the ledger cannot price, so
-   *  reserveWithinCap refuses while any exist this month (GOV-4). */
+  /** Rows that carry neither a cost nor token counts (written by
+   *  recordAskUsage's fallback insert) — spend the ledger cannot price, each
+   *  counted inside spentUsd at UNPRICED_CALL_USD (GOV-4). */
   unpricedCalls: number;
   /** Spend per op line — which feature spent the money. */
   byOp: Record<string, OpUsage>;
@@ -128,11 +143,14 @@ export function rollupUsage(rows: UsageRow[]): MonthUsage {
     let cost = 0;
     if (r.est_cost_usd !== null && r.est_cost_usd !== undefined) {
       cost = Number(r.est_cost_usd) || 0;
-    } else if (r.input_tokens !== null || r.output_tokens !== null) {
+    } else if (r.input_tokens != null || r.output_tokens != null) {
       // Tokens without a cost: price them (an unknown model prices as frontier).
       cost = estimateCostUsd(r.model ?? "", { inputTokens: r.input_tokens ?? 0, outputTokens: r.output_tokens ?? 0 });
     } else if (r.ok !== false) {
+      // GOV-4: a call whose price was never recorded — unknown spend,
+      // counted at the conservative figure, never as $0.
       out.unpricedCalls += 1;
+      cost = UNPRICED_CALL_USD;
     }
     out.spentUsd += cost;
     line.spentUsd += cost;
@@ -161,24 +179,30 @@ const PAGE = 1000;
 const MAX_PAGES = 100;
 
 /** Every current-month row matching the filter, paged past PostgREST's row
- *  cap (a partial sum would read as headroom that does not exist). */
+ *  cap (a partial sum would read as headroom that does not exist). A page
+ *  shorter than asked for is NOT taken as the last one — the project's
+ *  max-rows setting may be below PAGE — so the read continues from where the
+ *  rows end until it holds the exact count PostgREST reports, or a page
+ *  comes back empty. */
 async function readMonthRows(orgId: string, userId: string | null): Promise<UsageRow[]> {
   const rows: UsageRow[] = [];
   for (let page = 0; page < MAX_PAGES; page++) {
     let q = supabaseAdmin
       .from("ai_usage_events")
-      .select(USAGE_COLUMNS)
+      .select(USAGE_COLUMNS, { count: "exact" })
       .eq("org_id", orgId);
     if (userId !== null) q = q.eq("user_id", userId);
-    const { data, error } = await q
+    const from = rows.length;
+    const { data, error, count } = await q
       .gte("created_at", monthStartIso())
       .order("created_at", { ascending: true })
       .order("id", { ascending: true })
-      .range(page * PAGE, page * PAGE + PAGE - 1);
+      .range(from, from + PAGE - 1);
     if (error) throw new AiUsageUnavailableError(`couldn't read the usage ledger: ${error.message}`);
     const batch = (data ?? []) as UsageRow[];
     rows.push(...batch);
-    if (batch.length < PAGE) return rows;
+    if (batch.length === 0) return rows;
+    if (typeof count === "number" && rows.length >= count) return rows;
   }
   throw new AiUsageUnavailableError(`the usage ledger holds more than ${PAGE * MAX_PAGES} rows this month`);
 }
@@ -240,9 +264,10 @@ export async function getCapUsd(orgId: string, userId: string): Promise<number> 
 }
 
 /** Write one call's metering row. Token columns may not exist yet
- *  (pre-migration DB) — PGRST204 retries without them so metering never
- *  breaks an answer that already succeeded; such a row carries no cost and
- *  is counted as UNPRICED spend (MonthUsage.unpricedCalls), never as $0.
+ *  (pre-migration DB, or a stale schema cache) — PGRST204 retries without
+ *  them so metering never breaks an answer that already succeeded; such a
+ *  row carries no cost and is counted at UNPRICED_CALL_USD
+ *  (MonthUsage.unpricedCalls), never as $0.
  *  The op names the feature; every op shares the same cap (GOV-1). */
 export async function recordAskUsage(input: {
   orgId: string; userId: string; provider: string; model: string;
@@ -286,21 +311,16 @@ export const IN_FLIGHT_WINDOW_MS = 10 * 60_000;
  *  the other already took. */
 export function reservationVerdict(rows: UsageRow[], mine: { id: string; reservedUsd: number }, capUsd: number, opts: {
   op?: string; maxInFlight?: number; now?: number;
-} = {}): { ok: true } | { ok: false; status: 402 | 429 | 503; spentBeforeUsd: number; message: string } {
+} = {}): { ok: true } | { ok: false; status: 402 | 429; spentBeforeUsd: number; message: string } {
   const me = rows.find((r) => r.id === mine.id);
   const myKey = me ? `${me.created_at ?? ""}|${me.id}` : null;
   // A reservation the read did not return (it always should) is judged
   // against EVERY other reservation — the conservative reading.
   const earlier = (r: UsageRow) => myKey === null || `${r.created_at ?? ""}|${r.id ?? ""}` < myKey;
   const counted = rows.filter((r) => r.id !== mine.id && (!isReservationRow(r) || earlier(r)));
+  // Unpriced rows are inside spentUsd at UNPRICED_CALL_USD (GOV-4).
   const month = rollupUsage(counted);
   const spentBeforeUsd = month.spentUsd;
-  if (month.unpricedCalls > 0) {
-    return {
-      ok: false, status: 503, spentBeforeUsd,
-      message: `${month.unpricedCalls} AI call${month.unpricedCalls === 1 ? "" : "s"} this month ${month.unpricedCalls === 1 ? "was" : "were"} recorded without a cost, so the ledger can't show you're under your cap — apply migration 20260916 (the usage cost columns).`,
-    };
-  }
   if (capIsLocked(capUsd)) {
     return { ok: false, status: 402, spentBeforeUsd, message: "Your monthly AI cap is set to $0, so AI is locked for you until someone who manages AI caps raises it." };
   }
@@ -358,7 +378,6 @@ export async function reserveWithinCap(input: {
   const verdict = reservationVerdict(rows, { id, reservedUsd }, input.capUsd, { op: input.op, maxInFlight: input.maxInFlight });
   if (!verdict.ok) {
     await releaseUsage(id);
-    if (verdict.status === 503) throw new AiUsageUnavailableError(verdict.message);
     throw new GovernedCallError(verdict.message, verdict.status, {
       spentUsd: verdict.spentBeforeUsd, capUsd: displayCapUsd(input.capUsd), reservedUsd,
     });

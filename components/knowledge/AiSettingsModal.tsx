@@ -58,6 +58,11 @@ const NoKeyChip = ({ label }: { label: string }) => (
 
 const fmtUsd = (n: number) => `$${n.toFixed(2)}`;
 
+/** GOV-4: the figure the server counts a cost-less metering row at
+ *  (UNPRICED_CALL_USD in lib/ai/usageServer — a server-only module, so the
+ *  number is restated here; aiSettingsUsagePanel.test.ts holds them equal). */
+export const UNPRICED_CALL_DISPLAY_USD = 1;
+
 // What /api/ai/usage sends beyond lib/knowledge's AiUsageSummary (GOV-1 /
 // GOV-3 / GOV-10): every op's spend, the locked flag, who may set caps.
 type OpLine = { spentUsd: number; calls: number };
@@ -66,6 +71,11 @@ type UsageView = Omit<AiUsageSummary, "team"> & {
   locked?: boolean;
   byOp?: Record<string, OpLine>;
   canManageCaps?: boolean;
+  /** GOV-4: calls recorded without a cost — each counted at a fixed
+   *  conservative figure inside spentUsd. */
+  unpricedCalls?: number;
+  /** GOV-10: the viewer's own cap follows the workspace default. */
+  selfFollowsDefault?: boolean;
   team?: Array<NonNullable<AiUsageSummary["team"]>[number] & { calls?: number; locked?: boolean; byOp?: Record<string, OpLine> }>;
 };
 
@@ -567,9 +577,14 @@ export function UsagePanel({ orgId }: { orgId: string }) {
     setSavingCap(true);
     try {
       await setAiCap(orgId, cap);
+      // GOV-10: raising the default you follow does not raise your own cap —
+      // the server holds you at your current figure.
+      const heldSelf = usage.selfFollowsDefault === true && cap > (usage.orgCapUsd ?? usage.capUsd);
       showToast({ type: "success", title: cap === 0
         ? "Default monthly cap set to $0 — AI is locked for everyone on the default."
-        : `Default monthly cap set to ${fmtUsd(cap)} per person.` });
+        : heldSelf
+          ? `Default monthly cap set to ${fmtUsd(cap)} per person. Your own cap stays at ${fmtUsd(usage.orgCapUsd ?? usage.capUsd)} — nobody raises their own cap, so another person who manages AI caps has to raise yours.`
+          : `Default monthly cap set to ${fmtUsd(cap)} per person.` });
       setTick((t) => t + 1);
     } catch (e) {
       showToast({ type: "error", title: (e as Error).message });
@@ -628,6 +643,13 @@ export function UsagePanel({ orgId }: { orgId: string }) {
           Where it went: {breakdown.map((l, i) => (
             <span key={l.label}>{i > 0 ? " · " : ""}{l.label} <b className="text-[var(--color-text)]">{fmtUsd(l.spentUsd)}</b></span>
           ))}
+        </p>
+      )}
+      {(usage.unpricedCalls ?? 0) > 0 && (
+        <p className="text-[11px] text-amber-700 dark:text-amber-400">
+          {usage.unpricedCalls} AI call{usage.unpricedCalls === 1 ? " was" : "s were"} recorded without a cost this month;
+          each is counted at {fmtUsd(UNPRICED_CALL_DISPLAY_USD)}, a deliberately high figure, so your cap is never
+          under-counted.
         </p>
       )}
       <p className="text-[10px] text-[var(--color-text-muted)]">

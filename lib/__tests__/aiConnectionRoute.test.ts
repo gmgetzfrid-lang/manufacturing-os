@@ -3,7 +3,8 @@
 //   GOV-7   every live call (test, embeddings test, verify-on-save) is gated
 //           on the cap and metered under `connectionTest`; a capped member
 //           cannot test, but may still verify a NEW key on save (de minimis,
-//           five an hour); the saved key is tested on the saved model
+//           five an hour) — never a LOCKED ($0) member, whom GOV-3 allows no
+//           spend on any gate; the saved key is tested on the saved model
 //   GOV-11  the agreement is waived for these probes only (no org content)
 //   GOV-6   the embeddings key is held to ALLOWED_EMBEDDING_PROVIDERS
 //   GOV-12  a production server without EXPORT_ENCRYPTION_KEY refuses to
@@ -186,6 +187,24 @@ describe("GOV-7 — tests are gated and metered", () => {
     expect(sixth.status).toBe(429);
     expect(String(sixth.json.error)).toMatch(/five|5 times an hour/);
     expect(ai.chat).toHaveLength(5);
+  });
+
+  it("a LOCKED ($0) member gets no de-minimis exemption: a new key is neither checked nor saved (GOV-3 — zero spend on every gate)", async () => {
+    db.tables.ai_usage_limits = [{ org_id: ORG, user_id: ME, monthly_cap_usd: 0 }];
+    const chat = await post({ provider: "anthropic", model: "claude-sonnet-4", apiKey: "sk-ant-new-key-1" });
+    expect(chat.status).toBe(402);
+    expect(String(chat.json.error)).toMatch(/set to \$0.*can't be checked while AI is locked for you, so it was not saved/);
+    const emb = await post({ action: "embedding", embeddingProvider: "voyage", embeddingModel: "voyage-3.5-lite", embeddingApiKey: "pa-new-key" });
+    expect(emb.status).toBe(402);
+    // no provider call, no metering row, and the stored key is the old one
+    expect(ai.chat).toHaveLength(0);
+    expect(ai.embed).toHaveLength(0);
+    expect(ledger()).toHaveLength(0);
+    expect(db.tables.ai_connections[0]).toMatchObject({ api_key: "sk-ant-legacy-plain", embedding_api_key: "pa-plain" });
+    // a plain test says only the lock (no "not saved" — nothing was being saved)
+    const test = await post({ action: "test" });
+    expect(test.status).toBe(402);
+    expect(String(test.json.error)).not.toMatch(/not saved/);
   });
 });
 

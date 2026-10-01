@@ -3,7 +3,9 @@
 //   GOV-1 / GOV-5 / ORCH-5 / SEM-2  every op counts toward the month — the
 //                                   rollup no longer filters to knowledgeAsk
 //   GOV-4   a ledger (or cap) read error refuses (503), never reads as $0;
-//           rows written without a cost count as unpriced, never as $0
+//           rows written without a cost count at UNPRICED_CALL_USD — never
+//           $0, never a lock; the ledger is paged until the exact count (a
+//           max-rows setting below the page size never truncates the sum)
 //   GOV-3   a stored $0 cap LOCKS — for capReached() outright, and for every
 //           legacy `cap > 0 && spent >= cap` gate as soon as anything is spent
 //   GOV-14  getCapUsd binds the user id as a value; nothing is spliced into a
@@ -21,6 +23,10 @@ const db = vi.hoisted(() => ({
   calls: [] as Array<{ table: string; op: string; args: unknown[] }>,
   seq: 0,
   clock: 0,
+  /** PostgREST's max-rows: a response never carries more rows than this. */
+  maxRows: Infinity,
+  /** Simulate a response without `count` (the read must still page to the end). */
+  noCount: false,
 }));
 
 vi.mock("@/lib/supabaseAdmin", () => {
@@ -31,6 +37,7 @@ vi.mock("@/lib/supabaseAdmin", () => {
     let range: [number, number] | null = null;
     let limit: number | null = null;
     let single = false;
+    let wantCount = false;
     const orders: Array<{ col: string; asc: boolean }> = [];
     const exec = () => {
       const err = db.errors[`${table}:${action}`];
@@ -46,12 +53,18 @@ vi.mock("@/lib/supabaseAdmin", () => {
       if (action === "delete") { db.tables[table] = rows.filter((r) => !hit.includes(r)); return { data: null, error: null }; }
       let out = [...hit];
       for (const o of [...orders].reverse()) out.sort((a, b) => (String(a[o.col]) < String(b[o.col]) ? -1 : String(a[o.col]) > String(b[o.col]) ? 1 : 0) * (o.asc ? 1 : -1));
+      const total = out.length;
       if (range) out = out.slice(range[0], range[1] + 1);
       if (limit !== null) out = out.slice(0, limit);
-      return { data: out, error: null };
+      out = out.slice(0, db.maxRows);
+      return { data: out, error: null, count: wantCount && !db.noCount ? total : null };
     };
     const b: Record<string, unknown> = {
-      select: (...args: unknown[]) => { db.calls.push({ table, op: "select", args }); return b; },
+      select: (...args: unknown[]) => {
+        db.calls.push({ table, op: "select", args });
+        if ((args[1] as { count?: string } | undefined)?.count === "exact") wantCount = true;
+        return b;
+      },
       insert: (p: Row) => { action = "insert"; payload = p; db.calls.push({ table, op: "insert", args: [p] }); return b; },
       update: (p: Row) => { action = "update"; payload = p; db.calls.push({ table, op: "update", args: [p] }); return b; },
       delete: () => { action = "delete"; db.calls.push({ table, op: "delete", args: [] }); return b; },
@@ -74,7 +87,7 @@ vi.mock("@/lib/supabaseAdmin", () => {
 import {
   getMonthUsage, getMonthUsageByUser, getCapUsd, rollupUsage, capReached, capIsLocked, displayCapUsd,
   reserveWithinCap, settleUsage, releaseUsage, reservationVerdict, recordAskUsage,
-  AiUsageUnavailableError, LOCKED_CAP_USD, DEFAULT_MONTHLY_CAP_USD, monthStartIso, type UsageRow,
+  AiUsageUnavailableError, LOCKED_CAP_USD, DEFAULT_MONTHLY_CAP_USD, UNPRICED_CALL_USD, monthStartIso, type UsageRow,
 } from "@/lib/ai/usageServer";
 import { GovernedCallError } from "@/lib/ai/governedCall";
 
@@ -90,6 +103,8 @@ beforeEach(() => {
   db.calls = [];
   db.seq = 0;
   db.clock = 0;
+  db.maxRows = Infinity;
+  db.noCount = false;
 });
 
 describe("GOV-1 / SEM-2 / ORCH-5 / GOV-5 — every op counts toward the month", () => {
@@ -152,6 +167,26 @@ describe("GOV-1 / SEM-2 / ORCH-5 / GOV-5 — every op counts toward the month", 
     expect(m.spentUsd).toBe(23.45);
   });
 
+  it("a max-rows setting below the page size never truncates the sum: a short page is not taken as the last", async () => {
+    // A project whose PostgREST max-rows is 500, a member with 800 rows.
+    db.maxRows = 500;
+    db.tables.ai_usage_events = Array.from({ length: 800 }, () => row({ op: "knowledgeAsk", est_cost_usd: 0.01 }));
+    const m = await getMonthUsage("o1", "u1");
+    expect(m.calls).toBe(800);
+    expect(m.spentUsd).toBe(8);
+    // the read asks for the exact count, and stops once it holds it
+    const selects = db.calls.filter((c) => c.table === "ai_usage_events" && c.op === "select");
+    expect(selects.every((c) => (c.args[1] as { count?: string } | undefined)?.count === "exact")).toBe(true);
+    expect(selects).toHaveLength(2);
+  });
+
+  it("without a count it still reads until a page comes back empty", async () => {
+    db.maxRows = 300;
+    db.noCount = true;
+    db.tables.ai_usage_events = Array.from({ length: 700 }, () => row({ est_cost_usd: 0.01 }));
+    expect((await getMonthUsage("o1", "u1")).calls).toBe(700);
+  });
+
   it("asks and avgPromptTokens describe knowledge questions only; failures are not calls", () => {
     const m = rollupUsage([
       row({ op: "knowledgeAsk", input_tokens: 1000 }) as UsageRow,
@@ -177,15 +212,24 @@ describe("GOV-4 — the gate fails CLOSED", () => {
     await expect(getMonthUsageByUser("o1")).rejects.toBeInstanceOf(AiUsageUnavailableError);
   });
 
-  it("rows written without a cost (the pre-migration fallback) are UNPRICED, not $0, and refuse a reservation", async () => {
-    db.tables.ai_usage_events = [row({ input_tokens: null, output_tokens: null, est_cost_usd: null, model: null })];
+  it("rows written without a cost (recordAskUsage's fallback) count at UNPRICED_CALL_USD — not $0, and not a lock", async () => {
+    // $1.00: a frontier-rate call with a 120,000-token prompt and a 16,000-token reply
+    expect(UNPRICED_CALL_USD).toBe(1);
+    db.tables.ai_usage_events = [row({ input_tokens: null, output_tokens: null, est_cost_usd: null, model: null, op: "flowRead" })];
     const m = await getMonthUsage("o1", "u1");
     expect(m.unpricedCalls).toBe(1);
-    const err = await reserveWithinCap({ orgId: "o1", userId: "u1", op: "graphShape", provider: "anthropic", model: "claude-sonnet-4", worstCaseUsd: 0.01, capUsd: 10 }).catch((e) => e);
-    expect(err).toBeInstanceOf(AiUsageUnavailableError);
-    expect((err as Error).message).toMatch(/recorded without a cost/);
-    // the refused reservation was released
-    expect(db.tables.ai_usage_events).toHaveLength(1);
+    expect(m.spentUsd).toBe(1);
+    expect(m.byOp.flowRead.spentUsd).toBe(1);
+    expect(m.calls).toBe(1);
+    // a reservation that fits beside it proceeds — the month is not refused (GOV-4 done-when 2)
+    const r = await reserveWithinCap({ orgId: "o1", userId: "u1", op: "graphShape", provider: "anthropic", model: "claude-sonnet-4", worstCaseUsd: 0.01, capUsd: 10 });
+    expect(r.reservedUsd).toBe(0.01);
+    // one that does not fit is refused like any other spend (402), naming no migration
+    const err = await reserveWithinCap({ orgId: "o1", userId: "u1", op: "graphShape", provider: "anthropic", model: "claude-sonnet-4", worstCaseUsd: 9.5, capUsd: 10 }).catch((e) => e);
+    expect((err as GovernedCallError).status).toBe(402);
+    expect((err as Error).message).not.toMatch(/20260916/);
+    // a failed call written by the fallback is not counted (nothing was billed)
+    expect(rollupUsage([row({ input_tokens: null, output_tokens: null, est_cost_usd: null, ok: false }) as UsageRow]).spentUsd).toBe(0);
   });
 
   it("tokens without a cost are priced, never zero (an unknown model prices as frontier)", () => {
@@ -201,12 +245,13 @@ describe("GOV-4 — the gate fails CLOSED", () => {
     expect(await getCapUsd("o1", "u1")).toBe(DEFAULT_MONTHLY_CAP_USD);
   });
 
-  it("a metering write against a pre-migration ledger still lands its base row (and that row reads as unpriced)", async () => {
-    db.errors["ai_usage_events:insert"] = { code: "PGRST204", message: "Could not find the 'est_cost_usd' column" };
+  it("a metering write against a stale schema cache still lands its base row (and that row reads as unpriced)", async () => {
+    db.errors["ai_usage_events:insert"] = { code: "PGRST204", message: "Could not find the 'est_cost_usd' column of 'ai_usage_events' in the schema cache" };
     await recordAskUsage({ orgId: "o1", userId: "u1", provider: "anthropic", model: "m", usage: { inputTokens: 1, outputTokens: 1 }, ok: true, op: "flowRead" });
     const inserts = db.calls.filter((c) => c.table === "ai_usage_events" && c.op === "insert");
     expect(inserts).toHaveLength(2);
     expect(inserts[1].args[0]).not.toHaveProperty("est_cost_usd");
+    expect(rollupUsage([inserts[1].args[0] as UsageRow]).unpricedCalls).toBe(1);
   });
 });
 

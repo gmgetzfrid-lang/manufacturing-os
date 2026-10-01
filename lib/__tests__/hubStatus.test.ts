@@ -7,7 +7,9 @@
 //   HUB-9   the Meaning-index card holds its own slot (an Admin sees it beside
 //           Database), is green only above a threshold, reads "not built"
 //           when nothing is indexed, and its row ignores the viewer's key
-//   HUB-10  the snapshot is keyed by user + org and discarded on a uid mismatch
+//   HUB-10  the snapshot is keyed by user + org and discarded on a uid mismatch;
+//           a uid or org change while the page is mounted never carries the
+//           last identity's status over (nor saves it under the new key)
 //   HUB-5   fix CTAs land on the control, or say who can fix it
 //   HUB-3   the first Facility setup step is pointed at from the front door;
 //           the two "Setup" surfaces have different names
@@ -170,6 +172,39 @@ describe("HUB-10 — the snapshot belongs to one user", () => {
     await renderPage();
     expect(host.textContent).not.toMatch(/4f2a/);
     for (const k of legacyHubKeys("o1")) expect(window.localStorage.getItem(k)).toBeNull();
+  });
+
+  it("a uid change while the page is mounted (an account switched in another tab) starts from the NEW person's snapshot — the last person's status is neither shown nor saved under the new key", async () => {
+    env.conns = { personal: { keyLast4: "4f2a", embeddingKeyLast4: null } };
+    env.results.knowledge_questions = { data: [{ id: "q1", question: "Where is the relief valve on V-101?", user_name: "Prev", library_id: "lib-9", created_at: "2026-10-01" }] };
+    await renderPage();
+    expect(host.textContent).toMatch(/4f2a/);
+    expect(host.textContent).toMatch(/relief valve on V-101/);
+
+    // user 2 signs in from another tab; this tab re-renders with the new uid
+    // and every per-user source fails for them
+    env.role = { ...env.role, uid: "u2" };
+    env.connsFail = new Error("cold start");
+    env.results.knowledge_questions = { error: { message: "permission denied" } };
+    await renderPage();
+    expect(host.textContent).not.toMatch(/4f2a/);
+    expect(host.textContent).not.toMatch(/relief valve on V-101/);
+    const saved = readHubSnapshot<Record<string, unknown>>(window.localStorage.getItem(hubSnapshotKey("u2", "o1")), "u2");
+    expect(saved).not.toBeNull();
+    expect(JSON.stringify(saved)).not.toMatch(/4f2a|relief valve/);
+    expect(saved?.keysKnown).not.toBe(true);
+    expect(saved?.asksKnown).not.toBe(true);
+    // user 1's own snapshot is untouched
+    expect(window.localStorage.getItem(hubSnapshotKey("u1", "o1"))).toMatch(/4f2a/);
+  });
+
+  it("a Retry for the SAME person keeps what is on screen while it re-asks", async () => {
+    await renderPage();
+    expect(host.textContent).toMatch(/abcd/);
+    env.connsFail = new Error("cold start");
+    await act(async () => { [...host.querySelectorAll("button")].find((b) => /Retry/.test(b.textContent ?? ""))?.click(); });
+    await renderPage();
+    expect(host.textContent).toMatch(/abcd/);
   });
 });
 

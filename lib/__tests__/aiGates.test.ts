@@ -69,7 +69,7 @@ vi.mock("@/lib/aiInstructionsServer", () => ({ loadOrgInstructionsBlock: vi.fn(a
 
 import { assertAiGates, NO_KEY_MESSAGE, NO_EMBEDDING_KEY_MESSAGE } from "@/lib/ai/aiGates";
 import { governedAiCall, GovernedCallError } from "@/lib/ai/governedCall";
-import { AiUsageUnavailableError } from "@/lib/ai/usageServer";
+import { AiUsageUnavailableError, UNPRICED_CALL_USD } from "@/lib/ai/usageServer";
 import { AGREEMENT_VERSION } from "@/lib/ai/pricing";
 
 const ORG = "o1", ME = "u1";
@@ -165,9 +165,21 @@ describe("aiGates — the five gates, in order", () => {
     expect(ai.calls).toHaveLength(0);
   });
 
-  it("4: unpriced rows this month → 503 (the ledger cannot prove headroom)", async () => {
-    db.tables.ai_usage_events = [{ ...spent(0), est_cost_usd: null, input_tokens: null, output_tokens: null }];
-    expect((await refusal(assertAiGates({ orgId: ORG, userId: ME, op: "x" }))).status).toBe(503);
+  it("4: a row recorded without a cost counts at UNPRICED_CALL_USD — never $0, never a month-long lock (GOV-4)", async () => {
+    const unpriced = () => ({ ...spent(0), id: `np${++db.seq}`, est_cost_usd: null, input_tokens: null, output_tokens: null });
+    db.tables.ai_usage_events = [unpriced()];
+    // one stale-schema-cache row: the member keeps working, the month reads $1.00 more
+    const pass = await assertAiGates({ orgId: ORG, userId: ME, op: "x" });
+    expect(pass.month.unpricedCalls).toBe(1);
+    expect(pass.month.spentUsd).toBe(UNPRICED_CALL_USD);
+    expect(UNPRICED_CALL_USD).toBe(1);
+    // ...and a governed call still goes through and is reserved beside it
+    await expect(governedAiCall({ orgId: ORG, userId: ME, op: "graphShape", system: "s", user: "u", maxTokens: 800 })).resolves.toMatchObject({ text: "OK" });
+    // enough of them fill the cap like any spend — 402, not 503
+    db.tables.ai_usage_events = Array.from({ length: 10 }, unpriced);
+    const e = await refusal(assertAiGates({ orgId: ORG, userId: ME, op: "x" }));
+    expect(e.status).toBe(402);
+    expect(e.message).not.toMatch(/20260916/);
   });
 });
 

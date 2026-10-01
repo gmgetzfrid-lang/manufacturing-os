@@ -17,3 +17,13 @@ export class GovernedCallError extends Error {
     super(message);
   }
 }
+
+/** GOV-4: is this the refusal a ledger or cap read throws when the spend
+ *  cannot be read (AiUsageUnavailableError in lib/ai/usageServer: 503,
+ *  `details.usageUnavailable`)? A caller whose AI step is optional — page
+ *  vision during indexing — skips that step on it instead of failing the
+ *  work around it. Judged by the class and the flag, so a caller whose tests
+ *  stub the ledger module still recognises it. */
+export function isAiUsageUnavailable(e: unknown): boolean {
+  return e instanceof GovernedCallError && e.details?.usageUnavailable === true;
+}

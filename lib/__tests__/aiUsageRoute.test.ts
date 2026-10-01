@@ -2,8 +2,12 @@
 //
 //   GOV-10  setting caps is the `ai.manage_caps` capability (default Admin)
 //           read from the org's policy — Doc Control is refused unless
-//           granted; nobody raises their OWN cap; every change notifies the
+//           granted; nobody raises their OWN cap — by an override, by
+//           clearing one, or by raising the workspace default they follow
+//           (they are held where they were); every change notifies the
 //           other holders and the person whose cap moved
+//   GOV-4   an unreadable cap table refuses (503) — the team view and the
+//           audit's "previous figure" never fall back to $10
 //   GOV-3   a $0 cap reads `locked`, 100% — what the server enforces
 //   GOV-4   an unreadable ledger answers 503, never $0.00
 //   GOV-1   the meter carries every op, broken out per feature
@@ -25,8 +29,12 @@ vi.mock("@/lib/supabaseAdmin", () => {
     let payload: Row | Row[] | null = null;
     let range: [number, number] | null = null;
     let one = false;
+    let limited = false;
     const exec = () => {
-      const err = db.errors[`${table}:${action}`];
+      // `table:select:nolimit` fails only the reads that are not .limit()ed —
+      // the team view and the route's own default / override reads, never
+      // getCapUsd's two bound reads.
+      const err = db.errors[`${table}:${action}`] ?? (limited ? undefined : db.errors[`${table}:${action}:nolimit`]);
       if (err) return { data: null, error: err };
       const rows = (db.tables[table] ??= []);
       if (action === "insert") {
@@ -50,7 +58,7 @@ vi.mock("@/lib/supabaseAdmin", () => {
       gte: (c: string, v: string) => { filters.push((r) => String(r[c]) >= v); return b; },
       order: () => b,
       range: (a: number, z: number) => { range = [a, z]; return b; },
-      limit: () => b,
+      limit: () => { limited = true; return b; },
       single: () => { one = true; return b; },
       maybeSingle: () => { one = true; return b; },
       then: (res: (v: unknown) => unknown, rej?: (e: unknown) => unknown) => Promise.resolve(exec()).then(res, rej),
@@ -132,6 +140,51 @@ describe("GOV-10 — cap changes are the ai.manage_caps capability, never the co
     expect(db.tables.ai_usage_limits.find((l) => l.user_id === ADMIN)?.monthly_cap_usd).toBe(40);
   });
 
+  it("raising the workspace default you follow does NOT raise your own cap — you are held where you were (the finding's own scenario)", async () => {
+    // A single holder at $10 of $10, no personal override, raises the default to $10,000.
+    db.tables.org_members = db.tables.org_members.filter((m) => m.uid !== ADMIN2);
+    db.tables.ai_usage_limits = [{ org_id: ORG, user_id: null, monthly_cap_usd: 10 }];
+    db.tables.ai_usage_events = [spend(ADMIN, "knowledgeAsk", 10)];
+    expect((await get(ADMIN)).json.selfFollowsDefault).toBe(true);
+    const r = await post(ADMIN, { capUsd: 10000 });
+    expect(r.status).toBe(200);
+    expect(r.json).toMatchObject({ ok: true, capUsd: 10000, selfHeldAtUsd: 10 });
+    // everyone else follows the new default; the setter's own cap is still $10
+    expect(db.tables.ai_usage_limits.find((l) => l.user_id === null)?.monthly_cap_usd).toBe(10000);
+    expect(db.tables.ai_usage_limits.find((l) => l.user_id === ADMIN)?.monthly_cap_usd).toBe(10);
+    const mine = (await get(ADMIN)).json;
+    expect(mine).toMatchObject({ capUsd: 10, percent: 100, selfFollowsDefault: false });
+    expect((await get(ENG)).json).toMatchObject({ capUsd: 10000 });
+    // the hold is audited, before the default's own row
+    const audits = db.tables.audit_logs.filter((a) => a.action === "AI_CAP_CHANGED");
+    expect(audits.map((a) => a.details)).toEqual([
+      { targetUserId: ADMIN, capUsd: 10, previousCapUsd: 10, heldOnDefaultRaise: true },
+      { capUsd: 10000, previousCapUsd: 10 },
+    ]);
+    // and the hold cannot be undone by the holder: clearing it onto the $10,000 default is a self-raise
+    expect((await post(ADMIN, { capUsd: null, userId: ADMIN })).status).toBe(403);
+    expect((await post(ADMIN, { capUsd: 500, userId: ADMIN })).status).toBe(403);
+  });
+
+  it("only a setter who FOLLOWS the default is held, and only when it goes up; a hold that cannot be written changes nothing", async () => {
+    // ADMIN has an override of their own: raising the default does not touch it
+    db.tables.ai_usage_limits = [{ org_id: ORG, user_id: null, monthly_cap_usd: 10 }, { org_id: ORG, user_id: ADMIN, monthly_cap_usd: 50 }];
+    const up = await post(ADMIN, { capUsd: 20 });
+    expect(up.status).toBe(200);
+    expect(up.json.selfHeldAtUsd).toBeUndefined();
+    expect(db.tables.ai_usage_limits).toHaveLength(2);
+    // ADMIN2 follows the default; lowering it holds nobody
+    const down = await post(ADMIN2, { capUsd: 5 });
+    expect(down.status).toBe(200);
+    expect(db.tables.ai_usage_limits.some((l) => l.user_id === ADMIN2)).toBe(false);
+    // raising it while the hold cannot be written: refused, the default untouched
+    db.errors["ai_usage_limits:insert"] = { message: "permission denied" };
+    const r = await post(ADMIN2, { capUsd: 40 });
+    expect(r.status).toBe(500);
+    expect(String(r.json.error)).toMatch(/default was not raised/);
+    expect(db.tables.ai_usage_limits.find((l) => l.user_id === null)?.monthly_cap_usd).toBe(5);
+  });
+
   it("every change is audited with the previous figure and notifies the other holders and the person whose cap moved", async () => {
     await post(ADMIN, { capUsd: 0, userId: ENG });
     const audit = db.tables.audit_logs.at(-1)!;
@@ -163,6 +216,35 @@ describe("GOV-3 — the meter says what the server enforces", () => {
     expect(r.status).toBe(400);
     expect(String(r.json.error)).toMatch(/0 locks AI/);
     expect((await post(ADMIN, { capUsd: 10001 })).status).toBe(400);
+  });
+});
+
+describe("GOV-4 — an unreadable cap table refuses; nobody is shown, or audited from, a $10 that isn't there", () => {
+  it("the team view answers 503 usageUnavailable instead of everyone 'on the $10 default'", async () => {
+    db.tables.ai_usage_limits = [{ org_id: ORG, user_id: ENG, monthly_cap_usd: 0 }, { org_id: ORG, user_id: null, monthly_cap_usd: 50 }];
+    db.errors["ai_usage_limits:select:nolimit"] = { message: "canceling statement due to statement timeout" };
+    const r = await get(ADMIN);
+    expect(r.status).toBe(503);
+    expect(r.json.usageUnavailable).toBe(true);
+    expect(r.json.team).toBeUndefined();
+    expect(String(r.json.error)).toMatch(/statement timeout/);
+  });
+
+  it("setting the default refuses (503) when the previous default cannot be read — no row, no audit 'from $10'", async () => {
+    db.tables.ai_usage_limits = [{ org_id: ORG, user_id: null, monthly_cap_usd: 50 }];
+    db.errors["ai_usage_limits:select:nolimit"] = { message: "connection reset" };
+    const r = await post(ADMIN, { capUsd: 20 });
+    expect(r.status).toBe(503);
+    expect(db.tables.ai_usage_limits.find((l) => l.user_id === null)?.monthly_cap_usd).toBe(50);
+    expect(db.tables.audit_logs).toHaveLength(0);
+    expect(notices()).toHaveLength(0);
+  });
+
+  it("clearing an override refuses (503) when the default it would fall back to cannot be read (the self-raise test reads it)", async () => {
+    db.tables.ai_usage_limits = [{ org_id: ORG, user_id: null, monthly_cap_usd: 50 }, { org_id: ORG, user_id: ADMIN, monthly_cap_usd: 10 }];
+    db.errors["ai_usage_limits:select:nolimit"] = { message: "connection reset" };
+    expect((await post(ADMIN, { capUsd: null, userId: ADMIN })).status).toBe(503);
+    expect(db.tables.ai_usage_limits).toHaveLength(2);
   });
 });
 

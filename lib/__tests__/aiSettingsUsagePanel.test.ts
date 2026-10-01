@@ -5,7 +5,9 @@
 //           a $0 cap reads LOCKED, never "Cap reached" over an uncapped key
 //   GOV-10  the cap editor appears only for a holder of ai.manage_caps; the
 //           copy names who can raise a cap
-//   GOV-4   an unreadable meter is an alert with a retry, not a vanished panel
+//   GOV-4   an unreadable meter is an alert with a retry, not a vanished panel;
+//           calls recorded without a cost are said, with the figure the
+//           server counts each at
 //   GOV-1   "Where it went" names each feature's spend
 //   GOV-12  the key-storage notice names EXPORT_ENCRYPTION_KEY
 
@@ -14,15 +16,19 @@ import React, { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 
 const kn = vi.hoisted(() => ({ getAiUsage: vi.fn(), setAiCap: vi.fn(async () => undefined) }));
+const toast = vi.hoisted(() => ({ showToast: vi.fn() }));
 vi.mock("@/lib/knowledge", () => ({
   getAiConnections: vi.fn(), saveAiConnection: vi.fn(), testAiConnection: vi.fn(), removeAiConnection: vi.fn(),
   saveEmbeddingKey: vi.fn(), removeEmbeddingKey: vi.fn(), testEmbeddingKey: vi.fn(),
   getAiUsage: kn.getAiUsage, setAiCap: kn.setAiCap,
 }));
-vi.mock("@/components/providers/ToastProvider", () => ({ useToast: () => ({ showToast: vi.fn() }) }));
+vi.mock("@/components/providers/ToastProvider", () => ({ useToast: () => toast }));
+// usageServer is server-only; its constant is read here to hold the copy to it.
+vi.mock("@/lib/supabaseAdmin", () => ({ supabaseAdmin: {} }));
 vi.mock("@/components/providers/DialogProvider", () => ({ appConfirm: vi.fn(async () => true) }));
 
-import { UsagePanel, KeyStorageNotice, opBreakdown } from "@/components/knowledge/AiSettingsModal";
+import { UsagePanel, KeyStorageNotice, opBreakdown, UNPRICED_CALL_DISPLAY_USD } from "@/components/knowledge/AiSettingsModal";
+import { UNPRICED_CALL_USD } from "@/lib/ai/usageServer";
 
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -38,6 +44,7 @@ beforeEach(() => {
   document.body.appendChild(host);
   root = createRoot(host);
   kn.getAiUsage.mockReset();
+  toast.showToast.mockReset();
 });
 afterEach(() => { act(() => root.unmount()); host.remove(); });
 
@@ -87,6 +94,29 @@ describe("UsagePanel", () => {
     expect(host.querySelector("select")).not.toBeNull();
     expect([...host.querySelectorAll("option")].some((o) => o.textContent === "$0 lock")).toBe(true);
     expect([...host.querySelectorAll("button")].some((b) => b.textContent === "Set")).toBe(true);
+  });
+
+  it("GOV-10: a holder who follows the default and raises it is told their own cap stays where it was", async () => {
+    const team = [{ userId: "u1", name: "Ada", spentUsd: 10, asks: 1, calls: 2, inputTokens: 1, outputTokens: 1, capUsd: 10, locked: false, hasOverride: false, byOp: {} }];
+    kn.getAiUsage.mockResolvedValue({ ...base, spentUsd: 10, percent: 100, orgCapUsd: 10, team, canManageCaps: true, selfFollowsDefault: true });
+    await render(React.createElement(UsagePanel, { orgId: "o1" }));
+    const input = host.querySelector("input") as HTMLInputElement;
+    const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!;
+    await act(async () => { setter.call(input, "500"); input.dispatchEvent(new Event("input", { bubbles: true })); });
+    const set = [...host.querySelectorAll("button")].find((b) => b.textContent === "Set")!;
+    await act(async () => { set.dispatchEvent(new MouseEvent("click", { bubbles: true })); });
+    await act(async () => { await Promise.resolve(); });
+    expect(kn.setAiCap).toHaveBeenCalledWith("o1", 500);
+    expect(String(toast.showToast.mock.calls.at(-1)?.[0]?.title)).toMatch(/Default monthly cap set to \$500\.00 per person\. Your own cap stays at \$10\.00 — nobody raises their own cap/);
+    kn.getAiUsage.mockReset();
+  });
+
+  it("GOV-4: calls recorded without a cost are said, with the figure the server counts each at", async () => {
+    expect(UNPRICED_CALL_DISPLAY_USD).toBe(UNPRICED_CALL_USD);
+    kn.getAiUsage.mockResolvedValueOnce({ ...base, spentUsd: 2, percent: 20, calls: 2, unpricedCalls: 2 });
+    await render(React.createElement(UsagePanel, { orgId: "o1" }));
+    expect(host.textContent).toMatch(/2 AI calls were recorded without a cost this month; each is counted at \$1\.00/);
+    expect(host.textContent).not.toMatch(/20260916/);
   });
 
   it("GOV-4: an unreadable meter is an alert with the server's sentence and a Retry", async () => {

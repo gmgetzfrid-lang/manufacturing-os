@@ -55,6 +55,7 @@ import { transcribePageImage } from "@/lib/knowledgeVision";
 import { isTimeoutError, type AiProviderId } from "@/lib/ai/providerCall";
 import { ALLOWED_PROVIDERS, AGREEMENT_VERSION, type AiUsage } from "@/lib/ai/pricing";
 import { getMonthUsage, getCapUsd, recordAskUsage } from "@/lib/ai/usageServer";
+import { isAiUsageUnavailable } from "@/lib/ai/gateError";
 import { loadOrgInstructionsBlock } from "@/lib/aiInstructionsServer";
 
 export const PAGE_BATCH = 50;
@@ -1995,10 +1996,15 @@ async function loadSponsorVision(
     const tableMissing = !!agreeError && (agreeError.code === "42P01" || /does not exist/i.test(agreeError.message));
     if (!tableMissing && (agree ?? []).length === 0) return { forceAllPages };
   }
-  const [spent, cap] = await Promise.all([
+  // GOV-4: an unreadable ledger withholds the vision context only — the
+  // caller indexes text-only (or files a read-every-page library behind), and
+  // the drain goes on to the next document instead of ending the run.
+  const ledger = await Promise.all([
     getMonthUsage(doc.org_id, sponsor),
     getCapUsd(doc.org_id, sponsor),
-  ]);
+  ]).catch((e: unknown) => { if (isAiUsageUnavailable(e)) return null; throw e; });
+  if (!ledger) return { forceAllPages };
+  const [spent, cap] = ledger;
   if (cap > 0 && spent.spentUsd >= cap) return { forceAllPages };
 
   return {

@@ -51,6 +51,7 @@ import { memberHoldsAny } from "@/lib/roleHeld";
 import { loadOrgInstructionsBlock } from "@/lib/aiInstructionsServer";
 import { ALLOWED_PROVIDERS, estimateCostUsd, type AiUsage } from "@/lib/ai/pricing";
 import { getMonthUsage, getCapUsd, recordAskUsage } from "@/lib/ai/usageServer";
+import { isAiUsageUnavailable } from "@/lib/ai/gateError";
 import type { AiProviderId } from "@/lib/ai/providerCall";
 
 export const runtime = "nodejs";
@@ -169,11 +170,17 @@ export async function POST(req: NextRequest) {
     if (!usable) {
       visionSkipReason = "Add your AI key in AI settings to read pages that have no text layer.";
     } else {
-      const [spent, cap] = await Promise.all([
+      // GOV-4: a ledger that cannot be read refuses the AI step only — the
+      // text layer still indexes (no headroom is text-only, never a failure).
+      const ledger = await Promise.all([
         getMonthUsage(orgId, user.id),
         getCapUsd(orgId, user.id),
-      ]);
-      if (cap > 0 && spent.spentUsd >= cap) {
+      ]).catch((e: unknown) => { if (isAiUsageUnavailable(e)) return null; throw e; });
+      const [spent, cap] = ledger ?? [null, 0];
+      if (!spent) {
+        visionSkipReason = "AI usage can't be read right now, so pages without a text layer were skipped — " +
+          "they index automatically once it can.";
+      } else if (cap > 0 && spent.spentUsd >= cap) {
         visionSkipReason = `Monthly AI budget reached ($${spent.spentUsd.toFixed(2)} of $${cap.toFixed(2)}) — ` +
           "pages without a text layer were skipped. They index automatically once the cap resets or is raised.";
       } else {

@@ -28,6 +28,7 @@ import { openAiKey } from "@/lib/ai/keyVault";
 import { callAiModel, AiCallError, type AiProviderId, type AiCallImage } from "@/lib/ai/providerCall";
 import { ALLOWED_PROVIDERS, AGREEMENT_VERSION } from "@/lib/ai/pricing";
 import { getMonthUsage, getCapUsd, recordAskUsage } from "@/lib/ai/usageServer";
+import { GovernedCallError } from "@/lib/ai/gateError";
 import { ensurePdfPolyfills } from "@/lib/knowledgeText";
 import { codeProblem, type ProposedEntry } from "@/lib/codebook";
 import { parseModelJson } from "@/lib/modelJson";
@@ -90,7 +91,15 @@ async function governedPropose(opts: {
       return bad("Accept the AI acceptable-use agreement first (ask any question in Knowledge to be prompted).", 428);
     }
   }
-  const [monthSoFar, capUsd] = await Promise.all([getMonthUsage(orgId, userId), getCapUsd(orgId, userId)]);
+  // GOV-4: an unreadable ledger answers its own 503 sentence, not a bare 500.
+  let monthSoFar: Awaited<ReturnType<typeof getMonthUsage>>;
+  let capUsd: number;
+  try {
+    [monthSoFar, capUsd] = await Promise.all([getMonthUsage(orgId, userId), getCapUsd(orgId, userId)]);
+  } catch (e) {
+    if (e instanceof GovernedCallError) return bad(e.message, e.status);
+    throw e;
+  }
   if (capUsd > 0 && monthSoFar.spentUsd >= capUsd) {
     return bad(`Monthly AI budget reached ($${monthSoFar.spentUsd.toFixed(2)} of $${capUsd.toFixed(2)}).`, 402);
   }

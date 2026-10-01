@@ -65,11 +65,17 @@ describe("20261137 — org_capability_allows_for learns ai.manage_caps (GOV-10)"
     expect(onlyInA).toEqual([]);
     expect(onlyInB).toEqual([ADDED]);
     expect(fn137.split("\n").length).toBe(fnPrev.split("\n").length + 1);
-    // inside the CASE, before its ELSE, after every row the earlier body had
+    // inside the CASE, before its ELSE. Its place among the other rows is
+    // free: J2b's parallel quality.sign_off row (20261136) folds into this
+    // body at merge on either side of it, and the lineDiff above still
+    // admits exactly this one row against whichever definer is newest.
     const caseBlock = between(fn137, "v_tokens := CASE p_cap", "END;");
     expect(caseBlock).toContain(ADDED);
     expect(caseBlock.indexOf(ADDED)).toBeLessThan(caseBlock.indexOf("ELSE '[]'::jsonb"));
-    for (const id of caseMap(fnPrev).keys()) expect(caseBlock.indexOf(`'${id}'`), id).toBeLessThan(caseBlock.indexOf(ADDED));
+    for (const id of caseMap(fnPrev).keys()) {
+      expect(caseBlock.indexOf(`'${id}'`), id).toBeGreaterThanOrEqual(0);
+      expect(caseBlock.indexOf(`'${id}'`), id).toBeLessThan(caseBlock.indexOf("ELSE '[]'::jsonb"));
+    }
     expect(fn137).toMatch(/org_capability_allows_for\(p_org UUID, p_cap TEXT, p_uid UUID, p_resource JSONB\)\s*\nRETURNS BOOLEAN LANGUAGE plpgsql STABLE SECURITY DEFINER SET search_path = public/);
   });
 

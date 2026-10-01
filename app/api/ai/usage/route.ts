@@ -16,8 +16,12 @@
 // "$0.00" (GOV-4). A $0 cap is LOCKED (GOV-3): `locked: true`, 100%.
 // Who may set caps is the `ai.manage_caps` capability (GOV-10, default
 // Admin) read from the org's capability policy — never a role list — and
-// nobody raises their OWN cap; every change is audited and notifies the
-// other holders and the person whose cap moved.
+// nobody raises their OWN cap: not by an override, not by clearing one onto
+// a higher default, and not by raising the workspace default they follow
+// (their own cap is then held where it was, as a personal override, in the
+// same request). Every change is audited and notifies the other holders and
+// the person whose cap moved. A cap table that cannot be read refuses (503)
+// — the team view and the "previous figure" never fall back to $10.
 //
 // Reads are service-role only: ai_usage_events and ai_usage_limits have RLS
 // with zero client policies, so this route is the only window into them.
@@ -70,6 +74,19 @@ async function capsAuthority(orgId: string, auth: Auth): Promise<{ ok: true; all
   const loaded = await loadCapabilityPolicyStrict(orgId, supabaseAdmin);
   if (!loaded.ok) return { ok: false, error: loaded.error };
   return { ok: true, policy: loaded.policy, allowed: policyAllows(loaded.policy, AI_MANAGE_CAPS, auth.role, auth.roles, auth.userId) };
+}
+
+const limitsTableMissing = (e: { code?: string; message: string }) =>
+  e.code === "42P01" || /does not exist/i.test(e.message);
+
+/** The stored workspace default (display figure: 0 = locked), $10 when no
+ *  row exists; an error when the table cannot be read. */
+async function readOrgDefault(orgId: string): Promise<{ ok: true; capUsd: number } | { ok: false; error: string }> {
+  const { data, error } = await supabaseAdmin.from("ai_usage_limits")
+    .select("monthly_cap_usd").eq("org_id", orgId).is("user_id", null).maybeSingle();
+  if (error && !limitsTableMissing(error)) return { ok: false, error: error.message };
+  const raw = Number((data as { monthly_cap_usd?: number | string } | null)?.monthly_cap_usd);
+  return { ok: true, capUsd: Number.isFinite(raw) && raw >= 0 ? raw : DEFAULT_MONTHLY_CAP_USD };
 }
 
 const monthLabel = () =>
@@ -127,14 +144,22 @@ export async function GET(req: NextRequest) {
         .select("user_id, monthly_cap_usd")
         .eq("org_id", orgId),
     ]);
+    // GOV-4: a cap table that cannot be read is said — never everyone "on
+    // the $10 default", which a manager would then re-set caps from.
+    if (limitsRes.error && !limitsTableMissing(limitsRes.error)) {
+      return bad(`AI caps can't be read right now (${limitsRes.error.message}).`, 503, { usageUnavailable: true });
+    }
     const members = (membersRes.data ?? []) as Array<{ uid: string; display_name: string | null; email: string | null }>;
-    const limits = (limitsRes.data ?? []) as Array<{ user_id: string | null; monthly_cap_usd: number | string }>;
+    const limits = (limitsRes.error ? [] : (limitsRes.data ?? [])) as Array<{ user_id: string | null; monthly_cap_usd: number | string }>;
     const orgCapRaw = Number(limits.find((l) => l.user_id === null)?.monthly_cap_usd);
     const orgCapUsd = Number.isFinite(orgCapRaw) && orgCapRaw >= 0 ? orgCapRaw : DEFAULT_MONTHLY_CAP_USD;
     const overrideByUser = new Map(
       limits.filter((l) => l.user_id !== null).map((l) => [l.user_id as string, Number(l.monthly_cap_usd)]),
     );
     payload.orgCapUsd = orgCapUsd;
+    // Whether the viewer's own cap follows the default — a holder who raises
+    // the default is then held at their current cap (GOV-10).
+    payload.selfFollowsDefault = !overrideByUser.has(auth.userId);
     payload.team = members
       .map((m) => {
         const u = byUser.get(m.uid);
@@ -228,10 +253,9 @@ export async function POST(req: NextRequest) {
       throw e;
     }
   } else {
-    const { data: orgRow } = await supabaseAdmin.from("ai_usage_limits")
-      .select("monthly_cap_usd").eq("org_id", orgId).is("user_id", null).maybeSingle();
-    const raw = Number((orgRow as { monthly_cap_usd?: number | string } | null)?.monthly_cap_usd);
-    previousCapUsd = Number.isFinite(raw) && raw >= 0 ? raw : DEFAULT_MONTHLY_CAP_USD;
+    const prev = await readOrgDefault(orgId);
+    if (!prev.ok) return bad(`Couldn't read the current default cap, so nothing was changed: ${prev.error}`, 503);
+    previousCapUsd = prev.capUsd;
   }
   // GOV-10: nobody raises their OWN cap — not by an override, not by
   // clearing one onto a higher default. Lowering it is always allowed.
@@ -242,10 +266,10 @@ export async function POST(req: NextRequest) {
 
   // Clearing a per-user override — the person falls back to the org default.
   if (targetUserId && body.capUsd === null) {
-    const { data: orgRow } = await supabaseAdmin.from("ai_usage_limits")
-      .select("monthly_cap_usd").eq("org_id", orgId).is("user_id", null).maybeSingle();
-    const rawDefault = Number((orgRow as { monthly_cap_usd?: number | string } | null)?.monthly_cap_usd);
-    const fallback = Number.isFinite(rawDefault) && rawDefault >= 0 ? rawDefault : DEFAULT_MONTHLY_CAP_USD;
+    // The self-raise test reads the default: unreadable → nothing changes.
+    const def = await readOrgDefault(orgId);
+    if (!def.ok) return bad(`Couldn't read the default cap, so the override was not cleared: ${def.error}`, 503);
+    const fallback = def.capUsd;
     if (selfRaise(fallback)) return bad(SELF_RAISE, 403);
     const { error } = await supabaseAdmin
       .from("ai_usage_limits").delete()
@@ -266,6 +290,36 @@ export async function POST(req: NextRequest) {
     return bad("capUsd must be a number between 0 and 10000 (0 locks AI for that person until it is raised).");
   }
   if (selfRaise(capUsd)) return bad(SELF_RAISE, 403);
+
+  // GOV-10: raising the WORKSPACE default must not raise the setter's own
+  // cap. A setter whose cap follows the default (no override of their own)
+  // is held where they are — an override at the previous default, written
+  // and audited BEFORE the default moves, so a failure changes nothing.
+  // Raising it later takes another holder, like any other self-raise.
+  let pinnedSelfAtUsd: number | null = null;
+  if (!targetUserId && previousCapUsd !== null && capUsd > previousCapUsd) {
+    const { data: own, error: ownError } = await supabaseAdmin.from("ai_usage_limits")
+      .select("id").eq("org_id", orgId).eq("user_id", auth.userId).maybeSingle();
+    if (ownError && !limitsTableMissing(ownError)) {
+      return bad(`Couldn't read your own cap, so the default was not changed: ${ownError.message}`, 503);
+    }
+    if (!own && !ownError) {
+      const { error: pinError } = await supabaseAdmin.from("ai_usage_limits").insert({
+        org_id: orgId, user_id: auth.userId, monthly_cap_usd: previousCapUsd,
+        updated_by: auth.userId, updated_at: new Date().toISOString(),
+      });
+      if (pinError) {
+        return bad(`Couldn't hold your own cap at its current figure, so the default was not raised: ${pinError.message}`, 500);
+      }
+      pinnedSelfAtUsd = previousCapUsd;
+      await supabaseAdmin.from("audit_logs").insert({
+        action: "AI_CAP_CHANGED",
+        resource_type: "ai_usage_limit", resource_id: orgId,
+        org_id: orgId, user_id: auth.userId,
+        details: { targetUserId: auth.userId, capUsd: previousCapUsd, previousCapUsd, heldOnDefaultRaise: true },
+      }).then(() => undefined, () => undefined);
+    }
+  }
 
   const readQ = supabaseAdmin.from("ai_usage_limits").select("id").eq("org_id", orgId);
   const { data: existing, error: readError } = targetUserId
@@ -294,5 +348,8 @@ export async function POST(req: NextRequest) {
   }).then(() => undefined, () => undefined);
   await notifyCapChange(orgId, auth, caps.policy, { targetUserId, capUsd, previousCapUsd });
 
-  return NextResponse.json({ ok: true, capUsd, locked: capUsd === 0 });
+  return NextResponse.json({
+    ok: true, capUsd, locked: capUsd === 0,
+    ...(pinnedSelfAtUsd !== null ? { selfHeldAtUsd: pinnedSelfAtUsd } : {}),
+  });
 }

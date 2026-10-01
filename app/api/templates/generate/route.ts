@@ -26,9 +26,14 @@
 //
 // PR-6: a draft whose reply cannot be read as the requested fields — no JSON
 // object, JSON that does not parse (often a reply cut off at its length
-// limit), or a field left out — FAILS: the batch answers an error naming the
-// row, and no document with silently blank AI sections is ever returned. A
-// field the model deliberately wrote as "" is kept as written.
+// limit), or a field left out — FAILS for that row: no document with
+// silently blank AI sections is ever returned. In a per-row batch the slice
+// stops at that row: the documents drafted before it come back (they were
+// paid for), the row is named in `skippedRows` with the reason and `stopped`
+// says so, and `nextOffset` is the row AFTER it — so a row whose reply is
+// unreadable every time cannot hold the batch, and nothing paid is thrown
+// away. A summary document (one call) answers 502. A field the model
+// deliberately wrote as "" is kept as written.
 
 import { NextRequest, NextResponse } from "next/server";
 import JSZip from "jszip";
@@ -322,6 +327,8 @@ export async function POST(req: NextRequest) {
     };
 
     const documents: Array<{ values: Record<string, string>; filename: string; sourceRow?: number }> = [];
+    /** PR-6: rows whose draft could not be read — left out, never blanked. */
+    const skippedRows: Array<{ row: number; reason: string }> = [];
     let stopped: string | null = null;
     try {
       if (mode === "summary") {
@@ -343,6 +350,15 @@ export async function POST(req: NextRequest) {
             // was drafted and paid for; the next slice starts at this row
             // and answers the refusal itself.
             if (e instanceof GovernedCallError && documents.length > 0) { stopped = e.message; break; }
+            // PR-6: an unreadable draft stops the slice AT its row and skips
+            // it — the earlier rows are kept, the next slice starts after it.
+            if (e instanceof DraftParseError) {
+              const row = offset + i + 1;
+              skippedRows.push({ row, reason: e.reason });
+              stopped = `${e.message}. Row ${row} was left out — no document with blank AI sections was made; ` +
+                "the rows drafted before it are kept, and the next batch starts after it.";
+              break;
+            }
             throw e;
           }
           const values = { ...known, ...drafted };
@@ -357,10 +373,11 @@ export async function POST(req: NextRequest) {
         }
       }
     } catch (e) {
-      // Every call already settled its own metering row (GOV-13).
+      // Every call already settled its own metering row (GOV-13). Only the
+      // summary document (one call) reaches here with an unreadable draft.
       if (e instanceof DraftParseError) {
         return bad(
-          `${e.message}, so no document was produced for this batch and nothing was left blank. ` +
+          `${e.message}, so the summary document was not produced and nothing was left blank. ` +
           "Draft again to retry.",
           502,
         );
@@ -370,9 +387,10 @@ export async function POST(req: NextRequest) {
       return bad(`Drafting failed: ${(e as Error).message}`, 502);
     }
 
-    const drafted = mode === "summary" ? slice.length : documents.length;
+    // Rows this slice used up: every drafted document, plus a skipped row.
+    const consumed = mode === "summary" ? slice.length : documents.length + skippedRows.length;
     const nextOffset = mode === "summary" ? null
-      : (offset + drafted < sheetData.rows.length ? offset + drafted : null);
+      : (offset + consumed < sheetData.rows.length ? offset + consumed : null);
 
     return NextResponse.json({
       documents,
@@ -382,6 +400,7 @@ export async function POST(req: NextRequest) {
       rowCount: sheetData.rows.length,
       nextOffset,
       ...(stopped ? { stopped } : {}),
+      ...(skippedRows.length > 0 ? { skippedRows } : {}),
       estCostUsd: usage.inputTokens + usage.outputTokens > 0
         ? estimateCostUsd(modelUsed, usage) : 0,
     });

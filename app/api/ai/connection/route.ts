@@ -25,7 +25,10 @@
 // org content. A member at their cap cannot run a test; a NEW key may still
 // be verified while saving (key rotation must never be blocked by the cap) as
 // a de-minimis exemption, at most DE_MINIMIS_VERIFIES_PER_HOUR an hour,
-// metered all the same. A test against the SAVED key uses the saved model —
+// metered all the same. The exemption is for a member who has SPENT their
+// cap — never for one whose cap is $0: a locked member is allowed no spend on
+// any gate (GOV-3), so a new key cannot be checked, or saved, until the lock
+// is lifted. A test against the SAVED key uses the saved model —
 // a body-supplied model rides only with a body-supplied key (GOV-7).
 // GOV-12: a production server without EXPORT_ENCRYPTION_KEY refuses to store
 // a key (checked before any verify call is spent), and the GET reports
@@ -128,9 +131,10 @@ async function countUnsealed(orgId: string, userId?: string): Promise<number | n
 /** One probe call, gated: under the cap it is reserved like any call; at the
  *  cap a probe that VERIFIES A NEW KEY on save runs as a de-minimis exemption
  *  (at most DE_MINIMIS_VERIFIES_PER_HOUR an hour) so a capped member can
- *  still rotate a key, and a plain test is refused. Returns the reservation
- *  (null under the exemption — metered after with recordAskUsage) or the
- *  refusal to send. */
+ *  still rotate a key, and a plain test is refused. A LOCKED ($0) member is
+ *  refused outright — the exemption never admits spend the lock forbids.
+ *  Returns the reservation (null under the exemption — metered after with
+ *  recordAskUsage) or the refusal to send. */
 async function gateProbe(input: {
   orgId: string; userId: string; key: "chat" | "embedding"; connection: AiGateConnection;
   inputChars: number; maxTokens: number; verifyOnSave: boolean;
@@ -144,6 +148,9 @@ async function gateProbe(input: {
     return { reservation: await gate.reserve({ inputChars: input.inputChars, maxTokens: input.maxTokens }) };
   } catch (e) {
     if (!(e instanceof GovernedCallError)) throw e;
+    if (e.status === 402 && e.details?.locked === true && input.verifyOnSave) {
+      return { refuse: bad(`${e.message} A new key can't be checked while AI is locked for you, so it was not saved.`, 402) };
+    }
     if (e.status !== 402 || !input.verifyOnSave) return { refuse: bad(e.message, e.status) };
     const since = new Date(Date.now() - 3_600_000).toISOString();
     const { count, error } = await supabaseAdmin.from("ai_usage_events").select("id", { count: "exact", head: true })

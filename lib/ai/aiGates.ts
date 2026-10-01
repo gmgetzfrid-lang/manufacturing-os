@@ -13,7 +13,9 @@
 //   3. the signed acceptable-use agreement at AGREEMENT_VERSION (428, with
 //      the text to sign in `details`)
 //   4. the monthly cap over EVERY op — locked at $0, refused when reached,
-//      refused when the ledger cannot be read (402 / 503)
+//      refused when the ledger cannot be read (402 / 503); a row recorded
+//      without a cost counts at UNPRICED_CALL_USD, never as $0 and never as
+//      a lock (GOV-4)
 //   5. a reservation per call: pass.reserve(estimate) writes the call's worst
 //      case BEFORE the call and refuses when it does not fit beside every
 //      other in-flight call; reservation.settle(...) meters the real figures
@@ -36,7 +38,7 @@ import {
 import { embeddingConnectionFrom } from "@/lib/ai/embeddings";
 import {
   getMonthUsage, getCapUsd, capReached, capIsLocked, displayCapUsd, reserveWithinCap, settleUsage, releaseUsage,
-  AiUsageUnavailableError, type MonthUsage,
+  type MonthUsage,
 } from "@/lib/ai/usageServer";
 import { GovernedCallError } from "@/lib/ai/gateError";
 
@@ -172,12 +174,11 @@ export async function assertAiGates(input: AiGateInput): Promise<AiGatePass> {
     await assertAgreement(input, chatProvider, kind, connection.provider);
   }
 
+  // A read error throws AiUsageUnavailableError (503). Rows recorded
+  // without a cost are already inside spentUsd at the conservative figure.
   const [month, capUsd] = await Promise.all([
     getMonthUsage(input.orgId, input.userId), getCapUsd(input.orgId, input.userId),
   ]);
-  if (month.unpricedCalls > 0) {
-    throw new AiUsageUnavailableError(`${month.unpricedCalls} call${month.unpricedCalls === 1 ? "" : "s"} this month carry no recorded cost — apply migration 20260916`);
-  }
   if (capReached(month.spentUsd, capUsd)) {
     throw new GovernedCallError(
       capIsLocked(capUsd)
