@@ -6,10 +6,12 @@
 //   CheckoutHistoryPanel). The remainder: "a staleness state derived from a
 //   configurable interval", reusing the review-cycle pattern, rendered beside
 //   AckPill / ReviewPill / EffectivePill — and no third currency
-//   implementation. The cadence rides the EFFECTIVE review policy
-//   (`fieldVerifyIntervalCount` / `fieldVerifyIntervalUnit`, resolved by
-//   resolveEffectivePolicy), the verdict is reviewStatusFor's, and every read
-//   is checked: a failed read is `unknown`, never "never verified".
+//   implementation. The cadence rides the review policies
+//   (`fieldVerifyIntervalCount` / `fieldVerifyIntervalUnit`), resolved ON ITS
+//   OWN by resolveVerificationPolicy — the most specific level that DEFINES
+//   one (P14 review fix: a document's own review cycle no longer drops its
+//   folder's cadence) — the verdict is reviewStatusFor's, and every read is
+//   checked: a failed read is `unknown`, never "never verified".
 
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { readFileSync } from "node:fs";
@@ -50,6 +52,7 @@ vi.mock("@/lib/inAppNotifications", () => ({ notify: vi.fn() }));
 
 import {
   summarizeFieldVerification, loadFieldVerification, computeNextVerificationDate, verificationPillText, verificationPillTitle,
+  resolveVerificationPolicy, decidesVerificationCadence,
   type FieldOutcomeRow,
 } from "@/lib/reviewCycles";
 import { loadDocControlRegister, registerToCsv, fieldVerificationCsv } from "@/lib/docControlRegister";
@@ -101,6 +104,27 @@ describe("GAP-9 — the currency is the review-cycle rule applied to the walkdow
     expect(summarizeFieldVerification([{ outcome: "all_clear", ended_at: daysAgo(1) }], null)).toBeNull();
   });
 
+  it("P14 review fix — the cadence is resolved ON ITS OWN: the most specific level that DEFINES one wins; a level with only a review cycle defers; enabled:false stops inheritance", () => {
+    const ownCycle: ReviewPolicy = { enabled: true, intervalCount: 12, intervalUnit: "months" };
+    const folder3y: ReviewPolicy = { enabled: true, intervalCount: 24, intervalUnit: "months", leadDays: 60, fieldVerifyIntervalCount: 3, fieldVerifyIntervalUnit: "years" };
+    const lib1y: ReviewPolicy = { enabled: true, fieldVerifyIntervalCount: 1, fieldVerifyIntervalUnit: "years" };
+    // the drawing given its own 12-month review cycle in the inspector keeps the folder's walkdown cadence (and its lead days)
+    expect(resolveVerificationPolicy(ownCycle, folder3y, lib1y)).toBe(folder3y);
+    expect(resolveVerificationPolicy(ownCycle, { enabled: true, intervalCount: 6, intervalUnit: "months" }, lib1y)).toBe(lib1y);
+    expect(resolveVerificationPolicy({ ...ownCycle, fieldVerifyIntervalCount: 90, fieldVerifyIntervalUnit: "days" }, folder3y, lib1y)?.fieldVerifyIntervalCount).toBe(90);
+    // an explicit opt-out at a more specific level stops inheritance, as for the cycle
+    expect(resolveVerificationPolicy({ enabled: false }, folder3y, lib1y)).toBeNull();
+    expect(resolveVerificationPolicy(null, { enabled: false }, lib1y)).toBeNull();
+    expect(resolveVerificationPolicy(null, null, null)).toBeNull();
+    expect(decidesVerificationCadence(ownCycle)).toBe(false);
+    expect(decidesVerificationCadence({ enabled: false })).toBe(true);
+    expect(decidesVerificationCadence(folder3y)).toBe(true);
+    // the reviewer's case: a 2019 walkdown under the folder's 3-year rule is OVERDUE, not plain "Field-verified"
+    const v = summarizeFieldVerification([verified("2019-05-01T12:00:00.000Z")], resolveVerificationPolicy(ownCycle, folder3y, null));
+    expect(v).toMatchObject({ status: "overdue", cadence: "Every 3 years" });
+    expect(verificationPillText(v!).tone).toBe("bad");
+  });
+
   it("no third currency implementation: the verdict is reviewStatusFor's, the due date addInterval's, the cadence words describeInterval's", () => {
     const lib = src("lib/reviewCycles.ts");
     const fn = lib.slice(lib.indexOf("export function summarizeFieldVerification("), lib.indexOf("/** The currency when it could not be read"));
@@ -136,6 +160,18 @@ describe("GAP-9 — one document's currency is read CHECKED (the inspector's pil
     expect(await loadFieldVerification({ id: "d1", reviewPolicy: { enabled: false }, libraryId: "L1" })).toMatchObject({ status: "verified", cadence: null });
   });
 
+  it("P14 review fix — a document with its OWN review cycle (no cadence) still reads and applies the inherited cadence; an unreadable inherited level is unknown for it too", async () => {
+    seedDoc();
+    T("checkout_sessions").push({ id: "s0", org_id: ORG, document_id: "d2", outcome: "field_verified", ended_at: "2019-05-01T12:00:00.000Z", user_name: "Ann", outcome_ref: { rev: "1" } });
+    const own: ReviewPolicy = { enabled: true, intervalCount: 12, intervalUnit: "months" };
+    expect(await loadFieldVerification({ id: "d2", reviewPolicy: own, libraryId: "L1" })).toMatchObject({ status: "overdue", cadence: "Every 3 years", rev: "1" });
+    expect(await loadFieldVerification({ id: "d2", reviewPolicy: own, collectionId: "C1", libraryId: "L1" })).toMatchObject({ status: "overdue", cadence: "Every 30 days" });
+    state.failRead = "libraries";
+    expect(await loadFieldVerification({ id: "d2", reviewPolicy: own, libraryId: "L1" })).toMatchObject({ status: "unknown", rev: "1" });
+    // a document whose own policy sets a cadence reads nothing above it
+    expect(await loadFieldVerification({ id: "d2", reviewPolicy: { ...own, fieldVerifyIntervalCount: 10, fieldVerifyIntervalUnit: "years" }, libraryId: "L1" })).toMatchObject({ status: "current", cadence: "Every 10 years" });
+  });
+
   it("a failed register read is UNKNOWN (never 'never verified'); a failed inherited policy read is unknown with the facts it did read", async () => {
     seedDoc();
     state.failRead = "checkout_sessions";
@@ -168,11 +204,14 @@ describe("GAP-9 — the register shows it beside the other pills and hands it to
     doc("never");
     doc("flagged"); session("s2", "flagged", "field_verified", daysAgo(40)); session("s3", "flagged", "discrepancy", daysAgo(4));
     doc("own-off", { review_policy: { enabled: false } });
+    // P14 review fix: its own 12-month review cycle (set in the inspector) keeps the library's 3-year walkdown cadence
+    doc("own-cycle", { review_policy: { enabled: true, intervalCount: 12, intervalUnit: "months" } }); session("s4", "own-cycle", "field_verified", "2019-05-01T12:00:00.000Z");
     const byId = new Map((await loadDocControlRegister(ORG)).rows.map((r) => [r.id, r]));
     expect(byId.get("fresh")?.fieldVerification).toMatchObject({ status: "current", rev: "3" });
     expect(byId.get("never")?.fieldVerification).toMatchObject({ status: "never" });
     expect(byId.get("flagged")?.fieldVerification).toMatchObject({ status: "discrepancy" });
     expect(byId.get("own-off")?.fieldVerification).toBeNull();
+    expect(byId.get("own-cycle")?.fieldVerification).toMatchObject({ status: "overdue", cadence: "Every 3 years" });
   });
 
   it("the register read is PAGED — a verification past PostgREST's row cap is still found (never 'never verified')", async () => {
@@ -194,6 +233,15 @@ describe("GAP-9 — the register shows it beside the other pills and hands it to
     state.failRead = "libraries";
     rows = (await loadDocControlRegister(ORG)).rows;
     expect(rows[0].fieldVerification).toMatchObject({ status: "unknown", unknownReason: "the review policy could not be read" });
+    // P14 review fix: a document's own review cycle without a cadence still inherits it — so an unreadable library is unknown for it too;
+    // one whose own policy sets the cadence (or opts out) is decided without the library
+    state.db.tables.documents = [];
+    doc("own-cycle", { review_policy: { enabled: true, intervalCount: 12, intervalUnit: "months" } });
+    doc("own-cadence", { review_policy: { enabled: true, fieldVerifyIntervalCount: 5, fieldVerifyIntervalUnit: "years" } });
+    session("s5", "own-cadence", "field_verified", daysAgo(20));
+    const byId = new Map((await loadDocControlRegister(ORG)).rows.map((r) => [r.id, r]));
+    expect(byId.get("own-cycle")?.fieldVerification).toMatchObject({ status: "unknown" });
+    expect(byId.get("own-cadence")?.fieldVerification).toMatchObject({ status: "current", cadence: "Every 5 years" });
   });
 
   it("the CSV's last column carries the pill's words and the facts", async () => {

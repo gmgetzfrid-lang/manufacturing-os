@@ -11,7 +11,7 @@
 import { supabase } from "@/lib/supabase";
 import { resolveEffectiveOwner, teamSupervisorMap } from "@/lib/ownership";
 import {
-  reviewStatusFor, daysUntilReview, resolveEffectivePolicy, summarizeFieldVerification, unknownFieldVerification,
+  reviewStatusFor, daysUntilReview, resolveVerificationPolicy, decidesVerificationCadence, summarizeFieldVerification, unknownFieldVerification,
   verificationPillText, verificationPillTitle, FIELD_OUTCOMES,
   type ReviewStatus, type FieldOutcomeRow, type FieldVerification,
 } from "@/lib/reviewCycles";
@@ -65,8 +65,8 @@ export interface RegisterRow {
   retentionSchedule: string | null;
   retentionScheduleUnknown: boolean;
   // GAP-9: field-verification currency — the last walkdown (who, when,
-  // against which revision), the cadence's verdict from the EFFECTIVE review
-  // policy, a later discrepancy superseding it; `unknown` (never "never
+  // against which revision), the verdict of the cadence the review policies
+  // set (resolveVerificationPolicy), a later discrepancy superseding it; `unknown` (never "never
   // verified") when the register or an inherited policy could not be read.
   fieldVerification: FieldVerification | null;
   // Origin (ISO 9001 §7.5.3)
@@ -192,19 +192,23 @@ export async function loadDocControlRegister(orgId: string, opts?: { limit?: num
     const inForce = !!retention && !!retention.years;
     const ack = ackMap.get(d.id as string) ?? null;
     const review = reviewMap.get(d.id as string) ?? null;
-    // GAP-9: the same EFFECTIVE review policy the cycle resolves (document →
-    // folder → library); an inherited level that could not be read makes the
-    // currency unknown, never "never verified".
+    // GAP-9: the verification cadence, resolved on its own from the review
+    // policies (resolveVerificationPolicy: the most specific level that
+    // DEFINES one — P14 review fix — so a document's own review cycle does not
+    // drop its folder's cadence); a level is consulted only while every more
+    // specific one decides nothing, so an inherited level that could not be
+    // read makes the currency unknown, never "never verified".
     const ownReview = (d.review_policy as ReviewPolicy | null) ?? null;
     const folderReview = collectionId ? ((colMap.get(collectionId) as { review_policy?: ReviewPolicy | null } | undefined)?.review_policy ?? null) : null;
     const libReview = ((lib as { review_policy?: ReviewPolicy | null } | undefined)?.review_policy) ?? null;
-    const reviewPolicyUnknown = !ownReview && ((!!collectionId && !!colsErr && !folderReview) || (!folderReview && !!libsErr));
+    const verifyPolicyUnknown = !decidesVerificationCadence(ownReview)
+      && ((!!collectionId && !!colsErr) || (!decidesVerificationCadence(folderReview) && !!libsErr));
     const outcomes = fieldOutcomes.byDoc.get(d.id as string) ?? [];
     const fieldVerification = fieldOutcomes.error
       ? unknownFieldVerification(`the check-in register could not be read (${fieldOutcomes.error})`)
-      : reviewPolicyUnknown
+      : verifyPolicyUnknown
         ? unknownFieldVerification("the review policy could not be read", summarizeFieldVerification(outcomes, null))
-        : summarizeFieldVerification(outcomes, resolveEffectivePolicy(ownReview, folderReview, libReview));
+        : summarizeFieldVerification(outcomes, resolveVerificationPolicy(ownReview, folderReview, libReview));
     return {
       id: d.id as string,
       number: (d.document_number as string) || (d.title as string) || (d.name as string) || "—",
