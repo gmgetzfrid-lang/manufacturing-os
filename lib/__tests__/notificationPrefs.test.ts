@@ -7,7 +7,8 @@
 //     migrations (NEDGE-2 / DELIV-12: the page's 'immediate' was in no SQL
 //     file, so the first save of every member with no row was refused).
 //   * shouldSendForEvent (the app's rule) against email_gate()'s CASE in
-//     20261148 (the database's copy of the same rule): equal, event by event.
+//     20261148 (the database's copy of the same rule): equal, event by event;
+//     and the recall / PSM exemption from every preference, equal in both.
 //   * readToastPreference fails open (RT-10's consumer, N3, relies on it).
 //   * the toast switch is offered exactly when the listener reads it.
 
@@ -39,6 +40,7 @@ vi.mock("@/lib/supabase", () => ({
 import {
   DIGEST_FREQUENCIES, OFFERED_DIGEST_FREQUENCIES, DIGEST_LABELS, PREF_DEFAULTS, TOAST_PREFERENCE_HONOURED,
   normalizeDigestFrequency, prefsFromRow, shouldSendForEvent, emailAllowedByPrefs,
+  PREFERENCE_EXEMPT_EVENT_TYPES, isPreferenceExempt,
   isMissingColumnError, isCheckViolation, isMissingEmailGate, readToastPreference,
   type NotificationPrefs,
 } from "@/lib/notificationPrefs";
@@ -166,18 +168,43 @@ describe("DELIV-2 — one rule, evaluated in the app and in email_gate()", () =>
       expect(sql.has(e)).toBe(false);
       expect(tsMapping([e]).size).toBe(0);
     }
-    expect(GATE_BODY).not.toMatch(/safety_recall|safety_alert/);
+    const caseBlock = GATE_BODY.slice(GATE_BODY.indexOf("v_toggle := CASE"), GATE_BODY.indexOf("END;", GATE_BODY.indexOf("v_toggle := CASE")));
+    expect(caseBlock).not.toMatch(/safety_recall|safety_alert/);
     expect(read("lib/notificationPrefs.ts")).not.toMatch(/case "safety_/);
   });
 
-  it("both copies stop on the master switch and on 'never' before the toggle", () => {
+  it("DEC-44 (N1) §9 — the exempt list is the recall and safety categories, and email_gate() exempts exactly the same", () => {
+    expect([...PREFERENCE_EXEMPT_EVENT_TYPES]).toEqual([categoryToEventType("recall"), categoryToEventType("safety")]);
+    const m = GATE_BODY.match(/IF COALESCE\(p_event_type, ''\) NOT IN \(([^)]*)\) THEN\s*SELECT \* INTO v_prefs FROM notification_preferences WHERE user_id = p_to_user;/);
+    expect(m).not.toBeNull();
+    expect([...m![1].matchAll(/'(\w+)'/g)].map((x) => x[1])).toEqual([...PREFERENCE_EXEMPT_EVENT_TYPES]);
+    for (const e of events) expect(isPreferenceExempt(e), e).toBe(PREFERENCE_EXEMPT_EVENT_TYPES.includes(e));
+  });
+
+  it("both copies stop on the master switch and on 'never' before the toggle — every event but a recall or a PSM alert", () => {
     expect(GATE_BODY).toMatch(/IF v_prefs\.email_enabled IS FALSE THEN RETURN false; END IF;\s*IF v_prefs\.digest_frequency = 'never' THEN RETURN false; END IF;\s*v_toggle := CASE/);
-    for (const e of events) {
+    const stoppable = events.filter((e) => !isPreferenceExempt(e));
+    expect(stoppable.length).toBe(events.length - 2);
+    for (const e of stoppable) {
       expect(emailAllowedByPrefs({ ...PREF_DEFAULTS, email_enabled: false }, e), e).toBe(false);
       expect(emailAllowedByPrefs({ ...PREF_DEFAULTS, digest_frequency: "never" }, e), e).toBe(false);
       expect(emailAllowedByPrefs({ ...PREF_DEFAULTS }, e), e).toBe(true);
       expect(emailAllowedByPrefs(null, e), e).toBe(true);
     }
+  });
+
+  it("DEC-44 (N1) §9 — a recall and a PSM alert pass every preference in the app's copy: master switch, 'never', every toggle", () => {
+    const allOff = { ...PREF_DEFAULTS, email_enabled: false, digest_frequency: "never", ...Object.fromEntries(TOGGLES.map((t) => [t, false])) };
+    for (const c of ["recall", "safety"] as const) {
+      const e = categoryToEventType(c);
+      expect(emailAllowedByPrefs({ ...PREF_DEFAULTS, email_enabled: false }, e), e).toBe(true);
+      expect(emailAllowedByPrefs({ ...PREF_DEFAULTS, digest_frequency: "never" }, e), e).toBe(true);
+      expect(emailAllowedByPrefs(allOff, e), e).toBe(true);
+      expect(emailAllowedByPrefs(null, e), e).toBe(true);
+    }
+    // and nothing else does
+    expect(emailAllowedByPrefs(allOff, "system")).toBe(false);
+    expect(emailAllowedByPrefs(allOff, "compliance_digest")).toBe(false);
   });
 
   it("hourly and daily send as instant in both copies (nothing batches them)", () => {
@@ -189,7 +216,8 @@ describe("DELIV-2 — one rule, evaluated in the app and in email_gate()", () =>
 
   it("the rule lives here once: lib/notifications.ts imports it and defines no switch of its own", () => {
     const lib = read("lib/notifications.ts");
-    expect(lib).toMatch(/import \{ emailAllowedByPrefs, isMissingEmailGate \} from "@\/lib\/notificationPrefs";/);
+    expect(lib).toMatch(/import \{ emailAllowedByPrefs, isMissingEmailGate, isPreferenceExempt \} from "@\/lib\/notificationPrefs";/);
+    expect(lib).not.toMatch(/safety_recall|safety_alert/);
     expect(lib).not.toMatch(/function shouldSendForEvent/);
     expect(lib).not.toMatch(/case "comment_mention"/);
   });

@@ -6,8 +6,8 @@
 //   1. Asks email_gate() (20261148, SECURITY DEFINER) whether the RECIPIENT's
 //      preferences allow this email and whether it repeats, within 60
 //      seconds, the latest email to them about the same resource and event
-//      (same subject) — evaluated where the recipient's row is visible,
-//      whoever is calling (DELIV-2, DELIV-9)
+//      (same subject and body) — evaluated where the recipient's row is
+//      visible, whoever is calling (DELIV-2, DELIV-9)
 //   2. Writes a row to `email_notifications` (status='queued')
 //   3. Hits /api/notifications/send-queued to flush new rows immediately
 //      so the recipient sees the email within seconds, not minutes
@@ -16,7 +16,7 @@
 // produced by MentionableTextarea.
 
 import { supabase } from "@/lib/supabase";
-import { emailAllowedByPrefs, isMissingEmailGate } from "@/lib/notificationPrefs";
+import { emailAllowedByPrefs, isMissingEmailGate, isPreferenceExempt } from "@/lib/notificationPrefs";
 
 export type QueueEmailInput = {
   orgId: string;
@@ -62,6 +62,7 @@ async function evaluateEmailGate(input: QueueEmailInput): Promise<GateVerdict> {
     p_event_type: input.eventType,
     p_resource_id: input.resourceId || null,
     p_subject: input.subject,
+    p_body: input.bodyText,
   });
   if (!error) return data === false ? "suppress" : "send";
   if (isMissingEmailGate(error)) {
@@ -78,11 +79,12 @@ async function evaluateEmailGate(input: QueueEmailInput): Promise<GateVerdict> {
 
 /** The pre-20261148 gate: the recipient's row and the 60-second window read
  *  through the CALLER's client, with email_gate()'s dedupe key (a repeat of
- *  the latest email — same subject — never a different message that shares
- *  the event and resource). A missing row is the defaults when the read could
- *  have seen it (callerSeesRecipientRow); from a browser RLS hides another
- *  member's row, so there a missing row is reported as 'unverified' rather
- *  than read as all-on. */
+ *  the latest email — same subject AND same body — never a different message
+ *  that shares the event and resource). A missing row is the defaults when
+ *  the read could have seen it (callerSeesRecipientRow); from a browser RLS
+ *  hides another member's row, so there a missing row is reported as
+ *  'unverified' rather than read as all-on. A recall or PSM alert is never
+ *  'unverified': no preference bears on it. */
 async function legacyEmailGate(input: QueueEmailInput): Promise<GateVerdict> {
   const { data: prefs, error: prefsErr } = await supabase
     .from("notification_preferences")
@@ -95,16 +97,17 @@ async function legacyEmailGate(input: QueueEmailInput): Promise<GateVerdict> {
     const sixtySecAgo = new Date(Date.now() - 60_000).toISOString();
     const { data: latest } = await supabase
       .from("email_notifications")
-      .select("subject")
+      .select("subject, body_text")
       .eq("to_user_id", input.toUserId)
       .eq("event_type", input.eventType)
       .eq("resource_id", input.resourceId)
       .gte("created_at", sixtySecAgo)
       .order("created_at", { ascending: false })
       .limit(1);
-    const last = (latest as Array<{ subject?: unknown }> | null)?.[0];
-    if (last && last.subject === input.subject) return "suppress";
+    const last = (latest as Array<{ subject?: unknown; body_text?: unknown }> | null)?.[0];
+    if (last && last.subject === input.subject && last.body_text === input.bodyText) return "suppress";
   }
+  if (isPreferenceExempt(input.eventType)) return "send";
   if (prefsErr) return "unverified";
   if (prefs) return "send";
   return (await callerSeesRecipientRow(input.toUserId)) ? "send" : "unverified";
@@ -138,7 +141,7 @@ export async function queueEmail(input: QueueEmailInput): Promise<void> {
   try {
     // The recipient's preferences + the 60-second dedupe (a repeat of the
     // latest email to this recipient about the same event and resource: same
-    // subject), evaluated by email_gate() where both are visible.
+    // subject and body), evaluated by email_gate() where both are visible.
     const verdict = await evaluateEmailGate(input);
     if (verdict === "suppress") return;
 

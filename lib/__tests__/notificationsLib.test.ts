@@ -28,8 +28,10 @@ import { categoryToEventType, type NotifCategory } from "@/lib/notify/dispatch";
 //   email_gate() — SECURITY DEFINER (20261148): it sees every row whoever
 //     calls it. Its rules are written out here independently of the app's
 //     helper; notificationPrefs.test.ts pins the migration's CASE to them.
-//     Its dedupe merges a repeat only: the latest email to the recipient for
-//     the same (event, resource, org) in 60 s has the same subject.
+//     A recall ('safety_recall') or PSM alert ('safety_alert') skips the
+//     preferences entirely. Its dedupe merges a repeat only: the latest email
+//     to the recipient for the same (event, resource, org) in 60 s has the
+//     same subject AND the same body.
 //   auth.getSession — the browser carries the actor's session; the service
 //     role (the cron, the intake door) carries none.
 const world = vi.hoisted(() => ({
@@ -45,6 +47,7 @@ const world = vi.hoisted(() => ({
 
 vi.mock("@/lib/supabase", () => {
   type Row = Record<string, unknown>;
+  const EXEMPT = new Set(["safety_recall", "safety_alert"]);
   const GATED: Record<string, string> = {
     comment_mention: "email_on_mention",
     assignment: "email_on_assignment",
@@ -104,7 +107,7 @@ vi.mock("@/lib/supabase", () => {
   async function rpc(fn: string, args: Record<string, unknown>) {
     world.rpcCalls.push({ fn, args });
     if (world.rpc === "missing") {
-      return { data: null, error: { code: "PGRST202", message: `Could not find the function public.${fn}(p_event_type, p_org, p_resource_id, p_to_user) in the schema cache` } };
+      return { data: null, error: { code: "PGRST202", message: `Could not find the function public.${fn}(p_body, p_event_type, p_org, p_resource_id, p_subject, p_to_user) in the schema cache` } };
     }
     if (world.rpc === "missing-42883") {
       return { data: null, error: { code: "42883", message: `function public.${fn}(uuid, uuid, text, text) does not exist` } };
@@ -113,7 +116,7 @@ vi.mock("@/lib/supabase", () => {
       return { data: null, error: { code: "57014", message: "canceling statement due to statement timeout" } };
     }
     if (fn !== "email_gate") return { data: null, error: { code: "PGRST202", message: "unknown" } };
-    const p = world.prefs.get(args.p_to_user as string);
+    const p = EXEMPT.has(args.p_event_type as string) ? undefined : world.prefs.get(args.p_to_user as string);
     if (p) {
       if (p.email_enabled === false) return { data: false, error: null };
       if (p.digest_frequency === "never") return { data: false, error: null };
@@ -124,7 +127,8 @@ vi.mock("@/lib/supabase", () => {
       const since = Date.now() - 60_000;
       const last = world.emails.filter((e) => e.to_user_id === args.p_to_user && e.event_type === args.p_event_type
         && e.resource_id === args.p_resource_id && e.org_id === args.p_org && Date.parse(e.created_at as string) >= since).at(-1);
-      if (last && args.p_subject != null && last.subject === args.p_subject) return { data: false, error: null };
+      if (last && args.p_subject != null && args.p_body != null
+        && last.subject === args.p_subject && last.body_text === args.p_body) return { data: false, error: null };
     }
     return { data: true, error: null };
   }
@@ -280,7 +284,7 @@ describe("DELIV-2 — an opt-out is honoured whoever queues the email", () => {
   it("the gate is asked through email_gate with the org, the recipient, the event and the resource", async () => {
     await queueEmail(mail());
     expect(world.rpcCalls).toEqual([
-      { fn: "email_gate", args: { p_org: ORG, p_to_user: B, p_event_type: "comment_mention", p_resource_id: DOC1, p_subject: "Subject" } },
+      { fn: "email_gate", args: { p_org: ORG, p_to_user: B, p_event_type: "comment_mention", p_resource_id: DOC1, p_subject: "Subject", p_body: "Body" } },
     ]);
   });
 });
@@ -315,12 +319,20 @@ describe("DELIV-9 — the 60-second dedupe sees the recipient's rows", () => {
 
 // emit() queues with eventType = the CATEGORY (dispatch.ts categoryToEventType),
 // not the notification kind, so different messages about one document share
-// (recipient, event, resource). The dedupe must merge only a repeat.
+// (recipient, event, resource) — and some share the subject too, differing
+// only in the body. The dedupe must merge only a repeat: same subject AND body.
 describe("DELIV-9 — the dedupe merges a repeat, never a different message about the same resource", () => {
   const STATUS = categoryToEventType("status");   // lib/holds.ts: hold placed AND hold released
   const WATCHED = categoryToEventType("watched"); // postPublish 'advanced to Rev' AND workPackages 'went stale'
+  const RECALL = categoryToEventType("recall");   // lib/staleCopies.ts: the publish-time recall
   const PLACED = "HOLD placed on DOC-100 — Engineering review";
   const RELEASED = "Hold released on DOC-100";
+  // lib/staleCopies.ts:389-394 — the revision is only in the body
+  const RECALL_SUBJECT = "Your copy of DOC-100 is out of date";
+  const recallBody = (rev: string) =>
+    `The current revision is Rev ${rev}. You downloaded an older one — re-download before doing any work from it, and destroy old prints.`;
+  // lib/holds.ts:438-443 — the reason is only in the body
+  const releasedBody = (reason: string) => `Dana released the "${reason}" hold. Work can resume on the current revision.`;
 
   const PATHS = [
     ["email_gate (after the paste), queued from a browser", () => { world.ctx = "client"; world.rpc = "deployed"; }],
@@ -356,6 +368,26 @@ describe("DELIV-9 — the dedupe merges a repeat, never a different message abou
         await queueEmail(mail({ eventType: WATCHED, subject: "DOC-100 advanced to Rev C" }));
         await queueEmail(mail({ eventType: WATCHED, subject: 'Work package "B" went stale' }));
         expect(world.emails).toHaveLength(2);
+      });
+
+      it("Rev B published, then Rev C 30 s later: both recalls are queued, and the holder's last recall email names Rev C", async () => {
+        await queueEmail(mail({ eventType: RECALL, subject: RECALL_SUBJECT, bodyText: recallBody("B") }));
+        await queueEmail(mail({ eventType: RECALL, subject: RECALL_SUBJECT, bodyText: recallBody("C") }));
+        expect(world.emails.map((e) => e.body_text)).toEqual([recallBody("B"), recallBody("C")]);
+        expect(world.emails.at(-1)!.body_text).toMatch(/current revision is Rev C/);
+      });
+
+      it("a recall repeated (two producers, same revision) merges; the next revision still goes out", async () => {
+        await queueEmail(mail({ eventType: RECALL, subject: RECALL_SUBJECT, bodyText: recallBody("B") }));
+        await queueEmail(mail({ eventType: RECALL, subject: RECALL_SUBJECT, bodyText: recallBody("B") }));
+        await queueEmail(mail({ eventType: RECALL, subject: RECALL_SUBJECT, bodyText: recallBody("C") }));
+        expect(world.emails.map((e) => e.body_text)).toEqual([recallBody("B"), recallBody("C")]);
+      });
+
+      it("two different holds released on one document within 60 s (the reason is only in the body): both emails", async () => {
+        await queueEmail(mail({ eventType: STATUS, subject: RELEASED, bodyText: releasedBody("Engineering review") }));
+        await queueEmail(mail({ eventType: STATUS, subject: RELEASED, bodyText: releasedBody("Field verification") }));
+        expect(world.emails.map((e) => e.body_text)).toEqual([releasedBody("Engineering review"), releasedBody("Field verification")]);
       });
 
       it("the same message twice within 60 s is still one email", async () => {
@@ -398,41 +430,78 @@ describe("REGRESSION — every email queued before the switch is still queued wh
     }
   }
 
-  for (const ctx of ["client", "service"] as const) {
-    it(`${ctx} context: on ONE resource within 60 s, each of the ${EVENTS.length} event types queues two different messages as two emails`, async () => {
-      world.ctx = ctx;
-      for (const eventType of EVENTS) {
-        await queueEmail(mail({ eventType, subject: `${eventType}: first` }));
-        await queueEmail(mail({ eventType, subject: `${eventType}: second` }));
-      }
-      expect(world.emails.map((e) => e.subject)).toEqual(EVENTS.flatMap((e) => [`${e}: first`, `${e}: second`]));
-      expect(warn).not.toHaveBeenCalled();
-    });
+  // Two different messages about ONE resource within 60 s, for every event
+  // type: differing only in the subject, then only in the body. Through
+  // email_gate (browser and service role) and the pre-paste fallback.
+  const SAME_RESOURCE_PATHS = [
+    ["client context, email_gate", "client", "deployed"],
+    ["service context, email_gate", "service", "deployed"],
+    ["service context, pre-paste fallback", "service", "missing"],
+  ] as const;
+  for (const [label, ctx, rpc] of SAME_RESOURCE_PATHS) {
+    for (const vary of ["subject", "body"] as const) {
+      it(`${label}: on ONE resource within 60 s, each of the ${EVENTS.length} event types queues two messages differing only in the ${vary} as two emails`, async () => {
+        world.ctx = ctx;
+        world.rpc = rpc;
+        const msg = (eventType: string, n: string): Partial<QueueEmailInput> =>
+          vary === "subject" ? { subject: `${eventType}: ${n}`, bodyText: "Body" } : { subject: eventType, bodyText: `${eventType}: ${n}` };
+        for (const eventType of EVENTS) {
+          await queueEmail(mail({ eventType, ...msg(eventType, "first") }));
+          await queueEmail(mail({ eventType, ...msg(eventType, "second") }));
+        }
+        expect(world.emails.map((e) => [e.event_type, e.subject, e.body_text])).toEqual(
+          EVENTS.flatMap((e) => [
+            [e, msg(e, "first").subject, msg(e, "first").bodyText],
+            [e, msg(e, "second").subject, msg(e, "second").bodyText],
+          ]),
+        );
+        expect(world.emails.every((e) => e.metadata === null)).toBe(true);
+        if (rpc === "deployed") expect(warn).not.toHaveBeenCalled();
+      });
+    }
   }
 
-  it("recall and safety mail ignores every per-category toggle (only the master switch and 'never' stop it)", async () => {
+  it("recall and safety mail ignores every per-category toggle", async () => {
     setPrefs(B, { email_on_mention: false, email_on_assignment: false, email_on_status_change: false, email_on_watched_activity: false, email_on_sla_warning: false });
     await queueEmail(mail({ eventType: categoryToEventType("recall"), resourceId: DOC1 }));
     await queueEmail(mail({ eventType: categoryToEventType("safety"), resourceId: DOC2 }));
     expect(world.emails.map((e) => e.event_type)).toEqual(["safety_recall", "safety_alert"]);
   });
 
-  it("DEC-44 (N1) §9: the master switch and 'never' stop recall and safety email too, on every path", async () => {
-    // From 20261148 on this includes the browser path, which used to mail a
-    // recall regardless because it could not see the row (DELIV-2). The bell
-    // row is dispatch.ts's and is always written.
-    for (const [ctx, rpc] of [["client", "deployed"], ["service", "deployed"], ["service", "missing"]] as const) {
+  // The plan's "recall/safety categories are un-mutable regardless
+  // (dispatch.ts:59-66)": no preference stops them, on any path. On cd8a93a
+  // the browser path already mailed them (it could not see the row); this
+  // keeps that true after the paste, and makes the service-role path agree.
+  for (const [label, ctx, rpc] of [
+    ["a browser, email_gate", "client", "deployed"],
+    ["the service role, email_gate", "service", "deployed"],
+    ["the service role, pre-paste fallback", "service", "missing"],
+    ["a browser, pre-paste fallback", "client", "missing"],
+  ] as const) {
+    it(`DEC-44 (N1) §9 — ${label}: the master switch and 'never' stop every email but a recall or a PSM alert`, async () => {
       world.ctx = ctx;
       world.rpc = rpc;
       setPrefs(B, { email_enabled: false });
       setPrefs(C, { digest_frequency: "never" });
+      const toC = { toUserId: C, toEmail: "c@example.test" };
       for (const c of ["recall", "safety"] as const) {
         await queueEmail(mail({ eventType: categoryToEventType(c) }));
-        await queueEmail(mail({ toUserId: C, toEmail: "c@example.test", eventType: categoryToEventType(c) }));
+        await queueEmail(mail({ ...toC, eventType: categoryToEventType(c) }));
       }
-    }
-    expect(world.emails).toHaveLength(0);
-  });
+      expect(world.emails.map((e) => [e.to_user_id, e.event_type])).toEqual([
+        [B, "safety_recall"], [C, "safety_recall"], [B, "safety_alert"], [C, "safety_alert"],
+      ]);
+      // no preference bears on them, so a blind read never stamps them 'unverified'
+      expect(world.emails.every((e) => e.metadata === null)).toBe(true);
+      if (ctx === "service" || rpc === "deployed") {
+        // where the row is visible, the opt-out still stops everything else
+        await queueEmail(mail({ eventType: "comment_mention", resourceId: DOC2 }));
+        await queueEmail(mail({ ...toC, eventType: "assignment", resourceId: DOC2 }));
+        await queueEmail(mail({ eventType: "system", resourceId: DOC2 }));
+        expect(world.emails).toHaveLength(4);
+      }
+    });
+  }
 });
 
 describe("a gate that cannot answer is never a silent all-on", () => {

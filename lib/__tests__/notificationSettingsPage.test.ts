@@ -123,6 +123,14 @@ describe("NEDGE-2 / DELIV-12 — a member with no row saves the defaults", () =>
     });
   });
 
+  it("the master switch and Never say what they do not stop: drawing recalls and safety notices always email (DEC-44 (N1) §9)", async () => {
+    await mount();
+    const master = byText("div", /^Master switch\./)!;
+    expect(master.textContent).toMatch(/except drawing recalls and safety notices, which always email/);
+    const cadence = byText("div", /^Delivery cadence$/)!.parentElement!;
+    expect(cadence.textContent).toMatch(/Never turns event email off, except drawing recalls and safety notices/);
+  });
+
   it("offers only what the backend honours: Immediately and Never (Hourly / Daily are not offered)", async () => {
     await mount();
     const cadence = byText("div", /^Delivery cadence$/)!.parentElement!;

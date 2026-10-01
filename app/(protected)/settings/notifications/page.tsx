@@ -155,7 +155,7 @@ export default function NotificationSettingsPage() {
             <Mail className="w-5 h-5 text-[var(--color-text-muted)] shrink-0 mt-0.5" />
             <div className="flex-1">
               <div className="text-sm font-black text-[var(--color-text)]">Email notifications</div>
-              <div className="text-xs text-[var(--color-text-muted)] mt-0.5">Master switch. Off here means no email regardless of the per-event toggles below.</div>
+              <div className="text-xs text-[var(--color-text-muted)] mt-0.5">Master switch. Off here means no email regardless of the per-event toggles below — except drawing recalls and safety notices, which always email.</div>
             </div>
             <Toggle label="Email notifications" on={prefs.email_enabled} onChange={(v) => setPrefs({ ...prefs, email_enabled: v })} />
           </div>
@@ -173,7 +173,7 @@ export default function NotificationSettingsPage() {
         {/* Digest cadence */}
         <div className="bg-[var(--color-surface)] rounded-2xl border border-[var(--color-border)] shadow-sm p-5 mt-4">
           <div className="text-sm font-black text-[var(--color-text)] mb-1">Delivery cadence</div>
-          <div className="text-xs text-[var(--color-text-muted)] mb-3">Immediately sends each email as it happens; Never turns event email off. (The master switch above also stops the daily compliance digest.)</div>
+          <div className="text-xs text-[var(--color-text-muted)] mb-3">Immediately sends each email as it happens; Never turns event email off, except drawing recalls and safety notices. (The master switch above also stops the daily compliance digest.)</div>
           {legacyCadence && (
             <div className="text-xs text-amber-800 mb-3">Your saved cadence “{legacyCadence}” was never implemented — email has been sent immediately. Saving stores Immediately.</div>
           )}

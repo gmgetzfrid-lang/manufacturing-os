@@ -9,11 +9,12 @@
 //     first save of every member with no row failed (NEDGE-2 / DELIV-12).
 //     A test parses the CHECK and pins this list to it.
 //   * emailAllowedByPrefs / shouldSendForEvent are the email rule: the master
-//     switch, the cadence ('never'), and the per-event toggle. email_gate()
-//     in 20261148 is the SAME rule evaluated where the recipient's row is
-//     visible (DELIV-2); a test pins its CASE to shouldSendForEvent. The
-//     compliance digest (N6) imports emailAllowedByPrefs rather than
-//     re-deriving it.
+//     switch, the cadence ('never'), and the per-event toggle — none of which
+//     stops a drawing recall or a PSM alert (PREFERENCE_EXEMPT_EVENT_TYPES).
+//     email_gate() in 20261148 is the SAME rule evaluated where the
+//     recipient's row is visible (DELIV-2); a test pins its CASE to
+//     shouldSendForEvent and its exemption to this list. The compliance
+//     digest (N6) imports emailAllowedByPrefs rather than re-deriving it.
 //   * readToastPreference is the pop-up toast switch (RT-10) for the toast
 //     listener. It fails OPEN: a toast is the ephemeral echo of a bell row that
 //     is always written, so an unreadable preference shows toasts.
@@ -98,10 +99,23 @@ export function prefsFromRow(row: Record<string, unknown> | null | undefined): N
   };
 }
 
-/** The per-event email toggle. An event type with no case — a drawing recall
- *  ('safety_recall'), a PSM alert ('safety_alert'), 'system', the compliance
- *  digest — is gated only by the master switch and the cadence. email_gate()
- *  (20261148) carries the same cases; a test pins the two equal. */
+/** Event types no preference may silence — no per-event toggle, not the
+ *  master switch, not 'never': a drawing recall and a PSM alert
+ *  (lib/notify/dispatch.ts categoryToEventType, DIST-13 / LIFE-7; "recall/
+ *  safety categories are un-mutable regardless"). The 60-second dedupe still
+ *  applies to them, and their bell row is always written. email_gate()
+ *  (20261148) exempts the same list; a test pins the two equal. DEC-44 (N1)
+ *  §9. */
+export const PREFERENCE_EXEMPT_EVENT_TYPES: readonly string[] = Object.freeze(["safety_recall", "safety_alert"]);
+
+export function isPreferenceExempt(eventType: string): boolean {
+  return PREFERENCE_EXEMPT_EVENT_TYPES.includes(eventType);
+}
+
+/** The per-event email toggle. An event type with no case — 'system', the
+ *  compliance digest, and the preference-exempt recall / PSM alert — has no
+ *  toggle. email_gate() (20261148) carries the same cases; a test pins the
+ *  two equal. */
 export function shouldSendForEvent(
   prefs: Record<string, unknown> | null,
   eventType: string
@@ -124,10 +138,12 @@ export function shouldSendForEvent(
 /** The whole email preference rule for one recipient's row (null = no row =
  *  the defaults): the master switch, the 'never' cadence, the per-event
  *  toggle. Exported once, for queueEmail's fallback and the digest (N6).
- *  The master switch and 'never' stop recall and safety email too — GAP-203
- *  acceptance 2, "no email from any path"; recall / safety are un-mutable by a
- *  per-category toggle only (DEC-44 (N1) §9, for the integrator to ratify). */
+ *  A recall or a PSM alert passes all three (isPreferenceExempt): the plan's
+ *  "un-mutable regardless". GAP-203 acceptance 2's stricter reading — the
+ *  master switch stops every email, these included — is DEC-44 (N1) §9's
+ *  item for the integrator to ratify. */
 export function emailAllowedByPrefs(prefs: Record<string, unknown> | null, eventType: string): boolean {
+  if (isPreferenceExempt(eventType)) return true;
   if (prefs?.email_enabled === false) return false;
   if (prefs?.digest_frequency === "never") return false;
   return shouldSendForEvent(prefs, eventType);
