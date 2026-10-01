@@ -219,7 +219,12 @@ ratification now gates a switch in the code, not the deploy:
    device-aware variant (refuse only where `navigator.deviceMemory` is low,
    warn elsewhere). Tell the counted owners first.
 4. **Then switch it on.** Set `NEXT_PUBLIC_FIELD_PACK_BUDGET=on` and
-   redeploy: a `NEXT_PUBLIC_` value is built into the bundle.
+   redeploy: a `NEXT_PUBLIC_` value is built into the bundle. On Vercel,
+   set it in the project's environment. On a Docker self-host, set it in
+   `.env` for `docker compose up --build`, or pass `--build-arg
+   NEXT_PUBLIC_FIELD_PACK_BUDGET=on` to a raw `docker build`, then rebuild
+   the image (`Dockerfile` and `docker-compose.yml` carry the arg since P8's
+   fifth fix pass; `docs/SELF_HOST_DOCKER.md`).
 
 For PS-VERIFY's owner, not a P8 prerequisite: whether a still-current
 sheet a print could not read as a PDF (`unreadable_pdf` on the snapshot)

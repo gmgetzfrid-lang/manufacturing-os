@@ -357,12 +357,13 @@ What landed:
     - `components/assets/FileReferenceModal.tsx:189`: `try { await …insert(rows) } catch …`.
 
     All three belong to drafting-flow `EVID-5` (OPEN), whose done-when 3 ("no download or print record is written with `void` or a discarded promise") is exactly this. `99-fix-sequencing.md` names P8 as `EGR-6`'s closer for items 3 and 4 "citing drafting-flow `EVID-5`". `EGR-6` is therefore resolved for items 3 and 4 in this package's files, and closed by pointer to `EVID-5` for those three sites. Done-when 3 is NOT met repo-wide until `EVID-5` lands.
+- **Fix pass 5 (review finding): an unrecorded copy closes the confirmation dialog.** `DownloadUnrecordedError` is thrown after delivery, so the dialog close that follows a successful `downloadDocumentPdf` / `printDocumentPdf` was skipped. The uncontrolled-copy dialog stayed open beside the error with its "Download stamped copy" button live, which invited a second copy, also unrecorded. Both `runDocAction` catches (`components/viewers/FullScreenViewer.tsx`, `components/viewers/MultiDocViewer.tsx`) now handle `DownloadUnrecordedError` by closing the dialog (`setPending(null)` / `setDownloadConfirm(null)`) and raising the message as an alert. The dialog stays open, with the message inside it, only for a refusal made before delivery: an acknowledgment, a hold or a failed fetch. Test: `dcRoundFField.test.ts` "a delivered-but-unrecorded copy CLOSES the confirmation dialog and alerts …" pins both catches and that the error is thrown only after delivery.
 
 **Done-when.**
 1. ✓ (P1 SHARE, `EGRESS-7`) `revokeShareLink` is a checked write that surfaces failure.
 2. ✓ (P1 SHARE, `EGRESS-8`) `listShareLinks` surfaces its error.
 3. ✓ in this package's files; NOT met repo-wide. Every `download_audits` write in this package's files checks `{ error }` and logs loudly, and a failed write is never indistinguishable from a successful one. The person is told, after delivery, by:
-   - every caller of the download / print paths: the book viewer, the full-screen viewer (an alert when no dialog is open) and version history (inline);
+   - every caller of the download / print paths: the book viewer and the full-screen viewer (an alert, and the confirmation dialog closes, fix pass 5) and version history (inline);
    - the full-screen viewer's markup export (fix pass 4).
 
    The three writers outside this package (`requests/[id]/page.tsx:607` and `:689`, `FileReferenceModal.tsx:189`) still swallow `{ error }`. They are closed here by pointer to drafting-flow `EVID-5` (OPEN), which owns them.
