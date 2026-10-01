@@ -10,7 +10,10 @@
 // label keeps the /assets/<tag> path every sticker in the plant already
 // carries, and its caption now says "staff sign-in". A scan with no session
 // used to sit on an empty app shell (refresh() returns early without an org,
-// so the spinner never ended); it is now sent to sign-in carrying the tag.
+// so the spinner never ended); it is now sent to sign-in with the tag in
+// `next` — but only once getSession itself says there is NO session
+// (lib/assetSignIn.ts): RoleContext's `booted` also flips on its boot
+// watchdog while a slow network is still refreshing a signed-in token.
 
 import React, { useCallback, useEffect, useMemo, useState } from "react";
 import Link from "next/link";
@@ -22,6 +25,7 @@ import { PageShell, PageHeaderBar } from "@/components/ui/PageShell";
 import { Button } from "@/components/ui/Button";
 import { Spinner } from "@/components/ui/Spinner";
 import { getAssetByTag, listAssetPhotos, type Asset, type AssetPhoto } from "@/lib/assets";
+import { assetSignInHref, watchForNoSession, type NoSessionAnswer } from "@/lib/assetSignIn";
 import AliasPanel from "@/components/assets/AliasPanel";
 import MentionsPanel from "@/components/assets/MentionsPanel";
 import { stateStyle, documentState } from "@/lib/stateColors";
@@ -37,11 +41,21 @@ export default function AssetHubPage() {
   const { activeOrgId, hasAnyRole, uid, userEmail, booted, loading: roleLoading } = useRole();
   const router = useRouter();
   // Where a no-session scan goes: sign-in, carrying this tag (`next`).
-  const signInHref = `/?next=${encodeURIComponent(`/assets/${encodeURIComponent(tag)}`)}`;
-  const signedOut = booted && !roleLoading && !uid;
+  const signInHref = assetSignInHref(tag);
+  // RoleContext settled with no user — which its boot watchdog also reports
+  // while getSession is still pending. Confirm with getSession first: only a
+  // definitive "no session" redirects; an errored read shows the sign-in
+  // link without navigating away; until an answer comes the spinner stays.
+  const maybeSignedOut = booted && !roleLoading && !uid;
+  const [sessionAnswer, setSessionAnswer] = useState<NoSessionAnswer | null>(null);
   useEffect(() => {
-    if (signedOut) router.replace(signInHref);
-  }, [signedOut, router, signInHref]);
+    if (!maybeSignedOut) return;
+    return watchForNoSession(() => supabase.auth.getSession(), (answer) => {
+      setSessionAnswer(answer);
+      if (answer === "none") router.replace(signInHref);
+    });
+  }, [maybeSignedOut, router, signInHref]);
+  const signedOut = maybeSignedOut && sessionAnswer !== null;
   const [packing, setPacking] = useState(false);
   const [packProgress, setPackProgress] = useState<[number, number] | null>(null);
   const [packNote, setPackNote] = useState<string | null>(null);

@@ -21,6 +21,10 @@ const state = vi.hoisted(() => ({
   holdRows: [] as unknown[],
   holdError: false as boolean,
   effectiveDate: null as string | null,
+  /** The error the current-version (effective-date) read returns, if any. */
+  curError: null as { code?: string; message: string } | null,
+  /** The error the column-less retry returns, if any. */
+  retryError: null as { code?: string; message: string } | null,
   scanCount: 0 as number,
   scanCountError: false as boolean,
   inserts: [] as Array<{ table: string; row: Record<string, unknown> }>,
@@ -30,6 +34,7 @@ const state = vi.hoisted(() => ({
 function chain(table: string) {
   const filters: Record<string, unknown> = {};
   let head = false;
+  let cols = "";
   const c: Record<string, unknown> = {};
   const h: ProxyHandler<Record<string, unknown>> = {
     get(_t, p: string) {
@@ -45,6 +50,7 @@ function chain(table: string) {
       return (...args: unknown[]) => {
         if (p === "select") {
           state.selects.push({ table, cols: String(args[0]) });
+          cols = String(args[0]);
           if ((args[1] as { head?: boolean } | undefined)?.head) head = true;
         }
         if (p === "insert") state.inserts.push({ table, row: args[0] as Record<string, unknown> });
@@ -52,6 +58,12 @@ function chain(table: string) {
         if (p === "maybeSingle") {
           if (table === "documents") return Promise.resolve(state.docError ? { data: null, error: { message: "boom" } } : { data: state.doc, error: null });
           if (table === "document_versions") {
+            // the current-version read (with effective_date) and its column-less retry
+            if (cols === "created_at, effective_date" && state.curError) return Promise.resolve({ data: null, error: state.curError });
+            if (cols === "created_at") {
+              if (state.retryError) return Promise.resolve({ data: null, error: state.retryError });
+              return Promise.resolve({ data: filters.id === V ? { created_at: "2026-01-01" } : null, error: null });
+            }
             // current version lookup + printed version lookup both resolve here
             if (filters.id === V) return Promise.resolve({ data: { revision_label: "5", created_at: "2026-01-01", record_id: DOC, effective_date: state.effectiveDate }, error: null });
             if (filters.id === V_OLD) return Promise.resolve({ data: { revision_label: "4", created_at: "2025-06-01", record_id: DOC }, error: null });
@@ -77,6 +89,8 @@ beforeEach(() => {
   state.holdRows = [];
   state.holdError = false;
   state.effectiveDate = null;
+  state.curError = null;
+  state.retryError = null;
   state.scanCount = 0;
   state.scanCountError = false;
   state.inserts = [];
@@ -192,7 +206,7 @@ describe("VFY-1 / VFY-9 — green is an ALLOW-list (Issued, Locked); everything 
   });
   it("the route reads retirement from the shared set through lib/verifyVerdict — no inline status list", () => {
     const src = readFileSync(join(process.cwd(), "app/api/verify/route.ts"), "utf8");
-    expect(src).toContain('import { documentStanding } from "@/lib/verifyVerdict";');
+    expect(src).toContain('import { documentStanding, isUndefinedColumnError } from "@/lib/verifyVerdict";');
     expect(src).not.toMatch(/=== "Superseded" \|\||status === "Archived"/);
   });
 });
@@ -254,6 +268,30 @@ describe("VFY-4 / REV-9 — 'not yet in effect' is decided in the facility's cal
     vi.setSystemTime(new Date("2026-03-02T01:30:00Z"));
     expect((await verify()).verdict).toBe("not_yet_effective");
   });
+  it("an effective-date read that ERRORS (anything but a missing column) is 503 — never a green that the unseen date might forbid", async () => {
+    state.doc = docWith("Issued");
+    state.effectiveDate = "2999-01-01"; // pending — but the read fails, so the route cannot see it
+    state.curError = { message: "upstream timeout" };
+    const res = await call();
+    expect(res.status).toBe(503);
+    expect(res.headers.get("cache-control")).toBe("no-store");
+    expect(state.inserts.map((i) => i.row.verdict)).toEqual(["error"]);
+    // and it did NOT retry without the column (that path is for 42703 only)
+    expect(state.selects.filter((x) => x.table === "document_versions" && x.cols === "created_at")).toEqual([]);
+  });
+  it("a missing effective_date COLUMN (42703) retries without it — that database has no dates — and the retry is checked", async () => {
+    state.doc = docWith("Issued");
+    state.curError = { code: "42703", message: "column document_versions.effective_date does not exist" };
+    let r = await verify();
+    expect(r.verdict).toBe("current");
+    expect(r.effectiveDate).toBeNull();
+    expect(r.currentIssuedAt).toBe("2026-01-01");
+    state.retryError = { message: "upstream timeout" };
+    const res = await call();
+    expect(res.status).toBe(503);
+    r = (await res.json()) as Record<string, unknown>;
+    expect(r.verdict).toBeUndefined();
+  });
   it("the route no longer spells its own UTC 'today' — it asks lib/effectiveDate", () => {
     const src = readFileSync(join(process.cwd(), "app/api/verify/route.ts"), "utf8");
     expect(src).not.toMatch(/toISOString\(\)\.slice\(0, 10\)/);
@@ -268,7 +306,16 @@ describe("VFY-12 / VFY-13 — every scan is recorded, capped per IP, and answere
     const res = await call({ headers: { "x-forwarded-for": "203.0.113.7, 10.0.0.1", "user-agent": "FieldPhone/1.0" } });
     expect(res.headers.get("cache-control")).toBe("no-store");
     const rows = state.inserts.filter((i) => i.table === "verify_scans").map((i) => i.row);
-    expect(rows).toEqual([{ endpoint: "verify", target_id: DOC, verdict: "current", ip: "203.0.113.7", user_agent: "FieldPhone/1.0" }]);
+    expect(rows).toEqual([{ endpoint: "verify", target_id: DOC, printed_ref: V, verdict: "current", ip: "203.0.113.7", user_agent: "FieldPhone/1.0" }]);
+  });
+  it("the row names WHICH revision's paper was scanned (?v=): two prints of one document stay distinguishable; a doc-only QR names none", async () => {
+    state.doc = docWith("Issued");
+    await call({ v: V_OLD });
+    await call({ v: null });
+    expect(state.inserts.map((i) => [i.row.verdict, i.row.printed_ref])).toEqual([
+      ["superseded_version", V_OLD],
+      ["unverifiable", null],
+    ]);
   });
   it("an invalid code and an unknown document are recorded too (enumeration is visible)", async () => {
     const { GET } = await import("@/app/api/verify/route");

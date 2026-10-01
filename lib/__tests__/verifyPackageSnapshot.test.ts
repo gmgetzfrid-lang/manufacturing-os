@@ -13,6 +13,7 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { NextRequest } from "next/server";
+import { presentPackVerdict, type PackVerifyResult } from "@/lib/verifyPresent";
 
 const PKG = "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa";
 const PRINT = "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb";
@@ -27,6 +28,8 @@ const state = vi.hoisted(() => ({
   holds: [] as Array<Record<string, unknown>>,
   versions: [] as Array<Record<string, unknown>>,
   errors: {} as Record<string, boolean>,
+  /** The Postgres error code a failing table's read carries (e.g. 42703). */
+  errorCodes: {} as Record<string, string>,
   inserts: [] as Array<{ table: string; row: Record<string, unknown> }>,
 }));
 
@@ -51,7 +54,7 @@ function chain(table: string) {
     get(_t, p: string) {
       if (p === "then") {
         return (resolve: (v: unknown) => void) => {
-          if (state.errors[table]) return resolve({ data: null, error: { message: `${table} read failed` } });
+          if (state.errors[table]) return resolve({ data: null, error: { message: `${table} read failed`, code: state.errorCodes[table] } });
           if (head) return resolve({ data: null, error: null, count: 0 });
           resolve({ data: rowsFor(), error: null });
         };
@@ -93,6 +96,7 @@ beforeEach(() => {
   state.holds = [];
   state.versions = [];
   state.errors = {};
+  state.errorCodes = {};
   state.inserts = [];
 });
 
@@ -200,9 +204,25 @@ describe("VFY-1 / PKG-8 — the shared allow-list decides every sheet", () => {
     expect(r.verdict).toBe("not_yet_effective");
     expect(states(r)).toEqual(["not_yet_effective"]);
   });
+  it("an effective-date read that ERRORS is never green: 503, even with a pending date it could not see (VFY-4 / PKG-8 — late, never early)", async () => {
+    state.print = printAt([sheetV2]);
+    state.versions = [{ id: "v2", effective_date: "2999-01-01" }];
+    state.errors.document_versions = true; // a transient PostgREST failure, no code
+    const res = await call(true);
+    expect(res.status).toBe(503);
+    expect(res.headers.get("cache-control")).toBe("no-store");
+    expect(state.inserts.filter((i) => i.table === "verify_scans").map((i) => i.row.verdict)).toEqual(["error"]);
+  });
+  it("only a missing COLUMN (42703 — a database with no effective dates at all) reads as 'no date'", async () => {
+    state.print = printAt([sheetV2]);
+    state.errors.document_versions = true;
+    state.errorCodes.document_versions = "42703";
+    const r = await verify(true);
+    expect(r.verdict).toBe("current");
+  });
   it("the route imports the shared decision and never spells a status list", () => {
     const src = readFileSync(join(process.cwd(), "app/api/verify-package/route.ts"), "utf8");
-    expect(src).toContain('import { documentStanding } from "@/lib/verifyVerdict";');
+    expect(src).toContain('import { documentStanding, isUndefinedColumnError } from "@/lib/verifyVerdict";');
     expect(src).not.toMatch(/status === "Superseded"|status === "Void"|status === "Archived"/);
   });
 });
@@ -235,6 +255,32 @@ describe("HLD-3 / PHYS-1 / VFY-5 — a held sheet is marked with its own label a
     const r = await verify(true);
     expect(r.verdict).toBe("held");
     expect(states(r)).toEqual(["held"]);
+  });
+});
+
+describe("VFY-1 residual / VFY-11 — a not-issued sheet is not 'changed since printing'", () => {
+  it("a just-printed pack with one legacy NO-STATUS sheet: counted as not issued, and the page never says it changed since printing", async () => {
+    // PKG-4's print gate admits an empty-status legacy row; the verify allow-list does not.
+    state.print = printAt([sheetV2, { documentId: DOC2, versionId: "w1", revLabel: "1", label: "P-102" }]);
+    state.liveMembers.push({ document_id: DOC2, pinned_version_id: "w1", pinned_rev_label: "1" });
+    state.docs.push(docRow({ id: DOC2, document_number: "P-102", current_version_id: "w1", rev: "1", status: "" }));
+    const r = await verify(true);
+    expect(r.verdict).toBe("stale");
+    expect(states(r)).toEqual(["fresh", "not_issued"]);
+    expect(r.staleCount).toBe(1);
+    expect(r.notIssuedCount).toBe(1);
+    const view = presentPackVerdict(r as unknown as PackVerifyResult);
+    expect(view.ok).toBe(false);
+    expect(view.headline).toBe("PACK HAS UNISSUED SHEETS");
+    expect(view.blurb).toContain("1 of 2 sheets is not an issued, controlled revision");
+    expect(view.blurb).not.toMatch(/changed or withdrawn|since this pack was printed/);
+  });
+  it("a voided sheet is still 'changed or withdrawn' (notIssuedCount 0)", async () => {
+    state.print = printAt([sheetV2]);
+    state.docs = [docRow({ status: "Void" })];
+    const r = await verify(true);
+    expect(r.notIssuedCount).toBe(0);
+    expect(presentPackVerdict(r as unknown as PackVerifyResult).blurb).toContain("1 of 1 sheet changed or withdrawn since this pack was printed");
   });
 });
 
@@ -276,7 +322,16 @@ describe("fail-closed reads, the scan record and no-store", () => {
     const res = await call(true);
     expect(res.headers.get("cache-control")).toBe("no-store");
     expect(state.inserts.filter((i) => i.table === "verify_scans").map((i) => i.row)).toEqual([
-      { endpoint: "verify-package", target_id: PKG, verdict: "current", ip: "unknown", user_agent: null },
+      { endpoint: "verify-package", target_id: PKG, printed_ref: PRINT, verdict: "current", ip: "unknown", user_agent: null },
+    ]);
+  });
+  it("VFY-12: the scan row names WHICH printing was scanned (?print=), and a legacy cover QR names none", async () => {
+    state.print = printAt([{ documentId: DOC, versionId: "v1", revLabel: "3", label: "P-101" }]);
+    await call(true);
+    await call(false);
+    expect(state.inserts.filter((i) => i.table === "verify_scans").map((i) => [i.row.verdict, i.row.printed_ref])).toEqual([
+      ["stale", PRINT],
+      ["unconfirmed_print", null],
     ]);
   });
 });

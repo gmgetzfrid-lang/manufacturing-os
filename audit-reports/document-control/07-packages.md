@@ -340,7 +340,8 @@ app/api/verify-package/route.ts:56 — `const retired = d?.status === "Supersede
 **Resolution (2026-10-01, public-surfaces Round F).** Record-only for this area — `/api/verify`'s half is `DIST-2` (2026-08-24); the rest is public-surfaces PS-VERIFY (`VFY-1`, `VFY-9`, `VFY-11`), which owns both verify routes this round; verified at the branch:
 - **One shared helper:** `lib/verifyVerdict.ts` `documentStanding(status)` — retirement from `NOT_CURRENT_STATUSES`, Draft, and an ALLOW-list (Issued / Locked) for in force; anything else `not_issued`. `/api/verify` and `/api/verify-package` both call it; neither spells a status list.
 - **Distinct states on both pages:** `/verify` — "VOID — DO NOT USE", "DRAFT — NOT ISSUED", "NOT ISSUED — DO NOT USE" (DIST-2 + PS-VERIFY); `/verify-package` — each sheet labelled VOID / SUPERSEDED / ARCHIVED / DRAFT — NOT ISSUED / NOT ISSUED and never fresh.
-- **Effective dates in the pack:** `/api/verify-package` reads the current revisions' `effective_date` and a pending one makes the sheet and the pack `not_yet_effective` (amber) — decided by `effectiveStatusFor`, the facility's calendar (`REV-9`).
+- **Effective dates in the pack:** `/api/verify-package` reads the current revisions' `effective_date` and a pending one makes the sheet and the pack `not_yet_effective` (amber) — decided by `effectiveStatusFor`, the facility's calendar (`REV-9`). Review fix pass (2026-10-01): the first pass swallowed any read error on that query (no date → `fresh` → a green pack before a sheet was in force); now only a missing column (`42703`, a database with no dates) reads as "no date" and any other error is `503` (`isUndefinedColumnError`, `lib/verifyVerdict.ts`; `verifyPackageSnapshot.test.ts` "an effective-date read that ERRORS is never green …"). `/api/verify` has the same rule.
+- **Not-issued sheets are not "changed since printing"** (review fix pass): the pack page counts `draft` / `not_issued` sheets apart from changed / withdrawn ones (`notIssuedCount`; "N of M sheets are not an issued, controlled revision").
 - **Empty pack:** its own verdict, "NO SHEETS IN THIS PACK" (slate), never red '0 of 0'.
 - Tests: public-surfaces `lib/__tests__/verifyPackageSnapshot.test.ts` "VFY-1 / PKG-8 — the shared allow-list decides every sheet" (Void / Superseded / Archived / Draft / NULL / In Review → never fresh; Locked in force; a pending effective date → `not_yet_effective`; no status list in the route) and "VFY-8 / VFY-11 …"; `lib/__tests__/verifyRouteVerdict.test.ts`; `lib/__tests__/verifyPresent.test.ts`.
 - Verified: `tsc` 0, `eslint` 0 on every touched file, full `vitest` green (267 files / 5088 passed, 7 expected-fail).
@@ -348,10 +349,10 @@ app/api/verify-package/route.ts:56 — `const retired = d?.status === "Supersede
 **Done-when.**
 1. ✓ One shared helper decides retired / usable; both endpoints call it; Void and Draft are never current or fresh.
 2. ✓ The field pages render distinct Void and Draft states.
-3. ✓ `/api/verify-package` applies the not-yet-in-force qualification.
+3. ✓ `/api/verify-package` applies the not-yet-in-force qualification — and fails closed when the effective dates cannot be read (review fix pass).
 4. ✓ An empty package renders a distinct state.
 
-**Scope / residual.** None.
+**Scope / residual.** None for this finding. The pack print gate (`filterPackDocs`, P8's file) still admits an empty-status legacy sheet that the shared allow-list reads `not_issued` — public-surfaces `VFY-17`, owned by P8 FIELD.
 
 ---
 

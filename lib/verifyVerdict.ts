@@ -41,3 +41,15 @@ export function documentStanding(status: string | null | undefined): DocumentSta
   if (IN_FORCE_STATUSES.has(s)) return "in_force";
   return "not_issued";
 }
+
+/** The ONE read error a verify route may tolerate on the effective-date read:
+ *  Postgres' undefined_column (42703) — a database without the
+ *  `document_versions.effective_date` column (pre-20260819) has no effective
+ *  dates at all, so "no date" is the truth there. Any OTHER error (a
+ *  transient PostgREST failure, a timeout) leaves the date UNKNOWN — and an
+ *  unknown date could be a future one, so the route answers 503, never a
+ *  verdict that might be green before the revision is in force (VFY-4 /
+ *  PKG-8: late, never early). */
+export function isUndefinedColumnError(error: { code?: string | null } | null | undefined): boolean {
+  return !!error && error.code === "42703";
+}

@@ -8,8 +8,11 @@
 --      /api/verify-package, /api/verify-hold or /api/verify-ticket: the
 --      endpoint, the target id (the document / package / hold / ticket UUID
 --      the QR carried; NULL for a malformed code — the org is derivable from
---      the target, so no org column), the verdict the scanner was shown, the
---      client IP and user agent, and the time. No person. A scan refused by
+--      the target, so no org column), the printing the QR names (printed_ref:
+--      the ?v= version id of a sheet, the ?print= id of a pack; NULL when the
+--      QR names none — so two papers of one document stay distinguishable as
+--      evidence), the verdict the scanner was shown, the client IP and user
+--      agent, and the time. No person. A scan refused by
 --      the rate cap writes no row (lib/verifyRateLimit.ts), so one address
 --      adds at most the cap per hour.
 --      RLS ON with NO policies, and every table privilege revoked from anon
@@ -63,6 +66,7 @@ CREATE TABLE IF NOT EXISTS verify_scans (
   id         UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   endpoint   TEXT NOT NULL CHECK (endpoint IN ('verify', 'verify-package', 'verify-hold', 'verify-ticket')),
   target_id  UUID,                    -- the UUID the QR carried; NULL for a malformed code
+  printed_ref UUID,                   -- the printing the QR names (?v= version / ?print= print id); NULL if none
   verdict    TEXT NOT NULL,           -- what the scanner was shown ('current', 'held', 'invalid', …)
   ip         TEXT NOT NULL,
   user_agent TEXT,
@@ -76,7 +80,7 @@ ALTER TABLE verify_scans ENABLE ROW LEVEL SECURITY;
 -- gives new tables are withdrawn too, so RLS is not the only wall.
 REVOKE ALL ON TABLE verify_scans FROM anon, authenticated;
 COMMENT ON TABLE verify_scans IS
-  'VFY-12: one row per answered scan of the public verify endpoints (endpoint, target UUID, verdict shown, client IP / user agent) — scan evidence and the per-IP rate window. Service role only; pruned to 90 days by prune_verify_scans() from the maintenance cron.';
+  'VFY-12: one row per answered scan of the public verify endpoints (endpoint, target UUID, the printing the QR names, verdict shown, client IP / user agent) — scan evidence and the per-IP rate window. Service role only; pruned to 90 days by prune_verify_scans() from the maintenance cron.';
 
 -- ── 2. the 90-day prune ──────────────────────────────────────────────────
 CREATE OR REPLACE FUNCTION prune_verify_scans() RETURNS integer
@@ -97,10 +101,10 @@ SELECT 'verify_scans exists with RLS on and NO policies (service role only)' AS 
 UNION ALL SELECT 'verify_scans: anon and authenticated hold no SELECT / INSERT / UPDATE / DELETE',
        NOT has_table_privilege('anon', 'public.verify_scans', 'SELECT, INSERT, UPDATE, DELETE')
        AND NOT has_table_privilege('authenticated', 'public.verify_scans', 'SELECT, INSERT, UPDATE, DELETE'), NULL
-UNION ALL SELECT 'verify_scans carries id, endpoint, target_id, verdict, ip, user_agent, created_at',
+UNION ALL SELECT 'verify_scans carries id, endpoint, target_id, printed_ref, verdict, ip, user_agent, created_at',
        (SELECT COUNT(*) FROM information_schema.columns
          WHERE table_schema = 'public' AND table_name = 'verify_scans'
-           AND column_name IN ('id', 'endpoint', 'target_id', 'verdict', 'ip', 'user_agent', 'created_at')) = 7, NULL
+           AND column_name IN ('id', 'endpoint', 'target_id', 'printed_ref', 'verdict', 'ip', 'user_agent', 'created_at')) = 8, NULL
 UNION ALL SELECT 'verify_scans indexed on (ip, created_at), (target_id, created_at) and (created_at)',
        EXISTS (SELECT 1 FROM pg_indexes WHERE schemaname = 'public' AND indexname = 'verify_scans_ip_time_idx')
        AND EXISTS (SELECT 1 FROM pg_indexes WHERE schemaname = 'public' AND indexname = 'verify_scans_target_time_idx')

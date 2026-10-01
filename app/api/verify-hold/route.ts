@@ -11,9 +11,12 @@
 // the current rev and the rev the hold was placed against, and how many OTHER
 // holds are active on the same document with their categories (VFY-10 /
 // PHYS-10: a released card is green only when nothing else holds the
-// document). The ID is an unguessable UUID that only exists on cards the org
-// itself printed. Every answered scan leaves a verify_scans row and counts
-// toward a generous per-IP cap (VFY-12); every answer is no-store (VFY-13).
+// document — another document_holds row OR the document's legal hold, which
+// /api/verify and /api/verify-package also treat as held; the legal hold is
+// counted, never named, exactly as those two routes publish it). The ID is
+// an unguessable UUID that only exists on cards the org itself printed.
+// Every answered scan leaves a verify_scans row and counts toward a generous
+// per-IP cap (VFY-12); every answer is no-store (VFY-13).
 
 import { NextRequest } from "next/server";
 import { createClient } from "@supabase/supabase-js";
@@ -43,7 +46,11 @@ interface HoldRow {
   /** 20261073 (HLD-7); undefined on a pre-migration database. */
   held_rev_label?: string | null;
 }
-interface DocLabelRow { document_number: string | null; title: string | null; name: string | null; rev: string | null }
+interface DocLabelRow {
+  document_number: string | null; title: string | null; name: string | null; rev: string | null;
+  /** Read for the verdict only — never returned (VFY-14's contract, as on /api/verify). */
+  legal_hold: boolean | null;
+}
 interface SiblingRow { id: string; reason: string | null }
 
 export async function GET(req: NextRequest) {
@@ -84,17 +91,24 @@ export async function GET(req: NextRequest) {
   }
   const h = holdData as HoldRow;
 
+  // The document row carries the label AND its legal hold. A legal hold is a
+  // hold on the document like any open document_holds row — /api/verify and
+  // /api/verify-package both read it as held (VFY-5 done-when 3) — so a
+  // released card must not read green over it. An unreadable (or vanished)
+  // document is "unknown", amber — never green.
   let docLabel: string | null = null;
   let docRev: string | null = null;
-  const { data: docData } = await sb
+  let legalHold: boolean | null = null;
+  const { data: docData, error: docErr } = await sb
     .from("documents")
-    .select("document_number, title, name, rev")
+    .select("document_number, title, name, rev, legal_hold")
     .eq("id", h.document_id)
     .maybeSingle();
-  const d = docData as DocLabelRow | null;
+  const d = docErr ? null : (docData as DocLabelRow | null);
   if (d) {
     docLabel = String(d.document_number || d.title || d.name || "");
     docRev = d.rev ?? null;
+    legalHold = d.legal_hold === true;
   }
 
   // VFY-10 / PHYS-10: every OTHER unreleased hold on the same document. A
@@ -102,7 +116,9 @@ export async function GET(req: NextRequest) {
   // card must not read green while a sibling still stops the document. The
   // sibling read failing is "unknown" — amber, never green. (Filtered by id
   // here rather than with a not-equal filter, so the count can never include
-  // this hold.)
+  // this hold.) The legal hold counts as one more hold on the document; it
+  // carries no public category (its matter and reason are never published).
+  // An unknown legal-hold state with no sibling found is "unknown" too.
   let otherActiveHolds: number | null = 0;
   let otherHoldReasons: string[] = [];
   const { data: sibData, error: sibErr } = await sb
@@ -114,7 +130,7 @@ export async function GET(req: NextRequest) {
     otherActiveHolds = null;
   } else {
     const others = ((sibData as SiblingRow[] | null) ?? []).filter((s) => s.id !== h.id);
-    otherActiveHolds = others.length;
+    otherActiveHolds = legalHold === null && others.length === 0 ? null : others.length + (legalHold ? 1 : 0);
     otherHoldReasons = [...new Set(others.map((s) => publicHoldReason(s.reason)))];
   }
 

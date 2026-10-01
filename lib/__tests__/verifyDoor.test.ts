@@ -8,7 +8,8 @@
 //   VFY-3   buildVerifyUrl never stamps a document-only QR.
 //   PHYS-7 / HLD-13 (option b) the label keeps /assets/<tag>, its caption
 //           says staff sign-in and fits the label; the protected page sends
-//           a no-session scan to sign-in carrying the tag.
+//           a no-session scan to sign-in carrying the tag — only on
+//           getSession's definitive no-session answer (lib/assetSignIn.ts).
 //   VFY-10 / PHYS-10 the hold card's instruction matches the verdict.
 //   PKG-12  the cover lists every sheet (continuation pages).
 
@@ -99,7 +100,7 @@ describe("VFY-12 — migration 20261134 (one-paste protocol, service role only)"
   });
   it("verify_scans: the spec's columns, RLS on, NO policies, default grants withdrawn, the window / evidence / prune indexes", () => {
     expect(code).toContain("CREATE TABLE IF NOT EXISTS verify_scans (");
-    for (const col of ["id         UUID PRIMARY KEY DEFAULT gen_random_uuid()", "endpoint   TEXT NOT NULL CHECK (endpoint IN ('verify', 'verify-package', 'verify-hold', 'verify-ticket'))", "target_id  UUID", "verdict    TEXT NOT NULL", "ip         TEXT NOT NULL", "user_agent TEXT", "created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()"]) {
+    for (const col of ["id         UUID PRIMARY KEY DEFAULT gen_random_uuid()", "endpoint   TEXT NOT NULL CHECK (endpoint IN ('verify', 'verify-package', 'verify-hold', 'verify-ticket'))", "target_id  UUID", "printed_ref UUID", "verdict    TEXT NOT NULL", "ip         TEXT NOT NULL", "user_agent TEXT", "created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()"]) {
       expect(code).toContain(col);
     }
     expect(code).toContain("ALTER TABLE verify_scans ENABLE ROW LEVEL SECURITY;");
@@ -117,6 +118,9 @@ describe("VFY-12 — migration 20261134 (one-paste protocol, service role only)"
     expect(fn).not.toMatch(/auth\.uid\(\)/);
     expect(fn).toContain("REVOKE ALL ON FUNCTION prune_verify_scans() FROM PUBLIC, anon, authenticated;");
     expect(fn).toContain("GRANT EXECUTE ON FUNCTION prune_verify_scans() TO service_role;");
+  });
+  it("VFY-12 evidence: printed_ref (the ?v= / ?print= printing) is a column and the column probe counts all eight", () => {
+    expect(code).toContain("AND column_name IN ('id', 'endpoint', 'target_id', 'printed_ref', 'verdict', 'ip', 'user_agent', 'created_at')) = 8, NULL");
   });
   it("the prosrc probe quotes its literal the verbatim way ('' inside the LIKE)", () => {
     expect(code).toContain("p.prosrc LIKE '%INTERVAL ''90 days''%'");
@@ -187,13 +191,70 @@ describe("PHYS-7 / HLD-13 (option b) — the equipment label", () => {
       expect((i === 0 ? bold : regular).widthOfTextAtSize(line, 7), line).toBeLessThanOrEqual(100);
     });
   });
-  it("the protected page sends a no-session scan to sign-in carrying the tag", () => {
+  it("the sign-in href carries the tag in `next`", async () => {
+    const { assetSignInHref } = await import("@/lib/assetSignIn");
+    expect(assetSignInHref("FE-201")).toBe("/?next=%2Fassets%2FFE-201");
+    expect(assetSignInHref("P 101/A")).toBe(`/?next=${encodeURIComponent("/assets/P%20101%2FA")}`);
+  });
+  it("the protected page redirects only on getSession's DEFINITIVE no-session answer — not on RoleContext's boot watchdog", () => {
     const s = src("app/(protected)/assets/[tag]/page.tsx");
-    expect(s).toContain("const signInHref = `/?next=${encodeURIComponent(`/assets/${encodeURIComponent(tag)}`)}`;");
-    expect(s).toContain("const signedOut = booted && !roleLoading && !uid;");
-    expect(s).toContain("if (signedOut) router.replace(signInHref);");
+    expect(s).toContain("const signInHref = assetSignInHref(tag);");
+    expect(s).toContain("const maybeSignedOut = booted && !roleLoading && !uid;");
+    expect(s).toContain("return watchForNoSession(() => supabase.auth.getSession(), (answer) => {");
+    expect(s).toContain('if (answer === "none") router.replace(signInHref);');
+    expect(s).toContain("const signedOut = maybeSignedOut && sessionAnswer !== null;");
+    // the old redirect on the boot signal alone is gone
+    expect(s).not.toContain("if (signedOut) router.replace(signInHref);");
+    expect(s).not.toContain("const signedOut = booted && !roleLoading && !uid;");
     // the signed-out branch renders before the data spinner that never ended
     expect(s.indexOf("if (signedOut) {")).toBeLessThan(s.indexOf("if (loading && docs.length === 0 && !asset)"));
+  });
+});
+
+describe("PHYS-7 — watchForNoSession: booted can flip while getSession is still pending", () => {
+  const flush = () => new Promise((r) => setTimeout(r, 0));
+  type Answer = { data: { session: unknown } | null; error?: unknown };
+  function pending() {
+    let resolve!: (a: Answer) => void;
+    let reject!: (e: unknown) => void;
+    const p = new Promise<Answer>((res, rej) => { resolve = res; reject = rej; });
+    return { get: () => p, resolve, reject };
+  }
+  it("while getSession is pending nothing happens; a session that then arrives never redirects", async () => {
+    const { watchForNoSession } = await import("@/lib/assetSignIn");
+    const s = pending();
+    const answers: string[] = [];
+    watchForNoSession(s.get, (a) => answers.push(a));
+    await flush();
+    expect(answers).toEqual([]); // the boot watchdog fired; getSession has not answered — no redirect
+    s.resolve({ data: { session: { user: { id: "u1" } } }, error: null });
+    await flush();
+    expect(answers).toEqual([]); // signed in after all — stays on the tag
+  });
+  it("a resolved answer with no session and no error is the one definitive 'none' (the redirect)", async () => {
+    const { watchForNoSession } = await import("@/lib/assetSignIn");
+    const answers: string[] = [];
+    watchForNoSession(async () => ({ data: { session: null }, error: null }), (a) => answers.push(a));
+    await flush();
+    expect(answers).toEqual(["none"]);
+  });
+  it("an errored or rejected session read is 'unknown' — offer sign-in, do not navigate away", async () => {
+    const { watchForNoSession } = await import("@/lib/assetSignIn");
+    const answers: string[] = [];
+    watchForNoSession(async () => ({ data: { session: null }, error: new Error("refresh failed: network") }), (a) => answers.push(a));
+    watchForNoSession(() => Promise.reject(new Error("offline")), (a) => answers.push(a));
+    await flush();
+    expect(answers).toEqual(["unknown", "unknown"]);
+  });
+  it("an answer that arrives after the effect is cleaned up is ignored", async () => {
+    const { watchForNoSession } = await import("@/lib/assetSignIn");
+    const s = pending();
+    const answers: string[] = [];
+    const cancel = watchForNoSession(s.get, (a) => answers.push(a));
+    cancel();
+    s.resolve({ data: { session: null }, error: null });
+    await flush();
+    expect(answers).toEqual([]);
   });
 });
 

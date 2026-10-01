@@ -22,7 +22,7 @@
 
 import { NextRequest } from "next/server";
 import { createClient } from "@supabase/supabase-js";
-import { documentStanding } from "@/lib/verifyVerdict";
+import { documentStanding, isUndefinedColumnError } from "@/lib/verifyVerdict";
 import { effectiveStatusFor } from "@/lib/effectiveDate";
 import { publicHoldReason } from "@/lib/holds";
 import { checkVerifyRate, clientIp, verifyJson, verifyRateLimitedResponse } from "@/lib/verifyRateLimit";
@@ -55,6 +55,10 @@ const WITHDRAWN_STATES: ReadonlySet<SheetState> = new Set(["void", "archived", "
 const NOT_GOOD_STATES: ReadonlySet<SheetState> = new Set([
   "stale", "void", "archived", "superseded", "retired", "draft", "not_issued", "missing", "removed",
 ]);
+/** Not an issued revision at all — says nothing about "since printing" (a
+ *  legacy no-status sheet can be printed that way), so the page counts these
+ *  apart from the changed / withdrawn ones. */
+const NOT_ISSUED_STATES: ReadonlySet<SheetState> = new Set(["draft", "not_issued"]);
 
 export async function GET(req: NextRequest) {
   if (!supabaseUrl || !serviceRoleKey) {
@@ -68,8 +72,10 @@ export async function GET(req: NextRequest) {
   const sb = createClient(supabaseUrl, serviceRoleKey, { auth: { persistSession: false } });
   const ip = clientIp(req);
   const userAgent = req.headers.get("user-agent");
+  // The scan row keeps WHICH printing was scanned (the ?print= id), so two
+  // papers of the same package stay distinguishable as evidence (VFY-12).
   const scan = (verdict: string) =>
-    recordVerifyScan(sb, { endpoint: "verify-package", targetId: pkgId, verdict, ip, userAgent });
+    recordVerifyScan(sb, { endpoint: "verify-package", targetId: pkgId, printedRef: printId || null, verdict, ip, userAgent });
   const unavailable = async () => {
     await scan("error");
     return verifyJson({ error: "Verification unavailable — try again" }, 503);
@@ -181,9 +187,10 @@ export async function GET(req: NextRequest) {
   }
 
   // The current revisions' effective dates (PKG-8: the pack applies the same
-  // not-yet-in-force qualification /api/verify does). A read error — the
-  // pre-20260819 world has no column — means no date, as /api/verify's
-  // fallback does.
+  // not-yet-in-force qualification /api/verify does). Only a missing COLUMN
+  // (42703 — a pre-20260819 database, which has no dates at all) means "no
+  // date"; any other read error leaves the dates unknown, and an unknown date
+  // may be a future one — 503, never a green pack before a sheet is in force.
   const curIds = [...new Set([...byId.values()].map((d) => d.current_version_id).filter((v): v is string => !!v))];
   const effectiveByVersion = new Map<string, string | null>();
   if (curIds.length) {
@@ -191,6 +198,7 @@ export async function GET(req: NextRequest) {
       .from("document_versions")
       .select("id, effective_date")
       .in("id", curIds);
+    if (verErr && !isUndefinedColumnError(verErr)) return unavailable();
     if (!verErr) for (const v of (verData as VersionDateRow[] | null) ?? []) effectiveByVersion.set(String(v.id), v.effective_date ?? null);
   }
 
@@ -228,6 +236,7 @@ export async function GET(req: NextRequest) {
   const addedSincePrint = addedIds.map((id) => ({ label: labelOf(id, null) }));
 
   const staleCount = sheets.filter((s) => NOT_GOOD_STATES.has(s.state)).length;
+  const notIssuedCount = sheets.filter((s) => NOT_ISSUED_STATES.has(s.state)).length;
   const heldCount = sheets.filter((s) => s.state === "held").length;
 
   let verdict: PackVerdict;
@@ -252,6 +261,7 @@ export async function GET(req: NextRequest) {
     printConfirmed: printConfirmed && !snapshotMissing,
     sheetCount: sheets.length,
     staleCount,
+    notIssuedCount,
     heldCount,
     addedSincePrint,
     verdict,

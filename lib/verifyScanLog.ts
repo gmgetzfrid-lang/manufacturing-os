@@ -8,11 +8,15 @@
 //
 // The row is minimal and names no person: which endpoint, which target id
 // (the document / package / hold / ticket UUID the QR carried — the org is
-// derivable from it), the verdict the scanner was shown, the client IP and
-// user agent, and the time. `verify_scans` (migration 20261134) is RLS-on
-// with NO policies — service role only — and is pruned to 90 days by the
-// maintenance cron (prune_verify_scans(); no new vercel.json entry). The same
-// rows are the per-IP rate window (lib/verifyRateLimit.ts).
+// derivable from it), WHICH PRINTING the paper is when the QR says so (the
+// ?v= version id of a sheet, the ?print= id of a pack — without it two papers
+// of the same document are indistinguishable, and "this print was verified
+// as superseded" could not name the paper), the verdict the scanner was
+// shown, the client IP and user agent, and the time. `verify_scans`
+// (migration 20261134) is RLS-on with NO policies — service role only — and
+// is pruned to 90 days by the maintenance cron (prune_verify_scans(); no new
+// vercel.json entry). The same rows are the per-IP rate window
+// (lib/verifyRateLimit.ts).
 //
 // The write is CHECKED but never blocks a scan: a refused insert is logged
 // (console.error), the field still gets its answer. The one refusal that is
@@ -33,18 +37,25 @@ export interface VerifyScanInput {
   /** The UUID the QR carried; anything that is not a UUID is stored as null
    *  (an invalid code is still a scan — its verdict says "invalid"). */
   targetId: string | null;
+  /** The printing the QR names — /api/verify's ?v= version id, or
+   *  /api/verify-package's ?print= print id. UUID-or-null like the target;
+   *  absent for a QR that names no printing (a hold card, a ticket traveler's
+   *  rev label, a legacy code). */
+  printedRef?: string | null;
   /** The verdict the scanner was shown (or "invalid" / "unknown" / an error class). */
   verdict: string;
   ip: string;
   userAgent: string | null;
 }
 
-/** The row as written — bounded lengths, UUID-or-null target. Exported for tests. */
+/** The row as written — bounded lengths, UUID-or-null target and printed ref. Exported for tests. */
 export function verifyScanRow(input: VerifyScanInput): Record<string, unknown> {
   const target = input.targetId && UUID_RE.test(input.targetId) ? input.targetId.toLowerCase() : null;
+  const printed = input.printedRef && UUID_RE.test(input.printedRef) ? input.printedRef.toLowerCase() : null;
   return {
     endpoint: input.endpoint,
     target_id: target,
+    printed_ref: printed,
     verdict: String(input.verdict || "unknown").slice(0, 40),
     ip: String(input.ip || "unknown").slice(0, 64),
     user_agent: input.userAgent ? input.userAgent.slice(0, 400) : null,

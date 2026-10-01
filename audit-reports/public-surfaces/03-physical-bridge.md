@@ -1,6 +1,6 @@
 # 03 · The physical bridge — QR, labels, stamps, print
 
-**13 findings** — 2 CRITICAL · 7 HIGH · 4 MEDIUM.
+**14 findings** — 2 CRITICAL · 7 HIGH · 4 MEDIUM, plus `PHYS-14` (MEDIUM) opened by public-surfaces Round F (PS-VERIFY), 2026-10-01.
 
 What a printed page asserts, and whether it can be wrong.
 
@@ -298,16 +298,17 @@ physicalBridge.ts:84 `const url = \`${origin()}/assets/${encodeURIComponent(asse
 **Resolution (2026-10-01, public-surfaces Round F).** PS-VERIFY — one fix with document-control `HLD-13`, under option (b) (the user-informed default, 2026-09-17; recorded as `DEC-44 (PS-VERIFY)`). Reproduced on `3a3203d`: `drawLabel` built `${origin()}/assets/<tag>` with the one-line caption "SCAN: drawings · holds · report a problem" (drawn unfitted — about 160pt into the single sticker's 100pt text column), and the protected asset page's `refresh()` returned early without an org, leaving its spinner up, so a no-session scan sat on an empty app shell.
 - **Option (b):** keep `/assets/<tag>` — every sticker in the plant stays valid, no re-print — and make the page honest about being a staff page.
 - `lib/physicalBridge.ts`: `equipmentLabelUrl(tag)` (the path shape, pinned by test) and `LABEL_CAPTION_LINES` — "SCAN — STAFF SIGN-IN" / "drawings · holds ·" / "report a problem" — each fitted to the label's text column (measured at 7pt with pdf-lib's Helvetica metrics in the test).
-- `app/(protected)/assets/[tag]/page.tsx`: once the session boot has settled with no user (`booted && !loading && !uid`), the page shows "Equipment <tag> — Drawings, holds and problem reports for this equipment are for signed-in staff — Sign in to continue" and `router.replace("/?next=/assets/<tag>")` — sign-in, carrying the tag.
-- Files: `lib/physicalBridge.ts`, `app/(protected)/assets/[tag]/page.tsx`. Tests: `lib/__tests__/verifyDoor.test.ts` "PHYS-7 / HLD-13 (option b) — the equipment label".
+- `app/(protected)/assets/[tag]/page.tsx`: once the session boot has settled with no user (`booted && !loading && !uid`), the page shows "Equipment <tag> — Drawings, holds and problem reports for this equipment are for signed-in staff — Sign in to continue" and `router.replace("/?next=/assets/<tag>")` — sign-in, with the tag in `next`.
+- **Review fix pass (2026-10-01): redirect only on a DEFINITIVE no-session.** RoleContext's `booted` also turns true when its 8 s boot watchdog (`BOOT_SPINNER_MS`) gives up while `getSession` is still refreshing a token, so on a slow plant network a signed-in user was sent to sign-in — where `app/page.tsx` routed them to `/dashboard`, the tag lost. The page now confirms with `getSession` itself (`watchForNoSession`, new `lib/assetSignIn.ts`, with `assetSignInHref(tag)`): it redirects only when the answer resolves with no session and no error; while pending it keeps its spinner; an errored read ("unknown") shows the sign-in link without navigating away; a late answer after cleanup is ignored. Tests: `verifyDoor.test.ts` "PHYS-7 — watchForNoSession: booted can flip while getSession is still pending" (pending → nothing, then a session → no redirect; resolved null → `none`; errored / rejected → `unknown`; cancelled → nothing) and the page-source pin. Verified (fix pass): `tsc` 0, `eslint` 0 on every touched file, full `vitest` green (267 files / 5110 passed, 7 expected-fail); run against the first-pass code, 22 of the new / changed assertions fail (DEC-29).
+- Files: `lib/physicalBridge.ts`, `lib/assetSignIn.ts`, `app/(protected)/assets/[tag]/page.tsx`. Tests: `lib/__tests__/verifyDoor.test.ts` "PHYS-7 / HLD-13 (option b) — the equipment label", "PHYS-7 — watchForNoSession …".
 - Verified: `tsc` 0, `eslint` 0 on every touched file, full `vitest` green (267 files / 5088 passed, 7 expected-fail).
 
 **Done-when.**
-1. Not done as written, by decision (b): a no-session scan lands on the sign-in page with the tag carried in `next`, not on a public page naming the tag and its hold state. The public minimal-facts tag page was option (a); the default chose (b).
+1. Not done as written, by decision (b): a no-session scan lands on the sign-in page with the tag in `next`, not on a public page naming the tag and its hold state. The public minimal-facts tag page was option (a); the default chose (b). The sign-in page does not yet honour `next`, so the round trip does not return to the tag — that remainder is `PHYS-14` (DEC-31).
 2. ✓ The caption promises only what the landing delivers — staff sign-in.
 3. ✓ The path shape survives; no re-print.
 
-**Scope / residual.** The sign-in page (`app/page.tsx`) does not yet read `next`, so after signing in a person lands on `/dashboard`, not back on the tag — a small follow-up in a file no current package owns (flagged to the integrator). Overriding the default to option (a) means a public tag page under the `/verify*` contract (DEC-44 (PS-VERIFY), reversal).
+**Scope / residual.** The sign-in page (`app/page.tsx`) does not yet read `next`, so after signing in a person lands on `/dashboard`, not back on the tag — opened as `PHYS-14` (unowned; `app/page.tsx` is in no current package's file list). Overriding the default to option (a) means a public tag page under the `/verify*` contract (DEC-44 (PS-VERIFY), reversal).
 
 ---
 
@@ -416,6 +417,7 @@ verify-hold/route.ts:54 `active: !h.released_at,`; verify-hold/[holdId]/page.tsx
 - [ ] The printed card's instruction text matches the conditional verdict
 
 **Resolution (2026-10-01, public-surfaces Round F).** PS-VERIFY — fixed once with `VFY-10` (see that record for the route and page). `/api/verify-hold` returns the document's other active holds (count and categories) and a verdict; the page is green ONLY when this hold is released and no other hold is active, amber "RELEASED — DOCUMENT STILL ON HOLD … leave the equipment tagged" when siblings remain (or "CHECK OTHER HOLDS" when they could not be read), and never says "this tag can come down" otherwise. The printed card's instruction now matches: `lib/physicalBridge.ts` `HOLD_CARD_SCAN_LINES` — "GREEN when scanned = no hold remains on this document — this tag comes down." / "AMBER = this hold is released but another is still active — leave the equipment tagged." (each line fitted left of the QR).
+- **Review fix pass (2026-10-01).** "No hold remains" now includes the document's legal hold: `/api/verify-hold` reads `documents.legal_hold` with the label and counts it among the other holds (unnamed), so a released card on a legally held document is amber — the same answer `/api/verify` gives — and an unreadable document is "CHECK OTHER HOLDS" (see `VFY-10`). Verified (fix pass): `tsc` 0, `eslint` 0 on every touched file, full `vitest` green (267 files / 5110 passed, 7 expected-fail); run against the first-pass code, 22 of the new / changed assertions fail (DEC-29).
 - Files: `app/api/verify-hold/route.ts`, `app/verify-hold/[holdId]/page.tsx`, `lib/verifyPresent.ts`, `lib/physicalBridge.ts`. Tests: `lib/__tests__/verifyHold.test.ts`, `lib/__tests__/verifyPresent.test.ts`, `lib/__tests__/verifyDoor.test.ts` "VFY-10 / PHYS-10 — the hold card says what the scan answers".
 - Verified: `tsc` 0, `eslint` 0 on every touched file, full `vitest` green (267 files / 5088 passed, 7 expected-fail).
 
@@ -533,5 +535,37 @@ FullScreenViewer.tsx:1268 `value={\`${window.location.origin}/documents/${docRec
 3. ◐ Not fully done — under the share surface no file reads `window.location.origin` (pinned); `FullScreenViewer.tsx:1268` remains.
 
 **Scope / residual.** Done-when 1 and 3 keep this finding OPEN. Owner: public-surfaces PS-STAMP, whose file list already carries the `FullScreenViewer.tsx` `QrBadge (~1291) from publicOrigin()` change; when that lands, the integrator (or PS-STAMP) closes `PHYS-13` against it.
+
+---
+
+<a id="phys-14"></a>
+
+## PHYS-14 · The sign-in page ignores `?next=` — an equipment-label scan sent to sign-in "carrying the tag" lands on /dashboard after signing in, the tag lost
+
+- **Severity:** MEDIUM
+- **Status:** OPEN
+- **Verification:** CONFIRMED
+- **Locations:** `app/page.tsx` (`routeAuthedUser` → `router.replace("/dashboard")`; the password sign-in's `router.push('/dashboard')`), `app/(protected)/assets/[tag]/page.tsx` (sends a no-session scan to `/?next=/assets/<tag>`), `lib/assetSignIn.ts` (`assetSignInHref`)
+- **Independently verified:** — opened 2026-10-01 by public-surfaces Round F (PS-VERIFY) from the review of `PHYS-7` / document-control `HLD-13` (option (b), `DEC-44 (PS-VERIFY)` §4), per DEC-31; verified against the branch, not yet challenged by a second party.
+
+**Mechanism.** Under option (b) the equipment label stays a staff entry point and a no-session scan is sent to `/?next=/assets/<tag>`. The sign-in page never reads `next`: an already-signed-in session found on load goes through `routeAuthedUser`, which ends `router.replace("/dashboard")`, and an email / password sign-in ends `router.push('/dashboard')`. The tag carried in the URL does nothing.
+
+**Failure scenario.** A contractor with an account scans the sticker on pump P-101, is sent to sign-in, signs in — and lands on the dashboard, not on the pump's drawings and holds. To get back he must find the asset by hand, at the pump, on a phone.
+
+**Evidence.**
+
+```
+app/page.tsx — routeAuthedUser: … router.replace("/dashboard");
+app/page.tsx — handleLogin: … } else { router.push('/dashboard'); }
+app/(protected)/assets/[tag]/page.tsx — if (answer === "none") router.replace(signInHref);   // signInHref = /?next=%2Fassets%2F<tag>
+```
+
+**Done when.**
+
+- [ ] The sign-in page honours `?next=` on every success path (a session found on load, password, Microsoft) — but only a SAME-ORIGIN relative path (starts with a single `/`, not `//`, no scheme), else `/dashboard` (no open redirect)
+- [ ] `next` survives the Microsoft OAuth round trip (carried through the redirect and read back on return)
+- [ ] A test pins `/assets/<tag>` honoured and `//evil.example`, `https://…` and `/\evil` refused
+
+**Owner.** Unassigned — `app/page.tsx` is in no current package's file list; the integrator assigns it. Until it lands, `PHYS-7` / `HLD-13`'s redirect still ends the empty shell, but does not return to the tag.
 
 ---

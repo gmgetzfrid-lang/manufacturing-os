@@ -100,12 +100,14 @@ describe("verifyJson / verifyRateLimitedResponse — every answer is no-store (V
 });
 
 describe("recordVerifyScan — checked, bounded, never blocks the scan", () => {
-  it("the row: endpoint, UUID-or-null target, bounded verdict / ip / user agent, no person", () => {
-    const row = verifyScanRow({ endpoint: "verify", targetId: "AAAAAAAA-AAAA-AAAA-AAAA-AAAAAAAAAAAA", verdict: "current", ip: "203.0.113.7", userAgent: "x".repeat(900) });
-    expect(row).toEqual({ endpoint: "verify", target_id: "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa", verdict: "current", ip: "203.0.113.7", user_agent: "x".repeat(400) });
+  it("the row: endpoint, UUID-or-null target and printed ref, bounded verdict / ip / user agent, no person", () => {
+    const row = verifyScanRow({ endpoint: "verify", targetId: "AAAAAAAA-AAAA-AAAA-AAAA-AAAAAAAAAAAA", printedRef: "BBBBBBBB-BBBB-BBBB-BBBB-BBBBBBBBBBBB", verdict: "current", ip: "203.0.113.7", userAgent: "x".repeat(900) });
+    expect(row).toEqual({ endpoint: "verify", target_id: "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa", printed_ref: "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb", verdict: "current", ip: "203.0.113.7", user_agent: "x".repeat(400) });
     expect(verifyScanRow({ endpoint: "verify-hold", targetId: "not-a-uuid", verdict: "invalid", ip: "", userAgent: null }))
-      .toEqual({ endpoint: "verify-hold", target_id: null, verdict: "invalid", ip: "unknown", user_agent: null });
-    expect(Object.keys(row).sort()).toEqual(["endpoint", "ip", "target_id", "user_agent", "verdict"]);
+      .toEqual({ endpoint: "verify-hold", target_id: null, printed_ref: null, verdict: "invalid", ip: "unknown", user_agent: null });
+    // a printed ref that is not a UUID (a ticket's rev label, a forged ?v=) is stored as null
+    expect(verifyScanRow({ endpoint: "verify-ticket", targetId: null, printedRef: "C", verdict: "current", ip: "1.2.3.4", userAgent: null }).printed_ref).toBeNull();
+    expect(Object.keys(row).sort()).toEqual(["endpoint", "ip", "printed_ref", "target_id", "user_agent", "verdict"]);
   });
   it("inserts into verify_scans and reports success", async () => {
     const c = client({});

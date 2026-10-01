@@ -2,13 +2,17 @@
 // VFY-6, VFY-14, VFY-12 / VFY-13).
 //
 // A released hold card reads GREEN only when no other hold is active on the
-// same document; released-with-siblings (or with siblings that could not be
-// read) is AMBER. Operator text never leaves; the row is typed to the select.
+// same document — another document_holds row OR the document's legal hold,
+// which /api/verify and /api/verify-package also treat as held (VFY-5
+// done-when 3); released-with-siblings (or with siblings / a document that
+// could not be read) is AMBER. Operator text never leaves, the legal hold is
+// counted but never named; the row is typed to the select.
 
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { NextRequest } from "next/server";
+import { presentHoldVerdict, type HoldVerifyResult } from "@/lib/verifyPresent";
 
 const DOC = "22222222-2222-2222-2222-222222222222";
 const HOLD = "33333333-3333-3333-3333-333333333333";
@@ -20,6 +24,8 @@ const state = vi.hoisted(() => ({
   /** Fail the Nth document_holds read (1-based); 0 = never. */
   failHoldRead: 0 as number,
   holdReads: 0 as number,
+  /** Fail the documents read. */
+  failDocRead: false as boolean,
   inserts: [] as Array<{ table: string; row: Record<string, unknown> }>,
   selects: [] as Array<{ table: string; cols: string }>,
 }));
@@ -33,7 +39,9 @@ function chain(table: string) {
     const src = table === "document_holds" ? state.holds : table === "documents" ? state.docs : [];
     return src.filter((r) => eqs.every(([k, v]) => r[k] === v) && isNull.every((k) => r[k] == null));
   };
-  const failing = () => table === "document_holds" && state.failHoldRead > 0 && readNo === state.failHoldRead;
+  const failing = () =>
+    (table === "document_holds" && state.failHoldRead > 0 && readNo === state.failHoldRead) ||
+    (table === "documents" && state.failDocRead);
   const c: Record<string, unknown> = {};
   const h: ProxyHandler<Record<string, unknown>> = {
     get(_t, p: string) {
@@ -72,9 +80,10 @@ beforeEach(() => {
   process.env.NEXT_PUBLIC_SUPABASE_URL = "https://x.supabase.co";
   process.env.SUPABASE_SERVICE_ROLE_KEY = "svc";
   state.holds = [];
-  state.docs = [{ id: DOC, document_number: "V-101", title: "Vessel", name: "v", rev: "5" }];
+  state.docs = [{ id: DOC, document_number: "V-101", title: "Vessel", name: "v", rev: "5", legal_hold: false }];
   state.failHoldRead = 0;
   state.holdReads = 0;
+  state.failDocRead = false;
   state.inserts = [];
   state.selects = [];
 });
@@ -120,6 +129,60 @@ describe("VFY-10 / PHYS-10 — green only when no hold at all remains on the doc
     const { body } = await verify();
     expect(body.verdict).toBe("released_others_unknown");
     expect(body.otherActiveHolds).toBeNull();
+  });
+  it("released, nothing else in document_holds, but the DOCUMENT is under legal hold → never green (the same document reads 'held' on /api/verify)", async () => {
+    state.holds = [hold({ released_at: "2026-09-20T00:00:00Z" })];
+    state.docs = [{ ...state.docs[0], legal_hold: true }];
+    const { body } = await verify();
+    expect(body.verdict).toBe("released_others_active");
+    expect(body.otherActiveHolds).toBe(1);
+    expect(body.otherHoldReasons).toEqual([]); // counted, never named
+    const view = presentHoldVerdict(body as unknown as HoldVerifyResult);
+    expect(view.ok).toBe(false);
+    expect(view.bg).not.toBe("bg-emerald-600");
+    expect(view.blurb).not.toContain("this tag can come down");
+    expect(view.blurb).toContain("leave the equipment tagged");
+    // the legal hold's existence is folded into the count — no field, no word for it
+    expect(Object.keys(body).some((k) => /legal/i.test(k))).toBe(false);
+    expect(JSON.stringify(body)).not.toMatch(/legal/i);
+  });
+  it("legal hold plus a released sibling and an active sibling → both counted", async () => {
+    state.holds = [
+      hold({ released_at: "2026-09-20T00:00:00Z" }),
+      hold({ id: SIB, reason: "Client Review", released_at: null }),
+    ];
+    state.docs = [{ ...state.docs[0], legal_hold: true }];
+    const { body } = await verify();
+    expect(body.verdict).toBe("released_others_active");
+    expect(body.otherActiveHolds).toBe(2);
+    expect(body.otherHoldReasons).toEqual(["Client Review"]);
+  });
+  it("the legal hold is read with the label (and never selected into anything returned)", async () => {
+    state.holds = [hold({ released_at: "2026-09-20T00:00:00Z" })];
+    await verify();
+    expect(state.selects.find((x) => x.table === "documents")!.cols).toBe("document_number, title, name, rev, legal_hold");
+  });
+  it("a document read that FAILS → released_others_unknown (amber), never green", async () => {
+    state.holds = [hold({ released_at: "2026-09-20T00:00:00Z" })];
+    state.failDocRead = true;
+    const { status, body } = await verify();
+    expect(status).toBe(200);
+    expect(body.verdict).toBe("released_others_unknown");
+    expect(body.otherActiveHolds).toBeNull();
+    expect(presentHoldVerdict(body as unknown as HoldVerifyResult).ok).toBe(false);
+  });
+  it("a document row that is not there → released_others_unknown, never green", async () => {
+    state.holds = [hold({ released_at: "2026-09-20T00:00:00Z" })];
+    state.docs = [];
+    const { body } = await verify();
+    expect(body.verdict).toBe("released_others_unknown");
+  });
+  it("an unreadable document with an active sibling still says the document is held (amber, counted)", async () => {
+    state.holds = [hold({ released_at: "2026-09-20T00:00:00Z" }), hold({ id: SIB, reason: "Client Review", released_at: null })];
+    state.failDocRead = true;
+    const { body } = await verify();
+    expect(body.verdict).toBe("released_others_active");
+    expect(body.otherActiveHolds).toBe(1);
   });
   it("the hold read itself failing is a 503 (the page says: treat the hold as ACTIVE)", async () => {
     state.holds = [hold()];

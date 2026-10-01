@@ -22,7 +22,7 @@
 
 import { NextRequest } from "next/server";
 import { createClient } from "@supabase/supabase-js";
-import { documentStanding } from "@/lib/verifyVerdict";
+import { documentStanding, isUndefinedColumnError } from "@/lib/verifyVerdict";
 import { effectiveStatusFor } from "@/lib/effectiveDate";
 import { publicHoldReason } from "@/lib/holds";
 import { checkVerifyRate, clientIp, verifyJson, verifyRateLimitedResponse } from "@/lib/verifyRateLimit";
@@ -63,8 +63,10 @@ export async function GET(req: NextRequest) {
   const sb = createClient(supabaseUrl, serviceRoleKey, { auth: { persistSession: false } });
   const ip = clientIp(req);
   const userAgent = req.headers.get("user-agent");
+  // The scan row keeps WHICH revision's paper was scanned (the ?v= version
+  // id), so two prints of the same document stay distinguishable (VFY-12).
   const scan = (verdict: string) =>
-    recordVerifyScan(sb, { endpoint: "verify", targetId: docId, verdict, ip, userAgent });
+    recordVerifyScan(sb, { endpoint: "verify", targetId: docId, printedRef: versionId || null, verdict, ip, userAgent });
 
   const rate = await checkVerifyRate(sb, { ip });
   if (rate.limited) return verifyRateLimitedResponse(rate);
@@ -144,12 +146,25 @@ export async function GET(req: NextRequest) {
       .maybeSingle();
     let cur: unknown = curData;
     if (curErr) {
-      // Pre-effective-date-migration DB: retry without the column.
-      ({ data: cur } = await sb
+      // Only a pre-effective-date database (no column: 42703) may retry
+      // without it — it has no effective dates, so "no date" is true there.
+      // Any other error leaves the date UNKNOWN, and an unknown date may be a
+      // future one: never a verdict that could be green before the revision
+      // is in force (VFY-4 — late, never early). The retry is checked too.
+      if (!isUndefinedColumnError(curErr)) {
+        await scan("error");
+        return verifyJson({ error: "Verification unavailable — try again" }, 503);
+      }
+      const { data: retryData, error: retryErr } = await sb
         .from("document_versions")
         .select("created_at")
         .eq("id", d.current_version_id)
-        .maybeSingle());
+        .maybeSingle();
+      if (retryErr) {
+        await scan("error");
+        return verifyJson({ error: "Verification unavailable — try again" }, 503);
+      }
+      cur = retryData;
     }
     const c = cur as CurrentVersionRow | null;
     currentIssuedAt = c?.created_at ?? null;

@@ -97,6 +97,24 @@ describe("presentPackVerdict — /verify-package/[packageId]", () => {
     expect(b).toContain("1 of 3 sheets changed or withdrawn since this pack was printed");
     expect(b).toContain("2 sheets added to the package since printing are not in this pack");
   });
+  it("VFY-1 / VFY-11: a sheet that is not an issued revision is NOT reported as 'changed since this pack was printed'", () => {
+    // a just-printed pack whose one legacy no-status sheet verifies not_issued
+    const only = presentPackVerdict(pack({ verdict: "stale", staleCount: 1, notIssuedCount: 1, sheetCount: 3 }));
+    expect(only.headline).toBe("PACK HAS UNISSUED SHEETS");
+    expect(only.bg).toBe("bg-red-600");
+    expect(only.blurb).toContain("1 of 3 sheets is not an issued, controlled revision");
+    expect(only.blurb).not.toMatch(/changed or withdrawn|since this pack was printed/);
+    expect(only.advice).toMatch(/not issued revisions/);
+    // mixed: each kind counted for what it is
+    const mixed = presentPackVerdict(pack({ verdict: "stale", staleCount: 3, notIssuedCount: 2, sheetCount: 4 })).blurb;
+    expect(mixed).toContain("1 of 4 sheets changed or withdrawn since this pack was printed");
+    expect(mixed).toContain("2 of 4 sheets are not an issued, controlled revision");
+    expect(presentPackVerdict(pack({ verdict: "stale", staleCount: 3, notIssuedCount: 2, sheetCount: 4 })).headline).toBe("PACK IS STALE");
+    // an older API build that sends no notIssuedCount keeps the old wording
+    expect(presentPackVerdict(pack({ verdict: "stale", staleCount: 1, sheetCount: 3 })).blurb).toContain("1 of 3 sheets changed or withdrawn");
+    // a nonsensical count can never print a negative or "0 of N"
+    expect(presentPackVerdict(pack({ verdict: "stale", staleCount: 1, notIssuedCount: 5, sheetCount: 3 })).blurb).not.toMatch(/\b0 of\b|-\d/);
+  });
   it("sheetLabel: only a fresh sheet is ok; held names its categories; a legacy row says the printing is unknown", () => {
     expect(sheetLabel({ label: "x", printedRev: "4", currentRev: "4", fresh: true, retired: false, state: "fresh" })).toEqual({ text: "Rev 4 ✓", ok: true });
     expect(sheetLabel({ label: "x", printedRev: "4", currentRev: "4", fresh: false, retired: false, state: "held", holdReasons: ["Client Review"] }).text).toBe("ON HOLD · Client Review");
@@ -128,6 +146,15 @@ describe("presentHoldVerdict — /verify-hold/[holdId] (VFY-10 / PHYS-10)", () =
     expect(view.blurb).toContain("2 other holds are still active");
     expect(view.blurb).toContain("(Field Verification Needed)");
     expect(view.blurb).toContain("leave the equipment tagged");
+  });
+  it("released over a document held only by its (unnamed) legal hold — counted as one other hold, never '0 other holds'", () => {
+    const one = presentHoldVerdict(hold({ verdict: "released_others_active", otherActiveHolds: 1, otherHoldReasons: [] }));
+    expect(one.bg).toBe("bg-amber-500");
+    expect(one.blurb).toContain("1 other hold is still active on this document.");
+    expect(one.blurb).not.toContain("this tag can come down");
+    const zero = presentHoldVerdict(hold({ verdict: "released_others_active", otherActiveHolds: 0 }));
+    expect(zero.blurb).toContain("another hold is still active");
+    expect(zero.blurb).not.toMatch(/\b0 other/);
   });
   it("a legacy payload with no verdict, or an unknown verdict, is never green", () => {
     expect(presentHoldVerdict(hold({ verdict: undefined, active: false })).bg).not.toBe(GREEN);

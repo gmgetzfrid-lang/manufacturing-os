@@ -573,7 +573,8 @@ lib/physicalBridge.ts:84 — `const url = \`${origin()}/assets/${encodeURICompon
 - [ ] The public tag surface follows the same minimal-facts contract as the other verify routes
 - [ ] A test asserts the printed QR target is not under the (protected) route group
 
-**Resolution (2026-10-01, public-surfaces Round F).** Fixed once with public-surfaces `PHYS-7` (PS-VERIFY owns `lib/physicalBridge.ts` and the asset page), under option (b) — the user-informed default of 2026-09-17, recorded as `DEC-44 (PS-VERIFY)`: the label keeps `/assets/<tag>` (every sticker in the plant stays valid), its caption reads "SCAN — STAFF SIGN-IN / drawings · holds · / report a problem" (three lines fitted to the label), and the protected asset page sends a no-session scan to sign-in carrying the tag (`/?next=/assets/<tag>`) instead of an empty shell. See `PHYS-7` for files and tests (`lib/__tests__/verifyDoor.test.ts` "PHYS-7 / HLD-13 (option b)").
+**Resolution (2026-10-01, public-surfaces Round F).** Fixed once with public-surfaces `PHYS-7` (PS-VERIFY owns `lib/physicalBridge.ts` and the asset page), under option (b) — the user-informed default of 2026-09-17, recorded as `DEC-44 (PS-VERIFY)`: the label keeps `/assets/<tag>` (every sticker in the plant stays valid), its caption reads "SCAN — STAFF SIGN-IN / drawings · holds · / report a problem" (three lines fitted to the label), and the protected asset page sends a no-session scan to sign-in with the tag in `next` (`/?next=/assets/<tag>`) instead of an empty shell. See `PHYS-7` for files and tests (`lib/__tests__/verifyDoor.test.ts` "PHYS-7 / HLD-13 (option b)").
+- **Review fix pass (2026-10-01).** The redirect fires only on `getSession`'s definitive no-session answer (`watchForNoSession`, `lib/assetSignIn.ts`), not on RoleContext's 8 s boot watchdog, which also reports "booted, no user" while a slow network is still refreshing a signed-in token — that ejected signed-in staff to sign-in, and from there to `/dashboard`. Tests: `verifyDoor.test.ts` "PHYS-7 — watchForNoSession …". Verified (fix pass): `tsc` 0, `eslint` 0 on every touched file, full `vitest` green (267 files / 5110 passed, 7 expected-fail); run against the first-pass code, 22 of the new / changed assertions fail (DEC-29).
 - Verified: `tsc` 0, `eslint` 0 on every touched file, full `vitest` green (267 files / 5088 passed, 7 expected-fail).
 
 **Done-when.**
@@ -581,7 +582,7 @@ lib/physicalBridge.ts:84 — `const url = \`${origin()}/assets/${encodeURICompon
 2. Not applicable under (b) — no public tag surface exists; the protected page enforces auth and RLS.
 3. Replaced by decision (b): the QR target deliberately stays under `(protected)` so existing stickers keep working; the test asserts the contract (b) chose instead — the path is kept, the caption says staff sign-in, and a no-session scan is sent to sign-in carrying the tag.
 
-**Scope / residual.** The sign-in page (`app/page.tsx`) does not yet honour `next` (a person lands on `/dashboard` after signing in) — flagged to the integrator; no current package owns that file. Overriding (b) with a public tag page reopens done-when 2–3 (DEC-44 (PS-VERIFY), reversal).
+**Scope / residual.** The sign-in page (`app/page.tsx`) does not yet honour `next` (a person lands on `/dashboard` after signing in), so the round trip does not return to the tag — opened as public-surfaces `PHYS-14` (unowned; no current package owns that file). Overriding (b) with a public tag page reopens done-when 2–3 (DEC-44 (PS-VERIFY), reversal).
 
 ---
 

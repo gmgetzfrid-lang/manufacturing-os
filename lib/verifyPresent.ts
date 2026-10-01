@@ -138,7 +138,12 @@ export interface PackVerifyResult {
   snapshotMissing?: boolean;
   printConfirmed?: boolean;
   sheetCount: number;
+  /** Every printed sheet that is not good — changed, withdrawn, removed,
+   *  missing, or not an issued revision at all (back-compat total). */
   staleCount: number;
+  /** Of those, the sheets that are not an issued, controlled revision
+   *  (draft / not issued) — which says nothing about "since printing". */
+  notIssuedCount?: number;
   heldCount?: number;
   addedSincePrint?: Array<{ label: string }>;
   allFresh: boolean;
@@ -165,12 +170,21 @@ export function presentPackVerdict(r: PackVerifyResult): VerdictView {
         blurb: `${sheets(r.heldCount ?? 0)} in this pack ${(r.heldCount ?? 0) === 1 ? "is" : "are"} under an active hold — the sheets marked below.` };
     case "stale": {
       const added = r.addedSincePrint?.length ?? 0;
+      // A sheet that is not an issued revision (a draft, or a legacy row with
+      // no status) is not evidence that anything CHANGED since printing — it
+      // may have been printed that way — so it is counted on its own.
+      const notIssued = Math.min(Math.max(r.notIssuedCount ?? 0, 0), r.staleCount);
+      const changed = r.staleCount - notIssued;
       const parts: string[] = [];
-      if (r.staleCount > 0) parts.push(`${r.staleCount} of ${sheets(n)} changed or withdrawn since this pack was printed`);
+      if (changed > 0) parts.push(`${changed} of ${sheets(n)} changed or withdrawn since this pack was printed`);
+      if (notIssued > 0) parts.push(`${notIssued} of ${sheets(n)} ${notIssued === 1 ? "is" : "are"} not an issued, controlled revision`);
       if (added > 0) parts.push(`${sheets(added)} added to the package since printing ${added === 1 ? "is" : "are"} not in this pack`);
-      return { bg: "bg-red-600", icon: "x", ok: false, headline: "PACK IS STALE",
-        advice: "Do not work from the outdated sheets. Ask the package owner or Document Control for a re-printed pack — the stale sheets are marked below.",
-        blurb: `${parts.join("; ") || "This pack no longer matches its package"} — get the new sheets before starting work.` };
+      const onlyNotIssued = changed === 0 && added === 0 && notIssued > 0;
+      return { bg: "bg-red-600", icon: "x", ok: false, headline: onlyNotIssued ? "PACK HAS UNISSUED SHEETS" : "PACK IS STALE",
+        advice: onlyNotIssued
+          ? "Do not work from the sheets marked below — they are not issued revisions. Get the issued revisions from Document Control before starting work."
+          : "Do not work from the outdated sheets. Ask the package owner or Document Control for a re-printed pack — the stale sheets are marked below.",
+        blurb: `${parts.join("; ") || "This pack no longer matches its package"} — get the ${onlyNotIssued ? "issued" : "new"} sheets before starting work.` };
     }
     case "closed":
       return { bg: "bg-slate-700", icon: "x", ok: false, headline: "PACKAGE CLOSED — DO NOT WORK FROM IT",
@@ -234,9 +248,11 @@ export interface HoldVerifyResult {
 }
 
 /** GREEN only when this hold is released AND no other hold is active on the
- *  document (VFY-10 / PHYS-10) — "this tag can come down" is reachable only
- *  there. A released hold whose siblings are active, or whose siblings could
- *  not be read, is AMBER: leave the equipment tagged. */
+ *  document (VFY-10 / PHYS-10) — another document_holds row or the document's
+ *  legal hold, which the route counts among the others — so "this tag can
+ *  come down" is reachable only there. A released hold whose document is
+ *  still held, or whose other holds could not be read, is AMBER: leave the
+ *  equipment tagged. */
 export function presentHoldVerdict(r: HoldVerifyResult): VerdictView {
   const v: HoldVerdict = r.verdict ?? (r.active ? "active" : "released_others_unknown");
   switch (v) {
@@ -246,8 +262,9 @@ export function presentHoldVerdict(r: HoldVerifyResult): VerdictView {
     case "released_others_active": {
       const k = r.otherActiveHolds ?? 0;
       const reasons = (r.otherHoldReasons ?? []).filter(Boolean);
+      const what = k > 1 ? `${k} other holds are` : k === 1 ? "1 other hold is" : "another hold is";
       return { bg: "bg-amber-500", icon: "q", ok: false, headline: "RELEASED — DOCUMENT STILL ON HOLD", advice: null,
-        blurb: `This hold is released, but ${k} other hold${k === 1 ? " is" : "s are"} still active on this document${reasons.length ? ` (${reasons.join(", ")})` : ""}. Do not advance it, and leave the equipment tagged until every hold is released.` };
+        blurb: `This hold is released, but ${what} still active on this document${reasons.length ? ` (${reasons.join(", ")})` : ""}. Do not advance it, and leave the equipment tagged until every hold is released.` };
     }
     case "released":
       return { bg: "bg-emerald-600", icon: "ok", ok: true, headline: "RELEASED", advice: null,
