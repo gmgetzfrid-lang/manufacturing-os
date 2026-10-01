@@ -17,7 +17,8 @@
       "LOW": 6
     },
     "by_status": {
-      "OPEN": 56
+      "OPEN": 50,
+      "RESOLVED": 6
     }
   },
   "status_vocabulary": [
@@ -122,7 +123,7 @@
       "id": "ORG-1",
       "title": "/api/admin/restore/apply writes caller-supplied rows into ARBITRARY orgs and ARBITRARY tables with the service-role client — the sibling chunked route hardened exactly this and apply was left behind",
       "severity": "CRITICAL",
-      "status": "OPEN",
+      "status": "RESOLVED",
       "verification": "CONFIRMED",
       "verification_note": null,
       "blast_radius": null,
@@ -426,7 +427,7 @@
       "id": "BKP-3",
       "title": "/api/admin/restore/apply does not force the org boundary that /apply-table does — rows whose org_id isn't the backup's land in whatever org the file names",
       "severity": "HIGH",
-      "status": "OPEN",
+      "status": "RESOLVED",
       "verification": "CONFIRMED",
       "verification_note": null,
       "blast_radius": null,
@@ -485,7 +486,7 @@
       "id": "BKP-5",
       "title": "Restore can only ADD, never repair: rows are upserted on the backup's own primary keys with ignoreDuplicates, so restoring over damaged data inserts nothing and reports success",
       "severity": "HIGH",
-      "status": "OPEN",
+      "status": "RESOLVED",
       "verification": "CONFIRMED",
       "verification_note": null,
       "blast_radius": null,
@@ -538,7 +539,7 @@
       "id": "BKP-7",
       "title": "The \"Full ZIP with binaries\" the export page produces cannot be read by the restore page — two admin pages emit two incompatible archive formats",
       "severity": "HIGH",
-      "status": "OPEN",
+      "status": "RESOLVED",
       "verification": "CONFIRMED",
       "verification_note": null,
       "blast_radius": null,
@@ -1143,7 +1144,7 @@
       "id": "BKP-12",
       "title": "Four exported tables have no `id` column and no CONFLICT_TARGETS entry, so their restore upsert always errors and the advertised \"re-run, it's additive and safe\" breaks",
       "severity": "MEDIUM",
-      "status": "OPEN",
+      "status": "RESOLVED",
       "verification": "CONFIRMED",
       "verification_note": null,
       "blast_radius": null,
@@ -1442,7 +1443,7 @@
       "id": "BKP-10",
       "title": "A cancelled backup still downloads a final part whose report says \"Every file verified by SHA-256\" — with no cancellation flag and no file total",
       "severity": "LOW",
-      "status": "OPEN",
+      "status": "RESOLVED",
       "verification": "CONFIRMED",
       "verification_note": null,
       "blast_radius": null,

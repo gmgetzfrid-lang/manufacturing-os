@@ -80,12 +80,22 @@ describe("SURF-8 — restore refuses immutable tables, audits chunks, mints no r
 
   it("apply-table refuses immutable tables before writing and audits every chunk as a checked write", () => {
     const s = src("app/api/admin/restore/apply-table/route.ts");
-    expect(s.indexOf("if (isImmutableTable(table))")).toBeGreaterThan(0);
-    expect(s.indexOf("if (isImmutableTable(table))")).toBeLessThan(s.indexOf("for (let i = 0; i < mapped.length; i += 500)"));
+    // admin-and-org ORG-1 / BKP-3: the refusal and the write live in ONE function both restore routes share.
+    const lib = src("lib/dataRestore.ts");
+    const refusal = lib.slice(lib.indexOf("export function restoreTableRefusal("));
+    expect(refusal.indexOf("if (isImmutableTable(table))")).toBeGreaterThan(0);
+    const shared = lib.slice(lib.indexOf("export async function applyRestoreChunk("));
+    expect(shared.indexOf("const refusal = restoreTableRefusal(table);")).toBeGreaterThan(0);
+    expect(shared.indexOf("const refusal = restoreTableRefusal(table);")).toBeLessThan(shared.indexOf("for (let i = 0; i < mapped.length; i += 500)"));
+    expect(s.indexOf("const tableRefusal = restoreTableRefusal(table);")).toBeGreaterThan(0);
+    expect(s.indexOf("const tableRefusal = restoreTableRefusal(table);")).toBeLessThan(s.indexOf("await applyRestoreChunk("));
     expect(s).toMatch(/action: "RESTORE_CHUNK", resource_type: "org", resource_id: orgId, org_id: orgId/);
-    expect(s).toMatch(/rowsReceived: rows\.length, rowsAfterFilters: mapped\.length, inserted/);
+    expect(s).toMatch(/rowsReceived: rows\.length, rowsAfterFilters: result\.rowsAfterFilters, inserted/);
     expect(s).toMatch(/if \(auditErr\) \{/);
-    expect(src("app/(protected)/admin/restore/page.tsx")).toMatch(/manifest: \{ orgId: envelope\.manifest\.orgId, orgName: envelope\.manifest\.orgName \}/);
+    // admin-and-org BKP-5: the page's chunked flow lives in lib/dataRestore.ts runChunkedRestore; every chunk still names its backup.
+    expect(lib).toMatch(/const manifest = \{ orgId: envelope\.manifest\.orgId, orgName: envelope\.manifest\.orgName \};/);
+    expect(lib).toMatch(/\{ table, rows: chunk, idRemap, manifest \}/);
+    expect(src("app/(protected)/admin/restore/page.tsx")).toMatch(/await runChunkedRestore\(/);
   });
 });
 

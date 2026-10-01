@@ -1,27 +1,43 @@
 // POST /api/admin/restore/apply-table?orgId=
-// Body: { table, rows, idRemap }
+// Body: { table, rows, idRemap, preview? }
 //
 // Step 2 of the CHUNKED restore: one bounded slice of one table. The client
 // walks tables in FK order (orderTablesForRestore) posting ≤500 rows per call,
 // so restores of any size fit under serverless request limits.
 //
+// BKP-5: `preview: true` writes nothing and answers how many of these rows
+// already exist in this workspace under the table's key (kept as they are —
+// a restore only adds), how many keys another workspace on this deployment
+// holds (those rows cannot be restored here) and how many would be new, so
+// the page can show the counts BEFORE the admin applies. An apply answers the
+// same counts for what it did: inserted, existing (skipped — never
+// overwritten), heldElsewhere (not restored), uncounted, refused, cleared
+// (written with one nullable pointer cleared) and advanced (a numbering
+// counter this workspace held, raised past the restored numbers — fix pass 5).
+//
+// The check reads deployment-wide (heldElsewhere says another workspace holds
+// a key), so EVERY check is recorded too: a RESTORE_PREVIEW audit row per
+// call, a checked write — no answer is given when it cannot be recorded.
+//
 // Security model: the caller is an org Admin who fully controls the row
 // content anyway — the hard boundary enforced here is that every row lands in
 // THEIR org: org_id is overwritten server-side with the authorized org after
 // remapping, the table must be on the export contract (no arbitrary table
-// writes), and skip-set tables are refused.
+// writes), skip-set tables are refused, and every row's foreign keys to
+// org-scoped tables must name rows of this workspace (a row of a table with
+// no org_id lands only under a parent of it), and a storage key it carries
+// must sit under this workspace's orgs/<id>/ prefix. All of it lives in ONE shared
+// function, lib/dataRestore.ts applyRestoreChunk, which the single-shot
+// /apply route calls too (ORG-1 / BKP-3).
 
 import { NextRequest, NextResponse } from "next/server";
 import { authorizeOrgRole } from "@/lib/serverAuth";
-import { remapRow, conflictTargetFor, isSkippedTable, type RestorePlan, isImmutableTable, IMMUTABLE_TABLES } from "@/lib/dataRestore";
-import { ORG_SCOPED_TABLES, USER_SCOPED_FOR_ORG_TABLES } from "@/lib/exportTables";
+import { applyRestoreChunk, previewRestoreChunk, restoreTableRefusal, type RestorePlan } from "@/lib/dataRestore";
 
 export const runtime = "nodejs";
 
 const RESTORE_ROLES = ["Admin"];
 const MAX_ROWS_PER_CALL = 1000;
-
-const IMPORTABLE = new Set<string>([...ORG_SCOPED_TABLES, ...USER_SCOPED_FOR_ORG_TABLES]);
 
 export async function POST(req: NextRequest) {
   const orgId = req.nextUrl.searchParams.get("orgId") || "";
@@ -29,22 +45,16 @@ export async function POST(req: NextRequest) {
   if ("error" in actor) return NextResponse.json({ error: actor.error }, { status: actor.status });
   const sb = actor.admin;
 
-  let parsed: { table?: string; rows?: Array<Record<string, unknown>>; idRemap?: RestorePlan["idRemap"]; manifest?: { orgId?: string; orgName?: string } };
+  let parsed: { table?: string; rows?: Array<Record<string, unknown>>; idRemap?: RestorePlan["idRemap"]; manifest?: { orgId?: string; orgName?: string }; preview?: boolean };
   try { parsed = await req.json(); } catch { return NextResponse.json({ error: "Invalid JSON" }, { status: 400 }); }
 
   const table = (parsed.table || "").trim();
   const rows = Array.isArray(parsed.rows) ? parsed.rows : [];
   const idRemap = parsed.idRemap;
-  if (!table || !IMPORTABLE.has(table)) {
-    return NextResponse.json({ error: `Table "${table}" is not part of the backup contract.` }, { status: 400 });
-  }
-  if (isImmutableTable(table)) {
-    // SURF-8: append-only / self-insert-only tables cannot be blind-imported.
-    return NextResponse.json({ error: `Table "${table}" is append-only (${IMMUTABLE_TABLES[table]}); it is never restored by import.` }, { status: 400 });
-  }
-  if (isSkippedTable(table)) {
-    return NextResponse.json({ error: `Table "${table}" is reconciled, never blind-imported.` }, { status: 400 });
-  }
+  // Off-contract, append-only (SURF-8) and reconciled tables are refused
+  // before anything is read or written.
+  const tableRefusal = restoreTableRefusal(table);
+  if (tableRefusal) return NextResponse.json({ error: tableRefusal }, { status: 400 });
   if (rows.length === 0) return NextResponse.json({ ok: true, inserted: 0 });
   if (rows.length > MAX_ROWS_PER_CALL) {
     return NextResponse.json({ error: `Send at most ${MAX_ROWS_PER_CALL} rows per call.` }, { status: 413 });
@@ -53,78 +63,80 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: "idRemap missing — call /api/admin/restore/begin first." }, { status: 400 });
   }
 
-  // Remap, then FORCE the org boundary: whatever the backup (or a hostile
-  // client) claims, restored rows belong to the authorized workspace.
-  let mapped = rows.map((r) => {
-    const m = remapRow(r, idRemap);
-    if ("org_id" in m) m.org_id = orgId;
-    return m;
-  });
-
-  // Never resurrect comments onto a ticket that's since been archived to a
-  // stub — the JSONB stays cleared, so re-inserting rows would split-brain it.
-  if (table === "ticket_comments" && mapped.length) {
-    const ticketIds = Array.from(new Set(mapped.map((r) => r.ticket_id).filter(Boolean))) as string[];
-    const archived = new Set<string>();
-    for (let i = 0; i < ticketIds.length; i += 500) {
-      const { data } = await sb
-        .from("tickets").select("id")
-        .in("id", ticketIds.slice(i, i + 500)).eq("org_id", orgId).not("archived_at", "is", null);
-      for (const t of ((data ?? []) as Array<{ id: string }>)) archived.add(t.id);
+  // BKP-5: read-only — what would this slice do? (It writes no row of the
+  // table; it does leave its audit row.)
+  if (parsed.preview === true) {
+    const p = await previewRestoreChunk(sb, { orgId, table, rows, idRemap });
+    if (!p.ok) return NextResponse.json({ error: p.error }, { status: p.status ?? 500 });
+    const { error: previewAuditErr } = await sb.from("audit_logs").insert({
+      action: "RESTORE_PREVIEW", resource_type: "org", resource_id: orgId, org_id: orgId,
+      user_id: actor.userId, user_email: actor.email,
+      details: {
+        table, rowsReceived: rows.length, existing: p.existing, heldElsewhere: p.heldElsewhere, wouldInsert: p.wouldInsert,
+        backupOrgId: parsed.manifest?.orgId ?? Object.keys(idRemap.orgId ?? {})[0] ?? null,
+        backupOrgName: parsed.manifest?.orgName ?? null,
+      },
+    });
+    if (previewAuditErr) {
+      return NextResponse.json({ error: `The check could not be recorded (restore audit row failed: ${previewAuditErr.message}) — nothing was answered or written.` }, { status: 500 });
     }
-    if (archived.size) mapped = mapped.filter((r) => !archived.has(r.ticket_id as string));
+    return NextResponse.json({ ok: true, preview: true, rows: p.rows, existing: p.existing, heldElsewhere: p.heldElsewhere, wouldInsert: p.wouldInsert });
   }
 
-  let inserted = 0;
-  // HLD-9 (20261073): the document_holds INSERT guard binds the service role
-  // too — a backup row whose org differs from its document's, or whose
-  // document is gone, is refused by the row's own trigger (23514 / 23503). One
-  // such row must not sink the 499 legitimate holds sharing its chunk: the
-  // chunk is retried row by row and the refused ids are reported, not fatal.
-  const refused: Array<{ id: string | null; code: string; message: string }> = [];
-  const ROW_REFUSAL_CODES = new Set(["23514", "23503"]);
-  const rowRefusalTables = new Set(["document_holds"]);
-  for (let i = 0; i < mapped.length; i += 500) {
-    const chunk = mapped.slice(i, i + 500);
-    const up = await sb.from(table).upsert(chunk, { onConflict: conflictTargetFor(table), ignoreDuplicates: true, count: "exact" });
-    if (up.error) {
-      const ins = await sb.from(table).insert(chunk, { count: "exact" });
-      if (ins.error) {
-        if (!(rowRefusalTables.has(table) && ROW_REFUSAL_CODES.has(String(ins.error.code ?? "")))) {
-          return NextResponse.json({ error: ins.error.message, inserted }, { status: 500 });
-        }
-        for (const row of chunk) {
-          const one = await sb.from(table).upsert([row], { onConflict: conflictTargetFor(table), ignoreDuplicates: true, count: "exact" });
-          if (!one.error) { inserted += one.count ?? 1; continue; }
-          if (!ROW_REFUSAL_CODES.has(String(one.error.code ?? ""))) {
-            return NextResponse.json({ error: one.error.message, inserted, refused }, { status: 500 });
-          }
-          refused.push({ id: typeof row.id === "string" ? row.id : null, code: String(one.error.code), message: one.error.message });
-        }
-        continue;
-      }
-      inserted += ins.count ?? chunk.length;
-    } else {
-      inserted += up.count ?? chunk.length;
-    }
+  // Remap, FORCE the org boundary, filter, bound every row by the parents it
+  // names, write — the shared function both restore routes call.
+  const result = await applyRestoreChunk(sb, { orgId, table, rows, idRemap });
+  const { inserted, existing, heldElsewhere, uncounted, filtered, refused, cleared, advanced } = result;
+  const counts = {
+    inserted,
+    ...(existing ? { existing } : {}),
+    ...(heldElsewhere ? { heldElsewhere } : {}),
+    ...(uncounted ? { uncounted } : {}),
+    ...(filtered ? { filtered } : {}),
+    ...(advanced ? { advanced } : {}),
+    ...(refused.length ? { refused } : {}),
+    ...(cleared.length ? { cleared } : {}),
+  };
+  // A chunk that failed before writing anything leaves nothing to record. A
+  // statement accepted without a count may have written rows (uncounted), so
+  // that chunk is recorded too (fix pass 4).
+  if (!result.ok && inserted === 0 && !uncounted && !advanced && refused.length === 0 && cleared.length === 0) {
+    return NextResponse.json({ error: result.error, ...(result.code ? { code: result.code } : {}), ...counts }, { status: result.status ?? 500 });
   }
 
   // SURF-8 done-when 2: every restore chunk leaves an audit row naming the
-  // table, the row count and the backup it came from. Checked write — a
+  // table, the row count and the backup it came from — a chunk that failed
+  // part-way too, with what it wrote and why it stopped. Checked write — a
   // restore whose trail cannot be written must not look complete.
   const { error: auditErr } = await sb.from("audit_logs").insert({
     action: "RESTORE_CHUNK", resource_type: "org", resource_id: orgId, org_id: orgId,
     user_id: actor.userId, user_email: actor.email,
     details: {
-      table, rowsReceived: rows.length, rowsAfterFilters: mapped.length, inserted,
+      table, rowsReceived: rows.length, rowsAfterFilters: result.rowsAfterFilters, inserted,
+      ...(existing ? { existing } : {}),
+      ...(heldElsewhere ? { heldElsewhere } : {}),
+      ...(uncounted ? { uncounted } : {}),
+      ...(filtered ? { filtered } : {}),
+      ...(advanced ? { advanced } : {}),
       ...(refused.length ? { refused } : {}),
+      ...(cleared.length ? { cleared } : {}),
+      ...(!result.ok ? { failed: result.error ?? "write failed" } : {}),
       backupOrgId: parsed.manifest?.orgId ?? Object.keys(idRemap.orgId ?? {})[0] ?? null,
       backupOrgName: parsed.manifest?.orgName ?? null,
     },
   });
+  if (!result.ok) {
+    return NextResponse.json(
+      {
+        error: auditErr ? `${result.error} (and the restore audit row failed: ${auditErr.message})` : result.error,
+        ...(result.code ? { code: result.code } : {}), ...counts,
+      },
+      { status: result.status ?? 500 },
+    );
+  }
   if (auditErr) {
-    return NextResponse.json({ error: `Rows were written but the restore audit row failed: ${auditErr.message}`, inserted }, { status: 500 });
+    return NextResponse.json({ error: `Rows were written but the restore audit row failed: ${auditErr.message}`, ...counts }, { status: 500 });
   }
 
-  return NextResponse.json({ ok: true, inserted, ...(refused.length ? { refused } : {}) });
+  return NextResponse.json({ ok: true, ...counts });
 }

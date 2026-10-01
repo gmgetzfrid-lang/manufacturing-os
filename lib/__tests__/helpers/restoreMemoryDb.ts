@@ -1,0 +1,129 @@
+// lib/__tests__/helpers/restoreMemoryDb.ts
+//
+// An in-memory stand-in for the service-role Supabase client, faithful where
+// the restore and export paths depend on it (admin-and-org Round G, P1): a
+// write statement is atomic; `upsert` with ignoreDuplicates is ON CONFLICT
+// (<target>) DO NOTHING and fails 42P10 when the target is not a declared
+// key; any other declared unique key raises 23505; a declared foreign key
+// raises 23503 when a written row names a parent id no row holds (checked at
+// the end of the statement, as Postgres's RI triggers are, so a row may name
+// another row of the same statement); `count: "exact"` reports the rows
+// actually written; reads filter with eq / in / not-null / is, honour
+// `range`, and are cut at `maxRows` like PostgREST's max-rows setting.
+// Fix pass 2: a write carrying any value for a GENERATED ALWAYS column is
+// refused 428C9 (as Postgres refuses it — not a row-level code), and, with
+// `authUsers` set, `users` behaves like users.id REFERENCES auth.users: a
+// profile for a uid that is no sign-in account is refused 23503. Fix pass 5:
+// `lt` filters (a guarded update), and `update(...).select()` answers the
+// rows it changed.
+
+export type Row = Record<string, unknown>;
+
+export const db = {
+  rows: {} as Record<string, Array<Record<string, unknown>>>,
+  /** Declared unique keys per table (PK first). Default: [["id"]]. */
+  keys: {} as Record<string, string[][]>,
+  writeError: null as null | ((table: string, op: string, rows: Array<Record<string, unknown>>) => { code: string; message: string } | null),
+  readError: {} as Record<string, string>,
+  writes: [] as Array<{ table: string; op: string; n: number }>,
+  /** Every write statement attempted, successful or not. */
+  attempts: [] as Array<{ table: string; op: string }>,
+  /** Simulate a PostgREST that returns no count. */
+  countless: false,
+  /** Declared foreign keys per table: `column` names an `id` of `parent`. */
+  fks: {} as Record<string, Array<{ column: string; parent: string }>>,
+  /** PostgREST's max-rows: a read returns at most this many rows. */
+  maxRows: 1000,
+  /** Columns the database computes, per table: a write naming one is refused 428C9. */
+  generated: {} as Record<string, string[]>,
+  /** The deployment's sign-in accounts; when set, a `users` row for any other id is refused 23503. */
+  authUsers: null as Set<string> | null,
+};
+
+function keysOf(table: string): string[][] { return db.keys[table] ?? [["id"]]; }
+const sameKey = (a: Row, b: Row, cols: string[]) => cols.every((c) => a[c] !== undefined && a[c] !== null && String(a[c]) === String(b[c]));
+
+function exec(table: string, op: string, payload: unknown, opts: Record<string, unknown> | undefined, filters: Array<(r: Row) => boolean>, single: boolean, range: [number, number] | null) {
+  const all = (db.rows[table] ??= []);
+  if (op === "select") {
+    if (db.readError[table]) return { data: null, error: { code: "XX000", message: db.readError[table] } };
+    const matched = all.filter((r) => filters.every((f) => f(r)));
+    const ranged = range ? matched.slice(range[0], range[1] + 1) : matched;
+    const out = ranged.slice(0, db.maxRows);
+    return { data: single ? (out[0] ?? null) : out, error: null, count: matched.length };
+  }
+  if (op === "insert" || op === "upsert") {
+    const rows = (Array.isArray(payload) ? payload : [payload]) as Row[];
+    db.attempts.push({ table, op });
+    const injected = db.writeError?.(table, op, rows);
+    if (injected) return { data: null, error: injected, count: null };
+    for (const c of db.generated[table] ?? []) {
+      if (rows.some((r) => r[c] !== undefined)) {
+        return { data: null, error: { code: "428C9", message: `cannot insert a non-DEFAULT value into column "${c}"` }, count: null };
+      }
+    }
+    if (table === "users" && db.authUsers && rows.some((r) => !db.authUsers!.has(String(r.id)))) {
+      return { data: null, error: { code: "23503", message: 'insert or update on table "users" violates foreign key constraint "users_id_fkey"' }, count: null };
+    }
+    const keys = keysOf(table);
+    let arbiter: string[] | null = null;
+    if (op === "upsert") {
+      const target = String(opts?.onConflict ?? "id").split(",").map((s) => s.trim());
+      arbiter = keys.find((k) => k.length === target.length && k.every((c) => target.includes(c))) ?? null;
+      if (!arbiter) return { data: null, error: { code: "42P10", message: "there is no unique or exclusion constraint matching the ON CONFLICT specification" }, count: null };
+    }
+    const staged: Row[] = [];
+    for (const row of rows) {
+      const pool = [...all, ...staged];
+      if (arbiter && pool.some((r) => sameKey(r, row, arbiter!))) continue; // DO NOTHING
+      const clash = keys.find((k) => pool.some((r) => sameKey(r, row, k)));
+      if (clash) return { data: null, error: { code: "23505", message: `duplicate key value violates unique constraint "${table}_${clash.join("_")}_key"` }, count: null };
+      staged.push({ ...row });
+    }
+    for (const fk of db.fks[table] ?? []) {
+      const parentRows = fk.parent === table ? [...all, ...staged] : (db.rows[fk.parent] ?? []);
+      const orphan = staged.find((r) => r[fk.column] !== null && r[fk.column] !== undefined && !parentRows.some((p) => p.id === r[fk.column]));
+      if (orphan) {
+        return { data: null, error: { code: "23503", message: `insert or update on table "${table}" violates foreign key constraint "${table}_${fk.column}_fkey"` }, count: null };
+      }
+    }
+    all.push(...staged);
+    db.writes.push({ table, op, n: staged.length });
+    return { data: null, error: null, count: opts?.count && !db.countless ? staged.length : null };
+  }
+  if (op === "update") {
+    const injected = db.writeError?.(table, op, [payload as Row]);
+    if (injected) return { data: null, error: injected };
+    const hit = all.filter((r) => filters.every((f) => f(r)));
+    for (const r of hit) Object.assign(r, payload as Row);
+    db.writes.push({ table, op, n: hit.length });
+    return { data: hit, error: null };
+  }
+  return { data: null, error: null };
+}
+
+export function from(table: string) {
+  let op = "select"; let payload: unknown; let opts: Record<string, unknown> | undefined; let single = false;
+  let range: [number, number] | null = null;
+  const filters: Array<(r: Row) => boolean> = [];
+  const b: Record<string, unknown> = {
+    select: () => b,
+    insert: (rows: unknown, o?: Record<string, unknown>) => { op = "insert"; payload = rows; opts = o; return b; },
+    upsert: (rows: unknown, o?: Record<string, unknown>) => { op = "upsert"; payload = rows; opts = o; return b; },
+    update: (patch: unknown) => { op = "update"; payload = patch; return b; },
+    eq: (c: string, v: unknown) => { filters.push((r) => r[c] === v); return b; },
+    in: (c: string, vs: unknown[]) => { filters.push((r) => vs.includes(r[c])); return b; },
+    not: (c: string, _o: string, _v: unknown) => { filters.push((r) => r[c] !== null && r[c] !== undefined); return b; },
+    is: (c: string, v: unknown) => { filters.push((r) => (r[c] ?? null) === v); return b; },
+    lt: (c: string, v: unknown) => { filters.push((r) => typeof r[c] === "number" && typeof v === "number" && (r[c] as number) < v); return b; },
+    order: () => b, limit: () => b,
+    range: (from: number, to: number) => { range = [from, to]; return b; },
+    maybeSingle: () => { single = true; return b; },
+    single: () => { single = true; return b; },
+    then: (res: (v: unknown) => void, rej: (e: unknown) => void) => {
+      try { res(exec(table, op, payload, opts, filters, single, range)); } catch (e) { rej(e); }
+    },
+  };
+  return b;
+}
+

@@ -34,8 +34,8 @@
       "LOW": 48
     },
     "by_status": {
-      "OPEN": 157,
-      "RESOLVED": 102,
+      "OPEN": 155,
+      "RESOLVED": 104,
       "REFUTED": 2,
       "WONTFIX": 2,
       "INVALID": 1
@@ -1163,7 +1163,7 @@
       "id": "ILIFE-3",
       "title": "The only full backup an admin can download cannot be read by the restore page — two incompatible ZIP layouts",
       "severity": "HIGH",
-      "status": "OPEN",
+      "status": "RESOLVED",
       "verification": "CONFIRMED",
       "verification_note": null,
       "blast_radius": null,
@@ -4433,7 +4433,7 @@
       "id": "ILIFE-9",
       "title": "Site Codebook config, library numbering and recently-viewed have no `id` column but restore upserts them ON CONFLICT (id)",
       "severity": "MEDIUM",
-      "status": "OPEN",
+      "status": "RESOLVED",
       "verification": "CONFIRMED",
       "verification_note": null,
       "blast_radius": null,

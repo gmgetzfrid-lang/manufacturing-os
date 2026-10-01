@@ -72,7 +72,8 @@ function chain(table: string) {
       if (refusal) return { data: null, error: refusal, count: null };
       const inserted = rows.map((r) => ({ id: `${table}-${all.length + 1}`, ...r }));
       for (const r of inserted) { state.onWrite?.(table, op, r); all.push(r); }
-      return single ? { data: inserted[0], error: null } : { data: inserted, error: null };
+      // count: PostgREST reports the rows a write statement wrote (the restore's honest counts read it — admin-and-org BKP-5)
+      return single ? { data: inserted[0], error: null, count: 1 } : { data: inserted, error: null, count: inserted.length };
     }
     if (op === "update") {
       const hit = all.filter((r) => matches(r, filters));
@@ -553,6 +554,8 @@ describe("HLD-8 / HLD-10 — the inspector strip and the queue read the policy, 
 describe("HLD-9 — /api/admin/restore/apply-table retries a refused document_holds chunk row by row", () => {
   const idRemap = { orgId: { o1: "o1" }, uid: {} };
   async function apply(table: string, rows: Array<Record<string, unknown>>) {
+    // admin-and-org ORG-1 (fix pass): a restored hold lands only on a document of this workspace — the one it names is here.
+    state.rows.documents ??= [{ id: DOC, org_id: "o1" }];
     const { POST } = await import("@/app/api/admin/restore/apply-table/route");
     const req = new NextRequest("https://app/api/admin/restore/apply-table?orgId=o1", {
       method: "POST", body: JSON.stringify({ table, rows, idRemap }), headers: { "content-type": "application/json" },
@@ -579,12 +582,14 @@ describe("HLD-9 — /api/admin/restore/apply-table retries a refused document_ho
     expect(r2.status).toBe(200);
     expect(r2.body).toMatchObject({ inserted: 1, refused: [{ id: "orphan", code: "23503" }] });
   });
-  it("any other error, and any other table, still fails the chunk as before; a clean chunk reports no refusals", async () => {
+  it("any error that is not about one row still fails the chunk as before (any table); a clean chunk reports no refusals", async () => {
     state.writeError = (table, _op, rows) => table === "document_holds" && rows.some((r) => r.id === "x") ? { code: "42501", message: "permission denied" } : null;
     const r1 = await apply("document_holds", [openHoldRow({ id: "x" })]);
     expect(r1.status).toBe(500);
     expect(r1.body).toMatchObject({ error: "permission denied", inserted: 0 });
-    state.rows = {}; state.writeError = (table) => table === "document_favorites" ? { code: "23514", message: "refused" } : null;
+    // admin-and-org BKP-5 (fix pass): the row isolation is no longer document_holds-only — every table's row-level
+    // refusal (class 23) is isolated (lib/dataRestore.ts ROW_LEVEL_SQLSTATES); anything else still fails the chunk.
+    state.rows = {}; state.writeError = (table) => table === "document_favorites" ? { code: "42501", message: "refused" } : null;
     const r2 = await apply("document_favorites", [{ id: "f1", org_id: "o1", user_id: "u", document_id: DOC }]);
     expect(r2.status).toBe(500);
     state.rows = {}; state.writeError = null;
@@ -594,7 +599,9 @@ describe("HLD-9 — /api/admin/restore/apply-table retries a refused document_ho
     expect(state.rows.audit_logs.find((r) => r.action === "RESTORE_CHUNK")?.details).not.toHaveProperty("refused");
     // the migration header and the route both state the consequence
     expect(mig("20261073_dc_roundF_document_holds_integrity.sql")).toMatch(/delete it BEFORE\n-- any restore of document_holds from a backup taken before this paste/);
-    expect(src("app/api/admin/restore/apply-table/route.ts")).toMatch(/const rowRefusalTables = new Set\(\["document_holds"\]\);/);
+    // admin-and-org ORG-1 / BKP-3: the write moved into the ONE function both restore routes share.
+    expect(src("lib/dataRestore.ts")).toMatch(/export const ROW_LEVEL_SQLSTATES: ReadonlySet<string> = new Set\(\["23502", "23503", "23505", "23514", "23P01"\]\);/);
+    expect(src("app/api/admin/restore/apply-table/route.ts")).toMatch(/await applyRestoreChunk\(sb, \{ orgId, table, rows, idRemap \}\)/);
   });
 });
 

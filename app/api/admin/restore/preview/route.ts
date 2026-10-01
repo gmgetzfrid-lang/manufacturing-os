@@ -3,14 +3,17 @@
 // Body: a backup envelope (the JSON export, or the manifest+tables of a ZIP).
 // Returns a RestorePlan — the reconciliation preview the admin approves BEFORE
 // anything is written. This endpoint NEVER mutates: it only reads the current
-// workspace (org name + active members) to plan how a returning client's data
-// would merge in (additive users by email, org-name collision, id remap).
+// workspace (org name + members of every RESTORE_LINK_MEMBER_STATUSES status,
+// as /begin and /apply read them, so a re-run's placeholders are linked here
+// too) to plan how a returning client's data would merge in (additive users
+// by email, org-name collision, id remap). A read that fails answers 500 —
+// never a plan made against an unread member list.
 //
 // Restore is the most sensitive action in the app, so it's Admin-only.
 
 import { NextRequest, NextResponse } from "next/server";
 import { authorizeOrgRole } from "@/lib/serverAuth";
-import { planRestore, type RestoreEnvelopeLike, type CurrentMember } from "@/lib/dataRestore";
+import { planRestore, type RestoreEnvelopeLike, type CurrentMember, RESTORE_LINK_MEMBER_STATUSES } from "@/lib/dataRestore";
 
 export const runtime = "nodejs";
 
@@ -32,18 +35,18 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: "Not a recognizable backup: missing manifest/tables." }, { status: 400 });
   }
 
-  // Current workspace context — org name + active members (email is the join key).
-  const { data: orgRow } = await sb.from("orgs").select("name").eq("id", orgId).maybeSingle();
+  // Current workspace context — org name + members of every status (email is
+  // the join key), exactly as /begin and /apply reconcile.
+  const { data: orgRow, error: orgReadErr } = await sb.from("orgs").select("name").eq("id", orgId).maybeSingle();
   const orgName = (orgRow as { name?: string } | null)?.name ?? "";
 
-  const { data: memberRows } = await sb
-    .from("org_members")
-    .select("uid, email")
-    .eq("org_id", orgId)
-    .eq("status", "active");
-  const members: CurrentMember[] = ((memberRows as Array<{ uid: string; email: string | null }> | null) ?? [])
-    .filter((m) => m.email)
-    .map((m) => ({ uid: m.uid, email: m.email as string }));
+  const { data: memberRows, error: memberReadErr } = await sb.from("org_members").select("uid, email, status").eq("org_id", orgId).in("status", [...RESTORE_LINK_MEMBER_STATUSES]);
+  const readErr = memberReadErr ? { what: "members", e: memberReadErr } : orgReadErr ? { what: "name", e: orgReadErr } : null;
+  if (readErr) {
+    return NextResponse.json({ error: `Could not read this workspace's ${readErr.what} (${readErr.e.message}) — no plan was made.` }, { status: 500 });
+  }
+  const members: CurrentMember[] = ((memberRows as Array<{ uid: string; email: string | null; status: string | null }> | null) ?? [])
+    .map((m) => ({ uid: m.uid, email: m.email, status: m.status })); // fix pass 5: a member with no address links by uid
 
   const plan = planRestore(envelope, { orgId, orgName, members });
   return NextResponse.json({ plan });

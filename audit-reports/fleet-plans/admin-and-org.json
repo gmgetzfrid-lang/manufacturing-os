@@ -110,7 +110,8 @@
     "BKP-13",
     "BKP-6 residual",
     "BILL-3 dw3",
-    "projects-and-cost INTK-6 (remainder re-owned by the integrator 2026-10-01, orphan sweep: 'The export API still admits Manager ... while the table's RLS is controller-or-project-owner'. Redaction (EGR-7) and restore scrub (DEC-45) are done; only the role-set limb remains, and it closes by pointer when A&O P3 makes \u2026)"
+    "projects-and-cost INTK-6 (remainder re-owned by the integrator 2026-10-01, orphan sweep: 'The export API still admits Manager ... while the table's RLS is controller-or-project-owner'. Redaction (EGR-7) and restore scrub (DEC-45) are done; only the role-set limb remains, and it closes by pointer when A&O P3 makes \u2026)",
+    "intelligence ILIFE-4 (remainder re-owned by the integrator 2026-10-01 at the A&O P1 merge: done-when 2 \u2014 /api/admin/restore/apply has no caller; delete it, or wire it as the restore page's small-backup path; it already shares applyRestoreChunk and the stop rule)"
    ],
    "files": [
     "app/api/data-export/structured/route.ts",

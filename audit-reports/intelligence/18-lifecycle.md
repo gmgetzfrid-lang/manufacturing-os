@@ -97,7 +97,7 @@ lib/dataRestore.ts:292-298 `"asset_aliases", "proposed_links", "link_rules", "an
 ## ILIFE-3 · The only full backup an admin can download cannot be read by the restore page — two incompatible ZIP layouts
 
 - **Severity:** HIGH
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Verification:** CONFIRMED
 - **Locations:** `lib/clientBackup.ts:124`, `app/(protected)/admin/restore/page.tsx:113`, `app/(protected)/admin/restore/page.tsx:117`, `lib/exportRunner.ts:134`, `lib/exportRunner.ts:159`, `app/(protected)/admin/data-export/page.tsx:140`
 - **Independently verified:** ✓ **SURVIVES** — second independent adversarial pass. Confirmed. 'files-manifest.json' does not satisfy /(^|\/)manifest\.json$/ (the char before is '-'), so the Full ZIP is rejected outright. The manifest.json + tables/*.json layout is produced only by lib/exportRunner.ts:134/:159, whose zip is built for delivery destinations (buildAndDeliverExport, called only from /api/data-export/run and /run-scheduled) and is never offered as a browser download — the page's own button at :140 calls startGlobalBackup → clientBackup. Restore's UI copy ('Drop the Full ZIP (records + files)', :316/:339) therefore advertises a path that cannot work.
@@ -125,6 +125,8 @@ lib/clientBackup.ts:124 `zip.file("data.json", JSON.stringify(envelope, null, 2)
 
 **Partial (2026-09-30, intelligence Round G).** Pointer — re-verified at HEAD `1b71ca1`: unchanged. `lib/clientBackup.ts:124` writes the envelope as `data.json`; the restore page's ZIP branch still requires `manifest.json` (`app/(protected)/admin/restore/page.tsx:115`). Owner: admin-and-org **P1** (`BKP-7` — one archive layout, both producers; `BKP-10` — per-part manifests). This finding's round-trip test (clientBackup's entry names satisfy the restore page's regexes) and the documented multi-part procedure ride `BKP-7`; cross-note there.
 
+**Resolution (2026-10-01, intelligence Round G — closed by pointer by the integrator at the admin-and-org P1 merge).** Every done-when holds on the integration branch, landed by admin-and-org P1 (`BKP-7`, `BKP-10`; `DEC-75` §6): (1) the part-1 ZIP the browser's Full ZIP writes is read by the restore page and planned without unzipping — the page passes every dropped part to `readBackupArchive` (`lib/dataRestore.ts`), which reads the parts of one backup in any order; (2) `lib/clientBackup.ts` now writes `manifest.json` + `tables/<table>.json` (the server ZIP's layout, `lib/clientBackup.ts:166`), and an older `data.json` archive is still read; (3) `lib/__tests__/restoreArchiveRoundTrip.test.ts` ("BKP-7 — the browser-built Full ZIP is written in the one layout and restores end to end", :243-340) drives the real producers through `readBackupArchive`, `/begin` and `/apply-table` into another workspace; (4) the multi-part layout and procedure — which part carries the records, how `files/` of every part is put back — is documented in `lib/clientBackup.ts`'s header (:20-30) and `DEC-75` §6, and the page puts files back from every part.
+
 ---
 
 <a id="ilife-4"></a>
@@ -133,6 +135,7 @@ lib/clientBackup.ts:124 `zip.file("data.json", JSON.stringify(envelope, null, 2)
 
 - **Severity:** HIGH
 - **Status:** OPEN
+- **Assigned:** admin-and-org P3 (done-when 2: delete `/api/admin/restore/apply` or wire it as the page's small-backup path) — by the integrator, 2026-10-01 (at the admin-and-org P1 merge: the package that left this remainder has merged; fleet plan `audit-reports/fleet-plans/`).
 - **Verification:** CONFIRMED
 - **Locations:** `app/(protected)/admin/restore/page.tsx:190`, `app/(protected)/admin/restore/page.tsx:202`, `app/(protected)/admin/restore/page.tsx:207`, `app/api/admin/restore/apply/route.ts:115`, `app/api/admin/restore/apply-table/route.ts:80`
 - **Independently verified:** ✓ **SURVIVES** — second independent adversarial pass. Confirmed, including the dead-route claim: a repo-wide grep for '/api/admin/restore/apply' finds only apply-table call sites (page.tsx:196) and the route's own file — nothing ever POSTs to apply/route.ts. Partial credit to the UI: failedTables IS surfaced at :450, but the advice there ('re-run the restore, it's additive and safe') does not fix an FK-ordering failure, and children of a failed parent are still inserted wherever the column is nullable.
@@ -158,6 +161,8 @@ app/(protected)/admin/restore/page.tsx:200-209 `const body = await res.json().ca
 - [ ] The restore result UI states the consequence of a failed table ("stopped at <table>; N tables not attempted"), not just a list of names
 
 **Partial (2026-09-30, intelligence Round G).** Pointer — re-verified at HEAD `1b71ca1`: unchanged. The chunked loop records a failed table and moves on (`app/(protected)/admin/restore/page.tsx:190-208` — `if (!res.ok) { tableFailed = true; break; }` breaks the chunk loop only); `/api/admin/restore/apply` still exists with no caller; the result panel lists failed tables without the consequence (`:451`). Owner: admin-and-org **P1** — `BKP-5` criterion 2 is this finding's criterion 1, and `ORG-1` / `BKP-3` decide the fate of `/apply` (criterion 2). Cross-note on `BKP-5`.
+
+**Partial (2026-10-01, intelligence Round G — recorded by the integrator at the admin-and-org P1 merge).** (1) ✓ The page's chunked restore stops at the first table that fails and names the tables it did not attempt (`lib/dataRestore.ts` `runChunkedRestore`, landed by P1 `BKP-5`). (3) ✓ The result panel says "Restore stopped at <table> — N table(s) not attempted" and lists them (`app/(protected)/admin/restore/page.tsx:551`, :583). (2) **Not met:** `/api/admin/restore/apply` is kept — it shares the write path and the stop rule (`applyRestoreChunk`), so its logic is no longer a separate copy — but nothing in the app calls it: neither deleted nor wired as the small-backup path. Remainder → admin-and-org P3.
 
 ---
 
@@ -337,7 +342,7 @@ app/api/admin/orphans/route.ts:42-46 `const actor = await authorizeOrgRole(req, 
 ## ILIFE-9 · Site Codebook config, library numbering and recently-viewed have no `id` column but restore upserts them ON CONFLICT (id)
 
 - **Severity:** MEDIUM
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Verification:** CONFIRMED
 - **Locations:** `lib/dataRestore.ts:336`, `lib/dataRestore.ts:346`, `app/api/admin/restore/apply-table/route.ts:77`, `supabase/migrations/20260928_site_codebook.sql:38`, `supabase/migrations/20260806_intelligence_layer.sql:106`, `supabase/migrations/20260806_intelligence_layer.sql:121`
 - **Independently verified:** ✓ **SURVIVES** — second independent adversarial pass. Confirmed: the three tables have no `id` column, are on the export contract, and get conflictTargetFor()==='id'. The upsert fails (42703), the fallback `insert` at route.ts:79 then hits the real PK on any re-run/merge (23505) and returns 500. Blast radius is bounded — restore/page.tsx:203 does `tableFailed = true; break;` and records the table in `failedTables` rather than aborting the restore — but the table's rows are silently not restored. No test covers conflictTargetFor (lib/__tests__/dataRestore.test.ts has no CONFLICT reference).
@@ -363,6 +368,8 @@ lib/dataRestore.ts:336-348 `export const CONFLICT_TARGETS: Record<string, string
 - [ ] Re-running a restore twice into the same workspace produces zero failed tables
 
 **Partial (2026-09-30, intelligence Round G).** Pointer — re-verified at HEAD `1b71ca1`: `CONFLICT_TARGETS` (`lib/dataRestore.ts:461-468`) still has its six entries and none for `codebook_config`, `library_numbering` or `recently_viewed_docs`; `conflictTargetFor` still defaults to `"id"` (`:471-473`). Owner: admin-and-org **P1** (`BKP-12`, whose criteria name the same tables plus `document_equipment_suggestions`, and the "conflict target names real key columns" tripwire). Cross-note on `BKP-12`.
+
+**Resolution (2026-10-01, intelligence Round G — closed by pointer by the integrator at the admin-and-org P1 merge).** Every done-when holds on the integration branch, landed by admin-and-org P1 (`BKP-12`): (1) `CONFLICT_TARGETS` (`lib/dataRestore.ts:934-937`) names `codebook_config: "org_id"`, `library_numbering: "library_id"`, `recently_viewed_docs: "user_id,document_id"` (and `document_equipment_suggestions`); (2) `lib/__tests__/dataRestore.test.ts` ("BKP-12 — every restorable table's conflict target is a real key", :215-250) parses `supabase/` for each table's primary key, UNIQUE constraints and non-partial unique indexes and fails on any target that is not one; (3) `lib/__tests__/restoreApplyRoute.test.ts` ("restoring the same backup twice: the second run skips what exists — zero failed tables, on both routes", :302) runs the same backup twice with zero failed tables.
 
 ---
 
