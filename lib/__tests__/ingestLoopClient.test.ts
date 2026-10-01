@@ -14,6 +14,13 @@
 // dropped; the accept-partial and table-aware re-index calls speak the
 // route's contract (ING-6, ING-4), and a re-index that fails part-way keeps
 // what it already reset.
+//
+// Review fix pass 2 (2026-10-01): a document the re-index reset whose old
+// passages could not all be deleted is a leftover, never "could not be
+// reset", and an earlier call's failure that a later call reset is dropped;
+// the confirmation says AI vision re-reads a page only on a usable key —
+// the clicking person's first — and what becomes of it otherwise; the
+// person's own key is checked by the ingest route's own test.
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 
 /** The rows `knowledge_documents` answers with (listKnowledgeDocuments). */
@@ -34,7 +41,7 @@ vi.mock("@/lib/storage", () => ({ uploadToPath: vi.fn() }));
 
 import {
   ingestKnowledgeDocument, INGEST_BUSY_ROUNDS_MAX, acceptPartialIndex, planTableAwareReindex, runTableAwareReindex,
-  tableAwareReindexMessage, listKnowledgeDocuments,
+  tableAwareReindexMessage, listKnowledgeDocuments, ownVisionKeyProblem, tableAwareReindexKeyRefusal,
 } from "@/lib/knowledge";
 
 type Answer = Record<string, unknown>;
@@ -42,11 +49,14 @@ let answers: Answer[] = [];
 let calls = 0;
 /** Every POST body the loop sent, in order. */
 let bodies: Array<Record<string, unknown>> = [];
+/** Every URL fetched, in order. */
+let urls: string[] = [];
 
 beforeEach(() => {
-  answers = []; calls = 0; bodies = [];
+  answers = []; calls = 0; bodies = []; urls = [];
   vi.useFakeTimers();
-  vi.stubGlobal("fetch", vi.fn(async (_url: string, init?: { body?: string }) => {
+  vi.stubGlobal("fetch", vi.fn(async (url: string, init?: { body?: string }) => {
+    urls.push(url);
     bodies.push(JSON.parse(String(init?.body ?? "{}")) as Record<string, unknown>);
     const a = answers[Math.min(calls, answers.length - 1)];
     calls++;
@@ -249,23 +259,45 @@ describe("the accept-partial and table-aware re-index calls (ING-6, ING-4)", () 
       { ok: true, chunker: 2, reset: 3, busy: 1, errors: [], toReset: 4, visionPagesToReread: 60, remaining: 1 },
       { ok: true, chunker: 2, reset: 0, busy: 1, errors: [], toReset: 1, visionPagesToReread: 20, remaining: 1 },
     ];
-    expect(await runTableAwareReindex("lib-1")).toEqual({ reset: 8, busy: 1, errors: [], remaining: 1, stopped: null });
+    expect(await runTableAwareReindex("lib-1")).toEqual({ reset: 8, busy: 1, errors: [], leftovers: [], remaining: 1, stopped: null });
     expect(bodies).toEqual(Array.from({ length: 3 }, () => ({ action: "reindex", libraryId: "lib-1", chunker: 2 })));
   });
 
   it("a run whose documents are all reset ends at once", async () => {
     answers = [{ ok: true, chunker: 2, reset: 9, busy: 0, errors: [], toReset: 9, visionPagesToReread: 140, remaining: 0 }];
-    expect(await runTableAwareReindex("lib-1")).toEqual({ reset: 9, busy: 0, errors: [], remaining: 0, stopped: null });
+    expect(await runTableAwareReindex("lib-1")).toEqual({ reset: 9, busy: 0, errors: [], leftovers: [], remaining: 0, stopped: null });
     expect(calls).toBe(1);
   });
 
-  it("a document that fails in every round is counted once — its latest message kept", async () => {
+  it("a document that fails in every round is named once — by the last call, which tried it last", async () => {
     answers = [
-      { __status: 207, ok: false, chunker: 2, reset: 5, busy: 0, errors: ["d-9: chunks: timeout"], remaining: 1 },
-      { __status: 207, ok: false, chunker: 2, reset: 0, busy: 0, errors: ["d-9: chunks: permission denied"], remaining: 1 },
+      { __status: 207, ok: false, chunker: 2, reset: 5, busy: 0, errors: ["d-9: row: timeout"], remaining: 1 },
+      { __status: 207, ok: false, chunker: 2, reset: 0, busy: 0, errors: ["d-9: row: permission denied"], remaining: 1 },
     ];
     expect(await runTableAwareReindex("lib-1")).toEqual({
-      reset: 5, busy: 0, errors: ["d-9: chunks: permission denied"], remaining: 1, stopped: null,
+      reset: 5, busy: 0, errors: ["d-9: row: permission denied"], leftovers: [], remaining: 1, stopped: null,
+    });
+    expect(calls).toBe(2);
+  });
+
+  it("a document reset whose old passages could not all be deleted is a leftover — counted in reset, never as 'could not be reset'", async () => {
+    // resetKnowledgeIndex pushes such a document to BOTH `reset` and
+    // `errors`: the row is queued (out of Ask), the deletes failed.
+    const left = "d-9: chunks: timeout (the row is queued; the re-index's first batch clears what is left)";
+    answers = [{ __status: 207, ok: false, chunker: 2, reset: 4, busy: 0, errors: [left], remaining: 0 }];
+    expect(await runTableAwareReindex("lib-1")).toEqual({
+      reset: 4, busy: 0, errors: [], leftovers: [left], remaining: 0, stopped: null,
+    });
+  });
+
+  it("an earlier call's failure that a later call reset is not reported — leftovers are kept from every call", async () => {
+    const left = "d-1: page entities: timeout (the row is queued; the re-index's first batch clears what is left)";
+    answers = [
+      { __status: 207, ok: false, chunker: 2, reset: 5, busy: 0, errors: ["d-3: row: the claim was lost before the reset committed", left], remaining: 2 },
+      { ok: true, chunker: 2, reset: 2, busy: 0, errors: [], remaining: 0 },
+    ];
+    expect(await runTableAwareReindex("lib-1")).toEqual({
+      reset: 7, busy: 0, errors: [], leftovers: [left], remaining: 0, stopped: null,
     });
     expect(calls).toBe(2);
   });
@@ -277,7 +309,7 @@ describe("the accept-partial and table-aware re-index calls (ING-6, ING-4)", () 
       { __status: 500, error: why },
     ];
     expect(await runTableAwareReindex("lib-1")).toEqual({
-      reset: 8, busy: 0, errors: ["d-3: row: the claim was lost before the reset committed"], remaining: 2, stopped: why,
+      reset: 8, busy: 0, errors: ["d-3: row: the claim was lost before the reset committed"], leftovers: [], remaining: 2, stopped: why,
     });
   });
 
@@ -305,11 +337,94 @@ describe("the accept-partial and table-aware re-index calls (ING-6, ING-4)", () 
   it("the confirmation says what the dry run counts AND what it leaves out: the library drops out of Ask until each document is re-indexed", () => {
     const msg = tableAwareReindexMessage({ documents: 12, toReset: 9, visionPagesToReread: 140 });
     expect(msg).toContain("9 of 12 documents");
-    expect(msg).toContain("AI vision reads 140 pages again");
     expect(msg).toMatch(/drops out of Ask/);
     expect(msg).toMatch(/until it is re-indexed/);
     expect(msg).toMatch(/nightly maintenance run/);
     expect(msg).toMatch(/can take days/);
     expect(tableAwareReindexMessage({ documents: 1, toReset: 1, visionPagesToReread: 0 })).toContain("No page needs AI vision again");
+  });
+
+  it("the confirmation never promises the AI-vision pages come back: only on a usable key — yours first — and what becomes of them otherwise", () => {
+    const msg = tableAwareReindexMessage({ documents: 6, toReset: 4, visionPagesToReread: 52 });
+    // The first-pass promise is gone.
+    expect(msg).not.toContain("AI vision reads 52 pages again, billed to the AI key of whoever indexes them");
+    expect(msg).toContain(
+      "52 pages were read by AI vision. They are read again, and billed, only where whoever indexes them has an AI key "
+      + "with budget left: this page starts on your key as soon as you confirm; after that, an Admin or Doc Control "
+      + "member with the app open indexes on their own key, and the nightly maintenance run on the uploader's key "
+      + "(a doc-control mirror has no uploader).",
+    );
+    expect(msg).toContain(
+      "A page indexed with no such key comes back with only what its text layer holds — for a scan or a CAD sheet, "
+      + "nothing — and AI vision does not read it again until the document is re-indexed on a key (Re-index all).",
+    );
+    // Not a read-every-page library: no claim about the nightly run skipping documents.
+    expect(msg).not.toMatch(/never indexes a document/);
+    expect(tableAwareReindexMessage({ documents: 2, toReset: 1, visionPagesToReread: 1 }))
+      .toContain("1 page was read by AI vision. It is read again, and billed, only where");
+  });
+
+  it("a read-every-page library: the nightly run never indexes a document with no uploader key (every doc-control mirror) — said, even when no vision page was counted", () => {
+    const msg = tableAwareReindexMessage({ documents: 6, toReset: 4, visionPagesToReread: 52 }, { visionAllPages: true });
+    expect(msg).toContain(
+      "Because this library reads every page with AI vision, the nightly run never indexes a document whose uploader "
+      + "has no AI key with budget left — every doc-control mirror among them: those stay out of Ask until an Admin or "
+      + "Doc Control member with a key indexes them from the app.",
+    );
+    const none = tableAwareReindexMessage({ documents: 6, toReset: 4, visionPagesToReread: 0 }, { visionAllPages: true });
+    expect(none).not.toContain("No page needs AI vision again");
+    expect(none).toContain("This library reads every page with AI vision. Its pages are read again, and billed, only where whoever indexes them has an AI key with budget left");
+    expect(none).toMatch(/never indexes a document whose uploader has no AI key/);
+  });
+
+  it("the refusal for a person whose own key cannot read names the pages, the reason, and what would be lost", () => {
+    expect(tableAwareReindexKeyRefusal({ documents: 6, toReset: 4, visionPagesToReread: 52 }, "you have no AI key saved — add yours in AI settings first"))
+      .toBe("Nothing was reset. This re-index re-reads 52 pages of this library with AI vision, and this page starts indexing "
+        + "what it resets on your key as soon as it runs — but you have no AI key saved — add yours in AI settings first. "
+        + "Indexed with no usable key, those pages would come back with only their text layer, and AI vision would not read "
+        + "them again until the document is re-indexed on a key.");
+    expect(tableAwareReindexKeyRefusal({ documents: 6, toReset: 4, visionPagesToReread: 0 }, "x"))
+      .toContain("re-reads every page of this library with AI vision");
+  });
+});
+
+describe("ownVisionKeyProblem — the clicking person's own key, by the ingest route's test", () => {
+  const conn = (provider: string) => ({
+    provider, model: "m", keyLast4: "abcd", updatedAt: "2026-09-01T00:00:00Z",
+    embeddingProvider: null, embeddingModel: null, embeddingKeyLast4: null,
+  });
+  const conns = (c: ReturnType<typeof conn> | null) => ({ org: null, personal: c, effective: c, canManageOrg: true });
+  const usage = (spentUsd: number, capUsd: number) => ({
+    spentUsd, capUsd, percent: 0, inputTokens: 0, outputTokens: 0, asks: 0, avgPromptTokens: 0, monthLabel: "October 2026",
+  });
+
+  it("a usable key (allowed provider, under its cap) has no problem — asked of the connection and the usage routes", async () => {
+    answers = [conns(conn("anthropic")), usage(2, 10)];
+    expect(await ownVisionKeyProblem("o1")).toBeNull();
+    expect(urls).toEqual(["/api/ai/connection?orgId=o1", "/api/ai/usage?orgId=o1"]);
+  });
+
+  it("no key saved: the reason, and the usage route is not asked", async () => {
+    answers = [conns(null)];
+    expect(await ownVisionKeyProblem("o1")).toBe("you have no AI key saved — add yours in AI settings first");
+    expect(calls).toBe(1);
+  });
+
+  it("a provider indexing may not use is a problem, as the route's ALLOWED_PROVIDERS test makes it", async () => {
+    answers = [conns(conn("google"))];
+    expect(await ownVisionKeyProblem("o1")).toBe("your AI key's provider (google) cannot be used for indexing — change it in AI settings");
+  });
+
+  it("a monthly budget reached is a problem; a cap of 0 is not (the route reads it as no cap)", async () => {
+    answers = [conns(conn("openai")), usage(10, 10)];
+    expect(await ownVisionKeyProblem("o1")).toBe("your monthly AI budget is reached ($10.00 of $10.00) — it resets next month, or an admin can raise it");
+    calls = 0; urls = [];
+    answers = [conns(conn("openai")), usage(50, 0)];
+    expect(await ownVisionKeyProblem("o1")).toBeNull();
+  });
+
+  it("a check that cannot be made throws, never answers 'usable'", async () => {
+    answers = [{ __status: 500, error: "Couldn't load your connection: timeout" }];
+    await expect(ownVisionKeyProblem("o1")).rejects.toThrow(/Couldn't load your connection: timeout/);
   });
 });

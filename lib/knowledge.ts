@@ -10,6 +10,8 @@
 
 import { supabase } from "@/lib/supabase";
 import { uploadToPath, type UploadProgress } from "@/lib/storage";
+import { ALLOWED_PROVIDERS } from "@/lib/ai/pricing";
+import type { AiProviderId } from "@/lib/ai/providerCall";
 
 export interface KnowledgeLibrary {
   id: string;
@@ -730,20 +732,33 @@ export async function planTableAwareReindex(libraryId: string): Promise<TableAwa
  *  and running it again later picks those up. Every call is audited by the
  *  route before it resets anything.
  *
- *  A document that fails in one call is tried again by the next, so its
- *  errors are kept once per document (the route names each `${id}: …`), the
- *  latest message winning. (One that a later call did reset stays listed:
- *  the route counts what it reset, it does not name it.) The first call's refusal is thrown as is (nothing
- *  was reset). A later call that fails does NOT throw away what the calls
- *  before it did: documents they reset are already out of Ask, waiting to
- *  be re-indexed, so the result carries them with `stopped` — the reason
- *  the run stopped — and the `remaining` the last answer counted. */
+ *  The route names each problem `${id}: …`, and they are of two kinds:
+ *
+ *    - `leftovers`: the document WAS reset (counted in `reset`, out of Ask,
+ *      queued), but deleting part of its old index failed — the engine's
+ *      message ends "(the row is queued; the re-index's first batch clears
+ *      what is left)". Reported once, by the call that reset it.
+ *    - `errors`: the document was NOT reset. It stays in the route's
+ *      selector, so every later call that reaches it tries it again — and
+ *      the run's last call is the one that says how each still stands: a
+ *      run that ends with nothing remaining reset them all; one that ends
+ *      on a call that reset nothing has just tried them. So `errors` is the
+ *      last answered call's failures, never an earlier call's for a
+ *      document a later call reset. (A document the last call did not reach
+ *      before its deadline is not named, but is counted in `remaining`.)
+ *
+ *  The first call's refusal is thrown as is (nothing was reset). A later
+ *  call that fails does NOT throw away what the calls before it did:
+ *  documents they reset are already out of Ask, waiting to be re-indexed,
+ *  so the result carries them with `stopped` — the reason the run stopped —
+ *  and the `errors` and `remaining` the last answer gave. */
 export async function runTableAwareReindex(libraryId: string): Promise<{
-  reset: number; busy: number; errors: string[]; remaining: number; stopped: string | null;
+  reset: number; busy: number; errors: string[]; leftovers: string[]; remaining: number; stopped: string | null;
 }> {
   let reset = 0;
   let last = { busy: 0, remaining: 0 };
-  const errorsByDoc = new Map<string, string>();
+  let errors: string[] = [];
+  const leftoversByDoc = new Map<string, string>();
   let stopped: string | null = null;
   for (let round = 0; round < 200; round++) {
     let out: { reset?: unknown; busy?: unknown; errors?: unknown; remaining?: unknown };
@@ -757,33 +772,122 @@ export async function runTableAwareReindex(libraryId: string): Promise<{
     const did = Number(out.reset ?? 0);
     reset += did;
     last = { busy: Number(out.busy ?? 0), remaining: Number(out.remaining ?? 0) };
+    errors = [];
     if (Array.isArray(out.errors)) {
       for (const msg of out.errors.map(String)) {
-        const sep = msg.indexOf(": ");
-        errorsByDoc.set(sep > 0 ? msg.slice(0, sep) : msg, msg);
+        if (RESET_WITH_LEFTOVERS.test(msg)) {
+          const sep = msg.indexOf(": ");
+          leftoversByDoc.set(sep > 0 ? msg.slice(0, sep) : msg, msg);
+        } else {
+          errors.push(msg);
+        }
       }
     }
     if (last.remaining <= 0 || did === 0) break;
   }
-  return { reset, busy: last.busy, errors: [...errorsByDoc.values()].slice(0, 20), remaining: last.remaining, stopped };
+  return {
+    reset, busy: last.busy, errors: errors.slice(0, 20), leftovers: [...leftoversByDoc.values()].slice(0, 20),
+    remaining: last.remaining, stopped,
+  };
 }
 
+/** The engine's mark on a document it reset whose old index it could not
+ *  fully delete (`resetKnowledgeIndex` in lib/knowledgeIngest.ts): reset,
+ *  queued, and cleared by its first re-index batch. */
+const RESET_WITH_LEFTOVERS = /\(the row is queued; /;
+
+/** Whether THIS person's own AI key could read pages with AI vision right
+ *  now, by the ingest route's own test (app/api/knowledge/ingest): a saved
+ *  connection on an allowed provider, under its monthly cap. Null when it
+ *  could; otherwise the reason it could not, phrased to follow "but". A
+ *  check that cannot be made throws.
+ *
+ *  The table-aware re-index asks it first in a library AI vision reads
+ *  (ING-4): the library page's own loop is the first driver of every
+ *  document the run resets, on the clicking person's key, and a batch run
+ *  with no usable key commits a vision page with its text layer only — for
+ *  a scan or a CAD sheet, nothing — without recording it for a retry. */
+export async function ownVisionKeyProblem(orgId: string): Promise<string | null> {
+  const conns = await getAiConnections(orgId);
+  const conn = conns.effective ?? conns.personal;
+  if (!conn) return "you have no AI key saved — add yours in AI settings first";
+  if (!ALLOWED_PROVIDERS.includes(conn.provider as AiProviderId)) {
+    return `your AI key's provider (${conn.provider}) cannot be used for indexing — change it in AI settings`;
+  }
+  const usage = await getAiUsage(orgId);
+  const spent = Number(usage.spentUsd) || 0;
+  const cap = Number(usage.capUsd) || 0;
+  if (cap > 0 && spent >= cap) {
+    return `your monthly AI budget is reached ($${spent.toFixed(2)} of $${cap.toFixed(2)}) — it resets next month, or an admin can raise it`;
+  }
+  return null;
+}
+
+const pagesLabel = (n: number) => `${n} page${n === 1 ? "" : "s"}`;
+
 /** The confirmation before a table-aware re-index: what the dry run counts
- *  (documents reset, AI-vision pages read and billed again) and what it does
- *  not — every document it resets has its passages deleted and drops out of
- *  Ask until it is re-indexed, which for a library read by AI vision can
- *  take days when no controller keeps the app open (ING-4 / ING-7). */
-export function tableAwareReindexMessage(plan: TableAwareReindexPlan): string {
+ *  (documents reset, AI-vision pages read and billed again), on what
+ *  condition those pages are read again at all, and what the count leaves
+ *  out — every document it resets has its passages deleted and drops out of
+ *  Ask until it is re-indexed (ING-4 / ING-7).
+ *
+ *  AI vision reads a page only on a usable key (one with budget left):
+ *  interactively the indexing person's, on the nightly run the uploader's.
+ *  A batch with neither commits the page with its text layer only and
+ *  records nothing to retry. The page asks this only after it checked the
+ *  clicking person's own key (ownVisionKeyProblem), since its own loop
+ *  indexes first. A library that reads every page with AI vision
+ *  (`visionAllPages`) is never indexed by the nightly run without a
+ *  sponsored key, and a doc-control mirror has no uploader to sponsor it. */
+export function tableAwareReindexMessage(
+  plan: TableAwareReindexPlan, opts: { visionAllPages?: boolean } = {},
+): string {
   const docs = `${plan.toReset} of ${plan.documents} document${plan.documents === 1 ? "" : "s"}`;
-  const vision = plan.visionPagesToReread > 0
-    ? `AI vision reads ${plan.visionPagesToReread} page${plan.visionPagesToReread === 1 ? "" : "s"} again, billed to the AI key of whoever indexes them.`
-    : "No page needs AI vision again.";
-  return `${docs} will be re-read with table-aware chunking: a table stays one passage with a row per line, `
-    + "and a sentence that runs over a page break is kept whole. "
-    + `${vision} `
-    + "What that count leaves out: each document it resets drops out of Ask — its passages are deleted and it waits "
+  const p = plan.visionPagesToReread;
+  const allPages = opts.visionAllPages === true;
+  const parts: string[] = [
+    `${docs} will be re-read with table-aware chunking: a table stays one passage with a row per line, `
+      + "and a sentence that runs over a page break is kept whole.",
+  ];
+  if (p > 0 || allPages) {
+    const what = p > 0
+      ? `${pagesLabel(p)} ${p === 1 ? "was" : "were"} read by AI vision. ${p === 1 ? "It is" : "They are"} read again, and billed,`
+      : "This library reads every page with AI vision. Its pages are read again, and billed,";
+    parts.push(
+      `${what} only where whoever indexes them has an AI key with budget left: this page starts on your key as soon `
+      + "as you confirm; after that, an Admin or Doc Control member with the app open indexes on their own key, and the "
+      + "nightly maintenance run on the uploader's key (a doc-control mirror has no uploader). A page indexed with no "
+      + "such key comes back with only what its text layer holds — for a scan or a CAD sheet, nothing — and AI vision "
+      + "does not read it again until the document is re-indexed on a key (Re-index all).",
+    );
+    if (allPages) {
+      parts.push(
+        "Because this library reads every page with AI vision, the nightly run never indexes a document whose uploader "
+        + "has no AI key with budget left — every doc-control mirror among them: those stay out of Ask until an Admin "
+        + "or Doc Control member with a key indexes them from the app.",
+      );
+    }
+  } else {
+    parts.push("No page needs AI vision again.");
+  }
+  parts.push(
+    "What that count leaves out: each document it resets drops out of Ask — its passages are deleted and it waits "
     + "in the indexing queue — until it is re-indexed. Indexing runs while an Admin or Doc Control member has the app "
-    + "open, otherwise on the nightly maintenance run, so a library read by AI vision can take days to come back in full.";
+    + "open, otherwise on the nightly maintenance run, so a library read by AI vision can take days to come back in full.",
+  );
+  return parts.join(" ");
+}
+
+/** Why the page will not run a table-aware re-index for this person
+ *  (ownVisionKeyProblem's `problem`): its own loop would index what the run
+ *  resets on their key at once, and with no usable key those AI-vision
+ *  pages would come back with their text layer only, not read by AI vision
+ *  again until the document is re-indexed on a key. */
+export function tableAwareReindexKeyRefusal(plan: TableAwareReindexPlan, problem: string): string {
+  const what = plan.visionPagesToReread > 0 ? `${pagesLabel(plan.visionPagesToReread)} of this library` : "every page of this library";
+  return `Nothing was reset. This re-index re-reads ${what} with AI vision, and this page starts indexing what it `
+    + `resets on your key as soon as it runs — but ${problem}. Indexed with no usable key, those pages would come back `
+    + "with only their text layer, and AI vision would not read them again until the document is re-indexed on a key.";
 }
 
 /** Thumbs-up/down on an answer. 1 = useful (its cited pages will seed

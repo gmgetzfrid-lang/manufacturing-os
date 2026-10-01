@@ -38,6 +38,7 @@ import {
   type KnowledgeLibraryLink,
   rebuildDrawingIndex,
   acceptPartialIndex, planTableAwareReindex, runTableAwareReindex, tableAwareReindexMessage,
+  ownVisionKeyProblem, tableAwareReindexKeyRefusal,
   pdfUploadRefusal, readUploadHead,
 } from "@/lib/knowledge";
 import GraphShapeWizard from "@/components/graph/GraphShapeWizard";
@@ -1645,8 +1646,9 @@ export default function KnowledgeLibraryPage() {
 
   // ING-4 / ING-7: move this library to the table-aware chunker. The dry run
   // comes first and changes nothing; the confirmation says what it counts
-  // (documents reset, AI-vision pages billed again) and what it does not —
-  // the library drops out of Ask until each document is re-indexed.
+  // (documents reset, AI-vision pages billed again), on what condition those
+  // pages are read again at all, and what it does not count — the library
+  // drops out of Ask until each document is re-indexed.
   const tableAwareReindex = async () => {
     setChunkReindexing(true);
     try {
@@ -1655,33 +1657,69 @@ export default function KnowledgeLibraryPage() {
         showToast({ type: "info", title: "Every indexed document in this library already uses table-aware chunking." });
         return;
       }
+      // AI vision reads a page only on a usable key, and this page's own
+      // loop is the first to index what the run resets — on THIS person's
+      // key, the moment the run ends. A batch with no usable key commits a
+      // vision page with its text layer only and records nothing to retry,
+      // so in a library AI vision reads, a person whose own key cannot read
+      // is stopped here, before anything is reset. A check that cannot be
+      // made stops it too.
+      const visionAllPages = library?.aiFeatures?.visionAllPages === true;
+      if (plan.visionPagesToReread > 0 || visionAllPages) {
+        let problem: string | null;
+        try {
+          problem = await ownVisionKeyProblem(library?.orgId ?? activeOrgId ?? "");
+        } catch (e) {
+          showToast({ type: "error", title: `Nothing was reset: your AI key could not be checked — ${(e as Error).message}` });
+          return;
+        }
+        if (problem) {
+          showToast({ type: "error", title: tableAwareReindexKeyRefusal(plan, problem) });
+          return;
+        }
+      }
       const ok = await appConfirm({
         title: "Re-index with table-aware chunking?",
-        message: tableAwareReindexMessage(plan),
+        message: tableAwareReindexMessage(plan, { visionAllPages }),
         confirmLabel: "Re-index",
       });
       if (!ok) return;
       const out = await runTableAwareReindex(libraryId);
+      const docsLabel = (n: number) => `${n} document${n === 1 ? "" : "s"}`;
+      // Documents that WERE reset, but whose old passages could not all be
+      // deleted yet: out of Ask and queued all the same — never counted as
+      // "could not be reset".
+      const leftovers = out.leftovers.length > 0
+        ? ` For ${out.leftovers.length} of them the old passages could not all be deleted yet: ${out.leftovers[0]}`
+        : "";
       if (out.stopped) {
         // A later call failed: the documents already reset are out of Ask,
         // waiting to be re-indexed — say how many, and why it stopped.
         showToast({
           type: "error",
-          title: `${out.reset} document${out.reset === 1 ? "" : "s"} reset for table-aware chunking, then the run stopped: ${out.stopped}`
-            + (out.remaining > 0 ? ` — ${out.remaining} still to reset; run it again to finish.` : ""),
+          title: `${docsLabel(out.reset)} reset for table-aware chunking, then the run stopped: ${out.stopped}`
+            + (out.remaining > 0 ? ` — ${out.remaining} still to reset; run it again to finish.` : "")
+            + leftovers,
         });
       } else if (out.errors.length > 0) {
+        // Documents the run's last call could not reset (the route tries
+        // each again on every call it reaches them).
         showToast({
           type: "error",
-          title: `${out.reset} document${out.reset === 1 ? "" : "s"} reset; ${out.errors.length} could not be: ${out.errors[0]}`,
+          title: `${docsLabel(out.reset)} reset for table-aware chunking; ${out.errors.length} could not be reset: ${out.errors[0]}.`
+            + (out.remaining > 0
+              ? ` ${out.remaining} still to reset${out.busy > 0 ? ` (${out.busy} being indexed right now)` : ""} — run it again to finish.`
+              : "")
+            + leftovers,
         });
       } else {
         showToast({
-          type: out.remaining > 0 ? "warning" : "success",
-          title: out.reset > 0
-            ? `${out.reset} document${out.reset === 1 ? "" : "s"} reset for table-aware chunking — re-indexing starts now.`
+          type: out.remaining > 0 || leftovers ? "warning" : "success",
+          title: (out.reset > 0
+            ? `${docsLabel(out.reset)} reset for table-aware chunking — re-indexing starts now.`
               + (out.remaining > 0 ? ` ${out.remaining} could not be reset right now (being indexed) — run it again to finish.` : "")
-            : `No document could be reset — ${out.remaining} ${out.remaining === 1 ? "is" : "are"} being indexed right now. Run it again in a few minutes.`,
+            : `No document could be reset — ${out.remaining} ${out.remaining === 1 ? "is" : "are"} being indexed right now. Run it again in a few minutes.`)
+            + leftovers,
         });
       }
     } catch (e) {

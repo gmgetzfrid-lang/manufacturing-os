@@ -25,6 +25,15 @@
 // already owns is said, not reported "indexed"; a re-index that stops
 // part-way says what it already reset; a database without 20261122 is never
 // offered the table-aware re-index.
+//
+// Review fix pass 2 (2026-10-01): in a library AI vision reads, the re-index
+// first checks the clicking person's own key — the page's own loop indexes
+// what it resets, on that key, at once — and stops before anything is reset
+// when it cannot read; the confirmation says AI vision re-reads a page only
+// on a usable key, and, for a read-every-page library, that the nightly run
+// never indexes a document with no uploader key. A document reset with
+// leftovers is counted as reset, never "could not be"; a document that
+// really could not be reset is said with what is left to run.
 
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import React, { act } from "react";
@@ -43,6 +52,7 @@ const lib = vi.hoisted(() => ({
   acceptPartialIndex: vi.fn(),
   planTableAwareReindex: vi.fn(),
   runTableAwareReindex: vi.fn(),
+  ownVisionKeyProblem: vi.fn(),
   rebuildDrawingIndex: vi.fn(),
   deleteKnowledgeDocument: vi.fn(),
   nudgeEmbedDrain: vi.fn(),
@@ -72,7 +82,7 @@ vi.mock("@/lib/aiInstructions", () => ({ countActiveInstructions: vi.fn(async ()
 vi.mock("@/lib/knowledge", async (importOriginal) => ({ ...(await importOriginal<typeof import("@/lib/knowledge")>()), ...lib }));
 
 import KnowledgeLibraryPage from "@/app/(protected)/knowledge/[id]/page";
-import { tableAwareReindexMessage, type KnowledgeDocument, type KnowledgeLibrary } from "@/lib/knowledge";
+import { tableAwareReindexMessage, tableAwareReindexKeyRefusal, type KnowledgeDocument, type KnowledgeLibrary } from "@/lib/knowledge";
 
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -139,6 +149,7 @@ beforeEach(() => {
   lib.listKnowledgeQuestions.mockResolvedValue({ questions: [], withheld: 0 });
   lib.listLibraryLinks.mockResolvedValue([]);
   lib.ingestKnowledgeDocument.mockResolvedValue("indexed");
+  lib.ownVisionKeyProblem.mockResolvedValue(null);
   window.sessionStorage.clear();
 });
 afterEach(() => {
@@ -298,11 +309,13 @@ describe("ING-4 / ING-7 — Re-index with table-aware chunking", () => {
     setRole(true);
     await mount();
     lib.planTableAwareReindex.mockResolvedValue(plan);
-    lib.runTableAwareReindex.mockResolvedValue({ reset: 4, busy: 0, errors: [], remaining: 0, stopped: null });
+    lib.runTableAwareReindex.mockResolvedValue({ reset: 4, busy: 0, errors: [], leftovers: [], remaining: 0, stopped: null });
     dlg.appConfirm.mockResolvedValue(true);
     await act(async () => { byText("button", /Re-index with table-aware chunking/)!.click(); });
     await flush();
     expect(lib.planTableAwareReindex).toHaveBeenCalledWith("lib-1");
+    // 52 AI-vision pages: the person's own key is checked before anything is asked.
+    expect(lib.ownVisionKeyProblem).toHaveBeenCalledWith("o1");
     const ask = dlg.appConfirm.mock.calls[0][0] as { title: string; message: string };
     expect(ask.title).toBe("Re-index with table-aware chunking?");
     expect(ask.message).toBe(tableAwareReindexMessage(plan));
@@ -327,7 +340,7 @@ describe("ING-4 / ING-7 — Re-index with table-aware chunking", () => {
     setRole(true);
     await mount();
     lib.planTableAwareReindex.mockResolvedValue(plan);
-    lib.runTableAwareReindex.mockResolvedValue({ reset: 3, busy: 1, errors: [], remaining: 1, stopped: null });
+    lib.runTableAwareReindex.mockResolvedValue({ reset: 3, busy: 1, errors: [], leftovers: [], remaining: 1, stopped: null });
     dlg.appConfirm.mockResolvedValue(true);
     await act(async () => { byText("button", /Re-index with table-aware chunking/)!.click(); });
     await flush();
@@ -341,7 +354,7 @@ describe("ING-4 / ING-7 — Re-index with table-aware chunking", () => {
     setRole(true);
     await mount();
     lib.planTableAwareReindex.mockResolvedValue(plan);
-    lib.runTableAwareReindex.mockResolvedValue({ reset: 0, busy: 4, errors: [], remaining: 4, stopped: null });
+    lib.runTableAwareReindex.mockResolvedValue({ reset: 0, busy: 4, errors: [], leftovers: [], remaining: 4, stopped: null });
     dlg.appConfirm.mockResolvedValue(true);
     await act(async () => { byText("button", /Re-index with table-aware chunking/)!.click(); });
     await flush();
@@ -366,7 +379,7 @@ describe("ING-4 / ING-7 — Re-index with table-aware chunking", () => {
     await mount();
     lib.planTableAwareReindex.mockResolvedValue(plan);
     lib.runTableAwareReindex.mockResolvedValue({
-      reset: 3, busy: 0, errors: [], remaining: 1,
+      reset: 3, busy: 0, errors: [], leftovers: [], remaining: 1,
       stopped: "The re-index could not be recorded, so nothing was changed: insert failed",
     });
     dlg.appConfirm.mockResolvedValue(true);
@@ -375,6 +388,96 @@ describe("ING-4 / ING-7 — Re-index with table-aware chunking", () => {
     expect(toast.showToast).toHaveBeenCalledWith({
       type: "error",
       title: "3 documents reset for table-aware chunking, then the run stopped: The re-index could not be recorded, so nothing was changed: insert failed — 1 still to reset; run it again to finish.",
+    });
+  });
+
+  it("a person whose own key cannot read is stopped before anything is reset — the confirmation is never asked", async () => {
+    setRole(true);
+    await mount();
+    lib.planTableAwareReindex.mockResolvedValue(plan);
+    const problem = "you have no AI key saved — add yours in AI settings first";
+    lib.ownVisionKeyProblem.mockResolvedValue(problem);
+    dlg.appConfirm.mockResolvedValue(true);
+    await act(async () => { byText("button", /Re-index with table-aware chunking/)!.click(); });
+    await flush();
+    expect(lib.ownVisionKeyProblem).toHaveBeenCalledWith("o1");
+    expect(dlg.appConfirm).not.toHaveBeenCalled();
+    expect(lib.runTableAwareReindex).not.toHaveBeenCalled();
+    expect(toast.showToast).toHaveBeenCalledWith({ type: "error", title: tableAwareReindexKeyRefusal(plan, problem) });
+  });
+
+  it("a key check that cannot be made stops it too — nothing is reset", async () => {
+    setRole(true);
+    await mount();
+    lib.planTableAwareReindex.mockResolvedValue(plan);
+    lib.ownVisionKeyProblem.mockRejectedValue(new Error("Couldn't load AI usage (HTTP 500)"));
+    dlg.appConfirm.mockResolvedValue(true);
+    await act(async () => { byText("button", /Re-index with table-aware chunking/)!.click(); });
+    await flush();
+    expect(dlg.appConfirm).not.toHaveBeenCalled();
+    expect(lib.runTableAwareReindex).not.toHaveBeenCalled();
+    expect(toast.showToast).toHaveBeenCalledWith({
+      type: "error", title: "Nothing was reset: your AI key could not be checked — Couldn't load AI usage (HTTP 500)",
+    });
+  });
+
+  it("no AI-vision page in a library that does not read every page: no key is asked for", async () => {
+    setRole(true);
+    await mount();
+    const textOnly = { documents: 6, toReset: 4, visionPagesToReread: 0 };
+    lib.planTableAwareReindex.mockResolvedValue(textOnly);
+    lib.runTableAwareReindex.mockResolvedValue({ reset: 4, busy: 0, errors: [], leftovers: [], remaining: 0, stopped: null });
+    dlg.appConfirm.mockResolvedValue(true);
+    await act(async () => { byText("button", /Re-index with table-aware chunking/)!.click(); });
+    await flush();
+    expect(lib.ownVisionKeyProblem).not.toHaveBeenCalled();
+    expect((dlg.appConfirm.mock.calls[0][0] as { message: string }).message).toBe(tableAwareReindexMessage(textOnly));
+    expect(lib.runTableAwareReindex).toHaveBeenCalledWith("lib-1");
+  });
+
+  it("a read-every-page library checks the key even with no vision page counted, and the confirmation says the nightly run skips documents with no uploader key", async () => {
+    setRole(true);
+    lib.getKnowledgeLibrary.mockResolvedValue({ ...library, aiFeatures: { visionAllPages: true } });
+    await mount();
+    const counted = { documents: 6, toReset: 4, visionPagesToReread: 0 };
+    lib.planTableAwareReindex.mockResolvedValue(counted);
+    lib.runTableAwareReindex.mockResolvedValue({ reset: 4, busy: 0, errors: [], leftovers: [], remaining: 0, stopped: null });
+    dlg.appConfirm.mockResolvedValue(true);
+    await act(async () => { byText("button", /Re-index with table-aware chunking/)!.click(); });
+    await flush();
+    expect(lib.ownVisionKeyProblem).toHaveBeenCalledWith("o1");
+    const message = (dlg.appConfirm.mock.calls[0][0] as { message: string }).message;
+    expect(message).toBe(tableAwareReindexMessage(counted, { visionAllPages: true }));
+    expect(message).toMatch(/never indexes a document whose uploader has no AI key/);
+  });
+
+  it("a document reset whose old passages could not all be deleted counts as reset — the toast never says it could not be", async () => {
+    setRole(true);
+    await mount();
+    lib.planTableAwareReindex.mockResolvedValue(plan);
+    const left = "d-9: chunks: timeout (the row is queued; the re-index's first batch clears what is left)";
+    lib.runTableAwareReindex.mockResolvedValue({ reset: 4, busy: 0, errors: [], leftovers: [left], remaining: 0, stopped: null });
+    dlg.appConfirm.mockResolvedValue(true);
+    await act(async () => { byText("button", /Re-index with table-aware chunking/)!.click(); });
+    await flush();
+    expect(toast.showToast).toHaveBeenCalledWith({
+      type: "warning",
+      title: `4 documents reset for table-aware chunking — re-indexing starts now. For 1 of them the old passages could not all be deleted yet: ${left}`,
+    });
+    expect(toast.showToast).not.toHaveBeenCalledWith(expect.objectContaining({ title: expect.stringMatching(/could not be reset|could not be:/) }));
+  });
+
+  it("a document that really could not be reset is said, with what is left to run and how many are busy", async () => {
+    setRole(true);
+    await mount();
+    lib.planTableAwareReindex.mockResolvedValue(plan);
+    lib.runTableAwareReindex.mockResolvedValue({ reset: 2, busy: 1, errors: ["d-9: row: timeout"], leftovers: [], remaining: 2, stopped: null });
+    dlg.appConfirm.mockResolvedValue(true);
+    await act(async () => { byText("button", /Re-index with table-aware chunking/)!.click(); });
+    await flush();
+    expect(toast.showToast).toHaveBeenCalledWith({
+      type: "error",
+      title: "2 documents reset for table-aware chunking; 1 could not be reset: d-9: row: timeout. 2 still to reset (1 being indexed right now) — run it again to finish.",
     });
   });
 
