@@ -46,6 +46,7 @@ import { newIntakeToken, intakePortalPath, linkCredentialView, firstReadWithColu
 import { listCompanies, listBarredCompanies, getCompany, type Company } from "@/lib/companies";
 import { fmtMoney, type CostAccount, type Actor } from "@/lib/costs";
 import { getFileUrl } from "@/lib/storage";
+import { publicOrigin } from "@/lib/publicOrigin";
 import {
   type CostDocument, costDocStatusLabel,
   uploadCostDoc, awardQuote, postInvoice,
@@ -1395,7 +1396,10 @@ function QuoteLinksSection({ orgId, projectId, actor, existingGroups, setErr }: 
     } finally { setRevoking(null); }
   };
 
-  const portalUrl = (token: string) => `${window.location.origin}${intakePortalPath(token)}`;
+  // XEDGE-5 / PHYS-13: a contractor's quote link (copied, or printed in the
+  // starter RFQ) is built on the app's public origin (lib/publicOrigin),
+  // never the page's own host.
+  const portalUrl = (token: string) => `${publicOrigin()}${intakePortalPath(token)}`;
   /** The address a row can copy or put in an RFQ: minted / re-issued this
    *  session, or a token the database still stores (before 20261141). */
   const knownUrl = (l: QuoteLink): string | null => freshUrls.get(l.id) ?? (l.token ? portalUrl(l.token) : null);

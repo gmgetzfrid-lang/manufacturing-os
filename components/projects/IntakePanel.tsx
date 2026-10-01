@@ -22,6 +22,7 @@ import {
   FilePlus2, Search, RotateCcw,
 } from "lucide-react";
 import { supabase } from "@/lib/supabase";
+import { publicOrigin } from "@/lib/publicOrigin";
 import {
   finalizeReviewedRevision, finalizeReasonMessage,
   effectiveReviewControlForDocument, listDraftRoster, openReviewRoster,
@@ -257,8 +258,18 @@ export default function IntakePanel({ orgId, projectId, canManage, uid, userEmai
     if (!(await appConfirm({ message: `Revoke ${l.companyName}'s submit link? They lose access immediately.`, tone: "danger" }))) return;
     setBusy(l.id);
     try {
-      const { error } = await supabase.from("project_intake_links").update({ revoked_at: new Date().toISOString() }).eq("id", l.id);
+      // INTK-17: only a still-unrevoked link of THIS project is revoked, and
+      // the rows that changed are read back. Zero rows is nothing revoked
+      // (already revoked — its first revocation time stands — or not
+      // permitted): no audit row is written for it, and the user is told.
+      const { data: revoked, error } = await supabase.from("project_intake_links").update({ revoked_at: new Date().toISOString() })
+        .eq("id", l.id).eq("project_id", projectId).is("revoked_at", null).select("id");
       if (error) { setMsg(`Couldn't revoke: ${userFacingError(error)}`); return; }
+      if (!revoked || (revoked as unknown[]).length === 0) {
+        setMsg(`${l.companyName}'s link was not revoked — it may already be revoked, or you may not have permission. The list now shows its current state.`);
+        await refresh();
+        return;
+      }
       const { error: auditErr } = await supabase.from("audit_logs").insert({
         action: "INTAKE_LINK_REVOKED",
         resource_type: "project_intake_link", resource_id: l.id,
@@ -473,8 +484,11 @@ export default function IntakePanel({ orgId, projectId, canManage, uid, userEmai
     finally { setBusy(null); }
   };
 
-  const portalUrl = (token: string) =>
-    `${typeof window !== "undefined" ? window.location.origin : ""}${intakePortalPath(token)}`;
+  // XEDGE-5 / PHYS-13: the address a company is sent is built on the app's
+  // public origin (lib/publicOrigin — the configured site URL, else the
+  // production domain), never the page's own host: a link copied on a
+  // preview deploy must not send the contractor to a gated preview host.
+  const portalUrl = (token: string) => `${publicOrigin()}${intakePortalPath(token)}`;
   /** The address a list row can copy: minted / re-issued this session, or a
    *  token the database still stores (before 20261141). Otherwise none. */
   const knownUrl = (l: IntakeLink): string | null => freshUrls.get(l.id) ?? (l.token ? portalUrl(l.token) : null);
