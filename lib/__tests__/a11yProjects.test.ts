@@ -451,3 +451,31 @@ describe("A11Y-10 — nothing stays multi-column on a phone; a clipped money val
     expect(src("components/projects/CostsTab.tsx")).toContain('text-lg font-black tabular-nums text-[var(--color-text)] break-words">{value}</div>');
   });
 });
+
+describe("CHART-6 — no consumer paints a score band's colour on text", () => {
+  it("scoreBandColor is used only as a mark (a dial arc, a bar fill, a dot) — never as a text color, anywhere in the app", () => {
+    const files = [...walk("app"), ...walk("components")];
+    const asText: string[] = [];
+    for (const f of files) {
+      const s = src(f);
+      for (const m of s.matchAll(/color:\s*scoreBandColor\(/g)) asText.push(`${f}@${m.index}`);
+    }
+    expect(asText).toEqual([]);
+    // the 70–84 band is the white-label accent: orange-600 on white is 3.56 : 1, under the 4.5 an 11 px label needs
+    expect(ratio(T.accent, T.white)).toBeLessThan(4.5);
+  });
+  it("the coach header and the quality-manual coverage label wear the text token, with the band as an aria-hidden dot beside the figure", () => {
+    for (const [f, call] of [
+      ["components/projects/ProjectCoach.tsx", "scoreBandColor(health.score)"],
+      ["app/(protected)/companies/[id]/page.tsx", "scoreBandColor(company.qualityManualScore)"],
+    ]) {
+      const s = src(f);
+      const at = s.indexOf(`style={{ background: ${call} }}`);
+      expect(at, f).toBeGreaterThan(0);
+      const tag = s.slice(s.lastIndexOf("<span", at), at);
+      expect(tag, f).toContain('aria-hidden="true"');
+      const label = s.slice(s.lastIndexOf("<span", s.lastIndexOf("<span", at) - 1), at);
+      expect(label, f).toContain("text-[var(--color-text)]");
+    }
+  });
+});

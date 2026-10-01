@@ -82,7 +82,10 @@ export default function ProjectCoach({ orgId, projectId, refreshKey }: {
         <Sparkles className="w-4 h-4 text-[var(--color-accent)]" />
         <span className="text-sm font-bold text-[var(--color-text)]">Project health &amp; coach</span>
         {health.score != null && (
-          <span className="text-[11px] font-black tabular-nums" style={{ color: scoreBandColor(health.score) }}>
+          // CHART-6: the figure wears a text token; the band's colour is a
+          // mark beside it (the word carries the band too), never text paint.
+          <span className="inline-flex items-center gap-1 text-[11px] font-black tabular-nums text-[var(--color-text)]">
+            <span aria-hidden="true" className="w-2 h-2 rounded-full shrink-0" style={{ background: scoreBandColor(health.score) }} />
             {health.score} · {band}
           </span>
         )}

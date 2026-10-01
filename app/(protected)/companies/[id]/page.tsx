@@ -285,10 +285,12 @@ function QualityManualPanel({ orgId, company, canManage, actorId, onChanged, set
         <BookOpenCheck className="w-4 h-4 text-[var(--color-accent)]" />
         <span className="text-sm font-bold text-[var(--color-text)]">Quality manual</span>
         {company.qualityManualScore != null ? (
-          <span className="text-[11px] font-black tabular-nums" style={{ color: scoreBandColor(company.qualityManualScore) }}
+          // CHART-6: text token for the figure; the band colour rides on a mark beside it.
+          <span className="inline-flex items-center gap-1 text-[11px] font-black tabular-nums text-[var(--color-text)]"
             title={`Based on ${readExtent(company.qualityManualPagesRead, company.qualityManualPagesTotal).label} of the manual`}>
+            <span aria-hidden="true" className="w-2 h-2 rounded-full shrink-0" style={{ background: scoreBandColor(company.qualityManualScore) }} />
             {Math.round(company.qualityManualScore)}% coverage
-            <span className="ml-1 font-bold text-[var(--color-text-faint)]">· {readExtent(company.qualityManualPagesRead, company.qualityManualPagesTotal).label}</span>
+            <span className="ml-1 font-bold text-[var(--color-text-muted)]">· {readExtent(company.qualityManualPagesRead, company.qualityManualPagesTotal).label}</span>
           </span>
         ) : (
           <span className="text-[10px] text-[var(--color-text-muted)]">Not evaluated — the score gauges how much of a real quality program their manual covers.</span>
