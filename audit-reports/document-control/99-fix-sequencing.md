@@ -318,6 +318,37 @@ unless the guard's stamp says the archive took away no issue — so before the
 paste (no stamp columns) and for any legacy or service-role archive it
 restores Issued exactly as it always did, and the database decides.
 
+⚠ **Paste order — P14 RECORDS & REVIEW REMAINDERS (2026-10-01).** Three
+one-paste migrations, independent of one another (any order among them):
+- `20261149_dc_roundF_document_evidence_delete_guard.sql` (`DRLS-14`) —
+  **paste ONLY once the user ratifies `DEC-44 (P14)`** (the reversible
+  default: a document carrying acted acknowledgment / sign-off evidence
+  cannot be deleted by anyone; archive it instead). Independent of every
+  pending document-control paste (`20261131`, `20261139`, `20261143`,
+  `20261144`); with `20261131` pasted, a document carrying only unanswered
+  asks still deletes. Its result set carries the DEC-30 inventory of the
+  documents it would now refuse to delete.
+- `20261150_dc_roundF_work_package_repin_record.sql` (`DRLS-10`) — after
+  `20261032` / `20261033` (the pin policies and the pin guard it sits
+  beside); a new AFTER UPDATE trigger only, re-creating nothing.
+- `20261151_dc_roundF_promote_transaction_and_hold_override.sql` (`RG-12`,
+  `REV-20`) — after `20261144` (the guard's base) and `20261130`
+  (`publish_revision`'s base); its first statement refuses to run, changing
+  nothing, without them. **Never re-paste `20261144`, `20261139`,
+  `20261105` or any earlier guard migration after it, nor `20261130` or any
+  earlier `publish_revision` migration** — either drops the REV-20 rules.
+  Independent of `20261131`, `20261143`, `20261149` and `20261150`.
+  Deploy the app carrying P14 with or after the paste: the app before it
+  never calls `finalize_reviewed_promote`, and the app after it falls back
+  to its three checked writes on a database without the function. After
+  the paste a controller passes an active hold only through
+  `publish_revision`'s recorded force (`REV_HOLD_OVERRIDDEN`), never with a
+  bare pointer-and-issue write or an unstamped retirement's exit.
+`GAP-4` (owner-must-approve) and `GAP-9` (field-verification currency) need
+no migration: the owner's roster row is counted by the guard's existing
+per-slot-group count, and the verification cadence rides the `review_policy`
+JSON.
+
 ⚠ **Deploy note — P12 (operators, public-surfaces `SHR-11`).** Before
 deploying the app carrying P12, a self-hosted deployment (the Docker image,
 `next start`) must set `NEXT_PUBLIC_SITE_URL` to its public address — a
