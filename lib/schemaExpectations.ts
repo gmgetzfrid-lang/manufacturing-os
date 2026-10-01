@@ -92,6 +92,7 @@ export const EXPECTED_TABLES: readonly TableExpectation[] = [
   { table: "notes", migration: "20260617_phase9_notes.sql" },
   { table: "notification_preferences", migration: "20260529_phase_b_notifications.sql" },
   { table: "notifications", migration: "20260621_in_app_notifications.sql" },
+  { table: "orchestrator_proposals", migration: "20261147_intel_roundG_orchestrator_proposals.sql" },
   { table: "org_ai_instructions", migration: "20260806_intelligence_layer.sql" },
   // The capability policy + drafting config live here. schema.sql supplies it
   // (not a migration) — listed so /api/admin/schema-health catches the class

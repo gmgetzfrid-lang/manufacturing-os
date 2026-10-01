@@ -64,7 +64,7 @@ What twenty lenses did not look at — plus what is sound and must not break.
 ## IEDGE-1 · /api/graph/ask executes the SECURITY INVOKER corpus RPC on the SERVICE ROLE, so its own security comment is false and it returns passages from ACL-restricted mirrored documents to any member
 
 - **Severity:** CRITICAL
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Verification:** CONFIRMED
 - **Locations:** `app/api/graph/ask/route.ts:21-23`, `app/api/graph/ask/route.ts:83-106`, `supabase/migrations/20260929_mention_engine.sql:97-134`, `supabase/migrations/20260917_knowledge_sources.sql:69-82`, `app/(protected)/graph/page.tsx:278`
 - **Re-verified:** hardening pass — **SURVIVES**. The route's header comment claims *"the corpus RPC runs SECURITY INVOKER under the caller's own RLS, so this can never widen what the person is allowed to read"* (`:21-23`); the call at `:83` is `supabaseAdmin.rpc("graph_ask", …)`, which is the service role. The comment describes the opposite of the code.
@@ -86,6 +86,16 @@ app/api/graph/ask/route.ts:83 — `const { data: rawHits, error: askErr } = awai
 - [ ] The entity_mentions query at route.ts:137-143 is filtered by the same readable set before context_snippet is returned
 - [ ] The route header comment at lines 21-23 is rewritten to describe the enforcement that actually exists
 - [ ] A test asserts that a member denied read on a source document gets zero hits from a query whose only match is in that document
+
+**Resolution (2026-10-01, intelligence Round G).** Fixed once with [`GPV-1`](./08-graph-pivots.md#gpv-1) (the same defect; I-04's first commit, on its own). Reproduced first (DEC-29): `lib/__tests__/graphAskAcl.test.ts` fails five cases at the base `d466a59` through the real ACL seam. `app/api/graph/ask/route.ts` now calls `loadPrincipal` + `readableControlledDocIds` over the hits' mirror sources (`askerView`), BEFORE ranking, and drops every hit whose knowledge document mirrors a controlled document the caller cannot read; upload-origin hits stay. The `entity_mentions` read runs over the surviving knowledge documents only and drops a row whose `document_id` names an unreadable controlled document, so `context_snippet` never carries restricted text. Fails closed: an unreadable mirror lookup withholds every hit; a principal or readable set that cannot be built withholds every source-linked hit. A failed check is said as one, never as "nothing matches": a 503 "couldn't check document access right now — try again" when nothing can be shown, otherwise a partial-answer note; a failed `entity_mentions` read is likewise said as a failure, never as "run the mention indexer" (see `GPV-1`).
+
+**Done-when.**
+1. ✓ `loadPrincipal` + `readableControlledDocIds`; every hit whose knowledge document has a `source_document_id` the caller cannot read is dropped, failing closed on error — the shape of `/api/knowledge/drawing` and `/api/knowledge/ask`.
+2. ✓ The `entity_mentions` query is restricted to the surviving knowledge documents and its rows are filtered by the same readable set before `context_snippet` is returned.
+3. ✓ The header comment describes the enforcement that exists (service role; the per-asker filter; fail closed).
+4. ✓ A member denied read on a source document gets zero hits from a query whose only match is in that document ("a member with no read on the Legal library gets ZERO hits …").
+
+**Scope / residual.** `KACL-12` (owner I-12): the seam's own swallowed reads, shared by every caller. The orchestrator's read tools were `IEDGE-2` / `ORCH-3` (R&P EGRESS-3), unchanged here.
 
 ---
 
@@ -413,7 +423,7 @@ app/api/data-export/structured/route.ts:56-58 — `if (!["Admin", "Manager", "Do
 ## IEDGE-11 · The graph's ANSWERED mode is documented in the route contract but does not exist — /api/graph/ask can only ever return mode 'evidence' and answer null
 
 - **Severity:** MEDIUM
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Verification:** CONFIRMED
 - **Locations:** `app/api/graph/ask/route.ts:14-19`, `app/api/graph/ask/route.ts:108-113`, `app/api/graph/ask/route.ts:174-181`
 - **Re-verified:** hardening pass — **SURVIVES**, by census. `grep -c 'mode: "answered"'` on the route returns **0**. The contract at `:14-19` documents ANSWERED as one of two modes and *"it is always honest about which one you got"*; the value is never produced.
@@ -433,6 +443,14 @@ app/api/graph/ask/route.ts:109-112 — `return NextResponse.json<GraphAskRespons
 
 - [ ] Either the ANSWERED branch is implemented behind the same key/agreement/cap gates every other AI route uses, or the mode union, the answer field and the header comment are reduced to what the route actually does
 - [ ] No consumer branches on a mode the server cannot emit
+
+**Resolution (2026-10-01, intelligence Round G).** Per the plan default (`DEC-72` item 4): the contract is reduced to what the route does. In `app/api/graph/ask/route.ts`, `GraphAskResponse.mode` is the literal `"evidence"` and the `answer` field is gone from the type and from both payloads; the header says the route returns evidence only and that a written, cited answer is `/api/knowledge/ask`'s job, behind the governed key / agreement / cap gates. The one consumer, `app/(protected)/graph/page.tsx` (`interface GraphAsk`, I-14's file, not edited), never declared `mode` or `answer`. Reproduced first: the IEDGE-11 block of `lib/__tests__/graphAskAcl.test.ts` fails at `d466a59` on the `"answered"` union and the `answer` field.
+
+**Done-when.**
+1. ✓ The "reduced" branch: the mode union, the answer field and the header comment say only what the route does (every payload, including the no-match one, is `mode: "evidence"` with no `answer`).
+2. ✓ No consumer branches on a mode the server cannot emit: the page's `GraphAsk` interface carries neither `mode` nor `answer`, and nothing in it names `"answered"` (pinned).
+
+**Scope / residual.** Closes `GPV-12`'s route half (criterion 2); its count/lens half is I-14's.
 
 ---
 

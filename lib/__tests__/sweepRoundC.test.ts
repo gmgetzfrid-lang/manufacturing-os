@@ -14,9 +14,16 @@ const state = vi.hoisted(() => ({
   lists: {} as Record<string, Array<Record<string, unknown>>>,
   readable: new Set<string>(),
   upserts: [] as Array<{ table: string; row: Record<string, unknown>; opts: unknown }>,
+  inserts: [] as Array<{ table: string; row: Record<string, unknown> }>,
   askedFor: [] as string[][],
   emitted: [] as Array<Record<string, unknown>>,
   rpc: [] as Array<Record<string, unknown>>,
+  /** acl_index_denies answers (ORCH-8): action → denied. */
+  denies: {} as Record<string, boolean>,
+  rpcCalls: [] as Array<{ fn: string; args: Record<string, unknown> }>,
+  /** ORCH-6: a read of these tables errors; `.or()` lists are recorded. */
+  errors: {} as Record<string, { message: string }>,
+  orCalls: [] as Array<{ table: string; list: string }>,
 }));
 
 function chain(table: string) {
@@ -24,9 +31,13 @@ function chain(table: string) {
   const handler: ProxyHandler<Record<string, unknown>> = {
     get(_t, prop: string) {
       if (prop === "then") {
-        return (resolve: (v: unknown) => void) => resolve({ data: state.lists[table] ?? [], error: null });
+        return (resolve: (v: unknown) => void) => resolve(state.errors[table]
+          ? { data: null, error: state.errors[table] }
+          : { data: state.lists[table] ?? [], error: null });
       }
       return (...args: unknown[]) => {
+        if (prop === "or") state.orCalls.push({ table, list: String(args[0]) });
+        if (prop === "insert") state.inserts.push({ table, row: args[0] as Record<string, unknown> });
         if (prop === "maybeSingle") return Promise.resolve({ data: state.single[table] ?? null, error: null });
         if (prop === "upsert") {
           state.upserts.push({ table, row: args[0] as Record<string, unknown>, opts: args[1] });
@@ -42,7 +53,15 @@ function chain(table: string) {
 vi.mock("@/lib/supabaseAdmin", () => ({
   supabaseAdmin: {
     from: (t: string) => chain(t),
-    rpc: async () => ({ data: state.rpc, error: null }),
+    rpc: async (fn: string, args: Record<string, unknown>) => {
+      state.rpcCalls.push({ fn, args });
+      if (fn === "acl_index_denies") {
+        return String(args.p_action) in state.denies && state.denies[String(args.p_action)] === undefined
+          ? { data: null, error: { message: "function acl_index_denies does not exist" } }
+          : { data: state.denies[String(args.p_action)] ?? false, error: null };
+      }
+      return { data: state.rpc, error: null };
+    },
   },
 }));
 vi.mock("@/lib/knowledgeAccess", () => ({
@@ -75,7 +94,8 @@ const run = (name: string, args: Record<string, string | number | boolean>, ctx:
 
 beforeEach(() => {
   state.single = {}; state.lists = {}; state.readable = new Set();
-  state.upserts = []; state.askedFor = []; state.emitted = []; state.rpc = [];
+  state.upserts = []; state.inserts = []; state.askedFor = []; state.emitted = []; state.rpc = [];
+  state.denies = {}; state.rpcCalls = []; state.errors = {}; state.orCalls = [];
 });
 
 /** Two knowledge mirrors (k1 → d1 denied, k3 → d2 readable) and one
@@ -95,13 +115,64 @@ describe("SURF-7 / EGRESS-3 — check_permissions evaluates the caller's real AC
     expect(out.data).toMatchObject({ readable: false, editable: false });
     expect(state.askedFor).toEqual([["d1"]]);
   });
-  it("readable but not controller → editable false; controller BY COLLECTION (Requester + DocCtrl) → editable true; a hold blocks editing", async () => {
-    state.single.documents = { id: "d1", document_number: "P-1", status: "Issued", org_id: "o1" };
+  it("readable + read-only role → editable false; controller BY COLLECTION (Requester + DocCtrl) → editable true; a hold blocks editing", async () => {
+    state.single.documents = { id: "d1", document_number: "P-1", status: "Issued", org_id: "o1", acl_index: null };
     state.readable.add("d1");
-    expect((await run("check_permissions", { document_id: "d1" }, ctxFor(["Drafter"]))).data).toMatchObject({ readable: true, editable: false });
+    expect((await run("check_permissions", { document_id: "d1" }, ctxFor(["Viewer"]))).data).toMatchObject({ readable: true, editable: false });
+    expect((await run("check_permissions", { document_id: "d1" }, ctxFor(["Drafter", "Auditor"]))).data).toMatchObject({ readable: true, editable: false });
     expect((await run("check_permissions", { document_id: "d1" }, ctxFor(["Requester", "DocCtrl"]))).data).toMatchObject({ readable: true, editable: true, on_hold: false });
     state.lists.document_holds = [{ id: "h1", reason: "legal" }];
     expect((await run("check_permissions", { document_id: "d1" }, ctxFor(["Requester", "DocCtrl"]))).data).toMatchObject({ readable: true, editable: false, on_hold: true, holds: ["legal"] });
+  });
+  it("ORCH-8: editable is the real door — a Supervisor the document's ACL denies write is told no; a Drafter with no deny (or an explicit edit grant) is told yes", async () => {
+    const IDX = { allow: { roles: { write: ["Drafter"] } }, deny: { roles: { write: ["Supervisor"] } } };
+    state.single.documents = { id: "d1", document_number: "P-1", status: "Issued", org_id: "o1", acl_index: IDX };
+    state.readable.add("d1");
+    state.denies = { write: true };
+    expect((await run("check_permissions", { document_id: "d1" }, ctxFor(["Supervisor"]))).data).toMatchObject({ readable: true, editable: false });
+    // The database's own evaluator answered, for THIS caller and THIS index.
+    expect(state.rpcCalls[0]).toMatchObject({ fn: "acl_index_denies", args: { p_idx: IDX, p_org: "o1", p_uid: "u1", p_action: "write" } });
+    state.denies = {};
+    expect((await run("check_permissions", { document_id: "d1" }, ctxFor(["Drafter"]))).data).toMatchObject({ readable: true, editable: true });
+    // A Manager or Supervisor is not the controller tier: no bypass of a deny.
+    state.denies = { editMetadata: true };
+    expect((await run("check_permissions", { document_id: "d1" }, ctxFor(["Manager", "Supervisor"]))).data).toMatchObject({ editable: false });
+    // …while a controller is never denied by the index (the guard's own bypass).
+    expect((await run("check_permissions", { document_id: "d1" }, ctxFor(["DocCtrl"]))).data).toMatchObject({ editable: true });
+  });
+  it("ORCH-8: a read-only role binds the controller tier too — [DocCtrl, Viewer] is read-only (lib/roleHeld: deny-if-any, no controller escape)", async () => {
+    state.single.documents = { id: "d1", document_number: "P-1", status: "Issued", org_id: "o1", acl_index: null };
+    state.readable.add("d1");
+    for (const roles of [["DocCtrl", "Viewer"], ["Admin", "Auditor"], ["Viewer", "DocCtrl"]]) {
+      expect((await run("check_permissions", { document_id: "d1" }, ctxFor(roles))).data, roles.join("+")).toMatchObject({ readable: true, editable: false });
+    }
+    // The same answer every app edit surface gives (holdsReadOnlyRole), and
+    // the database is not asked — a read-only role is a "no" before any ACL.
+    expect(state.rpcCalls).toHaveLength(0);
+    state.single.documents = { id: "d1", document_number: "P-1", title: "A", library_id: "L", checked_out_by: null, checked_out_by_name: null, acl_index: null };
+    expect((await run("checkout_document", { document_id: "d1", reason: "markup" }, ctxFor(["DocCtrl", "Viewer"]))).data).toMatchObject({ forbidden: true });
+    // Remove the read-only role and the controller tier applies again.
+    expect((await run("checkout_document", { document_id: "d1", reason: "markup" }, ctxFor(["DocCtrl"]))).pending?.href).toBe("/documents/L?doc=d1");
+    const src = readFileSync(join(process.cwd(), "lib/orchestrator/tools.ts"), "utf8");
+    const body = src.slice(src.indexOf("async function mayEdit("));
+    expect(body.indexOf("holdsReadOnlyRole(")).toBeLessThan(body.indexOf("holdsControllerTier(ctx)"));
+  });
+  it("ORCH-8: an ACL index the database cannot evaluate is a 'no' (fail closed)", async () => {
+    state.single.documents = { id: "d1", document_number: "P-1", status: "Issued", org_id: "o1", acl_index: { deny: {} } };
+    state.readable.add("d1");
+    state.denies = { write: undefined as unknown as boolean };
+    expect((await run("check_permissions", { document_id: "d1" }, ctxFor(["Drafter"]))).data).toMatchObject({ editable: false });
+  });
+  it("ORCH-8: a hold read that fails is not 'no hold' — editable is false, on_hold unknown, and the failure is said (even for a controller)", async () => {
+    state.single.documents = { id: "d1", document_number: "P-1", status: "Issued", org_id: "o1", acl_index: null };
+    state.readable.add("d1");
+    state.errors.document_holds = { message: "statement timeout" };
+    for (const roles of [["Drafter"], ["Requester", "DocCtrl"]]) {
+      const out = (await run("check_permissions", { document_id: "d1" }, ctxFor(roles))).data;
+      expect(out, roles.join("+")).toEqual({ readable: true, editable: false, on_hold: null, error: "Hold status could not be checked — this is not the same as no hold." });
+    }
+    delete state.errors.document_holds;
+    expect((await run("check_permissions", { document_id: "d1" }, ctxFor(["Requester", "DocCtrl"]))).data).toMatchObject({ editable: true, on_hold: false });
   });
 });
 
@@ -180,13 +251,19 @@ describe("SURF-7 / EGRESS-3 — reads and acts are filtered through the caller",
     expect((allowed.data as { found: boolean }).found).toBe(true);
     expect((allowed.data as { same_sheet?: Array<{ page: number }> }).same_sheet).toEqual([{ sheet: "Sheet", page: 1 }]);
   });
-  it("checkout_document: an unreadable document 'does not exist'; a readable one still needs the controller tier by collection", async () => {
-    state.single.documents = { id: "d1", document_number: "P-1", title: "A", library_id: "L", checked_out_by: null, checked_out_by_name: null };
+  it("checkout_document: an unreadable document 'does not exist'; a readable one is proposed only where the real door lets the caller edit (ORCH-8)", async () => {
+    state.single.documents = { id: "d1", document_number: "P-1", title: "A", library_id: "L", checked_out_by: null, checked_out_by_name: null, acl_index: { deny: { roles: { write: ["Manager"] } } } };
     expect((await run("checkout_document", { document_id: "d1" }, ctxFor(["Drafter"]))).data).toMatchObject({ error: "No such document in this org." });
     state.readable.add("d1");
-    expect((await run("checkout_document", { document_id: "d1" }, ctxFor(["Drafter"]))).data).toMatchObject({ error: "This user's role can't check documents out." });
-    const asManager = await run("checkout_document", { document_id: "d1" }, ctxFor(["Drafter", "Manager"]));
-    expect((asManager.data as { status?: string }).status).toBe("awaiting_confirmation");
+    expect((await run("checkout_document", { document_id: "d1" }, ctxFor(["Viewer"]))).data).toMatchObject({ forbidden: true });
+    // Manager is not the controller tier (ORCH-8): the index's write deny binds.
+    state.denies = { write: true };
+    expect((await run("checkout_document", { document_id: "d1" }, ctxFor(["Drafter", "Manager"]))).data).toMatchObject({ forbidden: true });
+    expect((await run("checkout_document", { document_id: "d1", reason: "markup" }, ctxFor(["Requester", "DocCtrl"]))).pending?.href).toBe("/documents/L?doc=d1");
+    state.denies = {};
+    const asDrafter = await run("checkout_document", { document_id: "d1", reason: "markup" }, ctxFor(["Drafter"]));
+    expect((asDrafter.data as { status?: string }).status).toBe("awaiting_confirmation");
+    expect(asDrafter.pending?.href).toBe("/documents/L?doc=d1");
   });
   it("notify_personnel: unreadable → 'no such document'; readable + approved → the message is sent in the CALLER's name", async () => {
     state.single.documents = { id: "d1", document_number: "P-1", library_id: "L" };
@@ -197,20 +274,55 @@ describe("SURF-7 / EGRESS-3 — reads and acts are filtered through the caller",
     expect(state.emitted).toHaveLength(0);
     state.readable.add("d1");
     expect((await run("notify_personnel", params, ctxFor(["Viewer"], [fp]))).data).toMatchObject({ status: "sent" });
+    // The bell row — the delivery — is written on the service role in the
+    // caller's name; the dispatcher carries only the email copy.
+    expect(state.inserts.filter((i) => i.table === "notifications")).toHaveLength(1);
+    expect(state.inserts.find((i) => i.table === "notifications")!.row).toMatchObject({ org_id: "o1", user_id: "u2", kind: "orchestrator_message", actor_user_id: "u1", actor_name: "Pat Example" });
     expect(state.emitted).toHaveLength(1);
-    expect(state.emitted[0]).toMatchObject({ actorUserId: "u1", actorName: "Pat Example", orgId: "o1" });
+    expect(state.emitted[0]).toMatchObject({ actorUserId: "u1", actorName: "Pat Example", orgId: "o1", channels: ["email"] });
     expect(state.emitted[0].actorName).not.toBe("Document controller");
   });
-  it("log_audit_completion: a Viewer's confirmation cannot mint an audit row; a controller by collection can", async () => {
+  it("log_audit_completion: a Viewer's — or a Manager's / Supervisor's — confirmation cannot mint an audit row; a controller by collection can (ORCH-1 / ORCH-8)", async () => {
     const params = { sheet_number: "P-2030-001", revision: "C", status: "passed" };
     const fp = fingerprint("log_audit_completion", params);
-    const denied = await run("log_audit_completion", params, ctxFor(["Viewer"], [fp]));
-    expect(String((denied.data as { error?: string }).error)).toMatch(/^Only Admin, Document Control, Manager or Supervisor/);
+    for (const roles of [["Viewer"], ["Requester", "Supervisor"], ["Manager"]]) {
+      const denied = await run("log_audit_completion", params, ctxFor(roles, [fp]));
+      expect(denied.data, roles.join("+")).toMatchObject({ error: "Only Admin or Document Control can record an audit completion.", forbidden: true });
+    }
     expect(state.upserts).toHaveLength(0);
-    const ok = await run("log_audit_completion", params, ctxFor(["Requester", "Supervisor"], [fp]));
+    const ok = await run("log_audit_completion", params, ctxFor(["Requester", "DocCtrl"], [fp]));
     expect(ok.data).toMatchObject({ status: "logged" });
     expect(state.upserts).toHaveLength(1);
-    expect(state.upserts[0]).toMatchObject({ table: "drawing_audit_logs", row: { org_id: "o1", sheet_number: "P-2030-001", revision_code: "C", status: "passed" } });
+    // An ORG-WIDE row on 20261124's key (DEC-68 item 2).
+    expect(state.upserts[0]).toMatchObject({
+      table: "drawing_audit_logs",
+      row: { org_id: "o1", library_id: null, sheet_number: "P-2030-001", revision_code: "C", status: "passed" },
+      opts: { onConflict: "org_id,library_id,sheet_number,revision_code" },
+    });
+  });
+});
+
+describe("ORCH-6 — model text is escaped in .or() filters, and a failed lookup is never 'nothing found'", () => {
+  it("find_documents / query_equipment_by_unit quote the model's text as one literal value", async () => {
+    await run("find_documents", { query: "Pumps, Centrifugal (Unit 12)" }, ctxFor(["Viewer"]));
+    await run("query_equipment_by_unit", { unit_name: "Crude (U-20)" }, ctxFor(["Viewer"]));
+    expect(state.orCalls).toEqual([
+      { table: "documents", list: 'document_number.ilike."%Pumps, Centrifugal (Unit 12)%",title.ilike."%Pumps, Centrifugal (Unit 12)%"' },
+      { table: "assets", list: 'unit_code.ilike."%Crude (U-20)%",description.ilike."%Crude (U-20)%"' },
+    ]);
+  });
+  it("a query error comes back as an error payload — never matches: [] / equipment: []", async () => {
+    state.errors.documents = { message: "failed to parse logic tree" };
+    const found = await run("find_documents", { query: "Pumps, Centrifugal (Unit 12)" }, ctxFor(["Viewer"]));
+    expect(found.data).toMatchObject({ matches: null });
+    expect(String((found.data as { error?: string }).error)).toMatch(/NOT the same as finding nothing/);
+    state.errors.assets = { message: "timeout" };
+    const eq = await run("query_equipment_by_unit", { unit_name: "Crude" }, ctxFor(["Viewer"]));
+    expect(eq.data).toMatchObject({ equipment: null });
+    expect(String((eq.data as { error?: string }).error)).toMatch(/NOT the same as an empty unit/);
+  });
+  it("the system prompt tells the model a result with an error is a failed lookup", () => {
+    expect(src("lib/orchestrator/loop.ts")).toMatch(/A tool result with an \\"error\\" field means the lookup FAILED/);
   });
 });
 
@@ -222,7 +334,10 @@ describe("SURF-7 / EGRESS-3 — pinned at the source", () => {
     expect(tools).not.toMatch(/CONTROLLER_ROLES\.includes\(ctx\.role\)/);
     expect(tools).not.toContain('"Document controller"');
     expect(tools).toContain("actorName: ctx.actorName");
-    expect(tools).toMatch(/function holdsControllerTier\(ctx: ToolContext\): boolean \{\s*\n\s*return ctx\.principal\.roles\.some/);
+    // ORCH-8: the controller tier is the app's one definition, never a local list.
+    expect(tools).toMatch(/function holdsControllerTier\(ctx: ToolContext\): boolean \{\s*\n\s*return isControllerPrincipal\(ctx\.principal\);/);
+    expect(tools).not.toMatch(/CONTROLLER_ROLES/);
+    expect(tools).not.toMatch(/"Manager", "Supervisor"/);
   });
   it("every document-touching tool asks readableIds; the mirror hop in search_documents fails closed", () => {
     const uses = tools.match(/readableIds\(ctx, /g) ?? [];

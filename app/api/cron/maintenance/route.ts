@@ -38,6 +38,9 @@
 //      reservations; lib/intakeStaging.ts sweepIntakeStaging).
 //   4d. The public verify endpoints' scan record (verify_scans) is pruned to
 //      90 days (VFY-12; prune_verify_scans(), 20261134).
+//   8. (knowledge block) The assistant's write proposals a week past their
+//      15-minute expiry are pruned (ORCH-4; pruneOrchestratorProposals,
+//      lib/orchestrator/proposals.ts; a no-op before 20261147).
 //
 // Auth: server-to-server. If CRON_SECRET is set, require it as a Bearer
 // token. Degrades gracefully if optional env vars are missing.
@@ -58,6 +61,7 @@ import { scanStaleHolds } from "@/lib/holds";
 import { syncAllKnowledgeSources } from "@/lib/knowledgeSourceSync";
 import { drainKnowledgeIngestQueue } from "@/lib/knowledgeIngest";
 import { drainEmbedBacklog } from "@/lib/knowledgeEmbedDrain";
+import { pruneOrchestratorProposals } from "@/lib/orchestrator/proposals";
 import { runPlatformStorageAlerts } from "@/lib/storageUsage";
 import { rebuildAclIndexes, type RebuildCounts } from "@/lib/aclIndexRebuild";
 import { roleFilter } from "@/lib/roleHeld";
@@ -102,6 +106,7 @@ async function handler(req: NextRequest) {
     folderTrashPurged?: number;
     knowledgeSync?: { libraries: number; added: number; refreshed: number; removed: number };
     knowledgeIngest?: { docs: number; pages: number; completed: number };
+    orchestratorProposalsPruned?: number;
     platformStorage?: { r2Pct: number; dbPct: number; alerts: number };
     embedDrain?: { libraries: number; embedded: number };
     aclIndexRebuild?: RebuildCounts;
@@ -450,6 +455,15 @@ async function handler(req: NextRequest) {
     }
   } catch (e) {
     result.errors.push(`knowledge-ingest: ${(e as Error).message}`);
+  }
+  // The assistant's proposals (ORCH-4): a row a week past its expiry holds a
+  // message or a finding nobody can confirm any more — removed here daily,
+  // so an org that stops proposing still sheds them (the store path prunes
+  // too). No-op before 20261147; any other failure is a line.
+  try {
+    result.orchestratorProposalsPruned = await pruneOrchestratorProposals();
+  } catch (e) {
+    result.errors.push(`orchestrator-proposals: ${(e as Error).message}`);
   }
 
   // 9. PLATFORM STORAGE WATCHDOG — real measurements (walk the R2 bucket,

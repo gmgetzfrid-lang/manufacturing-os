@@ -966,6 +966,24 @@
         "none in code; the replay surfaces every migration that cannot run in filename order (e.g. intelligence DWG-9's 20261009 — guarded by I-07)"
       ],
       "sequencingNotes": "Added by the integrator 2026-10-01 (orphan sweep): AREA-1 done-when 3 asks a runtime test a static census cannot give; IRLS-6's replay and INTK-14's census need the same harness. Can run any time; if a needed devDependency cannot be fetched through the proxy, say so and stop."
+    },
+    {
+      "name": "I-19 ORCHESTRATOR TAINT FLAG — a write proposed after reading document text is flagged on its card and stored as such (ORCH-9 criterion 3)",
+      "findings": [
+        "ORCH-9 (remainder re-owned by the integrator 2026-10-01 at the I-04 merge: criterion 3 — a write proposal emitted in a run whose tool results carried a neutralised role / instruction marker is flagged: the flag stored on the proposal row (a column on orchestrator_proposals, 20261147) and the confirm card says 'suggested after reading document text — check before confirming'; or observe a real provider against the injected passage and record it (99, 'Verification you cannot skip'))"
+      ],
+      "files": [
+        "lib/orchestrator/protocol.ts (neutralizeUntrusted reports whether it rewrote a marker)",
+        "lib/orchestrator/loop.ts (the run carries the taint to the proposals it stores)",
+        "lib/orchestrator/proposals.ts (the flag column)",
+        "the assistant confirm card (app/(protected)/assistant/page.tsx / its card component)",
+        "a new migration adding the column to orchestrator_proposals (additive; DEC-30 inventory of counts only)"
+      ],
+      "migrationsLikely": 1,
+      "dependsOn": [
+        "I-04 (merged, DEC-72): the stored proposal and its table 20261147"
+      ],
+      "sequencingNotes": "Added by the integrator 2026-10-01 at the I-04 merge. ORCH-9 criteria 1-2 landed with I-04; criterion 3 needs either a real provider (none reachable in the sandbox) or this code close. Never block a proposal on the flag — it informs the person confirming; DEC-72 item 1 stays the write path."
     }
   ],
   "crossAreaFileOverlaps": [

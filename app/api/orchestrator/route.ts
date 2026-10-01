@@ -1,6 +1,6 @@
 // /api/orchestrator — the document controller you can talk to.
 //
-// POST { orgId, question, approved?: string[] } →
+// POST { orgId, question } →
 //   { answer, steps, pending, provider, model, budget }
 //
 // Everything the knowledge ask route enforces, this enforces too, because it
@@ -9,11 +9,14 @@
 // metering row per run. The only difference is what happens in the middle —
 // instead of one retrieval and one answer, the model drives a tool loop.
 //
-// `approved` carries fingerprints the user ticked in the UI. It is the ONLY
-// way a write tool executes, and it is scoped to the run it's sent with: an
-// approval is for a specific action with specific parameters, not a standing
-// permission to act.
+// A run never executes a write (ORCH-10). Write tools only PROPOSE; each
+// proposal is stored server-side for this person (ORCH-4) and runs, once,
+// only through /api/orchestrator/execute, which writes AI_ACTION_ATTEMPTED
+// before the tool acts and AI_ACTION_EXECUTED / AI_ACTION_FAILED after it.
+// There is no in-run approval: an `approved` field in the body is ignored,
+// and the tools run with an empty approval set.
 
+import { randomUUID } from "node:crypto";
 import { NextRequest, NextResponse } from "next/server";
 import { supabaseAdmin } from "@/lib/supabaseAdmin";
 import { openAiKey } from "@/lib/ai/keyVault";
@@ -26,6 +29,7 @@ import { getMonthUsage, getCapUsd, recordAskUsage } from "@/lib/ai/usageServer";
 import { runOrchestrator, type ModelCall } from "@/lib/orchestrator/loop";
 import type { ToolContext } from "@/lib/orchestrator/tools";
 import { loadPrincipal, readableControlledDocIds } from "@/lib/knowledgeAccess";
+import { storeProposals } from "@/lib/orchestrator/proposals";
 
 export const runtime = "nodejs";
 export const maxDuration = 120;
@@ -44,20 +48,11 @@ export async function POST(req: NextRequest) {
   const { data: { user }, error: authError } = await supabaseAdmin.auth.getUser(authHeader.slice(7));
   if (authError || !user) return bad("Unauthorized", 401);
 
-  let body: { orgId?: string; question?: string; approved?: unknown };
+  let body: { orgId?: string; question?: string };
   try { body = await req.json(); } catch { return bad("Expected JSON body"); }
   const orgId = String(body.orgId ?? "").trim();
   const question = String(body.question ?? "").trim().slice(0, 2000);
   if (!orgId || !question) return bad("orgId and question are required");
-
-  // Approvals arrive as opaque fingerprints. They're only ever compared, never
-  // parsed, so a forged one can at worst approve an action the model didn't
-  // propose — and the tool still re-checks role and org before it acts.
-  const approved = new Set(
-    Array.isArray(body.approved)
-      ? body.approved.filter((a): a is string => typeof a === "string").slice(0, 20)
-      : [],
-  );
 
   // SURF-7 / EGRESS-3: the caller's ACL principal — role COLLECTION, teams,
   // controller tier — is what every tool filters through. The service-role
@@ -135,7 +130,8 @@ export async function POST(req: NextRequest) {
     return { text: out.text, usage: out.usage };
   };
 
-  const ctx: ToolContext = { orgId, userId: user.id, role, approved, principal, actorName };
+  // ORCH-10: nothing is pre-approved in a run — every write tool proposes.
+  const ctx: ToolContext = { orgId, userId: user.id, role, approved: new Set<string>(), principal, actorName };
 
   let run;
   try {
@@ -153,6 +149,13 @@ export async function POST(req: NextRequest) {
     orgId, userId: user.id, provider, model,
     usage: run.usage, ok: !run.stoppedBecause, op: "orchestrator",
   });
+
+  // ORCH-4: every proposal that executes server-side is stored for THIS
+  // user in THIS org with a 15-minute expiry; the card carries its id, and
+  // /api/orchestrator/execute runs only the stored row, once. A proposal
+  // that could not be stored comes back marked unavailable — never
+  // confirmable from what the browser holds.
+  const pending = await storeProposals(orgId, user.id, randomUUID(), run.pending);
 
   // Show-me chips: every document the answer NAMES becomes a click — the
   // same designation squash-match the knowledge ask route uses. Checked
@@ -226,7 +229,7 @@ export async function POST(req: NextRequest) {
   return NextResponse.json({
     answer: run.answer,
     steps: run.steps,
-    pending: run.pending,
+    pending,
     stoppedBecause: run.stoppedBecause ?? null,
     ...(mentionedDocs.length > 0 ? { mentionedDocs } : {}),
     provider, model,

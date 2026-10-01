@@ -950,6 +950,9 @@
     ],
     "public-surfaces": [
      "PHYS-13 (remainder re-owned by the integrator 2026-10-01, orphan sweep: the same IntakePanel / QuotesPanel sites as document-control XEDGE-5 (done-when 3's tree-wide clause; lib/notifications.ts:209 is notifications N6's DELIV-5 limb, the library page IS-P1's))"
+    ],
+    "intelligence": [
+     "PR-2 (remainder re-owned by the integrator 2026-10-01 at the I-04 merge: criterion 2 \u2014 QuotesPanel.tsx renders quote.totalCheck.note beside the total only when totalCheck.mismatch && totalSource !== 'human'; a human-restated total is reconciled on screen with reconcileQuoteTotal(quote.total, quote.lineItems) (lib/bidTab.ts) and its note shown when it mismatches; never the stored note beside a corrected total (DEC-72 item 5). Never block.)"
     ]
    },
    "files": [
@@ -990,6 +993,9 @@
      "PERF-6 (remainder re-owned by the integrator 2026-10-01, orphan sweep: the cost-docs route limb only \u2014 a readable 504 / request deadline on /api/projects/cost-docs (the renderer limb is intelligence I-09's))",
      "PERF-5 (remainder re-owned by the integrator 2026-10-01, orphan sweep: measure frames in the pre-installed Chromium (Playwright) for the schedule surface the record names; 'does not drop frames' is the unmet done-when)",
      "SEC-21 (opened by J11's review 2026-10-01: project audit rows written under another resource type \u2014 e.g. a private project's milestone anchored to a document, written as resource_type 'document' \u2014 stay readable by every org member after 20261142; a migration re-creating 20261142's audit read policy from its body, with a DEC-30 inventory)"
+    ],
+    "intelligence": [
+     "PR-2 (remainder re-owned by the integrator 2026-10-01 at the I-04 merge: criterion 3 \u2014 the cost-docs route's invoice branch (app/api/projects/cost-docs/route.ts) validates the parsed invoice payload as validateParsedQuote does for quotes instead of storing raw.)"
     ]
    },
    "files": [
