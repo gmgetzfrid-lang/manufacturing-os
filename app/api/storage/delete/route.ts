@@ -17,7 +17,8 @@ import type { RetentionPolicy } from "@/types/schema";
 //     route already does;
 //   - a key belonging to a document under legal hold, an unreleased hold, or
 //     inside its EFFECTIVE retention period, or naming the revision the
-//     document holds as CURRENT, is refused, FAIL CLOSED — the opposite of
+//     document holds as CURRENT (unless the record is disposed), is refused,
+//     FAIL CLOSED — the opposite of
 //     the download route's fail-open, because destruction cannot be undone by
 //     a later correct read. "Belonging" means named by any document_versions
 //     row as its rendered file (file_url) OR its native source
@@ -164,12 +165,17 @@ export async function DELETE(req: NextRequest) {
       // resolves through documents.current_version_id: destroying them leaves
       // the register reporting the document at that revision with no file
       // behind it (RET-2's failure scenario, minus the hold). Refused for
-      // everyone, whatever the hold or retention state, whether the key is
-      // the rendered file or the native source. A document row we could not
-      // read threw above (503); a document that no longer exists has no
-      // current revision to protect.
+      // everyone, whatever the hold, whether the key is the rendered file or
+      // the native source — except for a DISPOSED record (P14 review fix):
+      // disposition is the record's end of life, and a 'destroy' schedule has
+      // no other route to its current file. A disposed record is still judged
+      // by the retention block below, which refuses while its period has not
+      // run, so only a disposed record whose retention has run passes. A
+      // document row we could not read threw above (503); a document that no
+      // longer exists has no current revision to protect.
       const currentId = row?.current_version_id ?? null;
-      if (currentId && ownerVersionIds.includes(currentId)) {
+      const disposedRecord = row?.disposition_state === "disposed";
+      if (currentId && !disposedRecord && ownerVersionIds.includes(currentId)) {
         return NextResponse.json(
           { error: "This file belongs to the document's current revision; it cannot be deleted while that revision is current." },
           { status: 423 },

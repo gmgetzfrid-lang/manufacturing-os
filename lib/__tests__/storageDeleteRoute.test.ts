@@ -648,14 +648,8 @@ describe("DACL-2 criterion 1 (b): the EFFECTIVE retention — a row never clocke
 
 describe("DACL-2 criterion 1 (b): a DISPOSED record is still judged — disposeDocument checks no eligibility", () => {
   const TEN_YEARS = { enabled: true, years: 10, basis: "created", action: "destroy" } as const;
-  /** doc1 disposed in library l1. Its revision v1 names RENDERED / SOURCE
-   *  (the keys deleted here); v2 is a LATER revision whose own file names
-   *  neither — the one a `current_version_id: "v2"` override makes current,
-   *  so the bound reads it while the current-revision refusal (RET-2) stays
-   *  out of the way: the bytes deleted are an older revision's. */
   function inLibrary(doc: Row, libPolicy: Row | null) {
     revision({ library_id: "l1", collection_id: null, created_at: ts(-30), updated_at: ts(-30), disposition_state: "disposed", ...doc });
-    state.rows.document_versions.push({ id: "v2", record_id: "doc1", file_url: `orgs/${ORG}/libraries/l1/P-101__revD__2.pdf`, source_file_key: null });
     state.rows.libraries = [{ id: "l1", retention_policy: libPolicy }];
     state.rows.collections = [];
   }
@@ -792,10 +786,10 @@ describe("DACL-2 criterion 1 (b): a DISPOSED record is still judged — disposeD
     const bound = new Date(Date.parse(revised) - 86_400_000).toISOString();
     for (const basis of ["issued", "superseded", "effective"] as const) {
       inLibrary(
-        { created_at: ts(-6 * 365), updated_at: ts(0), effective_date: null, retention_until: iso(-10), current_version_id: "v2" },
+        { created_at: ts(-6 * 365), updated_at: ts(0), effective_date: null, retention_until: iso(-10), current_version_id: "v1" },
         { enabled: true, years: 5, basis },
       );
-      (state.rows.document_versions[1] as Row).created_at = revised;
+      (state.rows.document_versions[0] as Row).created_at = revised;
       const res = await del(SOURCE);
       expect(res.status, basis).toBe(423);
       expect(((await res.json()) as { error: string }).error, basis).toContain(`until at least ${plusYears(bound, 5)}`);
@@ -807,20 +801,20 @@ describe("DACL-2 criterion 1 (b): a DISPOSED record is still judged — disposeD
   it("control: a current revision as old as the record adds nothing — once created_at + years has run it is deleted", async () => {
     member("Admin");
     inLibrary(
-      { created_at: ts(-6 * 365), updated_at: ts(0), effective_date: null, retention_until: iso(-10), current_version_id: "v2" },
+      { created_at: ts(-6 * 365), updated_at: ts(0), effective_date: null, retention_until: iso(-10), current_version_id: "v1" },
       { enabled: true, years: 5, basis: "issued" },
     );
-    (state.rows.document_versions[1] as Row).created_at = ts(-6 * 365);
+    (state.rows.document_versions[0] as Row).created_at = ts(-6 * 365);
     expect((await del(SOURCE)).status).toBe(200);
     expect(state.r2sends).toBe(1);
   });
 
   it("a failed current-revision read refuses 503; a pointer to a missing revision or an unreadable date falls back to created_at", async () => {
     member("Admin");
-    const doc = { created_at: ts(-6 * 365), updated_at: ts(0), effective_date: null, retention_until: iso(-10), current_version_id: "v2" };
+    const doc = { created_at: ts(-6 * 365), updated_at: ts(0), effective_date: null, retention_until: iso(-10), current_version_id: "v1" };
     const issued5 = { enabled: true, years: 5, basis: "issued" } as const;
     inLibrary(doc, issued5);
-    (state.rows.document_versions[1] as Row).created_at = ts(-365);
+    (state.rows.document_versions[0] as Row).created_at = ts(-365);
     state.failEq.add("document_versions|id");
     expect((await del(SOURCE)).status).toBe(503);
     state.failEq.delete("document_versions|id");
@@ -830,16 +824,16 @@ describe("DACL-2 criterion 1 (b): a DISPOSED record is still judged — disposeD
     expect((await del(SOURCE)).status).toBe(200);
     // unreadable revision date: created_at alone
     inLibrary(doc, issued5);
-    (state.rows.document_versions[1] as Row).created_at = "not-a-date";
+    (state.rows.document_versions[0] as Row).created_at = "not-a-date";
     expect((await del(SOURCE)).status).toBe(200);
   });
 
   it("the current revision is read only for the bound — not for a fixed basis, nor for an undisposed record", async () => {
     member("Admin");
-    inLibrary({ created_at: ts(-30), retention_until: iso(-10), current_version_id: "v2" }, TEN_YEARS);
+    inLibrary({ created_at: ts(-30), retention_until: iso(-10), current_version_id: "v1" }, TEN_YEARS);
     await del(SOURCE);
     inLibrary(
-      { created_at: ts(-30), updated_at: ts(-30), retention_until: iso(-10), disposition_state: null, current_version_id: "v2" },
+      { created_at: ts(-30), updated_at: ts(-30), retention_until: iso(-10), disposition_state: null, current_version_id: "v1" },
       { enabled: true, years: 5, basis: "issued" },
     );
     await del(SOURCE);
@@ -853,10 +847,10 @@ describe("DACL-2 criterion 1 (b): a DISPOSED record is still judged — disposeD
       expect((await del(SOURCE)).status, String(created)).toBe(423);
       // a readable current revision does not make it clockable: the pre-disposal updated_at may have been NULL too
       inLibrary(
-        { created_at: created, updated_at: ts(0), retention_until: iso(-10), current_version_id: "v2" },
+        { created_at: created, updated_at: ts(0), retention_until: iso(-10), current_version_id: "v1" },
         { enabled: true, years: 5, basis: "issued" },
       );
-      (state.rows.document_versions[1] as Row).created_at = ts(-7 * 365);
+      (state.rows.document_versions[0] as Row).created_at = ts(-7 * 365);
       expect((await del(SOURCE)).status, `${String(created)} with a revision`).toBe(423);
     }
     expect(state.r2sends).toBe(0);
@@ -956,6 +950,45 @@ describe("RET-2 (remainder): a key the document's CURRENT revision names is refu
     const res = await del(CUR_RENDERED);
     expect(res.status).toBe(423);
     expect(((await res.json()) as { error: string }).error).toMatch(/legal hold/);
+  });
+
+  it("P14 review fix — a DISPOSED record whose retention has RUN: its current revision's file and source are destroyed (disposition 'destroy' has no other route to them), with the custody row", async () => {
+    member("Admin");
+    for (const key of [CUR_RENDERED, CUR_SOURCE]) {
+      twoRevisions({ disposition_state: "disposed", retention_until: iso(-10), created_at: ts(-6 * 365), updated_at: ts(0), library_id: "l1", collection_id: null });
+      state.rows.libraries = [{ id: "l1", retention_policy: { enabled: true, years: 5, basis: "created", action: "destroy" } }];
+      state.rows.collections = [];
+      state.r2sends = 0;
+      state.audits = [];
+      const res = await del(key);
+      expect(res.status, key).toBe(200);
+      expect(state.r2sends, key).toBe(1);
+      expect(state.audits[0].details, key).toMatchObject({ path: key, documentId: "doc1", versionId: "v2" });
+    }
+  });
+
+  it("P14 review fix — a DISPOSED record whose retention has NOT run: its current revision's key is still refused, as retention (the exemption is from the current-revision rule only)", async () => {
+    member("Admin");
+    twoRevisions({ disposition_state: "disposed", retention_until: iso(400), created_at: ts(-30), updated_at: ts(0), library_id: "l1", collection_id: null });
+    state.rows.libraries = [{ id: "l1", retention_policy: { enabled: true, years: 10, basis: "created", action: "destroy" } }];
+    state.rows.collections = [];
+    const res = await del(CUR_RENDERED);
+    expect(res.status).toBe(423);
+    expect(((await res.json()) as { error: string }).error).toMatch(/under retention/);
+    expect(state.r2sends).toBe(0);
+  });
+
+  it("P14 review fix — the exemption is the DISPOSED state alone: an eligible (undisposed) record past its retention keeps its current revision's bytes", async () => {
+    member("Admin");
+    for (const disposition_state of [null, "eligible", "pending"]) {
+      twoRevisions({ disposition_state, retention_until: iso(-10), created_at: ts(-6 * 365), updated_at: ts(-6 * 365), library_id: "l1", collection_id: null });
+      state.rows.libraries = [{ id: "l1", retention_policy: { enabled: true, years: 5, basis: "created", action: "destroy" } }];
+      state.rows.collections = [];
+      const res = await del(CUR_RENDERED);
+      expect(res.status, String(disposition_state)).toBe(423);
+      expect(((await res.json()) as { error: string }).error, String(disposition_state)).toMatch(/current revision/);
+    }
+    expect(state.r2sends).toBe(0);
   });
 
   it("regression: the route's only caller (lib/costDocs.ts) deletes a project-costs key that no revision names", async () => {
