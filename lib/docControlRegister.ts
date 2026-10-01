@@ -15,6 +15,8 @@ import { getAckSummaries, ackStatusFor, type AckSummary, type AckStatus } from "
 import { getReviewSummaries, type ReviewSummary } from "@/lib/reviewControl";
 import { effectiveStatusFor } from "@/lib/effectiveDate";
 import { retentionStatusFor } from "@/lib/retention";
+import { resolveEffectiveRetentionPolicy, scheduledActionFor, scheduledActionLabel, describeRetentionPolicy, type ScheduledAction } from "@/lib/retentionPolicy";
+import type { RetentionPolicy } from "@/types/schema";
 import { describeOrigin } from "@/lib/documentOrigin";
 import { csvCell } from "@/lib/csvSafe";
 
@@ -49,6 +51,15 @@ export interface RegisterRow {
   retentionUntil: string | null;
   legalHold: boolean;
   dispositionEligible: boolean;
+  // RET-11: the scheduled end-of-life action of the EFFECTIVE retention
+  // policy (document → folder → library, P9's resolver) — null when no
+  // policy is in force; `retentionSchedule` describes it ("Retain 7 years
+  // from issued, then destroy"); `retentionScheduleUnknown` when the folder
+  // or library policy could not be read (never shown as "no schedule").
+  scheduledAction: ScheduledAction | null;
+  scheduledActionLabel: string | null;
+  retentionSchedule: string | null;
+  retentionScheduleUnknown: boolean;
   // Origin (ISO 9001 §7.5.3)
   external: boolean;
   originLabel: string;
@@ -94,7 +105,7 @@ export async function loadDocControlRegister(orgId: string, opts?: { limit?: num
   const limit = opts?.limit ?? 4000;
   const { data: docsData } = await supabase
     .from("documents")
-    .select("id, document_number, title, name, library_id, collection_id, status, rev, updated_at, owner_user_id, owner_name, next_review_date, pending_version_id, effective_date, retention_until, disposition_state, legal_hold, origin, external_source, external_reference")
+    .select("id, document_number, title, name, library_id, collection_id, status, rev, updated_at, owner_user_id, owner_name, next_review_date, pending_version_id, effective_date, retention_until, disposition_state, legal_hold, retention_policy, origin, external_source, external_reference")
     .eq("org_id", orgId)
     // or(): NULL-status documents are CONTROLLED records too — plain
     // not-in drops them via SQL NULL semantics, silently shrinking the
@@ -107,9 +118,9 @@ export async function loadDocControlRegister(orgId: string, opts?: { limit?: num
   if (!docs.length) return { rows: [], kpis: computeRegisterKpis([]), capped };
 
   const docIds = docs.map((d) => d.id as string);
-  const [{ data: libs }, { data: cols }, ackMap, reviewMap, distAckRes, { data: activeRows }] = await Promise.all([
-    supabase.from("libraries").select("id, name, owner_user_id, owner_name, owner_team_id").eq("org_id", orgId),
-    supabase.from("collections").select("id, owner_user_id, owner_name").eq("org_id", orgId),
+  const [{ data: libs, error: libsErr }, { data: cols, error: colsErr }, ackMap, reviewMap, distAckRes, { data: activeRows }] = await Promise.all([
+    supabase.from("libraries").select("id, name, owner_user_id, owner_name, owner_team_id, retention_policy").eq("org_id", orgId),
+    supabase.from("collections").select("id, owner_user_id, owner_name, retention_policy").eq("org_id", orgId),
     getAckSummaries(orgId, docIds),
     getReviewSummaries(orgId, docIds),
     // Outstanding DISTRIBUTION confirmations ("I have this revision") — the
@@ -158,6 +169,16 @@ export async function loadDocControlRegister(orgId: string, opts?: { limit?: num
       teamSupervisors,
     );
     const nextReviewDate = (d.next_review_date as string | null) ?? null;
+    // RET-11: the end-of-life action the record is scheduled for, from its
+    // EFFECTIVE policy. A level is consulted only while every more specific
+    // one is undefined, so a failed folder / library read makes the schedule
+    // unknown only for a record that inherits it.
+    const ownPolicy = (d.retention_policy as RetentionPolicy | null) ?? null;
+    const folderPolicy = collectionId ? ((colMap.get(collectionId) as { retention_policy?: RetentionPolicy | null } | undefined)?.retention_policy ?? null) : null;
+    const libPolicy = ((lib as { retention_policy?: RetentionPolicy | null } | undefined)?.retention_policy) ?? null;
+    const scheduleUnknown = !ownPolicy && ((!!collectionId && !!colsErr && !folderPolicy) || (!folderPolicy && !!libsErr));
+    const retention = scheduleUnknown ? null : resolveEffectiveRetentionPolicy(ownPolicy, folderPolicy, libPolicy);
+    const inForce = !!retention && !!retention.years;
     const ack = ackMap.get(d.id as string) ?? null;
     const review = reviewMap.get(d.id as string) ?? null;
     return {
@@ -184,6 +205,10 @@ export async function loadDocControlRegister(orgId: string, opts?: { limit?: num
       retentionUntil: (d.retention_until as string | null) ?? null,
       legalHold: !!d.legal_hold,
       dispositionEligible: retentionStatusFor({ retentionUntil: (d.retention_until as string | null) ?? null, dispositionState: (d.disposition_state as string | null) ?? null, legalHold: !!d.legal_hold }) === "eligible",
+      scheduledAction: inForce ? scheduledActionFor(retention) : null,
+      scheduledActionLabel: inForce ? scheduledActionLabel(retention) : null,
+      retentionSchedule: inForce ? describeRetentionPolicy(retention) : null,
+      retentionScheduleUnknown: scheduleUnknown,
       external: (d.origin as string | null) === "external",
       originLabel: describeOrigin({ origin: (d.origin as "internal" | "external" | null) ?? null, externalSource: (d.external_source as string | null) ?? null, externalReference: (d.external_reference as string | null) ?? null }),
     };
@@ -221,7 +246,7 @@ export function filterRegister(rows: RegisterRow[], filter: RegisterFilter, libr
 
 /** The master register as CSV — the artifact an auditor asks to be handed. */
 export function registerToCsv(rows: RegisterRow[]): string {
-  const header = ["Document", "Title", "Library", "Rev", "Status", "Owner", "Owner status", "Origin", "Effective", "Next review", "Review status", "Ack", "Distribution unconfirmed", "In review", "Retain until", "Legal hold", "Disposition"];
+  const header = ["Document", "Title", "Library", "Rev", "Status", "Owner", "Owner status", "Origin", "Effective", "Next review", "Review status", "Ack", "Distribution unconfirmed", "In review", "Retain until", "Legal hold", "Disposition", "Scheduled end of life"];
   const lines = rows.map((r) => [
     r.number, r.title, r.libraryName, r.rev ?? "", r.status ?? "",
     // DEL-8: branch on the id, not the name — an owned-but-unnamed row never
@@ -238,6 +263,8 @@ export function registerToCsv(rows: RegisterRow[]): string {
     r.retentionUntil ?? "",
     r.legalHold ? "HOLD" : "",
     r.dispositionEligible ? "eligible" : "",
+    // RET-11: the schedule's action (never a guess when it could not be read)
+    r.retentionScheduleUnknown ? "unknown (the retention policy could not be read)" : (r.retentionSchedule ?? ""),
   ].map(csvCell).join(","));
   return [header.join(","), ...lines].join("\n");
 }

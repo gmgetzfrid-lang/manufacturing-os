@@ -12,6 +12,7 @@ function row(p: Partial<RegisterRow> = {}): RegisterRow {
     review: null,
     effectiveDate: null, effectivePending: false,
     retentionUntil: null, legalHold: false, dispositionEligible: false,
+    scheduledAction: null, scheduledActionLabel: null, retentionSchedule: null, retentionScheduleUnknown: false,
     external: false, originLabel: "Internal",
     ...p,
   };

@@ -471,7 +471,7 @@ lib/serverRetention.ts:46-49 `const until = policy ? computeRetentionUntil(reten
 ## RET-11 · RetentionPolicy.action ('review' | 'archive' | 'destroy') is edited, stored and inherited but never read by anything
 
 - **Severity:** MEDIUM
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Assigned:** document-control P14 RECORDS & REVIEW REMAINDERS (new) — by the integrator, 2026-10-01 (orphan sweep: the package that left this remainder has merged; fleet plan `audit-reports/fleet-plans/`).
 - **Verification:** CONFIRMED
 - **Locations:** `types/schema.ts:215-223`, `components/documents/RetentionSection.tsx:189-191`, `components/documents/RetentionPolicyModal.tsx:45`, `lib/retention.ts:183-197`, `lib/retention.ts:151-159`, `lib/retentionPolicy.ts:21-27`
@@ -505,6 +505,18 @@ lib/retention.ts:194 `body: \`This record has passed its retention date (${(d.re
 - ✗ (alternative) the selector is not removed — the action is now honoured.
 
 **Scope / residual.** Stays OPEN for the register column. "destroy" still never deletes bytes here (the panel says so: disposition is an explicit logged action; the space-saver handles storage) — the recorded action is the schedule's intent, which is what a records audit asks for. `RetentionPolicyModal.tsx` is unchanged (its selector wording already reads "flag for review / archive / destroy").
+
+**Resolution (2026-10-01, document-control Round F wave 3).** Package **P14 RECORDS & REVIEW REMAINDERS** — the register column, the one limb P9 left. Reproduced on `4dd0df7`: `app/(protected)/register/page.tsx`'s Records column rendered only `RetentionPill` (status), from rows `lib/docControlRegister.ts` built without any policy — the loader selected no `retention_policy` from documents, collections or libraries, so a "then destroy" schedule was invisible on the auditor's register and absent from its CSV.
+- `lib/docControlRegister.ts` — `loadDocControlRegister` reads `retention_policy` with the documents, collections and libraries it already loads (no new query) and resolves each record's EFFECTIVE policy with P9's resolver (`resolveEffectiveRetentionPolicy`: document → its folder → library; a disabled level stops inheritance), labelling it with P9's functions (`scheduledActionFor`, `scheduledActionLabel`, `describeRetentionPolicy` — `lib/retentionPolicy.ts`, unchanged). New row fields: `scheduledAction` / `scheduledActionLabel` / `retentionSchedule` (null when no policy with a length is in force) and `retentionScheduleUnknown` — a failed folder or library read makes an INHERITED schedule unknown, never "no schedule" (the reads were unchecked; the error is now kept for this column; a record's own policy, or a defined folder policy, still answers). `registerToCsv` gains a last column, "Scheduled end of life" (the schedule, or "unknown (the retention policy could not be read)"); the earlier columns are unchanged.
+- `app/(protected)/register/page.tsx` — the Records column shows the pill as before (hold / eligible) and, beside it, "then destroy" / "then archive" / "then flag for review" titled with the full schedule (destroy in rose), or "schedule unknown"; "—" only when there is nothing to say.
+- Tests: `lib/__tests__/dcRoundFRegisterSchedule.test.ts` (4 cases, each failed against the base): the library's action, a folder's over it, the document's own over both, a disabled folder stopping inheritance, an empty folder inheriting, no policy / no length → none; an unreadable library or folder makes only the INHERITED schedule unknown; the CSV's last column (and "unknown"); the page renders the schedule and the unknown state beside the unchanged pill. `docControlRegister.test.ts`'s row fixture gains the four fields; `sweepRoundA3` / `csvProducersCensus` (partial rows) pass unchanged.
+
+**Done-when.**
+- ✓ (P9) `scanRetention` resolves the effective policy per document and names the scheduled action.
+- ✓ The register (this pass: the page and its CSV) and the disposition UI (P9) surface the scheduled action; `disposeDocument` defaults its action from the effective policy (P9).
+- ✗ (alternative) the selector is not removed — the action is honoured.
+
+**Scope / residual.** "destroy" still never deletes bytes (P9's note: disposition is an explicit logged action; the space-saver handles storage) — the register names the schedule's intent. No migration.
 
 ---
 

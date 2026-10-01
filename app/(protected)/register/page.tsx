@@ -172,7 +172,18 @@ export default function RegisterPage() {
                       ? <span className={`inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-[10px] font-bold ${r.review.ready ? "bg-emerald-50 text-emerald-700 border-emerald-200" : "bg-violet-50 text-violet-700 border-violet-200"}`}><ShieldCheck className="w-3 h-3" /> {r.review.revisionLabel || "in review"} · {r.review.signed}/{r.review.requiredPrimaries}</span>
                       : <span className="text-[var(--color-text-faint)]">—</span>}
                   </td>
-                  <td className="px-3 py-2">{(r.legalHold || r.dispositionEligible) ? <RetentionPill retentionUntil={r.retentionUntil} dispositionState={r.dispositionEligible ? "eligible" : null} legalHold={r.legalHold} compact /> : <span className="text-[var(--color-text-faint)]">—</span>}</td>
+                  <td className="px-3 py-2">
+                    {/* RET-11: the pill says where the record stands; the schedule says what its end of life is. */}
+                    <div className="flex flex-wrap items-center gap-1">
+                      {(r.legalHold || r.dispositionEligible) && <RetentionPill retentionUntil={r.retentionUntil} dispositionState={r.dispositionEligible ? "eligible" : null} legalHold={r.legalHold} compact />}
+                      {r.retentionScheduleUnknown
+                        ? <span className="inline-flex items-center rounded-full border border-amber-200 bg-amber-50 px-2 py-0.5 text-[10px] font-bold text-amber-700" title="The folder or library retention policy could not be read — refresh to try again.">schedule unknown</span>
+                        : r.scheduledActionLabel
+                          ? <span className={`inline-flex items-center rounded-full border px-2 py-0.5 text-[10px] font-bold ${r.scheduledAction === "destroy" ? "border-rose-200 bg-rose-50 text-rose-700" : "border-[var(--color-border)] bg-[var(--color-surface-2)] text-[var(--color-text-muted)]"}`} title={r.retentionSchedule ?? undefined}>then {r.scheduledActionLabel}</span>
+                          : null}
+                      {!(r.legalHold || r.dispositionEligible) && !r.retentionScheduleUnknown && !r.scheduledActionLabel && <span className="text-[var(--color-text-faint)]">—</span>}
+                    </div>
+                  </td>
                 </tr>
               ))}
             </tbody>
