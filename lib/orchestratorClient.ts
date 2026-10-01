@@ -28,6 +28,10 @@ export interface PendingAction {
   expiresAt?: string;
   /** Set when the proposal could not be stored: it cannot be confirmed. */
   unavailable?: string;
+  /** ORCH-9: the stored proposal was suggested after the assistant read
+   *  document text written like an instruction to it. Informational — the
+   *  card says so; confirming works exactly as for any other proposal. */
+  tainted?: boolean;
 }
 
 /** A document the answer names, resolved to something clickable. */

@@ -339,6 +339,16 @@ function PendingCard({
         <div className="flex-1">
           <p className="text-sm font-medium text-amber-900">Needs your confirmation</p>
           <p className="mt-0.5 text-sm text-amber-800">{action.summary}</p>
+          {action.tainted && (
+            // ORCH-9: informs, never blocks — the buttons below are unchanged.
+            <p className="mt-1 flex items-start gap-1.5 text-xs font-medium text-rose-700" role="note">
+              <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0" />
+              <span>
+                Suggested after reading document text — check before confirming.
+                <span className="font-normal"> Something it read was written like an instruction to the assistant.</span>
+              </span>
+            </p>
+          )}
           {outcome && !outcome.ok && (
             <p className="mt-1 text-xs font-medium text-rose-700">{outcome.note}</p>
           )}

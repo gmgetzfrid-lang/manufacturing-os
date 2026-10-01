@@ -205,7 +205,19 @@ export function orIlikeContains(columns: readonly string[], text: string): strin
  * Pure; returns a new value, never mutates the input.
  */
 export function neutralizeUntrusted<T>(value: T): T {
-  return walk(value) as T;
+  return neutralizeUntrustedReport(value).value;
+}
+
+/**
+ * ORCH-9 (criterion 3): the same rewrite, and whether it rewrote anything —
+ * i.e. whether a string in the value carried a fence, role, transcript or
+ * tool-call marker. The loop marks every write a run proposes after such a
+ * result reached the model (informational: it never blocks a proposal).
+ * Ordinary evidence reports `false` and comes back unchanged.
+ */
+export function neutralizeUntrustedReport<T>(value: T): { value: T; rewrote: boolean } {
+  const seen = { rewrote: false };
+  return { value: walk(value, seen) as T, rewrote: seen.rewrote };
 }
 
 const ROLE_MARKER = /\b(SYSTEM|ASSISTANT|USER|DEVELOPER|HUMAN|TOOL|QUESTION|REJECTED|PARAMETERS REJECTED|SITE INSTRUCTIONS)\s*:/gi;
@@ -220,12 +232,16 @@ function neutralizeString(text: string): string {
     .replace(/tool_name/gi, "tool name");
 }
 
-function walk(v: unknown): unknown {
-  if (typeof v === "string") return neutralizeString(v);
-  if (Array.isArray(v)) return v.map(walk);
+function walk(v: unknown, seen: { rewrote: boolean }): unknown {
+  if (typeof v === "string") {
+    const out = neutralizeString(v);
+    if (out !== v) seen.rewrote = true;
+    return out;
+  }
+  if (Array.isArray(v)) return v.map((x) => walk(x, seen));
   if (v && typeof v === "object") {
     const out: Record<string, unknown> = {};
-    for (const [k, x] of Object.entries(v as Record<string, unknown>)) out[k] = walk(x);
+    for (const [k, x] of Object.entries(v as Record<string, unknown>)) out[k] = walk(x, seen);
     return out;
   }
   return v;
