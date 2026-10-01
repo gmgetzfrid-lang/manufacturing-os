@@ -133,7 +133,7 @@ SELECT 'active members outside the controller tier — who LOSE confirming a flo
  WHERE m.status = 'active'
    AND NOT (m.role IN ('Admin', 'DocCtrl') OR m.roles && ARRAY['Admin', 'DocCtrl']::text[])
 UNION ALL
-SELECT 'of them, members who drew a flow that is now confirmed (each keeps it; only a controller edits or removes it from now on)', COUNT(DISTINCT f.created_by)
+SELECT 'of them, members who drew a flow that is now decided (confirmed or dismissed) — each keeps it; only a controller edits or removes it from now on', COUNT(DISTINCT f.created_by)
   FROM process_flows f JOIN org_members m ON m.org_id = f.org_id AND m.uid = f.created_by AND m.status = 'active'
  WHERE f.status IN ('confirmed', 'dismissed')
    AND NOT (m.role IN ('Admin', 'DocCtrl') OR m.roles && ARRAY['Admin', 'DocCtrl']::text[]);

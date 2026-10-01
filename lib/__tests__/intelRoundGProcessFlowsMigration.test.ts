@@ -180,6 +180,15 @@ describe("20261155 — the one-paste protocol (DEC-30)", () => {
     expect(tail).toContain("SELECT 'inventory (before): ' || what, NULL, n::text FROM _intel_g55_before");
   });
 
+  it("each inventory label says what its count counts: the decided-flows row counts confirmed AND dismissed, and says so", () => {
+    const inv = m.slice(m.indexOf("CREATE TEMP TABLE"), m.indexOf("\nBEGIN;\n"));
+    const at = inv.indexOf("WHERE f.status IN ('confirmed', 'dismissed')");
+    expect(at).toBeGreaterThan(0);
+    const label = inv.slice(inv.lastIndexOf("\nSELECT '", at), at);
+    expect(label).toContain("members who drew a flow that is now decided (confirmed or dismissed)");
+    expect(inv).not.toContain("a flow that is now confirmed (");
+  });
+
   it("the inventory's controller predicate is is_org_controller's own (20260814)", () => {
     const def = text("20260814_documents_delete_controllers.sql");
     expect(def).toContain("AND (role IN ('Admin', 'DocCtrl') OR roles && ARRAY['Admin', 'DocCtrl']::text[])");
