@@ -265,6 +265,34 @@ the agreement or an unreadable ledger, so a document waiting on AI vision is
 parked with that cause, never "Add one in AI settings" for a saved key.
 Whoever next edits the engine or the route keeps it (test:
 `aiUsageOutageIngest.test.ts`, "a document waiting on AI vision…").
+*Fix pass 7* (the seventh review's major): `noVisionReason` now also HOLDS
+a page that needs vision. The page is listed in `vision_failed_pages`, like
+a provider failure (ING-6), and is never consumed text-only. Consumed, the
+document reached 'ready' and nothing read the page once the member signed;
+that was a regression from `052271b` for keyed members, and the
+`2026-10-v3` re-sign put every member there at deploy.
+
+- The route answers a read-every-page library with vision withheld for such
+  a reason without running a batch: 428 with the agreement fields, or 409.
+  It writes nothing to the row, so the drain's queue order is untouched.
+- The drain's `loadSponsorVision` returns the uploader's `noVisionReason`
+  and passes it. The drain holds pages the same way and names that cause on
+  the row: the row no longer flips to "Add one in AI settings" on the next
+  pass.
+
+Whoever next edits the engine, the route or the drain keeps all three.
+Tests: `aiUsageOutageIngest.test.ts`, "GOV-11 / GOV-4 — a page that needs
+vision is never consumed text-only…".
+
+**Limb for I-02 / I-02b** (the library page and
+`components/providers/KnowledgeIndexIndicator.tsx`, through
+`lib/knowledge.ts`'s ingest loop): the ingest route's 428 (read-every-page
+library) and its retry-stage 409, for a member who has not signed, carry
+`agreementRequired`, `agreementText` and `agreementVersion`, as the ask
+route's 428 does. A client that prompts for the agreement on them, records
+the acceptance and re-runs indexing closes the loop. Until then the
+sentence sends the member to ask any question in Knowledge, which
+prompts.
 
 **`20261137` re-creates TWO functions** (I-05 fix pass 3): besides
 `org_capability_allows_for` (one CASE row), `capability_policy_write_guard`
