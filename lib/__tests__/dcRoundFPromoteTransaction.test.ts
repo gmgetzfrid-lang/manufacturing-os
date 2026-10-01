@@ -173,8 +173,9 @@ describe("20261151 — the guard and publish_revision re-created from their NEWE
     expect(P_RECORD).toContain("VALUES ('REV_HOLD_OVERRIDDEN', p_doc::text, 'document', v_doc.org_id, p_actor,");
     expect(P_RECORD).toMatch(/'holds', \(SELECT jsonb_agg\(jsonb_build_object\('id', h\.id, 'reason', h\.reason\) ORDER BY h\.opened_at\)/);
     expect(P.next.indexOf(P_RECORD)).toBeGreaterThan(P.next.indexOf("IF v_lock_via IS NOT NULL THEN"));
-    // the flag is set by nothing else in the sequence
-    for (const f of files.filter((x) => x !== FILE)) expect(stripComments(mig(f)), f).not.toMatch(/app\.publish_hold_override/);
+    // the flag is set by nothing else in the sequence (P17's 20261159 re-creates
+    // the guard, which READS it — current_setting — and sets it nowhere)
+    for (const f of files.filter((x) => x !== FILE)) expect(stripComments(mig(f)), f).not.toMatch(/set_config\('app\.publish_hold_override'/);
   });
 
   it("DRLS-16: publish_revision's grants are restated after the re-create (anon revoked in this file); the guard executable by no client role", () => {
