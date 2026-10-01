@@ -1092,11 +1092,15 @@ export default function InspectorPanel({
 // ─── Transmittal trail ────────────────────────────────────────────────────
 // "Which transmittals carried this document?" — the impact question nobody
 // could answer from the document side. Renders nothing when the doc was
-// never transmitted; flags recipients now holding a superseded rev.
+// never transmitted; flags recipients now holding a superseded rev. TRX-9:
+// a trail that could not be READ says so — it is never shown as "never
+// transmitted", which is exactly what an outdated outside holder looks like.
 function TransmittalTrail({ orgId, documentId, currentRev }: { orgId: string; documentId: string; currentRev: string | null }) {
   const [rows, setRows] = React.useState<Array<{ id: string; number: string; rev: string | null; purpose: string | null; status: string; recipient: string; issuedAt: string | null }>>([]);
+  const [failed, setFailed] = React.useState<string | null>(null);
   React.useEffect(() => {
     let alive = true;
+    setFailed(null);
     (async () => {
       const { listTransmittalsForDocument } = await import("@/lib/transmittals");
       const list = await listTransmittalsForDocument(orgId, documentId);
@@ -1112,10 +1116,20 @@ function TransmittalTrail({ orgId, documentId, currentRev }: { orgId: string; do
           recipient: t.recipientCompany || t.recipientName || "—",
           issuedAt: t.issuedAt ?? null,
         })));
-    })();
+    })().catch((e: unknown) => {
+      if (alive) { setRows([]); setFailed((e as Error)?.message || "The transmittal trail could not be read."); }
+    });
     return () => { alive = false; };
   }, [orgId, documentId]);
 
+  if (failed) {
+    return (
+      <div className="mt-3 rounded-xl border border-amber-300 bg-amber-50/60 dark:bg-amber-950/30 px-3 py-2.5 text-[11px] text-amber-800 dark:text-amber-300" role="status">
+        <div className="text-[10px] font-black uppercase tracking-widest mb-0.5">Transmitted on — couldn&apos;t check</div>
+        {failed} Whether this document went out on a transmittal is unknown until it can be read — it is not &quot;never transmitted&quot;.
+      </div>
+    );
+  }
   if (rows.length === 0) return null;
   return (
     <div className="mt-3 rounded-xl border border-[var(--color-border)] bg-[var(--color-surface-2)]/40 px-3 py-2.5">

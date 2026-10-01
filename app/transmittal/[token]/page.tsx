@@ -6,24 +6,45 @@
 // list — downloads the files EXACTLY as sent, and acknowledges receipt
 // with their name. That acknowledgment is the org's their-side,
 // timestamped proof of delivery.
+//
+// TRX-5: downloads stream through /api/transmittal, which stamps each PDF
+// UNCONTROLLED with the as-issued revision and a verify QR and records the
+// copy before it is released — this page only saves the bytes it is given.
+// TRX-3 / TRX-8: each document shows its status and effective date AS SENT
+// and the fingerprint (SHA-256) of the file issued. TRX-4: a revoked or
+// expired link says so, distinctly from a voided transmittal.
 
 import React, { useCallback, useEffect, useState } from "react";
 import {
   FileText, Loader2, AlertTriangle, CheckCircle2, Download, Building2, PenLine,
 } from "lucide-react";
 
-interface PortalItem { documentId: string; number: string; title: string | null; rev: string | null }
+interface PortalItem {
+  documentId: string; number: string; title: string | null; rev: string | null;
+  statusAsSent?: string | null; effectiveDate?: string | null; fileHash?: string | null;
+}
 interface PortalData {
   number: string; subject: string | null; purpose: string | null; status: string;
   notes: string | null; orgName: string | null; fromName: string | null;
   issuedAt: string | null; acknowledgedAt: string | null; acknowledgedByName: string | null;
   recipientName: string | null; recipientCompany: string | null;
+  portalExpiresAt?: string | null;
   items: PortalItem[];
+}
+
+/** What the route's refusal codes mean to the recipient. */
+function downloadError(status: number, body: { error?: string } | null): string {
+  const code = body?.error;
+  if (code === "revoked") return "The issuer has revoked this link — contact them for access.";
+  if (code === "expired") return "This link has expired — contact the issuer for a fresh one.";
+  if (code === "voided") return "This transmittal was voided by the issuer.";
+  if (code === "unrecorded") return "The download could not be recorded on the issuer's distribution record, so the file was not released. Try again shortly.";
+  return code || `The file couldn't be prepared (HTTP ${status}).`;
 }
 
 export default function TransmittalPortal({ params }: { params: Promise<{ token: string }> }) {
   const { token } = React.use(params);
-  const [state, setState] = useState<"loading" | "ok" | "voided" | "notfound" | "error">("loading");
+  const [state, setState] = useState<"loading" | "ok" | "voided" | "revoked" | "expired" | "notfound" | "error">("loading");
   const [data, setData] = useState<PortalData | null>(null);
   const [msg, setMsg] = useState<{ tone: "ok" | "err"; text: string } | null>(null);
   const [ackName, setAckName] = useState("");
@@ -36,7 +57,10 @@ export default function TransmittalPortal({ params }: { params: Promise<{ token:
       const res = await fetch(`/api/transmittal?token=${encodeURIComponent(token)}`);
       if (!res.ok) {
         const body = (await res.json().catch(() => null)) as { error?: string } | null;
-        setState(body?.error === "voided" ? "voided" : res.status === 404 ? "notfound" : "error");
+        setState(body?.error === "voided" ? "voided"
+          : body?.error === "revoked" ? "revoked"
+          : body?.error === "expired" ? "expired"
+          : res.status === 404 ? "notfound" : "error");
         return;
       }
       setData((await res.json()) as PortalData);
@@ -48,10 +72,23 @@ export default function TransmittalPortal({ params }: { params: Promise<{ token:
   const download = async (docId: string) => {
     setDownloading(docId); setMsg(null);
     try {
+      // The server stamps and records before it responds — this saves the blob.
       const res = await fetch(`/api/transmittal?token=${encodeURIComponent(token)}&file=${encodeURIComponent(docId)}`);
-      const body = (await res.json().catch(() => null)) as { url?: string; error?: string } | null;
-      if (!res.ok || !body?.url) throw new Error(body?.error || `HTTP ${res.status}`);
-      window.open(body.url, "_blank", "noopener");
+      if (!res.ok) {
+        const body = (await res.json().catch(() => null)) as { error?: string } | null;
+        throw new Error(downloadError(res.status, body));
+      }
+      const blob = await res.blob();
+      const disposition = res.headers.get("content-disposition") ?? "";
+      const named = disposition.match(/filename="([^"]+)"/)?.[1];
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = named || "document";
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(url);
     } catch (e) {
       setMsg({ tone: "err", text: (e as Error).message });
     } finally { setDownloading(null); }
@@ -67,7 +104,7 @@ export default function TransmittalPortal({ params }: { params: Promise<{ token:
         body: JSON.stringify({ token, name: ackName.trim(), note: ackNote.trim() || undefined }),
       });
       const body = (await res.json().catch(() => null)) as { ok?: boolean; error?: string } | null;
-      if (!res.ok || !body?.ok) throw new Error(body?.error || `HTTP ${res.status}`);
+      if (!res.ok || !body?.ok) throw new Error(body?.error === "revoked" || body?.error === "expired" ? downloadError(res.status, body) : body?.error || `HTTP ${res.status}`);
       setMsg({ tone: "ok", text: "Receipt recorded — thank you. The issuer has been notified." });
       await refresh();
     } catch (e) {
@@ -84,6 +121,8 @@ export default function TransmittalPortal({ params }: { params: Promise<{ token:
   if (state === "loading") return <Shell><div className="p-8 text-center text-slate-500"><Loader2 className="w-5 h-5 animate-spin inline mr-2" />Opening transmittal…</div></Shell>;
   if (state !== "ok" || !data) {
     const text = state === "voided" ? "This transmittal was voided by the issuer — it is no longer a valid record. Contact them for a replacement."
+      : state === "revoked" ? "The issuer has revoked this link. The transmittal itself still stands — contact them if you need access again."
+      : state === "expired" ? "This link has expired. The transmittal itself still stands — contact the issuer for a fresh link."
       : state === "notfound" ? "This link doesn't exist — it may have been mistyped."
       : "Something went wrong opening this transmittal. Try again shortly.";
     return <Shell><div className="p-8 text-center"><AlertTriangle className="w-8 h-8 text-amber-500 mx-auto mb-2" /><p className="text-sm text-slate-500">{text}</p></div></Shell>;
@@ -138,8 +177,15 @@ export default function TransmittalPortal({ params }: { params: Promise<{ token:
                   <div className="text-sm font-bold text-slate-900 dark:text-white truncate">
                     <span className="font-mono">{i.number}</span>
                     {i.rev && <span className="ml-2 text-[10px] font-black text-slate-500 bg-slate-100 dark:bg-slate-800 rounded px-1.5 py-0.5">REV {i.rev}</span>}
+                    {i.statusAsSent && <span className="ml-1.5 text-[10px] font-bold text-slate-500">{i.statusAsSent} as sent</span>}
                   </div>
                   {i.title && <div className="text-[11px] text-slate-500 truncate">{i.title}</div>}
+                  {i.effectiveDate && (
+                    <div className={`text-[10px] font-bold ${i.effectiveDate.slice(0, 10) > new Date().toISOString().slice(0, 10) ? "text-amber-700" : "text-slate-500"}`}>
+                      Effective {i.effectiveDate.slice(0, 10)}{i.effectiveDate.slice(0, 10) > new Date().toISOString().slice(0, 10) ? " — not yet in force" : ""}
+                    </div>
+                  )}
+                  {i.fileHash && <div className="text-[10px] font-mono text-slate-400" title={`SHA-256 of the file issued: ${i.fileHash}`}>SHA-256 {i.fileHash.slice(0, 12)}…</div>}
                 </div>
                 <button
                   onClick={() => void download(i.documentId)}
@@ -151,7 +197,7 @@ export default function TransmittalPortal({ params }: { params: Promise<{ token:
               </li>
             ))}
           </ul>
-          <div className="mt-1.5 text-[10px] text-slate-400">Files download exactly as issued on this transmittal — if a newer revision exists, it is NOT what this record covers.</div>
+          <div className="mt-1.5 text-[10px] text-slate-400">Files download exactly as issued on this transmittal — if a newer revision exists, it is NOT what this record covers. Each PDF is marked UNCONTROLLED with its revision and a QR to check whether it is still current.{data.portalExpiresAt ? ` This link works until ${new Date(data.portalExpiresAt).toLocaleDateString()}.` : ""}</div>
         </div>
 
         {data.notes && (
@@ -178,7 +224,7 @@ export default function TransmittalPortal({ params }: { params: Promise<{ token:
               <PenLine className="w-4 h-4 text-orange-600" /> Acknowledge receipt
             </div>
             <p className="text-[11px] text-slate-600 dark:text-slate-400 mb-3">
-              Confirming tells {data.orgName ?? "the issuer"} you received these documents at the revisions listed above. Your name and the time are recorded on the transmittal.
+              Confirming tells {data.orgName ?? "the issuer"} you received these documents at the revisions listed above. Your name, your note, the time and the network address you confirm from are recorded on the transmittal.
             </p>
             <div className="flex items-end gap-2 flex-wrap">
               <label className="block flex-1 min-w-48">

@@ -100,10 +100,15 @@ describe("LIFE-6 — the hold knows its ticket; a close cannot be silent over it
 });
 
 describe("SURF-17 — external mail is queued server-side from the row", () => {
-  it("the route renders from the transmittal row, checks issuer-or-controller, and marks the queue row external", () => {
+  it("the route renders from the transmittal row, checks transmit authority (TRX-1, the capability — no role list), and marks the queue row external", () => {
     const r = src("app/api/transmittal/send-email/route.ts");
-    expect(r).toMatch(/renderTransmittalEmail\(t, transmittalPortalUrl\(t\.portalToken\)\)/);
-    expect(r).toMatch(/if \(t\.createdBy !== user\.id && !isController\) \{/);
+    // TRX-14: the link is built on the public origin and a hostless one is never emailed.
+    expect(r).toMatch(/const portalUrl = transmittalPortalUrl\(t\.portalToken\);\s*\n\s*if \(!portalUrl\) \{/);
+    expect(r).toMatch(/renderTransmittalEmail\(t, portalUrl\)/);
+    // DEC-35: the hardcoded Admin / DocCtrl test became the capability's default.
+    expect(r).toMatch(/const authority = await evaluateTransmitAuthority\(supabaseAdmin, \{ orgId: t\.orgId, uid: user\.id, items: t\.items \}\);/);
+    expect(r).toMatch(/if \(!authority\.allowed\) \{/);
+    expect(r).not.toMatch(/held\.has\("Admin"\)|held\.has\("DocCtrl"\)/);
     expect(r).toMatch(/metadata: \{ number: t\.number, purpose: t\.purpose, external: true, sentVia: "server" \}/);
     expect(r).not.toMatch(/body\.(subject|bodyHtml|html|to)/);
   });

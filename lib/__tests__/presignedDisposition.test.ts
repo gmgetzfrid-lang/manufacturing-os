@@ -268,7 +268,7 @@ describe("census — every presigned GET issuer under app/api and lib signs a di
   // presignedGetDisposition in its own package. Named here so they stay
   // visible and nothing joins them.
   const KNOWN_UNSIGNED = new Set(["app/api/storage/resolve/route.ts", "lib/dataExport.ts"]);
-  it("download-url and transmittal carry one; nothing new signs a bare GetObjectCommand", () => {
+  it("download-url carries one (the transmittal portal no longer signs — it streams, TRX-5); nothing new signs a bare GetObjectCommand", () => {
     const issuers: string[] = [];
     const bare: string[] = [];
     for (const file of [...walk(join(root, "app", "api")), ...walk(join(root, "lib"))]) {
@@ -279,8 +279,9 @@ describe("census — every presigned GET issuer under app/api and lib signs a di
       if (!/ResponseContentDisposition|\.\.\.disposition\.overrides/.test(src) && !KNOWN_UNSIGNED.has(rel)) bare.push(rel);
     }
     expect(issuers).toEqual(expect.arrayContaining([
-      "app/api/storage/download-url/route.ts", "app/api/transmittal/route.ts", ...KNOWN_UNSIGNED,
+      "app/api/storage/download-url/route.ts", ...KNOWN_UNSIGNED,
     ]));
+    expect(issuers).not.toContain("app/api/transmittal/route.ts");
     expect(bare).toEqual([]);
   });
 });

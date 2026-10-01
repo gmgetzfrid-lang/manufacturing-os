@@ -183,9 +183,24 @@ export function renderProjectEvidenceHtml(data: ProjectEvidence): string {
 
   const trRows = data.transmittals.map((t) => {
     const items = Array.isArray(t.items) ? (t.items as Array<Record<string, unknown>>) : [];
-    const docList = items.map((i) => `${esc(i.number)}${i.rev ? ` R${esc(i.rev)}` : ""}`).join(", ");
+    // TRX-8 / TRX-3: each document as sent — its revision, its status at
+    // issue and a short prefix of the issued file's SHA-256, so the paper
+    // record identifies the exact bytes.
+    const docList = items.map((i) => {
+      const hash = typeof i.fileHash === "string" && i.fileHash ? ` #${esc(i.fileHash.slice(0, 12))}` : "";
+      const state = typeof i.statusAsSent === "string" && i.statusAsSent ? ` (${esc(i.statusAsSent)})` : "";
+      return `${esc(i.number)}${i.rev ? ` R${esc(i.rev)}` : ""}${state}${hash}`;
+    }).join(", ");
+    // TRX-13: the receipt with its evidence — what the server saw on a portal
+    // receipt (source address, the recipient's note), who recorded a manual one.
+    const meta = (t.acknowledged_meta && typeof t.acknowledged_meta === "object" ? t.acknowledged_meta : {}) as Record<string, unknown>;
+    const evidence = t.acknowledged_via === "portal"
+      ? ` (portal${meta.ip ? ` · from ${esc(meta.ip)}` : ""}${meta.note ? ` · note: “${esc(meta.note)}”` : ""})`
+      : t.acknowledged_via === "manual"
+        ? ` (recorded internally${meta.recordedByEmail ? ` by ${esc(meta.recordedByEmail)}` : ""}${meta.note ? ` · note: “${esc(meta.note)}”` : ""})`
+        : "";
     const ack = t.status === "acknowledged"
-      ? `${esc(t.acknowledged_by_name || "—")} · ${date(t.acknowledged_at)}${t.acknowledged_via === "portal" ? " (portal)" : ""}`
+      ? `${esc(t.acknowledged_by_name || "—")} · ${date(t.acknowledged_at)}${evidence}`
       : esc(t.status || "—");
     return `<tr><td class="mono"><b>${esc(t.number)}</b></td><td>${esc(t.recipient_company || t.recipient_name || "—")}</td><td>${esc(t.purpose || "—")}</td><td>${date(t.issued_at)}</td><td>${ack}</td><td class="small">${docList || "—"}</td></tr>`;
   });

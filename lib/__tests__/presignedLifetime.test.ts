@@ -215,16 +215,19 @@ describe("getSignedUrl census under app/api — no issuer is looser than the cei
     }
   }
 
-  it("censuses every signing site (upload-url, multipart, resolve, download-url, transmittal)", () => {
+  it("censuses every signing site (upload-url, multipart, resolve, download-url) — the transmittal portal no longer signs at all", () => {
     const files = new Set(calls.map((c) => c.file));
     for (const f of [
       "app/api/storage/upload-url/route.ts", "app/api/storage/multipart/route.ts",
-      "app/api/storage/resolve/route.ts", "app/api/storage/download-url/route.ts", "app/api/transmittal/route.ts",
+      "app/api/storage/resolve/route.ts", "app/api/storage/download-url/route.ts",
     ]) expect(files.has(f), f).toBe(true);
+    // document-control P7 (TRX-5 / EGR-8): the portal streams the stamped
+    // bytes through the route; a presigned URL never reaches the recipient.
+    expect(files.has("app/api/transmittal/route.ts")).toBe(false);
   });
 
   it("every lifetime is a literal ≤ the ceiling or the shared resolver's answer — never a query parameter", () => {
-    expect(calls.length).toBeGreaterThanOrEqual(5);
+    expect(calls.length).toBeGreaterThanOrEqual(4);
     for (const c of calls) {
       const lit = c.text.match(/expiresIn\s*:\s*(\d+)\b/);
       if (lit) {
