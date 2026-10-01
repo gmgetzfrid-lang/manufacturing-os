@@ -129,10 +129,23 @@ may be pasted before or after the app.
 **Owners still to map the ledger refusal** (`GOV-4`): during a ledger outage,
 `getMonthUsage` / `getCapUsd` throw a 503 `GovernedCallError`. The ingest
 route, the ingest drain and the codebook import catch it (I-05). The ask
-(I-03), orchestrator (I-04), locate (I-07) and embed (I-02's, merged) routes
-still answer an unhandled 500. They refuse either way, but the sentence is
-lost. Each maps `GovernedCallError` onto its response as it adopts
-`assertAiGates`.
+(I-03), orchestrator (I-04) and embed (I-02's, merged) routes still answer an
+unhandled 500. They refuse their AI work either way, but the sentence is lost.
+Each maps `GovernedCallError` onto its response as it adopts `assertAiGates`.
+
+**Locate loses non-AI output during an outage — I-07's limb** (`GOV-4`):
+`app/api/knowledge/locate/route.ts` is NOT refused either way. When its AI
+step is refused (no key, cap reached) it still answers the text-layer
+`positions`, `notOnPage` and the library-wide `elsewhere` hits with a
+`skipped` sentence; an unreadable ledger now throws at its
+`Promise.all([getMonthUsage(...), getCapUsd(...)])` (line 185 at I-05's head)
+and the whole response is a 500 — the positions already found and the
+"V-3 is on 025-PID-0103" navigation are lost. Limb: catch
+`isAiUsageUnavailable(e)` (`lib/ai/gateError.ts`) there and return
+`{ positions, notOnPage: trulyAbsent, elsewhere, skipped: e.message + " The
+sheet still opens at the right page." }` — the pattern I-05 applied to the
+ingest route — with a test that a ledger read error still answers the
+text-layer positions. Rethrow anything else.
 
 ---
 
