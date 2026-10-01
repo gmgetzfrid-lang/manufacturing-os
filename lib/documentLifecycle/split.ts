@@ -108,10 +108,13 @@ export async function splitDocument(input: SplitDocumentInput): Promise<SplitDoc
   // HLD-2 / REV-11: the SAME gate as supersedeDocument, before anything is
   // written — per-library publish authority (or the source's effective
   // owner), the lock (a foreign checkout needs a reason; its holder is told),
-  // and the hold (only a controller's explicit force passes it).
+  // and the hold (only a controller's explicit force passes it — the Split
+  // wizard passes it only on the controller's "Proceed over the active hold"
+  // acknowledgement, HLD-2 review fix 4).
   const preState = await authorizePublish({
     documentId: sourceId, libraryId, orgId, actorUserId, actorRole,
     overrideReason: input.overrideReason ?? reason, force: input.force, operation: "split",
+    subjectLabel: sourceLabel,
   });
   // REV-11: sheets landing in ANOTHER library than the source's take
   // authority there too — they are born owned by the actor, so the
@@ -127,7 +130,7 @@ export async function splitDocument(input: SplitDocumentInput): Promise<SplitDoc
   }
   const sourceHeld = preState.activeHolds.length > 0;
   if (sourceHeld && !copyHolds) {
-    throw new Error(`${sourceLabel} has an active hold — a split must carry it onto every new sheet. Turn "carry over holds" back on, or release the hold first.`);
+    throw new Error(`${sourceLabel} has an active hold — a split must carry it onto every new sheet. Turn "carry over holds" back on.`);
   }
   // REV-11: the new sheets are controlled first issues that REPLACE a
   // controlled drawing — the governing review policy is resolved for the
@@ -237,6 +240,9 @@ export async function splitDocument(input: SplitDocumentInput): Promise<SplitDoc
       newDocumentCount: newDocumentIds.length,
       newDocumentNumbers: targets.map((t) => t.documentNumber),
       holdsCarried: holdsCopied,
+      // HLD-2 (review fix 4): the holds the controller's explicit force
+      // proceeded over (empty when the source was not held).
+      proceededOverHolds: preState.activeHolds.map((h) => ({ id: h.id ?? null, reason: h.reason })),
     },
   });
 

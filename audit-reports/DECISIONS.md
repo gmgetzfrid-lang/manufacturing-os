@@ -2039,7 +2039,7 @@ then. A stated need for owners to share widens the INSERT arm to
 **Risk:** low — every change narrows; a never-expiring link older than 90
 days expires on apply, which the migration's inventory counts before the fact.
 
-*Landed 2026-09-30 (document-control Round F wave 2, P3 LIFECYCLE): §3's lifecycle half — archive, split and merge now REVOKE a document's live share links as supersede did (`revokeLiveSharesForDocument`, `lib/revisions.ts`: live rows only, what the actor may revoke under RLS, the count and any refusal on the retirement's audit event), and so does a reversal that parks a split / merge's sheets; revocation is durable (20261080), so an unarchive or a reversed split / merge no longer serves a link again. See `REV-10`.*
+*Landed 2026-09-30 (document-control Round F wave 2, P3 LIFECYCLE): §3's lifecycle half — archive, split and merge now REVOKE a document's live share links as supersede did (`revokeLiveSharesForDocument`, `lib/revisions.ts`: live rows only, what the actor may revoke under RLS, the count and any refusal on the retirement's audit event), and so does a reversal that parks a split / merge's sheets; revocation is durable (20261080), so an unarchive or a reversed split / merge no longer serves a link the retirement REVOKED. *Caveat (corrected in the fourth review fix):* a link another creator minted is revoked only when the retirer is a controller (RLS, 20261022). A non-controller's retirement leaves such a link live and only flags it — `liveShareLinksLeft` on the retirement's audit event (unexpired links only, P1's rule) and a line in the retirer's browser console; no queue shows it — and it serves again after an unarchive or a reversed split / merge until Document Control revokes it. See `REV-10`.*
 
 <a id="dec-47"></a>
 ## DEC-47 · Imported schedule rows are commitments everywhere
@@ -3308,9 +3308,9 @@ and an unverifiable sheet needs a deliberate single adopt.
 <a id="dec-44-p3-lifecycle"></a>
 ## DEC-44 · The documents-table rails: what the database references, what a creation may issue, what a reversal may restore, and which calendar decides "in effect"
 
-*Number provisional — minted by document-control Round F wave 2 (package P3 LIFECYCLE) as the brief directs; distinct from the download-record DEC-44 above. The integrator renumbers on merge (references: `REV-9`, `REV-11`, `REV-12`, `REV-16`, `DRLS-14` in document-control, the header of `supabase/migrations/20261131_dc_roundF_documents_rails.sql`, and one pattern in `lib/__tests__/dcRoundFLifecycleMigration.test.ts`).*
+*Number provisional — minted by document-control Round F wave 2 (package P3 LIFECYCLE) as the brief directs; distinct from the download-record DEC-44 above. The integrator renumbers on merge (references: `REV-9`, `REV-11`, `REV-12`, `REV-16`, `REV-17`, `DRLS-14` in document-control, the header of `supabase/migrations/20261131_dc_roundF_documents_rails.sql`, and one pattern in `lib/__tests__/dcRoundFLifecycleMigration.test.ts`).*
 
-*Sign-off: the first version of §2 and §3 removed capabilities (split / merge in a require-mode library, for controllers too; reversing a split / merge recorded before this round, from the UI) and was held for sign-off. The second review fix withdrew both removals — a controller issues in a require-mode library with the decision recorded (§2), and the reverse dialog names a legacy status explicitly (§3, `REV-16`) — so neither section now removes a write path the database allows; the integrator need only confirm the refusal §2 keeps (a non-controller in a require-mode library), which is the finding's own bypass closed.*
+*Sign-off: the first version of §2 and §3 removed capabilities (split / merge in a require-mode library, for controllers too; reversing a split / merge recorded before this round, from the UI) and was held for sign-off. The second review fix withdrew both removals — a controller issues in a require-mode library with the decision recorded (§2), and the reverse dialog names a legacy status explicitly (§3, `REV-16`) — so neither section now removes a write path the database allows; the integrator need only confirm the refusal §2 keeps (a non-controller in a require-mode library), which closes the finding's own bypass in the app only — the database half is `REV-17` (fourth review fix).*
 
 **Decision. Four calls the lifecycle package had to make, each in the direction that fails safe:**
 
@@ -3345,8 +3345,16 @@ and an unverifiable sheet needs a deliberate single adopt.
    controlled source while its replacements are unapproved — no controlled
    copy in between — so for a non-controller the operation refuses and says
    how to proceed (create as Draft, review, then retire the old document, or
-   ask Document Control); that refusal is the finding's own bypass closed
-   (an owner splitting past a mandatory review). Doc Control and Admin — the
+   ask Document Control); that refusal closes the finding's own bypass (an
+   owner splitting past a mandatory review) **in the app only**: the
+   database's guard exempts a first issue from the require-mode rule
+   (`enforce_document_publish_guard`, newest body `20261105:415` — only
+   `OLD.current_version_id IS NOT NULL` is a revision through the gate), so a
+   non-controller owner writing the rows and the first pointer from their own
+   session is admitted, with no `DOCUMENT_CREATED` row. The database rule is
+   `REV-17`, assigned to the integrator *(fourth review fix: the record
+   called the bypass closed without saying it was app-side)*. Doc Control
+   and Admin — the
    people who own the policy — proceed, and the creation event records the
    decision and who made it (`reviewPolicy: "require — issued WITHOUT the
    sign-off the policy requires, by controller <uid> …"` — on
@@ -3442,3 +3450,5 @@ the order is in `document-control/99-fix-sequencing.md`).
 *Landed 2026-09-30 (document-control Round F wave 2, P3 LIFECYCLE, second review fix): §2's controller path (recorded) and §3's dialog picker (`REV-16`) withdraw the two capability removals; §4's fallback is UTC-12, never early. The split / merge / supersede saga now does nothing irreversible (the review void, the share revocation) before its last step that can roll back, registers each source's restore before its flip, and runs an extended merge target's rev-up last. See `REV-6`, `REV-9`, `REV-11`, `REV-12`, `REV-14`, `REV-16`, `HLD-2`.*
 
 *Landed 2026-09-30 (document-control Round F wave 2, P3 LIFECYCLE, third review fix): §2's "recorded" now holds for every creation path — `createDocumentWithFile` writes `DOCUMENT_CREATED` with the initial status, the policy decision and the actor, and returns a refused write (`REV-11`). The reversal (§3) is two-phase: every restored document is proved restorable before any write, the parks / restores / lineage delete roll back whole, and the review voids and link revocations run only after (`REV-6`, `REV-12`). A merge into a held existing target with no rev-up is no longer refused (authority and the lock only — `HLD-2`), so no section removes a write path the database allows. §4's unset zone is logged and its worst case stated as 26 hours (`REV-9`). `REV-13` is back to OPEN: its every-door half is `20261131`'s rail, not yet pasteable.*
+
+*Landed 2026-09-30 (document-control Round F wave 2, P3 LIFECYCLE, fourth review fix): the controller's force over a hold reaches the UI — the Split and Merge wizards read the sources' active holds and, for a controller (the role collection), require "Proceed over the active hold … carried to every new sheet / the merge target", lock the carry on and pass `force`; anyone else is refused before submit and never told to release the hold (fix pass 3 left the force API-only, so the UI route was to release the hold, which carries nothing — the HLD-2 failure by another route, wrongly called fail-safe). `DOC_SPLIT` / `DOC_MERGED` name the holds proceeded over. A reversal that would park a held document takes the same explicit decision and carries the hold back onto every restored document (§3; `REV-12`), and a park or restore whose answer was lost is re-read before the rollback decides (`REV-6`). §2's require-mode refusal of a non-controller is app-side only; the database rule is `REV-17` (open). DEC-46's Landed line gains its RLS caveat (`REV-10`). See `HLD-2`, `REV-6`, `REV-10`, `REV-11`, `REV-12`, `REV-17`.*

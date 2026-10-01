@@ -37,6 +37,15 @@
 // path records its creation (DOCUMENT_CREATED); retirement counts the links
 // it could not revoke and writes P1's per-link revoke row; a held existing
 // merge target with no rev-up takes the merge; the tag union checks its row.
+//
+// Review fix 4: a held split / merge source is split or merged OVER the hold
+// on a controller's explicit acknowledgement (the wizards pass force; the
+// render tests are in dcRoundFHeldWizards.test.ts), anyone else is refused
+// and never told to release it; a reversal that parks a held document takes
+// the same explicit decision and carries the hold back onto what it
+// restores; a status write whose answer was lost is re-read before the
+// rollback decides; the reversal's per-key clash read fails closed (pinned);
+// an expired link is not counted as live.
 
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { readFileSync } from "node:fs";
@@ -57,6 +66,10 @@ const state = vi.hoisted(() => ({
   /** (table, patch) → true when THIS update must answer with zero rows and no
    *  error (PostgREST's silent RLS refusal) — one write, not the whole table. */
   zeroUpdate: null as null | ((table: string, patch: Row) => boolean),
+  /** (table, patch) → true when THIS update must LAND but its answer be lost
+   *  (a transport error after the database committed: supabase-js returns
+   *  { error: "Failed to fetch" }) — review fix 4. */
+  lostUpdate: null as null | ((table: string, patch: Row) => boolean),
 }));
 
 /** Wrap a fake builder so a plain read can be made to fail (a PostgREST
@@ -70,6 +83,9 @@ function readFailable(table: string, inner: Record<string, (...a: unknown[]) => 
       if (prop === "then") {
         if (op === "select" && state.failRead?.(table)) return (resolve: (v: unknown) => void) => resolve(failed());
         if (op === "update" && state.zeroUpdate?.(table, patch)) return (resolve: (v: unknown) => void) => resolve({ data: [], error: null });
+        if (op === "update" && state.lostUpdate?.(table, patch)) {
+          return (resolve: (v: unknown) => void) => (inner.then as unknown as (a: unknown) => void)(() => resolve({ data: null, error: { message: "Failed to fetch" } }));
+        }
         return (resolve: (v: unknown) => void, reject?: (e: unknown) => void) => (inner.then as unknown as (a: unknown, b: unknown) => void)(resolve, reject);
       }
       return (...args: unknown[]) => {
@@ -147,7 +163,7 @@ import {
   archiveDocument, supersedeDocument, revertToVersion, revUpDocument, createDocumentWithFile,
   correctRevisionLabel, authorizePublish, voidPendingDraft, UnresolvedReplacementsError,
   PublishContractUnavailableError, PUBLISH_RPC_RETRY_MS, OVERRIDE_REASON_MIN, CREATION_STATUSES,
-  PendingDraftVoidError,
+  PendingDraftVoidError, heldRetirementDecision,
 } from "@/lib/revisions";
 import { finalizeReviewedRevision } from "@/lib/reviewControl";
 import { onDocumentIssued } from "@/lib/reviewCycles";
@@ -215,6 +231,7 @@ beforeEach(() => {
   state.reviewThrows = false;
   state.failRead = null;
   state.zeroUpdate = null;
+  state.lostUpdate = null;
   PUBLISH_RPC_RETRY_MS.value = 0;
 });
 
@@ -614,7 +631,7 @@ describe("HLD-2 — split / merge run the supersede gate, and holds carry BEFORE
   it("a held source is refused for a non-controller before anything is written", async () => {
     const s = seedDoc("h1"); seedHold("h1");
     await expect(splitDocument({ source: asRecord(s), libraryId: LIB, targets: [target("H1A"), target("H1B")], reason: "declutter", orgId: ORG, actorUserId: ME }))
-      .rejects.toThrow(/active hold/);
+      .rejects.toThrow(/active hold/i);
     expect(T("documents")).toHaveLength(1);
     expect(docRow("h1").status).toBe("Issued");
   });
@@ -676,7 +693,7 @@ describe("HLD-2 — split / merge run the supersede gate, and holds carry BEFORE
       sources: [asRecord(a), asRecord(b)],
       target: { kind: "create_new", documentNumber: "G-NEW", title: "merged", assetTags: [], file: pdf("m.pdf"), initialRevLabel: "0", changeLog: "", libraryId: LIB },
       reason: "combine", orgId: ORG, actorUserId: ME,
-    })).rejects.toThrow(/active hold/);
+    })).rejects.toThrow(/active hold/i);
     expect(T("documents").some((d) => d.document_number === "G-NEW")).toBe(false);
   });
   it("merge records every source's prior status on the DOC_MERGED events and carries holds before superseding", async () => {
@@ -1169,7 +1186,7 @@ describe("REV-16 — a legacy split / merge is reversible from the dialog with a
   it("the dialog shows the validated picker (nothing pre-selected), requires a choice, and passes it as legacyRestoreStatus; it no longer promises 'Issued'", () => {
     const m = src("components/documents/lifecycle/ReverseConfirmModal.tsx");
     expect(m).toMatch(/const needsLegacyStatus = reversalNeedsLegacyStatus\(event\.action, event\.details \?\? null\);/);
-    expect(m).toMatch(/const valid = reason\.trim\(\)\.length > 0 && \(!needsLegacyStatus \|\| legacyStatus !== ""\);/);
+    expect(m).toMatch(/const valid = reason\.trim\(\)\.length > 0 && \(!needsLegacyStatus \|\| legacyStatus !== ""\) && !holdsBlock;/);
     expect(m).toMatch(/LEGACY_RESTORE_STATUSES\.map\(/);
     expect(m).toMatch(/<option value="">Choose the status it held before the/);
     expect((m.match(/actorRole, legacyRestoreStatus,/g) ?? []).length).toBe(2);
@@ -1453,5 +1470,228 @@ describe("HLD-2 (review fix 3) — the kept merge target", () => {
       reason: "combine", orgId: ORG, actorUserId: ME,
     });
     expect(audit("CREATED_FROM_MERGE")[1].details).toMatchObject({ assetTagsError: null });
+  });
+});
+
+// ─── Review fix 4 ─────────────────────────────────────────────────────────
+describe("HLD-2 (review fix 4) — a held source is split / merged OVER the hold, never by releasing it", () => {
+  const target = (n: string) => ({ documentNumber: n, title: n, assetTags: [], file: pdf(`${n}.pdf`), initialRevLabel: "0", changeLog: "" });
+  it("heldRetirementDecision: clear without holds; a controller acknowledges; anyone else is refused — and nobody is told to release the hold", () => {
+    expect(heldRetirementDecision({ operation: "split", held: [], isController: true })).toEqual({ kind: "clear" });
+    expect(heldRetirementDecision({ operation: "split", held: [{ label: "P-101", reasons: [] }], isController: false })).toEqual({ kind: "clear" });
+    const ack = heldRetirementDecision({ operation: "split", held: [{ label: "P-101", reasons: ["Awaiting Engineering"] }], isController: true });
+    expect(ack).toEqual({ kind: "acknowledge", text: "Proceed over the active hold on P-101 (Awaiting Engineering). It is carried to every new sheet." });
+    const two = heldRetirementDecision({ operation: "merge", held: [{ label: "P-101", reasons: ["A"] }, { label: "P-102", reasons: ["B"] }], isController: true });
+    expect(two).toMatchObject({ kind: "acknowledge", text: expect.stringMatching(/holds on P-101 \(A\); P-102 \(B\)\. They are carried to the merge target\./) });
+    const no = heldRetirementDecision({ operation: "split", held: [{ label: "P-101", reasons: ["Awaiting Engineering"] }], isController: false });
+    expect(no.kind).toBe("refused");
+    const msg = (no as { message: string }).message;
+    expect(msg).toMatch(/Only Doc Control or an Admin can split a held document: they proceed over the hold, and it is carried to every new sheet\./);
+    expect(msg).toMatch(/Do not release the hold to get past this — the new sheets would then carry no hold\./);
+    expect(msg).not.toMatch(/Release it before|publishing a new revision/);
+  });
+  it("a non-controller's split of a held source is refused with that wording (not \"release it before publishing a new revision\"); nothing is created", async () => {
+    const s = seedDoc("hf1"); seedHold("hf1");
+    const e = await splitDocument({ source: asRecord(s), libraryId: LIB, targets: [target("HF1A"), target("HF1B")], reason: "declutter", orgId: ORG, actorUserId: ME }).then((): never => { throw new Error("expected a rejection"); }, (x: unknown) => x as Error);
+    expect(e.message).toMatch(/^Active hold on HF1 \(Awaiting Engineering\)\. Only Doc Control or an Admin can split a held document/);
+    expect(e.message).not.toMatch(/Release it before publishing a new revision/);
+    expect(T("documents")).toHaveLength(1);
+  });
+  it("a controller who has not acknowledged (no force) is told to confirm — never to release; nothing is created", async () => {
+    state.roles = ["Manager", "DocCtrl"];
+    const s = seedDoc("hf2"); seedHold("hf2");
+    const e = await splitDocument({ source: asRecord(s), libraryId: LIB, targets: [target("HF2A"), target("HF2B")], reason: "declutter", orgId: ORG, actorUserId: ME }).then((): never => { throw new Error("expected a rejection"); }, (x: unknown) => x as Error);
+    expect(e.message).toBe('HF2 has an active hold (Awaiting Engineering). Confirm "Proceed over the active hold" to split over it — it is carried to every new sheet. Do not release the hold to get past this.');
+    expect(T("documents")).toHaveLength(1);
+  });
+  it("a non-controller's merge names the held source", async () => {
+    const a = seedDoc("hf3"); const b = seedDoc("hf4"); seedHold("hf4", "Client Review");
+    await expect(mergeDocuments({
+      sources: [asRecord(a), asRecord(b)],
+      target: { kind: "create_new", documentNumber: "HF-NEW", title: "m", assetTags: [], file: pdf("m.pdf"), initialRevLabel: "0", changeLog: "", libraryId: LIB },
+      reason: "combine", orgId: ORG, actorUserId: ME,
+    })).rejects.toThrow(/^Active hold on HF4 \(Client Review\)\. Only Doc Control or an Admin can merge a held document/);
+  });
+  it("a forced split and merge NAME the holds they proceeded over on DOC_SPLIT / DOC_MERGED (an unheld one records none)", async () => {
+    state.roles = ["DocCtrl"];
+    const s = seedDoc("hf5"); seedHold("hf5");
+    await splitDocument({ source: asRecord(s), libraryId: LIB, targets: [target("HF5A"), target("HF5B")], reason: "x", orgId: ORG, actorUserId: ME, force: true });
+    expect(audit("DOC_SPLIT")[0].details).toMatchObject({ holdsCarried: 2, proceededOverHolds: [{ id: "h-hf5-Awaiting Engineering", reason: "Awaiting Engineering" }] });
+    const a = seedDoc("hf6"); const b = seedDoc("hf7"); seedHold("hf7", "Client Review");
+    await mergeDocuments({
+      sources: [asRecord(a), asRecord(b)],
+      target: { kind: "create_new", documentNumber: "HF-NEW2", title: "m", assetTags: [], file: pdf("m.pdf"), initialRevLabel: "0", changeLog: "", libraryId: LIB },
+      reason: "combine", orgId: ORG, actorUserId: ME, force: true,
+    });
+    const merged = audit("DOC_MERGED");
+    expect(merged.find((e) => e.resource_id === "hf6")!.details).toMatchObject({ proceededOverHolds: [] });
+    expect(merged.find((e) => e.resource_id === "hf7")!.details).toMatchObject({ proceededOverHolds: [{ id: "h-hf7-Client Review", reason: "Client Review" }] });
+  });
+  it("the carry refusal and the router no longer point at releasing the hold", () => {
+    expect(src("lib/documentLifecycle/split.ts")).not.toMatch(/release the hold first/);
+    expect(src("lib/documentLifecycle/merge.ts")).not.toMatch(/release the holds first/);
+    const router = src("components/documents/lifecycle/ModifyDocumentRouter.tsx");
+    expect(router).toMatch(/A held sheet is split over its hold by Doc Control, never by releasing it\./);
+    for (const w of ["SplitWizard", "MergeWizard"]) {
+      const f = src(`components/documents/lifecycle/${w}.tsx`);
+      expect(f).toMatch(/isControllerPrincipal\(\{ role: activeRole, roles \}\)/); // the collection, not the headline alone
+      expect(f).toMatch(/force: holdDecision\.kind === "acknowledge" && holdAck \? true : undefined,/);
+    }
+  });
+});
+
+describe("HLD-2 / REV-12 (review fix 4) — a reversal that parks a held document takes an explicit decision and carries the hold back", () => {
+  const seedSplitF4 = (prefix: string) => {
+    seedDoc(prefix, { status: "Superseded", uniqueness_key: `${prefix}-key`, superseded_at: "2026-09-01T10:00:00Z", supersession_reason: "split" });
+    for (const x of ["a", "b"]) seedDoc(`${prefix}${x}`, { uniqueness_key: `${prefix}${x}-key` });
+    T("document_supersessions").push(
+      { id: `l-${prefix}a`, org_id: ORG, superseded_doc_id: prefix, replacement_doc_id: `${prefix}a`, reason: "split", created_by: ME, created_at: "2026-09-01T10:00:00Z" },
+      { id: `l-${prefix}b`, org_id: ORG, superseded_doc_id: prefix, replacement_doc_id: `${prefix}b`, reason: "split", created_by: ME, created_at: "2026-09-01T10:00:00Z" },
+    );
+    (state.db.tables.audit_logs ??= []).push({ id: `ev-${prefix}`, action: "DOC_SPLIT", resource_id: prefix, timestamp: "2026-09-01T10:00:00Z", details: { replacementDocIds: [`${prefix}a`, `${prefix}b`], priorStatus: "Issued", auditAt: "2026-09-01T10:00:00Z" } });
+  };
+  it("the reviewer's case: a hold opened on P-101A after the split — the reversal refuses BEFORE any write, names the hold, and never says to release it", async () => {
+    state.roles = ["DocCtrl"];
+    seedSplitF4("r1"); seedHold("r1a");
+    const e = await reverseSplit({ splitAuditEventId: "ev-r1", reason: "wrong split", orgId: ORG, actorUserId: ME }).then((): never => { throw new Error("expected a rejection"); }, (x: unknown) => x as Error);
+    expect(e.message).toMatch(/^Cannot reverse without an explicit decision: active hold on R1A \(Awaiting Engineering\), which the reversal parks as Superseded\. Confirm "Proceed over the active hold" and it is carried back onto the restored source\. Do not release the hold/);
+    expect(e.message).toMatch(/Nothing was changed\.$/);
+    expect(state.db.calls.some((c) => c.table === "documents" && c.method === "update")).toBe(false);
+    expect(docRow("r1").status).toBe("Superseded");
+  });
+  it("with the controller's force: the hold is carried onto the source BEFORE it is restored, the parked sheet keeps it, and the reversal names it", async () => {
+    state.roles = ["DocCtrl"];
+    seedSplitF4("r2"); seedHold("r2a");
+    await reverseSplit({ splitAuditEventId: "ev-r2", reason: "wrong split", orgId: ORG, actorUserId: ME, force: true });
+    expect(docRow("r2").status).toBe("Issued");
+    expect(docRow("r2a").status).toBe("Superseded");
+    const onSource = T("document_holds").filter((h) => h.document_id === "r2" && h.released_at == null);
+    expect(onSource).toHaveLength(1);
+    expect(onSource[0]).toMatchObject({ reason: "Awaiting Engineering", notes: expect.stringMatching(/^Carried over from R2A \(reversed split\)\./) });
+    expect(T("document_holds").find((h) => h.document_id === "r2a")!.released_at).toBeNull();
+    const order = state.db.calls.filter((c) => (c.table === "document_holds" && c.method === "insert") || (c.table === "documents" && c.method === "update" && (c.args[0] as Row).status === "Issued"))
+      .map((c) => c.table === "document_holds" ? "carry" : "restore");
+    expect(order).toEqual(["carry", "restore"]);
+    expect(audit("DOC_SPLIT_REVERSED")[0].details).toMatchObject({ proceededOverHolds: { r2a: ["Awaiting Engineering"] }, holdsCarriedBack: 1 });
+  });
+  it("a refusal after the carry rolls it back: the carried hold is released, the sheets un-parked, the source Superseded", async () => {
+    state.roles = ["DocCtrl"];
+    seedSplitF4("r3"); seedHold("r3b");
+    state.db.beforeUpdate!.documents = (next, old) => {
+      if (old.id === "r3" && next.status === "Issued") throw { code: "42501", message: "restore refused" };
+      return next;
+    };
+    await expect(reverseSplit({ splitAuditEventId: "ev-r3", reason: "r", orgId: ORG, actorUserId: ME, force: true })).rejects.toThrow(/r3 could not be restored[\s\S]*rolled back/);
+    expect(docRow("r3").status).toBe("Superseded");
+    expect(docRow("r3a").status).toBe("Issued");
+    expect(docRow("r3b").status).toBe("Issued");
+    expect(T("document_holds").filter((h) => h.document_id === "r3").every((h) => h.released_at)).toBe(true);
+    expect(T("document_holds").find((h) => h.document_id === "r3b")!.released_at).toBeNull();
+  });
+  it("unreadable holds on the parked documents refuse the reversal (fails closed)", async () => {
+    state.roles = ["DocCtrl"];
+    seedSplitF4("r4");
+    failNthRead("document_holds", 1);
+    await expect(reverseSplit({ splitAuditEventId: "ev-r4", reason: "r", orgId: ORG, actorUserId: ME, force: true }))
+      .rejects.toThrow(/Couldn't check the documents this reversal parks for active holds[\s\S]*nothing was changed/);
+    expect(state.db.calls.some((c) => c.table === "documents" && c.method === "update")).toBe(false);
+  });
+  it("reverseMerge: a held newly-created target refuses without force; with it, the hold is carried to EVERY restored source", async () => {
+    state.roles = ["Admin"];
+    seedDoc("rm1", { status: "Superseded" }); seedDoc("rm2", { status: "Superseded" }); seedDoc("rmt"); seedHold("rmt", "Client Review");
+    T("document_supersessions").push(
+      { id: "l-rm1", org_id: ORG, superseded_doc_id: "rm1", replacement_doc_id: "rmt", created_by: ME },
+      { id: "l-rm2", org_id: ORG, superseded_doc_id: "rm2", replacement_doc_id: "rmt", created_by: ME },
+    );
+    (state.db.tables.audit_logs ??= []).push({ id: "ev-rm", action: "DOC_MERGED", resource_id: "rm1", timestamp: "2026-09-03T00:00:00Z", details: { mergedIntoDocumentId: "rmt", mergeSiblings: ["rm1", "rm2"], targetWasNewlyCreated: true, priorStatuses: { rm1: "Issued", rm2: "Issued" }, auditAt: "2026-09-03T00:00:00Z" } });
+    await expect(reverseMerge({ mergeAuditEventId: "ev-rm", reason: "r", orgId: ORG, actorUserId: ME })).rejects.toThrow(/active hold on RMT \(Client Review\)[\s\S]*carried back onto every restored source/);
+    expect(docRow("rmt").status).toBe("Issued");
+    await reverseMerge({ mergeAuditEventId: "ev-rm", reason: "r", orgId: ORG, actorUserId: ME, force: true });
+    for (const id of ["rm1", "rm2"]) {
+      expect(docRow(id).status).toBe("Issued");
+      expect(T("document_holds").some((h) => h.document_id === id && h.reason === "Client Review" && h.released_at == null)).toBe(true);
+    }
+    expect(audit("DOC_MERGE_REVERSED")[0].details).toMatchObject({ holdsCarriedBack: 2, proceededOverHolds: { rmt: ["Client Review"] } });
+  });
+  it("an extended (kept) target is not parked, so its hold needs no decision", async () => {
+    state.roles = ["Admin"];
+    seedDoc("rk1", { status: "Superseded" }); seedDoc("rkt"); seedHold("rkt");
+    T("document_supersessions").push({ id: "l-rk1", org_id: ORG, superseded_doc_id: "rk1", replacement_doc_id: "rkt", created_by: ME });
+    (state.db.tables.audit_logs ??= []).push({ id: "ev-rk", action: "DOC_MERGED", resource_id: "rk1", timestamp: "t", details: { mergedIntoDocumentId: "rkt", mergeSiblings: ["rk1"], targetWasNewlyCreated: false, priorStatuses: { rk1: "Issued" }, auditAt: "t" } });
+    await reverseMerge({ mergeAuditEventId: "ev-rk", reason: "r", orgId: ORG, actorUserId: ME });
+    expect(docRow("rk1").status).toBe("Issued");
+    expect(T("document_holds").filter((h) => h.document_id === "rk1")).toHaveLength(0);
+  });
+});
+
+describe("REV-6 (review fix 4) — a status write whose answer was lost is re-read before the rollback decides; the clash read fails closed", () => {
+  const seedSplitF4 = (prefix: string) => {
+    seedDoc(prefix, { status: "Superseded", uniqueness_key: `${prefix}-key`, superseded_at: "2026-09-01T10:00:00Z", supersession_reason: "split" });
+    for (const x of ["a", "b"]) seedDoc(`${prefix}${x}`, { uniqueness_key: `${prefix}${x}-key` });
+    T("document_supersessions").push(
+      { id: `l-${prefix}a`, org_id: ORG, superseded_doc_id: prefix, replacement_doc_id: `${prefix}a`, created_by: ME },
+      { id: `l-${prefix}b`, org_id: ORG, superseded_doc_id: prefix, replacement_doc_id: `${prefix}b`, created_by: ME },
+    );
+    (state.db.tables.audit_logs ??= []).push({ id: `ev-${prefix}`, action: "DOC_SPLIT", resource_id: prefix, timestamp: "2026-09-01T10:00:00Z", details: { replacementDocIds: [`${prefix}a`, `${prefix}b`], priorStatus: "Issued", auditAt: "2026-09-01T10:00:00Z" } });
+  };
+  it("the reviewer's case: the SECOND park landed but its answer was lost — both sheets are un-parked, not just the first", async () => {
+    state.roles = ["DocCtrl"];
+    seedSplitF4("u1");
+    let n = 0;
+    state.lostUpdate = (t, patch) => t === "documents" && patch.status === "Superseded" && ++n === 2;
+    await expect(reverseSplit({ splitAuditEventId: "ev-u1", reason: "r", orgId: ORG, actorUserId: ME })).rejects.toThrow(/u1b could not be parked as Superseded \(Failed to fetch\)[\s\S]*no partial changes were kept/);
+    expect(docRow("u1a")).toMatchObject({ status: "Issued", superseded_at: null, supersession_reason: null });
+    expect(docRow("u1b")).toMatchObject({ status: "Issued", superseded_at: null, supersession_reason: null });
+    expect(docRow("u1").status).toBe("Superseded");
+    expect(T("document_supersessions")).toHaveLength(2);
+  });
+  it("the SOURCE restore landed but its answer was lost — the source goes back to Superseded with its own fields, the sheets un-parked", async () => {
+    state.roles = ["DocCtrl"];
+    seedSplitF4("u2");
+    state.lostUpdate = (t, patch) => t === "documents" && patch.status === "Issued" && patch.superseded_at === null;
+    await expect(reverseSplit({ splitAuditEventId: "ev-u2", reason: "r", orgId: ORG, actorUserId: ME })).rejects.toThrow(/u2 could not be restored to Issued \(Failed to fetch\)[\s\S]*rolled back/);
+    expect(docRow("u2")).toMatchObject({ status: "Superseded", superseded_at: "2026-09-01T10:00:00Z", supersession_reason: "split" });
+    expect(docRow("u2a").status).toBe("Issued");
+    expect(docRow("u2b").status).toBe("Issued");
+  });
+  it("a plain refusal (nothing changed) is not re-written or reported as a failed put-back", async () => {
+    state.roles = ["DocCtrl"];
+    seedSplitF4("u3");
+    state.db.beforeUpdate!.documents = (next, old) => {
+      if (old.id === "u3b" && next.status === "Superseded") throw { code: "42501", message: "park refused" };
+      return next;
+    };
+    const e = await reverseSplit({ splitAuditEventId: "ev-u3", reason: "r", orgId: ORG, actorUserId: ME }).then((): never => { throw new Error("expected a rejection"); }, (x: unknown) => x as Error);
+    expect(e.message).toMatch(/no partial changes were kept/);
+    expect(e.message).not.toMatch(/cleanup steps failed/);
+    // u3b took one write attempt (the refused park) and no put-back
+    expect(state.db.calls.filter((c) => c.table === "documents" && c.method === "update").length).toBe(3); // park a, park b (refused), un-park a
+  });
+  it("the per-key clash read failing refuses the reversal before any write (fails closed — pinned)", async () => {
+    state.roles = ["DocCtrl"];
+    seedSplitF4("u4");
+    failNthRead("documents", 2); // 1: the restored rows; 2: the clash query for the source's key
+    await expect(reverseSplit({ splitAuditEventId: "ev-u4", reason: "r", orgId: ORG, actorUserId: ME }))
+      .rejects.toThrow(/Couldn't confirm U4's number is free to come back \(documents read failed\) — nothing was changed\./);
+    expect(state.db.calls.some((c) => c.table === "documents" && c.method === "update")).toBe(false);
+    expect(docRow("u4").status).toBe("Superseded");
+  });
+});
+
+describe("REV-10 (review fix 4) — only LIVE links (unrevoked and unexpired, P1's rule) are counted as left", () => {
+  it("an expired, never-revoked link the retirer could not revoke is not counted; an unexpired one is", async () => {
+    const d = seedDoc("lv1");
+    (state.db.tables.document_shares ??= []).push(
+      { id: "lsh1", document_id: "lv1", org_id: ORG, revoked_at: null, expires_at: "2026-01-01T00:00:00Z" },
+      { id: "lsh2", document_id: "lv1", org_id: ORG, revoked_at: null, expires_at: "2099-01-01T00:00:00Z" },
+      { id: "lsh3", document_id: "lv1", org_id: ORG, revoked_at: null, expires_at: null },
+    );
+    state.db.refuseWrites.add("document_shares");
+    const err = vi.spyOn(console, "error").mockImplementation(() => {});
+    await archiveDocument({ doc: asRecord(d), reason: "retired", orgId: ORG, actorUserId: ME });
+    expect(audit("ARCHIVE_DOC")[0].details).toMatchObject({ revokedShareLinks: 0, liveShareLinksLeft: 2 });
+    expect(err.mock.calls.some((c) => /2 share link\(s\) are still live/.test(String(c[0])))).toBe(true);
+    err.mockRestore();
+    expect(src("lib/revisions.ts")).toMatch(/RETIRER'S BROWSER/);
   });
 });

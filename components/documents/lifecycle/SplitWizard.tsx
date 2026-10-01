@@ -12,13 +12,25 @@
 // Calls lib/documentLifecycle.ts:splitDocument which handles the
 // side effects (asset_tags, holds, project_documents, scope FKs,
 // audit, supersession links).
+//
+// HLD-2 (review fix 4): a source under an active stop-work hold is split
+// OVER the hold, never by releasing it. The wizard reads the source's active
+// holds; a controller (Admin / DocCtrl, anywhere in the role collection)
+// must tick "Proceed over the active hold", the hold carry is locked on, and
+// the split passes `force`. Anyone else is refused before submit and is told
+// that only Doc Control can — never to release the hold.
 
-import React, { useMemo, useState } from "react";
+import React, { useEffect, useMemo, useState } from "react";
 import {
   X, Split as SplitIcon, Plus, Trash2, ArrowRight, AlertTriangle,
   Loader2, Check, Upload, FileText, ChevronLeft,
 } from "lucide-react";
 import { splitDocument, type SplitTargetSpec } from "@/lib/documentLifecycle";
+import { heldRetirementDecision, type HeldRetirementDecision } from "@/lib/revisions";
+import { listActiveHoldsForDocument, type HoldRecord } from "@/lib/holds";
+import { isControllerPrincipal } from "@/lib/permissions";
+import { useRole } from "@/components/providers/RoleContext";
+import HeldSourceNotice, { holdSetKey } from "@/components/documents/lifecycle/HeldSourceNotice";
 import type { DocumentRecord, AssetTag } from "@/types/schema";
 import FirstRunHint from "@/components/ui/FirstRunHint";
 import HelpTooltip from "@/components/ui/HelpTooltip";
@@ -77,6 +89,44 @@ export default function SplitWizard(props: SplitWizardProps) {
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
+  // HLD-2 (review fix 4): the source's active holds, read on open and again
+  // when the confirm step is reached (a hold opened meanwhile is caught).
+  const { activeRole, roles } = useRole();
+  const isController = isControllerPrincipal({ role: activeRole, roles });
+  const [sourceHolds, setSourceHolds] = useState<HoldRecord[] | null>(null);
+  const [holdsReadError, setHoldsReadError] = useState<string | null>(null);
+  // The acknowledgement is bound to the exact holds it was given over: a
+  // re-read that finds a different set clears it.
+  const [ackedHoldKey, setAckedHoldKey] = useState<string | null>(null);
+  const atConfirm = step === 3;
+  useEffect(() => {
+    let alive = true;
+    if (!doc.id) return;
+    listActiveHoldsForDocument(doc.id).then(
+      (h) => { if (alive) { setSourceHolds(h); setHoldsReadError(null); } },
+      (e) => { if (alive) setHoldsReadError((e as Error).message); },
+    );
+    return () => { alive = false; };
+  }, [doc.id, atConfirm]);
+  const holdKey = holdSetKey(sourceHolds);
+  const holdAck = ackedHoldKey !== null && ackedHoldKey === holdKey;
+  const setHoldAck = (v: boolean) => setAckedHoldKey(v ? holdKey : null);
+  const holdDecision = heldRetirementDecision({
+    operation: "split",
+    held: sourceHolds && sourceHolds.length > 0
+      ? [{ label: doc.documentNumber || doc.title || "This document", reasons: sourceHolds.map((h) => h.reason) }]
+      : [],
+    isController,
+  });
+  // A held source's holds always carry (splitDocument refuses otherwise).
+  const effectiveCopyHolds = holdDecision.kind === "clear" ? copyHolds : true;
+  // Unread holds do not block: no force is passed, so splitDocument's own
+  // gate refuses a held source. Still loading, refused, or unacknowledged do.
+  const holdsBlockSubmit =
+    (sourceHolds === null && !holdsReadError) ||
+    holdDecision.kind === "refused" ||
+    (holdDecision.kind === "acknowledge" && !holdAck);
+
   const addTarget = () => setTargets((ts) => [...ts, makeDraft(doc, suffixFor(ts.length))]);
   const removeTarget = (i: number) => setTargets((ts) => ts.filter((_, j) => j !== i));
   const updateTarget = (i: number, patch: Partial<DraftTarget>) =>
@@ -115,7 +165,9 @@ export default function SplitWizard(props: SplitWizardProps) {
         source: doc, libraryId, folderPath,
         targets: targetSpecs,
         reason, mocReference: mocReference || undefined,
-        copyHolds, copyProjectMembership: copyProjects, copyScope,
+        copyHolds: effectiveCopyHolds, copyProjectMembership: copyProjects, copyScope,
+        // HLD-2: force only on the controller's explicit acknowledgement.
+        force: holdDecision.kind === "acknowledge" && holdAck ? true : undefined,
         orgId, actorUserId, actorUserName, actorEmail, actorRole,
       });
       onSuccess();
@@ -182,9 +234,11 @@ export default function SplitWizard(props: SplitWizardProps) {
               sourceTagsCount={sourceTags.length}
               reason={reason} setReason={setReason}
               moc={mocReference} setMoc={setMocReference}
-              copyHolds={copyHolds} setCopyHolds={setCopyHolds}
+              copyHolds={effectiveCopyHolds} setCopyHolds={setCopyHolds}
               copyProjects={copyProjects} setCopyProjects={setCopyProjects}
               copyScope={copyScope} setCopyScope={setCopyScope}
+              holdDecision={holdDecision} holdsReadError={holdsReadError}
+              holdAck={holdAck} setHoldAck={setHoldAck}
             />
           )}
 
@@ -218,7 +272,7 @@ export default function SplitWizard(props: SplitWizardProps) {
             <button
               type="button"
               onClick={onSubmit}
-              disabled={submitting || !step3Valid}
+              disabled={submitting || !step3Valid || holdsBlockSubmit}
               className="inline-flex items-center gap-1.5 text-sm font-bold bg-amber-600 hover:bg-amber-700 text-white px-3 py-1.5 rounded disabled:opacity-40"
             >
               {submitting ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Check className="w-3.5 h-3.5" />}
@@ -399,6 +453,7 @@ function Step3Confirm({
   doc, targets, sourceTagsCount,
   reason, setReason, moc, setMoc,
   copyHolds, setCopyHolds, copyProjects, setCopyProjects, copyScope, setCopyScope,
+  holdDecision, holdsReadError, holdAck, setHoldAck,
 }: {
   doc: DocumentRecord;
   targets: DraftTarget[];
@@ -408,9 +463,15 @@ function Step3Confirm({
   copyHolds: boolean; setCopyHolds: (v: boolean) => void;
   copyProjects: boolean; setCopyProjects: (v: boolean) => void;
   copyScope: boolean; setCopyScope: (v: boolean) => void;
+  holdDecision: HeldRetirementDecision;
+  holdsReadError: string | null;
+  holdAck: boolean; setHoldAck: (v: boolean) => void;
 }) {
+  const held = holdDecision.kind !== "clear";
   return (
     <div className="space-y-4">
+      <HeldSourceNotice decision={holdDecision} readError={holdsReadError} ack={holdAck} setAck={setHoldAck} />
+
       {/* Preview */}
       <div className="bg-[var(--color-surface-2)] border border-[var(--color-border)] rounded-lg p-3 text-xs">
         <div className="font-bold text-[var(--color-text)] mb-2">What will happen</div>
@@ -469,9 +530,10 @@ function Step3Confirm({
         </div>
         <div className="space-y-1.5 text-xs">
           <CarryOver
-            label="Active holds (with origin note)"
+            label={held ? "Active holds (with origin note) — always carried from a held source" : "Active holds (with origin note)"}
             checked={copyHolds}
             onChange={setCopyHolds}
+            disabled={held}
             help="If the source had any active holds (e.g. Awaiting Engineering), copy them to each new sheet with a note showing they came from the split. You can release them individually after."
           />
           <CarryOver
@@ -492,11 +554,11 @@ function Step3Confirm({
   );
 }
 
-function CarryOver({ label, checked, onChange, help }: { label: string; checked: boolean; onChange: (v: boolean) => void; help?: string }) {
+function CarryOver({ label, checked, onChange, help, disabled }: { label: string; checked: boolean; onChange: (v: boolean) => void; help?: string; disabled?: boolean }) {
   return (
     <div className="flex items-center gap-2">
       <label className="flex items-center gap-2 cursor-pointer flex-1">
-        <input type="checkbox" checked={checked} onChange={(e) => onChange(e.target.checked)} />
+        <input type="checkbox" checked={checked} disabled={disabled} onChange={(e) => onChange(e.target.checked)} />
         <span className="text-[var(--color-text)]">{label}</span>
       </label>
       {help && <HelpTooltip>{help}</HelpTooltip>}

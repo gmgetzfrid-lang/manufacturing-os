@@ -6,6 +6,13 @@
 //   1. Pick additional source documents (one is already in context).
 //   2. Target — create new or extend existing.
 //   3. Asset tag union + reason + carry-over toggles.
+//
+// HLD-2 (review fix 4): a source under an active stop-work hold is merged
+// OVER the hold, never by releasing it. The wizard reads the active holds of
+// every source the merge absorbs; a controller (Admin / DocCtrl, anywhere in
+// the role collection) must tick "Proceed over the active hold", the hold
+// carry is locked on, and the merge passes `force`. Anyone else is refused
+// before submit and told that only Doc Control can — never to release it.
 
 import React, { useEffect, useMemo, useState } from "react";
 import {
@@ -14,6 +21,11 @@ import {
 } from "lucide-react";
 import { supabase } from "@/lib/supabase";
 import { mergeDocuments, type MergeTargetSpec } from "@/lib/documentLifecycle";
+import { heldRetirementDecision, type HeldRetirementDecision } from "@/lib/revisions";
+import { listActiveHoldsForDocument, type HoldRecord } from "@/lib/holds";
+import { isControllerPrincipal } from "@/lib/permissions";
+import { useRole } from "@/components/providers/RoleContext";
+import HeldSourceNotice, { holdSetKey } from "@/components/documents/lifecycle/HeldSourceNotice";
 import type { DocumentRecord, AssetTag } from "@/types/schema";
 import { docRowToDocumentRecord } from "@/lib/documentRows";
 import FirstRunHint from "@/components/ui/FirstRunHint";
@@ -84,6 +96,48 @@ export default function MergeWizard(props: MergeWizardProps) {
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
+  // HLD-2 (review fix 4): the active holds of every source, read when the
+  // source list changes and again when the confirm step is reached. Only
+  // the sources the merge ABSORBS count — an extended target is kept, and
+  // its own holds stay on it (mergeDocuments gates it separately).
+  const { activeRole, roles } = useRole();
+  const isController = isControllerPrincipal({ role: activeRole, roles });
+  const [holdsBySource, setHoldsBySource] = useState<Record<string, HoldRecord[]> | null>(null);
+  const [holdsReadError, setHoldsReadError] = useState<string | null>(null);
+  // The acknowledgement is bound to the exact holds it was given over.
+  const [ackedHoldKey, setAckedHoldKey] = useState<string | null>(null);
+  const sourceIdsKey = allSources.map((s) => s.id ?? "").join(",");
+  const atConfirm = step === 3;
+  useEffect(() => {
+    let alive = true;
+    const ids = sourceIdsKey.split(",").filter(Boolean);
+    Promise.all(ids.map(async (id) => [id, await listActiveHoldsForDocument(id)] as const)).then(
+      (pairs) => { if (alive) { setHoldsBySource(Object.fromEntries(pairs)); setHoldsReadError(null); } },
+      (e) => { if (alive) setHoldsReadError((e as Error).message); },
+    );
+    return () => { alive = false; };
+  }, [sourceIdsKey, atConfirm]);
+  const keptId = targetMode === "extend_existing" ? (extendTarget?.id ?? null) : null;
+  const heldAbsorbed = allSources
+    .filter((s) => s.id && s.id !== keptId && (holdsBySource?.[s.id]?.length ?? 0) > 0)
+    .map((s) => ({ doc: s, holds: holdsBySource?.[s.id!] ?? [] }));
+  const holdDecision = heldRetirementDecision({
+    operation: "merge",
+    held: heldAbsorbed.map((h) => ({ label: h.doc.documentNumber || h.doc.title || "A source", reasons: h.holds.map((x) => x.reason) })),
+    isController,
+  });
+  const holdKey = holdSetKey(heldAbsorbed.flatMap((h) => h.holds));
+  const holdAck = ackedHoldKey !== null && ackedHoldKey === holdKey;
+  const setHoldAck = (v: boolean) => setAckedHoldKey(v ? holdKey : null);
+  // A held source's holds always carry (mergeDocuments refuses otherwise).
+  const effectiveCopyHolds = holdDecision.kind === "clear" ? copyHolds : true;
+  // Unread holds do not block: no force is passed, so mergeDocuments' own
+  // gate refuses a held source. Still loading, refused, or unacknowledged do.
+  const holdsBlockSubmit =
+    (holdsBySource === null && !holdsReadError) ||
+    holdDecision.kind === "refused" ||
+    (holdDecision.kind === "acknowledge" && !holdAck);
+
   const step1Valid = otherSources.length >= 1;
   const step2Valid = targetMode === "create_new"
     ? !!(newDocNumber.trim() && newTitle.trim() && newRev.trim() && newFile && !newDocNumberConflict)
@@ -123,7 +177,9 @@ export default function MergeWizard(props: MergeWizardProps) {
       await mergeDocuments({
         sources: allSources, target,
         reason, mocReference: mocReference || undefined,
-        copyHolds, copyProjectMembership: copyProjects,
+        copyHolds: effectiveCopyHolds, copyProjectMembership: copyProjects,
+        // HLD-2: force only on the controller's explicit acknowledgement.
+        force: holdDecision.kind === "acknowledge" && holdAck ? true : undefined,
         orgId, actorUserId, actorUserName, actorEmail, actorRole,
       });
       onSuccess();
@@ -206,8 +262,10 @@ export default function MergeWizard(props: MergeWizardProps) {
               targetLabel={targetMode === "create_new" ? `${newDocNumber} (new)` : `${extendTarget?.documentNumber} (extended)`}
               reason={reason} setReason={setReason}
               moc={mocReference} setMoc={setMocReference}
-              copyHolds={copyHolds} setCopyHolds={setCopyHolds}
+              copyHolds={effectiveCopyHolds} setCopyHolds={setCopyHolds}
               copyProjects={copyProjects} setCopyProjects={setCopyProjects}
+              holdDecision={holdDecision} holdsReadError={holdsReadError}
+              holdAck={holdAck} setHoldAck={setHoldAck}
             />
           )}
 
@@ -237,7 +295,7 @@ export default function MergeWizard(props: MergeWizardProps) {
           ) : (
             <button
               onClick={onSubmit}
-              disabled={submitting || !step3Valid}
+              disabled={submitting || !step3Valid || holdsBlockSubmit}
               className="inline-flex items-center gap-1.5 text-sm font-bold bg-amber-600 hover:bg-amber-700 text-white px-3 py-1.5 rounded disabled:opacity-40"
             >
               {submitting ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Check className="w-3.5 h-3.5" />}
@@ -492,7 +550,11 @@ function Step3TagsAndConfirm(props: {
   moc: string; setMoc: (v: string) => void;
   copyHolds: boolean; setCopyHolds: (v: boolean) => void;
   copyProjects: boolean; setCopyProjects: (v: boolean) => void;
+  holdDecision: HeldRetirementDecision;
+  holdsReadError: string | null;
+  holdAck: boolean; setHoldAck: (v: boolean) => void;
 }) {
+  const held = props.holdDecision.kind !== "clear";
   const toggle = (key: string) => {
     const next = new Set(props.excludedTagKeys);
     if (next.has(key)) next.delete(key); else next.add(key);
@@ -501,6 +563,7 @@ function Step3TagsAndConfirm(props: {
 
   return (
     <div className="space-y-4">
+      <HeldSourceNotice decision={props.holdDecision} readError={props.holdsReadError} ack={props.holdAck} setAck={props.setHoldAck} />
       <div className="bg-[var(--color-surface-2)] border border-[var(--color-border)] rounded-lg p-3 text-xs">
         <div className="font-bold text-[var(--color-text)] mb-2">What will happen</div>
         <ul className="list-disc ml-5 space-y-1 text-[var(--color-text)]">
@@ -554,8 +617,8 @@ function Step3TagsAndConfirm(props: {
         <div className="text-[10px] font-black text-[var(--color-text)] uppercase tracking-widest mb-2">Carry over from sources</div>
         <div className="space-y-1.5 text-xs">
           <label className="flex items-center gap-2 cursor-pointer">
-            <input type="checkbox" checked={props.copyHolds} onChange={(e) => props.setCopyHolds(e.target.checked)} />
-            <span className="text-[var(--color-text)]">Active holds (with origin notes)</span>
+            <input type="checkbox" checked={props.copyHolds} disabled={held} onChange={(e) => props.setCopyHolds(e.target.checked)} />
+            <span className="text-[var(--color-text)]">{held ? "Active holds (with origin notes) — always carried from a held source" : "Active holds (with origin notes)"}</span>
           </label>
           <label className="flex items-center gap-2 cursor-pointer">
             <input type="checkbox" checked={props.copyProjects} onChange={(e) => props.setCopyProjects(e.target.checked)} />

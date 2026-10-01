@@ -248,6 +248,47 @@ function overrideReasonVerb(op: GuardedOperation): string {
   }
 }
 
+/** HLD-2 (review fix 4): what a split or merge does with a source under an
+ *  active stop-work hold. A controller (Admin / DocCtrl, held anywhere in the
+ *  role collection — the database's `is_org_controller`) proceeds OVER the
+ *  hold with an explicit acknowledgement, and the hold is carried to every
+ *  new sheet (split) or onto the merge target; the operation then passes
+ *  `force`. Anyone else is refused (the database refuses them too: status →
+ *  Superseded advances the document) — and is NOT told to release the hold:
+ *  releasing a stop-work hold in order to split or merge is exactly how it
+ *  would be laundered away (the new sheets would carry nothing). Pure: the
+ *  Split / Merge wizards and `authorizePublish`'s refusal share the wording. */
+export type HeldRetirementDecision =
+  | { kind: "clear" }
+  | { kind: "acknowledge"; text: string }
+  | { kind: "refused"; message: string };
+
+export function heldRetirementDecision(opts: {
+  operation: "split" | "merge";
+  /** One entry per held source: its label and its active holds' reasons. */
+  held: ReadonlyArray<{ label: string; reasons: readonly string[] }>;
+  isController: boolean;
+}): HeldRetirementDecision {
+  const held = opts.held.filter((h) => h.reasons.length > 0);
+  if (held.length === 0) return { kind: "clear" };
+  const count = held.reduce((n, h) => n + h.reasons.length, 0);
+  const holdWord = count === 1 ? "hold" : "holds";
+  const list = held.map((h) => `${h.label} (${h.reasons.join(", ")})`).join("; ");
+  const where = opts.operation === "split" ? "every new sheet" : "the merge target";
+  const carried = `${count === 1 ? "It is" : "They are"} carried to ${where}.`;
+  if (opts.isController) {
+    return { kind: "acknowledge", text: `Proceed over the active ${holdWord} on ${list}. ${carried}` };
+  }
+  const leftBare = opts.operation === "split" ? "the new sheets" : "the merge target";
+  return {
+    kind: "refused",
+    message:
+      `Active ${holdWord} on ${list}. Only Doc Control or an Admin can ${opts.operation} a held document: ` +
+      `they proceed over the hold, and it is carried to ${where}. Ask them to run this ${opts.operation}. ` +
+      `Do not release the hold to get past this — ${leftBare} would then carry no hold.`,
+  };
+}
+
 /**
  * Authorize a publish on `libraryId` and evaluate the lock/hold guard, returning
  * the authoritative pre-publish state. Throws a UI-safe error when the actor
@@ -281,6 +322,9 @@ export async function authorizePublish(opts: {
    *  own holds do not stop it). Default "block". The returned state still
    *  carries the holds. */
   holds?: "block" | "ignore";
+  /** How a split / merge refusal over a hold names the document (HLD-2,
+   *  review fix 4). Defaults to "This document". */
+  subjectLabel?: string;
 }): Promise<PublishGuardState> {
   // OWN-3 / OWN-6: the principal carries the actor's full role collection
   // and team memberships — resolved from the same rows the DB guard reads —
@@ -325,6 +369,24 @@ export async function authorizePublish(opts: {
     force: opts.force === true,
     overrideLock: lockedByOther && !!opts.overrideReason?.trim(),
   });
+  if (!decision.ok && decision.code === "on_hold" && (operation === "split" || operation === "merge")) {
+    // HLD-2 (review fix 4): the generic refusal tells the actor to release
+    // the hold "before publishing a new revision" — for a split or merge
+    // that is the unsafe path (the new sheets would carry no hold). A
+    // controller is told to proceed over it explicitly; anyone else that
+    // only Doc Control can, and never to release it.
+    const label = opts.subjectLabel?.trim() || "This document";
+    const reasons = (decision.blockingHolds ?? state.activeHolds).map((h) => h.reason);
+    const held = heldRetirementDecision({ operation, held: [{ label, reasons }], isController: isControllerPrincipal(principal) });
+    const where = operation === "split" ? "every new sheet" : "the merge target";
+    const message = held.kind === "refused" ? held.message
+      : held.kind === "acknowledge"
+        ? `${label} has an active ${reasons.length === 1 ? "hold" : "holds"} (${reasons.join(", ")}). ` +
+          `Confirm "Proceed over the active hold" to ${operation} over it — it is carried to ${where}. ` +
+          "Do not release the hold to get past this."
+        : decision.message;
+    throw new DocumentMutationBlockedError({ ...decision, message });
+  }
   if (!decision.ok) throw new DocumentMutationBlockedError(decision);
   return state;
 }
@@ -539,13 +601,20 @@ export async function voidPendingDraftAfterPublish(documentId: string, actorUser
 // which a non-controller retirer may not revoke under 20261022 — are COUNTED
 // and returned (`liveLeft`), so the retirement's record flags them for
 // Document Control instead of reading as "revoked: 0" and nothing more.
+//
+// Review fix 4: "live" is P1's definition (20261080: revoked_at IS NULL AND
+// (expires_at IS NULL OR expires_at > now())) — an expired link that was
+// never revoked serves nothing and is not counted. The console line runs in
+// the RETIRER'S BROWSER (this is client-side code), not in a server log; the
+// durable flag is the count on the retirement's audit event.
 
 export type ShareRevocation = {
   revoked: number;
-  /** Live links left on the document after the revoke (as far as this actor
-   *  can see them — the 20261066 read rule shows a reader of the document
-   *  every link on it): another creator's, for a non-controller. Document
-   *  Control must revoke them. null when the count could not be read. */
+  /** Live links (unrevoked and unexpired — P1's definition) left on the
+   *  document after the revoke, as far as this actor can see them (the
+   *  20261066 read rule shows a reader of the document every link on it):
+   *  another creator's, for a non-controller. Document Control must revoke
+   *  them. null when the count could not be read. */
   liveLeft: number | null;
   error: string | null;
   /** SHARE_LINK_REVOKED rows that could not be written, if any. */
@@ -585,12 +654,19 @@ export async function revokeLiveSharesForDocument(documentId: string, actorUserI
   }
   let liveLeft: number | null = null;
   try {
-    const { count, error: countErr } = await supabase
+    // P1's live rule, applied to the unrevoked rows (a document carries a
+    // handful of links): an expired, never-revoked link is not live.
+    const nowMs = Date.now();
+    const { data: unrevoked, error: countErr } = await supabase
       .from("document_shares")
-      .select("id", { count: "exact", head: true })
+      .select("id, expires_at")
       .eq("document_id", documentId)
       .is("revoked_at", null);
-    if (!countErr && typeof count === "number") liveLeft = count;
+    if (!countErr && Array.isArray(unrevoked)) {
+      liveLeft = (unrevoked as Array<{ expires_at: string | null }>)
+        // An unparseable expiry counts as live (flagged, never hidden).
+        .filter((r) => r.expires_at == null || !(Date.parse(r.expires_at) <= nowMs)).length;
+    }
   } catch { /* unreadable → null: the record says the count is unknown */ }
   if (liveLeft !== 0) {
     console.error(`[retire] ${documentId}: ${liveLeft ?? "an unknown number of"} share link(s) are still live after the retirement — Document Control must revoke them.`);

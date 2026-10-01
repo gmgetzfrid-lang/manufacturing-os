@@ -40,6 +40,13 @@
 //   revoking its share links (revoked_at is frozen, 20261080) — with their
 //   outcomes on the reversal's record.
 //
+//   HLD-2 (review fix 4): a document the reversal PARKS may carry a hold
+//   opened after the operation. Parking it as Superseded and bringing the
+//   source back bare would launder that hold away, so phase one reads the
+//   parked documents' active holds and refuses unless the controller
+//   explicitly proceeds over them (`force`); the saga then carries each such
+//   hold onto every restored document BEFORE it is restored.
+//
 //   A split or merge recorded before Round F carries no prior status: the
 //   reversal REFUSES rather than guess one (it used to write 'Issued', which
 //   resurrected Void and Draft sources as controlled copies) unless the caller
@@ -66,7 +73,10 @@ import { resolveCanControlLibrary } from "@/lib/documentGuards";
 import { isEffectiveOwnerOfDocument } from "@/lib/ownership";
 import { assertNotOnHold } from "@/lib/holdGate";
 import { voidPendingDraftAfterPublish, revokeLiveSharesForDocument } from "@/lib/revisions";
-import { withCompensation, type Compensation } from "./common";
+import {
+  withCompensation, copyActiveHoldsToDoc, releaseCarriedHolds,
+  type Compensation, type ActorContext,
+} from "./common";
 
 export interface ReverseResult {
   reversedDocIds: string[];
@@ -194,6 +204,33 @@ async function putStatusBack(docId: string, snap: StatusSnapshot, actorUserId: s
   }
 }
 
+/** The outcome of one status write a reversal makes: `attempted` is set just
+ *  before the write, `landed` once its success is confirmed. */
+interface WriteOutcome { attempted: boolean; landed: boolean }
+
+/** REV-6 (review fix 4): the put-back for a status write whose outcome may be
+ *  UNKNOWN. A confirmed write is put back. A write that was attempted but
+ *  whose answer was lost (a transport error after the database committed
+ *  reads exactly like a refusal) is re-read, and put back only if the row
+ *  really changed — so a lost response never leaves a sheet parked under a
+ *  "no partial changes were kept" message, and a plain refusal (nothing
+ *  changed) is not reported as a failed put-back. A re-read that fails
+ *  throws, so withCompensation names the document. */
+function putBackIfChanged(docId: string, snap: StatusSnapshot, actorUserId: string, outcome: WriteOutcome): () => Promise<void> {
+  return async () => {
+    if (outcome.landed) return putStatusBack(docId, snap, actorUserId);
+    if (!outcome.attempted) return;
+    let now: StatusSnapshot;
+    try {
+      now = await readStatusSnapshot(docId);
+    } catch (e) {
+      throw new Error(`whether ${docId}'s status write landed could not be confirmed (${(e as Error).message}) — check its status`);
+    }
+    const changed = (Object.keys(snap) as Array<keyof StatusSnapshot>).some((k) => String(now[k] ?? "") !== String(snap[k] ?? ""));
+    if (changed) await putStatusBack(docId, snap, actorUserId);
+  };
+}
+
 /** The statuses the documents' partial unique index skips (20260619:
  *  documents_library_uniqkey_uniq … WHERE status NOT IN ('Archived',
  *  'Superseded')) — a document in one of them does not hold its key. */
@@ -249,16 +286,15 @@ async function assertRestorable(restoreIds: string[], parkedIds: string[]): Prom
 
 /** Park a document a reversal retires: mark it Superseded (checked) — the
  *  status write ONLY. Its put-back is registered with the reversal's saga
- *  BEFORE the write (and runs only if the park landed), so a later refusal
+ *  BEFORE the write (and runs if the park landed — or may have: an
+ *  unconfirmed outcome is re-read, putBackIfChanged), so a later refusal
  *  un-parks it. Voiding its review and revoking its links are the
  *  irreversible half (finishParking), run only after the saga has landed. */
 async function parkAsSuperseded(docId: string, supersessionReason: string, actorUserId: string, now: string, register: Register): Promise<void> {
   const snap = await readStatusSnapshot(docId);
-  let parked = false;
-  register({
-    describe: `un-park ${docId}`,
-    run: async () => { if (parked) await putStatusBack(docId, snap, actorUserId); },
-  });
+  const outcome: WriteOutcome = { attempted: false, landed: false };
+  register({ describe: `un-park ${docId}`, run: putBackIfChanged(docId, snap, actorUserId, outcome) });
+  outcome.attempted = true;
   const { data, error } = await supabase.from("documents").update({
     status: "Superseded",
     superseded_at: now,
@@ -270,7 +306,7 @@ async function parkAsSuperseded(docId: string, supersessionReason: string, actor
   if (error || ((data as unknown[] | null) ?? []).length === 0) {
     throw new Error(`Reversal stopped: ${docId} could not be parked as Superseded (${error?.message ?? "the write was refused"}).`);
   }
-  parked = true;
+  outcome.landed = true;
 }
 
 /** The irreversible half of parking, run only once the reversal's saga has
@@ -287,14 +323,13 @@ async function finishParking(docId: string, actorUserId: string): Promise<{ revo
 
 /** Un-supersede one document to the status it held (checked). Its put-back
  *  (Superseded again, with its own supersession fields) is registered
- *  before the write and runs only if the restore landed. */
+ *  before the write and runs if the restore landed — or may have (review
+ *  fix 4: an unconfirmed outcome is re-read, putBackIfChanged). */
 async function restoreStatus(docId: string, status: string, actorUserId: string, now: string, register: Register): Promise<void> {
   const snap = await readStatusSnapshot(docId);
-  let restored = false;
-  register({
-    describe: `put ${docId} back to ${snap.status}`,
-    run: async () => { if (restored) await putStatusBack(docId, snap, actorUserId); },
-  });
+  const outcome: WriteOutcome = { attempted: false, landed: false };
+  register({ describe: `put ${docId} back to ${snap.status}`, run: putBackIfChanged(docId, snap, actorUserId, outcome) });
+  outcome.attempted = true;
   const { data, error } = await supabase.from("documents").update({
     status,
     superseded_at: null,
@@ -307,7 +342,7 @@ async function restoreStatus(docId: string, status: string, actorUserId: string,
   if (error || ((data as unknown[] | null) ?? []).length === 0) {
     throw new Error(`Reversal stopped: ${docId} could not be restored to ${status} (${error?.message ?? "the write was refused"}).`);
   }
-  restored = true;
+  outcome.landed = true;
 }
 
 /** Delete this operation's supersession rows — the saga's LAST step
@@ -361,6 +396,70 @@ async function deleteLineage(filter: { supersededIds: string[]; replacementIds: 
   }
 }
 
+/** HLD-2 (review fix 4), phase one: the active holds on the documents a
+ *  reversal will PARK. A held one refuses the reversal unless the controller
+ *  explicitly proceeds over it (`force`) — never by releasing the hold,
+ *  which would bring the restored document back with no hold. Unreadable
+ *  holds refuse (fails closed). Returns the held parked ids with labels. */
+async function assertParkedHoldsDecided(
+  parkIds: string[],
+  force: boolean | undefined,
+  restoredLabel: string,
+): Promise<Array<{ id: string; label: string; reasons: string[] }>> {
+  if (parkIds.length === 0) return [];
+  const { data, error } = await supabase
+    .from("document_holds").select("document_id, reason")
+    .in("document_id", parkIds).is("released_at", null);
+  if (error) throw new Error(`Couldn't check the documents this reversal parks for active holds (${error.message}) — nothing was changed.`);
+  const byDoc = new Map<string, string[]>();
+  for (const h of (data as Array<{ document_id: string; reason: string }> | null) ?? []) {
+    byDoc.set(h.document_id, [...(byDoc.get(h.document_id) ?? []), h.reason]);
+  }
+  if (byDoc.size === 0) return [];
+  const { data: named } = await supabase.from("documents").select("id, document_number").in("id", [...byDoc.keys()]);
+  const numbers = new Map(((named as Array<{ id: string; document_number: string | null }> | null) ?? []).map((r) => [r.id, r.document_number]));
+  const held = [...byDoc.entries()].map(([id, reasons]) => ({ id, label: numbers.get(id) || id, reasons }));
+  if (force !== true) {
+    const count = held.reduce((n, h) => n + h.reasons.length, 0);
+    const list = held.map((h) => `${h.label} (${h.reasons.join(", ")})`).join("; ");
+    throw new Error(
+      `Cannot reverse without an explicit decision: active ${count === 1 ? "hold" : "holds"} on ${list}, which the reversal parks as Superseded. ` +
+      `Confirm "Proceed over the active hold" and ${count === 1 ? "it is" : "they are"} carried back onto ${restoredLabel}. ` +
+      `Do not release the hold to get past this — ${restoredLabel} would come back with no hold. Nothing was changed.`,
+    );
+  }
+  return held;
+}
+
+/** HLD-2 (review fix 4), inside the saga: carry every held parked
+ *  document's active holds onto each document the reversal restores, BEFORE
+ *  it is restored (it never comes back live without them). Each carry
+ *  registers the release of exactly the holds it placed. */
+async function carryParkedHolds(
+  held: Array<{ id: string; label: string }>,
+  restoreIds: string[],
+  opLabel: "split" | "merge",
+  actor: ActorContext,
+  register: Register,
+): Promise<number> {
+  let carried = 0;
+  for (const h of held) {
+    for (const restoreId of restoreIds) {
+      const r = await copyActiveHoldsToDoc({
+        sourceDocId: h.id, targetDocId: restoreId,
+        originLabel: `${h.label} (reversed ${opLabel})`,
+        actor,
+      });
+      carried += r.copied;
+      register({
+        describe: `release the holds carried from ${h.label} onto ${restoreId}`,
+        run: () => releaseCarriedHolds(r.holdIds, actor),
+      });
+    }
+  }
+  return carried;
+}
+
 /** Best-effort check for "stuff happened on these new docs after
  *  the original op." Doesn't block the reversal — it surfaces
  *  warnings the UI can show in the confirmation. REV-12: counted from the
@@ -398,6 +497,10 @@ interface ReverseSplitInput {
   /** Only for a split recorded before prior statuses were captured: the
    *  status to restore the source to, named explicitly (REV-12). */
   legacyRestoreStatus?: string;
+  /** HLD-2 (review fix 4): the controller's explicit decision to reverse
+   *  over an active hold on a sheet the reversal parks; the hold is carried
+   *  back onto the restored source. */
+  force?: boolean;
 }
 
 export async function reverseSplit(input: ReverseSplitInput): Promise<ReverseResult> {
@@ -413,16 +516,23 @@ export async function reverseSplit(input: ReverseSplitInput): Promise<ReverseRes
   // Surface what'll get parked under Superseded — work done AFTER the split.
   const warnings = await summarizeDerivativeWork(replacementIds, operationInstant(ev), "split");
 
-  // Phase one (REV-6): the source can come back — proved before any write.
+  // Phase one (REV-6): the source can come back — proved before any write;
+  // HLD-2: a held sheet is parked only on the controller's explicit force.
+  const heldParked = await assertParkedHoldsDecided(replacementIds, input.force, "the restored source");
   await assertRestorable([sourceDocId], replacementIds);
 
   const now = new Date().toISOString();
+  const actor: ActorContext = { orgId: input.orgId, actorUserId: input.actorUserId, actorEmail: input.actorEmail, actorRole: input.actorRole };
   // Phase two: the reversible saga. A refusal anywhere puts every sheet,
-  // the source and the lineage back; nothing irreversible has run yet.
+  // the source, any carried hold and the lineage back; nothing irreversible
+  // has run yet.
+  let holdsCarriedBack = 0;
   await withCompensation(async (register) => {
     for (const newId of replacementIds) {
       await parkAsSuperseded(newId, `Reverted split — ${input.reason}`, input.actorUserId, now, register);
     }
+    // HLD-2: a parked sheet's holds onto the source BEFORE it comes back.
+    holdsCarriedBack = await carryParkedHolds(heldParked, [sourceDocId], "split", actor, register);
     // Un-supersede the source — to the status it actually held (REV-12).
     await restoreStatus(sourceDocId, priorStatus, input.actorUserId, now, register);
     // Delete the join rows; the audit log retains the relationship so
@@ -461,6 +571,8 @@ export async function reverseSplit(input: ReverseSplitInput): Promise<ReverseRes
       derivativeWorkWarnings: warnings,
       restoredStatus: priorStatus,
       restoredStatusSource: typeof ev.details?.priorStatus === "string" ? "recorded" : "explicit",
+      proceededOverHolds: Object.fromEntries(heldParked.map((h) => [h.id, h.reasons])),
+      holdsCarriedBack,
       revokedShareLinks,
       liveShareLinksLeft,
       shareRevokeErrors,
@@ -483,6 +595,10 @@ interface ReverseMergeInput {
   actorRole?: string;
   /** Only for a merge recorded before prior statuses were captured (REV-12). */
   legacyRestoreStatus?: string;
+  /** HLD-2 (review fix 4): the controller's explicit decision to reverse
+   *  over an active hold on a newly-created target the reversal parks; the
+   *  hold is carried back onto every restored source. */
+  force?: boolean;
 }
 
 export async function reverseMerge(input: ReverseMergeInput): Promise<ReverseResult> {
@@ -536,10 +652,14 @@ export async function reverseMerge(input: ReverseMergeInput): Promise<ReverseRes
 
   const warnings = await summarizeDerivativeWork([targetDocId], operationInstant(ev), "merge");
 
-  // Phase one (REV-6): every source can come back — proved before any write.
+  // Phase one (REV-6): every source can come back — proved before any write;
+  // HLD-2: a held target is parked only on the controller's explicit force.
+  const heldParked = await assertParkedHoldsDecided(targetWasNewlyCreated ? [targetDocId] : [], input.force, "every restored source");
   await assertRestorable(allSourceIds, targetWasNewlyCreated ? [targetDocId] : []);
 
   const now = new Date().toISOString();
+  const actor: ActorContext = { orgId: input.orgId, actorUserId: input.actorUserId, actorEmail: input.actorEmail, actorRole: input.actorRole };
+  let holdsCarriedBack = 0;
   // Phase two: the reversible saga. Park the target FIRST, if newly created
   // (reverseSplit's order), then restore every source, then delete the
   // lineage — each step's put-back registered before it writes, so a
@@ -550,6 +670,8 @@ export async function reverseMerge(input: ReverseMergeInput): Promise<ReverseRes
     if (targetWasNewlyCreated) {
       await parkAsSuperseded(targetDocId, `Reverted merge — ${input.reason}`, input.actorUserId, now, register);
     }
+    // HLD-2: the parked target's holds onto every source BEFORE it returns.
+    holdsCarriedBack = await carryParkedHolds(heldParked, allSourceIds, "merge", actor, register);
     for (const sId of allSourceIds) {
       await restoreStatus(sId, restoreTo.get(sId)!, input.actorUserId, now, register);
     }
@@ -595,6 +717,8 @@ export async function reverseMerge(input: ReverseMergeInput): Promise<ReverseRes
       reason: input.reason.trim(),
       derivativeWorkWarnings: warnings,
       restoredStatuses: Object.fromEntries(restoreTo),
+      proceededOverHolds: Object.fromEntries(heldParked.map((h) => [h.id, h.reasons])),
+      holdsCarriedBack,
       revokedShareLinks,
       liveShareLinksLeft,
       shareRevokeError,

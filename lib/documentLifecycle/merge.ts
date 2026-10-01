@@ -150,13 +150,14 @@ async function gateMerge(input: MergeDocumentsInput): Promise<MergeGate> {
     const st = await authorizePublish({
       documentId: src.id!, libraryId: src.libraryId || target.libraryId, orgId, actorUserId, actorRole,
       overrideReason: input.overrideReason ?? reason, force: input.force, operation: "merge",
+      subjectLabel: src.documentNumber ?? undefined,
     });
     preStates.set(src.id!, st);
     if (st.activeHolds.length > 0) heldSourceIds.add(src.id!);
   }
   if (heldSourceIds.size > 0 && !copyHolds) {
     const labels = absorbed.filter((s) => heldSourceIds.has(s.id!)).map((s) => s.documentNumber ?? s.id).join(", ");
-    throw new Error(`${labels} ${heldSourceIds.size === 1 ? "has an active hold" : "have active holds"} — a merge must carry holds onto the target. Turn "carry over holds" back on, or release the holds first.`);
+    throw new Error(`${labels} ${heldSourceIds.size === 1 ? "has an active hold" : "have active holds"} — a merge must carry holds onto the target. Turn "carry over holds" back on.`);
   }
 
   let reviewPolicy: string;
@@ -398,6 +399,9 @@ async function finishMerge(
         // by the merge (leave it active on reverse).
         targetWasNewlyCreated: target.kind === "create_new",
         priorStatuses: gate.priorStatuses,
+        // HLD-2 (review fix 4): the holds on THIS source the controller's
+        // explicit force proceeded over (empty when it was not held).
+        proceededOverHolds: (gate.preStates.get(r.sourceDocId)?.activeHolds ?? []).map((h) => ({ id: h.id ?? null, reason: h.reason })),
       },
     });
   }
