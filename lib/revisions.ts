@@ -36,7 +36,7 @@ import { getMyEditBase, recordIntent } from "@/lib/intents";
 import { announceBranchOpened } from "@/lib/branches";
 import { isControllerPrincipal, type Principal } from "@/lib/permissions";
 import type { DocumentRecord, DocumentVersion, ReviewControl } from "@/types/schema";
-import { letterLabelFor, openReviewRoster, invalidateDraftSignoffs, effectiveReviewControlForDocument, reviewCompletionForDraft } from "@/lib/reviewControl";
+import { letterLabelFor, openReviewRoster, invalidateDraftSignoffs, effectiveReviewControlForDocument, draftRosterCompleteChecked } from "@/lib/reviewControl";
 import { applyEffectiveDate } from "@/lib/effectiveDate";
 import { isEffectiveOwnerOfDocument } from "@/lib/ownership";
 import { runPostPublishSideEffects } from "@/lib/postPublish";
@@ -2284,21 +2284,31 @@ export async function recordStatusIssue(input: {
     }
   }
   // The policy decision, best-effort: an unreadable policy or roster is
-  // recorded as unknown (null), never guessed.
+  // recorded as unknown (null), never guessed. P14 final review: the roster
+  // is read CHECKED (draftRosterCompleteChecked) — the unchecked read counted
+  // a failed read as an empty roster, so it recorded rosterComplete: false
+  // and issuedWithoutSignOff: true on no evidence — and the verdict is
+  // unknown whenever either half is.
   let reviewPolicyMode: string | null = null;
   let rosterComplete: boolean | null = null;
   try {
-    const { data: row } = await supabase.from("documents")
+    const { data: row, error: rowErr } = await supabase.from("documents")
       .select("collection_id, library_id, review_control").eq("id", input.documentId).maybeSingle();
-    if (row) {
+    if (row && !rowErr) {
       const chain = await effectiveReviewControlForDocument({
         reviewControl: null, collectionId: (row.collection_id as string | null) ?? null, libraryId: row.library_id as string,
       });
       const own = (row.review_control as ReviewControl | null) ?? null;
       reviewPolicyMode = chain.mode === "require" || own?.mode === "require" ? "require" : (chain.mode ?? null);
     }
-    if (input.versionId) rosterComplete = (await reviewCompletionForDraft(input.documentId, input.versionId)).complete;
-  } catch { /* recorded as unknown */ }
+  } catch { reviewPolicyMode = null; /* recorded as unknown */ }
+  if (input.versionId) {
+    try { rosterComplete = await draftRosterCompleteChecked(input.documentId, input.versionId); }
+    catch { rosterComplete = null; /* recorded as unknown */ }
+  }
+  const issuedWithoutSignOff = reviewPolicyMode === null || rosterComplete === null
+    ? null
+    : reviewPolicyMode === "require" && !rosterComplete;
   const { error: recordErr } = await logAuditAction({
     action: "DOCUMENT_ISSUED",
     resourceType: "document",
@@ -2316,7 +2326,7 @@ export async function recordStatusIssue(input: {
       putBack: input.putBack,
       reviewPolicyMode,
       rosterComplete,
-      issuedWithoutSignOff: reviewPolicyMode === "require" && rosterComplete === false,
+      issuedWithoutSignOff,
       complianceClocksStarted: input.putBack === false,
       reviewClockReset: input.putBack === false,
       acknowledgmentRosterOpened: input.putBack !== true,

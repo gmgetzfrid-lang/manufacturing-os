@@ -28,6 +28,10 @@ const state = vi.hoisted(() => ({
   refuse: null as null | { code: string; message: string },
   /** Fail the next documents select("*") (the status-issue basis read). */
   failBasisRead: false,
+  /** P14 final review: every document_review_signoffs read answers an error. */
+  failSignoffsRead: false,
+  /** P14 final review: the review-policy resolution throws (an unreadable chain). */
+  policyThrows: false,
 }));
 
 vi.mock("@/lib/supabase", () => ({
@@ -37,6 +41,13 @@ vi.mock("@/lib/supabase", () => ({
       ...real,
       from: (t: string) => {
         const b = real.from(t) as unknown as { select: (c: string) => unknown; update: (p: Row) => unknown };
+        if (t === "document_review_signoffs" && state.failSignoffsRead) {
+          const answer = { data: null, error: { code: "08006", message: "connection reset" } };
+          const chain: Record<string, unknown> = {};
+          for (const m of ["select", "eq", "in", "is", "order"]) chain[m] = () => chain;
+          chain.then = (res: (v: unknown) => unknown) => Promise.resolve(answer).then(res);
+          return chain;
+        }
         if (t === "documents" && state.failBasisRead) {
           return {
             select: (cols: string) => {
@@ -72,7 +83,13 @@ vi.mock("@/lib/distributionAcks", () => ({ closeStaleAcksForDocument: vi.fn(asyn
 vi.mock("@/lib/docClass", () => ({ effectiveDocClassForDocument: vi.fn(async () => null) }));
 vi.mock("@/lib/reviewControl", async (importOriginal) => {
   const real = await importOriginal<typeof import("@/lib/reviewControl")>();
-  return { ...real, effectiveReviewControlForDocument: vi.fn(async () => ({ mode: state.reviewMode })) };
+  return {
+    ...real,
+    effectiveReviewControlForDocument: vi.fn(async () => {
+      if (state.policyThrows) throw new Error("Couldn't resolve the review policy: statement timeout");
+      return { mode: state.reviewMode };
+    }),
+  };
 });
 
 import { changeDocumentStatus, unarchiveDocument, recordStatusIssue, putBackFromRetirementStamp } from "@/lib/revisions";
@@ -111,6 +128,8 @@ beforeEach(() => {
   state.clockThrows = false;
   state.refuse = null;
   state.failBasisRead = false;
+  state.failSignoffsRead = false;
+  state.policyThrows = false;
   // The guard's part this test needs: a refusal when asked, and the stamp
   // cleared on any write that leaves a retirement (20261144).
   state.db.beforeUpdate!.documents = (next) => {
@@ -141,6 +160,41 @@ describe("REV-19 — changeDocumentStatus: the status editors' write, the clocks
     seedDoc("d2", { status: "In Review" });
     await changeDocumentStatus({ orgId: ORG, documentId: "d2", toStatus: "Issued", door: "bulk", actorUserId: ME });
     expect(issued()[0].details).toMatchObject({ door: "bulk", fromStatus: "In Review", reviewPolicyMode: "require", rosterComplete: false, issuedWithoutSignOff: true });
+  });
+
+  it("P14 final review — a roster read that FAILS is unknown on the record (rosterComplete and issuedWithoutSignOff null), never 'issued without sign-off'", async () => {
+    state.reviewMode = "require";
+    seedDoc("d8", { status: "In Review" });
+    state.failSignoffsRead = true;
+    const out = await changeDocumentStatus({ orgId: ORG, documentId: "d8", toStatus: "Issued", door: "bulk", actorUserId: ME });
+    expect(out.issued).toBe(true);
+    // the first version read the roster unchecked: the failed read was an empty roster → rosterComplete false, issuedWithoutSignOff true
+    expect(issued()[0].details).toMatchObject({ reviewPolicyMode: "require", rosterComplete: null, issuedWithoutSignOff: null });
+  });
+
+  it("P14 final review — a policy that cannot be read is unknown: issuedWithoutSignOff null, whatever the roster says (the roster is still recorded)", async () => {
+    seedDoc("d9", { status: "In Review" });
+    state.policyThrows = true;
+    await changeDocumentStatus({ orgId: ORG, documentId: "d9", toStatus: "Issued", door: "bulk", actorUserId: ME });
+    // the first version recorded issuedWithoutSignOff: false on an unread policy
+    expect(issued()[0].details).toMatchObject({ reviewPolicyMode: null, rosterComplete: false, issuedWithoutSignOff: null });
+  });
+
+  it("P14 final review, regression — both halves read: a complete roster under require is not 'without sign-off'; an incomplete one is; no policy is never", async () => {
+    state.reviewMode = "require";
+    seedDoc("d10", { status: "In Review" });
+    T("document_review_signoffs").push({ id: "so1", org_id: ORG, document_id: "d10", document_version_id: "d10-v2", reviewer_user_id: "r1", slot: "primary", slot_group: "person:r1", status: "signed", signature_id: "sig1", activated: true });
+    await changeDocumentStatus({ orgId: ORG, documentId: "d10", toStatus: "Issued", door: "bulk", actorUserId: ME });
+    expect(issued()[0].details).toMatchObject({ reviewPolicyMode: "require", rosterComplete: true, issuedWithoutSignOff: false });
+    // the same roster with its signature unbound (RG-1: a row born 'signed' is not an approval) is incomplete
+    seedDoc("d11", { status: "In Review" });
+    T("document_review_signoffs").push({ id: "so2", org_id: ORG, document_id: "d11", document_version_id: "d11-v2", reviewer_user_id: "r1", slot: "primary", slot_group: "person:r1", status: "signed", signature_id: null, activated: true });
+    await changeDocumentStatus({ orgId: ORG, documentId: "d11", toStatus: "Issued", door: "bulk", actorUserId: ME });
+    expect(issued()[1].details).toMatchObject({ reviewPolicyMode: "require", rosterComplete: false, issuedWithoutSignOff: true });
+    state.reviewMode = "none";
+    seedDoc("d12", { status: "In Review" });
+    await changeDocumentStatus({ orgId: ORG, documentId: "d12", toStatus: "Issued", door: "bulk", actorUserId: ME });
+    expect(issued()[2].details).toMatchObject({ reviewPolicyMode: "none", rosterComplete: false, issuedWithoutSignOff: false });
   });
 
   it("a write that is not an issue (Issued → Draft, Draft → In Review, a register row with no revision) starts no clock and writes no record — the write itself as before", async () => {

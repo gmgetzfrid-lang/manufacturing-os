@@ -802,6 +802,19 @@ export async function reviewCompletionForDraft(
   return { requiredPrimaries, signed, complete, independent, roster };
 }
 
+/** REV-19 (P14 final review): a draft's per-slot completion read CHECKED,
+ *  for a caller that RECORDS the answer (lib/revisions.ts recordStatusIssue).
+ *  reviewCompletionForDraft's read is unchecked — a failed read is an empty
+ *  roster, so "incomplete", which fails closed for a publish but is a guess
+ *  on a record; this one throws instead, so the record can say "unknown".
+ *  Completion only, as reviewCompletionForDraft answers it with no actor. */
+export async function draftRosterCompleteChecked(documentId: string, versionId: string): Promise<boolean> {
+  const { data, error } = await supabase.from("document_review_signoffs").select("*")
+    .eq("document_id", documentId).eq("document_version_id", versionId);
+  if (error) throw new Error(`Couldn't read the review sign-offs (${error.message}).`);
+  return evaluateSlotCompletion(((data ?? []) as Array<Record<string, unknown>>).map(rowToSignoff)).complete;
+}
+
 /** DEC-21 policy lookup: defaults ON wherever a roster is configured; a
  *  library sets `requireIndependentReviewer: false` to opt out. Fail-safe:
  *  an unreadable library keeps the requirement. */
