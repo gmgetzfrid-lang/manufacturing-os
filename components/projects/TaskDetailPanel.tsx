@@ -590,7 +590,7 @@ function EditForm({
       </div>
       <L label="Description"><textarea value={description} onChange={(e) => setDescription(e.target.value)} rows={3} className={`${inp} resize-y`} /></L>
       </fieldset>
-      {error && <div className="text-xs text-rose-700 bg-rose-50 border border-rose-200 rounded-md p-2">{error}</div>}
+      {error && <div role="alert" className="text-xs font-bold text-rose-700 dark:text-rose-300 bg-rose-500/[0.08] border border-rose-500/50 rounded-md p-2">{error}</div>}
       <div className="flex items-center justify-end gap-2 pt-1">
         <button onClick={onCancel} disabled={saving} className="text-sm text-[var(--color-text-muted)] hover:text-[var(--color-text)] px-3 py-1.5">Cancel</button>
         <button onClick={() => void save()} disabled={saving || !canSave || v.hasErrors} title={v.hasErrors ? "Fix the highlighted fields first" : undefined} className="inline-flex items-center gap-1.5 text-sm font-semibold text-white bg-indigo-600 hover:bg-indigo-700 px-4 py-2 rounded-md disabled:opacity-40">
@@ -799,7 +799,7 @@ function DependencyEditor({
           ))}
         </select>
       )}
-      {error && <div className="text-[11px] text-rose-600 mt-1">{error}</div>}
+      {error && <div role="alert" className="text-[11px] text-rose-700 dark:text-rose-300 mt-1">{error}</div>}
     </div>
   );
 }

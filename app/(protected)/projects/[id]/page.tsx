@@ -1003,7 +1003,7 @@ function ActivityTab({
       )}
 
       {timelineError ? (
-        <div className="rounded-xl border border-rose-500/40 bg-rose-500/[0.06] px-4 py-3 text-xs font-bold text-rose-700 dark:text-rose-300 flex items-start gap-2">
+        <div role="alert" className="rounded-xl border border-rose-500/40 bg-rose-500/[0.06] px-4 py-3 text-xs font-bold text-rose-700 dark:text-rose-300 flex items-start gap-2">
           <AlertTriangle className="w-4 h-4 shrink-0 mt-0.5" /> The timeline could not be loaded: {timelineError}
         </div>
       ) : timeline === null ? (

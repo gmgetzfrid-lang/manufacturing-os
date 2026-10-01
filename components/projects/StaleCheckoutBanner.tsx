@@ -129,7 +129,7 @@ export default function StaleCheckoutBanner({ userId }: StaleCheckoutBannerProps
         </button>
       </div>
       {releaseError && (
-        <div className="px-4 py-2 text-[11px] font-bold text-rose-700 bg-rose-50 border-b border-rose-200">{releaseError}</div>
+        <div role="alert" className="px-4 py-2 text-[11px] font-bold text-rose-700 dark:text-rose-300 bg-rose-500/[0.08] border-b border-rose-500/50">{releaseError}</div>
       )}
       <div className="divide-y divide-amber-100">
         {rows.map((r) => (

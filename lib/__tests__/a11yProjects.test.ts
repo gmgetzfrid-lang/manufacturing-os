@@ -473,6 +473,90 @@ describe("A11Y-6 / UX-7 — results are announced, and an intake failure reads a
     });
     expect(silent).toEqual([]);
   });
+  // J10 third fix: the census above passes a whole FILE once any alert sits
+  // in it, and reads only set(Err|Error|Notice|Msg) — so a task-edit error, a
+  // dependency error, the rebase result and the import result rendered in
+  // plain divs, unannounced, in files that pass. This one is per RENDER
+  // SITE, and reads result-state setters too.
+  const SETTER = /const \[(\w+), (set\w+)\] = useState/g;
+  const MESSAGE_SETTER = /^set\w*(Err|Error|Errors|Notice|Msg|Message|Result|Warning|Warnings|Problem)$/;
+  /** State whose setter reads like a message but that is not one — said why. */
+  const NOT_A_MESSAGE: Record<string, string> = {
+    "components/projects/ScheduleImportModal.tsx:parseResult": "the parsed file — its questions are form controls (radio / select), its result is importResult",
+  };
+  const ANNOUNCES = /role=|aria-live=/;
+  /** Components that render their own alert / status. */
+  const ANNOUNCING_COMPONENT = /^(Notice|LoadFailed|PortalMessage)$/;
+  /** The JSX elements open at `pos` (innermost last) — a brace-aware scan of
+   *  the render the position sits in. */
+  const openAt = (s: string, pos: number): Array<{ name: string; attrs: string }> => {
+    const stack: Array<{ name: string; attrs: string }> = [];
+    const TAG = /<(\/?)([A-Za-z][\w.]*)((?:[^>{}"'`]|"[^"]*"|'[^']*'|`[^`]*`|\{(?:[^{}]|\{(?:[^{}]|\{[^{}]*\})*\})*\})*?)(\/?)>/g;
+    TAG.lastIndex = Math.max(0, s.lastIndexOf("return (", pos));
+    let m: RegExpExecArray | null;
+    while ((m = TAG.exec(s)) && m.index < pos) {
+      if (m[4] === "/") continue;
+      if (m[1] === "/") { const at = stack.map((t) => t.name).lastIndexOf(m[2]); if (at >= 0) stack.length = at; }
+      else stack.push({ name: m[2], attrs: m[3] });
+    }
+    return stack;
+  };
+  /** Every render of a message / result state that no alert, status or live
+   *  region carries: the element itself, an announcing component as its
+   *  first child, or an element it sits inside. */
+  const silentSites = (f: string, s: string): { sites: number; silent: string[] } => {
+    const names = new Set<string>();
+    for (const m of s.matchAll(SETTER)) if (MESSAGE_SETTER.test(m[2]) && !NOT_A_MESSAGE[`${f}:${m[1]}`]) names.add(m[1]);
+    let sites = 0;
+    const silent: string[] = [];
+    for (const name of names) {
+      const re = new RegExp(`\\{[^{}\\n]{0,60}?(?<!!)\\b${name}\\b(?:\\??\\.\\w+)*\\s*(?:&&|\\?)\\s*\\(?\\s*<([\\w.]+)((?:[^>{}]|\\{(?:[^{}]|\\{[^{}]*\\})*\\})*)>`, "g");
+      for (const m of s.matchAll(re)) {
+        sites++;
+        const after = s.slice(m.index! + m[0].length, m.index! + m[0].length + 200);
+        const announced = ANNOUNCES.test(m[2]) || ANNOUNCING_COMPONENT.test(m[1])
+          || /^\s*<(Notice|LoadFailed|PortalMessage)\b/.test(after)
+          || openAt(s, m.index!).some((t) => ANNOUNCES.test(t.attrs));
+        if (!announced) silent.push(`${f}:${s.slice(0, m.index).split("\n").length} {${name} … <${m[1]}${m[2].slice(0, 60)}>`);
+      }
+    }
+    return { sites, silent };
+  };
+  it("J10 third fix — per render site (mutation-checked): every message or result a Projects / Companies / portal screen renders is an alert, a status, or inside a live region", () => {
+    let sites = 0;
+    const silent: string[] = [];
+    for (const f of PROJECT_SURFACES) {
+      const r = silentSites(f, src(f));
+      sites += r.sites;
+      silent.push(...r.silent);
+    }
+    expect(silent).toEqual([]);
+    expect(sites).toBeGreaterThanOrEqual(30);
+    // the census catches the shapes the review found (an error in a plain
+    // div; a result block; a sibling of an alert, not inside it) …
+    const mutant = (body: string) => silentSites("mutant.tsx", `function X() {\n  const [error, setError] = useState<string | null>(null);\n  const [result, setResult] = useState<R | null>(null);\n  return (\n    <div>\n${body}\n    </div>\n  );\n}`).silent.length;
+    expect(mutant(`{error && <div className="text-xs text-rose-700">{error}</div>}`)).toBe(1);
+    expect(mutant(`{result && (\n<div className={\`rounded-xl \${result.errors.length > 0 ? "a" : "b"}\`}>done</div>)}`)).toBe(1);
+    expect(mutant(`<div role="alert">x</div>\n{error && <div>{error}</div>}`)).toBe(1);
+    // … and passes the shapes that announce
+    expect(mutant(`{error && <div role="alert">{error}</div>}`)).toBe(0);
+    expect(mutant(`<div aria-live="polite">\n{result && (<div className="x">ok</div>)}\n</div>`)).toBe(0);
+    expect(mutant(`{error && <div className="px-4"><Notice notice={error} /></div>}`)).toBe(0);
+    expect(mutant(`{!result && <div className="plan">plan</div>}`)).toBe(0);
+  });
+  it("J10 third fix — the four sites the review found are announced, in the token recipe (never a light-only slab)", () => {
+    const panel = src("components/projects/TaskDetailPanel.tsx");
+    expect(panel).toContain('{error && <div role="alert" className="text-xs font-bold text-rose-700 dark:text-rose-300 bg-rose-500/[0.08] border border-rose-500/50 rounded-md p-2">{error}</div>}');
+    expect(panel).toContain('{error && <div role="alert" className="text-[11px] text-rose-700 dark:text-rose-300 mt-1">{error}</div>}');
+    const rebase = src("components/projects/RebaseScheduleModal.tsx");
+    expect(rebase).toMatch(/<div aria-live="polite" aria-atomic="true">\n\s+\{result && \(\n\s+<div role=\{result\.errors\.length > 0 \? "alert" : "status"\}/);
+    expect(rebase).not.toMatch(/bg-(rose|emerald)-50\b/);
+    const imp = src("components/projects/ScheduleImportModal.tsx");
+    expect(imp).toMatch(/<div aria-live="polite" aria-atomic="true">\n\s+\{importResult && \(\n\s+<div role=\{importResult\.cancelled \|\| importResult\.errors\.length > 0 \? "alert" : "status"\}/);
+    expect(imp).not.toContain('"border-rose-200 bg-rose-50" : "border-emerald-200 bg-emerald-50"');
+    expect(src("components/projects/StaleCheckoutBanner.tsx")).toContain('<div role="alert" className="px-4 py-2 text-[11px] font-bold text-rose-700 dark:text-rose-300 bg-rose-500/[0.08] border-b border-rose-500/50">{releaseError}</div>');
+    expect(src("app/(protected)/projects/[id]/page.tsx")).toContain('<div role="alert" className="rounded-xl border border-rose-500/40 bg-rose-500/[0.06] px-4 py-3 text-xs font-bold text-rose-700 dark:text-rose-300 flex items-start gap-2">');
+  });
   it("the schedule board's undo toasts land in a live region that stays mounted; a warning is assertive", async () => {
     const T = UndoToastHost as unknown as React.FC<Record<string, unknown>>;
     await act(async () => { root.render(React.createElement(T, { toasts: [], onUndo: () => {}, onDismiss: () => {} })); });
