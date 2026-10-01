@@ -79,7 +79,8 @@ describe("reads fail loudly (UX-10)", () => {
     state.readError.turnover_review_events = { message: "permission denied for table turnover_review_events", code: "42501" };
     await expect(listTurnoverReviewEvents("o1", "p1")).rejects.toThrow(/don't have permission/);
     state.readError.turnover_review_events = { message: "upstream request timeout", code: "PGRST000" };
-    await expect(listTurnoverReviewEvents("o1", "p1")).rejects.toThrow(/upstream request timeout/);
+    // REL-3 (J10): still a throw, never an empty history — in words, not the driver's
+    await expect(listTurnoverReviewEvents("o1", "p1")).rejects.toThrow("The database couldn't be reached just now — try again in a moment.");
   });
 });
 

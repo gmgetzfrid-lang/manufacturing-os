@@ -225,7 +225,8 @@ describe("loadSignoffAuthority — the database's decision, fail-closed (dw4 / D
     const a = await loadSignoffAuthority("o1", "p1", actorOf(SAFETY));
     expect(a.maySign).toBe(false);
     expect(a.otherSigners).toBeNull();
-    expect(a.error).toMatch(/upstream timeout/);
+    // REL-3 (J10): the driver's words are translated
+    expect(a.error).toBe("The database couldn't be reached just now — try again in a moment.");
   });
   it("a failed fallback read is an error too", async () => {
     state.readError.org_members = { message: "permission denied", code: "42501" };
@@ -320,7 +321,7 @@ describe("setChecklistStatus('complete') — QUAL-4", () => {
     state.rpc = { quality_signoff_status: () => ({ data: null, error: { message: "upstream timeout", code: "PGRST000" } }) };
     const res = await setChecklistStatus({ orgId: "o1", projectId: "p1", checklist: checklist(), status: "complete", actor: actorOf(OW), signoff });
     expect(res.ok).toBe(false);
-    expect(res.error).toMatch(/Couldn't check who else can sign this checklist off \(upstream timeout\) — it stays open/);
+    expect(res.error).toMatch(/Couldn't check who else can sign this checklist off \(The database couldn't be reached just now — try again in a moment\.\) — it stays open/);
     expect(ceremony.calls).toHaveLength(0);
   });
 
@@ -443,7 +444,7 @@ describe("reviewTurnoverItem('accepted' / 'waived') — QUAL-4", () => {
     state.rpc = { quality_signoff_status: () => ({ data: null, error: { message: "upstream timeout", code: "PGRST000" } }) };
     const res = await reviewTurnoverItem({ item: titem(), status: "waived", note: "Vendor data sheets were not part of this scope", actor: actorOf(OW), signoff });
     expect(res.ok).toBe(false);
-    expect(res.error).toMatch(/Couldn't check who else can accept or waive this item \(upstream timeout\)/);
+    expect(res.error).toMatch(/Couldn't check who else can accept or waive this item \(The database couldn't be reached just now — try again in a moment\.\)/);
     expect(ceremony.calls).toHaveLength(1);
   });
 });

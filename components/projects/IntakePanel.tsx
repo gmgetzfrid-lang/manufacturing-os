@@ -16,6 +16,7 @@
 // Costs tab, not here (INTK-12).
 
 import React, { useCallback, useEffect, useRef, useState } from "react";
+import { userFacingError, userFacingReadError } from "@/lib/userFacingError";
 import {
   Link2, Loader2, Check, X, UploadCloud, Copy, Ban, ShieldCheck, Clock,
   FilePlus2, Search, RotateCcw,
@@ -119,7 +120,7 @@ export default function IntakePanel({ orgId, projectId, canManage, uid, userEmai
         supabase.from("projects").select("intake_library_id, intake_collection_id").eq("id", projectId).maybeSingle(),
         supabase.from("libraries").select("id, name").eq("org_id", orgId).order("name"),
       ]);
-      if (linksRead.error) throw new Error(linksRead.error.message ?? "the links could not be read");
+      if (linksRead.error) throw new Error(userFacingReadError(linksRead.error, "intake links"));
       const lk = linksRead.data;
       const linkRows = (((lk ?? []) as Array<Record<string, unknown>>)).map((r) => ({
         id: String(r.id), token: linkCredentialView(r).token, tokenPrefix: linkCredentialView(r).prefix,
@@ -200,7 +201,7 @@ export default function IntakePanel({ orgId, projectId, canManage, uid, userEmai
     try {
       if (!intakeLibraryId) {
         const { error: libErr } = await supabase.from("projects").update({ intake_library_id: lib }).eq("id", projectId);
-        if (libErr) throw new Error(`Couldn't set the intake library: ${libErr.message}`);
+        if (libErr) throw new Error(`Couldn't set the intake library: ${userFacingError(libErr)}`);
       }
       // SEC-19: the database stores only the token's SHA-256 (20261141) — this
       // is the one moment the address exists in full; it is shown below once.
@@ -212,7 +213,7 @@ export default function IntakePanel({ orgId, projectId, canManage, uid, userEmai
         expires_at: expiry.iso,
         created_by: uid,
       }).select("id").single();
-      if (error) throw new Error(error.message);
+      if (error) throw new Error(userFacingError(error, { context: "create intake link" }));
       // INTK-12: the audit row names the LINK (its id) — never the project in
       // its place, never token material — and a failed audit is visible.
       const { error: auditErr } = await supabase.from("audit_logs").insert({
@@ -226,7 +227,7 @@ export default function IntakePanel({ orgId, projectId, canManage, uid, userEmai
       setCompany(""); setEmail(""); setExpires(isoDateInDays(INTAKE_LINK_DEFAULT_DAYS)); setTrusted(false);
       await refresh();
       setMsg(auditErr
-        ? `Link created, but its audit record failed: ${auditErr.message}`
+        ? `Link created, but its audit record failed: ${userFacingError(auditErr)}`
         : "Link created — copy it below now and send it to the company. Its address is shown only this once; if it is lost, re-issue the link.",
       auditErr ? "error" : "success");
     } catch (e) { setMsg((e as Error).message); }
@@ -257,14 +258,14 @@ export default function IntakePanel({ orgId, projectId, canManage, uid, userEmai
     setBusy(l.id);
     try {
       const { error } = await supabase.from("project_intake_links").update({ revoked_at: new Date().toISOString() }).eq("id", l.id);
-      if (error) { setMsg(`Couldn't revoke: ${error.message}`); return; }
+      if (error) { setMsg(`Couldn't revoke: ${userFacingError(error)}`); return; }
       const { error: auditErr } = await supabase.from("audit_logs").insert({
         action: "INTAKE_LINK_REVOKED",
         resource_type: "project_intake_link", resource_id: l.id,
         org_id: orgId, user_id: uid, user_email: userEmail ?? null,
         details: { company: l.companyName, projectId },
       });
-      if (auditErr) setMsg(`The link was revoked, but its audit record failed: ${auditErr.message}`);
+      if (auditErr) setMsg(`The link was revoked, but its audit record failed: ${userFacingError(auditErr)}`);
       await refresh();
     } finally { setBusy(null); }
   };
@@ -306,7 +307,7 @@ export default function IntakePanel({ orgId, projectId, canManage, uid, userEmai
     try {
       const { error } = await supabase.from("project_intake_links")
         .update({ assigned_doc_ids: ids }).eq("id", l.id);
-      if (error) throw new Error(error.message);
+      if (error) throw new Error(userFacingError(error, { context: "intake assignment" }));
       await supabase.from("audit_logs").insert({
         action: "INTAKE_ASSIGNMENT_CHANGED",
         resource_type: "project_intake_link", resource_id: l.id,
@@ -329,7 +330,7 @@ export default function IntakePanel({ orgId, projectId, canManage, uid, userEmai
       const { data: doc, error: docErr } = await supabase.from("documents")
         .select("id, library_id, collection_id, review_control, pending_version_id")
         .eq("id", p.docId).eq("org_id", orgId).maybeSingle();
-      if (docErr) throw new Error(`Couldn't read ${p.label}: ${docErr.message}`);
+      if (docErr) throw new Error(`Couldn't read ${p.label}: ${userFacingReadError(docErr)}`);
       if (!doc || String(doc.pending_version_id ?? "") !== p.pendingVersionId) {
         await refresh();
         throw new Error(`${p.label} changed since this list loaded — it has been refreshed. Check the submission shown now before approving.`);
@@ -350,7 +351,7 @@ export default function IntakePanel({ orgId, projectId, canManage, uid, userEmai
       // to the bytes they reviewed; its MOC reference is SEC-14's.
       const { data: ver, error: verErr } = await supabase.from("document_versions")
         .select("moc_reference, file_hash").eq("id", p.pendingVersionId).maybeSingle();
-      if (verErr) throw new Error(`Couldn't read the submission: ${verErr.message}`);
+      if (verErr) throw new Error(`Couldn't read the submission: ${userFacingReadError(verErr)}`);
       // SEC-14: a drawing-class document's external revision carries its
       // management-of-change reference (the database refuses it otherwise).
       // Captured HERE, before either path — on the roster path the publish
@@ -368,7 +369,7 @@ export default function IntakePanel({ orgId, projectId, canManage, uid, userEmai
         if (moc.trim().length < 3) throw new Error("An MOC reference is at least 3 characters.");
         const { data: set, error: setErr } = await supabase.from("document_versions")
           .update({ moc_reference: moc.trim() }).eq("id", p.pendingVersionId).eq("review_state", "in_review").select("id");
-        if (setErr) throw new Error(`Couldn't record the MOC reference: ${setErr.message}`);
+        if (setErr) throw new Error(`Couldn't record the MOC reference: ${userFacingError(setErr)}`);
         if (!set || set.length === 0) throw new Error("Couldn't record the MOC reference: the write was refused.");
       }
       if (rosterRequired) {
@@ -445,18 +446,18 @@ export default function IntakePanel({ orgId, projectId, canManage, uid, userEmai
         ({ data: vRows, error: vErr } = await supabase.from("document_versions")
           .update({ review_state: "rejected" }).eq("id", p.pendingVersionId).select("id"));
       }
-      if (vErr) throw new Error(`Couldn't reject: ${vErr.message}`);
+      if (vErr) throw new Error(`Couldn't reject: ${userFacingError(vErr)}`);
       if (!vRows || vRows.length === 0) throw new Error("Couldn't reject: the write was refused.");
       const { error: dErr } = await supabase.from("documents")
         .update({ pending_version_id: null, updated_at: new Date().toISOString() }).eq("id", p.docId);
-      if (dErr) throw new Error(`Couldn't clear the pending revision: ${dErr.message}`);
+      if (dErr) throw new Error(`Couldn't clear the pending revision: ${userFacingError(dErr)}`);
       // RG-10: close out any sign-off rows on the rejected draft, so the daily
       // scan and the reviewers' inboxes stop chasing a draft nothing points at.
       // Zero rows is the normal case (an intake draft has no roster).
       const { error: voidErr } = await supabase.from("document_review_signoffs")
         .update({ status: "void", updated_at: new Date().toISOString() })
         .eq("document_version_id", p.pendingVersionId).in("status", ["pending", "signed"]);
-      if (voidErr) throw new Error(`The submission was rejected, but its review sign-offs could not be closed out: ${voidErr.message}`);
+      if (voidErr) throw new Error(`The submission was rejected, but its review sign-offs could not be closed out: ${userFacingError(voidErr)}`);
       const { error: auditErr } = await supabase.from("audit_logs").insert({
         action: "INTAKE_REJECTED",
         resource_type: "document", resource_id: p.docId,
@@ -464,7 +465,7 @@ export default function IntakePanel({ orgId, projectId, canManage, uid, userEmai
         details: { projectId, versionId: p.pendingVersionId, revLabel: p.revLabel, company: p.company, reason: reason.trim() },
       });
       setMsg(auditErr
-        ? `${p.label} Rev ${p.revLabel ?? ""} rejected, but its audit record failed: ${auditErr.message}`
+        ? `${p.label} Rev ${p.revLabel ?? ""} rejected, but its audit record failed: ${userFacingError(auditErr)}`
         : `${p.label} Rev ${p.revLabel ?? ""} rejected — the company sees it as not accepted, with your reason, on their portal.`,
       auditErr ? "error" : "success");
       await refresh();

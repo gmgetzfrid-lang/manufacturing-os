@@ -39,6 +39,7 @@ import {
 } from "lucide-react";
 import Link from "next/link";
 import { supabase } from "@/lib/supabase";
+import { userFacingError, userFacingReadError } from "@/lib/userFacingError";
 import { newIntakeToken, intakePortalPath, linkCredentialView, firstReadWithColumns, reissueIntakeLink } from "@/lib/intakeLinks";
 import { listCompanies, listBarredCompanies, getCompany, type Company } from "@/lib/companies";
 import { fmtMoney, type CostAccount, type Actor } from "@/lib/costs";
@@ -92,7 +93,7 @@ export async function guardedCostDocWrite(input: {
 }): Promise<{ ok: true; auditError: string | null } | { ok: false; error: string }> {
   const { data, error } = await supabase.from("cost_documents").update(input.patch)
     .eq("id", input.doc.id).eq("org_id", input.doc.orgId).in("status", [...OPEN_DOC_STATUSES]).select("id");
-  if (error) return { ok: false, error: error.message };
+  if (error) return { ok: false, error: userFacingError(error) };
   if (!data || (data as unknown[]).length === 0) {
     return { ok: false, error: "Someone else has already awarded, posted or voided this document — refresh to see the latest." };
   }
@@ -101,7 +102,7 @@ export async function guardedCostDocWrite(input: {
     org_id: input.doc.orgId, user_id: input.actor.uid, user_email: input.actor.email,
     details: input.audit.details,
   });
-  return { ok: true, auditError: auditErr ? auditErr.message : null };
+  return { ok: true, auditError: auditErr ? userFacingError(auditErr) : null };
 }
 
 const QUOTE_LINK_DEFAULT_DAYS = 90;
@@ -221,7 +222,7 @@ export default function QuotesPanel({ orgId, projectId, canManage, actor, accoun
     if (error) {
       setErr(missingColumn(error)
         ? "Linking a bidder to the registry needs migration 20261096 applied."
-        : `Couldn't link the company: ${error.message}`);
+        : `Couldn't link the company: ${userFacingError(error)}`);
       return;
     }
     if (!data || (data as unknown[]).length === 0) { setErr("Couldn't link the company — the document was decided (awarded, declined or voided) or removed since this table loaded. Refresh to see the latest."); return; }
@@ -240,12 +241,12 @@ export default function QuotesPanel({ orgId, projectId, canManage, actor, accoun
           .eq("id", doc.id).eq("org_id", orgId).select("id");
         const undone = !revertErr && !!reverted && (reverted as unknown[]).length > 0;
         setErr(undone
-          ? `The override could not be recorded (${auditErr.message}) — the link was put back.`
-          : `The link changed but its override record failed (${auditErr.message}) and it could not be undone (${revertErr ? revertErr.message : "no row was updated"}) — relink it by hand.`);
+          ? `The override could not be recorded (${userFacingError(auditErr)}) — the link was put back.`
+          : `The link changed but its override record failed (${userFacingError(auditErr)}) and it could not be undone (${revertErr ? userFacingError(revertErr) : "no row was updated"}) — relink it by hand.`);
         if (!undone) setExtras((prev) => new Map(prev).set(doc.id, { ...(prev.get(doc.id) ?? { pagesTotal: null, pagesRead: null }), companyId }));
         return;
       }
-      setErr(`The company was linked but its audit record failed: ${auditErr.message}`);
+      setErr(`The company was linked but its audit record failed: ${userFacingError(auditErr)}`);
     }
     setExtras((prev) => new Map(prev).set(doc.id, { ...(prev.get(doc.id) ?? { pagesTotal: null, pagesRead: null }), companyId }));
   };
@@ -565,7 +566,7 @@ function BidGroup({ group, docs: groupDocs, allDocs, accounts, companies, barred
    *  stops). */
   const barredNow = async (doc: CostDocument, vendorName: string | null): Promise<Company | null> => {
     const { data: row, error } = await supabase.from("cost_documents").select("company_id").eq("id", doc.id).maybeSingle();
-    if (error && !missingColumn(error)) throw new Error(error.message);
+    if (error && !missingColumn(error)) throw new Error(userFacingReadError(error));
     const boundId = (row as { company_id?: string | null } | null)?.company_id ?? null;
     if (boundId) {
       const bound = await getCompany(boundId);
@@ -652,7 +653,7 @@ function BidGroup({ group, docs: groupDocs, allDocs, accounts, companies, barred
         org_id: orgId, user_id: actor.uid, user_email: actor.email,
         details: { companyId: who.id, company: who.name, companyStatus: status, reason, total, currency: cur, rfqGroup: group, costAccountId: accountId },
       });
-      if (error) { setErr(`The override could not be recorded (${error.message}) — award stopped.`); return false; }
+      if (error) { setErr(`The override could not be recorded (${userFacingError(error)}) — award stopped.`); return false; }
       return true;
     };
     let overridden: { id: string; name: string } | null = barred ? { id: barred.id, name: barred.name } : null;
@@ -694,7 +695,7 @@ function BidGroup({ group, docs: groupDocs, allDocs, accounts, companies, barred
         org_id: orgId, user_id: actor.uid, user_email: actor.email,
         details: { companyId: overridden.id, company: overridden.name, why: failure },
       });
-      if (error) failure = `${failure} (The do-not-use override was recorded but could not be closed: ${error.message}.)`;
+      if (error) failure = `${failure} (The do-not-use override was recorded but could not be closed: ${userFacingError(error)})`;
     }
     setErr(failure);
   };
@@ -1264,7 +1265,7 @@ function QuoteLinksSection({ orgId, projectId, actor, existingGroups, setErr }: 
         expires_at: expiresAt.toISOString(),
         created_by: actor.uid,
       }).select("id").single();
-      if (error) throw new Error(/purpose/.test(error.message) ? "Quote links need the latest database migration (20261013) applied." : error.message);
+      if (error) throw new Error(/purpose/.test(error.message) ? "Quote links need the latest database migration (20261013) applied." : userFacingError(error));
       // The audit row names the LINK (its id) — never token material — and
       // a failed audit of minting an external credential is visible.
       const { error: auditErr } = await supabase.from("audit_logs").insert({
@@ -1272,7 +1273,7 @@ function QuoteLinksSection({ orgId, projectId, actor, existingGroups, setErr }: 
         org_id: orgId, user_id: actor.uid, user_email: actor.email,
         details: { company: company.trim(), rfqGroup: snapRfqGroup(group, snapTargets) || null, projectId, expiresAt: expiresAt.toISOString() },
       });
-      if (auditErr) setErr(`The link was created but its audit record failed: ${auditErr.message}`);
+      if (auditErr) setErr(`The link was created but its audit record failed: ${userFacingError(auditErr)}`);
       setFreshUrls((prev) => new Map(prev).set(String((created as { id: string }).id), portalUrl(token)));
       setCompany(""); setGroup(""); setExpires(isoDateInDays(QUOTE_LINK_DEFAULT_DAYS));
       await refresh();
@@ -1287,7 +1288,7 @@ function QuoteLinksSection({ orgId, projectId, actor, existingGroups, setErr }: 
     try {
       const { data: revoked, error } = await supabase.from("project_intake_links").update({ revoked_at: new Date().toISOString() })
         .eq("id", l.id).eq("project_id", projectId).is("revoked_at", null).select("id");
-      if (error) { setErr(`Couldn't revoke: ${error.message}`); return; }
+      if (error) { setErr(`Couldn't revoke: ${userFacingError(error)}`); return; }
       // Zero rows = nothing was revoked (already revoked, or not permitted):
       // never audit a revocation that did not happen.
       if (!revoked || (revoked as unknown[]).length === 0) { setErr(`${l.companyName}'s link was not revoked — it may already be revoked, or you may not have permission. Refresh to see its state.`); await refresh(); return; }
@@ -1296,7 +1297,7 @@ function QuoteLinksSection({ orgId, projectId, actor, existingGroups, setErr }: 
         org_id: orgId, user_id: actor.uid, user_email: actor.email,
         details: { company: l.companyName, rfqGroup: l.rfqGroup, projectId },
       });
-      if (auditErr) setErr(`The link was revoked but its audit record failed: ${auditErr.message}`);
+      if (auditErr) setErr(`The link was revoked but its audit record failed: ${userFacingError(auditErr)}`);
       await refresh();
     } finally { setRevoking(null); }
   };

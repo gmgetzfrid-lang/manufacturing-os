@@ -14,6 +14,7 @@ import {
   GitPullRequestArrow, Plus, Loader2, Check, X as XIcon, AlertTriangle, Undo2, UserRound,
 } from "lucide-react";
 import { supabase } from "@/lib/supabase";
+import { userFacingError } from "@/lib/userFacingError";
 import { fmtMoney, type CostAccount, type CostParty, type Actor } from "@/lib/costs";
 import {
   type ChangeOrder, type CoReason, CO_REASON_LABEL,
@@ -70,7 +71,7 @@ export default function ChangeOrdersPanel({ orgId, projectId, canManage, actor, 
       if (!co.costAccountId && accountId) {
         const { error } = await supabase.from("change_orders").update({ cost_account_id: accountId })
           .eq("id", co.id).eq("status", "proposed");
-        if (error) { setErr(error.message); return; }
+        if (error) { setErr(userFacingError(error)); return; }
         target = { ...co, costAccountId: accountId };
       }
     }

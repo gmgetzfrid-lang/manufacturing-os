@@ -49,6 +49,7 @@ import { supabase } from "@/lib/supabase";
 import type { Actor } from "@/lib/costs";
 import { NOT_CURRENT_STATUSES } from "@/lib/aiBoundary";
 import { checkedWrite, describeWriteError } from "@/lib/checkedWrite";
+import { userFacingReadError } from "@/lib/userFacingError";
 import { recordSignature, type SigningCredential } from "@/lib/eSignatures";
 import { isControllerPrincipal } from "@/lib/permissions";
 import type { Role } from "@/types/schema";
@@ -862,7 +863,7 @@ export async function runProjectEvidenceSweep(input: {
   try {
     const { data, error } = await supabase.from("project_checklists").select("id")
       .eq("project_id", input.projectId).eq("status", "open").limit(50);
-    if (error) return { ...EMPTY_PROJECT_SWEEP, error: `the project's checklists could not be read (${error.message})` };
+    if (error) return { ...EMPTY_PROJECT_SWEEP, error: `the project's checklists could not be read (${userFacingReadError(error, "runProjectEvidenceSweep")})` };
     const ids = ((data ?? []) as Array<{ id: string }>).map((r) => String(r.id));
     if (ids.length === 0) return { ...EMPTY_PROJECT_SWEEP };
     const state = await gatherProjectEvidenceState(input.orgId, input.projectId);
@@ -910,7 +911,7 @@ export async function sweepEvidenceForDocument(input: {
       out.retracted += r.retracted; out.refused += r.refused; out.failed += r.failed;
       if (r.error && !out.error) out.error = r.error;
     }
-    if (failedRead && !out.error) out.error = `the projects citing this document could not all be read (${failedRead.message})`;
+    if (failedRead && !out.error) out.error = `the projects citing this document could not all be read (${userFacingReadError(failedRead, "sweepEvidenceForDocument")})`;
     return out;
   } catch (e) {
     return { ...EMPTY_PROJECT_SWEEP, projects: 0, error: (e as Error).message };

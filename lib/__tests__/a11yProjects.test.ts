@@ -422,7 +422,7 @@ describe("A11Y-6 / UX-7 — results are announced, and an intake failure reads a
     expect(p).toContain('<div role={msg.tone === "error" ? "alert" : "status"} data-tone={msg.tone}');
     expect(p).toContain('<div aria-live="polite" aria-atomic="true">');
     // a failed revoke / approve / reject stays an error; a landed one is success
-    expect(p).toMatch(/if \(error\) \{ setMsg\(`Couldn't revoke: \$\{error\.message\}`\); return; \}/);
+    expect(p).toMatch(/if \(error\) \{ setMsg\(`Couldn't revoke: \$\{userFacingError\(error\)\}`\); return; \}/);
     expect(p).toContain('landed && (!swept || swept.ok) ? "success" : "error");');
     expect(p).toContain('auditErr ? "error" : "success");');
     expect(p).not.toMatch(/\{msg && <div className="rounded-xl border border-\[var\(--color-border\)\] bg-\[var\(--color-surface\)\][^"]*">\{msg\}<\/div>\}/);

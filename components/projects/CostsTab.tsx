@@ -17,6 +17,7 @@ import {
   Landmark, HardHat, Scale, TrendingUp, TrendingDown, AlertTriangle, Ban,
 } from "lucide-react";
 import { supabase } from "@/lib/supabase";
+import { userFacingReadError } from "@/lib/userFacingError";
 import {
   CostAccount, CostEntry, CostParty, CostEntryType,
   listAccounts, listEntries, listParties, saveAccount, addEntry, voidEntry, saveParty,
@@ -104,7 +105,7 @@ export default function CostsTab({ orgId, projectId, canManage, uid, userEmail, 
         supabase.from("milestones").select("id, name, percent_complete, status, planned_at, planned_start_at")
           .eq("project_id", projectId).order("planned_at").order("id").limit(PROJECT_MILESTONE_READ_LIMIT),
       ]);
-      if (msErr) throw new Error(`Couldn't load the schedule for earned value: ${msErr.message}`);
+      if (msErr) throw new Error(`Couldn't load the schedule for earned value: ${userFacingReadError(msErr)}`);
       setAccounts(a);
       setEntries(e);
       setParties(p);

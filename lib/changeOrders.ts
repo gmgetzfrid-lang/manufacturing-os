@@ -34,6 +34,7 @@ import { logAuditAction } from "@/lib/audit";
 import { addEntry, voidEntry, NO_ROW_MATCHED } from "@/lib/costs";
 import { memberHoldsAny } from "@/lib/roleHeld";
 import { emit } from "@/lib/notify/dispatch";
+import { userFacingError, userFacingReadError } from "@/lib/userFacingError";
 
 /** org_configurations key: `{ "amount": <number> }`. */
 export const CO_APPROVAL_THRESHOLD_KEY = "change_order_approval_threshold";
@@ -164,13 +165,13 @@ export async function listChangeOrders(projectId: string): Promise<ChangeOrder[]
   const { data, error } = await supabase
     .from("change_orders").select("*").eq("project_id", projectId)
     .order("created_at", { ascending: false }).limit(500);
-  if (error) throw Object.assign(new Error(error.message), { code: error.code ?? null });
+  if (error) throw Object.assign(new Error(userFacingReadError(error, "listChangeOrders")), { code: error.code ?? null });
   const cos = ((data as Record<string, unknown>[]) ?? []).map(rowToCo);
   const ids = [...new Set(cos.filter((c) => c.status === "approved" && c.postedEntryId).map((c) => c.postedEntryId as string))];
   const status = new Map<string, string | null>();
   for (let i = 0; i < ids.length; i += 100) {
     const { data: rows, error: entryErr } = await supabase.from("cost_entries").select("id, status").in("id", ids.slice(i, i + 100));
-    if (entryErr) throw new Error(`Couldn't read the change orders' cost entries: ${entryErr.message}`);
+    if (entryErr) throw new Error(`Couldn't read the change orders' cost entries: ${userFacingReadError(entryErr, "listChangeOrders entries")}`);
     for (const r of (rows ?? []) as Array<{ id: string; status: string | null }>) status.set(r.id, r.status);
   }
   for (const c of cos) {
@@ -207,7 +208,7 @@ export async function proposeChangeOrder(input: {
     const { data: last, error: readErr } = await supabase
       .from("change_orders").select("co_number").eq("project_id", input.projectId)
       .order("created_at", { ascending: false }).limit(50);
-    if (readErr) throw new Error(readErr.message);
+    if (readErr) throw new Error(userFacingReadError(readErr, "proposeChangeOrder"));
     const maxN = ((last as Array<{ co_number: string }>) ?? [])
       .map((r) => parseInt(String(r.co_number ?? "").replace(/\D+/g, ""), 10))
       .filter(Number.isFinite)
@@ -233,7 +234,7 @@ export async function proposeChangeOrder(input: {
     }).select("*").single();
     if (!error && inserted) { data = inserted as Record<string, unknown>; break; }
     if (error?.code === "23505") continue;
-    throw new Error(error?.message ?? "Couldn't propose the change order.");
+    throw new Error(error ? userFacingError(error, { context: "proposeChangeOrder" }) : "Couldn't propose the change order.");
   }
   if (!data) {
     throw new Error("Another change order was numbered at the same moment — try again and it will take the next number.");
@@ -255,8 +256,8 @@ async function otherEligibleDeciders(orgId: string, projectId: string, actorId: 
     supabase.from("org_members").select("uid, role, roles").eq("org_id", orgId).eq("status", "active"),
     supabase.from("projects").select("owner_user_id").eq("id", projectId).maybeSingle(),
   ]);
-  if (membersRes.error) return { count: 0, error: membersRes.error.message };
-  if (projectRes.error) return { count: 0, error: projectRes.error.message };
+  if (membersRes.error) return { count: 0, error: userFacingReadError(membersRes.error, "otherDeciders") };
+  if (projectRes.error) return { count: 0, error: userFacingReadError(projectRes.error, "otherDeciders") };
   const others = new Set<string>();
   for (const m of (membersRes.data ?? []) as Array<{ uid: string; role?: unknown; roles?: unknown }>) {
     if (m.uid && m.uid !== actorId && memberHoldsAny(m, CONTROLLER_ROLES)) others.add(m.uid);
@@ -326,7 +327,7 @@ export async function decideChangeOrder(input: {
   // Re-read — the caller's snapshot may be stale (amount, account, status).
   const { data: row, error: readErr } = await supabase
     .from("change_orders").select("*").eq("id", input.co.id).maybeSingle();
-  if (readErr || !row) throw new Error(readErr?.message ?? "Change order not found.");
+  if (readErr || !row) throw new Error(readErr ? userFacingReadError(readErr, "changeOrder") : "Change order not found.");
   const co = rowToCo(row as Record<string, unknown>);
   if (co.status !== "proposed") throw new Error(`This change order is already ${co.status}.`);
   const amountChanged = (now: number) =>
@@ -368,7 +369,7 @@ export async function decideChangeOrder(input: {
   const { data: claimed, error } = await (input.shownAccountId
     ? claim.eq("cost_account_id", input.shownAccountId)
     : claim.is("cost_account_id", null)).select("id");
-  if (error) throw new Error(error.message);
+  if (error) throw new Error(userFacingError(error, { context: "decideChangeOrder" }));
   if (!claimed || claimed.length === 0) {
     // Zero rows: decided by someone else, or the amount / line moved under us.
     const { data: now } = await supabase.from("change_orders").select("status, amount, cost_account_id").eq("id", co.id).maybeSingle();
@@ -409,7 +410,7 @@ export async function decideChangeOrder(input: {
       const { data: linked, error: linkErr } = await supabase.from("change_orders")
         .update({ posted_entry_id: posted.entryId }).eq("id", co.id).select("id");
       if (linkErr || !linked || linked.length === 0) {
-        warning = `${co.coNumber} was approved and its money posted, but the link to its cost entry could not be saved${linkErr ? ` (${linkErr.message})` : ""} — it is listed under "Ledger needs attention" on the Costs tab until repaired.`;
+        warning = `${co.coNumber} was approved and its money posted, but the link to its cost entry could not be saved${linkErr ? ` (${userFacingError(linkErr, { context: "decideChangeOrder link" })})` : ""} — it is listed under "Ledger needs attention" on the Costs tab until repaired.`;
       }
     }
   }
@@ -436,7 +437,7 @@ async function revertDecision(coId: string): Promise<{ ok: boolean; error?: stri
     const { data, error } = await supabase.from("change_orders").update({
       status: "proposed", decided_at: null, decided_by: null, decided_by_name: null, decision_note: null,
     }).eq("id", coId).eq("status", "approved").select("id");
-    if (error) return { ok: false, error: error.message };
+    if (error) return { ok: false, error: userFacingError(error, { context: "revertChangeOrderClaim" }) };
     if (!data || data.length === 0) return { ok: false, error: "the row was not in the claimed state any more" };
     return { ok: true };
   } catch (e) {
@@ -489,7 +490,7 @@ export async function unwindChangeOrder(input: {
 }): Promise<void> {
   const { data: row, error: readErr } = await supabase
     .from("change_orders").select("*").eq("id", input.co.id).maybeSingle();
-  if (readErr || !row) throw new Error(readErr?.message ?? "Change order not found.");
+  if (readErr || !row) throw new Error(readErr ? userFacingReadError(readErr, "changeOrder") : "Change order not found.");
   const co = rowToCo(row as Record<string, unknown>);
   if (co.status !== "approved") throw new Error(`Only an approved change order can be reversed — this one is ${co.status}.`);
   if (!co.postedEntryId) {
@@ -498,7 +499,7 @@ export async function unwindChangeOrder(input: {
   const entryId = co.postedEntryId;
   const readEntry = async () => {
     const { data, error: eErr } = await supabase.from("cost_entries").select("id, status").eq("id", entryId).maybeSingle();
-    if (eErr) throw new Error(`Couldn't read ${co.coNumber}'s cost entry: ${eErr.message}`);
+    if (eErr) throw new Error(`Couldn't read ${co.coNumber}'s cost entry: ${userFacingReadError(eErr, "changeOrder entry")}`);
     return (data as { id: string; status: string | null } | null) ?? null;
   };
   // Same rule as repairChangeOrder's reverse: with the CO's own entry void,
@@ -549,7 +550,7 @@ export async function unwindChangeOrder(input: {
     if (cur?.status === "approved" && cur.posted_entry_id && cur.posted_entry_id !== entryId) {
       throw new Error(`${co.coNumber} was re-linked to another cost entry while it was being reversed — its old entry is void, and it stays approved on the new one. Refresh, and Reverse it again if it should go.`);
     }
-    throw new Error(`${co.coNumber}'s cost entry is void, but the change order could not be marked void${error ? ` (${error.message})` : ""} — it no longer revises the budget and is listed under "Ledger needs attention" on the Costs tab: Reverse it there.`);
+    throw new Error(`${co.coNumber}'s cost entry is void, but the change order could not be marked void${error ? ` (${userFacingError(error, { context: "voidChangeOrder" })})` : ""} — it no longer revises the budget and is listed under "Ledger needs attention" on the Costs tab: Reverse it there.`);
   }
 
   await logAuditAction({
@@ -571,13 +572,13 @@ async function lookalikeEntries(co: ChangeOrder): Promise<{ rows: Array<{ id: st
     .eq("project_id", co.projectId).eq("cost_account_id", co.costAccountId)
     .eq("entry_type", "commitment").eq("status", "posted").is("source_document_id", null)
     .eq("reference", co.coNumber).limit(200);
-  if (error) return { rows: [], error: error.message };
+  if (error) return { rows: [], error: userFacingReadError(error, "coEntryCandidates") };
   const rows = ((data ?? []) as Array<{ id: string; amount: unknown; reference: string | null }>)
     .filter((e) => (e.reference ?? "").trim() === co.coNumber);
   if (rows.length === 0) return { rows };
   const { data: taken, error: takenErr } = await supabase.from("change_orders").select("id, posted_entry_id")
     .in("posted_entry_id", rows.map((e) => e.id));
-  if (takenErr) return { rows: [], error: takenErr.message };
+  if (takenErr) return { rows: [], error: userFacingReadError(takenErr, "coEntryCandidates") };
   const used = new Set(((taken ?? []) as Array<{ id: string; posted_entry_id: string | null }>)
     .filter((c) => c.id !== co.id).map((c) => c.posted_entry_id));
   return { rows: rows.filter((e) => !used.has(e.id)) };
@@ -602,14 +603,14 @@ export async function repairChangeOrder(input: {
 }): Promise<void> {
   const { data: row, error: readErr } = await supabase
     .from("change_orders").select("*").eq("id", input.co.id).maybeSingle();
-  if (readErr || !row) throw new Error(readErr?.message ?? "Change order not found.");
+  if (readErr || !row) throw new Error(readErr ? userFacingReadError(readErr, "changeOrder") : "Change order not found.");
   const co = rowToCo(row as Record<string, unknown>);
   if (co.status !== "approved") throw new Error(`${co.coNumber} is ${co.status} — nothing to repair.`);
 
   let current: { id: string; status: string | null } | null = null;
   if (co.postedEntryId) {
     const { data: e, error: eErr } = await supabase.from("cost_entries").select("id, status").eq("id", co.postedEntryId).maybeSingle();
-    if (eErr) throw new Error(`Couldn't read ${co.coNumber}'s cost entry: ${eErr.message}`);
+    if (eErr) throw new Error(`Couldn't read ${co.coNumber}'s cost entry: ${userFacingReadError(eErr, "changeOrder entry")}`);
     current = (e as { id: string; status: string | null } | null) ?? null;
     if (current?.status === "posted") {
       throw new Error(`${co.coNumber}'s cost entry is posted — nothing to repair. Use Reverse on the change-orders panel to unwind it.`);
@@ -623,7 +624,7 @@ export async function repairChangeOrder(input: {
     if (!input.entryId) throw new Error("Pick the cost entry this change order posted.");
     const { data: e, error: eErr } = await supabase.from("cost_entries")
       .select("id, project_id, cost_account_id, entry_type, status, reference, source_document_id").eq("id", input.entryId).maybeSingle();
-    if (eErr) throw new Error(eErr.message);
+    if (eErr) throw new Error(userFacingReadError(eErr, "repairChangeOrder"));
     const entry = e as { id: string; project_id: string | null; cost_account_id: string | null; entry_type: string | null; status: string | null; reference: string | null; source_document_id: string | null } | null;
     if (!entry || entry.project_id !== co.projectId || entry.cost_account_id !== co.costAccountId
       || entry.entry_type !== "commitment" || entry.status !== "posted" || entry.source_document_id
@@ -631,13 +632,13 @@ export async function repairChangeOrder(input: {
       throw new Error(`That entry is not ${co.coNumber}'s: link a POSTED commitment on the change order's budget line whose reference is ${co.coNumber}.`);
     }
     const { data: taken, error: takenErr } = await supabase.from("change_orders").select("id").eq("posted_entry_id", entry.id);
-    if (takenErr) throw new Error(takenErr.message);
+    if (takenErr) throw new Error(userFacingReadError(takenErr, "repairChangeOrder"));
     if (((taken ?? []) as Array<{ id: string }>).some((c) => c.id !== co.id)) {
       throw new Error("That entry is already linked to another change order.");
     }
     const { data: hit, error } = await linkPredicate(supabase.from("change_orders")
       .update({ posted_entry_id: entry.id }).eq("id", co.id).eq("status", "approved")).select("id");
-    if (error) throw new Error(error.message);
+    if (error) throw new Error(userFacingError(error, { context: "repairChangeOrder" }));
     if (!hit || hit.length === 0) throw new Error(NO_ROW_MATCHED);
     await logAuditAction({
       action: "CHANGE_ORDER_REPAIRED", resourceType: "project", resourceId: co.projectId,
@@ -656,7 +657,7 @@ export async function repairChangeOrder(input: {
   const { data: hit, error } = await linkPredicate(supabase.from("change_orders").update({
     status: "void", decision_note: reversalNote(input.actorName, input.note),
   }).eq("id", co.id).eq("status", "approved")).select("id");
-  if (error) throw new Error(error.message);
+  if (error) throw new Error(userFacingError(error, { context: "repairChangeOrder" }));
   if (!hit || hit.length === 0) throw new Error(NO_ROW_MATCHED);
   await logAuditAction({
     action: "CHANGE_ORDER_VOIDED", resourceType: "project", resourceId: co.projectId,

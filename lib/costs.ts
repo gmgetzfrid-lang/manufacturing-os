@@ -19,6 +19,7 @@
 // broken tab is never pixel-identical to an empty one.
 
 import { supabase } from "@/lib/supabase";
+import { userFacingError, userFacingReadError } from "@/lib/userFacingError";
 
 export type CostEntryType = "commitment" | "actual" | "adjustment";
 
@@ -157,7 +158,7 @@ async function audit(action: string, orgId: string, resourceId: string, actor: A
 export async function listParties(orgId: string, projectId: string): Promise<CostParty[]> {
   const { data, error } = await supabase.from("project_parties").select("*")
     .eq("org_id", orgId).eq("project_id", projectId).order("name");
-  if (error) throw new Error(`Couldn't load contractors & vendors: ${error.message}`);
+  if (error) throw new Error(`Couldn't load contractors & vendors: ${userFacingReadError(error, "listParties")}`);
   return (((data ?? []) as Array<Record<string, unknown>>)).map(mapParty);
 }
 
@@ -178,7 +179,7 @@ export async function saveParty(input: {
   if (input.patch.companyId !== undefined) row.company_id = input.patch.companyId || null;
   if (input.id) {
     const { data: hit, error } = await supabase.from("project_parties").update(row).eq("id", input.id).select("id");
-    if (error) return { ok: false, error: error.message };
+    if (error) return { ok: false, error: userFacingError(error, { context: "saveParty" }) };
     if (!hit || hit.length === 0) return { ok: false, error: NO_ROW_MATCHED };
     await audit("COST_PARTY_UPDATED", input.orgId, input.id, input.actor, { patch: input.patch });
     return { ok: true };
@@ -187,7 +188,7 @@ export async function saveParty(input: {
   const { data, error } = await supabase.from("project_parties")
     .insert({ org_id: input.orgId, project_id: input.projectId, created_by: input.actor.uid, ...row })
     .select("id").single();
-  if (error || !data) return { ok: false, error: error?.message ?? "Couldn't create the party." };
+  if (error || !data) return { ok: false, error: error ? userFacingError(error, { context: "saveParty" }) : "Couldn't add the contractor." };
   await audit("COST_PARTY_CREATED", input.orgId, String(data.id), input.actor, { name: row.name });
   return { ok: true };
 }
@@ -197,7 +198,7 @@ export async function saveParty(input: {
 export async function listAccounts(orgId: string, projectId: string): Promise<CostAccount[]> {
   const { data, error } = await supabase.from("cost_accounts").select("*")
     .eq("org_id", orgId).eq("project_id", projectId).order("code", { ascending: true, nullsFirst: false });
-  if (error) throw new Error(`Couldn't load cost accounts: ${error.message}`);
+  if (error) throw new Error(`Couldn't load cost accounts: ${userFacingReadError(error, "listAccounts")}`);
   return (((data ?? []) as Array<Record<string, unknown>>)).map(mapAccount);
 }
 
@@ -223,7 +224,7 @@ export async function saveAccount(input: {
   if (input.id) {
     const { data: before } = await supabase.from("cost_accounts").select("budget, name").eq("id", input.id).maybeSingle();
     const { data: hit, error } = await supabase.from("cost_accounts").update(row).eq("id", input.id).select("id");
-    if (error) return { ok: false, error: error.message };
+    if (error) return { ok: false, error: userFacingError(error, { context: "saveAccount" }) };
     if (!hit || hit.length === 0) return { ok: false, error: NO_ROW_MATCHED };
     await audit("COST_ACCOUNT_UPDATED", input.orgId, input.id, input.actor, {
       before: before ?? null, patch: input.patch,
@@ -234,7 +235,7 @@ export async function saveAccount(input: {
   const { data, error } = await supabase.from("cost_accounts")
     .insert({ org_id: input.orgId, project_id: input.projectId, budget: 0, created_by: input.actor.uid, ...row })
     .select("id").single();
-  if (error || !data) return { ok: false, error: error?.message ?? "Couldn't create the account." };
+  if (error || !data) return { ok: false, error: error ? userFacingError(error, { context: "saveAccount" }) : "Couldn't create the account." };
   await audit("COST_ACCOUNT_CREATED", input.orgId, String(data.id), input.actor, { name: row.name, code: row.code ?? null });
   return { ok: true };
 }
@@ -246,7 +247,7 @@ export async function listEntries(orgId: string, projectId: string): Promise<Cos
     .eq("org_id", orgId).eq("project_id", projectId)
     .order("entry_date", { ascending: false })
     .limit(2000);
-  if (error) throw new Error(`Couldn't load cost entries: ${error.message}`);
+  if (error) throw new Error(`Couldn't load cost entries: ${userFacingReadError(error, "listEntries")}`);
   return (((data ?? []) as Array<Record<string, unknown>>)).map(mapEntry);
 }
 
@@ -281,7 +282,7 @@ export async function addEntry(input: {
     created_by: input.actor.uid,
     created_by_name: input.actor.email?.split("@")[0] ?? null,
   }).select("id").single();
-  if (error || !data) return { ok: false, error: error?.message ?? "Couldn't post the entry." };
+  if (error || !data) return { ok: false, error: error ? userFacingError(error, { context: "addEntry" }) : "Couldn't post the entry." };
   await audit("COST_ENTRY_POSTED", input.orgId, String(data.id), input.actor, {
     accountId: input.costAccountId, type: input.entryType, amount: input.amount, reference: input.reference ?? null,
     sourceDocumentId: input.sourceDocumentId ?? null,
@@ -308,7 +309,7 @@ export async function voidEntry(input: {
   // void is a zero-row match, and a zero-row match writes NO audit row.
   const { data: hit, error } = await supabase.from("cost_entries").update({ status: "void" })
     .eq("id", input.entryId).eq("status", "posted").select("id");
-  if (error) return { ok: false, error: error.message };
+  if (error) return { ok: false, error: userFacingError(error, { context: "voidEntry" }) };
   if (!hit || hit.length === 0) return { ok: false, error: NO_ROW_MATCHED };
   await audit("COST_ENTRY_VOIDED", input.orgId, input.entryId, input.actor, { before: before ?? null });
   return { ok: true };

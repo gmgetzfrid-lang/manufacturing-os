@@ -20,6 +20,7 @@ import {
 } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { supabase } from "@/lib/supabase";
+import { userFacingError, classifyDbError } from "@/lib/userFacingError";
 import { createProject } from "@/lib/projects";
 import { seedTurnoverItems } from "@/lib/turnover";
 import { listCompanies, type Company } from "@/lib/companies";
@@ -183,11 +184,11 @@ export default function ProjectWizard({ orgId, actorUserId, actorEmail, actorRol
   const writeDeps = (projectId: string): WizardWriteDeps => ({
     updateProject: async (patch) => {
       const { error } = await supabase.from("projects").update(patch).eq("id", projectId);
-      return { error: error ? { message: error.message, code: error.code } : null };
+      return { error: error ? wizardWriteError(error) : null };
     },
     insertRows: async (table, rows) => {
       const { error } = await supabase.from(table).insert(rows);
-      return { error: error ? { message: error.message, code: error.code } : null };
+      return { error: error ? wizardWriteError(error) : null };
     },
     seedTurnover: () => seedTurnoverItems({
       orgId, projectId, jobKind, actor: { uid: actorUserId, email: actorEmail ?? null },
@@ -605,6 +606,17 @@ export default function ProjectWizard({ orgId, actorUserId, actorEmail, actorRol
         </div>
     </Modal>
   );
+}
+
+/** REL-3: what the wizard's failure list shows for a refused follow-up
+ *  write — a sentence, never the driver's text. A pending migration keeps
+ *  its code so the list can say which fields wait on it. */
+function wizardWriteError(error: { message: string; code?: string | null }): { message: string; code: string | null } {
+  const kind = classifyDbError(error);
+  return {
+    message: kind === "migration" ? "apply the latest database migration" : userFacingError(error, { context: "project wizard" }),
+    code: error.code ?? null,
+  };
 }
 
 function rows<T>(arr: T[], i: number, patch: Partial<T>): T[] {

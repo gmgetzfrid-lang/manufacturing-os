@@ -738,7 +738,8 @@ describe("legacy (pre-Round-G) entries attend their document — never a second 
     expect(o).toEqual({ available: false, docs: [], changeOrders: [] });
     // any other probe failure is a failed read (REL-2), never "nothing wrong"
     db.fail["cost_ledger_orphans:select"] = [{ message: "permission denied for view cost_ledger_orphans" }];
-    await expect(listLedgerOrphans("o1", "p1")).rejects.toThrow(/Couldn't check the ledger for orphans: permission denied/);
+    // REL-3 (J10): in words, not the driver's
+    await expect(listLedgerOrphans("o1", "p1")).rejects.toThrow("Couldn't check the ledger for orphans: You don't have permission to see this.");
   });
 
   it("the linked-entry check reads only this project's moved documents, in chunks — a large project never mis-lists a healthy award", async () => {
@@ -784,7 +785,7 @@ describe("approved change orders whose entry is gone — budget, listing, unwind
     expect(approvedChangesByAccount(cos).get("a1")).toBe(149 * 100);
     // a failed entry read is a failed read (REL-2), never a budget that silently dropped its changes
     db.fail["cost_entries:select"] = [{ message: "statement timeout" }];
-    await expect(listChangeOrders("p1")).rejects.toThrow(/Couldn't read the change orders' cost entries: statement timeout/);
+    await expect(listChangeOrders("p1")).rejects.toThrow("Couldn't read the change orders' cost entries: The database took too long to answer — try again.");
   });
 
   it("COST-4 (verification fix): the CO tiles and the report figure count by the same rule as the revised budget", async () => {
@@ -959,7 +960,7 @@ describe("MON-12 / COST-8 / MON-10 — registry lookups fail closed, currencies 
     db.fail["project_parties:select"] = [{ message: "statement timeout" }];
     const res = await awardQuote({ doc: doc({ partyId: "pp1" }), siblings: [], costAccountId: "a1", actor });
     expect(res.ok).toBe(false);
-    expect(res.error).toMatch(/Couldn't check the company registry \(statement timeout\)/);
+    expect(res.error).toMatch(/Couldn't check the company registry \(The database took too long to answer — try again\.\)/);
     expect(db.tables.cost_documents[0].status).toBe("parsed");
     db.fail["companies:select"] = [{ message: "timeout" }];
     const byName = await awardQuote({ doc: doc(), siblings: [], costAccountId: "a1", actor });
@@ -1048,7 +1049,7 @@ describe("checked writes and honest reads (SAF-3 / REL-2)", () => {
 
   it("REL-2: a failed read THROWS instead of returning an empty list", async () => {
     db.fail["cost_accounts:select"] = [{ message: "permission denied for table cost_accounts" }];
-    await expect(listAccounts("o1", "p1")).rejects.toThrow(/Couldn't load cost accounts: permission denied/);
+    await expect(listAccounts("o1", "p1")).rejects.toThrow("Couldn't load cost accounts: You don't have permission to see this.");
     db.fail["cost_documents:select"] = [{ message: "relation does not exist" }];
     await expect(listCostDocs("o1", "p1")).rejects.toThrow(/Couldn't load quotes & invoices/);
   });

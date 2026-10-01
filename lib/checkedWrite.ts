@@ -31,6 +31,8 @@
 // lib/__tests__/checkedWrite.test.ts censuses lib/checklists.ts and
 // lib/turnover.ts for any update/delete that bypasses this helper.
 
+import { userFacingError } from "@/lib/userFacingError";
+
 export const CHECKED_WRITE_REFUSED =
   "Nothing was changed — you don't have permission to do this, or someone else changed it first. Reload and try again.";
 
@@ -56,8 +58,10 @@ export function isMissingSchemaError(err: PgErrorLike): boolean {
     || /in the schema cache/i.test(msg);
 }
 
-/** Plain language for the two error shapes the Projects area meets most,
- *  the raw message for the rest (never thrown, always returned). */
+/** Plain language for the two error shapes the Projects area meets most;
+ *  the rest go through lib/userFacingError (REL-3): raw driver text is
+ *  mapped to a sentence, a rail's own refusal passes through as written
+ *  (never thrown, always returned). */
 export function describeWriteError(err: PgErrorLike): string {
   const code = err.code ?? "";
   const msg = err.message ?? "";
@@ -73,7 +77,7 @@ export function describeWriteError(err: PgErrorLike): string {
   if (code === "55P03" || /lock timeout/i.test(msg)) {
     return "Someone is changing or deleting this checklist right now — nothing was changed. Try again.";
   }
-  return msg || "The write failed — nothing was changed.";
+  return msg ? userFacingError(err, { context: "checkedWrite" }) : "The write failed — nothing was changed.";
 }
 
 /**
