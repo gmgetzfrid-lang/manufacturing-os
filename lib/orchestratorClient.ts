@@ -53,15 +53,13 @@ export interface OrchestratorReply {
 }
 
 /**
- * Ask the controller.
- *
- * `approved` carries fingerprints the user ticked. It's deliberately per-call:
- * approving a checkout doesn't leave the door open for the next question.
+ * Ask the controller. A run never executes a write (ORCH-10): write tools
+ * come back as pending proposals, confirmed one at a time through
+ * executeAction.
  */
 export async function askOrchestrator(
   orgId: string,
   question: string,
-  approved: string[] = [],
   signal?: AbortSignal,
 ): Promise<OrchestratorReply> {
   const { data: { session } } = await supabase.auth.getSession();
@@ -70,7 +68,7 @@ export async function askOrchestrator(
   const res = await fetch("/api/orchestrator", {
     method: "POST",
     headers: { "content-type": "application/json", authorization: `Bearer ${session.access_token}` },
-    body: JSON.stringify({ orgId, question, approved }),
+    body: JSON.stringify({ orgId, question }),
     signal,
   });
   const data = (await res.json().catch(() => null)) as (OrchestratorReply & { error?: string }) | null;

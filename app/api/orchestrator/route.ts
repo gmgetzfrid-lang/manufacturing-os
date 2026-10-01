@@ -1,6 +1,6 @@
 // /api/orchestrator — the document controller you can talk to.
 //
-// POST { orgId, question, approved?: string[] } →
+// POST { orgId, question } →
 //   { answer, steps, pending, provider, model, budget }
 //
 // Everything the knowledge ask route enforces, this enforces too, because it
@@ -9,10 +9,11 @@
 // metering row per run. The only difference is what happens in the middle —
 // instead of one retrieval and one answer, the model drives a tool loop.
 //
-// `approved` carries fingerprints the user ticked in the UI. It is the ONLY
-// way a write tool executes, and it is scoped to the run it's sent with: an
-// approval is for a specific action with specific parameters, not a standing
-// permission to act.
+// A run never executes a write (ORCH-10). Write tools only PROPOSE; each
+// proposal is stored server-side for this person (ORCH-4) and runs, once,
+// only through /api/orchestrator/execute, which writes AI_ACTION_EXECUTED
+// before the tool acts. There is no in-run approval: an `approved` field in
+// the body is ignored, and the tools run with an empty approval set.
 
 import { NextRequest, NextResponse } from "next/server";
 import { supabaseAdmin } from "@/lib/supabaseAdmin";
@@ -45,20 +46,11 @@ export async function POST(req: NextRequest) {
   const { data: { user }, error: authError } = await supabaseAdmin.auth.getUser(authHeader.slice(7));
   if (authError || !user) return bad("Unauthorized", 401);
 
-  let body: { orgId?: string; question?: string; approved?: unknown };
+  let body: { orgId?: string; question?: string };
   try { body = await req.json(); } catch { return bad("Expected JSON body"); }
   const orgId = String(body.orgId ?? "").trim();
   const question = String(body.question ?? "").trim().slice(0, 2000);
   if (!orgId || !question) return bad("orgId and question are required");
-
-  // Approvals arrive as opaque fingerprints. They're only ever compared, never
-  // parsed, so a forged one can at worst approve an action the model didn't
-  // propose — and the tool still re-checks role and org before it acts.
-  const approved = new Set(
-    Array.isArray(body.approved)
-      ? body.approved.filter((a): a is string => typeof a === "string").slice(0, 20)
-      : [],
-  );
 
   // SURF-7 / EGRESS-3: the caller's ACL principal — role COLLECTION, teams,
   // controller tier — is what every tool filters through. The service-role
@@ -136,7 +128,8 @@ export async function POST(req: NextRequest) {
     return { text: out.text, usage: out.usage };
   };
 
-  const ctx: ToolContext = { orgId, userId: user.id, role, approved, principal, actorName };
+  // ORCH-10: nothing is pre-approved in a run — every write tool proposes.
+  const ctx: ToolContext = { orgId, userId: user.id, role, approved: new Set<string>(), principal, actorName };
 
   let run;
   try {

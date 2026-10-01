@@ -32,7 +32,8 @@ interface Exchange {
   question: string;
   reply?: OrchestratorReply;
   error?: string;
-  /** Fingerprints the user confirmed on this exchange. */
+  /** Fingerprints whose confirmation ran on this exchange (display only —
+   *  never sent back to the server; ORCH-10). */
   approved: string[];
   /** Per-fingerprint outcome of a confirmed action ("sent", an error, …). */
   outcomes: Record<string, { ok: boolean; note: string }>;
@@ -65,14 +66,14 @@ export default function AssistantPage() {
     bottomRef.current?.scrollIntoView({ behavior: "smooth", block: "end" });
   }, [exchanges]);
 
-  const run = useCallback(async (id: string, text: string, approved: string[]) => {
+  const run = useCallback(async (id: string, text: string) => {
     if (!activeOrgId) return;
     abortRef.current?.abort();
     const controller = new AbortController();
     abortRef.current = controller;
     setBusy(true);
     try {
-      const reply = await askOrchestrator(activeOrgId, text, approved, controller.signal);
+      const reply = await askOrchestrator(activeOrgId, text, controller.signal);
       setExchanges((xs) => xs.map((x) => (
         x.id === id ? { ...x, reply, error: undefined } : x
       )));
@@ -94,7 +95,7 @@ export default function AssistantPage() {
     const id = `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
     setExchanges((xs) => [...xs, { id, question: trimmed, approved: [], outcomes: {} }]);
     setQuestion("");
-    void run(id, trimmed, []);
+    void run(id, trimmed);
   }, [busy, run]);
 
   // Confirming a write executes EXACTLY the proposed action server-side —

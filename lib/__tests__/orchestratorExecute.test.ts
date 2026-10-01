@@ -499,3 +499,31 @@ describe("DEC-68 handoff — check_audit_history never answers 'already audited'
   });
 });
 
+describe("ORCH-10 — one write path, audited: a run never executes a write", () => {
+  it("a run sent `approved: [the exact fingerprint]` while the model emits that exact call still only PROPOSES — nothing written, nothing audited", async () => {
+    const fp = "log_audit_completion(revision=C&sheet_number=025-PID-0103&status=broken_connectors)";
+    net.script = [AUDIT_CALL, "Recorded? No — proposed."];
+    const res = await runPOST(req("http://test/api/orchestrator", "dc", { orgId: ORG, question: "record it", approved: [fp] }));
+    expect(res.status).toBe(200);
+    const body = await res.json() as Record<string, unknown>;
+    expect(pendingOf(body)).toHaveLength(1);
+    expect(pendingOf(body)[0].fingerprint).toBe(fp);
+    expect(rowsOf("drawing_audit_logs")).toHaveLength(0);
+    expect(rowsOf("audit_logs")).toHaveLength(0);
+  });
+
+  it("pinned at the source: the run route reads no approvals and runs the tools with an empty set; only /execute approves, and only a stored fingerprint", () => {
+    const run = readFileSync(join(process.cwd(), "app/api/orchestrator/route.ts"), "utf8");
+    expect(run).not.toMatch(/body\.approved/);
+    expect(run).toMatch(/approved: new Set<string>\(\)/);
+    const exec = readFileSync(join(process.cwd(), "app/api/orchestrator/execute/route.ts"), "utf8");
+    expect(exec).toMatch(/approved: new Set\(\[proposal\.fingerprint\]\)/);
+    expect(exec).not.toMatch(/fingerprint\(def\.name/);
+    // The audit insert is checked, and comes before the tool runs.
+    expect(exec.indexOf('action: "AI_ACTION_EXECUTED"')).toBeLessThan(exec.indexOf("def.run(checked.values, ctx)"));
+    expect(exec).not.toMatch(/\.then\(\(\) => undefined, \(\) => undefined\)/);
+    const client = readFileSync(join(process.cwd(), "lib/orchestratorClient.ts"), "utf8");
+    expect(client).not.toMatch(/approved/);
+  });
+});
+
