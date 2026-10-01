@@ -32,6 +32,12 @@
 // unmarked, a grantee's delete refused, a signed record or a required item a
 // controller's to delete, cascade and purge passing — and the 3-argument
 // wrapper still executable by anon, which the probe and the records now say.
+// The second review fix re-ran it (18 probes true twice, 50 scenarios): a
+// completed checklist voided or reopened only by a controller and a
+// once-signed checklist deleted only by one (the void-then-delete gap), no
+// checklist or turnover item moved between projects, anon reading 0 rows
+// with no error, the capability admitting no controller by token while the
+// eligible set still does; the pre-fix file failed 22 of those scenarios.
 // These pins keep the file from drifting from those runs.
 
 import { describe, it, expect, vi, beforeEach } from "vitest";
@@ -89,11 +95,17 @@ beforeEach(() => {
 describe("quality.sign_off — the capability (dw1, DEC-13 / DEC-35)", () => {
   const def = CAPABILITY_DEFS.find((d) => d.id === "quality.sign_off");
 
-  it("exists in the Quality area with today's writers as its default (the controller pair; the owner is identity, not a token), and is not critical", () => {
+  it("exists in the Quality area, grants nobody by default and is not critical: controllers and the owner are STANDING holders, not tokens a grid could untick", () => {
     expect(def).toBeDefined();
     expect(def!.area).toBe("Quality");
-    expect(def!.defaultRoles).toEqual(["Admin", "DocCtrl"]);
+    // the review: with ["Admin","DocCtrl"] as the default, unticking DocCtrl in
+    // the permissions grid changed nothing (is_org_controller admits them in
+    // every policy) — the row now grants only BEYOND the standing holders
+    expect(def!.defaultRoles).toEqual([]);
     expect(def!.critical).toBeUndefined();
+    expect(def!.dormant).toBeUndefined();
+    // the grid shows the description under the label: the standing holders are said there
+    expect(def!.description).toMatch(/^Grants more people what Admin, Document Control and the project owner can always do, whatever this row says/);
   });
 
   it("projectId is a resource key, so a rule can name one project (and the policy validates)", () => {
@@ -107,9 +119,16 @@ describe("quality.sign_off — the capability (dw1, DEC-13 / DEC-35)", () => {
     expect(policyAllows(policy, "quality.sign_off", "Safety", ["Safety"], SAFETY, { projectId: "p1" })).toBe(true);
     expect(policyAllows(policy, "quality.sign_off", "Safety", ["Safety"], SAFETY, { projectId: "p2" })).toBe(false);
     expect(policyAllows(policy, "quality.sign_off", "Safety", ["Safety"], SAFETY)).toBe(false);
-    // an unconfigured org: the controller pair only (no role widened)
+    // an unconfigured org grants nobody beyond the standing holders (no role
+    // widened); a controller's authority is the policies' is_org_controller
+    // clause and quality_signer_eligible's is_org_controller_for, not this token
     expect(policyAllows({}, "quality.sign_off", "Safety", ["Safety"], SAFETY, { projectId: "p1" })).toBe(false);
-    expect(policyAllows({}, "quality.sign_off", "Manager", ["Manager", "DocCtrl"], ADMIN, { projectId: "p1" })).toBe(true);
+    expect(policyAllows({}, "quality.sign_off", "Manager", ["Manager", "DocCtrl"], ADMIN, { projectId: "p1" })).toBe(false);
+    // a rule naming only the project is enough (the base list stays empty)
+    const scopedOnly: CapabilityPolicy = { caps: { "quality.sign_off": [{ tokens: ["Safety"], when: { projectId: ["p1"] } }] } };
+    expect(validateCapabilityPolicy(scopedOnly)).toBeNull();
+    expect(policyAllows(scopedOnly, "quality.sign_off", "Safety", ["Safety"], SAFETY, { projectId: "p1" })).toBe(true);
+    expect(policyAllows(scopedOnly, "quality.sign_off", "Safety", ["Safety"], SAFETY, { projectId: "p2" })).toBe(false);
     // a personal grant is org-wide (WF-13 row 6) — every project the person can see
     expect(policyAllows({ grants: [{ cap: "quality.sign_off", uid: SAFETY }] }, "quality.sign_off", "Safety", ["Safety"], SAFETY, { projectId: "p2" })).toBe(true);
   });
@@ -268,6 +287,23 @@ describe("setChecklistStatus('complete') — QUAL-4", () => {
     }
     expect(ceremony.calls).toHaveLength(0);
   });
+
+  // The review's major: a second person's signed completion could be voided or
+  // reopened by any writer — no reason, no signature — and then deleted.
+  // 20261136 keeps the undo of a COMPLETED checklist to controllers; the lib
+  // returns the database's refusal as the error and audits nothing.
+  it("undoing a COMPLETED checklist is a controller's: the database's refusal comes back as the error, nothing audited, nothing signed", async () => {
+    state.tables.project_checklists[0].status = "complete";
+    state.writeError = { message: "A completed checklist is a signed sign-off — only Admin / Document Control reopens or voids it. Nothing was changed. QUAL-4, 20261136", code: "23514" };
+    for (const status of ["open", "void"] as const) {
+      const res = await setChecklistStatus({ orgId: "o1", projectId: "p1", checklist: checklist({ status: "complete" }), status, actor: actorOf(OW) });
+      expect(res.ok, status).toBe(false);
+      expect(res.error, status).toMatch(/only Admin \/ Document Control reopens or voids it/);
+    }
+    expect(audits()).toHaveLength(0);
+    expect(ceremony.calls).toHaveLength(0);
+    expect(state.tables.project_checklists[0].status).toBe("complete");
+  });
 });
 
 // ── the turnover acceptance ────────────────────────────────────────────────
@@ -398,7 +434,18 @@ describe("20261136 — one paste (DEC-30)", () => {
   });
   it("carries the DEC-30 informational counts the plan names: self-completed checklists, owner-accepted turnover on projects with other members", () => {
     expect(m136).toContain("completed checklists whose completion audit row names their own author");
-    expect(m136).toContain("accepted turnover items whose reviewer is the project owner, on projects whose org has other active members");
+    // the review: "the org has other active members" counted members who could
+    // never sign — the measure is another ELIGIBLE signer on that project (an
+    // active controller other than the owner: the only other writer before
+    // 20261136), plus the plan's literal reading, another active project member
+    const inventory = m136.slice(m136.indexOf("CREATE TEMP TABLE prj_roundg_signoff_before AS"), m136.indexOf("\nBEGIN;"));
+    expect(inventory).toContain("accepted turnover items whose reviewer is the project owner, on projects where another eligible signer existed");
+    expect(inventory).toContain("AND is_org_controller_for(p.org_id, m.uid)))::text");
+    expect(inventory).toContain("accepted turnover items whose reviewer is the project owner, on projects with another active project member (project_members");
+    expect(inventory).toMatch(/FROM project_members pm\s+JOIN org_members m ON m\.org_id = p\.org_id AND m\.uid::text = pm\.user_id::text AND m\.status = 'active'/);
+    expect(inventory).not.toContain("on projects whose org has other active members");
+    // is_org_controller_for exists before the inventory runs: the apply-order guard refuses without 20261125
+    expect(m136.indexOf("to_regprocedure('public.is_org_controller_for(uuid,uuid)') IS NULL")).toBeLessThan(m136.indexOf("CREATE TEMP TABLE prj_roundg_signoff_before AS"));
     expect(m136).toContain("stored capability rules conditioned on a projectId (expect 0");
   });
 });
@@ -409,7 +456,7 @@ describe("20261136 — org_capability_allows_for re-created from 20261132 (lineD
   const fn136 = fnBody(m136, H);
   const OLD_KEYS = "ARRAY['requestType', 'unit', 'libraryId', 'discipline']";
   const NEW_KEYS = `ARRAY[${RESOURCE_KEYS.map((k) => `'${k}'`).join(", ")}]`;
-  const ADDED = `      WHEN 'quality.sign_off'         THEN '["Admin","DocCtrl"]'::jsonb`;
+  const ADDED = `      WHEN 'quality.sign_off'         THEN '[]'::jsonb`;
 
   it("starts from the NEWEST definition: 20261132 was the last file to re-create the evaluator, and this is the newest now", () => {
     const definers = numbered.filter((f) => read(f).includes(`${H}(`));
@@ -442,28 +489,46 @@ describe("20261136 — org_capability_allows_for re-created from 20261132 (lineD
   });
 });
 
-describe("20261136 — the four write policies: replaced, newest body + one disjunct (DRLS-1)", () => {
+describe("20261136 — the four write policies: replaced, newest body + one disjunct + TO authenticated (DRLS-1)", () => {
   const OWNER = "user_owns_project(project_id))";
   const OWNER_OR = "user_owns_project(project_id) OR quality_signoff_granted(org_id, project_id))";
+  // The review: the policies had no TO clause, so anon evaluated them — and
+  // anon has no EXECUTE on quality_signoff_granted, which PostgreSQL checks
+  // while planning the policy: an anonymous read raised "permission denied
+  // for function" where it used to return no rows. One clause, the same bodies.
+  const toAuthenticated = (body: string) => {
+    expect(body.split(" FOR ALL\n").length - 1).toBe(1);
+    return body.replace(" FOR ALL\n", " FOR ALL TO authenticated\n");
+  };
 
-  it("project_checklists_write = 20261091's body with the disjunct on USING and WITH CHECK", () => {
+  it("project_checklists_write = 20261091's body with the disjunct on USING and WITH CHECK, TO authenticated", () => {
     const base = policy(m91, "project_checklists_write");
-    expect(policy(m136, "project_checklists_write")).toBe(base.split(OWNER).join(OWNER_OR));
+    expect(policy(m136, "project_checklists_write")).toBe(toAuthenticated(base).split(OWNER).join(OWNER_OR));
     expect(base.split(OWNER).length - 1).toBe(2);
   });
-  it("checklist_items_write = 20261091's body with the disjunct inside the checklist lookup, on USING and WITH CHECK", () => {
+  it("checklist_items_write = 20261091's body with the disjunct inside the checklist lookup, on USING and WITH CHECK, TO authenticated", () => {
     const base = policy(m91, "checklist_items_write");
     const before = "AND user_owns_project(c.project_id)))";
     const after = "AND (user_owns_project(c.project_id) OR quality_signoff_granted(c.org_id, c.project_id))))";
     expect(base.split(before).length - 1).toBe(2);
-    expect(policy(m136, "checklist_items_write")).toBe(base.split(before).join(after));
+    expect(policy(m136, "checklist_items_write")).toBe(toAuthenticated(base).split(before).join(after));
   });
-  it("turnover_items_write / punch_items_write = 20261013's bodies (their newest) with the disjunct", () => {
+  it("turnover_items_write / punch_items_write = 20261013's bodies (their newest) with the disjunct, TO authenticated", () => {
     for (const name of ["turnover_items_write", "punch_items_write"]) {
       const base = policy(m13, name);
       expect(base.split(OWNER).length - 1, name).toBe(2);
-      expect(policy(m136, name), name).toBe(base.split(OWNER).join(OWNER_OR));
+      expect(policy(m136, name), name).toBe(toAuthenticated(base).split(OWNER).join(OWNER_OR));
     }
+  });
+  it("every policy that calls quality_signoff_granted is TO authenticated — the helper anon cannot execute is never in a policy anon evaluates", () => {
+    const code = codeOnly(m136);
+    const policies = [...code.matchAll(/CREATE POLICY (\w+) ON (\w+) FOR ALL([^\n]*)\n[\s\S]*?;/g)];
+    expect(policies).toHaveLength(4);
+    for (const p of policies) {
+      expect(p[0], p[1]).toContain("quality_signoff_granted(");
+      expect(p[3].trim(), p[1]).toBe("TO authenticated");
+    }
+    expect(m136).toContain("REVOKE ALL ON FUNCTION quality_signoff_granted(uuid, uuid) FROM anon;");
   });
   it("each is DROPped and re-created under its own name — no second permissive policy beside it; 20261136 is the newest definition of all four", () => {
     for (const name of ["project_checklists_write", "checklist_items_write", "turnover_items_write", "punch_items_write"]) {
@@ -523,6 +588,34 @@ describe("20261136 — the sign-off helpers and rails", () => {
     expect(r).toContain("NEW.completed_single_signer := (OLD.created_by IS NOT NULL AND OLD.created_by = v_uid);");
     expect(r).toContain("A completed checklist keeps its sign-off");
   });
+  it("the checklist rail (review major): a COMPLETED checklist is reopened or voided by a controller only — before the completion record is cleared — and a checklist never changes project", () => {
+    const r = fnBody(m136, "CREATE OR REPLACE FUNCTION project_checklists_signoff_rail()");
+    const undo = "  IF OLD.status = 'complete' AND NEW.status IS DISTINCT FROM 'complete'\n     AND NOT is_org_controller(OLD.org_id) THEN\n    RAISE EXCEPTION 'A completed checklist is a signed sign-off — only Admin / Document Control reopens or voids it.";
+    expect(r).toContain(undo);
+    // check_violation, not insufficient_privilege: describeWriteError keeps the message (42501 becomes a generic line)
+    expect(r.slice(r.indexOf(undo), r.indexOf("END IF;", r.indexOf(undo)))).toContain("USING ERRCODE = 'check_violation';");
+    const move = "  IF NEW.project_id IS DISTINCT FROM OLD.project_id THEN\n    RAISE EXCEPTION 'A checklist stays on the project it was written for";
+    expect(r).toContain(move);
+    // both run on every signed-in UPDATE, after the author check and before anything is stamped or cleared
+    const order = [
+      "IF TG_OP = 'INSERT' THEN",
+      "IF NEW.created_by IS DISTINCT FROM OLD.created_by THEN",
+      move,
+      undo,
+      "NEW.status_changed_at := CASE WHEN NEW.status IS DISTINCT FROM OLD.status",
+      "-- Not complete: no completion record (the signature row itself stays).",
+    ];
+    let at = -1;
+    for (const line of order) { const i = r.indexOf(line); expect(i, line).toBeGreaterThan(at); at = i; }
+    // the service pass (restores, server routes) still passes first
+    expect(r.indexOf("IF v_uid IS NULL THEN RETURN NEW; END IF;")).toBeLessThan(r.indexOf(undo));
+    // no product path reopens or voids a checklist: the tab calls setChecklistStatus for "complete" only
+    const tab = src("components/projects/QualityTab.tsx");
+    expect((tab.match(/setChecklistStatus\(/g) ?? []).length).toBe(1);
+    expect(tab).toContain('setChecklistStatus({ orgId, projectId, checklist, status: "complete"');
+    // an org always keeps an active Admin (the last-Admin guard), so a controller exists to undo one
+    expect(read("20260831_capability_policy_and_rails.sql")).toContain("CREATE OR REPLACE FUNCTION prevent_last_admin_removal()");
+  });
   it("the turnover rail: creator stamped and never rewritten; never born accepted or waived; self-acceptance AND self-waiver refused while others can sign; a fresh signature on THIS item, newer than its last history row", () => {
     const r = fnBody(m136, "CREATE OR REPLACE FUNCTION turnover_items_signoff_rail()");
     expect(r).toContain("IF v_uid IS NULL THEN RETURN NEW; END IF;");
@@ -533,6 +626,13 @@ describe("20261136 — the sign-off helpers and rails", () => {
     expect(r).not.toMatch(/NEW\.status = 'accepted'/);
     // a required item leaves only by a signed waiver
     expect(r).toContain("IF OLD.required AND NOT NEW.required THEN");
+    // nor by a project move (review minor): no item changes project for a signed-in writer
+    expect(r).toContain("  IF NEW.project_id IS DISTINCT FROM OLD.project_id THEN\n    RAISE EXCEPTION 'A turnover item stays in the package it was added to");
+    expect(r.indexOf("IF NEW.project_id IS DISTINCT FROM OLD.project_id THEN")).toBeGreaterThan(r.indexOf("IF OLD.required AND NOT NEW.required THEN"));
+    expect(r.indexOf("IF NEW.project_id IS DISTINCT FROM OLD.project_id THEN")).toBeLessThan(r.indexOf("IF NEW.status IN ('accepted', 'waived') AND NEW.status IS DISTINCT FROM OLD.status THEN"));
+    // no product path moves one: the only project_id the lib writes is an insert's (two turnover inserts, one punch insert)
+    expect(src("lib/turnover.ts").match(/project_id:/g)).toHaveLength(3);
+    expect(src("lib/turnover.ts").match(/project_id: input\.projectId,/g)).toHaveLength(3);
     expect(r).toContain("v_others := quality_other_signers(NEW.org_id, NEW.project_id, v_uid);");
     expect(r).toContain("SELECT max(h.created_at) INTO v_since FROM turnover_review_events h WHERE h.item_id = NEW.id;");
     expect(r).toContain(`AND s.resource_type = '${QUALITY_SIGNOFF_RESOURCE.turnoverItem}'`);
@@ -558,7 +658,10 @@ describe("20261136 — the sign-off helpers and rails", () => {
       "IF pg_trigger_depth() > 1 THEN RETURN OLD; END IF;",
       "IF COALESCE(current_setting('app.record_purge', true), '') = 'project:' || OLD.project_id::text THEN",
       "IF is_org_controller(OLD.org_id) THEN RETURN OLD; END IF;",
-      "IF TG_TABLE_NAME = 'project_checklists' AND v_status = 'complete' THEN",
+      "IF TG_TABLE_NAME = 'project_checklists'\n     AND (v_status = 'complete'",
+      // the review: void (or reopen) then delete erased a signed completion —
+      // a checklist that EVER carried a signature is a controller's to delete
+      "OR EXISTS (SELECT 1 FROM e_signatures e\n                      WHERE e.org_id = OLD.org_id\n                        AND e.resource_type = 'project_checklist'\n                        AND e.resource_id = OLD.id)) THEN",
       "AND (v_status IN ('accepted', 'waived') OR COALESCE((v_old->>'required')::boolean, true)) THEN",
       "IF NOT user_owns_project(OLD.project_id) THEN",
       "AND NOT EXISTS (SELECT 1 FROM checklist_items i WHERE i.checklist_id = OLD.id) THEN",
@@ -578,7 +681,7 @@ describe("20261136 — the sign-off helpers and rails", () => {
   });
   it("probes cover the evaluator, the policies, the helpers' grants, the columns and every rail", () => {
     for (const label of [
-      "the evaluator carries the quality.sign_off default (Admin, DocCtrl) and every earlier default",
+      "the evaluator carries the quality.sign_off default (none — controllers and the project owner sign off by standing, not through the capability) and every earlier default",
       "the evaluator reads five resource keys (projectId added) in both rule passes",
       // only the resource-aware entry point is closed to anon; the wrapper's default grant is said, not claimed closed
       "anon cannot execute the resource-aware evaluator org_capability_allows_for; authenticated and service_role can (DRLS-16) — the 3-argument wrapper keeps its default grant",
@@ -586,15 +689,30 @@ describe("20261136 — the sign-off helpers and rails", () => {
       "checklist_items_write is the ONLY permissive write policy on checklist_items",
       "turnover_items_write is the ONLY permissive write policy on turnover_items",
       "punch_items_write is the ONLY permissive write policy on punch_items",
+      "the four write policies apply TO authenticated only",
       "the sign-off record columns exist",
+      "keeps a completed checklist's reopen or void to controllers, and never moves a checklist to another project",
       "both sign-off rails fire BEFORE INSERT OR UPDATE",
       "the turnover rail treats an acceptance AND a waiver as a sign-off",
+      "never moves an item to another project",
       "the delete rail fires BEFORE DELETE on project_checklists, turnover_items and punch_items",
-    ]) expect(tail, label).toContain(label);
+      "a signed sign-off (a checklist carrying a signature, completed or not)",
+    ]) expect(tail, label.replace(/'/g, "''")).toContain(label.replace(/'/g, "''"));
     expect(tail).not.toContain("anon cannot execute the evaluator;");
     // the AFTER count includes open items (every seeded item is born open)
     expect(tail).toContain("WHERE t.status NOT IN ('accepted', 'waived') AND t.created_by IS NOT NULL");
     expect(tail).not.toContain("t.status IN ('received', 'rejected')");
+    // 18 probes: every probe row carries `NULL::text` as n (the first spells `NULL::text AS n`)
+    expect((codeOnly(tail).match(/NULL::text(?! AS n)/g) ?? []).length + (codeOnly(tail).match(/NULL::text AS n/g) ?? []).length).toBe(18);
+    // the review: the AFTER rows ask quality_other_signers once per (org, project, author), never once per row
+    const after = tail.slice(tail.indexOf("SELECT label, NULL::boolean, n FROM prj_roundg_signoff_before"));
+    const helperCalls = [...after.matchAll(/quality_other_signers\(([^)]*)\)/g)].map((m) => m[1]);
+    expect(helperCalls).toEqual(["g.org_id, g.project_id, g.created_by", "g.org_id, g.project_id, g.created_by", "g.org_id, g.project_id, g.created_by"]);
+    expect((after.match(/GROUP BY (c|t)\.org_id, (c|t)\.project_id, (c|t)\.created_by\) g/g) ?? []).length).toBe(3);
+    expect((after.match(/COALESCE\(SUM\(g\.n\), 0\)::text/g) ?? []).length).toBe(3);
+    // the grid row grants beyond the standing holders: no AFTER row compares it to the controller pair
+    expect(tail).not.toContain("controller-pair answer differs");
+    expect(tail).toContain("AFTER: active controllers (Admin / Document Control) — standing signers on every project they can see");
     // deparsed policy text is matched on the function call, never a bare cast
     expect(tail).toContain("qual LIKE '%quality_signoff_granted(org_id, project_id)%'");
     expect(tail).toContain("with_check LIKE '%quality_signoff_granted(c.org_id, c.project_id)%'");

@@ -152,18 +152,21 @@ export const CAPABILITY_DEFS: CapabilityDef[] = [
   { id: "transmittal.issue", area: "Transmittals", label: "Issue transmittals",
     description: "Issue a drafted transmittal to its recipient, void it, revoke its portal link and record a receipt on the recipient's behalf. Every member may draft. Enforced at the database, which reads this policy per item library.",
     defaultRoles: ["Admin", "DocCtrl"] },
-  // QUAL-4 (projects Round G, J2b): who may record and sign off a project's
-  // quality decisions — checklists, turnover, punch. The default is today's
-  // writers: the controller pair the four quality write policies name (the
-  // project OWNER keeps the owner disjunct — identity, not a token). A
-  // discipline reviewer is GRANTED it — org-wide, or for one project by a
-  // rule scoped on projectId (DEC-13) — never named in code (DEC-35), and
-  // never by widening project_members.role. Enforced at the database
-  // (20261136: the write policies, the separation-of-duties rail and the
-  // signed sign-off), which evaluates it per project.
+  // QUAL-4 (projects Round G, J2b): who ELSE may record and sign off a
+  // project's quality decisions — checklists, turnover, punch. Its standing
+  // holders are not tokens: the controllers (Admin / DocCtrl — the four
+  // quality write policies' is_org_controller clause) and the project OWNER
+  // (the owner disjunct, identity) always can, whatever this row says, so
+  // the default grants nobody beyond them and the permissions grid never
+  // shows a controller cell that unticks nothing. A discipline reviewer is
+  // GRANTED it — org-wide, or for one project by a rule scoped on projectId
+  // (DEC-13) — never named in code (DEC-35), and never by widening
+  // project_members.role. Enforced at the database (20261136: the write
+  // policies, the separation-of-duties rail and the signed sign-off), which
+  // evaluates it per project.
   { id: "quality.sign_off", area: "Quality", label: "Sign off quality records",
-    description: "Record decisions on a project's checklists, turnover package and punch list, complete a checklist and accept turnover with an e-signature. Controllers and the project owner always can; a rule scoped to a project grants one project only. The author of a checklist (or the creator of a turnover item) cannot sign it off while another eligible signer exists. Enforced at the database, which reads this policy per project.",
-    defaultRoles: ["Admin", "DocCtrl"] },
+    description: "Grants more people what Admin, Document Control and the project owner can always do, whatever this row says: record decisions on a project's checklists, turnover package and punch list, complete a checklist and accept or waive turnover with an e-signature. Tick a role to grant it on every project it can see; a rule scoped to a project grants one project only. The author of a checklist (or the creator of a turnover item) cannot sign it off while another eligible signer exists. Enforced at the database, which reads this policy per project.",
+    defaultRoles: [] },
 ];
 
 /** A per-PERSON delegation of one capability — temporary (expiresAt) or
