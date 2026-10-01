@@ -8,8 +8,12 @@
 //     directive's "one-click hold states" requirement) — the click
 //     opens an inline confirm row that asks for an OPTIONAL expected
 //     release date (HLD-14) and places the hold on the second click.
-//   - "Other" reveals a free-text input + Submit; deliberately
-//     two-click so an arbitrary string isn't created accidentally.
+//   - "Other…" reveals a description input + Add; deliberately two-click
+//     so a hold isn't created accidentally. VFY-6: it places the "Other"
+//     reason CODE and keeps the description in the hold's NOTE — free text
+//     never goes into `reason`, which a public verify surface may name (by
+//     category only). The note shows here, in the hold queue and on the
+//     printed hold card, as before; it is never published online.
 //   - Release uses an inline confirm (a REQUIRED one-line reason,
 //     HLD-10) rather than a modal — the directive says "lightweight
 //     interactions" and "avoid excessive forms." A stop-work is lifted
@@ -37,7 +41,7 @@ import {
 } from "lucide-react";
 import {
   listActiveHoldsForDocument, openHold, releaseHold, updateHoldExpectedRelease, holdControlsFor,
-  expectedReleaseIso, expectedReleaseDate, PREDEFINED_HOLD_REASONS, type HoldRecord,
+  expectedReleaseIso, expectedReleaseDate, PREDEFINED_HOLD_REASONS, OTHER_HOLD_REASON, type HoldRecord,
 } from "@/lib/holds";
 import { loadCapabilityPolicy, type CapabilityPolicy } from "@/lib/capabilityPolicy";
 import { useRole } from "@/components/providers/RoleContext";
@@ -123,7 +127,7 @@ export default function HoldStrip({
 
   useEffect(() => { void refresh(); }, [refresh, refreshKey]);
 
-  const onOpen = async (reason: string, expectedDate?: string) => {
+  const onOpen = async (reason: string, expectedDate?: string, notes?: string) => {
     if (!reason.trim()) return;
     setBusy(true);
     setError(null);
@@ -131,6 +135,8 @@ export default function HoldStrip({
       await openHold({
         orgId, documentId,
         reason: reason.trim(),
+        // VFY-6: an "Other" hold's description is its note, never its reason.
+        ...(notes?.trim() ? { notes: notes.trim() } : {}),
         expectedReleaseAt: expectedReleaseIso(expectedDate),
         openedBy: userId,
         openedByName: userName,
@@ -294,7 +300,9 @@ export default function HoldStrip({
               <input
                 value={otherDraft}
                 onChange={(e) => setOtherDraft(e.target.value)}
-                placeholder="Custom hold reason"
+                placeholder="What is it held for? (kept in the hold's note)"
+                aria-label="Other hold — description, kept in the hold's note"
+                title='Placed as an "Other" hold; this description is its note — shown here, in the hold queue and on the printed card, never on the public verify page'
                 className="flex-1 min-w-[10rem] text-xs border border-[var(--color-border-strong)] rounded px-2 py-1 focus:outline-none focus:ring-1 focus:ring-amber-500"
                 autoFocus
               />
@@ -308,7 +316,7 @@ export default function HoldStrip({
                 className="text-[11px] border border-[var(--color-border-strong)] rounded px-1.5 py-0.5 focus:outline-none focus:ring-1 focus:ring-amber-500"
               />
               <button
-                onClick={() => otherDraft && onOpen(otherDraft, expectedDraft)}
+                onClick={() => otherDraft?.trim() && onOpen(OTHER_HOLD_REASON, expectedDraft, otherDraft)}
                 disabled={!otherDraft?.trim() || busy}
                 className="inline-flex items-center gap-1 px-2 py-1 rounded text-[11px] font-bold bg-amber-600 hover:bg-amber-700 text-white transition-colors disabled:opacity-40"
               >

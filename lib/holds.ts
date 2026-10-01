@@ -29,9 +29,7 @@ import { isControllerRole } from "@/lib/permissions";
 import { heldRoles, holdsReadOnlyRole } from "@/lib/roleHeld";
 import type { DocumentHold, HoldReason, Role } from "@/types/schema";
 
-/** The default predefined reasons surfaced by the picker UI. Orgs
- *  with site-specific vocabulary can store free-form reason strings
- *  (the DB column has no CHECK); these are just the defaults. */
+/** The default predefined reasons surfaced by the picker UI. */
 export const PREDEFINED_HOLD_REASONS: HoldReason[] = [
   "Awaiting Engineering",
   "Field Verification Needed",
@@ -39,9 +37,36 @@ export const PREDEFINED_HOLD_REASONS: HoldReason[] = [
   "Client Review",
 ];
 
+/** VFY-6 (P15): the "Other" slot of HoldReason. A hold for anything the four
+ *  predefined reasons do not cover is placed under this code, with what it
+ *  is for written to the hold's NOTE — never to `reason`, which a public
+ *  surface may name (by category only, publicHoldReason). */
+export const OTHER_HOLD_REASON: HoldReason = "Other";
+
+/** VFY-6 (P15): the reason CODES this module writes — the predefined
+ *  reasons and "Other". The column itself has no CHECK (holds placed before
+ *  P15 may carry operator text, and lifecycle copies carry a source's reason
+ *  across as it is); openHold, the one app door that places a hold, writes
+ *  nothing else, so the free-text path into `reason` is closed. */
+export const HOLD_REASON_CODES: readonly HoldReason[] = [...PREDEFINED_HOLD_REASONS, OTHER_HOLD_REASON];
+
+export function isHoldReasonCode(reason: string | null | undefined): boolean {
+  return (HOLD_REASON_CODES as readonly string[]).includes((reason ?? "").trim());
+}
+
+/** VFY-6 (P15): how a hold is named to MEMBERS (the bell / email when it is
+ *  placed or released): an "Other" hold by its note, so moving the
+ *  description out of `reason` loses nothing internally. Never used on a
+ *  public surface (those say the category — publicHoldReason). */
+export function holdReasonLabel(h: { reason: string; notes?: string | null }): string {
+  const note = (h.notes ?? "").trim();
+  if (h.reason !== OTHER_HOLD_REASON || !note) return h.reason;
+  return `${OTHER_HOLD_REASON}: ${note.length > 120 ? `${note.slice(0, 119)}…` : note}`;
+}
+
 /** HLD-7 / VFY-6: what an UNAUTHENTICATED surface may say about a hold's
- *  reason. `reason` is operator text — the schema has no CHECK and the
- *  picker's "Other…" stores whatever was typed — so the public verify
+ *  reason. `reason` may be operator text — the schema has no CHECK, and
+ *  before P15 the picker's "Other…" stored whatever was typed — so the public verify
  *  endpoint returns it only when it is one of the predefined categories and
  *  says "On hold" otherwise. The card the QR sits on prints the sentence in
  *  full; this is about what a forwarded URL discloses. */
@@ -142,7 +167,10 @@ export function holdControlsFor(
 export interface OpenHoldInput {
   orgId: string;
   documentId: string;
-  reason: string;                   // canonical HoldReason or free text
+  /** A reason CODE (HOLD_REASON_CODES) — VFY-6: anything else is refused. */
+  reason: string;
+  /** Required with "Other": what the document is held for (private: no
+   *  public surface publishes a hold's notes). */
   notes?: string;
   expectedReleaseAt?: string;       // ISO timestamp
   openedBy: string;
@@ -217,6 +245,14 @@ async function assertHoldCapability(
 
 export async function openHold(input: OpenHoldInput): Promise<HoldRecord> {
   if (!input.reason.trim()) throw new Error("Hold reason is required.");
+  // VFY-6: the reason is a code. Free text goes in the note of an "Other"
+  // hold, which the public verify surfaces never publish.
+  if (!isHoldReasonCode(input.reason)) {
+    throw new Error(`A hold's reason is one of: ${HOLD_REASON_CODES.join(", ")}. For anything else choose "${OTHER_HOLD_REASON}" and describe it in the hold's note.`);
+  }
+  if (input.reason.trim() === OTHER_HOLD_REASON && !input.notes?.trim()) {
+    throw new Error(`An "${OTHER_HOLD_REASON}" hold needs a description — say what the document is held for.`);
+  }
   await assertHoldCapability(input.orgId, "holds.open");
 
   // HLD-7: held_rev_label / held_version_id are NOT sent from here — the
@@ -242,6 +278,11 @@ export async function openHold(input: OpenHoldInput): Promise<HoldRecord> {
     // with the same reason is already active. Translate to a clearer
     // error so the UI can show "already on hold for that reason."
     if (error.code === "23505") {
+      // VFY-6: "Other" holds are told apart by their note once 20261152 is
+      // applied; before it, one "Other" hold at a time per document.
+      if (input.reason.trim() === OTHER_HOLD_REASON) {
+        throw new Error(`An "${OTHER_HOLD_REASON}" hold is already open on this document — with this description, or (until database update 20261152 is applied) with any description. Release it first, or place this hold under a predefined reason with a note.`);
+      }
       throw new Error(`A "${input.reason}" hold is already open on this document.`);
     }
     throw new Error(error.message);
@@ -264,7 +305,7 @@ export async function openHold(input: OpenHoldInput): Promise<HoldRecord> {
     orgId: input.orgId,
     documentId: input.documentId,
     opened: true,
-    reason: row.reason,
+    reason: holdReasonLabel(row),
     actorUserId: input.openedBy,
     actorName: input.openedByName,
   });
@@ -331,7 +372,7 @@ export async function releaseHold(input: ReleaseHoldInput): Promise<HoldRecord> 
     orgId: row.org_id,
     documentId: row.document_id,
     opened: false,
-    reason: row.reason,
+    reason: holdReasonLabel(row),
     actorUserId: input.releasedBy,
     actorName: input.releasedByName,
     // HLD-10: the person who stopped work is always told it resumed.
