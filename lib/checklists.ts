@@ -394,11 +394,70 @@ export async function createChecklist(input: {
 // ── Batched, checked, optimistic item writes ─────────────────────────────
 
 interface ItemWrite { item: ChecklistItem; patch: Record<string, unknown> }
+type ItemWriteOutcome = { landed: string[]; refused: string[]; failed: Array<{ id: string; error: string }> };
+
+/** The columns a machine write sends through the one-request apply
+ *  (20261157 apply_checklist_item_writes); the function stamps updated_at
+ *  (the server's clock) and updated_by NULL itself. */
+const MACHINE_WRITE_COLUMNS = ["status", "applicability", "ai_rationale", "evidence", "updated_by_name"] as const;
+
+/** A function the database does not have yet: Postgres 42883, or PostgREST's
+ *  schema-cache miss (PGRST202). */
+function isMissingRpc(err: { code?: string | null; message?: string | null }): boolean {
+  return err.code === "42883" || err.code === "PGRST202" || /could not find the function/i.test(err.message ?? "");
+}
+
+/**
+ * PERF-7 / DEC-52 item 10: the machine's writes to ONE checklist's items in
+ * ONE request — 20261157 `apply_checklist_item_writes` applies each write
+ * guarded on the row's updated_at AS READ (the same optimistic guard as the
+ * single-row path), each in its own sub-transaction, and returns what
+ * landed, what the guard refused and what failed (every 20261091 rail still
+ * judges each row). `null` while the migration is not applied — the caller
+ * falls back to the single-row writes.
+ */
+async function applyItemWritesInOneRequest(checklistId: string, writes: ItemWrite[]): Promise<ItemWriteOutcome | null> {
+  const payload = writes.map((w) => {
+    const out: Record<string, unknown> = { id: w.item.id, expected_updated_at: w.item.updatedAt };
+    for (const k of MACHINE_WRITE_COLUMNS) if (k in w.patch) out[k] = w.patch[k];
+    return out;
+  });
+  let res: { data: unknown; error: { code?: string | null; message: string } | null };
+  try {
+    res = await supabase.rpc("apply_checklist_item_writes", { p_checklist: checklistId, p_writes: payload });
+  } catch (e) {
+    const error = describeWriteError({ message: (e as Error)?.message ?? String(e) });
+    return { landed: [], refused: [], failed: writes.map((w) => ({ id: w.item.id, error })) };
+  }
+  if (res.error) {
+    if (isMissingRpc(res.error)) return null;
+    const error = describeWriteError(res.error);
+    return { landed: [], refused: [], failed: writes.map((w) => ({ id: w.item.id, error })) };
+  }
+  const out = (res.data ?? {}) as { landed?: unknown; refused?: unknown; failed?: unknown };
+  // An answer without the function's shape is not an outcome: the single-row
+  // writes run instead (their updated_at guard refuses any row the function
+  // did write, so nothing lands twice).
+  if (!Array.isArray(out.landed)) return null;
+  const ids = (v: unknown) => (Array.isArray(v) ? v.map(String) : []);
+  const failed = (Array.isArray(out.failed) ? out.failed : []).map((f) => {
+    const r = (f ?? {}) as { id?: unknown; code?: unknown; message?: unknown };
+    return { id: String(r.id ?? ""), error: describeWriteError({ code: typeof r.code === "string" ? r.code : null, message: String(r.message ?? "") }) };
+  });
+  return { landed: ids(out.landed), refused: ids(out.refused), failed };
+}
 
 /** Write each patch as a checked UPDATE guarded on the row's updated_at as
  *  read (optimistic concurrency): a row someone else changed in between is
- *  a refusal, never a lost chip. Batches of WRITE_BATCH run in parallel. */
-async function writeItemPatches(writes: ItemWrite[]): Promise<{ landed: string[]; refused: string[]; failed: Array<{ id: string; error: string }> }> {
+ *  a refusal, never a lost chip. One request through the database's apply
+ *  (PERF-7) — or, before 20261157 is applied, batches of WRITE_BATCH
+ *  single-row writes in parallel. */
+async function writeItemPatches(writes: ItemWrite[]): Promise<ItemWriteOutcome> {
+  const checklistId = writes[0]?.item.checklistId;
+  if (checklistId && writes.every((w) => w.item.checklistId === checklistId)) {
+    const inOne = await applyItemWritesInOneRequest(checklistId, writes);
+    if (inOne) return inOne;
+  }
   const landed: string[] = [], refused: string[] = [], failed: Array<{ id: string; error: string }> = [];
   for (let i = 0; i < writes.length; i += WRITE_BATCH) {
     const batch = writes.slice(i, i + WRITE_BATCH);

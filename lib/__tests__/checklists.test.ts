@@ -207,6 +207,112 @@ describe("applyAssessment", () => {
   });
 });
 
+// ── PERF-7 / DEC-52 item 10: one request through 20261157 ────────────────
+describe("the machine's writes in ONE request (20261157 apply_checklist_item_writes)", () => {
+  beforeEach(() => {
+    state.tables.checklist_items = [
+      row({ id: "a", text: "Weld log reviewed" }),
+      row({ id: "b", text: "NDE reports on file", updated_at: null }),
+      row({ id: "c", text: "Hydrotest", updated_at: "2026-09-02T00:00:00Z" }),
+    ];
+  });
+  const all = ["a", "b", "c"].map((id) => ({ itemId: id, applicability: "na" as const, rationale: "not in scope" }));
+  /** Plays the function: each write lands only where the row's updated_at is
+   *  still the one the caller read (the per-row guard), else it is refused. */
+  const play = (fail: Record<string, { code: string; message: string }> = {}) => (args: Record<string, unknown>) => {
+    const landed: string[] = [], refused: string[] = [], failed: Array<Record<string, unknown>> = [];
+    for (const w of args.p_writes as Array<Record<string, unknown>>) {
+      const id = String(w.id);
+      if (fail[id]) { failed.push({ id, ...fail[id] }); continue; }
+      const r = state.tables.checklist_items.find((x) => x.id === id && x.checklist_id === args.p_checklist);
+      if (!r || (r.updated_at ?? null) !== (w.expected_updated_at ?? null)) { refused.push(id); continue; }
+      for (const k of ["status", "applicability", "ai_rationale", "evidence", "updated_by_name"]) if (k in w) r[k] = w[k];
+      r.updated_at = "2026-10-01T00:00:00Z"; r.updated_by = null;
+      landed.push(id);
+    }
+    return { data: { landed, refused, failed }, error: null };
+  };
+
+  it("ONE call carries every write with the updated_at it was read at; no single-row UPDATE runs; the audit names only what landed", async () => {
+    state.rpc = { apply_checklist_item_writes: play() };
+    state.tables.checklist_items[2].updated_at = "2026-09-03T00:00:00Z";
+    const out = await applyAssessment({ orgId: "o1", projectId: "p1", checklistId: "cl1", proposals: all, confirmedItemIds: ["a", "b", "c"], actor });
+    expect(out).toMatchObject({ applied: 3, refused: 0, failed: 0 });
+    const calls = state.calls.filter((c) => c.table === "rpc:apply_checklist_item_writes");
+    expect(calls).toHaveLength(1);
+    const args = calls[0].args[0] as { p_checklist: string; p_writes: Array<Record<string, unknown>> };
+    expect(args.p_checklist).toBe("cl1");
+    expect(args.p_writes.map((w) => [w.id, w.expected_updated_at])).toEqual([["a", "2026-09-01T00:00:00Z"], ["b", null], ["c", "2026-09-03T00:00:00Z"]]);
+    // The function stamps the clock and the actor itself — the client sends neither.
+    for (const w of args.p_writes) {
+      expect(w).not.toHaveProperty("updated_at");
+      expect(w).not.toHaveProperty("updated_by");
+      expect(w).toMatchObject({ applicability: "na", status: "na", ai_rationale: "not in scope", updated_by_name: MACHINE_ACTOR_ASSESSMENT });
+    }
+    expect(itemWrites()).toHaveLength(0);
+    expect(state.tables.checklist_items.map((r) => r.status)).toEqual(["na", "na", "na"]);
+    const a = audits();
+    expect(a).toHaveLength(1);
+    expect((a[0].details as { items: unknown[] }).items).toHaveLength(3);
+  });
+
+  it("the per-row guard still decides: a row changed since it was read is REFUSED, a rail's refusal FAILS with its sentence, the rest land", async () => {
+    state.rpc = {
+      apply_checklist_item_writes: (args) => {
+        // someone touched b between the read and the write
+        state.tables.checklist_items[1].updated_at = "2026-09-30T00:00:00Z";
+        return play({ c: { code: "23514", message: "A person decided this item — the machine may not overwrite it." } })(args);
+      },
+    };
+    const out = await applyAssessment({ orgId: "o1", projectId: "p1", checklistId: "cl1", proposals: all, confirmedItemIds: ["a", "b", "c"], actor });
+    expect(out).toMatchObject({ applied: 1, refused: 1, failed: 1 });
+    expect(out.error).toBeTruthy();
+    expect(state.tables.checklist_items.map((r) => r.status)).toEqual(["na", "open", "open"]);
+    expect((audits()[0].details as { items: Array<{ itemId: string }> }).items.map((i) => i.itemId)).toEqual(["a"]);
+  });
+
+  it("a database error from the function fails every write and does NOT fall back; a missing function (PGRST202) or an answer without its shape does", async () => {
+    state.rpc = { apply_checklist_item_writes: () => ({ data: null, error: { code: "57014", message: "canceling statement due to statement timeout" } }) };
+    const failed = await applyAssessment({ orgId: "o1", projectId: "p1", checklistId: "cl1", proposals: all, confirmedItemIds: ["a"], actor });
+    expect(failed).toMatchObject({ applied: 0, failed: 1 });
+    expect(itemWrites()).toHaveLength(0);
+    expect(audits()).toHaveLength(0);
+
+    state.rpc = { apply_checklist_item_writes: () => ({ data: null, error: null }) };
+    const shapeless = await applyAssessment({ orgId: "o1", projectId: "p1", checklistId: "cl1", proposals: all, confirmedItemIds: ["a"], actor });
+    expect(shapeless.applied).toBe(1);
+    expect(itemWrites()).toHaveLength(1);
+
+    state.rpc = undefined; // before 20261157: PGRST202, the single-row path
+    const legacy = await applyAssessment({ orgId: "o1", projectId: "p1", checklistId: "cl1", proposals: all, confirmedItemIds: ["c"], actor });
+    expect(legacy.applied).toBe(1);
+    expect(itemWrites()).toHaveLength(2);
+  });
+
+  it("the evidence sweep goes through the same one request: the citation lands, the machine actor is the function's to stamp", async () => {
+    state.rpc = { apply_checklist_item_writes: play() };
+    state.tables.projects = [{ id: "p1", intake_collection_id: "intake", sow_document_id: null }];
+    state.tables.turnover_items = [];
+    state.tables.project_checklists = [];
+    state.tables.assets = [];
+    state.tables.document_versions = [{ id: "v1", record_id: "d1", provenance: "internal", review_state: null }];
+    state.tables.documents = [doc({ id: "d1", title: "E-301 Hydrotest Report" })];
+    state.tables.checklist_items = [row({ id: "a" })];
+    const out = await runAutoEvidence({ orgId: "o1", projectId: "p1", checklistId: "cl1", actor });
+    expect(out).toMatchObject({ satisfied: 1, refused: 0, failed: 0 });
+    const calls = state.calls.filter((c) => c.table === "rpc:apply_checklist_item_writes");
+    expect(calls).toHaveLength(1);
+    const [w] = (calls[0].args[0] as { p_writes: Array<Record<string, unknown>> }).p_writes;
+    expect(w).toMatchObject({ id: "a", expected_updated_at: "2026-09-01T00:00:00Z", status: "satisfied", updated_by_name: MACHINE_ACTOR_SWEEP });
+    expect(itemWrites()).toHaveLength(0);
+    expect(state.tables.checklist_items[0]).toMatchObject({
+      status: "satisfied", updated_by: null,
+      evidence: [{ label: 'Document on file: "E-301 Hydrotest Report"', documentId: "d1", source: "auto" }],
+    });
+  });
+});
+
+
 // ── updateChecklistItem (SAF-3 / SAF-4) ──────────────────────────────────
 describe("updateChecklistItem", () => {
   beforeEach(() => { state.tables.checklist_items = [row({})]; });

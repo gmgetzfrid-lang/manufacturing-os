@@ -39,6 +39,8 @@ const db = vi.hoisted(() => ({
   /** Tables whose UPDATE matches zero rows — the shape an RLS filter produces. */
   denyUpdate: new Set<string>(),
   seq: 0,
+  /** Column defaults an INSERT's returned row carries (a column the table has). */
+  defaults: {} as Record<string, Row>,
 }));
 function takeFail(table: string, op: string) {
   const q = db.fail[`${table}:${op}`];
@@ -61,7 +63,7 @@ function chain(table: string) {
   const applyInsert = () => {
     const err = takeFail(table, "insert");
     if (err) return { data: null, error: err };
-    const row = { id: `${table}-${++db.seq}`, ...insertRow };
+    const row = { id: `${table}-${++db.seq}`, ...(db.defaults[table] ?? {}), ...insertRow };
     (db.tables[table] ??= []).push(row);
     return { data: row, error: null };
   };
@@ -114,7 +116,23 @@ function chain(table: string) {
 const emitted = vi.hoisted(() => [] as Array<Row>);
 const audited = vi.hoisted(() => [] as Array<Row>);
 const deleted = vi.hoisted(() => [] as string[]);
-vi.mock("@/lib/supabase", () => ({ supabase: { from: (t: string) => chain(t) } }));
+/** GAP-406: the one-transaction award (20261157 award_quote). By default the
+ *  function is missing (PGRST202) — the database before the migration — so
+ *  every award below runs the client sequence; the GAP-406 block installs a
+ *  handler that plays the function. */
+const rpc = vi.hoisted(() => ({
+  calls: [] as Array<{ fn: string; args: Record<string, unknown> }>,
+  handler: null as null | ((fn: string, args: Record<string, unknown>) => { data: unknown; error: { code?: string; message: string } | null }),
+}));
+vi.mock("@/lib/supabase", () => ({
+  supabase: {
+    from: (t: string) => chain(t),
+    rpc: async (fn: string, args: Record<string, unknown>) => {
+      rpc.calls.push({ fn, args });
+      return rpc.handler ? rpc.handler(fn, args) : { data: null, error: { code: "PGRST202", message: `Could not find the function public.${fn} in the schema cache` } };
+    },
+  },
+}));
 vi.mock("@/lib/notify/dispatch", () => ({ emit: vi.fn(async (e: Row) => { emitted.push(e); }) }));
 vi.mock("@/lib/audit", () => ({ logAuditAction: vi.fn(async (e: Row) => { audited.push(e); }) }));
 vi.mock("@/lib/storage", () => ({
@@ -124,7 +142,7 @@ vi.mock("@/lib/storage", () => ({
 
 import {
   awardQuote, declineQuote, postInvoice, voidCostDoc, setManualTotal, listLedgerOrphans, repairCostDoc, costDocStatusLabel,
-  uploadCostDoc, listCostDocs, normalizeCurrency, type CostDocument,
+  uploadCostDoc, listCostDocs, normalizeCurrency, quoteGroups, isMissingRpc, type CostDocument,
 } from "@/lib/costDocs";
 import {
   proposeChangeOrder, decideChangeOrder, unwindChangeOrder, listChangeOrders, repairChangeOrder,
@@ -168,7 +186,9 @@ beforeEach(() => {
   db.fail = {};
   db.denyUpdate = new Set();
   db.seq = 0;
+  db.defaults = {};
   emitted.length = 0; audited.length = 0; deleted.length = 0;
+  rpc.calls.length = 0; rpc.handler = null;
   vi.spyOn(console, "warn").mockImplementation(() => undefined);
 });
 
@@ -1097,5 +1117,176 @@ describe("checked writes and honest reads (SAF-3 / REL-2)", () => {
     expect(res.ok).toBe(false);
     expect(deleted).toHaveLength(1);
     expect(deleted[0]).toMatch(/^orgs\/o1\/project-costs\/p1\//);
+  });
+});
+
+// ── GAP-406: the award in ONE database transaction (20261157 award_quote) ──
+describe("GAP-406 — awardQuote runs the award as one transaction when award_quote exists", () => {
+  /** Plays 20261157 award_quote against the in-memory tables: claim, the
+   *  commitment, the rivals and the audit row happen together or not at all. */
+  const playAward = (over: Record<string, unknown> = {}) => (fn: string, args: Record<string, unknown>) => {
+    if (fn !== "award_quote") return { data: null, error: { code: "PGRST202", message: "no" } };
+    if (over.error) return { data: null, error: over.error as { code?: string; message: string } };
+    if (over.data) return { data: over.data, error: null };
+    const d = db.tables.cost_documents.find((r) => r.id === args.p_doc)!;
+    d.status = "awarded";
+    db.tables.cost_entries.push({ id: "e-rpc", entry_type: "commitment", amount: args.p_expected_total, source_document_id: d.id, cost_account_id: args.p_cost_account });
+    db.tables.audit_logs.push({ action: "COST_DOC_AWARDED", details: { oneTransaction: true } });
+    return { data: { ok: true, entryId: "e-rpc", total: args.p_expected_total, rivals: 2, declined: 2, ungroupedOpen: [], company: null, override: false }, error: null };
+  };
+
+  it("calls award_quote ONCE with the total the guard checked; the client writes nothing itself; the owner is notified", async () => {
+    db.tables.cost_documents.push(docRow({}), docRow({ id: "r1", status: "parsed" }));
+    rpc.handler = playAward();
+    const res = await awardQuote({ doc: doc(), siblings: [], costAccountId: "a1", actor: { uid: "u-ctl", email: "ctl@x.test" } });
+    expect(res).toEqual({ ok: true });
+    expect(rpc.calls).toEqual([{ fn: "award_quote", args: { p_doc: "d1", p_cost_account: "a1", p_expected_total: 1000, p_override_reason: null, p_confirmed_total: null } }]);
+    // Exactly what the function wrote — no second entry, no client-side rival decline.
+    expect(entries()).toHaveLength(1);
+    expect(entries()[0].id).toBe("e-rpc");
+    expect(db.tables.cost_documents.map((d) => d.status)).toEqual(["awarded", "parsed"]);
+    expect(auditRows("COST_DOC_AWARDED")).toEqual([{ action: "COST_DOC_AWARDED", details: { oneTransaction: true } }]);
+    expect(emitted).toHaveLength(1);
+    expect((emitted[0].audience as { involved: string[] }).involved).toEqual(["u-owner"]);
+  });
+
+  it("the same return shape as the client sequence: rivals left undeclined and open ungrouped quotes come back as the `warning`", async () => {
+    db.tables.cost_documents.push(docRow({ rfq_group: null, vendor_name: "Acme Electrical" }));
+    rpc.handler = playAward({ data: { ok: true, entryId: "e1", total: 1000, rivals: 3, declined: 1, ungroupedOpen: ["Bravo Plumbing", "Cole Paint"] } });
+    const res = await awardQuote({ doc: doc({ rfqGroup: null }), siblings: [], costAccountId: "a1", actor });
+    expect(res.ok).toBe(true);
+    expect(res.warning).toBe(
+      "Awarded, but 2 of 3 competing bid(s) could not be marked not-selected — refresh and decline them by hand. " +
+      "Awarded. 2 other ungrouped quotes stay open (Bravo Plumbing, Cole Paint) — decline them if they competed for this scope.",
+    );
+  });
+
+  it("refusals that move nothing still run first, against the row as read — the function is not called", async () => {
+    db.tables.cost_accounts.push({ id: "a-eur", currency: "EUR" });
+    db.tables.cost_documents.push(docRow({ currency: "USD" }));
+    rpc.handler = playAward();
+    const res = await awardQuote({ doc: doc(), siblings: [], costAccountId: "a-eur", actor });
+    expect(res.ok).toBe(false);
+    expect(res.error).toMatch(/USD but the budget line is in EUR/);
+    expect(rpc.calls).toHaveLength(0);
+
+    db.tables.companies.push({ id: "c1", org_id: "o1", name: "Acme", status: "do_not_use" });
+    const flagged = await awardQuote({ doc: doc(), siblings: [], costAccountId: "a1", actor });
+    expect(flagged.needsOverride).toEqual({ companyId: "c1", companyName: "Acme", status: "do_not_use" });
+    expect(rpc.calls).toHaveLength(0);
+
+    const ok = await awardQuote({ doc: doc(), siblings: [], costAccountId: "a1", actor, overrideReason: "  Sole source  " });
+    expect(ok.ok).toBe(true);
+    expect(rpc.calls[0].args.p_override_reason).toBe("Sole source");
+  });
+
+  it("the function's own refusals (re-checked under its lock) read as the client sequence's sentences, and nothing falls back", async () => {
+    db.tables.cost_documents.push(docRow({}));
+    const cases: Array<[Record<string, unknown>, RegExp]> = [
+      [{ ok: false, code: "status", status: "awarded" }, /already awarded — refresh/],
+      [{ ok: false, code: "total_changed", total: 1200 }, /total of this quote changed since it was checked \(it is now 1,200\)/],
+      [{ ok: false, code: "currency", docCurrency: "USD", accountCurrency: "EUR" }, /USD but the budget line is in EUR/],
+      [{ ok: false, code: "account" }, /not on this project/],
+      [{ ok: false, code: "not_found" }, /removed, or you don't have permission/],
+    ];
+    for (const [data, msg] of cases) {
+      rpc.handler = playAward({ data });
+      const res = await awardQuote({ doc: doc(), siblings: [], costAccountId: "a1", actor });
+      expect(res.ok).toBe(false);
+      expect(res.error).toMatch(msg);
+    }
+    rpc.handler = playAward({ data: { ok: false, code: "company_flagged", company: { id: "c9", name: "Gulf", status: "inactive" } } });
+    const flagged = await awardQuote({ doc: doc(), siblings: [], costAccountId: "a1", actor });
+    expect(flagged.needsOverride).toEqual({ companyId: "c9", companyName: "Gulf", status: "inactive" });
+    // None of these fell back to the client sequence: no entry, no claim, no notice.
+    expect(entries()).toHaveLength(0);
+    expect(db.tables.cost_documents[0].status).toBe("parsed");
+    expect(emitted).toHaveLength(0);
+  });
+
+  it("a database error from the function (not a missing function) is reported — the client sequence does NOT run behind it", async () => {
+    db.tables.cost_documents.push(docRow({}));
+    const errSpy = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    rpc.handler = playAward({ error: { code: "40001", message: "could not serialize access" } });
+    const res = await awardQuote({ doc: doc(), siblings: [], costAccountId: "a1", actor });
+    errSpy.mockRestore();
+    expect(res.ok).toBe(false);
+    expect(entries()).toHaveLength(0);
+    expect(db.tables.cost_documents[0].status).toBe("parsed");
+    expect(auditRows("COST_DOC_AWARDED")).toHaveLength(0);
+  });
+
+  it("before 20261157 (42883 / PGRST202) the client sequence runs, as it did", async () => {
+    expect(isMissingRpc({ code: "42883", message: "function award_quote does not exist" })).toBe(true);
+    expect(isMissingRpc({ code: "PGRST202", message: "x" })).toBe(true);
+    expect(isMissingRpc({ code: "PGRST203", message: "Could not find the function public.award_quote(p_doc) in the schema cache" })).toBe(true);
+    expect(isMissingRpc({ code: "42501", message: "permission denied" })).toBe(false);
+    expect(isMissingRpc(null)).toBe(false);
+
+    db.tables.cost_documents.push(docRow({}));
+    rpc.handler = (fn) => ({ data: null, error: { code: "42883", message: `function public.${fn}(uuid, uuid, numeric, text, numeric) does not exist` } });
+    const res = await awardQuote({ doc: doc(), siblings: [], costAccountId: "a1", actor });
+    expect(res).toEqual({ ok: true });
+    expect(rpc.calls).toHaveLength(1);
+    expect(entries()).toHaveLength(1);
+    expect(auditRows("COST_DOC_AWARDED")[0].details).toMatchObject({ postedEntryId: entries()[0].id });
+  });
+});
+
+// ── BID-10: one field per RFQ key ───────────────────────────────────────────
+describe("BID-10 — quoteGroups keys groups case- and space-insensitively", () => {
+  it("'Unit 300 Repipe' and 'unit 300  repipe ' are ONE field, labelled with the first spelling; voids and invoices stay out", () => {
+    const groups = quoteGroups([
+      doc({ id: "a", rfqGroup: "Unit 300 Repipe" }),
+      doc({ id: "b", rfqGroup: "unit 300  repipe " }),
+      doc({ id: "c", rfqGroup: "Pipe racks" }),
+      doc({ id: "d", rfqGroup: null, vendorName: "Solo" }),
+      doc({ id: "e", rfqGroup: "UNIT 300 REPIPE", status: "void" }),
+      doc({ id: "f", rfqGroup: "Unit 300 Repipe", kind: "invoice" }),
+    ]);
+    expect(groups.map((g) => [g.group, g.docs.map((d) => d.id)])).toEqual([
+      ["Unit 300 Repipe", ["a", "b"]],
+      ["Pipe racks", ["c"]],
+      ["Ungrouped — Solo", ["d"]],
+    ]);
+  });
+});
+
+// ── COST-3 done-when 2: a new bid is linked to the ONE company its vendor binds to ──
+describe("COST-3 — uploadCostDoc links a bid whose vendor name binds to one Known Company", () => {
+  const file = { name: "q.pdf", type: "application/pdf" } as unknown as File;
+  beforeEach(() => { db.defaults.cost_documents = { company_id: null }; });
+
+  it("a unique normalised match is written on the row (guarded on 'still unlinked') and named in the upload's audit row", async () => {
+    db.tables.companies.push({ id: "c1", org_id: "o1", name: "Gulf Mechanical" }, { id: "c2", org_id: "o1", name: "Bayline Piping" });
+    const res = await uploadCostDoc({ orgId: "o1", projectId: "p1", kind: "quote", file, vendorName: "Gulf Mechanical, Inc.", actor });
+    expect(res.ok).toBe(true);
+    expect(db.tables.cost_documents[0].company_id).toBe("c1");
+    expect(auditRows("COST_DOC_UPLOADED")[0].details).toMatchObject({ companyLinked: { id: "c1", name: "Gulf Mechanical", by: "vendor name" } });
+  });
+
+  it("ambiguity, an unknown vendor, an invoice, a linked contractor or a database without the column links nothing — and the upload stands", async () => {
+    db.tables.companies.push({ id: "c1", org_id: "o1", name: "Gulf Mechanical" }, { id: "c2", org_id: "o1", name: "GULF MECHANICAL LLC" });
+    // "Gulf Mechanical, Inc." is no row's exact name and normalises to both
+    expect((await uploadCostDoc({ orgId: "o1", projectId: "p1", kind: "quote", file, vendorName: "Gulf Mechanical, Inc.", actor })).ok).toBe(true);
+    expect((await uploadCostDoc({ orgId: "o1", projectId: "p1", kind: "quote", file, vendorName: "Nobody Known", actor })).ok).toBe(true);
+    db.tables.companies.push({ id: "c3", org_id: "o1", name: "Bayline Piping" });
+    expect((await uploadCostDoc({ orgId: "o1", projectId: "p1", kind: "invoice", file, vendorName: "Bayline Piping", actor })).ok).toBe(true);
+    db.tables.project_parties.push({ id: "pp1", company_id: "c9" });
+    expect((await uploadCostDoc({ orgId: "o1", projectId: "p1", kind: "quote", file, vendorName: "Bayline Piping", partyId: "pp1", actor })).ok).toBe(true);
+    expect(db.tables.cost_documents.map((d) => d.company_id)).toEqual([null, null, null, null]);
+    db.defaults = {}; // before 20261096: no company_id column on the row
+    expect((await uploadCostDoc({ orgId: "o1", projectId: "p1", kind: "quote", file, vendorName: "Bayline Piping", actor })).ok).toBe(true);
+    expect(db.tables.cost_documents[4]).not.toHaveProperty("company_id");
+  });
+
+  it("a failed registry read or a refused link write never fails the upload", async () => {
+    db.tables.companies.push({ id: "c1", org_id: "o1", name: "Gulf Mechanical" });
+    db.fail["companies:select"] = [{ message: "network" }];
+    expect((await uploadCostDoc({ orgId: "o1", projectId: "p1", kind: "quote", file, vendorName: "Gulf Mechanical", actor })).ok).toBe(true);
+    db.denyUpdate.add("cost_documents");
+    expect((await uploadCostDoc({ orgId: "o1", projectId: "p1", kind: "quote", file, vendorName: "Gulf Mechanical", actor })).ok).toBe(true);
+    expect(db.tables.cost_documents.map((d) => d.company_id)).toEqual([null, null]);
+    expect(auditRows("COST_DOC_UPLOADED").map((a) => (a.details as Row).companyLinked)).toEqual([undefined, undefined]);
   });
 });
