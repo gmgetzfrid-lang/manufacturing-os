@@ -14,7 +14,8 @@
 //     email_gate() in 20261148 is the SAME rule evaluated where the
 //     recipient's row is visible (DELIV-2); a test pins its CASE to
 //     shouldSendForEvent and its exemption to this list. The compliance
-//     digest (N6) imports emailAllowedByPrefs rather than re-deriving it.
+//     digest is to import emailAllowedByPrefs rather than re-derive it
+//     (NEDGE-9, N6); until it does, it reads only email_enabled.
 //   * readToastPreference is the pop-up toast switch (RT-10) for the toast
 //     listener. It fails OPEN: a toast is the ephemeral echo of a bell row that
 //     is always written, so an unreadable preference shows toasts.

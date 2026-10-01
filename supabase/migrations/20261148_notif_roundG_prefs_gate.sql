@@ -105,11 +105,19 @@ UNION ALL
 SELECT 'BEFORE: rows with push_enabled = false (untouched here — the push channel reads it)',
        (SELECT COUNT(*) FILTER (WHERE to_jsonb(np) ->> 'push_enabled' = 'false') FROM notification_preferences np)::text
 UNION ALL
-SELECT 'BEFORE: emails queued in the last 30 days to a recipient whose row said email off or never (DELIV-2''s reach)',
+SELECT 'BEFORE: emails queued in the last 30 days to a recipient whose row said email off or never, of a kind email_gate() now stops (DELIV-2''s reach)',
        (SELECT COUNT(*) FROM email_notifications e
           JOIN notification_preferences np ON np.user_id = e.to_user_id
          WHERE e.created_at >= now() - interval '30 days'
-           AND (np.email_enabled = false OR np.digest_frequency = 'never'))::text
+           AND (np.email_enabled = false OR np.digest_frequency = 'never')
+           AND COALESCE(e.event_type, '') NOT IN ('safety_recall', 'safety_alert', 'compliance_digest'))::text
+UNION ALL
+SELECT 'BEFORE: emails queued in the last 30 days to such a recipient that this paste does NOT stop (recall and PSM mail are exempt; the compliance digest is NEDGE-9''s)',
+       (SELECT COUNT(*) FROM email_notifications e
+          JOIN notification_preferences np ON np.user_id = e.to_user_id
+         WHERE e.created_at >= now() - interval '30 days'
+           AND (np.email_enabled = false OR np.digest_frequency = 'never')
+           AND COALESCE(e.event_type, '') IN ('safety_recall', 'safety_alert', 'compliance_digest'))::text
 UNION ALL
 SELECT 'BEFORE: emails queued in the last 30 days that repeat, within 60 s, the latest email to the same (recipient, event, resource) with the same subject and body (DELIV-9''s reach)',
        (SELECT COUNT(*) FROM email_notifications e

@@ -185,8 +185,9 @@ export async function queueEmail(input: QueueEmailInput): Promise<void> {
 // impossible. The legitimate path is /api/transmittal/send-email.
 
 // shouldSendForEvent moved to lib/notificationPrefs.ts (notifications Round G,
-// N1) with the rest of the preference rule, so queueEmail, email_gate() and
-// the compliance digest share one definition.
+// N1) with the rest of the preference rule, so queueEmail and email_gate()
+// share one definition, and the compliance digest can import it (NEDGE-9, N6;
+// until it does, the digest reads only email_enabled).
 
 // ─── MENTION PARSING ─────────────────────────────────────────────────────
 // Mentions are stored in comment text as @[Display Name](uuid). This lets
