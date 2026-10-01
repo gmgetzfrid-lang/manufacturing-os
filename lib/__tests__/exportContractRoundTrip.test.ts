@@ -41,8 +41,9 @@ import { censusSchema } from "./helpers/schemaKeys";
 // so a read filtered by a missing column errors as the database does — the
 // shape of the base-2290b94 failure this package fixes (BKP-4).
 const census = censusSchema();
-/** Called before every read statement the export's client sends (a hook for concurrent-write cases). */
-const hooks = vi.hoisted(() => ({ onRead: null as null | ((table: string) => void) }));
+/** Called before every read statement the export's client sends (a hook for concurrent-write cases), with the
+ *  statement's `.in()` values and whether it is a head count. */
+const hooks = vi.hoisted(() => ({ onRead: null as null | ((table: string, q: { inValues: unknown[] | null; head: boolean }) => void) }));
 vi.mock("@/lib/serverAuth", async () => {
   const mem = await import("./helpers/restoreMemoryDb");
   return {
@@ -61,16 +62,20 @@ vi.mock("@supabase/supabase-js", async () => {
     const inn = b.in as (c: string, v: unknown[]) => unknown;
     const gt = b.gt as (c: string, v: unknown) => unknown;
     const order = b.order as (c: string, o?: unknown) => unknown;
+    const select = b.select as (cols?: unknown, o?: unknown) => unknown;
     let bad: string | null = null;
+    let inValues: unknown[] | null = null;
+    let head = false;
     const check = (c: string) => { if (shapes.get(table) && !shapes.get(table)!.columns.has(c)) bad = c; };
+    b.select = (cols?: unknown, o?: { head?: boolean }) => { head = o?.head === true; select(cols, o); return b; };
     b.eq = (c: string, v: unknown) => { check(c); eq(c, v); return b; };
-    b.in = (c: string, v: unknown[]) => { check(c); inn(c, v); return b; };
+    b.in = (c: string, v: unknown[]) => { check(c); inValues = v; inn(c, v); return b; };
     b.gt = (c: string, v: unknown) => { check(c); gt(c, v); return b; };
     b.order = (c: string, o?: unknown) => { check(c); order(c, o); return b; };
     const then = b.then as (res: (v: unknown) => void, rej: (e: unknown) => void) => void;
     b.then = (res: (v: unknown) => void, rej: (e: unknown) => void) => {
       if (bad) return res({ data: null, error: { code: "42703", message: `column ${table}.${bad} does not exist` } });
-      hooks.onRead?.(table);
+      hooks.onRead?.(table, { inValues, head });
       return then(res, rej);
     };
     return b;
@@ -231,6 +236,9 @@ async function zipText(zip: JSZip): Promise<string> {
   return parts.join("\n");
 }
 
+/** HeadObject's answer for an object that is not there, as the S3 client throws it. */
+const notFound = () => Object.assign(new Error("NotFound"), { name: "NotFound", $metadata: { httpStatusCode: 404 } });
+
 beforeEach(() => {
   hooks.onRead = null;
   db.keys = {}; db.writeError = null; db.readError = {}; db.writes = []; db.attempts = []; db.countless = false;
@@ -332,7 +340,7 @@ describe("BKP-2 / BKP-9 — every binary the database references is in the backu
   it("a key whose object is gone is counted missing, whichever collector found it", async () => {
     const { r2 } = await import("@/lib/r2");
     vi.mocked(r2.send).mockImplementation((async (cmd: { input: { Key: string } }) => {
-      if (cmd.input.Key === K.unregistered || cmd.input.Key === K.markup) throw new Error("NotFound");
+      if (cmd.input.Key === K.unregistered || cmd.input.Key === K.markup) throw notFound();
       return { ContentLength: 4 };
     }) as never);
     try {
@@ -343,6 +351,47 @@ describe("BKP-2 / BKP-9 — every binary the database references is in the backu
       const note = env.manifest.notes.find((n) => n.includes("does not yet track"));
       expect(note).toMatch(/0 are included in this backup and 1 was not found in storage \(counted with the missing files\)/);
       expect(note).not.toMatch(/ARE included/);
+    } finally {
+      vi.mocked(r2.send).mockImplementation((async () => ({ ContentLength: 4, ContentType: "application/octet-stream" })) as never);
+    }
+  });
+
+  it("a check that fails with anything but not-found (throttle, timeout, 5xx) keeps the file's URL: unchecked, never missing — and both ZIPs still pack it", async () => {
+    const { r2 } = await import("@/lib/r2");
+    const throttled = Object.assign(new Error("Please reduce your request rate."), { name: "SlowDown", $metadata: { httpStatusCode: 503 } });
+    const timedOut = Object.assign(new Error("socket hang up"), { name: "TimeoutError" });
+    vi.mocked(r2.send).mockImplementation((async (cmd: { input: { Key: string } }) => {
+      if (cmd.input.Key === K.dwg) throw throttled;
+      if (cmd.input.Key === K.quote) throw timedOut;
+      if (cmd.input.Key === K.markup) throw notFound();
+      return { ContentLength: 4 };
+    }) as never);
+    try {
+      const env = await exportEnvelope();
+      for (const k of [K.dwg, K.quote]) {
+        const f = env.files.find((x) => x.path === k)!;
+        expect(f.presignedUrl, k).toBe(`https://r2.test/${k}`);
+        expect(f.size, k).toBeNull();
+      }
+      // a real not-found is still missing, with no URL
+      expect(env.files.find((x) => x.path === K.markup)?.presignedUrl).toBe("");
+      expect(env.manifest.files).toMatchObject({ missing: 1, unchecked: 2 });
+      const note = env.manifest.notes.find((n) => n.includes("could not be checked against storage"));
+      expect(note).toMatch(/^2 file\(s\) could not be checked against storage: 2 because storage answered the check with an error other than "not found"/);
+      expect(note).not.toMatch(/time limit/);
+      // the browser Full ZIP and the server ZIP both pack the two unchecked files (a file with no URL is skipped by both)
+      stubFetch(env);
+      const saved: Uint8Array[] = [];
+      await runFullBackup(SRC, { onProgress: () => undefined, save: async (blob) => { saved.push(new Uint8Array(await blob.arrayBuffer())); } });
+      const browser = await JSZip.loadAsync(saved[0]);
+      expect(Object.keys(JSON.parse(await browser.file("files-manifest.json")!.async("string")))).toEqual(expect.arrayContaining([K.dwg, K.quote]));
+      const out = await buildAndDeliverExport({
+        supabaseUrl: "https://x.supabase.co", serviceRoleKey: "svc", orgId: SRC, exporterUserId: "u-alice", exporterEmail: "alice@acme.com",
+        includeFiles: true, delivery: { kind: "inline" },
+      });
+      const server = await JSZip.loadAsync(out.zipBytes!);
+      expect(server.file(`files/${K.dwg}`)).not.toBeNull();
+      expect(server.file(`files/${K.quote}`)).not.toBeNull();
     } finally {
       vi.mocked(r2.send).mockImplementation((async () => ({ ContentLength: 4, ContentType: "application/octet-stream" })) as never);
     }
@@ -644,6 +693,102 @@ describe("ILIFE-6 (export half) — every table is read once per row, in a stabl
     const ok = await exportEnvelope();
     expect(ok.tables.notification_preferences).toEqual([{ user_id: "u-alice", email_enabled: true }]);
     expect(ok.manifest.complete).toBe(true);
+  });
+});
+
+describe("notification_preferences is read through the members PARENT_ID_CHUNK (150) ids at a time (review minor: the URL of one read)", () => {
+  // A UUID-shaped uid is 36 characters, so one `.in()` over ~400 members is a ~15 KB URL, which the
+  // server refuses (414 / header too large). The stand-in refuses an id list over 8 KB the same way.
+  const uid = (i: number) => `00000000-0000-4000-8000-${String(i).padStart(12, "0")}`;
+  const members = (n: number) => Array.from({ length: n }, (_, i) => ({
+    id: `om-${String(i).padStart(4, "0")}`, org_id: SRC, uid: uid(i), email: `m${i}@acme.com`, role: "Viewer", roles: ["Viewer"], status: "active",
+  }));
+  const prefsFor = (rows: Row[]) => rows.map((m) => ({ user_id: m.uid, email_enabled: true }));
+  /** Every notification_preferences statement's id count; an id list over 8 KB is refused like a too-long URL. */
+  function watchPrefs(extra?: (q: { inValues: unknown[] | null; head: boolean }) => void) {
+    const sizes: Array<{ ids: number; head: boolean }> = [];
+    hooks.onRead = (t, q) => {
+      if (t !== "notification_preferences") return;
+      sizes.push({ ids: q.inValues?.length ?? 0, head: q.head });
+      if ((q.inValues ?? []).join(",").length > 8000) db.readError.notification_preferences = "414 Request-URI Too Large";
+      else delete db.readError.notification_preferences;
+      extra?.(q);
+    };
+    return sizes;
+  }
+
+  it("400 members: three reads of at most 150 ids, every member's row carried, the backup COMPLETE (one read of 400 was refused)", async () => {
+    db.rows.org_members = members(400);
+    db.rows.notification_preferences = prefsFor(db.rows.org_members);
+    const sizes = watchPrefs();
+    const env = await exportEnvelope();
+    expect(sizes.every((s) => s.ids > 0 && s.ids <= 150)).toBe(true);
+    expect(sizes.filter((s) => !s.head).map((s) => s.ids)).toEqual([150, 150, 100]);
+    expect((env.tables.notification_preferences as Row[]).map((r) => r.user_id)).toEqual(db.rows.org_members.map((m) => m.uid));
+    expect(env.manifest.tables.find((t) => t.name === "notification_preferences")).toEqual({ name: "notification_preferences", rowCount: 400 });
+    expect(env.manifest.complete).toBe(true);
+  });
+
+  it("a slice whose read comes up short twice marks the table short with that slice's counts, and keeps every other slice's rows", async () => {
+    db.rows.org_members = members(160);
+    db.rows.notification_preferences = prefsFor(db.rows.org_members);
+    // member 150's row (the first of the second slice) is seen by every count and returned by no page
+    const phantom = db.rows.notification_preferences[150];
+    watchPrefs((q) => {
+      if (!(q.inValues ?? []).includes(uid(150))) return;
+      const rows = db.rows.notification_preferences.filter((r) => r !== phantom);
+      db.rows.notification_preferences = q.head ? [...rows, phantom] : rows;
+    });
+    const env = await exportEnvelope();
+    const entry = env.manifest.tables.find((t) => t.name === "notification_preferences")!;
+    expect(entry.error).toBeUndefined();
+    expect(entry.rowCount).toBe(159);
+    expect(entry.short).toMatch(/^read 9 row\(s\), but the table held 10 before the read and 10 after it/);
+    expect((env.tables.notification_preferences as Row[]).map((r) => r.user_id)).toEqual(
+      db.rows.org_members.map((m) => m.uid).filter((u) => u !== uid(150)),
+    );
+    expect(env.manifest.complete).toBe(false);
+    expect(env.manifest.notes[0]).toMatch(/1 table\(s\) changed while they were read .*notification_preferences \(read 9 row/);
+  });
+
+  it("a short org_members read marks the table short too (preferences of members the read missed are not in it)", async () => {
+    db.rows.org_members = members(20);
+    db.rows.notification_preferences = prefsFor(db.rows.org_members);
+    // one member row every org_members count sees and no page returns
+    const ghost = { ...members(21)[20], id: "om-0000a" };
+    hooks.onRead = (t, q) => {
+      if (t !== "org_members") return;
+      const rows = db.rows.org_members.filter((r) => r !== ghost);
+      db.rows.org_members = q.head ? [...rows, ghost] : rows;
+    };
+    const env = await exportEnvelope();
+    expect(env.manifest.tables.find((t) => t.name === "org_members")?.short).toMatch(/read twice/);
+    const entry = env.manifest.tables.find((t) => t.name === "notification_preferences")!;
+    expect(entry.rowCount).toBe(20);
+    expect(entry.short).toMatch(/^read through the 20 row\(s\) of its parent table org_members that the export could read; the read of org_members came up short/);
+    expect(env.manifest.complete).toBe(false);
+  });
+
+  it("a slice whose read errors fails the table loudly (as any parent-keyed child), never a complete backup", async () => {
+    db.rows.org_members = members(160);
+    db.rows.notification_preferences = prefsFor(db.rows.org_members);
+    watchPrefs((q) => {
+      if ((q.inValues ?? []).includes(uid(150))) db.readError.notification_preferences = "canceling statement due to statement timeout";
+    });
+    const env = await exportEnvelope();
+    expect(env.manifest.tables.find((t) => t.name === "notification_preferences")).toEqual({
+      name: "notification_preferences", rowCount: 0, error: "canceling statement due to statement timeout",
+    });
+    expect(env.tables.notification_preferences).toEqual([]);
+    expect(env.manifest.complete).toBe(false);
+  });
+
+  it("an org_members read that failed fails the table — never a clean, empty one", async () => {
+    db.readError.org_members = "permission denied for table org_members";
+    db.rows.notification_preferences = [{ user_id: "u-alice", email_enabled: true }];
+    const env = await exportEnvelope();
+    expect(env.manifest.tables.find((t) => t.name === "notification_preferences")?.error).toMatch(/parent table org_members was not exported/);
+    expect(env.manifest.complete).toBe(false);
   });
 });
 

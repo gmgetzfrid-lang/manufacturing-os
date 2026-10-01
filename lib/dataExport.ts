@@ -79,8 +79,10 @@ export interface DataExportManifest {
      *  registered column named. */
     unregistered: number;
     /** Files listed with a URL but no size because the export's storage
-     *  check ran out of time (FILE_CHECK_BUDGET_MS) before reaching them —
-     *  not verified, and not counted in `missing` even if absent. */
+     *  check ran out of time (FILE_CHECK_BUDGET_MS) before reaching them, or
+     *  the check failed with an error other than not-found (a throttle,
+     *  timeout or 5xx) — not verified, and not counted in `missing` even if
+     *  absent. */
     unchecked: number;
     /** Files shed to offline space archives — expected to be absent from
      *  cloud storage; they live in the org's <root>/data/<archive>.zip files. */
@@ -155,15 +157,23 @@ export async function runOrgExport(params: {
     }
   }
 
-  // 2. User-scoped tables (notification_preferences) — fetched per member
+  // 2. User-scoped tables (notification_preferences) — read through this
+  //    workspace's members, PARENT_ID_CHUNK ids per `.in()` exactly as a
+  //    parent-keyed child is (dumpThroughParent): one read of every member id
+  //    put a ~400-member workspace's URL past what the server accepts, and the
+  //    refused read stamped every backup INCOMPLETE.
   for (const tbl of USER_SCOPED_FOR_ORG_TABLES) {
     try {
-      const memberIds = ((tables.org_members as Array<{ uid: string }>) ?? [])
-        .map((r) => r.uid)
-        .filter(Boolean);
-      const read: TableRead = memberIds.length === 0
-        ? { rows: [], short: null }
-        : await dumpTable(sb, tbl, "user_id", memberIds, true);
+      const members = tableCounts.find((t) => t.name === "org_members");
+      if (!members || members.error || !Object.prototype.hasOwnProperty.call(tables, "org_members")) {
+        throw new Error("its parent table org_members was not exported, so its rows cannot be scoped to this workspace");
+      }
+      const memberIds = Array.from(new Set(
+        (tables.org_members as Array<{ uid?: unknown }>)
+          .map((r) => r?.uid)
+          .filter((v): v is string => typeof v === "string" && v.length > 0),
+      ));
+      const read = await dumpThroughParent(sb, tbl, "user_id", "org_members", members, memberIds);
       tables[tbl] = read.rows;
       tableCounts.push(outcomeOf(tbl, read));
     } catch (e) {
@@ -208,6 +218,8 @@ export async function runOrgExport(params: {
   let missingFiles = 0;
   let missingUnregistered = 0;
   let uncheckedFiles = 0;
+  /** Of uncheckedFiles: the ones whose check failed with an error other than not-found. */
+  let uncheckedByError = 0;
   // The budget runs from here, but never past the ceiling counted from this
   // export's start, nor past the caller's own deadline: a slow table dump
   // leaves the checks less time, not the route.
@@ -249,13 +261,21 @@ export async function runOrgExport(params: {
         size = typeof head.ContentLength === "number" ? head.ContentLength : null;
         contentType = head.ContentType ?? null;
         createdAt = head.LastModified ? head.LastModified.toISOString() : null;
-      } catch {
-        // Object is missing in R2 (legacy / broken record). Keep it in the
-        // manifest with no URL so the gap is visible, never silently dropped.
-        size = null;
-        presignedUrl = "";
-        missingFiles++;
-        if (unregisteredPaths.has(path)) missingUnregistered++;
+      } catch (e) {
+        if (isNotFound(e)) {
+          // Object is missing in R2 (legacy / broken record). Keep it in the
+          // manifest with no URL so the gap is visible, never silently dropped.
+          size = null;
+          presignedUrl = "";
+          missingFiles++;
+          if (unregisteredPaths.has(path)) missingUnregistered++;
+        } else {
+          // A throttle, timeout or server error says nothing about the object:
+          // it keeps its URL (both ZIP producers skip a file without one) and
+          // is counted unchecked, never missing.
+          uncheckedFiles++;
+          uncheckedByError++;
+        }
       }
     }
     if (size) totalBytes += Number(size);
@@ -322,9 +342,14 @@ export async function runOrgExport(params: {
     );
   }
   if (uncheckedFiles > 0) {
+    const byTime = uncheckedFiles - uncheckedByError;
     notes.push(
-      `${uncheckedFiles} file(s) could not be checked against storage within this export's time limit. Each is listed with its ` +
-      "download URL but no size, and is not counted as missing even if it is gone; downloading it confirms it.",
+      (uncheckedByError === 0
+        ? `${uncheckedFiles} file(s) could not be checked against storage within this export's time limit.`
+        : `${uncheckedFiles} file(s) could not be checked against storage: ` +
+          (byTime > 0 ? `${byTime} within this export's time limit, and ` : "") +
+          `${uncheckedByError} because storage answered the check with an error other than "not found" (a throttle, timeout or server error).`) +
+      " Each is listed with its download URL but no size, and is not counted as missing even if it is gone; downloading it confirms it.",
     );
   }
   if (unregistered.length > 0) {
@@ -460,13 +485,29 @@ async function dumpOrgTable(
       .map((r) => r?.id)
       .filter((v): v is string => typeof v === "string" && v.length > 0),
   ));
+  return dumpThroughParent(sb, table, keyed.column, parent, parentOutcome, ids);
+}
+
+/** A child table read through its parent's ids (`column` IN ids),
+ *  PARENT_ID_CHUNK ids per read so no request outgrows a URL. The rows of
+ *  every chunk are kept; a chunk whose read came up short, or a parent whose
+ *  read came up short, marks the child short (the rows under parent rows the
+ *  read missed are not in it). A read error fails the whole child. */
+async function dumpThroughParent(
+  sb: SupabaseClient,
+  table: string,
+  column: string,
+  parent: string,
+  parentOutcome: { short?: string },
+  ids: readonly string[],
+): Promise<TableRead> {
   const out: unknown[] = [];
   const shorts: string[] = [];
   if (parentOutcome.short) {
     shorts.push(`read through the ${ids.length} row(s) of its parent table ${parent} that the export could read; the read of ${parent} came up short, so rows under the ones it missed are not included`);
   }
   for (let i = 0; i < ids.length; i += PARENT_ID_CHUNK) {
-    const read = await dumpTable(sb, table, keyed.column, ids.slice(i, i + PARENT_ID_CHUNK), true);
+    const read = await dumpTable(sb, table, column, ids.slice(i, i + PARENT_ID_CHUNK), true);
     for (const row of read.rows) out.push(row);
     if (read.short) shorts.push(read.short);
   }
@@ -623,6 +664,14 @@ async function readScoped(
     }
   }
   return { rows, short: null };
+}
+
+/** A storage error that says the object is not there (HeadObject's 404) —
+ *  the same test as the intake upload's staged-object check. Anything else
+ *  (a throttle, a timeout, a 5xx) says nothing about the object. */
+function isNotFound(e: unknown): boolean {
+  const err = e as { name?: unknown; $metadata?: { httpStatusCode?: unknown } } | null;
+  return err?.$metadata?.httpStatusCode === 404 || err?.name === "NotFound" || err?.name === "NoSuchKey";
 }
 
 /** Run `fn` over `items`, at most `limit` at a time (each call must settle on
