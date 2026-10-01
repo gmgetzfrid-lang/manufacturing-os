@@ -2748,7 +2748,8 @@ describe("DWG-13 — a row shared by per-sheet PDFs settles with the finding tha
     const lens = await (await get("orgId=o1&libraryId=kl-1")).json();
     const said = (lens.suggestions as string[]).find((x) => /name a sheet no title block in the set declares/.test(x)) ?? "";
     expect(said).toMatch(/re-index that drawing so its sheet numbers are read, and they are judged here/);
-    expect(said).toMatch(/a verdict already recorded for a sheet at a known revision stays as recorded \(listed as kept when the audit is recorded\) until that sheet is revised\./);
+    expect(said).toMatch(/Judging them can raise a recorded verdict but never lowers a settled one: a sheet whose verdict is already recorded at a known revision keeps it \(listed as kept when the audit is recorded\) until the sheet is revised\./);
+    expect(said).not.toMatch(/stays as recorded/);
     await record("kl-1");
     expect(row("025-PID-0104")).toMatchObject({ revision_code: "C", status: "flagged" });
     // A re-index reads page 2's sheet field: the lens judges it — nothing

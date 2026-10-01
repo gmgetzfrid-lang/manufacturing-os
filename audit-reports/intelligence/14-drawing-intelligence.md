@@ -1780,4 +1780,11 @@ Residual (adds to fix pass 10's list, which stands):
 - A shared row lists each finding once. Two members with the same text, such as the same missing sheet or "Page(s) 2 were never read", show as one.
 - A shared row written back keeps every member's settled finding, even one a later change resolves (in probe m1, SH2's one-way after 0101 references back). That is the known-revision rule, as for one sheet.
 - An unchecked reference or an unpaired connector into a sheet whose page gave only the drawing number stays settled. At a known revision, a re-index that reads the sheet field never lowers the recorded verdict, unless the filename named the sheet. The lens now says so.
+**Integration (2026-10-01).** The re-review of fix pass 11 found two minors, both in the lens's wording, and the integrator fixed them before the merge.
+
+- The other "could not be checked" line, for a reference that needs a sheet not read whole, still promised that "once that sheet is read whole they are judged". When that sheet is an accepted partial index, the finding is filed settled, and at a known revision a re-index never lowers it.
+- Fix pass 11's new clause said a recorded verdict "stays as recorded … until that sheet is revised". That holds only for lowering. A re-index can raise the verdict, and a provisional row is re-judged.
+
+Both lines now end: "Judging them can raise a recorded verdict but never lowers a settled one: a sheet whose verdict is already recorded at a known revision keeps it (listed as kept when the audit is recorded) until the sheet is revised." The probe-c1 route test in `lib/__tests__/intelRoundGDrawingRoutes.test.ts` now pins the new sentence and refuses the old one.
+
 ---

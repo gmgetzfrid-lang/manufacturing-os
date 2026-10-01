@@ -836,7 +836,9 @@ export async function GET(req: NextRequest) {
     suggestions.push(
       `${uncheckedRefs} reference(s) could not be checked: they need a sheet that was not read whole ` +
       `(${partly.slice(0, 4).map((d) => `${d.name} — ${incomplete.get(d.id)}`).join("; ")}${partly.length > 4 ? "; …" : ""}). ` +
-      "They are NOT counted as one-way or missing; once that sheet is read whole they are judged.",
+      "They are NOT counted as one-way or missing; once that sheet is read whole they are judged here. " +
+      "Judging them can raise a recorded verdict but never lowers a settled one: a sheet whose verdict is " +
+      "already recorded at a known revision keeps it (listed as kept when the audit is recorded) until the sheet is revised.",
     );
   }
   // References into a sheet no title block declares, of a drawing whose
@@ -853,8 +855,8 @@ export async function GET(req: NextRequest) {
       `${sheetUnread} reference(s) could not be checked: they name a sheet no title block in the set declares, and a ` +
       `drawing's title block gave its number without the sheet (${where.slice(0, 4).join("; ")}${where.length > 4 ? "; …" : ""}). ` +
       "They are NOT counted as one-way or missing; re-index that drawing so its sheet numbers are read, and they are judged " +
-      "here — but a verdict already recorded for a sheet at a known revision stays as recorded (listed as kept when the " +
-      "audit is recorded) until that sheet is revised.",
+      "here. Judging them can raise a recorded verdict but never lowers a settled one: a sheet whose verdict is " +
+      "already recorded at a known revision keeps it (listed as kept when the audit is recorded) until the sheet is revised.",
     );
   }
   if (opcNoRef.length > 0) {
