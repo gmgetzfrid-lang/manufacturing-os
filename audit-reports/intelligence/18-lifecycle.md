@@ -136,7 +136,7 @@ lib/clientBackup.ts:124 `zip.file("data.json", JSON.stringify(envelope, null, 2)
 ## ILIFE-4 · The restore path the UI actually uses never aborts on a failed parent table — the abort logic lives in a dead route
 
 - **Severity:** HIGH
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Assigned:** admin-and-org P3 (done-when 2: delete `/api/admin/restore/apply` or wire it as the page's small-backup path) — by the integrator, 2026-10-01 (at the admin-and-org P1 merge: the package that left this remainder has merged; fleet plan `audit-reports/fleet-plans/`).
 - **Verification:** CONFIRMED
 - **Locations:** `app/(protected)/admin/restore/page.tsx:190`, `app/(protected)/admin/restore/page.tsx:202`, `app/(protected)/admin/restore/page.tsx:207`, `app/api/admin/restore/apply/route.ts:115`, `app/api/admin/restore/apply-table/route.ts:80`
@@ -165,6 +165,25 @@ app/(protected)/admin/restore/page.tsx:200-209 `const body = await res.json().ca
 **Partial (2026-09-30, intelligence Round G).** Pointer — re-verified at HEAD `1b71ca1`: unchanged. The chunked loop records a failed table and moves on (`app/(protected)/admin/restore/page.tsx:190-208` — `if (!res.ok) { tableFailed = true; break; }` breaks the chunk loop only); `/api/admin/restore/apply` still exists with no caller; the result panel lists failed tables without the consequence (`:451`). Owner: admin-and-org **P1** — `BKP-5` criterion 2 is this finding's criterion 1, and `ORG-1` / `BKP-3` decide the fate of `/apply` (criterion 2). Cross-note on `BKP-5`.
 
 **Partial (2026-10-01, intelligence Round G — recorded by the integrator at the admin-and-org P1 merge).** (1) ✓ The page's chunked restore stops at the first table that fails and names the tables it did not attempt (`lib/dataRestore.ts` `runChunkedRestore`, landed by P1 `BKP-5`). (3) ✓ The result panel says "Restore stopped at <table> — N table(s) not attempted" and lists them (`app/(protected)/admin/restore/page.tsx:551`, :583). (2) **Not met:** `/api/admin/restore/apply` is kept — it shares the write path and the stop rule (`applyRestoreChunk`), so its logic is no longer a separate copy — but nothing in the app calls it: neither deleted nor wired as the small-backup path. Remainder → admin-and-org P3.
+
+**Resolution (2026-10-01, admin-and-org Round G).** Package P3, Done-when 2. Reproduced on base `bf6a552`. `app/api/admin/restore/apply/route.ts` still existed, and a repo-wide search found no caller outside its own file and its tests. The page restores through `/begin` and the chunked `/apply-table`.
+
+Fix: the route is **deleted**. That is the reversible, smaller change of the two the record allows:
+- it changes no user-facing behaviour, because nothing called it;
+- it removes a second door that writes a whole backup envelope in one request;
+- restoring one file undoes it.
+
+Wiring it as a small-backup path would have been the larger change. It needs a second branch in the page, a mapping of its answer into the panel's shape, and the org map that "Put the files back" needs, which `/apply` never answered. The stop rule and the write it had were already shared (`applyRestoreChunk`, `runChunkedRestore`), so nothing of them is lost.
+
+Tests that ran a case through it now run it through `/apply-table` or the page's driver: the org boundary, the bounded org-less rows, the bearer scrub, prototype names, re-runs, counters, the reconciliation failures and the rest. Its route-only cases (its 400 envelope refusal, its `DATA_RESTORE` audit row, its `note`) went with it. `lib/__tests__/restoreArchiveRoundTrip.test.ts` pins that the file is gone. `lib/dataRestore.ts` changes only comments that named the deleted route, which is all the deletion strictly requires.
+- Files: `app/api/admin/restore/apply/route.ts` (deleted), `lib/dataRestore.ts` (comments), `lib/__tests__/restoreApplyRoute.test.ts`, `lib/__tests__/restoreArchiveRoundTrip.test.ts`, `lib/__tests__/sweepRoundA.test.ts`, `lib/__tests__/sweepRoundC1b.test.ts`, `lib/__tests__/roundE_D_rolesAdmin.test.ts`.
+
+**Done-when.**
+1. ✓ — the chunked restore stops at the first failed table and names the rest (admin-and-org P1, `BKP-5`).
+2. ✓ — `/api/admin/restore/apply` is deleted, so no abort logic is left as dead code.
+3. ✓ — the result panel states the consequence (P1).
+
+**Scope / residual.** Admin-and-org `ALOG-8`'s "restore/apply site" (the single-shot `DATA_RESTORE` row) went with the route. The chunked path's own trail (`RESTORE_BEGIN`, `RESTORE_CHUNK`, `RESTORE_PREVIEW`) is unchanged. `DEC-75` §1 carries a Landed line.
 
 ---
 
@@ -314,7 +333,7 @@ Negative control: with `lib/storageKeyRegistry.ts` as at `45f0c1b`, both fail. `
 ## ILIFE-6 · Every paginated dump uses .range() with no .order() — the backup and the orphan reference set can silently skip rows
 
 - **Severity:** MEDIUM
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Assigned:** admin-and-org P3 (criterion 3, the purge-side re-check in `lib/storageOrphans.ts` `deleteOrphans`; after document-control P14 merges) — by the integrator, 2026-10-01 (admin-and-org P2 merge: P2 landed the keyset paging of criteria 1–2 and handed the re-check off; fleet plan `audit-reports/fleet-plans/admin-and-org.json`).
 - **Verification:** SUSPECTED
 - **Locations:** `lib/dataExport.ts:299`, `lib/dataExport.ts:300`, `lib/storageOrphans.ts:97`, `lib/storageOrphans.ts:99`
@@ -422,6 +441,31 @@ Tests in `lib/__tests__/exportContractRoundTrip.test.ts`, "notification_preferen
 - A failed slice, and a failed `org_members` read, fail the table.
 
 Negative control: with `lib/dataExport.ts` as at `45f0c1b`, four of the five fail. The failed-slice case holds both ways and pins the behaviour. Criterion 2's ✓ is unchanged.
+
+**Resolution (2026-10-01, admin-and-org Round G).** Package P3, criterion 3's purge-side re-check, after document-control P14 merged. Reproduced on base `bf6a552`. `lib/storageOrphans.ts deleteOrphans` (`:161-186`) sent every candidate of its own scan to `DeleteObjects` (`:171`) with no second look. The balanced write this record describes, a row already read deleted while a row naming the key lands behind the cursor, therefore still hid a reference from the keyset scan and its counts.
+
+Fix: just before each `DeleteObjects` batch, `deleteOrphans` calls `recheckStillNamed`:
+- **Plain columns.** `keysReferencedOutside` over every plain key column, one `.in()` statement per column and 200 keys. Each column's answer is one snapshot, and a read a row cap cut short refuses (P2's guard).
+- **JSON-embedded columns.** One containment read per key per `JSON_KEY_PROBES` entry: ticket attachments `[{url}]`, the branding logo `{logoPath}`, template examples `[{key}]` and `[{url}]`, and library and folder backgrounds `{background:{imagePath}}`. They run 16 at a time.
+- **The outcome.** A key named at re-check time is kept and counted (`kept`). A read error stops the purge before that batch, nothing in it deleted, and the error says so. Batches already deleted stay deleted.
+- Files: `lib/storageOrphans.ts` (`JSON_KEY_PROBES`, `recheckStillNamed`, `deleteOrphans`).
+- Tests: `lib/__tests__/storageOrphansRecheck.test.ts`. The stand-in hides a row from the scan's pages and counts (the balanced write) and shows it to every other read:
+  - a plain-column reference the scan missed (a mirror) is kept and the true orphan deleted;
+  - each JSON-embedded kind is kept by its containment read;
+  - a failed plain or containment read stops the purge with nothing in that batch deleted;
+  - a failure in the second batch leaves the first batch's deletions;
+  - no regression for unreferenced keys and the org prefix;
+  - the re-check runs after the scan;
+  - `JSON_KEY_PROBES` covers exactly `JSON_KEY_COLUMNS`, and each probe's shape is a value the registry's own extractor reads the key back from.
+
+  All 15 fail against base. `lib/__tests__/dcRoundFShed.test.ts`'s orphan block passes unchanged.
+
+**Done-when.**
+1. ✓ — every paginated dump has a stable, unique sort key (document-control `XEDGE-13`, A&O P2).
+2. ✓ — the export's count reconciliation (A&O P2).
+3. ✓ — the collector pages by keyset (A&O P2), and every candidate is re-checked against every registered key column in single statements just before it is deleted (P3). A missed reference now costs a kept orphan, never a deleted live file.
+
+**Scope / residual.** The re-check costs about six containment reads per candidate on top of 11 plain reads per 200 candidates, inside the orphans route's `maxDuration = 300`. A very large purge stops at the route's limit with what it deleted so far, rather than deleting unchecked. A reference that lands after the re-check's own statement and before `DeleteObjects` is the window left; it is milliseconds long, and an upload's object is never a candidate before it is seven days old.
 
 ---
 
@@ -717,7 +761,7 @@ Tests: `lib/__tests__/sourceSync.test.ts` ILIFE-13 block:
 ## ILIFE-14 · The direct storage delete frees a key that a knowledge-library mirror still names — the shed's mirror check (ILIFE-5) has a second door
 
 - **Severity:** LOW
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Assigned:** admin-and-org P3 (after document-control P14 merges: P14 edits the same route for `RET-2`) — by the integrator, 2026-10-01 (admin-and-org P2 merge; fleet plan `audit-reports/fleet-plans/admin-and-org.json`).
 - **Verification:** CONFIRMED (read at the admin-and-org P2 merge: `app/api/storage/delete/route.ts` `DELETE` refuses a key a held or retained revision names, then frees it without asking `lib/storageKeyRegistry.ts` whether any other registered key column — a `knowledge_documents.file_key` mirror among them — still names it)
 - **Locations:** `app/api/storage/delete/route.ts` (`DELETE`, between the hold / retention refusal and the `STORAGE_OBJECT_DELETE` custody row), `lib/storageKeyRegistry.ts` (`keysReferencedOutside`), `lib/knowledgeSourceSync.ts` (a mirror's `file_key` is the controlled revision's own key)
@@ -733,3 +777,30 @@ Tests: `lib/__tests__/sourceSync.test.ts` ILIFE-13 block:
 - [ ] A route test covers it: a `knowledge_documents` row naming the key is refused; an unreferenced key and today's project-cost deletes still succeed.
 
 **Closer:** admin-and-org P3 (assigned at the P2 merge, 2026-10-01). The exact hunk is in `ILIFE-5`'s record (the "second call site" block).
+
+**Resolution (2026-10-01, admin-and-org Round G).** Package P3, after document-control P14 merged (the route carries `RET-2`'s current-revision refusal). Reproduced on base `bf6a552`. `app/api/storage/delete/route.ts` went from the hold / retention try (`:273-275`) straight to the custody row (`:277`) and the delete. Nothing asked whether a knowledge mirror, or any other registered key column, still named the key.
+
+Fix: `ILIFE-5`'s "second call site" hunk, as recorded. After the hold / retention / current-revision try and before the custody row, the route calls `keysReferencedOutside(supabaseAdmin, [path], ["document_versions.file_url", "document_versions.source_file_key"])`:
+- a hit is 409 "Another record still uses this file (a knowledge-library copy or similar); it cannot be deleted.";
+- a read error, or a read a row cap cut short, is 503 "Could not verify what still uses this file; deletion refused.";
+- either way nothing is deleted and no custody row is written.
+
+`RET-2`'s and P11's refusals keep their answers and come first.
+- Files: `app/api/storage/delete/route.ts`.
+- Tests in `lib/__tests__/storageDeleteRoute.test.ts`, "ILIFE-14 — a key another record still names is never freed":
+  - a mirror naming a superseded revision's file is 409, with nothing deleted and no custody row;
+  - a vendor quote's row naming the key is 409;
+  - an unreadable column is 503;
+  - a clear revision's file and source still delete;
+  - the costDocs path still deletes;
+  - a hold still answers 423 first;
+  - the call's exclusions and its position are pinned.
+
+  The first three and the pin fail against base. Every existing case, `RET-2`'s and P11's included, passes.
+
+**Done-when.**
+- [x] The route refuses with 409, in plain words, a key that any registered key column other than the revision's own still names, using `keysReferencedOutside` (fail closed: a read error answers 503 and frees nothing) ✓.
+- [x] A route test covers it: a `knowledge_documents` row naming the key is refused; an unreferenced key and today's project-cost deletes still succeed ✓.
+
+**Scope / residual.** Plain columns only, as the predicate and the hunk are. A key named only inside JSON (an attachment, a logo, a template example, a background) is not checked here. The route's one caller deletes project-cost keys, which are plain. The orphan purge checks the JSON columns too (`ILIFE-6` criterion 3).
+

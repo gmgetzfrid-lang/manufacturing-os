@@ -117,6 +117,30 @@ app/api/stripe/webhook/route.ts:56 — `const plan = (sub.metadata?.plan as stri
 - [ ] customer.subscription.deleted clears subscribed_plan (or entitlement checks require an active status as well as a plan)
 - [ ] run-scheduled re-checks entitlement before executing a cloud-bucket destination, and disables (not deletes) destinations whose plan lapsed
 
+**Partial (2026-10-01, admin-and-org Round G).** Package P3, Done-when 3 only. Done-when 1 and 2 (the Stripe webhook) are admin-and-org P4's, and the status stays OPEN for them. Reproduced on base `bf6a552`:
+- the runner's re-check existed. Document-control `XEDGE-7` / `XEDGE-8` added `lib/exportEntitlement.ts scheduledRunGate`, whose plan limb skips a bucket destination under `SUBSCRIPTION_ENFORCE` (`DEC-18`);
+- but the skip (`app/api/data-export/run-scheduled/route.ts:114-140`) left the destination `enabled`, so a lapsed bucket destination was refused again every night. Re-enabling one later passed no plan gate unless the request also set the bucket (`destinations/[id]/route.ts`).
+
+Fix:
+- **Disable on a lapsed plan.** Under `SUBSCRIPTION_ENFORCE`, a skipped destination with a bucket whose workspace plan no longer includes cloud backups (`planNoLongerIncludesBuckets`, the same `cloudBucketAllowed` rule) is updated `enabled: false`, never deleted. The reason is on the cancelled run ("… the destination was disabled; an Admin re-enables it once the plan includes cloud backups") and on the card's `last_run_error`.
+- **When it does not disable.** An unreadable workspace row does not disable: the skip already happened, and a disable needs a definite answer. A skip for any other reason (a departed configurer, a lapsed subscription on a plan that still includes buckets) does not disable either. With the flag off, nothing changes (`DEC-18`): the would-be skip is a notice and the push runs.
+- **Re-enabling.** Enabling a bucket destination again (PATCH turning `enabled` on) passes `assertCloudBucketEntitlement` (402), as creating one does.
+- Files: `app/api/data-export/run-scheduled/route.ts`, `app/api/data-export/destinations/[id]/route.ts`.
+- Tests in `lib/__tests__/dataExportRoutes.test.ts`, "BILL-3 Done-when 3 — a bucket destination whose plan lapsed is disabled (never deleted), and enabling re-checks":
+  - under the flag: skipped, recorded and disabled, with the row kept;
+  - flag off: it runs and nothing is disabled;
+  - a departed configurer skips without disabling;
+  - enabling on a lapsed plan is 402, and 200 once the plan allows.
+
+  The disable and re-enable tests fail against base.
+
+**Done-when.**
+- [ ] subscribed_plan is derived from the subscription's price id — **not done here**: admin-and-org P4 (the Stripe webhook).
+- [ ] customer.subscription.deleted clears subscribed_plan (or entitlement checks require an active status as well as a plan) — **not done here**: P4.
+- [x] run-scheduled re-checks entitlement before executing a cloud-bucket destination, and disables (not deletes) destinations whose plan lapsed ✓. The re-check is `XEDGE-8`'s; the disable is new. Both ride `SUBSCRIPTION_ENFORCE` (`DEC-18`).
+
+**Scope / residual.** OPEN for Done-when 1 and 2 (P4). Until P4 derives the plan from the price id, the plan column the disable reads can be stale (`XEDGE-14`). That is why the refusal, and now the disable, wait for the flag.
+
 ---
 
 <a id="bill-4"></a>

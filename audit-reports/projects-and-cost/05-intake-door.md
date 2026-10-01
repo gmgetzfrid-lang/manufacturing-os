@@ -257,7 +257,7 @@ upload/route.ts:286-292 — the full insert object, with no `uniqueness_key`. li
 ## INTK-6 · Live contractor portal tokens are dumped in cleartext into every org backup and shipped to external destinations, reachable by a role that cannot even read the table under RLS
 
 - **Severity:** HIGH
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Assigned:** admin-and-org P3 — by the integrator, 2026-10-01 (orphan sweep: the package that left this remainder has merged; fleet plan `audit-reports/fleet-plans/`).
 - **Verification:** CONFIRMED
 - **Locations:** `lib/exportTables.ts:51`, `lib/dataExport.ts:95-99,300`, `supabase/migrations/20260913_projects_rls_recursion_fix.sql:99-102`, `app/api/data-export/destinations/route.ts:13`, `supabase/migrations/20260902_project_intake.sql:22`
@@ -291,6 +291,17 @@ lib/dataExport.ts:300 `let q = sb.from(table).select("*").range(from, from + pag
 - [ ] The export API's role set and the table's RLS agree — **not done**: waits for admin-and-org P3.
 
 **Scope / residual.** No code in this package (the export files are document-control / admin-and-org's). Close by pointer when A&O P3 merges.
+
+**Resolution (2026-10-01, admin-and-org Round G).** Package P3; the role-set limb closes by pointer to admin-and-org `BKP-8`. Reproduced on base `bf6a552`: the export API still admitted Manager. That was `app/api/data-export/structured/route.ts:56` and the `ADMIN_ROLES = ["Admin", "Manager", "DocCtrl"]` of `run/route.ts:18`, `destinations/route.ts:14` and the other export routes, while `project_intake_links`' RLS is controller or project owner (`20260913:100-102`).
+
+Now every `/api/data-export` route is held to the Admin-only data-export surface by `lib/adminGate.ts authorizeAdminSurface`. An Admin is in the controller tier (`is_org_controller`), so whoever can export can read every intake link through RLS. Tests: `lib/__tests__/dataExportRoutes.test.ts` "BKP-8 — every data-export route is Admin-only, through the one gate". A Manager, DocCtrl or Viewer is refused 403 by all eight handlers.
+
+**Done-when.**
+- [x] No bearer secret leaves in a backup ✓ — document-control `EGR-7` (unchanged).
+- [x] A restore never resurrects a live external door ✓ — `DEC-45` (unchanged).
+- [x] The export API's role set and the table's RLS agree ✓ — the export is Admin-only, inside the controller tier the RLS admits (admin-and-org `BKP-8`, `DEC-44 (A&O P3)` §1).
+
+**Scope / residual.** None in this record.
 
 ---
 

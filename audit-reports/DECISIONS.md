@@ -741,6 +741,8 @@ log shows what enforcement would have blocked.
 
 *Landed 2026-10-01 (intelligence Round G, I-05): AI provider keys take the same production / development split — with `EXPORT_ENCRYPTION_KEY` unset (or not 64 hex characters) a production server refuses to store a key (`lib/ai/keyVault.ts` `sealAiKey` throws; `/api/ai/connection` answers 503 before spending a verify call), development stores it with a warning, and existing rows keep decrypting (a plaintext one is re-sealed on its next save). Unlike the subscription flag this one is not off by default: storing a secret in plaintext is not a billing decision. See `GOV-12`, `DEC-73` item 6.*
 
+*Landed 2026-10-01 (admin-and-org Round G, P3): the scheduled sweep's plan limb now also DISABLES a bucket destination whose workspace plan no longer includes cloud backups, under the same flag only (`app/api/data-export/run-scheduled/route.ts`). It never deletes the destination. An unreadable workspace row never disables. With the flag off, nothing changes. Re-enabling one passes the create path's plan gate (`destinations/[id]` PATCH). See `BILL-3` Done-when 3.*
+
 <a id="dec-19"></a>
 ## DEC-19 · `access_requests` — build the surface or remove the feature?
 
@@ -1934,6 +1936,8 @@ safe side for a credential.
 *Landed 2026-10-01 (admin-and-org Round G, P1): "a restored export destination has no credentials and is DISABLED" now holds whatever the backup row carries — `lib/dataRestore.ts landRestoredRow` also sets `next_run_at` NULL (the scheduler selects only enabled rows with a due run) and NULLs every credential column even when the row omits the keys, which `scrubRestoredRow` alone could not see; and since both restore routes write through `applyRestoreChunk`, the scrub binds the single-shot `/apply` exactly as it binds `/apply-table`. See `BKP-11`, `BKP-1` (restore halves), `DEC-75`.*
 *Landed 2026-10-01 (admin-and-org Round G, P1 fix pass 3): the restore half's "nothing restored can fire until a person acts" now covers the outbound mail queue too. `email_notifications` is in `lib/dataRestore.ts SKIP_TABLES`, so neither restore route writes a row of it. A restored row bypassed the queue's INSERT rail (SURF-17) under the service role, and the drain sent it to any address the backup named. Landing it terminal was rejected because the Admin's dead-letter re-queue revives a failed row. The queue stays in the export for review. See `BKP-11` (fix pass 3 paragraph), `ORG-1`, `DEC-75` §4.*
 *Landed 2026-10-01 (admin-and-org Round G, P2): the acceptance line "No export artifact … contains a token or an `*_encrypted` value" is now pinned by VALUE. `lib/__tests__/exportContractRoundTrip.test.ts` runs the real export over a workspace holding live share, intake and portal tokens and destination credentials, and finds none of them in the envelope, in any entry of the server ZIP, or in any part of the browser Full ZIP. See `BKP-1` (RESOLVED).*
+
+*Landed 2026-10-01 (admin-and-org Round G, P3): "people … re-enter credentials" is now enforced, not only implied. Turning a disabled export destination on (`PATCH /api/data-export/destinations/[id]`) requires its credentials, stored or in the same request: both access keys for an s3 / r2 row, the signing secret for a webhook. Otherwise it answers 409 and asks the Admin to check the URL. A restored destination therefore cannot be enabled until a person re-enters what the backup never carried. A destination already enabled is not re-checked on edit: a webhook's secret is optional by design. See `BKP-11` Done-when 3.*
 
 <a id="dec-46"></a>
 ## DEC-46 · External share links: who mints, how long, what serves, what is recorded
@@ -3428,6 +3432,8 @@ may be scoped for speed. Nothing else changes.
 
 *Landed 2026-10-01 (admin-and-org Round G, P2): the collector reads the ONE storage-key registry the backup reads (`lib/storageKeyRegistry.ts`, `BKP-2`), still with no org filter, and pages by keyset (`ILIFE-6` criterion 3). The decision is unchanged. The `referencedKeys` aggregate (`ILIFE-8`'s residual) was not in A&O P2's plan and still leaves the server.*
 
+*Landed 2026-10-01 (admin-and-org Round G, P3): the reference set is now also asked again, bucket-wide, at both byte-freeing doors. (1) `deleteOrphans` re-checks every candidate just before its `DeleteObjects` batch (`recheckStillNamed`): one `.in()` per plain key column, and one containment read per key per JSON-embedded column. A key named then is kept, and a re-check that cannot read stops the purge (`ILIFE-6` criterion 3). (2) `DELETE /api/storage/delete` refuses with 409 a key that any registered key column other than the revision's own still names, and with 503 when that cannot be read (`ILIFE-14`). Neither read is org-scoped, so a reference anywhere protects the object, as this decision says.*
+
 <a id="dec-58"></a>
 ## DEC-58 · Knowledge ingestion: one writer, one reset, honest pages, a chunker a library chooses
 
@@ -4746,6 +4752,8 @@ Two smaller points are also fixed. A team membership naming an unmapped member w
 
 *Landed 2026-10-01 (admin-and-org Round G, P2): the export now carries the two org-less tables §3 bounds. `project_members` and `curated_collection_items` are read through this workspace's `projects` / `curated_collections` (`lib/exportTables.ts EXPORT_KEYED_BY`), and `orgs` by its id. A test pins that export and restore name the same parents. `access_requests` stays exported by `org_id`. A backup the current export writes is COMPLETE, and both tables restore end to end (`lib/__tests__/exportContractRoundTrip.test.ts`). See `BKP-4` (RESOLVED).*
 
+*Landed 2026-10-01 (admin-and-org Round G, P3): §1's single-shot `/api/admin/restore/apply` is deleted (intelligence `ILIFE-4`: it had no caller). The chunked `/apply-table`, driven by the page after `/begin`, is the one restore door, and `applyRestoreChunk` its one write. The Acceptance line "the same rows land identically through either route" now holds for that one route. The restore also reports a process flow that `20261155`'s endpoint check refuses as a dangling flow (`DANGLING_FLOW_CODE`), on its own line and counted apart from refused rows (`BKP-15`; `DEC-80` item 3).*
+
 <a id="dec-76"></a>
 ## DEC-76 · The Projects surface's words, its refusals, and a contractor's company link
 
@@ -5036,3 +5044,44 @@ dialog to close on one Escape closes its own stack in its handler.
 **Risk:** low. It narrows: members outside the controller tier lose confirming a flow and editing or removing a decided one. The paste counts them, and the confirmed rows they drew before are kept. Until `20261155` is pasted, the database still accepts a member's confirmed flow; the reader's authority, gates and checked writes hold either way.
 
 *Landed 2026-10-01 (intelligence Round G, I-09 fix pass): item 1's "written only by the reader" applies to SETTING a source. Clearing one is allowed, because `20261017`'s `ON DELETE SET NULL` on `source_document_id` runs as an UPDATE under the deleting person's session. The first guard refused it, which made every cited knowledge document, controlled document and library undeletable. The guard's fixed-column clause is now `OR (NEW.source_document_id IS NOT NULL AND NEW.source_document_id IS DISTINCT FROM OLD.source_document_id)`. Every other provenance column stays fixed, and a source is still never set or retargeted by a person. A dismissal whose source is cleared still sticks (item 6: it no longer names the document whose reading it judged, so `reproposable` answers false). See `FLOW-2`'s correction.*
+
+*Landed 2026-10-01 (admin-and-org Round G, P3): item 3's kept dangling flows travel in every backup taken since the paste, and `20261155` refuses each one on restore, because the guard binds the restore too. The restore reports each as "a process flow whose equipment or unit is not in this workspace — not restored" (`lib/dataRestore.ts DANGLING_FLOW_CODE`). The row is counted in `totalDanglingFlows` and given its own line on `/admin/restore`, never mixed with real refusals. The guard is unchanged: no restore-session marker was added (that would need a migration, and would land a flow the database otherwise refuses). See admin-and-org `BKP-15`.*
+
+<a id="dec-44-ao-p3"></a>
+## DEC-44 (A&O P3) · Who may take the whole workspace out, what the record of it names, and how a machine signs its audit row
+
+*Minted by admin-and-org Round G, package P3 (2026-10-01), under the protocol's fail-safe rule, as a provisional "DEC-44 (A&O P3)", distinct from the download-record DEC-44. It takes the fleet plan's stated defaults (`audit-reports/fleet-plans/admin-and-org.json`, P3: Admin-only export by refusal `DEC-43`; `lib/adminGate.ts` with no new constant or capability; "BKP-13/BILL-9: ONE convention for machine audit rows, shared with P4"). DEC-44 to DEC-80 are taken on the integration branch; the integrator renumbers. References: `BKP-8`, `BKP-13`, `BKP-11`, `BKP-6`, `BILL-3` (admin-and-org), `INTK-6` (projects-and-cost).*
+
+**Decision. Five calls about the full-workspace export.**
+
+1. **Admin-only, through the one gate.** The data-export admin surface (`lib/adminSurfaces.ts`) carries the restore surface's set, `["Admin"]`. Every `/api/data-export` route asks `lib/adminGate.ts authorizeAdminSurface(req, orgId, "data-export")`, and none keeps a role list of its own. That covers exporting, the run history, and creating, editing, testing or deleting a destination. An Admin is in the controller tier, so the service role's reads (every ACL-restricted document) hand the exporter nothing the app would not (`DEC-43`).
+2. **A machine's audit row** (the convention the scheduled push uses now and admin-and-org P4's Stripe webhook takes):
+   - `user_id` is NULL, never a string and never an invented uuid in the uuid column;
+   - `user_email` is the machine's label, `system:<channel>` (`system:scheduled-export`; P4: `system:stripe-webhook`);
+   - `user_role` is `system`;
+   - `details` names the channel and any person whose configuration the machine acted on (`configuredBy`), never as the actor.
+
+   The write is CHECKED like any other audit row. A row that cannot be written is surfaced (the scheduled export fails its run), never dropped.
+3. **The record names what left.** An export writes its `DATA_EXPORT` row (actor, role, channel, how many download links were minted) and then `DATA_EXPORT_FILES` rows naming every file it hands out, 500 to a row, with the document and revision for a revision's file. Both writes are checked, and an export that cannot be recorded is refused before anything leaves. It is a bulk `audit_logs` record; `download_audits` stays the member's own pull record (`DEC-44` §1).
+4. **What RLS keeps from every other member, the export keeps out.** A standalone note (no document, project or asset) is its author's private scratchpad (`notes_standalone_own`). It is withheld from every export, along with any file only it names. The manifest counts it and says why.
+5. **Every export, and every new way for one to leave, rings the controllers.**
+   - A person's export tells every other Admin / DocCtrl.
+   - A scheduled push tells all of them, naming the destination and its configurer.
+   - Creating any destination, enabling one, or pointing an enabled one somewhere new tells every other controller.
+   - A refused alert is recorded, never swallowed, and never blocks the act it reports.
+
+**Rationale.** The export runs as the service role, so the route's gate is the only boundary there is. Manager could export what the ACL hid from them, and every member's private notes went to whoever exported. The scheduled push was unlogged, its audit row refused on the uuid column and the refusal never read, and unannounced: a webhook destination was a silent daily channel. One machine convention keeps "who did this" answerable without a fabricated person; a NULL `user_id` with the channel named is the shape `download_audits` already uses for a share or portal pull (`DEC-44` §1).
+
+**Implementation.** `lib/adminSurfaces.ts`; every route under `app/api/data-export/`; `lib/dataExport.ts` (`withholdPrivateNotes`, `recordExport`); `lib/exportAlerts.ts` (new); `lib/exportRunner.ts`; `app/(protected)/admin/data-export/page.tsx`. Tests: `lib/__tests__/dataExportRoutes.test.ts`, `lib/__tests__/roundE_D_rolesAdmin.test.ts`.
+
+**Acceptance.**
+- A Manager, DocCtrl or Viewer is refused 403 by every data-export handler, and an Admin is admitted.
+- The scheduled push's `DATA_EXPORT` row has `user_id` NULL, `user_email` `system:scheduled-export` and `user_role` `system`.
+- A refused `DATA_EXPORT` or `DATA_EXPORT_FILES` insert refuses the export.
+- A private note is in no export.
+- Every export, and every destination created, enabled or re-pointed, rings the controllers.
+
+**Reversal.** A stated need for a non-Admin role to export moves the surface's `entry` (one line, the gate follows). It does not add a capability token unless the policy layer should decide it. A stated need to keep private notes in a disaster-recovery backup would carry them encrypted to their authors, never in the clear to the exporter.
+
+**Risk:** low to medium. Manager and DocCtrl lose the export page, its run history and the storage page's export buttons; the buttons now answer 403, and hiding them is admin-and-org P6's. A restore of a newer backup no longer brings back private notes. Controllers get one bell per scheduled run.
+
