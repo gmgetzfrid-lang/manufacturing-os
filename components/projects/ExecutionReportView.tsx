@@ -14,7 +14,7 @@ import {
 } from "lucide-react";
 import type { Milestone } from "@/types/schema";
 import { computeExecutionReport, FORECAST_MIN_DONE_FRACTION } from "@/lib/executionReport";
-import { computeCriticalPath, pathCalendarLabel } from "@/lib/criticalPath";
+import { computeCriticalPath, loopNote, pathCalendarLabel } from "@/lib/criticalPath";
 import { weightBasisLabel } from "@/lib/scheduleProgress";
 import { listBaselineCaptures, currentBaselineSummary, type BaselineCapture } from "@/lib/milestones";
 
@@ -64,11 +64,12 @@ export default function ExecutionReportView({ milestones, orgId, projectId, nowM
     () => milestones.filter((m) => m.id && critical.ids.has(m.id)).map((m) => m.name),
     [milestones, critical],
   );
-  // The tasks a loop of links keeps off the path, named so the loop can be
-  // found and a link removed (PT SCH-15, seventh review pass).
-  const loopNames = useMemo(() => {
-    const inLoop = new Set(critical.cycle ?? []);
-    return milestones.filter((m) => m.id && inLoop.has(m.id)).map((m) => m.name);
+  // The tasks a loop of links keeps off the path, named loop by loop so each
+  // can be found and a link removed (PT SCH-15, seventh and eighth review
+  // passes: separate loops were read as one).
+  const loopText = useMemo(() => {
+    const nameOf = new Map(milestones.filter((m) => m.id).map((m) => [m.id!, m.name] as const));
+    return loopNote((critical.loops ?? []).map((l) => l.map((id) => nameOf.get(id) ?? id)));
   }, [milestones, critical]);
 
   if (r.totalLeaves === 0) {
@@ -148,8 +149,9 @@ export default function ExecutionReportView({ milestones, orgId, projectId, nowM
       </div>
 
       {/* Critical path — what's driving the finish. Shown with no path too
-          when a loop of links keeps every unfinished task off it, so the
-          loop is never silent (seventh review pass). */}
+          when a loop of links holds the latest work (or every unfinished
+          task), so the loop is never silent (seventh and eighth review
+          passes). */}
       {(critical.ids.size > 0 || critical.cycle) && (
         <div className="rounded-2xl border border-rose-200 bg-rose-50/40 shadow-sm px-4 py-3">
           <div className="flex items-center gap-2 flex-wrap">
@@ -157,13 +159,15 @@ export default function ExecutionReportView({ milestones, orgId, projectId, nowM
             <span className="text-[10px] font-black uppercase tracking-widest text-[var(--color-text-faint)]">Driving the finish</span>
             <span className="text-sm font-bold text-[var(--color-text)]">{critical.ids.size > 0
               ? `${critical.ids.size} task${critical.ids.size === 1 ? "" : "s"} on the critical path`
-              : "No critical path — every unfinished task is in a loop of links"}</span>
+              : critical.floatDays.size === 0
+                ? "No critical path — every unfinished task is in a loop of links"
+                : "No critical path — the finish is in a loop of links"}</span>
             {critical.remainingHours > 0 && <span className="text-[11px] text-[var(--color-text-muted)]">· {Math.round(critical.remainingHours)}h still to do on the chain</span>}
             <span className="ml-auto text-[10px] text-[var(--color-text-faint)]">
               {critical.linked
                 ? `from the finish-to-start links · ${pathCalendarLabel(critical.calendar, critical.workedWeekendDays.length)}, no holidays${critical.unlinked > 0 ? ` · ${critical.unlinked} task${critical.unlinked === 1 ? " has" : "s have"} no links` : ""}`
                 : "no dependency links yet — only the tasks that end at the finish are shown"}
-              {critical.cycle ? ` · ${critical.cycle.length} task${critical.cycle.length === 1 ? "" : "s"} in a loop of links left out` : ""}
+              {critical.cycle ? ` · ${critical.cycle.length} task${critical.cycle.length === 1 ? "" : "s"} in ${(critical.loops?.length ?? 1) > 1 ? `${critical.loops!.length} loops` : "a loop"} of links left out` : ""}
             </span>
           </div>
           <div className="mt-2 flex flex-wrap gap-1.5">
@@ -172,10 +176,13 @@ export default function ExecutionReportView({ milestones, orgId, projectId, nowM
             ))}
             {criticalNames.length > 10 && <span className="text-[11px] text-[var(--color-text-faint)] italic">+{criticalNames.length - 10} more</span>}
           </div>
-          {loopNames.length > 0 && (
+          {critical.finishInLoop && critical.floatDays.size > 0 && (
             <p className="mt-2 text-[11px] text-[var(--color-text-muted)]">
-              Left out of the path — {loopNames.length === 1 ? "this task waits" : "these tasks wait"} for {loopNames.length === 1 ? "itself" : "each other"} through a loop of links: {loopNames.slice(0, 5).map((n) => `“${n}”`).join(", ")}{loopNames.length > 5 ? `, +${loopNames.length - 5} more` : ""}. Remove one of those links (in the task panel, or in the scheduling tool for an imported task) to put {loopNames.length === 1 ? "it" : "them"} back on the path.
+              The latest unfinished work is in a loop of links, so no chain of links drives the finish; every other task&apos;s float is measured up to that work.
             </p>
+          )}
+          {loopText && (
+            <p className="mt-2 text-[11px] text-[var(--color-text-muted)]">{loopText}</p>
           )}
         </div>
       )}

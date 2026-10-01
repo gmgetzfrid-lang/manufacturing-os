@@ -81,7 +81,12 @@
 // its place in the pass, its links to a loop member dropped, so a loop
 // upstream does not take the rest of the path with it. A finished leaf gates
 // nothing and waits for nothing here, so a loop through one is not a loop
-// for the path. Pure.
+// for the path. The finish is still the latest UNFINISHED work, a loop
+// member's included: every other leaf's float is measured against it, and
+// when a loop member's work is the latest, no chain drives the finish — the
+// path is empty and `finishInLoop` says why (eighth review pass: the finish
+// was the latest work OUTSIDE the loop, so a chain weeks short of the planned
+// finish was drawn at 0 float as "driving the finish"). Pure.
 
 import type { Milestone } from "@/types/schema";
 import { DAY_MS, fsReadyMs, isWeekendUtcDay, lagWorkingMs, reflowNodesFromMilestones, workingTimeMs } from "@/lib/scheduleReflow";
@@ -118,6 +123,15 @@ export interface CriticalPathResult {
    *  the pass), or null. Only the members: a leaf downstream of a loop keeps
    *  its place on the path. */
   cycle: string[] | null;
+  /** The same members, one list per loop — each strongly connected set of
+   *  leaves, or one leaf that waits for itself through a phase — so a screen
+   *  can tell tasks that wait for EACH OTHER from separate loops (two tasks
+   *  each linked to its own phase are two loops, not one). Null with cycle. */
+  loops: string[][] | null;
+  /** True when a loop member's work is the latest unfinished work, so no
+   *  chain of links outside a loop drives the finish and `ids` is empty
+   *  (every unfinished task in a loop included). */
+  finishInLoop: boolean;
 }
 
 /** The working week the path is measured on (see the header). */
@@ -132,6 +146,35 @@ export function pathCalendarLabel(calendar: PathCalendar, workedWeekendDays = 0)
     : "working days Mon–Fri, plus the weekend days with work planned on them";
 }
 
+/** How a screen names the tasks a loop of links keeps off the path, given
+ *  each loop's task names (CriticalPathResult.loops): one task that waits
+ *  for itself, several that wait for each other, or — when there are
+ *  separate loops — each group named on its own, since removing a link in
+ *  one puts back only that loop's tasks (eighth review pass: two tasks each
+ *  linked to its own phase read "these tasks wait for each other"). At most
+ *  `max` names are listed. Null when there is no loop. */
+export function loopNote(groups: string[][], max = 5): string | null {
+  const loops = groups.filter((g) => g.length > 0);
+  if (loops.length === 0) return null;
+  const total = loops.reduce((n, g) => n + g.length, 0);
+  const shown: string[][] = [];
+  let left = max;
+  for (const g of loops) {
+    if (left <= 0) break;
+    shown.push(g.slice(0, left));
+    left -= g.length;
+  }
+  const listed = shown.reduce((n, g) => n + g.length, 0);
+  const names = shown.map((g) => g.map((n) => `“${n}”`).join(", ")).join("; ") + (total > listed ? `, +${total - listed} more` : "");
+  const fix = "(in the task panel, or in the scheduling tool for an imported task)";
+  if (loops.length > 1) {
+    return `Left out of the path — these tasks are in ${loops.length} separate loops of links, each waiting for itself through its links or its phase: ${names}. Remove one link in each loop ${fix} to put its tasks back on the path.`;
+  }
+  return total === 1
+    ? `Left out of the path — this task waits for itself through a loop of links: ${names}. Remove one of those links ${fix} to put it back on the path.`
+    : `Left out of the path — these tasks wait for each other through a loop of links: ${names}. Remove one of those links ${fix} to put them back on the path.`;
+}
+
 const startMs = (m: Milestone) => Date.parse((m.plannedStartAt as string | undefined) ?? (m.plannedAt as string));
 const finishMs = (m: Milestone) => Date.parse(m.plannedAt as string);
 
@@ -140,7 +183,7 @@ export function computeCriticalPath(
   opts?: { toleranceDays?: number },
 ): CriticalPathResult {
   const tolerance = (opts?.toleranceDays ?? 1) * DAY_MS;
-  const empty: CriticalPathResult = { ids: new Set(), finish: null, remainingHours: 0, floatDays: new Map(), calendar: "mon-fri", workedWeekendDays: [], linked: false, unlinked: 0, cycle: null };
+  const empty: CriticalPathResult = { ids: new Set(), finish: null, remainingHours: 0, floatDays: new Map(), calendar: "mon-fri", workedWeekendDays: [], linked: false, unlinked: 0, cycle: null, loops: null, finishInLoop: false };
 
   const byId = new Map<string, Milestone>();
   for (const m of milestones) if (m.id) byId.set(m.id, m);
@@ -216,6 +259,7 @@ export function computeCriticalPath(
   const unfinished = (id: string) => { const m = byId.get(id)!; return m.status !== "completed" && !m.actualAt; };
   const liveEdge = (p: string, s: string) => p !== s && leafSet.has(p) && leafSet.has(s) && unfinished(p) && unfinished(s);
   const loopMember = new Set<string>();
+  const loopSets: string[][] = [];
   {
     const index = new Map<string, number>();
     const low = new Map<string, number>();
@@ -242,8 +286,8 @@ export function computeCriticalPath(
           const comp: string[] = [];
           let w: string;
           do { w = stack.pop()!; onStack.delete(w); comp.push(w); } while (w !== top.v);
-          if (comp.length > 1) for (const c of comp) loopMember.add(c);
-          else if (selfLoop.has(top.v) && unfinished(top.v)) loopMember.add(top.v);
+          if (comp.length > 1) { for (const c of comp) loopMember.add(c); loopSets.push(comp); }
+          else if (selfLoop.has(top.v) && unfinished(top.v)) { loopMember.add(top.v); loopSets.push(comp); }
         }
       }
     }
@@ -276,6 +320,10 @@ export function computeCriticalPath(
   // The loop's members (a leaf the order could not place would be one too;
   // none can be).
   const cycle = leafIds.filter((id) => loopMember.has(id) || !inOrder.has(id));
+  // Each loop's members in list order, the loops by their first member.
+  const position = new Map(leafIds.map((id, i) => [id, i] as const));
+  const byPosition = (a: string, b: string) => position.get(a)! - position.get(b)!;
+  const loops = loopSets.map((l) => [...l].sort(byPosition)).sort((a, b) => byPosition(a[0], b[0]));
   const preds = new Map<string, Array<{ p: string; lag: number }>>();
   for (const [p, row] of succ) for (const [sId, lag] of row) {
     const arr = preds.get(sId) ?? []; arr.push({ p, lag }); preds.set(sId, arr);
@@ -321,7 +369,7 @@ export function computeCriticalPath(
     return out;
   };
   const ownDays = new Map<string, readonly number[]>();
-  for (const id of order) ownDays.set(id, workedDaysOf(id));
+  for (const id of leafIds) ownDays.set(id, workedDaysOf(id));
   const own = (id: string): readonly number[] => ownDays.get(id) ?? NONE;
   // The days of an ascending list that overlap [from, to).
   const workedIn = (days: readonly number[], from: number, to: number): number[] => {
@@ -359,13 +407,18 @@ export function computeCriticalPath(
   // is not read, as a finished predecessor's is not).
   const open = (id: string) => unfinished(id) && inOrder.has(id);
   // The finish the float is measured against: the latest ready instant of an
-  // UNFINISHED leaf (a completed task's planned date gates nothing). The
-  // hand-off to it is measured, like a link, on its two ends' days: the
-  // leaf's own and those of the leaves that set the finish.
+  // UNFINISHED leaf (a completed task's planned date gates nothing) — a
+  // loop's members included: their work is still planned to end then, so a
+  // leaf outside the loop has float up to it, and when a member's work is
+  // the latest no leaf is within the tolerance of the finish and the path is
+  // empty (eighth review pass: the latest work outside the loop was used, and
+  // a chain weeks short of the finish read 0 float). The hand-off to it is
+  // measured, like a link, on its two ends' days: the leaf's own and those
+  // of the leaves that set the finish.
   let projectReady = -Infinity;
-  for (const id of order) if (open(id)) projectReady = Math.max(projectReady, ready.get(id)!);
+  for (const id of leafIds) if (unfinished(id)) projectReady = Math.max(projectReady, ready.get(id)!);
   let finishDays: readonly number[] = NONE;
-  for (const id of order) if (open(id) && ready.get(id) === projectReady) finishDays = union(finishDays, own(id));
+  for (const id of leafIds) if (unfinished(id) && ready.get(id) === projectReady) finishDays = union(finishDays, own(id));
   const toFinishDays = (id: string) => union(own(id), finishDays);
   const toFinishMs = (id: string) => gapOn(toFinishDays(id), ready.get(id)!, projectReady);
   // A link's gap: from the predecessor being ready (+ lag) to the successor's
@@ -447,5 +500,7 @@ export function computeCriticalPath(
     linked,
     unlinked,
     cycle: cycle.length > 0 ? cycle : null,
+    loops: loops.length > 0 ? loops : null,
+    finishInLoop: cycle.length > 0 && ids.size === 0,
   };
 }

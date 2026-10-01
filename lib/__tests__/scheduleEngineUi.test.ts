@@ -16,7 +16,9 @@
 //   PC SCHED-12 (limb c) — the timeline's critical-path control says what it is.
 //   PT SCH-15 / PC SCHED-10 (seventh review pass) — a loop of links that keeps
 //               tasks off the critical path is named on the board's toggle
-//               and on the Report, with no path to show too.
+//               and on the Report, with no path to show too. Eighth pass:
+//               when a loop holds the latest work no path is drawn (the
+//               screens say why), and separate loops are named as such.
 //   PT SCH-10 — the rebase form builds and shows schedule time (UTC) in every zone.
 //   PT A11Y-3 — milestone row tints keep every text colour at ≥ 4.5 : 1 in both themes.
 
@@ -210,6 +212,53 @@ describe("SCH-15 · a loop of links that keeps tasks off the critical path is na
     text = (host.textContent ?? "").replace(/\s+/g, " ");
     expect(text).toMatch(/Driving the finish ?No critical path — every unfinished task is in a loop of links/);
     expect(text).toMatch(/these tasks wait for each other through a loop of links: “Loop task”, “Other task”/);
+  });
+
+  // Review (eighth pass) probe: a → b; x ↔ y, and y (the latest work) also
+  // waits for b. The Report read "Driving the finish 2 tasks on the critical
+  // path" ([a, b] at 0 float, ~17 working days before the planned finish).
+  const latestInLoop: Milestone[] = [
+    mk({ id: "a", name: "Survey", plannedStartAt: "2026-06-01T00:00:00Z", plannedAt: "2026-06-03T00:00:00Z" }),
+    mk({ id: "b", name: "Design", plannedStartAt: "2026-06-04T00:00:00Z", plannedAt: "2026-06-05T00:00:00Z", dependsOn: ["a"] }),
+    mk({ id: "x", name: "Fabricate", plannedStartAt: "2026-06-08T00:00:00Z", plannedAt: "2026-06-19T00:00:00Z", dependsOn: ["y"] }),
+    mk({ id: "y", name: "Install", plannedStartAt: "2026-06-22T00:00:00Z", plannedAt: "2026-06-30T00:00:00Z", dependsOn: ["x", "b"] }),
+  ];
+  // Two phases, each with one task linked to its own phase: two loops.
+  const twoLoops: Milestone[] = [
+    mk({ id: "P", name: "Phase P", isSummary: true, plannedStartAt: "2026-03-02T00:00:00Z", plannedAt: "2026-03-06T00:00:00Z" }),
+    mk({ id: "p1", name: "P one", parentId: "P", plannedStartAt: "2026-03-02T00:00:00Z", plannedAt: "2026-03-03T00:00:00Z", dependsOn: ["P"] }),
+    mk({ id: "p2", name: "P two", parentId: "P", plannedStartAt: "2026-03-04T00:00:00Z", plannedAt: "2026-03-06T00:00:00Z" }),
+    mk({ id: "Q", name: "Phase Q", isSummary: true, plannedStartAt: "2026-03-09T00:00:00Z", plannedAt: "2026-03-13T00:00:00Z" }),
+    mk({ id: "q1", name: "Q one", parentId: "Q", plannedStartAt: "2026-03-09T00:00:00Z", plannedAt: "2026-03-10T00:00:00Z", dependsOn: ["Q"] }),
+    mk({ id: "q2", name: "Q two", parentId: "Q", plannedStartAt: "2026-03-11T00:00:00Z", plannedAt: "2026-03-13T00:00:00Z" }),
+  ];
+
+  it("the Report: a loop that holds the latest work — no path is claimed to drive the finish, and the loop is named", async () => {
+    await render(React.createElement(ExecutionReportView, { milestones: latestInLoop }));
+    const text = (host.textContent ?? "").replace(/\s+/g, " ");
+    expect(text).toMatch(/Driving the finish ?No critical path — the finish is in a loop of links/);
+    expect(text).not.toMatch(/tasks? on the critical path/);
+    expect(text).toMatch(/The latest unfinished work is in a loop of links, so no chain of links drives the finish/);
+    expect(text).toMatch(/these tasks wait for each other through a loop of links: “Fabricate”, “Install”/);
+  });
+
+  it("the board: a loop that holds the latest work — the toggle is disabled and says why", async () => {
+    await render(board(latestInLoop));
+    const btn = toggle()!;
+    expect(btn.disabled).toBe(true);
+    expect(btn.getAttribute("title")).toMatch(/No critical path to highlight: the latest unfinished work is in a loop of links, so no chain of links drives the finish date/);
+    expect(host.textContent).toMatch(/2 tasks are in a loop of links and left out of the path/);
+  });
+
+  it("separate loops are named as separate loops, on the Report and on the board", async () => {
+    await render(React.createElement(ExecutionReportView, { milestones: twoLoops }));
+    const text = (host.textContent ?? "").replace(/\s+/g, " ");
+    // Was: "these tasks wait for each other through a loop of links: “P one”, “Q one”".
+    expect(text).toMatch(/these tasks are in 2 separate loops of links, each waiting for itself through its links or its phase: “P one”; “Q one”/);
+    expect(text).toMatch(/2 tasks in 2 loops of links left out/);
+    expect(text).not.toMatch(/wait for each other/);
+    await render(board(twoLoops));
+    expect(toggle()!.getAttribute("title")).toMatch(/2 tasks are in 2 separate loops of links and left out of the path/);
   });
 });
 

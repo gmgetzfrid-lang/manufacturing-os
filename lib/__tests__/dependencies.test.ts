@@ -533,6 +533,9 @@ describe("SCH-4 / SCH-9 · a task linked to its own phase is a loop", () => {
 // reached such a loop: a COMPLETED task linked to its own phase blocked every
 // drag in the phase (base and the fifth pass wrote them), and the only remedy
 // was to edit a finished task's links (impossible for an imported row).
+// Eighth review pass: only a locked node with no open work inside it. A
+// locked PHASE that still holds open work is read at the finish of that
+// work, which moves, so a loop through it is refused like any phase loop.
 describe("SCH-4 / SCHED-5 · a loop through a locked task is no loop for the cascade", () => {
   const N = (id: string, parentId: string | null, s: string, f: string, deps: string[] = [], extra: Partial<ReflowNode> = {}): ReflowNode =>
     ({ id, parentId, plannedStartAt: d(`2026-${s}`), plannedAt: d(`2026-${f}`), dependsOn: deps, status: "planned", ...extra });
@@ -594,6 +597,59 @@ describe("SCH-4 / SCHED-5 · a loop through a locked task is no loop for the cas
     ];
     const { plan: q } = drag(carry, "Z", 7);
     expect(span(q.changes)).toEqual(["k 06-06→06-10"]);
+  });
+
+  // Review (eighth pass) probe: the seventh pass treated EVERY locked node
+  // as fixed and dropped its links, but a locked phase that still holds open
+  // work is read at phaseFinish — the finish of that work — which moves. P
+  // (open) holds S (completed / imported) which holds u (open); P also holds
+  // a, and P waits for S (stored before the link checks refused it). A +3
+  // drag of P, or of u and a together, wrote u Jun 24–26 and a Jun 17–28
+  // (+16 days), nothing held, nothing refused; the sixth pass refused it.
+  it("a phase waiting for its own LOCKED sub-phase that holds open work is a loop — refused, never absorbed with a wrong carry", () => {
+    const plan = (lock: Partial<ReflowNode>, uExtra: Partial<ReflowNode> = {}) => [
+      N("P", null, "06-01", "06-12", ["S"]), N("S", "P", "06-01", "06-10", [], lock),
+      N("u", "S", "06-08", "06-10", [], uExtra), N("a", "P", "06-01", "06-12"),
+    ];
+    const dragMany = (nodes: ReflowNode[], ids: string[], delta: number) => {
+      const primary = new Map<string, { id: string; plannedStartAt: string; plannedAt: string }>();
+      for (const id of ids) for (const c of computeTreeMove(nodes, id, delta, "defer")) if (!primary.has(c.id)) primary.set(c.id, c);
+      const updated = nodes.map((n) => (primary.has(n.id) ? { ...n, plannedStartAt: primary.get(n.id)!.plannedStartAt, plannedAt: primary.get(n.id)!.plannedAt } : n));
+      return { primary: [...primary.values()], plan: planCascade(updated, [...primary.keys()]) };
+    };
+    const refusal = (f: () => unknown) => {
+      try { f(); } catch (e) { return e instanceof CascadeRefusedError ? e.edges.map((x) => `${x.from}>${x.to}:${x.via}`) : String(e); }
+      return null;
+    };
+    for (const lock of [{ status: "completed" }, { locked: true }, { actualAt: d("2026-06-10") }] as Array<Partial<ReflowNode>>) {
+      const nodes = plan(lock);
+      // Was written: u 06-24→06-26, a 06-17→06-28, P 06-01→06-28, held [].
+      expect(refusal(() => drag(nodes, "P", 3))).toEqual(["P>S:contains", "S>P:link"]);
+      expect(refusal(() => dragMany(nodes, ["u", "a"], 3))).toEqual(["P>S:contains", "S>P:link"]);
+      // A move that does not reach the loop is written as before (u's own
+      // phases' successors do not include P, which contains it).
+      expect(span(drag(nodes, "u", 2).primary)).toEqual(["u 06-10→06-12"]);
+    }
+    // With no open work left inside S (u done too), S's finish never moves:
+    // no push can go round it, so the drag is written, exactly +3.
+    const done = plan({ status: "completed" }, { status: "completed" });
+    const { primary, plan: p } = drag(done, "P", 3);
+    expect(span(primary)).toEqual(["P 06-01→06-15", "a 06-04→06-15"]); // a +3; P re-envelopes round S, which stays
+    expect(p.changes).toEqual([]);
+    expect(p.held).toEqual([]);
+    // When the waiting phase is locked too, nothing can carry a push round
+    // the loop (a locked node is never pushed): the move is written, and each
+    // locked phase whose link into its own work is now broken is held — L
+    // (imported) waits for its sub-phase K (completed), K waits for its own
+    // task k. The seventh pass never reached L, so held read [K].
+    const locked = [
+      N("L", null, "06-01", "06-12", ["K"], { locked: true }), N("K", "L", "06-01", "06-10", ["k"], { status: "completed" }),
+      N("k", "K", "06-08", "06-10"),
+    ];
+    const { primary: kp, plan: kq } = drag(locked, "k", 2);
+    expect(span(kp)).toEqual(["k 06-10→06-12"]);
+    expect(kq.changes).toEqual([]);
+    expect(kq.held.map((h) => h.id).sort()).toEqual(["K", "L"]);
   });
 });
 

@@ -44,9 +44,15 @@
 // Seventh fix pass: only a loop's MEMBERS are left out (Tarjan); the leaves
 // downstream of it keep their place, so one task linked to its own phase no
 // longer takes every later phase off the path.
+//
+// Eighth fix pass: the finish was the latest work OUTSIDE a loop, so when a
+// loop held the latest work a chain weeks short of the planned finish was
+// drawn at 0 float. The finish now counts a loop's members, and no path is
+// drawn when one of them sets it (finishInLoop). Each loop is reported on its
+// own (loops), so separate loops are not named as one.
 
 import { describe, it, expect } from "vitest";
-import { computeCriticalPath, pathCalendarLabel } from "@/lib/criticalPath";
+import { computeCriticalPath, loopNote, pathCalendarLabel } from "@/lib/criticalPath";
 import { afterLagMs, lagWorkingMs, linkCyclePath, planCascade, reflowNodesFromMilestones, workingGapMs, workingTimeMs, CascadeRefusedError, DAY_MS } from "@/lib/scheduleReflow";
 import type { Milestone } from "@/types/schema";
 
@@ -557,6 +563,68 @@ describe("computeCriticalPath — CPM over the finish-to-start links", () => {
     const r = computeCriticalPath(ms);
     expect(r.cycle).toBeNull();
     expect([...r.ids].sort()).toEqual(["S", "t2", "y"]);
+  });
+
+  // Review (eighth pass) probe: a (Jun 1–3) → b (Jun 4–5); x ↔ y, and y (Jun
+  // 22–30) also waits for b. The path was [a, b] at 0 float, "driving the
+  // finish", with Jun 30 the finish and ~17 working days of slack behind it.
+  it("a loop that holds the latest work: the finish is measured over it, no path is drawn, and every other task's float is honest", () => {
+    const plan = (xyLinked: boolean): Milestone[] => [
+      mk({ id: "a", plannedStartAt: d("2026-06-01"), plannedAt: d("2026-06-03") }),
+      mk({ id: "b", plannedStartAt: d("2026-06-04"), plannedAt: d("2026-06-05"), dependsOn: ["a"] }),
+      mk({ id: "x", plannedStartAt: d("2026-06-08"), plannedAt: d("2026-06-19"), dependsOn: xyLinked ? ["y"] : [] }),
+      mk({ id: "y", plannedStartAt: d("2026-06-22"), plannedAt: d("2026-06-30"), dependsOn: ["x", "b"] }),
+    ];
+    const r = computeCriticalPath(plan(true));
+    expect(r.cycle).toEqual(["x", "y"]);
+    expect(r.loops).toEqual([["x", "y"]]);
+    expect([...r.ids]).toEqual([]); // was [b, a] at 0 float
+    expect(r.finishInLoop).toBe(true);
+    // Jun 5 (Fri) to Jun 30 (Tue): 17 working days, as without the loop.
+    expect(r.floatDays.get("a")).toBe(17);
+    expect(r.floatDays.get("b")).toBe(17);
+    const without = computeCriticalPath(plan(false));
+    expect([...without.ids].sort()).toEqual(["x", "y"]);
+    expect(without.finishInLoop).toBe(false);
+    // An unfinished task outside the loop that ends with it still drives:
+    // the path is drawn to the finish, and the loop is only named.
+    const tied = computeCriticalPath([...plan(true), mk({ id: "c", plannedStartAt: d("2026-06-08"), plannedAt: d("2026-06-30"), dependsOn: ["b"] })]);
+    expect([...tied.ids].sort()).toEqual(["a", "b", "c"]);
+    expect(tied.finishInLoop).toBe(false);
+    expect(tied.cycle).toEqual(["x", "y"]);
+    // Every unfinished task in a loop: no path, and finishInLoop.
+    const all = computeCriticalPath(plan(true).filter((m) => m.id === "x" || m.id === "y"));
+    expect([...all.ids]).toEqual([]);
+    expect(all.finishInLoop).toBe(true);
+    expect(all.floatDays.size).toBe(0);
+  });
+
+  it("each loop is reported on its own: two tasks each linked to its own phase are two loops, not one", () => {
+    const ms: Milestone[] = [
+      mk({ id: "P", isSummary: true, plannedStartAt: d("2026-06-01"), plannedAt: d("2026-06-05") }),
+      mk({ id: "p1", parentId: "P", plannedStartAt: d("2026-06-01"), plannedAt: d("2026-06-02"), dependsOn: ["P"] }),
+      mk({ id: "p2", parentId: "P", plannedStartAt: d("2026-06-03"), plannedAt: d("2026-06-05") }),
+      mk({ id: "Q", isSummary: true, plannedStartAt: d("2026-06-08"), plannedAt: d("2026-06-12") }),
+      mk({ id: "q1", parentId: "Q", plannedStartAt: d("2026-06-08"), plannedAt: d("2026-06-09"), dependsOn: ["Q"] }),
+      mk({ id: "q2", parentId: "Q", plannedStartAt: d("2026-06-10"), plannedAt: d("2026-06-12") }),
+    ];
+    const r = computeCriticalPath(ms);
+    expect(r.cycle).toEqual(["p1", "q1"]);
+    expect(r.loops).toEqual([["p1"], ["q1"]]);
+    expect([...r.ids]).toEqual(["q2"]);
+    expect(r.finishInLoop).toBe(false);
+    // Both linked to P: one loop of two (they wait for each other).
+    const both = computeCriticalPath(ms.map((m) => (m.id === "p2" ? { ...m, dependsOn: ["P"] } : m)));
+    expect(both.loops).toEqual([["p1", "p2"], ["q1"]]);
+  });
+
+  it("loopNote names one loop as one, and separate loops each on their own", () => {
+    expect(loopNote([])).toBeNull();
+    expect(loopNote([["Pour"]])).toMatch(/^Left out of the path — this task waits for itself through a loop of links: “Pour”\. Remove one of those links .* to put it back on the path\.$/);
+    expect(loopNote([["Pour", "Cure"]])).toMatch(/^Left out of the path — these tasks wait for each other through a loop of links: “Pour”, “Cure”\. .* to put them back on the path\.$/);
+    // Was: "these tasks wait for each other through a loop of links: “p1”, “q1”".
+    expect(loopNote([["p1"], ["q1"]])).toMatch(/^Left out of the path — these tasks are in 2 separate loops of links, each waiting for itself through its links or its phase: “p1”; “q1”\. Remove one link in each loop .* to put its tasks back on the path\.$/);
+    expect(loopNote([["a", "b", "c"], ["d", "e", "f"], ["g"]])).toMatch(/: “a”, “b”, “c”; “d”, “e”, \+2 more\./);
   });
 
   it("empty-safe", () => {

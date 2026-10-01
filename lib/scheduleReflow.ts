@@ -684,8 +684,9 @@ export interface CascadePlan {
  *  null when every loop there is made of task-to-task links alone. An edge
  *  that is not a plain link ("contains", "within") whose two ends sit in one
  *  strongly connected component lies on a loop (Tarjan, iterative).
- *  `edgesOut` is the graph walked (the cascade's leaves a locked node's
- *  links out; default: every edge), and `opens` which non-link edges may be
+ *  `edgesOut` is the graph walked (the cascade's leaves out the links of a
+ *  locked node with no open work inside it; default: every edge), and
+ *  `opens` which non-link edges may be
  *  the one the loop is found through (default: any — outlineLoop passes
  *  "only an edge the regroup adds"). */
 function phaseLoopIn(
@@ -834,9 +835,12 @@ export function outlineLoop(nodes: ReflowNode[], movedIds: string[], before?: Re
  * its edges named (CascadeRefusedError): one that runs through a phase
  * whenever the move reaches it, one of task-to-task links alone when a push
  * goes round it; so is a push further than any acyclic cascade over the
- * schedule could go. A loop with a LOCKED member is not one for the cascade:
- * a locked node never moves, so no push can go round it — the move is
- * written and the locked node checked for `held`. Pure.
+ * schedule could go. A loop through a LOCKED task with no open work inside
+ * it is not one for the cascade: that node never moves, so no push can go
+ * round it — the move is written and the locked node checked for `held`. A
+ * loop through a locked PHASE that still holds open work is refused like any
+ * phase loop: its links are read at the finish of that work, which moves.
+ * Pure.
  */
 export function cascadeDependents(nodes: ReflowNode[], changedIds: string[]): DateChange[] {
   return planCascade(nodes, changedIds).changes;
@@ -950,7 +954,23 @@ export function planCascade(nodes: ReflowNode[], changedIds: string[]): CascadeP
   // moves — while a loop of nodes that can move still is (seventh review
   // pass: a completed task linked to its own phase, or a phase's successor
   // done long ago, refused every move that reached it).
-  const fixed = (id: string) => isLocked(byId.get(id)) && !seedSet.has(id);
+  // A locked PHASE that still holds open work is not fixed, though: its own
+  // bar never moves, but its links are read at phaseFinish — the latest
+  // finish of the work inside it — which moves with that work, so a push
+  // CAN go round it. Its links and its phases' successors are walked, and a
+  // loop through it is refused like any phase loop (eighth review pass: a
+  // phase waiting for its own locked sub-phase holding open work was
+  // absorbed, and a +3-day drag wrote +16 days with nothing held).
+  const openWork = new Map<string, boolean>();
+  const holdsOpenWork = (id: string): boolean => {
+    let v = openWork.get(id);
+    if (v === undefined) {
+      v = subtreeOf(id).some((t) => t !== id && !isLocked(byId.get(t)));
+      openWork.set(id, v);
+    }
+    return v;
+  };
+  const fixed = (id: string) => isLocked(byId.get(id)) && !seedSet.has(id) && !holdsOpenWork(id);
   const walkOut = (id: string): PhaseEdge[] => (fixed(id) ? g.edgesOut(id).filter((e) => e.via === "contains") : g.edgesOut(id));
   const orderOut = (id: string): PhaseEdge[] => walkOut(id).filter((e) => e.via === "contains" || !isLocked(byId.get(e.to)));
 

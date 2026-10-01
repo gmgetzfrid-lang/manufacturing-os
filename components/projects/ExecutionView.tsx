@@ -285,10 +285,18 @@ export default function ExecutionView({
   // The clock it was measured on, as the button and the legend name it.
   const criticalCalendar = pathCalendarLabel(critical.calendar, critical.workedWeekendDays.length);
   // The tasks a loop of links keeps off the path: the button says so, so a
-  // highlighted chain is never read as the whole story (seventh review pass).
+  // highlighted chain is never read as the whole story (seventh review pass;
+  // eighth: separate loops are counted as such).
+  const loopCount = critical.loops?.length ?? 0;
   const loopCaveat = critical.cycle
-    ? `${critical.cycle.length} task${critical.cycle.length === 1 ? " is" : "s are"} in a loop of links and left out of the path`
+    ? `${critical.cycle.length} task${critical.cycle.length === 1 ? " is" : "s are"} in ${loopCount > 1 ? `${loopCount} separate loops` : "a loop"} of links and left out of the path`
     : null;
+  // Why there is no path to highlight while a loop holds the latest work
+  // (eighth review pass: the latest work OUTSIDE the loop was the finish, so
+  // a chain weeks short of it was highlighted as driving the finish date).
+  const noPathReason = critical.floatDays.size === 0
+    ? "every unfinished task is in a loop of links"
+    : "the latest unfinished work is in a loop of links, so no chain of links drives the finish date";
   const criticalOn = showCritical && critical.ids.size > 0;
 
   // Group color assignment — a phase + all its children share one hue.
@@ -886,7 +894,7 @@ export default function ExecutionView({
             disabled={critical.ids.size === 0}
             aria-pressed={criticalOn}
             title={(critical.ids.size === 0
-              ? "No critical path to highlight: every unfinished task is in a loop of links"
+              ? `No critical path to highlight: ${noPathReason}`
               : critical.linked
                 ? `Highlight the critical path: the unfinished tasks on the chain of finish-to-start links that drives the finish date (${criticalCalendar} — no holiday calendar)`
                 : "No dependency links yet, so only the unfinished tasks that end at the finish date are highlighted — add links to see the chain that drives it")
