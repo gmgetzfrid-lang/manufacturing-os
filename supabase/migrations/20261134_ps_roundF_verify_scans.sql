@@ -35,10 +35,13 @@
 -- and a function only the service role may execute; nothing existing is
 -- re-created or altered (no earlier migration defines verify_scans or
 -- prune_verify_scans). The before-apply inventory below says whether this
--- paste is a first apply or a re-run.
+-- paste is a first apply or a re-run; it is dropped and re-captured on every
+-- paste, so a second paste in the same editor session reports the counts
+-- from before THAT paste, never the first one's.
 --
 -- ⚠ APPLIED BY HAND (DEC-30). Idempotent: paste the whole file once into the
--- Supabase SQL editor. The editor shows only the LAST result set — the one
+-- Supabase SQL editor. A verify_scans table an earlier draft of this file
+-- created without printed_ref gains the column (ADD COLUMN IF NOT EXISTS). The editor shows only the LAST result set — the one
 -- final SELECT carries every probe (ok true/false, n NULL) and the inventory
 -- counts (ok NULL, n the count).
 --
@@ -48,9 +51,14 @@
 -- no-ops on the missing function.
 
 -- ── Before-apply inventory (aggregate counts only) ───────────────────────
-CREATE TEMP TABLE IF NOT EXISTS _ps_f34_before AS
+DROP TABLE IF EXISTS pg_temp._ps_f34_before;
+CREATE TEMP TABLE _ps_f34_before AS
 SELECT 'inventory: verify_scans already existed before this paste (1 = a re-run)' AS inventory,
        (CASE WHEN to_regclass('public.verify_scans') IS NULL THEN 0 ELSE 1 END)::text AS n
+UNION ALL
+SELECT 'inventory: verify_scans.printed_ref already existed before this paste',
+       COUNT(*)::text FROM information_schema.columns
+        WHERE table_schema = 'public' AND table_name = 'verify_scans' AND column_name = 'printed_ref'
 UNION ALL
 SELECT 'inventory: prune_verify_scans() already existed before this paste',
        COUNT(*)::text FROM pg_proc p JOIN pg_namespace ns ON ns.oid = p.pronamespace
@@ -72,6 +80,8 @@ CREATE TABLE IF NOT EXISTS verify_scans (
   user_agent TEXT,
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
+-- A table an earlier draft of this file created before printed_ref existed.
+ALTER TABLE verify_scans ADD COLUMN IF NOT EXISTS printed_ref UUID;
 CREATE INDEX IF NOT EXISTS verify_scans_ip_time_idx ON verify_scans (ip, created_at DESC);
 CREATE INDEX IF NOT EXISTS verify_scans_target_time_idx ON verify_scans (target_id, created_at DESC);
 CREATE INDEX IF NOT EXISTS verify_scans_time_idx ON verify_scans (created_at);

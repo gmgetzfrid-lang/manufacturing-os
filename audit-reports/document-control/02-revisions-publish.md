@@ -409,7 +409,7 @@ lib/effectiveDate.ts:91 — `const todayISO = () => new Date().toISOString().sli
 2. ✓ unchanged (P3).
 3. ✓ unchanged (P3).
 
-**Scope / residual.** Stays OPEN for the deployment-zone limb only — the operator sets `NEXT_PUBLIC_FACILITY_TIME_ZONE` in every deployment (or an org / library zone lands, `VFY-15`). Not flipped on the code half alone.
+**Scope / residual.** Stays OPEN for the deployment-zone limb only — the operator sets `NEXT_PUBLIC_FACILITY_TIME_ZONE` in every deployment (or an org / library zone lands, `VFY-15`). Not flipped on the code half alone. Public-surfaces `VFY-4` (done-when 2) stays OPEN on the same limb since PS-VERIFY's second review fix pass (2026-10-01), so the two records agree; one operator step closes both.
 
 ---
 

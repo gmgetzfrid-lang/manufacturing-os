@@ -16,7 +16,14 @@
 // printed sheet is Issued / Locked (the shared allow-list, lib/verifyVerdict),
 // hold-free (one document_holds read; an unreadable hold state is a hold —
 // HLD-3 / PHYS-1 / VFY-5), still the current version, in force, and still in
-// the package — with nothing added to the package since printing (VFY-2).
+// the package — and every sheet the package holds is in the pack (VFY-2). A
+// package sheet missing from the paper is split by what is true of it NOW:
+// one that could be printed makes the pack red (`notInPack` — "in the
+// package but not in this pack"; the snapshot does not record what the print
+// gate left out, so the route never claims it was "added since printing" —
+// VFY-19); one that cannot be printed now (not issued, withdrawn, held, no
+// file — PKG-4's refusals) is listed with why and makes an otherwise current
+// pack amber "incomplete", never stale: a re-print would leave it out too.
 // A cover QR with no print id cannot say which printing it is and is never
 // green (VFY-2's fail-safe default, 2026-09-17).
 
@@ -27,7 +34,7 @@ import { effectiveStatusFor } from "@/lib/effectiveDate";
 import { publicHoldReason } from "@/lib/holds";
 import { checkVerifyRate, clientIp, verifyJson, verifyRateLimitedResponse } from "@/lib/verifyRateLimit";
 import { recordVerifyScan } from "@/lib/verifyScanLog";
-import type { PackVerdict, SheetState } from "@/lib/verifyPresent";
+import type { NotPrintableReason, PackVerdict, SheetState } from "@/lib/verifyPresent";
 
 // A pack verdict is never prerendered or cached (VFY-13; OFF-1 dw3).
 export const dynamic = "force-dynamic";
@@ -104,8 +111,8 @@ export async function GET(req: NextRequest) {
   const closed = !!pkg.closed_at || pkg.status === "closed";
 
   // The package's membership NOW — the legacy QR's only source, and what a
-  // recorded print is compared against (VFY-2: a sheet added since printing
-  // is not in the crew's folder; a sheet removed since is still in it).
+  // recorded print is compared against (VFY-2: a package sheet missing from
+  // the paper is not in the crew's folder; a sheet removed since is still in it).
   const { data: memberData, error: memberErr } = await sb
     .from("work_package_documents")
     .select("document_id, pinned_version_id, pinned_rev_label")
@@ -151,9 +158,11 @@ export async function GET(req: NextRequest) {
 
   const onPaper = new Set(sources.map((s) => s.document_id));
   const inPackage = new Set(members.map((m) => m.document_id));
-  const addedIds = printConfirmed && !snapshotMissing ? [...inPackage].filter((id) => !onPaper.has(id)) : [];
+  // In the package, not on this paper. Only a recorded print can say what is
+  // on the paper; a legacy QR's "paper" IS the live membership.
+  const offPaperIds = printConfirmed && !snapshotMissing ? [...inPackage].filter((id) => !onPaper.has(id)) : [];
 
-  const docIds = [...new Set([...onPaper, ...addedIds])];
+  const docIds = [...new Set([...onPaper, ...offPaperIds])];
   const byId = new Map<string, DocRow>();
   if (docIds.length) {
     const { data: docData, error: docErr } = await sb
@@ -165,16 +174,17 @@ export async function GET(req: NextRequest) {
     for (const d of (docData as DocRow[] | null) ?? []) byId.set(String(d.id), d);
   }
 
-  // ONE hold read for every printed sheet. Unreadable → every sheet is held
-  // (fail closed: a stop-work signal is never assumed absent).
-  const paperIds = [...onPaper];
+  // ONE hold read for every printed sheet and every package sheet missing
+  // from the paper. Unreadable → every printed sheet is held (fail closed: a
+  // stop-work signal is never assumed absent), and a missing sheet's hold
+  // state is unknown — which is a reason it cannot be printed now.
   const holdsByDoc = new Map<string, string[]>();
   let holdsUnreadable = false;
-  if (paperIds.length) {
+  if (docIds.length) {
     const { data: holdData, error: holdErr } = await sb
       .from("document_holds")
       .select("document_id, reason")
-      .in("document_id", paperIds)
+      .in("document_id", docIds)
       .is("released_at", null);
     if (holdErr) holdsUnreadable = true;
     else {
@@ -233,7 +243,30 @@ export async function GET(req: NextRequest) {
       holdReasons: held && !holdsUnreadable ? [...new Set(reasons)] : [],
     };
   });
-  const addedSincePrint = addedIds.map((id) => ({ label: labelOf(id, null) }));
+  // Each package sheet missing from the paper, by what is true of it NOW.
+  // Not printable now — the print gate's own refusals (lib/docPack.ts
+  // filterPackDocs: not Issued / Locked, a hold or an unreadable hold state,
+  // no current file; an unreadable document is never packed either), read
+  // the way every verify surface reads them (the shared allow-list, so an
+  // empty status is "not issued" — VFY-17; the legal hold is a hold) — means
+  // a re-print would (or should) leave it out too: listed with why, never
+  // "stale". Anything else could be printed now and is not in the folder.
+  const notPrintable: Array<{ label: string; reason: NotPrintableReason }> = [];
+  const notInPack: Array<{ label: string }> = [];
+  for (const id of offPaperIds) {
+    const d = byId.get(id);
+    const label = labelOf(id, null);
+    const standing = documentStanding(d?.status);
+    let reason: NotPrintableReason | null = null;
+    if (!d) reason = "unavailable";
+    else if (holdsUnreadable) reason = "hold_unknown";
+    else if (d.legal_hold === true || (holdsByDoc.get(id)?.length ?? 0) > 0) reason = "on_hold";
+    else if (standing === "draft" || standing === "not_issued") reason = "not_issued";
+    else if (standing !== "in_force") reason = "withdrawn";
+    else if (!d.current_version_id) reason = "no_file";
+    if (reason) notPrintable.push({ label, reason });
+    else notInPack.push({ label });
+  }
 
   const staleCount = sheets.filter((s) => NOT_GOOD_STATES.has(s.state)).length;
   const notIssuedCount = sheets.filter((s) => NOT_ISSUED_STATES.has(s.state)).length;
@@ -244,9 +277,10 @@ export async function GET(req: NextRequest) {
   else if (closed) verdict = "closed";                         // VFY-8
   else if (sheets.length === 0) verdict = "empty";             // VFY-11
   else if (heldCount > 0) verdict = "held";                    // HLD-3 / PHYS-1
-  else if (staleCount > 0 || addedSincePrint.length > 0) verdict = "stale";
+  else if (staleCount > 0 || notInPack.length > 0) verdict = "stale";
   else if (!printConfirmed) verdict = "unconfirmed_print";     // VFY-2 legacy QR
   else if (sheets.some((s) => s.state === "not_yet_effective")) verdict = "not_yet_effective";
+  else if (notPrintable.length > 0) verdict = "incomplete";    // VFY-2: amber, not stale
   else verdict = "current";
 
   await scan(verdict);
@@ -263,7 +297,8 @@ export async function GET(req: NextRequest) {
     staleCount,
     notIssuedCount,
     heldCount,
-    addedSincePrint,
+    notInPack,
+    notPrintable,
     verdict,
     // Back-compat: true ONLY for the green verdict.
     allFresh: verdict === "current",

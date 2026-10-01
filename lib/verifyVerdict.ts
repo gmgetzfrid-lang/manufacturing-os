@@ -42,14 +42,21 @@ export function documentStanding(status: string | null | undefined): DocumentSta
   return "not_issued";
 }
 
-/** The ONE read error a verify route may tolerate on the effective-date read:
- *  Postgres' undefined_column (42703) — a database without the
- *  `document_versions.effective_date` column (pre-20260819) has no effective
- *  dates at all, so "no date" is the truth there. Any OTHER error (a
- *  transient PostgREST failure, a timeout) leaves the date UNKNOWN — and an
- *  unknown date could be a future one, so the route answers 503, never a
- *  verdict that might be green before the revision is in force (VFY-4 /
- *  PKG-8: late, never early). */
+/** The ONE read error a verify route may tolerate on a read of an optional
+ *  (later-migration) column: Postgres' undefined_column (42703), which
+ *  PostgREST raises for the whole select when it names a column the
+ *  database does not have yet.
+ *  - The effective-date read: a database without
+ *    `document_versions.effective_date` (pre-20260819) has no effective dates
+ *    at all, so "no date" is the truth there. Any OTHER error (a transient
+ *    PostgREST failure, a timeout) leaves the date UNKNOWN — and an unknown
+ *    date could be a future one, so the route answers 503, never a verdict
+ *    that might be green before the revision is in force (VFY-4 / PKG-8:
+ *    late, never early).
+ *  - The hold card's read: a database without
+ *    `document_holds.held_rev_label` (pre-20261073) retries without it, so
+ *    the sibling / legal-hold verdict (VFY-10) still reaches the field; the
+ *    held-at rev is then unknown (null). Any other error is a 503. */
 export function isUndefinedColumnError(error: { code?: string | null } | null | undefined): boolean {
   return !!error && error.code === "42703";
 }

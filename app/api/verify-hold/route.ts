@@ -21,6 +21,7 @@
 import { NextRequest } from "next/server";
 import { createClient } from "@supabase/supabase-js";
 import { publicHoldReason } from "@/lib/holds";
+import { isUndefinedColumnError } from "@/lib/verifyVerdict";
 import { checkVerifyRate, clientIp, verifyJson, verifyRateLimitedResponse } from "@/lib/verifyRateLimit";
 import { recordVerifyScan } from "@/lib/verifyScanLog";
 import type { HoldVerdict } from "@/lib/verifyPresent";
@@ -43,7 +44,7 @@ interface HoldRow {
   reason: string | null;
   opened_at: string | null;
   released_at: string | null;
-  /** 20261073 (HLD-7); undefined on a pre-migration database. */
+  /** 20261073 (HLD-7); not selected on a pre-migration database (see the read). */
   held_rev_label?: string | null;
 }
 interface DocLabelRow {
@@ -73,13 +74,23 @@ export async function GET(req: NextRequest) {
   }
 
   // HLD-7: held_rev_label is the 20261073 column — the rev the hold was
-  // placed against. It reads as undefined on a pre-migration database, which
-  // the payload reports as null (unknown), never as the current rev.
-  const { data: holdData, error: holdErr } = await sb
+  // placed against. On a database without 20261073 PostgREST REFUSES a select
+  // that names it (undefined_column, 42703) — it does not read as undefined —
+  // so that one error retries without the column, and the payload reports
+  // heldRev null (unknown), never the current rev. The retry is checked; any
+  // other error is a 503 ("treat the hold as ACTIVE"), never a verdict.
+  let { data: holdData, error: holdErr } = await sb
     .from("document_holds")
     .select("id, document_id, reason, opened_at, released_at, held_rev_label")
     .eq("id", holdId)
     .maybeSingle();
+  if (holdErr && isUndefinedColumnError(holdErr)) {
+    ({ data: holdData, error: holdErr } = await sb
+      .from("document_holds")
+      .select("id, document_id, reason, opened_at, released_at")
+      .eq("id", holdId)
+      .maybeSingle());
+  }
   if (holdErr) {
     // The page's error branch says "treat the hold as ACTIVE" — never green.
     await scan("error");

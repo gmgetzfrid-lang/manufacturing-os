@@ -243,6 +243,36 @@ describe("VFY-5 — the hold's public categories are named; operator text never 
     expect(r.holdReasons).toEqual(["Client Review", "On hold"]);
     expect(JSON.stringify(r)).not.toContain("Fuller");
   });
+  it("done-when 3 (review fix): the LEGAL hold counts in activeHolds, as /api/verify-hold counts it — and is never named", async () => {
+    // legal hold + one document_holds row → 2, the categories list only the row's
+    state.doc = docWith("Issued", { legal_hold: true });
+    state.holdRows = [{ reason: "Client Review" }];
+    let r = await verify();
+    expect(r.verdict).toBe("held");
+    expect(r.activeHolds).toBe(2);
+    expect(r.holdReasons).toEqual(["Client Review"]);
+    expect(JSON.stringify(r)).not.toMatch(/legal/i);
+    // a legal hold alone is one active hold, never "0"
+    state.holdRows = [];
+    r = await verify();
+    expect(r.onHold).toBe(true);
+    expect(r.activeHolds).toBe(1);
+    expect(r.holdReasons).toEqual([]);
+    // an unreadable hold read stays null (unknown), legal hold or not
+    state.holdError = true;
+    r = await verify();
+    expect(r.activeHolds).toBeNull();
+  });
+  it("the same document shows the same count on the sheet QR and the hold card: legal hold + X (released) + Y (active)", async () => {
+    // /api/verify-hold for X counts Y + the legal hold as 2 other holds (verifyHold.test.ts);
+    // /api/verify for the document must say 2 active holds, not 1
+    state.doc = docWith("Issued", { legal_hold: true });
+    state.holdRows = [{ reason: "Client Review" }]; // only Y is unreleased
+    const r = await verify();
+    expect(r.activeHolds).toBe(2);
+    const { presentDocVerdict } = await import("@/lib/verifyPresent");
+    expect(presentDocVerdict(r as unknown as Parameters<typeof presentDocVerdict>[0]).blurb).toContain("under 2 active holds (Client Review)");
+  });
 });
 
 describe("VFY-4 / REV-9 — 'not yet in effect' is decided in the facility's calendar, never the server's UTC date", () => {

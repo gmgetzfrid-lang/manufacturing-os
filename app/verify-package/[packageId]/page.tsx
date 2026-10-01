@@ -4,15 +4,18 @@
 // work-package cover sheet. "SCAN BEFORE STARTING WORK" now lands here:
 // public, no login, one verdict — may I work from this printed pack? Green
 // only for a recorded print whose every sheet is still the current, issued,
-// hold-free revision of an open package with nothing added since printing.
-// Red = a sheet changed, was withdrawn or is held; grey = the code cannot
-// confirm the printing, the package is closed, or it has no sheets. The
-// verdict and the per-sheet labels come from lib/verifyPresent.ts.
+// hold-free revision of an open package, with every sheet of the package in
+// it. Red = a sheet changed, was withdrawn or is held, or a sheet the
+// package holds (and that could be printed) is not in the pack; amber = not
+// yet in effect, or the package holds sheets that cannot be printed now
+// (listed with why); grey = the code cannot confirm the printing, the
+// package is closed, or it has no sheets. The verdict and the per-sheet
+// labels come from lib/verifyPresent.ts.
 
 import React, { useEffect, useState } from "react";
 import { useParams, useSearchParams } from "next/navigation";
 import { CheckCircle2, XCircle, Loader2, ShieldQuestion, OctagonAlert, RefreshCw } from "lucide-react";
-import { presentPackVerdict, sheetLabel, type PackVerifyResult } from "@/lib/verifyPresent";
+import { notPrintableText, presentPackVerdict, sheetLabel, type PackVerifyResult } from "@/lib/verifyPresent";
 
 export default function VerifyPackagePage() {
   const params = useParams<{ packageId: string }>();
@@ -114,10 +117,21 @@ export default function VerifyPackagePage() {
                   <div className="text-xs text-slate-500">This package has no sheets.</div>
                 )}
               </div>
-              {(result.addedSincePrint?.length ?? 0) > 0 && (
+              {(result.notInPack?.length ?? 0) > 0 && (
                 <div className="pt-2 border-t border-slate-100 text-xs text-red-700 leading-relaxed">
-                  <div className="font-black">Added to the package since printing — NOT in this pack:</div>
-                  {result.addedSincePrint!.map((a, i) => <div key={i} className="truncate">{a.label}</div>)}
+                  <div className="font-black">In the package but NOT in this pack:</div>
+                  {result.notInPack!.map((a, i) => <div key={i} className="truncate">{a.label}</div>)}
+                </div>
+              )}
+              {(result.notPrintable?.length ?? 0) > 0 && (
+                <div className="pt-2 border-t border-slate-100 text-xs text-amber-800 leading-relaxed">
+                  <div className="font-black">In the package, not in this pack — cannot be printed now:</div>
+                  {result.notPrintable!.map((a, i) => (
+                    <div key={i} className="flex items-center justify-between gap-2">
+                      <span className="truncate">{a.label}</span>
+                      <span className="shrink-0 font-black uppercase">{notPrintableText(a.reason)}</span>
+                    </div>
+                  ))}
                 </div>
               )}
               {view.advice && (

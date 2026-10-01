@@ -26,6 +26,8 @@ const state = vi.hoisted(() => ({
   holdReads: 0 as number,
   /** Fail the documents read. */
   failDocRead: false as boolean,
+  /** A database without 20261073: any document_holds select naming held_rev_label fails 42703. */
+  noHeldRevColumn: false as boolean,
   inserts: [] as Array<{ table: string; row: Record<string, unknown> }>,
   selects: [] as Array<{ table: string; cols: string }>,
 }));
@@ -35,6 +37,7 @@ function chain(table: string) {
   const isNull: string[] = [];
   let head = false;
   let readNo = 0;
+  let cols = "";
   const rows = () => {
     const src = table === "document_holds" ? state.holds : table === "documents" ? state.docs : [];
     return src.filter((r) => eqs.every(([k, v]) => r[k] === v) && isNull.every((k) => r[k] == null));
@@ -53,6 +56,7 @@ function chain(table: string) {
       return (...args: unknown[]) => {
         if (p === "select") {
           state.selects.push({ table, cols: String(args[0]) });
+          cols = String(args[0]);
           if ((args[1] as { head?: boolean } | undefined)?.head) head = true;
           if (table === "document_holds" && !head) readNo = ++state.holdReads;
         }
@@ -60,6 +64,9 @@ function chain(table: string) {
         if (p === "eq") eqs.push([String(args[0]), args[1]]);
         if (p === "is" && args[1] === null) isNull.push(String(args[0]));
         if (p === "maybeSingle") {
+          if (table === "document_holds" && state.noHeldRevColumn && cols.includes("held_rev_label")) {
+            return Promise.resolve({ data: null, error: { message: "column document_holds.held_rev_label does not exist", code: "42703" } });
+          }
           if (failing()) return Promise.resolve({ data: null, error: { message: "read failed" } });
           return Promise.resolve({ data: rows()[0] ?? null, error: null });
         }
@@ -84,6 +91,7 @@ beforeEach(() => {
   state.failHoldRead = 0;
   state.holdReads = 0;
   state.failDocRead = false;
+  state.noHeldRevColumn = false;
   state.inserts = [];
   state.selects = [];
 });
@@ -189,6 +197,52 @@ describe("VFY-10 / PHYS-10 — green only when no hold at all remains on the doc
     state.failHoldRead = 1;
     const { status } = await verify();
     expect(status).toBe(503);
+    expect(state.holdReads).toBe(1); // an error that is not 42703 is never retried
+    expect(state.inserts.filter((i) => i.table === "verify_scans").map((i) => i.row.verdict)).toEqual(["error"]);
+  });
+});
+
+describe("VFY-10 / PHYS-10 review fix — the verdict reaches the field on a database without 20261073 (held_rev_label)", () => {
+  // a pre-20261073 row has no held_rev_label column at all
+  const preHold = (over: Record<string, unknown> = {}) => {
+    const { held_rev_label: _drop, ...row } = hold(over);
+    void _drop;
+    return row;
+  };
+  it("42703 on the first read → retried without the column → the sibling / legal-hold verdict is computed, heldRev null", async () => {
+    state.noHeldRevColumn = true;
+    state.holds = [preHold({ released_at: "2026-09-20T00:00:00Z" }), preHold({ id: SIB, reason: "Client Review", released_at: null })];
+    const { status, body } = await verify();
+    expect(status).toBe(200);
+    expect(body.verdict).toBe("released_others_active");
+    expect(body.otherActiveHolds).toBe(1);
+    expect(body.heldRev).toBeNull();
+    const holdSelects = state.selects.filter((x) => x.table === "document_holds").map((x) => x.cols);
+    expect(holdSelects.slice(0, 2)).toEqual([
+      "id, document_id, reason, opened_at, released_at, held_rev_label",
+      "id, document_id, reason, opened_at, released_at",
+    ]);
+    // and a legally held document still reads amber there
+    state.holds = [preHold({ released_at: "2026-09-20T00:00:00Z" })];
+    state.docs = [{ ...state.docs[0], legal_hold: true }];
+    expect((await verify()).body.verdict).toBe("released_others_active");
+    // nothing else on the document → the green is reachable too
+    state.docs = [{ ...state.docs[0], legal_hold: false }];
+    expect((await verify()).body.verdict).toBe("released");
+  });
+  it("the retry is checked: a retry that fails is a 503 with an 'error' row, never a verdict", async () => {
+    state.noHeldRevColumn = true;
+    state.holds = [preHold({ released_at: "2026-09-20T00:00:00Z" })];
+    state.failHoldRead = 2; // the column-less retry is the second document_holds read
+    const { status } = await verify();
+    expect(status).toBe(503);
+    expect(state.inserts.filter((i) => i.table === "verify_scans").map((i) => i.row.verdict)).toEqual(["error"]);
+  });
+  it("the route says why: 42703 is the only error it retries on, through the shared helper", () => {
+    const src = readFileSync(join(process.cwd(), "app/api/verify-hold/route.ts"), "utf8");
+    expect(src).toContain('import { isUndefinedColumnError } from "@/lib/verifyVerdict";');
+    expect(src).toContain("if (holdErr && isUndefinedColumnError(holdErr)) {");
+    expect(src).not.toContain("It reads as undefined on a pre-migration database");
   });
 });
 

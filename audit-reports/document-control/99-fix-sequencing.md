@@ -200,5 +200,8 @@ into `DRLS-16`. `20261130` later drops the signature and grants the new one
 without `anon`; `lib/__tests__/dcHotfixAnonExecute.test.ts` refuses any
 future migration that re-opens the shape.
 
-**`REV-9` closes** when P8 swaps `/api/verify`'s inline date for
-`effectiveTodayISO()` and every deployment names its zone (rule 2).
+**`REV-9` closes** when every deployment names its zone (rule 2). The
+`/api/verify` swap to `effectiveTodayISO()` this line first gave to P8 is
+DONE — public-surfaces PS-VERIFY (2026-10-01, `REV-9`'s Partial block,
+public-surfaces `VFY-4`); P8 does not redo it. Public-surfaces `VFY-4`
+stays OPEN on the same operator limb.

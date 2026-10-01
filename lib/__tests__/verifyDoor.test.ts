@@ -78,7 +78,7 @@ describe("VFY-12 — migration 20261134 (one-paste protocol, service role only)"
   const M = src("supabase/migrations/20261134_ps_roundF_verify_scans.sql");
   const code = stripSql(M);
   it("the inventory is a TEMP table of counts captured BEFORE the transaction; BEGIN / COMMIT; one final SELECT (check, ok, n)", () => {
-    const tmp = code.indexOf("CREATE TEMP TABLE IF NOT EXISTS _ps_f34_before AS");
+    const tmp = code.indexOf("CREATE TEMP TABLE _ps_f34_before AS");
     const begin = code.indexOf("\nBEGIN;");
     const commit = code.indexOf("\nCOMMIT;");
     expect(tmp).toBeGreaterThan(-1);
@@ -122,6 +122,20 @@ describe("VFY-12 — migration 20261134 (one-paste protocol, service role only)"
   it("VFY-12 evidence: printed_ref (the ?v= / ?print= printing) is a column and the column probe counts all eight", () => {
     expect(code).toContain("AND column_name IN ('id', 'endpoint', 'target_id', 'printed_ref', 'verdict', 'ip', 'user_agent', 'created_at')) = 8, NULL");
   });
+  it("a second paste never reports the first paste's inventory: the temp table is DROPPED and re-captured, never CREATE … IF NOT EXISTS", () => {
+    const drop = code.indexOf("DROP TABLE IF EXISTS pg_temp._ps_f34_before;");
+    const create = code.indexOf("CREATE TEMP TABLE _ps_f34_before AS");
+    expect(drop).toBeGreaterThan(-1);
+    expect(create).toBeGreaterThan(drop);
+    expect(code).not.toContain("CREATE TEMP TABLE IF NOT EXISTS _ps_f34_before");
+    // and the inventory says whether printed_ref was already there (aggregate count)
+    expect(code.slice(create, code.indexOf("\nBEGIN;"))).toContain("'inventory: verify_scans.printed_ref already existed before this paste'");
+  });
+  it("a verify_scans table an earlier draft created without printed_ref gains it inside the transaction (the paste stays idempotent)", () => {
+    const add = code.indexOf("ALTER TABLE verify_scans ADD COLUMN IF NOT EXISTS printed_ref UUID;");
+    expect(add).toBeGreaterThan(code.indexOf("CREATE TABLE IF NOT EXISTS verify_scans ("));
+    expect(add).toBeLessThan(code.indexOf("\nCOMMIT;"));
+  });
   it("the prosrc probe quotes its literal the verbatim way ('' inside the LIKE)", () => {
     expect(code).toContain("p.prosrc LIKE '%INTERVAL ''90 days''%'");
   });
@@ -152,6 +166,12 @@ describe("VFY-14 — verify-ticket selects only what it reads (headers / select 
     const s = src("app/api/verify-ticket/route.ts");
     expect(s).toContain('.select("id, ticket_id, title, unit, status, deliverable_rev, last_modified, history")');
     expect(s).not.toContain("revision_count: number");
+  });
+  it("the read's error is checked: an outage is 503 + an 'error' scan row, never 'Unknown ticket' (behaviour: verifyTicketRead.test.ts)", () => {
+    const s = src("app/api/verify-ticket/route.ts");
+    expect(s).toContain("const { data: row, error: rowErr } = await sb");
+    expect(s.indexOf("if (rowErr) {")).toBeGreaterThan(-1);
+    expect(s.indexOf("if (rowErr) {")).toBeLessThan(s.indexOf("if (!row) {"));
   });
 });
 

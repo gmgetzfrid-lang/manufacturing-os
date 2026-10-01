@@ -89,11 +89,18 @@ export async function GET(req: NextRequest) {
     return verifyJson({ error: "Invalid code" }, 400);
   }
 
-  const { data: row } = await sb
+  const { data: row, error: rowErr } = await sb
     .from("tickets")
     .select("id, ticket_id, title, unit, status, deliverable_rev, last_modified, history")
     .eq("id", ticketId)
     .maybeSingle();
+  if (rowErr) {
+    // An unreadable ticket is an outage, not an unknown code: the scan row
+    // says 'error' (never 'unknown' — VFY-12's evidence must not read an
+    // outage as enumeration) and the field page says "try again".
+    await scan("error");
+    return verifyJson({ error: "Verification unavailable — try again" }, 503);
+  }
   if (!row) {
     await scan("unknown");
     return verifyJson({ error: "Unknown ticket" }, 404);

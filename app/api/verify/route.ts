@@ -98,6 +98,10 @@ export async function GET(req: NextRequest) {
   // count. A lookup error must never flip a held document to green, so an
   // errored hold read is "held" (fail safe for a stop-work signal). The
   // holds' predefined categories are named (VFY-5); operator text is not.
+  // The legal hold is counted in activeHolds — exactly as /api/verify-hold
+  // counts it among a card's other holds, so both surfaces show the same
+  // number for the same document (VFY-5 done-when 3) — and never named: it
+  // adds to the count, not to holdReasons.
   let heldError = false;
   let activeHolds: number | null = 0;
   let holdReasons: string[] = [];
@@ -111,7 +115,7 @@ export async function GET(req: NextRequest) {
     activeHolds = null;
   } else {
     const rows = (holdRows as HoldReasonRow[] | null) ?? [];
-    activeHolds = rows.length;
+    activeHolds = rows.length + (d.legal_hold === true ? 1 : 0);
     holdReasons = [...new Set(rows.map((h) => publicHoldReason(h.reason)))];
   }
   const onHold = d.legal_hold === true || heldError || (activeHolds ?? 0) > 0;

@@ -6,8 +6,12 @@
 // the print snapshot, not the live pins — so refreshing pins after printing
 // cannot flip already-distributed paper back to green. Green additionally
 // needs: an open package, at least one sheet, every sheet Issued / Locked,
-// hold-free, current, in force, still in the package, and nothing added to
-// the package since printing. A legacy QR (no print id) is never green.
+// hold-free, current, in force, still in the package, and every sheet of the
+// package in the pack. A package sheet missing from the paper that could be
+// printed now makes the pack red ("in the package but not in this pack" —
+// never "added since printing": the snapshot cannot prove that, VFY-19); one
+// that cannot be printed now (the PKG-4 refusals) makes an otherwise current
+// pack amber "incomplete", never stale. A legacy QR (no print id) is never green.
 
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { readFileSync } from "node:fs";
@@ -19,6 +23,7 @@ const PKG = "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa";
 const PRINT = "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb";
 const DOC = "cccccccc-cccc-cccc-cccc-cccccccccccc";
 const DOC2 = "dddddddd-dddd-dddd-dddd-dddddddddddd";
+const DOC3 = "eeeeeeee-eeee-eeee-eeee-eeeeeeeeeeee";
 
 const state = vi.hoisted(() => ({
   pkg: null as Record<string, unknown> | null,
@@ -163,15 +168,23 @@ describe("VFY-2 — the printed manifest, not the live package", () => {
     expect(r.verdict).toBe("stale");
     expect(states(r)).toEqual(["void"]);
   });
-  it("a sheet ADDED to the package since printing is reported and the pack is not green", async () => {
+  it("a printable sheet ADDED to the package since printing is reported as 'in the package but not in this pack' and the pack is not green", async () => {
     state.print = printAt([sheetV2]);
     state.liveMembers.push({ document_id: DOC2, pinned_version_id: "w1", pinned_rev_label: "1" });
     state.docs.push(docRow({ id: DOC2, document_number: "P-102", current_version_id: "w1", rev: "1" }));
     const r = await verify(true);
-    expect(r.addedSincePrint).toEqual([{ label: "P-102" }]);
+    expect(r.notInPack).toEqual([{ label: "P-102" }]);
+    expect(r.notPrintable).toEqual([]);
+    expect(r).not.toHaveProperty("addedSincePrint");
     expect(r.verdict).toBe("stale");
     expect(r.allFresh).toBe(false);
     expect(states(r)).toEqual(["fresh"]); // the printed sheet itself is fine
+    const view = presentPackVerdict(r as unknown as PackVerifyResult);
+    expect(view.ok).toBe(false);
+    expect(view.headline).toBe("PACK IS MISSING SHEETS");
+    expect(view.blurb).toContain("1 sheet in the package is not in this pack");
+    // the snapshot cannot prove WHEN it joined — nothing says "added since printing"
+    expect(`${view.headline} ${view.blurb} ${view.advice}`).not.toMatch(/added/i);
   });
   it("a sheet REMOVED from the package since printing is marked on the paper's list, not silently dropped", async () => {
     state.print = printAt([sheetV2]);
@@ -179,6 +192,112 @@ describe("VFY-2 — the printed manifest, not the live package", () => {
     const r = await verify(true);
     expect(states(r)).toEqual(["removed"]);
     expect(r.verdict).toBe("stale");
+  });
+});
+
+describe("VFY-2 review fix — a package sheet the print gate could not print is not 'added since printing' and never makes a correct pack stale", () => {
+  const member = (id: string, over: Record<string, unknown> = {}) => {
+    state.liveMembers.push({ document_id: id, pinned_version_id: "w1", pinned_rev_label: "1" });
+    state.docs.push(docRow({ id, document_number: id === DOC2 ? "P-102" : "P-103", current_version_id: "w1", rev: "1", ...over }));
+  };
+  const view = (r: Record<string, unknown>) => presentPackVerdict(r as unknown as PackVerifyResult);
+  const allText = (r: Record<string, unknown>) => { const v = view(r); return `${v.headline} ${v.blurb} ${v.advice ?? ""}`; };
+
+  it("printed Issued sheet + a DRAFT member PKG-4 left out → 'incomplete' (amber), not 'stale', and no 'added since printing'", async () => {
+    state.print = printAt([sheetV2]);
+    member(DOC2, { status: "Draft" });
+    const r = await verify(true);
+    expect(r.verdict).toBe("incomplete");
+    expect(r.verdict).not.toBe("stale");
+    expect(r.staleCount).toBe(0);
+    expect(r.notInPack).toEqual([]);
+    expect(r.notPrintable).toEqual([{ label: "P-102", reason: "not_issued" }]);
+    expect(states(r)).toEqual(["fresh"]);
+    expect(r.allFresh).toBe(false);
+    const v = view(r);
+    expect(v.ok).toBe(false);
+    expect(v.bg).toBe("bg-amber-500");
+    expect(v.headline).toBe("PACK INCOMPLETE");
+    expect(v.blurb).toContain("Every sheet in this pack is current, but 1 sheet in the package is not in it and cannot be printed now (not issued)");
+    expect(allText(r)).not.toMatch(/added|stale/i);
+  });
+  it("the same with a member under an ACTIVE HOLD → 'incomplete', reason on_hold; a legally held member too", async () => {
+    state.print = printAt([sheetV2]);
+    member(DOC2);
+    state.holds = [{ document_id: DOC2, reason: "Client Review", released_at: null }];
+    let r = await verify(true);
+    expect(r.verdict).toBe("incomplete");
+    expect(r.notPrintable).toEqual([{ label: "P-102", reason: "on_hold" }]);
+    expect(r.heldCount).toBe(0); // the printed sheet is not held — the pack is not "on hold"
+    expect(allText(r)).toContain("(on hold)");
+    expect(allText(r)).not.toMatch(/added|stale/i);
+    state.holds = [];
+    state.docs = state.docs.map((d) => (d.id === DOC2 ? { ...d, legal_hold: true } : d));
+    r = await verify(true);
+    expect(r.notPrintable).toEqual([{ label: "P-102", reason: "on_hold" }]);
+    expect(r.verdict).toBe("incomplete");
+  });
+  it("each PKG-4 refusal has its reason: withdrawn (Void), no current file, a document that cannot be read, an unknown hold state", async () => {
+    state.print = printAt([sheetV2]);
+    member(DOC2, { status: "Void" });
+    member(DOC3, { current_version_id: null });
+    let r = await verify(true);
+    expect(r.notPrintable).toEqual([{ label: "P-102", reason: "withdrawn" }, { label: "P-103", reason: "no_file" }]);
+    expect(r.verdict).toBe("incomplete");
+    // a member whose document row is not readable (gone, another org) is never packed either
+    state.docs = state.docs.filter((d) => d.id !== DOC3);
+    r = await verify(true);
+    expect((r.notPrintable as Array<Record<string, unknown>>)[1]).toEqual({ label: "Document", reason: "unavailable" });
+    // an unreadable hold state: the printed sheet is held (fail closed) and the member's hold state is unknown
+    state.errors.document_holds = true;
+    r = await verify(true);
+    expect(r.verdict).toBe("held");
+    expect((r.notPrintable as Array<Record<string, unknown>>)[0]).toEqual({ label: "P-102", reason: "hold_unknown" });
+  });
+  it("a member truly added later (printable now) is still reported — and makes the pack red even beside a not-printable one", async () => {
+    state.print = printAt([sheetV2]);
+    member(DOC2, { status: "Draft" });
+    member(DOC3);
+    const r = await verify(true);
+    expect(r.verdict).toBe("stale");
+    expect(r.notInPack).toEqual([{ label: "P-103" }]);
+    expect(r.notPrintable).toEqual([{ label: "P-102", reason: "not_issued" }]);
+    expect(view(r).headline).toBe("PACK IS MISSING SHEETS");
+    expect(allText(r)).not.toMatch(/added/i);
+  });
+  it("re-printing clears it: once the left-out member is the only difference, a later issue + re-print reads green", async () => {
+    // the member was a Draft at print, is Issued now, and the new print carries it
+    state.print = printAt([sheetV2, { documentId: DOC2, versionId: "w1", revLabel: "1", label: "P-102" }]);
+    member(DOC2);
+    const r = await verify(true);
+    expect(r.verdict).toBe("current");
+    expect(r.notInPack).toEqual([]);
+    expect(r.notPrintable).toEqual([]);
+  });
+  it("a not-yet-effective printed sheet still says so before 'incomplete' (both amber; the sheet in hand comes first)", async () => {
+    state.print = printAt([sheetV2]);
+    state.versions = [{ id: "v2", effective_date: "2999-01-01" }];
+    member(DOC2, { status: "Draft" });
+    const r = await verify(true);
+    expect(r.verdict).toBe("not_yet_effective");
+    expect(r.notPrintable).toEqual([{ label: "P-102", reason: "not_issued" }]);
+  });
+  it("a legacy QR compares nothing — no off-paper groups, still 'unconfirmed_print'", async () => {
+    member(DOC2, { status: "Draft" });
+    const r = await verify(false);
+    expect(r.notInPack).toEqual([]);
+    expect(r.notPrintable).toEqual([]);
+    expect(r.verdict).toBe("stale"); // the Draft member IS on a legacy QR's "paper" (the live membership)
+  });
+  it("the page never says 'added to the package since printing'", () => {
+    const page = readFileSync(join(process.cwd(), "app/verify-package/[packageId]/page.tsx"), "utf8");
+    expect(page).not.toMatch(/since printing/i);
+    expect(page).not.toContain("addedSincePrint");
+    expect(page).toContain("In the package but NOT in this pack:");
+    expect(page).toContain("In the package, not in this pack — cannot be printed now:");
+    expect(page).toContain("notPrintableText(a.reason)");
+    const route = readFileSync(join(process.cwd(), "app/api/verify-package/route.ts"), "utf8");
+    expect(route).not.toContain("addedSincePrint");
   });
 });
 

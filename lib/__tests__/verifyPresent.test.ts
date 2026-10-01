@@ -7,7 +7,7 @@ import { describe, it, expect } from "vitest";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import {
-  presentDocVerdict, presentPackVerdict, presentHoldVerdict, sheetLabel, formatEffectiveDay,
+  presentDocVerdict, presentPackVerdict, presentHoldVerdict, sheetLabel, formatEffectiveDay, notPrintableText,
   type DocVerifyResult, type PackVerifyResult, type HoldVerifyResult, type DocVerdict, type PackVerdict,
 } from "@/lib/verifyPresent";
 
@@ -72,7 +72,7 @@ const pack = (over: Partial<PackVerifyResult> = {}): PackVerifyResult => ({
 
 describe("presentPackVerdict — /verify-package/[packageId]", () => {
   it("green ONLY for 'current'", () => {
-    const all: PackVerdict[] = ["current", "not_yet_effective", "stale", "held", "closed", "empty", "unconfirmed_print", "unverifiable"];
+    const all: PackVerdict[] = ["current", "not_yet_effective", "incomplete", "stale", "held", "closed", "empty", "unconfirmed_print", "unverifiable"];
     for (const v of all) expect(presentPackVerdict(pack({ verdict: v })).bg === GREEN, v).toBe(v === "current");
     expect(presentPackVerdict(pack({ verdict: "brand_new" as PackVerdict })).bg).not.toBe(GREEN);
   });
@@ -82,7 +82,7 @@ describe("presentPackVerdict — /verify-package/[packageId]", () => {
     expect(view.bg).not.toBe("bg-red-600");
     expect(view.blurb).not.toMatch(/0 of 0/);
     // and a stale pack never says "0 of N" either: the count is only printed when non-zero
-    expect(presentPackVerdict(pack({ verdict: "stale", staleCount: 0, addedSincePrint: [{ label: "P-102" }] })).blurb).not.toMatch(/\b0 of\b/);
+    expect(presentPackVerdict(pack({ verdict: "stale", staleCount: 0, notInPack: [{ label: "P-102" }] })).blurb).not.toMatch(/\b0 of\b/);
   });
   it("VFY-8: a closed pack says so in the headline and is not green", () => {
     const view = presentPackVerdict(pack({ verdict: "closed", closed: true }));
@@ -92,10 +92,40 @@ describe("presentPackVerdict — /verify-package/[packageId]", () => {
   it("VFY-2: a legacy cover QR says it cannot confirm which printing", () => {
     expect(presentPackVerdict(pack({ verdict: "unconfirmed_print" })).headline).toBe("CAN'T CONFIRM WHICH PRINTING");
   });
-  it("stale names both the changed sheets and the sheets added since printing", () => {
-    const b = presentPackVerdict(pack({ verdict: "stale", staleCount: 1, sheetCount: 3, addedSincePrint: [{ label: "P-9" }, { label: "P-10" }] })).blurb;
-    expect(b).toContain("1 of 3 sheets changed or withdrawn since this pack was printed");
-    expect(b).toContain("2 sheets added to the package since printing are not in this pack");
+  it("stale names both the changed sheets and the package's sheets not in this pack — never 'added since printing'", () => {
+    const view = presentPackVerdict(pack({ verdict: "stale", staleCount: 1, sheetCount: 3, notInPack: [{ label: "P-9" }, { label: "P-10" }] }));
+    expect(view.headline).toBe("PACK IS STALE");
+    expect(view.blurb).toContain("1 of 3 sheets changed or withdrawn since this pack was printed");
+    expect(view.blurb).toContain("2 sheets in the package are not in this pack");
+    expect(view.blurb).not.toMatch(/added/i);
+    // only missing sheets: its own headline, a re-print advice, "get the missing sheets"
+    const only = presentPackVerdict(pack({ verdict: "stale", staleCount: 0, notInPack: [{ label: "P-9" }] }));
+    expect(only.headline).toBe("PACK IS MISSING SHEETS");
+    expect(only.bg).toBe("bg-red-600");
+    expect(only.blurb).toBe("1 sheet in the package is not in this pack — get the missing sheets before starting work.");
+    expect(only.advice).toMatch(/re-printed pack/);
+    expect(`${only.headline} ${only.blurb} ${only.advice}`).not.toMatch(/added|outdated/i);
+  });
+  it("incomplete (the package holds sheets that cannot be printed now) is AMBER, never green, never 'stale', and says why", () => {
+    const view = presentPackVerdict(pack({
+      verdict: "incomplete",
+      notPrintable: [{ label: "P-102", reason: "not_issued" }, { label: "P-103", reason: "on_hold" }, { label: "P-104", reason: "on_hold" }],
+    }));
+    expect(view.bg).toBe("bg-amber-500");
+    expect(view.ok).toBe(false);
+    expect(view.headline).toBe("PACK INCOMPLETE");
+    expect(view.blurb).toBe("Every sheet in this pack is current, but 3 sheets in the package are not in it and cannot be printed now (not issued, on hold) — listed below.");
+    expect(view.advice).toMatch(/Work only from the sheets in this pack/);
+    expect(`${view.headline} ${view.blurb} ${view.advice}`).not.toMatch(/added|stale/i);
+    // a payload with no list still never prints "0 sheets"
+    expect(presentPackVerdict(pack({ verdict: "incomplete" })).blurb).not.toMatch(/\b0 sheet/);
+  });
+  it("notPrintableText names every reason; an unknown one reads 'cannot be printed'", () => {
+    expect(["not_issued", "withdrawn", "on_hold", "hold_unknown", "unavailable", "no_file"].map(notPrintableText)).toEqual([
+      "not issued", "withdrawn", "on hold", "hold status unknown", "no longer available", "no current file",
+    ]);
+    expect(notPrintableText("brand_new")).toBe("cannot be printed");
+    expect(notPrintableText(null)).toBe("cannot be printed");
   });
   it("VFY-1 / VFY-11: a sheet that is not an issued revision is NOT reported as 'changed since this pack was printed'", () => {
     // a just-printed pack whose one legacy no-status sheet verifies not_issued

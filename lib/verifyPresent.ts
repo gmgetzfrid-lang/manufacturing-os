@@ -112,7 +112,7 @@ export function presentDocVerdict(r: DocVerifyResult): VerdictView {
 // ─── /verify-package/[packageId] — a printed work pack ───────────────────
 
 export type PackVerdict =
-  | "current" | "not_yet_effective" | "stale" | "held" | "closed" | "empty" | "unconfirmed_print" | "unverifiable";
+  | "current" | "not_yet_effective" | "incomplete" | "stale" | "held" | "closed" | "empty" | "unconfirmed_print" | "unverifiable";
 
 export type SheetState =
   | "fresh" | "not_yet_effective" | "stale" | "held"
@@ -130,6 +130,28 @@ export interface PackSheetRow {
   holdReasons?: string[];
 }
 
+/** Why a sheet of the package that is not in this pack cannot be printed
+ *  NOW — the same refusals the print gate applies (document-control PKG-4,
+ *  lib/docPack.ts filterPackDocs): not issued, withdrawn, under a hold (or a
+ *  hold state that could not be read), no longer readable, no current file.
+ *  Present tense on purpose: the route knows what is true of the sheet now,
+ *  not what the print gate saw — a re-print would leave it out too. */
+export type NotPrintableReason = "not_issued" | "withdrawn" | "on_hold" | "hold_unknown" | "unavailable" | "no_file";
+
+const NOT_PRINTABLE_TEXT: Record<NotPrintableReason, string> = {
+  not_issued: "not issued",
+  withdrawn: "withdrawn",
+  on_hold: "on hold",
+  hold_unknown: "hold status unknown",
+  unavailable: "no longer available",
+  no_file: "no current file",
+};
+
+/** The words for one not-printable reason (an unknown one reads "cannot be printed"). */
+export function notPrintableText(reason: string | null | undefined): string {
+  return NOT_PRINTABLE_TEXT[reason as NotPrintableReason] ?? "cannot be printed";
+}
+
 export interface PackVerifyResult {
   name: string;
   packageStatus: string | null;
@@ -145,7 +167,15 @@ export interface PackVerifyResult {
    *  (draft / not issued) — which says nothing about "since printing". */
   notIssuedCount?: number;
   heldCount?: number;
-  addedSincePrint?: Array<{ label: string }>;
+  /** Sheets in the package that are NOT in this pack and could be printed
+   *  now — added since printing, or left out of it for a reason that no
+   *  longer holds (a file that failed to fetch, a sheet issued since). The
+   *  route cannot tell which (VFY-19), so it never says "added since". */
+  notInPack?: Array<{ label: string }>;
+  /** Sheets in the package that are NOT in this pack and cannot be printed
+   *  now (NotPrintableReason) — a re-print would leave them out too, so they
+   *  never make the pack stale; on their own they make it "incomplete". */
+  notPrintable?: Array<{ label: string; reason: NotPrintableReason }>;
   allFresh: boolean;
   verdict?: PackVerdict;
   sheets: PackSheetRow[];
@@ -169,7 +199,11 @@ export function presentPackVerdict(r: PackVerifyResult): VerdictView {
         advice: "Do not work from the held sheets until Document Control releases every hold on them.",
         blurb: `${sheets(r.heldCount ?? 0)} in this pack ${(r.heldCount ?? 0) === 1 ? "is" : "are"} under an active hold — the sheets marked below.` };
     case "stale": {
-      const added = r.addedSincePrint?.length ?? 0;
+      // A sheet of the package that is not in this pack but could be printed
+      // now. The print snapshot does not record what the print gate left out
+      // (VFY-19), so nothing here says it was "added since printing" — only
+      // that the package holds it and this pack does not.
+      const missing = r.notInPack?.length ?? 0;
       // A sheet that is not an issued revision (a draft, or a legacy row with
       // no status) is not evidence that anything CHANGED since printing — it
       // may have been printed that way — so it is counted on its own.
@@ -178,13 +212,29 @@ export function presentPackVerdict(r: PackVerifyResult): VerdictView {
       const parts: string[] = [];
       if (changed > 0) parts.push(`${changed} of ${sheets(n)} changed or withdrawn since this pack was printed`);
       if (notIssued > 0) parts.push(`${notIssued} of ${sheets(n)} ${notIssued === 1 ? "is" : "are"} not an issued, controlled revision`);
-      if (added > 0) parts.push(`${sheets(added)} added to the package since printing ${added === 1 ? "is" : "are"} not in this pack`);
-      const onlyNotIssued = changed === 0 && added === 0 && notIssued > 0;
-      return { bg: "bg-red-600", icon: "x", ok: false, headline: onlyNotIssued ? "PACK HAS UNISSUED SHEETS" : "PACK IS STALE",
+      if (missing > 0) parts.push(`${sheets(missing)} in the package ${missing === 1 ? "is" : "are"} not in this pack`);
+      const onlyNotIssued = changed === 0 && missing === 0 && notIssued > 0;
+      const missingNotChanged = changed === 0 && missing > 0;
+      return { bg: "bg-red-600", icon: "x", ok: false,
+        headline: changed > 0 ? "PACK IS STALE" : missing > 0 ? "PACK IS MISSING SHEETS" : notIssued > 0 ? "PACK HAS UNISSUED SHEETS" : "PACK IS STALE",
         advice: onlyNotIssued
           ? "Do not work from the sheets marked below — they are not issued revisions. Get the issued revisions from Document Control before starting work."
-          : "Do not work from the outdated sheets. Ask the package owner or Document Control for a re-printed pack — the stale sheets are marked below.",
-        blurb: `${parts.join("; ") || "This pack no longer matches its package"} — get the ${onlyNotIssued ? "issued" : "new"} sheets before starting work.` };
+          : missingNotChanged
+            ? "Do not work from any sheet marked below, and ask the package owner or Document Control for a re-printed pack — the package's sheets that are not in this pack are listed below."
+            : "Do not work from the outdated sheets. Ask the package owner or Document Control for a re-printed pack — the stale sheets are marked below.",
+        blurb: `${parts.join("; ") || "This pack no longer matches its package"} — get the ${onlyNotIssued ? "issued" : missingNotChanged && notIssued === 0 ? "missing" : "new"} sheets before starting work.` };
+    }
+    case "incomplete": {
+      // Every printed sheet is current; the package also holds sheets that
+      // cannot be printed now (not issued, withdrawn, held …). A re-print
+      // would leave them out too, so this is not "stale" — but it is not
+      // green either: part of the package's scope is not in the crew's hands.
+      const left = r.notPrintable ?? [];
+      const k = left.length;
+      const why = [...new Set(left.map((s) => notPrintableText(s.reason)))];
+      return { bg: "bg-amber-500", icon: "q", ok: false, headline: "PACK INCOMPLETE",
+        advice: "Work only from the sheets in this pack. Do not work to the sheets listed as not in it until Document Control issues or releases them — a re-printed pack includes them once they can be printed.",
+        blurb: `Every sheet in this pack is current, but ${k > 0 ? sheets(k) : "a sheet"} in the package ${k === 1 || k === 0 ? "is" : "are"} not in it and cannot be printed now${why.length ? ` (${why.join(", ")})` : ""} — listed below.` };
     }
     case "closed":
       return { bg: "bg-slate-700", icon: "x", ok: false, headline: "PACKAGE CLOSED — DO NOT WORK FROM IT",
