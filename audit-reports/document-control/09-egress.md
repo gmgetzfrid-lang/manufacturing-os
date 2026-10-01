@@ -363,7 +363,7 @@ What landed:
 1. ✓ (P1 SHARE, `EGRESS-7`) `revokeShareLink` is a checked write that surfaces failure.
 2. ✓ (P1 SHARE, `EGRESS-8`) `listShareLinks` surfaces its error.
 3. ✓ in this package's files; NOT met repo-wide. Every `download_audits` write in this package's files checks `{ error }` and logs loudly, and a failed write is never indistinguishable from a successful one. The person is told, after delivery, by:
-   - every caller of the download / print paths: the book viewer and the full-screen viewer (an alert, and the confirmation dialog closes, fix pass 5) and version history (inline);
+   - every caller of the download / print paths: the book viewer and the full-screen viewer (an alert, and the confirmation dialog closes, fix pass 5; the merged book's download and print too, since the integration fix of 2026-10-01) and version history (inline);
    - the full-screen viewer's markup export (fix pass 4).
 
    The three writers outside this package (`requests/[id]/page.tsx:607` and `:689`, `FileReferenceModal.tsx:189`) still swallow `{ error }`. They are closed here by pointer to drafting-flow `EVID-5` (OPEN), which owns them.

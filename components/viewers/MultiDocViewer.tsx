@@ -846,8 +846,10 @@ export default function MultiDocViewer({ docs, onClose, currentUserId, currentUs
       a.click();
       document.body.removeChild(a);
       URL.revokeObjectURL(url);
-      if (book.unrecorded > 0) { setActionError(unrecordedBookMessage(book.unrecorded)); return; }
+      // A delivered-but-unrecorded book closes the dialog and alerts, like a
+      // single copy (EGR-6) — its button must never invite a second copy.
       setDownloadConfirm(null);
+      if (book.unrecorded > 0) void appAlert(unrecordedBookMessage(book.unrecorded));
     } catch (e) {
       setActionError((e as Error).message || "Book download failed");
     } finally {
@@ -874,8 +876,10 @@ export default function MultiDocViewer({ docs, onClose, currentUserId, currentUs
         return;
       }
       w.addEventListener("load", () => setTimeout(() => w.print(), 250));
-      if (book.unrecorded > 0) { setActionError(unrecordedBookMessage(book.unrecorded)); return; }
+      // A delivered-but-unrecorded book closes the dialog and alerts, like a
+      // single copy (EGR-6) — its button must never invite a second copy.
       setDownloadConfirm(null);
+      if (book.unrecorded > 0) void appAlert(unrecordedBookMessage(book.unrecorded));
     } catch (e) {
       setActionError((e as Error).message || "Book print failed");
     } finally {

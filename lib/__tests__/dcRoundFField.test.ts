@@ -1130,7 +1130,9 @@ describe("HLD-1 / PKG-10 / EGR-6 — the single-document copy", () => {
     expect(v).toContain("const recordable = bound.filter((e) => !!e.doc.orgId && !!e.doc.id);");
     expect(v).toMatch(/const \{ error \} = await supabase\.from\("download_audits"\)\.insert\(rows\);/);
     expect(v).not.toMatch(/try \{ await supabase\.from\("download_audits"\)\.insert\(rows\); \} catch/);
-    expect(v).toMatch(/if \(book\.unrecorded > 0\) \{ setActionError\(unrecordedBookMessage\(book\.unrecorded\)\); return; \}/);
+    // integration (2026-10-01): the merged book's download and print close the dialog and alert too
+    expect(v.match(/setDownloadConfirm\(null\);\s*\n\s*if \(book\.unrecorded > 0\) void appAlert\(unrecordedBookMessage\(book\.unrecorded\)\);/g)).toHaveLength(2);
+    expect(v).not.toMatch(/setActionError\(unrecordedBookMessage/);
     // HLD-1 in the book
     expect(v).toMatch(/const hold = await readCopyHoldState\(entry\.doc\.id\);/);
   });
