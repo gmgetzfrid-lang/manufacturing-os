@@ -18,8 +18,9 @@
 
 import { supabase } from "@/lib/supabase";
 import { logMilestoneEvent, logAuditAction } from "@/lib/audit";
-import { reflowAllAncestors, type ReflowNode } from "@/lib/scheduleReflow";
-import { effectiveWeight, leafPercent } from "@/lib/scheduleProgress";
+import { reflowAllAncestors, startForDuration, linkCyclePath, outlineLoop, type ReflowNode } from "@/lib/scheduleReflow";
+import { chooseWeightBasis, weightFor, leafPercent, type WeightBasis } from "@/lib/scheduleProgress";
+import { isImportedMilestone } from "@/lib/milestoneLiveness";
 import { shiftForStart, shiftAfterMove } from "@/lib/scheduleFilter";
 import { SCHEDULE_IMPORT_LIMITS } from "@/lib/scheduleParsers";
 import type {
@@ -232,6 +233,50 @@ const PATCH_COLUMN: Record<string, string> = {
   dependsOn: "depends_on",
 };
 
+/** The fields of an IMPORTED row that belong to the scheduling tool: the
+ *  next import writes every one of them back from the file (DEC-51), so an
+ *  edit made here would be silently lost. They are locked here, below the UI
+ *  (PT SCH-13) — its dependency links included (the importer writes
+ *  depends_on from the file's predecessors). Status, progress, actuals and
+ *  who actually did the work stay editable. */
+const IMPORT_OWNED_PATCH_KEYS: ReadonlyArray<keyof MilestonePatch> = [
+  "name", "description", "weight", "plannedAt", "plannedStartAt", "shift",
+  "workOrderRef", "responsibleParty", "responsibleKind", "responsibleOrg",
+  "location", "durationHours", "attributes", "dependsOn",
+];
+const IMPORT_OWNED_LABEL: Partial<Record<keyof MilestonePatch, string>> = {
+  name: "name", description: "description", weight: "weight", plannedAt: "finish", plannedStartAt: "start",
+  shift: "shift", workOrderRef: "work order", responsibleParty: "planned responsible", responsibleKind: "planned responsible type",
+  responsibleOrg: "planned responsible company", location: "location", durationHours: "work hours",
+  attributes: "source columns", dependsOn: "dependency links",
+};
+
+/** A change to what an imported row's scheduling tool owns (its dates, its
+ *  structure, its planned fields), refused — the next import would put the
+ *  file's values back without a word (PT SCH-13). */
+export class ImportedRowLockedError extends Error {
+  readonly ids: string[];
+  constructor(message: string, ids: string[]) {
+    super(message);
+    this.name = "ImportedRowLockedError";
+    this.ids = ids;
+  }
+}
+const sourceLabel = (src: string | null | undefined) =>
+  src === "p6" ? "Primavera P6" : src === "msproject" ? "MS Project" : src === "mpxj" ? "the scheduling tool" : src === "csv" ? "the imported file" : "the scheduling tool";
+
+/** A dependency edit that would close a loop, refused with the loop named
+ *  (PT SCH-4 / SCH-9) — checked over EVERY milestone of the project, read
+ *  from the database, never a display-filtered view. */
+export class DependencyCycleError extends Error {
+  readonly path: string[];
+  constructor(names: string[], path: string[]) {
+    super(`That link would make a loop: ${names.join(" → ")}. A task cannot (even indirectly) wait for itself — remove one of these links first.`);
+    this.name = "DependencyCycleError";
+    this.path = path;
+  }
+}
+
 export async function updateMilestone(input: UpdateMilestoneInput): Promise<Milestone> {
   const update: Record<string, unknown> = {
     updated_at: new Date().toISOString(),
@@ -245,6 +290,71 @@ export async function updateMilestone(input: UpdateMilestoneInput): Promise<Mile
   }
   // name must never be nulled.
   if ("name" in input.patch && input.patch.name) update.name = input.patch.name.trim();
+
+  // Imported rows: what the scheduling tool owns is locked (PT SCH-13). An
+  // unchanged value in the patch (an edit form sends every field) is dropped,
+  // a changed one refuses the whole update — nothing is written.
+  const ownedKeys = IMPORT_OWNED_PATCH_KEYS.filter((k) => k in input.patch);
+  let row: Record<string, unknown> | null = null;
+  if (ownedKeys.length > 0) {
+    const cols = Array.from(new Set(["id", "source", "project_id", "name", ...ownedKeys.map((k) => PATCH_COLUMN[k])]));
+    const { data: cur, error: curErr } = await supabase.from("milestones").select(cols.join(", ")).eq("id", input.id).maybeSingle();
+    if (curErr) throw new Error(curErr.message);
+    row = (cur as Record<string, unknown> | null) ?? null;
+    if (row && isImportedMilestone({ source: row.source as string | null })) {
+      const changed: string[] = [];
+      for (const k of ownedKeys) {
+        const col = PATCH_COLUMN[k];
+        const same = col === "depends_on"
+          ? sameDeps(row[col] as string[] | null, Array.isArray(update[col]) ? (update[col] as string[]) : [])
+          : samePlanValue(col, row[col], update[col]);
+        if (same) delete update[col];
+        else changed.push(IMPORT_OWNED_LABEL[k] ?? k);
+      }
+      if (changed.length > 0) {
+        throw new ImportedRowLockedError(
+          `“${String(row.name ?? "This task")}” comes from ${sourceLabel(row.source as string)}: its ${changed.join(", ")} ${changed.length === 1 ? "is" : "are"} set there and the next import writes ${changed.length === 1 ? "it" : "them"} back — change ${changed.length === 1 ? "it" : "them"} in the scheduling tool and re-import. Status, progress and who did the work are recorded here.`,
+          [input.id],
+        );
+      }
+    }
+  }
+
+  // A new dependency may not close a loop — checked over the WHOLE project,
+  // read here, never over whatever the caller happens to be showing (PT SCH-9).
+  if (Array.isArray(update.depends_on) && (update.depends_on as string[]).length > 0) {
+    const projectId = (row?.project_id as string | null | undefined)
+      ?? ((await supabase.from("milestones").select("project_id").eq("id", input.id).maybeSingle()).data as { project_id: string | null } | null)?.project_id
+      ?? null;
+    if (projectId) {
+      // Every row, paged past PostgREST's 1,000-row default — a truncated
+      // read would miss the loop on a large schedule. The outline comes too:
+      // a successor of a phase waits for all the work inside it, so a loop
+      // can run through a phase (linkCyclePath).
+      const rows: Array<{ id: string; name: string; depends_on: string[] | null; parent_id: string | null }> = [];
+      for (let from = 0; ; from += 1000) {
+        const { data: page, error: allErr } = await supabase.from("milestones").select("id, name, depends_on, parent_id")
+          .eq("project_id", projectId).order("id").range(from, from + 999);
+        if (allErr) throw new Error(`Could not check the new link for loops (${allErr.message}) — nothing was saved.`);
+        const got = (page ?? []) as Array<{ id: string; name: string; depends_on: string[] | null; parent_id: string | null }>;
+        rows.push(...got);
+        if (got.length < 1000) break;
+      }
+      const nodes: ReflowNode[] = rows.map((r) => ({ id: r.id, parentId: r.parent_id ?? null, plannedAt: "", dependsOn: r.id === input.id ? [] : (r.depends_on ?? []) }));
+      const nameOf = new Map(rows.map((r) => [r.id, r.name]));
+      // Only a link the edit ADDS can close a new loop. A link already stored
+      // is not re-judged, so a task inside a loop an old import left behind
+      // can still have an unrelated link removed or added (PT SCH-9).
+      const stored = new Set(rows.find((r) => r.id === input.id)?.depends_on ?? []);
+      for (const pred of update.depends_on as string[]) {
+        if (stored.has(pred)) continue;
+        const path = linkCyclePath(nodes, input.id, pred);
+        if (path) throw new DependencyCycleError(path.map((id) => nameOf.get(id) ?? id), path);
+        const self = nodes.find((n) => n.id === input.id);
+        if (self) self.dependsOn = [...(self.dependsOn ?? []), pred];
+      }
+    }
+  }
 
   // Snapshot the prior finish so we can log a human reschedule note, and the
   // stored shift + start so a date move can re-label it.
@@ -311,8 +421,17 @@ export interface MoveBatchResult {
   count: number;
   /** "rpc" via apply_milestone_moves; "rows" on a pre-migration database. */
   via: "rpc" | "rows";
+  /** True when the batch was refused WHOLE before anything was written: a
+   *  row had changed (or gone) since the caller loaded it, so `matched` is
+   *  empty and `unmatched` names the stale rows (PT SCH-7). */
+  refused?: boolean;
   /** The batch audit row or the per-row breadcrumbs could not be written. */
   auditError?: string;
+  /** Each moved row's updated_at AFTER the move, read back — what an Undo of
+   *  this move sends as its lock, so the Undo cannot overwrite an edit a
+   *  colleague made in between (PT SCH-18 / SCH-7). Absent when the read-back
+   *  failed; the caller then reloads instead. */
+  updatedAt?: Record<string, string>;
 }
 
 /** Thrown by applyMilestoneMoves (by default) when the optimistic lock
@@ -325,7 +444,9 @@ export class MoveConflictError extends Error {
   constructor(result: MoveBatchResult) {
     const n = result.unmatched.length;
     const moved = result.matched.length;
-    super(`${n} task${n === 1 ? " was" : "s were"} changed by someone else and ${n === 1 ? "was" : "were"} not moved${moved > 0 ? ` (the other ${moved} moved)` : ""}. Reload the schedule and try again.${result.auditError ? ` Also: ${result.auditError}.` : ""}`);
+    super(result.refused
+      ? `${n} task${n === 1 ? " was" : "s were"} changed or removed by someone else since the schedule loaded — nothing was moved. Reload the schedule and try again.`
+      : `${n} task${n === 1 ? " was" : "s were"} changed by someone else and ${n === 1 ? "was" : "were"} not moved${moved > 0 ? ` (the other ${moved} moved)` : ""}. Reload the schedule and try again.${result.auditError ? ` Also: ${result.auditError}.` : ""}`);
     this.name = "MoveConflictError";
     this.result = result;
   }
@@ -338,8 +459,13 @@ export class MoveConflictError extends Error {
  *  updates on pre-migration databases.
  *
  *  Each move carries the row's expected updated_at (the caller's loaded
- *  value, or the row as read just before the call): a row edited by someone
- *  else since then is left alone and reported in `unmatched` (PT SCH-7). Every
+ *  value, or the row as read just before the call). The rows are read first:
+ *  when any of them already differs from (or no longer has) the value its
+ *  move carries, the batch is refused WHOLE — nothing is written, `refused`
+ *  is set and `unmatched` names them — so a stale view never half-applies a
+ *  cascade. A row edited by someone else in the instant between that read
+ *  and the write is still left alone by the RPC's lock and reported in
+ *  `unmatched` beside the rows that did move (PT SCH-7). Every
  *  moved row gets a 'reschedule' breadcrumb with its before/after finish,
  *  matching updateMilestone's shape, and the batch audit row carries the
  *  before/after dates and is a CHECKED write (PC SCHED-11).
@@ -365,23 +491,45 @@ export async function applyMilestoneMoves(input: {
 
   // The rows as they stand: before/after for the trail, and the lock value
   // for any move whose caller did not supply one.
-  type BeforeRow = { id: string; planned_at: string; planned_start_at: string | null; updated_at: string | null; status: MilestoneStatus };
+  type BeforeRow = { id: string; name?: string; planned_at: string; planned_start_at: string | null; updated_at: string | null; status: MilestoneStatus; source?: string | null };
   const before = new Map<string, BeforeRow>();
   let readError: string | null = null;
   for (let i = 0; i < ids.length && !readError; i += 200) {
     const { data, error: readErr } = await supabase
       .from("milestones")
-      .select("id, planned_at, planned_start_at, updated_at, status")
+      .select("id, name, planned_at, planned_start_at, updated_at, status, source")
       .in("id", ids.slice(i, i + 200));
     if (readErr) { readError = readErr.message; break; }
     for (const r of (data ?? []) as BeforeRow[]) before.set(r.id, r);
   }
-  // Fail closed: without the read, a move whose caller supplied no expected
-  // updated_at would go out with the lock OFF. Refuse the batch (nothing is
-  // moved). When every move carries the caller's own lock value the read only
-  // fed the trail, so the move proceeds and the missing trail is reported.
-  if (readError && input.moves.some((m) => m.expectedUpdatedAt === undefined)) {
+  // Imported rows' dates belong to the scheduling tool (PT SCH-13): the
+  // engine never proposes moving them, and a batch that does is refused
+  // whole — nothing is moved.
+  const imported = [...before.values()].filter((r) => isImportedMilestone({ source: r.source ?? null }));
+  if (imported.length > 0) {
+    const names = imported.slice(0, 3).map((r) => `“${r.name ?? r.id.slice(0, 8)}”`).join(", ");
+    throw new ImportedRowLockedError(
+      `${imported.length} of these tasks ${imported.length === 1 ? "comes" : "come"} from ${sourceLabel(imported[0].source)} (${names}${imported.length > 3 ? ", …" : ""}): their dates are set there and the next import writes them back — nothing was moved. Change them in the scheduling tool and re-import.`,
+      imported.map((r) => r.id),
+    );
+  }
+  // Fail closed: the read is what the imported-row check above, the stale
+  // check below and a move without its own lock value depend on. Without it
+  // the batch is refused — nothing is moved (PT SCH-13).
+  if (readError) {
     throw new Error(`Could not read the tasks before moving them (${readError}) — nothing was moved. Try again.`);
+  }
+  // All or nothing for a stale view (PT SCH-7): a row that already differs
+  // from the lock its move carries (or is gone) would be skipped by the RPC
+  // while the rest of the cascade moved. Refuse the whole batch instead.
+  const sameStamp = (a: string | null | undefined, b: string): boolean =>
+    !!a && (a === b || Date.parse(a) === Date.parse(b));
+  const stale = input.moves.filter((m) => typeof m.expectedUpdatedAt === "string"
+    && !sameStamp(before.get(m.id)?.updated_at, m.expectedUpdatedAt)).map((m) => m.id);
+  if (stale.length > 0) {
+    const refused: MoveBatchResult = { matched: [], unmatched: stale, count: 0, via: "rpc", refused: true };
+    if ((input.onUnmatched ?? "throw") === "throw") throw new MoveConflictError(refused);
+    return refused;
   }
 
   const { data, error } = await supabase.rpc("apply_milestone_moves", {
@@ -419,7 +567,6 @@ export async function applyMilestoneMoves(input: {
 
   const result: MoveBatchResult = { matched, unmatched, count, via: "rpc" };
   const errs: string[] = [];
-  if (readError) errs.push(`breadcrumbs: the tasks could not be read before the move (${readError}), so no before-dates were recorded`);
 
   // Per-row breadcrumbs: the task's own trail shows the move, not just
   // status flips. Same shape as updateMilestone's reschedule note.
@@ -462,6 +609,19 @@ export async function applyMilestoneMoves(input: {
   if (auditRes.error) auditRes = await supabase.from("audit_logs").insert(auditRow); // one retry
   if (auditRes.error) errs.push(`audit: ${auditRes.error.message}`);
   if (errs.length) result.auditError = errs.join("; ");
+
+  // Read back the moved rows' new updated_at — the lock an Undo of THIS move
+  // sends (PT SCH-18). A failed read leaves it absent (the caller reloads).
+  if (matched.length > 0) {
+    const after: Record<string, string> = {};
+    let afterOk = true;
+    for (let i = 0; i < matched.length && afterOk; i += 200) {
+      const { data: rows, error: afterErr } = await supabase.from("milestones").select("id, updated_at").in("id", matched.slice(i, i + 200));
+      if (afterErr) { afterOk = false; break; }
+      for (const r of (rows ?? []) as Array<{ id: string; updated_at: string | null }>) if (r.updated_at) after[r.id] = r.updated_at;
+    }
+    if (afterOk) result.updatedAt = after;
+  }
   if (unmatched.length > 0 && (input.onUnmatched ?? "throw") === "throw") throw new MoveConflictError(result);
   return result;
 }
@@ -702,25 +862,190 @@ export async function listMilestoneNotes(milestoneId: string): Promise<Milestone
   return ((data as MilestoneNoteRow[]) ?? []).map(noteRowTo);
 }
 
-export async function deleteMilestone(id: string, actorUserId: string): Promise<void> {
+/** What deleting a milestone does to the rest of the schedule, computed
+ *  BEFORE anything is written — so the confirm can say it (PT SCH-17). The
+ *  direct children move up to the deleted row's parent (the top level when
+ *  it has none): a phase's work is never silently orphaned; every task that
+ *  depended on it loses exactly that link — no dangling id is left. */
+export interface MilestoneDeletePlan {
+  /** Direct children, promoted to `newParentId`. */
+  children: Array<{ id: string; name: string }>;
+  /** Everything below the row (children and their subtrees) — they stay. */
+  descendants: number;
+  newParentId: string | null;
+  /** Tasks whose depends_on names this row; the link is removed. */
+  dependents: Array<{ id: string; name: string }>;
+}
+
+export function planMilestoneDelete(
+  milestones: Array<Pick<Milestone, "id" | "name" | "parentId" | "dependsOn">>,
+  id: string,
+): MilestoneDeletePlan {
+  const target = milestones.find((m) => m.id === id);
+  const kids = new Map<string, Array<Pick<Milestone, "id" | "name">>>();
+  for (const m of milestones) {
+    if (!m.parentId || !m.id) continue;
+    const arr = kids.get(m.parentId) ?? []; arr.push(m); kids.set(m.parentId, arr);
+  }
+  let descendants = 0;
+  const stack = [id]; const seen = new Set<string>([id]);
+  while (stack.length) {
+    for (const k of kids.get(stack.pop()!) ?? []) if (k.id && !seen.has(k.id)) { seen.add(k.id); descendants++; stack.push(k.id); }
+  }
+  return {
+    children: (kids.get(id) ?? []).map((k) => ({ id: k.id!, name: k.name })),
+    descendants,
+    newParentId: target?.parentId && target.parentId !== id ? target.parentId : null,
+    dependents: milestones.filter((m) => m.id && m.id !== id && (m.dependsOn ?? []).includes(id)).map((m) => ({ id: m.id!, name: m.name })),
+  };
+}
+
+/** Delete one milestone WITHOUT orphaning its subtree (PT SCH-17): its direct
+ *  children move up to its parent, every depends_on link to it is removed,
+ *  and the row goes — ALL OR NOTHING, and never a silent no-op. A delete the
+ *  database refuses (the RESTRICTIVE milestones_delete_guard: Admin /
+ *  Manager, the row's creator, or someone who manages the project) matches
+ *  no row and returns no error; it used to run AFTER the children had been
+ *  moved and the links stripped, and the audit log then said it was deleted.
+ *
+ *  The work is done by delete_milestone_keep_subtree (20261107, SECURITY
+ *  INVOKER — RLS still decides): one transaction that raises, rolling back
+ *  the re-parent and the unlink, when the DELETE matches no row. On a
+ *  database without it the same steps run here in the CHECKED order: the
+ *  DELETE first, with the deleted row read back (none back = refused, nothing
+ *  changed); the foreign key's ON DELETE SET NULL has then detached the
+ *  children, which are moved under the row's parent; the links go last. A
+ *  step that fails after the delete is named with what already happened.
+ *  The MILESTONE_DELETED audit row is written only once the row is gone, and
+ *  records the prior structure (the parent, each promoted child, each
+ *  dependent's links before) so it is recoverable. Deleting an imported row
+ *  is allowed (removal is its own explicit action, DEC-51); the next import
+ *  of a file that still carries it brings it back. */
+export class MilestoneDeleteRefusedError extends Error {
+  constructor(name: string, detail?: string) {
+    super(`“${name}” was not deleted — you do not have the right to delete it (Admin or Manager, its creator, or someone who manages this project may), or it is already gone${detail ? ` (${detail})` : ""}. Nothing was changed.`);
+    this.name = "MilestoneDeleteRefusedError";
+  }
+}
+
+export async function deleteMilestone(id: string, actorUserId: string): Promise<{ reparented: number; unlinked: number }> {
   const { data: row, error: readErr } = await supabase.from("milestones").select("*").eq("id", id).maybeSingle();
   if (readErr) throw new Error(readErr.message);
-  if (!row) return;
+  if (!row) return { reparented: 0, unlinked: 0 };
   const m = rowToMilestone(row as MilestoneRow);
+  const newParent = m.parentId && m.parentId !== id ? m.parentId : null;
 
-  const { error: delErr } = await supabase.from("milestones").delete().eq("id", id);
-  if (delErr) throw new Error(delErr.message);
+  const audit = async (
+    children: Array<{ id: string; name: string }>,
+    dependents: Array<{ id: string; name: string; depends_on: string[] }>,
+    incomplete: string[],
+  ) => {
+    const res = pickResource(m);
+    const SHOWN = 50;
+    await logMilestoneEvent({
+      orgId: m.orgId,
+      milestoneId: m.id!,
+      resourceType: res.resourceType,
+      resourceId: res.resourceId,
+      userId: actorUserId,
+      type: "MILESTONE_DELETED",
+      name: m.name,
+      details: {
+        // The prior structure, so it is recoverable from the audit row.
+        priorParentId: m.parentId ?? null,
+        childrenMovedTo: newParent,
+        children: children.slice(0, SHOWN).map((c) => ({ id: c.id, name: c.name })),
+        childCount: children.length,
+        dependents: dependents.slice(0, SHOWN).map((d) => ({ id: d.id, name: d.name, dependsOnBefore: d.depends_on ?? [] })),
+        dependentCount: dependents.length,
+        dependsOn: m.dependsOn ?? [],
+        plannedStartAt: m.plannedStartAt ?? null, plannedAt: m.plannedAt, source: m.source,
+        ...(incomplete.length > 0 ? { incomplete } : {}),
+      },
+    });
+  };
 
-  const res = pickResource(m);
-  await logMilestoneEvent({
-    orgId: m.orgId,
-    milestoneId: m.id!,
-    resourceType: res.resourceType,
-    resourceId: res.resourceId,
-    userId: actorUserId,
-    type: "MILESTONE_DELETED",
-    name: m.name,
-  });
+  // 1. The all-or-nothing RPC (20261107).
+  const { data: rpcData, error: rpcErr } = await supabase.rpc("delete_milestone_keep_subtree", { p_id: id });
+  // Not deployed yet: PostgREST's PGRST202, or Postgres' undefined_function.
+  // (A permission error names the function too — that is a refusal, not absence.)
+  const rpcMissing = !!rpcErr && (rpcErr.code === "PGRST202" || rpcErr.code === "42883"
+    || /could not find the function|function [^ ]*delete_milestone_keep_subtree[^ ]* does not exist/i.test(rpcErr.message ?? ""));
+  if (rpcErr && !rpcMissing) {
+    // The RPC runs in one transaction: whatever it refused, nothing changed.
+    if (rpcErr.code === "42501") throw new MilestoneDeleteRefusedError(m.name);
+    throw new Error(`Could not delete “${m.name}” (${rpcErr.message}) — nothing was changed.`);
+  }
+  if (!rpcErr) {
+    const out = rpcData as null | {
+      deleted?: boolean;
+      children?: Array<{ id: string; name: string }>;
+      dependents?: Array<{ id: string; name: string; depends_on_before?: string[] | null }>;
+    };
+    if (!out || typeof out.deleted !== "boolean") throw new Error(`The delete of “${m.name}” gave no answer — reload the schedule to see whether it went.`);
+    if (!out.deleted) return { reparented: 0, unlinked: 0 }; // already gone
+    const children = out.children ?? [];
+    const dependents = (out.dependents ?? []).map((d) => ({ id: d.id, name: d.name, depends_on: [...(d.depends_on_before ?? [])] }));
+    await audit(children, dependents, []);
+    return { reparented: children.length, unlinked: dependents.length };
+  }
+
+  // 2. Fallback (no 20261107): the same steps, the DELETE first and checked.
+  // The rows it touches, read BEFORE anything is written. A database without
+  // the hierarchy (20260703) or the links (20260715) has no children /
+  // dependents to look after — the column is simply absent.
+  const { data: kidRows, error: kidErr } = await supabase.from("milestones").select("id, name").eq("parent_id", id);
+  if (kidErr && !looksLikeUnknownColumn(kidErr.message)) throw new Error(`Could not read the sub-tasks (${kidErr.message}) — nothing was deleted.`);
+  const children = (kidErr ? [] : (kidRows ?? [])) as Array<{ id: string; name: string }>;
+  // depends_on is JSONB (20260715): the containment value goes as JSON text.
+  // An array would be sent as a Postgres array literal (cs.{uuid}), which is
+  // not JSON — PostgREST answers 22P02 and every delete was refused here.
+  let depQ = supabase.from("milestones").select("id, name, depends_on").contains("depends_on", JSON.stringify([id]));
+  depQ = m.projectId ? depQ.eq("project_id", m.projectId) : depQ.eq("org_id", m.orgId);
+  const { data: depRows, error: depErr } = await depQ;
+  if (depErr && !looksLikeUnknownColumn(depErr.message)) throw new Error(`Could not read the tasks that depend on it (${depErr.message}) — nothing was deleted.`);
+  const dependents = ((depErr ? [] : (depRows ?? [])) as Array<{ id: string; name: string; depends_on: string[] | null }>)
+    .filter((r) => r.id !== id)
+    .map((r) => ({ id: r.id, name: r.name, depends_on: [...(r.depends_on ?? [])] }));
+
+  const { data: gone, error: delErr } = await supabase.from("milestones").delete().eq("id", id).select("id");
+  if (delErr) throw new Error(`Could not delete “${m.name}” (${delErr.message}) — nothing was changed.`);
+  if (!Array.isArray(gone) || gone.length === 0) throw new MilestoneDeleteRefusedError(m.name);
+
+  // The row is gone. Its children were detached by ON DELETE SET NULL: move
+  // them under its parent; then remove the links. Each failure is named with
+  // what already happened, after the audit row is written.
+  const incomplete: string[] = [];
+  const now = new Date().toISOString();
+  const plural = (n: number) => `${n} sub-task${n === 1 ? "" : "s"}`;
+  if (children.length > 0 && newParent) {
+    const { data: moved, error: upErr } = await supabase.from("milestones")
+      .update({ parent_id: newParent, updated_at: now, updated_by: actorUserId })
+      .in("id", children.map((c) => c.id))
+      .select("id");
+    if (upErr) incomplete.push(`its ${plural(children.length)} could not be moved up a level (${upErr.message}) — they are at the top level now`);
+    else if (!Array.isArray(moved) || moved.length < children.length) {
+      const n = children.length - (Array.isArray(moved) ? moved.length : 0);
+      incomplete.push(`${plural(n)} could not be moved up a level — ${n === 1 ? "it is" : "they are"} at the top level now`);
+    }
+  }
+  // Each unlink is read back: an update RLS filters, or one that finds the
+  // dependent already gone, matches 0 rows without an error — named, and not
+  // counted or audited as unlinked.
+  const unlinked: typeof dependents = [];
+  for (const d of dependents) {
+    const next = (d.depends_on ?? []).filter((x) => x !== id);
+    const { data: linkRows, error: linkErr } = await supabase.from("milestones")
+      .update({ depends_on: next, updated_at: now, updated_by: actorUserId })
+      .eq("id", d.id)
+      .select("id");
+    if (linkErr) incomplete.push(`the link from “${d.name}” could not be removed (${linkErr.message}) — it still names the deleted task; remove it in that task's links`);
+    else if (!Array.isArray(linkRows) || linkRows.length === 0) incomplete.push(`the link from “${d.name}” was not removed (the task could not be changed, or is gone) — if it is still there it names the deleted task; remove it in that task's links`);
+    else unlinked.push(d);
+  }
+  await audit(children, unlinked, incomplete);
+  if (incomplete.length > 0) throw new Error(`“${m.name}” was deleted, but ${incomplete.join("; ")}.`);
+  return { reparented: children.length, unlinked: unlinked.length };
 }
 
 // ─── Reads ──────────────────────────────────────────────────────
@@ -778,6 +1103,10 @@ export interface ScheduleMetrics {
   forecastEndAt: string | null;
   /** Count of milestones in each status. */
   byStatus: Record<MilestoneStatus, number>;
+  /** What every weight above is measured in — chosen once for the list:
+   *  planned work hours only when EVERY leaf carries them, else task weight
+   *  for all (PC SCHED-14). */
+  weightBasis: WeightBasis;
 }
 
 export function computeScheduleMetrics(milestones: Milestone[], opts?: { now?: Date }): ScheduleMetrics {
@@ -797,10 +1126,14 @@ export function computeScheduleMetrics(milestones: Milestone[], opts?: { now?: D
   const parentIds = new Set<string>();
   for (const m of milestones) { if (m.parentId) parentIds.add(m.parentId); }
   const isLeaf = (m: Milestone) => !(m.id && parentIds.has(m.id));
+  // One weighting basis for the whole list (PC SCHED-14): hours only when
+  // every leaf has them — never hours for some rows and unit weights for
+  // others in the same denominator.
+  const weightBasis = chooseWeightBasis(milestones.filter(isLeaf));
 
   for (const m of milestones) {
     if (!isLeaf(m)) continue;
-    const w = effectiveWeight(m);
+    const w = weightFor(m, weightBasis);
     totalWeight += w;
     byStatus[m.status]++;
     const plannedMs = new Date(m.plannedAt as string).getTime();
@@ -847,7 +1180,7 @@ export function computeScheduleMetrics(milestones: Milestone[], opts?: { now?: D
     }
   }
 
-  return { totalWeight, plannedValue, earnedValue, spi, percentEarned, percentPlanned, plannedEndAt, forecastEndAt, byStatus };
+  return { totalWeight, plannedValue, earnedValue, spi, percentEarned, percentPlanned, plannedEndAt, forecastEndAt, byStatus, weightBasis };
 }
 
 // ─── Ghost overlay import ────────────────────────────────────────
@@ -1908,6 +2241,52 @@ export interface GroupTasksResult {
   errors: string[];
 }
 
+/** Why putting `childIds` under the EXISTING phase `parentId` would make the
+ *  outline loop — or null (PT SCH-4 / SCH-9, sixth review pass). Grouping
+ *  changes no link, but a successor of a phase waits for all the work inside
+ *  it, so a task (or anything inside it) that already leads up to the
+ *  phase's successor closes a loop through the phase the moment it is put
+ *  inside — and every move that reaches it is then refused (planCascade) —
+ *  and a phase grouped under its own sub-task puts itself inside itself.
+ *  Checked over EVERY row of the project, read here (paged past PostgREST's
+ *  1,000-row cap, as updateMilestone's link check), on the outline as it
+ *  would be against the outline as it is: only a loop the regroup CLOSES
+ *  refuses it — a loop already in the data (a stale link from a task to its
+ *  own phase downstream, say) is not this regroup's doing (seventh review
+ *  pass). A selected row that IS the target stays where it is (it is
+ *  skipped below, never made its own parent). */
+async function groupingLoopRefusal(projectId: string, parentId: string, parentName: string, childIds: string[]): Promise<string | null> {
+  const rows: Array<{ id: string; name: string; parent_id: string | null; depends_on: string[] | null }> = [];
+  for (let from = 0; ; from += 1000) {
+    const { data: page, error } = await supabase.from("milestones").select("id, name, parent_id, depends_on")
+      .eq("project_id", projectId).order("id").range(from, from + 999);
+    if (error) return `Couldn't check the grouping for loops (${error.message}). Nothing was grouped.`;
+    const got = (page ?? []) as typeof rows;
+    rows.push(...got);
+    if (got.length < 1000) break;
+  }
+  const nameOf = new Map(rows.map((r) => [r.id, r.name]));
+  const label = (id: string) => `“${nameOf.get(id) ?? id}”`;
+  const parentOf = new Map(rows.map((r) => [r.id, r.parent_id ?? null]));
+  const moving = new Set(childIds.filter((id) => id !== parentId));
+  // The target inside one of the selected tasks: that task would end up
+  // inside itself.
+  const seen = new Set<string>();
+  for (let at = parentOf.get(parentId) ?? null; at && !seen.has(at); at = parentOf.get(at) ?? null) {
+    seen.add(at);
+    if (moving.has(at)) {
+      return `“${parentName}” sits inside ${label(at)}, one of the selected tasks — grouping ${label(at)} under it would put ${label(at)} inside itself. Nothing was grouped; pick a parent outside the selected tasks.`;
+    }
+  }
+  // A loop through a phase that the regrouped outline closes.
+  const asIs: ReflowNode[] = rows.map((r) => ({ id: r.id, parentId: r.parent_id ?? null, plannedAt: "", dependsOn: r.depends_on ?? [] }));
+  const nodes: ReflowNode[] = asIs.map((n) => (moving.has(n.id) ? { ...n, parentId } : n));
+  const loop = outlineLoop(nodes, [...moving], asIs);
+  if (!loop) return null;
+  const path = [label(loop[0].from), ...loop.map((e) => `${e.via === "contains" ? "(contains) " : e.via === "within" ? "(its phase) " : ""}${label(e.to)}`)].join(" → ");
+  return `Grouping under “${parentName}” would close a loop in the links: ${path}. A task cannot (even indirectly) wait for itself, and every move that reached it would be refused. Nothing was grouped — remove one of these links first, or pick another parent.`;
+}
+
 export async function groupTasksUnderParent(input: GroupTasksInput): Promise<GroupTasksResult> {
   const errors: string[] = [];
   if (input.childIds.length === 0) {
@@ -1918,6 +2297,21 @@ export async function groupTasksUnderParent(input: GroupTasksInput): Promise<Gro
     errors.push("Provide either parentName or parentId.");
     return { parentId: "", parentName: "", childCount: 0, errors };
   }
+  // An imported row's place in the hierarchy comes from the scheduling tool —
+  // the next import writes its parent back (PT SCH-13). Refuse before any
+  // write (no new parent is created) and name the rows.
+  {
+    const { data: srcRows, error: srcErr } = await supabase.from("milestones").select("id, name, source").in("id", input.childIds);
+    if (srcErr) {
+      errors.push(`Couldn't read the selected tasks: ${srcErr.message}`);
+      return { parentId: "", parentName: "", childCount: 0, errors };
+    }
+    const imported = ((srcRows ?? []) as Array<{ id: string; name: string; source: string | null }>).filter((r) => isImportedMilestone(r));
+    if (imported.length > 0) {
+      errors.push(`${imported.length} selected task${imported.length === 1 ? " comes" : "s come"} from ${sourceLabel(imported[0].source)} (${imported.slice(0, 3).map((r) => `“${r.name}”`).join(", ")}${imported.length > 3 ? ", …" : ""}); ${imported.length === 1 ? "its" : "their"} place in the outline is set there and the next import puts it back. Nothing was grouped — group them in the scheduling tool, or select only tasks added here.`);
+      return { parentId: "", parentName: "", childCount: 0, errors };
+    }
+  }
 
   // Resolve parent: existing or new.
   let parentId = input.parentId ?? "";
@@ -1926,14 +2320,31 @@ export async function groupTasksUnderParent(input: GroupTasksInput): Promise<Gro
   if (parentId) {
     const { data, error } = await supabase
       .from("milestones")
-      .select("id, name")
+      .select("id, name, source")
       .eq("id", parentId)
       .maybeSingle();
     if (error || !data) {
       errors.push(`Parent ${parentId.slice(0,8)} not found.`);
       return { parentId, parentName: "", childCount: 0, errors };
     }
-    parentName = (data as { name: string }).name;
+    // An imported phase's dates are the scheduling tool's: it keeps them
+    // whatever its children do (no engine re-envelopes it), so a task added
+    // under it here would sit outside its bar. Refused before any write
+    // (PT SCH-13) — group under a phase added here instead.
+    const parentRow = data as { name: string; source?: string | null };
+    if (isImportedMilestone({ source: parentRow.source ?? null })) {
+      errors.push(`“${parentRow.name}” comes from ${sourceLabel(parentRow.source)}: its dates are set there and it keeps them whatever its sub-tasks do, so tasks added here cannot be grouped under it. Nothing was grouped — create a new parent, or pick one added here.`);
+      return { parentId: "", parentName: "", childCount: 0, errors };
+    }
+    parentName = parentRow.name;
+    // The outline may not loop: refused, named, before any write (PT SCH-4 /
+    // SCH-9). A NEW parent needs no check — it has no links and holds only
+    // the selected tasks, so it can close no loop.
+    const loop = await groupingLoopRefusal(input.projectId, parentId, parentName, input.childIds);
+    if (loop) {
+      errors.push(loop);
+      return { parentId: "", parentName: "", childCount: 0, errors };
+    }
   } else {
     // Create a new summary parent. Use the EARLIEST child's planned
     // date as the parent's planned date (so the parent appears
@@ -1985,7 +2396,7 @@ export async function groupTasksUnderParent(input: GroupTasksInput): Promise<Gro
   // Reparent the children. RLS handles org-scoping.
   let updated = 0;
   for (const cid of input.childIds) {
-    if (cid === parentId) continue; // safety
+    if (cid === parentId) continue; // the target itself, if selected, stays where it is
     const { error } = await supabase
       .from("milestones")
       .update({
@@ -2024,15 +2435,20 @@ export async function setTaskDuration(input: {
   if (input.days < 1) return { ok: false, error: "Duration must be at least 1 day." };
   const { data: row, error: readErr } = await supabase
     .from("milestones")
-    .select("planned_at, project_id, parent_id")
+    .select("planned_at, project_id, parent_id, source, name")
     .eq("id", input.id)
     .maybeSingle();
   if (readErr || !row) return { ok: false, error: readErr?.message ?? "Task not found" };
-  const r = row as { planned_at: string; project_id: string | null; parent_id: string | null };
+  const r = row as { planned_at: string; project_id: string | null; parent_id: string | null; source?: string | null; name?: string };
+  if (isImportedMilestone({ source: r.source ?? null })) {
+    return { ok: false, error: `“${r.name ?? "This task"}” comes from ${sourceLabel(r.source)}: its dates are set there and the next import writes them back. Change its duration in the scheduling tool and re-import.` };
+  }
   const finish = new Date(r.planned_at);
   if (isNaN(finish.getTime())) return { ok: false, error: "Task has no valid finish date." };
-  const start = new Date(finish); start.setDate(finish.getDate() - (input.days - 1));
-  const newStartIso = start.toISOString();
+  // In UTC (PT SCH-12): `start.setDate(finish.getDate() − …)` did local-
+  // calendar arithmetic on a UTC instant, so a 3-day task ending 2 Nov started
+  // 30 Oct 23:00Z in America/Los_Angeles — a 4-day bar.
+  const newStartIso = startForDuration(finish.toISOString(), input.days);
   const { error: updErr } = await supabase
     .from("milestones")
     .update({
@@ -2047,19 +2463,26 @@ export async function setTaskDuration(input: {
   // (Drag edits reflow via computeTreeMove; a direct duration set didn't,
   // leaving the parent span stale until the next drag.) Best-effort: the
   // leaf update already committed, so we don't fail the call if this slips.
+  // An imported summary (its dates are the scheduling tool's) and a row with
+  // an actual are locked: reflowAllAncestors keeps their stored dates, so
+  // this never writes them (PT SCH-13 — the same rule applyMilestoneMoves
+  // enforces).
   if (r.parent_id && r.project_id) {
     try {
       const { data: rows } = await supabase
         .from("milestones")
-        .select("id, parent_id, planned_start_at, planned_at")
+        .select("id, parent_id, planned_start_at, planned_at, source, status, actual_at")
         .eq("project_id", r.project_id);
       if (rows) {
-        const nodes: ReflowNode[] = (rows as Array<{ id: string; parent_id: string | null; planned_start_at: string | null; planned_at: string }>)
+        const nodes: ReflowNode[] = (rows as Array<{ id: string; parent_id: string | null; planned_start_at: string | null; planned_at: string; source?: string | null; status?: string; actual_at?: string | null }>)
           .map((m) => ({
             id: m.id,
             parentId: m.parent_id,
             plannedStartAt: m.id === input.id ? newStartIso : m.planned_start_at,
             plannedAt: m.planned_at,
+            status: m.status,
+            actualAt: m.actual_at ?? null,
+            locked: isImportedMilestone({ source: m.source ?? null }),
           }));
         const changes = reflowAllAncestors(nodes);
         await Promise.all(changes.map((c) =>
@@ -2182,4 +2605,94 @@ export async function clearBaseline(input: {
     details: { count },
   }).catch(() => { /* audit is best-effort */ });
   return { ok: true, count, via: "legacy" };
+}
+
+/** One approved-plan capture a drift figure can be measured against
+ *  (PT SAF-7): the live baseline (the `baseline_*` columns) or a prior one
+ *  kept in milestone_baseline_history (20261099) when it was replaced by a
+ *  re-baseline or removed by a clear. */
+export interface BaselineCapture {
+  /** "current", or the history row's id. */
+  id: string;
+  /** When this baseline was set (its rows' baseline_set_at), or null. */
+  setAt: string | null;
+  /** When it was replaced / cleared (history only). */
+  retiredAt: string | null;
+  retiredBy: "rebaseline" | "clear" | null;
+  rowCount: number;
+  /** milestone id → baseline finish ISO. */
+  finishById: Map<string, string>;
+}
+
+/** The live baseline, as the confirm needs it before a re-baseline replaces
+ *  it: when it was set and over how many tasks (PT SAF-7). Null when the
+ *  project has none. Pure. */
+export function currentBaselineSummary(milestones: Milestone[]): { setAt: string | null; rowCount: number } | null {
+  let rowCount = 0;
+  let setAt: string | null = null;
+  for (const m of milestones) {
+    if (!m.baselineFinishAt) continue;
+    rowCount++;
+    const at = (m.baselineSetAt as string | null | undefined) ?? null;
+    if (at && (!setAt || Date.parse(at) > Date.parse(setAt))) setAt = at;
+  }
+  return rowCount > 0 ? { setAt, rowCount } : null;
+}
+
+/** Does this database keep a replaced baseline (milestone_baseline_history,
+ *  20261099)? true / false, or null when it could not be told (another read
+ *  error) — so a re-baseline confirm only promises "kept" when it is
+ *  (PT SAF-7): without the migration setBaseline's legacy path overwrites
+ *  the baseline with no history. */
+export async function baselineHistoryAvailable(input: { orgId: string; projectId: string }): Promise<boolean | null> {
+  const { error } = await supabase
+    .from("milestone_baseline_history")
+    .select("id")
+    .eq("org_id", input.orgId)
+    .eq("project_id", input.projectId)
+    .limit(1);
+  if (!error) return true;
+  const missing = error.code === "42P01" || error.code === "PGRST205" || /milestone_baseline_history/.test(error.message ?? "") && /does not exist|could not find/i.test(error.message ?? "");
+  return missing ? false : null;
+}
+
+/** Every baseline this project has had, newest first: the live one (from
+ *  `milestones`, already loaded by the caller), then each capture kept in
+ *  milestone_baseline_history. A database without the history table
+ *  (20261099 not applied) returns the live baseline alone and says so in
+ *  `historyUnavailable`; any other read failure is returned as `error`, never
+ *  as "no history". */
+export async function listBaselineCaptures(input: {
+  orgId: string;
+  projectId: string;
+  milestones: Milestone[];
+}): Promise<{ captures: BaselineCapture[]; historyUnavailable?: boolean; error?: string }> {
+  const captures: BaselineCapture[] = [];
+  const live = currentBaselineSummary(input.milestones);
+  if (live) {
+    const finishById = new Map<string, string>();
+    for (const m of input.milestones) if (m.id && m.baselineFinishAt) finishById.set(m.id, m.baselineFinishAt as string);
+    captures.push({ id: "current", setAt: live.setAt, retiredAt: null, retiredBy: null, rowCount: live.rowCount, finishById });
+  }
+  const { data, error } = await supabase
+    .from("milestone_baseline_history")
+    .select("id, taken_at, reason, row_count, rows")
+    .eq("org_id", input.orgId)
+    .eq("project_id", input.projectId)
+    .order("taken_at", { ascending: false })
+    .limit(50);
+  if (error) {
+    const missing = error.code === "42P01" || error.code === "PGRST205" || /milestone_baseline_history/.test(error.message ?? "") && /does not exist|could not find/i.test(error.message ?? "");
+    return missing ? { captures, historyUnavailable: true } : { captures, error: error.message };
+  }
+  for (const h of (data ?? []) as Array<{ id: string; taken_at: string; reason: "rebaseline" | "clear"; row_count: number; rows: Array<{ id: string; baseline_finish_at: string | null; baseline_set_at: string | null }> | null }>) {
+    const finishById = new Map<string, string>();
+    let setAt: string | null = null;
+    for (const r of h.rows ?? []) {
+      if (r.id && r.baseline_finish_at) finishById.set(r.id, r.baseline_finish_at);
+      if (r.baseline_set_at && (!setAt || Date.parse(r.baseline_set_at) > Date.parse(setAt))) setAt = r.baseline_set_at;
+    }
+    captures.push({ id: h.id, setAt, retiredAt: h.taken_at, retiredBy: h.reason, rowCount: Number(h.row_count ?? finishById.size), finishById });
+  }
+  return { captures };
 }

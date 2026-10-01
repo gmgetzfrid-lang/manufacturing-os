@@ -6,7 +6,10 @@
 //   - cleaning-crew holdup → pull some forward, push others back
 
 import { describe, it, expect } from "vitest";
-import { computeTreeMove, previewMove, defaultMoveMode, computeEdgeResize, type ReflowNode } from "@/lib/scheduleReflow";
+import {
+  computeTreeMove, previewMove, defaultMoveMode, computeEdgeResize, computeSummaryResize,
+  startForDuration, addUtcDays, toWallClock, fromWallClock, type ReflowNode,
+} from "@/lib/scheduleReflow";
 
 const iso = (d: string) => `${d}T00:00:00.000Z`;
 function find(changes: { id: string; plannedStartAt: string; plannedAt: string }[], id: string) {
@@ -170,4 +173,80 @@ describe("computeEdgeResize", () => {
   it("no-op for zero delta", () => {
     expect(computeEdgeResize(task, "t", "finish", 0)).toEqual([]);
   });
+});
+
+// PT SCH-11: the summary resize rounded every child's INSTANT to UTC midnight,
+// so a phase of MS Project's usual 08:00 / 17:00 tasks stretched "+1 day" moved
+// L2's finish two days and its start one (measured: L1 06-01T08:00→06-02T17:00
+// became 06-01T00:00→06-03T00:00; L2 06-03T08:00→06-05T17:00 became
+// 06-04T00:00→06-07T00:00). The MOVE is now rounded to whole days, so each
+// child keeps its clock time; the stretch is proportional from the fixed edge,
+// so the far child moves by exactly the delta and none moves further.
+describe("SCH-11 · a summary resize keeps each child's clock time", () => {
+  const t = (s: string) => `${s}:00.000Z`;
+  const phase: ReflowNode[] = [
+    { id: "P", parentId: null, plannedStartAt: t("2026-06-01T08:00"), plannedAt: t("2026-06-05T17:00") },
+    { id: "L1", parentId: "P", plannedStartAt: t("2026-06-01T08:00"), plannedAt: t("2026-06-02T17:00") },
+    { id: "L2", parentId: "P", plannedStartAt: t("2026-06-03T08:00"), plannedAt: t("2026-06-05T17:00") },
+  ];
+  it("+1 day on the finish edge: the phase ends exactly one day later; no child moves more than a day; clock times kept", () => {
+    const ch = computeSummaryResize(phase, "P", "finish", 1);
+    const by = Object.fromEntries(ch.map((c) => [c.id, c]));
+    expect(by["P"].plannedAt).toBe(t("2026-06-06T17:00"));     // exactly +1 day
+    expect(by["P"].plannedStartAt).toBe(t("2026-06-01T08:00")); // anchored start
+    expect(by["L2"].plannedAt).toBe(t("2026-06-06T17:00"));     // the edge child: +1 day, still 17:00
+    expect(by["L2"].plannedStartAt).toBe(t("2026-06-03T08:00"));// start moved by 0 whole days
+    expect(by["L1"]).toBeUndefined();                           // rounds to no move
+    for (const c of ch) {
+      expect(c.plannedStartAt.slice(11, 16)).toBe("08:00");
+      expect(c.plannedAt.slice(11, 16)).toBe("17:00");
+    }
+  });
+  it("−1 day on the start edge mirrors it", () => {
+    const ch = computeSummaryResize(phase, "P", "start", -1);
+    const by = Object.fromEntries(ch.map((c) => [c.id, c]));
+    expect(by["P"].plannedStartAt).toBe(t("2026-05-31T08:00"));
+    expect(by["P"].plannedAt).toBe(t("2026-06-05T17:00"));
+    for (const c of ch) expect([c.plannedStartAt.slice(11, 16), c.plannedAt.slice(11, 16)]).toEqual(["08:00", "17:00"]);
+  });
+  it("date-only children behave exactly as before (midnight stays midnight)", () => {
+    const d = (s: string) => `${s}T00:00:00.000Z`;
+    const ch = computeSummaryResize([
+      { id: "P", parentId: null, plannedStartAt: d("2026-03-02"), plannedAt: d("2026-03-05") },
+      { id: "a", parentId: "P", plannedStartAt: d("2026-03-02"), plannedAt: d("2026-03-03") },
+      { id: "b", parentId: "P", plannedStartAt: d("2026-03-04"), plannedAt: d("2026-03-05") },
+    ], "P", "finish", 3);
+    const by = Object.fromEntries(ch.map((c) => [c.id, c]));
+    expect(by["P"].plannedAt).toBe(d("2026-03-08"));
+    expect(by["b"].plannedAt).toBe(d("2026-03-08"));
+    for (const c of ch) expect(c.plannedStartAt.endsWith("T00:00:00.000Z") && c.plannedAt.endsWith("T00:00:00.000Z")).toBe(true);
+  });
+});
+
+// PT SCH-12: setTaskDuration did `start.setDate(finish.getDate() − (days − 1))`
+// — local-calendar arithmetic on a UTC instant — so a 3-day task ending
+// 2 Nov started 30 Oct 23:00Z in America/Los_Angeles (a 4-day bar). The one
+// UTC helper is exact in every zone, at both DST boundaries.
+describe("SCH-12 · duration arithmetic in UTC, across DST, in a negative-offset zone", () => {
+  const inZone = <T,>(zone: string, fn: () => T): T => {
+    const tz = process.env.TZ;
+    try { process.env.TZ = zone; return fn(); } finally { process.env.TZ = tz; }
+  };
+  for (const zone of ["America/Los_Angeles", "UTC", "Asia/Tokyo", "Pacific/Auckland"]) {
+    it(`${zone}: a 3-day task ending 2 Nov starts 31 Oct; ending 10 Mar starts 8 Mar`, () => {
+      inZone(zone, () => {
+        expect(startForDuration("2026-11-02T00:00:00.000Z", 3)).toBe("2026-10-31T00:00:00.000Z");
+        expect(startForDuration("2026-03-10T00:00:00.000Z", 3)).toBe("2026-03-08T00:00:00.000Z");
+        expect(startForDuration("2026-11-02T17:00:00.000Z", 1)).toBe("2026-11-02T17:00:00.000Z");
+        expect(addUtcDays("2026-11-01T08:00:00.000Z", 1)).toBe("2026-11-02T08:00:00.000Z");
+        // the wall-clock pair the editors use (PT SCH-10) round-trips in every zone
+        expect(toWallClock("2026-11-02T17:30:00.000Z")).toEqual({ date: "2026-11-02", time: "17:30" });
+        expect(fromWallClock("2026-11-02", "17:30")).toBe("2026-11-02T17:30:00.000Z");
+        expect(fromWallClock("2026-11-02", "17:30:15")).toBe("2026-11-02T17:30:15.000Z");
+        expect(fromWallClock("2026-11-02", null)).toBe("2026-11-02T00:00:00.000Z");
+        expect(fromWallClock("2026-11-02", "5pm")).toBeNull();
+        expect(fromWallClock("2026-02-30", "08:00")).toBeNull();
+      });
+    });
+  }
 });

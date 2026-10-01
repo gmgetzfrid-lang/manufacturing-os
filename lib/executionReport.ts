@@ -11,13 +11,19 @@
 //   * planned vs. actual performer (did the contractor we planned
 //     actually do it, or did our crew?)
 //   * per-group rollups (each top-level WBS node)
-//   * a naive forecast finish based on progress-to-date
+//   * a forecast finish at the current completion rate — named as such and
+//     withheld until 10% of tasks are done (PC SCHED-12)
 //
 // "Group" is whatever the schedule's top level is (unit / area / phase
 // / sub-project) — never assume a specific facility's vocabulary.
 
 import type { Milestone, MilestoneStatus } from "@/types/schema";
-import { effectiveWeight, leafPercent } from "@/lib/scheduleProgress";
+import { chooseWeightBasis, weightFor, leafPercent, type WeightBasis } from "@/lib/scheduleProgress";
+import { isOverdueMilestone } from "@/lib/milestoneLiveness";
+
+/** The share of tasks that must be complete before a rate-based forecast
+ *  finish is shown (PC SCHED-12): below it, the rate is noise. */
+export const FORECAST_MIN_DONE_FRACTION = 0.1;
 
 export interface GroupRollup {
   id: string;
@@ -59,11 +65,18 @@ export interface ExecutionReport {
   onHold: number;
   blocked: number;
   missed: number;
-  overdue: number;             // not complete & finish < now
-  pctComplete: number;         // 0..100, effort-weighted, partial-aware
+  overdue: number;             // not complete & its planned DAY (UTC) is before today's (isOverdueMilestone)
+  pctComplete: number;         // 0..100, weighted on `weightBasis`, partial-aware
+  /** What pctComplete (and each group's) is weighted by — chosen once for
+   *  the whole list: hours only when every leaf carries them (PC SCHED-14). */
+  weightBasis: WeightBasis;
   plannedHours: number;
   earnedHours: number;         // Σ hours × (% complete) — partial-aware
-  pctHours: number;            // 0..100 by hours (partial-aware)
+  /** 0..100 by hours (partial-aware), or null when no leaf carries planned
+   *  work hours — never a stand-in for pctComplete (PC SCHED-14 / SCHED-2). */
+  pctHours: number | null;
+  /** How many leaves carry planned work hours (of totalLeaves). */
+  leavesWithHours: number;
   /** Schedule envelope. */
   start: string | null;
   finish: string | null;
@@ -73,8 +86,16 @@ export interface ExecutionReport {
   expectedPct: number;
   /** pctComplete − expectedPct. Positive = ahead, negative = behind. */
   paceDelta: number;
-  /** Naive forecast finish ISO, or null. */
+  /** Forecast finish ISO at the current completion rate, the planned finish
+   *  once everything is done, or null while too few tasks are complete to
+   *  extrapolate (PC SCHED-12 — never the plan shown as a forecast). */
   forecastFinish: string | null;
+  /** Leaves completed per calendar day since the schedule's start — the
+   *  forecast's basis, or null when none is shown. */
+  forecastRatePerDay: number | null;
+  /** "rate": extrapolated at forecastRatePerDay; "complete": all done;
+   *  "too-early": fewer than FORECAST_MIN_DONE_FRACTION of tasks done. */
+  forecastBasis: "rate" | "complete" | "too-early";
   groups: GroupRollup[];
   blockers: Blocker[];
   performers: PerformerSplit;
@@ -105,7 +126,16 @@ const startMs = (m: Milestone) => Date.parse((m.plannedStartAt as string | undef
 const finishMs = (m: Milestone) => Date.parse(m.plannedAt as string);
 const hoursOf = (m: Milestone) => (typeof m.durationHours === "number" && m.durationHours > 0 ? m.durationHours : 0);
 
-export function computeExecutionReport(milestones: Milestone[], opts?: { now?: Date }): ExecutionReport {
+export function computeExecutionReport(
+  milestones: Milestone[],
+  opts?: {
+    now?: Date;
+    /** Measure drift against THIS captured baseline (milestone id → its
+     *  baseline finish ISO) instead of the live baseline columns — an older
+     *  capture from milestone_baseline_history (PT SAF-7). */
+    baselineFinishById?: Map<string, string> | null;
+  },
+): ExecutionReport {
   const now = (opts?.now ?? new Date()).getTime();
   const byId = new Map<string, Milestone>();
   for (const m of milestones) if (m.id) byId.set(m.id, m);
@@ -133,7 +163,10 @@ export function computeExecutionReport(milestones: Milestone[], opts?: { now?: D
     return cur;
   };
 
-  const overdue = (m: Milestone) => m.status !== "completed" && finishMs(m) < now;
+  // ONE overdue rule, shared with the health snapshot, the report, the pulse,
+  // the filter and every schedule surface (PT SCH-5): by UTC day.
+  const overdue = (m: Milestone) => isOverdueMilestone({ planned_at: m.plannedAt as string, status: m.status }, now);
+  const basis = chooseWeightBasis(leaves);
 
   // ── Top-line ─────────────────────────────────────────────────
   const tally = { done: 0, inProgress: 0, planned: 0, onHold: 0, blocked: 0, missed: 0, overdue: 0 };
@@ -155,7 +188,7 @@ export function computeExecutionReport(milestones: Milestone[], opts?: { now?: D
     const lp = leafPercent(m);             // 0..100, status-reconciled, partial-aware
     plannedHours += h;
     earnedHours += h * (lp / 100);         // PARTIAL earned hours, not just fully-done
-    const w = effectiveWeight(m);
+    const w = weightFor(m, basis);
     wsum += w; wpct += w * lp;
     const s = startMs(m), f = finishMs(m);
     if (Number.isFinite(s)) envStart = Math.min(envStart, s);
@@ -166,7 +199,8 @@ export function computeExecutionReport(milestones: Milestone[], opts?: { now?: D
   // Effort-weighted % that counts partial progress (a 90%-done task is 90%,
   // not 0). `done` (count of fully-complete leaves) is reported separately.
   const pctComplete = wsum > 0 ? Math.round(wpct / wsum) : 0;
-  const pctHours = plannedHours > 0 ? Math.round((earnedHours / plannedHours) * 100) : pctComplete;
+  const pctHours = plannedHours > 0 ? Math.round((earnedHours / plannedHours) * 100) : null;
+  const leavesWithHours = leaves.filter((m) => hoursOf(m) > 0).length;
 
   const start = Number.isFinite(envStart) ? new Date(envStart).toISOString() : null;
   const finish = Number.isFinite(envFinish) ? new Date(envFinish).toISOString() : null;
@@ -176,17 +210,26 @@ export function computeExecutionReport(milestones: Milestone[], opts?: { now?: D
   const expectedPct = totalDays > 0 ? Math.min(100, Math.round((elapsedDays / totalDays) * 100)) : 0;
   const paceDelta = pctComplete - expectedPct;
 
-  // Naive forecast: extrapolate completion rate over elapsed time.
-  let forecastFinish: string | null = finish;
-  if (Number.isFinite(envStart) && tally.done > 0 && pctComplete < 100 && elapsedDays > 0) {
+  // Forecast: the completion RATE so far (leaves done per calendar day since
+  // the schedule's start) carried forward — a count, not effort, and blind
+  // to dependencies, so it is named as such on screen and withheld until at
+  // least FORECAST_MIN_DONE_FRACTION of the tasks are done (PC SCHED-12).
+  // It used to default to the PLANNED finish, printed as the forecast.
+  let forecastFinish: string | null = null;
+  let forecastRatePerDay: number | null = null;
+  let forecastBasis: ExecutionReport["forecastBasis"] = "too-early";
+  if (totalLeaves > 0 && tally.done === totalLeaves) {
+    forecastFinish = finish;
+    forecastBasis = "complete";
+  } else if (Number.isFinite(envStart) && totalLeaves > 0 && tally.done / totalLeaves >= FORECAST_MIN_DONE_FRACTION && elapsedDays > 0) {
     const ratePerDay = tally.done / elapsedDays;             // leaves/day so far
     const remaining = totalLeaves - tally.done;
     if (ratePerDay > 0) {
       const daysLeft = Math.ceil(remaining / ratePerDay);
       forecastFinish = new Date(now + daysLeft * DAY).toISOString();
+      forecastRatePerDay = ratePerDay;
+      forecastBasis = "rate";
     }
-  } else if (pctComplete >= 100) {
-    forecastFinish = finish;
   }
 
   // ── Per-group rollups ────────────────────────────────────────
@@ -212,7 +255,7 @@ export function computeExecutionReport(milestones: Milestone[], opts?: { now?: D
     r.plannedHours += h;
     r.earnedHours += h * (lp / 100);  // partial earned hours
     const gw = groupWeight.get(key)!;
-    gw.wsum += effectiveWeight(m); gw.wpct += effectiveWeight(m) * lp;
+    gw.wsum += weightFor(m, basis); gw.wpct += weightFor(m, basis) * lp;
     const s = startMs(m), f = finishMs(m);
     if (Number.isFinite(s)) r.start = r.start && Date.parse(r.start) <= s ? r.start : new Date(s).toISOString();
     if (Number.isFinite(f)) r.finish = r.finish && Date.parse(r.finish) >= f ? r.finish : new Date(f).toISOString();
@@ -250,13 +293,16 @@ export function computeExecutionReport(milestones: Milestone[], opts?: { now?: D
 
   // ── Baseline drift ───────────────────────────────────────────
   let baseline: BaselineDrift | null = null;
-  const baselined = leaves.filter((m) => m.baselineFinishAt);
+  const blOverride = opts?.baselineFinishById ?? null;
+  const baselineOf = (m: Milestone): string | null =>
+    blOverride ? (m.id ? blOverride.get(m.id) ?? null : null) : ((m.baselineFinishAt as string | null | undefined) ?? null);
+  const baselined = leaves.filter((m) => baselineOf(m));
   if (baselined.length > 0) {
     let slipped = 0, pulledIn = 0;
     let blFinishMax = -Infinity, curFinishMax = -Infinity;
     const slips: Array<{ id: string; name: string; days: number }> = [];
     for (const m of baselined) {
-      const bl = Date.parse(m.baselineFinishAt as string);
+      const bl = Date.parse(baselineOf(m) as string);
       const cur = finishMs(m);
       if (Number.isFinite(bl)) blFinishMax = Math.max(blFinishMax, bl);
       if (Number.isFinite(cur)) curFinishMax = Math.max(curFinishMax, cur);
@@ -279,8 +325,8 @@ export function computeExecutionReport(milestones: Milestone[], opts?: { now?: D
   return {
     totalLeaves, done: tally.done, inProgress: tally.inProgress, planned: tally.planned,
     onHold: tally.onHold, blocked: tally.blocked, missed: tally.missed, overdue: tally.overdue,
-    pctComplete, plannedHours, earnedHours, pctHours,
-    start, finish, elapsedDays, totalDays, expectedPct, paceDelta, forecastFinish,
+    pctComplete, weightBasis: basis, plannedHours, earnedHours, pctHours, leavesWithHours,
+    start, finish, elapsedDays, totalDays, expectedPct, paceDelta, forecastFinish, forecastRatePerDay, forecastBasis,
     groups, blockers,
     performers: { byActualKind, deviations },
     baseline,

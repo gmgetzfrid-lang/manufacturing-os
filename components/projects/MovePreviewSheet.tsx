@@ -32,6 +32,22 @@ interface Props {
    *  counts over it (PC SCHED-3 / PT SCH-4); without it only the dragged
    *  targets are counted. */
   changeSetFor?: (mode: MoveMode) => BaselineCheckRow[];
+  /** The move as it will be WRITTEN, per mode (PT SCH-4): every row the
+   *  batch rewrites (so the sheet's count is the write's count), the locked
+   *  dependents it could not move, and a refusal when the links loop —
+   *  shown instead of a Confirm. Takes precedence over changeSetFor. */
+  planFor?: (mode: MoveMode) => MovePlan;
+}
+
+/** What a move will write, computed by the caller from the same engine
+ *  calls the commit makes. */
+export interface MovePlan {
+  rows: Array<BaselineCheckRow & { id: string; name: string }>;
+  /** Names of locked dependents (done / imported) left in place although
+   *  the move now breaks their link. */
+  held: string[];
+  /** Why the move cannot be made (a loop in the links), or null. */
+  refusal: string | null;
 }
 
 /** A row the baseline warning reads: its finish after the move and its
@@ -43,7 +59,7 @@ export function countPastBaseline(rows: BaselineCheckRow[]): number {
   return rows.filter((r) => r.baselineFinishAt && Date.parse(r.plannedAt) > Date.parse(r.baselineFinishAt)).length;
 }
 
-export default function MovePreviewSheet({ targets, deltaDays, onCancel, onConfirm, busy, changeSetFor }: Props) {
+export default function MovePreviewSheet({ targets, deltaDays, onCancel, onConfirm, busy, changeSetFor, planFor }: Props) {
   const primary = targets[0];
   // Default mode: if ANY moved task is in-progress and we're slipping
   // later, default to extend; else defer.
@@ -77,6 +93,10 @@ export default function MovePreviewSheet({ targets, deltaDays, onCancel, onConfi
   }, [mode, targets, deltaDays]);
 
   const multi = targets.length > 1;
+  // What this mode will actually write (PT SCH-4): the count on the sheet is
+  // the count of the write, cascaded dependents and phase envelopes included.
+  const plan = useMemo(() => (planFor ? planFor(mode) : null), [planFor, mode]);
+  const writes = plan ? plan.rows.length : null;
 
   // Capture "now" once per mount so the warnings memo stays pure.
   const [nowMs] = useState<number>(() => Date.now());
@@ -97,7 +117,12 @@ export default function MovePreviewSheet({ targets, deltaDays, onCancel, onConfi
     }
     // Baseline drift (PC SCHED-3 / PT SCH-4): say so before the move commits, the way the single-task form does —
     // over the computed change set when the caller hands it over, else over the dragged targets.
-    const pastBaseline = changeSetFor
+    if (plan && plan.held.length > 0) {
+      w.push(`${plan.held.length} dependent task${plan.held.length === 1 ? " is" : "s are"} done or imported, so ${plan.held.length === 1 ? "it stays" : "they stay"} put and will now start before this finishes: ${plan.held.slice(0, 3).join(", ")}${plan.held.length > 3 ? ", …" : ""}.`);
+    }
+    const pastBaseline = plan
+      ? countPastBaseline(plan.rows)
+      : changeSetFor
       ? countPastBaseline(changeSetFor(mode))
       : deltaDays > 0
         ? countPastBaseline(targets.map((t) => {
@@ -107,7 +132,7 @@ export default function MovePreviewSheet({ targets, deltaDays, onCancel, onConfi
         : 0;
     if (pastBaseline > 0) w.push(`${pastBaseline} task${pastBaseline === 1 ? "" : "s"} would finish past the approved baseline.`);
     return w;
-  }, [targets, deltaDays, mode, nowMs, changeSetFor]);
+  }, [targets, deltaDays, mode, nowMs, changeSetFor, plan]);
 
   return (
     <div className="fixed inset-0 z-[260] flex items-end sm:items-start sm:items-center justify-center overflow-y-auto p-4" onClick={onCancel}>
@@ -165,6 +190,18 @@ export default function MovePreviewSheet({ targets, deltaDays, onCancel, onConfi
             )}
           </div>
 
+          {plan?.refusal ? (
+            <div role="alert" className="rounded-lg border border-rose-500/50 bg-rose-500/[0.08] p-2.5 text-[12px] text-rose-700 dark:text-rose-300 flex items-start gap-1.5">
+              <AlertTriangle className="w-3.5 h-3.5 shrink-0 mt-0.5" /> {plan.refusal}
+            </div>
+          ) : writes !== null && (
+            <div className="text-[12px] text-[var(--color-text-muted)]">
+              Writes <b className="text-[var(--color-text)]">{writes} task{writes === 1 ? "" : "s"}</b>
+              {writes > targets.length && <> — {targets.length} moved, {writes - targets.length} more follow (dependents and the phases around them)</>}
+              {writes === 0 && <> — nothing here can move (done or imported tasks stay where they are)</>}.
+            </div>
+          )}
+
           {warnings.length > 0 && (
             <div className="rounded-lg border border-amber-300 bg-amber-50 p-2.5 space-y-1">
               {warnings.map((wn, i) => (
@@ -185,9 +222,9 @@ export default function MovePreviewSheet({ targets, deltaDays, onCancel, onConfi
 
         <div className="px-5 py-3 border-t border-[var(--color-border)] bg-slate-50/60 flex items-center justify-end gap-2">
           <button onClick={onCancel} disabled={busy} className="text-sm text-[var(--color-text-muted)] hover:text-[var(--color-text)] px-3 py-1.5 transition-colors">Cancel</button>
-          <button onClick={() => onConfirm(mode)} disabled={busy} className="inline-flex items-center gap-1.5 text-sm font-bold text-[var(--color-accent-fg)] bg-[var(--color-accent)] hover:bg-[var(--color-accent-hover)] px-4 py-2 rounded-lg disabled:opacity-40 transition-colors">
+          <button onClick={() => onConfirm(mode)} disabled={busy || !!plan?.refusal || writes === 0} className="inline-flex items-center gap-1.5 text-sm font-bold text-[var(--color-accent-fg)] bg-[var(--color-accent)] hover:bg-[var(--color-accent-hover)] px-4 py-2 rounded-lg disabled:opacity-40 transition-colors">
             {busy ? <Loader2 className="w-4 h-4 animate-spin" /> : <CalendarRange className="w-4 h-4" />}
-            {mode === "extend" ? "Extend" : "Shift"} {multi ? `${targets.length} tasks` : "task"}
+            {mode === "extend" ? "Extend" : "Shift"} {writes !== null ? `${writes} task${writes === 1 ? "" : "s"}` : multi ? `${targets.length} tasks` : "task"}
           </button>
         </div>
       </div>

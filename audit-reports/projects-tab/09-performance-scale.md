@@ -299,6 +299,12 @@ The calendar view is the one safe surface — it caps at 4 chips per day with
 - Dragging a task on a 400-row schedule does not drop frames.
 - The board's DOM node count is proportional to what is visible.
 
+**Partial (2026-09-30, projects Round G).** Remediation 1–3 landed; 4 did not, and done-when 1 cannot be measured here. (1) The leaf set is computed once per data change in `ExecutionView` (`useMemo` over the full list) and handed to `SummaryStrip`, which is `React.memo`'d with a memoised `overallPercent` — the O(n²) `items.some(…)` scan no longer runs per render or per drag frame; `ScheduleTab`'s `planLeafStats` is one pass over a parent set; `criticalPath.ts` builds its children map once. (3) The outline and the bars are WINDOWED: `lib/rowWindow.ts` (`rowWindow`, `scrollTopToReveal` — fixed-height rows, no dependency) picks the rows in view plus an overscan of 8; spacers of the same height keep every row and bar where it was; keyboard navigation scrolls by index (a row that is not rendered cannot `scrollIntoView`). (2) `DependencyArrows` keeps its memoised props, so a drag (which touches none of them) does not rebuild it; `Bar` / `OutlineRow` are not memo'd — windowing bounds them to the window. The dependency picker's cycle filter is one O(n + e) closure instead of a DFS per candidate (`SCH-9`). Tests: `scheduleEngineUi.test.ts` "PERF-5 ·" — a 400-leaf board renders at most 40 outline rows and 40 bars while still counting 0 / 400 tasks; `rowWindow` / `scrollTopToReveal` arithmetic; a source pin that the strip no longer scans items × items and both lists render `windowRows`.
+
+**Done-when (so far).** 2 ✓ (DOM rows proportional to the viewport, not the schedule). 1 not verified: no browser here to measure frames; per-frame work is now bounded to the window and a memoised strip, but "does not drop frames" is unmeasured.
+
+**Scope / residual.** Remediation 4 (a searchable dependency picker in place of a `<select>` of every task) is not built; `MIN_PX_PER_DAY = 30` still keeps "Fit" from fitting a two-year schedule.
+
 ---
 
 ## PERF-6 · PDF rendering plus inference can exceed the function's own time limit, and the user gets "HTTP 504"

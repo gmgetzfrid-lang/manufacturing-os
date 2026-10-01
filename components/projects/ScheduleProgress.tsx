@@ -21,10 +21,15 @@ import {
 } from "lucide-react";
 import type { Milestone, MilestoneStatus } from "@/types/schema";
 import type { ScheduleMetrics } from "@/lib/milestones";
+import { isOverdueMilestone, startOfDayUTCms } from "@/lib/milestoneLiveness";
 
 interface Props {
   milestones: Milestone[];
   metrics: ScheduleMetrics;
+  /** The screen's one "now" (epoch ms, useScheduleNow) — so this card's
+   *  overdue and "today" agree with every row and filter on the tab (PT
+   *  SCH-5). Omitted: the time the card mounted. */
+  nowMs?: number;
 }
 
 const STATUS_META: Record<MilestoneStatus, { label: string; tone: string; bar: string; Icon: React.ComponentType<{ className?: string }> }> = {
@@ -36,9 +41,14 @@ const STATUS_META: Record<MilestoneStatus, { label: string; tone: string; bar: s
   on_hold:     { label: "On hold",     tone: "text-amber-700",   bar: "bg-amber-500",   Icon: PauseCircle },
 };
 
-export default function ScheduleProgress({ milestones, metrics }: Props) {
+export default function ScheduleProgress({ milestones, metrics, nowMs: nowProp }: Props) {
   const total = milestones.length;
-  const today = new Date(); today.setHours(0,0,0,0);
+  // Days are UTC days — planned dates are stored wall-clock-as-UTC — so "today"
+  // and "overdue" agree with the board, the pulse and the report in every
+  // timezone (PT SCH-5: this card used LOCAL midnight, the pulse Date.now()).
+  const [mountMs] = React.useState<number>(() => Date.now());
+  const nowMs = nowProp ?? mountMs;
+  const today = new Date(startOfDayUTCms(nowMs));
   const in14 = new Date(today.getTime() + 14 * 86400000);
   const upcoming = milestones
     .filter((m) => m.status !== "completed" && m.plannedAt)
@@ -46,11 +56,12 @@ export default function ScheduleProgress({ milestones, metrics }: Props) {
     .filter((x) => x.due >= today && x.due <= in14)
     .sort((a, b) => a.due.getTime() - b.due.getTime())
     .slice(0, 5);
-  const overdue = milestones.filter((m) => {
-    if (m.status === "completed") return false;
-    if (!m.plannedAt) return false;
-    return new Date(m.plannedAt as string).getTime() < today.getTime();
-  });
+  // Leaves only — the population the pulse, the summary strip and the status
+  // counts use — through the one overdue rule.
+  const parentIds = new Set<string>();
+  for (const m of milestones) if (m.parentId) parentIds.add(m.parentId);
+  const overdue = milestones.filter((m) => !(m.id && parentIds.has(m.id))
+    && isOverdueMilestone({ planned_at: m.plannedAt as string | null, status: m.status }, nowMs));
 
   const earnedPct = Math.round(metrics.percentEarned * 100);
   const planPct = Math.round(metrics.percentPlanned * 100);
@@ -68,7 +79,14 @@ export default function ScheduleProgress({ milestones, metrics }: Props) {
             <div className="text-3xl font-black text-[var(--color-text)] leading-none mt-1">
               {earnedPct}<span className="text-base text-[var(--color-text-muted)] font-bold">%</span>
             </div>
-            <div className="text-[11px] text-[var(--color-text-muted)] mt-1">Earned weight · planned was {planPct}%</div>
+            <div className="text-[11px] text-[var(--color-text-muted)] mt-1">
+              {metrics.weightBasis === "hours" ? "Earned work hours" : "Earned task weight"} · planned was {planPct}%
+            </div>
+            {metrics.weightBasis === "weight" && (
+              <div className="text-[10px] text-[var(--color-text-faint)]" title="Work hours are used only when every task carries them; otherwise every task counts by its weight (1 unless set).">
+                not every task carries work hours, so tasks count by weight
+              </div>
+            )}
           </div>
           <div className="text-right">
             <div className="text-[10px] font-black uppercase tracking-widest text-[var(--color-text-muted)]">SPI</div>
@@ -146,7 +164,7 @@ export default function ScheduleProgress({ milestones, metrics }: Props) {
                   <div className="min-w-0 flex-1">
                     <div className="font-bold text-[var(--color-text)] truncate">{m.name}</div>
                     <div className="text-[10px] text-[var(--color-text-muted)] inline-flex items-center gap-1">
-                      <CalendarClock className="w-2.5 h-2.5" /> {humanRelative(due)}
+                      <CalendarClock className="w-2.5 h-2.5" /> {humanRelative(due, nowMs)}
                     </div>
                   </div>
                 </li>
@@ -185,11 +203,12 @@ function humanDate(iso: string): string {
   return d.toLocaleDateString(undefined, { year: "numeric", month: "short", day: "numeric", timeZone: "UTC" });
 }
 
-function humanRelative(d: Date): string {
+function humanRelative(d: Date, nowMs: number): string {
   // Compare on UTC day boundaries so "today"/"tomorrow" line up with the
-  // UTC-rendered dates rather than drifting a day in non-UTC timezones.
+  // UTC-rendered dates rather than drifting a day in non-UTC timezones — and
+  // against the card's one "now", not a fresh clock read (PT SCH-5).
   const toUtcDay = (x: Date) => Date.UTC(x.getUTCFullYear(), x.getUTCMonth(), x.getUTCDate());
-  const diff = Math.round((toUtcDay(d) - toUtcDay(new Date())) / 86400000);
+  const diff = Math.round((toUtcDay(d) - toUtcDay(new Date(nowMs))) / 86400000);
   if (diff === 0) return "today";
   if (diff === 1) return "tomorrow";
   if (diff > 1 && diff < 7) return `in ${diff} days`;

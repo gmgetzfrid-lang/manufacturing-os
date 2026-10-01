@@ -10,6 +10,7 @@
 // hierarchy intact instead of orphaning matches.
 
 import type { Milestone, MilestoneStatus } from "@/types/schema";
+import { isOverdueMilestone } from "@/lib/milestoneLiveness";
 
 export interface ScheduleFilter {
   /** Free text — matches name, WBS, work order, responsible, location,
@@ -19,7 +20,8 @@ export interface ScheduleFilter {
   statuses: MilestoneStatus[];
   /** Restrict to these top-level group ids (empty = all). */
   groupIds: string[];
-  /** Only tasks not complete whose finish is before now. */
+  /** Only overdue tasks — not complete and their planned DAY (UTC) is before
+   *  today's (isOverdueMilestone, the one rule every surface shares). */
   overdueOnly: boolean;
   /** Only tasks with an unmet blocker (on_hold | blocked). */
   blockedOnly: boolean;
@@ -127,10 +129,8 @@ export function filterMilestones(
       if (!terms.every((t) => hay.includes(t))) return false;
     }
     if (statusSet.size > 0 && !statusSet.has(m.status)) return false;
-    if (f.overdueOnly) {
-      if (m.status === "completed") return false;
-      if (Date.parse(m.plannedAt as string) >= now) return false;
-    }
+    // The one overdue rule (PT SCH-5): by UTC day — due today is not overdue.
+    if (f.overdueOnly && !isOverdueMilestone({ planned_at: m.plannedAt as string, status: m.status }, now)) return false;
     if (f.blockedOnly && m.status !== "blocked" && m.status !== "on_hold") return false;
     // The stored label only (PC SCHED-9: it follows the task when its start
     // moves). A row with no label matches no shift — a manual date-only task

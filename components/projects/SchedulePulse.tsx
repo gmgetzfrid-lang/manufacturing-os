@@ -17,13 +17,17 @@ import { computeExecutionReport } from "@/lib/executionReport";
 
 interface Props {
   milestones: Milestone[];
+  /** The screen's one "now" (epoch ms) — the same instant the summary strip
+   *  and the overdue filter count with (PT SCH-5). Omitted: the time of the
+   *  computation. */
+  nowMs?: number;
   /** Jump to a filtered view (the board applies it). */
   onShowOverdue: () => void;
   onShowBlocked: () => void;
 }
 
-export default function SchedulePulse({ milestones, onShowOverdue, onShowBlocked }: Props) {
-  const r = useMemo(() => computeExecutionReport(milestones), [milestones]);
+export default function SchedulePulse({ milestones, nowMs, onShowOverdue, onShowBlocked }: Props) {
+  const r = useMemo(() => computeExecutionReport(milestones, nowMs != null ? { now: new Date(nowMs) } : undefined), [milestones, nowMs]);
   if (r.totalLeaves === 0) return null;
 
   const items: React.ReactNode[] = [];

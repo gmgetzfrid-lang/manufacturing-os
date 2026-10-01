@@ -10,7 +10,7 @@
 // FANG tools all have this (Gmail's "Undo send", etc.); the schedule
 // had neither feedback nor undo.
 
-import { useCallback, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 
 export interface UndoableToast {
   id: number;
@@ -23,26 +23,56 @@ export interface UndoableToast {
 }
 
 const TIMEOUT_MS = 7000;
+/** How long a toast whose Undo FAILED stays up (with Undo as a retry). */
+const FAILED_UNDO_MS = 15000;
+const MAX_TOASTS = 3;
 
 export function useUndoableActions() {
   const [toasts, setToasts] = useState<UndoableToast[]>([]);
+  const toastsRef = useRef<UndoableToast[]>([]);
   const timers = useRef(new Map<number, ReturnType<typeof setTimeout>>());
+  const running = useRef(new Set<number>());
   const seq = useRef(0);
 
-  const dismiss = useCallback((id: number) => {
-    setToasts((t) => t.filter((x) => x.id !== id));
-    const handle = timers.current.get(id);
-    if (handle) { clearTimeout(handle); timers.current.delete(id); }
+  const commit = useCallback((next: UndoableToast[]) => {
+    toastsRef.current = next;
+    setToasts(next);
   }, []);
+  const clearTimer = useCallback((id: number) => {
+    const handle = timers.current.get(id);
+    if (handle) clearTimeout(handle);
+    timers.current.delete(id);
+  }, []);
+
+  const dismiss = useCallback((id: number) => {
+    commit(toastsRef.current.filter((x) => x.id !== id));
+    clearTimer(id);
+  }, [commit, clearTimer]);
+
+  const arm = useCallback((id: number, ms: number) => {
+    clearTimer(id);
+    const handle = setTimeout(() => {
+      timers.current.delete(id);
+      if (running.current.has(id)) return; // an undo in flight keeps its toast
+      commit(toastsRef.current.filter((x) => x.id !== id));
+    }, ms);
+    timers.current.set(id, handle);
+  }, [clearTimer, commit]);
 
   const pushToast = useCallback((toast: Omit<UndoableToast, "id">) => {
     const id = ++seq.current;
-    setToasts((t) => [...t.slice(-2), { id, ...toast }]); // keep last 3
-    const handle = setTimeout(() => {
-      setToasts((t) => t.filter((x) => x.id !== id));
-      timers.current.delete(id);
-    }, TIMEOUT_MS);
-    timers.current.set(id, handle);
+    const next = [...toastsRef.current, { id, ...toast }];
+    // Keep the last three; a toast dropped off the top takes its timer with
+    // it, so the timers map only ever holds the toasts on screen (PT SCH-18).
+    for (const dropped of next.slice(0, Math.max(0, next.length - MAX_TOASTS))) clearTimer(dropped.id);
+    commit(next.slice(-MAX_TOASTS));
+    arm(id, TIMEOUT_MS);
+  }, [commit, clearTimer, arm]);
+
+  // Nothing fires after the view is gone.
+  useEffect(() => () => {
+    for (const h of timers.current.values()) clearTimeout(h);
+    timers.current.clear();
   }, []);
 
   /** Announce a completed, reversible action. */
@@ -55,20 +85,33 @@ export function useUndoableActions() {
     pushToast({ message, tone });
   }, [pushToast]);
 
+  /** Run a toast's Undo. The toast stays up until the undo has actually
+   *  worked: an undo that throws (the schedule handlers throw on a refused
+   *  write — PT SCH-18) turns the SAME toast into "Couldn't undo: …" with its
+   *  Undo button kept as a retry, instead of closing as if it had worked. A
+   *  second click while one is running is ignored. */
   const runUndo = useCallback(async (t: UndoableToast) => {
-    dismiss(t.id);
-    if (!t.undo) return;
+    if (!t.undo) { dismiss(t.id); return; }
+    if (running.current.has(t.id)) return;
+    running.current.add(t.id);
+    clearTimer(t.id);
     try {
       await t.undo();
+      running.current.delete(t.id);
+      dismiss(t.id);
     } catch (e) {
-      // Don't fail silently — the action stays applied, so tell the user
-      // instead of closing the toast as if the undo worked.
-      pushToast({
-        message: `Couldn't undo: ${(e as Error)?.message || "please refresh and try again"}.`,
-        tone: "warning",
-      });
+      running.current.delete(t.id);
+      const reason = (e as Error)?.message || "please refresh and try again";
+      const base = t.message.replace(/^Couldn't undo: .*? — /, "");
+      const failed: UndoableToast = { ...t, tone: "warning", message: `Couldn't undo: ${reason} — ${base}` };
+      const current = toastsRef.current;
+      commit(current.some((x) => x.id === t.id) ? current.map((x) => (x.id === t.id ? failed : x)) : [...current, failed].slice(-MAX_TOASTS));
+      arm(t.id, FAILED_UNDO_MS);
     }
-  }, [dismiss, pushToast]);
+  }, [dismiss, clearTimer, commit, arm]);
 
-  return { toasts, announce, notify, dismiss, runUndo };
+  /** Test seam: how many timers are held (one per toast on screen). */
+  const timerCount = useCallback(() => timers.current.size, []);
+
+  return { toasts, announce, notify, dismiss, runUndo, timerCount };
 }

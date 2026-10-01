@@ -33,27 +33,46 @@ import {
 } from "lucide-react";
 import type { Milestone, MilestoneStatus } from "@/types/schema";
 import { groupTasksUnderParent, setTaskDuration } from "@/lib/milestones";
-import { computeTreeMove, computeEdgeResize, computeSummaryResize, sequenceSiblings, cascadeDependents, type ReflowNode, type DateChange } from "@/lib/scheduleReflow";
-import { computeCriticalPathLite } from "@/lib/criticalPath";
+import {
+  computeTreeMove, computeEdgeResize, computeSummaryResize, sequenceSiblings, planCascade,
+  reflowNodesFromMilestones, CascadeRefusedError, isLocked, type ReflowNode, type DateChange,
+} from "@/lib/scheduleReflow";
+import { computeCriticalPath, pathCalendarLabel } from "@/lib/criticalPath";
+import { isImportedMilestone, isOverdueMilestone } from "@/lib/milestoneLiveness";
+import { rowWindow, scrollTopToReveal } from "@/lib/rowWindow";
 import { resolveVisibleDepIndex } from "@/lib/scheduleDeps";
 import { buildProgressIndex, overallPercent } from "@/lib/scheduleProgress";
 import { assignGroupColors, type GroupColor } from "@/lib/scheduleColors";
 import SchedulePulse from "@/components/projects/SchedulePulse";
+import { useScheduleNow } from "@/components/projects/useScheduleNow";
 import TaskDetailPanel from "@/components/projects/TaskDetailPanel";
 import ScheduleCalendarTileView from "@/components/projects/ScheduleCalendarTileView";
 import StatusControl from "@/components/projects/StatusControl";
 import ProgressControl from "@/components/projects/ProgressControl";
 import ExecutionGuide from "@/components/projects/ExecutionGuide";
 import ExecutionReportView from "@/components/projects/ExecutionReportView";
-import MovePreviewSheet from "@/components/projects/MovePreviewSheet";
+import MovePreviewSheet, { type MovePlan } from "@/components/projects/MovePreviewSheet";
 import UndoToastHost from "@/components/projects/UndoToastHost";
 import { useUndoableActions } from "@/components/projects/useUndoableActions";
 import ScheduleFilterBar from "@/components/projects/ScheduleFilterBar";
 import { Select } from "@/components/ui/Field";
 import { filterMilestones, isFilterActive, EMPTY_FILTER, type ScheduleFilter } from "@/lib/scheduleFilter";
 
+/** What a persisted batch move reports back: whether it saved, and each
+ *  moved row's updated_at after the write — the lock its Undo sends (PT
+ *  SCH-18), so an Undo never overwrites a colleague's later edit. When the
+ *  lock rejected some rows AFTER others were written (a colleague saved in
+ *  the instant between the check and the write), `ok` is false and `matched`
+ *  names the rows that did move, so they can still be undone (PT SCH-7).
+ *  `error` is why it failed, in words — what a failed Undo says. */
+export interface MoveOutcome { ok: boolean; updatedAt?: Record<string, string>; matched?: string[]; error?: string }
+
 interface Props {
+  /** The FULL list. Every figure, rollup, cycle check and reschedule reads
+   *  it; `hideImported` only changes which rows are drawn (PT SCH-6 / SCH-9). */
   milestones: Milestone[];
+  /** Display filter: leave imported rows out of the rows drawn. */
+  hideImported?: boolean;
   canEdit: boolean;
   orgId: string;
   projectId: string;
@@ -63,8 +82,9 @@ interface Props {
   userRole?: string;
   onRefresh: () => void;
   /** Persist a batch of reflowed date changes (one drag can shift a
-   *  subtree + bleed its ancestors). */
-  onMoveMany?: (changes: DateChange[]) => Promise<boolean>;
+   *  subtree + bleed its ancestors). `expectedUpdatedAt` pins each row's
+   *  lock (an Undo sends what the move it reverses reported). */
+  onMoveMany?: (changes: DateChange[], opts?: { expectedUpdatedAt?: Record<string, string> }) => Promise<MoveOutcome>;
   onSetStatus?: (id: string, status: MilestoneStatus, reason?: string) => Promise<boolean>;
   /** Persist a leaf task's physical % complete (derives status server-side). */
   onSetProgress?: (id: string, percent: number) => Promise<boolean>;
@@ -92,7 +112,7 @@ interface FlatRow {
 }
 
 export default function ExecutionView({
-  milestones, canEdit, orgId, projectId, userId, userName, userEmail, userRole,
+  milestones, hideImported = false, canEdit, orgId, projectId, userId, userName, userEmail, userRole,
   onRefresh, onMoveMany, onSetStatus, onSetProgress,
 }: Props) {
   const [collapsed, setCollapsed] = useState<Set<string>>(new Set());
@@ -121,18 +141,42 @@ export default function ExecutionView({
   // Undo/feedback — the safety net so a new user can act fearlessly.
   const { toasts, announce, notify, dismiss, runUndo } = useUndoableActions();
 
+  // ONE "now" for every figure on the board — the pulse, the summary strip,
+  // the overdue filter, the Report and the today line — moved to a new UTC
+  // day at midnight, when the page is shown or focused again (a timer does
+  // not run while the device sleeps), and when a refresh lands on a later
+  // day, so an open board never shows two different overdue counts, nor
+  // yesterday's (PT SCH-5).
+  const nowMs = useScheduleNow(milestones);
+
   // Measure the timeline viewport so the day width can fill it edge to
   // edge instead of a hardcoded guess. Re-measures on resize.
   const [viewportW, setViewportW] = useState(0);
+  // …and its height + scroll position, for the windowed rows (PT PERF-5).
+  const [viewportH, setViewportH] = useState(0);
+  const [scrollTop, setScrollTop] = useState(0);
+  const scrollFrame = useRef<number | null>(null);
   useEffect(() => {
     const el = scrollRef.current;
     if (!el) return;
-    const measure = () => setViewportW(el.clientWidth);
+    const measure = () => { setViewportW(el.clientWidth); setViewportH(el.clientHeight); };
     measure();
     const ro = new ResizeObserver(measure);
     ro.observe(el);
     return () => ro.disconnect();
   }, []);
+  const onTimelineScroll = useCallback((e: React.UIEvent<HTMLDivElement>) => {
+    const el = e.currentTarget;
+    if (scrollFrame.current != null) return;
+    // Read the height here too: the scroller can remount (Timeline ↔
+    // Calendar) after the one-time ResizeObserver attached to the first one.
+    scrollFrame.current = requestAnimationFrame(() => {
+      scrollFrame.current = null;
+      setScrollTop(el.scrollTop);
+      setViewportH(el.clientHeight);
+    });
+  }, []);
+  useEffect(() => () => { if (scrollFrame.current != null) cancelAnimationFrame(scrollFrame.current); }, []);
 
   // Overlay optimistic status + percent onto the raw list.
   const items = useMemo(() => {
@@ -190,18 +234,29 @@ export default function ExecutionView({
     return m;
   }, [items, byId]);
 
+  // Rows the "Imported rows" toggle hides. DISPLAY ONLY (PT SCH-6): every
+  // figure below reads the full `items`, so hiding them changes no number,
+  // no rollup, no leaf-ness (a phase with hidden children is still a phase)
+  // and no cycle check.
+  const hiddenIds = useMemo(() => {
+    const out = new Set<string>();
+    if (hideImported) for (const m of items) if (m.id && isImportedMilestone(m)) out.add(m.id);
+    return out;
+  }, [items, hideImported]);
+
   // ── Search / filter ──────────────────────────────────────────
   const [filter, setFilter] = useState<ScheduleFilter>(EMPTY_FILTER);
   const filterOn = isFilterActive(filter);
   const visibleIds = useMemo(
-    () => filterMilestones(items, filter),
-    [items, filter],
+    () => filterMilestones(items, filter, { now: nowMs }),
+    [items, filter, nowMs],
   );
-  // The milestones each sub-view should render (full list when the
-  // filter is off, so nothing changes for the common case).
+  // The milestones each sub-view should render (full list when neither the
+  // filter nor the imported-rows toggle is on, so nothing changes for the
+  // common case).
   const visibleItems = useMemo(
-    () => (filterOn ? items.filter((m) => m.id && visibleIds.has(m.id)) : items),
-    [items, filterOn, visibleIds],
+    () => (filterOn || hiddenIds.size > 0 ? items.filter((m) => m.id && visibleIds.has(m.id) && !hiddenIds.has(m.id)) : items),
+    [items, filterOn, visibleIds, hiddenIds],
   );
   // Top-level groups for the filter bar chips.
   const topGroups = useMemo(() => {
@@ -213,16 +268,36 @@ export default function ExecutionView({
     return Array.from(seen.values()).sort(cmpMilestone);
   }, [items, byId]);
   // Match count = leaf tasks that survive the filter.
+  // Leaf-ness from the FULL tree (PT SCH-6), computed once per data change —
+  // not per render, and not per drag frame (PT PERF-5).
+  const leaves = useMemo(
+    () => items.filter((m) => !m.id || (childrenOf.get(m.id) ?? []).length === 0),
+    [items, childrenOf],
+  );
   const matchStats = useMemo(() => {
-    const isLeaf = (m: Milestone) => !m.id || (childrenOf.get(m.id) ?? []).length === 0;
-    const leaves = items.filter(isLeaf);
-    const shown = leaves.filter((m) => m.id && visibleIds.has(m.id)).length;
-    return { shown, total: leaves.length };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [items, visibleIds]);
+    const drawable = leaves.filter((m) => !m.id || !hiddenIds.has(m.id));
+    const shown = drawable.filter((m) => m.id && visibleIds.has(m.id)).length;
+    return { shown, total: drawable.length };
+  }, [leaves, visibleIds, hiddenIds]);
 
-  // Critical-path-lite: the unfinished chain driving the finish date.
-  const critical = useMemo(() => computeCriticalPathLite(items), [items]);
+  // The critical path, from the dependency links (PT SCH-15 / PC SCHED-10).
+  const critical = useMemo(() => computeCriticalPath(items), [items]);
+  // The clock it was measured on, as the button and the legend name it.
+  const criticalCalendar = pathCalendarLabel(critical.calendar, critical.workedWeekendDays.length);
+  // The tasks a loop of links keeps off the path: the button says so, so a
+  // highlighted chain is never read as the whole story (seventh review pass;
+  // eighth: separate loops are counted as such).
+  const loopCount = critical.loops?.length ?? 0;
+  const loopCaveat = critical.cycle
+    ? `${critical.cycle.length} task${critical.cycle.length === 1 ? " is" : "s are"} in ${loopCount > 1 ? `${loopCount} separate loops` : "a loop"} of links and left out of the path`
+    : null;
+  // Why there is no path to highlight while a loop holds the latest work
+  // (eighth review pass: the latest work OUTSIDE the loop was the finish, so
+  // a chain weeks short of it was highlighted as driving the finish date).
+  const noPathReason = critical.floatDays.size === 0
+    ? "every unfinished task is in a loop of links"
+    : "the latest unfinished work is in a loop of links, so no chain of links drives the finish date";
+  const criticalOn = showCritical && critical.ids.size > 0;
 
   // Group color assignment — a phase + all its children share one hue.
   const colors = useMemo(() => assignGroupColors(items), [items]);
@@ -253,6 +328,9 @@ export default function ExecutionView({
     const out: FlatRow[] = [];
     const walk = (nodes: TreeNode[]) => {
       for (const n of nodes) {
+        // A row the imported-rows toggle hides is not drawn; anything under
+        // it that is not hidden is drawn in its place (display only).
+        if (n.ms.id && hiddenIds.has(n.ms.id)) { walk(n.children); continue; }
         const hasChildren = n.children.length > 0;
         const info = n.ms.id ? progressIndex.get(n.ms.id) : undefined;
         out.push({
@@ -269,7 +347,15 @@ export default function ExecutionView({
     };
     walk(roots);
     return out;
-  }, [roots, collapsed, progressIndex]);
+  }, [roots, collapsed, progressIndex, hiddenIds]);
+
+  // Only the rows in (or just around) the viewport are rendered (PT PERF-5);
+  // the rest are spacers of the same height, so positions are unchanged.
+  const win = useMemo(
+    () => rowWindow({ scrollTop, viewportHeight: viewportH, rowHeight: ROW_H, headerHeight: AXIS_H, count: rows.length }),
+    [scrollTop, viewportH, rows.length],
+  );
+  const windowRows = useMemo(() => rows.slice(win.start, win.end), [rows, win]);
 
   // Date domain across the whole schedule.
   const domain = useMemo(() => {
@@ -303,7 +389,7 @@ export default function ExecutionView({
   }, [zoomFactor, fitPxPerDay]);
 
   const timelineW = domain ? domain.totalDays * pxPerDay : 0;
-  const today = useMemo(() => startOfDayUTC(new Date()), []);
+  const today = useMemo(() => startOfDayUTC(new Date(nowMs)), [nowMs]);
   const todayX = domain ? (dayDiff(domain.start, today) + 0.5) * pxPerDay : -1;
 
   // Center the viewport on "today" (or schedule start) on first paint.
@@ -332,7 +418,13 @@ export default function ExecutionView({
           `“${truncate(name)}” → ${statusWord(next)}`,
           async () => {
             setOptimistic((m) => new Map(m).set(id, prevStatus));
-            await onSetStatus(id, prevStatus);
+            // The handler reports a refusal as `false`, never a throw — so a
+            // failed undo used to close its toast like a successful one (PT
+            // SCH-18). Throw, so the toast says "Couldn't undo" and stays.
+            if (!(await onSetStatus(id, prevStatus))) {
+              setOptimistic((m) => { const n = new Map(m); n.delete(id); return n; });
+              throw new Error(`“${truncate(name)}” is still ${statusWord(next)}`);
+            }
           },
           next === "completed" ? "success" : "default",
         );
@@ -371,7 +463,11 @@ export default function ExecutionView({
         announce(`“${truncate(prev?.name ?? "Task")}” → ${clamped}%`, async () => {
           setOptimisticPct((m) => new Map(m).set(id, prevPct));
           if (prevStatus) setOptimistic((m) => new Map(m).set(id, prevStatus));
-          await onSetProgress(id, prevPct);
+          if (!(await onSetProgress(id, prevPct))) {
+            setOptimisticPct((m) => { const n = new Map(m); n.delete(id); return n; });
+            setOptimistic((m) => { const n = new Map(m); n.delete(id); return n; });
+            throw new Error(`“${truncate(prev?.name ?? "Task")}” is still at ${clamped}%`);
+          }
         }, clamped >= 100 ? "success" : "default");
       }
     } finally {
@@ -383,8 +479,19 @@ export default function ExecutionView({
   // task's prior status).
   // Bulk status for an explicit id set (used by both the timeline
   // selection and the calendar selection), with one undo.
-  const bulkStatusIds = useCallback(async (ids: string[], next: MilestoneStatus) => {
-    if (!canEdit || !onSetStatus || ids.length === 0) return;
+  const bulkStatusIds = useCallback(async (selected: string[], next: MilestoneStatus) => {
+    if (!canEdit || !onSetStatus || selected.length === 0) return;
+    // Leaves only: a phase's status is DERIVED from its tasks (its row shows it
+    // read-only). Setting it here stamped the phase row itself — "Done" wrote
+    // completed + actual_at — which locks the phase for every engine, so after
+    // a child was reopened the phase's own links stopped moving anything (PC
+    // SCHED-5). A selected phase is skipped, and the board says so.
+    const ids = selected.filter((id) => (childrenOf.get(id) ?? []).length === 0);
+    const skipped = selected.length - ids.length;
+    if (skipped > 0) {
+      notify(`${skipped} phase${skipped === 1 ? "" : "s"} left as ${skipped === 1 ? "it is" : "they are"} — a phase's status rolls up from its tasks. Set the tasks inside instead.`, "warning");
+    }
+    if (ids.length === 0) return;
     const prev = new Map<string, MilestoneStatus>();
     for (const id of ids) { const m = byId.get(id); if (m) prev.set(id, m.status); }
     setOptimistic((m) => { const n = new Map(m); for (const id of ids) n.set(id, next); return n; });
@@ -414,14 +521,22 @@ export default function ExecutionView({
         // Only offer to undo what actually changed.
         announce(`${succeeded.length} task${succeeded.length === 1 ? "" : "s"} → ${statusWord(next)}`, async () => {
           setOptimistic((m) => { const n = new Map(m); for (const id of succeeded) { const st = prev.get(id); if (st) n.set(id, st); } return n; });
-          await Promise.all(succeeded.map((id) => { const st = prev.get(id); return st ? onSetStatus(id, st) : Promise.resolve(true); }));
+          const undone = await Promise.all(succeeded.map(async (id) => {
+            const st = prev.get(id);
+            try { return st ? await onSetStatus(id, st) : true; } catch { return false; }
+          }));
+          const failed = succeeded.filter((_, i) => !undone[i]);
+          if (failed.length > 0) {
+            setOptimistic((m) => { const n = new Map(m); for (const id of failed) n.delete(id); return n; });
+            throw new Error(`${failed.length} of ${succeeded.length} task${succeeded.length === 1 ? "" : "s"} could not be set back`);
+          }
         }, next === "completed" ? "success" : "default");
       }
       setSelectedIds(new Set());
     } finally {
       setBusy((s) => { const n = new Set(s); for (const id of ids) n.delete(id); return n; });
     }
-  }, [canEdit, onSetStatus, byId, announce, notify]);
+  }, [canEdit, onSetStatus, byId, childrenOf, announce, notify]);
 
   // Bulk move for an explicit id set → open the confirmation sheet.
   const bulkMoveIds = useCallback((ids: string[], deltaDays: number) => {
@@ -433,32 +548,92 @@ export default function ExecutionView({
   const bulkStatus = useCallback((next: MilestoneStatus) => bulkStatusIds(Array.from(selectedIds), next), [bulkStatusIds, selectedIds]);
   const bulkMove = useCallback((deltaDays: number) => bulkMoveIds(Array.from(selectedIds), deltaDays), [bulkMoveIds, selectedIds]);
 
-  // Flat node list the reflow engine operates on.
-  const reflowNodes = useMemo<ReflowNode[]>(() => items.map((m) => ({
-    id: m.id!,
-    parentId: m.parentId ?? null,
-    plannedStartAt: (m.plannedStartAt as string | undefined) ?? null,
-    plannedAt: m.plannedAt as string,
-    status: m.status,
-    dependsOn: m.dependsOn ?? null,
-  })), [items]);
+  // Flat node list the reflow engine operates on — the FULL list (never the
+  // display-filtered rows, PT SCH-9), with actuals, imported rows (PT SCH-13)
+  // and each link's lag (PT SCH-8) carried by the one shared mapping.
+  const reflowNodes = useMemo<ReflowNode[]>(() => reflowNodesFromMilestones(items), [items]);
+  const nodeById = useMemo(() => new Map(reflowNodes.map((n) => [n.id, n])), [reflowNodes]);
+
+  // A refused cascade, in names: "Weld → NDE → Weld"; a sub-task carried
+  // with its phase reads "(contains)", and the phase a task sits in — whose
+  // successor waits for it — reads "(its phase)".
+  const describeRefusal = useCallback((e: CascadeRefusedError): string => {
+    const name = (id: string) => `“${truncate(byId.get(id)?.name ?? "a task", 40)}”`;
+    const path = [name(e.edges[0]?.from ?? ""), ...e.edges.map((x) => `${x.via === "contains" ? "(contains) " : x.via === "within" ? "(its phase) " : ""}${name(x.to)}`)].join(" → ");
+    return e.kind === "cycle"
+      ? `These links go round in a loop: ${path}. Nothing was moved — remove one of these links first.`
+      : `This move would push tasks further than the whole schedule could ever need (${path}). Nothing was moved.`;
+  }, [byId]);
 
   // After any edit, push dependents forward (finish-to-start) so the schedule
   // honors explicit task dependencies. Merges the cascade into the primary
-  // changes (cascade wins on overlap) so it persists + undoes as one set.
-  const withCascade = useCallback((primary: DateChange[]): DateChange[] => {
-    if (primary.length === 0) return primary;
+  // changes (cascade wins on overlap) so it persists + undoes as one set. A
+  // loop in the links is REFUSED here (PT SCH-4), never written.
+  const withCascade = useCallback((primary: DateChange[]): { changes: DateChange[]; held: string[]; refusal: string | null } => {
+    if (primary.length === 0) return { changes: primary, held: [], refusal: null };
     const map = new Map(primary.map((c) => [c.id, c]));
     const updated: ReflowNode[] = reflowNodes.map((n) => {
       const c = map.get(n.id);
       return c ? { ...n, plannedStartAt: c.plannedStartAt, plannedAt: c.plannedAt } : n;
     });
-    const cascade = cascadeDependents(updated, primary.map((c) => c.id));
-    if (cascade.length === 0) return primary;
-    const merged = new Map(primary.map((c) => [c.id, c]));
-    for (const c of cascade) merged.set(c.id, c);
-    return Array.from(merged.values());
-  }, [reflowNodes]);
+    try {
+      const plan = planCascade(updated, primary.map((c) => c.id));
+      const held = plan.held.map((h) => byId.get(h.id)?.name ?? h.id);
+      if (plan.changes.length === 0) return { changes: primary, held, refusal: null };
+      const merged = new Map(primary.map((c) => [c.id, c]));
+      for (const c of plan.changes) merged.set(c.id, c);
+      return { changes: Array.from(merged.values()), held, refusal: null };
+    } catch (e) {
+      if (e instanceof CascadeRefusedError) return { changes: [], held: [], refusal: describeRefusal(e) };
+      throw e;
+    }
+  }, [reflowNodes, byId, describeRefusal]);
+
+  // Persist a computed batch with one Undo that restores the rows' prior
+  // dates — and carries the lock the move reported, so the Undo is refused
+  // (and says why) if someone changed those rows in between (PT SCH-18). A
+  // batch the lock only partly wrote still gets an Undo for the rows that
+  // moved (PT SCH-7), so a half-applied cascade can be put back.
+  const persistBatch = useCallback(async (changes: DateChange[], message: string) => {
+    if (!onMoveMany) return;
+    const before: DateChange[] = [];
+    for (const c of changes) {
+      const m = byId.get(c.id);
+      if (!m) continue;
+      before.push({ id: c.id, plannedStartAt: (m.plannedStartAt as string | undefined) ?? (m.plannedAt as string), plannedAt: m.plannedAt as string });
+    }
+    const undoOf = (rows: DateChange[], stamps: Record<string, string> | undefined) => async () => {
+      const undone = await onMoveMany(rows, stamps ? { expectedUpdatedAt: stamps } : undefined);
+      if (!undone.ok) throw new Error(undone.error || "the move could not be undone");
+    };
+    setBusy((s) => { const n = new Set(s); for (const c of changes) n.add(c.id); return n; });
+    try {
+      const res = await onMoveMany(changes);
+      if (res.ok) {
+        announce(message, undoOf(before, res.updatedAt), "default");
+      } else if (res.matched && res.matched.length > 0) {
+        const keep = new Set(res.matched);
+        const restore = before.filter((b) => keep.has(b.id));
+        if (restore.length > 0) {
+          announce(`Only ${restore.length} of ${changes.length} task${changes.length === 1 ? "" : "s"} moved (the rest were changed by someone else) — Undo puts ${restore.length === 1 ? "it" : "those"} back · ${message}`, undoOf(restore, res.updatedAt), "warning");
+        }
+      } else {
+        // Refused whole (a stale view, a lock, an error): nothing moved and the
+        // bar snaps back on the reload — say why on the board itself (PT SCH-7).
+        notify(res.error ? `Not moved: ${res.error}` : "Nothing was moved.", "warning");
+      }
+    } finally {
+      setBusy((s) => { const n = new Set(s); for (const c of changes) n.delete(c.id); return n; });
+    }
+  }, [onMoveMany, byId, announce, notify]);
+
+  // Why a task cannot be moved here, or null.
+  const lockReason = useCallback((m: Milestone | undefined): string | null => {
+    if (!m?.id) return null;
+    if (isImportedMilestone(m)) return `“${truncate(m.name, 40)}” comes from ${m.source === "p6" ? "Primavera P6" : m.source === "msproject" ? "MS Project" : "your scheduling tool"} — its dates are set there and the next import writes them back. Change them in the scheduling tool and re-import.`;
+    if (isLocked(nodeById.get(m.id))) return `“${truncate(m.name, 40)}” is done — completed work stays where it happened. Reopen it to reschedule.`;
+    return null;
+  }, [nodeById]);
 
   // A move requested by the UI, awaiting confirmation. Carries the
   // target ids (one, or the multi-selection) and the day delta.
@@ -470,14 +645,19 @@ export default function ExecutionView({
   const requestMove = useCallback((id: string, deltaDays: number) => {
     if (!canEdit || !onMoveMany || deltaDays === 0 || !id) return;
     const ids = selectedIds.has(id) && selectedIds.size > 1 ? Array.from(selectedIds) : [id];
+    // A single locked leaf (imported, or done) cannot move — say why instead
+    // of opening a sheet that would write nothing.
+    if (ids.length === 1 && (childrenOf.get(id) ?? []).length === 0) {
+      const why = lockReason(byId.get(id));
+      if (why) { notify(why, "warning"); return; }
+    }
     setPendingMove({ ids, deltaDays });
-  }, [canEdit, onMoveMany, selectedIds]);
+  }, [canEdit, onMoveMany, selectedIds, childrenOf, lockReason, byId, notify]);
 
-  // Apply a confirmed move (mode chosen in the sheet) to every target.
-  const commitMove = useCallback(async (mode: "defer" | "extend") => {
-    const pm = pendingMove;
-    setPendingMove(null);
-    if (!pm || !onMoveMany) return;
+  // The move exactly as it will be written, for a mode: the tree move of
+  // every target plus the cascade (PT SCH-4) — the sheet previews THIS and
+  // the commit writes THIS, so the two cannot disagree.
+  const changesFor = useCallback((pm: { ids: string[]; deltaDays: number }, mode: "defer" | "extend") => {
     const primary: DateChange[] = [];
     const seen = new Set<string>();
     for (const id of pm.ids) {
@@ -487,31 +667,33 @@ export default function ExecutionView({
         primary.push(c);
       }
     }
-    const all = withCascade(primary); // push dependents to honor FS links
-    if (all.length === 0) return;
-    // Snapshot each affected row's current dates so Undo can restore.
-    const before: DateChange[] = [];
-    for (const c of all) {
-      const m = byId.get(c.id);
-      if (!m) continue;
-      before.push({
-        id: c.id,
-        plannedStartAt: (m.plannedStartAt as string | undefined) ?? (m.plannedAt as string),
-        plannedAt: m.plannedAt as string,
-      });
-    }
-    setBusy((s) => { const n = new Set(s); for (const c of all) n.add(c.id); return n; });
-    try {
-      const ok = await onMoveMany(all);
-      if (ok) {
-        const n = pm.ids.length;
-        const word = mode === "extend" ? "Extended" : "Moved";
-        const what = n > 1 ? `${n} tasks` : `“${truncate(byId.get(pm.ids[0])?.name ?? "task")}”`;
-        announce(`${word} ${what}`, async () => { await onMoveMany(before); }, "default");
-      }
-    }
-    finally { setBusy((s) => { const n = new Set(s); for (const c of all) n.delete(c.id); return n; }); }
-  }, [pendingMove, onMoveMany, reflowNodes, byId, announce, withCascade]);
+    return withCascade(primary); // push dependents to honor FS links
+  }, [reflowNodes, withCascade]);
+
+  const planFor = useCallback((mode: "defer" | "extend"): MovePlan => {
+    if (!pendingMove) return { rows: [], held: [], refusal: null };
+    const p = changesFor(pendingMove, mode);
+    return {
+      rows: p.changes.map((c) => ({ id: c.id, name: byId.get(c.id)?.name ?? c.id, plannedAt: c.plannedAt, baselineFinishAt: (byId.get(c.id)?.baselineFinishAt as string | null | undefined) ?? null })),
+      held: p.held,
+      refusal: p.refusal,
+    };
+  }, [pendingMove, changesFor, byId]);
+
+  // Apply a confirmed move (mode chosen in the sheet) to every target.
+  const commitMove = useCallback(async (mode: "defer" | "extend") => {
+    const pm = pendingMove;
+    setPendingMove(null);
+    if (!pm || !onMoveMany) return;
+    const plan = changesFor(pm, mode);
+    if (plan.refusal) { notify(plan.refusal, "warning"); return; }
+    if (plan.changes.length === 0) { notify("Nothing moved — done and imported tasks stay where they are.", "warning"); return; }
+    const n = pm.ids.length;
+    const word = mode === "extend" ? "Extended" : "Moved";
+    const what = n > 1 ? `${n} tasks` : `“${truncate(byId.get(pm.ids[0])?.name ?? "task")}”`;
+    const extra = plan.changes.length > n ? ` · ${plan.changes.length} tasks written` : "";
+    await persistBatch(plan.changes, `${word} ${what}${extra}`);
+  }, [pendingMove, onMoveMany, changesFor, byId, notify, persistBatch]);
 
   // Move a node by N days. The engine shifts the node + its descendants
   // and bleeds every ancestor's span to envelope its children; we
@@ -525,61 +707,33 @@ export default function ExecutionView({
   // with an undo that restores the affected rows' prior dates.
   const resizeEdge = useCallback(async (id: string, edge: "start" | "finish", deltaDays: number) => {
     if (!canEdit || !onMoveMany || deltaDays === 0) return;
-    const changes = withCascade(computeEdgeResize(reflowNodes, id, edge, deltaDays));
-    if (changes.length === 0) return;
-    const before: DateChange[] = [];
-    for (const c of changes) {
-      const m = byId.get(c.id); if (!m) continue;
-      before.push({ id: c.id, plannedStartAt: (m.plannedStartAt as string | undefined) ?? (m.plannedAt as string), plannedAt: m.plannedAt as string });
-    }
-    setBusy((s) => { const n = new Set(s); for (const c of changes) n.add(c.id); return n; });
-    try {
-      const ok = await onMoveMany(changes);
-      if (ok) announce(`Resized “${truncate(byId.get(id)?.name ?? "task")}”`, async () => { await onMoveMany(before); }, "default");
-    } finally {
-      setBusy((s) => { const n = new Set(s); for (const c of changes) n.delete(c.id); return n; });
-    }
-  }, [canEdit, onMoveMany, reflowNodes, byId, announce, withCascade]);
+    const why = lockReason(byId.get(id));
+    if (why) { notify(why, "warning"); return; }
+    const plan = withCascade(computeEdgeResize(reflowNodes, id, edge, deltaDays));
+    if (plan.refusal) { notify(plan.refusal, "warning"); return; }
+    if (plan.changes.length === 0) return;
+    await persistBatch(plan.changes, `Resized “${truncate(byId.get(id)?.name ?? "task")}”${plan.changes.length > 1 ? ` · ${plan.changes.length} tasks written` : ""}`);
+  }, [canEdit, onMoveMany, reflowNodes, byId, withCascade, lockReason, notify, persistBatch]);
 
   // Resize a SUMMARY/parent edge → proportionally stretch its subtree
   // ("extend the overall project"). Same commit+undo shape as resizeEdge.
   const resizeSummaryEdge = useCallback(async (id: string, edge: "start" | "finish", deltaDays: number) => {
     if (!canEdit || !onMoveMany || deltaDays === 0) return;
-    const changes = withCascade(computeSummaryResize(reflowNodes, id, edge, deltaDays));
-    if (changes.length === 0) return;
-    const before: DateChange[] = [];
-    for (const c of changes) {
-      const m = byId.get(c.id); if (!m) continue;
-      before.push({ id: c.id, plannedStartAt: (m.plannedStartAt as string | undefined) ?? (m.plannedAt as string), plannedAt: m.plannedAt as string });
-    }
-    setBusy((s) => { const n = new Set(s); for (const c of changes) n.add(c.id); return n; });
-    try {
-      const ok = await onMoveMany(changes);
-      if (ok) announce(`Stretched “${truncate(byId.get(id)?.name ?? "phase")}” · ${changes.length} task${changes.length === 1 ? "" : "s"} rescaled`, async () => { await onMoveMany(before); }, "default");
-    } finally {
-      setBusy((s) => { const n = new Set(s); for (const c of changes) n.delete(c.id); return n; });
-    }
-  }, [canEdit, onMoveMany, reflowNodes, byId, announce, withCascade]);
+    const plan = withCascade(computeSummaryResize(reflowNodes, id, edge, deltaDays));
+    if (plan.refusal) { notify(plan.refusal, "warning"); return; }
+    if (plan.changes.length === 0) { notify("Nothing to stretch — the tasks in this phase are done or imported, so they stay where they are.", "warning"); return; }
+    await persistBatch(plan.changes, `Stretched “${truncate(byId.get(id)?.name ?? "phase")}” · ${plan.changes.length} task${plan.changes.length === 1 ? "" : "s"} written`);
+  }, [canEdit, onMoveMany, reflowNodes, byId, withCascade, notify, persistBatch]);
 
   // Chain a phase's direct children finish-to-start (sequential steps), with
   // one undo. The pure layout is in sequenceSiblings.
   const sequencePhase = useCallback(async (parentId: string) => {
     if (!canEdit || !onMoveMany) return;
-    const changes = withCascade(sequenceSiblings(reflowNodes, parentId));
-    if (changes.length === 0) { notify("These tasks are already in sequence.", "default"); return; }
-    const before: DateChange[] = [];
-    for (const c of changes) {
-      const m = byId.get(c.id); if (!m) continue;
-      before.push({ id: c.id, plannedStartAt: (m.plannedStartAt as string | undefined) ?? (m.plannedAt as string), plannedAt: m.plannedAt as string });
-    }
-    setBusy((s) => { const n = new Set(s); for (const c of changes) n.add(c.id); return n; });
-    try {
-      const ok = await onMoveMany(changes);
-      if (ok) announce(`Sequenced “${truncate(byId.get(parentId)?.name ?? "phase")}” end-to-end`, async () => { await onMoveMany(before); }, "default");
-    } finally {
-      setBusy((s) => { const n = new Set(s); for (const c of changes) n.delete(c.id); return n; });
-    }
-  }, [canEdit, onMoveMany, reflowNodes, byId, announce, notify, withCascade]);
+    const plan = withCascade(sequenceSiblings(reflowNodes, parentId));
+    if (plan.refusal) { notify(plan.refusal, "warning"); return; }
+    if (plan.changes.length === 0) { notify("These tasks are already in sequence.", "default"); return; }
+    await persistBatch(plan.changes, `Sequenced “${truncate(byId.get(parentId)?.name ?? "phase")}” end-to-end`);
+  }, [canEdit, onMoveMany, reflowNodes, byId, notify, withCascade, persistBatch]);
 
   const toggleCollapse = useCallback((id: string) => {
     setCollapsed((s) => { const n = new Set(s); if (n.has(id)) n.delete(id); else n.add(id); return n; });
@@ -602,8 +756,16 @@ export default function ExecutionView({
     const idx = Math.max(0, rows.findIndex((r) => r.ms.id === focusedId));
     const cur = rows[idx]?.ms;
     const move = (delta: number) => {
-      const next = rows[Math.min(rows.length - 1, Math.max(0, idx + delta))];
-      if (next?.ms.id) { setFocusedId(next.ms.id); document.getElementById(`exec-row-${next.ms.id}`)?.scrollIntoView({ block: "nearest" }); }
+      const at = Math.min(rows.length - 1, Math.max(0, idx + delta));
+      const next = rows[at];
+      if (!next?.ms.id) return;
+      setFocusedId(next.ms.id);
+      // The row may not be rendered (windowed, PT PERF-5): scroll by index.
+      const el = scrollRef.current;
+      if (el) {
+        const top = scrollTopToReveal({ index: at, scrollTop: el.scrollTop, viewportHeight: el.clientHeight, rowHeight: ROW_H, headerHeight: AXIS_H });
+        if (top != null) el.scrollTop = top;
+      }
     };
     switch (e.key) {
       case "ArrowDown": e.preventDefault(); move(focusedId == null ? 0 : 1); break;
@@ -622,12 +784,14 @@ export default function ExecutionView({
   const dragState = useRef<{ id: string; ms: Milestone; startX: number } | null>(null);
   const onBarPointerDown = useCallback((e: React.PointerEvent, ms: Milestone) => {
     // Completed work is an actual — it doesn't move. Reopen it to reschedule.
+    // An imported row's dates belong to the scheduling tool (PT SCH-13).
     if (!canEdit || !onMoveMany || !ms.id || ms.isSummary || ms.status === "completed") return;
+    if (isImportedMilestone(ms) || ms.actualAt) { notify(lockReason(ms) ?? "This task cannot be moved here.", "warning"); return; }
     e.preventDefault();
     (e.currentTarget as HTMLElement).setPointerCapture?.(e.pointerId);
     dragState.current = { id: ms.id, ms, startX: e.clientX };
     setDrag({ id: ms.id, deltaDays: 0 });
-  }, [canEdit, onMoveMany]);
+  }, [canEdit, onMoveMany, notify, lockReason]);
   const onBarPointerMove = useCallback((e: React.PointerEvent) => {
     const d = dragState.current;
     if (!d) return;
@@ -656,7 +820,10 @@ export default function ExecutionView({
     return () => window.removeEventListener("keydown", onKey);
   }, []);
 
-  const summaries = useMemo(() => items.filter((m) => m.isSummary && (childrenOf.get(m.id!) ?? []).length > 0), [items, childrenOf]);
+  // Phases a selection may be grouped under: not an imported one — its dates
+  // are the scheduling tool's and it would not follow tasks added here (PT
+  // SCH-13; groupTasksUnderParent refuses it too).
+  const summaries = useMemo(() => items.filter((m) => m.isSummary && (childrenOf.get(m.id!) ?? []).length > 0 && !isImportedMilestone(m)), [items, childrenOf]);
 
   // Ancestry chain for the detail panel breadcrumb (nearest parent first).
   const ancestorsOf = useCallback((m: Milestone): Milestone[] => {
@@ -700,12 +867,13 @@ export default function ExecutionView({
 
       <SchedulePulse
         milestones={items}
+        nowMs={nowMs}
         onShowOverdue={() => { setLayout("timeline"); setFilter((f) => ({ ...EMPTY_FILTER, overdueOnly: true, query: f.query })); }}
         onShowBlocked={() => { setLayout("timeline"); setFilter((f) => ({ ...EMPTY_FILTER, blockedOnly: true, query: f.query })); }}
       />
 
       <div className="flex items-center gap-2">
-        <SummaryStrip items={items} today={today} domain={domain} />
+        <SummaryStrip items={items} leaves={leaves} today={today} domain={domain} />
       </div>
 
       <div className="flex items-center gap-2 flex-wrap">
@@ -720,14 +888,24 @@ export default function ExecutionView({
             </button>
           ))}
         </div>
-        {layout === "timeline" && critical.ids.size > 0 && (
+        {layout === "timeline" && (critical.ids.size > 0 || loopCaveat) && (
           <button
             onClick={() => setShowCritical((v) => !v)}
-            title="Highlight the unfinished tasks driving the finish date"
-            className={`inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs font-bold border transition-colors ${showCritical ? "bg-rose-600 text-white border-rose-600" : "bg-[var(--color-surface)] text-rose-700 border-rose-200 hover:border-rose-400"}`}
+            disabled={critical.ids.size === 0}
+            aria-pressed={criticalOn}
+            title={(critical.ids.size === 0
+              ? `No critical path to highlight: ${noPathReason}`
+              : critical.linked
+                ? `Highlight the critical path: the unfinished tasks on the chain of finish-to-start links that drives the finish date (${criticalCalendar} — no holiday calendar)`
+                : "No dependency links yet, so only the unfinished tasks that end at the finish date are highlighted — add links to see the chain that drives it")
+              + (loopCaveat && critical.ids.size > 0 ? `. ${loopCaveat} — remove one of those links to see where they fall` : "")}
+            className={`inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs font-bold border transition-colors disabled:opacity-60 disabled:cursor-not-allowed ${criticalOn ? "bg-rose-600 text-white border-rose-600" : "bg-[var(--color-surface)] text-rose-700 border-rose-200 hover:border-rose-400"}`}
           >
             <Zap className="w-3.5 h-3.5" /> Critical path
           </button>
+        )}
+        {layout === "timeline" && loopCaveat && (criticalOn || critical.ids.size === 0) && (
+          <span className="text-[11px] text-[var(--color-text-muted)]">{loopCaveat}</span>
         )}
       </div>
 
@@ -761,7 +939,7 @@ export default function ExecutionView({
       )}
 
       {layout === "report" ? (
-        <ExecutionReportView milestones={items} />
+        <ExecutionReportView milestones={items} orgId={orgId} projectId={projectId} nowMs={nowMs} />
       ) : layout === "calendar" ? (
         <ScheduleCalendarTileView
           milestones={visibleItems}
@@ -804,6 +982,7 @@ export default function ExecutionView({
           ref={scrollRef}
           tabIndex={0}
           onKeyDown={onTimelineKeyDown}
+          onScroll={onTimelineScroll}
           className="overflow-auto relative outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-accent-ring)]/40 rounded-b-2xl"
           style={{ maxHeight: "70vh" }}
         >
@@ -813,7 +992,10 @@ export default function ExecutionView({
               <div className="sticky top-0 z-10 bg-slate-50/95 backdrop-blur border-b border-[var(--color-border)] flex items-center px-3 text-[10px] font-black uppercase tracking-widest text-[var(--color-text-muted)]" style={{ height: AXIS_H }}>
                 <ListTree className="w-3.5 h-3.5 mr-1.5 text-[var(--color-accent)]" /> Work breakdown
               </div>
-              {rows.map((r) => (
+              {/* Windowed (PT PERF-5): only the rows in view are rendered; a
+                  spacer above and below keeps every row where it was. */}
+              <div style={{ height: win.start * ROW_H }} aria-hidden />
+              {windowRows.map((r) => (
                 <OutlineRow
                   key={r.ms.id}
                   row={r}
@@ -833,6 +1015,7 @@ export default function ExecutionView({
                   onSequence={() => r.ms.id && void sequencePhase(r.ms.id)}
                 />
               ))}
+              <div style={{ height: (rows.length - win.end) * ROW_H }} aria-hidden />
             </div>
 
             {/* ── Timeline column ── */}
@@ -846,11 +1029,11 @@ export default function ExecutionView({
                   <div className="absolute -top-0 -left-[3px] w-[7px] h-[7px] rounded-full bg-rose-500 shadow" />
                 </div>
               )}
-              {rows.map((r, i) => (
+              {windowRows.map((r, j) => (
                 <Bar
                   key={r.ms.id}
                   row={r}
-                  top={AXIS_H + i * ROW_H}
+                  top={AXIS_H + (win.start + j) * ROW_H}
                   domain={domain}
                   pxPerDay={pxPerDay}
                   canEdit={canEdit}
@@ -865,7 +1048,7 @@ export default function ExecutionView({
                     else void resizeEdge(r.ms.id, edge, d);
                   }}
                   onOpenDetail={() => r.ms.id && setDetailId(r.ms.id)}
-                  critical={showCritical ? (r.ms.id ? critical.ids.has(r.ms.id) : false) : null}
+                  critical={criticalOn ? (r.ms.id ? critical.ids.has(r.ms.id) : false) : null}
                   color={colors.colorOf(r.ms)}
                 />
               ))}
@@ -873,7 +1056,7 @@ export default function ExecutionView({
           </div>
         </div>
 
-        <Legend />
+        <Legend calendarLabel={criticalCalendar} />
       </div>
       )}
 
@@ -881,6 +1064,7 @@ export default function ExecutionView({
         <MovePreviewSheet
           targets={pendingMove.ids.map((id) => byId.get(id)).filter((m): m is Milestone => !!m)}
           deltaDays={pendingMove.deltaDays}
+          planFor={planFor}
           onCancel={() => setPendingMove(null)}
           onConfirm={(mode) => void commitMove(mode)}
         />
@@ -891,6 +1075,7 @@ export default function ExecutionView({
           milestone={byId.get(detailId)!}
           subtasks={(childrenOf.get(detailId) ?? []).slice().sort(cmpMilestone)}
           allTasks={items}
+          hiddenIds={hiddenIds}
           childCount={(id) => (childrenOf.get(id) ?? []).length}
           ancestors={ancestorsOf(byId.get(detailId)!)}
           canEdit={canEdit}
@@ -938,17 +1123,20 @@ function statusWord(s: MilestoneStatus): string {
 
 // ─── Summary strip ─────────────────────────────────────────────
 
-function SummaryStrip({ items, today, domain }: {
-  items: Milestone[]; today: Date;
+// Memoised, and handed the leaf list the parent computes once per data change:
+// the O(n²) `items.some(…)` leaf scan used to run on every render — every drag
+// frame included (PT PERF-5).
+const SummaryStrip = React.memo(function SummaryStrip({ items, leaves, today, domain }: {
+  items: Milestone[]; leaves: Milestone[]; today: Date;
   domain: { start: Date; end: Date; totalDays: number };
 }) {
-  const leaves = items.filter((m) => !items.some((c) => c.parentId === m.id));
   const total = leaves.length;
   const done = leaves.filter((m) => m.status === "completed").length;
   const inProg = leaves.filter((m) => m.status === "in_progress").length;
-  const overdue = leaves.filter((m) => m.status !== "completed" && finishMs(m) < today.getTime()).length;
-  // Duration-weighted earned %, counting partial progress — not a flat done/total.
-  const pct = overallPercent(items);
+  // The one overdue rule (PT SCH-5): the pulse above and this strip read the same predicate.
+  const overdue = leaves.filter((m) => isOverdueMilestone({ planned_at: m.plannedAt as string, status: m.status }, today.getTime())).length;
+  // Weighted earned %, counting partial progress — not a flat done/total.
+  const pct = useMemo(() => overallPercent(items), [items]);
   const elapsed = Math.max(0, Math.min(domain.totalDays, dayDiff(domain.start, today)));
 
   return (
@@ -967,7 +1155,7 @@ function SummaryStrip({ items, today, domain }: {
       <Stat label="Schedule day" value={`${elapsed} / ${domain.totalDays}`} tone="slate" />
     </div>
   );
-}
+});
 
 function Stat({ label, value, tone }: { label: string; value: number | string; tone: "blue" | "rose" | "slate" }) {
   const c = tone === "blue" ? "text-blue-600" : tone === "rose" ? "text-rose-600" : "text-[var(--color-text)]";
@@ -1153,7 +1341,7 @@ function OutlineRow({
         // Leaf: editable % complete.
         <ProgressControl percent={pct} onPick={onSetProgress} disabled={!canEdit} onDisabledClick={onViewOnly} busy={busy} size="sm" />
       )}
-      {canEdit && !ms.isSummary && (
+      {canEdit && !ms.isSummary && !isImportedMilestone(ms) && (
         <button onClick={onSetDuration} title="Set duration" className="shrink-0 p-1 rounded text-slate-300 hover:text-[var(--color-text)] hover:bg-[var(--color-surface-2)] opacity-60 sm:opacity-0 group-hover:opacity-100 transition-opacity">
           <CalendarRange className="w-3.5 h-3.5" />
         </button>
@@ -1224,7 +1412,9 @@ function Bar({
   const pct = row.pct;
   const tone = statusTone(ms.status);
   // Completed leaves are locked (actuals) — no drag, nudge, or resize handles.
-  const draggable = canEdit && !ms.isSummary && ms.status !== "completed";
+  // So are imported rows: their dates belong to the scheduling tool (PT SCH-13).
+  const imported = isImportedMilestone(ms);
+  const draggable = canEdit && !ms.isSummary && ms.status !== "completed" && !ms.actualAt && !imported;
   // MS Project milestones (zero-duration markers) render as a diamond, not a bar.
   const isMilestonePoint = (ms.attributes as Record<string, unknown> | null | undefined)?.milestone === "1";
   // If the bar is too narrow to hold its name (~6.2px per char + icon
@@ -1235,7 +1425,7 @@ function Bar({
   // Summary tasks render as a slim bracket; leaves as a solid bar with
   // a progress fill. Milestones (zero-width spans) get a diamond.
   if (ms.isSummary || hasChildren) {
-    const summaryResizable = canEdit;
+    const summaryResizable = canEdit && !imported;
     return (
       <div
         className={`absolute group/bar flex items-center transition-opacity ${dimmed ? "opacity-25" : ""} ${resize ? "z-20" : ""}`}
@@ -1302,7 +1492,7 @@ function Bar({
         onPointerUp={onPointerUp}
         style={draggable ? { touchAction: "none" } : undefined}
         className={`relative w-full h-full rounded-md border ${tone.border} ${tone.bar} shadow-sm overflow-hidden ${draggable ? "cursor-grab active:cursor-grabbing" : ""} ${dragDelta !== 0 || resize ? "ring-2 ring-[var(--color-accent-ring)] z-20" : onPath ? "ring-2 ring-rose-500 ring-offset-1" : ""}`}
-        title={`${ms.name}\n${fmtDateUTC(start)} → ${fmtDateUTC(finish)}${dragDelta ? `\nmove ${dragDelta > 0 ? "+" : ""}${dragDelta}d` : ""}${resize ? `\nresize ${resize.days > 0 ? "+" : ""}${resize.days}d` : ""}`}
+        title={`${ms.name}\n${fmtDateUTC(start)} → ${fmtDateUTC(finish)}${imported ? `\nImported (${ms.source}) — dates are set in the scheduling tool` : ""}${dragDelta ? `\nmove ${dragDelta > 0 ? "+" : ""}${dragDelta}d` : ""}${resize ? `\nresize ${resize.days > 0 ? "+" : ""}${resize.days}d` : ""}`}
       >
         {/* Group-hue cap on the left edge — a quiet identity marker that
             ties the leaf to its phase without overriding the status fill. */}
@@ -1473,7 +1663,7 @@ function DependencyArrows({ rows, byId, domain, pxPerDay }: {
 
 // ─── Status affordances ────────────────────────────────────────
 
-function Legend() {
+function Legend({ calendarLabel }: { calendarLabel: string }) {
   const entries: Array<[MilestoneStatus, string]> = [
     ["planned", "Planned"], ["in_progress", "In progress"], ["completed", "Done"], ["on_hold", "On hold"], ["blocked", "Blocked"], ["missed", "Missed"],
   ];
@@ -1500,7 +1690,7 @@ function Legend() {
         <span className="inline-flex items-center gap-1.5 text-[10px] text-[var(--color-text-muted)]" title="A milestone — a zero-duration marker">
           <span className="w-2.5 h-2.5 rotate-45 bg-slate-700 border border-white" /> Milestone
         </span>
-        <span className="inline-flex items-center gap-1.5 text-[10px] text-[var(--color-text-muted)]" title="On the critical path — drives the finish date">
+        <span className="inline-flex items-center gap-1.5 text-[10px] text-[var(--color-text-muted)]" title={`On the critical path — the chain of finish-to-start links that drives the finish date (${calendarLabel}, no holiday calendar; a task with no links counts only if it ends at the finish)`}>
           <span className="w-3 h-2.5 rounded-sm bg-slate-300 ring-2 ring-rose-500 ring-offset-1" /> Critical path
         </span>
         <span className="inline-flex items-center gap-1.5 text-[10px] text-[var(--color-text-muted)]" title="Finish-to-start dependency between linked tasks">

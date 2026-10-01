@@ -61,15 +61,15 @@ Work these in order. The numbering reflects priority, not just grouping —
 | # | Report | Findings | CRIT | Progress |
 |---|---|---|---|---|
 | 01 | [Security & access](./01-security-access.md) | 20 | 4 | 15 / 20 |
-| 02 | [Safety, compliance & the record](./02-safety-compliance.md) | 17 | 3 | 14 / 17 |
+| 02 | [Safety, compliance & the record](./02-safety-compliance.md) | 17 | 3 | 15 / 17 |
 | 03 | [Money & the ledger](./03-money-ledger.md) | 12 | 0 | 7 / 12 |
 | 04 | [Bid tabulation & the award decision](./04-bid-tabulation.md) | 12 | 2 | 11 / 12 |
 | 05 | [Charts & the printed RFQ](./05-charts-and-rfq.md) | 8 | 0 | 6 / 8 |
-| 06 | [Schedule engine](./06-schedule-engine.md) | 18 | 5 | 6 / 18 |
+| 06 | [Schedule engine](./06-schedule-engine.md) | 18 | 5 | 18 / 18 |
 | 07 | [Truth in the interface](./07-interface-truth.md) | 16 | 1 | 11 / 16 |
 | 08 | [Reliability & failure modes](./08-reliability.md) | 11 | 0 | 7 / 11 |
 | 09 | [Performance & scale](./09-performance-scale.md) | 11 | 0 | 2 / 11 |
-| 10 | [Accessibility, mobile & dark mode](./10-accessibility-mobile.md) | 13 | 2 | 3 / 13 |
+| 10 | [Accessibility, mobile & dark mode](./10-accessibility-mobile.md) | 13 | 2 | 4 / 13 |
 | — | [Upload door — recommended controls](./11-upload-door-controls.md) | design note | — | — |
 
 Report `11` is not a findings list. It is the control set requested for the
