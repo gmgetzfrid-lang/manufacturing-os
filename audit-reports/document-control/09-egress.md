@@ -419,13 +419,14 @@ app/api/transmittal/route.ts:71-74 issues a bare GetObjectCommand presign — no
 - [ ] If an unstamped as-sent original is genuinely required for some transmittal purposes, it is an explicit per-transmittal flag with its own audit reason — not the default for every external download
 
 **Resolution (2026-10-01, document-control Round F wave 2).** The same defect as `TRX-5`, closed by the same change (see TRX-5 / TRX-9 in `06-transmittals.md`): `/api/transmittal?file=` pulls the as-sent bytes server-side and streams them; a PDF is stamped with `applyStampToPdfDoc` — `UNCONTROLLED — TRANSMITTAL COPY`, the as-issued rev and transmittal number in the footer, a `/verify` QR bound to the exact version served — and a non-stampable file goes out through the route recorded as unstamped. Every pull writes a `download_audits` row (user_id NULL, `transmittal_id`, `version_id`, `source: "transmittal_portal"`) BEFORE the bytes leave, so external copies appear in the distribution record and in `lib/staleCopies.ts` recall; a refused write refuses the download.
-- Tests: `lib/__tests__/transmittalPortalRoute.test.ts` (TRX-5 / EGR-8 and TRX-9 blocks); `presignedLifetime.test.ts` / `presignedDisposition.test.ts` (the portal no longer presigns).
+- Fix pass (see TRX-5's "Size" block): the response is now a streamed body in 1 MiB chunks (the first cut returned one buffered body, which the platform caps at ~4.5 MB — a large drawing set would not arrive), `maxDuration` is 300 s, and a file over 64 MiB is hashed chunk by chunk, re-read pinned to the verified ETag (`If-Match`) and piped through unstamped, recorded `transmittal_portal_unstamped` with `unstampedReason: "oversize"`.
+- Tests: `lib/__tests__/transmittalPortalRoute.test.ts` (TRX-5 / EGR-8 and TRX-9 blocks; fix pass: the "size — a streamed body …" block); `presignedLifetime.test.ts` / `presignedDisposition.test.ts` (the portal no longer presigns).
 
 **Done-when.**
-- ✓ The portal streams bytes through the same server-side stamping path as `/api/share/file` (`applyStampToPdfDoc`, the as-sent rev in the footer, a `/verify` QR), rather than presigning the object.
+- ✓ The portal streams bytes through the same server-side stamping path as `/api/share/file` (`applyStampToPdfDoc`, the as-sent rev in the footer, a `/verify` QR), rather than presigning the object — every PDF up to 64 MiB is stamped (stated bound, DEC-60 §5).
 - ✓ A `download_audits` row is written for every portal pull.
-- ✓ No unstamped-original mode exists, so none is the default; if one is ever required it is a per-transmittal flag with its own audit reason (not built — no requirement stated).
+- ✓ No per-transmittal unstamped-original mode exists, so none is the default. The only unstamped deliveries are files that cannot be stamped — not a PDF, a stamp that fails, or (fix pass) a PDF over the 64 MiB bound — each recorded `transmittal_portal_unstamped` with its reason, never chosen per transmittal.
 
-**Scope / residual.** None.
+**Scope / residual.** A delivery lives within the function's 300 s budget (the presigned link had no limit); a very large file to a slow connection can be cut off mid-transfer — recorded, retryable. Confirm one portal download over 4.5 MB on the deployment (the platform's streamed-response behaviour).
 
 ---
