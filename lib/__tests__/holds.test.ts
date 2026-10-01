@@ -260,6 +260,15 @@ describe("HLD-10 / HLD-5 — releaseHold: reason required, DB-written audit not 
     expect(e.audience.followers).toBe(true);
     expect(e.audience.roles).toBeUndefined();
   });
+  it("VFY-6 (P15): the app's HOLD_RELEASED row carries the hold's notes beside its unchanged reason, so a custom (Other) hold is named by its description", async () => {
+    state.rows.document_holds = [openHoldRow({ reason: "Other", notes: "waiting on vendor weld map" })];
+    await release();
+    expect(audit.logHoldEvent).toHaveBeenCalledTimes(1);
+    expect(audit.logHoldEvent.mock.calls[0][0]).toMatchObject({
+      type: "HOLD_RELEASED", reason: "Other",
+      details: { releasedReason: "Vendor data received", notes: "waiting on vendor weld map" },
+    });
+  });
   it("20261073 database: the guard stamps release_recorded_at and the app writes NO second audit row; the guard's attribution wins", async () => {
     state.rows.document_holds = [openHoldRow()];
     state.onWrite = (table, op, row) => {

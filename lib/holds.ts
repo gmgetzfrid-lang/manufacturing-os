@@ -377,7 +377,9 @@ export async function releaseHold(input: ReleaseHoldInput): Promise<HoldRecord> 
       userRole: input.releasedByRole,
       type: "HOLD_RELEASED",
       reason: row.reason,
-      details: { releasedReason: row.released_reason, durationMs: durationMs(row.opened_at, row.released_at) },
+      // VFY-6 (P15): `notes` (an "Other" hold's description) beside `reason`,
+      // so the record names a custom hold by what it was for — additive.
+      details: { releasedReason: row.released_reason, durationMs: durationMs(row.opened_at, row.released_at), notes: row.notes },
     });
   }
 
