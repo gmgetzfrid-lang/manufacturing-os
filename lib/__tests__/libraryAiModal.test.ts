@@ -72,6 +72,21 @@ async function clickSave() {
   await act(async () => { await Promise.resolve(); });
 }
 
+describe("HUB-1 done-when 2 — a partial payload can never erase a stored key", () => {
+  it("every stored key the modal does not render is carried forward; a cleared field is cleared", async () => {
+    await open(libraryOf({ drawingIntel: true, decoder: "20 = Crude", futureToggle: true } as unknown as KnowledgeLibrary["aiFeatures"]));
+    const ta = [...host.querySelectorAll("textarea")].find((t) => t.value === "20 = Crude") as HTMLTextAreaElement;
+    const setter = Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, "value")!.set!;
+    await act(async () => { setter.call(ta, "   "); ta.dispatchEvent(new Event("input", { bubbles: true })); });
+    await clickSave();
+    const payload = (kn.saveLibraryAiFeatures.mock.calls[0] as unknown as [string, Record<string, unknown>])[1];
+    expect(payload.futureToggle).toBe(true);
+    expect(payload.drawingIntel).toBe(true);
+    // cleared → undefined, which the JSON body drops: the replace removes it
+    expect(JSON.parse(JSON.stringify(payload))).not.toHaveProperty("decoder");
+  });
+});
+
 describe("HUB-1 — the Drawing Intelligence checkbox survives Save", () => {
   it("ticking the box and saving hands drawingIntel: true to saveLibraryAiFeatures", async () => {
     await open(libraryOf({}));

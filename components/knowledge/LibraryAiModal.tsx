@@ -84,6 +84,10 @@ export default function LibraryAiModal({ library, orgId, open, onClose, onSaved 
     try {
       await saveLibraryAiInstructions(library.id, instructions);
       await saveLibraryAiFeatures(library.id, {
+        // HUB-1: the COMPLETE object — saveLibraryAiFeatures replaces the
+        // toggles as a set, so every stored key this modal does not render
+        // is carried forward rather than erased by a partial payload.
+        ...(library.aiFeatures ?? {}),
         clarifyFacets, visionPages, visionAllPages, drawingIntel,
         decoder: decoder.trim() || undefined,
         legendDocIds: legendDocIds.size > 0 ? [...legendDocIds].slice(0, 3) : undefined,
@@ -221,8 +225,8 @@ export default function LibraryAiModal({ library, orgId, open, onClose, onSaved 
                   <b> Leave it OFF for normal PDFs</b> — standards, specs and manuals with real
                   text extract fine, and their tables and figures are already handled (tables
                   index intact, and referenced figures are read from the page image at answer
-                  time). Costs a few cents per page on your key. Turn it on, then
-                  <b> Rebuild index</b>.
+                  time). Costs a few cents per page on your key. Turn it on, then run
+                  <b> Re-index all</b> in the Documents header.
                 </span>
               </span>
             </label>

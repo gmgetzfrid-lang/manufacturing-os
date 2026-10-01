@@ -237,7 +237,8 @@ export default function Sidebar({
         label: 'Drafting Requests', hint: 'Drafting & design request portal', href: '/requests', icon: MailPlus, tone: 'orange',
         ...badgeOf(sectionCounts.requests),
       },
-      { label: 'Intelligence', hint: 'AI in one place — ask, knowledge, graph, link review, setup', href: '/intelligence', icon: Bot, tone: 'violet' },
+      // HUB-4: the hint names every Intelligence tab — derived, so it cannot drift.
+      { label: 'Intelligence', hint: `AI in one place — ${INTELLIGENCE_VIEWS.map((v) => v.label).join(' · ')}`, href: '/intelligence', icon: Bot, tone: 'violet' },
       { label: 'Output Docs', hint: 'Generate scopes & letters from templates + data', href: '/output-templates', icon: FileOutput, tone: 'orange' },
       { label: 'Activity',    hint: 'History + audit log',                             href: '/activity',     icon: Activity, tone: 'emerald' },
     ];
@@ -267,6 +268,8 @@ export default function Sidebar({
       { label: 'Permissions',       href: '/admin/permissions', icon: KeyRound,   tone: 'amber'   },
       { label: 'Operational scope', href: '/admin/scope',       icon: Factory,    tone: 'emerald' },
       { label: 'Site codebook',     href: '/admin/codebook',    icon: BookMarked, tone: 'violet'  },
+      // HUB-6: the standing instructions folded into every AI prompt.
+      { label: 'AI instructions',   href: '/admin/ai-instructions', icon: Bot,    tone: 'violet'  },
       { label: 'Analytics',         href: '/admin/analytics',   icon: BarChart3,  tone: 'violet'  },
       { label: 'Audit log',         href: '/admin/audit',       icon: ScrollText, tone: 'rose'    },
       { label: 'Storage & Backup',  href: '/admin/storage',     icon: Gauge,      tone: 'amber'   },

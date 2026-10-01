@@ -52,6 +52,15 @@ export default function KnowledgePage() {
   }, [activeOrgId]);
   useEffect(() => { void refresh(); }, [refresh]);
 
+  // HUB-5: the Overview's "Create a library" fix lands on the control —
+  // /knowledge?create=1 opens the create dialog for those who can create.
+  useEffect(() => {
+    if (!isController) return;
+    try {
+      if (new URLSearchParams(window.location.search).get("create") === "1") setShowCreate(true);
+    } catch { /* no location */ }
+  }, [isController]);
+
   const create = async () => {
     if (!activeOrgId || !uid || !name.trim()) return;
     setCreating(true);

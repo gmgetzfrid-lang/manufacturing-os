@@ -102,15 +102,20 @@ export const FEATURE_ATLAS: AtlasEntry[] = [
     aliases: ["skills", "skill studio", "reasoning skills", "connection skills", "detectors", "basis of design", "shift handover", "plain language"],
   },
   {
-    label: "AI settings", href: "/intelligence/setup", area: "intelligence",
+    label: "AI setup", href: "/intelligence/setup", area: "intelligence",
     blurb: "Your own AI key, provider, spend caps, and the acceptable-use agreement.",
-    aliases: ["ai key", "api key", "openai", "claude", "anthropic", "budget", "cap", "provider", "ai setup"],
+    aliases: ["ai key", "api key", "openai", "claude", "anthropic", "budget", "cap", "provider", "ai setup", "ai settings"],
   },
   // ── Admin ──────────────────────────────────────────────────────────────
   {
     label: "Facility setup", href: "/setup", area: "admin",
     blurb: "The resumable setup navigator — live counts across every subsystem, flagged where to continue. Launch it any time; it knows where you left off.",
     aliases: ["setup", "onboarding", "getting started", "wizard", "continue setup", "what now", "next step"],
+  },
+  {
+    label: "AI instructions (playbooks)", href: "/admin/ai-instructions", area: "admin",
+    blurb: "Standing instructions the workspace teaches its AI once — folded into every answer, extraction and import ('our drawing types never include vendor codes').",
+    aliases: ["playbook", "playbooks", "house rules", "standing instructions", "tell the ai", "teach the ai", "ai instructions", "org instructions", "ai rules"],
   },
   {
     label: "Site Codebook", href: "/admin/codebook", area: "admin",
