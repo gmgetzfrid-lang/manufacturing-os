@@ -248,7 +248,8 @@ export async function GET(req: NextRequest) {
     closed,
     printedAt,
     snapshotMissing,
-    printConfirmed,
+    // The QR named a print record AND it was found.
+    printConfirmed: printConfirmed && !snapshotMissing,
     sheetCount: sheets.length,
     staleCount,
     heldCount,

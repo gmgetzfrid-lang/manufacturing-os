@@ -133,6 +133,7 @@ describe("/api/verify-package snapshot (PKG-2)", () => {
     state.print = null; // unknown print
     const r = await verify(true);
     expect(r.snapshotMissing).toBe(true);
+    expect(r.printConfirmed).toBe(false);
     expect(r.verdict).toBe("unverifiable");
     expect(r.allFresh).toBe(false);
   });

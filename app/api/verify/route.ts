@@ -27,6 +27,7 @@ import { effectiveStatusFor } from "@/lib/effectiveDate";
 import { publicHoldReason } from "@/lib/holds";
 import { checkVerifyRate, clientIp, verifyJson, verifyRateLimitedResponse } from "@/lib/verifyRateLimit";
 import { recordVerifyScan } from "@/lib/verifyScanLog";
+import type { DocVerdict } from "@/lib/verifyPresent";
 
 // A revision verdict is never prerendered or cached (VFY-13; OFF-1 dw3).
 export const dynamic = "force-dynamic";
@@ -35,11 +36,6 @@ const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL || process.env.SUPABASE
 const serviceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY || "";
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
-
-export type VerifyVerdict =
-  | "current" | "not_yet_effective" | "held"
-  | "superseded" | "void" | "archived" | "retired" | "draft" | "not_issued"
-  | "superseded_version" | "unverifiable";
 
 // VFY-14: the rows are typed to exactly the columns selected, and the select
 // names only what the verdict or the response uses — a spread of one of
@@ -167,7 +163,7 @@ export async function GET(req: NextRequest) {
   // stays for back-compat (older clients read only that boolean) and is true
   // ONLY for the plain in-force case.
   const standing = documentStanding(d.status);
-  let verdict: VerifyVerdict;
+  let verdict: DocVerdict;
   if (onHold) verdict = "held";
   else if (standing === "void") verdict = "void";
   else if (standing === "archived") verdict = "archived";
