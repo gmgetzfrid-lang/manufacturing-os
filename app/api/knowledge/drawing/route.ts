@@ -63,8 +63,9 @@ import {
 import { loadCodebookAdmin, codebookToDecoderText } from "@/lib/codebookServer";
 import {
   verdictsForSheets, verdictRows, sheetsNeedingAudit, seriesHeldBySet, seriesNotJudged,
-  missingWithinHeldSeries, replaceDecision, storedProvisional, mergeVerdictsByKey, indexFingerprint, verdictBasis, digest,
-  type AuditSheet,
+  missingWithinHeldSeries, missingUnreadInScope, replaceDecision, storedProvisional, mergeVerdictsByKey, awaitingFiled,
+  capWaitingOn, indexFingerprint, verdictBasis, digest, WAITING_NAMES_MAX,
+  type AuditSheet, type SheetVerdict,
 } from "@/lib/drawingAuditLog";
 
 export const runtime = "nodejs";
@@ -381,18 +382,36 @@ function forNowIncomplete(docs: readonly DocRow[], incomplete: ReadonlyMap<strin
 }
 
 /** Of those, the documents still being READ — parked on AI vision, or in
- *  flight — and so the ones that may yet hold ANY sheet the set is missing
- *  (auditDrawingRefs / auditOpcBoxes `inProgress`): what such a document has
- *  declared so far says nothing about the pages it has yet to read (review
- *  fix pass 6). A FAILED document is not among them: it is read again only
- *  when a person re-indexes it, so a sheet missing from the set never waits
- *  on it — it may hold one only by the settled rule (a sheet of its own
- *  drawing, of a series it declares two drawings of, or anything when its
- *  number was never read), and that finding is settled, an unchecked
- *  `flagged`. A finding about the failed document ITSELF (a box or a
- *  reference back not found on it) still waits on it, named with why. */
+ *  flight — and so the ones a missing sheet they may hold waits on (review
+ *  fix pass 6; which sheets each may hold is inFlightOf's, review fix pass
+ *  7). A FAILED document is not among them: it is read again only when a
+ *  person re-indexes it, so a sheet missing from the set never waits on it
+ *  — it may hold one only by the settled rule (a sheet of its own drawing,
+ *  of a series it declares two drawings of, or anything when its number was
+ *  never read), and that finding is settled, an unchecked `flagged`. A
+ *  finding about the failed document ITSELF (a box or a reference back not
+ *  found on it, or a connector into a destination no document declares that
+ *  it may be — its title block cleared by a rebuild — review fix pass 7)
+ *  still waits on it, named with why. */
 function stillBeingRead(docs: readonly DocRow[], forNow: ReadonlySet<string>): Set<string> {
   return new Set(docs.filter((d) => forNow.has(d.id) && d.status !== "error").map((d) => d.id));
+}
+
+/** Of those, the documents IN FLIGHT — the ones that may hold ANY sheet the
+ *  set is missing (auditDrawingRefs / auditOpcBoxes `inProgress`): queued,
+ *  mid-read, stale, or parked with no unread page known yet (a failed
+ *  batch's back-off), and a parked document whose title block has not been
+ *  read (reset by a rebuild, or never numbered). A parked document whose
+ *  number is declared and whose unread pages are known is not: it may wait
+ *  on AI vision until next month under a cap, or for good in a keyless
+ *  library, and while it may hold anything every real gap in the library —
+ *  in any series — waited on it all that time (review fix pass 7). It holds
+ *  by the settled rule (its own drawing, a series it declares two drawings
+ *  of), and what it holds still waits on it. */
+function inFlightOf(docs: readonly DocRow[], beingRead: ReadonlySet<string>, selfByDoc: ReadonlyMap<string, string[]>): Set<string> {
+  return new Set(docs
+    .filter((d) => beingRead.has(d.id) && ((d.vision_failed_pages ?? []).length === 0 || (selfByDoc.get(d.id) ?? []).length === 0))
+    .map((d) => d.id));
 }
 
 /** Index maps the census, audit and readout share. */
@@ -478,11 +497,14 @@ export async function GET(req: NextRequest) {
   // Sheets not read whole: their silence is not evidence — the SAME rule the
   // record applies (review fix pass 4).
   const incomplete = notReadWhole(docs);
-  // …and those still being read may hold any sheet the set is missing — the
-  // SAME rule the record applies (review fix pass 6).
-  const inProgress = stillBeingRead(docs, forNowIncomplete(docs, incomplete));
+  // …those in flight may hold any sheet the set is missing, and a sheet
+  // that one still being read may hold is unchecked whatever the held
+  // series — the SAME rules the record applies (review fix passes 6 and 7).
+  const forNow = forNowIncomplete(docs, incomplete);
+  const beingRead = stillBeingRead(docs, forNow);
+  const inFlight = inFlightOf(docs, beingRead, selfByDoc);
   const refAudit = auditDrawingRefs(
-    docs.map((d) => ({ id: d.id, name: d.name })), refsByDoc, selfByDoc, unitMap, incomplete, inProgress,
+    docs.map((d) => ({ id: d.id, name: d.name })), refsByDoc, selfByDoc, unitMap, incomplete, inFlight,
   );
   // A gap is judged only inside a series this library holds — the SAME rule
   // the record applies (DWG-6), so the lens never calls "a gap in the set"
@@ -491,13 +513,14 @@ export async function GET(req: NextRequest) {
   const notJudged = seriesNotJudged(identities);
   const held = seriesHeldBySet(identities);
   // The referencing sheets are listed to six on screen; the record takes
-  // every one (review fix pass 5), and the lens never ships the whole list.
+  // every one (review fix pass 5), and the lens never ships the whole list —
+  // nor every document that may hold a sheet (review fix pass 7).
   const audit = {
     ...refAudit,
     missingInSeries: missingWithinHeldSeries(refAudit.missingInSeries, held)
       .map(({ referencedByAll: _all, ...m }) => m),
-    missingUnread: missingWithinHeldSeries(refAudit.missingUnread, held)
-      .map(({ referencedByAll: _all, ...m }) => m),
+    missingUnread: missingUnreadInScope(refAudit.missingUnread, held, beingRead)
+      .map(({ referencedByAll: _all, ...m }) => ({ ...m, maybeInIds: m.maybeInIds.slice(0, WAITING_NAMES_MAX) })),
   };
 
   // ── OPC box pairing (best-effort) ──────────────────────────────────────
@@ -506,10 +529,11 @@ export async function GET(req: NextRequest) {
   // page whose title block and box numbers were both never read may be it
   // (review fix pass 6).
   const pageCounts = new Map(docs.map((d) => [d.id, Number(d.page_count ?? 0)]));
-  const opc = auditOpcBoxes(index.opc, selfByDoc, nameById, incomplete, selfPages, { pageCounts, inProgress });
+  const opc = auditOpcBoxes(index.opc, selfByDoc, nameById, incomplete, selfPages, { pageCounts, inProgress: inFlight, forNow });
   const {
-    boxCount: opcBoxCount, unreturned: opcUnreturned, unpaired: opcUnpaired, noRef: opcNoRef, unknown: opcUnknown,
+    boxCount: opcBoxCount, unreturned: opcUnreturned, unknown: opcUnknown, noRef: opcNoRef,
   } = opc;
+  const opcUnpaired = opc.unpaired.map((u) => (u.maybeInIds ? { ...u, maybeInIds: u.maybeInIds.slice(0, WAITING_NAMES_MAX) } : u));
 
   const text: TextRead = docs.length > 0
     ? await loadTextStats(docs.map((d) => d.id))
@@ -758,7 +782,8 @@ export async function GET(req: NextRequest) {
       `${opcUnpaired.length} connector box(es) could not be paired: the sheet each continues on has no box ` +
       "numbers read (a text layer, or a sheet read by AI vision before connector boxes were transcribed — in a " +
       "combined PDF, the page that is that sheet), or was not read whole and the box is not on what was read of " +
-      "it, or no sheet declares it yet while a document that may hold it is still being read. They are NOT counted " +
+      "it, or no page of its drawing declares the sheet named, or no sheet declares it yet while a document that " +
+      "may hold it is not read whole (still being read, or its indexing failed). They are NOT counted " +
       "as broken — check those boxes on the sheet (listed below).",
     );
   }
@@ -1052,19 +1077,32 @@ const sameRev = (a: string, b: string) => a.trim().toUpperCase() === b.trim().to
  *     sheet is never `unreturned` while a page of its destination declares
  *     no number and had no box numbers read; a connector whose destination
  *     no document declares, while a document still being read may hold it,
- *     is `unpaired` and waits on it (review fix pass 6). Broken stays
- *     exactly what the sheet itself shows.
+ *     is `unpaired` and waits on it (review fix pass 6) — and so is one a
+ *     document whose re-index FAILED may hold (its title block cleared), and
+ *     one naming a sheet no page of its drawing declares (review fix pass
+ *     7). Only a document in flight may hold ANY sheet; a parked one whose
+ *     number is declared holds by the settled rule (review fix pass 7).
+ *     Broken stays exactly what the sheet itself shows.
  *   * A verdict with a finding that waits on a document not read whole only
  *     FOR NOW (parked, failed, still being indexed — not an accepted partial
  *     index) is provisional: it never overwrites a settled verdict for what
  *     is unsettled in it — the row and its coverage are left untouched and
  *     the sheet is reported under `waitingOn` — and the next computation may
  *     replace it down to what it settled (replaceDecision; review fix pass
- *     5). That holds under an unknown revision too (review fix pass 6). A
+ *     5). That holds under an unknown revision too, over a settled row
+ *     (review fix pass 6) and over a provisional one (review fix pass 7). A
  *     missing sheet never waits on a FAILED document, which only a person's
  *     re-index changes; a finding about the failed document itself does
- *     (stillBeingRead). So nothing is refused while a sheet is being
- *     indexed: fix pass 4's 409 for the whole library is gone.
+ *     (stillBeingRead). A document filed under the same key that is not
+ *     read whole for now — a sibling sheet parked, or reset with its title
+ *     block cleared — leaves the verdict provisional too: its findings are
+ *     not in it yet (awaitingFiled, review fix pass 7). So nothing is
+ *     refused while a sheet is being indexed: fix pass 4's 409 for the whole
+ *     library is gone.
+ *   * Under an unknown revision the latest settled verdict replaces the row
+ *     — except while a document is in flight, when one that would LOWER
+ *     what the row settled waits: what that document has yet to declare
+ *     can take a finding out of the set's scope (review fix pass 7).
  *   * A stored verdict under a known revision is never replaced by a less
  *     severe one (RANK — replaceDecision): what a row SETTLED is never
  *     lowered.
@@ -1148,24 +1186,42 @@ async function recordAudit(orgId: string, libraryId: string, userId: string) {
   // that points at it.
   const incomplete = notReadWhole(docs);
   // The documents not read whole only for now (parked, failed, in flight),
-  // and of those the ones still being read, which may hold any sheet the set
-  // is missing (review fix pass 6).
+  // and of those the ones still being read, which a missing sheet waits on
+  // (review fix pass 6).
   const forNow = forNowIncomplete(docs, incomplete);
-  const inProgress = stillBeingRead(docs, forNow);
-  const audit = auditDrawingRefs(docs.map((d) => ({ id: d.id, name: d.name })), refsByDoc, selfByDoc, null, incomplete, inProgress);
+  const beingRead = stillBeingRead(docs, forNow);
+  // …and of those, the ones in flight, which may hold ANY sheet (review fix
+  // pass 7: a parked document with its number declared holds by the settled
+  // rule).
+  const inFlight = inFlightOf(docs, beingRead, selfByDoc);
+  const audit = auditDrawingRefs(docs.map((d) => ({ id: d.id, name: d.name })), refsByDoc, selfByDoc, null, incomplete, inFlight);
   const pageCounts = new Map(docs.map((d) => [d.id, Number(d.page_count ?? 0)]));
-  const opc = auditOpcBoxes(index.opc, selfByDoc, nameById, incomplete, selfPages, { pageCounts, inProgress });
+  const opc = auditOpcBoxes(index.opc, selfByDoc, nameById, incomplete, selfPages, { pageCounts, inProgress: inFlight, forNow });
   // The documents an unchecked finding waits on, when they are not read
   // whole only for now: such a finding is provisional (review fix pass 5).
   // A finding about one named document waits on it while it is parked,
   // failed or in flight; a sheet the set is missing waits only on documents
   // still being read — never on a failed one, which a person must re-index
   // (one whose number was never read would otherwise suspend every gap in
-  // the library; review fix pass 6).
+  // the library; review fix pass 6). Each document's label is built once
+  // (review fix pass 7: mid-rebuild every finding may name every document
+  // in flight).
   const statusById = new Map(docs.map((d) => [d.id, d.status]));
+  const labelById = new Map<string, string>();
+  const labelOf = (id: string): string => {
+    let label = labelById.get(id);
+    if (label === undefined) {
+      label = `${nameById.get(id) ?? "Sheet"} (${incomplete.get(id)}${statusById.get(id) === "error" ? " — re-index it" : ""})`;
+      labelById.set(id, label);
+    }
+    return label;
+  };
   const waitsOn = (ids: readonly (string | undefined)[], among: ReadonlySet<string> = forNow): string[] => [...new Set(ids)]
     .filter((id): id is string => !!id && among.has(id))
-    .map((id) => `${nameById.get(id) ?? "Sheet"} (${incomplete.get(id)}${statusById.get(id) === "error" ? " — re-index it" : ""})`);
+    .map(labelOf);
+  /** A document filed under a verdict's key that is not read whole only for
+   *  now: what the verdict waits on (awaitingFiled). */
+  const pendingOf = (id: string): string | null => (forNow.has(id) ? labelOf(id) : null);
 
   // The set's scope (DWG-6): the series this library holds. A sheet in a
   // series it does not hold is still recorded; gaps in that series are not
@@ -1291,18 +1347,21 @@ async function recordAudit(orgId: string, libraryId: string, userId: string) {
     unreadableConnectors: opc.unknown.map((u) => ({ sheet: u.sheet, box: u.box })),
     // A box the pairing could not check on a target not read whole waits on
     // it while that is only for now; one whose destination no document
-    // declares waits on the documents still being read that may hold it
-    // (review fix pass 6); one on a page whose box numbers were never read
-    // does not.
+    // declares waits on the documents not read whole for now that may hold
+    // it — in flight, parked, or failed with its title block cleared, which
+    // the destination may be (review fix passes 6 and 7); one on a page
+    // whose box numbers were never read does not.
     unpairedConnectors: opc.unpaired.map((u) => ({
       from: u.from, to: u.to, box: u.box, unread: u.unread, why: u.why,
-      waitsOn: u.unread ? waitsOn([u.toId]) : u.maybeInIds ? waitsOn(u.maybeInIds, inProgress) : [],
+      waitsOn: u.unread ? waitsOn([u.toId]) : u.maybeInIds ? waitsOn(u.maybeInIds) : [],
     })),
     // Checks that needed a sheet nobody read whole: unchecked, never one-way
-    // and never a gap (review fix pass 4).
+    // and never a gap (review fix pass 4) — kept whatever the held series
+    // while a document still being read may hold the sheet: it may be what
+    // made the series held (review fix pass 7).
     oneWayUnread: audit.oneWayUnread.map((o) => ({ from: o.from, to: o.to, unread: o.unread, waitsOn: waitsOn([o.toId]) })),
-    missingUnread: missingWithinHeldSeries(audit.missingUnread, heldSeries)
-      .map((m) => ({ ref: m.ref, referencedBy: m.referencedByAll, maybeIn: m.maybeIn, waitsOn: waitsOn(m.maybeInIds, inProgress) })),
+    missingUnread: missingUnreadInScope(audit.missingUnread, heldSeries, beingRead)
+      .map((m) => ({ ref: m.ref, referencedBy: m.referencedByAll, maybeIn: m.maybeIn, waitsOn: waitsOn(m.maybeInIds, beingRead) })),
     // The pages nobody read are not a clean bill — and the finding says
     // whose decision left them unread: only a controller's accepted partial
     // index is "accepted" (review fix pass 4).
@@ -1321,37 +1380,48 @@ async function recordAudit(orgId: string, libraryId: string, userId: string) {
   // reject the batch outright. One row per key: the more severe verdict, with
   // every document it covers and the basis each was computed from
   // (mergeVerdictsByKey).
-  const merged = mergeVerdictsByKey(verdicts, (id) => fingerprints.get(id) ?? "");
+  // A `skipped` member that is not read whole only for now leaves the
+  // merged verdict provisional: its findings are not in it yet (review fix
+  // pass 7).
+  const merged = mergeVerdictsByKey(verdicts, (id) => fingerprints.get(id) ?? "", pendingOf);
   // …and never replace what a stored verdict SETTLED with something less
   // severe (DWG-6) — except under an unknown revision, where the latest
   // settled verdict is the only one that can be about the drawing in front
-  // of us — nor a settled verdict with a provisional one for what is
-  // unsettled in it, whatever the revision (review fix pass 5; review fix
-  // pass 6 for the unknown revision). On the org-wide key (before 20261124) a row may be
-  // ANOTHER library's verdict, computed over another set: that exception is
-  // for this library's own row, and a row filed by another library (or by a
-  // writer that never said which) is never lowered, whatever its revision.
+  // of us, unless a document is still in flight (review fix pass 7) — nor
+  // a verdict with a provisional one for what is unsettled in it, whatever
+  // the revision (review fix pass 5; review fix passes 6 and 7 for the
+  // unknown revision). A document the stored row covered that is not read
+  // whole for now, and that this verdict does not cover (a sibling sheet
+  // under the same number, its title block cleared by a rebuild), leaves
+  // the verdict provisional too (awaitingFiled, review fix pass 7). On the
+  // org-wide key (before 20261124) a row may be ANOTHER library's verdict,
+  // computed over another set: that exception is for this library's own
+  // row, and a row filed by another library (or by a writer that never said
+  // which) is never lowered, whatever its revision.
   const libraryOf = (details: unknown) => (details as { libraryId?: unknown } | null)?.libraryId;
   const keptStored: Array<{ sheetNumber: string; revision: string; stored: string; computed: string }> = [];
   const waitingOn: Array<{ sheetNumber: string; revision: string; stored: string; computed: string; waitingOn: string[] }> = [];
-  const deduped = merged.filter((v) => {
-    const stored = priorRows.find((r) => r.sheet_number === v.sheetNumber && r.revision_code === v.revision);
-    if (!stored) return true;
+  const inFlightNames = [...inFlight].sort().map(labelOf);
+  const deduped: SheetVerdict[] = [];
+  for (const computed of merged) {
+    const stored = priorRows.find((r) => r.sheet_number === computed.sheetNumber && r.revision_code === computed.revision);
+    if (!stored) { deduped.push(computed); continue; }
+    const v = awaitingFiled(computed, Object.keys(coverageOf(stored.audit_details) ?? {}), pendingOf);
     const foreign = legacyKey && libraryOf(stored.audit_details) !== libraryId;
     const decision = replaceDecision(
       { revision_code: stored.revision_code, status: stored.status, provisional: storedProvisional(stored.audit_details) },
-      v, { neverLower: foreign },
+      v, { neverLower: foreign, inFlight: inFlight.size > 0 },
     );
     if (decision === "keep") {
       keptStored.push({ sheetNumber: v.sheetNumber, revision: v.revision, stored: stored.status, computed: v.status });
     } else if (decision === "wait") {
       waitingOn.push({
         sheetNumber: v.sheetNumber, revision: v.revision, stored: stored.status, computed: v.status,
-        waitingOn: [...(v.provisional?.waitingOn ?? [])],
+        // A settled computation waits only on the documents in flight.
+        waitingOn: capWaitingOn(v.provisional?.waitingOn ?? inFlightNames),
       });
-    }
-    return decision === "write";
-  });
+    } else deduped.push(v);
+  }
 
   if (deduped.length > 0) {
     const scope = {
@@ -1395,8 +1465,9 @@ async function recordAudit(orgId: string, libraryId: string, userId: string) {
         ...v.details.unreadableConnectors, ...v.details.unpairedConnectors, ...v.details.uncheckedReferences,
         ...v.details.unreadPages,
       ],
-      // Recorded provisional: what it waits on, and what is settled.
-      ...(v.provisional ? { waitingOn: [...v.provisional.waitingOn], settledStatus: v.provisional.settledStatus } : {}),
+      // Recorded provisional: what it waits on (named to six, the rest
+      // counted — review fix pass 7), and what is settled.
+      ...(v.provisional ? { waitingOn: capWaitingOn(v.provisional.waitingOn), settledStatus: v.provisional.settledStatus } : {}),
     })),
     // DWG-13: what was NOT re-audited, and why.
     alreadyRecorded,

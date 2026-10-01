@@ -759,9 +759,9 @@ export interface RefAudit {
    *  document id. */
   oneWayUnread: Array<{ from: string; to: string; toId: string; count: number; unread: string }>;
   /** In scope and not found — but a sheet of the library that was not read
-   *  whole may hold it (that document is still being read; it is a sheet of
-   *  that document's drawing, or of a series a combined PDF declares; or
-   *  that document's own number was never read). Not a gap until that document
+   *  whole may hold it (that document is in flight; it is a sheet of that
+   *  document's drawing, or of a series a combined PDF declares; or that
+   *  document's own number was never read). Not a gap until that document
    *  is read whole; `maybeIn` names it, with why, and `maybeInIds` gives its
    *  document id (review fix pass 4). `referencedByAll` as for
    *  missingInSeries. */
@@ -857,6 +857,31 @@ export function drawingRefTargets(
   return out;
 }
 
+/** What decides which missing sheets a document not read whole may hold
+ *  by the settled rule (mayHoldBySettledRule), computed once per document:
+ *  whether it carries a number at all (a title block declared one, or its
+ *  filename has one), the drawings it answers to, and whether it is a
+ *  combined PDF (two or more different drawings). */
+interface HoldingFacts { numbered: boolean; drawings: string[]; combined: boolean }
+
+function holdingFacts(name: string, declared: readonly string[]): HoldingFacts {
+  const numbered = declared.length > 0 || extractDrawingRefs(name).length > 0;
+  const drawings = [...new Set(sheetIdentities(name, declared).map((t) => t.replace(/-SH\d+$/, "")))];
+  return { numbered, drawings, combined: drawings.length >= 2 };
+}
+
+/** May a document not read whole, that is not in flight, hold this sheet?
+ *  A sheet of its own drawing; a drawing of a series it declares, when it
+ *  declares two or more different drawings; anything when its number was
+ *  never read. Shared by the reference audit and the box pairing (review
+ *  fix pass 7), so a sheet's holders are the same in both. */
+function mayHoldBySettledRule(facts: HoldingFacts, ref: string): boolean {
+  if (!facts.numbered) return true;
+  const drawing = ref.replace(/-SH\d+$/, "");
+  if (facts.drawings.some((t) => seriesMatch(t, drawing))) return true;
+  return facts.combined && facts.drawings.some((t) => seriesMatch(refSeries(t), refSeries(drawing)));
+}
+
 export function auditDrawingRefs(
   docs: Array<{ id: string; name: string }>,
   refsByDoc: Map<string, string[]>,
@@ -874,13 +899,18 @@ export function auditDrawingRefs(
    *  back that is not found there, or a sheet of its drawing that is not
    *  found, is unchecked — never one-way, never a gap (review fix pass 4). */
   incomplete?: ReadonlyMap<string, string>,
-  /** Of those, the documents still being READ — parked on AI vision, or in
-   *  flight (queued, mid-read, reset by a rebuild) — as opposed to an
+  /** Of those, the documents still IN FLIGHT — queued, mid-read, reset by
+   *  a rebuild, or parked with no title block read yet — as opposed to an
    *  accepted partial index or a failed document, which change only when a
-   *  person acts. What such a document has declared so far says nothing
-   *  about the pages it has yet to read (a combined PDF of several series, a
-   *  file named for something else), so it may hold ANY sheet the set is
-   *  missing (review fix pass 6). */
+   *  person acts, and to a parked document whose title block was read and
+   *  whose unread pages are known. What a document in flight has declared so
+   *  far says nothing about the pages it has yet to read (a combined PDF of
+   *  several series, a file named for something else), so it may hold ANY
+   *  sheet the set is missing (review fix pass 6). A parked document with
+   *  its number declared and its unread pages known holds by the settled
+   *  rule below: it may wait on AI vision for a month under a cap, and fix
+   *  pass 6 let it suspend real gaps in unrelated series all that time
+   *  (review fix pass 7). */
   inProgress?: ReadonlySet<string>,
 ): RefAudit {
   const { identityByDoc, identity, resolveDoc } = refResolver(docs, selfTagsByDoc);
@@ -946,32 +976,25 @@ export function auditDrawingRefs(
 
   // A missing sheet may yet be in a document that was not read whole, on a
   // page nobody read:
-  //  - any sheet at all, while that document is still being read (parked,
-  //    or in flight): what it has declared so far says nothing about the
-  //    pages it has yet to read — a combined PDF holding several series, or
-  //    a file named for something else, and a document reset by a rebuild
-  //    has declared nothing yet. Review fix pass 5 let it hold only a series
-  //    it had declared, so such a sheet was filed as a GAP, settled — and a
-  //    gap at a known revision is never lowered once the page is read
-  //    (review fix pass 6);
-  //  - for one that changes only when a person acts (an accepted partial
-  //    index, a failed document): a sheet of its own drawing; a drawing of a
-  //    series it declares, when it declares two or more different drawings
-  //    (a combined PDF — one drawing's file never stands for its whole
-  //    series, review fix pass 6); anything at all when its number was never
-  //    read (no title block declared, none in its filename).
-  const bareSheet = (r: string) => r.replace(/-SH\d+$/, "");
+  //  - any sheet at all, while that document is in flight (`inProgress`):
+  //    what it has declared so far says nothing about the pages it has yet
+  //    to read — a combined PDF holding several series, or a file named for
+  //    something else, and a document reset by a rebuild has declared
+  //    nothing yet. Review fix pass 5 let it hold only a series it had
+  //    declared, so such a sheet was filed as a GAP, settled — and a gap at
+  //    a known revision is never lowered once the page is read (review fix
+  //    pass 6);
+  //  - otherwise (an accepted partial index, a failed document, a parked
+  //    document whose title block was read — mayHoldBySettledRule): a sheet
+  //    of its own drawing; a drawing of a series it declares, when it
+  //    declares two or more different drawings (a combined PDF — one
+  //    drawing's file never stands for its whole series, review fix pass
+  //    6); anything at all when its number was never read (no title block
+  //    declared, none in its filename).
   const partly = docs.filter((d) => incomplete?.has(d.id));
+  const holding = new Map(partly.map((d) => [d.id, holdingFacts(d.name, selfTagsByDoc?.get(d.id) ?? [])]));
   const mayHold = (ref: string) => partly
-    .filter((d) => {
-      if (inProgress?.has(d.id)) return true;
-      const numbered = (selfTagsByDoc?.get(d.id) ?? []).length > 0 || extractDrawingRefs(d.name).length > 0;
-      if (!numbered) return true;
-      const own = identityByDoc.get(d.id) ?? [];
-      if (own.some((t) => seriesMatch(bareSheet(t), bareSheet(ref)))) return true;
-      const combined = new Set(own.map(bareSheet)).size >= 2;
-      return combined && own.some((t) => seriesMatch(refSeries(bareSheet(t)), refSeries(bareSheet(ref))));
-    });
+    .filter((d) => inProgress?.has(d.id) || mayHoldBySettledRule(holding.get(d.id)!, ref));
   // `referencedBy` is cut for display; the record needs every referencer —
   // a missing sheet is a finding against each sheet that points at it
   // (review fix pass 5).
@@ -981,8 +1004,8 @@ export function auditDrawingRefs(
       const holders = mayHold(ref);
       return {
         ref, referencedBy: all.slice(0, 6), referencedByAll: all, count: v.count,
-        // Named to six (every document still being read may hold it — a
-        // library being indexed has many); `maybeInIds` keeps every one.
+        // Named to six (every document in flight may hold it — a library
+        // being indexed has many); `maybeInIds` keeps every one.
         maybeIn: [
           ...holders.slice(0, 6).map((d) => `${d.name} (${incomplete!.get(d.id)})`),
           ...(holders.length > 6 ? [`${holders.length - 6} more document(s) not read whole`] : []),
@@ -1218,9 +1241,12 @@ export interface OpcAudit {
    *  destination document read whole with a page that declares no drawing
    *  number and on which no box numbers were read: that page may be the
    *  sheet named (review fix pass 6) — or a destination no document declares
-   *  while a document still being read may hold it (a document reset by a
-   *  rebuild has lost the title block it declared; `maybeInIds` names those
-   *  documents — review fix pass 6). The pairing could not be checked:
+   *  while a document not read whole for now may hold it (a document reset
+   *  by a rebuild has lost the title block it declared, and its re-index may
+   *  have failed since; `maybeInIds` names those documents — review fix
+   *  passes 6 and 7) — or a sheet no title block declares, of a drawing one
+   *  other document declares, whose page in it is not known (review fix
+   *  pass 7). The pairing could not be checked:
    *  absence of evidence, so it keeps the sheet from passing and never makes
    *  it broken (DWG-4 / DWG-8; review fix pass 4). `toId` is the
    *  destination's document, when one was resolved. */
@@ -1270,17 +1296,27 @@ export function auditOpcBoxes(
      *  be one of its sheets: never `unreturned` while one stands (review fix
      *  pass 6). Without it, only the pages the index declares are known. */
     pageCounts?: ReadonlyMap<string, number>;
-    /** Documents still being READ — parked on AI vision, or in flight — as
-     *  auditDrawingRefs takes them. A connector whose destination no
-     *  document declares may name a sheet on a page such a document has yet
-     *  to read; a document reset by a rebuild has lost the title block it
-     *  declared. Dropped, that connector let the sheet pass, settled — and a
-     *  recorded `broken_connectors` under an unknown revision was overwritten
-     *  with it (review fix pass 6). */
+    /** Documents still IN FLIGHT, as auditDrawingRefs takes them: they may
+     *  hold any sheet. A connector whose destination no document declares
+     *  may name a sheet on a page such a document has yet to read; a
+     *  document reset by a rebuild has lost the title block it declared.
+     *  Dropped, that connector let the sheet pass, settled — and a recorded
+     *  `broken_connectors` under an unknown revision was overwritten with it
+     *  (review fix pass 6). */
     inProgress?: ReadonlySet<string>;
+    /** Every document not read whole only FOR NOW — in flight, parked, or
+     *  failed (default: `inProgress`). One that is not in flight may hold
+     *  an undeclared destination by the settled rule (its own drawing — by
+     *  its filename, when a failure cleared its title block —, a series it
+     *  declares two drawings of, anything in the set's scope when its number
+     *  was never read): a rebuild that reset the destination and then
+     *  FAILED left no document declaring it, and the connector was dropped
+     *  and its sheet passed, settled (review fix pass 7). */
+    forNow?: ReadonlySet<string>;
   },
 ): OpcAudit {
   const { pageCounts, inProgress } = context ?? {};
+  const forNow = context?.forNow ?? inProgress;
   // Box numbers by document AND page: the sheet, not the file (review fix
   // pass 5 — pooled per document, a page vision read made a page it never
   // read look box-complete, and a correct connector into it was filed
@@ -1306,25 +1342,81 @@ export function auditOpcBoxes(
     }
   }
 
-  // A destination no document declares, while a document is still being
-  // read (review fix pass 6): which of those may hold it. Any of them, for a
-  // destination in the set's scope — a series some sheet of the library
-  // answers to, by its title block or its filename (the destination's own
-  // series, or its drawing's); for one outside it, only a document whose
-  // number is not read yet, which may be anything.
+  // A destination no document declares, while a document is not read whole
+  // only for now: which of those may hold it (review fix pass 6; fix pass 7
+  // for the documents not in flight). A document in flight: any destination
+  // in the set's scope — a series some sheet of the library answers to, by
+  // its title block or its filename (the destination's own series, or its
+  // drawing's) — and, when its number is not read yet, anything. Any other
+  // (parked with its title block read, or failed): the settled rule
+  // (mayHoldBySettledRule) — and when its number was never read, only a
+  // destination in the set's scope. Those named for the destination's
+  // drawing come first.
+  //
+  // Computed once (review fix pass 7): the scope, each candidate's facts,
+  // and whether a destination is in scope (memoised by form). Fix pass 6
+  // re-checked the scope for every candidate of every connector — seconds
+  // to tens of seconds on a large library mid-rebuild.
   const bare = (r: string) => r.replace(/-SH\d+$/, "");
-  const scope = new Set<string>();
-  const unnumbered = new Set<string>();
-  for (const [docId, name] of nameById) {
-    const declared = selfByDoc.get(docId) ?? [];
-    if (declared.length === 0 && extractDrawingRefs(name).length === 0) unnumbered.add(docId);
-    for (const t of sheetIdentities(name, declared)) { const s = refSeries(t); if (s) scope.add(s); }
+  const scope: string[] = [];
+  {
+    const seen = new Set<string>();
+    for (const [docId, name] of nameById) {
+      for (const t of sheetIdentities(name, selfByDoc.get(docId) ?? [])) {
+        const series = refSeries(t);
+        if (series && !seen.has(series)) { seen.add(series); scope.push(series); }
+      }
+    }
   }
-  const inScope = (ref: string) => [refSeries(ref), refSeries(bare(ref))]
-    .some((s) => !!s && [...scope].some((x) => seriesMatch(x, s)));
-  const holdersOf = (forms: readonly string[], source: string): string[] =>
-    [...(inProgress ?? [])].filter((id) => id !== source && nameById.has(id))
-      .filter((id) => unnumbered.has(id) || forms.some(inScope)).sort();
+  const inScopeMemo = new Map<string, boolean>();
+  const inScope = (ref: string): boolean => {
+    let hit = inScopeMemo.get(ref);
+    if (hit === undefined) {
+      const own = [refSeries(ref), refSeries(bare(ref))].filter(Boolean);
+      hit = own.some((x) => scope.some((y) => seriesMatch(y, x)));
+      inScopeMemo.set(ref, hit);
+    }
+    return hit;
+  };
+  const candidates = [...(forNow ?? [])].filter((id) => nameById.has(id)).sort().map((id) => ({
+    id, inFlight: !!inProgress?.has(id), facts: holdingFacts(nameById.get(id) ?? "", selfByDoc.get(id) ?? []),
+  }));
+  // Many connectors name one destination: its holders are worked out once.
+  const holdersMemo = new Map<string, string[]>();
+  const holdersOf = (forms: readonly string[], source: string): string[] => {
+    if (candidates.length === 0) return [];
+    const key = forms.join("\u0001");
+    let all = holdersMemo.get(key);
+    if (!all) {
+      const scoped = forms.some(inScope);
+      const drawings = forms.map(bare);
+      const named: string[] = [];
+      const others: string[] = [];
+      for (const c of candidates) {
+        const holds = c.inFlight
+          ? scoped || !c.facts.numbered
+          : c.facts.numbered ? forms.some((f) => mayHoldBySettledRule(c.facts, f)) : scoped;
+        if (!holds) continue;
+        (c.facts.numbered && c.facts.drawings.some((t) => drawings.some((d) => seriesMatch(t, d))) ? named : others).push(c.id);
+      }
+      all = [...named, ...others];
+      holdersMemo.set(key, all);
+    }
+    return all.includes(source) ? all.filter((id) => id !== source) : all;
+  };
+  /** Is sheet `ref` (X-SHn) known NOT to be in `target`, the one document
+   *  declaring its drawing X? Only when the target was read whole, every one
+   *  of its pages declares a number, and it declares sheets of X — none of
+   *  them this one. Otherwise the sheet may be one of its pages. */
+  const sheetKnownAbsent = (target: string, ref: string): boolean => {
+    if (incomplete?.has(target)) return false;
+    const count = Math.floor(Number(pageCounts?.get(target) ?? 0));
+    if (count <= 0) return false;
+    const declared = declaredPages(target);
+    for (let p = 1; p <= count; p++) if (!declared.has(p)) return false;
+    const base = bare(ref);
+    return [...(selfPages?.get(target)?.keys() ?? [])].some((t) => t !== ref && bare(t) === base && t !== base);
+  };
 
   // A stored line at the storage cut may have lost its tail — and with it
   // the drawing number. That is not evidence the connector names nothing.
@@ -1389,8 +1481,26 @@ export function auditOpcBoxes(
     // Box pairing: the box must reappear on the sheet it names — the
     // page(s) of the target whose title block declares the number matched.
     const matched = new Map<string, Set<string>>();
+    // A sheet no title block declares (X-SHn), of a drawing exactly one
+    // document declares (X): that document, unless the sheet is known not to
+    // be in it. Its page is not known, so the pairing is never checked —
+    // unpaired, never `unreturned` (review fix pass 7: such a connector was
+    // dropped, and its sheet passed, settled).
+    const undeclaredSheet = new Set<string>();
+    let viaDrawing = false;
     for (const ref of lookups) {
-      const owners = identityIndex.get(ref);
+      let owners = identityIndex.get(ref);
+      if (!owners && /-SH\d+$/.test(ref)) {
+        const drawingOwners = identityIndex.get(bare(ref));
+        const sole = drawingOwners?.size === 1 ? [...drawingOwners][0] : null;
+        // Its own drawing's other page: not paired (as before), and never a
+        // reason to skip the documents that may hold it.
+        if (sole && sole !== o.document_id && !sheetKnownAbsent(sole, ref)) {
+          owners = drawingOwners;
+          undeclaredSheet.add(ref);
+          viaDrawing = true;
+        }
+      }
       // An ambiguous number identifies a multi-sheet set, not one sheet —
       // never guess which one and report the guess as a defect.
       if (!owners || owners.size !== 1) continue;
@@ -1399,14 +1509,15 @@ export function auditOpcBoxes(
     }
     // No document declares it at all: a destination outside the library
     // (not a box finding — the reference audit says out of scope or missing)
-    // — unless a document still being read may hold it (review fix pass 6).
-    if (lookups.length > 0 && lookups.every((ref) => !identityIndex.has(ref))) {
+    // — unless a document not read whole for now may hold it (review fix
+    // passes 6 and 7).
+    if (!viaDrawing && lookups.length > 0 && lookups.every((ref) => !identityIndex.has(ref))) {
       const holders = holdersOf(lookups, o.document_id);
       if (holders.length > 0) {
         const where = holders.slice(0, 4).map((id) => `${nameById.get(id) ?? "Sheet"} (${incomplete?.get(id) ?? "not read whole"})`).join("; ");
         unpaired.push({
           box: o.tag, from, to: lookups[0], line: raw, maybeInIds: holders,
-          why: `no sheet in the set declares it yet, and it may be in ${where}${holders.length > 4 ? "; …" : ""}, not read whole yet`,
+          why: `no sheet in the set declares it yet, and it may be in ${where}${holders.length > 4 ? ` or ${holders.length - 4} more document(s)` : ""}, not read whole yet`,
         });
       }
     }
@@ -1432,7 +1543,13 @@ export function auditOpcBoxes(
       // sheet named (review fix pass 5): a combined PDF whose text-layer
       // page declares the number, beside a page AI vision read.
       if (sheetPages.length === 0) {
-        unpaired.push({ ...entry, why: "which of its pages is the sheet named is not known" });
+        const sheets = [...forms].filter((f) => undeclaredSheet.has(f)).map((f) => f.match(/-SH(\d+)$/)?.[1]);
+        unpaired.push({
+          ...entry,
+          why: sheets.length > 0
+            ? `no page of it declares sheet ${sheets.join(", ")}, so which of its pages is the sheet named is not known`
+            : "which of its pages is the sheet named is not known",
+        });
         continue;
       }
       const declared = declaredPages(target);

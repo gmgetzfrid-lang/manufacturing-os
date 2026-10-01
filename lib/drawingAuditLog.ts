@@ -84,8 +84,10 @@ export interface AuditFindings {
    *  page of a document read whole on which no box numbers were read (`why`
    *  says which — review fix pass 5), or may be a page of it whose drawing
    *  number and box numbers were both never read, or is declared by no
-   *  document while one still being read may hold it (`why` says which —
-   *  review fix pass 6). Absence of evidence — never broken (DWG-4). */
+   *  document while one not read whole for now may hold it (`why` says
+   *  which — review fix passes 6 and 7), or is a sheet no page of its
+   *  drawing declares (review fix pass 7). Absence of evidence — never
+   *  broken (DWG-4). */
   unpairedConnectors?: Array<{ from: string; to: string; box: string; unread?: string; why?: string; waitsOn?: readonly string[] }>;
   /** References whose check needed a sheet that was not read whole: the
    *  target was not found to reference back on what was read of it
@@ -129,7 +131,9 @@ export interface SheetVerdict {
   /** Set when a finding of this verdict waits on a document that is only
    *  for now not read whole — parked on AI vision, failed, or still being
    *  indexed (an accepted partial index never changes, so it is never
-   *  "for now"). `waitingOn` names those documents, with why;
+   *  "for now") — or when a document filed under the same key is, and its
+   *  findings are not in the verdict yet (awaitingFiled — review fix pass
+   *  7). `waitingOn` names those documents, with why;
    *  `settledStatus` is the verdict without those findings: what the sheet
    *  is known to be whatever they turn out to be. A provisional verdict
    *  never overwrites a settled one for what is unsettled in it, and the
@@ -327,6 +331,33 @@ export function missingWithinHeldSeries<T extends { ref: string }>(missing: read
   return missing.filter((m) => inHeldSeries(m.ref, held));
 }
 
+/** Unchecked missing sheets (auditDrawingRefs `missingUnread`) the set
+ *  judges: those in a held series, as missingWithinHeldSeries — and, while
+ *  a document that may hold one is still being read (`stillReading`), that
+ *  one whatever the held series now. The held series are counted from what
+ *  is declared NOW, and the document being read may be what made the series
+ *  held: reset by a rebuild, it declares nothing yet, and dropping its
+ *  sheets let a recorded gap under an unknown revision be overwritten with a
+ *  settled `passed` (review fix pass 7). Kept, the finding waits on that
+ *  document and is judged again once it is read. */
+export function missingUnreadInScope<T extends { ref: string; maybeInIds: readonly string[] }>(
+  missing: readonly T[], held: readonly string[], stillReading: ReadonlySet<string>,
+): T[] {
+  return missing.filter((m) => inHeldSeries(m.ref, held) || m.maybeInIds.some((id) => stillReading.has(id)));
+}
+
+/** At most this many documents are named where a verdict says what it waits
+ *  on — on the stored row and in the response; the rest are counted. Mid-
+ *  rebuild every document still being read may hold a missing sheet, so an
+ *  uncut list grew with the library on every row (review fix pass 7). */
+export const WAITING_NAMES_MAX = 6;
+
+/** A waiting list cut for storage and display: the first WAITING_NAMES_MAX
+ *  names, then "N more document(s) not read whole". */
+export function capWaitingOn(names: readonly string[], max: number = WAITING_NAMES_MAX): string[] {
+  return names.length <= max ? [...names] : [...names.slice(0, max), `${names.length - max} more document(s) not read whole`];
+}
+
 /** A short, stable digest of a string (FNV-1a, 32-bit, hex): enough to tell
  *  one index state, or one sheet list, from another. Never a security hash. */
 export function digest(text: string): string {
@@ -477,32 +508,81 @@ export function storedProvisional(details: unknown): { settledStatus: string } |
  * replaces a provisional row down to that row's settled status: what was
  * filed while a neighbour was unread heals once it is read.
  *
- * Under an unknown revision ("") a SETTLED computation is written, as
- * before — the latest verdict is the only one that can be about the drawing
- * in front of us — except `skipped`, which never erases a verdict. A
- * provisional one follows the same rule as at a known revision over a
- * settled row: it never overwrites it for what is unsettled in it (review
- * fix pass 6 — fix pass 5 wrote any computation there, so a verdict waiting
- * on a parked neighbour overwrote a verified `broken_connectors` with
- * `flagged`); over a provisional row, the latest is written. `neverLower`
- * applies the known-revision rule whatever the revision (a row another
- * library filed on the org-wide key, before 20261124).
+ * The provisional rules hold under any revision, unknown included: a
+ * provisional `next` never lowers what a row settled, provisional row or
+ * settled (review fix pass 6 for a settled row — fix pass 5 wrote any
+ * computation under "", so a verdict waiting on a parked neighbour
+ * overwrote a verified `broken_connectors` with `flagged`; review fix pass 7
+ * for a provisional row — fix pass 6 still wrote the latest over a
+ * provisional "" row, so a row that SETTLED `broken_connectors` was lowered
+ * to `flagged` while its destination was reset by a rebuild).
+ *
+ * Under an unknown revision ("") a SETTLED computation is written — the
+ * latest verdict is the only one that can be about the drawing in front of
+ * us — except `skipped`, which never erases a verdict, and except while a
+ * document of the library is still in flight (`inFlight`: queued, mid-read,
+ * reset by a rebuild — it may hold any sheet, and what it has declared so
+ * far says nothing about the pages it has yet to read): then a computation
+ * that would LOWER what the row settled waits, and is judged again once the
+ * document is read (the set digest names it). What such a document has yet
+ * to declare can drop a finding out of the set's scope altogether — a
+ * series only it held, a connector's destination only it declared — so a
+ * lower settled verdict then is not yet the latest verdict about the
+ * drawing (review fix pass 7). `neverLower` applies the known-revision rule
+ * whatever the revision (a row another library filed on the org-wide key,
+ * before 20261124).
  */
 export function replaceDecision(
   stored: { revision_code: string; status: string; provisional?: { settledStatus: string } | null } | null | undefined,
   next: { status: AuditStatus; provisional?: { settledStatus: AuditStatus } | null },
-  opts: { neverLower?: boolean } = {},
+  opts: { neverLower?: boolean; inFlight?: boolean } = {},
 ): "write" | "keep" | "wait" {
   if (!stored) return "write";
   const latestWins = stored.revision_code === "" && !opts.neverLower;
   const floor = stored.provisional ? stored.provisional.settledStatus : stored.status;
   if (next.provisional) {
     const settledNow = next.provisional.settledStatus;
-    if (stored.provisional) return !latestWins && wouldLowerSeverity(floor, settledNow) ? "wait" : "write";
+    if (stored.provisional) return wouldLowerSeverity(floor, settledNow) ? "wait" : "write";
     return !wouldLowerSeverity(floor, settledNow) && floor !== settledNow ? "write" : "wait";
   }
-  if (latestWins) return next.status !== "skipped" || stored.status === "skipped" ? "write" : "keep";
+  if (latestWins) {
+    if (next.status === "skipped") return stored.status === "skipped" ? "write" : "keep";
+    return opts.inFlight && wouldLowerSeverity(floor, next.status) ? "wait" : "write";
+  }
   return wouldLowerSeverity(floor, next.status) ? "keep" : "write";
+}
+
+/**
+ * A verdict filed under a key that other documents are filed under too —
+ * per-sheet PDFs of one drawing share its number — made provisional for
+ * each of them that is not read whole only FOR NOW (`pendingOf` names it,
+ * with why; null for one that is read whole, or never changes) and that
+ * this verdict does not cover. Such a document's own findings are not in
+ * the verdict: skipped while it is parked or in flight, or not filed at all
+ * while a rebuild has cleared its title block. Without this, a sibling's
+ * settled `passed` overwrote the shared row's `broken_connectors` under an
+ * unknown revision while the sheet that carried the broken box was parked,
+ * or reset (review fix pass 7). The verdict waits on it, settled at what
+ * the documents it does cover settled; a `skipped` verdict covers nothing
+ * and is left as it is (it never erases a verdict).
+ */
+export function awaitingFiled(
+  verdict: SheetVerdict, filed: Iterable<string>, pendingOf: (documentId: string) => string | null | undefined,
+): SheetVerdict {
+  if (verdict.status === "skipped") return verdict;
+  const covered = verdict.coverage ?? { [verdict.documentId]: "" };
+  const labels = [...new Set([...filed])]
+    .filter((id) => !(id in covered))
+    .map((id) => pendingOf(id))
+    .filter((x): x is string => !!x);
+  if (labels.length === 0) return verdict;
+  return {
+    ...verdict,
+    provisional: {
+      waitingOn: [...new Set([...(verdict.provisional?.waitingOn ?? []), ...labels])].sort(),
+      settledStatus: verdict.provisional?.settledStatus ?? verdict.status,
+    },
+  };
 }
 
 /**
@@ -513,10 +593,14 @@ export function replaceDecision(
  * (each that was read, with the basis it was computed from: `basisOf`; a
  * `skipped` sheet covers nothing). Provisional when any member is: waiting
  * on every document a member waits on, settled at the most severe settled
- * status among them (a settled member's status is settled).
+ * status among them (a settled member's status is settled) — and when a
+ * `skipped` member is a document not read whole only for now (`pendingOf`,
+ * awaitingFiled): its findings are not in the verdict yet (review fix pass
+ * 7).
  */
 export function mergeVerdictsByKey(
   verdicts: readonly SheetVerdict[], basisOf: (documentId: string) => string,
+  pendingOf?: (documentId: string) => string | null | undefined,
 ): SheetVerdict[] {
   const groups = new Map<string, SheetVerdict[]>();
   for (const v of verdicts) {
@@ -535,7 +619,12 @@ export function mergeVerdictsByKey(
       if (RANK[s] > RANK[settled]) settled = s;
     }
     const { provisional: _p, ...rest } = best;
-    return { ...rest, coverage, ...(waitingOn.length > 0 ? { provisional: { waitingOn, settledStatus: settled } } : {}) };
+    const merged: SheetVerdict = {
+      ...rest, coverage, ...(waitingOn.length > 0 ? { provisional: { waitingOn, settledStatus: settled } } : {}),
+    };
+    return pendingOf
+      ? awaitingFiled(merged, group.filter((v) => v.status === "skipped").map((v) => v.documentId), pendingOf)
+      : merged;
   });
 }
 
@@ -592,9 +681,10 @@ export function verdictRows(
       set: i === 0 ? { ...set, sheets: sheets.slice(0, AUDIT_SET_LIST_MAX) } : set,
       ...(v.coverage ? { coverage: { ...v.coverage } } : {}),
       // A verdict with findings that wait on a document not read whole yet:
-      // which, and what is settled without them (replaceDecision).
+      // which (named to WAITING_NAMES_MAX, the rest counted — review fix
+      // pass 7), and what is settled without them (replaceDecision).
       ...(v.provisional
-        ? { provisional: { waitingOn: [...v.provisional.waitingOn], settledStatus: v.provisional.settledStatus } } : {}),
+        ? { provisional: { waitingOn: capWaitingOn(v.provisional.waitingOn), settledStatus: v.provisional.settledStatus } } : {}),
     },
   }));
 }

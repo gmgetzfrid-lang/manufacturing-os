@@ -1606,6 +1606,313 @@ describe("DWG-13 / DWG-4 — what a document still being read may hold is never 
   });
 });
 
+describe("DWG-13 / DWG-4 — no verdict is lowered under an unknown revision for what a document not read whole may yet hold, and a large library mid-rebuild stays fast and small (review fix pass 7)", () => {
+  const row = (sheet: string) => logRows().find((r) => r.sheet_number === sheet)!;
+  /** A rebuild resets a document: queued, its entities cleared. */
+  const resetDoc = (id: string, over: Row = {}) => {
+    const saved = db.tables.knowledge_page_entities.filter((e) => e.document_id === id);
+    db.tables.knowledge_page_entities = db.tables.knowledge_page_entities.filter((e) => e.document_id !== id);
+    const doc = db.tables.knowledge_documents.find((d) => d.id === id)!;
+    const was = { ...doc };
+    Object.assign(doc, { status: "queued", pages_indexed: 0, ...over });
+    return () => {
+      db.tables.knowledge_page_entities.push(...saved);
+      Object.assign(doc, was);
+    };
+  };
+
+  it("the reviewer's probe provprov: a provisional verdict never lowers what a provisional unrevised row SETTLED", async () => {
+    seed({
+      knowledge_documents: [
+        kdoc("a", { name: "025-PID-0104.pdf" }),
+        kdoc("b", { name: "025-PID-0105.pdf" }),
+        kdoc("c", { name: "025-PID-0106.pdf", status: "indexing", page_count: 2, pages_indexed: 2, vision_failed_pages: [2], vision_retry_after: "2026-10-01T05:00:00Z", error: "overloaded" }),
+      ],
+      knowledge_page_entities: [
+        ent("a", "self", "025-PID-0104"), ent("a", "self", "025-PID-0104-SH1"), ent("a", "equipment", "V-1"),
+        ent("a", "opc", "14", 1, { raw: "OPC 14: DWG 025-PID-0105 SH 1 — TO V-1402" }),
+        ent("a", "opc", "15", 1, { raw: "OPC 15: DWG 025-PID-0106 SH 1 — TO V-1502" }),
+        ent("b", "self", "025-PID-0105"), ent("b", "self", "025-PID-0105-SH1"), ent("b", "equipment", "V-2"),
+        ent("b", "opc", "7", 1, { raw: "OPC 7: DWG 025-PID-0104 SH 1 — FROM V-7" }),
+        ent("c", "self", "025-PID-0106", 1), ent("c", "self", "025-PID-0106-SH1", 1), ent("c", "equipment", "V-3", 1),
+        ent("c", "opc", "8", 1, { raw: "OPC 8: DWG 025-PID-0104 SH 1 — FROM V-8" }),
+      ],
+    });
+    await record("kl-1");
+    // Box 14 is verified unreturned on 0105 (read whole); box 15 waits on the
+    // parked 0106: broken_connectors, provisional, SETTLED broken.
+    expect(row("025-PID-0104")).toMatchObject({ revision_code: "", status: "broken_connectors" });
+    expect((row("025-PID-0104").audit_details as { provisional: { settledStatus: string } }).provisional.settledStatus).toBe("broken_connectors");
+    const before = JSON.stringify(row("025-PID-0104"));
+    const finish = resetDoc("b");
+    // 0105 reset: box 14 now waits too, so the computation settles passed.
+    // Fix pass 6 wrote it over the row (flagged, settled passed, no broken
+    // connector). It waits.
+    const during = await record("kl-1");
+    expect(during.body.waitingOn).toEqual([expect.objectContaining({
+      sheetNumber: "025-PID-0104", stored: "broken_connectors", computed: "flagged",
+      waitingOn: ["025-PID-0105.pdf (not finished indexing)", "025-PID-0106.pdf (page(s) 2 never read)"],
+    })]);
+    expect(JSON.stringify(row("025-PID-0104"))).toBe(before);
+    finish();
+    await record("kl-1");
+    expect(row("025-PID-0104")).toMatchObject({ status: "broken_connectors" });
+  });
+
+  /** Per-sheet PDFs of 025-PID-0105 share its key; SH2 carries a connector
+   *  that names nowhere (broken). */
+  function perSheet(sh2: Row = {}) {
+    seed({
+      knowledge_documents: [
+        kdoc("s1", { name: "025-PID-0105 SH1.pdf" }),
+        kdoc("s2", { name: "025-PID-0105 SH2.pdf", ...sh2 }),
+        kdoc("c", { name: "025-PID-0106.pdf" }),
+      ],
+      knowledge_page_entities: [
+        ent("s1", "self", "025-PID-0105"), ent("s1", "self", "025-PID-0105-SH1"), ent("s1", "equipment", "V-1"),
+        ent("s2", "self", "025-PID-0105"), ent("s2", "self", "025-PID-0105-SH2"), ent("s2", "equipment", "V-2"),
+        ent("s2", "opc", "9", 1, { raw: "OPC 9: DWG NONE — TO V-9" }),
+        ent("c", "self", "025-PID-0106"), ent("c", "equipment", "V-3"),
+      ],
+    });
+  }
+
+  it("the reviewer's probe sib2: a parked sibling under the shared key never lets the other sheet's passed overwrite broken_connectors", async () => {
+    perSheet({ page_count: 2, pages_indexed: 2 });
+    await record("kl-1");
+    expect(row("025-PID-0105")).toMatchObject({ revision_code: "", status: "broken_connectors" });
+    const before = JSON.stringify(row("025-PID-0105"));
+    // SH2 parked: page 2 waits on AI vision. Its NONE connector is still in
+    // the index (the lens lists it), but a parked sheet is skipped.
+    Object.assign(db.tables.knowledge_documents.find((d) => d.id === "s2")!, {
+      status: "indexing", vision_failed_pages: [2], vision_retry_after: "2026-10-01T05:00:00Z", error: "overloaded",
+    });
+    const lens = await (await get("orgId=o1&libraryId=kl-1")).json();
+    expect(lens.opcNoRef).toEqual([expect.objectContaining({ box: "9", sheet: "025-PID-0105 SH2.pdf" })]);
+    const parked = await record("kl-1");
+    expect(parked.body.waitingOn).toEqual([expect.objectContaining({
+      sheetNumber: "025-PID-0105", stored: "broken_connectors", computed: "passed", waitingOn: ["025-PID-0105 SH2.pdf (page(s) 2 never read)"],
+    })]);
+    expect(JSON.stringify(row("025-PID-0105"))).toBe(before);
+    // Read whole again: the shared row is broken_connectors, from both.
+    Object.assign(db.tables.knowledge_documents.find((d) => d.id === "s2")!, {
+      status: "ready", vision_failed_pages: [], vision_retry_after: null, error: null,
+    });
+    const after = await record("kl-1");
+    expect(after.body.waitingOn).toEqual([]);
+    expect(row("025-PID-0105")).toMatchObject({ status: "broken_connectors" });
+  });
+
+  it("the reviewer's probe sib: a sibling reset by a rebuild (no number declared yet) never lets the other sheet's passed overwrite broken_connectors", async () => {
+    perSheet();
+    await record("kl-1");
+    const before = JSON.stringify(row("025-PID-0105"));
+    expect((row("025-PID-0105").audit_details as { coverage: Record<string, string> }).coverage).toHaveProperty("s2");
+    const finish = resetDoc("s2");
+    const during = await record("kl-1");
+    // SH2 is not filed (no number yet) — the stored row covered it.
+    expect(during.body.notRecorded).toEqual([expect.objectContaining({ name: "025-PID-0105 SH2.pdf" })]);
+    expect(during.body.waitingOn).toEqual([expect.objectContaining({
+      sheetNumber: "025-PID-0105", stored: "broken_connectors", computed: "passed", waitingOn: ["025-PID-0105 SH2.pdf (not finished indexing)"],
+    })]);
+    expect(JSON.stringify(row("025-PID-0105"))).toBe(before);
+    // SH2 re-read its title block only (in flight, skipped): still waits.
+    db.tables.knowledge_page_entities.push(ent("s2", "self", "025-PID-0105"), ent("s2", "self", "025-PID-0105-SH2"));
+    Object.assign(db.tables.knowledge_documents.find((d) => d.id === "s2")!, { status: "indexing" });
+    expect((await record("kl-1")).body.waitingOn).toEqual([expect.objectContaining({ sheetNumber: "025-PID-0105", stored: "broken_connectors" })]);
+    expect(JSON.stringify(row("025-PID-0105"))).toBe(before);
+    db.tables.knowledge_page_entities = db.tables.knowledge_page_entities.filter((e) => e.document_id !== "s2");
+    finish();
+    await record("kl-1");
+    expect(row("025-PID-0105")).toMatchObject({ status: "broken_connectors" });
+  });
+
+  /** 0104 carries box 14 into 0105 SH 1; 0105 has its boxes read, not 14. */
+  function boxInto0105(revised: boolean) {
+    seed({
+      knowledge_documents: [
+        kdoc("a", revised
+          ? { name: "025-PID-0104.pdf", source_document_id: "d-a", source_version_id: "v-a", source_rev: "C" }
+          : { name: "025-PID-0104.pdf" }),
+        kdoc("b", { name: "025-PID-0105.pdf" }),
+      ],
+      knowledge_page_entities: [
+        ent("a", "self", "025-PID-0104"), ent("a", "self", "025-PID-0104-SH1"), ent("a", "equipment", "V-1"),
+        ent("a", "opc", "14", 1, { raw: "OPC 14: DWG 025-PID-0105 SH 1 — TO V-1402" }),
+        ent("a", "ref", "025-PID-0105-SH1"),
+        ent("b", "self", "025-PID-0105"), ent("b", "self", "025-PID-0105-SH1"), ent("b", "equipment", "V-2"),
+        ent("b", "opc", "7", 1, { raw: "OPC 7: DWG 025-PID-0104 SH 1 — FROM V-7" }),
+        ent("b", "ref", "025-PID-0104-SH1"),
+      ],
+      documents: revised ? [{ id: "d-a", org_id: "o1", rev: "C", current_version_id: "v-a" }] : [],
+    });
+  }
+
+  for (const revised of [false, true]) {
+    it(`the reviewer's probe failed (${revised ? "rev C" : "unknown revision"}): a destination whose re-index FAILED after a rebuild reset it keeps the connector unpaired, waiting on it — never a settled passed`, async () => {
+      boxInto0105(revised);
+      await record("kl-1");
+      expect(row("025-PID-0104")).toMatchObject({ revision_code: revised ? "C" : "", status: "broken_connectors" });
+      const before = JSON.stringify(row("025-PID-0104"));
+      resetDoc("b", { status: "error", error: "corrupt PDF", page_count: null });
+      const lens = await (await get("orgId=o1&libraryId=kl-1")).json();
+      expect(lens.opcUnreturned).toEqual([]);
+      expect(lens.opcUnpaired).toEqual([expect.objectContaining({
+        box: "14", to: "025-PID-0105-SH1", maybeInIds: ["b"],
+        why: "no sheet in the set declares it yet, and it may be in 025-PID-0105.pdf (its indexing failed), not read whole yet",
+      })]);
+      const during = await record("kl-1");
+      expect(during.body.waitingOn).toEqual([expect.objectContaining({
+        sheetNumber: "025-PID-0104", stored: "broken_connectors", computed: "flagged",
+        waitingOn: ["025-PID-0105.pdf (its indexing failed — re-index it)"],
+      })]);
+      expect(JSON.stringify(row("025-PID-0104"))).toBe(before);
+    });
+  }
+
+  it("a first record while the destination's re-index has failed is provisional, never a settled passed", async () => {
+    boxInto0105(true);
+    resetDoc("b", { status: "error", error: "corrupt PDF", page_count: null });
+    await record("kl-1");
+    expect(row("025-PID-0104")).toMatchObject({ revision_code: "C", status: "flagged" });
+    expect((row("025-PID-0104").audit_details as { provisional: unknown }).provisional)
+      .toEqual({ waitingOn: ["025-PID-0105.pdf (its indexing failed — re-index it)"], settledStatus: "passed" });
+  });
+
+  it("the reviewer's probe held: the document that made the series held is reset — the unrevised gap waits, unchecked, and is filed again once it is read", async () => {
+    seed({
+      knowledge_documents: [kdoc("a", { name: "025-PID-0104.pdf" }), kdoc("b", { name: "scan_b.pdf" })],
+      knowledge_page_entities: [
+        ent("a", "self", "025-PID-0104"), ent("a", "equipment", "V-1"), ent("a", "ref", "025-PID-0199"), ent("a", "ref", "025-PID-0105"),
+        ent("b", "self", "025-PID-0105"), ent("b", "equipment", "V-2"), ent("b", "ref", "025-PID-0104"),
+      ],
+    });
+    await record("kl-1");
+    expect(row("025-PID-0104")).toMatchObject({ revision_code: "", status: "flagged" });
+    expect((row("025-PID-0104").audit_details as { missingReferences: string[] }).missingReferences)
+      .toEqual(["References 025-PID-0199, which isn't in the set"]);
+    const before = JSON.stringify(row("025-PID-0104"));
+    const finish = resetDoc("b");
+    // The lens: unchecked, waiting on the scan — never dropped.
+    const lens = await (await get("orgId=o1&libraryId=kl-1")).json();
+    expect(lens.audit.missingInSeries).toEqual([]);
+    expect(lens.audit.missingUnread.map((m: { ref: string; maybeIn: string[] }) => [m.ref, m.maybeIn]).sort()).toEqual([
+      ["025-PID-0105", ["scan_b.pdf (not finished indexing)"]], ["025-PID-0199", ["scan_b.pdf (not finished indexing)"]],
+    ]);
+    // Fix pass 6 dropped both and wrote 0104 passed, settled, over its gap.
+    const during = await record("kl-1");
+    expect(during.body.waitingOn).toEqual([expect.objectContaining({
+      sheetNumber: "025-PID-0104", stored: "flagged", computed: "flagged", waitingOn: ["scan_b.pdf (not finished indexing)"],
+    })]);
+    expect(JSON.stringify(row("025-PID-0104"))).toBe(before);
+    finish();
+    await record("kl-1");
+    expect((row("025-PID-0104").audit_details as { missingReferences: string[] }).missingReferences)
+      .toEqual(["References 025-PID-0199, which isn't in the set"]);
+  });
+
+  it("while a document is in flight, a settled verdict that would lower an unrevised row waits — even one whose finding the document's reset took out of the set's scope", async () => {
+    // b is a combined PDF of 040-TK-0001/0002 under an unrelated filename.
+    // Reset, it answers to its filename only: 040-TK leaves the set's scope,
+    // so 0104's reference into 040-TK-0009 is out of scope — no finding.
+    seed({
+      knowledge_documents: [kdoc("a", { name: "025-PID-0104.pdf" }), kdoc("b", { name: "026-PID-0200.pdf" })],
+      knowledge_page_entities: [
+        ent("a", "self", "025-PID-0104"), ent("a", "equipment", "V-1"), ent("a", "ref", "040-TK-0009"), ent("a", "ref", "040-TK-0001"),
+        ent("b", "self", "040-TK-0001", 1), ent("b", "self", "040-TK-0002", 2), ent("b", "equipment", "TK-1"), ent("b", "ref", "025-PID-0104"),
+      ],
+    });
+    await record("kl-1");
+    expect(row("025-PID-0104")).toMatchObject({ revision_code: "", status: "flagged" });
+    const before = JSON.stringify(row("025-PID-0104"));
+    const finish = resetDoc("b");
+    const during = await record("kl-1");
+    expect(during.body.waitingOn).toEqual([expect.objectContaining({
+      sheetNumber: "025-PID-0104", stored: "flagged", computed: "passed", waitingOn: ["026-PID-0200.pdf (not finished indexing)"],
+    })]);
+    expect(JSON.stringify(row("025-PID-0104"))).toBe(before);
+    finish();
+    await record("kl-1");
+    expect(row("025-PID-0104")).toMatchObject({ status: "flagged" });
+    // Nothing in flight: the latest settled verdict is written, as before —
+    // 040-TK-0009 uploaded, the gap is gone.
+    db.tables.knowledge_documents.push(kdoc("t9", { name: "040-TK-0009.pdf" }));
+    db.tables.knowledge_page_entities.push(ent("t9", "self", "040-TK-0009"), ent("t9", "ref", "025-PID-0104"));
+    const widened = await record("kl-1");
+    expect(widened.body.waitingOn).toEqual([]);
+    expect(row("025-PID-0104")).toMatchObject({ status: "passed" });
+  });
+
+  it("the reviewer's probe parked: a parked single-drawing PDF with its number declared never suspends a real gap in another series", async () => {
+    seed({
+      knowledge_documents: [
+        kdoc("t1", { name: "040-TK-0001.pdf", source_document_id: "d-t1", source_version_id: "v-t1", source_rev: "B" }),
+        kdoc("t2", { name: "040-TK-0002.pdf" }),
+        kdoc("t9", { name: "040-TK-0009.pdf" }),
+        kdoc("p", { name: "025-PID-0107.pdf", page_count: 2, pages_indexed: 2 }),
+      ],
+      knowledge_page_entities: [
+        ent("t1", "self", "040-TK-0001"), ent("t1", "equipment", "TK-1"), ent("t1", "ref", "040-TK-0009"),
+        ent("t2", "self", "040-TK-0002"), ent("t2", "equipment", "TK-2"),
+        ent("t9", "self", "040-TK-0009"), ent("t9", "equipment", "TK-9"), ent("t9", "ref", "040-TK-0001"),
+        ent("p", "self", "025-PID-0107", 1), ent("p", "equipment", "V-7", 1),
+      ],
+      documents: [{ id: "d-t1", org_id: "o1", rev: "B", current_version_id: "v-t1" }],
+    });
+    await record("kl-1");
+    expect(row("040-TK-0001")).toMatchObject({ revision_code: "B", status: "passed" });
+    // 0009 leaves the library; p's page 2 waits on AI vision until next month.
+    db.tables.knowledge_documents = db.tables.knowledge_documents.filter((d) => d.id !== "t9");
+    Object.assign(db.tables.knowledge_documents.find((d) => d.id === "p")!, {
+      status: "indexing", vision_failed_pages: [2], vision_retry_after: "2026-11-01T00:00:00Z", error: "monthly AI cap reached",
+    });
+    const res = await record("kl-1");
+    // Fix pass 6: waiting on 025-PID-0107.pdf until November, row passed.
+    expect(res.body.waitingOn).toEqual([]);
+    expect(row("040-TK-0001")).toMatchObject({ revision_code: "B", status: "flagged" });
+    expect((row("040-TK-0001").audit_details as { missingReferences: string[] }).missingReferences)
+      .toEqual(["References 040-TK-0009, which isn't in the set"]);
+    expect(row("040-TK-0001").audit_details).not.toHaveProperty("provisional");
+  });
+
+  it("the reviewer's probes perf and size: 600 sheets mid-rebuild record in bounded time, each verdict naming at most six documents, under 1 MB", async () => {
+    const N = 600;
+    const docs: Row[] = [];
+    const ents: Row[] = [];
+    const num = (i: number) => `025-PID-${String(1000 + i).padStart(4, "0")}`;
+    for (let i = 0; i < N; i++) {
+      const id = `d${String(i).padStart(4, "0")}`;
+      docs.push(kdoc(id, { name: `${num(i)}.pdf`, ...(i >= N / 2 ? { status: "stale", pages_indexed: 0, page_count: null } : {}) }));
+      if (i < N / 2) {
+        ents.push(ent(id, "self", num(i)), ent(id, "self", `${num(i)}-SH1`), ent(id, "equipment", `V-${i}`));
+        for (let k = 0; k < 4; k++) ents.push(ent(id, "opc", String(k + 1), 1, { raw: `OPC ${k + 1}: DWG ${num((i + N / 2 + k) % N)} SH 1 — TO V-${i}` }));
+        ents.push(ent(id, "ref", num((i + N / 2) % N)));
+      }
+    }
+    seed({ knowledge_documents: docs, knowledge_page_entities: ents });
+    const t0 = performance.now();
+    const res = await post({ orgId: "o1", libraryId: "kl-1", action: "record-audit" });
+    const text = await res.text();
+    const ms = performance.now() - t0;
+    expect(res.status).toBe(200);
+    const body = JSON.parse(text) as { recorded: number; sheets: Array<{ waitingOn?: string[] }> };
+    expect(body.recorded).toBe(N / 2);
+    // Fix pass 6: 4.41 MB here, every row naming all 300 documents in flight.
+    expect(text.length).toBeLessThan(1_000_000);
+    expect(Math.max(...body.sheets.map((s) => s.waitingOn?.length ?? 0))).toBe(7);
+    expect(body.sheets[0].waitingOn![6]).toBe("294 more document(s) not read whole");
+    const stored = logRows().map((r) => (r.audit_details as { provisional?: { waitingOn: string[] } }).provisional?.waitingOn.length ?? 0);
+    expect(Math.max(...stored)).toBe(7);
+    expect(logRows().reduce((n, r) => n + JSON.stringify(r.audit_details).length, 0)).toBeLessThan(1_000_000);
+    // A regression guard, not a benchmark: fix pass 6 took tens of seconds
+    // at this size (the route's limit is 60 s).
+    expect(ms).toBeLessThan(15_000);
+    const lens = await get("orgId=o1&libraryId=kl-1");
+    expect(lens.status).toBe(200);
+    expect((await lens.text()).length).toBeLessThan(1_000_000);
+  }, 60_000);
+});
+
 describe("DWG-13 / DWG-6 — a missing sheet is a finding against EVERY sheet that references it (review fix pass 5)", () => {
   it("eight sheets reference 025-PID-0199: all eight are flagged — the lens lists six, the record files eight", async () => {
     const docs = Array.from({ length: 8 }, (_, i) => kdoc(`m-${i + 1}`, { name: `025-PID-010${i + 1}.pdf` }));

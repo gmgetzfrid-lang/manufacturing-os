@@ -9,6 +9,7 @@ import {
   verdictsForSheets, sheetsNeedingAudit, verdictRows, RANK, wouldLowerSeverity,
   seriesHeldBySet, seriesNotJudged, missingWithinHeldSeries, mayReplaceStored, AUDIT_SET_LIST_MAX,
   indexFingerprint, digest, verdictBasis, replaceDecision, mergeVerdictsByKey, storedProvisional,
+  awaitingFiled, capWaitingOn, missingUnreadInScope, WAITING_NAMES_MAX,
   type AuditSheet, type AuditFindings, type SheetVerdict,
 } from "@/lib/drawingAuditLog";
 import { sheetIdentities } from "@/lib/drawingText";
@@ -376,9 +377,30 @@ describe("a finding that waits on a sheet not read whole FOR NOW is provisional 
     expect(replaceDecision({ revision_code: "", status: "broken_connectors" }, provisionalFlagged)).toBe("wait");
     expect(replaceDecision({ revision_code: "", status: "passed" }, provisionalFlagged)).toBe("wait");
     expect(replaceDecision({ revision_code: "", status: "passed" }, { status: "broken_connectors", provisional: { settledStatus: "broken_connectors" } })).toBe("write");
-    // …and over a provisional unrevised row, the latest is written.
-    expect(replaceDecision({ revision_code: "", status: "flagged", provisional: { settledStatus: "flagged" } }, provisionalFlagged)).toBe("write");
+    // …and over a provisional unrevised row, a provisional verdict never
+    // lowers what that row SETTLED (review fix pass 7, the reviewer's probe
+    // provprov: fix pass 6 wrote the latest there, so a row that settled
+    // broken_connectors was lowered to flagged while its destination was
+    // reset); one that settles no less is written, and a settled one heals
+    // it down to what it settled.
+    expect(replaceDecision({ revision_code: "", status: "broken_connectors", provisional: { settledStatus: "broken_connectors" } }, provisionalFlagged)).toBe("wait");
+    expect(replaceDecision({ revision_code: "", status: "flagged", provisional: { settledStatus: "flagged" } }, provisionalFlagged)).toBe("wait");
+    expect(replaceDecision({ revision_code: "", status: "flagged", provisional: { settledStatus: "passed" } }, provisionalFlagged)).toBe("write");
+    expect(replaceDecision({ revision_code: "", status: "flagged", provisional: { settledStatus: "flagged" } }, { status: "flagged", provisional: { settledStatus: "flagged" } })).toBe("write");
     expect(replaceDecision({ revision_code: "", status: "flagged", provisional: { settledStatus: "passed" } }, { status: "passed" })).toBe("write");
+    expect(replaceDecision({ revision_code: "", status: "broken_connectors", provisional: { settledStatus: "broken_connectors" } }, { status: "passed" })).toBe("write");
+    // While a document of the library is still in flight, a settled verdict
+    // that would lower what an unrevised row settled waits: the document may
+    // hold what drops a finding out of the set's scope (review fix pass 7).
+    // One that raises it, or matches it, is written; a known revision keeps.
+    const inFlight = { inFlight: true };
+    expect(replaceDecision({ revision_code: "", status: "broken_connectors" }, { status: "passed" }, inFlight)).toBe("wait");
+    expect(replaceDecision({ revision_code: "", status: "flagged" }, { status: "passed" }, inFlight)).toBe("wait");
+    expect(replaceDecision({ revision_code: "", status: "flagged", provisional: { settledStatus: "passed" } }, { status: "passed" }, inFlight)).toBe("write");
+    expect(replaceDecision({ revision_code: "", status: "passed" }, { status: "flagged" }, inFlight)).toBe("write");
+    expect(replaceDecision({ revision_code: "", status: "passed" }, { status: "passed" }, inFlight)).toBe("write");
+    expect(replaceDecision({ revision_code: "", status: "passed" }, { status: "skipped" }, inFlight)).toBe("keep");
+    expect(replaceDecision({ revision_code: "C", status: "flagged" }, { status: "passed" }, inFlight)).toBe("keep");
     // Another library's row on the org-wide key: never lowered, whatever its revision.
     expect(replaceDecision({ revision_code: "", status: "flagged" }, { status: "passed" }, { neverLower: true })).toBe("keep");
     // mayReplaceStored is the settled-over-settled case.
@@ -409,6 +431,60 @@ describe("a finding that waits on a sheet not read whole FOR NOW is provisional 
     const [o] = mergeVerdictsByKey([v("s-1", "passed")], (id) => id);
     expect(o.provisional).toBeUndefined();
     expect(mergeVerdictsByKey([v("s-1", "passed"), { ...v("s-9", "passed"), sheetNumber: "X" }], (id) => id)).toHaveLength(2);
+  });
+
+  // Review fix pass 7, the reviewer's probes sib and sib2: per-sheet PDFs
+  // of one drawing share its key. SH2 carried the broken box; parked (or
+  // reset by a rebuild) it is skipped (or not filed at all), and SH1's
+  // settled passed overwrote the shared broken_connectors under "".
+  it("a sibling not read whole for now leaves the shared verdict provisional — skipped in the group, or covered by the stored row (review fix pass 7)", () => {
+    const v = (documentId: string, status: SheetVerdict["status"], provisional?: SheetVerdict["provisional"]): SheetVerdict => ({
+      documentId, controlledDocumentId: null, sheetNumber: "025-PID-0105", revision: "", status,
+      details: { brokenConnectors: [], missingReferences: [], oneWay: [], unreadableConnectors: [], unpairedConnectors: [], uncheckedReferences: [], unreadPages: [] },
+      ...(provisional ? { provisional } : {}),
+    });
+    const pending = (id: string) => (id === "s2" ? "025-PID-0105 SH2.pdf (page(s) 2 never read)" : null);
+    // SH2 parked: skipped in the group — the verdict waits on it, settled at
+    // what SH1 settled.
+    const [m] = mergeVerdictsByKey([v("s1", "passed"), v("s2", "skipped")], (id) => `b-${id}`, pending);
+    expect(m).toMatchObject({ documentId: "s1", status: "passed", coverage: { s1: "b-s1" } });
+    expect(m.provisional).toEqual({ waitingOn: ["025-PID-0105 SH2.pdf (page(s) 2 never read)"], settledStatus: "passed" });
+    // …so over the stored broken_connectors it waits, whatever the revision.
+    expect(replaceDecision({ revision_code: "", status: "broken_connectors" }, m)).toBe("wait");
+    // A skipped member that is read whole (a scan with nothing in it) or not
+    // pending changes nothing; a verdict with nothing read stays skipped.
+    expect(mergeVerdictsByKey([v("s1", "passed"), v("s3", "skipped")], (id) => id, pending)[0].provisional).toBeUndefined();
+    expect(mergeVerdictsByKey([v("s2", "skipped")], (id) => id, pending)[0]).toMatchObject({ status: "skipped" });
+    expect(mergeVerdictsByKey([v("s2", "skipped")], (id) => id, pending)[0].provisional).toBeUndefined();
+    // Already provisional: the waits add up; what it settled stays.
+    const [n] = mergeVerdictsByKey([v("s1", "flagged", { waitingOn: ["X.pdf (not finished indexing)"], settledStatus: "passed" }), v("s2", "skipped")], (id) => id, pending);
+    expect(n.provisional).toEqual({
+      waitingOn: ["025-PID-0105 SH2.pdf (page(s) 2 never read)", "X.pdf (not finished indexing)"], settledStatus: "passed",
+    });
+    // SH2 reset by a rebuild: not filed at all (no number declared yet). The
+    // stored row covered it: awaitingFiled makes the verdict wait on it.
+    const [alone] = mergeVerdictsByKey([v("s1", "passed")], (id) => `b-${id}`, pending);
+    const waiting = awaitingFiled(alone, ["s1", "s2"], (id) => (id === "s2" ? "025-PID-0105 SH2.pdf (not finished indexing)" : null));
+    expect(waiting.provisional).toEqual({ waitingOn: ["025-PID-0105 SH2.pdf (not finished indexing)"], settledStatus: "passed" });
+    expect(replaceDecision({ revision_code: "", status: "broken_connectors" }, waiting)).toBe("wait");
+    // A covered document, one read whole now, or one gone from the library:
+    // nothing to wait on — the latest verdict, as before.
+    expect(awaitingFiled(alone, ["s1", "s9"], () => null)).toBe(alone);
+    expect(awaitingFiled(alone, ["s1"], () => "s1 (not finished indexing)")).toBe(alone);
+    expect(awaitingFiled({ ...alone, status: "skipped" }, ["s2"], () => "s2")).toMatchObject({ status: "skipped" });
+    expect(awaitingFiled({ ...alone, status: "skipped" }, ["s2"], () => "s2").provisional).toBeUndefined();
+  });
+
+  it("verdictRows names at most six documents a verdict waits on, and counts the rest (review fix pass 7)", () => {
+    const names = Array.from({ length: 300 }, (_, i) => `upload_${String(i).padStart(3, "0")}.pdf (not finished indexing)`);
+    expect(capWaitingOn(names)).toEqual([...names.slice(0, WAITING_NAMES_MAX), "294 more document(s) not read whole"]);
+    expect(capWaitingOn(names.slice(0, 6))).toEqual(names.slice(0, 6));
+    const [prov] = verdictsForSheets([sheet()], {
+      ...NOTHING, missingUnread: [{ ref: "PID-44-099", referencedBy: ["PID-44-012.pdf"], maybeIn: ["300 documents"], waitsOn: names }],
+    });
+    expect(prov.provisional!.waitingOn).toHaveLength(300);
+    const [row] = verdictRows("o1", [prov], "u1", { libraryId: "kl-1", sheets: ["PID-44-012"] });
+    expect((row.audit_details as { provisional: { waitingOn: string[] } }).provisional.waitingOn).toHaveLength(WAITING_NAMES_MAX + 1);
   });
 
   it("verdictRows writes the marker; a settled verdict carries none", () => {
@@ -607,6 +683,23 @@ describe("seriesHeldBySet — a gap is judged only in a series the library holds
     const missing = [{ ref: "025-PID-0107", referencedBy: ["a.pdf"] }, { ref: "025-PID-0105-SH2", referencedBy: ["a.pdf"] }];
     expect(missingWithinHeldSeries(missing, held).map((m) => m.ref)).toEqual(["025-PID-0107", "025-PID-0105-SH2"]);
     expect(seriesNotJudged(lib)).toEqual([]);
+  });
+
+  // Review fix pass 7, the reviewer's probe "held": the document that made
+  // 025-PID held is reset by a rebuild; the held series are counted from
+  // what is declared NOW, and its unchecked sheets were dropped — the
+  // recorded gap under "" was overwritten with a settled passed.
+  it("an unchecked missing sheet a document still being read may hold is judged whatever the held series now (review fix pass 7)", () => {
+    const missing = [
+      { ref: "025-PID-0199", referencedBy: ["a.pdf"], maybeInIds: ["b"] },
+      { ref: "030-PID-0001", referencedBy: ["a.pdf"], maybeInIds: ["f"] },
+      { ref: "040-TK-0009", referencedBy: ["a.pdf"], maybeInIds: ["f"] },
+    ];
+    // Nothing held: kept only where the holder is still being read.
+    expect(missingUnreadInScope(missing, [], new Set(["b"])).map((m) => m.ref)).toEqual(["025-PID-0199"]);
+    // A held series is judged as before, whoever may hold the sheet.
+    expect(missingUnreadInScope(missing, ["040-TK"], new Set()).map((m) => m.ref)).toEqual(["040-TK-0009"]);
+    expect(missingWithinHeldSeries(missing, []).map((m) => m.ref)).toEqual([]);
   });
 
   it("a single-sheet library, and one sheet per series, hold nothing — and say what was not judged", () => {
