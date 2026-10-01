@@ -192,6 +192,9 @@ export default function InspectorPanel({
   // ("3 issued · 8/12 confirmed") without opening them.
   const [activeHoldCount, setActiveHoldCount] = useState(0);
   const [staleHolderCount, setStaleHolderCount] = useState(0);
+  // DIST-9 dw3: the distribution record could not be READ — a gap in the
+  // evidence, never "nobody is working from a superseded copy".
+  const [staleUnknown, setStaleUnknown] = useState(false);
   // `issued` is null when the transmittal trail could not be READ (TRX-9) —
   // unknown, never zero; the read-and-understood counts still show.
   const [distSummary, setDistSummary] = useState<{ issued: number | null; issuedCapped: boolean; ackDone: number; ackTotal: number } | null>(null);
@@ -203,6 +206,7 @@ export default function InspectorPanel({
     // the fresh counts are still in flight.
     setActiveHoldCount(0);
     setStaleHolderCount(0);
+    setStaleUnknown(false);
     setDistSummary(null);
     (async () => {
       if (!selectedDoc?.id || !selectedDoc.orgId) return;
@@ -213,9 +217,15 @@ export default function InspectorPanel({
       } catch { if (alive) setActiveHoldCount(0); }
       try {
         const { getDocumentRecall } = await import("@/lib/staleCopies");
-        const { holders } = await getDocumentRecall(selectedDoc.id, selectedDoc.currentVersionId ?? null);
-        if (alive) setStaleHolderCount(holders.filter((h) => !h.hasCurrent).length);
-      } catch { if (alive) setStaleHolderCount(0); }
+        const { holders, unavailable } = await getDocumentRecall(selectedDoc.id, selectedDoc.currentVersionId ?? null);
+        if (alive) {
+          setStaleHolderCount(holders.filter((h) => !h.hasCurrent).length);
+          setStaleUnknown(unavailable);
+        }
+      } catch {
+        // DIST-9 dw3: a recall that could not run is unknown, not zero.
+        if (alive) { setStaleHolderCount(0); setStaleUnknown(true); }
+      }
       // TRX-9: the transmittal read throws on a real error. It is caught on its
       // own, so an unreadable trail marks the issued count unknown instead of
       // hiding the read-and-understood progress the acks counts still give.
@@ -479,6 +489,17 @@ export default function InspectorPanel({
           refreshKey={holdsRefresh}
           onChange={() => setHoldsRefresh((k) => k + 1)}
         />
+      )}
+      {staleUnknown && (
+        // DIST-9 dw3: an unreadable distribution record is a gap — said, never
+        // read as "nobody may be working from a superseded copy".
+        <div data-testid="stale-holders-unknown" className="rounded-xl border border-amber-300 bg-amber-50 px-3 py-2.5 text-xs text-amber-900 flex items-start gap-2">
+          <Send className="w-3.5 h-3.5 mt-0.5 shrink-0 text-amber-600" />
+          <span>
+            <b>Distribution record unavailable</b> — who holds a copy of this document could not be read, so whether anyone is working from a superseded copy is unknown.
+            Open <b>Distribution &amp; sharing</b> below to retry before relying on it.
+          </span>
+        </div>
       )}
       {staleHolderCount > 0 && (
         <div className="rounded-xl border border-amber-300 bg-amber-50 px-3 py-2.5 text-xs text-amber-900 flex items-start gap-2">

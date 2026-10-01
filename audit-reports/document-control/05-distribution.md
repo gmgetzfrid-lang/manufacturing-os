@@ -371,7 +371,7 @@ app/api/share/file/route.ts:130-140 quoted (the `source:` key at :139); supabase
 ## DIST-9 · download_audits — the sole evidence base for stale-copy recall — is fully mutable and deletable by any active org member
 
 - **Severity:** HIGH
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Assigned:** document-control P8 FIELD (running; reconciled at its merge) — by the integrator, 2026-10-01 (orphan sweep: the package that left this remainder has merged; fleet plan `audit-reports/fleet-plans/`).
 - **Assigned:** document-control P15 SURFACE REMAINDERS (done-when 3's last consumer: `components/documents/InspectorPanel.tsx`'s stale-holder banner reads `getDocumentRecall`'s `unavailable` as a gap, never as "nobody is stale") — by the integrator, 2026-10-01 (P8 merge; fleet plan `audit-reports/fleet-plans/`).
 - **Verification:** CONFIRMED
@@ -412,6 +412,18 @@ supabase/schema.sql:1090-1091 quoted verbatim (FOR ALL, USING only); schema.sql:
 
 
 *Reconciled at the P8 merge (integrator, 2026-10-01): done-when 2 now holds. `lib/downloads.ts` `logDownloadAudit` destructures and checks `{ error }` and returns `{ recorded }`; P8 FIELD's `EGR-6` is RESOLVED. The finding stays OPEN for done-when 3's third consumer only: `InspectorPanel.tsx` still reads the gap as nobody stale (verified at the merge), so DC P15 owns it. Done-when 1 is pending `20261068`.*
+
+**Resolution (2026-10-01, document-control Round F wave 3).** P15 SURFACE REMAINDERS — done-when 3's last consumer. Reproduced on `4dd0df7`: `components/documents/InspectorPanel.tsx:216-217` destructured `{ holders }` from `getDocumentRecall` and its `catch` set the count to 0, so an unreadable distribution record rendered no stale-holder banner at all — read as "nobody may be working from a superseded copy".
+- `InspectorPanel` now keeps `staleUnknown` beside `staleHolderCount`: it takes `{ holders, unavailable }`, sets `staleUnknown` from `unavailable`, and a recall that could not run at all (the dynamic import throwing) is unknown too (count 0, `staleUnknown` true); switching documents clears it synchronously with the other per-selection counts. When unknown, the alerts zone shows an amber line (`data-testid="stale-holders-unknown"`): "**Distribution record unavailable** — who holds a copy of this document could not be read, so whether anyone is working from a superseded copy is unknown. Open Distribution & sharing below to retry before relying on it." — the inspector-level twin of `DistributionRecall`'s "record unavailable" pill. The "N people may be working from a superseded copy" banner is unchanged.
+- Tests: `lib/__tests__/dcRoundFP15SurfacePins.test.ts` "DIST-9 dw3 — …" (the destructure, the state, the catch read as unknown, the synchronous reset, the rendered line, the old shape gone, and the reader's `unavailable` contract in `lib/staleCopies.ts`). The other suites that pin `InspectorPanel` stay green.
+
+**Done-when.**
+1. ✓ (pending migration `20261068`, P2) `download_audits` carries SELECT for members, INSERT for the acting user's own rows, and no UPDATE / DELETE.
+2. ✓ (P8 FIELD, reconciled at its merge) `logDownloadAudit` checks `{ error }`.
+3. ✓ A distribution record that cannot be produced is surfaced as a gap by every consumer of `getDocumentRecall`: `DistributionRecall` (P2), the publish-time auto-recall (`lib/postPublish.ts` → `nudgeStaleHolders`, P2's fix pass) and now the inspector's stale-holder banner.
+
+**Scope / residual.** RESOLVED for the code. **Pending migration:** `supabase/migrations/20261068_dc_roundF_download_audits_record.sql` (done-when 1's policies are not live until it is pasted). Untouched here: the banner still counts external copies (share link / transmittal) among "people" — `DistributionRecall` separates them; that wording is not this finding's. File: `components/documents/InspectorPanel.tsx`.
+
 ---
 
 <a id="dist-10"></a>
