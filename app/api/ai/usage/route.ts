@@ -40,7 +40,8 @@
 // answers 409, nothing written) and again after it, and an override the
 // default fell below in between is taken back out, only as it was written
 // — audited `compensated`, the other holders told, 409 (503 `unverified`
-// when the default cannot be read back). After every write that can RAISE
+// when the default cannot be read back); one that changed before it came
+// out is read again like any other. After every write that can RAISE
 // the caller's own cap — a default raise, taking a hold back out after a
 // default write that did not land, taking that override back out — the
 // route reads it again, with the row it comes from: one that ended above
@@ -49,14 +50,18 @@
 // against the default the same way), audited `compensated` with the figure
 // it replaced, the other holders told, and answered 409; a rise another
 // holder signed stands — their override of the caller, or a default they
-// wrote at or above what the caller's own write set (one they only trimmed
-// below it leaves the caller's own rise, which is put back); one that
-// cannot be read back is audited `unverified` and answered 503, never a
-// plain success. A default lowering cannot raise anyone and is not
-// re-read. A hold is written at the lower of the default and the setter's
-// own cap as read, and comes back out only as written and only while the
-// default is no higher than it (another request may be counting on it); a
-// hold that stays is said and told. What the response says about the
+// wrote at or above what the caller's own write set and every default the
+// caller wrote since the request began (one they only trimmed below that
+// leaves the caller's own rise, which is put back); one that cannot be
+// read back is audited `unverified` and answered 503, never a plain
+// success. An update that matches no row is never a success: another
+// person's override taken out since it was read is written again as an
+// insert (a lock lands as the answer says), and the rest answer 409. A
+// default lowering cannot raise anyone and is not re-read. A hold is
+// written at the lower of the default and the setter's own cap as read,
+// and comes back out only as written and only while the default is no
+// higher than it (another request may be counting on it); a hold that
+// stays is said and told. What the response says about the
 // setter's own cap is that re-read, never the intent: `selfHeldAtUsd` when
 // it is no higher than it started, `selfCapUsd` + `selfCapSetByAnother`
 // when another holder's figure now applies.
@@ -252,6 +257,51 @@ const risenByAnother = (
   row: { override: boolean; capUsd: number; writtenBy: string | null }, auth: Auth, ownWriteUsd: number,
 ) => writtenByAnother(row.writtenBy, auth) && (row.override || row.capUsd >= ownWriteUsd);
 
+/** How far a database clock may run behind this server's when the audit
+ *  log is read for the caller's own writes "since this request began". */
+const OWN_WRITE_CLOCK_ALLOWANCE_MS = 5_000;
+
+/** GOV-10: the highest workspace default the caller themselves wrote since
+ *  `sinceMs` (their own AI_CAP_CHANGED rows for the default; a row that
+ *  says it was not applied is not a write), null when none; an error when
+ *  the log cannot be read. */
+async function highestOwnDefaultWriteSince(orgId: string, auth: Auth, sinceMs: number): Promise<
+  { ok: true; maxUsd: number | null } | { ok: false; error: string }
+> {
+  const { data, error } = await supabaseAdmin.from("audit_logs").select("details")
+    .eq("action", "AI_CAP_CHANGED").eq("resource_type", "ai_usage_limit").eq("resource_id", orgId)
+    .eq("user_id", auth.userId).gte("timestamp", new Date(sinceMs - OWN_WRITE_CLOCK_ALLOWANCE_MS).toISOString());
+  if (error) return { ok: false, error: error.message };
+  let maxUsd: number | null = null;
+  for (const row of (data ?? []) as Array<{ details?: Record<string, unknown> | null }>) {
+    const d = row.details ?? {};
+    if (d.targetUserId || d.cleared || d.notApplied || d.capUsd === null || d.capUsd === undefined) continue;
+    const v = Number(d.capUsd);
+    if (Number.isFinite(v)) maxUsd = maxUsd === null ? v : Math.max(maxUsd, v);
+  }
+  return { ok: true, maxUsd };
+}
+
+/** GOV-10: `risenByAnother`, read against every default figure the caller
+ *  wrote since this request began as well as this request's own write: a
+ *  default another holder wrote is their signed raise only at or above all
+ *  of them. Their trim of a default the caller's OTHER request raised in
+ *  the window — which the caller then follows because this request's write
+ *  let them — is not their raise, and is put back. An audit log that
+ *  cannot be read counts no default as theirs: the rise is put back, said,
+ *  and the other holders told, and whoever meant it raises it again. */
+async function signedRiseByAnother(
+  orgId: string, auth: Auth, sinceMs: number,
+  row: { override: boolean; capUsd: number; writtenBy: string | null }, ownWriteUsd: number,
+): Promise<boolean> {
+  if (!risenByAnother(row, auth, ownWriteUsd)) return false;
+  if (row.override) return true;
+  const own = await highestOwnDefaultWriteSince(orgId, auth, sinceMs);
+  if (!own.ok) return false;
+  return own.maxUsd === null || row.capUsd >= own.maxUsd;
+}
+type CapRow = { override: boolean; capUsd: number; writtenBy: string | null };
+
 const fmtCap = (v: number) => (v === 0 ? "$0 (locked)" : `$${v}`);
 
 /** What putting the caller's own cap back did (`holdOwnCapAt`). */
@@ -272,20 +322,20 @@ type PutBack =
  *  who follows the default is put back by an INSERT, which no figure
  *  guards: the default is read again after it, and a put-back the default
  *  moved under — now at or below it (a lock), or another holder's signed
- *  figure (`risenByAnother`, against `ownWriteUsd`) — is taken back out,
- *  only as it was written, and the cap read again.
+ *  figure (`theirs`: `signedRiseByAnother`) — is taken back out, only as
+ *  it was written, and the cap read again.
  *    putBack    — lowered from `fromUsd`, the figure it actually replaced
  *    none       — already at or below `capUsd`: nothing to put back
  *    theirs     — another holder wrote the figure since: it stands
  *    unverified — put back, but the default could not be read back
  *    failed     — the write was refused, or the cap kept changing. */
-async function holdOwnCapAt(orgId: string, auth: Auth, capUsd: number, ownWriteUsd: number): Promise<PutBack> {
+async function holdOwnCapAt(orgId: string, auth: Auth, capUsd: number, theirs: (row: CapRow) => Promise<boolean>): Promise<PutBack> {
   for (let attempt = 0; attempt < 3; attempt++) {
     const fields = { monthly_cap_usd: capUsd, updated_by: auth.userId, updated_at: new Date().toISOString() };
     const now = await readOwnCapSource(orgId, auth);
     if (!now.ok) return { kind: "failed", error: now.error, fromUsd: null };
     if (now.capUsd <= capUsd) return { kind: "none", nowUsd: now.capUsd };
-    if (risenByAnother(now, auth, ownWriteUsd)) return { kind: "theirs", nowUsd: now.capUsd };
+    if (await theirs(now)) return { kind: "theirs", nowUsd: now.capUsd };
     if (now.override) {
       let write = supabaseAdmin.from("ai_usage_limits").update(fields)
         .eq("org_id", orgId).eq("user_id", auth.userId)
@@ -305,7 +355,7 @@ async function holdOwnCapAt(orgId: string, auth: Auth, capUsd: number, ownWriteU
         if (String(def.stored) === String(now.stored) && def.writtenBy === now.writtenBy) return { kind: "putBack", fromUsd: now.capUsd };
         const since = { override: false, capUsd: def.capUsd, writtenBy: def.writtenBy };
         // Moved, but still the caller's own rise above the put-back: it replaced that.
-        if (def.capUsd > capUsd && !risenByAnother(since, auth, ownWriteUsd)) return { kind: "putBack", fromUsd: def.capUsd };
+        if (def.capUsd > capUsd && !(await theirs(since))) return { kind: "putBack", fromUsd: def.capUsd };
         // At or below the put-back now, or another holder's signed figure:
         // the put-back is not the caller's to keep. Out, only as written.
         const { error: undoError } = await supabaseAdmin.from("ai_usage_limits").delete()
@@ -495,6 +545,9 @@ export async function POST(req: NextRequest) {
   // { orgId, capUsd }                → set the org-default cap
   // { orgId, capUsd, userId }        → set THAT person's cap (override)
   // { orgId, capUsd: null, userId }  → clear the override (back to default)
+  // When this request began: the caller's own default writes since then
+  // are read when a rise is weighed as another holder's (GOV-10).
+  const requestStartMs = Date.now();
   let body: { orgId?: string; capUsd?: number | null; userId?: string };
   try { body = await req.json(); } catch { return bad("Expected JSON body"); }
   const orgId = String(body.orgId ?? "").trim();
@@ -574,8 +627,10 @@ export async function POST(req: NextRequest) {
    *  ABOVE `ownBeforeUsd`:
    *    - is theirs — a signed raise — and stands (`theirs`), never put back,
    *      on their override of the caller, or on a default they wrote at or
-   *      above `ownWriteUsd`, what the caller's own write set
-   *      (`risenByAnother`);
+   *      above `ownWriteUsd`, what the caller's own write set, and at or
+   *      above every default the caller wrote since this request began
+   *      (`signedRiseByAnother`: their trim of the caller's other raise in
+   *      the window is not theirs);
    *    - otherwise, for a caller who is not the sole holder, it is put back
    *      DOWN there (`holdOwnCapAt`, guarded: it never overwrites a figure
    *      set since), audited `compensated` with the figure it replaced
@@ -592,10 +647,11 @@ export async function POST(req: NextRequest) {
     | { kind: "unverified" }
   > => {
     if (soleHolder) return { kind: "ok", ownAfterUsd: null };
+    const theirs = (row: CapRow) => signedRiseByAnother(orgId, auth, requestStartMs, row, ownWriteUsd);
     let now = await readOwnCapSource(orgId, auth);
     if (!now.ok) now = await readOwnCapSource(orgId, auth);
     if (now.ok && now.capUsd <= ownBeforeUsd) return { kind: "ok", ownAfterUsd: now.capUsd };
-    if (now.ok && risenByAnother(now, auth, ownWriteUsd)) return { kind: "theirs", ownAfterUsd: now.capUsd };
+    if (now.ok && await theirs(now)) return { kind: "theirs", ownAfterUsd: now.capUsd };
     // Risen, or unknown: is there a second signature the caller answers to?
     // (A roster that cannot be read is never "nobody else".)
     const v = await soleHolderVerdict();
@@ -605,7 +661,7 @@ export async function POST(req: NextRequest) {
       await notifyCapChange(orgId, auth, caps.policy, { targetUserId: auth.userId, capUsd: null, previousCapUsd: ownBeforeUsd, unverified: true });
       return { kind: "unverified" };
     }
-    const put = await holdOwnCapAt(orgId, auth, ownBeforeUsd, ownWriteUsd);
+    const put = await holdOwnCapAt(orgId, auth, ownBeforeUsd, theirs);
     // Lowered since by someone (nothing to put back), or another holder's figure now: it stands.
     if (put.kind === "none") return { kind: "ok", ownAfterUsd: put.nowUsd };
     if (put.kind === "theirs") return { kind: "theirs", ownAfterUsd: put.nowUsd };
@@ -772,6 +828,12 @@ export async function POST(req: NextRequest) {
   // lowered or locked, or the override it was decided from was cleared
   // since — would make the insert a raise: 409, nothing written. It is read
   // again after the insert (below). A sole holder's own raise needs neither.
+  // An update that matches no row never answers success: the row it was
+  // decided from is gone or changed. ANOTHER person's override that was
+  // taken out after it was read (cleared, or their own request took it back
+  // out) is written again as an insert, so the figure — a lock above all —
+  // lands as the audit row and the notices say; one written first by
+  // another request is the unique index's 409.
   const selfInsert = selfTarget && !rowExists && !soleHolder;
   const fields = { monthly_cap_usd: capUsd, updated_by: auth.userId, updated_at: new Date().toISOString() };
   let saveError: { code?: string; message: string } | null = null;
@@ -783,7 +845,14 @@ export async function POST(req: NextRequest) {
     else if (selfTarget) write = write.eq("monthly_cap_usd", previousCapUsd as number);
     const { data: written, error } = await write.select("id");
     saveError = error;
-    conflict = !error && (!targetUserId || selfTarget) && ((written as unknown[] | null) ?? []).length === 0;
+    if (!error && ((written as unknown[] | null) ?? []).length === 0) {
+      if (targetUserId && !selfTarget) {
+        const { error: insertError } = await supabaseAdmin.from("ai_usage_limits").insert({ org_id: orgId, user_id: targetUserId, ...fields });
+        saveError = insertError;
+      } else {
+        conflict = true;
+      }
+    }
   } else {
     if (selfInsert) {
       const def = await readOrgDefault(orgId);
@@ -893,13 +962,16 @@ export async function POST(req: NextRequest) {
   // checked against the default read again now. One that fell below it
   // while it was being saved — another holder lowered or locked it for
   // everyone who follows it — would leave you above that figure, so the
-  // override comes back out, only as it was written (a row another holder
-  // has changed since is theirs and stays), audited `compensated`, the
-  // other holders told, and answered 409: you follow the default again.
+  // override comes back out, only as it was written, audited `compensated`,
+  // the other holders told, and answered 409: you follow the default again.
   // Taking it out is itself a write that can raise you (the default can
   // move again before the delete), so it is re-read like a hold's removal.
-  // A default that cannot be read back is audited `unverified` and
-  // answered 503 — the change landed, unchecked.
+  // A row that changed before the delete (it matches nothing) is re-read
+  // the same way, with who wrote it: another holder's figure stands, but
+  // one of your own above the default — your own other request moved the
+  // override in the window — is put back at the default, audited
+  // `compensated` and told. A default that cannot be read back is audited
+  // `unverified` and answered 503 — the change landed, unchecked.
   if (selfInsert) {
     const after = await rereadOrgDefault(orgId);
     if (!after.ok) {
@@ -928,41 +1000,53 @@ export async function POST(req: NextRequest) {
           500, { conflict: true, compensated: true, capUsd },
         );
       }
-      if (((out as unknown[] | null) ?? []).length === 0) {
-        // Changed or cleared by another holder since: theirs, as it stands.
+      const removed = ((out as unknown[] | null) ?? []).length > 0;
+      if (removed) {
+        await auditCapChange(orgId, auth, {
+          targetUserId: auth.userId, capUsd: defaultNow, previousCapUsd: capUsd, compensated: true, overrideRemoved: true,
+        });
+        await notifyCapChange(orgId, auth, caps.policy, {
+          targetUserId: auth.userId, capUsd: defaultNow, previousCapUsd: capUsd, putBack: { error: null, overrideRemoved: true },
+        });
+      } else {
+        // Changed or cleared since — by another holder, or by another request
+        // of the caller's own: the re-read below reads who wrote it.
         await auditCapChange(orgId, auth, { targetUserId: auth.userId, capUsd, previousCapUsd, defaultNowUsd: defaultNow, overrideChanged: true });
-        const nowCap = await readOwnCap(orgId, auth);
-        return bad(
-          `${head}, and another cap change has changed your cap since, so it was left as it now stands. Reload the caps.`,
-          409, { conflict: true, overrideChanged: true, capUsd, ...(nowCap !== null ? { selfCapUsd: nowCap } : {}) },
-        );
       }
-      await auditCapChange(orgId, auth, {
-        targetUserId: auth.userId, capUsd: defaultNow, previousCapUsd: capUsd, compensated: true, overrideRemoved: true,
-      });
-      await notifyCapChange(orgId, auth, caps.policy, {
-        targetUserId: auth.userId, capUsd: defaultNow, previousCapUsd: capUsd, putBack: { error: null, overrideRemoved: true },
-      });
       const check = await recheckOwnCap(defaultNow, defaultNow);
-      let said = `${head}, so your new override was taken back out and you follow the default again. Nobody raises their own cap; reload the caps and try again.`;
+      let said = removed
+        ? `${head}, so your new override was taken back out and you follow the default again. Nobody raises their own cap; reload the caps and try again.`
+        : `${head}, and your cap was changed again before your new override could be taken back out`;
       let status = 409;
-      const extra: Record<string, unknown> = { conflict: true, compensated: true, capUsd };
+      const extra: Record<string, unknown> = { conflict: true, capUsd, ...(removed ? { compensated: true } : { overrideChanged: true }) };
       if (check.kind === "theirs") {
-        said += ` Your own cap now reads ${fmtCap(check.ownAfterUsd)} — a figure another person who manages AI caps set.`;
+        said += removed
+          ? ` Your own cap now reads ${fmtCap(check.ownAfterUsd)} — a figure another person who manages AI caps set.`
+          : `: it now reads ${fmtCap(check.ownAfterUsd)}, a figure another person who manages AI caps set, so it was left as it now stands. Reload the caps.`;
         Object.assign(extra, { selfCapUsd: check.ownAfterUsd, selfCapSetByAnother: true });
       } else if (check.kind === "compensated") {
-        const rose = ` Taking it out let your own cap rise to ${fmtCap(check.ownAfterUsd)} — another change landed at the same time`;
+        const rose = removed
+          ? ` Taking it out let your own cap rise to ${fmtCap(check.ownAfterUsd)} — another change landed at the same time`
+          : `: it read ${fmtCap(check.ownAfterUsd)}, above that default, on a change of your own`;
         said += check.holdError
           ? `${rose} — and it could not be put back at ${fmtCap(defaultNow)} (${check.holdError}). Tell another person who manages AI caps.`
-          : `${rose} — so it was put back at ${fmtCap(defaultNow)}.`;
+          : `${rose} — so it was put back at ${fmtCap(defaultNow)}.${removed ? "" : " Nobody raises their own cap; reload the caps and try again."}`;
         if (check.holdError) status = 500;
+        extra.compensated = true;
         if (check.ownNowUsd !== null) extra.selfCapUsd = check.ownNowUsd;
       } else if (check.kind === "unverified") {
-        said += " Your own cap could not be read back after the override was taken out, so nobody has checked it — tell another person who manages AI caps if yours rose.";
+        said += removed
+          ? " Your own cap could not be read back after the override was taken out, so nobody has checked it — tell another person who manages AI caps if yours rose."
+          : ", and it could not be read back, so nobody has checked it — tell another person who manages AI caps if yours rose.";
         status = 503;
         extra.unverified = true;
-      } else if (check.ownAfterUsd !== null) {
-        extra.selfCapUsd = check.ownAfterUsd;
+      } else {
+        if (!removed) {
+          said += check.ownAfterUsd !== null
+            ? `: it now reads ${fmtCap(check.ownAfterUsd)}, no higher than that default, so it was left as it now stands. Reload the caps.`
+            : ", so it was left as it now stands. Reload the caps.";
+        }
+        if (check.ownAfterUsd !== null) extra.selfCapUsd = check.ownAfterUsd;
       }
       return bad(said, status, extra);
     }
