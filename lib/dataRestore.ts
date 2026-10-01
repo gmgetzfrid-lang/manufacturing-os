@@ -88,8 +88,9 @@ export interface TablePlanItem {
   willImport: boolean;
   reason?: string;
   /** ORG-1: the name is not on the backup contract (nor a reconciled /
-   *  append-only table the contract once carried) — never written, and the
-   *  single-shot apply refuses an envelope that carries rows for it. */
+   *  append-only table the contract once carried) — never written, and
+   *  /apply-table refuses it (the single-shot /apply that also refused such
+   *  an envelope was deleted — intelligence ILIFE-4). */
   offContract?: boolean;
 }
 
@@ -629,7 +630,7 @@ export function planRestore(env: RestoreEnvelopeLike, current: CurrentOrgContext
   }
 
   const matchedUsers = users.filter((u) => u.disposition === "linked").length;
-  // Exactly the placeholders /begin and /apply create (fix pass 5: the
+  // Exactly the placeholders /begin creates (fix pass 5: the
   // page's confirm states this count) — a person with no backup uid of their
   // own names no row, so none is made for them.
   const newUsers = users.filter((u) => u.disposition === "new" && u.oldUid).length;
@@ -682,8 +683,9 @@ export function remapRow(
     }
   }
   // EGR-7 / XEDGE-10: a bearer column never comes back from a backup. Applied
-  // here — the one place BOTH restore paths (single-shot apply and the chunked
-  // apply-table) pass every row through — so no caller can forget it.
+  // here — the one place every restored row passes through (the chunked
+  // apply-table; the single-shot apply was deleted, ILIFE-4) — so no caller
+  // can forget it.
   return scrubRestoredRow(out);
 }
 
@@ -969,8 +971,8 @@ export function mergeNewUserUids(
 
 /** Give a restored placeholder its profile row, if the database lets it.
  *  False when it refuses — always, for a fresh uid that is no sign-in account
- *  (users.id references auth.users) — or the call fails: both restore routes
- *  count and report it (fix pass 2; it was swallowed). */
+ *  (users.id references auth.users) — or the call fails: /begin counts and
+ *  reports it (fix pass 2; it was swallowed). */
 export async function placeholderProfile(sb: Pick<SupabaseClient, "from">, uid: string, email: string, displayName?: string | null): Promise<boolean> {
   try {
     const { error } = await sb.from("users").upsert({ id: uid, email, display_name: displayName ?? null });
@@ -981,10 +983,11 @@ export async function placeholderProfile(sb: Pick<SupabaseClient, "from">, uid: 
 }
 
 // ── The shared restore write (ORG-1 / BKP-3 Done-when 2) ─────────────────
-// ONE function writes a slice of one table for BOTH restore routes — the
-// chunked /apply-table the UI uses and the single-shot /apply — so the two
-// paths cannot diverge again (the single-shot route had lost the org
-// boundary and the table allowlist the chunked one enforces).
+// ONE function writes a slice of one table for the restore — the chunked
+// /apply-table the UI uses. The single-shot /apply that once shared it had no
+// caller and was deleted (intelligence ILIFE-4, admin-and-org P3); it had lost
+// the org boundary and the table allowlist the chunked one enforces before
+// both routes were made to write through here.
 
 type RestoreDb = Pick<SupabaseClient, "from">;
 

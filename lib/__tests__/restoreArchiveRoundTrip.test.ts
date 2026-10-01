@@ -41,7 +41,7 @@
 
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { NextRequest } from "next/server";
-import { readFileSync } from "node:fs";
+import { readFileSync, existsSync } from "node:fs";
 import { join } from "node:path";
 import JSZip from "jszip";
 import { db, type Row } from "./helpers/restoreMemoryDb";
@@ -77,7 +77,6 @@ import {
 } from "@/lib/dataRestore";
 import { POST as applyTable } from "@/app/api/admin/restore/apply-table/route";
 import { POST as beginRoute } from "@/app/api/admin/restore/begin/route";
-import { POST as applySingle } from "@/app/api/admin/restore/apply/route";
 
 const SRC = "11111111-1111-4111-8111-111111111111";
 const TARGET = "22222222-2222-4222-8222-222222222222";
@@ -331,22 +330,10 @@ describe("BKP-7 — the browser-built Full ZIP is written in the one layout and 
     expectEveryRelationLanded();
   });
 
-  it("the single-shot /apply restores the same envelope too", async () => {
-    const envelope = await exportEnvelope();
-    seedTarget();
-    enforceForeignKeys();
-    const res = await applySingle(new NextRequest(`https://app/api/admin/restore/apply?orgId=${TARGET}`, {
-      method: "POST", headers: { authorization: "Bearer t", "content-type": "application/json" },
-      body: JSON.stringify({ envelope, confirm: true }),
-    }));
-    const body = await res.json();
-    expect(res.status).toBe(200);
-    expect(body.failedTables).toEqual([]);
-    expectOnlyPlaceholderOutcomes(body.tables);
-    expect(body.placeholdersWithoutProfile).toBe(1);
-    expect(String(body.note)).toMatch(/1 of them have no sign-in account yet/);
-    expect(rowsOf("document_versions")).toHaveLength(2);
-    expectEveryRelationLanded();
+  it("the single-shot /apply is gone (intelligence ILIFE-4): the page's chunked path is the one restore door", () => {
+    // It had no caller and was deleted by admin-and-org P3 (the reversible, smaller change: the
+    // chunked /begin + /apply-table above carry the same shared write and stop rule).
+    expect(existsSync(join(process.cwd(), "app/api/admin/restore/apply/route.ts"))).toBe(false);
   });
 });
 
