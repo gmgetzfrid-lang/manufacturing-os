@@ -587,6 +587,9 @@ export function storedProvisional(details: unknown): { settledStatus: string } |
  *             listed as kept on every record until the drawing was
  *             revised). Never for a `skipped` computation, which settles
  *             nothing, nor for a row another library filed (`neverLower`).
+ *             A row whose write-back would name no finding for its
+ *             settled status is kept as it is (settledFromStored, review
+ *             fix pass 11).
  */
 export function replaceDecision(
   stored: { revision_code: string; status: string; provisional?: { settledStatus: string } | null } | null | undefined,
@@ -634,7 +637,10 @@ function waitingPositions(v: SheetVerdict): Record<string, number[]> {
  *  list, written with the marker), no marker — under the key, controlled
  *  document and coverage of `computed`, the settled computation it was
  *  judged against. Null when the row does not say which of its findings
- *  waited (a row no recordAudit wrote): it is then kept as it is. */
+ *  waited (a row no recordAudit wrote): it is then kept as it is. Null too
+ *  when what it would write back names no finding for a status above
+ *  `passed` — a verdict with no reason is never settled for good (review
+ *  fix pass 11; mergeVerdictsByKey now keeps every member's findings). */
 export function settledFromStored(
   stored: { status: string; audit_details?: unknown }, computed: SheetVerdict,
 ): SheetVerdict | null {
@@ -650,17 +656,20 @@ export function settledFromStored(
     const drop = new Set(Array.isArray(at) ? at.filter((i): i is number => typeof i === "number") : []);
     return Array.isArray(v) ? v.filter((x, i): x is string => typeof x === "string" && !drop.has(i)) : [];
   };
+  const details: SheetVerdict["details"] = {
+    brokenConnectors: list("brokenConnectors"), missingReferences: list("missingReferences"), oneWay: list("oneWay"),
+    unreadableConnectors: list("unreadableConnectors"), unpairedConnectors: list("unpairedConnectors"),
+    uncheckedReferences: list("uncheckedReferences"), unreadPages: list("unreadPages"),
+  };
+  const status = marker.settledStatus as AuditStatus;
+  if (RANK[status] > RANK.passed && DETAIL_LISTS.every((key) => details[key].length === 0)) return null;
   return {
     documentId: computed.documentId,
     controlledDocumentId: computed.controlledDocumentId,
     sheetNumber: computed.sheetNumber,
     revision: computed.revision,
-    status: marker.settledStatus as AuditStatus,
-    details: {
-      brokenConnectors: list("brokenConnectors"), missingReferences: list("missingReferences"), oneWay: list("oneWay"),
-      unreadableConnectors: list("unreadableConnectors"), unpairedConnectors: list("unpairedConnectors"),
-      uncheckedReferences: list("uncheckedReferences"), unreadPages: list("unreadPages"),
-    },
+    status,
+    details,
     ...(computed.coverage ? { coverage: computed.coverage } : {}),
   };
 }
@@ -710,6 +719,14 @@ export function awaitingFiled(
  * `skipped` member is a document not read whole only for now (`pendingOf`,
  * awaitingFiled): its findings are not in the verdict yet (review fix pass
  * 7).
+ *
+ * Its findings are every read member's, list by list, each once in the
+ * order met; a finding waits only when no member holds it settled. The row
+ * then names the finding its settled status rests on, whichever member
+ * settled it (review fix pass 11: it carried the most severe member's
+ * findings alone, so a row that SH2's one-way settled at `flagged` held
+ * only SH1's waiting connector, and settledFromStored wrote it back
+ * `flagged` with no finding at all — for good, at a known revision).
  */
 export function mergeVerdictsByKey(
   verdicts: readonly SheetVerdict[], basisOf: (documentId: string) => string,
@@ -731,9 +748,24 @@ export function mergeVerdictsByKey(
       const s = v.provisional?.settledStatus ?? v.status;
       if (RANK[s] > RANK[settled]) settled = s;
     }
-    const { provisional: _p, ...rest } = best;
+    // Every read member's findings (a group with none read keeps the
+    // skipped verdict's own) — and which of them wait: those some member
+    // holds waiting and none holds settled.
+    const read = group.filter((v) => v.status !== "skipped");
+    const members = read.length > 0 ? read : [best];
+    const details = Object.fromEntries(
+      DETAIL_LISTS.map((key) => [key, [...new Set(members.flatMap((v) => v.details[key]))]]),
+    ) as SheetVerdict["details"];
+    const waitsIn = (v: SheetVerdict) => new Set(v.provisional ? v.waitingFindings ?? [] : []);
+    const heldSettled = new Set(members.flatMap((v) => {
+      const w = waitsIn(v);
+      return DETAIL_LISTS.flatMap((key) => v.details[key]).filter((x) => !w.has(x));
+    }));
+    const waitingFindings = [...new Set(members.flatMap((v) => [...waitsIn(v)]))].filter((x) => !heldSettled.has(x));
+    const { provisional: _p, waitingFindings: _w, ...rest } = best;
     const merged: SheetVerdict = {
-      ...rest, coverage, ...(waitingOn.length > 0 ? { provisional: { waitingOn, settledStatus: settled } } : {}),
+      ...rest, details, coverage,
+      ...(waitingOn.length > 0 ? { provisional: { waitingOn, settledStatus: settled }, waitingFindings } : {}),
     };
     return pendingOf
       ? awaitingFiled(merged, group.filter((v) => v.status === "skipped").map((v) => v.documentId), pendingOf)

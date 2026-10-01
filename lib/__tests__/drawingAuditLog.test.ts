@@ -881,3 +881,86 @@ describe("a provisional row settled below its floor is written back as what it s
     expect(x.provisional).toEqual({ waitingOn: waiting, settledStatus: "passed" });
   });
 });
+
+// Review fix pass 11 (the reviewer's probe m1): two per-sheet PDFs share a
+// key. SH1's only finding waits on a parked PDF; SH2's one-way is settled.
+// The merged row took SH1's findings alone and SH2's settled status, so
+// settledFromStored later wrote it back `flagged` naming no finding at all
+// — "already recorded" for good at a known revision.
+describe("a row shared by several documents carries every member's findings, and settles with the one that settled it (review fix pass 11)", () => {
+  const waiting = ["030-PID-0201.pdf (page(s) 2 never read)"];
+  const sh1 = sheet({ documentId: "s1", controlledDocumentId: "d-1", name: "025-PID-0105-SH1.pdf", sheetNumber: "025-PID-0105" });
+  const sh2 = sheet({ documentId: "s2", controlledDocumentId: "d-2", name: "025-PID-0105-SH2.pdf", sheetNumber: "025-PID-0105" });
+  const connector = "Connector 14 continues to 025-PID-0108-SH1: it may be in 030-PID-0201.pdf — the pairing was not checked; check the box on that sheet";
+  const oneWay = "References 025-PID-0101.pdf, which never references back";
+  const findings: AuditFindings = {
+    ...NOTHING,
+    oneWay: [{ from: "025-PID-0105-SH2.pdf", to: "025-PID-0101.pdf" }],
+    unpairedConnectors: [{ from: "025-PID-0105-SH1.pdf", to: "025-PID-0108-SH1", box: "14", why: "it may be in 030-PID-0201.pdf", waitsOn: waiting }],
+  };
+
+  it("the merged row holds SH2's settled one-way beside SH1's waiting connector, whichever member is listed first", () => {
+    for (const order of [[sh1, sh2], [sh2, sh1]]) {
+      const [m] = mergeVerdictsByKey(verdictsForSheets(order, findings), (id) => `b-${id}`);
+      expect(m.status).toBe("flagged");
+      expect(m.provisional).toEqual({ waitingOn: waiting, settledStatus: "flagged" });
+      expect(m.details.oneWay).toEqual([oneWay]);
+      expect(m.details.unpairedConnectors).toEqual([connector]);
+      expect(m.waitingFindings).toEqual([connector]);
+      expect(m.coverage).toEqual({ s1: "b-s1", s2: "b-s2" });
+      const [row] = verdictRows("o1", [m], "u1", SCOPE);
+      expect(row.audit_details).toMatchObject({ waitingFindings: { unpairedConnectors: [0] }, oneWay: [oneWay] });
+      // Re-judged settled `passed`: written back with the finding that
+      // settled it — never `flagged` with nothing named.
+      const computed = { ...verdictsForSheets([sh1, sh2], NOTHING)[0], coverage: { s1: "now", s2: "now" } };
+      expect(replaceDecision({ revision_code: "C", status: row.status, provisional: storedProvisional(row.audit_details) }, computed)).toBe("settle");
+      const back = settledFromStored({ status: row.status, audit_details: row.audit_details }, computed)!;
+      expect(back).toMatchObject({ status: "flagged", details: { oneWay: [oneWay], unpairedConnectors: [] } });
+      expect(back).not.toHaveProperty("provisional");
+    }
+  });
+
+  it("a finding one member holds waiting and another holds settled is settled; each finding is listed once, in the order met", () => {
+    const shared = "References 025-PID-0107, which isn't in the set";
+    const v = (documentId: string, w: boolean): SheetVerdict => ({
+      documentId, controlledDocumentId: null, sheetNumber: "025-PID-0105", revision: "C", status: "flagged",
+      details: { brokenConnectors: [], missingReferences: [shared], oneWay: [], unreadableConnectors: [], unpairedConnectors: [], uncheckedReferences: [], unreadPages: [] },
+      ...(w ? { provisional: { waitingOn: waiting, settledStatus: "passed" as const }, waitingFindings: [shared] } : {}),
+    });
+    const [m] = mergeVerdictsByKey([v("s1", true), v("s2", false)], (id) => id);
+    expect(m.details.missingReferences).toEqual([shared]);
+    expect(m.provisional).toEqual({ waitingOn: waiting, settledStatus: "flagged" });
+    expect(m.waitingFindings).toEqual([]);
+    // Both waiting: it waits.
+    const [n] = mergeVerdictsByKey([v("s1", true), v("s2", true)], (id) => id);
+    expect(n.waitingFindings).toEqual([shared]);
+    expect(n.provisional?.settledStatus).toBe("passed");
+  });
+
+  it("a skipped member adds no finding; a group with nothing read keeps the skipped verdict's own", () => {
+    const [sk] = verdictsForSheets([{ ...sh2, indexed: false }], { ...NOTHING, unreadPages: [{ sheet: sh2.name, pages: [1], why: "waiting on AI vision" }] });
+    const [ok] = verdictsForSheets([sh1], NOTHING);
+    const [m] = mergeVerdictsByKey([ok, sk], (id) => id);
+    expect(m).toMatchObject({ status: "passed", coverage: { s1: "s1" } });
+    expect(m.details.unreadPages).toEqual([]);
+    const [alone] = mergeVerdictsByKey([sk], (id) => id);
+    expect(alone.status).toBe("skipped");
+    expect(alone.details.unreadPages).toEqual(sk.details.unreadPages);
+  });
+
+  it("settledFromStored keeps a row whose write-back would name no finding above passed — and writes back a passed one", () => {
+    const computed = { ...verdictsForSheets([sh1], NOTHING)[0], coverage: { s1: "now" } };
+    const at = (settledStatus: string) => ({
+      status: "flagged",
+      audit_details: {
+        brokenConnectors: [], missingReferences: [], oneWay: [], unreadableConnectors: [], unpairedConnectors: [connector],
+        uncheckedReferences: [], unreadPages: [], provisional: { waitingOn: waiting, settledStatus },
+        waitingFindings: { unpairedConnectors: [0] },
+      },
+    });
+    // Fix pass 10's merged row: settled `flagged` by a finding it never held.
+    expect(settledFromStored(at("flagged"), computed)).toBeNull();
+    expect(settledFromStored(at("broken_connectors"), computed)).toBeNull();
+    expect(settledFromStored(at("passed"), computed)).toMatchObject({ status: "passed", details: { unpairedConnectors: [] } });
+  });
+});

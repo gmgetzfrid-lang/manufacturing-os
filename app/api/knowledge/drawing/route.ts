@@ -841,14 +841,20 @@ export async function GET(req: NextRequest) {
   }
   // References into a sheet no title block declares, of a drawing whose
   // title block gave its number but not that sheet on some page (review fix
-  // pass 10): never a gap, never one-way — said, with the sheets.
+  // pass 10): never a gap, never one-way — said, with the sheets. Filed
+  // settled, so a verdict already recorded at a known revision keeps them
+  // until that sheet is revised: the remedy says so (review fix pass 11 —
+  // it promised the re-index would judge them, and a re-index never lowers
+  // a recorded verdict).
   const sheetUnread = audit.missingSheetUnread.length + audit.oneWaySheetUnread.length;
   if (sheetUnread > 0) {
     const where = [...new Set([...audit.missingSheetUnread.flatMap((m) => m.maybeIn), ...audit.oneWaySheetUnread.map((o) => `${o.from} (${o.why})`)])];
     suggestions.push(
       `${sheetUnread} reference(s) could not be checked: they name a sheet no title block in the set declares, and a ` +
       `drawing's title block gave its number without the sheet (${where.slice(0, 4).join("; ")}${where.length > 4 ? "; …" : ""}). ` +
-      "They are NOT counted as one-way or missing; re-index that drawing so its sheet numbers are read, and they are judged.",
+      "They are NOT counted as one-way or missing; re-index that drawing so its sheet numbers are read, and they are judged " +
+      "here — but a verdict already recorded for a sheet at a known revision stays as recorded (listed as kept when the " +
+      "audit is recorded) until that sheet is revised.",
     );
   }
   if (opcNoRef.length > 0) {
