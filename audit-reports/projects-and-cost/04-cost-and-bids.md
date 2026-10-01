@@ -91,7 +91,7 @@ Pinned by `projectReport.test.ts` "an on-ledger approved CO: all three compute C
 ## COST-2 · Committed money is invisible to Remaining, to the over-budget flag, and to project health — a fully committed budget reads as fully available
 
 - **Severity:** MEDIUM
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Assigned:** projects-joint J12 SERVER REMAINDERS (new) — by the integrator, 2026-10-01 (orphan sweep: the package that left this remainder has merged; fleet plan `audit-reports/fleet-plans/`).
 - **Verification:** CONFIRMED
 - **Locations:** `lib/costs.ts:316`, `lib/costs.ts:317`, `lib/costs.ts:330`, `components/projects/CostsTab.tsx:133-142`, `lib/projectHealth.ts:25`, `lib/projectHealth.ts:70-86`, `lib/projectSnapshot.ts:101`
@@ -126,6 +126,18 @@ lib/costs.ts:316-317 — `remaining: a.budget - spent,` / `overBudget: a.budget 
 - [x] `lib/__tests__/costs.test.ts` pins budget 1000 / committed 900 / spent 0 → 100 remaining, not 1000.
 
 **Scope / residual.** OPEN for the health-score consumer. Decision (DEC-50 rule 1): exposure matched by party. The Available tile's secondary figure is labelled "unspent (actuals only)" (budget − spent), no longer "uninvoiced", which the Committed tile uses for open commitments.
+
+**Resolution (2026-10-01, projects Round G).** Package projects-joint J12 SERVER REMAINDERS closed the health-score consumer. `lib/projectSnapshot.ts` carries the rollup's `exposure` (spent + open commitments, `lib/costs.ts` `computeCostRollup` — the figure the Costs tab's Available tile is measured from) as `ProjectStateSnapshot.exposure`. `lib/projectHealth.ts` `computeProjectHealth`'s Cost part burns on it: with no CPI the score is `burnScore(exposure / budget)` (the existing curve, continuous across 100%), and the detail names both figures when commitments are open — "0% of budget spent · 100% committed · 100% committed or spent" for a fully committed budget with nothing invoiced, which used to read "0% of budget spent", score 100. With CPI known, a budget committed past its end caps the part (`min(cpiScore, burnScore(exposure / budget))`) and says "committed and spent run N% of budget — over budget". A snapshot without `exposure` (an older caller) reads exactly as before.
+- Commit: `87a8436`.
+- Tests: `lib/__tests__/prjRoundGJ12.test.ts` "COST-2 — the Cost part reads commitments, not spend alone" (fully committed, nothing spent → 60 and the committed wording; over-committed → over budget and below any under-budget position; CPI capped when over-committed; no `exposure` → the old string; revised budget is the yardstick); `lib/__tests__/projectSnapshot.test.ts` "the snapshot carries spent + open commitments as exposure, and the Cost part burns on it".
+
+**Done-when.**
+- [x] AccountRollup and ProjectCostRollup expose an exposure figure including open commitments, `remaining = budget − exposure`, and `overBudget` trips on exposure (J3, above).
+- [x] The Remaining tile and the per-account row render the commitment-inclusive figure, with the actuals-only figure secondary (J3, above).
+- [x] `computeProjectHealth`'s Cost part reads the commitments — through `exposure`, the matched-by-party figure (not the raw `s.committed`, which also counts commitments already invoiced against) — and its detail names them.
+- [x] `lib/__tests__/costs.test.ts` pins budget 1000 / committed 900 / spent 0 → 100 remaining, not 1000 (J3, above).
+
+**Scope / residual.** None. `ProjectStateSnapshot.committed` stays: the detail prints it ("N% committed").
 
 ---
 
@@ -194,6 +206,19 @@ Neither closes the Apex scenario by itself. A unique normalised match does not b
 Owner: none yet. Proposed: projects-joint J12 SERVER REMAINDERS (option (a) at parse or intake: `lib/costDocs.ts`, `app/api/projects/cost-docs/route.ts`, `app/api/intake/upload/route.ts`), or J10b UI REMAINDERS if the link is written on the bid tab's first render (`QuotesPanel.tsx`). The integrator assigns at the J13 merge (the fleet plan is not this package's file).
 
 The award refusal runs in the caller's session (`lib/costDocs.ts` is imported by a client component), so it is not a database rail. A direct PostgREST status write to `awarded` is not checked against the registry; that gap is projects-tab `MON-12`'s, still OPEN with J12. The lib's own override row is best-effort: a failed insert is logged, not thrown (`lib/costDocs.ts:98-108`, the `COST-11` convention). The bid tab's pre-post intent row is the fail-closed record. Pending migration: `20261096` (DEC-30).
+
+**Partial (2026-10-01, projects Round G).** Package projects-joint J12 SERVER REMAINDERS took option (a) of the residual above at the two writers it owns; the third writer and the owner's ruling remain, so the record stays OPEN.
+- **At parse.** `app/api/projects/cost-docs/route.ts`: a quote read on a row that carries `company_id` (20261096) with no link of its own, whose contractor has no link either (a party read error counts as linked), and that has a vendor name, is linked to the ONE Known Company the name binds to — `lib/bidTab.ts` `matchCompanyByName` (an exact case-insensitive name, else the one row it normalises to; ambiguity never binds) over the org's registry read in pages of 1,000. The link is its own write, guarded on the row still having no link (`.is("company_id", null)`), after the read's save: a company a person linked while the model ran is never replaced, and a link that cannot be written leaves the read standing. The response and `COST_DOC_PARSED` carry `companyLinked`. Commit `7e3999c`.
+- **At upload.** `lib/costDocs.ts` `uploadCostDoc` → `linkBidToRegistry`: the same rule for a new quote uploaded with a vendor name. Best effort — a failed registry read or a refused write never fails the upload. Commit `5ace9cf`.
+- **The award rail reads the stored link first.** `20261157`'s `cost_doc_company_behind` (and `award_quote`) resolve the document's link, then the contractor's, then one exact name — as `companyBehind` does (projects-tab `MON-12`).
+- Tests: `lib/__tests__/costDocsRoute.test.ts` "COST-3 done-when 2 — a read links the quote to the ONE Known Company its vendor name binds to" (exact and uniquely normalised names linked by the guarded write; ambiguity never binds; a linked row, a linked contractor or a row without the column is left alone with no registry read; an unknown vendor and an invoice link nothing); `lib/__tests__/costDocs.test.ts` "COST-3 — uploadCostDoc links a bid whose vendor name binds to one Known Company" (three cases, including a failed registry read and a refused write).
+
+**Done-when.**
+- ✓ `awardQuote` refuses a `do_not_use` company without a recorded override (above), and the database now refuses it too (`20261157`, `MON-12`).
+- ◐ A normalised comparison with an explicit link stored on the row: ✓ for a quote uploaded through the Costs tab with a vendor name, and for any quote the model reads; **not done for the intake door's quote insert** (`app/api/intake/upload/route.ts`, the door's quote branch) — a door quote that is never read keeps the name match until a person links it. That route's tests (`intakeUploadRoute.test.ts`) are document-control P14's in this wave, so the door was not edited here.
+- ✓ / ✓ The read extent and the confirm step, as above.
+
+**Scope / residual.** Owed: (1) the intake door's quote insert linking by the same rule (`linkBidToRegistry`'s logic, server-side); (2) the owner's ruling on the Apex scenario recorded above — whether the do-not-use GATE (never the binding) flags a registry name whose normalised tokens lead the vendor's ("Apex Industrial Services, LLC" vs "Apex Industrial"); a unique normalised match does not bind it, here or anywhere.
 
 ---
 
@@ -299,7 +324,7 @@ lib/bidTab.ts:159 — `const maxGaps = Math.max(...econ.map((e) => e.missingScop
 ## COST-6 · Change-order approval has no authority model: the proposer can approve their own change order, for any amount, with nothing enforced server-side beyond project ownership
 
 - **Severity:** MEDIUM
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Assigned:** projects-joint J12 SERVER REMAINDERS (new) — by the integrator, 2026-10-01 (orphan sweep: the package that left this remainder has merged; fleet plan `audit-reports/fleet-plans/`).
 - **Verification:** CONFIRMED
 - **Locations:** `lib/changeOrders.ts:132-197`, `components/projects/cost/ChangeOrdersPanel.tsx:46-78`, `components/projects/cost/ChangeOrdersPanel.tsx:98-108`, `supabase/migrations/20261013_project_controls_program.sql:262-266`, `app/(protected)/projects/[id]/page.tsx:134`
@@ -343,6 +368,18 @@ lib/changeOrders.ts:144-147 — the only pre-approval checks are `if (co.status 
 - [ ] Partly — the CO row shows proposer and decider side by side with the same-person flag; the close-out report (`lib/projectReport.ts`) is J7's file.
 
 **Scope / residual.** OPEN for the report line. The admin UI for the threshold key is a follow-on (DEC-31); the key, its shape, the malformed-means-none rule and the default are documented in `lib/changeOrders.ts` and DEC-50. Self-REJECTION is refused on the same rule (the brief's "approved/rejected"); withdrawing one's own proposal is the `void` decision, unaffected.
+
+**Resolution (2026-10-01, projects Round G).** Package projects-joint J12 SERVER REMAINDERS closed the report line. `lib/projectReport.ts` `gatherReportData` returns `coLines` — every change order with `proposedBy` (`created_by_name`), `decidedBy` / `decidedAt`, `samePerson` (`lib/changeOrders.ts` `selfDecided`: proposer and decider ids equal) and the decision note — and `renderReportHtml` prints them under the Money table: CO, amount, status, "Proposed by", "Decided by", with a **same person** flag on a change order its proposer decided and a legend saying that is allowed only when nobody else could decide (COST-6's rule above). Every value is escaped. A refused change-orders read prints no table (the Money section already says it could not be read).
+- Commit: `87a8436`.
+- Tests: `lib/__tests__/projectReport.test.ts` "the report names who proposed and who decided each change order (COST-6)" (proposer / decider side by side; CO-002 flagged "same person"; the legend; a title is escaped) and "a refused change_orders read prints no table".
+
+**Done-when.**
+- [x] decideChangeOrder rejects a self-decision while another eligible decider exists; otherwise it is allowed and marked (J3, above).
+- [x] An org-level approval threshold, enforced in the lib and by a database trigger judging the signed-in caller (J3, `20261094`).
+- [x] change_orders has split INSERT / UPDATE policies (J3, `20261094`).
+- [x] The CO row (J3, `ChangeOrdersPanel`) and the report (here) show proposer and decider side by side and flag the same person.
+
+**Scope / residual.** None for this record. The admin UI for the threshold key stays the follow-on recorded above (DEC-31).
 
 ---
 

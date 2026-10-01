@@ -262,7 +262,7 @@ the loop the suppression prevents.
 ## PERF-5 · The execution board renders eight hundred components into a viewport showing fifteen
 
 - **Severity:** MEDIUM
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Assigned:** projects-joint J12 SERVER REMAINDERS (new) — by the integrator, 2026-10-01 (orphan sweep: the package that left this remainder has merged; fleet plan `audit-reports/fleet-plans/`).
 - **Verification:** CONFIRMED (structure); node counts estimated
 - **Blast radius:** performance
@@ -308,6 +308,20 @@ The calendar view is the one safe surface — it caps at 4 chips per day with
 **Done-when (so far).** 2 ✓ (DOM rows proportional to the viewport, not the schedule). 1 not verified: no browser here to measure frames; per-frame work is now bounded to the window and a memoised strip, but "does not drop frames" is unmeasured.
 
 **Scope / residual.** Remediation 4 (a searchable dependency picker in place of a `<select>` of every task) is not built; `MIN_PX_PER_DAY = 30` still keeps "Fit" from fitting a two-year schedule.
+
+**Resolution (2026-10-01, projects Round G).** Package projects-joint J12 SERVER REMAINDERS measured done-when 1 in a browser, found what still cost a drag frame, and removed it.
+- **The measurement.** The pre-installed Chromium (`/opt/pw-browsers`, Chromium 141, driven by the machine's existing Playwright 1.56; nothing installed) loaded `components/projects/ExecutionView.tsx` bundled standalone (Vite, the data and `next/*` modules stubbed, the app's built Tailwind CSS linked) on a 400-row board (20 phases × 19 tasks over a year, a third of the tasks linked), 1440×900. A script pressed a bar and dragged it 360 px in 120 pointer moves ~16 ms apart, recording every animation frame and every long task (`PerformanceObserver('longtask')`), with a no-drag control (the same mouse moves, no press) at 1× and 4× CPU throttle, three runs each. DOM: 1,578 nodes, 22 bars and 24 outline rows drawn for 400 tasks (done-when 2's window, unchanged).
+- **What it found.** At 1× the board kept up (0–1 long task per drag). At 4× — a slower laptop — each change of the drag's day offset cost ~90 ms: 9–11 long tasks per drag (776–1,011 ms), 11–13 frames over 25 ms, the worst frame 100–233 ms. A CPU profile put most of it in `fmtDayUTC` / `fmtDateUTC` and `Axis`: `toLocaleDateString(…, options)` builds a new Intl formatter on every call, and every drag frame re-rendered the axis (one label per tick across a year) and every bar's tooltip.
+- **The fix.** The board's three date shapes are formatted by one `Intl.DateTimeFormat` each, built on first use (same output — pinned); `Axis` and `Gridlines` are `React.memo`'d (they depend on the domain and the zoom only, which a drag does not touch).
+- **After.** At 4×: no long task in any of the three runs; 2–4 frames over 25 ms per drag against 0–2 in the no-drag control (the host was under load from other jobs, load average ~25); the worst frame 33–67 ms. At 1×: no long task; 0–3 frames over 25 ms (control 0–6).
+- Commit: `329ba59`.
+- Tests: `lib/__tests__/prjRoundGJ12.test.ts` "PERF-5 — a drag does not rebuild the axis or construct a date formatter per label" (no per-call `toLocaleDateString` left in the board; the three cached formatters; the memo'd axis and gridlines; the cached formatters print what `toLocaleDateString` printed). The measurement harness is not in the repository (it needs a browser and is a one-off).
+
+**Done-when.**
+- ✓ Dragging a task on a 400-row schedule does not drop frames — measured: no main-thread long task during a drag at 1× or 4× CPU throttle; the frames that ran long matched the no-drag control's (host jitter), not the drag.
+- ✓ The board's DOM node count is proportional to what is visible (above; re-observed: 24 rows and 22 bars for 400 tasks).
+
+**Scope / residual.** Remediation 4 (a searchable dependency picker) and the `MIN_PX_PER_DAY = 30` floor that keeps "Fit" from fitting a two-year schedule are not done-whens and stay as recorded above. Measured headless on a loaded host, not on a deployed build against live data.
 
 ---
 
@@ -380,12 +394,23 @@ customer's own key, and a 504 burns it entirely.
 
 **Scope / residual.** Stays OPEN for the renderer items (intelligence) and the cost-docs route (P3). Showing the cap on screen is the UI owners': the company page's quality-manual confirm is projects J4's region (`COST-3`, "shows pages read / total" — J4's branch reads `pagesRead` and its own `pagesTotal` there; it can show `note` as it stands), and the Quality tab's checklist reader is J2's file (it can show `pageCap` beside the proposed items). Remediation item 5 (does the hosting plan permit `maxDuration = 120`?) is an operator fact this environment cannot see.
 
+**Partial (2026-10-01, projects Round G).** Package projects-joint J12 SERVER REMAINDERS put `/api/projects/cost-docs` on the deadline (the route limb of done-when 2 above). The route takes `routeDeadline(maxDuration)` at the top of `POST`; the render races it (`beforeDeadline`) — past it, 504 with `tooLargeToReadMessage(8)` and the model is never called; the page count gets its own 10 s budget inside the deadline and is UNKNOWN (null) after it, never a refusal and never the model's time; the governed call's `timeoutMs` is `aiBudgetMs(deadline, 90_000)` — what is left, capped at 90 s, refused under 10 s before the caller's key is spent; a model timeout (`isTimeoutError`) is the same readable 504. The route joins the deadline census.
+- Commit: `7e3999c`.
+- Tests: `lib/__tests__/costDocsRoute.test.ts` "PERF-6 — the read answers inside the function's own limit, with a readable 504" (the budget is what is left, capped; a render past the deadline → 504 naming the cap, no model call, nothing written; too little time after the render → 504 before the key; a model timeout → the same 504; a page count that never answers is null after its budget and the model keeps its 90 s); `lib/__tests__/routeDeadline.test.ts` census now names the route.
+
+**Done-when.**
+- A ten-page scanned PDF completes well inside the function limit — **not done**: the render's cost lives in `lib/knowledgePageRender.ts` (intelligence `FLOW-11` / `FLOW-13`), as above.
+- ✓ A timeout produces a readable message, not "HTTP 504" — now for all three page-reading routes (checklist, quality manual, cost documents).
+- Two concurrent reads do not exhaust memory — **not done**: renderer memory, same owner.
+
+**Scope / residual.** OPEN for the two renderer items (intelligence). The cost-docs read caps at 8 pages (`MAX_PAGES`), and the cap is named in the 504.
+
 ---
 
 ## PERF-7 · Applying an AI assessment issues one update per item, sequentially
 
 - **Severity:** MEDIUM
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Assigned:** projects-joint J12 SERVER REMAINDERS (new) — by the integrator, 2026-10-01 (orphan sweep: the package that left this remainder has merged; fleet plan `audit-reports/fleet-plans/`).
 - **Verification:** CONFIRMED
 - **Blast radius:** availability / data-integrity
@@ -424,12 +449,24 @@ server-side.
 
 **Scope / residual.** Remaining for this record: the single-statement server-side apply (an RPC keeping the per-row `updated_at` guard), not added here because it would make both the assessment and the sweep depend on a migration being applied (DEC-30) — recorded in DEC-52 as the follow-on that closes done-when 1. Done-when 2 and 3 hold now.
 
+**Resolution (2026-10-01, projects Round G).** Package projects-joint J12 SERVER REMAINDERS built the follow-on DEC-52 item 10 names. `supabase/migrations/20261157_prj_roundG_server_remainders.sql` §3: `apply_checklist_item_writes(p_checklist, p_writes)` (SECURITY INVOKER — every row is the caller's own write under the same RLS and the `20261091` rails; a NULL `auth.uid()` refused; EXECUTE revoked from PUBLIC and anon) applies up to 2,000 machine writes of ONE checklist in one request, each in its own sub-transaction and each guarded on the row's `updated_at` AS READ (`IS NOT DISTINCT FROM` the expected value — the single-row path's optimistic guard) and on the checklist; it writes only the machine actor's columns (status, applicability, rationale, evidence), stamps `updated_at` and `updated_by` NULL itself, accepts only the two machine names `lib/checklistEngine.ts` uses, and returns `{landed, refused, failed[{id, code, message}]}`. `lib/checklists.ts` `writeItemPatches` sends the assessment's and the sweep's writes through it when they share a checklist (they always do), maps the outcome (a rail's refusal is a failure with its sentence through `describeWriteError`), and falls back to the guarded single-row writes on 42883 / PGRST202 (before the migration) or an answer without the function's shape; any other database error fails every write and does NOT fall back. Pending migration: `20261157` (DEC-30).
+- Commits: `6f89983` (the function), `5ace9cf` (the lib).
+- Tests: `lib/__tests__/checklists.test.ts` "the machine's writes in ONE request (20261157 apply_checklist_item_writes)" (one call carries every write with the `updated_at` it was read at, no single-row UPDATE, the audit names only what landed; a changed row refused and a rail's refusal failed while the rest land; a database error fails all with no fallback, a missing function or a shapeless answer falls back; the sweep goes through the same request); `lib/__tests__/prjRoundGJ12Migration.test.ts` "PERF-7 — the machine's writes in one request, the per-row updated_at guard kept".
+- Scratch: a private PostgreSQL 16 with the real `20261091` checklist rail: one call carrying five writes — two landed, one was refused (its `updated_at` had moved), one failed (a person-decided item, refused by the real rail) and one failed the machine-name check (a write under a person's name); a member without write access had every row refused; a NULL `auth.uid()` → 42501; anon → permission denied.
+
+**Done-when.**
+- ✓ Applying a 300-item assessment is one round trip (with `20261157` applied; before it, ⌈n/50⌉ waves as above).
+- ✓ Failures are reported, not swallowed.
+- ✓ Two concurrent sweeps cannot lose evidence (the per-row guard, kept in the function).
+
+**Scope / residual.** None. Each row is its own sub-transaction, so a refused row never undoes a landed one — the single-row path's semantics. `DEC-52` item 10 carries a *Landed* line. A `schemaExpectations` entry for the function is the A&O owner's file (named for the integrator).
+
 ---
 
 ## PERF-8 · The full timeline loads on every project open, for a tab most users never click
 
 - **Severity:** MEDIUM
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Assigned:** projects-joint J12 SERVER REMAINDERS (new) — by the integrator, 2026-10-01 (orphan sweep: the package that left this remainder has merged; fleet plan `audit-reports/fleet-plans/`).
 - **Verification:** CONFIRMED
 - **Blast radius:** performance
@@ -468,12 +505,23 @@ the project row lands rather than blocking on everything.
 
 **Scope / residual.** The remaining limb is one prop through `ProjectCoach` and an optional pre-read argument to `gatherProjectSnapshot`. *Second fix pass (2026-09-30):* the lazily loaded timeline read put every cost-document and linked-document id in one `.in()` filter. A project with a few hundred quotes exceeded the gateway's URL limit, and the Activity tab failed as a whole. Every id list is now read 100 ids per request (`SAF-6`).
 
+**Resolution (2026-10-01, projects Round G).** Package projects-joint J12 SERVER REMAINDERS closed done-when 3 as the residual above describes. `lib/projectSnapshot.ts`: `gatherProjectSnapshot(…, { pre })` takes a `SnapshotPreRead` — the project row (`select *`) and the roster the caller already read — and reads neither `projects` nor `project_members` itself (a pre-read row without the 20261013 columns reads as not migrated, exactly what the read would have said). `lib/projects.ts` `getProjectForPage` returns the row it read; `app/(protected)/projects/[id]/page.tsx` keeps it with the roster from the same load (`coachPre`, set in the same tick as the coach's refresh key) and mounts `ProjectCoach` only once it has them, so the coach's first gather is the one that uses them; `components/projects/ProjectCoach.tsx` passes `preRead` through to the gather. The page edit is local (a state, one line in `refresh`, the coach's mount).
+- Commits: `87a8436` (the snapshot), `329ba59` (the page, the coach, `getProjectForPage`).
+- Tests: `lib/__tests__/projectSnapshot.test.ts` "gatherProjectSnapshot — the page's pre-read (PERF-8)" (neither table read with a pre-read, and the figures come from it; the control reads both; an unmigrated row reads as not migrated; a shared round is served as it was); `lib/__tests__/prjRoundGJ12.test.ts` "PERF-8 — the coach takes the project row and roster the page already read" (source pins on the page and the coach).
+
+**Done-when.**
+- ✓ Opening the Documents tab does not fetch the timeline (above).
+- ✓ The header paints before the tab data arrives (above).
+- ✓ No query runs twice in one load — the project row and the roster are read once, by the page, and handed to the coach.
+
+**Scope / residual.** Opening the Costs or Quality tab loads that tab's ledger itself, beside the coach's snapshot of the same tables — a second load (the tab's), not a second read in one load; sharing them is a cache, not this record. The pre-read is the page load's: a change made without the page's `refresh()` (none of the page's own actions) would be seen by the coach on the next page refresh.
+
 ---
 
 ## PERF-9 · A 571 KB chunk containing a zip library ships to everyone who opens any project
 
 - **Severity:** MEDIUM
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Assigned:** projects-joint J12 SERVER REMAINDERS (new) — by the integrator, 2026-10-01 (orphan sweep: the package that left this remainder has merged; fleet plan `audit-reports/fleet-plans/`).
 - **Verification:** CONFIRMED (verified against the built output)
 - **Blast radius:** performance
@@ -514,6 +562,18 @@ in `next/dynamic`.
 - Route JS is under 700 KB — **not verified here**: no `next build` was run in this package (the integrator builds); the finding stays open until the built manifest shows it.
 
 **Scope / residual.** The other heavy statics named (ExecutionView, ScheduleImportModal, TaskDetailPanel) are P6a/P6b files — not touched.
+
+**Resolution (2026-10-01, projects Round G).** Package projects-joint J12 SERVER REMAINDERS made the heavy statics lazy in the files that import them, and measured the route from a built manifest.
+- `app/(protected)/projects/[id]/page.tsx` (its import block only): `IntakePanel`, `CostsTab`, `QualityTab` and `ScheduleTab` load through `next/dynamic` (ssr off, a spinner while loading; each still renders inside its `TabErrorBoundary`, which also catches a failed chunk load). `components/projects/ScheduleTab.tsx`: `ExecutionView` and `ScheduleImportModal` load on use. `components/projects/ExecutionView.tsx`: `TaskDetailPanel` and `ScheduleCalendarTileView` load on use. (`QuotesPanel` already loads `lib/rfqDocx` at the click — above.)
+- **Measured.** `next build` with placeholder env (`NEXT_PUBLIC_SUPABASE_URL` / `_ANON_KEY` / `SUPABASE_SERVICE_ROLE_KEY`; a temporary `turbopack.root` because this worktree's `node_modules` is a symlink outside it — reverted, not committed), then `.next/server/app/(protected)/projects/[id]/page_client-reference-manifest.js` `entryJSFiles`. "Route JS" is read as the route's OWN client JavaScript — the page entry's chunks minus those every route loads (the root and `(protected)` layouts, the error and loading boundaries, `rootMainFiles`). Before (a build of `2af813b`): 1,051,421 bytes (gzip 291,772), largest chunk 603,888. After: **474,342 bytes** (gzip 144,895), largest chunk 99,707. With the app-wide shell counted the entry is 1,659,239 → 1,092,416 bytes; the shell itself is ~618 KB on every route and is not the Projects tree's. Neither `PizZip` nor the bid tab's code is in any initial chunk of the route (searched in the built chunks).
+- Commit: `329ba59`.
+- Tests: `lib/__tests__/prjRoundGJ12.test.ts` "PERF-9 — the project page loads its heavy tabs when they are opened" (the four page tabs are `next/dynamic`, never static; the board, import modal, task panel and calendar are lazy where they are imported; a census: no file under `app/` or `components/` statically imports one of the eight lazy components — a type import is fine).
+
+**Done-when.**
+- ✓ PizZip is not in the project route's initial chunks (by import graph above; now also by the built chunks).
+- ✓ Route JS is under 700 KB — 474,342 bytes of the route's own JavaScript, from the built manifest (the measure stated above).
+
+**Scope / residual.** The app-wide shell (~618 KB, shared by every route) is outside this record; a total-including-shell reading of done-when 2 would need the layouts slimmed, which no Projects package owns. Opening a heavy tab now fetches its chunk on first open (a spinner shows).
 
 ---
 
@@ -650,10 +710,10 @@ everywhere; add an explicit `order` to the snapshot query at minimum. Time-bound
 | PERF-2 | CRITICAL | RESOLVED |
 | PERF-3 | HIGH | OPEN |
 | PERF-4 | HIGH | OPEN |
-| PERF-5 | HIGH | OPEN |
+| PERF-5 | HIGH | RESOLVED |
 | PERF-6 | HIGH | OPEN |
-| PERF-7 | HIGH | OPEN |
-| PERF-8 | HIGH | OPEN |
-| PERF-9 | MEDIUM | OPEN |
+| PERF-7 | HIGH | RESOLVED |
+| PERF-8 | HIGH | RESOLVED |
+| PERF-9 | MEDIUM | RESOLVED |
 | PERF-10 | LOW | OPEN |
 | PERF-11 | MEDIUM | RESOLVED |

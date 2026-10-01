@@ -96,6 +96,13 @@ and instead assumes a constrained identity that the DB guards still apply to.
 **Related:** the new `document-control` area's intake lens covers the promote
 pipeline this door feeds. Read both.
 
+**Partial (2026-10-01, projects Round G).** Assigned to projects-joint J12 SERVER REMAINDERS for its two open items — the door's constrained identity (Scope's "structural one", acceptance 2) and a serving origin that is not the app's (acceptance 1's origin half). **Neither is built here**, for reasons the integrator can act on:
+- **The constrained identity** means rebuilding `app/api/intake/upload/route.ts` (and the direct-upload finalize) to write as an identity the database guards apply to — a per-request token scoped to one link, with insert policies for that link's project and library — instead of the service role. That route's tests (`lib/__tests__/intakeUploadRoute.test.ts`, `intakeDoorMigration.test.ts`) and the intake-door migrations of this wave (`20261149`–`20261151`) are document-control P14's; a rebuild of the door's identity beside them would collide. It needs its own package with those files.
+- **A separate serving origin** is a second domain (or bucket host) that serves uploads with no cookies and no app script — a deployment change this tree cannot make or prove. What the tree holds already stands: the door stores only sniffed PDF / DWG / DXF / ZIP (`SEC-6`), every presigned download is an attachment unless a viewer asks and the type cannot be a page (`DEC-49`, `SEC-18`), and `nosniff` / the viewer's refusal to frame HTML or SVG (`SEC-1`'s egress half).
+- Acceptances 3 (tokens: entropy, expiry, revocation effective immediately — J1, `SEC-19` hashing) and 4 (server-side rate limits failing open — J1, `intake_attempts`) hold as recorded on their findings.
+
+Owed: (1) the door's constrained identity, in a package that owns the door's route, tests and migrations; (2) an `UNTRUSTED_CONTENT_ORIGIN` (or equivalent) that presigned GETs of door uploads use, with the operator step to stand it up.
+
 ---
 
 <a id="gap-402"></a>
@@ -137,6 +144,16 @@ the remainder.
 1. An RLS-denied write surfaces as a failure everywhere, and writes no audit row.
 2. A test forces a denial on a PSSR/closeout path and asserts nothing is recorded.
 3. A raw discarded write result fails the build or the lint step.
+
+**Resolution (2026-10-01, projects Round G).** **Status: BUILT (narrow, as scoped).** The helper and the safety-critical conversions landed with projects Round G J2 QUALITY and J3 MONEY-LEDGER (`lib/checkedWrite.ts`; `lib/checklists.ts`, `lib/turnover.ts`, `lib/costs.ts`, `lib/costDocs.ts`, `lib/changeOrders.ts`). Package projects-joint J12 SERVER REMAINDERS did the two things Scope still asked for: it **opened the finding for the remainder** — projects-tab [`SAF-18`](./02-safety-compliance.md) — and **widened the census** that fails the build on a raw discarded write (`lib/__tests__/checkedWrite.test.ts` "census, widened — every lib file and the Projects surface"): every `lib/**` file and the Projects surface (`components/projects/**`, `app/api/projects/**`, `app/api/intake/**`, `app/(protected)/projects/**`) is scanned with the census's own `writeSites`; the 18 lib files and two Projects files with no unchecked `.update(` / `.delete(` must stay clean; the 48 lib files and six Projects files still carrying unchecked sites are on a ratchet that may only fall (158 sites in `lib`, 19 on the Projects surface, measured at `2af813b` + J12); and any file not named — new code — must be clean.
+- Commit: `e605b0b`.
+
+**Done-when.**
+1. ✓ An RLS-denied write surfaces as a failure and writes no audit row on the converted paths (J2 / J3, `SAF-3`).
+2. ✓ A test forces a denial on a PSSR / closeout path and asserts nothing is recorded — `lib/__tests__/checklists.test.ts` "a refused write (RLS zero rows) reports an error and writes no audit row (SAF-3)", `turnover.test.ts`'s refusals.
+3. ✓ A raw discarded write result fails the build — in the quality and money files (zero), in every clean file, in every NEW file under `lib/` and the Projects surface, and as a rise anywhere on the ratchet.
+
+**Scope / residual.** The remaining 177 unchecked sites are `SAF-18`'s, converted file by file by their owners (DEC-31). Merge note for the integrator: a package in flight that adds a raw update/delete to a new `lib` file, or adds one to a ratcheted file, fails `checkedWrite.test.ts` at merge — by design; a file that is converted should have its number lowered in the same change.
 
 ---
 
@@ -287,6 +304,17 @@ constrain.
 
 Outside this spec, because it is not a route to a green gate: completing the PROJECT over red gates takes an optional reason ("Reason (optional)", `app/(protected)/projects/[id]/page.tsx:779`; `lib/projects.ts:537` records `reason || null`). The gates stay red, and their state is recorded in `PROJECT_COMPLETED` and printed (PT `SAF-14`). This area's README lists that override as sound (`README.md:189`).
 
+**Resolution (2026-10-01, projects Round G).** **Status: BUILT.** Package projects-joint J12 SERVER REMAINDERS closed acceptance 2's report limb. `lib/projectReport.ts` gathers every decision a person made on a closeout gate — checklist items a person decided (a note on the row and a person's uid: N/A, satisfied, or another status "with a note"), turnover items waived / rejected / accepted with a review note, punch items voided or closed with a closure note — each with the reason recorded, who recorded it and when, newest first; `renderReportHtml` prints them under the Quality table as "Decisions on the record — each with the reason the person who made it recorded" (item, decision, reason, by + date; at most 200 rows, saying how many there are when there are more). A machine green (the evidence sweep's) carries a citation, not a reason, and is the evidence pack's to show (`QUAL-10`). The punch read became `select *` so the closure columns print where they exist, and a database without them is not a failed read.
+- Commit: `87a8436`.
+- Tests: `lib/__tests__/projectReport.test.ts` "the report prints each closeout decision with its reason (GAP-405)" (person-made decisions newest first with reason and actor; a machine green and undecided rows left out; the open punch count unchanged; no decisions → no section).
+
+**Done-when.**
+1. ✓ (above).
+2. ✓ The reason is recorded, attributed and visible on the closeout record — on the item (above) and now on the printed closeout report.
+3. ✓ (above).
+
+**Scope / residual.** None for this spec.
+
 ---
 
 <a id="gap-406"></a>
@@ -313,6 +341,18 @@ damage, the second addresses damage already done.
 1. A failure at any step leaves no partial award.
 2. A query identifies existing awarded-without-commitment documents.
 3. Repair is an auditable action, not a silent correction.
+
+**Resolution (2026-10-01, projects Round G).** **Status: BUILT.** Acceptances 2 and 3 landed with projects Round G J3 MONEY-LEDGER (`listLedgerOrphans` / `cost_ledger_orphans` names awarded-or-posted paper without its entry; `repairCostDoc` re-posts or reverts, audited — `MON-1`, `COST-11`). Package projects-joint J12 SERVER REMAINDERS made the award itself one transaction (acceptance 1): `supabase/migrations/20261157_prj_roundG_server_remainders.sql` §2 `award_quote(p_doc, p_cost_account, p_expected_total, p_override_reason, p_confirmed_total)` — SECURITY INVOKER (every read and write the caller's own, under the same RLS and money rails), a NULL `auth.uid()` refused, EXECUTE revoked from PUBLIC and anon — locks the quote and re-checks it (a quote, still draft / parsed, the budget line on the project and in the document's currency, the total the caller's guard checked, the registry — `MON-12`), returning `{ok:false, code}` with nothing written; then claims it, posts the commitment (`addEntry`'s row and its `COST_ENTRY_POSTED`), records the override, declines the open rivals by RFQ key, lists the open ungrouped quotes and writes `COST_DOC_AWARDED` (`oneTransaction: true`). A failure at any step after the claim raises, and the whole award rolls back. `lib/costDocs.ts` `awardQuote` runs its guard (currency, registry, read extent) against the row as read, then calls it, and returns the same shape as before — `{ok, error?, warning?, needsOverride?}`, the `warning` built from the function's `rivals` / `declined` / `ungroupedOpen`; on 42883 / PGRST202 (the migration not applied) the client sequence runs as before (the fallback, by the brief); any other database error is reported and the client sequence does NOT run behind it. Pending migration: `20261157` (DEC-30).
+- Commits: `6f89983` (the function), `5ace9cf` (the lib).
+- Tests: `lib/__tests__/costDocs.test.ts` "GAP-406 — awardQuote runs the award as one transaction when award_quote exists" (one call with the guard's total and nothing written by the client; the warning shape; guard refusals never call it and a reason is trimmed; the function's refusals read as the client sequence's sentences with no fallback; a database error reported with no fallback; 42883 / PGRST202 run the client sequence); `lib/__tests__/prjRoundGJ12Migration.test.ts` "GAP-406 — the award as one transaction" (order of the steps, refusals before the claim, raises after it, the currency rule, `addEntry`'s row, the rival key).
+- Scratch: a private PostgreSQL 16 — refusals (flagged company with the company returned, a changed total, USD vs EUR, a foreign budget line, no total) wrote nothing; a failure injected into the commitment insert, and separately into the `COST_DOC_AWARDED` insert, rolled the whole award back (the quote and its rival still parsed, no entry, no audit row); a clean award posted the commitment ("Award — Gulf Mechanical (Piping)", reference Q-2), declined both rivals including a `' piping  '` case variant, and wrote both audit rows; a second award → `status`; a plain member → `not_found`; no session → 42501; anon → permission denied.
+
+**Done-when.**
+1. ✓ A failure at any step leaves no partial award — with `20261157` applied (before it, J3's checked client sequence with its revert and the orphan line, as recorded on `MON-1`).
+2. ✓ A query identifies existing awarded-without-commitment documents (J3).
+3. ✓ Repair is an auditable action (J3).
+
+**Scope / residual.** The bid tab's pre-award intent row (`COST_DOC_AWARD_OVERRIDE_DO_NOT_USE`, `QuotesPanel.tsx`) is still written by the panel before the call, and closed as abandoned when the award fails — unchanged. A `schemaExpectations` entry for `award_quote` is the A&O owner's file (named for the integrator).
 
 ---
 

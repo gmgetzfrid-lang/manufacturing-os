@@ -1060,7 +1060,7 @@ Tests — `lib/__tests__/prjRoundGJ11Migrations.test.ts`: "no other migration re
 *Numbered SEC-21 on this branch (opened by projects Round G J11's review fix pass 2). If the number collides at merge the integrator renumbers.*
 
 - **Severity:** LOW
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Assigned:** projects-joint J12 SERVER REMAINDERS — by the integrator, 2026-10-01 (J11 merge; fleet plan `audit-reports/fleet-plans/`).
 - **Verification:** CONFIRMED (by reading; not exercised against a live database)
 - **Blast radius:** data-confidentiality
@@ -1081,6 +1081,17 @@ Tests — `lib/__tests__/prjRoundGJ11Migrations.test.ts`: "no other migration re
 **Done when.**
 - A member who cannot see a private project receives none of its `MILESTONE_*` or intake-link audit rows, whatever their resource type.
 - The audit roles still read every row; the project's Activity tab and timeline keep their rows for the people who can see the project.
+
+**Resolution (2026-10-01, projects Round G).** Package projects-joint J12 SERVER REMAINDERS took remediation (a). `supabase/migrations/20261157_prj_roundG_server_remainders.sql` §6–7: `audit_row_project_ref_visible(action, type, resource, details)` (LANGUAGE sql STABLE, SECURITY INVOKER, no SET clause, names schema-qualified — as `audit_row_project_visible`): a row whose `details.projectId` is a uuid follows that project (`project_visible_to_me`); a `project_intake_link` row follows its link's project; a `MILESTONE_*` row follows its milestone's project (`details.milestoneId`; a milestone with no project is org-level; a gone or unreadable milestone → not visible; a project-typed row is SEC-20's); anything else → true. `audit_logs_admin_trail` is re-created from its NEWEST definition (20261142, found by scanning the sequence at test time) with ONE added clause whose inline kind test keeps every other row from calling the function. The audit roles still read every row (`admin.audit_view` first, unchanged). Pending migration: `20261157` (DEC-30); the inventory counts milestone rows of private projects, rows of gone milestones and intake rows of private projects.
+- Commit: `6f89983`.
+- Tests: `lib/__tests__/prjRoundGJ12Migration.test.ts` "SEC-21 — audit_logs_admin_trail re-created from its NEWEST definition + ONE clause" (lineDiff: nothing of 20261142's body lost, only the comment and the clause added; the function's kinds and the inline test agree; INVOKER; the other `audit_logs` policies untouched); `lib/__tests__/projectsRls.test.ts` (the final overlay is 20261157's, ending in the SEC-20 then SEC-21 clauses; "before 20261157 an intake-link / INTAKE_ / MILESTONE_ row about a private project was any member's"); `prjRoundGJ11Migrations.test.ts`'s definer list now names 20261157.
+- Scratch: Run on a private scratch PostgreSQL 16 (a stub of the touched tables with the real `20261091` checklist rail and the real `20261142` function; the migration applied twice — idempotent — every final-SELECT probe `t`). A member outside a private project read only the org-level and open-project rows (an uploaded-document row, an open project's milestone, an org-level milestone, a gone project-typed milestone); a roster member also read the private project's `INTAKE_REJECTED` (with `projectId`) and its milestone rows; the owner read everything except a gone document-typed milestone; an Admin read every row; anon none.
+
+**Done-when.**
+- ✓ A member who cannot see a private project receives none of its `MILESTONE_*` or intake-link audit rows, whatever their resource type (with the migration applied).
+- ✓ The audit roles still read every row; people who can see the project keep its rows: every link row the app writes today carries `details.projectId` (`IntakePanel` create / revoke, `reissueIntakeLink`, the bid tab's quote links), so a roster member reads them; the Activity tab's milestone rows follow the milestone's project.
+
+**Scope / residual.** Two narrowings, both toward hiding, named: (1) a legacy `project_intake_link` row written without `details.projectId` is readable only by those who can read the link itself (`project_intake_links` RLS: the project's owner and controllers) and the audit roles; (2) the row of a DELETED document-anchored milestone (`details.milestoneId` no longer resolves) is audit-roles-only — the project it belonged to can no longer be named.
 
 ---
 
@@ -1108,4 +1119,4 @@ Tests — `lib/__tests__/prjRoundGJ11Migrations.test.ts`: "no other migration re
 | SEC-18 | MEDIUM | RESOLVED |
 | SEC-19 | LOW | RESOLVED |
 | SEC-20 | MEDIUM | RESOLVED |
-| SEC-21 | LOW | OPEN |
+| SEC-21 | LOW | RESOLVED |

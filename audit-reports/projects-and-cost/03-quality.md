@@ -586,7 +586,7 @@ lib/projectHealth.ts:231 `payoff: "Closeout is gated on acceptance; contractors 
 ## QUAL-10 · The one-click project Compliance Evidence Pack — the artifact positioned as the answer to a regulator — contains no checklist, no checklist item, no turnover item and no punch item
 
 - **Severity:** LOW
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Assigned:** projects-joint J12 SERVER REMAINDERS (new) — by the integrator, 2026-10-01 (orphan sweep: the package that left this remainder has merged; fleet plan `audit-reports/fleet-plans/`).
 - **Verification:** CONFIRMED
 - **Locations:** `lib/evidencePack.ts:146-162`, `lib/evidencePack.ts:218-228`, `lib/evidencePack.ts:230`, `app/(protected)/projects/[id]/page.tsx:340-348`
@@ -616,6 +616,18 @@ lib/evidencePack.ts:147-154 — the five-query `Promise.all`. lib/evidencePack.t
 - [ ] Items satisfied by the automated sweep are visually distinguished from human decisions in the printed pack.
 
 *Round G note (2026-09-29, projects Round G): left OPEN by plan — `lib/evidencePack.ts` waits for document-control P7 TRANSMITTALS (`TRX-13`) to merge first; nothing in that file was touched by this package.*
+
+**Resolution (2026-10-01, projects Round G).** Package projects-joint J12 SERVER REMAINDERS. Sections ADDED to the project pack without restructuring it (`lib/evidencePack.ts`; projects DF-P11 edits this file later). `gatherProjectQualityEvidence(projectId)` reads the project's checklists, their items (100 checklist ids per request), the turnover package and the punch list, and names any read that failed; `gatherProjectEvidence` adds it as `quality`. `renderProjectEvidenceHtml` prints, between Transmittals and the Audit trail: **Checklists — PSSR / MI / QA-QC** (each checklist with kind, status and — when complete — who completed it and on what basis; every item with its number, section, text, status, applicability, evidence citations — a sweep's citation marked "[automated citation]", the document id beside it — and who decided it: a person by name with date and their recorded reason, or the evidence sweep / AI assessment named "(automated)"); **Turnover package** (item, optional flag, status, reviewer, review date, note); **Punch list** (item and location, status, closed date, closed by, closure note). A green the automated sweep set is marked in words ("[automated]") and its row shaded and italic, so it reads as automated in a black-and-white print too (`checklistItemDecider`: `updated_by` NULL with a machine sentinel name, DEC-35 / DEC-52). A failed read prints "Could not read the … — this section is left out, not empty." — never "none". The footer is `PROJECT_PACK_COVERAGE`: what the pack is assembled from (now including the quality program) and what it does not include (the documents themselves and their revision history, the cost ledger, audit rows recorded against other records).
+- Commit: `87a8436`.
+- Tests: `lib/__tests__/evidencePackQuality.test.ts` (every checklist with its own items, the turnover package and the punch list; chunked item reads; automated vs person decider; the three sections in order before the audit trail with the sweep's green marked and the person's N/A with its reason; escaping; a legacy single-object chip still printed; failed reads said; the footer).
+
+**Done-when.**
+- [x] The pack renders every checklist with its items, each item's status, applicability, evidence citations and the actor who decided it.
+- [x] It renders the turnover package with per-item status, reviewer name, review date and note, and the punch list with closure dates and actors.
+- [x] The footer names what the pack does and does not cover.
+- [x] Items satisfied by the automated sweep are distinguished from human decisions in the printed pack — in words and shading, not colour alone.
+
+**Scope / residual.** The checklist read is bounded (200 checklists, 5,000 items per 100-checklist chunk; 500 turnover and 1,000 punch items) like the pack's other reads; a project past those bounds prints what the first read returned. The reads run as the person who opens the pack (RLS), as the pack's other sections do.
 
 ---
 

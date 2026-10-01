@@ -109,6 +109,17 @@ bidTab.ts:190-224 — the whole of validateParsedQuote; the only cross-field log
 
 **Scope / residual.** Criteria 2 (display) and 3 → the projects fleet (`QuotesPanel.tsx`; the cost-docs route). Cross-referenced on projects-and-cost `COST-3` and `COST-5`, which also edit `lib/bidTab.ts` (scoring), not `validateParsedQuote`.
 
+**Partial (2026-10-01, projects Round G).** Package projects-joint J12 SERVER REMAINDERS closed criterion 3 in the cost-docs route's invoice branch: it stores `validateParsedInvoice(raw)` (`lib/costDocParse.ts`, new) — `vendorName` (≤ 200), `docNumber` (≤ 60), `docDate` (a real calendar date in YYYY-MM-DD or null — "2026-02-30" is not one), `total` (a positive finite number, else 422 "Couldn't read an amount due from the invoice."), `currency` (a known ISO-4217 code via `isoCurrency`, else null), `lineItems` (description ≤ 500 and a finite total or null; at most 200 lines) — and drops every other key the model returned; the row's columns are filled from the validated record, never the raw JSON.
+- Commit: `7e3999c`.
+- Tests: `lib/__tests__/costDocsRoute.test.ts` "PR-2 criterion 3 — the invoice's extraction is validated before it is stored" (only the schema's fields stored, typed and bounded, a non-calendar date and junk keys dropped; a string, zero, negative or missing amount → 422 with nothing stored; the caps).
+
+**Done-when.**
+1. ✓ (above).
+2. **Not met here:** the review screen's display is `components/projects/cost/QuotesPanel.tsx` (projects-joint J10b in this wave) — the hand-over above stands.
+3. ✓ Invoice extraction validates its payload against a schema instead of storing `raw`.
+
+**Scope / residual.** OPEN for criterion 2 (display), with J10b.
+
 ---
 
 <a id="pr-3"></a>

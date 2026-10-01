@@ -657,7 +657,7 @@ already shows state.
 ## MON-12 · A company flagged "do not use" can still be awarded work
 
 - **Severity:** MEDIUM
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Assigned:** projects-joint J12 SERVER REMAINDERS (new) — by the integrator, 2026-10-01 (orphan sweep: the package that left this remainder has merged; fleet plan `audit-reports/fleet-plans/`).
 - **Verification:** CONFIRMED
 - **Blast radius:** process / governance
@@ -711,6 +711,18 @@ explicit override that captures a reason and writes an audit row. Decide what
 
 **Integration (2026-09-30, projects Round G — J3 merged onto J4).** The UI override now completes: the panel passes the typed reason to `awardQuote({ …, overrideReason })`, and when the lib finds a flag the table did not (an `inactive` company, or a registry link read differently) it returns `needsOverride`, the panel asks for the reason, records the intent and retries once (`QuotesPanel.tsx` `award`; `lib/costDocs.ts` `awardQuote`). J3's pointer asked to drop the panel's own pre-award row; it is kept instead, because it is written before money moves and is fail-closed. The trail now reads intent (`COST_DOC_AWARD_OVERRIDE_DO_NOT_USE`, the panel, before the post) → completed (`COST_DOC_AWARD_OVERRIDE`, the lib, after the post), or intent → abandoned (`COST_DOC_AWARD_OVERRIDE_ABANDONED`). The companies-page status tooltip no longer says the posting refusal is pending. Pinned by `quotesPanelRender.test.ts` "the override reason reaches the lib …", "a flag the lib finds and the table did not (an inactive company) …", "no reason for a lib-found flag …" and by `costDocs.test.ts`'s MON-12 cases asserting `needsOverride`. Still OPEN for the one remaining gap in Done-when 1: no database rail (a direct PostgREST status write to `awarded` is not checked against the registry).
 
+**Resolution (2026-10-01, projects Round G).** Package projects-joint J12 SERVER REMAINDERS built the database rail. `supabase/migrations/20261157_prj_roundG_server_remainders.sql` §1: `enforce_cost_document_award_registry` (BEFORE INSERT OR UPDATE OF status ON `cost_documents`; SECURITY DEFINER, `search_path` pinned, EXECUTE revoked from PUBLIC, anon and authenticated — DRLS-16) refuses a signed-in write that moves a document TO `awarded` (or inserts it born awarded) when the company behind it is `do_not_use` or `inactive`: "<name> is flagged DO NOT USE / is marked inactive … (MON-12, 20261157)", check_violation. The company is resolved by `cost_doc_company_behind` exactly as `lib/costDocs.ts` `companyBehind` resolves it — the document's own link (`company_id`, read through `to_jsonb` so a database without 20261096's column is not broken), then the contractor's, then ONE exact case-insensitive name in the org — and read as the definer, so a registry row the caller cannot read does not slip past. The one way through is an award with a typed reason through `award_quote` (`GAP-406`), which sets the transaction-local `app.cost_doc_award_override` to that one document's id and clears it after the claim. The service role (`auth.uid()` NULL) keeps its pass, as every Round G rail does. Pending migration: `20261157` (DEC-30). Before it is applied the lib refusal and the bid tab's gate stand as above.
+- Commit: `6f89983`.
+- Tests: `lib/__tests__/prjRoundGJ12Migration.test.ts` "MON-12 — the registry rail on an award" (the trigger's events; the refusal and the per-document override; the resolution order matches `companyBehind`) and "DRLS-16 — every function this migration adds".
+- Scratch: Run on a private scratch PostgreSQL 16 (a stub of the touched tables with the real `20261091` checklist rail and the real `20261142` function; the migration applied twice — idempotent — every final-SELECT probe `t`). A direct PATCH to `awarded` was refused (23514) for a do-not-use company linked through the contractor and for an inactive company matched by exact name; an insert born awarded was refused; `award_quote` with a reason awarded it, wrote `COST_DOC_AWARD_OVERRIDE` with the trimmed reason and left the override setting cleared; a service-role PATCH passed.
+
+**Done-when.**
+1. ✓ Awarding a `do_not_use` company requires an explicit, reasoned override — in the lib and the bid tab (above) and now at the database: a direct PostgREST status write is refused unless the award carries the reason through `award_quote`.
+2. ✓ The override is audited (`COST_DOC_AWARD_OVERRIDE`, by the lib's client sequence or by `award_quote` in the award's own transaction).
+3. ✓ `inactive` has behaviour (refused the same way, at both layers).
+
+**Scope / residual.** The rail judges the registry as it stands at the award; a company flagged after an award does not reopen it (by design). A `schemaExpectations` entry for the new trigger and functions is the A&O owner's file (`lib/schemaExpectations.ts`, A&O P2 in this wave) — named for the integrator, not edited.
+
 ---
 
 ## MON-13 · The contractor-link and item-contractor rules are enforced only in the browser
@@ -718,7 +730,7 @@ explicit override that captures a reason and writes an audit row. Decide what
 *Numbered MON-13 on this branch (opened by projects Round G J10's second review fix). If the number collides at merge the integrator renumbers.*
 
 - **Severity:** LOW
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Assigned:** projects-joint J12 SERVER REMAINDERS (a trigger migration enforcing the contractor-link and item-contractor rules) — by the integrator, 2026-10-01 (at the J10 merge; fleet plan `audit-reports/fleet-plans/`).
 - **Verification:** CONFIRMED (by reading; not exercised against a live database)
 - **Blast radius:** process / governance
@@ -739,6 +751,20 @@ explicit override that captures a reason and writes an audit row. Decide what
 - A direct PostgREST update re-pointing a linked contractor's company is refused.
 - A direct update moving a decided turnover or punch item to another contractor is refused, and so is naming the contractor of an unassigned rejected turnover item; assigning any other unassigned one still passes.
 
+**Resolution (2026-10-01, projects Round G).** Package projects-joint J12 SERVER REMAINDERS. `supabase/migrations/20261157_prj_roundG_server_remainders.sql` §4 enforces DEC-76 item 3's two app rules at the database (SECURITY INVOKER triggers, EXECUTE revoked; the service role keeps its pass):
+- `enforce_project_party_company_link` (BEFORE UPDATE OF company_id ON `project_parties`): a set link is never re-pointed or cleared by a signed-in caller; linking a contractor that has none, and renaming it, pass. The company's own delete (FK ON DELETE SET NULL, one trigger level down — `pg_trigger_depth() > 1`) passes.
+- `enforce_quality_item_contractor` (BEFORE UPDATE OF party_id ON `turnover_items` and `punch_items`): an item's contractor moves only while it is undecided (turnover open / received; punch open) — `lib/turnover.ts` `assignContractor`'s rule; a decided item keeps its contractor (re-point and unassign refused); an unassigned rejected turnover item is not named; the contractor's own delete (SET NULL one level down) passes.
+- Pending migration: `20261157` (DEC-30); the inventory counts decided items with a contractor, rejected unassigned turnover items and linked contractors before the transaction.
+- Commit: `6f89983`.
+- Tests: `lib/__tests__/prjRoundGJ12Migration.test.ts` "MON-13 — the contractor link is set once; a decided item keeps its contractor".
+- Scratch: Run on a private scratch PostgreSQL 16 (a stub of the touched tables with the real `20261091` checklist rail and the real `20261142` function; the migration applied twice — idempotent — every final-SELECT probe `t`). Re-pointing and clearing a set link refused; linking an unlinked contractor once passed, a rename passed, the company's delete nulled the link; an accepted turnover item's re-point and unassign refused, a received one's change passed; naming the contractor of an unassigned rejected item refused; a waived unassigned item named once passed and was then pinned; a done punch item refused, an open one passed; deleting a contractor that decided items cite nulled them (SET NULL passed); an owner nulling a decided punch item's contractor refused.
+
+**Done-when.**
+- ✓ A direct PostgREST update re-pointing a linked contractor's company is refused.
+- ✓ A direct update moving a decided turnover or punch item to another contractor is refused, and so is naming the contractor of an unassigned rejected turnover item; assigning any other unassigned one still passes.
+
+**Scope / residual.** The do-not-use look-alike reason on a FIRST link stays an app rule (`checkPartyCompanyLink`, DEC-76 item 3) — a reason is a dialog, not a column. `DEC-76` item 3 carries a *Landed* line.
+
 ---
 
 ## Report progress
@@ -756,5 +782,5 @@ explicit override that captures a reason and writes an audit row. Decide what
 | MON-9 | LOW | RESOLVED |
 | MON-10 | MEDIUM | OPEN |
 | MON-11 | MEDIUM | OPEN |
-| MON-12 | MEDIUM | OPEN |
-| MON-13 | LOW | OPEN |
+| MON-12 | MEDIUM | RESOLVED |
+| MON-13 | LOW | RESOLVED |
