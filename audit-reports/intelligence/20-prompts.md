@@ -59,7 +59,7 @@ execute/route.ts:46 `const role = (member.role as string) ?? "Viewer";` then :57
 
 **Resolution (2026-10-01, intelligence Round G).** Closed with `ORCH-1` and `ORCH-4` (report `15`). `log_audit_completion` is the controller tier through `lib/permissions` `isControllerPrincipal`, refused with `forbidden` (403 at `/execute`); `notify_personnel` follows the decided default (`DEC-44 (I-04)` item 2: any active member, about a document they can read). The approval no longer comes from what the client sent: `/api/orchestrator/execute` runs only a proposal stored server-side at the end of a run, for the person and org it was proposed to, within 15 minutes, once (`lib/orchestrator/proposals.ts`, `20261147`).
 
-**Pending migration:** `20261147_intel_roundG_orchestrator_proposals.sql` (see `ORCH-4`; until it is applied no assistant write can be confirmed).
+**Pending migration:** `20261147_intel_roundG_orchestrator_proposals.sql` (see `ORCH-4`). Paste it BEFORE or WITH the deploy that carries this package — it is purely additive and the code before that deploy never reads it; until it is applied no assistant write can be confirmed.
 
 **Done-when.**
 1. ✓ `logAuditCompletion` checks the controller tier before its proposal gate (the app's one definition, not a role list); for `notifyPersonnel` the criterion is replaced by `DEC-44 (I-04)` item 2.
@@ -103,7 +103,7 @@ bidTab.ts:190-224 — the whole of validateParsedQuote; the only cross-field log
 
 **Done-when.**
 1. ✓ `validateParsedQuote` computes Σ `lineItems[].total` and, beyond the tolerance, records the discrepancy on the row (`parsed.totalCheck`).
-2. **Not met here:** showing the discrepancy on the review screen is `components/projects/cost/QuotesPanel.tsx` (projects J4 / J10b), not this package's file — handed over: render `quote.totalCheck.note` beside the total when `quote.totalCheck?.mismatch` (the panel already holds the re-validated `ParsedQuote`). The criterion's "cannot be used in the bid tab until a human resolves it" is declined by the decided default (never block).
+2. **Not met here:** showing the discrepancy on the review screen is `components/projects/cost/QuotesPanel.tsx` (projects J4 / J10b), not this package's file — handed over, precisely: `totalCheck` describes the EXTRACTION (the total the AI read against the lines it read), and `withHumanTotal` keeps it when a person restates the total. So render `quote.totalCheck.note` beside the total only when `quote.totalCheck?.mismatch && quote.totalSource !== "human"`; when `quote.totalSource === "human"`, reconcile the number on screen instead — `reconcileQuoteTotal(quote.total, quote.lineItems)` (`lib/bidTab.ts`) — and show its `note` when it mismatches. Never show the stored note beside a corrected total (a reviewer who typed the right 1,820,000 would otherwise read "not the quoted total of 182,000"; `lib/__tests__/quoteTotalCheck.test.ts` pins both halves). The criterion's "cannot be used in the bid tab until a human resolves it" is declined by the decided default (never block).
 3. **Not met here:** validating the invoice payload instead of storing `raw` is the cost-docs route's invoice branch (projects J11 / J12's file) — handed over.
 
 **Scope / residual.** Criteria 2 (display) and 3 → the projects fleet (`QuotesPanel.tsx`; the cost-docs route). Cross-referenced on projects-and-cost `COST-3` and `COST-5`, which also edit `lib/bidTab.ts` (scoring), not `validateParsedQuote`.
