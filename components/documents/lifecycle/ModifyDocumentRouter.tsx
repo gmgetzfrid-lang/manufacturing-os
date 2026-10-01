@@ -213,13 +213,13 @@ export default function ModifyDocumentRouter(props: ModifyDocumentRouterProps) {
           <RouterChoice
             icon={Split} color="amber"
             label="Split this sheet into multiple sheets"
-            sub="Source becomes Superseded. New docs inherit scope, holds, and project membership."
+            sub="Source becomes Superseded. New docs inherit scope, holds, and project membership. A held sheet is split over its hold by Doc Control, never by releasing it."
             onClick={() => setChoice("split")}
           />
           <RouterChoice
             icon={Merge} color="amber"
             label="Combine with other sheets into one"
-            sub="Multiple sources → one target. Asset tags union; sources go Superseded."
+            sub="Multiple sources → one target. Asset tags union; sources go Superseded and their holds carry onto the target."
             onClick={() => setChoice("merge")}
           />
           <RouterChoice

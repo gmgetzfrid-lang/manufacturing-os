@@ -8,16 +8,20 @@
 // version row, and document_supersessions captures the lineage.
 
 import { supabase } from "@/lib/supabase";
+import {
+  authorizePublish, notifyHolderOfRetirement, resolveCreationReviewGate, canPutFirstRevisionInContainer,
+} from "@/lib/revisions";
 import type { DocumentRecord, AssetTag } from "@/types/schema";
 import {
   type ActorContext,
   createNewDocWithFirstVersion,
   markSupersededAndLink,
+  completeSourceRetirement,
   copyActiveHoldsToDoc,
   copyProjectMembershipToDoc,
   withCompensation,
   archiveRolledBackDoc,
-  restoreSupersededSource,
+  releaseCarriedHolds,
 } from "./common";
 
 export interface SplitTargetSpec {
@@ -48,8 +52,16 @@ export interface SplitDocumentInput {
   reason: string;                 // required
   mocReference?: string;
   /** Carry over the source's active holds to every new target.
-   *  Defaults to true — splits usually preserve blockers. */
+   *  Defaults to true — splits usually preserve blockers. HLD-2: false is
+   *  REFUSED when the source has an active hold (a structural edit must not
+   *  launder a stop-work signal away). */
   copyHolds?: boolean;
+  /** HLD-2: a controller's explicit force past an active hold on the source
+   *  (the supersede rule — an override reason never jumps a hold). */
+  force?: boolean;
+  /** Message to the user who has the source checked out, if anyone else
+   *  does. Defaults to the split reason (the supersede modal's rule). */
+  overrideReason?: string;
   /** Copy project_documents memberships to every new target.
    *  Defaults to true. */
   copyProjectMembership?: boolean;
@@ -90,10 +102,51 @@ export async function splitDocument(input: SplitDocumentInput): Promise<SplitDoc
   }
 
   const actor: ActorContext = { orgId, actorUserId, actorEmail, actorRole };
-  const priorSourceStatus = source.status ?? "Issued";
   const sourceId = source.id; // narrowed to string by the guard above
+  const sourceLabel = source.documentNumber ?? source.id;
 
-  return withCompensation(async (register) => {
+  // HLD-2 / REV-11: the SAME gate as supersedeDocument, before anything is
+  // written — per-library publish authority (or the source's effective
+  // owner), the lock (a foreign checkout needs a reason; its holder is told),
+  // and the hold (only a controller's explicit force passes it — the Split
+  // wizard passes it only on the controller's "Proceed over the active hold"
+  // acknowledgement, HLD-2 review fix 4).
+  const preState = await authorizePublish({
+    documentId: sourceId, libraryId, orgId, actorUserId, actorRole,
+    overrideReason: input.overrideReason ?? reason, force: input.force, operation: "split",
+    subjectLabel: sourceLabel,
+  });
+  // REV-11: sheets landing in ANOTHER library than the source's take
+  // authority there too — they are born owned by the actor, so the
+  // database's publish guard would admit them on that alone.
+  const sourceLibraryId = source.libraryId || libraryId;
+  if (sourceLibraryId !== libraryId) {
+    const ok = await canPutFirstRevisionInContainer({
+      orgId, libraryId, collectionId: inheritCollectionAndSet ? (source.collectionId ?? null) : null, actorUserId, actorRole,
+    });
+    if (!ok) {
+      throw new Error("You don't have authority to issue documents in the library the split sheets would land in — nothing was split. Ask an Admin or Doc Control.");
+    }
+  }
+  const sourceHeld = preState.activeHolds.length > 0;
+  if (sourceHeld && !copyHolds) {
+    throw new Error(`${sourceLabel} has an active hold — a split must carry it onto every new sheet. Turn "carry over holds" back on.`);
+  }
+  // REV-11: the new sheets are controlled first issues that REPLACE a
+  // controlled drawing — the governing review policy is resolved for the
+  // folder / library they land in; one that requires sign-off refuses
+  // anyone but a controller, whose decision is recorded on every sheet.
+  const review = await resolveCreationReviewGate({
+    libraryId,
+    collectionId: inheritCollectionAndSet ? (source.collectionId ?? null) : null,
+    what: `the sheets split from ${sourceLabel}`,
+    actor: { orgId, actorUserId, actorRole },
+  });
+
+  // Steps 1-3 can still roll back: every durable change registers its undo
+  // BEFORE it is made, and a failure anywhere runs them all. Nothing
+  // irreversible happens inside — see step 4.
+  const done = await withCompensation(async (register) => {
   // 1. Materialize each new doc with its first revision.
   const newDocumentIds: string[] = [];
   for (const t of targets) {
@@ -117,12 +170,14 @@ export async function splitDocument(input: SplitDocumentInput): Promise<SplitDoc
       file: t.file,
       actor,
       actorName: actorUserName,
+      initialStatus: "Issued",
       creationAuditAction: "CREATED_FROM_SPLIT",
       creationDetails: {
         sourceDocumentId: source.id,
         sourceDocumentNumber: source.documentNumber ?? null,
         reason: reason.trim(),
         mocReference: mocReference?.trim() || null,
+        reviewPolicy: review.recorded,
       },
     });
     newDocumentIds.push(r.documentId);
@@ -133,9 +188,49 @@ export async function splitDocument(input: SplitDocumentInput): Promise<SplitDoc
     });
   }
 
-  // 2. Mark the source as Superseded and write the supersessions join rows.
-  await markSupersededAndLink({
+  // 2. HLD-2: carry the source's holds onto every new sheet BEFORE the source
+  //    is superseded — inside the register, so a hold that fails to carry
+  //    rolls the whole split back instead of reporting a smaller count.
+  let holdsCopied = 0;
+  if (copyHolds && sourceHeld) {
+    for (const newId of newDocumentIds) {
+      const carried = await copyActiveHoldsToDoc({
+        sourceDocId: sourceId, targetDocId: newId,
+        originLabel: `${source.documentNumber ?? "source"} (split)`,
+        actor,
+      });
+      holdsCopied += carried.copied;
+      register({
+        describe: `release the holds carried onto rolled-back split target ${newId}`,
+        run: () => releaseCarriedHolds(carried.holdIds, actor),
+      });
+    }
+  }
+
+  // 3. Mark the source as Superseded and write the supersessions join rows.
+  //    REV-12: the status the source actually held is read fresh; REV-14:
+  //    its restore is registered BEFORE the flip, so a refused flip or
+  //    lineage write puts the source back instead of leaving it Superseded
+  //    with its replacements archived.
+  const retired = await markSupersededAndLink({
     sourceDocId: sourceId,
+    replacementDocIds: newDocumentIds,
+    reason: reason.trim(),
+    mocReference,
+    actor,
+    register,
+    label: `source ${source.documentNumber ?? source.id}`,
+  });
+  return { newDocumentIds, holdsCopied, retired };
+  });
+  const { newDocumentIds, holdsCopied, retired } = done;
+
+  // 4. Nothing below rolls back. NOW the irreversible half of the
+  //    retirement: the source's in-flight review is voided (REV-6) and its
+  //    share links revoked (REV-10), each outcome on the DOC_SPLIT record
+  //    with the REV-12 prior status and instant.
+  await completeSourceRetirement({
+    source: retired,
     replacementDocIds: newDocumentIds,
     reason: reason.trim(),
     mocReference,
@@ -144,30 +239,17 @@ export async function splitDocument(input: SplitDocumentInput): Promise<SplitDoc
     details: {
       newDocumentCount: newDocumentIds.length,
       newDocumentNumbers: targets.map((t) => t.documentNumber),
+      holdsCarried: holdsCopied,
+      // HLD-2 (review fix 4): the holds the controller's explicit force
+      // proceeded over (empty when the source was not held).
+      proceededOverHolds: preState.activeHolds.map((h) => ({ id: h.id ?? null, reason: h.reason })),
     },
   });
-  // If a later step fails, restore the source to its prior status on rollback.
-  register({
-    describe: `restore source ${source.documentNumber ?? source.id} from Superseded`,
-    run: () => restoreSupersededSource(sourceId, priorSourceStatus, newDocumentIds, actor),
-  });
 
-  // 3. Carry over holds + project memberships to each new doc. These are
-  //    SECONDARY effects: the split itself (new docs + supersession) is
-  //    already durable and correct above. A transient copy failure here is
-  //    reported via honest counts rather than rolling back the whole split,
-  //    so we don't undo valid structural work over a membership hiccup.
-  let holdsCopied = 0;
+  // 5. Project memberships are a SECONDARY effect: the split itself (new
+  //    docs + carried holds + supersession) is durable and correct above; a
+  //    membership hiccup is reported via an honest count, never a rollback.
   let projectsCopied = 0;
-  if (copyHolds) {
-    for (const newId of newDocumentIds) {
-      holdsCopied += await copyActiveHoldsToDoc({
-        sourceDocId: sourceId, targetDocId: newId,
-        originLabel: `${source.documentNumber ?? "source"} (split)`,
-        actor,
-      });
-    }
-  }
   if (copyProjectMembership) {
     for (const newId of newDocumentIds) {
       try {
@@ -178,7 +260,7 @@ export async function splitDocument(input: SplitDocumentInput): Promise<SplitDoc
     }
   }
 
-  // 4. Bump set's sheet_count if appropriate.
+  // 6. Bump set's sheet_count if appropriate.
   if (inheritCollectionAndSet && source.setId) {
     // Source still exists in the set (as Superseded) and we added N new.
     // We touch updated_at to signal change; the SetManager UI is the
@@ -189,11 +271,15 @@ export async function splitDocument(input: SplitDocumentInput): Promise<SplitDoc
       .eq("id", source.setId);
   }
 
+  await notifyHolderOfRetirement({
+    preState, documentId: sourceId, libraryId, orgId, actorUserId, actorEmail,
+    verb: "split", action: "split", reason: reason.trim(),
+  });
+
   return {
     supersededSourceId: sourceId,
     newDocumentIds,
     holdsCopied,
     projectMembershipsCopied: projectsCopied,
   };
-  });
 }

@@ -7,13 +7,36 @@
 // reversal preserves the audit trail and parks newly-created docs
 // under Superseded rather than destroying them. This modal makes
 // that explicit so users know what to expect.
+//
+// HLD-2 (review fix 4): a sheet the reversal parks may carry a hold opened
+// after the operation. The dialog reads the active holds on the documents
+// it will park; when there are any, the controller must tick "Proceed over
+// the active hold" (the reversal then passes `force` and carries each hold
+// back onto the restored document) — never release the hold to reverse.
 
-import React, { useState } from "react";
+import React, { useEffect, useState } from "react";
 import { Undo2, X, Loader2, AlertTriangle, Check, Info } from "lucide-react";
 import {
   reverseSplit, reverseMerge, reverseRenumber, type ReverseResult,
+  LEGACY_RESTORE_STATUSES, reversalNeedsLegacyStatus,
 } from "@/lib/documentLifecycle";
 import type { TimelineEvent } from "@/lib/timeline";
+import { listActiveHoldsForDocument } from "@/lib/holds";
+import HeldSourceNotice, { holdSetKey } from "@/components/documents/lifecycle/HeldSourceNotice";
+
+/** HLD-2 (review fix 4): the documents a reversal of this event would park —
+ *  a split's new sheets; a merge's target when it was (or may have been)
+ *  newly created. Passing `force` for a target the reversal then keeps is
+ *  harmless: only a parked held document needs it. */
+export function documentsReversalParks(action: string, details: Record<string, unknown> | null | undefined): string[] {
+  const d = details ?? {};
+  if (action === "DOC_SPLIT") return ((d.replacementDocIds as string[] | undefined) ?? []).filter(Boolean);
+  if (action === "DOC_MERGED") {
+    const target = typeof d.mergedIntoDocumentId === "string" ? d.mergedIntoDocumentId : null;
+    return target && d.targetWasNewlyCreated !== false ? [target] : [];
+  }
+  return [];
+}
 
 interface ReverseConfirmModalProps {
   event: TimelineEvent;
@@ -36,7 +59,41 @@ export default function ReverseConfirmModal({
   // The audit event's id comes from the prefixed TimelineEvent.id
   // ("audit:<uuid>"). Strip the prefix here.
   const auditEventId = event.id.replace(/^audit:/, "");
-  const valid = reason.trim().length > 0;
+  // REV-16: a split / merge recorded before Round F carries no prior status,
+  // and the reversal will not guess one (REV-12) — the controller names it
+  // here, from the validated list, with nothing pre-selected.
+  const needsLegacyStatus = reversalNeedsLegacyStatus(event.action, event.details ?? null);
+  const [legacyStatus, setLegacyStatus] = useState("");
+  const legacyRestoreStatus = needsLegacyStatus ? legacyStatus : undefined;
+
+  // HLD-2 (review fix 4): active holds on the documents this reversal parks.
+  const parkIdsKey = documentsReversalParks(event.action, event.details ?? null).join(",");
+  const [parkedHolds, setParkedHolds] = useState<Array<{ docId: string; id?: string | null; reason: string }> | null>(parkIdsKey ? null : []);
+  const [holdsReadError, setHoldsReadError] = useState<string | null>(null);
+  const [ackedHoldKey, setAckedHoldKey] = useState<string | null>(null);
+  useEffect(() => {
+    let alive = true;
+    const ids = parkIdsKey.split(",").filter(Boolean);
+    if (ids.length === 0) return;
+    Promise.all(ids.map(async (docId) => (await listActiveHoldsForDocument(docId)).map((h) => ({ docId, id: h.id, reason: h.reason })))).then(
+      (lists) => { if (alive) { setParkedHolds(lists.flat()); setHoldsReadError(null); } },
+      (e) => { if (alive) setHoldsReadError((e as Error).message); },
+    );
+    return () => { alive = false; };
+  }, [parkIdsKey]);
+  const held = (parkedHolds ?? []).length > 0;
+  const holdKey = holdSetKey(parkedHolds);
+  const holdAck = held && ackedHoldKey === holdKey;
+  const restoredLabel = event.action === "DOC_MERGED" ? "every restored source" : "the restored source";
+  const heldReasons = Array.from(new Set((parkedHolds ?? []).map((h) => h.reason)));
+  const holdDecision = held
+    ? { kind: "acknowledge" as const, text: `Proceed over the active ${heldReasons.length === 1 ? "hold" : "holds"} (${heldReasons.join(", ")}) on the ${event.action === "DOC_MERGED" ? "merge target" : "split's sheets"} this reversal parks. ${heldReasons.length === 1 ? "It is" : "They are"} carried back onto ${restoredLabel}.` }
+    : { kind: "clear" as const };
+  // Unread holds do not unlock a force: the reversal checks them itself and
+  // refuses a held document without it.
+  const holdsBlock = (parkedHolds === null && !holdsReadError) || (held && !holdAck);
+  const valid = reason.trim().length > 0 && (!needsLegacyStatus || legacyStatus !== "") && !holdsBlock;
+  const force = held && holdAck ? true : undefined;
 
   const submit = async () => {
     if (!valid) return;
@@ -47,12 +104,12 @@ export default function ReverseConfirmModal({
       if (event.action === "DOC_SPLIT") {
         res = await reverseSplit({
           splitAuditEventId: auditEventId,
-          reason, orgId, actorUserId, actorEmail, actorRole,
+          reason, orgId, actorUserId, actorEmail, actorRole, legacyRestoreStatus, force,
         });
       } else if (event.action === "DOC_MERGED") {
         res = await reverseMerge({
           mergeAuditEventId: auditEventId,
-          reason, orgId, actorUserId, actorEmail, actorRole,
+          reason, orgId, actorUserId, actorEmail, actorRole, legacyRestoreStatus, force,
         });
       } else if (event.action === "DOC_RENUMBERED") {
         res = await reverseRenumber({
@@ -115,6 +172,32 @@ export default function ReverseConfirmModal({
             We never hard-delete — newly-created docs are parked under <b>Superseded</b> so the audit trail stays intact.
             If derivative work happened on them, it&apos;s preserved under that status.
           </div>
+
+          <HeldSourceNotice
+            decision={holdDecision}
+            readError={holdsReadError}
+            ack={holdAck}
+            setAck={(v) => setAckedHoldKey(v ? holdKey : null)}
+          />
+
+          {needsLegacyStatus && (
+            <label className="block">
+              <span className="text-[10px] font-black text-[var(--color-text)] uppercase tracking-widest">
+                Status to restore {event.action === "DOC_MERGED" ? "the sources" : "the source"} to *
+              </span>
+              <select
+                value={legacyStatus}
+                onChange={(e) => setLegacyStatus(e.target.value)}
+                className="mt-1 w-full text-sm border border-[var(--color-border-strong)] rounded px-2.5 py-1.5"
+              >
+                <option value="">Choose the status it held before the {event.action === "DOC_MERGED" ? "merge" : "split"}…</option>
+                {LEGACY_RESTORE_STATUSES.map((st) => <option key={st} value={st}>{st}</option>)}
+              </select>
+              <span className="block mt-1 text-[11px] text-amber-800">
+                This {event.action === "DOC_MERGED" ? "merge" : "split"} was recorded before prior statuses were captured, so the reversal can&apos;t prove what status {event.action === "DOC_MERGED" ? "each source" : "the source"} held. Check its history first — restoring Issued makes it a controlled copy again. Your choice is recorded on the reversal.
+              </span>
+            </label>
+          )}
 
           {/* Reason */}
           <label className="block">
@@ -195,14 +278,17 @@ function describeReversal(event: TimelineEvent): Description {
   const d = event.details ?? {};
   if (event.action === "DOC_SPLIT") {
     const newCount = (d.newDocumentCount as number | undefined) ?? (d.replacementDocIds as string[] | undefined)?.length ?? 0;
+    const prior = typeof d.priorStatus === "string" && d.priorStatus ? d.priorStatus : null;
     return {
       opName: "Split",
       steps: [
-        `Source document will return to "Issued" status.`,
+        prior
+          ? `Source document will return to "${prior}" — the status it held before the split.`
+          : `Source document will return to the status you choose below (this split did not record the one it held).`,
         `${newCount} new doc${newCount === 1 ? "" : "s"} from the split will be marked Superseded with reason "Reverted split".`,
         `document_supersessions links from this split will be removed (audit row retains the history).`,
         `Asset tags on the parked docs are NOT moved back — they stay with the new doc rows for the audit reconstructable.`,
-        `Active holds and project memberships carried over during the split stay on the parked docs.`,
+        `Active holds stay on the parked docs, and any hold on them is carried back onto the source (you confirm it above). Project memberships stay on the parked docs.`,
       ],
     };
   }
@@ -211,9 +297,10 @@ function describeReversal(event: TimelineEvent): Description {
     return {
       opName: "Merge",
       steps: [
-        `${siblings.length || "All"} source document${siblings.length === 1 ? "" : "s"} will return to "Issued" status.`,
+        `${siblings.length || "All"} source document${siblings.length === 1 ? "" : "s"} will return to the status each held before the merge${reversalNeedsLegacyStatus("DOC_MERGED", d) ? " (not recorded for this merge — you choose it below)" : ""}.`,
         `Merge target will be parked under Superseded IF it was newly created by the merge. If it was an existing doc that absorbed the others, it stays Active and you'll need to use Revert separately to undo its rev-up.`,
         `document_supersessions links from this merge will be removed.`,
+        `Any hold on a target the reversal parks is carried back onto every source (you confirm it above).`,
       ],
     };
   }

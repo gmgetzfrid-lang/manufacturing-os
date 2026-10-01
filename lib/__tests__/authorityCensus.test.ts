@@ -254,9 +254,14 @@ describe("authority-function census (DB-7)", () => {
     const nodeVisible: [Def["kind"], string, string] = ["function", "node_visible/6", "is_org_controller"];
     const sites = [...firstWave, nodeVisible];
     const via = (body: string, funnel: string) => new RegExp(`(?<![\\w'])${funnel}(?![\\w'])`).test(body);
+    // DCK-8 (20261130) re-created publish_revision with a 12th parameter
+    // (p_override_reason) after dropping the 11-argument form: the conversion
+    // (b) stays pinned on 20261040's /11, the LIVE definition is /12.
+    const liveKeyOf = (key: string) => (key === "publish_revision/11" ? "publish_revision/12" : key);
     // (a) the LIVE definitions: additive, through the named funnel, at or after the conversion
     const final = census();
-    for (const [kind, key, funnel] of sites) {
+    for (const [kind, rawKey, funnel] of sites) {
+      const key = liveKeyOf(rawKey);
       expect(fam(kind, key), key).toBe("additive");
       const d = final.get(`${kind} ${key}`)!;
       expect(via(d.body, funnel), `${key} does not read ${funnel}`).toBe(true);
@@ -288,10 +293,13 @@ describe("authority-function census (DB-7)", () => {
     expect(via(nv!.body, "is_org_controller")).toBe(true);
     expect([...c41.keys()], "20261041 converts node_visible and nothing else").toEqual(["function node_visible/6"]);
     // the headline-only census the finding recorded is gone from every one of them
-    for (const [kind, key] of sites) {
+    for (const [kind, rawKey] of sites) {
+      const key = liveKeyOf(rawKey);
       expect(final.get(`${kind} ${key}`)!.body).not.toMatch(/SELECT role INTO v_role/);
       expect(final.get(`${kind} ${key}`)!.body).not.toMatch(/\bv_role IN \('Admin', ?'DocCtrl'\)/);
     }
+    // and the 11-argument form is gone from the live census
+    expect(final.get("function publish_revision/11")?.dropped ?? true).toBe(true);
   });
 
   it("DB-3's backfill (20261024) precedes every additive conversion, so 'additive' never meant 'denied'", () => {

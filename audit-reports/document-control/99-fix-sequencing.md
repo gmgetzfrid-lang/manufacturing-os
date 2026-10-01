@@ -117,3 +117,83 @@ per-access rows fail (logged, not fatal); the counter RPC keeps its
 one-argument arity and resolves either side of the apply. The integrator
 still applies in the order above so the first external pull is attributed
 to the share.
+
+⚠ **Deploy order — the publish override and the documents rails (Round F
+wave 2, P3 LIFECYCLE; DEC-63 (P3 LIFECYCLE)).** *(Corrected in the second
+review fix: the first version said to apply `20261130` and `20261131`
+"before the wave-2 app deploys" while `20261131`'s prerequisites are
+themselves app changes.)*
+
+**Hard rules.**
+
+1. **`20261131` is NOT PASTEABLE until `DRLS-15` and `DRLS-17` are
+   DEPLOYED.** Both are library-page fixes (P6 CHECKOUT's file; closers
+   unassigned — the integrator assigns them, ideally into this merge). From
+   the moment `20261131` is pasted:
+   - `DRLS-15` — it refuses a `rev` that differs from the current revision's
+     label, as one whole statement: the page's `saveMetadata` sends `rev`
+     with every other edit and discards the error, so any metadata save
+     that changes Rev silently loses ALL its edits, and the bulk editor's
+     "Revision" field fails on every row. Fix: check `{ error }` and the row
+     count, and stop sending `rev` (or send it only unchanged); drop
+     Revision from the bulk editor.
+   - `DRLS-17` — acknowledgment and sign-off evidence become a NO ACTION
+     reference on its revision, so the page's delete flow (pointer cleared,
+     then versions deleted, then the document) stops at the version step and
+     leaves a live document with no current file. Fix: delete the document
+     row directly, or pre-check and refuse before any write.
+   Until `20261131` is applied, `DRLS-3`, `DRLS-13` and `REV-13` are landed
+   but not live (recorded OPEN with a Partial block — `REV-13` since review
+   fix 3: its intake-door half is the rail's), and `REV-14` / `DRLS-14`'s
+   database halves wait with them.
+2. **Set `NEXT_PUBLIC_FACILITY_TIME_ZONE` before the wave-2 app ships**
+   (`REV-9`; the facility's IANA zone, e.g. `America/Chicago`; documented in
+   `.env.example`). Unset, the app decides "in effect" in UTC-12 — the
+   latest calendar, so never early anywhere, but late by the facility's UTC
+   offset plus 12 hours (up to 26 hours for a UTC+14 site) for the badge
+   and the "now in effect" notice; it logs the unset zone once per runtime,
+   and `facilityTimeZoneHealth()` (`lib/effectiveDate.ts`) answers for a
+   health surface. Make the app deploy conditional on it.
+3. Do not re-paste `20261105` or any earlier `publish_revision` migration
+   after `20261130`: it would re-create the 11-argument overload; re-running
+   `20261130` removes it.
+
+**Order.**
+
+0. Paste the `DRLS-16` hotfix now (below), independent of everything else.
+1. Deploy the `DRLS-15` and `DRLS-17` page fixes.
+2. Paste `20261130` (the override reason inside `publish_revision`).
+3. Paste `20261131` (the documents-table rails) — only now (rule 1).
+4. Deploy the wave-2 app immediately after (rule 2 met), to keep the window
+   below short.
+
+If the integrator folds `DRLS-15` / `DRLS-17` into the wave-2 merge (one
+deploy), the order is: paste `20261130` → deploy the app, with the page
+fixes, immediately → paste `20261131`. Either way `20261131` never precedes
+the page fixes.
+
+**The two windows — both fail closed, neither publishes unguarded.**
+
+- *`20261130` pasted, the old app still running* (steps 2–4 above): the
+  old app never sends `p_override_reason`, so every publish OVER another
+  user's checkout raises a raw `check_violation` ("publishing over another
+  user's checkout needs a reason …") — nothing is published; ordinary
+  publishes are the same call (the new parameter defaults to NULL) and
+  work. Keep it short by deploying the app right after the paste.
+- *the wave-2 app deployed, `20261130` not yet pasted* (the one-deploy
+  order): an override publish is refused with "needs migration 20261130"
+  (the named argument does not exist yet) — never published unguarded (the
+  legacy fallback is gone, `REV-8`); ordinary publishes work. The wave-2 app
+  needs nothing from `20261131` to run (the supersession pair constraint
+  dates from `20260526`; its lineage writers' checks do not depend on the
+  new policies).
+
+⚠ **Paste NOW, independent of wave 2 — `DRLS-16` (CRITICAL).** The live
+11-argument `publish_revision` was never revoked from `anon`, and it reads a
+NULL `auth.uid()` as a service-role call that may name any actor. The
+one-statement hotfix and its check are in the `DRLS-16` record
+(`10-rls.md`); `20261130` later drops the signature and grants the new one
+without `anon`.
+
+**`REV-9` closes** when P8 swaps `/api/verify`'s inline date for
+`effectiveTodayISO()` and every deployment names its zone (rule 2).

@@ -15,17 +15,17 @@
     "audit-reports/document-control/11-edges-and-invariants.md"
   ],
   "totals": {
-    "findings": 149,
+    "findings": 155,
     "gaps": 0,
     "by_severity": {
-      "CRITICAL": 18,
+      "CRITICAL": 19,
       "HIGH": 53,
-      "MEDIUM": 65,
-      "LOW": 13
+      "MEDIUM": 69,
+      "LOW": 14
     },
     "by_status": {
-      "RESOLVED": 114,
-      "OPEN": 35
+      "RESOLVED": 123,
+      "OPEN": 32
     }
   },
   "status_vocabulary": [
@@ -247,6 +247,30 @@
       ],
       "refuted": false,
       "summary": "A Viewer in org A (or any authenticated user of the deployment, in any tenant) enumerates a documentversions.id — they only need one, and their own org's version ids are readable — and POSTs {\"pversion\": \"<id of the current controlled revision of a P&ID>\", \"pprev\": \"<id of the revision before it>\"}. The controlled revision row is deleted outright, taking fileurl, filehash, approvedbyname, released",
+      "area": "document-control",
+      "report": "audit-reports/document-control/10-rls.md"
+    },
+    {
+      "id": "DRLS-16",
+      "title": "`anon` may execute the live `publish_revision` — and the function treats a NULL `auth.uid()` as the service role, so anyone with the public anon key can publish bytes as any member",
+      "severity": "CRITICAL",
+      "status": "OPEN",
+      "verification": "CONFIRMED",
+      "verification_note": "CONFIRMED (by reading the migration sequence; the live grant is to be checked with the query below)",
+      "blast_radius": null,
+      "related": [],
+      "locations": [
+        "supabase/migrations/20261105_prj_roundG_intake_review_and_attempts.sql:557-570",
+        "supabase/migrations/20261130_dc_roundF_publish_override_reason.sql"
+      ],
+      "has_verifier_correction": false,
+      "verified_by": "adversarial-independent",
+      "challenges": [
+        "adversarial",
+        "adversarial-independent"
+      ],
+      "refuted": false,
+      "summary": "An outsider with the anon key (shipped in every page) and a document id (printed on every /verify QR) calls rpc('publishrevision', { pdoc, pexpectedbase: null, pactor: <any member's uid>, pversion: {...} }). The first call answers stalebase, which hands back currentversionid; the second, with that id, publishes arbitrary bytes as the named member — no guard runs, and no audit row points at the rea",
       "area": "document-control",
       "report": "audit-reports/document-control/10-rls.md"
     },
@@ -1011,7 +1035,7 @@
       "id": "HLD-2",
       "title": "Split and merge supersede a held source without any hold check, then copy the holds to the new sheets on a best-effort, error-swallowing path that is outside the compensation register",
       "severity": "HIGH",
-      "status": "OPEN",
+      "status": "RESOLVED",
       "verification": "CONFIRMED",
       "verification_note": null,
       "blast_radius": null,
@@ -1581,7 +1605,7 @@
       "id": "REV-6",
       "title": "`pending_version_id` is never cleared by revert, supersede, archive, split or merge — an in-flight review draft survives every retirement path and can publish itself later",
       "severity": "HIGH",
-      "status": "OPEN",
+      "status": "RESOLVED",
       "verification": "CONFIRMED",
       "verification_note": null,
       "blast_radius": null,
@@ -2014,7 +2038,7 @@
       "id": "DCK-8",
       "title": "The transactional publish's lock check is switched off by a client-supplied boolean — p_override_lock is passed straight from the browser with no reason, no authority test, and no audit",
       "severity": "MEDIUM",
-      "status": "OPEN",
+      "status": "RESOLVED",
       "verification": "CONFIRMED",
       "verification_note": null,
       "blast_radius": null,
@@ -2458,6 +2482,57 @@
       ],
       "refuted": false,
       "summary": "A controller deletes a documentversions row (permitted by documentversionsdeletecontrollers), or anyone calls the unauthenticated revuprollbackorphan RPC. documents.currentversionid is left pointing at a row that no longer exists and the database raises nothing. The share route (route.ts:56-59) queries that id, gets no row, falls through to its newest-row fallback and serves a different drawing; t",
+      "area": "document-control",
+      "report": "audit-reports/document-control/10-rls.md"
+    },
+    {
+      "id": "DRLS-15",
+      "title": "The library page's metadata editor writes `documents.rev` directly and discards the result — after 20261131 a divergent revision label is refused by the database and the page says nothing",
+      "severity": "MEDIUM",
+      "status": "OPEN",
+      "verification": "CONFIRMED",
+      "verification_note": null,
+      "blast_radius": null,
+      "related": [],
+      "locations": [
+        "app/(protected)/documents/[libraryId]/page.tsx:2662-2683",
+        "components/documents/MetadataEditor.tsx:188-196",
+        "components/documents/MetadataEditor.tsx:381-382",
+        "components/documents/BulkEditModal.tsx:57-58",
+        "supabase/migrations/20261131_dc_roundF_documents_rails.sql"
+      ],
+      "has_verifier_correction": false,
+      "verified_by": "adversarial-independent",
+      "challenges": [
+        "adversarial",
+        "adversarial-independent"
+      ],
+      "refuted": false,
+      "summary": "An engineer fixes a typo in a custom metadata field and, in the same dialog, \"corrects\" Rev 3 to 3A. The database refuses the statement (the label must be the current revision's); the dialog closes; the metadata typo is not saved either, and nothing tells them. The bulk editor's \"Revision\" field (BulkEditModal.tsx:57-58) becomes an option that can never succeed: bulk-editing Revision on 40 rows is",
+      "area": "document-control",
+      "report": "audit-reports/document-control/10-rls.md"
+    },
+    {
+      "id": "DRLS-17",
+      "title": "The library page's delete flow clears the current-revision pointer before deleting the versions — after `20261131` a revision with acknowledgment or sign-off evidence stops it part-way, leaving a live document with no current file",
+      "severity": "MEDIUM",
+      "status": "OPEN",
+      "verification": "CONFIRMED",
+      "verification_note": null,
+      "blast_radius": null,
+      "related": [],
+      "locations": [
+        "app/(protected)/documents/[libraryId]/page.tsx:1245-1289",
+        "supabase/migrations/20261131_dc_roundF_documents_rails.sql"
+      ],
+      "has_verifier_correction": false,
+      "verified_by": "adversarial-independent",
+      "challenges": [
+        "adversarial",
+        "adversarial-independent"
+      ],
+      "refuted": false,
+      "summary": "A controller deletes a document whose Rev 2 has read-&-understood rows. Step 1 clears the pointer; step 2 is refused; the alert says \"Delete failed\". The document stays in the register at its rev label with no current file — the viewer and the share fall-backs resolve nothing or the newest row.",
       "area": "document-control",
       "report": "audit-reports/document-control/10-rls.md"
     },
@@ -3033,7 +3108,7 @@
       "id": "REV-10",
       "title": "Live share tokens keep serving a Superseded, Archived or split-away document to an unauthenticated external party — neither share route checks `documents.status` and no retirement path revokes a share",
       "severity": "MEDIUM",
-      "status": "OPEN",
+      "status": "RESOLVED",
       "verification": "CONFIRMED",
       "verification_note": null,
       "blast_radius": null,
@@ -3062,7 +3137,7 @@
       "id": "REV-11",
       "title": "Split, merge and the \"link a drawing\" upload create documents at status `Issued` with no publish-authority check and no review-control resolution, then start the compliance clocks on them",
       "severity": "MEDIUM",
-      "status": "OPEN",
+      "status": "RESOLVED",
       "verification": "CONFIRMED",
       "verification_note": null,
       "blast_radius": null,
@@ -3092,7 +3167,7 @@
       "id": "REV-12",
       "title": "`reverseSplit` / `reverseMerge` restore documents to `Issued` regardless of what they were before, and reconstruct state from an audit field (`auditAt`) that is never written",
       "severity": "MEDIUM",
-      "status": "OPEN",
+      "status": "RESOLVED",
       "verification": "CONFIRMED",
       "verification_note": null,
       "blast_radius": null,
@@ -3149,7 +3224,7 @@
       "id": "REV-14",
       "title": "`supersedeDocument` writes its lineage rows as one unchecked batch INSERT with no conflict handling, despite a comment claiming duplicate-key tolerance — a single existing pair silently drops the whole supersession record",
       "severity": "MEDIUM",
-      "status": "OPEN",
+      "status": "RESOLVED",
       "verification": "CONFIRMED",
       "verification_note": null,
       "blast_radius": null,
@@ -3169,6 +3244,59 @@
       ],
       "refuted": false,
       "summary": "P-101 was superseded by P-101A. A week later Doc Control realises P-101B also replaces it and re-runs Supersede with both numbers. The (P-101, P-101A) pair already exists; the two-row insert is rejected in full; the error is discarded; the modal reports success and closes. documentsupersessions still contains only the P-101A link — the P-101B relationship exists nowhere except the SUPERSEDEDOC aud",
+      "area": "document-control",
+      "report": "audit-reports/document-control/02-revisions-publish.md"
+    },
+    {
+      "id": "REV-15",
+      "title": "Split / merge sheets and the library page's bulk upload issue controlled first revisions that start no review clock and no read-&-understood roster",
+      "severity": "MEDIUM",
+      "status": "OPEN",
+      "verification": "CONFIRMED",
+      "verification_note": null,
+      "blast_radius": null,
+      "related": [],
+      "locations": [
+        "lib/documentLifecycle/common.ts",
+        "lib/documentLifecycle/split.ts",
+        "lib/documentLifecycle/merge.ts",
+        "app/(protected)/documents/[libraryId]/page.tsx",
+        "lib/revisions.ts",
+        "lib/__tests__/intakeUploadRoute.test.ts"
+      ],
+      "has_verifier_correction": false,
+      "verified_by": "adversarial-independent",
+      "challenges": [
+        "adversarial",
+        "adversarial-independent"
+      ],
+      "refuted": false,
+      "summary": "A cluttered P&ID is split into three sheets in a library with a two-year periodic-review policy and an ack policy for operators. The three sheets are Issued and controlled, but no review cycle is scheduled for any of them and no operator is asked to acknowledge them; the source's roster and clock were retired with it. Nothing reminds anyone until an audit asks when the sheets were last reviewed.",
+      "area": "document-control",
+      "report": "audit-reports/document-control/02-revisions-publish.md"
+    },
+    {
+      "id": "REV-17",
+      "title": "The database admits a non-controller's first issue in a library whose policy requires sign-off — the require-mode refusal of a new document's Rev 0 is enforced by the app only",
+      "severity": "MEDIUM",
+      "status": "OPEN",
+      "verification": "CONFIRMED",
+      "verification_note": null,
+      "blast_radius": null,
+      "related": [],
+      "locations": [
+        "supabase/migrations/20261105_prj_roundG_intake_review_and_attempts.sql:415",
+        "lib/revisions.ts",
+        "lib/documentLifecycle/common.ts"
+      ],
+      "has_verifier_correction": false,
+      "verified_by": "adversarial-independent",
+      "challenges": [
+        "adversarial",
+        "adversarial-independent"
+      ],
+      "refuted": false,
+      "summary": "A document owner who is not a controller, in a library whose policy requires sign-off, uses their own session from the browser console to insert a documents row with status Issued, a documentversions row and the first currentversionid write. The guard admits all three as a first issue: an unreviewed controlled Rev 0 lands, with no DOCUMENTCREATED row and no policy decision recorded.",
       "area": "document-control",
       "report": "audit-reports/document-control/02-revisions-publish.md"
     },
@@ -3845,7 +3973,7 @@
       "id": "REV-8",
       "title": "A transient PostgREST schema-cache miss drops every publish to the unguarded legacy three-step path for 60 seconds — no base check, no row lock, no transaction",
       "severity": "LOW",
-      "status": "OPEN",
+      "status": "RESOLVED",
       "verification": "CONFIRMED",
       "verification_note": null,
       "blast_radius": null,
@@ -3897,6 +4025,30 @@
       ],
       "refuted": false,
       "summary": "A Doc Control manager in Houston (UTC-5) publishes a revised operating procedure at 8:30 pm on 21 August with an effective date of 22 August — the day after the crew's training session. UTC is already 01:30 on 22 August, so todayISO() returns \"2026-08-22\", suppress evaluates \"2026-08-22\" <= \"2026-08-22\" → true, and effectivenotifiedat is stamped immediately. Her screen still shows the amber \"Effec",
+      "area": "document-control",
+      "report": "audit-reports/document-control/02-revisions-publish.md"
+    },
+    {
+      "id": "REV-16",
+      "title": "A split or merge recorded before Round F cannot be reversed from the UI, and owners who still see the reverse button are refused",
+      "severity": "LOW",
+      "status": "RESOLVED",
+      "verification": "CONFIRMED",
+      "verification_note": null,
+      "blast_radius": null,
+      "related": [],
+      "locations": [
+        "components/documents/lifecycle/ReverseConfirmModal.tsx",
+        "lib/documentLifecycle/reverse.ts"
+      ],
+      "has_verifier_correction": false,
+      "verified_by": "adversarial-independent",
+      "challenges": [
+        "adversarial",
+        "adversarial-independent"
+      ],
+      "refuted": false,
+      "summary": "A split done in August turns out to be wrong. Doc Control opens the reverse dialog and is told the reversal \"can't prove what status the source held\"; there is no way to say \"it was Issued\" from the UI. An owner who clicks the same button is told to ask Document Control.",
       "area": "document-control",
       "report": "audit-reports/document-control/02-revisions-publish.md"
     },

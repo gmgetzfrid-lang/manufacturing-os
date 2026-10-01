@@ -96,6 +96,7 @@ about the system.
 | [DEC-60](#dec-60) | The schedule engine's rules: a loop of links is refused and named; actuals and imported rows never move; finish-to-start without the phantom day, lag in working time; the critical path runs on the links and the plan's working days; one weighting basis per list; a phase delete is all or nothing | medium | `SCH-4`, `SCH-5`, `SCH-7`, `SCH-9`, `SCH-10`, `SCH-13`, `SCH-15`, `SCH-17`, `SCHED-5`, `SCHED-10`, `SCHED-12`, `SCHED-13`, `SCHED-14` |
 | [DEC-61](#dec-61) | A transmittal is a **formal issue**: members draft, the `transmittal.issue` capability (default Admin + DocCtrl, per item library) issues / voids / revokes / records receipt; the database writes the as-sent snapshot — of the document's **current** revision only — and freezes it; nothing issued is deleted; the portal link expires (90 days) and is revocable without voiding; the portal serves stamped, hash-verified, recorded bytes | medium | `TRX-1`–`TRX-14`, `EGR-8`, `XEDGE-5` |
 | [DEC-62](#dec-62) | **Only a controller publishes a skill org-wide**; members author private skills and ask for one to be shared, and an approval binds to the version shown; built-ins have no author and are never deleted; custom link patterns stay inside a safe subset with a hard deadline; the link engine remembers decisions (a stale proposal re-enters, a dismissal blocks only the pair and proposer that produced it); a link is read only by whoever can read both documents | medium | `IEDGE-3`, `GOV-2`, `IRLS-3`, `ORCH-2`, `PR-3`, `HUB-2`, `HUB-8`, `LNK-1`–`LNK-13`, `IRLS-2`, `IRLS-4`, `IRLS-15`, `WIRE-2` |
+| [DEC-63](#dec-63) | The documents-table rails: the version pointers are **trigger-enforced references**, not declared FKs (the restore replays documents first); a creation may **issue** only with publish authority and a review policy that does not require sign-off; a reversal restores only the **recorded** prior status; one effective-date calendar decides "in effect" | medium | `REV-9`, `REV-11`, `REV-12`, `REV-16`, `REV-17`, `DRLS-3`, `DRLS-13`, `DRLS-14` |
 
 ---
 
@@ -1079,6 +1080,8 @@ For a fix that needs a schema or policy change:
 *Landed 2026-09-23 (document-control Round F): `20261077` applies the two-worlds rule inside one paste — the pre-apply inventory (TEMP TABLE, aggregate counts: `document_review_events` rows with NULL `org_id` and how many of those have no parent document left, live `document_versions` rows sharing a storage key, documents disposed or Archived under an open hold) is captured BEFORE the transaction, the DDL then chooses its own world — `org_id SET NOT NULL` when the backfill left nothing, otherwise a `NOT VALID` CHECK that binds every NEW row and keeps the unbackfillable residue for the record (never deleted) — and the final SELECT reports which world it chose. See `DRLS-4`, `RET-8`, `HLD-1`.*
 *Landed 2026-09-30 (intelligence Round G, I-08): `20261125` and `20261126` take the two-worlds rule into one paste each — the pre-apply inventory (built-in skills carrying a member uid; org-wide custom skills whose author is not an active controller; `document_related_resources` rows with NULL `target_document_id`; duplicate mention keys; `origin` values outside the declared set; `proposed_links` rows in status `stale`) is a TEMP TABLE before the transaction, the plain mention indexes are built and the `origin` CHECK is VALIDATEd only in the world where nothing violates them, and the final rows report the world taken. See `IEDGE-3`, `IRLS-4`, `LNK-9`.*
 
+*Landed 2026-09-30 (document-control Round F wave 2, P3 LIFECYCLE): `20261131` takes the two-worlds rule to foreign keys and a unique index — the pre-apply inventory counts dangling and cross-document version pointers, documents whose `rev` differs from their current revision's label, duplicate supersession pairs and orphaned acknowledgment / sign-off evidence; the evidence FKs are added `NOT VALID` only where orphans exist (every new row bound, the residue counted, never deleted), the supersession pair index is built only where no duplicate pair exists, and existing label divergences are reported, not rewritten — the rail binds the next change. See `DRLS-3`, `DRLS-14`, `REV-14`.*
+
 <a id="dec-31"></a>
 ## DEC-31 · The scope rule
 
@@ -2054,6 +2057,8 @@ then. A stated need for owners to share widens the INSERT arm to
 
 **Risk:** low — every change narrows; a never-expiring link older than 90
 days expires on apply, which the migration's inventory counts before the fact.
+
+*Landed 2026-09-30 (document-control Round F wave 2, P3 LIFECYCLE): §3's lifecycle half — archive, split and merge now REVOKE a document's live share links as supersede did (`revokeLiveSharesForDocument`, `lib/revisions.ts`: live rows only, what the actor may revoke under RLS, the count and any refusal on the retirement's audit event), and so does a reversal that parks a split / merge's sheets; revocation is durable (20261080), so an unarchive or a reversed split / merge no longer serves a link the retirement REVOKED. *Caveat (corrected in the fourth review fix):* a link another creator minted is revoked only when the retirer is a controller (RLS, 20261022). A non-controller's retirement leaves such a link live and only flags it — `liveShareLinksLeft` on the retirement's audit event (unexpired links only, P1's rule) and a line in the retirer's browser console; no queue shows it — and it serves again after an unarchive or a reversed split / merge until Document Control revokes it. See `REV-10`.*
 
 <a id="dec-47"></a>
 ## DEC-47 · Imported schedule rows are commitments everywhere
@@ -3644,3 +3649,151 @@ issued rows whose creator would not hold it today.
 *Corrected in the I-08 fix pass 4 (intelligence Round G): §1 said the controllers' read admits only approving or declining a share request, but nothing tied the approval to a request or to the reviewed text — a controller could publish a member's draft that was never offered (under the member's byline), a withdrawn one, or one whose author swapped the text after the controller opened it (the reviewer's three races; on a local PostgreSQL 16 after the fix each one is refused). The guards now require an open request for a non-author's publish and never let a non-author raise one, an author's edit withdraws the request, and the Skill Library approves by version. The shelf's 200-row window, which could still push the newest requests off, is now paged to a stated ceiling with the requests read on their own. §3's worker start-up was bounded by one skill's share and one slow start ended every remaining skill; it now has its own allowance.*
 
 *Corrected in the I-08 fix pass 5 (intelligence Round G): §1 said `updated_at` was stamped by the guard on every write; it was stamped on UPDATE only, so a person's INSERT kept the client's id and dates and a draft deleted and re-inserted under the reviewed id and date passed a stale approval (reproduced on PostgreSQL 16 by the review). Both guards now give a person's new row the database's id, `created_at` and `updated_at`; on a local PostgreSQL 16 the replay matches nothing. §6 now includes the applied-link read rule: `LNK-3` routed provable evidence into `document_related_resources`, which every active member could read (the engine's row-by-row fallback wrote it even before `20261126`); `20261126` adds a RESTRICTIVE both-endpoints read policy, and before it is applied the engine applies nothing.*
+
+<a id="dec-63"></a>
+## DEC-63 · The documents-table rails: what the database references, what a creation may issue, what a reversal may restore, and which calendar decides "in effect"
+
+*Numbered DEC-63 at merge (minted by document-control Round F wave 2, package P3 LIFECYCLE, as a provisional DEC-44 — distinct from the download-record DEC-44; DEC-44 to DEC-62 were taken on the integration branch). References renumbered: `REV-9`, `REV-11`, `REV-12`, `REV-16`, `REV-17`, `DRLS-14` in document-control, the header of `supabase/migrations/20261131_dc_roundF_documents_rails.sql`, and the lifecycle tests.*
+
+*Sign-off: the first version of §2 and §3 removed capabilities (split / merge in a require-mode library, for controllers too; reversing a split / merge recorded before this round, from the UI) and was held for sign-off. The second review fix withdrew both removals — a controller issues in a require-mode library with the decision recorded (§2), and the reverse dialog names a legacy status explicitly (§3, `REV-16`) — so neither section now removes a write path the database allows; the integrator need only confirm the refusal §2 keeps (a non-controller in a require-mode library), which closes the finding's own bypass in the app only — the database half is `REV-17` (fourth review fix).*
+
+**Decision. Four calls the lifecycle package had to make, each in the direction that fails safe:**
+
+1. **The version pointers are trigger-enforced references, not declared
+   foreign keys.** `documents.current_version_id` / `pending_version_id`
+   must name a revision OF THAT document whenever they move (every caller,
+   the service role included), a document's current revision cannot be
+   deleted (a constraint trigger at end of statement — the NO ACTION timing),
+   and a pending pointer to a deleted draft is cleared. A signed-in INSERT
+   is born with both pointers NULL (no genuine creation flow sets them — a
+   version references its document, so it cannot exist first — and neither
+   UPDATE-only guard would see a document created already pointing at
+   another document's revision); the service role is exempt. A declared FK
+   would refuse every restored document: the restore replays `documents`
+   before `document_versions` (`lib/dataRestore.ts` `RESTORE_TABLE_ORDER`),
+   because versions reference their document, and it writes as the service
+   role. Compliance evidence that hangs off a version (`distribution_acks`,
+   `document_acknowledgments`, `document_review_signoffs`) takes a declared
+   NO ACTION FK — those tables restore after `document_versions` — so
+   deleting a REVISION with evidence is refused rather than cascading or
+   orphaning it. Deleting the DOCUMENT row still cascades all three through
+   `document_id`, as it always did: evidence survives a version delete, not a
+   document delete. What a document delete should do with its evidence is
+   not decided here (`DRLS-14` stays open on it), and the library page's
+   delete flow, which clears the pointer before deleting the versions, now
+   stops part-way at the version step (`DRLS-17`).
+2. **A creation that issues controlled content in a library whose effective
+   policy REQUIRES sign-off is refused for everyone but a controller, never
+   routed — and a controller's issue is recorded.** Split and merge sheets
+   and an "Issued" upload are first issues outside the database's revision
+   gate (RG-7). Routing a split's sheets through review would supersede the
+   controlled source while its replacements are unapproved — no controlled
+   copy in between — so for a non-controller the operation refuses and says
+   how to proceed (create as Draft, review, then retire the old document, or
+   ask Document Control); that refusal closes the finding's own bypass (an
+   owner splitting past a mandatory review) **in the app only**: the
+   database's guard exempts a first issue from the require-mode rule
+   (`enforce_document_publish_guard`, newest body `20261105:415` — only
+   `OLD.current_version_id IS NOT NULL` is a revision through the gate), so a
+   non-controller owner writing the rows and the first pointer from their own
+   session is admitted, with no `DOCUMENT_CREATED` row. The database rule is
+   `REV-17`, assigned to the integrator *(fourth review fix: the record
+   called the bypass closed without saying it was app-side)*. Doc Control
+   and Admin — the
+   people who own the policy — proceed, and the creation event records the
+   decision and who made it (`reviewPolicy: "require — issued WITHOUT the
+   sign-off the policy requires, by controller <uid> …"` — on
+   `CREATED_FROM_SPLIT` / `CREATED_FROM_MERGE`, and on the upload path's
+   `DOCUMENT_CREATED` row since the third review fix; before it, the upload
+   only returned the decision and its caller discarded it). Under
+   `publisher_choice` / `none` it proceeds and the decision is recorded too.
+   An unreadable policy refuses (RG-6). *(Second review fix: the first
+   version refused controllers as well, removing a write path the database
+   admits.)*
+3. **A reversal restores only a status it can prove — or one a controller
+   names.** Split and merge
+   record the source's prior status (read fresh) and the operation's instant
+   on their audit event; a reversal restores exactly that. An event recorded
+   before this round carries none: the reversal refuses rather than guess —
+   restoring "Issued" is what made a Void or Draft source a controlled copy
+   again — unless the caller names the status explicitly. The reversal
+   dialog names it: for an event that recorded none it shows a required
+   picker of the validated statuses with nothing pre-selected (`REV-16`,
+   second review fix). A reversal is a Document Control / Admin act (it
+   deletes supersession rows, which `20261131` reserves to them), and the
+   reverse affordance is offered only to them.
+4. **"In effect" is decided in one calendar: the facility's.** The
+   deployment names it in `NEXT_PUBLIC_FACILITY_TIME_ZONE` (an IANA zone,
+   read at call time by `effectiveDateTimeZone()` — the browser bundle and
+   the cron scan read the same name). The badge, the suppression watermark,
+   the daily scan and (once P8 swaps its inline date for
+   `effectiveTodayISO()`) `/api/verify` compare YYYY-MM-DD strings in it.
+   Unset, or not a zone the runtime knows, it falls back to **UTC-12**
+   (`Etc/GMT+12`), the latest calendar on Earth — never UTC. A day begins
+   there only after it has begun in every facility's calendar, so with no
+   zone named a date is never shown, stamped or announced as in force early
+   anywhere; it is late instead, by the facility's offset plus twelve hours
+   (a Houston badge flips at 07:00, not midnight; a UTC+14 site is 26 hours
+   late), and the app logs the unset zone once per runtime
+   (`facilityTimeZoneHealth()` answers for a health surface). *(Second review
+   fix: the first version fell back to UTC, which moved the field-facing
+   badge onto a calendar that flips a date early for every site west of UTC
+   — a Houston publisher's "tomorrow" read in effect from 19:00 the evening
+   before, and was never announced.)* `REV-9` stays open until P8 swaps
+   `/api/verify`'s inline date and every deployment names its zone (the
+   wave-2 app deploy is conditional on it), or an org / library zone setting
+   lands (which changes `effectiveDateTimeZone()` and nothing else). The
+   database never pre-stamps
+   a date that may still be ahead in the facility's calendar: the register
+   rail's copy (`REV-13`, below) stamps the watermark only for no date or a
+   date before yesterday in UTC.
+
+And the rule that makes these hang together: **the revision row is the
+source of truth for its label.** `documents.rev` / `revision` follow the
+current revision's `revision_label` (a correction on the revision is carried
+onto the document by the database), `documents.effective_date` follows the
+current revision's `effective_date` whenever the pointer moves, by any door
+— the service-role intake auto-publish included (`REV-13`) — and the
+register fields (`rev`, `revision`, `document_number`, `effective_date`)
+are the publisher tier's.
+
+**Rationale.** Each alternative leaves a state the plant cannot trust: a
+declared FK that breaks restore is removed at the first incident; a split
+that parks its sheets in review leaves nothing controlled on the equipment;
+a guessed status resurrects a withdrawn drawing; two calendars announce a
+date nobody sees flip.
+
+**Implementation.** Migrations `20261130` (the override reason, DCK-8) and
+`20261131` (the rails, the evidence FKs, the supersession policies and
+pair index); `lib/revisions.ts` (`resolveCreationReviewGate`,
+`createDocumentWithFile`'s required status, `voidPendingDraft`,
+`revokeLiveSharesForDocument`, `writeSupersessionLineage`),
+`lib/documentLifecycle/*` (the supersede gate on split / merge, carried
+holds before the supersession, recorded prior statuses, checked reversals),
+`lib/effectiveDate.ts` (`effectiveDateTimeZone`, `effectiveTodayISO`;
+`NEXT_PUBLIC_FACILITY_TIME_ZONE` documented in `.env.example`).
+
+**Acceptance.** `lib/__tests__/dcRoundFLifecycle.test.ts`,
+`lib/__tests__/dcRoundFLifecycleMigration.test.ts`,
+`lib/__tests__/effectiveDate.test.ts`.
+
+**Reversal.** (1) If the restore learns to replay the pointers after the
+versions (strip on insert, patch after), the rails can become declared FKs
+with no change in behaviour. (2) A "pending split" state that supersedes on
+approval would let a require-mode library route instead of refuse. (3) A
+per-source picker would let a legacy merge restore siblings to different
+statuses. (4) An org / library zone setting replaces the deployment variable.
+
+**Risk:** low on authority — every rule refuses something that was allowed;
+nobody gains anything on apply. Medium on workflow: `20261131`'s label rail
+refuses the library page's metadata save whenever it changes Rev (the
+whole statement, other edits included, and the page discards the error),
+and its evidence FKs stop the page's delete flow part-way, so `20261131` is
+**not pasteable** until both page fixes are deployed (`DRLS-15`, `DRLS-17`;
+the order is in `document-control/99-fix-sequencing.md`).
+
+*Landed 2026-09-30 (document-control Round F wave 2, P3 LIFECYCLE, second review fix): §2's controller path (recorded) and §3's dialog picker (`REV-16`) withdraw the two capability removals; §4's fallback is UTC-12, never early. The split / merge / supersede saga now does nothing irreversible (the review void, the share revocation) before its last step that can roll back, registers each source's restore before its flip, and runs an extended merge target's rev-up last. See `REV-6`, `REV-9`, `REV-11`, `REV-12`, `REV-14`, `REV-16`, `HLD-2`.*
+
+*Landed 2026-09-30 (document-control Round F wave 2, P3 LIFECYCLE, third review fix): §2's "recorded" now holds for every creation path — `createDocumentWithFile` writes `DOCUMENT_CREATED` with the initial status, the policy decision and the actor, and returns a refused write (`REV-11`). The reversal (§3) is two-phase: every restored document is proved restorable before any write, the parks / restores / lineage delete roll back whole, and the review voids and link revocations run only after (`REV-6`, `REV-12`). A merge into a held existing target with no rev-up is no longer refused (authority and the lock only — `HLD-2`), so no section removes a write path the database allows. §4's unset zone is logged and its worst case stated as 26 hours (`REV-9`). `REV-13` is back to OPEN: its every-door half is `20261131`'s rail, not yet pasteable.*
+
+*Landed 2026-09-30 (document-control Round F wave 2, P3 LIFECYCLE, fourth review fix): the controller's force over a hold reaches the UI — the Split and Merge wizards read the sources' active holds and, for a controller (the role collection), require "Proceed over the active hold … carried to every new sheet / the merge target", lock the carry on and pass `force`; anyone else is refused before submit and never told to release the hold (fix pass 3 left the force API-only, so the UI route was to release the hold, which carries nothing — the HLD-2 failure by another route, wrongly called fail-safe). `DOC_SPLIT` / `DOC_MERGED` name the holds proceeded over. A reversal that would park a held document takes the same explicit decision and carries the hold back onto every restored document (§3; `REV-12`), and a park or restore whose answer was lost is re-read before the rollback decides (`REV-6`). §2's require-mode refusal of a non-controller is app-side only; the database rule is `REV-17` (open). DEC-46's Landed line gains its RLS caveat (`REV-10`). See `HLD-2`, `REV-6`, `REV-10`, `REV-11`, `REV-12`, `REV-17`.*

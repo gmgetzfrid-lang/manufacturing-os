@@ -22,7 +22,7 @@ Checkout and the lock, revisions and publish, the review gate and e-signatures, 
 
 ## Findings
 
-**149 findings** — 18 CRITICAL, 53 HIGH, 65 MEDIUM, 13 LOW.
+**155 findings** — 19 CRITICAL, 53 HIGH, 69 MEDIUM, 14 LOW.
 
 ### Round F wave 1 (2026-09-23 → 2026-09-29) — six packages in parallel
 
@@ -250,7 +250,7 @@ Remaining: XEDGE extensions and the MEDIUM backlog.
 | # | Report | n | Note |
 |---|---|---|---|
 | 01 | [Checkout, check-in & the lock](./01-checkout.md) | 14 |  |
-| 02 | [Revisions, publish & supersession](./02-revisions-publish.md) | 14 |  |
+| 02 | [Revisions, publish & supersession](./02-revisions-publish.md) | 17 | `REV-15`, `REV-16`, `REV-17` opened at P3 LIFECYCLE, 2026-09-30 |
 | 03 | [The review gate & e-signatures](./03-review-gate.md) | 13 |  |
 | 04 | [Holds & stop-work](./04-holds.md) | 14 |  |
 | 05 | [Distribution, acknowledgment & recall](./05-distribution.md) | 15 |  |
@@ -258,7 +258,7 @@ Remaining: XEDGE extensions and the MEDIUM backlog.
 | 07 | [Doc packs, work packages & the field bundle](./07-packages.md) | 14 |  |
 | 08 | [Retention, legal hold, archive & restore](./08-retention.md) | 14 |  |
 | 09 | [Content egress](./09-egress.md) | 8 |  |
-| 10 | [RLS & persistence — table by table](./10-rls.md) | 14 |  |
+| 10 | [RLS & persistence — table by table](./10-rls.md) | 17 | `DRLS-15`, `DRLS-16` (CRITICAL — anon may execute `publish_revision`), `DRLS-17` opened at P3 LIFECYCLE, 2026-09-30 |
 | 11 | [Edges, modalities & load-bearing invariants](./11-edges-and-invariants.md) | 14 |  |
 
 Every report except the critic was **adversarially verified** — a second agent

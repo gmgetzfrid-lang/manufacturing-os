@@ -146,13 +146,16 @@ describe("/api/tickets/handback — records an outcome it can prove, nothing els
 });
 
 describe("pinned at the source — the publish path is reused, never reimplemented", () => {
-  it("revUpDocument carries relatedTicketId to the version row (direct, review-draft and legacy paths) and the audit", () => {
+  it("revUpDocument carries relatedTicketId to the version row (direct and review-draft paths) and the audit", () => {
     const r = src("lib/revisions.ts");
     expect(r).toMatch(/relatedTicketId\?: string \| null;/);
     expect((r.match(/related_ticket_id: input\.relatedTicketId \?\? null,/g) ?? []).length).toBe(2);
     expect(r).toContain("relatedTicketId: input.relatedTicketId ?? null,");
-    expect(r).toContain('msg.includes("related_ticket_id")');
-    expect(r).toContain("delete insertBody.related_ticket_id;");
+    // REV-8 (document-control Round F wave 2): the legacy three-step path —
+    // and its related_ticket_id column retry — is gone; a publish goes
+    // through publish_revision or not at all.
+    expect(r).not.toContain("legacyRevUpAfterUpload");
+    expect(r).not.toContain("delete insertBody.related_ticket_id;");
   });
   it("RevUpModal: presetFile / presetMocOrigin / relatedTicketId; a recorded 'no MOC' needs an explicit acknowledgement written into the change log", () => {
     const m = src("components/documents/RevUpModal.tsx");

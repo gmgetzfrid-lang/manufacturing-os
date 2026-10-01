@@ -17,6 +17,7 @@ import { logRevisionEvent } from "@/lib/audit";
 import { resolveActorPrincipal } from "@/lib/principal";
 import { resolveCanControlLibrary } from "@/lib/documentGuards";
 import { isEffectiveOwnerOfDocument } from "@/lib/ownership";
+import { assertNotOnHold } from "@/lib/holdGate";
 import type { DocumentRecord } from "@/types/schema";
 
 export interface RenumberInput {
@@ -42,6 +43,9 @@ export async function renumberDocument(input: RenumberInput): Promise<void> {
   if (!authorized) {
     throw new Error("You don't have authority to renumber this document. Ask an Admin or Doc Control to grant publish authority on this library.");
   }
+  // HLD-1: a held document keeps the number its hold cards were printed
+  // with until the hold is released (the shared gate; fails closed).
+  await assertNotOnHold(doc.id, { action: "renumbering it" });
 
   const now = new Date().toISOString();
 

@@ -142,14 +142,17 @@ describe("SECURITY DEFINER functions pin search_path (DB-6)", () => {
   });
 
   it("census parses the standard drop-then-recreate pattern as LIVE", () => {
-    // publish_revision is re-created by 20261019 via DROP + CREATE in one
-    // file; the census must key its 11 real parameters (the arg list carries
-    // a parenthesized comment that a naive parser truncates on) and report it
-    // live and pinned.
+    // publish_revision is re-created via DROP + CREATE in one file — first by
+    // 20261019 (11 real parameters; the arg list carries a parenthesized
+    // comment that a naive parser truncates on), then by 20261130 (DCK-8:
+    // the 11-argument form dropped, the 12-argument form with
+    // p_override_reason created). The census must report the new form live
+    // and pinned, and the old one dropped.
     const final = census();
-    const st = final.get("publish_revision/11");
+    const st = final.get("publish_revision/12");
     expect(st).toBeDefined();
     expect(st!.dropped).toBe(false);
     expect(st!.pinned).toBe(true);
+    expect(final.get("publish_revision/11")?.dropped).toBe(true);
   });
 });

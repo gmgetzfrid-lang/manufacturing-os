@@ -10,7 +10,7 @@ import React, { useCallback, useEffect, useState } from "react";
 import { Search, Loader2, FileText, Check, X, Upload, FolderPlus, Plus, Library as LibraryIcon } from "lucide-react";
 import { supabase } from "@/lib/supabase";
 import { searchDocuments, type DocumentRow } from "@/lib/search";
-import { createDocumentWithFile } from "@/lib/revisions";
+import { createDocumentWithFile, type CreationStatus } from "@/lib/revisions";
 import { createFolder, createLibrary, listLibraryFoldersOnce, type PickerFolder } from "@/lib/libraryCollections";
 import { appPrompt, appAlert } from "@/components/providers/DialogProvider";
 import { useRole } from "@/components/providers/RoleContext";
@@ -27,7 +27,7 @@ export default function DocumentLinkPicker({ orgId, userId, canManage = false, e
   const [libraries, setLibraries] = useState<{ id: string; name: string }[]>([]);
   // OWN-22: the creator's display name rides along as the owner-name cache
   // (DEL-8 — consumers still resolve names live).
-  const { member, userEmail } = useRole();
+  const { member, userEmail, activeRole } = useRole();
 
   useEffect(() => {
     let alive = true;
@@ -62,6 +62,11 @@ export default function DocumentLinkPicker({ orgId, userId, canManage = false, e
   const [file, setFile] = useState<File | null>(null);
   const [docNum, setDocNum] = useState("");
   const [docTitle, setDocTitle] = useState("");
+  // REV-11: the new document's status is the uploader's deliberate choice —
+  // a Draft (filed for reference, not a controlled copy) unless they choose
+  // to issue it, which takes publish authority and a library whose review
+  // policy allows an unreviewed first issue.
+  const [fileAs, setFileAs] = useState<CreationStatus>("Draft");
   const [creating, setCreating] = useState(false);
   const [upError, setUpError] = useState<string | null>(null);
 
@@ -111,12 +116,17 @@ export default function DocumentLinkPicker({ orgId, userId, canManage = false, e
     setCreating(true); setUpError(null);
     try {
       const folder = folders.find((f) => f.id === folderId);
-      const { documentId } = await createDocumentWithFile({
+      const { documentId, creationAuditError } = await createDocumentWithFile({
         orgId, libraryId: upLibraryId, collectionId: folderId || null,
         folderPath: folder ? folder.pathNames : undefined,
         documentNumber: docNum.trim(), title: docTitle.trim() || undefined,
-        file, actorUserId: userId,
+        file, status: fileAs, actorUserId: userId, actorEmail: userEmail ?? undefined, actorRole: activeRole ?? undefined,
       });
+      // REV-11: the document exists, but its creation record did not land —
+      // say so (Document Control can reconstruct it), never stay silent.
+      if (creationAuditError) {
+        await appAlert({ message: `${docNum.trim()} was created, but its creation record could not be written (${creationAuditError}). Tell Document Control so the record can be completed.`, tone: "danger" });
+      }
       await onPick(documentId);
     } catch (e) { setUpError((e as Error).message); } finally { setCreating(false); }
   };
@@ -210,6 +220,17 @@ export default function DocumentLinkPicker({ orgId, userId, canManage = false, e
                 <label className="text-[10px] font-black uppercase tracking-widest text-[var(--color-text-muted)]">Title</label>
                 <input value={docTitle} onChange={(e) => setDocTitle(e.target.value)} placeholder="optional" className={`${fieldCls} w-full`} />
               </div>
+            </div>
+
+            <div className="space-y-1">
+              <label className="text-[10px] font-black uppercase tracking-widest text-[var(--color-text-muted)]">File as</label>
+              <select value={fileAs} onChange={(e) => setFileAs(e.target.value as CreationStatus)} className={`${fieldCls} w-full`}>
+                <option value="Draft">Draft — filed for reference, not a controlled copy</option>
+                <option value="Issued">Issued — a controlled Rev 0 (needs publish authority in this library)</option>
+              </select>
+              {fileAs === "Issued" && (
+                <p className="text-[10px] text-[var(--color-text-muted)]">Issuing starts its review cycle and read-&amp;-understood roster. A library that requires reviewer sign-off refuses an unreviewed issue — file it as a Draft and submit it for review instead (Document Control may issue it, and is recorded doing so).</p>
+              )}
             </div>
 
             {upError && <div className="text-xs text-red-600 bg-red-50 border border-red-200 rounded-lg p-2">{upError}</div>}
