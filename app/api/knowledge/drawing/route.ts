@@ -14,7 +14,8 @@
 //                                           (org, library, sheet, revision).
 //                                           A sheet already recorded at the
 //                                           revision in front of it (with
-//                                           anything but `skipped`) is NOT
+//                                           anything but `skipped`), from
+//                                           the index it holds now, is NOT
 //                                           re-audited — the response lists
 //                                           it as already recorded (DWG-13);
 //                                           one whose revision is unknown
@@ -28,7 +29,10 @@
 //                                           with every counter zeroed, then
 //                                           chunks, page entities and machine
 //                                           mentions go; the page's
-//                                           auto-indexer re-runs
+//                                           auto-indexer re-runs. A caller
+//                                           that sends no cursor continues
+//                                           from where its last call stopped
+//                                           (kept on the library row)
 //
 // ACL: entities mirror controlled documents — results exclude every doc the
 // CALLER can't read, same engine as the ask route. Fails closed.
@@ -49,12 +53,12 @@ import { resetKnowledgeIndex } from "@/lib/knowledgeIngest";
 import {
   buildEquipmentCensus, auditDrawingRefs, auditOpcBoxes, equipmentRegisterCsv,
   parseUnitMap, parsePrefixMap, declaredSheetIdentity, sheetIdentities, rollUpEntities,
-  DRAWING_MAX_LOWERCASE_RATIO, type EntityRollupRow,
+  DRAWING_MAX_LOWERCASE_RATIO, THIN_PAGE_MAX_CHARS, type EntityRollupRow,
 } from "@/lib/drawingText";
 import { loadCodebookAdmin, codebookToDecoderText } from "@/lib/codebookServer";
 import {
-  verdictsForSheets, verdictRows, sheetsNeedingAudit, sheetsAloneInTheirSeries, seriesHeldBySet,
-  seriesNotJudged, missingWithinHeldSeries, mayReplaceStored, RANK, type AuditSheet, type SheetVerdict,
+  verdictsForSheets, verdictRows, sheetsNeedingAudit, seriesHeldBySet, seriesNotJudged,
+  missingWithinHeldSeries, mayReplaceStored, indexFingerprint, RANK, type AuditSheet, type SheetVerdict,
 } from "@/lib/drawingAuditLog";
 
 export const runtime = "nodejs";
@@ -268,11 +272,19 @@ type TextRead = {
   /** Documents whose text was NOT read whole (at or past the stop): their
    *  zero is "not counted", never "no text" (DWG-11). */
   unread: string[];
+  /** False before 20261124: chunks were COUNTED, but their characters and
+   *  letter case were not read (chars / lower / upper are 0, unknown). */
+  charsKnown: boolean;
   error?: string;
 };
 
 /** Characters, chunks and letter case per document — the database's
- *  knowledge_doc_text_stats() (20261124), or the chunks read whole. */
+ *  knowledge_doc_text_stats() (20261124). Before that function exists, the
+ *  chunks are only COUNTED (their document id, never their content): every
+ *  census GET used to ship the full text of every chunk in the library —
+ *  about 100 MB for a 1,000-document standards library — to measure what
+ *  the per-sheet readout shows. The count still says which sheets have no
+ *  text; the characters and letter case wait for the migration. */
 async function loadTextStats(docIds: string[]): Promise<TextRead> {
   const stats = new Map<string, TextStats>();
   let viaRows = false;
@@ -282,7 +294,7 @@ async function loadTextStats(docIds: string[]): Promise<TextRead> {
     if (!viaRows) {
       const { data, error } = await supabaseAdmin.rpc("knowledge_doc_text_stats", { p_document_ids: slice });
       if (error && isMissingFunction(error)) viaRows = true;
-      else if (error) return { stats, truncated: false, unread: [], error: error.message };
+      else if (error) return { stats, truncated: false, unread: [], charsKnown: true, error: error.message };
       else {
         for (const r of (data ?? []) as Array<{ document_id: string; chunks: number; chars: number; lower_letters: number; upper_letters: number }>) {
           stats.set(r.document_id, {
@@ -293,13 +305,13 @@ async function loadTextStats(docIds: string[]): Promise<TextRead> {
         continue;
       }
     }
-    const res = await readAllPages<{ document_id: string; content: string | null }>((from, to, withCount) => supabaseAdmin
+    const res = await readAllPages<{ document_id: string }>((from, to, withCount) => supabaseAdmin
       .from("knowledge_chunks")
-      .select("document_id, content", withCount ? { count: "exact" } : undefined)
+      .select("document_id", withCount ? { count: "exact" } : undefined)
       .in("document_id", slice)
       .order("document_id", { ascending: true }).order("page", { ascending: true }).order("seq", { ascending: true })
-      .range(from, to) as unknown as PromiseLike<PageResult<{ document_id: string; content: string | null }>>, budget);
-    if (res.error) return { stats, truncated: false, unread: [], error: res.error.message };
+      .range(from, to) as unknown as PromiseLike<PageResult<{ document_id: string }>>, budget);
+    if (res.error) return { stats, truncated: false, unread: [], charsKnown: false, error: res.error.message };
     // A cut read stops inside the document its last row belongs to: that
     // document, and every one after it, is unread — dropped whole, never
     // counted in part.
@@ -309,20 +321,16 @@ async function loadTextStats(docIds: string[]): Promise<TextRead> {
     for (const c of res.rows) {
       if (!counted.has(c.document_id)) continue;
       const s = stats.get(c.document_id) ?? { chunks: 0, chars: 0, lower: 0, upper: 0 };
-      const text = c.content ?? "";
       s.chunks++;
-      s.chars += text.length;
-      s.lower += (text.match(/[a-z]/g) ?? []).length;
-      s.upper += (text.match(/[A-Z]/g) ?? []).length;
       stats.set(c.document_id, s);
     }
     budget -= res.rows.length;
-    if (res.capped) return { stats, truncated: true, unread: [...slice.slice(cutAt), ...docIds.slice(i + DOC_SLICE)] };
+    if (res.capped) return { stats, truncated: true, unread: [...slice.slice(cutAt), ...docIds.slice(i + DOC_SLICE)], charsKnown: false };
     if (budget <= 0 && i + DOC_SLICE < docIds.length) {
-      return { stats, truncated: true, unread: docIds.slice(i + DOC_SLICE) };
+      return { stats, truncated: true, unread: docIds.slice(i + DOC_SLICE), charsKnown: false };
     }
   }
-  return { stats, truncated: false, unread: [] };
+  return { stats, truncated: false, unread: [], charsKnown: !viaRows };
 }
 
 /** A document still waiting on work it cannot do right now — a vision
@@ -413,11 +421,13 @@ export async function GET(req: NextRequest) {
 
   // ── OPC box pairing (best-effort) ──────────────────────────────────────
   const opc = auditOpcBoxes(index.opc, selfByDoc, nameById);
-  const { boxCount: opcBoxCount, unreturned: opcUnreturned, noRef: opcNoRef, unknown: opcUnknown } = opc;
+  const {
+    boxCount: opcBoxCount, unreturned: opcUnreturned, unpaired: opcUnpaired, noRef: opcNoRef, unknown: opcUnknown,
+  } = opc;
 
   const text: TextRead = docs.length > 0
     ? await loadTextStats(docs.map((d) => d.id))
-    : { stats: new Map<string, TextStats>(), truncated: false, unread: [] };
+    : { stats: new Map<string, TextStats>(), truncated: false, unread: [], charsKnown: true };
   if (text.error) return bad(text.error, 500);
   const truncated = index.truncated || text.truncated;
   // Not counted: whatever either read could not reach (DWG-11). A sheet
@@ -478,22 +488,33 @@ export async function GET(req: NextRequest) {
     const tags = tagsByDoc.get(d.id) ?? 0;
     const visionPages = Number(d.vision_pages ?? 0);
     const parked = isParked(d);
+    const hasText = text.charsKnown ? st.chars > 0 : st.chunks > 0;
     const verdict =
       d.status === "error" ? "error"
       : d.status !== "ready" || parked ? "indexing"   // a parked sheet is still indexing
       : unread.has(d.id) ? "not-counted"     // past what a read could reach (DWG-11)
       : visionPages > 0 ? "vision"           // AI read it — SHX/scan handled
       : tags > 0 ? "text"                    // text layer carried the tags
-      : st.chars > 0 ? "text-no-tags"        // readable text, no tags found
+      : hasText ? "text-no-tags"             // readable text, no tags found
       : "empty";                             // nothing at all came out
     // For text with no tags: a drawing we could not get tags out of, or
     // prose that never had any (DWG-7)? A title block, a drawing reference,
-    // or capital lettering says drawing.
+    // or capital lettering says drawing. Before 20261124 the letter case was
+    // not read: without a title block or a reference, "unknown".
     const letters = st.lower + st.upper;
     const looksLike = verdict !== "text-no-tags" ? null
       : selfByDoc.has(d.id) || refsByDoc.has(d.id)
-        || (letters > 0 && st.lower / letters <= DRAWING_MAX_LOWERCASE_RATIO) ? "drawing" : "prose";
+        || (letters > 0 && st.lower / letters <= DRAWING_MAX_LOWERCASE_RATIO) ? "drawing"
+      : text.charsKnown ? "prose" : "unknown";
     const identity = declaredSheetIdentity(selfByDoc.get(d.id) ?? []);
+    // An SHX export, by what it gave (DWG-7): thin text, nothing but its own
+    // title block's number, no drawing references. Only such a sheet is
+    // worth the every-page vision advice — a legend, cover or index sheet of
+    // a healthy text-layer set (references, no equipment) never is.
+    const pageCount = Math.max(1, Number(d.page_count ?? 0));
+    const declaredBases = new Set((selfByDoc.get(d.id) ?? []).map((t) => t.replace(/-SH\d+$/, "")));
+    const shxLike = looksLike === "drawing" && text.charsKnown && !refsByDoc.has(d.id)
+      && declaredBases.size <= pageCount && st.chars / pageCount <= THIN_PAGE_MAX_CHARS;
     // Pages the entity index has NOTHING for. On a drawing set this is the
     // fingerprint of an interrupted vision rebuild: the transcripts that DID
     // run produced tags, and the skipped pages produced silence — which then
@@ -518,7 +539,8 @@ export async function GET(req: NextRequest) {
       pages: Number(d.page_count ?? 0),
       pagesIndexed: Number(d.pages_indexed ?? 0),
       gapPages: gapPages.slice(0, 24),
-      chars: st.chars, tags, visionPages, verdict, looksLike,
+      // null: not measured (before 20261124, chunks are only counted).
+      chars: text.charsKnown ? st.chars : null, tags, visionPages, verdict, looksLike, shxLike,
       // What the title block itself says this sheet is — the SAME number an
       // audit of this sheet is recorded under (DWG-10).
       declared: identity.base
@@ -538,12 +560,17 @@ export async function GET(req: NextRequest) {
 
   const drawingNoTags = sheets.filter((s) => s.looksLike === "drawing");
   const proseNoTags = sheets.filter((s) => s.looksLike === "prose");
-  if (drawingNoTags.length > 0) {
+  const shxNoTags = sheets.filter((s) => s.shxLike);
+  if (shxNoTags.length > 0) {
+    // The only vision switch is library-wide, and it bills: said plainly,
+    // and only for sheets that look like SHX exports (DEC-59 item 1).
     suggestions.push(
-      `${drawingNoTags.length} sheet(s) look like DRAWINGS — capital lettering, a title block or drawing ` +
-      "references — but no equipment tags came out of their text layer: their tags are most likely SHX " +
-      "line-work, invisible to text extraction. Turn on \"Text doesn't extract from these files — index " +
-      "every page as an image\" in Library AI setup, then hit \"Rebuild index\".",
+      `${shxNoTags.length} sheet(s) look like SHX exports — capital lettering, thin text, at most a title block, ` +
+      "and no equipment tags or drawing references in their text layer: their tags are most likely line-work, " +
+      "invisible to text extraction. AI vision can read them, but the only switch is library-wide: \"Text " +
+      "doesn't extract from these files — index every page as an image\" in Library AI setup, then \"Rebuild " +
+      "index\", reads EVERY page of EVERY document in this library with AI vision and bills each page to your " +
+      "key. Turn it on only if most of this library is like these sheets.",
     );
   }
   if (readyDocs > 0 && !hasEntities && proseNoTags.length > 0 && drawingNoTags.length === 0) {
@@ -626,6 +653,13 @@ export async function GET(req: NextRequest) {
       "the box number is how a connector pairs, so these are worth a manual look (listed below).",
     );
   }
+  if (opcUnpaired.length > 0) {
+    suggestions.push(
+      `${opcUnpaired.length} connector box(es) could not be paired: the sheet each continues on has no box ` +
+      "numbers read (a text layer, or a sheet read by AI vision before connector boxes were transcribed). " +
+      "They are NOT counted as broken — check those boxes on the sheet (listed below).",
+    );
+  }
   if (opcNoRef.length > 0) {
     suggestions.push(
       `${opcNoRef.length} off-page connector(s) carry NO drawing number at all — broken by ` +
@@ -658,12 +692,15 @@ export async function GET(req: NextRequest) {
     opcBoxCount,
     opcPairing,
     opcUnreturned: opcUnreturned.slice(0, 25),
+    opcUnpaired: opcUnpaired.slice(0, 25),
     opcNoRef: opcNoRef.slice(0, 25),
     opcUnknown: opcUnknown.slice(0, 25),
     // DWG-11: the counts are exact only when nothing was cut.
     truncated,
     notCounted: unreadNames,
     indexSource: index.source,
+    // "counts": before 20261124 the chunks are counted, never read.
+    textStats: text.charsKnown ? "measured" : "counts",
   });
 }
 
@@ -672,6 +709,47 @@ export async function GET(req: NextRequest) {
 const REBUILD_BUDGET_MS = 40_000;
 /** Resets run this many documents at a time — each is its own claim. */
 const REBUILD_CONCURRENCY = 6;
+/** Where a cursorless caller's last call stopped, kept on the library row
+ *  (knowledge_libraries.ai_features) — the library page's "Re-index all"
+ *  cannot carry a cursor between presses (ING-12). */
+const REBUILD_MARK_KEY = "rebuildCursor";
+/** A press within this long of the last partial one continues it; later,
+ *  the re-index starts again from the first document. */
+const REBUILD_RESUME_WINDOW_MS = 6 * 60 * 60 * 1000;
+
+/** The cursor a cursorless caller's last partial call left, if it is still
+ *  fresh. A read that fails starts from the first document: it never fails
+ *  the rebuild, and never skips a document on a guess. */
+async function readRebuildMark(orgId: string, libraryId: string): Promise<string | null> {
+  const { data, error } = await supabaseAdmin
+    .from("knowledge_libraries").select("ai_features").eq("id", libraryId).eq("org_id", orgId).maybeSingle();
+  if (error || !data) return null;
+  const mark = ((data as { ai_features?: Record<string, unknown> | null }).ai_features ?? {})[REBUILD_MARK_KEY] as
+    { cursor?: unknown; at?: unknown } | undefined;
+  if (!mark || typeof mark.cursor !== "string" || typeof mark.at !== "string") return null;
+  const at = Date.parse(mark.at);
+  return Number.isFinite(at) && Date.now() - at <= REBUILD_RESUME_WINDOW_MS ? mark.cursor : null;
+}
+
+/** Keep (or clear, `cursor` null) where a cursorless caller stopped. The row
+ *  is read again right before the write and only this one key changes, so a
+ *  Library AI setup saved meanwhile is kept. Returns the failure, if any. */
+async function writeRebuildMark(orgId: string, libraryId: string, cursor: string | null): Promise<string | null> {
+  const { data, error } = await supabaseAdmin
+    .from("knowledge_libraries").select("ai_features").eq("id", libraryId).eq("org_id", orgId).maybeSingle();
+  if (error) return error.message;
+  if (!data) return null;
+  const features = { ...((data as { ai_features?: Record<string, unknown> | null }).ai_features ?? {}) };
+  if (cursor === null) {
+    if (!(REBUILD_MARK_KEY in features)) return null;
+    delete features[REBUILD_MARK_KEY];
+  } else {
+    features[REBUILD_MARK_KEY] = { cursor, at: new Date().toISOString() };
+  }
+  const { error: writeError } = await supabaseAdmin
+    .from("knowledge_libraries").update({ ai_features: features }).eq("id", libraryId).eq("org_id", orgId);
+  return writeError ? writeError.message : null;
+}
 
 export async function POST(req: NextRequest) {
   let body: { orgId?: string; libraryId?: string; action?: string; cursor?: string | null };
@@ -690,8 +768,9 @@ export async function POST(req: NextRequest) {
   if (body.action !== "rebuild") return bad("Unknown action");
   // A caller that sends no `cursor` key at all cannot follow one (the
   // library page's "Re-index all", lib/knowledge.ts rebuildDrawingIndex —
-  // I-02's, owed the cursor loop). It must never be able to report a
-  // partial reset as done: see rebuild().
+  // I-02's, owed the cursor loop). The route keeps its place for it, so
+  // each press continues where the last stopped; and it must never be able
+  // to report a partial reset as done: see rebuild().
   return rebuild(orgId, libraryId, typeof body.cursor === "string" ? body.cursor : null, !("cursor" in body));
 }
 
@@ -706,9 +785,18 @@ export async function POST(req: NextRequest) {
  * id order; a call that runs out of time answers `remaining` and the
  * `cursor` to continue from, so a continuation never resets (and re-bills)
  * a document twice.
+ *
+ * A caller that sends no cursor at all (the library page's "Re-index all")
+ * is given one: the route keeps where its last partial call stopped on the
+ * library row (REBUILD_MARK_KEY, for REBUILD_RESUME_WINDOW_MS) and the next
+ * press continues from there, until a press reaches the last document and
+ * clears it. Before this, every press restarted at the first document and a
+ * library larger than one call could never finish.
  */
-async function rebuild(orgId: string, libraryId: string, cursor: string | null, cursorless = false) {
+async function rebuild(orgId: string, libraryId: string, requested: string | null, cursorless = false) {
   const startedAt = Date.now();
+  const resumedFrom = cursorless ? await readRebuildMark(orgId, libraryId) : null;
+  const cursor = resumedFrom ?? requested;
   const res = await readAllPages<{ id: string; name: string }>((from, to, withCount) => supabaseAdmin
     .from("knowledge_documents").select("id, name", withCount ? { count: "exact" } : undefined)
     .eq("library_id", libraryId).eq("org_id", orgId)
@@ -716,7 +804,10 @@ async function rebuild(orgId: string, libraryId: string, cursor: string | null, 
     .range(from, to) as unknown as PromiseLike<PageResult<{ id: string; name: string }>>, Number.POSITIVE_INFINITY);
   if (res.error) return bad(res.error.message, 500);
   const all = res.rows.filter((d) => cursor === null || d.id > cursor);
-  if (all.length === 0) return NextResponse.json({ ok: true, docs: 0, busy: [], errors: [], remaining: 0, cursor: null });
+  if (all.length === 0) {
+    if (resumedFrom !== null) await writeRebuildMark(orgId, libraryId, null);
+    return NextResponse.json({ ok: true, docs: 0, busy: [], errors: [], remaining: 0, cursor: null, resumedFrom });
+  }
 
   const nameById = new Map(all.map((d) => [d.id, d.name]));
   const reset: string[] = [];
@@ -745,7 +836,14 @@ async function rebuild(orgId: string, libraryId: string, cursor: string | null, 
     // the budget was spent before it took any, where the caller asked to
     // start.
     cursor: remaining > 0 ? (next > 0 ? all[next - 1].id : cursor) : null,
+    // A cursorless caller continued from where its last call stopped.
+    ...(cursorless ? { resumedFrom } : {}),
   };
+  // A cursorless caller's place: kept while documents remain, cleared once
+  // the last one has been taken.
+  const markError = cursorless && (remaining > 0 || resumedFrom !== null)
+    ? await writeRebuildMark(orgId, libraryId, remaining > 0 ? body.cursor : null)
+    : null;
   // Nothing reset and something failed: a failure, said as one.
   if (reset.length === 0 && errors.length > 0) {
     return NextResponse.json({ ...body, error: `The rebuild failed: ${body.errors.slice(0, 3).join("; ")}` }, { status: 500 });
@@ -754,15 +852,20 @@ async function rebuild(orgId: string, libraryId: string, cursor: string | null, 
   // per-document failures, must not be able to call this complete: it is
   // told what happened, as a refusal it will show (ING-12).
   if (cursorless && (remaining > 0 || body.busy.length > 0 || body.errors.length > 0)) {
-    const parts = [`${reset.length} of ${all.length} document(s) were queued for re-indexing`];
+    const parts = [resumedFrom !== null
+      ? `${reset.length} of the ${all.length} document(s) the last press had not reached were queued for re-indexing`
+      : `${reset.length} of ${all.length} document(s) were queued for re-indexing`];
     if (body.busy.length > 0) {
       parts.push(`${body.busy.length} were being indexed right then and were left alone (${body.busy.slice(0, 3).join(", ")}${body.busy.length > 3 ? ", …" : ""})`);
     }
     if (body.errors.length > 0) parts.push(`${body.errors.length} failed (${body.errors.slice(0, 2).join("; ")})`);
     if (remaining > 0) {
-      parts.push(`${remaining} were not reached in time — the library is larger than one call can reset, and this ` +
-        "button cannot continue a partial re-index yet (in a drawing library, \"Rebuild index\" in the Drawing " +
-        "intelligence panel continues from where a call stops)");
+      parts.push(markError
+        ? `${remaining} were not reached in time, and where this call stopped could not be saved (${markError}) — ` +
+          "the next press starts again from the first document"
+        : `${remaining} were not reached in time — the library is larger than one call can reset. Press the button ` +
+          `again (within ${REBUILD_RESUME_WINDOW_MS / 3_600_000} hours) to continue from where this call stopped; ` +
+          "no document is reset twice");
     }
     return NextResponse.json({
       ...body,
@@ -792,19 +895,30 @@ const sameRev = (a: string, b: string) => a.trim().toUpperCase() === b.trim().to
  *     whose indexed label disagrees with it, is reported `skipped` with the
  *     reason and nothing is recorded for it.
  *   * A sheet already recorded at this revision, in this library, with
- *     anything but `skipped`, is not re-audited (DWG-13 — sheetsNeedingAudit).
- *     A sheet whose revision is unknown ("") always is: "unrevised" cannot
- *     be established for it, and its row takes the latest verdict.
+ *     anything but `skipped`, is not re-audited (DWG-13 — sheetsNeedingAudit)
+ *     — provided the row COVERED it: every document filed under that number
+ *     is on the row's `coverage`, with the fingerprint of the index it holds
+ *     now. A sibling sheet's verdict never stands for a sheet that was
+ *     skipped or added since, and a rebuild that changed a sheet's index
+ *     re-audits it. A sheet whose revision is unknown ("") always is
+ *     audited: "unrevised" cannot be established for it, and its row takes
+ *     the latest verdict.
  *   * A stored verdict under a known revision is never replaced by a less
  *     severe one (RANK — mayReplaceStored).
  *   * A gap ("isn't in the set") is judged only inside a series the library
- *     holds: a sheet that is the only one of its series here is recorded
- *     for what is its own (its connectors, its boxes), and references into
- *     that series are out of the set's scope (sheetsAloneInTheirSeries /
- *     seriesHeldBySet). The series not judged are named on the record.
+ *     holds — two or more different numbers of it (seriesHeldBySet). A
+ *     sheet in a series the library does not hold is recorded for what is
+ *     its own (its connectors, its boxes), and references into that series
+ *     are out of the set's scope. The series not judged are named on the
+ *     record.
  *   * Pages AI vision never read (an accepted partial index) keep a sheet
  *     from passing.
  *   * Nothing is recorded from a partial read of the index (DWG-11).
+ *   * Before 20261124 (no library_id) the verdicts are still recorded, on
+ *     the org-wide key that database has: prior rows read org-wide, the
+ *     upsert on (org, sheet, revision), never lowering a stored verdict —
+ *     the base's write path, with the RANK guard it lacked. The response
+ *     says so (`legacyKey`).
  */
 async function recordAudit(orgId: string, libraryId: string, userId: string) {
   const { docs, error: docErr } = await loadVisibleDocs(orgId, userId, libraryId);
@@ -825,24 +939,28 @@ async function recordAudit(orgId: string, libraryId: string, userId: string) {
     );
   }
 
-  // The keyed record (20261124): this library's prior verdicts.
-  const prior = await readAllPages<{ sheet_number: string; revision_code: string; status: string }>((from, to, withCount) => supabaseAdmin
-    .from("drawing_audit_logs")
-    .select("sheet_number, revision_code, status, library_id", withCount ? { count: "exact" } : undefined)
-    .eq("org_id", orgId).eq("library_id", libraryId)
-    .order("id", { ascending: true })
-    .range(from, to) as unknown as PromiseLike<PageResult<{ sheet_number: string; revision_code: string; status: string }>>,
-  Number.POSITIVE_INFINITY);
+  // The keyed record (20261124): this library's prior verdicts, with what
+  // each covered. Before 20261124 there is no library_id: the org-wide key
+  // that database has is read, and written, instead (legacyKey).
+  type PriorRow = { sheet_number: string; revision_code: string; status: string; audit_details?: unknown };
+  const readPrior = (scoped: boolean) => readAllPages<PriorRow>((from, to, withCount) => {
+    let q = supabaseAdmin
+      .from("drawing_audit_logs")
+      .select(scoped ? "sheet_number, revision_code, status, audit_details, library_id" : "sheet_number, revision_code, status, audit_details",
+        withCount ? { count: "exact" } : undefined)
+      .eq("org_id", orgId);
+    if (scoped) q = q.eq("library_id", libraryId);
+    return q.order("id", { ascending: true }).range(from, to) as unknown as PromiseLike<PageResult<PriorRow>>;
+  }, Number.POSITIVE_INFINITY);
+  let legacyKey = false;
+  let prior = await readPrior(true);
+  if (prior.error && isMissingColumn(prior.error)) {
+    legacyKey = true;
+    prior = await readPrior(false);
+  }
   if (prior.error) {
     if (isMissingTable(prior.error)) {
       return bad("Audit memory needs migration 20260929 — run it in Supabase, then record the audit again.", 424);
-    }
-    if (isMissingColumn(prior.error)) {
-      return bad(
-        "Audit memory needs migration 20261124 (verdicts kept per library) — run it in Supabase, then record " +
-        "the audit again. Nothing was recorded.",
-        424,
-      );
     }
     return bad(prior.error.message, 500);
   }
@@ -852,12 +970,22 @@ async function recordAudit(orgId: string, libraryId: string, userId: string) {
   const audit = auditDrawingRefs(docs.map((d) => ({ id: d.id, name: d.name })), refsByDoc, selfByDoc);
   const opc = auditOpcBoxes(index.opc, selfByDoc, nameById);
 
-  // The set's scope (DWG-6): the series this library holds. A sheet alone in
-  // its series is still recorded; gaps in that series are not judged.
+  // The set's scope (DWG-6): the series this library holds. A sheet in a
+  // series it does not hold is still recorded; gaps in that series are not
+  // judged.
   const identities = new Map(docs.map((d) => [d.id, sheetIdentities(d.name, selfByDoc.get(d.id) ?? [])]));
-  const aloneInSeries = sheetsAloneInTheirSeries(identities);
-  const heldSeries = seriesHeldBySet(identities, aloneInSeries);
-  const notJudged = seriesNotJudged(identities, aloneInSeries);
+  const heldSeries = seriesHeldBySet(identities);
+  const notJudged = seriesNotJudged(identities);
+
+  // What each document's index holds now (DWG-13): a verdict stands only
+  // for the index it was computed from.
+  const rowsByDoc = new Map<string, EntityRollupRow[]>();
+  for (const r of index.rollup) rowsByDoc.set(r.document_id, [...(rowsByDoc.get(r.document_id) ?? []), r]);
+  const opcByDoc = new Map<string, EntityRow[]>();
+  for (const o of index.opc) opcByDoc.set(o.document_id, [...(opcByDoc.get(o.document_id) ?? []), o]);
+  const fingerprints = new Map(docs.map((d) => [d.id, indexFingerprint({
+    rows: rowsByDoc.get(d.id) ?? [], opc: opcByDoc.get(d.id) ?? [], unreadPages: d.vision_failed_pages ?? [],
+  })]));
 
   // The controlled documents the mirrors stand for: current version + rev.
   const mirrored = [...new Set(docs.map((d) => d.source_document_id).filter((id): id is string => !!id))];
@@ -913,10 +1041,14 @@ async function recordAudit(orgId: string, libraryId: string, userId: string) {
   }
 
   // DWG-13: a sheet already recorded at this revision in this library (with
-  // anything but `skipped`) is done — not re-audited, not rewritten. A sheet
-  // whose revision is unknown never is.
-  const priorRows = prior.rows;
-  const needing = new Set(sheetsNeedingAudit(sheets, priorRows).map((s) => s.documentId));
+  // anything but `skipped`), from the index it holds now, is done — not
+  // re-audited, not rewritten. A sheet whose revision is unknown never is.
+  const coverageOf = (details: unknown): Record<string, string> | null => {
+    const c = (details as { coverage?: unknown } | null)?.coverage;
+    return c && typeof c === "object" && !Array.isArray(c) ? c as Record<string, string> : null;
+  };
+  const priorRows = prior.rows.map((r) => ({ ...r, coverage: coverageOf(r.audit_details) }));
+  const needing = new Set(sheetsNeedingAudit(sheets, priorRows, fingerprints).map((s) => s.documentId));
   const alreadyRecorded = sheets.filter((s) => !needing.has(s.documentId)).map((s) => {
     const p = priorRows.find((r) => r.sheet_number === s.sheetNumber && r.revision_code === s.revision && r.status !== "skipped");
     return { name: s.name, sheetNumber: s.sheetNumber, revision: s.revision, status: p?.status ?? "recorded" };
@@ -929,6 +1061,7 @@ async function recordAudit(orgId: string, libraryId: string, userId: string) {
       .map((m) => ({ ref: m.ref, referencedBy: m.referencedBy })),
     oneWay: audit.oneWay.map((o) => ({ from: o.from, to: o.to })),
     unreadableConnectors: opc.unknown.map((u) => ({ sheet: u.sheet, box: u.box })),
+    unpairedConnectors: opc.unpaired.map((u) => ({ from: u.from, to: u.to, box: u.box })),
     // An accepted partial index: the pages nobody read are not a clean bill.
     unreadPages: docs
       .filter((d) => (d.vision_failed_pages ?? []).length > 0)
@@ -937,13 +1070,20 @@ async function recordAudit(orgId: string, libraryId: string, userId: string) {
 
   // Two sheets of one set can declare the same number; the unique index would
   // reject the batch outright. Keep the more severe verdict — a clean sheet
-  // must never mask a broken one filed under the same number.
+  // must never mask a broken one filed under the same number — and record
+  // every document it covers: each one that was read, with its index's
+  // fingerprint (a `skipped` sheet is covered by nothing).
   const bestByKey = new Map<string, SheetVerdict>();
+  const coverageByKey = new Map<string, Record<string, string>>();
   for (const v of verdicts) {
     const key = `${v.sheetNumber}@${v.revision}`;
     const was = bestByKey.get(key);
     if (!was || RANK[v.status] > RANK[was.status]) bestByKey.set(key, v);
+    const covered = coverageByKey.get(key) ?? {};
+    if (v.status !== "skipped") covered[v.documentId] = fingerprints.get(v.documentId) ?? "";
+    coverageByKey.set(key, covered);
   }
+  for (const [key, v] of bestByKey) bestByKey.set(key, { ...v, coverage: coverageByKey.get(key) ?? {} });
   // …and never replace a stored verdict with a less severe one (DWG-6) —
   // except under an unknown revision, where the latest verdict is the only
   // one that can be about the drawing in front of us.
@@ -963,9 +1103,16 @@ async function recordAudit(orgId: string, libraryId: string, userId: string) {
       sheets: docs.map((d) => declaredSheetIdentity(selfByDoc.get(d.id) ?? []).base ?? d.name),
       seriesNotJudged: notJudged,
     };
-    const { error: writeError } = await supabaseAdmin
-      .from("drawing_audit_logs")
-      .upsert(verdictRows(orgId, deduped, userId, scope), { onConflict: "org_id,library_id,sheet_number,revision_code" });
+    const rows = verdictRows(orgId, deduped, userId, scope);
+    // Before 20261124: the org-wide key that database has, and no
+    // library_id column (the library stays in audit_details).
+    const { error: writeError } = legacyKey
+      ? await supabaseAdmin
+        .from("drawing_audit_logs")
+        .upsert(rows.map(({ library_id: _library, ...row }) => row), { onConflict: "org_id,sheet_number,revision_code" })
+      : await supabaseAdmin
+        .from("drawing_audit_logs")
+        .upsert(rows, { onConflict: "org_id,library_id,sheet_number,revision_code" });
     if (writeError) {
       return bad(
         isMissingTable(writeError)
@@ -989,14 +1136,22 @@ async function recordAudit(orgId: string, libraryId: string, userId: string) {
       sheetNumber: v.sheetNumber, revision: v.revision, status: v.status,
       findings: [
         ...v.details.brokenConnectors, ...v.details.missingReferences, ...v.details.oneWay,
-        ...v.details.unreadableConnectors, ...v.details.unreadPages,
+        ...v.details.unreadableConnectors, ...v.details.unpairedConnectors, ...v.details.unreadPages,
       ],
     })),
     // DWG-13: what was NOT re-audited, and why.
     alreadyRecorded,
     notRecorded,
     keptStored,
-    // DWG-6: series present only as a lone sheet — gaps in them not judged.
+    // DWG-6: series the library holds no more than one number of — gaps in
+    // them not judged.
     seriesNotJudged: notJudged,
+    // Before 20261124: recorded on the org-wide key, one verdict per sheet
+    // and revision across every library.
+    ...(legacyKey ? {
+      legacyKey: true,
+      notice: "Recorded on the org-wide key: until migration 20261124 is applied, one verdict per sheet and revision is " +
+        "kept across all libraries (never lowered). Apply it to keep each library's verdict separately.",
+    } : {}),
   });
 }

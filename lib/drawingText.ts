@@ -492,15 +492,25 @@ export function unitOfRef(ref: string, prefixLen: number): string | null {
 // shapes only after a context word. The label gives the reference layer
 // that context; the position lets the connector audit read ANY number the
 // field holds. "Broken" is then exactly what the contract says it is: the
-// field reads NONE, or is empty. A destination present but unreadable is
-// unknown, never broken.
+// connector shows neither a drawing number nor a sheet — the field reads
+// NONE, or is empty, and no SH follows. A connector that names only a sheet
+// continues within its OWN drawing (SAME, or NONE / empty with a sheet):
+// it is paired against that sheet of the source's declared drawing, never
+// called broken. A destination present but unreadable is unknown, never
+// broken. A pennant with no box number gets no OPC line at all — the prompt
+// has it transcribed as continuation phrasing, which the reference audit
+// reads (one-way, flagged), so no box is ever invented for it.
 
 /** What a transcript line for one connector looks like. */
 export const OPC_LINE_FORMAT = "OPC <box number>: DWG <destination drawing number> SH <sheet> — <TO|FROM> <service or equipment>";
 /** A worked example — parsed by parseOpcBoxes / parseOpcLine / extractDrawingRefs in the tests. */
 export const OPC_LINE_EXAMPLE = "OPC 14: DWG 2002-D-2001 SH 4 — TO V-1402 CRUDE OVERHEAD";
-/** Written in place of the drawing number when the connector shows none. */
+/** Written in place of the drawing number when the connector shows neither
+ *  a drawing number nor a sheet. */
 export const OPC_NO_DRAWING = "NONE";
+/** Written in place of the drawing number when the connector shows only a
+ *  sheet: it continues on another sheet of this same drawing. */
+export const OPC_SAME_DRAWING = "SAME";
 /** Ingest stores a connector's evidence line cut to this many characters
  *  (lib/knowledgeIngest.ts, truncateSafe(line, 160) — pinned by a test). A
  *  stored line this long may have been cut: its missing drawing number is
@@ -520,12 +530,18 @@ export function parseOpcBoxes(line: string): string[] {
 export interface OpcLine {
   box: string;
   /** The destination field as written (upper case, trimmed); null when it
-   *  is empty or reads NONE. */
+   *  is empty or reads NONE or SAME. */
   destination: string | null;
   /** The sheet the connector names, when it names one. */
   sheet: string | null;
-  /** The field reads NONE — the connector says it names no drawing. */
+  /** The field reads NONE and no sheet is named — the connector says it
+   *  names nowhere to continue. */
   none: boolean;
+  /** The field is empty and no sheet is named. */
+  empty: boolean;
+  /** The connector names only a sheet (SAME, or NONE / empty with a SH):
+   *  it continues on that sheet of the source's own drawing. */
+  sameDrawing: boolean;
 }
 
 // "OPC <n>: DWG <field> [SH <n>] [— <service>]". The label may carry NO. /
@@ -545,12 +561,20 @@ export function parseOpcLine(line: string): OpcLine | null {
   const head = cut >= 0 ? rest.slice(0, cut) : rest;
   const sh = head.match(OPC_SHEET_RE);
   const field = (sh ? sh[1] : head).trim().replace(/[\s,.;:]+$/, "");
-  const none = field === OPC_NO_DRAWING || field.startsWith(`${OPC_NO_DRAWING} `);
+  const marked = (word: string) => field === word || field.startsWith(`${word} `);
+  const none = marked(OPC_NO_DRAWING);
+  const same = marked(OPC_SAME_DRAWING);
+  const sheet = sh ? String(Number(sh[2])) : null;
+  // Only a sheet: a continuation within this drawing, whichever way the
+  // missing drawing number was written.
+  const sameDrawing = sheet !== null && (same || none || field === "");
   return {
     box: String(Number(m[1])),
-    destination: none || field === "" ? null : field,
-    sheet: sh ? String(Number(sh[2])) : null,
-    none,
+    destination: none || same || field === "" ? null : field,
+    sheet,
+    none: none && !sameDrawing,
+    empty: field === "" && !sameDrawing,
+    sameDrawing,
   };
 }
 
@@ -949,7 +973,7 @@ export function equipmentRegisterCsv(
 export const TEXTLESS_PAGE_MAX_CHARS = 60;
 
 /** Below this, a page is "thin": too little text to be prose. */
-const THIN_PAGE_MAX_CHARS = 1200;
+export const THIN_PAGE_MAX_CHARS = 1200;
 /** Tags a THIN page must carry before its text layer is believed. One is
  *  what a title block alone produces — the sheet's own drawing number. */
 export const MIN_TAGS_THIN_PAGE = 3;
@@ -1047,12 +1071,21 @@ export interface OpcEntity {
 
 export interface OpcAudit {
   boxCount: number;
-  /** Box leaves a sheet naming a loaded destination that has no matching box. */
+  /** Box leaves a sheet naming a loaded destination whose box numbers WERE
+   *  read, and none of them is this box. */
   unreturned: Array<{ box: string; from: string; to: string; line: string }>;
-  /** Box names no drawing at all — broken by definition, since nothing on the
-   *  sheet tells the reader where to continue. Only POSITIVE evidence can
-   *  say that: a contract line whose destination reads NONE or is empty, or
-   *  a complete line that holds nothing a drawing number could be. */
+  /** Box leaves a sheet naming a loaded destination whose box numbers were
+   *  never read — a text layer (which prints a pennant, not a box token), a
+   *  sheet read by AI vision before connector boxes were transcribed, or a
+   *  same-drawing connector whose source declared no drawing number. The
+   *  pairing could not be checked: absence of evidence, so it keeps the
+   *  sheet from passing and never makes it broken (DWG-4 / DWG-8). */
+  unpaired: Array<{ box: string; from: string; to: string; line: string }>;
+  /** Box names no destination at all — broken by definition, since nothing
+   *  on the sheet tells the reader where to continue. Only POSITIVE evidence
+   *  can say that: a contract line whose destination reads NONE or is empty
+   *  with no sheet named, or a complete line that holds nothing a drawing
+   *  number could be. */
   noRef: Array<{ box: string; sheet: string; page: number; line: string }>;
   /** Box whose destination could not be read: the stored line may have been
    *  cut before it (DWG-8), or what stands there is not shaped like a
@@ -1087,6 +1120,7 @@ export function auditOpcBoxes(
   const mayBeCut = (o: OpcEntity) => (o.raw ?? "").length >= OPC_RAW_STORED_MAX - 1;
 
   const unreturned: OpcAudit["unreturned"] = [];
+  const unpaired: OpcAudit["unpaired"] = [];
   const noRef: OpcAudit["noRef"] = [];
   const unknown: OpcAudit["unknown"] = [];
   const shape = (o: OpcEntity) => ({
@@ -1105,15 +1139,17 @@ export function auditOpcBoxes(
     const contract = parseOpcLine(raw);
     const positional = contract ? opcDestinationForms(contract) : [];
     const refs = [...new Set([...positional, ...extractDrawingRefs(raw)])];
+    const from = nameById.get(o.document_id) ?? "Sheet";
 
     // Is there a destination at all? (DWG-4 / DWG-8) A reference read
-    // anywhere on the line is one, whatever the field says.
-    if (refs.length === 0) {
+    // anywhere on the line is one, whatever the field says; so is a sheet of
+    // the connector's own drawing.
+    if (refs.length === 0 && !contract?.sameDrawing) {
       if (contract) {
-        // NONE, or nothing in the field: the connector says it names no
-        // drawing. Something in the field that is not a drawing number:
-        // unreadable, never broken.
-        if (contract.none || (!contract.destination && !mayBeCut(o))) noRef.push(shape(o));
+        // NONE, or nothing in the field, and no sheet: the connector says it
+        // names nowhere to continue. Something in the field that is not a
+        // drawing number (or SAME with no sheet): unreadable, never broken.
+        if (contract.none || (contract.empty && !mayBeCut(o))) noRef.push(shape(o));
         else unknown.push(shape(o));
       } else {
         (mayBeCut(o) || hasUnreadNumber(raw) ? unknown : noRef).push(shape(o));
@@ -1121,9 +1157,18 @@ export function auditOpcBoxes(
       continue;
     }
 
+    // A sheet of this same drawing: that sheet of the number the source's
+    // own title block declared.
+    const lookups = [...refs];
+    if (contract?.sameDrawing) {
+      const base = declaredSheetIdentity(selfByDoc.get(o.document_id) ?? []).base;
+      if (base) lookups.push(`${base}-SH${contract.sheet}`);
+      else unpaired.push({ box: o.tag, from, to: `sheet ${contract.sheet} of its own drawing (whose number was not read)`, line: raw });
+    }
+
     // Box pairing: the box must reappear on the sheet it names.
     const targets = new Set<string>();
-    for (const ref of refs) {
+    for (const ref of lookups) {
       const owners = identityIndex.get(ref);
       // An ambiguous number identifies a multi-sheet set, not one sheet —
       // never guess which one and report the guess as a defect.
@@ -1132,16 +1177,14 @@ export function auditOpcBoxes(
     }
     for (const target of targets) {
       if (target === o.document_id) continue;
-      if (!(opcByDoc.get(target)?.has(o.tag))) {
-        unreturned.push({
-          box: o.tag,
-          from: nameById.get(o.document_id) ?? "Sheet",
-          to: nameById.get(target) ?? "Sheet",
-          line: raw,
-        });
-      }
+      const entry = { box: o.tag, from, to: nameById.get(target) ?? "Sheet", line: raw };
+      const boxes = opcByDoc.get(target);
+      // A target with no box numbers read cannot say whether the box comes
+      // back — never evidence that it does not.
+      if (!boxes) unpaired.push(entry);
+      else if (!boxes.has(o.tag)) unreturned.push(entry);
     }
   }
 
-  return { boxCount: opcRows.length, unreturned, noRef, unknown };
+  return { boxCount: opcRows.length, unreturned, unpaired, noRef, unknown };
 }

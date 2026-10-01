@@ -24,10 +24,13 @@ import { supabase } from "@/lib/supabase";
 // Round G, I-07): whether the counts are whole (DWG-11), connectors whose
 // destination could not be read (DWG-8), whether box pairing had any input
 // (DWG-4), and per sheet: drawing-or-prose (DWG-7), what it waits on (ING-6).
-type SheetRow = Omit<NonNullable<DrawingIntel["sheets"]>[number], "verdict"> & {
+type SheetRow = Omit<NonNullable<DrawingIntel["sheets"]>[number], "verdict" | "chars"> & {
   /** "not-counted": past what a read of the index could reach (DWG-11). */
   verdict: NonNullable<DrawingIntel["sheets"]>[number]["verdict"] | "not-counted";
-  looksLike?: "drawing" | "prose" | null;
+  /** null: not measured (before 20261124 the chunks are only counted). */
+  chars: number | null;
+  /** "unknown": text with no tags whose letter case was not measured. */
+  looksLike?: "drawing" | "prose" | "unknown" | null;
   waiting?: { pages: number[]; reason: string | null; retryAfter: string | null } | null;
   acceptedUnread?: number[] | null;
   notCounted?: boolean;
@@ -36,13 +39,19 @@ type Intel = DrawingIntel & {
   truncated?: boolean;
   notCounted?: string[];
   opcUnknown?: Array<{ box: string; sheet: string; page: number; line: string }>;
+  /** Boxes whose continuation sheet has no box numbers read (DWG-4). */
+  opcUnpaired?: Array<{ box: string; from: string; to: string; line: string }>;
   opcPairing?: "ok" | "no-boxes";
+  /** "counts": before 20261124, chunks counted but never read (DWG-11). */
+  textStats?: "measured" | "counts";
 };
 type RecordResult = Awaited<ReturnType<typeof recordDrawingAudit>> & {
   alreadyRecorded?: Array<{ name: string; sheetNumber: string; revision: string; status: string }>;
   notRecorded?: Array<{ name: string; sheetNumber: string; revision: string; reason: string }>;
   /** Series this library holds only one sheet of: gaps in them not judged (DWG-6). */
   seriesNotJudged?: string[];
+  /** Before 20261124: recorded on the org-wide key, and why that matters. */
+  notice?: string;
 };
 type RebuildResult = {
   ok: boolean; docs: number; busy: string[]; errors: string[]; remaining: number; cursor: string | null; error?: string;
@@ -50,25 +59,35 @@ type RebuildResult = {
 
 /** POST the rebuild — through the ONE reset (resetKnowledgeIndex) — and
  *  follow its cursor until every document is reset, so a large library is
- *  never reset (and re-billed) twice by a second press. */
+ *  never reset (and re-billed) twice by a second press. A round that fails
+ *  ends the loop but never loses what earlier rounds did: their documents
+ *  ARE queued, so the totals come back with the error beside them. */
 async function rebuildAll(orgId: string, libraryId: string): Promise<RebuildResult> {
   const { data: { session } } = await supabase.auth.getSession();
   if (!session?.access_token) throw new Error("Not authenticated");
   const total: RebuildResult = { ok: true, docs: 0, busy: [], errors: [], remaining: 0, cursor: null };
   let cursor: string | null = null;
   for (let round = 0; round < 50; round++) {
-    const res = await fetch("/api/knowledge/drawing", {
-      method: "POST",
-      headers: { "content-type": "application/json", authorization: `Bearer ${session.access_token}` },
-      body: JSON.stringify({ orgId, libraryId, action: "rebuild", cursor }),
-    });
-    const data = (await res.json().catch(() => null)) as RebuildResult | null;
-    if (!res.ok || !data) throw new Error(data?.error || `HTTP ${res.status}`);
-    total.docs += data.docs;
-    total.busy.push(...data.busy);
-    total.errors.push(...data.errors);
-    total.ok = total.ok && data.ok;
-    total.remaining = data.remaining;
+    let res: Response;
+    let data: Partial<RebuildResult> | null;
+    try {
+      res = await fetch("/api/knowledge/drawing", {
+        method: "POST",
+        headers: { "content-type": "application/json", authorization: `Bearer ${session.access_token}` },
+        body: JSON.stringify({ orgId, libraryId, action: "rebuild", cursor }),
+      });
+      data = (await res.json().catch(() => null)) as Partial<RebuildResult> | null;
+    } catch (e) {
+      return { ...total, ok: false, error: (e as Error).message };
+    }
+    total.docs += data?.docs ?? 0;
+    total.busy.push(...(data?.busy ?? []));
+    total.errors.push(...(data?.errors ?? []));
+    if (!res.ok || !data) {
+      return { ...total, ok: false, remaining: data?.remaining ?? total.remaining, error: data?.error || `HTTP ${res.status}` };
+    }
+    total.ok = total.ok && !!data.ok;
+    total.remaining = data.remaining ?? 0;
     if (!data.remaining || !data.cursor) break;
     cursor = data.cursor;
   }
@@ -93,12 +112,14 @@ export default function DrawingIntelPanel({ orgId, libraryId, isController, refr
     alreadyRecorded: NonNullable<RecordResult["alreadyRecorded"]>;
     notRecorded: NonNullable<RecordResult["notRecorded"]>;
     seriesNotJudged: string[];
+    notice: string | null;
   } | null>(null);
   const [showUnknown, setShowUnknown] = useState(false);
   const [showMissing, setShowMissing] = useState(false);
   const [showScope, setShowScope] = useState(false);
   const [showOneWay, setShowOneWay] = useState(false);
   const [showOpc, setShowOpc] = useState(false);
+  const [showUnpaired, setShowUnpaired] = useState(false);
   const [showNoRef, setShowNoRef] = useState(false);
   const [showSheets, setShowSheets] = useState(false);
 
@@ -143,7 +164,18 @@ export default function DrawingIntelPanel({ orgId, libraryId, isController, refr
     setBusy("rebuild");
     try {
       const res = await rebuildAll(orgId, libraryId);
-      showToast({ type: "success", title: `${res.docs} document(s) queued — indexing starts now.` });
+      if (res.error) {
+        // Said beside what DID happen: documents earlier rounds queued are
+        // re-indexing whatever this round's failure was.
+        showToast({
+          type: "error",
+          title: res.docs > 0
+            ? `The rebuild stopped part-way (${res.error}) — ${res.docs} document(s) already queued are re-indexing; press "Rebuild index" again for the rest.`
+            : res.error,
+        });
+      } else {
+        showToast({ type: "success", title: `${res.docs} document(s) queued — indexing starts now.` });
+      }
       // The follow loop has a ceiling of its own; past it, say what is left.
       if (res.remaining > 0) {
         showToast({
@@ -162,7 +194,7 @@ export default function DrawingIntelPanel({ orgId, libraryId, isController, refr
       if (res.errors.length > 0) {
         showToast({ type: "error", title: `Part of the rebuild failed: ${res.errors.slice(0, 2).join("; ")}` });
       }
-      onRebuilt();
+      if (res.docs > 0 || !res.error) onRebuilt();
     } catch (e) {
       showToast({ type: "error", title: (e as Error).message });
     } finally { setBusy(null); }
@@ -179,6 +211,7 @@ export default function DrawingIntelPanel({ orgId, libraryId, isController, refr
         recorded: res.recorded, counts: res.counts,
         alreadyRecorded: res.alreadyRecorded ?? [], notRecorded: res.notRecorded ?? [],
         seriesNotJudged: res.seriesNotJudged ?? [],
+        notice: res.notice ?? null,
       });
       showToast({
         type: "success",
@@ -265,6 +298,9 @@ export default function DrawingIntelPanel({ orgId, libraryId, isController, refr
               {recorded.seriesNotJudged.length > 4 ? "…" : ""} — this library holds only one sheet of
               {recorded.seriesNotJudged.length === 1 ? " that series" : " each of those series"}, so it can&rsquo;t say what the series is missing.
             </div>
+          )}
+          {recorded.notice && (
+            <div className="mt-0.5 text-amber-800 dark:text-amber-300">{recorded.notice}</div>
           )}
           {recorded.notRecorded.length > 0 && (
             <div className="mt-0.5 text-amber-800 dark:text-amber-300">
@@ -443,6 +479,41 @@ export default function DrawingIntelPanel({ orgId, libraryId, isController, refr
         </div>
       )}
 
+      {/* ── Connector boxes whose continuation sheet has no boxes read ──── */}
+      {(intel.opcUnpaired?.length ?? 0) > 0 && (
+        <div className="mb-2">
+          <button onClick={() => setShowUnpaired((s) => !s)}
+            className="inline-flex items-center gap-1 text-[11px] font-black text-amber-600 hover:underline">
+            {showUnpaired ? <ChevronDown className="w-3.5 h-3.5" /> : <ChevronRight className="w-3.5 h-3.5" />}
+            <AlertTriangle className="w-3.5 h-3.5" />
+            {intel.opcUnpaired!.length} connector box(es) not paired — their continuation sheet has no box numbers read
+          </button>
+          {showUnpaired && (
+            <div className="mt-1.5 rounded-xl border border-amber-300 dark:border-amber-800 overflow-hidden">
+              <p className="px-3 py-2 text-[10px] text-amber-900 dark:text-amber-200 border-b border-amber-200 dark:border-amber-900">
+                The sheet each of these continues on carries no box numbers in the index — a text layer prints a
+                pennant, not a box number, and a sheet read by AI vision before connector boxes were transcribed has
+                none either. Whether the box comes back could not be checked: <b>not counted as broken</b>, worth a
+                look on that sheet.
+              </p>
+              <ul className="divide-y divide-[var(--color-border)] max-h-48 overflow-y-auto">
+                {intel.opcUnpaired!.map((o, i) => (
+                  <li key={i} className="px-3 py-1.5 text-[11px] flex items-start gap-2">
+                    <span className="shrink-0 font-mono font-black text-[var(--color-text)] px-1.5 rounded border border-[var(--color-border)]">{o.box}</span>
+                    <span className="min-w-0 text-[var(--color-text-muted)]">
+                      <span className="font-bold text-[var(--color-text)]">{o.from}</span>
+                      {" → "}
+                      <span className="font-bold text-[var(--color-text)]">{o.to}</span>
+                      <span className="block truncate" title={o.line}>{o.line}</span>
+                    </span>
+                  </li>
+                ))}
+              </ul>
+            </div>
+          )}
+        </div>
+      )}
+
       {/* ── Connectors with NO drawing number — broken by definition ───── */}
       {(intel.opcNoRef?.length ?? 0) > 0 && (
         <div className="mb-2">
@@ -545,7 +616,9 @@ export default function DrawingIntelPanel({ orgId, libraryId, isController, refr
                       // A drawing we got no tags from vs prose that never had any (DWG-7).
                       ? s.looksLike === "drawing"
                         ? { label: "Drawing, no tags", cls: "text-amber-600", Icon: AlertTriangle }
-                        : { label: "Prose", cls: "text-[var(--color-text-muted)]", Icon: FileText }
+                        : s.looksLike === "unknown"
+                          ? { label: "Text, no tags", cls: "text-[var(--color-text-muted)]", Icon: FileText }
+                          : { label: "Prose", cls: "text-[var(--color-text-muted)]", Icon: FileText }
                     : s.verdict === "not-counted" ? { label: "Not counted", cls: "text-rose-600", Icon: AlertTriangle }
                     : s.verdict === "empty" ? { label: "Nothing read", cls: "text-rose-600", Icon: AlertTriangle }
                     : s.verdict === "error" ? { label: "Error", cls: "text-rose-600", Icon: AlertTriangle }
@@ -597,8 +670,9 @@ export default function DrawingIntelPanel({ orgId, libraryId, isController, refr
                       <span className="text-right tabular-nums text-[var(--color-text-muted)]">
                         {s.pagesIndexed}{s.pages ? `/${s.pages}` : ""}
                       </span>
-                      <span className="text-right tabular-nums text-[var(--color-text-muted)]">
-                        {s.chars >= 1000 ? `${Math.round(s.chars / 1000)}k` : s.chars}
+                      <span className="text-right tabular-nums text-[var(--color-text-muted)]"
+                        title={s.chars == null ? "Characters are measured once migration 20261124 is applied" : undefined}>
+                        {s.chars == null ? "—" : s.chars >= 1000 ? `${Math.round(s.chars / 1000)}k` : s.chars}
                       </span>
                       <span className={`text-right tabular-nums font-black ${s.tags > 0 ? "text-[var(--color-text)]" : "text-rose-600"}`}>
                         {s.tags}
@@ -611,10 +685,16 @@ export default function DrawingIntelPanel({ orgId, libraryId, isController, refr
                 })}
               </ul>
               <p className="px-3 py-2 text-[10px] text-[var(--color-text-muted)] border-t border-[var(--color-border)]">
-                <b>Drawing, no tags</b> on an AutoCAD export usually means SHX fonts — the title block extracts,
-                the tags plot as line-work. Turn on <b>&ldquo;Text doesn&apos;t extract from these files — index every
-                page as an image&rdquo;</b> in Library AI setup and rebuild; those sheets flip to <b>AI vision</b> and
-                their tags appear. <b>Prose</b> documents never carry drawing tags.
+                <b>Drawing, no tags</b> with thin text and no drawing references usually means an AutoCAD export
+                with SHX fonts — the title block extracts, the tags plot as line-work. A drawing sheet whose text
+                gave references but no equipment (a legend, cover or index sheet) is fine as it is.
+                {" "}<b>&ldquo;Text doesn&apos;t extract from these files — index every page as an image&rdquo;</b> in
+                Library AI setup makes AI vision read <b>every page of every document</b> in this library on the next
+                rebuild, and bills each page to your key — turn it on only if most of the library is SHX.
+                {" "}<b>Prose</b> documents never carry drawing tags.
+                {intel.textStats === "counts" && (
+                  <> Characters per sheet are measured once migration 20261124 is applied (<b>—</b> until then).</>
+                )}
               </p>
             </div>
           )}

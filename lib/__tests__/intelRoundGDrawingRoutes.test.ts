@@ -438,14 +438,27 @@ describe("DWG-1 (criteria 3 and 4, handed over by I-06) — the revision filed i
   });
 });
 
-describe("the key needs 20261124", () => {
-  it("on a database without library_id nothing is recorded and the route names the migration", async () => {
+describe("before 20261124 the audit is still recorded, on the key that database has (review fix pass 2)", () => {
+  it("on a database without library_id: the org-wide key, never lowered, and the route says so", async () => {
     twoLibraries();
     db.missingColumns.drawing_audit_logs = ["library_id"];
     const a = await record("kl-1");
-    expect(a.status).toBe(424);
-    expect(a.body.error).toMatch(/20261124/);
-    expect(logRows()).toEqual([]);
+    expect(a.status).toBe(200);
+    expect(a.body).toMatchObject({ recorded: 3, legacyKey: true, notice: expect.stringMatching(/20261124/) });
+    // The base's write path: upsert on (org, sheet, revision), no library_id column.
+    const ups = db.ops.filter((o) => o.table === "drawing_audit_logs" && o.kind === "upsert");
+    expect(ups).toHaveLength(1);
+    expect((ups[0].payload as Row[]).every((r) => !("library_id" in r))).toBe(true);
+    expect(logRows().map((r) => r.sheet_number).sort()).toEqual(["025-PID-0104", "025-PID-0105", "025-PID-0106"]);
+    // The library is still on the record.
+    expect((logRows()[0].audit_details as { libraryId: string }).libraryId).toBe("kl-1");
+    // A narrower library computes 0104 against a different set; the stored
+    // verdict on the shared key is never lowered (the base overwrote it).
+    logRows().find((r) => r.sheet_number === "025-PID-0104")!.status = "flagged";
+    const b = await record("kl-2");
+    expect(b.status).toBe(200);
+    expect(logRows().filter((r) => r.sheet_number === "025-PID-0104")).toEqual([expect.objectContaining({ status: "flagged" })]);
+    expect(b.body.keptStored).toEqual([expect.objectContaining({ sheetNumber: "025-PID-0104", stored: "flagged", computed: "passed" })]);
   });
 });
 
@@ -558,10 +571,32 @@ describe("the lens tells parked, drawing and prose sheets apart", () => {
     });
     const body = await (await get("orgId=o1&libraryId=kl-1")).json();
     const by = (id: string) => body.sheets.find((s: { id: string }) => s.id === id);
-    expect(by("x-1")).toMatchObject({ verdict: "text-no-tags", looksLike: "drawing" });
-    expect(by("x-2")).toMatchObject({ verdict: "text-no-tags", looksLike: "prose" });
-    expect(body.suggestions.join(" ")).toMatch(/look like DRAWINGS[\s\S]*Text doesn't extract from these files — index every page as an image/);
-    expect(body.suggestions.join(" ")).not.toMatch(/normal for prose documents/);
+    expect(by("x-1")).toMatchObject({ verdict: "text-no-tags", looksLike: "drawing", shxLike: true });
+    expect(by("x-2")).toMatchObject({ verdict: "text-no-tags", looksLike: "prose", shxLike: false });
+    const said = body.suggestions.join(" ");
+    expect(said).toMatch(/1 sheet\(s\) look like SHX exports[\s\S]*Text doesn't extract from these files — index every page as an image/);
+    // The switch is library-wide and bills: said plainly (review fix pass 2).
+    expect(said).toMatch(/reads EVERY page of EVERY document in this library with AI vision and bills each page to your key/);
+    expect(said).not.toMatch(/normal for prose documents/);
+  });
+
+  it("a drawing sheet whose text layer gave references (a legend, an index) is never told to vision-read the library (review fix pass 2)", async () => {
+    const dense = `DRAWING NO: 025-PID-0001 SHEET 1 OF 1 REV 0 ${"LEGEND SYMBOLS VALVE GATE GLOBE CHECK BALL ".repeat(40)}`;
+    seed({
+      knowledge_documents: [kdoc("l-1", { name: "Index.pdf" }), kdoc("l-2", { name: "Legend.pdf" })],
+      knowledge_page_entities: [
+        // The drawing index: a title block and references to every sheet.
+        ent("l-1", "self", "025-PID-0000"), ent("l-1", "ref", "025-PID-0104"), ent("l-1", "ref", "025-PID-0105"),
+        // A dense legend: lots of capital text, no tags, past the thin line.
+        ent("l-2", "self", "025-PID-0001"),
+      ],
+      knowledge_chunks: [chunk("l-1", "DRAWING NO: 025-PID-0000 DRAWING INDEX 025-PID-0104 025-PID-0105"), chunk("l-2", dense)],
+    });
+    const body = await (await get("orgId=o1&libraryId=kl-1")).json();
+    const by = (id: string) => body.sheets.find((s: { id: string }) => s.id === id);
+    expect(by("l-1")).toMatchObject({ verdict: "text-no-tags", looksLike: "drawing", shxLike: false });
+    expect(by("l-2")).toMatchObject({ verdict: "text-no-tags", looksLike: "drawing", shxLike: false });
+    expect(body.suggestions.join(" ")).not.toMatch(/index every page as an image/);
   });
 
   it("box pairing with no box numbers says it has no input instead of showing a clean zero", async () => {
@@ -605,6 +640,32 @@ describe("the lens tells parked, drawing and prose sheets apart", () => {
     expect(body.textlessCount).toBe(0);
     expect(body.suggestions.join(" ")).not.toMatch(/no machine-readable text/);
     expect(body.notCounted).toEqual(expect.arrayContaining(unread.map((s) => `${s.id}.pdf`)));
+  });
+
+  it("before 20261124 the text statistics COUNT chunks and never ship their content (review fix pass 2)", async () => {
+    seed({
+      knowledge_documents: [kdoc("q-1"), kdoc("q-2"), kdoc("q-3")],
+      knowledge_page_entities: [ent("q-1", "equipment", "V-1")],
+      knowledge_chunks: [chunk("q-1", "V-1 SUCTION DRUM"), chunk("q-2", "Some text with no tags at all.")],
+    });
+    net.rpcMissing = true;
+    const body = await (await get("orgId=o1&libraryId=kl-1")).json();
+    const chunkReads = db.ops.filter((o) => o.table === "knowledge_chunks" && o.kind === "select");
+    expect(chunkReads.length).toBeGreaterThan(0);
+    expect(chunkReads.every((o) => JSON.stringify(o.columns) === JSON.stringify(["document_id"]))).toBe(true);
+    expect(body.textStats).toBe("counts");
+    const by = (id: string) => body.sheets.find((s: { id: string }) => s.id === id);
+    // Counted: a sheet with chunks has text, one without is textless…
+    expect(by("q-2")).toMatchObject({ verdict: "text-no-tags", looksLike: "unknown", chars: null, shxLike: false });
+    expect(by("q-3")).toMatchObject({ verdict: "empty" });
+    expect(body.textlessCount).toBe(1);
+    // …and never advised to buy vision on a guess about letter case.
+    expect(body.suggestions.join(" ")).not.toMatch(/look like SHX exports/);
+    // With 20261124 the readout is measured.
+    net.rpcMissing = false;
+    const measured = await (await get("orgId=o1&libraryId=kl-1")).json();
+    expect(measured.textStats).toBe("measured");
+    expect(measured.sheets.find((s: { id: string }) => s.id === "q-2")).toMatchObject({ looksLike: "prose", chars: 30 });
   });
 
   it("an accepted partial index is never recorded passed: the unread pages are a finding (fix pass)", async () => {
@@ -757,5 +818,174 @@ describe("DWG-12 — 'where else' answers with the sheet that IS the number, nev
     locateSheet();
     const body = await (await locate({ orgId: "o1", documentId: "s-1", page: 1, tags: ["025-PID-0106"] })).json();
     expect(body.elsewhere).toEqual([expect.objectContaining({ tag: "025-PID-0106", documentId: "s-3", page: 2 })]);
+  });
+});
+
+// ── review fix pass 2 ───────────────────────────────────────────────────────
+
+describe("DWG-4 — a connector into a sheet with no box numbers read is unpaired, never broken (review fix pass 2)", () => {
+  it("the lens lists it as not paired, and the record files the source flagged — never broken_connectors", async () => {
+    twoLibraries();
+    // 0104 is vision-read under the contract; 0105 (a text layer, or read
+    // before connector boxes were transcribed) carries no opc rows at all.
+    db.tables.knowledge_page_entities.push(ent("c-104", "opc", "14", 1, { raw: "OPC 14: DWG 025-PID-0105 SH 1 — TO V-1402" }));
+    const lens = await (await get("orgId=o1&libraryId=kl-1")).json();
+    expect(lens.opcUnreturned).toEqual([]);
+    expect(lens.opcNoRef).toEqual([]);
+    expect(lens.opcUnpaired).toEqual([expect.objectContaining({ box: "14", from: "025-PID-0104.pdf", to: "025-PID-0105.pdf" })]);
+    expect(lens.suggestions.join(" ")).toMatch(/1 connector box\(es\) could not be paired[\s\S]*NOT counted as broken/);
+    await record("kl-1");
+    const row = logRows().find((r) => r.sheet_number === "025-PID-0104")!;
+    expect(row.status).toBe("flagged");
+    expect((row.audit_details as { unpairedConnectors: string[] }).unpairedConnectors[0])
+      .toMatch(/Connector 14 continues to 025-PID-0105\.pdf, whose box numbers were never read/);
+  });
+
+  it("a sheet-only connector (DWG SAME SH n) pairs inside its own drawing — a missing box there is the broken one", async () => {
+    const docs: Row[] = [kdoc("d-3", { name: "SH3.pdf" }), kdoc("d-4", { name: "SH4.pdf" })];
+    seed({
+      knowledge_documents: docs,
+      knowledge_page_entities: [
+        ent("d-3", "self", "2002-D-2001"), ent("d-3", "self", "2002-D-2001-SH3"), ent("d-3", "equipment", "V-1"),
+        ent("d-4", "self", "2002-D-2001"), ent("d-4", "self", "2002-D-2001-SH4"), ent("d-4", "equipment", "V-2"),
+        ent("d-3", "opc", "14", 1, { raw: "OPC 14: DWG SAME SH 4 — TO V-1402" }),
+        ent("d-4", "opc", "15", 1, { raw: "OPC 15: DWG SAME SH 3 — FROM V-1401" }),
+      ],
+    });
+    const lens = await (await get("orgId=o1&libraryId=kl-1")).json();
+    expect(lens.opcNoRef).toEqual([]);
+    // SH4's boxes were read and 14 is not among them; SH3's carry no 15.
+    expect(lens.opcUnreturned.map((u: { box: string }) => u.box).sort()).toEqual(["14", "15"]);
+  });
+});
+
+describe("DWG-13 — 'already recorded' means the row covered this sheet, from this index (review fix pass 2)", () => {
+  /** 2002-D-2001 SH1 and SH2: separate controlled documents, both Rev 0 —
+   *  both filed under the drawing's number. */
+  function siblingSheets() {
+    seed({
+      knowledge_documents: [
+        kdoc("s-1", { name: "2002-D-2001 SH1.pdf", source_document_id: "d-s1", source_version_id: "v-s1", source_rev: "0" }),
+        kdoc("s-2", { name: "2002-D-2001 SH2.pdf", source_document_id: "d-s2", source_version_id: "v-s2", source_rev: "0", status: "indexing" }),
+      ],
+      knowledge_page_entities: [
+        ent("s-1", "self", "2002-D-2001"), ent("s-1", "self", "2002-D-2001-SH1"), ent("s-1", "equipment", "V-1"),
+        ent("s-2", "self", "2002-D-2001"), ent("s-2", "self", "2002-D-2001-SH2"), ent("s-2", "equipment", "V-2"),
+      ],
+      documents: [
+        { id: "d-s1", org_id: "o1", rev: "0", current_version_id: "v-s1" },
+        { id: "d-s2", org_id: "o1", rev: "0", current_version_id: "v-s2" },
+      ],
+    });
+  }
+
+  it("a sibling's verdict never stands for a sheet that was skipped: once SH2 is read, the shared row is re-audited", async () => {
+    siblingSheets();
+    await record("kl-1");
+    expect(logRows()).toEqual([expect.objectContaining({ sheet_number: "2002-D-2001", revision_code: "0", status: "passed" })]);
+    expect((logRows()[0].audit_details as { coverage: Record<string, string> }).coverage).toHaveProperty("s-1");
+    expect((logRows()[0].audit_details as { coverage: Record<string, string> }).coverage).not.toHaveProperty("s-2");
+    // SH2 finishes indexing — and carries a connector that names nowhere.
+    db.tables.knowledge_documents.find((d) => d.id === "s-2")!.status = "ready";
+    db.tables.knowledge_page_entities.push(ent("s-2", "opc", "15", 1, { raw: "OPC 15: DWG NONE — TO FLARE" }));
+    const again = await record("kl-1");
+    expect(again.body.alreadyRecorded).toEqual([]);
+    expect(logRows()).toEqual([expect.objectContaining({ sheet_number: "2002-D-2001", status: "broken_connectors" })]);
+    expect(Object.keys((logRows()[0].audit_details as { coverage: Record<string, string> }).coverage).sort()).toEqual(["s-1", "s-2"]);
+    // Both covered, nothing changed: done.
+    const third = await record("kl-1");
+    expect(third.body.recorded).toBe(0);
+    expect(third.body.alreadyRecorded).toHaveLength(2);
+  });
+
+  it("a rebuild that changed a sheet's index re-audits it at the same revision: the new NONE box is recorded broken", async () => {
+    twoLibraries();
+    await record("kl-1");
+    expect(logRows().find((r) => r.sheet_number === "025-PID-0105")).toMatchObject({ revision_code: "A", status: "passed" });
+    // The controller rebuilds; the vision re-read now transcribes the boxes.
+    db.tables.knowledge_page_entities.push(ent("c-105", "opc", "15", 1, { raw: "OPC 15: DWG NONE — FROM DESALTER" }));
+    const again = await record("kl-1");
+    expect(again.body.recorded).toBe(1);
+    expect(again.body.alreadyRecorded.map((a: { sheetNumber: string }) => a.sheetNumber).sort()).toEqual(["025-PID-0104", "025-PID-0106"]);
+    expect(logRows().find((r) => r.sheet_number === "025-PID-0105")).toMatchObject({ revision_code: "A", status: "broken_connectors" });
+  });
+});
+
+describe("DWG-6 — one multi-sheet drawing never makes its parent series 'held' (review fix pass 2)", () => {
+  it("Tank Farm holding 025-PID-0104 as per-sheet PDFs files no gap against 025-PID", async () => {
+    seed({
+      knowledge_documents: [
+        kdoc("t-s1", { name: "025-PID-0104 SH1.pdf" }), kdoc("t-s2", { name: "025-PID-0104 SH2.pdf" }), kdoc("t-tf", { name: "TF-PID-0001.pdf" }),
+      ],
+      knowledge_page_entities: [
+        ent("t-s1", "self", "025-PID-0104"), ent("t-s1", "self", "025-PID-0104-SH1"),
+        ent("t-s2", "self", "025-PID-0104"), ent("t-s2", "self", "025-PID-0104-SH2"),
+        ent("t-tf", "self", "TF-PID-0001"),
+        ent("t-s1", "ref", "025-PID-0107"), ent("t-s1", "ref", "025-PID-0104-SH2"), ent("t-s2", "ref", "025-PID-0104-SH1"),
+        ent("t-s1", "equipment", "V-1"), ent("t-s2", "equipment", "V-2"), ent("t-tf", "equipment", "TK-1"),
+      ],
+    });
+    const a = await record("kl-1");
+    expect(a.body.seriesNotJudged).toEqual(["025-PID", "TF-PID"]);
+    const r104 = logRows().find((r) => r.sheet_number === "025-PID-0104")!;
+    expect(r104.status).toBe("passed");
+    expect((r104.audit_details as { missingReferences: string[] }).missingReferences).toEqual([]);
+  });
+});
+
+describe("ING-12 — the library page's Re-index all continues where it stopped (review fix pass 2)", () => {
+  it("a cursorless call that runs out of time keeps its place on the library row; the next press continues and clears it", async () => {
+    const docs = Array.from({ length: 8 }, (_, i) => kdoc(`r-${i}`, { name: `D${i}.pdf` }));
+    seed({ knowledge_documents: docs });
+    db.tables.knowledge_libraries[0].ai_features = { decoder: "first two digits = unit" };
+    // Each reset "takes" 30 s: the 40 s budget admits one round of six.
+    const real = Date.now();
+    let clock = 0;
+    const spy = vi.spyOn(Date, "now").mockImplementation(() => real + clock);
+    db.hooks.push((op) => {
+      if (op.table === "knowledge_documents" && op.kind === "update" && (op.payload as Row)?.status === "stale") clock += 30_000;
+    });
+    try {
+      const first = await post({ orgId: "o1", libraryId: "kl-1", action: "rebuild" });
+      const a = await first.json();
+      expect(first.status).toBe(409);
+      expect(a).toMatchObject({ docs: 6, remaining: 2, cursor: "r-5", resumedFrom: null, partial: true });
+      expect(a.error).toMatch(/2 were not reached in time[\s\S]*Press the button again \(within 6 hours\) to continue from where this call stopped/);
+      const ai1 = db.tables.knowledge_libraries[0].ai_features as Record<string, unknown>;
+      expect(ai1).toMatchObject({ decoder: "first two digits = unit", rebuildCursor: { cursor: "r-5" } });
+
+      const resets = () => db.ops.filter((o) => o.table === "knowledge_documents" && o.kind === "update" && (o.payload as Row)?.status === "stale")
+        .map((o) => o.filters.find((f) => f.col === "id")?.value);
+      const before = resets().length;
+      const second = await post({ orgId: "o1", libraryId: "kl-1", action: "rebuild" });
+      expect(second.status).toBe(200);
+      expect(await second.json()).toMatchObject({ docs: 2, remaining: 0, resumedFrom: "r-5" });
+      // Only the two it had not reached: no document reset twice.
+      expect(resets().slice(before)).toEqual(["r-6", "r-7"]);
+      // Done: the place is cleared, the rest of the library's setup kept.
+      expect(db.tables.knowledge_libraries[0].ai_features).toEqual({ decoder: "first two digits = unit" });
+    } finally { spy.mockRestore(); }
+  });
+
+  it("a place older than the resume window is ignored: the press starts from the first document", async () => {
+    seed({ knowledge_documents: [kdoc("a-1"), kdoc("a-2"), kdoc("a-3")] });
+    db.tables.knowledge_libraries[0].ai_features = { rebuildCursor: { cursor: "a-2", at: new Date(Date.now() - 7 * 3600_000).toISOString() } };
+    const stale = await post({ orgId: "o1", libraryId: "kl-1", action: "rebuild" });
+    expect(await stale.json()).toMatchObject({ docs: 3, resumedFrom: null });
+    // A fresh one is followed.
+    seed({ knowledge_documents: [kdoc("a-1"), kdoc("a-2"), kdoc("a-3")] });
+    db.tables.knowledge_libraries[0].ai_features = { rebuildCursor: { cursor: "a-2", at: new Date(Date.now() - 3600_000).toISOString() } };
+    const fresh = await post({ orgId: "o1", libraryId: "kl-1", action: "rebuild" });
+    expect(await fresh.json()).toMatchObject({ docs: 1, resumedFrom: "a-2", remaining: 0 });
+    expect(rowsOf("knowledge_documents").filter((d) => d.status === "stale").map((d) => d.id)).toEqual(["a-3"]);
+    expect(db.tables.knowledge_libraries[0].ai_features).toEqual({});
+  });
+
+  it("the panel's own calls (a cursor key, even null) never read or write the kept place", async () => {
+    seed({ knowledge_documents: [kdoc("a-1"), kdoc("a-2")] });
+    db.tables.knowledge_libraries[0].ai_features = { rebuildCursor: { cursor: "a-1", at: new Date().toISOString() } };
+    const res = await post({ orgId: "o1", libraryId: "kl-1", action: "rebuild", cursor: null });
+    expect(await res.json()).toMatchObject({ docs: 2 });
+    expect(db.tables.knowledge_libraries[0].ai_features).toEqual({ rebuildCursor: expect.objectContaining({ cursor: "a-1" }) });
   });
 });

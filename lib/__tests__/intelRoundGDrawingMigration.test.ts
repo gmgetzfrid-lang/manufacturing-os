@@ -105,10 +105,14 @@ describe("20261124 — DWG-6: the verdict key carries the library", () => {
       .toMatch(/CREATE UNIQUE INDEX IF NOT EXISTS drawing_audit_logs_sheet_rev_idx\s+ON drawing_audit_logs \(org_id, sheet_number, revision_code\);/);
   });
 
-  it("the drawing route upserts on exactly that key", () => {
+  it("the drawing route upserts on exactly that key — and on the org-wide one only where library_id does not exist yet", () => {
     const route = readFileSync(join(root, "app/api/knowledge/drawing/route.ts"), "utf8");
     expect(route).toContain(`{ onConflict: "org_id,library_id,sheet_number,revision_code" }`);
-    expect(route).not.toContain(`onConflict: "org_id,sheet_number,revision_code"`);
+    // The pre-20261124 key appears once, in the legacyKey branch, which
+    // drops library_id from the rows (review fix pass 2).
+    const legacy = route.split(`onConflict: "org_id,sheet_number,revision_code"`);
+    expect(legacy).toHaveLength(2);
+    expect(legacy[0].slice(-400)).toMatch(/legacyKey\s*\?[\s\S]*rows\.map\(\(\{ library_id: _library, \.\.\.row \}\) => row\)/);
   });
 
   it("touches no policy: drawing_audit_logs keeps its three (and the probe says so)", () => {

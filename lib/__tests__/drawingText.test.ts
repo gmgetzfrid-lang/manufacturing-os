@@ -495,10 +495,11 @@ describe("SHX drawings whose only text is the title block", () => {
 
 import {
   extractLineNumbers, drawingSignals, auditOpcBoxes, declaredSheetIdentity, rollUpEntities, parseOpcLine,
-  OPC_LINE_EXAMPLE, OPC_LINE_FORMAT, OPC_NO_DRAWING, OPC_RAW_STORED_MAX, TITLE_BLOCK_OPEN, TITLE_BLOCK_CLOSE,
+  OPC_LINE_EXAMPLE, OPC_LINE_FORMAT, OPC_NO_DRAWING, OPC_SAME_DRAWING, OPC_RAW_STORED_MAX, TITLE_BLOCK_OPEN, TITLE_BLOCK_CLOSE,
   SPARSE_PAGE_MAX_CHARS, DENSE_DRAWING_MIN_TAGS_PER_KCHAR, DRAWING_MAX_LOWERCASE_RATIO,
 } from "../drawingText";
 import { truncateSafe } from "../knowledgeText";
+import { VISION_SYSTEM } from "../knowledgeVision";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 
@@ -563,7 +564,9 @@ describe("DWG-4 — the connector line contract between the vision prompt and th
   it("the prompt's own example parses: box number, and the destination drawing with its sheet", () => {
     expect(parseOpcBoxes(OPC_LINE_EXAMPLE)).toEqual(["14"]);
     expect(extractDrawingRefs(OPC_LINE_EXAMPLE)).toEqual(["2002-D-2001-SH4"]);
-    expect(parseOpcLine(OPC_LINE_EXAMPLE)).toEqual({ box: "14", destination: "2002-D-2001", sheet: "4", none: false });
+    expect(parseOpcLine(OPC_LINE_EXAMPLE)).toEqual({
+      box: "14", destination: "2002-D-2001", sheet: "4", none: false, empty: false, sameDrawing: false,
+    });
     expect(OPC_LINE_FORMAT.startsWith("OPC <box number>: DWG <destination drawing number>")).toBe(true);
   });
 
@@ -575,21 +578,38 @@ describe("DWG-4 — the connector line contract between the vision prompt and th
       "OPC 16: DWG 2002-D-2001 SH 5 — TO E-201 FEED",
     ];
     const sheetB = ["OPC 14: DWG 2002-D-2001 SH 3 — FROM V-1401"];
-    const rows = [
-      ...sheetA.flatMap((l) => parseOpcBoxes(l).map((box) => ({ document_id: "a", page: 3, tag: box, raw: l }))),
-      ...sheetB.flatMap((l) => parseOpcBoxes(l).map((box) => ({ document_id: "b", page: 4, tag: box, raw: l }))),
-    ];
+    // SH5's own transcript names its connectors too — box 21, never 16.
+    const sheetC = ["OPC 21: DWG 2002-D-2001 SH 6 — TO P-201A"];
+    const rowsOf = (doc: string, page: number, lines: string[]) =>
+      lines.flatMap((l) => parseOpcBoxes(l).map((box) => ({ document_id: doc, page, tag: box, raw: l })));
+    const rows = [...rowsOf("a", 3, sheetA), ...rowsOf("b", 4, sheetB), ...rowsOf("c", 5, sheetC)];
     const self = new Map([
       ["a", ["2002-D-2001", "2002-D-2001-SH3"]], ["b", ["2002-D-2001", "2002-D-2001-SH4"]], ["c", ["2002-D-2001", "2002-D-2001-SH5"]],
     ]);
     const names = new Map([["a", "SH3.pdf"], ["b", "SH4.pdf"], ["c", "SH5.pdf"]]);
     const audit = auditOpcBoxes(rows, self, names);
-    expect(audit.boxCount).toBe(4);
-    // Box 14 comes back on SH4; box 16 names SH5, which carries no box 16.
+    expect(audit.boxCount).toBe(5);
+    // Box 14 comes back on SH4; box 16 names SH5, whose boxes WERE read and
+    // carry no 16.
     expect(audit.unreturned).toEqual([expect.objectContaining({ box: "16", from: "SH3.pdf", to: "SH5.pdf" })]);
-    // NONE in place of a drawing number is the one broken-by-definition case.
+    // NONE in place of a drawing number and a sheet is the one
+    // broken-by-definition case.
     expect(audit.noRef).toEqual([expect.objectContaining({ box: "15", sheet: "SH3.pdf" })]);
     expect(audit.unknown).toEqual([]);
+    // Box 21 names SH6, which is not loaded: no pairing to judge.
+    expect(audit.unpaired).toEqual([]);
+  });
+
+  it("a connector into a sheet with NO box numbers read is unpaired — never unreturned, never broken (review fix pass 2)", () => {
+    // SH3 is vision-read under the contract; SH4 is a text layer (it never
+    // prints a box token) or was read before connector boxes were
+    // transcribed: it has no opc rows at all.
+    const rows = [{ document_id: "a", page: 3, tag: "14", raw: OPC_LINE_EXAMPLE }];
+    const self = new Map([["a", ["2002-D-2001", "2002-D-2001-SH3"]], ["b", ["2002-D-2001", "2002-D-2001-SH4"]]]);
+    const audit = auditOpcBoxes(rows, self, new Map([["a", "SH3.pdf"], ["b", "SH4.pdf"]]));
+    expect(audit.unreturned).toEqual([]);
+    expect(audit.noRef).toEqual([]);
+    expect(audit.unpaired).toEqual([{ box: "14", from: "SH3.pdf", to: "SH4.pdf", line: OPC_LINE_EXAMPLE }]);
   });
 
   // Fix pass: the destination is read BY POSITION, so a site's own numbering
@@ -615,14 +635,62 @@ describe("DWG-4 — the connector line contract between the vision prompt and th
     expect(extractDrawingRefs("OPC 7: 025-M-0107 SH 2 — TO V-1402")).toEqual([]);
   });
 
+  /** A connector on A, with B's box numbers read (`boxesOnB`) or not. */
+  const pair = (raw: string, selfA: string[], selfB: string[], boxesOnB: string[] | null) => auditOpcBoxes(
+    [
+      { document_id: "a", page: 1, tag: parseOpcBoxes(raw)[0] ?? "1", raw },
+      ...(boxesOnB ?? []).map((box) => ({ document_id: "b", page: 1, tag: box, raw: `OPC ${box}: DWG 9999-X-0001 — TO V-1` })),
+    ],
+    new Map([["a", selfA], ["b", selfB]]), new Map([["a", "A.pdf"], ["b", "B.pdf"]]),
+  );
+
   it("pairs by the positional destination, whatever its shape: the box must come back on that sheet", () => {
     const raw = "OPC 7: DWG 4410-01-001 SH 2 — TO V-1402";
     expect(extractDrawingRefs(raw)).toEqual([]);                    // the grammar cannot read it…
-    const audit = one(raw, [["b", ["4410-01-001", "4410-01-001-SH2"]]]);
+    const audit = pair(raw, [], ["4410-01-001", "4410-01-001-SH2"], ["3"]);
     expect(audit.unreturned).toEqual([expect.objectContaining({ box: "7", from: "A.pdf", to: "B.pdf" })]);  // …the position can
+    expect(pair(raw, [], ["4410-01-001", "4410-01-001-SH2"], ["7"]).unreturned).toEqual([]);
+    // B with no box numbers read cannot say: unpaired, never unreturned.
+    const unread = pair(raw, [], ["4410-01-001", "4410-01-001-SH2"], null);
+    expect(unread.unreturned).toEqual([]);
+    expect(unread.unpaired).toEqual([expect.objectContaining({ box: "7", from: "A.pdf", to: "B.pdf" })]);
     // A sheet named by the connector is never paired with a sheet that did
     // not declare it (the bare number may be a whole set).
-    expect(one(raw, [["b", ["4410-01-001"]]]).unreturned).toEqual([]);
+    const set = pair(raw, [], ["4410-01-001"], ["3"]);
+    expect(set.unreturned).toEqual([]);
+    expect(set.unpaired).toEqual([]);
+  });
+
+  it("a connector naming only a sheet continues within its own drawing — paired there, never broken (review fix pass 2)", () => {
+    const selfA = ["2002-D-2001", "2002-D-2001-SH3"];
+    const selfB = ["2002-D-2001", "2002-D-2001-SH4"];
+    for (const raw of [
+      `OPC 14: DWG ${OPC_SAME_DRAWING} SH 4 — TO V-1402`,  // the contract's own form
+      `OPC 14: DWG ${OPC_NO_DRAWING} SH 4 — TO V-1402`,    // the first contract's wording: NONE, with a sheet
+      "OPC 14: DWG SH 4 — TO V-1402",                      // an empty field, with a sheet
+    ]) {
+      expect(parseOpcLine(raw), raw).toMatchObject({ box: "14", destination: null, sheet: "4", none: false, empty: false, sameDrawing: true });
+      // SH4's boxes were read and 14 is among them: paired, nothing to say.
+      const ok = pair(raw, selfA, selfB, ["14"]);
+      expect(ok.noRef, raw).toEqual([]);
+      expect(ok.unreturned, raw).toEqual([]);
+      expect(ok.unpaired, raw).toEqual([]);
+      expect(ok.unknown, raw).toEqual([]);
+      // SH4's boxes were read and 14 is not: unreturned, on the sheet named.
+      expect(pair(raw, selfA, selfB, ["15"]).unreturned, raw).toEqual([expect.objectContaining({ box: "14", from: "A.pdf", to: "B.pdf" })]);
+      // SH4 has no box numbers read: unpaired.
+      expect(pair(raw, selfA, selfB, null).unpaired, raw).toEqual([expect.objectContaining({ box: "14", to: "B.pdf" })]);
+    }
+    // The source declared no drawing number: the sheet cannot be found —
+    // unpaired, never broken.
+    const blind = pair(`OPC 14: DWG ${OPC_SAME_DRAWING} SH 4 — TO V-1402`, [], selfB, ["15"]);
+    expect(blind.noRef).toEqual([]);
+    expect(blind.unreturned).toEqual([]);
+    expect(blind.unpaired).toEqual([expect.objectContaining({ box: "14", from: "A.pdf", to: expect.stringMatching(/sheet 4 of its own drawing/) })]);
+    // SAME with no sheet is outside the contract's meaning: unknown, never broken.
+    const noSheet = one(`OPC 14: DWG ${OPC_SAME_DRAWING} — TO V-1402`);
+    expect(noSheet.noRef).toEqual([]);
+    expect(noSheet.unknown).toHaveLength(1);
   });
 
   it("broken means what the contract says: the field reads NONE, or is empty", () => {
@@ -649,8 +717,12 @@ describe("DWG-4 — the connector line contract between the vision prompt and th
     // Only the box, equipment and a sheet number: nothing names a drawing.
     expect(one("OPC 3 TO V-1402 SH 2 CRUDE").noRef).toHaveLength(1);
     expect(one("OPC 3 FROM 12\"-P-14022-A1A").noRef).toHaveLength(1);
-    // A readable reference outside the contract still pairs as before.
-    expect(one("OPC 3 CONT ON DWG 025-PID-0107", [["b", ["025-PID-0107"]]]).unreturned).toHaveLength(1);
+    // A readable reference outside the contract still pairs as before —
+    // against a sheet whose box numbers were read; one whose were not is
+    // unpaired.
+    expect(pair("OPC 3 CONT ON DWG 025-PID-0107", [], ["025-PID-0107"], ["9"]).unreturned).toHaveLength(1);
+    expect(one("OPC 3 CONT ON DWG 025-PID-0107", [["b", ["025-PID-0107"]]]).unpaired).toHaveLength(1);
+    expect(one("OPC 3 CONT ON DWG 025-PID-0107", [["b", ["025-PID-0107"]]]).unreturned).toEqual([]);
     // A row with no stored line says nothing about its destination.
     const bare = auditOpcBoxes([{ document_id: "a", page: 1, tag: "3", raw: null }], new Map(), new Map([["a", "A.pdf"]]));
     expect(bare.noRef).toEqual([]);
@@ -665,10 +737,25 @@ describe("DWG-4 — the connector line contract between the vision prompt and th
     expect(audit.oneWay).toEqual([{ from: "025-PID-0106.pdf", to: "025-PID-0107.pdf", count: 1 }]);
   });
 
+  it("the prompt says how to write a sheet-only connector, and never to invent a box number (review fix pass 2)", () => {
+    // A same-drawing continuation: SAME with its sheet — parsed as such.
+    expect(VISION_SYSTEM).toContain(`'OPC 14: DWG ${OPC_SAME_DRAWING} SH 4 — TO V-1402'`);
+    expect(parseOpcLine(`OPC 14: DWG ${OPC_SAME_DRAWING} SH 4 — TO V-1402`)).toMatchObject({ sameDrawing: true, sheet: "4" });
+    expect(VISION_SYSTEM).toMatch(/only a sheet number \(it continues on another sheet of this same drawing\), write SAME/);
+    expect(VISION_SYSTEM).toMatch(/neither a drawing number nor a sheet, write NONE/);
+    // A pennant with no box number gets no OPC line — it is transcribed as
+    // continuation phrasing, which the reference layer reads.
+    expect(VISION_SYSTEM).toMatch(/shows NO box number, do not write an OPC line for it and never make a number up/);
+    expect(VISION_SYSTEM).toContain("'CONT ON DWG <drawing number> SH <sheet>'");
+    expect(parseOpcBoxes("CONT ON DWG 2002-D-2001 SH 4")).toEqual([]);
+    expect(extractDrawingRefs("CONT ON DWG 2002-D-2001 SH 4")).toEqual(["2002-D-2001-SH4"]);
+  });
+
   it("the vision prompt is built from the parser's constants (they cannot drift apart)", () => {
     const vision = readFileSync(join(__dirname, "..", "knowledgeVision.ts"), "utf8");
-    expect(vision).toMatch(/import \{[\s\S]*OPC_LINE_FORMAT, OPC_LINE_EXAMPLE, OPC_NO_DRAWING, TITLE_BLOCK_OPEN, TITLE_BLOCK_CLOSE,[\s\S]*\} from "@\/lib\/drawingText"/);
+    expect(vision).toMatch(/import \{[\s\S]*OPC_LINE_FORMAT, OPC_LINE_EXAMPLE, OPC_NO_DRAWING, OPC_SAME_DRAWING, TITLE_BLOCK_OPEN, TITLE_BLOCK_CLOSE,[\s\S]*\} from "@\/lib\/drawingText"/);
     expect(vision).toContain("${OPC_LINE_FORMAT}");
+    expect(vision).toContain("${OPC_SAME_DRAWING}");
     expect(vision).toContain("${TITLE_BLOCK_OPEN}");
     expect(vision).not.toMatch(/instrument bubble \(V-3, P-101A, PSV-2001, "\s*\+?\s*"6\\"-P-1024-A1A\)/);
   });
