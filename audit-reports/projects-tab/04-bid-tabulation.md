@@ -505,6 +505,8 @@ selected from a dropdown, created explicitly.
 
 What is owed: key `quoteGroups` by `rfqKey` / `rfqGroupKey` (keeping a typed spelling as the label), or have `lib/projectSnapshot.ts` merge its groups the way the panel does. Either is about one line, plus a snapshot test that two case variants count as one field. `lib/costDocs.ts` and `lib/projectSnapshot.ts` are outside this records-only package. The record stays OPEN.
 
+The comment above the bid tab's grouping (`components/projects/cost/QuotesPanel.tsx:189-192`) is stale. It says `lib/costDocs` keys the award's rival-decline on the exact string, and calls the server-side key P3's pending limb. That limb has landed (`rfqKey`, above). Whoever owns the grouping-key fix should correct the comment in the same change.
+
 ---
 
 ## BID-11 · Quote validity dates and vendor notes are captured and never shown
