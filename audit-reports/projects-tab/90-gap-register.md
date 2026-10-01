@@ -408,9 +408,11 @@ contrast pass on both themes.
 **Acceptance.**
 - ✓ 1. Every control on the public portal is keyboard-reachable and focus-visible (`a11yProjects.test.ts` "A11Y-1 —", rendered).
 - ✓ 2. No compliance surface conveys status by colour alone; a test asserts the accessible name of a status cell includes its state (`a11yProjects.test.ts` "A11Y-2 —").
-- ✓ 3. Both themes pass contrast on the milestone and checklist surfaces (`scheduleEngineUi.test.ts` "A11Y-3 ·"; `a11yProjects.test.ts` "A11Y-13 —").
+- ✓ 3. Both themes pass contrast on the milestone and checklist surfaces (`scheduleEngineUi.test.ts` "A11Y-3 ·"; `a11yProjects.test.ts` "A11Y-13 —") — including the dimmed rows, since the review fix below.
 
 **Scope / residual.** Out of scope by the register's own line: a full WCAG programme. The schedule engine's remaining light slabs outside the milestone rows are `A11Y-13`'s (open).
+
+*Review fix (2026-10-01, projects Round G).* Acceptance 3 was marked ✓ while two rows of the checklist surface failed it: N/A checklist rows rendered at `opacity-50` and closed punch rows at `opacity-55` — content rows, not disabled controls — which put their text (the muted rationale line most of all) under 4.5 : 1 in both themes, and the record computed only the cited pairs. Both rows are now set back by their status mark, the muted text token and (punch) a strike with the done / voided label, never whole-row opacity (`components/projects/QualityTab.tsx`); `a11yProjects.test.ts` computes the old composite (< 4.5) and the muted token at full strength (≥ 4.5 in light and dark) and pins both rows.
 
 ---
 

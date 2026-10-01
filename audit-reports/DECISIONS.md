@@ -103,7 +103,7 @@ about the system.
 | [DEC-67](#dec-67) | One unit identity joined as data (a codebook unit maps to at most one operational unit; `documents.unit_code` is written by the decode, never guessed); a scope is a resolved id set that scopes the graph's assembly — the place before the filter; no node type beyond systems | low | `GM-2`, `GM-10`, `GM-12`, `GPV-2`, `GPV-3`, `WIRE-3`, `WIRE-4`, `AREA-10`, `GAP-305`, `GAP-306` |
 | [DEC-68](#dec-68) | Drawing intelligence: a dense page is a drawing when its text says so (vision never automatic); a verdict is keyed by the set it was computed over (`drawing_audit_logs` unique per library); a stored verdict at a known revision is never lowered, and a provisional one waits on the documents still being read; a model's point is a claim, never a fact (`20261124`). | low | `DWG-4`, `DWG-6`, `DWG-7`, `DWG-13`, `BR-12` |
 | [DEC-69](#dec-69) | The contractor door's credential at rest, its upload path, and who reads a project's audit rows: an intake link is stored only as the SHA-256 of its token (shown once, re-issued when lost); a large file goes straight to storage through a staged object the door reserves, claims once and always removes; an audit row about a project is the project's (`20261141`, `20261142`). | low | `SEC-19`, `INTK-15`, `SEC-20`, `SEC-16` |
-| [DEC-44 (J10)](#dec-44-j10) | The Projects surface: one word per concept (`lib/projectVocabulary` — contractor, task, and one "no longer counts" word per record); a database refusal reaches a user as a plain sentence, the raw detail logged (`lib/userFacingError`); a contractor links to its Known Company once and never re-points, a do-not-use name linked elsewhere needs a recorded reason; Accept is confirmed by the document pick and the signature ceremony | low | `UX-15`, `REL-3`, `UX-10`, `MON-7`, `COST-12`, `A11Y-8` |
+| [DEC-44 (J10)](#dec-44-j10) | The Projects surface: one word per concept (`lib/projectVocabulary` — contractor, task, and one "no longer counts" word per record); a database refusal reaches a user as a plain sentence, the raw detail logged (`lib/userFacingError`); a contractor links to its Known Company once and never re-points, a do-not-use name linked elsewhere needs a recorded reason (an app-level rule); Accept is confirmed by the document pick and the signature ceremony; the shared Modal answers Escape on the topmost dialog only | low | `UX-15`, `REL-3`, `UX-10`, `MON-7`, `COST-12`, `A11Y-8`, `A11Y-4` |
 
 ---
 
@@ -4424,7 +4424,7 @@ against.
 
 *Minted by projects Round G, package J10 SURFACE-SWEEP (2026-10-01), as a provisional "DEC-44 (J10)" — distinct from the download-record DEC-44; the integrator renumbers it at merge.*
 
-**Decision. Four defaults the J10 brief named, each the reading that fails safe:**
+**Decision. Four defaults the J10 brief named, each the reading that fails safe, and one recorded change to a shared component (item 5, added by the review fix):**
 
 1. **One word per concept (`UX-15`).** `lib/projectVocabulary.ts` holds the
    words and their meanings, and the pickers, legends and the Costs glossary
@@ -4455,12 +4455,16 @@ against.
    the driver text to decide (schema step-down, missing-RPC probes) reads the
    raw error before translating.
 3. **A contractor's Known Company link is set once (`MON-7`, `COST-12`).** An
-   award reads its company THROUGH the quote's contractor, so the link is part
-   of the do-not-use rail: it is set when the contractor is added, or later
-   only while it has none (`linkPartyToCompany` updates where
+   award reads its company THROUGH the quote's contractor, so the link is
+   guarded by the do-not-use rule — **an app-level rule; no database
+   enforcement** (`lib/costs.ts` and the wizard; a member who may update
+   `project_parties` can still re-point it over PostgREST until a trigger
+   migration, J12's, enforces it). It is set when the contractor is added,
+   or later only while it has none (`linkPartyToCompany` updates where
    `company_id IS NULL`), and never re-pointed. A contractor whose name could
    be a do-not-use company, linked to any other company, needs a reason,
-   recorded on the audit row. An accepted turnover item and a closed punch
+   recorded on the audit row; where no reason can be asked (the wizard's
+   name-bound rows) the link is left off and the screen says so. An accepted turnover item and a closed punch
    item count for the company bound to the item's contractor; an unassigned
    item or one whose contractor is unlinked counts for nobody — the
    dimension stays Unrated (null), never 0.
@@ -4471,6 +4475,16 @@ against.
    added. The wizard's stepper is out of the tab order — it stays clickable,
    marks the current step (`aria-current="step"`), and Back / Next are the
    keyboard path.
+5. **Escape belongs to what is in front (`A11Y-4`) — an intended change to the
+   shared `components/ui/Modal.tsx`.** Only the topmost open modal traps focus
+   and answers Escape. Before, every open dismissable `Modal` registered its
+   own window listener, so with nested modals one Escape closed all of them;
+   now a confirm opened from a dialog closes alone and the dialog under it
+   stays. Single-modal Escape / backdrop / non-dismissable behaviour is
+   unchanged. `HelpTooltip` marks an Escape handled only when it is in front
+   (focus inside it, or it sits in the topmost dialog, or no dialog is open);
+   a note left open behind a dialog closes quietly and the dialog takes the
+   same key.
 
 **Rationale.** Each removes a way the surface misinforms: a word that means
 two things, a schema sentence where a plant user needs a plain one, a link
@@ -4484,15 +4498,19 @@ covers the terms on the tab and nothing else), `userFacingError.test.ts`
 the Projects / Companies data layer), `mon7Scorecard.test.ts` and
 `costsContractorLink.test.ts` (link once, never re-point, the recorded reason,
 accepted turnover reaches the company, every dimension scores on a full
-fixture), `a11yProjects.test.ts` "A11Y-8".
+fixture), `a11yProjects.test.ts` "A11Y-8", `modalFocus.test.ts` (item 5: the
+nested confirm closes alone; a note behind a dialog does not take its Escape).
 
 **Reversal.** 1: a plant that calls its schedule rows "activities" changes
 the words in `lib/projectVocabulary.ts` and the strings that read them. 2:
 none planned. 3: a controller-only "re-point a link" action with its own
 audited reason would allow a correction; until then a wrong link is undone in
 the database by an administrator. 4: a stated requirement for a typed reason
-on Accept adds it to the ceremony.
+on Accept adds it to the ceremony. 5: a consumer that needs every open
+dialog to close on one Escape closes its own stack in its handler.
 
 **Risk:** low — words, messages and a narrower write; no migration.
 
 *Landed 2026-10-01 (projects Round G): all four items, package J10 SURFACE-SWEEP — `lib/projectVocabulary.ts` and the UX-15 sweep; `lib/userFacingError.ts` across the Projects / Companies data layer (REL-3, UX-10); `linkPartyToCompany` and the contractor pickers (MON-7, COST-12); A11Y-8 pinned on the existing ceremony. No migration.*
+
+*Landed 2026-10-01 (projects Round G, J10 review fix): item 2 now holds at the screen as well as the data layer — `userFacingCaughtError` translates a caught error where it is shown (keeping a library's lead-in, replacing only the driver fragment), and a screen census over every Projects / Companies component and page and the vendor portal pins it; item 3 is stated as an app-level rule and the wizard's name-bound links pass it (`checkPartyCompanyLink`); item 5 (the shared Modal's topmost-only Escape, and HelpTooltip's in-front rule) is recorded as the intended change it is. No migration.*
