@@ -34,12 +34,18 @@
 --   2. The reason rail (second review fix — the database limb of done-when
 --      2): a signed-in INSERT writes a reason CODE — the four predefined
 --      reasons, or "Other" with a non-blank note (its description). A reason
---      outside the codes is admitted only when a hold of the same org
---      already carries exactly that text: the legacy reason a lifecycle copy
---      carries across. The column's free text can be copied, never added
---      to. The service role (a restore replaying held history) keeps what it
---      supplies, as 20261073 does. No CHECK: the rows placed before P15 keep
---      their text.
+--      outside the codes that a hold of the same org already carries exactly
+--      is kept: the legacy reason a lifecycle copy carries across. Any other
+--      text (third review fix) is COERCED, never refused: it becomes an
+--      "Other" hold whose note is that text (ahead of any note sent with
+--      it) — so the app that runs before P15, whose "Other…" picker types
+--      free text into `reason`, still places every custom stop-work hold
+--      (between this paste and the P15 deploy, or after a rollback of it),
+--      and free text still never lands in `reason`. The only refusal is an
+--      "Other" hold with no description. The column's free text can be
+--      copied, never added to. The service role (a restore replaying held
+--      history) keeps what it supplies, as 20261073 does. No CHECK: the rows
+--      placed before P15 keep their text.
 --   3. An "Other" hold's note is fixed once it is placed (second review
 --      fix): it is the hold's description — identity, as the free-text
 --      reason it replaces is under 20261073's guard (which leaves notes
@@ -54,9 +60,10 @@
 --      when the trigger is created, never when it fires).
 --
 -- WIDENING (the index admits a row it refused: a second open "Other" hold
--- with a different note) AND NARROWING (the rail and the freeze refuse rows
--- the database admitted: a signed-in hold with new free text in `reason`, an
--- "Other" hold with no description, a change to an "Other" hold's note).
+-- with a different note) AND NARROWING (the rail rewrites a signed-in hold's
+-- new free text in `reason` into an "Other" hold described by it, and with
+-- the freeze refuses rows the database admitted: an "Other" hold with no
+-- description, a change to an "Other" hold's note).
 -- DEC-30 inventory (aggregate counts only, captured BEFORE the
 -- transaction): holds whose reason is outside the code vocabulary (custom
 -- text placed before P15 — kept, never rewritten; the public verify
@@ -64,16 +71,19 @@
 -- open, documents with two or more open custom-reason holds, open "Other"
 -- holds, and open "Other" holds with a blank note (kept; the description
 -- rule binds new rows).
--- HOW TO APPLY: paste it IMMEDIATELY BEFORE deploying the app carrying P15 —
--- a hard prerequisite, and keep the gap short. Without it the P15 app
--- refuses a second open "Other" hold on one document (two different custom
--- holds, placeable today as two free-text reasons, would collide on the
--- shared code), and a split / merge / reversal that carries two "Other"
--- holds onto one document is refused and rolled back (fails closed — never
--- a dropped hold). Between this paste and that deploy, the app that runs
--- today can no longer place a custom ("Other…") hold whose text is new to
--- the org — the rail refuses it with the sentence above; a predefined
--- reason still places, and its lifecycle carries are unaffected.
+-- HOW TO APPLY: paste it BEFORE deploying the app carrying P15 (a
+-- prerequisite of that deploy). Without it the P15 app refuses a second
+-- open "Other" hold on one document (two different custom holds, placeable
+-- today as two free-text reasons, would collide on the shared code), and a
+-- split / merge / reversal that carries two "Other" holds onto one document
+-- is refused and rolled back (fails closed — never a dropped hold). The
+-- paste does not stop the app that runs today (third review fix): its
+-- custom ("Other…") hold, free text in `reason`, is placed as an "Other"
+-- hold described by that text — the same row the P15 picker writes — and
+-- its predefined holds and lifecycle carries are unaffected; so the gap
+-- before the deploy, or a rollback of the deploy, closes no stop-work path.
+-- (That app names such a hold "Other" in its bell / email, and refuses an
+-- identical second custom hold as "already open" — as it did before.)
 -- Independent of every other pending migration. Single paste: temp-table
 -- inventory -> BEGIN / DDL / COMMIT -> one SELECT (check text, ok boolean,
 -- n text).
@@ -131,27 +141,34 @@ BEGIN
     IF auth.uid() IS NULL THEN
       RETURN NEW;
     END IF;
-    IF NEW.reason = 'Other' THEN
-      IF NULLIF(btrim(NEW.notes), '') IS NULL THEN
-        RAISE EXCEPTION 'An "Other" hold needs a description: say in the hold note what the document is held for.'
-          USING ERRCODE = 'check_violation';
-      END IF;
-      RETURN NEW;
-    END IF;
     IF NEW.reason IN ('Awaiting Engineering', 'Field Verification Needed', 'Missing Vendor Data', 'Client Review') THEN
       RETURN NEW;
     END IF;
-    -- A reason outside the codes is the text of a hold placed before P15,
-    -- carried across by a split / merge / reversal (copyActiveHoldsToDoc
-    -- copies a source hold's reason unchanged): admitted only when a hold of
-    -- this org already carries exactly that reason. Free text is copied,
-    -- never added.
-    IF EXISTS (SELECT 1 FROM document_holds h
-                WHERE h.org_id = NEW.org_id AND h.reason = NEW.reason) THEN
+    -- A NULL reason is left to the column's NOT NULL, as before.
+    IF NEW.reason IS NULL THEN
       RETURN NEW;
     END IF;
-    RAISE EXCEPTION 'A hold reason is one of: Awaiting Engineering, Field Verification Needed, Missing Vendor Data, Client Review, Other. For anything else choose "Other" and describe it in the hold note.'
-      USING ERRCODE = 'check_violation';
+    IF NEW.reason <> 'Other' THEN
+      -- A reason outside the codes that a hold of this org already carries
+      -- exactly is the text of a hold placed before P15, carried across by
+      -- a split / merge / reversal (copyActiveHoldsToDoc copies a source
+      -- hold's reason unchanged): kept as it is.
+      IF EXISTS (SELECT 1 FROM document_holds h
+                  WHERE h.org_id = NEW.org_id AND h.reason = NEW.reason) THEN
+        RETURN NEW;
+      END IF;
+      -- Any other text — the custom reason the picker that ran before P15
+      -- typed into `reason` — becomes an "Other" hold whose description
+      -- (its note) is that text, ahead of any note sent with it. Coerced,
+      -- never refused: a stop-work hold is placed whichever app places it.
+      NEW.notes := concat_ws(E'\n', NULLIF(btrim(NEW.reason), ''), NULLIF(btrim(NEW.notes), ''));
+      NEW.reason := 'Other';
+    END IF;
+    IF NULLIF(btrim(NEW.notes), '') IS NULL THEN
+      RAISE EXCEPTION 'An "Other" hold needs a description: say in the hold note what the document is held for.'
+        USING ERRCODE = 'check_violation';
+    END IF;
+    RETURN NEW;
   END IF;
 
   -- UPDATE: an "Other" hold's note IS its description — what the work is
@@ -209,14 +226,15 @@ SELECT 'trg_document_hold_reason_code fires enforce_document_hold_reason_code BE
                   AND (t.tgtype & 1) = 1 AND (t.tgtype & 2) = 2 AND (t.tgtype & 4) = 4 AND (t.tgtype & 16) = 16),
        NULL::text
 UNION ALL
-SELECT 'the rail: a signed-in INSERT writes a code (Other with its description), outside the codes only a reason the org already carries, and the service role passes',
+SELECT 'the rail: a signed-in INSERT writes a code, new free text becomes an Other hold described by it (never refused), an Other hold needs its description, a reason the org already carries is kept, and the service role passes',
        EXISTS (SELECT 1 FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace
                 WHERE n.nspname = 'public' AND p.proname = 'enforce_document_hold_reason_code'
                   AND p.prosrc LIKE '%IF auth.uid() IS NULL THEN%RETURN NEW%'
-                  AND p.prosrc LIKE '%IF NULLIF(btrim(NEW.notes), %) IS NULL THEN%needs a description%'
                   AND p.prosrc LIKE '%Awaiting Engineering%Field Verification Needed%Missing Vendor Data%Client Review%'
                   AND p.prosrc LIKE '%WHERE h.org_id = NEW.org_id AND h.reason = NEW.reason%'
-                  AND p.prosrc LIKE '%A hold reason is one of:%'),
+                  AND p.prosrc LIKE '%NEW.notes := concat_ws(E%, NULLIF(btrim(NEW.reason), %), NULLIF(btrim(NEW.notes), %))%NEW.reason := %Other%'
+                  AND p.prosrc LIKE '%IF NULLIF(btrim(NEW.notes), %) IS NULL THEN%needs a description%'
+                  AND p.prosrc NOT LIKE '%A hold reason is one of:%'),
        NULL::text
 UNION ALL
 SELECT 'the freeze: an Other hold''s note cannot change once placed, for everyone',

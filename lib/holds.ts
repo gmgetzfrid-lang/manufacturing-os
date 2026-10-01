@@ -27,6 +27,7 @@ import { logHoldEvent } from "@/lib/audit";
 import { loadCapabilityPolicy, policyAllows, tokensFor, heldMatchesTokens, grantActive, type CapabilityPolicy } from "@/lib/capabilityPolicy";
 import { isControllerRole } from "@/lib/permissions";
 import { heldRoles, holdsReadOnlyRole } from "@/lib/roleHeld";
+import { OTHER_HOLD_REASON, holdReasonLabel } from "@/lib/holdGate";
 import type { DocumentHold, HoldReason, Role } from "@/types/schema";
 
 /** The default predefined reasons surfaced by the picker UI. */
@@ -40,8 +41,10 @@ export const PREDEFINED_HOLD_REASONS: HoldReason[] = [
 /** VFY-6 (P15): the "Other" slot of HoldReason. A hold for anything the four
  *  predefined reasons do not cover is placed under this code, with what it
  *  is for written to the hold's NOTE — never to `reason`, which a public
- *  surface may name (by category only, publicHoldReason). */
-export const OTHER_HOLD_REASON: HoldReason = "Other";
+ *  surface may name (by category only, publicHoldReason). Defined in
+ *  lib/holdGate.ts (pure) with holdReasonLabel, so the hold gate's refusal
+ *  sentence names a custom hold the same way. */
+export { OTHER_HOLD_REASON, holdReasonLabel } from "@/lib/holdGate";
 
 /** VFY-6 (P15): the reason CODES this module writes — the predefined
  *  reasons and "Other". The column itself has no CHECK (holds placed before
@@ -56,16 +59,6 @@ export const HOLD_REASON_CODES: readonly HoldReason[] = [...PREDEFINED_HOLD_REAS
 
 export function isHoldReasonCode(reason: string | null | undefined): boolean {
   return (HOLD_REASON_CODES as readonly string[]).includes((reason ?? "").trim());
-}
-
-/** VFY-6 (P15): how a hold is named to MEMBERS (the bell / email when it is
- *  placed or released): an "Other" hold by its note, so moving the
- *  description out of `reason` loses nothing internally. Never used on a
- *  public surface (those say the category — publicHoldReason). */
-export function holdReasonLabel(h: { reason: string; notes?: string | null }): string {
-  const note = (h.notes ?? "").trim();
-  if (h.reason !== OTHER_HOLD_REASON || !note) return h.reason;
-  return `${OTHER_HOLD_REASON}: ${note.length > 120 ? `${note.slice(0, 119)}…` : note}`;
 }
 
 /** VFY-6 (P15 review fix): an OPEN hold's identity as the open-reason unique
@@ -301,7 +294,7 @@ export async function openHold(input: OpenHoldInput): Promise<HoldRecord> {
       // VFY-6: "Other" holds are told apart by their note once 20261152 is
       // applied; before it, one "Other" hold at a time per document.
       if (input.reason.trim() === OTHER_HOLD_REASON) {
-        throw new Error(`An "${OTHER_HOLD_REASON}" hold is already open on this document — with this description, or (until database update 20261152 is applied) with any description. Release it first, or place this hold under a predefined reason with a note.`);
+        throw new Error(`An "${OTHER_HOLD_REASON}" hold is already open on this document — with this description, or (until database update 20261152 is applied) with any description. Release it first, or choose a different description.`);
       }
       throw new Error(`A "${input.reason}" hold is already open on this document.`);
     }

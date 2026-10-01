@@ -50,6 +50,7 @@ import {
 import { loadCapabilityPolicy, type CapabilityPolicy } from "@/lib/capabilityPolicy";
 import { isControllerPrincipal } from "@/lib/permissions";
 import { NOT_CURRENT_STATUSES } from "@/lib/aiBoundary";
+import { holdReasonLabel } from "@/lib/holdGate";
 import type { Role } from "@/types/schema";
 
 /** The picker's PostgREST filter for the shared not-current set (TRX-3) —
@@ -599,7 +600,7 @@ function TransmittalComposer({ orgId, editing, preloadDoc, actor, policy, princi
     (async () => {
       const [docsRes, holdsRes] = await Promise.all([
         supabase.from("documents").select("id, status, archived_at, current_version_id, legal_hold, library_id, rev").eq("org_id", orgId).in("id", ids),
-        supabase.from("document_holds").select("document_id, reason").in("document_id", ids).is("released_at", null),
+        supabase.from("document_holds").select("document_id, reason, notes").in("document_id", ids).is("released_at", null),
       ]);
       if (!alive) return;
       const docs = (docsRes.data as Array<Record<string, unknown>> | null) ?? [];
@@ -628,7 +629,9 @@ function TransmittalComposer({ orgId, editing, preloadDoc, actor, policy, princi
           currentRevisionLabel: d.current_version_id && labelOf.has(String(d.current_version_id)) ? labelOf.get(String(d.current_version_id)) : undefined,
           legalHold: !!d.legal_hold,
           libraryId: (d.library_id as string) ?? null,
-          holds: holdsRes.error ? null : holdRows.filter((h) => String(h.document_id) === id).map((h) => String(h.reason ?? "hold")),
+          // VFY-6 (P15): a custom hold is named by its description (members only).
+          holds: holdsRes.error ? null : holdRows.filter((h) => String(h.document_id) === id)
+            .map((h) => holdReasonLabel({ reason: String(h.reason ?? "hold"), notes: (h.notes as string | null) ?? null })),
         });
       }
       setFacts(out);

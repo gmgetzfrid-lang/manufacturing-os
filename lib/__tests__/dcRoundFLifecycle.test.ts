@@ -2034,3 +2034,21 @@ describe("VFY-6 (P15 review fix) — two different custom (Other) holds both car
     expect(body).not.toMatch(/existingReasons/);
   });
 });
+
+describe("VFY-6 (P15 third review fix) — a reversal names a custom (Other) hold on a parked sheet by its description", () => {
+  it("the refusal says what the work is stopped for — not just (Other); a predefined hold beside it is named as before", async () => {
+    state.roles = ["DocCtrl"];
+    seedDoc("v6", { status: "Superseded", uniqueness_key: "v6-key", superseded_at: "2026-09-01T10:00:00Z", supersession_reason: "split" });
+    for (const x of ["a", "b"]) seedDoc(`v6${x}`, { uniqueness_key: `v6${x}-key` });
+    T("document_supersessions").push(
+      { id: "l-v6a", org_id: ORG, superseded_doc_id: "v6", replacement_doc_id: "v6a", reason: "split", created_by: ME, created_at: "2026-09-01T10:00:00Z" },
+      { id: "l-v6b", org_id: ORG, superseded_doc_id: "v6", replacement_doc_id: "v6b", reason: "split", created_by: ME, created_at: "2026-09-01T10:00:00Z" },
+    );
+    (state.db.tables.audit_logs ??= []).push({ id: "ev-v6", action: "DOC_SPLIT", resource_id: "v6", timestamp: "2026-09-01T10:00:00Z", details: { replacementDocIds: ["v6a", "v6b"], priorStatus: "Issued", auditAt: "2026-09-01T10:00:00Z" } });
+    (state.db.tables.document_holds ??= []).push({ id: "h-v6a-other", org_id: ORG, document_id: "v6a", reason: "Other", notes: "waiting on vendor weld map", expected_release_at: null, released_at: null, opened_at: "2026-09-02" });
+    seedHold("v6b", "Client Review");
+    const e = await reverseSplit({ splitAuditEventId: "ev-v6", reason: "wrong split", orgId: ORG, actorUserId: ME }).then((): never => { throw new Error("expected a rejection"); }, (x: unknown) => x as Error);
+    expect(e.message).toMatch(/^Cannot reverse without an explicit decision: active holds on V6A \(Other: waiting on vendor weld map\); V6B \(Client Review\), which the reversal parks as Superseded\./);
+    expect(state.db.calls.some((c) => c.table === "documents" && c.method === "update")).toBe(false);
+  });
+});

@@ -14,7 +14,12 @@
 //     rules at the database — a signed-in INSERT writes a code ("Other" with
 //     its description, or a legacy reason the org already carries: a
 //     lifecycle carry), and an "Other" hold's description is fixed once
-//     placed (enforce_document_hold_reason_code).
+//     placed (enforce_document_hold_reason_code);
+//   * third review fix: new free text in `reason` (the app that runs before
+//     P15) is COERCED into an "Other" hold described by it — never refused,
+//     so no stop-work path closes between the paste and the deploy, or after
+//     a rollback of the deploy. The only refusal is an "Other" hold with no
+//     description.
 
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { readFileSync } from "node:fs";
@@ -62,12 +67,18 @@ vi.mock("@/lib/audit", () => ({ logHoldEvent: audit.logHoldEvent }));
 const dispatch = vi.hoisted(() => ({ emit: vi.fn(async (_p: Row) => undefined) }));
 vi.mock("@/lib/notify/dispatch", () => ({ emit: dispatch.emit }));
 vi.mock("@/lib/inAppNotifications", () => ({ notify: vi.fn(async () => undefined) }));
+// lib/shareServe.ts (the public share door) is imported for its hold sentence only
+vi.mock("@/lib/shareAuthorization", () => ({ shareStillAuthorized: vi.fn(async () => true) }));
 
 import {
   openHold, HOLD_REASON_CODES, PREDEFINED_HOLD_REASONS, OTHER_HOLD_REASON, isHoldReasonCode, holdReasonLabel,
   publicHoldReason, PUBLIC_HOLD_REASON_FALLBACK, openHoldKey,
 } from "@/lib/holds";
 import { createHash } from "node:crypto";
+import * as holdGate from "@/lib/holdGate";
+import { decideHoldGate, holdRefusalMessage, readActiveHolds, HoldBlockedError, type ActiveHoldSummary } from "@/lib/holdGate";
+import { publicShareHoldReason } from "@/lib/shareServe";
+import { itemIssueBlocker } from "@/lib/transmittals";
 
 const root = process.cwd();
 const src = (p: string) => readFileSync(join(root, p), "utf8");
@@ -117,7 +128,9 @@ describe("VFY-6 — the hold reason is a code; free text lives in the note", () 
   });
   it("a second open Other hold the index refuses says why (one at a time until 20261152; same description after)", async () => {
     state.insertError = { code: "23505", message: "duplicate key value violates unique constraint \"document_holds_open_reason_uniq\"" };
-    await expect(openHold({ ...base, reason: "Other", notes: "x" })).rejects.toThrow(/An "Other" hold is already open on this document — with this description, or \(until database update 20261152 is applied\) with any description\./);
+    await expect(openHold({ ...base, reason: "Other", notes: "x" })).rejects.toThrow(/An "Other" hold is already open on this document — with this description, or \(until database update 20261152 is applied\) with any description\. Release it first, or choose a different description\.$/);
+    // third review fix: it no longer points at the predefined buttons, which take only a date (no note)
+    await expect(openHold({ ...base, reason: "Other", notes: "x" })).rejects.not.toThrow(/predefined reason/);
     await expect(openHold({ ...base, reason: "Client Review" })).rejects.toThrow('A "Client Review" hold is already open on this document.');
   });
   it("holdReasonLabel names an Other hold by its note (members only); every other hold by its reason", () => {
@@ -196,10 +209,12 @@ describe("20261152 — an open Other hold is keyed by its note (one paste, DEC-3
     const rail = /IF NEW\.reason IN \(([^)]*)\) THEN/.exec(code);
     expect(rail).not.toBeNull();
     expect([...rail![1].matchAll(/'([^']*)'/g)].map((m) => m[1])).toEqual([...PREDEFINED_HOLD_REASONS]);
-    expect(code).toContain(`IF NEW.reason = '${OTHER_HOLD_REASON}' THEN`);
+    expect(code).toContain(`IF NEW.reason <> '${OTHER_HOLD_REASON}' THEN`);
+    expect(code).toContain(`NEW.reason := '${OTHER_HOLD_REASON}';`);
     expect(code).toContain(`IF OLD.reason = '${OTHER_HOLD_REASON}' AND NEW.notes IS DISTINCT FROM OLD.notes THEN`);
-    // the rail's sentence names the same codes, in order
-    expect(code).toContain(`'A hold reason is one of: ${HOLD_REASON_CODES.join(", ")}. For anything else choose "${OTHER_HOLD_REASON}" and describe it in the hold note.'`);
+    // third review fix: no refusal for free text any more (it is coerced) — only the probe says it is gone
+    expect(code.slice(0, code.indexOf("COMMIT;"))).not.toContain("A hold reason is one of:");
+    expect(code).toContain("AND p.prosrc NOT LIKE '%A hold reason is one of:%'");
   });
   it("the DDL: the 20260612 index dropped and re-created (the note keyed by its md5), partial on open holds, inside BEGIN / COMMIT", () => {
     const ddl = code.slice(code.indexOf("BEGIN;"), code.indexOf("\nCOMMIT;"));
@@ -220,15 +235,24 @@ describe("20261152 — an open Other hold is keyed by its note (one paste, DEC-3
     expect(ddl).toContain("REVOKE ALL ON FUNCTION enforce_document_hold_reason_code() FROM PUBLIC, anon, authenticated, service_role;");
     expect(ddl).toMatch(/DROP TRIGGER IF EXISTS trg_document_hold_reason_code ON document_holds;\s*\nCREATE TRIGGER trg_document_hold_reason_code\s*\n\s*BEFORE INSERT OR UPDATE ON document_holds\s*\n\s*FOR EACH ROW EXECUTE FUNCTION enforce_document_hold_reason_code\(\);/);
     const fn = ddl.slice(ddl.indexOf("CREATE OR REPLACE FUNCTION enforce_document_hold_reason_code()"), ddl.indexOf("REVOKE ALL ON FUNCTION enforce_document_hold_reason_code()"));
-    // INSERT: the service role passes first; then Other needs a non-blank note; then the codes; then a reason the org already carries; else refused
+    // INSERT: the service role passes first; then the predefined codes; a NULL reason is left to NOT NULL;
+    // then (not "Other") a reason the org already carries is kept, else the text is coerced into an Other
+    // hold described by it; last, an Other hold — placed or coerced — needs a non-blank description
     const at = (needle: string) => { const i = fn.indexOf(needle); expect(i, needle).toBeGreaterThan(-1); return i; };
     expect(at("IF TG_OP = 'INSERT' THEN")).toBeLessThan(at("IF auth.uid() IS NULL THEN"));
-    expect(at("IF auth.uid() IS NULL THEN")).toBeLessThan(at("IF NEW.reason = 'Other' THEN"));
-    expect(at("IF NULLIF(btrim(NEW.notes), '') IS NULL THEN")).toBeLessThan(at("IF NEW.reason IN ("));
-    expect(at("IF NEW.reason IN (")).toBeLessThan(at("WHERE h.org_id = NEW.org_id AND h.reason = NEW.reason) THEN"));
-    expect(at("WHERE h.org_id = NEW.org_id AND h.reason = NEW.reason) THEN")).toBeLessThan(at("RAISE EXCEPTION 'A hold reason is one of:"));
+    expect(at("IF auth.uid() IS NULL THEN")).toBeLessThan(at("IF NEW.reason IN ("));
+    expect(at("IF NEW.reason IN (")).toBeLessThan(at("IF NEW.reason IS NULL THEN"));
+    expect(at("IF NEW.reason IS NULL THEN")).toBeLessThan(at("IF NEW.reason <> 'Other' THEN"));
+    expect(at("IF NEW.reason <> 'Other' THEN")).toBeLessThan(at("WHERE h.org_id = NEW.org_id AND h.reason = NEW.reason) THEN"));
+    expect(at("WHERE h.org_id = NEW.org_id AND h.reason = NEW.reason) THEN")).toBeLessThan(at("NEW.notes := concat_ws(E'\\n', NULLIF(btrim(NEW.reason), ''), NULLIF(btrim(NEW.notes), ''));"));
+    expect(at("NEW.notes := concat_ws(E'\\n', NULLIF(btrim(NEW.reason), ''), NULLIF(btrim(NEW.notes), ''));")).toBeLessThan(at("NEW.reason := 'Other';"));
+    expect(at("NEW.reason := 'Other';")).toBeLessThan(at("IF NULLIF(btrim(NEW.notes), '') IS NULL THEN"));
+    expect(at("IF NULLIF(btrim(NEW.notes), '') IS NULL THEN")).toBeLessThan(at("RAISE EXCEPTION 'An \"Other\" hold needs a description"));
+    // the INSERT branch raises exactly once (the blank description), and never for free text
+    const insert = fn.slice(at("IF TG_OP = 'INSERT' THEN"), at("IF OLD.reason = 'Other' AND NEW.notes IS DISTINCT FROM OLD.notes THEN"));
+    expect((insert.match(/RAISE EXCEPTION/g) ?? []).length).toBe(1);
     // UPDATE: the freeze binds everyone (no auth.uid() exemption after the INSERT branch)
-    const update = fn.slice(at("RAISE EXCEPTION 'A hold reason is one of:"));
+    const update = fn.slice(at("IF OLD.reason = 'Other' AND NEW.notes IS DISTINCT FROM OLD.notes THEN"));
     expect(update).not.toContain("auth.uid()");
     expect(update).toContain("RAISE EXCEPTION 'The description of an \"Other\" hold cannot be changed once it is placed; release the hold and place a new one.'");
     // every refusal is a check_violation (the app's checked writes surface the sentence)
@@ -257,5 +281,69 @@ describe("20261152 — an open Other hold is keyed by its note (one paste, DEC-3
     expect(tail).not.toMatch(/LIKE '[^']*::/);
     expect(tail.trim().endsWith(";")).toBe(true);
     expect((tail.match(/;/g) ?? []).length).toBe(1);
+  });
+});
+
+describe("VFY-6 (P15 third review fix) — the members-only hold sentences name a custom hold by its description", () => {
+  const other = (id: string, notes: string | null): ActiveHoldSummary => ({ id, reason: "Other", notes, openedAt: null, openedByName: null });
+  const cr: ActiveHoldSummary = { id: "h-cr", reason: "Client Review", notes: "see RFI 12", openedAt: null, openedByName: null };
+
+  it("holdReasonLabel / OTHER_HOLD_REASON live in lib/holdGate.ts (pure) and lib/holds.ts re-exports the same ones", () => {
+    expect(holdGate.holdReasonLabel).toBe(holdReasonLabel);
+    expect(holdGate.OTHER_HOLD_REASON).toBe(OTHER_HOLD_REASON);
+  });
+
+  it("holdRefusalMessage (every HoldBlockedError: the editors, the transmittal issue, the share mint, acknowledgments) says what the work is stopped for", () => {
+    expect(holdRefusalMessage([other("h1", "waiting on vendor weld map")], "putting it in force"))
+      .toBe("Document has an active hold (Other: waiting on vendor weld map); release the hold before putting it in force.");
+    // two custom holds: both named — never "(Other, Other)"
+    expect(holdRefusalMessage([other("h1", "waiting on vendor weld map"), other("h2", "crane survey pending")]))
+      .toBe("Document has an active holds (Other: waiting on vendor weld map, Other: crane survey pending); release the holds.");
+    // REGRESSION: a predefined reason is named by its reason (its note is not the reason); a legacy free-text reason as before
+    expect(holdRefusalMessage([cr])).toBe("Document has an active hold (Client Review); release the hold.");
+    expect(holdRefusalMessage([{ ...cr, reason: "Waiting on legal re: incident", notes: null }])).toBe("Document has an active hold (Waiting on legal re: incident); release the hold.");
+    // a summary read without notes (an older caller) still says the category
+    expect(holdRefusalMessage([{ id: "h", reason: "Other", openedAt: null, openedByName: null }])).toBe("Document has an active hold (Other); release the hold.");
+    const d = decideHoldGate({ readable: true, holds: [other("h1", "waiting on vendor weld map")] }, "issuing it on a transmittal");
+    expect(d.blocked && new HoldBlockedError(d).message).toBe("Document has an active hold (Other: waiting on vendor weld map); release the hold before issuing it on a transmittal.");
+  });
+
+  it("readActiveHolds selects the note with the hold and hands it on", async () => {
+    const selects: string[] = [];
+    const rows = [{ id: "h1", reason: "Other", notes: "waiting on vendor weld map", opened_at: null, opened_by_name: "Dana" }];
+    const q: Record<string, unknown> = {};
+    Object.assign(q, {
+      select: (cols: string) => { selects.push(cols); return q; },
+      eq: () => q,
+      is: () => Promise.resolve({ data: rows, error: null }),
+    });
+    const read = await readActiveHolds("d1", { from: () => q } as never);
+    expect(selects).toEqual(["id, reason, notes, opened_at, opened_by_name"]);
+    expect(read).toEqual({ readable: true, holds: [{ id: "h1", reason: "Other", notes: "waiting on vendor weld map", openedAt: null, openedByName: "Dana" }] });
+  });
+
+  it("the PUBLIC share door still says the category only — the description never leaves", () => {
+    const e = new HoldBlockedError({ blocked: true, holds: [other("h1", "waiting on vendor weld map"), cr], unreadable: false, message: "x" });
+    const said = publicShareHoldReason(e);
+    expect(said).toBe("This document is under an active hold (Client Review).");
+    expect(said).not.toMatch(/weld map|Other/);
+    expect(publicShareHoldReason(new HoldBlockedError({ blocked: true, holds: [other("h1", "waiting on vendor weld map")], unreadable: false, message: "x" })))
+      .toBe("This document is under an active hold.");
+  });
+
+  it("the transmittal composer reads the note and names the hold by holdReasonLabel; its blocker says so", () => {
+    const page = src("app/(protected)/transmittals/page.tsx");
+    expect(page).toContain('supabase.from("document_holds").select("document_id, reason, notes").in("document_id", ids).is("released_at", null),');
+    expect(page).toMatch(/\.map\(\(h\) => holdReasonLabel\(\{ reason: String\(h\.reason \?\? "hold"\), notes: \(h\.notes as string \| null\) \?\? null \}\)\),/);
+    expect(page).toContain('import { holdReasonLabel } from "@/lib/holdGate";');
+    expect(itemIssueBlocker({ number: "P-101" }, { found: true, status: "Issued", archivedAt: null, currentVersionId: "v1", legalHold: false, holds: [holdReasonLabel({ reason: "Other", notes: "waiting on vendor weld map" })] } as never))
+      .toBe("P-101 is under an active hold (Other: waiting on vendor weld map) — release it before issuing.");
+  });
+
+  it("a lifecycle reversal's hold sentence reads the note too (driven in dcRoundFLifecycle.test.ts)", () => {
+    const rev = src("lib/documentLifecycle/reverse.ts");
+    const fn = rev.slice(rev.indexOf("async function assertParkedHoldsDecided("), rev.indexOf("async function carryParkedHolds("));
+    expect(fn).toContain('.from("document_holds").select("document_id, reason, notes")');
+    expect(fn).toContain("byDoc.set(h.document_id, [...(byDoc.get(h.document_id) ?? []), holdReasonLabel(h)]);");
   });
 });
