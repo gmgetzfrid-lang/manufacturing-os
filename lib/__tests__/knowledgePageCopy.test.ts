@@ -124,6 +124,36 @@ describe("ASK-6 — the assistant's words are the assistant's, and never a trap"
     expect(screenAssistantRequest("See https://evil.example/login", "aspect")).toEqual({ ok: false, reason: "it contains a link" });
     expect(screenAssistantRequest("x".repeat(ASSISTANT_REQUEST_MAX + 1), "aspect").ok).toBe(false);
   });
+  it("reproduction → fix: a shear-pin or clevis-pin calculation, and OTP written for the operating test pressure, are not refused — only a PIN or one-time code asked for as one", () => {
+    // these were refused as credential requests (`pins?` beside an ask verb, bare `otps?`)
+    const engineering = [
+      "Provide the pin diameter (in) and the applied shear load (lbf).",
+      "Enter the clevis pin diameter and material yield strength.",
+      "Provide the clevis pin diameter",
+      "Please give the number of anchor pins and the bolt circle diameter.",
+      "Provide the OTP (operating test pressure) in psig.",
+      "Provide your OTP (operating test pressure) in psig.",
+      "Enter the connector pin number for signal A.",
+      "ENTER CLEVIS PIN DIAMETER (IN)",
+      "HOW MANY ANCHOR PINS?",
+      "What's your pin count per flange?",
+    ];
+    for (const t of engineering) {
+      expect(screenAssistantRequest(t, "need"), t).toEqual({ ok: true });
+      expect(screenAssistantRequest(t, "clarify"), t).toEqual({ ok: true });
+    }
+    expect(screenAssistantRequest("Which aspect: PIN code rules or password rotation?", "clarify")).toEqual({ ok: true });
+    // …while a PIN or a one-time code, asked for as one, is still refused
+    const credential = "it asks for a credential, account or identity detail";
+    for (const t of ["enter your PIN", "Enter your pin.", "ENTER YOUR PIN", "Enter the PIN.", "Provide the PIN number for the vendor portal.",
+      "what is your OTP code", "What is your OTP?", "Type the OTP code we sent you.", "Enter the one-time code below."]) {
+      expect(screenAssistantRequest(t, "need"), t).toEqual({ ok: false, reason: credential });
+    }
+    for (const t of ["enter your PIN", "what is your OTP code", "what's your pin?", "Please enter your PIN to continue.",
+      "Type your one-time code below."]) {
+      expect(screenAssistantRequest(t, "clarify"), t).toEqual({ ok: false, reason: credential });
+    }
+  });
   it("NeedCard: the app's first-person chrome is gone; the prompt is quoted inside the assistant frame; the secrets line is at the input", () => {
     const need = page.slice(page.indexOf("function NeedCard("), page.indexOf("function CopyButton("));
     expect(need).not.toContain("I need a value from you to run this calculation");

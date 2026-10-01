@@ -1061,6 +1061,35 @@ export async function releaseBackgroundBuild(orgId: string, libraryId: string): 
   return apiPost("/api/knowledge/embed", { orgId, libraryId, action: "release" });
 }
 
+/** What the panel says after a background-build control, decided by what the
+ *  route ANSWERED — never by the call merely returning (SEM-8 / SEM-11): a
+ *  Stop that found nothing running stopped nothing, and a consent flag that
+ *  came back other than the one asked for was not recorded. (A refused or
+ *  failed write is a non-2xx, which apiPost throws.) */
+export type EmbedControlOutcome = { type: "success" | "info" | "error"; title: string };
+export function releaseOutcome(out: { released?: unknown } | null | undefined): EmbedControlOutcome {
+  if (out?.released === true) return { type: "success", title: "Background build stopped." };
+  if (out?.released === false) return { type: "info", title: "No background build was running any more — nothing was stopped." };
+  return { type: "error", title: "The server didn't say whether the background build stopped — look at it again." };
+}
+export function retryOutcome(out: { requeued?: unknown } | null | undefined): EmbedControlOutcome {
+  const n = typeof out?.requeued === "number" ? out.requeued : null;
+  if (n === null) return { type: "error", title: "The server didn't say whether the refused passages were queued — look at them again." };
+  if (n === 0) return { type: "info", title: "No refused passages were waiting any more — nothing was queued." };
+  return { type: "success", title: `Queued ${n.toLocaleString()} refused passage${n === 1 ? "" : "s"} for another try.` };
+}
+export function keepCurrentOutcome(out: { standing?: unknown } | null | undefined, asked: boolean): EmbedControlOutcome {
+  if (out?.standing === asked) {
+    return { type: "success", title: asked ? "This library's meaning index will be kept current." : "No longer kept current in the background." };
+  }
+  return {
+    type: "error",
+    title: asked
+      ? "The standing consent was not recorded — look at it again."
+      : "The standing consent was not withdrawn — it may still be spending; look at it again.",
+  };
+}
+
 /** SEM-8: the one-line drift statement every reader sees on the library page
  *  — null when the index is complete, not built at all, or unknown. It says
  *  what is true either way — passages added since a build, or a build that

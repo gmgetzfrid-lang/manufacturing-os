@@ -298,6 +298,62 @@ describe("/api/knowledge/history — the team's record, re-decided per reader", 
     expect((await (await post({ orgId: ORG, libraryId: LIB, action: "thread", threadId: T1 })).json()).withheld).toBe(2);
     expect(repo("app/api/knowledge/history/route.ts")).toContain('...(action === "search" ? {} : { withheld }),');
   });
+  describe("reproduction → fix: a search's answer never depends on how many matches were withheld (the fixed window was a count in coarser form)", () => {
+    /** V's own matching answer, older than `restricted` matching answers of
+     *  E's that cite the restricted P&ID (withheld from V). */
+    const seedWindow = (restricted: number) => {
+      admin.state.tables.knowledge_questions.push(q({
+        question: "Q-mine: flange torque for the open standard", citations: [cite(K_OPEN)], user_id: V, created_at: "2026-10-01T00:00:00Z",
+      }));
+      for (let i = 0; i < restricted; i++) {
+        admin.state.tables.knowledge_questions.push(q({
+          question: `Q-hidden-${i}: flange torque from the restricted P&ID`, citations: [cite(K_PRIV, "RESTRICTED TORQUE")],
+          created_at: `2026-10-02T${String(Math.floor(i / 60)).padStart(2, "0")}:${String(i % 60).padStart(2, "0")}:00Z`,
+        }));
+      }
+    };
+    const search = async (limit: number) =>
+      (await (await post({ orgId: ORG, libraryId: LIB, action: "search", query: "flange torque", limit })).json()) as { rows: Array<{ question: string }> };
+    const names = (b: { rows: Array<{ question: string }> }) => b.rows.map((r) => r.question.split(":")[0]);
+
+    it("limit=1 and limit=25 answer alike when 4 newer restricted answers match (was [] vs [Q-mine])", async () => {
+      seedWindow(4);
+      admin.state.user = { id: V };
+      const small = await search(1);
+      const large = await search(25);
+      expect(names(small)).toEqual(["Q-mine"]);
+      expect(large).toEqual(small);
+      expect(JSON.stringify(large)).not.toContain("RESTRICTED TORQUE");
+    });
+    it("more restricted matches than one page (150) still never hide the reader's own answer — the search pages on", async () => {
+      seedWindow(150);
+      admin.state.user = { id: V };
+      expect(names(await search(1))).toEqual(["Q-mine"]);
+      expect(names(await search(100))).toEqual(["Q-mine"]);
+      const pages = admin.state.calls.filter((c) => c.table === "knowledge_questions" && c.method === "range");
+      expect(pages.map((c) => c.args)).toContainEqual([100, 199]);
+    });
+    it("a caller's limit below the default is ignored: limit=1 returns up to the default of rows the reader may see", async () => {
+      admin.state.user = { id: E };
+      const one = await (await post({ orgId: ORG, libraryId: LIB, action: "search", query: "relief valve set points", limit: 1 })).json();
+      const five = await (await post({ orgId: ORG, libraryId: LIB, action: "search", query: "relief valve set points", limit: 5 })).json();
+      expect(one.rows).toHaveLength(5);
+      expect(one).toEqual(five);
+    });
+    it("the scan stops at SEARCH_SCAN_CAP matches (bounded work); what it found is returned and no count is said", async () => {
+      seedWindow(520);
+      admin.state.user = { id: V };
+      const body = await search(5);
+      expect(body.rows).toEqual([]);                                   // the residual: beyond the 500th newest match
+      expect(body).not.toHaveProperty("withheld");
+      const pages = admin.state.calls.filter((c) => c.table === "knowledge_questions" && c.method === "range").map((c) => c.args);
+      expect(pages).toEqual([[0, 99], [100, 199], [200, 299], [300, 399], [400, 499]]);
+      const route = repo("app/api/knowledge/history/route.ts");
+      expect(route).toContain("const SEARCH_SCAN_CAP = 500;");
+      expect(route).toContain("Math.max(SEARCH_DEFAULT, Math.min(Number(body.limit) || SEARCH_DEFAULT, 100))");
+      expect(route).not.toContain("fetchN");
+    });
+  });
   it("ask memory is scoped to THIS library (ASK-1 done-when 2) and to readable answers", async () => {
     admin.state.user = { id: E };
     const res = await (await post({ orgId: ORG, libraryId: LIB, action: "search", query: "relief valve set points", limit: 10 })).json();
@@ -362,6 +418,55 @@ describe("/api/knowledge/history — the team's record, re-decided per reader", 
       expect(text).not.toContain("LIBRARY-ONLY QUOTE");
     }
     // a controller is not filtered, so nothing is checked for them (DEC-43)
+    admin.state.user = { id: A };
+    expect((await post({ orgId: ORG, libraryId: LIB, action: "list" })).status).toBe(200);
+  });
+  it("reproduction: the seam judges a document DENIED to the reader's team as readable when the team_members read fails (loadPrincipal ignores the error)", async () => {
+    const { loadPrincipal, readableControlledDocIds } = await import("@/lib/knowledgeAccess");
+    const TM = "3a000000-0000-4000-8000-000000000001";
+    const DTEAM = "0e000000-0000-4000-8000-000000000004";
+    admin.state.tables.team_members.push({ team_id: TM, uid: V });
+    admin.state.tables.documents.push({ id: DTEAM, org_id: ORG, library_id: DCLIB, collection_id: null, visibility: "normal", is_private: false, scope: "org", created_by: A, owner_user_id: null,
+      acl: { visibility: "normal", rules: [
+        { effect: "allow", subject: { type: "org", id: ORG }, actions: ["read", "discover"] },
+        { effect: "deny", subject: { type: "team", id: TM }, actions: ["read", "discover"] },
+      ] } });
+    expect([...await readableControlledDocIds((await loadPrincipal(ORG, V))!, [DTEAM])]).toEqual([]);   // the team DENY binds
+    admin.state.failReads.team_members = { message: "statement timeout" };
+    const blind = (await loadPrincipal(ORG, V))!;
+    expect(blind.teamIds).toEqual([]);                                                                 // the error is dropped
+    expect([...await readableControlledDocIds(blind, [DTEAM])]).toEqual([DTEAM]);                     // …and the DENY never matches
+  });
+  it("…so the history route reads the reader's teams again: a failed read answers 500 with NO rows, and a principal whose teams were lost is judged with the teams actually read", async () => {
+    const TM = "3a000000-0000-4000-8000-000000000001";
+    const DTEAM = "0e000000-0000-4000-8000-000000000004";
+    const K_TEAM = "0f000000-0000-4000-8000-000000000004";
+    admin.state.tables.team_members.push({ team_id: TM, uid: V });
+    admin.state.tables.documents.push({ id: DTEAM, org_id: ORG, library_id: DCLIB, collection_id: null, visibility: "normal", is_private: false, scope: "org", created_by: A, owner_user_id: null,
+      acl: { visibility: "normal", rules: [
+        { effect: "allow", subject: { type: "org", id: ORG }, actions: ["read", "discover"] },
+        { effect: "deny", subject: { type: "team", id: TM }, actions: ["read", "discover"] },
+      ] } });
+    admin.state.tables.knowledge_documents.push({ id: K_TEAM, org_id: ORG, source_document_id: DTEAM });
+    admin.state.tables.knowledge_questions.push(q({ question: "Q-team: relief valve set points from the team-denied sheet", citations: [cite(K_TEAM, "TEAM-DENIED QUOTE")] }));
+    admin.state.user = { id: V };
+    // healthy: withheld by the team DENY
+    expect(await (await post({ orgId: ORG, libraryId: LIB, action: "list" })).text()).not.toContain("TEAM-DENIED QUOTE");
+    // the team read fails: nothing is served
+    admin.state.failReads = { team_members: { message: "statement timeout" } };
+    const res = await post({ orgId: ORG, libraryId: LIB, action: "list" });
+    expect(res.status).toBe(500);
+    const text = await res.text();
+    expect(JSON.parse(text).rows).toBeUndefined();
+    expect(JSON.parse(text).error).toMatch(/teams \(and the access rules that name them\) could not be read: statement timeout/);
+    expect(text).not.toContain("TEAM-DENIED QUOTE");
+    // loadPrincipal's read failed but the re-read succeeds: judged with the teams read
+    admin.state.failReads = {};
+    const { loadPrincipal } = await import("@/lib/knowledgeAccess");
+    const lost = { ...(await loadPrincipal(ORG, V))!, teamIds: [] };
+    expect([...await readableKnowledgeDocIds(lost, [K_TEAM, K_OPEN])]).toEqual([K_OPEN]);
+    // a controller is not filtered, so nothing is read for them (DEC-43)
+    admin.state.failReads = { team_members: { message: "statement timeout" } };
     admin.state.user = { id: A };
     expect((await post({ orgId: ORG, libraryId: LIB, action: "list" })).status).toBe(200);
   });

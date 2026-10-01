@@ -108,6 +108,10 @@ async function callerConnection(orgId: string, userId: string): Promise<Embeddin
   });
 }
 
+/** The marker for DISPLAY (the status panel) and for the finished build's
+ *  tidy-up, where an unreadable marker writes nothing. Never for a control
+ *  that reports what it changed: release and keep-current read through
+ *  readEmbedBuildMarker, whose failure is an error, not "no marker". */
 async function readMarker(libraryId: string) {
   const { data } = await supabaseAdmin.from("knowledge_libraries").select("ai_features").eq("id", libraryId).maybeSingle();
   return parseEmbedBuildMarker((data?.ai_features as Record<string, unknown> | null)?.embedBuild);
@@ -214,7 +218,12 @@ export async function POST(req: NextRequest) {
   if (body.action === "release") {
     // The marker's owner may withdraw their consent; controllers may stop
     // any background build (SEM-11: a stuck build an admin can see and end).
-    const marker = await readMarker(libraryId);
+    // A marker that could not be READ is not "no marker": answering
+    // { released: false } then would tell a payer nothing was running while
+    // their consent keeps spending — the read's failure is the answer (500).
+    const seen = await readEmbedBuildMarker(libraryId);
+    if (seen.error) return bad(`Couldn't read the background build, so nothing was stopped: ${seen.error}`, 500);
+    const marker = seen.marker;
     if (!marker) return NextResponse.json({ released: false });
     if (!principal.isController && marker.userId !== user.id) {
       return bad("Only the member whose key pays, or Admin / Doc Control, can stop this background build.", 403);
@@ -344,7 +353,12 @@ export async function POST(req: NextRequest) {
       if (err) return bad(`Couldn't record the standing consent: ${err}`, 500);
       return NextResponse.json({ standing: true });
     }
-    const marker = await readMarker(libraryId);
+    // As for release: an unreadable marker is never reported withdrawn.
+    const seen = await readEmbedBuildMarker(libraryId);
+    if (seen.error) {
+      return bad(`Couldn't read the standing consent, so nothing was withdrawn: ${seen.error}`, 500, { standing: null });
+    }
+    const marker = seen.marker;
     if (marker) {
       const detail = await loadEmbedDetail(orgId, libraryId);
       const left = detail ? detail.remaining : stats.total - stats.embedded;

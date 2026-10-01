@@ -310,7 +310,7 @@ Scratch PostgreSQL 16 (fix pass 3, stand-in `vector` with text I/O, deleted afte
 3. ✓ User-bearer triggers are rate-limited by library (`USER_TRIGGER_MIN_INTERVAL_MS`); two that still overlap stay disjoint through the claim.
 4. ✓ The guard no longer misreports concurrent progress.
 
-**Scope / residual.** The throttle is keyed on the library's last drain rather than on the user (the server keeps no per-user state); what it bounds is the spend, which is the finding's harm.
+**Scope / residual.** The throttle is keyed on the library's last drain rather than on the user (the server keeps no per-user state); what it bounds is the spend, which is the finding's harm. Every user nudge still reads the marker list before the per-library throttle applies, so done-when 3 is met per library, not per user, and request volume is not bounded. This wording was made exact in fix pass 4.
 
 ---
 
@@ -354,13 +354,17 @@ Fix pass 2 (review minor): the Rebuild's clear of another member's consent is co
 
 Tests in `embedStatusShape.test.ts` "review fix pass 3 — a consent write that did not land is never reported as done" (seven cases, each failing against the old code). Scratch PostgreSQL 16: `embed_build_marker_write(…, '', NULL)` set a marker on a library with none (true), refused on a library holding one (false), and still applied under a matching expectation.
 
+Fix pass 4 (2026-10-01, review):
+- *Major: an unreadable marker was reported as "nothing to stop" or "withdrawn".* The route's `readMarker` dropped the read error, so a failed read looked like "no marker". "Stop it" then answered 200 `{ released: false }` and "keep current" off answered 200 `{ standing: false }`. The panel's `act` showed a success toast for any answer ("Background build stopped." / "No longer kept current in the background.") while the consent kept spending. Release and keep-current now read through `readEmbedBuildMarker` and answer 500 when the read fails (`{ standing: null }` on keep-current); `readMarker` remains only for the status display and the finished build's tidy-up, where a failed read writes nothing. The panel's toast is now what the route answered: `releaseOutcome`, `keepCurrentOutcome(out, asked)` and `retryOutcome` (`lib/knowledge.ts`). `{ released: false }` is an "info" toast ("nothing was stopped"), never "stopped". A consent flag other than the one asked for is an error. "Try them again" with nothing requeued says so. Tests: `embedStatusShape.test.ts` "review fix pass 4 — an unreadable consent is never reported stopped or withdrawn (DEC-54 (5))". Its two reproductions fail against the old route.
+- *Minor (the GOV-14 limb): any controller could forge the consent with a direct PostgREST write.* `knowledge_libraries_write` is FOR ALL `is_org_controller`, so an Admin or Doc Control could PATCH `ai_features.embedBuild` to name any active member with `standing: true`. The drain would then spend that member's key and cap on every run, and a standing consent survives 100%. `20261121` now adds `trg_knowledge_libraries_embed_build_guard` (BEFORE INSERT OR UPDATE OF `ai_features`, `knowledge_libraries_embed_build_guard()`, invoker, `search_path` pinned). It refuses any change to the `embedBuild` key — set, edited, removed, or carried in on a new row — unless `auth.role()` is `service_role` (the embed route and the drain, through `embed_build_marker_write`). A session with no request role (the SQL editor) is let through. `knowledge_library_save_ai_features` keeps the stored marker byte for byte, so saving Library AI setup never trips it. The paste gains a probe and two inventory rows: standing consents that exist before apply, which cannot be told apart from a forged one; and other BEFORE INSERT / UPDATE triggers on the table. Scratch PostgreSQL 16, with the section applied twice (probe true both times): a controller's forge on a library without a marker, an edit of the payer, a removal by PATCH, and an INSERT carrying a marker were all refused (`insufficient_privilege`). The toggles save kept the marker. A toggles-only PATCH on a library without a marker, a plain INSERT and an `ai_instructions` update all went through. A Viewer's save changed nothing. The service role's set / patch / clear all applied. `embed_build_marker_write` stayed unexecutable by `authenticated`. The SQL editor's repair went through. Shape test: `embedDrain.test.ts` "review fix pass 4 (SEM-8 / GOV-14 limb): only the service role changes the consent marker". `GOV-14` itself is I-05's record and is not edited here. This closes its "a controller hand-edits the consent" limb at the database; the drain's uuid / active-member check landed earlier (`SEM-11`).
+
 **Done-when.**
 1. ✓ A standing per-library consent keeps the stamp armed, so ingestion's new passages are picked up by the next drain; without it, the not-covered state is visible (2).
 2. ✓ The drift is shown on the library page by the Ask box, not only inside the panel.
 3. ✓ Non-controllers see the drift line and the panel's bar.
 4. ✓ A test adds chunks to a completed library and asserts the not-covered state and its words. The standing consent survives a Library AI save and a Rebuild by another member ends it without a cent on its key: `embedStatusShape.test.ts` ("SEM-8 — saving Library AI setup never erases the standing consent", "a Rebuild ends ANOTHER member's standing consent first — the drain then spends nothing on their key"), `embedDrain.test.ts` ("the drain never writes the whole ai_features blob…").
 
-**Scope / residual.** The stamp is JSON on `knowledge_libraries.ai_features`; before 20261121 is applied its writers fall back to the old whole-column write (the save still carries the marker over), and the drain's claim and detail reads fall back likewise. `components/knowledge/LibraryAiModal.tsx` is unchanged — the protection is in `saveLibraryAiFeatures`.
+**Scope / residual.** The stamp is JSON on `knowledge_libraries.ai_features`; before 20261121 is applied its writers fall back to the old whole-column write (the save still carries the marker over), and the drain's claim and detail reads fall back likewise. `components/knowledge/LibraryAiModal.tsx` is unchanged — the protection is in `saveLibraryAiFeatures`. Standing consents recorded before `20261121` is applied cannot be told from one a controller wrote directly; the paste counts them so they can be read before relying on them (fix pass 4).
 
 ---
 
@@ -475,7 +479,7 @@ lib/knowledgeEmbedDrain.ts:51-55 — `.not("ai_features->embedBuild", "is", null
 1. ✓ Least-recently-attempted first (`lastDrainAt`), over every marker — no window.
 2. ✓ Cap-reached and failing libraries record a backoff the queue skips; repeated failure releases the stamp.
 3. ✓ Results distinguish advanced, blocked (with the reason), starved and the rest.
-4. ✓ A stuck-marker library surfaces on the panel with its reason and a Stop control.
+4. ✓ A stuck-marker library surfaces on the panel with its reason and a Stop control. Fix pass 4: Stop answers 500 when it cannot read the marker, and the panel shows "stopped" only for `{ released: true }` (detail on `SEM-8`).
 
 **Scope / residual.** The drain still rides the daily maintenance cron plus page nudges — no `vercel.json` entry (99 Do-not; `lib/__tests__/vercelConfig.test.ts`).
 

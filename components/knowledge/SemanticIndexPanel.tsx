@@ -36,8 +36,8 @@ import { appConfirm } from "@/components/providers/DialogProvider";
 import { Button } from "@/components/ui/Button";
 import {
   semanticStatus, buildSemanticIndex, resetSemanticIndex, retryFailedPassages,
-  setKeepIndexCurrent, releaseBackgroundBuild, acceptAiAgreement,
-  type SemanticProgress, type AgreementRequiredError,
+  setKeepIndexCurrent, releaseBackgroundBuild, acceptAiAgreement, releaseOutcome, keepCurrentOutcome, retryOutcome,
+  type SemanticProgress, type AgreementRequiredError, type EmbedControlOutcome,
 } from "@/lib/knowledge";
 
 /** A dollar figure a person can read: cents under a dollar, never "$0.00"
@@ -208,11 +208,13 @@ export default function SemanticIndexPanel({ orgId, libraryId, isController, onS
     }
   };
 
-  const act = async (run: () => Promise<unknown>, done: string) => {
+  /** A control's toast is what the route answered (releaseOutcome /
+   *  keepCurrentOutcome) — a Stop that stopped nothing is never "stopped". */
+  const act = async <T,>(run: () => Promise<T>, outcome: (out: T) => EmbedControlOutcome) => {
     try {
       const out = await withAgreement(run);
       if (out === null) return;
-      showToast({ type: "success", title: done });
+      showToast(outcome(out));
     } catch (e) {
       showToast({ type: "error", title: (e as Error).message });
     } finally {
@@ -378,7 +380,7 @@ export default function SemanticIndexPanel({ orgId, libraryId, isController, onS
           )}
           {isController && !building && (
             <button className="mt-1.5 font-black underline"
-              onClick={() => void act(() => retryFailedPassages(orgId, libraryId), "Queued the refused passages for another try.")}>
+              onClick={() => void act(() => retryFailedPassages(orgId, libraryId), retryOutcome)}>
               Try them again
             </button>
           )}
@@ -404,7 +406,7 @@ export default function SemanticIndexPanel({ orgId, libraryId, isController, onS
           )}
           {canRelease && !building && (
             <button className="ml-1 font-black underline"
-              onClick={() => void act(() => releaseBackgroundBuild(orgId, libraryId), "Background build stopped.")}>
+              onClick={() => void act(() => releaseBackgroundBuild(orgId, libraryId), releaseOutcome)}>
               Stop it
             </button>
           )}
@@ -415,10 +417,10 @@ export default function SemanticIndexPanel({ orgId, libraryId, isController, onS
         <label className="mt-2 flex items-start gap-2 text-[11px] text-[var(--color-text-muted)] cursor-pointer">
           <input type="checkbox" className="accent-violet-600 w-3.5 h-3.5 mt-0.5"
             checked={!!bg?.standing && bg.mine}
-            onChange={(e) => void act(
-              () => setKeepIndexCurrent(orgId, libraryId, e.target.checked),
-              e.target.checked ? "This library's meaning index will be kept current." : "No longer kept current in the background.",
-            )} />
+            onChange={(e) => {
+              const asked = e.target.checked;
+              void act(() => setKeepIndexCurrent(orgId, libraryId, asked), (out) => keepCurrentOutcome(out, asked));
+            }} />
           <span>
             <b className="text-[var(--color-text)]">Keep this index current as documents are added</b> — new passages are
             embedded in the background on your embeddings key, within your monthly cap. Without it, passages added after a

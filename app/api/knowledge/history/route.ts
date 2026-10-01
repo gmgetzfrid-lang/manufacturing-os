@@ -21,14 +21,22 @@
 // recent answers / of one conversation's turns — no query decides it) and
 // NEVER for `search`: there the reader's own words pick the rows, so a count
 // of matches they may not see would answer "does a restricted answer say
-// X?" one phrase at a time.
+// X?" one phrase at a time. For the same reason a search's answer never
+// depends on how many matches were withheld: it pages through the matches,
+// newest first, judging each page for the reader, until it holds `limit`
+// rows the reader may see or the matches run out (at most
+// SEARCH_SCAN_CAP matches are looked at), and a caller's `limit` below the
+// default is ignored. A fixed window trimmed after filtering answered
+// differently for limit=1 and limit=25 whenever restricted matches filled
+// the small window — a count of them, in coarser form.
 //
 // Fails CLOSED on a failed read of the stored answers, of the cited knowledge
 // documents, of the controlled documents, or of the document libraries and
 // folders whose ACLs decide them: an error and no rows — never an unfiltered
-// answer. (The seam's own landscape read still ignores its errors; the
-// libraries / folders reads are checked first in readableKnowledgeDocIds
-// until the seam's owner makes it throw.)
+// answer. (The seam's own landscape read still ignores its errors, and so
+// does loadPrincipal's team_members read; readableKnowledgeDocIds makes the
+// libraries / folders reads first and reads the reader's teams again, each
+// failure closed, until the seam's owner makes both throw.)
 
 import { NextRequest, NextResponse } from "next/server";
 import { supabaseAdmin } from "@/lib/supabaseAdmin";
@@ -40,6 +48,13 @@ import {
 export const runtime = "nodejs";
 
 const COLUMNS = "id, org_id, library_id, thread_id, user_id, user_name, question, answer, citations, mode, created_at";
+const CORE_COLUMNS = "id, org_id, library_id, user_id, user_name, question, answer, citations, created_at";
+
+/** Ask memory: the default number of matches, the page it reads them in, and
+ *  the most matches it will look at before answering with what it found. */
+const SEARCH_DEFAULT = 5;
+const SEARCH_PAGE = 100;
+const SEARCH_SCAN_CAP = 500;
 
 function bad(msg: string, status = 400) {
   return NextResponse.json({ error: msg }, { status });
@@ -74,7 +89,11 @@ export async function POST(req: NextRequest) {
   if (!lib) return bad("Library not found", 404);
 
   // ── 1. The candidate rows ────────────────────────────────────────────────
-  const limit = Math.max(1, Math.min(Number(body.limit) || (action === "search" ? 5 : 25), 100));
+  // A search never takes fewer than the default (the answer must not depend
+  // on the caller's window — see the header).
+  const limit = action === "search"
+    ? Math.max(SEARCH_DEFAULT, Math.min(Number(body.limit) || SEARCH_DEFAULT, 100))
+    : Math.max(1, Math.min(Number(body.limit) || 25, 100));
   type Read = { rows: StoredAnswerRow[]; error: string | null };
   const base = (columns: string) => supabaseAdmin.from("knowledge_questions").select(columns)
     .eq("org_id", orgId).eq("library_id", libraryId);
@@ -82,78 +101,96 @@ export async function POST(req: NextRequest) {
     build: (columns: string) => PromiseLike<{ data: unknown; error: { code?: string; message: string } | null }>,
   ): Promise<Read> => {
     let res = await build(COLUMNS);
-    if (missingColumn(res.error)) res = await build("id, org_id, library_id, user_id, user_name, question, answer, citations, created_at");
+    if (missingColumn(res.error)) res = await build(CORE_COLUMNS);
     if (res.error) return { rows: [], error: res.error.message };
     return { rows: (res.data ?? []) as StoredAnswerRow[], error: null };
   };
 
-  let read: Read = { rows: [], error: null };
-  if (action === "list") {
-    read = await run((c) => base(c).order("created_at", { ascending: false }).limit(limit));
-  } else if (action === "thread") {
-    if (!isUuid(body.threadId)) return bad("threadId is required");
-    const threadId = body.threadId;
-    read = await run((c) => base(c).eq("thread_id", threadId).order("created_at", { ascending: true }).limit(200));
+  // ── 2. The reader's view ─────────────────────────────────────────────────
+  /** Which of `rows` the reader may see (controllers: every row, DEC-43).
+   *  Throws on any failed read — the caller fails closed. */
+  const readerView = async (rows: StoredAnswerRow[]): Promise<{ visible: StoredAnswerRow[]; withheld: number }> => {
+    if (principal.isController) return { visible: rows, withheld: 0 };
+    // Earlier turns of the same conversations decide later ones. Read
+    // oldest first; if a read comes back full, the turns after its last
+    // row were not seen, so a listed turn later than that is withheld
+    // (fail-safe) rather than judged on a partial conversation.
+    const threadIds = [...new Set(rows.map((r) => r.thread_id).filter((t): t is string => isUuid(t)))];
+    const threadRows: StoredAnswerRow[] = [];
+    const unseenAfter = new Map<string, string>(); // thread → last created_at read
+    const CONTEXT_PAGE = 1000;
+    for (let i = 0; i < threadIds.length; i += 10) {
+      const chunk = threadIds.slice(i, i + 10);
+      const { data, error } = await supabaseAdmin.from("knowledge_questions").select(COLUMNS)
+        .eq("org_id", orgId).eq("library_id", libraryId)
+        .in("thread_id", chunk)
+        .order("created_at", { ascending: true }).limit(CONTEXT_PAGE);
+      if (error) throw new Error(error.message);
+      const got = (data ?? []) as unknown as StoredAnswerRow[];
+      threadRows.push(...got);
+      if (got.length >= CONTEXT_PAGE) {
+        const last = got[got.length - 1].created_at;
+        for (const t of chunk) unseenAfter.set(t, last);
+      }
+    }
+    const cited = [...rows, ...threadRows].flatMap((r) => citedKnowledgeDocIds(r.citations));
+    const readable = await readableKnowledgeDocIds(principal, cited);
+    const plan = planVisibleHistory(rows, threadRows, readable, user.id);
+    const unchecked = (r: StoredAnswerRow) =>
+      !!r.thread_id && unseenAfter.has(r.thread_id) && r.created_at > (unseenAfter.get(r.thread_id) as string);
+    const visible = plan.visible.filter((r) => !unchecked(r));
+    return { visible, withheld: plan.withheld.length + (plan.visible.length - visible.length) };
+  };
+  const accessFailed = (e: unknown) => bad(`Couldn't check access to the cited documents: ${(e as Error).message}`, 500);
+
+  let visible: StoredAnswerRow[] = [];
+  let withheld = 0;
+  if (action === "list" || action === "thread") {
+    let read: Read;
+    if (action === "list") {
+      read = await run((c) => base(c).order("created_at", { ascending: false }).limit(limit));
+    } else {
+      if (!isUuid(body.threadId)) return bad("threadId is required");
+      const threadId = body.threadId;
+      read = await run((c) => base(c).eq("thread_id", threadId).order("created_at", { ascending: true }).limit(200));
+    }
+    if (read.error) return bad(`Couldn't read the question history: ${read.error}`, 500);
+    try { ({ visible, withheld } = await readerView(read.rows)); } catch (e) { return accessFailed(e); }
   } else {
     const q = String(body.query ?? "").trim();
     if (q.length >= 8) {
-      // Filtering happens after the match, so read with headroom and trim
-      // to the limit once the reader's view is known.
-      const fetchN = Math.min(limit * 4, 100);
-      const fts = await base(COLUMNS)
-        .textSearch("search_tsv", q, { type: "websearch", config: "english" })
-        .order("created_at", { ascending: false }).limit(fetchN);
-      if (!fts.error) read = { rows: (fts.data ?? []) as unknown as StoredAnswerRow[], error: null };
-      else {
-        // Pre-migration (no search_tsv): a plain ilike on the question.
-        read = await run((c) => base(c)
-          .ilike("question", `%${q.slice(0, 60).replace(/[%_]/g, " ")}%`)
-          .order("created_at", { ascending: false }).limit(fetchN));
-      }
-    }
-  }
-  if (read.error) return bad(`Couldn't read the question history: ${read.error}`, 500);
-  const rows = read.rows;
-
-  // ── 2. The reader's view ─────────────────────────────────────────────────
-  let visible = rows;
-  let withheld = 0;
-  if (!principal.isController) {
-    try {
-      // Earlier turns of the same conversations decide later ones. Read
-      // oldest first; if a read comes back full, the turns after its last
-      // row were not seen, so a listed turn later than that is withheld
-      // (fail-safe) rather than judged on a partial conversation.
-      const threadIds = [...new Set(rows.map((r) => r.thread_id).filter((t): t is string => isUuid(t)))];
-      const threadRows: StoredAnswerRow[] = [];
-      const unseenAfter = new Map<string, string>(); // thread → last created_at read
-      const CONTEXT_PAGE = 1000;
-      for (let i = 0; i < threadIds.length; i += 10) {
-        const chunk = threadIds.slice(i, i + 10);
-        const { data, error } = await supabaseAdmin.from("knowledge_questions").select(COLUMNS)
-          .eq("org_id", orgId).eq("library_id", libraryId)
-          .in("thread_id", chunk)
-          .order("created_at", { ascending: true }).limit(CONTEXT_PAGE);
-        if (error) throw new Error(error.message);
-        const got = (data ?? []) as unknown as StoredAnswerRow[];
-        threadRows.push(...got);
-        if (got.length >= CONTEXT_PAGE) {
-          const last = got[got.length - 1].created_at;
-          for (const t of chunk) unseenAfter.set(t, last);
+      // One page of matches, newest first. Full-text on search_tsv; before
+      // that migration (no search_tsv), a plain ilike on the question.
+      let fts = true;
+      const page = async (from: number): Promise<Read> => {
+        const to = from + SEARCH_PAGE - 1;
+        if (fts) {
+          const res = await base(COLUMNS)
+            .textSearch("search_tsv", q, { type: "websearch", config: "english" })
+            .order("created_at", { ascending: false }).order("id", { ascending: false }).range(from, to);
+          if (!res.error) return { rows: (res.data ?? []) as unknown as StoredAnswerRow[], error: null };
+          if (from > 0) return { rows: [], error: res.error.message };
+          fts = false;
         }
+        return run((c) => base(c)
+          .ilike("question", `%${q.slice(0, 60).replace(/[%_]/g, " ")}%`)
+          .order("created_at", { ascending: false }).order("id", { ascending: false }).range(from, to));
+      };
+      // Page until `limit` rows the reader may see, or the matches run out,
+      // or SEARCH_SCAN_CAP matches were looked at — never a window whose
+      // size decides how many restricted matches can hide a visible one.
+      const seen = new Set<string>();
+      for (let from = 0; from < SEARCH_SCAN_CAP && visible.length < limit; from += SEARCH_PAGE) {
+        const read = await page(from);
+        if (read.error) return bad(`Couldn't read the question history: ${read.error}`, 500);
+        const fresh = read.rows.filter((r) => !seen.has(r.id));
+        for (const r of fresh) seen.add(r.id);
+        try { visible.push(...(await readerView(fresh)).visible); } catch (e) { return accessFailed(e); }
+        if (read.rows.length < SEARCH_PAGE) break;
       }
-      const cited = [...rows, ...threadRows].flatMap((r) => citedKnowledgeDocIds(r.citations));
-      const readable = await readableKnowledgeDocIds(principal, cited);
-      const plan = planVisibleHistory(rows, threadRows, readable, user.id);
-      const unchecked = (r: StoredAnswerRow) =>
-        !!r.thread_id && unseenAfter.has(r.thread_id) && r.created_at > (unseenAfter.get(r.thread_id) as string);
-      visible = plan.visible.filter((r) => !unchecked(r));
-      withheld = plan.withheld.length + (plan.visible.length - visible.length);
-    } catch (e) {
-      return bad(`Couldn't check access to the cited documents: ${(e as Error).message}`, 500);
+      visible = visible.slice(0, limit);
     }
   }
-  if (action === "search") visible = visible.slice(0, limit);
 
   return NextResponse.json({
     rows: visible.map((r) => ({

@@ -134,6 +134,11 @@ export function planVisibleHistory(
  * the same two reads are made here first and a failure of either throws
  * (closed). What remains is a read failing between this check and the
  * seam's own — closed for good when loadDcLandscape throws (handed over).
+ * loadPrincipal (same file) ignores a failed team_members read too, leaving
+ * teamIds empty, so an ACL that DENIES the reader's team would never match
+ * and the document would be judged readable. The reader's teams are read
+ * again here, a failure throws (closed), and the mirrors are judged with the
+ * teams actually read — until loadPrincipal throws on that read (handed over).
  */
 export async function readableKnowledgeDocIds(
   principal: KnowledgePrincipal,
@@ -160,8 +165,12 @@ export async function readableKnowledgeDocIds(
     else mirrors.set(r.id, r.source_document_id);
   }
   if (mirrors.size > 0) {
-    if (!principal.isController) await assertDcLandscapeReadable(principal.orgId);
-    const ok = await readableControlledDocIds(principal, [...new Set(mirrors.values())]);
+    let reader = principal;
+    if (!principal.isController) {
+      await assertDcLandscapeReadable(principal.orgId);
+      reader = { ...principal, teamIds: await readerTeamIds(principal.uid) };
+    }
+    const ok = await readableControlledDocIds(reader, [...new Set(mirrors.values())]);
     for (const [kid, dcId] of mirrors) if (ok.has(dcId)) readable.add(kid);
   }
   return readable;
@@ -180,4 +189,14 @@ async function assertDcLandscapeReadable(orgId: string): Promise<void> {
     const { error } = await supabaseAdmin.from(table).select("id", { count: "exact", head: true }).eq("org_id", orgId);
     if (error) throw new Error(`the ${what} (and their access rules) could not be read: ${error.message}`);
   }
+}
+
+/** The reader's teams, read so that a failure is an error: loadPrincipal's
+ *  own read of team_members ignores one (teamIds [] — a team DENY never
+ *  matches), which would judge a document denied to the reader's team as
+ *  readable. The caller answers nothing rather than judge without them. */
+async function readerTeamIds(uid: string): Promise<string[]> {
+  const { data, error } = await supabaseAdmin.from("team_members").select("team_id").eq("uid", uid);
+  if (error) throw new Error(`your teams (and the access rules that name them) could not be read: ${error.message}`);
+  return ((data ?? []) as Array<{ team_id: string }>).map((t) => t.team_id);
 }

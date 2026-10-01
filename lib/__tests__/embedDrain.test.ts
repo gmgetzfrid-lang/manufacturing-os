@@ -948,8 +948,34 @@ describe("20261121 — the paste contract, byte fidelity, the census", () => {
   it("census: 20261121 is the last definer of semantic_search, semantic_coverage, semantic_coverage_detail, embed_claim_batch and the two marker-safe writers", () => {
     const files = readdirSync(join(process.cwd(), "supabase", "migrations")).filter((f) => /^\d{8}.*\.sql$/.test(f)).sort();
     const last = (re: RegExp) => files.filter((f) => re.test(strip(mig(f)))).pop();
-    for (const name of ["semantic_search", "semantic_coverage", "semantic_coverage_detail", "embed_claim_batch", "embed_build_marker_write", "knowledge_library_save_ai_features"]) {
+    for (const name of ["semantic_search", "semantic_coverage", "semantic_coverage_detail", "embed_claim_batch", "embed_build_marker_write", "knowledge_library_save_ai_features", "knowledge_libraries_embed_build_guard"]) {
       expect(last(new RegExp(`CREATE (OR REPLACE )?FUNCTION ${name}\\(`))).toBe(FILE);
     }
+    expect(last(/CREATE TRIGGER \w+\s+BEFORE [\w ,]*\bON knowledge_libraries\b/)).toBe(FILE);
+  });
+  it("review fix pass 4 (SEM-8 / GOV-14 limb): only the service role changes the consent marker — a controller's direct PostgREST write of ai_features.embedBuild is refused", () => {
+    // knowledge_libraries_write lets every controller UPDATE the row; the
+    // marker names whose key and cap the drain spends.
+    const fn = body.slice(body.indexOf("CREATE OR REPLACE FUNCTION knowledge_libraries_embed_build_guard()"), body.indexOf("DROP TRIGGER IF EXISTS trg_knowledge_libraries_embed_build_guard"));
+    expect(fn).toContain("RETURNS trigger LANGUAGE plpgsql SECURITY INVOKER SET search_path = public AS $$");
+    expect(fn).toContain("IF auth.role() IS NULL OR auth.role() = 'service_role' THEN\n    RETURN NEW;");
+    expect(fn).toContain("IF TG_OP = 'UPDATE' THEN\n    v_before := OLD.ai_features -> 'embedBuild';");
+    expect(fn).toContain("IF (NEW.ai_features -> 'embedBuild') IS DISTINCT FROM v_before THEN");
+    expect(fn).toContain("USING ERRCODE = 'insufficient_privilege';");
+    expect(body).toMatch(/CREATE TRIGGER trg_knowledge_libraries_embed_build_guard\n\s+BEFORE INSERT OR UPDATE OF ai_features ON knowledge_libraries\n\s+FOR EACH ROW EXECUTE FUNCTION knowledge_libraries_embed_build_guard\(\);/);
+    // the guard lands in the same transaction as the writers it leaves open
+    expect(body.indexOf("CREATE TRIGGER trg_knowledge_libraries_embed_build_guard")).toBeGreaterThan(body.indexOf("CREATE OR REPLACE FUNCTION knowledge_library_save_ai_features("));
+    // the toggles save keeps the stored marker byte for byte, so it never trips the guard
+    const save = body.slice(body.indexOf("CREATE OR REPLACE FUNCTION knowledge_library_save_ai_features("), body.indexOf("REVOKE ALL ON FUNCTION knowledge_library_save_ai_features"));
+    expect(save).toContain("THEN jsonb_build_object('embedBuild', l.ai_features -> 'embedBuild')");
+    // the marker writer stays service-role only
+    expect(body).toContain("REVOKE ALL ON FUNCTION embed_build_marker_write(UUID, JSONB, BOOLEAN, TEXT[], TEXT, TEXT) FROM public, anon, authenticated;");
+    // probed, with the forms pg_proc keeps verbatim; inventoried before apply
+    expect(tail).toContain("SELECT 'trg_knowledge_libraries_embed_build_guard: only the service role (or a session with no request role) changes ai_features.embedBuild; search_path pinned',");
+    expect(tail).toContain("AND prosrc LIKE '%auth.role() IS NULL OR auth.role() = ''service_role''%'");
+    expect(tail).toContain("AND prosrc LIKE '%(NEW.ai_features -> ''embedBuild'') IS DISTINCT FROM v_before%'");
+    const inv = m.slice(m.indexOf("CREATE TEMP TABLE"), m.indexOf("\nBEGIN;"));
+    expect(inv).toContain("standing (\"keep current\") consents");
+    expect(inv).toContain("other BEFORE INSERT / UPDATE row triggers on knowledge_libraries");
   });
 });

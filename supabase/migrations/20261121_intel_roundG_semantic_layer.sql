@@ -86,11 +86,24 @@
 --        * knowledge_library_save_ai_features(library, features) — replaces
 --          every key EXCEPT embedBuild, in one statement, under the caller's
 --          own RLS (controllers), and says whether a row was saved.
+--   6. SEM-8 / SEM-11 (the GOV-14 limb) — only the server writes the
+--      consent. knowledge_libraries_write is FOR ALL is_org_controller, so
+--      any Admin or Doc Control could PATCH ai_features.embedBuild directly
+--      (PostgREST) to name ANY active member with standing:true, and the
+--      drain would spend that member's key and cap on every run, for good.
+--      trg_knowledge_libraries_embed_build_guard (BEFORE INSERT OR UPDATE OF
+--      ai_features) refuses any change to the embedBuild key — set, edited
+--      or removed — unless the request runs as service_role (the embed route
+--      and the drain, through embed_build_marker_write). The toggles save
+--      keeps the stored marker, so saving Library AI setup never trips it. A
+--      session with no request role at all (the SQL editor: the database
+--      owner, not a PostgREST caller) is let through.
 --
 -- Nothing here widens anyone's access: new columns, service-role-only claim
 -- and marker functions, a counts function and a toggles save under the
--- caller's RLS, and two re-created functions that return the same rows or
--- fewer (service_role's EXECUTE on them is re-stated, not new). Pre-apply inventory (DEC-30)
+-- caller's RLS, a guard that narrows who may change the consent marker, and
+-- two re-created functions that return the same rows or fewer
+-- (service_role's EXECUTE on them is re-stated, not new). Pre-apply inventory (DEC-30)
 -- is captured into a TEMP TABLE before the transaction: aggregate counts
 -- only. Single paste: inventory → BEGIN/DDL/COMMIT → ONE SELECT (check text,
 -- ok boolean, n text) — the editor shows only the last result. The last rows
@@ -127,6 +140,16 @@ SELECT '  of those, in library ' || c.library_id::text, COUNT(*)
 UNION ALL
 SELECT 'libraries carrying a background-build marker (ai_features.embedBuild)', COUNT(*)
   FROM knowledge_libraries WHERE ai_features ? 'embedBuild'
+UNION ALL
+SELECT 'of those, standing ("keep current") consents — from here on changed only by the server (SEM-8 guard); one a controller wrote directly before this is not told apart, so read them before relying on them', COUNT(*)
+  FROM knowledge_libraries WHERE ai_features -> 'embedBuild' ->> 'standing' = 'true'
+UNION ALL
+SELECT 'other BEFORE INSERT / UPDATE row triggers on knowledge_libraries (they run beside the consent guard)', COUNT(*)
+  FROM pg_trigger t
+ WHERE NOT t.tgisinternal
+   AND t.tgrelid = 'public.knowledge_libraries'::regclass
+   AND (t.tgtype & 1) = 1 AND (t.tgtype & 2) = 2 AND (t.tgtype & (4 | 16)) <> 0
+   AND t.tgname <> 'trg_knowledge_libraries_embed_build_guard'
 UNION ALL
 SELECT 'build markers older than 7 days (SEM-11: now backed off or released instead of holding a drain slot)', COUNT(*)
   FROM knowledge_libraries
@@ -452,6 +475,41 @@ $$;
 REVOKE ALL ON FUNCTION knowledge_library_save_ai_features(UUID, JSONB) FROM public, anon;
 GRANT EXECUTE ON FUNCTION knowledge_library_save_ai_features(UUID, JSONB) TO authenticated;
 
+-- ── 7. SEM-8 / SEM-11 (GOV-14 limb): only the server writes the consent ────
+-- A controller may change every other key of ai_features (the toggles); the
+-- embedBuild key names whose key and cap the drain spends, and only that
+-- member's own action through the embed route — or the drain's own
+-- bookkeeping — may change it. auth.role() is the request's JWT role:
+-- 'service_role' for the server, 'authenticated' / 'anon' for a browser
+-- (also inside a SECURITY DEFINER function it calls), NULL for a session
+-- with no request at all (the SQL editor), which is let through.
+CREATE OR REPLACE FUNCTION knowledge_libraries_embed_build_guard()
+RETURNS trigger LANGUAGE plpgsql SECURITY INVOKER SET search_path = public AS $$
+DECLARE
+  v_before JSONB;
+BEGIN
+  IF auth.role() IS NULL OR auth.role() = 'service_role' THEN
+    RETURN NEW;
+  END IF;
+  IF TG_OP = 'UPDATE' THEN
+    v_before := OLD.ai_features -> 'embedBuild';
+  END IF;
+  IF (NEW.ai_features -> 'embedBuild') IS DISTINCT FROM v_before THEN
+    RAISE EXCEPTION 'The meaning index''s background-build consent (ai_features.embedBuild) is changed only by the embed route, for the member whose key pays — not by a direct write. (SEM-8, 20261121)'
+      USING ERRCODE = 'insufficient_privilege';
+  END IF;
+  RETURN NEW;
+END;
+$$;
+
+COMMENT ON FUNCTION knowledge_libraries_embed_build_guard() IS
+  'SEM-8 / SEM-11: BEFORE INSERT OR UPDATE OF ai_features guard on knowledge_libraries. Refuses any change to ai_features.embedBuild (who pays for the background build, and a standing consent) unless the request runs as service_role (the embed route and the drain, via embed_build_marker_write); a session with no request role (the SQL editor) passes.';
+
+DROP TRIGGER IF EXISTS trg_knowledge_libraries_embed_build_guard ON knowledge_libraries;
+CREATE TRIGGER trg_knowledge_libraries_embed_build_guard
+  BEFORE INSERT OR UPDATE OF ai_features ON knowledge_libraries
+  FOR EACH ROW EXECUTE FUNCTION knowledge_libraries_embed_build_guard();
+
 COMMIT;
 
 -- ── Verification (read-only) — every probe true; inventory rows carry n ─────
@@ -546,6 +604,17 @@ SELECT 'knowledge_library_save_ai_features: replaces the toggles and keeps embed
           FROM pg_proc WHERE proname = 'knowledge_library_save_ai_features')
        AND has_function_privilege('authenticated', 'knowledge_library_save_ai_features(uuid, jsonb)', 'EXECUTE')
        AND NOT has_function_privilege('anon', 'knowledge_library_save_ai_features(uuid, jsonb)', 'EXECUTE'),
+       NULL
+UNION ALL
+SELECT 'trg_knowledge_libraries_embed_build_guard: only the service role (or a session with no request role) changes ai_features.embedBuild; search_path pinned',
+       EXISTS (SELECT 1 FROM pg_trigger t
+                WHERE t.tgname = 'trg_knowledge_libraries_embed_build_guard' AND NOT t.tgisinternal
+                  AND t.tgrelid = 'public.knowledge_libraries'::regclass AND t.tgenabled <> 'D')
+       AND (SELECT NOT prosecdef
+                   AND array_to_string(proconfig, ',') LIKE '%search_path=public%'
+                   AND prosrc LIKE '%auth.role() IS NULL OR auth.role() = ''service_role''%'
+                   AND prosrc LIKE '%(NEW.ai_features -> ''embedBuild'') IS DISTINCT FROM v_before%'
+              FROM pg_proc WHERE proname = 'knowledge_libraries_embed_build_guard'),
        NULL
 UNION ALL
 SELECT 'inventory (after): pgvector version / iterative scan enabled on semantic_search',

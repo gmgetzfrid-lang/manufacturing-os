@@ -15,7 +15,8 @@
 --      through loadPrincipal + readableControlledDocIds for the CURRENT reader
 --      and withholds a whole row (and every later turn of its conversation)
 --      when any cited source is not readable to them — an answer is as
---      restricted as its most restricted source.
+--      restricted as its most restricted CITED source (ASK-1 open: a row
+--      does not yet record passages retrieved but not cited).
 --   2. KACL-7 — knowledge_documents_select (20260911:124-128) showed every
 --      mirror's number, title, revision, page count and file key to every
 --      member. A MIRROR row (source_document_id IS NOT NULL) is now visible

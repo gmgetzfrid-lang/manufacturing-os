@@ -587,6 +587,76 @@ describe("review fix pass 3 — a consent write that did not land is never repor
   });
 });
 
+describe("review fix pass 4 — an unreadable consent is never reported stopped or withdrawn (DEC-54 (5))", () => {
+  const OTHER = "0d000000-0000-4000-8000-0000000000bb";
+  const feats = () => admin.state.tables.knowledge_libraries[0].ai_features as { embedBuild?: Row };
+  /** The route's own library check reads knowledge_libraries first; the
+   *  n-th read after it (the marker read) answers an error. */
+  const failMarkerRead = (nth = 2) => {
+    const real = admin.state.failReads;
+    let reads = 0;
+    admin.state.failReads = new Proxy(real, {
+      get: (t, p: string) => (p === "knowledge_libraries" && ++reads === nth ? { message: "statement timeout" } : (t as Record<string, unknown>)[p]),
+    });
+  };
+  const markerWrites = () => admin.state.calls.filter((c) => c.table === "rpc:embed_build_marker_write");
+
+  it("reproduction → fix: 'Stop it' whose marker read FAILS is a 500 — never { released: false } — and the consent is untouched", async () => {
+    feats().embedBuild = { userId: OTHER, at: "2026-09-01T00:00:00Z", standing: true };
+    failMarkerRead();
+    const { POST } = await import("@/app/api/knowledge/embed/route");
+    const res = await POST(req({ action: "release" }));
+    expect(res.status).toBe(500);
+    const body = await res.json();
+    expect(body.error).toMatch(/Couldn't read the background build, so nothing was stopped: statement timeout/);
+    expect(body).not.toHaveProperty("released");
+    expect(markerWrites()).toHaveLength(0);
+    expect(feats().embedBuild).toMatchObject({ userId: OTHER, standing: true });
+  });
+  it("reproduction → fix: keep-current OFF whose marker read FAILS is a 500 — never { standing: false } — and the consent is untouched", async () => {
+    feats().embedBuild = { userId: ME, at: "2026-09-01T00:00:00Z", standing: true };
+    failMarkerRead();
+    const { POST } = await import("@/app/api/knowledge/embed/route");
+    const res = await POST(req({ action: "keep-current", on: false }));
+    expect(res.status).toBe(500);
+    const body = await res.json();
+    expect(body.error).toMatch(/Couldn't read the standing consent, so nothing was withdrawn: statement timeout/);
+    expect(body.standing).toBeNull();
+    expect(markerWrites()).toHaveLength(0);
+    expect(feats().embedBuild).toMatchObject({ userId: ME, standing: true });
+  });
+  it("a readable library with no marker still answers { released: false } / { standing: false } (nothing was running)", async () => {
+    feats().embedBuild = undefined;
+    const { POST } = await import("@/app/api/knowledge/embed/route");
+    expect(await (await POST(req({ action: "release" }))).json()).toEqual({ released: false });
+    expect(await (await POST(req({ action: "keep-current", on: false }))).json()).toEqual({ standing: false });
+  });
+  it("the panel's toast is the route's answer: { released: false } is never 'stopped'; a flag other than the one asked for is an error", async () => {
+    const { releaseOutcome, keepCurrentOutcome, retryOutcome } = await import("@/lib/knowledge");
+    expect(releaseOutcome({ released: true })).toEqual({ type: "success", title: "Background build stopped." });
+    expect(releaseOutcome({ released: false })).toEqual({ type: "info", title: "No background build was running any more — nothing was stopped." });
+    expect(releaseOutcome({} as { released?: boolean }).type).toBe("error");
+    expect(keepCurrentOutcome({ standing: true }, true).type).toBe("success");
+    expect(keepCurrentOutcome({ standing: false }, false)).toEqual({ type: "success", title: "No longer kept current in the background." });
+    expect(keepCurrentOutcome({ standing: null }, false)).toEqual({ type: "error", title: "The standing consent was not withdrawn — it may still be spending; look at it again." });
+    expect(keepCurrentOutcome({ standing: true }, false).type).toBe("error");
+    expect(keepCurrentOutcome({ standing: false }, true).type).toBe("error");
+    // the same for "Try them again": a requeue of none queued nothing
+    expect(retryOutcome({ requeued: 3 })).toEqual({ type: "success", title: "Queued 3 refused passages for another try." });
+    expect(retryOutcome({ requeued: 0 }).type).toBe("info");
+    expect(retryOutcome({} as { requeued?: number }).type).toBe("error");
+    const { readFileSync } = await import("node:fs");
+    const panel = readFileSync("components/knowledge/SemanticIndexPanel.tsx", "utf8");
+    const act = panel.slice(panel.indexOf("const act = async"), panel.indexOf("// A panel that renders NOTHING"));
+    expect(act).toContain("showToast(outcome(out));");
+    expect(act).not.toContain('type: "success"');
+    expect(panel).toContain("void act(() => releaseBackgroundBuild(orgId, libraryId), releaseOutcome)");
+    expect(panel).toContain("void act(() => setKeepIndexCurrent(orgId, libraryId, asked), (out) => keepCurrentOutcome(out, asked));");
+    expect(panel).toContain("void act(() => retryFailedPassages(orgId, libraryId), retryOutcome)");
+    expect(panel).not.toContain('"Background build stopped."');
+  });
+});
+
 describe("SEM-8 — saving Library AI setup never erases the standing consent", () => {
   const LIBROW = () => ({ id: LIB, org_id: ORG, ai_features: { visionAllPages: false, decoder: "PID", embedBuild: { userId: ME, at: "2026-09-01T00:00:00Z", standing: true } } as Row });
   it("with 20261121: one RPC replaces the toggles and keeps embedBuild (transcribed from the SQL); a refused save is an error", async () => {
