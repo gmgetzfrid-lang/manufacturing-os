@@ -54,6 +54,7 @@ import {
 } from "@/lib/knowledgeIngest";
 import { computeForKnowledgeDoc } from "@/lib/equipmentBridgeServer";
 import { transcribePageImage } from "@/lib/knowledgeVision";
+import { getMonthUsage, getCapUsd } from "@/lib/ai/usageServer";
 
 const DOC = "kd-9";
 const post = (body: unknown, token = "good") => POST(new NextRequest("http://x/api/knowledge/ingest", {
@@ -340,6 +341,55 @@ describe("ING-8 — a person's explicit re-run (retryNow)", () => {
     expect(vi.mocked(transcribePageImage)).not.toHaveBeenCalled();
     expect(rowsOf("knowledge_documents")[0]).toMatchObject({ status: "indexing", ingest_failures: 1, ingest_claimed_by: null });
   });
+
+  it("a controller with no usable key re-running a failed vision-retry batch: 409 with the reason, nothing recorded, and the failure's record stays on the row", async () => {
+    // The reviewer's probe K1: the re-run was audited, then the engine parked
+    // it — the keyless message over the failure's cause, its back-off erased
+    // to now — and answered 409: recorded, and then refused.
+    const until = new Date(Date.now() + 600_000).toISOString();
+    const error = ingestFailureMessage("chunk insert failed: connection reset by peer", 1, ingestFailureBackoffMs(1), true);
+    await atRetryStage({ ingest_failures: 1, error, vision_retry_after: until });
+    const failureRecord = { status: "indexing", ingest_failures: 1, error, vision_retry_after: until, vision_failed_pages: [1], ingest_claimed_by: null };
+
+    // No AI key at all.
+    db.tables.ai_connections = [];
+    const keyless = await post({ documentId: DOC, retryNow: true });
+    expect(keyless.status).toBe(409);
+    const kb = await keyless.json();
+    expect(kb).toMatchObject({ failureRetryBlocked: true, visionRetryBlocked: false, failureRetryAfter: until });
+    expect(kb.error).toBe(visionRetryMessage([1], null));
+    expect(kb.visionSkipReason).toMatch(/^Add your AI key in AI settings/);
+    expect(rowsOf("audit_logs")).toEqual([]);
+    expect(rowsOf("knowledge_documents")[0]).toMatchObject(failureRecord);
+
+    // A key, at its monthly cap: the same.
+    db.tables.ai_connections = [{ org_id: "o1", user_id: "u-ctrl", provider: "anthropic", model: "user-model", api_key: "k" }];
+    vi.mocked(getCapUsd).mockResolvedValueOnce(5);
+    vi.mocked(getMonthUsage).mockResolvedValueOnce({ spentUsd: 5 } as Awaited<ReturnType<typeof getMonthUsage>>);
+    const capped = await post({ documentId: DOC, retryNow: true });
+    expect(capped.status).toBe(409);
+    const cb = await capped.json();
+    expect(cb).toMatchObject({ failureRetryBlocked: true, failureRetryAfter: until });
+    expect(cb.visionSkipReason).toMatch(/^Monthly AI budget reached/);
+    expect(rowsOf("audit_logs")).toEqual([]);
+    expect(rowsOf("knowledge_documents")[0]).toMatchObject(failureRecord);
+    expect(vi.mocked(transcribePageImage)).not.toHaveBeenCalled();
+  });
+
+  it("a re-run that meets `busy` is not recorded while it waits: only the batch that takes the claim records it, then runs", async () => {
+    await inBackoff({ ingest_claimed_by: "ingest:other-tab", ingest_claimed_at: new Date().toISOString() });
+    let recordedWhileBusy: number | null = null;
+    // The other tab's batch lets go shortly after this POST arrives.
+    setTimeout(() => {
+      recordedWhileBusy = rowsOf("audit_logs").length;
+      Object.assign(rowsOf("knowledge_documents")[0], { ingest_claimed_by: null, ingest_claimed_at: null });
+    }, 200);
+    const res = await post({ documentId: DOC, retryNow: true });
+    expect(res.status).toBe(200);
+    expect(await res.json()).toMatchObject({ done: true, busy: false });
+    expect(recordedWhileBusy).toBe(0);
+    expect(rowsOf("audit_logs").map((a) => a.action)).toEqual(["KNOWLEDGE_DOC_RETRY_NOW", "KNOWLEDGE_DOC_INDEXED"]);
+  }, 20_000);
 
   it("with no back-off in force it is an ordinary batch — nothing is recorded — and it stays a controller's action", async () => {
     await inBackoff({ ingest_failures: 0, error: null, vision_retry_after: null });

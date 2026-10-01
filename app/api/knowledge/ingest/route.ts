@@ -33,7 +33,8 @@
 // status, never 'error' (ING-6, ING-8). The route cannot tell a person's
 // click from the automatic loops (the library page's, the app-shell
 // indicator's), so a person's explicit re-run says so: `retryNow: true`
-// skips a failed batch's back-off, audited first (KNOWLEDGE_DOC_RETRY_NOW).
+// skips a failed batch's back-off, audited (KNOWLEDGE_DOC_RETRY_NOW) once the
+// engine lets it through and before anything runs — never for one refused.
 // The library page's Resume is to pass it (I-02); the automatic loops never
 // do.
 
@@ -43,7 +44,7 @@ import { supabaseAdmin } from "@/lib/supabaseAdmin";
 import { openAiKey } from "@/lib/ai/keyVault";
 import {
   ingestKnowledgeDocBatch, refuseNonPdf, reindexLibraryChunks, onDocumentReady, markIngestFailed,
-  claimIngestLease, releaseIngestLease, failureBackoffUntil,
+  claimIngestLease, releaseIngestLease,
   type VisionContext, type IngestBatchResult,
 } from "@/lib/knowledgeIngest";
 import { memberHoldsAny } from "@/lib/roleHeld";
@@ -115,29 +116,33 @@ export async function POST(req: NextRequest) {
   // ── A person's explicit re-run (ING-8) ─────────────────────────────────
   // `retryNow` skips a failed batch's back-off: someone fixed the cause (a
   // connection, their AI budget) and wants it tried now, not on the next
-  // pass. Controller-only like the rest of this route, and audited FIRST — a
-  // re-run that cannot be recorded runs nothing. Only when a back-off is
-  // actually in force: otherwise it is an ordinary batch, and nothing is
-  // recorded. A failed batch's back-off in either stage — the main pass or
-  // a vision-retry batch — and the engine lets the re-run past both of its
-  // gates. A vision retry's own back-off (ING-6, the provider refused a
-  // whole round) is not a failed batch's: nothing is recorded, and the
-  // answer is the 409 with its reason.
-  let retryNow = false;
-  const backoffUntil = body.retryNow === true ? failureBackoffUntil(doc as Record<string, unknown>) : null;
-  if (backoffUntil) {
-    const { error: auditErr } = await supabaseAdmin.from("audit_logs").insert({
-      action: "KNOWLEDGE_DOC_RETRY_NOW",
-      resource_type: "knowledge_document", resource_id: documentId,
-      org_id: doc.org_id, user_id: user.id,
-      details: {
-        name: doc.name, fileKey: doc.file_key, sourceVersionId: doc.source_version_id ?? null,
-        failures: doc.ingest_failures, backoffUntil, lastError: doc.error,
+  // pass. Controller-only like the rest of this route, and audited before
+  // anything runs — a re-run that cannot be recorded runs nothing. It is
+  // recorded only when the engine lets it through and is about to perform
+  // it (`onRetryNow`): under the claim, with a failed batch's back-off in
+  // force (in either stage — the main pass or a vision-retry batch), and
+  // with a key that can read the pages waiting on AI vision. So nothing is
+  // recorded for a POST that only meets `busy`, for a vision retry's own
+  // back-off (ING-6: the 409 with its reason), for a re-run this person
+  // has no usable key for (the 409 with that reason; the failure's record
+  // stays on the row), or with no back-off in force (an ordinary batch).
+  const retry = body.retryNow === true
+    ? {
+      retryNow: true,
+      onRetryNow: async (row: Record<string, unknown>, backoffUntil: string): Promise<string | null> => {
+        const { error: auditErr } = await supabaseAdmin.from("audit_logs").insert({
+          action: "KNOWLEDGE_DOC_RETRY_NOW",
+          resource_type: "knowledge_document", resource_id: documentId,
+          org_id: doc.org_id, user_id: user.id,
+          details: {
+            name: row.name ?? doc.name, fileKey: row.file_key, sourceVersionId: row.source_version_id ?? null,
+            failures: row.ingest_failures, backoffUntil, lastError: row.error,
+          },
+        });
+        return auditErr ? auditErr.message : null;
       },
-    });
-    if (auditErr) return bad(`The re-run could not be recorded, so nothing was run: ${auditErr.message}`, 500);
-    retryNow = true;
-  }
+    }
+    : {};
 
   // ── Vision fallback context ────────────────────────────────────────────
   // Pages with no text layer (AutoCAD SHX exports, scans) get READ by the
@@ -207,12 +212,15 @@ export async function POST(req: NextRequest) {
       // unclaimed on a pre-20261122 database.
       ...("source_version_id" in doc ? { source_version_id: (doc.source_version_id as string | null) ?? null } : {}),
     };
-    let res: IngestBatchResult = await ingestKnowledgeDocBatch(row, vision, deadlineMs, { retryNow });
+    let res: IngestBatchResult = await ingestKnowledgeDocBatch(row, vision, deadlineMs, retry);
     // The loser WAITS (ING-2): the other driver holds the claim for one batch
     // at most. Look again until it lets go, while a batch still fits.
     while (res.busy && Date.now() + BUSY_POLL_MS + MIN_BATCH_MS < deadlineMs) {
       await new Promise((r) => setTimeout(r, BUSY_POLL_MS));
-      res = await ingestKnowledgeDocBatch(row, vision, deadlineMs, { retryNow });
+      res = await ingestKnowledgeDocBatch(row, vision, deadlineMs, retry);
+    }
+    if (res.retryNowError) {
+      return bad(`The re-run could not be recorded, so nothing was run: ${res.retryNowError}`, 500);
     }
 
     // ── Not a PDF at all (ING-9). An upload leaves nothing behind; a

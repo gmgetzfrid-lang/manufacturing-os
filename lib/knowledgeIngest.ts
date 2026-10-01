@@ -141,6 +141,9 @@ export interface IngestBatchResult {
   failureRetryBlocked: boolean;
   failureRetryMessage: string | null;
   failureRetryAfter: string | null;
+  /** A person's re-run (`retryNow`) was let through, but its record
+   *  (`onRetryNow`) could not be written: nothing was run, and this says why. */
+  retryNowError: string | null;
   /** The batch ran unclaimed, on a database without migration 20261122: no
    *  claim, and nowhere to hold a failed vision page for a retry (ING-6) —
    *  such a page is committed with its text layer only. */
@@ -596,7 +599,7 @@ export async function refuseNonPdf(
     return { message, removed: true, superseded: false, error: null };
   }
   let mark = supabaseAdmin.from("knowledge_documents")
-    .update({ status: "error", error: message.slice(0, 500) }).eq("id", id).eq("file_key", fileKey);
+    .update({ status: "error", error: truncateSafe(message, ERROR_MAX_CHARS) }).eq("id", id).eq("file_key", fileKey);
   if (version !== undefined) mark = version === null ? mark.is("source_version_id", null) : mark.eq("source_version_id", version);
   const { data: marked, error: markErr } = await mark.select("id");
   if (markErr) return { message, removed: false, superseded: false, error: markErr.message };
@@ -730,7 +733,10 @@ export async function markIngestFailed(
   const retry = read.failures !== undefined && !permanent && attempt < INGEST_FAILURE_MAX_ATTEMPTS;
   const wait = ingestFailureBackoffMs(attempt);
   const retryAfter = retry ? new Date(nowMs + wait).toISOString() : null;
-  const legacyUpdate = { status: "error", error: cause.slice(0, ERROR_MAX_CHARS) };
+  // Every message is fitted surrogate-safe: a cut through a pair leaves a
+  // lone surrogate, which Postgres refuses in the JSON body — the failure
+  // would then never be recorded, and every driver would retry it unbounded.
+  const legacyUpdate = { status: "error", error: fitCause(cause, ERROR_MAX_CHARS) };
   const update: Record<string, unknown> = read.failures === undefined ? legacyUpdate
     : retry
       ? {
@@ -744,7 +750,7 @@ export async function markIngestFailed(
         ...legacyUpdate,
         error: attempt >= INGEST_FAILURE_MAX_ATTEMPTS && !permanent
           ? causeThen(cause, ` — indexing failed ${attempt} times in a row; re-run it once the cause is fixed.`)
-          : cause.slice(0, ERROR_MAX_CHARS),
+          : fitCause(cause, ERROR_MAX_CHARS),
         ingest_failures: attempt, vision_retry_after: null,
       };
   const write = (patch: Record<string, unknown>, withCount: boolean) => {
@@ -925,10 +931,18 @@ export async function ingestKnowledgeDocBatch(
    *  early and cleanly, is what makes progress durable. */
   deadlineMs?: number,
   opts: {
-    /** A person's explicit re-run (the route's `retryNow`, audited there):
-     *  a failed batch's back-off (ING-8) does not hold it. Every automatic
-     *  driver leaves it unset. */
+    /** A person's explicit re-run (the route's `retryNow`): a failed batch's
+     *  back-off (ING-8) does not hold it. Every automatic driver leaves it
+     *  unset. */
     retryNow?: boolean;
+    /** The re-run's record (the route's audit row). Called only when the
+     *  re-run is let through and about to be performed — under the claim,
+     *  past both gates, with a vision context in hand when the pages waiting
+     *  are AI vision's, and before anything is downloaded — so a re-run that
+     *  is refused, or only ever meets `busy`, is never recorded. It answers
+     *  why it could not record, or null; a record that fails (or throws)
+     *  gives the claim back and runs nothing (`retryNowError`). */
+    onRetryNow?: (row: Record<string, unknown>, backoffUntil: string) => Promise<string | null>;
   } = {},
 ): Promise<IngestBatchResult> {
   ensurePdfPolyfills();
@@ -951,7 +965,7 @@ export async function ingestKnowledgeDocBatch(
       visionFailedPages: failedNow, visionError: null, visionRetryAttempts: 0,
       busy: false, retryAfterMs: null, superseded: false,
       visionRetryBlocked: false, visionRetryMessage: null, visionRetryAfter: null,
-      failureRetryBlocked: false, failureRetryMessage: null, failureRetryAfter: null,
+      failureRetryBlocked: false, failureRetryMessage: null, failureRetryAfter: null, retryNowError: null,
       legacy: lease.kind === "unlocked", notPdf: null,
       ...flags,
     };
@@ -1007,7 +1021,7 @@ export async function ingestKnowledgeDocBatch(
     ): Promise<IngestBatchResult> => {
       const stamped = Date.parse(String(cur.vision_retry_after ?? ""));
       const nowMs = Date.now();
-      if (claimed && !queue && claimed.error === message.slice(0, 500) &&
+      if (claimed && !queue && claimed.error === truncateSafe(message, ERROR_MAX_CHARS) &&
           Number.isFinite(stamped) && stamped <= nowMs && nowMs - stamped < VISION_RETRY_BACKOFF_MS) {
         // A driver without a key that finds its own reason already on the
         // row, stamped within the last half hour and holding no one back,
@@ -1023,7 +1037,7 @@ export async function ingestKnowledgeDocBatch(
       } else if (claimed) {
         const known = new Set(Object.keys(claimed));
         const update = Object.fromEntries(Object.entries({
-          error: message.slice(0, 500), vision_retry_after: retryAfter,
+          error: truncateSafe(message, ERROR_MAX_CHARS), vision_retry_after: retryAfter,
           // A retry pass whose reads ran is not a failed batch (ING-8): it
           // clears the count. A park that read nothing — no key, or no page
           // left to try this round — keeps it, or a failure that persists
@@ -1049,7 +1063,7 @@ export async function ingestKnowledgeDocBatch(
     //    Nothing to do and nothing to write: the failure and when it is next
     //    tried are on the row already. Checked before anything is
     //    downloaded, by every driver alike — except a person's explicit
-    //    re-run (`retryNow`), which the route audits.
+    //    re-run (`retryNow`), recorded below once it is let through.
     const failureHold = claimed ? failureBackoffUntil(cur) : null;
     if (claimed && failureHold && !opts.retryNow) {
       released = await releaseIngestLease(doc.id, driver);
@@ -1075,8 +1089,7 @@ export async function ingestKnowledgeDocBatch(
         // One column holds both back-offs. A person's re-run that the gate
         // above let through (`retryNow`, the stamp a failed batch's back-off
         // — failureBackoffUntil) is past it here too: a failed vision-retry
-        // batch is retried now, exactly like a failed main-pass one, rather
-        // than refused after the route has recorded the re-run.
+        // batch is retried now, exactly like a failed main-pass one.
         if (Number.isFinite(after) && after > Date.now() && !(opts.retryNow && failureHold)) {
           released = await releaseIngestLease(doc.id, driver);
           return idle(claimed, {
@@ -1086,7 +1099,39 @@ export async function ingestKnowledgeDocBatch(
             visionRetryAfter: String(cur.vision_retry_after),
           });
         }
-        if (!vision) return await park(visionRetryMessage(waiting, null), new Date().toISOString());
+        if (!vision) {
+          // A person's re-run with no key that can read the waiting pages (no
+          // AI key, or a monthly cap reached) cannot perform the retry: it is
+          // refused with the reason, and writes nothing — never a park over
+          // the failed batch's record (its cause, its count, its back-off),
+          // which every driver still honours. Nothing is recorded either.
+          if (opts.retryNow && failureHold) {
+            released = await releaseIngestLease(doc.id, driver);
+            return idle(claimed, {
+              failureRetryBlocked: true,
+              failureRetryMessage: visionRetryMessage(waiting, null),
+              failureRetryAfter: failureHold,
+            });
+          }
+          return await park(visionRetryMessage(waiting, null), new Date().toISOString());
+        }
+      }
+    }
+
+    // ── A person's re-run, let through (ING-8) ───────────────────────────
+    //    Recorded here and only here: under the claim, past both gates,
+    //    before anything is downloaded. A re-run that cannot be recorded
+    //    runs nothing.
+    if (claimed && failureHold && opts.retryNow && opts.onRetryNow) {
+      let refusal: string | null;
+      try {
+        refusal = await opts.onRetryNow(claimed, failureHold);
+      } catch (e) {
+        refusal = (e instanceof Error ? e.message : String(e)) || "the record failed";
+      }
+      if (refusal) {
+        released = await releaseIngestLease(doc.id, driver);
+        return idle(claimed, { retryNowError: refusal });
       }
     }
 
@@ -1841,7 +1886,7 @@ export async function ingestKnowledgeDocBatch(
         // A batch that did work is not a failed one (ING-8), and holds no
         // one back — unless it finished a vision-retry round (ING-6).
         ...(didWork ? { ingest_failures: 0, vision_retry_after: roundBackoff?.after ?? null } : {}),
-        ...(roundBackoff ? { error: roundBackoff.message.slice(0, 500) } : {}),
+        ...(roundBackoff ? { error: truncateSafe(roundBackoff.message, ERROR_MAX_CHARS) } : {}),
         chunk_version: chunkVersion,
         ingest_claimed_by: null, ingest_claimed_at: null,
       };
@@ -1897,7 +1942,7 @@ export async function ingestKnowledgeDocBatch(
       busy: false, retryAfterMs: null, superseded: false,
       // A commit that finished a retry round says when the rest is tried.
       visionRetryBlocked: false, visionRetryMessage: roundBackoff?.message ?? null, visionRetryAfter: roundBackoff?.after ?? null,
-      failureRetryBlocked: false, failureRetryMessage: null, failureRetryAfter: null,
+      failureRetryBlocked: false, failureRetryMessage: null, failureRetryAfter: null, retryNowError: null,
       legacy: !leased, notPdf: null,
     };
   } catch (e) {
@@ -1973,16 +2018,22 @@ export async function drainKnowledgeIngestQueue(opts: {
   const out = { docsTouched: 0, pagesIndexed: 0, completed: 0, errors: [] as string[] };
   // 'indexing' is also the state an interactive driver leaves a row in
   // between its batches, so a row someone holds the claim on is skipped
-  // here rather than raced (ING-2). A document whose failed vision pages
-  // wait on a retry (ING-6) stays 'indexing' too: its vision_retry_after
-  // files it behind every document with real work (never-stamped first),
-  // and every park this run makes re-stamps it to now — a keyless park
-  // skips its write only while its stamp is under half an hour old — so a
-  // parked row sorts behind anything that lapsed before its last park.
-  // Parked rows rotate through the head twenty at a time and can never hold
-  // it: a lapsed failure (ING-8) comes up as they do — on the next run,
-  // behind twenty of them. A pre-20261122 database has neither column: the
-  // legacy selector.
+  // here rather than raced (ING-2). The queue is twenty rows a run, across
+  // every org: never-stamped rows (work no one has looked at yet) first,
+  // then the oldest vision_retry_after. A document whose failed vision pages
+  // wait on a retry (ING-6) stays 'indexing' too, and every row this run
+  // meets but cannot work on is re-stamped to now, behind anything that
+  // lapsed before it: a park (a keyless one skips its write only while its
+  // stamp is under half an hour old), and a row in a read-every-page
+  // library with no sponsored key (fileBehind, below) — which used to be
+  // skipped untouched, so twenty never-stamped ones held the head for good.
+  // So no row the drain cannot work on holds the head: they rotate through
+  // it twenty at a time. A lapsed failure (ING-8) comes up once the rows
+  // ahead of it have had their turn — the never-stamped work, then the rows
+  // stamped before it lapsed: on run floor(N / 20) + 1 after it lapsed for
+  // N such rows, or later when a run's page budget or time ends before its
+  // twentieth row. A pre-20261122 database has neither column: the legacy
+  // selector, in upload order.
   const cutoff = new Date(Date.now() - INGEST_LEASE_TTL_MS).toISOString();
   const select = (claimFilter: boolean) => {
     let q = supabaseAdmin
@@ -1996,8 +2047,28 @@ export async function drainKnowledgeIngestQueue(opts: {
     return q.order("created_at", { ascending: true }).limit(20);
   };
   let { data: queued, error } = await select(true);
-  if (error && isMissingColumn(error)) ({ data: queued, error } = await select(false));
+  let hasStamp = true;
+  if (error && isMissingColumn(error)) { hasStamp = false; ({ data: queued, error } = await select(false)); }
   if (error || !queued) return out;
+
+  /** A row this run cannot work on files behind everything that lapsed
+   *  before now, as a park does: its stamp moves to now. A compare-and-set
+   *  on the stamp as read, on a row no one holds the claim on, so it never
+   *  overwrites a writer's — and a back-off still in force already files it
+   *  behind now, and is never shortened. Checked: a stamp that cannot be
+   *  written is reported. */
+  const fileBehind = async (d: KnowledgeDocRow): Promise<void> => {
+    if (!hasStamp) return;
+    const nowMs = Date.now();
+    const at = Date.parse(String(d.vision_retry_after ?? ""));
+    if (Number.isFinite(at) && at > nowMs) return;
+    let q = supabaseAdmin.from("knowledge_documents").update({ vision_retry_after: new Date(nowMs).toISOString() })
+      .eq("id", d.id).eq("file_key", d.file_key)
+      .or(`ingest_claimed_at.is.null,ingest_claimed_at.lt."${cutoff}"`);
+    q = d.vision_retry_after == null ? q.is("vision_retry_after", null) : q.eq("vision_retry_after", d.vision_retry_after);
+    const { error: stampErr } = await q;
+    if (stampErr) out.errors.push(`${d.name}: could not move it behind newer work in the queue: ${stampErr.message}`);
+  };
 
   let budget = opts.maxPages;
   for (const doc of queued as KnowledgeDocRow[]) {
@@ -2006,7 +2077,9 @@ export async function drainKnowledgeIngestQueue(opts: {
     // Vision on the uploader's key, same gates as interactive. A library
     // marked "read every page with vision" must NOT be consumed text-only
     // when no sponsored key is available — that would permanently index
-    // drawings as empty pages. Leave it queued for an interactive driver.
+    // drawings as empty pages. Leave it queued for an interactive driver,
+    // filed behind what lapsed before now (a mirror has no uploader, so no
+    // sponsor ever: left where it was, it would come first every night).
     const visionUsage: AiUsage = { inputTokens: 0, outputTokens: 0 };
     let visionModel = "";
     const sponsor = await loadSponsorVision(doc, (u, model) => {
@@ -2014,7 +2087,7 @@ export async function drainKnowledgeIngestQueue(opts: {
       visionUsage.outputTokens += u.outputTokens;
       visionModel = model;
     });
-    if (!sponsor.ctx && sponsor.forceAllPages) continue;
+    if (!sponsor.ctx && sponsor.forceAllPages) { await fileBehind(doc); continue; }
 
     out.docsTouched++;
     let row: KnowledgeDocRow = doc;
