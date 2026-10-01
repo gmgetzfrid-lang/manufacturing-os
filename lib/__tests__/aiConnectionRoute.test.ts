@@ -191,7 +191,7 @@ describe("GOV-7 — tests are gated and metered", () => {
 
   it("a LOCKED ($0) member gets no de-minimis exemption: a new key is neither checked nor saved (GOV-3 — zero spend on every gate)", async () => {
     db.tables.ai_usage_limits = [{ org_id: ORG, user_id: ME, monthly_cap_usd: 0 }];
-    const chat = await post({ provider: "anthropic", model: "claude-sonnet-4", apiKey: "sk-ant-new-key-1" });
+    const chat = await post({ provider: "anthropic", model: "chat-model", apiKey: "sk-ant-new-key-1" });
     expect(chat.status).toBe(402);
     expect(String(chat.json.error)).toMatch(/set to \$0.*can't be checked while AI is locked for you, so it was not saved/);
     const emb = await post({ action: "embedding", embeddingProvider: "voyage", embeddingModel: "voyage-3.5-lite", embeddingApiKey: "pa-new-key" });

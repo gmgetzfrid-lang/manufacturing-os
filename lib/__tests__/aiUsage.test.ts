@@ -222,10 +222,10 @@ describe("GOV-4 — the gate fails CLOSED", () => {
     expect(m.byOp.flowRead.spentUsd).toBe(1);
     expect(m.calls).toBe(1);
     // a reservation that fits beside it proceeds — the month is not refused (GOV-4 done-when 2)
-    const r = await reserveWithinCap({ orgId: "o1", userId: "u1", op: "graphShape", provider: "anthropic", model: "claude-sonnet-4", worstCaseUsd: 0.01, capUsd: 10 });
+    const r = await reserveWithinCap({ orgId: "o1", userId: "u1", op: "graphShape", provider: "anthropic", model: "m", worstCaseUsd: 0.01, capUsd: 10 });
     expect(r.reservedUsd).toBe(0.01);
     // one that does not fit is refused like any other spend (402), naming no migration
-    const err = await reserveWithinCap({ orgId: "o1", userId: "u1", op: "graphShape", provider: "anthropic", model: "claude-sonnet-4", worstCaseUsd: 9.5, capUsd: 10 }).catch((e) => e);
+    const err = await reserveWithinCap({ orgId: "o1", userId: "u1", op: "graphShape", provider: "anthropic", model: "m", worstCaseUsd: 9.5, capUsd: 10 }).catch((e) => e);
     expect((err as GovernedCallError).status).toBe(402);
     expect((err as Error).message).not.toMatch(/20260916/);
     // a failed call written by the fallback is not counted (nothing was billed)
