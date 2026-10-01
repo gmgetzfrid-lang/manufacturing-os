@@ -56,6 +56,8 @@ lib/storageOrphans.ts:41-44 `// Each source: [label, query, extractor]. Tables a
 
 **Partial (2026-09-30, intelligence Round G).** Pointer — re-verified at HEAD `1b71ca1`: no criterion holds. `collectReferencedKeys` still has no `cost_documents` source (`lib/storageOrphans.ts:47-93` — document_versions, knowledge_documents, asset_photos, tickets, markup_requests, plot_plans, libraries, collections, users, org_configurations, output_templates), no key-column tripwire exists, and the purge's audit row records counts and scope, not keys (`app/api/admin/orphans/route.ts:50-55`). What changed around it: the sweep's walk and delete set are confined to the caller's org prefix (document-control `RET-7`; `ILIFE-8`'s listing half — ILIFE-8 itself stays OPEN on its `referencedKeys` residual), so the gap's blast radius is now the caller's own org; and the collector pages in id order (document-control `XEDGE-13`), but its post-loop count does not catch a concurrent delete (`ILIFE-6` criterion 3, ✗). Owner: admin-and-org **P2** (`BKP-2` — the storage-key registry including `cost_documents.file_url`, and its tripwire); criterion 3 (keys in the audit row) is this finding's addition, carried to `BKP-2` by a cross-note.
 
+*Cross-note (2026-10-01, admin-and-org Round G, P2): criteria 1 and 2 hold. `cost_documents.file_url` is in `lib/storageKeyRegistry.ts STORAGE_KEY_SOURCES`, which `collectReferencedKeys` reads, and `lib/__tests__/storageKeyRegistry.test.ts` is the key-column census (see `BKP-2`, RESOLVED). Criterion 3 (the purge's audit row records the deleted keys) belongs to `app/api/admin/orphans/route.ts`, which is outside A&O P2's files; this finding stays OPEN on it.*
+
 ---
 
 <a id="ilife-2"></a>
@@ -220,6 +222,45 @@ Tests: `lib/__tests__/intelRoundGIngestMigration.test.ts`:
 
 So the whole knowledge restore aborts, not one row. **Handoff to I-01, which owns restore:** the restore must drop mirrors whose `source_document_id` is absent from the restored documents. Alternatively, it can add `knowledge_documents` to the per-row refusal set (23503) and teach the single-shot path the same per-row refusal. The migration's header and `DEC-58`'s Risk line now say this.
 
+**Partial (2026-10-01, admin-and-org Round G, P2).** The predicate landed; its call site is not this package's.
+
+`lib/storageKeyRegistry.ts keysReferencedOutside(sb, keys, except)` returns the keys among `keys` that any registered plain key column still names. The case that matters is `knowledge_documents.file_key`, which names the SAME object as the controlled revision it mirrors (`lib/knowledgeSourceSync.ts` writes `file_key: version.file_url`). The read is:
+- bucket-wide, like the sweep's reference set (`DEC-57`);
+- fail-closed on any read error;
+- skips the `table.column` entries the caller has already judged.
+
+Reproduced on HEAD: the document shed's two guards are `partitionOrgKeys` (RET-6) and `sharedLiveKeys` (RET-8). `sharedLiveKeys` reads `document_versions` only (`lib/shedKeyGuard.ts:64-86`) and is called at `app/api/admin/shed/route.ts:98` (produce and preview, `refineSelection`) and `app/api/admin/shed/commit/route.ts:118` (commit). Neither consults `knowledge_documents`, so a shed between a rev-up and the next sync still deletes bytes a 'ready' mirror points at.
+
+Tests: `lib/__tests__/storageKeyRegistry.test.ts`, "ILIFE-5 — keysReferencedOutside: the predicate a step freeing a revision's bytes must consult":
+- a key a knowledge mirror still names is kept, and a key nothing else names is not;
+- every plain key column is checked except the excluded ones;
+- an unreadable column refuses.
+
+**Handoff — the exact call-site hunks.** The shed routes are document-control's (P9 merged), and no running package lists them:
+```diff
+--- app/api/admin/shed/route.ts   (refineSelection, :93-101)
++import { keysReferencedOutside } from "@/lib/storageKeyRegistry";
+ …
+   const shared = await sharedLiveKeys(sb, orgId, owned.map((r) => r.file_url as string), insideIds);
+-  const rows = shared.size === 0 ? owned : owned.filter((r) => !shared.has(r.file_url as string));
++  // ILIFE-5: a key a knowledge mirror (or any other registered column) still names is never claimed.
++  const elsewhere = await keysReferencedOutside(sb, owned.map((r) => r.file_url as string), ["document_versions.file_url"]);
++  const rows = owned.filter((r) => !shared.has(r.file_url as string) && !elsewhere.has(r.file_url as string));
+--- app/api/admin/shed/commit/route.ts   (the RET-8 block, :116-126)
++import { keysReferencedOutside } from "@/lib/storageKeyRegistry";
+ …
+     const shared = await sharedLiveKeys(sb, orgId, versions.map((v) => v.file_url as string), linkedIds);
++    // ILIFE-5: never free bytes a knowledge mirror still names.
++    for (const k of await keysReferencedOutside(sb, versions.map((v) => v.file_url as string), ["document_versions.file_url"])) shared.add(k);
+     if (shared.size > 0) {
+```
+Both sit inside the existing `try` that answers 503 (produce: the GET / POST catch; commit: "… Nothing was freed.") on a read error. With them, a revision whose key a mirror names is never claimed and never freed, and is counted in `sharedSkipped`. Test shape: `lib/__tests__/dcRoundFShed.test.ts`'s RET-8 cases, with a `knowledge_documents` row naming the key.
+
+**Done-when.**
+1. ✓ (intelligence Round G, above).
+2. ✓ (above).
+3. ◐ — the predicate exists and is tested, but the shed's candidate query does not call it yet. OPEN on the handoff.
+
 ---
 
 <a id="ilife-6"></a>
@@ -257,6 +298,8 @@ lib/dataExport.ts:299-311 `while (true) { let q = sb.from(table).select("*").ran
 - *Export.* `dumpTable` still pages `select("*").range(…)` with no `.order` (`lib/dataExport.ts:315`), and the manifest's `complete` is still `failedTables.length === 0` (`:262`) with no per-table count reconciliation — criterion 1 (for the export) and criterion 2 open.
 
 Owner of both halves: admin-and-org **P2** — `BKP-2` owns the reference collector, and the export contract is `lib/dataExport.ts`; cross-note on `BKP-2`. A&O P2's plan does not carry criterion 3 today (it lists "BKP-2 pagination half ← DC XEDGE-13" as already resolved), so the integrator adds the keyset fix to it together with the two test edits the fix forces: flip `intelRoundGRecords.test.ts` "ILIFE-6 criterion 3 …" from `it.fails` to `it` (it fails the suite until flipped — the tripwire is deliberate), and update `destructiveDeletes.test.ts`'s fake, which answers only `.range`. The `BKP-2` cross-note names both edits, so the package that lands the fix reads them in the record it is assigned.
+
+*Cross-note (2026-10-01, admin-and-org Round G, P2): criterion 3's collector half landed. `lib/storageOrphans.ts collectReferencedKeys` pages by keyset (`.order("id").gt("id", last).limit(1000)`), and the tripwire in `lib/__tests__/intelRoundGRecords.test.ts` is flipped to `it` (see `BKP-2`). The balanced case still needs a re-check of each candidate before `DeleteObjects` in `deleteOrphans`: a row already read is deleted while one is inserted behind the cursor. That is the purge side, outside A&O P2's brief. The export half is untouched: `dumpTable`'s stable order and the per-table count reconciliation (criteria 1-2 for the export). A&O P2's plan lists it as resolved elsewhere (`XEDGE-13`), which covers the sweeper only; the integrator assigns an owner.*
 
 ---
 
@@ -470,6 +513,12 @@ lib/schemaExpectations.ts:10-13 `// Generated from supabase/migrations (CREATE T
 - [ ] EXPECTED_COLUMNS gains the feature-critical ALTERs from 20261015/16/17 so a half-applied intelligence migration is visible
 
 **Partial (2026-09-30, intelligence Round G).** Re-verified at HEAD `1b71ca1`. Half of criterion 1 landed under projects Round G **J9** (`REL-7`): `lib/__tests__/schemaExpectations.test.ts` scans every `CREATE TABLE` in `supabase/migrations` and fails when one is missing from `EXPECTED_TABLES` (`:155-159`) — but it grandfathers `answer_skills`, `link_rules`, `process_flows`, `knowledge_line_traces` and `document_markups` (`:71`) and does not assert the reverse, so the phantom `{ table: "statements" }` is still listed (`lib/schemaExpectations.ts:118`). Criterion 2 (the intelligence tables probed with their migration files) and criterion 3 (`EXPECTED_COLUMNS` for the 20261015/16/17 ALTERs) are open. Owner: admin-and-org **P2** (`BKP-14` — delete `statements`, regenerate the list, empty the grandfather set); cross-note there. `knowledge_line_traces` is retired (`20261007_retire_line_traces.sql`), so its row should record the retirement rather than probe for a table that must not exist (the `IRLS-12` verifier correction).
+
+*Cross-note (2026-10-01, admin-and-org Round G, P2): closes by pointer to admin-and-org `BKP-14` (RESOLVED).*
+- *Criterion 1 ✓: the tripwire runs both ways, schema.sql included; `statements` fails it and is gone.*
+- *Criterion 2 ✓: `process_flows`, `link_rules` and `answer_skills` are probed with their files, and `knowledge_line_traces` is recorded as retired.*
+- *Criterion 3 ✓, vacuously: 20261015/16/17 add no column to an older table.*
+- *The route reads PGRST205 as missing, which settles the verifier's "phantom may pass as present".*
 
 ---
 

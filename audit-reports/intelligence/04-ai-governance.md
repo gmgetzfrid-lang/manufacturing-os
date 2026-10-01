@@ -255,7 +255,7 @@ Integrator at merge (2026-10-01, the final review's minor). The GET passed the l
 ## GOV-4 · The spend gate fails OPEN: any ledger read error, and any pre-migration metering row, resolves to $0 spent
 
 - **Severity:** HIGH
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Assigned:** admin-and-org P2 (done-when 3, the schema-health row) — by the integrator, 2026-10-01 (at the I-05 merge: the package that left this remainder has merged; fleet plan `audit-reports/fleet-plans/`).
 - **Verification:** CONFIRMED
 - **Locations:** `lib/ai/usageServer.ts:65`, `lib/ai/usageServer.ts:42-53 (rollup)`, `lib/ai/usageServer.ts:122-126`
@@ -324,6 +324,20 @@ Integrator at merge (2026-10-01, the final review's minor). A member list the GE
 4. ✓ Test: a mocked ledger error produces a refused governed call.
 
 **Scope / residual.** OPEN until done-when 3's schema-health row lands. On a database without `20260916`'s cost columns the ledger read fails, so every AI call is refused — the columns are a hard precondition. During a ledger outage the ask and orchestrator routes still answer an unhandled error (a 500) instead of the 503 sentence — refused either way, never spent; their owners map `GovernedCallError` as they adopt `assertAiGates` (I-03 ask, I-04 orchestrator — listed in `99-fix-sequencing.md`). The embed route (I-02) does the same, and the embed drain records the refusal and ends that run, which only spends AI. *Corrected in fix pass 2:* locate is NOT "refused either way". When its AI step is refused (no key, cap reached) it still answers the text-layer positions, `notOnPage` and the library-wide `elsewhere` hits with a `skipped` sentence; now an unreadable ledger throws at its `Promise.all([getMonthUsage, getCapUsd])` (`app/api/knowledge/locate/route.ts:185`) and the whole response is a 500 — a viewer loses the positions already found and the "V-3 is on 025-PID-0103" navigation, which spend nothing. That is a regression of non-AI output caused by this package's throw. I-07's limb (in `99-fix-sequencing.md`): catch `isAiUsageUnavailable(e)` there and answer `positions`, `notOnPage` and `elsewhere` with the refusal as `skipped`, the pattern this package applied to the ingest route. *Fix pass 3:* that limb is now a MERGE GATE for I-05, not only a handoff — I-07 runs in parallel and nothing in the merge order put it first, so the integrator applies the recorded catch (code and test in `99-fix-sequencing.md`) at I-05's merge if I-07 has not landed it. *Corrected in fix pass 10:* the gate was written against a `Promise.all([getMonthUsage, getCapUsd])` that I-07 as merged (`d466a59`) no longer has. Locate now reads its spend through its own `monthSpendAllOps`, which answers null on a ledger error, and I-07 handles that null. The throw that remains is `getCapUsd`'s: it refuses an unreadable cap table where at `052271b` it answered $10. That throw sits outside any try at `app/api/knowledge/locate/route.ts:303` on the integration branch, so the response is still a 500 that loses the free answer. The gate in `99-fix-sequencing.md` is restated against that line, with the $0 lock check (`GOV-3`) and the tests. The current month of the ledger is no longer purge-eligible (fix pass 3, above).
+
+**Resolution (2026-10-01, admin-and-org Round G).** Done-when 3, the last open item, landed in admin-and-org package P2. `lib/schemaExpectations.ts EXPECTED_COLUMNS` probes the four `ai_usage_events` columns that `20260916_ai_governance.sql` adds and the ledger read selects (`lib/ai/usageServer.ts USAGE_COLUMNS`): `est_cost_usd`, `input_tokens`, `output_tokens` and `model`. A database without them now shows on `/api/admin/schema-health` as a gap naming `20260916_ai_governance.sql` ("AI spend ledger — the cap gate's cost (every AI call is refused without it)"), on top of the refusal the ledger read already gives.
+- Files: `lib/schemaExpectations.ts`.
+- Tests: `lib/__tests__/schemaExpectations.test.ts`:
+  - "GOV-4 Done-when 3: every ledger column lib/ai/usageServer.ts reads that 20260916 adds is probed": it parses `USAGE_COLUMNS`, finds the columns 20260916 adds and requires a row for each;
+  - "every EXPECTED_COLUMNS row's file really adds that column".
+
+**Done-when.**
+1. ✓ (intelligence Round G, I-05).
+2. ✓ (I-05).
+3. ✓ — the schema-health rows.
+4. ✓ (I-05).
+
+**Scope / residual.** As recorded above: the routes' mapping of `GovernedCallError`, by their owners. None of it is a criterion of this finding.
 
 ---
 

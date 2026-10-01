@@ -109,6 +109,7 @@ about the system.
 | [DEC-73](#dec-73) | AI spend and keys: **one cap over every op**, a $0 cap **locks**, an unreadable ledger **refuses**; each call's worst case is **reserved before it is made**; setting caps is the **`ai.manage_caps`** capability (default Admin), never your own; Voyage stays on a named **embeddings allowlist** and every agreement names it (re-sign); production **never stores a key in plaintext**; the hub front door points at Facility setup | medium | `GOV-1`, `GOV-3`, `GOV-4`, `GOV-6`, `GOV-10`, `GOV-12`, `GOV-13`, `HUB-3` |
 | [DEC-74](#dec-74) | Notification preferences: one cadence spelling (`'instant'`); Hourly / Daily not offered; one email rule (master switch, `'never'`, the event's toggle) evaluated in **`email_gate()`**, where the recipient's row is visible; a gate that cannot answer still sends and stamps the row `unverified`; the 60-second dedupe merges an exact repeat only; "in-app" means the toast, never the bell; no inert switch; **no preference stops a drawing recall or a PSM alert** (§9, awaiting the user's ratification against GAP-203 acceptance 2) | low | `NEDGE-2`, `DELIV-12`, `DELIV-2`, `DELIV-9`, `RT-10` |
 | [DEC-75](#dec-75) | A restore writes **only the export contract's tables, only into the authorized workspace**: one shared write path forces `org_id`, every foreign key to an org-scoped table must name a row of that workspace (a row of a table with no `org_id` lands only under a parent of it), a person with no sign-in account is cleared or refuses the row, a storage key under another workspace's prefix is refused, and anything else is refused before a write; the outbound mail queue and the AI agreements, spend ledger and caps are never restored, and every service-role-only contract table is classified by a census; computed columns are never sent; tables restore parents-first; a restore **only adds** — an existing row is kept as it is (a numbering counter is only raised, never lowered), a re-run links the placeholders an earlier run created, a reconciliation read or write that fails stops the restore before any table, a key another workspace holds is reported as not restored, a row the database refuses is reported while the rest lands, and the counts are shown before and after; **one archive layout** (`manifest.json` + `tables/`) both producers write and the restore page reads, in parts | low | `ORG-1`, `BKP-3`, `BKP-5`, `BKP-7`, `BKP-10`, `BKP-12` |
+| [DEC-44 (A&O P2)](#dec-44-ao-p2) | A member reads only the **card columns** of an export destination (name, type, enabled, schedule, last run) — never its credentials or coordinates; the member policy is kept, the narrowing is a column privilege — *provisional number* | low | `BKP-11` |
 
 ---
 
@@ -1924,6 +1925,7 @@ safe side for a credential.
 *Landed 2026-10-01 (projects Round G, J11): the vendor intake token is stored only as its SHA-256 (`20261141`, projects-tab `SEC-19`), so `project_intake_links.token_hash` (the value a presented token is matched by) and `token_prefix` are bearer columns too — redacted with `token` in `REDACT_COLUMNS` and scrubbed by the restore; a restored link's placeholder token is hashed by the database and the link still arrives REVOKED. See [`DEC-69`](#dec-69).*
 *Landed 2026-10-01 (admin-and-org Round G, P1): "a restored export destination has no credentials and is DISABLED" now holds whatever the backup row carries — `lib/dataRestore.ts landRestoredRow` also sets `next_run_at` NULL (the scheduler selects only enabled rows with a due run) and NULLs every credential column even when the row omits the keys, which `scrubRestoredRow` alone could not see; and since both restore routes write through `applyRestoreChunk`, the scrub binds the single-shot `/apply` exactly as it binds `/apply-table`. See `BKP-11`, `BKP-1` (restore halves), `DEC-75`.*
 *Landed 2026-10-01 (admin-and-org Round G, P1 fix pass 3): the restore half's "nothing restored can fire until a person acts" now covers the outbound mail queue too. `email_notifications` is in `lib/dataRestore.ts SKIP_TABLES`, so neither restore route writes a row of it. A restored row bypassed the queue's INSERT rail (SURF-17) under the service role, and the drain sent it to any address the backup named. Landing it terminal was rejected because the Admin's dead-letter re-queue revives a failed row. The queue stays in the export for review. See `BKP-11` (fix pass 3 paragraph), `ORG-1`, `DEC-75` §4.*
+*Landed 2026-10-01 (admin-and-org Round G, P2): the acceptance line "No export artifact … contains a token or an `*_encrypted` value" is now pinned by VALUE. `lib/__tests__/exportContractRoundTrip.test.ts` runs the real export over a workspace holding live share, intake and portal tokens and destination credentials, and finds none of them in the envelope, in any entry of the server ZIP, or in any part of the browser Full ZIP. See `BKP-1` (RESOLVED).*
 
 <a id="dec-46"></a>
 ## DEC-46 · External share links: who mints, how long, what serves, what is recorded
@@ -3416,6 +3418,8 @@ may be scoped for speed. Nothing else changes.
 
 **Risk:** low. It keeps the current behaviour and closes no door.
 
+*Landed 2026-10-01 (admin-and-org Round G, P2): the collector reads the ONE storage-key registry the backup reads (`lib/storageKeyRegistry.ts`, `BKP-2`), still with no org filter, and pages by keyset (`ILIFE-6` criterion 3). The decision is unchanged. The `referencedKeys` aggregate (`ILIFE-8`'s residual) was not in A&O P2's plan and still leaves the server.*
+
 <a id="dec-58"></a>
 ## DEC-58 · Knowledge ingestion: one writer, one reset, honest pages, a chunker a library chooses
 
@@ -4722,3 +4726,29 @@ The single-shot audit row also dropped `uncounted` and `filtered`, and the page'
 2. The confirm and `RESTORE_ADDITIVE_NOTE` still told the Admin that every record already here is "kept exactly as it is", while the run then raised an existing counter.
 
 Two smaller points are also fixed. A team membership naming an unmapped member was reported with the wrong remedy (`person_not_restored`). The counter justification assumed the backup's ticket prefix matches this workspace's; where it does not, the raise leaves a gap rather than a duplicate, which is the trade-off now recorded in §5. All are fixed above (§5) with route tests, each checked by mutation. The residual risks of the fifth correction are unchanged, and a restore into a workspace with a different number prefix skips the numbers the backup issued.
+
+*Landed 2026-10-01 (admin-and-org Round G, P2): the export now carries the two org-less tables §3 bounds. `project_members` and `curated_collection_items` are read through this workspace's `projects` / `curated_collections` (`lib/exportTables.ts EXPORT_KEYED_BY`), and `orgs` by its id. A test pins that export and restore name the same parents. `access_requests` stays exported by `org_id`. A backup the current export writes is COMPLETE, and both tables restore end to end (`lib/__tests__/exportContractRoundTrip.test.ts`). See `BKP-4` (RESOLVED).*
+
+<a id="dec-44-ao-p2"></a>
+## DEC-44 (A&O P2) · What a member may read of an export destination
+
+*Minted by admin-and-org Round G, package P2 (2026-10-01), under the protocol's fail-safe rule, taking the fleet plan's stated default (`audit-reports/fleet-plans/admin-and-org.json`, P2 decisionsNeeded: "BKP-11: drop member SELECT policy vs non-credential view"; the brief: prefer the reversible option). It is a provisional "DEC-44 (A&O P2)", distinct from the download-record DEC-44. DEC-44 to DEC-75 are taken on the integration branch, so the integrator renumbers. References: `BKP-11`; `supabase/migrations/20261154_ao_roundG_export_destinations_select.sql`; `lib/__tests__/aoRoundGExportDestinationsMigration.test.ts`.*
+
+**Decision. A member reads only the CARD columns of their own org's export destinations: name, type, whether it is on, its schedule and its last run. A member never reads its credentials or its coordinates. The member SELECT policy stays; the narrowing is a column privilege.**
+
+1. The table-level SELECT on `export_destinations` is revoked from PUBLIC, anon and authenticated. SELECT is granted back to authenticated on `id, org_id, name, destination_type, enabled, schedule_kind, schedule_hour_utc, schedule_day_of_week, schedule_day_of_month, next_run_at, include_files, retention_days, last_run_at, last_run_status, last_run_error, last_run_bytes, created_at, created_by, updated_at, updated_by`.
+2. Not granted:
+   - the credentials: `access_key_id_encrypted`, `secret_access_key_encrypted`, `webhook_secret_encrypted`;
+   - the coordinates: `endpoint`, `region`, `bucket`, `prefix`, `webhook_url`. A webhook URL can carry its own secret, and Admins, Managers and DocCtrls read the coordinates through the role-gated API.
+3. `export_dest_member_select` (`20260605`) is kept as it is: it still binds a card read to the caller's own active membership.
+
+**Rationale.** The table is service-role-only by design: every read in the app is the service role behind a role-gated route, and `20260605`'s own header says the client never touches it. Dropping the policy would remove the member read as well, but a dropped policy has to be re-created from its body to undo it. The column privilege is undone with one GRANT and leaves the policy's org binding in place. Exposing the coordinates was rejected for the same reason the credentials are withheld: the API, not the table, is where an authorised role reads them.
+
+**Implementation.** `20261154` (one paste: count-only inventory, one transaction, one `(check, ok, n)` SELECT with eight probes). The shape test pins the grant list to the census of the table's columns minus the credentials and coordinates, and pins that no reader in `app/`, `lib/` or `components/` uses a member session.
+
+**Acceptance.** After the paste, a member's `select('*')` on the table is refused (42501). A select of the card columns answers for their own org only. `has_column_privilege('authenticated', …)` is false for each credential and coordinate column, `anon` holds no column, and the service role keeps the whole table.
+
+**Reversal.** `GRANT SELECT ON export_destinations TO anon, authenticated;` (in the migration header) restores the previous privileges exactly. A screen that needs a member to read the coordinates should get a server route, not the grant.
+
+**Risk:** low. Nothing in the app reads the table as a member. A column added later is not readable by a member until it is granted, which fails closed.
+

@@ -33,7 +33,7 @@ What is in the export set, what is silently absent, and what a restore does to l
 ## BKP-1 · Exports embed live unauthenticated bearer tokens — share links, transmittal portal links, and WRITE-capable vendor intake links — in plaintext in a file designed to be mailed around
 
 - **Severity:** CRITICAL
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Verification:** CONFIRMED
 - **Locations:** `lib/exportTables.ts:50-54`, `lib/dataExport.ts:300`, `app/api/share/resolve/route.ts:30-37`, `app/api/transmittal/route.ts:24-31`, `app/api/intake/upload/route.ts:32-40`, `supabase/migrations/20260623_document_shares.sql:14`, `supabase/migrations/20260902_project_intake.sql:22`, `supabase/migrations/20260910_transmittal_portal.sql:21`, `lib/exportTables.ts:171-181`
 - **Independently verified:** ✓ **SURVIVES** — second independent adversarial pass. Confirmed on every leg: the columns exist in plaintext, `select("*")` carries them into both the JSON envelope and the ZIP's tables/*.json, and possession of the string is the entire credential on three unauthenticated routes, one of them write-capable. The only counter-argument is fidelity (a restore without tokens breaks live share links) — that's a design tension, not a refutation of the exposure.
@@ -60,6 +60,17 @@ lib/exportTables.ts:50-54 lists `"project_intake_links"`, `"document_shares"`, `
 
 **Partial (2026-10-01, admin-and-org Round G).** P1's restore half, verified and pinned — no new code was needed for it. Re-verified on HEAD `bcbf3e8`: document-control `EGR-7` / `DEC-45` put `scrubRestoredRow` inside `remapRow` (`lib/dataRestore.ts`), and since `ORG-1` / `BKP-3` both restore routes write ONLY through `applyRestoreChunk`, which calls `remapRow` on every row — so the single-shot `/apply` scrubs exactly as the chunked `/apply-table` does: a share or intake link lands with a `restored-<uuid>` placeholder token and `revoked_at` set, a transmittal with no `portal_token` and an issued one VOIDED. Test: `lib/__tests__/restoreApplyRoute.test.ts` "the single-shot route scrubs every bearer column like the chunked one" (`document_shares`, `project_intake_links`, `transmittals`) and "the same rows land identically through /apply-table and /apply"; the chunked route stays covered by `lib/__tests__/dcRoundFExportContract.test.ts`. Done-when 2's restore clause ("the restore path regenerates tokens instead of reinstating the old ones") holds on both routes; the export half (Done-when 1, 3 and the manifest note) is `EGR-7`'s, which admin-and-org P2 closes this finding by pointer to. Status stays OPEN for P2.
 
+**Resolution (2026-10-01, admin-and-org Round G).** Package P2 — the export half by pointer, plus the value test Done-when 3 asks for. Re-verified on base `2290b94`: document-control `EGR-7` / `XEDGE-10` (`DEC-45`) holds — `lib/exportTables.ts REDACT_COLUMNS` (`document_shares.token`; `project_intake_links.token`, `token_hash`, `token_prefix`; `transmittals.portal_token`; the three `export_destinations` `*_encrypted` columns) and `redactRow`, applied by `dumpTable` to every dumped row (`lib/dataExport.ts`, `out.push(...rows.map((r) => redactRow(table, …)))`); the manifest's `redactedColumns` and notes say share and intake links must be re-issued, a restored transmittal has no portal link, and destination credentials must be re-entered; the restore half is P1's (Partial above). What was missing was Done-when 3: the only tests were source pins (`lib/__tests__/dcRoundFExportContract.test.ts`) and a unit test of `redactRow`; nothing ran the export over live token values. Landed: `lib/__tests__/exportContractRoundTrip.test.ts`, "BKP-1 — no exported row carries a live bearer credential". The real `runOrgExport` runs over a workspace holding a live share token, an intake token with its hash and prefix, an issued transmittal's portal token and an export destination's three credentials. Every redacted column is null in every exported row (each redacted table has rows, so the check is not vacuous), and none of the seeded values appears anywhere in the serialized envelope, in any entry of the server ZIP (`lib/exportRunner.ts buildAndDeliverExport`) or in any part of the browser Full ZIP (`lib/clientBackup.ts runFullBackup`). The test matches values, not a "token shape": the intake door's shape (`[A-Za-z0-9_-]{16,128}`) also matches every UUID in the envelope, so a shape scan cannot tell a leak from an id. The shape side is the existing redaction census (`lib/__tests__/exportCoverage.test.ts`: every credential-NAMED column of an exported table must be redacted).
+- Files: none changed for this finding (tests only).
+- Tests: `lib/__tests__/exportContractRoundTrip.test.ts` "the envelope: every redacted column is null and no token value appears anywhere", "the server ZIP and the browser Full ZIP: no token value in any entry".
+
+**Done-when.**
+- [x] token columns are redacted (nulled) in the export dump ✓ — `REDACT_COLUMNS` / `redactRow` in `dumpTable` (`EGR-7`).
+- [x] the manifest notes that share/portal/intake links must be re-issued after a restore, and the restore path regenerates tokens instead of reinstating the old ones ✓ — the manifest notes (`lib/dataExport.ts`); `scrubRestoredRow` on both restore routes (P1, above).
+- [x] a test asserts no exported row contains a value matching the share/portal/intake token ✓ — by value, across the envelope and both ZIP layouts.
+
+**Scope / residual.** None for this finding. `export_destinations.webhook_url` is not a credential under `DEC-45` and is still exported; a member's direct read of it is narrowed by `BKP-11`'s migration `20261154`.
+
 ---
 
 <a id="bkp-2"></a>
@@ -67,7 +78,7 @@ lib/exportTables.ts:50-54 lists `"project_intake_links"`, `"document_shares"`, `
 ## BKP-2 · cost_documents binaries are referenced by nothing the system knows about — absent from every backup AND eligible for permanent orphan deletion after 7 days
 
 - **Severity:** CRITICAL
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Verification:** CONFIRMED
 - **Locations:** `lib/dataExport.ts:316-363`, `lib/storageOrphans.ts:42-88`, `lib/storageOrphans.ts:152-177`, `app/api/admin/orphans/route.ts:47`, `app/api/intake/upload/route.ts:70-87`, `supabase/migrations/20260819_orphan_tables_backfill.sql:179-196`, `lib/exportTables.ts:93`
 - **Independently verified:** ✓ **SURVIVES** — second independent adversarial pass. Both halves verified by repo-wide search: no reference source anywhere registers cost_documents.file_url, so the binaries are simultaneously absent from every backup manifest and eligible for permanent, unrecoverable deletion 7 days after upload.
@@ -91,6 +102,25 @@ lib/storageOrphans.ts:11-13 promises the opposite — "the reference collector q
 - [ ] orphan deletion refuses to run when the reference collector's source list is smaller than the schema's storage-key column set
 
 *Cross-area note (2026-09-30, intelligence Round G): intelligence `ILIFE-1` (the same `cost_documents` gap) closes by pointer when this lands, and also asks that the orphan purge's audit row record the deleted KEYS. Intelligence `ILIFE-6`'s open halves ride this package: the export contract (`dumpTable`, `lib/dataExport.ts:315`, pages with no `.order`, and the manifest has no per-table count reconciliation), and this finding's collector — `collectReferencedKeys` pages by OFFSET with a count taken after the loop, so a concurrent delete skips a live reference the count cannot see (ILIFE-6 criterion 3, reproduced; the fix is keyset paging, `.gt("id", lastId)`). Landing it forces two test edits outside this area's files: flip `lib/__tests__/intelRoundGRecords.test.ts` "ILIFE-6 criterion 3 …" from `it.fails` to `it` (a deliberate tripwire — it fails the suite until flipped), and update `lib/__tests__/destructiveDeletes.test.ts`'s collector fake, which answers only `.range`. Intelligence `ILIFE-8`'s residual is here too, and ILIFE-8 stays OPEN on it: the orphan scan returns `referencedKeys`, a platform-wide count, to one org (`app/api/admin/orphans/route.ts:30`, `lib/storageOrphans.ts:187`) — count only keys under the caller's prefix, or drop the field (`DEC-57`). Neither is in admin-and-org P2's plan yet; the integrator adds both. (Test edits and ILIFE-8 status added on intelligence I-01's fix pass 3.)*
+
+**Resolution (2026-10-01, admin-and-org Round G).** Package P2. Reproduced on base `2290b94`: `lib/dataExport.ts collectFilePaths` (`:340-387`) and `lib/storageOrphans.ts collectReferencedKeys` (its sources, `:47-93`) each kept their own list, and neither named `cost_documents` (no match in either file). Fix: `lib/storageKeyRegistry.ts` is the one registry. `STORAGE_KEY_SOURCES` lists 12 sources: document revisions with their native source, knowledge PDFs, asset photos, ticket attachments, markup files, plot plans, library and folder covers, avatars, the branding logo, output templates with their examples, and `cost_documents.file_url`. BOTH collectors read it: `collectFilePaths` builds the backup's file manifest from it, and `collectReferencedKeys` builds the sweep's reference set from it. `STORAGE_KEY_COLUMNS` declares the schema's key columns. `collectReferencedKeys` first calls `registryGaps(sources)` and refuses to scan when its sources read fewer columns than that declaration ("reference scan refused: the schema's storage-key columns … are read by no collector source — aborting (fail-closed)"). `scanOrphans`, and so `deleteOrphans`, run it first. `asset_files`, which the verifier named, holds no key of its own: it links an asset to a DOCUMENT, whose revisions' keys are collected. `BINARY_LINK_TABLES` records this and the census asserts it.
+- Files: `lib/storageKeyRegistry.ts` (new), `lib/storageOrphans.ts` (the collector), `lib/dataExport.ts` (`collectFilePaths`).
+- Tests: `lib/__tests__/storageKeyRegistry.test.ts`:
+  - the census: "every key-named column in supabase/ is registered or declared not-a-key, with a reason", "STORAGE_KEY_COLUMNS is exactly the key-named columns plus the JSON-embedded logo — no more, no less", "the sources read exactly the declared key columns (no gap either way)";
+  - "cost_documents, native CAD sources, knowledge PDFs and output templates are in BOTH collectors";
+  - "BKP-2 Done-when 3: the orphan sweep refuses to run when its source list is smaller than the schema's key columns" (no read happens);
+  - "asset_files holds no key of its own".
+  `lib/__tests__/exportContractRoundTrip.test.ts` carries a vendor quote through the server ZIP, the browser ZIP and a restore.
+
+**Done-when.**
+- [x] cost_documents.file_url is registered in BOTH lib/storageOrphans.ts sources and lib/dataExport.ts collectFilePaths ✓ — one registry, read by both.
+- [x] a test enumerates every storage-key column in the schema and fails when either collector is missing one ✓ — the census in `storageKeyRegistry.test.ts` (by column name across supabase/, the JSON-embedded logo declared), plus "the two lists are identical".
+- [x] orphan deletion refuses to run when the reference collector's source list is smaller than the schema's storage-key column set ✓ — `registryGaps` in `collectReferencedKeys`.
+
+**Scope / residual.** The census reads column NAMES (`(^|_)(url|key|path|attachments|files)$`), so a key inside a JSON column under another name is invisible to it. The export's value scan (`BKP-9` Done-when 3) reports such a key at run time. On the cross-notes above:
+- Intelligence `ILIFE-1`'s third criterion (the purge's audit row records the deleted KEYS) belongs to `app/api/admin/orphans/route.ts`, which is outside this package's files; `ILIFE-1` stays OPEN on it.
+- `ILIFE-6` criterion 3 landed here. `collectReferencedKeys` pages `.order("id").gt("id", last).limit(1000)` (keyset), so a row deleted behind the cursor can no longer move a window. The tripwire in `lib/__tests__/intelRoundGRecords.test.ts` is flipped to `it`. `lib/__tests__/destructiveDeletes.test.ts`'s stand-in answers the keyset chain and throws on `.range`. One case keyset paging alone cannot rule out: a row already read is deleted while a row is inserted behind the cursor, and the count balances. Closing it needs a re-check of each candidate just before `DeleteObjects`, in `deleteOrphans` (the purge side), which this package's brief does not cover; recorded on `ILIFE-6`.
+- `ILIFE-8`'s `referencedKeys` residual is not in this package's plan and is untouched.
 
 ---
 
@@ -142,7 +172,7 @@ app/api/admin/restore/apply/route.ts:82 `let mapped = rows.map((r) => remapRow(r
 ## BKP-4 · Four tables in ORG_SCOPED_TABLES have no org_id column — every export is stamped INCOMPLETE and permanently drops project rosters and curated-collection contents
 
 - **Severity:** HIGH
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Verification:** CONFIRMED
 - **Locations:** `lib/exportTables.ts:57-58`, `lib/exportTables.ts:91`, `lib/exportTables.ts:109-110`, `lib/exportTables.ts:152`, `lib/dataExport.ts:95-107`, `lib/dataExport.ts:209-218`, `lib/dataExport.ts:248`, `supabase/schema.sql:19-30`, `supabase/migrations/20260527_projects_and_collaboration.sql:55-65`, `supabase/migrations/20260602_documents_library_super.sql:63-71`, `supabase/migrations/20260819_orphan_tables_backfill.sql:16-24`
 - **Independently verified:** ✓ **SURVIVES** — second independent adversarial pass. Confirmed exactly, including the count of four. project_members (project rosters) and curated_collection_items (curated collection contents) are unrecoverable customer data that no export has ever contained.
@@ -166,6 +196,23 @@ lib/dataExport.ts:97 `const rows = await dumpTable(sb, tbl, "org_id", params.org
 - [ ] `project_members` and `curated_collection_items` are exported through their parent key (project_id → projects.org_id, collection_id → curated_collections.org_id) instead of org_id
 - [ ] `orgs` is exported with `.eq("id", orgId)` and `access_requests` is moved to EXPORT_EXCLUDED_TABLES with the reason already written in its migration comment
 - [ ] the coverage tripwire additionally asserts that every ORG_SCOPED_TABLES entry actually has an org_id column in the schema, so a table added to the wrong list fails the build
+
+**Resolution (2026-10-01, admin-and-org Round G).** Package P2. Reproduced on base `2290b94`: `runOrgExport` dumped every `ORG_SCOPED_TABLES` entry with `dumpTable(sb, tbl, "org_id", …)` (`lib/dataExport.ts:103`), and three entries have no `org_id` column: `orgs` (`lib/exportTables.ts:156`), `project_members` (`:112`) and `curated_collection_items` (`:58`). The fourth the finding named, `access_requests` (`:92`), has carried `org_id` since `20261023`, as P1 recorded under `BKP-3` / `DEC-75`. The failure itself is reproduced in `lib/__tests__/exportContractRoundTrip.test.ts`, whose database stand-in answers 42703 for a filter on a column the table lacks, as PostgREST does ("the stand-in answers 42703 for a filter on a column the table lacks").
+
+Fix: `lib/exportTables.ts EXPORT_KEYED_BY` names each such table's own key: `orgs` by `id`, `project_members` through `projects` (`project_id`), `curated_collection_items` through `curated_collections` (`collection_id`). `lib/dataExport.ts dumpOrgTable` reads a parent-keyed child with `.in(<column>, <this workspace's parent ids>)`, in chunks of 150, after its parent; `ORG_SCOPED_TABLES` lists the parent first, so it is dumped first. A parent that failed, or was not dumped, fails the child with "its parent table … was not exported, so its rows cannot be scoped to this workspace": the table is recorded as an error and never read unscoped. The restore already binds the same two children to a parent in the target workspace (P1, `ORG_LESS_RESTORE_PARENTS`), and a test pins that export and restore name the same parents.
+- **access_requests (the plan's decision): kept exported, not excluded.** It has `org_id`, so the criterion's premise ("no org_id") no longer holds, and it is this workspace's data: who asked to join. This is the plan default.
+- Files: `lib/exportTables.ts`, `lib/dataExport.ts`.
+- Tests:
+  - `lib/__tests__/exportCoverage.test.ts`, "export scope tripwire (BKP-4)": every `ORG_SCOPED_TABLES` entry has `org_id` or an `EXPORT_KEYED_BY` entry; an entry has no `org_id`, reads a real column, and its parent is org-keyed and dumped first; export and restore bound by the same parent.
+  - `lib/__tests__/exportContractRoundTrip.test.ts`, "BKP-4 — …": the backup is COMPLETE; `orgs` carries only this workspace's row, and the roster and the curated contents only this workspace's rows; a failing parent fails its child; 320 parents are read in chunks with every row once. The round trip restores both tables into a fresh workspace.
+  - Mutation-checked: with `EXPORT_KEYED_BY` emptied, eight of these fail.
+
+**Done-when.**
+- [x] `project_members` and `curated_collection_items` are exported through their parent key ✓.
+- [x] `orgs` is exported with `.eq("id", orgId)` ✓. `access_requests` is NOT moved to `EXPORT_EXCLUDED_TABLES`: the reason the criterion gives ("no org_id") stopped being true at `20261023`, so it is exported by `org_id` like every org table (plan default; `DEC-75` records the column).
+- [x] the coverage tripwire asserts every ORG_SCOPED_TABLES entry has an org_id column — or names its own key ✓.
+
+**Scope / residual.** `manifest.complete` now carries a signal; on base it was false on every export. The chain reaction (the browser backup never read `manifest.complete`) was closed by P1 (`BKP-10`: the browser backup's report carries `complete` and the manifest notes).
 
 ---
 
@@ -458,7 +505,7 @@ app/api/data-export/structured/route.ts:55 `if (!["Admin", "Manager", "DocCtrl"]
 ## BKP-9 · The file manifest misses native CAD source files, knowledge-library PDFs and output templates — the README still claims "every binary file, path-preserved"
 
 - **Severity:** HIGH
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Verification:** CONFIRMED
 - **Locations:** `lib/dataExport.ts:316-363`, `lib/dataExport.ts:126-133`, `lib/exportRunner.ts:466-476`, `lib/storageOrphans.ts:43-47`, `lib/storageOrphans.ts:80-87`, `lib/revisions.ts:499-524`, `lib/knowledge.ts:357-365`, `app/data-portability/page.tsx:64`
 - **Independently verified:** ✓ **SURVIVES** — second independent adversarial pass. The sibling collector in storageOrphans.ts is the settling evidence: the same repo enumerates these keys for deletion-safety but not for backup, so the ZIP's 'every binary file' claim is false for CAD sources, knowledge PDFs and output templates.
@@ -480,6 +527,30 @@ lib/dataExport.ts:330-360 is the complete list of `add(...)` calls — document_
 - [ ] collectFilePaths and collectReferencedKeys are driven by one shared registry of (table, column, extractor) so they cannot diverge
 - [ ] a test asserts the two lists are identical
 - [ ] the manifest's `files.missing` counter reflects keys that exist in the DB but were not collected, instead of only keys that failed HeadObject
+
+**Resolution (2026-10-01, admin-and-org Round G).** Package P2, in one commit with `BKP-2` (the same registry). Reproduced on base `2290b94`: `collectFilePaths` (`lib/dataExport.ts:340-387`) had eight `add` sources. It had no `document_versions.source_file_key`, no `knowledge_documents.file_key` and no `output_templates` keys, while the sweep's collector had all three. P1's own round trip seeded an output template whose `.docx` no backup carried.
+
+Fix: `collectFilePaths` reads `lib/storageKeyRegistry.ts STORAGE_KEY_SOURCES`, the list the sweep reads. The export now carries native CAD sources, knowledge-library PDFs, output templates and their examples, and vendor quotes (`BKP-2`), as well as everything it carried before. A source whose table the export does not carry contributes nothing; the only one is `users` (avatars), which is excluded whole with its reason (`EXPORT_EXCLUDED_TABLES`). A byte size is read only when it is a number: an intake redline's "2.00 MB" is now head-checked instead of being summed as NaN.
+
+Done-when 3: after the registry has collected, `findUnregisteredOrgKeys` scans every string (JSON included) of every exported row for a key under this workspace's prefix that no registered column named. It skips the tables that RECORD a key as history (`KEY_MENTION_TABLES`: `audit_logs`, `export_runs`, `export_destinations`). Each key it finds is CARRIED: added to the file list and head-checked like the rest, so `files.missing` counts it when storage lacks it. It is also counted in the new `manifest.files.unregistered`, with a ⚠ note naming each `table.column` and saying the orphan sweep does not protect it until it is registered. So `files.missing` no longer reports 0 over a key nobody looked at: every key the exported rows hold under the workspace's prefix is looked at.
+
+`app/data-portability/page.tsx` no longer promises "every byte you've ever uploaded". It now promises "every file your records reference", naming CAD sources, knowledge PDFs, templates and quotes, and says files archived offline stay in the space-archive zips the backup names. Its "every column verbatim" line now names the credential columns that are exported empty (`BKP-1`).
+- Files: `lib/storageKeyRegistry.ts`, `lib/dataExport.ts`, `app/data-portability/page.tsx`.
+- Tests:
+  - `lib/__tests__/storageKeyRegistry.test.ts`: "the two lists are identical, less the sources whose table the export does not carry (each excluded with a reason)" and "BKP-9 Done-when 3 — the export's value scan for keys no registered column names".
+  - `lib/__tests__/exportContractRoundTrip.test.ts`, "BKP-2 / BKP-9 — every binary the database references is in the backup, and restores":
+    - the manifest lists every registered key and the unregistered one (`unregistered: 1`) and skips the audit row's mention;
+    - a gone object is counted missing, whichever collector found it;
+    - the server ZIP and the browser Full ZIP pack every binary, and a fresh workspace restores them with every key column moved to the new prefix.
+  - The same file's "/data-portability promises what the export carries".
+  - `lib/__tests__/restoreArchiveRoundTrip.test.ts` (P1's) now counts the template binary the export carries: three files, packed and put back.
+
+**Done-when.**
+- [x] collectFilePaths and collectReferencedKeys are driven by one shared registry ✓.
+- [x] a test asserts the two lists are identical ✓ — less `users`, which the export never carries, by name and reason.
+- [x] the manifest's `files.missing` counter reflects keys that exist in the DB but were not collected ✓. Such a key is now found, head-checked and counted in `missing` when its object is gone. It is named under `files.unregistered`, and no key under the workspace's prefix escapes the count.
+
+**Scope / residual.** `lib/exportRunner.ts`'s README line "every binary file, path-preserved" (admin-and-org P3's file) is now true for every file the records reference, and was not edited. Avatars are personal and are not in an org backup, by design.
 
 ---
 
@@ -566,6 +637,31 @@ supabase/migrations/20260605_rls_policies_new_tables.sql:142-144 `CREATE POLICY 
 
 In every case the drain's candidate filter matches 0 rows. Each test fails with the `SKIP_TABLES` entry removed. The queue stays in the export, as audit_logs does: the backup still carries it for review, and only the restore leaves it out. Status stays OPEN for P2 (Done-when 1).
 
+**Partial (2026-10-01, admin-and-org Round G, P2).** Done-when 1 is `supabase/migrations/20261154_ao_roundG_export_destinations_select.sql`, under decision `DEC-44 (A&O P2)` (a provisional number). Reproduced on base `2290b94`: `export_dest_member_select` (`20260605_rls_policies_new_tables.sql:141-144`) is the only definition in the sequence, and no migration narrows the privilege, so every active member could select the three `*_encrypted` columns.
+
+The plan's fail-safe default was taken, the reversible option:
+- The policy is KEPT.
+- The table-level SELECT is revoked from PUBLIC, anon and authenticated.
+- SELECT is granted back to authenticated on the card columns only: id, org, name, type, enabled, schedule, last run, created and updated.
+- Not granted: the credentials, and the destination's coordinates (`endpoint`, `region`, `bucket`, `prefix`, `webhook_url`). A webhook URL can carry its own secret; Admins, Managers and DocCtrls read the coordinates through the role-gated API.
+
+Nothing in the app reads the table with a member session, and a test pins that. The file is one paste:
+- a count-only inventory before the transaction: rows, rows holding a credential, active members who could read them, and whether `authenticated` held SELECT;
+- one final `(check, ok, n)` SELECT carrying eight probes;
+- the rollback in the header: `GRANT SELECT ON export_destinations TO anon, authenticated;`.
+
+Test: `lib/__tests__/aoRoundGExportDestinationsMigration.test.ts`.
+- **Pending migration:** `supabase/migrations/20261154_ao_roundG_export_destinations_select.sql` — **not applied** (DEC-30).
+
+Done-when 2 (the export nulls the credentials) holds by document-control `XEDGE-10` (`REDACT_COLUMNS.export_destinations`), and is now pinned by value as well (`lib/__tests__/exportContractRoundTrip.test.ts`, the `BKP-1` block).
+
+**Done-when.**
+1. ✓ (pending migration `20261154`) — narrowed to non-credential columns by a column privilege, the policy kept.
+2. ✓ — the export nulls the credential columns (`XEDGE-10`; pinned by value).
+3. ◐ — the restore half ✓ (P1). The remaining limb is that enabling a destination must require its credentials (the s3 / r2 keys, the webhook secret). It belongs to `app/api/data-export/destinations/[id]/route.ts` PATCH, admin-and-org P3's file, as P1 recorded.
+
+**Scope / residual.** OPEN until P3 lands Done-when 3's PATCH refusal and `20261154` is pasted.
+
 ---
 
 <a id="bkp-12"></a>
@@ -646,7 +742,7 @@ app/api/data-export/run-scheduled/route.ts:111 `exporterUserId: "cron",`. lib/da
 ## BKP-14 · lib/schemaExpectations.ts has a phantom table scraped from a prose comment and omits 24 real tables — the schema-health panel is permanently red and blind to the newest migrations
 
 - **Severity:** MEDIUM
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Verification:** CONFIRMED
 - **Locations:** `lib/schemaExpectations.ts:104`, `lib/schemaExpectations.ts:10-13`, `app/api/admin/schema-health/route.ts:45-51`, `app/api/admin/schema-health/route.ts:67-81`, `supabase/migrations/20260819_orphan_tables_backfill.sql:3`
 - **Independently verified:** ✓ **SURVIVES** — second independent adversarial pass. Confirmed precisely, phantom and count: my own naive CREATE-TABLE scan reproduced the 'statements' artifact from that comment line, which is exactly how the file says it was generated ('Generated from supabase/migrations (CREATE TABLE scan)', lines 10-13). The panel is permanently red on a table that does not exist and silent on 20261017_process_flows.sql.
@@ -670,5 +766,30 @@ lib/schemaExpectations.ts:104 `{ table: "statements", migration: "20260819_orpha
 - [ ] a vitest tripwire diffs EXPECTED_TABLES against supabase/ on every run, the way lib/__tests__/exportCoverage.test.ts guards the export contract
 
 *Cross-area note (2026-09-30, intelligence Round G): intelligence `ILIFE-12` and `IRLS-12` close by pointer here. Since projects J9 `REL-7` a tripwire exists (`lib/__tests__/schemaExpectations.test.ts`), but it grandfathers `answer_skills` / `link_rules` / `process_flows` / `knowledge_line_traces` / `document_markups` (`:71`) and does not assert the reverse, so `statements` survives; ILIFE-12 also asks for `EXPECTED_COLUMNS` rows for the 20261015 / 16 / 17 ALTERs.*
+
+**Resolution (2026-10-01, admin-and-org Round G).** Package P2. Reproduced on base `2290b94`:
+- `lib/schemaExpectations.ts:120` lists `{ table: "statements", … }`, and there is no CREATE TABLE statements anywhere in supabase/.
+- `lib/__tests__/schemaExpectations.test.ts` (projects J9 `REL-7`) scanned the migrations only, never schema.sql; it grandfathered five names (`:71`) and never checked a row against its file. So `statements` survived and 19 created tables were never probed:
+  - fifteen base-schema tables: `documents`, `document_versions`, `tickets`, `audit_logs`, `org_members`, `orgs`, `users`, `collections`, `libraries`, `checkout_sessions`, `download_audits`, `document_sets`, `metadata_templates`, `table_views`, `watermark_policies`;
+  - `answer_skills`, `link_rules`, `process_flows` and `document_markups`.
+
+Fix:
+- The phantom row is deleted.
+- The 19 rows are added; the base tables name `schema.sql (base schema)`, the existing convention.
+- `knowledge_line_traces` (created by `20261007_line_traces.sql`, dropped by `20261007_retire_line_traces.sql`) goes in the new `RETIRED_TABLES` and is never probed (intelligence `IRLS-12`'s verifier correction). The list now covers all 119 tables supabase/ creates: 118 expected, 1 retired.
+- The tripwire's grandfather set is empty and stays empty. The scan reads schema.sql and the numbered migrations, and it fails both ways: a created table with no row, and a row whose named file does not create that table (the phantom's shape). A retired table must be created and dropped where its row says, and never listed.
+- The route now reads PGRST205 (current PostgREST's answer for an absent table) as missing. It matched 42P01 only, so a missing table could read as present (`ILIFE-12`'s verifier).
+
+- Files: `lib/schemaExpectations.ts`; `app/api/admin/schema-health/route.ts` (outside the plan's file list, but the list's only consumer — see `SHR-12`); `lib/__tests__/schemaExpectations.test.ts`.
+- Tests: `lib/__tests__/schemaExpectations.test.ts`:
+  - "REL-7 tripwire — every table a migration creates is on the health check": "the grandfather set is empty (BKP-14 regenerated the list)", "BKP-14: every row names a file that really creates that table — no phantom (the scraped `statements` row is gone)", "BKP-14: the list covers every table supabase/ creates, schema.sql's included, less the retired", and the retired-table check;
+  - "a table answered with PGRST205 is missing, not present".
+
+**Done-when.**
+- [x] the `statements` entry is deleted ✓.
+- [x] EXPECTED_TABLES is regenerated from the CREATE TABLE scan (SQL, comments stripped) and covers every table ✓ — 119 are created now (111 when the finding was written): 118 rows and 1 retired.
+- [x] a vitest tripwire diffs EXPECTED_TABLES against supabase/ on every run ✓ — in both directions.
+
+**Scope / residual.** None. Intelligence `ILIFE-12` and `IRLS-12` close by pointer here (cross-notes on both). Their criterion on the 20261015/16/17 ALTERs is vacuous: those migrations add no column to an older table, they create the three tables, which are now probed.
 
 ---
