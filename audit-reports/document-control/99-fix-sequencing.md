@@ -188,24 +188,6 @@ the page fixes.
   dates from `20260526`; its lineage writers' checks do not depend on the
   new policies).
 
-⚠ **Paste NOW, independent of wave 2 — `DRLS-16` (CRITICAL).** The live
-11-argument `publish_revision` was never revoked from `anon`, and it reads a
-NULL `auth.uid()` as a service-role call that may name any actor. The
-hotfix is migration `20261129_dc_hotfix_anon_execute.sql` (2026-10-01; it
-supersedes the one-statement snippet first written into the `DRLS-16`
-record): it revokes `anon` on every overload of `publish_revision` and of
-`post_ticket_comment` (the same NULL-uid shape) and its result set lists
-every SECURITY DEFINER function `anon` can still execute, to be read back
-into `DRLS-16`. `20261130` later drops the signature and grants the new one
-without `anon`; `lib/__tests__/dcHotfixAnonExecute.test.ts` refuses any
-future migration that re-opens the shape.
-
-**`REV-9` closes** when every deployment names its zone (rule 2). The
-`/api/verify` swap to `effectiveTodayISO()` this line first gave to P8 is
-DONE — public-surfaces PS-VERIFY (2026-10-01, `REV-9`'s Partial block,
-public-surfaces `VFY-4`); P8 does not redo it. Public-surfaces `VFY-4`
-stays OPEN on the same operator limb.
-
 ⚠ **Deploy order — the field pack (Round F wave 2, P8 FIELD; DEC-44 (P8
 FIELD), provisional label).** Three things precede the P8 app deploy, in
 this order (added at P8's third review fix pass):
@@ -235,3 +217,21 @@ this order (added at P8's third review fix pass):
 `TRX-15`'s stricter portal rule (a PDF goes out stamped or not at all) is not
 in this deploy: it is armed per item only by `TRX-16`'s issue-time mark, and
 lands with the user's ratification of the `DEC-61` §5 amendment.
+
+⚠ **Paste NOW, independent of wave 2 — `DRLS-16` (CRITICAL).** The live
+11-argument `publish_revision` was never revoked from `anon`, and it reads a
+NULL `auth.uid()` as a service-role call that may name any actor. The
+hotfix is migration `20261129_dc_hotfix_anon_execute.sql` (2026-10-01; it
+supersedes the one-statement snippet first written into the `DRLS-16`
+record): it revokes `anon` on every overload of `publish_revision` and of
+`post_ticket_comment` (the same NULL-uid shape) and its result set lists
+every SECURITY DEFINER function `anon` can still execute, to be read back
+into `DRLS-16`. `20261130` later drops the signature and grants the new one
+without `anon`; `lib/__tests__/dcHotfixAnonExecute.test.ts` refuses any
+future migration that re-opens the shape.
+
+**`REV-9` closes** when every deployment names its zone (rule 2). The
+`/api/verify` swap to `effectiveTodayISO()` this line first gave to P8 is
+DONE — public-surfaces PS-VERIFY (2026-10-01, `REV-9`'s Partial block,
+public-surfaces `VFY-4`); P8 does not redo it. Public-surfaces `VFY-4`
+stays OPEN on the same operator limb.
