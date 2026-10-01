@@ -258,6 +258,13 @@ signed. The census lists the route INLINE, no longer PENDING. Whoever next
 edits the route keeps the read (tests: `aiUsageOutageIngest.test.ts`
 "GOV-11 — …", `aiGateCensus.test.ts`; `ingestRoute.test.ts`'s seed signs the
 agreement). GOV-11 stays OPEN only for flows/read (I-09) and locate (I-07).
+*Fix pass 6:* `ingestKnowledgeDocBatch` (`lib/knowledgeIngest.ts`, I-06's,
+merged) takes `opts.noVisionReason`, and `visionRetryMessage` takes it as a
+third argument. The interactive route passes it when vision was withheld for
+the agreement or an unreadable ledger, so a document waiting on AI vision is
+parked with that cause, never "Add one in AI settings" for a saved key.
+Whoever next edits the engine or the route keeps it (test:
+`aiUsageOutageIngest.test.ts`, "a document waiting on AI vision…").
 
 **`20261137` re-creates TWO functions** (I-05 fix pass 3): besides
 `org_capability_allows_for` (one CASE row), `capability_policy_write_guard`
