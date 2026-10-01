@@ -672,10 +672,14 @@ describe("20261136 — the sign-off helpers and rails", () => {
     for (const line of order) { const i = r.indexOf(line); expect(i, line).toBeGreaterThan(at); at = i; }
     // the service pass (restores, server routes) still passes first
     expect(r.indexOf("IF v_uid IS NULL THEN RETURN NEW; END IF;")).toBeLessThan(r.indexOf(undo));
-    // no product path reopens or voids a checklist: the tab calls setChecklistStatus for "complete" only
+    // no product path REOPENS a checklist: the tab calls setChecklistStatus
+    // for "complete" and — since projects Round G J10b (REL-9) — "void",
+    // offered only to the controller tier this rail admits
     const tab = src("components/projects/QualityTab.tsx");
-    expect((tab.match(/setChecklistStatus\(/g) ?? []).length).toBe(1);
+    expect((tab.match(/setChecklistStatus\(/g) ?? []).length).toBe(2);
     expect(tab).toContain('setChecklistStatus({ orgId, projectId, checklist, status: "complete"');
+    expect(tab).toContain('setChecklistStatus({ orgId, projectId, checklist, status: "void", actor });');
+    expect(tab).not.toMatch(/setChecklistStatus\(\{[^}]*status: "open"/);
     // an org always keeps an active Admin (the last-Admin guard), so a controller exists to undo one
     expect(read("20260831_capability_policy_and_rails.sql")).toContain("CREATE OR REPLACE FUNCTION prevent_last_admin_removal()");
   });

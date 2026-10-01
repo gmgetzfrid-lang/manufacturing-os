@@ -48,7 +48,7 @@ vi.mock("@/lib/audit", () => ({ logAuditAction: vi.fn() }));
 vi.mock("@/lib/notify/dispatch", () => ({ emit: vi.fn() }));
 vi.mock("@/lib/storage", () => ({ uploadToPath: vi.fn(), deleteFile: vi.fn() }));
 vi.mock("@/components/providers/DialogProvider", () => ({ appConfirm: vi.fn(), appPrompt: vi.fn() }));
-vi.mock("@/components/providers/RoleContext", () => ({ useRole: () => ({ member: { displayName: "Pat" }, hasAnyRole: () => false }) }));
+vi.mock("@/components/providers/RoleContext", () => ({ useRole: () => ({ member: { displayName: "Pat" }, activeRole: "Engineer", roles: ["Engineer"] }) }));
 vi.mock("@/components/signatures/SignatureCeremony", () => ({ default: () => null }));
 // The quotes panel stands in for every write on the Costs tab: its button
 // fires the onChanged a real award / read / void fires.

@@ -74,6 +74,7 @@ import { useAiReadiness, aiBlocked, AiPreconditionNote } from "@/components/proj
 import { StatusMark, StatusLegend, CHECKLIST_STATUS_MARKS, PUNCH_STATUS_MARKS } from "@/components/projects/StatusMark";
 import { TURNOVER_STATUS_MEANING } from "@/lib/projectVocabulary";
 import { invalidateProjectSnapshot } from "@/lib/projectSnapshot";
+import { isControllerPrincipal } from "@/lib/permissions";
 
 /** A11Y-8: a decision control is never under 24 px, and on a coarse
  *  pointer (a tablet, a gloved hand) it is 44 px — set on the button, never
@@ -134,7 +135,13 @@ export default function QualityTab({ orgId, projectId, canManage, uid, userEmail
   onDataChanged?: () => void;
 }) {
   const actor: Actor = useMemo(() => ({ uid, email: userEmail ?? null }), [uid, userEmail]);
-  const { member } = useRole();
+  const { member, activeRole, roles } = useRole();
+  /** REL-9: voiding a checklist is the controller tier's — held anywhere in
+   *  the role collection, lib/permissions isControllerPrincipal, which
+   *  mirrors is_org_controller: the database's project_checklists_signoff_rail
+   *  (20261136, QUAL-15) refuses anyone else, so nobody else is offered the
+   *  control. */
+  const mayVoidChecklist = isControllerPrincipal({ role: activeRole, roles });
   /** QUAL-4: the database's sign-off decision for this project — read with
    *  the lists on every refresh (mount, Retry, after each change), so a grant,
    *  a revocation or a new eligible signer is seen without a page reload. */
@@ -251,7 +258,7 @@ export default function QualityTab({ orgId, projectId, canManage, uid, userEmail
         <Notice notice={failure(`The project's contractors couldn't be loaded — ${asClause(contractorsError)}. Each item keeps its contractor, but it can't be shown or changed until the list loads.`)}
           action={<button type="button" onClick={() => setContractorsTry((n) => n + 1)} className="underline">Retry</button>} />
       )}
-      <ChecklistsSection key={sweepTick} orgId={orgId} projectId={projectId} canManage={canSignOff} actor={actor} signoff={signoff}
+      <ChecklistsSection key={sweepTick} orgId={orgId} projectId={projectId} canManage={canSignOff} actor={actor} signoff={signoff} mayVoid={mayVoidChecklist}
         checklists={checklists} loadError={loadErrors.checklists} onRetry={retry} onChanged={afterWrite} />
       <TurnoverSection orgId={orgId} projectId={projectId} canManage={canSignOff} actor={actor} signoff={signoff}
         items={turnover} events={events} loadError={loadErrors.turnover} historyError={loadErrors.history} onRetry={retry}
@@ -275,8 +282,10 @@ function LoadFailed({ what, error, onRetry }: { what: string; error: string; onR
 
 // ── Checklists ───────────────────────────────────────────────────────────
 
-function ChecklistsSection({ orgId, projectId, canManage, actor, signoff, checklists, loadError, onRetry, onChanged }: {
+function ChecklistsSection({ orgId, projectId, canManage, actor, signoff, mayVoid = false, checklists, loadError, onRetry, onChanged }: {
   orgId: string; projectId: string; canManage: boolean; actor: Actor; signoff: SignoffContext;
+  /** REL-9: the viewer may void a checklist (the controller tier). */
+  mayVoid?: boolean;
   checklists: Checklist[]; loadError?: string; onRetry: () => void; onChanged: () => void;
 }) {
   const [showNew, setShowNew] = useState(false);
@@ -324,7 +333,7 @@ function ChecklistsSection({ orgId, projectId, canManage, actor, signoff, checkl
         <div className="divide-y divide-[var(--color-border)]">
           {checklists.filter((c) => c.status !== "void").map((c) => (
             <ChecklistCard key={c.id} orgId={orgId} projectId={projectId} checklist={c}
-              canManage={canManage} actor={actor} signoff={signoff} onChanged={onChanged} />
+              canManage={canManage} actor={actor} signoff={signoff} mayVoid={mayVoid} onChanged={onChanged} />
           ))}
         </div>
       )}
@@ -475,9 +484,10 @@ type ReviewProposal = AssessmentProposal & {
 /** The cited document's current standing, for the evidence chip (SAF-1 / QUAL-1). */
 type DocStanding = { status: string | null; rev: string | null; label: string };
 
-function ChecklistCard({ orgId, projectId, checklist, canManage, actor, signoff, onChanged }: {
+function ChecklistCard({ orgId, projectId, checklist, canManage, actor, signoff, mayVoid = false, onChanged }: {
   orgId: string; projectId: string; checklist: Checklist;
   canManage: boolean; actor: Actor; signoff: SignoffContext;
+  mayVoid?: boolean;
   onChanged: () => void;
 }) {
   const [open, setOpen] = useState(false);
@@ -612,6 +622,28 @@ function ChecklistCard({ orgId, projectId, checklist, canManage, actor, signoff,
     if (!res.ok) { setNotice(failure(res.error ?? "Couldn't complete.")); return; }
     onChanged();
   };
+  /** REL-9: a checklist created by mistake (or one that should not count)
+   *  is voided — the controller's act the database rail admits (QUAL-15,
+   *  20261136): it leaves the project's checklists and every count closeout
+   *  reads; its items, any sign-off signature and the audit row stay. The
+   *  write is checked (lib/checklists setChecklistStatus → checkedWrite): a
+   *  refusal or a row that did not change is said, never a silent success. */
+  const voidChecklist = async () => {
+    const ok = await appConfirm({
+      title: `Void the checklist “${checklist.title}”?`,
+      message: `${checklist.status === "complete"
+        ? `It was signed off${checklist.completedByName ? ` by ${checklist.completedByName}` : ""}. Voiding withdraws it from`
+        : "Use this for a checklist created by mistake. Voiding takes it out of"} this project's checklists and every closeout count. Its items${checklist.status === "complete" ? " and its signature" : ""} stay on the record, and the void is recorded under your name. Only Admin / Document Control can void a checklist.`,
+      confirmLabel: "Void checklist",
+      tone: "danger",
+    });
+    if (!ok) return;
+    setBusy("void"); setNotice(null);
+    const res = await setChecklistStatus({ orgId, projectId, checklist, status: "void", actor });
+    setBusy(null);
+    if (!res.ok) { setNotice(failure(res.error ?? "Couldn't void the checklist.")); return; }
+    onChanged();
+  };
   /** DEC-12: the author signs off only when nobody else on the project can
    *  — and waits while that is not known (`pending`). */
   const separation = signoffSeparation(checklist.createdBy, actor.uid, signoff.otherSigners, "checklist");
@@ -722,6 +754,16 @@ function ChecklistCard({ orgId, projectId, checklist, canManage, actor, signoff,
               onCancel={() => { if (busy !== "complete") setSigning(false); }}
               onSign={(_intent, statement, signatureImage, reauth) => void complete({ statement, signatureImage: signatureImage ?? null, reauth: reauth ?? null, signerName: signoff.signerName })}
             />
+          )}
+
+          {mayVoid && checklist.status !== "void" && (
+            <div className="flex items-center gap-2">
+              <button type="button" onClick={() => void voidChecklist()} disabled={busy != null}
+                title="Admin / Document Control: take this checklist out of the project and its closeout counts — its items and any signature stay on the record"
+                className={`${DECISION_TARGET} ml-auto inline-flex items-center gap-1 px-2.5 py-1 rounded-lg border border-rose-500/40 text-[11px] font-bold text-rose-700 dark:text-rose-300 hover:bg-rose-500/10 disabled:opacity-50 transition-colors`}>
+                {busy === "void" ? <Loader2 className="w-3 h-3 animate-spin" /> : <Ban className="w-3 h-3" />} Void checklist
+              </button>
+            </div>
           )}
 
           <Notice notice={notice} onClose={() => setNotice(null)} />
