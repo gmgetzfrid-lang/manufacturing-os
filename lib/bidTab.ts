@@ -80,6 +80,52 @@ export interface ParsedQuote {
   /** The currency the model read, kept when a human restates the bid in
    *  another currency (BID-7) — "corrected · AI read €150,000". */
   extractedCurrency?: string | null;
+  /** PR-2: the extracted total reconciled against its own priced lines.
+   *  Present only when at least one line prints a total. A FLAG for the
+   *  reviewer — the total is never corrected from it and the bid is never
+   *  blocked by it (options, tax and allowances make a gap normal). */
+  totalCheck?: TotalReconciliation;
+}
+
+/** PR-2: Σ line totals against the bottom line, as read. */
+export interface TotalReconciliation {
+  /** Σ lineItems[].total over the lines that print a total. */
+  lineItemsSum: number;
+  /** Lines that print a total, and lines that do not. */
+  pricedLines: number;
+  unpricedLines: number;
+  /** total − Σ lines. Positive: the bottom line is more than the lines add up to. */
+  difference: number;
+  /** |difference| beyond TOTAL_RECONCILE_TOLERANCE. */
+  mismatch: boolean;
+  /** What the reviewer is told when it does not add up; null when it does. */
+  note: string | null;
+}
+
+/** A gap within max(1 unit, 0.5 % of the total) is rounding, not a flag. */
+export const TOTAL_RECONCILE_TOLERANCE = { absolute: 1, relative: 0.005 } as const;
+
+const cents = (n: number) => Math.round(n * 100) / 100;
+
+/** PR-2: does the extracted bottom line equal the sum of the extracted
+ *  priced lines? Null when no line prints a total — nothing to reconcile.
+ *  Pure; changes nothing, decides nothing. */
+export function reconcileQuoteTotal(total: number, lineItems: readonly QuoteLineItem[]): TotalReconciliation | null {
+  const priced = lineItems.filter((l) => typeof l.total === "number" && Number.isFinite(l.total));
+  if (priced.length === 0) return null;
+  const lineItemsSum = cents(priced.reduce((sum, l) => sum + (l.total as number), 0));
+  const difference = cents(total - lineItemsSum);
+  const tolerance = Math.max(TOTAL_RECONCILE_TOLERANCE.absolute, Math.abs(total) * TOTAL_RECONCILE_TOLERANCE.relative);
+  const mismatch = Math.abs(difference) > tolerance;
+  const unpricedLines = lineItems.length - priced.length;
+  return {
+    lineItemsSum, pricedLines: priced.length, unpricedLines, difference, mismatch,
+    note: mismatch
+      ? `The priced lines add up to ${lineItemsSum.toLocaleString("en-US")}, not the quoted total of ${total.toLocaleString("en-US")} `
+        + `(difference ${difference.toLocaleString("en-US")}). Check the PDF before relying on the total — options, tax or `
+        + `allowances may explain it, or the total may have been misread${unpricedLines > 0 ? `; ${unpricedLines} line(s) print no price` : ""}.`
+      : null,
+  };
 }
 
 export interface BidEconomics {
@@ -643,7 +689,7 @@ export function validateParsedQuote(raw: unknown, id: string): ParsedQuote {
   const total = num(r.total);
   if (total == null || total <= 0) throw new Error("Couldn't read a total price from the quote.");
   const items = Array.isArray(r.lineItems) ? r.lineItems : [];
-  return {
+  const quote: ParsedQuote = {
     id,
     vendorName: str(r.vendorName) ?? "Unknown vendor",
     total,
@@ -671,4 +717,8 @@ export function validateParsedQuote(raw: unknown, id: string): ParsedQuote {
       })
       .filter((l): l is QuoteLineItem => l !== null),
   };
+  // PR-2: the bottom line reconciled against its own priced lines — flagged
+  // on the record for the review screen, never corrected, never blocking.
+  const check = reconcileQuoteTotal(total, quote.lineItems);
+  return check ? { ...quote, totalCheck: check } : quote;
 }
