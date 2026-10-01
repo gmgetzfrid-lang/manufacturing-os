@@ -13,6 +13,7 @@
 //       newMatches: [{ id, name, libraryName, pathNames, docCount }],
 //     },
 //     suggestions: [ same shape as newMatches ], // wizard pre-checks these
+//     flowReads: { readable, read } | null,   // AREA-8: drawings read for flows
 //     canManage: boolean,
 //   }
 //
@@ -134,6 +135,7 @@ export async function GET(req: NextRequest) {
       counts: { ready: 0, pending: 0 },
       drift: { deadSources: [], movedOut: [], movedOutTotal: 0, newMatches: [] },
       suggestions: suggestFoldersForUnit(unit, allFolders),
+      flowReads: null,
       canManage: principal.isController,
     });
   }
@@ -227,6 +229,12 @@ export async function GET(req: NextRequest) {
         inDc: !!at,
       };
     });
+  // AREA-8: how many of the shelf's readable documents have been read for
+  // flows — a FLOWS_READ record (a read, flows found or not) or a flow read
+  // off it. Coverage, not presence: one hand-drawn flow no longer ticks the
+  // deep read for 400 unread drawings. Null when it cannot be counted.
+  const flowReads = await countFlowReads(orgId, kdocs.filter((d) => d.status === "ready").map((d) => d.id));
+
   const coveredWithWhole = new Set(coveredFolderIds);
   coveredWithWhole.add("__whole");
 
@@ -258,8 +266,41 @@ export async function GET(req: NextRequest) {
       newMatches: drift.newMatches.slice(0, 6),
     },
     suggestions: [],
+    flowReads,
     canManage: principal.isController,
   });
+}
+
+/** AREA-8: of these knowledge documents, how many have been read for flows. */
+async function countFlowReads(orgId: string, readyIds: string[]): Promise<{ readable: number; read: number } | null> {
+  const ready = new Set(readyIds);
+  const read = new Set<string>();
+  for (let from = 0; from < 50_000; from += 1000) {
+    const { data, error } = await supabaseAdmin
+      .from("audit_logs").select("id, resource_id")
+      .eq("org_id", orgId).eq("action", "FLOWS_READ")
+      .order("id").range(from, from + 999);
+    if (error) return null;
+    for (const r of (data ?? []) as Array<{ resource_id: string | null }>) {
+      if (r.resource_id && ready.has(r.resource_id)) read.add(r.resource_id);
+    }
+    if ((data ?? []).length < 1000) break;
+  }
+  for (let from = 0; from < 50_000; from += 1000) {
+    const { data, error } = await supabaseAdmin
+      .from("process_flows").select("id, source_document_id")
+      .eq("org_id", orgId).not("source_document_id", "is", null)
+      .order("id").range(from, from + 999);
+    if (error) {
+      if (error.code === "42P01" || /does not exist|could not find the table/i.test(error.message)) break;
+      return null;
+    }
+    for (const r of (data ?? []) as Array<{ source_document_id: string | null }>) {
+      if (r.source_document_id && ready.has(r.source_document_id)) read.add(r.source_document_id);
+    }
+    if ((data ?? []).length < 1000) break;
+  }
+  return { readable: ready.size, read: read.size };
 }
 
 // ── POST: bind (or unbind) the area's knowledge library ─────────────────────

@@ -13,6 +13,9 @@
 // reason and the fix printed on it:
 //
 //   ready         — mirrored into a knowledge library, readable now
+//   indexing      — mirrored, still being indexed (pending / indexing / stale)
+//   ingest_failed — mirrored, indexing FAILED; the stored reason rides on the
+//                   row (FLOW-7 — never "indexing…" forever)
 //   pending_sync  — watched by a knowledge library, mirror hasn't run (Sync)
 //   unwatched     — no knowledge library watches its folder (link it)
 //   not_pdf       — current revision isn't a PDF (the AI reads PDFs only)
@@ -26,8 +29,17 @@
 // Pure and testable: the API route feeds it plain data, no I/O here.
 
 export type DcDocState =
-  | "ready" | "indexing" | "pending_sync" | "unwatched" | "not_pdf"
+  | "ready" | "indexing" | "ingest_failed" | "pending_sync" | "unwatched" | "not_pdf"
   | "not_current" | "no_file" | "held_back";
+
+/** A knowledge document's state as the picker shows it (FLOW-7): ready to
+ *  read, still indexing, or failed — `error` is terminal (the ingester never
+ *  picks it up again), so it is never shown as indexing. */
+export function mirrorState(status: string | null | undefined): "ready" | "indexing" | "ingest_failed" {
+  if (status === "ready") return "ready";
+  if (status === "error") return "ingest_failed";
+  return "indexing";
+}
 
 export interface DcDocRow {
   dcDocId: string;
@@ -37,6 +49,10 @@ export interface DcDocRow {
    *  takes. */
   kdocId: string | null;
   pageCount: number | null;
+  /** ingest_failed: the reason the ingester stored. */
+  error?: string | null;
+  /** The knowledge library the mirror lives in (AREA-5: the area's own shelf). */
+  kLibraryId?: string | null;
 }
 
 export interface DcFolderNode {
@@ -63,7 +79,11 @@ export interface DcLibraryNode {
 export interface FlowsBrowseUploadGroup {
   knowledgeLibraryId: string;
   knowledgeLibraryName: string;
-  docs: Array<{ kdocId: string; name: string; pageCount: number | null }>;
+  docs: Array<{
+    kdocId: string; name: string; pageCount: number | null;
+    state: "ready" | "indexing" | "ingest_failed";
+    error?: string | null;
+  }>;
 }
 
 export interface FlowsBrowseResult {
@@ -79,6 +99,8 @@ export interface FlowsBrowseInputs {
     id: string; name: string; libraryId: string;
     pageCount: number | null; status: string | null;
     sourceDocumentId: string | null;
+    /** The ingester's stored reason when status is 'error'. */
+    error?: string | null;
   }>;
   sources: Array<{
     knowledgeLibraryId: string;
@@ -177,11 +199,11 @@ export function assembleFlowsBrowse(inputs: FlowsBrowseInputs): FlowsBrowseResul
   const libsWithDocs = new Set<string>();
   for (const d of dcDocs) {
     const mirror = mirrorByDc.get(d.id);
-    // A mirror still being indexed (pending/stale/error) is NOT ready — a
-    // "Read" on it would scan page 1 of an unpaged file and blame the
-    // drawing for having no flows.
+    // A mirror still being indexed (pending/stale) is NOT ready — a "Read"
+    // on it would scan page 1 of an unpaged file and blame the drawing for
+    // having no flows. A FAILED one says so, with its reason (FLOW-7).
     const state: DcDocState = mirror
-      ? (mirror.status === "ready" ? "ready" : "indexing")
+      ? mirrorState(mirror.status)
       : d.block
         ? d.block
         : !isCovered(d, union)
@@ -195,6 +217,8 @@ export function assembleFlowsBrowse(inputs: FlowsBrowseInputs): FlowsBrowseResul
       state,
       kdocId: mirror?.id ?? null,
       pageCount: mirror?.pageCount ?? null,
+      ...(state === "ingest_failed" ? { error: mirror?.error ?? null } : {}),
+      ...(mirror ? { kLibraryId: mirror.libraryId } : {}),
     };
     const key = d.collectionId ? `folder:${d.collectionId}` : `lib:${d.libraryId}`;
     const list = rowsByContainer.get(key) ?? [];
@@ -272,7 +296,11 @@ export function assembleFlowsBrowse(inputs: FlowsBrowseInputs): FlowsBrowseResul
       knowledgeLibraryName: klName.get(k.libraryId) ?? "Knowledge library",
       docs: [],
     };
-    g.docs.push({ kdocId: k.id, name: k.name, pageCount: k.pageCount });
+    const upState = mirrorState(k.status);
+    g.docs.push({
+      kdocId: k.id, name: k.name, pageCount: k.pageCount, state: upState,
+      ...(upState === "ingest_failed" ? { error: k.error ?? null } : {}),
+    });
     uploadsByKl.set(k.libraryId, g);
   }
   const uploads = [...uploadsByKl.values()]

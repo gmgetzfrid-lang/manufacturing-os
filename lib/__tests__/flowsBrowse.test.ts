@@ -137,3 +137,45 @@ describe("assembleFlowsBrowse — mirror status honesty", () => {
     expect(tree[0].folders[0].docs[0].kdocId).toBe("k1");
   });
 });
+
+describe("FLOW-7 — a failed ingest is named, with its reason, never 'indexing' forever", () => {
+  it("a mirror whose indexing FAILED is 'ingest_failed' with the stored error; it never renders as indexing", () => {
+    const inputs = base();
+    inputs.sources = [{ knowledgeLibraryId: "kl1", sourceType: "library", sourceId: "dl1" }];
+    inputs.knowledgeDocs = [
+      { id: "k1", name: "Scanned PFD book", libraryId: "kl1", pageCount: 60, status: "error", sourceDocumentId: "d1", error: "unpdf: out of memory rendering page 41" },
+      { id: "k2", name: "Indexing", libraryId: "kl1", pageCount: null, status: "indexing", sourceDocumentId: "d2", error: null },
+    ];
+    inputs.dcDocs = [
+      { id: "d1", name: "Book", libraryId: "dl1", collectionId: "fA", block: null },
+      { id: "d2", name: "Other", libraryId: "dl1", collectionId: "fA", block: null },
+    ];
+    const rows = assembleFlowsBrowse(inputs).tree[0].folders[0].docs;
+    const failed = rows.find((d) => d.kdocId === "k1")!;
+    expect(failed.state).toBe("ingest_failed");
+    expect(failed.state).not.toBe("indexing");
+    expect(failed.error).toBe("unpdf: out of memory rendering page 41");
+    expect(rows.find((d) => d.kdocId === "k2")!.state).toBe("indexing");
+  });
+
+  it("an upload carries its state too: a failed or pending upload is not offered as ready", () => {
+    const inputs = base();
+    inputs.knowledgeDocs = [
+      { id: "u1", name: "Up ok", libraryId: "kl1", pageCount: 3, status: "ready", sourceDocumentId: null },
+      { id: "u2", name: "Up failed", libraryId: "kl1", pageCount: null, status: "error", sourceDocumentId: null, error: "R2 timeout" },
+      { id: "u3", name: "Up pending", libraryId: "kl1", pageCount: null, status: "pending", sourceDocumentId: null },
+    ];
+    const docs = assembleFlowsBrowse(inputs).uploads[0].docs;
+    expect(docs.map((d) => [d.name, d.state, d.error ?? null])).toEqual([
+      ["Up failed", "ingest_failed", "R2 timeout"], ["Up ok", "ready", null], ["Up pending", "indexing", null],
+    ]);
+  });
+
+  it("AREA-5: a mirrored row names the knowledge library it lives in, so the picker can open on the area's shelf", () => {
+    const inputs = base();
+    inputs.sources = [{ knowledgeLibraryId: "kl1", sourceType: "library", sourceId: "dl1" }];
+    inputs.knowledgeDocs = [{ id: "k1", name: "PFD", libraryId: "kl1", pageCount: 2, status: "ready", sourceDocumentId: "d1" }];
+    inputs.dcDocs = [{ id: "d1", name: "PFD", libraryId: "dl1", collectionId: null, block: null }];
+    expect(assembleFlowsBrowse(inputs).tree[0].docs[0]).toMatchObject({ state: "ready", kdocId: "k1", kLibraryId: "kl1" });
+  });
+});

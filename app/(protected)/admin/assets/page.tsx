@@ -41,7 +41,8 @@ import type { Role } from "@/types/schema";
 import { listLibraryFoldersOnce, type PickerFolder } from "@/lib/libraryCollections";
 import { getDocumentsForAssetsHydrated } from "@/lib/operationalGraph";
 import AssetPhotoCarousel from "@/components/assets/AssetPhotoCarousel";
-import { CategorizeBanner, FlowPanel } from "@/components/assets/UnitOpsPanels";
+import { CategorizeBanner, FlowPanel, FlowReviewQueue } from "@/components/assets/UnitOpsPanels";
+import { countAssetFlows } from "@/lib/processFlows";
 import { AreaKnowledgePanel } from "@/components/assets/AreaKnowledgePanel";
 import DocumentLinkPicker from "@/components/documents/DocumentLinkPicker";
 import AssetPhotoUploader from "@/components/assets/AssetPhotoUploader";
@@ -297,12 +298,13 @@ function AssetsPageInner() {
   );
   // The area's FULL asset list, independent of search/type/photo filters —
   // the knowledge panel's counts describe the area, not the current view.
-  const areaAssetIds = useMemo(
+  const areaAssets = useMemo(
     () => (unitFilter && unitFilter !== "__unassigned"
-      ? assets.filter((a) => a.unit_code === unitFilter).map((a) => a.id)
+      ? assets.filter((a) => a.unit_code === unitFilter)
       : []),
     [unitFilter, assets],
   );
+  const areaAssetIds = useMemo(() => areaAssets.map((a) => a.id), [areaAssets]);
 
   const searchActive = search.trim().length > 0 || typeFilter !== "" || filterMode !== "all" || discoveredOnly;
 
@@ -509,6 +511,11 @@ function AssetsPageInner() {
             onChanged={() => { invalidateAssetCache(); void refresh(); }} />
         )}
 
+        {/* FLOW-1: every proposed flow in the plant, whatever unit it touches. */}
+        {!loading && uid && activeOrgId && (!unitFilter || unitFilter === "__unassigned") && (
+          <FlowReviewQueue orgId={activeOrgId} userId={uid} userName={userEmail ?? undefined} isController={isController} />
+        )}
+
         {/* Search + filters */}
         <div className="mb-4 flex items-center gap-2 flex-wrap">
           <div className="relative flex-1 min-w-[200px]">
@@ -670,7 +677,7 @@ function AssetsPageInner() {
             {unitAssetIds.length > 0 && <UnitDocuments assetIds={unitAssetIds} assets={filtered} />}
             {unitFilter && unitFilter !== "__unassigned" && uid && (
               <FlowPanel orgId={activeOrgId!} userId={uid} userName={userEmail ?? undefined}
-                isAdmin={isAdmin} unitCode={unitFilter} unitAssets={filtered} />
+                isController={isController} unitCode={unitFilter} unitAssets={areaAssets} />
             )}
           </div>
         ) : book.units.length > 0 && !searchActive ? (
@@ -1906,7 +1913,11 @@ function AssetEditDrawer({
 
   const onDelete = async () => {
     if (!asset) return;
-    if (!(await appConfirm({ message: `Delete asset "${asset.tag}" and all its photos, aliases and document links? This can't be undone — the deletion is recorded in the audit log.`, tone: "danger" }))) return;
+    // FLOW-6: deleting equipment removes its process flows (20261155) — say how many.
+    const flows = await countAssetFlows(orgId, asset.id);
+    const flowNote = flows === null ? ", and any process flows it is part of (they could not be counted)"
+      : flows > 0 ? `, and the ${flows} process flow${flows === 1 ? "" : "s"} it is part of` : "";
+    if (!(await appConfirm({ message: `Delete asset "${asset.tag}" and all its photos, aliases and document links${flowNote}? This can't be undone — the deletion is recorded in the audit log.`, tone: "danger" }))) return;
     setBusy(true);
     try {
       await deleteAsset(asset.id);
@@ -1924,7 +1935,12 @@ function AssetEditDrawer({
   // document links stay.
   const onArchive = async () => {
     if (!asset) return;
-    if (!(await appConfirm({ message: `Archive "${asset.tag}"? It leaves the registry views but keeps its photos, aliases and document links, and can be restored from the Archived list.`, confirmLabel: "Archive" }))) return;
+    // FLOW-6: archived equipment's flows are kept but leave the map until it is restored.
+    const flows = await countAssetFlows(orgId, asset.id);
+    const flowNote = flows && flows > 0
+      ? ` Its ${flows} process flow${flows === 1 ? "" : "s"} ${flows === 1 ? "is" : "are"} kept, but leave${flows === 1 ? "s" : ""} the process map while it is archived.`
+      : "";
+    if (!(await appConfirm({ message: `Archive "${asset.tag}"? It leaves the registry views but keeps its photos, aliases and document links, and can be restored from the Archived list.${flowNote}`, confirmLabel: "Archive" }))) return;
     setBusy(true);
     try {
       await archiveAsset(asset.id, userId);

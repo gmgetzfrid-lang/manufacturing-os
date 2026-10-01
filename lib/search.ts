@@ -221,9 +221,14 @@ export interface DocumentSearchParams {
   query?: string;
   libraryId?: string;
   collectionId?: string;
+  /** A plant's documents: filed to it, or decoded to a codebook unit one of
+   *  its operational units is mapped to (WIRE-3). */
   plantId?: string;
+  /** An operational unit's documents: filed to it, or decoded to the
+   *  codebook unit it is mapped to (WIRE-3). There is no systemId: a system
+   *  has no decoded identity and no screen files a document to one, so the
+   *  filter could only ever return nothing (WIRE-3, removed). */
   unitId?: string;
-  systemId?: string;
   /** Phase 2 completion — filter to documents linked to a project via
    *  the project_documents join table (auto-populated from checkouts). */
   projectId?: string;
@@ -231,12 +236,41 @@ export interface DocumentSearchParams {
   limit?: number;
 }
 
+/** WIRE-3: an operational unit's documents are the ones filed to it
+ *  (documents.unit_id) AND the ones whose number decodes to the Site
+ *  Codebook unit it is mapped to (documents.unit_code — 20261138, DEC-67).
+ *  The PostgREST `or` filter for both, or null when the unit is not mapped
+ *  (or the database predates the mapping): then unit_id alone. */
+export async function unitDocumentFilter(unitId: string): Promise<string | null> {
+  const { data, error } = await supabase.from("units").select("codebook_code").eq("id", unitId).maybeSingle();
+  if (error) return null;
+  const code = String((data as { codebook_code?: string | null } | null)?.codebook_code ?? "").replace(/"/g, "").trim();
+  if (!code) return null;
+  return `unit_id.eq.${unitId},unit_code.eq."${code}"`;
+}
+
+/** WIRE-3: a plant's documents are the ones filed to it (documents.plant_id)
+ *  AND the ones decoded to a codebook unit that one of its operational
+ *  units is mapped to. Null when none of its units is mapped (or the
+ *  database predates the mapping): then plant_id alone. */
+export async function plantDocumentFilter(plantId: string): Promise<string | null> {
+  const { data, error } = await supabase.from("units").select("codebook_code")
+    .eq("plant_id", plantId).eq("archived", false).not("codebook_code", "is", null);
+  if (error) return null;
+  const codes = [...new Set(((data as Array<{ codebook_code: string | null }> | null) ?? [])
+    .map((u) => String(u.codebook_code ?? "").replace(/"/g, "").trim()).filter(Boolean))];
+  if (codes.length === 0) return null;
+  return `plant_id.eq.${plantId},unit_code.in.(${codes.map((c) => `"${c}"`).join(",")})`;
+}
+
 /** Search documents by free-text + scope filters. Falls back to a plain
  *  scoped list when `query` is empty. RLS still applies — callers only
  *  see rows for orgs they're a member of. */
 export async function searchDocuments(params: DocumentSearchParams): Promise<DocumentRow[]> {
-  const { orgId, query, libraryId, collectionId, plantId, unitId, systemId, projectId, status, limit = 50 } = params;
+  const { orgId, query, libraryId, collectionId, plantId, unitId, projectId, status, limit = 50 } = params;
   const trimmed = (query ?? "").trim();
+  const unitOr = unitId ? await unitDocumentFilter(unitId) : null;
+  const plantOr = plantId ? await plantDocumentFilter(plantId) : null;
 
   // Project filter: first resolve the document_id set via project_documents,
   // then narrow the documents query. Two round-trips, but the join-table
@@ -261,9 +295,8 @@ export async function searchDocuments(params: DocumentSearchParams): Promise<Doc
 
   if (libraryId) q = q.eq("library_id", libraryId);
   if (collectionId) q = q.eq("collection_id", collectionId);
-  if (plantId) q = q.eq("plant_id", plantId);
-  if (unitId) q = q.eq("unit_id", unitId);
-  if (systemId) q = q.eq("system_id", systemId);
+  if (plantId) q = plantOr ? q.or(plantOr) : q.eq("plant_id", plantId);
+  if (unitId) q = unitOr ? q.or(unitOr) : q.eq("unit_id", unitId);
   if (projectDocIds) q = q.in("id", projectDocIds);
   if (status) {
     if (Array.isArray(status)) q = q.in("status", status);
@@ -289,9 +322,8 @@ export async function searchDocuments(params: DocumentSearchParams): Promise<Doc
       let q2 = supabase.from("documents").select("*").eq("org_id", orgId).limit(limit);
       if (libraryId) q2 = q2.eq("library_id", libraryId);
       if (collectionId) q2 = q2.eq("collection_id", collectionId);
-      if (plantId) q2 = q2.eq("plant_id", plantId);
-      if (unitId) q2 = q2.eq("unit_id", unitId);
-      if (systemId) q2 = q2.eq("system_id", systemId);
+      if (plantId) q2 = plantOr ? q2.or(plantOr) : q2.eq("plant_id", plantId);
+      if (unitId) q2 = unitOr ? q2.or(unitOr) : q2.eq("unit_id", unitId);
       if (projectDocIds) q2 = q2.in("id", projectDocIds);
       if (status) { if (Array.isArray(status)) q2 = q2.in("status", status); else q2 = q2.eq("status", status); }
       q2 = q2
@@ -312,9 +344,8 @@ export async function searchDocuments(params: DocumentSearchParams): Promise<Doc
         .in("id", fresh.slice(0, 100)).limit(limit - rows.length);
       if (libraryId) q3 = q3.eq("library_id", libraryId);
       if (collectionId) q3 = q3.eq("collection_id", collectionId);
-      if (plantId) q3 = q3.eq("plant_id", plantId);
-      if (unitId) q3 = q3.eq("unit_id", unitId);
-      if (systemId) q3 = q3.eq("system_id", systemId);
+      if (plantId) q3 = plantOr ? q3.or(plantOr) : q3.eq("plant_id", plantId);
+      if (unitId) q3 = unitOr ? q3.or(unitOr) : q3.eq("unit_id", unitId);
       if (projectDocIds) q3 = q3.in("id", projectDocIds);
       if (status) { if (Array.isArray(status)) q3 = q3.in("status", status); else q3 = q3.eq("status", status); }
       const { data: d3 } = await q3.order("updated_at", { ascending: false, nullsFirst: false });
