@@ -41,6 +41,7 @@ import { listCompanies, type Company } from "@/lib/companies";
 import { matchCompanyByName } from "@/lib/bidTab";
 import { appConfirm, appPrompt } from "@/components/providers/DialogProvider";
 import { invalidateProjectSnapshot } from "@/lib/projectSnapshot";
+import { DECISION_TARGET } from "@/components/projects/decisionTarget";
 
 const COST_TYPES = ["labor", "material", "equipment", "subcontract", "other"] as const;
 /** COST-8: the account form offers a currency instead of hardcoding USD. */
@@ -491,16 +492,16 @@ function LedgerHealth({ orphans, accounts, entries, cos, canManage, actor, busy,
         <div key={d.id} className="flex items-center gap-2 flex-wrap pl-6">
           <span>{d.kind} <b>{d.vendorName ?? d.fileName ?? d.id.slice(0, 8)}</b> is {costDocStatusLabel(d.status).toLowerCase()} but has no cost entry.</span>
           {canManage && (
-            <span className="inline-flex items-center gap-1.5 ml-auto">
+            <span className="inline-flex items-center gap-2 ml-auto">
               <select value={accountPick[d.id] ?? ""} onChange={(e) => setAccountPick((m) => ({ ...m, [d.id]: e.target.value }))}
                 className="h-6 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-1 text-[10px] max-w-40">
                 <option value="">Posts to budget line…</option>
                 {accounts.map((a) => <option key={a.id} value={a.id}>{a.code ? `${a.code} ` : ""}{a.name}</option>)}
               </select>
               <button onClick={() => void repair(d, "repost")} disabled={busy === d.id}
-                className="px-2 py-0.5 rounded-lg bg-[var(--color-accent)] text-[var(--color-accent-fg)] text-[10px] font-black disabled:opacity-50">Re-post</button>
+                className={`${DECISION_TARGET} px-2 py-0.5 rounded-lg bg-[var(--color-accent)] text-[var(--color-accent-fg)] text-[10px] font-black disabled:opacity-50`}>Re-post</button>
               <button onClick={() => void repair(d, "revert")} disabled={busy === d.id}
-                className="px-2 py-0.5 rounded-lg border border-rose-500/50 text-rose-700 dark:text-rose-300 text-[10px] font-black disabled:opacity-50">{revertLabel(d)}</button>
+                className={`${DECISION_TARGET} px-2 py-0.5 rounded-lg border border-rose-500/50 text-rose-700 dark:text-rose-300 text-[10px] font-black disabled:opacity-50`}>{revertLabel(d)}</button>
             </span>
           )}
         </div>
@@ -511,7 +512,7 @@ function LedgerHealth({ orphans, accounts, entries, cos, canManage, actor, busy,
           <div key={c.id} className="flex items-center gap-2 flex-wrap pl-6">
             <span><b>{c.coNumber}</b> ({c.title}) is approved for {fmtMoney(c.amount)} {coSentence(c)} Until then it does not revise the budget.</span>
             {canManage && (
-              <span className="inline-flex items-center gap-1.5 ml-auto">
+              <span className="inline-flex items-center gap-2 ml-auto">
                 {candidates.length > 0 && (
                   <>
                     <select value={entryPick[c.id] ?? candidates[0].id} onChange={(e) => setEntryPick((m) => ({ ...m, [c.id]: e.target.value }))}
@@ -522,12 +523,12 @@ function LedgerHealth({ orphans, accounts, entries, cos, canManage, actor, busy,
                       ))}
                     </select>
                     <button onClick={() => void repairCo(c, "link")} disabled={busy === c.id}
-                      className="px-2 py-0.5 rounded-lg bg-[var(--color-accent)] text-[var(--color-accent-fg)] text-[10px] font-black disabled:opacity-50">Link</button>
+                      className={`${DECISION_TARGET} px-2 py-0.5 rounded-lg bg-[var(--color-accent)] text-[var(--color-accent-fg)] text-[10px] font-black disabled:opacity-50`}>Link</button>
                   </>
                 )}
                 <button onClick={() => void repairCo(c, "reverse")} disabled={busy === c.id}
                   title={candidates.length > 0 ? `A posted commitment carrying ${c.coNumber} is still on the budget line — link it instead, or void it by hand first.` : "Marks the change order void on the record; audited."}
-                  className="px-2 py-0.5 rounded-lg border border-rose-500/50 text-rose-700 dark:text-rose-300 text-[10px] font-black disabled:opacity-50">Reverse</button>
+                  className={`${DECISION_TARGET} px-2 py-0.5 rounded-lg border border-rose-500/50 text-rose-700 dark:text-rose-300 text-[10px] font-black disabled:opacity-50`}>Reverse</button>
               </span>
             )}
           </div>
@@ -628,7 +629,7 @@ function AccountDetail({ orgId, projectId, actor, rollup: r, entries, parties, m
                     if (!res.ok) setErr(res.error ?? "Couldn't void the entry."); else onChanged();
                   }}
                   disabled={busy === e.id}
-                  className="ml-auto shrink-0 inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-bold text-[var(--color-text-faint)] hover:text-rose-600 hover:bg-rose-500/10 transition-colors"
+                  className={`${DECISION_TARGET} ml-auto shrink-0 inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-bold text-[var(--color-text-faint)] hover:text-rose-600 hover:bg-rose-500/10 transition-colors`}
                   title="Void (financial records are never deleted)"
                 >
                   <Ban className="w-3 h-3" /> Void
@@ -701,7 +702,7 @@ function EntryForm({ orgId, projectId, accountId, parties, actor, onDone, setErr
       <input value={desc} onChange={(e) => setDesc(e.target.value)} placeholder="Description"
         className="h-8 flex-1 min-w-32 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-2 text-xs" />
       <button onClick={() => void submit()} disabled={saving}
-        className="h-8 inline-flex items-center gap-1 px-3 rounded-lg bg-[var(--color-accent)] text-[var(--color-accent-fg)] text-[11px] font-black hover:bg-[var(--color-accent-hover)] disabled:opacity-50 transition-colors">
+        className={`${DECISION_TARGET} h-8 inline-flex items-center gap-1 px-3 rounded-lg bg-[var(--color-accent)] text-[var(--color-accent-fg)] text-[11px] font-black hover:bg-[var(--color-accent-hover)] disabled:opacity-50 transition-colors`}>
         {saving ? <Loader2 className="w-3 h-3 animate-spin" /> : <Plus className="w-3 h-3" />} Post
       </button>
     </div>
@@ -765,7 +766,7 @@ function AccountForm({ orgId, projectId, actor, parties, milestones, onDone, onC
         {error && <span role="alert" className="text-[11px] font-bold text-rose-700 dark:text-rose-300">{error}</span>}
         <span className="ml-auto flex items-center gap-2">
           <button onClick={onCancel} className="text-xs font-bold text-[var(--color-text-muted)] hover:text-[var(--color-text)] px-2 py-1">Cancel</button>
-          <button onClick={() => void submit()} disabled={saving} className="inline-flex items-center gap-1 px-3 py-1.5 rounded-lg bg-[var(--color-accent)] text-[var(--color-accent-fg)] text-xs font-black hover:bg-[var(--color-accent-hover)] disabled:opacity-50">
+          <button onClick={() => void submit()} disabled={saving} className={`${DECISION_TARGET} inline-flex items-center gap-1 px-3 py-1.5 rounded-lg bg-[var(--color-accent)] text-[var(--color-accent-fg)] text-xs font-black hover:bg-[var(--color-accent-hover)] disabled:opacity-50`}>
             {saving ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Check className="w-3.5 h-3.5" />} Create
           </button>
         </span>
@@ -884,14 +885,14 @@ function PartiesPanel({ orgId, projectId, actor, parties, canManage, onChanged }
                     Known company: {companyName.get(p.companyId) ?? "open the record"}
                   </Link>
                 ) : linking === p.id ? (
-                  <span className="inline-flex flex-wrap items-center gap-1.5">
+                  <span className="inline-flex flex-wrap items-center gap-2">
                     <select value={linkPick} onChange={(e) => setLinkPick(e.target.value)} aria-label={`Known company for ${p.name}`}
                       className="h-7 max-w-48 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-1.5 text-[11px]">
                       <option value="">Pick the company…</option>
                       {companies.map((c) => <option key={c.id} value={c.id}>{c.name}{c.status === "do_not_use" ? " — DO NOT USE" : c.status === "inactive" ? " — inactive" : ""}</option>)}
                     </select>
                     <button type="button" onClick={() => void link(p)} disabled={!linkPick || saving}
-                      className="h-7 px-2 rounded-lg bg-[var(--color-accent)] text-[var(--color-accent-fg)] text-[10px] font-black disabled:opacity-50">Link</button>
+                      className={`${DECISION_TARGET} h-7 px-2 rounded-lg bg-[var(--color-accent)] text-[var(--color-accent-fg)] text-[10px] font-black disabled:opacity-50`}>Link</button>
                     <button type="button" onClick={() => { setLinking(null); setLinkPick(""); }} className="text-[10px] font-bold text-[var(--color-text-muted)]">Cancel</button>
                   </span>
                 ) : (
@@ -924,7 +925,7 @@ function PartiesPanel({ orgId, projectId, actor, parties, canManage, onChanged }
           )}
           <input value={trade} onChange={(e) => setTrade(e.target.value)} placeholder="Trade (piping, E&I…)" aria-label="Trade" className="h-8 w-36 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-2 text-xs" />
           <input value={contract} onChange={(e) => setContract(e.target.value)} placeholder="Contract value" aria-label="Contract value" inputMode="decimal" className="h-8 w-32 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-2 text-xs font-mono tabular-nums" />
-          <button onClick={() => void add()} disabled={saving} className="h-8 inline-flex items-center gap-1 px-3 rounded-lg bg-[var(--color-accent)] text-[var(--color-accent-fg)] text-[11px] font-black hover:bg-[var(--color-accent-hover)] disabled:opacity-50">
+          <button onClick={() => void add()} disabled={saving} className={`${DECISION_TARGET} h-8 inline-flex items-center gap-1 px-3 rounded-lg bg-[var(--color-accent)] text-[var(--color-accent-fg)] text-[11px] font-black hover:bg-[var(--color-accent-hover)] disabled:opacity-50`}>
             {saving ? <Loader2 className="w-3 h-3 animate-spin" /> : <Plus className="w-3 h-3" />} Add
           </button>
         </div>

@@ -47,6 +47,7 @@ import { listCompanies, listBarredCompanies, getCompany, type Company } from "@/
 import { fmtMoney, type CostAccount, type Actor } from "@/lib/costs";
 import { getFileUrl } from "@/lib/storage";
 import { publicOrigin } from "@/lib/publicOrigin";
+import { DECISION_TARGET } from "@/components/projects/decisionTarget";
 import {
   type CostDocument, costDocStatusLabel,
   uploadCostDoc, awardQuote, postInvoice, declineQuote, voidCostDoc,
@@ -459,7 +460,7 @@ export default function QuotesPanel({ orgId, projectId, canManage, actor, accoun
                   <>
                     <ReadButton busy={busy === doc.id} onClick={() => void readDoc(doc)} />
                     <button onClick={() => void typeTotal(doc)}
-                      className="text-[10px] font-bold text-[var(--color-text-muted)] hover:text-[var(--color-text)]">type total</button>
+                      className={`${DECISION_TARGET} text-[10px] font-bold text-[var(--color-text-muted)] hover:text-[var(--color-text)]`}>type total</button>
                   </>
                 )}
                 {canManage && doc.status === "parsed" && (
@@ -487,7 +488,7 @@ export default function QuotesPanel({ orgId, projectId, canManage, actor, accoun
                 )}
                 {canManage && doc.status === "parsed" && (
                   <button onClick={() => void typeTotal(doc)} title="Correct the amount by hand"
-                    className="inline-flex items-center gap-0.5 text-[10px] font-bold text-[var(--color-text-muted)] hover:text-[var(--color-text)]">
+                    className={`${DECISION_TARGET} inline-flex items-center gap-0.5 text-[10px] font-bold text-[var(--color-text-muted)] hover:text-[var(--color-text)]`}>
                     <Pencil className="w-3 h-3" /> correct total
                   </button>
                 )}
@@ -781,7 +782,7 @@ function BidGroup({ group, docs: groupDocs, allDocs, accounts, companies, barred
                   <span className="font-bold text-[var(--color-text)] max-w-40 truncate">{d.vendorName ?? d.fileName}</span>
                   <OpenPdfButton doc={d} setErr={setErr} />
                   {canManage && <ReadButton busy={busy === d.id} onClick={() => void readDoc(d)} />}
-                  {canManage && <button onClick={() => void typeTotal(d)} className="text-[10px] font-bold text-[var(--color-text-muted)] hover:text-[var(--color-text)]">type total</button>}
+                  {canManage && <button onClick={() => void typeTotal(d)} className={`${DECISION_TARGET} text-[10px] font-bold text-[var(--color-text-muted)] hover:text-[var(--color-text)]`}>type total</button>}
                 </span>
               ))}
             </div>
@@ -957,14 +958,14 @@ function BidGroup({ group, docs: groupDocs, allDocs, accounts, companies, barred
                               {rowActions && (
                                 <>
                                   <button onClick={() => void typeTotal(doc)} title="Correct the total by hand — the AI's reading stays on the record"
-                                    className="ml-1 inline-flex items-center gap-0.5 text-[10px] font-bold text-[var(--color-text-muted)] hover:text-[var(--color-text)]">
+                                    className={`${DECISION_TARGET} ml-2 inline-flex items-center gap-0.5 text-[10px] font-bold text-[var(--color-text-muted)] hover:text-[var(--color-text)]`}>
                                     <Pencil className="w-3 h-3" /> correct total
                                   </button>
                                   {/* MON-10: an ungrouped bid is declined by hand (an award declines only its own RFQ group). */}
                                   {!doc.rfqGroup?.trim() && doc.kind === "quote" && (
                                     <button onClick={() => void decline(doc)} disabled={busy === doc.id}
                                       title="Mark this bid not selected — for a quote that competed with one awarded elsewhere. Audited; the contractor's portal shows it."
-                                      className="ml-1 inline-flex items-center gap-0.5 text-[10px] font-bold text-[var(--color-text-muted)] hover:text-[var(--color-text)] disabled:opacity-50">
+                                      className={`${DECISION_TARGET} ml-2 inline-flex items-center gap-0.5 text-[10px] font-bold text-[var(--color-text-muted)] hover:text-[var(--color-text)] disabled:opacity-50`}>
                                       <XIcon className="w-3 h-3" /> Decline
                                     </button>
                                   )}
@@ -1167,7 +1168,7 @@ function ReadButton({ busy, onClick }: { busy: boolean; onClick: () => void }) {
   const blocked = !!ai && aiBlocked(ai);
   return (
     <button onClick={onClick} disabled={busy || blocked} aria-describedby={blocked ? "quotes-ai-precondition" : undefined}
-      className="inline-flex items-center gap-1 px-2 py-0.5 rounded-lg bg-[var(--color-accent)] text-[var(--color-accent-fg)] text-[10px] font-black hover:bg-[var(--color-accent-hover)] disabled:opacity-50 transition-colors"
+      className={`${DECISION_TARGET} inline-flex items-center gap-1 px-2 py-0.5 rounded-lg bg-[var(--color-accent)] text-[var(--color-accent-fg)] text-[10px] font-black hover:bg-[var(--color-accent-hover)] disabled:opacity-50 transition-colors`}
       title="AI reads the printed pages into numbers — on your own AI key. You review before anything posts.">
       {busy ? <Loader2 className="w-3 h-3 animate-spin" /> : <Sparkles className="w-3 h-3" />} Read
     </button>
@@ -1187,14 +1188,14 @@ function PostControls({ accounts, busy, onPost, label, currency, costType }: {
   const accountId = picked || (accounts.length === 1 ? accounts[0].id : "");
   if (accounts.length === 0) return <CreateBudgetLineInline label={label} currency={currency} costType={costType} />;
   return (
-    <span className="inline-flex items-center gap-1">
+    <span className="inline-flex items-center gap-2">
       <select value={accountId} onChange={(e) => setAccountId(e.target.value)}
         className="h-6 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-1 text-[10px] max-w-36">
         <option value="">Budget line…</option>
         {accounts.map((a) => <option key={a.id} value={a.id}>{a.code ? `${a.code} ` : ""}{a.name}</option>)}
       </select>
       <button onClick={() => accountId && void onPost(accountId)} disabled={busy || !accountId}
-        className="inline-flex items-center gap-1 px-2 py-0.5 rounded-lg bg-[var(--color-accent)] text-[var(--color-accent-fg)] text-[10px] font-black hover:bg-[var(--color-accent-hover)] disabled:opacity-50 transition-colors">
+        className={`${DECISION_TARGET} inline-flex items-center gap-1 px-2 py-0.5 rounded-lg bg-[var(--color-accent)] text-[var(--color-accent-fg)] text-[10px] font-black hover:bg-[var(--color-accent-hover)] disabled:opacity-50 transition-colors`}>
         {busy ? <Loader2 className="w-3 h-3 animate-spin" /> : <CheckCircle2 className="w-3 h-3" />} {label}
       </button>
     </span>
@@ -1255,7 +1256,7 @@ function CreateBudgetLineInline({ label, currency, costType = "subcontract" }: {
         {INLINE_COST_TYPES.map((t) => <option key={t} value={t}>{t}</option>)}
       </select>
       <button type="button" onClick={() => void create()} disabled={saving}
-        className="inline-flex items-center gap-1 px-2 py-0.5 rounded-lg bg-[var(--color-accent)] text-[var(--color-accent-fg)] text-[10px] font-black disabled:opacity-50">
+        className={`${DECISION_TARGET} inline-flex items-center gap-1 px-2 py-0.5 rounded-lg bg-[var(--color-accent)] text-[var(--color-accent-fg)] text-[10px] font-black disabled:opacity-50`}>
         {saving ? <Loader2 className="w-3 h-3 animate-spin" /> : <Plus className="w-3 h-3" />} Create
       </button>
       <button type="button" onClick={() => { setOpen(false); setError(null); }} className="text-[10px] font-bold text-[var(--color-text-muted)]">Cancel</button>
@@ -1289,7 +1290,7 @@ function VoidButton({ doc, actor, busy, setBusy, onChanged, setErr }: {
         onChanged();
       }}
       disabled={busy}
-      className="ml-auto inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-bold text-[var(--color-text-faint)] hover:text-rose-600 hover:bg-rose-500/10 transition-colors">
+      className={`${DECISION_TARGET} ml-auto inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-bold text-[var(--color-text-faint)] hover:text-rose-600 hover:bg-rose-500/10 transition-colors`}>
       <Ban className="w-3 h-3" /> Void
     </button>
   );
@@ -1357,7 +1358,7 @@ function UploadRow({ orgId, projectId, actor, kind, existingGroups, parties, onD
         </>
       )}
       <button onClick={() => void submit()} disabled={saving || !file}
-        className="h-8 inline-flex items-center gap-1 px-3 rounded-lg bg-[var(--color-accent)] text-[var(--color-accent-fg)] text-[11px] font-black hover:bg-[var(--color-accent-hover)] disabled:opacity-50 transition-colors">
+        className={`${DECISION_TARGET} h-8 inline-flex items-center gap-1 px-3 rounded-lg bg-[var(--color-accent)] text-[var(--color-accent-fg)] text-[11px] font-black hover:bg-[var(--color-accent-hover)] disabled:opacity-50 transition-colors`}>
         {saving ? <Loader2 className="w-3 h-3 animate-spin" /> : <UploadCloud className="w-3 h-3" />} Upload
       </button>
     </div>
@@ -1563,7 +1564,7 @@ function QuoteLinksSection({ orgId, projectId, actor, existingGroups, setErr }: 
             className="h-8 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-2 text-xs [color-scheme:light] dark:[color-scheme:dark]" />
         </label>
         <button onClick={() => void create()} disabled={saving}
-          className="h-8 inline-flex items-center gap-1 px-3 rounded-lg bg-[var(--color-accent)] text-[var(--color-accent-fg)] text-[11px] font-black hover:bg-[var(--color-accent-hover)] disabled:opacity-50 transition-colors">
+          className={`${DECISION_TARGET} h-8 inline-flex items-center gap-1 px-3 rounded-lg bg-[var(--color-accent)] text-[var(--color-accent-fg)] text-[11px] font-black hover:bg-[var(--color-accent-hover)] disabled:opacity-50 transition-colors`}>
           {saving ? <Loader2 className="w-3 h-3 animate-spin" /> : <Link2 className="w-3 h-3" />} Create link
         </button>
       </div>
@@ -1580,28 +1581,28 @@ function QuoteLinksSection({ orgId, projectId, actor, existingGroups, setErr }: 
                   </span>
                 : <span className="text-[10px] font-bold text-amber-700 dark:text-amber-300" title="Created before expiry was required — revoke it when the bidding closes">no expiry</span>}
               {l.tokenPrefix && <span className="font-mono text-[10px] text-[var(--color-text-faint)]" title="The first characters of this link's address — the full address is shown only when the link is created or re-issued">{l.tokenPrefix}…</span>}
-              <span className="ml-auto flex items-center gap-1">
+              <span className="ml-auto flex items-center gap-2">
                 {linkLive(l) && (knownUrl(l) ? (
                   <>
                     <button onClick={() => void makeRfq(l)}
                       title="Download a ready-to-send Request For Quote (.docx) built from this project's scope, purpose, and turnover requirements — with this company's submission link inside."
-                      className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md border border-[var(--color-border-strong)] text-[10px] font-bold text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-surface-2)] transition-colors">
+                      className={`${DECISION_TARGET} inline-flex items-center gap-1 px-2 py-0.5 rounded-md border border-[var(--color-border-strong)] text-[10px] font-bold text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-surface-2)] transition-colors`}>
                       <FileText className="w-3 h-3" /> RFQ (.docx)
                     </button>
                     <button onClick={() => void copy(l)}
-                      className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md border border-[var(--color-border-strong)] text-[10px] font-bold text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-surface-2)] transition-colors">
+                      className={`${DECISION_TARGET} inline-flex items-center gap-1 px-2 py-0.5 rounded-md border border-[var(--color-border-strong)] text-[10px] font-bold text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-surface-2)] transition-colors`}>
                       <Copy className="w-3 h-3" /> {copied === l.id ? "Copied!" : "Copy link"}
                     </button>
                   </>
                 ) : (
                   <button onClick={() => void reissue(l)} disabled={reissuing === l.id}
                     title="The address is not stored (only its fingerprint is). Re-issue to get a new one for Copy link and the RFQ — the old one stops working."
-                    className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md border border-[var(--color-border-strong)] text-[10px] font-bold text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-surface-2)] transition-colors disabled:opacity-50">
+                    className={`${DECISION_TARGET} inline-flex items-center gap-1 px-2 py-0.5 rounded-md border border-[var(--color-border-strong)] text-[10px] font-bold text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-surface-2)] transition-colors disabled:opacity-50`}>
                     {reissuing === l.id ? <Loader2 className="w-3 h-3 animate-spin" /> : <RotateCcw className="w-3 h-3" />} Re-issue
                   </button>
                 ))}
                 <button onClick={() => void revoke(l)} disabled={revoking === l.id}
-                  className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md border border-rose-500/40 text-[10px] font-bold text-rose-700 dark:text-rose-300 hover:bg-rose-500/10 transition-colors disabled:opacity-50">
+                  className={`${DECISION_TARGET} inline-flex items-center gap-1 px-2 py-0.5 rounded-md border border-rose-500/40 text-[10px] font-bold text-rose-700 dark:text-rose-300 hover:bg-rose-500/10 transition-colors disabled:opacity-50`}>
                   {revoking === l.id ? <Loader2 className="w-3 h-3 animate-spin" /> : <Ban className="w-3 h-3" />} Revoke
                 </button>
               </span>

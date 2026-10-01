@@ -112,6 +112,9 @@ describe("INTK-17 — the Intake tab's Revoke changes only an unrevoked link of 
     db.byOp["audit_logs.insert"] = { data: null, error: null };
     dlg.appConfirm.mockResolvedValue(true);
     await renderIntake();
+    // A11Y-14: the link row's decision controls carry the 24 / 44 px floor
+    expect(buttonByText(/Revoke/)!.className).toContain("pointer-coarse:min-h-11");
+    expect(buttonByText(/Assign docs/)!.className).toContain("pointer-coarse:min-h-11");
     await act(async () => { buttonByText(/Revoke/)!.click(); }); await settle();
     const upd = db.calls.filter((c) => c.table === "project_intake_links" && c.op === "update");
     expect(upd.map((c) => c.method)).toEqual(["update", "eq", "eq", "is", "select"]);

@@ -75,11 +75,12 @@ import { StatusMark, StatusLegend, CHECKLIST_STATUS_MARKS, PUNCH_STATUS_MARKS } 
 import { TURNOVER_STATUS_MEANING } from "@/lib/projectVocabulary";
 import { invalidateProjectSnapshot } from "@/lib/projectSnapshot";
 import { isControllerPrincipal } from "@/lib/permissions";
+import { DECISION_TARGET } from "@/components/projects/decisionTarget";
 
-/** A11Y-8: a decision control is never under 24 px, and on a coarse
- *  pointer (a tablet, a gloved hand) it is 44 px — set on the button, never
- *  by a bare element rule in the shared stylesheet. */
-const DECISION_TARGET = "min-h-6 min-w-6 pointer-coarse:min-h-11 pointer-coarse:min-w-11 pointer-coarse:px-3";
+/** A11Y-8 / A11Y-14: a decision control is never under 24 px, and on a
+ *  coarse pointer (a tablet, a gloved hand) it is 44 px — set on the button,
+ *  never by a bare element rule in the shared stylesheet. One constant for
+ *  every Projects surface (components/projects/decisionTarget.ts). */
 
 /** PERF-10: ONE date formatter for every row of the tab — a checklist's
  *  sign-off, an item's machine verification, a turnover review and its

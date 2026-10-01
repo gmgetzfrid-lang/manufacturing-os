@@ -151,6 +151,11 @@ describe("MON-10 — the award's warning, its promise, and the hand decline", ()
   it("Decline is offered on an open UNGROUPED quote only; it asks for an optional reason, calls declineQuote with it and re-reads", async () => {
     await render([BAY, doc({ ...COLE, rfqGroup: "Unit 300 Repipe" })]);
     expect(btn(rowOf("Bayline"), /Decline/)).toBeTruthy();
+    // A11Y-14: every decision control in the row is 24 px, 44 px on a coarse pointer
+    for (const re of [/Award/, /correct total/, /Decline/, /Void/]) {
+      expect(btn(rowOf("Bayline"), re)!.className, String(re)).toContain("min-h-6");
+      expect(btn(rowOf("Bayline"), re)!.className, String(re)).toContain("pointer-coarse:min-h-11");
+    }
     expect(btn(rowOf("Cole Paint"), /Decline/)).toBeUndefined();   // grouped: the award declines it
     dlg.appPrompt.mockResolvedValueOnce("  Awarded to Gulf Mechanical  ");
     cd.declineQuote.mockResolvedValueOnce({ ok: true });

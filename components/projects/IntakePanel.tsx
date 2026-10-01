@@ -23,6 +23,7 @@ import {
 } from "lucide-react";
 import { supabase } from "@/lib/supabase";
 import { publicOrigin } from "@/lib/publicOrigin";
+import { DECISION_TARGET } from "@/components/projects/decisionTarget";
 import {
   finalizeReviewedRevision, finalizeReasonMessage,
   effectiveReviewControlForDocument, listDraftRoster, openReviewRoster,
@@ -540,11 +541,11 @@ export default function IntakePanel({ orgId, projectId, canManage, uid, userEmai
                 <span className="text-sm font-bold text-[var(--color-text)]">{p.label}</span>
                 <span className="text-xs text-[var(--color-text-muted)]">Rev {p.revLabel ?? "—"} · {p.company ?? "external"}{p.submittedAt ? ` · ${new Date(p.submittedAt).toLocaleDateString()}` : ""}</span>
                 {canManage && (
-                  <span className="ml-auto flex items-center gap-1.5">
-                    <button onClick={() => void approve(p)} disabled={busy === p.docId} className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg bg-emerald-500 text-white text-[11px] font-black hover:bg-emerald-600 disabled:opacity-50">
+                  <span className="ml-auto flex items-center gap-2">
+                    <button onClick={() => void approve(p)} disabled={busy === p.docId} className={`${DECISION_TARGET} inline-flex items-center gap-1 px-2.5 py-1 rounded-lg bg-emerald-500 text-white text-[11px] font-black hover:bg-emerald-600 disabled:opacity-50`}>
                       {busy === p.docId ? <Loader2 className="w-3 h-3 animate-spin" /> : <Check className="w-3 h-3" />} Approve
                     </button>
-                    <button onClick={() => void reject(p)} disabled={busy === p.docId} className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg border border-rose-500/40 text-rose-700 dark:text-rose-300 text-[11px] font-black hover:bg-rose-500/10 disabled:opacity-50">
+                    <button onClick={() => void reject(p)} disabled={busy === p.docId} className={`${DECISION_TARGET} inline-flex items-center gap-1 px-2.5 py-1 rounded-lg border border-rose-500/40 text-rose-700 dark:text-rose-300 text-[11px] font-black hover:bg-rose-500/10 disabled:opacity-50`}>
                       <X className="w-3 h-3" /> Reject
                     </button>
                   </span>
@@ -580,22 +581,22 @@ export default function IntakePanel({ orgId, projectId, canManage, uid, userEmai
                 {l.allowAutoSupersede && <span className="inline-flex items-center gap-0.5 text-[10px] font-bold text-violet-700 dark:text-violet-300"><ShieldCheck className="w-3 h-3" /> trusted</span>}
                 <span className="text-[var(--color-text-faint)]">{l.submissionCount} submission{l.submissionCount === 1 ? "" : "s"}{l.expiresAt ? ` · expires ${new Date(l.expiresAt).toLocaleDateString()}` : ""}{l.revokedAt ? " · REVOKED" : ""}</span>
                 {!l.revokedAt && (
-                  <span className="ml-auto flex items-center gap-1">
+                  <span className="ml-auto flex items-center gap-2">
                     {l.tokenPrefix && <span className="font-mono text-[10px] text-[var(--color-text-faint)]" title="The first characters of this link's address — the full address is shown only when the link is created or re-issued">{l.tokenPrefix}…</span>}
                     {canManage && (!l.expiresAt || Date.parse(l.expiresAt) > Date.now()) && (() => {
                       const url = knownUrl(l);
                       return url ? (
-                        <button onClick={() => { void navigator.clipboard.writeText(url); setMsg(`Copied ${l.companyName}'s link.`, "success"); }} className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md border border-[var(--color-border-strong)] font-bold hover:border-[var(--color-accent-ring)]"><Copy className="w-3 h-3" /> Copy link</button>
+                        <button onClick={() => { void navigator.clipboard.writeText(url); setMsg(`Copied ${l.companyName}'s link.`, "success"); }} className={`${DECISION_TARGET} inline-flex items-center gap-1 px-2 py-0.5 rounded-md border border-[var(--color-border-strong)] font-bold hover:border-[var(--color-accent-ring)]`}><Copy className="w-3 h-3" /> Copy link</button>
                       ) : (
-                        <button onClick={() => void reissue(l)} disabled={busy === l.id} title="The address is not stored (only its fingerprint is). Re-issue to get a new one — the old one stops working." className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md border border-[var(--color-border-strong)] font-bold hover:border-[var(--color-accent-ring)]"><RotateCcw className="w-3 h-3" /> Re-issue</button>
+                        <button onClick={() => void reissue(l)} disabled={busy === l.id} title="The address is not stored (only its fingerprint is). Re-issue to get a new one — the old one stops working." className={`${DECISION_TARGET} inline-flex items-center gap-1 px-2 py-0.5 rounded-md border border-[var(--color-border-strong)] font-bold hover:border-[var(--color-accent-ring)]`}><RotateCcw className="w-3 h-3" /> Re-issue</button>
                       );
                     })()}
                     {canManage && (
-                      <button onClick={() => { setAssignOpen(assignOpen === l.id ? null : l.id); setAssignQ(""); setAssignResults([]); }} className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md border border-[var(--color-border-strong)] font-bold hover:border-[var(--color-accent-ring)]">
+                      <button onClick={() => { setAssignOpen(assignOpen === l.id ? null : l.id); setAssignQ(""); setAssignResults([]); }} className={`${DECISION_TARGET} inline-flex items-center gap-1 px-2 py-0.5 rounded-md border border-[var(--color-border-strong)] font-bold hover:border-[var(--color-accent-ring)]`}>
                         <FilePlus2 className="w-3 h-3" /> Assign docs
                       </button>
                     )}
-                    {canManage && <button onClick={() => void revoke(l)} disabled={busy === l.id} className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md border border-rose-500/40 text-rose-700 dark:text-rose-300 font-bold hover:bg-rose-500/10"><Ban className="w-3 h-3" /> Revoke</button>}
+                    {canManage && <button onClick={() => void revoke(l)} disabled={busy === l.id} className={`${DECISION_TARGET} inline-flex items-center gap-1 px-2 py-0.5 rounded-md border border-rose-500/40 text-rose-700 dark:text-rose-300 font-bold hover:bg-rose-500/10`}><Ban className="w-3 h-3" /> Revoke</button>}
                   </span>
                 )}
               </div>
@@ -609,7 +610,7 @@ export default function IntakePanel({ orgId, projectId, canManage, uid, userEmai
                         <span key={id} className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded-md bg-[var(--color-surface-2)] border border-[var(--color-border-strong)] text-[10px] font-bold text-[var(--color-text)]">
                           {docLabels.get(id) ?? "Document"}
                           {canManage && (
-                            <button onClick={() => void updateAssigned(l, l.assignedDocIds.filter((x) => x !== id))} disabled={busy === l.id} title="Unassign" className="text-[var(--color-text-faint)] hover:text-rose-600">
+                            <button onClick={() => void updateAssigned(l, l.assignedDocIds.filter((x) => x !== id))} disabled={busy === l.id} title="Unassign" className={`${DECISION_TARGET} text-[var(--color-text-faint)] hover:text-rose-600`}>
                               <X className="w-3 h-3" />
                             </button>
                           )}
@@ -637,7 +638,7 @@ export default function IntakePanel({ orgId, projectId, canManage, uid, userEmai
                               <button
                                 onClick={() => void updateAssigned(l, [...l.assignedDocIds, r.id], r.label)}
                                 disabled={busy === l.id}
-                                className="w-full text-left px-2 py-1 text-xs font-bold text-[var(--color-text)] hover:bg-[var(--color-surface-2)] disabled:opacity-50"
+                                className={`${DECISION_TARGET} w-full text-left px-2 py-1 text-xs font-bold text-[var(--color-text)] hover:bg-[var(--color-surface-2)] disabled:opacity-50`}
                               >
                                 {r.label}
                               </button>
@@ -673,7 +674,7 @@ export default function IntakePanel({ orgId, projectId, canManage, uid, userEmai
               <input type="checkbox" checked={trusted} onChange={(e) => setTrusted(e.target.checked)} />
               Trusted: once one of <b>their own documents</b> has been approved, their later revisions of it publish immediately — never documents assigned to them, never over a hold or a checkout, never in a library that requires reviewer sign-off
             </label>
-            <button onClick={() => void createLink()} disabled={busy === "create"} className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-[var(--color-accent)] text-[var(--color-accent-fg)] text-xs font-black hover:bg-[var(--color-accent-hover)] disabled:opacity-50">
+            <button onClick={() => void createLink()} disabled={busy === "create"} className={`${DECISION_TARGET} inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-[var(--color-accent)] text-[var(--color-accent-fg)] text-xs font-black hover:bg-[var(--color-accent-hover)] disabled:opacity-50`}>
               {busy === "create" ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Link2 className="w-3.5 h-3.5" />} Create link
             </button>
           </div>
