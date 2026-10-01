@@ -179,6 +179,10 @@ export interface KnowledgeAnswer {
   saveError?: string;
   /** ASK-7: the prompt was over its size budget and was cut (the answer says so). */
   trimmed?: { passages: number; fullText: string[] };
+  /** ASK-5: this many of the asker's earlier turns in the conversation were
+   *  not sent with the question (a document one drew on is no longer
+   *  readable to them, or was removed) — the answer's last line says so. */
+  historyWithheld?: number;
 }
 
 export interface EquipmentTable {
@@ -202,6 +206,10 @@ export interface EquipmentTable {
       }>;
     }>;
   }>;
+  /** ASK-2: the tag census stopped at its ceiling and this many of the
+   *  library's sheets were not counted — the register is a floor, not the
+   *  whole set (a tag on an uncounted sheet is not listed). */
+  partial?: { uncountedSheets: number };
 }
 
 export interface KnowledgeQuestion {

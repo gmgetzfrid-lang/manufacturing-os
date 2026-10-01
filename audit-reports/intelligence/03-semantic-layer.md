@@ -183,7 +183,7 @@ Tests: `askRouteHonesty.test.ts` "SEM-3: a library built by another provider is 
 3. ✓ The catch distinguishes "no embedding key" (normal, silent) from a provider refusal (reported on the answer).
 4. ✓ The removal-confirmation copy is corrected.
 
-**Scope / residual.** None.
+**Scope / residual.** None in this finding. `components/knowledge/AiSettingsModal.tsx` is also in I-20's file list, and this message is I-03's only change to it, so the merge must keep both. The known overlap is recorded in `99-fix-sequencing.md` (I-03 fix pass 2).
 
 ---
 

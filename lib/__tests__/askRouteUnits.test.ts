@@ -8,7 +8,11 @@ import { describe, it, expect, vi, afterEach } from "vitest";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { callAiModel, AiCallError } from "@/lib/ai/providerCall";
-import { readAll, columnMissing } from "@/lib/knowledgeAskGuards";
+import React from "react";
+import { renderToStaticMarkup } from "react-dom/server";
+import { readAll, columnMissing, provenPageCurrent } from "@/lib/knowledgeAskGuards";
+import EquipmentTablePanel from "@/components/knowledge/EquipmentTablePanel";
+import type { EquipmentTable } from "@/lib/knowledge";
 import { planVisibleHistory, parseAnswerContext, contextKnowledgeDocIds, type StoredAnswerRow } from "@/lib/knowledgeHistory";
 import { buildAnswerSkills, buildAnswerSkillsBlock } from "@/lib/answerSkillsServer";
 
@@ -152,6 +156,26 @@ describe("ASK-1 / KACL-1 / IEDGE-5 — planVisibleHistory reads the recorded con
     expect(planVisibleHistory([r], [], new Set([D1]), "reader").visible).toEqual([r]);
   });
 
+  it("a library row that cites nothing: without a context it is its asker's alone (as before); WITH one it is judged by that context", () => {
+    const bare = row({ citations: [] });
+    expect(planVisibleHistory([bare], [], new Set([D1, D2]), "reader").withheld).toEqual([bare]);
+    expect(planVisibleHistory([bare], [], new Set([D1, D2]), "asker").visible).toEqual([bare]);
+    // "Nothing matches" with an empty context: nothing reached the model — shown.
+    const none = row({ citations: [], context: ctx([]) });
+    expect(planVisibleHistory([none], [], new Set(), "reader").visible).toEqual([none]);
+    // An uncited answer built on D2: shown only to a reader who can read D2.
+    const uncited = row({ citations: [], context: ctx([D2]) });
+    expect(planVisibleHistory([uncited], [], new Set([D1]), "reader").withheld).toEqual([uncited]);
+    expect(planVisibleHistory([uncited], [], new Set([D2]), "reader").visible).toEqual([uncited]);
+    // Incomplete or client-history contexts stay the asker's alone.
+    const partialCtx = row({ citations: [], context: ctx([], { complete: false }) });
+    expect(planVisibleHistory([partialCtx], [], new Set(), "reader").withheld).toEqual([partialCtx]);
+    // A nothing-matched turn with its context no longer taints the turn after it.
+    const t1 = row({ id: "n1", thread_id: "T", citations: [], context: ctx([]), created_at: "2026-10-01T00:00:00Z" });
+    const t2 = row({ id: "n2", thread_id: "T", context: ctx([D1]), created_at: "2026-10-01T00:01:00Z" });
+    expect(planVisibleHistory([t1, t2], [t1, t2], new Set([D1]), "reader").visible.map((x) => x.id)).toEqual(["n1", "n2"]);
+  });
+
   it("parseAnswerContext reads only a context the ask route wrote; contextKnowledgeDocIds lists its documents", () => {
     expect(parseAnswerContext(null)).toBeNull();
     expect(parseAnswerContext([D1])).toBeNull();
@@ -162,6 +186,38 @@ describe("ASK-1 / KACL-1 / IEDGE-5 — planVisibleHistory reads the recorded con
     expect(parseAnswerContext({ documents: [] })?.complete).toBe(false);
     expect(contextKnowledgeDocIds({ documents: [D1, D2] })).toEqual([D1, D2]);
     expect(contextKnowledgeDocIds(undefined)).toEqual([]);
+  });
+});
+
+// ── IEDGE-4 — provenPageCurrent ─────────────────────────────────────────────
+
+describe("IEDGE-4 — provenPageCurrent: a rated page is seated only while it is the version the rating saw", () => {
+  const ANSWERED = "2026-09-01T00:00:00Z";
+  const mirror = (over: Record<string, unknown> = {}) => ({ source_document_id: "dc-1", source_version_id: "v1", source_rev: "B", ...over });
+  const since = (map: Record<string, string>) => (id: string) => map[id];
+
+  it("an upload is always the page that was rated", () => {
+    expect(provenPageCurrent({}, { source_document_id: null }, ANSWERED, () => undefined)).toBe(true);
+  });
+  it("a recorded version: seated only while the mirror still points at it (a same-label re-release is not)", () => {
+    expect(provenPageCurrent({ sourceVersionId: "v1", sourceRev: "B" }, mirror(), ANSWERED, () => undefined)).toBe(true);
+    expect(provenPageCurrent({ sourceVersionId: "v1", sourceRev: "B" }, mirror({ source_version_id: "v2" }), ANSWERED, () => undefined)).toBe(false);
+  });
+  it("nothing recorded (a rating made before I-03): seated when the mirror's version became current no later than the answer", () => {
+    expect(provenPageCurrent({}, mirror(), ANSWERED, since({ v1: "2026-08-01T00:00:00Z" }))).toBe(true);
+    expect(provenPageCurrent({}, mirror(), ANSWERED, since({ v1: ANSWERED }))).toBe(true);
+    expect(provenPageCurrent({}, mirror(), ANSWERED, since({ v1: "2026-09-02T00:00:00Z" }))).toBe(false);
+    expect(provenPageCurrent({}, mirror(), ANSWERED, since({}))).toBe(false);
+    expect(provenPageCurrent({}, mirror(), null, since({ v1: "2026-08-01T00:00:00Z" }))).toBe(false);
+  });
+  it("nothing recorded, and a mirror with no version: nothing to compare — seated, as before", () => {
+    expect(provenPageCurrent({}, mirror({ source_version_id: null }), ANSWERED, () => undefined)).toBe(true);
+  });
+  it("only the label recorded: a different label is never seated; the same label still needs the version to predate the answer", () => {
+    expect(provenPageCurrent({ sourceRev: "A" }, mirror(), ANSWERED, since({ v1: "2026-08-01T00:00:00Z" }))).toBe(false);
+    expect(provenPageCurrent({ sourceRev: "B" }, mirror(), ANSWERED, since({ v1: "2026-08-01T00:00:00Z" }))).toBe(true);
+    expect(provenPageCurrent({ sourceRev: "B" }, mirror(), ANSWERED, since({ v1: "2026-09-02T00:00:00Z" }))).toBe(false);
+    expect(provenPageCurrent({ sourceRev: "B" }, mirror({ source_version_id: null }), ANSWERED, () => undefined)).toBe(true);
   });
 });
 
@@ -250,5 +306,18 @@ describe("the answer surface marks what the route now says", () => {
   });
   it("PR-4: the equipment table marks a sheet an AI transcribed", () => {
     expect(src("components/knowledge/EquipmentTablePanel.tsx")).toMatch(/s\.viaVision && \(\s*<span data-via-vision="true"/);
+  });
+  it("ASK-2: a register built from a partial census is RENDERED as a floor — 'at least', and how many sheets were not counted; a whole one is not", () => {
+    const table: EquipmentTable = {
+      total: 1, truncated: false, filteredTo: "Pumps",
+      categories: [{ prefix: "P", label: "Pumps", count: 1, items: [{ tag: "P-5001", note: null, sheets: [{ documentId: "d", documentName: "025-PID-0005.pdf", page: 1 }] }] }],
+      partial: { uncountedSheets: 2 },
+    };
+    const partial = renderToStaticMarkup(React.createElement(EquipmentTablePanel, { table, onOpenTag: () => undefined }));
+    expect(partial).toMatch(/Pumps — (<!-- -->)?at least (<!-- -->)?1(<!-- -->)? distinct tag/);
+    expect(partial).toMatch(/data-partial-register="true"[^>]*>PARTIAL — (<!-- -->)?2(<!-- -->)? sheet(<!-- -->)?s were(<!-- -->)? not\s+counted; this list is a floor/);
+    const whole = renderToStaticMarkup(React.createElement(EquipmentTablePanel, { table: { ...table, partial: undefined }, onOpenTag: () => undefined }));
+    expect(whole).not.toMatch(/PARTIAL|at least/);
+    expect(whole).toMatch(/Pumps — (<!-- -->)?1(<!-- -->)? distinct tag/);
   });
 });

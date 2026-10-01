@@ -666,8 +666,9 @@ Tests: `lib/__tests__/ingestLock.test.ts` ("chunks say 'vision' with the model t
 - **The citation carries it.** The route reads `knowledge_chunks.source` / `source_model` (`20261122`) for the passages in the pool; a citation of a vision chunk carries `source: "vision"` and `sourceModel`, and so does a show-me sheet citation from a page whose text an AI model transcribed. The source card shows "AI transcription of this page" ("This passage is an AI model's transcription of the page image, not the drawing's own text — check tags and values against the page.").
 - **The prompt is told.** A transcribed passage's label reads `AI TRANSCRIPTION`, and the system prompt says such a passage was read from a page image by an AI model, may misread tags, values and drawing numbers, and needs a **Check:** when the answer rests on it.
 - **Identity, in the ask route.** DRAWING FACTS count a title-block identity as READ only from a text layer; one read off an AI transcription is "unconfirmed" (`PR-4`).
+- **A provenance read that fails, fails toward the warning (fix pass 2).** The first fix pass stopped reading on any error, so a timeout presented vision passages as text-layer quotes, with no label and no chip. Now only a missing column (before `20261122`) means "nothing to label". On any other error, every passage of a document an AI read pages of (`knowledge_documents.vision_pages > 0`) is labelled `POSSIBLY AI TRANSCRIPTION`, the system rule says such a passage is to be treated as a transcription, and its citation carries `source: "vision"` (with no model), so the source card warns. The show-me sheet citations' own provenance read fails the same way.
 
-Tests: `askRouteHonesty.test.ts` "GOV-9 — …" ("a vision chunk → AI TRANSCRIPTION in its passage label, the system rule, and source/sourceModel on its citation", "a show-me sheet citation … from a page an AI transcribed is marked too", "a database before 20261122 (no source column) labels nothing and answers as before"); `askRouteUnits.test.ts` "GOV-9: a vision-derived quote is marked …".
+Tests: `askRouteHonesty.test.ts` "GOV-9 — …" ("a vision chunk → AI TRANSCRIPTION in its passage label, the system rule, and source/sourceModel on its citation", "a show-me sheet citation … from a page an AI transcribed is marked too", "reproduction → fix: a provenance read that FAILS marks every passage of a document an AI read pages of as possibly transcribed — never a text-layer quote" (fix pass 2), "a database before 20261122 (no source column) labels nothing and answers as before"); `askRouteUnits.test.ts` "GOV-9: a vision-derived quote is marked …".
 
 **Done-when.**
 1. ✓ (2026-09-30) `knowledge_chunks` records how its text was obtained.
@@ -675,7 +676,7 @@ Tests: `askRouteHonesty.test.ts` "GOV-9 — …" ("a vision chunk → AI TRANSCR
 3. ✓ The ask prompt is told which passages are transcriptions.
 4. Partly. ✓ The ask route's DRAWING FACTS never treat a vision-read title block as a confirmed identity. ✗ The other consumers of `self` rows — the drawing audit and title-block reading (I-07, `PR-11`), the sheet address (I-11, `GAP-301`) — and the equipment table's sheet name (it shows the declared title block, with "AI-read" beside a transcribed sheet) still use a vision-read identity without a human confirming it.
 
-**Scope / residual.** OPEN on criterion 4's other consumers (I-07, I-11). Chunks written before `20261122` read `'text'`.
+**Scope / residual.** OPEN on criterion 4's other consumers (I-07, I-11). Chunks written before `20261122` read `'text'`. After a failed provenance read, a text-layer passage of a document with some vision-read pages is marked as possibly transcribed: the warning errs toward caution for that one ask.
 
 ---
 

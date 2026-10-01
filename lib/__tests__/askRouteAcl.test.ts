@@ -59,7 +59,7 @@ vi.mock("@/lib/ai/keyVault", () => ({ openAiKey: (k: string | null) => k }));
 
 import { POST } from "@/app/api/knowledge/ask/route";
 import { POST as historyPOST } from "@/app/api/knowledge/history/route";
-import { DATA_OPEN, DATA_CLOSE } from "@/lib/knowledgeAskGuards";
+import { DATA_OPEN, DATA_CLOSE, CUT_OFF_LINE } from "@/lib/knowledgeAskGuards";
 
 const ask = (body: Record<string, unknown>, token = "good") => POST(new NextRequest("http://x/api/knowledge/ask", {
   method: "POST", headers: { authorization: `Bearer ${token}`, "content-type": "application/json" },
@@ -316,7 +316,7 @@ describe("ASK-1 / KACL-1 / IEDGE-5 — the row records every document that reach
     expect(list.withheld).toBe(0);
   });
 
-  it("the drawing facts record only the sheets whose tag rows fed them — a document that contributed no tag is not context", async () => {
+  it("the drawing facts record the sheets whose tag rows fed them — an UPLOAD that contributed no tag (org-readable) is not context", async () => {
     const S_TAGGED = U(11);
     const S_PLAIN = U(12);
     seed({
@@ -345,6 +345,37 @@ describe("ASK-1 / KACL-1 / IEDGE-5 — the row records every document that reach
     expect(res.status).toBe(200);
     expect(allPrompts()).not.toContain("tallied by the app");
     expect(allPrompts()).not.toContain("Sheets: 0");
+  });
+
+  it("reproduction → fix: a restricted MIRROR sheet with no tag rows reaches the drawing facts by its name — the row records it, and a teammate denied it never gets the answer", async () => {
+    const S_A = U(21);
+    const S_B = U(22);
+    seed({
+      documents: [dcDoc("dc-1", { acl: DENY_VIEWER_ACL })],
+      knowledge_documents: [
+        kdoc(S_A, { name: "025-PID-0001.pdf" }),
+        kdoc(S_B, { name: "025-PID-0002 SECRET UNIT.pdf", source_document_id: "dc-1", source_rev: "A" }),
+      ],
+      knowledge_page_entities: [
+        { id: "e-1", org_id: ORG, library_id: LIB, document_id: S_A, page: 1, kind: "equipment", tag: "V-101", raw: "V-101" },
+        { id: "e-2", org_id: ORG, library_id: LIB, document_id: S_A, page: 1, kind: "ref", tag: "025-PID-0002", raw: "025-PID-0002" },
+      ],
+    });
+    h.script = [{ text: '["vessels"]', usage: { inputTokens: 100, outputTokens: 10 } }, REFINE_NONE, answer("**Answer:** One vessel, V-101.")];
+    const res = await ask({ question: "How many vessels are in this unit?" });
+    expect(res.status).toBe(200);
+    // The controller may read the mirror: its name reached the model in the facts.
+    expect(answerCall().user).toMatch(/One-way connectors[^\n]*025-PID-0001\.pdf → 025-PID-0002 SECRET UNIT\.pdf/);
+    const docs = (rowsOf("knowledge_questions")[0].context as { documents: string[] }).documents;
+    expect(docs).toContain(S_A);
+    expect(docs).toContain(S_B);
+    // The Viewer, denied the mirror, never gets the answer from the team's record.
+    const viewerList = await (await history({ action: "list" }, "viewer")).json();
+    expect(viewerList.rows).toEqual([]);
+    expect(viewerList.withheld).toBe(1);
+    expect(JSON.stringify(viewerList)).not.toContain("SECRET UNIT");
+    // A controller still reads it (DEC-43).
+    expect((await (await history({ action: "list" }, "good")).json()).rows).toHaveLength(1);
   });
 
   it("a database before 20261153 (no context column) still saves the answer, without it, and says nothing is wrong", async () => {
@@ -507,6 +538,75 @@ describe("ASK-5 — a thread's earlier turns come from the record, never from th
     expect(rowsOf("knowledge_questions")).toHaveLength(2);
   });
 
+  it("reproduction → fix: a 'Nothing matches' turn records what reached the model, so a teammate is shown it — and the turn after it is not withheld", async () => {
+    seed({ knowledge_documents: [kdoc(K_OPEN)], knowledge_chunks: [kchunk(K_OPEN, OPEN_TEXT, { id: "c-open" })] });
+    h.script = [{ text: '["flare tip velocity"]', usage: { inputTokens: 100, outputTokens: 10 } }, REFINE_NONE];
+    const none = await (await ask({ question: "What is the flare tip velocity limit?", threadId: THREAD })).json();
+    expect(none.answer).toMatch(/Nothing in this library matches/);
+    expect(rowsOf("knowledge_questions")[0].context).toEqual({ v: 1, documents: [], complete: true, history: "none" });
+    h.script = [QUERY_GEN, REFINE_NONE, answer()];
+    expect((await ask({ question: "What is the relief valve set pressure?", threadId: THREAD })).status).toBe(200);
+    // The Viewer may read every document either turn drew on: both are shown.
+    const viewerList = await (await history({ action: "list" }, "viewer")).json();
+    expect(viewerList.rows).toHaveLength(2);
+    expect(viewerList.withheld).toBe(0);
+  });
+
+  it("a 'Nothing matches' turn on a database before 20261153 is saved without its context, as before", async () => {
+    seed({ knowledge_documents: [kdoc(K_OPEN)], knowledge_chunks: [kchunk(K_OPEN, OPEN_TEXT, { id: "c-open" })] });
+    db.missingColumns.knowledge_questions = ["context"];
+    h.script = [{ text: '["flare tip velocity"]', usage: { inputTokens: 100, outputTokens: 10 } }, REFINE_NONE];
+    const none = await (await ask({ question: "What is the flare tip velocity limit?", threadId: THREAD })).json();
+    expect(none.saved).toBeUndefined();
+    expect(rowsOf("knowledge_questions")[0]).toMatchObject({ thread_id: THREAD });
+    expect(rowsOf("knowledge_questions")[0].context).toBeUndefined();
+  });
+
+  it("reproduction → fix: the asker's own earlier turns that cannot be sent are SAID on the answer — never a silent loss of the conversation", async () => {
+    seed({
+      knowledge_documents: [kdoc(K_OPEN)], knowledge_chunks: [kchunk(K_OPEN, OPEN_TEXT, { id: "c-open" })],
+      knowledge_questions: [
+        // Turn 1 cites a document deleted since; turn 2 follows it.
+        turn({ id: "t-1", question: "What did the removed sheet say?", answer: "It said 300 psig [1].", citations: [{ n: 1, documentId: U(99), page: 1 }] }),
+        turn({ id: "t-2", question: "And the tolerance?", answer: "Three percent [1].", citations: [{ n: 1, documentId: K_OPEN, page: 1 }], created_at: "2026-09-30T10:05:00Z" }),
+      ],
+    });
+    h.script = [QUERY_GEN, REFINE_NONE, answer()];
+    const body = await (await ask({ question: "What about the 1 inch line?", threadId: THREAD })).json();
+    expect(allPrompts()).not.toContain("CONVERSATION SO FAR");
+    expect(body.historyWithheld).toBe(2);
+    expect(body.answer).toMatch(/! 2 earlier turns of this conversation were not used for this answer/);
+    expect(rowsOf("knowledge_questions").find((r) => r.question === "What about the 1 inch line?")?.answer).toBe(body.answer);
+  });
+
+  it("nothing withheld → no note and no historyWithheld field", async () => {
+    seed({
+      knowledge_documents: [kdoc(K_OPEN)], knowledge_chunks: [kchunk(K_OPEN, OPEN_TEXT, { id: "c-open" })],
+      knowledge_questions: [turn({ question: "Which standard governs?", answer: "EP 5-1-1 [1].", citations: [{ n: 1, documentId: K_OPEN, page: 1 }] })],
+    });
+    h.script = [QUERY_GEN, REFINE_NONE, answer()];
+    const body = await (await ask({ question: "And the set pressure?", threadId: THREAD })).json();
+    expect(body.historyWithheld).toBeUndefined();
+    expect(body.answer).not.toMatch(/earlier turn/);
+  });
+
+  it("reproduction → fix: a thread longer than one capped read sends its LATEST turns, read whole and in order", async () => {
+    const turns: Row[] = [];
+    for (let i = 0; i < 205; i++) {
+      turns.push(turn({
+        id: `t-${String(i).padStart(3, "0")}`, question: `Q-${i}`, answer: `A-${i}`,
+        created_at: new Date(Date.UTC(2026, 8, 1) + i * 60_000).toISOString(),
+      }));
+    }
+    seed({ knowledge_documents: [kdoc(K_OPEN)], knowledge_chunks: [kchunk(K_OPEN, OPEN_TEXT, { id: "c-open" })], knowledge_questions: turns });
+    h.script = [QUERY_GEN, REFINE_NONE, answer()];
+    expect((await ask({ question: "And the set pressure?", threadId: THREAD })).status).toBe(200);
+    const sent = answerCall().user;
+    for (const i of [201, 202, 203, 204]) expect(sent).toContain(`Q: Q-${i}\nA: A-${i}`);
+    expect(sent).not.toContain("Q: Q-200\n");
+    expect(sent).not.toContain("Q: Q-199\n");
+  });
+
   it("without a thread, client history is used but the row is marked unverified — the record keeps it its asker's", async () => {
     seed({ knowledge_documents: [kdoc(K_OPEN)], knowledge_chunks: [kchunk(K_OPEN, OPEN_TEXT, { id: "c-open" })] });
     h.script = [QUERY_GEN, REFINE_NONE, answer()];
@@ -556,8 +656,16 @@ describe("IEDGE-4 — citations carry the mirror's revision; proven ground never
     expect(allPrompts()).not.toContain(PROVEN_PAGE);
   });
 
-  it("a rating that recorded no revision proves nothing about a mirror's page today — not seated", async () => {
+  it("REGRESSION: a rating made before I-03 (no version or revision recorded) of a mirror that records no version still seats its page, as before", async () => {
     rated(null, "B");
+    h.script = [QUERY_GEN, REFINE_NONE, answer()];
+    await ask({ question: "What is the relief valve set pressure?" });
+    expect(allPrompts()).toContain(PROVEN_PAGE);
+  });
+
+  it("ASK-3: a rated answer whose text says it was cut off seats nothing, though its row carries no context (a database before 20261153)", async () => {
+    rated("B", "B");
+    (rowsOf("knowledge_questions")[0] as Row).answer = `**Answer:** You need [1].\n\n${CUT_OFF_LINE}`;
     h.script = [QUERY_GEN, REFINE_NONE, answer()];
     await ask({ question: "What is the relief valve set pressure?" });
     expect(allPrompts()).not.toContain(PROVEN_PAGE);
@@ -597,10 +705,13 @@ describe("IEDGE-4 — citations carry the mirror's revision; proven ground never
     expect(byDoc[K_OPEN].sourceVersionId).toBeUndefined();
   });
 
-  /** A rated answer whose citation recorded `citedVersion` of a mirror now at `currentVersion`, both labelled B. */
-  function ratedVersion(citedVersion: string | null, currentVersion: string) {
+  /** A rated answer (given 2026-09-01) whose citation recorded `citedVersion`
+   *  of a mirror now at `currentVersion`, both labelled B; `versions` are the
+   *  controlled document's document_versions rows. */
+  function ratedVersion(citedVersion: string | null, currentVersion: string, versions: Row[] = [], citeRev: string | null = "B") {
     seed({
       documents: [dcDoc("dc-1")],
+      document_versions: versions.map((v) => ({ org_id: ORG, record_id: "dc-1", revision_label: "B", released_at: null, ...v })),
       knowledge_documents: [kdoc(K_OPEN), kdoc(K_MIRROR, { source_document_id: "dc-1", source_rev: "B", source_version_id: currentVersion })],
       knowledge_chunks: [
         kchunk(K_OPEN, OPEN_TEXT, { id: "c-open" }),
@@ -609,7 +720,7 @@ describe("IEDGE-4 — citations carry the mirror's revision; proven ground never
       knowledge_questions: [{
         id: "q-rated", org_id: ORG, library_id: LIB, user_id: CTRL, user_name: "Ada", question: "What is the relief valve set pressure?",
         answer: "…", rating: 1, created_at: "2026-09-01T00:00:00Z", mode: "library",
-        citations: [{ n: 1, documentId: K_MIRROR, page: 7, sourceRev: "B", ...(citedVersion ? { sourceVersionId: citedVersion } : {}) }],
+        citations: [{ n: 1, documentId: K_MIRROR, page: 7, ...(citeRev ? { sourceRev: citeRev } : {}), ...(citedVersion ? { sourceVersionId: citedVersion } : {}) }],
       }],
     });
   }
@@ -628,11 +739,48 @@ describe("IEDGE-4 — citations carry the mirror's revision; proven ground never
     expect(allPrompts()).not.toContain(PROVEN_PAGE);
   });
 
-  it("a rating that recorded only the label, of a mirror that has a version, proves nothing about today's page — not seated", async () => {
-    ratedVersion(null, "ver-1");
+  const seats = async () => {
     h.script = [QUERY_GEN, REFINE_NONE, answer()];
     await ask({ question: "What is the relief valve set pressure?" });
-    expect(allPrompts()).not.toContain(PROVEN_PAGE);
+    return allPrompts().includes(PROVEN_PAGE);
+  };
+
+  it("reproduction → fix (REGRESSION): a rating made before I-03 (nothing recorded) of a mirror whose version became current BEFORE that answer — unchanged since — seats its page, as before", async () => {
+    ratedVersion(null, "ver-1", [{ id: "ver-1", created_at: "2026-08-01T00:00:00Z" }], null);
+    expect(await seats()).toBe(true);
+  });
+
+  it("the mirror's version became current AFTER the rated answer — what was rated is not on the page now — not seated", async () => {
+    ratedVersion(null, "ver-2", [{ id: "ver-2", created_at: "2026-09-10T00:00:00Z" }], null);
+    expect(await seats()).toBe(false);
+  });
+
+  it("a draft made before the answer but released (made current) after it is not what was rated — not seated", async () => {
+    ratedVersion(null, "ver-2", [{ id: "ver-2", created_at: "2026-08-01T00:00:00Z", released_at: "2026-09-05T00:00:00Z" }], null);
+    expect(await seats()).toBe(false);
+  });
+
+  it("a version whose time cannot be known — no such version of that document, or a read that fails — is not seated", async () => {
+    ratedVersion(null, "ver-1", [], null);
+    expect(await seats()).toBe(false);
+    resetHarness();
+    ratedVersion(null, "ver-1", [{ id: "ver-1", record_id: "dc-other", created_at: "2026-08-01T00:00:00Z" }], null);
+    expect(await seats()).toBe(false);
+    resetHarness();
+    ratedVersion(null, "ver-1", [{ id: "ver-1", created_at: "2026-08-01T00:00:00Z" }], null);
+    db.hooks.push((op) => op.table === "document_versions" ? { error: { code: "57014", message: "canceling statement due to statement timeout" } } : undefined);
+    expect(await seats()).toBe(false);
+  });
+
+  it("a rating that recorded only the label: seated while the mirror's version predates the answer, not once a newer version (or another label) is current", async () => {
+    ratedVersion(null, "ver-1", [{ id: "ver-1", created_at: "2026-08-01T00:00:00Z" }]);
+    expect(await seats()).toBe(true);
+    resetHarness();
+    ratedVersion(null, "ver-2", [{ id: "ver-2", created_at: "2026-09-10T00:00:00Z" }]);
+    expect(await seats()).toBe(false);
+    resetHarness();
+    ratedVersion(null, "ver-1", [{ id: "ver-1", created_at: "2026-08-01T00:00:00Z" }], "A");
+    expect(await seats()).toBe(false);
   });
 
   it("the record badges a new VERSION under the same label; a cited document deleted since is not 'revised' and is not badged", async () => {

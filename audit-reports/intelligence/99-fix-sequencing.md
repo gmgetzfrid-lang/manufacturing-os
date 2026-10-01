@@ -268,6 +268,31 @@ member's refusal says "Your monthly AI cap is set to $0, so AI is locked for you
 until someone who manages AI caps raises it" and never the reset; a reached cap
 says it resets on the 1st (`askRouteHonesty.test.ts` "GOV-3: …").*
 
+**A cut-off answer cannot be rated — the feedback route's limb** (`ASK-3`,
+I-03 fix pass 2; no package owns `app/api/knowledge/feedback/route.ts`). The
+ask route gives a cut-off answer no `questionId`, so the page offers no rating,
+but `/api/knowledge/feedback` rates any row its asker names by id, and the
+history route returns ids. The rating acts on nothing: proven ground, its one
+reader, skips a row whose `context.partial` is true or whose answer ends with
+`CUT_OFF_LINE`. Limb, for whichever package next edits the feedback route, or
+the integrator: select `id, user_id, context` (retry without `context` on a
+missing column), and when `context?.partial === true` refuse with
+`bad("A cut-off answer cannot be rated — ask a narrower question for a complete one.", 409)`
+before the update. Test: a partial row is refused 409 and keeps `rating` null;
+a complete row is rated as before.
+
+**Known overlap — `components/knowledge/AiSettingsModal.tsx`** (`SEM-3`
+done-when 4, I-03; the file is also in I-20's list). The integrator's orphan
+sweep gave I-03 `SEM-3`'s remainder, including "the removal dialog must say
+vectors work again only with a key for the provider that built them". I-03's
+only change to the file is that message, in `EmbeddingKeyEditor`'s removal
+confirm: "Vectors already built stay in place, but they work again only with a
+key for the provider that built them — a key for another provider cannot search
+them until the library's index is rebuilt with it." Whichever of I-03 and I-20
+merges second keeps both: I-20's edits, and this message
+(`askRouteUnits.test.ts` "SEM-3: removing the embeddings key never promises …"
+pins it).
+
 ⛔ **MERGE GATE for I-05 / I-02b — a $0 cap is a refusal to every reader of
 `/api/ai/usage`** (`GOV-3`; I-02b's code, I-02b runs in parallel).
 **APPLIED by the integrator at the I-05 merge (2026-10-01)** — I-02b merged

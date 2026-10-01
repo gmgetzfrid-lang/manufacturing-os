@@ -40,8 +40,18 @@ export default function EquipmentTablePanel({ table, onOpenTag }: {
         <Table2 className="w-4 h-4 text-orange-600 shrink-0" />
         <span className="text-xs font-black text-[var(--color-text)]">
           {table.filteredTo ? `${table.filteredTo} — ` : "Equipment register — "}
+          {table.partial ? "at least " : ""}
           {table.total.toLocaleString()} distinct tag{table.total === 1 ? "" : "s"}
         </span>
+        {/* ASK-2: built from a census cut at its ceiling — a floor, never the
+            whole register (a number missing here may be in use on a sheet
+            that was not counted). */}
+        {table.partial && (
+          <span data-partial-register="true" className="text-[10px] text-amber-700 dark:text-amber-300 font-black">
+            PARTIAL — {table.partial.uncountedSheets.toLocaleString()} sheet{table.partial.uncountedSheets === 1 ? " was" : "s were"} not
+            counted; this list is a floor, so a tag or number missing from it may still be in use
+          </span>
+        )}
         {table.truncated && (
           <span className="text-[10px] text-amber-600 font-bold">
             showing the first 400 — the full set is the &ldquo;Equipment register (CSV)&rdquo; button in this library&apos;s Drawing Intelligence panel (turn on &ldquo;This is a drawing set&rdquo; in Library AI setup to show it)

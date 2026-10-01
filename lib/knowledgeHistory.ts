@@ -28,12 +28,16 @@
 //     readableControlledDocIds admits its controlled document;
 //   - anything else (a knowledge document since deleted or held back from the
 //     AI, another org's id, a malformed id) — NOT readable: nothing proves it.
-// A library answer that cites NO document proves nothing about its sources:
-// the model may have answered from retrieved passages without a [n] marker
-// (or with invented markers the ask route stripped), and a "Nothing matches"
-// row names the asker's own indexing gaps. The row records only what it
-// cites, so such a row is shown to its asker alone (and to controllers). An
-// internet-mode answer (web sources only) is shown to everyone.
+// A library answer that cites NO document, on a row written without its
+// context, proves nothing about its sources: the model may have answered from
+// retrieved passages without a [n] marker (or with invented markers the ask
+// route stripped), and a "Nothing matches" row names the asker's own indexing
+// gaps. Such a row records only what it cites, so it is shown to its asker
+// alone (and to controllers). A row WITH its context (the ask route writes
+// one on every library answer, "Nothing matches" included, since I-03) is
+// judged by that context like any other — every document that reached the
+// model readable. An internet-mode answer (web sources only) is shown to
+// everyone.
 // A conversation carries its earlier turns into every later answer (the ask
 // sends them back as context), so once a turn is withheld every later turn
 // of the same thread is withheld too. A conversation continued from someone
@@ -164,9 +168,12 @@ export function planVisibleHistory(
       if (ctx.documents.some((id) => !readable.has(id) && !(ownRow && gone.has(id)))) return true;
       if ((!ctx.complete || ctx.history === "client") && !ownRow) return true;
     }
-    // Nothing cited: a web answer is safe; a library answer proves nothing
-    // about the passages it was built from, so only its asker sees it.
-    if (cited.length === 0 && r.mode !== "internet") return !ownRow;
+    // Nothing cited: a web answer is safe; a library answer WITHOUT a
+    // recorded context proves nothing about the passages it was built from,
+    // so only its asker sees it. One with a context ("Nothing matches", or an
+    // answer that cited nothing) has just been judged by everything that
+    // reached the model — the same proof a citing answer gets.
+    if (cited.length === 0 && r.mode !== "internet" && !ctx) return !ownRow;
     return false;
   };
 

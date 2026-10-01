@@ -125,3 +125,45 @@ export const ANSWER_MAX_TOKENS = 4_000;
 
 /** ASK-2 / ING-10: the most tag-occurrence rows one census reads. */
 export const DRAWING_FACTS_ROW_CEILING = 20_000;
+
+// ── IEDGE-4: may a rated answer's citation still seat its page? ─────────────
+//
+// A thumbs-up approved a page AS IT WAS when the answer was given. A mirror's
+// page now holds whatever the controlled version the mirror points at put
+// there, so the page is seated only when that is still the version the
+// rating saw:
+//   - the citation recorded the version (sourceVersionId, since I-03): the
+//     mirror must still point at it;
+//   - it recorded only the revision label: the label must still match, and
+//     when the mirror has a version, that version must have become current no
+//     later than the answer (a same-label re-release after it is new content);
+//   - it recorded nothing (every rating made before this package): the
+//     mirror's version must have become current no later than the answer — an
+//     unchanged document keeps teaching retrieval, as it did before; a
+//     version made current after the answer was given is not what was rated.
+//     A mirror with no version recorded at all cannot be compared and seats
+//     its page, as before.
+// An upload is replaced only by a person (a new document id), so its page is
+// always the one rated.
+export function provenPageCurrent(
+  cite: { sourceVersionId?: string | null; sourceRev?: string | null },
+  doc: { source_document_id?: string | null; source_version_id?: string | null; source_rev?: string | null },
+  /** The rated answer's created_at (when the page was read). */
+  answeredAt: string | null | undefined,
+  /** When a controlled version became current (the later of its created_at
+   *  and released_at); undefined when that is not known. */
+  versionCurrentSince: (versionId: string) => string | null | undefined,
+): boolean {
+  if (!doc.source_document_id) return true;
+  const recordedVersion = cite.sourceVersionId ?? null;
+  const recordedRev = cite.sourceRev ?? null;
+  const currentVersion = doc.source_version_id ?? null;
+  if (recordedVersion) {
+    return currentVersion ? recordedVersion === currentVersion : !!recordedRev && recordedRev === (doc.source_rev ?? null);
+  }
+  if (recordedRev && recordedRev !== (doc.source_rev ?? null)) return false;
+  if (!currentVersion) return true;
+  const since = Date.parse(String(versionCurrentSince(currentVersion) ?? ""));
+  const answered = Date.parse(String(answeredAt ?? ""));
+  return Number.isFinite(since) && Number.isFinite(answered) && since <= answered;
+}
