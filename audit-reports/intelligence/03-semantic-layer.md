@@ -33,6 +33,7 @@ Coverage, drift, and what happens to a chunk that never embeds.
 
 - **Severity:** MEDIUM
 - **Status:** OPEN
+- **Assigned:** intelligence I-05 AI GOVERNANCE (running; its branch carries the code — reconciled at its merge) — by the integrator, 2026-10-01 (orphan sweep: the package that left this remainder has merged; fleet plan `audit-reports/fleet-plans/`).
 - **Verification:** CONFIRMED
 - **Locations:** `app/api/knowledge/ask/route.ts:463-468`, `app/api/knowledge/ask/route.ts:482-489`, `lib/knowledgeEmbedCore.ts:56-60`, `lib/knowledgeEmbedCore.ts:113-115`, `components/knowledge/AiSettingsModal.tsx:284-311`
 - **Independently verified:** ✓ **SURVIVES, corrected** — second independent adversarial pass. Severity **HIGH → MEDIUM** by this pass. Mechanically correct: a mixed-stamp library is filtered to one stamp per ask and which stamp wins is unordered, so it can differ between asks. Lowered to MEDIUM because it needs an admin to change the saved embedding model mid-build, keyword retrieval is unaffected (the fuse at :512+ still runs), and both the reset comment (embed/route.ts:97-107) and the Rebuild dialog (SemanticIndexPanel.tsx:113-116, 'Do it after ingestion or the embedding model changes') name the exact remedy.
@@ -108,6 +109,7 @@ lib/ai/usageServer.ts:57-67 — `.from("ai_usage_events").select(...).eq("org_id
 
 - **Severity:** MEDIUM
 - **Status:** OPEN
+- **Assigned:** intelligence I-03 THE ASK ROUTE and I-05 AI GOVERNANCE — by the integrator, 2026-10-01 (orphan sweep: the package that left this remainder has merged; fleet plan `audit-reports/fleet-plans/`).
 - **Verification:** CONFIRMED
 - **Locations:** `app/api/knowledge/ask/route.ts:468-478`, `app/api/knowledge/ask/route.ts:505-507`, `lib/ai/embeddings.ts:102-104`, `lib/ai/embeddings.ts:205-215`, `components/knowledge/AiSettingsModal.tsx:331-338`
 - **Independently verified:** ✓ **SURVIVES, corrected** — second independent adversarial pass. Severity **HIGH → MEDIUM** by this pass. The core claim holds — after a provider switch, semantic search returns zero permanently with no error surfaced, and the dialog copy is true only for re-adding the SAME provider. One sub-claim in the summary is false: the mismatched call is rejected by the provider (404 → embeddings.ts:103) before any embedding is billed, so asks do not 'pay for a Voyage query embedding'. Lowered to MEDIUM: keyword retrieval is untouched and the existing Rebuild button (SemanticIndexPanel.tsx:203) fully repairs it once someone knows.
@@ -232,6 +234,7 @@ Fix pass 2 (review minor): the retrievable-document filter reads `document_id`, 
 
 - **Severity:** MEDIUM
 - **Status:** OPEN
+- **Assigned:** intelligence I-03 THE ASK ROUTE — by the integrator, 2026-10-01 (orphan sweep: the package that left this remainder has merged; fleet plan `audit-reports/fleet-plans/`).
 - **Verification:** CONFIRMED
 - **Locations:** `app/api/knowledge/ask/route.ts:394-397`, `app/api/knowledge/ask/route.ts:463-467`, `app/api/knowledge/ask/route.ts:480-489`, `supabase/migrations/20261007_rag_hardening.sql:95`
 - **Independently verified:** ✓ **SURVIVES** — second independent adversarial pass. Confirmed — one library's stamp is imposed on all of them, so a linked reference library on any other embedding model contributes exactly zero semantic hits while still appearing to be fully indexed in its own panel. Nothing detects or reports the mismatch.
@@ -374,6 +377,7 @@ Fix pass 4 (2026-09-30, review):
 
 - **Severity:** MEDIUM
 - **Status:** OPEN
+- **Assigned:** the user — paste 20261121 and send back its recall row; no code is owed until then — by the integrator, 2026-10-01 (orphan sweep: the package that left this remainder has merged; fleet plan `audit-reports/fleet-plans/`).
 - **Verification:** SUSPECTED
 - **Locations:** `supabase/migrations/20260930_semantic_layer.sql:65-66`, `supabase/migrations/20261007_rag_hardening.sql:89-97`, `app/api/knowledge/ask/route.ts:482-489`
 - **Independently verified:** ✓ **SURVIVES** — second independent adversarial pass. Confirmed: filters are applied after the HNSW walk and nothing raises ef_search off its default 40, so a small tenant inside a large multi-tenant table can get a handful of rows or zero for a 12-row request. One mitigation the finding does not cite: 20261011_semantic_coverage_fast.sql:17 adds `knowledge_chunks_org_lib_idx (org_id, library_id)`, so for a very selective library the planner may pick an exact index-scan+sort plan instead — the recall loss is plan-dependent, not guaranteed. MEDIUM stands.
@@ -491,6 +495,7 @@ lib/knowledgeEmbedDrain.ts:51-55 — `.not("ai_features->embedBuild", "is", null
 
 - **Severity:** MEDIUM
 - **Status:** OPEN
+- **Assigned:** intelligence I-03 THE ASK ROUTE — by the integrator, 2026-10-01 (orphan sweep: the package that left this remainder has merged; fleet plan `audit-reports/fleet-plans/`).
 - **Verification:** CONFIRMED
 - **Locations:** `app/api/knowledge/ask/route.ts:268-272`, `app/api/knowledge/ask/route.ts:568`, `app/api/knowledge/ask/route.ts:1774`, `lib/knowledge.ts:122-126`, `components/knowledge/SemanticIndexPanel.tsx:257-265`
 - **Independently verified:** ✓ **SURVIVES** — second independent adversarial pass. Confirmed on both halves: the flag is a boolean over `semantic.length > 0`, so 3% coverage still reports "hybrid", and no component anywhere renders the field. The route's own comment convicts it.
@@ -533,6 +538,7 @@ lib/knowledge.ts:122-126 states the intended contract in its own doc comment —
 
 - **Severity:** MEDIUM
 - **Status:** OPEN
+- **Assigned:** intelligence I-05 AI GOVERNANCE (running; its branch carries the code — reconciled at its merge) — by the integrator, 2026-10-01 (orphan sweep: the package that left this remainder has merged; fleet plan `audit-reports/fleet-plans/`).
 - **Verification:** SUSPECTED
 - **Locations:** `components/knowledge/SemanticIndexPanel.tsx:32-35`, `components/knowledge/SemanticIndexPanel.tsx:174-175`, `components/knowledge/SemanticIndexPanel.tsx:109-118`, `lib/ai/pricing.ts:84-91`, `app/api/knowledge/embed/route.ts:213`
 - **Independently verified:** ✓ **SURVIVES** — second independent adversarial pass. Both numbers confirmed and they disagree by ~7× on the same job (250k passages: 250¢ quoted vs ~$18 ledgered at 0.20/M). This is not cosmetic: the same inflated figure is what getMonthUsage/getCapUsd compare against, so a voyage build consumes a member's monthly cap ~10× faster than the real spend and can be halted by the cap path at knowledgeEmbedDrain.ts:92.

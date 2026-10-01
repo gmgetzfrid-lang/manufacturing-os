@@ -469,6 +469,7 @@ and not having a delay claim.
 
 - **Severity:** MEDIUM
 - **Status:** OPEN
+- **Assigned:** projects-joint J12 SERVER REMAINDERS (new) — by the integrator, 2026-10-01 (orphan sweep: the package that left this remainder has merged; fleet plan `audit-reports/fleet-plans/`).
 - **Verification:** CONFIRMED
 - **Blast radius:** data-integrity
 - **Locations:**
@@ -510,6 +511,7 @@ for imported rows too.
 
 - **Severity:** HIGH
 - **Status:** OPEN
+- **Assigned:** projects-joint J12 SERVER REMAINDERS (new) — by the integrator, 2026-10-01 (orphan sweep: the package that left this remainder has merged; fleet plan `audit-reports/fleet-plans/`).
 - **Verification:** CONFIRMED
 - **Blast radius:** ux / process
 - **Locations:**

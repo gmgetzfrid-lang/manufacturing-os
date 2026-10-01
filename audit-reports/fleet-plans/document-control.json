@@ -302,7 +302,11 @@
     "TRX-15 (added by the integrator 2026-10-01: a stamping consumer \u2014 the transmittal portal's >64 MiB unstamped path and its in-memory download; P7 TRANSMITTALS opened it)",
     "public-surfaces VFY-19 (added at the PS-VERIFY merge 2026-10-01: a sheet dropped at print by a fetch failure or an unparseable PDF is recorded on the print, so /verify-package can classify it)",
     "public-surfaces VFY-17 (added at the PS-VERIFY merge 2026-10-01: the pack print gate refuses a legacy empty-status document the verify allow-list refuses, so a just-printed pack can scan green \u2014 lib/docPack.ts filterPackDocs)",
-    "public-surfaces VFY-18 (added at the PS-VERIFY merge 2026-10-01: a print whose snapshot insert fails is refused or reported, never shipped with a bare-package cover QR \u2014 lib/workPackages.ts recordPackagePrint, packages page)"
+    "public-surfaces VFY-18 (added at the PS-VERIFY merge 2026-10-01: a print whose snapshot insert fails is refused or reported, never shipped with a bare-package cover QR \u2014 lib/workPackages.ts recordPackagePrint, packages page)",
+    "DIST-9 (remainder re-owned by the integrator 2026-10-01, orphan sweep: Done-when 2: \"lib/downloads.ts logDownloadAudit destructures and checks { error } instead of relying on a catch that cannot fire\" \u2014 P8 FIELD's EGR-6 limb (done on the running branch, not on HEAD). Done-when 1's policy half is \u2026)",
+    "public-surfaces PHYS-1 (remainder re-owned by the integrator 2026-10-01, orphan sweep: Done-when 4: \"lib/downloads.ts buildFooterNotice adds a hold line when the document has an active hold at issue time.\")",
+    "public-surfaces VFY-11 (remainder re-owned by the integrator 2026-10-01, orphan sweep: Done-when 3 (\u25d0): red is not reserved for a stale/retired sheet. The remaining gap is \"a sheet dropped at print by a fetch failure or an unparseable PDF reads red until a re-print carries it\" (VFY-19, P8), plus the provisional \u2026)",
+    "public-surfaces PHYS-8 (remainder re-owned by the integrator 2026-10-01, orphan sweep: \"Stays OPEN for the drafting limb (PKG-5 / P8)\" (:374). On HEAD, app/(protected)/requests/[id]/page.tsx:607 and :689 still `void supabase.from(\"download_audits\").insert(...)` unchecked, naming \u2026)"
    ],
    "files": [
     "lib/docPack.ts",
@@ -475,6 +479,52 @@
     "the authority it takes is the publisher tier the guard already enforces for pointer moves (OWN-15 / OWN-19) \u2014 record the rule as a DEC under the fail-safe protocol"
    ],
    "sequencingNotes": "Added by the integrator 2026-10-01 from P12's review (REV-18 HIGH, DEC-31 remainder). Runs after P12; before identity IS-P1 and intelligence I-12 only if it edits the library page (it should not)."
+  },
+  {
+   "name": "P14 RECORDS & REVIEW REMAINDERS \u2014 the current-revision delete refusal, a document delete's evidence, the register's end-of-life column, the transactional promote, the owner slot, verification currency",
+   "findings": [
+    "RET-2 (remainder re-owned by the integrator 2026-10-01, orphan sweep: \"One limb: refuse a key that a document's CURRENT revision names.\" Collect every version id naming the key per owner (either column), select documents.current_version_id, refuse 423 when the current version is among them (fail \u2026)",
+    "DRLS-14 (remainder re-owned by the integrator 2026-10-01, orphan sweep: The document-delete half of done-when 2: \"deleting the DOCUMENT row still cascades all three [distribution_acks, document_acknowledgments, document_review_signoffs] through document_id ... NO ACTION on the three document_id \u2026)",
+    "RET-11 (remainder re-owned by the integrator 2026-10-01, orphan sweep: \"Stays OPEN for the register column\" (:489). The register must surface the scheduled end-of-life action. HEAD app/(protected)/register/page.tsx:175 renders only RetentionPill (status) from row fields that carry no policy chain.)",
+    "RG-12 (remainder re-owned by the integrator 2026-10-01, orphan sweep: \"Stays OPEN for done-when 2 only\" (:469): \"the promote and its bookkeeping in ONE transactional RPC so current_version_id can never point at a row still marked in_review\".)",
+    "roles-and-permissions GAP-4 (remainder re-owned by the integrator 2026-10-01, orphan sweep: Not built. types/schema.ts:209-234 ReviewControl has reviewer/alternate/draftViewer fields and no owner slot. Needs an optional owner-must-approve slot on ReviewControl, with openReviewRoster, reviewCompletionForDraft's \u2026)",
+    "roles-and-permissions GAP-9 (remainder re-owned by the integrator 2026-10-01, orphan sweep: Scope \"In\" also lists \"a staleness state derived from a configurable interval\" (reuse the review-cycle pattern, rendered beside AckPill/ReviewPill/EffectivePill), which is not built (no verification-staleness code exists). The \u2026)"
+   ],
+   "files": [
+    "app/api/storage/delete/route.ts (RET-2's current-revision limb, beside P11's helpers) + lib/__tests__/storageDeleteRoute.test.ts",
+    "a migration for DRLS-14 (the three document_id evidence FKs to NO ACTION, or a refusal while evidence exists \u2014 a DEC first, DEC-30 inventory) + app/api/collections/delete and trash routes surfacing the refusal",
+    "app/(protected)/register/page.tsx + lib/docControlRegister.ts (RET-11: scheduledActionLabel / describeRetentionPolicy from lib/retentionPolicy.ts)",
+    "a transactional promote RPC (RG-12) re-created from the newest bodies with lineDiff tests; lib/reviewControl.ts / lib/revisions.ts finalize",
+    "types/schema.ts ReviewControl owner slot + openReviewRoster / reviewCompletionForDraft / the completion gate re-created from its newest body (R&P GAP-4)",
+    "a verification-currency pill reusing the review-cycle pattern (R&P GAP-9)"
+   ],
+   "migrationsLikely": 3,
+   "dependsOn": [
+    "P13 STATUS-TRANSITION merged (lib/reviewControl.ts, lib/revisions.ts, the publish guard)",
+    "P8 FIELD merged"
+   ],
+   "sequencingNotes": "Added by the integrator 2026-10-01 (orphan sweep): remainders that merged packages (P3, P4, P9, P11, R&P) left Partial with no owner. RET-2 first (HIGH)."
+  },
+  {
+   "name": "P15 SURFACE REMAINDERS \u2014 the share modal asks the deny predicate, a hold's public reason is a code, one status vocabulary, the spreadsheet parser off xlsx 0.18",
+   "findings": [
+    "public-surfaces SHR-14 (remainder re-owned by the integrator 2026-10-01, orphan sweep: Done-when 3: \"The modal's mint gate asks the same predicate and says why instead of offering the Create box\". canMintShare should call rpc('user_download_denied', {p_acl_index, p_uid: self, p_org}), and the modal and \u2026)",
+    "public-surfaces VFY-6 (remainder re-owned by the integrator 2026-10-01, orphan sweep: Done-when 2: \"reason_code (constrained) + reason_text (never public), or close the 'Other\u2026' path\". On HEAD, HoldStrip.tsx:11 and :252 still offer the \"Other\" free-text reason.)",
+    "public-surfaces VFY-20 (remainder re-owned by the integrator 2026-10-01, orphan sweep: All three done-when are open. A DEC must settle the vocabulary: either the editors stop offering \"IFC\" (and existing IFC rows move), or \"IFC\" is added to DocumentStatus, filterPackDocs and IN_FORCE_STATUSES together. A test \u2026)",
+    "XEDGE-12 (remainder re-owned by the integrator 2026-10-01, orphan sweep: \"The dependency move (above) \u2014 the finding stays OPEN for it\" (:550). Move off xlsx@0.18.5 to SheetJS >=0.20.2 (vendored tgz) or exceljs, with the lockfile reflecting it. HEAD package.json:36 is \"xlsx\": \"^0.18.5\" and \u2026)"
+   ],
+   "files": [
+    "components/documents/ShareLinkModal.tsx + lib/documentShares.ts canMintShare / createShareLink (SHR-14 done-when 3: rpc user_download_denied, after 20261140)",
+    "a migration splitting document_holds.reason into reason_code + reason_text with a DEC-30 inventory of custom reasons + components/documents/HoldStrip.tsx (VFY-6)",
+    "the status vocabulary (VFY-20): a DEC first \u2014 the editors stop offering 'IFC' or DocumentStatus / filterPackDocs / IN_FORCE_STATUSES gain it together \u2014 components/documents/BulkEditModal.tsx, MetadataEditor.tsx, MetadataStagingModal.tsx + a test pinning every editor's statuses",
+    "package.json / package-lock.json + lib/xlsxData.ts (XEDGE-12: SheetJS >= 0.20.2 or exceljs; the fixture test kept)"
+   ],
+   "migrationsLikely": 1,
+   "dependsOn": [
+    "P13 STATUS-TRANSITION merged (BulkEditModal / MetadataEditor; its guard keys on the status vocabulary VFY-20 settles)",
+    "P12 merged (20261140)"
+   ],
+   "sequencingNotes": "Added by the integrator 2026-10-01 (orphan sweep)."
   }
  ],
  "crossAreaFileOverlaps": [
@@ -486,5 +536,11 @@
   "admin-and-org P7 \u2194 lib/audit.ts (P3 narrow edit; A&O after)",
   "drafting-flow EVID-5 \u2194 P2 download_audits table"
  ],
- "notes": "Wave 1 (2026-09-17) implementations were lost to a container recycle before review; re-run 2026-09-23 as one workflow per package, merged and pushed individually. All 114 OPEN ids assigned exactly once."
+ "notes": "Wave 1 (2026-09-17) implementations were lost to a container recycle before review; re-run 2026-09-23 as one workflow per package, merged and pushed individually. All 114 OPEN ids assigned exactly once.",
+ "userHeld": {
+  "DRLS-3": "deploy the app carrying P12's DRLS-15 / DRLS-17 commit, then paste 20261131",
+  "DRLS-13": "deploy the app carrying P12's DRLS-15 / DRLS-17 commit, then paste 20261131",
+  "REV-13": "deploy the app carrying P12's DRLS-15 / DRLS-17 commit, then paste 20261131",
+  "TRX-14": "ratify DEC-64 \u00a71 (or reject it, which turns the remainder back into code work)"
+ }
 }

@@ -213,6 +213,7 @@ Tests:
 
 - **Severity:** MEDIUM
 - **Status:** OPEN
+- **Assigned:** the user — paste 20261122; no code is owed until then — by the integrator, 2026-10-01 (orphan sweep: the package that left this remainder has merged; fleet plan `audit-reports/fleet-plans/`).
 - **Verification:** CONFIRMED
 - **Locations:** `lib/knowledgeText.ts:305`, `lib/knowledgeText.ts:53-86`, `lib/knowledgeText.ts:88-127`, `lib/knowledgeIngest.ts:316-328`, `lib/knowledgeVision.ts:49-51`, `lib/__tests__/knowledgeText.test.ts:312-345`
 - **Independently verified:** ✓ **SURVIVES, corrected** — second independent adversarial pass. Severity **HIGH → MEDIUM** by this pass. The code claim is exactly right and decisive. Severity lowered because the finding missed a live guard: the safety net splitTables' own comment claims to have retired ('the answer prompt then had to carry a standing disclaimer … needs no disclaimer') is STILL in the prompt — app/api/knowledge/ask/route.ts:1501-1502 requires a '**Check:**' line 'whenever a value comes from a table, because PDF table extraction jumbles numbers'. Answers built on jumbled tables are therefore still flagged to the reader, making this a serious quality regression rather than an unguarded wrong-value path.
@@ -490,6 +491,7 @@ The engine's park message still reads "ask an admin to accept the partial index"
 
 - **Severity:** MEDIUM
 - **Status:** OPEN
+- **Assigned:** the user — paste 20261122; no code is owed until then — by the integrator, 2026-10-01 (orphan sweep: the package that left this remainder has merged; fleet plan `audit-reports/fleet-plans/`).
 - **Verification:** CONFIRMED
 - **Locations:** `lib/knowledgeIngest.ts:123`, `lib/knowledgeIngest.ts:316-328`, `lib/knowledgeText.ts:140-161`, `lib/knowledgeIngest.ts:119`
 - **Independently verified:** ✓ **SURVIVES** — second independent adversarial pass. True by construction, and slightly understated — chunking is per SECTION SEGMENT within a page (knowledgeIngest.ts:316-321), so a provision straddling a section heading is split too. I searched for a mitigation and found none: the ask route has no neighbouring-page expansion, the orchestrator has no read-page tool, and the per-document cap of 3 in fuseTier (ask/route.ts:526-533) actively reduces the chance both sides of a page break are retrieved together.
@@ -889,6 +891,7 @@ Tests: `lib/__tests__/ingestLock.test.ts` ("empty pages accumulate across batche
 
 - **Severity:** MEDIUM
 - **Status:** OPEN
+- **Assigned:** intelligence I-07 DRAWING INTELLIGENCE (running; its branch carries the code — reconciled at its merge) — by the integrator, 2026-10-01 (orphan sweep: the package that left this remainder has merged; fleet plan `audit-reports/fleet-plans/`).
 - **Verification:** CONFIRMED
 - **Locations:** `lib/knowledgeIngest.ts:458-467`, `app/api/knowledge/drawing/route.ts:371`, `lib/knowledgeSourceSync.ts:248-260`, `app/api/knowledge/drawing/route.ts:290-297`
 - **Independently verified:** ✓ **SURVIVES** — second independent adversarial pass. Confirmed by repo-wide grep: `pages_indexed: 0` appears in exactly those two reset sites and neither touches vision_pages; no other code path writes the column. A rebuild that produces zero tags and zero chars still reports verdict 'vision' once status returns to 'ready'.

@@ -847,9 +847,14 @@
      "UX-13",
      "UX-15",
      "MON-7",
-     "CHART-6"
+     "CHART-6",
+     "UX-7 (remainder re-owned by the integrator 2026-10-01, orphan sweep: 'A failed intake action renders in an error tone \u2014 components/projects/IntakePanel.tsx :292 ... not edited here; this record stays OPEN for that limb.' At HEAD, IntakePanel.tsx:443 renders every msg (errors included) in the \u2026)",
+     "UX-10 (remainder re-owned by the integrator 2026-10-01, orphan sweep: 'Still OPEN for Done-when 2: no raw Postgres string may reach a user anywhere in the Projects area. That is REL-3's sweep, and not every surface has been converted.')",
+     "GAP-410 (remainder re-owned by the integrator 2026-10-01, orphan sweep: Sources A11Y-1 (keyboard-unreachable file pickers, including the public portal) and A11Y-2 (colour-only checklist status) are OPEN. A11Y-3 is RESOLVED (J6b). The contrast pass on both themes (A11Y-13) is in J10.)"
     ],
-    "projects-and-cost": []
+    "projects-and-cost": [
+     "COST-12 (remainder re-owned by the integrator 2026-10-01, orphan sweep: Done-when 1 is lib-done (lib/costs.ts:36-39,101,166,178 carry companyId), but the Costs tab party form (CostsTab.tsx:767 saveParty) offers no Known Company link. Done-when 3's 'turnover/punch creation carries the responsible \u2026)"
+    ]
    },
    "files": [
     "MON-7 writers (PC COST-12): lib/costs.ts saveParty carries company_id; ProjectWizard contractors create parties with company_id; lib/turnover.ts:143,:168,:247 and lib/changeOrders.ts rows carry party_id; QuotesPanel.tsx:461 award binds party_id/company_id; lib/companies.ts:240-252 gather reads through project_parties.company_id \u2014 each a one-line edit in another package's file, done after that package merged",
@@ -873,7 +878,7 @@
     "GAP-410 'do not add a tooltip and call the dot fixed', 'do not fix dark mode by disabling the tint' (A11Y-3 was P6b's), README 'the recurring shape of the problems is re-implementation \u2014 most fixes are substitutions' (Modal, Field, sr-only, shell padding)",
     "Runs AFTER P1, P2, P3, P4, P7, P8, P9 have merged (it touches files every one of them owns \u2014 substitution work, not new engineering) and after PERF-11's indexes (P9) for MON-7; the only package that is sequenced behind the rest of this area",
     "identity-and-session IS-P1 edits projects/[id]/page.tsx:237, projects/page.tsx:190, SecureDocViewer.tsx:58 after all DC waves \u2014 coordinate ordering (rebase on whichever lands second)",
-    "projects-and-cost COST-12 (writer half) and COST-3 (advisory-only flag) close by pointer to MON-7/UX-13 here"
+    "projects-and-cost COST-12 (writer half) and COST-3 (advisory-only flag) close by pointer to MON-7/UX-13 here \u2014 corrected 2026-10-01 (orphan sweep): COST-3's remaining limb already landed with J3 (lib/costDocs.ts posting-side refusal); its record is reconciled by J13, not closed by pointer to J10"
    ],
    "decisionsNeeded": [
     "A11Y-8 Accept confirmation \u2014 default: Accept opens the same reason dialog as Reject (P2 made the reason mandatory); the stepper is removed from the tab order",
@@ -891,7 +896,8 @@
      "SEC-18",
      "SEC-19",
      "SEC-20",
-     "UX-16"
+     "UX-16",
+     "SEC-16 (added by the integrator 2026-10-01, orphan sweep: J11's SEC-19 token hashing (20261141) and the mint-once IntakePanel / QuotesPanel lists make done-when 1 true once 20261141 is live \u2014 the integrator reconciles SEC-16's record at the J11 merge)"
     ],
     "projects-and-cost": [
      "INTK-15",
@@ -922,6 +928,123 @@
     "INTK-15 default: presigned direct upload with a server finalize; the 4.5 MB serverless body limit no longer applies"
    ],
    "sequencingNotes": "Added by the integrator 2026-10-01 for the OPEN findings Round G packages opened (DEC-31 remainders) and no package owned. CHART-6 went to J10 (surface sweep)."
+  },
+  {
+   "name": "J10b UI REMAINDERS \u2014 outbound links from the configured origin, the award's warning and decline, total label lookups, per-row formatters, the tabs' data-changed loop, the checklist void, the closeout gates state",
+   "projectsTabPackages": [],
+   "projectsAndCostPackages": [],
+   "findings": {
+    "projects-tab": [
+     "MON-10 (remainder re-owned by the integrator 2026-10-01, orphan sweep: (1) J4 pointer: 'QuotesPanel.tsx must render res.warning after an award ..., and offer a \"Decline\" action calling declineQuote on open ungrouped quotes (and a Void on declined rows, now allowed); the award confirm ... should \u2026)",
+     "REL-4 (remainder re-owned by the integrator 2026-10-01, orphan sweep: 'OPEN for the other areas' lookups and CHECKs.' Lookups still not total at HEAD: QualityTab.tsx:571 CHECKLIST_KIND_LABEL[checklist.kind], :1246 TURNOVER_STATUS_LABEL[status]; companies/page.tsx:240 COMPANY_KIND_LABEL[c.kind]; \u2026)",
+     "PERF-10 (remainder re-owned by the integrator 2026-10-01, orphan sweep: 'OPEN only for the TimelineFeed / QualityTab per-row formatters.' At HEAD: components/documents/TimelineFeed.tsx:208 d.toLocaleString() per row; QualityTab.tsx:581, :812, :1146, :1173, :1341, :1347 new \u2026)",
+     "PERF-3 (remainder re-owned by the integrator 2026-10-01, orphan sweep: 'met with one bound ... a tab whose load lands more than SNAPSHOT_REUSE_MS after the coach's round settled costs a second round. The window, and the bump behind it, go with PERF-4, and the finding stays OPEN until then.' 'Once \u2026)",
+     "PERF-4 (remainder re-owned by the integrator 2026-10-01, orphan sweep: 'the suppression is still present at both sites'. At HEAD: components/projects/CostsTab.tsx:123-125 and components/projects/QualityTab.tsx:174-176 (onDataChanged?.() inside refresh, under '// eslint-disable-next-line \u2026)",
+     "REL-9 (remainder re-owned by the integrator 2026-10-01, orphan sweep: (1) 'a mistaken checklist's void is J2's (lib/checklists.ts / QualityTab)'. At HEAD, QualityTab calls setChecklistStatus only with 'complete' (:531), so no UI voids a checklist, although the lib accepts 'void' and J2b's \u2026)"
+    ],
+    "projects-and-cost": [
+     "QUAL-8 (remainder re-owned by the integrator 2026-10-01, orphan sweep: 'The closeout dialog's explicit \"gates could not be loaded\" state \u2014 NOT done here ... this record stays OPEN until that limb lands.' At HEAD, page.tsx:224-232 swallows a gatherProjectSnapshot rejection (.catch(() => \u2026)"
+    ],
+    "document-control": [
+     "XEDGE-5 (remainder re-owned by the integrator 2026-10-01, orphan sweep: the projects sites only \u2014 components/projects/IntakePanel.tsx:424 and components/projects/cost/QuotesPanel.tsx:1255, :1285 build outbound links from window.location.origin; use the configured public origin (the library page's \u2026)"
+    ],
+    "public-surfaces": [
+     "PHYS-13 (remainder re-owned by the integrator 2026-10-01, orphan sweep: the same IntakePanel / QuotesPanel sites as document-control XEDGE-5 (done-when 3's tree-wide clause; lib/notifications.ts:209 is notifications N6's DELIV-5 limb, the library page IS-P1's))"
+    ]
+   },
+   "files": [
+    "components/projects/IntakePanel.tsx, components/projects/cost/QuotesPanel.tsx (XEDGE-5 / PHYS-13 origin; MON-10 res.warning after an award, Decline on open ungrouped quotes, the award confirm's wording)",
+    "components/projects/QualityTab.tsx, app/(protected)/companies/page.tsx, app/(protected)/companies/[id]/page.tsx (REL-4 total label lookups; PERF-10 hoisted formatters; REL-9 the checklist void control), components/documents/TimelineFeed.tsx (PERF-10)",
+    "components/projects/CostsTab.tsx :123-125 and QualityTab.tsx :174-176 (PERF-4: onDataChanged out of refresh, the eslint suppression gone; PERF-3's SNAPSHOT_REUSE_MS window goes with it)",
+    "app/(protected)/projects/[id]/page.tsx :224-232 (QUAL-8: the closeout dialog says 'gates could not be loaded' instead of swallowing the rejection)"
+   ],
+   "migrationsLikely": 0,
+   "when": "after J10 (the same component files)",
+   "dependsOn": [
+    "J10 merged",
+    "J11 merged"
+   ],
+   "sequencingNotes": "Added by the integrator 2026-10-01 (orphan sweep): UI remainders that merged packages (J2, J3, J4, J7, P7) left Partial with no owner, in J10's files."
+  },
+  {
+   "name": "J12 SERVER REMAINDERS \u2014 the closed-project refusal on cost documents, the cost score reads commitments, the CO proposer/decider line, the evidence pack, the contractor notice, the award in one transaction, the assessment RPC, one gather per load, route JS under budget",
+   "projectsTabPackages": [],
+   "projectsAndCostPackages": [],
+   "findings": {
+    "projects-and-cost": [
+     "PM-1 (remainder re-owned by the integrator 2026-10-01, orphan sweep: Door half: J1 has since landed the closed-project refusal (upload/route.ts:422-426, resolve/route.ts:57-63; tests intakeUploadRoute.test.ts:340-353, :1361-1364), so the record's 'not done here' for done-when 1 is stale. Still \u2026)",
+     "COST-2 (remainder re-owned by the integrator 2026-10-01, orphan sweep: 'computeProjectHealth's Cost part reading s.committed (or dropping the field) ... rollup.exposure is the figure to read.' At HEAD the Cost score is still spent/budget or CPI (lib/projectHealth.ts:178-192). s.committed appears \u2026)",
+     "COST-6 (remainder re-owned by the integrator 2026-10-01, orphan sweep: 'OPEN for the report line': the close-out report must show each change order's proposer and decider side by side and flag the same person. At HEAD lib/projectReport.ts:288-289 prints only aggregate CO counts and amounts, with \u2026)",
+     "QUAL-10 (remainder re-owned by the integrator 2026-10-01, orphan sweep: The whole finding: 'left OPEN by plan \u2014 lib/evidencePack.ts waits for document-control P7 TRANSMITTALS (TRX-13) to merge first; nothing in that file was touched'. lib/evidencePack.ts still has no checklist, turnover or punch \u2026)"
+    ],
+    "projects-tab": [
+     "SAF-9 (remainder re-owned by the integrator 2026-10-01, orphan sweep: (a) 'The contractor is notified on both outcomes \u2014 not done: ... an email to the link's contact_email needs a server route ... that is not in this package's plan'. (b) 'the turnover claim at \u2026)",
+     "SAF-8 (remainder re-owned by the integrator 2026-10-01, orphan sweep: 'NOT the money: the cost earned value still gives a missed task its stored percent \u2014 lib/costs.ts:448-460 milestonePctIndex returns Math.round(percentComplete) whatever the status'. It is unchanged at HEAD \u2026)",
+     "MON-12 (remainder re-owned by the integrator 2026-10-01, orphan sweep: 'Still OPEN for the one remaining gap in Done-when 1: no database rail (a direct PostgREST status write to awarded is not checked against the registry).')",
+     "GAP-406 (remainder re-owned by the integrator 2026-10-01, orphan sweep: Acceptance 2 (a query finds awarded-without-commitment documents) and 3 (repair is an audited action) are met. Acceptance 1, 'A failure at any step leaves no partial award', is not: a post failure plus a revert failure leaves \u2026)",
+     "PERF-7 (remainder re-owned by the integrator 2026-10-01, orphan sweep: 'Remaining for this record: the single-statement server-side apply (an RPC keeping the per-row updated_at guard), not added here because it would make both the assessment and the sweep depend on a migration being applied \u2026)",
+     "PERF-8 (remainder re-owned by the integrator 2026-10-01, orphan sweep: 'No query runs twice in one load \u2014 not done: the coach ... still reads projects and project_members beside the page's own reads ... The remaining limb is one prop through ProjectCoach and an optional pre-read argument to \u2026)",
+     "PERF-9 (remainder re-owned by the integrator 2026-10-01, orphan sweep: 'Route JS is under 700 KB \u2014 not verified here: no next build was run in this package ... the finding stays open until the built manifest shows it.' I read the local build (.next, BUILD_ID written 2026-10-01 13:33, two minutes \u2026)",
+     "GAP-401 (remainder re-owned by the integrator 2026-10-01, orphan sweep: Acceptance 1 (content sniff + attachment disposition; SEC-1/SEC-6 RESOLVED; J11 closes the last unsigned issuers, SEC-18, on its branch), 3 (expiry/revoke; SEC-5) and 4 (fail-open rate limit; 01-security-access.md:433) are \u2026)",
+     "GAP-402 (remainder re-owned by the integrator 2026-10-01, orphan sweep: Narrow build done: lib/checkedWrite.ts, the quality and money sites converted, and the census in lib/__tests__/checkedWrite.test.ts:109-131 (lib/checklists.ts, lib/turnover.ts and the three money files at ratchet zero; SAF-3 \u2026)",
+     "PERF-6 (remainder re-owned by the integrator 2026-10-01, orphan sweep: the cost-docs route limb only \u2014 a readable 504 / request deadline on /api/projects/cost-docs (the renderer limb is intelligence I-09's))",
+     "PERF-5 (remainder re-owned by the integrator 2026-10-01, orphan sweep: measure frames in the pre-installed Chromium (Playwright) for the schedule surface the record names; 'does not drop frames' is the unmet done-when)"
+    ]
+   },
+   "files": [
+    "app/api/projects/cost-docs/* (PM-1 closed-project refusal; PERF-6 deadline)",
+    "lib/projectHealth.ts (COST-2)",
+    "lib/projectReport.ts (COST-6)",
+    "lib/evidencePack.ts (QUAL-10 \u2014 coordinate with drafting-flow DF-P11)",
+    "a server route mailing the intake link's contact_email on both outcomes (SAF-9) \u2014 coordinate with notifications N6's email renderer",
+    "lib/costs.ts milestonePctIndex (SAF-8)",
+    "one migration: a BEFORE UPDATE rail on cost_documents refusing a status move to awarded outside the registry (MON-12) + an award_quote RPC doing claim + commitment + rival decline + audit in one transaction (GAP-406) + the assessment apply RPC keeping the per-row updated_at guard (PERF-7, DEC-52) \u2014 DEC-30 inventories, newest bodies, lineDiff tests, the DRLS-16 rule",
+    "components/projects/ProjectCoach.tsx + lib/projectSnapshot.ts (PERF-8 pre-read prop)",
+    "dynamic imports for ExecutionView / ScheduleImportModal / TaskDetailPanel / ScheduleCalendar (PERF-9; verify from the built manifest)",
+    "GAP-401 constrained intake identity + untrusted-content serving origin; GAP-402 open the remainder finding its narrow verdict requires and widen the checkedWrite census"
+   ],
+   "migrationsLikely": 1,
+   "when": "after J11; may run beside J10 / J10b (no shared files except where noted)",
+   "dependsOn": [
+    "J11 merged (it edits the cost-docs route for COST-15)",
+    "DF-P11 coordination for lib/evidencePack.ts"
+   ],
+   "sequencingNotes": "Added by the integrator 2026-10-01 (orphan sweep): server-side remainders that merged packages (J1\u2013J9, P7) left Partial with no owner."
+  },
+  {
+   "name": "J13 RECORDS RECONCILE \u2014 remainders that landed in code but whose records were never flipped (independently verified, DEC-29)",
+   "projectsTabPackages": [],
+   "projectsAndCostPackages": [],
+   "findings": {
+    "projects-and-cost": [
+     "COST-3 (remainder re-owned by the integrator 2026-10-01, orphan sweep: Record: 'Remaining limb: PC-7's posting-side refusal (reads company_id \u2192 companies.status, requires the recorded override)'. It is present on HEAD; the record was never updated.)",
+     "COST-10 (remainder re-owned by the integrator 2026-10-01, orphan sweep: Record: 'OPEN until J8's project purge lands (dw2)' and the pointer to J8 asks for 'deleteProject must route through delete_project_record ... and the projects BEFORE DELETE guard must refuse a project with financial rows \u2026)",
+     "INTK-12 (remainder re-owned by the integrator 2026-10-01, orphan sweep: The record contradicts itself. Status is OPEN and done-whens 2-4 are unticked, yet the J1 landed note at :559 says 'With J4's QuotesPanel half this meets Done-when 2\u20134; Done-when 1 was J4's. This finding stays with its owner \u2026)"
+    ],
+    "projects-tab": [
+     "REL-6 (remainder re-owned by the integrator 2026-10-01, orphan sweep: Record: 'Stays OPEN until P3's money-path failure tests land.' They are on HEAD; the record was never updated.)",
+     "BID-10 (remainder re-owned by the integrator 2026-10-01, orphan sweep: Record: 'not done here: the server-side key (lib/costDocs.ts:157, :250-251 lower(trim)) is P3 / J3's one-line limb \u2014 the finding stays open until it lands.' It landed with J3 (review fix pass 2); BID-10 was never updated.)",
+     "MON-8 (remainder re-owned by the integrator 2026-10-01, orphan sweep: Record: 'Open until J4 lands the call-site wrap.' The wrap is present; the record was never updated.)",
+     "GAP-403 (remainder re-owned by the integrator 2026-10-01, orphan sweep: None found. The register was never annotated.)",
+     "GAP-404 (remainder re-owned by the integrator 2026-10-01, orphan sweep: None found. The register was never annotated.)",
+     "GAP-405 (remainder re-owned by the integrator 2026-10-01, orphan sweep: None in code. The register was never annotated.)",
+     "GAP-407 (remainder re-owned by the integrator 2026-10-01, orphan sweep: None found. The register was never annotated.)",
+     "GAP-408 (remainder re-owned by the integrator 2026-10-01, orphan sweep: None found. The register was never annotated.)",
+     "GAP-409 (remainder re-owned by the integrator 2026-10-01, orphan sweep: None for the gap's acceptance. PERF-1 stays OPEN only on 'Back does not re-run it', which GAP-409's own 'do not fix this with a client-side cache' forbids (user-held there).)"
+    ],
+    "roles-and-permissions": [
+     "GAP-1 (remainder re-owned by the integrator 2026-10-01, orphan sweep: None in code. The register's \"Not built\" note (:136-140) still says \"Stage 3 \u2014 the engineer gate as a real capability \u2014 is the next round\", which DECISIONS.md:569 shows landed on 2026-09-17. Only the record is stale.)"
+    ]
+   },
+   "files": [
+    "records only: audit-reports/projects-and-cost/*.md, audit-reports/projects-tab/*.md (incl. the gap register), audit-reports/roles-and-permissions/90-gap-register.md (GAP-1's stale 'Not built' note) \u2014 each flip cites file:line on HEAD and every done-when; a remainder that does NOT hold stays OPEN with a Partial and is reported"
+   ],
+   "migrationsLikely": 0,
+   "when": "any time (records only)",
+   "dependsOn": [
+    "none"
+   ],
+   "sequencingNotes": "Added by the integrator 2026-10-01 (orphan sweep). An adversarial reviewer re-checks every flip."
   }
  ],
  "ownershipRule": "Where the two briefs disagree on a shared file, projects-and-cost's proposal applies: libs / API routes / migrations follow the projects-and-cost brief, components / pages follow the projects-tab brief; the schedule engine (lib/milestones.ts, criticalPath.ts, executionReport.ts) follows projects-tab's P6b brief with PC-4's rollup semantics folded in.",
@@ -929,6 +1052,12 @@
   "now: J2, J3, J4, J6a, J7 (minus QUAL-10), J9 route half",
   "then: J5 (after J3), J6b (after J6a)",
   "after DC P4: J1; after DC P6: J8; after DC P2: J9 egress half; after DC P7: J7 QUAL-10 limb, J2b",
-  "then: J11 (after J2b); last: J10"
- ]
+  "then: J11 (after J2b); last: J10",
+  "orphan sweep 2026-10-01: J13 any time (records only); J12 after J11; J10b after J10"
+ ],
+ "userHeld": {
+  "COST-5": "ratify DEC-48 (the silence-vs-plausible-hours gap, the declared / silent weighting, 'cheapest does not automatically win')",
+  "PERF-1": "rule on 'Back does not re-run it' (GAP-409 forbids a client-side cache)",
+  "CHART-2": "ratify DEC-55 rule 1 (then the integrator flips it with no code change)"
+ }
 }

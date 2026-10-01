@@ -258,6 +258,7 @@ upload/route.ts:286-292 — the full insert object, with no `uniqueness_key`. li
 
 - **Severity:** HIGH
 - **Status:** OPEN
+- **Assigned:** admin-and-org P3 — by the integrator, 2026-10-01 (orphan sweep: the package that left this remainder has merged; fleet plan `audit-reports/fleet-plans/`).
 - **Verification:** CONFIRMED
 - **Locations:** `lib/exportTables.ts:51`, `lib/dataExport.ts:95-99,300`, `supabase/migrations/20260913_projects_rls_recursion_fix.sql:99-102`, `app/api/data-export/destinations/route.ts:13`, `supabase/migrations/20260902_project_intake.sql:22`
 - **Independently verified:** ✓ **SURVIVES** — second independent adversarial pass. Confirmed on every leg: the table is exported with `select("*")`, nothing masks `token`, and a Manager — who cannot SELECT the table under the current RLS policy — can create an S3/webhook destination and receive the whole org's live intake tokens on every scheduled run (run-scheduled uses the service-role key and bypasses RLS entirely). /api/data-export/structured and /run are likewise Manager-callable.
@@ -520,6 +521,7 @@ upload/route.ts:45-46 — the complete file validation. :270 `ContentType: file.
 
 - **Severity:** MEDIUM
 - **Status:** OPEN
+- **Assigned:** projects-joint J13 RECORDS RECONCILE (new; the remainder appears landed — independently verified before any flip) — by the integrator, 2026-10-01 (orphan sweep: the package that left this remainder has merged; fleet plan `audit-reports/fleet-plans/`).
 - **Verification:** CONFIRMED
 - **Locations:** `components/projects/cost/QuotesPanel.tsx:536-548`, `components/projects/cost/QuotesPanel.tsx:613-635`, `components/projects/IntakePanel.tsx:62-64,354-359`
 - **Independently verified:** ✓ **SURVIVES** — second independent adversarial pass. All three legs confirmed. The routes do honour revoked_at/expires_at (upload route :40-41), but the Costs tab never sets or clears either, so a quote link is a permanent bearer credential in practice; and INTAKE_QUOTE_LINK_CREATED stores the first 8 chars of the secret as its resource_id, which both leaks token material into audit_logs and makes the row unjoinable to the link.
@@ -609,6 +611,7 @@ upload/route.ts:232-240 `if (!collectionId) { const { data: col, error: colErr }
 
 - **Severity:** LOW
 - **Status:** OPEN
+- **Assigned:** intelligence I-17 DATABASE HARNESS (new; the SECURITY DEFINER grant census) — by the integrator, 2026-10-01 (orphan sweep: the package that left this remainder has merged; fleet plan `audit-reports/fleet-plans/`).
 - **Verification:** SUSPECTED
 - **Locations:** `supabase/migrations/20260902_project_intake.sql:73-79`, `supabase/migrations/20260913_projects_rls_recursion_fix.sql:99-102`, `supabase/migrations/20260930_semantic_layer.sql:119-120`, `app/api/intake/upload/route.ts:121,214,393`
 - **Independently verified:** ✓ **SURVIVES, corrected** — second independent adversarial pass. Severity **MEDIUM → LOW** by this pass. The technical claim is correct and confirmed by repo-wide search — the REVOKE really is missing and this is an outlier against house style. Severity is overstated at MEDIUM: exploitation needs the link's *id*, a random UUIDv4 that no public surface discloses (the resolve route returns no id, and a member who can already see it under RLS is a controller/owner with write access anyway), and the blast radius is two cosmetic display columns. LOW.

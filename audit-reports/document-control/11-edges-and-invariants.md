@@ -215,6 +215,7 @@ lib/exportRunner.ts:386 `Prefix: params.prefix ? params.prefix.replace(/^\/+|\/+
 
 - **Severity:** MEDIUM
 - **Status:** OPEN
+- **Assigned:** projects-joint J10b UI REMAINDERS (IntakePanel / QuotesPanel) and identity-and-session IS-P1 (the library page) — by the integrator, 2026-10-01 (orphan sweep: the package that left this remainder has merged; fleet plan `audit-reports/fleet-plans/`).
 - **Verification:** CONFIRMED
 - **Locations:** `lib/transmittals.ts:389-393`, `lib/transmittals.ts:278`, `lib/transmittals.ts:309-321`, `lib/publicOrigin.ts:1-22`, `lib/docPack.ts:104-105`, `app/api/share/file/route.ts:114-116`
 - **Re-verified:** hardening pass — **SURVIVES**. `transmittalPortalUrl` is `typeof window !== "undefined" ? window.location.origin : ""` (`transmittals.ts:390`), so the server produces a relative URL on the one artifact that leaves the site. Same root as `notifications/NEDGE-11` — fix once.
@@ -517,6 +518,7 @@ app/api/templates/generate/route.ts:317-318 `const docs = Array.isArray(body.doc
 
 - **Severity:** MEDIUM
 - **Status:** OPEN
+- **Assigned:** document-control P15 SURFACE REMAINDERS (new) — by the integrator, 2026-10-01 (orphan sweep: the package that left this remainder has merged; fleet plan `audit-reports/fleet-plans/`).
 - **Verification:** SUSPECTED
 - **Locations:** `package.json:29`, `package-lock.json (node_modules/xlsx 0.18.5)`, `lib/xlsxData.ts:9,33`, `app/api/templates/generate/route.ts:131`
 - **Re-verified:** hardening pass — **SURVIVES**. `package.json:36` pins `"xlsx": "^0.18.5"`, the final npm release of the package, and `lib/xlsxData.ts:9` imports it. Reachable with an attacker-chosen bucket object via `XEDGE-1`.

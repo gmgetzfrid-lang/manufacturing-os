@@ -31,6 +31,7 @@ The server behaviour beneath the already-audited tabs.
 
 - **Severity:** HIGH
 - **Status:** OPEN
+- **Assigned:** projects-joint J12 SERVER REMAINDERS (new) — by the integrator, 2026-10-01 (orphan sweep: the package that left this remainder has merged; fleet plan `audit-reports/fleet-plans/`).
 - **Verification:** CONFIRMED
 - **Locations:** `lib/projects.ts:259-318`, `app/api/intake/upload/route.ts:35-42`, `app/api/intake/upload/route.ts:225-228`, `app/api/intake/upload/route.ts:299-334`, `app/(protected)/projects/[id]/page.tsx:625-653`, `supabase/migrations/20261013_project_controls_program.sql:262-288`, `supabase/migrations/20260902_project_intake.sql:51-60`
 - **Independently verified:** ✓ **SURVIVES** — second independent adversarial pass. Survives. Verified as a claim of absence: grep across lib/, app/ and components/ finds no closed-project write guard of any kind, and the intake door never loads projects.status. A cancelled project's trusted link still auto-supersedes a controlled drawing to Issued.

@@ -288,6 +288,7 @@ for a step that already happened.
 
 - **Severity:** HIGH
 - **Status:** OPEN
+- **Assigned:** projects-joint J10 SURFACE-SWEEP — by the integrator, 2026-10-01 (orphan sweep: the package that left this remainder has merged; fleet plan `audit-reports/fleet-plans/`).
 - **Verification:** CONFIRMED
 - **Blast radius:** ux / trust
 - **Locations:**
@@ -417,6 +418,7 @@ failed COMMENT blank the entire project view."*
 
 - **Severity:** HIGH
 - **Status:** OPEN
+- **Assigned:** projects-joint J10 SURFACE-SWEEP — by the integrator, 2026-10-01 (orphan sweep: the package that left this remainder has merged; fleet plan `audit-reports/fleet-plans/`).
 - **Verification:** CONFIRMED
 - **Blast radius:** ux / diagnosability
 - **Locations:**

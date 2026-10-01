@@ -116,6 +116,7 @@ A policy census across the document-control schema.
 
 - **Severity:** HIGH
 - **Status:** OPEN
+- **Assigned:** the user — deploy the app carrying P12's DRLS-15 / DRLS-17 commit, then paste 20261131; no code is owed until then — by the integrator, 2026-10-01 (orphan sweep: the package that left this remainder has merged; fleet plan `audit-reports/fleet-plans/`).
 - **Verification:** CONFIRMED
 - **Locations:** `supabase/schema.sql:1068-1069`, `supabase/migrations/20260822_review_completion_guard.sql:36-41`, `supabase/migrations/20260816_documents_access_change_guard.sql:81-101`, `supabase/migrations/20261011_collections_guard_and_trash.sql:38-62`, `supabase/migrations/20260819_effective_date.sql:17-28`
 - **Independently verified:** ✓ **SURVIVES** — second independent adversarial pass. The claim of absence is correct and complete — nothing in the schema or any migration keeps documents.rev/revision/document_number/effective_date consistent with current_version_id, and no check constraint or sync trigger exists. Any active member can move the register label without moving the file.
@@ -544,6 +545,7 @@ schema.sql:1032 `RETURNS SETOF UUID LANGUAGE SQL SECURITY DEFINER AS $$` — 43 
 
 - **Severity:** MEDIUM
 - **Status:** OPEN
+- **Assigned:** the user — deploy the app carrying P12's DRLS-15 / DRLS-17 commit, then paste 20261131; no code is owed until then — by the integrator, 2026-10-01 (orphan sweep: the package that left this remainder has merged; fleet plan `audit-reports/fleet-plans/`).
 - **Verification:** CONFIRMED
 - **Locations:** `supabase/migrations/20260615_fix_missing_rls_policies.sql:71-76`, `supabase/schema.sql:189-200`, `lib/documentLifecycle/common.ts:293`, `lib/revisions.ts:1481`
 - **Independently verified:** ✓ **SURVIVES** — second independent adversarial pass. All four cited claims verified verbatim, including the 'both writers ignore errors' half, which is the part most likely to have been overstated and is not.
@@ -586,6 +588,7 @@ schema.sql:1032 `RETURNS SETOF UUID LANGUAGE SQL SECURITY DEFINER AS $$` — 43 
 
 - **Severity:** MEDIUM
 - **Status:** OPEN
+- **Assigned:** document-control P14 RECORDS & REVIEW REMAINDERS (new) — by the integrator, 2026-10-01 (orphan sweep: the package that left this remainder has merged; fleet plan `audit-reports/fleet-plans/`).
 - **Verification:** CONFIRMED
 - **Locations:** `supabase/schema.sql:144`, `supabase/migrations/20260818_review_before_publish.sql:30`, `supabase/migrations/20260825_work_packages_acks.sql:102`, `supabase/migrations/20260817_read_understood.sql:37`, `supabase/migrations/20260823_publish_contract.sql:76`
 - **Independently verified:** ✓ **SURVIVES** — second independent adversarial pass. Correct on every element. One more instance of the asymmetry that strengthens rather than weakens it: work_package_documents.pinned_version_id REFERENCES document_versions(id) with no ON DELETE clause defaults to NO ACTION, so a pinned version blocks deletion while an acknowledged one silently cascades — three different behaviours across four child tables pointing at the same parent.

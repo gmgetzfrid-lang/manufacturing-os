@@ -463,6 +463,7 @@ Voiding must go through a status-guarded update (see `MON-3`).
 
 - **Severity:** MEDIUM
 - **Status:** OPEN
+- **Assigned:** projects-joint J13 RECORDS RECONCILE (new; the remainder appears landed — independently verified before any flip) — by the integrator, 2026-10-01 (orphan sweep: the package that left this remainder has merged; fleet plan `audit-reports/fleet-plans/`).
 - **Verification:** CONFIRMED
 - **Blast radius:** correctness / process
 - **Locations:**

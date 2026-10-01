@@ -440,6 +440,7 @@ RevUpModal.tsx:97 initial state; :143-145 the localStorage rehydrate; :311 the p
 
 - **Severity:** LOW
 - **Status:** OPEN
+- **Assigned:** document-control P14 RECORDS & REVIEW REMAINDERS (new) — by the integrator, 2026-10-01 (orphan sweep: the package that left this remainder has merged; fleet plan `audit-reports/fleet-plans/`).
 - **Verification:** CONFIRMED
 - **Locations:** `lib/reviewControl.ts:444-449`, `components/viewers/MultiDocViewer.tsx:386`, `components/assets/FileReferenceModal.tsx:42`, `components/documents/HistoryDrawer.tsx:60`, `lib/timeline.ts:330`
 - **Independently verified:** ✓ **SURVIVES, corrected** — second independent adversarial pass. Severity **MEDIUM → LOW** by this pass. 'Filtered out of every latest-approved query, so viewers serve the superseded drawing' is false — the promote at :429-433 sets current_version_id, and every viewer/share path hits that pointer directly with no review_state predicate, so the correct new file is served. The real residue is a stuck record: revision_label frozen at '2A' while documents.rev says '2', review_state still 'in_review', prior rev not superseded — which hides the current revision from the listing surfaces that DO filter (components/documents/HistoryDrawer.tsx:60, lib/timeline.ts:330, components/documents/CompareRevisionsModal.tsx:60). The cited unique-index collision (20260823_publish_contract.sql:63-65) is also not the systematic trigger implied: baseRev is the NEXT label, not the outgoing rev's, so it collides only against a pre-existing un-superseded row with the same label.

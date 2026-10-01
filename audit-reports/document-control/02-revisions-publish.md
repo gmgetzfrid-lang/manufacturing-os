@@ -571,6 +571,7 @@ lib/documentLifecycle/reverse.ts:117-118 — "// Un-supersede the source. Restor
 
 - **Severity:** MEDIUM
 - **Status:** OPEN
+- **Assigned:** the user — deploy the app carrying P12's DRLS-15 / DRLS-17 commit, then paste 20261131; no code is owed until then — by the integrator, 2026-10-01 (orphan sweep: the package that left this remainder has merged; fleet plan `audit-reports/fleet-plans/`).
 - **Verification:** CONFIRMED
 - **Locations:** `lib/revisions.ts:1146-1312`, `lib/revisions.ts:642-647`, `lib/reviewControl.ts:482-484`, `lib/effectiveDate.ts:45`, `lib/effectiveDate.ts:62-63`, `lib/docControlRegister.ts:186-187`
 - **Independently verified:** ✓ **SURVIVES** — second independent adversarial pass. Confirmed. After a revert, documents.effective_date still holds the withdrawn revision's future date with effective_notified_at NULL, so scanEffectiveDates (effectiveDate.ts:56-63, `.lte("effective_date", todayISO()).is("effective_notified_at", null)`) fires 'Now in effect: <doc> Rev <revert-label>' on that date, and docControlRegister.ts:186-187 keeps flagging the reverted doc effectivePending. The new revert version row itself carries no effective_date (revertPayload, :1172-1185), so the version and the document disagree.

@@ -71,6 +71,7 @@ app/api/admin/shed/route.ts:52-54 `.from("document_versions").select("id, file_u
 
 - **Severity:** HIGH
 - **Status:** OPEN
+- **Assigned:** document-control P14 RECORDS & REVIEW REMAINDERS (new) — by the integrator, 2026-10-01 (orphan sweep: the package that left this remainder has merged; fleet plan `audit-reports/fleet-plans/`).
 
 **Resolution (2026-08-24 — cross-area closure, fixed as roles-and-permissions `SURF-2` and hardened again in that area's adversarial-review round).** Every limb of this finding is closed in `app/api/storage/delete/route.ts`: the caller must be an Admin/DocCtrl of the key's org (read additively); `assertSafeStorageKey` runs before any prefix reasoning and non-org-prefixed keys are refused; the key resolves to its document and a legal hold or unreleased `document_holds` row refuses with 423, **fail closed** (503) on any lookup error; and a `STORAGE_OBJECT_DELETE` audit row is written BEFORE destruction, with the route refusing when the custody record cannot be written. Tests: `lib/__tests__/storageDeleteRoute.test.ts` (9 cases). See `../roles-and-permissions/09-non-document-surfaces.md` (`SURF-2`) for the full record.
 
@@ -167,6 +168,7 @@ lib/accessRecert.ts:60-62 `const { data } = await supabase.from("libraries").sel
 
 - **Severity:** HIGH
 - **Status:** OPEN
+- **Assigned:** admin-and-org P9 (ALOG-2: access_recertification_events split; then close by pointer) — by the integrator, 2026-10-01 (orphan sweep: the package that left this remainder has merged; fleet plan `audit-reports/fleet-plans/`).
 - **Verification:** CONFIRMED
 - **Locations:** `supabase/schema.sql:1060-1070`, `supabase/migrations/20260901_db_hard_enforcement.sql:152-162`, `supabase/migrations/20260820_retention.sql:59-64`, `supabase/migrations/20260821_access_recert.sql:39-44`, `lib/retention.ts:113-116`, `components/documents/RetentionSection.tsx:29-33`
 - **Independently verified:** ✓ **SURVIVES** — second independent adversarial pass. Confirmed — the app-side gate is only components/documents/RetentionSection.tsx's `canManage` prop, which is client-side. Note the interaction that makes this worse than a lone integrity bug: clearing legal_hold via PostgREST also disarms the 20260826 BEFORE DELETE triggers, which are described as the enforcement that must not depend on the client.
@@ -455,6 +457,7 @@ lib/serverRetention.ts:46-49 `const until = policy ? computeRetentionUntil(reten
 
 - **Severity:** MEDIUM
 - **Status:** OPEN
+- **Assigned:** document-control P14 RECORDS & REVIEW REMAINDERS (new) — by the integrator, 2026-10-01 (orphan sweep: the package that left this remainder has merged; fleet plan `audit-reports/fleet-plans/`).
 - **Verification:** CONFIRMED
 - **Locations:** `types/schema.ts:215-223`, `components/documents/RetentionSection.tsx:189-191`, `components/documents/RetentionPolicyModal.tsx:45`, `lib/retention.ts:183-197`, `lib/retention.ts:151-159`, `lib/retentionPolicy.ts:21-27`
 - **Independently verified:** ✓ **SURVIVES** — second independent adversarial pass. Claim of absence confirmed by grep: no consumer in lib/, components/, app/ or any SQL branches on the field. lib/retention.ts:194 also hardcodes the notification body "eligible for disposition review" for every policy. A records schedule configured 'destroy' silently becomes 'archive' — over-retention, which is itself a legal exposure, so MEDIUM stands even though the behavior fails in the safe direction.

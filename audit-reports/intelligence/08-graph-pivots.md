@@ -61,6 +61,7 @@ app/api/graph/ask/route.ts:21-23 — "Security: org membership is checked here, 
 
 - **Severity:** MEDIUM
 - **Status:** OPEN
+- **Assigned:** intelligence I-14 GRAPH PAGE, LENSES & RENDERERS — by the integrator, 2026-10-01 (orphan sweep: the package that left this remainder has merged; fleet plan `audit-reports/fleet-plans/`).
 - **Verification:** CONFIRMED
 - **Locations:** `lib/orgGraph.ts:37-44`, `lib/orgGraph.ts:109-117`, `lib/orgGraph.ts:222-250`, `lib/graphSettings.ts:22-52`, `app/(protected)/graph/page.tsx:151-180`
 - **Independently verified:** ✓ **SURVIVES, corrected** — second independent adversarial pass. Severity **HIGH → MEDIUM** by this pass. The factual claim is exact — the node record carries no scoping key and no scope control exists. I am lowering the severity because the absolute framing ("cannot be built without changing the assembly") is overstated for equipment: `unit`-type edges to `cbunit:<code>` are already assembled (orgGraph.ts:255), so a UI-only filter "assets with a unit edge to cbunit:20" is derivable from graph.edges today. It is only DOCUMENTS that genuinely need an assembly change — and that is GPV-3's finding, so GPV-2's remaining independent content is a missing-feature/UX gap, not a HIGH defect.
@@ -437,6 +438,7 @@ components/graph/OrgGraph2D.tsx:428-437 — the canvas element carries `ref`, `c
 
 - **Severity:** MEDIUM
 - **Status:** OPEN
+- **Assigned:** intelligence I-14 GRAPH PAGE, LENSES & RENDERERS — by the integrator, 2026-10-01 (orphan sweep: the package that left this remainder has merged; fleet plan `audit-reports/fleet-plans/`).
 - **Verification:** CONFIRMED
 - **Locations:** `lib/orgGraph.ts:104`, `lib/orgGraph.ts:198-203`, `lib/codebook.ts:29-56`, `lib/codebook.ts:368-380`, `app/(protected)/admin/assets/page.tsx:232`, `app/api/area/knowledge-status/route.ts:54`
 - **Independently verified:** ✓ **SURVIVES** — second independent adversarial pass. Confirmed — the graph's own header comment (orgGraph.ts:5-16, "each edge is a row somewhere") enumerates nine relationship sources and codebook unit meta is not among them, so a unit's pinned libraries and its bound knowledge shelf are stored, edited and consumed elsewhere but never drawn.

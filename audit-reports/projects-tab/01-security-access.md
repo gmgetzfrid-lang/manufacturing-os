@@ -497,6 +497,7 @@ cost entries should be deletable at all, versus archive-only.
 
 - **Severity:** HIGH
 - **Status:** OPEN
+- **Assigned:** intelligence I-09 (app/api/flows/read is its file) — by the integrator, 2026-10-01 (orphan sweep: the package that left this remainder has merged; fleet plan `audit-reports/fleet-plans/`).
 - **Verification:** CONFIRMED
 - **Blast radius:** security / data-confidentiality
 - **Locations:**
@@ -783,6 +784,7 @@ validate the recipient's active membership (see `SEC-17` note below).
 
 - **Severity:** MEDIUM
 - **Status:** OPEN
+- **Assigned:** projects-joint J11 (running: its SEC-19 token hashing and mint-once lists meet done-when 1 once 20261141 is live — reconciled at its merge) — by the integrator, 2026-10-01 (orphan sweep: the package that left this remainder has merged; fleet plan `audit-reports/fleet-plans/`).
 - **Verification:** CONFIRMED as a mechanism; SUSPECTED as a practical concern (requires an already-privileged actor)
 - **Blast radius:** audit integrity
 - **Locations:**

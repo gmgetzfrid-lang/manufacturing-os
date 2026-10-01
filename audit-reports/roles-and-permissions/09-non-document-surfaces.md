@@ -844,6 +844,7 @@ WHERE (en.metadata->>'external') IS DISTINCT FROM 'true'
 
 - **Severity:** LOW
 - **Status:** OPEN
+- **Assigned:** admin-and-org P6 — by the integrator, 2026-10-01 (orphan sweep: the package that left this remainder has merged; fleet plan `audit-reports/fleet-plans/`).
 - **Verification:** CONFIRMED
 - **Blast radius:** access-control / consistency
 - **Locations:**

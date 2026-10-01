@@ -52,6 +52,7 @@ more times.
 
 - **Severity:** HIGH
 - **Status:** OPEN
+- **Assigned:** the user — rule on 'Back does not re-run it'; no code is owed until then — by the integrator, 2026-10-01 (orphan sweep: the package that left this remainder has merged; fleet plan `audit-reports/fleet-plans/`).
 - **Verification:** CONFIRMED (query counts exact; timing estimated)
 - **Blast radius:** performance / availability
 - **Locations:**
@@ -158,6 +159,7 @@ memory.
 
 - **Severity:** MEDIUM
 - **Status:** OPEN
+- **Assigned:** projects-joint J10b UI REMAINDERS (new) — by the integrator, 2026-10-01 (orphan sweep: the package that left this remainder has merged; fleet plan `audit-reports/fleet-plans/`).
 - **Verification:** CONFIRMED
 - **Blast radius:** performance
 - **Locations:**
@@ -221,6 +223,7 @@ Tests (`lib/__tests__/projectSnapshot.test.ts`): "a sharing request joins the ro
 
 - **Severity:** MEDIUM
 - **Status:** OPEN
+- **Assigned:** projects-joint J10b UI REMAINDERS (new) — by the integrator, 2026-10-01 (orphan sweep: the package that left this remainder has merged; fleet plan `audit-reports/fleet-plans/`).
 - **Verification:** CONFIRMED (latent — does not fire today)
 - **Blast radius:** availability
 - **Locations:**
@@ -260,6 +263,7 @@ the loop the suppression prevents.
 
 - **Severity:** MEDIUM
 - **Status:** OPEN
+- **Assigned:** projects-joint J12 SERVER REMAINDERS (new) — by the integrator, 2026-10-01 (orphan sweep: the package that left this remainder has merged; fleet plan `audit-reports/fleet-plans/`).
 - **Verification:** CONFIRMED (structure); node counts estimated
 - **Blast radius:** performance
 - **Locations:**
@@ -311,6 +315,7 @@ The calendar view is the one safe surface — it caps at 4 chips per day with
 
 - **Severity:** MEDIUM
 - **Status:** OPEN
+- **Assigned:** intelligence I-09 (the renderer) and projects-joint J12 (the cost-docs route deadline) — by the integrator, 2026-10-01 (orphan sweep: the package that left this remainder has merged; fleet plan `audit-reports/fleet-plans/`).
 - **Verification:** CONFIRMED (arithmetic); SUSPECTED (hosting plan cap)
 - **Blast radius:** availability / cost
 - **Locations:**
@@ -381,6 +386,7 @@ customer's own key, and a 504 burns it entirely.
 
 - **Severity:** MEDIUM
 - **Status:** OPEN
+- **Assigned:** projects-joint J12 SERVER REMAINDERS (new) — by the integrator, 2026-10-01 (orphan sweep: the package that left this remainder has merged; fleet plan `audit-reports/fleet-plans/`).
 - **Verification:** CONFIRMED
 - **Blast radius:** availability / data-integrity
 - **Locations:**
@@ -424,6 +430,7 @@ server-side.
 
 - **Severity:** MEDIUM
 - **Status:** OPEN
+- **Assigned:** projects-joint J12 SERVER REMAINDERS (new) — by the integrator, 2026-10-01 (orphan sweep: the package that left this remainder has merged; fleet plan `audit-reports/fleet-plans/`).
 - **Verification:** CONFIRMED
 - **Blast radius:** performance
 - **Locations:**
@@ -467,6 +474,7 @@ the project row lands rather than blocking on everything.
 
 - **Severity:** MEDIUM
 - **Status:** OPEN
+- **Assigned:** projects-joint J12 SERVER REMAINDERS (new) — by the integrator, 2026-10-01 (orphan sweep: the package that left this remainder has merged; fleet plan `audit-reports/fleet-plans/`).
 - **Verification:** CONFIRMED (verified against the built output)
 - **Blast radius:** performance
 - **Locations:**
@@ -513,6 +521,7 @@ in `next/dynamic`.
 
 - **Severity:** LOW
 - **Status:** OPEN
+- **Assigned:** projects-joint J10b UI REMAINDERS (new) — by the integrator, 2026-10-01 (orphan sweep: the package that left this remainder has merged; fleet plan `audit-reports/fleet-plans/`).
 - **Verification:** CONFIRMED
 - **Blast radius:** performance
 - **Locations:**

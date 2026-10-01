@@ -471,6 +471,7 @@ Read the file end to end. The write is on line 216, inside `try {` opened at 196
 
 - **Severity:** MEDIUM
 - **Status:** OPEN
+- **Assigned:** intelligence I-03 THE ASK ROUTE and I-11 THE BRIDGE & THE MEMORY — by the integrator, 2026-10-01 (orphan sweep: the package that left this remainder has merged; fleet plan `audit-reports/fleet-plans/`).
 - **Verification:** CONFIRMED
 - **Locations:** `lib/knowledgeVision.ts:32-54`, `lib/knowledgeVision.ts:84-94`, `app/api/knowledge/ask/route.ts:1627-1650`, `supabase/migrations/20260922_vision_pages.sql:13`, `lib/knowledgeIngest.ts:458-470`
 - **Independently verified:** ✓ **SURVIVES** — second independent adversarial pass. Confirmed by repo-wide search: no migration adds any per-chunk source/vision column (only `section` in 20260914 and `tsv` in 20261007 touch knowledge_chunks), so there is nowhere to record that a given chunk came from lib/knowledgeVision.ts's haiku-tier OCR (VISION_MODEL at :26-30). The transcript flows into the normal chunk pipeline and is rendered identically to text-layer extraction.

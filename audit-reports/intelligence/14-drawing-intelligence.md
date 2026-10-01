@@ -32,6 +32,7 @@ Tag extraction, OPC references, pipe tracing, and revision staleness.
 
 - **Severity:** HIGH
 - **Status:** OPEN
+- **Assigned:** intelligence I-07 DRAWING INTELLIGENCE (running; its branch carries the code — reconciled at its merge) — by the integrator, 2026-10-01 (orphan sweep: the package that left this remainder has merged; fleet plan `audit-reports/fleet-plans/`).
 - **Verification:** CONFIRMED
 - **Locations:** `lib/knowledgeSourceSync.ts:239-263`, `lib/knowledgeIngest.ts:399-429`, `app/api/knowledge/drawing/route.ts:414-433`, `app/api/knowledge/drawing/route.ts:368`
 - **Independently verified:** ✓ **SURVIVES** — second independent adversarial pass. The chain holds end to end. The stale index also defeats the 'skipped' safety valve: route.ts:434 `indexed: d.status === "ready" && withEntities.has(d.id)` is satisfied by the surviving Rev-C rows plus the `status: done ? "ready" : "indexing"` write at knowledgeIngest.ts:432, so drawingAuditLog.ts:101-104 files `passed`/`flagged` rather than `skipped` — under Rev D.

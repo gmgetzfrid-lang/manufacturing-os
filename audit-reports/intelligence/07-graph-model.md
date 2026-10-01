@@ -317,6 +317,7 @@ Tests: `lib/__tests__/graphInsights.test.ts` — the PID-4402 / E-2201 tag+menti
 
 - **Severity:** MEDIUM
 - **Status:** OPEN
+- **Assigned:** intelligence I-14 GRAPH PAGE, LENSES & RENDERERS — by the integrator, 2026-10-01 (orphan sweep: the package that left this remainder has merged; fleet plan `audit-reports/fleet-plans/`).
 - **Verification:** SUSPECTED
 - **Locations:** `supabase/migrations/20260708_acl_rls_enforcement.sql:41-86`, `lib/orgGraph.ts:109-117`, `supabase/migrations/20260605_rls_policies_new_tables.sql:26-27`, `app/(protected)/graph/page.tsx:581-586`
 - **Independently verified:** ✓ **SURVIVES** — second independent adversarial pass. Confirmed: a controller's document set is a strict superset of a viewer's, assets are identical for both, so orphan/hub/bridge output is viewer-relative by construction. Nothing on the page qualifies it — page.tsx:581-586 and 614-616 print the counts and 'no context yet' with no ACL caveat, and the truncation strip (737-741) carries only cap notices.
@@ -521,6 +522,7 @@ Tests: `graphInsights.test.ts` — a component holding a plot plan and a unit is
 
 - **Severity:** LOW
 - **Status:** OPEN
+- **Assigned:** intelligence I-14 GRAPH PAGE, LENSES & RENDERERS — by the integrator, 2026-10-01 (orphan sweep: the package that left this remainder has merged; fleet plan `audit-reports/fleet-plans/`).
 - **Verification:** CONFIRMED
 - **Locations:** `lib/orgGraph.ts:23`, `lib/orgGraph.ts:109-113`, `lib/operationalGraph.ts:172-208`, `supabase/migrations/20260606_operational_entity_graph.sql:113`
 - **Independently verified:** ✓ **SURVIVES, corrected** — second independent adversarial pass. Severity **MEDIUM → LOW** by this pass. Factually correct — systems are a whole hierarchy level the graph never models, and documents.plant_id/system_id are read nowhere in it. But a repo-wide grep for `system_id`/`systemId` shows NO primary write path: the only writers are lib/documentLifecycle/common.ts:182 (from an `input.systemId` no UI supplies), split.ts:115 and merge.ts:124 which merely copy an existing value. No component or API route sets it, so the described scenario is essentially unreachable through the product. Downgrade to LOW (a modelling gap, not a live defect).

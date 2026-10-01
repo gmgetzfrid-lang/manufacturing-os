@@ -32,6 +32,7 @@ Whether giving an area a drawing populates its equipment.
 
 - **Severity:** HIGH
 - **Status:** OPEN
+- **Assigned:** intelligence I-17 DATABASE HARNESS (new) — by the integrator, 2026-10-01 (orphan sweep: the package that left this remainder has merged; fleet plan `audit-reports/fleet-plans/`).
 - **Verification:** CONFIRMED
 - **Locations:** `supabase/migrations/20260605_rls_policies_new_tables.sql:24-29`, `app/(protected)/admin/assets/page.tsx:56`, `app/(protected)/admin/assets/page.tsx:348-352`, `lib/assets.ts:172-220`
 - **Independently verified:** ✓ **SURVIVES, corrected** — second independent adversarial pass. Severity **CRITICAL → HIGH** by this pass. The claim is correct in every particular; the banner promises an authority boundary that the database does not hold. Severity is one notch high: the migration's own header states the design ("Role-based authorization ... is handled in application code, not RLS — RLS just prevents cross-tenant data access") and the identical FOR-ALL pattern is app-wide (schema.sql:1080 `tickets_org_access ON tickets FOR ALL`, document_assets, asset_photos, asset_types), so this is intra-tenant privilege escalation by an authenticated active member with no tenant-isolation break — HIGH, not CRITICAL.
@@ -321,6 +322,7 @@ lib/assets.ts:123-133 — `let q = supabase.from("assets").select("*").eq("org_i
 
 - **Severity:** MEDIUM
 - **Status:** OPEN
+- **Assigned:** intelligence I-14 (GPV-7: Connect writes node.unitCode) and I-09 (WIRE-10: the endpoint-existence trigger) — by the integrator, 2026-10-01 (orphan sweep: the package that left this remainder has merged; fleet plan `audit-reports/fleet-plans/`).
 - **Verification:** CONFIRMED
 - **Locations:** `supabase/migrations/20260606_operational_entity_graph.sql:52-70`, `supabase/migrations/20260606_operational_entity_graph.sql:106-116`, `app/(protected)/admin/scope/page.tsx:126`, `lib/orgGraph.ts:190-201`, `lib/orgGraph.ts:253-259`, `app/(protected)/graph/page.tsx:318-324`
 - **Independently verified:** ✓ **SURVIVES** — second independent adversarial pass. Both unit models are live: migration 20260606:52-70 creates `units` (fed by /admin/scope) while codebook units get their own `cbunit:<code>` nodes at orgGraph.ts:196-201. Also confirmed the graph's connect path treats them as interchangeable — graph/page.tsx:319-322 `n.id.startsWith("unit:") ? (n.sub ?? null)` resolves a legacy unit row to its free-text `code` column and writes that string as a process-flow unit ref, which is a different namespace from the codebook code the flow panel matches on.
@@ -364,6 +366,7 @@ Tests: `lib/__tests__/orgGraph.test.ts`, `lib/__tests__/intelRoundGUnitIdentity.
 
 - **Severity:** MEDIUM
 - **Status:** OPEN
+- **Assigned:** intelligence I-09 PROCESS FLOWS & OPERATING AREAS — by the integrator, 2026-10-01 (orphan sweep: the package that left this remainder has merged; fleet plan `audit-reports/fleet-plans/`).
 - **Verification:** CONFIRMED
 - **Locations:** `app/(protected)/admin/assets/page.tsx:1309-1314`, `app/(protected)/admin/assets/page.tsx:1011-1018`, `lib/equipmentBridgeServer.ts:240-258`, `lib/assetCategorize.ts:51-56`
 - **Independently verified:** ✓ **SURVIVES** — second independent adversarial pass. Confirmed — no reconciliation, no warning, no validation anywhere. Mild mitigation worth noting: the two fields sit side by side in the same grid (page.tsx:1498-1512, 'Operating unit' select next to a free-text 'Site code' input), so the contradiction is at least visible to whoever is editing; it is simply never enforced or flagged.

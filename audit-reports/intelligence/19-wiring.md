@@ -108,6 +108,7 @@ lib/equipmentBridgeServer.ts:272 `const { error: updErr } = await admin.from("do
 
 - **Severity:** HIGH
 - **Status:** OPEN
+- **Assigned:** intelligence I-09 (lib/search.ts) and I-14 (the lens UI) — by the integrator, 2026-10-01 (orphan sweep: the package that left this remainder has merged; fleet plan `audit-reports/fleet-plans/`).
 - **Verification:** CONFIRMED
 - **Locations:** `supabase/migrations/20260606_operational_entity_graph.sql:105-119`, `lib/assets.ts:170-202,206-215`, `lib/documentLifecycle/common.ts:181-182`, `lib/orgGraph.ts:253-261,321-325`, `lib/search.ts:176-184,540-542`
 - **Independently verified:** ✓ **SURVIVES** — second independent adversarial pass. Confirmed dead scaffold. The only write path copies from a field that is always null, so assets.unit_id and documents.unit_id are null in every real row — which makes /admin/scope decorative, the search scope filters silently empty, and every `unit:`/`plant:` node degree-0 and then deleted by orgGraph.ts:321-325. HIGH stands.

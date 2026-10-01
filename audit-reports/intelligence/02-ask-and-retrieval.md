@@ -32,6 +32,7 @@ How candidates are chosen, what the prompt promises, and whether the citation is
 
 - **Severity:** CRITICAL
 - **Status:** OPEN
+- **Assigned:** intelligence I-03 THE ASK ROUTE — by the integrator, 2026-10-01 (orphan sweep: the package that left this remainder has merged; fleet plan `audit-reports/fleet-plans/`).
 - **Verification:** CONFIRMED
 - **Locations:** `lib/knowledge.ts:504-527`, `app/(protected)/knowledge/[id]/page.tsx:1406-1418`, `app/(protected)/knowledge/[id]/page.tsx:1690-1725`, `app/api/knowledge/ask/route.ts:1632-1650`, `app/api/knowledge/ask/route.ts:1739-1753`, `supabase/migrations/20260911_knowledge_ai.sql:146-150`
 - **Independently verified:** ✓ **SURVIVES** — second independent adversarial pass. Confirmed end to end. The republish is not theoretical: knowledge/[id]/page.tsx:1705-1708 rebuilds the answer object with `citations: (Array.isArray(pa.citations) ? pa.citations : []) as KnowledgeCitation[]`, and the renderer prints those quotes verbatim (page.tsx:678-690 `<blockquote>{c.quote}</blockquote>` plus a 'Copy quote' button). The route's own per-asker ACL filter (route.ts:157-187, `excludedDocIds`) governs retrieval only and has no counterpart on the memory path.
@@ -237,6 +238,7 @@ app/api/knowledge/ask/route.ts:89-94 — `const history = (Array.isArray(body.hi
 
 - **Severity:** MEDIUM
 - **Status:** OPEN
+- **Assigned:** intelligence I-03 THE ASK ROUTE — by the integrator, 2026-10-01 (orphan sweep: the package that left this remainder has merged; fleet plan `audit-reports/fleet-plans/`).
 - **Verification:** CONFIRMED
 - **Locations:** `app/api/knowledge/ask/route.ts:1442-1450`, `lib/knowledge.ts:491-494`, `app/(protected)/knowledge/[id]/page.tsx:585-614`, `app/(protected)/knowledge/[id]/page.tsx:1759-1766`, `app/api/knowledge/ask/route.ts:686-693`, `lib/knowledgeText.ts:230-237`
 - **Independently verified:** ✓ **SURVIVES** — second independent adversarial pass. Confirmed. Neither card marks its content as model-authored, and both are reachable from document text given ASK-4 — the calc protocol at route.ts:1442-1450 explicitly instructs the model to emit a bare `**Need:** …` line, which is exactly the channel an injected instruction would use.
@@ -497,6 +499,7 @@ app/api/knowledge/ask/route.ts:14-19 — "An Anthropic key gets keyword search a
 
 - **Severity:** MEDIUM
 - **Status:** OPEN
+- **Assigned:** intelligence I-03 THE ASK ROUTE — by the integrator, 2026-10-01 (orphan sweep: the package that left this remainder has merged; fleet plan `audit-reports/fleet-plans/`).
 - **Verification:** CONFIRMED
 - **Locations:** `lib/knowledgeText.ts:163-169`, `lib/knowledgeText.ts:607-623`, `lib/knowledgeText.ts:628-642`, `app/api/knowledge/ask/route.ts:1643`, `app/api/knowledge/ask/route.ts:1739-1753`
 - **Independently verified:** ✓ **SURVIVES** — second independent adversarial pass. Confirmed end-to-end: lib/knowledgeIngest.ts:141/362 sanitize stored chunk text with sanitizeStorageText, which KEEPS valid surrogate PAIRS (knowledgeText.ts:22-24), so an astral-dense chunk reaches retrieval intact and the RRF slice is the first cut that can land mid-pair. Narrowing worth noting (does not refute): chunkProse caps prose chunks at target=1400 < 1600, so only TABLE chunks (chunkPageText allows up to target*2 = 2800, knowledgeText.ts:106-107) are long enough to be truncated at all — the bug needs an astral-dense table chunk. MEDIUM is right.

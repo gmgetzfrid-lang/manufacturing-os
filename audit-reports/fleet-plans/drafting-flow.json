@@ -146,7 +146,8 @@
     "DCW-7",
     "FRIC-3",
     "HAND-7",
-    "EDGE-12"
+    "EDGE-12",
+    "roles-and-permissions GAP-8 (remainder re-owned by the integrator 2026-10-01, orphan sweep: Not built: no `source_documents` appears anywhere in lib/, components/ or app/. Needs metadata.source_documents (an array beside the singular source_document) and Impact-panel / intent-bridge queries that read both.)"
    ],
    "severityMix": "2 HIGH, 8 MEDIUM, 1 LOW",
    "files": [
@@ -454,7 +455,8 @@
     "PERS-3",
     "PERS-2",
     "EDGE-3",
-    "ROUTE-7"
+    "ROUTE-7",
+    "roles-and-permissions GAP-13 (remainder re-owned by the integrator 2026-10-01, orphan sweep: Acceptance 1 is not met: the reason list is hardcoded as REVISION_REASONS at app/(protected)/requests/[id]/page.tsx:128 and is revision-flavoured, not an org-configured \"we don't do that\" list. Acceptance 2 is met …)"
    ],
    "severityMix": "2 HIGH, 11 MEDIUM",
    "files": [

@@ -623,6 +623,7 @@ supabase/migrations/20260910_transmittal_portal.sql:12-13 — `--      from an i
 
 - **Severity:** MEDIUM
 - **Status:** OPEN
+- **Assigned:** the user — ratify (or reject) DEC-64 §1; no code is owed until then — by the integrator, 2026-10-01 (orphan sweep: the package that left this remainder has merged; fleet plan `audit-reports/fleet-plans/`).
 - **Verification:** CONFIRMED
 - **Locations:** `lib/transmittals.ts:381-384`, `lib/publicOrigin.ts:1-22`, `lib/downloads.ts:90-100`, `lib/transmittals.ts:304-314`, `app/(protected)/transmittals/page.tsx:261`
 - **Independently verified:** ✓ **SURVIVES** — second independent adversarial pass. Confirmed — transmittalPortalUrl is the only URL builder in the repo that still uses window.location.origin for an externally-consumed link, and publicOrigin() exists precisely for this. Note the fix only helps where NEXT_PUBLIC_SITE_URL is set, since publicOrigin falls back to window.location.origin (publicOrigin.ts:20).

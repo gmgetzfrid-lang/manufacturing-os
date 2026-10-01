@@ -165,7 +165,7 @@
   },
   {
    "name": "N6 EMAIL-PIPELINE-AND-CRON — absolute links, one render layer, honest drain reporting, a preference-aware digest, observable inserts",
-   "findings": ["NEDGE-4", "DELIV-5", "NEDGE-10", "NEDGE-12", "DELIV-11", "NEDGE-9", "DELIV-7", "DELIV-4", "DELIV-1", "DELIV-8"],
+   "findings": ["NEDGE-4", "DELIV-5", "NEDGE-10", "NEDGE-12", "DELIV-11", "NEDGE-9", "DELIV-7", "DELIV-4", "DELIV-1", "DELIV-8", "public-surfaces PHYS-13 (remainder re-owned by the integrator 2026-10-01, orphan sweep: lib/notifications.ts:209 ticketUrl only — the same site as DELIV-5 done-when 2 (publicOrigin()); the projects and library-page sites are J10b's and IS-P1's)"],
    "severityMix": "3 HIGH, 6 MEDIUM, 1 LOW",
    "files": [
     "new lib/emailRender.ts (renderNotificationEmail({title, body, link, orgName}) → {subject, bodyText, bodyHtml}: absolute action link built from publicOrigin() (lib/publicOrigin.ts:17-22) and REFUSED — throws — when it is empty (the XEDGE-5 lesson); tokenizeMentions applied to comment text so @[Name](uuid) never leaves the system; footer linking /settings/notifications; escapeHtml carried forward for every interpolation — report 08 'verified sound')",
@@ -243,7 +243,7 @@
   },
   {
    "name": "N8 PRODUCERS-FREE — the census holes whose files no other fleet owns (Phase 2 census, severity order)",
-   "findings": ["PROD-3", "PROD-14", "PROD-2", "PROD-5", "PROD-11", "PROD-6"],
+   "findings": ["PROD-3", "PROD-14", "PROD-2", "PROD-5", "PROD-11", "PROD-6", "projects-tab MON-11 (remainder re-owned by the integrator 2026-10-01, orphan sweep: the turnover-rejection emit in lib/turnover.ts (an emit() only, no mutator change) — J2 merged without it)"],
    "severityMix": "2 HIGH, 4 MEDIUM",
    "files": [
     "lib/branches.ts (:216 resolveBranch audience mirrors announceBranchOpened :148 — { involved: [branch.createdBy], roles: ['DocCtrl'] }; resolving marks the matching unread branch_open rows read by metadata.branchId — PROD-3 dw1/dw2; the actor-strip at dispatch :87 still applies)",

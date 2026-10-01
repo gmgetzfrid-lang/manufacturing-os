@@ -348,6 +348,7 @@ intelligence/page.tsx:70 — `const snapKey = `intel-status-${activeOrgId}`;` an
 
 - **Severity:** LOW
 - **Status:** OPEN
+- **Assigned:** intelligence I-14 GRAPH PAGE, LENSES & RENDERERS — by the integrator, 2026-10-01 (orphan sweep: the package that left this remainder has merged; fleet plan `audit-reports/fleet-plans/`).
 - **Verification:** CONFIRMED
 - **Locations:** `app/(protected)/knowledge/[id]/page.tsx:1600-1616`, `app/(protected)/knowledge/page.tsx:72`, `app/(protected)/assistant/page.tsx:131`, `app/(protected)/graph/page.tsx:444`, `app/(protected)/admin/proposed-links/page.tsx:155`
 - **Independently verified:** ✓ **SURVIVES, corrected** — second independent adversarial pass. Severity **MEDIUM → LOW** by this pass. Factually correct — /knowledge/[id] is the one Intelligence surface with no tab strip. But it is not navigationally stranded: a labelled back-link to /knowledge sits in the header, so the cost is one extra click, not a dead end, and every other detail page in the app (documents/[libraryId], assets/[tag]) follows the same eyebrow-not-tabs convention. Consistency nit → LOW.

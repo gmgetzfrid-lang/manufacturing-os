@@ -458,6 +458,7 @@ lib/turnover.ts:269 `row.closed_by = input.actor.uid;`. lib/turnover.ts:106-119 
 
 - **Severity:** LOW
 - **Status:** OPEN
+- **Assigned:** projects-joint J10b UI REMAINDERS (new) — by the integrator, 2026-10-01 (orphan sweep: the package that left this remainder has merged; fleet plan `audit-reports/fleet-plans/`).
 - **Verification:** SUSPECTED
 - **Locations:** `lib/checklists.ts:102-106`, `lib/checklists.ts:214-231`, `lib/checklists.ts:218-224`, `app/(protected)/projects/[id]/page.tsx:192-200`, `components/projects/QualityTab.tsx:335-341`
 - **Independently verified:** ✓ **SURVIVES, corrected** — second independent adversarial pass. Severity **MEDIUM → LOW** by this pass. The fail-open mechanism is real, but neither cited trigger is reachable. Losing Admin/DocCtrl removes the WRITE, not the SELECT — the status update would fail, not the gate. And if 20261013 were unapplied, project_checklists would not exist either, so there would be no checklist to complete. What actually survives is a transient/network error on the item read silently passing the gate.
@@ -586,6 +587,7 @@ lib/projectHealth.ts:231 `payoff: "Closeout is gated on acceptance; contractors 
 
 - **Severity:** LOW
 - **Status:** OPEN
+- **Assigned:** projects-joint J12 SERVER REMAINDERS (new) — by the integrator, 2026-10-01 (orphan sweep: the package that left this remainder has merged; fleet plan `audit-reports/fleet-plans/`).
 - **Verification:** CONFIRMED
 - **Locations:** `lib/evidencePack.ts:146-162`, `lib/evidencePack.ts:218-228`, `lib/evidencePack.ts:230`, `app/(protected)/projects/[id]/page.tsx:340-348`
 - **Independently verified:** ✓ **SURVIVES, corrected** — second independent adversarial pass. Severity **MEDIUM → LOW** by this pass. The structural claim holds — the pack has no quality sections. But 'contains no turnover item and no punch item' is literally false: the audit-trail section carries TURNOVER_REVIEWED / CHECKLIST_* / PUNCH_* rows with item name, status, actor and date, and a sibling one-click Report covers the quality rollups.

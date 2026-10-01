@@ -190,6 +190,7 @@ app/api/verify/route.ts:90 — `const isCurrent = !docRetired && (!versionId || 
 
 - **Severity:** LOW
 - **Status:** OPEN
+- **Assigned:** the user — set NEXT_PUBLIC_FACILITY_TIME_ZONE in every deployment; no code is owed until then — by the integrator, 2026-10-01 (orphan sweep: the package that left this remainder has merged; fleet plan `audit-reports/fleet-plans/`).
 - **Verification:** CONFIRMED
 - **Locations:** `app/api/verify/route.ts:91-94`, `lib/effectiveDate.ts:21-28`, `lib/docControlRegister.ts:187`, `supabase/migrations/20260819_effective_date.sql:17`
 - **Independently verified:** ✓ **SURVIVES, corrected** — second independent adversarial pass. Severity **MEDIUM → LOW** by this pass. The divergence is real but the finding misdiagnoses the fix. effectiveStatusFor is RUNTIME-local, and this is a server route on a UTC host, so calling the canonical helper would compute the identical answer — the two only disagree because the register/badge call sites run in the browser (lib/docControlRegister.ts:187 uses the browser supabase client). A repo-wide grep for timezone/org-locale settings finds none, so there is no plant timezone to compare against; the actual defect is a one-day-boundary disagreement bounded by the UTC offset between the field page and the in-app badge. LOW.
@@ -283,6 +284,7 @@ grep -rn 'document_holds|hold' app/api/verify/route.ts app/api/verify-package/ro
 
 - **Severity:** MEDIUM
 - **Status:** OPEN
+- **Assigned:** document-control P15 SURFACE REMAINDERS (new) — by the integrator, 2026-10-01 (orphan sweep: the package that left this remainder has merged; fleet plan `audit-reports/fleet-plans/`).
 - **Verification:** CONFIRMED
 - **Locations:** `app/api/verify-hold/route.ts:46-56`, `components/documents/HoldStrip.tsx:190-203`, `supabase/migrations/20260612_phase5_holds.sql:26-33`, `app/verify-hold/[holdId]/page.tsx:110-113`
 - **Independently verified:** ✓ **SURVIVES** — second independent adversarial pass. Right on both halves: the route withholds `notes` and `opened_by_name` but publishes `reason` verbatim to an unauthenticated endpoint, and `reason` is exactly the field the UI lets a controller type free text into. app/verify-hold/[holdId]/page.tsx:110-113 prints it under 'Reason' on the public page.
@@ -330,6 +332,7 @@ app/api/verify-hold/route.ts:55 — `reason: (h.reason as string) ?? null,`  |  
 
 - **Severity:** MEDIUM
 - **Status:** OPEN
+- **Assigned:** intelligence I-12 DOCUMENT ACL BOUNDARY (the chooser on app/(protected)/documents/page.tsx) — by the integrator, 2026-10-01 (orphan sweep: the package that left this remainder has merged; fleet plan `audit-reports/fleet-plans/`).
 - **Verification:** CONFIRMED
 - **Locations:** `app/d/[number]/route.ts:19-36`, `app/d/[number]/route.ts:24-25`
 - **Independently verified:** ✓ **SURVIVES** — second independent adversarial pass. Both halves confirmed against the file's own header claim at :4-5 ('punctuation- and case-forgiving, same normalization as search'). Additional unclaimed exposure: the supabaseAdmin query at :27-32 is not scoped to any org, so the substring fallback can redirect to a document belonging to a different tenant.
@@ -509,6 +512,7 @@ app/api/verify-hold/route.ts:54 — `active: !h.released_at,`  |  app/api/verify
 
 - **Severity:** LOW
 - **Status:** OPEN
+- **Assigned:** document-control P8 FIELD (running; reconciled at its merge) — by the integrator, 2026-10-01 (orphan sweep: the package that left this remainder has merged; fleet plan `audit-reports/fleet-plans/`).
 - **Verification:** CONFIRMED
 - **Locations:** `app/api/verify-package/route.ts:73`, `app/verify-package/[packageId]/page.tsx:89-101,116-118`
 - **Independently verified:** ✓ **SURVIVES, corrected** — second independent adversarial pass. Severity **MEDIUM → LOW** by this pass. The '0 of 0' red screen is real and reads as nonsense. Severity is overstated: the failure direction is fail-closed (stop work), and the same page prints an accurate corrective line inside the card — page.tsx:118-120 `{result.sheets.length === 0 && (<div ...>This package has no sheets.</div>)}` — so the crew is not told a stale sheet exists that they must go find. Copy/verdict-taxonomy defect, LOW.
@@ -858,7 +862,7 @@ app/api/verify-package/route.ts — const offPaperIds = printConfirmed && !snaps
 
 - **Severity:** LOW
 - **Status:** OPEN
-- **Assigned:** document-control P12 WAVE-2 RESIDUALS (BulkEditModal.tsx is in its files) — by the integrator, 2026-10-01 (fleet plan `audit-reports/fleet-plans/`).
+- **Assigned:** document-control P12 WAVE-2 RESIDUALS (BulkEditModal.tsx is in its files) — by the integrator, 2026-10-01 (fleet plan `audit-reports/fleet-plans/`); the remainder re-owned to document-control P15 SURFACE REMAINDERS (new) — by the integrator, 2026-10-01 (orphan sweep: the package that left this remainder has merged; fleet plan `audit-reports/fleet-plans/`).
 - **Verification:** CONFIRMED
 - **Locations:** `components/documents/BulkEditModal.tsx:32` (`STATUS_OPTIONS` — "Draft", "In Review", "Issued", "IFC", "Superseded", "Archived"), `components/documents/MetadataStagingModal.tsx:68` (`DEFAULT_STATUS_OPTIONS` — the same with "IFC"), `types/schema.ts:658` (`DocumentStatus` — no "IFC", no "In Review"), `lib/docPack.ts` (`filterPackDocs` — refuses any status outside Issued / Locked), `lib/verifyVerdict.ts` (`IN_FORCE_STATUSES` — Issued / Locked only), `components/documents/LifecycleBoard.tsx` (an "IFC" column derived from `issueType` / Issued, not from the status)
 - **Independently verified:** — opened 2026-10-01 by public-surfaces Round F (PS-VERIFY, third review fix pass) from the review of `VFY-1` / `VFY-9`, per DEC-31; verified against the branch, not yet challenged by a second party.

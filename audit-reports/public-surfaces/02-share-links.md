@@ -597,6 +597,7 @@ file/route.ts:109-117 `await applyStampToPdfDoc(pdfDoc, { userLabel: "shared-lin
 
 - **Severity:** LOW
 - **Status:** OPEN
+- **Assigned:** admin-and-org P2 — by the integrator, 2026-10-01 (orphan sweep: the package that left this remainder has merged; fleet plan `audit-reports/fleet-plans/`).
 - **Verification:** CONFIRMED
 - **Locations:** `supabase/migrations/20260818_followups_rls.sql:95-102`, `app/api/share/resolve/route.ts:59`, `components/documents/ShareLinkModal.tsx:205`, `app/share/[token]/page.tsx:141`
 - **Independently verified:** ✓ **SURVIVES, corrected** — second independent adversarial pass. Severity **MEDIUM → LOW** by this pass. Every factual element checks out. I lower it to LOW on impact: the real distribution record is the download_audits row written independently by app/api/share/file/route.ts:129-140, so a missing RPC degrades a convenience counter (stuck at 0) rather than destroying the audit trail; and the search_path gap is only exploitable by a role that can create objects in a schema it can prepend, which Supabase's authenticated/anon roles cannot do on `public` by default.
@@ -686,7 +687,7 @@ schema.sql:1022 `ALTER TABLE download_audits ENABLE ROW LEVEL SECURITY;` and sch
 
 - **Severity:** LOW
 - **Status:** OPEN
-- **Assigned:** document-control P12 WAVE-2 RESIDUALS (the share INSERT rail is `20261080`, a document-control migration) — by the integrator, 2026-10-01 (fleet plan `audit-reports/fleet-plans/`).
+- **Assigned:** document-control P12 WAVE-2 RESIDUALS (the share INSERT rail is `20261080`, a document-control migration) — by the integrator, 2026-10-01 (fleet plan `audit-reports/fleet-plans/`); the remainder re-owned to document-control P15 SURFACE REMAINDERS (new) — by the integrator, 2026-10-01 (orphan sweep: the package that left this remainder has merged; fleet plan `audit-reports/fleet-plans/`).
 - **Verification:** SUSPECTED
 - **Locations:** `supabase/migrations/20261080_dc_roundF_share_minting_and_revocation.sql:150-177`, `lib/documentShares.ts:105-115`, `components/documents/ShareLinkModal.tsx:165`, `lib/downloadDeny.ts:65-86`, `lib/shareServe.ts:210-215`
 - **Opened by:** document-control Round F wave 2 verification fix (P1 SHARE, 2026-09-30) as the DEC-31 remainder of `SHR-3` — the mint-time half of its deny-download limb (the serve-time half is closed; `SHR-3`'s criteria are resolve-time only). Author-graded: no independent challenge yet.

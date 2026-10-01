@@ -65,6 +65,7 @@ case, and let it go negative when the data does — then project across
 
 - **Severity:** MEDIUM
 - **Status:** OPEN
+- **Assigned:** the user — ratify DEC-55 rule 1; no code is owed until then — by the integrator, 2026-10-01 (orphan sweep: the package that left this remainder has merged; fleet plan `audit-reports/fleet-plans/`).
 - **Verification:** CONFIRMED (measured contrast)
 - **Blast radius:** accessibility / correctness
 - **Locations:**

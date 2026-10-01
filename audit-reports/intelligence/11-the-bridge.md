@@ -267,6 +267,7 @@ lib/equipmentBridgeServer.ts:245-253 — `const { data: blankRows } = await admi
 
 - **Severity:** MEDIUM
 - **Status:** OPEN
+- **Assigned:** intelligence I-11 THE BRIDGE & THE MEMORY — by the integrator, 2026-10-01 (orphan sweep: the package that left this remainder has merged; fleet plan `audit-reports/fleet-plans/`).
 - **Verification:** CONFIRMED
 - **Locations:** `lib/equipmentBridgeServer.ts:200-233`, `lib/assets.ts:43-47`, `app/(protected)/admin/assets/page.tsx:1397-1411`, `app/(protected)/admin/assets/page.tsx:115`, `components/documents/EquipmentSweepModal.tsx:262-264`
 - **Independently verified:** ✓ **SURVIVES** — second independent adversarial pass. Confirmed by exhaustive search — the provenance is written and never surfaced or filtered on, and app/(protected)/admin/assets/page.tsx:115 loads with `listAssets({ orgId: activeOrgId, archived: false })` with no origin facet.

@@ -92,6 +92,7 @@ Pinned by `projectReport.test.ts` "an on-ledger approved CO: all three compute C
 
 - **Severity:** MEDIUM
 - **Status:** OPEN
+- **Assigned:** projects-joint J12 SERVER REMAINDERS (new) — by the integrator, 2026-10-01 (orphan sweep: the package that left this remainder has merged; fleet plan `audit-reports/fleet-plans/`).
 - **Verification:** CONFIRMED
 - **Locations:** `lib/costs.ts:316`, `lib/costs.ts:317`, `lib/costs.ts:330`, `components/projects/CostsTab.tsx:133-142`, `lib/projectHealth.ts:25`, `lib/projectHealth.ts:70-86`, `lib/projectSnapshot.ts:101`
 - **Independently verified:** ✓ **SURVIVES, corrected** — second independent adversarial pass. Severity **HIGH → MEDIUM** by this pass. The arithmetic claim is exactly right — a $480k award on a $500k account still reports remaining $500k, overBudget false, and a 100/100 cost health score. Downgraded to MEDIUM because 'invisible' overstates the UI: CostsTab.tsx:129-130 renders a dedicated 'Committed' stat card with '% of budget', line 150 prints 'spent · committed · budget', lines 152-153 draw the committed ghost bar, and line 356 repeats committed per account — the reader is shown the number, it is just excluded from Remaining/overBudget/health.
@@ -134,6 +135,7 @@ lib/costs.ts:316-317 — `remaining: a.budget - spent,` / `overBudget: a.budget 
 
 - **Severity:** MEDIUM
 - **Status:** OPEN
+- **Assigned:** projects-joint J13 RECORDS RECONCILE (new; the remainder appears landed — independently verified before any flip) — by the integrator, 2026-10-01 (orphan sweep: the package that left this remainder has merged; fleet plan `audit-reports/fleet-plans/`).
 - **Verification:** CONFIRMED
 - **Locations:** `components/projects/cost/QuotesPanel.tsx:275`, `components/projects/cost/QuotesPanel.tsx:286-291`, `lib/costDocs.ts:211-263`, `app/api/companies/quality-manual/route.ts:27`, `app/api/companies/quality-manual/route.ts:56`, `lib/checklistEngine.ts:200-206`, `app/(protected)/companies/[id]/page.tsx:216-232`
 - **Independently verified:** ✓ **SURVIVES** — second independent adversarial pass. All three sub-claims verified: no code path blocks or even warns on awarding a do_not_use vendor, matching is whole-string so 'Apex Industrial Services, LLC' never resolves to 'Apex Industrial', and the rubric score is computed from at most the first 10 rendered pages (the prompt itself concedes 'Only the attached pages count').
@@ -224,6 +226,7 @@ lib/changeOrders.ts:167-172 — the entire financial effect of approval is `entr
 
 - **Severity:** MEDIUM
 - **Status:** OPEN
+- **Assigned:** the user — ratify DEC-48; no code is owed until then — by the integrator, 2026-10-01 (orphan sweep: the package that left this remainder has merged; fleet plan `audit-reports/fleet-plans/`).
 - **Verification:** CONFIRMED
 - **Locations:** `lib/bidTab.ts:159`, `lib/bidTab.ts:165-171`, `lib/bidTab.ts:139`, `lib/bidTab.ts:118-124`
 - **Independently verified:** ✓ **SURVIVES** — second independent adversarial pass. Both mechanics verified. Padding hours lowers $/hr monotonically and therefore raises the manpower part: 2,000h vs 4,000h at the same $200k gives parts of 50 vs 100, a 15-point weighted swing, on a number the bidder writes about itself with no cross-check. The 'best value' label is advisory (tooltip at QuotesPanel.tsx:293 says 'not automatically the winner'), which caps the impact but does not change the ranking bias.
@@ -267,6 +270,7 @@ lib/bidTab.ts:159 — `const maxGaps = Math.max(...econ.map((e) => e.missingScop
 
 - **Severity:** MEDIUM
 - **Status:** OPEN
+- **Assigned:** projects-joint J12 SERVER REMAINDERS (new) — by the integrator, 2026-10-01 (orphan sweep: the package that left this remainder has merged; fleet plan `audit-reports/fleet-plans/`).
 - **Verification:** CONFIRMED
 - **Locations:** `lib/changeOrders.ts:132-197`, `components/projects/cost/ChangeOrdersPanel.tsx:46-78`, `components/projects/cost/ChangeOrdersPanel.tsx:98-108`, `supabase/migrations/20261013_project_controls_program.sql:262-266`, `app/(protected)/projects/[id]/page.tsx:134`
 - **Independently verified:** ✓ **SURVIVES** — second independent adversarial pass. Verified by repo-wide search: no self-approval, separation-of-duties, or amount-threshold check exists anywhere for change orders (the only self-approval logic in the repo is in the tickets/workflow module). The proposer's own uid lands in both created_by (:108) and decided_by (:154) with nothing objecting.
@@ -455,6 +459,7 @@ supabase/migrations/20260908_cost_control.sql:56-57 — `ALTER TABLE cost_entrie
 
 - **Severity:** MEDIUM
 - **Status:** OPEN
+- **Assigned:** projects-joint J13 RECORDS RECONCILE (new; the remainder appears landed — independently verified before any flip) — by the integrator, 2026-10-01 (orphan sweep: the package that left this remainder has merged; fleet plan `audit-reports/fleet-plans/`).
 - **Verification:** CONFIRMED
 - **Locations:** `supabase/migrations/20260906_projects_hardening.sql:158-175`, `supabase/migrations/20261013_project_controls_program.sql:262-266`, `supabase/migrations/20261013_project_controls_program.sql:304-314`, `lib/costs.ts:246-257`, `lib/costDocs.ts:308-309`
 - **Independently verified:** ✓ **SURVIVES** — second independent adversarial pass. Confirmed. The codebase demonstrably knows the fix — 20260814_documents_delete_controllers.sql:44 and 20260815:24-29 use `AS RESTRICTIVE FOR DELETE`, and 20260826 adds BEFORE DELETE triggers for legal holds — but none of that was applied to the money tables.
@@ -538,6 +543,7 @@ lib/costDocs.ts:256 — `.then(() => undefined, () => undefined);` on the rival-
 
 - **Severity:** MEDIUM
 - **Status:** OPEN
+- **Assigned:** projects-joint J10 SURFACE-SWEEP (the Costs tab party form — MON-7's writers) — by the integrator, 2026-10-01 (orphan sweep: the package that left this remainder has merged; fleet plan `audit-reports/fleet-plans/`).
 - **Verification:** CONFIRMED
 - **Locations:** `lib/companies.ts:240`, `lib/companies.ts:246-253`, `lib/companies.ts:284`, `lib/companies.ts:299-301`, `lib/costs.ts:127-154`, `components/projects/ProjectWizard.tsx:177-186`, `components/projects/cost/QuotesPanel.tsx:461-466`, `lib/turnover.ts:152`, `lib/turnover.ts:174`, `lib/turnover.ts:253`
 - **Independently verified:** ✓ **SURVIVES** — second independent adversarial pass. Every clause checks out on a repo-wide search. The consequence is exactly as stated: parties are found only by company_id (companies.ts:240), so awardsTotal is always 0 and the quality/bids/punch evidence slices are always empty — the scorecard structurally cannot score a company.

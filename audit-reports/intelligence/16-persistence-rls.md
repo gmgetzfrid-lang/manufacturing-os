@@ -245,6 +245,7 @@ lib/mentionIndexer.ts:136-142 — `const { error } = await supabaseAdmin.from("e
 
 - **Severity:** MEDIUM
 - **Status:** OPEN
+- **Assigned:** intelligence I-17 DATABASE HARNESS (new) — by the integrator, 2026-10-01 (orphan sweep: the package that left this remainder has merged; fleet plan `audit-reports/fleet-plans/`).
 - **Verification:** SUSPECTED
 - **Locations:** `supabase/migrations/20260806_intelligence_layer.sql:57-61`, `supabase/migrations/20260911_knowledge_ai.sql:91`, `lib/schemaExpectations.ts:1-13`
 - **Independently verified:** ✓ **SURVIVES** — second independent adversarial pass. Confirmed on a fresh DB: knowledge_questions does not exist in supabase/schema.sql (grep over its 1341 lines returns nothing), there is no README or ordering manifest in supabase/migrations, and lib/schemaExpectations.ts:4-5 states migrations are "applied BY HAND in the Supabase SQL editor" — where a multi-statement script runs as one implicit transaction, so the whole file rolls back. The knock-on is real too: 20260807_link_proposals.sql:95 does `ALTER TABLE document_related_resources ADD COLUMN…` on a table only created at 20260806:68, inside the file that just aborted.
@@ -294,6 +295,7 @@ Tests: `lib/__tests__/intelRoundGMigrationOrder.test.ts`:
 
 - **Severity:** MEDIUM
 - **Status:** OPEN
+- **Assigned:** intelligence I-09 PROCESS FLOWS & OPERATING AREAS — by the integrator, 2026-10-01 (orphan sweep: the package that left this remainder has merged; fleet plan `audit-reports/fleet-plans/`).
 - **Verification:** SUSPECTED
 - **Locations:** `supabase/migrations/20260917_knowledge_sources.sql:31`, `supabase/migrations/20260917_knowledge_sources.sql:53-58`, `supabase/migrations/20261017_process_flows.sql:17-20`, `supabase/migrations/20260928_site_codebook.sql:78`, `lib/knowledgeSourceSync.ts:285-292`
 - **Independently verified:** ✓ **SURVIVES** — second independent adversarial pass. Structural claim verified — the mirrored knowledge_documents row and its knowledge_chunks (full extracted text) outlive a deleted controlled document until the next sync. One narrowing the finding does not state: for non-controllers the ask route fails closed on orphans, because lib/knowledgeAccess.ts:201-205 finds no `documents` row for a deleted id so it never enters `readable`; but lib/knowledgeAccess.ts:196 `if (principal.isController) return new Set(docIds);` returns ALL ids unchecked, so Admin/DocCtrl answers can still cite the deleted document. Also note the cited 20261017_process_flows.sql:17-20 is the polymorphic from_kind/from_ref/to_kind/to_ref pair (correctly FK-less by design); that file's source_document_id at :27 does have a proper FK.
@@ -375,6 +377,7 @@ Tests: `lib/__tests__/intelRoundGIngestMigration.test.ts` (the key and the casca
 
 - **Severity:** LOW
 - **Status:** OPEN
+- **Assigned:** intelligence I-12 DOCUMENT ACL BOUNDARY — by the integrator, 2026-10-01 (orphan sweep: the package that left this remainder has merged; fleet plan `audit-reports/fleet-plans/`).
 - **Verification:** SUSPECTED
 - **Locations:** `supabase/migrations/20260929_mention_engine.sql:73-76`, `supabase/migrations/20260929_mention_engine.sql:38`, `lib/mentionIndexer.ts:84-121`, `lib/mentions.ts:9`, `lib/mentions.ts:120-127`, `lib/mentionIndexer.ts:157-190`
 - **Independently verified:** ✓ **SURVIVES, corrected** — second independent adversarial pass. Severity **MEDIUM → LOW** by this pass. The RLS design flaw is real and correctly described, but the exploit path is unreachable today — by the batch's own IRLS-4, entity_mentions has never been written, so the backlinks panel (lib/mentions.ts:126-134 mentionsForAsset) returns an empty set and there are no snippets to leak. It is a latent exposure that goes live the moment IRLS-4's onConflict is fixed; LOW until then. (The one path that could seed rows independently is a backup restore — lib/dataRestore.ts:298 lists entity_mentions.)

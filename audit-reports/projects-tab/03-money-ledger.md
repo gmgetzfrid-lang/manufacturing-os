@@ -448,6 +448,7 @@ the contractor's permanent scorecard."
 
 - **Severity:** MEDIUM
 - **Status:** OPEN
+- **Assigned:** projects-joint J13 RECORDS RECONCILE (new; the remainder appears landed — independently verified before any flip) — by the integrator, 2026-10-01 (orphan sweep: the package that left this remainder has merged; fleet plan `audit-reports/fleet-plans/`).
 - **Verification:** CONFIRMED
 - **Blast radius:** availability
 - **Locations:**
@@ -531,6 +532,7 @@ project.
 
 - **Severity:** MEDIUM
 - **Status:** OPEN
+- **Assigned:** projects-joint J10b UI REMAINDERS (new) — by the integrator, 2026-10-01 (orphan sweep: the package that left this remainder has merged; fleet plan `audit-reports/fleet-plans/`).
 - **Verification:** CONFIRMED
 - **Blast radius:** ux / vendor relations
 - **Locations:**
@@ -575,6 +577,7 @@ group. Send the notification promised at `upload/route.ts:127`.
 
 - **Severity:** MEDIUM
 - **Status:** OPEN
+- **Assigned:** notifications N8 PRODUCERS-FREE (the turnover-rejection emit in lib/turnover.ts) — by the integrator, 2026-10-01 (orphan sweep: the package that left this remainder has merged; fleet plan `audit-reports/fleet-plans/`).
 - **Verification:** CONFIRMED
 - **Blast radius:** process
 - **Locations:**
@@ -621,6 +624,7 @@ already shows state.
 
 - **Severity:** MEDIUM
 - **Status:** OPEN
+- **Assigned:** projects-joint J12 SERVER REMAINDERS (new) — by the integrator, 2026-10-01 (orphan sweep: the package that left this remainder has merged; fleet plan `audit-reports/fleet-plans/`).
 - **Verification:** CONFIRMED
 - **Blast radius:** process / governance
 - **Locations:**

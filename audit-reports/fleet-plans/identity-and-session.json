@@ -5,7 +5,9 @@
   {
    "name": "IS-P1 \u00b7 SESS-6 \u2014 activeRole: Role | null type flip (code only)",
    "findings": [
-    "SESS-6"
+    "SESS-6",
+    "document-control XEDGE-5 (remainder re-owned by the integrator 2026-10-01, orphan sweep: the library page's two sites only \u2014 app/(protected)/documents/[libraryId]/page.tsx :755 and :3159 still build outbound /d/ links from window.location.origin; use the configured public origin (the IntakePanel / QuotesPanel \u2026)",
+    "public-surfaces PHYS-13 (remainder re-owned by the integrator 2026-10-01, orphan sweep: the same two library-page sites as document-control XEDGE-5 (done-when 3's tree-wide clause))"
    ],
    "files": [
     "components/providers/RoleContext.tsx (type :67 \u2192 Role | null; seed :115 null; five setActiveRole('Viewer') sites :285 :311 :343 :416 :508)",

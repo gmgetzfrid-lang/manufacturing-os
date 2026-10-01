@@ -173,5 +173,8 @@
   "requests/[id]/page.tsx \u2194 drafting-flow",
   "schemaExpectations, cron/maintenance \u2194 DC P5, A&O P5"
  ],
- "notes": "Eleven of 54 close by record. Defaults for the seven product decisions were stated to the user 2026-09-17 and apply unless overridden: PHYS-7 (b); share minting controller tier + granted publishers, never-expires removed, 90-day max; refuse shares to Draft/Superseded/Void/Archived/held; per-scan log with IP+UA pruned at 90 days; timezone pure helper + DEC; production-URL origin fallback; UNCONTROLLED COPY everywhere."
+ "notes": "Eleven of 54 close by record. Defaults for the seven product decisions were stated to the user 2026-09-17 and apply unless overridden: PHYS-7 (b); share minting controller tier + granted publishers, never-expires removed, 90-day max; refuse shares to Draft/Superseded/Void/Archived/held; per-scan log with IP+UA pruned at 90 days; timezone pure helper + DEC; production-URL origin fallback; UNCONTROLLED COPY everywhere.",
+ "userHeld": {
+  "VFY-4": "set NEXT_PUBLIC_FACILITY_TIME_ZONE in every deployment (a Docker build argument on self-host)"
+ }
 }

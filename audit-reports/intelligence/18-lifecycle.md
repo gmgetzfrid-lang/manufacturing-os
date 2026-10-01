@@ -167,6 +167,7 @@ app/(protected)/admin/restore/page.tsx:200-209 `const body = await res.json().ca
 
 - **Severity:** MEDIUM
 - **Status:** OPEN
+- **Assigned:** admin-and-org P2 (the storage-key registry extended to the document shed) — by the integrator, 2026-10-01 (orphan sweep: the package that left this remainder has merged; fleet plan `audit-reports/fleet-plans/`).
 - **Verification:** CONFIRMED
 - **Locations:** `supabase/migrations/20260917_knowledge_sources.sql:54`, `supabase/migrations/20260911_knowledge_ai.sql:81`, `supabase/migrations/20260921_drawing_entities.sql:24`, `lib/knowledge.ts:467`, `app/(protected)/documents/[libraryId]/page.tsx:1011`, `lib/knowledgeSourceSync.ts:286`
 - **Independently verified:** ✓ **SURVIVES, corrected** — second independent adversarial pass. Severity **HIGH → MEDIUM** by this pass. The claim is right about the schema and wrong about permanence. A deleted controlled document drops out of `wanted`, so the next sweep deletes the mirror and knowledge_chunks/knowledge_page_entities/entity_mentions cascade on their real FKs to knowledge_documents(id). Ask is also already guarded for ordinary users — app/api/knowledge/ask/route.ts:176-183 excludes any mirror whose source_document_id is not in readableControlledDocIds, and a deleted doc can never be in it. Residual risk that keeps this alive at MEDIUM: up to ~24h of exposure; controllers bypass the ask filter entirely (lib/knowledgeAccess.ts:196 `if (principal.isController) return new Set(docIds);` returns ids of rows it never looked up); and syncAllKnowledgeSources caps at `maxLibraries = 25` taken unordered and deployment-wide, so past 25 source-linked libraries some are never swept.
@@ -471,6 +472,7 @@ lib/schemaExpectations.ts:10-13 `// Generated from supabase/migrations (CREATE T
 
 - **Severity:** LOW
 - **Status:** OPEN
+- **Assigned:** intelligence I-06b INGEST ROUTE FOLLOW-UPS — by the integrator, 2026-10-01 (orphan sweep: the package that left this remainder has merged; fleet plan `audit-reports/fleet-plans/`).
 - **Verification:** CONFIRMED
 - **Locations:** `lib/knowledgeSourceSync.ts:299`, `lib/knowledgeSourceSync.ts:303`, `lib/knowledgeSourceSync.ts:309`, `app/api/cron/maintenance/route.ts:245`
 - **Independently verified:** ✓ **SURVIVES, corrected** — second independent adversarial pass. Severity **MEDIUM → LOW** by this pass. The mechanism is real — an unordered slice(0,25) with no rotation means libraries past the cut get no cron attention. But 'never sync, ever' is false: any file landing in or moving within the watched doc-control library pushes a full reconcile (ADD + rev-up refresh + REMOVE) for that library regardless of the cut, and a controller can force one. The residual gap is narrow (a rev-up in a >25th library with no other filing activity, since publish does not call nudgeKnowledgeSources), so LOW.

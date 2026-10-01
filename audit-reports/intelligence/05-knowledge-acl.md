@@ -32,6 +32,7 @@
 
 - **Severity:** CRITICAL
 - **Status:** OPEN
+- **Assigned:** intelligence I-03 THE ASK ROUTE — by the integrator, 2026-10-01 (orphan sweep: the package that left this remainder has merged; fleet plan `audit-reports/fleet-plans/`).
 - **Verification:** CONFIRMED
 - **Locations:** `supabase/migrations/20260911_knowledge_ai.sql:146-150`, `lib/knowledge.ts:504-527`, `lib/knowledge.ts:529-546`, `app/(protected)/knowledge/[id]/page.tsx:1410-1415`, `app/(protected)/knowledge/[id]/page.tsx:1690-1720`, `app/api/knowledge/ask/route.ts:1632-1650`, `app/api/knowledge/ask/route.ts:1739-1744`
 - **Independently verified:** ✓ **SURVIVES** — second independent adversarial pass. Confirmed with no mitigating guard anywhere: the history row is readable by any active org member through the browser client under RLS, and it carries verbatim 1600-char quotes and document names from documents that member may be denied. The per-asker ACL filter (route.ts:157-187) runs only over live retrieval, never over replayed history.
@@ -254,6 +255,7 @@ download-url/route.ts:76-88 — `const allowed = canDiscover({ principal: {…},
 
 - **Severity:** MEDIUM
 - **Status:** OPEN
+- **Assigned:** intelligence I-12 DOCUMENT ACL BOUNDARY — by the integrator, 2026-10-01 (orphan sweep: the package that left this remainder has merged; fleet plan `audit-reports/fleet-plans/`).
 - **Verification:** CONFIRMED
 - **Locations:** `supabase/migrations/20260911_knowledge_ai.sql:124-128`, `supabase/migrations/20260917_knowledge_sources.sql:69-82`, `lib/knowledge.ts:323-347`, `lib/knowledgeSourceSync.ts:47-52`
 - **Independently verified:** ✓ **SURVIVES** — second independent adversarial pass. Confirmed: the 20260917 lockdown is chunk-only, so every mirror's document number, title, source_rev, page_count — and file_key, which is the same R2 key KACL-5 turns into bytes — stays readable by any active org member regardless of the controlled document's ACL.

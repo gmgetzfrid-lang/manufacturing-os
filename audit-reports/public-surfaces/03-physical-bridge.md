@@ -32,6 +32,7 @@ What a printed page asserts, and whether it can be wrong.
 
 - **Severity:** HIGH
 - **Status:** OPEN
+- **Assigned:** document-control P8 FIELD (running; reconciled at its merge) — by the integrator, 2026-10-01 (orphan sweep: the package that left this remainder has merged; fleet plan `audit-reports/fleet-plans/`).
 - **Verification:** CONFIRMED
 - **Locations:** `app/api/verify/route.ts:34-38`, `app/api/verify/route.ts:89-90`, `app/verify/[docId]/page.tsx:64-65`, `app/verify/[docId]/page.tsx:98-100`, `app/api/verify-package/route.ts:56`, `app/api/verify-package/route.ts:61`, `lib/documentGuards.ts:1-7`, `lib/downloads.ts:227-240`
 - **Independently verified:** ✓ **SURVIVES, corrected** — second independent adversarial pass. Severity **CRITICAL → HIGH** by this pass. The mechanical claim is correct — a held document scans GREEN. But 'invisible to every field scan' is false, and CRITICAL rests on a premise the codebase contradicts: holds are defined in-repo as blocks on ADVANCING a document, not on using a print (lib/documentGuards.ts:105-107 'Any active hold blocks the operation (the hold exists precisely to stop the document from advancing)'; components/ui/IsoGuidance.tsx:112-118 'no new revisions, no IFC release'), and the physical carrier for a hold is its own tag — lib/physicalBridge.ts:150 draws 'HOLD — DO NOT ADVANCE' and :164 stamps a `/verify-hold/{holdId}` QR served by app/api/verify-hold/route.ts. Real gap, HIGH not CRITICAL.
@@ -338,6 +339,7 @@ physicalBridge.ts:84 `const url = \`${origin()}/assets/${encodeURIComponent(asse
 
 - **Severity:** HIGH
 - **Status:** OPEN
+- **Assigned:** drafting-flow DF-P10 (= PKG-5, the drafting limb) and document-control P8 FIELD (the lib/downloads.ts limb) — by the integrator, 2026-10-01 (orphan sweep: the package that left this remainder has merged; fleet plan `audit-reports/fleet-plans/`).
 - **Verification:** CONFIRMED
 - **Locations:** `supabase/schema.sql:789-799`, `app/api/share/file/route.ts:129-141`, `app/(protected)/requests/[id]/page.tsx:592-600`, `app/(protected)/requests/[id]/page.tsx:673-684`, `lib/downloads.ts:131-145`, `lib/staleCopies.ts:39-47`
 - **Independently verified:** ✓ **SURVIVES** — second independent adversarial pass. Confirmed on both halves: the columns exist nowhere in the schema or any migration, and every one of these callers discards the outcome (supabase-js returns `{error}` rather than throwing, so the try/catch at share/file:141 is not even reached). The paths that DO write valid rows — lib/downloads.ts:132-141, lib/docPack.ts:114-122, components/viewers/MultiDocViewer.tsx:737-747 — use only real columns, which is exactly why the distribution record contains internal pulls and nothing else.
@@ -609,6 +611,7 @@ stamping.ts:118-119 `const base = page.getViewport({ scale: 1 });\n        const
 
 - **Severity:** MEDIUM
 - **Status:** OPEN
+- **Assigned:** projects-joint J10b (IntakePanel / QuotesPanel), identity-and-session IS-P1 (the library page) and notifications N6 (lib/notifications.ts ticketUrl) — by the integrator, 2026-10-01 (orphan sweep: the package that left this remainder has merged; fleet plan `audit-reports/fleet-plans/`).
 - **Verification:** CONFIRMED
 - **Locations:** `components/viewers/FullScreenViewer.tsx:1268`, `components/viewers/FullScreenViewer.tsx:63`, `components/viewers/FullScreenViewer.tsx:1015-1016`, `components/documents/ShareLinkModal.tsx:81`, `components/documents/ShareLinkModal.tsx:209`, `lib/publicOrigin.ts:8-12`
 - **Independently verified:** ✓ **SURVIVES** — second independent adversarial pass. Both call sites confirmed, and the file-local inconsistency in FullScreenViewer (publicOrigin at :1016, window.location.origin at :1268) makes it plainly an oversight rather than a deliberate exception. The share-link QR is the one that reaches an external party, so the preview-deploy dead-end is real; the /documents QR at :1268 targets a protected route the scanner must log into anyway, which limits the blast radius of that half.

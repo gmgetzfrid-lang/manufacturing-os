@@ -80,6 +80,7 @@ lib/equipmentBridgeServer.ts:96-100 — `for (const cand of numberCandidates) { 
 
 - **Severity:** MEDIUM
 - **Status:** OPEN
+- **Assigned:** intelligence I-11 THE BRIDGE & THE MEMORY — by the integrator, 2026-10-01 (orphan sweep: the package that left this remainder has merged; fleet plan `audit-reports/fleet-plans/`).
 - **Verification:** CONFIRMED
 - **Locations:** `supabase/migrations/20260928_site_codebook.sql:108-111`, `lib/equipmentBridgeServer.ts:175-180`, `lib/equipmentBridgeServer.ts:278-285`
 - **Independently verified:** ✓ **SURVIVES** — second independent adversarial pass. The write/delete authority claim is exactly right — any active member, Viewer included, can rewrite or DELETE the proposal and the applied ledger, and applyForDocument trusts the row. One sub-claim in the summary is wrong: the automatic post-ingest path is NOT a clean trigger, because computeForKnowledgeDoc recomputes and upserts `suggested` at line 124 immediately before calling applyForDocument at :130, destroying the injection. The real vector is the confused deputy in app/api/equipment-bridge/route.ts:128-141, where a WRITER_ROLES user's Apply reads the poisoned row with no recompute.
@@ -211,6 +212,7 @@ lib/roleCapabilities.ts:74-84 — `Admin: 100, Manager: 90, Supervisor: 80, Draf
 
 - **Severity:** MEDIUM
 - **Status:** OPEN
+- **Assigned:** intelligence I-16 CODEBOOK LIFECYCLE (new) — by the integrator, 2026-10-01 (orphan sweep: the package that left this remainder has merged; fleet plan `audit-reports/fleet-plans/`).
 - **Verification:** CONFIRMED
 - **Locations:** `app/(protected)/admin/codebook/page.tsx:208-216`, `lib/codebook.ts:356`, `lib/codebook.ts:360-363`, `supabase/migrations/20260928_site_codebook.sql:78-83`, `supabase/migrations/20261017_process_flows.sql:17-20`
 - **Independently verified:** ✓ **SURVIVES** — second independent adversarial pass. Confirmed: re-typing a mistyped unit code is delete-plus-add, which cascades to nothing, and the confirm text's "Nothing else is deleted" is technically true but misleading — assets keep the dead unit_code (surfacing in the unknownUnits bucket at admin/assets/page.tsx:240-244) and process_flows rows keep dangling to_ref/from_ref strings that now resolve to no unit.
@@ -252,6 +254,7 @@ lib/codebook.ts:360-363 — `export async function deleteEntry(id: string): Prom
 
 - **Severity:** MEDIUM
 - **Status:** OPEN
+- **Assigned:** intelligence I-16 CODEBOOK LIFECYCLE (new) — by the integrator, 2026-10-01 (orphan sweep: the package that left this remainder has merged; fleet plan `audit-reports/fleet-plans/`).
 - **Verification:** CONFIRMED
 - **Locations:** `lib/equipmentBridgeServer.ts:211-212`, `lib/equipmentBridgeServer.ts:251-253`, `lib/assetCategorize.ts:51-57`, `app/(protected)/admin/assets/page.tsx:1016-1019`, `app/(protected)/admin/codebook/page.tsx:344-347`
 - **Independently verified:** ✓ **SURVIVES** — second independent adversarial pass. The absence claim holds under a repo-wide search: every write of assets.code is a create-time or fill-a-blank write, so a padTo (or type-code, or prefix) change leaves every pre-existing asset carrying a code the current codebook would no longer produce, with nothing anywhere detecting the divergence.

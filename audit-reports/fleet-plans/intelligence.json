@@ -208,7 +208,16 @@
         "ASK-9",
         "ASK-10",
         "SEM-10",
-        "IRLS-13 (added by the integrator 2026-10-01; opened by I-08: an answer names the Reasoning Skills that shaped it — loadAnswerSkillsBlock, the ask response, the orchestrator)"
+        "IRLS-13 (added by the integrator 2026-10-01; opened by I-08: an answer names the Reasoning Skills that shaped it — loadAnswerSkillsBlock, the ask response, the orchestrator)",
+        "ASK-1 (remainder re-owned by the integrator 2026-10-01, orphan sweep: 'A row records only the documents its answer CITES' — passages retrieved but not cited, and drawing facts, are not recorded, so a teammate's answer citing SOME readable documents is shown even when it drew on uncited …)",
+        "KACL-1 (remainder re-owned by the integrator 2026-10-01, orphan sweep: Same code as ASK-1: 'a row records only what its answer CITES, so an answer citing SOME readable documents is shown to other members even when its text drew on uncited restricted passages or drawing facts.')",
+        "IEDGE-5 (remainder re-owned by the integrator 2026-10-01, orphan sweep: Rows record the documents an answer CITES, not every document it drew on; uncited retrieved passages and drawing facts are not recorded and so not filtered.)",
+        "ASK-6 (remainder re-owned by the integrator 2026-10-01, orphan sweep: Run screenAssistantRequest in /api/knowledge/ask with the matching kind ('need' on **Need:** text, 'clarify'/'aspect' on plan.clarify); reject rather than relay only on { ok: false }; relay cautions.)",
+        "ASK-11 (remainder re-owned by the integrator 2026-10-01, orphan sweep: The knowledge_questions insert must check r.error unconditionally and surface a non-column failure rather than silently returning questionId: null.)",
+        "SEM-6 (remainder re-owned by the integrator 2026-10-01, orphan sweep: Resolve p_model per searched library with planQueryEmbedding(resolveCorpusModel(detail.models), connection), embed once per distinct (provider, model), and report libraries that contributed no semantic rows.)",
+        "SEM-12 (remainder re-owned by the integrator 2026-10-01, orphan sweep: The ask response must carry retrievalCoverage { embedded, total } over every library searched (linked ones included); the page renderer is ready.)",
+        "SEM-3 (remainder re-owned by the integrator 2026-10-01, orphan sweep: The ask route must embed the query via planQueryEmbedding (corpus provider/model) and report its reasons instead of the empty catch; the removal dialog must say vectors work again only with a key for the provider that built them.)",
+        "GOV-9 (remainder re-owned by the integrator 2026-10-01, orphan sweep: CitationOut must carry the chunk source/model and the answer UI mark vision-derived quotes; the ask prompt must flag transcribed passages; title-block fields from a vision transcript must not be authoritative identity without …)"
       ],
       "severityMix": "0 CRITICAL / 5 HIGH / 13 MEDIUM / 1 LOW",
       "files": [
@@ -312,7 +321,10 @@
         "HUB-7",
         "HUB-9",
         "HUB-10",
-        "HUB-12"
+        "HUB-12",
+        "SEM-1 (remainder re-owned by the integrator 2026-10-01, orphan sweep: Saving a different embedding model or provider must warn that existing vectors become unusable and offer the reset.)",
+        "SEM-13 (remainder re-owned by the integrator 2026-10-01, orphan sweep: Per-model Voyage rates replace the single voyage- prefix (landed on the I-05 branch, unmerged; record not yet flipped).)",
+        "SEM-3 (remainder re-owned by the integrator 2026-10-01, orphan sweep: The ask route must embed the query via planQueryEmbedding (corpus provider/model) and report its reasons instead of the empty catch; the removal dialog must say vectors work again only with a key for the provider that built them.)"
       ],
       "severityMix": "1 CRITICAL / 6 HIGH / 13 MEDIUM / 5 LOW",
       "files": [
@@ -418,7 +430,9 @@
         "DWG-13",
         "ING-5",
         "PR-10",
-        "PR-11"
+        "PR-11",
+        "DWG-1 (remainder re-owned by the integrator 2026-10-01, orphan sweep: Criteria 3 and 4: recordAudit must read the revision from knowledge_documents.source_rev and refuse when it disagrees; a sheet whose source_version_id differs from current_version_id must be reported 'skipped'. Done on the …)",
+        "ING-12 (remainder re-owned by the integrator 2026-10-01, orphan sweep: The drawing rebuild's reset must write vision_pages: 0 (and zero ingest_failures / vision_retry_after) by calling resetKnowledgeIndex. Done on the I-07 branch, not yet merged.)"
       ],
       "severityMix": "0 CRITICAL / 5 HIGH / 11 MEDIUM / 1 LOW",
       "files": [
@@ -534,7 +548,14 @@
         "WIRE-6",
         "WIRE-10",
         "PR-7",
-        "PR-8"
+        "PR-8",
+        "IRLS-7 (remainder re-owned by the integrator 2026-10-01, orphan sweep: 'OPEN until the process_flows read-time validation lands': an edge to a deleted asset must be shown as broken rather than drawn. Plus paste 20261122.)",
+        "AREA-10 (remainder re-owned by the integrator 2026-10-01, orphan sweep: Connect mode must refuse a unit: endpoint without unitCode (graph/page.tsx, I-14 GPV-7); no process_flows row may name a unit ref that resolves to no codebook_entries row (I-09 WIRE-10 trigger). Apply 20261138.)",
+        "GAP-306 (remainder re-owned by the integrator 2026-10-01, orphan sweep: Picking a unit in the graph (I-14 picker), a second surface consuming the scope object (UnitOpsPanels via I-09 AREA-6), and a nameable / savable / URL-shareable scope (I-14 GPV-11). The mapping and decode (GAP-305) must be …)",
+        "WIRE-3 (remainder re-owned by the integrator 2026-10-01, orphan sweep: 'let searchDocuments' unitId filter also match documents.unit_code = the code that unit is mapped to, or drop the plant / unit / system parameters no caller passes. Apply 20261138.')",
+        "AREA-11 (remainder re-owned by the integrator 2026-10-01, orphan sweep: 'the Facility Setup navigator (app/(protected)/setup/page.tsx) … the count it needs is planIdentityReview(assets, book).filter((r) => r.kind === \"code_names_other_unit\").length (exported, tested).')",
+        "projects-tab SEC-10 (remainder re-owned by the integrator 2026-10-01, orphan sweep: 'NOT covered: /api/flows/read (app/api/flows/read/route.ts:53-80) renders knowledge_documents.file_key as the service role for any controller ... with no download-deny check and no DEC-43 row ... it closes when that route …)",
+        "projects-tab PERF-6 (remainder re-owned by the integrator 2026-10-01, orphan sweep: the renderer limb only — a ten-page scanned PDF completes inside the function limit and two concurrent reads do not exhaust memory (lib/knowledgePageRender.ts); the cost-docs route's readable 504 is projects-joint J12's)"
       ],
       "severityMix": "0 CRITICAL / 3 HIGH / 13 MEDIUM / 7 LOW",
       "files": [
@@ -555,7 +576,7 @@
         "I-13 owns orgGraph's flow cap/dedupe halves (FLOW-9, FLOW-8/GM-8); I-14 owns the renderer half (FLOW-10/GPV-8) — cross-reference",
         "FLOW-14 (topology feeds nothing but drawing) — see decision; the orchestrator's trace_pid_lines is I-04's file"
       ],
-      "sequencingNotes": "RLS migration first (four findings, one root) -> FLOW-3 -> FLOW-5/IEDGE-8/FLOW-12 -> FLOW-4/AREA-5/WIRE-6 -> FLOW-1 -> PR-7/PR-8/FLOW-11/FLOW-13 -> FLOW-6/WIRE-10 -> FLOW-7 -> AREA-8 -> AREA-6 (after I-13/I-14) -> FLOW-14 (decision). 99 Do-not: no AI-derived data drives a hold/MOC; proposed flows never reach a reasoning surface.",
+      "sequencingNotes": "RLS migration first (four findings, one root) -> FLOW-3 -> FLOW-5/IEDGE-8/FLOW-12 -> FLOW-4/AREA-5/WIRE-6 -> FLOW-1 -> PR-7/PR-8/FLOW-11/FLOW-13 -> FLOW-6/WIRE-10 -> FLOW-7 -> AREA-8 -> AREA-6 (I-13 merged: the URL key is lib/scope.ts parseScopeParam / formatScopeParam, so AREA-6 does not wait for I-14; it is lib/scope.ts's FIRST consumer under DEC-67, and I-14's scope picker follows it) -> FLOW-14 (decision). 99 Do-not: no AI-derived data drives a hold/MOC; proposed flows never reach a reasoning surface.",
       "decisionsNeeded": [
         "FLOW-2 — default: hand-drawn flows by non-controllers land as 'proposed'; controllers confirm (fail-safe: the shared topology is human-controller-asserted)",
         "FLOW-14 — default: not built; recorded as a follow-up gap ('confirmed topology as a reasoning input'); only confirmed flows would ever be consumed",
@@ -652,7 +673,12 @@
         "GAP-307",
         "GAP-308",
         "GAP-309",
-        "GAP-314 (opened at the I-13 merge 2026-10-01: the unit decode at create time — the Bridge at ingest writes documents.unit_code through the backfill's planner)"
+        "GAP-314 (opened at the I-13 merge 2026-10-01: the unit decode at create time — the Bridge at ingest writes documents.unit_code through the backfill's planner, reusing document-control P13's server-side decode helper; and acceptance 2, the /admin/scope count of documents undecoded since the last run)",
+        "BR-8 (remainder re-owned by the integrator 2026-10-01, orphan sweep: Auto-apply records a real service identity (or a resolvable created_by) instead of the nil UUID; the sweep modal's 'provenance recorded' copy links to /admin/assets with the Discovered filter.)",
+        "CB-2 (remainder re-owned by the integrator 2026-10-01, orphan sweep: applyForDocument must re-derive code via tagToCode(s.tag, s.unitCode, book) instead of trusting the stored `suggested` payload; and 'A runtime refusal test waits for a database in the test suite.')",
+        "GAP-311 (remainder re-owned by the integrator 2026-10-01, orphan sweep: Typing a tag must also return its sheets (with sheet label such as SHT 4) — arrives when I-11 writes document_assets rows with the sheet address.)",
+        "GAP-310 (remainder re-owned by the integrator 2026-10-01, orphan sweep: Switch linkProposerServer's alias comparison to tagKey and add it to the awkward-input agreement table (orphaned); make the Bridge's assetNorm an import of tagKey (I-11); paste 20261127.)",
+        "GOV-9 (remainder re-owned by the integrator 2026-10-01, orphan sweep: CitationOut must carry the chunk source/model and the answer UI mark vision-derived quotes; the ask prompt must flag transcribed passages; title-block fields from a vision transcript must not be authoritative identity without …)"
       ],
       "severityMix": "0 CRITICAL / 4 HIGH / 9 MEDIUM / 4 LOW (+7 gaps: 302 S, 301 S, 303 M, 304 M, 309 M, 307 M, 308 M)",
       "files": [
@@ -702,7 +728,11 @@
         "IEDGE-12",
         "KACL-12 (opened 2026-09-30 by I-01A: loadDcLandscape / loadPrincipal swallow container and team read errors and fail OPEN)",
         "IEDGE-2 (re-opened 2026-09-30 by I-01A on the same seam limb as KACL-12)",
-        "public-surfaces VFY-16 (added at the PS-VERIFY merge 2026-10-01: the verify page's title for a private / hidden document — the DACL-8 visibility limb)"
+        "public-surfaces VFY-16 (added at the PS-VERIFY merge 2026-10-01: the verify page's title for a private / hidden document — the DACL-8 visibility limb)",
+        "IEDGE-6 (remainder re-owned by the integrator 2026-10-01, orphan sweep: entity_mentions_source_readable hides a mention only where the document ROW is hidden; 'node_visible is true for normal visibility, so mentions in normal-visibility documents with allow-list or deny ACLs, and in private …)",
+        "KACL-7 (remainder re-owned by the integrator 2026-10-01, orphan sweep: Mirror rows of normal-visibility documents with allow-list ACLs / role-team denies, and of private drafts, still reach every member; file_key is still returned to the browser for source-linked mirrors.)",
+        "IRLS-9 (remainder re-owned by the integrator 2026-10-01, orphan sweep: Mentions in normal-visibility documents with allow-list / role-team deny ACLs, and in private drafts, still reach every member until node_visible carries those rules; no repository test runs the policy against a database.)",
+        "public-surfaces VFY-7 (remainder re-owned by the integrator 2026-10-01, orphan sweep: Done-when 1 (a normalized candidate match) and 3 (a chooser when there is more than one exact normalized match). On HEAD, app/(protected)/documents/page.tsx:108-109 searches with searchDocuments and silently takes …)"
       ],
       "severityMix": "0 CRITICAL / 2 HIGH / 5 MEDIUM / 1 LOW",
       "files": [
@@ -801,7 +831,15 @@
         "GPV-11",
         "GPV-12",
         "GPV-13",
-        "IRLS-14 (added by the integrator 2026-10-01; opened by I-08: the graph says when the mention index is unbuilt or failed instead of drawing an empty map — mentionCoverage; the orgGraph half coordinates with I-13)"
+        "IRLS-14 (added by the integrator 2026-10-01; opened by I-08: the graph says when the mention index is unbuilt or failed instead of drawing an empty map — mentionCoverage; the orgGraph half coordinates with I-13)",
+        "GM-6 (remainder re-owned by the integrator 2026-10-01, orphan sweep: Pass graph.access to computeInsights and render GraphInsights.basis.note in the Insights panel so the counts are labelled viewer-scoped.)",
+        "GPV-2 (remainder re-owned by the integrator 2026-10-01, orphan sweep: GraphSettings gains a scope descriptor (lib/scope.ts ScopeRef, serialised unit:<code>); the scope is settable from NodePeek and the top bar with an active chip.)",
+        "GPV-14 (remainder re-owned by the integrator 2026-10-01, orphan sweep: Renderers must draw GraphEdge.via (pinned vs knowledge vs filing) so a viewer can tell a pinned shelf from a filing library.)",
+        "GM-10 (remainder re-owned by the integrator 2026-10-01, orphan sweep: Rename the lens presets to what they show (or rebuild them on scope).)",
+        "HUB-11 (remainder re-owned by the integrator 2026-10-01, orphan sweep: Add title=\"Intelligence\" to the graph page's ViewTabs strip.)",
+        "AREA-10 (remainder re-owned by the integrator 2026-10-01, orphan sweep: Connect mode must refuse a unit: endpoint without unitCode (graph/page.tsx, I-14 GPV-7); no process_flows row may name a unit ref that resolves to no codebook_entries row (I-09 WIRE-10 trigger). Apply 20261138.)",
+        "GAP-306 (remainder re-owned by the integrator 2026-10-01, orphan sweep: Picking a unit in the graph (I-14 picker), a second surface consuming the scope object (UnitOpsPanels via I-09 AREA-6), and a nameable / savable / URL-shareable scope (I-14 GPV-11). The mapping and decode (GAP-305) must be …)",
+        "WIRE-3 (remainder re-owned by the integrator 2026-10-01, orphan sweep: 'let searchDocuments' unitId filter also match documents.unit_code = the code that unit is mapped to, or drop the plant / unit / system parameters no caller passes. Apply 20261138.')"
       ],
       "severityMix": "0 CRITICAL / 0 HIGH / 11 MEDIUM / 2 LOW",
       "files": [
@@ -816,7 +854,8 @@
         "I-13 (lib/scope.ts, one unit identity for GPV-7, GraphNode scoping keys) for the scope picker and GPV-7; everything else can start now",
         "I-13 owns the orgGraph halves (FLOW-8/GM-8 edge key; GM-1's data is the full graph already loaded); I-09 links to the URL contract defined here (AREA-6)",
         "No DC / A&O / PS package lists these files",
-        "99 Do-not: never infer an edge at render time; never name a lens after what it hides"
+        "99 Do-not: never infer an edge at render time; never name a lens after what it hides",
+        "I-09 merged before the scope picker (GAP-306 / GPV-2 limbs): DEC-67 — the place (I-09 AREA-6, linking /graph?scope=unit:<code>) before the filter (the picker); everything else in I-14 can land first"
       ],
       "sequencingNotes": "Now: GM-1, GM-7, GM-11, GPV-5, GPV-9, GPV-13, GPV-10/GPV-4 naming, GPV-8/FLOW-10, GPV-12. After I-13: GPV-7, GPV-11 scope in the URL, the picker.",
       "decisionsNeeded": [
@@ -852,13 +891,15 @@
       "name": "I-06b INGEST ROUTE FOLLOW-UPS — a server-side vision-key gate on the table-aware re-index and on keyless drivers, structured leftovers, the owed drain test",
       "findings": [
         "ING-13 (opened 2026-10-01 at the I-02b integration: the reindex action and keyless drivers have no server-side vision-key gate; the route's leftovers are free text)",
-        "ING-6 (the fileBehind drain test the I-06 merge left owed; ING-6's other open limbs are I-03's and I-07's)"
+        "ING-6 (the fileBehind drain test the I-06 merge left owed; ING-6's other open limbs are I-03's and I-07's)",
+        "ILIFE-13 (remainder re-owned by the integrator 2026-10-01, orphan sweep: Forward `unsynced` in the maintenance cron's knowledgeSync result, and show a per-library last-synced timestamp on the knowledge library UI. Plus paste 20261122 (last_synced_at).)"
       ],
       "files": [
         "app/api/knowledge/ingest/route.ts (reindex(): refuse 409 when visionPagesToReread > 0 or visionAllPages and the caller fails the vision test; structured leftovers next to errors)",
         "lib/knowledgeIngest.ts (a keyless batch of a regenerated document records its needs-vision pages rather than committing them text-only as complete; the fileBehind drain test)",
         "lib/knowledge.ts (consume the structured leftovers; drop the RESET_WITH_LEFTOVERS free-text parse once the route returns them)",
-        "lib/__tests__/ingestLock.test.ts / ingestLoopClient.test.ts (extend)"
+        "lib/__tests__/ingestLock.test.ts / ingestLoopClient.test.ts (extend)",
+        "lib/mentionIndexer.ts — strip the '[cont. from p. N]' carried-row marker before matching (an ING-7 handoff addressed to I-08, which merged without it; not one of ING-7's done-when items) — added by the integrator 2026-10-01, orphan sweep"
       ],
       "migrationsLikely": 0,
       "dependsOn": [
@@ -866,6 +907,60 @@
         "I-05 merged — the vision test is lib/ai/aiGates.ts assertAiGates when it exists; never a parallel copy"
       ],
       "sequencingNotes": "Added by the integrator 2026-10-01 from the I-02b final review (DEC-31 remainder)."
+    },
+    {
+      "name": "I-15 GRAPH SERVER ASSEMBLY — one route assembles the graph under the caller's own document visibility (GAP-313)",
+      "findings": [
+        "GAP-313 (remainder re-owned by the integrator 2026-10-01, orphan sweep: Whole spec unbuilt: one route assembles the graph (and a scoped graph) under the caller's own document visibility, the page loads one payload and says when a cached snapshot was skipped, and the page comment matches the real …)"
+      ],
+      "files": [
+        "new app/api/graph/route.ts (per-caller assembly through loadPrincipal + readableControlledDocIds — never one cached payload shared across callers)",
+        "lib/orgGraph.ts (a server entry beside the client one; buildOrgGraph's scope option unchanged)",
+        "app/(protected)/graph/page.tsx (one payload; says when a cached snapshot was skipped; the page comment matches the real request count) — I-14's file, edited after I-14 merges",
+        "a payload-comparison test: a controller's and a granted-nothing member's payloads against the client assembly for the same org"
+      ],
+      "migrationsLikely": 0,
+      "dependsOn": [
+        "I-12 DOCUMENT ACL BOUNDARY merged (the per-caller read predicate the route must use)",
+        "I-14 merged (graph/page.tsx)"
+      ],
+      "sequencingNotes": "Added by the integrator 2026-10-01 (orphan sweep): GAP-313 was opened at the I-13 merge as GM-12's follow-up and had no owner. Runs after I-12 and I-14."
+    },
+    {
+      "name": "I-16 CODEBOOK LIFECYCLE — a code renamed in place cascades atomically; a server-side re-decode with a preview; a codebook version stamped on derived codes (CB-5, CB-6)",
+      "findings": [
+        "CB-5 (remainder re-owned by the integrator 2026-10-01, orphan sweep: 'codes are still not editable in place, and there is no cascade rewriting assets.unit_code, the unit part of assets.code and process_flows refs. It is a multi-table rename that must be atomic (a SECURITY DEFINER function gated …)",
+        "CB-6 (remainder re-owned by the integrator 2026-10-01, orphan sweep: A server-side, admin-triggered re-decode job with a preview diff (today the plan runs in the browser under the user's RLS), and a codebook version on codebook_config/codebook_entries with assets recording the version their …)"
+      ],
+      "files": [
+        "new migration: rename_codebook_code SECURITY DEFINER (is_org_controller, one transaction, rewriting assets.unit_code, the unit part of assets.code, process_flows references and units.codebook_code — must pass 20261128 §6 trg_codebook_entries_guard_in_use; REVOKE from PUBLIC, anon); a codebook version on codebook_config / codebook_entries and the derivation version on assets (DEC-30 inventory, counts only)",
+        "new admin route for the server-side re-decode (preview diff, then apply)",
+        "lib/codebook.ts, lib/assetCategorize.ts, app/(protected)/admin/codebook/page.tsx",
+        "tests (cascade atomicity, the guard, preview = apply)"
+      ],
+      "migrationsLikely": 1,
+      "dependsOn": [
+        "I-10 and I-13 merged (codebook files, units.codebook_code)",
+        "I-11 merged if it edits lib/codebook.ts or lib/assetCategorize.ts"
+      ],
+      "sequencingNotes": "Added by the integrator 2026-10-01 (orphan sweep): I-10 merged leaving CB-5 / CB-6 Partial with no owner."
+    },
+    {
+      "name": "I-17 DATABASE HARNESS — Postgres inside the test run: policies asserted per role at runtime, a fresh-install replay, the SECURITY DEFINER grant census (AREA-1, IRLS-6, projects INTK-14)",
+      "findings": [
+        "AREA-1 (remainder re-owned by the integrator 2026-10-01, orphan sweep: 'done-when 3 asks for a test that refuses a Viewer's JWT at runtime, and a static census plus a scratch-database spot check is not that test.' Plus 'Apply 20261128.')",
+        "IRLS-6 (remainder re-owned by the integrator 2026-10-01, orphan sweep: a fresh-database replay of the numbered migrations in filename order with zero errors, and /api/admin/schema-health against that fresh install — automated here in the harness instead of an operator run)",
+        "projects-and-cost INTK-14 (remainder re-owned by the integrator 2026-10-01, orphan sweep: 'A sweep of every SECURITY DEFINER function added since 20260902 — not done: ... 59 such functions, 48 with no explicit REVOKE/GRANT ... 19 are not [trigger functions] ... Each needs its own reasoned decision.')"
+      ],
+      "files": [
+        "vitest setup for an in-process Postgres (e.g. @electric-sql/pglite) or a local PostgreSQL 16 started for the run, replaying supabase/schema.sql + every numbered migration with stubbed auth.uid() / role helpers",
+        "new lib/__tests__/rls/*.test.ts: AREA-1's Viewer / Manager / Admin JWT refusals at runtime; the fresh replay (IRLS-6); a census of every SECURITY DEFINER function's EXECUTE grants with a reasoned decision per function (INTK-14) — any REVOKE it needs is a migration with the DRLS-16 rule"
+      ],
+      "migrationsLikely": 1,
+      "dependsOn": [
+        "none in code; the replay surfaces every migration that cannot run in filename order (e.g. intelligence DWG-9's 20261009 — guarded by I-07)"
+      ],
+      "sequencingNotes": "Added by the integrator 2026-10-01 (orphan sweep): AREA-1 done-when 3 asks a runtime test a static census cannot give; IRLS-6's replay and INTK-14's census need the same harness. Can run any time; if a needed devDependency cannot be fetched through the proxy, say so and stop."
     }
   ],
   "crossAreaFileOverlaps": [
@@ -895,5 +990,11 @@
     "lib/__tests__/entityKindGuard.test.ts ↔ I-07 (ING-5/DWG-12) — I-03/I-06 keep TAG_ENTITY_KINDS reads named; lib/__tests__/sweepRoundC.test.ts ↔ I-04 extends; I-12 re-runs",
     "drawing_audit_logs unique key ↔ I-07 DWG-6 (adds library_id) and I-04 ORCH-11/ORCH-1 (log_audit_completion upsert) — agree the key before either lands"
   ],
-  "notes": "COVERAGE: 254 OPEN ids assigned exactly once across 14 packages (I-01 23, I-02 20, I-03 19, I-04 12, I-05 25, I-06 17, I-07 17, I-08 23, I-09 23, I-10 19, I-11 17, I-12 8, I-13 18, I-14 13); halves/limbs are noted on the owning id and cross-referenced, never double-assigned. 12 gap specs: GAP-301/302/303/304/307/308/309 → I-11; GAP-305/306 → I-13; GAP-310/311 → I-10; GAP-312 → handed to the drafting-flow fleet with WIRE-7 (must ship with GAP-110/GAP-111; prerequisites I-10 GAP-311 and I-11 GAP-304). REFUTED (never queue): IEDGE-9, WIRE-5. Already RESOLVED by pointer: IEDGE-2, ORCH-3 (R&P EGRESS-3, Round C1, 20261048 live). VERIFIED AGAINST HEAD (ba7bfcb): /api/graph/ask still runs graph_ask on the service role with no ACL (GPV-1/IEDGE-1 OPEN — EGRESS-3 did not touch it); knowledge_questions_select is still org-wide (20260911:146-150); answer_skills/link_rules INSERT admit any member with visibility='org'; assets/asset_types/document_assets/project_documents are still FOR ALL member; process_flows INSERT has no status gate; the Bridge still throws on targetKey above discovery, reads kind='equipment' only and writes the metadata column only; unit:/cbunit: are still two families; getMonthUsage still filters op='knowledgeAsk' and getCapUsd's `capUsd > 0` disables a $0 cap; LibraryAiModal.save() still drops drawingIntel; the orchestrator's CONTROLLER_ROLES is still four roles and /execute still trusts client-sent tool+parameters (fingerprint only). Closed by other areas and verified: KACL-2 (EGRESS-3 — same code as IEDGE-2/ORCH-3), DACL-2 (SURF-2), DACL-3 (EGRESS-2), DACL-5 (DOCACL-1/ADD-1/20261041), DACL-1 (DB-4/DOCACL-4/OWN-20/DEC-10), the EGRESS-1 halves of DACL-4, WIRE-9 (LIFE-2/DEC-23), BR-1's roles[] half (ADD-1), ORCH-1/PR-1's checkout+audit-log gate (EGRESS-3), is_org_controller search_path (DB-6/20261020), XEDGE-13 for ILIFE-6's orphan half. CONCURRENCY WITH THE DOCUMENT-CONTROL WAVES: run NOW, disjoint from every DC wave-1/wave-2 file — I-02, I-03, I-04, I-06, I-07, I-08, I-09, I-10, I-11 (all but the assets/[tag] read switch), I-14 core, I-01 phase A, I-05 core (lib/ai/*, app/api/ai/*, AiSettingsModal, LibraryAiModal, intelligence/page, knowledge/page, setup page, ViewTabs, featureAtlas, EquipmentTablePanel). MUST WAIT and why — I-05 Sidebar.tsx after DC P2 EGRESS (swSession posting lands there), app/api/templates/generate after DC P10 EDGES (XEDGE-11/12 rewrite it), lib/capabilityPolicy.ts + org_capability_allows_for after DC wave-2 P7 (it re-creates the function; GOV-10 must build on P7's newest definition); I-11 assets/[tag]/page.tsx after PS-VERIFY (owns the file in wave 2); I-12 after DC P2 (download-url), P6 CHECKOUT + wave-2 RG-12/XEDGE-5 (documents/[libraryId]/page.tsx) and identity IS-P1 (documents/page.tsx :187 and 13 sites on the library page) — its files are the most contended in the repo, so it runs last; I-01 phase B after admin-and-org P1/P2/P3 (which themselves run after DC), because lib/dataRestore.ts and lib/exportTables.ts/dataExport.ts are rewritten there. INTERNAL ORDER: I-10 (GAP-310 Phase 0) before I-13 (GAP-305 needs the codebook files and one grammar); I-13 before I-14's scope picker/GPV-7 and I-09's AREA-6; I-06 ING-3 before I-11 GAP-309; I-07 DWG-2 before I-11 makes discovery authoritative; I-11 GAP-302 before ANY Bridge relation write (99 PAIR 1) and GAP-301 before GAP-304 (PAIR 3); I-02's RLS before I-05's hub label; I-05's aiGates is the one agreement/cap helper — I-09 (flows/read), I-07 (locate), I-02 (embed) wire their limbs in their own files (the HLD-1 pattern), each landing a local gate first if I-05 has not merged; I-07 DWG-6 and I-04's log_audit_completion agree the drawing_audit_logs key. MIGRATIONS: 17 likely across 11 packages, every one hand-applied (DEC-30) with a 'Pending migration:' line and the inventory query pasted BEFORE apply where named: I-06 (dangling mirrors; vision_pages > page_count), I-07 (cross-library audit duplicates), I-08 (NULL-target related rows; duplicate mentions; builtin owners), I-09 (dangling flow endpoints; non-controller confirmed rows), I-10 (duplicate assets.code; code≠tagToCode; alias rewrites; non-numeric codes), I-11 (untagged-relation backfill population), I-12 (libraries newly hidden; zero-rule ACLs; newly-binding role/team denies — BLOCKED per DEC-30 if the inventory cannot be observed), I-13 (decode vs unit_id disagreements), I-02 (citations naming now-restricted documents; stale embedBuild markers), I-05 (none — function re-creation only, lineDiff proof). Every migration that touches a function or policy a later numbered migration defines must satisfy lib/__tests__/migrationSourceOfTruth.test.ts (DB-8) and the searchPathPin lint. EVIDENCE BAR per package (DEC-29): reproduce first, failing test before, every Done-when checked, ship loop tsc → eslint → vitest → next build, 'Verified sound' diff-checked; each package edits its findings in place, updates the README progress table and runs node audit-reports/build-index.mjs. DEC-35 applies throughout: no new role literals — the controller tier through lib/permissions isControllerPrincipal / lib/roleHeld, distinct authorities through a capability id; unit and equipment labels come from the codebook. 99 Do-not table binds every package: no Bridge tags into documents.asset_tags, no sheet node, no render-time unit edge, no MAX_PAGES raise, no service-class lexicon, no confidence auto-accept, no AI-derived hold/MOC input, no vercel.json cron, no second container-chain walk, no lens named for what it hides. SUSPECTED prompt-quality findings (ASK-8, PR-5, PR-9, ORCH-9, DWG-7/8/10/11, SEM-7/9/11/13, GM-5/6/8/12, KACL-11, IRLS-9, AREA-9, CB-7, GOV-14, ILIFE-6/11, LNK-3, WIRE-2, HUB-10, ORCH-7, ORCH-10, FLOW-13, IRLS-6/7) must be reproduced before acting — no provider was observed by the audit."
+  "notes": "COVERAGE: 254 OPEN ids assigned exactly once across 14 packages (I-01 23, I-02 20, I-03 19, I-04 12, I-05 25, I-06 17, I-07 17, I-08 23, I-09 23, I-10 19, I-11 17, I-12 8, I-13 18, I-14 13); halves/limbs are noted on the owning id and cross-referenced, never double-assigned. 12 gap specs: GAP-301/302/303/304/307/308/309 → I-11; GAP-305/306 → I-13; GAP-310/311 → I-10; GAP-312 → handed to the drafting-flow fleet with WIRE-7 (must ship with GAP-110/GAP-111; prerequisites I-10 GAP-311 and I-11 GAP-304). REFUTED (never queue): IEDGE-9, WIRE-5. Already RESOLVED by pointer: IEDGE-2, ORCH-3 (R&P EGRESS-3, Round C1, 20261048 live). VERIFIED AGAINST HEAD (ba7bfcb): /api/graph/ask still runs graph_ask on the service role with no ACL (GPV-1/IEDGE-1 OPEN — EGRESS-3 did not touch it); knowledge_questions_select is still org-wide (20260911:146-150); answer_skills/link_rules INSERT admit any member with visibility='org'; assets/asset_types/document_assets/project_documents are still FOR ALL member; process_flows INSERT has no status gate; the Bridge still throws on targetKey above discovery, reads kind='equipment' only and writes the metadata column only; unit:/cbunit: are still two families; getMonthUsage still filters op='knowledgeAsk' and getCapUsd's `capUsd > 0` disables a $0 cap; LibraryAiModal.save() still drops drawingIntel; the orchestrator's CONTROLLER_ROLES is still four roles and /execute still trusts client-sent tool+parameters (fingerprint only). Closed by other areas and verified: KACL-2 (EGRESS-3 — same code as IEDGE-2/ORCH-3), DACL-2 (SURF-2), DACL-3 (EGRESS-2), DACL-5 (DOCACL-1/ADD-1/20261041), DACL-1 (DB-4/DOCACL-4/OWN-20/DEC-10), the EGRESS-1 halves of DACL-4, WIRE-9 (LIFE-2/DEC-23), BR-1's roles[] half (ADD-1), ORCH-1/PR-1's checkout+audit-log gate (EGRESS-3), is_org_controller search_path (DB-6/20261020), XEDGE-13 for ILIFE-6's orphan half. CONCURRENCY WITH THE DOCUMENT-CONTROL WAVES: run NOW, disjoint from every DC wave-1/wave-2 file — I-02, I-03, I-04, I-06, I-07, I-08, I-09, I-10, I-11 (all but the assets/[tag] read switch), I-14 core, I-01 phase A, I-05 core (lib/ai/*, app/api/ai/*, AiSettingsModal, LibraryAiModal, intelligence/page, knowledge/page, setup page, ViewTabs, featureAtlas, EquipmentTablePanel). MUST WAIT and why — I-05 Sidebar.tsx after DC P2 EGRESS (swSession posting lands there), app/api/templates/generate after DC P10 EDGES (XEDGE-11/12 rewrite it), lib/capabilityPolicy.ts + org_capability_allows_for after DC wave-2 P7 (it re-creates the function; GOV-10 must build on P7's newest definition); I-11 assets/[tag]/page.tsx after PS-VERIFY (owns the file in wave 2); I-12 after DC P2 (download-url), P6 CHECKOUT + wave-2 RG-12/XEDGE-5 (documents/[libraryId]/page.tsx) and identity IS-P1 (documents/page.tsx :187 and 13 sites on the library page) — its files are the most contended in the repo, so it runs last; I-01 phase B after admin-and-org P1/P2/P3 (which themselves run after DC), because lib/dataRestore.ts and lib/exportTables.ts/dataExport.ts are rewritten there. INTERNAL ORDER: I-10 (GAP-310 Phase 0) before I-13 (GAP-305 needs the codebook files and one grammar); I-13 before I-14's scope picker/GPV-7 and I-09's AREA-6; I-06 ING-3 before I-11 GAP-309; I-07 DWG-2 before I-11 makes discovery authoritative; I-11 GAP-302 before ANY Bridge relation write (99 PAIR 1) and GAP-301 before GAP-304 (PAIR 3); I-02's RLS before I-05's hub label; I-05's aiGates is the one agreement/cap helper — I-09 (flows/read), I-07 (locate), I-02 (embed) wire their limbs in their own files (the HLD-1 pattern), each landing a local gate first if I-05 has not merged; I-07 DWG-6 and I-04's log_audit_completion agree the drawing_audit_logs key. MIGRATIONS: 17 likely across 11 packages, every one hand-applied (DEC-30) with a 'Pending migration:' line and the inventory query pasted BEFORE apply where named: I-06 (dangling mirrors; vision_pages > page_count), I-07 (cross-library audit duplicates), I-08 (NULL-target related rows; duplicate mentions; builtin owners), I-09 (dangling flow endpoints; non-controller confirmed rows), I-10 (duplicate assets.code; code≠tagToCode; alias rewrites; non-numeric codes), I-11 (untagged-relation backfill population), I-12 (libraries newly hidden; zero-rule ACLs; newly-binding role/team denies — BLOCKED per DEC-30 if the inventory cannot be observed), I-13 (decode vs unit_id disagreements), I-02 (citations naming now-restricted documents; stale embedBuild markers), I-05 (none — function re-creation only, lineDiff proof). Every migration that touches a function or policy a later numbered migration defines must satisfy lib/__tests__/migrationSourceOfTruth.test.ts (DB-8) and the searchPathPin lint. EVIDENCE BAR per package (DEC-29): reproduce first, failing test before, every Done-when checked, ship loop tsc → eslint → vitest → next build, 'Verified sound' diff-checked; each package edits its findings in place, updates the README progress table and runs node audit-reports/build-index.mjs. DEC-35 applies throughout: no new role literals — the controller tier through lib/permissions isControllerPrincipal / lib/roleHeld, distinct authorities through a capability id; unit and equipment labels come from the codebook. 99 Do-not table binds every package: no Bridge tags into documents.asset_tags, no sheet node, no render-time unit edge, no MAX_PAGES raise, no service-class lexicon, no confidence auto-accept, no AI-derived hold/MOC input, no vercel.json cron, no second container-chain walk, no lens named for what it hides. SUSPECTED prompt-quality findings (ASK-8, PR-5, PR-9, ORCH-9, DWG-7/8/10/11, SEM-7/9/11/13, GM-5/6/8/12, KACL-11, IRLS-9, AREA-9, CB-7, GOV-14, ILIFE-6/11, LNK-3, WIRE-2, HUB-10, ORCH-7, ORCH-10, FLOW-13, IRLS-6/7) must be reproduced before acting — no provider was observed by the audit.",
+  "userHeld": {
+    "ING-4": "paste 20261122 (then a controller presses the re-index button per DEC-58)",
+    "ING-7": "paste 20261122",
+    "SEM-9": "paste 20261121 and send back its last row (recall@12 vs exact scan; >= 0.90 closes it, below turns it back into code work)",
+    "GAP-305": "paste 20261138, run the unit-identity decode on /admin/scope, paste 20261138 again and send back the disagreement inventory"
+  }
 }

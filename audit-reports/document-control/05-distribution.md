@@ -372,6 +372,7 @@ app/api/share/file/route.ts:130-140 quoted (the `source:` key at :139); supabase
 
 - **Severity:** HIGH
 - **Status:** OPEN
+- **Assigned:** document-control P8 FIELD (running; reconciled at its merge) — by the integrator, 2026-10-01 (orphan sweep: the package that left this remainder has merged; fleet plan `audit-reports/fleet-plans/`).
 - **Verification:** CONFIRMED
 - **Locations:** `supabase/schema.sql:1089-1091`, `supabase/schema.sql:1031-1034`, `lib/staleCopies.ts:33-113`, `lib/staleCopies.ts:125-180`, `lib/downloads.ts:123-146`
 - **Independently verified:** ✓ **SURVIVES** — second independent adversarial pass. Confirmed. Contrast the sibling three lines above it, supabase/schema.sql:1086-1087, where audit_logs gets a separate `audit_logs_insert ... WITH CHECK (user_id = auth.uid())`; download_audits got no such treatment. Since lib/staleCopies.ts:33-113 and :125-180 derive both the personal stale-copy list and the per-document recall roster entirely from this table, a self-targeted DELETE erases the holder from the recall evidence base with no trace.

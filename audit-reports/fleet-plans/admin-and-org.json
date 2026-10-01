@@ -72,7 +72,9 @@
     "BKP-9",
     "BKP-11 (RLS + export-nulling halves)",
     "BKP-14",
-    "ALOG-1 dw4"
+    "ALOG-1 dw4",
+    "public-surfaces SHR-12 (remainder re-owned by the integrator 2026-10-01, orphan sweep: Done-when 4: \"lib/schemaExpectations.ts checks for the function, not only the document_shares table\". The table half has landed (lib/schemaExpectations.ts:70, the document_share_accesses row added by J9 / REL-7, commit \u2026)",
+    "intelligence ILIFE-5 (remainder re-owned by the integrator 2026-10-01, orphan sweep: The document shed must refuse to delete any file_url still referenced by a knowledge_documents.file_key (the rev-up \u2192 shed \u2192 next-sync chain reaction). Plus paste 20261122.)"
    ],
    "files": [
     "lib/exportTables.ts",
@@ -106,7 +108,8 @@
     "BKP-8",
     "BKP-13",
     "BKP-6 residual",
-    "BILL-3 dw3"
+    "BILL-3 dw3",
+    "projects-and-cost INTK-6 (remainder re-owned by the integrator 2026-10-01, orphan sweep: 'The export API still admits Manager ... while the table's RLS is controller-or-project-owner'. Redaction (EGR-7) and restore scrub (DEC-45) are done; only the role-set limb remains, and it closes by pointer when A&O P3 makes \u2026)"
    ],
    "files": [
     "app/api/data-export/structured/route.ts",
@@ -212,7 +215,8 @@
     "BILL-11",
     "BILL-12",
     "BILL-13",
-    "ORG-5"
+    "ORG-5",
+    "roles-and-permissions SURF-19 (remainder re-owned by the integrator 2026-10-01, orphan sweep: The whole finding (no Partial). SURF-9's Scope/residual (09-non-document-surfaces.md:508) split it off: \"the eighteen API route files behind the surfaces still call authorizeOrgRole with their own role constants ... converting \u2026)"
    ],
    "files": [
     "app/api/admin/storage-stats/route.ts (POST lets Admin/DocCtrl of ANY org upsert the global platform_settings row; convert to lib/adminGate.ts \u2014 closes R&P SURF-19's named case)",
@@ -335,7 +339,8 @@
     "ORG-10 residual",
     "roles-and-permissions WF-10 (added by the integrator 2026-10-01: the 60-second server-side policy cache is invalidated when a policy, grant or membership changes \u2014 a revoked person stops acting at once)",
     "projects-and-cost QUAL-14 (added at the J2b merge 2026-10-01: the permissions console authors a project-scoped quality.sign_off rule and a per-person, per-project grant)",
-    "ORG-14 (opened at the J2b merge 2026-10-01: the View-as simulator shows standing quality signers and project-scoped grantees as not holding quality.sign_off)"
+    "ORG-14 (opened at the J2b merge 2026-10-01: the View-as simulator shows standing quality signers and project-scoped grantees as not holding quality.sign_off)",
+    "document-control RET-4 (remainder re-owned by the integrator 2026-10-01, orphan sweep: Done-when 3's second table: access_recertification_events split into member SELECT and a controller/owner-bound INSERT, with no UPDATE or DELETE (A&O P9 ALOG-2). Then close by pointer. The 20261077 half (\u00a72 library attestation \u2026)"
    ],
    "files": [
     "components/permissions/PermissionsExplorer.tsx (capability rows rendered from CAPABILITY_DEFS + stored policy; five named mismatches corrected)",

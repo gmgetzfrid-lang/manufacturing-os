@@ -209,6 +209,7 @@ lib/knowledgeSourceSync.ts:242-243 — `const { error: chunkErr } = await supaba
 
 - **Severity:** HIGH
 - **Status:** OPEN
+- **Assigned:** intelligence I-03 THE ASK ROUTE — by the integrator, 2026-10-01 (orphan sweep: the package that left this remainder has merged; fleet plan `audit-reports/fleet-plans/`).
 - **Verification:** CONFIRMED
 - **Locations:** `supabase/migrations/20260911_knowledge_ai.sql:146-151`, `lib/knowledge.ts:504-527`, `lib/knowledge.ts:529-548`, `app/(protected)/knowledge/[id]/page.tsx:1409-1419`, `app/(protected)/knowledge/[id]/page.tsx:1697-1721`, `app/(protected)/knowledge/[id]/page.tsx:1497-1514`, `app/(protected)/knowledge/[id]/page.tsx:1424-1430`
 - **Re-verified:** hardening pass — **SURVIVES**. `knowledge_questions_select` is `USING (active org member)` with no ACL term, while inserts happen service-side under the asker's own ACL. What one person could see becomes what everyone can read.
@@ -254,6 +255,7 @@ supabase/migrations/20260911_knowledge_ai.sql:147-150 — `CREATE POLICY knowled
 
 - **Severity:** HIGH
 - **Status:** OPEN
+- **Assigned:** intelligence I-12 DOCUMENT ACL BOUNDARY — by the integrator, 2026-10-01 (orphan sweep: the package that left this remainder has merged; fleet plan `audit-reports/fleet-plans/`).
 - **Verification:** CONFIRMED
 - **Locations:** `supabase/migrations/20260929_mention_engine.sql:37-38`, `supabase/migrations/20260929_mention_engine.sql:72-76`, `lib/mentions.ts:8`, `lib/mentions.ts:39-41`, `lib/mentions.ts:51-66`
 - **Re-verified:** hardening pass — **SURVIVES**. `entity_mentions_read` is `USING (active org member)`. `context_snippet` is declared `NOT NULL` with the comment *"The evidence. This column is the entire reason the table exists"* — it is source-document prose, readable org-wide with no document-ACL term.
