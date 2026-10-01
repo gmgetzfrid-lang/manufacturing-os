@@ -205,11 +205,17 @@ function enforceForeignKeys() {
   db.fks = fks;
   db.generated = generated;
 }
+/** The structured-export endpoint and storage's GET of a presigned URL (which, like R2, states the object's Content-Length). */
+const storageGet = vi.fn(async (url: string): Promise<Response> => {
+  const k = decodeURIComponent(url.replace("https://r2.test/", ""));
+  if (!BYTES[k]) return new Response("missing", { status: 404 });
+  const body = new TextEncoder().encode(BYTES[k]);
+  return new Response(body, { status: 200, headers: { "content-length": String(body.byteLength) } });
+});
 function stubFetch(envelope: DataExportEnvelope) {
   vi.stubGlobal("fetch", vi.fn(async (url: string) => {
     if (url.startsWith("/api/data-export/structured")) return new Response(JSON.stringify(envelope), { status: 200 });
-    const k = decodeURIComponent(url.replace("https://r2.test/", ""));
-    return BYTES[k] ? new Response(new TextEncoder().encode(BYTES[k]), { status: 200 }) : new Response("missing", { status: 404 });
+    return storageGet(url);
   }));
 }
 const exportEnvelope = () =>
@@ -693,6 +699,131 @@ describe("ILIFE-6 (export half) — every table is read once per row, in a stabl
     const ok = await exportEnvelope();
     expect(ok.tables.notification_preferences).toEqual([{ user_id: "u-alice", email_enabled: true }]);
     expect(ok.manifest.complete).toBe(true);
+  });
+});
+
+describe("the server ZIP's embed loop: a size-unknown file is capped before it is buffered, and the route's deadline stops embedding (final review minors)", () => {
+  const throttled = () => Object.assign(new Error("Please reduce your request rate."), { name: "SlowDown", $metadata: { httpStatusCode: 503 } });
+  const build = (deadlineAt?: number) => buildAndDeliverExport({
+    supabaseUrl: "https://x.supabase.co", serviceRoleKey: "svc", orgId: SRC, exporterUserId: "u-alice", exporterEmail: "alice@acme.com",
+    includeFiles: true, delivery: { kind: "inline" }, ...(deadlineAt === undefined ? {} : { deadlineAt }),
+  });
+  const json = async (zip: JSZip, name: string) => JSON.parse(await zip.file(name)!.async("string"));
+  afterEach(async () => {
+    vi.unstubAllEnvs();
+    const { r2 } = await import("@/lib/r2");
+    vi.mocked(r2.send).mockImplementation((async () => ({ ContentLength: 4, ContentType: "application/octet-stream" })) as never);
+  });
+
+  it("a file the export could not size-check is held to the cap by the length storage reports, never buffered past it; with no length it is not embedded", async () => {
+    const { r2 } = await import("@/lib/r2");
+    // three files whose storage check failed: listed with their URL and no size (unchecked)
+    vi.mocked(r2.send).mockImplementation((async (cmd: { input: { Key: string } }) => {
+      if ([K.dwg, K.quote, K.tmpl].includes(cmd.input.Key)) throw throttled();
+      return { ContentLength: 4 };
+    }) as never);
+    vi.stubEnv("EXPORT_MAX_EMBED_BYTES", "100");
+    const big = { cancel: vi.fn(async () => undefined), arrayBuffer: vi.fn(async () => new ArrayBuffer(5000)) };
+    const unsized = { cancel: vi.fn(async () => undefined), arrayBuffer: vi.fn(async () => new ArrayBuffer(4)) };
+    vi.stubGlobal("fetch", vi.fn(async (url: string) => {
+      const k = decodeURIComponent(url.replace("https://r2.test/", ""));
+      if (k === K.dwg) return { ok: true, status: 200, headers: new Headers({ "content-length": "5000" }), body: { cancel: big.cancel }, arrayBuffer: big.arrayBuffer };
+      if (k === K.quote) return { ok: true, status: 200, headers: new Headers(), body: { cancel: unsized.cancel }, arrayBuffer: unsized.arrayBuffer };
+      return storageGet(url);
+    }));
+    const out = await build();
+    expect(big.arrayBuffer).not.toHaveBeenCalled();      // never buffered
+    expect(unsized.arrayBuffer).not.toHaveBeenCalled();
+    expect(big.cancel).toHaveBeenCalled();
+    expect(unsized.cancel).toHaveBeenCalled();
+    const zip = await JSZip.loadAsync(out.zipBytes!);
+    expect(zip.file(`files/${K.dwg}`)).toBeNull();
+    expect(zip.file(`files/${K.quote}`)).toBeNull();
+    expect(zip.file(`files/${K.tmpl}`)).not.toBeNull(); // unchecked, but storage said 4 bytes: under the cap, embedded
+    const omitted = await json(zip, "files-omitted.json");
+    expect(omitted.files).toEqual([
+      { path: K.dwg, size: 5000 },
+      { path: K.quote, size: null, reason: "not embedded: storage did not report its size, so it could not be held to the embed cap" },
+    ]);
+    expect(omitted.reason).toMatch(/is not embedded, since it cannot be held to that cap \(1 here\)/);
+    expect(await zip.file("README.md")!.async("string")).toMatch(/2 file\(s\) are NOT inside this ZIP .* 1 were left out because storage did not report their size\./);
+  });
+
+  it("past the route's deadline no file is fetched: the rest are listed omitted with the reason, the README says why, and the archive is delivered and restorable", async () => {
+    const env = await exportEnvelope();
+    stubFetch(env);
+    const realNow = Date.now.bind(Date);
+    let skew = 0;
+    const clock = vi.spyOn(Date, "now").mockImplementation(() => realNow() + skew);
+    const fetched: string[] = [];
+    vi.stubGlobal("fetch", vi.fn(async (url: string) => {
+      fetched.push(url);
+      if (fetched.length === 3) skew = 120_000; // the third download "takes" two minutes
+      return storageGet(url);
+    }));
+    try {
+      const out = await build(realNow() + 60_000);
+      expect(fetched).toHaveLength(3);
+      const zip = await JSZip.loadAsync(out.zipBytes!);
+      const packed = Object.keys(await json(zip, "files-manifest.json"));
+      expect(packed).toHaveLength(3);
+      const omitted = await json(zip, "files-omitted.json");
+      expect(omitted.files).toHaveLength(Object.keys(K).length - 3);
+      for (const o of omitted.files) expect(o, o.path).toEqual({ path: o.path, size: 4, reason: "not embedded: the export reached its time limit" });
+      expect([...packed, ...omitted.files.map((o: { path: string }) => o.path)].sort()).toEqual(Object.values(K).sort());
+      expect(omitted.reason).toMatch(/^This export stopped embedding binaries when it neared its time limit, so the archive is delivered rather than lost; 13 file\(s\) here say so/);
+      expect(await zip.file("README.md")!.async("string")).toMatch(/13 were left out because the export reached its time limit while embedding/);
+      expect(out.diagnostics.find((d) => d.step === "files:omitted")?.detail).toMatch(/^13 omitted: 13 at the time limit, 0 of unknown size/);
+      // every record is in the archive and reads back as a backup
+      const read = await readBackupArchive([{ name: "manufacturing-os-backup.zip", zip: zip as unknown as BackupZipLike }]);
+      expect(read.layout).toBe("manifest+tables");
+      expect(read.files).toHaveLength(3);
+      expect((read.envelope.tables.document_versions as Row[]).length).toBe(1);
+    } finally {
+      clock.mockRestore();
+    }
+  });
+
+  it("a small export (every size known, under the cap, well before the deadline) is built exactly as before: every file fetched once in manifest order, the same entries, steps and texts", async () => {
+    const env = await exportEnvelope();
+    stubFetch(env);
+    storageGet.mockClear();
+    const out = await build();
+    expect(storageGet.mock.calls.map((c) => c[0])).toEqual(env.files.map((f) => f.presignedUrl));
+    const zip = await JSZip.loadAsync(out.zipBytes!);
+    const names = Object.keys(zip.files).filter((n) => !zip.files[n].dir && !n.startsWith("schema/"));
+    expect(names).toEqual([
+      "manifest.json",
+      ...Object.keys(env.tables).map((t) => `tables/${t}.json`),
+      ...env.files.map((f) => `files/${f.path}`),
+      "files-manifest.json",
+      "README.md",
+    ]);
+    expect(await zip.file("README.md")!.async("string")).not.toMatch(/Omitted binaries/);
+    expect(out.diagnostics.map((d) => d.step)).toEqual([
+      "envelope:start", "envelope:done", "zip:build", "schema:migrations", "files:fetch", "files:done", "zip:compress", "zip:ready",
+    ]);
+    // the over-cap path keeps its texts byte for byte
+    vi.stubEnv("EXPORT_MAX_EMBED_BYTES", "8");
+    const capped = await build();
+    const cz = await JSZip.loadAsync(capped.zipBytes!);
+    const omitted = await json(cz, "files-omitted.json");
+    expect(omitted.reason).toBe("Embedded binaries are capped at 8 B per ZIP to protect the export runtime. These files are NOT in this ZIP. Download them via the JSON export's presigned URLs, or shed old history first to shrink the set.");
+    expect(omitted.files[0]).toEqual({ path: env.files[2].path, size: 4 });
+    expect(await cz.file("README.md")!.async("string")).toContain(`\n## ⚠ Omitted binaries\n\n${omitted.files.length} file(s) exceeded this ZIP's embedded-bytes cap and are NOT inside — see files-omitted.json for the list and how to fetch them.\n`);
+    expect(capped.diagnostics.find((d) => d.step === "files:omitted")?.detail).toBe(`${omitted.files.length} over the 8 B cap`);
+  });
+
+  it("both ZIP routes pass their own deadline (route start + maxDuration less the headroom) into the build", async () => {
+    const { exportEmbedDeadline, EMBED_HEADROOM_MS } = await import("@/lib/exportRunner");
+    expect(exportEmbedDeadline(1_000_000, 300)).toBe(1_000_000 + 300_000 - EMBED_HEADROOM_MS);
+    expect(EMBED_HEADROOM_MS).toBeGreaterThanOrEqual(60_000);
+    for (const route of ["run", "run-scheduled"]) {
+      const src = readFileSync(join(process.cwd(), "app", "api", "data-export", route, "route.ts"), "utf8");
+      expect(src, route).toMatch(/export const maxDuration = 300;/);
+      expect(src, route).toMatch(/\{\n  \/\/ [^\n]*\n  const routeStart = Date\.now\(\);/); // the handler's first statement
+      expect(src, route).toMatch(/deadlineAt: exportEmbedDeadline\(routeStart, maxDuration\),\n\s*\}\);/);
+    }
   });
 });
 
