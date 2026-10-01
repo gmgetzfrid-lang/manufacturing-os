@@ -25,7 +25,7 @@
     "NEVER use activeRole?.includes( \u2014 lib/__tests__/sweepRoundC1b.test.ts HEADLINE_AUTHORITY census forbids it; use hasAnyRole / roles.some",
     "Run only when no fleet owns documents/[libraryId]/page.tsx, requests/[id]/page.tsx, SecureDocViewer.tsx \u2014 after all document-control waves merge"
    ],
-   "sequencingNotes": "One self-contained change (DEC-31 already split SESS-5\u2192SESS-6). Order: RoleContext flip \u2192 requests/page.tsx :379 \u2192 other 7 files \u2192 tests \u2192 records. Re-census 2026-09-17: 28 tsc errors in 8 files after the flip.",
+   "sequencingNotes": "One self-contained change (DEC-31 already split SESS-5\u2192SESS-6). Order: RoleContext flip \u2192 requests/page.tsx :379 \u2192 other 7 files \u2192 tests \u2192 records. Re-census 2026-09-17: 28 tsc errors in 8 files after the flip. DC P12 (merged 2026-10-01) also edited app/(protected)/documents/[libraryId]/page.tsx outside saveMetadata / confirmDeleteDoc / uploadOne: the landedShortfalls declaration in handleStagedUpload and one notes.push reporting refused DOCUMENT_CREATED rows \u2014 rebase on them, do not revert them (see document-control/99-fix-sequencing.md).",
    "decisionsNeeded": [
     "Audit payload null semantics: omit user_role (recommended)"
    ],
