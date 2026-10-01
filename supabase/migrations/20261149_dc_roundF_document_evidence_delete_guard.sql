@@ -42,9 +42,10 @@
 --     · the library page's single delete — one checked statement since
 --       DRLS-17 (P12); it shows the database's sentence verbatim ("Delete
 --       failed: …");
---     · a library delete (cascades its documents): /documents shows the
---       sentence ("Delete failed: …"); /admin/libraries says "Failed to
---       delete library." (its own wording — follow-up for that page);
+--     · a library delete (cascades its documents): /documents and
+--       /admin/libraries show the sentence ("Delete failed: …" — the
+--       latter since P14's final review, which also reads a zero-row
+--       delete as a refusal);
 --     · the library page's BULK delete (handleBulkDelete) awaits each
 --       delete without reading its error and then drops EVERY selected row
 --       from the screen — a refused row reads as deleted (a false success)
@@ -73,9 +74,9 @@
 -- page's owner, identity IS-P1 / intelligence I-12; coordinate) that CHECKS
 -- each delete (.select("id") plus its error) and keeps every refused row on
 -- screen with the database's sentence — or one that pre-checks the
--- selection's evidence counts and refuses before deleting anything. Ship
--- beside it: /admin/libraries showing the database's sentence instead of
--- "Failed to delete library." (not a false success, but no reason given).
+-- selection's evidence counts and refuses before deleting anything.
+-- (/admin/libraries, once only "Failed to delete library.", shows the
+-- database's sentence since P14's final review.)
 -- Single paste: temp-table inventory → BEGIN/DDL/COMMIT → one SELECT
 -- (check text, ok boolean, n text).
 -- ⚠ APPLIED BY HAND (DEC-30). Idempotent.
