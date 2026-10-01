@@ -754,58 +754,24 @@ export async function finalizeReviewedRevision(input: {
   if (draftBase !== previousVersionId && !(draftBase === null && intakeApproval)) return { published: false, reason: "stale_base" };
   const nowIso = new Date().toISOString();
 
-  // Promote FIRST — this is the update the publish-guard trigger inspects
-  // (authority, active holds, review completion). Nothing else is mutated
-  // until it commits, so a guard rejection leaves history untouched.
-  // CAS on pending_version_id AND current_version_id: when two "last"
-  // reviewers sign concurrently, both read complete=true and both reach this
-  // line — the promote clears pending_version_id, so exactly one matches; the
-  // loser matches zero rows and must NOT re-run the relabel/supersede/
-  // side-effect pipeline (the publish trigger does not reject a same-value
-  // promote, so without the CAS the loser would double-fire every supersede
-  // notification and roster rebuild). The base half (REV-5) makes the
-  // expected-base check atomic with the write.
-  let promoteQuery = supabase.from("documents")
-    .update({ current_version_id: pendingId, rev: baseRev, revision: baseRev, status: "Issued", pending_version_id: null, updated_at: nowIso, updated_by: input.actorId })
-    .eq("id", input.documentId)
-    .eq("pending_version_id", pendingId);
-  promoteQuery = previousVersionId ? promoteQuery.eq("current_version_id", previousVersionId) : promoteQuery.is("current_version_id", null);
-  const { data: promoted, error: docErr } = await promoteQuery.select("id");
-  if (docErr) return { published: false, reason: docErr.message };
-  if (!promoted || promoted.length === 0) {
-    // Zero rows: either a concurrent finalizer already promoted this exact
-    // draft (the revision IS published; nothing left to do) or the document
-    // moved under us between the read and the write (the pointer is still
-    // set) — never assume the happy case.
-    const { data: again } = await supabase.from("documents").select("pending_version_id").eq("id", input.documentId).maybeSingle();
-    if ((again?.pending_version_id as string | null) === pendingId) return { published: false, reason: "conflict" };
-    return { published: true };
-  }
-
-  // Bookkeeping after the point of no return: relabel the approved draft,
-  // retire the prior rev, and close out sign-off rows that were still pending
-  // (e.g. a standby alternate) so the scan/inbox never chase a published draft.
-  // EGRESS-6/OWN-14: these were bare awaits — a refusal here leaves the
-  // document promoted while the version row still reads '2A · in review',
-  // with nothing surfaced anywhere. Checked now: a failure names exactly the
-  // inconsistent state it leaves so someone fixes it, instead of nobody
-  // knowing it exists.
-  const { data: relabeled, error: relabelErr } = await supabase.from("document_versions")
-    .update({ review_state: "approved", revision_label: baseRev, released_at: nowIso, supersedes_version_id: previousVersionId, updated_at: nowIso })
-    .eq("id", pendingId)
-    .select("id");
-  if (relabelErr || !relabeled || relabeled.length === 0) {
-    throw new Error(
-      `The document was promoted, but the approved draft could not be relabeled to Rev ${baseRev}` +
-      ` (${relabelErr?.message ?? "the write was refused"}). Version history is inconsistent — a document controller should correct the revision label.`,
-    );
-  }
-  if (previousVersionId) {
-    const { error: supErr } = await supabase.from("document_versions")
-      .update({ superseded_at: nowIso }).eq("id", previousVersionId).select("id");
-    if (supErr) {
-      throw new Error(`The new revision is published, but the prior revision could not be marked superseded: ${supErr.message}`);
-    }
+  // RG-12: the promote and its bookkeeping (relabel / approve the draft,
+  // supersede the prior revision) in ONE transaction. finalize_reviewed_promote
+  // (20261151) runs these same three writes as the CALLER (SECURITY INVOKER:
+  // the publish guard and the row-level policies decide them exactly as they
+  // decide promoteThreeStep's) and rolls the promote back when a bookkeeping
+  // write matches no row, so current_version_id never names a row still
+  // in_review. Only a database without the function (before the paste:
+  // PGRST202 / 42883) takes the three separately checked writes.
+  const atomic = await promoteReviewedDraftAtomically({
+    documentId: input.documentId, pendingId, previousVersionId, baseRev, actorId: input.actorId ?? null,
+  });
+  if (atomic.outcome === "refused") return { published: false, reason: atomic.reason };
+  if (atomic.outcome === "no_match") return await afterZeroRowPromote(input.documentId, pendingId);
+  if (atomic.outcome === "unavailable") {
+    const early = await promoteThreeStep({
+      documentId: input.documentId, pendingId, previousVersionId, baseRev, actorId: input.actorId, nowIso,
+    });
+    if (early) return early;
   }
   {
     const { error: voidErr } = await supabase.from("document_review_signoffs")
@@ -883,6 +849,104 @@ export async function finalizeReviewedRevision(input: {
     } catch { /* best-effort: never fails a landed publish */ }
   }
   return { published: true };
+}
+
+/** RG-12: what finalize_reviewed_promote (20261151) answered. `unavailable`:
+ *  the database has no such function yet (PGRST202 / 42883) — the caller
+ *  takes the three-step promote; `refused`: the call raised (the publish
+ *  guard, a row-level refusal, a bookkeeping write that matched no row — all
+ *  rolled back) or answered something unrecognised. */
+async function promoteReviewedDraftAtomically(p: {
+  documentId: string; pendingId: string; previousVersionId: string | null; baseRev: string; actorId: string | null;
+}): Promise<{ outcome: "promoted" | "no_match" | "unavailable" } | { outcome: "refused"; reason: string }> {
+  const { data, error } = await supabase.rpc("finalize_reviewed_promote", {
+    p_document_id: p.documentId,
+    p_pending_id: p.pendingId,
+    p_expected_current: p.previousVersionId,
+    p_base_rev: p.baseRev,
+    p_actor: p.actorId,
+  });
+  if (error) {
+    const code = (error as { code?: string | null }).code ?? "";
+    const msg = error.message ?? "";
+    if (code === "PGRST202" || code === "42883" || /could not find the function/i.test(msg)) return { outcome: "unavailable" };
+    return { outcome: "refused", reason: msg || "The publish was refused." };
+  }
+  if (data === "promoted" || data === "no_match") return { outcome: data };
+  return { outcome: "refused", reason: `The publish could not be confirmed (the database answered ${JSON.stringify(data ?? null)}); reload the document to see whether the revision was published.` };
+}
+
+/** The promote matched no row: either a concurrent finalizer already
+ *  promoted this exact draft (the revision IS published; nothing left to do)
+ *  or the document moved under us between the read and the write (the
+ *  pointer is still set) — never assume the happy case. */
+async function afterZeroRowPromote(documentId: string, pendingId: string): Promise<{ published: boolean; reason?: string }> {
+  const { data: again } = await supabase.from("documents").select("pending_version_id").eq("id", documentId).maybeSingle();
+  if ((again?.pending_version_id as string | null) === pendingId) return { published: false, reason: "conflict" };
+  return { published: true };
+}
+
+/** The promote and its bookkeeping as three separately checked writes — the
+ *  path for a database without finalize_reviewed_promote (before 20261151).
+ *  Returns an answer when the publish stops here (a refusal, or a zero-row
+ *  promote), null when it landed; throws when the promote landed and the
+ *  bookkeeping did not (the incident RG-12 names). */
+async function promoteThreeStep(p: {
+  documentId: string; pendingId: string; previousVersionId: string | null; baseRev: string; actorId?: string | null; nowIso: string;
+}): Promise<{ published: boolean; reason?: string } | null> {
+  // Promote FIRST — this is the update the publish-guard trigger inspects
+  // (authority, active holds, review completion). Nothing else is mutated
+  // until it commits, so a guard rejection leaves history untouched.
+  // CAS on pending_version_id AND current_version_id: when two "last"
+  // reviewers sign concurrently, both read complete=true and both reach this
+  // line — the promote clears pending_version_id, so exactly one matches; the
+  // loser matches zero rows and must NOT re-run the relabel/supersede/
+  // side-effect pipeline (the publish trigger does not reject a same-value
+  // promote, so without the CAS the loser would double-fire every supersede
+  // notification and roster rebuild). The base half (REV-5) makes the
+  // expected-base check atomic with the write.
+  const { documentId, pendingId, previousVersionId, baseRev, nowIso } = p;
+  let promoteQuery = supabase.from("documents")
+    .update({ current_version_id: pendingId, rev: baseRev, revision: baseRev, status: "Issued", pending_version_id: null, updated_at: nowIso, updated_by: p.actorId })
+    .eq("id", documentId)
+    .eq("pending_version_id", pendingId);
+  promoteQuery = previousVersionId ? promoteQuery.eq("current_version_id", previousVersionId) : promoteQuery.is("current_version_id", null);
+  const { data: promoted, error: docErr } = await promoteQuery.select("id");
+  if (docErr) return { published: false, reason: docErr.message };
+  if (!promoted || promoted.length === 0) {
+    // Zero rows: either a concurrent finalizer already promoted this exact
+    // draft (the revision IS published; nothing left to do) or the document
+    // moved under us between the read and the write (the pointer is still
+    // set) — never assume the happy case.
+    return await afterZeroRowPromote(p.documentId, p.pendingId);
+  }
+
+  // Bookkeeping after the point of no return: relabel the approved draft,
+  // retire the prior rev, and close out sign-off rows that were still pending
+  // (e.g. a standby alternate) so the scan/inbox never chase a published draft.
+  // EGRESS-6/OWN-14: these were bare awaits — a refusal here leaves the
+  // document promoted while the version row still reads '2A · in review',
+  // with nothing surfaced anywhere. Checked now: a failure names exactly the
+  // inconsistent state it leaves so someone fixes it, instead of nobody
+  // knowing it exists.
+  const { data: relabeled, error: relabelErr } = await supabase.from("document_versions")
+    .update({ review_state: "approved", revision_label: baseRev, released_at: nowIso, supersedes_version_id: previousVersionId, updated_at: nowIso })
+    .eq("id", pendingId)
+    .select("id");
+  if (relabelErr || !relabeled || relabeled.length === 0) {
+    throw new Error(
+      `The document was promoted, but the approved draft could not be relabeled to Rev ${baseRev}` +
+      ` (${relabelErr?.message ?? "the write was refused"}). Version history is inconsistent — a document controller should correct the revision label.`,
+    );
+  }
+  if (previousVersionId) {
+    const { error: supErr } = await supabase.from("document_versions")
+      .update({ superseded_at: nowIso }).eq("id", previousVersionId).select("id");
+    if (supErr) {
+      throw new Error(`The new revision is published, but the prior revision could not be marked superseded: ${supErr.message}`);
+    }
+  }
+  return null;
 }
 
 // ── Daily scan: activate alternates on timeout + escalate ─────────────────────

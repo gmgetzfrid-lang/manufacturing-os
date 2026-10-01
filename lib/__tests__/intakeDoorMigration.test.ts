@@ -207,7 +207,12 @@ describe("20261105 — the review side of the door", () => {
     expect(guardDefs.slice(at105, at105 + 2)).toEqual(["20261105_prj_roundG_intake_review_and_attempts.sql", "20261139_dc_roundF_first_issue_and_branch_closeout.sql"]);
     // document-control Round F wave 2 (DCK-8) — its lineDiff against this
     // file's body is lib/__tests__/dcRoundFLifecycleMigration.test.ts.
-    expect(newest(/CREATE OR REPLACE FUNCTION publish_revision\(/)).toBe("20261130_dc_roundF_publish_override_reason.sql");
+    // … and the next one (P14, REV-20: 20261151) re-creates it from 20261130's
+    // body (its lineDiff: dcRoundFPromoteTransaction.test.ts).
+    const pubDefs = files.filter((f) => /CREATE OR REPLACE FUNCTION publish_revision\(/.test(stripComments(mig(f))));
+    const at105p = pubDefs.indexOf("20261105_prj_roundG_intake_review_and_attempts.sql");
+    expect(pubDefs[at105p + 1]).toBe("20261130_dc_roundF_publish_override_reason.sql");
+    expect(newest(/CREATE OR REPLACE FUNCTION publish_revision\(/)! >= "20261130_dc_roundF_publish_override_reason.sql").toBe(true);
   });
   it("intake rows retired the older way are RESOLVED at apply; the health signal counts only rows nothing withdrew", () => {
     const conv = between(B, "UPDATE document_versions v\n   SET review_state = 'superseded'", ";");

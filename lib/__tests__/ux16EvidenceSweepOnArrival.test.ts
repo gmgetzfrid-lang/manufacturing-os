@@ -51,7 +51,8 @@ function chain(table: string) {
   return new Proxy(c, h);
 }
 
-vi.mock("@/lib/supabase", () => ({ supabase: { from: (t: string) => chain(t), rpc: vi.fn(async () => ({ data: null, error: null })) } }));
+// RG-12 (P14): a database before 20261151 has no finalize_reviewed_promote — PostgREST answers PGRST202 and the app keeps its three checked writes, which these tests pin.
+vi.mock("@/lib/supabase", () => ({ supabase: { from: (t: string) => chain(t), rpc: vi.fn(async (fn?: string) => (fn === "finalize_reviewed_promote" ? { data: null, error: { code: "PGRST202", message: "Could not find the function public.finalize_reviewed_promote" } } : { data: null, error: null })) } }));
 vi.mock("@/lib/audit", () => ({ logAuditAction: vi.fn(async () => ({ error: null })) }));
 vi.mock("@/lib/inAppNotifications", () => ({ notify: vi.fn(async () => undefined) }));
 vi.mock("@/lib/postPublish", () => ({ runPostPublishSideEffects: vi.fn(async () => undefined) }));

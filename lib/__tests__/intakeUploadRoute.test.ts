@@ -1179,7 +1179,7 @@ describe("what the door files where", () => {
 // under another name, fails the build.
 const KEY = "current_version_id";
 /** SQL functions that set documents.current_version_id themselves. */
-const POINTER_RPCS = new Set(["publish_revision"]);
+const POINTER_RPCS = new Set(["publish_revision", "finalize_reviewed_promote"]);
 type Writer = { site: string; method: string; line: number; pipeline: boolean; clocks: boolean };
 /** Does this function CALL `name`? Syntax-tree calls only. */
 function callsFn(body: ts.Node | null, name: string): boolean {
@@ -1293,6 +1293,9 @@ describe("census — every writer of current_version_id runs the post-publish pi
     "lib/revisions.ts:createDocumentWithFile": { reason: "first-version seed of a brand-new document — nothing is superseded; an issued one starts its review clock and ack roster through startIssuedDocumentClocks (REV-15)", clocks: "self" },
     "lib/documentLifecycle/common.ts:createNewDocWithFirstVersion": { reason: "first-version seed of a split / merge sheet — nothing is superseded by the pointer write itself; it runs inside the saga, so its callers start the review clock and ack roster (startClocksForIssuedDocuments) once the operation can no longer roll back (REV-15)", clocks: ["lib/documentLifecycle/split.ts:splitDocument", "lib/documentLifecycle/merge.ts:finishMerge"] },
     "app/(protected)/documents/[libraryId]/page.tsx:uploadOne": { reason: "first-version seed of a bulk upload — nothing is superseded; an issued one starts its review clock and ack roster through startIssuedDocumentClocks after its checked pointer write (REV-15)", clocks: "self" },
+    // RG-12 (P14): the review promote's two shapes, both called only by finalizeReviewedRevision, which runs the pipeline once the promote landed.
+    "lib/reviewControl.ts:promoteReviewedDraftAtomically": { reason: "the one wrapper of rpc('finalize_reviewed_promote') (20261151: the promote and its bookkeeping in one transaction) — every call of it is censused as a writer in its caller", wrapper: true },
+    "lib/reviewControl.ts:promoteThreeStep": { reason: "the review promote's three checked writes, for a database without finalize_reviewed_promote — finalizeReviewedRevision runs the pipeline after it returns", via: "lib/reviewControl.ts:finalizeReviewedRevision" },
   };
   const walk = (dir: string): string[] => readdirSync(dir).flatMap((f) => {
     const p = join(dir, f);
