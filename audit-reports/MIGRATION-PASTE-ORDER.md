@@ -11,7 +11,7 @@ This is a read-only reference, compiled 2026-10-01 by the integrator from two so
 - `h:N` = line N of the row's own migration file. `20261130:47` = line 47 of `supabase/migrations/20261130_*.sql`.
 - **(derived)** marks an ordering fact I worked out from which files CREATE the same function, policy or trigger. No record states it.
 
-**Keeping this current.** The integrator updates this guide at every merge that adds a migration, and whenever you report a paste. Not listed yet, because they are still on unmerged package branches: 20261137 (I-05), 20261141 and 20261142 (projects J11), 20261143 (document-control P8) and 20261144 (P13). When you paste a file, send back its result rows; the integrator then marks it **LIVE** here and in the finding records.
+**Keeping this current.** The integrator updates this guide at every merge that adds a migration, and whenever you report a paste. Not listed yet, because they are still on unmerged package branches: 20261137 (I-05), 20261143 (document-control P8) and 20261144 (P13). When you paste a file, send back its result rows; the integrator then marks it **LIVE** here and in the finding records.
 
 ---
 
@@ -98,6 +98,7 @@ The file loops over every overload of both functions by name (h:31-45), inside o
 | | **One-deploy variant.** Paste 20261130 → deploy the app with the page fixes → paste 20261131 (SEQ:170-173). | |
 | **20261139** first issue and branch close-out | *"Deploy the app carrying `REV-15`'s bulk upload change with or before it"*. REV-15 itself is still OPEN, with a Partial block (dc/02-revisions-publish.md:664, :681). | SEQ:217-219 |
 | **20261124** drawing audit scope | Paste after the app carrying intelligence **I-04** is deployed. I-04 moves the orchestrator's `log_audit_completion` onto the new `(org, library, sheet, revision)` key; before that, the paste makes that one tool's write fail (42P10). | h:23-28 |
+| **20261141** intake token hashing | **Irreversible.** Paste only after the J11 build is live and every open tab has reloaded (the update pill offers it). Pasted earlier, or followed by a rollback, every contractor link breaks; the only way back is re-issuing each link. The file refuses until its `SET app.j11_deployed = 'yes';` line is uncommented. | 20261141 header; pt/01-security-access.md SEC-19 |
 | 20261019 *(LIVE, historical)* | The app that stops sending `p_actor_role` had to deploy before this file was applied. | 20261019:18-19 |
 | 20261050 *(LIVE, historical)* | Applied after the app carrying the signing route was deployed. | 20261050:25-27 |
 
@@ -239,6 +240,8 @@ All PASTE and HOLD rows read *"Pending migration"* or *"not applied"* in the rec
 | 103 PASTE | `20261138`: unit identity (`units.codebook_code`, `documents.unit_code`, guards, projection) | GAP-305, GM-6 | — | **Paste once more after the first decode run** (h:109-112; int/90-gap-register.md:335) | — | Pending (int/07-graph-model.md:122) |
 | 104 HOLD | `20261139`: first-issue refusal (publish guard from 105) and branch close-out WITH CHECK (from 61) | REV-17, DRLS-9 | 20261105, 20261061 (h:50-51; SEQ:213-215; dc/02-revisions-publish.md:762). Any order relative to 20261129–20261131 (h:51-52; SEQ:210-211). | Never re-paste 20261105 after it (h:55-56; SEQ:216). REV-17 is fully closed only once 20261131 is live too (h:52-55). | **§3A: REV-15 app change with or before it** | *"not yet pasted"* (dc/02-revisions-publish.md:759; dc/10-rls.md:419) |
 | 105 PASTE | `20261140`: `user_download_denied()` plus a deny arm on `document_shares_insert` (from 80) | SHR-14 | 20261080 (h:38). `role_rank` comes from LIVE 46. | independent of 20261139 (h:40; ps/02-share-links.md:720) | — | *"not yet pasted"* (ps/02-share-links.md:717) |
+| 106 HOLD | `20261141`: the intake link stored as the SHA-256 of its token (every stored token hashed, the plain column nulled and kept null by a CHECK); intake authorship fixed; `adopt_intake_document` and the adoption number guard | SEC-19, SEC-16, INTK-16 (projects J11) | 20261104, 20261105 (it refuses otherwise) | — | **IRREVERSIBLE — §3A.** Paste only once the J11 build is live AND open browser tabs have reloaded. The file refuses to run until you uncomment its `SET app.j11_deployed = 'yes';` line. | Pending (pt/01-security-access.md SEC-19) |
+| 107 PASTE | `20261142`: a private project's audit rows are read by those who can read the project (`audit_row_project_visible`); `audit_logs_admin_trail` re-created from 20261063 | SEC-20 (projects J11) | 20261063 (LIVE), 20261102 (`project_visible_to_me`) | **(derived)** Never re-paste 20261045 or 20261063 after it (both define `audit_logs_admin_trail`). | — | Pending (pt/01-security-access.md SEC-20) |
 
 **Sequence at a glance.**
 1. **20261129**, now.
@@ -249,7 +252,7 @@ All PASTE and HOLD rows read *"Pending migration"* or *"not applied"* in the rec
    - 20261120, 20261121, 20261122, 20261123, 20261125, 20261126, 20261127, 20261128
    - 20261130, 20261132, 20261133, 20261134, 20261136, 20261138, 20261140
 4. Deploy the app build carrying the wave-2 changes (SEQ:167-168).
-5. Paste 20261131 once DRLS-15 and DRLS-17 are deployed, and 20261139 once REV-15 is deployed (either order). Paste 20261124 once intelligence I-04 is deployed.
+5. Paste 20261131 once DRLS-15 and DRLS-17 are deployed, and 20261139 once REV-15 is deployed (either order). Paste 20261124 once intelligence I-04 is deployed. Paste 20261141 once the J11 build is live and open tabs have reloaded; 20261142 any time after 20261102.
 6. Paste 20261138 again after the first decode run.
 
 No record or header makes 20261132–20261140 depend on 20261131, so holding 20261131 does not block them (derived from the headers above).

@@ -26,8 +26,8 @@ before and after.
 | CRITICAL | 17 |
 | HIGH | 52 |
 | MEDIUM | 66 |
-| LOW | 3 |
-| **Total** | **138** |
+| LOW | 4 |
+| **Total** | **139** |
 
 Two findings here (`BID-5`, `UX-2`) carry `Status: REFUTED` — an independent pass
 disproved them. They are kept with the reason rather than deleted (`DEC-41`);
@@ -45,6 +45,9 @@ J1 on 2026-09-30.
 by package J8 on 2026-09-30.
 `CHART-6` (two consumers paint the score band's colour as text; the 70–84 band
 is the white-label accent) was opened by package J5 on 2026-09-30.
+`SEC-21` (project audit rows written under another resource type, such as a
+milestone anchored to a document, stay readable by every org member) was
+opened by package J11's review on 2026-10-01.
 
 Counts are generated from the reports by
 [`../build-index.mjs`](../build-index.mjs) — see
@@ -60,7 +63,7 @@ Work these in order. The numbering reflects priority, not just grouping —
 
 | # | Report | Findings | CRIT | Progress |
 |---|---|---|---|---|
-| 01 | [Security & access](./01-security-access.md) | 20 | 4 | 15 / 20 |
+| 01 | [Security & access](./01-security-access.md) | 21 | 4 | 19 / 21 |
 | 02 | [Safety, compliance & the record](./02-safety-compliance.md) | 17 | 3 | 15 / 17 |
 | 03 | [Money & the ledger](./03-money-ledger.md) | 12 | 0 | 7 / 12 |
 | 04 | [Bid tabulation & the award decision](./04-bid-tabulation.md) | 12 | 2 | 11 / 12 |

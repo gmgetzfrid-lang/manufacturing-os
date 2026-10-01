@@ -336,7 +336,7 @@ export type StatusTransitionInput = {
 /** One closeout gate as recorded and rendered: `ok` null = the read it
  *  depends on failed or is not migrated — unknown, never a pass. */
 export interface CloseoutGateLine {
-  key: "punch" | "turnover" | "checklists" | "changeOrders";
+  key: "punch" | "turnover" | "checklists" | "checklistsVoided" | "changeOrders";
   ok: boolean | null;
   text: string;
   /** How many items are open behind the gate (null = unknown). Named so
@@ -345,16 +345,41 @@ export interface CloseoutGateLine {
 }
 
 /**
- * SAF-14: the closeout gates — the same four lines the Complete dialog shows
+ * SAF-14: the closeout gates — the same lines the Complete dialog shows
  * and the completion's audit row records, so what the report prints is what
  * was open at the moment of the override. A gate whose read failed (or is
  * not migrated) is recorded as unknown, not as clear. Pure.
+ *
+ * QUAL-15: the checklist gate counts SIGN-OFF, not only item colours — a
+ * non-void checklist that is not complete is "not signed off" (and a
+ * completion with no signature on record is named as such) whatever its
+ * items read; the text keeps "not signed off" apart from "items
+ * unresolved". A voided checklist leaves every count, so each one is named
+ * on its own failing line with who voided it — a fifth line, present only
+ * when one exists.
  */
 export function closeoutGateLines(s: ProjectStateSnapshot): CloseoutGateLine[] {
   const gap = new Set([...(s.readFailures ?? []), ...(s.notMigrated ?? [])]);
   const unknown = (...reads: string[]) => reads.some((r) => gap.has(r));
   const plural = (n: number, one: string, many = `${one}s`) => `${n} ${n === 1 ? one : many}`;
   const checklistOpen = s.checklistOpenItems + s.checklistNeedsEvidence;
+  const awaitingSignoff = s.checklistsAwaitingSignoff ?? 0;
+  const completedUnsigned = s.checklistsCompletedUnsigned ?? 0;
+  const checklistGateOpen = awaitingSignoff + completedUnsigned + checklistOpen;
+  const checklistText = [
+    awaitingSignoff > 0 ? `${plural(awaitingSignoff, "checklist")} not signed off` : null,
+    completedUnsigned > 0 ? `${plural(completedUnsigned, "checklist")} completed with no signature on record` : null,
+    checklistOpen > 0 ? `${plural(checklistOpen, "checklist item")} unresolved` : null,
+  ].filter(Boolean).join(" · ");
+  const voided = s.checklistsVoided ?? [];
+  const voidedLine: CloseoutGateLine[] = unknown(SNAPSHOT_READS.checklists) || voided.length === 0 ? [] : [{
+    key: "checklistsVoided",
+    ok: false,
+    text: `${plural(voided.length, "checklist")} voided — ${voided.map((v) => `${v.title} (${
+      v.voidedBy ? `voided by ${v.voidedBy}` : v.voidedByUnreadable ? "who voided it could not be read" : "who voided it is not on record"
+    })`).join("; ")}`,
+    openCount: voided.length,
+  }];
   return [
     unknown(SNAPSHOT_READS.punch)
       ? { key: "punch", ok: null, text: "Punch list — could not be read", openCount: null }
@@ -371,7 +396,8 @@ export function closeoutGateLines(s: ProjectStateSnapshot): CloseoutGateLine[] {
         },
     unknown(SNAPSHOT_READS.checklists, SNAPSHOT_READS.checklistItems)
       ? { key: "checklists", ok: null, text: "Checklists — could not be read", openCount: null }
-      : { key: "checklists", ok: checklistOpen === 0, text: checklistOpen === 0 ? "Checklists clear" : `${plural(checklistOpen, "checklist item")} unresolved`, openCount: checklistOpen },
+      : { key: "checklists", ok: checklistGateOpen === 0, text: checklistGateOpen === 0 ? "Checklists clear" : checklistText, openCount: checklistGateOpen },
+    ...voidedLine,
     unknown(SNAPSHOT_READS.changeOrders)
       ? { key: "changeOrders", ok: null, text: "Change orders — could not be read", openCount: null }
       : { key: "changeOrders", ok: s.openChangeOrders === 0, text: s.openChangeOrders === 0 ? "No change orders awaiting decision" : `${plural(s.openChangeOrders, "change order")} awaiting decision`, openCount: s.openChangeOrders },
@@ -1234,8 +1260,10 @@ function headQuery(table: string) {
  *    caller is a controller AND gives a reason (the default is Archive);
  *  · revokes the project's contractor intake links (PM-2's inline limb —
  *    PC-1 / J1 exports the shared intake-link revoke helper);
- *  · writes PROJECT_DELETED (org-readable) with the counts and how many
- *    stored files the delete orphans, and PURGE_PROJECT_SNAPSHOT — a
+ *  · writes PROJECT_DELETED with the counts and how many stored files the
+ *    delete orphans — readable by the org's audit viewers only once
+ *    20261142 is applied (SEC-20: a project row whose project is gone is no
+ *    member's; before it, by every member) — and PURGE_PROJECT_SNAPSHOT — a
  *    serialized snapshot of the cost and quality rows plus the orphaned
  *    storage keys (they carry original file names) for the orphan sweep,
  *    readable by the org's audit viewers only (a PURGE_ action is inside the

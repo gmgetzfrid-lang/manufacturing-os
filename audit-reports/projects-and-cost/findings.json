@@ -18,8 +18,8 @@
       "LOW": 12
     },
     "by_status": {
-      "RESOLVED": 57,
-      "OPEN": 18
+      "RESOLVED": 62,
+      "OPEN": 13
     }
   },
   "status_vocabulary": [
@@ -1135,7 +1135,7 @@
       "id": "INTK-15",
       "title": "The intake door still streams every upload through a serverless function — the advertised 100 MB limit is not the host's, and the bytes are buffered before they are sniffed",
       "severity": "MEDIUM",
-      "status": "OPEN",
+      "status": "RESOLVED",
       "verification": "CONFIRMED",
       "verification_note": "CONFIRMED (by reading; the platform body limit is SUSPECTED, as in `INTK-8`)",
       "blast_radius": null,
@@ -1159,7 +1159,7 @@
       "id": "INTK-16",
       "title": "Adoption's collision re-check runs only in the controller's browser — a direct update of an intake sheet's library skips the cross-library number rule",
       "severity": "MEDIUM",
-      "status": "OPEN",
+      "status": "RESOLVED",
       "verification": "CONFIRMED",
       "verification_note": "CONFIRMED (by reading; not exercised against a live database)",
       "blast_radius": "document-control integrity",
@@ -1373,7 +1373,7 @@
       "id": "PM-15",
       "title": "Six other CSV exports write formula-leading cells unescaped — PM-10's guard reached only the project export",
       "severity": "MEDIUM",
-      "status": "OPEN",
+      "status": "RESOLVED",
       "verification": "CONFIRMED",
       "verification_note": "CONFIRMED (the producers located by `grep -rln 'text/csv' app lib components`; each builds its cells without `lib/csvSafe`)",
       "blast_radius": null,
@@ -1515,7 +1515,7 @@
       "id": "QUAL-15",
       "title": "Project closeout never requires a checklist's signed completion — an open checklist whose items are all green reads \"Checklists clear\", and a voided one leaves every count, so the separated, signed sign-off can simply be skipped",
       "severity": "MEDIUM",
-      "status": "OPEN",
+      "status": "RESOLVED",
       "verification": "CONFIRMED",
       "verification_note": "CONFIRMED (by reading)",
       "blast_radius": null,
@@ -1837,7 +1837,7 @@
       "id": "COST-15",
       "title": "A quote whose total was typed before any read can never have its line items read",
       "severity": "LOW",
-      "status": "OPEN",
+      "status": "RESOLVED",
       "verification": "CONFIRMED",
       "verification_note": null,
       "blast_radius": null,

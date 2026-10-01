@@ -222,6 +222,34 @@ export async function gatherProjectSnapshotUncached(
     absent(fields);
     return legacy ? read(label, legacy(), fallback) : fallback;
   };
+  /** QUAL-15: the checklists with their sign-off. `completed_signature_id`
+   *  arrives with 20261136; before it, a completion carries no signature by
+   *  construction, so the legacy read (status only) is the whole truth and
+   *  nothing is named as not migrated (20261136 is not 20261013's gap). */
+  let signoffColumns = true;
+  type ChecklistRow = { id: string; status: string; title?: string | null; completed_signature_id?: string | null };
+  const checklistQuery = (cols: string) =>
+    sig(supabase.from("project_checklists").select(cols).eq("project_id", projectId).limit(50)) as unknown as PromiseLike<QueryResult<ChecklistRow[]>>;
+  const readChecklists = async (): Promise<ChecklistRow[]> => {
+    let r: QueryResult<ChecklistRow[]>;
+    try {
+      r = await checklistQuery("id, status, title, completed_signature_id");
+    } catch (e) {
+      if (signal?.aborted) throw e;
+      fail(R.checklists);
+      return [];
+    }
+    if (r.error && r.error.code && MISSING_COLUMN.has(r.error.code)) {
+      signoffColumns = false;
+      return read<ChecklistRow[]>(R.checklists, checklistQuery("id, status, title"), [], true);
+    }
+    if (r.error) {
+      if (r.error.code && MISSING_TABLE.has(r.error.code)) absent(R.checklists);
+      else fail(R.checklists);
+      return [];
+    }
+    return r.data ?? [];
+  };
 
   const [projRow, accounts, entries, costDocRows, parties, coRows, msRows, checklists, turnover, punch, links, members] =
     await Promise.all([
@@ -249,8 +277,7 @@ export async function gatherProjectSnapshotUncached(
       read<Row[]>(R.milestones, sig(supabase.from("milestones")
         .select("id, parent_id, status, planned_at, percent_complete, weight, duration_hours, created_at, baseline_finish_at, source")
         .eq("project_id", projectId).order("planned_at").order("id").limit(PROJECT_MILESTONE_READ_LIMIT)), []),
-      read<Array<{ id: string; status: string }>>(R.checklists, sig(supabase.from("project_checklists")
-        .select("id, status").eq("project_id", projectId).limit(50)), [], true),
+      readChecklists(),
       read<Array<{ required: boolean; status: string }>>(R.turnover, sig(supabase.from("turnover_items")
         .select("required, status").eq("project_id", projectId).limit(300)), [], true),
       read<Array<{ status: string }>>(R.punch, sig(supabase.from("punch_items")
@@ -330,6 +357,51 @@ export async function gatherProjectSnapshotUncached(
   }
   if (signal?.aborted) throw abortError();
 
+  // QUAL-15: completion is the signed, separated sign-off (QUAL-4,
+  // 20261136) — a checklist whose items are all green is still OPEN until
+  // someone signs it off, and a completion with no signature on record
+  // (made before 20261136, or by a service-role write) is not a sign-off.
+  // Counted only where 20261136's column exists; before it no completion
+  // can carry one.
+  const liveChecklists = checklists.filter((c) => c.status !== "void");
+  const checklistsAwaitingSignoff = liveChecklists.filter((c) => c.status !== "complete").length;
+  const checklistsCompletedUnsigned = signoffColumns
+    ? liveChecklists.filter((c) => c.status === "complete" && !c.completed_signature_id).length
+    : 0;
+  // A voided checklist leaves every count above, so it is named at
+  // closeout, with who voided it — the CHECKLIST_STATUS audit row
+  // setChecklistStatus writes (a void made outside the lib has none, and
+  // says so). Read only when there is one to name.
+  const voided = checklists.filter((c) => c.status === "void");
+  let checklistsVoided: NonNullable<ProjectStateSnapshot["checklistsVoided"]> = [];
+  if (voided.length > 0) {
+    type AuditRow = { user_email: string | null; details: Record<string, unknown> | null };
+    let rows: AuditRow[] = [];
+    let unreadable = false;
+    try {
+      const r = await (sig(supabase.from("audit_logs").select("user_email, details, timestamp")
+        .eq("resource_type", "project").eq("resource_id", projectId).eq("action", "CHECKLIST_STATUS")
+        .order("timestamp", { ascending: false }).limit(500)) as unknown as PromiseLike<QueryResult<AuditRow[]>>);
+      if (r.error) unreadable = true; else rows = r.data ?? [];
+    } catch (e) {
+      if (signal?.aborted) throw e;
+      unreadable = true;
+    }
+    const voidedBy = new Map<string, string>();
+    for (const row of rows) {
+      const d = row.details ?? {};
+      const id = typeof d.checklistId === "string" ? d.checklistId : null;
+      if (id && d.status === "void" && !voidedBy.has(id)) voidedBy.set(id, row.user_email || "a signed-in member");
+    }
+    checklistsVoided = voided.map((c) => ({
+      id: c.id,
+      title: (c.title ?? "").trim() || "Untitled checklist",
+      voidedBy: voidedBy.get(c.id) ?? null,
+      ...(unreadable ? { voidedByUnreadable: true } : {}),
+    }));
+  }
+  if (signal?.aborted) throw abortError();
+
   const reqTurnover = turnover.filter((t) => t.required !== false);
   const goals = proj.goals;
 
@@ -362,6 +434,9 @@ export async function gatherProjectSnapshotUncached(
     checklistCount: checklists.filter((c) => c.status !== "void").length,
     checklistOpenItems,
     checklistNeedsEvidence,
+    checklistsAwaitingSignoff,
+    checklistsCompletedUnsigned,
+    checklistsVoided,
     turnoverRequired: reqTurnover.length,
     turnoverAccepted: reqTurnover.filter((t) => t.status === "accepted" || t.status === "waived").length,
     punchOpen: punch.filter((p) => p.status === "open").length,

@@ -27,7 +27,10 @@ export function useArchiveAwareOpen() {
     try {
       const { data } = await supabase.auth.getSession();
       const token = data.session?.access_token ?? "";
-      const res = await fetch(`/api/storage/resolve?path=${encodeURIComponent(path)}`, {
+      // A new-tab viewer: it asks for inline (SEC-18 / DEC-49) — the route
+      // grants it only for a PDF or a raster image, type pinned; anything
+      // else arrives as an attachment and downloads instead of rendering.
+      const res = await fetch(`/api/storage/resolve?path=${encodeURIComponent(path)}&inline=1`, {
         headers: { Authorization: `Bearer ${token}` },
       });
       const body = await res.json().catch(() => null);

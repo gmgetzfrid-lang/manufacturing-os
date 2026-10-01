@@ -13,7 +13,8 @@
 import { NextRequest, NextResponse } from "next/server";
 import { supabaseAdmin } from "@/lib/supabaseAdmin";
 import { parseSourceDocument } from "@/lib/sourceDocRef";
-import { INTAKE_TOKEN_RE, CLOSED_PROJECT_STATUSES, LINK_INVALID_MESSAGE } from "@/lib/intakeLinks";
+import { INTAKE_TOKEN_RE, CLOSED_PROJECT_STATUSES, LINK_INVALID_MESSAGE, readIntakeLinkByToken } from "@/lib/intakeLinks";
+import { sha256Hex } from "@/lib/intakeRateLimit";
 
 export const runtime = "nodejs";
 
@@ -37,11 +38,12 @@ export async function GET(req: NextRequest) {
     return NextResponse.json({ error: "invalid" }, { status: 400 });
   }
 
-  const { data: link, error: linkErr } = await supabaseAdmin
-    .from("project_intake_links")
-    .select("id, org_id, project_id, company_name, allow_auto_supersede, expires_at, revoked_at, assigned_doc_ids")
-    .eq("token", token)
-    .maybeSingle();
+  // SEC-19: the link is found by the token's SHA-256 — the table keeps no
+  // usable token (20261141); before that migration, by the plain column.
+  const { data: link, error: linkErr } = await readIntakeLinkByToken(supabaseAdmin, {
+    token, tokenHash: sha256Hex(token),
+    columns: "id, org_id, project_id, company_name, allow_auto_supersede, expires_at, revoked_at, assigned_doc_ids",
+  });
   if (linkErr) return NextResponse.json({ error: "unavailable" }, { status: 503 });
   // PM-2 dw2: a deleted project's links are DELETED (20261104's
   // trg_projects_close_intake_links), so a link the database does not hold

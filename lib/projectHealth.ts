@@ -52,6 +52,16 @@ export interface ProjectStateSnapshot {
   checklistCount: number;
   checklistOpenItems: number;
   checklistNeedsEvidence: number;
+  /** QUAL-15: non-void checklists not yet signed off (status not
+   *  `complete`) — open at closeout whatever their items' colours. */
+  checklistsAwaitingSignoff?: number;
+  /** QUAL-15: checklists `complete` with no signature on record (once
+   *  20261136's `completed_signature_id` exists; 0 before it). */
+  checklistsCompletedUnsigned?: number;
+  /** QUAL-15: voided checklists — they leave every count above, so each is
+   *  named at closeout with who voided it (the CHECKLIST_STATUS audit row;
+   *  null = none on record; `voidedByUnreadable` = that read failed). */
+  checklistsVoided?: Array<{ id: string; title: string; voidedBy: string | null; voidedByUnreadable?: boolean }>;
   turnoverRequired: number;
   turnoverAccepted: number;
   punchOpen: number;
@@ -356,7 +366,10 @@ export function buildCoachItems(s: ProjectStateSnapshot, projectId: string): Coa
   if (s.checklistNeedsEvidence > 0) add({
     id: "evidence", kind: "quality", weight: 76,
     title: `Provide evidence for ${s.checklistNeedsEvidence} checklist item${s.checklistNeedsEvidence === 1 ? "" : "s"}`,
-    payoff: "Nothing runs on its own — run \"Check evidence we already hold\" on the Quality tab; items with a matching document on file turn green with the citation attached.",
+    // UX-16: the sweep runs on its own at the two moments evidence arrives
+    // (lib/reviewControl finalizeReviewedRevision, lib/turnover
+    // reviewTurnoverItem); the button runs it any other time.
+    payoff: "It runs on its own when a contractor submission is approved or a turnover item is accepted; to run it now, use \"Check evidence we already hold\" on the Quality tab — items with a matching document on file turn green with the citation attached.",
     href: `${base}?tab=quality`,
   });
   if (s.turnoverRequired > 0 && s.turnoverAccepted < s.turnoverRequired) add({

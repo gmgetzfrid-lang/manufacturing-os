@@ -14,17 +14,17 @@
     "audit-reports/projects-tab/10-accessibility-mobile.md"
   ],
   "totals": {
-    "findings": 138,
+    "findings": 139,
     "gaps": 10,
     "by_severity": {
       "CRITICAL": 17,
       "HIGH": 52,
       "MEDIUM": 66,
-      "LOW": 3
+      "LOW": 4
     },
     "by_status": {
-      "OPEN": 42,
-      "RESOLVED": 94,
+      "OPEN": 38,
+      "RESOLVED": 99,
       "REFUTED": 2
     }
   },
@@ -3400,7 +3400,7 @@
       "id": "SEC-16",
       "title": "The project owner can read a link's raw token and act as the contractor",
       "severity": "MEDIUM",
-      "status": "OPEN",
+      "status": "RESOLVED",
       "verification": "CONFIRMED",
       "verification_note": "CONFIRMED as a mechanism; SUSPECTED as a practical concern (requires an already-privileged actor)",
       "blast_radius": "audit integrity",
@@ -3450,7 +3450,7 @@
       "id": "SEC-18",
       "title": "The archive-aware opener and the data-export envelope sign presigned downloads with no disposition",
       "severity": "MEDIUM",
-      "status": "OPEN",
+      "status": "RESOLVED",
       "verification": "CONFIRMED",
       "verification_note": null,
       "blast_radius": "security",
@@ -3479,7 +3479,7 @@
       "id": "SEC-20",
       "title": "Audit rows about a private project are readable by every org member",
       "severity": "MEDIUM",
-      "status": "OPEN",
+      "status": "RESOLVED",
       "verification": "CONFIRMED",
       "verification_note": "CONFIRMED (policy read; not exercised against a live database)",
       "blast_radius": "data-confidentiality",
@@ -3586,7 +3586,7 @@
       "id": "UX-16",
       "title": "The evidence sweep never runs when evidence actually arrives",
       "severity": "MEDIUM",
-      "status": "OPEN",
+      "status": "RESOLVED",
       "verification": "CONFIRMED",
       "verification_note": null,
       "blast_radius": "copy-truth / workflow",
@@ -3660,7 +3660,7 @@
       "id": "SEC-19",
       "title": "Contractor intake tokens are stored in plaintext — any read of the table is a working door credential",
       "severity": "LOW",
-      "status": "OPEN",
+      "status": "RESOLVED",
       "verification": "CONFIRMED",
       "verification_note": "CONFIRMED (by reading)",
       "blast_radius": "security",
@@ -3683,6 +3683,37 @@
       ],
       "refuted": false,
       "summary": null,
+      "area": "projects-tab",
+      "report": "audit-reports/projects-tab/01-security-access.md"
+    },
+    {
+      "id": "SEC-21",
+      "title": "Project audit rows written under another resource type stay readable by every org member",
+      "severity": "LOW",
+      "status": "OPEN",
+      "verification": "CONFIRMED",
+      "verification_note": "CONFIRMED (by reading; not exercised against a live database)",
+      "blast_radius": "data-confidentiality",
+      "related": [
+        "SEC-20",
+        "SEC-2",
+        "DEC-69"
+      ],
+      "locations": [
+        "lib/milestones.ts:132-136",
+        "lib/audit.ts:131-161",
+        "lib/intakeLinks.ts",
+        "components/projects/IntakePanel.tsx",
+        "components/projects/cost/QuotesPanel.tsx",
+        "supabase/migrations/20261142_prj_roundG_project_audit_rows.sql"
+      ],
+      "has_verifier_correction": false,
+      "verified_by": "author",
+      "challenges": [
+        "author"
+      ],
+      "refuted": false,
+      "summary": "A member who is not on a private project reads auditlogs?action=like.MILESTONE and gets that project's document-anchored milestone names, dates and status changes, while SEC-20 says the project's own rows are covered.",
       "area": "projects-tab",
       "report": "audit-reports/projects-tab/01-security-access.md"
     }

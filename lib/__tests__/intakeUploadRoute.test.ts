@@ -45,6 +45,7 @@
 
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { readFileSync, readdirSync, statSync } from "node:fs";
+import { createHash } from "node:crypto";
 import { join, relative } from "node:path";
 import ts from "typescript";
 import { NextRequest } from "next/server";
@@ -59,6 +60,14 @@ const db = vi.hoisted(() => ({
   rpc: {} as Record<string, (args: Record<string, unknown>) => { data: unknown; error: unknown }>,
   rpcCalls: [] as Array<{ fn: string; args: Record<string, unknown> }>,
   r2Puts: [] as Array<Record<string, unknown>>,
+  /** INTK-15: objects a direct upload staged (key → bytes) and the reads of them. */
+  r2Objects: new Map<string, Uint8Array>(),
+  r2Reads: [] as Array<{ op: string; key: string; range?: string }>,
+  presigns: [] as Array<{ input: Record<string, unknown>; opts: Record<string, unknown> }>,
+  /** INTK-15: called after each staged GET (a re-PUT between the reads);
+   *  `ignoreIfMatch` is a storage that does not honour If-Match. */
+  afterGet: null as null | ((key: string, range?: string) => void),
+  ignoreIfMatch: false,
   r2Deletes: [] as Array<Record<string, unknown>>,
   emits: [] as Array<Record<string, unknown>>,
   pipeline: [] as Array<{ input: Record<string, unknown>; boundToServiceRole: boolean }>,
@@ -195,13 +204,56 @@ vi.mock("@/lib/supabaseAdmin", () => ({
   },
 }));
 vi.mock("@/lib/supabase", () => ({
-  supabase: { from: (t: string) => chain(t), rpc: async () => ({ data: null, error: null }) },
+  // INTK-16: adopt_intake_document answers as a database before 20261141, so
+  // the adoption cases below exercise the direct-update path (the database
+  // path is lib/__tests__/transitionIn.test.ts's and the scratch cluster's).
+  supabase: {
+    from: (t: string) => chain(t),
+    rpc: async (fn: string) => (fn === "adopt_intake_document"
+      ? { data: null, error: { message: `Could not find the function public.${fn}`, code: "PGRST202" } }
+      : { data: null, error: null }),
+  },
   __registerScopedServerClient: vi.fn((read: () => unknown) => { db.scopeRead = read; }),
 }));
-vi.mock("@/lib/r2", () => ({ r2: { send: vi.fn(async (cmd: { input: Row; op: string }) => { (cmd.op === "delete" ? db.r2Deletes : db.r2Puts).push(cmd.input); }) }, R2_BUCKET: "bucket" }));
+vi.mock("@/lib/r2", () => ({
+  r2: {
+    send: vi.fn(async (cmd: { input: Row; op: string }) => {
+      // INTK-15: a staged object answers HEAD and (ranged) GET.
+      if (cmd.op === "head" || cmd.op === "get") {
+        const key = String(cmd.input.Key);
+        db.r2Reads.push({ op: cmd.op, key, ...(cmd.input.Range ? { range: String(cmd.input.Range) } : {}) });
+        const obj = db.r2Objects.get(key);
+        if (!obj) throw Object.assign(new Error("NotFound"), { name: "NotFound", $metadata: { httpStatusCode: 404 } });
+        // an ETag that changes with the bytes (FNV-1a + length)
+        let h = 2166136261;
+        for (const x of obj) { h ^= x; h = Math.imul(h, 16777619) >>> 0; }
+        const etag = `"${h.toString(16)}-${obj.byteLength}"`;
+        if (cmd.op === "head") return { ContentLength: obj.byteLength, ETag: etag };
+        if (cmd.input.IfMatch && !db.ignoreIfMatch && cmd.input.IfMatch !== etag) {
+          throw Object.assign(new Error("At least one of the pre-conditions you specified did not hold"), { name: "PreconditionFailed", $metadata: { httpStatusCode: 412 } });
+        }
+        const m = /^bytes=(\d+)-(\d+)$/.exec(String(cmd.input.Range ?? ""));
+        const part = new Uint8Array(m ? obj.subarray(Number(m[1]), Number(m[2]) + 1) : obj);
+        db.afterGet?.(key, cmd.input.Range ? String(cmd.input.Range) : undefined);
+        return { Body: { transformToByteArray: async () => part } };
+      }
+      (cmd.op === "delete" ? db.r2Deletes : db.r2Puts).push(cmd.input);
+      if (cmd.op === "delete") db.r2Objects.delete(String(cmd.input.Key));
+    }),
+  },
+  R2_BUCKET: "bucket",
+}));
+vi.mock("@aws-sdk/s3-request-presigner", () => ({
+  getSignedUrl: vi.fn(async (_client: unknown, cmd: { input: Row }, opts: Row) => {
+    db.presigns.push({ input: cmd.input, opts });
+    return `https://r2.test/${String(cmd.input.Key)}?X-Amz-Expires=${String(opts.expiresIn)}`;
+  }),
+}));
 vi.mock("@aws-sdk/client-s3", () => ({
   PutObjectCommand: class { op = "put"; constructor(public input: unknown) {} },
   DeleteObjectCommand: class { op = "delete"; constructor(public input: unknown) {} },
+  GetObjectCommand: class { op = "get"; constructor(public input: unknown) {} },
+  HeadObjectCommand: class { op = "head"; constructor(public input: unknown) {} },
 }));
 vi.mock("@/lib/notify/dispatch", () => ({ emit: vi.fn(async (e: Row) => { db.emits.push({ ...e, boundToServiceRole: scopedToAdmin() }); }) }));
 vi.mock("@/lib/postPublish", () => ({
@@ -223,7 +275,8 @@ function link(over: Row = {}): Row {
   return {
     id: LINK, org_id: ORG, project_id: "p1", company_name: "Vendor Co", contact_email: "v@vendor.test",
     allow_auto_supersede: true, expires_at: null, revoked_at: null, assigned_doc_ids: [], created_by: "creator1",
-    token: TOKEN, purpose: "documents", rfq_group: null,
+    // SEC-19 (20261141): the link is found by the token's SHA-256.
+    token: null, token_hash: createHash("sha256").update(TOKEN).digest("hex"), purpose: "documents", rfq_group: null,
     submission_count: 0, max_submissions: 500, bytes_received: 0, max_total_bytes: 5 * 1024 ** 3, ...over,
   };
 }
@@ -255,6 +308,7 @@ const docWrites = () => db.writes.filter((w) => w.table === "documents" || w.tab
 
 beforeEach(() => {
   db.tables = {}; db.writes = []; db.errors = {}; db.rpcCalls = []; db.r2Puts = []; db.r2Deletes = []; db.emits = []; db.pipeline = [];
+  db.r2Objects = new Map(); db.r2Reads = []; db.presigns = []; db.afterGet = null; db.ignoreIfMatch = false;
   db.seq = 0; db.user = null;
   db.rpc = {
     review_control_mode_for: () => ({ data: "none", error: null }),
@@ -1251,6 +1305,14 @@ describe("census — every writer of current_version_id runs the post-publish pi
   // A pinned wrapper of a pointer RPC makes every call of it a writer site.
   const wrappers = new Set(Object.entries(EXEMPT).filter(([, e]) => e.wrapper).map(([site]) => site.split(":")[1]));
   const writers = [...sources].flatMap(([file, src]) => pointerWriters(file, src, wrappers));
+  // INTK-15 (J11): the intake route's POST is a thin wrapper that removes a
+  // direct upload's staged object when the request ends; the door's body —
+  // the caller of publishThroughContract that runs the pipeline — is `door`.
+  // (Pinned here, apart from the table above, so the table's own edits merge.)
+  EXEMPT["app/api/intake/upload/route.ts:publishThroughContract"] = {
+    reason: "the intake door's trusted promote — door (POST's body) runs the pipeline after it returns a published outcome",
+    via: "app/api/intake/upload/route.ts:door",
+  };
 
   it("the detector sees inline, shorthand, spread and prebuilt-patch writes — and ignores clears and reads", () => {
     const probe = (body: string) => pointerWriters("probe.ts", `async function f(v: string, supabase: any) {\n${body}\n}`).length;
@@ -1535,6 +1597,431 @@ describe("the Intake tab, the transition-in panel and the portal", () => {
     // second verification: a NULL org is kept NULL (never the string "null") and reported, not nudged
     expect(c).toContain("orgId: r.org_id == null ? null : String(r.org_id),");
     expect(c).toContain("if (nudged.orgless > 0) intakeLine(`review-health: ${nudged.orgless} group(s) of rows name no org");
+    const vercel = JSON.parse(src("vercel.json")) as { crons?: unknown[] };
+    expect((vercel.crons ?? []).length).toBeLessThanOrEqual(2);
+  });
+});
+
+// ── INTK-15 (projects Round G J11): the direct door ─────────────────────────
+// The portal sends the bytes straight to storage on a PUT the door presigned
+// for the link's own staging key; finalize sniffs the STORED bytes (a ranged
+// read first) and from there runs exactly the multipart pipeline. Every J1
+// guarantee is asserted through the finalize step. Staging
+// (lib/intakeStaging.ts): a begin RESERVES its declared bytes against the
+// link's budget; a finalize CLAIMS the reservation before any other answer
+// and then owns — and deletes — the staged object, whatever it answers.
+describe("INTK-15 — the direct door: begin presigns, finalize checks the stored bytes", () => {
+  const STAGING = "intake-staging/o1/p1/lnk1/";
+  const HASH = createHash("sha256").update(TOKEN).digest("hex");
+  const json = (step: "begin" | "finalize", payload: Row, headers: Record<string, string> = {}) => POST(new NextRequest(
+    `http://x/api/intake/upload?step=${step}`,
+    { method: "POST", body: JSON.stringify(payload), headers: { "x-intake-token": TOKEN, "content-type": "application/json", ...headers } },
+  ));
+  /** begin, then "PUT" the bytes to the staged key the door chose. */
+  const stage = async (bytes: Uint8Array, name = "sheet.pdf", type = "application/pdf") => {
+    const res = await json("begin", { fileName: name, size: bytes.byteLength, contentType: type });
+    const body = await res.json() as { ok: boolean; uploadKey: string; uploadUrl: string; contentType: string; expiresIn: number };
+    db.r2Objects.set(body.uploadKey, bytes);
+    return { res, body };
+  };
+  const finalize = (uploadKey: string, fields: Record<string, string>, name = "sheet.pdf", type = "application/pdf") =>
+    json("finalize", { uploadKey, fileName: name, contentType: type, fields });
+  /** A staged object and its reservation, as a begin leaves them. */
+  const reserve = (id: string, bytes: Uint8Array | null, over: Row = {}) => {
+    (db.tables.intake_attempts ??= []).push({ id, token_hash: HASH, ip: "unknown", link_id: LINK, outcome: "staged", bytes: bytes?.byteLength ?? 100, created_at: new Date().toISOString(), ...over });
+    if (bytes) db.r2Objects.set(`${STAGING}${id}`, bytes);
+    return `${STAGING}${id}`;
+  };
+  const rows = (outcome: string) => (db.tables.intake_attempts ?? []).filter((a) => a.outcome === outcome);
+  const deleted = () => db.r2Deletes.map((d) => String(d.Key));
+
+  it("begin: the credential first; a PUT presigned for a FRESH key under the link's own prefix of the ONE staging root, Content-Length signed to the declared size, 10 minutes, never cached — the declared size reserved, nothing stored, nothing filed", async () => {
+    seed({ doc: null });
+    const { res, body } = await stage(PDF);
+    expect(res.status).toBe(200);
+    expect(res.headers.get("cache-control")).toBe("no-store");
+    expect(body.uploadKey.startsWith(STAGING)).toBe(true);
+    const id = body.uploadKey.slice(STAGING.length);
+    expect(id).toMatch(/^[0-9a-f-]{36}$/);
+    expect(db.presigns).toHaveLength(1);
+    expect(db.presigns[0].input).toMatchObject({ Key: body.uploadKey, ContentLength: PDF.byteLength, ContentType: "application/octet-stream" });
+    expect([...(db.presigns[0].opts.signableHeaders as Set<string>)].sort()).toEqual(["content-length", "content-type"]);
+    expect(db.presigns[0].opts.expiresIn).toBe(600);
+    expect(body.contentType).toBe("application/octet-stream");
+    // the reservation: the staged object's id, the link, the declared bytes
+    expect(rows("staged")).toEqual([expect.objectContaining({ id, token_hash: HASH, link_id: LINK, bytes: PDF.byteLength })]);
+    expect(db.r2Puts).toEqual([]);
+    expect(docWrites()).toEqual([]);
+    // a second begin is a different key
+    const again = await stage(PDF);
+    expect(again.body.uploadKey).not.toBe(body.uploadKey);
+  });
+
+  it("begin refuses what the door refuses — a bad token, a revoked link, a closed project, a size over the limit or the budget — and presigns nothing", async () => {
+    seed({ doc: null });
+    expect((await json("begin", { size: 10 }, { "x-intake-token": "short" })).status).toBe(400);
+    seed({ doc: null, link: { revoked_at: "2026-09-01T00:00:00Z" } });
+    expect((await json("begin", { size: 10 })).status).toBe(410);
+    seed({ doc: null });
+    db.tables.projects[0].status = "completed";
+    expect((await json("begin", { size: 10 })).status).toBe(410);
+    seed({ doc: null });
+    expect((await json("begin", { size: 100 * 1024 * 1024 + 1 })).status).toBe(413);
+    expect((await json("begin", { size: 0 })).status).toBe(400);
+    seed({ doc: null, link: { bytes_received: 5 * 1024 ** 3 - 10 } });
+    const over = await json("begin", { size: 1000 });
+    expect(over.status).toBe(429);
+    expect((await over.json()).code).toBe("link_budget");
+    expect(db.presigns).toEqual([]);
+    expect(rows("staged")).toEqual([]);
+  });
+
+  it("review fix: a step's JSON body is read through a 16 KB cap whatever its Content-Length says — a revoked link's chunked multi-MB body is refused at the cap, never buffered; a small chunked body still works", async () => {
+    /** A body streamed in 4 KB chunks with NO Content-Length (chunked), counting what the door pulled. */
+    const streamed = (text: string, padTo = 0) => {
+      const enc = new TextEncoder();
+      const total = Math.max(padTo, text.length);
+      let sent = 0;
+      const pulled = { bytes: 0 };
+      const body = new ReadableStream<Uint8Array>({
+        pull(ctrl) {
+          if (sent >= total) { ctrl.close(); return; }
+          const piece = sent === 0 ? text.padEnd(Math.min(total, 4096), " ") : " ".repeat(Math.min(4096, total - sent));
+          sent += piece.length;
+          pulled.bytes += piece.length;
+          ctrl.enqueue(enc.encode(piece));
+        },
+      });
+      return { body, pulled };
+    };
+    const send = (step: "begin" | "finalize", body: ReadableStream<Uint8Array>) => POST(new NextRequest(
+      `http://x/api/intake/upload?step=${step}`,
+      { method: "POST", body, headers: { "x-intake-token": TOKEN, "content-type": "application/json" }, duplex: "half" } as ConstructorParameters<typeof NextRequest>[1],
+    ));
+    // the reviewer's case: a revoked link, a 4 MB chunked body to ?step=begin
+    seed({ doc: null, link: { revoked_at: "2026-09-01T00:00:00Z" } });
+    const big = streamed(JSON.stringify({ size: 10 }), 4 * 1024 * 1024);
+    const res = await send("begin", big.body);
+    expect(res.status).toBe(413);
+    expect((await res.json()).error).toBe("Expected a small JSON request.");
+    expect(big.pulled.bytes).toBeLessThan(64 * 1024);   // stopped at the cap (plus the stream's read-ahead), never the 4 MB
+    // the same on finalize
+    const bigF = streamed(JSON.stringify({ uploadKey: `${STAGING}x` }), 4 * 1024 * 1024);
+    expect((await send("finalize", bigF.body)).status).toBe(413);
+    expect(bigF.pulled.bytes).toBeLessThan(64 * 1024);
+    // a declared length over the cap is refused unread
+    const declared = await json("begin", { size: 10 }, { "content-length": String(16 * 1024 + 1) });
+    expect(declared.status).toBe(413);
+    // a small chunked body (no Content-Length) is read as before
+    seed({ doc: null });
+    const small = streamed(JSON.stringify({ fileName: "a.pdf", size: 100, contentType: "application/pdf" }));
+    const ok = await send("begin", small.body);
+    expect(ok.status).toBe(200);
+    expect((await ok.json()).uploadKey.startsWith(STAGING)).toBe(true);
+  });
+
+  it("the route header names the one body read before the revocation check, and why; readStepBody reads through readCapped, never req.json()", () => {
+    const route = readFileSync(join(process.cwd(), "app/api/intake/upload/route.ts"), "utf8");
+    expect(route).toMatch(/The one exception is the direct door's small JSON step body \(INTK-15,\s*\n\/\/\s+below\): at most 16 KB, read through a capped reader/);
+    expect(route).toMatch(/because a finalize must CLAIM its staged object before it can answer\s*\n\/\/\s+a revoked or expired link/);
+    const reader = route.slice(route.indexOf("async function readStepBody("), route.indexOf("async function door("));
+    expect(reader).toContain("const text = await readCapped(req, DIRECT_BODY_MAX);");
+    expect(reader).not.toContain("req.json()");
+  });
+
+  it("INTK-8 on the direct path: staged-but-unclaimed bytes count against the link's budget — a link cannot stage past it by never finalizing; a claim releases its reservation", async () => {
+    seed({ doc: null, link: { bytes_received: 5 * 1024 ** 3 - 150 } });
+    const first = await json("begin", { size: 100 });
+    expect(first.status).toBe(200);
+    // the first 100 bytes are reserved: a second 100 would pass the old check (bytes_received alone) but not this one
+    const second = await json("begin", { size: 100 });
+    expect(second.status).toBe(429);
+    expect((await second.json()).code).toBe("link_budget");
+    expect(db.presigns).toHaveLength(1);
+    // the first is finalized (here: its claim) — its reservation is released
+    const key = String((await first.json()).uploadKey);
+    db.r2Objects.set(key, PDF.subarray(0, 0));   // an empty PUT: refused after the claim
+    expect((await finalize(key, { title: "x" })).status).toBe(400);
+    expect(rows("staged")).toEqual([]);
+    expect((await json("begin", { size: 100 })).status).toBe(200);
+  });
+
+  it("an abandoned begin stops counting once it is swept: the link's next begin removes its expired reservations — the object first, then the row", async () => {
+    seed({ doc: null, link: { bytes_received: 5 * 1024 ** 3 - 150 } });
+    const old = new Date(Date.now() - 3 * 3600 * 1000).toISOString();
+    const staleKey = reserve("00000000-0000-4000-8000-0000000000e1", PDF, { bytes: 140, created_at: old });
+    const res = await json("begin", { size: 100 });
+    expect(res.status).toBe(200);
+    expect(deleted()).toEqual([staleKey]);
+    expect(db.r2Objects.has(staleKey)).toBe(false);
+    expect(rows("staged").map((r) => r.id)).not.toContain("00000000-0000-4000-8000-0000000000e1");
+  });
+
+  it("begin is the upload's attempt; finalize is counted in its OWN window (per token and per IP) — never unthrottled", async () => {
+    seed({ doc: null });
+    const { body } = await stage(PDF);
+    expect(rows("attempt")).toHaveLength(1);
+    const res = await finalize(body.uploadKey, { title: "Skid GA" });
+    expect(res.status).toBe(200);
+    expect(rows("attempt")).toHaveLength(1);
+    expect(rows("finalize")).toEqual([expect.objectContaining({ token_hash: HASH })]);
+    // a full attempt window refuses the BEGIN …
+    db.tables.intake_attempts = Array.from({ length: 30 }, () => ({ token_hash: HASH, ip: "unknown", outcome: "attempt", created_at: new Date().toISOString() }));
+    expect((await json("begin", { size: 10 })).status).toBe(429);
+    // … a full finalize window refuses a FINALIZE before the link is even read — guessing through ?step=finalize is throttled too
+    db.tables.intake_attempts = Array.from({ length: 30 }, () => ({ token_hash: HASH, ip: "unknown", outcome: "finalize", created_at: new Date().toISOString() }));
+    db.r2Reads = [];
+    const key = reserve("00000000-0000-4000-8000-0000000000f1", PDF);
+    const limited = await finalize(key, { title: "x" });
+    expect(limited.status).toBe(429);
+    expect((await limited.json()).code).toBe("rate_limited");
+    db.tables.intake_attempts = Array.from({ length: 60 }, (_, i) => ({ token_hash: `h${i}`, ip: "203.0.113.9", outcome: "finalize", created_at: new Date().toISOString() }));
+    const perIp = await json("finalize", { uploadKey: key }, { "x-forwarded-for": "203.0.113.9" });
+    expect(perIp.status).toBe(429);
+    expect((await perIp.json()).error).toMatch(/from your network/);
+    expect(db.r2Reads).toEqual([]);
+  });
+
+  it("finalize files a new document exactly as the multipart door does — sniffed type, the link's authorship, review — from the STORED bytes; the staged object is removed", async () => {
+    seed({ doc: null });
+    const { body } = await stage(PDF, "skid.pdf", "application/octet-stream");
+    const res = await finalize(body.uploadKey, { title: "Skid GA", number: "V-300" }, "skid.pdf", "application/octet-stream");
+    expect(res.status).toBe(200);
+    const out = await res.json();
+    expect(out.status).toBe("in_review");
+    // the sniff read a RANGE of the stored object before the whole of it
+    expect(db.r2Reads.map((r) => `${r.op}${r.range ? ` ${r.range}` : ""}`)).toEqual(["head", "get bytes=0-63", "get"]);
+    // stored under the door's own key with the SNIFFED type — never the staged key
+    expect(db.r2Puts).toHaveLength(1);
+    expect(db.r2Puts[0]).toMatchObject({ ContentType: "application/pdf" });
+    expect(String(db.r2Puts[0].Key)).toMatch(/^orgs\/o1\/project-intake\/p1\/[0-9a-f-]{36}-skid\.pdf$/);
+    expect(db.tables.documents.find((d) => d.id === out.documentId)).toMatchObject({ authored_by_link_id: LINK, uniqueness_key: "v-300" });
+    expect(deleted()).toEqual([body.uploadKey]);
+    expect(db.r2Objects.has(body.uploadKey)).toBe(false);
+    expect(rows("staged")).toEqual([]);
+  });
+
+  it("finalize refuses (and deletes) a disallowed type sniffed from the STORED bytes — an HTML file named .pdf never reaches storage under a door key", async () => {
+    seed({ doc: null });
+    const html = enc("<!doctype html><script>alert(1)</script>");
+    const { body } = await stage(html, "drawing.pdf", "application/pdf");
+    const res = await finalize(body.uploadKey, { title: "Skid GA" }, "drawing.pdf", "application/pdf");
+    expect(res.status).toBe(415);
+    expect((await res.json()).code).toBe("file_type");
+    // only the head was read — the rest of the object never was
+    expect(db.r2Reads.filter((r) => r.op === "get").map((r) => r.range)).toEqual(["bytes=0-63"]);
+    expect(db.r2Puts).toEqual([]);
+    expect(docWrites()).toEqual([]);
+    expect(deleted()).toEqual([body.uploadKey]);
+  });
+
+  it("the bytes filed are the bytes sniffed: a re-PUT between the head and the full read is refused (If-Match on the HEAD's ETag) — and so is a full read whose head differs, should storage ignore If-Match", async () => {
+    seed({ doc: null });
+    const pdfish = enc("%PDF-1.7\n" + "x".repeat(80));
+    const html = enc("<!doctype html>" + "y".repeat(pdfish.byteLength - 15));
+    expect(html.byteLength).toBe(pdfish.byteLength);
+    const { body } = await stage(pdfish);
+    db.afterGet = (key, range) => { if (range) db.r2Objects.set(key, html); };
+    const res = await finalize(body.uploadKey, { title: "Skid GA" });
+    expect(res.status).toBe(409);
+    expect((await res.json()).code).toBe("upload_changed");
+    expect(db.r2Puts).toEqual([]);
+    expect(docWrites()).toEqual([]);
+    expect(deleted()).toEqual([body.uploadKey]);
+    // a storage that does not honour If-Match: the full read's head is compared with the sniffed one
+    seed({ doc: null });
+    db.r2Puts = []; db.r2Deletes = []; db.ignoreIfMatch = true;
+    const again = await stage(pdfish);
+    db.afterGet = (key, range) => { if (range) db.r2Objects.set(key, html); };
+    const res2 = await finalize(again.body.uploadKey, { title: "Skid GA" });
+    expect(res2.status).toBe(409);
+    expect(db.r2Puts).toEqual([]);
+    expect(deleted()).toEqual([again.body.uploadKey]);
+  });
+
+  it("finalize runs the trusted publish contract and the post-publish pipeline under the service role, as the multipart door does", async () => {
+    seed();
+    const { body } = await stage(DWG, "skid.dwg", "application/acad");
+    const res = await finalize(body.uploadKey, { docId: D1, revLabel: "C" }, "skid.dwg", "application/acad");
+    expect(res.status).toBe(200);
+    expect((await res.json()).status).toBe("published");
+    expect(published()?.args).toMatchObject({ p_doc: D1, p_actor: "creator1" });
+    expect(db.pipeline).toHaveLength(1);
+    expect(db.pipeline[0].boundToServiceRole).toBe(true);
+  });
+
+  it("a retry of the same bytes through finalize answers with the original, and the second staged copy is removed", async () => {
+    seed({ doc: null });
+    const first = await stage(PDF);
+    const a = await (await finalize(first.body.uploadKey, { title: "Skid GA" })).json();
+    const second = await stage(PDF);
+    const res = await finalize(second.body.uploadKey, { title: "Skid GA" });
+    const b = await res.json();
+    expect(b).toMatchObject({ ok: true, duplicate: true, documentId: a.documentId });
+    expect(deleted()).toEqual(expect.arrayContaining([first.body.uploadKey, second.body.uploadKey]));
+  });
+
+  it("one staged object, one finalize: concurrent finalizes of the same key — exactly one reads and files it; the others are refused before a byte is read", async () => {
+    seed({ doc: null });
+    const { body } = await stage(PDF);
+    const answers = await Promise.all(Array.from({ length: 5 }, () => finalize(body.uploadKey, { title: "Skid GA" })));
+    const statuses = answers.map((r) => r.status).sort();
+    expect(statuses).toEqual([200, 409, 409, 409, 409]);
+    for (const r of answers.filter((x) => x.status === 409)) expect((await r.json()).code).toBe("upload_claimed");
+    expect(db.r2Reads.filter((r) => r.op === "head")).toHaveLength(1);
+    expect(db.r2Puts).toHaveLength(1);
+    expect(deleted()).toEqual([body.uploadKey]);
+    // and a later finalize of the same key (a replay) is refused the same way
+    expect((await finalize(body.uploadKey, { title: "Skid GA" })).status).toBe(409);
+  });
+
+  it("finalize names only the link's own staged objects: another link's key, the old in-org prefix, a door key or a path is refused before storage is read; an unreserved key is refused; a reserved key with no object is a sentence", async () => {
+    seed({ doc: null });
+    for (const key of [
+      "intake-staging/o1/p1/OTHERLINK/00000000-0000-4000-8000-000000000000",
+      "orgs/o1/project-intake/p1/staging/lnk1/00000000-0000-4000-8000-000000000000",
+      "orgs/o1/project-intake/p1/00000000-0000-4000-8000-000000000000-skid.pdf",
+      `${STAGING}../../../libraries/x.pdf`,
+      `${STAGING}00000000-0000-4000-8000-000000000000/extra`,
+    ]) {
+      const res = await finalize(key, { title: "x" });
+      expect(res.status, key).toBe(400);
+    }
+    expect(db.r2Reads).toEqual([]);
+    // a well-formed key no begin of THIS token reserved — never read, never deleted
+    const unreserved = await finalize(`${STAGING}00000000-0000-4000-8000-000000000000`, { title: "x" });
+    expect(unreserved.status).toBe(409);
+    expect((await unreserved.json()).code).toBe("upload_claimed");
+    reserve("00000000-0000-4000-8000-0000000000a2", null, { token_hash: "someone-else" });
+    expect((await finalize(`${STAGING}00000000-0000-4000-8000-0000000000a2`, { title: "x" })).status).toBe(409);
+    expect(db.r2Reads).toEqual([]);
+    expect(db.r2Deletes).toEqual([]);
+    // reserved, but the PUT never landed
+    const key = reserve("00000000-0000-4000-8000-0000000000a1", null);
+    const missing = await finalize(key, { title: "x" });
+    expect(missing.status).toBe(404);
+    expect((await missing.json()).code).toBe("upload_missing");
+  });
+
+  it("finalize re-checks the link: a link revoked between begin and finalize files nothing, and the staged object it claimed is removed (never read)", async () => {
+    seed({ doc: null });
+    const { body } = await stage(PDF);
+    db.tables.project_intake_links[0].revoked_at = new Date().toISOString();
+    const res = await finalize(body.uploadKey, { title: "Skid GA" });
+    expect(res.status).toBe(410);
+    expect(docWrites()).toEqual([]);
+    expect(db.r2Reads).toEqual([]);
+    expect(deleted()).toEqual([body.uploadKey]);
+    expect(db.r2Objects.has(body.uploadKey)).toBe(false);
+    expect(rows("staged")).toEqual([]);
+  });
+
+  it("every answer after the claim deletes the staged object — an expired link, a closed or gone project, a spent budget", async () => {
+    const cases: Array<[string, () => void, number]> = [
+      ["expired", () => { db.tables.project_intake_links[0].expires_at = "2026-01-01T00:00:00Z"; }, 410],
+      ["closed", () => { db.tables.projects[0].status = "cancelled"; }, 410],
+      ["gone", () => { db.tables.projects = []; }, 410],
+      ["spent", () => { db.tables.project_intake_links[0].submission_count = 500; }, 429],
+    ];
+    for (const [name, mutate, status] of cases) {
+      seed({ doc: null });
+      db.r2Deletes = [];
+      const { body } = await stage(PDF);
+      mutate();
+      const res = await finalize(body.uploadKey, { title: "x" });
+      expect(res.status, name).toBe(status);
+      expect(deleted(), name).toEqual([body.uploadKey]);
+      expect(db.r2Reads, name).toEqual([]);
+    }
+  });
+
+  it("finalize holds the stored size to the limit and the budget; only the six form fields are read from its body", async () => {
+    seed({ doc: null, link: { bytes_received: 5 * 1024 ** 3 - 5 } });
+    const key = reserve("00000000-0000-4000-8000-0000000000aa", PDF);
+    const over = await finalize(key, { title: "Skid GA" });
+    expect(over.status).toBe(429);
+    expect(deleted()).toEqual([key]);
+    seed({ doc: null });
+    reserve("00000000-0000-4000-8000-0000000000aa", PDF);
+    const res = await json("finalize", { uploadKey: key, fileName: "a.pdf", contentType: "application/pdf", fields: { title: "Skid GA", token: "x", file: "y", orgId: "evil" } });
+    expect(res.status).toBe(200);
+    const ins = db.writes.find((w) => w.table === "documents" && w.method === "insert")!;
+    expect(ins.args[0]).toMatchObject({ org_id: ORG, title: "Skid GA" });
+  });
+
+  it("a JSON step body is small: a large declared one is refused unread", async () => {
+    seed({ doc: null });
+    const res = await POST(new NextRequest("http://x/api/intake/upload?step=begin", {
+      method: "POST", body: "{}", headers: { "x-intake-token": TOKEN, "content-type": "application/json", "content-length": String(64 * 1024) },
+    }));
+    expect(res.status).toBe(413);
+  });
+
+  it("the multipart fallback names its begin (x-intake-begun): the attempt the begin counted is not counted again — once — and anything its PUT left is removed", async () => {
+    seed({ doc: null });
+    const { body } = await stage(PDF);
+    expect(rows("attempt")).toHaveLength(1);
+    const res = await upload({ title: "Skid GA" }, undefined, { "x-intake-begun": body.uploadKey });
+    expect(res.status).toBe(200);
+    expect(rows("attempt")).toHaveLength(1);
+    expect(rows("staged")).toEqual([]);
+    expect(deleted()).toContain(body.uploadKey);
+    // naming it again is an ordinary, counted attempt
+    seed({ doc: null });
+    db.tables.intake_attempts = [{ token_hash: HASH, ip: "unknown", outcome: "attempt", created_at: new Date().toISOString() }];
+    await upload({ title: "Other GA" }, { bytes: enc("%PDF-1.7\nother"), name: "o.pdf", type: "application/pdf" }, { "x-intake-begun": body.uploadKey });
+    expect(rows("attempt")).toHaveLength(2);
+    // a begin another token made is never this token's to claim
+    seed({ doc: null });
+    db.tables.intake_attempts = [];
+    reserve("00000000-0000-4000-8000-0000000000b1", null, { token_hash: "someone-else" });
+    await upload({ title: "Third GA" }, { bytes: enc("%PDF-1.7\nthird"), name: "t.pdf", type: "application/pdf" }, { "x-intake-begun": `${STAGING}00000000-0000-4000-8000-0000000000b1` });
+    expect(rows("attempt")).toHaveLength(1);
+    expect(rows("staged")).toHaveLength(1);
+  });
+
+  it("a begin that cannot presign keeps its reservation and hands the portal the key, so the fallback is counted once", async () => {
+    seed({ doc: null });
+    const { getSignedUrl } = await import("@aws-sdk/s3-request-presigner");
+    vi.mocked(getSignedUrl).mockRejectedValueOnce(new Error("no credentials"));
+    const res = await json("begin", { size: PDF.byteLength });
+    expect(res.status).toBe(503);
+    const b = await res.json();
+    expect(b).toMatchObject({ code: "direct_unavailable" });
+    expect(String(b.uploadKey).startsWith(STAGING)).toBe(true);
+    expect((await upload({ title: "Skid GA" }, undefined, { "x-intake-begun": b.uploadKey })).status).toBe(200);
+    expect(rows("attempt")).toHaveLength(1);
+  });
+
+  it("the portal uses the direct door (begin → PUT → finalize) and falls back to the multipart POST — naming the begin — when the door cannot presign, the browser cannot reach storage, or storage refuses ANY file the multipart door could take (review fix: up to the platform cap's upper reading, not 4 MiB)", () => {
+    const read = (f: string) => readFileSync(join(process.cwd(), f), "utf8");
+    const p = read("app/submit/[token]/page.tsx");
+    expect(p).toContain('fetch(`/api/intake/upload?step=${step}`');
+    expect(p).toContain("await putWithXhr(b.uploadUrl, file, b.contentType ?? \"application/octet-stream\");");
+    expect(p).toContain('const fin = await json("finalize", { uploadKey: b.uploadKey, fileName: file.name, contentType: file.type, fields });');
+    expect(p).toContain('if (b?.code === "direct_unavailable" || !b) return multipart(b?.uploadKey);');
+    expect(p).toContain("if (e instanceof UploadCancelledError) throw e;");
+    expect(p).toContain("if (/network error/i.test((e as Error).message)) return multipart(b.uploadKey);");
+    expect(p).toContain("if (file.size > MULTIPART_DOOR_MAX_BYTES) throw new Error(STORAGE_REFUSED);");
+    // the platform's own body cap answering the fallback (a 413 with no door body) is the storage sentence
+    expect(p).toContain("if (viaMultipart.res.status === 413 && !viaMultipart.body) throw new Error(STORAGE_REFUSED);");
+    expect(p).toContain("if (begunKey) headers[INTAKE_BEGUN_HEADER] = begunKey;");
+    // the threshold is the platform's ~4.5 MB body cap at its upper reading: a 4.0-4.4 MB file storage refused still goes through multipart
+    const cap = /const MULTIPART_DOOR_MAX_BYTES = ([\d.\s*]+);/.exec(p)?.[1] ?? "0";
+    const capBytes = cap.split("*").map((n) => Number(n.trim())).reduce((a, b) => a * b, 1);
+    expect(capBytes).toBe(4.5 * 1024 * 1024);
+    expect(capBytes).toBeGreaterThanOrEqual(4.5 * 1000 * 1000);
+    expect(p).not.toContain("MULTIPART_SAFE_BYTES");
+    expect((p.match(/await sendToDoor\(token, /g) ?? []).length).toBe(3);
+    expect(read("lib/storage.ts")).toMatch(/export function putWithXhr\(/);
+  });
+
+  it("the maintenance cron sweeps the staging root (no new cron entry): objects past the TTL, then their reservations", () => {
+    const src = (p: string) => readFileSync(join(process.cwd(), p), "utf8");
+    const c = src("app/api/cron/maintenance/route.ts");
+    expect(c).toContain('import { sweepIntakeStaging } from "@/lib/intakeStaging";');
+    expect(c).toContain("const staging = await sweepIntakeStaging(sb);");
+    expect(c).toContain("for (const e of staging.errors) intakeLine(`intake-staging: ${e}`);");
     const vercel = JSON.parse(src("vercel.json")) as { crons?: unknown[] };
     expect((vercel.crons ?? []).length).toBeLessThanOrEqual(2);
   });

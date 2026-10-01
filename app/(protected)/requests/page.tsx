@@ -47,6 +47,7 @@ import {
 import { loadCapabilityPolicy, type CapabilityPolicy } from '@/lib/capabilityPolicy';
 import { flaggedRequestTypes } from '@/lib/requestTypes';
 import { isTerminalTicketStatus } from '@/lib/ticketShed';
+import { csvLine } from '@/lib/csvSafe';
 
 // =========================================================================================
 // SECTION 1: TYPES & CONFIGURATION INTERFACES
@@ -573,7 +574,7 @@ export default function RequestPortal() {
     const headers = ['ID', 'Title', 'Unit', 'Status', 'Type', 'Requester', 'Drafter', 'Created', 'Modified'];
     const rows = filteredTickets.map(t => [
       t.ticketId,
-      `"${t.title.replace(/"/g, '""')}"`, // Correctly escape double quotes within the title
+      t.title,
       t.unit,
       t.status,
       t.requestType,
@@ -583,7 +584,9 @@ export default function RequestPortal() {
       toDate(t.lastModified).toISOString().split('T')[0]
     ]);
 
-    const csvContent = [headers.join(','), ...rows.map(r => r.join(','))].join('\n');
+    // PM-15: every cell through lib/csvSafe (quotes, commas, newlines AND a
+    // formula-leading title or requester name, written as text).
+    const csvContent = [csvLine(headers), ...rows.map(r => csvLine(r))].join('\n');
     const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
     const url = URL.createObjectURL(blob);
     const link = document.createElement('a');

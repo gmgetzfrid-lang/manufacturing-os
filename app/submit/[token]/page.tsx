@@ -12,7 +12,8 @@ import {
   UploadCloud, FileText, Loader2, AlertTriangle, CheckCircle2, Clock, Building2, Pen,
 } from "lucide-react";
 import { supabase } from "@/lib/supabase";
-import { INTAKE_TOKEN_HEADER, LINK_GONE_MESSAGE, LINK_INVALID_MESSAGE, PROJECT_CLOSED_MESSAGE } from "@/lib/intakeLinks";
+import { putWithXhr, UploadCancelledError } from "@/lib/storage";
+import { INTAKE_TOKEN_HEADER, INTAKE_BEGUN_HEADER, LINK_GONE_MESSAGE, LINK_INVALID_MESSAGE, PROJECT_CLOSED_MESSAGE } from "@/lib/intakeLinks";
 
 interface IntakeItem {
   docId: string; label: string; rev: string | null; status: string | null;
@@ -48,15 +49,78 @@ type DoorBody = { ok?: boolean; message?: string; note?: string; error?: string;
  *  (INTK-8). A browser that is also signed in to the app sends that session
  *  too, so an insider using a contractor's link is recorded as themselves
  *  (SEC-16). */
-async function postToDoor(token: string, form: FormData): Promise<{ res: Response; body: DoorBody }> {
+async function doorHeaders(token: string): Promise<Record<string, string>> {
   const headers: Record<string, string> = { [INTAKE_TOKEN_HEADER]: token };
   try {
     const { data } = await supabase.auth.getSession();
     if (data.session?.access_token) headers.Authorization = `Bearer ${data.session.access_token}`;
   } catch { /* no app session — the ordinary contractor case */ }
+  return headers;
+}
+
+async function postToDoor(token: string, form: FormData, begunKey?: string | null): Promise<{ res: Response; body: DoorBody }> {
+  const headers = await doorHeaders(token);
+  // INTK-15: the fallback for a direct upload names its begin — the door
+  // counted that attempt already and does not count it twice.
+  if (begunKey) headers[INTAKE_BEGUN_HEADER] = begunKey;
   const res = await fetch("/api/intake/upload", { method: "POST", body: form, headers });
   const body = (await res.json().catch(() => null)) as DoorBody;
   return { res, body };
+}
+
+/** The most the multipart door could ever take: the platform caps a
+ *  function's request body at 4.5 MB, multipart framing included. Read here
+ *  as 4.5 MiB — the upper reading — so no file the multipart door took
+ *  before the direct door existed is refused without trying it. */
+const MULTIPART_DOOR_MAX_BYTES = 4.5 * 1024 * 1024;
+/** Storage refused the PUT and the multipart door cannot take the file. */
+const STORAGE_REFUSED = "The file didn't reach storage — try again. If it keeps failing, contact your project contact.";
+
+type BeginBody = { ok?: boolean; uploadKey?: string; uploadUrl?: string; contentType?: string; error?: string; ref?: string; code?: string } | null;
+
+/** INTK-15: send a submission through the DIRECT door — the bytes go
+ *  straight to storage on a PUT the door presigned for this link (so the
+ *  100 MB limit is real), then the door checks the stored file (the same
+ *  type sniff, budget, review rules and notices as before) and files it.
+ *  The token travels in a header on both steps. The multipart POST is the
+ *  fallback, carrying the begin so the attempt is counted once: when the
+ *  door cannot presign; when the browser cannot reach storage (a network
+ *  error — no PUT CORS) at any size, a large file then getting the size
+ *  sentence; and when storage refuses the PUT (a 403, a 400, a 5xx, a
+ *  stall) for any file the multipart door could take — one the platform's
+ *  body cap then refuses (a 413 with no door answer) gets the storage
+ *  sentence, not the 100 MB one. */
+async function sendToDoor(token: string, file: File, fields: Record<string, string>): Promise<{ res: Response; body: DoorBody }> {
+  const multipart = (begunKey?: string | null) => {
+    const form = new FormData();
+    form.set("file", file);
+    for (const [k, v] of Object.entries(fields)) form.set(k, v);
+    return postToDoor(token, form, begunKey);
+  };
+  const json = async (step: "begin" | "finalize", payload: Record<string, unknown>) => fetch(`/api/intake/upload?step=${step}`, {
+    method: "POST", body: JSON.stringify(payload),
+    headers: { ...(await doorHeaders(token)), "Content-Type": "application/json" },
+  });
+  const begin = await json("begin", { fileName: file.name, size: file.size, contentType: file.type });
+  const b = (await begin.json().catch(() => null)) as BeginBody;
+  if (!begin.ok || !b?.ok || !b.uploadUrl || !b.uploadKey) {
+    // A refusal the door made (link, size, rate, budget) is the answer; an
+    // unavailable direct path is retried the old way.
+    if (b?.code === "direct_unavailable" || !b) return multipart(b?.uploadKey);
+    return { res: begin, body: b };
+  }
+  try {
+    await putWithXhr(b.uploadUrl, file, b.contentType ?? "application/octet-stream");
+  } catch (e) {
+    if (e instanceof UploadCancelledError) throw e;
+    if (/network error/i.test((e as Error).message)) return multipart(b.uploadKey);
+    if (file.size > MULTIPART_DOOR_MAX_BYTES) throw new Error(STORAGE_REFUSED);
+    const viaMultipart = await multipart(b.uploadKey);
+    if (viaMultipart.res.status === 413 && !viaMultipart.body) throw new Error(STORAGE_REFUSED);
+    return viaMultipart;
+  }
+  const fin = await json("finalize", { uploadKey: b.uploadKey, fileName: file.name, contentType: file.type, fields });
+  return { res: fin, body: (await fin.json().catch(() => null)) as DoorBody };
 }
 
 /** The sentence the contractor sees for a refused upload: the server's own
@@ -120,12 +184,11 @@ export default function IntakePortal({ params }: { params: Promise<{ token: stri
     if (mode === "rev" && (!targetDoc || !revLabel.trim())) { setMsg({ tone: "err", text: "Pick the document and give the new revision a label." }); return; }
     setBusy(true); setMsg(null);
     try {
-      const form = new FormData();
-      form.set("file", file);
-      if (mode === "rev") { form.set("docId", targetDoc); form.set("revLabel", revLabel.trim()); }
-      else { form.set("title", title.trim()); if (number.trim()) form.set("number", number.trim()); if (revLabel.trim()) form.set("revLabel", revLabel.trim()); }
-      if (changeNote.trim()) form.set("changeNote", changeNote.trim());
-      const { res, body } = await postToDoor(token, form);
+      const fields: Record<string, string> = {};
+      if (mode === "rev") { fields.docId = targetDoc; fields.revLabel = revLabel.trim(); }
+      else { fields.title = title.trim(); if (number.trim()) fields.number = number.trim(); if (revLabel.trim()) fields.revLabel = revLabel.trim(); }
+      if (changeNote.trim()) fields.changeNote = changeNote.trim();
+      const { res, body } = await sendToDoor(token, file, fields);
       if (!res.ok || !body?.ok) throw new Error(doorError(res, body));
       setMsg({ tone: "ok", text: `${body.message ?? "Submitted."}${body.note ? ` ${body.note}` : ""}` });
       setFile(null); setTitle(""); setNumber(""); setRevLabel(""); setChangeNote("");
@@ -139,10 +202,7 @@ export default function IntakePortal({ params }: { params: Promise<{ token: stri
     if (!f) return;
     setRedlineBusy(ticketRef); setMsg(null);
     try {
-      const form = new FormData();
-      form.set("file", f);
-      form.set("ticketId", ticketRef);
-      const { res, body } = await postToDoor(token, form);
+      const { res, body } = await sendToDoor(token, f, { ticketId: ticketRef });
       if (!res.ok || !body?.ok) throw new Error(doorError(res, body));
       setMsg({ tone: "ok", text: body.message ?? "Redlines sent." });
       await refresh();
@@ -168,10 +228,7 @@ export default function IntakePortal({ params }: { params: Promise<{ token: stri
       if (!file) { setMsg({ tone: "err", text: "Choose your quote PDF first." }); return; }
       setBusy(true); setMsg(null);
       try {
-        const form = new FormData();
-        form.set("file", file);
-        if (changeNote.trim()) form.set("changeNote", changeNote.trim());
-        const { res, body } = await postToDoor(token, form);
+        const { res, body } = await sendToDoor(token, file, changeNote.trim() ? { changeNote: changeNote.trim() } : {});
         if (!res.ok || !body?.ok) throw new Error(doorError(res, body));
         setMsg({ tone: "ok", text: body.message ?? "Quote received." });
         setFile(null); setChangeNote("");

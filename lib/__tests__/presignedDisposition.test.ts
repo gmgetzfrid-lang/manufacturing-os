@@ -260,29 +260,45 @@ describe("census — every presigned GET issuer under app/api and lib signs a di
       return /\.tsx?$/.test(p) ? [p] : [];
     });
   }
-  // The two known bare issuers, both SEC-18 and both owned elsewhere:
-  // /api/storage/resolve (the archive-aware opener — drafting-flow DF-P11,
-  // which re-checks its ACL after document-control P2) and
-  // lib/dataExport.ts (the data-export envelope's per-file URLs —
-  // admin-and-org P2, the export contract). Each adopts
-  // presignedGetDisposition in its own package. Named here so they stay
-  // visible and nothing joins them.
-  const KNOWN_UNSIGNED = new Set(["app/api/storage/resolve/route.ts", "lib/dataExport.ts"]);
-  it("download-url carries one (the transmittal portal no longer signs — it streams, TRX-5); nothing new signs a bare GetObjectCommand", () => {
+  // No known exception (SEC-18, projects Round G J11): /api/storage/resolve
+  // (the archive-aware opener) and lib/dataExport.ts (the data-export
+  // envelope's per-file URLs) — the two bare issuers DEC-49 named — now
+  // spread presignedGetDisposition's overrides like download-url does
+  // (lib/__tests__/sec18ResolveExportDisposition.test.ts signs through both).
+  const SIGNED_ISSUERS = ["app/api/storage/download-url/route.ts", "app/api/storage/resolve/route.ts", "lib/dataExport.ts"];
+  it("download-url, resolve and the export envelope carry one (the transmittal portal no longer signs — it streams, TRX-5); nothing signs a bare GetObjectCommand", () => {
     const issuers: string[] = [];
     const bare: string[] = [];
+    // The text of one getSignedUrl( … ) call, to its balancing paren.
+    const callsIn = (src: string): string[] => {
+      const out: string[] = [];
+      for (let at = src.indexOf("getSignedUrl("); at >= 0; at = src.indexOf("getSignedUrl(", at + 1)) {
+        let depth = 0, end = src.length;
+        for (let i = at; i < src.length; i++) {
+          if (src[i] === "(") depth++;
+          else if (src[i] === ")") { depth--; if (depth === 0) { end = i + 1; break; } }
+        }
+        out.push(src.slice(at, end));
+      }
+      return out;
+    };
+    const putOnly: string[] = [];
     for (const file of [...walk(join(root, "app", "api")), ...walk(join(root, "lib"))]) {
       const src = readFileSync(file, "utf8");
       if (!/getSignedUrl\(/.test(src) || !/new GetObjectCommand\(/.test(src)) continue;
       const rel = file.replace(root + "/", "");
+      // A file whose every signature is a PUT (projects-and-cost INTK-15: the
+      // intake door presigns its staging PUT and READS staged objects with
+      // GetObjectCommand through r2.send — it signs no GET) is not an issuer.
+      const calls = callsIn(src).filter((c) => c !== "getSignedUrl(");
+      if (calls.length > 0 && calls.every((c) => /new PutObjectCommand\(/.test(c))) { putOnly.push(rel); continue; }
       issuers.push(rel);
-      if (!/ResponseContentDisposition|\.\.\.disposition\.overrides/.test(src) && !KNOWN_UNSIGNED.has(rel)) bare.push(rel);
+      if (!/ResponseContentDisposition|\.\.\.disposition\.overrides/.test(src)) bare.push(rel);
     }
-    expect(issuers).toEqual(expect.arrayContaining([
-      "app/api/storage/download-url/route.ts", ...KNOWN_UNSIGNED,
-    ]));
+    expect(issuers).toEqual(expect.arrayContaining(SIGNED_ISSUERS));
     expect(issuers).not.toContain("app/api/transmittal/route.ts");
     expect(bare).toEqual([]);
+    expect(putOnly).toEqual(["app/api/intake/upload/route.ts"]);
   });
 });
 

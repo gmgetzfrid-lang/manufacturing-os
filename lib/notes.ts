@@ -14,6 +14,7 @@
 
 import { supabase } from "@/lib/supabase";
 import { logAuditAction } from "@/lib/audit";
+import { csvCell } from "@/lib/csvSafe";
 
 export interface Note {
   id: string;
@@ -1054,10 +1055,9 @@ export function reportToMarkdown(r: ReportData): string {
 /** The report as CSV — for the people (and bosses) who live in Excel.
  *  One flat sheet: Section, Date, Item, Detail, Days, Topic. */
 export function reportToCsv(r: ReportData): string {
-  const esc = (v: string | number | null | undefined): string => {
-    const s = String(v ?? "");
-    return /[",\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
-  };
+  // PM-15: every typed cell through lib/csvSafe (PM-10) — a note led by
+  // = + - @ is written as text, never a live formula.
+  const esc = (v: string | number | null | undefined): string => csvCell(v ?? "");
   const rows: string[] = ["Section,Date,Item,Detail,Days,Topic"];
   for (const g of r.achievements) {
     for (const e of g.items) {

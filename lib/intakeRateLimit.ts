@@ -85,11 +85,15 @@ type AttemptClient = { from: (table: string) => any };
  *  marks the maintenance cron's digest for the link: a BOUNDARY for the
  *  fold count (what it announced is never counted again) but not a notice
  *  in the window — noticesInWindow counts `notified` only, so the link's
- *  next submission after a digest is told at once, never folded behind it. */
+ *  next submission after a digest is told at once, never folded behind it.
+ *  INTK-15 (J11): `finalize` is a direct upload's finalize step — its own
+ *  window, per token and per IP, with the same limits (a begin is the
+ *  upload's `attempt`); `staged` is a begin's reservation of its declared
+ *  bytes (lib/intakeStaging.ts — never a rate-window row). */
 export const ATTEMPT_OUTCOME = {
   attempt: "attempt", notified: "notified", suppressed: "suppressed",
   suppressedPublished: "suppressed_published", suppressedDisplaced: "suppressed_displaced",
-  digested: "digested",
+  digested: "digested", finalize: "finalize", staged: "staged",
 } as const;
 
 /** SEC-8 dw2: the most notices one link sends the team per window, forced
@@ -101,28 +105,31 @@ export type RateVerdict = { limited: false } | { limited: true; retryAfterSec: n
 
 const HOUR_MS = 3600_000;
 
-async function countSince(client: AttemptClient, col: "token_hash" | "ip", value: string, sinceIso: string): Promise<number | null> {
+async function countSince(client: AttemptClient, col: "token_hash" | "ip", value: string, sinceIso: string, outcome: string): Promise<number | null> {
   const { count, error } = await client.from("intake_attempts")
     .select("id", { count: "exact", head: true })
-    .eq(col, value).eq("outcome", ATTEMPT_OUTCOME.attempt)
+    .eq(col, value).eq("outcome", outcome)
     .gte("created_at", sinceIso);
   if (error) return null;
   return typeof count === "number" ? count : 0;
 }
 
-/** Over the per-token or per-IP hourly window? Fails OPEN on any error. */
+/** Over the per-token or per-IP hourly window? Fails OPEN on any error.
+ *  `outcome` names the window (default `attempt`; a direct upload's
+ *  finalize step has its own, `finalize`). */
 export async function checkIntakeRate(client: AttemptClient, input: {
-  tokenHash: string; ip: string; limits: IntakeLimits; now?: number;
+  tokenHash: string; ip: string; limits: IntakeLimits; now?: number; outcome?: string;
 }): Promise<RateVerdict> {
   try {
     const since = new Date((input.now ?? Date.now()) - HOUR_MS).toISOString();
-    const perToken = await countSince(client, "token_hash", input.tokenHash, since);
+    const outcome = input.outcome ?? ATTEMPT_OUTCOME.attempt;
+    const perToken = await countSince(client, "token_hash", input.tokenHash, since, outcome);
     if (perToken != null && perToken >= input.limits.perTokenPerHour) {
       return { limited: true, retryAfterSec: 3600, message: `Too many uploads on this link in the last hour (limit ${input.limits.perTokenPerHour}). Wait a while and try again — nothing from this attempt was stored.` };
     }
     // An unknown address is not everyone's address — never pool them.
     if (input.ip !== "unknown") {
-      const perIp = await countSince(client, "ip", input.ip, since);
+      const perIp = await countSince(client, "ip", input.ip, since, outcome);
       if (perIp != null && perIp >= input.limits.perIpPerHour) {
         return { limited: true, retryAfterSec: 3600, message: `Too many uploads from your network in the last hour (limit ${input.limits.perIpPerHour}). Wait a while and try again — nothing from this attempt was stored.` };
       }

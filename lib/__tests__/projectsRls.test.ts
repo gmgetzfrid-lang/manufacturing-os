@@ -107,6 +107,7 @@ const TABLES = [
   "change_orders", "project_checklists", "checklist_items", "turnover_items", "punch_items",
   "project_parties", "cost_accounts", "cost_documents", "cost_entries",
   "project_documents", "projects", "project_activity", "company_events", "turnover_review_events",
+  "audit_logs",
 ];
 
 /** A migration another package ships, replayed at its number (a merge fixture). */
@@ -337,3 +338,36 @@ describe("PM-7 — the project feed", () => {
     expect([...final.get("project_activity")!.values()].filter((p) => p.cmd === "UPDATE" || p.cmd === "ALL")).toEqual([]);
   });
 });
+
+// projects Round G (J11) — projects-tab SEC-20: an audit row about a private
+// project (resource_type 'project' / 'cost') is readable only by those who can
+// read the project, and by the audit roles. 20261142 re-creates the RESTRICTIVE
+// overlay from 20261063 with one added clause (the lineDiff is
+// prjRoundGJ11Migrations.test.ts's); the census pins the final policy set.
+describe("SEC-20 — audit rows about a private project follow the project's visibility", () => {
+  it("the final audit_logs set: one permissive member read, one insert, and ONE restrictive overlay that gates project / cost rows on audit_row_project_visible", () => {
+    const set = pol("audit_logs");
+    const restrictive = set.filter(([, p]) => !p.permissive);
+    expect(restrictive.map(([n]) => n)).toEqual(["audit_logs_admin_trail"]);
+    const [, trail] = restrictive[0];
+    expect(trail.file).toBe("supabase/migrations/20261142_prj_roundG_project_audit_rows.sql");
+    expect(trail.cmd).toBe("SELECT");
+    // the audit roles read every row (admin.audit_view through the evaluator) …
+    expect(trail.body).toMatch(/org_capability_allows\(org_id, 'admin\.audit_view', auth\.uid\(\)\)\s*\n\s*OR NOT \(/);
+    // … anyone else: not the org-level trail AND the row's project is visible
+    expect(trail.body).toMatch(/\)\s*\n\s*AND \(COALESCE\(resource_type, ''\) NOT IN \('project', 'cost', 'project_checklist', 'turnover_item'\)\s*\n\s*OR audit_row_project_visible\(resource_type, resource_id\)\)\s*\n\s*\)\s*$/);
+    const permissiveReads = set.filter(([, p]) => p.permissive && (p.cmd === "SELECT" || p.cmd === "ALL"));
+    expect(permissiveReads.map(([n]) => n)).toEqual(["audit_logs_org_access"]);
+    expect(set.filter(([, p]) => p.cmd === "INSERT").map(([n]) => n)).toEqual(["audit_logs_insert"]);
+  });
+  it("before 20261142 the overlay narrowed only the org-level trail — a project / cost row was any member's (the finding, reproduced)", () => {
+    const saved = files.splice(0);
+    files.push(...saved.filter((f) => !/\/\d{8}/.test(f) || f.split("/").pop()! < "20261142"));
+    const before = replay();
+    files.splice(0, files.length, ...saved);
+    const trail = before.get("audit_logs")!.get("audit_logs_admin_trail")!;
+    expect(trail.file).toBe("supabase/migrations/20261063_rp_roundE_audit_view_capability.sql");
+    expect(trail.body).not.toMatch(/audit_row_project_visible/);
+  });
+});
+

@@ -18,7 +18,7 @@
 import React, { useCallback, useEffect, useRef, useState } from "react";
 import {
   Link2, Loader2, Check, X, UploadCloud, Copy, Ban, ShieldCheck, Clock,
-  FilePlus2, Search,
+  FilePlus2, Search, RotateCcw,
 } from "lucide-react";
 import { supabase } from "@/lib/supabase";
 import {
@@ -27,7 +27,11 @@ import {
 } from "@/lib/reviewControl";
 import { effectiveDocClassForDocument } from "@/lib/docClass";
 import { appConfirm, appPrompt } from "@/components/providers/DialogProvider";
-import { INTAKE_LINK_DEFAULT_DAYS, INTAKE_LINK_MAX_DAYS, intakeExpiryFor } from "@/lib/intakeLinks";
+import {
+  INTAKE_LINK_DEFAULT_DAYS, INTAKE_LINK_MAX_DAYS, intakeExpiryFor,
+  newIntakeToken, intakePortalPath, linkCredentialView, firstReadWithColumns, reissueIntakeLink,
+} from "@/lib/intakeLinks";
+import { describeProjectSweep } from "@/lib/checklists";
 import type { ReviewControl } from "@/types/schema";
 
 // SEC-5: the date picker works in the user's LOCAL calendar (the expiry
@@ -43,7 +47,10 @@ import TransitionInPanel from "@/components/projects/TransitionInPanel";
 import { flagCollisionToDrafting, TransitionCandidate, TransitionImpact } from "@/lib/transitionIn";
 
 interface IntakeLink {
-  id: string; token: string; companyName: string; contactEmail: string | null;
+  /** SEC-19: the full token only where the database still stores it (before
+   *  20261141); otherwise null — the address is shown once, at mint or
+   *  re-issue, and `tokenPrefix` tells two links apart. */
+  id: string; token: string | null; tokenPrefix: string | null; companyName: string; contactEmail: string | null;
   allowAutoSupersede: boolean; expiresAt: string | null; revokedAt: string | null;
   submissionCount: number; lastUsedAt: string | null;
   assignedDocIds: string[];
@@ -64,6 +71,9 @@ export default function IntakePanel({ orgId, projectId, canManage, uid, userEmai
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState<string | null>(null);
   const [msg, setMsg] = useState<string | null>(null);
+  /** SEC-19: link id → the address minted or re-issued in THIS session — the
+   *  only time it is known (the database keeps its SHA-256, 20261141). */
+  const [freshUrls, setFreshUrls] = useState<Map<string, string>>(new Map());
 
   // Assign-existing-documents picker (per link)
   const [assignOpen, setAssignOpen] = useState<string | null>(null);
@@ -87,22 +97,27 @@ export default function IntakePanel({ orgId, projectId, canManage, uid, userEmai
       // the Costs tab's (with its own expiry and revoke), and shown here it
       // would offer an "Assign docs" that does nothing. Tolerant of a
       // database without the purpose column (20261013).
-      const linkCols = "id, token, company_name, contact_email, allow_auto_supersede, expires_at, revoked_at, submission_count, last_used_at, assigned_doc_ids";
+      // SEC-19: the list reads the token's PREFIX, never the token (20261141
+      // keeps only its hash); before that migration, the plain column.
+      const linkCols = "id, company_name, contact_email, allow_auto_supersede, expires_at, revoked_at, submission_count, last_used_at, assigned_doc_ids";
+      const readLinks = (cred: "token_prefix" | "token", byPurpose: boolean) => byPurpose
+        ? supabase.from("project_intake_links").select(`${linkCols}, ${cred}`)
+            .eq("project_id", projectId).eq("purpose", "documents").order("created_at", { ascending: false })
+        : supabase.from("project_intake_links").select(`${linkCols}, ${cred}`)
+            .eq("project_id", projectId).order("created_at", { ascending: false });
       const [linksRead, { data: proj }, { data: ls }] = await Promise.all([
-        supabase.from("project_intake_links").select(linkCols)
-          .eq("project_id", projectId).eq("purpose", "documents").order("created_at", { ascending: false }),
+        firstReadWithColumns<Array<Record<string, unknown>>>([
+          () => readLinks("token_prefix", true), () => readLinks("token", true),
+          () => readLinks("token_prefix", false), () => readLinks("token", false),
+        ]),
         supabase.from("projects").select("intake_library_id, intake_collection_id").eq("id", projectId).maybeSingle(),
         supabase.from("libraries").select("id, name").eq("org_id", orgId).order("name"),
       ]);
-      let lk = linksRead.data;
-      if (linksRead.error && /purpose/.test(linksRead.error.message ?? "")) {
-        ({ data: lk } = await supabase.from("project_intake_links").select(linkCols)
-          .eq("project_id", projectId).order("created_at", { ascending: false }));
-      } else if (linksRead.error) {
-        throw new Error(linksRead.error.message);
-      }
+      if (linksRead.error) throw new Error(linksRead.error.message ?? "the links could not be read");
+      const lk = linksRead.data;
       const linkRows = (((lk ?? []) as Array<Record<string, unknown>>)).map((r) => ({
-        id: String(r.id), token: String(r.token), companyName: String(r.company_name),
+        id: String(r.id), token: linkCredentialView(r).token, tokenPrefix: linkCredentialView(r).prefix,
+        companyName: String(r.company_name),
         contactEmail: (r.contact_email as string | null) ?? null,
         allowAutoSupersede: !!r.allow_auto_supersede,
         expiresAt: (r.expires_at as string | null) ?? null,
@@ -181,7 +196,9 @@ export default function IntakePanel({ orgId, projectId, canManage, uid, userEmai
         const { error: libErr } = await supabase.from("projects").update({ intake_library_id: lib }).eq("id", projectId);
         if (libErr) throw new Error(`Couldn't set the intake library: ${libErr.message}`);
       }
-      const token = (crypto.randomUUID() + crypto.randomUUID()).replace(/-/g, "").slice(0, 40);
+      // SEC-19: the database stores only the token's SHA-256 (20261141) — this
+      // is the one moment the address exists in full; it is shown below once.
+      const token = newIntakeToken();
       const { data: created, error } = await supabase.from("project_intake_links").insert({
         org_id: orgId, project_id: projectId, token,
         company_name: company.trim(), contact_email: email.trim() || null,
@@ -198,13 +215,33 @@ export default function IntakePanel({ orgId, projectId, canManage, uid, userEmai
         org_id: orgId, user_id: uid, user_email: userEmail ?? null,
         details: { company: company.trim(), trusted, expiresAt: expiry.iso, projectId },
       });
+      const createdId = String((created as { id: string }).id);
+      setFreshUrls((prev) => new Map(prev).set(createdId, portalUrl(token)));
       setCompany(""); setEmail(""); setExpires(isoDateInDays(INTAKE_LINK_DEFAULT_DAYS)); setTrusted(false);
       await refresh();
       setMsg(auditErr
         ? `Link created, but its audit record failed: ${auditErr.message}`
-        : "Link created — copy it below and send it to the company.");
+        : "Link created — copy it below now and send it to the company. Its address is shown only this once; if it is lost, re-issue the link.");
     } catch (e) { setMsg((e as Error).message); }
     finally { setBusy(null); }
+  };
+
+  /** SEC-19: a lost address is re-issued — a new token on the same link —
+   *  never read back. The old address stops working. */
+  const reissue = async (l: IntakeLink) => {
+    if (!(await appConfirm({ message: `Re-issue ${l.companyName}'s submit link? The address they have stops working; you get a new one to send them. Their submissions, assignments and history stay with the link.` }))) return;
+    setBusy(l.id); setMsg(null);
+    try {
+      const res = await reissueIntakeLink({
+        linkId: l.id, orgId, projectId, company: l.companyName, actorId: uid, actorEmail: userEmail ?? null,
+      });
+      if (!res.ok) { setMsg(res.error); await refresh(); return; }
+      setFreshUrls((prev) => new Map(prev).set(l.id, portalUrl(res.token)));
+      await refresh();
+      setMsg(res.auditError
+        ? `${l.companyName}'s link was re-issued, but its audit record failed: ${res.auditError}`
+        : `${l.companyName}'s link was re-issued — copy the new address below now; it is shown only this once.`);
+    } finally { setBusy(null); }
   };
 
   const revoke = async (l: IntakeLink) => {
@@ -355,15 +392,18 @@ export default function IntakePanel({ orgId, projectId, canManage, uid, userEmai
       // still checks authority and holds). A required one: the roster must
       // be complete.
       const res = await finalizeReviewedRevision({
-        orgId, documentId: p.docId, actorId: uid, actorName: userEmail ?? "Reviewer",
+        orgId, documentId: p.docId, actorId: uid, actorName: userEmail ?? "Reviewer", actorEmail: userEmail ?? null,
         requireRosterComplete: rosterRequired,
       });
       if (!res.published) throw new Error(finalizeReasonMessage(res.reason));
       // Name what actually became current — never the stale row's label.
       const { data: after } = await supabase.from("documents").select("rev, current_version_id").eq("id", p.docId).maybeSingle();
-      setMsg(String(after?.current_version_id ?? "") === p.pendingVersionId
+      // UX-16: the approval swept the project's open checklists — say what it did.
+      const swept = res.evidenceSweep ? describeProjectSweep(res.evidenceSweep) : null;
+      setMsg((String(after?.current_version_id ?? "") === p.pendingVersionId
         ? `${p.label} Rev ${String(after?.rev ?? p.revLabel ?? "")} approved — it is now the current revision.`
-        : `${p.label}: the approval went through, but the current revision is not the submission you approved — refresh and check the document.`);
+        : `${p.label}: the approval went through, but the current revision is not the submission you approved — refresh and check the document.`)
+        + (swept ? ` ${swept.text}` : ""));
       await refresh();
     } catch (e) { setMsg((e as Error).message); }
     finally { setBusy(null); }
@@ -421,7 +461,10 @@ export default function IntakePanel({ orgId, projectId, canManage, uid, userEmai
   };
 
   const portalUrl = (token: string) =>
-    `${typeof window !== "undefined" ? window.location.origin : ""}/submit/${token}`;
+    `${typeof window !== "undefined" ? window.location.origin : ""}${intakePortalPath(token)}`;
+  /** The address a list row can copy: minted / re-issued this session, or a
+   *  token the database still stores (before 20261141). Otherwise none. */
+  const knownUrl = (l: IntakeLink): string | null => freshUrls.get(l.id) ?? (l.token ? portalUrl(l.token) : null);
 
   // Transition-in flag: collision/overlap → drafting ticket in the
   // assignment queue, pre-loaded with both sides of the conflict.
@@ -499,9 +542,15 @@ export default function IntakePanel({ orgId, projectId, canManage, uid, userEmai
                 <span className="text-[var(--color-text-faint)]">{l.submissionCount} submission{l.submissionCount === 1 ? "" : "s"}{l.expiresAt ? ` · expires ${new Date(l.expiresAt).toLocaleDateString()}` : ""}{l.revokedAt ? " · REVOKED" : ""}</span>
                 {!l.revokedAt && (
                   <span className="ml-auto flex items-center gap-1">
-                    {canManage && (!l.expiresAt || Date.parse(l.expiresAt) > Date.now()) && (
-                      <button onClick={() => { void navigator.clipboard.writeText(portalUrl(l.token)); setMsg(`Copied ${l.companyName}'s link.`); }} className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md border border-[var(--color-border-strong)] font-bold hover:border-[var(--color-accent-ring)]"><Copy className="w-3 h-3" /> Copy link</button>
-                    )}
+                    {l.tokenPrefix && <span className="font-mono text-[10px] text-[var(--color-text-faint)]" title="The first characters of this link's address — the full address is shown only when the link is created or re-issued">{l.tokenPrefix}…</span>}
+                    {canManage && (!l.expiresAt || Date.parse(l.expiresAt) > Date.now()) && (() => {
+                      const url = knownUrl(l);
+                      return url ? (
+                        <button onClick={() => { void navigator.clipboard.writeText(url); setMsg(`Copied ${l.companyName}'s link.`); }} className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md border border-[var(--color-border-strong)] font-bold hover:border-[var(--color-accent-ring)]"><Copy className="w-3 h-3" /> Copy link</button>
+                      ) : (
+                        <button onClick={() => void reissue(l)} disabled={busy === l.id} title="The address is not stored (only its fingerprint is). Re-issue to get a new one — the old one stops working." className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md border border-[var(--color-border-strong)] font-bold hover:border-[var(--color-accent-ring)]"><RotateCcw className="w-3 h-3" /> Re-issue</button>
+                      );
+                    })()}
                     {canManage && (
                       <button onClick={() => { setAssignOpen(assignOpen === l.id ? null : l.id); setAssignQ(""); setAssignResults([]); }} className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md border border-[var(--color-border-strong)] font-bold hover:border-[var(--color-accent-ring)]">
                         <FilePlus2 className="w-3 h-3" /> Assign docs

@@ -35,10 +35,11 @@
 import React, { useMemo, useState } from "react";
 import {
   FileText, UploadCloud, Loader2, Sparkles, Trophy, Link2, Copy, AlertTriangle,
-  CheckCircle2, ScanSearch, Ban, Receipt, ChevronDown, ChevronRight, ExternalLink, Pencil,
+  CheckCircle2, ScanSearch, Ban, Receipt, ChevronDown, ChevronRight, ExternalLink, Pencil, RotateCcw,
 } from "lucide-react";
 import Link from "next/link";
 import { supabase } from "@/lib/supabase";
+import { newIntakeToken, intakePortalPath, linkCredentialView, firstReadWithColumns, reissueIntakeLink } from "@/lib/intakeLinks";
 import { listCompanies, listBarredCompanies, getCompany, type Company } from "@/lib/companies";
 import { fmtMoney, type CostAccount, type Actor } from "@/lib/costs";
 import { getFileUrl } from "@/lib/storage";
@@ -462,6 +463,9 @@ export default function QuotesPanel({ orgId, projectId, canManage, actor, accoun
                       if (!res.ok) setErr(res.error ?? "Couldn't post."); else onChanged();
                     }} label="Post as actual" />
                 )}
+                {canManage && typedTotalUnread(doc) && (
+                  <ReadButton busy={busy === doc.id} onClick={() => void readDoc(doc)} />
+                )}
                 {canManage && doc.status === "parsed" && (
                   <button onClick={() => void typeTotal(doc)} title="Correct the amount by hand"
                     className="inline-flex items-center gap-0.5 text-[10px] font-bold text-[var(--color-text-muted)] hover:text-[var(--color-text)]">
@@ -503,7 +507,7 @@ function BidGroup({ group, docs: groupDocs, allDocs, accounts, companies, barred
     for (const d of groupDocs) {
       if (d.status === "void" || d.status === "draft") continue;
       const q = parsedQuoteFrom(d);
-      if (q) out.push({ doc: d, quote: withHumanTotal(q, d.totalAmount, d.currency) });
+      if (q) out.push({ doc: d, quote: bidFromRow(d, q) });
       else if ((d.totalAmount ?? 0) > 0) {
         out.push({ doc: d, quote: priceOnlyQuote({ id: d.id, vendorName: d.vendorName ?? d.fileName ?? "Bid", total: d.totalAmount!, currency: d.currency }) });
       }
@@ -830,6 +834,13 @@ function BidGroup({ group, docs: groupDocs, allDocs, accounts, companies, barred
                                   ? "The AI couldn't read line detail from this file — a typed total, shown in its own currency."
                                   : "The AI couldn't read line detail from this file — this field compares every bid on price alone, so it is scored and ranked like the others."}>typed total — price only</div>
                             )}
+                            {/* COST-15: a total typed before any read can still have its
+                                line items read — the extraction lands BESIDE the typed
+                                total, which stays the scored and awarded number (a
+                                differing read shows as "AI read …"). */}
+                            {doc && canManage && !awarded && typedTotalUnread(doc) && (
+                              <div className="mt-0.5"><ReadButton busy={busy === doc.id} onClick={() => void readDoc(doc)} /></div>
+                            )}
                             <ReadExtentChip extras={ext} status={doc?.status ?? "parsed"} />
                           </td>
                           <td className="px-3 py-2 text-right tabular-nums">
@@ -1028,6 +1039,31 @@ function CompanyPicker({ companies, value, suggestion, onChange }: {
   );
 }
 
+/** COST-15: a document whose total was typed before any read — `parsed`
+ *  with no extraction. The route reads it and saves the extraction beside
+ *  the typed total (never replacing it). */
+function typedTotalUnread(doc: CostDocument): boolean {
+  return doc.status === "parsed" && doc.parsed == null;
+}
+
+/** ONE number per bid (BID-1): the row's human-visible total overlays the
+ *  extraction. COST-15: a read saved BESIDE a total typed before any read
+ *  leaves the row's currency as the person left it — and a row with no
+ *  currency whose extraction names one is exactly that case (an ordinary
+ *  read writes its currency to the row, a correction keeps or restates it).
+ *  The typed figure's currency stays UNKNOWN, as it was before the read and
+ *  as posting sees it: the read's currency never becomes the bid's, and the
+ *  read stays on the bid as what the AI read. */
+function bidFromRow(d: CostDocument, q: ParsedQuote): ParsedQuote {
+  const bid = withHumanTotal(q, d.totalAmount, d.currency);
+  const readCurrency = isoCurrency(q.currency);
+  if (isoCurrency(d.currency) != null || readCurrency == null || !((d.totalAmount ?? 0) > 0)) return bid;
+  return {
+    ...bid, total: d.totalAmount!, currency: null, totalSource: "human",
+    extractedTotal: bid.extractedTotal ?? q.total, extractedCurrency: bid.extractedCurrency ?? readCurrency,
+  };
+}
+
 function ReadButton({ busy, onClick }: { busy: boolean; onClick: () => void }) {
   return (
     <button onClick={onClick} disabled={busy}
@@ -1158,7 +1194,9 @@ function UploadRow({ orgId, projectId, actor, kind, existingGroups, parties, onD
 // ── Quote links: the contractor door for prices ──────────────────────────
 
 interface QuoteLink {
-  id: string; token: string; companyName: string; rfqGroup: string | null;
+  /** SEC-19: the full token only before 20261141; then null — the address
+   *  is known only right after a mint or a re-issue (`freshUrls`). */
+  id: string; token: string | null; tokenPrefix: string | null; companyName: string; rfqGroup: string | null;
   revokedAt: string | null; expiresAt: string | null; submissionCount: number;
 }
 
@@ -1175,15 +1213,22 @@ function QuoteLinksSection({ orgId, projectId, actor, existingGroups, setErr }: 
   const [saving, setSaving] = useState(false);
   const [revoking, setRevoking] = useState<string | null>(null);
   const [copied, setCopied] = useState<string | null>(null);
+  /** SEC-19: link id → the address minted or re-issued in THIS session — the
+   *  only time it is known (the database keeps its SHA-256, 20261141). */
+  const [freshUrls, setFreshUrls] = useState<Map<string, string>>(new Map());
+  const [reissuing, setReissuing] = useState<string | null>(null);
 
   const refresh = React.useCallback(async () => {
-    const { data, error } = await supabase.from("project_intake_links")
-      .select("id, token, company_name, rfq_group, revoked_at, expires_at, submission_count, purpose")
+    // SEC-19: the token's prefix, never the token; the plain column only
+    // before 20261141.
+    const read = (cred: "token_prefix" | "token") => supabase.from("project_intake_links")
+      .select(`id, ${cred}, company_name, rfq_group, revoked_at, expires_at, submission_count, purpose`)
       .eq("project_id", projectId).eq("purpose", "quote")
       .order("created_at", { ascending: false });
+    const { data, error } = await firstReadWithColumns<Array<Record<string, unknown>>>([() => read("token_prefix"), () => read("token")]);
     if (error) { setLinks([]); return; } // pre-migration: purpose column absent
     setLinks((((data ?? []) as Array<Record<string, unknown>>)).map((r) => ({
-      id: String(r.id), token: String(r.token),
+      id: String(r.id), token: linkCredentialView(r).token, tokenPrefix: linkCredentialView(r).prefix,
       companyName: String(r.company_name ?? ""),
       rfqGroup: (r.rfq_group as string | null) ?? null,
       revokedAt: (r.revoked_at as string | null) ?? null,
@@ -1207,7 +1252,9 @@ function QuoteLinksSection({ orgId, projectId, actor, existingGroups, setErr }: 
     }
     setSaving(true); setErr(null);
     try {
-      const token = (crypto.randomUUID() + crypto.randomUUID()).replace(/-/g, "").slice(0, 40);
+      // SEC-19: the database stores only the token's SHA-256 (20261141) —
+      // the address exists in full only now, and is kept for this session.
+      const token = newIntakeToken();
       const { data: created, error } = await supabase.from("project_intake_links").insert({
         org_id: orgId, project_id: projectId, token,
         company_name: company.trim(),
@@ -1224,6 +1271,7 @@ function QuoteLinksSection({ orgId, projectId, actor, existingGroups, setErr }: 
         details: { company: company.trim(), rfqGroup: snapRfqGroup(group, snapTargets) || null, projectId, expiresAt: expiresAt.toISOString() },
       });
       if (auditErr) setErr(`The link was created but its audit record failed: ${auditErr.message}`);
+      setFreshUrls((prev) => new Map(prev).set(String((created as { id: string }).id), portalUrl(token)));
       setCompany(""); setGroup(""); setExpires(isoDateInDays(QUOTE_LINK_DEFAULT_DAYS));
       await refresh();
     } catch (e) {
@@ -1251,8 +1299,32 @@ function QuoteLinksSection({ orgId, projectId, actor, existingGroups, setErr }: 
     } finally { setRevoking(null); }
   };
 
+  const portalUrl = (token: string) => `${window.location.origin}${intakePortalPath(token)}`;
+  /** The address a row can copy or put in an RFQ: minted / re-issued this
+   *  session, or a token the database still stores (before 20261141). */
+  const knownUrl = (l: QuoteLink): string | null => freshUrls.get(l.id) ?? (l.token ? portalUrl(l.token) : null);
+  /** An expired link answers "This link has expired." — so it offers no
+   *  RFQ, Copy link or Re-issue (the Intake tab's gate): a new link is made
+   *  instead. */
+  const linkLive = (l: QuoteLink): boolean => !l.expiresAt || Date.parse(l.expiresAt) > Date.now();
+
+  /** SEC-19: a lost address is re-issued (a new token on the same link),
+   *  never read back. The old address stops working. */
+  const reissue = async (l: QuoteLink) => {
+    if (!(await appConfirm({ message: `Re-issue ${l.companyName}'s quote link? The address they have stops working; you get a new one to send (Copy link / RFQ). Quotes already submitted stay.` }))) return;
+    setReissuing(l.id); setErr(null);
+    try {
+      const res = await reissueIntakeLink({ linkId: l.id, orgId, projectId, company: l.companyName, actorId: actor.uid, actorEmail: actor.email });
+      if (!res.ok) { setErr(res.error); await refresh(); return; }
+      setFreshUrls((prev) => new Map(prev).set(l.id, portalUrl(res.token)));
+      if (res.auditError) setErr(`The link was re-issued but its audit record failed: ${res.auditError}`);
+      await refresh();
+    } finally { setReissuing(null); }
+  };
+
   const copy = async (l: QuoteLink) => {
-    const url = `${window.location.origin}/submit/${l.token}`;
+    const url = knownUrl(l);
+    if (!url) return;
     try { await navigator.clipboard.writeText(url); setCopied(l.id); setTimeout(() => setCopied(null), 1500); }
     catch { setErr("Couldn't copy — your browser blocked clipboard access."); }
   };
@@ -1261,6 +1333,8 @@ function QuoteLinksSection({ orgId, projectId, actor, existingGroups, setErr }: 
   // outbound ask that makes inbound quotes comparable. The zip library
   // loads at the click (PERF-9), never in the project route's bundle.
   const makeRfq = async (l: QuoteLink) => {
+    const quoteUrl = knownUrl(l);
+    if (!quoteUrl) return;
     try {
       const { downloadStarterRfq } = await import("@/lib/rfqDocx");
       const { data: proj } = await supabase
@@ -1282,7 +1356,7 @@ function QuoteLinksSection({ orgId, projectId, actor, existingGroups, setErr }: 
         rfqGroup: l.rfqGroup,
         purpose: (p.purpose as string | null) ?? null,
         sowLabel,
-        quoteUrl: `${window.location.origin}/submit/${l.token}`,
+        quoteUrl,
         dueDate: null,
         turnoverItems: (((to ?? []) as Array<{ name: string }>)).map((t) => t.name),
       });
@@ -1327,16 +1401,27 @@ function QuoteLinksSection({ orgId, projectId, actor, existingGroups, setErr }: 
                     {Date.parse(l.expiresAt) < Date.now() ? "expired" : "expires"} {new Date(l.expiresAt).toLocaleDateString()}
                   </span>
                 : <span className="text-[10px] font-bold text-amber-700 dark:text-amber-300" title="Created before expiry was required — revoke it when the bidding closes">no expiry</span>}
+              {l.tokenPrefix && <span className="font-mono text-[10px] text-[var(--color-text-faint)]" title="The first characters of this link's address — the full address is shown only when the link is created or re-issued">{l.tokenPrefix}…</span>}
               <span className="ml-auto flex items-center gap-1">
-                <button onClick={() => void makeRfq(l)}
-                  title="Download a ready-to-send Request For Quote (.docx) built from this project's scope, purpose, and turnover requirements — with this company's submission link inside."
-                  className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md border border-[var(--color-border-strong)] text-[10px] font-bold text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-surface-2)] transition-colors">
-                  <FileText className="w-3 h-3" /> RFQ (.docx)
-                </button>
-                <button onClick={() => void copy(l)}
-                  className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md border border-[var(--color-border-strong)] text-[10px] font-bold text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-surface-2)] transition-colors">
-                  <Copy className="w-3 h-3" /> {copied === l.id ? "Copied!" : "Copy link"}
-                </button>
+                {linkLive(l) && (knownUrl(l) ? (
+                  <>
+                    <button onClick={() => void makeRfq(l)}
+                      title="Download a ready-to-send Request For Quote (.docx) built from this project's scope, purpose, and turnover requirements — with this company's submission link inside."
+                      className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md border border-[var(--color-border-strong)] text-[10px] font-bold text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-surface-2)] transition-colors">
+                      <FileText className="w-3 h-3" /> RFQ (.docx)
+                    </button>
+                    <button onClick={() => void copy(l)}
+                      className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md border border-[var(--color-border-strong)] text-[10px] font-bold text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-surface-2)] transition-colors">
+                      <Copy className="w-3 h-3" /> {copied === l.id ? "Copied!" : "Copy link"}
+                    </button>
+                  </>
+                ) : (
+                  <button onClick={() => void reissue(l)} disabled={reissuing === l.id}
+                    title="The address is not stored (only its fingerprint is). Re-issue to get a new one for Copy link and the RFQ — the old one stops working."
+                    className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md border border-[var(--color-border-strong)] text-[10px] font-bold text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-surface-2)] transition-colors disabled:opacity-50">
+                    {reissuing === l.id ? <Loader2 className="w-3 h-3 animate-spin" /> : <RotateCcw className="w-3 h-3" />} Re-issue
+                  </button>
+                ))}
                 <button onClick={() => void revoke(l)} disabled={revoking === l.id}
                   className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md border border-rose-500/40 text-[10px] font-bold text-rose-700 dark:text-rose-300 hover:bg-rose-500/10 transition-colors disabled:opacity-50">
                   {revoking === l.id ? <Loader2 className="w-3 h-3 animate-spin" /> : <Ban className="w-3 h-3" />} Revoke

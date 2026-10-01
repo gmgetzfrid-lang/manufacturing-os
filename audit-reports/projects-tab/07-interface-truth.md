@@ -708,7 +708,7 @@ shown on that tab), **EAC** (never rendered — the forecast is a sentence),
 ## UX-16 · The evidence sweep never runs when evidence actually arrives
 
 - **Severity:** MEDIUM
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Assigned:** projects J11 PROJECTS RESIDUALS — by the integrator, 2026-10-01 (fleet plan `audit-reports/fleet-plans/`).
 - **Verification:** CONFIRMED
 - **Blast radius:** copy-truth / workflow
@@ -738,6 +738,21 @@ quality (P2) packages, not the wizard/health package.
 - `SAF-1` is `RESOLVED` first.
 - The `UX-3` coach copy is updated to describe the automated moments.
 
+**Resolution (2026-10-01, projects Round G).** Package J11 PROJECTS RESIDUALS (assigned by the integrator; the intake and quality packages it names are merged). Precondition checked: `SAF-1` is `RESOLVED` (`02-safety-compliance.md`), and the sweep obeys its evidence contract unchanged (`gatherProjectEvidenceState`: Issued / Locked documents only, an intake submission only once approved, accepted-turnover documents first). Reproduced first: at `55e281d` `runAutoEvidence` had one caller (`QualityTab.tsx:509`, the button); neither `finalizeReviewedRevision` nor `reviewTurnoverItem` ran it — the new test file fails 9 of its 12 cases against that code.
+- `lib/checklists.ts` — `runProjectEvidenceSweep({ orgId, projectId, actor })`: the sweep scoped to the PROJECT — every `open` checklist, against ONE evidence gather (`runAutoEvidence` takes an optional pre-gathered `state`); the same machine-stamped, checked, per-checklist-audited sweep as the button; it never throws (the write that triggered it has landed). `sweepEvidenceForDocument({ orgId, documentId, actor })`: the projects whose evidence register cites a document — its intake folder holds it, it is the project's Summary of Work, or an accepted turnover item names it (the register's three sources; org-scoped) — each swept. `describeProjectSweep` — one sentence for what it did (null for a no-op), a failure line when items could not be written (a caller without write access to the project's quality records) or a read failed.
+- `lib/turnover.ts` — `reviewTurnoverItem` sweeps the item's project after an ACCEPTED decision lands (a rejection or waiver brings no evidence); `reopenTurnoverItem` sweeps after reopening an accepted item, so a green that rested on it is withdrawn (QUAL-1's retraction, at the moment the evidence leaves). The outcome comes back as `evidenceSweep` when a checklist was swept.
+- `lib/reviewControl.ts` — `finalizeReviewedRevision`, after the publish and its post-publish pipeline, calls `sweepEvidenceForDocument` (best-effort; never fails a landed publish) — the intake approval from the Intake tab (`requireRosterComplete: false`) and a roster-reviewed intake revision published from the document's review panel both reach it. The outcome comes back as `evidenceSweep`. *Review fix pass:* the sweep's actor email is the new `actorEmail` input — the approver's session email from both callers (`IntakePanel`, `ReviewGateSection`), or none — never `actorName`, which the Intake tab fills with the literal "Reviewer" when the session email is not loaded (the `CHECKLIST_AUTO_EVIDENCE` rows' `user_email` would have read "Reviewer").
+- Surfaces: `components/projects/IntakePanel.tsx` appends the sweep's sentence to the approval message; `components/projects/QualityTab.tsx` (`TurnoverSection.finish`) shows it after an acceptance or a reopen and remounts the checklist section so open cards re-read the items it changed; `components/documents/ReviewGateSection.tsx` alerts when the sweep could not finish (a success there is visible on the checklists and in their audit rows).
+- `lib/projectHealth.ts` — the `UX-3` coach copy now describes the automated moments: "It runs on its own when a contractor submission is approved or a turnover item is accepted; to run it now, use "Check evidence we already hold" on the Quality tab — …".
+Tests — new `lib/__tests__/ux16EvidenceSweepOnArrival.test.ts`: "accepting an item sweeps the item's project and hands the outcome back", "a rejection or a waiver brings no evidence — no sweep", "reopening an ACCEPTED item sweeps too…", "a project with no open checklist: …the plain { ok: true }", "an intake approval (the approve click is the review) publishes, then sweeps — with the approver as the actor", (fix pass) "the sweep's actor email is the approver's email — never the display name: an approver whose email is not loaded is recorded with none, not 'Reviewer'", "a publish that did not land sweeps nothing"; the real sweep — "sweeps EVERY open checklist of the project against ONE evidence gather; an accepted turnover item proves its line" (two checklists, one gather, a satisfied write citing the turnover row and a needs-evidence write, one `CHECKLIST_AUTO_EVIDENCE` audit row each), "no open checklist: no gather, nothing written", "sweepEvidenceForDocument finds the projects by intake folder, SOW and accepted turnover item — scoped to the org", "describeProjectSweep…"; the coach copy and the three surfaces pinned. `projectControls.test.ts` ("coach copy claims no unbuilt mechanism", "…names a verb that exists") passes unchanged.
+
+**Done-when.**
+- The sweep runs after intake approval and after turnover acceptance, scoped to the project — ✓.
+- `SAF-1` is `RESOLVED` first — ✓ (checked on this base).
+- The `UX-3` coach copy is updated to describe the automated moments — ✓.
+
+**Scope / residual.** A trusted link's auto-published revision (the external door's own publish, no person approving) does not trigger the sweep: the door runs server-side under the request-scoped service role (`DEC-56`), and its revision is swept the next time evidence arrives or someone clicks the button — the copy names only the moments that run it. The sweep writes under the approver's session, so an approver without write access to the project's quality records publishes normally and is told the checklists could not be updated (nothing is written past RLS). The post-publish pipeline's own `actorEmail` in `finalizeReviewedRevision` still takes `actorName` (code from before J11, not this record's; the Intake tab's "Reviewer" fallback reaches it the same way) — left for its owner (`DEC-31`).
+
 ---
 
 ## Report progress
@@ -759,4 +774,4 @@ quality (P2) packages, not the wizard/health package.
 | UX-13 | HIGH | OPEN |
 | UX-14 | MEDIUM | RESOLVED |
 | UX-15 | MEDIUM | OPEN |
-| UX-16 | MEDIUM | OPEN |
+| UX-16 | MEDIUM | RESOLVED |

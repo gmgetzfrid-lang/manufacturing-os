@@ -208,8 +208,13 @@ export const REDACT_COLUMNS: Record<string, { columns: readonly string[]; reason
     reason: "the sole credential for /share/<token> — an unexpired share in an old backup would otherwise stay live forever; re-issue shares after a restore",
   },
   project_intake_links: {
-    columns: ["token"],
-    reason: "a WRITE credential — it lets the holder submit versions through /api/intake/*; re-issue intake links after a restore",
+    // SEC-19 (20261141): the token is stored only as its SHA-256 — the value
+    // the door matches a presented token against — and a six-character
+    // prefix. Reinstating the hash from a backup would revive the link, so
+    // all three columns are the credential (a restored link arrives REVOKED
+    // with an unguessable placeholder token, which the database hashes).
+    columns: ["token", "token_hash", "token_prefix"],
+    reason: "a WRITE credential — it lets the holder submit versions through /api/intake/*; the database matches a presented token by token_hash, so the hash (and its prefix) is redacted with it; re-issue intake links after a restore",
   },
   transmittals: {
     columns: ["portal_token"],

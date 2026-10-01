@@ -234,7 +234,10 @@ describe("intakeRateLimit — the window", () => {
     expect(ATTEMPT_OUTCOME.suppressed).toBe("suppressed");
     // the rate window counts attempts only — a folded notice never throttles the contractor
     const src = (await import("node:fs")).readFileSync((await import("node:path")).join(process.cwd(), "lib/intakeRateLimit.ts"), "utf8");
-    expect(src).toMatch(/\.eq\(col, value\)\.eq\("outcome", ATTEMPT_OUTCOME\.attempt\)/);
+    // (J11 INTK-15: the window's outcome is a parameter — `attempt` unless a
+    // direct upload's finalize step names its own window)
+    expect(src).toMatch(/\.eq\(col, value\)\.eq\("outcome", outcome\)/);
+    expect(src).toContain("const outcome = input.outcome ?? ATTEMPT_OUTCOME.attempt;");
     expect(await foldedSinceLastNotice({ from: () => { throw new Error("down"); } }, { tokenHash: "h" })).toEqual({ total: 0, published: 0, displaced: 0 });
   });
   it("SEC-8 dw2: an ordinary notice only into an empty window; a forced one (published / displaced) only while fewer than the cap went — a burst is never one notice per upload", () => {

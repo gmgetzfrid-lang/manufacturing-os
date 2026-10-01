@@ -21,6 +21,7 @@ import { PageShell, PageHeaderBar } from "@/components/ui/PageShell";
 import { Button } from "@/components/ui/Button";
 import { Input, Select as UiSelect } from "@/components/ui/Field";
 import { Spinner } from "@/components/ui/Spinner";
+import { csvCell } from "@/lib/csvSafe";
 
 // Auditor included: the role exists FOR audit review — it was defined with an
 // "audit" capability yet locked out of the one page that shows the trail.
@@ -423,11 +424,9 @@ function exportAuditCsv(
   rows: AuditRow[],
   docMeta: Map<string, { documentNumber: string | null; title: string | null; libraryId: string }>,
 ) {
-  const csvField = (v: unknown): string => {
-    if (v == null) return "";
-    const s = String(v);
-    return /[",\n\r]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
-  };
+  // PM-15: every cell through lib/csvSafe — a formula-leading value (an
+  // email, a detail, a document title) is written as text, never a formula.
+  const csvField = csvCell;
   const header = ["Timestamp", "Action", "Resource Type", "Resource ID", "Resource Label", "User Email", "User Role", "Details JSON"];
   const lines: string[] = [header.map(csvField).join(",")];
   for (const r of rows) {

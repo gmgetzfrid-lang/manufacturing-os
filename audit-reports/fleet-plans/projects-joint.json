@@ -988,7 +988,8 @@
      "GAP-401 (remainder re-owned by the integrator 2026-10-01, orphan sweep: Acceptance 1 (content sniff + attachment disposition; SEC-1/SEC-6 RESOLVED; J11 closes the last unsigned issuers, SEC-18, on its branch), 3 (expiry/revoke; SEC-5) and 4 (fail-open rate limit; 01-security-access.md:433) are \u2026)",
      "GAP-402 (remainder re-owned by the integrator 2026-10-01, orphan sweep: Narrow build done: lib/checkedWrite.ts, the quality and money sites converted, and the census in lib/__tests__/checkedWrite.test.ts:109-131 (lib/checklists.ts, lib/turnover.ts and the three money files at ratchet zero; SAF-3 \u2026)",
      "PERF-6 (remainder re-owned by the integrator 2026-10-01, orphan sweep: the cost-docs route limb only \u2014 a readable 504 / request deadline on /api/projects/cost-docs (the renderer limb is intelligence I-09's))",
-     "PERF-5 (remainder re-owned by the integrator 2026-10-01, orphan sweep: measure frames in the pre-installed Chromium (Playwright) for the schedule surface the record names; 'does not drop frames' is the unmet done-when)"
+     "PERF-5 (remainder re-owned by the integrator 2026-10-01, orphan sweep: measure frames in the pre-installed Chromium (Playwright) for the schedule surface the record names; 'does not drop frames' is the unmet done-when)",
+     "SEC-21 (opened by J11's review 2026-10-01: project audit rows written under another resource type \u2014 e.g. a private project's milestone anchored to a document, written as resource_type 'document' \u2014 stay readable by every org member after 20261142; a migration re-creating 20261142's audit read policy from its body, with a DEC-30 inventory)"
     ]
    },
    "files": [

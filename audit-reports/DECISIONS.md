@@ -102,6 +102,7 @@ about the system.
 | [DEC-66](#dec-66) | A quality sign-off is **granted per project** (`quality.sign_off`, the capability policy's resource dimension), **separated** from the record's author whenever someone else could sign, and **signed** with the existing e-signature ceremony — the database binds the signature to the completion, acceptance or waiver; a grant never deletes, and a signed record is a controller's to undo or delete (as is voiding any checklist) | medium | `QUAL-4`, `QUAL-14`, `QUAL-15`, `ORG-14` |
 | [DEC-67](#dec-67) | One unit identity joined as data (a codebook unit maps to at most one operational unit; `documents.unit_code` is written by the decode, never guessed); a scope is a resolved id set that scopes the graph's assembly — the place before the filter; no node type beyond systems | low | `GM-2`, `GM-10`, `GM-12`, `GPV-2`, `GPV-3`, `WIRE-3`, `WIRE-4`, `AREA-10`, `GAP-305`, `GAP-306` |
 | [DEC-68](#dec-68) | Drawing intelligence: a dense page is a drawing when its text says so (vision never automatic); a verdict is keyed by the set it was computed over (`drawing_audit_logs` unique per library); a stored verdict at a known revision is never lowered, and a provisional one waits on the documents still being read; a model's point is a claim, never a fact (`20261124`). | low | `DWG-4`, `DWG-6`, `DWG-7`, `DWG-13`, `BR-12` |
+| [DEC-69](#dec-69) | The contractor door's credential at rest, its upload path, and who reads a project's audit rows: an intake link is stored only as the SHA-256 of its token (shown once, re-issued when lost); a large file goes straight to storage through a staged object the door reserves, claims once and always removes; an audit row about a project is the project's (`20261141`, `20261142`). | low | `SEC-19`, `INTK-15`, `SEC-20`, `SEC-16` |
 
 ---
 
@@ -1905,6 +1906,7 @@ safe side for a credential.
 
 *Landed 2026-09-23 (document-control Round F, fix pass): "a restored transmittal has no portal token" is enforced against the insert rail — `trg_transmittals_guard` (20261027) mints a fresh token for every row inserted as `issued`, so `scrubRestoredRow` lands a formerly issued transmittal as `voided` (the register record survives, a note says why, and no link can ever be presented); a person issues a new transmittal to send again. `push_subscriptions` (per-device Web Push `endpoint` / `p256dh` / `auth`) is excluded from the export whole, and the coverage tripwire also treats `auth` / `p256dh` as bearer names, so the acceptance line holds for every exported table.*
 *Landed 2026-10-01 (document-control Round F wave 2, P7 TRANSMITTALS): the trigger now enforces this for a backup the scrub cannot recognise. `scrubRestoredRow` voids an issued transmittal only when the row carries the `portal_token` key, so a row from a backup taken before 20260910 arrived `issued` — and with 20261133's issue gate it would have been re-dated, given a fresh 90-day live link, or aborted the whole restore on a document the backup lists as withdrawn. `trg_transmittals_guard` (20261133) lands any service-role INSERT born `issued` VOIDED with the same `RESTORED_TRANSMITTAL_NOTE` sentence, keeping its recorded issue date, minting no token and skipping the gate (pinned to the constant in `dcRoundFTransmittalMigrations.test.ts`). See `TRX-4`, `DEC-61`.*
+*Landed 2026-10-01 (projects Round G, J11): the vendor intake token is stored only as its SHA-256 (`20261141`, projects-tab `SEC-19`), so `project_intake_links.token_hash` (the value a presented token is matched by) and `token_prefix` are bearer columns too — redacted with `token` in `REDACT_COLUMNS` and scrubbed by the restore; a restored link's placeholder token is hashed by the database and the link still arrives REVOKED. See [`DEC-69`](#dec-69).*
 
 <a id="dec-46"></a>
 ## DEC-46 · External share links: who mints, how long, what serves, what is recorded
@@ -2413,6 +2415,8 @@ PDF viewer in sandboxed frames would let the PDF frame take `sandbox=""` too.
 
 **Risk:** low — every change narrows; the viewers that frame keep working
 through the opt-in.
+
+*Landed 2026-10-01 (projects Round G, J11): the two named exceptions are closed — `/api/storage/resolve` spreads `presignedGetDisposition(path, wantsInline(…))` like `download-url` (attachment by default; `ArchiveAwareOpen`, a new-tab viewer, asks `&inline=1` and is a reviewed inline caller) and `lib/dataExport.ts` signs every per-file URL as an attachment; the census in `presignedDisposition.test.ts` has no known exception left. See projects-tab `SEC-18`.*
 
 <a id="dec-50"></a>
 ## DEC-50 · The money ledger's derived figures and rails
@@ -3344,6 +3348,8 @@ allowlist); the authorship rule and the contract-only promote are structural.
 
 **Risk:** medium — a trusted vendor's first revisions now wait for a person,
 and an unverifiable sheet needs a deliberate single adopt.
+
+*Landed 2026-10-01 (projects Round G, J11): two of "Deferred, on the record" are built, and item 6's re-check moved into the database. Hashing at rest (`SEC-19`): the link is stored as `sha256(token)` and looked up by it; the tabs show the address once and re-issue a lost one (`20261141`). Presigned direct uploads (`INTK-15`): the portal PUTs to a staging key the door presigned for the live link (Content-Length signed) and a finalize step sniffs the STORED bytes, then runs item 4's door unchanged — taken on the brief's decision, not `GAP-401`'s constrained identity. Item 6 (`INTK-16`): adoption runs through `adopt_intake_document` and a guard on `documents` refuses any signed-in move or renumber of an intake-born sheet that would leave a live same number in another library (the SAF-12 rule) — the re-check is the server's now. "Intake-born" is the stored `authored_by_link_id`, which no signed-in session may write (`trg_documents_authorship_fixed` — authorship is the door's, fixed at creation), and a sheet revived outside an intake folder is judged like a move (review fix pass 2: as first landed, clearing the column in the same PATCH, or archiving in the move and reviving after, skipped the rule). See [`DEC-69`](#dec-69).*
 
 <a id="dec-57"></a>
 ## DEC-57 · The orphan sweep's reference collector stays bucket-wide
@@ -4323,3 +4329,93 @@ See `lib/__tests__/intelRoundGDrawing.test.ts`, `lib/__tests__/intelRoundGDrawin
 *Corrected 2026-10-01 (intelligence Round G, I-07 review fix pass 11). Item 2, the acceptance and the reversal above now say what the code does after the eleventh review. Fix pass 10's correction above overstated one thing: a provisional row written back "as what it settled" did not hold for a row several documents share under one key.*
 - *The shared row carried only its most severe member's findings, with the settled status of all members. So the write-back could be `flagged` with no finding at all, and already recorded for good. It now carries every member's findings, and a write-back that names none above `passed` is kept as it is.*
 - *The lens's remedy for a reference into a sheet whose page gave only the drawing number promised that a re-index would judge it. A verdict already recorded at a known revision is kept after that re-index, and the suggestion now says so.*
+*Landed 2026-10-01 (projects Round G, J11): closeout now requires the signed completion (`QUAL-15`'s closeout half) — the checklist gate reads "N checklists not signed off" for every non-void checklist not complete (and names a completion with no signature on record), whatever its items' colours, and each voided checklist is its own failing line naming who voided it, in the Complete dialog, the closeout audit row and the report.*
+
+<a id="dec-69"></a>
+## DEC-69 · The contractor door's credential at rest, its upload path, and who reads a project's audit rows
+
+*Minted by projects Round G, package J11 PROJECTS RESIDUALS (2026-10-01), as a provisional "DEC-44", distinct from the download-record DEC-44 above. Renumbered DEC-69 by the integrator at merge (2026-10-01), because DEC-44 to DEC-68 were taken on the integration branch.*
+
+**Decision. Three defaults the J11 brief named, each the reading that fails safe:**
+
+1. **The intake token is stored as its SHA-256, and a lost link is re-issued
+   (`SEC-19`).** `project_intake_links` keeps `token_hash` (sha256 hex — no
+   per-row salt: the token is ~160 random bits) and a six-character
+   `token_prefix`; the `token` column is write-only (a trigger hashes and
+   nulls whatever is written, a CHECK holds it NULL). Both public routes
+   match `sha256(presented token)`. Links minted before `20261141` are
+   hashed in place — their contractors' URLs keep working. The tabs show an
+   address once, at mint or re-issue; a lost one is re-issued (a new token
+   on the same link — id, authorship, history and budget kept), never read
+   back. The hash is a bearer column for `DEC-45`. **`20261141` is applied
+   only after the J11 build is live** — the hash-in-place is irreversible,
+   and code from before J11 reads the plain token; the file's first
+   statement refuses to run until the operator confirms it.
+2. **The contractor's bytes go straight to storage, and the door checks the
+   stored bytes (`INTK-15`).** `?step=begin` (every pre-body check of
+   `DEC-56` item 4, the rate window counted — the one body read first is
+   the step's own JSON, at most 16 KB through a capped reader, right after
+   the link lookup, because a finalize must claim its staged object before
+   it can answer a refused link) reserves the declared size
+   against the link's budget (staged-but-unclaimed bytes count with filed
+   ones) and presigns a PUT for a fresh key under the link's own prefix of
+   ONE staging root (`intake-staging/`), its Content-Length signed;
+   `?step=finalize` has its own rate window, takes only that link's staged
+   key, CLAIMS its reservation (one delete — exactly one request ever owns a
+   staged object) and from then deletes the object whatever it answers;
+   it re-checks the link, sniffs a ranged read of the stored head BEFORE
+   reading the rest (both reads pinned to the HEAD's ETag), and then runs
+   the door exactly as a multipart POST does. An abandoned upload is swept
+   automatically — by the link's next begin and by the maintenance cron
+   (objects past `STAGING_TTL_MS`, then their reservations). One PUT, not S3
+   multipart: the 100 MB cap is far under storage's single-PUT ceiling. The
+   multipart POST stays as the fallback — a door that cannot presign, a
+   browser that cannot reach storage, a storage refusal of any file the
+   multipart door could take (up to the platform's ~4.5 MB body cap) — and
+   names its begin, so the attempt is counted once.
+3. **An audit row about a project is the project's (`SEC-20`).** A
+   `project` / `cost` row in `audit_logs`, and the quality sign-off's
+   `project_checklist` / `turnover_item` e-signature rows, are readable by
+   someone who can see the project (`project_visible_to_me`, through the
+   cost / checklist / turnover row's project) or by an audit viewer
+   (`admin.audit_view`) — one added clause on the RESTRICTIVE
+   `audit_logs_admin_trail`, re-created from its newest definition
+   (`20261063`), its type test inline so no other row pays for the check. A
+   deleted project's rows are the audit roles' alone. admin-and-org P7
+   (audit-log integrity) builds on this definition. Rows about a project
+   written under ANOTHER type follow that type and stay org-readable: the
+   `MILESTONE_*` rows of a milestone anchored to a document (`document`,
+   or `milestone` with no anchor), intake-link rows (`project_intake_link`)
+   and a door document row — projects-tab `SEC-21` (opened, LOW) owns
+   them.
+
+**Rationale.** Each closes a door the earlier rounds left ajar on purpose
+(`DEC-56` deferred 1 and 2; `SEC-2` moved the tables, not their audit rows),
+without a second implementation of a guard: the door's checks, the sniff,
+the visibility helper and the overlay are the existing ones, reused.
+
+**Acceptance.** No column of `project_intake_links` holds a usable token
+and both routes match by hash; a direct upload of an HTML file named `.pdf`
+is refused from the stored bytes and the staged object deleted, as it is on
+every answer after a finalize's claim, and concurrent finalizes of one
+staged object file it once; a member
+who cannot see a private project reads none of its project / cost audit
+rows while an Admin reads every row (`prjRoundGJ11Migrations.test.ts`,
+`intakeUploadRoute.test.ts` "INTK-15 — the direct door",
+`projectsRls.test.ts` "SEC-20", and the scratch PostgreSQL 16 runs recorded
+on `SEC-19`, `SEC-20` and `INTK-16`).
+
+**Reversal.** 1: none planned (a plain token would be a regression) — and
+none possible after `20261141`: the plain tokens are not kept, so a code
+rollback to a build before J11 breaks every contractor link until each is
+re-issued; the migration is applied only once the J11 build is live. 2: if
+storage CORS cannot admit the portal's PUT, or storage refuses it, the
+multipart fallback is the door until it can. 3: a stated requirement that
+every member read every project's audit trail would drop the clause.
+
+**Risk:** low once applied in order — every change narrows or moves bytes
+off the request path; `20261141` and `20261142` are pending until pasted,
+and `20261141` pasted BEFORE the J11 deploy (or followed by a rollback)
+would break every contractor link, which its first statement guards
+against.
+

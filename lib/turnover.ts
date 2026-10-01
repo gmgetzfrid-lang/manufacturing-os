@@ -44,6 +44,7 @@ import { checkedWrite, describeWriteError, isMissingSchemaError } from "@/lib/ch
 import { reasonKey, reasonProblem } from "@/lib/checklistEngine";
 import {
   captureQualitySignoff, loadSignoffAuthority, signoffSeparation, QUALITY_SIGNOFF_RESOURCE, type SignoffInput,
+  runProjectEvidenceSweep, type ProjectSweepOutcome,
 } from "@/lib/checklists";
 
 export type TurnoverStatus = "open" | "received" | "accepted" | "rejected" | "waived";
@@ -312,7 +313,7 @@ export async function reviewTurnoverItem(input: {
   actor: Actor;
   /** QUAL-4: the signing ceremony's output — required to accept or waive. */
   signoff?: SignoffInput | null;
-}): Promise<{ ok: boolean; error?: string }> {
+}): Promise<{ ok: boolean; error?: string; evidenceSweep?: ProjectSweepOutcome }> {
   const { item } = input;
   const note = input.note?.trim() || null;
   if (input.status === "rejected" || input.status === "waived") {
@@ -355,6 +356,13 @@ export async function reviewTurnoverItem(input: {
     documentId: input.documentId ?? item.documentId ?? null,
     ...(signatureId ? { signatureId, singleSigner } : {}),
   });
+  // UX-16: an accepted item is evidence arriving (its document joins the
+  // project's register, first) — the project's open checklists are swept
+  // now, not when someone next clicks "Check evidence we already hold".
+  if (input.status === "accepted") {
+    const evidenceSweep = await runProjectEvidenceSweep({ orgId: item.orgId, projectId: item.projectId, actor: input.actor });
+    if (evidenceSweep.checklists > 0 || evidenceSweep.error) return { ok: true, evidenceSweep };
+  }
   return { ok: true };
 }
 
@@ -369,7 +377,7 @@ export async function reviewTurnoverItem(input: {
  *  owner, or a quality.sign_off holder for the project — 20261136). */
 export async function reopenTurnoverItem(input: {
   item: TurnoverItem; reason: string; actor: Actor;
-}): Promise<{ ok: boolean; error?: string }> {
+}): Promise<{ ok: boolean; error?: string; evidenceSweep?: ProjectSweepOutcome }> {
   const { item } = input;
   if (item.status !== "accepted" && item.status !== "waived") {
     return { ok: false, error: "Only an accepted or waived item can be reopened." };
@@ -389,6 +397,12 @@ export async function reopenTurnoverItem(input: {
     // the decision being reopened, as the row carried it
     prior: { reviewedByName: item.reviewedByName, reviewedAt: item.reviewedAt, note: item.reviewNote, documentId: item.documentId },
   });
+  // UX-16 / QUAL-1: reopening an ACCEPTED item takes its document out of
+  // the register — the sweep withdraws a green that rested on it.
+  if (item.status === "accepted") {
+    const evidenceSweep = await runProjectEvidenceSweep({ orgId: item.orgId, projectId: item.projectId, actor: input.actor });
+    if (evidenceSweep.checklists > 0 || evidenceSweep.error) return { ok: true, evidenceSweep };
+  }
   return { ok: true };
 }
 

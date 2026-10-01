@@ -18,6 +18,7 @@ import {
 import type { InboxSnapshot } from "@/lib/inbox";
 import { useGreeting } from "@/components/cockpit/DailyBrief";
 import { useNotificationCenter } from "@/components/notifications/NotificationCenter";
+import { csvCell } from "@/lib/csvSafe";
 
 // Headline counts for the three command-deck pillars. Fetched separately from
 // the personal inbox snapshot (org-wide numbers), each guarded so a missing
@@ -280,18 +281,16 @@ export function formatAgo(iso: string | undefined): string {
 // CSV export — dumps every Inbox section into one CSV with section
 // headers. Friendly enough to send to email/Slack at end of day.
 export function exportInboxCsv(d: InboxSnapshot, signedInAs?: string) {
-  const csvField = (v: unknown): string => {
-    if (v == null) return "";
-    const s = String(v);
-    return /[",\n\r]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
-  };
+  // PM-15: every cell through lib/csvSafe — a ticket title, a hold note or a
+  // recipient led by = + - @ is written as text, never a live formula.
+  const csvField = csvCell;
   const lines: string[] = [];
-  lines.push(`#### My Inbox — ${new Date().toISOString().slice(0, 10)}${signedInAs ? ` · ${signedInAs}` : ""} ####`);
+  lines.push(csvField(`#### My Inbox — ${new Date().toISOString().slice(0, 10)}${signedInAs ? ` · ${signedInAs}` : ""} ####`));
   lines.push("");
 
   const addTable = (heading: string, header: string[], rows: unknown[][]) => {
     if (rows.length === 0) return;
-    lines.push(heading);
+    lines.push(csvField(heading));
     lines.push(header.map(csvField).join(","));
     for (const r of rows) lines.push(r.map(csvField).join(","));
     lines.push("");

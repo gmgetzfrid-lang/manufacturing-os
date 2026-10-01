@@ -28,6 +28,7 @@
 
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { readFileSync } from "node:fs";
+import { createHash } from "node:crypto";
 import { join } from "node:path";
 import { NextRequest } from "next/server";
 
@@ -631,7 +632,7 @@ describe("RG-10 — the intake route never repoints past a live review", () => {
   // projects Round G J1: a trusted link's OWN document is authored_by_link_id
   // (never inferred from the version chain) and is NOT assigned; an assigned
   // document always goes through review.
-  const link = { id: "lnk1", org_id: "o1", project_id: "p1", company_name: "Vendor", contact_email: "v@x", allow_auto_supersede: true, expires_at: null, revoked_at: null, assigned_doc_ids: [] as string[], created_by: "ctl1", token: TOKEN, purpose: "documents", rfq_group: null };
+  const link = { id: "lnk1", org_id: "o1", project_id: "p1", company_name: "Vendor", contact_email: "v@x", allow_auto_supersede: true, expires_at: null, revoked_at: null, assigned_doc_ids: [] as string[], created_by: "ctl1", token: null, token_hash: createHash("sha256").update(TOKEN).digest("hex"), purpose: "documents", rfq_group: null };
   const seed = () => {
     db.tables.project_intake_links = [link];
     db.tables.projects = [{ id: "p1", org_id: "o1", status: "active", name: "Proj", owner_user_id: "own1", intake_library_id: "lib1", intake_collection_id: "col1" }];

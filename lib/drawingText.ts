@@ -17,6 +17,8 @@
 //     which referenced numbers exist NOWHERE in the library — the
 //     broken/missing-reference audit, computed deterministically.
 
+import { csvCell } from "@/lib/csvSafe";
+
 /** At or under this many characters a page is too short to be a page of
  *  prose (a standard's page runs 2,500-4,000), so it is treated as a
  *  drawing without further evidence — the behaviour every sparse sheet
@@ -1309,8 +1311,8 @@ export function rollUpEntities(
 
 // ── CSV register ───────────────────────────────────────────────────────────
 
-const csvCell = (s: string): string =>
-  /[",\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
+// PM-15: cells are encoded by lib/csvSafe's csvCell (PM-10) — a tag or a
+// sheet name read off a drawing is written as text, never a live formula.
 
 /** The equipment register as CSV (opens straight into Excel): one row per
  *  distinct tag with category, occurrence count, and the sheets it's on. */

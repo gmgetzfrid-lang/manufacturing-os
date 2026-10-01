@@ -686,11 +686,14 @@ export function finalizeReasonMessage(reason: string | undefined): string {
  *  existing publish trigger, so only an authorized publisher/owner can finalize. */
 export async function finalizeReviewedRevision(input: {
   orgId: string; documentId: string; actorId?: string | null; actorName?: string | null;
+  /** UX-16: the approver's email for the evidence sweep's audit rows — never
+   *  the display name (`actorName`). */
+  actorEmail?: string | null;
   /** Project-intake approvals have no sign-off roster — the approve click IS
    *  the review. The DB publish guard still verifies authority + holds, and
    *  its completion gate only binds when roster rows exist. */
   requireRosterComplete?: boolean;
-}): Promise<{ published: boolean; reason?: string }> {
+}): Promise<{ published: boolean; reason?: string; evidenceSweep?: import("@/lib/checklists").ProjectSweepOutcome & { projects: number } }> {
   const { data: docRow } = await supabase.from("documents")
     .select("id, library_id, rev, status, current_version_id, pending_version_id").eq("id", input.documentId).maybeSingle();
   if (!docRow) return { published: false, reason: "not_found" };
@@ -840,6 +843,20 @@ export async function finalizeReviewedRevision(input: {
       actorName: input.actorName ?? "Document Control",
       actorEmail: input.actorName ?? null,
     });
+  }
+  // UX-16: an approved revision is evidence arriving — sweep the open
+  // checklists of every project whose evidence register cites this document
+  // (its intake folder, its Summary of Work, an accepted turnover item).
+  // Best-effort and after the point of no return: the publish has landed,
+  // and the sweep's outcome travels back for the caller to say.
+  if (input.actorId) {
+    try {
+      const { sweepEvidenceForDocument } = await import("@/lib/checklists");
+      const evidenceSweep = await sweepEvidenceForDocument({
+        orgId: input.orgId, documentId: input.documentId, actor: { uid: input.actorId, email: input.actorEmail ?? null },
+      });
+      if (evidenceSweep.projects > 0 || evidenceSweep.error) return { published: true, evidenceSweep };
+    } catch { /* best-effort: never fails a landed publish */ }
   }
   return { published: true };
 }

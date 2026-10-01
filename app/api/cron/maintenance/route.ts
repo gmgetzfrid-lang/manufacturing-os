@@ -33,6 +33,9 @@
 //      unless the function does not exist yet (20261105 not applied).
 //      Folded intake publishes / replacements no notice announced get one
 //      digest per project (INTK-10 / SEC-8 — flushFoldedIntakeNotices).
+//      The door's direct-upload staging is swept (INTK-15 — every object
+//      under intake-staging/ older than STAGING_TTL_MS, then the expired
+//      reservations; lib/intakeStaging.ts sweepIntakeStaging).
 //   4d. The public verify endpoints' scan record (verify_scans) is pruned to
 //      90 days (VFY-12; prune_verify_scans(), 20261134).
 //
@@ -63,6 +66,7 @@ import {
   nudgeReviewHealth, REVIEW_HEALTH_KIND, isMissingFunction, type ReviewHealthOrg,
 } from "@/lib/intakeRateLimit";
 import { runWithServerClient } from "@/lib/serverClientScope";
+import { sweepIntakeStaging } from "@/lib/intakeStaging";
 import { emit } from "@/lib/notify/dispatch";
 
 export const runtime = "nodejs";
@@ -105,6 +109,7 @@ async function handler(req: NextRequest) {
     orphanedInReviewVersions?: number;
     pendingOnRetiredVersions?: number;
     intakeFoldedDigests?: number;
+    intakeStagingSwept?: number;
     reviewHealthNudges?: number;
     verifyScansPruned?: number;
     errors: string[];
@@ -185,6 +190,14 @@ async function handler(req: NextRequest) {
     } else {
       result.intakeAttemptsPruned = Number(pruned ?? 0);
     }
+    // INTK-15: the direct door's staging — an abandoned begin's object (a
+    // closed tab, a PUT never finalized), or a refused finalize's whose own
+    // delete failed, is removed once older than STAGING_TTL_MS, then its
+    // expired reservation. Never throws; each failure is a line.
+    const staging = await sweepIntakeStaging(sb);
+    result.intakeStagingSwept = staging.objectsDeleted;
+    for (const e of staging.errors) intakeLine(`intake-staging: ${e}`);
+    if (staging.truncated) intakeLine("intake-staging: more staged objects than one run lists — the next run continues");
     const { data: orphans, error: orphanErr } = await sb.rpc("orphaned_in_review_versions_count");
     if (orphanErr) {
       if (!isMissingFunction(orphanErr)) intakeLine(`intake-door: health count unavailable (orphaned_in_review_versions_count): ${orphanErr.message}`);

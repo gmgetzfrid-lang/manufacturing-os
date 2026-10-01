@@ -488,3 +488,63 @@ describe("COST-5 dw3 / BID-9 — what the row says, and what a typed total may b
     expect(db.calls.some((c) => c.table === "cost_documents" && c.method === "update")).toBe(false);
   });
 });
+
+// projects Round G (J11) — projects-and-cost COST-15 (fix pass): a read saved
+// BESIDE a total typed before any read leaves the row's currency as the
+// person left it. The bid table must not re-denominate the typed figure in
+// the currency the AI read.
+describe("COST-15 — a read beside a typed total never re-denominates the typed figure", () => {
+  const usd = (id: string, vendorName: string, total: number) => doc({
+    id, vendorName, currency: "USD", totalAmount: total,
+    parsed: { vendorName, total, currency: "USD", lineItems: [{ description: "Repipe exchanger circuits", total, hours: 1500 }], exclusions: [] },
+  });
+  const typedThenRead = doc({
+    id: "typed", vendorName: "Scanned Co", currency: null, totalAmount: 150_000,
+    parsed: { vendorName: "Scanned Co", total: 148_000, currency: "EUR", lineItems: [{ description: "Repipe exchanger circuits", total: 148_000, hours: 1500 }], exclusions: [] },
+  });
+  it("the typed figure's currency stays unknown, as before the read and as posting sees it — never the read's euro; the field is not mixed by it", async () => {
+    reg.listCompanies.mockResolvedValue([]);
+    await render([usd("alpha", "Alpha Piping", 140_000), usd("beta", "Beta Mechanical", 160_000), typedThenRead], "USD");
+    const row = [...host.querySelectorAll("tbody tr")].find((r) => /Scanned Co/.test(r.textContent ?? ""))!;
+    expect(row.textContent).not.toMatch(/€150,000/);
+    expect(row.textContent).toMatch(/\$150,000/);
+    expect(row.textContent).toMatch(/currency not printed — assumed USD/);
+    expect(host.textContent).not.toMatch(/This field mixes currencies/);
+  });
+  it("a row whose currency WAS set keeps it (an ordinary read, a restated correction) — unchanged", async () => {
+    reg.listCompanies.mockResolvedValue([]);
+    await render([usd("alpha", "Alpha Piping", 140_000), usd("beta", "Beta Mechanical", 160_000), { ...typedThenRead, currency: "EUR" }], "USD");
+    const row = [...host.querySelectorAll("tbody tr")].find((r) => /Scanned Co/.test(r.textContent ?? ""))!;
+    expect(row.textContent).toMatch(/€150,000/);
+    expect(host.textContent).toMatch(/This field mixes currencies/);
+  });
+});
+
+// projects Round G (J11) — projects-tab SEC-19 (fix pass 2): an EXPIRED quote
+// link answers "This link has expired." — a re-issued address or an RFQ
+// built on it would send the vendor to a dead door. The row offers no RFQ,
+// Copy link or Re-issue (the Intake tab's gate); a live link still does.
+describe("SEC-19 — an expired quote link offers no Re-issue, RFQ or Copy link", () => {
+  const linkRow = (id: string, company: string, expiresAt: string) => ({
+    id, token_prefix: id.slice(0, 6), company_name: company, rfq_group: "Unit 300 Repipe", revoked_at: null,
+    expires_at: expiresAt, submission_count: 0, purpose: "quote",
+  });
+  it("the expired row shows 'expired' and Revoke only; the live row with no known address offers Re-issue", async () => {
+    reg.listCompanies.mockResolvedValue([]);
+    db.results.project_intake_links = { data: [
+      linkRow("live01", "Live Bidder", new Date(Date.now() + 30 * 86_400_000).toISOString()),
+      linkRow("dead01", "Lapsed Bidder", new Date(Date.now() - 86_400_000).toISOString()),
+    ], error: null };
+    await render();
+    const toggle = [...host.querySelectorAll("button")].find((b) => /Quote links for contractors/.test(b.textContent ?? ""))!;
+    await act(async () => { toggle.click(); });
+    for (let i = 0; i < 5; i++) await act(async () => { await new Promise((r) => setTimeout(r, 0)); });
+    const item = (name: RegExp) => [...host.querySelectorAll("li")].find((li) => name.test(li.textContent ?? ""))!;
+    const labels = (li: Element) => [...li.querySelectorAll("button")].map((b) => (b.textContent ?? "").trim());
+    const dead = item(/Lapsed Bidder/);
+    expect(dead.textContent).toMatch(/expired/);
+    expect(labels(dead)).toEqual(["Revoke"]);
+    const live = item(/Live Bidder/);
+    expect(labels(live)).toEqual(["Re-issue", "Revoke"]);
+  });
+});
