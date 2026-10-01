@@ -290,11 +290,17 @@ describe("SEM-13 — the quoted price and the ledger come from one function", ()
       expect(Math.abs(est - actual) / actual).toBeLessThan(0.3);
     }
   });
-  it("different models quote different prices (no flat 1¢ per 1,000 passages any more); Voyage figures are marked estimates", () => {
+  it("different models quote different prices (no flat 1¢ per 1,000 passages any more); only a Voyage model the price table does not name is marked a placeholder", () => {
     const small = estimateEmbeddingCostUsd("text-embedding-3-small", 1_400_000, 1_000);
     const large = estimateEmbeddingCostUsd("text-embedding-3-large", 1_400_000, 1_000);
     expect(large).toBeGreaterThan(small * 5);
-    expect(embeddingRateIsPlaceholder("voyage-3.5-lite")).toBe(true);
+    // SEM-13 (the integrator, at the I-05 merge): the three Voyage models the
+    // picker offers are priced from Voyage's published list (GOV-6) — real rates
+    for (const m of ["voyage-3.5-lite", "voyage-3.5", "voyage-3-large"]) expect(embeddingRateIsPlaceholder(m), m).toBe(false);
+    // a Voyage model that falls to the conservative family row is still labelled
+    expect(embeddingRateIsPlaceholder("voyage-law-2")).toBe(true);
     expect(embeddingRateIsPlaceholder("text-embedding-3-small")).toBe(false);
+    // the quoted estimate for a named Voyage model is its published rate
+    expect(estimateEmbeddingCostUsd("voyage-3-large", 4_000_000, 0)).toBeCloseTo(0.18, 6);
   });
 });

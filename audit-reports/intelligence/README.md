@@ -56,7 +56,7 @@ It is not a missing brain. It is a missing memory.
 
 ## Findings
 
-**263 findings** — 9 CRITICAL, 59 HIGH, 147 MEDIUM, 48 LOW — plus **14 gap specs** (`GAP-313`, `GAP-314` opened at I-13, 2026-10-01).
+**264 findings** — 9 CRITICAL, 59 HIGH, 148 MEDIUM, 48 LOW — plus **14 gap specs** (`GAP-313`, `GAP-314` opened at I-13, 2026-10-01; `GOV-15` opened at the I-05 merge, 2026-10-01).
 
 > **One finding here carries `Status: REFUTED`** — `IEDGE-9`. An independent pass disproved it; the reason is on the finding. Kept rather than deleted (`DEC-41`). **Do not queue it as work.**
 
@@ -67,7 +67,7 @@ It is not a missing brain. It is a missing memory.
 | 01 | [Ingestion](./01-ingestion.md) | 13 | PDF → chunks, and what is lost on the way — `ING-13` opened by the I-02b integration (intelligence Round G), 2026-10-01 |
 | 02 | [Ask & retrieval](./02-ask-and-retrieval.md) | 11 | Ranking, grounding, citation verification, the injection surface |
 | 03 | [Semantic layer](./03-semantic-layer.md) | 13 | Coverage, drift, chunks that never embed |
-| 04 | [AI governance](./04-ai-governance.md) | 14 | Keys, allowlist, metering, calls that bypass governance |
+| 04 | [AI governance](./04-ai-governance.md) | 15 | Keys, allowlist, metering, calls that bypass governance — `GOV-15` opened by the integrator at the I-05 merge (intelligence Round G), 2026-10-01 |
 | 05 | [**Knowledge ACL**](./05-knowledge-acl.md) | 12 | **Your leak question, half one** — `KACL-12` opened by intelligence Round G (I-01A), 2026-09-30 |
 | 06 | [**Document ACL leaks**](./06-document-acl-leaks.md) | 12 | **Your leak question, half two** |
 | 07 | [Graph model](./07-graph-model.md) | 14 | Every edge, every cap, what is not modelled |

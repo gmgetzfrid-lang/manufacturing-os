@@ -513,9 +513,12 @@ describe("20261136 — org_capability_allows_for re-created from 20261132 (lineD
   const NEW_KEYS = `ARRAY[${RESOURCE_KEYS.map((k) => `'${k}'`).join(", ")}]`;
   const ADDED = `      WHEN 'quality.sign_off'         THEN '[]'::jsonb`;
 
-  it("starts from the NEWEST definition: 20261132 was the last file to re-create the evaluator, and this is the newest now", () => {
+  it("started from the NEWEST definition: 20261132 was the last file to re-create the evaluator before this one (intelligence Round G's 20261137 re-creates it again from THIS body — pinned in intelRoundGAiCapsMigration.test.ts)", () => {
     const definers = numbered.filter((f) => read(f).includes(`${H}(`));
-    expect(definers.slice(-2)).toEqual(["20261132_dc_roundF_transmit_capability.sql", M136]);
+    const at = definers.indexOf(M136);
+    expect(at).toBeGreaterThan(0);
+    expect(definers[at - 1]).toBe("20261132_dc_roundF_transmit_capability.sql");
+    expect(definers[at + 1]).toBe("20261137_intel_roundG_ai_manage_caps.sql");
   });
   it("is the 20261132 body with the two key lists widened by projectId and ONE CASE row — nothing else changed", () => {
     const { onlyInA, onlyInB } = lineDiff(fn132, fn136);
@@ -528,12 +531,14 @@ describe("20261136 — org_capability_allows_for re-created from 20261132 (lineD
     expect(fn136).toBe(expected);
     expect(fn136.split(NEW_KEYS).length - 1).toBe(2);
   });
-  it("the live CASE mirrors CAPABILITY_DEFS exactly (every id, same defaults, same count)", () => {
+  it("the CASE mirrored CAPABILITY_DEFS exactly when it shipped (every id, same defaults) — the later 20261137 row (ai.manage_caps) is the only id it lacks; the live census is rpPhase4Migration.test.ts", () => {
     const caseBlock = fn136.slice(fn136.indexOf("v_tokens := CASE p_cap"), fn136.indexOf("END;", fn136.indexOf("v_tokens := CASE p_cap")));
     const sql = new Map<string, string[]>();
     for (const m of caseBlock.matchAll(/WHEN '([^']+)'\s+THEN '(\[[^\]]*\])'::jsonb/g)) sql.set(m[1], JSON.parse(m[2]) as string[]);
-    for (const d of CAPABILITY_DEFS) expect(sql.get(d.id), d.id).toEqual(d.defaultRoles);
-    expect(sql.size).toBe(CAPABILITY_DEFS.length);
+    const later = new Set(["ai.manage_caps"]);
+    for (const d of CAPABILITY_DEFS) if (!later.has(d.id)) expect(sql.get(d.id), d.id).toEqual(d.defaultRoles);
+    expect(sql.size).toBe(CAPABILITY_DEFS.length - later.size);
+    for (const id of later) expect(sql.has(id), id).toBe(false);
   });
   it("revokes EXECUTE from PUBLIC and anon, grants authenticated and service_role; the wrapper is untouched", () => {
     expect(m136).toContain("REVOKE ALL ON FUNCTION org_capability_allows_for(uuid, text, uuid, jsonb) FROM PUBLIC;");

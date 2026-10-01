@@ -44,7 +44,7 @@ export default function EquipmentTablePanel({ table, onOpenTag }: {
         </span>
         {table.truncated && (
           <span className="text-[10px] text-amber-600 font-bold">
-            showing the first 400 — use the CSV export in Drawing intelligence for the full set
+            showing the first 400 — the full set is the &ldquo;Equipment register (CSV)&rdquo; button in this library&apos;s Drawing Intelligence panel (turn on &ldquo;This is a drawing set&rdquo; in Library AI setup to show it)
           </span>
         )}
         <span className="flex-1" />

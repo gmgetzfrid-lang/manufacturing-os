@@ -122,7 +122,11 @@ vi.mock("@/lib/equipmentBridgeServer", () => ({ computeForKnowledgeDoc: vi.fn(as
 vi.mock("@/lib/mentionIndexer", () => ({ loadAliasDictionary: vi.fn(async () => []), indexDocumentMentions: vi.fn(async () => undefined) }));
 vi.mock("@/lib/ai/usageServer", () => ({
   getMonthUsage: vi.fn(async () => ({ spentUsd: 0 })),
-  getCapUsd: vi.fn(async () => 0),
+  // I-05 (GOV-3): 0 is no longer "no cap" — getCapUsd answers
+  // LOCKED_CAP_USD for a $0 lock — so the default is a figure the scripted
+  // calls never reach (the integrator's I-05 merge gate).
+  getCapUsd: vi.fn(async () => 1000),
+  capIsLocked: (c: number) => c <= Number.MIN_VALUE,
   monthStartIso: () => "2026-10-01T00:00:00.000Z",
   recordAskUsage: vi.fn(async () => { ai.log.push("meter"); }),
 }));
@@ -132,6 +136,7 @@ vi.mock("@/lib/ai/keyVault", () => ({ openAiKey: (k: string) => k }));
 import { GET as drawingGET, POST as drawingPOST } from "@/app/api/knowledge/drawing/route";
 import { POST as locatePOST } from "@/app/api/knowledge/locate/route";
 import { recordAskUsage, getCapUsd } from "@/lib/ai/usageServer";
+import { GovernedCallError } from "@/lib/ai/gateError";
 import { estimateCostUsd, AGREEMENT_VERSION } from "@/lib/ai/pricing";
 import { VISION_MODEL } from "@/lib/knowledgeVision";
 import { INGEST_LEASE_TTL_MS } from "@/lib/knowledgeIngest";
@@ -170,7 +175,7 @@ beforeEach(() => {
   net.maxRows = 1000; net.rpcMissing = false; net.rpcCalls = [];
   ai.script = []; ai.calls = []; ai.log = [];
   vi.mocked(recordAskUsage).mockClear();
-  vi.mocked(getCapUsd).mockResolvedValue(0);
+  vi.mocked(getCapUsd).mockResolvedValue(1000);
 });
 afterEach(() => { vi.unstubAllEnvs(); });
 
@@ -805,6 +810,37 @@ describe("DWG-5 / GOV-8 — every locate call is metered, once, after the last",
     body = await (await locate({ orgId: "o1", documentId: "s-1", page: 1, tags: ["V-3"] })).json();
     expect(body).toMatchObject({ agreementRequired: true, agreementVersion: AGREEMENT_VERSION });
     expect(ai.calls).toHaveLength(0);
+  });
+
+  it("I-05 merge gate (GOV-4): a cap table that can't be read refuses the AI step, never the free answer", async () => {
+    locateSheet();
+    vi.mocked(getCapUsd).mockRejectedValueOnce(new GovernedCallError("AI usage can't be read right now, so AI calls are refused until it can (down).", 503, { usageUnavailable: true }));
+    const res = await locate({ orgId: "o1", documentId: "s-1", page: 1, tags: ["V-3"] });
+    expect(res.status).toBe(200);
+    const body = await res.json();
+    expect(body.skipped).toMatch(/AI usage can't be read right now/);
+    expect(body.skipped).toMatch(/The sheet still opens at the right page/);
+    expect(Array.isArray(body.positions)).toBe(true);
+    expect(body).toHaveProperty("notOnPage");
+    expect(body).toHaveProperty("elsewhere");
+    expect(ai.calls).toHaveLength(0);
+    expect(recordAskUsage).not.toHaveBeenCalled();
+    // any other error still throws
+    locateSheet();
+    vi.mocked(getCapUsd).mockRejectedValueOnce(new Error("boom"));
+    await expect(locate({ orgId: "o1", documentId: "s-1", page: 1, tags: ["V-3"] })).rejects.toThrow("boom");
+  });
+
+  it("I-05 merge gate (GOV-3): a $0 cap is refused before the first call, at $0 spent too", async () => {
+    locateSheet();
+    vi.mocked(getCapUsd).mockResolvedValueOnce(Number.MIN_VALUE);
+    const res = await locate({ orgId: "o1", documentId: "s-1", page: 1, tags: ["V-3"] });
+    expect(res.status).toBe(200);
+    const body = await res.json();
+    expect(body.skipped).toMatch(/Your monthly AI cap is set to \$0, so AI is locked for you until someone who manages AI caps raises it/);
+    expect(Array.isArray(body.positions)).toBe(true);
+    expect(ai.calls).toHaveLength(0);
+    expect(recordAskUsage).not.toHaveBeenCalled();
   });
 });
 

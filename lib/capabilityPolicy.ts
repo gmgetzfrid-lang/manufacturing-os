@@ -64,7 +64,8 @@ export type CapabilityId =
   | "admin.archive_view"
   | "admin.audit_view"
   | "transmittal.issue"         // TRX-1: issue / void / revoke / record receipt (drafting stays open)
-  | "quality.sign_off";         // QUAL-4: write + sign off a project's checklists / turnover / punch, per project
+  | "quality.sign_off"          // QUAL-4: write + sign off a project's checklists / turnover / punch, per project
+  | "ai.manage_caps";           // GOV-10: set the org-default and per-person monthly AI caps
 
 export interface CapabilityDef {
   id: CapabilityId;
@@ -168,6 +169,20 @@ export const CAPABILITY_DEFS: CapabilityDef[] = [
   { id: "quality.sign_off", area: "Quality", label: "Sign off quality records",
     description: "Grants more people what Admin, Document Control and the project owner can always do, whatever this row says: record decisions on a project's checklists, turnover package and punch list, complete a checklist and accept or waive turnover with an e-signature. Tick a role to grant it on every project it can see; a rule scoped to a project grants one project only. The author of a checklist (or the creator of a turnover item) cannot sign it off while another eligible signer exists. Enforced at the database, which reads this policy per project.",
     defaultRoles: [] },
+  // GOV-10 (intelligence Round G): spend authority. Members spend their OWN
+  // provider keys under a monthly cap; who may set the workspace default and
+  // each person's cap is this capability, read by /api/ai/usage — never a
+  // role list. Default Admin only: Doc Control no longer raises caps unless
+  // an Admin grants it. CRITICAL: a change to this row is Admin's (the
+  // policy route, and the 20261137 write guard against a direct write) and
+  // Admin is never removed from it — otherwise a Doc Controller could set
+  // the row to [DocCtrl] from the console, become its sole holder and raise
+  // their own cap with no Admin involved. Nobody raises their OWN cap while
+  // another active member holds it (the route refuses), and every change
+  // notifies the other holders.
+  { id: "ai.manage_caps", area: "AI", label: "Manage AI spend caps", critical: true,
+    description: "Set the workspace's default monthly AI cap and any person's own cap ($0 locks AI for them). Raising your own cap takes another holder while one exists. Admin always keeps it, and only an Admin changes who holds it. Every change is audited and notifies the other holders.",
+    defaultRoles: ["Admin"] },
 ];
 
 /** A per-PERSON delegation of one capability — temporary (expiresAt) or

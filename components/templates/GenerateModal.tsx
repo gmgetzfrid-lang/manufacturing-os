@@ -8,6 +8,10 @@
 // The review screen is the point: this replaces work someone used to do one
 // document at a time, so they get to see the words before they exist as
 // files, not after.
+//
+// PR-6: when the server stops a batch early it says why (`stopped`: the cap,
+// or a draft it could not read) and names every row it left out
+// (`skippedRows`) — both are shown here, so a left-out row is never silent.
 
 import React, { useState } from "react";
 import {
@@ -21,8 +25,16 @@ import { Input, Textarea, Select } from "@/components/ui/Field";
 import { supabase } from "@/lib/supabase";
 import {
   uploadTemplateFile, draftDocuments, renderDocuments, fileDocumentsToLibrary,
-  type OutputTemplate, type DraftedDocument, type Placeholder,
+  type OutputTemplate, type DraftedDocument, type Placeholder, type DraftResult,
 } from "@/lib/outputTemplates";
+
+/** What the draft action sends beyond DraftResult (PR-6). */
+type DraftReply = DraftResult & {
+  /** Why this slice stopped early — the cap, or a draft that could not be read. */
+  stopped?: string;
+  /** Rows whose draft could not be read: left out, never blanked. */
+  skippedRows?: Array<{ row: number; reason: string }>;
+};
 
 export default function GenerateModal({ orgId, template, onClose, onGenerated }: {
   orgId: string;
@@ -48,6 +60,8 @@ export default function GenerateModal({ orgId, template, onClose, onGenerated }:
   const [expanded, setExpanded] = useState<number | null>(0);
   const [busy, setBusy] = useState<"upload" | "draft" | "render" | null>(null);
   const [nextOffset, setNextOffset] = useState<number | null>(null);
+  const [stoppedNote, setStoppedNote] = useState<string | null>(null);
+  const [skipped, setSkipped] = useState<Array<{ row: number; reason: string }>>([]);
   const [cost, setCost] = useState(0);
   const [mapping, setMapping] = useState<{
     missing: Placeholder[]; headers: string[]; columnMap: Record<string, string>;
@@ -102,6 +116,7 @@ export default function GenerateModal({ orgId, template, onClose, onGenerated }:
       const up = await uploadTemplateFile(orgId, file, "data");
       setSource(up);
       setDocs([]); setMapping(null); setNextOffset(null); setCost(0);
+      setStoppedNote(null); setSkipped([]);
     } catch (e) {
       showToast({ type: "error", title: (e as Error).message });
     } finally { setBusy(null); }
@@ -111,7 +126,7 @@ export default function GenerateModal({ orgId, template, onClose, onGenerated }:
     if (!source) return;
     setBusy("draft");
     try {
-      const res = await draftDocuments({
+      const res: DraftReply = await draftDocuments({
         orgId, templateId: template.id, sourceFileKey: source.key,
         sheet: sheet || undefined, mode, rowOffset: offset,
         columnMap: columnMapOverride ?? mapping?.columnMap,
@@ -127,6 +142,8 @@ export default function GenerateModal({ orgId, template, onClose, onGenerated }:
       }
       setMapping(null);
       setDocs((prev) => (offset === 0 ? (res.documents ?? []) : [...prev, ...(res.documents ?? [])]));
+      setSkipped((prev) => (offset === 0 ? (res.skippedRows ?? []) : [...prev, ...(res.skippedRows ?? [])]));
+      setStoppedNote(res.stopped ?? null);
       setNextOffset(res.nextOffset ?? null);
       setCost((c) => c + (res.estCostUsd ?? 0));
       setExpanded(0);
@@ -265,6 +282,32 @@ export default function GenerateModal({ orgId, template, onClose, onGenerated }:
             </div>
           )}
 
+          {/* ── PR-6: why the batch stopped, and every row left out ─────── */}
+          {(stoppedNote || skipped.length > 0) && (
+            <div role="status" className="rounded-xl border-2 border-amber-300 dark:border-amber-800 bg-amber-50/60 dark:bg-amber-950/20 p-3.5 space-y-1.5">
+              <div className="flex items-start gap-2">
+                <AlertTriangle className="w-4 h-4 text-amber-600 shrink-0 mt-0.5" />
+                <div className="text-xs text-amber-900 dark:text-amber-200 space-y-1">
+                  {stoppedNote && <p><b>Drafting stopped part-way.</b> {stoppedNote}</p>}
+                  {skipped.length > 0 && (
+                    <>
+                      <p><b>Left out — no document was made for {skipped.length === 1 ? "this row" : "these rows"}:</b></p>
+                      <ul className="list-disc pl-4">
+                        {skipped.map((r) => <li key={r.row}>Row {r.row}: {r.reason}</li>)}
+                      </ul>
+                    </>
+                  )}
+                </div>
+              </div>
+              {docs.length === 0 && nextOffset !== null && (
+                <Button size="sm" variant="secondary" onClick={() => void runDraft(nextOffset)} disabled={busy !== null}>
+                  {busy === "draft" ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Sparkles className="w-3.5 h-3.5" />}
+                  Draft the next batch ({Math.max(0, (rowCount ?? 0) - nextOffset)} rows left)
+                </Button>
+              )}
+            </div>
+          )}
+
           {/* ── 2. Review ──────────────────────────────────────────────── */}
           {docs.length > 0 && (
             <div className="rounded-xl border border-[var(--color-border)] p-3.5">
@@ -323,7 +366,7 @@ export default function GenerateModal({ orgId, template, onClose, onGenerated }:
                 <Button size="sm" variant="secondary" className="mt-2"
                   onClick={() => void runDraft(nextOffset)} disabled={busy !== null}>
                   {busy === "draft" ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Sparkles className="w-3.5 h-3.5" />}
-                  Draft the next batch ({(rowCount ?? 0) - docs.length} rows left)
+                  Draft the next batch ({Math.max(0, (rowCount ?? 0) - nextOffset)} rows left)
                 </Button>
               )}
             </div>

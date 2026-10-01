@@ -1,18 +1,22 @@
 "use client";
 
-// /intelligence/setup — ALL AI configuration on one page instead of a modal
-// buried in Knowledge plus two admin pages. Your keys and usage meter live
-// here inline; org-level teaching (playbooks, codebook) links out to its
-// admin surface for those who hold the role.
+// /intelligence/setup — "AI setup": ALL AI configuration on one page instead
+// of a modal buried in Knowledge plus two admin pages. Your keys and usage
+// meter live here inline; org-level teaching (playbooks, codebook) links out
+// to its admin surface for those who hold the role. Not to be confused with
+// Facility setup (/setup), the order-of-operations navigator, which this
+// page links to by that name (HUB-3).
 
 import React, { useEffect, useState } from "react";
 import Link from "next/link";
-import { Settings2, GraduationCap, BookMarked, Database, ArrowRight, Loader2 } from "lucide-react";
+import { Settings2, GraduationCap, BookMarked, Database, ArrowRight, Loader2, Compass } from "lucide-react";
 import { useRole } from "@/components/providers/RoleContext";
 import { getAiConnections } from "@/lib/knowledge";
 import { PageShell, PageHeaderBar } from "@/components/ui/PageShell";
 import ViewTabs, { INTELLIGENCE_VIEWS } from "@/components/navigation/ViewTabs";
-import { KeyEditor, EmbeddingKeyEditor, UsagePanel } from "@/components/knowledge/AiSettingsModal";
+import {
+  KeyEditor, EmbeddingKeyEditor, UsagePanel, KeyStorageNotice, type KeyStorageInfo,
+} from "@/components/knowledge/AiSettingsModal";
 
 export default function IntelligenceSetupPage() {
   const { activeOrgId, hasAnyRole } = useRole();
@@ -57,6 +61,7 @@ export default function IntelligenceSetupPage() {
               onChanged={() => setReloadTick((t) => t + 1)} />
             <EmbeddingKeyEditor orgId={activeOrgId} current={data.personal}
               onChanged={() => setReloadTick((t) => t + 1)} />
+            <KeyStorageNotice storage={(data as { keyStorage?: KeyStorageInfo }).keyStorage} />
           </>
         )}
 
@@ -85,6 +90,10 @@ export default function IntelligenceSetupPage() {
               Org-level configuration (playbooks, codebook) is managed by Admin / Doc Control.
             </p>
           )}
+          {/* HUB-3: the order-of-operations navigator, by its own name. */}
+          <SetupLink href="/setup" icon={Compass}
+            title="Facility setup"
+            body="The steps in order — codebook, registry, documents, the bridge, knowledge, connections, process — with live counts, resuming wherever the workspace is." />
         </div>
       </div>
     </PageShell>

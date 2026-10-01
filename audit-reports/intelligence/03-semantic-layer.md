@@ -33,7 +33,7 @@ Coverage, drift, and what happens to a chunk that never embeds.
 
 - **Severity:** MEDIUM
 - **Status:** OPEN
-- **Assigned:** intelligence I-05 AI GOVERNANCE (running; its branch carries the code — reconciled at its merge) — by the integrator, 2026-10-01 (orphan sweep: the package that left this remainder has merged; fleet plan `audit-reports/fleet-plans/`).
+- **Assigned:** intelligence I-03 THE ASK ROUTE (the residual: the ask route reads its corpus model from one row — move it onto `resolveCorpusModel`) — by the integrator, 2026-10-01 (at the I-05 merge: the earlier assignment to I-05 was wrong — its branch does not touch the ask route; fleet plan `audit-reports/fleet-plans/`).
 - **Verification:** CONFIRMED
 - **Locations:** `app/api/knowledge/ask/route.ts:463-468`, `app/api/knowledge/ask/route.ts:482-489`, `lib/knowledgeEmbedCore.ts:56-60`, `lib/knowledgeEmbedCore.ts:113-115`, `components/knowledge/AiSettingsModal.tsx:284-311`
 - **Independently verified:** ✓ **SURVIVES, corrected** — second independent adversarial pass. Severity **HIGH → MEDIUM** by this pass. Mechanically correct: a mixed-stamp library is filtered to one stamp per ask and which stamp wins is unordered, so it can differ between asks. Lowered to MEDIUM because it needs an admin to change the saved embedding model mid-build, keyword retrieval is unaffected (the fuse at :512+ still runs), and both the reset comment (embed/route.ts:97-107) and the Rebuild dialog (SemanticIndexPanel.tsx:113-116, 'Do it after ingestion or the embedding model changes') name the exact remedy.
@@ -77,7 +77,7 @@ app/api/knowledge/ask/route.ts:463-468 — `const { data: stamped } = await supa
 ## SEM-2 · Embedding spend is invisible to the monthly cap — every cap check in the embed path reads a number that excludes embeddings
 
 - **Severity:** HIGH
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Verification:** CONFIRMED
 - **Locations:** `lib/ai/usageServer.ts:57-67`, `lib/ai/usageServer.ts:106-127`, `app/api/knowledge/embed/route.ts:139-149`, `app/api/knowledge/embed/route.ts:178-183`, `lib/knowledgeEmbedDrain.ts:88-95`, `lib/knowledgeEmbedDrain.ts:123-128`
 - **Independently verified:** ✓ **SURVIVES** — second independent adversarial pass. Right, and understated: the same op filter also hides flowRead, drawingLocate and knowledgeVision, and getMonthUsageByUser:70-76 carries it too, so the controllers' team view never shows this spend either — directly contradicting the comment at usageServer.ts:109-111 ('bills as knowledgeVision so the spend is visible as its own line but shares the same cap'). No DB view or trigger aggregates ai_usage_events; these helpers are the whole ledger.
@@ -100,6 +100,17 @@ lib/ai/usageServer.ts:57-67 — `.from("ai_usage_events").select(...).eq("org_id
 - [ ] A cap-exceeded state reached purely by embedding spend blocks the next `/api/knowledge/embed` build pass and the drain's per-library gate
 - [ ] The admin spend view shows embedding and vision spend as their own lines inside the same monthly total
 - [ ] A test asserts that a knowledgeEmbed usage row moves the number `getMonthUsage` returns
+
+
+**Resolution (2026-10-01, intelligence Round G).** Fixed at its root by GOV-1: every op counts in `getMonthUsage` and `getMonthUsageByUser`. Both embed-path gates — `/api/knowledge/embed` and the drain's per-library gate — read `getMonthUsage`, so a cap reached purely by embedding spend refuses the next build pass and holds the drain, with no edit to I-02's files. The usage response breaks spend out per op (`byOp`). The meter shows "Where it went", with the meaning index and vision indexing as their own lines inside one total, and the team table shows each member's breakdown on hover. Tests: `aiUsage.test.ts` ("a knowledgeEmbed row alone moves the number getMonthUsage returns, and can trip the cap", including the gates' legacy shape), `aiUsageRoute.test.ts`, `aiSettingsUsagePanel.test.ts`.
+
+**Done-when.**
+1. ✓ Neither rollup filters on `op`.
+2. ✓ A cap reached by embedding spend alone blocks the next embed pass and the drain's gate.
+3. ✓ The spend view shows embedding and vision as their own lines inside the monthly total.
+4. ✓ Test: a knowledgeEmbed row moves the number `getMonthUsage` returns.
+
+**Scope / residual.** None for this finding.
 
 ---
 
@@ -537,8 +548,7 @@ lib/knowledge.ts:122-126 states the intended contract in its own doc comment —
 ## SEM-13 · Two different, both-wrong prices for the same rebuild: the panel quotes 1¢/1k flat, the ledger charges Voyage at 10× the real rate
 
 - **Severity:** MEDIUM
-- **Status:** OPEN
-- **Assigned:** intelligence I-05 AI GOVERNANCE (running; its branch carries the code — reconciled at its merge) — by the integrator, 2026-10-01 (orphan sweep: the package that left this remainder has merged; fleet plan `audit-reports/fleet-plans/`).
+- **Status:** RESOLVED
 - **Verification:** SUSPECTED
 - **Locations:** `components/knowledge/SemanticIndexPanel.tsx:32-35`, `components/knowledge/SemanticIndexPanel.tsx:174-175`, `components/knowledge/SemanticIndexPanel.tsx:109-118`, `lib/ai/pricing.ts:84-91`, `app/api/knowledge/embed/route.ts:213`
 - **Independently verified:** ✓ **SURVIVES** — second independent adversarial pass. Both numbers confirmed and they disagree by ~7× on the same job (250k passages: 250¢ quoted vs ~$18 ledgered at 0.20/M). This is not cosmetic: the same inflated figure is what getMonthUsage/getCapUsd compare against, so a voyage build consumes a member's monthly cap ~10× faster than the real spend and can be halted by the cap path at knowledgeEmbedDrain.ts:92.
@@ -569,10 +579,10 @@ components/knowledge/SemanticIndexPanel.tsx:32-35 — `/** Rough, deliberately r
 
 **Done-when.**
 1. ✓ The estimate is computed from the connection's model through the ledger's price table and the library's actual character volume.
-2. ✗ Per-model Voyage rates in `lib/ai/pricing.ts` — I-05's file (GOV-6: "Voyage rate corrected from the published list"). Until then the panel labels Voyage figures an estimate.
+2. ✓ *Recorded by the integrator at the I-05 merge (2026-10-01):* I-05 (`GOV-6`, `DEC-73` item 4) priced the three Voyage models the picker offers from Voyage's published list (`lib/ai/pricing.ts`: `voyage-3.5-lite` 0.02, `voyage-3.5` 0.06, `voyage-3-large` 0.18 per million tokens; any other Voyage model falls to the conservative `voyage-` family row), pinned in `aiPricing.test.ts`. The panel's "conservative placeholder" label followed in the same merge: `embeddingRateIsPlaceholder` (`lib/ai/embeddings.ts`) is true only for a Voyage model that falls to the family row (`matchedPricePrefix`, `lib/ai/pricing.ts`), so the three named models are quoted as the estimates they are, at their real rate. Tests: `embeddings.test.ts` and `embedStatusShape.test.ts` ("SEM-13 …"); both fail against the old label.
 3. ✓ The quoted estimate and the ledger's figure come from one function (`estimateCostUsd`).
 4. ✓ `lib/__tests__/embeddings.test.ts`: for every offered model the estimate equals `estimateCostUsd` at the estimated tokens (exact), and the stated tolerance of the 4-characters-a-token estimate against a provider's own count is within 30% for ordinary prose.
 
-**Scope / residual.** Handed to I-05: the per-model Voyage rates.
+**Scope / residual.** None. RESOLVED at the I-05 merge (2026-10-01): every done-when holds.
 
 ---

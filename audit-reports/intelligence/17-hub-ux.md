@@ -29,7 +29,7 @@ What a new org sees, and whether the numbers on the status board are real.
 ## HUB-1 · Drawing Intelligence is unreachable in every workspace — the only checkbox that enables it is dropped on save
 
 - **Severity:** CRITICAL
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Verification:** CONFIRMED
 - **Locations:** `components/knowledge/LibraryAiModal.tsx:37`, `components/knowledge/LibraryAiModal.tsx:86-90`, `components/knowledge/LibraryAiModal.tsx:229-243`, `app/(protected)/knowledge/[id]/page.tsx:1956-1960`, `lib/knowledge.ts:39-44`, `lib/knowledge.ts:279-289`
 - **Independently verified:** ✓ **SURVIVES** — second independent adversarial pass. Repo-wide grep for `drawingIntel` returns five hits and none of them writes the flag — the modal's own state, its checkbox, the type declaration in knowledge.ts:44, and the strict `=== true` gate. There is no API route, migration default, or seed that sets it, so DrawingIntelPanel is unreachable in every workspace and the ticked box is silently discarded behind a success toast.
@@ -53,6 +53,21 @@ LibraryAiModal.tsx:86-90 — `await saveLibraryAiFeatures(library.id, { clarifyF
 - [ ] `drawingIntel` is included in the `saveLibraryAiFeatures` payload in LibraryAiModal.save(), so ticking the box and saving makes the panel appear on reload
 - [ ] `saveLibraryAiFeatures` either merges into the existing `ai_features` JSON or the call site is required to pass the complete object (e.g. by dropping `?` from the interface fields or taking a full-object parameter), so a partial payload can never silently erase a stored key
 - [ ] The two copy references that point at Drawing Intelligence (EquipmentTablePanel.tsx:47, SemanticIndexPanel.tsx:166) name a control that exists on the surface the reader is looking at
+
+
+**Resolution (2026-10-01, intelligence Round G).** Reproduced: `save()` omitted `drawingIntel`. The fix shipped first, as its own commit: the payload carries it.
+
+- Done-when 2: the modal passes the COMPLETE object, with the stored `aiFeatures` spread first and the modal's fields over it. A stored key the modal does not render survives the toggles-as-a-set replace of `saveLibraryAiFeatures` / `knowledge_library_save_ai_features`, which already keep `embedBuild` (I-02, `20261121`).
+- Done-when 3: EquipmentTablePanel names the real control — "the full set is the "Equipment register (CSV)" button in this library's Drawing Intelligence panel (turn on "This is a drawing set" in Library AI setup to show it)". SemanticIndexPanel's line was fixed by I-02.
+
+Tests: `libraryAiModal.test.ts` — rendered: tick the box and Save → `drawingIntel: true`; untick → false; an unknown stored key is carried and a cleared decoder dropped. `hubStatus.test.ts` pins the copy.
+
+**Done-when.**
+1. ✓ Ticking the box and saving makes the panel appear on reload.
+2. ✓ The call site passes the complete object, so a partial payload can no longer erase a stored key.
+3. ✓ Both copy references name a control that exists on the surface the reader is looking at.
+
+**Scope / residual.** The ask route's line ("the full tag list is in the library's Drawing intelligence panel") is now true once a library is marked a drawing set (I-03's file, unchanged).
 
 ---
 
@@ -104,7 +119,7 @@ answerSkills.ts:60-70 — `await supabase.from("answer_skills").insert(want.map(
 ## HUB-3 · A brand-new org's front door offers no first step — the only order-of-operations navigator is invisible from the Intelligence hub and buried in a collapsed Admin drawer
 
 - **Severity:** MEDIUM
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Verification:** CONFIRMED
 - **Locations:** `app/(protected)/intelligence/page.tsx:302-308`, `app/(protected)/intelligence/page.tsx:190-235`, `components/navigation/ViewTabs.tsx:106-114`, `components/navigation/Sidebar.tsx:143`, `components/navigation/Sidebar.tsx:252-253`, `app/(protected)/setup/page.tsx:109-188`
 - **Independently verified:** ✓ **SURVIVES** — second independent adversarial pass. Confirmed: the one surface that answers "what do I do first" is unlinked from the AI front door, admin-only in the nav, and inside a drawer that starts collapsed.
@@ -129,6 +144,18 @@ intelligence/page.tsx:302-307 — `<JumpCard href="/assistant" .../> <JumpCard h
 - [ ] The two "Setup" surfaces are distinguishable by name — e.g. the Intelligence tab reads "AI keys" and /setup keeps "Facility setup"
 - [ ] /setup carries the Intelligence ViewTabs strip, or is reachable from the hub without opening a collapsed admin section
 
+
+**Resolution (2026-10-01, intelligence Round G).** Built to the plan's default (`DEC-73` item 8): the navigator gets a hub card, and no sidebar entry is added beyond HUB-6's. The Overview reads the codebook-entry, live-asset and knowledge-library counts. When one is zero it shows "Start here — Facility setup", names the next stage in the navigator's own order (codebook → registry → knowledge) and why it matters, and links /setup; members are told Admin or Doc Control does these steps. The Intelligence tab, the jump card and the atlas entry are now "AI setup"; /setup keeps "Facility setup", and AI setup links to it by that name. Tests: `hubStatus.test.ts` ("HUB-3 — the first step from the front door; two Setups with two names").
+
+Fix pass 2, after the second review (*corrected:* the setup read took a FAILED count as 0). When only one of `codebook_entries` or `assets` errored, `cb.count ?? 0` / `as.count ?? 0` was patched with `setupKnown: true` and saved to the snapshot, so a statement timeout in a configured workspace showed "Start here — Facility setup. Next step: Site codebook" and painted it again from the snapshot on the next visit — against HUB-7's rule that a failure is never stored as known. The rule now lives in `setupCountsPatch` (`lib/hubStatus.ts`): a count comes only from a read that succeeded; a missing table (42P01 / PGRST205) is 0, which is genuinely "not started"; any other error sets `setupFailed` (dropped from the snapshot like every `*Failed` flag) and leaves `setupKnown` alone, and the card is hidden while `setupFailed` is set. A last-known snapshot of a configured workspace keeps its counts. Tests: `hubStatus.test.ts` ("a count that FAILED is never 'not started' …" — it fails on the pre-fix page; "a last-known snapshot of a configured workspace is not turned into a false card by a failed re-read"; "setupCountsPatch: a missing table is 0 …").
+
+**Done-when.**
+1. ✓ /intelligence surfaces the first incomplete stage when the codebook, the registry or the knowledge libraries are empty — from counts that were actually read (fix pass 2).
+2. ✓ The two surfaces are distinguishable by name: "AI setup" and "Facility setup".
+3. ✓ /setup is reachable from the hub without opening the collapsed Admin drawer.
+
+**Scope / residual.** None for this finding.
+
 ---
 
 <a id="hub-4"></a>
@@ -136,7 +163,7 @@ intelligence/page.tsx:302-307 — `<JumpCard href="/assistant" .../> <JumpCard h
 ## HUB-4 · Copy says six tabs; there are seven — and the sidebar hint omits the Skills library entirely
 
 - **Severity:** LOW
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Verification:** CONFIRMED
 - **Locations:** `components/navigation/ViewTabs.tsx:104-114`, `app/(protected)/intelligence/page.tsx:3-5`, `components/navigation/Sidebar.tsx:237`
 - **Independently verified:** ✓ **SURVIVES, corrected** — second independent adversarial pass. Severity **MEDIUM → LOW** by this pass. The facts are all correct, but two of the three cited locations are source comments that no user ever sees; the only user-visible defect is the Sidebar hint omitting the Skill Library. That is a copy nit, not a MEDIUM — and the Skill Library is separately discoverable via the tab row itself (ViewTabs.tsx:111) and the command palette (lib/featureAtlas.ts:99-102, aliased to "skills", "skill studio", "reasoning skills", …).
@@ -156,6 +183,15 @@ ViewTabs.tsx:104-114 — comment `// One tool, six lenses: everything AI lives h
 - [ ] The sidebar hint names every tab in INTELLIGENCE_VIEWS, Skills included
 - [ ] The "six lenses"/"Six tabs" comments match the array, or drop the count so they cannot drift again
 
+
+**Resolution (2026-10-01, intelligence Round G).** The sidebar hint is derived from `INTELLIGENCE_VIEWS` ("AI in one place — Overview · Ask · Knowledge · Graph · Review · Skills · AI setup"), so it names every tab and cannot drift. The "six lenses" / "Six tabs" comments no longer count. Tests: `hubStatus.test.ts` ("HUB-4 / HUB-6 — the navigation tells the truth").
+
+**Done-when.**
+1. ✓ The hint names every tab, Skills included.
+2. ✓ The comments drop the count.
+
+**Scope / residual.** Only the nav array's hint changed in `Sidebar.tsx`; the badge trail is the notifications fleet's.
+
 ---
 
 <a id="hub-5"></a>
@@ -163,7 +199,7 @@ ViewTabs.tsx:104-114 — comment `// One tool, six lenses: everything AI lives h
 ## HUB-5 · Every fix CTA on the status board lands on a list page rather than the control that fixes it
 
 - **Severity:** LOW
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Verification:** CONFIRMED
 - **Locations:** `app/(protected)/intelligence/page.tsx:209-233`, `app/(protected)/knowledge/page.tsx:108-142`, `components/knowledge/SemanticIndexPanel.tsx:192-213`
 - **Independently verified:** ✓ **SURVIVES, corrected** — second independent adversarial pass. Severity **MEDIUM → LOW** by this pass. SURVIVES on substance for the two Knowledge-related CTAs, but the title's quantifier is false: the two key cards (page.tsx:190-204) point at `/intelligence/setup`, which renders `<KeyEditor …/>` and `<EmbeddingKeyEditor …/>` inline at setup/page.tsx:56-59 — the exact control that fixes them — and the Database CTA lands on the page hosting Database health. Two of five misroute, so LOW rather than MEDIUM.
@@ -185,6 +221,15 @@ intelligence/page.tsx:3-10 — `// Every ✗ links directly to its fix.` intelli
 - [ ] The Knowledge and Meaning-index CTAs deep-link to a specific library (or open the create-library flow) rather than the shelf list
 - [ ] A card whose fix the viewer's role cannot perform states who can, instead of offering a button that dead-ends
 
+
+**Resolution (2026-10-01, intelligence Round G).** "Nothing indexed" now links to `/knowledge?create=1`, which opens the create-library dialog for a controller (`app/(protected)/knowledge/page.tsx`), or to the newest library's page to upload. "Index not built" links to the newest library's page, where Build index lives. A member sees who can fix it instead of a dead-end button ("Admin or Doc Control adds documents…" / "…builds the meaning index from a library's page"). The rules are `knowledgeFix` / `meaningIndexFix` in `lib/hubStatus.ts`, with the controller tier read through `isControllerPrincipal`. Tests: `hubStatus.test.ts` ("HUB-5 — every fix lands on its control, or says who can").
+
+**Done-when.**
+1. ✓ The Knowledge and Meaning-index CTAs deep-link to a library or open the create flow.
+2. ✓ A card whose fix the viewer cannot perform says who can.
+
+**Scope / residual.** The deep links go to the newest library. Per-library coverage would let the index CTA pick the library that actually needs building.
+
 ---
 
 <a id="hub-6"></a>
@@ -193,6 +238,7 @@ intelligence/page.tsx:3-10 — `// Every ✗ links directly to its fix.` intelli
 
 - **Severity:** MEDIUM
 - **Status:** OPEN
+- **Assigned:** intelligence I-20 AI UI REMAINDERS (done-when 2, the library Ask header) — by the integrator, 2026-10-01 (at the I-05 merge: the package that left this remainder has merged; fleet plan `audit-reports/fleet-plans/`).
 - **Verification:** CONFIRMED
 - **Locations:** `app/(protected)/intelligence/setup/page.tsx:67-71`, `app/(protected)/knowledge/[id]/page.tsx:1643-1647`, `lib/featureAtlas.ts:75-105`, `components/navigation/Sidebar.tsx:252-269`
 - **Independently verified:** ✓ **SURVIVES** — second independent adversarial pass. Confirmed, including the chicken-and-egg the summary points at: the knowledge-library link only appears once instructions already exist, so an org with zero playbooks has exactly one discoverable path (the controller-only block on the Setup tab) and the command palette cannot find it at all.
@@ -212,6 +258,15 @@ Four differently-shaped searches: `grep -rn "ai-instructions" --include=*.ts --i
 - [ ] `/admin/ai-instructions` has a FEATURE_ATLAS entry with plain-language keywords (playbook, house rules, standing instructions, tell the AI), so the command palette finds it
 - [ ] The library Ask header points at playbooks even when `instructionCount === 0` — an empty state that invites the first one rather than hiding the door
 
+
+**Partial (2026-10-01, intelligence Round G).** `/admin/ai-instructions` now has a `FEATURE_ATLAS` entry, "AI instructions (playbooks)", with aliases including playbook, house rules, standing instructions, tell the ai and teach the ai. It also has an admin-nav entry, "AI instructions", beside Site codebook; the page admits the members the Admin drawer is built for. Tests: `hubStatus.test.ts` ("AI instructions (playbooks) is in the atlas under the words people use, and in the admin nav"), `featureAtlas.test.ts`.
+
+**Done-when.**
+1. ✓ The command palette finds it.
+2. ✗ The library Ask header's link (`app/(protected)/knowledge/[id]/page.tsx`, `instructionCount > 0 && …`) belongs to I-02 / I-02b: an empty state there should invite the first playbook.
+
+**Scope / residual.** OPEN for done-when 2.
+
 ---
 
 <a id="hub-7"></a>
@@ -219,7 +274,7 @@ Four differently-shaped searches: `grep -rn "ai-instructions" --include=*.ts --i
 ## HUB-7 · Status-board cards shimmer forever when their data source fails — the skeleton is the permanent state, and two of four failure paths are silent
 
 - **Severity:** MEDIUM
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Verification:** CONFIRMED
 - **Locations:** `app/(protected)/intelligence/page.tsx:137-143`, `app/(protected)/intelligence/page.tsx:107-135`, `app/(protected)/intelligence/page.tsx:245-249`, `app/(protected)/intelligence/page.tsx:277-282`, `app/(protected)/intelligence/page.tsx:320-330`, `supabase/migrations/20261014_coverage_timeout_headroom.sql:3`
 - **Independently verified:** ✓ **SURVIVES** — second independent adversarial pass. Confirmed. supabase-js resolves (never rejects) on an RPC HTTP 500, so a semantic_coverage failure lands in the FIRST handler with r.data null → row null → no patch → coverageKnown stays false → the Meaning-index card shimmers permanently for any non-admin (schemaGaps is only ever set under `if (isAdmin)` at :145). Both coverage failure modes (the `() => undefined` reject arm and the null-row arm) are silent; the counts path at :132-134 at least sets `error`, and both key arms set keysKnown — so 2 of 4 silent is accurate. Migration 20261014_coverage_timeout_headroom.sql:1-9 confirms this RPC really does time out in the field.
@@ -241,6 +296,25 @@ intelligence/page.tsx:137-143 — `void supabase.rpc("semantic_coverage", { p_or
 - [ ] Every data source patches its `*Known` flag in its rejection handler, the way the key fetch already does at page.tsx:97-104
 - [ ] A card whose source failed renders a stated "couldn't check" state with a retry, not an indefinite skeleton
 - [ ] The counts block does not let one failing query blank three panels — settle the four independently (Promise.allSettled or separate calls)
+
+
+**Resolution (2026-10-01, intelligence Round G).** Every source now patches its own known flag, and a failure is a state, not a shimmer:
+
+- The keys, libraries, documents, proposals, recent-questions, coverage and schema-health reads settle independently, so one failing query no longer blanks three panels through a shared `Promise.all`.
+- Each failure renders "Couldn't check (reason)" with a Retry on its own card or panel. A card showing a snapshot value says "Last known — couldn't refresh".
+- `semantic_coverage`'s resolved-with-error 500 is read as a failure, and a missing row as "nothing indexed".
+- A failed key check no longer paints "No key saved".
+- The pending-proposals count is read directly, because the shared helper reads an error as 0.
+- Failures are never persisted to the snapshot. *(Fix pass 2: the Facility-setup counts were the one source that still read a failed count as 0 and saved it as known; corrected under HUB-3.)*
+
+Tests: `hubStatus.test.ts` ("HUB-7 — a failed source is said, with a retry", rendered).
+
+**Done-when.**
+1. ✓ Every source patches its flag in its rejection handler (and on a resolved error).
+2. ✓ A failed card states "couldn't check", with a retry.
+3. ✓ The sources settle independently.
+
+**Scope / residual.** None for this finding.
 
 ---
 
@@ -288,7 +362,7 @@ ConnectionSkillsPanel.tsx:74-79 — `const remove = async (r: LinkRule) => { set
 ## HUB-9 · The Meaning-index card never renders for an Admin, and reads green at 1% coverage or with nothing indexed at all
 
 - **Severity:** LOW
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Verification:** CONFIRMED
 - **Locations:** `app/(protected)/intelligence/page.tsx:217-234`, `app/(protected)/intelligence/page.tsx:145-167`, `app/(protected)/intelligence/page.tsx:261-270`
 - **Independently verified:** ✓ **SURVIVES, corrected** — second independent adversarial pass. Severity **MEDIUM → LOW** by this pass. The mechanism is real — the ternary at :217 means an Admin whose schema-health call succeeds gets the Database card in the coverage card's slot, and ok= is true at 1/400 embedded — but 'never renders for an Admin' is literally false: schemaGaps starts null, so the Meaning-index card DOES render until /api/admin/schema-health answers, and renders permanently if that fetch is non-ok (:160 `if (!res.ok) return;`). More importantly the scenario's own admin holds the embedding key, so the row at :261-270 does render for them and states '16 of 400 passages embedded' — the coverage number is not actually withheld. Downgrade to LOW: a green check on a partially-built index whose exact percentage is printed beside it.
@@ -311,6 +385,16 @@ intelligence/page.tsx:228 — `ok={s.chunksTotal > 0 ? s.chunksEmbedded > 0 : tr
 - [ ] The Meaning-index card is only green above a defensible coverage threshold, and reads as "not built" rather than green when `chunksTotal === 0`
 - [ ] The "Meaning index N% built" row is not suppressed by the viewer's personal embeddings key — coverage is a library fact, not a per-user one
 
+
+**Resolution (2026-10-01, intelligence Round G).** Database health and the Meaning index each hold their own slot, so an Admin sees five cards. The Meaning-index card is green only at ≥ 95% embedded (`MEANING_INDEX_OK_PCT`) and reads "Not built — nothing has been indexed yet", not green, at zero. The "Meaning index N% built" row no longer depends on the viewer's own embeddings key. Tests: `hubStatus.test.ts` ("HUB-9 — the Meaning-index card").
+
+**Done-when.**
+1. ✓ Database health and Meaning index each hold a slot.
+2. ✓ Green only above the threshold; "not built" when `chunksTotal === 0`.
+3. ✓ Coverage is shown as a library fact, not a per-user one.
+
+**Scope / residual.** None for this finding.
+
 ---
 
 <a id="hub-10"></a>
@@ -318,7 +402,7 @@ intelligence/page.tsx:228 — `ok={s.chunksTotal > 0 ? s.chunksEmbedded > 0 : tr
 ## HUB-10 · The Overview's instant-paint snapshot is keyed by org, not by user — the previous person's per-user AI status is painted for the next one on a shared workstation
 
 - **Severity:** LOW
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Verification:** SUSPECTED
 - **Locations:** `app/(protected)/intelligence/page.tsx:70-84`, `app/(protected)/intelligence/page.tsx:147-165`, `app/api/ai/connection/route.ts:99-105`, `components/providers/RoleContext.tsx:260-280`
 - **Independently verified:** ✓ **SURVIVES, corrected** — second independent adversarial pass. Severity **MEDIUM → LOW** by this pass. The key fact holds: the localStorage snapshot is keyed by org only, yet chatKey/embeddingKey are strictly per-user, so on a shared device the next signer-in gets the previous user's masked key state painted as known (no shimmer), and the `() => patch({ keysKnown: true })` failure arm at :103 leaves those stale values standing as authoritative. But RoleContext.tsx:271-278 does purge every `intel-status-*` / `schema-gaps-*` key on SIGNED_OUT, and in the normal path the stale paint is overwritten within one round-trip by the real getAiConnections result. Exposure is a 4-character key suffix plus a boolean, transient, and inside the same org — LOW.
@@ -339,6 +423,19 @@ intelligence/page.tsx:70 — `const snapKey = `intel-status-${activeOrgId}`;` an
 
 - [ ] Both localStorage keys include the uid (e.g. `intel-status-${uid}-${orgId}`), so a snapshot can never be read by a different account
 - [ ] The snapshot carries the uid it was written under and is discarded on mismatch, rather than relying on a sign-out handler having run
+
+
+**Resolution (2026-10-01, intelligence Round G).** The snapshot keys are now `intel-status-<uid>-<org>` and `schema-gaps-<uid>-<org>`; RoleContext's sign-out sweep still matches the prefixes. The stored snapshot carries the uid it was written for and is discarded on a mismatch (`readHubSnapshot`). The org-only keys of before are removed on load and never read. Tests: `hubStatus.test.ts` ("HUB-10 — the snapshot belongs to one user", including a shared-device render).
+
+Fix pass, after the review (*corrected:* done-when 2 held for the snapshot on disk but not for the status in memory). When the uid or workspace changed while the page was mounted — an account switched in another tab, since Supabase syncs auth across tabs — the effect kept what was on screen (`{ ...prev }`) with its "known" flags, and the next patch saved the last person's key last-4 and recent questions under the NEW person's key, stamped with the new uid, where the uid check could not catch them. Now the page remembers whose status is on screen (`uid|org`). Only a Retry for the same person and workspace keeps it; any other change starts from the new identity's own snapshot or the empty status. The board also paints nothing it holds for anyone else, even in the frame before the reset (`statusFor`). Tests: `hubStatus.test.ts` ("a uid change while the page is mounted … the last person's status is neither shown nor saved under the new key" — it fails on the pre-fix page; "a Retry for the SAME person keeps what is on screen").
+
+Fix pass 2, after the second review (*corrected:* the first fix pass's "never saved under another identity's key … residual none" did not hold for an Admin). The reset ran in a `queueMicrotask`, but an Admin whose database check was cached (`schema-gaps-<uid>-<org>`, under an hour old) patched SYNCHRONOUSLY inside the effect, before it. That patch's updater built the new status from the previous identity's and wrote it to localStorage under the NEW identity's key, stamped with the new uid; the microtask then read it back as the new identity's "own snapshot" and painted it. Reproduced in both directions: an Admin signing in on a device where an Engineer was on the hub was shown the Engineer's key last-4 and document count for the key check's cold start, and an Admin switching workspace with the new workspace's gaps cached saw the old workspace's documents, recent questions and a "Build index" link into the old workspace's library — persisted as the new workspace's last known, so a failing source there kept the old value on screen as "Last known". Now the status and its owner are ONE piece of state (`Board`: `for` = `uid|org`, the effect `run`, the `status`), the identity's snapshot is read at the top of the effect before any source can answer, and the reset and every patch build through one rule (`baseFor`): a board that belongs to another identity is never inherited — the run starts from this identity's own snapshot — and the same identity keeps what is on screen, clearing the last run's failures on the run's first write, whichever of the reset or a patch lands first. localStorage is written only with a status built for its own key. Tests: `hubStatus.test.ts` ("an Admin whose database check is cached … starts from THEIR snapshot on a uid change …" and "an Admin's workspace switch with the new workspace's gaps cached never paints, links to or saves the old workspace's figures" — both fail on the pre-fix page, with every other source left pending).
+
+**Done-when.**
+1. ✓ Both keys include the uid.
+2. ✓ The snapshot carries its uid and is discarded on a mismatch, without relying on a sign-out handler having run. The in-memory status is never carried across a uid or workspace change — including a source that patches before the reset (fix pass 2) — so it is never painted for, or saved under the key of, another identity.
+
+**Scope / residual.** None for this finding.
 
 ---
 
@@ -384,7 +481,7 @@ intelligence/page.tsx:70 — `const snapKey = `intel-status-${activeOrgId}`;` an
 ## HUB-12 · Three surfaces name the same checkbox three different ways, and two of them route the reader through a panel that cannot render
 
 - **Severity:** MEDIUM
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Verification:** CONFIRMED
 - **Locations:** `components/knowledge/LibraryAiModal.tsx:213-216`, `components/knowledge/SemanticIndexPanel.tsx:158-168`, `components/knowledge/DrawingIntelPanel.tsx:432-436`, `components/knowledge/EquipmentTablePanel.tsx:45-49`
 - **Independently verified:** ✓ **SURVIVES** — second independent adversarial pass. Confirmed on both clauses. A grep for the exact strings shows 'These are CAD exports or scans' exists nowhere but SemanticIndexPanel's own advice text — the real label is 'Text doesn't extract from these files'. And both SemanticIndexPanel (:163 'run Rebuild index under Drawing intelligence') and EquipmentTablePanel (:47 'use the CSV export in Drawing intelligence') send the reader to a panel that is not mounted unless aiFeatures.drawingIntel === true, and which returns null when nothing was extracted — precisely the failure state that produces the advice.
@@ -405,5 +502,19 @@ LibraryAiModal.tsx:214-216 — `<span className="block text-xs font-bold ...">Te
 
 - [ ] All instructional copy quotes the checkbox by its actual on-screen label
 - [ ] No instruction routes a reader through Drawing intelligence for an action that lives elsewhere — the general re-index is named as "Re-index all" in the Documents header, where page.tsx:1835-1838 says it was deliberately moved
+
+
+**Partial (2026-10-01, intelligence Round G).** This package's lines:
+
+- Library AI setup keeps the checkbox's on-screen label. Its help now names the real follow-up, "Turn it on, then run Re-index all in the Documents header"; it used to say "Rebuild index", which is the meaning-index control.
+- EquipmentTablePanel names the real export button and says how to show its panel.
+
+I-02's SemanticIndexPanel line (merged) quotes the label and names "Re-index all". Pins: `hubStatus.test.ts` ("HUB-12 (this package's lines)") and I-02's `knowledgePageCopy.test.ts`.
+
+**Done-when.**
+1. ✓ *Recorded by the integrator at the I-05 merge (2026-10-01):* I-07 (merged `d466a59`) rewrote DrawingIntelPanel's footer, which now quotes the checkbox by its on-screen label — "Text doesn't extract from these files — index every page as an image" in Library AI setup (`components/knowledge/DrawingIntelPanel.tsx`, the "Drawing, no tags" footer); its "Rebuild index" names the panel's own button. Every instructional line now quotes the label as shown. Pinned: `hubStatus.test.ts` ("Drawing intelligence's footer quotes the checkbox by its on-screen label"), with the drawing route's suggestions in `intelRoundGDrawingRoutes.test.ts`.
+2. ✓ for the lines landed. No instruction sends a reader to Drawing intelligence for an action that lives elsewhere: the register export does live there, and the copy now says how to show the panel.
+
+**Scope / residual.** None. RESOLVED at the I-05 merge: both done-whens hold, with I-07's line merged.
 
 ---

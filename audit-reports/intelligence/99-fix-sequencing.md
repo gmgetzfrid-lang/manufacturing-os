@@ -108,6 +108,316 @@ here"* — describes a place at least as much as a filter. Decide deliberately.
 
 Then the remaining findings in severity order.
 
+⚠ **Deploy order — intelligence Round G I-05 (AI governance; `DEC-73`).**
+A stored $0 cap LOCKS the moment the app deploys (`GOV-3`) — the app half does
+not wait for `20261137` — where $0 used to mean "no cap". **Before the app
+deploys**, run this read-only query in the Supabase SQL editor (it changes
+nothing; it is `20261137`'s two $0 inventory counts):
+
+```sql
+SELECT 'per-person AI caps stored as $0 (they LOCK once the app deploys)' AS check, COUNT(*)::text AS n
+  FROM ai_usage_limits WHERE user_id IS NOT NULL AND monthly_cap_usd = 0
+UNION ALL
+SELECT 'workspace-default AI caps stored as $0 (every member on the default is locked)', COUNT(*)::text
+  FROM ai_usage_limits WHERE user_id IS NULL AND monthly_cap_usd = 0;
+```
+
+A non-zero count is a workspace that meant "unlimited": set a real figure
+first (AI settings, or an UPDATE of that row), then deploy. `20261137` itself
+may be pasted before or after the app.
+
+**Owners still to map the ledger refusal** (`GOV-4`): during a ledger outage,
+`getMonthUsage` / `getCapUsd` throw a 503 `GovernedCallError`. The ingest
+route, the ingest drain and the codebook import catch it (I-05). The ask
+(I-03), orchestrator (I-04) and embed (I-02's, merged) routes still answer an
+unhandled 500. They refuse their AI work either way, but the sentence is lost.
+Each maps `GovernedCallError` onto its response as it adopts `assertAiGates`.
+
+⛔ **MERGE GATE for I-05 — locate keeps its non-AI output when the cap
+table cannot be read, and refuses a $0 lock before its first call** (`GOV-4`,
+`GOV-3`; I-07's file, merged at `d466a59`).
+**APPLIED by the integrator at the I-05 merge (2026-10-01)**, as written
+below, in `app/api/knowledge/locate/route.ts`, with the two tests in
+`lib/__tests__/intelRoundGDrawingRoutes.test.ts` ("I-05 merge gate …"; both
+fail against the route before the gate) and the mock change named below. *Restated in I-05 fix pass 10:*
+the gate as first written replaced a `Promise.all([getMonthUsage(...),
+getCapUsd(...)])` that I-07 as merged no longer has, so it could not be
+applied as written. On the integration branch,
+`app/api/knowledge/locate/route.ts:303` reads, outside any try:
+
+```ts
+const [spentUsd, cap] = await Promise.all([monthSpendAllOps(orgId, user.id), getCapUsd(orgId, user.id)]);
+```
+
+`monthSpendAllOps` is locate's own ledger read. It answers null on a read
+error, and the route already handles that null. With I-05 two things change
+under it:
+
+- (a) `getCapUsd` THROWS `AiUsageUnavailableError` (503) when the cap table
+  cannot be read; at `052271b` it answered $10. Uncaught, the whole locate
+  response is a 500. The text-layer `positions`, `notOnPage` and the
+  library-wide `elsewhere` hits, which spend nothing, are lost.
+- (b) A stored $0 cap is `LOCKED_CAP_USD`, the smallest positive number.
+  `monthSpendAllOps` has no lock floor (I-05's `getMonthUsage` has one).
+  For a locked member with no spend this month, `overCap(ZERO_USAGE)` =
+  `cap > 0 && 0 >= 5e-324` is false, so the coarse pass, a paid page-vision
+  call, is made. The per-call re-checks refuse after it. Until this lands,
+  `GOV-3`'s "every gate refuses at $0 spent" does not hold for locate.
+
+**When I-05 merges, if I-07 has not already landed this, the integrator
+applies it in the same merge** (the locate route is otherwise I-07's):
+
+```ts
+import { isAiUsageUnavailable } from "@/lib/ai/gateError";
+import { getCapUsd, capIsLocked, recordAskUsage, monthStartIso } from "@/lib/ai/usageServer";
+// …replacing line 303's `const [spentUsd, cap] = await Promise.all([...]);`
+let spentUsd: number | null;
+let cap: number;
+try {
+  [spentUsd, cap] = await Promise.all([monthSpendAllOps(orgId, user.id), getCapUsd(orgId, user.id)]);
+} catch (e) {
+  // GOV-4: a cap table that cannot be read refuses the AI step, never the free answer.
+  if (!isAiUsageUnavailable(e)) throw e;
+  return NextResponse.json({
+    positions: [...found.values()], notOnPage: trulyAbsent, elsewhere,
+    skipped: `${(e as Error).message} The sheet still opens at the right page.`,
+  });
+}
+// (the existing `if (spentUsd === null) { … }` stays as it is)
+// GOV-3: a $0 cap locks. It is refused before the first call, at $0 spent too:
+// monthSpendAllOps has no lock floor, so overCap alone admits it.
+if (capIsLocked(cap)) {
+  return NextResponse.json({
+    positions: [...found.values()], notOnPage: trulyAbsent, elsewhere,
+    skipped: "Your monthly AI cap is set to $0, so AI is locked for you until someone who manages AI caps raises it — the sheet still opens at the right page.",
+  });
+}
+```
+
+(Replacing `monthSpendAllOps` with I-05's `getMonthUsage(...).spentUsd`,
+which counts every op and carries the floor, would also close (b). It would
+not close (a). It is I-07's call; either way (a) needs the catch.)
+
+**I-07's test file changes with it.** `lib/__tests__/intelRoundGDrawingRoutes.test.ts`
+mocks `@/lib/ai/usageServer` whole. Its mock gains
+`capIsLocked: (c: number) => c <= Number.MIN_VALUE`. Its `getCapUsd`
+default, `vi.fn(async () => 0)`, and the `beforeEach`'s
+`mockResolvedValue(0)`, become a figure the scripted calls never reach,
+such as `1000`. With I-05, `getCapUsd` never answers 0: 0 meant "no cap",
+and it is now the lock. Tests, with I-07's route:
+
+1. A vision-read sheet, a key on file and a signed agreement, with
+   `getCapUsd` rejecting with `new GovernedCallError("AI usage can't be read
+   right now, so AI calls are refused until it can (down).", 503,
+   { usageUnavailable: true })` (from `@/lib/ai/gateError`, not mocked).
+   Expect 200, with the text-layer `positions`, `notOnPage` and `elsewhere`
+   intact, and `skipped` carrying "AI usage can't be read right now". There
+   is no provider call and no metering row. Any other error still throws.
+2. The same sheet with `getCapUsd` resolving `Number.MIN_VALUE` (a $0 cap)
+   and no spend this month. Expect 200 with the free answer and `skipped`
+   naming the $0 lock. `ai.calls` is empty and `recordAskUsage` is not
+   called. Without the check, the coarse pass is made: one call.
+
+**The current month of the AI spend ledger is never purged — coordinated
+limb in A&O's file** (`GOV-4` / `GOV-10`, I-05 fix pass 3).
+`app/api/admin/purge/route.ts` (A&O P7's; the notifications fleet's N6 edits
+its status filters) listed `ai_usage_events` as "pure telemetry" with a 7-day
+floor, so an Admin or Doc Controller at their cap could purge the month's
+rows older than a week and be admitted again. I-05 added `cutoffFor`: the
+cutoff for `ai_usage_events` is `min(cutoff, monthStartIso())` (count and
+delete), the target is relabelled "AI spend ledger (past months)", and the
+preview and the `DATA_PURGE` row carry each table's cutoff
+(`lib/__tests__/purgeLedgerFloor.test.ts`). **A&O P7 and N6 rebase on it and
+keep it**: whatever else changes in the route, a current-month ledger row is
+never purge-eligible.
+
+**Embeddings allowlist at spend — I-02 / I-02b's limb** (`GOV-6`). The
+embeddings allowlist (`ALLOWED_EMBEDDING_PROVIDERS`) is enforced at save and
+at test (`/api/ai/connection`), and by `assertAiGates({ key: "embedding" })`
+— which no index-time spend calls yet. `/api/knowledge/embed`, the embed
+drain and the ask route's query embedding read the key through
+`embeddingConnectionFrom` with no allowlist (the client only calls Voyage's
+or OpenAI's endpoint, so no third vendor is reached today). Limb: run
+`assertAiGates({ key: "embedding" })` in the embed route and the drain as
+they adopt the gate stack, or have `embeddingConnectionFrom` return null for
+a provider off `ALLOWED_EMBEDDING_PROVIDERS`; test a stored
+`embedding_provider` off the list is never spent.
+
+**The lock's copy on the older routes — I-03 / I-04 / I-02 / I-07 limbs**
+(`GOV-3`). A $0 cap is a lock that does not reset, but the ask, orchestrator
+and embed routes print "Monthly AI budget reached — $0.00 of your $0.00 cap.
+It resets on the 1st" for a locked member, and locate "Monthly AI budget
+reached ($0.00 of $0.00)". Each owner branches on `capIsLocked(cap)` (or a
+refusal's `details.locked`) and says "Your monthly AI cap is set to $0, so AI
+is locked for you until someone who manages AI caps raises it" — never the
+reset — as `/api/templates/generate` does (I-05).
+
+⛔ **MERGE GATE for I-05 / I-02b — a $0 cap is a refusal to every reader of
+`/api/ai/usage`** (`GOV-3`; I-02b's code, I-02b runs in parallel).
+**APPLIED by the integrator at the I-05 merge (2026-10-01)** — I-02b merged
+first, so the gate landed with I-05: `ownVisionKeyProblem` returns
+`aiUsageLockedReason(usage)` first, and `ingestLoopClient.test.ts`'s case
+is flipped as written below. Since
+I-05, `GET /api/ai/usage` answers `capUsd: 0, locked: true` for a LOCKED
+member; 0 no longer means "no cap". I-02b's new `ownVisionKeyProblem`
+(`lib/knowledge.ts`) does `const cap = Number(usage.capUsd) || 0; if (cap > 0
+&& spent >= cap) …`, so for a locked member it answers null ("no problem").
+The table-aware re-index then runs without its warning, the ingest route
+refuses vision ("Monthly AI budget reached ($0.00 of $0.00)"), and scan and
+CAD pages are indexed text-only. I-05 added `locked` (with `calls`, `byOp`
+and `canManageCaps`) to `AiUsageSummary` and the helper
+`aiUsageLockedReason(usage)` beside `getAiUsage`. **Whichever of I-05 and
+I-02b merges second, the integrator applies this in the same merge**,
+inside `ownVisionKeyProblem`, right after `const usage = await
+getAiUsage(orgId);`:
+
+```ts
+  // GOV-3 (I-05): a $0 cap is a LOCK (`locked: true`, capUsd 0), never "no cap".
+  const locked = aiUsageLockedReason(usage);
+  if (locked) return locked;
+```
+
+The test flips with it. In I-02b's `lib/__tests__/ingestLoopClient.test.ts`,
+"a monthly budget reached is a problem; a cap of 0 is not (the route reads
+it as no cap)" asserts the opposite and becomes "…; a cap of 0 is the LOCK
+(GOV-3)". Both `{ ...usage(0, 0), locked: true }` and `usage(50, 0)` now
+expect `"your monthly AI cap is set to $0, so AI is locked for you until
+someone who manages AI caps raises it"`. The page test in
+`knowledgePageIngestUi.test.ts` already shows that any `ownVisionKeyProblem`
+answer refuses the re-index before anything is reset. Every other reader of
+`/api/ai/usage` follows the same rule: `usage.locked === true` (equivalently
+`capUsd` 0) is a refusal, never "no cap". Today the only other reader is AI
+settings, which already does.
+
+**The Voyage "placeholder rate" label — I-02 / I-02b's limb** (`GOV-6`,
+`SEM-13`; I-05 fix pass 5). **APPLIED by the integrator at the I-05 merge (2026-10-01)**
+(I-02 and I-02b had merged): `embeddingRateIsPlaceholder` reads the price
+table's matched row (`matchedPricePrefix`), and both tests flipped as below. `embeddingRateIsPlaceholder(model)`
+(`lib/ai/embeddings.ts`, line 387 at I-05's head) returns true for EVERY
+Voyage model, and `/api/knowledge/embed` sends it as `placeholderRate`
+(line 144), so the meaning-index panel (`SemanticIndexPanel`) labels every
+Voyage estimate "this provider's rate in the app is a conservative
+placeholder". Since I-05, `lib/ai/pricing.ts` prices the three Voyage models
+the app offers from Voyage's published list (the three named Voyage rows
+above the family row), and the ledger charges exactly that. Limb:
+`embeddingRateIsPlaceholder` returns false for a model one of those three
+rows prices and true only for a Voyage model that falls through to the bare
+`voyage-` family row. The tests flip with it: `lib/__tests__/embeddings.test.ts`
+(line 297 asserts the lite model is a placeholder) expects false for the
+three and true for an unlisted Voyage model, and `embedStatusShape.test.ts`'s
+`placeholderRate: true` follows its model.
+
+**GOV-11's interactive-ingest agreement limb — landed in I-05 (fix pass 5);
+nothing to re-assign.** `app/api/knowledge/ingest/route.ts` (I-06's, merged)
+now reads `ai_key_agreements` for the requester at `AGREEMENT_VERSION`
+before it builds the `VisionContext`. Unsigned, or signed an older version,
+skips vision only and says so; an unreadable record is never taken as
+signed. The census lists the route INLINE, no longer PENDING. Whoever next
+edits the route keeps the read (tests: `aiUsageOutageIngest.test.ts`
+"GOV-11 — …", `aiGateCensus.test.ts`; `ingestRoute.test.ts`'s seed signs the
+agreement). GOV-11 stays OPEN only for flows/read (I-09) and locate (I-07).
+*Fix pass 6:* `ingestKnowledgeDocBatch` (`lib/knowledgeIngest.ts`, I-06's,
+merged) takes `opts.noVisionReason`, and `visionRetryMessage` takes it as a
+third argument. The interactive route passes it when vision was withheld for
+the agreement or an unreadable ledger, so a document waiting on AI vision is
+parked with that cause, never "Add one in AI settings" for a saved key.
+Whoever next edits the engine or the route keeps it (test:
+`aiUsageOutageIngest.test.ts`, "a document waiting on AI vision…").
+*Fix pass 7* (the seventh review's major): `noVisionReason` now also HOLDS
+a page that needs vision. The page is listed in `vision_failed_pages`, like
+a provider failure (ING-6), and is never consumed text-only. Consumed, the
+document reached 'ready' and nothing read the page once the member signed;
+that was a regression from `052271b` for keyed members, and the
+`2026-10-v3` re-sign put every member there at deploy.
+
+- The route answers a read-every-page library with vision withheld for such
+  a reason without running a batch: 428 with the agreement fields, or 409.
+  It writes nothing to the row, so the drain's queue order is untouched.
+- The drain's `loadSponsorVision` returns the uploader's `noVisionReason`
+  and passes it. The drain holds pages the same way and names that cause on
+  the row: the row no longer flips to "Add one in AI settings" on the next
+  pass.
+
+Whoever next edits the engine, the route or the drain keeps all three.
+Tests: `aiUsageOutageIngest.test.ts`, "GOV-11 / GOV-4 — a page that needs
+vision is never consumed text-only…".
+
+**Limb for I-02 / I-02b** (the library page and
+`components/providers/KnowledgeIndexIndicator.tsx`, through
+`lib/knowledge.ts`'s ingest loop): the ingest route's 428 (read-every-page
+library) and its retry-stage 409, for a member who has not signed, carry
+`agreementRequired`, `agreementText` and `agreementVersion`, as the ask
+route's 428 does. A client that prompts for the agreement on them, records
+the acceptance and re-runs indexing closes the loop. Until then the
+sentence sends the member to ask any question in Knowledge, which
+prompts.
+
+**`20261137` re-creates TWO functions** (I-05 fix pass 3): besides
+`org_capability_allows_for` (one CASE row), `capability_policy_write_guard`
+from `20261056` with `'ai.manage_caps'` added to its critical list
+(`ai.manage_caps` is `critical: true`). A later package that re-creates the
+guard starts from `20261137`'s body.
+
+**MERGE notes — I-05's limbs in other packages' files** (I-05 fix pass 11;
+the integrator confirms at I-05's merge that no running owner branch
+conflicts with them). Each owner that next edits the file keeps the limb:
+
+- `lib/knowledgeIngest.ts` (I-06's, merged; I-06b next). Keep the GOV-4
+  catch in the drain's `loadSponsorVision`: an unreadable ledger withholds
+  vision only, and the drain goes on. Keep `opts.noVisionReason` and its
+  third argument to `visionRetryMessage`. Keep the vision-page hold
+  (`visionHeld` → `vision_failed_pages`): a page that needs vision is never
+  consumed text-only while the reason can be fixed. Keep the uploader's
+  agreement read, which returns that reason.
+- `app/api/knowledge/ingest/route.ts` (I-06's, merged; I-06b next). Keep:
+  - the GOV-4 catch around `getMonthUsage` / `getCapUsd` (vision skipped,
+    never a 500);
+  - the GOV-11 read of `ai_key_agreements` at `AGREEMENT_VERSION`, where an
+    unreadable record is never taken as signed;
+  - `noVisionReason` passed to the batch;
+  - a read-every-page library's 428 (agreement fields) or 409, written
+    without touching the row.
+- `lib/knowledge.ts` (I-02's, merged; I-02b). Keep the additive types:
+  `AiUsageSummary` gains `locked` / `calls` / `byOp` / `canManageCaps`.
+  Keep `aiUsageLockedReason`. Keep `setAiCap`, which returns the POST's
+  answer (`AiCapSetResult`). AI settings types what POST adds beyond that
+  (`selfCapUsd`, `selfCapSetByAnother`, `selfCapOwnLowering`, `unchanged`,
+  and since fix pass 12 `pinnedAtDefault`) locally, as `CapSetView`, and
+  what GET adds (`teamUnavailable`, fix pass 12) as `UsageView`; neither
+  touches `lib/knowledge.ts`. The `ownVisionKeyProblem` MERGE GATE above
+  still applies.
+- `app/api/admin/purge/route.ts` (A&O P7's; N6 edits its status filters).
+  Keep `cutoffFor`: the `ai_usage_events` cutoff is never later than
+  `monthStartIso()`. Keep the relabelled target and the per-table cutoff in
+  the preview and the `DATA_PURGE` row (`purgeLedgerFloor.test.ts`).
+
+**GOV-10 → `GOV-15` at I-05's merge** (integrator's decision, 2026-10-01).
+GOV-10 is recorded as a Partial, Status OPEN: the self-raise ban holds for
+sequential requests. Races between two or more cap changes in flight are
+`GOV-15`, "a cap change is one database transaction", which the integrator
+opens with its own package. That package writes one SECURITY DEFINER
+function, `search_path` pinned, with DRLS-16's revoke and grant. It locks
+the default and override rows, then decides, writes and audits. It
+REPLACES the route's app-side machinery: `capChangesSince`, `signedFigure`,
+`holdOwnCapAt`, `recheckOwnCap`, the guarded writes, re-reads and
+put-backs, and `writeId` / `limitRowId`. It does not extend them. Its
+inputs are the residual under GOV-10's "What the race machinery leaves
+open" and "Noted for `GOV-15`". One input is a rule to loosen, not
+machinery to replace (I-05 fix pass 12): clearing one's OWN override is
+refused outright while another holder exists, even when the clear changes
+nothing or lowers the cap (an override of $50 another holder set, over a $5
+default). At `052271b` that clear was allowed. It is refused only because
+racing it against a default raise once deleted the hold the raise had just
+written. Inside `GOV-15`'s transaction, allow a self-clear that is not a
+raise: the default is read under the same lock. Since fix pass 12 a
+self-clear that finds no override answers `unchanged` (200) instead of the
+403. The same package (or `GOV-13`'s) moves `readMonthRows` off offset
+paging: a keyset cursor on (`created_at`, `id`), or one server-side sum.
+That also lifts the 100,000-row read ceiling. Since fix pass 12, a team
+ledger past the ceiling leaves the usage GET up (the viewer's own meter and
+the default's editor) and says the team view is unavailable
+(`teamUnavailable`).
+
 ---
 
 ## Do not do these

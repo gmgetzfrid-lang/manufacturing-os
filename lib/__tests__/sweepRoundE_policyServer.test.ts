@@ -17,7 +17,7 @@
 //     adds the same CASE row to the SQL evaluator, byte-faithful otherwise.
 
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import { readFileSync } from "node:fs";
+import { readFileSync, readdirSync } from "node:fs";
 import { join } from "node:path";
 import { NextRequest } from "next/server";
 import {
@@ -225,17 +225,17 @@ describe("20261057 — the SQL default CASE gains the engineer-gate row, byte-fa
     expect(m57).not.toMatch(/DROP FUNCTION/);
     expect(fn57).toMatch(/SECURITY DEFINER SET search_path = public/);
   });
-  it("the CASE mirrors CAPABILITY_DEFS capability-for-capability (18 rows as of this migration; 20261063 carries the row forward and adds admin.audit_view, 20261132 transmittal.issue, 20261136 quality.sign_off) and still denies unknowns", () => {
+  it("the CASE mirrors CAPABILITY_DEFS capability-for-capability (18 rows as of this migration; 20261063 carries the row forward and adds admin.audit_view, 20261132 transmittal.issue, 20261136 quality.sign_off, 20261137 ai.manage_caps) and still denies unknowns", () => {
     const caseBlock = between(fn57, "v_tokens := CASE p_cap", "END;");
     const sqlDefaults = new Map<string, string[]>();
     for (const m of caseBlock.matchAll(/WHEN '([^']+)'\s+THEN '(\[[^\]]*\])'::jsonb/g)) sqlDefaults.set(m[1], JSON.parse(m[2]) as string[]);
     for (const [id, roles] of sqlDefaults) expect(CAPABILITY_DEFS.find((d) => d.id === id)?.defaultRoles, id).toEqual(roles);
     expect(sqlDefaults.size).toBe(18);
     // the only capabilities this (superseded) CASE lacks are package D's,
-    // document-control P7's (20261132) and projects J2b's (20261136) — the
-    // live census is rpPhase4Migration.test.ts
-    expect(CAPABILITY_DEFS.map((d) => d.id).filter((id) => !sqlDefaults.has(id))).toEqual(["admin.audit_view", "transmittal.issue", "quality.sign_off"]);
-    expect(CAPABILITY_DEFS.length).toBe(21);
+    // document-control P7's (20261132), projects J2b's (20261136) and
+    // intelligence Round G's (20261137) — the live census is rpPhase4Migration.test.ts
+    expect(CAPABILITY_DEFS.map((d) => d.id).filter((id) => !sqlDefaults.has(id))).toEqual(["admin.audit_view", "transmittal.issue", "quality.sign_off", "ai.manage_caps"]);
+    expect(CAPABILITY_DEFS.length).toBe(22);
     expect(caseBlock).toMatch(/ELSE '\[\]'::jsonb/);
   });
   it("one paste: BEGIN/COMMIT around the DDL, then ONE final SELECT of probes (ok boolean) and aggregate counts (n text)", () => {
@@ -627,6 +627,53 @@ describe("QUAL-4 — the policy route and a project-scoped rule", () => {
   });
 });
 
+describe("GOV-10 (intelligence Round G) — ai.manage_caps is critical: who holds spend authority is Admin's to change", () => {
+  beforeEach(seedPolicyOrg);
+  const LABEL = /Only an Admin may change a critical capability \(Manage AI spend caps\)/;
+
+  it("a DocCtrl who WIDENS it to themselves is refused (403) — the sole-holder self-raise path stays closed", async () => {
+    state.user = { id: "c1" };
+    const toSelf = await policy({ op: "save", orgId: "o1", caps: { "ai.manage_caps": ["DocCtrl"] } });
+    expect(toSelf.status).toBe(403);
+    expect((await toSelf.json()).error).toMatch(LABEL);
+    const beside = await policy({ op: "save", orgId: "o1", caps: { "ai.manage_caps": ["Admin", "DocCtrl"] } });
+    expect(beside.status).toBe(403);
+    expect((await beside.json()).error).toMatch(LABEL);
+    // the additive DocCtrl (headline Manager) the same
+    state.user = { id: "m1" };
+    expect((await policy({ op: "save", orgId: "o1", caps: { "ai.manage_caps": ["Admin", "Manager"] } })).status).toBe(403);
+    expect(updates("org_configurations")).toHaveLength(0);
+    expect(inserts("audit_logs")).toHaveLength(0);
+  });
+
+  it("a DocCtrl who NARROWS it is refused too (403); an untouched entry rides along with their other edits", async () => {
+    state.rows.org_configurations = [config({ ...STORED, caps: { ...STORED.caps, "ai.manage_caps": ["Admin", "DocCtrl"] } })];
+    state.user = { id: "c1" };
+    const narrowed = await policy({ op: "save", orgId: "o1", caps: { ...STORED.caps, "ai.manage_caps": ["Admin"] } });
+    expect(narrowed.status).toBe(403);
+    expect((await narrowed.json()).error).toMatch(LABEL);
+    expect(updates("org_configurations")).toHaveLength(0);
+    // the same entry, unchanged, beside a non-critical edit: no change to it, so the save goes through
+    const untouched = await policy({ op: "save", orgId: "o1", caps: { ...STORED.caps, "ticket.assign": ["Admin", "DocCtrl"], "ai.manage_caps": ["Admin", "DocCtrl"] } });
+    expect(untouched.status).toBe(200);
+    // writing the shipped default explicitly over an absent key is no change either
+    state.rows.org_configurations = [config(STORED)];
+    expect((await policy({ op: "save", orgId: "o1", caps: { ...STORED.caps, "ai.manage_caps": ["Admin"] } })).status).toBe(200);
+  });
+
+  it("an Admin may widen it; nobody — an Admin included — may leave Admin off it (400, the rail that keeps a second signature possible)", async () => {
+    state.user = { id: "a1" };
+    expect((await policy({ op: "save", orgId: "o1", caps: { "ai.manage_caps": ["Admin", "DocCtrl"] } })).status).toBe(200);
+    state.calls = [];
+    const dropped = await policy({ op: "save", orgId: "o1", caps: { "ai.manage_caps": ["DocCtrl"] } });
+    expect(dropped.status).toBe(400);
+    expect((await dropped.json()).error).toMatch(/Manage AI spend caps: Admin cannot be removed from a critical capability/);
+    expect(updates("org_configurations")).toHaveLength(0);
+    // the editor locks Admin on the row (CRITICAL badge) — it reads the same flag
+    expect(CAPABILITY_DEFS.find((d) => d.id === "ai.manage_caps")?.critical).toBe(true);
+  });
+});
+
 describe("20261056 — the write guard at the database", () => {
   const m56 = mig("20261056_rp_roundE_capability_policy_write_guard.sql");
   const fn = between(m56, "CREATE OR REPLACE FUNCTION capability_policy_write_guard", "DROP TRIGGER IF EXISTS");
@@ -674,9 +721,18 @@ describe("20261056 — the write guard at the database", () => {
     expect(parseStoredCapabilityPolicy({ "ticket.manage": ["Admin"] }).caps).toEqual({ "ticket.manage": ["Admin"] });
     expect(parseStoredCapabilityPolicy({ caps: { "ticket.manage": ["Admin"] }, "ticket.manage": ["Admin", "Viewer"] }).caps).toEqual({ "ticket.manage": ["Admin"] });
   });
-  it("its critical list is CAPABILITY_DEFS critical: true, in order; a change is Admin's; Admin stays on the bare list AND on every rule; a mixed list is refused", () => {
-    const critical = CAPABILITY_DEFS.filter((d) => d.critical).map((d) => `'${d.id}'`).join(", ");
-    expect(fn).toContain(`FOREACH v_cap IN ARRAY ARRAY[${critical}] LOOP`);
+  it("its critical list was CAPABILITY_DEFS critical: true, in order, when it shipped (later additions named); the NEWEST definition carries every critical id; a change is Admin's; Admin stays on the bare list AND on every rule; a mixed list is refused", () => {
+    // ai.manage_caps became critical in intelligence Round G (GOV-10), and
+    // 20261137 re-creates this guard with it on the list
+    const LATER_CRITICAL = new Set(["ai.manage_caps"]);
+    const asArray = (ids: string[]) => `FOREACH v_cap IN ARRAY ARRAY[${ids.map((id) => `'${id}'`).join(", ")}] LOOP`;
+    const critical = CAPABILITY_DEFS.filter((d) => d.critical).map((d) => d.id);
+    expect(fn).toContain(asArray(critical.filter((id) => !LATER_CRITICAL.has(id))));
+    const H = "CREATE OR REPLACE FUNCTION capability_policy_write_guard";
+    const dir = join(process.cwd(), "supabase", "migrations");
+    const definers = readdirSync(dir).filter((f) => /^\d{8}.*\.sql$/.test(f)).sort().filter((f) => mig(f).includes(H));
+    const newest = mig(definers[definers.length - 1]);
+    expect(between(newest, H, "$$;")).toContain(asArray(critical));
     expect(fn).toMatch(/IF v_entry IS DISTINCT FROM v_old_entry AND NOT v_admin THEN\s*\n\s*RAISE EXCEPTION 'Only an Admin may change a critical capability/);
     // rule list iff some element is not a string — normalizeCapabilityEntry's
     // `every string` test, not "the first element is an object"

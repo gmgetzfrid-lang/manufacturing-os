@@ -11,7 +11,7 @@ This is a read-only reference, compiled 2026-10-01 by the integrator from two so
 - `h:N` = line N of the row's own migration file. `20261130:47` = line 47 of `supabase/migrations/20261130_*.sql`.
 - **(derived)** marks an ordering fact I worked out from which files CREATE the same function, policy or trigger. No record states it.
 
-**Keeping this current.** The integrator updates this guide at every merge that adds a migration, and whenever you report a paste. Not listed yet, because it is still on an unmerged package branch: 20261137 (I-05). When you paste a file, send back its result rows; the integrator then marks it **LIVE** here and in the finding records.
+**Keeping this current.** The integrator updates this guide at every merge that adds a migration, and whenever you report a paste. Every merged migration is listed (20261137, I-05, added at its merge 2026-10-01). When you paste a file, send back its result rows; the integrator then marks it **LIVE** here and in the finding records.
 
 ---
 
@@ -120,6 +120,20 @@ The other order is tolerated: the app degrades or fails closed until the paste l
 
 - Set `NEXT_PUBLIC_FACILITY_TIME_ZONE` before the wave-2 app ships (SEQ:149-156).
 - Self-hosted deployments only: set `NEXT_PUBLIC_SITE_URL` (a Docker build argument) before deploying the app that carries P12 (SEQ:237-247).
+
+### D. A read-only check BEFORE the next deploy (intelligence I-05, merged 2026-10-01)
+
+From the deploy that carries I-05, a stored $0 AI cap **locks** AI for that person, or for everyone on the default. Before, $0 meant "no cap". Before you deploy, paste this read-only query into the SQL editor. It changes nothing:
+
+```sql
+SELECT 'per-person AI caps stored as $0 (they LOCK once the app deploys)' AS check, COUNT(*)::text AS n
+  FROM ai_usage_limits WHERE user_id IS NOT NULL AND monthly_cap_usd = 0
+UNION ALL
+SELECT 'workspace-default AI caps stored as $0 (every member on the default is locked)', COUNT(*)::text
+  FROM ai_usage_limits WHERE user_id IS NULL AND monthly_cap_usd = 0;
+```
+
+Both counts 0: deploy. A non-zero count is a workspace that meant "unlimited". Set a real figure first (AI settings, or an UPDATE of that row), then deploy. (int/99-fix-sequencing.md, "Deploy order — intelligence Round G I-05"; `DEC-73` item 2.)
 
 ---
 
@@ -235,10 +249,11 @@ All PASTE and HOLD rows read *"Pending migration"* or *"not applied"* in the rec
 | 96 NOW | `20261129_dc_hotfix_anon_execute.sql` | DRLS-16 (CRITICAL) | nothing (§2) | — | none | *"not yet pasted"* (dc/10-rls.md:702) |
 | 97 PASTE | `20261130`: `publish_revision` needs an override reason. Drops the 11-argument signature, creates a 12-argument one, revokes anon. | DCK-8 | 20261105 (h:15-16) | Precede 20261131 (20261131:112). **Never re-paste 20261105 or earlier after it; if that happens, re-run this file** (h:50-53; SEQ:157-159). | §3B: paste before the wave-2 deploy | Pending (dc/01-checkout.md:403) |
 | 98 HOLD | `20261131`: documents rails (label, pointers, evidence FKs, supersession policies) | DRLS-3, DRLS-14, DRLS-13, REV-14 (+REV-13) | 20261130 (h:112) | — | **§3A: DRLS-15 and DRLS-17 deployed first** | *"not pasteable yet"* (dc/10-rls.md:152, :579; dc/02-revisions-publish.md:609) |
-| 99 PASTE | `20261132`: `transmittal.issue` capability row in `org_capability_allows_for` (re-created from 63) | TRX-1 | — | **Precede 20261133** (h:17-20; dc/06-transmittals.md:64) and 20261136. **(derived)** Never re-paste after 20261136. | §3B: 132 → 133, then deploy | *"Until they are applied only the app half … is in force"* (dc/06-transmittals.md:64) |
+| 99 PASTE | `20261132`: `transmittal.issue` capability row in `org_capability_allows_for` (re-created from 63) | TRX-1 | — | **Precede 20261133** (h:17-20; dc/06-transmittals.md:64) and 20261136. **(derived)** Never re-paste after 20261136 or 20261137. | §3B: 132 → 133, then deploy | *"Until they are applied only the app half … is in force"* (dc/06-transmittals.md:64) |
 | 100 PASTE | `20261133`: transmittal rails. Re-creates `transmittals_guard` (from 27). | TRX-1/2/3/4/6/8/12, HLD-1 | **20261132**. It raises and rolls back otherwise (h:3-6). | — | §3B | dc/06-transmittals.md:64 |
 | 101 PASTE | `20261134`: `verify_scans` and `prune_verify_scans()` | VFY-12 (+deploy-impact counts VFY-9, VFY-20) | none. *"nothing existing is re-created"* (h:34-39) | — | none (§3B) | *"not applied"* (ps/01-verify-endpoints.md:588) |
-| 102 PASTE | `20261136`: quality sign-off authority. Adds the `projectId` key and `quality.sign_off`; re-creates the four quality write policies. | QUAL-4 | **20261091, 20261125, 20261132**. It refuses otherwise (h:3-5; pc/03-quality.md:269). | — | — | Pending (pc/03-quality.md:269) |
+| 102 PASTE | `20261136`: quality sign-off authority. Adds the `projectId` key and `quality.sign_off`; re-creates the four quality write policies. | QUAL-4 | **20261091, 20261125, 20261132**. It refuses otherwise (h:3-5; pc/03-quality.md:269). | **Precede 20261137**, and never re-paste it after 20261137 — that would drop the `ai.manage_caps` row (20261137:17-21). | — | Pending (pc/03-quality.md:269) |
+| 102a PASTE | `20261137`: spend authority. `org_capability_allows_for` re-created from 20261136's body plus the `ai.manage_caps` row (default Admin); `capability_policy_write_guard` re-created from 20261056 with `ai.manage_caps` on its critical list; DRLS-16 grants | GOV-10 (+ DEC-73) (intelligence I-05) | **20261136** (its body; folded in by the integrator at the I-05 merge, 20261137:5-21), 20261056 (LIVE) | Never re-paste 20261136, 20261132 or any earlier evaluator file, nor 20261056, after it (each drops the `ai.manage_caps` row or its critical rail). | **§3D: run the read-only $0-cap check before the I-05 deploy.** The file itself may be pasted before or after that deploy. | Pending (int/04-ai-governance.md GOV-10) |
 | 103 PASTE | `20261138`: unit identity (`units.codebook_code`, `documents.unit_code`, guards, projection) | GAP-305, GM-6 | — | **Paste once more after the first decode run** (h:109-112; int/90-gap-register.md:335) | — | Pending (int/07-graph-model.md:122) |
 | 104 HOLD | `20261139`: first-issue refusal (publish guard from 105) and branch close-out WITH CHECK (from 61) | REV-17, DRLS-9 | 20261105, 20261061 (h:50-51; SEQ:213-215; dc/02-revisions-publish.md:762). Any order relative to 20261129–20261131 (h:51-52; SEQ:210-211). | Never re-paste 20261105 after it (h:55-56; SEQ:216). REV-17 is fully closed only once 20261131 is live too (h:52-55). | **§3A: REV-15 app change with or before it** | *"not yet pasted"* (dc/02-revisions-publish.md:759; dc/10-rls.md:419) |
 | 105 PASTE | `20261140`: `user_download_denied()` plus a deny arm on `document_shares_insert` (from 80) | SHR-14 | 20261080 (h:38). `role_rank` comes from LIVE 46. | independent of 20261139 (h:40; ps/02-share-links.md:720) | — | *"not yet pasted"* (ps/02-share-links.md:717) |
@@ -255,7 +270,7 @@ All PASTE and HOLD rows read *"Pending migration"* or *"not applied"* in the rec
    - 20261068, 20261070, 20261071, 20261072, 20261073, 20261074, 20261075, 20261077, 20261080, 20261081
    - 20261091, 20261093, 20261094, 20261095, 20261096, 20261097, 20261098, 20261099, 20261102, 20261103, 20261104, 20261105, 20261106, 20261107
    - 20261120, 20261121, 20261122, 20261123, 20261125, 20261126, 20261127, 20261128
-   - 20261130, 20261132, 20261133, 20261134, 20261136, 20261138, 20261140, 20261147
+   - 20261130, 20261132, 20261133, 20261134, 20261136, 20261137, 20261138, 20261140, 20261147
 4. Deploy the app build carrying the wave-2 changes (SEQ:167-168).
 5. Paste 20261131 once DRLS-15 and DRLS-17 are deployed, and 20261139 once REV-15 is deployed (either order). Paste 20261124 once intelligence I-04 is deployed. Paste 20261141 once the J11 build is live and open tabs have reloaded; 20261142 any time after 20261102; 20261143 with or just after the P8 deploy; 20261144 after 20261139 (and after 20261131 if that is still pending).
 6. Paste 20261138 again after the first decode run.

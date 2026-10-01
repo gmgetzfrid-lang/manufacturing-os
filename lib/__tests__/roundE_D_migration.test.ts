@@ -40,13 +40,13 @@ describe("20261063 — org_capability_allows_for learns admin.audit_view; audit_
     // the added line sits inside the CASE, right after admin.archive_view
     expect(fn63).toMatch(/WHEN 'admin\.archive_view'\s+THEN '\["Admin","DocCtrl"\]'::jsonb\n      WHEN 'admin\.audit_view'/);
   });
-  it("the default CASE mirrored CAPABILITY_DEFS exactly when it shipped (every id, same defaults) — the later 20261132 row (transmittal.issue) and 20261136 row (quality.sign_off) are the only ids it lacks", () => {
+  it("the default CASE mirrored CAPABILITY_DEFS exactly when it shipped (every id, same defaults) — the later 20261132 row (transmittal.issue), 20261136 row (quality.sign_off) and 20261137 row (ai.manage_caps) are the only ids it lacks", () => {
     const caseNew = between(fn63, "v_tokens := CASE p_cap", "END;");
     const sqlDefaults = new Map<string, string[]>();
     for (const m of caseNew.matchAll(/WHEN '([^']+)'\s+THEN '(\[[^\]]*\])'::jsonb/g)) sqlDefaults.set(m[1], JSON.parse(m[2]) as string[]);
     // 20261063 is now HISTORICAL (20261132 re-creates the evaluator from it);
     // the live census is rpPhase4Migration.test.ts.
-    const later = new Set(["transmittal.issue", "quality.sign_off"]);
+    const later = new Set(["transmittal.issue", "quality.sign_off", "ai.manage_caps"]);
     for (const def of CAPABILITY_DEFS) if (!later.has(def.id)) expect(sqlDefaults.get(def.id), def.id).toEqual(def.defaultRoles);
     expect(sqlDefaults.size).toBe(CAPABILITY_DEFS.length - later.size);
     for (const id of later) expect(sqlDefaults.has(id), id).toBe(false);

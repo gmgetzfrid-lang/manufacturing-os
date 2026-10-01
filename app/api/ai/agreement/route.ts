@@ -1,9 +1,11 @@
 // /api/ai/agreement — the acceptable-use agreement EVERY user signs before
 // their first AI question in a workspace.
 //
-//   GET  ?orgId=…  → { accepted, version, text } — text is flavored for the
-//                    provider whose key will actually receive this user's
-//                    prompts (Claude vs OpenAI paragraph).
+//   GET  ?orgId=…  → { accepted, version, text } — text names every vendor
+//                    either allowlist admits, flavored for the providers
+//                    whose keys will actually receive this user's text: the
+//                    chat key's (Claude vs OpenAI paragraph) and the
+//                    embeddings key's (the Voyage AI paragraph — GOV-6).
 //   POST { orgId } → record acceptance of the CURRENT version (name, scope
 //                    'use', version, IP, timestamp) in ai_key_agreements.
 //
@@ -45,6 +47,16 @@ async function effectiveProvider(orgId: string, userId: string): Promise<string 
   return (data?.provider as string | undefined) ?? undefined;
 }
 
+/** GOV-6: the provider this user's EMBEDDINGS key sends page text to, when
+ *  they hold one (a database without the column has none). */
+async function embeddingProvider(orgId: string, userId: string): Promise<string | undefined> {
+  const { data, error } = await supabaseAdmin
+    .from("ai_connections").select("embedding_provider")
+    .eq("org_id", orgId).eq("user_id", userId).maybeSingle();
+  if (error) return undefined;
+  return ((data as { embedding_provider?: string | null } | null)?.embedding_provider as string | undefined) ?? undefined;
+}
+
 export async function GET(req: NextRequest) {
   const orgId = (req.nextUrl.searchParams.get("orgId") ?? "").trim();
   if (!orgId) return bad("orgId is required");
@@ -59,7 +71,7 @@ export async function GET(req: NextRequest) {
   return NextResponse.json({
     accepted: (data ?? []).length > 0,
     version: AGREEMENT_VERSION,
-    text: buildAgreementText(await effectiveProvider(orgId, auth.userId)),
+    text: buildAgreementText(await effectiveProvider(orgId, auth.userId), await embeddingProvider(orgId, auth.userId)),
   });
 }
 

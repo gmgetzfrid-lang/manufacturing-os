@@ -22,7 +22,7 @@ import {
   getAiConnections, saveAiConnection, testAiConnection, removeAiConnection,
   saveEmbeddingKey, removeEmbeddingKey, testEmbeddingKey,
   getAiUsage, setAiCap,
-  type AiConnectionInfo, type AiUsageSummary,
+  type AiConnectionInfo, type AiUsageSummary, type AiCapSetResult,
 } from "@/lib/knowledge";
 import { ALLOWED_PROVIDERS, PROVIDER_BLOCK_MESSAGE } from "@/lib/ai/pricing";
 import { EMBEDDING_PROVIDERS, defaultEmbeddingModel } from "@/lib/ai/embeddings";
@@ -57,6 +57,142 @@ const NoKeyChip = ({ label }: { label: string }) => (
 );
 
 const fmtUsd = (n: number) => `$${n.toFixed(2)}`;
+
+/** GOV-4: the figure the server counts a cost-less metering row at
+ *  (UNPRICED_CALL_USD in lib/ai/usageServer — a server-only module, so the
+ *  number is restated here; aiSettingsUsagePanel.test.ts holds them equal). */
+export const UNPRICED_CALL_DISPLAY_USD = 1;
+
+// What /api/ai/usage sends beyond lib/knowledge's AiUsageSummary (which
+// carries every op's spend, the locked flag and who may set caps — GOV-1 /
+// GOV-3 / GOV-10): the cost-less calls and the viewer's own cap standing.
+type OpLine = { spentUsd: number; calls: number; inputTokens?: number; outputTokens?: number };
+type UsageView = AiUsageSummary & {
+  /** GOV-1: each op line carries its own tokens (an embedding token is not
+   *  priced like a chat token). */
+  byOp?: Record<string, OpLine>;
+  /** GOV-4: calls recorded without a cost — each counted at a fixed
+   *  conservative figure inside spentUsd. */
+  unpricedCalls?: number;
+  /** GOV-10: the viewer's own cap follows the workspace default. */
+  selfFollowsDefault?: boolean;
+  /** GOV-10: nobody else active holds ai.manage_caps — the viewer's own
+   *  raise has no second signature to wait for, so it goes through. */
+  soleCapsHolder?: boolean;
+  /** GOV-10: the viewer's uid — their own row in `team`. */
+  selfUserId?: string;
+  /** GOV-4 / GOV-1: the team's month could not be summed (an outage, or more
+   *  rows this month than the server reads) — the reason; `team` is absent,
+   *  the viewer's own figures and the default's editor still stand. */
+  teamUnavailable?: string;
+};
+/** What POST /api/ai/usage answers beyond lib/knowledge's AiCapSetResult
+ *  (GOV-10): after a default raise, the setter's own cap when it is no
+ *  longer where it started — `selfCapSetByAnother` when the figure that
+ *  applies now is one another holder set (their raise, never a hold), and
+ *  `selfCapOwnLowering` when it is the setter's own lowering of one;
+ *  `unchanged` when the cap already stood as asked, so nothing was written,
+ *  audited or told; `pinnedAtDefault` when a person who followed the
+ *  default was given its figure as their own, so the default no longer
+ *  moves them. */
+type CapSetView = AiCapSetResult & {
+  selfCapUsd?: number; selfCapSetByAnother?: boolean; selfCapOwnLowering?: boolean; unchanged?: boolean; pinnedAtDefault?: boolean;
+};
+
+/** The meter line each feature writes, named for a person (GOV-1: every
+ *  line counts against the one cap). An unknown op shows as itself. */
+const OP_LABELS: Record<string, string> = {
+  knowledgeAsk: "Questions", knowledgeVision: "Vision indexing", knowledgeEmbed: "Meaning index",
+  orchestrator: "Assistant", drawingLocate: "Locate on drawings", flowRead: "Flow reading",
+  templateDraft: "Template drafting", codebookImport: "Codebook import", graphShape: "Graph shaping",
+  checklistSegment: "Checklists", checklistAssess: "Checklists", qualityManualReview: "Quality manuals",
+  skillAssist: "Skill Studio", quoteParse: "Quotes & invoices", invoiceParse: "Quotes & invoices",
+  connectionTest: "Key checks",
+};
+/** Ops whose tokens are EMBEDDING tokens — cents per million against
+ *  dollars for a chat token, so never extrapolated together with them. */
+const EMBEDDING_OPS = new Set(["knowledgeEmbed"]);
+
+/** The meter's token line (GOV-1 sums every op's tokens into the month):
+ *  the chat-model tokens so far and roughly how many the rest of the cap
+ *  buys at the rate they were bought at — embedding tokens apart, counted
+ *  but never extrapolated. No estimate when it can't be made honestly: a
+ *  lock, no chat spend yet, or a meaning-index line without its tokens. */
+export function tokenLine(usage: Pick<UsageView, "inputTokens" | "outputTokens" | "spentUsd" | "capUsd" | "locked" | "byOp">):
+  { chatTokens: number; embeddingTokens: number; estChatTokenBudget: number | null } {
+  const total = usage.inputTokens + usage.outputTokens;
+  let embeddingTokens = 0;
+  let embeddingSpent = 0;
+  let split = true;
+  for (const [op, line] of Object.entries(usage.byOp ?? {})) {
+    if (!EMBEDDING_OPS.has(op)) continue;
+    if (typeof line.inputTokens !== "number" || typeof line.outputTokens !== "number") { split = false; continue; }
+    embeddingTokens += line.inputTokens + line.outputTokens;
+    embeddingSpent += line.spentUsd;
+  }
+  if (!split) return { chatTokens: total, embeddingTokens: 0, estChatTokenBudget: null };
+  const chatTokens = Math.max(0, total - embeddingTokens);
+  const chatSpent = usage.spentUsd - embeddingSpent;
+  const headroom = Math.max(0, usage.capUsd - usage.spentUsd);
+  const estChatTokenBudget = usage.locked !== true && usage.capUsd > 0 && chatSpent > 0.0001 && chatTokens > 0
+    ? Math.round(chatTokens + headroom * (chatTokens / chatSpent))
+    : null;
+  return { chatTokens, embeddingTokens, estChatTokenBudget };
+}
+
+/** Spend per feature, largest first, same-named lines merged. */
+export function opBreakdown(byOp: Record<string, OpLine> | undefined): Array<{ label: string; spentUsd: number }> {
+  const merged = new Map<string, number>();
+  for (const [op, line] of Object.entries(byOp ?? {})) {
+    const label = OP_LABELS[op] ?? op;
+    merged.set(label, (merged.get(label) ?? 0) + line.spentUsd);
+  }
+  return [...merged].map(([label, spentUsd]) => ({ label, spentUsd }))
+    .filter((l) => l.spentUsd > 0).sort((a, b) => b.spentUsd - a.spentUsd);
+}
+
+/** GOV-12: how keys are kept on this server, from /api/ai/connection's GET. */
+export type KeyStorageInfo = {
+  encrypted: boolean; plaintextRefused: boolean; yoursUnsealed: number | null; orgUnsealed?: number | null;
+};
+
+/** GOV-12: the settings page says, in words, whether AI keys are encrypted
+ *  at rest and names the server setting that does it — an AI-key
+ *  requirement, not only an export one. */
+export function KeyStorageNotice({ storage }: { storage: KeyStorageInfo | null | undefined }) {
+  if (!storage) return null;
+  const lines: string[] = [];
+  if (!storage.encrypted) {
+    lines.push(storage.plaintextRefused
+      ? "This server has no EXPORT_ENCRYPTION_KEY, so it refuses to save AI keys. Whoever runs the server sets it (64 hex characters; it also encrypts saved storage credentials)."
+      : "Development server: AI keys are stored UNENCRYPTED until EXPORT_ENCRYPTION_KEY (64 hex characters) is set on the server.");
+  }
+  if ((storage.yoursUnsealed ?? 0) > 0) {
+    lines.push(storage.encrypted
+      ? "Your saved key is stored unencrypted from before encryption was set up — save it again (no need to re-paste) to encrypt it."
+      : "Your saved key is stored unencrypted.");
+  }
+  if ((storage.orgUnsealed ?? 0) > 0) {
+    const n = storage.orgUnsealed as number;
+    lines.push(`${n} stored AI key${n === 1 ? " is" : "s are"} not encrypted at rest in this workspace — each is encrypted the next time its owner saves it${storage.encrypted ? "" : ", once EXPORT_ENCRYPTION_KEY is set"}.`);
+  }
+  if (lines.length === 0) {
+    return (
+      <p className="text-[10px] text-[var(--color-text-muted)]">
+        AI keys are encrypted at rest with the server&apos;s EXPORT_ENCRYPTION_KEY.
+      </p>
+    );
+  }
+  return (
+    <div role="status" className="rounded-xl border border-amber-300 dark:border-amber-800 bg-amber-50 dark:bg-amber-950/30 px-3 py-2 space-y-1">
+      {lines.map((l) => (
+        <p key={l} className="text-[11px] font-bold text-amber-800 dark:text-amber-300 flex items-start gap-1.5">
+          <AlertTriangle className="w-3.5 h-3.5 shrink-0 mt-px" /> <span>{l}</span>
+        </p>
+      ))}
+    </div>
+  );
+}
 const fmtTok = (n: number) =>
   n >= 1_000_000 ? `${(n / 1_000_000).toFixed(1)}M`
   : n >= 1000 ? `${(n / 1000).toFixed(n >= 100_000 ? 0 : 1)}k`
@@ -431,8 +567,8 @@ export function EmbeddingKeyEditor({ orgId, current, onChanged }: {
 //    get the team's month and per-person cap dropdowns. ───────────────────
 export function UsagePanel({ orgId }: { orgId: string }) {
   const { showToast } = useToast();
-  const [usage, setUsage] = useState<AiUsageSummary | null>(null);
-  const [failed, setFailed] = useState(false);
+  const [usage, setUsage] = useState<UsageView | null>(null);
+  const [failed, setFailed] = useState<string | null>(null);
   const [tick, setTick] = useState(0);
   const [capDraft, setCapDraft] = useState<string>("");
   const [savingCap, setSavingCap] = useState(false);
@@ -443,14 +579,24 @@ export function UsagePanel({ orgId }: { orgId: string }) {
     getAiUsage(orgId)
       .then((u) => {
         if (cancelled) return;
-        setUsage(u); setFailed(false);
+        setUsage(u as UsageView); setFailed(null);
         if (u.orgCapUsd !== undefined) setCapDraft(String(u.orgCapUsd));
       })
-      .catch(() => { if (!cancelled) setFailed(true); });
+      .catch((e) => { if (!cancelled) setFailed((e as Error).message || "AI usage couldn't be read."); });
     return () => { cancelled = true; };
   }, [orgId, tick]);
 
-  if (failed) return null; // pre-migration DB — the meter simply isn't there yet
+  // GOV-4: an unreadable meter is said out loud — the server refuses AI calls
+  // until it can read the spend, so a vanished meter would hide the reason.
+  if (failed) {
+    return (
+      <div role="alert" className="rounded-xl border border-rose-300 bg-rose-50 dark:bg-rose-950/40 px-3.5 py-2.5 flex items-start gap-2">
+        <AlertTriangle className="w-3.5 h-3.5 text-rose-600 shrink-0 mt-0.5" />
+        <div className="flex-1 text-[11px] font-bold text-rose-700 dark:text-rose-300">{failed}</div>
+        <button className="text-[11px] font-black text-rose-700 dark:text-rose-300 underline" onClick={() => setTick((t) => t + 1)}>Retry</button>
+      </div>
+    );
+  }
   if (!usage) {
     return (
       <div className="rounded-xl border border-[var(--color-border)] px-3.5 py-3 text-center">
@@ -459,29 +605,56 @@ export function UsagePanel({ orgId }: { orgId: string }) {
     );
   }
 
-  const totalTokens = usage.inputTokens + usage.outputTokens;
-  // "20k of ~200k": extrapolate the month's token budget from what the
-  // spend so far actually bought at the models really being used.
-  const estTokenBudget = usage.spentUsd > 0.0001 && usage.capUsd > 0
-    ? Math.round(totalTokens * (usage.capUsd / usage.spentUsd))
-    : null;
+  // "20k of ~200k": the chat tokens so far, and roughly what the rest of
+  // the cap buys at the rate they were bought at — never mixed with the
+  // meaning index's far cheaper embedding tokens (GOV-1 sums both).
+  const { chatTokens, embeddingTokens, estChatTokenBudget } = tokenLine(usage);
   const hot = usage.percent >= 80;
-  const capped = usage.percent >= 100;
+  // GOV-3: a $0 cap is LOCKED — the server refuses every AI call for it.
+  const locked = usage.locked === true;
+  const capped = locked || usage.percent >= 100;
+  const canManageCaps = usage.canManageCaps === true;
+  const breakdown = opBreakdown(usage.byOp);
   const barColor = capped ? "bg-rose-600" : hot ? "bg-amber-500" : "bg-emerald-600";
 
   const saveCap = async () => {
     const cap = Number(capDraft);
-    if (!Number.isFinite(cap) || cap < 0) {
-      showToast({ type: "error", title: "Enter a cap in dollars, e.g. 10." });
+    if (capDraft.trim() === "" || !Number.isFinite(cap) || cap < 0) {
+      showToast({ type: "error", title: "Enter a cap in dollars, e.g. 10 — 0 locks AI for everyone on the default." });
       return;
     }
     setSavingCap(true);
     try {
-      await setAiCap(orgId, cap);
-      showToast({ type: "success", title: `Default monthly cap set to ${fmtUsd(cap)} per person.` });
+      const res: CapSetView = await setAiCap(orgId, cap);
+      // GOV-10: what happened to YOUR cap is the server's answer, never a
+      // guess from what this panel read when it opened (the roster may have
+      // changed since): raising the default you follow holds you at your
+      // current figure (`selfHeldAtUsd`) — unless nobody else manages AI
+      // caps, when yours follows it, recorded as such (`soleHolder`). A
+      // figure another holder set while it was saved (`selfCapUsd` with
+      // `selfCapSetByAnother`) is theirs: never said as a hold. A default
+      // already at that figure changed nothing, and is said so (`unchanged`).
+      showToast({ type: "success", title: res.unchanged === true
+        ? `The default monthly cap is already ${cap === 0 ? "$0 — AI is locked for everyone on the default" : `${fmtUsd(cap)} per person`}, so nothing changed.`
+        : cap === 0
+        ? "Default monthly cap set to $0 — AI is locked for everyone on the default."
+        : typeof res.selfCapUsd === "number"
+          ? `Default monthly cap set to ${fmtUsd(cap)} per person. Your own cap is now ${fmtUsd(res.selfCapUsd)}${res.selfCapSetByAnother !== true ? ""
+            : res.selfCapOwnLowering === true ? " — your own lowering of a figure another person who manages AI caps set"
+              : " — set by another person who manages AI caps"}.`
+        : typeof res.selfHeldAtUsd === "number"
+          // The hold is a personal cap: a later change to the default no
+          // longer moves it (the other holders are told the same).
+          ? `Default monthly cap set to ${fmtUsd(cap)} per person. Your own cap stays at ${res.selfHeldAtUsd === 0 ? "$0 (AI locked)" : fmtUsd(res.selfHeldAtUsd)} as a personal cap — a change to the default no longer moves it, and nobody raises their own cap, so another person who manages AI caps has to raise yours.`
+          : res.soleHolder === true
+            ? `Default monthly cap set to ${fmtUsd(cap)} per person, yours included — you're the only person who manages AI caps here, so there is nobody else to raise it. The change is recorded in the audit log.`
+            : `Default monthly cap set to ${fmtUsd(cap)} per person.` });
       setTick((t) => t + 1);
     } catch (e) {
       showToast({ type: "error", title: (e as Error).message });
+      // GOV-10: a refused save can still have moved something (a default
+      // that landed while your own cap was put back) — show what is stored.
+      setTick((t) => t + 1);
     } finally { setSavingCap(false); }
   };
 
@@ -490,16 +663,32 @@ export function UsagePanel({ orgId }: { orgId: string }) {
   const setMemberCap = async (userId: string, name: string, value: string) => {
     setSavingUser(userId);
     try {
+      // A raise of your OWN cap goes through only when nobody else manages
+      // AI caps; the server says so (`soleHolder`), and so does the toast.
+      const sole = " You're the only person who manages AI caps here, so your own raise went through — it is recorded in the audit log.";
+      // A cap that already stood as asked changed nothing (`unchanged`):
+      // nothing was written, audited or told, and the toast says so.
       if (value === "default") {
-        await setAiCap(orgId, null, userId);
-        showToast({ type: "success", title: `${name} follows the workspace default again.` });
+        const res: CapSetView = await setAiCap(orgId, null, userId);
+        showToast({ type: "success", title: res.unchanged === true
+          ? `${name} already follows the workspace default, so nothing changed.`
+          : `${name} follows the workspace default again.${res.soleHolder === true ? sole : ""}` });
       } else {
-        await setAiCap(orgId, Number(value), userId);
-        showToast({ type: "success", title: `${name}'s monthly cap set to $${Number(value)}.` });
+        const res: CapSetView = await setAiCap(orgId, Number(value), userId);
+        // GOV-10: the default's own figure, given to someone who followed
+        // it, is a personal cap now — later default changes don't move them.
+        showToast({ type: "success", title: res.unchanged === true
+          ? `${name}'s monthly cap is already ${Number(value) === 0 ? "$0 — AI is locked for them" : `$${Number(value)}`}, so nothing changed.`
+          : res.pinnedAtDefault === true
+            ? `${name}'s monthly cap set to ${Number(value) === 0 ? "$0 (AI locked)" : `$${Number(value)}`} as a personal cap — the workspace default's figure, but a change to the default no longer moves it.${res.soleHolder === true ? sole : ""}`
+          : (Number(value) === 0
+            ? `${name}'s monthly cap set to $0 — AI is locked for them.`
+            : `${name}'s monthly cap set to $${Number(value)}.`) + (res.soleHolder === true ? sole : "") });
       }
       setTick((t) => t + 1);
     } catch (e) {
       showToast({ type: "error", title: (e as Error).message });
+      setTick((t) => t + 1);
     } finally { setSavingUser(null); }
   };
 
@@ -510,7 +699,7 @@ export function UsagePanel({ orgId }: { orgId: string }) {
           <Gauge className="w-3.5 h-3.5" /> Your AI usage — {usage.monthLabel}
         </div>
         <span className={`text-xs font-black ${capped ? "text-rose-600" : hot ? "text-amber-600" : "text-[var(--color-text)]"}`}>
-          {fmtUsd(usage.spentUsd)} of {fmtUsd(usage.capUsd)} · {usage.percent}%
+          {locked ? <>Locked · {fmtUsd(usage.spentUsd)} spent</> : <>{fmtUsd(usage.spentUsd)} of {fmtUsd(usage.capUsd)} · {usage.percent}%</>}
         </span>
       </div>
       <div className="h-2 rounded-full bg-[var(--color-surface-2)] overflow-hidden">
@@ -519,82 +708,146 @@ export function UsagePanel({ orgId }: { orgId: string }) {
       </div>
       <div className="flex flex-wrap gap-x-4 gap-y-1 text-[11px] text-[var(--color-text-muted)]">
         <span>
-          <b className="text-[var(--color-text)]">{fmtTok(totalTokens)}</b>
-          {estTokenBudget ? <> of ~{fmtTok(estTokenBudget)}</> : null} tokens
+          <b className="text-[var(--color-text)]">{fmtTok(chatTokens)}</b>
+          {estChatTokenBudget ? <> of ~{fmtTok(estChatTokenBudget)}</> : null} tokens
         </span>
+        {embeddingTokens > 0 && (
+          <span><b className="text-[var(--color-text)]">{fmtTok(embeddingTokens)}</b> meaning-index tokens</span>
+        )}
         <span><b className="text-[var(--color-text)]">{usage.asks}</b> questions</span>
+        {typeof usage.calls === "number" && (
+          <span><b className="text-[var(--color-text)]">{usage.calls}</b> AI calls in all</span>
+        )}
         {usage.asks > 0 && (
           <span>avg <b className="text-[var(--color-text)]">{fmtTok(usage.avgPromptTokens)}</b> prompt tokens / question</span>
         )}
       </div>
+      {breakdown.length > 0 && (
+        <p className="text-[11px] text-[var(--color-text-muted)]">
+          Where it went: {breakdown.map((l, i) => (
+            <span key={l.label}>{i > 0 ? " · " : ""}{l.label} <b className="text-[var(--color-text)]">{fmtUsd(l.spentUsd)}</b></span>
+          ))}
+        </p>
+      )}
+      {(usage.unpricedCalls ?? 0) > 0 && (
+        <p className="text-[11px] text-amber-700 dark:text-amber-400">
+          {usage.unpricedCalls} AI call{usage.unpricedCalls === 1 ? " was" : "s were"} recorded without a cost this month;
+          each is counted at {fmtUsd(UNPRICED_CALL_DISPLAY_USD)}, a deliberately high figure, so your cap is never
+          under-counted.
+        </p>
+      )}
       <p className="text-[10px] text-[var(--color-text-muted)]">
-        These numbers are YOURS alone: every question you ask writes one metering row under your user
-        id with the token counts your provider reported for that call — nobody else&apos;s asks are mixed in.
+        These numbers are YOURS alone: every AI call you make — questions, indexing, the meaning index,
+        the assistant, imports, key checks — writes metering rows under your user id with the token counts
+        your provider reported, and all of it counts against your one monthly cap. Nobody else&apos;s calls
+        are mixed in.
       </p>
-      {capped ? (
+      {locked ? (
         <p className="text-[11px] font-bold text-rose-600">
-          Cap reached — questions are locked until the 1st, unless an Admin raises the cap.
+          Your monthly cap is $0 — AI is locked for you until someone who manages AI caps (an Admin, unless your
+          workspace granted it to others) raises it.
+        </p>
+      ) : capped ? (
+        <p className="text-[11px] font-bold text-rose-600">
+          Cap reached — AI calls are locked until the 1st, unless someone who manages AI caps (an Admin, unless
+          your workspace granted it to others) raises it.
         </p>
       ) : hot ? (
         <p className="text-[11px] font-bold text-amber-600">
-          Over 80% of your monthly budget — questions lock at 100% until the 1st.
+          Over 80% of your monthly budget — AI calls lock at 100% until the 1st.
         </p>
       ) : null}
 
-      {usage.team && (
+      {(usage.team || usage.teamUnavailable) && (
         <div className="pt-2 border-t border-[var(--color-border)] space-y-2">
           <div className="flex items-center gap-2 flex-wrap">
             <span className="text-[10px] font-black uppercase tracking-wider text-[var(--color-text-muted)] flex items-center gap-1.5">
               <Users className="w-3.5 h-3.5" /> Team this month
             </span>
-            <div className="ml-auto flex items-center gap-1.5">
-              <span className="text-[10px] text-[var(--color-text-muted)]">Cap $/person</span>
-              <Input value={capDraft} onChange={(e) => setCapDraft(e.target.value)}
-                className="!w-20 !py-1 text-xs" inputMode="decimal" />
-              <Button variant="secondary" onClick={() => void saveCap()} disabled={savingCap}
-                className="!px-2.5 !py-1 text-xs">
-                {savingCap ? <Loader2 className="w-3 h-3 animate-spin" /> : "Set"}
-              </Button>
-            </div>
+            {canManageCaps ? (
+              <div className="ml-auto flex items-center gap-1.5">
+                <span className="text-[10px] text-[var(--color-text-muted)]">Cap $/person</span>
+                <Input value={capDraft} onChange={(e) => setCapDraft(e.target.value)}
+                  className="!w-20 !py-1 text-xs" inputMode="decimal" />
+                <Button variant="secondary" onClick={() => void saveCap()} disabled={savingCap}
+                  className="!px-2.5 !py-1 text-xs">
+                  {savingCap ? <Loader2 className="w-3 h-3 animate-spin" /> : "Set"}
+                </Button>
+              </div>
+            ) : (
+              <span className="ml-auto text-[10px] text-[var(--color-text-muted)]">
+                Default cap {usage.orgCapUsd === 0 ? "$0 (locked)" : fmtUsd(usage.orgCapUsd ?? usage.capUsd)} per person
+              </span>
+            )}
           </div>
-          <ul className="space-y-1">
+          {/* GOV-4: a team month that can't be summed is said — never "$0.00" a person. */}
+          {!usage.team && usage.teamUnavailable && (
+            <p role="alert" className="text-[11px] font-bold text-rose-700 dark:text-rose-300">
+              The team&apos;s month can&apos;t be shown right now ({usage.teamUnavailable}). Your own figures above are
+              current{canManageCaps ? ", and the default cap can still be set" : ""}; per-person caps show again once it can be read.
+            </p>
+          )}
+          {usage.team && <ul className="space-y-1">
             {usage.team.map((m) => {
-              // Each person meters against THEIR cap (override or default).
+              // Each person meters against THEIR cap (override or default);
+              // a $0 cap is locked (GOV-3).
               const pct = m.capUsd > 0 ? Math.min(100, Math.round((m.spentUsd / m.capUsd) * 100)) : 100;
-              const presets = [5, 10, 15, 20, 25, 30, 35, 50, 75, 100];
+              const presets = [0, 5, 10, 15, 20, 25, 30, 35, 50, 75, 100];
+              const lines = opBreakdown(m.byOp);
               if (m.hasOverride && !presets.includes(m.capUsd)) presets.push(m.capUsd);
+              // GOV-10: on the viewer's OWN row, unless nobody else manages
+              // caps, the server refuses a raise and clearing the override
+              // (back to the default) — so neither is offered: only a figure
+              // at or below their cap.
+              const ownRowLimited = usage.selfUserId !== undefined && m.userId === usage.selfUserId && usage.soleCapsHolder !== true;
+              const RAISE_OWN = "Another person who manages AI caps has to raise your own cap or set it back to the default — you can lower it.";
               return (
-                <li key={m.userId} className="flex items-center gap-2 text-[11px]">
+                <li key={m.userId} className="flex items-center gap-2 text-[11px]"
+                  title={lines.length > 0 ? lines.map((l) => `${l.label} ${fmtUsd(l.spentUsd)}`).join(" · ") : undefined}>
                   <span className="w-32 truncate font-bold text-[var(--color-text)]">{m.name}</span>
                   <div className="flex-1 h-1.5 rounded-full bg-[var(--color-surface-2)] overflow-hidden">
                     <div className={`h-full rounded-full ${pct >= 100 ? "bg-rose-600" : pct >= 80 ? "bg-amber-500" : "bg-emerald-600"}`}
                       style={{ width: `${pct}%` }} />
                   </div>
                   <span className="w-[88px] text-right text-[var(--color-text-muted)] tabular-nums">
-                    {fmtUsd(m.spentUsd)} · {m.asks} asks
+                    {fmtUsd(m.spentUsd)} · {typeof m.calls === "number" ? `${m.calls} calls` : `${m.asks} asks`}
                   </span>
+                  {canManageCaps ? (
                   <select
                     value={m.hasOverride ? String(m.capUsd) : "default"}
                     disabled={savingUser === m.userId}
                     onChange={(e) => void setMemberCap(m.userId, m.name, e.target.value)}
-                    title={`${m.name}'s monthly cap`}
+                    title={ownRowLimited ? `Your monthly cap. ${RAISE_OWN}` : `${m.name}'s monthly cap`}
                     className={`shrink-0 w-[74px] text-[10px] font-black rounded-lg border px-1 py-0.5 bg-[var(--color-surface)] cursor-pointer disabled:opacity-50 ${
                       m.hasOverride
                         ? "border-[var(--color-accent)] text-[var(--color-accent)]"
                         : "border-[var(--color-border)] text-[var(--color-text-muted)]"}`}>
-                    <option value="default">${usage.orgCapUsd ?? usage.capUsd} def</option>
-                    {presets.sort((a, b) => a - b).map((p) => (
-                      <option key={p} value={String(p)}>${p}</option>
-                    ))}
+                    <option value="default" disabled={ownRowLimited} title={ownRowLimited ? RAISE_OWN : undefined}>${usage.orgCapUsd ?? usage.capUsd} def</option>
+                    {presets.sort((a, b) => a - b).map((p) => {
+                      const refused = ownRowLimited && p > m.capUsd;
+                      return (
+                        <option key={p} value={String(p)} disabled={refused} title={refused ? RAISE_OWN : undefined}>{p === 0 ? "$0 lock" : `$${p}`}</option>
+                      );
+                    })}
                   </select>
+                  ) : (
+                    <span className="shrink-0 w-[74px] text-right text-[10px] font-black text-[var(--color-text-muted)]">
+                      {m.capUsd === 0 ? "locked" : `$${m.capUsd}`}{m.hasOverride ? "" : " def"}
+                    </span>
+                  )}
                 </li>
               );
             })}
-          </ul>
+          </ul>}
           <p className="text-[10px] text-[var(--color-text-muted)]">
-            Each person meters against their own cap — the dropdown sets it (highlighted = personal
-            override, &ldquo;def&rdquo; = the workspace default). Estimated from exact provider token counts ×
-            published rates; questions lock server-side at 100% and reset on the 1st (UTC).
+            Each person meters against their own cap{canManageCaps ? " — the dropdown sets it (highlighted = personal override, “def” = the workspace default)" : ""}.
+            Every AI call counts (hover a row for where it went). Estimated from exact provider token counts ×
+            published rates; AI calls lock server-side at 100% — at once for a $0 cap — and reset on the 1st (UTC).
+            {canManageCaps && usage.soleCapsHolder
+              ? " You're the only person who manages AI caps here, so you can raise your own; every change is recorded in the audit log. Grant “Manage AI spend caps” to someone else (Permissions) and raising your own cap takes them."
+              : canManageCaps
+              ? " Nobody can raise their own cap, and every change notifies the others who manage caps."
+              : " Caps are set by people with the “Manage AI spend caps” permission (Admin by default)."}
           </p>
         </div>
       )}
@@ -647,6 +900,7 @@ export default function AiSettingsModal({ orgId, open, onClose }: {
                 onChanged={() => setReloadTick((t) => t + 1)} />
               <EmbeddingKeyEditor orgId={orgId} current={data.personal}
                 onChanged={() => setReloadTick((t) => t + 1)} />
+              <KeyStorageNotice storage={(data as { keyStorage?: KeyStorageInfo }).keyStorage} />
             </>
           )}
         </div>

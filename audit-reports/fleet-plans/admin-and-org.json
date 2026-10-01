@@ -74,7 +74,8 @@
     "BKP-14",
     "ALOG-1 dw4",
     "public-surfaces SHR-12 (remainder re-owned by the integrator 2026-10-01, orphan sweep: Done-when 4: \"lib/schemaExpectations.ts checks for the function, not only the document_shares table\". The table half has landed (lib/schemaExpectations.ts:70, the document_share_accesses row added by J9 / REL-7, commit \u2026)",
-    "intelligence ILIFE-5 (remainder re-owned by the integrator 2026-10-01, orphan sweep: The document shed must refuse to delete any file_url still referenced by a knowledge_documents.file_key (the rev-up \u2192 shed \u2192 next-sync chain reaction). Plus paste 20261122.)"
+    "intelligence ILIFE-5 (remainder re-owned by the integrator 2026-10-01, orphan sweep: The document shed must refuse to delete any file_url still referenced by a knowledge_documents.file_key (the rev-up \u2192 shed \u2192 next-sync chain reaction). Plus paste 20261122.)",
+    "intelligence GOV-4 (remainder re-owned by the integrator 2026-10-01 at the I-05 merge: done-when 3 \u2014 the EXPECTED_COLUMNS row for ai_usage_events.est_cost_usd (20260916) in lib/schemaExpectations.ts, so schema-health names the column the AI ledger read needs)"
    ],
    "files": [
     "lib/exportTables.ts",

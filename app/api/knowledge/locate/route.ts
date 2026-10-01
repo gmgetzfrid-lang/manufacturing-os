@@ -40,7 +40,8 @@ import { callAiModel, type AiProviderId } from "@/lib/ai/providerCall";
 import {
   ALLOWED_PROVIDERS, AGREEMENT_VERSION, buildAgreementText, estimateCostUsd, addUsage, ZERO_USAGE, type AiUsage,
 } from "@/lib/ai/pricing";
-import { getCapUsd, recordAskUsage, monthStartIso } from "@/lib/ai/usageServer";
+import { getCapUsd, capIsLocked, recordAskUsage, monthStartIso } from "@/lib/ai/usageServer";
+import { isAiUsageUnavailable } from "@/lib/ai/gateError";
 import { VISION_MODEL } from "@/lib/knowledgeVision";
 import {
   LOCATE_SYSTEM, buildLocateUser, buildRelocateUser, parseLocateResponse, type TagPosition,
@@ -300,7 +301,28 @@ export async function POST(req: NextRequest) {
 
   // ── Monthly cap: every op this month counts (local gate, GOV-1's default;
   //    I-05's aiGates unifies it). A ledger that cannot be read refuses.
-  const [spentUsd, cap] = await Promise.all([monthSpendAllOps(orgId, user.id), getCapUsd(orgId, user.id)]);
+  //    I-05's MERGE GATE (applied by the integrator at the I-05 merge):
+  //    getCapUsd throws a 503 GovernedCallError when the cap table cannot be
+  //    read — that refuses the AI step, never the free answer (GOV-4).
+  let spentUsd: number | null;
+  let cap: number;
+  try {
+    [spentUsd, cap] = await Promise.all([monthSpendAllOps(orgId, user.id), getCapUsd(orgId, user.id)]);
+  } catch (e) {
+    if (!isAiUsageUnavailable(e)) throw e;
+    return NextResponse.json({
+      positions: [...found.values()], notOnPage: trulyAbsent, elsewhere,
+      skipped: `${(e as Error).message} The sheet still opens at the right page.`,
+    });
+  }
+  // GOV-3: a $0 cap locks. It is refused before the first call, at $0 spent
+  // too — monthSpendAllOps has no lock floor, so overCap alone admits it.
+  if (capIsLocked(cap)) {
+    return NextResponse.json({
+      positions: [...found.values()], notOnPage: trulyAbsent, elsewhere,
+      skipped: "Your monthly AI cap is set to $0, so AI is locked for you until someone who manages AI caps raises it — the sheet still opens at the right page.",
+    });
+  }
   if (spentUsd === null) {
     return NextResponse.json({
       positions: [...found.values()], notOnPage: trulyAbsent, elsewhere,

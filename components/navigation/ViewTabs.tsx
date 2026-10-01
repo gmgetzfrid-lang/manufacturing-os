@@ -101,8 +101,10 @@ export const ACTIVITY_VIEWS: ViewTab[] = [
   { label: "Audit log", href: "/admin/audit", icon: ScrollText },
 ];
 
-// One tool, six lenses: everything AI lives here. The sidebar shows a single
-// "Intelligence" entry; these tabs are the whole map of it.
+// One tool, one tab per lens: everything AI lives here. The sidebar shows a
+// single "Intelligence" entry (its hint is derived from this array); these
+// tabs are the whole map of it. "AI setup" is the AI keys / caps page —
+// distinct from Facility setup (/setup), the order-of-operations navigator.
 export const INTELLIGENCE_VIEWS: ViewTab[] = [
   { label: "Overview", href: "/intelligence", icon: Gauge, exact: true },
   { label: "Ask", href: "/assistant", icon: Bot },
@@ -110,5 +112,5 @@ export const INTELLIGENCE_VIEWS: ViewTab[] = [
   { label: "Graph", href: "/graph", icon: Waypoints },
   { label: "Review", href: "/admin/proposed-links", icon: GitPullRequest },
   { label: "Skills", href: "/intelligence/skills", icon: Puzzle },
-  { label: "Setup", href: "/intelligence/setup", icon: Settings2 },
+  { label: "AI setup", href: "/intelligence/setup", icon: Settings2 },
 ];

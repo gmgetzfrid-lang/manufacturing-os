@@ -220,6 +220,7 @@ ask/route.ts:1386-1393 builds `standing` from `aiInstructions` and `legendBlock`
 
 - **Severity:** MEDIUM
 - **Status:** OPEN
+- **Assigned:** intelligence I-20 AI UI REMAINDERS (done-when 3, the review-step override) — by the integrator, 2026-10-01 (at the I-05 merge: the package that left this remainder has merged; fleet plan `audit-reports/fleet-plans/`).
 - **Verification:** CONFIRMED
 - **Locations:** `app/api/templates/generate/route.ts:242-255`, `app/api/templates/generate/route.ts:205-217`, `app/api/templates/generate/route.ts:304-313`
 - **Independently verified:** ✓ **SURVIVES** — second independent adversarial pass. Confirmed, and the same silent-blank happens without ever reaching the catch: :242 `const json = text.startsWith("{") ? text : (text.match(/\{[\s\S]*\}/)?.[0] ?? "{}")` parses "{}" cleanly and :246-249 then writes "" for every field. The review screen (components/templates/GenerateModal.tsx:279-317) is a collapsed one-at-a-time accordion whose row shows only the filename — an empty AI field is invisible unless that document is expanded, and nothing marks which ones are empty.
@@ -241,6 +242,20 @@ templates/generate/route.ts:253-255 `} catch { return Object.fromEntries(aiField
 - [ ] a parse failure marks that document as failed in the response and the UI refuses to render it
 - [ ] the failed-draft branch is distinguishable from a genuinely empty field
 - [ ] documents with empty AI fields cannot be rendered without an explicit override
+
+
+**Partial (2026-10-01, intelligence Round G).** Reproduced: the tolerant parse fell back to `"{}"`, and the catch wrote "" into every AI field. Now `parseDraftFields` refuses four kinds of reply: one with no JSON object, JSON that does not parse (a reply cut off at its length limit), a non-object, or one that leaves a requested field out. The batch then answers 502 naming the row: "The AI's draft for row 7 couldn't be read — … so no document was produced for this batch and nothing was left blank. Draft again to retry." No document with silently blank AI sections reaches the review screen or the render. A field the model wrote as "" (or null) is its answer and is kept. The failed call is still metered as a failed draft, since its tokens were spent. A cap stop part-way returns the rows already drafted (and paid for), and the next slice starts at the stopped row. Tests: `templatesDraftGate.test.ts` ("PR-6 — an unreadable draft fails, it never blanks").
+
+Fix pass, after the review (*corrected:* one unreadable draft failed the whole slice with 502, throwing away the rows already drafted and paid for; the client re-drafted from the same offset, paying for them again each try, and a row whose reply is cut off every time — truncation at the 3,000-token limit — held the batch for good. `GenerateModal` also never showed the cap stop's `stopped`). Now a per-row slice stops AT the unreadable row and keeps everything before it: the documents drafted so far come back, the row is named in `skippedRows` (`{ row, reason }`) with a `stopped` sentence ("Row 20 was left out — no document with blank AI sections was made; the rows drafted before it are kept, and the next batch starts after it."), and `nextOffset` is the row AFTER it — so nothing paid is discarded and a row that always fails cannot hold the batch. A summary document (one call) still answers 502. `components/templates/GenerateModal.tsx` (no plan assigns it; edited here) shows why a batch stopped — the cap or an unreadable draft — and keeps every left-out row listed with its reason across later batches; it offers the next batch even when the slice's only row was left out, and counts the rows left from the server's offset. Tests: `templatesDraftGate.test.ts` ("PR-6 — an unreadable draft fails its row…", including "a row that is unreadable on EVERY try cannot hold the batch"), `generateModalStopped.test.ts` (rendered).
+
+Fix pass 2, after the second review (*corrected:* "nothing paid is discarded" held only for an unreadable draft and a cap stop). A provider failure part-way — an `AiCallError`: a timeout, a 429, a 5xx — on row N > 1 was rethrown and answered with the error, discarding rows 1..N-1, whose reservations were already settled as paid; "Draft again" paid for them a second time, on every retry that hit a flaky row. Now the per-row catch treats `AiCallError` with documents already drafted like the cap stop: the slice stops, the drafted documents come back, `stopped` says "The AI provider failed on row N: … The rows drafted before it are kept; the next batch starts at row N.", and `nextOffset` stays AT row N (nothing was drafted for it, so it is retried, not left out — it is not in `skippedRows`). The failed call settles as a failed, zero-token row. A provider failure on the slice's FIRST row still answers with its error, since nothing was drafted to keep. `GenerateModal` already shows `stopped` with the documents and offers the next batch from the server's offset. Tests: `templatesDraftGate.test.ts` ("a provider failure part-way (a timeout on row 12 of a slice) keeps rows 1-11 and the next slice starts AT row 12 …", "a provider failure on the slice's FIRST row answers with its error …").
+
+**Done-when.**
+1. ✓ A parse failure marks that row as failed in the response (`skippedRows`), with no document for it, and the UI names it and cannot render it.
+2. ✓ A failed draft is distinguishable from a genuinely empty field.
+3. ✗ Not done here. Refusing to render a document with a genuinely empty AI field without an explicit override needs a review-screen control (an override in `GenerateModal`'s review step). This package touched the modal only to say why a batch stopped. A server refusal would block legitimately optional AI fields with no way to override.
+
+**Scope / residual.** OPEN for done-when 3. A left-out row is re-drafted by drafting again from the start (or after fixing the row's data); the dialog keeps it listed until then. In a per-row batch no drafted, paid-for row is discarded by an unreadable draft, a cap stop or a provider failure after the first row (fix pass 2); the summary document is one call, so its failure discards nothing drafted.
 
 ---
 
@@ -442,6 +457,7 @@ Tests:
 
 - **Severity:** MEDIUM
 - **Status:** OPEN
+- **Assigned:** intelligence I-09 PROCESS FLOWS & OPERATING AREAS (criterion 1, and criterion 2's locate status code) — by the integrator, 2026-10-01 (at the I-05 merge: the package that left this remainder has merged; fleet plan `audit-reports/fleet-plans/`).
 - **Verification:** CONFIRMED
 - **Locations:** `app/api/flows/read/route.ts:106-132`, `app/api/knowledge/locate/route.ts:171-215`, `app/api/templates/generate/route.ts:177-238`, `lib/ai/pricing.ts:29-33`, `lib/ai/governedCall.ts:50-61`
 - **Independently verified:** ✓ **SURVIVES** — second independent adversarial pass. Confirmed by repo-wide search: none of the three routes touches ai_key_agreements, and each can be the first provider call a DocCtrl ever makes, so document pages and row data leave the workspace with no signed acceptable-use record.
@@ -469,5 +485,14 @@ Two search shapes confirm the set: `grep -rn ai_key_agreements` and `grep -rn AG
 - **The answer is still 200.** An unsigned caller gets the free answer (cached text-layer positions and the "where else" jumps) with `skipped` and `agreementRequired`, `agreementText` and `agreementVersion`. It is not a bare 428, because opening a sheet must keep working without a provider call. A read error on the agreement table refuses too.
 - **Tested.** `lib/__tests__/intelRoundGDrawingRoutes.test.ts` "an unreadable ledger refuses rather than assume $0; an unsigned agreement sends nothing".
 - **Local.** It is a local gate, the HLD-1 pattern. I-05's `lib/ai/aiGates` is the one helper and unifies it (and may choose the 428).
+
+**Partial (2026-10-01, intelligence Round G).** `/api/templates/generate` now runs `assertAiGates`: the agreement (428, with the agreement text), own key, the cap over every op, and a per-document reservation. The other two routes belong to other packages. flows/read is I-09's: it moves onto `aiGates` / `governedAiCall` and deletes the two stale "doesn't carry images" comments. knowledge/locate is I-07's (its local gate landed with I-07, `d466a59` — the pointer above). The census test covers done-when 3. Tests: `templatesDraftGate.test.ts`, `aiGateCensus.test.ts`.
+
+**Done-when.**
+1. ✗ I-09's file.
+2. Half. templates/generate ✓ (428 with `agreementText`). knowledge/locate: the check landed with I-07 (merged `d466a59`, the pointer above) — `ai_key_agreements` is read before the first provider call and nothing is sent unsigned — but it answers 200 with `agreementRequired` / `agreementText`, not the criterion's 428, so that opening a sheet keeps its free answer. *Integrator at merge (2026-10-01):* the status code is the open half of this criterion; I-09 owns the decision (keep the 200 and record it, or a 428 the locate client handles) with criterion 1.
+3. ✓ A test asserts every route importing a provider call either runs the gates, checks `AGREEMENT_VERSION`, or is named with its owner.
+
+**Scope / residual.** OPEN until I-09 lands criterion 1 and settles criterion 2's locate status code (I-07's limb is merged).
 
 ---

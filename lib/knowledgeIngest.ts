@@ -55,6 +55,7 @@ import { transcribePageImage } from "@/lib/knowledgeVision";
 import { isTimeoutError, type AiProviderId } from "@/lib/ai/providerCall";
 import { ALLOWED_PROVIDERS, AGREEMENT_VERSION, type AiUsage } from "@/lib/ai/pricing";
 import { getMonthUsage, getCapUsd, recordAskUsage } from "@/lib/ai/usageServer";
+import { isAiUsageUnavailable } from "@/lib/ai/gateError";
 import { loadOrgInstructionsBlock } from "@/lib/aiInstructionsServer";
 
 export const PAGE_BATCH = 50;
@@ -860,11 +861,20 @@ export const VISION_RETRY_BACKOFF_MS = 30 * 60_000;
  *  partial index has no button yet (I-02's library page), so it is named as
  *  something to ask an admin for, not an action. The provider's message is
  *  cut to fit the row's `error` (ERROR_MAX_CHARS), never the cadence or the
- *  way out that follow it. */
-export function visionRetryMessage(pages: number[], cause: string | null): string {
+ *  way out that follow it. `noVision` (no `cause`): why the driver had no
+ *  vision context when it is not the missing key or budget the default
+ *  sentence names — the route's own reason (GOV-11: the acceptable-use
+ *  agreement; GOV-4: a ledger that cannot be read), which is the one the
+ *  person can act on. */
+export function visionRetryMessage(pages: number[], cause: string | null, noVision?: string | null): string {
   const list = pages.slice(0, 12).join(", ") + (pages.length > 12 ? ", …" : "");
   const what = `AI vision could not read ${pages.length} page${pages.length === 1 ? "" : "s"} (p. ${list})`;
   const meanwhile = "The rest of the document is searchable meanwhile.";
+  if (!cause && noVision) {
+    const head = `${what}, and ${pages.length === 1 ? "it" : "they"} can't be retried for you now: `;
+    const tail = ` ${meanwhile} If ${pages.length === 1 ? "it stays" : "they stay"} unread, ask an admin to accept the partial index.`;
+    return head + fitCause(noVision, ERROR_MAX_CHARS - head.length - tail.length) + tail;
+  }
   if (!cause) {
     return `${what}, and retrying needs an AI key with budget left. ${meanwhile} Add one in AI settings and re-run indexing, or ask an admin to accept the partial index.`;
   }
@@ -943,6 +953,19 @@ export async function ingestKnowledgeDocBatch(
      *  why it could not record, or null; a record that fails (or throws)
      *  gives the claim back and runs nothing (`retryNowError`). */
     onRetryNow?: (row: Record<string, unknown>, backoffUntil: string) => Promise<string | null>;
+    /** Why the caller passed no `vision`, when it is not the missing key or
+     *  budget the default "retrying needs an AI key" sentence names: an
+     *  acceptable-use agreement that is unsigned or cannot be read (GOV-11),
+     *  or a ledger that cannot be read (GOV-4) — a reason someone can fix.
+     *  A page that needs AI vision is then HELD for it (listed in
+     *  vision_failed_pages, like a provider failure — ING-6), never consumed
+     *  text-only: a document consumed that way reaches 'ready' and nothing
+     *  ever reads the page again. Pages waiting on AI vision are parked (and
+     *  a re-run refused) with this reason — on the row and in the answer —
+     *  instead of being sent to add a key that is already saved. Both
+     *  drivers pass it (the route for its requester, the drain for the
+     *  uploader). */
+    noVisionReason?: string | null;
   } = {},
 ): Promise<IngestBatchResult> {
   ensurePdfPolyfills();
@@ -1109,11 +1132,11 @@ export async function ingestKnowledgeDocBatch(
             released = await releaseIngestLease(doc.id, driver);
             return idle(claimed, {
               failureRetryBlocked: true,
-              failureRetryMessage: visionRetryMessage(waiting, null),
+              failureRetryMessage: visionRetryMessage(waiting, null, opts.noVisionReason),
               failureRetryAfter: failureHold,
             });
           }
-          return await park(visionRetryMessage(waiting, null), new Date().toISOString());
+          return await park(visionRetryMessage(waiting, null, opts.noVisionReason), new Date().toISOString());
         }
       }
     }
@@ -1260,6 +1283,9 @@ export async function ingestKnowledgeDocBatch(
       visionModel: string | null;
       /** The provider's message when the vision read failed (not a timeout). */
       visionFailed: string | null;
+      /** The page needs AI vision, and the driver has none for a reason
+       *  someone can fix (`opts.noVisionReason`): held for it, not consumed. */
+      visionHeld: boolean;
       entities: Array<Record<string, unknown>>;
     };
 
@@ -1290,6 +1316,7 @@ export async function ingestKnowledgeDocBatch(
       let visionRead = false;
       let visionModel: string | null = null;
       let visionFailed: string | null = null;
+      let visionHeld = false;
       const rawPageText = lines.join("\n");
       const tagsFromText = extractEquipmentTags(rawPageText).length + extractDrawingRefs(rawPageText).length;
       if (forceVision || vision?.forceAllPages || pageNeedsVision(rawPageText, tagsFromText)) {
@@ -1346,6 +1373,13 @@ export async function ingestKnowledgeDocBatch(
           // the last finished page so the caller's next call resumes exactly
           // here with a fresh invocation's worth of time.
           return { stop: timeForVision ? "budget" : "time" };
+        } else if (opts.noVisionReason) {
+          // GOV-11 / GOV-4: no vision for a reason someone can fix (the
+          // agreement, the ledger). The page keeps its text layer for now and
+          // waits for AI vision on the row, like a provider failure (ING-6):
+          // consumed text-only, the document would reach 'ready' and the page
+          // would never be read once the reason is gone.
+          visionHeld = true;
         }
       }
 
@@ -1458,7 +1492,7 @@ export async function ingestKnowledgeDocBatch(
         });
       }
 
-      return { stop: null, page: { lines, chunkLines, visionRead, visionModel, visionFailed, entities } };
+      return { stop: null, page: { lines, chunkLines, visionRead, visionModel, visionFailed, visionHeld, entities } };
     };
 
     /** A drawing sheet has no sentence to finish — its foot is a title
@@ -1530,6 +1564,7 @@ export async function ingestKnowledgeDocBatch(
         const read = step.page;
         entityRows.push(...read.entities);
         if (read.visionFailed) { failed.add(p); visionError = read.visionFailed; }
+        else if (read.visionHeld) failed.add(p);
         else failed.delete(p);
         lastCompletedPage = p;
         const built = chunkRowsFor(p, read, section, carried);
@@ -1543,7 +1578,7 @@ export async function ingestKnowledgeDocBatch(
       //    pages whose vision call failed. No key = nothing can retry them
       //    here: said on the row, never an error (normally caught above,
       //    before the download).
-      if (!vision) return await park(visionRetryMessage(pageList(queueBefore), null), new Date().toISOString());
+      if (!vision) return await park(visionRetryMessage(pageList(queueBefore), null, opts.noVisionReason), new Date().toISOString());
       const backoff = () => new Date(Date.now() + VISION_RETRY_BACKOFF_MS).toISOString();
       // Least recently tried first; a page that already failed this round
       // waits for the next one.
@@ -1968,11 +2003,16 @@ export async function ingestKnowledgeDocBatch(
  *  on the uploader's own key — behind exactly the interactive gates
  *  (allowlisted provider, signed agreement, monthly cap) and metered to
  *  them. Returns no context when any gate fails; the caller then decides
- *  between text-only indexing and leaving the document queued. */
+ *  between text-only indexing and leaving the document queued. When the
+ *  gate that failed is one someone can fix — an uploader with a key who has
+ *  not accepted the current agreement, an acceptance or a ledger that
+ *  cannot be read (GOV-11 / GOV-4) — it says so (`noVisionReason`): the
+ *  engine then holds the pages that need vision instead of consuming them,
+ *  and names that reason on the row, as the interactive route does. */
 async function loadSponsorVision(
   doc: KnowledgeDocRow,
   onUsage: (usage: { inputTokens: number; outputTokens: number }, model: string) => void,
-): Promise<{ ctx?: VisionContext; forceAllPages: boolean }> {
+): Promise<{ ctx?: VisionContext; forceAllPages: boolean; noVisionReason?: string }> {
   const { data: libRow } = await supabaseAdmin
     .from("knowledge_libraries").select("ai_features")
     .eq("id", doc.library_id).maybeSingle();
@@ -1993,12 +2033,29 @@ async function loadSponsorVision(
       .eq("org_id", doc.org_id).eq("user_id", sponsor)
       .eq("scope", "use").eq("agreement_version", AGREEMENT_VERSION).limit(1);
     const tableMissing = !!agreeError && (agreeError.code === "42P01" || /does not exist/i.test(agreeError.message));
-    if (!tableMissing && (agree ?? []).length === 0) return { forceAllPages };
+    if (agreeError && !tableMissing) {
+      return { forceAllPages, noVisionReason: "The uploader's AI acceptable-use agreement can't be checked right now, so pages without a text layer are held for AI vision." };
+    }
+    if (!tableMissing && (agree ?? []).length === 0) {
+      return {
+        forceAllPages,
+        noVisionReason: "The uploader has not accepted the current AI acceptable-use agreement, so pages without a text layer are held for AI vision " +
+          "— they are read once the uploader accepts it, or when a controller who has accepted it indexes this document.",
+      };
+    }
   }
-  const [spent, cap] = await Promise.all([
+  // GOV-4: an unreadable ledger withholds the vision context only — the
+  // pages that need it are held (a read-every-page library is filed
+  // behind), and the drain goes on to the next document instead of ending
+  // the run.
+  const ledger = await Promise.all([
     getMonthUsage(doc.org_id, sponsor),
     getCapUsd(doc.org_id, sponsor),
-  ]);
+  ]).catch((e: unknown) => { if (isAiUsageUnavailable(e)) return null; throw e; });
+  if (!ledger) {
+    return { forceAllPages, noVisionReason: "AI usage can't be read right now, so pages without a text layer are held for AI vision." };
+  }
+  const [spent, cap] = ledger;
   if (cap > 0 && spent.spentUsd >= cap) return { forceAllPages };
 
   return {
@@ -2101,7 +2158,11 @@ export async function drainKnowledgeIngestQueue(opts: {
         const waitingBefore = pageList(row.vision_failed_pages).length;
         // Same deadline the drain itself respects: a batch that overruns the
         // cron's window would be killed mid-flight and lose its pages.
-        const res = await ingestKnowledgeDocBatch(row, sponsor.ctx, opts.deadlineMs);
+        // GOV-11 / GOV-4: the uploader's fixable reason (unsigned, or a
+        // record or ledger that cannot be read) holds the pages that need
+        // vision and is named on the row — never the generic "add a key".
+        const res = await ingestKnowledgeDocBatch(row, sponsor.ctx, opts.deadlineMs,
+          sponsor.ctx ? {} : { noVisionReason: sponsor.noVisionReason ?? null });
         // Someone else is indexing it, or it moved under us: not ours now.
         // Failed vision pages this run cannot retry: said on the row, and
         // the document keeps its index — never an error (ING-6). A failed

@@ -31,6 +31,7 @@ Whether a hold blocks every path or only the ones somebody remembered.
 
 - **Severity:** HIGH
 - **Status:** OPEN
+- **Assigned:** document-control P14 RECORDS & REVIEW REMAINDERS (limb 1: `disposeDocument` onto `lib/holdGate.ts`) and P15 SURFACE REMAINDERS (limb 2: the markup export's hold line in `FullScreenViewer.tsx`) — by the integrator, 2026-10-01 (at the I-05 merge: the packages that left these limbs have merged, and the plan named no next owner for either file; fleet plan `audit-reports/fleet-plans/`).
 - **Verification:** CONFIRMED
 - **Locations:** `supabase/migrations/20260822_review_completion_guard.sql:36-40`, `supabase/migrations/20260822_review_completion_guard.sql:77-86`, `lib/documentGuards.ts:138-148`, `lib/revisions.ts:1051-1118`, `lib/retention.ts:151-158`, `lib/downloads.ts`, `lib/transmittals.ts`, `lib/distributionAcks.ts`, `lib/documentShares.ts`, `lib/documentLifecycle/renumber.ts`
 - **Independently verified:** ✓ **SURVIVES** — second independent adversarial pass. The absence claim checks out repo-wide: a case-insensitive grep for 'hold' across lib/transmittals.ts, lib/distributionAcks.ts, lib/documentShares.ts and lib/documentLifecycle/renumber.ts returns ZERO hits, and lib/downloads.ts's only hits are about the checkout holder, not document_holds. Worse than stated: even on an advancing update the DB trigger returns NEW for Admin/DocCtrl (lines 60-63) before reaching the hold check, so controllers are unblocked there too.

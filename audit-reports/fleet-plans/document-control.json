@@ -492,7 +492,8 @@
     "DRLS-10 (added at the P8 merge 2026-10-01: done-when 3's database half \u2014 a trigger on work_package_documents UPDATE OF pinned_version_id recording a direct re-pin by the owner or a controller)",
     "PKG-9's handed-off residual (added at the P8 merge 2026-10-01; not an open finding): lib/acknowledgments.ts recomputeDocumentAck's effectiveAckPolicyForDocument call reads the folder / library ack_policy unchecked, so a failed read can leave a roster unassigned \u2014 check it like lib/downloads.ts readEffectiveAckPolicy does",
     "REV-19 (opened by P13 2026-10-01: an admitted status-change issue starts the compliance clocks and records the issue \u2014 route it through a lib/revisions.ts function; the library page's saveMetadata call site last, coordinated with identity IS-P1 / intelligence I-12)",
-    "REV-20 (opened at the P13 merge 2026-10-01: a controller's single write moving the pointer and making the status an issue passes an active hold unrecorded \u2014 a transaction-local flag publish_revision's force sets; and an unstamped retirement's exit)"
+    "REV-20 (opened at the P13 merge 2026-10-01: a controller's single write moving the pointer and making the status an issue passes an active hold unrecorded \u2014 a transaction-local flag publish_revision's force sets; and an unstamped retirement's exit)",
+    "HLD-1 (limb re-owned by the integrator 2026-10-01 at the I-05 merge: lib/retention.ts disposeDocument still reads lib/holds.ts listActiveHoldsForDocument \u2014 move it onto lib/holdGate.ts (readActiveHolds + decideHoldGate / assertNotOnHold), keeping P9's dispose gate behaviour)"
    ],
    "files": [
     "app/api/storage/delete/route.ts (RET-2's current-revision limb, beside P11's helpers) + lib/__tests__/storageDeleteRoute.test.ts",
@@ -519,7 +520,8 @@
     "XEDGE-12 (remainder re-owned by the integrator 2026-10-01, orphan sweep: \"The dependency move (above) \u2014 the finding stays OPEN for it\" (:550). Move off xlsx@0.18.5 to SheetJS >=0.20.2 (vendored tgz) or exceljs, with the lockfile reflecting it. HEAD package.json:36 is \"xlsx\": \"^0.18.5\" and \u2026)",
     "DIST-9 (added at the P8 merge 2026-10-01: done-when 3's last consumer \u2014 components/documents/InspectorPanel.tsx's stale-holder banner must read getDocumentRecall's unavailable as a gap, never as 'nobody is stale')",
     "TRX-16 (opened by P8 FIELD 2026-10-01: an issue-time stampability check \u2014 a size bound plus a pdf-lib load in lib/transmittals.ts issue \u2014 so the issuer is refused or warned at issue, not the recipient at download)",
-    "TRX-15 (added at the P8 merge 2026-10-01: done-when 1 closes with TRX-16 and the user's ratification of the DEC-61 \u00a75 amendment; done-when 2's device check \u2014 one hidden-frame download on iOS Safari and Firefox \u2014 is the user's)"
+    "TRX-15 (added at the P8 merge 2026-10-01: done-when 1 closes with TRX-16 and the user's ratification of the DEC-61 \u00a75 amendment; done-when 2's device check \u2014 one hidden-frame download on iOS Safari and Firefox \u2014 is the user's)",
+    "HLD-1 (limb re-owned by the integrator 2026-10-01 at the I-05 merge: components/viewers/FullScreenViewer.tsx's markup export calls applyStampToPdfDoc directly, so a held document's redlined export carries no hold line \u2014 route it through the lib/downloads.ts hold stamp as the plain download and print do)"
    ],
    "files": [
     "components/documents/ShareLinkModal.tsx + lib/documentShares.ts canMintShare / createShareLink (SHR-14 done-when 3: rpc user_download_denied, after 20261140)",

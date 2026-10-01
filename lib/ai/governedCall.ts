@@ -4,20 +4,22 @@
 // the same order: the caller's OWN key (no workspace fallback), the provider
 // allowlist, the signed acceptable-use agreement, the monthly cap, and
 // metered spend afterward. Duplicating that stack per route is how one of
-// them eventually forgets the cap. This helper is the stack, once.
+// them eventually forgets the cap. The stack itself lives in lib/ai/aiGates
+// (shared with the routes that call the model directly); this helper is the
+// stack plus ONE call: the call's worst case is reserved before it is made
+// (GOV-13) and settled to the provider's own counts after.
 //
 // Server-only: touches ai_connections via the service role.
 
 import { supabaseAdmin } from "@/lib/supabaseAdmin";
 import { callAiModel, type AiProviderId, type AiCallResult, type AiCallImage } from "@/lib/ai/providerCall";
-import { openAiKey } from "@/lib/ai/keyVault";
-import { ALLOWED_PROVIDERS, AGREEMENT_VERSION } from "@/lib/ai/pricing";
-import { getMonthUsage, getCapUsd, recordAskUsage } from "@/lib/ai/usageServer";
+import { assertAiGates } from "@/lib/ai/aiGates";
 import { loadOrgInstructionsBlock } from "@/lib/aiInstructionsServer";
+import { GovernedCallError } from "@/lib/ai/gateError";
 
-export class GovernedCallError extends Error {
-  constructor(message: string, public status: number) { super(message); }
-}
+// The refusal class lives in lib/ai/gateError (the ledger throws it too);
+// re-exported here under the name every caller imports.
+export { GovernedCallError };
 
 /** Run one governed model call on the member's own key. Throws
  *  GovernedCallError with an HTTP status when a gate refuses — routes map
@@ -39,58 +41,38 @@ export async function governedAiCall(input: {
 }): Promise<AiCallResult> {
   const { orgId, userId } = input;
 
-  const { data: conn } = await supabaseAdmin
-    .from("ai_connections").select("provider, model, api_key")
-    .eq("org_id", orgId).eq("user_id", userId).maybeSingle();
-  if (!conn || !ALLOWED_PROVIDERS.includes(conn.provider as AiProviderId)) {
-    throw new GovernedCallError(
-      "Add your Claude or OpenAI key in AI settings first — AI features run on your own key.", 412);
-  }
-
-  {
-    const { data: agree, error: agreeError } = await supabaseAdmin
-      .from("ai_key_agreements").select("id")
-      .eq("org_id", orgId).eq("user_id", userId)
-      .eq("scope", "use").eq("agreement_version", AGREEMENT_VERSION).limit(1);
-    const tableMissing = !!agreeError &&
-      (agreeError.code === "42P01" || /does not exist/i.test(agreeError.message));
-    if (!tableMissing && (agree ?? []).length === 0) {
-      throw new GovernedCallError(
-        "Accept the AI acceptable-use agreement first (ask any question in Knowledge to be prompted).", 428);
-    }
-  }
-
-  const [monthSoFar, capUsd] = await Promise.all([
-    getMonthUsage(orgId, userId), getCapUsd(orgId, userId),
-  ]);
-  if (capUsd > 0 && monthSoFar.spentUsd >= capUsd) {
-    throw new GovernedCallError(
-      `Monthly AI budget reached ($${monthSoFar.spentUsd.toFixed(2)} of $${capUsd.toFixed(2)}).`, 402);
-  }
+  // Own key → allowlist → agreement → cap (every op) — or a refusal.
+  const gate = await assertAiGates({ orgId, userId, op: input.op });
 
   const instructions = input.instructionScope
     ? await loadOrgInstructionsBlock(supabaseAdmin, orgId, input.instructionScope)
     : "";
 
-  const provider = conn.provider as AiProviderId;
-  const model = String(conn.model);
+  const { provider, model, apiKey } = gate.connection;
+  const system = input.system + instructions;
+  const maxTokens = input.maxTokens ?? 2000;
+  // The worst case of THIS call, written before it is made: refused (402)
+  // when it does not fit, and visible to every concurrent call.
+  const reservation = await gate.reserve({
+    inputChars: system.length + input.user.length,
+    images: input.images?.length ?? 0,
+    maxTokens,
+  });
   try {
     const out = await callAiModel({
-      provider, model,
-      apiKey: openAiKey(String(conn.api_key)),
-      system: input.system + instructions,
+      provider: provider as AiProviderId, model,
+      apiKey,
+      system,
       user: input.user,
       images: input.images,
-      maxTokens: input.maxTokens ?? 2000,
+      maxTokens,
       timeoutMs: input.timeoutMs ?? 45_000,
     });
-    await recordAskUsage({ orgId, userId, provider, model, usage: out.usage, ok: true, op: input.op });
+    await reservation.settle({ usage: out.usage, ok: true });
     return out;
   } catch (e) {
-    await recordAskUsage({
-      orgId, userId, provider, model,
-      usage: { inputTokens: 0, outputTokens: 0 }, ok: false, op: input.op,
-    }).catch(() => { /* metering failure must not mask the real error */ });
+    // settle never throws: a metering failure must not mask the real error.
+    await reservation.settle({ usage: { inputTokens: 0, outputTokens: 0 }, ok: false });
     throw e;
   }
 }

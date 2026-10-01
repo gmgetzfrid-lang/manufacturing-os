@@ -218,7 +218,8 @@
         "SEM-12 (remainder re-owned by the integrator 2026-10-01, orphan sweep: The ask response must carry retrievalCoverage { embedded, total } over every library searched (linked ones included); the page renderer is ready.)",
         "SEM-3 (remainder re-owned by the integrator 2026-10-01, orphan sweep: The ask route must embed the query via planQueryEmbedding (corpus provider/model) and report its reasons instead of the empty catch; the removal dialog must say vectors work again only with a key for the provider that built them.)",
         "GOV-9 (remainder re-owned by the integrator 2026-10-01, orphan sweep: CitationOut must carry the chunk source/model and the answer UI mark vision-derived quotes; the ask prompt must flag transcribed passages; title-block fields from a vision transcript must not be authoritative identity without …)",
-        "GOV-8 (added at the I-07 merge 2026-10-01: AiCallError carries the usage the provider reported — lib/ai/providerCall.ts — so a failed call's tokens are metered; the cross-route cap count is I-05's GOV-1)"
+        "GOV-8 (added at the I-07 merge 2026-10-01: AiCallError carries the usage the provider reported — lib/ai/providerCall.ts — so a failed call's tokens are metered; the cross-route cap count is I-05's GOV-1)",
+        "SEM-1 (remainder re-owned by the integrator 2026-10-01 at the I-05 merge: the ask route reads its corpus model from one row (app/api/knowledge/ask/route.ts, `stamped?.embedding_model`) — move it onto lib/ai/embeddings.ts resolveCorpusModel so a mixed library is named, not searched by whichever row came back)"
       ],
       "severityMix": "0 CRITICAL / 5 HIGH / 13 MEDIUM / 1 LOW",
       "files": [
@@ -557,7 +558,9 @@
         "WIRE-3 (remainder re-owned by the integrator 2026-10-01, orphan sweep: 'let searchDocuments' unitId filter also match documents.unit_code = the code that unit is mapped to, or drop the plant / unit / system parameters no caller passes. Apply 20261138.')",
         "AREA-11 (remainder re-owned by the integrator 2026-10-01, orphan sweep: 'the Facility Setup navigator (app/(protected)/setup/page.tsx) … the count it needs is planIdentityReview(assets, book).filter((r) => r.kind === \"code_names_other_unit\").length (exported, tested).')",
         "projects-tab SEC-10 (remainder re-owned by the integrator 2026-10-01, orphan sweep: 'NOT covered: /api/flows/read (app/api/flows/read/route.ts:53-80) renders knowledge_documents.file_key as the service role for any controller ... with no download-deny check and no DEC-43 row ... it closes when that route …)",
-        "projects-tab PERF-6 (remainder re-owned by the integrator 2026-10-01, orphan sweep: the renderer limb only — a ten-page scanned PDF completes inside the function limit and two concurrent reads do not exhaust memory (lib/knowledgePageRender.ts); the cost-docs route's readable 504 is projects-joint J12's)"
+        "projects-tab PERF-6 (remainder re-owned by the integrator 2026-10-01, orphan sweep: the renderer limb only — a ten-page scanned PDF completes inside the function limit and two concurrent reads do not exhaust memory (lib/knowledgePageRender.ts); the cost-docs route's readable 504 is projects-joint J12's)",
+        "GOV-11 (remainder re-owned by the integrator 2026-10-01 at the I-05 merge: done-when 2's flows/read limb — app/api/flows/read/route.ts reads the agreement before its first provider call, by moving onto assertAiGates / governedAiCall; locate's local gate landed with I-07)",
+        "PR-12 (remainder re-owned by the integrator 2026-10-01 at the I-05 merge: criterion 1 — flows/read rewritten onto governedAiCall with its images and the two stale 'doesn't carry images' comments deleted; and criterion 2's locate status code: keep the 200 + agreementRequired and record why, or a 428 the locate client handles)"
       ],
       "severityMix": "0 CRITICAL / 3 HIGH / 13 MEDIUM / 7 LOW",
       "files": [
@@ -984,6 +987,51 @@
         "I-04 (merged, DEC-72): the stored proposal and its table 20261147"
       ],
       "sequencingNotes": "Added by the integrator 2026-10-01 at the I-04 merge. ORCH-9 criteria 1-2 landed with I-04; criterion 3 needs either a real provider (none reachable in the sandbox) or this code close. Never block a proposal on the flag — it informs the person confirming; DEC-72 item 1 stays the write path."
+    },
+    {
+      "name": "I-18 AI CAP TRANSACTION & METERING — a cap change is one database transaction (GOV-15, closing GOV-10); multi-round paths reserve per round (GOV-13, ORCH-7); the drains re-check and meter inside their loops (GOV-5)",
+      "findings": [
+        "GOV-15 (opened by the integrator at the I-05 merge 2026-10-01: every cap change is one SECURITY DEFINER function that locks the default and override rows, decides the self-raise ban, writes and audits in one transaction; the route's app-side race machinery — capChangesSince, signedFigure, holdOwnCapAt, recheckOwnCap, guarded writes and put-backs, writeId / limitRowId — is deleted; a non-raising self-clear allowed; audit-first only for the sole holder; readMonthRows pages by key; a concurrent test on a real PostgreSQL)",
+        "GOV-10 (remainder re-owned by the integrator 2026-10-01 at the I-05 merge: done-when 2 holds for sequential requests (the committed T1–T10 matrix); it closes when GOV-15 lands)",
+        "GOV-13 (remainder re-owned by the integrator 2026-10-01 at the I-05 merge: done-when 3 — the multi-round paths reserve per round in their own files: the orchestrator loop (lib/orchestrator/loop.ts), locate's refine passes (app/api/knowledge/locate/route.ts, which also moves its local agreement / cap gate onto assertAiGates), the ingest batches (lib/knowledgeIngest.ts))",
+        "ORCH-7 (remainder re-owned by the integrator 2026-10-01 at the I-05 merge: the orchestrator reserves the run's worst case (or per round) before the first call and settles after, and passes maxInFlight — reserveWithinCap / settleUsage from lib/ai/usageServer.ts)",
+        "GOV-5 (remainder re-owned by the integrator 2026-10-01 at the I-05 merge: done-when 1, 2 and the ingest-drain half of 3 and 4 — lib/knowledgeEmbedDrain.ts and lib/knowledgeIngest.ts re-check headroom inside their loops and meter per slice / batch; a drain-level 'zero provider calls at 100%' test for the ingest drain)"
+      ],
+      "files": [
+        "a new migration: the cap-change SECURITY DEFINER function (DRLS-16 rule; DEC-30 inventory of counts only)",
+        "app/api/ai/usage/route.ts (call the function; delete the race machinery)",
+        "lib/ai/usageServer.ts (keyset paging in readMonthRows)",
+        "lib/orchestrator/loop.ts, app/api/orchestrator/route.ts (reserve / settle, maxInFlight)",
+        "app/api/knowledge/locate/route.ts (per-round reservation; assertAiGates)",
+        "lib/knowledgeIngest.ts, lib/knowledgeEmbedDrain.ts (in-loop re-check and metering)",
+        "lib/__tests__/aiUsageRoute.test.ts (T1–T10 unchanged) and a concurrent test on a real PostgreSQL (I-17's harness or a throwaway PostgreSQL 16)"
+      ],
+      "migrationsLikely": 1,
+      "dependsOn": [
+        "I-05 (merged, DEC-73)",
+        "I-06b and I-19 merged first (they edit lib/knowledgeIngest.ts and lib/orchestrator/loop.ts)",
+        "I-17 if its harness is available (otherwise a throwaway PostgreSQL 16, deleted afterwards)"
+      ],
+      "sequencingNotes": "Added by the integrator 2026-10-01 at the I-05 merge, when the GOV-10 concurrency chase (fix passes 5–10) stopped converging. Replace the route's race machinery, never extend it; every sequential answer, notice and audit row of the T1–T10 matrix must stay as it is."
+    },
+    {
+      "name": "I-20 AI UI REMAINDERS — the playbooks invitation in the library Ask header (HUB-6), the template review's override for an empty AI field (PR-6), the embed build's audit row and a list of the builds running on one's key (GOV-14)",
+      "findings": [
+        "HUB-6 (remainder re-owned by the integrator 2026-10-01 at the I-05 merge: done-when 2 — the library Ask header in app/(protected)/knowledge/[id]/page.tsx invites the first playbook when instructionCount is 0; I-02 / I-02b, its owners, have merged)",
+        "PR-6 (remainder re-owned by the integrator 2026-10-01 at the I-05 merge: done-when 3 — GenerateModal's review step refuses to render a document with a genuinely empty AI field without an explicit per-field override; never a server refusal that would block legitimately optional fields)",
+        "GOV-14 (remainder re-owned by the integrator 2026-10-01 at the I-05 merge: done-when 3 — an audit row names the request that stamped an embed build (app/api/knowledge/embed/route.ts); done-when 4 — one place lists every build running on a member's key, e.g. in AI settings)"
+      ],
+      "files": [
+        "app/(protected)/knowledge/[id]/page.tsx (the Ask header's empty state)",
+        "components/templates/GenerateModal.tsx (the review-step override)",
+        "app/api/knowledge/embed/route.ts (the stamp's audit row)",
+        "components/knowledge/AiSettingsModal.tsx or the meaning-index panel (the builds-on-my-key list)"
+      ],
+      "migrationsLikely": 0,
+      "dependsOn": [
+        "I-05 (merged, DEC-73)"
+      ],
+      "sequencingNotes": "Added by the integrator 2026-10-01 at the I-05 merge, for remainders whose owners (I-02, I-02b, I-05) have merged. Can run any time; AiSettingsModal is also edited by I-18 only through the usage route's answers, so take I-18's merged copy if it lands first."
     }
   ],
   "crossAreaFileOverlaps": [

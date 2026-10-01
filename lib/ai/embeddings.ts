@@ -21,7 +21,7 @@
 // Embedding a library costs real money, so it is opt-in and batched.
 
 import { AiCallError } from "@/lib/ai/providerCall";
-import { estimateCostUsd } from "@/lib/ai/pricing";
+import { estimateCostUsd, matchedPricePrefix } from "@/lib/ai/pricing";
 
 export type EmbeddingProviderId = "voyage" | "openai";
 
@@ -382,10 +382,12 @@ export function estimateEmbeddingCostUsd(model: string, chars: number, passages:
   return estimateCostUsd(model, { inputTokens: estimateEmbeddingTokens(chars, passages), outputTokens: 0 });
 }
 
-/** Voyage's in-app rate is a declared conservative placeholder
- *  (lib/ai/pricing) — its figures are labelled estimates until corrected. */
+/** A Voyage model the price table names (lib/ai/pricing — the three the
+ *  picker offers, at Voyage's published list price, GOV-6) is billed at its
+ *  real rate; only one that falls through to the conservative `voyage-`
+ *  family row is a placeholder, and its figures say so (SEM-13). */
 export function embeddingRateIsPlaceholder(model: string): boolean {
-  return embeddingProviderForModel(model) === "voyage";
+  return embeddingProviderForModel(model) === "voyage" && matchedPricePrefix(model) === "voyage-";
 }
 
 export const NO_EMBEDDING_KEY_MESSAGE =

@@ -481,12 +481,16 @@ describe("ownVisionKeyProblem — the clicking person's own key, by the ingest r
     expect(await ownVisionKeyProblem("o1")).toBe("your AI key's provider (google) cannot be used for indexing — change it in AI settings");
   });
 
-  it("a monthly budget reached is a problem; a cap of 0 is not (the route reads it as no cap)", async () => {
+  it("a monthly budget reached is a problem; a cap of 0 is the LOCK (GOV-3 — the I-05 merge gate)", async () => {
     answers = [conns(conn("openai")), usage(10, 10)];
     expect(await ownVisionKeyProblem("o1")).toBe("your monthly AI budget is reached ($10.00 of $10.00) — it resets next month, or an admin can raise it");
+    const lock = "your monthly AI cap is set to $0, so AI is locked for you until someone who manages AI caps raises it";
+    calls = 0; urls = [];
+    answers = [conns(conn("openai")), { ...usage(0, 0), locked: true }];
+    expect(await ownVisionKeyProblem("o1")).toBe(lock);
     calls = 0; urls = [];
     answers = [conns(conn("openai")), usage(50, 0)];
-    expect(await ownVisionKeyProblem("o1")).toBeNull();
+    expect(await ownVisionKeyProblem("o1")).toBe(lock);
   });
 
   it("a check that cannot be made throws, never answers 'usable'", async () => {

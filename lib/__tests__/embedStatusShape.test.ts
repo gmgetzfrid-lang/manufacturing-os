@@ -56,6 +56,8 @@ vi.mock("@/lib/supabase", async () => {
 });
 
 import { estimateEmbeddingCostUsd } from "@/lib/ai/embeddings";
+// The CURRENT agreement version (GOV-6 bumped it; a pinned literal would go stale).
+import { AGREEMENT_VERSION } from "@/lib/ai/pricing";
 
 const ORG = "0a000000-0000-4000-8000-000000000001";
 const LIB = "0b000000-0000-4000-8000-000000000001";
@@ -77,7 +79,7 @@ beforeEach(() => {
   admin.state.rpc.semantic_coverage_detail = () => (detail ? { data: [detail], error: null } : { data: null, error: { code: "PGRST202", message: "Could not find the function" } });
   admin.state.tables.knowledge_libraries = [{ id: LIB, org_id: ORG, ai_features: {} }];
   admin.state.tables.ai_connections = [{ org_id: ORG, user_id: ME, provider: "anthropic", api_key: "k", embedding_provider: "voyage", embedding_model: "voyage-3.5-lite", embedding_api_key: "pa" }];
-  admin.state.tables.ai_key_agreements = [{ org_id: ORG, user_id: ME, scope: "use", agreement_version: "2026-07-v2" }];
+  admin.state.tables.ai_key_agreements = [{ org_id: ORG, user_id: ME, scope: "use", agreement_version: AGREEMENT_VERSION }];
   installMarkerRpc(admin.state);            // 20261121 applied (one test below takes it away)
   browser.state ??= freshAdminState();
   Object.assign(browser.state, freshAdminState());
@@ -143,7 +145,7 @@ describe("Round G — what the status says out loud", () => {
     expect(body).toMatchObject({ remaining: 0, done: true, failed: 2 });
     expect(body.failedSamples).toEqual([{ documentName: "EP-5-6-2.pdf", page: 7, error: "input exceeds the model's context" }]);
   });
-  it("SEM-13: the estimate is the ledger's own function over the library's real text, for the caller's model; Voyage is marked an estimate", async () => {
+  it("SEM-13: the estimate is the ledger's own function over the library's real text, for the caller's model; a Voyage model the price table names is a real rate, not a placeholder", async () => {
     withDetail();
     const { POST } = await import("@/app/api/knowledge/embed/route");
     const body = await (await POST(statusReq())).json();
@@ -151,7 +153,7 @@ describe("Round G — what the status says out loud", () => {
       model: "voyage-3.5-lite",
       remainingUsd: estimateEmbeddingCostUsd("voyage-3.5-lite", 12_000, 8),
       fullUsd: estimateEmbeddingCostUsd("voyage-3.5-lite", 60_000, 40),
-      placeholderRate: true,
+      placeholderRate: false,
     });
     expect(body.connection).toEqual({ provider: "voyage", model: "voyage-3.5-lite" });
     expect(JSON.stringify(body)).not.toContain("\"pa\"");          // the key never leaves the server
@@ -366,7 +368,7 @@ describe("Round G — the controls", () => {
     const A = "0d000000-0000-4000-8000-0000000000bb";
     admin.state.tables.org_members = [{ org_id: ORG, uid: A, status: "active" }, { org_id: ORG, uid: ME, status: "active" }];
     admin.state.tables.ai_connections.push({ org_id: ORG, user_id: A, provider: "anthropic", api_key: "k", embedding_provider: "voyage", embedding_model: "voyage-3.5-lite", embedding_api_key: "pa-A" });
-    admin.state.tables.ai_key_agreements.push({ org_id: ORG, user_id: A, scope: "use", agreement_version: "2026-07-v2" });
+    admin.state.tables.ai_key_agreements.push({ org_id: ORG, user_id: A, scope: "use", agreement_version: AGREEMENT_VERSION });
     admin.state.tables.knowledge_libraries[0].ai_features = { visionAllPages: true, embedBuild: { userId: A, at: "2026-09-01T00:00:00Z", standing: true } };
     admin.state.tables.knowledge_chunks = Array.from({ length: 5 }, (_, i) => ({ id: `c${i}`, org_id: ORG, library_id: LIB, embedding: "[0]", embedding_model: "voyage-3.5-lite", embed_attempts: 0 }));
     const { POST } = await import("@/app/api/knowledge/embed/route");
