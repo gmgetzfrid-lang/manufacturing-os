@@ -29,14 +29,14 @@ stacking, and what a real OS notification would attach to.
 
 ## Findings
 
-**105 findings** — 2 CRITICAL, 15 HIGH, 72 MEDIUM, 16 LOW — plus **7 gap specs**, all buildable.
+**106 findings** — 2 CRITICAL, 15 HIGH, 73 MEDIUM, 16 LOW — plus **7 gap specs**, all buildable.
 
 > **One finding here carries `Status: REFUTED`** — `NEDGE-1`. An independent pass disproved it; the reason is on the finding. Kept rather than deleted (`DEC-41`). **Do not queue it as work.**
 
 | # | Report | Findings | Focus |
 |---|---|---|---|
 | 01 | [Producer census](./01-producer-census.md) | 14 | Which subsystems notify, which are silent, which vocabulary is dead |
-| 02 | [Delivery integrity](./02-delivery-integrity.md) | 14 | What gets dropped between an event and a person, and whether anything notices |
+| 02 | [Delivery integrity](./02-delivery-integrity.md) | 15 | What gets dropped between an event and a person, and whether anything notices — `DELIV-15` opened by the integrator at the N1 merge, 2026-10-01 |
 | 03 | [Taxonomy](./03-taxonomy.md) | 14 | Alerts vs notifications — every signalling surface, and where they contradict |
 | 04 | [**The cold trail**](./04-cold-trail.md) | 13 | Badge propagation. The central complaint |
 | 05 | [Realtime & lifecycle](./05-realtime-and-lifecycle.md) | 12 | Channels, teardown, multi-tab drift, events fired while nobody is looking |

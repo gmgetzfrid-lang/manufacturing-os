@@ -95,6 +95,15 @@ week), `RT-3` (three-to-six concurrent copies of `useTicketNotifications` each
 opening their own channel), `RT-2` (every checkout message in the workspace
 toasted to every signed-in user).
 
+*Hand-off (2026-10-01, notifications Round G, N1 PREFS-GATE → N3): the change
+that makes `components/providers/NotificationListener.tsx` read the pop-up
+preference, whether through `lib/notificationPrefs.ts` `readToastPreference` or
+`toast_enabled` directly, must also flip `TOAST_PREFERENCE_HONOURED` to `true`
+in `lib/notificationPrefs.ts`. That is one line in N1's file. Until it is
+flipped, the settings page does not offer the "Pop-up toasts" switch.
+`lib/__tests__/notificationPrefs.test.ts` fails whenever the listener mentions
+either name while the flag is false, and the reverse (`RT-10`).*
+
 Then the census holes in severity order: `PROD-2` (access requests notify
 nobody), `PROD-14` (`markup_request` never notifies the person asked), `PROD-9`
 (holds never notify the owner), `PROD-3`, `PROD-5`.

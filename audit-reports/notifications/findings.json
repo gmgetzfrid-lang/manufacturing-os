@@ -12,17 +12,18 @@
     "audit-reports/notifications/08-edges-and-invariants.md"
   ],
   "totals": {
-    "findings": 105,
+    "findings": 106,
     "gaps": 7,
     "by_severity": {
       "CRITICAL": 2,
       "HIGH": 15,
-      "MEDIUM": 72,
+      "MEDIUM": 73,
       "LOW": 16
     },
     "by_status": {
       "REFUTED": 3,
-      "OPEN": 102
+      "RESOLVED": 4,
+      "OPEN": 99
     }
   },
   "status_vocabulary": [
@@ -67,7 +68,7 @@
       "id": "NEDGE-2",
       "title": "The notification preferences page can never save for any user who has not already saved: the UI writes digest_frequency='immediate', the CHECK constraint only permits 'instant'",
       "severity": "CRITICAL",
-      "status": "OPEN",
+      "status": "RESOLVED",
       "verification": "CONFIRMED",
       "verification_note": null,
       "blast_radius": null,
@@ -121,7 +122,7 @@
       "id": "DELIV-2",
       "title": "Every client-initiated email ignores the recipient's opt-out — queueEmail reads notification_preferences under the ACTOR's RLS, which only exposes the actor's own row",
       "severity": "HIGH",
-      "status": "OPEN",
+      "status": "RESOLVED",
       "verification": "CONFIRMED",
       "verification_note": null,
       "blast_radius": null,
@@ -606,7 +607,7 @@
       "id": "DELIV-9",
       "title": "The 60-second burst dedupe in queueEmail never fires from the browser — same RLS blindness — so a single workflow event mails each person once per producer",
       "severity": "MEDIUM",
-      "status": "OPEN",
+      "status": "RESOLVED",
       "verification": "CONFIRMED",
       "verification_note": null,
       "blast_radius": null,
@@ -685,7 +686,7 @@
       "id": "DELIV-12",
       "title": "The notification preferences page cannot save in its default state — it writes digest_frequency:'immediate' against a CHECK constraint that only accepts 'instant'",
       "severity": "MEDIUM",
-      "status": "OPEN",
+      "status": "RESOLVED",
       "verification": "CONFIRMED",
       "verification_note": null,
       "blast_radius": null,
@@ -731,6 +732,28 @@
       ],
       "refuted": false,
       "summary": "This is the owner's complaint #2 with a receipt: outside an open browser tab there is no delivery presence at all. The only in-session signal is the NotificationListener toast (NotificationListener.tsx:92-97), which requires the app to be open and focused; the only out-of-session signal is email, which is separately compromised by findings 1-3. A holdopened on a live P&ID at 02:00 reaches nobody u",
+      "area": "notifications",
+      "report": "audit-reports/notifications/02-delivery-integrity.md"
+    },
+    {
+      "id": "DELIV-15",
+      "title": "The transmittal portal route queues the issuer's emails without reading any preference",
+      "severity": "MEDIUM",
+      "status": "OPEN",
+      "verification": "CONFIRMED",
+      "verification_note": "CONFIRMED (N1's final review, read from `app/api/transmittal/route.ts` on the integration branch at the N1 merge)",
+      "blast_radius": null,
+      "related": [],
+      "locations": [
+        "app/api/transmittal/route.ts"
+      ],
+      "has_verifier_correction": false,
+      "verified_by": "author",
+      "challenges": [
+        "author"
+      ],
+      "refuted": false,
+      "summary": "A member who issued a transmittal turns the master email switch off (or picks Never) and saves. The recipient acknowledges through the portal. The member still gets the receipt email, although the settings page told them no event email would come. GAP-203 acceptance 2 (\"a user who sets emailenabled = false receives no email from any path\") is unmet for a non-safety event.",
       "area": "notifications",
       "report": "audit-reports/notifications/02-delivery-integrity.md"
     },

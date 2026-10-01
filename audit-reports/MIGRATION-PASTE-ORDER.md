@@ -262,6 +262,7 @@ All PASTE and HOLD rows read *"Pending migration"* or *"not applied"* in the rec
 | 108 HOLD | `20261143`: closing or deleting a work package limited to its owner and controllers; deleting a printed package refused through the API; the field-pack budget's MEASURE counts | DRLS-10, PKG-12 (document-control P8) | 20260825 (the work_packages policies it re-creates) | — | **§3A: with the P8 app deploy or just after, never before** (h:66-73) — pasted first, the old page shows a false "Package closed" to a non-owner. | Pending (dc/10-rls.md DRLS-10) |
 | 109 PASTE | `20261144`: a status change that issues a document is a guarded write (`enforce_document_publish_guard` re-created from 20261139; `is_controlled_issue_status`; a retirement stamp) | REV-18 (+ DEC-71) | **20261139** (h:122); after **20261131** when both are pending (h:126) | **Never re-paste 20261139, 20261105 or any earlier guard file after it** — that drops the REV-18 blocks (h:122-124). | — (independent of 20261129 / 20261130 / 20261140) | Pending (dc/02-revisions-publish.md REV-18) |
 | 110 PASTE | `20261147`: `orchestrator_proposals` — the assistant's proposed writes stored server-side (run, org, person, tool, parameters, fingerprint, sentence, expiry, one-shot claim); RLS on with no policies, every privilege revoked from anon and authenticated (service role only); no function created | ORCH-4, PR-1, ORCH-10 (+ DEC-72) (intelligence I-04) | — (a new table; nothing earlier defines it) | — | **§3B: before or with the I-04 deploy, never after** (h:45-49) | Pending (int/15-orchestrator.md ORCH-4) |
+| 111 PASTE | `20261148`: `email_gate()` — the email preference rule and the 60-second repeat check evaluated where the recipient's row is visible (STABLE SECURITY DEFINER, pinned search_path, EXECUTE revoked from PUBLIC and anon); `notification_preferences.toast_enabled`; `inapp_enabled` marked DEPRECATED (kept) | DELIV-2, DELIV-9, RT-10 (+ DEC-74) (notifications N1) | 20260529, 20261047 (h:70-73) | — | — (either order with the deploy, h:64-68) | Pending (notif/02-delivery-integrity.md DELIV-2) |
 
 **Sequence at a glance.**
 1. **20261129**, now.
@@ -270,7 +271,7 @@ All PASTE and HOLD rows read *"Pending migration"* or *"not applied"* in the rec
    - 20261068, 20261070, 20261071, 20261072, 20261073, 20261074, 20261075, 20261077, 20261080, 20261081
    - 20261091, 20261093, 20261094, 20261095, 20261096, 20261097, 20261098, 20261099, 20261102, 20261103, 20261104, 20261105, 20261106, 20261107
    - 20261120, 20261121, 20261122, 20261123, 20261125, 20261126, 20261127, 20261128
-   - 20261130, 20261132, 20261133, 20261134, 20261136, 20261137, 20261138, 20261140, 20261147
+   - 20261130, 20261132, 20261133, 20261134, 20261136, 20261137, 20261138, 20261140, 20261147, 20261148
 4. Deploy the app build carrying the wave-2 changes (SEQ:167-168).
 5. Paste 20261131 once DRLS-15 and DRLS-17 are deployed, and 20261139 once REV-15 is deployed (either order). Paste 20261124 once intelligence I-04 is deployed. Paste 20261141 once the J11 build is live and open tabs have reloaded; 20261142 any time after 20261102; 20261143 with or just after the P8 deploy; 20261144 after 20261139 (and after 20261131 if that is still pending).
 6. Paste 20261138 again after the first decode run.

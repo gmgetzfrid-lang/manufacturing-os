@@ -11,9 +11,10 @@ const src = (p: string) => readFileSync(process.cwd() + "/" + p, "utf8");
 
 describe("LIFE-7 — the PSM undocumented-change alert is a safety message", () => {
   it("the safety category maps to an event type no preference toggle gates", () => {
-    // shouldSendForEvent (lib/notifications.ts) switches on a closed list of
+    // shouldSendForEvent (lib/notificationPrefs.ts since notifications Round G
+    // N1; mirrored by email_gate() in 20261148) switches on a closed list of
     // preference-gated event types and returns true for anything else.
-    const gated = src("lib/notifications.ts").match(/case "([a-z_]+)":\s*(?:case "[a-z_]+":\s*)*return prefs\./g) ?? [];
+    const gated = src("lib/notificationPrefs.ts").match(/case "([a-z_]+)":\s*(?:case "[a-z_]+":\s*)*return prefs\./g) ?? [];
     const gatedTypes = gated.flatMap((c) => [...c.matchAll(/case "([a-z_]+)"/g)].map((m) => m[1]));
     expect(gatedTypes).toContain("assignment");
     expect(gatedTypes).not.toContain(categoryToEventType("safety"));

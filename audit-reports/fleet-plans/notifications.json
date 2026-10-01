@@ -75,7 +75,7 @@
   },
   {
    "name": "N3 SURFACES — an honest doorway, accessible surfaces, one toast per event (GAP-202 step 1 + NEDGE-5)",
-   "findings": ["TAX-1", "TRAIL-3", "NEDGE-5", "RT-2", "TAX-4", "TAX-3", "TAX-9", "RT-5", "RT-9"],
+   "findings": ["TAX-1", "TRAIL-3", "NEDGE-5", "RT-2", "TAX-4", "TAX-3", "TAX-9", "RT-5", "RT-9", "RT-10 (remainder re-owned by the integrator 2026-10-01 at the N1 merge: NotificationListener reads readToastPreference (lib/notificationPrefs.ts) on mount and on return, and N3 flips TOAST_PREFERENCE_HONOURED so the settings page offers the Pop-up toasts switch; per-category toast toggles wait for N2's kind registry (GAP-207 / TAX-5) — never a seventh classification)"],
    "severityMix": "5 HIGH, 3 MEDIUM, 1 LOW",
    "files": [
     "components/notifications/NotificationCenter.tsx (open(filter, section?) :23/:37; CenterPanel filters items by item.section :81-85; header count :116 equals the badge that opened it and names the section; empty state names the section; role=dialog already at :99 — add focus-in on open / focus-restore on close)",
@@ -276,7 +276,7 @@
   },
   {
    "name": "N9 DC-OWNED-PRODUCERS-AND-KIND-SPLIT — the fixes that live in document-control's files, plus splitting the overloaded kinds (after the DC waves)",
-   "findings": ["PROD-9", "PROD-4", "PROD-12", "NEDGE-11", "NEDGE-8", "TRAIL-4", "PROD-13", "TAX-13", "OS-6"],
+   "findings": ["PROD-9", "PROD-4", "PROD-12", "NEDGE-11", "NEDGE-8", "TRAIL-4", "PROD-13", "TAX-13", "OS-6", "DELIV-15 (opened by the integrator at the N1 merge 2026-10-01: app/api/transmittal/route.ts queues the issuer's portal-receipt email (event_type watcher_activity) and the unstamped / refused-PDF notice without reading any preference — route the receipt through emailAllowedByPrefs or email_gate as the service role, and state whether the unstamped / refused notice is deliberately exempt)"],
    "severityMix": "9 MEDIUM",
    "files": [
     "lib/holds.ts :249-267 (resolve effectiveOwnerForDocument (lib/ownership.ts:35) and add the owner uid; pass audience.projectId when the document is on a project — PROD-9; after DC P5 HOLDS)",
