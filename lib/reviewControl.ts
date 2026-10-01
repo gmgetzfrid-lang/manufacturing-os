@@ -18,7 +18,7 @@ import { supabase } from "@/lib/supabase";
 import { notify } from "@/lib/inAppNotifications";
 import { logAuditAction } from "@/lib/audit";
 import { recordSignature, type SigningCredential } from "@/lib/eSignatures";
-import { effectiveOwnerForDocument, resolveEffectiveOwner, getOrgControllers, teamSupervisorMap } from "@/lib/ownership";
+import { effectiveOwnerForDocument, resolveEffectiveOwner, getOrgControllers, teamSupervisorMap, type LibraryOwnerCols, type TeamSupervisorLookup } from "@/lib/ownership";
 import { applyEffectiveDate } from "@/lib/effectiveDate";
 import type { ReviewControl, ReviewControlMode } from "@/types/schema";
 import { heldRoles, roleFilter } from "@/lib/roleHeld";
@@ -403,6 +403,68 @@ async function withdrawStrandedSubmission(input: { documentId: string; versionId
   return problems;
 }
 
+/** GAP-4 (P14 review fix): the effective owner an owner-must-approve roster
+ *  slots, read CHECKED at every rung. The same rows as
+ *  effectiveOwnerForDocument (lib/ownership.ts) — the document's, its
+ *  folder's and its library's owner, the library's owning team's
+ *  supervisor, and the active membership of each candidate — resolved
+ *  through the ONE chain (resolveEffectiveOwner, OWN-16), but a read that
+ *  answers an error, or finds no row where the rung points, THROWS instead
+ *  of resolving past that rung. effectiveOwnerForDocument reads the folder,
+ *  library and team unchecked and treats an unreadable membership as
+ *  "everyone is active" — fit for a notification route, not for naming the
+ *  person whose approval a revision cannot publish without: a transient
+ *  error there rosters the library owner in the folder owner's slot, opens
+ *  the roster with no owner slot at all, or rosters a departed owner the
+ *  review can never complete without. */
+async function readOwnerForApproval(input: { orgId: string; documentId: string; libraryId: string }): Promise<{ userId: string | null; name: string | null }> {
+  const unread = (what: string, error: { message?: string } | null): Error =>
+    new Error(`${what} could not be read: ${error?.message || "no row was returned"}`);
+  const { data: doc, error: docErr } = await supabase.from("documents")
+    .select("owner_user_id, owner_name, collection_id").eq("id", input.documentId).maybeSingle();
+  if (docErr || !doc) throw unread("the document's own owner", docErr);
+  const docOwner = { owner_user_id: (doc.owner_user_id as string | null) ?? null, owner_name: (doc.owner_name as string | null) ?? null };
+  const collectionId = (doc.collection_id as string | null) ?? null;
+  let folderOwner: { owner_user_id: string | null; owner_name: string | null } | null = null;
+  if (collectionId) {
+    const { data: col, error: colErr } = await supabase.from("collections")
+      .select("owner_user_id, owner_name").eq("id", collectionId).maybeSingle();
+    if (colErr || !col) throw unread("the folder's owner", colErr);
+    folderOwner = { owner_user_id: (col.owner_user_id as string | null) ?? null, owner_name: (col.owner_name as string | null) ?? null };
+  }
+  const { data: lib, error: libErr } = await supabase.from("libraries")
+    .select("owner_user_id, owner_name, owner_team_id").eq("id", input.libraryId).maybeSingle();
+  if (libErr || !lib) throw unread("the library's owner", libErr);
+  const libOwner = lib as LibraryOwnerCols;
+  const teamId = libOwner.owner_team_id ?? null;
+  let supervisor: string | null = null;
+  let teamName: string | null = null;
+  if (teamId) {
+    const { data: team, error: teamErr } = await supabase.from("teams")
+      .select("supervisor_user_id, name").eq("id", teamId).maybeSingle();
+    if (teamErr || !team) throw unread("the owning team's supervisor", teamErr);
+    supervisor = (team.supervisor_user_id as string | null) ?? null;
+    teamName = (team.name as string | null) ?? null;
+  }
+  const candidates = uniq([docOwner.owner_user_id ?? "", folderOwner?.owner_user_id ?? "", libOwner.owner_user_id ?? "", supervisor ?? ""]);
+  const active = new Set<string>();
+  const memberName = new Map<string, string | null>();
+  if (candidates.length > 0) {
+    const { data: members, error: memErr } = await supabase.from("org_members")
+      .select("uid, display_name, email").eq("org_id", input.orgId).eq("status", "active").in("uid", candidates);
+    if (memErr) throw unread("whether the owner is an active member", memErr);
+    for (const m of (members ?? []) as Array<Record<string, unknown>>) {
+      active.add(m.uid as string);
+      memberName.set(m.uid as string, (m.display_name as string) || (m.email as string) || null);
+    }
+  }
+  const teams: TeamSupervisorLookup | null = teamId
+    ? new Map([[teamId, { userId: supervisor, name: supervisor ? (memberName.get(supervisor) ?? teamName) : null }]])
+    : null;
+  const eff = resolveEffectiveOwner(docOwner, folderOwner, libOwner, active, teams);
+  return { userId: eff.userId, name: eff.name };
+}
+
 /** Open a fresh reviewer roster for an in-review draft: primaries active + notified,
  *  alternates inactive (they wait for the timeout or a manual activation). Flags a
  *  gap to owner + Admin/DocCtrl if no primary reviewer resolves.
@@ -412,8 +474,9 @@ async function withdrawStrandedSubmission(input: { documentId: string; versionId
  *  RG-8: the draft's author is skipped from the roster (DEC-21, unless the
  *  library opted out of independent review).
  *  GAP-4: under `ownerMustApprove` the effective owner is a required primary
- *  in their own slot (placeOwnerSlot); an owner that cannot be read
- *  withdraws the submission like a roster that cannot be saved. */
+ *  in their own slot (placeOwnerSlot); an owner that cannot be read — at any
+ *  rung of the chain (readOwnerForApproval) — withdraws the submission like
+ *  a roster that cannot be saved. */
 export async function openReviewRoster(input: {
   orgId: string; documentId: string; libraryId: string; versionId: string;
   revisionLabel: string; contentHash: string | null; control: ReviewControl;
@@ -453,21 +516,21 @@ export async function openReviewRoster(input: {
   // opened from now on only (an open roster is never changed). The database
   // completion gate counts primary rows per slot group, so the owner's row is
   // required there too with no change to the guard. The owner is read
-  // CHECKED: an owner we could not read must never open a roster without them.
+  // CHECKED at every rung (readOwnerForApproval — P14 review fix): an owner
+  // we could not read must never open a roster without them, or with
+  // someone else in their slot.
   let ownerSlot: OwnerSlotOutcome = null;
   if (input.control.ownerMustApprove === true) {
-    const { data: od, error: odErr } = await supabase.from("documents")
-      .select("owner_user_id, owner_name, collection_id").eq("id", input.documentId).maybeSingle();
-    if (odErr || !od) {
-      await withdrawAndThrow("The reviewer roster could not be opened: the document's owner, who must approve it, could not be read", odErr?.message ?? "the document was not found");
+    let owner: { userId: string | null; name: string | null } | null = null;
+    let ownerUnread = "the owner could not be resolved";
+    try {
+      owner = await readOwnerForApproval({ orgId: input.orgId, documentId: input.documentId, libraryId: input.libraryId });
+    } catch (e) {
+      ownerUnread = (e as Error).message;
     }
-    const owner = await effectiveOwnerForDocument({
-      ownerUserId: (od?.owner_user_id as string | null) ?? null,
-      ownerName: (od?.owner_name as string | null) ?? null,
-      collectionId: (od?.collection_id as string | null) ?? null,
-      libraryId: input.libraryId,
-      orgId: input.orgId,
-    });
+    if (!owner) {
+      return await withdrawAndThrow("The reviewer roster could not be opened: the document's owner, who must approve it, could not be read", ownerUnread);
+    }
     const placed = placeOwnerSlot({ primaries, alternates, owner, skipAuthorUid: requireIndependent ? authorUid : null });
     ({ primaries, alternates } = placed);
     ownerSlot = placed.outcome;

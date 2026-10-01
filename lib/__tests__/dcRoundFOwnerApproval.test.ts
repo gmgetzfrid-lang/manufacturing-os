@@ -13,6 +13,10 @@
 //   The database completion gate counts primary rows per slot group, so the
 //   owner's row is required there with no change to the guard — pinned
 //   against the NEWEST guard body, found by scanning the migrations.
+//   P14 review fix: the owner is resolved from rows read CHECKED at every
+//   rung (document, folder, library, owning team, active membership) through
+//   the real one chain — a read that fails withdraws the submission instead
+//   of rostering the next rung's owner, no owner, or a departed one.
 
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { readFileSync, readdirSync } from "node:fs";
@@ -22,7 +26,9 @@ import { newFakeDb, makeFakeSupabase, type FakeDb } from "./helpers/fakeSupabase
 const state = vi.hoisted(() => ({
   db: null as unknown as FakeDb,
   owner: { userId: "own1", name: "Olive Owner" } as { userId: string | null; name: string | null },
-  failDocumentRead: null as null | string,
+  /** Reads (selects) that answer an error: table, optionally the exact
+   *  select list, and the message. Writes go through. */
+  failRead: [] as Array<{ table: string; cols?: string; message: string }>,
   notified: [] as Array<Record<string, unknown>>,
   audited: [] as Array<Record<string, unknown>>,
 }));
@@ -33,18 +39,22 @@ vi.mock("@/lib/supabase", () => ({
     return {
       ...base,
       from: (t: string) => {
-        if (t === "documents" && state.failDocumentRead) {
+        if (state.failRead.some((f) => f.table === t)) {
           const real = base.from(t) as unknown as Record<string, (...a: unknown[]) => unknown>;
-          // Reads of the document row fail; writes (the withdrawal) go through.
+          // The matching reads fail; writes (the withdrawal) go through.
           return new Proxy(real, {
             get(target, prop: string) {
               if (prop === "select") {
-                const answer = { data: null, error: { message: state.failDocumentRead } };
-                const chain: Record<string, unknown> = {};
-                for (const m of ["eq", "in", "is", "order", "limit"]) chain[m] = () => chain;
-                chain.maybeSingle = async () => answer;
-                chain.then = (res: (v: unknown) => unknown) => Promise.resolve(answer).then(res);
-                return () => chain;
+                return (cols: string, ...rest: unknown[]) => {
+                  const hit = state.failRead.find((f) => f.table === t && (f.cols === undefined || f.cols === cols));
+                  if (!hit) return target.select(cols, ...rest);
+                  const answer = { data: null, error: { message: hit.message } };
+                  const chain: Record<string, unknown> = {};
+                  for (const m of ["eq", "in", "is", "order", "limit"]) chain[m] = () => chain;
+                  chain.maybeSingle = async () => answer;
+                  chain.then = (res: (v: unknown) => unknown) => Promise.resolve(answer).then(res);
+                  return chain;
+                };
               }
               return target[prop];
             },
@@ -59,15 +69,20 @@ vi.mock("@/lib/inAppNotifications", () => ({ notify: vi.fn(async (n: Record<stri
 vi.mock("@/lib/audit", () => ({ logAuditAction: vi.fn(async (e: Record<string, unknown>) => { state.audited.push(e); return { error: null }; }) }));
 vi.mock("@/lib/eSignatures", () => ({ recordSignature: vi.fn() }));
 vi.mock("@/lib/effectiveDate", () => ({ applyEffectiveDate: vi.fn(async () => undefined) }));
-vi.mock("@/lib/ownership", () => ({
-  effectiveOwnerForDocument: vi.fn(async () => state.owner),
-  resolveEffectiveOwner: vi.fn(() => ({ userId: null, name: null })),
-  getOrgControllers: vi.fn(async () => ["ctl1"]),
-  teamSupervisorMap: vi.fn(async () => new Map()),
-}));
+vi.mock("@/lib/ownership", async (importOriginal) => {
+  const real = await importOriginal<typeof import("@/lib/ownership")>();
+  return {
+    // the ONE chain is the real one: the owner slot resolves from the rows
+    resolveEffectiveOwner: vi.fn(real.resolveEffectiveOwner),
+    // the gap notice's (unchecked) recipient lookup
+    effectiveOwnerForDocument: vi.fn(async () => state.owner),
+    getOrgControllers: vi.fn(async () => ["ctl1"]),
+    teamSupervisorMap: vi.fn(async () => new Map()),
+  };
+});
 
 import { openReviewRoster, placeOwnerSlot, slotGroupKey, evaluateSlotCompletion, reviewCompletionForDraft, type Reviewer } from "@/lib/reviewControl";
-import { effectiveOwnerForDocument } from "@/lib/ownership";
+import { effectiveOwnerForDocument, resolveEffectiveOwner } from "@/lib/ownership";
 import type { ReviewControl } from "@/types/schema";
 
 const src = (p: string) => readFileSync(join(process.cwd(), p), "utf8");
@@ -101,21 +116,46 @@ const input = (control: ReviewControl, extra: Partial<{ actorId: string }> = {})
 const member = (uid: string, name: string, role = "Engineer") => ({ org_id: "o1", uid, display_name: name, email: `${uid}@x`, status: "active", role, roles: [role] });
 const rosterRows = () => T("document_review_signoffs");
 
-function seed(opts: { author?: string; library?: ReviewControl } = {}) {
-  T("org_members").push(member("rev1", "Rita Reviewer"), member("own1", "Olive Owner"), member("alt1", "Alan Alternate"), member("pub1", "Pat Publisher"));
+function seed(opts: {
+  author?: string; library?: ReviewControl;
+  docOwner?: string | null; folder?: { owner_user_id: string | null; owner_name?: string | null } | null;
+  libraryOwner?: string | null; libraryTeam?: string | null;
+} = {}) {
+  T("org_members").push(
+    member("rev1", "Rita Reviewer"), member("own1", "Olive Owner"), member("alt1", "Alan Alternate"), member("pub1", "Pat Publisher"),
+    member("fold1", "Fern Folder-Owner"), member("libown", "Lee Library-Owner"), member("sup1", "Sam Supervisor"),
+  );
   T("document_versions").push({ id: "v2A", created_by: opts.author ?? "pub1", superseded_at: null });
-  T("documents").push({ id: "d1", org_id: "o1", library_id: "lib1", pending_version_id: "v2A", owner_user_id: "own1", owner_name: "Olive Owner", collection_id: null });
-  T("libraries").push({ id: "lib1", org_id: "o1", review_control: opts.library ?? OWNER_CTL });
+  const docOwner = opts.docOwner === undefined ? "own1" : opts.docOwner;
+  T("documents").push({
+    id: "d1", org_id: "o1", library_id: "lib1", pending_version_id: "v2A",
+    owner_user_id: docOwner, owner_name: docOwner === "own1" ? "Olive Owner" : null, collection_id: opts.folder ? "c1" : null,
+  });
+  if (opts.folder) T("collections").push({ id: "c1", org_id: "o1", library_id: "lib1", owner_name: null, ...opts.folder });
+  T("libraries").push({
+    id: "lib1", org_id: "o1", review_control: opts.library ?? OWNER_CTL,
+    owner_user_id: opts.libraryOwner ?? null, owner_name: opts.libraryOwner ? "Lee Library-Owner" : null, owner_team_id: opts.libraryTeam ?? null,
+  });
+  if (opts.libraryTeam) T("teams").push({ id: opts.libraryTeam, org_id: "o1", name: "Process Engineering", supervisor_user_id: "sup1" });
+}
+const OWNER_READ_FAILED = /^The reviewer roster could not be opened: the document's owner, who must approve it, could not be read \(/;
+function expectWithdrawnWithoutRoster() {
+  expect(rosterRows()).toEqual([]);
+  expect(T("documents")[0].pending_version_id).toBeNull();
+  expect(T("document_versions")[0].superseded_at).toBeTruthy();
+  expect(state.audited.map((a) => a.action)).toEqual(["REVIEW_ROSTER_FAILED"]);
+  expect(state.notified).toEqual([]);
 }
 
 beforeEach(() => {
   state.db = newFakeDb();
   state.db.unique.document_review_signoffs = [["document_version_id", "reviewer_user_id"]];
   state.owner = { userId: "own1", name: "Olive Owner" };
-  state.failDocumentRead = null;
+  state.failRead = [];
   state.notified = [];
   state.audited = [];
   vi.mocked(effectiveOwnerForDocument).mockClear();
+  vi.mocked(resolveEffectiveOwner).mockClear();
 });
 
 describe("GAP-4 — placeOwnerSlot puts the effective owner on the roster as a required primary of their own", () => {
@@ -165,7 +205,9 @@ describe("GAP-4 acceptance 1 — an owner-must-approve policy opens rosters with
     expect(ask).toMatchObject({ kind: "review_requested" });
     expect(String(ask?.body)).toMatch(/as the document's owner, your approval is required/);
     expect(state.audited.find((a) => a.action === "REVIEW_REQUESTED")).toMatchObject({ details: { primaries: 2, ownerSlot: "rostered" } });
-    expect(vi.mocked(effectiveOwnerForDocument)).toHaveBeenCalledWith(expect.objectContaining({ ownerUserId: "own1", libraryId: "lib1", orgId: "o1" }));
+    // resolved through the ONE chain from checked reads — not the unchecked effectiveOwnerForDocument
+    expect(vi.mocked(resolveEffectiveOwner)).toHaveBeenCalledTimes(1);
+    expect(vi.mocked(effectiveOwnerForDocument)).not.toHaveBeenCalled();
     // nothing escalated: the roster has no gap
     expect(state.notified.filter((n) => n.kind === "review_overdue")).toEqual([]);
   });
@@ -196,7 +238,9 @@ describe("GAP-4 acceptance 1 — an owner-must-approve policy opens rosters with
   });
 
   it("no active owner: the roster opens with the reviewers and Document Control is told the owner slot could not be filled", async () => {
+    // the document's owner left the org; nothing above it is owned
     seed();
+    T("org_members").find((m) => m.uid === "own1")!.status = "inactive";
     state.owner = { userId: null, name: null };
     await openReviewRoster(input(OWNER_CTL));
     expect(rosterRows().map((r) => r.reviewer_user_id)).toEqual(["rev1"]);
@@ -208,14 +252,67 @@ describe("GAP-4 acceptance 1 — an owner-must-approve policy opens rosters with
 
   it("an owner that cannot be READ never opens a roster without them: the submission is withdrawn (RG-7) and the publisher is told", async () => {
     seed();
-    state.failDocumentRead = "statement timeout";
-    await expect(openReviewRoster(input(OWNER_CTL))).rejects.toThrow(/the document's owner, who must approve it, could not be read \(statement timeout\)\. The submission was withdrawn: nothing is in review/);
-    expect(rosterRows()).toEqual([]);
-    state.failDocumentRead = null;
-    expect(T("documents")[0].pending_version_id).toBeNull();
-    expect(T("document_versions")[0].superseded_at).toBeTruthy();
-    expect(state.audited.map((a) => a.action)).toEqual(["REVIEW_ROSTER_FAILED"]);
-    expect(state.notified).toEqual([]);
+    state.failRead = [{ table: "documents", message: "statement timeout" }];
+    await expect(openReviewRoster(input(OWNER_CTL))).rejects.toThrow(/the document's owner, who must approve it, could not be read \(the document's own owner could not be read: statement timeout\)\. The submission was withdrawn: nothing is in review/);
+    state.failRead = [];
+    expectWithdrawnWithoutRoster();
+  });
+
+  it("the inherited rungs: a document with no owner of its own rosters its FOLDER's owner (not the library's); a team-owned library's supervisor; an inactive document owner falls through (GAP-5)", async () => {
+    seed({ docOwner: null, folder: { owner_user_id: "fold1", owner_name: "Fern Folder-Owner" }, libraryOwner: "libown" });
+    await openReviewRoster(input(OWNER_CTL));
+    expect(rosterRows().filter((r) => String(r.slot_group).startsWith("owner:")).map((r) => [r.reviewer_user_id, r.reviewer_name])).toEqual([["fold1", "Fern Folder-Owner"]]);
+
+    state.db = newFakeDb();
+    seed({ docOwner: null, libraryTeam: "team1" });
+    await openReviewRoster(input(OWNER_CTL));
+    expect(rosterRows().find((r) => r.slot_group === "owner:sup1")).toMatchObject({ reviewer_user_id: "sup1", reviewer_name: "Sam Supervisor", slot: "primary" });
+
+    state.db = newFakeDb();
+    seed({ folder: { owner_user_id: "fold1" } });
+    T("org_members").find((m) => m.uid === "own1")!.status = "inactive";
+    await openReviewRoster(input(OWNER_CTL));
+    expect(rosterRows().filter((r) => String(r.slot_group).startsWith("owner:")).map((r) => r.reviewer_user_id)).toEqual(["fold1"]);
+  });
+
+  it("P14 review fix — the FOLDER read fails while the folder owner is the effective owner: withdrawn, never the library owner rostered in the owner's slot", async () => {
+    seed({ docOwner: null, folder: { owner_user_id: "fold1" }, libraryOwner: "libown" });
+    state.failRead = [{ table: "collections", message: "connection reset" }];
+    await expect(openReviewRoster(input(OWNER_CTL))).rejects.toThrow(OWNER_READ_FAILED);
+    state.failRead = [];
+    expect(rosterRows().map((r) => r.reviewer_user_id)).not.toContain("libown");
+    expectWithdrawnWithoutRoster();
+  });
+
+  it("P14 review fix — a folder row that is not there (unreadable to the caller) is no answer either: withdrawn", async () => {
+    seed({ docOwner: null, folder: { owner_user_id: "fold1" }, libraryOwner: "libown" });
+    state.db.tables.collections = [];
+    await expect(openReviewRoster(input(OWNER_CTL))).rejects.toThrow(/the folder's owner could not be read: no row was returned/);
+    expectWithdrawnWithoutRoster();
+  });
+
+  it("P14 review fix — the LIBRARY read fails with no document or folder owner: withdrawn, never a roster opened without an owner slot", async () => {
+    seed({ docOwner: null, libraryOwner: "libown" });
+    state.failRead = [{ table: "libraries", cols: "owner_user_id, owner_name, owner_team_id", message: "permission denied for table libraries" }];
+    await expect(openReviewRoster(input(OWNER_CTL))).rejects.toThrow(/the library's owner could not be read: permission denied for table libraries/);
+    state.failRead = [];
+    expectWithdrawnWithoutRoster();
+  });
+
+  it("P14 review fix — the owning TEAM read fails: withdrawn", async () => {
+    seed({ docOwner: null, libraryTeam: "team1" });
+    state.failRead = [{ table: "teams", cols: "supervisor_user_id, name", message: "statement timeout" }];
+    await expect(openReviewRoster(input(OWNER_CTL))).rejects.toThrow(/the owning team's supervisor could not be read: statement timeout/);
+    state.failRead = [];
+    expectWithdrawnWithoutRoster();
+  });
+
+  it("P14 review fix — the MEMBERSHIP read fails: withdrawn, never a possibly departed owner rostered (the review could never complete)", async () => {
+    seed();
+    state.failRead = [{ table: "org_members", cols: "uid, display_name, email", message: "connection reset" }];
+    await expect(openReviewRoster(input(OWNER_CTL))).rejects.toThrow(/whether the owner is an active member could not be read: connection reset/);
+    state.failRead = [];
+    expectWithdrawnWithoutRoster();
   });
 
   it("regression — a policy without the flag opens the roster exactly as before (no owner read, no owner row)", async () => {
@@ -223,6 +320,8 @@ describe("GAP-4 acceptance 1 — an owner-must-approve policy opens rosters with
     await openReviewRoster(input(PLAIN_CTL));
     expect(rosterRows().map((r) => [r.reviewer_user_id, r.slot_group])).toEqual([["rev1", "person:rev1"]]);
     expect(vi.mocked(effectiveOwnerForDocument)).not.toHaveBeenCalled();
+    expect(vi.mocked(resolveEffectiveOwner)).not.toHaveBeenCalled();
+    expect(state.db.calls.filter((c) => c.method === "select" && /owner_team_id|supervisor_user_id/.test(String(c.args[0])))).toEqual([]);
     expect(state.audited.find((a) => a.action === "REVIEW_REQUESTED")).toMatchObject({ details: { primaries: 1, ownerSlot: null } });
   });
 });
