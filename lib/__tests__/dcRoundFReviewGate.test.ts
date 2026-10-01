@@ -256,7 +256,8 @@ describe("RG-6 — a policy that cannot be read is unknown, never 'none'", () =>
     expect(m).toContain('useState<"loading" | "resolved" | "unknown">("loading")');
     expect(m).toMatch(/catch \(e\) \{\s*\n\s*if \(alive\) \{ setReviewControl\(null\); setReviewPolicyStatus\("unknown"\)/);
     expect(m).toContain('const policyResolved = reviewPolicyStatus === "resolved";');
-    expect(m).toContain("disabled={submitting || !file || !policyResolved}");
+    // (P13 second review fix: a retired document holds it too — REV-18)
+    expect(m).toMatch(/disabled=\{submitting \|\| !file \|\| !policyResolved(?: \|\| !!retiredRefusal)?\}/);
     expect(m).toMatch(/if \(!policyResolved\) \{\s*\n\s*return setError\(/);
     expect(m).toContain("setPolicyAttempt((n) => n + 1)");
     expect(m).not.toMatch(/catch \{ if \(alive\) setReviewControl\(null\); \}/);

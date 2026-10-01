@@ -33,12 +33,26 @@ const state = vi.hoisted(() => ({
   isOwner: true,
   /** the session uid the transcribed guard sees (null = the service role) */
   uid: "u1" as string | null,
+  /** a table whose reads answer this error (a column the database lacks) */
+  readError: null as null | { table: string; error: { code: string; message: string } },
 }));
 
 vi.mock("@/lib/supabase", () => ({
   get supabase() {
     const base = makeFakeSupabase(state.db);
-    return { ...base, rpc: (...a: unknown[]) => state.rpc(...a) };
+    const from = (t: string) => {
+      const re = state.readError;
+      if (re && re.table === t) {
+        const answer = { data: null, error: re.error };
+        const chain: Record<string, unknown> = {};
+        for (const m of ["select", "eq", "in", "is", "order", "limit"]) chain[m] = () => chain;
+        chain.maybeSingle = async () => answer;
+        chain.single = async () => answer;
+        return chain;
+      }
+      return base.from(t);
+    };
+    return { ...base, from, rpc: (...a: unknown[]) => state.rpc(...a) };
   },
 }));
 vi.mock("@/lib/storage", () => ({
@@ -89,7 +103,9 @@ vi.mock("@/lib/docClass", () => ({ effectiveDocClassForDocument: vi.fn(async () 
 
 import {
   revUpDocument, unarchiveDocument, archiveDocument, supersedeDocument, firstIssueGateForRevUp,
+  submitForReview, describeFirstIssue, describeRetiredRevUp, unarchiveRestoreDefault,
 } from "@/lib/revisions";
+import { RETIRED_NOT_ISSUED_STAMP } from "@/lib/issueStatus";
 import { finalizeReviewedRevision, effectiveReviewControlForDocument, effectiveModeForRevUp } from "@/lib/reviewControl";
 import { restoreSupersededSource } from "@/lib/documentLifecycle/common";
 import { mergeDocuments } from "@/lib/documentLifecycle/merge";
@@ -139,7 +155,10 @@ function transcribedGuard(next: Row, old: Row): Row {
     || (next.status === "Superseded" && (old.status ?? "") !== "Superseded")
     || (RETIRED.includes(String(old.status)) && next.status !== old.status)
     || (next.status === "Archived" && (old.status ?? "") !== "Archived");
-  const newDoor = issuing && !advancing0;
+  // P13 second review fix: a status-only exit into an issue from a retirement that took away NO issue is the new door too.
+  const notIssuedExit = next.current_version_id === old.current_version_id && RETIRED.includes(String(old.status))
+    && old.retired_issue_status === "not-issued" && old.retired_issue_version_id == null;
+  const newDoor = issuing && (!advancing0 || notIssuedExit);
   // P13 review fix: the retirement stamp (written only here) and the put-back it allows.
   const restoring = issuing && RETIRED.includes(String(old.status)) && old.retired_issue_version_id != null
     && next.current_version_id === old.retired_issue_version_id && next.current_version_id === old.current_version_id;
@@ -149,7 +168,7 @@ function transcribedGuard(next: Row, old: Row): Row {
     } else if (old.current_version_id != null && isControlledIssueStatus(old.status as string | null)) {
       next.retired_issue_status = old.status; next.retired_issue_version_id = old.current_version_id;
     } else {
-      next.retired_issue_status = null; next.retired_issue_version_id = null;
+      next.retired_issue_status = "not-issued"; next.retired_issue_version_id = null;
     }
   } else {
     next.retired_issue_status = null; next.retired_issue_version_id = null;
@@ -180,6 +199,7 @@ beforeEach(() => {
   state.canControl = false;
   state.isOwner = true;
   state.uid = ME;
+  state.readError = null;
 });
 
 // ─── Addendum 1: the rev-up's first issue ──────────────────────────────────
@@ -361,7 +381,7 @@ describe("P13 review fix — the require limb spares the put-back of the issue a
 
     seedDoc("ar2", { status: "Draft", owner_user_id: "someone-else" });
     await archiveDocument({ doc: asRecord(docRow("ar2")), reason: "tidy", orgId: ORG, actorUserId: ME });
-    expect(docRow("ar2").retired_issue_status).toBeNull();
+    expect(docRow("ar2")).toMatchObject({ retired_issue_status: "not-issued", retired_issue_version_id: null });
     await expect(unarchiveDocument({ doc: asRecord(docRow("ar2")), reason: "back", orgId: ORG, actorUserId: ME })).rejects.toThrow(UNREVIEWED);
     expect(docRow("ar2").status).toBe("Archived");
   });
@@ -512,5 +532,212 @@ describe("P13 review fix — the first issue is answered by effectiveModeForRevU
     expect(m).toContain("setFirstIssueMustReview(first.mustReview)");
     expect(m).toContain("const effMode = effectiveModeForRevUp({ control: reviewControl ?? { mode: \"none\" }, changeType, firstIssueMustReview });");
     expect(m).toContain('const willReview = effMode === "require" || (effMode === "publisher_choice" && routeThroughReview);');
+  });
+});
+
+// ─── P13 second review fix ──────────────────────────────────────────────────
+describe("P13 second review fix (major) — a retirement that took away no issue is no detour past the hold", () => {
+  const update = (id: string, patch: Row) => supabase.from("documents").update(patch).eq("id", id);
+  beforeEach(() => { state.reviewMode = "require"; state.roles = ["Manager", "DocCtrl"]; });
+
+  it("the reviewer's case: a controller's held, never-issued Draft taken through Void / Archived / Superseded and then made Issued by a status edit — refused over the hold, as the direct Draft -> Issued is", async () => {
+    for (const via of ["Void", "Archived", "Superseded"]) {
+      const id = `hd-${via}`;
+      seedDoc(id);
+      T("document_holds").push({ id: `h-${id}`, document_id: id, released_at: null });
+      expect((await update(id, { status: via })).error).toBeNull();
+      expect(docRow(id)).toMatchObject({ status: via, retired_issue_status: RETIRED_NOT_ISSUED_STAMP, retired_issue_version_id: null });
+      const { error } = await update(id, { status: "Issued" });
+      expect(error?.message, via).toBe(HOLD_ISSUE);
+      expect(docRow(id).status).toBe(via);
+    }
+    seedDoc("hd-direct");
+    T("document_holds").push({ id: "h-direct", document_id: "hd-direct", released_at: null });
+    expect((await update("hd-direct", { status: "Issued" })).error?.message).toBe(HOLD_ISSUE);
+  });
+
+  it("what keeps its rule: the put-back of an ISSUE over a hold (a controller), the same detour with no hold, a pointer move with the status (the pointer gate), and a retirement before 20261144 (no stamp)", async () => {
+    seedDoc("pb1", { status: "Issued" });
+    T("document_holds").push({ id: "h-pb1", document_id: "pb1", released_at: null });
+    expect((await update("pb1", { status: "Archived" })).error).toBeNull();
+    expect(docRow("pb1").retired_issue_version_id).toBe("pb1-v0");
+    expect((await update("pb1", { status: "Issued" })).error).toBeNull();
+
+    seedDoc("nh1");
+    expect((await update("nh1", { status: "Void" })).error).toBeNull();
+    expect((await update("nh1", { status: "Issued" })).error).toBeNull();
+
+    seedDoc("pm1");
+    T("document_holds").push({ id: "h-pm1", document_id: "pm1", released_at: null });
+    T("document_versions").push({ id: "pm1-v1", org_id: ORG, record_id: "pm1", revision_label: "1", superseded_at: null });
+    expect((await update("pm1", { status: "Archived" })).error).toBeNull();
+    expect((await update("pm1", { status: "Issued", current_version_id: "pm1-v1" })).error).toBeNull();
+
+    seedDoc("lg1", { status: "Void" }); // retired before the paste: no stamp
+    T("document_holds").push({ id: "h-lg1", document_id: "lg1", released_at: null });
+    expect((await update("lg1", { status: "Issued" })).error).toBeNull();
+  });
+
+  it("a pointer moved while retired keeps the marker, and a later status-only exit is still the new door; a caller cannot write the marker away", async () => {
+    seedDoc("mk1");
+    T("document_holds").push({ id: "h-mk1", document_id: "mk1", released_at: null });
+    T("document_versions").push({ id: "mk1-v1", org_id: ORG, record_id: "mk1", revision_label: "1", superseded_at: null });
+    await update("mk1", { status: "Void" });
+    await update("mk1", { current_version_id: "mk1-v1" });
+    await update("mk1", { retired_issue_status: null });
+    expect(docRow("mk1")).toMatchObject({ retired_issue_status: RETIRED_NOT_ISSUED_STAMP, current_version_id: "mk1-v1" });
+    expect((await update("mk1", { status: "Issued" })).error?.message).toBe(HOLD_ISSUE);
+  });
+
+  it("the marker is the SQL's: the guard and the INSERT trigger write exactly RETIRED_NOT_ISSUED_STAMP", () => {
+    const sql = readFileSync(join(process.cwd(), "supabase/migrations/20261144_dc_roundF_status_issue_transition.sql"), "utf8");
+    expect(sql.match(new RegExp(`NEW\\.retired_issue_status := '${RETIRED_NOT_ISSUED_STAMP}';`, "g"))).toHaveLength(2);
+    expect(sql).toContain(`AND OLD.retired_issue_status = '${RETIRED_NOT_ISSUED_STAMP}'`);
+  });
+});
+
+describe("P13 second review fix — a controller's direct first issue is RECORDED on REV_UP (DEC-63 §2), as the merge door records it", () => {
+  const revUpEvent = () => T("audit_logs").filter((r) => r.action === "REV_UP").pop()?.details as Record<string, unknown> | undefined;
+
+  it("a controller's Minor rev-up of a Draft in a require library: REV_UP carries the policy decision — a first issue made without the required sign-off", async () => {
+    state.reviewMode = "require";
+    state.roles = ["Manager", "DocCtrl"];
+    published();
+    await revUp(seedDoc("rc1"));
+    expect(revUpEvent()).toMatchObject({
+      changeType: "Minor",
+      firstIssueWithoutSignOff: true,
+      reviewPolicy: "require — Rev 1 is RC1's FIRST controlled issue, published WITHOUT the sign-off the policy requires, by controller u1 (DEC-63 §2)",
+    });
+    // a register row's first file by a controller is the same record
+    await revUp(seedDoc("rc2", { current_version_id: null, status: "Issued" }));
+    expect(revUpEvent()).toMatchObject({ firstIssueWithoutSignOff: true });
+  });
+
+  it("nothing is added where no sign-off was skipped: a library that does not require it, or an ordinary revision of an Issued document", async () => {
+    published();
+    state.roles = ["Manager", "DocCtrl"];
+    state.reviewMode = "none";
+    await revUp(seedDoc("rc3"));
+    expect(revUpEvent()).not.toHaveProperty("reviewPolicy");
+    expect(revUpEvent()).not.toHaveProperty("firstIssueWithoutSignOff");
+    state.reviewMode = "require";
+    state.roles = ["Engineer"];
+    await revUp(seedDoc("rc4", { status: "Issued" }));
+    expect(revUpEvent()).not.toHaveProperty("reviewPolicy");
+  });
+});
+
+describe("P13 second review fix — a RETIRED document is not revised: every rev-up door refuses it up front (never a review that can't land)", () => {
+  it("firstIssueGateForRevUp answers `retired` (no first issue, no policy read) for Superseded / Void / Archived, trimmed; describeFirstIssue never calls it \"not issued yet\"", async () => {
+    state.reviewMode = "require";
+    const actor = { orgId: ORG, actorUserId: ME };
+    for (const st of ["Superseded", "Void", "Archived", " Void "]) {
+      const id = `rt-${st.trim()}-${st.length}`;
+      seedDoc(id, { status: st });
+      expect(await firstIssueGateForRevUp({ doc: asRecord(docRow(id)), libraryId: LIB, actor }))
+        .toMatchObject({ retired: true, firstIssue: false, mustReview: false, requiresSignOff: false });
+    }
+    expect(effectiveReviewControlForDocument).not.toHaveBeenCalled();
+    expect(describeFirstIssue("D1", { hasCurrentRevision: true, status: "Void", retired: true }, "2")).toBe("D1 is Void (retired), so Rev 2 can't be published onto it until it is restored");
+    expect(describeRetiredRevUp("D1", "Archived")).toMatch(/^D1 is Archived, and a retired document isn't revised — a review of it could never be published[\s\S]*Restore it first \(un-archive it, or ask Document Control to un-void it or reverse the supersession\)/);
+  });
+
+  it("revUpDocument refuses a retired document before anything is uploaded — for a controller too, in any library", async () => {
+    published();
+    for (const [st, mode, roles] of [["Void", "require", ["Engineer"]], ["Archived", "none", ["Manager", "DocCtrl"]], ["Superseded", "require", ["Admin"]]] as const) {
+      state.reviewMode = mode;
+      state.roles = [...roles];
+      const d = seedDoc(`rr-${st}`, { status: st });
+      await expect(revUp(d, "Minor")).rejects.toThrow(new RegExp(`RR-${st.toUpperCase()} is ${st}, and a retired document isn't revised[\\s\\S]*Nothing was uploaded\\.`));
+    }
+    expect(uploadToPath).not.toHaveBeenCalled();
+    expect(state.rpc).not.toHaveBeenCalled();
+  });
+
+  it("submitForReview refuses a retired document before anything is uploaded (finalizeReviewedRevision would refuse it: the draft would be stranded)", async () => {
+    state.reviewMode = "require";
+    const d = seedDoc("sr1", { status: "Void" });
+    await expect(submitForReview({
+      doc: asRecord(d), libraryId: LIB, file: pdf("x.pdf"), revisionLabel: "1", changeLog: "narrative", changeType: "Major" as never,
+      orgId: ORG, actorUserId: ME,
+    })).rejects.toThrow(/SR1 is Void, and a retired document isn't revised[\s\S]*Nothing was uploaded or submitted\./);
+    expect(uploadToPath).not.toHaveBeenCalled();
+    expect(docRow("sr1").pending_version_id).toBeNull();
+    expect(T("document_versions").filter((v) => v.record_id === "sr1")).toHaveLength(1);
+  });
+
+  it("setLevelRevUp puts a retired sheet in `failed` with what to do — never sent to review, never published; the other sheets proceed", async () => {
+    state.reviewMode = "require";
+    state.canControl = true;
+    published();
+    const issued = seedDoc("sv1", { status: "Issued" });
+    const voided = seedDoc("sv2", { status: "Void" });
+    const r = await setLevelRevUp({
+      setId: "set9", sheets: [issued, voided].map((d) => ({ doc: asRecord(d), file: pdf(`${d.id}.pdf`), revisionLabel: "1" })),
+      libraryId: LIB, sharedChangeLog: "bump", changeType: "Major" as never, orgId: ORG, actorUserId: ME,
+    });
+    expect(r.sentForReview).toBe(1); // the Issued sheet's Major change
+    expect(r.failed).toHaveLength(1);
+    expect(r.failed[0]).toMatchObject({ documentId: "sv2" });
+    expect(r.failed[0].error).toMatch(/SV2 is Void, and a retired document isn't revised[\s\S]*It was not published or submitted\./);
+    expect(docRow("sv2").pending_version_id).toBeNull();
+  });
+
+  it("mergeDocuments into a retired target with a rev-up is refused in its gate — no source is superseded, nothing is published", async () => {
+    state.reviewMode = "none";
+    state.canControl = true;
+    published();
+    const t = seedDoc("rmt", { status: "Archived" });
+    const a = seedDoc("rms", { status: "Issued" });
+    await expect(mergeDocuments({
+      sources: [asRecord(t), asRecord(a)],
+      target: { kind: "extend_existing", target: asRecord(t), libraryId: LIB, revUp: { file: pdf("m.pdf"), revisionLabel: "1", changeLog: "merged", changeType: "Major" as never }, assetTagsUnion: [] },
+      reason: "combine", orgId: ORG, actorUserId: ME,
+    })).rejects.toThrow(/RMT is Archived, and a retired document isn't revised[\s\S]*Nothing was merged\./);
+    expect(docRow("rms").status).toBe("Issued");
+    expect(state.rpc).not.toHaveBeenCalled();
+  });
+
+  it("RevUpModal asks the same gate and refuses a retired document up front (pinned)", () => {
+    const m = readFileSync(join(process.cwd(), "components/documents/RevUpModal.tsx"), "utf8");
+    expect(m).toContain("setRetiredRefusal(first.retired ? describeRetiredRevUp(");
+    expect(m).toContain("if (!asBranch && retiredRefusal) return setError(retiredRefusal);");
+    expect(m).toContain("disabled={submitting || !file || !policyResolved || !!retiredRefusal}");
+    expect(m).toContain("{effMode !== \"none\" && !retiredRefusal && (");
+  });
+});
+
+describe("P13 second review fix — the un-archive dialog's default restore status comes from the guard's stamp (unarchiveRestoreDefault)", () => {
+  beforeEach(() => { state.reviewMode = "require"; state.canControl = true; state.isOwner = false; });
+
+  it("an archived ISSUE comes back Issued (and its put-back is admitted); an archived Draft comes back a Draft (and stays a Draft); anything unrecorded defaults to Draft", async () => {
+    seedDoc("ud1", { status: "Issued" });
+    await archiveDocument({ doc: asRecord(docRow("ud1")), reason: "tidy", orgId: ORG, actorUserId: ME });
+    expect(await unarchiveRestoreDefault("ud1")).toEqual({ status: "Issued", basis: "issued" });
+    await unarchiveDocument({ doc: asRecord(docRow("ud1")), reason: "back", orgId: ORG, actorUserId: ME, restoreStatus: "Issued" });
+    expect(docRow("ud1").status).toBe("Issued");
+
+    seedDoc("ud2", { status: "Draft" });
+    await archiveDocument({ doc: asRecord(docRow("ud2")), reason: "tidy", orgId: ORG, actorUserId: ME });
+    expect(await unarchiveRestoreDefault("ud2")).toEqual({ status: "Draft", basis: "not-issued" });
+    await unarchiveDocument({ doc: asRecord(docRow("ud2")), reason: "back", orgId: ORG, actorUserId: ME, restoreStatus: "Draft" });
+    expect(docRow("ud2").status).toBe("Draft"); // the dead end the review found: the Draft restore is open to the publisher
+
+    seedDoc("ud3", { status: "Archived" }); // archived before 20261144: no stamp
+    expect(await unarchiveRestoreDefault("ud3")).toEqual({ status: "Draft", basis: "unknown" });
+    seedDoc("ud4", { status: "Archived", current_version_id: null }); // nothing to issue
+    expect(await unarchiveRestoreDefault("ud4")).toEqual({ status: "Draft", basis: "unknown" });
+    // the stamped revision is no longer current (a pointer moved while archived): not known to be the issue
+    seedDoc("ud5", { status: "Archived", retired_issue_status: "Issued", retired_issue_version_id: "other" });
+    expect(await unarchiveRestoreDefault("ud5")).toEqual({ status: "Draft", basis: "unknown" });
+    expect(await unarchiveRestoreDefault("missing")).toEqual({ status: "Draft", basis: "unknown" });
+  });
+
+  it("a database without the stamp (before 20261144) or an unreadable row: unknown, Draft — never a guess of Issued", async () => {
+    seedDoc("ud6", { status: "Archived", retired_issue_status: "Issued", retired_issue_version_id: "ud6-v0" });
+    expect(await unarchiveRestoreDefault("ud6")).toEqual({ status: "Issued", basis: "issued" }); // readable: the stamp decides
+    state.readError = { table: "documents", error: { code: "42703", message: "column documents.retired_issue_status does not exist" } };
+    expect(await unarchiveRestoreDefault("ud6")).toEqual({ status: "Draft", basis: "unknown" });
   });
 });

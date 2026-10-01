@@ -35,8 +35,13 @@
 --               In Review (the one write no rule saw before) is refused over
 --               an active hold for everyone, a controller included — a
 --               controller's override of a hold is publish_revision's
---               recorded force, never a status edit. Every write the guard
---               already decided keeps exactly its hold rule.
+--               recorded force, never a status edit. So is (P13 second
+--               review fix) a status-only issue out of a retirement that
+--               took away NO issue — the 'not-issued' stamp below: Draft ->
+--               Void / Archived / Superseded -> Issued is the same issue of a
+--               never-issued revision, one write later. Every other write
+--               the guard already decided keeps exactly its hold rule (a
+--               retirement before this migration carries no stamp: OWN-15's).
 --             * require mode: in a library whose policy requires sign-off —
 --               the folder / library chain OR the document's own (as
 --               REV-17's first-issue rule reads it; DEC-44 (P13): a
@@ -50,8 +55,12 @@
 --               was issued — documents.retired_issue_status and
 --               retired_issue_version_id (new columns, written ONLY by this
 --               guard: it overwrites a caller's value on every signed-in
---               UPDATE, and trg_document_retired_issue_stamp_insert clears
---               them on a signed-in INSERT). Putting that same revision back
+--               UPDATE, and trg_document_retired_issue_stamp_insert resets
+--               them on a signed-in INSERT); entering one from a status that
+--               is not an issue (or from an issue with no revision) stamps
+--               'not-issued' with no revision (second review fix: the hold
+--               then binds its status-only exit into an issue, above), and
+--               so does a signed-in INSERT born retired. Putting that same revision back
 --               into an issue status (v_restoring: a failed supersede / split
 --               / merge's compensation, an un-archive) is not decided by the
 --               require-mode limb — the publisher tier and the hold check
@@ -83,6 +92,13 @@
 --           document_retired_issue_stamp_on_insert() (not SECURITY DEFINER,
 --           search_path pinned, EXECUTE revoked from every client role).
 --
+--   The guard runs as its OWNER (SECURITY DEFINER; CREATE OR REPLACE keeps
+--           the owner it was first created with, which need not be the role
+--           pasting this script). The predicate's EXECUTE is revoked from
+--           every client role, so §3 grants it to the guard's owner when
+--           that role cannot already run it, and the final SELECT probes it
+--           (P13 second review fix).
+--
 -- NOT a widening: every change refuses something that was allowed (the
 -- put-back exemption only spares a restore the require limb, itself new
 -- here). DEC-30 inventories (aggregate counts, captured BEFORE the
@@ -95,7 +111,11 @@
 -- Archived documents under a require policy whose current revision has no
 -- complete roster (retired before this migration, unstamped: only a
 -- controller restores them to an issue status, until a review completes);
--- Draft / In Review documents with a current revision and an active hold.
+-- Draft / In Review documents with a current revision and an active hold
+-- (their status-only issue, directly or through a retirement after this
+-- migration, is now refused for everyone until the hold is released).
+-- No document carries a retirement stamp at the paste (the columns are new),
+-- so the 'not-issued' rule binds only retirements made after it.
 -- The trigger function is not callable directly (it RETURNS trigger); its
 -- EXECUTE stays revoked from PUBLIC and every client role (DRLS-16 rule, as
 -- 20261139 left it).
@@ -159,7 +179,7 @@ SELECT 'inventory (before apply): documents in Superseded / Void / Archived, wit
   FROM governed g
  WHERE btrim(COALESCE(g.status, ''), E' \t\n\u000B\f\r\u00A0\u1680\u2000\u2001\u2002\u2003\u2004\u2005\u2006\u2007\u2008\u2009\u200A\u2028\u2029\u202F\u205F\u3000\uFEFF') IN ('Superseded', 'Void', 'Archived')
 UNION ALL
-SELECT 'inventory (before apply): documents in Draft / In Review, with a current revision and an active hold (REV-18: their status-only issue is now refused for everyone until the hold is released)',
+SELECT 'inventory (before apply): documents in Draft / In Review, with a current revision and an active hold (REV-18: their status-only issue — directly, or through Void / Archived / Superseded after this migration — is now refused for everyone until the hold is released)',
        COUNT(*)::text
   FROM documents d
  WHERE d.current_version_id IS NOT NULL
@@ -186,7 +206,7 @@ REVOKE ALL ON FUNCTION is_controlled_issue_status(text) FROM PUBLIC, anon, authe
 ALTER TABLE documents ADD COLUMN IF NOT EXISTS retired_issue_status text;
 ALTER TABLE documents ADD COLUMN IF NOT EXISTS retired_issue_version_id uuid;
 COMMENT ON COLUMN documents.retired_issue_status IS
-  'REV-18 (20261144): the issue status the document held when it entered Superseded / Archived / Void (NULL when it was not an issue). Written only by enforce_document_publish_guard.';
+  'REV-18 (20261144): the issue status the document held when it entered Superseded / Archived / Void, or ''not-issued'' (with no revision) when it entered from a status that is not an issue or had no revision; NULL when retired before 20261144 or by the service role. Written only by enforce_document_publish_guard (and reset on a signed-in INSERT).';
 COMMENT ON COLUMN documents.retired_issue_version_id IS
   'REV-18 (20261144): the revision that was current when the document entered Superseded / Archived / Void from an issue status; putting that revision back is not a new issue. Written only by enforce_document_publish_guard.';
 
@@ -236,19 +256,31 @@ BEGIN
   -- IFC, a library's own status) — is a guarded write too, whichever door
   -- it comes through: a status edit, or a rev-up / promote that also moves
   -- the pointer. The predicate is is_controlled_issue_status (this
-  -- migration; pinned to the app's by test). v_new_door marks the one
-  -- write no rule above saw before: a status-only move out of Draft / In
-  -- Review into an issue. (v_advancing is NULL for a NULL NEW.status, which
-  -- the app calls an issue: COALESCE, so a NULL is no way past the hold.)
+  -- migration; pinned to the app's by test). v_new_door marks the writes
+  -- no rule above decided as an issue: a status-only move out of Draft / In
+  -- Review into an issue, and (P13 second review fix) a status-only exit
+  -- into an issue from a retirement that took away no issue (stamped
+  -- 'not-issued' below — Draft -> Void / Archived / Superseded -> Issued).
+  -- (v_advancing is NULL for a NULL NEW.status, which the app calls an
+  -- issue: COALESCE, so a NULL is no way past the hold.)
   v_issuing := NEW.current_version_id IS NOT NULL
                AND NOT is_controlled_issue_status(OLD.status)
                AND is_controlled_issue_status(NEW.status);
-  v_new_door := v_issuing AND NOT COALESCE(v_advancing, false);
+  v_new_door := v_issuing
+                AND (NOT COALESCE(v_advancing, false)
+                     OR COALESCE(NEW.current_version_id IS NOT DISTINCT FROM OLD.current_version_id
+                                 AND OLD.status IN ('Superseded', 'Archived', 'Void')
+                                 AND OLD.retired_issue_status = 'not-issued'
+                                 AND OLD.retired_issue_version_id IS NULL, false));
   v_advancing := v_advancing OR v_issuing;
   -- REV-18 (P13 review fix): the retirement stamp. Entering Superseded /
   -- Archived / Void from an ISSUE status stamps what was issued (the status
-  -- and the revision); moving between those statuses keeps it; any other
-  -- write clears it. A caller's own value is overwritten here on every
+  -- and the revision); entering one from any other status (a Draft, In
+  -- Review, an issue with no revision) stamps 'not-issued' with no revision
+  -- (second review fix: nothing issued was taken away, so a status-only
+  -- exit into an issue is a new issue under the new-door hold, v_new_door);
+  -- moving between those statuses keeps it; any other write clears it. A
+  -- caller's own value is overwritten here on every
   -- signed-in UPDATE (and cleared on INSERT, §4), so the stamp says what the
   -- document WAS. v_restoring: this write puts that same revision back into
   -- an issue status — the put-back of the issue its retirement took away (a
@@ -268,7 +300,7 @@ BEGIN
       NEW.retired_issue_status := OLD.status;
       NEW.retired_issue_version_id := OLD.current_version_id;
     ELSE
-      NEW.retired_issue_status := NULL;
+      NEW.retired_issue_status := 'not-issued';
       NEW.retired_issue_version_id := NULL;
     END IF;
   ELSE
@@ -431,10 +463,11 @@ BEGIN
     END IF;
   END IF;
 
-  -- REV-18 (P13): the issue itself. (1) The new door is never opened over
-  -- an active hold, by anyone — a controller included: a controller's
-  -- override of a hold is publish_revision's force (recorded), never a
-  -- status edit. Every other issue keeps the hold rule its write already
+  -- REV-18 (P13): the issue itself. (1) The new door — a status-only issue
+  -- out of Draft / In Review, or out of a retirement stamped 'not-issued' —
+  -- is never opened over an active hold, by anyone — a controller included:
+  -- a controller's override of a hold is publish_revision's force
+  -- (recorded), never a status edit. Every other issue keeps the hold rule its write already
   -- had (the check below, for everyone short of a controller). (2) In a
   -- library whose policy requires sign-off — the folder / library chain
   -- OR the document's own, as REV-17's first-issue rule reads it, so a
@@ -520,16 +553,44 @@ $$;
 -- EXECUTE is checked when a trigger is created, not when it fires, so no
 -- client role needs it (DRLS-16: grant only to the roles that call it).
 REVOKE ALL ON FUNCTION enforce_document_publish_guard() FROM PUBLIC, anon, authenticated, service_role;
+-- The guard calls is_controlled_issue_status as its OWN owner (SECURITY
+-- DEFINER), and CREATE OR REPLACE keeps the owner the guard was first
+-- created with — not necessarily the role pasting this script, who owns the
+-- predicate. Its EXECUTE is revoked from every client role (§1), so the
+-- guard's owner is granted it when it cannot already run it (a no-op for
+-- the same owner or a superuser); the final SELECT probes it. P13 second
+-- review fix: without it every signed-in issue write would fail with
+-- "permission denied for function is_controlled_issue_status".
+DO $$
+DECLARE
+  v_owner regrole;
+BEGIN
+  SELECT p.proowner::regrole INTO v_owner
+    FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace
+   WHERE n.nspname = 'public' AND p.proname = 'enforce_document_publish_guard';
+  IF v_owner IS NOT NULL
+     AND NOT has_function_privilege(v_owner::oid, 'is_controlled_issue_status(text)', 'EXECUTE') THEN
+    EXECUTE format('GRANT EXECUTE ON FUNCTION is_controlled_issue_status(text) TO %s', v_owner);
+  END IF;
+END
+$$;
 
--- ── 4. REV-18: a signed-in INSERT never carries a retirement stamp ──────────
+-- ── 4. REV-18: a signed-in INSERT never carries an issue stamp ─────────────
 -- Otherwise a member could insert a retired document already "stamped" and
--- restore it as an issue past the require limb. The service role (a restore
--- replays documents with their stamps) is untouched, as in the guard.
+-- restore it as an issue past the require limb. A document born retired was
+-- never issued: it is stamped 'not-issued' (second review fix — its
+-- status-only issue is under the new-door hold, as a Draft's is). The
+-- service role (a restore replays documents with their stamps) is
+-- untouched, as in the guard.
 CREATE OR REPLACE FUNCTION document_retired_issue_stamp_on_insert()
 RETURNS trigger LANGUAGE plpgsql SET search_path = public AS $$
 BEGIN
   IF auth.uid() IS NOT NULL THEN
-    NEW.retired_issue_status := NULL;
+    IF COALESCE(NEW.status IN ('Superseded', 'Archived', 'Void'), false) THEN
+      NEW.retired_issue_status := 'not-issued';
+    ELSE
+      NEW.retired_issue_status := NULL;
+    END IF;
     NEW.retired_issue_version_id := NULL;
   END IF;
   RETURN NEW;
@@ -562,8 +623,9 @@ SELECT 'REV-18: the guard makes an issue transition advancing (v_issuing joins v
           FROM pg_proc WHERE proname = 'enforce_document_publish_guard'),
        NULL
 UNION ALL
-SELECT 'REV-18: a NULL status is no way past the hold (v_new_door COALESCEs v_advancing); entering Superseded / Archived / Void from an issue stamps it, any other signed-in write keeps or clears it, and putting the stamped revision back is v_restoring',
-       (SELECT prosrc LIKE '%v_new_door := v_issuing AND NOT COALESCE(v_advancing, false);%'
+SELECT 'REV-18: a NULL status is no way past the hold (v_new_door COALESCEs v_advancing), nor is a retirement that took away no issue (stamped not-issued: its status-only exit is the new door); entering Superseded / Archived / Void from an issue stamps it, any other signed-in write keeps or clears it, and putting the stamped revision back is v_restoring',
+       (SELECT prosrc LIKE '%v_new_door := v_issuing%AND (NOT COALESCE(v_advancing, false)%OR COALESCE(NEW.current_version_id IS NOT DISTINCT FROM OLD.current_version_id%AND OLD.retired_issue_status = ''not-issued''%AND OLD.retired_issue_version_id IS NULL, false));%'
+           AND prosrc LIKE '%NEW.retired_issue_status := ''not-issued'';%'
            AND prosrc LIKE '%v_restoring := COALESCE(v_issuing%'
            AND prosrc LIKE '%AND NEW.current_version_id = OLD.retired_issue_version_id%'
            AND prosrc LIKE '%NEW.retired_issue_status := OLD.status;%'
@@ -616,7 +678,7 @@ SELECT 'REV-18: trg_document_publish_guard still fires the guard on every docume
                   AND t.tgrelid = 'documents'::regclass AND p.proname = 'enforce_document_publish_guard'),
        NULL
 UNION ALL
-SELECT 'REV-18: the retirement stamp columns exist, and a signed-in INSERT clears them (trg_document_retired_issue_stamp_insert, BEFORE INSERT; its function not SECURITY DEFINER, executable by no client role)',
+SELECT 'REV-18: the retirement stamp columns exist, and a signed-in INSERT resets them — not-issued when born retired, else NULL (trg_document_retired_issue_stamp_insert, BEFORE INSERT; its function not SECURITY DEFINER, executable by no client role)',
        (SELECT count(*) = 2 FROM information_schema.columns
          WHERE table_schema = 'public' AND table_name = 'documents'
            AND column_name IN ('retired_issue_status', 'retired_issue_version_id'))
@@ -627,8 +689,15 @@ SELECT 'REV-18: the retirement stamp columns exist, and a signed-in INSERT clear
        AND EXISTS (SELECT 1 FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace
                     WHERE n.nspname = 'public' AND p.proname = 'document_retired_issue_stamp_on_insert'
                       AND NOT p.prosecdef AND p.proconfig @> ARRAY['search_path=public']
-                      AND p.prosrc LIKE '%NEW.retired_issue_version_id := NULL;%')
+                      AND p.prosrc LIKE '%NEW.retired_issue_version_id := NULL;%'
+                      AND p.prosrc LIKE '%NEW.retired_issue_status := ''not-issued'';%')
        AND NOT has_function_privilege('authenticated', 'document_retired_issue_stamp_on_insert()', 'EXECUTE'),
+       NULL
+UNION ALL
+SELECT 'REV-18: the guard''s owner (the guard runs as its owner) may execute is_controlled_issue_status — else every signed-in issue write fails with permission denied',
+       COALESCE(has_function_privilege((SELECT p.proowner FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace
+                                         WHERE n.nspname = 'public' AND p.proname = 'enforce_document_publish_guard'),
+                                       'is_controlled_issue_status(text)', 'EXECUTE'), false),
        NULL
 UNION ALL
 SELECT inventory, NULL, n FROM dc_round_f_144_before;

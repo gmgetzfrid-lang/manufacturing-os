@@ -3,11 +3,22 @@
 // ArchiveConfirmModal — soft-delete a document. Records actor + reason on
 // the documents row and writes an ARCHIVE_DOC audit entry. Archived rows
 // are hidden from the default library list but recoverable by admins.
+//
+// REV-18 (P13 second review fix): the un-archive asks what the document
+// comes back as (UNARCHIVE_RESTORE_STATUSES). Restoring to Issued is a
+// controlled issue the database decides (20261144): a Draft archived after
+// that migration comes back a Draft by default, and a refused restore to
+// Issued says the Draft restore is still open — never a dead end.
 
-import React, { useState } from "react";
+import React, { useEffect, useState } from "react";
 import { X, Archive, AlertTriangle, Loader2, ArchiveRestore } from "lucide-react";
-import { archiveDocument, unarchiveDocument } from "@/lib/revisions";
+import {
+  archiveDocument, unarchiveDocument, unarchiveRestoreDefault, UNARCHIVE_RESTORE_STATUSES,
+} from "@/lib/revisions";
+import { isIssueRefusal } from "@/lib/issueStatus";
 import type { DocumentRecord } from "@/types/schema";
+
+type RestoreStatus = (typeof UNARCHIVE_RESTORE_STATUSES)[number];
 
 interface ArchiveConfirmModalProps {
   isOpen: boolean;
@@ -19,7 +30,9 @@ interface ArchiveConfirmModalProps {
   actorUserId: string;
   actorEmail?: string;
   actorRole?: string;
-  onSuccess: () => void;
+  /** Called after the write landed; an un-archive passes the status the
+   *  document was restored to. */
+  onSuccess: (restoredStatus?: string) => void;
 }
 
 export default function ArchiveConfirmModal({
@@ -29,6 +42,23 @@ export default function ArchiveConfirmModal({
   const [reason, setReason] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  // REV-18: what an un-archive restores to, defaulted from what the document
+  // WAS (unarchiveRestoreDefault reads the guard's retirement stamp).
+  const [restoreStatus, setRestoreStatus] = useState<RestoreStatus>("Draft");
+  const [basis, setBasis] = useState<"loading" | "issued" | "not-issued" | "unknown">("loading");
+
+  useEffect(() => {
+    if (!isOpen || mode !== "unarchive") return;
+    let alive = true;
+    setBasis("loading");
+    (async () => {
+      const d = doc.id
+        ? await unarchiveRestoreDefault(doc.id).catch(() => ({ status: "Draft" as RestoreStatus, basis: "unknown" as const }))
+        : { status: "Draft" as RestoreStatus, basis: "unknown" as const };
+      if (alive) { setRestoreStatus(d.status); setBasis(d.basis); }
+    })();
+    return () => { alive = false; };
+  }, [isOpen, mode, doc.id]);
 
   if (!isOpen) return null;
 
@@ -40,14 +70,20 @@ export default function ArchiveConfirmModal({
     try {
       if (isArchive) {
         await archiveDocument({ doc, reason, orgId, actorUserId, actorEmail, actorRole });
+        onSuccess();
       } else {
-        await unarchiveDocument({ doc, reason, orgId, actorUserId, actorEmail, actorRole });
+        await unarchiveDocument({ doc, reason, orgId, actorUserId, actorEmail, actorRole, restoreStatus });
+        onSuccess(restoreStatus);
       }
-      onSuccess();
       setReason("");
       onClose();
     } catch (e) {
-      setError((e as Error).message || `Failed to ${mode}`);
+      const message = (e as Error).message || `Failed to ${mode}`;
+      // REV-18: a refused restore to Issued is the issue rule — the Draft
+      // restore is still open (then submit the revision for review).
+      setError(!isArchive && restoreStatus === "Issued" && isIssueRefusal(message)
+        ? `${message} Nothing was restored. You can restore it as a Draft instead (choose Draft above), then submit its revision for review.`
+        : message);
     } finally {
       setBusy(false);
     }
@@ -83,9 +119,35 @@ export default function ArchiveConfirmModal({
                 Nothing is deleted — admins can restore it any time. The action is logged.
               </p>
             ) : (
-              <p>
-                The document will be returned to <b>Issued</b> status and visible in the library list again.
-              </p>
+              <div className="space-y-2">
+                <p>
+                  The document will be returned to <b>{restoreStatus}</b> status and visible in the library list again.
+                </p>
+                <label className="block">
+                  <span className="text-[10px] font-black text-[var(--color-text)] uppercase tracking-widest">Restore as</span>
+                  <select
+                    aria-label="Restore as"
+                    value={restoreStatus}
+                    onChange={(e) => setRestoreStatus(e.target.value as RestoreStatus)}
+                    disabled={busy || basis === "loading"}
+                    className="mt-1 w-full px-2.5 py-2 border border-[var(--color-border-strong)] rounded-lg text-sm bg-[var(--color-surface)]"
+                  >
+                    {UNARCHIVE_RESTORE_STATUSES.map((st) => <option key={st} value={st}>{st}</option>)}
+                  </select>
+                </label>
+                <p className="text-xs text-[var(--color-text-muted)]">
+                  {basis === "loading" && "Checking what it was before it was archived…"}
+                  {basis === "issued" && "It was issued when it was archived — restoring it as Issued puts that issue back."}
+                  {basis === "not-issued" && "It was not issued when it was archived (a Draft or In Review), so it comes back as a Draft unless you choose otherwise."}
+                  {basis === "unknown" && "What it was before it was archived isn't recorded, so it comes back as a Draft unless you choose otherwise."}
+                </p>
+                {restoreStatus === "Issued" && basis !== "issued" && (
+                  <p className="text-xs text-amber-800 bg-amber-50 border border-amber-200 rounded-lg p-2">
+                    Restoring as <b>Issued</b> makes its current revision a controlled issue: in a library that requires
+                    reviewer sign-off an unreviewed revision needs Document Control, and an active hold refuses it.
+                  </p>
+                )}
+              </div>
             )}
           </div>
 
@@ -118,7 +180,7 @@ export default function ArchiveConfirmModal({
           </button>
           <button
             onClick={() => void submit()}
-            disabled={busy}
+            disabled={busy || (!isArchive && basis === "loading")}
             className={`inline-flex items-center gap-1.5 px-3 py-2 rounded-lg text-xs font-bold text-white disabled:opacity-60 ${
               isArchive ? "bg-slate-700 hover:bg-slate-800" : "bg-emerald-600 hover:bg-emerald-500"
             }`}

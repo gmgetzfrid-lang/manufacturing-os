@@ -33,6 +33,23 @@ export function isControlledIssueStatus(status: string | null | undefined): bool
   return !WORK_IN_PROGRESS_STATUSES.has(s) && !NOT_CURRENT_STATUSES.has(s);
 }
 
+/** REV-18 (P13 second review fix): is the document RETIRED — Superseded,
+ *  Void or Archived (NOT_CURRENT_STATUSES), trimmed as isControlledIssueStatus
+ *  trims? A retired document is not revised: a review of it can never be
+ *  published (finalizeReviewedRevision refuses a retired document, REV-5),
+ *  so every rev-up door refuses it up front and says to restore it first
+ *  (lib/revisions.ts firstIssueGateForRevUp / describeRetiredRevUp). */
+export function isRetiredStatus(status: string | null | undefined): boolean {
+  return NOT_CURRENT_STATUSES.has((status ?? "").trim());
+}
+
+/** REV-18 (P13 second review fix): the retirement stamp's marker (20261144,
+ *  documents.retired_issue_status) for a retirement that took away NO issue
+ *  — entered from a Draft / In Review, or from an issue with no revision. The
+ *  guard alone writes it (pinned to the SQL by test); the un-archive dialog
+ *  reads it to restore a Draft as a Draft (unarchiveRestoreDefault). */
+export const RETIRED_NOT_ISSUED_STAMP = "not-issued";
+
 /** REV-18: does this status change make the document a controlled ISSUE?
  *  A document that HAS a current revision moving out of a status that is not
  *  an issue (Draft, In Review, Superseded, Void, Archived) into one that is —

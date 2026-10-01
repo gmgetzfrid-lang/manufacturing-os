@@ -259,7 +259,14 @@ door, nor restore to an issue status an unreviewed revision of a document
 retired BEFORE the paste (or retired from a status that was not an issue) —
 Document Control does it. The put-back of an issue retired after the paste
 (a failed supersede / split / merge's compensation, an un-archive) is spared
-the rule (review fix, `REV-18`).
+the rule (review fix, `REV-18`). A retirement after the paste that took away
+no issue is stamped `not-issued`, and its status-only exit into an issue is
+refused over an active hold for everyone, a controller included (second
+review fix). The script also grants EXECUTE on `is_controlled_issue_status`
+to the guard's own owner when that role cannot already run it (the guard
+runs as its owner) and probes it: a `false` on that row means every
+signed-in issue write would fail with "permission denied" — stop and report
+it.
 
 ⚠ **Deploy note — P12 (operators, public-surfaces `SHR-11`).** Before
 deploying the app carrying P12, a self-hosted deployment (the Docker image,

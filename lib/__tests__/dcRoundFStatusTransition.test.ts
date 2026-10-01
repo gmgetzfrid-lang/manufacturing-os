@@ -127,7 +127,12 @@ describe("20261144 — the guard is re-created from the NEWEST earlier definitio
       "  v_issuing := NEW.current_version_id IS NOT NULL",
       "               AND NOT is_controlled_issue_status(OLD.status)",
       "               AND is_controlled_issue_status(NEW.status);",
-      "  v_new_door := v_issuing AND NOT COALESCE(v_advancing, false);",
+      "  v_new_door := v_issuing",
+      "                AND (NOT COALESCE(v_advancing, false)",
+      "                     OR COALESCE(NEW.current_version_id IS NOT DISTINCT FROM OLD.current_version_id",
+      "                                 AND OLD.status IN ('Superseded', 'Archived', 'Void')",
+      "                                 AND OLD.retired_issue_status = 'not-issued'",
+      "                                 AND OLD.retired_issue_version_id IS NULL, false));",
       "  v_advancing := v_advancing OR v_issuing;",
       "  v_restoring := COALESCE(v_issuing",
       "                 AND OLD.status IN ('Superseded', 'Archived', 'Void')",
@@ -142,7 +147,7 @@ describe("20261144 — the guard is re-created from the NEWEST earlier definitio
       "      NEW.retired_issue_status := OLD.status;",
       "      NEW.retired_issue_version_id := OLD.current_version_id;",
       "    ELSE",
-      "      NEW.retired_issue_status := NULL;",
+      "      NEW.retired_issue_status := 'not-issued';",
       "      NEW.retired_issue_version_id := NULL;",
       "    END IF;",
       "  ELSE",
@@ -250,7 +255,10 @@ describe("20261144 — the guard is re-created from the NEWEST earlier definitio
     expect(next).toMatch(/RETURNS trigger LANGUAGE plpgsql SECURITY DEFINER SET search_path = public AS \$\$/);
     expect(M).toMatch(/REVOKE ALL ON FUNCTION enforce_document_publish_guard\(\) FROM PUBLIC, anon, authenticated, service_role;/);
     const code = stripComments(M);
-    expect(code).not.toMatch(/GRANT /);
+    // the one GRANT is the predicate to the guard's OWN owner (P13 second review fix) — never a client role
+    expect(code.match(/GRANT /g)).toHaveLength(1);
+    expect(code).toContain("EXECUTE format('GRANT EXECUTE ON FUNCTION is_controlled_issue_status(text) TO %s', v_owner);");
+    expect(code).not.toMatch(/GRANT [^\n]*TO (?:PUBLIC|anon|authenticated|service_role)\b/);
     expect(code).not.toMatch(/(?:CREATE|DROP) TRIGGER (?:IF EXISTS )?trg_document_publish_guard/);
     expect(code.match(/CREATE TRIGGER/g)).toHaveLength(1);
     expect(code.match(/DROP TRIGGER/g)).toHaveLength(1);
@@ -260,7 +268,7 @@ describe("20261144 — the guard is re-created from the NEWEST earlier definitio
 
 describe("20261144 — P13 review fixes: a NULL status meets the hold; the put-back of a retired issue is spared the require limb (the retirement stamp)", () => {
   it("minor 3: v_new_door COALESCEs v_advancing — the carried v_advancing expression is byte-identical (a NULL NEW.status makes it NULL, and the app calls NULL an issue)", () => {
-    expect(next).toContain("  v_new_door := v_issuing AND NOT COALESCE(v_advancing, false);\n");
+    expect(next).toContain("  v_new_door := v_issuing\n                AND (NOT COALESCE(v_advancing, false)\n");
     expect(next).not.toContain("v_new_door := v_issuing AND NOT v_advancing;");
     const carried = between(live, "  v_advancing :=\n", "<> 'Archived');\n");
     expect(next).toContain(carried);
@@ -285,7 +293,11 @@ describe("20261144 — P13 review fixes: a NULL status meets the hold; the put-b
     expect(code(fn.split("\n")).slice(2)).toEqual([
       "BEGIN",
       "  IF auth.uid() IS NOT NULL THEN",
-      "    NEW.retired_issue_status := NULL;",
+      "    IF COALESCE(NEW.status IN ('Superseded', 'Archived', 'Void'), false) THEN",
+      "      NEW.retired_issue_status := 'not-issued';",
+      "    ELSE",
+      "      NEW.retired_issue_status := NULL;",
+      "    END IF;",
       "    NEW.retired_issue_version_id := NULL;",
       "  END IF;",
       "  RETURN NEW;",
@@ -311,15 +323,64 @@ describe("20261144 — P13 review fixes: a NULL status meets the hold; the put-b
     expect(next).toContain("    ELSIF OLD.current_version_id IS NOT NULL AND is_controlled_issue_status(OLD.status) THEN\n      NEW.retired_issue_status := OLD.status;\n      NEW.retired_issue_version_id := OLD.current_version_id;");
   });
 
-  it("no app code reads or writes the stamp (only the guard writes it, only the guard reads it)", () => {
+  it("second review fix (major): a retirement that took away NO issue is stamped 'not-issued' with no revision, and its status-only exit into an issue is the new door — refused over an active hold for everyone, a controller included", () => {
+    // entry from a status that is not an issue (or an issue with no revision): the marker, never a revision
+    expect(next).toContain("    ELSE\n      NEW.retired_issue_status := 'not-issued';\n      NEW.retired_issue_version_id := NULL;\n    END IF;\n  ELSE\n    NEW.retired_issue_status := NULL;");
+    // the marker cannot be mistaken for an issue stamp: an issue stamp always carries its revision, and the test asks for NULL
+    const door = between(next, "  v_new_door := v_issuing\n", "false));\n");
+    expect(door).toContain("AND OLD.retired_issue_status = 'not-issued'");
+    expect(door).toContain("AND OLD.retired_issue_version_id IS NULL");
+    // status-only: a pointer move keeps the pointer gate's hold rule (publish_revision's recorded force for a controller)
+    expect(door).toContain("NEW.current_version_id IS NOT DISTINCT FROM OLD.current_version_id");
+    expect(door).toContain("AND OLD.status IN ('Superseded', 'Archived', 'Void')");
+    // v_new_door is read once, before the controller short-circuit — the hold binds a controller there
+    expect(stripComments(next).match(/v_new_door/g)).toHaveLength(3); // declared, set, read
+    expect(next.indexOf("    IF v_new_door AND EXISTS (")).toBeLessThan(next.indexOf("  IF is_org_controller(NEW.org_id) THEN\n    RETURN NEW;"));
+    // v_restoring never reads the marker (it needs a stamped revision), so the put-back stays the issue's only
+    expect(between(next, "  v_restoring := COALESCE(v_issuing", ", false);")).toContain("AND OLD.retired_issue_version_id IS NOT NULL");
+    // the paste-time probe pins the widened door and the marker
+    const tail = M.slice(M.lastIndexOf("\nCOMMIT;"));
+    expect(tail).toContain("OLD.retired_issue_status = ''not-issued''");
+    expect(tail).toContain("NEW.retired_issue_status := ''not-issued'';");
+  });
+
+  it("second review fix (minor): the guard's owner may run the predicate — granted to it (never to a client role) when it cannot already, and probed after COMMIT", () => {
+    const begin = M.indexOf("\nBEGIN;"), commit = M.lastIndexOf("\nCOMMIT;");
+    const doAt = M.indexOf("DO $$\nDECLARE\n  v_owner regrole;");
+    expect(doAt).toBeGreaterThan(M.indexOf("REVOKE ALL ON FUNCTION enforce_document_publish_guard()"));
+    expect(doAt).toBeGreaterThan(begin);
+    expect(doAt).toBeLessThan(commit);
+    const block = between(M, "DO $$\nDECLARE\n  v_owner regrole;", "\n$$;");
+    expect(block).toContain("SELECT p.proowner::regrole INTO v_owner");
+    expect(block).toContain("WHERE n.nspname = 'public' AND p.proname = 'enforce_document_publish_guard';");
+    expect(block).toContain("AND NOT has_function_privilege(v_owner::oid, 'is_controlled_issue_status(text)', 'EXECUTE') THEN");
+    const tail = M.slice(commit);
+    const probe = tail.split(/\nUNION ALL\n/).find((x) => x.includes("the guard''s owner"))!;
+    expect(probe).toBeTruthy();
+    expect(probe).toContain("COALESCE(has_function_privilege((SELECT p.proowner FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace");
+    expect(probe).toContain("'is_controlled_issue_status(text)', 'EXECUTE'), false)");
+    // the client-role probes still stand: the grant never reaches anon / authenticated
+    expect(tail).toContain("AND NOT has_function_privilege('authenticated', 'is_controlled_issue_status(text)', 'EXECUTE')");
+  });
+
+  it("no app code writes the stamp (only the guard does); the one app read is the un-archive dialog's default (unarchiveRestoreDefault, a select — P13 second review fix)", () => {
     const roots = ["lib", "components", "app"];
     const walk = (d: string): string[] => readdirSync(join(process.cwd(), d), { withFileTypes: true }).flatMap((e) => {
       const p = `${d}/${e.name}`;
       if (e.isDirectory()) return e.name === "__tests__" || e.name === "node_modules" ? [] : walk(p);
       return /\.(ts|tsx)$/.test(e.name) ? [p] : [];
     });
-    const hits = roots.flatMap(walk).filter((f) => /retired_issue_(status|version_id)/.test(readFileSync(join(process.cwd(), f), "utf8")));
-    expect(hits).toEqual([]);
+    // code lines only (a comment may name the column)
+    const codeLines = (t: string) => t.split("\n").filter((l) => !/^\s*(?:\*|\/\/|\/\*)/.test(l));
+    const hits = roots.flatMap(walk).filter((f) => codeLines(readFileSync(join(process.cwd(), f), "utf8")).some((l) => /retired_issue_(status|version_id)/.test(l)));
+    expect(hits).toEqual(["lib/revisions.ts"]);
+    const rev = readFileSync(join(process.cwd(), "lib/revisions.ts"), "utf8");
+    const lines = rev.split("\n").filter((l) => /retired_issue_(status|version_id)/.test(l) && !l.trim().startsWith("*") && !l.trim().startsWith("//"));
+    expect(lines.map((l) => l.trim())).toEqual([
+      '.select("current_version_id, retired_issue_status, retired_issue_version_id").eq("id", documentId).maybeSingle();',
+      "const stampedVersion = (data.retired_issue_version_id as string | null) ?? null;",
+      "if (!stampedVersion && data.retired_issue_status === RETIRED_NOT_ISSUED_STAMP) return { status: \"Draft\", basis: \"not-issued\" };",
+    ]);
   });
 });
 
@@ -480,7 +541,7 @@ describe("20261144 — one script, inventory first, one final result set (the on
         checked++;
       }
     }
-    expect(checked).toBeGreaterThanOrEqual(22);
+    expect(checked).toBeGreaterThanOrEqual(23);
   });
   it("the header states the paste order: after the guard's base (never re-paste an earlier guard), independent of 20261131", () => {
     const head = M.slice(0, M.indexOf("DROP TABLE IF EXISTS"));

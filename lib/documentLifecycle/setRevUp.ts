@@ -10,7 +10,7 @@
 // by the caller because each sheet's file is different.
 
 import { logRevisionEvent } from "@/lib/audit";
-import { revUpDocument, submitForReview, firstIssueGateForRevUp } from "@/lib/revisions";
+import { revUpDocument, submitForReview, firstIssueGateForRevUp, describeRetiredRevUp } from "@/lib/revisions";
 import { effectiveReviewControlForDocument, effectiveModeForRevUp } from "@/lib/reviewControl";
 import type { DocumentRecord, DocumentVersion } from "@/types/schema";
 
@@ -72,6 +72,7 @@ export async function setLevelRevUp(input: SetRevUpInput): Promise<SetRevUpResul
       // single-sheet rev-up — the audit found it silently bypassed the gate
       // (fresh versions have no roster, so the DB guard never fires either).
       let willReview = false;
+      let retiredRefusal: string | null = null;
       try {
         const control = await effectiveReviewControlForDocument({
           reviewControl: sheet.doc.reviewControl ?? null,
@@ -87,6 +88,13 @@ export async function setLevelRevUp(input: SetRevUpInput): Promise<SetRevUpResul
         const firstIssue = await firstIssueGateForRevUp({
           doc: sheet.doc, libraryId, actor: { orgId, actorUserId, actorRole },
         });
+        // P13 second review fix: a RETIRED sheet (Superseded / Void /
+        // Archived) is not revised — never sent to a review that could not
+        // be published, never published back to life. It lands in `failed`
+        // with what to do (restore it first).
+        if (firstIssue.retired) {
+          retiredRefusal = describeRetiredRevUp(sheet.doc.documentNumber ?? sheet.doc.id ?? "This sheet", firstIssue.status);
+        }
         // Batch bumps have no per-sheet "route through review?" checkbox, so
         // publisher_choice defaults to the safe side: through review.
         willReview = effectiveModeForRevUp({ control, changeType, firstIssueMustReview: firstIssue.mustReview }) !== "none";
@@ -97,6 +105,7 @@ export async function setLevelRevUp(input: SetRevUpInput): Promise<SetRevUpResul
         // be read.
         throw new Error(`Couldn't verify the pre-publish review policy for ${sheet.doc.documentNumber ?? sheet.doc.id ?? "this sheet"} — it was not published: ${(e as Error).message}`);
       }
+      if (retiredRefusal) throw new Error(`${retiredRefusal} It was not published or submitted.`);
 
       if (willReview) {
         await submitForReview(common);

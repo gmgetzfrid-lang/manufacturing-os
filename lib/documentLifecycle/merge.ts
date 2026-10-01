@@ -11,7 +11,7 @@ import { supabase } from "@/lib/supabase";
 import { logRevisionEvent } from "@/lib/audit";
 import {
   revUpDocument, authorizePublish, notifyHolderOfRetirement, resolveCreationReviewGate,
-  canPutFirstRevisionInContainer, firstIssueGateForRevUp, describeFirstIssue,
+  canPutFirstRevisionInContainer, firstIssueGateForRevUp, describeFirstIssue, describeRetiredRevUp,
   type RevUpInput,
 } from "@/lib/revisions";
 import { effectiveReviewControlForDocument, effectiveModeForRevUp } from "@/lib/reviewControl";
@@ -223,6 +223,12 @@ async function gateMerge(input: MergeDocumentsInput): Promise<MergeGate> {
       });
     } catch (e) {
       throw new Error(`Couldn't verify the review policy for ${target.target.documentNumber ?? "the merge target"} — nothing was merged: ${(e as Error).message}`);
+    }
+    // P13 second review fix: a RETIRED target (Superseded / Void / Archived)
+    // is not revised — its rev-up would be refused at the LAST step, after
+    // every source was superseded. Refused here, before anything is written.
+    if (firstIssue.retired) {
+      throw new Error(`${describeRetiredRevUp(targetLabel, firstIssue.status)} Nothing was merged.`);
     }
     if (mode === "require") {
       throw new Error(firstIssue.mustReview

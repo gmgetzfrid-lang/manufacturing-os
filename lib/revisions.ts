@@ -44,7 +44,7 @@ import { onDocumentIssued } from "@/lib/reviewCycles";
 import { onDocumentIssuedAck } from "@/lib/acknowledgments";
 import { recomputeRetention } from "@/lib/retention";
 import { assertNotOnHold } from "@/lib/holdGate";
-import { isControlledIssueStatus } from "@/lib/issueStatus";
+import { isControlledIssueStatus, isRetiredStatus, RETIRED_NOT_ISSUED_STAMP } from "@/lib/issueStatus";
 import { requestUnitCodeDecode } from "@/lib/unitCodeClient";
 
 // ─── Publish contract errors ─────────────────────────────────────────────
@@ -688,7 +688,7 @@ export type CreationStatus = (typeof CREATION_STATUSES)[number];
  *  changes make a document a controlled issue — lib/issueStatus.ts (pure, so
  *  the client status editors can ask it too). Re-exported here, where every
  *  creation door already imports them. */
-export { WORK_IN_PROGRESS_STATUSES, isControlledIssueStatus, isIssueTransition } from "@/lib/issueStatus";
+export { WORK_IN_PROGRESS_STATUSES, isControlledIssueStatus, isIssueTransition, isRetiredStatus } from "@/lib/issueStatus";
 
 /** REV-15: the compliance clocks a newly ISSUED document starts — the
  *  periodic-review clock and the read-&-understood roster its governing
@@ -979,13 +979,20 @@ export async function createDocumentWithFile(input: {
  *  first issue is then recorded as made without it). The live pointer,
  *  status and document policy are read here unless the caller has just read
  *  them. An unreadable policy THROWS (RG-6) — never
- *  "no policy". Nothing is written. */
+ *  "no policy". Nothing is written.
+ *
+ *  A RETIRED document (Superseded / Void / Archived — isRetiredStatus) is no
+ *  first issue and no revision either (P13 second review fix): `retired` is
+ *  set and nothing else is asked. A review of it could never be published
+ *  (finalizeReviewedRevision refuses a retired document, REV-5) and a direct
+ *  publish would bring it back to life as Issued, so every door refuses it
+ *  up front with describeRetiredRevUp — restore it first. */
 export async function firstIssueGateForRevUp(opts: {
   doc: Pick<DocumentRecord, "id" | "collectionId" | "currentVersionId" | "status" | "reviewControl">;
   libraryId: string;
   actor: { orgId: string; actorUserId: string; actorRole?: string };
   live?: { current: string | null; status: string | null; reviewControl?: ReviewControl | null };
-}): Promise<{ firstIssue: boolean; hasCurrentRevision: boolean; status: string | null; requiresSignOff: boolean; mustReview: boolean }> {
+}): Promise<{ firstIssue: boolean; retired: boolean; hasCurrentRevision: boolean; status: string | null; requiresSignOff: boolean; mustReview: boolean }> {
   let live = opts.live;
   if (!live) {
     const { data, error } = await supabase
@@ -999,7 +1006,8 @@ export async function firstIssueGateForRevUp(opts: {
       }
       : { current: opts.doc.currentVersionId ?? null, status: opts.doc.status ?? null };
   }
-  const seen = { hasCurrentRevision: !!live.current, status: live.status };
+  const seen = { hasCurrentRevision: !!live.current, status: live.status, retired: false };
+  if (isRetiredStatus(live.status)) return { ...seen, retired: true, firstIssue: false, requiresSignOff: false, mustReview: false };
   if (live.current && isControlledIssueStatus(live.status)) return { ...seen, firstIssue: false, requiresSignOff: false, mustReview: false };
   const chain = await effectiveReviewControlForDocument({
     reviewControl: null, collectionId: opts.doc.collectionId ?? null, libraryId: opts.libraryId,
@@ -1012,10 +1020,21 @@ export async function firstIssueGateForRevUp(opts: {
   return { ...seen, firstIssue: true, requiresSignOff: true, mustReview: !isControllerPrincipal(principal) };
 }
 
+/** REV-18 (P13 second review fix): the refusal of a rev-up of a RETIRED
+ *  document, in one sentence every door uses (revUpDocument, submitForReview,
+ *  RevUpModal, setLevelRevUp, mergeDocuments' gate) — never the first-issue
+ *  wording ("is not issued yet"), which would be untrue of it. */
+export function describeRetiredRevUp(label: string, status: string | null): string {
+  return `${label} is ${(status ?? "").trim() || "retired"}, and a retired document isn't revised — a review of it could never be published, and publishing onto it would bring it back as Issued. ` +
+    "Restore it first (un-archive it, or ask Document Control to un-void it or reverse the supersession), then publish the revision.";
+}
+
 /** REV-18: why a rev-up is a first issue, in one clause (the refusals of
  *  revUpDocument and mergeDocuments' gate both say it). */
-export function describeFirstIssue(label: string, gate: { hasCurrentRevision: boolean; status: string | null }, revisionLabel?: string): string {
+export function describeFirstIssue(label: string, gate: { hasCurrentRevision: boolean; status: string | null; retired?: boolean }, revisionLabel?: string): string {
   const rev = revisionLabel?.trim() ? `Rev ${revisionLabel.trim()}` : "this revision";
+  // a retired document is not "not issued yet" (P13 second review fix)
+  if (gate.retired) return `${label} is ${(gate.status ?? "").trim() || "retired"} (retired), so ${rev} can't be published onto it until it is restored`;
   return gate.hasCurrentRevision
     ? `${label} is not issued yet (${gate.status || "Draft"}), so publishing ${rev} makes it a controlled issue for the first time`
     : `${label} has no current revision, so ${rev} would be its first controlled issue`;
@@ -1049,6 +1068,9 @@ export async function revUpDocument(input: RevUpInput): Promise<RevUpResult> {
   });
   const lockedByOther =
     !!preState.checkedOutBy && String(preState.checkedOutBy) !== String(actorUserId);
+  // REV-18: the first-issue answer, kept for the REV_UP record (a branch
+  // publish moves neither the pointer nor the status, so it is not asked).
+  let firstIssue: Awaited<ReturnType<typeof firstIssueGateForRevUp>> | null = null;
 
   // 1. Resolve the base this work is built on + the provenance class.
   //    session    → actor holds an active checkout session on the doc
@@ -1120,15 +1142,18 @@ export async function revUpDocument(input: RevUpInput): Promise<RevUpResult> {
       });
     }
     const label = doc.documentNumber || doc.title || "this document";
-    let firstIssue: Awaited<ReturnType<typeof firstIssueGateForRevUp>>;
+    let gate: Awaited<ReturnType<typeof firstIssueGateForRevUp>>;
     try {
-      firstIssue = await firstIssueGateForRevUp({ doc, libraryId, actor: { orgId, actorUserId, actorRole }, live });
+      gate = await firstIssueGateForRevUp({ doc, libraryId, actor: { orgId, actorUserId, actorRole }, live });
     } catch (e) {
       throw new Error(`Couldn't verify the review policy for ${label} — nothing was uploaded or published: ${(e as Error).message}`);
     }
-    if (firstIssue.mustReview) {
+    firstIssue = gate;
+    // P13 second review fix: a retired document is not revised (restore it first).
+    if (gate.retired) throw new Error(`${describeRetiredRevUp(label, gate.status)} Nothing was uploaded.`);
+    if (gate.mustReview) {
       throw new Error(
-        `This library requires reviewer sign-off, and ${describeFirstIssue(label, firstIssue, revisionLabel)} — a first issue is not a revision through the review gate, so a Minor or Correction change doesn't exempt it. ` +
+        `This library requires reviewer sign-off, and ${describeFirstIssue(label, gate, revisionLabel)} — a first issue is not a revision through the review gate, so a Minor or Correction change doesn't exempt it. ` +
         "Nothing was uploaded. Choose Major and submit it for review, or ask Document Control, who may issue it.",
       );
     }
@@ -1319,6 +1344,16 @@ export async function revUpDocument(input: RevUpInput): Promise<RevUpResult> {
       relatedTicketId: input.relatedTicketId ?? null,
       pendingDraftVoided: draftVoid.voidedVersionId,
       pendingDraftVoidProblem: draftVoid.problem,
+      // REV-18 / DEC-63 §2 (P13 second review fix): a controller's direct
+      // FIRST issue under a policy that requires sign-off is admitted — and
+      // recorded as such, as the merge door records it, so it is never read
+      // as an ordinary Minor revision.
+      ...(!branched && firstIssue?.firstIssue && firstIssue.requiresSignOff && !firstIssue.mustReview
+        ? {
+          reviewPolicy: `require — Rev ${revisionLabel.trim()} is ${doc.documentNumber || doc.title || "the document"}'s FIRST controlled issue, published WITHOUT the sign-off the policy requires, by controller ${actorUserId} (DEC-63 §2)`,
+          firstIssueWithoutSignOff: true,
+        }
+        : {}),
     },
   });
 
@@ -1422,7 +1457,14 @@ export async function submitForReview(input: RevUpInput): Promise<{ versionId: s
 
   // Base numeric target + letter label. If a draft is already in review, bump its
   // letter (2A -> 2B).
-  const { data: docRow } = await supabase.from("documents").select("pending_version_id, rev, current_version_id").eq("id", doc.id).maybeSingle();
+  const { data: docRow } = await supabase.from("documents").select("pending_version_id, rev, current_version_id, status").eq("id", doc.id).maybeSingle();
+  // REV-18 (P13 second review fix): a review of a RETIRED document could
+  // never be published (finalizeReviewedRevision refuses it, REV-5) — the
+  // draft would be stranded. Refused before anything is uploaded.
+  const liveStatus = docRow ? ((docRow.status as string | null | undefined) ?? null) : (doc.status ?? null);
+  if (isRetiredStatus(liveStatus)) {
+    throw new Error(`${describeRetiredRevUp(doc.documentNumber || doc.title || "This document", liveStatus)} Nothing was uploaded or submitted.`);
+  }
   const existingPendingId = (docRow?.pending_version_id as string | null) ?? null;
   let existingLabel: string | null = null;
   if (existingPendingId) {
@@ -1987,6 +2029,30 @@ export async function archiveDocument(input: ArchiveInput): Promise<void> {
 /** OWN-15: the statuses an unarchive may restore to — never an arbitrary
  *  string (documents.status has no CHECK constraint). */
 export const UNARCHIVE_RESTORE_STATUSES = ["Issued", "Draft", "In Review"] as const;
+
+/** REV-18 (P13 second review fix): which status the un-archive dialog
+ *  offers first, and why. 20261144's retirement stamp (written only by the
+ *  publish guard; read here, never written) says what an archived document
+ *  WAS: an issue whose revision is still current (`issued`) comes back
+ *  Issued — the put-back the rule spares; a retirement that took away no
+ *  issue (`not-issued`, RETIRED_NOT_ISSUED_STAMP) comes back a Draft, so a
+ *  Draft is never issued by its un-archive. Anything else — archived before
+ *  20261144 or by the service role, its revision moved since, no current
+ *  revision, a database without the stamp, an unreadable row — is not known
+ *  to have been issued (`unknown`): Draft, the fail-safe side. The dialog
+ *  offers every UNARCHIVE_RESTORE_STATUSES either way. Read-only. */
+export async function unarchiveRestoreDefault(documentId: string): Promise<{
+  status: (typeof UNARCHIVE_RESTORE_STATUSES)[number]; basis: "issued" | "not-issued" | "unknown";
+}> {
+  const { data, error } = await supabase.from("documents")
+    .select("current_version_id, retired_issue_status, retired_issue_version_id").eq("id", documentId).maybeSingle();
+  if (error || !data) return { status: "Draft", basis: "unknown" };
+  const current = (data.current_version_id as string | null) ?? null;
+  const stampedVersion = (data.retired_issue_version_id as string | null) ?? null;
+  if (current && stampedVersion === current) return { status: "Issued", basis: "issued" };
+  if (!stampedVersion && data.retired_issue_status === RETIRED_NOT_ISSUED_STAMP) return { status: "Draft", basis: "not-issued" };
+  return { status: "Draft", basis: "unknown" };
+}
 
 export async function unarchiveDocument(input: ArchiveInput & { restoreStatus?: string }): Promise<void> {
   const { doc, reason, orgId, actorUserId, actorEmail, actorRole, restoreStatus } = input;

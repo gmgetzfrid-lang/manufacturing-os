@@ -31,7 +31,7 @@ import {
 } from "lucide-react";
 import {
   revUpDocument, submitForReview, suggestNextRevisionLabel, listVersions,
-  StaleBaseError, DuplicateLabelError, type StaleBaseInfo, firstIssueGateForRevUp,
+  StaleBaseError, DuplicateLabelError, type StaleBaseInfo, firstIssueGateForRevUp, describeRetiredRevUp,
 } from "@/lib/revisions";
 import { effectiveReviewControlForDocument, effectiveModeForRevUp } from "@/lib/reviewControl";
 import { effectiveDocClassForDocument, type DocClass } from "@/lib/docClass";
@@ -128,6 +128,10 @@ export default function RevUpModal({
   // or no current revision) and the actor may not publish that unreviewed —
   // it goes to review whatever the change type (firstIssueGateForRevUp).
   const [firstIssueMustReview, setFirstIssueMustReview] = useState(false);
+  // REV-18 (P13 second review fix): a RETIRED document (Superseded / Void /
+  // Archived) is not revised — a review of it could never be published and a
+  // direct publish would bring it back as Issued. Refused up front.
+  const [retiredRefusal, setRetiredRefusal] = useState<string | null>(null);
   const [routeThroughReview, setRouteThroughReview] = useState(true);
   const [showMore, setShowMore] = useState(false);
   const [effectiveDate, setEffectiveDate] = useState("");
@@ -236,7 +240,11 @@ export default function RevUpModal({
           doc: { id: doc.id, collectionId: doc.collectionId, currentVersionId: doc.currentVersionId, status: doc.status, reviewControl: doc.reviewControl },
           libraryId, actor: { orgId, actorUserId, actorRole },
         });
-        if (alive) { setReviewControl(c); setFirstIssueMustReview(first.mustReview); setReviewPolicyStatus("resolved"); }
+        if (alive) {
+          setReviewControl(c); setFirstIssueMustReview(first.mustReview);
+          setRetiredRefusal(first.retired ? describeRetiredRevUp(doc.documentNumber || doc.title || "This document", first.status) : null);
+          setReviewPolicyStatus("resolved");
+        }
       } catch (e) {
         if (alive) { setReviewControl(null); setReviewPolicyStatus("unknown"); setReviewPolicyError((e as Error).message || "unknown error"); }
       }
@@ -248,7 +256,7 @@ export default function RevUpModal({
       }
     })();
     return () => { alive = false; };
-  }, [isOpen, doc.id, doc.reviewControl, doc.collectionId, doc.currentVersionId, doc.status, libraryId, orgId, actorUserId, actorRole, policyAttempt]);
+  }, [isOpen, doc.id, doc.reviewControl, doc.collectionId, doc.currentVersionId, doc.status, doc.documentNumber, doc.title, libraryId, orgId, actorUserId, actorRole, policyAttempt]);
 
   // The mode that actually applies to THIS rev-up — a Minor/Correction change is
   // an escape hatch that publishes directly (no sign-off cycle), except for a
@@ -327,6 +335,8 @@ export default function RevUpModal({
           : `Couldn't verify the review policy (${reviewPolicyError ?? "unknown error"}) — nothing was published. Retry, or ask Document Control.`,
       );
     }
+    // REV-18: a retired document is restored first, never revised (nor sent to a review that can't land).
+    if (!asBranch && retiredRefusal) return setError(retiredRefusal);
     if (asBranch && branchReason.trim().length < 5) {
       return setError("A branch needs a reason (at least 5 characters) — it becomes an open item until reconciled.");
     }
@@ -774,7 +784,7 @@ export default function RevUpModal({
           {/* The escape hatch made visible: a review-gated library where the
               chosen change type (Minor/Correction) bypasses the gate. The
               default dropdown value must never silently decide governance. */}
-          {reviewControl && reviewControl.mode !== "none" && effMode === "none" && (
+          {reviewControl && reviewControl.mode !== "none" && effMode === "none" && !retiredRefusal && (
             <div className="rounded-lg border border-amber-300 bg-amber-50 p-3 text-[12px] text-amber-900 flex items-start gap-2">
               <AlertTriangle className="w-4 h-4 mt-0.5 shrink-0 text-amber-600" />
               <span>
@@ -785,9 +795,17 @@ export default function RevUpModal({
             </div>
           )}
 
+          {/* REV-18: a retired document is not revised — restore it first. */}
+          {retiredRefusal && (
+            <div role="alert" className="rounded-lg border border-red-300 bg-red-50 p-3 text-[12px] text-red-800 flex items-start gap-2">
+              <AlertTriangle className="w-4 h-4 mt-0.5 shrink-0" />
+              <span>{retiredRefusal}</span>
+            </div>
+          )}
+
           {/* Pre-publish review banner — this library gates revisions behind
               reviewer sign-off. A Minor/Correction change escapes the gate. */}
-          {effMode !== "none" && (
+          {effMode !== "none" && !retiredRefusal && (
             <div className="rounded-lg border border-violet-300 bg-violet-50 p-3 text-[12px] text-violet-900 space-y-2">
               <div className="flex items-start gap-2">
                 <ShieldCheck className="w-4 h-4 mt-0.5 shrink-0 text-violet-600" />
@@ -993,8 +1011,8 @@ export default function RevUpModal({
             </button>
             <button
               onClick={() => doPublish(false)}
-              disabled={submitting || !file || !policyResolved}
-              title={policyResolved ? undefined : "The review policy has not resolved — publishing is held until it does (RG-6)"}
+              disabled={submitting || !file || !policyResolved || !!retiredRefusal}
+              title={retiredRefusal ?? (policyResolved ? undefined : "The review policy has not resolved — publishing is held until it does (RG-6)")}
               className={`inline-flex items-center gap-1.5 px-3 py-2 rounded-lg text-xs font-bold text-white disabled:opacity-50 ${willReview ? "bg-violet-600 hover:bg-violet-500" : "bg-orange-600 hover:bg-orange-500"}`}
             >
               {submitting ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <ChevronRight className="w-3.5 h-3.5" />}
