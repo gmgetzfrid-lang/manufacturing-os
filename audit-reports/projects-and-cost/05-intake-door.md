@@ -520,7 +520,7 @@ upload/route.ts:45-46 — the complete file validation. :270 `ContentType: file.
 ## INTK-12 · Quote links are permanent bearer credentials: no expiry offered, no revoke control in the Costs tab, and their creation audit row writes a fragment of the secret token as the resource id
 
 - **Severity:** MEDIUM
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Assigned:** projects-joint J13 RECORDS RECONCILE (new; the remainder appears landed — independently verified before any flip) — by the integrator, 2026-10-01 (orphan sweep: the package that left this remainder has merged; fleet plan `audit-reports/fleet-plans/`).
 - **Verification:** CONFIRMED
 - **Locations:** `components/projects/cost/QuotesPanel.tsx:536-548`, `components/projects/cost/QuotesPanel.tsx:613-635`, `components/projects/IntakePanel.tsx:62-64,354-359`
@@ -559,6 +559,23 @@ QuotesPanel.tsx:539-544 — the insert object, no `expires_at`. :613-634 — the
 
 
 *IntakePanel limb landed 2026-09-30 (projects Round G, J1): `components/projects/IntakePanel.tsx` lists DOCUMENT links only (`.eq("purpose", "documents")`, tolerant of a database without the column) — a quote link is managed on the Costs tab and is no longer shown here with an "Assign docs" control; the link insert reads back `.select("id").single()`, `INTAKE_LINK_CREATED`'s `resource_id` is the link id (no longer the project id, never token material) and its `{ error }` — and `INTAKE_LINK_REVOKED`'s — is checked and surfaced. With J4's QuotesPanel half this meets Done-when 2–4; Done-when 1 was J4's. This finding stays with its owner (PC-8) to close.*
+
+**Resolution (2026-10-01, projects Round G).** Record reconcile by package J13 RECORDS RECONCILE: no application code, test or migration changed here. The Costs-tab half landed with J4 BIDTAB (commit `44119df`, merge `0a8cc63`). The IntakePanel half landed with J1 INTAKE-DOOR (commit `ee68448`, merge `29777d1`); J1's landed note above already said the two halves meet done-whens 2-4, but the Status stayed OPEN. Verified against HEAD `4dd0df7`.
+
+**Done-when.**
+- ✓ The quote-link form offers an expiry, and the list carries a revoke button that writes `revoked_at`. In `components/projects/cost/QuotesPanel.tsx`, the expiry input (:1384) defaults to 90 days (:1212); a blank or past date is refused (:1249-1252); `expires_at` is written (:1262). Revoke (:1425-1428) writes `revoked_at` under `.eq("id").eq("project_id").is("revoked_at", null).select("id")` (:1286-1287), and a zero-row result is reported, not audited (:1291). A pre-Round-G link shows "no expiry" in amber (:1403). Test: `quotesPanelRender.test.ts` "the expired row shows 'expired' and Revoke only; the live row with no known address offers Re-issue" (:532), exit 0 (31 passed). It pins the Revoke control on each row; no committed test drives the create or revoke writes (see Scope).
+- ✓ IntakePanel lists DOCUMENT links only: `components/projects/IntakePanel.tsx:104-105` (`.eq("purpose", "documents")`). The unfiltered read at :106-107 runs only on a database without the `purpose` column, where no quote link can exist. Test: `intakeUploadRoute.test.ts` "IntakePanel links: document links only, an expiry always, the audit row names the link (SEC-5 / INTK-12 limb)" (:1499), exit 0 (117 passed).
+- ✓ Both link-creation inserts read back `.select("id").single()`, and the audit row's `resource_id` is that id. QuotesPanel: the insert at :1258-1264, the audit row at :1268-1272. IntakePanel: the insert at :202-208, the audit row at :212-217. No token material reaches `audit_logs`; the re-issue path's row is ids only too (`lib/intakeLinks.ts:283-289`). Test: the IntakePanel pin above; the QuotesPanel half has no committed pin.
+- ✓ Both audit inserts check `{ error }` and surface it. QuotesPanel: create :1268-1273, revoke :1292-1297. IntakePanel: create :212-224, revoke :253-259.
+
+**Scope / residual.** The QuotesPanel create and revoke writes have no committed test: J4 named none, and this package changes no test. They were verified instead (DEC-29 rule 2) by a throwaway jsdom render against HEAD, not committed; 2 of 2 passed. That render checked that:
+- a blank expiry inserts nothing and says why, and a future expiry is written;
+- the insert chain is `insert → select → single`;
+- `INTAKE_QUOTE_LINK_CREATED`'s `resource_id` is the returned id, the row carries no token, and a failed audit insert is surfaced;
+- Revoke writes only `revoked_at`, through `update → eq → eq → is → select`, and audits `INTAKE_QUOTE_LINK_REVOKED` by the link id;
+- a zero-row revoke audits nothing.
+
+A committed pin is owed by whichever package next owns `QuotesPanel.tsx`. IntakePanel's revoke does not read back its row count; that is not a done-when here. Quote links minted before Round G keep no expiry until `20261096`'s commented backfill is run (projects-tab `SEC-5`).
 
 ---
 
