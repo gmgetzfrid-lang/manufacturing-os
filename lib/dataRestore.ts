@@ -134,6 +134,11 @@ const SKIP_TABLES: Record<string, string> = {
   email_notifications: "the outbound mail queue — a restored message would be sent again, to whatever address the backup names; delivery state is never restored",
   subscriptions: "billing state is owned by the payment provider — re-subscribe, never copy",
   push_subscriptions: "device push registrations are machine-specific — re-established per device",
+  // admin-and-org P1 (fix pass 4): service-role only (20260916). The only
+  // writer, POST /api/ai/usage, is controller-gated, bounds a cap to
+  // 0..10000 and audits it (AI_CAP_CHANGED); a restored row would set any
+  // value unaudited. Until a controller re-sets them the default cap applies.
+  ai_usage_limits: "monthly AI spend caps are set only through the controller route, which bounds and audits them — re-set them after a restore (the default cap applies until then)",
 };
 
 // SURF-8: append-only / self-insert-only tables are never blind-imported.
@@ -153,6 +158,29 @@ export const IMMUTABLE_TABLES: Record<string, string> = {
   download_audits: "download audits are written only by the download egress — a restored row would name a copy holder nobody served",
   milestone_baseline_history: "prior approved-plan snapshots are written only by set_project_baseline / clear_project_baseline (projects Round G, PC SCHED-3)",
   turnover_review_events: "the turnover review history is written only by the database's trigger on turnover_items (a restored decided item gets one row from its own stamps)",
+  // admin-and-org P1 (fix pass 4): service-role only (20260916). The only
+  // writer, POST /api/ai/agreement, records the CALLER's own acceptance (name,
+  // agreement version, IP, time), and every AI ask gate reads it — a restored
+  // row would be a signature nobody gave that passes the gate.
+  ai_key_agreements: "acceptable-use agreements are the signer's own act — written only by /api/ai/agreement",
+  // Service-role only (20260806): one row per metered call, written by the
+  // call path; the monthly caps sum it, so a restored row would move this
+  // month's spend (a negative cost would lift a cap).
+  ai_usage_events: "the AI spend ledger is written only by the metered call path — the caps sum it, so a restored row would move this month's spend",
+};
+
+/** admin-and-org P1 (fix pass 4): contract tables that supabase/ makes
+ *  service-role only for writes (REVOKE ALL / INSERT FROM authenticated, never
+ *  granted back) and that a restore still writes — each with why a restored
+ *  row is the workspace's data, not anyone's act and not a value only a
+ *  bounded route may set. lib/__tests__/dataRestore.test.ts censuses
+ *  supabase/ and fails when such a table is in none of SKIP_TABLES,
+ *  IMMUTABLE_TABLES or this map — the class SURF-8 and ORG-1 close, so a new
+ *  service-role-only table cannot become restorable unexamined. */
+export const RESTORE_SERVICE_ROLE_WAIVERS: Readonly<Record<string, string>> = {
+  archive_settings: "the archive location hint, naming and storage-alert threshold — the values an Admin / Doc Control sets through /api/admin/archive-settings; they drive only the archive prompt and storage alerts and confer no access",
+  archives: "the catalog of archives this workspace produced (label, kind, counts); restored versions' archive_id labels name these rows. A row carries no bytes and grants nothing — a reclaim (shed/commit) still frees only this workspace's keys, after its legal-hold and shared-key checks",
+  knowledge_page_entities: "derived drawing-page tags the indexer writes; bounded to this workspace's knowledge documents (RESTORE_PARENT_RULES) and replaced on re-index — no gate reads a row as anyone's act",
 };
 
 /** True when `table` is append-only / self-insert-only and must not be blind-imported. */

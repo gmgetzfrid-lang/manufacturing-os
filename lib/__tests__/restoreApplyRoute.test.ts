@@ -30,6 +30,16 @@
 //                  (members of every status), so uid-keyed rows never land
 //                  twice; a cleared pointer is reported only for a row the
 //                  database took.
+//   fix pass 4     the member read /begin, /apply, /preview and the page
+//                  plan against is checked (an unread list would mint a
+//                  placeholder for every person, active members included);
+//                  the rename and every placeholder insert are checked, and
+//                  /begin and /apply stop before any table when one fails;
+//                  acceptable-use agreements and the AI spend ledger are
+//                  append-only and the AI caps are skipped (the census of
+//                  service-role-only tables lives in dataRestore.test.ts); a
+//                  chunk that failed after a count-less accepted statement is
+//                  audited.
 //
 // The routes run for real against an in-memory engine that behaves like
 // PostgREST where it matters here: a statement is atomic, `upsert` with
@@ -56,6 +66,7 @@ vi.mock("@/lib/serverAuth", async () => {
 import { POST as applyTable } from "@/app/api/admin/restore/apply-table/route";
 import { POST as applySingle } from "@/app/api/admin/restore/apply/route";
 import { POST as beginRoute } from "@/app/api/admin/restore/begin/route";
+import { POST as previewRoute } from "@/app/api/admin/restore/preview/route";
 import {
   applyRestoreChunk, ORG_LESS_RESTORE_PARENTS, RESTORE_CONTRACT_TABLES, isSkippedTable, planRestore,
   previewChunkedRestore, runChunkedRestore, RESTORE_ADDITIVE_NOTE, RESTORE_HELD_ELSEWHERE_NOTE, ROW_LEVEL_SQLSTATES,
@@ -1124,10 +1135,12 @@ describe("BKP-5 / BKP-12 (fix pass 3) — a re-run links the placeholders the fi
     const schema = readFileSync(join(process.cwd(), "types/schema.ts"), "utf8");
     const declared = /export type MemberStatus = ([^;]+);/.exec(schema)![1].match(/"([a-z_]+)"/g)!.map((x) => x.slice(1, -1));
     expect([...RESTORE_LINK_MEMBER_STATUSES].sort()).toEqual([...declared].sort());
-    for (const f of ["app/api/admin/restore/begin/route.ts", "app/api/admin/restore/apply/route.ts", "app/(protected)/admin/restore/page.tsx"]) {
+    // Fix pass 4: /preview reconciles the same way, and every reader checks the read.
+    for (const f of ["app/api/admin/restore/begin/route.ts", "app/api/admin/restore/apply/route.ts", "app/api/admin/restore/preview/route.ts", "app/(protected)/admin/restore/page.tsx"]) {
       const src = readFileSync(join(process.cwd(), f), "utf8");
-      expect(src, f).toMatch(/from\("org_members"\)\.select\("uid, email, status"\)\.eq\("org_id", (orgId|activeOrgId)\)\.in\("status", \[\.\.\.RESTORE_LINK_MEMBER_STATUSES\]\)/);
-      expect(src, f).not.toMatch(/from\("org_members"\)\.select\("uid, email"\)\.eq\("org_id", (orgId|activeOrgId)\)\.eq\("status", "active"\)/);
+      expect(src, f).toMatch(/\{ data: memberRows, error: memberReadErr \}[^;]*from\("org_members"\)\.select\("uid, email, status"\)\.eq\("org_id", (orgId|activeOrgId)\)\.in\("status", \[\.\.\.RESTORE_LINK_MEMBER_STATUSES\]\)/);
+      expect(src, f).toMatch(/if \(readErr\) (throw|\{)/);
+      expect(src, f).not.toMatch(/\.eq\("status", "active"\)/);
     }
   });
 });
@@ -1176,3 +1189,189 @@ describe("BKP-5 (fix pass 3) — a cleared pointer is reported only for a row th
     expect(direct).toMatchObject({ ok: false, inserted: 0, cleared: [] });
   });
 });
+
+describe("BKP-5 / BKP-12 (fix pass 4) — the reconciliation fails closed: an unread member list, a refused rename or placeholder writes no table", () => {
+  const ALICE = "uid-alice-live";
+  beforeEach(() => {
+    db.rows.org_members = [{ org_id: ORG, uid: ALICE, email: "alice@acme.com", status: "active" }];
+  });
+  const backupMembers = [
+    { uid: "old-alice", email: "alice@acme.com", role: "Engineer" },
+    { uid: "old-bob", email: "bob@acme.com", role: "Engineer" },
+    { uid: "old-cara", email: "cara@acme.com", role: "Viewer" },
+  ];
+  const begin = async (extra: Record<string, unknown> = {}) => {
+    const res = await beginRoute(post("/api/admin/restore/begin", { manifest: { orgId: "backup-org", orgName: "Acme" }, orgMembers: backupMembers, ...extra }));
+    return { status: res.status, body: (await res.json()) as Record<string, unknown> };
+  };
+  const env = (extra: Record<string, unknown[]> = {}) => ({
+    manifest: { orgId: "backup-org", orgName: "Acme" },
+    tables: { org_members: backupMembers, documents: [{ id: "d1", org_id: "backup-org", owner_user_id: "old-alice" }], document_favorites: [{ org_id: "backup-org", user_id: "old-bob", document_id: "d1" }], ...extra },
+  });
+  const memberInserts = () => db.attempts.filter((a) => a.table === "org_members");
+
+  it("/begin: the member read failing answers 500 before the rename, any placeholder or any audit row", async () => {
+    db.readError.org_members = "canceling statement due to statement timeout";
+    const r = await begin({ manifest: { orgId: "backup-org", orgName: "Acme Inc." }, orgNameChoice: "backup" });
+    expect(r.status).toBe(500);
+    expect(String(r.body.error)).toMatch(/^Could not read this workspace's members \(canceling statement due to statement timeout\) — nothing was written\.$/);
+    expect(r.body.idRemap).toBeUndefined();
+    expect(memberInserts()).toEqual([]);
+    expect(rowsOf("org_members")).toHaveLength(1);
+    expect(rowsOf("orgs").find((o) => o.id === ORG)!.name).toBe("Acme");
+    expect(audits("RESTORE_BEGIN")).toEqual([]);
+  });
+
+  it("/apply: the same — no placeholder, no table, no audit; and the page's driver stops at /begin with that message", async () => {
+    db.readError.org_members = "permission denied";
+    const r = await single(env());
+    expect(r.status).toBe(500);
+    expect(String(r.body.error)).toMatch(/^Could not read this workspace's members \(permission denied\)/);
+    expect(db.attempts).toEqual([]);
+    expect(rowsOf("documents")).toEqual([]);
+    expect(audits("DATA_RESTORE")).toEqual([]);
+    const e = env() as RestoreEnvelopeLike;
+    await expect(runChunkedRestore({ orgId: ORG, envelope: e, plan: planFor(e), orgNameChoice: "current", post: routePost }))
+      .rejects.toThrow(/Could not read this workspace's members/);
+    expect(db.attempts).toEqual([]);
+  });
+
+  it("the workspace-name read failing is refused the same way (it decides the rename)", async () => {
+    db.readError.orgs = "permission denied for table orgs";
+    const r = await begin({ orgNameChoice: "backup" });
+    expect(r.status).toBe(500);
+    expect(String(r.body.error)).toMatch(/^Could not read this workspace's name/);
+    expect(db.attempts).toEqual([]);
+  });
+
+  it("/preview reads members of every status (a re-run's placeholders are linked, as /begin links them) and refuses an unread list", async () => {
+    const first = await begin();
+    expect(first.body).toMatchObject({ createdUsers: 2 });
+    const res = await previewRoute(post("/api/admin/restore/preview", env()));
+    const { plan } = (await res.json()) as { plan: { counts: { matchedUsers: number; newUsers: number }; idRemap: { uid: Record<string, string> } } };
+    expect(res.status).toBe(200);
+    expect(plan.counts).toMatchObject({ matchedUsers: 3, newUsers: 0 });
+    expect(plan.idRemap.uid).toEqual((first.body.idRemap as { uid: Record<string, string> }).uid);
+    db.readError.org_members = "timeout";
+    const failed = await previewRoute(post("/api/admin/restore/preview", env()));
+    expect(failed.status).toBe(500);
+    expect(((await failed.json()) as { error: string }).error).toMatch(/^Could not read this workspace's members \(timeout\) — no plan was made\.$/);
+  });
+
+  it("/begin: a placeholder that cannot be made answers 500 naming the address — the run never reaches a table; a re-run links what was made", async () => {
+    db.writeError = (table, op, rows) => (table === "org_members" && op === "insert" && rows[0].email === "cara@acme.com" ? { code: "P0001", message: "refused by trigger" } : null);
+    const r = await begin();
+    expect(r.status).toBe(500);
+    expect(String(r.body.error)).toMatch(/^Could not create the restored placeholder for cara@acme\.com \(refused by trigger\)\. No table was written\. 1 placeholder\(s\) made before it are kept/);
+    expect(r.body.idRemap).toBeUndefined(); // no map to write rows with — old-cara can never land unmapped
+    expect(audits("RESTORE_BEGIN")[0].details).toMatchObject({ createdUsers: 1, failed: "placeholder for cara@acme.com: refused by trigger" });
+    const bobUid = rowsOf("org_members").find((m) => m.email === "bob@acme.com")!.uid;
+    db.writeError = null;
+    const again = await begin();
+    expect(again.status).toBe(200);
+    expect(again.body).toMatchObject({ createdUsers: 1, linkedUsers: 2 });
+    expect((again.body.idRemap as { uid: Record<string, string> }).uid).toMatchObject({ "old-alice": ALICE, "old-bob": bobUid });
+    expect(rowsOf("org_members").filter((m) => m.email === "bob@acme.com")).toHaveLength(1);
+  });
+
+  it("through the page's driver: the run stops at /begin — no table is attempted, nothing lands naming the raw backup uid", async () => {
+    db.writeError = (table, op, rows) => (table === "org_members" && op === "insert" && rows[0].email === "bob@acme.com" ? { code: "23514", message: "check violated" } : null);
+    const e = env() as RestoreEnvelopeLike;
+    await expect(runChunkedRestore({ orgId: ORG, envelope: e, plan: planFor(e), orgNameChoice: "current", post: routePost }))
+      .rejects.toThrow(/Could not create the restored placeholder for bob@acme\.com/);
+    expect(db.attempts.filter((a) => a.table !== "org_members" && a.table !== "audit_logs")).toEqual([]);
+    expect(rowsOf("document_favorites")).toEqual([]);
+  });
+
+  it("/apply: a placeholder that cannot be made stops before any table, and the DATA_RESTORE row records what was made and why it stopped", async () => {
+    db.writeError = (table, op, rows) => (table === "org_members" && op === "insert" && rows[0].email === "cara@acme.com" ? { code: "P0001", message: "refused by trigger" } : null);
+    const r = await single(env());
+    expect(r.status).toBe(500);
+    expect(r.body).toMatchObject({ createdUsers: 1, totalInserted: 0, tables: [] });
+    expect(String(r.body.error)).toMatch(/placeholder for cara@acme\.com/);
+    expect(rowsOf("documents")).toEqual([]);
+    expect(rowsOf("document_favorites")).toEqual([]);
+    expect(audits("DATA_RESTORE")[0].details).toMatchObject({ createdUsers: 1, totalInserted: 0, tables: [], failed: "placeholder for cara@acme.com: refused by trigger", orgNameApplied: false });
+  });
+
+  it("a refused rename answers 500 before any placeholder (both routes); an applied one is recorded as applied", async () => {
+    db.writeError = (table, op) => (table === "orgs" && op === "update" ? { code: "23505", message: "duplicate org name" } : null);
+    const renamed = { manifest: { orgId: "backup-org", orgName: "Acme Inc." }, orgNameChoice: "backup" };
+    const r = await begin(renamed);
+    expect(r.status).toBe(500);
+    expect(String(r.body.error)).toMatch(/^Could not apply the backup's workspace name \(duplicate org name\) — nothing was written\.$/);
+    expect(memberInserts()).toEqual([]);
+    expect(audits("RESTORE_BEGIN")).toEqual([]);
+    const s1 = await applySingle(post("/api/admin/restore/apply", { envelope: { ...env(), manifest: { orgId: "backup-org", orgName: "Acme Inc." } }, orgNameChoice: "backup", confirm: true }));
+    expect(s1.status).toBe(500);
+    expect(memberInserts()).toEqual([]);
+    expect(rowsOf("documents")).toEqual([]);
+    db.writeError = null;
+    const ok = await begin(renamed);
+    expect(ok.status).toBe(200);
+    expect(rowsOf("orgs").find((o) => o.id === ORG)!.name).toBe("Acme Inc.");
+    expect(audits("RESTORE_BEGIN")[0].details).toMatchObject({ orgNameChoice: "backup", orgNameApplied: true });
+  });
+});
+
+describe("ORG-1 (fix pass 4) — an acceptable-use agreement, the spend ledger and the caps are never restored", () => {
+  // The review's rows: an agreement for each member under the current version, a cap far over the route's 10,000 ceiling, a negative spend.
+  const agreement = (id: string, user: string) => ({ id, org_id: "backup-org", user_id: user, user_name: "x", scope: "use", provider: "anthropic", agreement_version: "v3", ip: "203.0.113.9", accepted_at: "2026-01-02" });
+  const cap = { id: "cap-1", org_id: "backup-org", user_id: null, monthly_cap_usd: 1e9 };
+  const spend = { id: "ev-1", org_id: "backup-org", op: "knowledgeAsk", user_id: "u-1", est_cost_usd: -5000, ok: true };
+
+  it("/apply-table refuses each table with 400 before any read or write", async () => {
+    for (const [table, rows, why] of [
+      ["ai_key_agreements", [agreement("k1", "u-1"), agreement("k2", "u-2")], /append-only \(acceptable-use agreements are the signer's own act/],
+      ["ai_usage_events", [spend], /append-only \(the AI spend ledger/],
+      ["ai_usage_limits", [cap], /never blind-imported \(monthly AI spend caps are set only through the controller route/],
+    ] as const) {
+      const r = await chunk(table, [...rows]);
+      expect(r.status, table).toBe(400);
+      expect(String(r.body.error), table).toMatch(why);
+      expect(rowsOf(table), table).toEqual([]);
+    }
+    expect(db.attempts).toEqual([]);
+  });
+
+  it("the single-shot /apply and the page's driver plan them out and land the rest", async () => {
+    const env: RestoreEnvelopeLike = {
+      manifest: { orgId: "backup-org" },
+      tables: { ai_key_agreements: [agreement("k1", "u-1")], ai_usage_limits: [cap], ai_usage_events: [spend], notes: [{ id: "n1", org_id: "backup-org" }] },
+    };
+    const { status, body } = await single(env);
+    expect(status).toBe(200);
+    expect((body.tables as Array<{ name: string }>).map((t) => t.name)).toEqual(["notes"]);
+    const sent: string[] = [];
+    const spy: RestorePost = async (path, b) => {
+      if (path.startsWith("/api/admin/restore/apply-table")) sent.push(String((b as { table: string }).table));
+      return routePost(path, b);
+    };
+    db.rows.notes = [];
+    await runChunkedRestore({ orgId: ORG, envelope: env, plan: planFor(env), orgNameChoice: "current", post: spy });
+    expect(sent).toEqual(["notes"]);
+    for (const t of ["ai_key_agreements", "ai_usage_limits", "ai_usage_events"]) expect(rowsOf(t), t).toEqual([]);
+  });
+});
+
+describe("ALOG-8 (fix pass 4) — a chunk that failed after a count-less accepted statement is audited", () => {
+  it("statement 1 accepted without a count, statement 2 refused: 500 with uncounted, and a RESTORE_CHUNK row records both", async () => {
+    db.countless = true;
+    db.writeError = (table, op, rows) => (table === "plants" && op === "upsert" && rows[0].id === "p500" ? { code: "42703", message: 'column "zone" of relation "plants" does not exist' } : null);
+    const rows = Array.from({ length: 600 }, (_, i) => ({ id: `p${i}`, org_id: "backup-org", name: `Plant ${i}` }));
+    const r = await chunk("plants", rows);
+    expect(r.status).toBe(500);
+    expect(r.body).toMatchObject({ inserted: 0, uncounted: 500, code: "42703" });
+    const trail = audits("RESTORE_CHUNK");
+    expect(trail).toHaveLength(1);
+    expect(trail[0].details).toMatchObject({ table: "plants", rowsReceived: 600, inserted: 0, uncounted: 500, failed: 'column "zone" of relation "plants" does not exist' });
+  });
+
+  it("a chunk whose only statement failed still leaves nothing to record", async () => {
+    db.writeError = (table, op) => (table === "plants" && op === "upsert" ? { code: "42703", message: "no column" } : null);
+    const r = await chunk("plants", [{ id: "p1", org_id: "backup-org" }]);
+    expect(r.status).toBe(500);
+    expect(audits("RESTORE_CHUNK")).toEqual([]);
+  });
+});
+

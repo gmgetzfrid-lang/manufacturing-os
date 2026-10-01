@@ -1,12 +1,16 @@
 import { describe, it, expect } from "vitest";
+import { mkdtempSync, mkdirSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import {
   planRestore, remapRow, orderTablesForRestore, mergeNewUserUids, type RestoreEnvelopeLike, type CurrentOrgContext,
   CONFLICT_TARGETS, conflictTargetFor, RESTORE_CONTRACT_TABLES, isSkippedTable, skipReasonFor, isImmutableTable,
   RESTORE_TABLE_ORDER, RESTORE_PARENT_RULES, RESTORE_FK_PARENT_WAIVERS, ORG_LESS_RESTORE_PARENTS, restoreParentRulesFor,
   restoreRowsInOrder, restoreTableRefusal,
   RESTORE_GENERATED_COLUMNS, RESTORE_USER_REFERENCES, restoreUserReferencesFor, landRestoredRow, foreignStorageKey,
+  RESTORE_SERVICE_ROLE_WAIVERS, IMMUTABLE_TABLES,
 } from "@/lib/dataRestore";
-import { censusSchema } from "./helpers/schemaKeys";
+import { censusSchema, censusServiceRoleWriteTables } from "./helpers/schemaKeys";
 
 function env(overrides: Partial<RestoreEnvelopeLike> = {}): RestoreEnvelopeLike {
   return {
@@ -462,3 +466,68 @@ describe("ORG-1 (fix pass 2) — foreignStorageKey", () => {
     expect(foreignStorageKey(`orgs/${MINE}/a orgs/${OTHER}/b`, MINE)?.org).toBe(OTHER);
   });
 });
+
+// admin-and-org P1 (fix pass 4) — the class SURF-8's list and the mail-queue
+// fix closed one instance at a time: a table supabase/ makes service-role
+// only (its rows are written only by a server route that decides what a row
+// may say) must not become writable by a restore, which writes with the
+// service role, unless someone examined it and wrote down why.
+describe("ORG-1 (fix pass 4) — every service-role-only contract table is skipped, append-only, or waived in writing", () => {
+  const locked = censusServiceRoleWriteTables();
+  const onContract = [...locked].filter((t) => RESTORE_CONTRACT_TABLES.has(t)).sort();
+
+  it("the census reads REVOKE and GRANT in order, per grantee and privilege (sanity on a synthetic schema)", () => {
+    const root = mkdtempSync(join(tmpdir(), "svc-census-"));
+    mkdirSync(join(root, "migrations"));
+    writeFileSync(join(root, "schema.sql"), [
+      "-- REVOKE ALL ON commented FROM authenticated;",
+      "REVOKE ALL ON a, public.b FROM public, anon, authenticated;",
+      "REVOKE SELECT ON c FROM authenticated;",
+      "REVOKE ALL ON d FROM anon;",
+      "revoke insert, update ON TABLE e FROM authenticated, anon;",
+      "REVOKE EXECUTE ON FUNCTION f(uuid) FROM authenticated;",
+    ].join("\n"));
+    writeFileSync(join(root, "migrations", "20990101_x.sql"), "GRANT SELECT, INSERT ON a TO authenticated;\nGRANT SELECT ON b TO authenticated;\n");
+    expect([...censusServiceRoleWriteTables(root)].sort()).toEqual(["b", "e"]);
+  });
+
+  it("finds the tables the review named — the parser sees supabase/ as it is", () => {
+    expect(onContract).toEqual(expect.arrayContaining(["ai_key_agreements", "ai_usage_limits", "ai_usage_events", "turnover_review_events"]));
+  });
+
+  it("each one is never written by a restore, or carries a written waiver", () => {
+    const unexamined = onContract.filter((t) => !isSkippedTable(t) && !Object.prototype.hasOwnProperty.call(RESTORE_SERVICE_ROLE_WAIVERS, t));
+    expect(unexamined, "add the table to SKIP_TABLES / IMMUTABLE_TABLES, or to RESTORE_SERVICE_ROLE_WAIVERS with why a restored row is safe").toEqual([]);
+  });
+
+  it("every waiver names a restorable, service-role-only contract table, with a reason (no stale or redundant waiver)", () => {
+    for (const [t, why] of Object.entries(RESTORE_SERVICE_ROLE_WAIVERS)) {
+      expect(locked.has(t), t).toBe(true);
+      expect(RESTORE_CONTRACT_TABLES.has(t), t).toBe(true);
+      expect(isSkippedTable(t), t).toBe(false);
+      expect(why.length, t).toBeGreaterThan(40);
+    }
+  });
+
+  it("the review's tables: agreements and the spend ledger are append-only, the caps are skipped — none is planned or written", () => {
+    expect(isImmutableTable("ai_key_agreements")).toBe(true);
+    expect(IMMUTABLE_TABLES.ai_key_agreements).toMatch(/signer's own act/);
+    expect(isImmutableTable("ai_usage_events")).toBe(true);
+    expect(isSkippedTable("ai_usage_limits")).toBe(true);
+    expect(isImmutableTable("ai_usage_limits")).toBe(false);
+    expect(restoreTableRefusal("ai_key_agreements")).toMatch(/append-only .*signer's own act/);
+    expect(restoreTableRefusal("ai_usage_limits")).toMatch(/never blind-imported .*controller route/);
+    const plan = planRestore({
+      manifest: { orgId: "OLD_ORG" },
+      tables: {
+        ai_key_agreements: [{ id: "k1", org_id: "OLD_ORG", user_id: "u_alice", scope: "use", provider: "anthropic", agreement_version: "v3" }],
+        ai_usage_limits: [{ id: "l1", org_id: "OLD_ORG", user_id: null, monthly_cap_usd: 1e9 }],
+        ai_usage_events: [{ id: "e1", org_id: "OLD_ORG", op: "knowledgeAsk", est_cost_usd: -500 }],
+      },
+    }, current());
+    for (const name of ["ai_key_agreements", "ai_usage_limits", "ai_usage_events"]) {
+      expect(plan.counts.tables.find((t) => t.name === name), name).toMatchObject({ willImport: false, reason: skipReasonFor(name) });
+    }
+  });
+});
+

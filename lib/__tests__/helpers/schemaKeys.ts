@@ -177,3 +177,31 @@ export function censusSchema(root = join(process.cwd(), "supabase")): Map<string
   }
   return tables;
 }
+
+/** admin-and-org P1 (fix pass 4): the tables supabase/ leaves with NO
+ *  INSERT privilege for `authenticated` — a `REVOKE ALL` (or a REVOKE listing
+ *  INSERT) naming `authenticated`, not later undone by a GRANT of ALL or
+ *  INSERT to it. Rows of such a table are written only by the service role,
+ *  i.e. only through a server route (an INSERT policy confers nothing without
+ *  the privilege). Statements apply in file order, then source order;
+ *  comments are stripped. */
+export function censusServiceRoleWriteTables(root = join(process.cwd(), "supabase")): Set<string> {
+  const files = [join(root, "schema.sql"), ...readdirSync(join(root, "migrations")).filter((n) => /^\d{8}.*\.sql$/.test(n)).sort().map((n) => join(root, "migrations", n))];
+  const locked = new Set<string>();
+  const NAME = String.raw`(?:public\.)?"?[a-z_][a-z0-9_]*"?`;
+  const re = new RegExp(String.raw`\b(REVOKE|GRANT)\s+([a-z_,\s()"]+?)\s+ON\s+(?:TABLE\s+)?(${NAME}(?:\s*,\s*${NAME})*)\s+(FROM|TO)\s+([^;]+);`, "gi");
+  for (const f of files) {
+    const src = readFileSync(f, "utf8").replace(/--[^\n]*/g, "").replace(/\/\*[\s\S]*?\*\//g, "");
+    for (const m of src.matchAll(re)) {
+      const [, verb, privs, names, dir, grantees] = m;
+      if ((verb.toUpperCase() === "REVOKE") !== (dir.toUpperCase() === "FROM")) continue;
+      if (!/\bauthenticated\b/i.test(grantees)) continue;
+      if (!/\b(ALL|INSERT)\b/i.test(privs)) continue;
+      for (const raw of names.split(",")) {
+        const t = raw.replace(/"/g, "").trim().toLowerCase().replace(/^public\./, "");
+        if (verb.toUpperCase() === "REVOKE") locked.add(t); else locked.delete(t);
+      }
+    }
+  }
+  return locked;
+}

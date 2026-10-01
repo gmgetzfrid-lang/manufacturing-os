@@ -95,8 +95,10 @@ export async function POST(req: NextRequest) {
     ...(refused.length ? { refused } : {}),
     ...(cleared.length ? { cleared } : {}),
   };
-  // A chunk that failed before writing anything leaves nothing to record.
-  if (!result.ok && inserted === 0 && refused.length === 0 && cleared.length === 0) {
+  // A chunk that failed before writing anything leaves nothing to record. A
+  // statement accepted without a count may have written rows (uncounted), so
+  // that chunk is recorded too (fix pass 4).
+  if (!result.ok && inserted === 0 && !uncounted && refused.length === 0 && cleared.length === 0) {
     return NextResponse.json({ error: result.error, ...(result.code ? { code: result.code } : {}), ...counts }, { status: result.status ?? 500 });
   }
 

@@ -143,10 +143,14 @@ export default function RestorePage() {
       // Current workspace context for the local plan. Members of every status
       // link by email, as /begin links them: a re-run finds the placeholders
       // an earlier run created (never a second set under new ids).
-      const [{ data: orgRow }, { data: memberRows }] = await Promise.all([
+      const [{ data: orgRow, error: orgReadErr }, { data: memberRows, error: memberReadErr }] = await Promise.all([
         supabase.from("orgs").select("name").eq("id", activeOrgId).maybeSingle(),
         supabase.from("org_members").select("uid, email, status").eq("org_id", activeOrgId).in("status", [...RESTORE_LINK_MEMBER_STATUSES]),
       ]);
+      // Checked (fix pass 4): a plan made against an unread member list would
+      // show every backup person as new — no plan is shown instead.
+      const readErr = memberReadErr ? { what: "members", e: memberReadErr } : orgReadErr ? { what: "name", e: orgReadErr } : null;
+      if (readErr) throw new Error(`Could not read this workspace's ${readErr.what} (${readErr.e.message}) — no plan was made and nothing was written.`);
       const members = ((memberRows ?? []) as Array<{ uid: string; email: string | null; status: string | null }>)
         .filter((m) => m.email).map((m) => ({ uid: m.uid, email: m.email as string, status: m.status }));
       const p = planRestore(envelope, {

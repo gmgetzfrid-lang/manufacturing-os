@@ -18,6 +18,13 @@
 //   4. audit (checked — a restore whose trail cannot be written must not
 //      look complete)
 //
+// Fail closed (admin-and-org P1, fix pass 4): the workspace reads, the
+// rename and every placeholder insert are checked. A read that fails answers
+// 500 before anything is written; a placeholder that cannot be made answers
+// 500 naming the address before any table is written (the person's backup
+// uid would otherwise stay unmapped and land in their rows) — a re-run links
+// the placeholders already made.
+//
 // ORG-1 / BKP-3: an envelope carrying rows for a table that is not on the
 // backup contract is refused with 400 before anything is written.
 //
@@ -49,12 +56,19 @@ export async function POST(req: NextRequest) {
   }
 
   // Current context → re-plan.
-  const { data: orgRow } = await sb.from("orgs").select("name").eq("id", orgId).maybeSingle();
+  const { data: orgRow, error: orgReadErr } = await sb.from("orgs").select("name").eq("id", orgId).maybeSingle();
   const orgName = (orgRow as { name?: string } | null)?.name ?? "";
   // Fix pass 3: every membership status links by email — a re-run finds the
   // placeholder an earlier run created instead of minting a second one under
   // a new uid (which would land every uid-keyed row again).
-  const { data: memberRows } = await sb.from("org_members").select("uid, email, status").eq("org_id", orgId).in("status", [...RESTORE_LINK_MEMBER_STATUSES]);
+  const { data: memberRows, error: memberReadErr } = await sb.from("org_members").select("uid, email, status").eq("org_id", orgId).in("status", [...RESTORE_LINK_MEMBER_STATUSES]);
+  // Fix pass 4: checked before anything is written — planned against an
+  // unread list, every backup person (active members included) would get a
+  // placeholder and every uid would be remapped to a dead one.
+  const readErr = memberReadErr ? { what: "members", e: memberReadErr } : orgReadErr ? { what: "name", e: orgReadErr } : null;
+  if (readErr) {
+    return NextResponse.json({ error: `Could not read this workspace's ${readErr.what} (${readErr.e.message}) — nothing was written.` }, { status: 500 });
+  }
   const members: CurrentMember[] = ((memberRows as Array<{ uid: string; email: string | null; status: string | null }> | null) ?? [])
     .filter((m) => m.email).map((m) => ({ uid: m.uid, email: m.email as string, status: m.status }));
   const plan = planRestore(envelope, { orgId, orgName, members });
@@ -69,15 +83,21 @@ export async function POST(req: NextRequest) {
     );
   }
 
-  // 1) Org-name choice.
+  // 1) Org-name choice — checked (fix pass 4): the audit row says whether it applied.
+  let orgNameApplied = false;
   if (plan.orgNameCollision && parsed.orgNameChoice === "backup") {
-    await sb.from("orgs").update({ name: plan.orgNameCollision.backupName }).eq("id", orgId);
+    const { error: renameErr } = await sb.from("orgs").update({ name: plan.orgNameCollision.backupName }).eq("id", orgId);
+    if (renameErr) {
+      return NextResponse.json({ error: `Could not apply the backup's workspace name (${renameErr.message}) — nothing was written.` }, { status: 500 });
+    }
+    orgNameApplied = true;
   }
 
   // 2) Restored placeholders for unknown emails.
   const created: Record<string, string> = {};
   let createdUsers = 0;
   let placeholdersWithoutProfile = 0;
+  let placeholderFailed: { email: string; message: string } | null = null;
   for (const u of plan.users.filter((x) => x.disposition === "new" && x.oldUid)) {
     const newUid = globalThis.crypto?.randomUUID?.() || `restored-${u.oldUid}`;
     const { error } = await sb.from("org_members").insert({
@@ -86,15 +106,39 @@ export async function POST(req: NextRequest) {
       org_id: orgId, uid: newUid, email: u.email, role: restoredMemberHeadline(restoredMemberRoles(u.role, u.roles)), roles: restoredMemberRoles(u.role, u.roles),
       status: "inactive", display_name: u.displayName ?? null,
     });
-    if (!error) {
-      // A profile row exists only for a sign-in account (users.id references
-      // auth.users), so the database refuses it for a placeholder: counted
-      // and reported, never swallowed — rows that must name a profile cannot
-      // name this person until they accept an invitation.
-      if (!(await placeholderProfile(sb, newUid, u.email, u.displayName))) placeholdersWithoutProfile++;
-      created[u.oldUid] = newUid;
-      createdUsers++;
-    }
+    // Fix pass 4: a person with no placeholder would keep their backup uid,
+    // and every row naming them would land naming it. Stop before any table.
+    if (error) { placeholderFailed = { email: u.email, message: error.message }; break; }
+    // A profile row exists only for a sign-in account (users.id references
+    // auth.users), so the database refuses it for a placeholder: counted
+    // and reported, never swallowed — rows that must name a profile cannot
+    // name this person until they accept an invitation.
+    if (!(await placeholderProfile(sb, newUid, u.email, u.displayName))) placeholdersWithoutProfile++;
+    created[u.oldUid] = newUid;
+    createdUsers++;
+  }
+  if (placeholderFailed) {
+    // What this run did write (placeholders, the name) still leaves its trail.
+    const { error: failAuditErr } = await sb.from("audit_logs").insert({
+      action: "DATA_RESTORE", resource_id: orgId, resource_type: "org", org_id: orgId,
+      user_id: actor.userId, user_email: actor.email,
+      details: {
+        schemaVersion: plan.schemaVersion, createdUsers, placeholdersWithoutProfile, orgNameApplied,
+        linkedUsers: plan.counts.matchedUsers, totalInserted: 0, totalExisting: 0, totalHeldElsewhere: 0,
+        backupOrgId: envelope.manifest.orgId ?? null, tables: [],
+        failed: `placeholder for ${placeholderFailed.email}: ${placeholderFailed.message}`,
+      },
+    });
+    return NextResponse.json(
+      {
+        error:
+          `Could not create the restored placeholder for ${placeholderFailed.email} (${placeholderFailed.message}). No table was written. ` +
+          `${createdUsers} placeholder(s) made before it${orgNameApplied ? " and the backup's workspace name" : ""} are kept — a re-run links them, never duplicates them.` +
+          (failAuditErr ? ` (And the restore audit row failed: ${failAuditErr.message}.)` : ""),
+        createdUsers, totalInserted: 0, tables: [],
+      },
+      { status: 500 },
+    );
   }
   const idRemap = mergeNewUserUids(plan.idRemap, created);
 
@@ -148,7 +192,7 @@ export async function POST(req: NextRequest) {
     action: "DATA_RESTORE", resource_id: orgId, resource_type: "org", org_id: orgId,
     user_id: actor.userId, user_email: actor.email,
     details: {
-      schemaVersion: plan.schemaVersion, createdUsers, placeholdersWithoutProfile,
+      schemaVersion: plan.schemaVersion, createdUsers, placeholdersWithoutProfile, orgNameApplied,
       linkedUsers: plan.counts.matchedUsers, totalInserted, totalExisting, totalHeldElsewhere,
       backupOrgId: envelope.manifest.orgId ?? null,
       tables: results.map((r) => ({ name: r.name, inserted: r.inserted, existing: r.existing ?? 0, ...(r.heldElsewhere ? { heldElsewhere: r.heldElsewhere } : {}), error: r.error, ...(r.refused ? { refused: r.refused.length } : {}), ...(r.cleared ? { cleared: r.cleared.length } : {}) })),
