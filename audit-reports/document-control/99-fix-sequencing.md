@@ -161,7 +161,7 @@ themselves app changes.)*
 **Order.**
 
 0. Paste the `DRLS-16` hotfix now (below) — migration `20261129_dc_hotfix_anon_execute.sql` — independent of everything else.
-1. Deploy the `DRLS-15` and `DRLS-17` page fixes.
+1. Deploy the `DRLS-15` and `DRLS-17` page fixes (assigned 2026-10-01 to package P12 WAVE-2 RESIDUALS, which ships them first).
 2. Paste `20261130` (the override reason inside `publish_revision`).
 3. Paste `20261131` (the documents-table rails) — only now (rule 1).
 4. Deploy the wave-2 app immediately after (rule 2 met), to keep the window

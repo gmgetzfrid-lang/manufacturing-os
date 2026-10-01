@@ -846,7 +846,8 @@
      "REL-3",
      "UX-13",
      "UX-15",
-     "MON-7"
+     "MON-7",
+     "CHART-6"
     ],
     "projects-and-cost": []
    },
@@ -880,6 +881,46 @@
     "REL-3 \u2014 default: a fixed map of known Postgres/PostgREST codes \u2192 plain sentences, with an 'unexpected' fallback that names no internals; raw detail goes to console.error only",
     "MON-7 quality dimension \u2014 default: an accepted turnover item counts for the company bound to the item's party; unbound parties stay Unrated (null), never 0"
    ]
+  },
+  {
+   "name": "J11 PROJECTS RESIDUALS",
+   "projectsTabPackages": [],
+   "projectsAndCostPackages": [],
+   "findings": {
+    "projects-tab": [
+     "SEC-18",
+     "SEC-19",
+     "SEC-20",
+     "UX-16"
+    ],
+    "projects-and-cost": [
+     "INTK-15",
+     "INTK-16",
+     "PM-15",
+     "COST-15"
+    ]
+   },
+   "files": [
+    "INTK-15: app/api/intake/upload/route.ts + app/submit/[token]/page.tsx + lib/storage.ts \u2014 the contractor door uploads straight to storage (presigned PUT / multipart above MULTIPART_THRESHOLD) and the route finalizes, keeping J1's sniff, rate limit, collision scan and post-publish pipeline on the finalize step",
+    "INTK-16: the adoption collision re-check moves server-side (a route or a guard trigger), so a direct update of an intake row cannot skip it",
+    "SEC-19: project_intake_links tokens stored as a hash (migration: hash column, backfill, compare by hash; DEC-45 export redaction unchanged)",
+    "SEC-20: audit rows about a private project readable only by those who can read the project (migration replacing the audit_logs SELECT predicate for project-scoped rows, from its NEWEST definition)",
+    "SEC-18: the archive-aware opener and the data-export envelope sign presigned downloads with a disposition (attachment, sanitized filename) like download-url",
+    "PM-15: the six other CSV exports (admin/audit, register, ownership register, requests, knowledge drawing, CommandDeck) use PM-10's formula-escaping helper",
+    "COST-15: a quote whose total was typed before any read can still have its line items read (cost-docs route + QuotesPanel)",
+    "UX-16: the evidence sweep runs when evidence actually arrives (the upload / link writers trigger it), not only on page load"
+   ],
+   "migrationsLikely": 2,
+   "when": "after J2b; BEFORE J10 (J10 stays last)",
+   "dependsOn": [
+    "J1 INTAKE-DOOR, J2 QUALITY, J3, J8 merged (every file here is a merged package's; narrow edits)",
+    "DEC-45 (export redaction), DEC-30 inventories for the hash backfill and the audit predicate (counts only)"
+   ],
+   "decisionsNeeded": [
+    "SEC-19 default: SHA-256 of the token with a per-row salt is unnecessary for 32-byte random tokens \u2014 store sha256(token) hex, compare by hash; links minted before the migration are hashed in place (the plain column dropped after the backfill)",
+    "INTK-15 default: presigned direct upload with a server finalize; the 4.5 MB serverless body limit no longer applies"
+   ],
+   "sequencingNotes": "Added by the integrator 2026-10-01 for the OPEN findings Round G packages opened (DEC-31 remainders) and no package owned. CHART-6 went to J10 (surface sweep)."
   }
  ],
  "ownershipRule": "Where the two briefs disagree on a shared file, projects-and-cost's proposal applies: libs / API routes / migrations follow the projects-and-cost brief, components / pages follow the projects-tab brief; the schedule engine (lib/milestones.ts, criticalPath.ts, executionReport.ts) follows projects-tab's P6b brief with PC-4's rollup semantics folded in.",
@@ -887,6 +928,6 @@
   "now: J2, J3, J4, J6a, J7 (minus QUAL-10), J9 route half",
   "then: J5 (after J3), J6b (after J6a)",
   "after DC P4: J1; after DC P6: J8; after DC P2: J9 egress half; after DC P7: J7 QUAL-10 limb, J2b",
-  "last: J10"
+  "then: J11 (after J2b); last: J10"
  ]
 }

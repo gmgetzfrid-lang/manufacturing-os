@@ -597,6 +597,7 @@ lib/staleCopies.ts:197 `category: "status"`; lib/notify/dispatch.ts:53 the mappi
 
 - **Severity:** MEDIUM
 - **Status:** OPEN
+- **Assigned:** document-control P12 WAVE-2 RESIDUALS — by the integrator, 2026-10-01 (fleet plan `audit-reports/fleet-plans/`).
 - **Verification:** SUSPECTED
 - **Locations:** `lib/documentShares.ts:216-231`, `app/api/share/list/route.ts:61-66`, `components/documents/ShareLinkModal.tsx:283`
 - **Opened by:** document-control Round F wave 2 (P1 SHARE, 2026-09-23) as the DEC-31 remainder of `DIST-6` / public-surfaces `SHR-4` (their third criterion). Author-graded: no independent challenge yet.

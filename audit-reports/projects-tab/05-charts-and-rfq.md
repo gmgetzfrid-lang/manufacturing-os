@@ -271,6 +271,7 @@ regardless of whether a schedule span exists.
 
 - **Severity:** MEDIUM
 - **Status:** OPEN
+- **Assigned:** projects J10 SURFACE-SWEEP — by the integrator, 2026-10-01 (fleet plan `audit-reports/fleet-plans/`).
 - **Verification:** CONFIRMED (measured contrast)
 - **Blast radius:** accessibility
 - **Locations:**

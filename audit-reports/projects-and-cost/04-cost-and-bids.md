@@ -690,6 +690,7 @@ lib/costDocs.ts:312-315 — `if (doc.status === "awarded" || doc.status === "pos
 
 - **Severity:** LOW
 - **Status:** OPEN
+- **Assigned:** projects J11 PROJECTS RESIDUALS — by the integrator, 2026-10-01 (fleet plan `audit-reports/fleet-plans/`).
 - **Verification:** CONFIRMED
 - **Locations:** `app/api/projects/cost-docs/route.ts:100`, `components/projects/cost/QuotesPanel.tsx:437`, `components/projects/cost/QuotesPanel.tsx:694`
 - **Independently verified:** — (`author`: opened at the J3 x J4 merge of projects Round G, from J4's recorded remainder on `COST-13`)

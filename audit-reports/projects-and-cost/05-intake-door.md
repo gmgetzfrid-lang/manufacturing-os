@@ -648,6 +648,7 @@ upload/route.ts:232-240 `if (!collectionId) { const { data: col, error: colErr }
 
 - **Severity:** MEDIUM
 - **Status:** OPEN
+- **Assigned:** projects J11 PROJECTS RESIDUALS — by the integrator, 2026-10-01 (fleet plan `audit-reports/fleet-plans/`).
 - **Verification:** CONFIRMED (by reading; the platform body limit is SUSPECTED, as in `INTK-8`)
 - **Locations:** `app/api/intake/upload/route.ts` (`req.formData()` then `file.arrayBuffer()`), `app/submit/[token]/page.tsx` (the `fetch` of the multipart body), `lib/storage.ts` (`getPresignedUploadUrl`, the S3 multipart path above `MULTIPART_THRESHOLD`)
 - **Independently verified:** — (`author`: opened by projects Round G package J1 while resolving `INTK-8`, per `DEC-31`; not yet challenged)
@@ -672,6 +673,7 @@ upload/route.ts:232-240 `if (!collectionId) { const { data: col, error: colErr }
 - **Severity:** MEDIUM
 - **Severity rationale:** Reachable only outside the app's adoption path (a controller-tier session or a script under its token), but the result is the two live same-numbered documents `INTK-3` exists to prevent.
 - **Status:** OPEN
+- **Assigned:** projects J11 PROJECTS RESIDUALS — by the integrator, 2026-10-01 (fleet plan `audit-reports/fleet-plans/`).
 - **Verification:** CONFIRMED (by reading; not exercised against a live database)
 - **Blast radius:** document-control integrity
 - **Locations:** `lib/transitionIn.ts:397-511` (`adoptDocument` — the re-scan, `blockingNumberCollision` at :455, the look-up outside the destination at :457 and the `documents` update at :511, all on the shared client in the caller's browser session), `components/projects/TransitionInPanel.tsx:148,169` (the panel calls it), `supabase/migrations/20261011_collections_guard_and_trash.sql:38-56` (`enforce_document_move_guard` — fires on a `collection_id` change and asks only whether the actor is a controller), `supabase/migrations/20260619_document_uniqueness_configurable.sql:40-42` (the partial unique index is per `library_id`)

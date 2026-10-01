@@ -331,7 +331,8 @@
     "ALOG-2",
     "ALOG-14",
     "ALOG-9 residual",
-    "ORG-10 residual"
+    "ORG-10 residual",
+    "roles-and-permissions WF-10 (added by the integrator 2026-10-01: the 60-second server-side policy cache is invalidated when a policy, grant or membership changes \u2014 a revoked person stops acting at once)"
    ],
    "files": [
     "components/permissions/PermissionsExplorer.tsx (capability rows rendered from CAPABILITY_DEFS + stored policy; five named mismatches corrected)",

@@ -879,6 +879,7 @@ Tests: `projectsRls.test.ts` "SEC-17 / PM-8 — project_documents"; `projectRail
 
 - **Severity:** MEDIUM
 - **Status:** OPEN
+- **Assigned:** projects J11 PROJECTS RESIDUALS — by the integrator, 2026-10-01 (fleet plan `audit-reports/fleet-plans/`).
 - **Verification:** CONFIRMED
 - **Blast radius:** security
 - **Locations:**
@@ -927,6 +928,7 @@ in `lib/__tests__/presignedDisposition.test.ts`.
 
 - **Severity:** LOW
 - **Status:** OPEN
+- **Assigned:** projects J11 PROJECTS RESIDUALS — by the integrator, 2026-10-01 (fleet plan `audit-reports/fleet-plans/`).
 - **Verification:** CONFIRMED (by reading)
 - **Blast radius:** security
 - **Locations:**
@@ -953,6 +955,7 @@ in `lib/__tests__/presignedDisposition.test.ts`.
 
 - **Severity:** MEDIUM
 - **Status:** OPEN
+- **Assigned:** projects J11 PROJECTS RESIDUALS — by the integrator, 2026-10-01 (fleet plan `audit-reports/fleet-plans/`).
 - **Verification:** CONFIRMED (policy read; not exercised against a live database)
 - **Blast radius:** data-confidentiality
 - **Locations:**

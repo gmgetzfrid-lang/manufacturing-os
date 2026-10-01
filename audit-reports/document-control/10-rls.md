@@ -382,6 +382,7 @@ schema.sql:1090 `CREATE POLICY "download_audits_org_access" ON download_audits F
 
 - **Severity:** MEDIUM
 - **Status:** OPEN
+- **Assigned:** document-control P12 WAVE-2 RESIDUALS — by the integrator, 2026-10-01 (fleet plan `audit-reports/fleet-plans/`).
 - **Verification:** CONFIRMED
 - **Locations:** `supabase/migrations/20260823_publish_contract.sql:112-117`, `supabase/migrations/20260823_publish_contract.sql:70-95`, `supabase/schema.sql:1217-1236`
 - **Independently verified:** ✓ **SURVIVES** — second independent adversarial pass. Correct, and the migration comment shows the breadth was deliberate ('any active org member may resolve') rather than an oversight — which is exactly why it reads as a design gap at MEDIUM rather than a bug. Nothing verifies that a merge actually happened.
@@ -615,6 +616,7 @@ schema.sql:144 `current_version_id UUID,` — the column immediately follows `st
 
 - **Severity:** MEDIUM
 - **Status:** OPEN
+- **Assigned:** document-control P12 WAVE-2 RESIDUALS (a deploy prerequisite of `20261131`) — by the integrator, 2026-10-01 (fleet plan `audit-reports/fleet-plans/`).
 - **Verification:** CONFIRMED
 - **Locations:** `app/(protected)/documents/[libraryId]/page.tsx:2662-2683`, `components/documents/MetadataEditor.tsx:188-196`, `components/documents/MetadataEditor.tsx:381-382`, `components/documents/BulkEditModal.tsx:57-58`, `supabase/migrations/20261131_dc_roundF_documents_rails.sql`
 - **Independently verified:** — opened 2026-09-30 by document-control Round F wave 2 (P3 LIFECYCLE) while closing `DRLS-3`, per DEC-31 (the remainder of a fix that would otherwise reach into another package's file); verified against the code at `a11e1e4`, not yet challenged by a second party.
@@ -689,6 +691,7 @@ SELECT 'authenticated can still execute publish_revision/11 (expect ok = true)',
 
 - **Severity:** MEDIUM
 - **Status:** OPEN
+- **Assigned:** document-control P12 WAVE-2 RESIDUALS (a deploy prerequisite of `20261131`) — by the integrator, 2026-10-01 (fleet plan `audit-reports/fleet-plans/`).
 - **Verification:** CONFIRMED
 - **Locations:** `app/(protected)/documents/[libraryId]/page.tsx:1245-1289` (`confirmDeleteDoc`), `supabase/migrations/20261131_dc_roundF_documents_rails.sql` (the evidence FKs, NO ACTION)
 - **Independently verified:** — opened 2026-09-30 by document-control Round F wave 2 (P3 LIFECYCLE, review fix) for the consequence of `DRLS-14`'s evidence FKs in another package's file, per DEC-31; not yet challenged by a second party.

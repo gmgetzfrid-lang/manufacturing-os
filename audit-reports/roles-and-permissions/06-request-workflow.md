@@ -527,6 +527,7 @@ intermittent unexplained 409s during approval.
 
 - **Severity:** MEDIUM
 - **Status:** OPEN
+- **Assigned:** admin-and-org P9 (permissions console truth and access recertification) — by the integrator, 2026-10-01 (fleet plan `audit-reports/fleet-plans/`).
 - **Verification:** CONFIRMED (currently masked by `WF-1`)
 - **Blast radius:** security
 - **Locations:**

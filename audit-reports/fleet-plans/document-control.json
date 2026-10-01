@@ -28,7 +28,8 @@
   "HLD-6": "P9",
   "RET-9": "P9",
   "DRLS-11": "P9",
-  "TRX-11": "P7"
+  "TRX-11": "P7",
+  "DRLS-16": "integrator hotfix (2026-10-01): migration 20261129 revokes anon on every publish_revision / post_ticket_comment overload and lists the live sweep; lib/__tests__/dcHotfixAnonExecute.test.ts is done-when 3. Closes on the operator's paste and the sweep read-back \u2014 no package"
  },
  "packages": [
   {
@@ -297,7 +298,8 @@
     "PKG-10",
     "HLD-1 (download/footer limb)",
     "REV-9 (consumer of P3's helper)",
-    "HLD-4 (record-only)"
+    "HLD-4 (record-only)",
+    "TRX-15 (added by the integrator 2026-10-01: a stamping consumer \u2014 the transmittal portal's >64 MiB unstamped path and its in-memory download; P7 TRANSMITTALS opened it)"
    ],
    "files": [
     "lib/docPack.ts",
@@ -305,14 +307,16 @@
     "app/(protected)/packages/page.tsx",
     "lib/downloads.ts (logDownloadAudit {error}; buildFooterNotice hold line)",
     "components/viewers/MultiDocViewer.tsx",
-    "app/api/verify-package/route.ts \u2014 NOT edited (PS-VERIFY owns it; HLD-3/PKG-8 close by pointer)"
+    "app/api/verify-package/route.ts \u2014 NOT edited (PS-VERIFY owns it; HLD-3/PKG-8 close by pointer)",
+    "app/api/transmittals/portal/** and the portal page \u2014 TRX-15 only (P7's merged files; the stamping helpers stay PS-STAMP's)"
    ],
    "migrationsLikely": 0,
    "dependsOn": [
     "P5 HOLDS assertNotOnHold (HLD-1 banner/refusal limb)",
     "P3 for REV-9's shared 'today' helper (one-line consumer)",
     "Report 07 substrate + Phase 7b: filterPackDocs/assessPackDocs gate \u2192 snapshot \u2192 download \u2192 pins-last ordering (PKG-6) is verified sound \u2014 keep 'gate before any side-effect' and print snapshot = paper",
-    "DEC-40 (projects link by reference)"
+    "DEC-40 (projects link by reference)",
+    "PS-STAMP merged (TRX-15 consumes lib/stamping.ts as PS-STAMP leaves it)"
    ],
    "sequencingNotes": "Wave 2. The verify-package half of item 2 was left hold-blind with an inline literal (the DIST-2 lesson) \u2014 PS-VERIFY finishes it with ONE shared helper; P8 must not touch the verify routes."
   },
@@ -414,6 +418,34 @@
     "P9 RECORDS (merged): retention_until / disposition_state are the fields the retention limb reads"
    ],
    "sequencingNotes": "Added by the integrator at the I-01A merge (2026-10-01): no fleet plan owned the storage-delete route. Small; schedule with wave 2."
+  },
+  {
+   "name": "P12 WAVE-2 RESIDUALS \u2014 the library page's rails (the 20261131 deploy prerequisites), the creation paths' review clock, the guard's require-mode first issue, revision-branch close-out, the share inventory",
+   "findings": [
+    "DRLS-15 (deploy prerequisite of 20261131: the metadata editor and bulk editor stop writing documents.rev; saveMetadata checks its result)",
+    "DRLS-17 (deploy prerequisite of 20261131: the delete flow never clears the pointer first; a refusal leaves the document as it was)",
+    "REV-15 (split / merge sheets and the bulk upload start the review clock and the ack roster, or record why not; J1's pointer-census exemptions re-reasoned)",
+    "REV-17 (enforce_document_publish_guard refuses a non-controller's first issue under require mode, re-created from its NEWEST body with a lineDiff proof; intake-linked versions exempt)",
+    "DRLS-9 (revision_branches close-out: UPDATE gains a WITH CHECK that only a publisher of the document resolves a branch, with a non-empty resolution note)",
+    "DIST-15 (an org-wide share-link inventory with per-row and bulk revoke through revokeShareLink, controller tier)",
+    "public-surfaces SHR-14 (the share INSERT rail refuses a creator denied download on the document \u2014 20261080's rail re-created from its newest body)"
+   ],
+   "files": [
+    "app/(protected)/documents/[libraryId]/page.tsx \u2014 saveMetadata, confirmDeleteDoc, uploadOne ONLY (P6 CHECKOUT's file, merged; identity IS-P1 and intelligence I-12 edit it after this package)",
+    "components/documents/MetadataEditor.tsx, components/documents/BulkEditModal.tsx",
+    "lib/documentLifecycle/common.ts, split.ts, merge.ts (createNewDocWithFirstVersion \u2014 the review clock / ack roster start, the same calls createDocumentWithFile makes)",
+    "lib/revisions.ts \u2014 read-only reference for createDocumentWithFile / resolveCreationReviewGate unless a shared helper is extracted",
+    "lib/__tests__/intakeUploadRoute.test.ts \u2014 the pointer census's pinned exemptions (REV-15 done-when 2)",
+    "new app/(protected)/admin/shares/page.tsx (or a section of an existing admin page) + an org-wide list route; lib/documentShares.ts revokeShareLink reused",
+    "new migration(s): enforce_document_publish_guard re-created from 20261105's body (REV-17) with a DEC-30 inventory of non-controller first issues under require mode; revision_branches_org_update replaced (DRLS-9); the share INSERT rail from 20261080 re-created with the download-deny check (SHR-14)"
+   ],
+   "migrationsLikely": 2,
+   "dependsOn": [
+    "P3 LIFECYCLE merged (DRLS-15/DRLS-17/REV-15/REV-17 were opened by it; 20261131 is its migration and must not be pasted before DRLS-15/DRLS-17 deploy)",
+    "P1 SHARE merged (revokeShareLink, 20261066's SELECT policy, 20261080's rail)",
+    "J1 INTAKE-DOOR merged (20261105 is the newest enforce_document_publish_guard; SEC-13 binds intake-linked versions)"
+   ],
+   "sequencingNotes": "Added by the integrator 2026-10-01 for the OPEN findings that wave 2 opened (DEC-31 remainders) and no package owned. DRLS-15 and DRLS-17 first \u2014 they gate the 20261131 paste. Runs before identity IS-P1 and intelligence I-12 (both edit the library page after the DC waves)."
   }
  ],
  "crossAreaFileOverlaps": [

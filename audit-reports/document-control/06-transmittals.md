@@ -666,6 +666,7 @@ lib/publicOrigin.ts:8-11 — `// point at the PUBLIC production domain. \`window
 
 - **Severity:** LOW
 - **Status:** OPEN
+- **Assigned:** document-control P8 FIELD (a stamping consumer; after PS-STAMP merges) — by the integrator, 2026-10-01 (fleet plan `audit-reports/fleet-plans/`).
 - **Verification:** CONFIRMED (by reading; the bound and the fallback are pinned in `lib/__tests__/transmittalPortalRoute.test.ts`)
 - **Blast radius:** document-control integrity (an uncontrolled copy without its marking)
 - **Locations:**

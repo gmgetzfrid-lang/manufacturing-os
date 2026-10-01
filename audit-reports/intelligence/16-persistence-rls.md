@@ -526,6 +526,7 @@ lib/schemaExpectations.ts:11-13 — `// Generated from supabase/migrations (CREA
 
 - **Severity:** LOW
 - **Status:** OPEN
+- **Assigned:** intelligence I-03 THE ASK ROUTE — by the integrator, 2026-10-01 (fleet plan `audit-reports/fleet-plans/`).
 - **Verification:** CONFIRMED
 - **Locations:** `lib/answerSkillsServer.ts` (`loadAnswerSkillsBlock`), `app/api/knowledge/ask/route.ts` (the answer response), `app/api/orchestrator/route.ts`
 - **Opened 2026-09-30 (intelligence Round G, I-08)** as the remainder of `IRLS-3` (`DEC-31`): `IRLS-3`'s third done-when is in the ask route and the answer UI, which another package owns (I-03).
@@ -545,6 +546,7 @@ lib/schemaExpectations.ts:11-13 — `// Generated from supabase/migrations (CREA
 
 - **Severity:** LOW
 - **Status:** OPEN
+- **Assigned:** intelligence I-14 GRAPH PAGE, LENSES & RENDERERS (the `lib/orgGraph.ts` half coordinates with I-13) — by the integrator, 2026-10-01 (fleet plan `audit-reports/fleet-plans/`).
 - **Verification:** CONFIRMED
 - **Locations:** `app/(protected)/graph/page.tsx`, `lib/orgGraph.ts` (mention edges), `lib/mentions.ts` `mentionCoverage`
 - **Opened 2026-09-30 (intelligence Round G, I-08)** as the remainder of `IRLS-4` (`DEC-31`): the graph page belongs to another package (I-14).

@@ -707,6 +707,7 @@ shown on that tab), **EAC** (never rendered — the forecast is a sentence),
 
 - **Severity:** MEDIUM
 - **Status:** OPEN
+- **Assigned:** projects J11 PROJECTS RESIDUALS — by the integrator, 2026-10-01 (fleet plan `audit-reports/fleet-plans/`).
 - **Verification:** CONFIRMED
 - **Blast radius:** copy-truth / workflow
 - **Locations:**

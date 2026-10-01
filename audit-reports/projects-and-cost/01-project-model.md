@@ -827,6 +827,7 @@ No `SET search_path`. The unqualified `org_members` and `auth.uid()` resolve thr
 
 - **Severity:** MEDIUM
 - **Status:** OPEN
+- **Assigned:** projects J11 PROJECTS RESIDUALS — by the integrator, 2026-10-01 (fleet plan `audit-reports/fleet-plans/`).
 - **Verification:** CONFIRMED (the producers located by `grep -rln 'text/csv' app lib components`; each builds its cells without `lib/csvSafe`)
 - **Locations:** `app/(protected)/admin/audit/page.tsx:450` (audit export), `app/(protected)/register/page.tsx:59-64` → `lib/docControlRegister.ts` `registerToCsv`, `app/(protected)/admin/permissions/page.tsx:209` → `lib/ownership.ts` `ownershipRegisterToCsv`, `app/(protected)/requests/page.tsx:587`, `app/api/knowledge/drawing/route.ts:147`, `components/cockpit/CommandDeck.tsx:342`
 - **Related:** `PM-10` (split from its done-when 2 per `DEC-31`)

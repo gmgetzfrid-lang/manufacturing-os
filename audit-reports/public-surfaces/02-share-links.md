@@ -623,6 +623,7 @@ schema.sql:1022 `ALTER TABLE download_audits ENABLE ROW LEVEL SECURITY;` and sch
 
 - **Severity:** LOW
 - **Status:** OPEN
+- **Assigned:** document-control P12 WAVE-2 RESIDUALS (the share INSERT rail is `20261080`, a document-control migration) — by the integrator, 2026-10-01 (fleet plan `audit-reports/fleet-plans/`).
 - **Verification:** SUSPECTED
 - **Locations:** `supabase/migrations/20261080_dc_roundF_share_minting_and_revocation.sql:150-177`, `lib/documentShares.ts:105-115`, `components/documents/ShareLinkModal.tsx:165`, `lib/downloadDeny.ts:65-86`, `lib/shareServe.ts:210-215`
 - **Opened by:** document-control Round F wave 2 verification fix (P1 SHARE, 2026-09-30) as the DEC-31 remainder of `SHR-3` — the mint-time half of its deny-download limb (the serve-time half is closed; `SHR-3`'s criteria are resolve-time only). Author-graded: no independent challenge yet.

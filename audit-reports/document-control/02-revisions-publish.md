@@ -650,6 +650,7 @@ lib/revisions.ts:1470-1471 — "// Record the (old → new) join rows. Idempoten
 
 - **Severity:** MEDIUM
 - **Status:** OPEN
+- **Assigned:** document-control P12 WAVE-2 RESIDUALS — by the integrator, 2026-10-01 (fleet plan `audit-reports/fleet-plans/`).
 - **Verification:** CONFIRMED
 - **Locations:** `lib/documentLifecycle/common.ts` (`createNewDocWithFirstVersion`), `lib/documentLifecycle/split.ts`, `lib/documentLifecycle/merge.ts`, `app/(protected)/documents/[libraryId]/page.tsx` (`uploadOne`), `lib/revisions.ts` (`createDocumentWithFile` — the path that does start them), `lib/__tests__/intakeUploadRoute.test.ts` (the pointer census's pinned exemptions)
 - **Independently verified:** — opened 2026-09-30 by document-control Round F wave 2 (P3 LIFECYCLE, review fix) from the `REV-11` verifier's "opposite defect", per DEC-31; verified against the branch, not yet challenged by a second party.
@@ -704,6 +705,7 @@ lib/revisions.ts:1470-1471 — "// Record the (old → new) join rows. Idempoten
 
 - **Severity:** MEDIUM
 - **Status:** OPEN
+- **Assigned:** document-control P12 WAVE-2 RESIDUALS — by the integrator, 2026-10-01 (fleet plan `audit-reports/fleet-plans/`).
 - **Verification:** CONFIRMED
 - **Locations:** `supabase/migrations/20261105_prj_roundG_intake_review_and_attempts.sql:415` (`enforce_document_publish_guard`, newest body — the RG-7 block), `lib/revisions.ts` (`resolveCreationReviewGate`, `createDocumentWithFile`), `lib/documentLifecycle/common.ts` (`createNewDocWithFirstVersion`), DEC-63 (P3 LIFECYCLE) §2
 - **Independently verified:** — opened 2026-09-30 by document-control Round F wave 2 (P3 LIFECYCLE, review fix 4) from the reviewer's finding on `REV-11`, per DEC-31; verified against the branch, not yet challenged by a second party.

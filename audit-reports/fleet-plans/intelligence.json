@@ -207,7 +207,8 @@
         "ASK-7",
         "ASK-9",
         "ASK-10",
-        "SEM-10"
+        "SEM-10",
+        "IRLS-13 (added by the integrator 2026-10-01; opened by I-08: an answer names the Reasoning Skills that shaped it — loadAnswerSkillsBlock, the ask response, the orchestrator)"
       ],
       "severityMix": "0 CRITICAL / 5 HIGH / 13 MEDIUM / 1 LOW",
       "files": [
@@ -797,7 +798,8 @@
         "GPV-10",
         "GPV-11",
         "GPV-12",
-        "GPV-13"
+        "GPV-13",
+        "IRLS-14 (added by the integrator 2026-10-01; opened by I-08: the graph says when the mention index is unbuilt or failed instead of drawing an empty map — mentionCoverage; the orgGraph half coordinates with I-13)"
       ],
       "severityMix": "0 CRITICAL / 0 HIGH / 11 MEDIUM / 2 LOW",
       "files": [
