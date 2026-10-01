@@ -132,6 +132,19 @@ Three differently-shaped searches: (1) `unit_id` across all .ts/.tsx — 30 hits
 - [ ] lib/search.ts's plant/unit/system filters return non-empty results for a scoped org, or are removed
 - [ ] a `unit:` node survives the degree-0 prune in a real org
 
+**Partial (2026-10-01, intelligence Round G).** Reproduced first (DEC-29): `lib/__tests__/orgGraph.test.ts` run against the base commit's `lib/orgGraph.ts` (57609d2) fails 22 of its 23 cases, each on a finding's own mechanism — here a mapped operational unit's paper and equipment never met. Decision (the plan's default, `DEC-44`): keep plants / units / systems and the Site Codebook, JOIN them (`units.codebook_code`, 20261138), retire nothing. What landed: `/admin/scope` maps each operational unit to its codebook unit (the `UnitMapping` control → `setUnitCodebookCode`, a checked write) and runs the unit-identity decode from its Unit identity panel (`POST /api/admin/unit-identity`): documents.unit_code from each drawing number, assets.unit_id from the mapping. `lib/orgGraph.ts` draws documents' and assets' plant_id / system_id / unit_id, and a mapped unit is its codebook node.
+
+Tests: `lib/__tests__/orgGraph.test.ts`, `lib/__tests__/intelRoundGUnitIdentity.test.ts` (route, planner, mapping write).
+
+**Pending migration:** `supabase/migrations/20261138_intel_roundG_unit_identity.sql` (hand-applied; one paste — its result set carries the pre-apply inventory and every probe). Until it is applied the graph builds on the legacy columns and says so ("The unit-identity migration (20261138) is not applied …"), and the decode route answers 409.
+
+**Done-when.**
+1. ✓ "A UI writes … assets.unit_id and the graph joins …": the /admin/scope decode writes assets.unit_id, and the graph joins operational and codebook units through `units.codebook_code` (units.code is another namespace — "U100" against "20" — so the join is the mapping, not the code string). documents.unit_id stays a configured scope by the decision; a document's decoded unit is documents.unit_code (GAP-305 acceptance 2), and the decode never writes documents.unit_id.
+2. Partly. `searchAssets({ unitId })` now returns the unit's equipment (assets.unit_id is filled for every mapped filing). **Not met:** `lib/search.ts` `searchDocuments`' unitId / systemId filters and the "sibling documents in the same system" narrowing still read documents.unit_id / system_id only, which no UI writes; `lib/search.ts` is not in this package's files.
+3. ✓ A unit identity survives the prune in a real org: a mapped unit is `cbunit:<code>` with its plant edge, paper and equipment; an unmapped units row keeps its unit → plant edge.
+
+**Scope / residual.** Remaining limb (for whoever next owns `lib/search.ts` — I-10 last edited it): let `searchDocuments`' unitId filter also match documents.unit_code = the code that unit is mapped to, or drop the plant / unit / system parameters no caller passes. Apply 20261138.
+
 ---
 
 <a id="wire-4"></a>
@@ -139,7 +152,7 @@ Three differently-shaped searches: (1) `unit_id` across all .ts/.tsx — 30 hits
 ## WIRE-4 · Nine entity classes are invisible to the graph, which is why the "Process" and "Equipment" lenses do not describe what they show
 
 - **Severity:** LOW
-- **Status:** OPEN
+- **Status:** WONTFIX
 - **Verification:** CONFIRMED
 - **Locations:** `lib/orgGraph.ts:23-35,99-144`, `app/(protected)/graph/page.tsx:428-433`, `lib/graphSettings.ts`
 - **Independently verified:** ✓ **SURVIVES, corrected** — second independent adversarial pass. Severity **MEDIUM → LOW** by this pass. The countable core is true — the graph has seven node types and no lifecycle entity is among them — but the narrative that convicts the lenses is misattributed: the Process lens does hide plot plans and its label is accurate. What remains is a scope gap (the graph was built as an entity/paper map, not a work-in-flight map) plus one minor label/content mismatch in the Equipment lens, which is LOW, not MEDIUM.
@@ -163,6 +176,18 @@ lib/orgGraph.ts:23 `export type GraphNodeType = "document" | "asset" | "unit" | 
 - [ ] hold / ticket / checkout appear as node kinds or as state decorations on document and asset nodes
 - [ ] a lens is defined by a predicate (scope + types) rather than a hiddenTypes array
 - [ ] GraphSettings gains a scope field and the graph can be restricted to one operating area
+
+**Resolution (2026-10-01, intelligence Round G) — WONTFIX for its own content (DEC-28; the plan's default, DEC-44).** No node type beyond systems, and systems are folded into the unit class (GM-10): holds, tickets and checkouts do not become graph nodes or node decorations in this round.
+- **Cost.** Every node type is a Record key in five renderer / control files (I-14's) and an ACL-sensitive read per kind; the work-in-flight question ("what is happening around this vessel now") is answered where those records live — the document's hold strip, the asset hub, the review queues. The graph is the entity-and-paper map.
+- **Alternative rejected.** Decorating document nodes with hold / checkout state from this package — the decoration is drawn by the page.
+- **What would change the answer.** An owner request for a work-in-flight lens; it would be a decoration over the node set `lib/scope.ts` resolves, not a node type.
+
+**Done-when.**
+1. Not done — declined by decision (above).
+2. The lib half ✓: a lens can be a predicate over scope + types — `lib/scope.ts` resolves a unit's containment set and `buildOrgGraph(orgId, { scope })` assembles it (GAP-306). The lens UI and the rename are I-14's (GPV-10, GPV-11).
+3. The lib half ✓: the graph can be restricted to one operating area (`scope.test.ts`); the GraphSettings field is I-14's `lib/graphSettings.ts` (GPV-11).
+
+**Scope / residual.** The naming defect closes with I-14's lens rename (the plan); the scope picker with I-14's GAP-306 UI.
 
 ---
 

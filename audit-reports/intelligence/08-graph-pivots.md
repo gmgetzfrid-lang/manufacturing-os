@@ -82,6 +82,18 @@ lib/orgGraph.ts:37-44 — `export interface GraphNode { id: string; type: GraphN
 - [ ] the view memo in app/(protected)/graph/page.tsx filters nodes by that scope structurally (a document is in scope if its unitCode matches OR it is edged to an in-scope asset), independent of hop distance
 - [ ] the scope is settable from a cbunit/plant node in NodePeek and from a control in the top bar, and its active state is shown the way the Focused chip is (page.tsx:498-505)
 
+**Partial (2026-10-01, intelligence Round G).** Reproduced first (DEC-29): `lib/__tests__/orgGraph.test.ts` run against the base commit's `lib/orgGraph.ts` (57609d2) fails 22 of its 23 cases, each on a finding's own mechanism — here the node record carried no scoping key. What landed in `lib/orgGraph.ts`: `GraphNode` gains `unitCode`, `unitId`, `plantId`, `systemId`, `libraryId`, `typeId`, `sheetNumber` (and, on a scoped graph, `outside`), copied from the rows already read — never inferred; the assets select adds `plant_id, system_id, type_id, library_id`, the documents select `unit_code, plant_id, system_id`. The structural scope itself is GAP-306's: `lib/scope.ts` resolves a unit's containment set and `buildOrgGraph(orgId, { scope })` assembles exactly it — the scope filters the ASSEMBLY (GAP-306's "Do not filter post-assembly"), not the view memo.
+
+Tests: `lib/__tests__/orgGraph.test.ts` GPV-2 block; `lib/__tests__/scope.test.ts`.
+
+**Done-when.**
+1. ✓ The scoping fields exist and are populated from rows already selected; plant_id / system_id / type_id are in the assets select.
+2. **Not met here:** the GraphSettings scope descriptor — `lib/graphSettings.ts` is I-14's (URL-serialisable lens / scope, GPV-11). The descriptor to carry is `lib/scope.ts`'s `ScopeRef`, serialised `unit:<code>` by `parseScopeParam` / `formatScopeParam`.
+3. ✓ In the assembly rather than the view memo: a document is in a unit's scope when its decode or operational scope names the unit, it sits in a library or folder pinned to the unit, or it is edged to the unit's equipment — independent of hop distance (`scope.test.ts`).
+4. **Not met here:** setting the scope from NodePeek and the top bar, and its active chip — I-14 (the page and components/graph/*).
+
+**Scope / residual.** Remaining limbs: I-14's scope picker and GraphSettings field, consuming `lib/scope.ts`.
+
 ---
 
 <a id="gpv-3"></a>
@@ -89,7 +101,7 @@ lib/orgGraph.ts:37-44 — `export interface GraphNode { id: string; type: GraphN
 ## GPV-3 · No document is ever edged to a Site Codebook unit — the two "unit" node families are disjoint, so a unit-scoped view of the paper is two hops away and mediated by equipment
 
 - **Severity:** HIGH
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Verification:** CONFIRMED
 - **Locations:** `lib/orgGraph.ts:253-261`, `lib/orgGraph.ts:190-203`, `lib/orgGraph.ts:284-289`, `supabase/migrations/20260606_operational_entity_graph.sql:52-65`, `lib/codebook.ts:1-10`
 - **Independently verified:** ✓ **SURVIVES** — second independent adversarial pass. Confirmed, including the one escape hatch I checked: the flow edges at :284-289 use `flowNodeId = (kind, ref) => kind === "asset" ? `asset:${ref}` : `cbunit:${ref}``, but app/api/flows/read/route.ts:67 types the roster as `kind: "asset" | "unit"` only — no document ever enters process_flows, so no doc-to-cbunit edge can arise there either. The two families are genuinely disjoint and a document is two hops from a codebook unit, always mediated by an asset.
@@ -109,6 +121,19 @@ lib/orgGraph.ts:259 `if (d.unit_id) addEdge(\`doc:${d.id}\`, \`unit:${d.unit_id}
 - [ ] documents.unit_id rows are bridged to their codebook unit (or the legacy unit node is edged to the matching cbunit node), so one unit identity is reachable from both sides
 - [ ] or the two families are visually and structurally distinguished — different node types/labels — so a user can tell which "Crude Unit" they are looking at
 - [ ] a cbunit node at depth 1 reaches the documents scoped to that unit
+
+**Resolution (2026-10-01, intelligence Round G).** Reproduced first (DEC-29): `lib/__tests__/orgGraph.test.ts` run against the base commit's `lib/orgGraph.ts` (57609d2) fails 22 of its 23 cases, each on a finding's own mechanism — here no document was ever edged to a codebook unit. What landed (the one unit identity of GAP-305 / GM-2): a documents.unit_id row reaches its codebook unit through the mapping (an operational unit mapped by `units.codebook_code` IS the `cbunit:<code>` node), and the drawing-number decode is a real column (`documents.unit_code`, written by the unit-identity backfill) drawn document → `cbunit:<code>` directly. Nothing is inferred at assembly (the guard test pins it).
+
+Tests: `lib/__tests__/orgGraph.test.ts` — `cbunit:20` reaches the drawing in one hop; a decode-only drawing (unit_code 20, no unit_id) is edged to `cbunit:20`.
+
+**Pending migration:** `supabase/migrations/20261138_intel_roundG_unit_identity.sql` (hand-applied; one paste — its result set carries the pre-apply inventory and every probe). Until it is applied the graph builds on the legacy columns and says so ("The unit-identity migration (20261138) is not applied …"), and the decode route answers 409.
+
+**Done-when.**
+1. ✓ documents.unit_id rows are bridged to their codebook unit (the mapped row is the codebook node); one unit identity is reachable from both sides.
+2. ✓ (the alternative is not needed) — and an operational unit with no mapping is a structurally distinct node: `unit:<uuid>`, `unitCode` null, linking to /admin/scope where it is mapped. Its distinct colour / Filters label is I-14's (GPV-4).
+3. ✓ A cbunit node at depth 1 reaches the documents scoped to that unit.
+
+**Scope / residual.** Apply 20261138, map the operational units on /admin/scope, run the decode.
 
 ---
 
@@ -173,7 +198,7 @@ app/(protected)/graph/page.tsx:237 — `}, [focusParam, view]);`. app/(protected
 ## GPV-6 · Assets, libraries, projects and plot plans are capped with LIMIT and no ORDER BY — which equipment appears on the map is nondeterministic between loads
 
 - **Severity:** MEDIUM
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Verification:** CONFIRMED
 - **Locations:** `lib/orgGraph.ts:107-117`, `lib/orgGraph.ts:137`, `lib/orgGraph.ts:141-143`, `lib/orgGraph.ts:164-165`, `app/(protected)/graph/page.tsx:110-123`
 - **Independently verified:** ✓ **SURVIVES** — second independent adversarial pass. Confirmed — Postgres gives no ordering guarantee for LIMIT without ORDER BY, so which 2,000 of 3,400 assets land on the map can differ per query plan, per user, and per load. Two aggravating factors the finding is right to flag: page.tsx:110-114 paints a sessionStorage snapshot of a PREVIOUS non-deterministic build first, and Insights are computed over `view.nodes` (:239-241), so orphan/degree analyses are drawn from a random subset while the chip claims "the first 2000".
@@ -193,6 +218,17 @@ lib/orgGraph.ts:114-117 — `supabase.from("assets").select("id, tag, descriptio
 - [ ] every capped query carries a deterministic ORDER BY (assets by tag or updated_at, libraries/projects/plots by name)
 - [ ] the truncation copy matches the actual ordering rule for each list
 - [ ] or the caps are removed in favour of the scope pivot, so a unit-scoped map loads that unit's full population rather than a random org-wide slice
+
+**Resolution (2026-10-01, intelligence Round G).** Reproduced first (DEC-29): `lib/__tests__/orgGraph.test.ts` run against the base commit's `lib/orgGraph.ts` (57609d2) fails 22 of its 23 cases, each on a finding's own mechanism — here the assets read had no ORDER BY and the copy claimed "the first 2000". What landed in `lib/orgGraph.ts`: every capped read carries a deterministic ORDER BY with a unique tiebreak — assets `tag, id`; libraries, projects, plot plans `name, id`; documents `updated_at desc, id` — read as `limit(cap + 1)` so the cap note fires only when exceeded; link tables page in keyset order; the knowledge-mirror read is by id (no cap). The notes say the rule: "Showing the first 2,000 equipment items by tag.", "… libraries by name.", "Showing the 1,500 most recently updated documents."
+
+Tests: `lib/__tests__/orgGraph.test.ts` GM-3 / GPV-6 block (the five assets past the cap BY TAG are the ones left out; the order calls are asserted).
+
+**Done-when.**
+1. ✓ Every capped query carries a deterministic ORDER BY (assets by tag, libraries / projects / plots by name).
+2. ✓ The truncation copy matches each list's ordering rule.
+3. ✓ (also) A unit's full population loads through GAP-306's scoped assembly (`scope.test.ts`: a unit entirely past both org-wide caps is complete on its own map).
+
+**Scope / residual.** The page's sessionStorage snapshot now holds a deterministic build; the snapshot path itself is I-14's (GM-12 / GAP-313).
 
 ---
 
@@ -222,6 +258,8 @@ app/(protected)/graph/page.tsx:319-322 — `const unitCode = (n: GraphNode): str
 - [ ] the optimistic edge pushed at page.tsx:344 uses the same node ids the rebuild will produce, so a refresh never contradicts the confirmation
 - [ ] the Connect button is not offered on unit nodes whose flow endpoint cannot be resolved
 - [ ] existing process_flows rows whose unit refs resolve to no node are surfaced somewhere rather than silently dropped by addEdge
+
+*Handoff (2026-10-01, intelligence Round G, I-13): the one unit identity this needs has landed (GAP-305) — a mapped operational unit is the `cbunit:<code>` node, and every unit node carries `GraphNode.unitCode` (the codebook code; null on an operational unit with no mapping). Connect can write `node.unitCode` and refuse a unit node whose `unitCode` is null; the optimistic edge then uses the same node ids the rebuild produces.*
 
 ---
 
@@ -398,7 +436,7 @@ components/graph/OrgGraph2D.tsx:428-437 — the canvas element carries `ref`, `c
 ## GPV-14 · The unit's pinned libraries and its bound AI knowledge library are real org-authored relationships that the graph never draws
 
 - **Severity:** MEDIUM
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Verification:** CONFIRMED
 - **Locations:** `lib/orgGraph.ts:104`, `lib/orgGraph.ts:198-203`, `lib/codebook.ts:29-56`, `lib/codebook.ts:368-380`, `app/(protected)/admin/assets/page.tsx:232`, `app/api/area/knowledge-status/route.ts:54`
 - **Independently verified:** ✓ **SURVIVES** — second independent adversarial pass. Confirmed — the graph's own header comment (orgGraph.ts:5-16, "each edge is a row somewhere") enumerates nine relationship sources and codebook unit meta is not among them, so a unit's pinned libraries and its bound knowledge shelf are stored, edited and consumed elsewhere but never drawn.
@@ -418,5 +456,18 @@ lib/codebook.ts:29-36 — `export interface UnitResourceLink { id; label; librar
 - [ ] each unit's meta.links produces a cbunit→library edge (and, where folderId is set, a scoped edge or a folder node)
 - [ ] meta.knowledgeLibraryId produces a cbunit→library edge with its own edge type so a viewer can tell a pinned shelf from a filing library
 - [ ] those edges are the primary structure a unit scope pivot filters on, so scoping to Unit 20 pulls in its pinned paper directly rather than via equipment
+
+**Resolution (2026-10-01, intelligence Round G).** Reproduced first (DEC-29): `lib/__tests__/orgGraph.test.ts` run against the base commit's `lib/orgGraph.ts` (57609d2) fails 22 of its 23 cases, each on a finding's own mechanism — here a unit's pinned library produced no edge. What landed:
+- `lib/orgGraph.ts` reads the codebook unit entries with their meta (a direct read — `loadCodebook` swallowed a failed read, GM-4) and draws each `meta.links` entry as `cbunit:<code>` → `lib:<libraryId>` (type "library", `via: "pinned"`, `note` naming the link's label and, for a folder link, "library › folder"), and `meta.knowledgeLibraryId` as `cbunit:<code>` → `klib:<id>` — the knowledge library, folded into the library node class (sub "Knowledge library", href `/knowledge/<id>`; no new node type, DEC-44) — with `via: "knowledge"`.
+- `lib/scope.ts` makes the pinned shelves the unit's paper: the documents of a pinned library, or of a pinned folder's subtree (collections.path_ids), are in its scope.
+
+Tests: `lib/__tests__/orgGraph.test.ts` GPV-14 block; `lib/__tests__/scope.test.ts` (a pinned folder and its subfolder are in; another folder of the same library is out; `why.pinned = 10`).
+
+**Done-when.**
+1. ✓ Each unit's meta.links produces a cbunit → library edge; a folder link carries the folder (its note) and scopes to that folder's subtree.
+2. ✓ The binding is its own kind of edge: `via: "knowledge"` to a `klib:` node that says "Knowledge library" — distinct from a document's filing edge (no `via`) and from a pin (`via: "pinned"`). A separate GraphEdgeType was not added because every renderer keys a Record on GraphEdgeType (`components/graph/graphTheme.ts` EDGE_RGB / EDGE_LABELS, I-14's files) and a new type cannot compile without editing them; a colour and legend entry for `via` is I-14's (GPV-8's legend).
+3. ✓ Those edges are the structure the unit scope pivots on: scoping to the unit pulls its pinned paper in directly.
+
+**Scope / residual.** I-14: a legend / colour for `via` (library edges are hidden by the default lens).
 
 ---

@@ -67,6 +67,7 @@ to and reads from, where each fact carries three things it does not carry today:
 | [GAP-310](#gap-310) | One tag grammar | **BUILD_NARROW** | S | — |
 | [GAP-311](#gap-311) | Tag lookup in ⌘K — the five-second question | **BUILD_NARROW** | S | `GAP-310` |
 | [GAP-312](#gap-312) | The drafting request gets an equipment field | **BUILD** | M | `GAP-304`, `GAP-311` |
+| [GAP-313](#gap-313) | A server-assembled graph (GM-12's follow-up) | **BUILD** | M | a per-caller document ACL on the server (I-12) |
 
 ---
 
@@ -318,6 +319,25 @@ from its drawing number has nowhere to record the decode.
 4. A document whose number does not decode is **reported**, not guessed — the
    discipline `lib/assetCategorize.ts:12-16` already states.
 
+**Resolution (2026-10-01, intelligence Round G, I-13).** Reproduced first (DEC-29): `lib/__tests__/orgGraph.test.ts` against the base `lib/orgGraph.ts` draws the crude unit twice (`expected […] to not include 'unit:u1'`) with no path between a drawing filed to the operational unit and the equipment filed to the codebook unit. Decision (the plan's default — `DEC-44`, provisional number): keep both, join them as data, retire nothing. What landed:
+- `supabase/migrations/20261138_intel_roundG_unit_identity.sql` — `units.codebook_code` + UNIQUE `(org_id, codebook_code)` where set (the mapping); `documents.unit_code` (+ index); `trg_documents_unit_code_guard` (BEFORE INSERT OR UPDATE OF unit_code, document_number): a person's insert lands NULL, a person's write is refused (42501), a renumber drops the old decode unless the same write sets a new one, the service role passes; `documents_total_for_org` (GM-6). Every object is new — no earlier migration defines any of them, so nothing is re-created (pinned by test).
+- The decode is WRITTEN, never inferred at assembly: `lib/operationalGraph.ts` `planUnitIdentity` decodes every document number with the org's own codebook (`parseDrawingNumber`, I-10's one parser) and `POST /api/admin/unit-identity` writes `documents.unit_code` as its one writer (service role; authority ADMIN_SURFACES "scope".writes over the role collection; preview by default; refusals counted; audited `UNIT_IDENTITY_BACKFILL`). The same pass projects `assets.unit_code` through the mapping onto `assets.unit_id`; `documents.unit_id` is never written. An empty or format-less codebook writes nothing (a failed codebook load can never clear the decodes).
+- `/admin/scope`: each operational unit is mapped to the codebook unit it is (`UnitMapping` → `setUnitCodebookCode`, a checked write; a code mapped elsewhere is refused by name), and the Unit identity panel previews and runs the decode, listing the numbers that do not decode with the codebook's own reason (`explainDrawingNumberMiss`).
+- `lib/orgGraph.ts` emits one node per real unit: a mapped operational unit IS `cbunit:<code>`; an unmapped one is `unit:<uuid>`; `documents.unit_code` is drawn.
+
+Tests: `lib/__tests__/orgGraph.test.ts` (one node, 2 hops, the guard test "each edge is a row somewhere" — a decodable number with no unit_code row draws no unit edge, and `lib/orgGraph.ts` never calls the decoder), `lib/__tests__/intelRoundGUnitIdentity.test.ts` (planner, route, mapping write, migration shape). Verified on a scratch PostgreSQL 16 with stubbed auth: the paste ran in one go with every probe true and the inventory rows filled; the service role's decode write landed; a person's write was refused with `documents_unit_code_decode_only`, a person's insert landed NULL, a person's title edit kept the decode, a renumber (person or service role) dropped it while a renumber that set a new decode kept it; a second units row mapped to the same code was refused by `units_org_codebook_code_uniq`; `documents_total_for_org` answered the member 3, a non-member 0, and anon `permission denied`; a re-paste was clean.
+
+**Pending migration:** `supabase/migrations/20261138_intel_roundG_unit_identity.sql` (hand-applied). DEC-30: the decode runs in TypeScript after the apply, so the disagreement inventory is 0 on the first paste; **re-paste the file after the first decode run** (it is idempotent) and its last two rows report the real counts — documents whose operational unit is mapped to a different codebook unit than their decode, and decoded documents whose operational unit is not mapped:
+`SELECT COUNT(*) FROM documents d JOIN units u ON u.id = d.unit_id WHERE d.unit_code IS NOT NULL AND u.codebook_code IS NOT NULL AND u.codebook_code <> d.unit_code;` and the same with `u.codebook_code IS NULL`. Both are reported, never rewritten.
+
+**Done-when (acceptance).**
+1. ✓ A codebook unit code resolves to at most one `units` row (UNIQUE per org), and the mapping is data (a column set on /admin/scope).
+2. ✓ `documents.unit_code` exists and is written by the decode (the unit-identity backfill).
+3. ✓ The graph emits one unit node per real unit (given the mapping a person sets — an unmapped operational unit is a different unit).
+4. ✓ A number that does not decode, decodes with no unit segment, or names a unit the codebook does not hold is reported (count, sample numbers, the codebook's reason; the unknown codes with counts) and left empty — never guessed.
+
+**Scope / residual.** Freshness: a document created or renumbered after a run has no decode until the next run; the create-time decode belongs with the writers that already decode (I-11's Bridge at ingest; document-control's `lib/documentLifecycle`). `lib/schemaExpectations.ts` (A&O's) may list `documents.unit_code` / `units.codebook_code` in the health panel when it is next regenerated (ILIFE-12 / BKP-14).
+
 ---
 
 <a id="gap-306"></a>
@@ -365,6 +385,20 @@ apply. Argue it on his behalf before building the filter.
 3. A scope is nameable, savable and shareable by URL.
 4. Scoped assembly returns complete results within the caps for a unit that
    exceeds them org-wide.
+
+**Partial (2026-10-01, intelligence Round G, I-13).** The core ships; the picker and the operating-area link follow, as the plan sequences them. Decision on "argue the place before the filter" (the plan's default — `DEC-44`): `lib/scope.ts` is consumed FIRST by the operating-area page (I-09 AREA-6, linking `/graph?scope=unit:<code>`), THEN by the graph's scope picker (I-14) — the place is the first delivery, the filter the second. What landed:
+- `lib/scope.ts` — `resolveScope(orgId, { kind: "unit", code })` resolves CONTAINMENT under the reader's RLS, from persisted rows only: the codebook unit, its mapped operational unit, systems and plant; equipment filed to it (unit_code, unit_id, system_id); documents decoded to it (documents.unit_code), filed to it (unit_id / system_id), in its pinned libraries and folder subtrees, and governing its equipment one step (document_assets, entity_mentions through knowledge mirrors) — never further. Every rule is paged to completion up to `RESOLVE_CAP`; a failed read or a reached cap marks the scope incomplete and says which rule. `scopeMembership` tests node ids; `parseScopeParam` / `formatScopeParam` define the URL key `unit:<code>`.
+- `lib/orgGraph.ts` `buildOrgGraph(orgId, { scope })` scopes the ASSEMBLY: it reads the unit's ids (not an org-wide capped slice), applies the caps to the unit's own population, makes nodes only for members, and counts every link that leaves the scope on the node it leaves from (`GraphNode.outside`, `OrgGraph.scope.boundary`, a truncation "N links lead out of Crude Unit — each node shows how many leave from it."). Documents the relation names but the reader cannot open are said, not drawn.
+
+Tests: `lib/__tests__/scope.test.ts` — containment by every rule and nothing one step past; a mention through an indexed copy; a failed read marks the scope incomplete; pre-migration absence said; and the acceptance case below.
+
+**Done-when (acceptance).**
+1. Partly — the lib half ✓: a unit's scope yields that unit's world and nothing else, with boundary stubs (no unit-30 node on Crude Unit's map; the drawing tagged to a unit-30 exchanger and the pump feeding one each carry `outside: 1`). **Not met here:** "picking" — the picker is I-14's (the page and components/graph/*).
+2. Partly — one surface consumes the scope object today (the org graph's assembly). **Not met here:** the second — the operating-area panel (UnitOpsPanels, I-09 AREA-6) is its planned next consumer.
+3. **Not met here:** nameable / savable / shareable by URL — the key exists (`unit:<code>`); the URL contract and saved lenses are I-14's (GPV-11).
+4. ✓ `scope.test.ts`: a unit whose 50 assets sort past the org-wide asset cap and whose 40 documents are older than the org-wide document cap is absent from the org-wide map and complete on its own (50 assets, 40 documents, no cap notice).
+
+**Scope / residual.** I-09 AREA-6 (the place), then I-14 (the picker, the URL, saved scopes). Both read `lib/scope.ts`; neither needs a change here. The mapping and the decode (GAP-305) must be applied and run for the decoded / filed rules to find anything.
 
 ---
 
@@ -589,6 +623,26 @@ different fields. **Ship them together or the form gets edited twice.**
 3. Blank never blocks submission.
 
 *Handoff (2026-09-30, intelligence Round G, I-01 phase A): this gap is [`WIRE-7`](./19-wiring.md#wire-7) criterion 1 and is handed to the drafting-flow fleet — **DF-P6 REVIEW-MODEL**, which edits `app/(protected)/requests/new/page.tsx` for `GAP-110` / `GAP-111`, so it ships with them. No drafting-flow package lists it yet; the integrator adds it to DF-P6 (or schedules it directly after). Intelligence prerequisites: `GAP-311` (I-10, merged) and `GAP-304` (I-11).*
+
+---
+
+<a id="gap-313"></a>
+## GAP-313 · A server-assembled graph
+
+**Verdict: BUILD** · Effort: **M** · Depends on: a per-caller document ACL on the server (I-12's chain work) · *Opened 2026-10-01 (intelligence Round G, I-13) as the follow-up of [`GM-12`](./07-graph-model.md#gm-12) (WONTFIX for now).*
+
+The org graph is assembled in the browser on every mount — about fourteen requests for a typical org, up to ~56 at the caps — and the sessionStorage snapshot that hides it is skipped above 2 MB, which is exactly the orgs that need it. A server route could assemble once, page every table to completion, cache per caller, and reach the service-role-only edges the client never can (knowledge_page_entities' sheets — [`GM-14`](./07-graph-model.md#gm-14)).
+
+### Do not
+
+- **Do not move assembly behind `supabaseAdmin` without the per-caller document ACL.** The client read is safe only because documents RLS (`documents_acl_select` → `node_visible`) hides restricted documents and addEdge drops their edges; a service-role assembly must apply the same predicate — and the app-enforced allow lists and role / team denies — per caller, or every member sees every drawing.
+- **Do not cache one payload across callers.** The document side of the graph is the reader's own (GM-6).
+
+### Acceptance
+
+1. One route assembles the graph (and a scoped graph — `lib/scope.ts`) under the caller's own document visibility; a test compares a controller's and a granted-nothing member's payloads with the client assembly's for the same org.
+2. The page loads one payload, and says when a cached snapshot was skipped.
+3. The page comment matches the real request count.
 
 ---
 

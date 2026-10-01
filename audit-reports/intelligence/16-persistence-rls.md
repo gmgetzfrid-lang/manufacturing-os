@@ -557,6 +557,8 @@ lib/schemaExpectations.ts:11-13 — `// Generated from supabase/migrations (CREA
 
 - [ ] The graph reads `mentionCoverage` and, with zero mention edges, says which case it is, with the next step (run the indexer / see the failure).
 
+*Handoff (2026-10-01, intelligence Round G, I-13): the `lib/orgGraph.ts` half is exposed — `OrgGraph.mentionCoverage { installed, rows, drawn, unmapped, capped }`: `installed: false` when entity_mentions does not exist (42P01), `rows: 0` when the index is installed but holds nothing the reader can see, `drawn` the mention edges on the map, `capped` when the read stopped at the edge cap. The page's message ("never built" / "built, nothing named" / the next step) is I-14's.*
+
 ---
 
 <a id="irls-15"></a>

@@ -252,7 +252,7 @@ flowsBrowse.ts:183-185 verbatim: `const state: DcDocState = mirror ? (mirror.sta
 ## FLOW-8 · A recycle loop loses one of its two legs: addEdge's dedupe key is order-insensitive, so A→B and B→A collapse to a single drawn edge
 
 - **Severity:** LOW
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Verification:** CONFIRMED
 - **Locations:** `lib/orgGraph.ts:170-179`, `lib/orgGraph.ts:286-289`, `supabase/migrations/20261017_process_flows.sql:36`
 - **Independently verified:** ✓ **SURVIVES, corrected** — second independent adversarial pass. Severity **MEDIUM → LOW** by this pass. The mechanism is exactly as claimed — two rows, one drawn edge, and two under-counted degrees. Severity is too high: because the renderer draws flows as undirected lines with no arrowhead and no direction readout (see FLOW-10, OrgGraph2D.tsx:202), one line and two lines between the same pair are visually and semantically identical today, so the user-visible loss is a link count.
@@ -275,6 +275,16 @@ lib/orgGraph.ts:174 `const key = a < b ? `${a}|${b}|${type}` : `${b}|${a}|${type
 
 - [ ] Directional edge types (`flow`, `supersession`) dedupe on the ordered key `a|b|type`, not the symmetric one
 - [ ] A test builds a two-row recycle loop and asserts both edges survive
+
+**Resolution (2026-10-01, intelligence Round G).** Reproduced first (DEC-29): `lib/__tests__/orgGraph.test.ts` run against the base commit's `lib/orgGraph.ts` (57609d2) fails 22 of its 23 cases, each on a finding's own mechanism — here a two-row recycle loop assembled to one edge. What landed in `lib/orgGraph.ts`: `DIRECTED_EDGE_TYPES = {flow, supersession}`; `addEdge` dedupes those on the ordered key `a|b|type` (a = the source), every other type on the unordered pair. Proposed flows are counted in a truncation (GM-8).
+
+Tests: `lib/__tests__/orgGraph.test.ts` — T-401 → P-402 and P-402 → T-401 both survive, each keeping its direction; supersession too; related still dedupes as a pair.
+
+**Done-when.**
+1. ✓ flow and supersession dedupe on the ordered key.
+2. ✓ A test builds a two-row recycle loop and asserts both edges survive.
+
+**Scope / residual.** Showing the direction is the renderer's (I-14, FLOW-10 / GPV-8).
 
 ---
 
@@ -305,6 +315,8 @@ lib/processFlows.ts:41-42 `.order("created_at", { ascending: true }).limit(4000)
 - [ ] `if (flows.capped) truncations.push(...)` is added alongside the existing three, and `related`/`supersessions` too
 - [ ] `listProcessFlows` orders descending by created_at, or splits proposed/confirmed into separate bounded queries
 - [ ] `pageRows` orders by a stable key so a cap yields a defensible subset
+
+*Handoff (2026-10-01, intelligence Round G, I-13): the `lib/orgGraph.ts` half has landed — `flows.capped` (and `related` / `supersessions`) push a truncation that says what was read of how many, and `pageRows` pages in keyset order (`id` ascending, `gt` the last id), so a capped flow read is a stable, defensible subset (GM-13 / GM-3). Criterion 2 (`lib/processFlows.ts` `listProcessFlows`) remains I-09's.*
 
 ---
 
