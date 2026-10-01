@@ -10,7 +10,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import React, { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 
-const ui = vi.hoisted(() => ({ showToast: vi.fn(), appConfirm: vi.fn(async () => true), getDrawingIntel: vi.fn() }));
+const ui = vi.hoisted(() => ({ showToast: vi.fn(), appConfirm: vi.fn(async () => true), getDrawingIntel: vi.fn(), recordDrawingAudit: vi.fn() }));
 
 vi.mock("@/lib/supabase", () => ({
   supabase: { auth: { getSession: async () => ({ data: { session: { access_token: "tok" } } }) } },
@@ -18,7 +18,7 @@ vi.mock("@/lib/supabase", () => ({
 vi.mock("@/components/providers/ToastProvider", () => ({ useToast: () => ({ showToast: ui.showToast }) }));
 vi.mock("@/components/providers/DialogProvider", () => ({ appConfirm: ui.appConfirm }));
 vi.mock("@/lib/knowledge", () => ({
-  getDrawingIntel: ui.getDrawingIntel, downloadEquipmentRegister: vi.fn(), recordDrawingAudit: vi.fn(),
+  getDrawingIntel: ui.getDrawingIntel, downloadEquipmentRegister: vi.fn(), recordDrawingAudit: ui.recordDrawingAudit,
 }));
 
 import DrawingIntelPanel from "@/components/knowledge/DrawingIntelPanel";
@@ -91,5 +91,34 @@ describe("the panel's rebuild keeps what earlier rounds did when a later round f
     await pressRebuild(onRebuilt);
     expect(ui.showToast.mock.calls.map((c) => c[0])).toContainEqual(expect.objectContaining({ type: "error", title: "The rebuild failed: x" }));
     expect(onRebuilt).not.toHaveBeenCalled();
+  });
+});
+
+describe("the lens and the record name what they did not judge (review fix pass 3)", () => {
+  async function render() {
+    await act(async () => {
+      root.render(React.createElement(DrawingIntelPanel, { orgId: "o1", libraryId: "kl-2", isController: true, refreshKey: 0, onRebuilt: () => undefined }));
+    });
+  }
+
+  it("the lens names the series whose gaps it does not judge — the record's own rule and words", async () => {
+    ui.getDrawingIntel.mockResolvedValue({ ...INTEL, seriesNotJudged: ["025-PID"] });
+    await render();
+    expect(host.textContent).toMatch(/Gaps are not judged in 025-PID — this library holds no more than one drawing number of that series/);
+  });
+
+  it("the record says which sheets were being indexed, and that no verdict was re-decided by them", async () => {
+    ui.recordDrawingAudit.mockResolvedValue({
+      recorded: 0, counts: {}, sheets: [], alreadyRecorded: [{ name: "A.pdf", sheetNumber: "025-PID-0104", revision: "C", status: "flagged" }],
+      notRecorded: [], seriesNotJudged: ["040-TK"], indexingNow: ["025-PID-0105.pdf"],
+    });
+    await render();
+    const button = [...host.querySelectorAll("button")].find((b) => b.textContent?.includes("Record audit"));
+    expect(button).toBeTruthy();
+    await act(async () => { button!.click(); });
+    await act(async () => { await new Promise((r) => setTimeout(r, 0)); });
+    expect(host.textContent).toMatch(/1 sheet\(s\) are being indexed right now \(025-PID-0105\.pdf\) — no verdict was\s*re-decided by a change in the sheets it points at/);
+    expect(host.textContent).toMatch(/this library holds no more than one drawing number of\s*that series/);
+    expect(host.textContent).not.toMatch(/holds only one sheet of/);
   });
 });

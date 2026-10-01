@@ -563,7 +563,10 @@ describe("the lens tells parked, drawing and prose sheets apart", () => {
   it("text with no tags says drawing (capitals, a title block) or prose — and the advice differs", async () => {
     seed({
       knowledge_documents: [kdoc("x-1"), kdoc("x-2")],
-      knowledge_page_entities: [ent("x-1", "self", "025-PID-0104")],
+      // What ingest writes for a TrueType title block on a sparse page: the
+      // border's number as the sheet's identity AND, ref-shaped, as a ref
+      // row (extractDrawingRefs over every text item) — review fix pass 3.
+      knowledge_page_entities: [ent("x-1", "self", "025-PID-0104"), ent("x-1", "ref", "025-PID-0104")],
       knowledge_chunks: [
         chunk("x-1", "DRAWING NO: 025-PID-0104 GENERAL ARRANGEMENT NOTES ALL DIMENSIONS IN MM"),
         chunk("x-2", "The bolting requirements apply to every flanged joint in this service."),
@@ -571,13 +574,29 @@ describe("the lens tells parked, drawing and prose sheets apart", () => {
     });
     const body = await (await get("orgId=o1&libraryId=kl-1")).json();
     const by = (id: string) => body.sheets.find((s: { id: string }) => s.id === id);
+    // Its own number is the sheet itself, never a reference to another drawing.
     expect(by("x-1")).toMatchObject({ verdict: "text-no-tags", looksLike: "drawing", shxLike: true });
     expect(by("x-2")).toMatchObject({ verdict: "text-no-tags", looksLike: "prose", shxLike: false });
     const said = body.suggestions.join(" ");
-    expect(said).toMatch(/1 sheet\(s\) look like SHX exports[\s\S]*Text doesn't extract from these files — index every page as an image/);
-    // The switch is library-wide and bills: said plainly (review fix pass 2).
-    expect(said).toMatch(/reads EVERY page of EVERY document in this library with AI vision and bills each page to your key/);
+    // The cheaper remedy first: a keyed rebuild reads such pages page by page.
+    expect(said).toMatch(/1 sheet\(s\) look like SHX exports[\s\S]*Hit "Rebuild index" with your AI key saved: a page like that is read by AI vision during indexing, page by page/);
+    // No key has been used in this library: the every-page switch is not offered.
+    expect(said).not.toMatch(/index every page as an image/);
     expect(said).not.toMatch(/normal for prose documents/);
+  });
+
+  it("the library-wide every-page switch is offered only once a keyed rebuild has evidently left SHX sheets unread (review fix pass 3)", async () => {
+    seed({
+      knowledge_documents: [kdoc("x-1"), kdoc("v-1", { vision_pages: 3 })],
+      knowledge_page_entities: [ent("x-1", "self", "025-PID-0104"), ent("x-1", "ref", "025-PID-0104-SH1"), ent("v-1", "equipment", "V-1")],
+      knowledge_chunks: [chunk("x-1", "DRAWING NO: 025-PID-0104 SHEET 1 GENERAL ARRANGEMENT"), chunk("v-1", "V-1 SUCTION DRUM")],
+    });
+    const body = await (await get("orgId=o1&libraryId=kl-1")).json();
+    expect(body.sheets.find((s: { id: string }) => s.id === "x-1")).toMatchObject({ shxLike: true });
+    const said = body.suggestions.join(" ");
+    expect(said).toMatch(/Hit "Rebuild index" with your AI key saved[\s\S]*1 document\(s\) here were read by AI vision[\s\S]*if a rebuild with your key saved still leaves these sheets unread[\s\S]*Text doesn't extract from these files — index every page as an image/);
+    // The switch is library-wide and bills: said plainly.
+    expect(said).toMatch(/reads EVERY page of EVERY document in this library with AI vision and bills each page to your key/);
   });
 
   it("a drawing sheet whose text layer gave references (a legend, an index) is never told to vision-read the library (review fix pass 2)", async () => {
@@ -905,9 +924,132 @@ describe("DWG-13 — 'already recorded' means the row covered this sheet, from t
     // The controller rebuilds; the vision re-read now transcribes the boxes.
     db.tables.knowledge_page_entities.push(ent("c-105", "opc", "15", 1, { raw: "OPC 15: DWG NONE — FROM DESALTER" }));
     const again = await record("kl-1");
-    expect(again.body.recorded).toBe(1);
-    expect(again.body.alreadyRecorded.map((a: { sheetNumber: string }) => a.sheetNumber).sort()).toEqual(["025-PID-0104", "025-PID-0106"]);
+    // 0105 is re-audited — and so are 0104 and 0106, which point at it: what
+    // 0105 holds decides their verdicts too (review fix pass 3).
+    expect(again.body.recorded).toBe(3);
+    expect(again.body.alreadyRecorded).toEqual([]);
     expect(logRows().find((r) => r.sheet_number === "025-PID-0105")).toMatchObject({ revision_code: "A", status: "broken_connectors" });
+    expect(logRows().find((r) => r.sheet_number === "025-PID-0104")).toMatchObject({ revision_code: "C", status: "passed" });
+    // Nothing changed since: all done.
+    expect((await record("kl-1")).body.recorded).toBe(0);
+  });
+});
+
+describe("DWG-13 — a verdict that depends on a neighbour is re-judged when the neighbour changes (review fix pass 3)", () => {
+  /** 0105 rev-upped to B and vision-read: its box numbers are {7, 9}. */
+  const revUp0105 = (boxes: string[]) => {
+    db.tables.documents.find((d) => d.id === "d-105")!.rev = "B";
+    db.tables.documents.find((d) => d.id === "d-105")!.current_version_id = "v-105b";
+    Object.assign(db.tables.knowledge_documents.find((d) => d.id === "c-105")!, { source_version_id: "v-105b", source_rev: "B", vision_pages: 1 });
+    for (const box of boxes) db.tables.knowledge_page_entities.push(ent("c-105", "opc", box, 1, { raw: `OPC ${box}: DWG 025-PID-0199 — TO V-${box}` }));
+  };
+
+  it("0104 recorded flagged (0105's boxes never read); 0105 re-read without box 14 — 0104 is re-judged broken, not 'already recorded'", async () => {
+    twoLibraries();
+    db.tables.knowledge_page_entities.push(ent("c-104", "opc", "14", 1, { raw: "OPC 14: DWG 025-PID-0105 SH 1 — TO V-1402" }));
+    await record("kl-1");
+    expect(logRows().find((r) => r.sheet_number === "025-PID-0104")).toMatchObject({ revision_code: "C", status: "flagged" });
+    revUp0105(["7", "9"]);
+    // The lens says it…
+    const lens = await (await get("orgId=o1&libraryId=kl-1")).json();
+    expect(lens.opcUnreturned).toEqual([expect.objectContaining({ box: "14", from: "025-PID-0104.pdf", to: "025-PID-0105.pdf" })]);
+    // …and so does the record: 0104's own index is unchanged, its neighbour's is not.
+    const again = await record("kl-1");
+    expect(again.body.alreadyRecorded.map((a: { sheetNumber: string }) => a.sheetNumber)).not.toContain("025-PID-0104");
+    const row = logRows().find((r) => r.sheet_number === "025-PID-0104")!;
+    expect(row).toMatchObject({ revision_code: "C", status: "broken_connectors" });
+    expect((row.audit_details as { brokenConnectors: string[] }).brokenConnectors[0]).toMatch(/Connector 14 continues to 025-PID-0105\.pdf, which has no matching box/);
+  });
+
+  it("0104 recorded passed while 0105 carried box 14; 0105 re-read at the same revision without it — the record no longer says passed", async () => {
+    twoLibraries();
+    db.tables.knowledge_page_entities.push(
+      ent("c-104", "opc", "14", 1, { raw: "OPC 14: DWG 025-PID-0105 SH 1 — TO V-1402" }),
+      ent("c-105", "opc", "14", 1, { raw: "OPC 14: DWG 025-PID-0104 SH 1 — FROM V-1401" }),
+    );
+    await record("kl-1");
+    expect(logRows().find((r) => r.sheet_number === "025-PID-0104")).toMatchObject({ status: "passed" });
+    // A rebuild of 0105 transcribes a different box.
+    db.tables.knowledge_page_entities = db.tables.knowledge_page_entities.filter((e) => !(e.document_id === "c-105" && e.kind === "opc"));
+    db.tables.knowledge_page_entities.push(ent("c-105", "opc", "7", 1, { raw: "OPC 7: DWG 025-PID-0199 — TO V-7" }));
+    await record("kl-1");
+    expect(logRows().find((r) => r.sheet_number === "025-PID-0104")).toMatchObject({ revision_code: "C", status: "broken_connectors" });
+  });
+
+  it("a sheet added that makes a series held re-judges the gaps it now can see", async () => {
+    twoLibraries();
+    await record("kl-2");
+    // Tank Farm's 0104 is the only 025-PID number there: its references to
+    // 0105 and 0107 are not judged.
+    expect(logRows().find((r) => r.library_id === "kl-2" && r.sheet_number === "025-PID-0104")).toMatchObject({ status: "passed" });
+    // 025-PID-0110 joins Tank Farm (nobody references it): the series is held now.
+    db.tables.knowledge_documents.push(kdoc("t-110", { library_id: "kl-2", name: "025-PID-0110.pdf" }));
+    db.tables.knowledge_page_entities.push(ent("t-110", "self", "025-PID-0110", 1, { library_id: "kl-2" }), ent("t-110", "equipment", "V-9", 1, { library_id: "kl-2" }));
+    const again = await record("kl-2");
+    expect(again.body.seriesNotJudged).not.toContain("025-PID");
+    const tank104 = logRows().find((r) => r.library_id === "kl-2" && r.sheet_number === "025-PID-0104")!;
+    expect(tank104.status).toBe("flagged");
+    expect((tank104.audit_details as { missingReferences: string[] }).missingReferences.join(" ")).toMatch(/025-PID-0107/);
+  });
+
+  it("while a sheet is being indexed, no verdict is re-decided by its half-built index — and the response says so", async () => {
+    twoLibraries();
+    db.tables.knowledge_page_entities.push(ent("c-104", "opc", "14", 1, { raw: "OPC 14: DWG 025-PID-0105 SH 1 — TO V-1402" }));
+    await record("kl-1");
+    // 0105 is mid-rebuild: some of its boxes are back, it is not finished.
+    db.tables.knowledge_documents.find((d) => d.id === "c-105")!.status = "indexing";
+    db.tables.knowledge_page_entities.push(ent("c-105", "opc", "7", 1, { raw: "OPC 7: DWG 025-PID-0199 — TO V-7" }));
+    const during = await record("kl-1");
+    expect(during.body.indexingNow).toEqual(["025-PID-0105.pdf"]);
+    expect(during.body.alreadyRecorded.map((a: { sheetNumber: string }) => a.sheetNumber)).toContain("025-PID-0104");
+    expect(logRows().find((r) => r.sheet_number === "025-PID-0104")).toMatchObject({ status: "flagged" });
+    // Finished: 0104 is re-judged against what 0105 now holds.
+    db.tables.knowledge_documents.find((d) => d.id === "c-105")!.status = "ready";
+    const after = await record("kl-1");
+    expect(after.body.indexingNow).toBeUndefined();
+    expect(logRows().find((r) => r.sheet_number === "025-PID-0104")).toMatchObject({ status: "broken_connectors" });
+  });
+});
+
+describe("DWG-6 — the lens judges gaps by the record's rule (review fix pass 3)", () => {
+  it("a reference into a series the library does not hold is no gap on screen either; the series is named", async () => {
+    twoLibraries();
+    db.tables.knowledge_page_entities.push(ent("c-106", "ref", "025-PID-0107"));
+    // Crude Unit holds 025-PID: 0107 IS a gap there.
+    const crude = await (await get("orgId=o1&libraryId=kl-1")).json();
+    expect(crude.audit.missingInSeries.map((m: { ref: string }) => m.ref)).toEqual(["025-PID-0107"]);
+    expect(crude.seriesNotJudged).toEqual([]);
+    // Tank Farm holds one 025-PID number: its references to 0105 and 0107
+    // are not judged — the same as its record.
+    const tank = await (await get("orgId=o1&libraryId=kl-2")).json();
+    expect(tank.audit.missingInSeries).toEqual([]);
+    expect(tank.seriesNotJudged).toEqual(["025-PID"]);
+    expect(tank.suggestions.join(" ")).not.toMatch(/gaps in the set/);
+    expect((await record("kl-2")).body.seriesNotJudged).toEqual(tank.seriesNotJudged);
+  });
+});
+
+describe("DWG-6 — before 20261124, another library's unknown-revision verdict is never lowered (review fix pass 3)", () => {
+  it("library B's computation never replaces library A's row on the org-wide key; A's own row still takes its latest verdict", async () => {
+    seed({
+      knowledge_documents: [kdoc("a-1", { name: "A 100-E-001.pdf" }), kdoc("b-1", { library_id: "kl-2", name: "B 100-E-001.pdf" })],
+      knowledge_page_entities: [
+        ent("a-1", "self", "100-E-001"), ent("a-1", "equipment", "V-1"), ent("a-1", "opc", "7", 1, { raw: "OPC 7: DWG NONE — FROM DESALTER" }),
+        ent("b-1", "self", "100-E-001", 1, { library_id: "kl-2" }), ent("b-1", "equipment", "V-1", 1, { library_id: "kl-2" }),
+      ],
+    });
+    db.missingColumns.drawing_audit_logs = ["library_id"];
+    await record("kl-1");
+    expect(logRows()).toEqual([expect.objectContaining({ sheet_number: "100-E-001", revision_code: "", status: "broken_connectors" })]);
+    const b = await record("kl-2");
+    expect(b.body.legacyKey).toBe(true);
+    expect(b.body.notice).toMatch(/a verdict another library recorded is never lowered by this one/);
+    expect(b.body.keptStored).toEqual([expect.objectContaining({ sheetNumber: "100-E-001", revision: "", stored: "broken_connectors", computed: "passed" })]);
+    expect(logRows()).toEqual([expect.objectContaining({ status: "broken_connectors" })]);
+    // Library A fixes its own sheet: its own unknown-revision row takes the latest verdict.
+    db.tables.knowledge_page_entities = db.tables.knowledge_page_entities.filter((e) => e.kind !== "opc");
+    await record("kl-1");
+    expect(logRows()).toEqual([expect.objectContaining({ status: "passed" })]);
   });
 });
 
@@ -959,7 +1101,10 @@ describe("ING-12 — the library page's Re-index all continues where it stopped 
       const before = resets().length;
       const second = await post({ orgId: "o1", libraryId: "kl-1", action: "rebuild" });
       expect(second.status).toBe(200);
-      expect(await second.json()).toMatchObject({ docs: 2, remaining: 0, resumedFrom: "r-5" });
+      const b = await second.json();
+      expect(b).toMatchObject({ docs: 2, remaining: 0, resumedFrom: "r-5" });
+      // A press that finished what an earlier one began says so (review fix pass 3).
+      expect(b.notice).toMatch(/Continued from where the last press stopped: 2 document\(s\) queued by this press; the documents earlier presses queued were not reset again/);
       // Only the two it had not reached: no document reset twice.
       expect(resets().slice(before)).toEqual(["r-6", "r-7"]);
       // Done: the place is cleared, the rest of the library's setup kept.
@@ -971,7 +1116,9 @@ describe("ING-12 — the library page's Re-index all continues where it stopped 
     seed({ knowledge_documents: [kdoc("a-1"), kdoc("a-2"), kdoc("a-3")] });
     db.tables.knowledge_libraries[0].ai_features = { rebuildCursor: { cursor: "a-2", at: new Date(Date.now() - 7 * 3600_000).toISOString() } };
     const stale = await post({ orgId: "o1", libraryId: "kl-1", action: "rebuild" });
-    expect(await stale.json()).toMatchObject({ docs: 3, resumedFrom: null });
+    const fromTop = await stale.json();
+    expect(fromTop).toMatchObject({ docs: 3, resumedFrom: null });
+    expect(fromTop.notice).toBeUndefined();
     // A fresh one is followed.
     seed({ knowledge_documents: [kdoc("a-1"), kdoc("a-2"), kdoc("a-3")] });
     db.tables.knowledge_libraries[0].ai_features = { rebuildCursor: { cursor: "a-2", at: new Date(Date.now() - 3600_000).toISOString() } };

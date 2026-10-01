@@ -8,7 +8,7 @@ import { describe, it, expect } from "vitest";
 import {
   verdictsForSheets, sheetsNeedingAudit, verdictRows, RANK, wouldLowerSeverity,
   seriesHeldBySet, seriesNotJudged, missingWithinHeldSeries, mayReplaceStored, AUDIT_SET_LIST_MAX,
-  indexFingerprint, digest, type AuditSheet, type AuditFindings,
+  indexFingerprint, digest, verdictBasis, basisIndexPart, type AuditSheet, type AuditFindings,
 } from "@/lib/drawingAuditLog";
 import { sheetIdentities } from "@/lib/drawingText";
 
@@ -181,6 +181,43 @@ describe("sheetsNeedingAudit", () => {
       [{ sheet_number: "P-1", revision_code: "C", status: "passed" }], FP)).toHaveLength(1);
     expect(sheetsNeedingAudit([sheet({ sheetNumber: "P-1" })],
       [{ sheet_number: "P-1", revision_code: "C", status: "passed", coverage: null }], FP)).toHaveLength(1);
+  });
+});
+
+describe("verdictBasis — a verdict stands only while its neighbours and its set are what it was computed from (review fix pass 3)", () => {
+  it("changes with the sheet's own index, with any neighbour's index, and with the set — never with their order", () => {
+    const base = verdictBasis("own-a", ["b:fp-b", "c:fp-c"], "set-1");
+    expect(verdictBasis("own-a", ["c:fp-c", "b:fp-b"], "set-1")).toBe(base);
+    expect(verdictBasis("own-x", ["b:fp-b", "c:fp-c"], "set-1")).not.toBe(base);
+    // The sheet its box continues on re-read with different box numbers.
+    expect(verdictBasis("own-a", ["b:fp-b2", "c:fp-c"], "set-1")).not.toBe(base);
+    // A reference now resolving to a sheet it did not (or no longer).
+    expect(verdictBasis("own-a", ["b:fp-b"], "set-1")).not.toBe(base);
+    // A sheet added that makes a gap judgeable (or fills one).
+    expect(verdictBasis("own-a", ["b:fp-b", "c:fp-c"], "set-2")).not.toBe(base);
+    expect(basisIndexPart(base)).toBe("own-a");
+    // A coverage entry written before verdictBasis is the bare fingerprint.
+    expect(basisIndexPart("fp-old")).toBe("fp-old");
+  });
+
+  it("sheetsNeedingAudit: a neighbour's change re-audits the sheet; while indexing runs, only the sheet's own index counts", () => {
+    const k1 = sheet({ documentId: "k-1", sheetNumber: "P-1" });
+    const stored = verdictBasis("own-a", ["k-2:fp-b"], "set-1");
+    const prior = [{ sheet_number: "P-1", revision_code: "C", status: "flagged", coverage: { "k-1": stored } }];
+    expect(sheetsNeedingAudit([k1], prior, new Map([["k-1", stored]]))).toEqual([]);
+    // k-2 re-read (its boxes transcribed at last): k-1 is re-judged.
+    const now = new Map([["k-1", verdictBasis("own-a", ["k-2:fp-b2"], "set-1")]]);
+    expect(sheetsNeedingAudit([k1], prior, now)).toEqual([k1]);
+    // …but not against a half-built index while something is being indexed.
+    expect(sheetsNeedingAudit([k1], prior, now, { indexOnly: true })).toEqual([]);
+    // Its own index changed: re-audited either way.
+    const own = new Map([["k-1", verdictBasis("own-z", ["k-2:fp-b"], "set-1")]]);
+    expect(sheetsNeedingAudit([k1], prior, own, { indexOnly: true })).toEqual([k1]);
+    // A row written before review fix pass 3 (a bare fingerprint) is audited
+    // once more — and, while indexing runs, compared on its own index.
+    const old = [{ ...prior[0], coverage: { "k-1": "own-a" } }];
+    expect(sheetsNeedingAudit([k1], old, new Map([["k-1", stored]]))).toEqual([k1]);
+    expect(sheetsNeedingAudit([k1], old, new Map([["k-1", stored]]), { indexOnly: true })).toEqual([]);
   });
 });
 

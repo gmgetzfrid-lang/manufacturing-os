@@ -101,9 +101,9 @@ export interface SheetVerdict {
     /** Pages never read (an accepted partial index). */
     unreadPages: string[];
   };
-  /** The documents this verdict covers, each with the fingerprint of the
-   *  index it was computed from (indexFingerprint) — set by the writer when
-   *  verdicts sharing one key are merged (DWG-13). */
+  /** The documents this verdict covers, each with the basis it was computed
+   *  from (verdictBasis: its own index, its neighbours', the set) — set by
+   *  the writer when verdicts sharing one key are merged (DWG-13). */
   coverage?: Readonly<Record<string, string>>;
 }
 
@@ -291,6 +291,26 @@ export function indexFingerprint(index: {
   return digest(`${rows.join("\n")}\u0002${opc.join("\n")}\u0002${unread}`);
 }
 
+/** What a verdict on one document was computed FROM (DWG-13, review fix
+ *  pass 3): its own index (`own`, indexFingerprint), the index of every
+ *  document its connectors and references resolve to (`neighbours`, each
+ *  "<id>:<indexFingerprint>") — whether a box comes back, or a reference is
+ *  returned, is read off THAT sheet — and the set it was judged against
+ *  (`set`, a digest of every number the library's sheets answer to: what is
+ *  missing, and which series are held). Written as
+ *  "<own>+<neighbourhood digest>", so the sheet's own part can still be
+ *  compared alone (basisIndexPart) while a neighbour is being indexed. */
+export function verdictBasis(own: string, neighbours: readonly string[], set: string): string {
+  return `${own}+${digest(`${[...neighbours].sort().join("\n")}\u0002${set}`)}`;
+}
+
+/** The sheet's own index part of a recorded basis. A coverage entry written
+ *  before verdictBasis is the bare indexFingerprint — all of it. */
+export function basisIndexPart(basis: string): string {
+  const cut = basis.indexOf("+");
+  return cut >= 0 ? basis.slice(0, cut) : basis;
+}
+
 /**
  * Which sheets actually need auditing.
  *
@@ -308,13 +328,24 @@ export function indexFingerprint(index: {
  *
  * And a row counts as done only for what it COVERED (DWG-13): every
  * document filed under its key must be in the row's `coverage`, with the
- * fingerprint of the index it is indexed from now (`fingerprints`, by
- * knowledge document id — indexFingerprint). Two per-sheet documents of one
+ * basis its verdict would be computed from now (`fingerprints`, by
+ * knowledge document id — verdictBasis). Two per-sheet documents of one
  * drawing share its number, so a sibling's verdict never stands for a sheet
- * that was skipped or added since; and a rebuild that changed what a sheet's
+ * that was skipped or added since; a rebuild that changed what a sheet's
  * index holds (connector boxes transcribed at last) re-audits it, under the
- * same revision. A row with no coverage (written before this rule, or by
- * another writer) is not done: it is audited once more, never lowered.
+ * same revision; and so does a change in a sheet it points at (review fix
+ * pass 3) — the sheet its box continues on re-read with different box
+ * numbers, a referenced sheet that now references back or no longer does —
+ * or in the set (a sheet added that makes a gap judgeable, or fills one).
+ * A row with no coverage (written before this rule, or by another writer)
+ * is not done: it is audited once more, never lowered.
+ *
+ * `indexOnly`: while any sheet of the library is being indexed, its index
+ * is half-built, and a neighbour's half-built index must never re-decide a
+ * verdict (it would file "unpaired" or a gap that is not there, and a known
+ * revision's verdict is never lowered again). Then only each sheet's OWN
+ * index is compared (basisIndexPart), as before review fix pass 3; the
+ * neighbours are compared again once indexing settles.
  */
 export function sheetsNeedingAudit(
   sheets: readonly AuditSheet[],
@@ -323,6 +354,7 @@ export function sheetsNeedingAudit(
     coverage?: Readonly<Record<string, string>> | null;
   }>,
   fingerprints: ReadonlyMap<string, string>,
+  opts: { indexOnly?: boolean } = {},
 ): AuditSheet[] {
   const done = new Map<string, Readonly<Record<string, string>>>();
   for (const a of priorAudits) {
@@ -337,8 +369,11 @@ export function sheetsNeedingAudit(
   const out: AuditSheet[] = [];
   for (const [key, group] of byKey) {
     const covered = done.get(key);
+    const same = (stored: string | undefined, now: string | undefined) =>
+      stored !== undefined && now !== undefined &&
+      (opts.indexOnly ? basisIndexPart(stored) === basisIndexPart(now) : stored === now);
     const whole = !!covered && group.every((s) =>
-      s.revision !== "" && fingerprints.has(s.documentId) && covered[s.documentId] === fingerprints.get(s.documentId));
+      s.revision !== "" && fingerprints.has(s.documentId) && same(covered[s.documentId], fingerprints.get(s.documentId)));
     if (!whole) out.push(...group);
   }
   // Input order, whatever the grouping.

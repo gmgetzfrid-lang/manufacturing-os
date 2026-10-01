@@ -15,7 +15,8 @@
 //                                           A sheet already recorded at the
 //                                           revision in front of it (with
 //                                           anything but `skipped`), from
-//                                           the index it holds now, is NOT
+//                                           the index it and its neighbours
+//                                           hold now, is NOT
 //                                           re-audited — the response lists
 //                                           it as already recorded (DWG-13);
 //                                           one whose revision is unknown
@@ -51,14 +52,15 @@ import { TAG_ENTITY_KINDS } from "@/lib/knowledgeEntityKinds";
 import { loadPrincipal, readableControlledDocIds } from "@/lib/knowledgeAccess";
 import { resetKnowledgeIndex } from "@/lib/knowledgeIngest";
 import {
-  buildEquipmentCensus, auditDrawingRefs, auditOpcBoxes, equipmentRegisterCsv,
+  buildEquipmentCensus, auditDrawingRefs, auditOpcBoxes, drawingRefTargets, equipmentRegisterCsv,
   parseUnitMap, parsePrefixMap, declaredSheetIdentity, sheetIdentities, rollUpEntities,
   DRAWING_MAX_LOWERCASE_RATIO, THIN_PAGE_MAX_CHARS, type EntityRollupRow,
 } from "@/lib/drawingText";
 import { loadCodebookAdmin, codebookToDecoderText } from "@/lib/codebookServer";
 import {
   verdictsForSheets, verdictRows, sheetsNeedingAudit, seriesHeldBySet, seriesNotJudged,
-  missingWithinHeldSeries, mayReplaceStored, indexFingerprint, RANK, type AuditSheet, type SheetVerdict,
+  missingWithinHeldSeries, mayReplaceStored, wouldLowerSeverity, indexFingerprint, verdictBasis, digest, RANK,
+  type AuditSheet, type SheetVerdict,
 } from "@/lib/drawingAuditLog";
 
 export const runtime = "nodejs";
@@ -415,9 +417,15 @@ export async function GET(req: NextRequest) {
 
   // ── Census + reference audit + suggestions ─────────────────────────────
   const census = buildEquipmentCensus(equipment.map((e) => ({ tag: e.tag, count: e.occurrences })), prefixLabels);
-  const audit = auditDrawingRefs(
+  const refAudit = auditDrawingRefs(
     docs.map((d) => ({ id: d.id, name: d.name })), refsByDoc, selfByDoc, unitMap,
   );
+  // A gap is judged only inside a series this library holds — the SAME rule
+  // the record applies (DWG-6), so the lens never calls "a gap in the set"
+  // what the record refuses to judge. The series not judged are named.
+  const identities = new Map(docs.map((d) => [d.id, sheetIdentities(d.name, selfByDoc.get(d.id) ?? [])]));
+  const notJudged = seriesNotJudged(identities);
+  const audit = { ...refAudit, missingInSeries: missingWithinHeldSeries(refAudit.missingInSeries, seriesHeldBySet(identities)) };
 
   // ── OPC box pairing (best-effort) ──────────────────────────────────────
   const opc = auditOpcBoxes(index.opc, selfByDoc, nameById);
@@ -508,12 +516,16 @@ export async function GET(req: NextRequest) {
       : text.charsKnown ? "prose" : "unknown";
     const identity = declaredSheetIdentity(selfByDoc.get(d.id) ?? []);
     // An SHX export, by what it gave (DWG-7): thin text, nothing but its own
-    // title block's number, no drawing references. Only such a sheet is
-    // worth the every-page vision advice — a legend, cover or index sheet of
-    // a healthy text-layer set (references, no equipment) never is.
+    // title block's number, no references to OTHER drawings. Only such a
+    // sheet is worth the SHX advice — a legend, cover or index sheet of a
+    // healthy text-layer set (references, no equipment) never is. Ingest
+    // reads the title block's own number as a reference too (a TrueType
+    // border item "025-PID-0104" is ref-shaped): that one is the sheet
+    // itself, never a reference to another drawing (review fix pass 3).
     const pageCount = Math.max(1, Number(d.page_count ?? 0));
     const declaredBases = new Set((selfByDoc.get(d.id) ?? []).map((t) => t.replace(/-SH\d+$/, "")));
-    const shxLike = looksLike === "drawing" && text.charsKnown && !refsByDoc.has(d.id)
+    const otherRefs = (refsByDoc.get(d.id) ?? []).filter((r) => !declaredBases.has(r.replace(/-SH\d+$/, "")));
+    const shxLike = looksLike === "drawing" && text.charsKnown && otherRefs.length === 0
       && declaredBases.size <= pageCount && st.chars / pageCount <= THIN_PAGE_MAX_CHARS;
     // Pages the entity index has NOTHING for. On a drawing set this is the
     // fingerprint of an interrupted vision rebuild: the transcripts that DID
@@ -562,15 +574,25 @@ export async function GET(req: NextRequest) {
   const proseNoTags = sheets.filter((s) => s.looksLike === "prose");
   const shxNoTags = sheets.filter((s) => s.shxLike);
   if (shxNoTags.length > 0) {
-    // The only vision switch is library-wide, and it bills: said plainly,
-    // and only for sheets that look like SHX exports (DEC-59 item 1).
+    // The cheaper remedy first: a thin page with no tags is read by AI
+    // vision page by page on any rebuild with a key saved (pageNeedsVision).
+    // The library-wide every-page switch bills every page of every document,
+    // so it is offered only once a key has evidently been used here (some
+    // document was read by AI vision) and these sheets are still unread —
+    // said plainly (DEC-59 item 1, review fix pass 3).
+    const visionReadHere = docs.filter((d) => Number(d.vision_pages ?? 0) > 0).length;
     suggestions.push(
-      `${shxNoTags.length} sheet(s) look like SHX exports — capital lettering, thin text, at most a title block, ` +
-      "and no equipment tags or drawing references in their text layer: their tags are most likely line-work, " +
-      "invisible to text extraction. AI vision can read them, but the only switch is library-wide: \"Text " +
-      "doesn't extract from these files — index every page as an image\" in Library AI setup, then \"Rebuild " +
-      "index\", reads EVERY page of EVERY document in this library with AI vision and bills each page to your " +
-      "key. Turn it on only if most of this library is like these sheets.",
+      `${shxNoTags.length} sheet(s) look like SHX exports — capital lettering, thin text, nothing but their own ` +
+      "title block's number, and no equipment tags or references to other drawings in their text layer: their tags " +
+      "are most likely line-work, invisible to text extraction. Hit \"Rebuild index\" with your AI key saved: a " +
+      "page like that is read by AI vision during indexing, page by page, and each page read bills to your key." +
+      (visionReadHere > 0
+        ? ` ${visionReadHere} document(s) here were read by AI vision, so a key has been used in this library: if a ` +
+          "rebuild with your key saved still leaves these sheets unread, the remaining switch is library-wide — " +
+          "\"Text doesn't extract from these files — index every page as an image\" in Library AI setup, then " +
+          "\"Rebuild index\", reads EVERY page of EVERY document in this library with AI vision and bills each page " +
+          "to your key. Turn it on only if most of this library is like these sheets."
+        : ""),
     );
   }
   if (readyDocs > 0 && !hasEntities && proseNoTags.length > 0 && drawingNoTags.length === 0) {
@@ -695,6 +717,9 @@ export async function GET(req: NextRequest) {
     opcUnpaired: opcUnpaired.slice(0, 25),
     opcNoRef: opcNoRef.slice(0, 25),
     opcUnknown: opcUnknown.slice(0, 25),
+    // DWG-6: series the library holds no more than one number of — gaps in
+    // them are not judged, here or on the record.
+    seriesNotJudged: notJudged,
     // DWG-11: the counts are exact only when nothing was cut.
     truncated,
     notCounted: unreadNames,
@@ -806,7 +831,12 @@ async function rebuild(orgId: string, libraryId: string, requested: string | nul
   const all = res.rows.filter((d) => cursor === null || d.id > cursor);
   if (all.length === 0) {
     if (resumedFrom !== null) await writeRebuildMark(orgId, libraryId, null);
-    return NextResponse.json({ ok: true, docs: 0, busy: [], errors: [], remaining: 0, cursor: null, resumedFrom });
+    return NextResponse.json({
+      ok: true, docs: 0, busy: [], errors: [], remaining: 0, cursor: null, resumedFrom,
+      ...(resumedFrom !== null
+        ? { notice: "Continued from where the last press stopped: earlier presses had already queued every document, so nothing was left to reset." }
+        : {}),
+    });
   }
 
   const nameById = new Map(all.map((d) => [d.id, d.name]));
@@ -873,6 +903,17 @@ async function rebuild(orgId: string, libraryId: string, requested: string | nul
       error: `Re-index is not complete: ${parts.join("; ")}.`,
     }, { status: 409 });
   }
+  // A press that finished what an earlier one began says so: its count is
+  // this press's, and the documents earlier presses queued were not reset
+  // again — whatever was saved in Library AI setup between presses did not
+  // reach them a second time.
+  if (cursorless && resumedFrom !== null) {
+    return NextResponse.json({
+      ...body,
+      notice: `Continued from where the last press stopped: ${reset.length} document(s) queued by this press; the ` +
+        "documents earlier presses queued were not reset again.",
+    });
+  }
   return NextResponse.json(body);
 }
 
@@ -897,12 +938,16 @@ const sameRev = (a: string, b: string) => a.trim().toUpperCase() === b.trim().to
  *   * A sheet already recorded at this revision, in this library, with
  *     anything but `skipped`, is not re-audited (DWG-13 — sheetsNeedingAudit)
  *     — provided the row COVERED it: every document filed under that number
- *     is on the row's `coverage`, with the fingerprint of the index it holds
- *     now. A sibling sheet's verdict never stands for a sheet that was
- *     skipped or added since, and a rebuild that changed a sheet's index
- *     re-audits it. A sheet whose revision is unknown ("") always is
- *     audited: "unrevised" cannot be established for it, and its row takes
- *     the latest verdict.
+ *     is on the row's `coverage`, with the basis its verdict would be
+ *     computed from now (verdictBasis): its own index, the index of every
+ *     sheet its connectors and references resolve to, and the set. A
+ *     sibling sheet's verdict never stands for a sheet that was skipped or
+ *     added since; a rebuild that changed a sheet's index re-audits it; so
+ *     does a change in a sheet it points at, or in the set. While any sheet
+ *     is being indexed, only each sheet's own index is compared — a
+ *     half-built neighbour never re-decides a verdict. A sheet whose
+ *     revision is unknown ("") always is audited: "unrevised" cannot be
+ *     established for it, and its row takes the latest verdict.
  *   * A stored verdict under a known revision is never replaced by a less
  *     severe one (RANK — mayReplaceStored).
  *   * A gap ("isn't in the set") is judged only inside a series the library
@@ -916,9 +961,11 @@ const sameRev = (a: string, b: string) => a.trim().toUpperCase() === b.trim().to
  *   * Nothing is recorded from a partial read of the index (DWG-11).
  *   * Before 20261124 (no library_id) the verdicts are still recorded, on
  *     the org-wide key that database has: prior rows read org-wide, the
- *     upsert on (org, sheet, revision), never lowering a stored verdict —
- *     the base's write path, with the RANK guard it lacked. The response
- *     says so (`legacyKey`).
+ *     upsert on (org, sheet, revision) — the base's write path, with the
+ *     RANK guard it lacked. A row another library filed (or one that never
+ *     said which) is never lowered, whatever its revision; only this
+ *     library's own unknown-revision row takes the latest verdict. The
+ *     response says so (`legacyKey`).
  */
 async function recordAudit(orgId: string, libraryId: string, userId: string) {
   const { docs, error: docErr } = await loadVisibleDocs(orgId, userId, libraryId);
@@ -977,15 +1024,31 @@ async function recordAudit(orgId: string, libraryId: string, userId: string) {
   const heldSeries = seriesHeldBySet(identities);
   const notJudged = seriesNotJudged(identities);
 
-  // What each document's index holds now (DWG-13): a verdict stands only
-  // for the index it was computed from.
+  // What each verdict is computed FROM (DWG-13): the document's own index;
+  // the index of every document its connectors and references resolve to —
+  // whether a box comes back, or a reference is returned, is read off THAT
+  // sheet; and the set (every number the library's sheets answer to: what
+  // is missing, which series are held). A verdict stands only while all
+  // three are what it was computed from (verdictBasis).
   const rowsByDoc = new Map<string, EntityRollupRow[]>();
   for (const r of index.rollup) rowsByDoc.set(r.document_id, [...(rowsByDoc.get(r.document_id) ?? []), r]);
   const opcByDoc = new Map<string, EntityRow[]>();
   for (const o of index.opc) opcByDoc.set(o.document_id, [...(opcByDoc.get(o.document_id) ?? []), o]);
-  const fingerprints = new Map(docs.map((d) => [d.id, indexFingerprint({
+  const ownPrint = new Map(docs.map((d) => [d.id, indexFingerprint({
     rows: rowsByDoc.get(d.id) ?? [], opc: opcByDoc.get(d.id) ?? [], unreadPages: d.vision_failed_pages ?? [],
   })]));
+  const setPrint = digest([...new Set([...identities.values()].flat())].sort().join("\n"));
+  const refTargets = drawingRefTargets(docs.map((d) => ({ id: d.id, name: d.name })), refsByDoc, selfByDoc);
+  const fingerprints = new Map(docs.map((d) => {
+    const near = new Set([...(refTargets.get(d.id) ?? []), ...(opc.targetsByDoc.get(d.id) ?? [])]);
+    near.delete(d.id);
+    return [d.id, verdictBasis(ownPrint.get(d.id) ?? "", [...near].map((n) => `${n}:${ownPrint.get(n) ?? ""}`), setPrint)];
+  }));
+  // A sheet being indexed right now (queued or mid-read — a parked sheet
+  // waits with a whole index) has a half-built index: no verdict is re-
+  // decided by it. Each sheet is then compared on its own index only, and
+  // against its neighbours once indexing settles.
+  const indexingNow = docs.filter((d) => d.status !== "ready" && d.status !== "error" && !isParked(d));
 
   // The controlled documents the mirrors stand for: current version + rev.
   const mirrored = [...new Set(docs.map((d) => d.source_document_id).filter((id): id is string => !!id))];
@@ -1048,7 +1111,8 @@ async function recordAudit(orgId: string, libraryId: string, userId: string) {
     return c && typeof c === "object" && !Array.isArray(c) ? c as Record<string, string> : null;
   };
   const priorRows = prior.rows.map((r) => ({ ...r, coverage: coverageOf(r.audit_details) }));
-  const needing = new Set(sheetsNeedingAudit(sheets, priorRows, fingerprints).map((s) => s.documentId));
+  const needing = new Set(sheetsNeedingAudit(sheets, priorRows, fingerprints, { indexOnly: indexingNow.length > 0 })
+    .map((s) => s.documentId));
   const alreadyRecorded = sheets.filter((s) => !needing.has(s.documentId)).map((s) => {
     const p = priorRows.find((r) => r.sheet_number === s.sheetNumber && r.revision_code === s.revision && r.status !== "skipped");
     return { name: s.name, sheetNumber: s.sheetNumber, revision: s.revision, status: p?.status ?? "recorded" };
@@ -1086,11 +1150,17 @@ async function recordAudit(orgId: string, libraryId: string, userId: string) {
   for (const [key, v] of bestByKey) bestByKey.set(key, { ...v, coverage: coverageByKey.get(key) ?? {} });
   // …and never replace a stored verdict with a less severe one (DWG-6) —
   // except under an unknown revision, where the latest verdict is the only
-  // one that can be about the drawing in front of us.
+  // one that can be about the drawing in front of us. On the org-wide key
+  // (before 20261124) a row may be ANOTHER library's verdict, computed over
+  // another set: that exception is for this library's own row, and a row
+  // filed by another library (or by a writer that never said which) is
+  // never lowered, whatever its revision.
+  const libraryOf = (details: unknown) => (details as { libraryId?: unknown } | null)?.libraryId;
   const keptStored: Array<{ sheetNumber: string; revision: string; stored: string; computed: string }> = [];
   const deduped = [...bestByKey.values()].filter((v) => {
     const stored = priorRows.find((r) => r.sheet_number === v.sheetNumber && r.revision_code === v.revision);
-    if (stored && !mayReplaceStored(stored, v.status)) {
+    const foreign = legacyKey && !!stored && libraryOf(stored.audit_details) !== libraryId;
+    if (stored && (foreign ? wouldLowerSeverity(stored.status, v.status) : !mayReplaceStored(stored, v.status))) {
       keptStored.push({ sheetNumber: v.sheetNumber, revision: v.revision, stored: stored.status, computed: v.status });
       return false;
     }
@@ -1146,12 +1216,16 @@ async function recordAudit(orgId: string, libraryId: string, userId: string) {
     // DWG-6: series the library holds no more than one number of — gaps in
     // them not judged.
     seriesNotJudged: notJudged,
+    // DWG-13: sheets being indexed right now — no verdict was re-decided by
+    // a change in the sheets it points at until they finish.
+    ...(indexingNow.length > 0 ? { indexingNow: indexingNow.map((d) => d.name) } : {}),
     // Before 20261124: recorded on the org-wide key, one verdict per sheet
     // and revision across every library.
     ...(legacyKey ? {
       legacyKey: true,
       notice: "Recorded on the org-wide key: until migration 20261124 is applied, one verdict per sheet and revision is " +
-        "kept across all libraries (never lowered). Apply it to keep each library's verdict separately.",
+        "kept across all libraries, and a verdict another library recorded is never lowered by this one. Apply it to " +
+        "keep each library's verdict separately.",
     } : {}),
   });
 }

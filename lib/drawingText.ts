@@ -491,7 +491,9 @@ export function unitOfRef(ref: string, prefixLen: number): string | null {
 // 123456, M-101 — and extractDrawingRefs deliberately reads the ambiguous
 // shapes only after a context word. The label gives the reference layer
 // that context; the position lets the connector audit read ANY number the
-// field holds. "Broken" is then exactly what the contract says it is: the
+// field holds — and only the field: a box is paired against the drawing in
+// its destination position, never against a number its service tail
+// mentions. "Broken" is then exactly what the contract says it is: the
 // connector shows neither a drawing number nor a sheet — the field reads
 // NONE, or is empty, and no SH follows. A connector that names only a sheet
 // continues within its OWN drawing (SAME, or NONE / empty with a sheet):
@@ -547,8 +549,11 @@ export interface OpcLine {
 // "OPC <n>: DWG <field> [SH <n>] [— <service>]". The label may carry NO. /
 // NUMBER / #; the separator is an em or en dash (spaced or not), or a
 // spaced hyphen — never a bare hyphen, which is part of drawing numbers.
+// A tail written without its dash still starts at its TO / FROM word: the
+// service's own drawing number ("FROM 025-PID-0101 HEADER") is never read
+// as the destination (review fix pass 3).
 const OPC_CONTRACT_RE = /^\s*OPC[\s#.:-]*(\d{1,4})\s*:\s*(?:DWG|DRG|DRAWING)\b\.?(?:\s*(?:NO\b\.?|NUMBER\b|#))?\s*[:.]?\s*(.*)$/;
-const OPC_SEPARATOR_RE = /\s*[—–]\s*|\s+-{1,2}\s+/;
+const OPC_SEPARATOR_RE = /\s*[—–]\s*|\s+-{1,2}\s+|\s+(?=(?:TO|FROM)\s)/;
 const OPC_SHEET_RE = /^(.*?)[\s,]*\bSH(?:T|EET)?\b\.?\s*(?:NO\b\.?)?\s*[:#]?\s*(\d{1,3})\b/;
 
 /** Read a transcript line written in OPC_LINE_FORMAT; null for a line in any
@@ -764,18 +769,11 @@ export function sheetIdentities(name: string, declaredTags: readonly string[]): 
  *  worse than saying nothing — it manufactures alarm about drawings that are
  *  probably perfect. Only two things are actionable: sheets missing from a
  *  series you DID load, and connectors that don't come back inside the set. */
-export function auditDrawingRefs(
-  docs: Array<{ id: string; name: string }>,
-  refsByDoc: Map<string, string[]>,
-  /** Identities READ FROM EACH SHEET'S OWN TITLE BLOCK at ingest (kind
-   *  'self' entities) — drawing number, plus number-SHn per sheet. When a
-   *  sheet declares who it is, that beats anything the filename says:
-   *  files are named by whoever exported them, borders are drafted. */
-  selfTagsByDoc?: Map<string, string[]>,
-  /** Site decoder (parseUnitMap) — names the unit each out-of-scope series
-   *  belongs to, so "load these" reads as units, not bare numbers. */
-  unitMap?: UnitMap | null,
-): RefAudit {
+/** The library's sheets by identity, and which loaded sheet a reference
+ *  means — shared by the reference audit and by drawingRefTargets, so what a
+ *  verdict is recorded as depending on is exactly what it was computed
+ *  from. */
+function refResolver(docs: ReadonlyArray<{ id: string; name: string }>, selfTagsByDoc?: ReadonlyMap<string, string[]>) {
   // A sheet's identity: what its title block declares, else every drawing-
   // number-shaped token in its filename.
   const identityByDoc = new Map<string, string[]>();
@@ -793,11 +791,6 @@ export function auditDrawingRefs(
     set.add(i.docId);
     exact.set(i.ref, set);
   }
-  const nameById = new Map(docs.map((d) => [d.id, d.name]));
-  const scopeAll = [...new Set(identity.map((i) => refSeries(i.ref)))].filter(Boolean).sort();
-  // For display, keep only root series — "025-PID", not forty per-drawing
-  // entries under it.
-  const scope = scopeAll.filter((s) => !scopeAll.some((r) => r !== s && s.startsWith(`${r}-`)));
 
   /** Which loaded sheet does this reference mean? Exact match first, then a
    *  UNIQUE same-series sheet with the same number (0107 ≡ 107, SH3 ≡ 3).
@@ -815,6 +808,53 @@ export function auditDrawingRefs(
     const docIds = new Set(candidates.map((c) => c.docId));
     return docIds.size === 1 ? [...docIds][0] : null;
   };
+  return { identityByDoc, identity, resolveDoc };
+}
+
+/** By document id: the loaded sheets its references resolve to — one sheet
+ *  each, exactly as auditDrawingRefs links them (a sheet citing its own
+ *  number, or a number naming a whole multi-sheet set, links nothing).
+ *  Whether such a sheet references back decides a one-way finding, so a
+ *  recorded verdict depends on it (DWG-13). */
+export function drawingRefTargets(
+  docs: ReadonlyArray<{ id: string; name: string }>,
+  refsByDoc: ReadonlyMap<string, string[]>,
+  selfTagsByDoc?: ReadonlyMap<string, string[]>,
+): Map<string, string[]> {
+  const { identityByDoc, resolveDoc } = refResolver(docs, selfTagsByDoc);
+  const out = new Map<string, string[]>();
+  for (const [docId, refs] of refsByDoc) {
+    const selfRefs = new Set(identityByDoc.get(docId) ?? []);
+    for (const ref of refs) {
+      if (selfRefs.has(ref)) continue;
+      const target = resolveDoc(ref);
+      if (!target || target === "multi" || target === docId) continue;
+      const list = out.get(docId) ?? [];
+      if (!list.includes(target)) list.push(target);
+      out.set(docId, list);
+    }
+  }
+  return out;
+}
+
+export function auditDrawingRefs(
+  docs: Array<{ id: string; name: string }>,
+  refsByDoc: Map<string, string[]>,
+  /** Identities READ FROM EACH SHEET'S OWN TITLE BLOCK at ingest (kind
+   *  'self' entities) — drawing number, plus number-SHn per sheet. When a
+   *  sheet declares who it is, that beats anything the filename says:
+   *  files are named by whoever exported them, borders are drafted. */
+  selfTagsByDoc?: Map<string, string[]>,
+  /** Site decoder (parseUnitMap) — names the unit each out-of-scope series
+   *  belongs to, so "load these" reads as units, not bare numbers. */
+  unitMap?: UnitMap | null,
+): RefAudit {
+  const { identityByDoc, identity, resolveDoc } = refResolver(docs, selfTagsByDoc);
+  const nameById = new Map(docs.map((d) => [d.id, d.name]));
+  const scopeAll = [...new Set(identity.map((i) => refSeries(i.ref)))].filter(Boolean).sort();
+  // For display, keep only root series — "025-PID", not forty per-drawing
+  // entries under it.
+  const scope = scopeAll.filter((s) => !scopeAll.some((r) => r !== s && s.startsWith(`${r}-`)));
 
   const missingMap = new Map<string, { referencedBy: Set<string>; count: number }>();
   const outMap = new Map<string, { refs: Set<string>; count: number; referencedBy: Set<string> }>();
@@ -1092,6 +1132,10 @@ export interface OpcAudit {
    *  drawing number. Absence of evidence, recorded as unknown — worth a look
    *  on the sheet, never "broken". */
   unknown: Array<{ box: string; sheet: string; page: number; line: string }>;
+  /** By source document id: the documents its boxes were paired against —
+   *  whose box numbers decide its verdict (DWG-13: a recorded verdict
+   *  stands only while they are unchanged). */
+  targetsByDoc: ReadonlyMap<string, readonly string[]>;
 }
 
 export function auditOpcBoxes(
@@ -1123,6 +1167,7 @@ export function auditOpcBoxes(
   const unpaired: OpcAudit["unpaired"] = [];
   const noRef: OpcAudit["noRef"] = [];
   const unknown: OpcAudit["unknown"] = [];
+  const targetsByDoc = new Map<string, string[]>();
   const shape = (o: OpcEntity) => ({
     box: o.tag,
     sheet: nameById.get(o.document_id) ?? "Sheet",
@@ -1137,19 +1182,27 @@ export function auditOpcBoxes(
     // Nothing stored says nothing — about the destination either way.
     if (!raw) { unknown.push(shape(o)); continue; }
     const contract = parseOpcLine(raw);
-    const positional = contract ? opcDestinationForms(contract) : [];
-    const refs = [...new Set([...positional, ...extractDrawingRefs(raw)])];
+    // A contract line is paired on its POSITIONAL destination only. A drawing
+    // number in its `— <TO|FROM> <service>` tail says where the service
+    // comes from or goes, not which sheet this box continues on: pairing
+    // against it filed a false `unreturned` — the top severity — against a
+    // sheet the connector never named (review fix pass 3). A line outside
+    // the contract has no positions; the grammar reads it whole, as before.
+    const refs = contract ? opcDestinationForms(contract) : extractDrawingRefs(raw);
     const from = nameById.get(o.document_id) ?? "Sheet";
 
-    // Is there a destination at all? (DWG-4 / DWG-8) A reference read
-    // anywhere on the line is one, whatever the field says; so is a sheet of
-    // the connector's own drawing.
+    // Is there a destination at all? (DWG-4 / DWG-8) A drawing number in the
+    // destination field is one; so is a sheet of the connector's own drawing.
     if (refs.length === 0 && !contract?.sameDrawing) {
       if (contract) {
         // NONE, or nothing in the field, and no sheet: the connector says it
-        // names nowhere to continue. Something in the field that is not a
-        // drawing number (or SAME with no sheet): unreadable, never broken.
-        if (contract.none || (contract.empty && !mayBeCut(o))) noRef.push(shape(o));
+        // names nowhere to continue — unless a drawing number stands
+        // elsewhere on the line (its tail): then which sheet the box means
+        // is unclear, and unclear is unknown, never broken. Something in the
+        // field that is not a drawing number (or SAME with no sheet):
+        // unreadable, never broken.
+        const saysNowhere = contract.none || (contract.empty && !mayBeCut(o));
+        if (saysNowhere && extractDrawingRefs(raw).length === 0) noRef.push(shape(o));
         else unknown.push(shape(o));
       } else {
         (mayBeCut(o) || hasUnreadNumber(raw) ? unknown : noRef).push(shape(o));
@@ -1177,6 +1230,9 @@ export function auditOpcBoxes(
     }
     for (const target of targets) {
       if (target === o.document_id) continue;
+      const paired = targetsByDoc.get(o.document_id) ?? [];
+      if (!paired.includes(target)) paired.push(target);
+      targetsByDoc.set(o.document_id, paired);
       const entry = { box: o.tag, from, to: nameById.get(target) ?? "Sheet", line: raw };
       const boxes = opcByDoc.get(target);
       // A target with no box numbers read cannot say whether the box comes
@@ -1186,5 +1242,5 @@ export function auditOpcBoxes(
     }
   }
 
-  return { boxCount: opcRows.length, unreturned, unpaired, noRef, unknown };
+  return { boxCount: opcRows.length, unreturned, unpaired, noRef, unknown, targetsByDoc };
 }

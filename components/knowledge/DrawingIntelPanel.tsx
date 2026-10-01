@@ -44,12 +44,19 @@ type Intel = DrawingIntel & {
   opcPairing?: "ok" | "no-boxes";
   /** "counts": before 20261124, chunks counted but never read (DWG-11). */
   textStats?: "measured" | "counts";
+  /** Series this library holds no more than one drawing number of: gaps in
+   *  them are not judged — the same rule as the record (DWG-6). */
+  seriesNotJudged?: string[];
 };
 type RecordResult = Awaited<ReturnType<typeof recordDrawingAudit>> & {
   alreadyRecorded?: Array<{ name: string; sheetNumber: string; revision: string; status: string }>;
   notRecorded?: Array<{ name: string; sheetNumber: string; revision: string; reason: string }>;
-  /** Series this library holds only one sheet of: gaps in them not judged (DWG-6). */
+  /** Series this library holds no more than one drawing number of: gaps in
+   *  them not judged (DWG-6). */
   seriesNotJudged?: string[];
+  /** Sheets being indexed right now: no verdict was re-decided by a change
+   *  in the sheets it points at (DWG-13). */
+  indexingNow?: string[];
   /** Before 20261124: recorded on the org-wide key, and why that matters. */
   notice?: string;
 };
@@ -112,6 +119,7 @@ export default function DrawingIntelPanel({ orgId, libraryId, isController, refr
     alreadyRecorded: NonNullable<RecordResult["alreadyRecorded"]>;
     notRecorded: NonNullable<RecordResult["notRecorded"]>;
     seriesNotJudged: string[];
+    indexingNow: string[];
     notice: string | null;
   } | null>(null);
   const [showUnknown, setShowUnknown] = useState(false);
@@ -211,6 +219,7 @@ export default function DrawingIntelPanel({ orgId, libraryId, isController, refr
         recorded: res.recorded, counts: res.counts,
         alreadyRecorded: res.alreadyRecorded ?? [], notRecorded: res.notRecorded ?? [],
         seriesNotJudged: res.seriesNotJudged ?? [],
+        indexingNow: res.indexingNow ?? [],
         notice: res.notice ?? null,
       });
       showToast({
@@ -295,8 +304,15 @@ export default function DrawingIntelPanel({ orgId, libraryId, isController, refr
           {recorded.seriesNotJudged.length > 0 && (
             <div className="mt-0.5">
               Gaps were not judged in {recorded.seriesNotJudged.slice(0, 4).join(", ")}
-              {recorded.seriesNotJudged.length > 4 ? "…" : ""} — this library holds only one sheet of
+              {recorded.seriesNotJudged.length > 4 ? "…" : ""} — this library holds no more than one drawing number of
               {recorded.seriesNotJudged.length === 1 ? " that series" : " each of those series"}, so it can&rsquo;t say what the series is missing.
+            </div>
+          )}
+          {recorded.indexingNow.length > 0 && (
+            <div className="mt-0.5 text-amber-800 dark:text-amber-300">
+              <b>{recorded.indexingNow.length}</b> sheet(s) are being indexed right now
+              ({recorded.indexingNow.slice(0, 3).join(", ")}{recorded.indexingNow.length > 3 ? "…" : ""}) — no verdict was
+              re-decided by a change in the sheets it points at. Record again once indexing finishes.
             </div>
           )}
           {recorded.notice && (
@@ -310,8 +326,9 @@ export default function DrawingIntelPanel({ orgId, libraryId, isController, refr
             </div>
           )}
           <div className="mt-0.5 opacity-80">
-            Sheets already recorded at this revision won&rsquo;t need auditing again until they&rsquo;re revised
-            (a sheet whose revision isn&rsquo;t known is audited every time).
+            Sheets already recorded at this revision aren&rsquo;t audited again until they&rsquo;re revised or
+            re-indexed, or a sheet they point at (or the set) changes. A sheet whose revision isn&rsquo;t known is
+            audited every time.
           </div>
         </div>
       )}
@@ -375,6 +392,15 @@ export default function DrawingIntelPanel({ orgId, libraryId, isController, refr
             </ul>
           )}
         </div>
+      )}
+
+      {(intel.seriesNotJudged ?? []).length > 0 && (
+        <p className="mb-2 text-[11px] text-[var(--color-text-muted)]">
+          Gaps are not judged in {intel.seriesNotJudged!.slice(0, 4).join(", ")}
+          {intel.seriesNotJudged!.length > 4 ? "…" : ""} — this library holds no more than one drawing number of
+          {intel.seriesNotJudged!.length === 1 ? " that series" : " each of those series"}, so it can&rsquo;t say what
+          the series is missing.
+        </p>
       )}
 
       {/* ── Battery limits — expected, and explicitly NOT broken ───────── */}
@@ -685,9 +711,11 @@ export default function DrawingIntelPanel({ orgId, libraryId, isController, refr
                 })}
               </ul>
               <p className="px-3 py-2 text-[10px] text-[var(--color-text-muted)] border-t border-[var(--color-border)]">
-                <b>Drawing, no tags</b> with thin text and no drawing references usually means an AutoCAD export
-                with SHX fonts — the title block extracts, the tags plot as line-work. A drawing sheet whose text
-                gave references but no equipment (a legend, cover or index sheet) is fine as it is.
+                <b>Drawing, no tags</b> with thin text and no references to other drawings usually means an AutoCAD
+                export with SHX fonts — the title block extracts, the tags plot as line-work. A drawing sheet whose
+                text gave references but no equipment (a legend, cover or index sheet) is fine as it is.
+                {" "}<b>Rebuild index</b> with your AI key saved first: such pages are read by AI vision page by page,
+                each page billed to your key. Only if that leaves them unread:
                 {" "}<b>&ldquo;Text doesn&apos;t extract from these files — index every page as an image&rdquo;</b> in
                 Library AI setup makes AI vision read <b>every page of every document</b> in this library on the next
                 rebuild, and bills each page to your key — turn it on only if most of the library is SHX.

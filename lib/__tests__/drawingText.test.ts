@@ -494,7 +494,7 @@ describe("SHX drawings whose only text is the title block", () => {
 // ── intelligence Round G (I-07) ────────────────────────────────────────────
 
 import {
-  extractLineNumbers, drawingSignals, auditOpcBoxes, declaredSheetIdentity, rollUpEntities, parseOpcLine,
+  extractLineNumbers, drawingSignals, auditOpcBoxes, declaredSheetIdentity, rollUpEntities, parseOpcLine, drawingRefTargets,
   OPC_LINE_EXAMPLE, OPC_LINE_FORMAT, OPC_NO_DRAWING, OPC_SAME_DRAWING, OPC_RAW_STORED_MAX, TITLE_BLOCK_OPEN, TITLE_BLOCK_CLOSE,
   SPARSE_PAGE_MAX_CHARS, DENSE_DRAWING_MIN_TAGS_PER_KCHAR, DRAWING_MAX_LOWERCASE_RATIO,
 } from "../drawingText";
@@ -698,8 +698,46 @@ describe("DWG-4 — the connector line contract between the vision prompt and th
     expect(one("OPC 15: DWG NONE SHOWN — FROM DESALTER").noRef).toHaveLength(1);
     expect(one("OPC 15: DWG — FROM DESALTER").noRef).toHaveLength(1);
     expect(one("OPC 15: DWG").noRef).toHaveLength(1);
-    // …unless the line names a drawing elsewhere: then it does say where to go.
-    expect(one("OPC 15: DWG NONE — CONT ON DWG 025-PID-0107").noRef).toEqual([]);
+    // …unless a drawing number stands elsewhere on the line: which sheet the
+    // box means is then unclear — unknown, never broken, and never paired
+    // against that number (review fix pass 3).
+    const tail = pair("OPC 15: DWG NONE — CONT ON DWG 025-PID-0107", [], ["025-PID-0107"], ["9"]);
+    expect(tail.noRef).toEqual([]);
+    expect(tail.unknown).toHaveLength(1);
+    expect(tail.unreturned).toEqual([]);
+    expect(tail.unpaired).toEqual([]);
+  });
+
+  it("a drawing number in the service tail is never the destination: no false unreturned against it (review fix pass 3)", () => {
+    // A (0104): box 14 continues on 0105; its service comes FROM a header
+    // drawn on 0101. B (0105) carries box 14; C (0101) carries only box 3.
+    const self = new Map([["a", ["025-PID-0104"]], ["b", ["025-PID-0105"]], ["c", ["025-PID-0101"]]]);
+    const names = new Map([["a", "A.pdf"], ["b", "B.pdf"], ["c", "C.pdf"]]);
+    for (const raw of [
+      "OPC 14: DWG 025-PID-0105 — FROM 025-PID-0101 HEADER",  // the contract's shape
+      "OPC 14: DWG 025-PID-0105 FROM 025-PID-0101 HEADER",    // the tail's dash left out
+      "OPC 14: DWG 025-PID-0105 -- TO 025-PID-0101 HEADER",
+    ]) {
+      expect(parseOpcLine(raw), raw).toMatchObject({ box: "14", destination: "025-PID-0105" });
+      const audit = auditOpcBoxes([
+        { document_id: "a", page: 1, tag: "14", raw },
+        { document_id: "b", page: 1, tag: "14", raw: "OPC 14: DWG 025-PID-0104 — TO V-1402" },
+        { document_id: "c", page: 1, tag: "3", raw: "OPC 3: DWG 025-PID-0102 — TO V-3" },
+      ], self, names);
+      expect(audit.unreturned, raw).toEqual([]);
+      expect(audit.unpaired, raw).toEqual([]);
+      expect(audit.noRef, raw).toEqual([]);
+      // A's verdict depends on B's box numbers — never on C's.
+      expect(audit.targetsByDoc.get("a"), raw).toEqual(["b"]);
+      // …and a missing box on the sheet the field DOES name is still caught.
+      const missing = auditOpcBoxes([
+        { document_id: "a", page: 1, tag: "14", raw },
+        { document_id: "b", page: 1, tag: "7", raw: "OPC 7: DWG 025-PID-0199 — TO V-1402" },
+      ], self, names);
+      expect(missing.unreturned, raw).toEqual([expect.objectContaining({ box: "14", from: "A.pdf", to: "B.pdf" })]);
+    }
+    // A line outside the contract still reads its references whole, as before.
+    expect(pair("OPC 3 CONT ON DWG 025-PID-0107", [], ["025-PID-0107"], ["9"]).targetsByDoc.get("a")).toEqual(["b"]);
   });
 
   it("a destination present but not shaped like a drawing number is unknown, never broken", () => {
@@ -727,6 +765,21 @@ describe("DWG-4 — the connector line contract between the vision prompt and th
     const bare = auditOpcBoxes([{ document_id: "a", page: 1, tag: "3", raw: null }], new Map(), new Map([["a", "A.pdf"]]));
     expect(bare.noRef).toEqual([]);
     expect(bare.unknown).toHaveLength(1);
+  });
+
+  it("drawingRefTargets: the one sheet each reference resolves to — what a one-way finding is read off (review fix pass 3)", () => {
+    const docs = [
+      { id: "a", name: "025-PID-0106.pdf" }, { id: "b", name: "025-PID-0107.pdf" },
+      { id: "s1", name: "x.pdf" }, { id: "s2", name: "y.pdf" },
+    ];
+    const self = new Map([["s1", ["2002-D-2001", "2002-D-2001-SH1"]], ["s2", ["2002-D-2001", "2002-D-2001-SH2"]]]);
+    const refs = new Map([
+      ["a", ["025-PID-0107", "025-PID-0106", "025-PID-0999", "2002-D-2001", "2002-D-2001-SH2"]],
+    ]);
+    // 0107 is one sheet; its own number links nothing; 0999 is not loaded;
+    // the bare 2002-D-2001 names a whole set (no single sheet); SH2 is one.
+    expect(drawingRefTargets(docs, refs, self).get("a")).toEqual(["b", "s2"]);
+    expect(drawingRefTargets(docs, new Map([["b", ["025-PID-0107"]]]), self).has("b")).toBe(false);
   });
 
   it("the text layer's connectors are its references: CONT ON / pennant numbers extract as refs and pair one-way", () => {
