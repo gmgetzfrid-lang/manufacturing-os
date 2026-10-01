@@ -42,7 +42,7 @@ import { listLibraryFoldersOnce, type PickerFolder } from "@/lib/libraryCollecti
 import { getDocumentsForAssetsHydrated } from "@/lib/operationalGraph";
 import AssetPhotoCarousel from "@/components/assets/AssetPhotoCarousel";
 import { CategorizeBanner, FlowPanel, FlowReviewQueue } from "@/components/assets/UnitOpsPanels";
-import { countAssetFlows } from "@/lib/processFlows";
+import { countAssetFlows, assetDeleteFlowNote } from "@/lib/processFlows";
 import { AreaKnowledgePanel } from "@/components/assets/AreaKnowledgePanel";
 import DocumentLinkPicker from "@/components/documents/DocumentLinkPicker";
 import AssetPhotoUploader from "@/components/assets/AssetPhotoUploader";
@@ -1913,10 +1913,10 @@ function AssetEditDrawer({
 
   const onDelete = async () => {
     if (!asset) return;
-    // FLOW-6: deleting equipment removes its process flows (20261155) — say how many.
+    // FLOW-6: deleting equipment removes its process flows (20261155) — say
+    // how many, and that they stay (shown as broken) until that paste.
     const flows = await countAssetFlows(orgId, asset.id);
-    const flowNote = flows === null ? ", and any process flows it is part of (they could not be counted)"
-      : flows > 0 ? `, and the ${flows} process flow${flows === 1 ? "" : "s"} it is part of` : "";
+    const flowNote = assetDeleteFlowNote(flows);
     if (!(await appConfirm({ message: `Delete asset "${asset.tag}" and all its photos, aliases and document links${flowNote}? This can't be undone — the deletion is recorded in the audit log.`, tone: "danger" }))) return;
     setBusy(true);
     try {

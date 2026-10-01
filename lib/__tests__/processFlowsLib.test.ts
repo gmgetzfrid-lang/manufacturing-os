@@ -38,7 +38,7 @@ vi.mock("@/lib/supabase", () => {
 
 import {
   createManualFlow, decideFlow, deleteFlow, listProcessFlowsPaged, listProcessFlows, resolveAssetEndpoints,
-  countAssetFlows, flowConfidence, isLowConfidence, FlowProposedNotice, FlowDismissedNotice, flowWriteMessage,
+  countAssetFlows, assetDeleteFlowNote, flowConfidence, isLowConfidence, FlowProposedNotice, FlowDismissedNotice, flowWriteMessage,
   FLOW_DECIDE_REFUSED, FLOW_DELETE_REFUSED, FLOW_PROPOSED_MESSAGE, FLOW_PAGE, FLOW_READ_CAP,
   FLOW_ALREADY_PROPOSED_MESSAGE, FLOW_DISMISSED_MESSAGE, FLOW_EXISTS_UNREAD_MESSAGE,
 } from "@/lib/processFlows";
@@ -204,6 +204,24 @@ describe("countAssetFlows — what deleting or archiving equipment does to its f
     expect(callsOf("process_flows", "or")[0].args[0]).toBe("and(from_kind.eq.asset,from_ref.eq.a1),and(to_kind.eq.asset,to_ref.eq.a1)");
     push("process_flows", { data: null, error: { message: "down" } });
     await expect(countAssetFlows("o1", "a1")).resolves.toBeNull();
+  });
+});
+
+describe("assetDeleteFlowNote — FLOW-6: the delete confirm is true before and after 20261155 is pasted", () => {
+  it("removal is the migration's trigger, so the sentence says the flows stay (shown as broken) until it is applied", () => {
+    expect(assetDeleteFlowNote(0)).toBe("");
+    expect(assetDeleteFlowNote(1)).toBe(", and its 1 process flow (until the process-flows migration is applied, it stays and shows as broken)");
+    expect(assetDeleteFlowNote(3)).toBe(", and its 3 process flows (until the process-flows migration is applied, they stay and show as broken)");
+    expect(assetDeleteFlowNote(null)).toBe(", and any process flows it is part of (they could not be counted; until the process-flows migration is applied, they stay and show as broken)");
+  });
+  it("the asset editor's delete confirm uses it (never an unconditional 'removed')", async () => {
+    const { readFileSync } = await import("node:fs");
+    const page = readFileSync(`${process.cwd()}/app/(protected)/admin/assets/page.tsx`, "utf8");
+    const onDelete = page.slice(page.indexOf("const onDelete = async () => {"), page.indexOf("const onArchive = async () => {"));
+    expect(onDelete).toContain("const flows = await countAssetFlows(orgId, asset.id);");
+    expect(onDelete).toContain("const flowNote = assetDeleteFlowNote(flows);");
+    expect(onDelete).toContain("document links${flowNote}?");
+    expect(onDelete).not.toMatch(/process flow\$\{flows === 1 \? "" : "s"\} it is part of/);
   });
 });
 

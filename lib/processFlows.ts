@@ -232,6 +232,19 @@ export async function countAssetFlows(orgId: string, assetId: string): Promise<n
   return count ?? 0;
 }
 
+/** What the asset delete confirm says about the equipment's flows. Removing
+ *  them is 20261155's AFTER DELETE trigger, and the app ships before that
+ *  paste — so the sentence is true in both worlds: removed once the
+ *  migration is applied, kept and shown as broken until then (FLOW-6). */
+export function assetDeleteFlowNote(flows: number | null): string {
+  const before = "until the process-flows migration is applied";
+  if (flows === null) return `, and any process flows it is part of (they could not be counted; ${before}, they stay and show as broken)`;
+  if (flows <= 0) return "";
+  return flows === 1
+    ? `, and its 1 process flow (${before}, it stays and shows as broken)`
+    : `, and its ${flows} process flows (${before}, they stay and show as broken)`;
+}
+
 // ── Endpoints, as the review surfaces show them (IRLS-7 / FLOW-6) ──────────
 
 export type EndpointInfo =
