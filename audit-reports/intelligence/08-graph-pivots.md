@@ -436,7 +436,7 @@ components/graph/OrgGraph2D.tsx:428-437 — the canvas element carries `ref`, `c
 ## GPV-14 · The unit's pinned libraries and its bound AI knowledge library are real org-authored relationships that the graph never draws
 
 - **Severity:** MEDIUM
-- **Status:** RESOLVED
+- **Status:** OPEN
 - **Verification:** CONFIRMED
 - **Locations:** `lib/orgGraph.ts:104`, `lib/orgGraph.ts:198-203`, `lib/codebook.ts:29-56`, `lib/codebook.ts:368-380`, `app/(protected)/admin/assets/page.tsx:232`, `app/api/area/knowledge-status/route.ts:54`
 - **Independently verified:** ✓ **SURVIVES** — second independent adversarial pass. Confirmed — the graph's own header comment (orgGraph.ts:5-16, "each edge is a row somewhere") enumerates nine relationship sources and codebook unit meta is not among them, so a unit's pinned libraries and its bound knowledge shelf are stored, edited and consumed elsewhere but never drawn.
@@ -457,7 +457,7 @@ lib/codebook.ts:29-36 — `export interface UnitResourceLink { id; label; librar
 - [ ] meta.knowledgeLibraryId produces a cbunit→library edge with its own edge type so a viewer can tell a pinned shelf from a filing library
 - [ ] those edges are the primary structure a unit scope pivot filters on, so scoping to Unit 20 pulls in its pinned paper directly rather than via equipment
 
-**Resolution (2026-10-01, intelligence Round G).** Reproduced first (DEC-29): `lib/__tests__/orgGraph.test.ts` run against the base commit's `lib/orgGraph.ts` (57609d2) fails 23 of its 24 cases, each on a finding's own mechanism — here a unit's pinned library produced no edge. What landed:
+**Partial (2026-10-01, intelligence Round G).** Reproduced first (DEC-29): `lib/__tests__/orgGraph.test.ts` run against the base commit's `lib/orgGraph.ts` (57609d2) fails 23 of its 24 cases, each on a finding's own mechanism — here a unit's pinned library produced no edge. What landed:
 - `lib/orgGraph.ts` reads the codebook unit entries with their meta (a direct read — `loadCodebook` swallowed a failed read, GM-4) and draws each `meta.links` entry as `cbunit:<code>` → `lib:<libraryId>` (type "library", `via: "pinned"`, `note` naming the link's label and, for a folder link, "library › folder"), and `meta.knowledgeLibraryId` as `cbunit:<code>` → `klib:<id>` — the knowledge library, folded into the library node class (sub "Knowledge library", href `/knowledge/<id>`; no new node type, DEC-44) — with `via: "knowledge"`.
 - `lib/scope.ts` makes the pinned shelves the unit's paper: the documents of a pinned library, or of a pinned folder's subtree (collections.path_ids), are in its scope.
 
@@ -465,9 +465,9 @@ Tests: `lib/__tests__/orgGraph.test.ts` GPV-14 block; `lib/__tests__/scope.test.
 
 **Done-when.**
 1. ✓ Each unit's meta.links produces a cbunit → library edge; a folder link carries the folder (its note) and scopes to that folder's subtree.
-2. ✓ The binding is its own kind of edge: `via: "knowledge"` to a `klib:` node that says "Knowledge library" — distinct from a document's filing edge (no `via`) and from a pin (`via: "pinned"`). A separate GraphEdgeType was not added because every renderer keys a Record on GraphEdgeType (`components/graph/graphTheme.ts` EDGE_RGB / EDGE_LABELS, I-14's files) and a new type cannot compile without editing them; a colour and legend entry for `via` is I-14's (GPV-8's legend).
+2. **Not met here:** "its own edge type so a viewer can tell a pinned shelf from a filing library". The data half landed — the binding is a `library` edge qualified `via: "knowledge"` to a `klib:` node that says "Knowledge library", distinct in the data from a document's filing edge (no `via`) and from a pin (`via: "pinned"`). But it is not a separate GraphEdgeType, and no renderer reads `via` yet, so today a viewer cannot tell them apart on the map. A separate GraphEdgeType was not added because every renderer keys a Record on GraphEdgeType (`components/graph/graphTheme.ts` EDGE_RGB / EDGE_LABELS, I-14's files) and a new type cannot compile without editing them; drawing `via` (a colour and legend entry — GPV-8's legend) is I-14's.
 3. ✓ Those edges are the structure the unit scope pivots on: scoping to the unit pulls its pinned paper in directly.
 
-**Scope / residual.** I-14: a legend / colour for `via` (library edges are hidden by the default lens).
+**Scope / residual.** Remaining limb: I-14 draws `via` (a legend / colour; library edges are hidden by the default lens) — until then criterion 2 is met in the data only. Corrected 2026-10-01 at review: first recorded RESOLVED.
 
 ---
