@@ -127,6 +127,26 @@ describe("ASK-1 / KACL-1 / IEDGE-5 — planVisibleHistory reads the recorded con
     }
   });
 
+  it("reproduction → fix: a CONTEXT document deleted since never withholds its asker's own row — a teammate's view stays withheld", () => {
+    const r = row({ context: ctx([D1, D2]) });
+    const gone = new Set([D2]);
+    // D2 (uncited) was deleted after the ask: nothing resolves it now.
+    expect(planVisibleHistory([r], [], new Set([D1]), "asker", gone).visible).toEqual([r]);
+    expect(planVisibleHistory([r], [], new Set([D1]), "reader", gone).withheld).toEqual([r]);
+    // A later turn of the asker's thread is not poisoned by it either.
+    const t1 = row({ id: "t1", thread_id: "T", created_at: "2026-10-01T00:00:00Z", context: ctx([D1, D2]) });
+    const t2 = row({ id: "t2", thread_id: "T", created_at: "2026-10-01T00:01:00Z", context: ctx([D1]) });
+    expect(planVisibleHistory([t1, t2], [t1, t2], new Set([D1]), "asker", gone).visible.map((x) => x.id)).toEqual(["t1", "t2"]);
+    expect(planVisibleHistory([t1, t2], [t1, t2], new Set([D1]), "reader", gone).visible).toEqual([]);
+  });
+
+  it("a context document that still exists but the asker can no longer read, or a CITED document deleted since, still withholds the asker's own row", () => {
+    const r = row({ context: ctx([D1, D2]) });
+    expect(planVisibleHistory([r], [], new Set([D1]), "asker").withheld).toEqual([r]);
+    const cited = row({ citations: [{ n: 1, documentId: D2, page: 1 }], context: ctx([D2]) });
+    expect(planVisibleHistory([cited], [], new Set(), "asker", new Set([D2])).withheld).toEqual([cited]);
+  });
+
   it("a row written before 20261153 (no context) is judged by its citations, as before", () => {
     const r = row({});
     expect(planVisibleHistory([r], [], new Set([D1]), "reader").visible).toEqual([r]);

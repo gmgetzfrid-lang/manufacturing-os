@@ -32,7 +32,7 @@ Coverage, drift, and what happens to a chunk that never embeds.
 ## SEM-1 · A library embedded under two models silently loses half its corpus, and which half is nondeterministic
 
 - **Severity:** MEDIUM
-- **Status:** RESOLVED
+- **Status:** OPEN
 - **Assigned:** intelligence I-03 THE ASK ROUTE (the residual: the ask route reads its corpus model from one row — move it onto `resolveCorpusModel`) — by the integrator, 2026-10-01 (at the I-05 merge: the earlier assignment to I-05 was wrong — its branch does not touch the ask route; fleet plan `audit-reports/fleet-plans/`).
 - **Verification:** CONFIRMED
 - **Locations:** `app/api/knowledge/ask/route.ts:463-468`, `app/api/knowledge/ask/route.ts:482-489`, `lib/knowledgeEmbedCore.ts:56-60`, `lib/knowledgeEmbedCore.ts:113-115`, `components/knowledge/AiSettingsModal.tsx:284-311`
@@ -70,20 +70,21 @@ app/api/knowledge/ask/route.ts:463-468 — `const { data: stamped } = await supa
 
 **Scope / residual.** The ask route still reads its corpus model from one row (`ask/route.ts:463-468`, I-03); with 20261121 applied that no longer decides which half is searched.
 
-**Resolution (2026-10-01, intelligence Round G, I-03).** The two remainders. Reproduced first (DEC-29): with the base route (`4dd0df7`) swapped back in, 53 of the 92 cases in the new `lib/__tests__/askRouteAcl.test.ts`, `askRouteHonesty.test.ts` and `askRouteUnits.test.ts` fail — every case named below as a reproduction among them — and the REGRESSION pin (an org under its cap, agreement signed, key saved: the same answer, citations, memory row and one metering row) passes on both.
+**Partial (2026-10-01, intelligence Round G, I-03).** The ask route's remainder. Reproduced first (DEC-29): with the base route (`4dd0df7`) swapped back in, 53 of the 92 cases in the new `lib/__tests__/askRouteAcl.test.ts`, `askRouteHonesty.test.ts` and `askRouteUnits.test.ts` fail — every case named below as a reproduction among them — and the REGRESSION pin (an org under its cap, agreement signed, key saved: the same answer, citations, memory row and one metering row) passes on both.
 
 - **The route reads the corpus model whole.** Each searched library's corpus model comes from `semantic_coverage_detail` through `loadEmbedDetail` → `resolveCorpusModel` (single / mixed / empty), never from one row; a mixed library is not searched and the answer says why. A database before `20261121` (no coverage detail) reads its stamp from one row as before — with `20261121`'s refusal it no longer decides which half is searched.
-- **The save warns.** `EmbeddingKeyEditor` (`components/knowledge/AiSettingsModal.tsx`): saving a different provider or model asks first — "Meaning indexes built with ‹old› (‹provider›) can't be searched with ‹new› (‹provider›) — vectors are never reused across models. Meaning search stops on each such library until its index is rebuilt with the new model (Rebuild index, in that library's meaning-index panel — an Admin or Doc Control can run it). Keyword search is unaffected." Declining saves nothing; the same setting saves without asking.
 
-Tests: `askRouteHonesty.test.ts` "SEM-6 / SEM-1 reproduction → fix: a linked library on another model is searched in ITS vector space …"; `embeddingSwitchWarning.test.ts` (jsdom: another provider, another model of the same provider, the same setting — the first two fail without the warning).
+Tests: `askRouteHonesty.test.ts` "SEM-6 / SEM-1 reproduction → fix: a linked library on another model is searched in ITS vector space …".
+
+The save-time confirm this package first added to `EmbeddingKeyEditor` (`components/knowledge/AiSettingsModal.tsx`) was withdrawn in its fix pass: that file is not this package's (the fleet plan gives the AI-settings modal to I-20, and the save-time confirm was handed to I-05 on 2026-09-30, above), and a parallel package edits it. Its test file (`embeddingSwitchWarning.test.ts`) went with it. Only `SEM-3`'s removal-dialog copy, which `SEM-3`'s remainder names, stays on this branch.
 
 **Done-when.**
 1. ✓ (2026-09-30) Coverage per model; the panel names a mixed library.
-2. ✓ Saving a different model or provider warns that existing vectors become unusable and points at the reset (the panel's Rebuild index, which already offers it).
-3. ✓ (2026-09-30) A mixed library refuses semantic search until rebuilt; the route now resolves the model deterministically too.
+2. ✗ Not done. Saving a different embedding model or provider in AI settings still neither warns nor offers the reset; the panel, the build's 409 and the drain hold (2026-09-30) remain the only notice. Handed to I-20 (the AI-settings modal's owner in the fleet plan): a confirm at save time that says existing vectors stop answering and OFFERS the reset (names the libraries, or links each library's Rebuild).
+3. ✓ (2026-09-30) A mixed library refuses semantic search until rebuilt; the ask route now resolves the model deterministically too.
 4. ✓ (2026-09-30) The two-stamp tests.
 
-**Scope / residual.** The warning cannot list which libraries hold vectors under the old model (the modal reads no library); the panel of each says so.
+**Scope / residual.** OPEN on done-when 2 (I-20).
 
 ---
 
@@ -178,7 +179,7 @@ Tests: `askRouteHonesty.test.ts` "SEM-3: a library built by another provider is 
 
 **Done-when.**
 1. ✓ The corpus's provider is recorded (its model stamp) and the query is embedded with it, or meaning search reports unavailable rather than empty.
-2. ✓ (2026-09-30) A provider change surfaces a blocking notice; the save itself now warns too (`SEM-1`).
+2. ✓ (2026-09-30) A provider change surfaces a blocking notice (the panel, the build's 409, the drain hold). A save-time confirm is `SEM-1` done-when 2's (I-20).
 3. ✓ The catch distinguishes "no embedding key" (normal, silent) from a provider refusal (reported on the answer).
 4. ✓ The removal-confirmation copy is corrected.
 

@@ -42,7 +42,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { supabaseAdmin } from "@/lib/supabaseAdmin";
 import { loadPrincipal } from "@/lib/knowledgeAccess";
 import {
-  citedKnowledgeDocIds, contextKnowledgeDocIds, isUuid, planVisibleHistory, readableKnowledgeDocIds,
+  citedKnowledgeDocIds, contextKnowledgeDocIds, isUuid, planVisibleHistory, knowledgeDocAccess,
   type StoredAnswerRow,
 } from "@/lib/knowledgeHistory";
 
@@ -153,12 +153,14 @@ export async function POST(req: NextRequest) {
       }
     }
     // Every document a row cites AND every document its recorded context says
-    // reached the model (ASK-1 / KACL-1 / IEDGE-5) is judged for this reader.
+    // reached the model (ASK-1 / KACL-1 / IEDGE-5) is judged for this reader;
+    // a context document deleted since withholds a teammate's view, never the
+    // asker's own row (lib/knowledgeHistory planVisibleHistory).
     const cited = [...rows, ...threadRows].flatMap((r) => [
       ...citedKnowledgeDocIds(r.citations), ...contextKnowledgeDocIds(r.context),
     ]);
-    const readable = await readableKnowledgeDocIds(principal, cited);
-    const plan = planVisibleHistory(rows, threadRows, readable, user.id);
+    const { readable, gone } = await knowledgeDocAccess(principal, cited);
+    const plan = planVisibleHistory(rows, threadRows, readable, user.id, gone);
     const unchecked = (r: StoredAnswerRow) =>
       !!r.thread_id && unseenAfter.has(r.thread_id) && r.created_at > (unseenAfter.get(r.thread_id) as string);
     const visible = plan.visible.filter((r) => !unchecked(r));
@@ -221,36 +223,39 @@ export async function POST(req: NextRequest) {
   }
 
   // IEDGE-4: an answer whose cited mirror has been revised since it was
-  // given is badged — its quotes and pages are the old revision's. Read only
-  // for citations that recorded their revision (since I-03); a database
-  // without source_rev (pre-20260917) badges nothing.
+  // given is badged — its quotes and pages are the old revision's. The sync
+  // re-points a mirror when its controlled document's VERSION changes
+  // (source_version_id), so the version a citation recorded is compared; a
+  // citation that recorded only the revision label compares the label. A
+  // cited document that no longer exists is not "revised" and is not badged.
+  // Read only for citations that recorded either (since I-03); a database
+  // without the source columns (pre-20260917) badges nothing.
+  type Pin = { documentId?: unknown; sourceRev?: unknown; sourceVersionId?: unknown };
+  const pinsOf = (r: StoredAnswerRow): Array<Pin & { documentId: string }> =>
+    (Array.isArray(r.citations) ? r.citations as Pin[] : []).filter((c): c is Pin & { documentId: string } =>
+      typeof c?.documentId === "string" && isUuid(c.documentId)
+      && (typeof c.sourceVersionId === "string" || typeof c.sourceRev === "string"));
   const revised = new Set<string>();
   {
-    const pinned = new Map<string, Set<string>>(); // knowledge doc id → revisions cited
-    for (const r of visible) {
-      for (const c of Array.isArray(r.citations) ? r.citations as Array<{ documentId?: unknown; sourceRev?: unknown }> : []) {
-        if (typeof c?.documentId === "string" && typeof c.sourceRev === "string" && isUuid(c.documentId)) {
-          const set = pinned.get(c.documentId) ?? new Set<string>();
-          set.add(c.sourceRev);
-          pinned.set(c.documentId, set);
-        }
-      }
-    }
-    const ids = [...pinned.keys()];
-    const current = new Map<string, string | null>();
+    const ids = [...new Set(visible.flatMap((r) => pinsOf(r).map((c) => c.documentId)))];
+    const current = new Map<string, { rev: string | null; version: string | null }>();
     let readable = true;
     for (let i = 0; i < ids.length && readable; i += 100) {
       const { data, error } = await supabaseAdmin.from("knowledge_documents")
-        .select("id, source_rev").in("id", ids.slice(i, i + 100));
+        .select("id, source_rev, source_version_id").in("id", ids.slice(i, i + 100));
       if (error) { readable = false; break; }
-      for (const d of (data ?? []) as Array<{ id: string; source_rev: string | null }>) current.set(d.id, d.source_rev ?? null);
-    }
-    if (readable) {
-      for (const r of visible) {
-        const cites = Array.isArray(r.citations) ? r.citations as Array<{ documentId?: unknown; sourceRev?: unknown }> : [];
-        if (cites.some((c) => typeof c?.documentId === "string" && typeof c.sourceRev === "string"
-          && (!current.has(c.documentId) || current.get(c.documentId) !== c.sourceRev))) revised.add(r.id);
+      for (const d of (data ?? []) as Array<{ id: string; source_rev: string | null; source_version_id: string | null }>) {
+        current.set(d.id, { rev: d.source_rev ?? null, version: d.source_version_id ?? null });
       }
+    }
+    const revisedSince = (c: Pin & { documentId: string }): boolean => {
+      const now = current.get(c.documentId);
+      if (!now) return false;
+      if (typeof c.sourceVersionId === "string" && now.version) return now.version !== c.sourceVersionId;
+      return typeof c.sourceRev === "string" && now.rev !== c.sourceRev;
+    };
+    if (readable) {
+      for (const r of visible) if (pinsOf(r).some(revisedSince)) revised.add(r.id);
     }
   }
 

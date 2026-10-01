@@ -422,27 +422,6 @@ export function EmbeddingKeyEditor({ orgId, current, onChanged }: {
       setNotice({ tone: "err", text: "Paste your embeddings key first." });
       return;
     }
-    // SEM-1: a meaning index lives in ONE model's vector space. Switching the
-    // provider or the model leaves every index built with the old one
-    // unsearchable by meaning until that library is rebuilt — said before
-    // the switch is saved, with where the rebuild is.
-    if (saved) {
-      const before = current?.embeddingModel ?? defaultEmbeddingModel(saved as "voyage" | "openai");
-      const after = model.trim() || defaultEmbeddingModel(provider as "voyage" | "openai");
-      if (provider !== saved || after !== before) {
-        const label = (id: string) => EMBEDDING_PROVIDERS.find((p) => p.id === id)?.label ?? id;
-        const ok = await appConfirm({
-          title: "Switch your embedding model?",
-          message:
-            `Meaning indexes built with ${before} (${label(saved)}) can't be searched with ${after} ` +
-            `(${label(provider)}) — vectors are never reused across models. Meaning search stops on each ` +
-            "such library until its index is rebuilt with the new model (Rebuild index, in that library's " +
-            "meaning-index panel — an Admin or Doc Control can run it). Keyword search is unaffected.",
-          confirmLabel: "Switch model",
-        });
-        if (!ok) return;
-      }
-    }
     setBusy("save"); setNotice(null);
     const hadNewKey = !!apiKey.trim();
     const last4 = apiKey.trim().slice(-4);

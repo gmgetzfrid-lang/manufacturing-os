@@ -316,6 +316,37 @@ describe("ASK-1 / KACL-1 / IEDGE-5 — the row records every document that reach
     expect(list.withheld).toBe(0);
   });
 
+  it("the drawing facts record only the sheets whose tag rows fed them — a document that contributed no tag is not context", async () => {
+    const S_TAGGED = U(11);
+    const S_PLAIN = U(12);
+    seed({
+      knowledge_documents: [kdoc(S_TAGGED, { name: "025-PID-0001.pdf" }), kdoc(S_PLAIN, { name: "Piping spec.pdf" })],
+      knowledge_page_entities: [{ id: "e-1", org_id: ORG, library_id: LIB, document_id: S_TAGGED, page: 1, kind: "equipment", tag: "V-101", raw: "V-101" }],
+    });
+    h.script = [{ text: '["vessels"]', usage: { inputTokens: 100, outputTokens: 10 } }, REFINE_NONE, answer("**Answer:** One vessel.")];
+    const res = await ask({ question: "How many vessels are in this unit?" });
+    expect(res.status).toBe(200);
+    expect(answerCall().user).toContain("DRAWING FACTS — tallied by the app");
+    const docs = (rowsOf("knowledge_questions")[0].context as { documents: string[] }).documents;
+    expect(docs).toContain(S_TAGGED);
+    expect(docs).not.toContain(S_PLAIN);
+  });
+
+  it("a failed read of the sheets behind the drawing facts sends no facts at all — never 'Sheets: 0' over the tags it did read", async () => {
+    seed({
+      knowledge_documents: [kdoc(U(11), { name: "025-PID-0001.pdf" })],
+      knowledge_page_entities: [{ id: "e-1", org_id: ORG, library_id: LIB, document_id: U(11), page: 1, kind: "equipment", tag: "V-101", raw: "V-101" }],
+    });
+    db.hooks.push((op) => op.table === "knowledge_documents" && op.kind === "select"
+      && Array.isArray(op.columns) && op.columns.join(",") === "id,name,library_id,vision_pages"
+      ? { error: { code: "57014", message: "canceling statement due to statement timeout" } } : undefined);
+    h.script = [{ text: '["vessels"]', usage: { inputTokens: 100, outputTokens: 10 } }, REFINE_NONE, answer("**Answer:** One vessel.")];
+    const res = await ask({ question: "How many vessels are in this unit?" });
+    expect(res.status).toBe(200);
+    expect(allPrompts()).not.toContain("tallied by the app");
+    expect(allPrompts()).not.toContain("Sheets: 0");
+  });
+
   it("a database before 20261153 (no context column) still saves the answer, without it, and says nothing is wrong", async () => {
     openAndRestricted();
     db.missingColumns.knowledge_questions = ["context"];
@@ -326,6 +357,59 @@ describe("ASK-1 / KACL-1 / IEDGE-5 — the row records every document that reach
     expect(body.saved).toBeUndefined();
     expect(rowsOf("knowledge_questions")).toHaveLength(1);
     expect(rowsOf("knowledge_questions")[0].context).toBeUndefined();
+  });
+});
+
+describe("ASK-1 — a document deleted since never hides its asker's own answer; a teammate's view stays withheld", () => {
+  const K_CTX = U(3);
+  const THREAD = "22222222-3333-4444-8555-666666666666";
+  const ENG = { org_id: ORG, uid: "u-eng", role: "Engineer", roles: ["Engineer"], status: "active", display_name: "Eng", email: "e@x" };
+  type Listed = { id: string };
+
+  it("reproduction → fix: deleting an uncited context document leaves the asker's list, memory search, conversation and follow-up history unchanged", async () => {
+    seed({
+      knowledge_documents: [kdoc(K_OPEN, { name: "Relief standard.pdf" }), kdoc(K_CTX, { name: "Superseded sheet.pdf" })],
+      knowledge_chunks: [
+        kchunk(K_OPEN, OPEN_TEXT, { id: "c-0open", page: 4 }),
+        kchunk(K_CTX, "The relief valve set pressure was reviewed on the superseded sheet.", { id: "c-9ctx", page: 1 }),
+      ],
+    }, [ENG]);
+    h.script = [QUERY_GEN, REFINE_NONE, answer("**Answer:** It must not exceed the design pressure [1].")];
+    const first = await (await ask({ question: "What is the relief valve set pressure?", threadId: THREAD }, "viewer")).json();
+    expect(first.citations.map((c: { documentId: string }) => c.documentId)).toEqual([K_OPEN]);
+    const row = rowsOf("knowledge_questions")[0];
+    expect((row.context as { documents: string[] }).documents.sort()).toEqual([K_OPEN, K_CTX].sort());
+    row.search_tsv = row.question; // the stand-in has no generated search column
+    // Before the delete, a teammate who may read both documents sees it too.
+    expect((await (await history({ action: "list" }, "as:u-eng")).json()).rows.map((r: Listed) => r.id)).toEqual([row.id]);
+
+    // The uncited sheet goes: excluded from the AI, removed by a sync, or deleted by a member.
+    db.tables.knowledge_documents = rowsOf("knowledge_documents").filter((d) => d.id !== K_CTX);
+    db.tables.knowledge_chunks = rowsOf("knowledge_chunks").filter((c) => c.document_id !== K_CTX);
+
+    const own = await (await history({ action: "list" }, "viewer")).json();
+    expect(own.rows.map((r: Listed) => r.id)).toEqual([row.id]);
+    expect(own.withheld).toBe(0);
+    const memory = await (await history({ action: "search", query: "relief valve set pressure" }, "viewer")).json();
+    expect(memory.rows.map((r: Listed) => r.id)).toEqual([row.id]);
+    const conversation = await (await history({ action: "thread", threadId: THREAD }, "viewer")).json();
+    expect(conversation.rows.map((r: Listed) => r.id)).toEqual([row.id]);
+
+    resetHarness();
+    h.script = [QUERY_GEN, REFINE_NONE, answer()];
+    const follow = await ask({ question: "And the tolerance?", threadId: THREAD }, "viewer");
+    expect(follow.status).toBe(200);
+    expect(answerCall().user).toContain("CONVERSATION SO FAR");
+    expect(answerCall().user).toContain("It must not exceed the design pressure [1].");
+    expect(rowsOf("knowledge_questions").find((r) => r.question === "And the tolerance?")?.context).toMatchObject({ history: "thread" });
+
+    // A teammate: nothing proves they could have read the deleted sheet, so
+    // the answer (and the turn after it) stays withheld from them.
+    const team = await (await history({ action: "list" }, "as:u-eng")).json();
+    expect(team.rows).toEqual([]);
+    expect(team.withheld).toBe(2);
+    // A controller still reads all memory (DEC-43).
+    expect((await (await history({ action: "list" }, "good")).json()).rows).toHaveLength(2);
   });
 });
 
@@ -392,6 +476,35 @@ describe("ASK-5 — a thread's earlier turns come from the record, never from th
     const res = await ask({ question: "And the design pressure?", threadId: THREAD }, "viewer");
     expect(res.status).toBe(200);
     expect(allPrompts()).not.toContain("312 psig");
+  });
+
+  it("reproduction → fix: an internet-mode turn and a nothing-matched turn join their conversation, so a library follow-up reads them back from the record", async () => {
+    seed({ knowledge_documents: [kdoc(K_OPEN)], knowledge_chunks: [kchunk(K_OPEN, OPEN_TEXT, { id: "c-open" })] });
+    h.script = [{ text: "API 510 is the pressure vessel inspection code.", usage: { inputTokens: 200, outputTokens: 30 } }];
+    expect((await ask({ question: "What is API 510?", mode: "internet", threadId: THREAD })).status).toBe(200);
+    h.script = [{ text: '["flare tip velocity"]', usage: { inputTokens: 100, outputTokens: 10 } }, REFINE_NONE];
+    const none = await (await ask({ question: "What is the flare tip velocity limit?", threadId: THREAD })).json();
+    expect(none.answer).toMatch(/Nothing in this library matches/);
+    expect(rowsOf("knowledge_questions").map((r) => r.thread_id)).toEqual([THREAD, THREAD]);
+
+    resetHarness();
+    h.script = [QUERY_GEN, REFINE_NONE, answer()];
+    expect((await ask({ question: "What does our standard say about it?", threadId: THREAD })).status).toBe(200);
+    const sent = answerCall().user;
+    expect(sent).toContain("Q: What is API 510?\nA: API 510 is the pressure vessel inspection code.");
+    expect(sent).toContain("Q: What is the flare tip velocity limit?");
+  });
+
+  it("a database without threads saves the internet and nothing-matched turns without one, as before", async () => {
+    seed({ knowledge_documents: [kdoc(K_OPEN)], knowledge_chunks: [kchunk(K_OPEN, OPEN_TEXT, { id: "c-open" })] });
+    db.missingColumns.knowledge_questions = ["thread_id"];
+    h.script = [{ text: "API 510 is the pressure vessel inspection code.", usage: { inputTokens: 200, outputTokens: 30 } }];
+    const web = await (await ask({ question: "What is API 510?", mode: "internet", threadId: THREAD })).json();
+    expect(web.saved).toBeUndefined();
+    h.script = [{ text: '["flare tip velocity"]', usage: { inputTokens: 100, outputTokens: 10 } }, REFINE_NONE];
+    const none = await (await ask({ question: "What is the flare tip velocity limit?", threadId: THREAD })).json();
+    expect(none.saved).toBeUndefined();
+    expect(rowsOf("knowledge_questions")).toHaveLength(2);
   });
 
   it("without a thread, client history is used but the row is marked unverified — the record keeps it its asker's", async () => {
@@ -472,13 +585,67 @@ describe("IEDGE-4 — citations carry the mirror's revision; proven ground never
     expect(after.rows[0].revisedSince).toBe(true);
   });
 
-  it("a citation of a mirror carries its revision (sourceRev); an upload's carries none", async () => {
+  it("a citation of a mirror carries its revision (sourceRev) and its version (sourceVersionId); an upload's carries neither", async () => {
     openAndRestricted({ acl: null });
+    (rowsOf("knowledge_documents").find((d) => d.id === K_MIRROR) as Row).source_version_id = "ver-1";
     h.script = [QUERY_GEN, REFINE_NONE, answer("**Answer:** Open [1]; incident [2].")];
     const body = await (await ask({ question: "What is the relief valve set pressure?" })).json();
     const byDoc = Object.fromEntries(body.citations.map((c: { documentId: string }) => [c.documentId, c]));
     expect(byDoc[K_MIRROR].sourceRev).toBe("B");
+    expect(byDoc[K_MIRROR].sourceVersionId).toBe("ver-1");
     expect(byDoc[K_OPEN].sourceRev).toBeUndefined();
+    expect(byDoc[K_OPEN].sourceVersionId).toBeUndefined();
+  });
+
+  /** A rated answer whose citation recorded `citedVersion` of a mirror now at `currentVersion`, both labelled B. */
+  function ratedVersion(citedVersion: string | null, currentVersion: string) {
+    seed({
+      documents: [dcDoc("dc-1")],
+      knowledge_documents: [kdoc(K_OPEN), kdoc(K_MIRROR, { source_document_id: "dc-1", source_rev: "B", source_version_id: currentVersion })],
+      knowledge_chunks: [
+        kchunk(K_OPEN, OPEN_TEXT, { id: "c-open" }),
+        kchunk(K_MIRROR, PROVEN_PAGE, { id: "c-proven", page: 7 }),
+      ],
+      knowledge_questions: [{
+        id: "q-rated", org_id: ORG, library_id: LIB, user_id: CTRL, user_name: "Ada", question: "What is the relief valve set pressure?",
+        answer: "…", rating: 1, created_at: "2026-09-01T00:00:00Z", mode: "library",
+        citations: [{ n: 1, documentId: K_MIRROR, page: 7, sourceRev: "B", ...(citedVersion ? { sourceVersionId: citedVersion } : {}) }],
+      }],
+    });
+  }
+
+  it("control: the version the rating recorded is the mirror's current one — its page is seated", async () => {
+    ratedVersion("ver-1", "ver-1");
+    h.script = [QUERY_GEN, REFINE_NONE, answer()];
+    await ask({ question: "What is the relief valve set pressure?" });
+    expect(allPrompts()).toContain(PROVEN_PAGE);
+  });
+
+  it("reproduction → fix: a re-release under the SAME revision label is a new version — the page is not seated", async () => {
+    ratedVersion("ver-1", "ver-2");
+    h.script = [QUERY_GEN, REFINE_NONE, answer()];
+    await ask({ question: "What is the relief valve set pressure?" });
+    expect(allPrompts()).not.toContain(PROVEN_PAGE);
+  });
+
+  it("a rating that recorded only the label, of a mirror that has a version, proves nothing about today's page — not seated", async () => {
+    ratedVersion(null, "ver-1");
+    h.script = [QUERY_GEN, REFINE_NONE, answer()];
+    await ask({ question: "What is the relief valve set pressure?" });
+    expect(allPrompts()).not.toContain(PROVEN_PAGE);
+  });
+
+  it("the record badges a new VERSION under the same label; a cited document deleted since is not 'revised' and is not badged", async () => {
+    openAndRestricted({ acl: null });
+    const mirror = () => rowsOf("knowledge_documents").find((d) => d.id === K_MIRROR) as Row;
+    mirror().source_version_id = "ver-1";
+    h.script = [QUERY_GEN, REFINE_NONE, answer("**Answer:** Open [1]; incident [2].")];
+    await ask({ question: "What is the relief valve set pressure?" });
+    expect((await (await history({ action: "list" }, "good")).json()).rows[0].revisedSince).toBeUndefined();
+    mirror().source_version_id = "ver-2"; // re-released, still labelled B
+    expect((await (await history({ action: "list" }, "good")).json()).rows[0].revisedSince).toBe(true);
+    db.tables.knowledge_documents = rowsOf("knowledge_documents").filter((d) => d.id !== K_MIRROR);
+    expect((await (await history({ action: "list" }, "good")).json()).rows[0].revisedSince).toBeUndefined();
   });
 });
 

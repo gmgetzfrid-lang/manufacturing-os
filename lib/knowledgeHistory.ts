@@ -16,8 +16,12 @@
 // document the reader may read. A row whose context could not be recorded in
 // full (more documents than ANSWER_CONTEXT_DOC_CAP) or whose conversation
 // history came from the client unverified (ASK-5) proves nothing about its
-// sources and is its asker's alone. A row written before 20261153 carries no
-// context and is judged by what it cites, as before:
+// sources and is its asker's alone. A context document deleted since (held
+// back from the AI, removed by a sync, deleted by a member) proves nothing to
+// a teammate, so their view is withheld; its asker read it when the answer
+// was given, so it never hides the asker's own row (they read their own rows
+// directly anyway — knowledge_questions_select). A row written before
+// 20261153 carries no context and is judged by what it cites, as before:
 //   - an upload-origin knowledge document of the reader's org — readable (the
 //     same content as the PDF every member can open, by design);
 //   - a mirror of a controlled document — readable when
@@ -135,12 +139,16 @@ const byTime = (a: StoredAnswerRow, b: StoredAnswerRow) =>
  * withheld, because the earlier answer rode along as its context.
  * `readerUid` is the reader: a library answer citing no document is shown to
  * its asker only (null = nobody's own — every such row is withheld).
+ * `gone` are the ids that resolve to no knowledge document at all
+ * (`knowledgeDocAccess`): a recorded CONTEXT document among them does not
+ * withhold the reader's own row; it still withholds anyone else's.
  */
 export function planVisibleHistory(
   rows: readonly StoredAnswerRow[],
   threadRows: readonly StoredAnswerRow[],
   readable: ReadonlySet<string>,
   readerUid: string | null,
+  gone: ReadonlySet<string> = new Set(),
 ): { visible: StoredAnswerRow[]; withheld: StoredAnswerRow[] } {
   const citesUnreadable = (r: StoredAnswerRow) => {
     const cited = citedKnowledgeDocIds(r.citations);
@@ -148,10 +156,12 @@ export function planVisibleHistory(
     const ownRow = !!readerUid && r.user_id === readerUid;
     // What reached the model, recorded since 20261153: every one must be
     // readable too, and a context that is incomplete or rests on unverified
-    // client history proves nothing, so only its asker sees the row.
+    // client history proves nothing, so only its asker sees the row. A
+    // context document deleted since cannot be judged for anyone: it
+    // withholds a teammate's view, never the asker's own row.
     const ctx = parseAnswerContext(r.context);
     if (ctx) {
-      if (ctx.documents.some((id) => !readable.has(id))) return true;
+      if (ctx.documents.some((id) => !readable.has(id) && !(ownRow && gone.has(id)))) return true;
       if ((!ctx.complete || ctx.history === "client") && !ownRow) return true;
     }
     // Nothing cited: a web answer is safe; a library answer proves nothing
@@ -184,8 +194,28 @@ export function planVisibleHistory(
   return { visible, withheld };
 }
 
+/** What a reader may do with a set of knowledge-document ids now. */
+export interface KnowledgeDocAccess {
+  /** The ids the reader may read. */
+  readable: Set<string>;
+  /** The uuid-shaped ids that resolve to no knowledge document at all —
+   *  deleted since (an exclusion from the AI, a sync removal, a member's
+   *  delete). Never readable; see planVisibleHistory for what they withhold. */
+  gone: Set<string>;
+}
+
+/** Which of these knowledge-document ids may the principal read now — the
+ *  readable set of `knowledgeDocAccess`, with the same failure rules. */
+export async function readableKnowledgeDocIds(
+  principal: KnowledgePrincipal,
+  kdocIds: readonly string[],
+): Promise<Set<string>> {
+  return (await knowledgeDocAccess(principal, kdocIds)).readable;
+}
+
 /**
- * Which of these knowledge-document ids may the principal read now? Throws on
+ * Which of these knowledge-document ids may the principal read now, and which
+ * no longer exist? Throws on
  * a failed read of knowledge_documents — the caller fails CLOSED (serves
  * nothing) rather than serving an unfiltered answer. A failed read of the
  * controlled documents themselves admits none of them (closed).
@@ -201,13 +231,14 @@ export function planVisibleHistory(
  * again here, a failure throws (closed), and the mirrors are judged with the
  * teams actually read — until loadPrincipal throws on that read (handed over).
  */
-export async function readableKnowledgeDocIds(
+export async function knowledgeDocAccess(
   principal: KnowledgePrincipal,
   kdocIds: readonly string[],
-): Promise<Set<string>> {
+): Promise<KnowledgeDocAccess> {
   const readable = new Set<string>();
+  const gone = new Set<string>();
   const ids = [...new Set(kdocIds)].filter(isUuid);
-  if (ids.length === 0) return readable;
+  if (ids.length === 0) return { readable, gone };
 
   const rows: Array<{ id: string; org_id: string; source_document_id: string | null }> = [];
   for (let i = 0; i < ids.length; i += 100) {
@@ -218,6 +249,8 @@ export async function readableKnowledgeDocIds(
     if (error) throw new Error(`knowledge documents unreadable: ${error.message}`);
     rows.push(...((data ?? []) as typeof rows));
   }
+  const found = new Set(rows.map((r) => r.id));
+  for (const id of ids) if (!found.has(id)) gone.add(id);
 
   const mirrors = new Map<string, string>(); // knowledge doc id → controlled doc id
   for (const r of rows) {
@@ -234,7 +267,7 @@ export async function readableKnowledgeDocIds(
     const ok = await readableControlledDocIds(reader, [...new Set(mirrors.values())]);
     for (const [kid, dcId] of mirrors) if (ok.has(dcId)) readable.add(kid);
   }
-  return readable;
+  return { readable, gone };
 }
 
 /** The two reads loadDcLandscape depends on and does not check: the org's

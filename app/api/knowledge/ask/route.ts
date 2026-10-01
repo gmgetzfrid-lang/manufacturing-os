@@ -79,8 +79,8 @@ import {
   DRAWING_FACTS_ROW_CEILING,
 } from "@/lib/knowledgeAskGuards";
 import {
-  planVisibleHistory, readableKnowledgeDocIds, citedKnowledgeDocIds, contextKnowledgeDocIds, parseAnswerContext,
-  ANSWER_CONTEXT_DOC_CAP, type AnswerContext, type StoredAnswerRow,
+  planVisibleHistory, knowledgeDocAccess, citedKnowledgeDocIds, contextKnowledgeDocIds, parseAnswerContext,
+  ANSWER_CONTEXT_DOC_CAP, type AnswerContext, type KnowledgeDocAccess, type StoredAnswerRow,
 } from "@/lib/knowledgeHistory";
 import {
   buildEquipmentCensus, auditDrawingRefs, extractEquipmentTags, extractDrawingRefs, parseUnitMap,
@@ -313,7 +313,9 @@ export async function POST(req: NextRequest) {
   // library it started in: a thread holding anyone else's turn, or another
   // library's, is refused rather than written into (no grafting). Its turns
   // are re-decided for the asker now (planVisibleHistory — a turn citing a
-  // document they can no longer read is not sent, nor is any turn after it).
+  // document they can no longer read is not sent, nor is any turn after it;
+  // a document that merely reached an earlier answer's prompt and has since
+  // been deleted does not drop the asker's own turn).
   let history: Array<{ question: string; answer: string }> = [];
   let historySource: AnswerContext["history"] = "none";
   if (threadId) {
@@ -340,16 +342,16 @@ export async function POST(req: NextRequest) {
         );
       }
       if (turns.length > 0) {
-        let readableKdocs: Set<string>;
+        let access: KnowledgeDocAccess;
         try {
           if (!principal) throw new Error("no principal");
-          readableKdocs = await readableKnowledgeDocIds(principal, turns.flatMap((t) => [
+          access = await knowledgeDocAccess(principal, turns.flatMap((t) => [
             ...citedKnowledgeDocIds(t.citations), ...contextKnowledgeDocIds(t.context),
           ]));
         } catch {
           return bad("Couldn't check access to this conversation's earlier answers — try again in a moment.", 503);
         }
-        const { visible } = planVisibleHistory(turns, turns, readableKdocs, user.id);
+        const { visible } = planVisibleHistory(turns, turns, access.readable, user.id, access.gone);
         history = visible.slice(-4).map((t) => ({
           question: truncateSafe(t.question ?? "", 500), answer: truncateSafe(t.answer ?? "", 1200),
         }));
@@ -533,14 +535,16 @@ export async function POST(req: NextRequest) {
         n: i + 1, url: s.url, title: s.title ?? s.url,
       }));
       // ASK-11: a save that fails for any reason but a missing column is said.
+      // The turn joins its conversation (thread_id), so a follow-up in library
+      // mode reads it back from the record (ASK-5).
       let saveError: string | null = null;
       {
         let r = await supabaseAdmin.from("knowledge_questions").insert({
           org_id: orgId, library_id: libraryId, user_id: user.id, user_name: userName,
-          question, answer: out.text, citations, provider, model, mode: "internet",
+          question, answer: out.text, citations, provider, model, mode: "internet", thread_id: threadId,
         });
-        // Pre-migration DBs lack the mode column — retry without it.
-        if (r.error?.code === "PGRST204" || r.error?.message?.includes("mode")) {
+        // Pre-migration DBs lack the mode / thread_id columns — retry without them.
+        if (r.error?.code === "PGRST204" || r.error?.code === "42703" || /mode|thread_id/.test(r.error?.message ?? "")) {
           r = await supabaseAdmin.from("knowledge_questions").insert({
             org_id: orgId, library_id: libraryId, user_id: user.id, user_name: userName,
             question, answer: out.text, citations, provider, model,
@@ -880,18 +884,25 @@ export async function POST(req: NextRequest) {
         8,
       ),
     ];
+    // The passages RANKING placed (governing then reference, each by rank) —
+    // as opposed to the reserved ones attached after it (proven ground,
+    // pull-by-name, missing-document probes, graph hops), which bypass
+    // ranking. The prompt-size budget gives up ranked passages first (ASK-7).
+    let rankedIds = new Set(chunks.map((c) => c.id));
 
     // One roster of every reachable document — reused by proven-ground,
     // pull-by-name, whole-document mode, and the graph hop, so designation
     // resolution is one fetch instead of four.
     // Paged past PostgREST's max-rows (KACL-4): a roster cut at the cap
     // would silently drop documents from pull-by-name and the graph hop.
-    // It also carries each mirror's indexed revision (IEDGE-4) and how many
-    // pages AI vision read (PR-4) — absent on older databases.
+    // It also carries each mirror's indexed version and revision label
+    // (IEDGE-4) and how many pages AI vision read (PR-4) — absent on older
+    // databases.
     type ReachableDoc = {
       id: string; name: string; library_id: string; file_key: string | null;
       status: string | null; page_count: number | null; pages_indexed: number | null;
-      source_document_id?: string | null; source_rev?: string | null; vision_pages?: number | null;
+      source_document_id?: string | null; source_version_id?: string | null; source_rev?: string | null;
+      vision_pages?: number | null;
     };
     const squashDes = (t: string) => t.toUpperCase().replace(/[^A-Z0-9]/g, "");
     let reachableDocs: ReachableDoc[] = [];
@@ -902,7 +913,7 @@ export async function POST(req: NextRequest) {
         .from("knowledge_documents").select(cols)
         .in("library_id", reachableLibIds)
         .order("id", { ascending: true }).range(from, to));
-      let read = await roster(`${BASE_DOC}, source_document_id, source_rev, vision_pages`);
+      let read = await roster(`${BASE_DOC}, source_document_id, source_version_id, source_rev, vision_pages`);
       if (read.error && columnMissing(read.error)) read = await roster(BASE_DOC);
       reachableDocs = read.rows.filter((d) => !excludedDocIds.has(d.id));
     }
@@ -916,9 +927,12 @@ export async function POST(req: NextRequest) {
     //    What never seats a page: an answer that was cut off (ASK-3) or that
     //    carries model arithmetic nobody verified (PR-9) — its rating proves
     //    nothing about the pages; and a page of a mirror whose controlled
-    //    document has been revised since the rated answer cited it, or whose
-    //    revision that answer did not record (IEDGE-4) — the page now holds
-    //    what the new revision put there, not what a person approved.
+    //    document has a new version since the rated answer cited it, or whose
+    //    version that answer did not record (IEDGE-4) — the page now holds
+    //    what the new version put there, not what a person approved. The
+    //    version is what the sync re-points a mirror on (source_version_id):
+    //    a re-release under the same revision label is still a new version.
+    //    A mirror with no version recorded compares the revision label.
     try {
       const provenRead = (cols: string) => supabaseAdmin
         .from("knowledge_questions")
@@ -932,7 +946,10 @@ export async function POST(req: NextRequest) {
       const proven = provenRes.data;
       const pairs: Array<{ documentId: string; page: number }> = [];
       for (const row of (proven ?? []) as unknown as Array<{
-        citations: Array<{ documentId?: string; page?: number; sourceRev?: string | null }> | null; context?: unknown;
+        citations: Array<{
+          documentId?: string; page?: number; sourceRev?: string | null; sourceVersionId?: string | null;
+        }> | null;
+        context?: unknown;
       }>) {
         const ctx = parseAnswerContext(row.context);
         if (ctx?.partial || ctx?.arithmetic === "unverified") continue;
@@ -940,7 +957,12 @@ export async function POST(req: NextRequest) {
           if (!c.documentId || typeof c.page !== "number" || excludedDocIds.has(c.documentId)) continue;
           const doc = rosterById.get(c.documentId);
           if (!doc) continue;
-          if (doc.source_document_id && (!c.sourceRev || c.sourceRev !== (doc.source_rev ?? null))) continue;
+          if (doc.source_document_id) {
+            const sameSource = doc.source_version_id
+              ? c.sourceVersionId === doc.source_version_id
+              : !!c.sourceRev && c.sourceRev === (doc.source_rev ?? null);
+            if (!sameSource) continue;
+          }
           pairs.push({ documentId: c.documentId, page: c.page });
         }
       }
@@ -1060,6 +1082,7 @@ export async function POST(req: NextRequest) {
             8,
           ),
         ];
+        rankedIds = new Set(chunks.map((c) => c.id));
       }
       // ── PULL BY NAME: chunk search finds text INSIDE pages, so a document
       //    whose pages don't repeat its own designation is unfindable by
@@ -1274,8 +1297,12 @@ export async function POST(req: NextRequest) {
     // facts — count questions answer from DATA, not from 14 passages.
     //
     // ASK-2 / ING-10: the census is read WHOLE (paged), up to a ceiling; past
-    // it, the last document is dropped whole and the facts say they are a
-    // partial floor — the "trust these" wording and the next-free numbers go.
+    // it, the document the ceiling cut is dropped whole (every sheet counted
+    // is counted completely), the sheets whose tags were not read are passed
+    // to the reference audit as not read whole (a connector into one, or a
+    // sheet one may hold, is unchecked — never one-way, never a gap), and the
+    // facts say they are a partial floor — the "trust these" wording and the
+    // next-free numbers go.
     // PR-4: the facts say how many sheets were read by AI vision, and only a
     // text-layer title block counts as an identity that was READ.
     //
@@ -1284,7 +1311,8 @@ export async function POST(req: NextRequest) {
     // drawingRules is the app's own instruction about it (system prompt).
     let drawingFacts = "";
     let drawingRules = "";
-    /** Every document whose tags fed the facts — recorded on the row. */
+    /** Every document whose tag rows fed the facts — recorded on the row
+     *  (ASK-1). A sheet that contributed no tag row contributed only its name. */
     let drawingFactDocIds: string[] = [];
     // Out-of-scope destinations discovered by the audit — feeds the scope
     // checklist below and the re-ask detection.
@@ -1319,24 +1347,43 @@ export async function POST(req: NextRequest) {
       if (entRead.error) throw new Error(entRead.error.message);
       let entRows = entRead.rows;
       const drawingFactsPartial = entRead.capped;
+      /** Past the ceiling: the first document whose tag rows were not all
+       *  read. It, and every document sorting after it (the read is ordered
+       *  by document), was not read whole. */
+      let unreadFrom: string | null = null;
       if (drawingFactsPartial) {
-        // The ceiling cut a document somewhere: drop the last one whole, so
-        // every document counted is counted completely.
-        const lastDoc = entRows[entRows.length - 1]?.document_id;
-        entRows = entRows.slice(0, DRAWING_FACTS_ROW_CEILING).filter((e) => e.document_id !== lastDoc);
+        // readAll returns more than the ceiling once capped: the first row
+        // past it names the document the ceiling cut. Its rows inside the
+        // ceiling are dropped, so every document counted is counted whole.
+        const kept = entRows.slice(0, DRAWING_FACTS_ROW_CEILING);
+        unreadFrom = entRows[DRAWING_FACTS_ROW_CEILING]?.document_id ?? kept[kept.length - 1]?.document_id ?? null;
+        entRows = kept.filter((e) => e.document_id !== unreadFrom);
       }
       const ents = entRows.filter((e) => !excludedDocIds.has(e.document_id));
       if (ents.length > 0) {
-        const docsRead = await readAll<{ id: string; name: string; library_id: string; vision_pages?: number | null }>((from, to) =>
+        type FactDoc = { id: string; name: string; library_id: string; vision_pages?: number | null };
+        let docsRead = await readAll<FactDoc>((from, to) =>
           supabaseAdmin.from("knowledge_documents").select("id, name, library_id, vision_pages")
             .in("library_id", allLibIds).order("id", { ascending: true }).range(from, to));
-        const docsRows = docsRead.error && columnMissing(docsRead.error)
-          ? (await readAll<{ id: string; name: string; library_id: string; vision_pages?: number | null }>((from, to) =>
-              supabaseAdmin.from("knowledge_documents").select("id, name, library_id")
-                .in("library_id", allLibIds).order("id", { ascending: true }).range(from, to))).rows
-          : docsRead.rows;
-        const docsList = docsRows.filter((d) => !excludedDocIds.has(d.id));
-        drawingFactDocIds = docsList.map((d) => d.id);
+        if (docsRead.error && columnMissing(docsRead.error)) {
+          docsRead = await readAll<FactDoc>((from, to) =>
+            supabaseAdmin.from("knowledge_documents").select("id, name, library_id")
+              .in("library_id", allLibIds).order("id", { ascending: true }).range(from, to));
+        }
+        // Any other failure: no facts at all, rather than a census that says
+        // "Sheets: 0" over the tags it did read.
+        if (docsRead.error) throw new Error(docsRead.error.message);
+        const docsList = docsRead.rows.filter((d) => !excludedDocIds.has(d.id));
+        drawingFactDocIds = [...new Set(ents.map((e) => e.document_id))];
+        // ASK-2: the sheets the ceiling left unread — their silence is never
+        // evidence of a one-way connector or a gap.
+        const unreadDocs = new Map<string, string>();
+        if (unreadFrom !== null) {
+          const from = unreadFrom.toLowerCase();
+          for (const d of docsList) {
+            if (d.id.toLowerCase() >= from) unreadDocs.set(d.id, "its tags were past the census ceiling and were not read");
+          }
+        }
         // PR-4: sheets whose tags came (at least in part) from an AI
         // transcription of the page image (knowledge_documents.vision_pages).
         const visionDocIds = new Set(docsList.filter((d) => (d.vision_pages ?? 0) > 0).map((d) => d.id));
@@ -1354,7 +1401,7 @@ export async function POST(req: NextRequest) {
           if (!list.includes(e.tag)) list.push(e.tag);
           selfByDoc.set(e.document_id, list);
         }
-        const audit = auditDrawingRefs(docsList, refsByDoc, selfByDoc, unitMap);
+        const audit = auditDrawingRefs(docsList, refsByDoc, selfByDoc, unitMap, unreadDocs.size > 0 ? unreadDocs : undefined);
         outOfScopeList = audit.outOfScope.map((o) => ({
           series: o.series, unitName: o.unitName ?? null, count: o.count, refs: o.refs,
         }));
@@ -1448,7 +1495,9 @@ export async function POST(req: NextRequest) {
           " (the passages are excerpts, never the whole picture):\n" +
           (drawingFactsPartial
             ? `- PARTIAL: the tag index holds more rows than one census reads (${DRAWING_FACTS_ROW_CEILING.toLocaleString("en-US")}), ` +
-              "so every count below is a FLOOR, not a total, and no next free number is given.\n"
+              "so every count below is a FLOOR, not a total, and no next free number is given. " +
+              `${unreadDocs.size} sheet(s) were not counted: a connector into one of them, or a missing sheet one of them ` +
+              "may hold, was not checked and is not listed below.\n"
             : "") +
           `- Sheets: ${docsList.length}` +
           (declaredCount > 0
@@ -1591,10 +1640,19 @@ export async function POST(req: NextRequest) {
           "terminology — try rephrasing with the exact terms the standard would use." +
           (missingDocs.length > 0 ? `\n! The answer likely lives in: ${missingDocs.join(", ")} — not in your libraries.` : "") +
           (partialDocs.length > 0 ? `\n! Indexing gap: ${partialDocs.join("; ")}.` : "");
-      const r = await supabaseAdmin.from("knowledge_questions").insert({
+      // The turn joins its conversation (thread_id), so a follow-up reads it
+      // back from the record (ASK-5); a database without threads saves it
+      // without one.
+      let r = await supabaseAdmin.from("knowledge_questions").insert({
         org_id: orgId, library_id: libraryId, user_id: user.id, user_name: userName,
-        question, answer, citations: [], provider, model,
+        question, answer, citations: [], provider, model, thread_id: threadId,
       });
+      if (r.error && (r.error.code === "PGRST204" || r.error.code === "42703" || /thread_id/.test(r.error.message ?? ""))) {
+        r = await supabaseAdmin.from("knowledge_questions").insert({
+          org_id: orgId, library_id: libraryId, user_id: user.id, user_name: userName,
+          question, answer, citations: [], provider, model,
+        });
+      }
       // ASK-11: a save that fails is said, never silently dropped.
       const saveError = r.error ? unsavedSentence(r.error.message) : null;
       if (r.error) console.error("[knowledge/ask] the answer could not be saved", r.error.message);
@@ -2049,9 +2107,17 @@ export async function POST(req: NextRequest) {
 
     // ── ASK-7: one prompt-size budget across the system blocks, the user
     //    turn and the page images, checked BEFORE the answer call. Over it,
-    //    a whole document falls back to its retrieved snippets first, then
-    //    the lowest-ranked passages go — and the answer says so, instead of
-    //    the provider refusing an oversized request with a 502.
+    //    a whole document falls back to its retrieved snippets first; then
+    //    passages are seated in priority order — the reserved ones first (in
+    //    the order they were attached: proven ground, the documents the
+    //    question named, missing-document probes, graph hops), then the
+    //    ranked ones by rank — each kept when it still fits beside those
+    //    kept before it. So the lowest-ranked passages go first, a reserved
+    //    passage goes only when it no longer fits beside the reserved ones
+    //    before it (never to make room for a ranked one), and one passage
+    //    too large for any answer never costs the ones after it their seat.
+    //    The answer says so, instead of the provider refusing an oversized
+    //    request with a 502.
     const promptTokens = () =>
       Math.ceil((answerSystem(pageImages).length + answerUser(pageImages).length) / PROMPT_CHARS_PER_TOKEN)
       + pageImages.length * PROMPT_TOKENS_PER_IMAGE;
@@ -2066,15 +2132,30 @@ export async function POST(req: NextRequest) {
         wholeDocIds.delete(id);
       }
     }
-    while (promptTokens() > PROMPT_TOKEN_BUDGET && chunks.length > 1) {
-      chunks = chunks.slice(0, -1);
-      trimmed.passages++;
+    if (promptTokens() > PROMPT_TOKEN_BUDGET && chunks.length > 1) {
+      const pool = chunks;
+      const order = [
+        ...pool.map((c, i) => ({ c, i })).filter(({ c }) => !rankedIds.has(c.id)),
+        ...pool.map((c, i) => ({ c, i })).filter(({ c }) => rankedIds.has(c.id)),
+      ];
+      const keep = new Set<number>();
+      const seat = () => { chunks = pool.filter((_, i) => keep.has(i)); };
+      for (const { i } of order) {
+        keep.add(i);
+        seat();
+        if (promptTokens() > PROMPT_TOKEN_BUDGET) keep.delete(i);
+      }
+      // As before, never zero passages: when not even one fits, the first in
+      // priority stays and the provider says what it refused.
+      if (keep.size === 0 && order.length > 0) keep.add(order[0].i);
+      seat();
+      trimmed.passages = pool.length - chunks.length;
     }
     const trimNote = trimmed.passages > 0 || trimmed.fullText.length > 0
       ? "\n\n! This question loaded more text than one answer can read, so " +
         [
           trimmed.fullText.length > 0 ? `the full text of ${trimmed.fullText.join(" and ")} was replaced by its best-matching passages` : "",
-          trimmed.passages > 0 ? `${trimmed.passages} lower-ranked passage${trimmed.passages === 1 ? " was" : "s were"} left out` : "",
+          trimmed.passages > 0 ? `${trimmed.passages} passage${trimmed.passages === 1 ? " was" : "s were"} left out (the lowest-ranked first)` : "",
         ].filter(Boolean).join(" and ") +
         " — ask about a narrower part of the question for a complete answer."
       : "";
@@ -2226,8 +2307,11 @@ export async function POST(req: NextRequest) {
       n: number; documentId: string; documentName: string; page: number;
       section: string | null; quote: string; tags?: string[];
       libraryName?: string; tier?: string;
-      /** IEDGE-4: the controlled revision a mirror's page was read from. */
+      /** IEDGE-4: the controlled revision label a mirror's page was read from. */
       sourceRev?: string;
+      /** IEDGE-4: the controlled VERSION it was read from — what the sync
+       *  re-points the mirror on, and what "revised since" compares. */
+      sourceVersionId?: string;
       /** GOV-9: the quote is an AI model's transcription of the page image. */
       source?: "vision"; sourceModel?: string | null;
     };
@@ -2250,6 +2334,8 @@ export async function POST(req: NextRequest) {
           } : {}),
           ...(rosterById.get(c.document_id)?.source_document_id && rosterById.get(c.document_id)?.source_rev
             ? { sourceRev: rosterById.get(c.document_id)?.source_rev as string } : {}),
+          ...(rosterById.get(c.document_id)?.source_document_id && rosterById.get(c.document_id)?.source_version_id
+            ? { sourceVersionId: rosterById.get(c.document_id)?.source_version_id as string } : {}),
           ...(chunkSource.has(c.id) ? { source: "vision" as const, sourceModel: chunkSource.get(c.id)?.model ?? null } : {}),
         };
       });

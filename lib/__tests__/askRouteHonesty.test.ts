@@ -218,6 +218,29 @@ describe("ASK-2 / ING-10 / PR-4 — the drawing facts are whole or say they are 
     expect(distinct % 100).toBe(0);
   }, 30_000);
 
+  it("reproduction → fix: sheets whose size does not divide the page — the sheet the ceiling cuts is dropped whole, and no one-way connector is reported into a sheet past it", async () => {
+    // 140 sheets × 150 tags, plus three references: 21,003 rows. The read
+    // stops at 21,000; row 20,000 falls inside sheet 133, so sheets 0–132 are
+    // counted (19,950 tags) and 133 onward were not read whole.
+    sheets(140, 150);
+    const ents = rowsOf("knowledge_page_entities");
+    ents.push(
+      ent("k-s0010", "ref", "025-PID-0135"),  // into a sheet past the ceiling, which points back…
+      ent("k-s0135", "ref", "025-PID-0010"),  // …on a row the census never read
+      ent("k-s0020", "ref", "025-PID-0030"),  // control: both read whole, no reference back
+    );
+    h.script = [DRAW_Q, REFINE_NONE, DRAW_A];
+    const res = await ask({ question: "How many vessels are in this unit?" });
+    expect(res.status).toBe(200);
+    const data = fenced(answerCall().user);
+    expect(data).toMatch(/PARTIAL: the tag index holds more rows than one census reads \(20,000\)/);
+    expect(data).toMatch(/7 sheet\(s\) were not counted: a connector into one of them, or a missing sheet one of them may hold, was not checked/);
+    expect(data).toContain("Equipment, distinct tags: 19950 (at least)");
+    const oneWay = data.split("\n").find((l) => l.startsWith("- One-way connectors")) ?? "";
+    expect(oneWay).toContain("025-PID-0020.pdf → 025-PID-0030.pdf");
+    expect(oneWay).not.toContain("0135");
+  }, 30_000);
+
   it("PR-4: sheets read by AI vision are counted, their title blocks are unconfirmed, and 'trust' becomes a hedge", async () => {
     sheets(4, 3, (d) => (d < 2 ? { vision_pages: 1 } : {}));
     const ents = rowsOf("knowledge_page_entities");
@@ -364,6 +387,40 @@ describe("PR-9 — model arithmetic is marked unverified (what the code proves: 
     expect(answerHasComputation("V-101 and PSV-2001 per 2026-10-01; set at `285 psig` [1].", "")).toBe(false);
     expect(answerHasComputation(ANSWER.text, "")).toBe(false);
   });
+
+  it("reproduction → fix: a lookup is not arithmetic — fractions, pressure classes and sizes before an '=' elsewhere on the line are never flagged", () => {
+    for (const lookup of [
+      "- Use **3/4 in** bolts; torque = `250 ft-lb` [2]",
+      "A 1/2\" line = `12.7 mm` OD",
+      "Flange class 150/300: max pressure = 285 psig",
+      "2 x 4 spacing per Table 121.5 = 10 ft",
+      "1/2 in = 12.7 mm",
+      "NPS 1-1/2 = 48.3 mm OD",
+      "Test pressure = 1.5 × design pressure",
+    ]) expect([lookup, answerHasComputation(lookup, "")]).toEqual([lookup, false]);
+    // …while a substitution written with units or value chips still is.
+    for (const worked of [
+      "P_T = 1.5 × `285 psig` = `427.5 psig` [1]",
+      "1.5 × 285 psig = 427.5 psig",
+      "t = (285 × 6.625) / (2 × (20,000 × 1.0 + 285 × 0.4)) = 0.047 in",
+      "600 - 150 = 450 psig",
+    ]) expect([worked, answerHasComputation(worked, "")]).toEqual([worked, true]);
+  });
+
+  it("an ordinary lookup answer through the route carries no arithmetic flag — on the response or the row", async () => {
+    ordinaryLibrary();
+    h.script = [QUERY_GEN, REFINE_NONE, { ...ANSWER, text: "**Answer:** Use **3/4 in** bolts [1].\n**Basis:**\n- Use **3/4 in** bolts; torque = `250 ft-lb` [2]" }];
+    const body = await (await ask({ question: "What bolt size and torque for a 6-inch 150# flange?" })).json();
+    expect(body.arithmetic).toBeUndefined();
+    expect(rowsOf("knowledge_questions")[0].context).not.toHaveProperty("arithmetic");
+  });
+
+  it("the detector is linear enough for a whole answer: a long run of numbers that never reaches '=' is judged at once", () => {
+    const t = Date.now();
+    expect(answerHasComputation("1 × ".repeat(3000), "")).toBe(false);
+    expect(answerHasComputation(`${"( 1 ) × ".repeat(2000)}x`, "")).toBe(false);
+    expect(Date.now() - t).toBeLessThan(5000);
+  });
 });
 
 // ── IRLS-13 ─────────────────────────────────────────────────────────────────
@@ -503,7 +560,38 @@ describe("ASK-7 — the cap is enforced against THIS ask's projected cost, and t
     expect(body.answer).toMatch(/This month's remaining AI budget limited how long this answer could be\./);
   });
 
-  it("over the prompt-size budget the lowest-ranked passages go first and the answer says so", async () => {
+  it("reproduction → fix: over the budget the lowest-RANKED passages go first — the passages of the document the question NAMED, attached after ranking, keep their seats", async () => {
+    // Ranked passages are cut to 1,600 characters; EP 5-1-1 (too large for
+    // whole-document mode) contributes its four front pages by name, whole
+    // (~92,000 characters each), AFTER the ranked list. Together they are
+    // past one prompt's budget; the named pages alone fit.
+    const filler = (i: number) => `relief valve set pressure FILLER-${String(i).padStart(2, "0")} ${"plant data row ".repeat(200)}`;
+    const front = (marker: string) => `${marker} ${"practice text ".repeat(6570)}`;
+    seed({
+      knowledge_documents: [kdoc("k-big", { name: "Data book.pdf" }), kdoc("k-ep", { name: "EP 5-1-1 Relief design.pdf", page_count: 131, pages_indexed: 131 })],
+      knowledge_chunks: [
+        ...Array.from({ length: 10 }, (_, i) => kchunk("k-big", filler(i), { id: `c-f${String(i).padStart(2, "0")}`, page: i + 1 })),
+        ...Array.from({ length: 131 }, (_, i) => kchunk("k-ep",
+          i === 0 ? front("EP-NAMED-FRONT") : i === 3 ? front("EP-NAMED-TAIL") : i < 4 ? front(`EP-PAGE-${i}`) : `Section ${i} text.`,
+          { id: `c-ep-${String(i).padStart(3, "0")}`, page: i + 1 })),
+      ],
+    });
+    h.rpcMissing.add("knowledge_search_document");
+    h.script = [{ text: '["relief valve set pressure"]', usage: { inputTokens: 300, outputTokens: 20 } }, REFINE_NONE, { ...ANSWER, text: "**Answer:** See [1]." }];
+    const body = await (await ask({ question: "What does EP 5-1-1 say about the relief valve set pressure?" })).json();
+    const user = answerCall().user;
+    // Every page of the named document stays — the last one attached too…
+    expect(user).toContain("EP-NAMED-FRONT");
+    expect(user).toContain("EP-NAMED-TAIL");
+    // …the top-ranked passage stays, and the lowest-ranked went first.
+    expect(user).toContain("FILLER-00");
+    expect(user).not.toContain("FILLER-09");
+    expect(body.trimmed.passages).toBeGreaterThan(0);
+    expect(body.answer).toMatch(/passages? (?:was|were) left out \(the lowest-ranked first\)/);
+    expect(Math.ceil((answerCall().system.length + user.length) / 3.5)).toBeLessThanOrEqual(PROMPT_TOKEN_BUDGET);
+  });
+
+  it("reserved passages past the budget on their own are cut to what fits — the small ranked passage still gets its seat — and the answer says so", async () => {
     // Proven ground seats whole pages (raw chunk text, never cut to a snippet):
     // twelve 40,000-character chunks are far past one prompt's budget.
     const big = (i: number) => `${"Plant data row ".repeat(2700)} page ${i}`;
@@ -526,6 +614,7 @@ describe("ASK-7 — the cap is enforced against THIS ask's projected cost, and t
     expect(body.answer).toMatch(/This question loaded more text than one answer can read/);
     const call = answerCall();
     expect(Math.ceil((call.system.length + call.user.length) / 3.5)).toBeLessThanOrEqual(PROMPT_TOKEN_BUDGET);
+    expect(call.user).toContain("The relief valve set pressure shall not exceed the design pressure.");
   });
 
   it("ASK-1: a document the refine round's preview showed the model is recorded on the row, even when the budget trims it from the answer", async () => {
