@@ -57,7 +57,7 @@ import { loadPrincipal, readableControlledDocIds } from "@/lib/knowledgeAccess";
 import { resetKnowledgeIndex } from "@/lib/knowledgeIngest";
 import {
   buildEquipmentCensus, auditDrawingRefs, auditOpcBoxes, drawingRefTargets, equipmentRegisterCsv,
-  parseUnitMap, parsePrefixMap, declaredSheetIdentity, sheetIdentities, rollUpEntities,
+  parseUnitMap, parsePrefixMap, declaredSheetIdentity, sheetIdentities, sheetDrawingNumbers, rollUpEntities,
   DRAWING_MAX_LOWERCASE_RATIO, THIN_PAGE_MAX_CHARS, type EntityRollupRow,
 } from "@/lib/drawingText";
 import { loadCodebookAdmin, codebookToDecoderText } from "@/lib/codebookServer";
@@ -421,11 +421,13 @@ function stillBeingRead(docs: readonly DocRow[], forNow: ReadonlySet<string>): S
  *  reach was filed a settled gap). A parked document may wait on AI vision
  *  until next month under a cap, and while it may hold anything every real
  *  gap in the library — in any series — waited on it all that time (review
- *  fix pass 7). It holds by the settled rule instead (its own drawing, a
- *  series it declares two drawings of; anything when its number was read
- *  neither from a title block nor from its filename); what it holds waits
- *  on it, and a gap it does not hold that way is filed and waits on it too
- *  — never settled while it is parked (review fix pass 8). */
+ *  fix pass 7). A missing sheet it holds by the settled rule's positive
+ *  clauses instead (its own drawing, a series it declares two drawings of —
+ *  never one because its number was read neither from a title block nor
+ *  from its filename, review fix pass 9); what it holds waits on it, and a
+ *  gap it does not hold that way is filed and waits on it too — never
+ *  settled while it is parked (review fix pass 8). A connector's
+ *  destination it holds as auditOpcBoxes says (`reading`). */
 function inFlightOf(docs: readonly DocRow[], beingRead: ReadonlySet<string>): Set<string> {
   return new Set(docs
     .filter((d) => beingRead.has(d.id) && !(mainPassThrough(d) && isParked(d) && (d.vision_failed_pages ?? []).length > 0))
@@ -527,9 +529,11 @@ export async function GET(req: NextRequest) {
   // A gap is judged only inside a series this library holds — the SAME rule
   // the record applies (DWG-6), so the lens never calls "a gap in the set"
   // what the record refuses to judge. The series not judged are named.
-  const identities = new Map(docs.map((d) => [d.id, sheetIdentities(d.name, selfByDoc.get(d.id) ?? [])]));
-  const notJudged = seriesNotJudged(identities);
-  const held = seriesHeldBySet(identities);
+  // Real drawing numbers only — never a filename standing in for one: a
+  // prose document is no series (review fix pass 9).
+  const numbers = new Map(docs.map((d) => [d.id, sheetDrawingNumbers(d.name, selfByDoc.get(d.id) ?? [])]));
+  const notJudged = seriesNotJudged(numbers);
+  const held = seriesHeldBySet(numbers);
   // The referencing sheets are listed to six on screen; the record takes
   // every one (review fix pass 5), and the lens never ships the whole list —
   // nor every document that may hold a sheet (review fix pass 7), nor every
@@ -1089,6 +1093,14 @@ const sameRev = (a: string, b: string) => a.trim().toUpperCase() === b.trim().to
  *     does a change in a sheet it points at, or in the set. A sheet whose
  *     revision is unknown ("") always is audited: "unrevised" cannot be
  *     established for it, and its row takes the latest settled verdict.
+ *     Nor is a row written PROVISIONAL ever done: it is judged again on
+ *     every record until a settled verdict replaces it — the document it
+ *     waits on can stop waiting without being read (a controller accepts
+ *     its partial index, or its indexing fails), and nothing in its basis
+ *     need change then (review fix pass 9). The set's basis names, for each
+ *     document not read whole, which kind it is — accepted, failed, in
+ *     flight or parked — so a verdict computed while it was one is judged
+ *     again once it is another.
  *   * A sheet that is not read whole (pages AI vision never read: parked,
  *     an accepted partial index, a failed run; a failed document; one still
  *     being indexed) is no evidence: a box, or a reference back, not found
@@ -1260,9 +1272,12 @@ async function recordAudit(orgId: string, libraryId: string, userId: string) {
   // The set's scope (DWG-6): the series this library holds. A sheet in a
   // series it does not hold is still recorded; gaps in that series are not
   // judged.
+  // Judged by real drawing numbers only — the SAME as the lens (review fix
+  // pass 9: a prose document's filename made a series "PUMP" not judged).
   const identities = new Map(docs.map((d) => [d.id, sheetIdentities(d.name, selfByDoc.get(d.id) ?? [])]));
-  const heldSeries = seriesHeldBySet(identities);
-  const notJudged = seriesNotJudged(identities);
+  const numbers = new Map(docs.map((d) => [d.id, sheetDrawingNumbers(d.name, selfByDoc.get(d.id) ?? [])]));
+  const heldSeries = seriesHeldBySet(numbers);
+  const notJudged = seriesNotJudged(numbers);
 
   // What each verdict is computed FROM (DWG-13): the document's own index;
   // the index of every document its connectors and references resolve to —
@@ -1281,7 +1296,16 @@ async function recordAudit(orgId: string, libraryId: string, userId: string) {
   // is not read whole, which (review fix pass 4): a sheet "not found in what
   // was read of the set" is re-judged once the document that may hold it is
   // read whole, whether or not that document's own numbers change.
-  const partlyRead = [...incomplete].map(([id, why]) => `${id}:${why}`).sort();
+  // …and which KIND of not read whole each is (review fix pass 9): an
+  // accepted partial index, a failed document, one in flight, or one parked
+  // all carry the same "page(s) N never read" when their unread pages are
+  // listed, yet they wait — or hold a sheet — differently. Fix pass 8
+  // digested the label alone, so a parked document accepted or failed left
+  // every verdict that waited on it "already recorded" for good.
+  const kindOf = (d: DocRow): string => isAcceptedPartial(d) ? "accepted"
+    : d.status === "error" ? "failed"
+    : inFlight.has(d.id) ? "inflight" : "parked";
+  const partlyRead = docs.filter((d) => incomplete.has(d.id)).map((d) => `${d.id}:${incomplete.get(d.id)}:${kindOf(d)}`).sort();
   const setPrint = digest([...new Set([...identities.values()].flat())].sort().join("\n") +
     (partlyRead.length > 0 ? `\u0002${partlyRead.join("\n")}` : ""));
   const refTargets = drawingRefTargets(docs.map((d) => ({ id: d.id, name: d.name })), refsByDoc, selfByDoc);
@@ -1364,7 +1388,12 @@ async function recordAudit(orgId: string, libraryId: string, userId: string) {
     const c = (details as { coverage?: unknown } | null)?.coverage;
     return c && typeof c === "object" && !Array.isArray(c) ? c as Record<string, string> : null;
   };
-  const priorRows = prior.rows.map((r) => ({ ...r, coverage: coverageOf(r.audit_details) }));
+  // A provisional row is never done (review fix pass 9): it is judged again
+  // on every record, and replaceDecision keeps that from lowering what it
+  // settled.
+  const priorRows = prior.rows.map((r) => ({
+    ...r, coverage: coverageOf(r.audit_details), provisional: storedProvisional(r.audit_details),
+  }));
   const needing = new Set(sheetsNeedingAudit(sheets, priorRows, fingerprints).map((s) => s.documentId));
   const alreadyRecorded = sheets.filter((s) => !needing.has(s.documentId)).map((s) => {
     const p = priorRows.find((r) => r.sheet_number === s.sheetNumber && r.revision_code === s.revision && r.status !== "skipped");

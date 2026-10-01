@@ -2225,6 +2225,207 @@ describe("DWG-13 / DWG-4 — a document mid-read, a parked one, or a reset or fa
   });
 });
 
+describe("DWG-13 / DWG-6 — a provisional verdict is judged again until it settles, whether the document it waits on is read, accepted or fails; a parked scan hides no gap; a prose document is no series (review fix pass 9)", () => {
+  const row = (sheet: string) => logRows().find((r) => r.sheet_number === sheet)!;
+  const doc = (id: string) => db.tables.knowledge_documents.find((d) => d.id === id)!;
+  type Details = {
+    missingReferences: string[]; uncheckedReferences: string[]; unpairedConnectors: string[];
+    provisional?: { waitingOn: string[]; settledStatus: string };
+    set: { seriesNotJudged?: string[] };
+  };
+  const details = (sheet: string) => row(sheet).audit_details as Details;
+  const PARKED_UNDER_CAP = {
+    status: "indexing", page_count: 2, pages_indexed: 2, vision_failed_pages: [2],
+    vision_retry_after: "2026-11-01T00:00:00Z", error: "monthly AI cap reached",
+  };
+  /** 025-PID-0104 at rev C: connector 14 into 025-PID-0108 SH1, which no
+   *  sheet declares; 030-PID-0201.pdf is parked under the cap with page 2
+   *  unread — a parked document may hold any destination in the set's
+   *  scope (review fix pass 8), so rev C is filed provisional. */
+  function parkedDestination() {
+    seed({
+      knowledge_documents: [
+        kdoc("a", { name: "025-PID-0104.pdf", source_document_id: "d-a", source_version_id: "v-a", source_rev: "C" }),
+        kdoc("b", { name: "025-PID-0101.pdf" }),
+        kdoc("p", { name: "030-PID-0201.pdf", ...PARKED_UNDER_CAP }),
+      ],
+      knowledge_page_entities: [
+        ent("a", "self", "025-PID-0104"), ent("a", "self", "025-PID-0104-SH1"), ent("a", "equipment", "V-1"),
+        ent("a", "opc", "14", 1, { raw: "OPC 14: DWG 025-PID-0108 SH 1 — TO V-1402" }),
+        ent("a", "ref", "025-PID-0108-SH1"),
+        ent("b", "self", "025-PID-0101"), ent("b", "equipment", "V-2"),
+        ent("p", "self", "030-PID-0201", 1), ent("p", "equipment", "P-1", 1),
+      ],
+      documents: [{ id: "d-a", org_id: "o1", rev: "C", current_version_id: "v-a" }],
+    });
+  }
+  const WAITING = "030-PID-0201.pdf (page(s) 2 never read)";
+
+  it("the reviewer's probe accept: a controller accepts the parked document's partial index — rev C is judged again and settles passed, never 'already recorded' flagged", async () => {
+    parkedDestination();
+    await record("kl-1");
+    expect(row("025-PID-0104")).toMatchObject({ revision_code: "C", status: "flagged" });
+    expect(details("025-PID-0104").provisional).toEqual({ waitingOn: [WAITING], settledStatus: "passed" });
+    // app/api/knowledge/ingest acceptPartial: ready, accepted, nothing else
+    // changes — its unread pages, and so its "page(s) 2 never read", stay.
+    Object.assign(doc("p"), { vision_partial_accepted: true, status: "ready", error: null, vision_retry_after: null });
+    const lens = await (await get("orgId=o1&libraryId=kl-1")).json();
+    expect(lens.opcUnpaired).toEqual([]);
+    const after = await record("kl-1");
+    // Fix pass 8: alreadyRecorded, flagged, still "waiting on" it for good.
+    expect(after.body.alreadyRecorded).toEqual([]);
+    expect(after.body.keptStored).toEqual([]);
+    expect(row("025-PID-0104")).toMatchObject({ revision_code: "C", status: "passed" });
+    expect(row("025-PID-0104").audit_details).not.toHaveProperty("provisional");
+    // Settled now: the next record leaves it be.
+    const again = await record("kl-1");
+    expect(again.body.alreadyRecorded).toEqual(expect.arrayContaining([
+      { name: "025-PID-0104.pdf", sheetNumber: "025-PID-0104", revision: "C", status: "passed" },
+    ]));
+  });
+
+  it("the reviewer's probe failed: the parked document's indexing then fails — rev C is judged again, never stuck flagged until someone re-indexes it", async () => {
+    parkedDestination();
+    await record("kl-1");
+    expect(details("025-PID-0104").provisional).toEqual({ waitingOn: [WAITING], settledStatus: "passed" });
+    Object.assign(doc("p"), { status: "error", error: "provider refused 5 times", vision_retry_after: null });
+    const after = await record("kl-1");
+    expect(after.body.alreadyRecorded.map((r: { sheetNumber: string }) => r.sheetNumber)).not.toContain("025-PID-0104");
+    // A failed document holds by the settled rule (030-PID-0201's sheets
+    // only): the connector into 025-PID-0108 no longer waits on it.
+    expect(row("025-PID-0104")).toMatchObject({ revision_code: "C", status: "passed" });
+    expect(row("025-PID-0104").audit_details).not.toHaveProperty("provisional");
+  });
+
+  it("a provisional row re-judged while it still waits is kept provisional, and never lowered below what it settled", async () => {
+    parkedDestination();
+    await record("kl-1");
+    const before = JSON.stringify(details("025-PID-0104").provisional);
+    const again = await record("kl-1");
+    // Judged again — not "already recorded" — and filed as it was.
+    expect(again.body.alreadyRecorded.map((r: { sheetNumber: string }) => r.sheetNumber)).not.toContain("025-PID-0104");
+    expect(row("025-PID-0104")).toMatchObject({ revision_code: "C", status: "flagged" });
+    expect(JSON.stringify(details("025-PID-0104").provisional)).toBe(before);
+  });
+
+  it("the reviewer's probe accept-gap: a gap filed while another series' PDF was parked settles, with no stale provisional marker, once its partial index is accepted", async () => {
+    seed({
+      knowledge_documents: [
+        kdoc("t1", { name: "025-PID-0101.pdf", source_document_id: "d-t1", source_version_id: "v-t1", source_rev: "B" }),
+        kdoc("t2", { name: "025-PID-0102.pdf" }),
+        kdoc("p", { name: "040-TK-0001.pdf", ...PARKED_UNDER_CAP }),
+      ],
+      knowledge_page_entities: [
+        ent("t1", "self", "025-PID-0101"), ent("t1", "equipment", "V-1"), ent("t1", "ref", "025-PID-0108"),
+        ent("t2", "self", "025-PID-0102"), ent("t2", "equipment", "V-2"),
+        ent("p", "self", "040-TK-0001", 1), ent("p", "equipment", "TK-1", 1),
+      ],
+      documents: [{ id: "d-t1", org_id: "o1", rev: "B", current_version_id: "v-t1" }],
+    });
+    await record("kl-1");
+    expect(details("025-PID-0101")).toMatchObject({
+      missingReferences: ["References 025-PID-0108, which isn't in the set"],
+      provisional: { waitingOn: ["040-TK-0001.pdf (page(s) 2 never read)"], settledStatus: "passed" },
+    });
+    Object.assign(doc("p"), { vision_partial_accepted: true, status: "ready", error: null, vision_retry_after: null });
+    await record("kl-1");
+    // The accepted partial index never changes, and holds no 025-PID sheet:
+    // the gap is settled — flagged, and no longer "waiting".
+    expect(row("025-PID-0101")).toMatchObject({ revision_code: "B", status: "flagged" });
+    expect(details("025-PID-0101").missingReferences).toEqual(["References 025-PID-0108, which isn't in the set"]);
+    expect(row("025-PID-0101").audit_details).not.toHaveProperty("provisional");
+  });
+
+  it("the reviewer's probe retry-then-park: a verdict recorded while a document was in flight is judged again once it is parked, and again once accepted — the set's basis names which kind each document is", async () => {
+    seed({
+      knowledge_documents: [
+        kdoc("a", { name: "025-PID-0104.pdf", source_document_id: "d-a", source_version_id: "v-a", source_rev: "C" }),
+        kdoc("b", { name: "025-PID-0101.pdf" }),
+        // Main pass through, page 2 queued, the retry not run yet: in flight.
+        kdoc("p", { name: "025-PID-0107.pdf", status: "indexing", page_count: 2, pages_indexed: 2, vision_failed_pages: [2] }),
+      ],
+      knowledge_page_entities: [
+        ent("a", "self", "025-PID-0104"), ent("a", "self", "025-PID-0104-SH1"), ent("a", "equipment", "V-1"),
+        ent("a", "opc", "14", 1, { raw: "OPC 14: DWG 030-PID-0203 SH 1 — TO V-1402" }),
+        ent("b", "self", "025-PID-0101"), ent("b", "equipment", "V-2"),
+        ent("p", "self", "025-PID-0107", 1), ent("p", "equipment", "V-7", 1),
+      ],
+      documents: [{ id: "d-a", org_id: "o1", rev: "C", current_version_id: "v-a" }],
+    });
+    await record("kl-1");
+    expect(row("025-PID-0104")).toMatchObject({ revision_code: "C", status: "passed" });
+    // Parked under the cap: the same "page(s) 2 never read", another kind.
+    Object.assign(doc("p"), { vision_retry_after: "2026-11-01T00:00:00Z", error: "monthly AI cap reached" });
+    const parked = await record("kl-1");
+    expect(parked.body.alreadyRecorded).toEqual([]);
+    Object.assign(doc("p"), { vision_partial_accepted: true, status: "ready", error: null, vision_retry_after: null });
+    const accepted = await record("kl-1");
+    expect(accepted.body.alreadyRecorded).toEqual([]);
+    expect(row("025-PID-0104")).toMatchObject({ revision_code: "C", status: "passed" });
+    // Nothing changed since: done.
+    const again = await record("kl-1");
+    expect(again.body.alreadyRecorded.map((r: { sheetNumber: string }) => r.sheetNumber)).toContain("025-PID-0104");
+  });
+
+  it("the reviewer's probe unnum: a parked scan whose number was never read hides no real gap as unchecked — it is filed as a gap that waits on the scan, and settles once the page is read", async () => {
+    seed({
+      knowledge_documents: [
+        kdoc("t1", { name: "040-TK-0001.pdf", source_document_id: "d-t1", source_version_id: "v-t1", source_rev: "B" }),
+        kdoc("t2", { name: "040-TK-0002.pdf" }),
+        kdoc("p", { name: "Scan_0001.pdf", ...PARKED_UNDER_CAP, page_count: 1, pages_indexed: 1, vision_failed_pages: [1] }),
+      ],
+      knowledge_page_entities: [
+        ent("t1", "self", "040-TK-0001"), ent("t1", "equipment", "TK-1"), ent("t1", "ref", "040-TK-0009"),
+        ent("t2", "self", "040-TK-0002"), ent("t2", "equipment", "TK-2"),
+      ],
+      documents: [{ id: "d-t1", org_id: "o1", rev: "B", current_version_id: "v-t1" }],
+    });
+    const scan = "Scan_0001.pdf (page(s) 1 never read)";
+    const lens = await (await get("orgId=o1&libraryId=kl-1")).json();
+    // Fix pass 8: missingUnread, "NOT counted as one-way or missing".
+    expect(lens.audit.missingUnread).toEqual([]);
+    expect(lens.audit.missingInSeries).toEqual([expect.objectContaining({ ref: "040-TK-0009", pendingIn: [scan] })]);
+    expect(lens.suggestions.join("\n")).not.toMatch(/could not be checked/);
+    await record("kl-1");
+    expect(row("040-TK-0001")).toMatchObject({ revision_code: "B", status: "flagged" });
+    expect(details("040-TK-0001")).toMatchObject({
+      missingReferences: ["References 040-TK-0009, which isn't in the set"], uncheckedReferences: [],
+      provisional: { waitingOn: [scan], settledStatus: "passed" },
+    });
+    // The scan is read: a pump datasheet, no 040-TK-0009 on it. The gap
+    // settles flagged, with no marker left.
+    Object.assign(doc("p"), { status: "ready", vision_failed_pages: [], vision_retry_after: null, error: null });
+    db.tables.knowledge_page_entities.push(ent("p", "equipment", "P-101", 1));
+    await record("kl-1");
+    expect(row("040-TK-0001")).toMatchObject({ revision_code: "B", status: "flagged" });
+    expect(row("040-TK-0001").audit_details).not.toHaveProperty("provisional");
+  });
+
+  it("the reviewer's probe notjudged: a prose document's filename names no series 'not judged' — on the lens or on the record", async () => {
+    seed({
+      knowledge_documents: [
+        kdoc("t1", { name: "040-TK-0001.pdf" }), kdoc("t2", { name: "040-TK-0002.pdf" }),
+        kdoc("m", { name: "Pump Manual.pdf" }), kdoc("s", { name: "Spec Section 15000.pdf" }),
+        kdoc("p", { name: "Scan_0001.pdf", ...PARKED_UNDER_CAP, page_count: 1, pages_indexed: 1, vision_failed_pages: [1] }),
+      ],
+      knowledge_page_entities: [
+        ent("t1", "self", "040-TK-0001"), ent("t1", "equipment", "TK-1"), ent("t2", "self", "040-TK-0002"), ent("t2", "equipment", "TK-2"),
+      ],
+      knowledge_chunks: [chunk("m", "Install the pump on a level base and grout it."), chunk("s", "Section 15000 mechanical general requirements.")],
+    });
+    const lens = await (await get("orgId=o1&libraryId=kl-1")).json();
+    // Fix pass 8: ["PUMP", "SPEC-SECTION"] (and "SCAN_0001.PDF").
+    expect(lens.seriesNotJudged).toEqual([]);
+    const res = await record("kl-1");
+    expect(res.body.seriesNotJudged).toEqual([]);
+    for (const r of logRows()) expect((r.audit_details as Details).set).not.toHaveProperty("seriesNotJudged");
+    // A real lone drawing is still named.
+    db.tables.knowledge_documents.push(kdoc("d", { name: "030-PID-0201.pdf" }));
+    db.tables.knowledge_page_entities.push(ent("d", "self", "030-PID-0201"), ent("d", "equipment", "P-9"));
+    expect((await (await get("orgId=o1&libraryId=kl-1")).json()).seriesNotJudged).toEqual(["030-PID"]);
+  });
+});
+
 describe("DWG-13 / DWG-6 — a missing sheet is a finding against EVERY sheet that references it (review fix pass 5)", () => {
   it("eight sheets reference 025-PID-0199: all eight are flagged — the lens lists six, the record files eight", async () => {
     const docs = Array.from({ length: 8 }, (_, i) => kdoc(`m-${i + 1}`, { name: `025-PID-010${i + 1}.pdf` }));

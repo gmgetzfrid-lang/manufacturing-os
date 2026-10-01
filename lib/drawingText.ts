@@ -783,10 +783,19 @@ export interface RefAudit {
  *  filename itself. The audit resolves references against these, and the
  *  audit record's scope rule (lib/drawingAuditLog.ts) reads the same. */
 export function sheetIdentities(name: string, declaredTags: readonly string[]): string[] {
+  const numbers = sheetDrawingNumbers(name, declaredTags);
+  return numbers.length > 0 ? numbers : [normalizeRef(name)];
+}
+
+/** The real drawing numbers a sheet answers to: what its title block
+ *  declared, else the drawing-number-shaped tokens in its filename — and
+ *  NOTHING when neither has one, never the filename itself (sheetIdentities'
+ *  fallback). What decides which series the library holds, and which it
+ *  does not judge (seriesHeldBySet / seriesNotJudged, lib/drawingAuditLog):
+ *  "Pump Manual.pdf" is no number of a series "PUMP" (review fix pass 9). */
+export function sheetDrawingNumbers(name: string, declaredTags: readonly string[]): string[] {
   const declared = declaredTags.map(normalizeRef).filter(Boolean);
-  if (declared.length > 0) return declared;
-  const fromName = extractDrawingRefs(name);
-  return fromName.length > 0 ? fromName : [normalizeRef(name)];
+  return declared.length > 0 ? declared : extractDrawingRefs(name);
 }
 
 /** docs: every sheet in the library with its display name (drawing numbers
@@ -886,9 +895,21 @@ function holdingFacts(name: string, declared: readonly string[]): HoldingFacts {
  *  the same in both. A PARKED document that does not hold a sheet by this
  *  rule still keeps a gap from settling, and a connector into the set's
  *  scope unpaired (review fix pass 8): its unread pages are known, but not
- *  what stands on them. */
+ *  what stands on them. In the reference audit a parked document holds by
+ *  the positive clauses alone (holdsByItsNumber, review fix pass 9). */
 function mayHoldBySettledRule(facts: HoldingFacts, ref: string): boolean {
-  if (!facts.numbered) return true;
+  return !facts.numbered || holdsByItsNumber(facts, ref);
+}
+
+/** The settled rule's positive clauses alone: a sheet of the document's own
+ *  drawing, or a drawing of a series it declares two or more drawings of —
+ *  never "anything" because its number was never read. What a PARKED
+ *  document holds in the reference audit (review fix pass 9): a gap it may
+ *  hold any other way is filed as a gap that waits on it, as for a numbered
+ *  parked document — fix pass 8 hid every real gap in every series as
+ *  unchecked while an unnumbered scan was parked. */
+function holdsByItsNumber(facts: HoldingFacts, ref: string): boolean {
+  if (!facts.numbered) return false;
   const drawing = ref.replace(/-SH\d+$/, "");
   if (facts.drawings.some((t) => seriesMatch(t, drawing))) return true;
   return facts.combined && facts.drawings.some((t) => seriesMatch(refSeries(t), refSeries(drawing)));
@@ -925,8 +946,10 @@ export function auditDrawingRefs(
   inProgress?: ReadonlySet<string>,
   /** Every document still being READ — in flight, or parked on AI vision
    *  (never a failed one, nor an accepted partial index). A parked document
-   *  holds by the settled rule below, and a sheet the set is missing that it
-   *  does not hold that way is a gap — but not a settled one while it is
+   *  holds by the settled rule's positive clauses below (its own drawing, a
+   *  combined PDF's series — never anything because its number was never
+   *  read, review fix pass 9), and a sheet the set is missing that it does
+   *  not hold that way is a gap — but not a settled one while it is
    *  parked: one of its unread pages may yet declare it. Such a gap carries
    *  `pendingIn` / `pendingIds`, and the record files it waiting on them
    *  (review fix pass 8 — fix pass 7 filed it settled, and at a known
@@ -1004,21 +1027,27 @@ export function auditDrawingRefs(
   //    declared, so such a sheet was filed as a GAP, settled — and a gap at
   //    a known revision is never lowered once the page is read (review fix
   //    pass 6);
-  //  - otherwise (an accepted partial index, a failed document, a parked
-  //    document — mayHoldBySettledRule): a sheet of its own drawing; a
-  //    drawing of a series it declares, when it declares two or more
-  //    different drawings (a combined PDF — one drawing's file never stands
-  //    for its whole series, review fix pass 6); anything at all when its
-  //    number was never read (no title block declared, none in its
-  //    filename).
+  //  - otherwise (an accepted partial index, a failed document —
+  //    mayHoldBySettledRule): a sheet of its own drawing; a drawing of a
+  //    series it declares, when it declares two or more different drawings
+  //    (a combined PDF — one drawing's file never stands for its whole
+  //    series, review fix pass 6); anything at all when its number was never
+  //    read (no title block declared, none in its filename);
+  //  - a PARKED document (`stillReading`, not in flight): the positive
+  //    clauses alone — its own drawing, a combined PDF's series
+  //    (holdsByItsNumber), never anything because its number was never read
+  //    (review fix pass 9).
   // A sheet no document holds is a gap — settled, unless a PARKED document
-  // (`stillReading`, not in flight) is not read whole: one of its unread
-  // pages may yet declare it, so the gap waits on it (review fix pass 8).
+  // is not read whole: one of its unread pages may yet declare it, so the
+  // gap waits on it (review fix pass 8) — numbered or not (review fix pass
+  // 9: an unnumbered parked scan hid every real gap as unchecked).
   const partly = docs.filter((d) => incomplete?.has(d.id));
   const holding = new Map(partly.map((d) => [d.id, holdingFacts(d.name, selfTagsByDoc?.get(d.id) ?? [])]));
+  const parkedIds = new Set(partly.filter((d) => stillReading?.has(d.id) && !inProgress?.has(d.id)).map((d) => d.id));
   const mayHold = (ref: string) => partly
-    .filter((d) => inProgress?.has(d.id) || mayHoldBySettledRule(holding.get(d.id)!, ref));
-  const parked = partly.filter((d) => stillReading?.has(d.id) && !inProgress?.has(d.id));
+    .filter((d) => inProgress?.has(d.id)
+      || (parkedIds.has(d.id) ? holdsByItsNumber(holding.get(d.id)!, ref) : mayHoldBySettledRule(holding.get(d.id)!, ref)));
+  const parked = partly.filter((d) => parkedIds.has(d.id));
   /** Up to six documents with why, the rest counted. */
   const namedSix = (list: ReadonlyArray<{ id: string; name: string }>) => [
     ...list.slice(0, 6).map((d) => `${d.name} (${incomplete!.get(d.id)})`),

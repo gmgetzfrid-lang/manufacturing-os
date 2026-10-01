@@ -272,7 +272,10 @@ function seriesChain(ref: string): string[] {
 /**
  * The drawing series this library HOLDS (DWG-6): those in which it carries
  * at least two distinct numbers, counted across all its documents —
- * identities: each document's numbers (sheetIdentities).
+ * identities: each document's REAL drawing numbers (sheetDrawingNumbers —
+ * never sheetIdentities' filename fallback: "Pump Manual.pdf" is no number
+ * of a series "PUMP", and a prose document never makes one held or "not
+ * judged", review fix pass 9). seriesNotJudged takes the same.
  *
  * A gap is a statement about a SET: "references 025-PID-0107, which isn't
  * in the set" is only true of a library that holds the 025-PID series. A
@@ -437,22 +440,34 @@ export function verdictBasis(own: string, neighbours: readonly string[], set: st
  * A sheet whose verdict waits on a document that is only for now not read
  * whole (parked, failed, still being indexed) is judged like any other, and
  * its verdict is provisional: it never overwrites a settled row for what is
- * unsettled in it (replaceDecision), and its basis changes once that
- * document is read whole, so it is judged again then (review fix pass 5 —
- * fix pass 4 refused to record at all while a sheet was being indexed, and
- * let a parked or failed neighbour raise a settled `passed` for good).
+ * unsettled in it (replaceDecision) (review fix pass 5 — fix pass 4 refused
+ * to record at all while a sheet was being indexed, and let a parked or
+ * failed neighbour raise a settled `passed` for good).
+ *
+ * And a row written PROVISIONAL (its `provisional` marker,
+ * storedProvisional) is never done, whatever its basis: it is judged again
+ * on every record until a settled verdict replaces it (review fix pass 9).
+ * Its basis changes when the document it waits on is read whole — but not
+ * when that document stops being "for now" WITHOUT being read: a
+ * controller accepts its partial index, or a parked document's indexing
+ * fails. Its unread pages, and so its label and its index, are the same;
+ * fix pass 8 then answered the row "already recorded" for good, a `flagged`
+ * at a known revision still waiting on a document that no longer waits,
+ * where the computation was `passed`. replaceDecision keeps a re-judgement
+ * from lowering what the row settled.
  */
 export function sheetsNeedingAudit(
   sheets: readonly AuditSheet[],
   priorAudits: ReadonlyArray<{
     sheet_number: string; revision_code: string; status: string;
     coverage?: Readonly<Record<string, string>> | null;
+    provisional?: { settledStatus: string } | null;
   }>,
   fingerprints: ReadonlyMap<string, string>,
 ): AuditSheet[] {
   const done = new Map<string, Readonly<Record<string, string>>>();
   for (const a of priorAudits) {
-    if (a.status === "skipped" || a.revision_code === "" || !a.coverage) continue;
+    if (a.status === "skipped" || a.revision_code === "" || !a.coverage || a.provisional) continue;
     done.set(`${a.sheet_number}@${a.revision_code}`, a.coverage);
   }
   const byKey = new Map<string, AuditSheet[]>();

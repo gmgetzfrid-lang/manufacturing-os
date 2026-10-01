@@ -506,6 +506,7 @@ describe("SHX drawings whose only text is the title block", () => {
 
 import {
   extractLineNumbers, drawingSignals, auditOpcBoxes, declaredSheetIdentity, rollUpEntities, parseOpcLine, drawingRefTargets,
+  sheetIdentities, sheetDrawingNumbers,
   OPC_LINE_EXAMPLE, OPC_LINE_FORMAT, OPC_NO_DRAWING, OPC_SAME_DRAWING, OPC_RAW_STORED_MAX, TITLE_BLOCK_OPEN, TITLE_BLOCK_CLOSE,
   SPARSE_PAGE_MAX_CHARS, DENSE_DRAWING_MIN_TAGS_PER_KCHAR, DRAWING_MAX_LOWERCASE_RATIO,
 } from "../drawingText";
@@ -1222,6 +1223,51 @@ describe("DWG-4 — the connector line contract between the vision prompt and th
     expect(gap.pendingIds).toEqual(["p", ...many.map((d) => d.id)]);
     expect(gap.pendingIn).toHaveLength(7);
     expect(gap.pendingIn![6]).toBe("3 more document(s) not read whole");
+  });
+
+  // Review fix pass 9 (the reviewer's probe unnum): a parked scan whose
+  // number was read neither from a title block nor from its filename held
+  // EVERY missing sheet by the settled rule's "anything" clause, so every
+  // real gap in every series was shown unchecked ("NOT counted as …
+  // missing") until next month — where a numbered parked PDF's gap was a
+  // gap that waits on it.
+  it("a parked document whose number was never read holds no gap by that alone: the gap is filed, waiting on it — a failed or accepted one still holds it, settled (review fix pass 9)", () => {
+    const docs = [{ id: "t1", name: "040-TK-0001.pdf" }, { id: "t2", name: "040-TK-0002.pdf" }, { id: "p", name: "Scan_0001.pdf" }];
+    const self = new Map([["t1", ["040-TK-0001"]], ["t2", ["040-TK-0002"]]]);
+    const refs = new Map([["t1", ["040-TK-0009"]]]);
+    const unread = new Map([["p", "page(s) 1 never read"]]);
+    const parked = auditDrawingRefs(docs, refs, self, null, unread, new Set(), new Set(["p"]));
+    expect(parked.missingUnread).toEqual([]);
+    expect(parked.missingInSeries).toEqual([{
+      ref: "040-TK-0009", referencedBy: ["040-TK-0001.pdf"], referencedByAll: ["040-TK-0001.pdf"], count: 1,
+      pendingIn: ["Scan_0001.pdf (page(s) 1 never read)"], pendingIds: ["p"],
+    }]);
+    // In flight it may still hold any sheet: unchecked, waiting on it.
+    const inFlight = auditDrawingRefs(docs, refs, self, null, unread, new Set(["p"]), new Set(["p"]));
+    expect(inFlight.missingInSeries).toEqual([]);
+    expect(inFlight.missingUnread.map((m) => [m.ref, m.maybeInIds])).toEqual([["040-TK-0009", ["p"]]]);
+    // Failed, or its partial index accepted (not being read): the settled
+    // rule's "anything when its number was never read" stands — unchecked,
+    // and settled.
+    const settled = auditDrawingRefs(docs, refs, self, null, unread, new Set(), new Set());
+    expect(settled.missingInSeries).toEqual([]);
+    expect(settled.missingUnread.map((m) => [m.ref, m.maybeInIds])).toEqual([["040-TK-0009", ["p"]]]);
+    // A parked document still holds its own drawing's sheets, numbered by
+    // its filename: unchecked, as before.
+    const named = auditDrawingRefs([...docs.slice(0, 2), { id: "p", name: "025-PID-0107 SH1.pdf" }],
+      new Map([["t1", ["040-TK-0009", "025-PID-0107-SH2"]]]), self, null, unread, new Set(), new Set(["p"]));
+    expect(named.missingUnread.map((m) => [m.ref, m.maybeInIds])).toEqual([["025-PID-0107-SH2", ["p"]]]);
+    expect(named.missingInSeries.map((m) => [m.ref, m.pendingIds])).toEqual([["040-TK-0009", ["p"]]]);
+  });
+
+  it("a sheet's drawing numbers never include its filename standing in for one (review fix pass 9)", () => {
+    expect(sheetDrawingNumbers("Pump Manual.pdf", [])).toEqual([]);
+    expect(sheetIdentities("Pump Manual.pdf", [])).toEqual([normalizeRef("Pump Manual.pdf")]);
+    expect(sheetDrawingNumbers("Spec Section 15000.pdf", [])).toEqual([]);
+    expect(sheetDrawingNumbers("025-PID-0107.pdf", [])).toEqual(["025-PID-0107"]);
+    expect(sheetDrawingNumbers("Scan_0001.pdf", ["040-TK-0001"])).toEqual(["040-TK-0001"]);
+    // What the title block declared beats the filename, as in sheetIdentities.
+    expect(sheetDrawingNumbers("025-PID-0107.pdf", ["025-PID-0108"])).toEqual(sheetIdentities("025-PID-0107.pdf", ["025-PID-0108"]));
   });
 
   // Review fix pass 8, the reviewer's probe parked-opc: a connector into a

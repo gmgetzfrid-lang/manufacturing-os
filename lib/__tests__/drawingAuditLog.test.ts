@@ -12,7 +12,7 @@ import {
   awaitingFiled, capWaitingOn, missingUnreadInScope, WAITING_NAMES_MAX,
   type AuditSheet, type AuditFindings, type SheetVerdict,
 } from "@/lib/drawingAuditLog";
-import { sheetIdentities } from "@/lib/drawingText";
+import { sheetIdentities, sheetDrawingNumbers } from "@/lib/drawingText";
 
 const sheet = (over: Partial<AuditSheet> = {}): AuditSheet => ({
   documentId: "k-1", controlledDocumentId: "d-1",
@@ -189,6 +189,27 @@ describe("sheetsNeedingAudit", () => {
       [{ sheet_number: "P-1", revision_code: "C", status: "passed" }], FP)).toHaveLength(1);
     expect(sheetsNeedingAudit([sheet({ sheetNumber: "P-1" })],
       [{ sheet_number: "P-1", revision_code: "C", status: "passed", coverage: null }], FP)).toHaveLength(1);
+  });
+
+  // Review fix pass 9 (the reviewer's probes accept and failed): the
+  // document a provisional row waits on can stop waiting WITHOUT being read
+  // — its partial index accepted, or its indexing failed — and nothing in
+  // the row's basis changes then. Fix pass 8 answered such a row "already
+  // recorded" for good: a flagged at a known revision, still waiting.
+  it("a row written provisional is never done, whatever its coverage: it is judged again on every record (review fix pass 9)", () => {
+    const prov = { sheet_number: "P-1", revision_code: "C", status: "flagged", coverage: covered };
+    expect(sheetsNeedingAudit([sheet({ sheetNumber: "P-1" })], [prov], FP)).toEqual([]);
+    expect(sheetsNeedingAudit([sheet({ sheetNumber: "P-1" })], [{ ...prov, provisional: { settledStatus: "passed" } }], FP))
+      .toHaveLength(1);
+    // A marker that is not one (storedProvisional's null) leaves it done.
+    expect(sheetsNeedingAudit([sheet({ sheetNumber: "P-1" })], [{ ...prov, provisional: null }], FP)).toEqual([]);
+    expect(sheetsNeedingAudit([sheet({ sheetNumber: "P-1" })],
+      [{ ...prov, provisional: storedProvisional({ provisional: { waitingOn: ["x.pdf"], settledStatus: "passed" } }) }], FP)).toHaveLength(1);
+    // Re-judged, it never lowers what the row settled: a settled computation
+    // below the settled floor is kept, one at it heals the row.
+    const stored = { revision_code: "C", status: "flagged", provisional: { settledStatus: "flagged" } };
+    expect(replaceDecision(stored, { status: "passed" })).toBe("keep");
+    expect(replaceDecision({ ...stored, provisional: { settledStatus: "passed" } }, { status: "passed" })).toBe("write");
   });
 });
 
@@ -724,6 +745,28 @@ describe("seriesHeldBySet — a gap is judged only in a series the library holds
     // A held series is judged as before, whoever may hold the sheet.
     expect(missingUnreadInScope(missing, ["040-TK"], new Set()).map((m) => m.ref)).toEqual(["040-TK-0009"]);
     expect(missingWithinHeldSeries(missing, []).map((m) => m.ref)).toEqual([]);
+  });
+
+  // Review fix pass 9 (the reviewer's probe notjudged): the route counted
+  // sheetIdentities, whose fallback is the filename itself — "Pump
+  // Manual.pdf" and "Spec Section 15000.pdf" were named series "PUMP" and
+  // "SPEC-SECTION" not judged, on the lens and on every recorded row.
+  it("a prose document's filename is no drawing number: it names no series, held or not judged (review fix pass 9)", () => {
+    const docs: Array<[string, string, string[]]> = [
+      ["t1", "040-TK-0001.pdf", ["040-TK-0001"]], ["t2", "040-TK-0002.pdf", ["040-TK-0002"]],
+      ["m", "Pump Manual.pdf", []], ["s", "Spec Section 15000.pdf", []], ["p", "Scan_0001.pdf", []],
+      ["q", "Pump Curves.pdf", []],
+    ];
+    const numbers = new Map(docs.map(([id, name, self]) => [id, sheetDrawingNumbers(name, self)]));
+    expect(seriesNotJudged(numbers)).toEqual([]);
+    expect(seriesHeldBySet(numbers)).toEqual(["040-TK"]);
+    // The filename fallback is what named them (and two pump documents made
+    // a "held" series of it).
+    expect(seriesNotJudged(ids(docs))).toEqual(["SCAN_0001.PDF", "SPEC-SECTION"]);
+    expect(seriesHeldBySet(ids(docs))).toEqual(["040-TK", "PUMP"]);
+    // A drawing number in a filename still counts.
+    const named = new Map([...numbers, ["d", sheetDrawingNumbers("030-PID-0201.pdf", [])]]);
+    expect(seriesNotJudged(named)).toEqual(["030-PID"]);
   });
 
   it("a single-sheet library, and one sheet per series, hold nothing — and say what was not judged", () => {
