@@ -65,6 +65,10 @@ type RecordResult = Awaited<ReturnType<typeof recordDrawingAudit>> & {
   /** …and one a computation now differs from only in what waits on a sheet
    *  not read whole yet — judged again once it is (review fix pass 5). */
   waitingOn?: Array<{ sheetNumber: string; revision: string; stored: string; computed: string; waitingOn: string[] }>;
+  /** Of the sheets recorded, those written again only because they still
+   *  wait on a sheet not read whole yet, at the status they were (review fix
+   *  pass 10). */
+  stillWaiting?: number;
 };
 type RebuildResult = {
   ok: boolean; docs: number; busy: string[]; errors: string[]; remaining: number; cursor: string | null; error?: string;
@@ -126,6 +130,7 @@ export default function DrawingIntelPanel({ orgId, libraryId, isController, refr
     notRecorded: NonNullable<RecordResult["notRecorded"]>;
     keptStored: NonNullable<RecordResult["keptStored"]>;
     waitingOn: NonNullable<RecordResult["waitingOn"]>;
+    stillWaiting: number;
     seriesNotJudged: string[];
     notice: string | null;
   } | null>(null);
@@ -231,13 +236,14 @@ export default function DrawingIntelPanel({ orgId, libraryId, isController, refr
       setRecorded({
         recorded: res.recorded, counts: res.counts,
         alreadyRecorded: res.alreadyRecorded ?? [], notRecorded: res.notRecorded ?? [],
-        keptStored: kept, waitingOn: waiting,
+        keptStored: kept, waitingOn: waiting, stillWaiting: res.stillWaiting ?? 0,
         seriesNotJudged: res.seriesNotJudged ?? [],
         notice: res.notice ?? null,
       });
       showToast({
         type: "success",
         title: `Audit recorded for ${res.recorded} sheet(s)` +
+          ((res.stillWaiting ?? 0) > 0 ? ` (${res.stillWaiting} of them unchanged, still waiting on a sheet not read whole yet)` : "") +
           ((res.alreadyRecorded?.length ?? 0) > 0 ? ` — ${res.alreadyRecorded!.length} already recorded at this revision` : "") +
           (kept.length > 0 ? ` — ${kept.length} stored verdict(s) kept, differing from what was computed now` : "") +
           (waiting.length > 0 ? ` — ${waiting.length} waiting on a sheet not read whole yet` : "") + ".",
@@ -309,6 +315,12 @@ export default function DrawingIntelPanel({ orgId, libraryId, isController, refr
             .map((k) => `${recorded.counts[k]} ${k.replace(/_/g, " ")}`)
             .join(" · ")}
           .
+          {recorded.stillWaiting > 0 && (
+            <div className="mt-0.5">
+              <b>{recorded.stillWaiting}</b> of them unchanged — still waiting on a sheet not read whole yet, and
+              audited again on every record until it settles.
+            </div>
+          )}
           {recorded.alreadyRecorded.length > 0 && (
             <div className="mt-0.5">
               <b>{recorded.alreadyRecorded.length}</b> already recorded at this revision — not re-audited
@@ -352,7 +364,8 @@ export default function DrawingIntelPanel({ orgId, libraryId, isController, refr
           <div className="mt-0.5 opacity-80">
             Sheets already recorded at this revision aren&rsquo;t audited again until they&rsquo;re revised or
             re-indexed, or a sheet they point at (or the set) changes. A sheet whose revision isn&rsquo;t known is
-            audited every time.
+            audited every time. A verdict that waits on a sheet not read whole yet is audited again on every record
+            until it settles.
           </div>
         </div>
       )}

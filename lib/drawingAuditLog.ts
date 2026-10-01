@@ -98,6 +98,14 @@ export interface AuditFindings {
    *  (review fix pass 4). */
   oneWayUnread?: Array<{ from: string; to: string; unread: string; waitsOn?: readonly string[] }>;
   missingUnread?: Array<{ ref: string; referencedBy: string[]; maybeIn: readonly string[]; waitsOn?: readonly string[] }>;
+  /** A sheet no title block declares (X-SHn), that a page of a document
+   *  read whole may be — its title block gave X without the sheet, or no
+   *  number (auditDrawingRefs `missingSheetUnread`) — and a link that is not
+   *  returned while a reference of the target that resolves to no sheet may
+   *  be the source (`oneWaySheetUnread`, `via` that reference, `why` why it
+   *  may be). Unchecked, never a gap, never one-way (review fix pass 10). */
+  sheetUnread?: Array<{ ref: string; referencedBy: string[]; maybeIn: readonly string[]; waitsOn?: readonly string[] }>;
+  oneWaySheetUnread?: Array<{ from: string; to: string; via: string; why: string }>;
   /** Pages AI vision never read: nothing on them — connectors included —
    *  was audited. `why` says whose decision left them unread: "partial index
    *  accepted" (the default) only for a controller's accepted partial index;
@@ -142,6 +150,12 @@ export interface SheetVerdict {
    *  next computation may replace it down to its settled status
    *  (replaceDecision — review fix pass 5). */
   provisional?: { waitingOn: readonly string[]; settledStatus: AuditStatus };
+  /** With `provisional`: the findings in `details` that wait — the rest are
+   *  what the verdict settled. A provisional row whose re-judgement settles
+   *  below what it settled is written back as that: its settled status and
+   *  findings, with no marker (replaceDecision "settle", review fix pass
+   *  10). */
+  waitingFindings?: readonly string[];
 }
 
 /**
@@ -214,6 +228,17 @@ export function verdictsForSheets(
         m.waitsOn);
     }
   }
+  for (const m of findings.sheetUnread ?? []) {
+    for (const by of m.referencedBy) {
+      push(unchecked, by,
+        `References ${m.ref}, which no title block in the set declares — it may be in ${m.maybeIn.join("; ")}, so whether it is in the set was not checked`,
+        m.waitsOn);
+    }
+  }
+  for (const o of findings.oneWaySheetUnread ?? []) {
+    push(unchecked, o.from,
+      `References ${o.to}, which references ${o.via} — that may be this sheet (${o.why}), so whether it references back was not checked`);
+  }
   const unreadPages = new Map<string, string[]>();
   for (const u of findings.unreadPages ?? []) {
     if (u.pages.length === 0) continue;
@@ -242,6 +267,7 @@ export function verdictsForSheets(
     // What is known whatever the documents it waits on turn out to hold.
     const known = settled.get(s.name) ?? new Set<string>();
     const waitsOn = s.indexed ? [...(waiting.get(s.name) ?? [])].sort() : [];
+    const waitingFindings = [b, m, w, u, q, c, p].flat().filter((x) => !known.has(x));
     return {
       documentId: s.documentId,
       controlledDocumentId: s.controlledDocumentId ?? null,
@@ -252,7 +278,8 @@ export function verdictsForSheets(
         brokenConnectors: b, missingReferences: m, oneWay: w, unreadableConnectors: u, unpairedConnectors: q,
         uncheckedReferences: c, unreadPages: p,
       },
-      ...(waitsOn.length > 0 ? { provisional: { waitingOn: waitsOn, settledStatus: statusOf((x) => known.has(x)) } } : {}),
+      ...(waitsOn.length > 0
+        ? { provisional: { waitingOn: waitsOn, settledStatus: statusOf((x) => known.has(x)) }, waitingFindings } : {}),
     };
   });
 }
@@ -549,12 +576,23 @@ export function storedProvisional(details: unknown): { settledStatus: string } |
  * a destination outside the set's scope, and the guard was not applied to
  * it). `neverLower` applies the known-revision rule whatever the revision
  * (a row another library filed on the org-wide key, before 20261124).
+ *
+ *   "settle" — a SETTLED computation below what a PROVISIONAL row settled,
+ *             at a known revision: the row is written back as what it
+ *             settled — its settled status and findings, its marker
+ *             dropped, the computation's coverage (settledFromStored) — so
+ *             it stops naming documents that no longer wait and is
+ *             "already recorded" until something changes (review fix pass
+ *             10: it was kept with its stale marker, judged again and
+ *             listed as kept on every record until the drawing was
+ *             revised). Never for a `skipped` computation, which settles
+ *             nothing, nor for a row another library filed (`neverLower`).
  */
 export function replaceDecision(
   stored: { revision_code: string; status: string; provisional?: { settledStatus: string } | null } | null | undefined,
   next: { status: AuditStatus; provisional?: { settledStatus: AuditStatus } | null },
   opts: { neverLower?: boolean; stillReading?: boolean } = {},
-): "write" | "keep" | "wait" {
+): "write" | "keep" | "wait" | "settle" {
   if (!stored) return "write";
   const latestWins = stored.revision_code === "" && !opts.neverLower;
   const floor = stored.provisional ? stored.provisional.settledStatus : stored.status;
@@ -567,7 +605,64 @@ export function replaceDecision(
     if (next.status === "skipped") return stored.status === "skipped" ? "write" : "keep";
     return opts.stillReading && wouldLowerSeverity(floor, next.status) ? "wait" : "write";
   }
-  return wouldLowerSeverity(floor, next.status) ? "keep" : "write";
+  if (!wouldLowerSeverity(floor, next.status)) return "write";
+  return stored.provisional && next.status !== "skipped" && !opts.neverLower ? "settle" : "keep";
+}
+
+const AUDIT_STATUSES: ReadonlySet<string> = new Set(["passed", "broken_connectors", "flagged", "skipped"]);
+const DETAIL_LISTS = [
+  "brokenConnectors", "missingReferences", "oneWay", "unreadableConnectors", "unpairedConnectors",
+  "uncheckedReferences", "unreadPages",
+] as const;
+
+/** Where a provisional verdict's waiting findings stand: by details list,
+ *  their positions in it — what the row stores (`waitingFindings`), a few
+ *  numbers rather than a second copy of every finding. */
+function waitingPositions(v: SheetVerdict): Record<string, number[]> {
+  const waiting = new Set(v.waitingFindings ?? []);
+  const out: Record<string, number[]> = {};
+  for (const key of DETAIL_LISTS) {
+    const at = v.details[key].flatMap((x, i) => (waiting.has(x) ? [i] : []));
+    if (at.length > 0) out[key] = at;
+  }
+  return out;
+}
+
+/** A provisional row written back as what it SETTLED (replaceDecision
+ *  "settle", review fix pass 10): its settled status, its findings less the
+ *  ones that waited (`audit_details.waitingFindings`, their positions by
+ *  list, written with the marker), no marker — under the key, controlled
+ *  document and coverage of `computed`, the settled computation it was
+ *  judged against. Null when the row does not say which of its findings
+ *  waited (a row no recordAudit wrote): it is then kept as it is. */
+export function settledFromStored(
+  stored: { status: string; audit_details?: unknown }, computed: SheetVerdict,
+): SheetVerdict | null {
+  const d = (stored.audit_details ?? null) as Record<string, unknown> | null;
+  const marker = storedProvisional(d);
+  const waiting = d?.waitingFindings;
+  if (!marker || !AUDIT_STATUSES.has(marker.settledStatus) || !waiting || typeof waiting !== "object" || Array.isArray(waiting)) {
+    return null;
+  }
+  const list = (key: (typeof DETAIL_LISTS)[number]): string[] => {
+    const v = d?.[key];
+    const at = (waiting as Record<string, unknown>)[key];
+    const drop = new Set(Array.isArray(at) ? at.filter((i): i is number => typeof i === "number") : []);
+    return Array.isArray(v) ? v.filter((x, i): x is string => typeof x === "string" && !drop.has(i)) : [];
+  };
+  return {
+    documentId: computed.documentId,
+    controlledDocumentId: computed.controlledDocumentId,
+    sheetNumber: computed.sheetNumber,
+    revision: computed.revision,
+    status: marker.settledStatus as AuditStatus,
+    details: {
+      brokenConnectors: list("brokenConnectors"), missingReferences: list("missingReferences"), oneWay: list("oneWay"),
+      unreadableConnectors: list("unreadableConnectors"), unpairedConnectors: list("unpairedConnectors"),
+      uncheckedReferences: list("uncheckedReferences"), unreadPages: list("unreadPages"),
+    },
+    ...(computed.coverage ? { coverage: computed.coverage } : {}),
+  };
 }
 
 /**
@@ -701,8 +796,14 @@ export function verdictRows(
       // A verdict with findings that wait on a document not read whole yet:
       // which (named to WAITING_NAMES_MAX, the rest counted — review fix
       // pass 7), and what is settled without them (replaceDecision).
+      // …and which of its findings wait — by list, their positions in it —
+      // so a re-judgement that settles below it can write it back as what
+      // it settled (settledFromStored, review fix pass 10).
       ...(v.provisional
-        ? { provisional: { waitingOn: capWaitingOn(v.provisional.waitingOn), settledStatus: v.provisional.settledStatus } } : {}),
+        ? {
+          provisional: { waitingOn: capWaitingOn(v.provisional.waitingOn), settledStatus: v.provisional.settledStatus },
+          waitingFindings: waitingPositions(v),
+        } : {}),
     },
   }));
 }

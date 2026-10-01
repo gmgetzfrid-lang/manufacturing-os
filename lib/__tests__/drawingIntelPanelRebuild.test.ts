@@ -194,4 +194,23 @@ describe("the lens and the record name what they did not judge (review fix pass 
     await act(async () => { toggle!.click(); });
     expect(host.textContent).toMatch(/combined\.pdf \(page 1 of it is the sheet named, and no box numbers were read there\)/);
   });
+
+  // Review fix pass 10: since fix pass 9 a provisional verdict is audited
+  // again, and rewritten, on every record until it settles — the footer
+  // said recorded sheets are not audited again, and the count gave no hint
+  // that the same unchanged rows were being written again.
+  it("the record says a waiting verdict is audited again on every record, and counts the unchanged ones apart (review fix pass 10)", async () => {
+    ui.recordDrawingAudit.mockResolvedValue({
+      recorded: 2, counts: { flagged: 2 }, stillWaiting: 1, sheets: [], alreadyRecorded: [], notRecorded: [], seriesNotJudged: [],
+      keptStored: [], waitingOn: [],
+    });
+    await render();
+    await pressRecord();
+    expect(host.textContent).toMatch(/A verdict that waits on a sheet not read whole yet is audited again on every record\s*until it settles\./);
+    expect(host.textContent).toMatch(/1 of them unchanged — still waiting on a sheet not read whole yet, and\s*audited again on every record until it settles\./);
+    expect(ui.showToast.mock.calls.map((c) => c[0])).toContainEqual(expect.objectContaining({
+      type: "success",
+      title: "Audit recorded for 2 sheet(s) (1 of them unchanged, still waiting on a sheet not read whole yet).",
+    }));
+  });
 });

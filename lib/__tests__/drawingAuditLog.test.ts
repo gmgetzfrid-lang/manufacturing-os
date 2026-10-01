@@ -9,7 +9,7 @@ import {
   verdictsForSheets, sheetsNeedingAudit, verdictRows, RANK, wouldLowerSeverity,
   seriesHeldBySet, seriesNotJudged, missingWithinHeldSeries, mayReplaceStored, AUDIT_SET_LIST_MAX,
   indexFingerprint, digest, verdictBasis, replaceDecision, mergeVerdictsByKey, storedProvisional,
-  awaitingFiled, capWaitingOn, missingUnreadInScope, WAITING_NAMES_MAX,
+  awaitingFiled, capWaitingOn, missingUnreadInScope, WAITING_NAMES_MAX, settledFromStored,
   type AuditSheet, type AuditFindings, type SheetVerdict,
 } from "@/lib/drawingAuditLog";
 import { sheetIdentities, sheetDrawingNumbers } from "@/lib/drawingText";
@@ -206,9 +206,10 @@ describe("sheetsNeedingAudit", () => {
     expect(sheetsNeedingAudit([sheet({ sheetNumber: "P-1" })],
       [{ ...prov, provisional: storedProvisional({ provisional: { waitingOn: ["x.pdf"], settledStatus: "passed" } }) }], FP)).toHaveLength(1);
     // Re-judged, it never lowers what the row settled: a settled computation
-    // below the settled floor is kept, one at it heals the row.
+    // below the settled floor writes the row back as what it settled (review
+    // fix pass 10: it was kept with its marker), one at it heals the row.
     const stored = { revision_code: "C", status: "flagged", provisional: { settledStatus: "flagged" } };
-    expect(replaceDecision(stored, { status: "passed" })).toBe("keep");
+    expect(replaceDecision(stored, { status: "passed" })).toBe("settle");
     expect(replaceDecision({ ...stored, provisional: { settledStatus: "passed" } }, { status: "passed" })).toBe("write");
   });
 });
@@ -378,7 +379,9 @@ describe("a finding that waits on a sheet not read whole FOR NOW is provisional 
     const storedProv = { revision_code: "C", status: "flagged", provisional: { settledStatus: "passed" } };
     expect(replaceDecision(storedProv, { status: "passed" })).toBe("write");
     expect(replaceDecision(storedProv, { status: "skipped" })).toBe("keep");
-    expect(replaceDecision({ ...storedProv, provisional: { settledStatus: "flagged" } }, { status: "passed" })).toBe("keep");
+    // Below what it settled: written back as that, never lowered (review fix
+    // pass 10 — "keep" left its stale marker).
+    expect(replaceDecision({ ...storedProv, provisional: { settledStatus: "flagged" } }, { status: "passed" })).toBe("settle");
     // A real finding in a provisional verdict is written over a settled row.
     expect(replaceDecision(passedC, { status: "broken_connectors", provisional: { settledStatus: "broken_connectors" } })).toBe("write");
     // What a settled row settled is never lowered, provisional or not.
@@ -796,5 +799,85 @@ describe("verdictRows — the series not judged are on the record", () => {
     expect((row.audit_details as { set: { seriesNotJudged?: string[] } }).set.seriesNotJudged).toEqual(["025-PID"]);
     const [plain] = verdictRows("org-1", verdictsForSheets([sheet()], NOTHING), "u-1", SCOPE);
     expect((plain.audit_details as { set: Record<string, unknown> }).set).not.toHaveProperty("seriesNotJudged");
+  });
+});
+
+// Review fix pass 10 (the reviewer's probe p1, and DWG-4's twin): a
+// provisional row whose re-judgement settles below what it settled was KEPT
+// as it was — its marker, and the finding that "waits" on a document that
+// no longer waits, on the row for good, judged again on every record. It is
+// written back as what it settled.
+describe("a provisional row settled below its floor is written back as what it settled (review fix pass 10)", () => {
+  const waiting = ["030-PID-0201.pdf (page(s) 2 never read)"];
+  const findings: AuditFindings = {
+    ...NOTHING,
+    oneWay: [{ from: "PID-44-012.pdf", to: "PID-44-013.pdf" }],
+    unpairedConnectors: [{ from: "PID-44-012.pdf", to: "025-PID-0108-SH1", box: "14", why: "it may be in 030-PID-0201.pdf", waitsOn: waiting }],
+  };
+
+  it("the row says which of its findings wait, by position — a few numbers, not a second copy", () => {
+    const [v] = verdictsForSheets([sheet()], findings);
+    expect(v.provisional).toEqual({ waitingOn: waiting, settledStatus: "flagged" });
+    expect(v.waitingFindings).toEqual([v.details.unpairedConnectors[0]]);
+    const [row] = verdictRows("o1", [v], "u1", SCOPE);
+    expect(row.audit_details).toMatchObject({ waitingFindings: { unpairedConnectors: [0] } });
+    const [settled] = verdictsForSheets([sheet()], NOTHING);
+    expect(verdictRows("o1", [settled], "u1", SCOPE)[0].audit_details).not.toHaveProperty("waitingFindings");
+  });
+
+  it("replaceDecision settles it at a known revision — never for a skip, never another library's row", () => {
+    const stored = { revision_code: "B", status: "flagged", provisional: { settledStatus: "flagged" } };
+    expect(replaceDecision(stored, { status: "passed" })).toBe("settle");
+    expect(replaceDecision(stored, { status: "skipped" })).toBe("keep");
+    expect(replaceDecision(stored, { status: "passed" }, { neverLower: true })).toBe("keep");
+    // A settled row below its floor is kept, as before; an unknown revision
+    // takes the latest.
+    expect(replaceDecision({ revision_code: "B", status: "flagged" }, { status: "passed" })).toBe("keep");
+    expect(replaceDecision({ ...stored, revision_code: "" }, { status: "passed" })).toBe("write");
+  });
+
+  it("settledFromStored: its settled status and findings, no marker, the computation's coverage", () => {
+    const [v] = verdictsForSheets([sheet()], findings);
+    const [row] = verdictRows("o1", [{ ...v, coverage: { "k-1": "old" } }], "u1", SCOPE);
+    const computed = { ...verdictsForSheets([sheet()], NOTHING)[0], coverage: { "k-1": "now" } };
+    const back = settledFromStored({ status: row.status, audit_details: row.audit_details }, computed)!;
+    expect(back).toMatchObject({ status: "flagged", sheetNumber: "PID-44-012", revision: "C", coverage: { "k-1": "now" } });
+    expect(back.details.oneWay).toEqual(["References PID-44-013.pdf, which never references back"]);
+    expect(back.details.unpairedConnectors).toEqual([]);
+    expect(back).not.toHaveProperty("provisional");
+    const [rewritten] = verdictRows("o1", [back], "u1", SCOPE);
+    expect(rewritten.audit_details).not.toHaveProperty("provisional");
+    expect(rewritten.audit_details).not.toHaveProperty("waitingFindings");
+    // A row that does not say which findings waited is kept as it is.
+    expect(settledFromStored({ status: "flagged", audit_details: { provisional: { waitingOn: waiting, settledStatus: "flagged" } } }, computed)).toBeNull();
+    expect(settledFromStored({ status: "flagged", audit_details: { oneWay: [] } }, computed)).toBeNull();
+  });
+
+  it("an unchecked sheet a page of a document read whole may be, and a reference back that may be it, are flagged — never a gap, never one-way", () => {
+    const [v] = verdictsForSheets([sheet(), sheet({ documentId: "k-2", name: "025-PID-0105.pdf", sheetNumber: "025-PID-0105" })], {
+      ...NOTHING,
+      sheetUnread: [{ ref: "025-PID-0105-SH2", referencedBy: ["PID-44-012.pdf"], maybeIn: ["025-PID-0105.pdf (its sheet number was not read on page(s) 2)"] }],
+      oneWaySheetUnread: [{ from: "025-PID-0105.pdf", to: "PID-44-012.pdf", via: "025-PID-0105-SH2", why: "its sheet number was not read on page(s) 2" }],
+    });
+    expect(v.status).toBe("flagged");
+    expect(v.provisional).toBeUndefined();
+    expect(v.details.missingReferences).toEqual([]);
+    expect(v.details.uncheckedReferences).toEqual([
+      "References 025-PID-0105-SH2, which no title block in the set declares — it may be in 025-PID-0105.pdf (its sheet number was not read on page(s) 2), so whether it is in the set was not checked",
+    ]);
+    const [, w] = verdictsForSheets([sheet(), sheet({ documentId: "k-2", name: "025-PID-0105.pdf", sheetNumber: "025-PID-0105" })], {
+      ...NOTHING,
+      oneWaySheetUnread: [{ from: "025-PID-0105.pdf", to: "PID-44-012.pdf", via: "025-PID-0105-SH2", why: "its sheet number was not read on page(s) 2" }],
+    });
+    expect(w.status).toBe("flagged");
+    expect(w.details.oneWay).toEqual([]);
+    expect(w.details.uncheckedReferences).toEqual([
+      "References PID-44-012.pdf, which references 025-PID-0105-SH2 — that may be this sheet (its sheet number was not read on page(s) 2), so whether it references back was not checked",
+    ]);
+    // Waiting, as a gap does, on a document parked meanwhile.
+    const [x] = verdictsForSheets([sheet()], {
+      ...NOTHING, sheetUnread: [{ ref: "025-PID-0105-SH2", referencedBy: ["PID-44-012.pdf"], maybeIn: ["x"], waitsOn: waiting }],
+    });
+    expect(x.provisional).toEqual({ waitingOn: waiting, settledStatus: "passed" });
   });
 });

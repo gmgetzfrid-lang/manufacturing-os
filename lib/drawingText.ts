@@ -776,11 +776,35 @@ export interface RefAudit {
   missingUnread: Array<{
     ref: string; referencedBy: string[]; referencedByAll: string[]; count: number; maybeIn: string[]; maybeInIds: string[];
   }>;
+  /** In scope and not found, no document not read whole may hold it — but a
+   *  document READ WHOLE may be it: a sheet-addressed reference (X-SHn) that
+   *  no title block declares, while a page of a document answering to X
+   *  gave X without any sheet of it (its sheet field was not read), or gave
+   *  no number at all (pagesMayBeSheet). Unchecked, never a gap: the record
+   *  files it settled, as an unchecked reference, waiting — as a gap does —
+   *  only on the documents parked on AI vision (`pendingIn` / `pendingIds`)
+   *  (review fix pass 10: it was filed a gap, "isn't in the set", and at a
+   *  known revision never lowered once that sheet field was read).
+   *  `maybeIn` names those documents with the pages, to six; `maybeInIds`
+   *  gives every one. */
+  missingSheetUnread: Array<{
+    ref: string; referencedBy: string[]; referencedByAll: string[]; count: number; maybeIn: string[]; maybeInIds: string[];
+    pendingIn?: string[]; pendingIds?: string[];
+  }>;
+  /** B points at A, and A never points back at B by a reference that
+   *  resolves — but a sheet-addressed reference A makes that resolves to no
+   *  sheet may be B (B was not read whole, or a page of B gave its drawing
+   *  number without the sheet). Whether A references back was not checked:
+   *  unchecked, never one-way (review fix pass 10). `via` is A's reference;
+   *  `why` says why it may be B. */
+  oneWaySheetUnread: Array<{ from: string; to: string; count: number; via: string; why: string }>;
 }
 
 /** Every number a sheet answers to: what its title block declared (kind
- *  'self'), else every drawing-number-shaped token in its filename, else the
- *  filename itself. The audit resolves references against these, and the
+ *  'self'), with the sheet its filename names when the title block gave
+ *  that drawing's number but no sheet of it (filenameSheets, review fix
+ *  pass 10); else every drawing-number-shaped token in its filename; else
+ *  the filename itself. The audit resolves references against these, and the
  *  audit record's scope rule (lib/drawingAuditLog.ts) reads the same. */
 export function sheetIdentities(name: string, declaredTags: readonly string[]): string[] {
   const numbers = sheetDrawingNumbers(name, declaredTags);
@@ -788,14 +812,76 @@ export function sheetIdentities(name: string, declaredTags: readonly string[]): 
 }
 
 /** The real drawing numbers a sheet answers to: what its title block
- *  declared, else the drawing-number-shaped tokens in its filename — and
+ *  declared (with the sheet its filename names, as above), else the
+ *  drawing-number-shaped tokens in its filename — and
  *  NOTHING when neither has one, never the filename itself (sheetIdentities'
  *  fallback). What decides which series the library holds, and which it
  *  does not judge (seriesHeldBySet / seriesNotJudged, lib/drawingAuditLog):
  *  "Pump Manual.pdf" is no number of a series "PUMP" (review fix pass 9). */
 export function sheetDrawingNumbers(name: string, declaredTags: readonly string[]): string[] {
   const declared = declaredTags.map(normalizeRef).filter(Boolean);
-  return declared.length > 0 ? declared : extractDrawingRefs(name);
+  if (declared.length === 0) return extractDrawingRefs(name);
+  // …and, for a drawing it declared without any sheet of it, the sheet its
+  // filename names (filenameSheets, review fix pass 10).
+  const fromFile = filenameSheets(name, declared).filter((f) => !declared.includes(f));
+  return fromFile.length > 0 ? [...declared, ...fromFile] : declared;
+}
+
+/** The sheet a document's FILENAME names, for a drawing whose number its
+ *  title block declared without any sheet of it: "025-PID-0105-SH2.pdf"
+ *  whose title block gave 025-PID-0105 and no sheet field answers to
+ *  025-PID-0105-SH2 (review fix pass 10). The title block still rules: a
+ *  drawing it declared a sheet of takes nothing from the filename, nor does
+ *  one it never declared. A sheet suffix glued on by a dash or an
+ *  underscore ("-SH2", "_SHT2") is read as the grammar reads "SH 2".
+ *  A pairing on such a sheet never makes a box `unreturned` (auditOpcBoxes):
+ *  a filename is no title block. */
+export function filenameSheets(name: string, declaredTags: readonly string[]): string[] {
+  const declared = declaredTags.map(normalizeRef).filter(Boolean);
+  if (declared.length === 0) return [];
+  const bareDeclared = declared.filter((t) => !/-SH\d+$/.test(t));
+  const out: string[] = [];
+  for (const f of extractDrawingRefs(name.replace(/[-_](?=SH(?:T|EET)?[.\s]*(?:NO\.?\s*)?\d)/gi, " "))) {
+    const sheet = /-SH(\d+)$/.exec(f);
+    if (!sheet) continue;
+    const drawing = f.slice(0, -sheet[0].length);
+    const own = bareDeclared.find((t) => seriesMatch(t, drawing));
+    if (!own) continue;
+    if (declared.some((t) => /-SH\d+$/.test(t) && seriesMatch(t.replace(/-SH\d+$/, ""), own))) continue;
+    const form = `${own}-SH${sheet[1]}`;
+    if (!out.includes(form)) out.push(form);
+  }
+  return out;
+}
+
+/** Which pages of a document may be sheet `ref` (X-SHn) of drawing X, when
+ *  no title block in the set declares that sheet: a page whose title block
+ *  gave X but no sheet of it, and a page that declared no number at all. A
+ *  page that declares a sheet of X is that sheet, and one that declares only
+ *  other drawings is theirs. A filename never rules a page out: it may name
+ *  the sheet a page IS (filenameSheets), never the ones it is not. `null`
+ *  when how many pages it has is not known. Shared by the reference audit
+ *  and the box pairing (review fix pass 10 — a page that declared only the
+ *  bare drawing number counted as "declares a number", so a reference into
+ *  it was filed a settled gap and a connector into it was dropped). */
+function pagesMayBeSheet(
+  ref: string,
+  declaredOn: ReadonlyMap<string, readonly number[]> | undefined,
+  pageCount: number | undefined,
+): number[] | null {
+  const drawing = ref.replace(/-SH\d+$/, "");
+  const count = Math.floor(Number(pageCount ?? 0));
+  if (!(count > 0)) return null;
+  const byPage = new Map<number, string[]>();
+  for (const [t, ps] of declaredOn ?? []) for (const p of ps) byPage.set(p, [...(byPage.get(p) ?? []), normalizeRef(t)]);
+  const out: number[] = [];
+  for (let p = 1; p <= count; p++) {
+    const tags = byPage.get(p) ?? [];
+    const ofIt = tags.filter((t) => seriesMatch(t.replace(/-SH\d+$/, ""), drawing));
+    if (tags.length > 0 && (ofIt.length === 0 || ofIt.some((t) => /-SH\d+$/.test(t)))) continue;
+    out.push(p);
+  }
+  return out;
 }
 
 /** docs: every sheet in the library with its display name (drawing numbers
@@ -815,10 +901,19 @@ function refResolver(docs: ReadonlyArray<{ id: string; name: string }>, selfTags
   // number-shaped token in its filename.
   const identityByDoc = new Map<string, string[]>();
   const identity: Array<{ ref: string; docId: string }> = [];
-  for (const d of docs) {
-    const own = sheetIdentities(d.name, selfTagsByDoc?.get(d.id) ?? []);
-    identityByDoc.set(d.id, own);
-    for (const ref of own) identity.push({ ref, docId: d.id });
+  const owned = docs.map((d) => ({ d, own: sheetIdentities(d.name, selfTagsByDoc?.get(d.id) ?? []) }));
+  const claims = new Map<string, number>();
+  for (const { own } of owned) for (const ref of new Set(own)) claims.set(ref, (claims.get(ref) ?? 0) + 1);
+  for (const { d, own } of owned) {
+    // A sheet only its filename names (filenameSheets) yields to any other
+    // document answering to that number: a title block that declares it
+    // rules, and two filenames naming one sheet name none (review fix pass
+    // 10).
+    const declared = new Set((selfTagsByDoc?.get(d.id) ?? []).map(normalizeRef));
+    const kept = declared.size === 0 ? own
+      : own.filter((ref) => declared.has(ref) || !/-SH\d+$/.test(ref) || claims.get(ref) === 1);
+    identityByDoc.set(d.id, kept);
+    for (const ref of kept) identity.push({ ref, docId: d.id });
   }
   // One number can identify several docs (every sheet of a set carries the
   // set's base drawing number) — track ALL owners, never last-write-wins.
@@ -955,9 +1050,55 @@ export function auditDrawingRefs(
    *  (review fix pass 8 — fix pass 7 filed it settled, and at a known
    *  revision it was never lowered once the page was read). */
   stillReading?: ReadonlySet<string>,
+  /** Which page each declared number stands on (the roll-up's `pages` for
+   *  kind 'self', as auditOpcBoxes takes it) and how many pages each
+   *  document has. A sheet-addressed reference no title block declares may
+   *  be a page of a document READ WHOLE whose title block gave the drawing
+   *  number but not that sheet, or gave nothing (pagesMayBeSheet): then it
+   *  is unchecked (`missingSheetUnread`), never a gap. Without these, which
+   *  pages a document has is not known: a document answering to the
+   *  drawing may be the sheet when its title block declared no sheet of it
+   *  at all (review fix pass 10). */
+  pages?: {
+    selfPages?: ReadonlyMap<string, ReadonlyMap<string, readonly number[]>>;
+    pageCounts?: ReadonlyMap<string, number>;
+  },
 ): RefAudit {
   const { identityByDoc, identity, resolveDoc } = refResolver(docs, selfTagsByDoc);
   const nameById = new Map(docs.map((d) => [d.id, d.name]));
+  // A sheet-addressed reference no title block declares, X-SHn: the
+  // documents READ WHOLE that may be that sheet — answering to drawing X,
+  // with a page that gave X but no sheet of it, or gave no number at all
+  // (review fix pass 10). A document not read whole is mayHold's, below.
+  const sheetMemo = new Map<string, Array<{ id: string; pages: number[] | null }>>();
+  const sheetHolders = (ref: string): Array<{ id: string; pages: number[] | null }> => {
+    if (!/-SH\d+$/.test(ref)) return [];
+    let hit = sheetMemo.get(ref);
+    if (!hit) {
+      const drawing = ref.replace(/-SH\d+$/, "");
+      hit = [];
+      for (const d of docs) {
+        if (incomplete?.has(d.id)) continue;
+        if (!(identityByDoc.get(d.id) ?? []).some((t) => !/-SH\d+$/.test(t) && seriesMatch(t, drawing))) continue;
+        const may = pagesMayBeSheet(ref, pages?.selfPages?.get(d.id), pages?.pageCounts?.get(d.id));
+        // Its pages not known: it may be the sheet when its title block
+        // declared no sheet of the drawing at all — a per-sheet PDF whose
+        // sheet field was not read.
+        const holds = may === null
+          ? !(selfTagsByDoc?.get(d.id) ?? []).some((t) => /-SH\d+$/.test(t) && seriesMatch(normalizeRef(t).replace(/-SH\d+$/, ""), drawing))
+          : may.length > 0;
+        if (holds) hit.push({ id: d.id, pages: may });
+      }
+      sheetMemo.set(ref, hit);
+    }
+    return hit;
+  };
+  const sheetWhy = (pagesOf: number[] | null) => (pagesOf
+    ? `its sheet number was not read on page(s) ${pagesOf.slice(0, 6).join(", ")}${pagesOf.length > 6 ? ", …" : ""}`
+    : "which of its pages is which sheet was not read");
+  // By document: its sheet-addressed references that resolved to no sheet —
+  // one of them may be a sheet that points at it (oneWaySheetUnread).
+  const unresolvedSheetRefs = new Map<string, Set<string>>();
   const scopeAll = [...new Set(identity.map((i) => refSeries(i.ref)))].filter(Boolean).sort();
   // For display, keep only root series — "025-PID", not forty per-drawing
   // entries under it.
@@ -986,6 +1127,7 @@ export function auditDrawingRefs(
         continue;
       }
       if (targetId === docId) continue;         // resolved to itself
+      if (/-SH\d+$/.test(ref)) unresolvedSheetRefs.set(docId, new Set([...(unresolvedSheetRefs.get(docId) ?? []), ref]));
       const series = refSeries(ref);
       const inScope = scopeAll.some((s) => seriesMatch(s, series));
       if (inScope) {
@@ -1002,19 +1144,6 @@ export function auditDrawingRefs(
         outMap.set(series, entry);
       }
     }
-  }
-
-  // One-way: A points at B (both loaded) and B never points back at A — on
-  // a B that was read whole. On a B that was not, the reference back may
-  // stand on a page nobody read: unchecked, never one-way.
-  const oneWay: RefAudit["oneWay"] = [];
-  const oneWayUnread: RefAudit["oneWayUnread"] = [];
-  for (const link of links.values()) {
-    if (links.has(`${link.to}→${link.from}`)) continue;
-    const entry = { from: nameById.get(link.from) ?? "Sheet", to: nameById.get(link.to) ?? "Sheet", count: link.count };
-    const unread = incomplete?.get(link.to);
-    if (unread) oneWayUnread.push({ from: entry.from, to: entry.to, toId: link.to, count: entry.count, unread });
-    else oneWay.push(entry);
   }
 
   // A missing sheet may yet be in a document that was not read whole, on a
@@ -1055,6 +1184,35 @@ export function auditDrawingRefs(
   ];
   const pendingIn = namedSix(parked);
   const pendingIds = parked.map((d) => d.id);
+
+  // One-way: A points at B (both loaded) and B never points back at A — on
+  // a B that was read whole. On a B that was not, the reference back may
+  // stand on a page nobody read: unchecked, never one-way. Nor is it one-way
+  // when a sheet-addressed reference B makes, resolving to no sheet, may be
+  // A — A not read whole and holding it, or a page of A that gave its
+  // drawing number without the sheet (review fix pass 10: per-sheet PDFs
+  // whose SH2 title block gave only the drawing number filed SH2 one-way).
+  const oneWay: RefAudit["oneWay"] = [];
+  const oneWayUnread: RefAudit["oneWayUnread"] = [];
+  const oneWaySheetUnread: RefAudit["oneWaySheetUnread"] = [];
+  for (const link of links.values()) {
+    if (links.has(`${link.to}→${link.from}`)) continue;
+    const entry = { from: nameById.get(link.from) ?? "Sheet", to: nameById.get(link.to) ?? "Sheet", count: link.count };
+    const unread = incomplete?.get(link.to);
+    if (unread) { oneWayUnread.push({ from: entry.from, to: entry.to, toId: link.to, count: entry.count, unread }); continue; }
+    let via: { ref: string; why: string } | null = null;
+    for (const ref of [...(unresolvedSheetRefs.get(link.to) ?? [])].sort()) {
+      const asSheet = sheetHolders(ref).find((h) => h.id === link.from);
+      if (asSheet) { via = { ref, why: sheetWhy(asSheet.pages) }; break; }
+      if (incomplete?.has(link.from) && mayHold(ref).some((d) => d.id === link.from)) {
+        via = { ref, why: incomplete.get(link.from)! };
+        break;
+      }
+    }
+    if (via) oneWaySheetUnread.push({ ...entry, via: via.ref, why: via.why });
+    else oneWay.push(entry);
+  }
+
   // `referencedBy` is cut for display; the record needs every referencer —
   // a missing sheet is a finding against each sheet that points at it
   // (review fix pass 5).
@@ -1062,12 +1220,21 @@ export function auditDrawingRefs(
     .map(([ref, v]) => {
       const all = [...v.referencedBy].sort();
       const holders = mayHold(ref);
+      // No document not read whole may hold it: a document read whole whose
+      // title block gave the drawing number without that sheet may be it
+      // (review fix pass 10) — unchecked, never a gap.
+      const asSheet = holders.length === 0 ? sheetHolders(ref) : [];
       return {
         ref, referencedBy: all.slice(0, 6), referencedByAll: all, count: v.count,
         // Named to six (every document in flight may hold it — a library
         // being indexed has many); `maybeInIds` keeps every one.
         maybeIn: namedSix(holders),
         maybeInIds: holders.map((d) => d.id),
+        sheetIn: [
+          ...asSheet.slice(0, 6).map((h) => `${nameById.get(h.id) ?? "Sheet"} (${sheetWhy(h.pages)})`),
+          ...(asSheet.length > 6 ? [`${asSheet.length - 6} more document(s)`] : []),
+        ],
+        sheetInIds: asSheet.map((h) => h.id),
       };
     })
     .sort((a, b) => b.count - a.count);
@@ -1076,9 +1243,14 @@ export function auditDrawingRefs(
     resolved,
     totalRefs,
     seriesInScope: scope,
-    missingInSeries: missingAll.filter((m) => m.maybeIn.length === 0)
-      .map(({ maybeIn: _maybeIn, maybeInIds: _maybeInIds, ...m }) => (pendingIds.length > 0 ? { ...m, pendingIn, pendingIds } : m)),
-    missingUnread: missingAll.filter((m) => m.maybeIn.length > 0),
+    missingInSeries: missingAll.filter((m) => m.maybeIn.length === 0 && m.sheetIn.length === 0)
+      .map(({ maybeIn: _maybeIn, maybeInIds: _maybeInIds, sheetIn: _sheetIn, sheetInIds: _sheetInIds, ...m }) =>
+        (pendingIds.length > 0 ? { ...m, pendingIn, pendingIds } : m)),
+    missingUnread: missingAll.filter((m) => m.maybeIn.length > 0)
+      .map(({ sheetIn: _sheetIn, sheetInIds: _sheetInIds, ...m }) => m),
+    missingSheetUnread: missingAll.filter((m) => m.maybeIn.length === 0 && m.sheetIn.length > 0)
+      .map(({ sheetIn, sheetInIds, maybeIn: _maybeIn, maybeInIds: _maybeInIds, ...m }) =>
+        ({ ...m, maybeIn: sheetIn, maybeInIds: sheetInIds, ...(pendingIds.length > 0 ? { pendingIn, pendingIds } : {}) })),
     outOfScope: [...outMap.entries()]
       .map(([series, v]) => {
         const unit = unitMap ? unitOfRef(series, unitMap.prefixLen) : null;
@@ -1093,6 +1265,7 @@ export function auditDrawingRefs(
       .sort((a, b) => b.count - a.count),
     oneWay: oneWay.sort((a, b) => b.count - a.count),
     oneWayUnread: oneWayUnread.sort((a, b) => b.count - a.count),
+    oneWaySheetUnread: oneWaySheetUnread.sort((a, b) => b.count - a.count),
   };
 }
 
@@ -1399,6 +1572,7 @@ export function auditOpcBoxes(
   const declaredPages = (docId: string): Set<number> =>
     new Set([...(selfPages?.get(docId)?.values() ?? [])].flatMap((ps) => [...ps]));
   const byNumber = (a: number, b: number) => a - b;
+  const bare = (r: string) => r.replace(/-SH\d+$/, "");
   const identityIndex = new Map<string, Set<string>>();
   for (const [docId, tags] of selfByDoc) {
     for (const t of tags) {
@@ -1406,6 +1580,35 @@ export function auditOpcBoxes(
       set.add(docId);
       identityIndex.set(t, set);
     }
+  }
+  // The sheet a document's filename names, when its title block gave the
+  // drawing number but no sheet of it (filenameSheets — the reference audit
+  // resolves the same): its pages are the ones declaring that number. A box
+  // missing from them is never `unreturned` — a filename is no title block —
+  // only unpaired (review fix pass 10: "025-PID-0105-SH2.pdf" whose title
+  // block gave only 025-PID-0105 was no destination at all, and a connector
+  // into it was dropped).
+  const fileSheetPages = new Map<string, Map<string, readonly number[]>>();
+  const fileSheetsOf = new Map<string, string[]>();
+  const fileClaims = new Map<string, number>();
+  for (const [docId, tags] of selfByDoc) {
+    const forms = filenameSheets(nameById.get(docId) ?? "", tags);
+    if (forms.length === 0) continue;
+    fileSheetsOf.set(docId, forms);
+    for (const f of forms) fileClaims.set(f, (fileClaims.get(f) ?? 0) + 1);
+  }
+  for (const [docId, forms] of fileSheetsOf) {
+    const byForm = new Map<string, readonly number[]>();
+    for (const f of forms) {
+      // A title block that declares the sheet rules; two filenames naming
+      // one sheet name none (as the reference audit resolves).
+      if (identityIndex.has(f) || fileClaims.get(f) !== 1) continue;
+      const drawing = bare(f);
+      byForm.set(f, [...new Set([...(selfPages?.get(docId) ?? new Map<string, readonly number[]>())]
+        .filter(([t]) => !/-SH\d+$/.test(t) && seriesMatch(normalizeRef(t), drawing)).flatMap(([, ps]) => [...ps]))].sort(byNumber));
+    }
+    for (const f of byForm.keys()) identityIndex.set(f, new Set([docId]));
+    if (byForm.size > 0) fileSheetPages.set(docId, byForm);
   }
 
   // A destination no document declares, while a document is not read whole
@@ -1415,16 +1618,19 @@ export function auditOpcBoxes(
   // sheet of the library answers to, by its title block or its filename
   // (the destination's own series, or its drawing's) — and, when its number
   // is not read yet, anything. A parked one: any destination in the set's
-  // scope, and what it holds by the settled rule (mayHoldBySettledRule). A
-  // failed one: the settled rule — and when its number was never read, only
-  // a destination in the set's scope. Those named for the destination's
-  // drawing come first.
+  // scope, and what it holds by its number (its own drawing, a combined
+  // PDF's series) — never anything because its number was never read: a
+  // parked scan stays parked until next month under a cap, and a connector
+  // into a unit the set was never given is no finding (review fix pass 10;
+  // the reference audit's parked holders, fix pass 9). A failed one: the
+  // settled rule — and when its number was never read, only a destination
+  // in the set's scope. Those named for the destination's drawing come
+  // first.
   //
   // Computed once (review fix pass 7): the scope, each candidate's facts,
   // and whether a destination is in scope (memoised by form). Fix pass 6
   // re-checked the scope for every candidate of every connector — seconds
   // to tens of seconds on a large library mid-rebuild.
-  const bare = (r: string) => r.replace(/-SH\d+$/, "");
   const scope: string[] = [];
   {
     const seen = new Set<string>();
@@ -1462,7 +1668,7 @@ export function auditOpcBoxes(
       const others: string[] = [];
       for (const c of candidates) {
         const holds = c.inFlight ? scoped || !c.facts.numbered
-          : c.reading ? scoped || forms.some((f) => mayHoldBySettledRule(c.facts, f))
+          : c.reading ? scoped || forms.some((f) => holdsByItsNumber(c.facts, f))
           : c.facts.numbered ? forms.some((f) => mayHoldBySettledRule(c.facts, f)) : scoped;
         if (!holds) continue;
         (c.facts.numbered && c.facts.drawings.some((t) => drawings.some((d) => seriesMatch(t, d))) ? named : others).push(c.id);
@@ -1472,19 +1678,22 @@ export function auditOpcBoxes(
     }
     return all.includes(source) ? all.filter((id) => id !== source) : all;
   };
-  /** Is sheet `ref` (X-SHn) known NOT to be in `target`, the one document
-   *  declaring its drawing X? Only when the target was read whole, every one
-   *  of its pages declares a number, and it declares sheets of X — none of
-   *  them this one. Otherwise the sheet may be one of its pages. */
+  /** Is sheet `ref` (X-SHn) known NOT to be in `target`, a document
+   *  declaring its drawing X? Only when the target was read whole, and every
+   *  one of its pages is accounted for: it declares a sheet of X, or only
+   *  other drawings (pagesMayBeSheet). A page that gave X without a
+   *  sheet of it, or no number at all, may be the sheet (review fix pass 10:
+   *  "every page declares a number" counted a page that declared only the
+   *  bare drawing number, and a connector into it was dropped, its sheet
+   *  recorded `passed` with the pairing never checked). */
   const sheetKnownAbsent = (target: string, ref: string): boolean => {
     if (incomplete?.has(target)) return false;
-    const count = Math.floor(Number(pageCounts?.get(target) ?? 0));
-    if (count <= 0) return false;
-    const declared = declaredPages(target);
-    for (let p = 1; p <= count; p++) if (!declared.has(p)) return false;
-    const base = bare(ref);
-    return [...(selfPages?.get(target)?.keys() ?? [])].some((t) => t !== ref && bare(t) === base && t !== base);
+    const may = pagesMayBeSheet(ref, selfPages?.get(target), pageCounts?.get(target));
+    return may !== null && may.length === 0;
   };
+  /** The pages of `target` that may be sheet `ref`, for a finding's why. */
+  const mayBePages = (target: string, ref: string): number[] =>
+    pagesMayBeSheet(ref, selfPages?.get(target), pageCounts?.get(target)) ?? [];
 
   // A stored line at the storage cut may have lost its tail — and with it
   // the drawing number. That is not evidence the connector names nothing.
@@ -1555,17 +1764,23 @@ export function auditOpcBoxes(
     // unpaired, never `unreturned` (review fix pass 7: such a connector was
     // dropped, and its sheet passed, settled). Only a guess, though: it
     // stands only when no OTHER document not read whole for now may hold the
-    // sheet (below).
+    // sheet (below). Of a drawing several documents declare, the one the
+    // sheet is not known to be absent from; when two or more may each be
+    // it, none is guessed, and the connector is unpaired naming them (review
+    // fix pass 10: dropped, its sheet passed with the pairing unchecked).
     const undeclaredSheet = new Set<string>();
     const guessed: Array<{ ref: string; owner: string }> = [];
+    const ambiguous: Array<{ ref: string; owners: string[] }> = [];
     for (const ref of lookups) {
       const owners = identityIndex.get(ref);
       if (!owners && /-SH\d+$/.test(ref)) {
-        const drawingOwners = identityIndex.get(bare(ref));
-        const sole = drawingOwners?.size === 1 ? [...drawingOwners][0] : null;
+        const drawingOwners = [...(identityIndex.get(bare(ref)) ?? [])];
         // Its own drawing's other page: not paired (as before), and never a
         // reason to skip the documents that may hold it.
-        if (sole && sole !== o.document_id && !sheetKnownAbsent(sole, ref)) guessed.push({ ref, owner: sole });
+        if (drawingOwners.includes(o.document_id) && !sheetKnownAbsent(o.document_id, ref)) continue;
+        const may = drawingOwners.filter((id) => id !== o.document_id && !sheetKnownAbsent(id, ref)).sort();
+        if (may.length === 1) guessed.push({ ref, owner: may[0] });
+        else if (may.length > 1) ambiguous.push({ ref, owners: may });
         continue;
       }
       // An ambiguous number identifies a multi-sheet set, not one sheet —
@@ -1584,7 +1799,7 @@ export function auditOpcBoxes(
     // the guess (review fix pass 8: the guess filed a known revision's
     // `passed` `flagged` for good, against the wrong document).
     if (lookups.length > 0 && lookups.every((ref) => !identityIndex.has(ref))) {
-      const guessedOwners = new Set(guessed.map((g) => g.owner));
+      const guessedOwners = new Set([...guessed.map((g) => g.owner), ...ambiguous.flatMap((a) => a.owners)]);
       const holders = holdersOf(lookups, o.document_id).filter((id) => !guessedOwners.has(id));
       if (holders.length > 0) {
         const where = holders.slice(0, 4).map((id) => `${nameById.get(id) ?? "Sheet"} (${incomplete?.get(id) ?? "not read whole"})`).join("; ");
@@ -1593,7 +1808,20 @@ export function auditOpcBoxes(
           why: `no sheet in the set declares it yet, and it may be in ${where}${holders.length > 4 ? ` or ${holders.length - 4} more document(s)` : ""}, not read whole yet`,
         });
         guessed.length = 0;
+        ambiguous.length = 0;
       }
+    }
+    if (ambiguous.length > 0 && guessed.length === 0 && matched.size === 0) {
+      const { ref, owners } = ambiguous[0];
+      const where = owners.slice(0, 4).map((id) => {
+        const pages = mayBePages(id, ref);
+        return `${nameById.get(id) ?? "Sheet"} (${incomplete?.get(id)
+          ?? (pages.length > 0 ? `its sheet number was not read on page(s) ${pages.slice(0, 6).join(", ")}` : "which of its pages is which sheet was not read")})`;
+      }).join("; ");
+      unpaired.push({
+        box: o.tag, from, to: ref, line: raw, maybeInIds: owners,
+        why: `no page in the set declares it, and it may be in ${where}${owners.length > 4 ? ` or ${owners.length - 4} more document(s)` : ""}`,
+      });
     }
     for (const { ref, owner } of guessed) {
       matched.set(owner, new Set([...(matched.get(owner) ?? []), ref]));
@@ -1606,7 +1834,8 @@ export function auditOpcBoxes(
       targetsByDoc.set(o.document_id, paired);
       const entry = { box: o.tag, from, to: nameById.get(target) ?? "Sheet", toId: target, line: raw };
       const pages = boxesByPage.get(target);
-      const sheetPages = [...new Set([...forms].flatMap((f) => [...(selfPages?.get(target)?.get(f) ?? [])]))].sort(byNumber);
+      const sheetPages = [...new Set([...forms].flatMap((f) =>
+        [...(selfPages?.get(target)?.get(f) ?? fileSheetPages.get(target)?.get(f) ?? [])]))].sort(byNumber);
       if (sheetPages.some((p) => pages?.get(p)?.has(o.tag))) continue;
       // A target that was not read whole cannot say whether the box comes
       // back: it may stand on a page nobody read, and filing it `unreturned`
@@ -1661,6 +1890,17 @@ export function auditOpcBoxes(
           });
           continue;
         }
+      }
+      // …nor a sheet only its filename names: its title block gave the
+      // drawing number without the sheet, and a filename is no title block
+      // (review fix pass 10).
+      const byFile = [...forms].filter((f) => !selfPages?.get(target)?.has(f) && fileSheetPages.get(target)?.has(f));
+      if (byFile.length > 0) {
+        unpaired.push({
+          ...entry,
+          why: `only its filename names ${byFile.join(", ")} — its title block gave the drawing number without the sheet — and box ${o.tag} is not on page ${sheetPages.join(", ")} of it`,
+        });
+        continue;
       }
       // The sheet named was read, in a document read whole, and its box
       // numbers were read: the box does not come back.
