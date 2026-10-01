@@ -189,7 +189,7 @@ supabase/migrations/20261016_reasoning_skills.sql:43-48 — `CREATE POLICY answe
 ## IEDGE-4 · Ask memory has no revision keying, so a superseded answer is re-served verbatim and its stale page citations are re-injected into fresh retrieval as PROVEN GROUND
 
 - **Severity:** HIGH
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Verification:** CONFIRMED
 - **Locations:** `lib/knowledgeSourceSync.ts:239-263`, `supabase/migrations/20260911_knowledge_ai.sql:91-104`, `app/api/knowledge/ask/route.ts:600-636`, `lib/linkProposals.ts:175-195`, `app/(protected)/knowledge/[id]/page.tsx:1703-1719`
 - **Re-verified:** hardening pass — **SURVIVES**, by column census. `knowledge_questions` is `(id, org_id, library_id, user_id, user_name, question, answer, citations, provider, model, mode, created_at)` — **no version or revision column exists**, so a cached answer cannot be invalidated by a rev-up. Note the *corpus* is revision-keyed (`knowledgeSourceSync.ts:239` compares `source_version_id` and re-ingests); it is the answer memory sitting on top of it that is not.
@@ -211,6 +211,21 @@ lib/knowledgeSourceSync.ts:242-243 — `const { error: chunkErr } = await supaba
 - [ ] The memory card and Conversations list refuse to serve — or loudly badge — an answer whose sources have revved since
 - [ ] PROVEN GROUND skips citations whose recorded revision no longer matches the mirror's current source_rev
 
+**Resolution (2026-10-01, intelligence Round G).** Reproduced first (DEC-29): with the base route (`4dd0df7`) swapped back in, 53 of the 92 cases in the new `lib/__tests__/askRouteAcl.test.ts`, `askRouteHonesty.test.ts` and `askRouteUnits.test.ts` fail — every case named below as a reproduction among them — and the REGRESSION pin (an org under its cap, agreement signed, key saved: the same answer, citations, memory row and one metering row) passes on both.
+
+- **The revision is recorded.** A citation of a mirror carries `sourceRev` — the controlled revision its page was indexed from (`knowledge_documents.source_rev`); an upload's carries none.
+- **Proven ground never seats a stale page.** A rated answer's citation of a mirror seats its page only when it recorded a revision and that revision is still the mirror's current one; a citation that recorded none (every row written before this change) proves nothing about the page today and is not seated. A partial answer (`ASK-3`) or one with unverified arithmetic (`PR-9`) seats nothing.
+- **The team's record badges it.** `/api/knowledge/history` compares each visible row's cited revisions with the mirrors' current ones and returns `revisedSince`; the memory card says "A document this answer cites has been revised since — its quotes and pages are the old revision's. Ask fresh for the current one." and the Conversations list marks the thread "sources revised since".
+
+Tests: `askRouteAcl.test.ts` "IEDGE-4 — citations carry the mirror's revision; proven ground never seats a page revised since" ("control: … recorded revision is the mirror's current one seats its page", "reproduction → fix: the document was revised since the rating — the page is not seated", "a rating that recorded no revision proves nothing …", "the team's record badges an answer whose cited mirror has been revised since (revisedSince)", "a citation of a mirror carries its revision …"); `askRouteUnits.test.ts` "IEDGE-4: the memory card and the Conversations list badge …".
+
+**Done-when.**
+1. ✓ The row records the source revision behind each cited mirror page (on the citation). Rows are not marked at publish time: the stored revision is compared with the mirror's current one on every read, so there is nothing to keep in step and a row is badged the moment the mirror's revision moves.
+2. ✓ The memory card and the Conversations list badge an answer whose sources have revved since.
+3. ✓ Proven ground skips citations whose recorded revision no longer matches (or was never recorded).
+
+**Scope / residual.** Rows written before this change recorded no revision, so they cannot be badged, and their mirror pages are no longer seated as proven ground (upload pages still are). A revision read that fails badges nothing for that read. Only cited documents carry revisions; the context documents (`ASK-1`) are recorded by id.
+
 ---
 
 <a id="iedge-5"></a>
@@ -218,7 +233,7 @@ lib/knowledgeSourceSync.ts:242-243 — `const { error: chunkErr } = await supaba
 ## IEDGE-5 · Ask memory is org-wide readable: answers produced under the per-asker ACL filter are stored and re-served in full to members who cannot read the sources, and their threads can be reopened and re-injected into the model
 
 - **Severity:** HIGH
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Assigned:** intelligence I-03 THE ASK ROUTE — by the integrator, 2026-10-01 (orphan sweep: the package that left this remainder has merged; fleet plan `audit-reports/fleet-plans/`).
 - **Verification:** CONFIRMED
 - **Locations:** `supabase/migrations/20260911_knowledge_ai.sql:146-151`, `lib/knowledge.ts:504-527`, `lib/knowledge.ts:529-548`, `app/(protected)/knowledge/[id]/page.tsx:1409-1419`, `app/(protected)/knowledge/[id]/page.tsx:1697-1721`, `app/(protected)/knowledge/[id]/page.tsx:1497-1514`, `app/(protected)/knowledge/[id]/page.tsx:1424-1430`
@@ -256,6 +271,17 @@ supabase/migrations/20260911_knowledge_ai.sql:147-150 — `CREATE POLICY knowled
 3. ✓ `lib/__tests__/knowledgeMemoryAcl.test.ts`: a denied member's search returns zero rows for an answer built from a document they cannot read, and a thread whose first turn cites it is withheld whole.
 
 **Scope / residual.** Passages retrieved but not cited are not recorded on the row. An answer that cites nothing is shown to its asker only. An answer that cites SOME documents is judged by those, so a sentence it drew from an uncited restricted passage is only as protected as its cited sources. BLOCKING handoff to I-03: record the retrieved set on the row. This finding stays OPEN until that lands and `planVisibleHistory` reads it. `loadDcLandscape` should still throw on a failed read (the seam's owner); until then the history route checks the same two reads first and answers 500 when either fails. `loadPrincipal` should throw on a failed `team_members` read too (the seam's owner); until then the history route reads the reader's teams again and fails closed (fix pass 4). The ask route's server-side history by `thread_id` (I-03 `ASK-5`) must apply the same filter before re-injection; the functions are exported for it.
+
+**Resolution (2026-10-01, intelligence Round G).** The blocking remainder landed (same code as `ASK-1`, full detail there): every library answer's row records, in `knowledge_questions.context` (`20261153`), each knowledge document whose text reached a prompt for it — passages retrieved but not cited, the refine preview, legend sheets, page images, referenced-table anchors and the documents behind the drawing facts included — and `planVisibleHistory` reads it. A teammate is shown a row only when every cited and every recorded document is readable to them now. Reproduced first (DEC-29): with the base route (`4dd0df7`) swapped back in, 53 of the 92 cases in the new `lib/__tests__/askRouteAcl.test.ts`, `askRouteHonesty.test.ts` and `askRouteUnits.test.ts` fail — every case named below as a reproduction among them — and the REGRESSION pin (an org under its cap, agreement signed, key saved: the same answer, citations, memory row and one metering row) passes on both.
+
+**Pending migration:** `supabase/migrations/20261153_intel_roundG_ask_answer_context.sql` (`knowledge_questions.context` JSONB + an object CHECK; inventory before apply: stored answers, and those rated thumbs-up). It narrows what a teammate may read through the app and widens nothing — no policy, grant or function is touched.
+
+**Done-when.**
+1. ✓ Rows record which source documents the answer drew on, and every read path filters by them: `searchAskHistory`, `listKnowledgeQuestions` and `openConversation` through `/api/knowledge/history`; the `/intelligence` recent-asks widget reads only the reader's own rows (every row for a controller) under `20261120`.
+2. ✓ A server route applying `readableControlledDocIds`, plus the narrowed RLS policy (unchanged).
+3. ✓ `askRouteAcl.test.ts` "reproduction → fix: an answer citing only the open document, built on a passage from one a teammate cannot read, is withheld from that teammate" (the denied member's `list` returns no rows and counts one withheld), with `knowledgeMemoryAcl.test.ts` for the search.
+
+**Scope / residual.** Until `20261153` is pasted, and for rows written before it, a row is judged by its citations alone. KACL-12 (the seam failing closed) stays with its owner. `DEC-44 (I-03)` item 5.
 
 ---
 

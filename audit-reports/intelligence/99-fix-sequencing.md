@@ -133,6 +133,11 @@ route, the ingest drain and the codebook import catch it (I-05). The ask
 unhandled 500. They refuse their AI work either way, but the sentence is lost.
 Each maps `GovernedCallError` onto its response as it adopts `assertAiGates`.
 
+*Landed 2026-10-01 (intelligence Round G, I-03): the ask route's limb. It runs
+`assertAiGates` and maps `GovernedCallError`, so a ledger that cannot be read
+answers the 503 sentence, before the first call and mid-ask alike
+(`askRouteHonesty.test.ts` "GOV-4: …").*
+
 ⛔ **MERGE GATE for I-05 — locate keeps its non-AI output when the cap
 table cannot be read, and refuses a $0 lock before its first call** (`GOV-4`,
 `GOV-3`; I-07's file, merged at `d466a59`).
@@ -243,6 +248,12 @@ they adopt the gate stack, or have `embeddingConnectionFrom` return null for
 a provider off `ALLOWED_EMBEDDING_PROVIDERS`; test a stored
 `embedding_provider` off the list is never spent.
 
+*Landed 2026-10-01 (intelligence Round G, I-03): the ask route's query
+embedding. It is spent only on a provider in `ALLOWED_EMBEDDING_PROVIDERS` and
+behind `assertAiGates({ op: "knowledgeEmbed", key: "embedding" })`
+(`askRouteHonesty.test.ts` "GOV-6 limb: an embeddings key on a provider off the
+allowlist is never spent"). The embed route and the drain remain I-02 / I-02b's.*
+
 **The lock's copy on the older routes — I-03 / I-04 / I-02 / I-07 limbs**
 (`GOV-3`). A $0 cap is a lock that does not reset, but the ask, orchestrator
 and embed routes print "Monthly AI budget reached — $0.00 of your $0.00 cap.
@@ -251,6 +262,11 @@ reached ($0.00 of $0.00)". Each owner branches on `capIsLocked(cap)` (or a
 refusal's `details.locked`) and says "Your monthly AI cap is set to $0, so AI
 is locked for you until someone who manages AI caps raises it" — never the
 reset — as `/api/templates/generate` does (I-05).
+
+*Landed 2026-10-01 (intelligence Round G, I-03): the ask route's limb. A locked
+member's refusal says "Your monthly AI cap is set to $0, so AI is locked for you
+until someone who manages AI caps raises it" and never the reset; a reached cap
+says it resets on the 1st (`askRouteHonesty.test.ts` "GOV-3: …").*
 
 ⛔ **MERGE GATE for I-05 / I-02b — a $0 cap is a refusal to every reader of
 `/api/ai/usage`** (`GOV-3`; I-02b's code, I-02b runs in parallel).

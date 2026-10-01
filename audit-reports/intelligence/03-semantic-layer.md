@@ -32,7 +32,7 @@ Coverage, drift, and what happens to a chunk that never embeds.
 ## SEM-1 · A library embedded under two models silently loses half its corpus, and which half is nondeterministic
 
 - **Severity:** MEDIUM
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Assigned:** intelligence I-03 THE ASK ROUTE (the residual: the ask route reads its corpus model from one row — move it onto `resolveCorpusModel`) — by the integrator, 2026-10-01 (at the I-05 merge: the earlier assignment to I-05 was wrong — its branch does not touch the ask route; fleet plan `audit-reports/fleet-plans/`).
 - **Verification:** CONFIRMED
 - **Locations:** `app/api/knowledge/ask/route.ts:463-468`, `app/api/knowledge/ask/route.ts:482-489`, `lib/knowledgeEmbedCore.ts:56-60`, `lib/knowledgeEmbedCore.ts:113-115`, `components/knowledge/AiSettingsModal.tsx:284-311`
@@ -69,6 +69,21 @@ app/api/knowledge/ask/route.ts:463-468 — `const { data: stamped } = await supa
 4. ✓ `lib/__tests__/embeddings.test.ts` (a two-stamp corpus resolves as mixed, in any key order), `embedStatusShape.test.ts` (the status and the 409), and the scratch PostgreSQL 16 run (the search refuses a two-model library).
 
 **Scope / residual.** The ask route still reads its corpus model from one row (`ask/route.ts:463-468`, I-03); with 20261121 applied that no longer decides which half is searched.
+
+**Resolution (2026-10-01, intelligence Round G, I-03).** The two remainders. Reproduced first (DEC-29): with the base route (`4dd0df7`) swapped back in, 53 of the 92 cases in the new `lib/__tests__/askRouteAcl.test.ts`, `askRouteHonesty.test.ts` and `askRouteUnits.test.ts` fail — every case named below as a reproduction among them — and the REGRESSION pin (an org under its cap, agreement signed, key saved: the same answer, citations, memory row and one metering row) passes on both.
+
+- **The route reads the corpus model whole.** Each searched library's corpus model comes from `semantic_coverage_detail` through `loadEmbedDetail` → `resolveCorpusModel` (single / mixed / empty), never from one row; a mixed library is not searched and the answer says why. A database before `20261121` (no coverage detail) reads its stamp from one row as before — with `20261121`'s refusal it no longer decides which half is searched.
+- **The save warns.** `EmbeddingKeyEditor` (`components/knowledge/AiSettingsModal.tsx`): saving a different provider or model asks first — "Meaning indexes built with ‹old› (‹provider›) can't be searched with ‹new› (‹provider›) — vectors are never reused across models. Meaning search stops on each such library until its index is rebuilt with the new model (Rebuild index, in that library's meaning-index panel — an Admin or Doc Control can run it). Keyword search is unaffected." Declining saves nothing; the same setting saves without asking.
+
+Tests: `askRouteHonesty.test.ts` "SEM-6 / SEM-1 reproduction → fix: a linked library on another model is searched in ITS vector space …"; `embeddingSwitchWarning.test.ts` (jsdom: another provider, another model of the same provider, the same setting — the first two fail without the warning).
+
+**Done-when.**
+1. ✓ (2026-09-30) Coverage per model; the panel names a mixed library.
+2. ✓ Saving a different model or provider warns that existing vectors become unusable and points at the reset (the panel's Rebuild index, which already offers it).
+3. ✓ (2026-09-30) A mixed library refuses semantic search until rebuilt; the route now resolves the model deterministically too.
+4. ✓ (2026-09-30) The two-stamp tests.
+
+**Scope / residual.** The warning cannot list which libraries hold vectors under the old model (the modal reads no library); the panel of each says so.
 
 ---
 
@@ -119,7 +134,7 @@ lib/ai/usageServer.ts:57-67 — `.from("ai_usage_events").select(...).eq("org_id
 ## SEM-3 · Switching embedding provider makes semantic search return nothing, forever, silently — and the removal dialog promises the opposite
 
 - **Severity:** MEDIUM
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Assigned:** intelligence I-03 THE ASK ROUTE and I-05 AI GOVERNANCE — by the integrator, 2026-10-01 (orphan sweep: the package that left this remainder has merged; fleet plan `audit-reports/fleet-plans/`).
 - **Verification:** CONFIRMED
 - **Locations:** `app/api/knowledge/ask/route.ts:468-478`, `app/api/knowledge/ask/route.ts:505-507`, `lib/ai/embeddings.ts:102-104`, `lib/ai/embeddings.ts:205-215`, `components/knowledge/AiSettingsModal.tsx:331-338`
@@ -152,6 +167,22 @@ app/api/knowledge/ask/route.ts:475-478 — `for (const t of texts.slice(0, 3)) {
 4. ✗ The removal-confirmation copy is in `components/knowledge/AiSettingsModal.tsx` (I-05's file) — handed to I-05: it should say vectors work again only with a key for the provider that built them.
 
 **Scope / residual.** Handed: I-03 (route limb), I-05 (dialog copy).
+
+**Resolution (2026-10-01, intelligence Round G, I-03).** The route limb and the dialog copy. Reproduced first (DEC-29): with the base route (`4dd0df7`) swapped back in, 53 of the 92 cases in the new `lib/__tests__/askRouteAcl.test.ts`, `askRouteHonesty.test.ts` and `askRouteUnits.test.ts` fail — every case named below as a reproduction among them — and the REGRESSION pin (an org under its cap, agreement signed, key saved: the same answer, citations, memory row and one metering row) passes on both.
+
+- The ask route plans every searched library's query embedding with `planQueryEmbedding(corpus, connection)`: the corpus's own model on the corpus's own provider, or a reason. A library built by another provider is never sent the wrong provider's model; it is reported on the answer (`meaningSearch.notes`, e.g. "Vendor manuals: The meaning index was built with ‹model› (OpenAI); your embeddings key is Voyage AI …") and shown above the sources.
+- The empty catch is gone: a provider that refuses the corpus's model (or the key) is a reportable fault, said on the answer ("‹library›: meaning search could not run — ‹the provider's message›"), and keyword search goes on. No embeddings key is the normal state: no note, and no library's index is even read.
+- The removal dialog no longer promises the vectors work again with any key: "Vectors already built stay in place, but they work again only with a key for the provider that built them — a key for another provider cannot search them until the library's index is rebuilt with it."
+
+Tests: `askRouteHonesty.test.ts` "SEM-3: a library built by another provider is reported on the answer (not an empty catch), and its model is never sent to the wrong provider", "SEM-3: a provider that refuses the corpus's model is said on the answer — keyword search goes on"; `askRouteUnits.test.ts` "SEM-3: removing the embeddings key never promises …" and "SEM-3 / ASK-11: a library meaning search could not cover … are said".
+
+**Done-when.**
+1. ✓ The corpus's provider is recorded (its model stamp) and the query is embedded with it, or meaning search reports unavailable rather than empty.
+2. ✓ (2026-09-30) A provider change surfaces a blocking notice; the save itself now warns too (`SEM-1`).
+3. ✓ The catch distinguishes "no embedding key" (normal, silent) from a provider refusal (reported on the answer).
+4. ✓ The removal-confirmation copy is corrected.
+
+**Scope / residual.** None.
 
 ---
 
@@ -244,7 +275,7 @@ Fix pass 2 (review minor): the retrievable-document filter reads `document_id`, 
 ## SEM-6 · Linked reference libraries contribute zero semantic results whenever their corpus model differs from the asked library's
 
 - **Severity:** MEDIUM
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Assigned:** intelligence I-03 THE ASK ROUTE — by the integrator, 2026-10-01 (orphan sweep: the package that left this remainder has merged; fleet plan `audit-reports/fleet-plans/`).
 - **Verification:** CONFIRMED
 - **Locations:** `app/api/knowledge/ask/route.ts:394-397`, `app/api/knowledge/ask/route.ts:463-467`, `app/api/knowledge/ask/route.ts:480-489`, `supabase/migrations/20261007_rag_hardening.sql:95`
@@ -277,6 +308,17 @@ app/api/knowledge/ask/route.ts:465 — `.eq("org_id", orgId).eq("library_id", li
 3. Partly — the helper's per-library test exists; the end-to-end route test is I-03's.
 
 **Scope / residual.** Handed to I-03 with the helper.
+
+**Resolution (2026-10-01, intelligence Round G, I-03).** Reproduced first (DEC-29): with the base route (`4dd0df7`) swapped back in, 53 of the 92 cases in the new `lib/__tests__/askRouteAcl.test.ts`, `askRouteHonesty.test.ts` and `askRouteUnits.test.ts` fail — every case named below as a reproduction among them — and the REGRESSION pin (an org under its cap, agreement signed, key saved: the same answer, citations, memory row and one metering row) passes on both. The ask route plans each searched library — linked ones included — on its own: `resolveCorpusModel` over its `semantic_coverage_detail`, then `planQueryEmbedding` for the provider and model that must embed the query. Libraries are grouped by (provider, model) and the query is embedded once per group; each library is searched with its own `p_model`. The response says how many libraries were searched by meaning and how many contributed rows (`meaningSearch: { libraries, searched, contributed, notes }`), with a note naming any library whose index exists but could not be searched.
+
+Tests: `askRouteHonesty.test.ts` "SEM-6 / SEM-1 reproduction → fix: a linked library on another model is searched in ITS vector space — each library's own model, one embedding per model" (both libraries contribute; two embedding calls, one per model); the SEM-3 cases for a library that cannot be matched.
+
+**Done-when.**
+1. ✓ `p_model` is resolved per library.
+2. ✓ Libraries that contributed no semantic rows are counted, and the ones that could not be searched are named.
+3. ✓ Two libraries on two stamps both contribute, or the mismatch is surfaced.
+
+**Scope / residual.** A linked library whose provider differs from the asker's embeddings key can only be reported, not searched (one key per member).
 
 ---
 
@@ -430,7 +472,7 @@ supabase/migrations/20260930_semantic_layer.sql:61-66 — the index's own ration
 ## SEM-10 · Query-side embedding tokens are never metered — contradicting the module's own stated contract
 
 - **Severity:** LOW
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Verification:** CONFIRMED
 - **Locations:** `lib/ai/embeddings.ts:20-21`, `lib/ai/embeddings.ts:208-215`, `app/api/knowledge/ask/route.ts:265-280`, `app/api/knowledge/ask/route.ts:475-478`, `app/api/knowledge/ask/route.ts:701-704`
 - **Independently verified:** ✓ **SURVIVES, corrected** — second independent adversarial pass. Severity **MEDIUM → LOW** by this pass. The mechanism is exactly as claimed — up to 5 query embeddings per ask (3 at :476 `texts.slice(0,3)` plus 2 at :703 `plan.queries.slice(0,2)`) are billed by the provider and never metered. But the magnitude is negligible: a query is tens of tokens, so 10,000 query embeddings on voyage-3.5-lite is a fraction of a cent — it cannot meaningfully distort the ledger or the cap. It is a broken documented contract, not a billing problem; LOW.
@@ -453,6 +495,18 @@ lib/ai/embeddings.ts:208-215 — `export async function embedQuery(…): Promise
 - [ ] Query-embedding spend appears in `ai_usage_events` (its own op is fine, provided the cap reads it)
 - [ ] Asks over a library with zero embedded chunks skip the query embedding entirely rather than buying a vector that can match nothing
 - [ ] A test asserts an ask produces a metering row covering its embedding calls
+
+**Resolution (2026-10-01, intelligence Round G, I-03).** Reproduced first (DEC-29): with the base route (`4dd0df7`) swapped back in, 53 of the 92 cases in the new `lib/__tests__/askRouteAcl.test.ts`, `askRouteHonesty.test.ts` and `askRouteUnits.test.ts` fail — every case named below as a reproduction among them — and the REGRESSION pin (an org under its cap, agreement signed, key saved: the same answer, citations, memory row and one metering row) passes on both. Query embeddings are metered like every other call: the route embeds through `embedPassages({ kind: "query" })`, which returns the provider's usage, behind `assertAiGates({ op: "knowledgeEmbed", key: "embedding" })` (the embeddings allowlist, the agreement, the cap). Each embedding call reserves its worst case first and settles its real tokens into one `ai_usage_events` row per embedding model per ask (`op: knowledgeEmbed`); the one monthly cap reads every op (`DEC-73` item 1), and the response's `budget` includes it. A library with no stamped vector buys no query embedding, and without an embeddings key no library's index is read at all.
+
+Tests: `askRouteHonesty.test.ts` "SEM-10: query embeddings are metered (their own line, the one cap reads it); a library with no vectors buys none", and "GOV-6 limb: an embeddings key on a provider off the allowlist is never spent".
+
+**Done-when.**
+1. ✓ The query embedding returns usage and the route folds it into a metered total.
+2. ✓ Query-embedding spend appears in `ai_usage_events` (its own op, read by the cap).
+3. ✓ An ask over a library with zero embedded chunks skips the query embedding.
+4. ✓ A test asserts the metering row covering the embedding calls.
+
+**Scope / residual.** None.
 
 ---
 
@@ -505,7 +559,7 @@ lib/knowledgeEmbedDrain.ts:51-55 — `.not("ai_features->embedBuild", "is", null
 ## SEM-12 · The one signal that tells an asker retrieval was keyword-only is computed and never rendered — partial coverage degrades answers with zero indication
 
 - **Severity:** MEDIUM
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Assigned:** intelligence I-03 THE ASK ROUTE — by the integrator, 2026-10-01 (orphan sweep: the package that left this remainder has merged; fleet plan `audit-reports/fleet-plans/`).
 - **Verification:** CONFIRMED
 - **Locations:** `app/api/knowledge/ask/route.ts:268-272`, `app/api/knowledge/ask/route.ts:568`, `app/api/knowledge/ask/route.ts:1774`, `lib/knowledge.ts:122-126`, `components/knowledge/SemanticIndexPanel.tsx:257-265`
@@ -540,6 +594,18 @@ lib/knowledge.ts:122-126 states the intended contract in its own doc comment —
 4. ✓ as far as the suite goes: `lib/__tests__/knowledgePageCopy.test.ts` pins the chip and note to the rendered elements and asserts the wording at 3%, 94%, 95% and 100% (the suite has no DOM renderer).
 
 **Scope / residual.** Handed to I-03: send `retrievalCoverage` for the libraries searched.
+
+**Resolution (2026-10-01, intelligence Round G, I-03).** The route half. Reproduced first (DEC-29): with the base route (`4dd0df7`) swapped back in, 53 of the 92 cases in the new `lib/__tests__/askRouteAcl.test.ts`, `askRouteHonesty.test.ts` and `askRouteUnits.test.ts` fail — every case named below as a reproduction among them — and the REGRESSION pin (an org under its cap, agreement signed, key saved: the same answer, citations, memory row and one metering row) passes on both. The ask response carries `retrievalCoverage: { embedded, total }` summed over EVERY library searched (linked ones included) whenever the database can say it for each (`semantic_coverage_detail`, `20261121`), and the page's `describeRetrieval` already prefers it. `retrieval` itself now means a meaning-found passage is in the final pool (`ASK-10`).
+
+Tests: `askRouteHonesty.test.ts` (the SEM-6 case asserts `retrievalCoverage` `{ embedded: 2, total: 2 }` over two libraries; the SEM-10 case `{ embedded: 0, total: 3 }`); `knowledgePageCopy.test.ts` (the renderer, unchanged).
+
+**Done-when.**
+1. ✓ (2026-09-30) Rendered for every reader.
+2. ✓ The per-answer coverage over every library actually searched comes from the route.
+3. ✓ (2026-09-30) The "covers N%" note below 95%.
+4. ✓ (2026-09-30) The rendered elements.
+
+**Scope / residual.** A database before `20261121` sends no `retrievalCoverage`; the page then uses the asked library's live coverage, as before.
 
 ---
 

@@ -541,6 +541,16 @@ lib/schemaExpectations.ts:11-13 — `// Generated from supabase/migrations (CREA
 - [ ] The skills loader returns the names (and ids) of the packs it included alongside the block.
 - [ ] The ask response and the orchestrator response carry that list, and the answer UI names the skills that shaped an answer.
 
+**Partial (2026-10-01, intelligence Round G, I-03).** The loader and the ask route. `lib/answerSkillsServer.ts`: `loadAnswerSkills` / `buildAnswerSkills` return the block AND the packs it carries (`id`, `name`, `builtinKey`), in the order they ride; a pack the block budget cut is not listed; `loadAnswerSkillsBlock` is unchanged for its other caller. The ask response carries `skills`, the row records their names (`context.skills`), and the answer surface says "Shaped by: …" beside the retrieval chip.
+
+Tests: `askRouteUnits.test.ts` "IRLS-13 — buildAnswerSkills names the packs that rode the block, and only those" and "IRLS-13: the answer names the Reasoning Skills that shaped it"; `askRouteHonesty.test.ts` "IRLS-13 — …" ("the packs that rode the prompt come back on the response and are recorded on the row", "no pack, no list").
+
+**Done-when.**
+1. ✓ The skills loader returns the names and ids of the packs it included alongside the block.
+2. Partly. ✓ The ask response carries the list and the answer UI names them. ✗ The orchestrator (`app/api/orchestrator/route.ts`, which still calls `loadAnswerSkillsBlock`) and its answer surface are the orchestrator's owner's; switching it to `loadAnswerSkills` and returning `skills` is a two-line change there.
+
+**Scope / residual.** OPEN on the orchestrator half.
+
 ---
 
 <a id="irls-14"></a>

@@ -525,7 +525,7 @@ The test path also accepts a caller-supplied `model` while using the SAVED key (
 ## GOV-8 · /api/knowledge/locate makes up to eight additional vision calls AFTER writing its metering row, and accumulates their tokens into an object nobody reads again
 
 - **Severity:** MEDIUM
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Assigned:** intelligence I-03 THE ASK ROUTE (AiCallError carries the reported usage — lib/ai/providerCall.ts) — by the integrator, 2026-10-01 (I-07 merge: I-07 landed its own half; fleet plan `audit-reports/fleet-plans/`).
 - **Verification:** CONFIRMED
 - **Locations:** `app/api/knowledge/locate/route.ts:206-220`, `app/api/knowledge/locate/route.ts:236-238`, `app/api/knowledge/locate/route.ts:259-271`
@@ -584,6 +584,17 @@ Tests: `lib/__tests__/intelRoundGDrawingRoutes.test.ts`, block "DWG-5 / GOV-8":
 - Half done. ✓ A refine call that throws contributes the usage its error carries. ✗ For a refusal or an empty answer, the provider reports usage but `callAiModel` throws an `AiCallError` that does not carry it (`lib/ai/providerCall.ts`, I-03's file for ASK-3's `stopReason`; not this package's). The route already reads `usage` off any thrown error, so the limb closes with that additive change, and with no edit here. A call that fails on HTTP, or times out, gets no token report from the provider, so nothing is lost there.
 
 **Scope / residual.** OPEN until `AiCallError` carries the usage the provider reported (owner: `lib/ai/providerCall.ts`, I-03). The cross-route cap count is I-05's GOV-1.
+
+**Resolution (2026-10-01, intelligence Round G, I-03).** The last limb. `lib/ai/providerCall.ts` (additive — an optional third constructor argument; every existing call is unchanged): `AiCallError` carries `usage` when the provider reported tokens for a call that still failed — Anthropic's refusal and empty answer, OpenAI's and Gemini's empty answer. An HTTP failure or a timeout reports none, and `usage` is absent. The locate route already reads `usage` off any thrown error (`usageOf`), so its refine calls that are refused or come back empty now count what they spent, with no edit to its file; the ask route does the same (`ASK-7`).
+
+Tests: `askRouteUnits.test.ts` "GOV-8: a refusal and an empty answer throw AiCallError carrying the tokens the provider reported", "an HTTP failure reports no usage …", "the change is additive …"; `intelRoundGDrawingRoutes.test.ts` "a refine call that throws still counts the usage it carries" (I-07, unchanged).
+
+**Done-when.**
+1. ✓ (I-07) One row after all passes.
+2. ✓ (I-07) The refine calls' tokens are in the row.
+3. ✓ A refine call that throws contributes the tokens the provider reported — now including a refusal or an empty answer.
+
+**Scope / residual.** None here; the cross-route cap is `GOV-1` (resolved).
 
 ---
 
@@ -649,6 +660,22 @@ Tests: `lib/__tests__/ingestLock.test.ts` ("chunks say 'vision' with the model t
 - ✗ Not done here. Treating title-block fields parsed from a vision transcript (kind `self` rows) as authoritative identity only after a human confirms them belongs to the consumers of those rows: I-07 (PR-11, the title block read only from the border) and I-11 (GAP-301, the sheet address).
 
 **Scope / residual.** Pending migration: `20261122_intel_roundG_ingest_integrity.sql`. Chunks written before it read `'text'`, because nobody recorded otherwise. The pre-apply inventory counts the documents with vision-read pages, whose older chunks stay ambiguous until their next re-index. OPEN until criteria 2–4 land.
+
+**Partial (2026-10-01, intelligence Round G, I-03).** Criteria 2 and 3, and the ask route's limb of 4. Reproduced first (DEC-29): with the base route (`4dd0df7`) swapped back in, 53 of the 92 cases in the new `lib/__tests__/askRouteAcl.test.ts`, `askRouteHonesty.test.ts` and `askRouteUnits.test.ts` fail — every case named below as a reproduction among them — and the REGRESSION pin (an org under its cap, agreement signed, key saved: the same answer, citations, memory row and one metering row) passes on both.
+
+- **The citation carries it.** The route reads `knowledge_chunks.source` / `source_model` (`20261122`) for the passages in the pool; a citation of a vision chunk carries `source: "vision"` and `sourceModel`, and so does a show-me sheet citation from a page whose text an AI model transcribed. The source card shows "AI transcription of this page" ("This passage is an AI model's transcription of the page image, not the drawing's own text — check tags and values against the page.").
+- **The prompt is told.** A transcribed passage's label reads `AI TRANSCRIPTION`, and the system prompt says such a passage was read from a page image by an AI model, may misread tags, values and drawing numbers, and needs a **Check:** when the answer rests on it.
+- **Identity, in the ask route.** DRAWING FACTS count a title-block identity as READ only from a text layer; one read off an AI transcription is "unconfirmed" (`PR-4`).
+
+Tests: `askRouteHonesty.test.ts` "GOV-9 — …" ("a vision chunk → AI TRANSCRIPTION in its passage label, the system rule, and source/sourceModel on its citation", "a show-me sheet citation … from a page an AI transcribed is marked too", "a database before 20261122 (no source column) labels nothing and answers as before"); `askRouteUnits.test.ts` "GOV-9: a vision-derived quote is marked …".
+
+**Done-when.**
+1. ✓ (2026-09-30) `knowledge_chunks` records how its text was obtained.
+2. ✓ The citation carries it and the answer UI marks vision-derived quotes "AI transcription of this page".
+3. ✓ The ask prompt is told which passages are transcriptions.
+4. Partly. ✓ The ask route's DRAWING FACTS never treat a vision-read title block as a confirmed identity. ✗ The other consumers of `self` rows — the drawing audit and title-block reading (I-07, `PR-11`), the sheet address (I-11, `GAP-301`) — and the equipment table's sheet name (it shows the declared title block, with "AI-read" beside a transcribed sheet) still use a vision-read identity without a human confirming it.
+
+**Scope / residual.** OPEN on criterion 4's other consumers (I-07, I-11). Chunks written before `20261122` read `'text'`.
 
 ---
 

@@ -835,7 +835,7 @@ Also `lib/__tests__/ingestLock.test.ts`: "ING-9 — the cron drain refuses a non
 ## ING-10 · The 'TRUST these for counts and totals' drawing-facts slab is a hard 20,000-row cap with no overflow detection
 
 - **Severity:** MEDIUM
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Verification:** CONFIRMED
 - **Locations:** `app/api/knowledge/ask/route.ts:945-956`, `app/api/knowledge/ask/route.ts:1055-1068`, `lib/orchestrator/tools.ts:371-376`, `lib/knowledgeEntityKinds.ts:11-20`
 - **Independently verified:** ✓ **SURVIVES** — second independent adversarial pass. Verified: repo-wide grep for 20000/20_000 shows the only truncation flag in this path is `truncated: byTag.size > MAX_ROWS` (MAX_ROWS=400), which is about the clickable table, not the 20k row cap; the drawingFacts prose has no equivalent. app/api/knowledge/drawing/route.ts:184 and 281 share the same pattern. The claim of absence holds.
@@ -858,6 +858,14 @@ app/api/knowledge/ask/route.ts:954 `.limit(20000);` immediately followed at 955 
 
 - [ ] The slab is paginated (like the drawing route's 50-doc slices at app/api/knowledge/drawing/route.ts:85-99) or the count is computed in SQL
 - [ ] When the cap is hit, DRAWING FACTS says so instead of claiming EVERY sheet — or the block is withheld entirely
+
+**Resolution (2026-10-01, intelligence Round G, I-03).** Same code as `ASK-2` (full detail there). Reproduced first (DEC-29): with the base route (`4dd0df7`) swapped back in, 53 of the 92 cases in the new `lib/__tests__/askRouteAcl.test.ts`, `askRouteHonesty.test.ts` and `askRouteUnits.test.ts` fail — every case named below as a reproduction among them — and the REGRESSION pin (an org under its cap, agreement signed, key saved: the same answer, citations, memory row and one metering row) passes on both. The DRAWING FACTS slab is read with `readAll` — `.range` pages in a stable order until a page comes back empty, up to `DRAWING_FACTS_ROW_CEILING` (20,000) — and when the ceiling is hit the last document is dropped whole and the facts say they are a PARTIAL floor, with no next-free number and no "TRUST" instruction. Tests: `askRouteHonesty.test.ts` "a census larger than one PostgREST response is read WHOLE (paged) …" and "reproduction → fix: more tag rows than the census ceiling …"; `entityKindGuard.test.ts` (the completeness case).
+
+**Done-when.**
+1. ✓ The slab is paginated.
+2. ✓ When the cap is hit, DRAWING FACTS says so instead of claiming every sheet.
+
+**Scope / residual.** `lib/orchestrator/tools.ts` `loadLineGraph` (one of this record's locations) still reads `knowledge_page_entities` with `.limit(20000)` and no overflow check. It feeds the assistant's line trace, not DRAWING FACTS, and makes no "trust these counts" claim; it is the orchestrator's file (not this package's) and is handed to its owner.
 
 ---
 

@@ -31,7 +31,7 @@
 ## KACL-1 · Ask history is org-member readable and replays verbatim quotes and document names from documents the reader cannot open
 
 - **Severity:** CRITICAL
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Assigned:** intelligence I-03 THE ASK ROUTE — by the integrator, 2026-10-01 (orphan sweep: the package that left this remainder has merged; fleet plan `audit-reports/fleet-plans/`).
 - **Verification:** CONFIRMED
 - **Locations:** `supabase/migrations/20260911_knowledge_ai.sql:146-150`, `lib/knowledge.ts:504-527`, `lib/knowledge.ts:529-546`, `app/(protected)/knowledge/[id]/page.tsx:1410-1415`, `app/(protected)/knowledge/[id]/page.tsx:1690-1720`, `app/api/knowledge/ask/route.ts:1632-1650`, `app/api/knowledge/ask/route.ts:1739-1744`
@@ -76,6 +76,18 @@ lib/knowledge.ts:510-516 — `const { data, error } = await supabase\n      .fro
 The four items are met for what a row records, its citations. It stays OPEN on what a row does not record (fix pass 3, item 3).
 
 **Scope / residual.** The PROVEN GROUND boost (`ask/route.ts`) and `linkProposerServer.ts` read the table on the service role and are unaffected (the ask route already filters with `excludedDocIds`). A stored row records the documents it CITED; passages retrieved but not cited, and drawing facts, are not recorded. Until the ask route records them (I-03, BLOCKING for this finding), a library answer citing no document is shown to its asker alone, and one citing some is judged by those alone. `loadDcLandscape` should still throw on a failed read (handed to the seam's owner): the history route now checks the same two reads first and answers 500 when either fails, which leaves only a failure between that check and the seam's own read. `loadPrincipal` should throw on a failed `team_members` read too (handed to the seam's owner): it drops the error and returns no teams, so a team DENY never matches; until it throws, `readableKnowledgeDocIds` reads the reader's teams again, fails closed when that read fails, and judges the mirrors with the teams it read (fix pass 4).
+
+**Resolution (2026-10-01, intelligence Round G).** The blocking remainder landed (same code as `ASK-1`, full detail there). The ask route records on every library answer each knowledge document whose passages, legend text, page images, referenced-table anchors or drawing facts reached a prompt — the refine round's preview included — in `knowledge_questions.context` (`20261153`), and `planVisibleHistory` withholds a teammate's row unless every one of them, and every cited document, is readable to the reader now; an incomplete context, or one resting on unverified client history, keeps the row its asker's alone. Reproduced first (DEC-29): with the base route (`4dd0df7`) swapped back in, 53 of the 92 cases in the new `lib/__tests__/askRouteAcl.test.ts`, `askRouteHonesty.test.ts` and `askRouteUnits.test.ts` fail — every case named below as a reproduction among them — and the REGRESSION pin (an org under its cap, agreement signed, key saved: the same answer, citations, memory row and one metering row) passes on both. Tests: `askRouteAcl.test.ts` "ASK-1 / KACL-1 / IEDGE-5 …", `askRouteUnits.test.ts` "planVisibleHistory reads the recorded context".
+
+**Pending migration:** `supabase/migrations/20261153_intel_roundG_ask_answer_context.sql` (`knowledge_questions.context` JSONB + an object CHECK; inventory before apply: stored answers, and those rated thumbs-up). It narrows what a teammate may read through the app and widens nothing — no policy, grant or function is touched.
+
+**Done-when.**
+1. ✓ History is served by `/api/knowledge/history`, which re-filters every row through `readableControlledDocIds` for the current reader — over what the answer drew on, not only what it cites.
+2. ✓ `searchAskHistory` and `listKnowledgeQuestions` go through that route (unchanged).
+3. ✓ Redacted at read time (unchanged): an excluded document's mirror is purged, so a row whose citations or context name it no longer resolves and is withheld.
+4. ✓ Two members with different ACLs get different history (`knowledgeMemoryAcl.test.ts`), and a row built on a passage only one of them may read is withheld from the other (`askRouteAcl.test.ts`).
+
+**Scope / residual.** As `ASK-1`: rows written before `20261153`, or before it is pasted, are judged by their citations alone. KACL-12 (the seam failing closed) stays with its owner. `DEC-44 (I-03)` item 5.
 
 ---
 
@@ -157,7 +169,7 @@ lib/knowledgeAccess.ts:54-57 — the doc comment states the opposite of the code
 ## KACL-4 · The ask route's per-asker ACL exclusion set fails OPEN on any query error and is silently truncated by the PostgREST row cap
 
 - **Severity:** HIGH
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Verification:** CONFIRMED
 - **Locations:** `app/api/knowledge/ask/route.ts:157-187`, `lib/storageOrphans.ts:90-99`, `lib/orgGraph.ts:74-92`
 - **Independently verified:** ✓ **SURVIVES** — second independent adversarial pass. Both halves confirmed. The fail-open half is unconditional and needs no configuration to bite. The truncation half depends on the deployment's PostgREST max-rows setting, but the repo treats that cap as real everywhere else it reads a large table, and this security-critical query is the one place that neither pages nor reports truncation.
@@ -181,6 +193,20 @@ route.ts:163-187 — `let excludedDocIds = new Set<string>();\n  {\n    const al
 - [ ] A query error on the exclusion set aborts the ask (or excludes ALL source-linked mirrors), matching the comment at lines 161-162; only a genuine 42703 pre-migration code degrades to 'no mirrors'
 - [ ] The linkedDocs and reachableDocs queries page with .range() until exhausted, the way lib/storageOrphans.ts:90-99 does
 - [ ] A test with a library of more mirrors than the row cap proves a restricted mirror at the tail is still excluded
+
+**Resolution (2026-10-01, intelligence Round G).** The two halves R&P Round C1 left. Reproduced first (DEC-29): with the base route (`4dd0df7`) swapped back in, 53 of the 92 cases in the new `lib/__tests__/askRouteAcl.test.ts`, `askRouteHonesty.test.ts` and `askRouteUnits.test.ts` fail — every case named below as a reproduction among them — and the REGRESSION pin (an org under its cap, agreement signed, key saved: the same answer, citations, memory row and one metering row) passes on both.
+
+- **Fails closed.** The mirror read that builds the per-asker exclusion set answers 503 ("Couldn't check which documents you may read, so nothing was searched — try again in a moment.") on any error except a genuinely missing column (`columnMissing`: 42703 / PGRST204, a database before `20260917`, which has no mirrors). No provider call is made and nothing is metered. A failed principal load, a seam that throws, or a `documents` read that errors makes every mirror unreadable (closed).
+- **Never cut at the cap.** The mirror list and the reachable-document roster are read with `readAll` (`lib/knowledgeAskGuards.ts`): `.range` pages in id order until a page comes back EMPTY — a page shorter than asked for is not taken as the last, because a project's max-rows may be below the page size. The controlled documents are judged in slices of 100.
+
+Tests: `askRouteAcl.test.ts` "KACL-4 — …" ("reproduction → fix: a mirror read that errors refuses the ask (503) before any provider call — it never runs unfiltered", "a database without the source columns (42703, pre-20260917) has no mirrors and answers as before", "reproduction → fix: a library of more mirrors than one response holds — the restricted mirror at the tail is still excluded", with max-rows at 50); `askRouteUnits.test.ts` "KACL-4 — readAll pages past max-rows and never takes a short page for the last one".
+
+**Done-when.**
+1. ✓ A query error aborts the ask; only a missing column degrades to "no mirrors".
+2. ✓ Both the mirror list and the reachable roster page until exhausted.
+3. ✓ A restricted mirror at the tail of a library larger than the row cap is still excluded.
+
+**Scope / residual.** The seam's own reads failing closed (`loadDcLandscape`, `loadPrincipal`) are `KACL-12`'s.
 
 ---
 
@@ -222,7 +248,7 @@ download-url/route.ts:76-88 — `const allowed = canDiscover({ principal: {…},
 ## KACL-6 · Any active org member can ask any knowledge library and any of its linked libraries — knowledge_libraries carries no ACL of its own
 
 - **Severity:** MEDIUM
-- **Status:** OPEN
+- **Status:** WONTFIX
 - **Verification:** CONFIRMED
 - **Locations:** `app/api/knowledge/ask/route.ts:103-137`, `supabase/migrations/20260911_knowledge_ai.sql:47-56`, `supabase/migrations/20260911_knowledge_ai.sql:114-118`, `supabase/migrations/20260915_knowledge_links.sql:22-42`
 - **Independently verified:** ✓ **SURVIVES** — second independent adversarial pass. Confirmed. Upload-origin documents have source_document_id NULL, so they never enter the linkedDocs set at :166-170 and no exclusion can apply to them — a private data-room library really is fully answerable by any active member.
@@ -246,6 +272,21 @@ download-url/route.ts:76-88 — `const allowed = canDiscover({ principal: {…},
 - [ ] knowledge_libraries carries acl + visibility evaluated by the same lib/acl engine, and the ask route rejects a library the caller cannot read before spending a token
 - [ ] Linked reference libraries are checked against the ASKER too, not just the library that declared the link
 - [ ] The product states plainly, in the library UI, that upload-origin documents are readable by every workspace member
+
+**Resolution (2026-10-01, intelligence Round G) — WONTFIX by decision (`DEC-44 (I-03)` item 1; the plan's default).** Real as stated: `knowledge_libraries` carries no ACL, and an upload-origin document (`source_document_id` NULL) is answerable by every active member. Not built:
+
+- **What it would cost.** An ACL and visibility on `knowledge_libraries` evaluated through `lib/acl`, enforced at every door that reads a library — the ask route (and each linked library), the history route, ingest and the sync, the graph and the orchestrator's tools — plus a permission UI for libraries and a migration for their policies.
+- **Why not now.** Restricted content already has a home with a full ACL engine: Document Control. A knowledge library that mirrors it inherits those ACLs per asker at every retrieval seam, linked libraries included (`KACL-4`, `KACL-8`, `KACL-10`); only the PDFs uploaded straight into a library are org-readable, and that is the design.
+- **What would change the answer.** A facility that must keep restricted material outside Document Control (an uploads-only data room, say). Then the library ACL above is built, evaluated by the same engine as the DC chain.
+
+What landed: the library page says it where files are added (controllers): "PDFs added here are readable by every member of this workspace (in answers and on this page). Documents mirrored from Document Control keep their own access rules — keep restricted files there." Test: `askRouteUnits.test.ts` "KACL-6: where PDFs are added, the page says they are readable by every member".
+
+**Done-when.**
+1. Not done — WONTFIX by decision (above): no library-level ACL.
+2. Not done as a library check, by the same decision. A linked library's MIRRORS are checked against the asker (the exclusion set spans every linked library); its uploads are org-readable like any other.
+3. ✓ The library UI states that upload-origin documents are readable by every workspace member.
+
+**Scope / residual.** Reversal: `DEC-44 (I-03)` item 1.
 
 ---
 
@@ -299,7 +340,7 @@ download-url/route.ts:76-88 — `const allowed = canDiscover({ principal: {…},
 ## KACL-8 · Site Codebook legend sheets are injected into every answer without passing through the per-asker ACL filter
 
 - **Severity:** MEDIUM
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Verification:** CONFIRMED
 - **Locations:** `app/api/knowledge/ask/route.ts:149-155`, `app/api/knowledge/ask/route.ts:1362-1385`, `app/(protected)/admin/codebook/page.tsx:468-477`, `lib/codebookServer.ts:31`
 - **Independently verified:** ✓ **SURVIVES, corrected** — second independent adversarial pass. The substance holds — a site-wide legend that mirrors a restricted controlled document is injected into every member's answers — but the title is wrong on mechanism: the per-asker filter IS applied at :1367; it is the exclusion SET that is scoped to the asked and linked libraries only. Severity stays MEDIUM (bounded to at most 3 legend docs, 6000 chars).
@@ -321,6 +362,17 @@ route.ts:1369-1374 — `const { data: legendChunks } = await supabaseAdmin\n    
 - [ ] Legend doc ids are resolved to their source_document_id and run through readableControlledDocIds for the ASKER before any chunk is fetched, failing closed
 - [ ] The legend chunk query is scoped with .eq("org_id", orgId)
 - [ ] A legend document the asker cannot read contributes nothing and the answer does not silently degrade in a way that reveals its existence
+
+**Resolution (2026-10-01, intelligence Round G).** Reproduced first (DEC-29): with the base route (`4dd0df7`) swapped back in, 53 of the 92 cases in the new `lib/__tests__/askRouteAcl.test.ts`, `askRouteHonesty.test.ts` and `askRouteUnits.test.ts` fail — every case named below as a reproduction among them — and the REGRESSION pin (an org under its cap, agreement signed, key saved: the same answer, citations, memory row and one metering row) passes on both. Legend / decoder sheets go through the same seam as retrieval before any chunk is fetched. The library's own `legendDocIds` and the Site Codebook's are each resolved within this org (`knowledge_documents`, `.eq("org_id", orgId)`, uuid-shaped ids only, minus the asker's exclusion set); a legend that mirrors a controlled document is used only when the asker may read it and the AI may (`readableControlledDocIds` + `aiReadability`, whichever library the legend lives in); any failure makes it unreadable (closed). The chunk read carries `.eq("org_id", orgId)`. A legend that fails contributes nothing, silently — nothing on the answer says a legend was dropped, so its existence is not revealed. The legend text is DATA in the user turn (`ASK-4`).
+
+Tests: `askRouteAcl.test.ts` "KACL-8 / ASK-8 — legend sheets pass the asker's ACL and the org scope" ("reproduction → fix: a site-wide legend that mirrors a document the Viewer is denied — in a library not searched — contributes nothing", "a controller gets the same legend — as DATA in the user turn, never in the system prompt", "a legend held back from the AI contributes nothing, even for a controller", "reproduction → fix (ASK-8): a legend id naming ANOTHER org's knowledge document is never read").
+
+**Done-when.**
+1. ✓ Legend ids are resolved to their controlled documents and run through `readableControlledDocIds` for the asker before any chunk is fetched, failing closed.
+2. ✓ The legend chunk query is scoped with `.eq("org_id", orgId)`.
+3. ✓ A legend the asker cannot read contributes nothing, and the answer does not reveal it.
+
+**Scope / residual.** Write-time validation of stored legend ids is `ASK-8` done-when 2.
 
 ---
 
@@ -351,6 +403,15 @@ lib/aiBoundary.ts:10-16 — "The four reasons a controlled document is NOT AI-re
 - [ ] The comment at ask/route.ts:405-408 says 'ACL-excluded' or the filter genuinely folds in ai_excluded
 - [ ] docs/ARCHITECTURE.md:125 and lib/schemaExpectations.ts:121 are the single named description of the gatekeeper, and no code or doc refers to an is_indexed column
 - [ ] aiReadability is the one function every AI door calls, with a test asserting each door calls it
+
+**Partial (2026-10-01, intelligence Round G).** The ask route's part. Its retrieval filter now genuinely folds in the AI boundary: every mirror's controlled document is judged by `aiReadability` (`lib/aiBoundary.ts`: held back, not current, no current file) at query time, and the comment names what it filters ("the per-asker ACL set, plus controlled documents the AI may not read"). `docs/ARCHITECTURE.md` names the ask route among the enforcement points. Tests: `askRouteUnits.test.ts` "KACL-9 — the AI boundary is documents.ai_excluded (aiReadability); the ask route calls it at retrieval" (the call and the comment; and "no code or doc names an is_indexed gatekeeper" over `lib/aiBoundary.ts`, `lib/schemaExpectations.ts`, `docs/ARCHITECTURE.md` and the route — a repo-wide search outside `audit-reports/` finds no `is_indexed` either); `askRouteAcl.test.ts` "KACL-10 — …".
+
+**Done-when.**
+1. ✓ The filter genuinely folds in `ai_excluded` (through `aiReadability`), and the comment says so.
+2. ✓ No code or doc refers to an `is_indexed` column; `docs/ARCHITECTURE.md` and `lib/schemaExpectations.ts` describe the gatekeeper.
+3. ✗ Partly. The ask route, the knowledge sync and `flows/browse` call `aiReadability`; the orchestrator's tools (`lib/orchestrator/tools.ts`) and the link proposer (`lib/linkProposerServer.ts`) still test `ai_excluded` directly, and drawing / locate are I-07's. One function at every door, with a test per door, needs those owners.
+
+**Scope / residual.** OPEN on done-when 3 (the other doors' owners).
 
 ---
 
@@ -383,6 +444,17 @@ exclusion/route.ts:5-11 — "The hole was TIMING. A document that had already be
 - [ ] The ask route (and drawing/locate) fold documents.ai_excluded into excludedDocIds at query time, so a held-back document is never retrievable even if a mirror exists
 - [ ] The exclusion flip and syncKnowledgeLibrarySources cannot interleave (re-read the flag inside the insert loop, or re-run the purge after the sync, or take a per-library advisory lock)
 - [ ] An errored ai_excluded read in knowledgeSourceSync fails closed for that pass rather than mirroring everything
+
+**Partial (2026-10-01, intelligence Round G).** The ask route's half. Reproduced first (DEC-29): with the base route (`4dd0df7`) swapped back in, 53 of the 92 cases in the new `lib/__tests__/askRouteAcl.test.ts`, `askRouteHonesty.test.ts` and `askRouteUnits.test.ts` fail — every case named below as a reproduction among them — and the REGRESSION pin (an org under its cap, agreement signed, key saved: the same answer, citations, memory row and one metering row) passes on both. The AI boundary is checked at query time: before any search, every mirror's controlled document is read (`documents`: `ai_excluded`, `status`, `archived_at`, `current_version_id`, org-scoped, in slices of 100, paged) and judged by `aiReadability`; a mirror whose document is held back, superseded / void / archived, or has no current file joins the exclusion set for everyone, controllers included, whatever a racing sync left in place. A `documents` read that errors excludes every mirror. Legends pass the same check (`KACL-8`). So the race below can no longer put a held-back document in front of the ask route's model.
+
+Tests: `askRouteAcl.test.ts` "KACL-10 — the AI boundary holds at query time, whatever a racing sync left behind" (held back, superseded, archived, no current file — each "reproduction → fix …"; the control; "a documents read that errors excludes every mirror (closed), never admits them").
+
+**Done-when.**
+1. Partly. ✓ The ask route folds the boundary into its exclusion set at query time. ✗ drawing / locate (`app/api/knowledge/drawing`, `app/api/knowledge/locate`) are I-07's files.
+2. ✗ The exclusion flip and `syncKnowledgeLibrarySources` can still interleave (`lib/knowledgeSourceSync.ts`, `app/api/knowledge/exclusion`) — not this package's files; the ask route no longer depends on who wins.
+3. ✗ `knowledgeSourceSync` still ignores an errored `ai_excluded` read (`if (!error) …`) — the sync's owner.
+
+**Scope / residual.** OPEN on the sync race, the sync's fail-open read, and the drawing / locate doors.
 
 ---
 
