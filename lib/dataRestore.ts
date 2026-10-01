@@ -162,14 +162,19 @@ export const ORG_LESS_RESTORE_PARENTS: Readonly<Record<string, { column: string;
 };
 
 /** One foreign key a restored row must honour inside the target workspace:
- *  `column` names an `id` of `parent`. */
-export interface RestoreParentRule { column: string; parent: string }
+ *  `column` names an `id` of `parent`. `clearWhenMissing`: the pointer is
+ *  CLEARED (and reported) instead of the row being refused when its parent is
+ *  not a row of this workspace — only for a nullable ON DELETE SET NULL
+ *  pointer that confers no access and places the row under no ACL, so a
+ *  cleared one never widens who can see or do anything (fix pass 2). */
+export interface RestoreParentRule { column: string; parent: string; clearWhenMissing?: true }
 
-/** "column>parent column>parent …" → rules (the parent key is always `id`). */
+/** "column>parent column>parent? …" → rules (the parent key is always `id`;
+ *  a trailing `?` marks a pointer that is cleared rather than refused). */
 function fkRules(spec: string): ReadonlyArray<RestoreParentRule> {
   return spec.split(/\s+/).filter(Boolean).map((pair) => {
-    const [column, parent] = pair.split(">");
-    return { column, parent };
+    const [column, target] = pair.split(">");
+    return target.endsWith("?") ? { column, parent: target.slice(0, -1), clearWhenMissing: true as const } : { column, parent: target };
   });
 }
 
@@ -181,8 +186,9 @@ function fkRules(spec: string): ReadonlyArray<RestoreParentRule> {
  *  FK order restores parents first); a self-reference may also name a row of
  *  the same chunk whose id is new to the deployment. Any other row is refused
  *  (`parent_outside_workspace`) and never written — a team_members row naming
- *  another tenant's team, a checkout episode on another tenant's document. An
- *  unreadable parent table fails the chunk closed.
+ *  another tenant's team, a checkout episode on another tenant's document —
+ *  except that a `clearWhenMissing` pointer (marked `?`) is cleared instead
+ *  and the row lands. An unreadable parent table fails the chunk closed.
  *  lib/__tests__/dataRestore.test.ts derives every foreign key from
  *  supabase/ and fails when one to an org-scoped parent has no rule here, or
  *  one to a parent with no org_id is not waived in RESTORE_FK_PARENT_WAIVERS. */
@@ -225,7 +231,11 @@ export const RESTORE_PARENT_RULES: Readonly<Record<string, ReadonlyArray<Restore
   knowledge_page_entities: fkRules("library_id>knowledge_libraries document_id>knowledge_documents"),
   knowledge_questions: fkRules("library_id>knowledge_libraries"),
   knowledge_sources: fkRules("library_id>knowledge_libraries"),
-  libraries: fkRules("owner_team_id>teams"),
+  // An owner team makes its supervisor the library's effective owner
+  // (lib/ownership.ts); without it ownership falls to the org's controllers
+  // (narrower) — cleared, so one refused team never refuses its libraries,
+  // their documents and their versions.
+  libraries: fkRules("owner_team_id>teams?"),
   library_numbering: fkRules("library_id>libraries"),
   library_views: fkRules("library_id>libraries"),
   markup_requests: fkRules("project_id>projects document_id>documents"),
@@ -241,7 +251,9 @@ export const RESTORE_PARENT_RULES: Readonly<Record<string, ReadonlyArray<Restore
   project_documents: fkRules("project_id>projects document_id>documents"),
   project_members: fkRules("project_id>projects"),
   project_parties: fkRules("project_id>projects company_id>companies"),
-  projects: fkRules("sow_document_id>documents"),
+  // The scope-of-work pointer carries no access — cleared, so one refused
+  // document never refuses its project and everything under it.
+  projects: fkRules("sow_document_id>documents?"),
   proposed_links: fkRules("document_id>documents target_document_id>documents"),
   punch_items: fkRules("project_id>projects party_id>project_parties"),
   recently_viewed_docs: fkRules("document_id>documents"),
@@ -262,7 +274,40 @@ export const RESTORE_PARENT_RULES: Readonly<Record<string, ReadonlyArray<Restore
  *  every such parent). */
 export const RESTORE_FK_PARENT_WAIVERS: Readonly<Record<string, string>> = {
   orgs: "the org_id column itself — forced to the target workspace by bindRestoredRow",
-  users: "a person's uid (teams.created_by, team_members.uid / added_by), not a workspace's row — remapped by the email reconciliation; the membership row itself is bounded by its team_id (checked)",
+  users: "a person's profile, not a workspace's row, so no workspace check applies; the uid is remapped by the email reconciliation, and RESTORE_USER_REFERENCES reads users for every uid these columns name — a restored placeholder has NO users row (users.id references auth.users), so it is cleared from a nullable column and refuses a team membership (person_not_restored). The membership row itself is bounded by its team_id (checked)",
+};
+
+/** Foreign keys of restorable tables onto `users` — a person's profile row,
+ *  which exists only for a sign-in account (users.id REFERENCES auth.users).
+ *  A restored placeholder (an email this workspace has no member for) is
+ *  minted with a fresh uid that is no sign-in account, so /begin cannot give
+ *  it a users row and the database would refuse every row naming it (23503).
+ *  The restore reads `users` for every uid these columns name before the
+ *  write: a uid with no profile is CLEARED from a nullable column (the row
+ *  lands; reported) and REFUSES the row when the column is required (a team
+ *  membership needs the person; reported as person_not_restored).
+ *  lib/__tests__/dataRestore.test.ts derives every foreign key onto users from
+ *  supabase/ and fails when one is missing here or `required` disagrees with
+ *  the column's NOT NULL. */
+export const RESTORE_USER_REFERENCES: Readonly<Record<string, ReadonlyArray<{ column: string; required: boolean }>>> = {
+  teams: [{ column: "created_by", required: false }],
+  team_members: [{ column: "uid", required: true }, { column: "added_by", required: false }],
+};
+
+/** The users-FK columns `table`'s restored rows carry. */
+export function restoreUserReferencesFor(table: string): ReadonlyArray<{ column: string; required: boolean }> {
+  return has(RESTORE_USER_REFERENCES, table) ? RESTORE_USER_REFERENCES[table] : [];
+}
+
+/** Columns the database COMPUTES (GENERATED ALWAYS … STORED). Postgres
+ *  refuses any non-DEFAULT value for one (428C9 — not a row-level code, so it
+ *  would stop the run), and the export carries them (select("*")). A restored
+ *  row never sends one: the database recomputes it from the row.
+ *  lib/__tests__/dataRestore.test.ts censuses supabase/ for GENERATED ALWAYS
+ *  columns and fails when a restorable table's is missing here. */
+export const RESTORE_GENERATED_COLUMNS: Readonly<Record<string, readonly string[]>> = {
+  knowledge_chunks: ["tsv"],                // 20261007_rag_hardening.sql
+  knowledge_questions: ["search_tsv"],      // 20260806 / 20261123
 };
 
 /** The parent rules `table`'s restored rows must honour. */
@@ -324,15 +369,23 @@ export function bindRestoredRow(table: string, row: Record<string, unknown>, org
   return { ...row, org_id: orgId };
 }
 
-/** admin-and-org BKP-11 (restore half): a restored export destination lands
- *  INERT whatever the backup row carries — disabled, with no next run (the
- *  scheduler selects only enabled rows with a due next_run_at) and with every
- *  credential column null, even when the row omits the keys (scrubRestoredRow
- *  only sees the columns a row carries). An Admin re-enters credentials and
- *  re-saves the schedule before it can fire again. Returns a new object. */
+/** How a restored row lands. admin-and-org BKP-11 (restore half): a
+ *  restored export destination lands INERT whatever the backup row carries —
+ *  disabled, with no next run (the scheduler selects only enabled rows with a
+ *  due next_run_at) and with every credential column null, even when the row
+ *  omits the keys (scrubRestoredRow only sees the columns a row carries). An
+ *  Admin re-enters credentials and re-saves the schedule before it can fire
+ *  again. BKP-5 (fix pass 2): a column the database computes
+ *  (RESTORE_GENERATED_COLUMNS) is left out, so the database recomputes it.
+ *  Returns a new object when it changes anything. */
 export function landRestoredRow(table: string, row: Record<string, unknown>): Record<string, unknown> {
-  if (table !== "export_destinations") return row;
-  const out: Record<string, unknown> = { ...row, enabled: false, next_run_at: null };
+  let out = row;
+  if (has(RESTORE_GENERATED_COLUMNS, table) && RESTORE_GENERATED_COLUMNS[table].some((c) => has(row, c))) {
+    out = { ...row };
+    for (const c of RESTORE_GENERATED_COLUMNS[table]) delete out[c];
+  }
+  if (table !== "export_destinations") return out;
+  out = { ...out, enabled: false, next_run_at: null };
   for (const c of redactedColumnsFor(table)) out[c] = null;
   return out;
 }
@@ -562,6 +615,35 @@ export function remapOrgPath(value: string, orgPairs: Array<[string, string]>): 
   return s;
 }
 
+// ORG-1 (fix pass 2): a storage key names the workspace that owns the object
+// ("orgs/<org uuid>/…"). remapOrgPath moves the BACKUP org's prefix to the
+// target; any other org's prefix left in a restored row would name another
+// tenant's object, and readers that resolve a stored key with the service
+// role (lib/docFileServer.ts serves document_versions.file_url) do not check
+// the prefix. Such a row is refused.
+const STORAGE_ORG_PREFIX = /(?:^|[^0-9a-z])orgs\/([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})\//gi;
+
+/** The first string in `value` (top level or deep inside JSONB) carrying a
+ *  storage key under an org prefix other than `orgId`'s, or null. Pure. */
+export function foreignStorageKey(value: unknown, orgId: string): { org: string; value: string } | null {
+  const mine = orgId.toLowerCase();
+  if (typeof value === "string") {
+    if (!value.includes("orgs/")) return null;
+    for (const m of value.matchAll(STORAGE_ORG_PREFIX)) {
+      if (m[1].toLowerCase() !== mine) return { org: m[1].toLowerCase(), value };
+    }
+    return null;
+  }
+  if (Array.isArray(value)) {
+    for (const v of value) { const hit = foreignStorageKey(v, orgId); if (hit) return hit; }
+    return null;
+  }
+  if (value && typeof value === "object") {
+    for (const v of Object.values(value as Record<string, unknown>)) { const hit = foreignStorageKey(v, orgId); if (hit) return hit; }
+  }
+  return null;
+}
+
 function deepRemapValues(value: unknown, uidMap: Record<string, string>, orgPairs: Array<[string, string]>): unknown {
   if (typeof value === "string") {
     const mapped = has(uidMap, value) ? uidMap[value] : undefined;
@@ -736,6 +818,19 @@ export function mergeNewUserUids(
   return { orgId: { ...idRemap.orgId }, uid: { ...idRemap.uid, ...created } };
 }
 
+/** Give a restored placeholder its profile row, if the database lets it.
+ *  False when it refuses — always, for a fresh uid that is no sign-in account
+ *  (users.id references auth.users) — or the call fails: both restore routes
+ *  count and report it (fix pass 2; it was swallowed). */
+export async function placeholderProfile(sb: Pick<SupabaseClient, "from">, uid: string, email: string, displayName?: string | null): Promise<boolean> {
+  try {
+    const { error } = await sb.from("users").upsert({ id: uid, email, display_name: displayName ?? null });
+    return !error;
+  } catch {
+    return false;
+  }
+}
+
 // ── The shared restore write (ORG-1 / BKP-3 Done-when 2) ─────────────────
 // ONE function writes a slice of one table for BOTH restore routes — the
 // chunked /apply-table the UI uses and the single-shot /apply — so the two
@@ -771,8 +866,13 @@ export interface RestoreChunkResult {
    *  "unknown", never assumed written. */
   uncounted: number;
   /** Rows not written, each with its reason (a database refusal of that single
-   *  row, or a parent that is not a row of this workspace). */
+   *  row, a parent that is not a row of this workspace, a person with no
+   *  sign-in account, a storage key under another workspace's prefix). */
   refused: RestoreRowRefusal[];
+  /** Rows WRITTEN with one nullable pointer cleared, each with the column and
+   *  why (a person with no sign-in account; an owner team or SOW document
+   *  that is not a row of this workspace). */
+  cleared: RestoreRowRefusal[];
   /** Rows left after the restore's own filters (comments of a ticket archived
    *  since the backup are dropped). */
   rowsAfterFilters: number;
@@ -814,6 +914,8 @@ export function restoreRefusalLabel(code: string): string {
     case "23514": return "refused by a database check";
     case "23502": return "a required value is missing";
     case "23P01": return "overlaps an existing row";
+    case "person_not_restored": return "names a person with no sign-in account yet (a restored placeholder) — re-invite them";
+    case "storage_key_outside_workspace": return "carries a storage key under another workspace's prefix";
     default: return code;
   }
 }
@@ -841,6 +943,14 @@ async function idsTaken(sb: RestoreDb, table: string, ids: string[]): Promise<{ 
 }
 
 const KEY_PAGE = 1000;
+
+/** BKP-12 (fix pass 2): the most write statements one restore request spends
+ *  isolating rows the database refuses. Bisection costs ~2·k·log2(n/k)
+ *  statements for k refused rows of n, so a chunk where EVERY row is refused
+ *  (a NOT NULL column the backup lacks) would cost 2n-1; past this budget the
+ *  rows of a refused statement are reported refused together, with the
+ *  database's code and message, and a re-run retries them. */
+export const RESTORE_BISECT_MAX_STATEMENTS = 100;
 
 /** BKP-5 (fix pass): where the rows' keys are held now — by a row of THIS
  *  workspace, or by a row of another workspace on the same deployment.
@@ -900,13 +1010,21 @@ async function locateRestoreKeys(
  *  `status` / `error` when `ok` is false. Order of rules:
  *    1. the table must be on the backup contract and not reconciled / append-only;
  *    2. every row is remapped (uids, org paths, bearer scrub), bound to `orgId`
- *       and landed inert where the table requires it (export destinations);
+ *       and landed (export destinations inert; computed columns left out);
  *    3. comments of a ticket archived since the backup are dropped;
- *    4. every foreign key to an org-scoped table must name a row of this
- *       workspace (RESTORE_PARENT_RULES) — an org-less row's bounding parent
- *       is required;
+ *    4. before the write, each row is checked for what it carries, whom it
+ *       names and what it points at: a storage key under another workspace's
+ *       prefix refuses it; a person with no sign-in account (users) refuses a
+ *       required column and is cleared from a nullable one
+ *       (RESTORE_USER_REFERENCES); every foreign key to an org-scoped table
+ *       must name a row of this workspace (RESTORE_PARENT_RULES — an org-less
+ *       row's bounding parent is required; a `clearWhenMissing` pointer is
+ *       cleared instead). A row these rules would refuse or clear whose key is
+ *       already held — here or by another workspace — is never written either
+ *       way, so it is counted as existing / held elsewhere, not refused;
  *    5. upsert on the table's real conflict target; a statement refused for
- *       one row's sake (ROW_LEVEL_SQLSTATES) is bisected to that row;
+ *       one row's sake (ROW_LEVEL_SQLSTATES) is bisected to that row, within
+ *       RESTORE_BISECT_MAX_STATEMENTS per request;
  *    6. skipped keys are split into kept-here and held-by-another-workspace. */
 export async function applyRestoreChunk(
   sb: RestoreDb,
@@ -914,11 +1032,12 @@ export async function applyRestoreChunk(
 ): Promise<RestoreChunkResult> {
   const { orgId, table, idRemap } = params;
   const refused: RestoreRowRefusal[] = [];
+  const cleared: RestoreRowRefusal[] = [];
   let existing = 0;
   let heldElsewhere = 0;
   let uncounted = 0;
   const fail = (status: number, error: string, inserted = 0, rowsAfterFilters = 0, code?: string | null): RestoreChunkResult =>
-    ({ ok: false, status, error, ...(code ? { code: String(code) } : {}), inserted, existing, heldElsewhere, uncounted, refused, rowsAfterFilters, filtered: params.rows.length - rowsAfterFilters });
+    ({ ok: false, status, error, ...(code ? { code: String(code) } : {}), inserted, existing, heldElsewhere, uncounted, refused, cleared, rowsAfterFilters, filtered: params.rows.length - rowsAfterFilters });
 
   const refusal = restoreTableRefusal(table);
   if (refusal) return fail(400, refusal, 0, params.rows.length);
@@ -942,14 +1061,68 @@ export async function applyRestoreChunk(
   }
   const rowsAfterFilters = mapped.length;
 
-  // ORG-1 / BKP-3: a restored row is bounded by what it POINTS AT, not only
-  // by its org. Every parent a row names through a foreign key is read in
+  // ── 4. Before the write: what a row carries, whom it names, what it points at.
+  // A rule that cannot read what it needs fails the chunk closed — nothing is
+  // written on a guess.
+  const label = (r: Record<string, unknown>) => restoreRowLabel(table, r);
+  /** Refusals that do not depend on other rows of the chunk (reported after
+   *  a parent refusal of the same row: the workspace boundary comes first). */
+  const storageRefusal = new Map<Record<string, unknown>, RestoreRowRefusal>();
+  const personRefusal = new Map<Record<string, unknown>, RestoreRowRefusal>();
+  /** Nullable columns to clear on a row that is written, with the note. */
+  const clears = new Map<Record<string, unknown>, Array<{ column: string; note: RestoreRowRefusal }>>();
+  const addClear = (r: Record<string, unknown>, column: string, code: string, message: string) => {
+    if (!clears.has(r)) clears.set(r, []);
+    clears.get(r)!.push({ column, note: { id: label(r), code, message } });
+  };
+
+  // (a) ORG-1 (fix pass 2): a storage key under another workspace's prefix.
+  for (const r of mapped) {
+    const hit = foreignStorageKey(r, orgId);
+    if (hit) {
+      storageRefusal.set(r, {
+        id: label(r), code: "storage_key_outside_workspace",
+        message: `carries the storage key "${hit.value.length > 160 ? `${hit.value.slice(0, 160)}…` : hit.value}" under another workspace's prefix (orgs/${hit.org}/)`,
+      });
+    }
+  }
+
+  // (b) BKP-5 (fix pass 2): a person with no sign-in account. A restored
+  // placeholder has no users row (users.id references auth.users), so the
+  // database would refuse every row naming it.
+  const userRefs = restoreUserReferencesFor(table);
+  if (userRefs.length && mapped.length) {
+    const uids = new Set<string>();
+    for (const r of mapped) for (const ref of userRefs) { const v = r[ref.column]; if (typeof v === "string" && v) uids.add(v); }
+    const profiles = await idsTaken(sb, "users", Array.from(uids));
+    if (!profiles.ok) return fail(500, `Could not check the people these ${table} rows name: ${profiles.error}`, 0, rowsAfterFilters);
+    for (const r of mapped) {
+      for (const ref of userRefs) {
+        const v = r[ref.column];
+        if (typeof v !== "string" || !v || profiles.ids.has(v)) continue;
+        if (ref.required) {
+          personRefusal.set(r, {
+            id: label(r), code: "person_not_restored",
+            message: `${ref.column} ${v} has no sign-in account on this deployment (a restored placeholder) — re-invite the person, then add them again`,
+          });
+          clears.delete(r);
+          break;
+        }
+        addClear(r, ref.column, "person_not_restored", `${ref.column} ${v} cleared: no sign-in account on this deployment (a restored placeholder)`);
+      }
+    }
+  }
+
+  // (c) ORG-1 / BKP-3: a restored row is bounded by what it POINTS AT, not
+  // only by its org. Every parent a row names through a foreign key is read in
   // THIS workspace (FK order restores parents first); a row naming one that
   // is elsewhere — or missing — is refused, never written. An org-less row's
-  // bounding parent is required (BKP-3 Done-when 3).
+  // bounding parent is required (BKP-3 Done-when 3). A `clearWhenMissing`
+  // pointer is cleared instead of refusing the row.
   const rules = restoreParentRulesFor(table);
+  const inWorkspace = new Map<string, Set<string>>();
+  const newHere = new Set<string>();
   if (rules.length && mapped.length) {
-    const bound = has(ORG_LESS_RESTORE_PARENTS, table) ? ORG_LESS_RESTORE_PARENTS[table] : null;
     const wanted = new Map<string, Set<string>>();
     for (const r of mapped) {
       for (const rule of rules) {
@@ -959,7 +1132,6 @@ export async function applyRestoreChunk(
         wanted.get(rule.parent)!.add(v);
       }
     }
-    const inWorkspace = new Map<string, Set<string>>();
     for (const [parent, ids] of wanted) {
       const res = await idsInWorkspace(sb, parent, orgId, Array.from(ids));
       if (!res.ok) return fail(500, `Could not check the ${parent} rows these ${table} rows belong to: ${res.error}`, 0, rowsAfterFilters);
@@ -969,7 +1141,6 @@ export async function applyRestoreChunk(
     // parents-first): it counts once that id is new to the deployment — an id
     // another workspace holds is skipped by the write, and a child naming it
     // would point there.
-    const newHere = new Set<string>();
     const selfIds = wanted.get(table);
     if (selfIds) {
       const chunkIds = new Set(mapped.map((r) => r.id).filter((v): v is string => typeof v === "string"));
@@ -981,39 +1152,82 @@ export async function applyRestoreChunk(
         for (const id of candidates) if (!taken.ids.has(id)) newHere.add(id);
       }
     }
-    const outside = (r: Record<string, unknown>): RestoreRowRefusal | null => {
-      for (const rule of rules) {
-        const v = r[rule.column];
-        const required = bound !== null && bound.column === rule.column;
-        if ((v === null || v === undefined) && !required) continue;
-        if (typeof v === "string" && (inWorkspace.get(rule.parent)?.has(v) || (rule.parent === table && newHere.has(v)))) continue;
-        return {
-          id: restoreRowLabel(table, r),
-          code: "parent_outside_workspace",
-          message: `${rule.column} ${typeof v === "string" ? v : "(none)"} is not a ${rule.parent} row of this workspace`,
-        };
-      }
-      return null;
-    };
-    // To a fixed point: a refused row's id no longer counts as a parent here.
-    for (let changed = true; changed;) {
-      changed = false;
-      mapped = mapped.filter((r) => {
-        const why = outside(r);
-        if (!why) return true;
-        refused.push(why);
-        if (typeof r.id === "string" && newHere.delete(r.id)) changed = true;
-        return false;
-      });
+  }
+  const bound = has(ORG_LESS_RESTORE_PARENTS, table) ? ORG_LESS_RESTORE_PARENTS[table] : null;
+  const parentHere = (rule: RestoreParentRule, v: unknown) =>
+    typeof v === "string" && (inWorkspace.get(rule.parent)?.has(v) || (rule.parent === table && newHere.has(v)));
+  const outside = (r: Record<string, unknown>): RestoreRowRefusal | null => {
+    const storage = storageRefusal.get(r);
+    if (storage) return storage;
+    for (const rule of rules) {
+      if (rule.clearWhenMissing) continue;
+      const v = r[rule.column];
+      const required = bound !== null && bound.column === rule.column;
+      if ((v === null || v === undefined) && !required) continue;
+      if (parentHere(rule, v)) continue;
+      return {
+        id: label(r),
+        code: "parent_outside_workspace",
+        message: `${rule.column} ${typeof v === "string" ? v : "(none)"} is not a ${rule.parent} row of this workspace`,
+      };
+    }
+    return personRefusal.get(r) ?? null;
+  };
+  // To a fixed point: a refused row's id no longer counts as a parent here.
+  const refusedRows: Array<{ row: Record<string, unknown>; why: RestoreRowRefusal }> = [];
+  for (let changed = true; changed;) {
+    changed = false;
+    mapped = mapped.filter((r) => {
+      const why = outside(r);
+      if (!why) return true;
+      refusedRows.push({ row: r, why });
+      if (typeof r.id === "string" && newHere.delete(r.id)) changed = true;
+      return false;
+    });
+  }
+  for (const r of mapped) {
+    for (const rule of rules) {
+      if (!rule.clearWhenMissing) continue;
+      const v = r[rule.column];
+      if (v === null || v === undefined || parentHere(rule, v)) continue;
+      addClear(r, rule.column, "parent_outside_workspace", `${rule.column} ${typeof v === "string" ? v : String(v)} cleared: not a ${rule.parent} row of this workspace`);
     }
   }
+
+  // A row refused or cleared above whose key is already held is never
+  // written either way: kept here (existing) or held by another workspace —
+  // counted as such, never reported as refused. When the keys cannot be read
+  // the refusals stand (each is true of the row as it was sent).
+  const flagged = [...refusedRows.map((x) => x.row), ...mapped.filter((r) => clears.has(r))];
+  const settled = new Set<Record<string, unknown>>();
+  if (flagged.length) {
+    const where = await locateRestoreKeys(sb, table, orgId, flagged);
+    if (where.ok) {
+      for (const r of flagged) {
+        const k = restoreKeyOf(table, r);
+        if (k === null) continue;
+        if (where.here.has(k)) { existing++; settled.add(r); }
+        else if (where.elsewhere.has(k)) { heldElsewhere++; settled.add(r); }
+      }
+    }
+  }
+  for (const { row, why } of refusedRows) if (!settled.has(row)) refused.push(why);
+  mapped = mapped.filter((r) => !settled.has(r)).map((r) => {
+    const list = clears.get(r);
+    if (!list) return r;
+    const out = { ...r };
+    for (const { column, note } of list) { out[column] = null; cleared.push(note); }
+    return out;
+  });
 
   // BKP-12: the upsert's own refusal is the answer. There is no plain-insert
   // retry of a chunk the upsert already rejected — every conflict target is a
   // real key (census test). A refusal about ONE row (ROW_LEVEL_SQLSTATES) is
-  // bisected down to that row, which is reported; anything else stops here.
+  // bisected down to that row, which is reported, within a statement budget;
+  // anything else stops here.
   let inserted = 0;
   let skipped = 0;
+  let bisectLeft = RESTORE_BISECT_MAX_STATEMENTS;
   const skippedPool: Array<Record<string, unknown>> = [];
   const write = async (rows: Array<Record<string, unknown>>): Promise<{ error: string; code: string } | null> => {
     const up = await sb.from(table).upsert(rows, { onConflict: conflictTargetFor(table), ignoreDuplicates: true, count: "exact" });
@@ -1028,9 +1242,19 @@ export async function applyRestoreChunk(
     const code = String(up.error.code ?? "");
     if (!ROW_LEVEL_SQLSTATES.has(code)) return { error: up.error.message, code };
     if (rows.length === 1) {
-      refused.push({ id: restoreRowLabel(table, rows[0]), code, message: up.error.message });
+      refused.push({ id: label(rows[0]), code, message: up.error.message });
       return null;
     }
+    if (bisectLeft < 2) {
+      for (const r of rows) {
+        refused.push({
+          id: label(r), code,
+          message: `${up.error.message} — refused with the ${rows.length} row(s) of one statement: this request stopped isolating rows after ${RESTORE_BISECT_MAX_STATEMENTS} statements; run the restore again to retry them`,
+        });
+      }
+      return null;
+    }
+    bisectLeft -= 2;
     const mid = Math.ceil(rows.length / 2);
     return (await write(rows.slice(0, mid))) ?? write(rows.slice(mid));
   };
@@ -1055,7 +1279,7 @@ export async function applyRestoreChunk(
     }
   }
   await settleSkipped();
-  return { ok: true, inserted, existing, heldElsewhere, uncounted, refused, rowsAfterFilters, filtered: params.rows.length - rowsAfterFilters };
+  return { ok: true, inserted, existing, heldElsewhere, uncounted, refused, cleared, rowsAfterFilters, filtered: params.rows.length - rowsAfterFilters };
 }
 
 /** BKP-5: what a restore of these rows WOULD do, read-only — how many already
@@ -1065,8 +1289,10 @@ export async function applyRestoreChunk(
  *  are remapped and bound to the workspace exactly as the write does, so a
  *  composite key that carries an org or a user is compared as it would be
  *  written. It does not apply the write's other rules (archived-ticket
- *  comments, parents outside the workspace, a second unique key): their
- *  outcome is reported per row after the apply. */
+ *  comments, parents outside the workspace, a person with no sign-in
+ *  account, a foreign storage key, a second unique key): their outcome is
+ *  reported per row after the apply. The route records every call
+ *  (RESTORE_PREVIEW) — the check reads deployment-wide. */
 export interface RestorePreviewResult {
   ok: boolean;
   status?: number;
@@ -1139,6 +1365,8 @@ export interface RestoreTableOutcome {
   /** Dropped by a restore rule (comments of a ticket archived since the backup). */
   filtered: number;
   refused: RestoreRowRefusal[];
+  /** Written with one nullable pointer cleared (see RestoreChunkResult.cleared). */
+  cleared: RestoreRowRefusal[];
   error?: string;
 }
 
@@ -1147,12 +1375,16 @@ export interface ChunkedRestoreResult {
   idRemap: RestorePlan["idRemap"];
   createdUsers: number;
   linkedUsers: number;
+  /** Placeholders /begin could give no profile row (no sign-in account yet):
+   *  rows that must name a profile cannot name them (RESTORE_USER_REFERENCES). */
+  placeholdersWithoutProfile: number;
   totalInserted: number;
   totalExisting: number;
   totalHeldElsewhere: number;
   totalUncounted: number;
   totalFiltered: number;
   totalRefused: number;
+  totalCleared: number;
   tables: RestoreTableOutcome[];
   /** BKP-5 Done-when 2: the table the restore STOPPED at (tables are
    *  FK-ordered, so nothing after it was attempted), and why. */
@@ -1192,6 +1424,7 @@ export async function previewChunkedRestore(params: {
   const { orgId, envelope, plan, post } = params;
   const order = restoreOrder(plan);
   const rowsTotal = order.reduce((s, t) => s + tableRows(envelope, t).length, 0);
+  const manifest = { orgId: envelope.manifest.orgId, orgName: envelope.manifest.orgName };
   const out: ChunkedRestorePreview = { tables: {}, existing: 0, heldElsewhere: 0, wouldInsert: 0 };
   let rowsDone = 0;
   for (const [tablesDone, table] of order.entries()) {
@@ -1200,7 +1433,7 @@ export async function previewChunkedRestore(params: {
     for (let i = 0; i < rows.length; i += RESTORE_CHUNK_ROWS) {
       params.onProgress?.({ phase: "checking", currentTable: table, rowsDone, rowsTotal, tablesDone, tablesTotal: order.length });
       const chunk = rows.slice(i, i + RESTORE_CHUNK_ROWS).map((r) => keyProjection(table, r));
-      const res = await post(`/api/admin/restore/apply-table?orgId=${encodeURIComponent(orgId)}`, { table, rows: chunk, idRemap: plan.idRemap, preview: true });
+      const res = await post(`/api/admin/restore/apply-table?orgId=${encodeURIComponent(orgId)}`, { table, rows: chunk, idRemap: plan.idRemap, preview: true, manifest });
       if (!res.ok) throw new Error(`Could not check ${table} against this workspace: ${String(res.body?.error ?? `HTTP ${res.status}`)}`);
       acc.rows += num(res.body?.rows);
       acc.existing += num(res.body?.existing);
@@ -1242,13 +1475,14 @@ export async function runChunkedRestore(params: {
 
   const result: ChunkedRestoreResult = {
     idRemap, createdUsers: num(begin.body?.createdUsers), linkedUsers: num(begin.body?.linkedUsers),
-    totalInserted: 0, totalExisting: 0, totalHeldElsewhere: 0, totalUncounted: 0, totalFiltered: 0, totalRefused: 0,
+    placeholdersWithoutProfile: num(begin.body?.placeholdersWithoutProfile),
+    totalInserted: 0, totalExisting: 0, totalHeldElsewhere: 0, totalUncounted: 0, totalFiltered: 0, totalRefused: 0, totalCleared: 0,
     tables: [], stoppedAt: null, notAttempted: [],
   };
   let rowsDone = 0;
   for (const [tablesDone, table] of order.entries()) {
     const rows = tableRows(envelope, table);
-    const t: RestoreTableOutcome = { name: table, rows: rows.length, inserted: 0, existing: 0, heldElsewhere: 0, uncounted: 0, filtered: 0, refused: [] };
+    const t: RestoreTableOutcome = { name: table, rows: rows.length, inserted: 0, existing: 0, heldElsewhere: 0, uncounted: 0, filtered: 0, refused: [], cleared: [] };
     for (let i = 0; i < rows.length; i += RESTORE_CHUNK_ROWS) {
       params.onProgress?.({ phase: "tables", currentTable: table, rowsDone, rowsTotal, tablesDone, tablesTotal: order.length });
       const chunk = rows.slice(i, i + RESTORE_CHUNK_ROWS);
@@ -1268,6 +1502,7 @@ export async function runChunkedRestore(params: {
       t.uncounted += num(res.body?.uncounted);
       t.filtered += num(res.body?.filtered);
       if (Array.isArray(res.body?.refused)) t.refused.push(...(res.body.refused as RestoreRowRefusal[]));
+      if (Array.isArray(res.body?.cleared)) t.cleared.push(...(res.body.cleared as RestoreRowRefusal[]));
       if (!res.ok) { t.error = String(res.body?.error ?? `HTTP ${res.status}`); break; }
       rowsDone += chunk.length;
     }
@@ -1278,6 +1513,7 @@ export async function runChunkedRestore(params: {
     result.totalUncounted += t.uncounted;
     result.totalFiltered += t.filtered;
     result.totalRefused += t.refused.length;
+    result.totalCleared += t.cleared.length;
     if (t.error) {
       result.stoppedAt = { table, error: t.error };
       result.notAttempted = order.slice(order.indexOf(table) + 1);

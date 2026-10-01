@@ -16,7 +16,7 @@
 
 import { NextRequest, NextResponse } from "next/server";
 import { authorizeOrgRole } from "@/lib/serverAuth";
-import { planRestore, mergeNewUserUids, type CurrentMember, restoredMemberRoles, restoredMemberHeadline } from "@/lib/dataRestore";
+import { planRestore, mergeNewUserUids, placeholderProfile, type CurrentMember, restoredMemberRoles, restoredMemberHeadline } from "@/lib/dataRestore";
 
 export const runtime = "nodejs";
 
@@ -61,6 +61,7 @@ export async function POST(req: NextRequest) {
   // Restored placeholders for unknown emails (inactive — no seat, no auth).
   const created: Record<string, string> = {};
   let createdUsers = 0;
+  let placeholdersWithoutProfile = 0;
   for (const u of plan.users.filter((x) => x.disposition === "new" && x.oldUid)) {
     const newUid = globalThis.crypto?.randomUUID?.() || `restored-${u.oldUid}`;
     const { error } = await sb.from("org_members").insert({
@@ -70,7 +71,12 @@ export async function POST(req: NextRequest) {
       status: "inactive", display_name: u.displayName ?? null,
     });
     if (!error) {
-      try { await sb.from("users").upsert({ id: newUid, email: u.email, display_name: u.displayName ?? null }); } catch { /* profile best-effort */ }
+      // admin-and-org P1 (fix pass 2): a profile row exists only for a sign-in
+      // account (users.id references auth.users), so the database refuses it
+      // for a placeholder. Counted and reported, never swallowed: rows that
+      // must name a profile (a team membership) cannot name this person until
+      // they accept an invitation — the restore clears or refuses them.
+      if (!(await placeholderProfile(sb, newUid, u.email, u.displayName))) placeholdersWithoutProfile++;
       created[u.oldUid] = newUid;
       createdUsers++;
     }
@@ -92,6 +98,7 @@ export async function POST(req: NextRequest) {
       membersInBackup: members.length,
       linkedUsers: plan.counts.matchedUsers,
       createdUsers,
+      placeholdersWithoutProfile,
     },
   });
   if (auditErr) {
@@ -106,6 +113,12 @@ export async function POST(req: NextRequest) {
     idRemap,
     createdUsers,
     linkedUsers: plan.counts.matchedUsers,
-    warnings: plan.warnings,
+    placeholdersWithoutProfile,
+    warnings: [
+      ...plan.warnings,
+      ...(placeholdersWithoutProfile > 0
+        ? [`${placeholdersWithoutProfile} restored placeholder(s) have no sign-in account yet — a team membership naming one cannot be restored, and a team creator / adder naming one is cleared.`]
+        : []),
+    ],
   });
 }

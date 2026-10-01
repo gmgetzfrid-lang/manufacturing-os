@@ -496,15 +496,17 @@ export default function RestorePage() {
 }
 
 /** BKP-5: what the restore did, said plainly — never a green panel over a
- *  run that stopped, refused rows, wrote nothing, or met ids another
- *  workspace holds. */
+ *  run that stopped, refused rows, cleared pointers, wrote nothing, wrote
+ *  rows the server did not count, or met ids another workspace holds. */
 function RestoreResultPanel({ result }: { result: ChunkedRestoreResult }) {
   const stopped = result.stoppedAt;
-  const nothingNew = result.totalInserted === 0;
+  // An uncounted write is unknown — never "nothing new" (fix pass 2).
+  const nothingNew = result.totalInserted === 0 && result.totalUncounted === 0;
   const tone = stopped || result.totalHeldElsewhere > 0
     ? "border-red-200 bg-red-50 text-red-900"
-    : result.totalRefused > 0 || nothingNew ? "border-amber-200 bg-amber-50 text-amber-900" : "border-emerald-200 bg-emerald-50 text-emerald-900";
+    : result.totalRefused > 0 || result.totalCleared > 0 || result.totalUncounted > 0 || nothingNew ? "border-amber-200 bg-amber-50 text-amber-900" : "border-emerald-200 bg-emerald-50 text-emerald-900";
   const refusedByTable = result.tables.filter((t) => t.refused.length > 0);
+  const clearedByTable = result.tables.filter((t) => t.cleared.length > 0);
   const elsewhereByTable = result.tables.filter((t) => t.heldElsewhere > 0);
   return (
     <div className={`rounded-2xl border p-4 ${tone}`}>
@@ -517,7 +519,11 @@ function RestoreResultPanel({ result }: { result: ChunkedRestoreResult }) {
               ? <><AlertTriangle className="w-4 h-4" /> Nothing new was restored</>
               : result.totalRefused > 0
                 ? <><AlertTriangle className="w-4 h-4" /> Records restored — {fmtNum(result.totalRefused)} row(s) refused</>
-                : <><CheckCircle2 className="w-4 h-4" /> Records restored</>}
+                : result.totalUncounted > 0
+                  ? <><AlertTriangle className="w-4 h-4" /> Restored — {fmtNum(result.totalUncounted)} record(s) the server did not count</>
+                  : result.totalCleared > 0
+                    ? <><AlertTriangle className="w-4 h-4" /> Records restored — {fmtNum(result.totalCleared)} pointer(s) cleared</>
+                    : <><CheckCircle2 className="w-4 h-4" /> Records restored</>}
       </div>
       <div className="text-[11px] leading-relaxed space-y-1">
         <div>
@@ -547,6 +553,18 @@ function RestoreResultPanel({ result }: { result: ChunkedRestoreResult }) {
             {Array.from(new Set(t.refused.map((r) => restoreRefusalLabel(r.code)))).join("; ")} (see the audit log&apos;s RESTORE_CHUNK rows for each id).
           </div>
         ))}
+        {clearedByTable.map((t) => (
+          <div key={t.name}>
+            <span className="font-mono">{t.name}</span>: {t.cleared.length} row(s) restored with a pointer cleared —{" "}
+            {Array.from(new Set(t.cleared.map((r) => r.message.split(" ")[0]))).join(", ")} (
+            {Array.from(new Set(t.cleared.map((r) => restoreRefusalLabel(r.code)))).join("; ")}).
+          </div>
+        ))}
+        {result.placeholdersWithoutProfile > 0 && (
+          <div>
+            <b>{fmtNum(result.placeholdersWithoutProfile)}</b> restored placeholder(s) have no sign-in account yet, so a team membership naming one was not restored and a team creator / adder naming one was cleared — add them to their teams again once they accept the invitation.
+          </div>
+        )}
         <div>Restored users are inactive — re-invite them to grant access.</div>
       </div>
     </div>

@@ -11,7 +11,12 @@
 // holds (those rows cannot be restored here) and how many would be new, so
 // the page can show the counts BEFORE the admin applies. An apply answers the
 // same counts for what it did: inserted, existing (skipped — never
-// overwritten), heldElsewhere (not restored), uncounted, refused.
+// overwritten), heldElsewhere (not restored), uncounted, refused, cleared
+// (written with one nullable pointer cleared).
+//
+// The check reads deployment-wide (heldElsewhere says another workspace holds
+// a key), so EVERY check is recorded too: a RESTORE_PREVIEW audit row per
+// call, a checked write — no answer is given when it cannot be recorded.
 //
 // Security model: the caller is an org Admin who fully controls the row
 // content anyway — the hard boundary enforced here is that every row lands in
@@ -19,7 +24,8 @@
 // remapping, the table must be on the export contract (no arbitrary table
 // writes), skip-set tables are refused, and every row's foreign keys to
 // org-scoped tables must name rows of this workspace (a row of a table with
-// no org_id lands only under a parent of it). All of it lives in ONE shared
+// no org_id lands only under a parent of it), and a storage key it carries
+// must sit under this workspace's orgs/<id>/ prefix. All of it lives in ONE shared
 // function, lib/dataRestore.ts applyRestoreChunk, which the single-shot
 // /apply route calls too (ORG-1 / BKP-3).
 
@@ -56,17 +62,30 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: "idRemap missing — call /api/admin/restore/begin first." }, { status: 400 });
   }
 
-  // BKP-5: read-only — what would this slice do?
+  // BKP-5: read-only — what would this slice do? (It writes no row of the
+  // table; it does leave its audit row.)
   if (parsed.preview === true) {
     const p = await previewRestoreChunk(sb, { orgId, table, rows, idRemap });
     if (!p.ok) return NextResponse.json({ error: p.error }, { status: p.status ?? 500 });
+    const { error: previewAuditErr } = await sb.from("audit_logs").insert({
+      action: "RESTORE_PREVIEW", resource_type: "org", resource_id: orgId, org_id: orgId,
+      user_id: actor.userId, user_email: actor.email,
+      details: {
+        table, rowsReceived: rows.length, existing: p.existing, heldElsewhere: p.heldElsewhere, wouldInsert: p.wouldInsert,
+        backupOrgId: parsed.manifest?.orgId ?? Object.keys(idRemap.orgId ?? {})[0] ?? null,
+        backupOrgName: parsed.manifest?.orgName ?? null,
+      },
+    });
+    if (previewAuditErr) {
+      return NextResponse.json({ error: `The check could not be recorded (restore audit row failed: ${previewAuditErr.message}) — nothing was answered or written.` }, { status: 500 });
+    }
     return NextResponse.json({ ok: true, preview: true, rows: p.rows, existing: p.existing, heldElsewhere: p.heldElsewhere, wouldInsert: p.wouldInsert });
   }
 
   // Remap, FORCE the org boundary, filter, bound every row by the parents it
   // names, write — the shared function both restore routes call.
   const result = await applyRestoreChunk(sb, { orgId, table, rows, idRemap });
-  const { inserted, existing, heldElsewhere, uncounted, filtered, refused } = result;
+  const { inserted, existing, heldElsewhere, uncounted, filtered, refused, cleared } = result;
   const counts = {
     inserted,
     ...(existing ? { existing } : {}),
@@ -74,9 +93,10 @@ export async function POST(req: NextRequest) {
     ...(uncounted ? { uncounted } : {}),
     ...(filtered ? { filtered } : {}),
     ...(refused.length ? { refused } : {}),
+    ...(cleared.length ? { cleared } : {}),
   };
   // A chunk that failed before writing anything leaves nothing to record.
-  if (!result.ok && inserted === 0 && refused.length === 0) {
+  if (!result.ok && inserted === 0 && refused.length === 0 && cleared.length === 0) {
     return NextResponse.json({ error: result.error, ...(result.code ? { code: result.code } : {}), ...counts }, { status: result.status ?? 500 });
   }
 
@@ -93,6 +113,7 @@ export async function POST(req: NextRequest) {
       ...(heldElsewhere ? { heldElsewhere } : {}),
       ...(uncounted ? { uncounted } : {}),
       ...(refused.length ? { refused } : {}),
+      ...(cleared.length ? { cleared } : {}),
       ...(!result.ok ? { failed: result.error ?? "write failed" } : {}),
       backupOrgId: parsed.manifest?.orgId ?? Object.keys(idRemap.orgId ?? {})[0] ?? null,
       backupOrgName: parsed.manifest?.orgName ?? null,

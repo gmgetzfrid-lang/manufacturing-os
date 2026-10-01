@@ -4,6 +4,7 @@ import {
   CONFLICT_TARGETS, conflictTargetFor, RESTORE_CONTRACT_TABLES, isSkippedTable, skipReasonFor, isImmutableTable,
   RESTORE_TABLE_ORDER, RESTORE_PARENT_RULES, RESTORE_FK_PARENT_WAIVERS, ORG_LESS_RESTORE_PARENTS, restoreParentRulesFor,
   restoreRowsInOrder, restoreTableRefusal,
+  RESTORE_GENERATED_COLUMNS, RESTORE_USER_REFERENCES, restoreUserReferencesFor, landRestoredRow, foreignStorageKey,
 } from "@/lib/dataRestore";
 import { censusSchema } from "./helpers/schemaKeys";
 
@@ -355,5 +356,109 @@ describe("prototype keys are plain data to the restore", () => {
     const out = remapRow({ id: "n1", org_id: "constructor", body: "toString", tags: ["valueOf", "hasOwnProperty"] }, { orgId: { b: "c" }, uid: {} });
     expect(out).toMatchObject({ body: "toString", tags: ["valueOf", "hasOwnProperty"] });
     expect(typeof out.org_id).toBe("string");
+  });
+});
+
+// ─── admin-and-org Round G, P1 fix pass 2 ───────────────────────────────────
+
+describe("the census sees ON DELETE actions, NOT NULL columns and GENERATED ALWAYS columns (sanity)", () => {
+  const schema = censusSchema();
+  it("reads them from inline, table-level and ALTER definitions, less later drops", () => {
+    const fk = (t: string, c: string) => schema.get(t)?.fks.find((f) => f.columns.length === 1 && f.columns[0] === c);
+    expect(fk("libraries", "owner_team_id")?.onDelete).toBe("set null");
+    expect(fk("projects", "sow_document_id")?.onDelete).toBe("set null");
+    expect(fk("team_members", "uid")).toMatchObject({ parent: "users", onDelete: "cascade" });
+    expect(fk("teams", "created_by")).toMatchObject({ parent: "users", onDelete: "no action" });
+    expect(schema.get("team_members")?.notNull.has("uid")).toBe(true);
+    expect(schema.get("team_members")?.notNull.has("added_by")).toBe(false);
+    expect(schema.get("documents")?.notNull.has("id")).toBe(true); // a PRIMARY KEY is NOT NULL
+    // 20261007 drops tsv and re-adds it, still generated; 20260806 / 20261123 add search_tsv
+    expect([...(schema.get("knowledge_chunks")?.generated ?? [])]).toEqual(["tsv"]);
+    expect([...(schema.get("knowledge_questions")?.generated ?? [])]).toEqual(["search_tsv"]);
+    expect(schema.get("documents")?.generated.has("search_tsv")).toBe(false); // trigger-maintained, writable
+  });
+});
+
+describe("BKP-5 (fix pass 2) — a column the database computes is never restored", () => {
+  const schema = censusSchema();
+  const restorable = [...RESTORE_CONTRACT_TABLES].filter((t) => !isSkippedTable(t)).sort();
+
+  it("every GENERATED ALWAYS column of a restorable table is in RESTORE_GENERATED_COLUMNS, and every entry is one", () => {
+    const missing: string[] = [];
+    for (const t of restorable) {
+      for (const c of schema.get(t)?.generated ?? []) {
+        if (!(RESTORE_GENERATED_COLUMNS[t] ?? []).includes(c)) missing.push(`${t}.${c}`);
+      }
+    }
+    expect(missing, `computed columns the restore would send (Postgres refuses them, 428C9, and the run stops): ${missing.join(", ")}`).toEqual([]);
+    const stale = Object.entries(RESTORE_GENERATED_COLUMNS).flatMap(([t, cols]) => cols.filter((c) => !schema.get(t)?.generated.has(c)).map((c) => `${t}.${c}`));
+    expect(stale).toEqual([]);
+  });
+
+  it("landRestoredRow leaves them out (and leaves every other column alone)", () => {
+    const row = { id: "kc-1", org_id: "o", content: "pump", tsv: "'pump':1" };
+    expect(landRestoredRow("knowledge_chunks", row)).toEqual({ id: "kc-1", org_id: "o", content: "pump" });
+    expect(row).toHaveProperty("tsv"); // the input is not mutated
+    expect(landRestoredRow("knowledge_questions", { id: "q", question: "x", search_tsv: "'x':1" })).toEqual({ id: "q", question: "x" });
+    const plain = { id: "n1", tsv: "a column of the same name elsewhere is data" };
+    expect(landRestoredRow("notes", plain)).toBe(plain);
+  });
+});
+
+describe("BKP-5 / ORG-1 (fix pass 2) — every foreign key onto users is read before the write", () => {
+  const schema = censusSchema();
+  const restorable = [...RESTORE_CONTRACT_TABLES].filter((t) => !isSkippedTable(t)).sort();
+
+  it("RESTORE_USER_REFERENCES lists every restorable foreign key onto users / auth.users, `required` exactly when the column is NOT NULL", () => {
+    const census: string[] = [];
+    for (const t of restorable) {
+      const shape = schema.get(t);
+      for (const f of shape?.fks ?? []) {
+        if (f.parent !== "users" && f.parent !== "auth.users") continue;
+        census.push(`${t}.${f.columns.join("+")}:${shape!.notNull.has(f.columns[0]) ? "required" : "nullable"}`);
+      }
+    }
+    const listed = Object.entries(RESTORE_USER_REFERENCES).flatMap(([t, refs]) => refs.map((r) => `${t}.${r.column}:${r.required ? "required" : "nullable"}`));
+    expect(listed.sort()).toEqual(census.sort());
+    expect(census.sort()).toEqual(["team_members.added_by:nullable", "team_members.uid:required", "teams.created_by:nullable"]);
+    expect(restoreUserReferencesFor("constructor")).toEqual([]);
+  });
+
+  it("the users waiver no longer claims the email reconciliation makes a placeholder's uid valid", () => {
+    expect(RESTORE_FK_PARENT_WAIVERS.users).toMatch(/a restored placeholder has NO users row/);
+    expect(RESTORE_FK_PARENT_WAIVERS.users).toMatch(/RESTORE_USER_REFERENCES/);
+  });
+});
+
+describe("ORG-1 (fix pass 2) — a pointer is cleared instead of refusing its row only where that never widens access", () => {
+  const schema = censusSchema();
+  it("every clearWhenMissing rule is a nullable ON DELETE SET NULL foreign key — and the set is exactly the two reviewed pointers", () => {
+    const clearable = Object.entries(RESTORE_PARENT_RULES).flatMap(([t, rules]) => rules.filter((r) => r.clearWhenMissing).map((r) => ({ t, r })));
+    for (const { t, r } of clearable) {
+      const f = schema.get(t)?.fks.find((x) => x.columns.length === 1 && x.columns[0] === r.column && x.parent === r.parent);
+      expect(f?.onDelete, `${t}.${r.column}`).toBe("set null");
+      expect(schema.get(t)?.notNull.has(r.column), `${t}.${r.column} nullable`).toBe(false);
+    }
+    // documents.collection_id is SET NULL too, but a document's folder carries its ACL:
+    // cleared, it would land at the library root — wider than the backup. Never cleared.
+    expect(clearable.map(({ t, r }) => `${t}.${r.column}`).sort()).toEqual(["libraries.owner_team_id", "projects.sow_document_id"]);
+    expect(restoreParentRulesFor("documents").find((r) => r.column === "collection_id")?.clearWhenMissing).toBeUndefined();
+  });
+});
+
+describe("ORG-1 (fix pass 2) — foreignStorageKey", () => {
+  const MINE = "11111111-1111-4111-8111-111111111111";
+  const OTHER = "22222222-2222-4222-8222-222222222222";
+  it("finds a key under another org's prefix, top level or deep; this org's prefix, non-uuid text and no prefix are clean", () => {
+    expect(foreignStorageKey(`orgs/${OTHER}/libraries/x.pdf`, MINE)).toEqual({ org: OTHER, value: `orgs/${OTHER}/libraries/x.pdf` });
+    expect(foreignStorageKey({ a: [{ b: `https://cdn.example/orgs/${OTHER}/y` }] }, MINE)?.org).toBe(OTHER);
+    expect(foreignStorageKey(`orgs/${OTHER.toUpperCase()}/x`, MINE)?.org).toBe(OTHER);
+    expect(foreignStorageKey(`orgs/${MINE}/libraries/x.pdf`, MINE)).toBeNull();
+    expect(foreignStorageKey(`orgs/${MINE.toUpperCase()}/x`, MINE)).toBeNull();
+    expect(foreignStorageKey("see the orgs/teams/ page", MINE)).toBeNull();
+    expect(foreignStorageKey(`myorgs/${OTHER}/x`, MINE)).toBeNull();
+    expect(foreignStorageKey({ n: 1, t: null, flag: true }, MINE)).toBeNull();
+    // a string that carries this org's key AND another's is caught
+    expect(foreignStorageKey(`orgs/${MINE}/a orgs/${OTHER}/b`, MINE)?.org).toBe(OTHER);
   });
 });

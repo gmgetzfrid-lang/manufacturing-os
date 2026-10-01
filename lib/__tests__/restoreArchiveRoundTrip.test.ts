@@ -21,6 +21,17 @@
 // a hold and a milestone citing a ticket, a version that supersedes another,
 // a sub-folder listed before its parent folder. A fresh-workspace restore of the current export
 // must land every one of them, with no stop and no refusal.
+//
+// P1 fix pass 2: the engine also refuses a value for a GENERATED ALWAYS
+// column (428C9, as Postgres does — the export carries knowledge_chunks.tsv
+// and knowledge_questions.search_tsv) and models users.id REFERENCES
+// auth.users: a restored placeholder gets no profile row, so a row naming
+// it through a users foreign key is refused 23503 by the engine. The source
+// org carries indexed knowledge (chunks, page entities, questions) and output
+// templates after it, and a team CREATED BY a placeholder that owns the
+// library everything else hangs off. Every one of them lands; the only
+// outcomes are the placeholder's own: its team membership is refused
+// (person_not_restored) and the team's creator / the adder are cleared.
 
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { NextRequest } from "next/server";
@@ -74,8 +85,12 @@ function seedSource() {
       { org_id: SRC, uid: "u-alice", email: "alice@acme.com", role: "Admin", roles: ["Admin"], status: "active" },
       { org_id: SRC, uid: "u-bob", email: "bob@acme.com", role: "Engineer", roles: ["Engineer"], status: "active" },
     ],
-    teams: [{ id: "team-1", org_id: SRC, name: "Operations" }],
-    team_members: [{ team_id: "team-1", uid: "u-bob", org_id: SRC }],
+    // created by bob, who is a placeholder in the target (no sign-in account there)
+    teams: [{ id: "team-1", org_id: SRC, name: "Operations", created_by: "u-bob" }],
+    team_members: [
+      { team_id: "team-1", uid: "u-alice", org_id: SRC, added_by: "u-bob" },
+      { team_id: "team-1", uid: "u-bob", org_id: SRC, added_by: "u-alice" },
+    ],
     libraries: [{ id: "lib-1", org_id: SRC, name: "P&IDs", owner_team_id: "team-1" }],
     document_sets: [{ id: "set-1", org_id: SRC, library_id: "lib-1", name: "Unit 100" }],
     // a sub-folder the export lists BEFORE the folder it sits in
@@ -100,21 +115,34 @@ function seedSource() {
     knowledge_documents: [{ id: "kd-1", org_id: SRC, library_id: "kl-1", source_id: "ks-1", source_document_id: "doc-1" }],
     entity_mentions: [{ id: "em-1", org_id: SRC, asset_id: "as-1", knowledge_document_id: "kd-1", page: 1 }],
     process_flows: [{ id: "pf-1", org_id: SRC, source_document_id: "kd-1" }],
+    // indexed knowledge: the export carries the computed tsv / search_tsv columns
+    knowledge_chunks: [{ id: "kc-1", org_id: SRC, library_id: "kl-1", document_id: "kd-1", page: 1, seq: 0, section: "Specs", content: "Pump P-101A", tsv: "'p-101a':3B 'pump':2B 'spec':1A" }],
+    knowledge_page_entities: [{ id: "kpe-1", org_id: SRC, library_id: "kl-1", document_id: "kd-1", page: 1 }],
+    knowledge_questions: [{ id: "kq-1", org_id: SRC, library_id: "kl-1", user_id: "u-alice", question: "Which pump?", answer: "P-101A", search_tsv: "'p-101a':3 'pump':2" }],
+    output_templates: [{ id: "ot-1", org_id: SRC, name: "Datasheet", template_file_key: `orgs/${SRC}/templates/ds.docx` }],
+    output_generations: [{ id: "og-1", org_id: SRC, template_id: "ot-1" }],
     document_shares: [{ id: "sh-1", org_id: SRC, document_id: "doc-1", token: "live-share-token", revoked_at: null }],
     audit_logs: [],
   };
 }
-/** Every FOREIGN KEY between restorable tables, as the database enforces it (census of supabase/). */
+/** Every FOREIGN KEY between restorable tables and onto users, and every
+ *  GENERATED ALWAYS column, as the database enforces them (census of supabase/). */
 function enforceForeignKeys() {
   const schema = censusSchema();
   const restorable = new Set([...RESTORE_CONTRACT_TABLES].filter((t) => !isSkippedTable(t)));
   const fks: typeof db.fks = {};
+  const generated: typeof db.generated = {};
   for (const t of restorable) {
     for (const f of schema.get(t)?.fks ?? []) {
-      if (f.columns.length === 1 && restorable.has(f.parent)) (fks[t] ??= []).push({ column: f.columns[0], parent: f.parent });
+      if (f.columns.length === 1 && (restorable.has(f.parent) || f.parent === "users")) (fks[t] ??= []).push({ column: f.columns[0], parent: f.parent });
     }
+    const g = [...(schema.get(t)?.generated ?? [])];
+    if (g.length) generated[t] = g;
   }
+  expect(generated).toMatchObject({ knowledge_chunks: ["tsv"], knowledge_questions: ["search_tsv"] }); // sanity
+  expect(fks.team_members).toContainEqual({ column: "uid", parent: "users" });
   db.fks = fks;
+  db.generated = generated;
 }
 /** What the source org's backup carries that must land: table → ids. */
 const RELATIONS: Record<string, string[]> = {
@@ -122,22 +150,40 @@ const RELATIONS: Record<string, string[]> = {
   projects: ["proj-1"], tickets: ["tk-1"], document_holds: ["hold-1"], milestones: ["ms-1"], checkout_episodes: ["ep-1"],
   checkout_sessions: ["cs-1"], assets: ["as-1"], knowledge_libraries: ["kl-1"], knowledge_sources: ["ks-1"],
   knowledge_documents: ["kd-1"], entity_mentions: ["em-1"], process_flows: ["pf-1"],
+  knowledge_chunks: ["kc-1"], knowledge_page_entities: ["kpe-1"], knowledge_questions: ["kq-1"], output_templates: ["ot-1"], output_generations: ["og-1"],
 };
 function expectEveryRelationLanded() {
   for (const [table, ids] of Object.entries(RELATIONS)) {
     expect(rowsOf(table).map((r) => r.id).sort(), table).toEqual([...ids].sort());
     for (const r of rowsOf(table)) expect(r.org_id, `${table} ${String(r.id)}`).toBe(TARGET);
   }
-  expect(rowsOf("team_members")).toEqual([expect.objectContaining({ team_id: "team-1", org_id: TARGET })]);
-  expect(rowsOf("libraries")[0].owner_team_id).toBe("team-1");
+  // alice is linked (she has a profile here); bob is a placeholder (none): his
+  // membership cannot land, and the pointers naming him are cleared
+  expect(rowsOf("team_members")).toEqual([expect.objectContaining({ team_id: "team-1", uid: "t-alice", org_id: TARGET, added_by: null })]);
+  expect(rowsOf("teams")[0].created_by).toBeNull();
+  expect(rowsOf("libraries")[0].owner_team_id).toBe("team-1"); // the team a placeholder created owns the library
   expect(rowsOf("checkout_sessions")[0].episode_id).toBe("ep-1");
   expect(rowsOf("entity_mentions")[0].knowledge_document_id).toBe("kd-1");
+  // computed columns are never sent — the database recomputes them
+  expect(rowsOf("knowledge_chunks")[0]).not.toHaveProperty("tsv");
+  expect(rowsOf("knowledge_questions")[0]).not.toHaveProperty("search_tsv");
+  expect(rowsOf("knowledge_questions")[0].user_id).toBe("t-alice");
+  expect(rowsOf("output_templates")[0].template_file_key).toBe(`orgs/${TARGET}/templates/ds.docx`);
+}
+/** The only refusal / clears a fresh-workspace restore of this org may report: the placeholder's own. */
+function expectOnlyPlaceholderOutcomes(tables: Array<{ name: string; refused?: Array<{ code: string }>; cleared?: Array<{ code: string; message: string }> }>) {
+  const refused = tables.flatMap((t) => (t.refused ?? []).map((r) => `${t.name}:${r.code}`));
+  expect(refused).toEqual(["team_members:person_not_restored"]);
+  const cleared = tables.flatMap((t) => (t.cleared ?? []).map((r) => `${t.name}:${r.code}:${r.message.split(" ")[0]}`)).sort();
+  expect(cleared).toEqual(["team_members:person_not_restored:added_by", "teams:person_not_restored:created_by"]);
 }
 function seedTarget() {
   db.rows = {
     orgs: [{ id: TARGET, name: "Acme" }],
     org_members: [{ org_id: TARGET, uid: "t-alice", email: "alice@acme.com", role: "Admin", roles: ["Admin"], status: "active" }],
+    users: [{ id: "t-alice", email: "alice@acme.com" }, { id: "admin-1", email: "admin@target.io" }],
   };
+  db.authUsers = new Set(["t-alice", "admin-1"]); // a placeholder uid is no sign-in account
   db.writes = []; db.attempts = [];
 }
 
@@ -188,7 +234,7 @@ const rowsOf = (t: string): Row[] => db.rows[t] ?? [];
 
 beforeEach(() => {
   db.keys = {}; db.writeError = null; db.readError = {}; db.writes = []; db.attempts = []; db.countless = false;
-  db.fks = {}; db.maxRows = 1000;
+  db.fks = {}; db.maxRows = 1000; db.generated = {}; db.authUsers = null;
   db.keys.team_members = [["team_id", "uid"]];
   seedSource();
 });
@@ -238,7 +284,8 @@ describe("BKP-7 — the browser-built Full ZIP is written in the one layout and 
     enforceForeignKeys();
     const result = await restoreInto(read.envelope);
     expect(result.stoppedAt).toBeNull();
-    expect(result).toMatchObject({ totalRefused: 0, totalHeldElsewhere: 0, totalExisting: 0 });
+    expect(result).toMatchObject({ totalRefused: 1, totalCleared: 2, totalHeldElsewhere: 0, totalExisting: 0, placeholdersWithoutProfile: 1 });
+    expectOnlyPlaceholderOutcomes(result.tables);
     expect(result.idRemap.orgId).toEqual({ [SRC]: TARGET }); // what "Put the files back" remaps keys with
     expect(result.totalInserted).toBeGreaterThanOrEqual(5);
     expectEveryRelationLanded();
@@ -268,7 +315,7 @@ describe("BKP-7 — the browser-built Full ZIP is written in the one layout and 
     enforceForeignKeys();
     const result = await restoreInto(read.envelope);
     expect(result.stoppedAt).toBeNull();
-    expect(result.totalRefused).toBe(0);
+    expectOnlyPlaceholderOutcomes(result.tables);
     expect(rowsOf("documents")[0]).toMatchObject({ id: "doc-1", org_id: TARGET });
     expectEveryRelationLanded();
   });
@@ -284,7 +331,9 @@ describe("BKP-7 — the browser-built Full ZIP is written in the one layout and 
     const body = await res.json();
     expect(res.status).toBe(200);
     expect(body.failedTables).toEqual([]);
-    expect((body.tables as Array<{ refused?: unknown[] }>).filter((t) => t.refused)).toEqual([]);
+    expectOnlyPlaceholderOutcomes(body.tables);
+    expect(body.placeholdersWithoutProfile).toBe(1);
+    expect(String(body.note)).toMatch(/1 of them have no sign-in account yet/);
     expect(rowsOf("document_versions")).toHaveLength(2);
     expectEveryRelationLanded();
   });
@@ -313,7 +362,7 @@ describe("BKP-7 — an archive written before this change, and archives that can
     enforceForeignKeys();
     const result = await restoreInto(read.envelope);
     expect(result.stoppedAt).toBeNull();
-    expect(result.totalRefused).toBe(0);
+    expectOnlyPlaceholderOutcomes(result.tables);
     expect(rowsOf("document_versions")).toHaveLength(2);
     expectEveryRelationLanded();
   });

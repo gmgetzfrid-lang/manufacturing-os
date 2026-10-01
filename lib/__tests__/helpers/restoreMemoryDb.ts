@@ -10,6 +10,10 @@
 // another row of the same statement); `count: "exact"` reports the rows
 // actually written; reads filter with eq / in / not-null / is, honour
 // `range`, and are cut at `maxRows` like PostgREST's max-rows setting.
+// Fix pass 2: a write carrying any value for a GENERATED ALWAYS column is
+// refused 428C9 (as Postgres refuses it — not a row-level code), and, with
+// `authUsers` set, `users` behaves like users.id REFERENCES auth.users: a
+// profile for a uid that is no sign-in account is refused 23503.
 
 export type Row = Record<string, unknown>;
 
@@ -28,6 +32,10 @@ export const db = {
   fks: {} as Record<string, Array<{ column: string; parent: string }>>,
   /** PostgREST's max-rows: a read returns at most this many rows. */
   maxRows: 1000,
+  /** Columns the database computes, per table: a write naming one is refused 428C9. */
+  generated: {} as Record<string, string[]>,
+  /** The deployment's sign-in accounts; when set, a `users` row for any other id is refused 23503. */
+  authUsers: null as Set<string> | null,
 };
 
 function keysOf(table: string): string[][] { return db.keys[table] ?? [["id"]]; }
@@ -47,6 +55,14 @@ function exec(table: string, op: string, payload: unknown, opts: Record<string, 
     db.attempts.push({ table, op });
     const injected = db.writeError?.(table, op, rows);
     if (injected) return { data: null, error: injected, count: null };
+    for (const c of db.generated[table] ?? []) {
+      if (rows.some((r) => r[c] !== undefined)) {
+        return { data: null, error: { code: "428C9", message: `cannot insert a non-DEFAULT value into column "${c}"` }, count: null };
+      }
+    }
+    if (table === "users" && db.authUsers && rows.some((r) => !db.authUsers!.has(String(r.id)))) {
+      return { data: null, error: { code: "23503", message: 'insert or update on table "users" violates foreign key constraint "users_id_fkey"' }, count: null };
+    }
     const keys = keysOf(table);
     let arbiter: string[] | null = null;
     if (op === "upsert") {

@@ -12,7 +12,9 @@
 //      only export-contract tables, every foreign key to an org-scoped table
 //      bounded to this workspace (org-less rows by their parent), all other
 //      ids preserved so foreign keys resolve; existing ids are skipped
-//      (additive, re-runnable), a row the database refuses is reported
+//      (additive, re-runnable), a row the database refuses is reported, a
+//      person with no sign-in account is cleared from a nullable column or
+//      refuses a team membership (RESTORE_USER_REFERENCES)
 //   4. audit (checked — a restore whose trail cannot be written must not
 //      look complete)
 //
@@ -24,7 +26,7 @@
 
 import { NextRequest, NextResponse } from "next/server";
 import { authorizeOrgRole } from "@/lib/serverAuth";
-import { planRestore, orderTablesForRestore, mergeNewUserUids, applyRestoreChunk, restoreRowsInOrder, type RestoreEnvelopeLike, type CurrentMember, type RestoreRowRefusal, restoredMemberRoles, restoredMemberHeadline } from "@/lib/dataRestore";
+import { planRestore, orderTablesForRestore, mergeNewUserUids, applyRestoreChunk, restoreRowsInOrder, placeholderProfile, type RestoreEnvelopeLike, type CurrentMember, type RestoreRowRefusal, restoredMemberRoles, restoredMemberHeadline } from "@/lib/dataRestore";
 
 export const runtime = "nodejs";
 
@@ -72,6 +74,7 @@ export async function POST(req: NextRequest) {
   // 2) Restored placeholders for unknown emails.
   const created: Record<string, string> = {};
   let createdUsers = 0;
+  let placeholdersWithoutProfile = 0;
   for (const u of plan.users.filter((x) => x.disposition === "new" && x.oldUid)) {
     const newUid = globalThis.crypto?.randomUUID?.() || `restored-${u.oldUid}`;
     const { error } = await sb.from("org_members").insert({
@@ -81,7 +84,11 @@ export async function POST(req: NextRequest) {
       status: "inactive", display_name: u.displayName ?? null,
     });
     if (!error) {
-      try { await sb.from("users").upsert({ id: newUid, email: u.email, display_name: u.displayName ?? null }); } catch { /* profile best-effort */ }
+      // A profile row exists only for a sign-in account (users.id references
+      // auth.users), so the database refuses it for a placeholder: counted
+      // and reported, never swallowed — rows that must name a profile cannot
+      // name this person until they accept an invitation.
+      if (!(await placeholderProfile(sb, newUid, u.email, u.displayName))) placeholdersWithoutProfile++;
       created[u.oldUid] = newUid;
       createdUsers++;
     }
@@ -91,7 +98,7 @@ export async function POST(req: NextRequest) {
   // 3) Insert records in FK order.
   const importable = plan.counts.tables.filter((t) => t.willImport && t.rows > 0).map((t) => t.name);
   const order = orderTablesForRestore(importable);
-  const results: Array<{ name: string; inserted: number; existing?: number; heldElsewhere?: number; uncounted?: number; filtered?: number; error?: string; refused?: RestoreRowRefusal[] }> = [];
+  const results: Array<{ name: string; inserted: number; existing?: number; heldElsewhere?: number; uncounted?: number; filtered?: number; error?: string; refused?: RestoreRowRefusal[]; cleared?: RestoreRowRefusal[] }> = [];
   let totalInserted = 0;
   let totalExisting = 0;
   let totalHeldElsewhere = 0;
@@ -100,7 +107,7 @@ export async function POST(req: NextRequest) {
     // A self-referencing table's rows go parents-first, so no chunk names a row a later one carries.
     const rows = restoreRowsInOrder(name, (Array.isArray(raw) ? raw : []) as Record<string, unknown>[]);
     if (!rows.length) continue;
-    let inserted = 0; let existing = 0; let heldElsewhere = 0; let uncounted = 0; let filtered = 0; let error: string | undefined; const refused: RestoreRowRefusal[] = [];
+    let inserted = 0; let existing = 0; let heldElsewhere = 0; let uncounted = 0; let filtered = 0; let error: string | undefined; const refused: RestoreRowRefusal[] = []; const cleared: RestoreRowRefusal[] = [];
     for (let i = 0; i < rows.length; i += 500) {
       const r = await applyRestoreChunk(sb, { orgId, table: name, rows: rows.slice(i, i + 500), idRemap });
       inserted += r.inserted;
@@ -109,11 +116,12 @@ export async function POST(req: NextRequest) {
       uncounted += r.uncounted;
       filtered += r.filtered;
       refused.push(...r.refused);
+      cleared.push(...r.cleared);
       if (!r.ok) { error = r.error ?? "restore write failed"; break; }
     }
     // Report what actually landed — earlier chunks committed even on failure.
     // BKP-5: and what did not — rows whose key already exists were skipped.
-    results.push({ name, inserted, ...(existing ? { existing } : {}), ...(heldElsewhere ? { heldElsewhere } : {}), ...(uncounted ? { uncounted } : {}), ...(filtered ? { filtered } : {}), error, ...(refused.length ? { refused } : {}) });
+    results.push({ name, inserted, ...(existing ? { existing } : {}), ...(heldElsewhere ? { heldElsewhere } : {}), ...(uncounted ? { uncounted } : {}), ...(filtered ? { filtered } : {}), error, ...(refused.length ? { refused } : {}), ...(cleared.length ? { cleared } : {}) });
     totalInserted += inserted;
     totalExisting += existing;
     totalHeldElsewhere += heldElsewhere;
@@ -137,10 +145,10 @@ export async function POST(req: NextRequest) {
     action: "DATA_RESTORE", resource_id: orgId, resource_type: "org", org_id: orgId,
     user_id: actor.userId, user_email: actor.email,
     details: {
-      schemaVersion: plan.schemaVersion, createdUsers,
+      schemaVersion: plan.schemaVersion, createdUsers, placeholdersWithoutProfile,
       linkedUsers: plan.counts.matchedUsers, totalInserted, totalExisting, totalHeldElsewhere,
       backupOrgId: envelope.manifest.orgId ?? null,
-      tables: results.map((r) => ({ name: r.name, inserted: r.inserted, existing: r.existing ?? 0, ...(r.heldElsewhere ? { heldElsewhere: r.heldElsewhere } : {}), error: r.error, ...(r.refused ? { refused: r.refused.length } : {}) })),
+      tables: results.map((r) => ({ name: r.name, inserted: r.inserted, existing: r.existing ?? 0, ...(r.heldElsewhere ? { heldElsewhere: r.heldElsewhere } : {}), error: r.error, ...(r.refused ? { refused: r.refused.length } : {}), ...(r.cleared ? { cleared: r.cleared.length } : {}) })),
     },
   });
   if (auditErr) {
@@ -155,6 +163,7 @@ export async function POST(req: NextRequest) {
     ok: failed.length === 0,
     createdUsers,
     linkedUsers: plan.counts.matchedUsers,
+    placeholdersWithoutProfile,
     totalInserted,
     totalExisting,
     totalHeldElsewhere,
@@ -168,6 +177,9 @@ export async function POST(req: NextRequest) {
         : "") +
       "File binaries are not re-uploaded here — " +
       "any referenced file that isn't in storage will prompt for its archive when opened. " +
-      "Restored users are inactive placeholders; re-invite them to grant access.",
+      "Restored users are inactive placeholders; re-invite them to grant access." +
+      (placeholdersWithoutProfile > 0
+        ? ` ${placeholdersWithoutProfile} of them have no sign-in account yet: a team membership naming one was not restored, and a team creator / adder naming one was cleared — add them to their teams again once they accept.`
+        : ""),
   });
 }
