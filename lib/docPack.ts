@@ -64,9 +64,13 @@ export interface PackSheetRef {
 
 /** PKG-12: a field pack's budget. The builder merges in browser memory
  *  (pdf-lib holds every copied page, then writes the whole pack again), so an
- *  unbounded pack locks up or kills a field tablet. Above any of these the
- *  pack is REFUSED before anything is recorded or downloaded, with a split
- *  the person can act on. Stated defaults (document-control Round F, P8). */
+ *  unbounded pack locks up or kills a field tablet. A pack over the sheet
+ *  count, or whose sheets TOGETHER pass the page / byte budget, is REFUSED
+ *  before anything is recorded or downloaded, with a split the person can
+ *  act on. A sheet over the page / byte budget ON ITS OWN cannot be helped by
+ *  any split: it is left out (`too_large`, named in the toast and on the
+ *  print record) and the rest of the pack is built. Stated defaults
+ *  (document-control Round F, P8). */
 export const PACK_MAX_SHEETS = 150;
 export const PACK_MAX_PAGES = 1000;
 export const PACK_MAX_BYTES = 150 * 1024 * 1024;
@@ -110,9 +114,32 @@ export function packSheetBudgetRefusal(count: number): PackTooLargeError | null 
   );
 }
 
-/** PKG-12: the page / byte budget, checked as sheets are merged. `merged`
- *  sheets are already in; `total` is the gated sheet count. Pure. */
-function packContentBudgetRefusal(input: {
+const MB = 1024 * 1024;
+
+/** PKG-12: why ONE sheet is over a field pack's budget on its own — its file
+ *  over the byte budget (known from the fetched bytes, before pdf-lib parses
+ *  anything) or its pages over the page budget — or null when it fits. Such a
+ *  sheet is left out (`too_large`), never the reason a whole pack is refused:
+ *  no split could carry it. Pure. */
+export function packSheetOverBudget(sheet: { bytes?: number | null; pages?: number | null }): string | null {
+  if (typeof sheet.bytes === "number" && sheet.bytes > PACK_MAX_BYTES) {
+    return `${Math.ceil(sheet.bytes / MB)} MB on its own — over a field pack's ${Math.round(PACK_MAX_BYTES / MB)} MB budget, ` +
+      "so it was left out; download it on its own";
+  }
+  if (typeof sheet.pages === "number" && sheet.pages > PACK_MAX_PAGES) {
+    return `${sheet.pages} pages on its own — over a field pack's ${PACK_MAX_PAGES}-page budget, ` +
+      "so it was left out; download it on its own";
+  }
+  return null;
+}
+
+/** PKG-12: the CUMULATIVE page / byte budget, checked as sheets are merged.
+ *  `merged` sheets are already in; `total` is the gated sheet count. Every
+ *  sheet that reaches this check fits the budget on its own
+ *  (`packSheetOverBudget` left the others out), so the overflow is the
+ *  pack's, and a split into packs of at most `merged` sheets is offered.
+ *  Pure. */
+export function packContentBudgetRefusal(input: {
   label: string; merged: number; total: number; pages: number; bytes: number;
 }): PackTooLargeError | null {
   const overPages = input.pages > PACK_MAX_PAGES;
@@ -120,24 +147,66 @@ function packContentBudgetRefusal(input: {
   if (!overPages && !overBytes) return null;
   const budget = overPages
     ? `${PACK_MAX_PAGES}-page budget (${input.pages} pages)`
-    : `${Math.round(PACK_MAX_BYTES / (1024 * 1024))} MB budget (${Math.ceil(input.bytes / (1024 * 1024))} MB)`;
-  if (input.merged === 0) {
-    return new PackTooLargeError(
-      `${input.label} alone is over a field pack's ${budget}, so the pack was not built and nothing was printed. ` +
-      "Download that sheet on its own, and pack the others without it.",
-      1, 1,
-    );
-  }
-  const parts = Math.max(2, packPartsFor(input.total, input.merged));
+    : `${Math.round(PACK_MAX_BYTES / MB)} MB budget (${Math.ceil(input.bytes / MB)} MB)`;
+  const perPack = Math.max(1, input.merged);
+  const parts = Math.max(2, packPartsFor(input.total, perPack));
   return new PackTooLargeError(
     `This pack passed a field pack's ${budget} at ${input.label} (sheet ${input.merged + 1} of ${input.total}), ` +
-    `so it was not built and nothing was printed. Split it into ${parts} packs of at most ${input.merged} sheets each ` +
+    `so it was not built and nothing was printed. Split it into ${parts} packs of at most ${perPack} sheet${perPack === 1 ? "" : "s"} each ` +
     "and print them separately.",
-    parts, input.merged,
+    parts, perPack,
   );
 }
 
+/** VFY-19: a device that ran out of memory — at ANY stage, pdf-lib's load
+ *  included (it parses the whole file there) — never a property of the file.
+ *  A RangeError ("Array buffer allocation failed", "Invalid array length")
+ *  or an allocation / out-of-memory message. Pure. */
+export function isOutOfMemoryError(e: unknown): boolean {
+  if (e instanceof RangeError) return true;
+  const msg = String((e as { message?: unknown } | null)?.message ?? e ?? "");
+  return /allocation|out of memory/i.test(msg);
+}
+
+/** pdf-lib's own parse / format refusals. Its error classes compile to plain
+ *  `Error` (no working `instanceof` — checked against pdf-lib 1.17), so the
+ *  test is the message every one of them carries: PDFParsingError and its
+ *  subclasses ("Failed to parse PDF document … No PDF header found",
+ *  "Failed to parse PDF object …", "Parser stalled", "Expected next byte …",
+ *  "Did not find expected keyword …") and NumberParsingError ("Failed to
+ *  parse number …"). */
+const PDF_FORMAT_ERROR = /^(Failed to parse\b|No PDF header found|Parser stalled|Expected next byte\b|Did not find expected keyword\b)/;
+
+/** VFY-19: the code for a sheet whose build failed AFTER its file was
+ *  fetched. `unreadable_pdf` — "could not be read as a PDF; a re-print would
+ *  leave it out too", which the verify door reads amber — ONLY when pdf-lib
+ *  refused the file with its own parse / format error at load, or loaded it
+ *  encrypted (the stamper's refusal). An out-of-memory failure at ANY stage
+ *  (load included), and anything else, is `build_failed`, which the verify
+ *  door keeps red: a re-print, e.g. on a desktop, may well carry it. Pure. */
+export function packBuildFailureCode(
+  e: unknown,
+  at: { loaded: boolean; encrypted: boolean },
+): "unreadable_pdf" | "build_failed" {
+  if (isOutOfMemoryError(e)) return "build_failed";
+  if (!at.loaded) {
+    const msg = String((e as { message?: unknown } | null)?.message ?? "");
+    return PDF_FORMAT_ERROR.test(msg) ? "unreadable_pdf" : "build_failed";
+  }
+  return at.encrypted ? "unreadable_pdf" : "build_failed";
+}
+
 const packLabel = (d: Record<string, unknown>) => String(d.document_number || d.title || d.name || "Document");
+
+/** PKG-7: `.in()` reads are chunked (150 ids, the lib/acknowledgments.ts and
+ *  lib/workPackages.ts size) so a large asset tag or package stays under
+ *  PostgREST's URL limit. */
+const IN_CHUNK = 150;
+function chunkIds<T>(xs: T[]): T[][] {
+  const out: T[][] = [];
+  for (let i = 0; i < xs.length; i += IN_CHUNK) out.push(xs.slice(i, i + IN_CHUNK));
+  return out;
+}
 
 /** PKG-7: the label of a requested document the person printing cannot read
  *  (an ACL-hidden member) — named as what it is, not a blank "Document". */
@@ -269,21 +338,31 @@ async function readAndGatePackDocs(
   userId: string | null | undefined,
 ): Promise<{ docs: Array<Record<string, unknown>>; skipped: PackSkip[] }> {
   if (documentIds.length === 0) return { docs: [], skipped: [] };
-  const { data: docRows, error: docErr } = await supabase
-    .from("documents")
-    .select(columns)
-    .in("id", documentIds);
-  if (docErr) throw new Error(`Couldn't read the pack's documents (${docErr.message}) — nothing was printed.`);
-  const accounted = accountForRequested(documentIds, (docRows as unknown as Array<Record<string, unknown>>) ?? []);
-  const { data: holdRows, error: holdErr } = await supabase
-    .from("document_holds")
-    .select("document_id")
-    .in("document_id", documentIds)
-    .is("released_at", null);
-  const heldIds = new Set(
-    ((holdRows as Array<{ document_id: string }> | null) ?? []).map((h) => h.document_id),
-  );
-  const gated = filterPackDocs(accounted.rows, heldIds, !!holdErr);
+  const requested = [...new Set(documentIds)];
+  const docRows: Array<Record<string, unknown>> = [];
+  for (const ids of chunkIds(requested)) {
+    const { data, error: docErr } = await supabase
+      .from("documents")
+      .select(columns)
+      .in("id", ids);
+    if (docErr) throw new Error(`Couldn't read the pack's documents (${docErr.message}) — nothing was printed.`);
+    docRows.push(...((data as unknown as Array<Record<string, unknown>>) ?? []));
+  }
+  const accounted = accountForRequested(documentIds, docRows);
+  // Fail CLOSED: a hold read that errors on any chunk treats every sheet as
+  // held-unknown (PKG-4).
+  const heldIds = new Set<string>();
+  let holdErr = false;
+  for (const ids of chunkIds(requested)) {
+    const { data: holdRows, error } = await supabase
+      .from("document_holds")
+      .select("document_id")
+      .in("document_id", ids)
+      .is("released_at", null);
+    if (error) { holdErr = true; break; }
+    for (const h of (holdRows as Array<{ document_id: string }> | null) ?? []) heldIds.add(h.document_id);
+  }
+  const gated = filterPackDocs(accounted.rows, heldIds, holdErr);
   const acked = await ackGatePackRows(gated.docs, userId);
   return { docs: acked.rows, skipped: [...accounted.skipped, ...gated.skipped, ...acked.skipped] };
 }
@@ -363,11 +442,11 @@ export async function buildAndDownloadDocPack(input: {
     .map((d) => d.current_version_id as string | null)
     .filter((v): v is string => !!v);
   const urlByVersion = new Map<string, string>();
-  if (versionIds.length > 0) {
+  for (const ids of chunkIds([...new Set(versionIds)])) {
     const { data: versionRows, error: versionErr } = await supabase
       .from("document_versions")
       .select("id, file_url")
-      .in("id", versionIds);
+      .in("id", ids);
     if (versionErr) throw new Error(`Couldn't read the pack's files (${versionErr.message}) — nothing was printed.`);
     for (const v of (versionRows as Array<{ id: string; file_url: string }>) ?? []) urlByVersion.set(v.id, v.file_url);
   }
@@ -385,7 +464,7 @@ export async function buildAndDownloadDocPack(input: {
     const label = packLabel(d);
     const versionId = (d.current_version_id as string | null) ?? null;
     // The parsed file, once pdf-lib has loaded it — what tells "could not be
-    // read as a PDF" from a later build failure (VFY-19, below).
+    // read as a PDF" from any other build failure (VFY-19, below).
     let single: PDFDocument | null = null;
     try {
       const rawUrl = versionId ? urlByVersion.get(versionId) : undefined;
@@ -404,9 +483,19 @@ export async function buildAndDownloadDocPack(input: {
         continue;
       }
 
+      // PKG-12: a file over the byte budget on its own is left out BEFORE
+      // pdf-lib parses it (parsing it is what would exhaust the device).
+      const tooBig = packSheetOverBudget({ bytes: bytes.byteLength });
+      if (tooBig) { skipped.push({ documentId, label, reason: tooBig, code: "too_large", versionId }); continue; }
+
       // Stamp each document individually so its footer + QR are its own.
       single = await PDFDocument.load(bytes, { ignoreEncryption: true });
       const pageCount = single.getPageCount();
+      // PKG-12: so is one whose pages alone are over the page budget — the
+      // sheet is checked on its own before the pack's running total, so the
+      // pack is refused (with a split) only when its sheets TOGETHER pass it.
+      const tooLong = packSheetOverBudget({ pages: pageCount });
+      if (tooLong) { skipped.push({ documentId, label, reason: tooLong, code: "too_large", versionId }); continue; }
       const over = packContentBudgetRefusal({
         label, merged: included, total: docs.length,
         pages: pageTotal + pageCount, bytes: byteTotal + bytes.byteLength,
@@ -440,13 +529,13 @@ export async function buildAndDownloadDocPack(input: {
       if (e instanceof PackTooLargeError) throw e;
       // VFY-19: "could not be read as a PDF" (unreadable_pdf — a re-print
       // would leave it out too, so /verify-package reads it amber) ONLY when
-      // pdf-lib could not load the file (unparseable, not a PDF at all) or
-      // loaded an encrypted one the stamper refuses. Anything else after the
-      // fetch — a copyPages failure, a tablet running out of memory merging a
-      // large valid PDF — is build_failed: a desktop re-print may well carry
+      // pdf-lib refused the file with its own parse / format error at load,
+      // or loaded an encrypted one the stamper refuses. A tablet running out
+      // of memory — at load (pdf-lib parses the whole file there) or merging —
+      // and anything else is build_failed: a desktop re-print may well carry
       // it, so the verify door keeps it red ("not in this pack").
-      const unreadablePdf = !single || single.isEncrypted;
-      skipped.push({ documentId, label, reason: (e as Error).message, code: unreadablePdf ? "unreadable_pdf" : "build_failed", versionId });
+      const code = packBuildFailureCode(e, { loaded: !!single, encrypted: !!single?.isEncrypted });
+      skipped.push({ documentId, label, reason: (e as Error)?.message || String(e), code, versionId });
     } finally {
       done += 1;
       input.onProgress?.(done, docs.length);

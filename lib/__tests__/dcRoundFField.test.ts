@@ -46,6 +46,13 @@ const state = vi.hoisted(() => ({
   /** Page counts whose parsed document is encrypted / whose page copy throws. */
   encrypted: new Set<number>(),
   copyFails: new Set<number>(),
+  /** Page counts whose pdf-lib LOAD runs out of memory (a large valid scan). */
+  loadOom: new Set<number>(),
+  /** How many times pdf-lib's load ran. */
+  loads: 0,
+  /** A fetched file's byte length, when it must differ from its page count
+   *  (a file over the pack's byte budget, never allocated in the test). */
+  byteLengthByUrl: {} as Record<string, number>,
   user: { id: "u1", email: "u1@example.com" } as { id: string; email: string } | null,
   /** Every `.in()` filter, per table (the chunking pins). */
   inCalls: [] as Array<{ table: string; column: string; n: number }>,
@@ -141,14 +148,19 @@ vi.mock("pdf-lib", () => {
     PDFDocument: {
       create: async () => doc(0),
       load: async (bytes: ArrayBuffer) => {
-        if (state.unparseable.has(bytes.byteLength)) throw new Error("Failed to parse PDF document");
+        state.loads += 1;
+        if (state.loadOom.has(bytes.byteLength)) throw new RangeError("Array buffer allocation failed");
+        if (state.unparseable.has(bytes.byteLength)) throw new Error("Failed to parse PDF document (line:0 col:0 offset=0): No PDF header found");
         return doc(bytes.byteLength);
       },
     },
   };
 });
 
-import { buildAndDownloadDocPack, assessPackDocs, PackTooLargeError, PACK_MAX_SHEETS, PACK_MAX_PAGES, packPartsFor, splitPackIds, packSheetBudgetRefusal, accountForRequested } from "@/lib/docPack";
+import {
+  buildAndDownloadDocPack, assessPackDocs, PackTooLargeError, PACK_MAX_SHEETS, PACK_MAX_PAGES, PACK_MAX_BYTES, packPartsFor, splitPackIds,
+  packSheetBudgetRefusal, accountForRequested, packSheetOverBudget, packContentBudgetRefusal, packBuildFailureCode, isOutOfMemoryError,
+} from "@/lib/docPack";
 import {
   listWorkPackages, createWorkPackage, refreshWorkPackage, recordPackagePrint, setWorkPackageStatus,
   printSnapshotSheets, coverEntryLabels, mergeLeftOut, memberFreshness, PackagePrintNotRecordedError, resetPackageSchemaFlag,
@@ -190,6 +202,9 @@ beforeEach(() => {
   state.unparseable = new Set();
   state.encrypted = new Set();
   state.copyFails = new Set();
+  state.loadOom = new Set();
+  state.loads = 0;
+  state.byteLengthByUrl = {};
   state.user = { id: "u1", email: "u1@example.com" };
   state.inCalls = [];
   resetPackageSchemaFlag();
@@ -199,7 +214,9 @@ beforeEach(() => {
     return {
       ok: true,
       status: 200,
-      arrayBuffer: async () => new ArrayBuffer(state.pagesByUrl[u] ?? 1),
+      arrayBuffer: async () => (state.byteLengthByUrl[u]
+        ? ({ byteLength: state.byteLengthByUrl[u] } as unknown as ArrayBuffer)
+        : new ArrayBuffer(state.pagesByUrl[u] ?? 1)),
       blob: async () => new Blob(["raw"]),
     };
   }));
@@ -323,6 +340,43 @@ describe("PKG-7 — a member the reader cannot open is never silently erased", (
     })).rejects.toThrow(/1 of the 2 chosen documents could not be read with your access, so the package was not created/);
     expect(state.inserts).toEqual([]);
   });
+
+  it("refresh and create chunk their documents read (150 ids per read) — a ~400-sheet package is not one 400-id GET (fix pass 2)", async () => {
+    const ids = Array.from({ length: 400 }, (_, i) => `d${i}`);
+    state.tables.documents = ids.map((id) => docRow(id));
+    state.tables.work_package_documents = ids.map((id, i) => ({ id: `m${i}`, package_id: "p1", org_id: "org1", document_id: id, pinned_version_id: `v-${id}`, pinned_rev_label: "1" }));
+    await refreshWorkPackage("p1", { actor: { userId: "u1" } });
+    expect(state.inCalls.filter((c) => c.table === "documents").map((c) => c.n)).toEqual([150, 150, 100]);
+    state.inCalls = [];
+    await createWorkPackage({ orgId: "org1", name: "Big job", documentIds: ids, actorUserId: "u1", actorName: "u1" });
+    expect(state.inCalls.filter((c) => c.table === "documents").map((c) => c.n)).toEqual([150, 150, 100]);
+    const members = state.inserts.find((i) => i.table === "work_package_documents")!.row as Row[];
+    expect(members).toHaveLength(400);
+    // one chunk that fails still refuses the whole create — nothing half-read is pinned
+    state.inserts = [];
+    state.readErrors.documents = { message: "URI too long" };
+    await expect(createWorkPackage({ orgId: "org1", name: "Big job", documentIds: ids, actorUserId: "u1", actorName: "u1" }))
+      .rejects.toThrow(/Couldn't read the chosen documents \(URI too long\) — the package was not created/);
+    expect(state.inserts).toEqual([]);
+  });
+
+  it("the pack's gate reads (documents, holds) are chunked too — a large asset tag's print is not one oversized GET", async () => {
+    const ids = Array.from({ length: 400 }, (_, i) => `d${i}`);
+    state.tables.documents = ids.map((id) => docRow(id));
+    state.tables.document_holds = [{ document_id: "d399", released_at: null }];
+    const a = await assessPackDocs(ids, { userId: "u1" });
+    expect(state.inCalls.filter((c) => c.table === "documents").map((c) => c.n)).toEqual([150, 150, 100]);
+    expect(state.inCalls.filter((c) => c.table === "document_holds").map((c) => c.n)).toEqual([150, 150, 100]);
+    // the hold on the LAST chunk is still seen (never lost to a chunk boundary)
+    expect(a.packable).toHaveLength(399);
+    expect(a.skipped).toEqual([expect.objectContaining({ documentId: "d399", code: "on_hold" })]);
+    // a hold read that fails fails CLOSED for every sheet
+    state.readErrors.document_holds = { message: "timeout" };
+    const b = await assessPackDocs(ids.slice(0, 3), { userId: "u1" });
+    expect(b.packable).toEqual([]);
+    expect(b.skipped.map((x) => x.code)).toEqual(["hold_unknown", "hold_unknown", "hold_unknown"]);
+    expect(src("lib/docPack.ts")).not.toMatch(/\.in\("id", documentIds\)|\.in\("document_id", documentIds\)|\.in\("id", versionIds\)/);
+  });
 });
 
 // ─── PKG-9 ──────────────────────────────────────────────────────────────────
@@ -421,10 +475,56 @@ describe("PKG-12 — a pack has a budget, keeps its order, and the cover gives e
     expect(state.inserts).toEqual([]);
   });
 
-  it("a single sheet over the budget says so (download it on its own)", async () => {
-    state.tables.documents = [docRow("a")];
-    state.tables.document_versions = [versionFor("a", PACK_MAX_PAGES + 1)];
-    await expect(buildAndDownloadDocPack(packInput(["a"]) as never)).rejects.toThrow(/A alone is over a field pack's/);
+  it("a sheet over the PAGE budget on its own is LEFT OUT (too_large) and the rest is built — no split could carry it, so it never refuses the pack (fix pass 2)", async () => {
+    state.tables.documents = [docRow("a"), docRow("b"), docRow("c")];
+    state.tables.document_versions = [versionFor("a", 3), versionFor("b", PACK_MAX_PAGES + 1), versionFor("c", 2)];
+    let coverSkipped: Array<{ documentId?: string; code?: string }> = [];
+    const r = await buildAndDownloadDocPack(packInput(["a", "b", "c"], {
+      buildCoverAfter: async (_inc: unknown, skipped: typeof coverSkipped) => { coverSkipped = skipped; return null; },
+    }) as never);
+    expect(r.included).toBe(2);
+    expect(r.skipped).toEqual([expect.objectContaining({
+      documentId: "b", code: "too_large", versionId: "v-b",
+      reason: `${PACK_MAX_PAGES + 1} pages on its own — over a field pack's ${PACK_MAX_PAGES}-page budget, so it was left out; download it on its own`,
+    })]);
+    // the print record receives it with its code (VFY-19), and the pack downloads
+    expect(coverSkipped).toEqual([expect.objectContaining({ documentId: "b", code: "too_large" })]);
+    expect(state.events).toContain("download");
+    expect(packLeftOutText("too_large")).toBe("too large for a field pack when printed — it is printed on its own");
+  });
+
+  it("a file over the BYTE budget on its own is left out BEFORE pdf-lib parses it (parsing it is what would exhaust the tablet)", async () => {
+    state.tables.documents = [docRow("a"), docRow("big")];
+    state.tables.document_versions = [versionFor("a", 2), versionFor("big", 4)];
+    state.byteLengthByUrl["https://files/big.pdf"] = 180 * 1024 * 1024;
+    const r = await buildAndDownloadDocPack(packInput(["a", "big"]) as never);
+    expect(r.included).toBe(1);
+    expect(r.skipped).toEqual([expect.objectContaining({
+      documentId: "big", code: "too_large",
+      reason: "180 MB on its own — over a field pack's 150 MB budget, so it was left out; download it on its own",
+    })]);
+    expect(state.loads).toBe(1); // only "a" was ever parsed
+    expect(packSheetOverBudget({ bytes: PACK_MAX_BYTES })).toBeNull();
+    expect(packSheetOverBudget({ pages: PACK_MAX_PAGES })).toBeNull();
+  });
+
+  it("the RUNNING total is the only refusal, and its split always helps: packs of at most the sheets that fitted (one, when the first sheet alone nearly fills a pack)", async () => {
+    state.tables.documents = [docRow("a"), docRow("b")];
+    state.tables.document_versions = [versionFor("a", 900), versionFor("b", 200)];
+    const err = await buildAndDownloadDocPack(packInput(["a", "b"]) as never).catch((e) => e);
+    expect(err).toBeInstanceOf(PackTooLargeError);
+    expect(err.perPack).toBe(1);
+    expect(err.parts).toBe(2);
+    expect(String(err.message)).toMatch(/at B \(sheet 2 of 2\).*Split it into 2 packs of at most 1 sheet each/);
+    expect(state.events).not.toContain("download");
+    expect(packContentBudgetRefusal({ label: "X", merged: 4, total: 9, pages: PACK_MAX_PAGES, bytes: PACK_MAX_BYTES })).toBeNull();
+    // the hub takes a split of one sheet a part too (each part then fits)
+    expect(src("app/(protected)/assets/[tag]/page.tsx")).toMatch(/if \(e instanceof PackTooLargeError && e\.perPack >= 1\) \{/);
+    // /packages states the split in work packages (its remedy), with the refusal's own numbers
+    const page = src("app/(protected)/packages/page.tsx");
+    expect(page).toContain('showToast(tooLarge.code === "pack_too_large"');
+    expect(page).toMatch(/For a work package that means \$\{tooLarge\.parts \?\? 2\} work packages of at most/);
+    expect(err.code).toBe("pack_too_large");
   });
 
   it("the merged order is the CALLER's order, not the database's, and each included sheet carries its page count", async () => {
@@ -444,7 +544,7 @@ describe("PKG-12 — a pack has a budget, keeps its order, and the cover gives e
   it("the asset hub turns a refused pack into the parts it names — 'Print part 1 of N' (fix pass: splitPackIds is no longer unused)", () => {
     const hub = src("app/(protected)/assets/[tag]/page.tsx");
     expect(hub).toContain('const { buildAndDownloadDocPack, PackTooLargeError, splitPackIds } = await import("@/lib/docPack");');
-    expect(hub).toMatch(/if \(e instanceof PackTooLargeError && e\.perPack > 1\) \{[\s\S]{0,200}?setPackParts\(splitPackIds\(all, e\.perPack\)\);/);
+    expect(hub).toMatch(/if \(e instanceof PackTooLargeError && e\.perPack >= 1\) \{[\s\S]{0,200}?setPackParts\(splitPackIds\(all, e\.perPack\)\);/);
     expect(hub).toContain("onClick={() => void runPack(ids, { n: i + 1, of: packParts.length })}>");
     expect(hub).toContain("Print part {i + 1} of {packParts.length} ({ids.length})");
     // the split the refusal names is the split the page offers
@@ -519,7 +619,7 @@ describe("EGR-6 — the pack's distribution record is written after the download
     state.pagesByUrl["https://files/b.pdf"] = 7;
     state.unparseable.add(7);
     const r = await buildAndDownloadDocPack(packInput(["a", "b"]) as never);
-    expect(r.skipped).toEqual([expect.objectContaining({ documentId: "b", code: "unreadable_pdf", versionId: "v-b", reason: "Failed to parse PDF document" })]);
+    expect(r.skipped).toEqual([expect.objectContaining({ documentId: "b", code: "unreadable_pdf", versionId: "v-b", reason: expect.stringMatching(/^Failed to parse PDF document/) })]);
   });
 
   it("an encrypted file (the stamper's refusal) is 'unreadable_pdf' too", async () => {
@@ -536,6 +636,35 @@ describe("EGR-6 — the pack's distribution record is written after the download
     expect(r.included).toBe(1);
     expect(r.skipped).toEqual([expect.objectContaining({ documentId: "b", code: "build_failed", versionId: "v-b", reason: "Array buffer allocation failed" })]);
     expect(packLeftOutText("build_failed")).toBe("its file could not be added to the pack when printed");
+  });
+
+  it("OUT OF MEMORY IN pdf-lib's LOAD (a large valid scan — pdf-lib parses the whole file there) is 'build_failed' too, never 'unreadable_pdf' (fix pass 2)", async () => {
+    state.pagesByUrl["https://files/b.pdf"] = 11;
+    state.loadOom.add(11);
+    const r = await buildAndDownloadDocPack(packInput(["a", "b"]) as never);
+    expect(r.included).toBe(1);
+    expect(r.skipped).toEqual([expect.objectContaining({ documentId: "b", code: "build_failed", versionId: "v-b", reason: "Array buffer allocation failed" })]);
+  });
+
+  it("packBuildFailureCode: unreadable_pdf ONLY for pdf-lib's own parse / format refusal at load, or an encrypted file; out of memory at any stage, and anything else, is build_failed", () => {
+    const notLoaded = { loaded: false, encrypted: false };
+    for (const msg of [
+      "Failed to parse PDF document (line:0 col:24 offset=12): No PDF header found",
+      "Failed to parse PDF object starting with the following byte: 0",
+      "Failed to parse number (line:1 col:2 offset=3): \"x\"",
+      "Parser stalled",
+      "Expected next byte to be 10 but it was actually 13",
+      "Did not find expected keyword 'endobj'",
+    ]) expect(packBuildFailureCode(new Error(msg), notLoaded), msg).toBe("unreadable_pdf");
+    expect(packBuildFailureCode(new RangeError("Array buffer allocation failed"), notLoaded)).toBe("build_failed");
+    expect(packBuildFailureCode(new RangeError("Invalid array length"), notLoaded)).toBe("build_failed");
+    expect(packBuildFailureCode(new Error("Out of memory"), notLoaded)).toBe("build_failed");
+    expect(packBuildFailureCode(new TypeError("Cannot read properties of undefined (reading 'Pages')"), notLoaded)).toBe("build_failed");
+    expect(packBuildFailureCode(new Error("the PDF is encrypted, so it cannot be stamped"), { loaded: true, encrypted: true })).toBe("unreadable_pdf");
+    expect(packBuildFailureCode(new RangeError("Array buffer allocation failed"), { loaded: true, encrypted: true })).toBe("build_failed");
+    expect(packBuildFailureCode(new Error("copy failed"), { loaded: true, encrypted: false })).toBe("build_failed");
+    expect(isOutOfMemoryError("JavaScript heap out of memory")).toBe(true);
+    expect(isOutOfMemoryError(new Error("Failed to parse PDF document"))).toBe(false);
   });
 });
 

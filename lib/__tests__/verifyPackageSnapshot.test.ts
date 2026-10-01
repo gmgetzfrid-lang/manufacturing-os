@@ -794,6 +794,39 @@ describe("VFY-19 — the snapshot records what the print LEFT OUT, so a missing 
     expect(r.verdict).toBe("stale");
   });
 
+  it("OUT OF MEMORY IN pdf-lib's LOAD (a large valid 300-page scan on a tablet) is build_failed at print, so the still-current sheet stays RED — never the amber 'a re-print would leave it out too' (fix pass 2)", async () => {
+    vi.doMock("@/lib/supabase", () => ({ supabase: {} }));
+    vi.doMock("@/lib/stamping", () => ({ applyStampToPdfDoc: vi.fn() }));
+    vi.doMock("@/lib/intents", () => ({ recordIntent: vi.fn() }));
+    const { packBuildFailureCode } = await import("@/lib/docPack");
+    // the builder's classification of the two failures pdf-lib's load can raise
+    const oom = packBuildFailureCode(new RangeError("Array buffer allocation failed"), { loaded: false, encrypted: false });
+    expect(oom).toBe("build_failed");
+    // a file that is not a PDF at all, refused by the REAL pdf-lib with its own parse error
+    const { PDFDocument } = await import("pdf-lib");
+    const parseErr = await PDFDocument.load(new TextEncoder().encode("PK\u0003\u0004 a zip, not a pdf")).then(() => null, (e: unknown) => e);
+    expect(parseErr).not.toBeNull();
+    expect(packBuildFailureCode(parseErr, { loaded: false, encrypted: false })).toBe("unreadable_pdf");
+    // the out-of-memory sheet, still the current revision, scans RED (a desktop re-print carries it)
+    member(DOC2, "P-102");
+    state.versions = [{ id: "w1", file_url: "org/lib/P-102.pdf", file_type: "application/pdf" }];
+    state.print = printAt([printed, leftOut(DOC2, oom, "w1")]);
+    const r = await verify(true);
+    expect(r.notPrintable).toEqual([]);
+    expect(r.notInPack).toEqual([{ label: "P-102", leftOutAtPrint: "build_failed" }]);
+    expect(r.verdict).toBe("stale");
+  });
+
+  it("a sheet left out as too_large (over a field pack's budget on its own) stays RED 'not in this pack' — the verify route adds no new amber rule for it", async () => {
+    member(DOC2, "P-102");
+    state.versions = [{ id: "w1", file_url: "org/lib/P-102.pdf", file_type: "application/pdf" }];
+    state.print = printAt([printed, leftOut(DOC2, "too_large", "w1")]);
+    const r = await verify(true);
+    expect(r.notPrintable).toEqual([]);
+    expect(r.notInPack).toEqual([{ label: "P-102", leftOutAtPrint: "too_large" }]);
+    expect(r.verdict).toBe("stale");
+  });
+
   it("ADDED SINCE: a member the snapshot neither printed nor left out joined after this printing", async () => {
     member(DOC3, "P-103");
     state.versions = [{ id: "w1", file_url: "org/lib/P-103.pdf", file_type: "application/pdf" }];

@@ -270,7 +270,19 @@ export default function PackagesPage() {
           unrecordedNote,
       });
     } catch (e) {
-      showToast({ type: "error", title: "Couldn't print the pack", message: (e as Error).message });
+      // PKG-12: a work package over a field pack's budget is split into
+      // PACKAGES (no part-print here: the parts not on a paper would scan
+      // "added since this pack was printed"). A sheet too large on its own
+      // never lands here — the builder leaves it out and names it.
+      const tooLarge = e as { code?: string; parts?: number; perPack?: number; message?: string };
+      showToast(tooLarge.code === "pack_too_large"
+        ? {
+            type: "error",
+            title: "Too large for one field pack — nothing was printed",
+            message: `${tooLarge.message ?? ""} For a work package that means ${tooLarge.parts ?? 2} work packages of at most ` +
+              `${tooLarge.perPack ?? 1} sheet${tooLarge.perPack === 1 ? "" : "s"} each — create them from this one's drawings (e.g. one per area), then print each.`,
+          }
+        : { type: "error", title: "Couldn't print the pack", message: (e as Error).message });
     } finally {
       setPrinting(null);
     }

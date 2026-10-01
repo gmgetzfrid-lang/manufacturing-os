@@ -9,11 +9,15 @@
 //
 // TRX-5: downloads stream through /api/transmittal, which stamps each PDF
 // UNCONTROLLED with the as-issued revision and a verify QR and records the
-// copy before it is released. TRX-15: a PDF the route cannot stamp is refused
-// (only a file that is not a PDF leaves unmarked), and this page never holds
-// a download in memory — it points a hidden frame at the route (`&nav=1`), so
-// the browser streams the attachment straight to disk; a refusal renders in
-// that frame as plain text, which the page reads back and explains.
+// copy before it is released; a file it cannot stamp leaves as issued,
+// recorded so, and the issuer is told (DEC-61 §5 — a PDF the issue-time
+// check marked stampable is refused instead, TRX-16). TRX-15: this page
+// never holds a download in memory — it points a hidden frame at the route
+// (`&nav=1`), so the browser streams the attachment straight to disk; a
+// refusal renders in that frame as plain text, which the page reads back and
+// explains. A browser that drops an attachment arriving in a hidden frame
+// (one not yet checked on iOS Safari / Firefox) is covered by a visible
+// link to the SAME address, opened as a top-level navigation.
 // TRX-3 / TRX-8: each document shows its status and effective date AS SENT
 // and the fingerprint (SHA-256) and size of the file issued. TRX-4: a revoked
 // or expired link says so, distinctly from a voided transmittal.
@@ -28,9 +32,11 @@ interface PortalItem {
   statusAsSent?: string | null; effectiveDate?: string | null; fileHash?: string | null; fileSize?: number | null;
   /** REV-9: decided by the route in the facility's calendar. */
   notYetInForce?: boolean;
-  /** TRX-15: the file is not a PDF, so it is released as issued WITHOUT the
-   *  UNCONTROLLED marking (null = unknown). */
+  /** TRX-15: the file is released as issued WITHOUT the UNCONTROLLED
+   *  marking (null = unknown) — `unmarkedReason` says why: not a PDF, or a
+   *  PDF over the size the portal can mark. */
   releasedUnmarked?: boolean | null;
+  unmarkedReason?: "not_pdf" | "oversize" | null;
 }
 interface PortalData {
   number: string; subject: string | null; purpose: string | null; status: string;
@@ -61,8 +67,8 @@ function downloadError(status: number, body: { error?: string; reason?: string }
   if (code === "unrecorded") return "The download could not be recorded on the issuer's distribution record, so the file was not released. Try again shortly.";
   if (code === "unstampable") {
     return body?.reason === "oversize"
-      ? "This PDF is too large for the portal to mark as an UNCONTROLLED copy, so it was not released — an unmarked drawing cannot be told from a controlled one once it is printed. Ask the issuer to send it another way (or split into smaller files)."
-      : "This PDF could not be marked as an UNCONTROLLED copy (it may be encrypted or damaged), so it was not released. Contact the issuer.";
+      ? "This PDF is too large for the portal to mark as an UNCONTROLLED copy, so it was not released — an unmarked drawing cannot be told from a controlled one once it is printed. The issuer has been told; ask them to send it another way (or split into smaller files)."
+      : "This PDF could not be marked as an UNCONTROLLED copy (it may be encrypted or damaged), so it was not released. The issuer has been told.";
   }
   return code || `The file couldn't be prepared (HTTP ${status}).`;
 }
@@ -90,6 +96,12 @@ function frameRefusal(text: string | null | undefined): { error?: string; reason
  *  UI takes over — a large PDF is stamped before its first byte arrives. A
  *  refusal still shows whenever it lands. */
 const DOWNLOAD_SETTLE_MS = 8000;
+
+/** The route address a file is saved from — the hidden frame's, and the
+ *  visible fallback link's (TRX-15). */
+function fileHref(token: string, docId: string): string {
+  return `/api/transmittal?token=${encodeURIComponent(token)}&file=${encodeURIComponent(docId)}&nav=1`;
+}
 /** A download frame is kept this long — past the route's 300 s budget. */
 const DOWNLOAD_FRAME_TTL_MS = 10 * 60 * 1000;
 
@@ -102,6 +114,9 @@ export default function TransmittalPortal({ params }: { params: Promise<{ token:
   const [ackNote, setAckNote] = useState("");
   const [ackBusy, setAckBusy] = useState(false);
   const [downloading, setDownloading] = useState<string | null>(null);
+  // TRX-15: the files whose hidden-frame download was started — each then
+  // shows a visible "did not start?" link to the same address.
+  const [started, setStarted] = useState<Set<string>>(() => new Set());
   const frames = useRef<HTMLIFrameElement[]>([]);
   useEffect(() => () => { for (const f of frames.current) f.remove(); frames.current = []; }, []);
 
@@ -128,6 +143,7 @@ export default function TransmittalPortal({ params }: { params: Promise<{ token:
   // navigation so the portal stays on screen; only a refusal renders in it.
   const download = (docId: string, number: string) => {
     setDownloading(docId); setMsg(null);
+    setStarted((prev) => (prev.has(docId) ? prev : new Set(prev).add(docId)));
     const frame = document.createElement("iframe");
     frame.style.display = "none";
     frame.setAttribute("aria-hidden", "true");
@@ -143,13 +159,15 @@ export default function TransmittalPortal({ params }: { params: Promise<{ token:
         frames.current = frames.current.filter((f) => f !== frame);
       }
     });
-    frame.src = `/api/transmittal?token=${encodeURIComponent(token)}&file=${encodeURIComponent(docId)}&nav=1`;
+    frame.src = fileHref(token, docId);
     document.body.appendChild(frame);
     frames.current.push(frame);
     window.setTimeout(() => {
       if (!frames.current.includes(frame)) return; // refused — already said
       setDownloading((cur) => (cur === docId ? null : cur));
-      setMsg({ tone: "ok", text: `${number}: your browser is saving the file as issued — check its downloads.` });
+      // Never "saved": a browser may drop an attachment that arrives in a
+      // hidden frame, and the page cannot see whether it did.
+      setMsg({ tone: "ok", text: `${number}: the download should have started — check your browser's downloads. If nothing arrived, use "Download didn't start? Open the file directly" under ${number}.` });
     }, DOWNLOAD_SETTLE_MS);
     // The frame outlives the transfer (removing it earlier would cancel a
     // download still being stamped); it is dropped well after the route's
@@ -253,8 +271,24 @@ export default function TransmittalPortal({ params }: { params: Promise<{ token:
                   )}
                   {i.releasedUnmarked === true && (
                     <div className="text-[10px] font-bold text-amber-700">
-                      Not a PDF — released as issued, WITHOUT the UNCONTROLLED marking. Confirm with the issuer that this revision is still current before you use it.
+                      {i.unmarkedReason === "oversize"
+                        ? "Too large for the portal to mark — released as issued, WITHOUT the UNCONTROLLED marking (the issuer is told). Confirm with the issuer that this revision is still current before you use it."
+                        : "Not a PDF — released as issued, WITHOUT the UNCONTROLLED marking. Confirm with the issuer that this revision is still current before you use it."}
                     </div>
+                  )}
+                  {started.has(i.documentId) && (
+                    // TRX-15: the hidden frame's download is not yet checked on
+                    // every browser (iOS Safari, Firefox) — the same address as
+                    // a top-level navigation always reaches the browser's own
+                    // download handling.
+                    <a
+                      href={fileHref(token, i.documentId)}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="mt-0.5 inline-block text-[10px] font-bold text-blue-700 underline"
+                    >
+                      Download didn&apos;t start? Open the file directly
+                    </a>
                   )}
                   {(i.fileHash || sizeLabel(i.fileSize)) && (
                     <div className="text-[10px] font-mono text-slate-400" title={i.fileHash ? `SHA-256 of the file issued: ${i.fileHash}` : undefined}>
@@ -272,7 +306,7 @@ export default function TransmittalPortal({ params }: { params: Promise<{ token:
               </li>
             ))}
           </ul>
-          <div className="mt-1.5 text-[10px] text-slate-400">Files download exactly as issued on this transmittal — if a newer revision exists, it is NOT what this record covers. Each PDF is marked UNCONTROLLED with its revision and a QR to check whether it is still current; a PDF that cannot be marked is not released (contact the issuer), and a file that is not a PDF (a CAD model, a spreadsheet) is released as issued, without the marking — confirm with the issuer that its revision is still current before you use it.{data.portalExpiresAt ? ` This link works until ${new Date(data.portalExpiresAt).toLocaleDateString()}.` : ""}</div>
+          <div className="mt-1.5 text-[10px] text-slate-400">Files download exactly as issued on this transmittal — if a newer revision exists, it is NOT what this record covers. Each PDF is marked UNCONTROLLED with its revision and a QR to check whether it is still current. A file the portal cannot mark — one that is not a PDF (a CAD model, a spreadsheet), a PDF too large to mark, or a PDF saved with security restrictions — is released as issued, without the marking (the issuer is told of a PDF): confirm with the issuer that its revision is still current before you use it.{data.portalExpiresAt ? ` This link works until ${new Date(data.portalExpiresAt).toLocaleDateString()}.` : ""}</div>
         </div>
 
         {data.notes && (

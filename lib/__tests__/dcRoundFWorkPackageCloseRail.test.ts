@@ -9,7 +9,11 @@
 //   · SELECT / INSERT are not touched; no function, no trigger;
 //   · the DEC-30 one-paste shape: inventory TEMP TABLE before BEGIN, one
 //     BEGIN / COMMIT, ONE final SELECT (check, ok, n) of probes + aggregate
-//     counts, probes that never put a cast inside a LIKE.
+//     counts, probes that never put a cast inside a LIKE;
+//   · fix pass 2: the MEASURE rows count the population the app's budget
+//     (PKG-12) and the portal's stamping bound (TRX-15) actually reach — the
+//     print gate's sheets, recorded file sizes against the code's own
+//     constants — and the file asks for the paste BEFORE the app deploys.
 
 import { describe, it, expect } from "vitest";
 import { readFileSync, readdirSync } from "node:fs";
@@ -121,15 +125,58 @@ describe("20261143 — work_packages UPDATE / DELETE narrowed to the owner or a 
     expect((m143.match(/^COMMIT;$/gm) ?? []).length).toBe(1);
     const inventory = m143.slice(m143.indexOf("CREATE TEMP TABLE"), m143.indexOf("\nBEGIN;"));
     // aggregate counts only — never a customer row
-    expect((inventory.match(/COUNT\(/g) ?? []).length).toBe(10);
-    // the PKG-12 measurements are labelled as such — read-only, changed by nothing here
-    expect((inventory.match(/'MEASURE \(PKG-12, not changed by this file\): /g) ?? []).length).toBe(2);
+    expect((inventory.match(/COUNT\(/g) ?? []).length).toBe(16);
+    // the measurements are labelled as such — read-only, changed by nothing here
+    expect((inventory.match(/'MEASURE \(PKG-12, not changed by this file\): /g) ?? []).length).toBe(6);
+    expect((inventory.match(/'MEASURE \(TRX-15, not changed by this file\): /g) ?? []).length).toBe(2);
     expect(inventory).not.toMatch(/SELECT \*|SELECT p\.(?:id|name)|SELECT m\.(?:uid|email)/);
     const tail = tailOf(m143);
     expect((codeOnly(tail).match(/;/g) ?? []).length).toBe(1);
     expect(codeOnly(tail)).not.toMatch(/\b(UPDATE|INSERT|DELETE|ALTER|DROP|CREATE)\b/);
     expect(tail).toMatch(/AS check,\s*\n[\s\S]*?AS ok,\s*\n\s*NULL::text AS n/);
     expect(tail).toContain("SELECT inventory, NULL::boolean, n FROM dc_round_f_143_before;");
+  });
+
+  it("MEASURE rows (fix pass 2): the print gate's population, the code's own budgets, sizes that exist, and the paste ordered before the app", () => {
+    const inventory = m143.slice(m143.indexOf("CREATE TEMP TABLE"), m143.indexOf("\nBEGIN;"));
+    const rows = inventory.split("\nUNION ALL\n").filter((r) => r.includes("'MEASURE ("));
+    expect(rows).toHaveLength(8);
+    const pkg12 = rows.filter((r) => r.includes("MEASURE (PKG-12"));
+    // every PKG-12 row counts what the gate admits — Issued / Locked — never "not Archived"
+    for (const r of pkg12) {
+      expect(r).toContain("d.status IN ('Issued', 'Locked')");
+      expect(r).not.toMatch(/IS DISTINCT FROM 'Archived'/);
+    }
+    // the four package / tag rows also drop a sheet under an active document hold, and say they are an upper bound or a sum of sheets that fit alone
+    for (const r of pkg12.slice(0, 4)) {
+      expect(r).toContain("NOT EXISTS (SELECT 1 FROM document_holds h WHERE h.document_id = d.id AND h.released_at IS NULL)");
+    }
+    expect(pkg12.slice(0, 2).every((r) => r.includes("upper bound"))).toBe(true);
+    // sizes are read from document_versions.size (the column exists: schema.sql), against the code's constants
+    const schema = readFileSync(join(process.cwd(), "supabase", "schema.sql"), "utf8");
+    expect(schema).toMatch(/CREATE TABLE IF NOT EXISTS document_versions \([\s\S]*?\n  size BIGINT,/);
+    const docPack = readFileSync(join(process.cwd(), "lib", "docPack.ts"), "utf8");
+    expect(docPack).toContain("export const PACK_MAX_BYTES = 150 * 1024 * 1024;");
+    expect(150 * 1024 * 1024).toBe(157286400);
+    expect(pkg12.filter((r) => r.includes("157286400"))).toHaveLength(3);
+    // the rows within a pack on their own are summed; the over-150 MB singles are the too-large row
+    expect(pkg12[2]).toContain("AND v.size <= 157286400");
+    expect(pkg12[3]).toContain("AND v.size <= 157286400");
+    expect(pkg12[4]).toContain("AND v.size > 157286400");
+    expect(pkg12[5]).toMatch(/records no size[\s\S]*page counts are not stored/);
+    // TRX-15: the portal's own bound, live links only, the 20261133 columns read through to_jsonb (they may not exist yet)
+    const route = readFileSync(join(process.cwd(), "app", "api", "transmittal", "route.ts"), "utf8");
+    expect(route).toContain("const PORTAL_STAMP_MAX_BYTES = 64 * 1024 * 1024;");
+    const trx = rows.filter((r) => r.includes("MEASURE (TRX-15"));
+    expect(trx[0]).toContain("> 67108864");
+    expect(64 * 1024 * 1024).toBe(67108864);
+    for (const r of trx) {
+      expect(r).toContain("t.status IN ('issued', 'acknowledged')");
+      expect(r).toContain("to_jsonb(t)->>'portal_revoked_at' IS NULL");
+      expect(r).not.toMatch(/\bt\.portal_(revoked|expires)_at\b/);
+    }
+    // the operator reads the counts BEFORE the app ships
+    expect(m143).toMatch(/DEPLOY ORDER \(PKG-12\): paste this file BEFORE the P8 FIELD app deploys and\n-- read the MEASURE rows first/);
   });
 
   it("probes match the DEPARSED policy text: no cast inside any LIKE pattern, and every pattern the policies would deparse to", () => {

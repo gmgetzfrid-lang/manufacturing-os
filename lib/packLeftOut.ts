@@ -39,13 +39,19 @@ export type PackLeftOutCode =
   /** The file could not be fetched at print time (a re-print may carry it). */
   | "fetch_failed"
   /** The file was fetched but could not be read or stamped as a PDF: pdf-lib
-   *  could not load it (unparseable, a file that is not a PDF) or it is
-   *  encrypted (the stamper's refusal). A re-print would leave it out too. */
+   *  refused to parse it (its own parse / format error — unparseable, a file
+   *  that is not a PDF) or it loaded encrypted (the stamper's refusal). Never
+   *  a device running out of memory. A re-print would leave it out too. */
   | "unreadable_pdf"
-  /** The file was fetched and read, but adding it to the pack failed (a page
-   *  copy that threw, a device out of memory merging a large valid PDF) — a
+  /** The file was fetched, but adding it to the pack failed for a reason
+   *  that is not the file's format — a device out of memory loading or
+   *  merging a large valid PDF (at any stage), a page copy that threw — so a
    *  re-print, e.g. on a desktop, may carry it. */
-  | "build_failed";
+  | "build_failed"
+  /** PKG-12: the sheet ALONE is over a field pack's page or byte budget, so
+   *  it is left out (the rest of the pack is built) — it is downloaded on its
+   *  own. A re-print leaves it out too; the paper does not hold it. */
+  | "too_large";
 
 const TEXT: Record<PackLeftOutCode, string> = {
   not_issued: "not an issued revision when printed",
@@ -58,6 +64,7 @@ const TEXT: Record<PackLeftOutCode, string> = {
   fetch_failed: "its file could not be fetched when printed",
   unreadable_pdf: "its file could not be read as a PDF when printed",
   build_failed: "its file could not be added to the pack when printed",
+  too_large: "too large for a field pack when printed — it is printed on its own",
 };
 
 export function isPackLeftOutCode(v: unknown): v is PackLeftOutCode {

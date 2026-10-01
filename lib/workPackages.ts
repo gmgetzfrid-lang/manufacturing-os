@@ -73,8 +73,9 @@ export const RESTRICTED_MEMBER_LABEL = "Restricted document";
  *  (the read failed) — not a permission statement. */
 export const UNREAD_MEMBER_LABEL = "Document (not read just now)";
 
-/** PKG-7: `.in()` reads are chunked so a large set of open packages stays
- *  under PostgREST's URL limit (the lib/acknowledgments.ts chunk size). */
+/** PKG-7: `.in()` reads are chunked so a large set of open packages — or
+ *  one large package's members, at create and at refresh — stays under
+ *  PostgREST's URL limit (the lib/acknowledgments.ts chunk size). */
 const IN_CHUNK = 150;
 function chunked<T>(xs: T[]): T[][] {
   const out: T[][] = [];
@@ -214,14 +215,16 @@ export async function createWorkPackage(input: {
   actorName: string;
 }): Promise<string> {
   const requested = [...new Set(input.documentIds)];
-  let docRows: Array<Record<string, unknown>> = [];
+  const docRows: Array<Record<string, unknown>> = [];
   if (requested.length > 0) {
-    const { data: docs, error: docErr } = await supabase
-      .from("documents")
-      .select("id, rev, current_version_id")
-      .in("id", requested);
-    if (docErr) throw new Error(`Couldn't read the chosen documents (${docErr.message}) — the package was not created.`);
-    docRows = (docs as Array<Record<string, unknown>>) ?? [];
+    for (const ids of chunked(requested)) {
+      const { data: docs, error: docErr } = await supabase
+        .from("documents")
+        .select("id, rev, current_version_id")
+        .in("id", ids);
+      if (docErr) throw new Error(`Couldn't read the chosen documents (${docErr.message}) — the package was not created.`);
+      docRows.push(...((docs as Array<Record<string, unknown>>) ?? []));
+    }
     const found = new Set(docRows.map((d) => String(d.id)));
     const missing = requested.filter((id) => !found.has(id)).length;
     if (missing > 0) {
@@ -433,12 +436,15 @@ export async function refreshWorkPackage(
     rows = rows.filter((r) => only.has(r.document_id));
   }
   if (rows.length === 0) return;
-  const { data: docs, error: docErr } = await supabase
-    .from("documents")
-    .select("id, rev, current_version_id")
-    .in("id", rows.map((r) => r.document_id));
-  if (docErr) throw new Error(`Couldn't read the package's documents (${docErr.message}) — nothing moved.`);
-  const byId = new Map(((docs as Array<Record<string, unknown>>) ?? []).map((d) => [String(d.id), d]));
+  const byId = new Map<string, Record<string, unknown>>();
+  for (const ids of chunked([...new Set(rows.map((r) => r.document_id))])) {
+    const { data: docs, error: docErr } = await supabase
+      .from("documents")
+      .select("id, rev, current_version_id")
+      .in("id", ids);
+    if (docErr) throw new Error(`Couldn't read the package's documents (${docErr.message}) — nothing moved.`);
+    for (const d of (docs as Array<Record<string, unknown>>) ?? []) byId.set(String(d.id), d);
+  }
   const readable = rows.filter((r) => byId.has(r.document_id));
   const unreadable = rows.length - readable.length;
 

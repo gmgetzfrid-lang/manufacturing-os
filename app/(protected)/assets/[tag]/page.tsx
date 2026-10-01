@@ -108,9 +108,10 @@ export default function AssetHubPage() {
         );
       } catch (e) {
         // PKG-12: over the budget → the split the refusal names, as parts
-        // this page prints (a single sheet over the budget alone is not
-        // split — it is downloaded on its own).
-        if (e instanceof PackTooLargeError && e.perPack > 1) {
+        // this page prints. (A sheet over the budget ON ITS OWN never refuses
+        // the pack: the builder leaves it out as too large, names it in the
+        // note above, and builds the rest — it is downloaded on its own.)
+        if (e instanceof PackTooLargeError && e.perPack >= 1) {
           const all = docs.map((d) => d.id);
           if (all.length > e.perPack) setPackParts(splitPackIds(all, e.perPack));
         }

@@ -24,12 +24,15 @@
 //                  over the stamping bound is hashed chunk by chunk, re-read
 //                  pinned to the verified ETag (If-Match) and piped through
 //                  unstamped, recorded with the reason.
-//   TRX-15 (P8)    a PDF goes out stamped or not at all: a PDF over the bound
-//                  (its first bytes say so — the rest is never read) or one
-//                  the stamper refuses is 422 "unstampable", nothing recorded
-//                  as delivered, the refusal on the issuer's trail; only a
-//                  non-PDF leaves unstamped. `&nav=1` answers a refusal as
-//                  plain text for the portal page's download frame.
+//   TRX-15 (P8)    a PDF that cannot be stamped (over the bound, or one the
+//                  stamper refuses) goes out recorded unstamped (DEC-61 §5)
+//                  and the ISSUER IS TOLD, once per transmittal and document
+//                  (deduped on a delivered bell notice); only an item the
+//                  issue-time check (TRX-16) marked `stampable: true` is held
+//                  to "stamped or not at all" — 422 "unstampable", nothing
+//                  recorded as delivered, the refusal on the issuer's trail.
+//                  `&nav=1` answers a refusal as plain text for the portal
+//                  page's download frame.
 
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { NextRequest } from "next/server";
@@ -65,6 +68,9 @@ const state = vi.hoisted(() => ({
   notifications: [] as Array<Record<string, unknown>>,
   emails: [] as Array<Record<string, unknown>>,
   issuerEmail: null as string | null,
+  // a refused bell / email insert (supabase-js resolves { error }, never rejects)
+  notificationInsertError: null as { message: string } | null,
+  emailInsertError: null as { message: string } | null,
 }));
 
 function chain(table: string) {
@@ -81,6 +87,13 @@ function chain(table: string) {
     if (table === "transmittals" && op === "update") {
       state.updates.push({ ...payload!, __filters: { ...filters } });
       return { data: state.updateRows, error: null };
+    }
+    if (table === "notifications" && op === "select") {
+      // the dedupe read: a bell notice of this kind, transmittal and document that was WRITTEN
+      const rows = state.notifications.filter((n) =>
+        n.kind === filters.kind && n.resource_type === filters.resource_type && n.resource_id === filters.resource_id &&
+        (n.metadata as Record<string, unknown> | undefined)?.documentId === filters["metadata->>documentId"]);
+      return { data: rows.map((_, i) => ({ id: `n${i}` })), error: null };
     }
     if (table === "audit_logs" && op === "select") {
       // the dedupe read: the trail rows of this action, transmittal and document
@@ -102,8 +115,14 @@ function chain(table: string) {
           op = "insert";
           const row = args[0] as Record<string, unknown>;
           if (table === "audit_logs") { state.audits.push(row); return Promise.resolve({ error: null }); }
-          if (table === "notifications") { state.notifications.push(row); return Promise.resolve({ error: null }); }
-          if (table === "email_notifications") { state.emails.push(row); return Promise.resolve({ error: null }); }
+          if (table === "notifications") {
+            if (state.notificationInsertError) return Promise.resolve({ error: state.notificationInsertError });
+            state.notifications.push(row); return Promise.resolve({ error: null });
+          }
+          if (table === "email_notifications") {
+            if (state.emailInsertError) return Promise.resolve({ error: state.emailInsertError });
+            state.emails.push(row); return Promise.resolve({ error: null });
+          }
           if (table === "download_audits") {
             state.order.push("download_audits");
             state.downloads.push(row);
@@ -217,6 +236,8 @@ beforeEach(async () => {
   state.notifications = [];
   state.emails = [];
   state.issuerEmail = null;
+  state.notificationInsertError = null;
+  state.emailInsertError = null;
 });
 
 describe("GET /api/transmittal file resolver (EGR-1)", () => {
@@ -490,6 +511,7 @@ describe("TRX-4 — the link has its own lifecycle", () => {
       documentId: DOC, number: "P-101", title: null, rev: "3", statusAsSent: "Issued", effectiveDate: "2026-11-01", fileHash: "abc123", fileSize: null,
       notYetInForce: expect.any(Boolean), // REV-9 — decided in the facility's calendar (pinned below)
       releasedUnmarked: null,             // TRX-15 — no version row in this fixture: unknown
+      unmarkedReason: null,
     });
     (state.transmittal!.items as Array<Record<string, unknown>>)[0].fileSize = 2516582;
     const again = await (await get()).json() as Record<string, unknown>;
@@ -566,13 +588,71 @@ function getNav(file: string): Promise<Response> {
   return GET(new NextRequest(u));
 }
 
-describe("TRX-15 — a PDF leaves the portal stamped or not at all", () => {
+describe("TRX-15 — a PDF that cannot be stamped: released recorded-unstamped with the issuer told (DEC-61 §5), refused only when the issue-time check marked it stampable (TRX-16)", () => {
+  const arm = () => { (state.transmittal!.items as Array<Record<string, unknown>>)[0].stampable = true; };
+  const restoreStamp = () => {
+    vi.mocked(applyStampToPdfDoc).mockReset();
+    vi.mocked(applyStampToPdfDoc).mockImplementation(async (_doc: unknown, opts: Record<string, unknown>) => { state.order.push("stamp"); state.stamps.push(opts); });
+  };
   beforeEach(() => {
     state.versionRow = { file_url: `orgs/orgA/d/${DOC}.pdf`, org_id: "orgA", record_id: DOC, revision_label: "3" };
   });
 
-  it("a PDF over the stamping bound is REFUSED (422 unstampable / oversize): its first bytes say PDF, the rest is never read, nothing is recorded as delivered, the refusal is on the issuer's trail", async () => {
+  it("an item issued WITHOUT the issue-time mark (every live transmittal today): a PDF over the bound is verified, re-read pinned and piped UNSTAMPED, recorded so — and the issuer is told", async () => {
+    state.issuerEmail = "issuer@acme.com";
     state.contentLength = 64 * 1024 * 1024 + 1; // claimed by the store; the bytes stay small in the test
+    (state.transmittal!.items as Array<Record<string, unknown>>)[0].fileHash = sha(state.bytes);
+    const res = await get(DOC);
+    expect(res.status).toBe(200);
+    expect(state.destroyed).toBe(0);                    // read whole, chunk by chunk — not stopped at the header
+    expect(state.getInputs).toEqual([
+      { Bucket: "b", Key: `orgs/orgA/d/${DOC}.pdf` },
+      { Bucket: "b", Key: `orgs/orgA/d/${DOC}.pdf`, IfMatch: '"etag-1"' },
+    ]);
+    expect(state.stamps).toHaveLength(0);
+    expect(res.headers.get("x-transmittal-stamped")).toBe("0");
+    expect(sha(new Uint8Array(await res.arrayBuffer()))).toBe(sha(state.bytes));
+    expect(state.downloads[0].source).toBe("transmittal_portal_unstamped");
+    const a = state.audits.find((x) => x.action === "TRANSMITTAL_PORTAL_DOWNLOAD")!;
+    expect(a.details).toMatchObject({ stamped: false, unstampedReason: "oversize", hashVerified: true });
+    expect(state.audits.some((x) => x.action === "TRANSMITTAL_PORTAL_UNSTAMPABLE_REFUSED")).toBe(false);
+    // the issuer is told it left WITHOUT the marking (never a silent unmarked copy)
+    expect(state.notifications).toHaveLength(1);
+    expect(state.notifications[0]).toMatchObject({
+      kind: "transmittal_unstampable", user_id: "issuer1", resource_type: "transmittal", resource_id: "t1",
+      metadata: { documentId: DOC, reason: "oversize", outcome: "released" },
+    });
+    expect(String(state.notifications[0].title)).toBe("Transmittal TR-0001: P-101 Rev 3 went to the recipient WITHOUT the UNCONTROLLED marking");
+    expect(String(state.notifications[0].body)).toMatch(/larger than the portal can mark \(64 MB\).*recorded as unstamped/);
+    expect(state.emails).toEqual([expect.objectContaining({ to_email: "issuer@acme.com", event_type: "transmittal_unstamped", status: "queued" })]);
+  });
+
+  it("an unmarked item: a PDF the stamper refuses (encrypted / permission-restricted) goes out as issued, recorded unstamped (stamp_failed), the issuer told once", async () => {
+    vi.mocked(applyStampToPdfDoc).mockImplementation(async () => {
+      throw new Error("Input document to `PDFDocument.load` is encrypted.");
+    });
+    try {
+      const res = await get(DOC);
+      expect(res.status).toBe(200);
+      expect(sha(new Uint8Array(await res.arrayBuffer()))).toBe(sha(state.bytes)); // the as-issued bytes
+      expect(res.headers.get("content-type")).toBe("application/pdf");
+      expect(state.downloads[0].source).toBe("transmittal_portal_unstamped");
+      const a = state.audits.find((x) => x.action === "TRANSMITTAL_PORTAL_DOWNLOAD")!;
+      expect(a.details).toMatchObject({ stamped: false, unstampedReason: "stamp_failed" });
+      expect(state.notifications).toHaveLength(1);
+      expect(String(state.notifications[0].body)).toMatch(/security or permission restrictions \(common for vendor and certified drawings\)/);
+      // a second pull: delivered again, recorded again, the issuer NOT told twice
+      expect((await get(DOC)).status).toBe(200);
+      expect(state.downloads).toHaveLength(2);
+      expect(state.notifications).toHaveLength(1);
+    } finally {
+      restoreStamp();
+    }
+  });
+
+  it("an item the issue-time check marked stampable: a PDF over the bound is REFUSED (422 unstampable / oversize) — the rest never read, nothing recorded as delivered, the refusal on the issuer's trail", async () => {
+    arm();
+    state.contentLength = 64 * 1024 * 1024 + 1;
     (state.transmittal!.items as Array<Record<string, unknown>>)[0].fileHash = sha(state.bytes);
     const res = await get(DOC);
     expect(res.status).toBe(422);
@@ -587,36 +667,31 @@ describe("TRX-15 — a PDF leaves the portal stamped or not at all", () => {
     expect(trail.user_id).toBe("issuer1");
     expect(trail.details).toMatchObject({ number: "TR-0001", documentId: DOC, versionId: VER, reason: "oversize", maxStampBytes: 64 * 1024 * 1024 });
     expect(state.audits.some((a) => a.action === "TRANSMITTAL_PORTAL_DOWNLOAD")).toBe(false);
+    expect(state.notifications[0]).toMatchObject({ metadata: { documentId: DOC, reason: "oversize", outcome: "refused" } });
+    expect(String(state.notifications[0].body)).toMatch(/larger than the portal can mark \(64 MB\)/);
   });
 
-  it("a PDF the stamper refuses (encrypted, malformed) is REFUSED (422 unstampable / stamp_failed) — never delivered unstamped", async () => {
-    vi.mocked(applyStampToPdfDoc).mockImplementationOnce(async () => {
-      throw new Error("the PDF is encrypted, so it cannot be stamped — it was not issued as a copy");
-    });
-    const res = await get(DOC);
-    expect(res.status).toBe(422);
-    expect(await res.json()).toEqual({ error: "unstampable", reason: "stamp_failed" });
-    expect(state.downloads).toHaveLength(0);
-    const trail = state.audits.find((a) => a.action === "TRANSMITTAL_PORTAL_UNSTAMPABLE_REFUSED")!;
-    expect(trail.details).toMatchObject({ reason: "stamp_failed", detail: expect.stringMatching(/encrypted/) });
-  });
-
-  it("the issuer is TOLD — a bell and an email naming the document and the likely cause — once per transmittal and document (deduped on the trail)", async () => {
+  it("a marked item the stamper refuses is REFUSED (422 unstampable / stamp_failed) — never delivered unstamped; the issuer told once (deduped on the delivered bell notice)", async () => {
+    arm();
     state.issuerEmail = "issuer@acme.com";
     vi.mocked(applyStampToPdfDoc).mockImplementation(async () => {
       throw new Error("Input document to `PDFDocument.load` is encrypted.");
     });
     try {
-      expect((await get(DOC)).status).toBe(422);
+      const res = await get(DOC);
+      expect(res.status).toBe(422);
+      expect(await res.json()).toEqual({ error: "unstampable", reason: "stamp_failed" });
+      expect(state.downloads).toHaveLength(0);
+      const trail = state.audits.find((a) => a.action === "TRANSMITTAL_PORTAL_UNSTAMPABLE_REFUSED")!;
+      expect(trail.details).toMatchObject({ reason: "stamp_failed", detail: expect.stringMatching(/encrypted/) });
       expect(state.notifications).toHaveLength(1);
       const n = state.notifications[0];
       expect(n).toMatchObject({
         org_id: "orgA", user_id: "issuer1", kind: "transmittal_unstampable",
         link: "/transmittals", resource_type: "transmittal", resource_id: "t1",
-        metadata: { documentId: DOC, reason: "stamp_failed" },
+        metadata: { documentId: DOC, reason: "stamp_failed", outcome: "refused" },
       });
       expect(String(n.title)).toBe("Transmittal TR-0001: P-101 Rev 3 was refused to the recipient");
-      expect(String(n.body)).toMatch(/security or permission restrictions \(common for vendor and certified drawings\)/);
       expect(String(n.body)).toMatch(/this one still reads issued on the register/);
       expect(state.emails).toHaveLength(1);
       expect(state.emails[0]).toMatchObject({ to_user_id: "issuer1", to_email: "issuer@acme.com", subject: n.title, event_type: "transmittal_refused", status: "queued" });
@@ -626,28 +701,70 @@ describe("TRX-15 — a PDF leaves the portal stamped or not at all", () => {
       expect(state.notifications).toHaveLength(1);
       expect(state.emails).toHaveLength(1);
     } finally {
-      vi.mocked(applyStampToPdfDoc).mockReset();
-      vi.mocked(applyStampToPdfDoc).mockImplementation(async (_doc: unknown, opts: Record<string, unknown>) => { state.order.push("stamp"); state.stamps.push(opts); });
+      restoreStamp();
     }
   });
 
-  it("an oversize PDF names the bound; no issuer on the row → nobody to tell, still refused", async () => {
-    state.contentLength = 64 * 1024 * 1024 + 1;
-    expect((await get(DOC)).status).toBe(422);
-    expect(String(state.notifications[0].body)).toMatch(/larger than the portal can mark \(64 MB\)/);
-    expect(state.emails).toHaveLength(0); // no member email on record — the bell still rang
-    state.audits = []; state.notifications = [];
-    state.transmittal!.created_by = null;
-    expect((await get(DOC)).status).toBe(422);
-    expect(state.notifications).toHaveLength(0);
+  it("a bell notice whose insert FAILED is not 'told': the failure is logged and the next pull tells the issuer again (never silenced by the trail)", async () => {
+    vi.mocked(applyStampToPdfDoc).mockImplementation(async () => { throw new Error("encrypted"); });
+    const err = vi.spyOn(console, "error").mockImplementation(() => {});
+    try {
+      state.issuerEmail = "issuer@acme.com";
+      state.notificationInsertError = { message: "new row violates row-level security policy" };
+      state.emailInsertError = { message: "relation is read-only" };
+      expect((await get(DOC)).status).toBe(200);
+      expect(state.notifications).toHaveLength(0);
+      expect(err).toHaveBeenCalledWith(expect.stringMatching(/bell notice of an unstamped PDF was refused/), "new row violates row-level security policy");
+      expect(err).toHaveBeenCalledWith(expect.stringMatching(/email notice of an unstamped PDF could not be queued/), "relation is read-only");
+      state.notificationInsertError = null;
+      state.emailInsertError = null;
+      expect((await get(DOC)).status).toBe(200);
+      expect(state.notifications).toHaveLength(1);
+      expect(state.emails).toHaveLength(1);
+    } finally {
+      err.mockRestore();
+      restoreStamp();
+    }
   });
 
-  it("only a file that is not a PDF ever leaves unstamped — the route has no unstamped-PDF branch left", () => {
+  it("the email queue is kicked on the configured public origin (publicOrigin), never on the address the request names; no issuer → nobody to tell", async () => {
+    const prev = process.env.CRON_SECRET;
+    process.env.CRON_SECRET = "s3cret";
+    const kicks: string[] = [];
+    vi.stubGlobal("fetch", vi.fn(async (url: string) => { kicks.push(String(url)); return new Response(null, { status: 202 }); }));
+    try {
+      state.issuerEmail = "issuer@acme.com";
+      state.contentLength = 64 * 1024 * 1024 + 1;
+      // the request arrives on another host (a rewritten URL / a trusted Host header)
+      const u = new URL("https://attacker.example/api/transmittal");
+      u.searchParams.set("token", TOKEN);
+      u.searchParams.set("file", DOC);
+      expect((await GET(new NextRequest(u))).status).toBe(200);
+      expect(kicks).toEqual(["https://app.example.com/api/notifications/send-queued"]);
+      const route = readFileSync("app/api/transmittal/route.ts", "utf8");
+      const tell = route.slice(route.indexOf("async function tellIssuerUnstampable("), route.indexOf("export async function GET("));
+      expect(tell).not.toMatch(/req\.nextUrl\.origin|origin: string/);
+      expect(tell).toContain("const origin = publicOrigin();");
+      state.notifications = []; state.emails = [];
+      state.transmittal!.created_by = null;
+      expect((await get(DOC)).status).toBe(200);
+      expect(state.notifications).toHaveLength(0);
+    } finally {
+      vi.unstubAllGlobals();
+      if (prev === undefined) delete process.env.CRON_SECRET; else process.env.CRON_SECRET = prev;
+    }
+  });
+
+  it("the refusal is ARMED only by the issue-time mark (`stampable: true`), so a live transmittal issued before TRX-16 is never refused at download for a file nobody checked", () => {
     const src = readFileSync("app/api/transmittal/route.ts", "utf8");
-    expect(src).toContain('const unstampedReason: "not_pdf" | null = isPdf ? null : "not_pdf";');
-    expect(src).not.toMatch(/delivering unstamped/);
-    expect(src).not.toMatch(/unstampedReason = "stamp_failed"|"oversize" \| null/);
-    expect(src).toContain('if (oversizePdf) return refuseUnstampable("oversize", null);');
+    expect(src).toContain("function refusesUnstampable(item: Item): boolean {\n  return item.stampable === true;\n}");
+    expect(src).toContain("const armed = refusesUnstampable(item);");
+    expect(src).toContain("await hashBody(obj.Body, { stopIfPdf: armed })");
+    expect(src).toContain('if (isPdf && !source && armed) return refuseUnstampable("oversize", null);');
+    expect(src).toContain('if (armed) return refuseUnstampable("stamp_failed", (e as Error).message || null);');
+    // DEC-61 §5's fallback is back for everything else, recorded with the reason
+    expect(src).toContain('let unstampedReason: "not_pdf" | "oversize" | "stamp_failed" | null = !isPdf ? "not_pdf" : source ? null : "oversize";');
+    expect(src).toContain('await tellIssuerUnstampable(t, item, unstampedReason, "released");');
   });
 
   it("&nav=1 (the portal page's download frame): a refusal is plain text carrying the status; without it the JSON answer is unchanged", async () => {
@@ -661,6 +778,7 @@ describe("TRX-15 — a PDF leaves the portal stamped or not at all", () => {
     expect(r2.status).toBe(410);
     expect(JSON.parse(await r2.text())).toEqual({ error: "revoked", status: 410 });
     state.transmittal!.portal_revoked_at = null;
+    arm();
     state.contentLength = 64 * 1024 * 1024 + 1;
     const r3 = await getNav(DOC);
     expect(JSON.parse(await r3.text())).toEqual({ error: "unstampable", reason: "oversize", status: 422 });
@@ -675,17 +793,24 @@ describe("TRX-15 — a PDF leaves the portal stamped or not at all", () => {
     expect(await j.json()).toEqual({ error: "That document is not on this transmittal." });
   });
 
-  it("the portal page never holds a download in memory: a hidden frame navigates to the route (&nav=1); no fetch().blob(), no object URL", () => {
+  it("the portal page never holds a download in memory (a hidden frame, &nav=1), and always offers a VISIBLE link to the same address — a browser that drops a hidden-frame attachment (iOS Safari, Firefox: not yet checked) still gets the file", () => {
     const page = readFileSync("app/transmittal/[token]/page.tsx", "utf8");
     expect(page).not.toMatch(/res\.blob\(\)|\.blob\(\)/);
     expect(page).not.toMatch(/createObjectURL/);
     expect(page).toContain('document.createElement("iframe")');
-    expect(page).toMatch(/&nav=1`/);
+    expect(page).toContain("return `/api/transmittal?token=${encodeURIComponent(token)}&file=${encodeURIComponent(docId)}&nav=1`;");
+    expect(page).toContain("frame.src = fileHref(token, docId);");
     expect(page).toMatch(/frameRefusal\(text\)/);
-    // the refusal it can now receive is explained
+    // the fallback: the SAME address, as a top-level navigation, once a download was started
+    expect(page).toMatch(/\{started\.has\(i\.documentId\) && \([\s\S]{0,400}?href=\{fileHref\(token, i\.documentId\)\}\s*\n\s*target="_blank"/);
+    expect(page).toContain("Download didn&apos;t start? Open the file directly");
+    // and the page never claims the browser saved it
+    expect(page).not.toMatch(/your browser is saving the file/);
+    // the refusal it can receive is explained
     expect(page).toMatch(/code === "unstampable"/);
-    // and it no longer claims a large PDF is released unmarked
-    expect(page).not.toMatch(/or it is too large to mark|or a very large one/);
+    // a large PDF released unmarked is said to be (DEC-61 §5)
+    expect(page).toContain('i.unmarkedReason === "oversize"');
+    expect(page).toMatch(/a PDF too large to mark, or a PDF saved with security restrictions — is released as issued, without the marking/);
   });
 });
 
@@ -720,17 +845,31 @@ describe("REV-9 — the portal's 'not yet in force' is decided in the facility's
   });
 });
 
-describe("TRX-15 — the snapshot flags a pinned file that is not a PDF (the page can no longer read the download's headers)", () => {
-  it("a .dwg pin → releasedUnmarked true; a PDF pin → false; read scoped to the transmittal's org", async () => {
+describe("TRX-15 — the snapshot flags a pinned file that leaves unmarked (the page can no longer read the download's headers)", () => {
+  it("a .dwg pin → releasedUnmarked true (not_pdf); a PDF pin → false; read scoped to the transmittal's org", async () => {
     state.versionRows = [{ id: VER, file_url: `orgs/orgA/d/${DOC}.dwg`, file_type: "application/acad", org_id: "orgA" }];
     let body = await (await get()).json() as { items: Array<Record<string, unknown>> };
-    expect(body.items[0].releasedUnmarked).toBe(true);
+    expect(body.items[0]).toMatchObject({ releasedUnmarked: true, unmarkedReason: "not_pdf" });
     state.versionRows = [{ id: VER, file_url: `orgs/orgA/d/${DOC}.pdf`, file_type: "application/pdf", org_id: "orgA" }];
     body = await (await get()).json() as { items: Array<Record<string, unknown>> };
-    expect(body.items[0].releasedUnmarked).toBe(false);
+    expect(body.items[0]).toMatchObject({ releasedUnmarked: false, unmarkedReason: null });
     // another org's row of the same id resolves nothing → unknown
     state.versionRows = [{ id: VER, file_url: `orgs/orgB/d/x.dwg`, file_type: null, org_id: "orgB" }];
     body = await (await get()).json() as { items: Array<Record<string, unknown>> };
-    expect(body.items[0].releasedUnmarked).toBeNull();
+    expect(body.items[0]).toMatchObject({ releasedUnmarked: null, unmarkedReason: null });
+  });
+
+  it("a PDF over the stamping bound (by the size recorded at issue, else the version's) → releasedUnmarked true (oversize); an item marked stampable is refused instead, so never flagged", async () => {
+    const big = 64 * 1024 * 1024 + 1;
+    state.versionRows = [{ id: VER, file_url: `orgs/orgA/d/${DOC}.pdf`, file_type: "application/pdf", size: big, org_id: "orgA" }];
+    let body = await (await get()).json() as { items: Array<Record<string, unknown>> };
+    expect(body.items[0]).toMatchObject({ releasedUnmarked: true, unmarkedReason: "oversize" });
+    state.versionRows = [{ id: VER, file_url: `orgs/orgA/d/${DOC}.pdf`, file_type: "application/pdf", size: 10, org_id: "orgA" }];
+    (state.transmittal!.items as Array<Record<string, unknown>>)[0].fileSize = big;
+    body = await (await get()).json() as { items: Array<Record<string, unknown>> };
+    expect(body.items[0]).toMatchObject({ releasedUnmarked: true, unmarkedReason: "oversize" });
+    (state.transmittal!.items as Array<Record<string, unknown>>)[0].stampable = true;
+    body = await (await get()).json() as { items: Array<Record<string, unknown>> };
+    expect(body.items[0]).toMatchObject({ releasedUnmarked: false, unmarkedReason: null });
   });
 });

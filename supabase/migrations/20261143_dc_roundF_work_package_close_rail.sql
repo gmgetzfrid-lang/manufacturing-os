@@ -43,13 +43,35 @@
 --
 -- DEC-30: the inventory (aggregate counts only) is captured BEFORE the
 -- transaction and returned with the probes in ONE result set — the only one
--- the SQL editor shows. Two MEASURE rows ride along (read-only, changed by
--- nothing here): how many open packages and asset tags are over the field
--- pack's 150-sheet budget (PKG-12), so the budget's reach is a count, not a
--- guess.
+-- the SQL editor shows. MEASURE rows ride along (read-only, changed by
+-- nothing here), so the reach of two app-side behaviour changes in the same
+-- package is a count, not a guess:
+--   · PKG-12, the field pack's budget (150 sheets / 1000 pages / 150 MB): the
+--     open packages and asset tags over 150 sheets, and over 150 MB of
+--     recorded file size, counted over the sheets the print gate admits
+--     (Issued / Locked, no active document hold — an upper bound: a
+--     printer's outstanding sign-offs and unreadable sheets are per person
+--     and not subtracted); the single current files over 150 MB (left out of
+--     every pack as too large); and the in-force files with no recorded size,
+--     which the size rows cannot see. The 1000-page budget has no row: page
+--     counts are not stored.
+--   · TRX-15, the transmittal portal: the live items whose file is a PDF over
+--     the 64 MiB stamping bound (released unstamped under DEC-61 §5 today,
+--     the issuer told; refused only once the issue-time check, TRX-16, marks
+--     such an item), and the live items whose size is not recorded.
+--
+-- DEPLOY ORDER (PKG-12): paste this file BEFORE the P8 FIELD app deploys and
+-- read the MEASURE rows first — a package or asset tag they count prints
+-- today and is refused with a split (or loses a too-large sheet) once the
+-- app ships, so its owner is told before, not by the refusal. Applied before
+-- the app, the narrowing is already in force: on the old page a non-owner's
+-- Close matches no row (the old lib then reads it as closed; the package
+-- stays open and listed) until the app deploys.
 --
 -- ⚠ APPLIED BY HAND (DEC-30). One script; re-running is safe. Needs 20260825
--- and 20261028 (both live since 2026-08).
+-- and 20261028 (both live since 2026-08); the TRX-15 rows read 20261133's
+-- portal columns through to_jsonb, so they also run on a database without
+-- 20261133.
 -- ─────────────────────────────────────────────────────────────────────────────
 
 -- ── Pre-apply inventory (aggregate counts only; read BEFORE the change) ─────
@@ -76,21 +98,81 @@ UNION ALL
 SELECT 'BEFORE: policies on work_packages (expect 4: select, insert, update, delete)',
        (SELECT COUNT(*) FROM pg_policies WHERE schemaname = 'public' AND tablename = 'work_packages')::text
 UNION ALL
-SELECT 'MEASURE (PKG-12, not changed by this file): open / executing packages with more than 150 sheets (a print of one is now refused; it is split into packages)',
+SELECT 'MEASURE (PKG-12, not changed by this file): open / executing packages with more than 150 printable sheets (Issued / Locked, no active hold; upper bound) — a print of one is refused with a split; it is split into packages',
        (SELECT COUNT(*) FROM (
           SELECT wpd.package_id FROM work_package_documents wpd
             JOIN work_packages p ON p.id = wpd.package_id
+            JOIN documents d ON d.id = wpd.document_id
            WHERE p.status <> 'closed'
+             AND d.status IN ('Issued', 'Locked')
+             AND NOT EXISTS (SELECT 1 FROM document_holds h WHERE h.document_id = d.id AND h.released_at IS NULL)
            GROUP BY wpd.package_id HAVING COUNT(*) > 150) x)::text
 UNION ALL
-SELECT 'MEASURE (PKG-12, not changed by this file): asset tags carried by more than 150 non-archived documents (the asset hub now prints them in parts)',
+SELECT 'MEASURE (PKG-12, not changed by this file): asset tags carried by more than 150 printable documents (Issued / Locked, no active hold; upper bound) — the asset hub prints them in parts',
        (SELECT COUNT(*) FROM (
           SELECT d.org_id, t->>'tag' AS tag
             FROM documents d
            CROSS JOIN LATERAL jsonb_array_elements(CASE WHEN jsonb_typeof(d.asset_tags) = 'array' THEN d.asset_tags ELSE '[]'::jsonb END) t
-           WHERE d.status IS DISTINCT FROM 'Archived'
+           WHERE d.status IN ('Issued', 'Locked')
+             AND NOT EXISTS (SELECT 1 FROM document_holds h WHERE h.document_id = d.id AND h.released_at IS NULL)
              AND jsonb_typeof(t) = 'object' AND NULLIF(t->>'tag', '') IS NOT NULL
-           GROUP BY d.org_id, t->>'tag' HAVING COUNT(DISTINCT d.id) > 150) x)::text;
+           GROUP BY d.org_id, t->>'tag' HAVING COUNT(DISTINCT d.id) > 150) x)::text
+UNION ALL
+SELECT 'MEASURE (PKG-12, not changed by this file): open / executing packages whose printable sheets (each within a pack on its own) record more than 150 MB together — a print of one is refused with a split',
+       (SELECT COUNT(*) FROM (
+          SELECT wpd.package_id FROM work_package_documents wpd
+            JOIN work_packages p ON p.id = wpd.package_id
+            JOIN documents d ON d.id = wpd.document_id
+            JOIN document_versions v ON v.id = d.current_version_id
+           WHERE p.status <> 'closed'
+             AND d.status IN ('Issued', 'Locked')
+             AND NOT EXISTS (SELECT 1 FROM document_holds h WHERE h.document_id = d.id AND h.released_at IS NULL)
+             AND v.size <= 157286400
+           GROUP BY wpd.package_id HAVING SUM(v.size) > 157286400) x)::text
+UNION ALL
+SELECT 'MEASURE (PKG-12, not changed by this file): asset tags whose printable documents (each within a pack on its own) record more than 150 MB together — the asset hub prints them in parts',
+       (SELECT COUNT(*) FROM (
+          SELECT d.org_id, t->>'tag' AS tag
+            FROM documents d
+            JOIN document_versions v ON v.id = d.current_version_id
+           CROSS JOIN LATERAL jsonb_array_elements(CASE WHEN jsonb_typeof(d.asset_tags) = 'array' THEN d.asset_tags ELSE '[]'::jsonb END) t
+           WHERE d.status IN ('Issued', 'Locked')
+             AND NOT EXISTS (SELECT 1 FROM document_holds h WHERE h.document_id = d.id AND h.released_at IS NULL)
+             AND jsonb_typeof(t) = 'object' AND NULLIF(t->>'tag', '') IS NOT NULL
+             AND v.size <= 157286400
+           GROUP BY d.org_id, t->>'tag' HAVING SUM(v.size) > 157286400) x)::text
+UNION ALL
+SELECT 'MEASURE (PKG-12, not changed by this file): Issued / Locked documents whose current file records more than 150 MB — left out of every field pack as too large (downloaded on their own)',
+       (SELECT COUNT(*) FROM documents d
+          JOIN document_versions v ON v.id = d.current_version_id
+         WHERE d.status IN ('Issued', 'Locked') AND v.size > 157286400)::text
+UNION ALL
+SELECT 'MEASURE (PKG-12, not changed by this file): Issued / Locked documents whose current file records no size — the size rows above cannot see them (and no row measures the 1000-page budget: page counts are not stored)',
+       (SELECT COUNT(*) FROM documents d
+          LEFT JOIN document_versions v ON v.id = d.current_version_id
+         WHERE d.status IN ('Issued', 'Locked') AND d.current_version_id IS NOT NULL AND v.size IS NULL)::text
+UNION ALL
+SELECT 'MEASURE (TRX-15, not changed by this file): items on live transmittals (issued / acknowledged, link not revoked or expired) whose file is a PDF over the 64 MiB stamping bound — released unstamped under DEC-61 §5 (the issuer told); refused only once the issue-time check (TRX-16) marks such an item',
+       (SELECT COUNT(*) FROM transmittals t
+         CROSS JOIN LATERAL jsonb_array_elements(CASE WHEN jsonb_typeof(t.items) = 'array' THEN t.items ELSE '[]'::jsonb END) it
+          JOIN document_versions v ON v.id::text = COALESCE(it->>'versionId', it->>'version_id')
+         WHERE t.status IN ('issued', 'acknowledged')
+           AND to_jsonb(t)->>'portal_token' IS NOT NULL
+           AND to_jsonb(t)->>'portal_revoked_at' IS NULL
+           AND (to_jsonb(t)->>'portal_expires_at' IS NULL OR (to_jsonb(t)->>'portal_expires_at')::timestamptz > now())
+           AND (lower(COALESCE(v.file_type, '')) LIKE '%pdf%' OR lower(v.file_url) LIKE '%.pdf')
+           AND COALESCE(CASE WHEN it->>'fileSize' ~ '^[0-9]+$' THEN (it->>'fileSize')::bigint END, v.size) > 67108864)::text
+UNION ALL
+SELECT 'MEASURE (TRX-15, not changed by this file): items on live transmittals whose size is recorded neither on the item nor on a pinned version — the row above cannot see them',
+       (SELECT COUNT(*) FROM transmittals t
+         CROSS JOIN LATERAL jsonb_array_elements(CASE WHEN jsonb_typeof(t.items) = 'array' THEN t.items ELSE '[]'::jsonb END) it
+          LEFT JOIN document_versions v ON v.id::text = COALESCE(it->>'versionId', it->>'version_id')
+         WHERE t.status IN ('issued', 'acknowledged')
+           AND to_jsonb(t)->>'portal_token' IS NOT NULL
+           AND to_jsonb(t)->>'portal_revoked_at' IS NULL
+           AND (to_jsonb(t)->>'portal_expires_at' IS NULL OR (to_jsonb(t)->>'portal_expires_at')::timestamptz > now())
+           AND COALESCE(it->>'fileSize', '') !~ '^[0-9]+$'
+           AND v.size IS NULL)::text;
 
 BEGIN;
 
