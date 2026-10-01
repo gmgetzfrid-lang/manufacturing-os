@@ -133,19 +133,78 @@ route, the ingest drain and the codebook import catch it (I-05). The ask
 unhandled 500. They refuse their AI work either way, but the sentence is lost.
 Each maps `GovernedCallError` onto its response as it adopts `assertAiGates`.
 
-**Locate loses non-AI output during an outage — I-07's limb** (`GOV-4`):
-`app/api/knowledge/locate/route.ts` is NOT refused either way. When its AI
-step is refused (no key, cap reached) it still answers the text-layer
-`positions`, `notOnPage` and the library-wide `elsewhere` hits with a
-`skipped` sentence; an unreadable ledger now throws at its
+⛔ **MERGE GATE for I-05 — locate keeps its non-AI output during a ledger
+outage** (`GOV-4`; I-07's file, I-07 runs in parallel). `app/api/knowledge/locate/route.ts`
+is NOT refused either way. When its AI step is refused (no key, cap reached)
+it still answers the text-layer `positions`, `notOnPage` and the
+library-wide `elsewhere` hits with a `skipped` sentence; with I-05 an
+unreadable ledger throws at its
 `Promise.all([getMonthUsage(...), getCapUsd(...)])` (line 185 at I-05's head)
 and the whole response is a 500 — the positions already found and the
-"V-3 is on 025-PID-0103" navigation are lost. Limb: catch
-`isAiUsageUnavailable(e)` (`lib/ai/gateError.ts`) there and return
-`{ positions, notOnPage: trulyAbsent, elsewhere, skipped: e.message + " The
-sheet still opens at the right page." }` — the pattern I-05 applied to the
-ingest route — with a test that a ledger read error still answers the
-text-layer positions. Rethrow anything else.
+"V-3 is on 025-PID-0103" navigation are lost. **When I-05 merges, if I-07 has
+not already landed this, the integrator applies it in the same merge** (the
+locate route is otherwise I-07's):
+
+```ts
+import { isAiUsageUnavailable } from "@/lib/ai/gateError";
+import type { MonthUsage } from "@/lib/ai/usageServer";
+// …replacing `const [spent, cap] = await Promise.all([...]);`
+let spent: MonthUsage, cap: number;
+try {
+  [spent, cap] = await Promise.all([getMonthUsage(orgId, user.id), getCapUsd(orgId, user.id)]);
+} catch (e) {
+  if (!isAiUsageUnavailable(e)) throw e;
+  return NextResponse.json({
+    positions: [...found.values()], notOnPage: trulyAbsent, elsewhere,
+    skipped: `${(e as Error).message} The sheet still opens at the right page.`,
+  });
+}
+```
+
+Test (with it): a vision-read sheet, a key on file, and `ai_usage_events`
+answering a read error → 200 with the text-layer `positions`, `notOnPage`
+and `elsewhere` intact and `skipped` carrying the "AI usage can't be read
+right now" sentence; no provider call. Any other error still throws.
+
+**The current month of the AI spend ledger is never purged — coordinated
+limb in A&O's file** (`GOV-4` / `GOV-10`, I-05 fix pass 3).
+`app/api/admin/purge/route.ts` (A&O P7's; the notifications fleet's N6 edits
+its status filters) listed `ai_usage_events` as "pure telemetry" with a 7-day
+floor, so an Admin or Doc Controller at their cap could purge the month's
+rows older than a week and be admitted again. I-05 added `cutoffFor`: the
+cutoff for `ai_usage_events` is `min(cutoff, monthStartIso())` (count and
+delete), the target is relabelled "AI spend ledger (past months)", and the
+preview and the `DATA_PURGE` row carry each table's cutoff
+(`lib/__tests__/purgeLedgerFloor.test.ts`). **A&O P7 and N6 rebase on it and
+keep it**: whatever else changes in the route, a current-month ledger row is
+never purge-eligible.
+
+**Embeddings allowlist at spend — I-02 / I-02b's limb** (`GOV-6`). The
+embeddings allowlist (`ALLOWED_EMBEDDING_PROVIDERS`) is enforced at save and
+at test (`/api/ai/connection`), and by `assertAiGates({ key: "embedding" })`
+— which no index-time spend calls yet. `/api/knowledge/embed`, the embed
+drain and the ask route's query embedding read the key through
+`embeddingConnectionFrom` with no allowlist (the client only calls Voyage's
+or OpenAI's endpoint, so no third vendor is reached today). Limb: run
+`assertAiGates({ key: "embedding" })` in the embed route and the drain as
+they adopt the gate stack, or have `embeddingConnectionFrom` return null for
+a provider off `ALLOWED_EMBEDDING_PROVIDERS`; test a stored
+`embedding_provider` off the list is never spent.
+
+**The lock's copy on the older routes — I-03 / I-04 / I-02 / I-07 limbs**
+(`GOV-3`). A $0 cap is a lock that does not reset, but the ask, orchestrator
+and embed routes print "Monthly AI budget reached — $0.00 of your $0.00 cap.
+It resets on the 1st" for a locked member, and locate "Monthly AI budget
+reached ($0.00 of $0.00)". Each owner branches on `capIsLocked(cap)` (or a
+refusal's `details.locked`) and says "Your monthly AI cap is set to $0, so AI
+is locked for you until someone who manages AI caps raises it" — never the
+reset — as `/api/templates/generate` does (I-05).
+
+**`20261137` re-creates TWO functions** (I-05 fix pass 3): besides
+`org_capability_allows_for` (one CASE row), `capability_policy_write_guard`
+from `20261056` with `'ai.manage_caps'` added to its critical list
+(`ai.manage_caps` is `critical: true`). A later package that re-creates the
+guard starts from `20261137`'s body.
 
 ---
 
