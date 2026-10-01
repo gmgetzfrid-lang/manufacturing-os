@@ -38,8 +38,9 @@ vi.mock("@/lib/supabase", () => {
 
 import {
   createManualFlow, decideFlow, deleteFlow, listProcessFlowsPaged, listProcessFlows, resolveAssetEndpoints,
-  countAssetFlows, flowConfidence, isLowConfidence, FlowProposedNotice, flowWriteMessage,
+  countAssetFlows, flowConfidence, isLowConfidence, FlowProposedNotice, FlowDismissedNotice, flowWriteMessage,
   FLOW_DECIDE_REFUSED, FLOW_DELETE_REFUSED, FLOW_PROPOSED_MESSAGE, FLOW_PAGE, FLOW_READ_CAP,
+  FLOW_ALREADY_PROPOSED_MESSAGE, FLOW_DISMISSED_MESSAGE, FLOW_EXISTS_UNREAD_MESSAGE,
 } from "@/lib/processFlows";
 
 const push = (table: string, ...res: Res[]) => { (db.queue[table] ??= []).push(...res); };
@@ -61,11 +62,48 @@ describe("createManualFlow — FLOW-2: the database decides confirmed or propose
     expect(e.message).toBe(FLOW_PROPOSED_MESSAGE);
     expect(e.landed).toBe("proposed");
   });
-  it("a duplicate pair is a no-op ('exists'); a guard refusal reads as a sentence", async () => {
-    push("process_flows", { data: null, error: { code: "23505", message: "duplicate key" } });
+  it("a duplicate of a CONFIRMED pair is a no-op ('exists') — regression pin: a controller redrawing a confirmed flow, as today", async () => {
+    push("process_flows", { data: null, error: { code: "23505", message: "duplicate key" } }, { data: { id: "f0", status: "confirmed" }, error: null });
     await expect(createManualFlow(input)).resolves.toBe("exists");
+  });
+  it("a guard refusal reads as a sentence", async () => {
     push("process_flows", { data: null, error: { code: "23503", message: "process_flows_endpoint: unit U100 is not a Site Codebook unit — a flow ends at registry equipment or a Site Codebook unit" } });
     await expect(createManualFlow({ ...input, fromKind: "unit", fromRef: "U100" })).rejects.toThrow(/^Unit U100 is not a Site Codebook unit/);
+  });
+
+  describe("a 23505 collision says what the pair already IS — the graph draws only a confirmed one", () => {
+    const collide = (prior: Res) => push("process_flows", { data: null, error: { code: "23505", message: "duplicate key" } }, prior);
+
+    it("reads the existing row by the unique pair, with 20261017's columns only (works before 20261155)", async () => {
+      collide({ data: { id: "f0", status: "confirmed" }, error: null });
+      await createManualFlow(input);
+      const selects = callsOf("process_flows", "select").map((c) => c.args[0]);
+      expect(selects).toEqual(["id, status", "id, status"]);
+      expect(callsOf("process_flows", "eq").map((c) => c.args)).toEqual([
+        ["org_id", "o1"], ["from_kind", "asset"], ["from_ref", "a1"], ["to_kind", "asset"], ["to_ref", "a2"],
+      ]);
+    });
+    it("an existing PROPOSAL throws FlowProposedNotice (already proposed) — never 'exists'", async () => {
+      collide({ data: { id: "f0", status: "proposed" }, error: null });
+      const e = await createManualFlow(input).catch((x) => x);
+      expect(e).toBeInstanceOf(FlowProposedNotice);
+      expect(e.message).toBe(FLOW_ALREADY_PROPOSED_MESSAGE);
+      expect(e.landed).toBe("proposed");
+    });
+    it("an existing DISMISSED pair throws FlowDismissedNotice — never 'exists'", async () => {
+      collide({ data: { id: "f0", status: "dismissed" }, error: null });
+      const e = await createManualFlow(input).catch((x) => x);
+      expect(e).toBeInstanceOf(FlowDismissedNotice);
+      expect(e).not.toBeInstanceOf(FlowProposedNotice);
+      expect(e.message).toBe(FLOW_DISMISSED_MESSAGE);
+      expect(e.landed).toBe("dismissed");
+    });
+    it("a status that cannot be read (an error, or no row) is an error — never 'exists' on a guess", async () => {
+      collide({ data: null, error: { code: "42703", message: "column process_flows.status does not exist" } });
+      await expect(createManualFlow(input)).rejects.toThrow(FLOW_EXISTS_UNREAD_MESSAGE);
+      collide({ data: null, error: null });
+      await expect(createManualFlow(input)).rejects.toThrow(FLOW_EXISTS_UNREAD_MESSAGE);
+    });
   });
   it("an RLS refusal names who may", () => {
     expect(flowWriteMessage({ code: "42501", message: "new row violates row-level security policy" })).toMatch(/only a document controller/);
@@ -140,9 +178,22 @@ describe("resolveAssetEndpoints — IRLS-7 / FLOW-6: an end that names deleted e
     expect(m?.get("U100")).toEqual({ state: "missing" });
     expect(callsOf("assets", "in")[0].args).toEqual(["id", [B, GONE]]);
   });
-  it("a registry read that fails is null — 'could not check', never 'gone'", async () => {
+  it("a registry read that fails marks only the refs it asked for 'unchecked' — never 'gone'; the known equipment keeps its tag", async () => {
     push("assets", { data: null, error: { message: "down" } });
-    await expect(resolveAssetEndpoints([B])).resolves.toBeNull();
+    const m = await resolveAssetEndpoints([A, B, GONE, "U100"], new Map([[A, { tag: "V-101", unit_code: "20" }]]));
+    expect(m.get(A)).toEqual({ state: "ok", tag: "V-101", archived: false, unitCode: "20" });
+    expect(m.get(B)).toEqual({ state: "unchecked" });
+    expect(m.get(GONE)).toEqual({ state: "unchecked" });
+    // not a uuid: it cannot name registry equipment, read or not
+    expect(m.get("U100")).toEqual({ state: "missing" });
+  });
+  it("one failed chunk leaves the other chunks' answers standing", async () => {
+    const many = Array.from({ length: 201 }, (_, i) => `bbbbbbbb-0000-0000-0000-${String(i).padStart(12, "0")}`);
+    push("assets", { data: [{ id: many[0], tag: "P-1", archived: false, unit_code: "20" }], error: null }, { data: null, error: { message: "down" } });
+    const m = await resolveAssetEndpoints(many);
+    expect(m.get(many[0])).toEqual({ state: "ok", tag: "P-1", archived: false, unitCode: "20" });
+    expect(m.get(many[1])).toEqual({ state: "missing" });
+    expect(m.get(many[200])).toEqual({ state: "unchecked" });
   });
 });
 

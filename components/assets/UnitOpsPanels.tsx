@@ -136,6 +136,9 @@ function EndpointLabel({ kind, refId, endpoints }: { kind: string; refId: string
   if (endpoints === null) return <span title="The registry could not be read — try again">equipment (not checked)</span>;
   const info = endpoints.get(refId);
   if (!info) return <>…</>;
+  // Per ref: a failed registry read leaves only the ends it asked about
+  // unchecked — the unit's own equipment keeps its tag.
+  if (info.state === "unchecked") return <span title="The registry could not be read — try again">equipment (not checked)</span>;
   if (info.state === "missing") {
     return <span className="text-rose-600 dark:text-rose-400" title="This flow names equipment that was deleted from the registry">equipment no longer exists</span>;
   }
@@ -457,8 +460,12 @@ export function FlowReviewQueue({ orgId, userId, userName, isController }: {
   if (!visible) return null;
   // The registry tells which unit each equipment end is filed to; when it
   // could not be read, "no operating area" would be a guess — it is "not
-  // checked", and the filter that depends on it is off.
-  const registryRead = endpoints !== null && endpoints !== undefined;
+  // checked", and the filter that depends on it is off. Per ref: a failed
+  // read marks only the ends it asked about.
+  const endUnchecked = (kind: string, ref: string) =>
+    kind === "asset" && (!endpoints || endpoints.get(ref)?.state === "unchecked");
+  const registryRead = endpoints !== null && endpoints !== undefined
+    && ![...endpoints.values()].some((i) => i.state === "unchecked");
   const unitOf = (kind: string, ref: string): string | null => {
     if (kind === "unit") return ref;
     const info = endpoints?.get(ref);
@@ -470,7 +477,7 @@ export function FlowReviewQueue({ orgId, userId, userName, isController }: {
   const rowProps = { endpoints, isController, userId, onDecide: (f: ProcessFlow, a: boolean) => void decide(f, a), onRemove: (f: ProcessFlow) => void remove(f) };
   const where = (f: ProcessFlow) => {
     const units = [...new Set([unitOf(f.from_kind, f.from_ref), unitOf(f.to_kind, f.to_ref)].filter((u): u is string => !!u))];
-    const unchecked = !registryRead && (f.from_kind === "asset" || f.to_kind === "asset");
+    const unchecked = endUnchecked(f.from_kind, f.from_ref) || endUnchecked(f.to_kind, f.to_ref);
     const label = units.length > 0
       ? `${units.map((u) => `Unit ${u}`).join(" · ")}${unchecked ? " · equipment's unit not checked" : ""}`
       : endpoints === undefined && unchecked ? "…"
@@ -478,7 +485,7 @@ export function FlowReviewQueue({ orgId, userId, userName, isController }: {
       : "no operating area";
     return (
       <span className="text-[9px] font-black px-1.5 py-0.5 rounded bg-[var(--color-surface-2)] text-[var(--color-text-muted)] shrink-0"
-        title={unchecked && endpoints === null ? "The registry could not be read, so the unit this equipment is filed to was not checked" : undefined}>
+        title={unchecked && endpoints !== undefined ? "The registry could not be read, so the unit this equipment is filed to was not checked" : undefined}>
         {label}
       </span>
     );
@@ -503,7 +510,7 @@ export function FlowReviewQueue({ orgId, userId, userName, isController }: {
           <AlertTriangle className="w-3.5 h-3.5 mt-0.5 shrink-0" /> {proposed.length === 0 ? `The proposed flows could not be read: ${error}` : error}
         </div>
       )}
-      {endpoints === null && proposed.length > 0 && (
+      {endpoints !== undefined && !registryRead && proposed.length > 0 && (
         <div className="text-[10px] text-amber-700 dark:text-amber-300 mb-2">
           The equipment registry could not be read — which operating area each proposal touches was not checked. Reload to try again.
         </div>

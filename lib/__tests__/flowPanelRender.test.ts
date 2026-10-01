@@ -164,6 +164,26 @@ describe("IRLS-7 / FLOW-6 — an end naming deleted equipment is shown as gone",
   });
 });
 
+describe("IRLS-7 — a registry read that fails leaves the unit's own equipment named", () => {
+  it("an assets read error: the in-unit tags are still shown (as before I-09); only the end outside the unit is 'not checked'", async () => {
+    db.flows = [
+      flow({ id: "c1", status: "confirmed", label: "crude feed" }),
+      flow({ id: "c2", status: "confirmed", from_ref: E, to_ref: LOOSE1 }),
+    ];
+    db.assetsError = { message: "registry down" };
+    await render(panel(true));
+    const text = host.textContent ?? "";
+    expect(text).toContain("2 confirmed");
+    // V-101 → E-201 and E-201 → (outside): every in-unit end keeps its tag
+    expect(text.match(/V-101/g)).toHaveLength(1);
+    expect(text.match(/E-201/g)).toHaveLength(2);
+    expect([...host.querySelectorAll("span")].filter((x) => x.textContent === "equipment (not checked)")).toHaveLength(1);
+    expect(text).not.toContain("equipment no longer exists");
+    // the registry WAS asked — for the outside end only
+    expect(db.calls.filter((c) => c.table === "assets" && c.method === "in").map((c) => c.args[1])).toEqual([[LOOSE1]]);
+  });
+});
+
 describe("PR-7 — low confidence apart", () => {
   it("an AI proposal with no confidence sits in the low-confidence bucket, labelled unknown", async () => {
     db.flows = [flow({ id: "p3", status: "proposed", origin: "ai", evidence: { docName: "PFD-1" } })];

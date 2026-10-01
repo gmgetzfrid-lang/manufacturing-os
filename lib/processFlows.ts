@@ -108,6 +108,15 @@ export function flowWriteMessage(error: { code?: string; message?: string }): st
 
 export const FLOW_PROPOSED_MESSAGE =
   "Saved as a proposed flow — a document controller (Admin or DocCtrl) confirms it from the operating area's flow panel before it joins the process map.";
+/** The pair was already in the table as a proposal (a 23505 collision). */
+export const FLOW_ALREADY_PROPOSED_MESSAGE =
+  "That flow is already proposed — a document controller (Admin or DocCtrl) confirms it from the operating area's flow panel before it joins the process map.";
+/** The pair was already in the table, dismissed by a controller. */
+export const FLOW_DISMISSED_MESSAGE =
+  "That flow was dismissed — a document controller (Admin or DocCtrl) judged it not a real flow, so it is not on the process map.";
+/** The pair was already in the table, but where it stands could not be read. */
+export const FLOW_EXISTS_UNREAD_MESSAGE =
+  "That flow is already recorded, but where it stands could not be read — refresh to see whether it is on the process map.";
 export const FLOW_DECIDE_REFUSED =
   "That flow wasn't changed — only a document controller (Admin or DocCtrl) confirms or dismisses flows (or someone already removed it). Refresh to see where it stands.";
 export const FLOW_DELETE_REFUSED =
@@ -119,17 +128,33 @@ export const FLOW_DELETE_REFUSED =
  *  of the map shows this sentence instead. */
 export class FlowProposedNotice extends Error {
   readonly landed = "proposed" as const;
-  constructor() {
-    super(FLOW_PROPOSED_MESSAGE);
+  constructor(message: string = FLOW_PROPOSED_MESSAGE) {
+    super(message);
     this.name = "FlowProposedNotice";
+  }
+}
+
+/** The pair is already in the table, DISMISSED by a controller. Thrown, like
+ *  FlowProposedNotice, so a caller that draws the edge on any return (the
+ *  graph's Connect) shows this sentence instead of drawing a rejected pair
+ *  as part of the map. */
+export class FlowDismissedNotice extends Error {
+  readonly landed = "dismissed" as const;
+  constructor() {
+    super(FLOW_DISMISSED_MESSAGE);
+    this.name = "FlowDismissedNotice";
   }
 }
 
 /** Draw a flow by hand. A controller's lands confirmed (a human with the
  *  authority said so); anyone else's lands as a proposal — the database
  *  decides (20261155) and this reports what landed: "confirmed", "exists"
- *  (the unique pair index makes a duplicate a no-op, not an error), or a
- *  thrown FlowProposedNotice for a proposal. */
+ *  (the unique pair index makes a duplicate a no-op, not an error — returned
+ *  only when the pair already there is CONFIRMED), or a thrown notice: a
+ *  FlowProposedNotice for a proposal (new, or the pair already proposed), a
+ *  FlowDismissedNotice for a pair a controller dismissed, and an Error when
+ *  the pair is there but its status could not be read (never "exists" on a
+ *  guess — the graph would draw it as the map). */
 export async function createManualFlow(input: {
   orgId: string;
   fromKind: FlowEndpointKind; fromRef: string;
@@ -148,7 +173,21 @@ export async function createManualFlow(input: {
     created_by_name: input.userName ?? null,
   }).select("id, status").maybeSingle();
   if (error) {
-    if (error.code === "23505") return "exists";
+    if (error.code === "23505") {
+      // The pair is already there — say what it IS. Only 20261017's columns
+      // are read, so this works before 20261155 is pasted.
+      const { data: prior, error: priorError } = await supabase.from("process_flows")
+        .select("id, status")
+        .eq("org_id", input.orgId)
+        .eq("from_kind", input.fromKind).eq("from_ref", input.fromRef)
+        .eq("to_kind", input.toKind).eq("to_ref", input.toRef)
+        .maybeSingle();
+      const status = priorError ? null : (prior as { status?: string } | null)?.status;
+      if (status === "confirmed") return "exists";
+      if (status === "proposed") throw new FlowProposedNotice(FLOW_ALREADY_PROPOSED_MESSAGE);
+      if (status === "dismissed") throw new FlowDismissedNotice();
+      throw new Error(FLOW_EXISTS_UNREAD_MESSAGE);
+    }
     throw new Error(flowWriteMessage(error));
   }
   if ((data as { status?: string } | null)?.status === "proposed") throw new FlowProposedNotice();
@@ -197,19 +236,22 @@ export async function countAssetFlows(orgId: string, assetId: string): Promise<n
 
 export type EndpointInfo =
   | { state: "ok"; tag: string; archived: boolean; unitCode: string | null }
-  | { state: "missing" };
+  | { state: "missing" }
+  /** Asked of the registry, and the read failed: not checked, never "gone". */
+  | { state: "unchecked" };
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 /** Resolve asset endpoints against the registry: each ref is equipment that
  *  exists (with its tag, archived or not) or equipment that no longer exists
  *  — validated on read, so a flow to a deleted asset is shown as broken,
- *  never as an unnamed chip. Null when the registry read failed (the panel
- *  then says it could not check, never "gone"). */
+ *  never as an unnamed chip. A registry read that fails marks only the refs
+ *  it asked for "unchecked" (the panel says it could not check them, never
+ *  "gone"); the `known` equipment (the unit's own) keeps its tags. */
 export async function resolveAssetEndpoints(
   refs: Iterable<string>,
   known: ReadonlyMap<string, { tag: string; archived?: boolean | null; unit_code?: string | null }> = new Map(),
-): Promise<Map<string, EndpointInfo> | null> {
+): Promise<Map<string, EndpointInfo>> {
   const out = new Map<string, EndpointInfo>();
   const ask: string[] = [];
   for (const ref of new Set(refs)) {
@@ -221,7 +263,10 @@ export async function resolveAssetEndpoints(
   for (let i = 0; i < ask.length; i += 200) {
     const chunk = ask.slice(i, i + 200);
     const { data, error } = await supabase.from("assets").select("id, tag, archived, unit_code").in("id", chunk);
-    if (error) return null;
+    if (error) {
+      for (const ref of chunk) out.set(ref, { state: "unchecked" });
+      continue;
+    }
     for (const r of (data as Array<{ id: string; tag: string; archived: boolean | null; unit_code: string | null }>) ?? []) {
       out.set(r.id, { state: "ok", tag: r.tag, archived: !!r.archived, unitCode: r.unit_code ?? null });
     }
