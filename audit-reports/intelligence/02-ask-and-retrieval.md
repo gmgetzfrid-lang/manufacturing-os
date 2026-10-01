@@ -295,17 +295,18 @@ Fix pass 5 (2026-09-30, review major; superseded by fix pass 6): replaced fix pa
   - a date of birth, a security question, a mother's maiden name;
   - an API or secret key, an access or bearer token;
   - login / sign-in / SSO / account / user / "your" credentials;
-  - a link;
-  - under `"need"`, an ask verb followed within the sentence by login / log-in / sign-in / SSO / MFA / 2FA / two-factor.
+  - the reader's own login as the object of an ask: "Enter your SSO login.", "Provide your SSO login so I can sign the calc.", "What's your login?" (addendum below);
+  - a link.
   
-  `"need"` refuses these wherever they appear. `"clarify"` refuses them only when asked for, so the access-control SOP rule from fix pass 3 stands: NAMING passwords or MFA is fine, ASKING for one is refused. The audit's SSO-password scenario is still refused under both kinds.
+  `"need"` refuses these wherever they appear. `"clarify"` refuses them only when asked for, so the access-control SOP rule from fix pass 3 stands: NAMING passwords or MFA is fine, ASKING for a password, an MFA code or the reader's login is refused. The audit's SSO-password scenario is still refused under both kinds.
 - **Tier 1 no longer contains terms an engineering library uses for other things:**
   - bare "card number" (an I/O card);
   - bare "routing number" (a manufacturing routing);
   - "pwd" (Public Works Department schedules);
   - bare "credentials" (an inspector's or welder's);
   - bare "secret" (a SECRET drawing classification);
-  - "log in" / "sign in" written as two words ("Give the log in base 10 of the pressure ratio.", "Enter the sign in front of the vacuum term.").
+  - "log in" / "sign in" written as two words ("Give the log in base 10 of the pressure ratio.", "Enter the sign in front of the vacuum term.");
+  - a bare login / sign-in / SSO / MFA / 2FA word beside an ask verb (addendum below).
   
   "PIN code" was never put in tier 1, because it is also a postal code.
 - **Tier 2 cautions and never blocks (`{ ok: true, caution: ASSISTANT_PIN_CAUTION }`). It holds every pin / PIN / OTP / digit-code rule (`PIN_CAUTION_RE`):**
@@ -317,7 +318,7 @@ Fix pass 5 (2026-09-30, review major; superseded by fix pass 6): replaced fix pa
   - a delivery to "you" or "your phone / email / device …", or by SMS / text message / an authenticator, with one word allowed before it ("the code from Google Authenticator");
   - the PIN, OTP or digit code as the whole of what is asked. Here the verb must open the clause, and only enter / type / provide / give / paste / submit / reply with / tell me / what is count. Input, supply, share and send are dropped, because "input pin" and "supply pin" are nouns.
   
-  `NeedCard` and `ClarifyCard` render the caution inside the `AssistantAskingFrame` as an amber line: "This question mentions a PIN or a code. This app never needs your personal PINs or one-time codes. If that is what it is asking for, don't enter it." The input, the Calculate button and the aspect buttons stay enabled. The Need input's never-enter line is unchanged. An aspect label is still screened for length and links only.
+  `NeedCard` and `ClarifyCard` render the caution (this one, or the login caution in the addendum below) inside the `AssistantAskingFrame` as an amber line: "This question mentions a PIN or a code. This app never needs your personal PINs or one-time codes. If that is what it is asking for, don't enter it." The input, the Calculate button and the aspect buttons stay enabled. The Need input's never-enter line is unchanged. An aspect label is still screened for length and links only.
 
 The cards moved out of the page into `components/knowledge/AssistantAskCards.tsx`, unchanged apart from the caution line, so that they can be rendered in a test. The page imports `ClarifyCard` and `NeedCard` from there. Tests:
 - `lib/__tests__/knowledgePageCopy.test.ts` "fix pass 6 → no pin, PIN, OTP or code sentence an engineering library writes is refused": every engineering sentence from the verifier, the fix-pass-4 review and the earlier passes, plus the dropped tier-1 words, is not refused under `"need"` or `"clarify"`. Most carry no caution at all, and "PIN code" carries only a caution.
@@ -327,9 +328,11 @@ The cards moved out of the page into `components/knowledge/AssistantAskCards.tsx
 
 The first two tests fail against the fix pass 5 screen. They replace the fix pass 4 test ("reproduction → fix: a shear-pin or clevis-pin calculation …") and the fix pass 5 test ("reproduction → fix: a pin is judged by the credential bound to it …"), and carry over every sentence those tests held. **What is not refused, and why:** any pin / PIN / OTP / code request, however credential-like ("Enter your SIM PIN.", "the 6-digit code we texted you"), is shown with the caution rather than refused. A heuristic over that vocabulary cannot tell a part from a credential reliably enough to take the input away. The caution, the never-enter line at the input and the AI-written frame are the guard. A credential term with no ask verb inside a clarify question ("Which aspect: password rules, MFA, or remote login?") is not a request and is not refused.
 
+*Addendum (2026-09-30, intelligence Round G, fix pass 6 follow-up).* As first committed, fix pass 6 still refused, under `"need"` and `"clarify"`, any sentence where an ask verb was followed within 60 characters by login / log-in / sign-in / SSO / MFA / 2FA / two-factor. That refused "Give the login count." and "Provide the MFA flow rate.". The rule is now tier 2 (`ACCESS_CAUTION_RE`): such a sentence is shown with a sibling amber line (`ASSISTANT_LOGIN_CAUTION`: "This question mentions a login, sign-in or MFA. This app never needs your login, password or MFA codes. If that is what it is asking for, don't enter it."), and the input stays enabled. The access words no longer appear in any tier-1 pattern. Tier 1 keeps the explicit secret nouns asked of the reader: a password / passcode / passphrase ("Enter your SSO password."), an MFA / 2FA / authenticator / verification code ("Enter your MFA code."), "your credentials", and the reader's own login as the object of the ask (`ASKED_LOGIN`). `ASKED_LOGIN` covers an ask verb, then your / my, an optional SSO, then login / sign-in / SSO with an optional details / name / ID. The phrase must end there: at the end of the clause, or before so / to / for / and / here / below. "Enter your SSO login." is therefore REFUSED, while "Enter your login count." is only cautioned. "Provide the SSO login for the vendor portal." (not "your") is cautioned, not refused. The audit's SSO-password scenario stays refused under both kinds, through "password". Test: `lib/__tests__/knowledgePageCopy.test.ts` "fix pass 6 addendum → an ask verb beside a bare login / SSO / MFA word is a caution; a password, an MFA code or the reader's own login asked for is refused". It fails against the first fix-pass-6 screen. The tier-1 source check now also asserts that no tier-1 pattern uses the access words. With this change, no rule in the screen refuses a sentence for a pin, PIN, OTP, code or bare access word.
+
 **Done-when.**
 1. ✓ Need and clarify text render inside a visually distinct "the assistant is asking" container that is not app chrome.
-2. Partly. At the page, the screen refuses a prompt before anything can be typed when it is over-long, contains a link, or contains tier-1 credential / secret vocabulary. A pin / PIN / OTP / code mention is only cautioned (fix pass 6). ✗ Validating and rejecting the prompt SERVER-SIDE, before it is relayed, belongs to the ask route (I-03's file; the plan's "clarify/need text sanitised as data (ASK-6 route half)"). `screenAssistantRequest` is ready for it.
+2. Partly. At the page, the screen refuses a prompt before anything can be typed when it is over-long, contains a link, or contains tier-1 credential / secret vocabulary. A pin / PIN / OTP / code mention, or a bare login / SSO / MFA word beside an ask verb, is only cautioned (fix pass 6 and its addendum). ✗ Validating and rejecting the prompt SERVER-SIDE, before it is relayed, belongs to the ask route (I-03's file; the plan's "clarify/need text sanitised as data (ASK-6 route half)"). `screenAssistantRequest` is ready for it.
 3. ✓ The Need input carries the explicit never-enter line at the point of entry.
 
 **Scope / residual.** Handed to I-03: run `screenAssistantRequest` in `/api/knowledge/ask` with the matching kind (`"need"` on `**Need:**` text, `"clarify"` / `"aspect"` on `plan.clarify`'s question and options). Refuse rather than relay only on `{ ok: false }`. A `caution` is relayed with the text and never refused, because no pin / code rule blocks input (fix pass 6).

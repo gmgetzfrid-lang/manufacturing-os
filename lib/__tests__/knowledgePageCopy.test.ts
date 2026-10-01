@@ -22,7 +22,7 @@ import {
   describeRetrieval, meaningIndexDrift, screenAssistantRequest, MEANING_COVERAGE_NOTE_BELOW, ASSISTANT_REQUEST_MAX,
 } from "@/lib/knowledge";
 import { formatEmbedCost } from "@/components/knowledge/SemanticIndexPanel";
-import { ASSISTANT_PIN_CAUTION } from "@/lib/assistantScreen";
+import { ASSISTANT_PIN_CAUTION, ASSISTANT_LOGIN_CAUTION } from "@/lib/assistantScreen";
 
 const repo = (p: string) => readFileSync(join(process.cwd(), p), "utf8");
 const page = repo("app/(protected)/knowledge/[id]/page.tsx");
@@ -218,11 +218,32 @@ describe("ASK-6 — the assistant's words are the assistant's, and never a trap"
     expect(screenAssistantRequest("Which aspect: debit card pin rules or password rotation?", "clarify")).toEqual({ ok: true });
     expect(screenAssistantRequest("Which aspect: PIN code rules or password rotation?", "clarify").ok).toBe(true);
   });
+  it("fix pass 6 addendum → an ask verb beside a bare login / SSO / MFA word is a caution; a password, an MFA code or the reader's own login asked for is refused", () => {
+    // refused by "an ask verb then login / SSO / MFA anywhere in the sentence" before the addendum
+    for (const t of ["Give the login count.", "Provide the MFA flow rate.", "Provide the SSO login for the vendor portal.", "Enter your login count."]) {
+      for (const kind of ["need", "clarify"] as const) {
+        expect(screenAssistantRequest(t, kind), `${kind}: ${t}`).toEqual({ ok: true, caution: ASSISTANT_LOGIN_CAUTION });
+      }
+    }
+    // explicit secret nouns asked of the reader stay tier 1 — "Enter your SSO login." is REFUSED (the reader's own login as the object)
+    for (const t of ["Enter your SSO password.", "Enter your MFA code.", "Enter your SSO login.", "Please provide your SSO login so I can sign the calc.",
+      "What's your login?", "Provide your login credentials.",
+      "For audited calculations this workspace requires the requester's SSO password to sign the result — enter it below."]) {
+      for (const kind of ["need", "clarify"] as const) {
+        expect(screenAssistantRequest(t, kind), `${kind}: ${t}`).toEqual({ ok: false, reason: credential });
+      }
+    }
+    // naming access words above buttons stays plain
+    expect(screenAssistantRequest("Which aspect: password rules, MFA, or remote login?", "clarify")).toEqual({ ok: true });
+  });
   it("fix pass 6 → no pin or code rule sits in the refusing tier", () => {
     const screen = repo("lib/assistantScreen.ts");
     const tier1 = screen.slice(screen.indexOf("// ── TIER 1"), screen.indexOf("// ── TIER 2"))
       .split("\n").filter((l) => !l.trim().startsWith("//")).join("\n"); // the patterns, not their comments
     expect(tier1).not.toMatch(/\bpins?\b|otps?\b|\\d\+\[\\s-\]\?digit/i);
+    // nor the bare access words (addendum): they are a caution beside an ask verb
+    expect(tier1).not.toContain("ACCESS_TERMS");
+    expect(screen).toContain("if (kind !== \"aspect\" && ACCESS_CAUTION_RE.test(t)) return { ok: true, caution: ASSISTANT_LOGIN_CAUTION };");
     expect(screen).toContain("if (kind !== \"aspect\" && PIN_CAUTION_RE.test(t)) return { ok: true, caution: ASSISTANT_PIN_CAUTION };");
   });
   it("NeedCard: the app's first-person chrome is gone; the prompt is quoted inside the assistant frame; the secrets line is at the input", () => {
