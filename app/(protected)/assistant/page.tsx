@@ -343,10 +343,7 @@ function PendingCard({
             // ORCH-9: informs, never blocks — the buttons below are unchanged.
             <p className="mt-1 flex items-start gap-1.5 text-xs font-medium text-rose-700" role="note">
               <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0" />
-              <span>
-                Suggested after reading document text — check before confirming.
-                <span className="font-normal"> Something it read was written like an instruction to the assistant.</span>
-              </span>
+              <span>Suggested after reading document text — check before confirming.</span>
             </p>
           )}
           {outcome && !outcome.ok && (

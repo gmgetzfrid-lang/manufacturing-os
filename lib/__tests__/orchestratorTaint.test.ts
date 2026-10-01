@@ -73,6 +73,7 @@ const AUDIT_CALL = JSON.stringify({
   parameters: { sheet_number: "025-PID-0103", revision: "C", status: "broken_connectors" },
 });
 const SEARCH_CALL = JSON.stringify({ tool_name: "search_documents", parameters: { query: "0103 audit" } });
+const CHECKOUT_CALL = JSON.stringify({ tool_name: "checkout_document", parameters: { document_id: "d-1", reason: "markup" } });
 /** The pre-I-19 insert payload of one proposal row — the keys a clean run
  *  still writes, and nothing else. */
 const LEGACY_KEYS = ["id", "run_id", "org_id", "user_id", "fingerprint", "tool", "parameters", "summary", "expires_at"].sort();
@@ -111,7 +112,7 @@ const req = (url: string, token: string, body: unknown) => new NextRequest(url, 
   headers: { authorization: `Bearer ${token}`, "content-type": "application/json" },
   body: JSON.stringify(body),
 });
-type Card = { fingerprint: string; tool: string; proposalId?: string; expiresAt?: string; unavailable?: string; tainted?: boolean; href?: string };
+type Card = { fingerprint: string; tool: string; summary?: string; proposalId?: string; expiresAt?: string; unavailable?: string; tainted?: boolean; href?: string };
 /** One run: the model searches (reading `snippet`), then proposes `call`. */
 async function proposeAfterReading(snippet: string, call = AUDIT_CALL): Promise<{ body: Record<string, unknown>; card: Card }> {
   passage(snippet);
@@ -252,11 +253,46 @@ describe("ORCH-9 criterion 3 — a proposal suggested after reading an instructi
     expect(warn).not.toHaveBeenCalled();
   });
 
-  it("a handoff (checkout) in a flagged run is never stored and its card carries no flag — the real flow is its confirmation", async () => {
-    const { card } = await proposeAfterReading(PLANTED, JSON.stringify({ tool_name: "checkout_document", parameters: { document_id: "d-1", reason: "markup" } }));
+  it("a handoff (checkout) in a flagged run is never stored, and its confirm card carries the run's flag — also before 20261158 (no column involved)", async () => {
+    const { card } = await proposeAfterReading(PLANTED, CHECKOUT_CALL);
     expect(card.href).toBe("/documents/L-ops?doc=d-1");
-    expect(card.tainted).toBeUndefined();
+    expect(card.summary).toBe("Open 025-PID-0103 to check it out — markup");
+    expect(card.tainted).toBe(true);
+    expect(card.proposalId).toBeUndefined();
     expect(rowsOf("orchestrator_proposals")).toHaveLength(0);
+    expect(proposalInserts()).toHaveLength(0);
+
+    seed();
+    db.missingColumns.orchestrator_proposals = ["tainted"];
+    const before = await proposeAfterReading(PLANTED, CHECKOUT_CALL);
+    expect(before.card.tainted).toBe(true);
+    expect(proposalInserts()).toHaveLength(0);
+    expect(warn).not.toHaveBeenCalled();
+  });
+
+  it("REGRESSION: a handoff in a clean run hands on exactly the pre-I-19 card (no tainted key)", async () => {
+    const { card } = await proposeAfterReading(ORDINARY, CHECKOUT_CALL);
+    expect(Object.keys(card).sort()).toEqual(["fingerprint", "href", "parameters", "summary", "tool"]);
+    expect(rowsOf("orchestrator_proposals")).toHaveLength(0);
+  });
+
+  it("a proposal that repeats the user's own words ('Question:', 'Rejected:') after a clean read is NOT flagged: the store and the card are the pre-I-19 ones", async () => {
+    const notify = await proposeAfterReading(ORDINARY, JSON.stringify({
+      tool_name: "notify_personnel", parameters: { user_id: "u-dc", document_id: "d-1", message: "Question: is rev C current?" },
+    }));
+    expect(notify.card.summary).toBe("Notify a colleague about 025-PID-0103: “Question: is rev C current?”");
+    expect(notify.card.tainted).toBeUndefined();
+    expect(payloadKeys(proposalInserts()[0])).toEqual(LEGACY_KEYS);
+
+    seed();
+    const audit = await proposeAfterReading(ORDINARY, JSON.stringify({
+      tool_name: "log_audit_completion",
+      parameters: { sheet_number: "025-PID-0103", revision: "C", status: "flagged", details: "Rejected: connector B-4 mismatch" },
+    }));
+    expect(audit.card.summary).toBe("Record 025-PID-0103 rev C as flagged — “Rejected: connector B-4 mismatch”");
+    expect(audit.card.tainted).toBeUndefined();
+    expect(payloadKeys(proposalInserts()[0])).toEqual(LEGACY_KEYS);
+    expect(rowsOf("orchestrator_proposals")[0]).not.toHaveProperty("tainted");
   });
 
   it("storeProposals: a mixed batch names the column on every row explicitly; a clean batch is the legacy payload", async () => {
@@ -265,6 +301,13 @@ describe("ORCH-9 criterion 3 — a proposal suggested after reading an instructi
     const [ins] = proposalInserts();
     expect((ins.payload as Row[]).map((r) => r.tainted)).toEqual([true, false]);
     expect(out.map((c) => c.tainted)).toEqual([true, undefined]);
+    // A handoff is never stored: its card keeps the run's mark as it is.
+    db.ops = [];
+    const handoff = { fingerprint: "h", tool: "checkout_document", summary: "s", parameters: {}, href: "/documents/L-ops?doc=d-1" };
+    const handed = await storeProposals(ORG, "u-dc", "11111111-1111-4111-8111-111111111113", [{ ...handoff, tainted: true }, handoff]);
+    expect(proposalInserts()).toHaveLength(0);
+    expect(handed.map((c) => c.tainted)).toEqual([true, undefined]);
+    expect(Object.keys(handed[1])).not.toContain("tainted");
     db.ops = [];
     const clean = await storeProposals(ORG, "u-dc", "11111111-1111-4111-8111-111111111112", [p("c")]);
     expect(payloadKeys(proposalInserts()[0])).toEqual(LEGACY_KEYS);

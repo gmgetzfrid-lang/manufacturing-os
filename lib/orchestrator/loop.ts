@@ -37,11 +37,14 @@ export interface OrchestratorStep {
 }
 
 /** A write the run hands on (ORCH-9 criterion 3). `tainted` is set on every
- *  proposal of a run in which a tool result carried a role / instruction
- *  marker that neutralizeUntrusted rewrote — the model proposing it had read
- *  text written like an instruction. It informs the person confirming; it
- *  never blocks or changes the proposal (DEC-72 item 1 stays the write path).
- *  A run that read no marker hands its proposals on untouched. */
+ *  proposal of a run in which a tool result, in the part of it the model was
+ *  shown, carried a fence, role, transcript or tool-call marker that
+ *  neutralizeUntrusted rewrote (a label such as "SYSTEM:" counts, whatever
+ *  follows it). A proposal's own result is not counted: it repeats the
+ *  model's own arguments back, not text it read. It informs the person
+ *  confirming; it never blocks or changes the proposal (DEC-72 item 1 stays
+ *  the write path). A run that read no marker hands its proposals on
+ *  untouched. */
 export type RunPendingAction = PendingAction & { tainted?: true };
 
 export interface OrchestratorRun {
@@ -161,6 +164,17 @@ function clip(text: string): string {
     : `${text.slice(0, RESULT_CHARS)}\n…(result truncated — call again with a narrower query if you need more)`;
 }
 
+/** ORCH-9 criterion 3: did the part of this result the transcript shows the
+ *  model carry a marker the neutralisation rewrites? The transcript shows the
+ *  neutralised result serialised and clipped; the two serialisations agree on
+ *  every character before the first rewrite, so their clips differ exactly
+ *  when a rewrite falls inside what is shown. A marker in the clipped tail —
+ *  text the model never receives — does not count. */
+function showsRewrittenMarker(result: unknown): boolean {
+  const { value, rewrote } = neutralizeUntrustedReport(result);
+  return rewrote && clip(JSON.stringify(value)) !== clip(JSON.stringify(result));
+}
+
 /**
  * Run the cycle.
  *
@@ -185,8 +199,9 @@ export async function runOrchestrator(opts: RunOptions): Promise<OrchestratorRun
   let corrections = 0;
   let note: string | undefined;
   let stoppedBecause: string | undefined;
-  // ORCH-9 criterion 3: set once a tool result carried a marker the
-  // transcript's neutralisation rewrites; every proposal is then marked.
+  // ORCH-9 criterion 3: set once a tool result the model was shown carried a
+  // marker the transcript's neutralisation rewrites; every proposal is then
+  // marked.
   let tainted = false;
   const proposals = (): RunPendingAction[] => (tainted
     ? [...pending.values()].map((p) => ({ ...p, tainted: true as const }))
@@ -273,7 +288,10 @@ export async function runOrchestrator(opts: RunOptions): Promise<OrchestratorRun
       const out = await def.run(checked.values, ctx);
       if (out.pending) pending.set(out.pending.fingerprint, out.pending);
       steps.push({ tool: def.name, parameters: checked.values, result: out.data });
-      tainted ||= neutralizeUntrustedReport(out.data).rewrote;
+      // A proposal's result repeats the model's own words (its summary is
+      // built from the arguments), so it is not text the model read: only
+      // other results can taint the run.
+      if (!out.pending && showsRewrittenMarker(out.data)) tainted = true;
     } catch (e) {
       // A tool throwing is a bug in OUR code, not a reason to abandon the run.
       // Report it into the transcript and let the model route around it.

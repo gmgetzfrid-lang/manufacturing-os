@@ -87,8 +87,9 @@ describe("ORCH-9 criterion 3 — the confirm card says a proposal was suggested 
     await askAndRender([flagged]);
     expect(host.textContent).toContain(FLAG_TEXT);
     const note = host.querySelector('[role="note"]');
-    expect(note?.textContent).toContain(FLAG_TEXT);
-    expect(note?.textContent).toMatch(/written like an instruction/);
+    // The brief's wording, and only that: the signal is a rewritten label
+    // (e.g. "SYSTEM:"), not proof an instruction was read.
+    expect(note?.textContent?.trim()).toBe(FLAG_TEXT);
     const [confirm] = buttons("Confirm and run");
     expect(confirm).toBeDefined();
     expect(confirm.disabled).toBe(false);
@@ -106,6 +107,19 @@ describe("ORCH-9 criterion 3 — the confirm card says a proposal was suggested 
     const [confirm] = buttons("Confirm and run");
     await act(async () => { confirm.click(); });
     expect(client.executed).toEqual([{ orgId: "o1", action: clean }]);
+  });
+
+  it("a flagged handoff (checkout) card carries the note; its 'Open and continue there' link is unchanged", async () => {
+    const handoff = card({
+      tainted: true, tool: "checkout_document", fingerprint: "checkout_document(document_id=d-1&reason=markup)",
+      summary: "Open 025-PID-0103 to check it out — markup", parameters: { document_id: "d-1", reason: "markup" },
+      href: "/documents/L-ops?doc=d-1", proposalId: undefined, expiresAt: undefined,
+    });
+    await askAndRender([handoff]);
+    expect(host.querySelector('[role="note"]')?.textContent?.trim()).toBe(FLAG_TEXT);
+    const link = [...host.querySelectorAll("a")].find((a) => a.textContent?.includes("Open and continue there"));
+    expect(link?.getAttribute("href")).toBe("/documents/L-ops?doc=d-1");
+    expect(buttons("Confirm and run")).toHaveLength(0);
   });
 
   it("only the flagged card of a run carries the note; dismissing a flagged card works as for any card", async () => {
