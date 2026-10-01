@@ -195,14 +195,17 @@ FullScreenViewer.tsx:966 `const stampNow = liveState !== "controlled";`; :1005-1
 - The bake now goes through the shared, rotation-aware `bakeMarkupIntoDoc` (`lib/markupExport.ts`, `PHYS-12`).
 - Files: `components/viewers/FullScreenViewer.tsx`.
 - Tests: `lib/__tests__/psStampRoundF.test.ts` — "PHYS-5 — a marked-up export is always stamped and recorded uncontrolled" (four tests: no checkout gate and the stamp call unconditional; the `_markup_UNCONTROLLED` suffix; `state: "uncontrolled"` with `expiresAt`; the holder skips only the modal). All four fail on the base and pass after.
-- Verified: `tsc` 0, `eslint` 0 on every touched file, full `vitest` green (258 files / 4636 tests: 4629 passed, 7 expected-fail).
+- Verified: `tsc` 0, `eslint` 0 on every touched file, full `vitest` green (258 files / 4636 tests: 4629 passed, 7 expected-fail). Re-run after the review fix pass: `tsc` 0, `eslint` 0, full `vitest` green (258 files / 4639 tests: 4632 passed, 7 expected-fail).
 
 **Done-when.**
 1. ✓ `downloadWithMarkup` always stamps, regardless of checkout state.
 2. ✓ The exported filename always carries the `_markup_UNCONTROLLED` suffix.
 3. ✓ `logDownloadAudit` for a markup export is called with state `"uncontrolled"` and the uncontrolled expiry. (`logDownloadAudit` is `lib/downloads.ts`, P8's; the `download_audits` row has no state column, and the always-set `expires_at` is what marks the row as an uncontrolled copy.)
 
-**Scope / residual.** The viewer is a client component, so it is pinned by source tests: vitest runs `lib/__tests__` in node and there is no component harness. Nothing else is left.
+**Scope / residual.**
+- The viewer is a client component, so it is pinned by source tests: vitest runs `lib/__tests__` in node and there is no component harness.
+- This closes the defect in `FullScreenViewer` only. The same defect still reaches paper through the book viewer. `components/viewers/MultiDocViewer.tsx` `runDocAction` bakes the markups with `bakeMarkupIntoPdf` and hands the result to `downloadDocumentPdf`. For the checkout holder of the current version, that takes the controlled pass-through (`lib/downloads.ts`). The redlined PDF leaves unstamped, with no markup suffix, and is audited with `expires_at` null.
+- That limb is not this finding's file. It is tracked as document-control `PKG-10` done-when 3 ("a baked-markup download is never treated as a controlled copy"), owned by document-control P8. Until it lands, "every modified copy is uncontrolled" holds for the `FullScreenViewer` export, not tree-wide. *Corrected in the review fix pass:* the first write-up said "Nothing else is left".
 
 ---
 
@@ -338,15 +341,25 @@ requests/[id]/page.tsx:647 `watermarkText: file.type === "Draft" ? "REVIEW ONLY 
 - [ ] No print path emits the string "CONTROLLED COPY" unless a registered controlled-copy record exists for that pull
 
 **Partial (2026-10-01, public-surfaces Round F).** The stamping substrate landed. The caller half is drafting-flow DF-P10 (public-surfaces `PKG-5`): `app/(protected)/requests/[id]/page.tsx` is that package's file and is untouched here, so the finding stays OPEN.
-- `lib/stamping.ts`: `StampOptions.controlState?: StampControlState` (`"uncontrolled" | "review"`, default `"uncontrolled"`). There is deliberately no `"controlled"` member, because a stamped copy is never the controlled copy (the controlled copy is the unstamped pass-through to the checkout holder). The footer's main line is now DERIVED: `stampMainLine(controlState, timestamp)` gives "UNCONTROLLED COPY • Downloaded: <when> • Do Not Distribute" or "UNCONTROLLED COPY — REVIEW ONLY • …". It replaces the hardcoded literal at the old `stamping.ts:211`, and with no timestamp the empty "Downloaded:" segment (this finding's chain reaction) is left out. When a caller passes `controlState` and no `watermarkText`, the same state supplies the watermark ("UNCONTROLLED COPY" / "REVIEW ONLY — DO NOT DISTRIBUTE"), so the two marks come from one value. Existing callers' words are unchanged: each passes a `watermarkText`, and the default main line is the old one.
-- Tests: `lib/__tests__/psStampRoundF.test.ts` — "PHYS-9 substrate — StampOptions.controlState drives the footer's main line" (the default line equals the old literal; review copies; no timestamp; no state can print "CONTROLLED COPY" without "UN-"; `controlState: "review"` with no `watermarkText` gives an agreeing watermark and footer end to end; the literal is gone).
+- `lib/stamping.ts`: `StampOptions.controlState?: StampControlState` (`"uncontrolled" | "review"`, default `"uncontrolled"`). There is deliberately no `"controlled"` member, because a stamped copy is never the controlled copy (the controlled copy is the unstamped pass-through to the checkout holder). The footer's main line is now DERIVED: `stampMainLine(controlState, timestamp)` gives "UNCONTROLLED COPY • Downloaded: <when> • Do Not Distribute" or "UNCONTROLLED COPY — REVIEW ONLY • …". It replaces the hardcoded literal at the old `stamping.ts:211`, and with no timestamp the empty "Downloaded:" segment (this finding's chain reaction) is left out. When a caller passes `controlState` and no `watermarkText`, the same state supplies the watermark ("UNCONTROLLED COPY" / "REVIEW ONLY — DO NOT DISTRIBUTE"), so the two marks come from one value. Every existing caller passes a `watermarkText`, and the default main line is the old one. Their words are therefore unchanged, with one exception: the drafting download's "CONTROLLED COPY" watermark, covered by the backstop below.
+- `lib/stamping.ts` (added in the review fix pass): a watermark backstop. `stampWatermark(watermarkText, controlState)` prints a caller's watermark as given, unless it claims a controlled copy (`claimsControlledCopy`: the words "controlled copy" without "un", any case). In that case the control state's own watermark is printed ("UNCONTROLLED COPY" by default), and `applyStampToPdfDoc` logs a `[stamping] watermarkText "…" claims a controlled copy …` warning. The drafting download's `"CONTROLLED COPY"` (`requests/[id]/page.tsx:661`) therefore now prints as "UNCONTROLLED COPY", the same watermark `handlePrint` passes for that file. A caller's free-text `footerNotice` is still printed as given; no caller writes the claim there.
+- Tests: `lib/__tests__/psStampRoundF.test.ts`, "PHYS-9 substrate — StampOptions.controlState drives the footer's main line":
+  - the default line equals the old literal;
+  - review copies;
+  - no timestamp;
+  - no state can print "CONTROLLED COPY" without "UN-";
+  - a claiming watermark is replaced and every other watermark is kept;
+  - end to end, a `"CONTROLLED COPY"` watermark prints as "UNCONTROLLED COPY" with the warning;
+  - `controlState: "review"` with no `watermarkText` gives an agreeing watermark and footer end to end;
+  - the literal is gone.
+- Verified after the review fix pass: `tsc` 0, `eslint` 0 on every touched file, full `vitest` green (258 files / 4639 tests: 4632 passed, 7 expected-fail).
 
 **Done-when (this pass).**
-1. — Not done here: the drafting download and print paths still pass different `watermarkText` (`requests/[id]/page.tsx`, DF-P10's).
+1. ◐ The printed marks now agree: for an issued file the download and the print both stamp "UNCONTROLLED COPY" in the watermark and in the footer. The caller still writes two different literals rather than one control state, and its audit row still records `watermark_text: "CONTROLLED COPY"` (`requests/[id]/page.tsx:694`). Both are DF-P10's file.
 2. ◐ The footer's main line derives from an explicit control state ✓. The drafting caller still has to pass `controlState` and stop passing a contradicting `watermarkText` (DF-P10).
-3. — Not done here: `requests/[id]/page.tsx:647` still passes "CONTROLLED COPY" (DF-P10; the stated default is "UNCONTROLLED COPY everywhere").
+3. ✓ for every print that goes through the stamper: neither the footer's main line nor the watermark can carry "CONTROLLED COPY", whatever the caller passes. `requests/[id]/page.tsx:661` still passes the literal, and the stamper prints "UNCONTROLLED COPY" in its place (the stated default, "UNCONTROLLED COPY everywhere"). Only a caller's free-text `footerNotice` is not checked.
 
-**Scope / residual.** Closer: drafting-flow DF-P10 (`PKG-5` DELIVERABLE-PRINT). Pass `controlState: file.type === "Draft" ? "review" : "uncontrolled"` on both paths and drop the `watermarkText` literals.
+**Scope / residual.** Closer: drafting-flow DF-P10 (`PKG-5` DELIVERABLE-PRINT). It should pass `controlState: file.type === "Draft" ? "review" : "uncontrolled"` on both paths and drop the `watermarkText` literals. It should also record the watermark actually printed in the audit row.
 
 ---
 
@@ -418,17 +431,25 @@ verify-hold/route.ts:54 `active: !h.released_at,`; verify-hold/[holdId]/page.tsx
 - `lib/publicOrigin.ts` follows one documented order:
   1. `NEXT_PUBLIC_SITE_URL`.
   2. Vercel's production domain: `VERCEL_PROJECT_PRODUCTION_URL` on the server (set on every Vercel deployment, previews included), its `NEXT_PUBLIC_VERCEL_PROJECT_PRODUCTION_URL` twin in a browser, with https added. Never `VERCEL_URL`, the deployment's own host, which on a preview is the login-gated hostname this helper exists to keep off paper.
-  3. In a browser only, the page's own origin, unless it is a `*.vercel.app` host (`isVercelDeploymentHost`).
-  4. `""`, meaning no link.
+  3. In a browser only, the page's own origin.
+  4. `""`, meaning no link. Only a server with nothing configured reaches it. The server routes that build outbound links treat it as no link: the share and transmittal stamps drop the QR and the instruction to scan it, and the transmittal email refuses.
   `configuredPublicOrigin()` stops after step 2 and never answers with the page's host.
+  *Corrected in the review fix pass.* The first write-up also refused a `*.vercel.app` page host at step 3 (`isVercelDeploymentHost`), so a browser on such a host with nothing configured got `""`. Three browser callers do not treat `""` as "no link". `components/documents/ShareLinkModal.tsx` copied a `/share/<token>` link and QR. `components/documents/RelatedPanel.tsx` copied `/d/<number>`. `lib/physicalBridge.ts` printed labels, hold cards, travelers and pack covers whose QR encoded a relative path. The refusal is removed, so a browser always gets an absolute origin. The first write-up's claim that every caller treats `""` as "no link" was false for those three and is withdrawn.
 - `lib/stamping.ts`: a stamp with no `verifyUrl` logs `[stamping] no verifyUrl — this copy carries no verify QR and no instruction to scan one …`. When no QR is on the page (no URL, or a QR that failed to generate), `withoutScanInstruction` removes the instruction before the footer is drawn: the sentence, or the clause after an em dash. It prints "Confirm the current revision before use." in its place. This backs up every caller; the share route (P1) and the transmittal portal (P7) already word their footer on the URL.
-- `.env.example`: `NEXT_PUBLIC_SITE_URL` has its own section, "Public origin (REQUIRED for the physical bridge)". It says what is built on it, that it should be set in every environment including previews, which fallback is actually implemented (`VERCEL_PROJECT_PRODUCTION_URL`, never `VERCEL_URL`), and what happens with neither.
+- `.env.example`: `NEXT_PUBLIC_SITE_URL` has its own section, "Public origin (REQUIRED for the physical bridge)". It says what is built on it, that it should be set in every environment including previews, which fallback is actually implemented (`VERCEL_PROJECT_PRODUCTION_URL`, never `VERCEL_URL`), that a browser reads that domain only when Vercel exposes its system variables and otherwise uses its own address, and what happens with neither.
 - Files: `lib/publicOrigin.ts`, `lib/stamping.ts`, `.env.example`.
 - Tests: `lib/__tests__/psStampRoundF.test.ts`:
-  - "PHYS-11 — publicOrigin(): configured, else production, never a preview host" covers the server production fallback, `VERCEL_URL` never used, `""` with nothing set, a browser off Vercel vs on `*.vercel.app`, the exposed production domain on a preview host, `configuredPublicOrigin` never using the page's host, and the `.env.example` pins.
+  - "PHYS-11 — publicOrigin(): configured, else production, else (browser) the page, never VERCEL_URL" covers:
+    - the server production fallback, and `VERCEL_URL` never used;
+    - `""` on a server with nothing set;
+    - a browser with nothing configured getting its own absolute origin on any host, `*.vercel.app` and localhost included, so no caller builds a relative URL;
+    - no host refusal left in the helper;
+    - the exposed production domain on a preview host;
+    - `configuredPublicOrigin` never using the page's host;
+    - the `.env.example` pins.
   - "PHYS-11 / SHR-11 — the stamp never tells a reader to scan a QR it does not carry" covers the em-dash clause, the "Scan to verify." sentence, the share and transmittal wording, byte-identity without an instruction (including a "SCAN-001" document number), and end to end: no `verifyUrl` logs the warning with no caption and no instruction; a failed QR drops the instruction; with a QR, all of it stays.
-  Every one of these fails on the base.
-- Verified: `tsc` 0, `eslint` 0 on every touched file, full `vitest` green (258 files / 4636 tests: 4629 passed, 7 expected-fail). For a caller with a verify URL, a word-for-word comparison against the base stamper showed the same watermark, footer and caption words.
+  Every one of these fails on the base, except the browser page-origin case: that is the base's own behaviour, kept on purpose.
+- Verified: `tsc` 0, `eslint` 0 on every touched file, full `vitest` green (258 files / 4636 tests: 4629 passed, 7 expected-fail). For a caller with a verify URL, a word-for-word comparison against the base stamper showed the same watermark, footer and caption words. Re-run after the review fix pass: `tsc` 0, `eslint` 0, full `vitest` green (258 files / 4639 tests: 4632 passed, 7 expected-fail).
 
 **Done-when.**
 1. ✓ `publicOrigin()` implements a server fallback and `.env.example` documents exactly that one. It is Vercel's production domain, deliberately not the `VERCEL_URL` the old comment named, because that is a preview's own host.
@@ -437,8 +458,8 @@ verify-hold/route.ts:54 `active: !h.released_at,`; verify-hold/[holdId]/page.tsx
 4. ✓ A stamp with no verify URL logs a warning, on the server and in the browser.
 
 **Scope / residual.**
-- The browser half (b), preview-host QRs, is closed by step 3: a browser never uses a `*.vercel.app` host, and gets the production domain when Vercel exposes it (the default for Next.js projects).
-- One niche world remains: a Vercel deployment with system-variable exposure turned off and nothing configured. Its browser now gets `""`. The stamp handles that (no QR, no instruction, a warning). `lib/physicalBridge.ts` (PS-VERIFY's) would build a relative QR target on `""` and should drop the QR the same way; that is handed to PS-VERIFY.
+- The browser half (b), preview-host QRs, is closed wherever Vercel exposes its system environment variables (the default for Next.js projects): the browser reads the production domain at step 2, before the page's own host.
+- It stays open in one case: a Vercel deployment with that exposure turned off and nothing configured. There a browser on a preview host falls back to that host at step 3, as it did on the base, so labels, stamps and share links made there can dead-end on Vercel's login. Setting `NEXT_PUBLIC_SITE_URL` closes it. Refusing the page host instead is safe only once every browser caller refuses on `""` (`lib/physicalBridge.ts`, PS-VERIFY's; `ShareLinkModal`, `RelatedPanel`). Until then a refusal turns a possibly gated link into a relative one that never works. No hand-off is needed while the helper keeps the page origin.
 - The URL builders that still bypass `publicOrigin()` (IntakePanel, QuotesPanel, the library page's `/d/` copy, `lib/notifications.ts` `ticketUrl`) belong to their owners (`XEDGE-5` dw1, notifications `DELIV-5`).
 - See DEC-44 (public-surfaces PS-STAMP).
 
@@ -540,7 +561,8 @@ FullScreenViewer.tsx:1268 `value={\`${window.location.origin}/documents/${docRec
 **Scope / residual.** Done-when 1 and 3 keep this finding OPEN. Owner: public-surfaces PS-STAMP, whose file list already carries the `FullScreenViewer.tsx` `QrBadge (~1291) from publicOrigin()` change; when that lands, the integrator (or PS-STAMP) closes `PHYS-13` against it.
 
 **Partial (2026-10-01, public-surfaces Round F).** The `FullScreenViewer.tsx` phone QR is now built on `publicOrigin()`. The tree-wide done-when 3 still names files outside this package, so the finding stays OPEN.
-- `components/viewers/FullScreenViewer.tsx`: the "Continue on phone" `<QrBadge>` value is `${publicOrigin()}/documents/<library>?doc=<id>`. It is rendered only after the click, so on the client. When there is no public origin, the popover says "No public site URL is configured (NEXT_PUBLIC_SITE_URL), so there is no link a phone could open." instead of encoding a relative URL. `window.location.origin` no longer appears in the viewer. `publicOrigin()` itself now never returns a `*.vercel.app` host (`PHYS-11`), so neither QrBadge call site can encode a preview host.
+- `components/viewers/FullScreenViewer.tsx`: the "Continue on phone" `<QrBadge>` value is `${publicOrigin()}/documents/<library>?doc=<id>`. It is rendered only after the click, so on the client. As a guard, an empty origin shows "No public site URL is configured (NEXT_PUBLIC_SITE_URL), so there is no link a phone could open." instead of encoding a relative URL. A browser always gets an origin, so the guard does not fire today. `window.location.origin` no longer appears in the viewer.
+- Neither QrBadge call site can encode a preview host when `NEXT_PUBLIC_SITE_URL` is set or Vercel exposes its production domain to the browser. In a Vercel deployment with that exposure off and nothing configured, both still encode the page's own host; that is `PHYS-11`'s residual. *Corrected in the review fix pass:* the first write-up said `publicOrigin()` never returns a `*.vercel.app` host. That refusal was withdrawn (see `PHYS-11`).
 - Tests: `lib/__tests__/psStampRoundF.test.ts` — "PHYS-13 — FullScreenViewer's phone QR is built on publicOrigin()".
 
 **Done-when (this pass).**

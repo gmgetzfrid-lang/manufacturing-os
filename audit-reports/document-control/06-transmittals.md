@@ -661,24 +661,34 @@ lib/publicOrigin.ts:8-11 — `// point at the PUBLIC production domain. \`window
 **Scope / residual.** Left OPEN for the browser half of done-when 1. Making `publicOrigin()` itself refuse when NEXT_PUBLIC_SITE_URL is unset is PS-STAMP's (XEDGE-5 dw2); when it lands, `transmittalPortalUrl` follows it with no change here. The other builders XEDGE-5 names belong to their owners (XEDGE-5 stays OPEN for them).
 
 **Resolution (2026-10-01, public-surfaces Round F).** The browser half is closed by the origin rule changing in `lib/publicOrigin.ts`, as P7 anticipated ("until the origin rule itself changes").
-- `lib/publicOrigin.ts` (PS-STAMP) gains `configuredPublicOrigin()`: `NEXT_PUBLIC_SITE_URL`, else Vercel's production domain (`VERCEL_PROJECT_PRODUCTION_URL` on the server, its `NEXT_PUBLIC_` twin in a browser; never `VERCEL_URL`). It never answers with the page's own host. `publicOrigin()` itself no longer returns a `*.vercel.app` host from a browser.
-- `lib/transmittals.ts` (P7's merged file, two lines): `transmittalPortalUrl` builds on `configuredPublicOrigin()`, and `portalOriginConfigured()` is `!!configuredPublicOrigin()`. A browser and the server therefore build the same link, and with nothing configured neither builds one: `null` in the browser too. The cover sheet then prints no portal block, the copy action refuses, and the email route refuses (unchanged).
-- On a Vercel production without `NEXT_PUBLIC_SITE_URL`, the production domain keeps the link working. That was P7's reason for not returning `null` in the browser.
-- `app/(protected)/transmittals/page.tsx` (P7's, one line): the issue toast now says no portal link can be built, instead of "the link uses this browser's address".
+- `lib/publicOrigin.ts` (PS-STAMP) gains `configuredPublicOrigin()`: `NEXT_PUBLIC_SITE_URL`, else Vercel's production domain (`VERCEL_PROJECT_PRODUCTION_URL` on the server, its `NEXT_PUBLIC_` twin in a browser; never `VERCEL_URL`). It never answers with the page's own host. (`publicOrigin()` itself still ends on the page's own origin in a browser; the transmittal link no longer uses it.)
+- `lib/transmittals.ts` (P7's merged file, two lines): `transmittalPortalUrl` builds on `configuredPublicOrigin()`, and `portalOriginConfigured()` is `!!configuredPublicOrigin()`. With nothing configured neither runtime builds a link: `null` in the browser too. The cover sheet then prints no portal block, the copy action refuses, and the email route refuses (unchanged).
+- The browser and the server build the same link only when `NEXT_PUBLIC_SITE_URL` is set or Vercel exposes the production domain's `NEXT_PUBLIC_` twin to the browser.
+  - With exposure off and the variable unset, they differ. The email route reads `VERCEL_PROJECT_PRODUCTION_URL` at runtime and emails a working link. The browser builds none, so the cover sheet carries no portal block and the copy action refuses.
+- P7 did not return `null` in the browser because a correctly hosted production without `NEXT_PUBLIC_SITE_URL` would lose the cover-sheet QR and the copy link outright. The production-domain fallback answers that only on Vercel with exposure on.
+  - Off Vercel (a self-hosted production, local dev) with the variable unset, and on Vercel with exposure off, the browser now loses both.
+  - That is the accepted trade: a missing link is reported, while a link built on the page's own host could be a preview link the recipient cannot open. Setting `NEXT_PUBLIC_SITE_URL`, which `.env.example` now marks required, restores both.
+- `app/(protected)/transmittals/page.tsx` (P7's file): the issue toast speaks for this browser and no longer says "the link uses this browser's address". It reads "this browser cannot build the portal link (NEXT_PUBLIC_SITE_URL unset) — the cover sheet carries none", so it cannot contradict an email the server did send. The copy action's refusal says the same. The copy-link toast's warning suffix (`portalOriginConfigured() ? "" : …`), unreachable once a URL implies a configured origin, is removed.
 - `lib/__tests__/dcRoundFTransmittals.test.ts`: the "unset on the server" test also clears the two Vercel variables, so it holds on a Vercel builder.
 - Tests: `lib/__tests__/psStampRoundF.test.ts` "TRX-14 / XEDGE-5 — the portal link needs a configured origin in a browser too":
-  - with nothing configured, a browser builds no link (`null`) on a preview host and off Vercel alike;
-  - on a preview deploy the browser's link equals the server's: the production link;
-  - the lib and toast pins.
+  - with nothing configured, a browser builds no link (`null`) on a preview host and off Vercel alike, though `publicOrigin()` there is the page;
+  - with exposure off, the server builds the production link while the browser builds none;
+  - on a preview deploy with exposure on, the browser's link equals the server's: the production link;
+  - the lib and toast pins (the browser-worded notes, no "this browser's address" text left).
   P7's three TRX-14 tests stay green.
-- Verified: `tsc` 0, `eslint` 0 on every touched file, full `vitest` green (258 files / 4636 tests: 4629 passed, 7 expected-fail).
+- Verified: `tsc` 0, `eslint` 0 on every touched file, full `vitest` green (258 files / 4636 tests: 4629 passed, 7 expected-fail). Re-run after the review fix pass: `tsc` 0, `eslint` 0, full `vitest` green (258 files / 4639 tests: 4632 passed, 7 expected-fail).
 
 **Done-when.**
 1. ✓ `transmittalPortalUrl` builds on the public-origin helper (`configuredPublicOrigin()`) and returns `null` when no origin is configured, in a browser as on the server. Callers therefore refuse to email or print a hostless or preview-host link.
 2. ✓ (P7) `sendTransmittalEmail` (its route) and `openTransmittalSheet` handle the no-origin case explicitly.
-3. ✓ The issue flow says when no public origin is configured, and now says that no link was built.
+3. ✓ The issue flow says when this browser has no public origin, and that the cover sheet carries no link.
 
-**Scope / residual.** The copy-link toast's warning suffix in `transmittals/page.tsx` (`portalOriginConfigured() ? "" : " NEXT_PUBLIC_SITE_URL is not set …"`) can no longer run, because a URL exists only when an origin is configured. It is left in place, dead but harmless, for P7's owner to tidy. See DEC-44 (public-surfaces PS-STAMP) and the DEC-61 landed note.
+**Scope / residual.**
+- Two trades are accepted and recorded in DEC-44 (public-surfaces PS-STAMP) §1:
+  - with Vercel's exposure off and `NEXT_PUBLIC_SITE_URL` unset, the browser builds no link while the server emails one;
+  - off Vercel with the variable unset, the copy link and the cover-sheet QR are lost.
+- *Corrected in the review fix pass:* the first write-up said the two runtimes always build the same link, and that the production fallback answers P7's concern everywhere.
+- See also the DEC-61 landed note.
 
 ---
 

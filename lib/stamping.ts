@@ -42,8 +42,11 @@ import {
 /** PHYS-9: what a stamped copy IS. A stamped copy is never a controlled copy
  *  — a controlled copy is the unstamped pass-through to the checkout holder
  *  (lib/downloads.ts determineControlState) — so there is no "controlled"
- *  member and no stamp can call itself CONTROLLED COPY. "review" marks a draft
- *  handed out for review. */
+ *  member. Neither mark the stamper derives can call the copy a CONTROLLED
+ *  COPY: the footer's main line comes from this state (stampMainLine), and a
+ *  caller's watermarkText that claims one is replaced by the state's
+ *  watermark (stampWatermark). A caller's free-text footerNotice is printed
+ *  as given. "review" marks a draft handed out for review. */
 export type StampControlState = "uncontrolled" | "review";
 
 const CONTROL_STATE_LABEL: Record<StampControlState, string> = {
@@ -118,10 +121,23 @@ export function withoutScanInstruction(notice: string): string {
   return kept.join(" ");
 }
 
+/** PHYS-9: the watermark's leading text. A caller's watermarkText is printed
+ *  as given, unless it claims a CONTROLLED COPY (the words without "UN"),
+ *  which a stamped copy never is: then the control state's own watermark is
+ *  printed instead. With no watermarkText the state supplies it. */
+const CONTROLLED_COPY_CLAIM = /(?<!un)controlled\s+copy/i;
+export function claimsControlledCopy(text: string): boolean {
+  return CONTROLLED_COPY_CLAIM.test(text);
+}
+export function stampWatermark(watermarkText: string | undefined, state: StampControlState | undefined): string {
+  const forState = CONTROL_STATE_WATERMARK[state ?? "uncontrolled"] ?? CONTROL_STATE_WATERMARK.uncontrolled;
+  if (watermarkText === undefined) return forState;
+  return claimsControlledCopy(watermarkText) ? forState : watermarkText;
+}
+
 function buildStampText(opts: StampOptions) {
   const parts = [];
-  const watermarkText = opts.watermarkText
-    ?? (CONTROL_STATE_WATERMARK[opts.controlState ?? "uncontrolled"] ?? CONTROL_STATE_WATERMARK.uncontrolled);
+  const watermarkText = stampWatermark(opts.watermarkText, opts.controlState);
   if (watermarkText) parts.push(watermarkText);
   if (opts.userLabel) parts.push(opts.userLabel);
   if (opts.email) parts.push(opts.email);
@@ -337,6 +353,13 @@ export async function applyStampToPdfDoc(pdfDoc: PDFDocument, opts: StampOptions
     throw new Error("the PDF is encrypted, so it cannot be stamped — it was not issued as a copy");
   }
   const font = await pdfDoc.embedFont(StandardFonts.HelveticaBold);
+  if (opts.watermarkText !== undefined && claimsControlledCopy(opts.watermarkText)) {
+    // PHYS-9: say so rather than quietly reword a caller.
+    console.warn(
+      `[stamping] watermarkText "${opts.watermarkText}" claims a controlled copy; a stamped copy is uncontrolled, ` +
+      `so the watermark reads "${stampWatermark(opts.watermarkText, opts.controlState)}" instead.`,
+    );
+  }
   const watermark = buildStampText(opts);
 
   // Verification QR — generated once, embedded on every page. Failure to

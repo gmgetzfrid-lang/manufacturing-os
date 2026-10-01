@@ -680,18 +680,21 @@ async function nextTransmittalSeq(orgId: string): Promise<number> {
 /** TRX-14 / XEDGE-5: the external portal link, built on the deployment's
  *  CONFIGURED public origin (lib/publicOrigin.ts configuredPublicOrigin —
  *  NEXT_PUBLIC_SITE_URL, else Vercel's production domain; never the page's
- *  own host, so the browser and the server build the same link). Returns null
- *  when there is no configured origin — in a browser as on the server — so a
- *  caller refuses to email or print a hostless or preview-host link. */
+ *  own host). Returns null when there is no configured origin — in a browser
+ *  as on the server — so a caller refuses to email or print a hostless or
+ *  preview-host link. The two runtimes build the same link only when
+ *  NEXT_PUBLIC_SITE_URL is set or Vercel exposes the production domain to
+ *  the browser; with exposure off the server can email a link this browser
+ *  cannot build. */
 export function transmittalPortalUrl(token: string): string | null {
   let origin = "";
   try { origin = configuredPublicOrigin(); } catch { origin = ""; }
   return origin ? `${origin}/transmittal/${token}` : null;
 }
 
-/** TRX-14 dw3: true when the deployment names its public origin
- *  (NEXT_PUBLIC_SITE_URL, or Vercel's production domain). Without it no
- *  portal link can be built, so the issue flow says so. */
+/** TRX-14 dw3: true when THIS runtime can name the public origin
+ *  (NEXT_PUBLIC_SITE_URL, or Vercel's production domain). Without it this
+ *  runtime builds no portal link, so the issue flow says so. */
 export function portalOriginConfigured(): boolean {
   return !!configuredPublicOrigin();
 }

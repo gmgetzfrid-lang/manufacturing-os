@@ -3610,7 +3610,7 @@ as sent. The stamping bound is one constant in the portal route.
 unless the org grants the capability; the migration's inventory counts the
 issued rows whose creator would not hold it today.
 
-*Landed 2026-10-01 (public-surfaces Round F, PS-STAMP): §4's "built on the public origin" now holds in both runtimes. `transmittalPortalUrl` builds on `configuredPublicOrigin()` (`lib/publicOrigin.ts`: `NEXT_PUBLIC_SITE_URL`, else Vercel's production domain `VERCEL_PROJECT_PRODUCTION_URL`; never the page's own host or a preview's `VERCEL_URL`). The browser and the server therefore build the same link, and with neither configured no link is built anywhere: the email route refuses, the cover sheet prints no portal block, the copy action refuses. A Vercel production without `NEXT_PUBLIC_SITE_URL` keeps working on its production domain. Closes `TRX-14`'s browser half. See DEC-44 (public-surfaces PS-STAMP).*
+*Landed 2026-10-01 (public-surfaces Round F, PS-STAMP): §4's "built on the public origin" now holds in both runtimes. `transmittalPortalUrl` builds on `configuredPublicOrigin()` (`lib/publicOrigin.ts`: `NEXT_PUBLIC_SITE_URL`, else Vercel's production domain `VERCEL_PROJECT_PRODUCTION_URL`; never the page's own host or a preview's `VERCEL_URL`). With neither configured no link is built anywhere: the email route refuses, the cover sheet prints no portal block, the copy action refuses. The browser and the server build the same link only when `NEXT_PUBLIC_SITE_URL` is set or Vercel exposes the production domain to the browser. With that exposure off and the variable unset, the server still emails the production link while the browser builds none, and the issue toast says only that this browser cannot build it. Off Vercel with the variable unset, the copy link and the cover-sheet QR are lost outright. That is an accepted trade for never printing a preview-host link. Closes `TRX-14`'s browser half. See DEC-44 (public-surfaces PS-STAMP).*
 
 <a id="dec-44"></a>
 ## DEC-44 · What a printed copy asserts and where its links point
@@ -3628,13 +3628,29 @@ screen, so what it says and where its QR points are decided in one place
      the server, set on every Vercel deployment including previews, and its
      `NEXT_PUBLIC_` twin in a browser), and never `VERCEL_URL`, which on a
      preview is the deployment's own login-gated host;
-   - else, in a browser only, the page's own origin, unless it is a
-     `*.vercel.app` host;
-   - else `""`, meaning no link.
+   - else, in a browser only, the page's own origin;
+   - else `""`, meaning no link. Only a server with nothing configured gets
+     it, and the server routes that build outbound links refuse on it.
+
+   A browser always gets an absolute origin. Several browser callers build
+   `${publicOrigin()}/…` without checking for `""`: labels, hold cards,
+   travelers and pack covers (`lib/physicalBridge.ts`), share links
+   (`ShareLinkModal`) and `/d/` copies (`RelatedPanel`). Refusing the page
+   host would turn their links relative, which never work. With Vercel's
+   system-variable exposure off and nothing configured, a preview host can
+   therefore still reach paper (`PHYS-11` residual).
 
    A link handed to an outside party that the server also sends (the
    transmittal portal) is built on `configuredPublicOrigin()`: the first two
-   steps only. Browser and server then build the same link, or none.
+   steps only, never the page host. Browser and server build the same link
+   only when `NEXT_PUBLIC_SITE_URL` is set or Vercel exposes the production
+   domain to the browser. Two trades are accepted, because a missing link is
+   reported and a preview-host link is not:
+   - With exposure off, the browser builds none while a server on Vercel
+     still emails one.
+   - Off Vercel (self-hosted, local dev) with the variable unset, the copy
+     link and the cover-sheet QR are lost.
+
    `NEXT_PUBLIC_SITE_URL` is **required** for the physical bridge
    (`.env.example`). *Stated default (production-URL fallback, stated
    2026-09-17).*
@@ -3655,13 +3671,21 @@ screen, so what it says and where its QR points are decided in one place
    is drawn through it. Baked markups are placed the same way.
 5. **A stamped copy is always uncontrolled.** The controlled copy is the
    unstamped pass-through of the current master to its checkout holder
-   (`lib/downloads.ts`). Any modified copy, such as a markup export, is
-   stamped and recorded uncontrolled, the holder's included.
-   `StampOptions.controlState` has no "controlled" member. It drives the
-   footer's main line, and the watermark when the caller gives none. An
-   encrypted PDF cannot be stamped and is never issued as a copy: a pack
-   skips it with the reason. *Stated default ("UNCONTROLLED COPY
-   everywhere").*
+   (`lib/downloads.ts`). The `FullScreenViewer` markup export is stamped and
+   recorded uncontrolled, the holder's included.
+   - This is not yet true tree-wide. The book viewer's markup download
+     (`MultiDocViewer` `runDocAction` → `downloadDocumentPdf`) still gives
+     the checkout holder the controlled pass-through. That open limb is
+     document-control `PKG-10` done-when 3 (P8).
+   - `StampOptions.controlState` has no "controlled" member. It drives the
+     footer's main line, and the watermark when the caller gives none.
+   - A caller's `watermarkText` that claims CONTROLLED COPY is replaced by
+     the state's watermark, with a logged warning (`stampWatermark`).
+   - A caller's free-text footer notice is printed as given.
+   - An encrypted PDF cannot be stamped and is never issued as a copy: a
+     pack skips it with the reason.
+
+   *Stated default ("UNCONTROLLED COPY everywhere").*
 
 > Made during public-surfaces Round F (2026-10-01, package PS-STAMP) under the
 > fail-safe rule in *How to use this file*. Closed: `PHYS-5`, `PHYS-11`,
@@ -3679,14 +3703,14 @@ login wall, a footer that says "scan the QR" over a blank corner, a plate
 printed over the title block's revision letter, a QR printed sideways on a
 rotated sheet, and redlines leaving the app with no UNCONTROLLED mark are all
 ways the paper lies. Each is fixed at the one shared helper so every caller
-inherits it.
+inherits it. The login wall is fixed only where the production domain is
+known (§1). The markup limb is fixed only in `FullScreenViewer` (§5).
 
 **Implementation.**
-- `lib/publicOrigin.ts`: `publicOrigin`, `configuredPublicOrigin`,
-  `isVercelDeploymentHost`.
-- `lib/stamping.ts`: `DisplayFrame`, `stampMainLine`,
-  `withoutScanInstruction`, `StampControlState`, the encrypted refusal, the
-  no-URL warning.
+- `lib/publicOrigin.ts`: `publicOrigin`, `configuredPublicOrigin`.
+- `lib/stamping.ts`: `DisplayFrame`, `stampMainLine`, `stampWatermark`,
+  `claimsControlledCopy`, `withoutScanInstruction`, `StampControlState`, the
+  encrypted refusal, the no-URL and claimed-controlled warnings.
 - `lib/stampLayout.ts`: `normalizeRotation`, `displaySize`, `displayToUser`,
   `fallbackInk`, `titleBlockReserve`.
 - `lib/markupExport.ts`: `bakeMarkupIntoDoc`.
@@ -3701,23 +3725,40 @@ inherits it.
 - A `/Rotate 90` sheet whose ink analysis finds the top-left empty gets its
   QR in the displayed top-left, upright and on-page.
 - A server-stamped ASME B sheet puts nothing on its title or revision block.
-- With nothing configured, a server returns `""` and a browser on a
-  `*.vercel.app` host returns `""`. Neither builds a transmittal link.
-- With `VERCEL_PROJECT_PRODUCTION_URL` set, both build the production link.
+- With nothing configured, a server returns `""` and a browser returns its
+  page's own origin. Neither builds a transmittal link.
+- With `VERCEL_PROJECT_PRODUCTION_URL` set (and its `NEXT_PUBLIC_` twin
+  exposed to the browser), both build the production link.
+- A caller's "CONTROLLED COPY" watermark prints as "UNCONTROLLED COPY".
 - A stamp with no verify URL logs a warning and prints no scan instruction.
 - A checkout holder's markup export is stamped, named `_markup_UNCONTROLLED`
   and recorded uncontrolled.
 
 **Reversal.** (1) A facility hosting off Vercel sets `NEXT_PUBLIC_SITE_URL`;
-nothing to change. A stated need to trust the page's own host on Vercel would
-be one line in `isVercelDeploymentHost`. (3) Server-side ink analysis (a Node
-canvas) would replace the blind placement for the server paths, with no
-caller change. A facility whose sheets carry the title block elsewhere would
+nothing to change. Refusing a `*.vercel.app` page host in the browser would
+first need every browser caller to refuse on `""` (see §1). (3) Server-side
+ink analysis (a Node canvas) would replace the blind placement for the
+server paths, with no caller change. A facility whose sheets carry the title block elsewhere would
 change `fallbackInk`'s corner. (5) A registered, numbered, recallable
 controlled-copy record would add a `controlState` member, and only then could
 a stamp say CONTROLLED COPY.
 
-**Risk:** low. Server stamps move the QR from bottom-right to top-left on
-every copy, and portrait footers wrap narrower. A Vercel deployment with
-system-variable exposure off and nothing configured gets no origin in the
-browser, so its stamps carry no QR (warned).
+**Risk:** low.
+- Server stamps move the QR from bottom-right to top-left on every copy, and
+  portrait footers wrap narrower.
+- A Vercel deployment with system-variable exposure off and nothing
+  configured has two gaps. Its browser falls back to the page's own host, so
+  QRs and copy links made on a preview can still dead-end, as before this
+  round. Its browser also builds no transmittal link, although the server
+  emails one.
+- Off Vercel with nothing configured, the transmittal copy link and the
+  cover-sheet QR are gone until `NEXT_PUBLIC_SITE_URL` is set.
+- The drafting download's watermark changes from "CONTROLLED COPY" to
+  "UNCONTROLLED COPY".
+
+*Corrected in the review fix pass.* The first entry made three claims that
+were wrong:
+- that a browser never uses a `*.vercel.app` host (that refusal is
+  withdrawn, because it emitted relative links);
+- that browser and server always build the same transmittal link;
+- that every modified copy is already uncontrolled.

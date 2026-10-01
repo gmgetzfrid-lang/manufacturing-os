@@ -76,7 +76,7 @@ function issueToast(outcome: IssueOutcome): { type: "success" | "warning"; title
   else if (t.recipientEmail?.trim()) notes.push(`the email was NOT sent (${outcome.email.reason ?? "unknown reason"}) — copy the portal link instead`);
   else notes.push("no recipient email — copy the portal link to send it");
   if (outcome.portal === "ready" && !portalOriginConfigured()) {
-    notes.push("no public site URL is configured (NEXT_PUBLIC_SITE_URL), so no portal link can be built — the cover sheet carries none");
+    notes.push("this browser cannot build the portal link (NEXT_PUBLIC_SITE_URL unset) — the cover sheet carries none");
   }
   if (outcome.auditError) notes.push(`the audit record could not be written (${outcome.auditError})`);
   const clean = outcome.portal === "ready" && (outcome.email.sent || !t.recipientEmail?.trim()) && portalOriginConfigured() && !outcome.auditError;
@@ -390,12 +390,12 @@ export default function TransmittalsPage() {
                       <button
                         onClick={() => {
                           const url = transmittalPortalUrl(t.portalToken!);
-                          if (!url) { showToast({ type: "error", title: "No portal link", message: "This deployment has no public site URL configured." }); return; }
+                          if (!url) { showToast({ type: "error", title: "No portal link", message: "This browser cannot build the portal link (NEXT_PUBLIC_SITE_URL unset)." }); return; }
                           void navigator.clipboard.writeText(url);
                           showToast({
-                            type: portalOriginConfigured() ? "success" : "warning",
+                            type: "success",
                             title: "Portal link copied",
-                            message: `Send it to ${t.recipientName || t.recipientCompany || "the recipient"} — they can download the files and acknowledge receipt themselves.${portalOriginConfigured() ? "" : " NEXT_PUBLIC_SITE_URL is not set, so the link uses this browser's address — check it opens from outside before sending."}`,
+                            message: `Send it to ${t.recipientName || t.recipientCompany || "the recipient"} — they can download the files and acknowledge receipt themselves.`,
                           });
                         }}
                         title="Copy the recipient's secure portal link — no account needed on their side"
