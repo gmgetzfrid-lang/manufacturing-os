@@ -4542,6 +4542,8 @@ against.
 
 **Risk:** low. `20261147` is purely additive and should be pasted BEFORE or WITH this package's deploy; until it is pasted no assistant write can be confirmed (the cards say so) — reads and answers are unaffected. A member who relied on the assistant to record an audit as Manager or Supervisor must now use a controller (the drawing route already required one). A non-controller whose document carries no ACL deny is now offered a checkout handoff the controller-only gate refused before; the handoff writes nothing and the real flow enforces its own guards.
 
+*Landed 2026-10-01 (intelligence Round G, I-19 — `ORCH-9` criterion 3): item 1's stored proposal carries a document-text flag. A proposal made in a run whose tool results carried a role / instruction marker that `neutralizeUntrusted` rewrote (`lib/orchestrator/protocol.ts` `neutralizeUntrustedReport`; the loop carries the taint to every proposal of the run) is stored with `orchestrator_proposals.tainted = true` (`20261158`: nullable, rows stored before it NULL, new rows default `false`) and its card says "Suggested after reading document text — check before confirming". The flag informs and never blocks: `/api/orchestrator/execute` does not read it, so the stored proposal, confirmed once by its owner, stays the only write path. A clean run stores exactly what it stored before; before `20261158` a flagged proposal is stored without the flag (still confirmable, card unflagged). See `lib/__tests__/orchestratorTaint.test.ts`, `lib/__tests__/orchestratorTaintCard.test.ts`.*
+
 
 <a id="dec-73"></a>
 ## DEC-73 · AI spend and keys: one cap over every op, reserved before the call, set by a capability; keys never stored in plaintext in production
