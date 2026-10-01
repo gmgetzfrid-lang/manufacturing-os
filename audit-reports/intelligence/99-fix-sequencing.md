@@ -200,6 +200,39 @@ refusal's `details.locked`) and says "Your monthly AI cap is set to $0, so AI
 is locked for you until someone who manages AI caps raises it" — never the
 reset — as `/api/templates/generate` does (I-05).
 
+⛔ **MERGE GATE for I-05 / I-02b — a $0 cap is a refusal to every reader of
+`/api/ai/usage`** (`GOV-3`; I-02b's code, I-02b runs in parallel). Since
+I-05, `GET /api/ai/usage` answers `capUsd: 0, locked: true` for a LOCKED
+member; 0 no longer means "no cap". I-02b's new `ownVisionKeyProblem`
+(`lib/knowledge.ts`) does `const cap = Number(usage.capUsd) || 0; if (cap > 0
+&& spent >= cap) …`, so for a locked member it answers null ("no problem").
+The table-aware re-index then runs without its warning, the ingest route
+refuses vision ("Monthly AI budget reached ($0.00 of $0.00)"), and scan and
+CAD pages are indexed text-only. I-05 added `locked` (with `calls`, `byOp`
+and `canManageCaps`) to `AiUsageSummary` and the helper
+`aiUsageLockedReason(usage)` beside `getAiUsage`. **Whichever of I-05 and
+I-02b merges second, the integrator applies this in the same merge**,
+inside `ownVisionKeyProblem`, right after `const usage = await
+getAiUsage(orgId);`:
+
+```ts
+  // GOV-3 (I-05): a $0 cap is a LOCK (`locked: true`, capUsd 0), never "no cap".
+  const locked = aiUsageLockedReason(usage);
+  if (locked) return locked;
+```
+
+The test flips with it. In I-02b's `lib/__tests__/ingestLoopClient.test.ts`,
+"a monthly budget reached is a problem; a cap of 0 is not (the route reads
+it as no cap)" asserts the opposite and becomes "…; a cap of 0 is the LOCK
+(GOV-3)". Both `{ ...usage(0, 0), locked: true }` and `usage(50, 0)` now
+expect `"your monthly AI cap is set to $0, so AI is locked for you until
+someone who manages AI caps raises it"`. The page test in
+`knowledgePageIngestUi.test.ts` already shows that any `ownVisionKeyProblem`
+answer refuses the re-index before anything is reset. Every other reader of
+`/api/ai/usage` follows the same rule: `usage.locked === true` (equivalently
+`capUsd` 0) is a refusal, never "no cap". Today the only other reader is AI
+settings, which already does.
+
 **`20261137` re-creates TWO functions** (I-05 fix pass 3): besides
 `org_capability_allows_for` (one CASE row), `capability_policy_write_guard`
 from `20261056` with `'ai.manage_caps'` added to its critical list
