@@ -17,10 +17,18 @@
 // full (more documents than ANSWER_CONTEXT_DOC_CAP) or whose conversation
 // history came from the client unverified (ASK-5) proves nothing about its
 // sources and is its asker's alone. A context document deleted since (held
-// back from the AI, removed by a sync, deleted by a member) proves nothing to
-// a teammate, so their view is withheld; its asker read it when the answer
-// was given, so it never hides the asker's own row (they read their own rows
-// directly anyway — knowledge_questions_select). A row written before
+// back from the AI, removed by a sync, deleted by a member, replaced by its
+// next revision) cannot be judged any more:
+//   - one the row records as an UPLOAD (`uploads`, I-03 fix pass 5) was
+//     readable by every member when the answer was given (uploads are
+//     org-readable by design — DEC-44 (I-03) item 1 / KACL-6), so its
+//     deletion withholds nobody's view;
+//   - any other (a MIRROR, whose controlled document's ACL can no longer be
+//     read, or a document the row does not record as an upload) proves
+//     nothing to a teammate, so their view is withheld; its asker read it
+//     when the answer was given, so it never hides the asker's own row (they
+//     read their own rows directly anyway — knowledge_questions_select).
+// A row written before
 // 20261153 carries no context and is judged by what it cites, as before:
 //   - an upload-origin knowledge document of the reader's org — readable (the
 //     same content as the PDF every member can open, by design);
@@ -78,6 +86,13 @@ export interface AnswerContext {
   /** Every knowledge document whose passages, legend text, page images or
    *  drawing facts reached the model for this answer. */
   documents: string[];
+  /** Those of `documents` that were UPLOADS (no controlled document behind
+   *  them — readable by every member) when the answer was given (I-03 fix
+   *  pass 5). Deleting one later withholds no reader's view; a recorded
+   *  document NOT listed here that is gone withholds a teammate's view. A
+   *  context without the list treats every gone document as a possible
+   *  mirror (fail-safe). */
+  uploads?: string[];
   /** False when there were more than ANSWER_CONTEXT_DOC_CAP of them. */
   complete: boolean;
   /** Where the conversation context came from: the record of the asker's own
@@ -102,6 +117,7 @@ export function parseAnswerContext(raw: unknown): AnswerContext | null {
     documents: c.documents.filter((d): d is string => typeof d === "string" && d.length > 0),
     complete: c.complete === true,
     history: c.history === "thread" || c.history === "client" ? c.history : "none",
+    ...(Array.isArray(c.uploads) ? { uploads: c.uploads.filter((d): d is string => typeof d === "string" && d.length > 0) } : {}),
     ...(c.partial === true ? { partial: true } : {}),
     ...(c.arithmetic === "unverified" ? { arithmetic: "unverified" as const } : {}),
     ...(Array.isArray(c.skills) ? { skills: c.skills.filter((x): x is string => typeof x === "string") } : {}),
@@ -145,7 +161,9 @@ const byTime = (a: StoredAnswerRow, b: StoredAnswerRow) =>
  * its asker only (null = nobody's own — every such row is withheld).
  * `gone` are the ids that resolve to no knowledge document at all
  * (`knowledgeDocAccess`): a recorded CONTEXT document among them does not
- * withhold the reader's own row; it still withholds anyone else's.
+ * withhold the reader's own row, nor anyone's when the row records it as an
+ * upload (`uploads` — every member could read it when the answer was given);
+ * any other one still withholds a teammate's view.
  */
 export function planVisibleHistory(
   rows: readonly StoredAnswerRow[],
@@ -161,11 +179,16 @@ export function planVisibleHistory(
     // What reached the model, recorded since 20261153: every one must be
     // readable too, and a context that is incomplete or rests on unverified
     // client history proves nothing, so only its asker sees the row. A
-    // context document deleted since cannot be judged for anyone: it
-    // withholds a teammate's view, never the asker's own row.
+    // context document deleted since cannot be judged now: one recorded as an
+    // upload was every member's to read when the answer was given, so it
+    // withholds no one (I-03 fix pass 5 — before, replacing any one tagged
+    // upload hid every answer that carried the drawing facts from the whole
+    // team); any other withholds a teammate's view, never the asker's own row.
     const ctx = parseAnswerContext(r.context);
     if (ctx) {
-      if (ctx.documents.some((id) => !readable.has(id) && !(ownRow && gone.has(id)))) return true;
+      const wasUpload = new Set(ctx.uploads ?? []);
+      const judgedGone = (id: string) => gone.has(id) && (ownRow || wasUpload.has(id));
+      if (ctx.documents.some((id) => !readable.has(id) && !judgedGone(id))) return true;
       if ((!ctx.complete || ctx.history === "client") && !ownRow) return true;
     }
     // Nothing cited: a web answer is safe; a library answer WITHOUT a

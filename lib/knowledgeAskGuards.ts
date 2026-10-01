@@ -10,15 +10,45 @@ export type PgErr = { code?: string; message: string };
 
 /** A read (or write) failed only because the database has not applied the
  *  migration that adds one of `columns` — Postgres's undefined column
- *  (42703), or PostgREST's schema-cache miss (PGRST204) NAMING one of them.
+ *  (42703: 'column "x" does not exist', 'column t.x does not exist') or
+ *  PostgREST's schema-cache miss (PGRST204: "Could not find the 'x' column"),
+ *  either one NAMING one of them. Both messages always name the column.
  *  Any other error — a timeout, a filter that will not parse, an ambiguous
- *  column reference, a schema-cache miss on another column — is a read that
- *  failed, and the caller takes its fail-closed path, never the
- *  pre-migration fallback that drops those columns (I-03 fix pass 4: every
- *  such fallback in the ask route is narrowed to the columns it drops). */
+ *  column reference, an undefined or schema-cache miss on ANOTHER column (a
+ *  trigger's, a later migration's) — is a read that failed, and the caller
+ *  takes its fail-closed path, never the pre-migration fallback that drops
+ *  those columns (I-03 fix pass 4 narrowed every such fallback in the ask
+ *  route; fix pass 5 requires the name for 42703 too, and narrows the
+ *  history route's and the insert retries' fallbacks the same way). */
 export const columnsMissing = (e: PgErr | null | undefined, ...columns: string[]): boolean =>
-  !!e && (e.code === "42703"
-    || (e.code === "PGRST204" && columns.some((c) => new RegExp(`(^|[^a-z0-9_])${c}($|[^a-z0-9_])`, "i").test(e.message ?? ""))));
+  !!e && (e.code === "42703" || e.code === "PGRST204")
+    && columns.some((c) => new RegExp(`(^|[^a-z0-9_])${c}($|[^a-z0-9_])`, "i").test(e.message ?? ""));
+
+/** ASK-11: write one knowledge_questions row, retrying ONLY for the columns
+ *  a pre-migration database lacks — `context` (20261153), then the later
+ *  columns `row` adds over `core` (mode, missing_docs, thread_id: 20260912 /
+ *  20261008). Each retry keeps every column the error did not name, so a
+ *  database that has `context` but not `thread_id` still records what reached
+ *  the model. Any other error is returned for the caller to say (never a
+ *  silent retry that drops the context). */
+export async function insertAnswerRow<R extends { error: PgErr | null }>(
+  insert: (values: Record<string, unknown>) => PromiseLike<R>,
+  row: Record<string, unknown>,
+  core: Record<string, unknown>,
+  context: object | null,
+): Promise<R> {
+  let withContext = context !== null;
+  let r = await insert(withContext ? { ...row, context } : row);
+  if (r.error && withContext && columnsMissing(r.error, "context")) {
+    withContext = false;
+    r = await insert(row);
+  }
+  if (r.error && columnsMissing(r.error, "mode", "missing_docs", "thread_id")) {
+    r = await insert(withContext ? { ...core, context } : core);
+    if (r.error && withContext && columnsMissing(r.error, "context")) r = await insert(core);
+  }
+  return r;
+}
 
 /** KACL-4 / KACL-8: a knowledge_documents read failed only because the
  *  database has no source columns (pre-20260917). Any other error is a read

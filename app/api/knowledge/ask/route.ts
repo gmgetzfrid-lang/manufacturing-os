@@ -77,6 +77,7 @@ import {
   DATA_BOUNDARY_RULE, answerHasComputation, CUT_OFF_LINE, refusedRequestAnswer, PROMPT_TOKEN_BUDGET,
   PROMPT_CHARS_PER_TOKEN, PROMPT_TOKENS_PER_IMAGE, MIN_ANSWER_TOKENS, ANSWER_MAX_TOKENS, MIN_ANSWER_PROMPT_CHARS,
   DRAWING_FACTS_ROW_CEILING, provenPageCurrent, sourceColumnMissing, drawingFactsScope, drawingFactsDocuments,
+  insertAnswerRow,
 } from "@/lib/knowledgeAskGuards";
 import {
   planVisibleHistory, knowledgeDocAccess, citedKnowledgeDocIds, contextKnowledgeDocIds, parseAnswerContext,
@@ -291,6 +292,9 @@ export async function POST(req: NextRequest) {
   /** Every mirror in the searched libraries (ASK-1: a mirror whose name the
    *  drawing facts carry is recorded on the row). */
   let mirrorDocIds = new Set<string>();
+  /** The database has no source columns (pre-20260917): it holds no mirror,
+   *  so every knowledge document is an upload (ASK-1, `uploads`). */
+  let noSourceColumn = false;
   {
     const allLibIds = [libraryId, ...linkedLibraries.map((l) => l.id)];
     const mirrorsRead = await readAll<{ id: string; source_document_id: string }>((from, to) => supabaseAdmin
@@ -306,6 +310,7 @@ export async function POST(req: NextRequest) {
         503,
       );
     }
+    noSourceColumn = !!mirrorsRead.error;
     const linkedDocs = mirrorsRead.error ? [] : mirrorsRead.rows;
     mirrorDocIds = new Set(linkedDocs.map((d) => d.id));
     if (linkedDocs.length > 0) {
@@ -609,22 +614,31 @@ export async function POST(req: NextRequest) {
       const citations = out.webSources.map((s, i) => ({
         n: i + 1, url: s.url, title: s.title ?? s.url,
       }));
+      // ASK-3: a web answer stopped by the 3,000-token ceiling is marked the
+      // way a library answer is — the cut-off line, partial: true, and
+      // context.partial on the row (fix pass 5: this path ignored the stop
+      // reason and served a cut-off answer as a complete one). It names no
+      // document and sends no history (the question alone rides the prompt).
+      const partial = out.truncated === true || out.stopReason === "max_tokens";
+      const answer = partial ? `${out.text}\n\n${CUT_OFF_LINE}` : out.text;
+      const webContext: AnswerContext | null = partial
+        ? { v: 1, documents: [], uploads: [], complete: true, history: "none", partial: true }
+        : null;
       // ASK-11: a save that fails for any reason but a missing column is said.
       // The turn joins its conversation (thread_id), so a follow-up in library
       // mode reads it back from the record (ASK-5).
       let saveError: string | null = null;
       {
-        let r = await supabaseAdmin.from("knowledge_questions").insert({
+        const core = {
           org_id: orgId, library_id: libraryId, user_id: user.id, user_name: userName,
-          question, answer: out.text, citations, provider, model, mode: "internet", thread_id: threadId,
-        });
-        // Pre-migration DBs lack the mode / thread_id columns — retry without them.
-        if (r.error?.code === "PGRST204" || r.error?.code === "42703" || /mode|thread_id/.test(r.error?.message ?? "")) {
-          r = await supabaseAdmin.from("knowledge_questions").insert({
-            org_id: orgId, library_id: libraryId, user_id: user.id, user_name: userName,
-            question, answer: out.text, citations, provider, model,
-          });
-        }
+          question, answer, citations, provider, model,
+        };
+        // Pre-migration DBs lack context / mode / thread_id — retried without
+        // exactly the column the error names (insertAnswerRow).
+        const r = await insertAnswerRow(
+          (values) => supabaseAdmin.from("knowledge_questions").insert(values),
+          { ...core, mode: "internet", thread_id: threadId }, core, webContext,
+        );
         if (r.error) {
           console.error("[knowledge/ask] the answer could not be saved", r.error.message);
           saveError = unsavedSentence(r.error.message);
@@ -638,8 +652,9 @@ export async function POST(req: NextRequest) {
       }).then(() => undefined, () => undefined);
       await meter(true);
       return NextResponse.json({
-        answer: out.text, citations, provider, model, mode: "internet", liveWeb: out.liveWeb,
+        answer, citations, provider, model, mode: "internet", liveWeb: out.liveWeb,
         budget: budget(),
+        ...(partial ? { partial: true } : {}),
         ...(saveError ? { saved: false, saveError } : {}),
       });
     } catch (e) {
@@ -802,23 +817,32 @@ export async function POST(req: NextRequest) {
       const e = embeddingConnectionFrom(connRow);
       return e && (ALLOWED_EMBEDDING_PROVIDERS as readonly string[]).includes(e.provider) ? e : null;
     })();
+    type Coverage = { embedded: number; total: number } | null;
     type LibMeaning = {
       id: string; tier: "governing" | "reference"; plan: QueryEmbedPlan;
-      coverage: { embedded: number; total: number } | null; rows: number; failed: string | null;
+      /** SEM-12: awaited only when the response is built. */
+      coverage: Promise<Coverage>; rows: number; failed: string | null;
     };
+    const coverageOf = (detail: Awaited<ReturnType<typeof loadEmbedDetail>>): Coverage =>
+      detail ? { embedded: detail.embedded, total: detail.total } : null;
     // Without an embeddings key nothing can be searched by meaning — no
     // query is embedded and the ask costs exactly what it did — but each
     // library's coverage is still read (SEM-12, a database count, no provider
     // call), so a keyword-only answer can say how much of EVERY library it
     // searched has a meaning index it did not use, linked ones included.
+    // That read aggregates over every chunk of the library, and nothing
+    // before the response needs it here: it runs alongside the searches and
+    // is awaited only when the response is built (fix pass 5 — fix pass 4
+    // made every keyword-only ask wait on it before round 1). A key holder's
+    // plan needs it first (SEM-1: the corpus model), as before.
     const meaningLibs: LibMeaning[] = await Promise.all(searchLibraries.map(async (lib): Promise<LibMeaning> => {
-      const detail = await loadEmbedDetail(orgId, lib.id);
       if (!embeddingConn) {
         return {
           id: lib.id, tier: lib.tier, plan: { ok: false, reason: "no_key", detail: NO_EMBEDDING_KEY_MESSAGE },
-          coverage: detail ? { embedded: detail.embedded, total: detail.total } : null, rows: 0, failed: null,
+          coverage: loadEmbedDetail(orgId, lib.id).then(coverageOf, () => null), rows: 0, failed: null,
         };
       }
+      const detail = await loadEmbedDetail(orgId, lib.id);
       let corpus: CorpusModelVerdict;
       if (detail) {
         corpus = detail.corpus;
@@ -838,7 +862,7 @@ export async function POST(req: NextRequest) {
       }
       return {
         id: lib.id, tier: lib.tier, plan: planQueryEmbedding(corpus, embeddingConn),
-        coverage: detail ? { embedded: detail.embedded, total: detail.total } : null, rows: 0, failed: null,
+        coverage: Promise.resolve(coverageOf(detail)), rows: 0, failed: null,
       };
     }));
     // Chunk ids a meaning list contributed — "hybrid" means one of them is in
@@ -1027,6 +1051,18 @@ export async function POST(req: NextRequest) {
       reachableDocs = read.rows.filter((d) => !excludedDocIds.has(d.id));
     }
     const rosterById = new Map(reachableDocs.map((d) => [d.id, d]));
+    /** Legend sheets read as uploads (no controlled document behind them). */
+    const legendUploads = new Set<string>();
+    /** ASK-1 (fix pass 5): was this recorded document an UPLOAD when the
+     *  answer was given — readable by every member (DEC-44 (I-03) item 1 /
+     *  KACL-6)? Only when that is KNOWN: a document of a searched library
+     *  that the mirror list does not hold and whose roster row names no
+     *  controlled document (or a database with no source columns at all), or
+     *  a legend read as one. Anything else is not listed, so a later deletion
+     *  of it still withholds a teammate's view (lib/knowledgeHistory). */
+    const wasUpload = (id: string): boolean => legendUploads.has(id) || (
+      rosterById.has(id) && !mirrorDocIds.has(id)
+      && (noSourceColumn || rosterById.get(id)?.source_document_id === null));
 
     // ── PROVEN GROUND: answers the team rated 👍 teach retrieval. When a
     //    similar question was answered before and a human confirmed the
@@ -1837,9 +1873,11 @@ export async function POST(req: NextRequest) {
       // the question named (the indexing gaps it names are theirs) — so the
       // team's record judges it by them, not as an answer that cites nothing.
       const noneDrawn = [...new Set([...previewDocIds, ...namedDocs.map((d) => d.id)])];
+      const noneDocuments = noneDrawn.slice(0, ANSWER_CONTEXT_DOC_CAP);
       const noneContext: AnswerContext = {
         v: 1,
-        documents: noneDrawn.slice(0, ANSWER_CONTEXT_DOC_CAP),
+        documents: noneDocuments,
+        uploads: noneDocuments.filter(wasUpload),
         complete: noneDrawn.length <= ANSWER_CONTEXT_DOC_CAP,
         history: historySource,
       };
@@ -1847,17 +1885,18 @@ export async function POST(req: NextRequest) {
         org_id: orgId, library_id: libraryId, user_id: user.id, user_name: userName,
         question, answer, citations: [], provider, model, thread_id: threadId,
       };
-      let r = await supabaseAdmin.from("knowledge_questions").insert({ ...noneRow, context: noneContext });
-      // A database before 20261153 has no context column: saved without it.
-      if (r.error && columnsMissing(r.error, "context")) {
-        r = await supabaseAdmin.from("knowledge_questions").insert(noneRow);
-      }
-      if (r.error && (r.error.code === "PGRST204" || r.error.code === "42703" || /thread_id/.test(r.error.message ?? ""))) {
-        r = await supabaseAdmin.from("knowledge_questions").insert({
+      // A database before 20261153 has no context column (saved without
+      // it), one before 20261008 no thread_id (saved without it): retried
+      // only for the column the error names (insertAnswerRow, ASK-11).
+      const r = await insertAnswerRow(
+        (values) => supabaseAdmin.from("knowledge_questions").insert(values),
+        noneRow,
+        {
           org_id: orgId, library_id: libraryId, user_id: user.id, user_name: userName,
           question, answer, citations: [], provider, model,
-        });
-      }
+        },
+        noneContext,
+      );
       // ASK-11: a save that fails is said, never silently dropped.
       const saveError = r.error ? unsavedSentence(r.error.message) : null;
       if (r.error) console.error("[knowledge/ask] the answer could not be saved", r.error.message);
@@ -2054,6 +2093,9 @@ export async function POST(req: NextRequest) {
         const r = legendRows.find((x) => x.id === id);
         return !!r && (!r.source_document_id || legendOk.has(r.source_document_id));
       });
+      // Read without its source only on a database that has no mirrors
+      // (sourceColumnMissing above): an upload either way.
+      for (const id of usable) if (legendRows.find((x) => x.id === id)?.source_document_id == null) legendUploads.add(id);
       if (usable.length > 0) {
         const { data: legendChunks } = await supabaseAdmin
           .from("knowledge_chunks")
@@ -2423,6 +2465,11 @@ export async function POST(req: NextRequest) {
     //    (one round). The tool does the reading — the user is never sent to
     //    look up a table by hand.
     let fetchUnaffordable = false;
+    /** ASK-7: the answer asked for pages, and what was left of the month
+     *  after paying for it could not cover even the shortest answer again —
+     *  without the pages too. The ask ends with a stated sentence (saved as
+     *  a library answer), never a 402 after the first answer was paid for. */
+    let refetchUnaffordable = false;
     let answerOut = await call({
       system: answerSystem(pageImages),
       user: answerUser(pageImages),
@@ -2459,21 +2506,35 @@ export async function POST(req: NextRequest) {
         } else if (fetched.length > 0) {
           pageImages = [...pageImages, ...fetched];
         }
-        answerOut = await call({
-          system: answerSystem(pageImages, fetchNote),
-          user: answerUser(pageImages),
-          maxTokens: answerMaxTokens(pageImages, fetchNote),
-          ...(pageImages.length > 0
-            ? { images: pageImages.map((img) => ({ base64: img.base64, mediaType: img.mediaType })) }
-            : {}),
-        });
+        // ASK-7 (fix pass 5): the second answer WITHOUT pages is priced too —
+        // when no page matched, or the first answer's real spend left too
+        // little even for the answer without the pages, the reservation would
+        // refuse it (402) after query generation, refine and a first answer
+        // were paid for. The ask ends here instead, and says why.
+        if (!shortestFits(pageImages, fetchNote)) {
+          refetchUnaffordable = true;
+        } else {
+          answerOut = await call({
+            system: answerSystem(pageImages, fetchNote),
+            user: answerUser(pageImages),
+            maxTokens: answerMaxTokens(pageImages, fetchNote),
+            ...(pageImages.length > 0
+              ? { images: pageImages.map((img) => ({ base64: img.base64, mediaType: img.mediaType })) }
+              : {}),
+          });
+        }
       }
     }
-    let answer = answerOut.text;
+    let answer = refetchUnaffordable
+      ? "**Answer:** This question was not answered. To answer it, the AI asked to read a page it had not been " +
+        "shown (a table or figure), and this month's remaining AI budget could not cover answering again after " +
+        "that page request.\n" +
+        "! Ask about a narrower part of the question, or ask again once your monthly AI budget allows it."
+      : answerOut.text;
     // ASK-3: the provider says when its output ceiling cut the answer off. A
     // cut-off answer says so, is stored as partial, and is never offered for
     // rating or used as proven ground.
-    const partial = answerOut.truncated === true || answerOut.stopReason === "max_tokens";
+    const partial = !refetchUnaffordable && (answerOut.truncated === true || answerOut.stopReason === "max_tokens");
     // ASK-6: a calculation that stops for user-specific values replies with
     // a bare "**Need:** …" line, which the page turns into an input box. It
     // is the MODEL's text — screened here, before it is relayed: refused
@@ -2495,7 +2556,7 @@ export async function POST(req: NextRequest) {
     }
     if (partial) answer += `\n\n${CUT_OFF_LINE}` +
       (lengthLimitedByBudget ? " (This month's remaining AI budget limited how long this answer could be.)" : "");
-    if (fetchUnaffordable) {
+    if (fetchUnaffordable && !refetchUnaffordable) {
       answer += "\n\n! The pages this answer asked to read were not attached — this month's remaining AI budget " +
         "could not cover reading them.";
     }
@@ -2724,10 +2785,16 @@ export async function POST(req: NextRequest) {
       // every passage of one of them.
       ...graphHops.flatMap((hop) => [hop.from, hop.toId]),
     ]);
-    const arithmetic = !needRefused && !/^\*\*Need:\*\*/.test(answer.trim()) && answerHasComputation(answer, inputs);
+    const arithmetic = !needRefused && !refetchUnaffordable && !/^\*\*Need:\*\*/.test(answer.trim())
+      && answerHasComputation(answer, inputs);
+    const contextDocuments = [...drawn].slice(0, ANSWER_CONTEXT_DOC_CAP);
     const context: AnswerContext = {
       v: 1,
-      documents: [...drawn].slice(0, ANSWER_CONTEXT_DOC_CAP),
+      documents: contextDocuments,
+      // Which of them every member could read when the answer was given:
+      // deleting one of those later (a re-upload of its next revision, a
+      // sync removal, an exclusion) hides the answer from no one (fix pass 5).
+      uploads: contextDocuments.filter(wasUpload),
       complete: drawn.size <= ANSWER_CONTEXT_DOC_CAP,
       history: historySource,
       ...(partial ? { partial: true } : {}),
@@ -2737,7 +2804,7 @@ export async function POST(req: NextRequest) {
 
     // The row id comes back so the client can attach a thumbs-up/down to
     // THIS answer (the feedback that trains future retrieval) — never for a
-    // cut-off answer (ASK-3).
+    // cut-off answer (ASK-3), nor for one that was never written (ASK-7).
     let questionId: string | null = null;
     let saveError: string | null = null;
     {
@@ -2747,19 +2814,20 @@ export async function POST(req: NextRequest) {
         missing_docs: missingDocs.length > 0 ? missingDocs : null,
         thread_id: threadId,
       };
-      let r = await supabaseAdmin.from("knowledge_questions").insert({ ...row, context }).select("id").maybeSingle();
       // A database before 20261153 has no context column: the row is saved
-      // without it (and judged by its citations alone, as before).
-      if (r.error && columnsMissing(r.error, "context")) {
-        r = await supabaseAdmin.from("knowledge_questions").insert(row).select("id").maybeSingle();
-      }
-      // Pre-migration DBs lack mode/missing_docs/thread_id — retry with the core set.
-      if (r.error && (r.error.code === "PGRST204" || /mode|missing_docs|thread_id/.test(r.error.message ?? ""))) {
-        r = await supabaseAdmin.from("knowledge_questions").insert({
+      // without it (and judged by its citations alone, as before). One
+      // before 20260912 / 20261008 lacks mode / missing_docs / thread_id: the
+      // core set, keeping the context when the database has it. Each retry
+      // only for the column the error names (insertAnswerRow, ASK-11).
+      const r = await insertAnswerRow(
+        (values) => supabaseAdmin.from("knowledge_questions").insert(values).select("id").maybeSingle(),
+        row,
+        {
           org_id: orgId, library_id: libraryId, user_id: user.id, user_name: userName,
           question, answer, citations, provider, model,
-        }).select("id").maybeSingle();
-      }
+        },
+        context,
+      );
       // ASK-11: any other failure is said — never a silent questionId: null.
       if (r.error) {
         console.error("[knowledge/ask] the answer could not be saved", r.error.message);
@@ -2782,9 +2850,10 @@ export async function POST(req: NextRequest) {
     // SEM-12: the meaning index's coverage over EVERY library searched
     // (linked ones included), when the database can say it (20261121) —
     // whether or not the asker has an embeddings key.
-    const retrievalCoverage = meaningLibs.every((l) => l.coverage)
-      ? meaningLibs.reduce((acc, l) => ({
-          embedded: acc.embedded + (l.coverage?.embedded ?? 0), total: acc.total + (l.coverage?.total ?? 0),
+    const coverages = await Promise.all(meaningLibs.map((l) => l.coverage));
+    const retrievalCoverage = coverages.every((c) => c)
+      ? coverages.reduce<{ embedded: number; total: number }>((acc, c) => ({
+          embedded: acc.embedded + (c?.embedded ?? 0), total: acc.total + (c?.total ?? 0),
         }), { embedded: 0, total: 0 })
       : null;
     // SEM-3 / SEM-6: a library whose meaning index exists but could not be
@@ -2799,7 +2868,7 @@ export async function POST(req: NextRequest) {
 
     return NextResponse.json({
       answer, citations, provider, model, mode: "library", missingDocs, partialDocs,
-      questionId: partial ? null : questionId, budget: budget(),
+      questionId: partial || refetchUnaffordable ? null : questionId, budget: budget(),
       graphHops: graphHops.map((h) => ({ from: docName.get(h.from) ?? "retrieved document", to: h.to, via: h.via })),
       // How the passages behind this answer were found. "keyword" is not a
       // degraded state to hide — it's what this product did yesterday and

@@ -17,7 +17,7 @@
 
 import { NextRequest, NextResponse } from "next/server";
 import { supabaseAdmin } from "@/lib/supabaseAdmin";
-import { CUT_OFF_LINE } from "@/lib/knowledgeAskGuards";
+import { CUT_OFF_LINE, columnsMissing } from "@/lib/knowledgeAskGuards";
 
 export const runtime = "nodejs";
 
@@ -42,8 +42,9 @@ export async function POST(req: NextRequest) {
     .from("knowledge_questions").select(cols)
     .eq("id", questionId).maybeSingle();
   let read = await readRow("id, user_id, answer, context");
-  // A database before 20261153 has no context column: the cut-off line decides.
-  if (read.error && /context/.test(read.error.message ?? "")) read = await readRow("id, user_id, answer");
+  // A database before 20261153 has no context column: the cut-off line
+  // decides. Only an error NAMING that column (columnsMissing) reads without it.
+  if (read.error && columnsMissing(read.error, "context")) read = await readRow("id, user_id, answer");
   const row = read.data as { id: string; user_id: string; answer?: string | null; context?: { partial?: unknown } | null } | null;
   if (!row) return bad("Answer not found", 404);
   if (row.user_id !== user.id) return bad("You can only rate your own answers", 403);

@@ -42,6 +42,10 @@ export const h = {
   /** An embedding model the provider refuses (404 → AiCallError 400). */
   embedRefuses: null as string | null,
   skills: { block: "", skills: [] as Array<{ id: string | null; name: string; builtinKey: string | null }> },
+  /** Milliseconds semantic_coverage_detail takes to answer (0 = at once). */
+  coverageDelayMs: 0,
+  /** Every RPC, in the order its answer came back. */
+  rpcLog: [] as string[],
 };
 
 export function resetHarness(): void {
@@ -57,6 +61,8 @@ export function resetHarness(): void {
   h.semanticFor = new Map();
   h.embedRefuses = null;
   h.skills = { block: "", skills: [] };
+  h.coverageDelayMs = 0;
+  h.rpcLog = [];
 }
 
 type Res = { data: unknown; error: unknown; count?: number | null };
@@ -212,7 +218,15 @@ function rpc(fn: string, args: Record<string, unknown>): PromiseLike<Res> {
     }
     return { data: null, error: { code: "PGRST202", message: `unknown function ${fn}` } };
   };
-  return { then: (f, r) => Promise.resolve().then(run).then(f, r) };
+  const delay = fn === "semantic_coverage_detail" ? h.coverageDelayMs : 0;
+  const start = () => (delay > 0 ? new Promise<void>((ok) => setTimeout(ok, delay)) : Promise.resolve());
+  return {
+    then: (f, r) => start().then(() => {
+      const out = run();
+      h.rpcLog.push(fn);
+      return out;
+    }).then(f, r),
+  };
 }
 
 export const adminStandIn = {

@@ -12,6 +12,7 @@ import React from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import {
   readAll, columnsMissing, provenPageCurrent, sourceColumnMissing, drawingFactsScope, drawingFactsDocuments,
+  insertAnswerRow, type PgErr,
 } from "@/lib/knowledgeAskGuards";
 import EquipmentTablePanel from "@/components/knowledge/EquipmentTablePanel";
 import type { EquipmentTable } from "@/lib/knowledge";
@@ -114,6 +115,80 @@ describe("KACL-4 — readAll pages past max-rows and never takes a short page fo
     expect(columnsMissing({ code: "57014", message: "statement timeout" }, "context")).toBe(false);
     expect(columnsMissing(null, "context")).toBe(false);
   });
+
+  it("reproduction → fix (fix pass 5): an undefined column (42703) is a missing migration only when it NAMES one of the columns — Postgres always names it", () => {
+    // Both of Postgres's spellings name the column.
+    expect(columnsMissing({ code: "42703", message: "column knowledge_questions.thread_id does not exist" }, "thread_id", "mode")).toBe(true);
+    expect(columnsMissing({ code: "42703", message: 'column "mode" of relation "knowledge_questions" does not exist' }, "thread_id", "mode")).toBe(true);
+    // Fix pass 4 took every 42703 as these columns missing: a trigger's, or a
+    // later migration's, undefined column took the pre-migration path too.
+    expect(columnsMissing({ code: "42703", message: 'column "rated_at" does not exist' }, "context")).toBe(false);
+    expect(columnsMissing({ code: "42703", message: "column knowledge_documents.library_id does not exist" }, "source_document_id")).toBe(false);
+    expect(columnsMissing({ code: "42703", message: 'column "context_hint" does not exist' }, "context")).toBe(false);
+    expect(columnsMissing({ code: "42703", message: 'record "new" has no field "thread_id_x"' }, "thread_id")).toBe(false);
+  });
+});
+
+describe("ASK-11 — insertAnswerRow retries only for the column the error names, keeping the context when the database has it", () => {
+  const missing = (col: string): PgErr => ({ code: "PGRST204", message: `Could not find the '${col}' column of 'knowledge_questions' in the schema cache` });
+  /** A database lacking `lacks`: an insert naming one of them fails naming the first. */
+  const dbLacking = (lacks: string[], other: PgErr | null = null) => {
+    const writes: Array<Record<string, unknown>> = [];
+    const insert = async (values: Record<string, unknown>) => {
+      writes.push(values);
+      if (other) return { error: other };
+      const col = lacks.find((c) => c in values);
+      return { error: col ? missing(col) : null };
+    };
+    return { insert, writes };
+  };
+  const core = { question: "q", answer: "a" };
+  const row = { ...core, mode: "library", thread_id: "T", missing_docs: null };
+  const context = { v: 1, documents: [] };
+
+  it("every column present: one write, with the context", async () => {
+    const d = dbLacking([]);
+    expect((await insertAnswerRow(d.insert, row, core, context)).error).toBeNull();
+    expect(d.writes).toEqual([{ ...row, context }]);
+  });
+
+  it("no context column (before 20261153): saved without it", async () => {
+    const d = dbLacking(["context"]);
+    expect((await insertAnswerRow(d.insert, row, core, context)).error).toBeNull();
+    expect(d.writes.at(-1)).toEqual(row);
+  });
+
+  it("reproduction → fix: context but no thread_id (20261153 pasted before 20261008) — the core set KEEPS the context", async () => {
+    const d = dbLacking(["thread_id"]);
+    expect((await insertAnswerRow(d.insert, row, core, context)).error).toBeNull();
+    expect(d.writes.at(-1)).toEqual({ ...core, context });
+  });
+
+  it("neither (in either order the database names them): the core set alone", async () => {
+    for (const lacks of [["context", "thread_id"], ["thread_id", "context"]]) {
+      const d = dbLacking(lacks);
+      expect((await insertAnswerRow(d.insert, row, core, context)).error).toBeNull();
+      expect(d.writes.at(-1)).toEqual(core);
+    }
+  });
+
+  it("reproduction → fix: any other error — another column's 42703, a PGRST204 naming another column, a type error — is returned after ONE write, never retried without the context", async () => {
+    for (const other of [
+      { code: "42703", message: 'column "rated_at" does not exist' },
+      { code: "PGRST204", message: "Could not find the 'provider' column of 'knowledge_questions' in the schema cache" },
+      { code: "22P02", message: "invalid input syntax for type json" },
+    ]) {
+      const d = dbLacking([], other);
+      expect((await insertAnswerRow(d.insert, row, core, context)).error).toEqual(other);
+      expect(d.writes).toEqual([{ ...row, context }]);
+    }
+  });
+
+  it("no context to record (a complete web answer): the row as given", async () => {
+    const d = dbLacking(["mode"]);
+    expect((await insertAnswerRow(d.insert, row, core, null)).error).toBeNull();
+    expect(d.writes).toEqual([row, core]);
+  });
 });
 
 // ── ASK-1 / KACL-1 / IEDGE-5 — the team's record judges what reached the model ─
@@ -154,6 +229,30 @@ describe("ASK-1 / KACL-1 / IEDGE-5 — planVisibleHistory reads the recorded con
     expect(planVisibleHistory([t1, t2], [t1, t2], new Set([D1]), "reader", gone).visible).toEqual([]);
   });
 
+  it("reproduction → fix (fix pass 5): a deleted context document the row records as an UPLOAD withholds no one — every member could read it when the answer was given; a deleted one NOT recorded as an upload (a mirror) still withholds a teammate's view", () => {
+    const D3 = "00000000-0000-4000-8000-000000000003";
+    // D2 an upload, D3 a mirror; both uncited.
+    const r = row({ context: ctx([D1, D2, D3], { uploads: [D1, D2] }) });
+    // Fix pass 4: D2 (a tagged upload replaced by its next revision) gone →
+    // withheld from every teammate.
+    expect(planVisibleHistory([r], [], new Set([D1, D3]), "reader", new Set([D2])).visible).toEqual([r]);
+    expect(planVisibleHistory([r], [], new Set([D1, D3]), "asker", new Set([D2])).visible).toEqual([r]);
+    // The mirror gone: its controlled document's ACL can no longer be judged.
+    expect(planVisibleHistory([r], [], new Set([D1, D2]), "reader", new Set([D3])).withheld).toEqual([r]);
+    expect(planVisibleHistory([r], [], new Set([D1, D2]), "asker", new Set([D3])).visible).toEqual([r]);
+    // A context that does not say which were uploads: every gone document
+    // may have been a mirror (fail-safe).
+    const unsaid = row({ context: ctx([D1, D2]) });
+    expect(planVisibleHistory([unsaid], [], new Set([D1]), "reader", new Set([D2])).withheld).toEqual([unsaid]);
+    // An upload that still exists but is unreadable (another org's) is no
+    // deletion: still withheld.
+    expect(planVisibleHistory([r], [], new Set([D1, D3]), "reader", new Set()).withheld).toEqual([r]);
+    // A later turn of the thread follows the same rule.
+    const t1 = row({ id: "u1", thread_id: "T", created_at: "2026-10-01T00:00:00Z", context: ctx([D1, D2], { uploads: [D1, D2] }) });
+    const t2 = row({ id: "u2", thread_id: "T", created_at: "2026-10-01T00:01:00Z", context: ctx([D1], { uploads: [D1] }) });
+    expect(planVisibleHistory([t1, t2], [t1, t2], new Set([D1]), "reader", new Set([D2])).visible.map((x) => x.id)).toEqual(["u1", "u2"]);
+  });
+
   it("a context document that still exists but the asker can no longer read, or a CITED document deleted since, still withholds the asker's own row", () => {
     const r = row({ context: ctx([D1, D2]) });
     expect(planVisibleHistory([r], [], new Set([D1]), "asker").withheld).toEqual([r]);
@@ -192,6 +291,8 @@ describe("ASK-1 / KACL-1 / IEDGE-5 — planVisibleHistory reads the recorded con
     expect(parseAnswerContext({ documents: "x" })).toBeNull();
     expect(parseAnswerContext({ documents: [D1, 7, ""], complete: true, history: "thread", partial: true, arithmetic: "unverified", skills: ["Basis of Design", 3] }))
       .toEqual({ v: 1, documents: [D1], complete: true, history: "thread", partial: true, arithmetic: "unverified", skills: ["Basis of Design"] });
+    expect(parseAnswerContext({ documents: [D1, D2], uploads: [D1, 4, ""], complete: true })?.uploads).toEqual([D1]);
+    expect(parseAnswerContext({ documents: [D1], uploads: "all", complete: true })).not.toHaveProperty("uploads");
     // anything not stated as complete is incomplete (fail-safe)
     expect(parseAnswerContext({ documents: [] })?.complete).toBe(false);
     expect(contextKnowledgeDocIds({ documents: [D1, D2] })).toEqual([D1, D2]);

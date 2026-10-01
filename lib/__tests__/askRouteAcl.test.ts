@@ -601,6 +601,45 @@ describe("ASK-1 / KACL-1 / IEDGE-5 — the row records every document that reach
     expect(viewerList.withheld).toBe(1);
   });
 
+  it("reproduction → fix (fix pass 5): the history route's read failing with an error that merely mentions a column, or names ANOTHER one, answers 500 with no rows — never rows re-read without their context and judged by their citations alone", async () => {
+    openAndRestricted();
+    h.script = [QUERY_GEN, REFINE_NONE, answer("**Answer:** It must not exceed the design pressure [1].")];
+    await ask({ question: "What is the relief valve set pressure?" });
+    expect((rowsOf("knowledge_questions")[0].context as { documents: string[] }).documents).toContain(K_MIRROR);
+    for (const err of [
+      { code: "42702", message: 'column reference "mode" is ambiguous' },
+      { code: "42703", message: "column knowledge_questions.user_name does not exist" },
+      { code: "PGRST204", message: "Could not find the 'library_id' column of 'knowledge_questions' in the schema cache" },
+      { code: "57014", message: "canceling statement due to statement timeout (thread_id)" },
+    ]) {
+      db.hooks = [(op) => op.table === "knowledge_questions" && op.kind === "select"
+        && Array.isArray(op.columns) && op.columns.includes("context") ? { error: err } : undefined];
+      // Fix pass 4: re-read with the core columns (no context) — the row
+      // cites only the upload, so the Viewer denied the mirror was shown it.
+      const res = await history({ action: "list" }, "viewer");
+      expect(res.status).toBe(500);
+      const text = JSON.stringify(await res.json());
+      expect(text).not.toContain("design pressure");
+      expect(text).not.toContain('"rows"');
+    }
+  });
+
+  it("reproduction → fix (fix pass 5): a database with the context column but no thread_id / mode (20261153 pasted before 20261008) saves the context and judges the row by it — never the core set without it", async () => {
+    openAndRestricted();
+    db.missingColumns.knowledge_questions = ["thread_id", "mode"];
+    h.script = [QUERY_GEN, REFINE_NONE, answer("**Answer:** It must not exceed the design pressure [1].")];
+    const body = await (await ask({ question: "What is the relief valve set pressure?" })).json();
+    expect(body.saved).toBeUndefined();
+    // Fix pass 4's core-set retry dropped the context.
+    const row = rowsOf("knowledge_questions")[0];
+    expect((row.context as { documents: string[] }).documents.sort()).toEqual([K_MIRROR, K_OPEN].sort());
+    // …and the history route read the core set without it.
+    const viewerList = await (await history({ action: "list" }, "viewer")).json();
+    expect(viewerList.rows).toEqual([]);
+    expect(viewerList.withheld).toBe(1);
+    expect((await (await history({ action: "list" }, "good")).json()).rows).toHaveLength(1);
+  });
+
   it("a database before 20261153 (no context column) still saves the answer, without it, and says nothing is wrong", async () => {
     openAndRestricted();
     db.missingColumns.knowledge_questions = ["context"];
@@ -614,13 +653,13 @@ describe("ASK-1 / KACL-1 / IEDGE-5 — the row records every document that reach
   });
 });
 
-describe("ASK-1 — a document deleted since never hides its asker's own answer; a teammate's view stays withheld", () => {
+describe("ASK-1 — a document deleted since never hides its asker's own answer; a deleted UPLOAD hides it from no one; a deleted mirror still withholds a teammate's view", () => {
   const K_CTX = U(3);
   const THREAD = "22222222-3333-4444-8555-666666666666";
   const ENG = { org_id: ORG, uid: "u-eng", role: "Engineer", roles: ["Engineer"], status: "active", display_name: "Eng", email: "e@x" };
   type Listed = { id: string };
 
-  it("reproduction → fix: deleting an uncited context document leaves the asker's list, memory search, conversation and follow-up history unchanged", async () => {
+  it("reproduction → fix: deleting an uncited context UPLOAD leaves the asker's list, memory search, conversation and follow-up history unchanged — and, since fix pass 5, the team's too", async () => {
     seed({
       knowledge_documents: [kdoc(K_OPEN, { name: "Relief standard.pdf" }), kdoc(K_CTX, { name: "Superseded sheet.pdf" })],
       knowledge_chunks: [
@@ -633,6 +672,8 @@ describe("ASK-1 — a document deleted since never hides its asker's own answer;
     expect(first.citations.map((c: { documentId: string }) => c.documentId)).toEqual([K_OPEN]);
     const row = rowsOf("knowledge_questions")[0];
     expect((row.context as { documents: string[] }).documents.sort()).toEqual([K_OPEN, K_CTX].sort());
+    // Both were uploads (readable by every member) when the answer was given.
+    expect((row.context as { uploads: string[] }).uploads.sort()).toEqual([K_OPEN, K_CTX].sort());
     row.search_tsv = row.question; // the stand-in has no generated search column
     // Before the delete, a teammate who may read both documents sees it too.
     expect((await (await history({ action: "list" }, "as:u-eng")).json()).rows.map((r: Listed) => r.id)).toEqual([row.id]);
@@ -657,13 +698,90 @@ describe("ASK-1 — a document deleted since never hides its asker's own answer;
     expect(answerCall().user).toContain("It must not exceed the design pressure [1].");
     expect(rowsOf("knowledge_questions").find((r) => r.question === "And the tolerance?")?.context).toMatchObject({ history: "thread" });
 
-    // A teammate: nothing proves they could have read the deleted sheet, so
-    // the answer (and the turn after it) stays withheld from them.
+    // A teammate: the deleted sheet was an upload every member could read
+    // when the answer was given, so neither turn is withheld (fix pass 4
+    // withheld both from every teammate).
     const team = await (await history({ action: "list" }, "as:u-eng")).json();
-    expect(team.rows).toEqual([]);
-    expect(team.withheld).toBe(2);
+    expect(team.rows).toHaveLength(2);
+    expect(team.withheld).toBe(0);
     // A controller still reads all memory (DEC-43).
     expect((await (await history({ action: "list" }, "good")).json()).rows).toHaveLength(2);
+  });
+
+  it("reproduction → fix (fix pass 5, the review's probe): an org with NO restricted documents — replacing one tagged P&ID upload with its next revision no longer erases the team's record of every answer that carried the drawing facts", async () => {
+    const S1 = U(61);
+    const S2 = U(62);
+    const S2_NEXT = U(63);
+    seed({
+      knowledge_documents: [
+        kdoc(K_OPEN, { name: "Relief standard.pdf" }),
+        kdoc(S1, { name: "025-PID-0001.pdf" }),
+        kdoc(S2, { name: "025-PID-0002.pdf" }),
+      ],
+      knowledge_chunks: [kchunk(K_OPEN, OPEN_TEXT, { id: "c-0open", page: 4 })],
+      knowledge_page_entities: [
+        { id: "e-1", org_id: ORG, library_id: LIB, document_id: S1, page: 1, kind: "equipment", tag: "V-101", raw: "V-101" },
+        { id: "e-2", org_id: ORG, library_id: LIB, document_id: S2, page: 1, kind: "equipment", tag: "E-201", raw: "E-201" },
+      ],
+    });
+    h.script = [QUERY_GEN, REFINE_NONE, answer("**Answer:** It must not exceed the design pressure [1].")];
+    const body = await (await ask({ question: "What is the relief valve set pressure limit?" })).json();
+    expect(body.citations.map((c: { documentId: string }) => c.documentId)).toEqual([K_OPEN]);
+    expect(answerCall().user).toContain("DRAWING FACTS — tallied by the app");
+    const row = rowsOf("knowledge_questions")[0];
+    const ctx = row.context as { documents: string[]; uploads: string[] };
+    expect(ctx.documents.sort()).toEqual([K_OPEN, S1, S2].sort());
+    expect(ctx.uploads.sort()).toEqual([K_OPEN, S1, S2].sort());
+    row.search_tsv = row.question;
+    expect((await (await history({ action: "list" }, "viewer")).json()).rows).toHaveLength(1);
+
+    // A member replaces 025-PID-0002.pdf with its next revision: the old
+    // knowledge document (and its tags) is deleted, a new one is added.
+    db.tables.knowledge_documents = [...rowsOf("knowledge_documents").filter((d) => d.id !== S2), kdoc(S2_NEXT, { name: "025-PID-0002 Rev B.pdf" })];
+    db.tables.knowledge_page_entities = rowsOf("knowledge_page_entities").filter((e) => e.document_id !== S2);
+
+    // Fix pass 4: the Viewer's list went to 0 rows, withheld 1.
+    const viewerList = await (await history({ action: "list" }, "viewer")).json();
+    expect(viewerList.rows.map((r: { id: string }) => r.id)).toEqual([row.id]);
+    expect(viewerList.withheld).toBe(0);
+    const memory = await (await history({ action: "search", query: "relief valve set pressure limit" }, "viewer")).json();
+    expect(memory.rows.map((r: { id: string }) => r.id)).toEqual([row.id]);
+    // The asker, as before.
+    expect((await (await history({ action: "list" }, "good")).json()).rows).toHaveLength(1);
+  });
+
+  it("…while deleting a recorded MIRROR still withholds a teammate's view: its controlled document's ACL can no longer be judged — never the asker's own row", async () => {
+    seed({
+      documents: [dcDoc("dc-1")],
+      knowledge_documents: [
+        kdoc(K_OPEN, { name: "Relief standard.pdf" }),
+        kdoc(K_MIRROR, { name: "INC-0042 — Incident report", source_document_id: "dc-1", source_rev: "B" }),
+      ],
+      knowledge_chunks: [kchunk(K_OPEN, OPEN_TEXT, { id: "c-0open", page: 4 }), kchunk(K_MIRROR, RESTRICTED, { id: "c-9mirror", page: 2 })],
+    }, [ENG]);
+    h.script = [QUERY_GEN, REFINE_NONE, answer("**Answer:** It must not exceed the design pressure [1].")];
+    // The Viewer asks: dc-1 is readable to every member today.
+    const body = await (await ask({ question: "What is the relief valve set pressure?" }, "viewer")).json();
+    expect(body.citations.map((c: { documentId: string }) => c.documentId)).toEqual([K_OPEN]);
+    expect(allPrompts()).toContain("312 psig");
+    const row = rowsOf("knowledge_questions")[0];
+    const ctx = row.context as { documents: string[]; uploads: string[] };
+    expect(ctx.documents.sort()).toEqual([K_OPEN, K_MIRROR].sort());
+    // The mirror is never recorded as an upload.
+    expect(ctx.uploads).toEqual([K_OPEN]);
+    expect((await (await history({ action: "list" }, "as:u-eng")).json()).rows).toHaveLength(1);
+
+    // A sync removes the mirror.
+    db.tables.knowledge_documents = rowsOf("knowledge_documents").filter((d) => d.id !== K_MIRROR);
+    db.tables.knowledge_chunks = rowsOf("knowledge_chunks").filter((c) => c.document_id !== K_MIRROR);
+
+    const team = await (await history({ action: "list" }, "as:u-eng")).json();
+    expect(team.rows).toEqual([]);
+    expect(team.withheld).toBe(1);
+    expect(JSON.stringify(team)).not.toContain("312 psig");
+    // The asker keeps their own answer; a controller reads all memory (DEC-43).
+    expect((await (await history({ action: "list" }, "viewer")).json()).rows).toHaveLength(1);
+    expect((await (await history({ action: "list" }, "good")).json()).rows).toHaveLength(1);
   });
 });
 
@@ -800,6 +918,17 @@ describe("ASK-5 — a thread's earlier turns come from the record, never from th
     expect(h.calls).toHaveLength(0);
   });
 
+  it("an internet answer stored as cut off (ASK-3, fix pass 5) names no document and is still shown to every member", async () => {
+    seed({ knowledge_documents: [kdoc(K_OPEN)], knowledge_chunks: [kchunk(K_OPEN, OPEN_TEXT, { id: "c-open" })] });
+    h.script = [{ text: "API 510 covers inspection of", usage: { inputTokens: 200, outputTokens: 3000 }, stopReason: "max_tokens" }];
+    const web = await (await ask({ question: "What is API 510?", mode: "internet" })).json();
+    expect(web.partial).toBe(true);
+    expect(rowsOf("knowledge_questions")[0].context).toMatchObject({ documents: [], partial: true });
+    const viewerList = await (await history({ action: "list" }, "viewer")).json();
+    expect(viewerList.rows).toHaveLength(1);
+    expect(viewerList.rows[0].answer).toContain(CUT_OFF_LINE);
+  });
+
   it("a database without threads saves the internet and nothing-matched turns without one, as before", async () => {
     seed({ knowledge_documents: [kdoc(K_OPEN)], knowledge_chunks: [kchunk(K_OPEN, OPEN_TEXT, { id: "c-open" })] });
     db.missingColumns.knowledge_questions = ["thread_id"];
@@ -817,7 +946,7 @@ describe("ASK-5 — a thread's earlier turns come from the record, never from th
     h.script = [{ text: '["flare tip velocity"]', usage: { inputTokens: 100, outputTokens: 10 } }, REFINE_NONE];
     const none = await (await ask({ question: "What is the flare tip velocity limit?", threadId: THREAD })).json();
     expect(none.answer).toMatch(/Nothing in this library matches/);
-    expect(rowsOf("knowledge_questions")[0].context).toEqual({ v: 1, documents: [], complete: true, history: "none" });
+    expect(rowsOf("knowledge_questions")[0].context).toEqual({ v: 1, documents: [], uploads: [], complete: true, history: "none" });
     h.script = [QUERY_GEN, REFINE_NONE, answer()];
     expect((await ask({ question: "What is the relief valve set pressure?", threadId: THREAD })).status).toBe(200);
     // The Viewer may read every document either turn drew on: both are shown.

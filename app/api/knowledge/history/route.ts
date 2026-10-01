@@ -45,6 +45,7 @@ import {
   citedKnowledgeDocIds, contextKnowledgeDocIds, isUuid, planVisibleHistory, knowledgeDocAccess,
   type StoredAnswerRow,
 } from "@/lib/knowledgeHistory";
+import { columnsMissing } from "@/lib/knowledgeAskGuards";
 
 export const runtime = "nodejs";
 
@@ -53,6 +54,10 @@ export const runtime = "nodejs";
  *  reads the columns before it, and its rows are judged by their citations. */
 const CONTEXT_COLUMNS = "id, org_id, library_id, thread_id, user_id, user_name, question, answer, citations, mode, created_at, context";
 const COLUMNS = "id, org_id, library_id, thread_id, user_id, user_name, question, answer, citations, mode, created_at";
+/** A database without thread_id / mode (before 20261008 / 20260912) — with
+ *  `context` when it has that column, so its rows are still judged by
+ *  everything that reached the model. */
+const CORE_CONTEXT_COLUMNS = "id, org_id, library_id, user_id, user_name, question, answer, citations, created_at, context";
 const CORE_COLUMNS = "id, org_id, library_id, user_id, user_name, question, answer, citations, created_at";
 
 /** Ask memory: the default number of matches, the page it reads them in, and
@@ -65,13 +70,16 @@ function bad(msg: string, status = 400) {
   return NextResponse.json({ error: msg }, { status });
 }
 
-/** Pre-migration databases lack thread_id / mode (20261008 / 20260912): read
- *  the core set instead of failing the whole history. */
-const missingColumn = (e: { code?: string; message?: string } | null) =>
-  !!e && (e.code === "42703" || e.code === "PGRST204" || /thread_id|mode/.test(e.message ?? ""));
-/** Only the `context` column is missing (a database before 20261153). */
-const missingContext = (e: { code?: string; message?: string } | null) =>
-  !!e && (e.code === "42703" || e.code === "PGRST204") && /context/.test(e.message ?? "");
+/** A database before 20261153: the `context` column is missing — an
+ *  undefined column (42703) or schema-cache miss (PGRST204) NAMING it. */
+const missingContext = (e: { code?: string; message: string } | null) => columnsMissing(e, "context");
+/** A database before 20261008 / 20260912: thread_id or mode is missing —
+ *  named the same way. Only these two take a reduced column set; any other
+ *  error (a timeout, an ambiguous column, a miss on another column) answers
+ *  500 with no rows, never rows read without their context (I-03 fix pass
+ *  5: any 42703, any PGRST204 or any message mentioning "mode" used to
+ *  re-read WITHOUT context, so a row was judged by its citations alone). */
+const missingThreadColumns = (e: { code?: string; message: string } | null) => columnsMissing(e, "thread_id", "mode");
 
 export async function POST(req: NextRequest) {
   const authHeader = req.headers.get("authorization");
@@ -115,7 +123,14 @@ export async function POST(req: NextRequest) {
       columns = COLUMNS;
       res = await build(columns);
     }
-    if (missingColumn(res.error)) res = await build(CORE_COLUMNS);
+    if ((columns === CONTEXT_COLUMNS || columns === COLUMNS) && missingThreadColumns(res.error)) {
+      columns = columns === CONTEXT_COLUMNS ? CORE_CONTEXT_COLUMNS : CORE_COLUMNS;
+      res = await build(columns);
+    }
+    if (columns === CORE_CONTEXT_COLUMNS && missingContext(res.error)) {
+      columns = CORE_COLUMNS;
+      res = await build(columns);
+    }
     if (res.error) return { rows: [], error: res.error.message };
     return { rows: (res.data ?? []) as StoredAnswerRow[], error: null };
   };
@@ -155,7 +170,8 @@ export async function POST(req: NextRequest) {
     // Every document a row cites AND every document its recorded context says
     // reached the model (ASK-1 / KACL-1 / IEDGE-5) is judged for this reader;
     // a context document deleted since withholds a teammate's view, never the
-    // asker's own row (lib/knowledgeHistory planVisibleHistory).
+    // asker's own row — and nobody's when the row records it as an upload
+    // (lib/knowledgeHistory planVisibleHistory).
     const cited = [...rows, ...threadRows].flatMap((r) => [
       ...citedKnowledgeDocIds(r.citations), ...contextKnowledgeDocIds(r.context),
     ]);

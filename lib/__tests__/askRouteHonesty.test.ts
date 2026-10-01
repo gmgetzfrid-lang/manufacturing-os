@@ -199,6 +199,35 @@ describe("ASK-3 — an answer cut off at the output ceiling says so, is stored a
     expect(rowsOf("knowledge_questions").find((r) => r.id === whole.questionId)?.rating).toBe(1);
   });
 
+  it("reproduction → fix (fix pass 5): an INTERNET answer cut off at its 3,000-token ceiling ends with the cut-off line, says partial: true, and is stored as partial — never served as a complete answer", async () => {
+    ordinaryLibrary();
+    h.script = [{ text: "API 520 Part I requires:\n- Set pressure at or below MAWP\n- Overpressure allowance of", usage: { inputTokens: 900, outputTokens: 3000 }, stopReason: "max_tokens" }];
+    const body = await (await ask({ question: "What does API 520 require for relief valve set pressure?", mode: "internet" })).json();
+    expect(h.calls).toHaveLength(1);
+    expect(h.calls[0].maxTokens).toBe(3000);
+    // Fix pass 4: the text was returned and stored as it came, unmarked.
+    expect(body.partial).toBe(true);
+    expect(body.answer.endsWith(CUT_OFF_LINE)).toBe(true);
+    expect(body.answer.startsWith("API 520 Part I requires:")).toBe(true);
+    const row = rowsOf("knowledge_questions")[0];
+    expect(row).toMatchObject({ mode: "internet", answer: body.answer });
+    // It names no document and sent no history.
+    expect(row.context).toEqual({ v: 1, documents: [], uploads: [], complete: true, history: "none", partial: true });
+    // Its asker cannot rate it.
+    expect((await rate(String(row.id), 1)).status).toBe(409);
+  });
+
+  it("control: an internet answer that finished on its own is returned and stored exactly as before — no cut-off line, no partial mark, no context", async () => {
+    ordinaryLibrary();
+    h.script = [{ text: "API 520 Part I covers sizing and selection.", usage: { inputTokens: 900, outputTokens: 40 }, stopReason: "end" }];
+    const body = await (await ask({ question: "What does API 520 cover?", mode: "internet" })).json();
+    expect(body.answer).toBe("API 520 Part I covers sizing and selection.");
+    expect(body.partial).toBeUndefined();
+    const row = rowsOf("knowledge_questions")[0];
+    expect(row).toMatchObject({ mode: "internet", answer: "API 520 Part I covers sizing and selection." });
+    expect(row.context ?? null).toBeNull();
+  });
+
   it("on a database before 20261153 (no context column) the feedback route knows a cut-off answer by its cut-off line", async () => {
     ordinaryLibrary();
     db.missingColumns.knowledge_questions = ["context"];
@@ -872,6 +901,67 @@ describe("ASK-7 — the cap is enforced against THIS ask's projected cost, and t
     expect((rowsOf("knowledge_questions")[0].context as { documents: string[] }).documents).not.toContain("k-tab");
   });
 
+  /** A first answer that asks to Fetch and spends the month down to just
+   *  BELOW the shortest worst case of answering again over the same prompt
+   *  — so not even an answer without the pages fits. */
+  const fetchThatSpendsTheMonth = () => ({
+    text: "**Fetch:** Table A-1 stress",
+    get usage() {
+      const first = h.calls[h.calls.length - 1];
+      const again = worstCaseCostUsd("chat-model-a", { inputChars: first.system.length + first.user.length, maxTokens: MIN_ANSWER_TOKENS });
+      const target = 10 - (again - 0.004);
+      return { inputTokens: Math.round((target - 35 * 25e-6) / 5e-6) - 800, outputTokens: 0 };
+    },
+  });
+  const UNANSWERED = /^\*\*Answer:\*\* This question was not answered\. To answer it, the AI asked to read a page it had not been shown \(a table or figure\), and this month's remaining AI budget could not cover answering again after that page request\./;
+
+  it("reproduction → fix (fix pass 5): a Fetch that matched NO page, after a first answer that left too little to answer again, ends with a stated sentence — never a 402 after the first answer was paid for", async () => {
+    ordinaryLibrary();
+    // Nothing in the library holds "Table A-1": no page matches the Fetch.
+    h.script = [QUERY_GEN, REFINE_NONE, fetchThatSpendsTheMonth(), ANSWER];
+    const res = await ask({ question: Q });
+    // Fix pass 4: no page was fetched, so nothing was priced, and the second
+    // answer's reservation refused it — 402.
+    expect(res.status).toBe(200);
+    const body = await res.json();
+    expect(h.calls).toHaveLength(3);
+    expect(body.answer).toMatch(UNANSWERED);
+    expect(body.citations).toEqual([]);
+    expect(body.questionId).toBeNull();
+    expect(body.partial).toBeUndefined();
+    // Saved as a library answer, recording what reached the first answer.
+    const row = rowsOf("knowledge_questions")[0];
+    expect(row).toMatchObject({ mode: "library", answer: body.answer });
+    expect((row.context as { documents: string[] }).documents).toEqual(["k-std"]);
+    expect(row.context).not.toHaveProperty("partial");
+    expect(row.context).not.toHaveProperty("arithmetic");
+    // What the three calls spent is metered, once.
+    const metered = rowsOf("ai_usage_events").filter((r) => r.op === "knowledgeAsk");
+    expect(metered).toHaveLength(1);
+    expect(metered[0]).toMatchObject({ ok: true });
+  });
+
+  it("reproduction → fix (fix pass 5): a Fetch whose pages were found, when even the answer WITHOUT them no longer fits after the first answer's real spend, ends the same way — never a 402", async () => {
+    ordinaryLibrary();
+    rowsOf("knowledge_documents").push(kdoc("k-tab", { name: "B31.3 Appendix A.pdf" }));
+    rowsOf("knowledge_chunks").push(
+      ...[12, 13, 14].map((page) => kchunk("k-tab", `Table A-1 allowable stress values, carbon steel, sheet ${page}`, { id: `c-tab-${page}`, page })),
+    );
+    vi.mocked(renderKnowledgePages)
+      .mockImplementationOnce(async () => [])
+      .mockImplementationOnce(async (_k: string, pages: number[]) => pages.map((page) => ({ page, mediaType: "image/png", base64: "AAAA" })));
+    h.script = [QUERY_GEN, REFINE_NONE, fetchThatSpendsTheMonth(), ANSWER];
+    const res = await ask({ question: Q });
+    // Fix pass 4: the pages were dropped, but the answer without them was
+    // still refused by its reservation — 402.
+    expect(res.status).toBe(200);
+    const body = await res.json();
+    expect(h.calls).toHaveLength(3);
+    expect(body.answer).toMatch(UNANSWERED);
+    expect(body.answer).not.toMatch(/were not attached/);
+    expect((rowsOf("knowledge_questions")[0].context as { documents: string[] }).documents).not.toContain("k-tab");
+  });
+
   it("control: a Fetch the month can cover attaches its pages, as before", async () => {
     ordinaryLibrary();
     rowsOf("knowledge_documents").push(kdoc("k-tab", { name: "B31.3 Appendix A.pdf" }));
@@ -1177,6 +1267,41 @@ describe("the meaning half — one vector space per library, over-fetched, meter
     // Fix pass 3 sent no coverage at all without a key; the page then fell
     // back to the asked library's live coverage alone.
     expect(body.retrievalCoverage).toEqual({ embedded: 2, total: 4 });
+  });
+
+  it("SEM-12 reproduction → fix (fix pass 5): without an embeddings key the coverage read is off the critical path — round 1's keyword search never waits for it, and the response still carries it", async () => {
+    seed({
+      knowledge_libraries: [...baseTables().knowledge_libraries, { id: LIB2, org_id: ORG, name: "Vendor manuals", ai_features: {}, ai_instructions: null }],
+      knowledge_library_links: [{ library_id: LIB, linked_library_id: LIB2 }],
+      knowledge_documents: [kdoc("k-gov"), kdoc("k-vendor", { library_id: LIB2, name: "Pump manual.pdf" })],
+      knowledge_chunks: [
+        vchunk("k-gov", "The relief valve set pressure shall not exceed the design pressure.", EMB_V, { id: "c-gov" }),
+        kchunk("k-gov", "Relief valve set pressure tolerance is three percent.", { id: "c-gov-2", page: 2 }),
+        vchunk("k-vendor", "Relief valve set pressure adjustment procedure.", EMB_V, { id: "c-vendor", library_id: LIB2 }),
+        kchunk("k-vendor", "Relief valve set pressure spring chart.", { id: "c-vendor-2", library_id: LIB2, page: 2 }),
+      ],
+    });
+    // The whole-library aggregate is slow (it reads every chunk).
+    h.coverageDelayMs = 60;
+    h.script = [QUERY_GEN, REFINE_NONE, ANSWER];
+    const body = await (await ask({ question: "What is the relief valve set pressure limit?" })).json();
+    expect(h.embedCalls).toHaveLength(0);
+    expect(body.retrievalCoverage).toEqual({ embedded: 2, total: 4 });
+    // Fix pass 4 awaited both coverage reads before round 1 searched anything.
+    const firstSearch = h.rpcLog.indexOf("knowledge_search");
+    expect(firstSearch).toBeGreaterThanOrEqual(0);
+    expect(h.rpcLog.indexOf("semantic_coverage_detail")).toBeGreaterThan(firstSearch);
+  });
+
+  it("control: with an embeddings key the coverage is read BEFORE planning (SEM-1 needs the corpus model), as before", async () => {
+    seed({ knowledge_documents: [kdoc("k-gov")], knowledge_chunks: [vchunk("k-gov", "The relief valve set pressure shall not exceed the design pressure.", EMB_V, { id: "c-gov" })] });
+    withEmbeddingKey(CTRL);
+    h.coverageDelayMs = 30;
+    h.script = [QUERY_GEN, REFINE_NONE, ANSWER];
+    const body = await (await ask({ question: "What is the relief valve set pressure limit?" })).json();
+    expect(h.embedCalls).toHaveLength(1);
+    expect(body.retrievalCoverage).toEqual({ embedded: 1, total: 1 });
+    expect(h.rpcLog.indexOf("semantic_coverage_detail")).toBeLessThan(h.rpcLog.indexOf("knowledge_search"));
   });
 
   it("GOV-6 limb: an embeddings key on a provider off the allowlist is never spent", async () => {
