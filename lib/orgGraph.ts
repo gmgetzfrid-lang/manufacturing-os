@@ -936,18 +936,33 @@ export function assembleOrgGraph(rows: GraphRows, opts: AssembleOptions = {}): O
     if (kl) addEdge(`cbunit:${u.code}`, `klib:${kl}`, "library", { via: "knowledge", note: "Knowledge library bound to this operating area" });
   }
 
-  let disagreeDocs = 0, disagreeAssets = 0;
+  // Filing / decode against the operational unit. They DIFFER only when the
+  // operational unit is mapped to a codebook unit and that code is not the
+  // filing; an operational unit that is not mapped (or not on this map) cannot
+  // be compared — counted apart, as the decode's report and 20261138's
+  // inventory keep it (unitIdUnmapped).
+  let disagreeDocs = 0, disagreeAssets = 0, unmappedDocs = 0, unmappedAssets = 0;
+  const compare = (code: string | null | undefined, unitId: string | null | undefined): "same" | "differ" | "unmapped" | null => {
+    if (!code || !unitId) return null;
+    const opCode = codeOfUnitRow(unitId);
+    if (opCode === null) return "unmapped";
+    return opCode === code ? "same" : "differ";
+  };
   for (const a of rows.assets) {
     if (a.unit_code) addEdge(`asset:${a.id}`, `cbunit:${a.unit_code}`, "unit");
     if (a.unit_id) addEdge(`asset:${a.id}`, unitNode(a.unit_id), "unit");
-    if (a.unit_code && a.unit_id && unitNode(a.unit_id) !== `cbunit:${a.unit_code}`) disagreeAssets += 1;
+    const c = compare(a.unit_code, a.unit_id);
+    if (c === "differ") disagreeAssets += 1;
+    else if (c === "unmapped") unmappedAssets += 1;
     if (a.system_id) addEdge(`asset:${a.id}`, `system:${a.system_id}`, "unit");
     if (a.plant_id) addEdge(`asset:${a.id}`, `plant:${a.plant_id}`, "unit");
   }
   for (const d of rows.documents) {
     if (d.unit_code) addEdge(`doc:${d.id}`, `cbunit:${d.unit_code}`, "unit");
     if (d.unit_id) addEdge(`doc:${d.id}`, unitNode(d.unit_id), "unit");
-    if (d.unit_code && d.unit_id && unitNode(d.unit_id) !== `cbunit:${d.unit_code}`) disagreeDocs += 1;
+    const c = compare(d.unit_code, d.unit_id);
+    if (c === "differ") disagreeDocs += 1;
+    else if (c === "unmapped") unmappedDocs += 1;
     if (d.system_id) addEdge(`doc:${d.id}`, `system:${d.system_id}`, "unit");
     if (d.plant_id) addEdge(`doc:${d.id}`, `plant:${d.plant_id}`, "unit");
     addEdge(`doc:${d.id}`, `lib:${d.library_id}`, "library");
@@ -1018,6 +1033,12 @@ export function assembleOrgGraph(rows: GraphRows, opts: AssembleOptions = {}): O
   }
   if (disagreeAssets > 0) {
     truncations.push(`The Site Codebook filing and the operational unit differ for ${plural(disagreeAssets, "equipment item")} — both ties are drawn.`);
+  }
+  if (unmappedDocs > 0) {
+    truncations.push(`${plural(unmappedDocs, "document")} carr${unmappedDocs === 1 ? "ies" : "y"} an operational unit that is not mapped to the Site Codebook (or is not on this map), so its decoded unit and that unit cannot be compared — both ties are drawn.`);
+  }
+  if (unmappedAssets > 0) {
+    truncations.push(`${plural(unmappedAssets, "equipment item")} carr${unmappedAssets === 1 ? "ies" : "y"} an operational unit that is not mapped to the Site Codebook (or is not on this map), so its filing and that unit cannot be compared — both ties are drawn.`);
   }
   const severed = [...severedByType.values()].reduce((s, n) => s + n, 0);
   if (severed > 0) {

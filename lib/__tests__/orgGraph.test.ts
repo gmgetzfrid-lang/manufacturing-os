@@ -144,6 +144,49 @@ describe("GAP-305 / GM-2 / GPV-3 / WIRE-3 / AREA-10 — one node per real unit",
     expect(g.truncations.join("\n")).toMatch(/decoded unit \(drawing number\) and the operational unit differ for 1 document/);
   });
 
+  it("an operational unit that is NOT mapped (or not on this map) is never a disagreement — it 'cannot be compared', as the decode's report says", async () => {
+    // Right after 20261138, before anyone maps units on /admin/scope: every
+    // document with documents.unit_id AND a decode points at an unmapped
+    // unit. None of them is a mis-filed drawing.
+    reset(plant({
+      units: [
+        o({ id: "u1", name: "Crude Unit", code: "U100", plant_id: "p1", codebook_code: null, archived: false }),
+        o({ id: "u2", name: "Coker", code: "U200", plant_id: "p1", codebook_code: "30", archived: false }),
+      ],
+      documents: [
+        o({ id: "d1", document_number: "2002-D-1", title: null, library_id: "L1", unit_id: "u1", unit_code: "20", sheet_number: null, sheet_total: null, updated_at: "2026-09-01" }),
+        o({ id: "d2", document_number: "2002-D-2", title: null, library_id: "L1", unit_id: "u1", unit_code: "20", sheet_number: null, sheet_total: null, updated_at: "2026-09-02" }),
+        // an operational unit this map did not read (archived since) — not comparable either
+        o({ id: "d3", document_number: "3002-D-3", title: null, library_id: "L1", unit_id: "uGone", unit_code: "30", sheet_number: null, sheet_total: null, updated_at: "2026-09-03" }),
+        // mapped and agreeing — neither note
+        o({ id: "d4", document_number: "3002-D-4", title: null, library_id: "L1", unit_id: "u2", unit_code: "30", sheet_number: null, sheet_total: null, updated_at: "2026-09-04" }),
+      ],
+      assets: [
+        o({ id: "a1", tag: "E-1", description: null, unit_code: "20", unit_id: "u1", archived: false }),      // unmapped unit: cannot be compared
+        o({ id: "a2", tag: "E-2", description: null, unit_code: "20", unit_id: "u2", archived: false }),      // mapped to 30, filed 20: differs
+      ],
+    }));
+    const g = await buildOrgGraph(ORG);
+    const t = g.truncations.join("\n");
+    expect(t).not.toMatch(/decoded unit \(drawing number\) and the operational unit differ/);
+    expect(t).toMatch(/3 documents carry an operational unit that is not mapped to the Site Codebook \(or is not on this map\), so its decoded unit and that unit cannot be compared/);
+    expect(t).toMatch(/The Site Codebook filing and the operational unit differ for 1 equipment item —/);
+    expect(t).toMatch(/1 equipment item carries an operational unit that is not mapped to the Site Codebook/);
+    // both ties are still drawn
+    expect(g.edges).toContainEqual({ a: "doc:d1", b: "cbunit:20", type: "unit" });
+    expect(g.edges).toContainEqual({ a: "doc:d1", b: "unit:u1", type: "unit" });
+    // the pure assembler counts the same way
+    const rows = emptyGraphRows();
+    rows.codebookUnits = [{ code: "20", label: "Crude Unit", meta: null }];
+    rows.units = [{ id: "u1", name: "Crude Unit", code: "U100", plant_id: "p1", codebook_code: null }];
+    rows.plants = [{ id: "p1", name: "Refinery", code: null }];
+    rows.libraries = [{ id: "L1", name: "Drawings" }];
+    rows.documents = [{ id: "d1", document_number: "2002-D-1", title: null, library_id: "L1", unit_id: "u1", unit_code: "20", sheet_number: null, sheet_total: null }];
+    const pure = assembleOrgGraph(rows).truncations.join("\n");
+    expect(pure).not.toMatch(/differ/);
+    expect(pure).toMatch(/1 document carries an operational unit that is not mapped/);
+  });
+
   it("before 20261138 the graph still builds (legacy columns) and says what it cannot draw", async () => {
     db.missingColumns = { documents: ["unit_code"], units: ["codebook_code"] };
     const g = await buildOrgGraph(ORG);

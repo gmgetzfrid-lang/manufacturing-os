@@ -25,7 +25,12 @@
 // archiving a unit releases its code). Which codes are taken is read
 // directly (listCodebookMappings), not from the tree on screen: archiving a
 // PLANT does not archive its units, so a unit under an archived plant keeps
-// its code while the default tree does not show it.
+// its code while the default tree does not show it. The codebook's unit list
+// (the picker, its labels and the "mapped" count) is read whole, in keyset
+// pages (listCodebookUnits): loadCodebook is one request, which PostgREST
+// cuts at 1,000 entries of every kind. Equipment follows the mapping in the
+// database (20261138): mapping, remapping or archiving a unit moves its
+// projected equipment at once, and a refiled item follows its filing.
 
 import React, { useCallback, useEffect, useState } from "react";
 import {
@@ -37,7 +42,7 @@ import {
   getScopeTree, createPlant, createUnit, createSystem,
   updatePlant, updateUnit, updateSystem,
   archivePlant, archiveUnit, archiveSystem,
-  setUnitCodebookCode, runUnitIdentityBackfill, listCodebookMappings,
+  setUnitCodebookCode, runUnitIdentityBackfill, listCodebookMappings, listCodebookUnits,
   type ScopeNode, type UnitIdentityReport, type CodebookMappingHolder,
 } from "@/lib/operationalGraph";
 import { loadCodebook, EMPTY_CODEBOOK, type Codebook } from "@/lib/codebook";
@@ -73,6 +78,8 @@ export default function ScopePage() {
   const [addingChildOf, setAddingChildOf] = useState<{ kind: "root" | "plant" | "unit"; parentId?: string } | null>(null);
   const [editing, setEditing] = useState<EditTarget>(null);
   const [book, setBook] = useState<Codebook>(EMPTY_CODEBOOK);
+  /** The codebook's unit list could not be read whole — said, never a short list presented as the codebook. */
+  const [bookError, setBookError] = useState<string | null>(null);
   /** Every codebook code held by an operational unit, under any plant (null:
    *  the read failed — the tree on screen is the fallback, and says so). */
   const [holders, setHolders] = useState<CodebookMappingHolder[] | null>(null);
@@ -81,7 +88,19 @@ export default function ScopePage() {
   useEffect(() => {
     if (!activeOrgId) return;
     let alive = true;
-    loadCodebook(activeOrgId).then((b) => { if (alive) setBook(b); }).catch(() => { if (alive) setBook(EMPTY_CODEBOOK); });
+    // The unit entries are read whole (keyset pages) and replace the book's
+    // unit list: loadCodebook's one request is cut at PostgREST's max-rows.
+    Promise.all([
+      loadCodebook(activeOrgId).catch(() => EMPTY_CODEBOOK),
+      listCodebookUnits(activeOrgId).then(
+        (units) => ({ units, error: null as string | null }),
+        (e: unknown) => ({ units: null, error: (e as Error).message }),
+      ),
+    ]).then(([b, u]) => {
+      if (!alive) return;
+      setBook(u.units ? { ...b, units: u.units } : b);
+      setBookError(u.error);
+    });
     return () => { alive = false; };
   }, [activeOrgId]);
 
@@ -231,6 +250,12 @@ export default function ScopePage() {
       {holdersError && (
         <div className="flex items-center gap-2 text-xs text-amber-700 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2">
           <AlertTriangle className="w-3.5 h-3.5" /> The Site Codebook mapping could not be read in full ({holdersError}) — a code held by a unit under an archived plant may still be offered.
+        </div>
+      )}
+
+      {bookError && (
+        <div className="flex items-center gap-2 text-xs text-amber-700 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2">
+          <AlertTriangle className="w-3.5 h-3.5" /> The Site Codebook&apos;s units could not be read in full ({bookError}) — the unit list below may be short, so a mapped code can read &quot;not in the codebook&quot;.
         </div>
       )}
 
@@ -541,7 +566,7 @@ function UnitIdentityPanel({ orgId, canEdit, book, mappedTo }: {
         )}
       </div>
       <div className="text-[11px] text-[var(--color-text-muted)]">
-        Each drawing number is decoded with the Site Codebook and the unit it names is written to the document; equipment with no operational unit takes the one its codebook unit is mapped to (a unit already set is never changed). A number that does not decode is listed here — never guessed.
+        Each drawing number is decoded with the Site Codebook and the unit it names is written to the document; equipment with no operational unit takes the one its codebook unit is mapped to (a unit already set by hand is never changed). Equipment follows the mapping on its own — mapping, remapping or archiving a unit, or refiling an item, moves its unit at once; the decode fills what was missed. A number that does not decode is listed here — never guessed.
       </div>
       {err && (
         <div className="flex items-center gap-2 text-xs text-red-700 bg-red-50 border border-red-200 rounded-lg px-3 py-2">

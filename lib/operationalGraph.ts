@@ -24,10 +24,14 @@
 // guess — a number that does not decode is reported) and assets.unit_id =
 // the mapping's projection of assets.unit_code, FILLED where it is empty
 // (a value already there is never rewritten — a disagreement is counted).
+// The database keeps that projection current between runs (20261138:
+// trg_assets_unit_id_follows_filing on every insert and refile,
+// trg_units_codebook_code_follow on every mapping change); the backfill
+// fills what those could not see.
 
 import { supabase } from "@/lib/supabase";
 import type { Plant, Unit, PlantSystem } from "@/types/schema";
-import { parseDrawingNumber, explainDrawingNumberMiss, type Codebook } from "@/lib/codebook";
+import { parseDrawingNumber, explainDrawingNumberMiss, type Codebook, type CodebookEntry } from "@/lib/codebook";
 import { isMissingColumn, pageRows, pageIn } from "@/lib/orgGraph";
 
 // ─── Row shapes (snake_case from Postgres) ──────────────────────
@@ -231,6 +235,25 @@ export async function listCodebookMappings(orgId: string): Promise<CodebookMappi
     });
 }
 
+/** Every Site Codebook unit entry of the org, read in keyset pages (pageRows),
+ *  ordered by sort then code — the list the mapping picker offers and counts.
+ *  loadCodebook reads every entry kind in ONE request, which PostgREST cuts
+ *  at max-rows (1,000), so a unit past that row would vanish from the picker
+ *  and read "(not in the codebook)" (the route reads its units the same way).
+ *  null: the codebook table is not there (pre-migration — no units). */
+export async function listCodebookUnits(orgId: string): Promise<CodebookEntry[] | null> {
+  const r = await pageRows<{ id: string; code: string; label: string; meta: CodebookEntry["meta"] | null; sort: number | null; origin?: string | null }>(
+    "codebook_entries", "id, code, label, meta, sort, origin", orgId, 100_000, (q) => q.eq("kind", "unit"));
+  if (r.missing) return null;
+  if (r.error) throw new Error(r.error.message);
+  const units = r.rows.map((e): CodebookEntry => ({
+    id: String(e.id), kind: "unit", code: String(e.code), label: String(e.label ?? ""),
+    meta: e.meta ?? {}, sort: Number(e.sort ?? 0), origin: e.origin === "import" ? "import" : "manual",
+  }));
+  units.sort((a, b) => (a.sort - b.sort) || (a.code < b.code ? -1 : a.code > b.code ? 1 : 0));
+  return units;
+}
+
 export async function createUnit(input: {
   orgId: string; plantId: string; name: string; code?: string;
   description?: string; createdBy: string;
@@ -394,7 +417,9 @@ export interface UnitIdentityReport {
   assets: {
     scanned: number; toSet: number; disagreeWithFiling: number; keptWithoutFiling: number; written: number;
     /** planned, but after the read the item's unit_id was set (or its filing
-     *  changed, or it was deleted) — the fill re-checks and left it as it is. */
+     *  changed, or it was deleted) — the fill re-checks and left it as it is;
+     *  or its unit was remapped, and the database filled it by the mapping
+     *  as it stands now. */
     changed: number;
     refused: number;
   };
@@ -435,10 +460,15 @@ export function isOpenVisibility(visibility: string | null | undefined): boolean
  *     sees every document (`seesRestricted` — the controller tier), otherwise
  *     only open-visibility documents; the rest are counted as `unlisted`;
  *   * assets.unit_id = the operational unit mapped to assets.unit_code, set
- *     ONLY where unit_id is empty. A value already there — set by hand, by an
- *     import, or by an earlier pass under an older mapping — is never
- *     re-pointed or cleared (nothing records what it was): a value that
- *     disagrees with the filing is counted, as a document's disagreement is;
+ *     ONLY where unit_id is empty. A value already there — set by hand or by
+ *     an import — is never re-pointed or cleared by this pass (nothing
+ *     records what it was): a value that disagrees with the filing is
+ *     counted, as a document's disagreement is. Between runs the database
+ *     keeps the projection current (20261138): a refile moves a projected
+ *     unit (a hand-set one is kept), and a mapping change moves its
+ *     projected equipment — so a projection never goes stale behind a
+ *     refile or a remap, and this pass only fills what the triggers could
+ *     not see;
  *   * documents.unit_id is never written (a configured scope, not a decode). */
 export function planUnitIdentity(input: {
   docs: UnitIdentityDoc[]; assets: UnitIdentityAsset[]; units: UnitMappingRow[]; book: Codebook; dryRun: boolean;

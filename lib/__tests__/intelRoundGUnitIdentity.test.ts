@@ -10,6 +10,12 @@
 // 42501, a person's insert landing NULL, a renumber dropping the decode, anon
 // refused EXECUTE on the count) — that run is recorded in GAP-305's
 // Resolution block, not repeated here (no database runs in the suite).
+// The projection triggers (trg_assets_unit_id_follows_filing,
+// trg_units_codebook_code_follow) were run the same way; here they are
+// stood in for by assetsFollowFiling / unitsFollowMapping below, transcribed
+// rule for rule from the SQL, so the app's own writes (the decode, a refile
+// through lib/assets.ts, a remap through setUnitCodebookCode) are exercised
+// against what the database does with them.
 
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { readFileSync, readdirSync } from "node:fs";
@@ -42,9 +48,11 @@ vi.mock("@/lib/supabase", async () => {
 });
 
 import {
-  planUnitIdentity, setUnitCodebookCode, getScopeTree, runUnitIdentityBackfill, listCodebookMappings,
+  planUnitIdentity, setUnitCodebookCode, getScopeTree, runUnitIdentityBackfill, listCodebookMappings, listCodebookUnits,
   UNIT_IDENTITY_WRITE_BUDGET, type UnitIdentityReport,
 } from "@/lib/operationalGraph";
+import { createAsset, updateAsset } from "@/lib/assets";
+import { searchAssets } from "@/lib/search";
 import { EMPTY_CODEBOOK, type Codebook, type CodebookEntry } from "@/lib/codebook";
 import { adminSurface } from "@/lib/adminSurfaces";
 import { POST } from "@/app/api/admin/unit-identity/route";
@@ -144,6 +152,50 @@ describe("planUnitIdentity — the decode is written, never guessed", () => {
   });
 });
 
+// ── 20261138's projection triggers, stood in for ─────────────────────────
+
+/** The non-archived unit holding a codebook code (UNIQUE per org), as the
+ *  triggers' subqueries read it. */
+const holderOf = (org: unknown, code: unknown, except?: unknown): string | null => {
+  if (code === null || code === undefined) return null;
+  const u = (db.tables.units ?? []).find((x) => x.org_id === org && x.codebook_code === code && !x.archived && x.id !== except);
+  return u ? String(u.id) : null;
+};
+/** trg_assets_unit_id_follows_filing (BEFORE INSERT OR UPDATE OF unit_code
+ *  ON assets): `old` null is an INSERT. Returns what lands. */
+function assetsFollowFiling(old: Row | null, row: Row): Row {
+  if (old === null) {
+    if (row.unit_id != null) return row;                                 // an insert that names its unit keeps it
+    return { ...row, unit_id: holderOf(row.org_id, row.unit_code) };
+  }
+  if (!("unit_code" in row)) return row;                                 // UPDATE OF unit_code only
+  const next = { ...old, ...row };
+  if ((next.unit_id ?? null) !== (old.unit_id ?? null)) return row;       // the write sets unit_id: as written
+  if (old.unit_id != null) {
+    if ((next.unit_code ?? null) === (old.unit_code ?? null)) return row; // not refiled: stays
+    if (holderOf(old.org_id, old.unit_code) !== old.unit_id) return row;  // set by hand: kept
+  }
+  return { ...row, unit_id: holderOf(next.org_id, next.unit_code) };
+}
+/** units_codebook_code_guard's archive release, then trg_units_codebook_code_follow
+ *  (AFTER): projected equipment follows the old code to its holder (none),
+ *  and equipment under the new code with no unit takes this one. */
+function unitsFollowMapping(old: Row, patch: Row): Row {
+  const landed = { ...patch, ...((patch.archived ?? old.archived) ? { codebook_code: null } : {}) };
+  const was = old.codebook_code ?? null, now = ({ ...old, ...landed }).codebook_code ?? null;
+  if (was === now) return landed;
+  for (const a of db.tables.assets ?? []) {
+    if (a.org_id !== old.org_id) continue;
+    if (was !== null && a.unit_id === old.id && a.unit_code === was) a.unit_id = holderOf(old.org_id, was, old.id);
+    if (now !== null && a.unit_code === now && (a.unit_id ?? null) === null) a.unit_id = old.id;
+  }
+  return landed;
+}
+const installProjection = () => {
+  db.triggers = { assets: (r, p) => assetsFollowFiling(r, p), units: unitsFollowMapping };
+  db.insertTriggers = { assets: (r) => assetsFollowFiling(null, r) };
+};
+
 // ── The route ────────────────────────────────────────────────────────────
 
 function seed(over: Partial<Record<string, Row[]>> = {}) {
@@ -168,7 +220,8 @@ function seed(over: Partial<Record<string, Row[]>> = {}) {
     ...over,
   } as Record<string, Row[]>;
   db.missingTables = new Set(); db.missingColumns = {}; db.readError = {}; db.hidden = {};
-  db.refuseWrites = new Set(); db.writeError = {}; db.rpc = {}; db.calls = []; db.seq = 0; db.triggers = {};
+  db.refuseWrites = new Set(); db.writeError = {}; db.rpc = {}; db.calls = []; db.seq = 0;
+  installProjection();
   db.maxRows = 1000; db.beforeWrite = null;
 }
 
@@ -259,8 +312,11 @@ describe("POST /api/admin/unit-identity", () => {
     expect(row("assets", "a1").unit_id).toBe("u20");
     expect(row("assets", "a2").unit_id).toBe("u20");
     expect(row("assets", "a3").unit_id).toBe("u20");
+    // the decode never names a unit in its write: it re-sends the filing and
+    // the database fills the EMPTY unit from the mapping at the write
     const assetUpdates = db.calls.filter((c) => c.table === "assets" && c.method === "update");
-    expect(assetUpdates.every((c) => (c.args[0] as { unit_id: unknown }).unit_id !== null)).toBe(true);
+    expect(assetUpdates.length).toBeGreaterThan(0);
+    expect(assetUpdates.every((c) => Object.keys(c.args[0] as Row).join(",") === "unit_code")).toBe(true);
   });
 
   it("a Supervisor (a scope writer outside the controller tier) never sees a private document's number; a DocCtrl does", async () => {
@@ -378,6 +434,80 @@ describe("the writes re-check what they were planned on (a concurrent writer bet
   });
 });
 
+describe("assets.unit_id stays current between runs — refile, remap, new equipment (20261138's projection triggers)", () => {
+  beforeEach(() => seed({
+    units: [o({ id: "u20", codebook_code: "20", archived: false }), o({ id: "u30", codebook_code: "30", archived: false })],
+    assets: [
+      o({ id: "a1", tag: "E-22", unit_code: "20", unit_id: null, archived: false }),
+      o({ id: "a2", tag: "E-23", unit_code: "30", unit_id: "u20", archived: false }),  // set by hand, disagrees
+    ],
+  }));
+
+  it("a refile after a decode moves the projected unit with the filing; a unit set by hand is kept", async () => {
+    await call({ orgId: ORG, dryRun: false });
+    expect(row("assets", "a1").unit_id).toBe("u20");
+    // an engineer refiles E-22 to unit 30 on /admin/assets (lib/assets.ts updateAsset)
+    await updateAsset("a1", { unit_code: "30" }, "uid-1");
+    expect(row("assets", "a1")).toMatchObject({ unit_code: "30", unit_id: "u30" });
+    expect((await searchAssets({ orgId: ORG, unitId: "u20" })).map((a) => a.id)).not.toContain("a1");
+    expect((await searchAssets({ orgId: ORG, unitId: "u30" })).map((a) => a.id)).toContain("a1");
+    // the hand-set disagreement is refiled too: it was never the projection, so it is kept
+    await updateAsset("a2", { unit_code: null }, "uid-1");
+    expect(row("assets", "a2").unit_id).toBe("u20");
+    // the next decode finds nothing stale — no "kept" disagreement for E-22
+    const again = await (await call({ orgId: ORG })).json();
+    expect(again.assets).toMatchObject({ toSet: 0, disagreeWithFiling: 0 });
+  });
+
+  it("a remap after a decode moves the projected equipment to the code's new holder — never left on the old unit", async () => {
+    await call({ orgId: ORG, dryRun: false });
+    expect(row("assets", "a1").unit_id).toBe("u20");
+    db.tables.units.push(o({ id: "u40", codebook_code: null, archived: false }));
+    await setUnitCodebookCode("u20", null, "uid-1");          // released
+    expect(row("assets", "a1").unit_id).toBeNull();
+    await setUnitCodebookCode("u40", "20", "uid-1");          // taken by the replacement
+    expect(row("assets", "a1").unit_id).toBe("u40");
+    expect(row("assets", "a2").unit_id).toBe("u20");          // a hand-set unit is never touched by a remap of another code
+    // archiving the holder releases the code and its projection with it
+    Object.assign(row("units", "u40"), unitsFollowMapping({ ...row("units", "u40") }, { archived: true }), { archived: true });
+    expect(row("units", "u40").codebook_code).toBeNull();
+    expect(row("assets", "a1").unit_id).toBeNull();
+    const again = await (await call({ orgId: ORG })).json();
+    // E-22 is not stale anywhere; the one disagreement is E-23's hand-set unit, kept
+    expect(again.assets).toMatchObject({ toSet: 0, disagreeWithFiling: 1 });
+  });
+
+  it("equipment created after a decode carries its unit at once — no re-run needed", async () => {
+    await call({ orgId: ORG, dryRun: false });
+    const created = await createAsset({ orgId: ORG, tag: "P-101", unitCode: "30", createdBy: "uid-1" });
+    expect(created.unit_id).toBe("u30");
+    expect((await searchAssets({ orgId: ORG, unitId: "u30" })).map((a) => a.tag)).toContain("P-101");
+  });
+
+  it("a remap between the decode's read and its write is never written as it was: the fill lands by the mapping AT the write", async () => {
+    seed({
+      units: [o({ id: "u20", codebook_code: "20", archived: false }), o({ id: "u30", codebook_code: null, archived: false })],
+      assets: [o({ id: "a1", tag: "E-22", unit_code: "20", unit_id: null, archived: false })],
+      documents: [],
+    });
+    let once = false;
+    db.beforeWrite = (table) => {
+      if (once || table !== "assets") return;
+      once = true;
+      // the plan said u20; before the write, 20 is released (a1 is still empty)
+      Object.assign(row("units", "u20"), unitsFollowMapping({ ...row("units", "u20") }, { codebook_code: null }));
+    };
+    const body = await (await call({ orgId: ORG, dryRun: false })).json();
+    expect(once).toBe(true);
+    expect(row("assets", "a1").unit_id).toBeNull();           // never the stale u20
+    expect(body.assets).toMatchObject({ toSet: 1, written: 0, changed: 1, refused: 0 });
+    expect(body.notes.join("\n")).toMatch(/1 equipment item\(s\) changed since they were read .*remapped/);
+    // mapping the code to its new holder places it
+    await setUnitCodebookCode("u30", "20", "uid-1");
+    expect(row("assets", "a1").unit_id).toBe("u30");
+  });
+});
+
 describe("the codebook is read whole — a unit past PostgREST's max-rows never clears a decode", () => {
   /** 1,100 entries: units 20 and 30 first, 1,097 equipment types, then unit 70 — past row 1,000 of loadCodebookAdmin's one request. */
   const bigBook = () => [
@@ -416,6 +546,25 @@ describe("the codebook is read whole — a unit past PostgREST's max-rows never 
     expect((await r.json()).error).toMatch(/Site Codebook's units could not be read: statement timeout — nothing was planned/);
     expect(db.calls.some((c) => c.method === "update")).toBe(false);
     expect(row("documents", "d2").unit_code).toBe("20");
+  });
+
+  it("the scope page's unit list is read whole too (listCodebookUnits): unit 70 past row 1,000 is offered, labelled and counted", async () => {
+    seed({ codebook_entries: bigBook() });
+    const units = await listCodebookUnits(ORG);
+    expect(units!.map((u) => [u.code, u.label])).toEqual([["20", "Crude Unit"], ["30", "Coker"], ["70", "Sulfur"]]);
+    expect(units!.every((u) => u.kind === "unit")).toBe(true);
+    const limits = db.calls.filter((c) => c.table === "codebook_entries" && c.method === "limit").map((c) => Number(c.args[0]));
+    expect(Math.max(...limits)).toBeLessThanOrEqual(1000);
+    db.missingTables = new Set(["codebook_entries"]);
+    expect(await listCodebookUnits(ORG)).toBeNull();
+    db.missingTables = new Set();
+    db.readError = { codebook_entries: { message: "statement timeout" } };
+    await expect(listCodebookUnits(ORG)).rejects.toThrow(/statement timeout/);
+    // the page takes its picker, labels and "X of Y mapped" from that list, and says when it is short
+    const src = readFileSync("app/(protected)/admin/scope/page.tsx", "utf8");
+    expect(src).toContain("listCodebookUnits(activeOrgId)");
+    expect(src).toContain("setBook(u.units ? { ...b, units: u.units } : b)");
+    expect(src).toMatch(/Site Codebook&apos;s units could not be read in full/);
   });
 });
 
@@ -586,6 +735,8 @@ describe("20261138 — one paste, counts only, every object new", () => {
       "documents_total_for_org", "documents_unit_code_guard", "trg_documents_unit_code_guard",
       "units_org_codebook_code_uniq", "documents_org_unit_code_idx", "codebook_code",
       "units_codebook_code_guard", "trg_units_codebook_code_guard",
+      "assets_unit_id_follows_filing", "trg_assets_unit_id_follows_filing",
+      "units_codebook_code_follow", "trg_units_codebook_code_follow",
     ]) {
       expect(others.some((s) => s.includes(name)), name).toBe(false);
     }
@@ -640,8 +791,73 @@ describe("20261138 — one paste, counts only, every object new", () => {
   it("the header no longer claims nothing else is widened without naming the route's disclosure rule and the fill-only projection", () => {
     const header = sql.slice(0, sql.indexOf("CREATE TEMP TABLE"));
     expect(header).not.toMatch(/Nothing else is widened;/);
-    expect(header).toMatch(/lists a document's number in its report only to\s*\n--\s*a caller who may read it/);
-    expect(header).toMatch(/FILLS an empty assets\.unit_id but never rewrites one already set/);
+    expect(header).toMatch(/lists a document's\s*\n--\s*number in its report only to a caller who may read it/);
+    expect(header).toMatch(/FILLS an empty assets\.unit_id\s*\n--\s*\(through 6\.\) but never rewrites one already set/);
+    // the projection's one widening is said: 7. moves it for a caller the assets overlay would refuse
+    expect(header).toMatch(/7\. moves it for a\s*\n--\s*mapping change 5\. admitted even when the assets UPDATE overlay would/);
+  });
+
+  it("assets.unit_id follows the filing (6.): BEFORE INSERT OR UPDATE OF unit_code, not SECURITY DEFINER, and a hand-set unit is kept", () => {
+    const f = code.slice(code.indexOf("FUNCTION assets_unit_id_follows_filing"), code.indexOf("DROP TRIGGER IF EXISTS trg_assets_unit_id_follows_filing"));
+    expect(f).not.toMatch(/SECURITY DEFINER/);
+    expect(f).toMatch(/RETURNS trigger LANGUAGE plpgsql SET search_path = public AS \$\$/);
+    // the order of the rules is the rule: a write that sets unit_id wins; an unmoved filing keeps its unit;
+    // a refiled unit that was not the old filing's projection is kept; only then is the filing projected
+    const order = [
+      "IF TG_OP = 'UPDATE' THEN",
+      "IF NEW.unit_id IS DISTINCT FROM OLD.unit_id THEN RETURN NEW; END IF;",
+      "IF OLD.unit_id IS NOT NULL THEN",
+      "IF NEW.unit_code IS NOT DISTINCT FROM OLD.unit_code THEN RETURN NEW; END IF;",
+      "IF OLD.unit_id IS DISTINCT FROM (SELECT u.id FROM units u",
+      "WHERE u.org_id = OLD.org_id AND u.codebook_code = OLD.unit_code AND NOT u.archived) THEN",
+      "ELSIF NEW.unit_id IS NOT NULL THEN",
+      "NEW.unit_id := (SELECT u.id FROM units u",
+      "WHERE u.org_id = NEW.org_id AND u.codebook_code = NEW.unit_code AND NOT u.archived);",
+      "RETURN NEW;\nEND;",
+    ];
+    let at = -1;
+    for (const step of order) {
+      const i = f.indexOf(step, at + 1);
+      expect(i, step).toBeGreaterThan(at);
+      at = i;
+    }
+    // no auth branch: every writer (a person, the Bridge, an import, the decode) gets the same projection
+    expect(f).not.toMatch(/auth\.uid\(\)/);
+    expect(code).toMatch(/CREATE TRIGGER trg_assets_unit_id_follows_filing\s*BEFORE INSERT OR UPDATE OF unit_code ON assets\s*FOR EACH ROW EXECUTE FUNCTION assets_unit_id_follows_filing\(\);/);
+    // probed in the final SELECT: BEFORE (2), INSERT (4), UPDATE (16)
+    expect(code).toContain("tgname = 'trg_assets_unit_id_follows_filing'");
+    expect(code).toContain("AND (tgtype & 2) <> 0 AND (tgtype & 4) <> 0 AND (tgtype & 16) <> 0)");
+    expect(code).toContain("prosrc LIKE '%IF NEW.unit_id IS DISTINCT FROM OLD.unit_id THEN RETURN NEW; END IF;%'");
+    expect(code).toContain("FROM pg_proc WHERE proname = 'assets_unit_id_follows_filing'");
+  });
+
+  it("the projection follows the mapping (7.): AFTER, SECURITY DEFINER with search_path pinned, the scope writer tier re-checked, release then fill-only take", () => {
+    const f = code.slice(code.indexOf("FUNCTION units_codebook_code_follow"), code.indexOf("DROP TRIGGER IF EXISTS trg_units_codebook_code_follow"));
+    expect(f).toMatch(/RETURNS trigger LANGUAGE plpgsql SECURITY DEFINER SET search_path = public AS \$\$/);
+    // nothing to do unless the code moved (an archive arrives here with 5.'s release already applied)
+    expect(f).toMatch(/IF TG_OP = 'UPDATE' AND NEW\.codebook_code IS NOT DISTINCT FROM OLD\.codebook_code THEN\s*RETURN NULL;/);
+    expect(f).toMatch(/IF TG_OP = 'INSERT' AND NEW\.codebook_code IS NULL THEN\s*RETURN NULL;/);
+    // the definer's rights are never lent to a caller 5. refuses — the same roles, the same refusal
+    const guard = f.indexOf("caller_holds_any_role(NEW.org_id");
+    const firstWrite = f.indexOf("UPDATE assets");
+    expect(guard).toBeGreaterThan(-1);
+    expect(guard).toBeLessThan(firstWrite);
+    expect(f).toMatch(/IF auth\.uid\(\) IS NOT NULL\s*AND NOT caller_holds_any_role\(NEW\.org_id, ARRAY\[[^\]]*\]::text\[\]\) THEN\s*RAISE EXCEPTION 'units_codebook_code_scope_writers:/);
+    const roles = f.match(/caller_holds_any_role\(NEW\.org_id, ARRAY\[([^\]]*)\]::text\[\]\)/)!;
+    expect(roles[1].split(",").map((r) => r.trim().replace(/^'|'$/g, "")).sort()).toEqual([...(adminSurface("scope")?.writes ?? [])].sort());
+    // release: only the equipment projected from THIS unit under the OLD code, to the old code's holder now
+    expect(f).toMatch(/IF TG_OP = 'UPDATE' AND OLD\.codebook_code IS NOT NULL THEN\s*UPDATE assets SET unit_id = \(SELECT u\.id FROM units u\s*WHERE u\.org_id = OLD\.org_id AND u\.codebook_code = OLD\.codebook_code AND NOT u\.archived\)\s*WHERE org_id = OLD\.org_id AND unit_id = OLD\.id AND unit_code = OLD\.codebook_code;/);
+    // take: fill only — a unit already there is kept
+    expect(f).toMatch(/IF NEW\.codebook_code IS NOT NULL THEN\s*UPDATE assets SET unit_id = NEW\.id\s*WHERE org_id = NEW\.org_id AND unit_code = NEW\.codebook_code AND unit_id IS NULL;/);
+    expect(f.indexOf("unit_id = OLD.id")).toBeLessThan(f.indexOf("unit_id = NEW.id"));
+    // it writes nothing but assets.unit_id
+    expect(f.match(/UPDATE \w+ SET (\w+)/g)).toEqual(["UPDATE assets SET unit_id", "UPDATE assets SET unit_id"]);
+    expect(code).toMatch(/CREATE TRIGGER trg_units_codebook_code_follow\s*AFTER INSERT OR UPDATE OF codebook_code, archived ON units\s*FOR EACH ROW EXECUTE FUNCTION units_codebook_code_follow\(\);/);
+    // probed: AFTER row trigger (bit 1 set, bit 2 clear), SECURITY DEFINER, search_path pinned
+    expect(code).toContain("tgname = 'trg_units_codebook_code_follow'");
+    expect(code).toContain("AND (tgtype & 1) <> 0 AND (tgtype & 2) = 0 AND (tgtype & 4) <> 0 AND (tgtype & 16) <> 0)");
+    expect(code).toContain("prosrc LIKE '%caller_holds_any_role(NEW.org_id, ARRAY[''Admin'',''Manager'',''Supervisor'',''DocCtrl'']::text[])%'");
+    expect(code).toMatch(/AND prosecdef\s*\n\s*AND array_to_string\(proconfig, ','\) LIKE '%search_path=public%'\s*\n\s*FROM pg_proc WHERE proname = 'units_codebook_code_follow'/);
   });
 
   it("pg_proc probes double the apostrophes of the body's literals; no bare cast inside a LIKE pattern", () => {

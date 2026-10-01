@@ -52,17 +52,53 @@
 --      be mapped to the unit that replaces it (the UNIQUE index would
 --      otherwise hold it on a row the page no longer shows). Not SECURITY
 --      DEFINER; search_path pinned.
+--   6. trg_assets_unit_id_follows_filing (BEFORE INSERT OR UPDATE OF
+--      unit_code ON assets): assets.unit_id is the mapping's projection of
+--      the item's filing, and it is kept current here for every writer (the
+--      registry page, the Bridge, an import, the decode) — the way 3. drops a
+--      renumbered document's decode. A new item with no unit takes the one
+--      its filing maps to; a refiled item whose unit WAS the old filing's
+--      projection (or empty) takes the new filing's (none, when that maps to
+--      none); a write that sets unit_id itself is taken as written; a unit
+--      that disagreed with the old filing (set by hand or by an import) is
+--      kept. An UPDATE that names unit_code without changing it fills an
+--      EMPTY unit from the mapping as it stands at that moment — the
+--      decode's fill is exactly that write, so a remap after the decode's
+--      read is never written as it was. Not SECURITY DEFINER (it reads
+--      units, which every active member reads); search_path pinned.
+--   7. trg_units_codebook_code_follow (AFTER INSERT OR UPDATE OF
+--      codebook_code, archived ON units): the projection follows the
+--      mapping. When a unit's code is set, cleared, moved or released by an
+--      archive, the equipment it was projected onto (unit_id = this unit,
+--      filed under the old code) moves to the old code's holder (none — the
+--      code is unique), and the equipment filed under the new code with no
+--      unit takes this one (fill only). A deleted unit needs nothing here:
+--      assets.unit_id is ON DELETE SET NULL (20260606). SECURITY DEFINER, as
+--      a foreign key's own cascade bypasses RLS: the projection must move
+--      with the mapping whoever moved it — a scope writer who also holds a
+--      read-only role is refused by the assets UPDATE overlay (20261045),
+--      which would leave the old unit on the equipment silently. It
+--      re-checks 5.'s authority itself (it never runs for anyone 5. refuses,
+--      whatever the trigger order), writes only assets.unit_id, only the
+--      org's equipment under the code that moved, and the registry guard
+--      (assets_guard_registry, 20261045) still sees the caller.
+--      search_path pinned.
 --
 -- WIDENS one read: an active member may learn how many documents the org
 -- holds, including ones they cannot open (a count only — the same class as
--- 20261120's entity_mentions_total_for_asset). Nothing else in this file
--- widens; both guards narrow (members can no longer hand-write a unit
--- decode, and only the scope writer tier can change the mapping). The
--- application half — POST /api/admin/unit-identity reads every document
--- with the service role — lists a document's number in its report only to
--- a caller who may read it (the controller tier sees all; the rest of the
--- scope writer tier sees open-visibility numbers and a count of the others),
--- and it FILLS an empty assets.unit_id but never rewrites one already set.
+-- 20261120's entity_mentions_total_for_asset). Both guards narrow (members
+-- can no longer hand-write a unit decode, and only the scope writer tier can
+-- change the mapping). The projection (6., 7.) writes nothing a person
+-- chooses: only assets.unit_id, only the filing seen through the mapping,
+-- and a unit that disagrees with the filing is kept; 7. moves it for a
+-- mapping change 5. admitted even when the assets UPDATE overlay would
+-- refuse that caller a registry write of their own (a scope writer who also
+-- holds Viewer or Auditor). The application half — POST /api/admin/unit-
+-- identity reads every document with the service role — lists a document's
+-- number in its report only to a caller who may read it (the controller
+-- tier sees all; the rest of the scope writer tier sees open-visibility
+-- numbers and a count of the others), and it FILLS an empty assets.unit_id
+-- (through 6.) but never rewrites one already set.
 --
 -- DEC-30. The pre-apply inventory (aggregate counts only) is captured into a
 -- TEMP TABLE BEFORE the transaction. The decode runs in TypeScript after the
@@ -90,7 +126,7 @@ SELECT 'operational units whose code equals a Site Codebook unit code (a hint fo
  WHERE NOT u.archived
    AND EXISTS (SELECT 1 FROM codebook_entries c WHERE c.org_id = u.org_id AND c.kind = 'unit' AND c.code = u.code)
 UNION ALL
-SELECT 'assets with assets.unit_id set (kept as they are — the backfill only fills an EMPTY unit_id from the mapping)', COUNT(*)
+SELECT 'assets with assets.unit_id set (kept as they are — no unit is mapped yet, so none of them is a projection; the decode and the triggers below fill only an EMPTY unit_id)', COUNT(*)
   FROM assets WHERE unit_id IS NOT NULL
 UNION ALL
 SELECT 'assets filed under a Site Codebook unit (assets.unit_code set)', COUNT(*)
@@ -194,6 +230,79 @@ CREATE TRIGGER trg_units_codebook_code_guard
   BEFORE INSERT OR UPDATE OF codebook_code, archived OR DELETE ON units
   FOR EACH ROW EXECUTE FUNCTION units_codebook_code_guard();
 
+-- ── 6. assets.unit_id follows the filing ────────────────────────────────────
+CREATE OR REPLACE FUNCTION assets_unit_id_follows_filing()
+RETURNS trigger LANGUAGE plpgsql SET search_path = public AS $$
+BEGIN
+  IF TG_OP = 'UPDATE' THEN
+    -- A write that sets unit_id itself is taken as written.
+    IF NEW.unit_id IS DISTINCT FROM OLD.unit_id THEN RETURN NEW; END IF;
+    IF OLD.unit_id IS NOT NULL THEN
+      -- Not refiled: the unit stays.
+      IF NEW.unit_code IS NOT DISTINCT FROM OLD.unit_code THEN RETURN NEW; END IF;
+      -- Refiled, but the unit was not the old filing's projection (set by
+      -- hand or by an import): kept.
+      IF OLD.unit_id IS DISTINCT FROM (SELECT u.id FROM units u
+            WHERE u.org_id = OLD.org_id AND u.codebook_code = OLD.unit_code AND NOT u.archived) THEN
+        RETURN NEW;
+      END IF;
+    END IF;
+  ELSIF NEW.unit_id IS NOT NULL THEN
+    -- An insert that names its unit keeps it.
+    RETURN NEW;
+  END IF;
+  -- The filing seen through the mapping as it stands now (NULL: none).
+  NEW.unit_id := (SELECT u.id FROM units u
+                   WHERE u.org_id = NEW.org_id AND u.codebook_code = NEW.unit_code AND NOT u.archived);
+  RETURN NEW;
+END;
+$$;
+
+DROP TRIGGER IF EXISTS trg_assets_unit_id_follows_filing ON assets;
+CREATE TRIGGER trg_assets_unit_id_follows_filing
+  BEFORE INSERT OR UPDATE OF unit_code ON assets
+  FOR EACH ROW EXECUTE FUNCTION assets_unit_id_follows_filing();
+
+-- ── 7. The projection follows the mapping ───────────────────────────────────
+CREATE OR REPLACE FUNCTION units_codebook_code_follow()
+RETURNS trigger LANGUAGE plpgsql SECURITY DEFINER SET search_path = public AS $$
+BEGIN
+  IF TG_OP = 'UPDATE' AND NEW.codebook_code IS NOT DISTINCT FROM OLD.codebook_code THEN
+    RETURN NULL;
+  END IF;
+  IF TG_OP = 'INSERT' AND NEW.codebook_code IS NULL THEN
+    RETURN NULL;
+  END IF;
+  -- 5.'s authority, re-checked here: this function writes equipment rows
+  -- with the definer's rights, so it decides for itself who it runs for.
+  IF auth.uid() IS NOT NULL
+     AND NOT caller_holds_any_role(NEW.org_id, ARRAY['Admin','Manager','Supervisor','DocCtrl']::text[]) THEN
+    RAISE EXCEPTION 'units_codebook_code_scope_writers: only the Operational scope writer roles map a unit to the Site Codebook'
+      USING ERRCODE = '42501';
+  END IF;
+  -- Released (moved, cleared, or by an archive): the equipment this unit was
+  -- projected onto follows the old code to its holder now (none — a code
+  -- maps to at most one unit — unless the same statement handed it on).
+  IF TG_OP = 'UPDATE' AND OLD.codebook_code IS NOT NULL THEN
+    UPDATE assets SET unit_id = (SELECT u.id FROM units u
+                                  WHERE u.org_id = OLD.org_id AND u.codebook_code = OLD.codebook_code AND NOT u.archived)
+     WHERE org_id = OLD.org_id AND unit_id = OLD.id AND unit_code = OLD.codebook_code;
+  END IF;
+  -- Taken: equipment filed under the new code with no unit takes this one
+  -- (fill only — a unit already there is kept).
+  IF NEW.codebook_code IS NOT NULL THEN
+    UPDATE assets SET unit_id = NEW.id
+     WHERE org_id = NEW.org_id AND unit_code = NEW.codebook_code AND unit_id IS NULL;
+  END IF;
+  RETURN NULL;
+END;
+$$;
+
+DROP TRIGGER IF EXISTS trg_units_codebook_code_follow ON units;
+CREATE TRIGGER trg_units_codebook_code_follow
+  AFTER INSERT OR UPDATE OF codebook_code, archived ON units
+  FOR EACH ROW EXECUTE FUNCTION units_codebook_code_follow();
+
 COMMIT;
 
 -- ── Verification (read-only) + inventory — ONE result set ───────────────────
@@ -254,12 +363,38 @@ SELECT 'units.codebook_code is the scope writer tier''s: a change by anyone else
               FROM pg_proc WHERE proname = 'units_codebook_code_guard'),
        NULL
 UNION ALL
+SELECT 'assets.unit_id follows the filing: a new item takes the unit its filing maps to, a refile moves a projected unit and keeps one set by hand, a write that sets unit_id is taken as written (BEFORE trigger, not SECURITY DEFINER, search_path pinned)',
+       EXISTS (SELECT 1 FROM pg_trigger WHERE tgname = 'trg_assets_unit_id_follows_filing'
+                AND tgrelid = 'assets'::regclass AND NOT tgisinternal
+                AND (tgtype & 2) <> 0 AND (tgtype & 4) <> 0 AND (tgtype & 16) <> 0)
+       AND (SELECT prosrc LIKE '%IF NEW.unit_id IS DISTINCT FROM OLD.unit_id THEN RETURN NEW; END IF;%'
+                   AND prosrc LIKE '%IF NEW.unit_code IS NOT DISTINCT FROM OLD.unit_code THEN RETURN NEW; END IF;%'
+                   AND prosrc LIKE '%IF OLD.unit_id IS DISTINCT FROM (SELECT u.id FROM units u%'
+                   AND prosrc LIKE '%NEW.unit_id := (SELECT u.id FROM units u%'
+                   AND NOT prosecdef
+                   AND array_to_string(proconfig, ',') LIKE '%search_path=public%'
+              FROM pg_proc WHERE proname = 'assets_unit_id_follows_filing'),
+       NULL
+UNION ALL
+SELECT 'the projection follows the mapping: a code moved, cleared or released takes its projected unit off the equipment, the new code fills its equipment with none (AFTER row trigger, SECURITY DEFINER, search_path pinned, the scope writer tier re-checked)',
+       EXISTS (SELECT 1 FROM pg_trigger WHERE tgname = 'trg_units_codebook_code_follow'
+                AND tgrelid = 'units'::regclass AND NOT tgisinternal
+                AND (tgtype & 1) <> 0 AND (tgtype & 2) = 0 AND (tgtype & 4) <> 0 AND (tgtype & 16) <> 0)
+       AND (SELECT prosrc LIKE '%WHERE org_id = OLD.org_id AND unit_id = OLD.id AND unit_code = OLD.codebook_code;%'
+                   AND prosrc LIKE '%WHERE org_id = NEW.org_id AND unit_code = NEW.codebook_code AND unit_id IS NULL;%'
+                   AND prosrc LIKE '%caller_holds_any_role(NEW.org_id, ARRAY[''Admin'',''Manager'',''Supervisor'',''DocCtrl'']::text[])%'
+                   AND prosrc LIKE '%USING ERRCODE = ''42501''%'
+                   AND prosecdef
+                   AND array_to_string(proconfig, ',') LIKE '%search_path=public%'
+              FROM pg_proc WHERE proname = 'units_codebook_code_follow'),
+       NULL
+UNION ALL
 SELECT 'inventory (before): ' || what, NULL, n::text FROM _intel_g38_before
 UNION ALL
 SELECT 'inventory (after): operational units mapped to a Site Codebook unit', NULL,
        (SELECT COUNT(*) FROM units WHERE codebook_code IS NOT NULL)::text
 UNION ALL
-SELECT 'inventory (after): assets whose unit_id differs from the operational unit their filing maps to (kept — the backfill never rewrites a unit_id)', NULL,
+SELECT 'inventory (after): assets whose unit_id differs from the operational unit their filing maps to (kept — set by hand or by an import; a projected unit follows its filing and the mapping)', NULL,
        (SELECT COUNT(*) FROM assets a JOIN units u ON u.org_id = a.org_id AND u.codebook_code = a.unit_code
          WHERE a.unit_id IS NOT NULL AND a.unit_id <> u.id)::text
 UNION ALL

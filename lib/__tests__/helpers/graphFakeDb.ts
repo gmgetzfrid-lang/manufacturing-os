@@ -17,7 +17,8 @@
 // read is `readError`; RLS is `hidden` (rows a reader cannot see are absent
 // from reads AND counts); `refuseWrites` makes an UPDATE match zero rows;
 // `triggers` stands in for a BEFORE UPDATE trigger (row, patch) → the patch
-// that lands; `beforeWrite` runs before each UPDATE matches its rows (a
+// that lands, and `insertTriggers` for a BEFORE INSERT one (row → the row
+// that lands); `beforeWrite` runs before each UPDATE matches its rows (a
 // concurrent writer between a read and a write).
 // Every call is recorded in `calls`. Not a database — it exists to prove what
 // the app code does with the answers.
@@ -37,6 +38,7 @@ export interface GraphFakeDb {
   calls: Array<{ table: string; method: string; args: unknown[] }>;
   seq: number;
   triggers?: Record<string, (row: Row, patch: Row) => Row>;
+  insertTriggers?: Record<string, (row: Row) => Row>;
   /** PostgREST db-max-rows (undefined → 1,000, the default). */
   maxRows?: number;
   beforeWrite?: ((table: string) => void) | null;
@@ -48,7 +50,7 @@ export const FAKE_MAX_ROWS = 1000;
 export function newGraphFakeDb(): GraphFakeDb {
   return {
     tables: {}, missingTables: new Set(), missingColumns: {}, readError: {}, hidden: {},
-    refuseWrites: new Set(), writeError: {}, rpc: {}, calls: [], seq: 0, triggers: {},
+    refuseWrites: new Set(), writeError: {}, rpc: {}, calls: [], seq: 0, triggers: {}, insertTriggers: {},
     maxRows: FAKE_MAX_ROWS, beforeWrite: null,
   };
 }
@@ -65,6 +67,7 @@ export function resetGraphFakeDb(db: GraphFakeDb, tables: Record<string, Row[]> 
   db.calls = [];
   db.seq = 0;
   db.triggers = {};
+  db.insertTriggers = {};
   db.maxRows = FAKE_MAX_ROWS;
   db.beforeWrite = null;
 }
@@ -121,7 +124,11 @@ export function makeGraphFake(db: GraphFakeDb) {
       }
       if (op === "insert") {
         if (db.writeError[table]) return { data: null, error: db.writeError[table] };
-        const rows = payload.map((p) => ({ id: p.id ?? `${table}-${++db.seq}`, ...p }));
+        const trig = db.insertTriggers?.[table];
+        const rows = payload.map((p) => {
+          const r = { id: p.id ?? `${table}-${++db.seq}`, ...p };
+          return trig ? trig(r) : r;
+        });
         (db.tables[table] ??= []).push(...rows);
         return { data: returning ? rows : null, error: null };
       }

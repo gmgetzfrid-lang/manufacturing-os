@@ -13,6 +13,14 @@
 // rewritten (a disagreement is counted). documents.unit_id is never
 // written. Rules: lib/operationalGraph.ts planUnitIdentity.
 //
+// assets.unit_id is KEPT CURRENT by the database, not by this pass:
+// 20261138's trg_assets_unit_id_follows_filing projects the filing on every
+// insert and refile, and trg_units_codebook_code_follow moves the projection
+// when a unit's mapping changes. This pass only fills what those could not
+// see (an item written while its unit was being mapped) — and it fills
+// THROUGH the same trigger, so the value is the mapping as it stands at the
+// write, never the one this call read.
+//
 // `dryRun: true` reports what would change and writes nothing (DEC-30: the
 // inventory before the apply). Idempotent — re-running writes only drift.
 //
@@ -28,15 +36,20 @@
 //
 // EVERY WRITE RE-CHECKS WHAT IT WAS PLANNED ON. The plan comes from a read
 // taken before the writes, so each UPDATE carries the plan's own condition:
-// an equipment item's unit_id is filled only while it is still EMPTY and the
-// item is still filed to the codebook unit the plan mapped (`.is("unit_id",
-// null)`, `.eq("unit_code", …)`); a document's decode lands only while its
-// number is still one the plan decoded to that value (`.in("document_number",
-// …)` — every number in one write decodes to the same value, so a renumber
-// to another of them is still right). A row that no longer matches is left
-// as it is and counted `changed` (changed since it was read) — never refused,
-// never overwritten. 20261138's trigger drops the decode on a person's
-// renumber; this keeps the service role from writing it back.
+// an equipment item is written only while its unit_id is still EMPTY and it
+// is still filed to the codebook unit the plan mapped (`.is("unit_id",
+// null)`, `.eq("unit_code", …)`), and the write re-sends that filing rather
+// than a unit id — 20261138's trigger fills the empty unit from the mapping
+// AT THE WRITE, so a remap between this call's read and its write lands the
+// new holder (or none), never the unit this call planned; a row that lands
+// with another unit than planned is counted `changed`. A document's decode
+// lands only while its number is still one the plan decoded to that value
+// (`.in("document_number", …)` — every number in one write decodes to the
+// same value, so a renumber to another of them is still right). A row that
+// no longer matches is left as it is and counted `changed` (changed since it
+// was read) — never refused, never overwritten. 20261138's trigger drops the
+// decode on a person's renumber; this keeps the service role from writing it
+// back.
 //
 // THE CODEBOOK IS READ WHOLE. loadCodebookAdmin is one request, which
 // PostgREST cuts at max-rows (1,000 entries of every kind); a unit past the
@@ -121,8 +134,13 @@ async function readAll<T extends { id: string }>(
   }
 }
 
-/** One UPDATE: the value, the rows, and the condition the plan was made on. */
-type Chunk = { value: string | null; ids: string[]; guard: (q: Narrowable) => Narrowable };
+/** One UPDATE: the columns it writes, the rows, the condition the plan was
+ *  made on, and (when the database decides the value) which returned rows
+ *  landed as planned. */
+type Chunk = {
+  patch: Record<string, unknown>; ids: string[]; guard: (q: Narrowable) => Narrowable;
+  returning?: string; landed?: (row: Record<string, unknown>) => boolean;
+};
 
 /** Take at most `budget` planned rows, in plan order; say how many were left. */
 function takeBudget<V>(writes: Map<V, string[]>, budget: number): { groups: Array<[V, string[]]>; taken: number; left: number } {
@@ -159,50 +177,61 @@ function documentChunks(groups: Array<[string | null, string[]]>, numberOf: Map<
       const n = numberOf.get(id) ?? null;
       if (n === null) unnumbered.push(id);
       else if (inListable(n)) listed.push(id);
-      else chunks.push({ value, ids: [id], guard: (q) => q.eq("document_number", n) });
+      else chunks.push({ patch: { unit_code: value }, ids: [id], guard: (q) => q.eq("document_number", n) });
     }
-    for (const part of slices(unnumbered, DOC_WRITE_CHUNK)) chunks.push({ value, ids: part, guard: (q) => q.is("document_number", null) });
+    for (const part of slices(unnumbered, DOC_WRITE_CHUNK)) chunks.push({ patch: { unit_code: value }, ids: part, guard: (q) => q.is("document_number", null) });
     for (const part of slices(listed, DOC_WRITE_CHUNK)) {
       const numbers = [...new Set(part.map((id) => numberOf.get(id) as string))];
-      chunks.push({ value, ids: part, guard: (q) => q.in("document_number", numbers) });
+      chunks.push({ patch: { unit_code: value }, ids: part, guard: (q) => q.in("document_number", numbers) });
     }
   }
   return chunks;
 }
 
 /** assets.unit_id fills: only while unit_id is still EMPTY and the item is
- *  still filed to the codebook unit mapped to the value (DEC-44 §3). */
-function assetChunks(groups: Array<[string, string[]]>, codeOfUnit: Map<string, string>): Chunk[] {
+ *  still filed to the codebook unit the plan mapped (DEC-44 §3). The write
+ *  re-sends that filing, unchanged; 20261138's trg_assets_unit_id_follows_filing
+ *  fills the empty unit from the mapping as it stands at the write, so a row
+ *  lands as planned only when it comes back carrying the planned unit. A
+ *  planned unit whose filing is unknown (it cannot be — the plan only fills
+ *  through a mapped filing) is never written. */
+function assetChunks(groups: Array<[string, string[]]>, codeOfUnit: Map<string, string>): { chunks: Chunk[]; unplaceable: number } {
   const chunks: Chunk[] = [];
+  let unplaceable = 0;
   for (const [unitId, ids] of groups) {
     const filing = codeOfUnit.get(unitId) ?? null;
+    if (filing === null) { unplaceable += ids.length; continue; }
     for (const part of slices(ids, WRITE_CHUNK)) {
       chunks.push({
-        value: unitId, ids: part,
-        guard: (q) => (filing === null ? q.is("unit_id", null) : q.is("unit_id", null).eq("unit_code", filing)),
+        patch: { unit_code: filing }, ids: part,
+        guard: (q) => q.is("unit_id", null).eq("unit_code", filing),
+        returning: "id, unit_id",
+        landed: (r) => r.unit_id === unitId,
       });
     }
   }
-  return chunks;
+  return { chunks, unplaceable };
 }
 
-/** Apply one column's chunks in bounded parallel waves. `written` landed;
- *  `changed` no longer matched the plan's condition (changed or deleted since
- *  the read) and were left as they are; `refused` met an error. */
+/** Apply one table's chunks in bounded parallel waves. `written` landed as
+ *  planned; `changed` no longer matched the plan's condition (changed or
+ *  deleted since the read) and were left as they are, or the database placed
+ *  them by a mapping that changed since the read; `refused` met an error. */
 async function applyWrites(
-  table: "documents" | "assets", column: "unit_code" | "unit_id", orgId: string, chunks: Chunk[],
+  table: "documents" | "assets", orgId: string, chunks: Chunk[],
 ): Promise<{ written: number; changed: number; refused: number; firstError: string | null }> {
   let written = 0, changed = 0, refused = 0;
   let firstError: string | null = null;
   for (let w = 0; w < chunks.length; w += WRITE_WAVE) {
     const wave = chunks.slice(w, w + WRITE_WAVE);
-    const results = await Promise.all(wave.map(({ value, ids, guard }) => guard(
-      (supabaseAdmin.from(table).update({ [column]: value }) as unknown as Narrowable).eq("org_id", orgId).in("id", ids),
-    ).select("id")));
+    const results = await Promise.all(wave.map(({ patch, ids, guard, returning }) => guard(
+      (supabaseAdmin.from(table).update(patch) as unknown as Narrowable).eq("org_id", orgId).in("id", ids),
+    ).select(returning ?? "id")));
     results.forEach(({ data, error }, i) => {
       const n = wave[i].ids.length;
       if (error) { refused += n; firstError ??= error.message; return; }
-      const landed = (data ?? []).length;
+      const rows = (data ?? []) as Array<Record<string, unknown>>;
+      const landed = wave[i].landed ? rows.filter(wave[i].landed!).length : rows.length;
       written += landed;
       changed += n - landed;
     });
@@ -291,8 +320,10 @@ export async function POST(req: NextRequest) {
     }));
     if (startErr) return bad(`The decode did not run: its audit record could not be written (${startErr.message}).`, 500);
 
-    const d = await applyWrites("documents", "unit_code", orgId, documentChunks(dc.groups, numberOf));
-    const a = await applyWrites("assets", "unit_id", orgId, assetChunks(ac.groups, codeOfUnit));
+    const d = await applyWrites("documents", orgId, documentChunks(dc.groups, numberOf));
+    const placed = assetChunks(ac.groups, codeOfUnit);
+    const a = await applyWrites("assets", orgId, placed.chunks);
+    a.changed += placed.unplaceable;
     report.documents.written = d.written;
     report.documents.changed = d.changed;
     report.documents.refused = d.refused;
@@ -304,7 +335,7 @@ export async function POST(req: NextRequest) {
     if (d.firstError) report.notes.push(`${d.refused} document write(s) were refused: ${d.firstError}`);
     if (d.changed > 0) report.notes.push(`${d.changed} document(s) changed since they were read (renumbered or deleted while the decode ran) — left as they are; run the decode again to place them.`);
     if (a.firstError) report.notes.push(`${a.refused} equipment write(s) were refused: ${a.firstError}`);
-    if (a.changed > 0) report.notes.push(`${a.changed} equipment item(s) changed since they were read (a unit set, refiled or deleted while the decode ran) — left as they are; a unit already set is never overwritten.`);
+    if (a.changed > 0) report.notes.push(`${a.changed} equipment item(s) changed since they were read (a unit set, refiled, remapped or deleted while the decode ran) — a unit already set is never overwritten, and an item whose unit was remapped took the unit its filing maps to now.`);
 
     const { error: auditErr } = await supabaseAdmin.from("audit_logs").insert(auditRow("finished", {
       documents: { written: d.written, changed: d.changed, refused: d.refused },
