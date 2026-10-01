@@ -869,11 +869,19 @@ export default function FullScreenViewer({
       setPending(null);
     } catch (e) {
       const message = (e as Error).message || "Action failed";
+      // EGR-6: a copy delivered but not recorded already reached the person —
+      // close the dialog (its download button would invite a second copy,
+      // unrecorded too) and say it. The dialog stays open only for a refusal
+      // made BEFORE delivery (acknowledgment, hold, fetch).
+      if (e instanceof DownloadUnrecordedError) {
+        setPending(null);
+        void appAlert(message);
+        return;
+      }
       setActionError(message);
       // The checkout holder's direct download / print opens no dialog, and
-      // actionError renders only inside it — say it anyway (EGR-6: a copy
-      // delivered but not recorded, a hold or an acknowledgment refusal is
-      // never silent).
+      // actionError renders only inside it — say it anyway (a hold or an
+      // acknowledgment refusal is never silent).
       if (!pending) void appAlert(message);
     } finally { setActionBusy(false); }
   };

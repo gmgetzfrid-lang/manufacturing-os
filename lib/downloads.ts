@@ -17,7 +17,7 @@ import { downloadStampedPdf, stampPdf } from "@/lib/stamping";
 import { recordIntent } from "@/lib/intents";
 import { publicOrigin } from "@/lib/publicOrigin";
 import { decideHoldGate, readActiveHolds, type HoldGateDecision } from "@/lib/holdGate";
-import type { DocumentRecord } from "@/types/schema";
+import type { AckPolicy, DocumentRecord } from "@/types/schema";
 
 export type ControlState = "controlled" | "uncontrolled";
 
@@ -329,10 +329,38 @@ export interface AckGateDoc {
  *  ack policy sets `hardGate` AND for which the person still has a pending
  *  acknowledgment; `unknown` — the documents it could not decide because a
  *  read failed (their chunk's pending-acknowledgment read, the policy
- *  module, or their own policy read). */
+ *  module, or their own folder / library policy read). */
 export interface AckGateOutcome {
   gated: Set<string>;
   unknown: Set<string>;
+}
+
+/** PKG-9 (P8's fifth fix pass): a document's inherited ack policy, resolved
+ *  with CHECKED reads. lib/acknowledgments.ts effectiveAckPolicyForDocument
+ *  reads the folder and library policies without looking at `{ error }` —
+ *  supabase-js RESOLVES with it on a PostgREST error or a dropped connection,
+ *  it does not throw — so a failed read resolved as "no policy here" and the
+ *  pack and the book let a hard-gated sheet through. The most specific
+ *  DEFINED level wins (resolveEffectiveAckPolicy), so a level is read only
+ *  while every more specific one is undefined: a document's own policy needs
+ *  no read at all. A read that errors (or throws) is `ok: false` — the gate
+ *  marks the document unknown and never memoizes it. */
+async function readEffectiveAckPolicy(
+  d: AckGateDoc & { libraryId: string },
+  resolve: typeof import("@/lib/acknowledgments").resolveEffectiveAckPolicy,
+): Promise<{ ok: true; policy: AckPolicy | null } | { ok: false }> {
+  const own = (d.ackPolicy ?? null) as AckPolicy | null;
+  if (own) return { ok: true, policy: resolve(own, null, null) };
+  let folder: AckPolicy | null = null;
+  if (d.collectionId) {
+    const { data, error } = await supabase.from("collections").select("ack_policy").eq("id", d.collectionId).maybeSingle();
+    if (error) return { ok: false };
+    folder = (data as { ack_policy?: AckPolicy | null } | null)?.ack_policy ?? null;
+    if (folder) return { ok: true, policy: resolve(null, folder, null) };
+  }
+  const { data: lib, error: libError } = await supabase.from("libraries").select("ack_policy").eq("id", d.libraryId).maybeSingle();
+  if (libError) return { ok: false };
+  return { ok: true, policy: resolve(null, folder, (lib as { ack_policy?: AckPolicy | null } | null)?.ack_policy ?? null) };
 }
 
 /** PKG-9: THE hard read-&-understood gate — the one helper every copy path
@@ -372,28 +400,25 @@ export async function ackGateDocuments(docs: AckGateDoc[], userId: string): Prom
     }
   }
   if (pending.size === 0) return { gated, unknown };
-  let effectiveAckPolicyForDocument: typeof import("@/lib/acknowledgments").effectiveAckPolicyForDocument;
+  let resolveEffectiveAckPolicy: typeof import("@/lib/acknowledgments").resolveEffectiveAckPolicy;
   try {
-    ({ effectiveAckPolicyForDocument } = await import("@/lib/acknowledgments"));
+    ({ resolveEffectiveAckPolicy } = await import("@/lib/acknowledgments"));
   } catch {
     for (const id of pending) unknown.add(id);
     return { gated, unknown };
   }
-  type Policy = Awaited<ReturnType<typeof effectiveAckPolicyForDocument>>;
   for (const d of candidates) {
     if (!pending.has(d.id) || gated.has(d.id)) continue;
     try {
       const memoKey = `${JSON.stringify(d.ackPolicy ?? null)}|${d.collectionId ?? ""}|${d.libraryId}`;
       const hit = ackPolicyMemo.get(memoKey);
-      let policy: Policy;
+      let policy: AckPolicy | null;
       if (hit && Date.now() - hit.at < ACK_POLICY_TTL_MS) {
-        policy = hit.policy as Policy;
+        policy = hit.policy as AckPolicy | null;
       } else {
-        policy = await effectiveAckPolicyForDocument({
-          ackPolicy: (d.ackPolicy ?? null) as Parameters<typeof effectiveAckPolicyForDocument>[0]["ackPolicy"],
-          collectionId: d.collectionId ?? null,
-          libraryId: d.libraryId,
-        });
+        const read = await readEffectiveAckPolicy(d, resolveEffectiveAckPolicy);
+        if (!read.ok) { unknown.add(d.id); continue; } // undecided — and never memoized
+        policy = read.policy;
         ackPolicyMemo.set(memoKey, { at: Date.now(), policy });
         if (ackPolicyMemo.size > 200) {
           const oldest = ackPolicyMemo.keys().next().value;

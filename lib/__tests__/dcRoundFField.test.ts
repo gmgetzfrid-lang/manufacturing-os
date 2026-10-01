@@ -36,7 +36,6 @@ const state = vi.hoisted(() => ({
   inserts: [] as Array<{ table: string; row: unknown }>,
   updates: [] as Array<{ table: string; patch: Record<string, unknown>; filters: Record<string, unknown> }>,
   events: [] as string[],
-  ackPolicies: {} as Record<string, unknown>,
   stamps: [] as Array<Record<string, unknown>>,
   stampedDownloads: [] as Array<{ filename: string; options: Record<string, unknown> }>,
   /** Pages of the PDF served at a URL (the mock's ArrayBuffer length). */
@@ -67,6 +66,8 @@ const state = vi.hoisted(() => ({
   declaredLengthByUrl: {} as Record<string, number>,
   /** Every URL whose body was read whole (arrayBuffer). */
   bodyReads: [] as string[],
+  /** Every SELECT, per table, with its .eq() filters (the policy-read pins). */
+  selects: [] as Array<{ table: string; filters: Record<string, unknown> }>,
 }));
 
 function chain(table: string) {
@@ -91,6 +92,7 @@ function chain(table: string) {
       const id = String(filters.id ?? "");
       return { data: state.updateDenied.has(id) ? [] : [{ id }], error: null };
     }
+    state.selects.push({ table, filters: { ...filters } });
     if (state.readErrors[table]) return { data: null, error: state.readErrors[table] };
     const rows = (state.tables[table] ?? []).filter((r) =>
       Object.entries(ins).every(([k, v]) => v.includes(r[k])) &&
@@ -136,9 +138,29 @@ vi.mock("@/lib/supabase", () => ({
     },
   },
 }));
-vi.mock("@/lib/acknowledgments", () => ({
-  effectiveAckPolicyForDocument: vi.fn(async (d: { libraryId: string }) => state.ackPolicies[d.libraryId] ?? null),
-}));
+vi.mock("@/lib/acknowledgments", () => {
+  // the pure resolver, as lib/acknowledgments.ts has it (most specific DEFINED level wins)
+  const resolveEffectiveAckPolicy = (...levels: Array<{ enabled?: boolean } | null | undefined>) => {
+    for (const p of levels) if (p) return p.enabled ? p : null;
+    return null;
+  };
+  return {
+    resolveEffectiveAckPolicy,
+    // As lib/acknowledgments.ts has it: the folder / library reads' `{ error }`
+    // is never looked at, so a failed read resolves as "no policy" (it does not
+    // throw). P8's fifth fix pass stops the gate calling it; a call is a regression.
+    effectiveAckPolicyForDocument: vi.fn(async (d: { ackPolicy?: { enabled?: boolean } | null; collectionId?: string | null; libraryId: string }) => {
+      const { supabase } = await import("@/lib/supabase");
+      let folder: { enabled?: boolean } | null = null;
+      if (d.collectionId) {
+        const { data } = await supabase.from("collections").select("ack_policy").eq("id", d.collectionId).maybeSingle();
+        folder = (data as { ack_policy?: { enabled?: boolean } | null } | null)?.ack_policy ?? null;
+      }
+      const { data: lib } = await supabase.from("libraries").select("ack_policy").eq("id", d.libraryId).maybeSingle();
+      return resolveEffectiveAckPolicy(d.ackPolicy ?? null, folder, (lib as { ack_policy?: { enabled?: boolean } | null } | null)?.ack_policy ?? null);
+    }),
+  };
+});
 vi.mock("@/lib/stamping", () => ({
   applyStampToPdfDoc: vi.fn(async (doc: { isEncrypted?: boolean }, opts: Record<string, unknown>) => {
     if (doc?.isEncrypted) throw new Error("the PDF is encrypted, so it cannot be stamped — it was not issued as a copy");
@@ -218,7 +240,7 @@ beforeEach(() => {
   state.inserts = [];
   state.updates = [];
   state.events = [];
-  state.ackPolicies = {};
+  state.selects = [];
   state.stamps = [];
   state.stampedDownloads = [];
   state.pagesByUrl = {};
@@ -461,7 +483,7 @@ describe("PKG-7 — a member the reader cannot open is never silently erased", (
 
 describe("PKG-9 — the hard read-&-understood gate binds every pack button", () => {
   beforeEach(() => {
-    state.ackPolicies.libGated = { enabled: true, hardGate: true };
+    state.tables.libraries = [{ id: "libGated", ack_policy: { enabled: true, hardGate: true } }];
     state.tables.documents = [docRow("a"), docRow("g", { library_id: "libGated" })];
     state.tables.document_versions = [versionFor("a"), versionFor("g")];
     state.tables.document_acknowledgments = [{ id: "ack1", document_id: "g", assignee_user_id: "u1", status: "pending" }];
@@ -497,32 +519,72 @@ describe("PKG-9 — the hard read-&-understood gate binds every pack button", ()
   });
 
   it("reads the printer's PENDING acknowledgments first (chunked), and resolves a policy only for a sheet with one — none pending, no policy round trip at all", async () => {
-    const { effectiveAckPolicyForDocument } = await import("@/lib/acknowledgments");
-    const policy = vi.mocked(effectiveAckPolicyForDocument);
-    policy.mockClear();
+    const policyReads = () => state.selects.filter((c) => c.table === "collections" || c.table === "libraries");
     const many = Array.from({ length: 200 }, (_, i) => ({ id: `x${i}`, libraryId: `lib${i % 40}`, collectionId: `col${i}` }));
     state.tables.document_acknowledgments = [];
     expect((await ackGatedDocumentIds(many, "u1")).size).toBe(0);
-    expect(policy).not.toHaveBeenCalled();
+    expect(policyReads()).toEqual([]);
     expect(state.inCalls.filter((c) => c.table === "document_acknowledgments").map((c) => c.n)).toEqual([150, 50]);
-    // one pending → one policy resolved, for that sheet only
+    // one pending → one policy resolved, for that sheet only: its folder, then its library
     state.inCalls = [];
+    state.selects = [];
     state.tables.document_acknowledgments = [{ id: "k", document_id: "x7", assignee_user_id: "u1", status: "pending" }];
-    state.ackPolicies.lib7 = { enabled: true, hardGate: true };
+    state.tables.libraries = [{ id: "lib7", ack_policy: { enabled: true, hardGate: true } }];
     expect([...await ackGatedDocumentIds(many, "u1")]).toEqual(["x7"]);
-    expect(policy).toHaveBeenCalledTimes(1);
-    expect(policy.mock.calls[0][0]).toMatchObject({ libraryId: "lib7", collectionId: "col7" });
+    expect(policyReads()).toEqual([
+      { table: "collections", filters: { id: "col7" } },
+      { table: "libraries", filters: { id: "lib7" } },
+    ]);
   });
 
-  it("the single download still fails OPEN on a broken policy read (unchanged rule) — the gate reports it UNKNOWN, never gated", async () => {
+  it("the gate reads the folder and library policies ITSELF, checked — never through effectiveAckPolicyForDocument, which swallows a read error as 'no policy' (fix pass 5)", async () => {
+    const downloads = src("lib/downloads.ts");
+    expect(downloads).not.toMatch(/await effectiveAckPolicyForDocument\(/);
+    expect(downloads).toMatch(/const \{ data, error \} = await supabase\.from\("collections"\)\.select\("ack_policy"\)\.eq\("id", d\.collectionId\)\.maybeSingle\(\);\s*\n\s*if \(error\) return \{ ok: false \};/);
+    expect(downloads).toMatch(/const \{ data: lib, error: libError \} = await supabase\.from\("libraries"\)\.select\("ack_policy"\)\.eq\("id", d\.libraryId\)\.maybeSingle\(\);\s*\n\s*if \(libError\) return \{ ok: false \};/);
+    // an errored resolution is never memoized
+    expect(downloads).toMatch(/if \(!read\.ok\) \{ unknown\.add\(d\.id\); continue; \}[^\n]*\n\s*policy = read\.policy;\s*\n\s*ackPolicyMemo\.set\(/);
     const { effectiveAckPolicyForDocument } = await import("@/lib/acknowledgments");
-    vi.mocked(effectiveAckPolicyForDocument).mockRejectedValueOnce(new Error("boom"));
+    vi.mocked(effectiveAckPolicyForDocument).mockClear();
+    await ackGateDocuments([{ id: "g", libraryId: "libGated", collectionId: "colAny" }], "u1");
+    expect(effectiveAckPolicyForDocument).not.toHaveBeenCalled();
+  });
+
+  it("the single download still fails OPEN on a LIBRARY policy read that returns { error } (unchanged rule) — the gate reports it UNKNOWN, never gated, and never memoizes it", async () => {
+    state.readErrors.libraries = { message: "upstream request timeout" };
     const gated = await ackGatedDocumentIds([{ id: "g", libraryId: "libBroken" }], "u1");
     expect(gated.size).toBe(0);
-    vi.mocked(effectiveAckPolicyForDocument).mockRejectedValueOnce(new Error("boom"));
     const gate = await ackGateDocuments([{ id: "g", libraryId: "libBroken" }], "u1");
     expect([...gate.gated]).toEqual([]);
     expect([...gate.unknown]).toEqual(["g"]);
+    // the failed read was not remembered as "no policy": once the library reads,
+    // its hard gate holds on the very next print (no 60-second fail-open window)
+    delete state.readErrors.libraries;
+    state.tables.libraries.push({ id: "libBroken", ack_policy: { enabled: true, hardGate: true } });
+    const again = await ackGateDocuments([{ id: "g", libraryId: "libBroken" }], "u1");
+    expect([...again.gated]).toEqual(["g"]);
+    expect(again.unknown.size).toBe(0);
+  });
+
+  it("a FOLDER policy read that returns { error } leaves the sheet unknown even when its library is hard-gated (the folder might say otherwise); a document's own policy needs no read at all", async () => {
+    state.readErrors.collections = { message: "permission denied for table collections", code: "42501" };
+    const gate = await ackGateDocuments([{ id: "g", libraryId: "libGated", collectionId: "colBroken" }], "u1");
+    expect([...gate.unknown]).toEqual(["g"]);
+    expect(gate.gated.size).toBe(0);
+    expect(state.selects.filter((c) => c.table === "libraries")).toEqual([]); // the library is never asked once the folder is undecided
+    // the document's own hard gate decides it without a folder or library read — both broken here
+    state.readErrors.libraries = { message: "upstream request timeout" };
+    state.selects = [];
+    const own = await ackGateDocuments([{ id: "g", libraryId: "libBroken2", collectionId: "colBroken", ackPolicy: { enabled: true, hardGate: true } }], "u1");
+    expect([...own.gated]).toEqual(["g"]);
+    expect(own.unknown.size).toBe(0);
+    expect(state.selects.filter((c) => c.table === "collections" || c.table === "libraries")).toEqual([]);
+    // and a folder policy that is defined decides it without the library read
+    delete state.readErrors.collections;
+    state.tables.collections = [{ id: "colOff", ack_policy: { enabled: false } }];
+    const folderOff = await ackGateDocuments([{ id: "g", libraryId: "libGated", collectionId: "colOff" }], "u1");
+    expect(folderOff.gated.size).toBe(0);
+    expect(folderOff.unknown.size).toBe(0);
   });
 
   it("the PACK fails CLOSED (fix pass 4): a pending-acknowledgment read that errors leaves the sheet out as ack_unknown — never merged — while the desk download stays open", async () => {
@@ -545,16 +607,33 @@ describe("PKG-9 — the hard read-&-understood gate binds every pack button", ()
     expect(packLeftOutText("ack_unknown")).toBe("its acknowledgment status could not be checked when printed");
   });
 
-  it("a broken POLICY read for a sheet with a pending sign-off is ack_unknown in the pack too; a sheet with none pending needs no policy and packs", async () => {
+  it("PKG-9's own scenario (fix pass 5): a LIBRARY-level hard gate whose library read returns { error } — the pack leaves the pending sheet out as ack_unknown, twice in a row; the book's gate reports it unknown", async () => {
     // a library no earlier test resolved (the policy memo holds a resolved policy for a minute)
     state.tables.documents.push(docRow("p", { library_id: "libFlaky" }));
     state.tables.document_versions.push(versionFor("p"));
     state.tables.document_acknowledgments = [{ id: "ack2", document_id: "p", assignee_user_id: "u1", status: "pending" }];
-    const { effectiveAckPolicyForDocument } = await import("@/lib/acknowledgments");
-    vi.mocked(effectiveAckPolicyForDocument).mockRejectedValueOnce(new Error("library read failed"));
-    const result = await buildAndDownloadDocPack(packInput(["a", "p"]) as never);
-    expect(result.included).toBe(1);
-    expect(result.skipped).toEqual([expect.objectContaining({ documentId: "p", code: "ack_unknown" })]);
+    state.tables.libraries.push({ id: "libFlaky", ack_policy: { enabled: true, hardGate: true } });
+    state.readErrors.libraries = { message: "upstream request timeout" };
+    for (let attempt = 0; attempt < 2; attempt++) {
+      state.stamps = [];
+      const result = await buildAndDownloadDocPack(packInput(["a", "p"]) as never);
+      expect(result.included).toBe(1);
+      expect(result.skipped).toEqual([expect.objectContaining({ documentId: "p", code: "ack_unknown" })]);
+      expect(state.stamps).toHaveLength(1); // "a" only — P-101 is never stamped into the pack
+    }
+    // the book viewer reads the same gate and refuses on `unknown` (pinned below)
+    const book = await ackGateDocuments([{ id: "a", libraryId: "lib1" }, { id: "p", libraryId: "libFlaky" }], "u1");
+    expect([...book.unknown]).toEqual(["p"]);
+    expect(book.gated.size).toBe(0);
+    // a FOLDER read that errors does the same in the pack
+    delete state.readErrors.libraries;
+    state.tables.documents.push(docRow("q", { library_id: "libGated", collection_id: "colFlaky" }));
+    state.tables.document_versions.push(versionFor("q"));
+    state.tables.document_acknowledgments.push({ id: "ack3", document_id: "q", assignee_user_id: "u1", status: "pending" });
+    state.readErrors.collections = { message: "upstream request timeout" };
+    const assessed = await assessPackDocs(["a", "q"], { userId: "u1" });
+    expect(assessed.packable.map((x) => x.id)).toEqual(["a"]);
+    expect(assessed.skipped).toEqual([expect.objectContaining({ documentId: "q", code: "ack_unknown" })]);
   });
 
   it("the book viewer refuses a book holding a sheet whose sign-off status could not be checked, naming it (fail closed)", () => {
@@ -581,6 +660,23 @@ describe("PKG-12 — the budget is OFF until the deployment switches it on (DEC-
     }
     // the literal reference Next inlines into the browser bundle
     expect(src("lib/docPack.ts")).toContain('const raw = (process.env.NEXT_PUBLIC_FIELD_PACK_BUDGET ?? "").trim().toLowerCase();');
+  });
+
+  it("the switch reaches a self-hosted Docker build (fix pass 5): a build arg in the Dockerfile and compose, documented, shipped off", () => {
+    // .env is excluded from the image, so a build arg is the only route into the bundle
+    const dockerfile = src("Dockerfile");
+    const build = dockerfile.slice(0, dockerfile.indexOf("RUN npm run build"));
+    expect(build).toMatch(/\nARG NEXT_PUBLIC_FIELD_PACK_BUDGET\n/);
+    expect(build).toContain("    NEXT_PUBLIC_FIELD_PACK_BUDGET=${NEXT_PUBLIC_FIELD_PACK_BUDGET} \\\n");
+    const compose = src("docker-compose.yml");
+    const args = compose.slice(compose.indexOf("      args:"), compose.indexOf("    image:"));
+    expect(args).toContain("        NEXT_PUBLIC_FIELD_PACK_BUDGET: ${NEXT_PUBLIC_FIELD_PACK_BUDGET:-}");
+    // shipped OFF: the example leaves it commented out, and the docs say when to set it
+    const env = src(".env.example");
+    expect(env).toContain("\n# NEXT_PUBLIC_FIELD_PACK_BUDGET=on\n");
+    expect(env).not.toMatch(/\nNEXT_PUBLIC_FIELD_PACK_BUDGET=/);
+    const doc = src("docs/SELF_HOST_DOCKER.md");
+    expect(doc).toMatch(/\| `NEXT_PUBLIC_FIELD_PACK_BUDGET` \| build \(optional\) — `on` switches on the field-pack budget[^\n]*Leave it unset \(off\) until Document Control has ratified the budget[^\n]*--build-arg NEXT_PUBLIC_FIELD_PACK_BUDGET=on/);
   });
 
   it("OFF: a 200-sheet work package prints as ONE pack, as it did before P8 — no refusal, no split", async () => {
@@ -1054,6 +1150,17 @@ describe("HLD-1 / PKG-10 / EGR-6 — the single-document copy", () => {
     expect(vh).toContain('setDownloadError((e as Error).message || "Download failed");');
     expect(vh).not.toContain('setError((e as Error).message || "Download failed");');
     expect(vh).toMatch(/\{downloadError && \(\s*\n\s*<div role="alert"/);
+  });
+
+  it("a delivered-but-unrecorded copy CLOSES the confirmation dialog and alerts — its download button never invites a second copy (fix pass 5)", () => {
+    const fsv = src("components/viewers/FullScreenViewer.tsx");
+    expect(fsv).toMatch(/if \(e instanceof DownloadUnrecordedError\) \{\s*\n\s*setPending\(null\);\s*\n\s*void appAlert\(message\);\s*\n\s*return;\s*\n\s*\}\s*\n\s*setActionError\(message\);/);
+    const mdv = src("components/viewers/MultiDocViewer.tsx");
+    expect(mdv).toMatch(/copyWatermark, DownloadUnrecordedError,\s*\n\} from "@\/lib\/downloads";/);
+    expect(mdv).toMatch(/if \(e instanceof DownloadUnrecordedError\) \{\s*\n\s*setDownloadConfirm\(null\);\s*\n\s*void appAlert\(message\);\s*\n\s*return;\s*\n\s*\}\s*\n\s*setActionError\(message\);/);
+    // the error is thrown only AFTER delivery, so closing the dialog loses nothing: the copy is in hand
+    const downloads = src("lib/downloads.ts");
+    expect(downloads).toMatch(/triggerBlobDownload\([\s\S]*?if \(!audit\.recorded\) throw new DownloadUnrecordedError\(audit\.error\);/);
   });
 });
 

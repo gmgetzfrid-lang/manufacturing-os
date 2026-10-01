@@ -30,7 +30,7 @@ import { supabase } from "@/lib/supabase";
 import type { DocumentRecord } from "@/types/schema";
 import {
   downloadDocumentPdf, printDocumentPdf, determineControlState, viewerStatusBadge, type ViewBadgeTone,
-  ackGateDocuments, readCopyHoldState, holdFooterLine, copyWatermark,
+  ackGateDocuments, readCopyHoldState, holdFooterLine, copyWatermark, DownloadUnrecordedError,
 } from "@/lib/downloads";
 import { stampPdf } from "@/lib/stamping";
 import { recordIntent } from "@/lib/intents";
@@ -698,9 +698,18 @@ export default function MultiDocViewer({ docs, onClose, currentUserId, currentUs
       setDownloadConfirm(null);
     } catch (e) {
       const message = (e as Error).message || "Action failed";
+      // EGR-6: a copy delivered but not recorded already reached the person —
+      // close the dialog (its download button would invite a second copy,
+      // unrecorded too) and say it. The dialog stays open only for a refusal
+      // made BEFORE delivery (acknowledgment, hold, fetch).
+      if (e instanceof DownloadUnrecordedError) {
+        setDownloadConfirm(null);
+        void appAlert(message);
+        return;
+      }
       setActionError(message);
-      // The holder's direct download opens no dialog — say it anyway (an
-      // unrecorded copy, a hold or an acknowledgment refusal is never silent).
+      // The holder's direct download opens no dialog — say it anyway (a hold
+      // or an acknowledgment refusal is never silent).
       if (!downloadConfirm) void appAlert(message);
     } finally {
       if (bakedUrl) URL.revokeObjectURL(bakedUrl);

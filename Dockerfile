@@ -36,11 +36,16 @@ ARG NEXT_PUBLIC_SITE_URL
 # The facility's IANA time zone for effective dates (lib/effectiveDate.ts,
 # document-control REV-9); the browser's badge reads it from the bundle.
 ARG NEXT_PUBLIC_FACILITY_TIME_ZONE
+# The field-pack budget switch (lib/docPack.ts fieldPackBudgetEnforced,
+# document-control PKG-12): off unless "on". Set it only once Document
+# Control has ratified the budget; the browser reads it from the bundle.
+ARG NEXT_PUBLIC_FIELD_PACK_BUDGET
 ENV NEXT_PUBLIC_SUPABASE_URL=${NEXT_PUBLIC_SUPABASE_URL} \
     NEXT_PUBLIC_SUPABASE_ANON_KEY=${NEXT_PUBLIC_SUPABASE_ANON_KEY} \
     NEXT_PUBLIC_APP_URL=${NEXT_PUBLIC_APP_URL} \
     NEXT_PUBLIC_SITE_URL=${NEXT_PUBLIC_SITE_URL} \
     NEXT_PUBLIC_FACILITY_TIME_ZONE=${NEXT_PUBLIC_FACILITY_TIME_ZONE} \
+    NEXT_PUBLIC_FIELD_PACK_BUDGET=${NEXT_PUBLIC_FIELD_PACK_BUDGET} \
     # Placeholder only so module-load Supabase clients don't throw during the
     # build's page-data collection; the real key is supplied at runtime.
     SUPABASE_SERVICE_ROLE_KEY=build-time-placeholder \
