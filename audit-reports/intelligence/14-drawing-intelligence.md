@@ -99,7 +99,9 @@ Tests: `lib/__tests__/intelRoundGDrawingRoutes.test.ts`, block "DWG-1 (criteria 
 - ✓ `recordAudit` reads the revision from `knowledge_documents.source_rev` and refuses to record when it disagrees with the controlled document's.
 - ✓ A sheet whose `source_version_id` differs from the controlled document's `current_version_id` is reported `skipped` with a reason, never `passed`, and nothing is written for it.
 
-**Scope / residual.** The record is now keyed per library as well (DWG-6, `20261124`), and an unrevised sheet is not re-audited (DWG-13). Recording needs `20261124`: without it the route answers 424 and writes nothing (Pending migration, under DWG-6).
+**Scope / residual.** The record is now keyed per library as well (DWG-6, `20261124`), and an unrevised sheet is not re-audited (DWG-13); a sheet whose revision is unknown (`""`) always is. Recording needs `20261124`: without it the route answers 424 and writes nothing (Pending migration, under DWG-6).
+
+**Review fix pass (2026-10-01, intelligence Round G).** "The lens never trusts a half-read sheet" did not hold for an ACCEPTED partial index: a controller's accepted document is `ready`, so it counted as indexed and could be recorded `passed` with pages AI vision never read. Now `recordAudit` files a finding for every sheet whose `vision_failed_pages` is not empty ("Page(s) 5, 6 were never read by AI vision (partial index accepted) — nothing on them was audited"), through the new `unreadPages` input of `verdictsForSheets` (`lib/drawingAuditLog.ts`). Such a sheet is `flagged`, never `passed` and never `broken_connectors`. Tests: `lib/__tests__/drawingAuditLog.test.ts` "unread pages keep a sheet from passing (an accepted partial index)", `lib/__tests__/intelRoundGDrawingRoutes.test.ts` "an accepted partial index is never recorded passed: the unread pages are a finding (fix pass)". Both fail against the round's first commit.
 
 ---
 
@@ -152,7 +154,7 @@ Executed: node script reproducing extractEquipmentTags' exact logic over the nin
 
 **Partial (2026-10-01, intelligence Round G).** Reproduced first (DEC-29) by running the base extractor over the finding's list: `6"-P-1024-A1A` gave `["P-1024"]`, and so on for every case. What landed:
 
-- **The guard.** `extractEquipmentTags` (`lib/drawingText.ts`) skips a match preceded by a line size. A line size is a whole number, a fraction, or a whole-and-fraction (`6`, `3/4`, `1-1/2`, `1 1/2`, `.75`) followed by an inch mark (`"`, `''`, `”`, `″`) or `IN`/`INCH`, with an optional dash. It also skips a match after the `LINE` label (`LINE 6"-P-1024-A1A`, `LINE NO. P-1024`). A metric size (`150-P-1024`, `DN150-P-1024`) ends in a digit-dash and was already caught by the drawing-number guard.
+- **The guard.** `extractEquipmentTags` (`lib/drawingText.ts`) skips a match that is part of a pipe line number (`isLineNumberContext`). A line size is a whole number, a fraction, or a whole-and-fraction (`6`, `3/4`, `1-1/2`, `1 1/2`, `.75`) followed by an inch mark (`"`, `''`, `”`, `″`) or `IN`/`INCH`. The size makes the token a line number when it is GLUED to it by a dash (`6"-P-1024`, `6 IN-P-1024`), or, when only a space (or nothing) stands between, when the token goes on to carry a line spec segment (`6" P-1024-A1A`). `LINE NO.` / `LINE #` always introduces a line; a bare `LINE` word does only with the spec segment after it. A metric size (`150-P-1024`, `DN150-P-1024`) ends in a digit-dash and was already caught by the drawing-number guard. (Corrected in the review fix pass below: the guard first rejected every tag after any size.)
 - **One grammar.** `extractLineNumbers` returns whole line numbers, normalised (`6"-P-1024-A1A`), by the SAME size grammar. The guard and the line grammar therefore cannot disagree about what a line number is.
 - **The prompt.** `VISION_SYSTEM` (`lib/knowledgeVision.ts`) no longer lists `6"-P-1024-A1A` among the "equipment tag, line number, valve tag, instrument bubble" examples. It asks for every line number on its own line, labelled `LINE`, and says a line number is never an equipment tag.
 
@@ -161,12 +163,19 @@ Tests:
 - `lib/__tests__/intelRoundGDrawing.test.ts` "yields equipment tags and a title-block identity past 2,000 characters — and no phantom pumps from line numbers". This one runs the real ingest over a real PDF: 40 line numbers `6"-P-10xx-A1A` and no `P-10xx` equipment row. It fails against the base extractor.
 
 **Done-when.**
-- ✓ `extractEquipmentTags` rejects a match preceded by an inch mark or a size fraction (`"`, `''`, `IN`, `<digit>/<digit>"`, and `”`/`″`/`INCH`), with the same shape of guard as the digit-dash one.
+- ✓ `extractEquipmentTags` rejects a match preceded by an inch mark or a size fraction (`"`, `''`, `IN`, `<digit>/<digit>"`, and `”`/`″`/`INCH`) when the size is a line number's — glued to the tag by a dash, or followed by a line spec — with the same shape of guard as the digit-dash one. A valve or instrument written with the size of its line (`2" PSV-2001`) is not rejected: the criterion's own target is the line number, and those are real tags.
 - ✗ **Not done here.** A line number is not yet stored as its own entity kind `'line'`. That needs a call in `lib/knowledgeIngest.ts` (the ingest owner's file, I-06's design, not this package's), in the two per-line loops beside `extractEquipmentTags`. `extractLineNumbers` is the export for it, the grammar is pinned by test, and the extractor already keeps line numbers out of the equipment count. When that call lands, `ENTITY_KINDS` must gain `'line'`: `lib/__tests__/entityKindGuard.test.ts` now holds the kind inventory to the ingest both ways (ING-5), so it fails until it does. The decision's default (DEC-59, item 4) still stands: extract them as `'line'`, never drop them.
 - ✓ Tests pin every case in the executed list, plus the positive cases.
 - ✓ The Bridge creates no registry asset from a line-number occurrence. The Bridge reads `kind = 'equipment'` only (`lib/equipmentBridgeServer.ts`), and no equipment row is written for a line number any more, on the text-layer path or the vision path.
 
-**Scope / residual.** Equipment rows already minted from line numbers stay until each document's next re-index. `20261124`'s inventory counts them ("equipment rows whose evidence line puts a pipe-line size right before the tag"). OPEN until the ingest owner writes `'line'` rows.
+**Scope / residual.** Equipment rows already minted from line numbers stay until each document's next re-index. `20261124`'s inventory counts them ("equipment rows whose evidence line reads as a pipe line number"), by the same two joints. OPEN until the ingest owner writes `'line'` rows.
+
+**Review fix pass (2026-10-01, intelligence Round G).** The first guard over-reached. `LINE_SIZE_BEFORE_RE` allowed whitespace and made the dash optional, so every tag written after an inch size was dropped: `2" PSV-2001`, `4" FCV-101`, `6" SDV-1001`, `3"x4" PSV-101`, `1-1/2" PSV-12`, `3/4" TW-12`, `2"PSV-2001`, `NPS 2 IN PSV-101`, `2" V-1 DRAIN`, and the bare-`LINE` guard dropped `SUCTION LINE P-101A`. The base extracted all of them, so the census, the CSV register and the Bridge silently lost PSM-critical valves. Now:
+- **The joint decides.** A size counts as a line number's only when the dash is glued to it (`LINE_SIZE_DASH_BEFORE_RE`), or when a space-separated size is followed by a token that carries a line spec segment of two or more characters (`LINE_SIZE_SPACE_BEFORE_RE` + `LINE_SPEC_AFTER_RE`; `PSV-2001-A`, a one-letter suffix, stays a tag). The `LINE` label is held to `LINE NO.` / `LINE #`, or a bare `LINE` with the spec segment after it.
+- **Still one grammar.** `extractLineNumbers` uses the same two joints (`LINE_NUMBER_RE`), so whatever it calls a line, `extractEquipmentTags` never counts, and the reverse.
+- **The inventory agrees.** `20261124`'s phantom-row count uses the same two joints. A test runs the SQL regex and the extractor over the same lines and asserts they agree.
+
+Tests: `lib/__tests__/drawingText.test.ts` "a valve or instrument written with the size of its line is still a tag (fix pass)" (all twelve cases above, each also absent from `extractLineNumbers`) and the `LINE` label cases; `lib/__tests__/intelRoundGDrawingMigration.test.ts` "the DWG-2 phantom count uses the extractor's own line grammar — a size-annotated valve is not a phantom (fix pass)". The first fails against the round's first commit. Every case in the finding's list still yields no tag.
 
 ---
 
@@ -291,9 +300,9 @@ Searches: `grep -n "OPC" lib/knowledgeVision.ts` → NONE; `grep -ni "opc" lib/k
 
 **Resolution (2026-10-01, intelligence Round G).** Reproduced first (DEC-29). The base `parseOpcBoxes` returns `[]` for every connector phrasing the base prompt asked for (`TO 025-PID-0107`, `CONT ON DWG 21-D-1105 SH 3`). A real-ingest run of a vision transcript wrote no `opc` row. What landed:
 
-- **One contract, owned by the parser.** `lib/drawingText.ts` declares the connector line: `OPC_LINE_FORMAT` = `OPC <box number>: <destination drawing number> SH <sheet> — <TO|FROM> <service or equipment>`, with `OPC_LINE_EXAMPLE` = `OPC 14: 2002-D-2001 SH 4 — TO V-1402 CRUDE OVERHEAD`, and `OPC_NO_DRAWING` = `NONE` for a connector that shows no drawing number.
+- **One contract, owned by the parser.** `lib/drawingText.ts` declares the connector line: `OPC_LINE_FORMAT` = `OPC <box number>: DWG <destination drawing number> SH <sheet> — <TO|FROM> <service or equipment>`, with `OPC_LINE_EXAMPLE` = `OPC 14: DWG 2002-D-2001 SH 4 — TO V-1402 CRUDE OVERHEAD`, and `OPC_NO_DRAWING` = `NONE` for a connector that shows no drawing number. (The `DWG` label and the positional read were added in the review fix pass below.)
 - **The prompt is built from it.** `VISION_SYSTEM` (`lib/knowledgeVision.ts`) imports those constants and asks for every off-page connector on its own line in exactly that form, destination drawing first. The prompt and its parser can no longer drift apart. The parser's old header comment described a prompt that did not exist; it is rewritten to say this.
-- **The lens says when pairing has no input.** When no box number was read from a drawing set, `app/api/knowledge/drawing/route.ts` answers `opcPairing: "no-boxes"` with a suggestion: "Connector box pairing needs AI-vision indexing … Connectors are still audited through their drawing references". `components/knowledge/DrawingIntelPanel.tsx` shows "Connector pairing needs vision indexing" in place of an empty, reassuring result.
+- **The lens says when pairing has no input.** When no box number was read from a drawing set, `app/api/knowledge/drawing/route.ts` answers `opcPairing: "no-boxes"` with a suggestion: "Connector box pairing has no input here: box numbers are read only from AI-vision transcripts … Connectors are still audited through their drawing references". `components/knowledge/DrawingIntelPanel.tsx` shows "Connector box pairing has no input here" in place of an empty, reassuring result. (Reworded in the review fix pass: the first wording told every text-layer set to turn on every-page vision.)
 
 Tests:
 - `lib/__tests__/drawingText.test.ts`, block "DWG-4 — the connector line contract between the vision prompt and the parser":
@@ -302,15 +311,23 @@ Tests:
   - the text layer's connectors extract as references and pair one-way;
   - the prompt imports the parser's constants.
 - `lib/__tests__/intelRoundGDrawing.test.ts` "a labelled connector before the fenced title block … OPC lines land as connector rows": the real ingest writes `opc` rows 14 and 15 whose line carries `2002-D-2001 SH 4`. It fails against the base code.
-- `lib/__tests__/intelRoundGDrawingRoutes.test.ts` "box pairing with no box numbers says it needs vision indexing instead of showing a clean zero".
+- `lib/__tests__/intelRoundGDrawingRoutes.test.ts` "box pairing with no box numbers says it has no input instead of showing a clean zero".
 
 **Done-when.**
 - ✓ `VISION_SYSTEM` emits a labelled, parseable connector line matching `OPC_BOX_RE`, with an example in the prompt.
 - ✓ A fixture transcript round-trips prompt-shaped output through `parseOpcBoxes` and `auditOpcBoxes` and asserts a non-empty `boxCount` (4).
-- ✓ The text-layer path's connector extraction does not depend on the OPC token. On the text layer a connector is its continuation phrasing and its pennant's drawing number. `extractDrawingRefs` extracts both (`CONT ON DWG 025-PID-0107`, `025-PID-0108 SH 2`) as `ref` rows, and the reference audit pairs them: one-way between loaded sheets, missing within a loaded series (pinned by test). What the text layer cannot give is a BOX NUMBER, so box-to-box pairing stays fed by vision transcripts, and the lens says so (next criterion). Widening the box token to words a text layer might print (CONN, CONNECTOR) was rejected: every false box with no drawing number would mint a top-severity `broken_connectors` record.
-- ✓ Until a connector can actually be read, the panel says "connector pairing needs vision indexing" instead of showing a reassuring zero.
+- ✗ **Not done — by decision (DEC-59, item 5).** No new text-layer connector extraction was built. What the text layer has is what it had at the base: `extractDrawingRefs` reads continuation phrasing and pennant drawing numbers (`CONT ON DWG 025-PID-0107`, `025-PID-0108 SH 2`) as `ref` rows, and the reference audit pairs them (one-way between loaded sheets, missing within a held series). This round's first record ticked the criterion on that existing layer, which overstated it. What the text layer cannot give is a BOX NUMBER, so box-to-box pairing stays fed by vision transcripts, and the lens says so (next criterion). Widening the box token to words a text layer might print (CONN, CONNECTOR) was rejected: every false box with no drawing number would mint a top-severity `broken_connectors` record.
+- ✓ Until a connector can actually be read, the panel says box pairing has no input — box numbers come only from AI-vision transcripts — instead of showing a reassuring zero.
 
-**Scope / residual.** Sheets indexed before this carry no `opc` rows until they are re-read with AI vision ("Rebuild index" with the library's vision option). DWG-8's truncation trap, which this contract makes live, is neutralised in the same change (see DWG-8).
+**Scope / residual.** Sheets indexed before this carry no `opc` rows until they are re-read with AI vision ("Rebuild index" with the library's vision option). DWG-8's truncation trap, which this contract makes live, is neutralised in the same change (see DWG-8). Text-layer connectors keep being audited through their references only (criterion 3, DEC-59 item 5).
+
+**Review fix pass (2026-10-01, intelligence Round G).** The first contract made the top-severity verdict reachable, and also made it FALSE for most numbering schemes. It asked for the bare destination right after the colon (`OPC 7: 025-M-0107 SH 2 — …`), while `auditOpcBoxes` still called a connector broken when `extractDrawingRefs` read nothing from its line. That grammar reads the loose `NNN-X-NNNN` shape only after a context word, and never reads plain numeric or other shapes. `025-M-0107`, `21-A-1105`, `100-E-001`, `025-P-1001`, `4410-01-001`, `123456`, `D-2001` and `M-101` all came out as "names no destination drawing", which `Record audit` files as `broken_connectors`: a permanent PSM verdict, never re-audited at that revision. Now:
+- **The destination is labelled.** `OPC_LINE_FORMAT` is `OPC <box number>: DWG <destination drawing number> SH <sheet> — …`, and `VISION_SYSTEM` asks for the number "exactly as written" after the word DWG, leaving out `SH <sheet>` when none is shown. The label gives the reference layer its strong context: a loose-shaped number on a connector line now lands as a `ref` row too (pinned through the real ingest: `OPC 16: DWG 025-M-0107 SH 2` writes ref `025-M-0107-SH2`).
+- **The destination is read by position.** `parseOpcLine` (`lib/drawingText.ts`) reads a contract line's destination field (between `DWG` and `SH` or the dash) whatever its shape. `auditOpcBoxes` pairs boxes on that field, normalised and sheet-addressed when a sheet is named (`opcDestinationForms`), as well as on whatever `extractDrawingRefs` reads.
+- **The no-boxes notice is a fact, not a purchase order.** The first suggestion told every set without box rows — every text-layer set — to turn on "index every page as an image" and rebuild, re-billing every page of a TrueType set to gain box pairing while its connectors were already audited through their references (against DEC-59 item 1 and the 99 do-not on vision-reading the whole set). It now states that pairing has no input and why. Only a set with sheets already read by AI vision is told that a rebuild re-reads those sheets with box numbers, and that it bills those pages again.
+- **Broken means what the contract says.** A connector is `noRef` only when its field reads `NONE` or is empty, and nothing else on its line names a drawing. A field that holds something not shaped like a drawing number (`SEE NOTE 3`, `ILLEGIBLE`) is `unknown`, never broken. A line outside the contract with no readable reference is `unknown` when anything on it could still be a drawing number (three or more digits in a row once the box, equipment tags and a sheet number are set aside), and broken only when nothing could. A row with no stored line is `unknown`.
+
+Tests: `lib/__tests__/drawingText.test.ts`, the DWG-4 block: "a destination in any numbering scheme is a destination — never 'names no drawing'" (the nine shapes above), "the DWG label gives the reference layer its context", "pairs by the positional destination, whatever its shape", "broken means what the contract says: the field reads NONE, or is empty", "a destination present but not shaped like a drawing number is unknown, never broken", "a line outside the contract: unknown when something on it could still be a drawing number, broken only when nothing could"; `lib/__tests__/intelRoundGDrawing.test.ts` (the real ingest writes the loose-shaped connector as a reference, and its stored lines audit with only the `NONE` box broken). Each new `drawingText` case fails against the round's first commit. The notice: `lib/__tests__/intelRoundGDrawingRoutes.test.ts` "box pairing with no box numbers says it has no input instead of showing a clean zero" (and never mentions every-page vision) and "a set already read by AI vision before the connector contract is told a rebuild re-reads its boxes — and re-bills".
 
 ---
 
@@ -429,12 +446,12 @@ app/api/knowledge/drawing/route.ts:445 — `const RANK: Record<string, number> =
   - The route upserts on `org_id,library_id,sheet_number,revision_code`.
 - **Never lowered.** `RANK` and `wouldLowerSeverity` (`lib/drawingAuditLog.ts`, exported for every writer, the orchestrator's `log_audit_completion` included) are checked against the STORED row for this library, not just within the batch. A computed verdict that would lower a stored one is not written; it is reported under `keptStored`. With DWG-13, a stored non-`skipped` verdict at this revision is not even recomputed.
 - **The set is on the record.** `audit_details` carries `libraryId` and `set` (every sheet number in the library when the verdict was computed: the count always, the list up to 500 with `truncated` past that). `audited_at` is written on every write.
-- **No verdict about a set the library does not hold.** `sheetsAloneInTheirSeries` drops a sheet whose drawing series no other sheet in the library shares; a document that declares several sheets counts as a series on its own. Such a sheet is not recorded, and is listed in `notRecorded` with the reason.
+- **No verdict about a set the library does not hold.** A gap ("isn't in the set") is judged only inside a series the library holds (`seriesHeldBySet`). A sheet that is the only one of its series in the library (`sheetsAloneInTheirSeries`) is still recorded for what is its own — its connectors and boxes — while references into its series are out of the set's scope (`missingWithinHeldSeries`), and the record names the series not judged (`audit_details.set.seriesNotJudged`). (Corrected in the review fix pass below: the first rule dropped such sheets whole.)
 - **No verdict from a partial read.** If the entity index could not be read whole (DWG-11), the route answers 409 and records nothing.
 
 Tests:
 - `lib/__tests__/intelRoundGDrawingRoutes.test.ts`:
-  - "Crude Unit records 0104 passed; Tank Farm's lone 0104 is NOT recorded, and Crude Unit's verdict survives";
+  - "Crude Unit records 0104 passed; Tank Farm judges no gap in a series it holds one sheet of, and Crude Unit's verdict survives";
   - "when both libraries hold the series, each keeps its own row for the same sheet and revision";
   - "a 'skipped' verdict is re-audited once the sheet can be read — re-stamped, never lowered";
   - "on a database without library_id nothing is recorded and the route names the migration".
@@ -443,13 +460,19 @@ Tests:
 
 **Done-when.**
 - ✓ The unique key includes the scope the verdict was computed in (`library_id`), so two libraries cannot overwrite each other.
-- ✓ The upsert refuses to lower severity: the RANK comparison runs against the existing row, and a stored `broken_connectors` or `flagged` is never replaced by `skipped`.
-- ✓ `audit_details` records the library and the sheet list the verdict was computed against.
-- ✓ A verdict computed over a library that does not hold the sheet's own series is not recorded at all.
+- ✓ The upsert refuses to lower severity: the RANK comparison runs against the existing row, and a stored `broken_connectors` or `flagged` is never replaced by `skipped`. One qualification (review fix pass, with DWG-13): under an UNKNOWN revision (`""`) the latest non-`skipped` verdict replaces the row (`mayReplaceStored`), because nothing can tell that row's drawing from the one that replaced it; `skipped` still never replaces a verdict.
+- ✓ `audit_details` records the library and the sheet list the verdict was computed against, and the series it did not judge.
+- ✓ In the form the review fix pass settled: no verdict ABOUT a series — a gap — is ever recorded from a library that does not hold that series (the finding's failure scenario: Tank Farm now files no "isn't in the set" against 025-PID). The sheet itself is recorded for what is its own. The criterion's literal "not recorded at all" also dropped a lone sheet's own defects (a connector naming no drawing) and every verdict of a single-sheet or one-sheet-per-series library, which the base recorded; that was the over-reach the review found.
 
 **Final key, for I-04.** `UNIQUE (org_id, library_id, sheet_number, revision_code) NULLS NOT DISTINCT`. `log_audit_completion` (`lib/orchestrator/tools.ts`) must upsert with `onConflict: "org_id,library_id,sheet_number,revision_code"` and `library_id` NULL (org-wide), and should apply `RANK` / `wouldLowerSeverity` before writing. Until it does, once `20261124` is applied that one tool's upsert names a key that no longer exists, and PostgREST refuses it (42P10). The tool returns that error; it does not write elsewhere. Apply `20261124` after the merge that moves it (the migration's header says so).
 
 **Pending migration:** `20261124_intel_roundG_drawing_audit_scope.sql`. Until it is applied the route records nothing: it answers 424, naming the migration. The pre-apply inventory counts the verdicts on a sheet mirrored into more than one library, which are the ambiguous ones. Decision: `DEC-59` item 2.
+
+**Review fix pass (2026-10-01, intelligence Round G).** `sheetsAloneInTheirSeries` dropped whole verdicts that the base recorded: a single-sheet library, a library holding one sheet per series, and a combined PDF declaring `025-PID-0101/0102/0103` with no SHEET field (only several `-SHn` forms exempted a document). The suppression covered every finding, including a connector that names `NONE`, a defect of the sheet itself. Now:
+- **A document holds a series of its own** when it declares two or more numbers of one series, whichever form (`sheetsAloneInTheirSeries` counts distinct identities per series within the document; the `-SHn` rule is one case of it).
+- **A sheet alone in its series is recorded.** `recordAudit` no longer skips it. Its `missingInSeries` findings are limited to the series the library holds (`seriesHeldBySet` / `missingWithinHeldSeries` in `lib/drawingAuditLog.ts`), so a reference into its own series is out of scope, exactly like one into another unit. Its broken, unreturned, one-way, unreadable and unread-page findings stand. The response and `audit_details.set.seriesNotJudged` name the series whose gaps were not judged; the panel says so.
+
+Tests: `lib/__tests__/drawingAuditLog.test.ts` "a combined PDF declaring several numbers of one series holds that series itself (fix pass)", "a single-sheet library, and one sheet per series, are alone — and recorded for what is their own", "gaps are judged only inside a series the library holds", and "verdictRows — the series not judged are on the record"; `lib/__tests__/intelRoundGDrawingRoutes.test.ts` "Crude Unit records 0104 passed; Tank Farm judges no gap in a series it holds one sheet of …" (0104 recorded `passed` in Tank Farm with no missing reference and `seriesNotJudged: ["025-PID"]`; Crude Unit's row untouched), "a lone sheet's own defect is still recorded: a connector that names no drawing is broken in any set (fix pass)", and "a single combined PDF, and a single-sheet library, are recorded". Each fails against the round's first commit.
 
 ---
 
@@ -570,7 +593,7 @@ What landed:
 - **A cut line is UNKNOWN.** `auditOpcBoxes` (`lib/drawingText.ts`) sorts a connector with no readable destination two ways. If its stored line is at the storage cut (`OPC_RAW_STORED_MAX`, 160, pinned by test to the ingest's own `truncateSafe(line, 160)`), it goes to a new `unknown` bucket. Only a COMPLETE line with no drawing number stays `noRef`.
 - **Unknown is never broken.** `verdictsForSheets` (`lib/drawingAuditLog.ts`) records an unknown connector as `unreadableConnectors`: "its destination could not be read … check it on the sheet". It keeps the sheet from `passed` (the sheet is `flagged`) and never makes it `broken_connectors`.
 - **Shown as unknown.** The lens lists such connectors separately ("not counted as broken"), with the whole stored line. The reviewer used to see a 120-character slice of the evidence.
-- **The destination comes first.** DWG-4's contract asks the model for `OPC <box>: <destination drawing number> SH <sheet> — …`, so a vision line's drawing number sits in its first few dozen characters and the cut cannot reach it.
+- **The destination comes first.** DWG-4's contract asks the model for `OPC <box>: DWG <destination drawing number> SH <sheet> — …`, so a vision line's drawing number sits in its first few dozen characters and the cut cannot reach it.
 
 Tests:
 - `lib/__tests__/drawingText.test.ts`, block "DWG-8 — a cut evidence line is unknown, never broken": a >160-character connector line fed through ingest's own cut reports no `noRef` and one `unknown`; a complete short line with `NONE` is still broken; the cut is pinned to `lib/knowledgeIngest.ts`.
@@ -583,6 +606,8 @@ Tests:
 - ✓ A test feeds a >160-character connector line through ingest-shaped truncation and asserts the audit does not report `noRef`.
 
 **Scope / residual.** OPEN until the ingest owner stores the full line's reference, or a longer cut, for `opc` rows.
+
+**Review fix pass (2026-10-01, intelligence Round G).** With DWG-4's corrected contract, `unknown` also takes a connector whose destination is present but not shaped like a drawing number, a line outside the contract that still holds a number-like run, and a row with no stored line — absence of evidence each time, never broken. A contract line's destination sits right after `OPC <n>: DWG`, so for it the cut cannot matter: a contract line well past 160 characters, cut the way ingest cuts it, still reads its destination — neither broken nor unknown (test "a contract line keeps its destination at the head, so the storage cut can never take it"). The criteria's status is unchanged.
 
 ---
 
@@ -772,6 +797,8 @@ Also `lib/__tests__/drawingText.test.ts` "DWG-11 — the roll-up the census is c
 
 **Pending migration:** `20261124_intel_roundG_drawing_audit_scope.sql` (the two functions). Without it the census is still whole, read as raw rows, and slower on a large library. Decision: none needed.
 
+**Review fix pass (2026-10-01, intelligence Round G).** The text-statistics read (`loadTextStats`, the raw-chunk path before `20261124`) stopped at the ceiling without saying which documents it had not read, so the sheets past the cut showed 0 characters: "Nothing read", counted as textless, and the lens advised paying for AI vision beside its own PARTIAL notice. Now `loadTextStats` stops at a whole document like the entity read and returns the documents it did not reach. They join `notCounted`, get the verdict `not-counted` (shown "Not counted"), and are left out of the textless count and its vision suggestion. Test: `lib/__tests__/intelRoundGDrawingRoutes.test.ts` "a sheet past the text-stats read is not counted — never 'Nothing read', never sent to vision (fix pass)", which fails against the round's first commit.
+
 ---
 
 <a id="dwg-12"></a>
@@ -877,12 +904,13 @@ app/api/knowledge/locate/route.ts:273 — `if (!fp) break;` (keeps the coarse po
 
 **Resolution (2026-10-01, intelligence Round G).** Reproduced first (DEC-29). Against the base route a second "Record audit" re-wrote every verdict, and a close-up that did not see the tag kept (and cached) the coarse point. The tests below fail there. What landed:
 
-- **`sheetsNeedingAudit` is wired.** `recordAudit` (`app/api/knowledge/drawing/route.ts`) loads this library's prior verdicts and runs the sheets through it before writing. A sheet recorded at the revision in front of it with anything but `skipped` is not re-audited and not rewritten. `skipped` never counts as done.
+- **`sheetsNeedingAudit` is wired.** `recordAudit` (`app/api/knowledge/drawing/route.ts`) loads this library's prior verdicts and runs the sheets through it before writing. A sheet recorded at the revision in front of it with anything but `skipped` is not re-audited and not rewritten. `skipped` never counts as done, and neither does a verdict under an unknown revision (`""`; review fix pass below).
 - **The response says what was skipped.** It distinguishes `recorded` from `alreadyRecorded` (sheet, revision, stored status) and from `notRecorded` (with the reason). The panel shows all three. The route header now describes what the route does.
 - **The time is written every time.** `verdictRows` writes `audited_at` on every write, so a `skipped` row later re-recorded carries when it was decided.
 - **`buildRelocateUser` is wired.** In `app/api/knowledge/locate/route.ts`, a FIRST close-up that does not see the tag refutes the coarse point. One relocate round asks again on the whole page, told where the wrong answer was. Its prompt (`lib/drawingLocate.ts`) now says what was actually observed: "a close-up of that spot does NOT show the tag … If you cannot see it, omit it". The old prompt claimed "no pipe line-work near there".
   - A relocated point is cached as an estimate. If the round finds nothing, or returns the same spot, the tag is reported not visible and nothing is cached.
   - A close-up that fails on a provider error keeps the coarser point: it neither confirms nor refutes it.
+  - What is never cached is a point a close-up REFUTED. A point no close-up checked — a tag past the first four (`REFINE_MAX`), or one the loop never reached because time, the cap, a provider error or the canvas stopped it — keeps its coarse point and is cached as the estimate it is: approximate, labelled so, rejectable (PR-10). (This round's first record said "a point no round confirmed is never cached", which overstated it; corrected in the review fix pass.)
 
 Tests:
 - `lib/__tests__/intelRoundGDrawingRoutes.test.ts`:
@@ -893,11 +921,17 @@ Tests:
 - `lib/__tests__/drawingLocate.test.ts` "buildRelocateUser — the relocate round says what was actually observed".
 
 **Done-when.**
-- ✓ `recordAudit` loads prior verdicts for the library's sheets and runs them through `sheetsNeedingAudit` before recomputing.
+- ✓ `recordAudit` loads prior verdicts for the library's sheets and runs them through `sheetsNeedingAudit` before recomputing. An unrevised sheet is never re-audited where "unrevised" can be established — a known revision; a sheet under an unknown revision is audited every time.
 - ✓ The response distinguishes "recorded" from "already recorded at this revision".
 - ✓ The refine loop calls `buildRelocateUser` when the close-up returns no sighting, instead of silently keeping a point it just failed to confirm.
 - ✓ No function stays unwired: `sheetsNeedingAudit` and `buildRelocateUser` both have production callers now.
 
 **Scope / residual.** The orchestrator's `check_audit_history` reads by `(org_id, sheet_number)` and now sees one row per library. That is I-04's tool; the final key is under DWG-6.
+
+**Review fix pass (2026-10-01, intelligence Round G).** Two corrections.
+- **An unknown revision is never "unrevised".** `recordAudit` files `revision ""` for every library-only sheet (and a mirror with no label on either side). `sheetsNeedingAudit` treated a prior `""` row as done for good, so a library-only PDF recorded `flagged` ("References 025-PID-0107, which isn't in the set") kept that verdict after 0107 was uploaded or the PDF replaced — every later record answered "already recorded at this revision", and the panel promised it would not need auditing "until revised", which can never happen. Now a `""` row never counts as done (`sheetsNeedingAudit`), and the latest non-`skipped` verdict replaces it (`mayReplaceStored` in `lib/drawingAuditLog.ts`, used by the route in place of the bare `wouldLowerSeverity` check); `skipped` still never erases a verdict, and a known revision's verdict is still never lowered. The panel's line now says a sheet whose revision is not known is audited every time. A real revision for library-only sheets (the title block's REV, read at ingest) would let them be keyed too; that is a further change, not made here.
+- **The caching claim, restated** (bullet above): a refuted point is never cached; an unchecked coarse point is cached as an approximate estimate. The route header and `lib/drawingLocate.ts` say the same.
+
+Tests: `lib/__tests__/drawingAuditLog.test.ts` "never treats a verdict under an UNKNOWN revision as done — 'unrevised' can't be established (fix pass)" and "mayReplaceStored — the latest verdict, never a lower one at a known revision"; `lib/__tests__/intelRoundGDrawingRoutes.test.ts` "a sheet whose revision is unknown is re-audited every time, and its row takes the latest verdict (fix pass)" (flagged → passed once the set is widened, one row; a sheet that cannot be read keeps its verdict, reported under `keptStored`) and "a point no close-up checked (past REFINE_MAX) is cached as the coarse estimate it is — approximate, rejectable". The `""` tests fail against the round's first commit. The DWG-13 route tests now mirror every Crude Unit sheet with a revision, so "a second record writes nothing" exercises the known-revision rule it states.
 
 ---

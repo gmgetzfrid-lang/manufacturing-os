@@ -330,7 +330,7 @@ locate/route.ts:282-288 is the cache write, inside a loop over every returned po
   - `app/api/knowledge/locate/route.ts` returns every `pos_source = 'vision'` position with `approximate: true` and `readOnRevision`, the knowledge document's `source_rev`.
   - A rev-up or a rebuild clears every page entity, cached positions included, through `resetKnowledgeIndex` (DEC-58). That is the decision's default: they expire on rev-up.
   - `components/knowledge/CitedPageViewer.tsx` labels the marker "~ AI estimate", with a tooltip "AI estimate (read on rev C) — approximate, not surveyed", and keeps the dashed tolerance box.
-- **The relocate round is wired** (DWG-13). A close-up that does not see the tag refutes the coarse point. One relocate round asks again with `buildRelocateUser`; a point no round confirmed is never cached.
+- **The relocate round is wired** (DWG-13). A close-up that does not see the tag refutes the coarse point. One relocate round asks again with `buildRelocateUser`; a point a close-up refuted is never cached. A point no close-up checked (a tag past the first four, or one the refine loop never reached because time, the cap, a provider error or the canvas stopped it) is cached as the coarse estimate it is, returned `approximate` and rejectable like every other estimate. (Corrected in the review fix pass: this line first said "a point no round confirmed is never cached", which the code never did.)
 - **A viewer can reject an estimate.** `POST /api/knowledge/locate { action: "reject", orgId, documentId, page, tags: [tag] }` clears `nx`/`ny`/`pos_source` on that page's row, only where `pos_source = 'vision'`. A text-layer position is read from the PDF and cannot be rejected. The same fail-closed ACL as any locate read applies; the write is checked and reports `cleared`. The viewer puts a ✕ on each estimate.
 
 Tests: `lib/__tests__/intelRoundGDrawingRoutes.test.ts`:
@@ -346,6 +346,8 @@ Also `lib/__tests__/drawingLocate.test.ts` "buildRelocateUser — the relocate r
 - ✓ A viewer can reject a marker and clear the cached position.
 
 **Scope / residual.** Positions cached before this were never checked by a relocate round. They still render as estimates and can be rejected. Decision: `DEC-59` item 3.
+
+**Review fix pass (2026-10-01, intelligence Round G).** The record (and `DEC-59` item 3, its acceptance line, the locate route's header and `lib/drawingLocate.ts`) said a point no round confirmed is never cached. The code caches every coarse point no close-up refuted, including ones no close-up checked. That is consistent with this finding's done-when (each such point is cached and returned as an approximate estimate, labelled "~ AI estimate", rejectable), so the claim was corrected rather than the behaviour: dropping unchecked points would re-bill the coarse pass on every view of a sheet whose canvas is unavailable. Pinned by `lib/__tests__/intelRoundGDrawingRoutes.test.ts` "a point no close-up checked (past REFINE_MAX) is cached as the coarse estimate it is — approximate, rejectable".
 
 ---
 

@@ -861,8 +861,8 @@ Tests: `lib/__tests__/sourceSync.test.ts` ("chunks, page entities, machine menti
 
 **Resolution (2026-10-01, intelligence Round G, I-07).** The missing half landed. The drawing rebuild (`app/api/knowledge/drawing/route.ts`, POST `action: "rebuild"`) no longer resets rows itself. It calls `resetKnowledgeIndex` per document, under that document's ingest claim, so the row is written with `RESET_ROW`'s zeros: `vision_pages: 0`, empty pages, the vision retry queue, `ingest_failures` and `vision_retry_after` (ING-8). Then chunks, page entities and machine mentions go, each checked.
 - **Busy documents.** A document another driver is indexing is left alone and reported (`busy`).
-- **Large libraries.** A large library is reset in id order within a time budget and continued by cursor, so no document is reset (and re-billed) twice. The panel follows the cursor.
-- **Failures.** Failures are reported, never a silent success.
+- **Large libraries.** A large library is reset in id order within a time budget and continued by cursor, so no document is reset (and re-billed) twice. The Drawing intelligence panel follows the cursor. The library page's "Re-index all" does not yet (review fix pass below).
+- **Failures.** Failures are reported, never a silent success — by the panel, and by the route to a caller that cannot show them (review fix pass below).
 
 Test: `lib/__tests__/intelRoundGDrawingRoutes.test.ts` "zeroes every counter under the claim, clears chunks and entities, and leaves a document another driver holds alone", with `vision_pages` 7 → 0, `ingest_failures` 2 → 0 and `vision_retry_after` → null. It also covers "a continuation cursor never resets the same document twice". It fails against the base route.
 
@@ -871,5 +871,13 @@ Test: `lib/__tests__/intelRoundGDrawingRoutes.test.ts` "zeroes every counter und
 - ✓ The counter is scoped to the current index generation (I-06, above).
 
 **Scope / residual.** Values already inflated stay until each document's next re-index (I-06's note above).
+
+**Review fix pass (2026-10-01, intelligence Round G, I-07).** The resolution above claimed the cursor and the failure reporting for every caller, and the implementer's note called `rebuildDrawingIndex` (`lib/knowledge.ts`) unused. It is not: the library page's general "Re-index all" button (`app/(protected)/knowledge/[id]/page.tsx`) calls it without a cursor, ignores `remaining`, `busy` and `errors`, and toasts "N document(s) queued" — on a library past what one call can reset, or with documents an indexer holds, a partial reset read as complete. Both files are I-02's (the knowledge UI), so they were not edited here.
+- **Handed to I-02.** `rebuildDrawingIndex` must loop on `cursor` until `remaining` is 0, and surface `busy` and `errors`, as `rebuildAll` in `components/knowledge/DrawingIntelPanel.tsx` does; its return type gains those fields.
+- **Until then, the route refuses to be read as done.** `POST /api/knowledge/drawing { action: "rebuild" }` from a caller that sends no `cursor` key at all (the panel always sends one, `null` on its first call) answers 409 with `partial: true` and a message `apiPost` throws as the error toast — "Re-index is not complete: N of M document(s) were queued; K were being indexed right then and were left alone (…); R were not reached in time …" — whenever documents were left unreached, busy, or failed. A complete reset still answers 200.
+- **A spent budget no longer crashes.** When the document listing alone outlasted the budget, `all[next - 1]` read `undefined` and the call answered 500; it now returns the cursor it was given.
+- **The panel's own ceiling is said.** Its follow loop stops after 50 calls; any documents still `remaining` are now shown ("press Rebuild index again to continue").
+
+Tests: `lib/__tests__/intelRoundGDrawingRoutes.test.ts` "a caller that sends no cursor (the library page's Re-index all) can never read a partial reset as done (fix pass)" and "a budget spent before the first reset answers the cursor it was given, not a crash (fix pass)"; both fail against the round's first commit. The existing rebuild test now sends the panel's shape (`cursor: null`).
 
 ---

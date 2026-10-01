@@ -3398,22 +3398,26 @@ may be scoped for speed. Nothing else changes.
 
 *Landed 2026-10-01 (intelligence Round G, I-07): the drawing rebuild (`app/api/knowledge/drawing/route.ts`, POST `action: "rebuild"`) now goes through `resetKnowledgeIndex`, one document at a time under each document's own claim, with a time budget and an id cursor, so no document is reset twice. Item 1's "the drawing rebuild is to take the claim" and item 2's "the drawing rebuild is to call it" therefore hold: a document a batch holds is reported `busy` and left alone, and every counter is zeroed (`vision_pages`, `ingest_failures`, `vision_retry_after`). The drawing lens shows a parked document as indexing, with the pages it waits on and why (ING-6's limb). ING-12 is resolved; ING-1 and ING-8's residuals are closed. Test: `lib/__tests__/intelRoundGDrawingRoutes.test.ts`.*
 
+*Corrected 2026-10-01 (intelligence Round G, I-07 review fix pass): the line above holds for the Drawing intelligence panel, which follows the cursor and shows `busy` and failures. It did not hold for the library page's "Re-index all" (`app/(protected)/knowledge/[id]/page.tsx` → `lib/knowledge.ts` `rebuildDrawingIndex`, I-02's files), which sends no cursor and reported a partial reset as complete. That caller's cursor loop is handed to I-02 (see ING-12). Until it lands, the route answers a call with no `cursor` key that leaves documents unreached, busy or failed with a 409 carrying what happened, so it can no longer be read as done.*
+
 
 <a id="dec-59"></a>
 ## DEC-59 · Drawing intelligence: what counts as a drawing, whose set a verdict judges, and what a model's point is worth
 
-**Decision. Four calls about the drawing layer, taking the defaults the fleet plan named (`audit-reports/fleet-plans/intelligence.json`, package I-07).**
+**Decision. Five calls about the drawing layer: the four defaults the fleet plan named (`audit-reports/fleet-plans/intelligence.json`, package I-07), and one (item 5) made in the review fix pass.**
 
 1. **A dense page is a drawing when its text says so; vision is never automatic (DWG-7 / BR-12).** A page at or under 2,000 characters is a drawing, as before. A denser page is a drawing when it is lettered in capitals (at most 35 % of its letters lower case) AND is either a tag list (at least 4 tags and drawing references per 1,000 characters) or declares its own drawing number in a title block. Such a page gets tag extraction from its text layer, which costs nothing. AI vision stays a per-library opt-in, and no page is routed to it automatically.
 2. **A verdict is keyed by the set it was computed over (DWG-6).** `drawing_audit_logs` is unique on `(org_id, library_id, sheet_number, revision_code) NULLS NOT DISTINCT` (`20261124`).
    - Existing rows take the library of their recorded knowledge document where it resolves, and stay org-wide (`library_id` NULL) otherwise. The orchestrator's `log_audit_completion` writes org-wide rows on the same key.
    - There is no foreign key: a verdict outlives its library.
-   - A stored verdict is never replaced by a less severe one (`RANK` / `wouldLowerSeverity` in `lib/drawingAuditLog.ts`, exported for every writer).
-   - A sheet whose drawing series no other sheet in the library shares is not recorded: a library holding one mirrored sheet of a series cannot judge that series.
+   - A stored verdict at a known revision is never replaced by a less severe one (`RANK` / `wouldLowerSeverity` in `lib/drawingAuditLog.ts`, exported for every writer; `mayReplaceStored` adds the unknown-revision rule below).
+   - A gap ("isn't in the set") is judged only inside a series the library holds. A sheet that is the only one of its series in the library is recorded for what is its own (its connectors and boxes), and references into its series are out of the set's scope; the record names the series not judged. A document declaring several numbers of one series holds that series itself.
+   - A verdict under an unknown revision (`""`) is never "already recorded": such a sheet is audited every time, and the latest non-`skipped` verdict replaces its row.
    - Nothing is recorded from an index that could not be read whole.
    - The revision filed is the one indexed. A mirror on an older version, or with a disagreeing label, is skipped with the reason.
-3. **A model's point is an estimate (PR-10).** A vision position is cached as `pos_source 'vision'` and returned as `approximate`, with the revision it was read on. It expires when the sheet is revised or rebuilt (`resetKnowledgeIndex` clears every page entity), and a viewer can reject it. A coarse point that a close-up does NOT confirm is never cached: one relocate round asks again (`buildRelocateUser`), and if that finds nothing the tag is reported not visible.
-4. **A pipe line number is never equipment, and is to be kept as kind `'line'` (DWG-2).** `extractEquipmentTags` refuses a tag preceded by a line size or the `LINE` label. `extractLineNumbers` holds the line grammar. Writing `'line'` rows is a call in `lib/knowledgeIngest.ts`, owed by that file's owner. `ENTITY_KINDS` gains `'line'` with it: the guard holds the inventory to the writer both ways, so it fails until then.
+3. **A model's point is an estimate (PR-10).** A vision position is cached as `pos_source 'vision'` and returned as `approximate`, with the revision it was read on. It expires when the sheet is revised or rebuilt (`resetKnowledgeIndex` clears every page entity), and a viewer can reject it. A coarse point that a close-up REFUTES is never cached: one relocate round asks again (`buildRelocateUser`), and if that finds nothing the tag is reported not visible. A coarse point no close-up checked is cached as the estimate it is.
+4. **A pipe line number is never equipment, and is to be kept as kind `'line'` (DWG-2).** `extractEquipmentTags` refuses a tag that is part of a line number: a size glued to it by a dash, a size followed by the tag and a line spec segment, or the `LINE NO.` label. A valve or instrument written with the size of its line (`2" PSV-2001`) stays a tag. `extractLineNumbers` holds the line grammar. Writing `'line'` rows is a call in `lib/knowledgeIngest.ts`, owed by that file's owner. `ENTITY_KINDS` gains `'line'` with it: the guard holds the inventory to the writer both ways, so it fails until then.
+5. **A connector's box is read from vision transcripts only; a text layer's connectors are its references (DWG-4).** The connector line is `OPC <box>: DWG <destination> SH <sheet> — …`, its destination read by position, and a connector is broken only when that destination reads `NONE` or is empty. A text layer prints a pennant, not a box token, so it gets no connector extraction of its own: its continuation phrasing and pennant numbers are audited as references (one-way, missing within a held series). The box token is not widened to words a text layer might print (CONN, CONNECTOR), because every false box with no drawing number would mint a top-severity `broken_connectors` record. DWG-4's third criterion is therefore not done, by this decision.
 
 > Made during intelligence Round G (2026-10-01) under the protocol's fail-safe rule, taking the four defaults the fleet plan named. Closes `DWG-4`, `DWG-5`, `DWG-6`, `DWG-7`, `DWG-9`, `DWG-10`, `DWG-11`, `DWG-12`, `DWG-13`, `BR-12`, `ING-5`, `PR-10` and `PR-11`, and `DWG-1`'s and `ING-12`'s handed-over halves. Records partial calls on `DWG-2` (the `'line'` rows), `DWG-3` (the ingest half), `DWG-8` (the full-line reference column) and `GOV-8` (usage carried on a thrown provider call). Migration: `20261124_intel_roundG_drawing_audit_scope.sql`.
 >
@@ -3423,19 +3427,24 @@ may be scoped for speed. Nothing else changes.
 
 **Acceptance.**
 - A 2,683-character TrueType P&ID page yields equipment tags and a title-block identity through the real ingest, and no line-number phantoms.
-- Two libraries holding one sheet keep two verdicts; a lone mirror of a series is not recorded; a second record writes nothing; a `skipped` sheet is re-recorded once it can be read.
+- Two libraries holding one sheet keep two verdicts; a lone mirror of a series is recorded with no gap judged in that series; a second record writes nothing for a sheet with a known revision; a `skipped` sheet is re-recorded once it can be read; a sheet with an unknown revision takes the latest verdict.
+- A connector whose destination is `025-M-0107`, `4410-01-001` or `123456` is never "names no destination"; only `NONE` or an empty field is broken.
+- `2" PSV-2001` and `4" FCV-101` are equipment; `6"-P-1024-A1A` and `6" P-1024-A1A` are not.
 - Five model calls in one locate request are metered in one row after the last.
-- A close-up that refutes the coarse point triggers the relocate round, and an unconfirmed point is never cached.
+- A close-up that refutes the coarse point triggers the relocate round, and the refuted point is never cached; a point no close-up checked is cached as an approximate estimate.
 - Text-layer marks land on pdf.js's own point for every `/Rotate`.
 
 See `lib/__tests__/intelRoundGDrawing.test.ts`, `lib/__tests__/intelRoundGDrawingRoutes.test.ts`, `lib/__tests__/intelRoundGDrawingMigration.test.ts`, `lib/__tests__/drawingText.test.ts`, `lib/__tests__/drawingAuditLog.test.ts`, `lib/__tests__/drawingLocate.test.ts` and `lib/__tests__/entityKindGuard.test.ts`.
 
 **Reversal.**
 - (1) The thresholds are `DENSE_DRAWING_MIN_TAGS_PER_KCHAR`, `DRAWING_MAX_LOWERCASE_RATIO` and `SPARSE_PAGE_MAX_CHARS` in `lib/drawingText.ts`.
-- (2) Keying org-wide again means dropping the scoped index and restoring `(org_id, sheet_number, revision_code)`, which can only succeed after rows that share a key across libraries are merged. The series rule is `sheetsAloneInTheirSeries`, in one place.
-- (3) Caching unconfirmed points again is the `unconfirmed` branch in the locate route.
+- (2) Keying org-wide again means dropping the scoped index and restoring `(org_id, sheet_number, revision_code)`, which can only succeed after rows that share a key across libraries are merged. The series rule is `sheetsAloneInTheirSeries` / `seriesHeldBySet` / `missingWithinHeldSeries`; the unknown-revision rule is `sheetsNeedingAudit` / `mayReplaceStored`, all in `lib/drawingAuditLog.ts`.
+- (3) Caching refuted points again is the `unconfirmed` branch in the locate route; not caching unchecked points would be a filter on `located` before the cache write.
 - (4) None while `'line'` is unwritten.
+- (5) Widening the box token is `OPC_BOX_RE` in `lib/drawingText.ts`; the contract is `OPC_LINE_FORMAT` there, and the prompt is built from it.
 
 **Risk:** low to medium.
 - **The writers.** Until I-04 moves `log_audit_completion` onto the new key, applying `20261124` makes that one tool's upsert fail (42P10, reported), so apply it after that merge.
 - **Letter case.** The letter-case signal misses a mixed-case drawing over 2,000 characters with no title block, and such a sheet keeps the old behaviour.
+
+*Corrected 2026-10-01 (intelligence Round G, I-07 review fix pass): items 2, 3 and 4 and the acceptance lines above now say what the code does after the fix review — a lone sheet is recorded with no gap judged in its series (the first rule dropped single-sheet libraries, one-sheet-per-series libraries, combined PDFs and a lone sheet's own broken connectors); an unknown revision is never "already recorded"; only a REFUTED point is never cached; a size-annotated valve stays a tag. Item 5 is new: it records the call behind DWG-4's third criterion, which the first record had ticked on the reference layer that already existed.*
