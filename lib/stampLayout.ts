@@ -153,6 +153,48 @@ export const FALLBACK_INK: PageInk = {
   bottomBand: 0,
 };
 
+// ─── Page rotation: measure and draw in ONE space (PHYS-12 / PKG-13) ─────
+//
+// A page's /Rotate turns it CLOCKWISE for display and print. pdf.js applies
+// it — the ink analysis measures the page AS DISPLAYED — while pdf-lib draws
+// in the page's unrotated user space (MediaBox). So every mark is laid out in
+// DISPLAY space (the functions above take display width/height) and each
+// anchor point is mapped into user space here, its angle advanced by the
+// rotation, so the QR lands in the corner the analysis chose and every mark
+// reads upright on the printed sheet.
+
+/** A page's /Rotate, normalized to the four values PDF allows. */
+export type PageRotation = 0 | 90 | 180 | 270;
+
+export function normalizeRotation(angleDeg: number): PageRotation {
+  const quarterTurns = Math.round((Number.isFinite(angleDeg) ? angleDeg : 0) / 90);
+  return ((((quarterTurns % 4) + 4) % 4) * 90) as PageRotation;
+}
+
+/** The page as displayed and printed: a quarter turn swaps the MediaBox's sides. */
+export function displaySize(
+  mediaW: number, mediaH: number, rotation: PageRotation,
+): { width: number; height: number } {
+  return rotation === 90 || rotation === 270
+    ? { width: mediaH, height: mediaW }
+    : { width: mediaW, height: mediaH };
+}
+
+/** A point in DISPLAY space (origin at the bottom-left of the page as the
+ *  reader sees it, y up) → the page's unrotated user space, where pdf-lib
+ *  draws. A mark drawn at that point must also be rotated by `rotation`
+ *  degrees (counter-clockwise in user space) to read upright. */
+export function displayToUser(
+  x: number, y: number, mediaW: number, mediaH: number, rotation: PageRotation,
+): { x: number; y: number } {
+  switch (rotation) {
+    case 90: return { x: mediaW - y, y: x };
+    case 180: return { x: mediaW - x, y: mediaH - y };
+    case 270: return { x: y, y: mediaH - x };
+    default: return { x, y };
+  }
+}
+
 // ─── QR geometry: a plate that can never leave the page ──────────────────
 
 export interface QrPlacement {

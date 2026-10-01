@@ -21,11 +21,18 @@
 // The raster analysis is best-effort: no DOM, worker failure, or a page
 // that won't render simply falls back to the historical bottom-right/bottom
 // placements. The pure math lives in lib/stampLayout.ts (unit-tested).
+//
+// Rotated sheets (PHYS-12 / PKG-13): pdf.js measures a page AS DISPLAYED
+// (its /Rotate applied); pdf-lib draws in the unrotated MediaBox. Every mark
+// is therefore laid out in display space and mapped into user space through
+// one DisplayFrame per page, so the analysis and the drawing never disagree
+// about which corner is which.
 
-import { PDFDocument, rgb, StandardFonts, degrees, PDFFont, PDFPage } from "pdf-lib";
+import { PDFDocument, rgb, StandardFonts, degrees, PDFFont, PDFPage, type Rotation } from "pdf-lib";
 import {
   fitRotatedTextSize, centerRotatedText, wrapToWidth,
   pickQrCorner, pickFooterEdge, placeQr,
+  normalizeRotation, displaySize, displayToUser,
   FALLBACK_INK, type PageInk, type Corner,
 } from "@/lib/stampLayout";
 
@@ -151,9 +158,33 @@ async function analyzePageInk(source: ArrayBuffer | Uint8Array): Promise<PageInk
 
 // ─── The stamp itself ────────────────────────────────────────────────────
 
-function drawWatermark(page: PDFPage, font: PDFFont, text: string): void {
+/** A page as DISPLAYED (after its /Rotate) — the space the ink analysis
+ *  measured. `width`/`height` are the displayed sides; `at()` maps a display
+ *  point into the user space pdf-lib draws in and turns the mark with the
+ *  page, so it reads upright on the printed sheet (PHYS-12 / PKG-13). */
+interface DisplayFrame {
+  page: PDFPage;
+  width: number;
+  height: number;
+  at(x: number, y: number, angleDeg?: number): { x: number; y: number; rotate: Rotation };
+}
+
+function displayFrame(page: PDFPage): DisplayFrame {
+  const media = page.getSize();
+  const rotation = normalizeRotation(page.getRotation().angle);
+  const { width, height } = displaySize(media.width, media.height, rotation);
+  return {
+    page, width, height,
+    at: (x, y, angleDeg = 0) => ({
+      ...displayToUser(x, y, media.width, media.height, rotation),
+      rotate: degrees(angleDeg + rotation),
+    }),
+  };
+}
+
+function drawWatermark(frame: DisplayFrame, font: PDFFont, text: string): void {
   if (!text) return;
-  const { width, height } = page.getSize();
+  const { page, width, height } = frame;
   const ANGLE = -30;
   let run = text;
   let widthAt1pt = font.widthOfTextAtSize(run, 1);
@@ -173,23 +204,22 @@ function drawWatermark(page: PDFPage, font: PDFFont, text: string): void {
     pageW: width, pageH: height, textW, textH: fit.size, angleDeg: ANGLE,
   });
   page.drawText(run, {
-    x, y,
+    ...frame.at(x, y, ANGLE),
     size: fit.size, font,
     color: rgb(0.2, 0.2, 0.2),
     opacity: 0.15,
-    rotate: degrees(ANGLE),
   });
 }
 
 function drawFooter(input: {
-  page: PDFPage;
+  frame: DisplayFrame;
   font: PDFFont;
   opts: StampOptions;
   edge: "top" | "bottom";
   qrCorner: Corner | null;
 }): void {
-  const { page, font, opts, edge, qrCorner } = input;
-  const { width, height } = page.getSize();
+  const { frame, font, opts, edge, qrCorner } = input;
+  const { page, width, height } = frame;
 
   const mainSize = Math.min(10, Math.max(6.5, width / 62));
   const noticeSize = Math.max(6, mainSize - 1.5);
@@ -226,7 +256,7 @@ function drawFooter(input: {
   for (const e of entries) {
     yCursor -= e.size;
     page.drawText(e.text, {
-      x: xStart, y: yCursor,
+      ...frame.at(xStart, yCursor),
       size: e.size, font,
       color: e.color,
       opacity: 0.85,
@@ -236,6 +266,13 @@ function drawFooter(input: {
 }
 
 export async function applyStampToPdfDoc(pdfDoc: PDFDocument, opts: StampOptions): Promise<void> {
+  // PKG-13: pdf-lib can LOAD an encrypted PDF (ignoreEncryption) but cannot
+  // decrypt it — stamped or merged, its pages are unreadable. Refuse with the
+  // reason (a pack records the sheet as skipped, exactly as stampPdf's load
+  // already fails an individual download) rather than issue garbage.
+  if (pdfDoc.isEncrypted) {
+    throw new Error("the PDF is encrypted, so it cannot be stamped — it was not issued as a copy");
+  }
   const font = await pdfDoc.embedFont(StandardFonts.HelveticaBold);
   const watermark = buildStampText(opts);
 
@@ -259,29 +296,32 @@ export async function applyStampToPdfDoc(pdfDoc: PDFDocument, opts: StampOptions
   const pages = pdfDoc.getPages();
   for (let i = 0; i < pages.length; i += 1) {
     const page = pages[i];
-    const { width, height } = page.getSize();
+    // Layout runs in DISPLAY space — the space the analysis measured — and
+    // every anchor goes through frame.at() into user space (PHYS-12).
+    const frame = displayFrame(page);
+    const { width, height } = frame;
     // Pages beyond the analyzed cap reuse the last analyzed page (sheets in
     // a set share their template); no analysis at all → convention.
     const pageInk: PageInk = ink?.[Math.min(i, ink.length - 1)] ?? FALLBACK_INK;
 
-    drawWatermark(page, font, watermark);
+    drawWatermark(frame, font, watermark);
 
     const qrCorner = qrImage ? pickQrCorner(pageInk.corners) : null;
     const footerEdge = pickFooterEdge(pageInk.topBand, pageInk.bottomBand);
-    drawFooter({ page, font, opts, edge: footerEdge, qrCorner });
+    drawFooter({ frame, font, opts, edge: footerEdge, qrCorner });
 
     if (qrImage && qrCorner) {
       const q = placeQr({ pageW: width, pageH: height, corner: qrCorner });
       // White backing plate: even the emptiest corner of a drawing can have
       // stray linework — the code must stay scannable regardless.
       page.drawRectangle({
-        x: q.plate.x, y: q.plate.y, width: q.plate.w, height: q.plate.h,
+        ...frame.at(q.plate.x, q.plate.y), width: q.plate.w, height: q.plate.h,
         color: rgb(1, 1, 1),
         opacity: 0.92,
       });
-      page.drawImage(qrImage, { x: q.qrX, y: q.qrY, width: q.qrSize, height: q.qrSize });
+      page.drawImage(qrImage, { ...frame.at(q.qrX, q.qrY), width: q.qrSize, height: q.qrSize });
       page.drawText("SCAN TO VERIFY", {
-        x: q.labelX, y: q.labelY,
+        ...frame.at(q.labelX, q.labelY),
         size: q.labelSize,
         font,
         color: rgb(0.25, 0.25, 0.25),

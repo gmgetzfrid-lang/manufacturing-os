@@ -45,3 +45,24 @@ describe("PHYS-5 — a marked-up export is always stamped and recorded uncontrol
     expect(req).not.toMatch(/raw bake, no stamp/);
   });
 });
+
+// ─── PHYS-12 / PKG-13: one bake, rotation-aware, shared by both viewers ────
+describe("PKG-13 — the viewer's markup export bakes through the shared rotation-aware bake", () => {
+  it("downloadWithMarkup calls bakeMarkupIntoDoc and keeps no private copy of the unrotated bake", () => {
+    const v = src("components/viewers/FullScreenViewer.tsx");
+    const fn = v.slice(v.indexOf("const downloadWithMarkup = async () => {"), v.indexOf("const requestMarkupDownload = () => {"));
+    expect(v).toContain('import { bakeMarkupIntoPdf, bakeMarkupIntoDoc } from "@/lib/markupExport";');
+    expect(fn).toContain("await bakeMarkupIntoDoc(pdfDoc, states);");
+    expect(fn).not.toMatch(/page\.drawImage\(img, \{ x: 0, y: 0, width, height \}\)/);
+    expect(fn).not.toMatch(/new fabric\.StaticCanvas/);
+    // bake first, then stamp the same document
+    expect(fn.indexOf("await bakeMarkupIntoDoc(pdfDoc, states);")).toBeLessThan(fn.indexOf("await applyStampToPdfDoc(pdfDoc, {"));
+  });
+  it("lib/markupExport sizes the raster to the displayed page and lays it back with the page's rotation", () => {
+    const m = src("lib/markupExport.ts");
+    expect(m).toContain("const rotation = normalizeRotation(page.getRotation().angle);");
+    expect(m).toContain("const { width, height } = displaySize(media.width, media.height, rotation);");
+    expect(m).toContain("page.drawImage(img, { ...origin, width, height, rotate: degrees(rotation) });");
+    expect(m).toMatch(/export async function bakeMarkupIntoPdf\([\s\S]*?await bakeMarkupIntoDoc\(pdfDoc, pageStates\);/);
+  });
+});

@@ -49,7 +49,7 @@ import { recordIntent } from "@/lib/intents";
 import QrBadge from "@/components/ui/QrBadge";
 import type { DocumentRecord, DocumentVersion } from "@/types/schema";
 import { supabase } from "@/lib/supabase";
-import { bakeMarkupIntoPdf } from "@/lib/markupExport";
+import { bakeMarkupIntoPdf, bakeMarkupIntoDoc } from "@/lib/markupExport";
 import { stashDraft } from "@/lib/draftHandoff";
 import {
   downloadDocumentPdf,
@@ -994,27 +994,15 @@ export default function FullScreenViewer({
       const srcBytes = await ensureBytes();
       if (!srcBytes) { setMarkupError("Couldn't load the PDF to export."); setMarkupBusy(false); return; }
       const pdfDoc = await PDFDocument.load(srcBytes);
-      const pages = pdfDoc.getPages();
 
       const states: Record<number, object> = { ...pageStates };
       if (currentNorm) states[currentPage] = currentNorm;
 
-      // 1. Bake Fabric annotations into each page
-      for (const [k, st] of Object.entries(states)) {
-        const pn = parseInt(k, 10);
-        if (pn < 1 || pn > pages.length) continue;
-        const page = pages[pn - 1];
-        const { width, height } = page.getSize();
-        const tempEl = window.document.createElement("canvas");
-        const sc = new fabric.StaticCanvas(tempEl, { width: 1000, height: 1000 });
-        await sc.loadFromJSON(st as CanvasJson);
-        sc.setDimensions({ width, height });
-        sc.renderAll();
-        const png = sc.toDataURL({ format: "png", multiplier: 2 });
-        const pngBytes = await fetch(png).then((r) => r.arrayBuffer());
-        const img = await pdfDoc.embedPng(pngBytes);
-        page.drawImage(img, { x: 0, y: 0, width, height });
-      }
+      // 1. Bake Fabric annotations into each page — the shared, rotation-
+      //    aware bake (lib/markupExport.ts): the redlines were drawn over the
+      //    page as displayed, so a /Rotate sheet's land where they were drawn
+      //    (PKG-13 / PHYS-12).
+      await bakeMarkupIntoDoc(pdfDoc, states);
 
       // 2. Apply the UNCONTROLLED stamp on top — unconditionally (PHYS-5):
       //    markups are never part of the controlled revision.
