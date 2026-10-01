@@ -40,7 +40,12 @@
 --      flow never starts and ends at the same endpoint (23514). A source
 --      document is a knowledge document of the same org. Checked on INSERT
 --      and when an endpoint or the source changes — an existing dangling row
---      can still be decided or removed.
+--      can still be decided or removed. The org restore (lib/dataRestore,
+--      service role) is a writer like any other: a dangling row kept below
+--      (item 4) that a backup still holds is refused on restore (23503), as is
+--      a flow whose asset the restore skipped — an open handoff to
+--      admin-and-org (BKP restore fidelity), recorded under FLOW-6 and
+--      DEC-44 (I-09) item 3.
 --   4. Deleting an asset removes its flows (AFTER DELETE ON assets, under
 --      the deleting person's RLS — asset DELETE is the controller tier's since
 --      20261128, and a controller may delete any flow). Rows that already
@@ -185,7 +190,8 @@ BEGIN
       USING ERRCODE = '23503';
   END IF;
 
-  -- The reader (the service role) and the org restore are not a person.
+  -- The reader (the service role) and the org restore are not a person: the
+  -- endpoint and source checks above bind them; the person rules below do not.
   IF v_uid IS NULL THEN RETURN NEW; END IF;
 
   v_email := (SELECT m.email FROM org_members m

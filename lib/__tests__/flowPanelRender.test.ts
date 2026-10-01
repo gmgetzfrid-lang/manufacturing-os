@@ -254,6 +254,33 @@ describe("FLOW-1 — the plant-wide review: proposals only, a failed read said, 
     expect(host.querySelectorAll('button[title="Confirm — draw it on the graph"]')).toHaveLength(2);
   });
 
+  it("arriving by the panel's link (#plant-flow-review), the queue brings itself into view once its proposals load — the anchor did not exist when the browser looked", async () => {
+    const scroll = vi.fn();
+    const had = Object.prototype.hasOwnProperty.call(Element.prototype, "scrollIntoView");
+    const prev = (Element.prototype as { scrollIntoView?: unknown }).scrollIntoView;
+    (Element.prototype as { scrollIntoView?: unknown }).scrollIntoView = scroll;
+    try {
+      window.history.replaceState(null, "", "/admin/assets#plant-flow-review");
+      db.flows = [flow({ id: "p5", status: "proposed", origin: "ai", from_ref: LOOSE1, to_ref: LOOSE2, evidence: { confidence: 0.8 } })];
+      await render(queue());
+      expect(host.querySelector("#plant-flow-review")).not.toBeNull();
+      expect(scroll).toHaveBeenCalledTimes(1);
+      expect(scroll.mock.instances[0]).toBe(host.querySelector("#plant-flow-review"));
+      // a later refresh (a decision) does not yank the page back
+      await render(queue());
+      expect(scroll).toHaveBeenCalledTimes(1);
+      // without the hash, nothing scrolls
+      act(() => root.unmount()); root = createRoot(host); scroll.mockClear();
+      window.history.replaceState(null, "", "/admin/assets");
+      await render(queue());
+      expect(scroll).not.toHaveBeenCalled();
+    } finally {
+      window.history.replaceState(null, "", "/");
+      if (had) (Element.prototype as { scrollIntoView?: unknown }).scrollIntoView = prev;
+      else delete (Element.prototype as { scrollIntoView?: unknown }).scrollIntoView;
+    }
+  });
+
   it("a readable registry keeps the filter: only proposals touching no operating area", async () => {
     db.flows = [
       flow({ id: "p5", status: "proposed", origin: "ai", from_ref: LOOSE1, to_ref: LOOSE2, evidence: { confidence: 0.8 } }),
@@ -343,5 +370,56 @@ describe("AREA-5 / FLOW-1 — the Read-flows modal: the area's shelf when it hol
     expect(link?.getAttribute("href")).toBe("/admin/assets#plant-flow-review");
     const readCall = fetchMock.mock.calls.find((c) => c[0] === "/api/flows/read")!;
     expect(JSON.parse(String((readCall[1] as RequestInit).body))).toMatchObject({ knowledgeDocumentId: "kd1", unitCode: "20" });
+  });
+
+  // FLOW-7 regression pin: the reader renders an upload's stored file and
+  // never its index, so a direct upload keeps its Read in every state — the
+  // state and the stored failure are printed beside it.
+  const uploadsModel = () => browse({
+    areaKnowledgeLibrary: null,
+    uploads: [{
+      knowledgeLibraryId: "kl9", knowledgeLibraryName: "PFD book shelf",
+      docs: [
+        { kdocId: "kfail", name: "PFD book (failed)", pageCount: null, state: "ingest_failed", error: "unpdf ran out of memory" },
+        { kdocId: "kidx", name: "PFD book (indexing)", pageCount: null, state: "indexing" },
+      ],
+    }],
+  });
+
+  it("a direct upload whose indexing failed can still be read for flows — the failure and 'page count unknown' are said beside the Read", async () => {
+    await openModal(uploadsModel(), { proposed: 1, note: "Read page 1. 1 flow proposed." });
+    const failed = [...document.body.querySelectorAll("button")].find((b) => b.textContent?.includes("PFD book (failed)"));
+    expect(failed).toBeDefined();
+    const text = failed!.textContent ?? "";
+    expect(text).toContain("Indexing failed");
+    expect(text).toContain("unpdf ran out of memory");
+    expect(text).toContain("page count unknown — enter the pages to read");
+    expect(text).toContain("Read");
+    await act(async () => { failed!.click(); });
+    await flush();
+    const readCall = fetchMock.mock.calls.find((c) => c[0] === "/api/flows/read")!;
+    expect(JSON.parse(String((readCall[1] as RequestInit).body))).toMatchObject({ knowledgeDocumentId: "kfail" });
+    expect(host.textContent).toContain("Read page 1. 1 flow proposed.");
+  });
+
+  it("a direct upload still indexing is readable too, labelled as indexing", async () => {
+    await openModal(uploadsModel());
+    const indexing = [...document.body.querySelectorAll("button")].find((b) => b.textContent?.includes("PFD book (indexing)"));
+    expect(indexing).toBeDefined();
+    expect(indexing!.textContent).toContain("Indexing…");
+    expect(indexing!.textContent).toContain("page count unknown — enter the pages to read");
+    expect(indexing!.disabled).toBe(false);
+  });
+
+  it("a MIRROR that is not ready is still not offered (unchanged): its row is a status, not a Read", async () => {
+    const model = browse();
+    (model.tree as Array<{ folders: Array<{ docs: Row[] }> }>)[0].folders[0].docs = [
+      { dcDocId: "d1", name: "PFD-100 Crude", state: "ingest_failed", kdocId: "kd1", pageCount: null, error: "R2 timeout", kLibraryId: "kl1" },
+    ];
+    await openModal(model);
+    await act(async () => { select().value = ""; select().dispatchEvent(new Event("change", { bubbles: true })); });
+    await flush();
+    expect([...document.body.querySelectorAll("button")].some((b) => b.textContent?.includes("PFD-100 Crude"))).toBe(false);
+    expect(document.body.textContent).toContain("Indexing failed: R2 timeout");
   });
 });

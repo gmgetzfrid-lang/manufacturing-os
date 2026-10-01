@@ -20,7 +20,9 @@
 // the reader is a controller are recorded (DEC-43, channel "flows_read").
 // The gate is asked last, just before the render: a read the AI gates or
 // the empty registry refuse opens no file and records no restricted read
-// (a 428 → sign → retry is one record, not two).
+// (a 428 → sign → retry is one record, not two). It is asked for the label
+// first: a stale mirror whose current revision is not a PDF is a 409 that
+// says so, with nothing opened and nothing recorded.
 //
 // The model call is governed (GOV-11 / PR-12): assertAiGates runs first —
 // own key, allowlist, the signed acceptable-use agreement (428 with the text
@@ -45,6 +47,7 @@ import {
   renderKnowledgePagesReport, DRAWING_RENDER_WIDTH,
 } from "@/lib/knowledgePageRender";
 import { resolveDocumentFile } from "@/lib/docFileServer";
+import { isPdfFile } from "@/lib/verifyVerdict";
 import { isControllerPrincipal } from "@/lib/permissions";
 import { normalizeRoles } from "@/lib/roleCapabilities";
 import { routeDeadline, aiBudgetMs, tooLargeToReadMessage } from "@/lib/routeDeadline";
@@ -65,6 +68,10 @@ const READ_CAP = 20_000;
 const PAGE = 1000;
 /** No page render STARTS with less than this left for the model. */
 const MODEL_RESERVE_MS = 45_000;
+
+/** A mirror whose controlled document's current revision is not a PDF. */
+const STALE_NOT_PDF =
+  "The current revision of this drawing is not a PDF — this mirror is stale and the AI reads PDFs only. Sync the library (or attach a PDF revision) and read it again.";
 
 const columnMissing = (e: { code?: string; message?: string } | null) =>
   !!e && (e.code === "42703" || e.code === "PGRST204" || /column [\w."]+ does not exist|could not find the '\w+' column/i.test(e.message ?? ""));
@@ -165,10 +172,18 @@ export async function POST(req: NextRequest) {
   let fileKey = doc.file_key;
   let revisionRead: string | null = null;
   if (doc.source_document_id) {
-    const gate = await resolveDocumentFile(orgId, doc.source_document_id, {
-      uid: userId, email: userData.user.email ?? null, channel: "flows_read",
-    });
+    const reader = { uid: userId, email: userData.user.email ?? null, channel: "flows_read" };
+    // Asked first for the label only (no bytes, so no DEC-43 record): a
+    // mirror a sync has not caught up with may name a current revision that
+    // is not a PDF (a DWG republished over the drawing). That is said, never
+    // rendered into a misleading "could not be rendered" — and nothing was
+    // opened, so nothing is recorded.
+    const decided = await resolveDocumentFile(orgId, doc.source_document_id, { ...reader, labelOnly: true });
+    if (!decided.ok) return bad(decided.error, decided.status);
+    if (!isPdfFile(decided.file.fileKey, decided.file.fileType)) return bad(STALE_NOT_PDF, 409, { staleMirror: true });
+    const gate = await resolveDocumentFile(orgId, doc.source_document_id, reader);
     if (!gate.ok) return bad(gate.error, gate.status);
+    if (!isPdfFile(gate.file.fileKey, gate.file.fileType)) return bad(STALE_NOT_PDF, 409, { staleMirror: true });
     // The pages read are the ones the gate decided on. The mirror's revision
     // is the one read only when its file IS that file (a mirror a sync has
     // not caught up with reads the current revision, recorded as unknown).
@@ -356,21 +371,27 @@ export async function POST(req: NextRequest) {
     assetsOmitted: roster.assetsOmitted,
   };
 
-  // AREA-8: a read is a fact the area checklist counts, flows found or not.
-  await supabaseAdmin.from("audit_logs").insert({
-    action: "FLOWS_READ",
-    resource_type: "knowledge_document",
-    resource_id: doc.id,
-    org_id: orgId,
-    user_id: userId,
-    user_email: userData.user.email ?? null,
-    details: {
-      pagesRead, pagesTotal, proposed: landed.length, reproposed,
-      sourceDocumentId: doc.source_document_id, revisionRead, unitCode,
-    },
-  }).then(() => undefined, () => undefined);
+  // AREA-8: a read is a fact the area checklist counts, flows found or not —
+  // but a read whose every write failed recorded nothing, so it is not
+  // counted as read (the person is told the writes failed, below).
+  const nothingRecorded = landed.length === 0 && writeFailed > 0;
+  if (!nothingRecorded) {
+    await supabaseAdmin.from("audit_logs").insert({
+      action: "FLOWS_READ",
+      resource_type: "knowledge_document",
+      resource_id: doc.id,
+      org_id: orgId,
+      user_id: userId,
+      user_email: userData.user.email ?? null,
+      details: {
+        pagesRead, pagesTotal, proposed: landed.length, reproposed,
+        sourceDocumentId: doc.source_document_id, revisionRead, unitCode,
+        ...(writeFailed > 0 ? { writeFailed } : {}),
+      },
+    }).then(() => undefined, () => undefined);
+  }
 
-  if (landed.length === 0 && writeFailed > 0) {
+  if (nothingRecorded) {
     return bad(
       `The drawing was read (the call was charged to your key), but writing the proposals failed: ${writeError ?? "unknown error"}`,
       500, { ...outcome, note: readNote(outcome) },

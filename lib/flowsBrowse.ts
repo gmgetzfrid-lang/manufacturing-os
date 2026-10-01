@@ -296,6 +296,8 @@ export function assembleFlowsBrowse(inputs: FlowsBrowseInputs): FlowsBrowseResul
       knowledgeLibraryName: klName.get(k.libraryId) ?? "Knowledge library",
       docs: [],
     };
+    // The state is a LABEL on an upload: the reader renders its stored file,
+    // never the index, so the picker keeps its Read in every state.
     const upState = mirrorState(k.status);
     g.docs.push({
       kdocId: k.id, name: k.name, pageCount: k.pageCount, state: upState,

@@ -106,6 +106,13 @@ export default function SetupPage() {
           try {
             const [identities, book] = await Promise.all([listAssetIdentities(activeOrgId), loadCodebook(activeOrgId)]);
             const live = identities.filter((a) => !a.archived);
+            // loadCodebook answers EMPTY_CODEBOOK when its read fails, and an
+            // empty book decodes no code — "every site code agrees" would be
+            // a tick on nothing checked. A book with no unit or no equipment
+            // type cannot name a code's unit at all: while a filed asset
+            // carries a code, that is "could not be checked", never 0.
+            const decodable = book.units.length > 0 && book.equipmentTypes.length > 0;
+            if (!decodable && live.some((a) => !!a.code && !!a.unit_code)) return null;
             return planIdentityReview(live, book, identities).filter((r) => r.kind === "code_names_other_unit").length;
           } catch { return null; }
         })(),

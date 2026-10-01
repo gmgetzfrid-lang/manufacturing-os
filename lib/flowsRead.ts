@@ -316,13 +316,16 @@ export function readNote(o: ReadOutcome): string {
 // ── AREA-8: the area checklist's deep-read coverage ─────────────────────────
 
 /** A title or folder name that says "flow drawing": a PFD / process flow
- *  diagram, a P&ID, a block (flow) diagram, a utility flow diagram, a
- *  flowsheet. Whole words only ("rapid" is not a PID). */
+ *  diagram, a P&ID (also spelled out: "Piping & Instrumentation
+ *  Diagram(s)"), a block (flow) diagram, a utility flow diagram, a
+ *  flowsheet. Whole words only ("rapid" is not a PID), and a bare "PID"
+ *  that names the control algorithm ("PID controller", "PID loop tuning")
+ *  is not a drawing. */
 const FLOW_DRAWING_WORD =
-  /(?:^|[^a-z0-9])(?:p\s*&\s*ids?|p\s*and\s*ids?|pids?|pfds?|ufds?|bfds?|process\s+flows?(?:\s+diagrams?)?|flow\s+diagrams?|flow\s*sheets?|block\s+(?:flow\s+)?diagrams?)(?=$|[^a-z0-9])/i;
+  /(?:^|[^a-z0-9])(?:p\s*&\s*ids?|p\s*and\s*ids?|pids?(?!\s*[-_]?\s*(?:controllers?|control|loops?|tuning|gains?|parameters?|settings?|algorithms?|function\s+blocks?|blocks?|faceplates?)(?:$|[^a-z0-9]))|piping\s*(?:&|and)\s*instrument(?:ation)?(?:\s+diagrams?)?|pfds?|ufds?|bfds?|process\s+flows?(?:\s+diagrams?)?|flow\s+diagrams?|flow\s*sheets?|block\s+(?:flow\s+)?diagrams?)(?=$|[^a-z0-9])/i;
 
-/** Does any of these names (the document's own, its folder path) call it a
- *  flow drawing? */
+/** Does any of these names (the document's own, its folder path, the drawing
+ *  type its number decodes to) call it a flow drawing? */
 export function namesFlowDrawing(...names: Array<string | null | undefined>): boolean {
   return names.some((n) => !!n && FLOW_DRAWING_WORD.test(n));
 }
@@ -343,13 +346,17 @@ export interface FlowReadCoverage {
  *  read once — the threshold a plant engineer sets for "the PFDs and P&IDs
  *  are mapped", not "every data sheet went through the paid reader". */
 export function flowReadCoverage(
-  ready: Array<{ id: string; name: string; folderPath?: string[] }>,
+  ready: Array<{ id: string; name: string; folderPath?: string[]; drawingType?: string | null }>,
   readIds: ReadonlySet<string>,
 ): FlowReadCoverage {
   let readable = 0, read = 0, otherDocs = 0;
   for (const d of ready) {
     const wasRead = readIds.has(d.id);
-    if (wasRead || namesFlowDrawing(d.name, ...(d.folderPath ?? []))) {
+    // The drawing type the document's number decodes to (the Site Codebook's
+    // drawing_type label, "02" → "P&ID") is asked first; a codebook label is
+    // free text, so it ADDS a drawing the title misses and never takes one
+    // away from the title or folder.
+    if (wasRead || namesFlowDrawing(d.drawingType, d.name, ...(d.folderPath ?? []))) {
       readable += 1;
       if (wasRead) read += 1;
     } else otherDocs += 1;

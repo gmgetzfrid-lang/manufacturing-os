@@ -36,7 +36,12 @@ const st = vi.hoisted(() => ({
   docGate: { ok: true, file: { documentId: "dc1", label: "PFD-1", fileKey: "r2/pfd-1.pdf", fileType: "application/pdf" } } as
     | { ok: true; file: { documentId: string; label: string; fileKey: string; fileType: string | null } }
     | { ok: false; status: number; error: string },
+  /** The recording (bytes-serving) resolutions — at most one DEC-43 row each. */
   docGateCalls: [] as Array<unknown[]>,
+  /** The label-only resolutions asked first (no bytes, no DEC-43 row). */
+  docGateLabelCalls: [] as Array<unknown[]>,
+  /** What the label-only ask answers, when it differs from docGate (a race). */
+  docGateLabel: null as null | { ok: true; file: { documentId: string; label: string; fileKey: string; fileType: string | null } },
   seq: 0,
 }));
 
@@ -180,7 +185,13 @@ vi.mock("@/lib/knowledgePageRender", () => ({
   }),
 }));
 vi.mock("@/lib/docFileServer", () => ({
-  resolveDocumentFile: vi.fn(async (...args: unknown[]) => { st.order.push("docgate"); st.docGateCalls.push(args); return st.docGate; }),
+  resolveDocumentFile: vi.fn(async (...args: unknown[]) => {
+    if ((args[2] as { labelOnly?: boolean }).labelOnly) {
+      st.order.push("docgate:label"); st.docGateLabelCalls.push(args);
+      return st.docGateLabel ?? st.docGate;
+    }
+    st.order.push("docgate"); st.docGateCalls.push(args); return st.docGate;
+  }),
 }));
 
 import { POST } from "@/app/api/flows/read/route";
@@ -196,7 +207,7 @@ const flowsOf = () => st.rows.process_flows ?? [];
 
 beforeEach(() => {
   st.user = { id: "admin1", email: "admin@x.io" };
-  st.calls = []; st.order = []; st.aiInputs = []; st.renderArgs = []; st.docGateCalls = [];
+  st.calls = []; st.order = []; st.aiInputs = []; st.renderArgs = []; st.docGateCalls = []; st.docGateLabelCalls = []; st.docGateLabel = null;
   st.noVersionColumn = false; st.upsertError = null; st.upsertDropPairs = []; st.insertError = null;
   st.gateError = null; st.aiError = null; st.numPages = 6; st.failPages = []; st.seq = 0;
   st.docGate = { ok: true, file: { documentId: "dc1", label: "PFD-1", fileKey: "r2/pfd-1.pdf", fileType: "application/pdf" } };
@@ -277,7 +288,7 @@ describe("GOV-11 / PR-12 — the gates run before any render; the call is govern
 
   it("a signed member under their cap: gates, then the document gate, then render, then ONE governed call carrying the rendered pages", async () => {
     await post({});
-    expect(st.order).toEqual(["gates", "docgate", "render", "call"]);
+    expect(st.order).toEqual(["gates", "docgate:label", "docgate", "render", "call"]);
     expect(st.aiInputs).toHaveLength(1);
     expect(st.aiInputs[0]).toMatchObject({ orgId: "o1", userId: "admin1", op: "flowRead", maxTokens: 1600 });
     expect((st.aiInputs[0].images as unknown[]).length).toBe(6);
@@ -297,8 +308,10 @@ describe("SEC-10 — the pages are the caller's to read", () => {
     const res = await post({});
     expect(res.status).toBe(403);
     expect((await res.json()).error).toBe("You don't have access to read that document.");
-    expect(st.docGateCalls[0]).toEqual(["o1", "dc1", { uid: "admin1", email: "admin@x.io", channel: "flows_read" }]);
-    expect(st.order).toEqual(["gates", "docgate"]);
+    expect(st.docGateLabelCalls[0]).toEqual(["o1", "dc1", { uid: "admin1", email: "admin@x.io", channel: "flows_read", labelOnly: true }]);
+    // refused on the label: no bytes were ever asked for, so nothing is recorded
+    expect(st.docGateCalls).toHaveLength(0);
+    expect(st.order).toEqual(["gates", "docgate:label"]);
   });
 
   it("a broken folder chain is named (409); a gate that cannot read is 503 — both before any spend", async () => {
@@ -307,7 +320,7 @@ describe("SEC-10 — the pages are the caller's to read", () => {
     st.docGate = { ok: false, status: 503, error: "Couldn't verify your access to that document — try again." };
     st.order = [];
     expect((await post({})).status).toBe(503);
-    expect(st.order).toEqual(["gates", "docgate"]);
+    expect(st.order).toEqual(["gates", "docgate:label"]);
   });
 
   it("the document gate is asked only once the read will happen: a refusal before it (the agreement, an empty registry) records no restricted read, and 428 → sign → retry asks it once", async () => {
@@ -335,10 +348,35 @@ describe("SEC-10 — the pages are the caller's to read", () => {
     expect(flowsOf()[0].source_version_id).toBeNull();
   });
 
+  it("a mirror lagging a current revision that is NOT a PDF (a DWG republished) is a 409 that says so — nothing opened, nothing recorded, nothing rendered", async () => {
+    st.docGate = { ok: true, file: { documentId: "dc1", label: "PFD-1", fileKey: "r2/pfd-1-rev3.dwg", fileType: "image/vnd.dwg" } };
+    const res = await post({});
+    expect(res.status).toBe(409);
+    const json = await res.json();
+    expect(json.error).toMatch(/not a PDF — this mirror is stale/);
+    expect(json.error).toMatch(/Sync the library/);
+    expect(json.staleMirror).toBe(true);
+    // asked for the label only: no bytes, so no DEC-43 restricted-read row
+    expect(st.docGateLabelCalls).toHaveLength(1);
+    expect(st.docGateCalls).toHaveLength(0);
+    expect(st.order).toEqual(["gates", "docgate:label"]);
+    expect(st.renderArgs).toHaveLength(0);
+    expect(st.aiInputs).toHaveLength(0);
+  });
+
+  it("the revision changing to a non-PDF between the label and the read is the same 409 — never a misleading render failure", async () => {
+    st.docGateLabel = { ok: true, file: { documentId: "dc1", label: "PFD-1", fileKey: "r2/pfd-1.pdf", fileType: "application/pdf" } };
+    st.docGate = { ok: true, file: { documentId: "dc1", label: "PFD-1", fileKey: "r2/pfd-1-rev3.dwg", fileType: null } };
+    const res = await post({});
+    expect(res.status).toBe(409);
+    expect(st.renderArgs).toHaveLength(0);
+  });
+
   it("an upload with no controlled source keeps its own rule: no document gate, its own file", async () => {
     st.rows.knowledge_documents[0] = { ...st.rows.knowledge_documents[0], source_document_id: null, source_version_id: null, file_key: "r2/upload.pdf" };
     expect((await post({})).status).toBe(200);
     expect(st.docGateCalls).toHaveLength(0);
+    expect(st.docGateLabelCalls).toHaveLength(0);
     expect(st.renderArgs[0].key).toBe("r2/upload.pdf");
   });
 });
@@ -520,6 +558,24 @@ describe("FLOW-1 / AREA-8 — outside the unit, and the read record", () => {
     expect(st.rows.audit_logs).toEqual([expect.objectContaining({
       action: "FLOWS_READ", resource_type: "knowledge_document", resource_id: "kd1", org_id: "o1", user_id: "admin1",
       details: expect.objectContaining({ pagesRead: [1, 2, 3, 4, 5, 6], proposed: 0, unitCode: "20" }),
+    })]);
+  });
+
+  it("a read whose writes ALL failed is not counted as read — no FLOWS_READ record, and the 500 says so", async () => {
+    st.upsertError = { code: "XX000", message: "boom" };
+    st.insertError = () => ({ code: "XX000", message: "boom" });
+    const res = await post({ unitCode: "20" });
+    expect(res.status).toBe(500);
+    expect((st.rows.audit_logs ?? []).filter((r) => r.action === "FLOWS_READ")).toHaveLength(0);
+  });
+
+  it("a read where some writes landed is counted, and the record carries how many failed", async () => {
+    st.upsertError = { code: "23503", message: "endpoint gone" };
+    st.insertError = (r) => (r.to_ref === "a4" ? { code: "23503", message: "endpoint gone" } : null);
+    st.aiText = JSON.stringify({ flows: [{ from: "A2", to: "A1", confidence: 0.9 }, { from: "A3", to: "A4", confidence: 0.9 }] });
+    expect((await post({})).status).toBe(200);
+    expect(st.rows.audit_logs).toEqual([expect.objectContaining({
+      action: "FLOWS_READ", details: expect.objectContaining({ proposed: 1, writeFailed: 1 }),
     })]);
   });
 });

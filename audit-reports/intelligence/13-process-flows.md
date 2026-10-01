@@ -61,14 +61,14 @@ app/(protected)/admin/assets/page.tsx:580 `{unitFilter && unitFilter !== "__unas
 What landed:
 - `components/assets/UnitOpsPanels.tsx` `FlowReviewQueue` lists every proposed flow in the plant, newest first, whatever unit it touches. It reads only the proposals, filtered in the database (`listProcessFlowsPaged(orgId, { status: "proposed" })`), never the whole confirmed map. Each row shows its unit(s), or "no operating area". There is an "only equipment in no operating area" filter, confirm / dismiss for the controller tier, and Withdraw for the author. A list read that fails is shown as an error ("The proposed flows could not be read: …"), not as an empty queue. When the registry cannot be read, an equipment end is labelled "unit not checked" (never "no operating area"), and the filter is disabled. It is mounted on the operating-areas page's all-equipment and `__unassigned` views (anchor `#plant-flow-review`).
 - `FlowPanel` takes the unit's FULL equipment list (`areaAssets` — every asset filed to the unit from the page's complete registry read, never the search / type / photo filtered view). It counts proposals that touch nothing in the unit, with a link to the plant-wide list.
-- `app/api/flows/read/route.ts` takes the launching `unitCode` and answers `outsideUnit`: how many of the landed proposals touch neither the unit's equipment nor the unit. The Read-flows modal passes the count to `FlowPanel`. The panel shows "N of the proposals are outside this unit — decide them under Proposed flows across the plant", with that phrase linked to `#plant-flow-review`. (The first pass printed it as plain text with no link; corrected in the fix pass.)
+- `app/api/flows/read/route.ts` takes the launching `unitCode` and answers `outsideUnit`: how many of the landed proposals touch neither the unit's equipment nor the unit. The Read-flows modal passes the count to `FlowPanel`. The panel shows "N of the proposals are outside this unit — decide them under Proposed flows across the plant", with that phrase linked to `#plant-flow-review`. (The first pass printed it as plain text with no link; corrected in the fix pass.) Second fix pass: the anchor exists only once the queue's own proposals have loaded, after the browser has already looked for it, so a bare link landed at the top of the page. `FlowReviewQueue` now brings itself into view (`scrollIntoView`), once, when it first appears while `location.hash` is `#plant-flow-review` (`PLANT_FLOW_REVIEW_ID`). A later refresh does not scroll the page back.
 
-Tests: `lib/__tests__/flowPanelRender.test.ts` ("the plant-wide list shows a proposal between equipment no operating area holds"; "proposals touching nothing in this unit are counted with a link …"; "the operating-areas page gives the panel the unit's FULL equipment …"; from the fix pass, "reads only the proposals, filtered in the database …", "a list read that fails is SAID …", "an unreadable registry: each asset end is 'unit not checked' …", "a read whose proposals land outside the unit LINKS them to where they are decided"), `lib/__tests__/processFlowsLib.test.ts` ("the plant-wide review reads only the proposals …"), `lib/__tests__/flowsReadRoute.test.ts` ("a read launched from Crude (20) says how many of its proposals touch nothing in Crude").
+Tests: `lib/__tests__/flowPanelRender.test.ts` ("the plant-wide list shows a proposal between equipment no operating area holds"; "proposals touching nothing in this unit are counted with a link …"; "the operating-areas page gives the panel the unit's FULL equipment …"; from the fix pass, "reads only the proposals, filtered in the database …", "a list read that fails is SAID …", "an unreadable registry: each asset end is 'unit not checked' …", "a read whose proposals land outside the unit LINKS them to where they are decided"; from the second fix pass, "arriving by the panel's link (#plant-flow-review), the queue brings itself into view once its proposals load …"), `lib/__tests__/processFlowsLib.test.ts` ("the plant-wide review reads only the proposals …"), `lib/__tests__/flowsReadRoute.test.ts` ("a read launched from Crude (20) says how many of its proposals touch nothing in Crude").
 
 **Done-when.**
 1. ✓ A plant-wide proposed-flows review surface exists on the operating-areas page, independent of unit selection.
 2. ✓ FlowPanel is given the unit's full asset set.
-3. ✓ The read response reports how many proposals landed outside the caller's unit, and the unit panel links to where they are decided (`#plant-flow-review`).
+3. ✓ The read response reports how many proposals landed outside the caller's unit, and the unit panel links to where they are decided (`#plant-flow-review`). The link reaches the list: the queue scrolls itself into view when it renders after its asynchronous load.
 
 **Scope / residual.** `app/(protected)/admin/assets/page.tsx` (I-10's, merged) mounts the queue and passes `areaAssets`; listed under filesOutsidePlan.
 
@@ -339,6 +339,8 @@ Tests: `lib/__tests__/flowPanelRender.test.ts` ("'equipment no longer exists', m
 
 **Scope / residual.** Pending migration `20261155`. Rows that already dangle are counted in its inventory and kept (DEC-30). They show as gone and a controller removes them. The confirmations are in `app/(protected)/admin/assets/page.tsx` (I-10's, merged; filesOutsidePlan).
 
+*Open handoff to admin-and-org (BKP restore fidelity), found in the second review.* The guard's endpoint check binds every writer, the org restore included (`lib/dataRestore.ts`, service role). A backup taken after the paste still holds the kept dangling rows. On restore, each one is refused with `23503 process_flows_endpoint` and reported as "references a row that is not there". The same happens to a flow whose asset the restore skipped because it exists in another workspace. This was verified on a throwaway PG16. The migration header (items 3 and 4, and the comment above the person rules) now says this, instead of reading as if restore passes. The fix options belong to the restore engine: a restore-session marker the guard honours on INSERT, or the restore reporting these rows as the dangling flows they were. Neither is this package's file.
+
 ---
 
 <a id="flow-7"></a>
@@ -374,16 +376,18 @@ flowsBrowse.ts:183-185 verbatim: `const state: DcDocState = mirror ? (mirror.sta
 **Resolution (2026-10-01, intelligence Round G).** Reproduced first: `assembleFlowsBrowse` mapped every non-ready mirror to `indexing`, and the browse route never selected `knowledge_documents.error`.
 
 What landed:
-- `lib/flowsBrowse.ts`: `DcDocState` gains `ingest_failed`, and `mirrorState(status)` maps `error` to it (`pending` / `indexing` / `stale` stay `indexing`). A failed row carries the stored `error`. Direct uploads carry the same state and error, so a failed or pending upload is no longer offered as ready.
+- `lib/flowsBrowse.ts`: `DcDocState` gains `ingest_failed`, and `mirrorState(status)` maps `error` to it (`pending` / `indexing` / `stale` stay `indexing`). A failed row carries the stored `error`. Direct uploads carry the same state and error as a LABEL. *(Corrected in the second fix pass: an earlier line here read "a failed or pending upload is no longer offered as ready". That went past this finding, which is about mirror labels, and removed a working read: `/api/flows/read` renders an upload's stored `file_key` and never touches the index.)* A direct upload keeps its Read in every state. `components/assets/UnitOpsPanels.tsx` `docRow(…, directUpload)` prints "Indexing…" or "Indexing failed" with the stored reason beside the Read, and "page count unknown — enter the pages to read" when the page count is missing. A mirror that is not ready stays unreadable, as on base.
 - `app/api/flows/browse/route.ts` selects `error` (and orders the paged read by name, then id).
 - The picker shows "Indexing failed" with the reason ("Indexing failed: <the stored error>") and no spinner. The hint says the failure will not finish on its own.
 
-Tests: `lib/__tests__/flowsBrowse.test.ts` ("FLOW-7 — a failed ingest is named, with its reason …": a mirror with `status: "error"` is `ingest_failed` with its error and never `indexing`; uploads carry state).
+Tests: `lib/__tests__/flowsBrowse.test.ts` ("FLOW-7 — a failed ingest is named, with its reason …": a mirror with `status: "error"` is `ingest_failed` with its error and never `indexing`; uploads carry state). `lib/__tests__/flowPanelRender.test.ts`: "a direct upload whose indexing failed can still be read for flows …", "a direct upload still indexing is readable too …", and "a MIRROR that is not ready is still not offered (unchanged) …".
 
 **Done-when.**
 1. ✓ `DcDocState` has `ingest_failed`; `status === "error"` maps to it.
 2. ✓ The browse route selects `error` and the row's hint prints it.
 3. ✓ A test asserts an `error` mirror never renders as `indexing`.
+
+**Scope / residual.** None. Regression pin: a controller reads flows from a direct upload whatever its indexing state, as on base.
 
 ---
 

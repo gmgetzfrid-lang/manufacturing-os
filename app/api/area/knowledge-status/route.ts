@@ -30,6 +30,8 @@ import {
   suggestFoldersForUnit, computeAreaDrift, type AreaFolder,
 } from "@/lib/areaKnowledge";
 import { flowReadCoverage } from "@/lib/flowsRead";
+import { loadCodebookAdmin } from "@/lib/codebookServer";
+import { parseDrawingNumber } from "@/lib/codebook";
 
 export const runtime = "nodejs";
 export const maxDuration = 30;
@@ -204,16 +206,16 @@ export async function GET(req: NextRequest) {
 
   // Where each mirrored doc lives in doc control NOW.
   const dcIds = [...new Set(kdocs.map((d) => d.source_document_id).filter((x): x is string => !!x))];
-  const dcById = new Map<string, { collectionId: string | null; libraryId: string | null }>();
+  const dcById = new Map<string, { collectionId: string | null; libraryId: string | null; number: string | null }>();
   for (let i = 0; i < dcIds.length; i += 100) {
     const { data, error: dcErr } = await supabaseAdmin
-      .from("documents").select("id, collection_id, library_id")
+      .from("documents").select("id, collection_id, library_id, document_number")
       .in("id", dcIds.slice(i, i + 100));
     // A failed chunk would make its docs read as "deleted in doc control"
     // and silently vanish from moved-out detection — fail instead.
     if (dcErr) return bad(`Couldn't locate mirrored documents: ${dcErr.message}`, 500);
-    for (const d of (data ?? []) as Array<{ id: string; collection_id: string | null; library_id: string | null }>) {
-      dcById.set(d.id, { collectionId: d.collection_id, libraryId: d.library_id });
+    for (const d of (data ?? []) as Array<{ id: string; collection_id: string | null; library_id: string | null; document_number?: string | null }>) {
+      dcById.set(d.id, { collectionId: d.collection_id, libraryId: d.library_id, number: d.document_number ?? null });
     }
   }
   const mirroredDocs = kdocs
@@ -247,8 +249,20 @@ export async function GET(req: NextRequest) {
     const lib = at.libraryId ? landscape.libraries.get(at.libraryId)?.name : undefined;
     return [...(lib ? [lib] : []), ...(folder ? (folder.path_names.length > 0 ? folder.path_names : [folder.name]) : [])];
   };
+  // The drawing type a mirror's number decodes to (Site Codebook
+  // drawing_type, "02" → "P&ID"): a P&ID titled only by its number, in a
+  // folder that does not say so, still counts. A codebook that cannot be
+  // read decodes nothing and the title / folder test stands alone.
+  const book = readIds === null ? null : await loadCodebookAdmin(supabaseAdmin, orgId);
+  const drawingTypeOf = (sourceDocumentId: string | null): string | null => {
+    const number = sourceDocumentId ? dcById.get(sourceDocumentId)?.number : null;
+    return number && book ? parseDrawingNumber(number, book)?.drawingTypeLabel ?? null : null;
+  };
   const flowReads = readIds === null ? null : flowReadCoverage(
-    readyDocs.map((d) => ({ id: d.id, name: d.name, folderPath: folderPathOf(d.source_document_id) })),
+    readyDocs.map((d) => ({
+      id: d.id, name: d.name, folderPath: folderPathOf(d.source_document_id),
+      drawingType: drawingTypeOf(d.source_document_id),
+    })),
     readIds,
   );
 

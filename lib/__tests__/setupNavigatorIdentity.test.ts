@@ -87,4 +87,31 @@ describe("AREA-11 — the navigator counts code ↔ filing contradictions", () =
     expect(host.textContent).toContain("Site codes vs. filing could not be checked");
     expect(host.textContent).not.toContain("Every site code agrees");
   });
+
+  it("a codebook read that fails (loadCodebook answers EMPTY_CODEBOOK) with coded equipment: 'could not be checked', never a green tick", async () => {
+    s.book = EMPTY_CODEBOOK;
+    s.identities = [
+      { id: "a1", tag: "E-22", unit_code: "20", code: "2530.22", type_id: null, origin: null, archived: false },
+    ];
+    await mount();
+    expect(host.textContent).toContain("Site codes vs. filing could not be checked");
+    expect(host.textContent).not.toContain("Every site code agrees");
+  });
+
+  it("no equipment carries a code: nothing can contradict its filing, whatever the codebook — 'every site code agrees' stands", async () => {
+    s.book = EMPTY_CODEBOOK;
+    s.identities = [
+      { id: "a1", tag: "E-22", unit_code: "20", code: null, type_id: null, origin: null, archived: false },
+    ];
+    await mount();
+    expect(host.textContent).toContain("Every site code agrees with its unit");
+  });
+
+  it("agreeing codes on a readable codebook are still ticked (regression pin)", async () => {
+    s.identities = [
+      { id: "a2", tag: "E-23", unit_code: "25", code: "2530.23", type_id: null, origin: null, archived: false },
+    ];
+    await mount();
+    expect(host.textContent).toContain("Every site code agrees with its unit");
+  });
 });

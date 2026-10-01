@@ -152,6 +152,54 @@ describe("AREA-8 — the route counts the shelf's flow drawings read for flows",
     expect(json.flowReads).toEqual({ readable: 5, read: 3, otherDocs: 2 });
   });
 
+  it("P&IDs filed under 'Piping & Instrumentation Diagrams' with numbered titles are in the denominator: 3 PFDs read do NOT tick step 3", async () => {
+    st.landscape.libraries.set("dl1", { name: "Drawings" });
+    st.landscape.folders.set("fPID", { name: "Piping & Instrumentation Diagrams", library_id: "dl1", parent_id: null, path_names: ["Piping & Instrumentation Diagrams"] });
+    st.rows.documents = Array.from({ length: 4 }, (_, i) => ({ id: `dcp${i}`, org_id: "o1", collection_id: "fPID", library_id: "dl1" }));
+    st.rows.knowledge_documents = [
+      ...Array.from({ length: 3 }, (_, i) => ({ id: `pfd${i}`, org_id: "o1", library_id: "kl1", name: `PFD-${i}`, status: "ready", source_document_id: null })),
+      ...Array.from({ length: 4 }, (_, i) => ({ id: `pid${i}`, org_id: "o1", library_id: "kl1", name: `1001-P-00${i}`, status: "ready", source_document_id: `dcp${i}` })),
+    ];
+    st.rows.audit_logs = Array.from({ length: 3 }, (_, i) => ({ id: `l${i}`, org_id: "o1", action: "FLOWS_READ", resource_id: `pfd${i}` }));
+    st.rows.process_flows = [];
+    const json = await (await get()).json();
+    expect(json.flowReads).toEqual({ readable: 7, read: 3, otherDocs: 0 });
+  });
+
+  it("the lexicon: the spelled-out P&ID counts; a 'PID controller' data sheet does not", async () => {
+    st.rows.knowledge_documents = [
+      { id: "s1", org_id: "o1", library_id: "kl1", name: "Piping and Instrumentation Diagram — Crude overhead", status: "ready", source_document_id: null },
+      { id: "s2", org_id: "o1", library_id: "kl1", name: "Piping & Instrumentation Diagrams (book 2)", status: "ready", source_document_id: null },
+      { id: "s3", org_id: "o1", library_id: "kl1", name: "PID controller datasheet TIC-101", status: "ready", source_document_id: null },
+      { id: "s4", org_id: "o1", library_id: "kl1", name: "PID loop tuning guide", status: "ready", source_document_id: null },
+      { id: "s5", org_id: "o1", library_id: "kl1", name: "PID-1001 Crude", status: "ready", source_document_id: null },
+    ];
+    st.rows.audit_logs = []; st.rows.process_flows = [];
+    const json = await (await get()).json();
+    expect(json.flowReads).toEqual({ readable: 3, read: 0, otherDocs: 2 });
+  });
+
+  it("a mirror titled only by its number, filed in a folder that says nothing, counts when its number decodes to a P&ID drawing type", async () => {
+    st.landscape.libraries.set("dl1", { name: "Drawings" });
+    st.landscape.folders.set("fX", { name: "Crude", library_id: "dl1", parent_id: null, path_names: ["Area 20", "Crude"] });
+    st.rows.codebook_entries.push(
+      { id: "dt2", org_id: "o1", kind: "drawing_type", code: "02", label: "P&ID", meta: {}, sort: 0 },
+      { id: "dt7", org_id: "o1", kind: "drawing_type", code: "07", label: "Isometric", meta: {}, sort: 0 },
+    );
+    st.rows.codebook_config = [{ org_id: "o1", drawing_number: { segments: [{ kind: "unit", digits: 2 }, { kind: "drawing_type", digits: 2 }, { kind: "iterable" }] } }];
+    st.rows.documents = [
+      { id: "dn1", org_id: "o1", collection_id: "fX", library_id: "dl1", document_number: "20-02-001" },
+      { id: "dn2", org_id: "o1", collection_id: "fX", library_id: "dl1", document_number: "20-07-001" },
+    ];
+    st.rows.knowledge_documents = [
+      { id: "n1", org_id: "o1", library_id: "kl1", name: "20-02-001", status: "ready", source_document_id: "dn1" },
+      { id: "n2", org_id: "o1", library_id: "kl1", name: "20-07-001", status: "ready", source_document_id: "dn2" },
+    ];
+    st.rows.audit_logs = []; st.rows.process_flows = [];
+    const json = await (await get()).json();
+    expect(json.flowReads).toEqual({ readable: 1, read: 0, otherDocs: 1 });
+  });
+
   it("a read record that cannot be counted is null — 'could not be counted', never 0 of 3", async () => {
     st.failAudit = true;
     expect((await (await get()).json()).flowReads).toBeNull();

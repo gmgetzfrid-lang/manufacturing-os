@@ -123,7 +123,8 @@ export function unitGraphHref(unitCode: string): string {
 }
 
 /** The list of every proposal in the plant, on the all-equipment view. */
-export const PLANT_FLOW_REVIEW_HREF = "/admin/assets#plant-flow-review";
+export const PLANT_FLOW_REVIEW_ID = "plant-flow-review";
+export const PLANT_FLOW_REVIEW_HREF = `/admin/assets#${PLANT_FLOW_REVIEW_ID}`;
 
 type EndpointMap = Map<string, EndpointInfo> | null | undefined;
 
@@ -441,7 +442,19 @@ export function FlowReviewQueue({ orgId, userId, userName, isController }: {
 
   // Nothing to review — unless the list could not be read: a failed read
   // is said, never an empty queue a controller would take for "all done".
-  if (proposed === null || proposed === undefined || (proposed.length === 0 && !error)) return null;
+  const visible = !(proposed === null || proposed === undefined || (proposed.length === 0 && !error));
+  // FLOW-1: the unit panel links here (PLANT_FLOW_REVIEW_HREF). The anchor
+  // exists only once the proposals have loaded — after the browser looked
+  // for it — so the queue brings itself into view, once, when it appears.
+  const anchorRef = useRef<HTMLDivElement | null>(null);
+  const scrolledToAnchor = useRef(false);
+  useEffect(() => {
+    if (!visible || scrolledToAnchor.current) return;
+    if (typeof window === "undefined" || window.location.hash !== `#${PLANT_FLOW_REVIEW_ID}`) return;
+    scrolledToAnchor.current = true;
+    anchorRef.current?.scrollIntoView?.({ behavior: "smooth", block: "start" });
+  }, [visible]);
+  if (!visible) return null;
   // The registry tells which unit each equipment end is filed to; when it
   // could not be read, "no operating area" would be a guess — it is "not
   // checked", and the filter that depends on it is off.
@@ -472,7 +485,7 @@ export function FlowReviewQueue({ orgId, userId, userName, isController }: {
   };
 
   return (
-    <div id="plant-flow-review" className="mb-4 rounded-xl border border-amber-300 dark:border-amber-800 bg-[var(--color-surface)] p-3.5"
+    <div id={PLANT_FLOW_REVIEW_ID} ref={anchorRef} className="mb-4 rounded-xl border border-amber-300 dark:border-amber-800 bg-[var(--color-surface)] p-3.5"
       style={{ animation: "rise 0.4s var(--ease-fluid) both" }}>
       <div className="flex items-center gap-2 flex-wrap mb-2">
         <Waypoints className="w-4 h-4 text-amber-600 shrink-0" />
@@ -737,9 +750,17 @@ function ReadFlowsModal({ orgId, unitCode, onClose, onDone }: {
     held_back: { label: "Held back from AI", hint: "A controller excluded this document from AI reading." },
   };
   const FALLBACK_META = { label: "Unavailable", hint: "This document can't be read right now." };
-  const docRow = (d: DcDocRow, container?: { type: "library" | "folder"; id: string; name: string }) => {
-    if (d.state === "ready" && d.kdocId) {
+  // A direct upload (`directUpload`) is read from its stored file — the reader
+  // renders knowledge_documents.file_key and never touches the index — so it
+  // keeps its Read whatever its indexing state; the state and the stored
+  // failure ride on the row beside it (FLOW-7). A mirror that is not ready
+  // stays unreadable here, as it always was.
+  const docRow = (d: DcDocRow, container?: { type: "library" | "folder"; id: string; name: string }, directUpload = false) => {
+    const readableUpload = directUpload && (d.state === "indexing" || d.state === "ingest_failed");
+    if ((d.state === "ready" || readableUpload) && d.kdocId) {
       const kid = d.kdocId;
+      const pagesLine = d.pageCount ? `${d.pageCount} page${d.pageCount === 1 ? "" : "s"}`
+        : readableUpload ? "page count unknown — enter the pages to read" : "page count pending";
       return (
         <button key={d.dcDocId} onClick={() => void run(kid)} disabled={runningId !== null}
           className="w-full flex items-center gap-2 px-2.5 py-2 rounded-lg border border-[var(--color-border)] hover:border-cyan-400 text-left disabled:opacity-50">
@@ -747,8 +768,19 @@ function ReadFlowsModal({ orgId, unitCode, onClose, onDone }: {
           <span className="flex-1 min-w-0">
             <span className="block text-xs font-bold text-[var(--color-text)] truncate">{d.name}</span>
             <span className="block text-[10px] text-[var(--color-text-faint)]">
-              {d.pageCount ? `${d.pageCount} page${d.pageCount === 1 ? "" : "s"}` : "page count pending"}
+              {pagesLine}
             </span>
+            {readableUpload && (
+              <span className="block text-[10px] text-[var(--color-text-faint)] truncate"
+                title={d.state === "ingest_failed" && d.error ? `Indexing failed: ${d.error}` : undefined}>
+                <span className={`text-[9px] font-black uppercase px-1 rounded mr-1 ${d.state === "ingest_failed"
+                  ? "bg-rose-100 dark:bg-rose-900/50 text-rose-700 dark:text-rose-300"
+                  : "bg-cyan-100 dark:bg-cyan-900/50 text-cyan-700 dark:text-cyan-300"}`}>
+                  {d.state === "ingest_failed" ? "Indexing failed" : "Indexing…"}
+                </span>
+                {d.state === "ingest_failed" && d.error ? `${d.error} — ` : ""}flows are read from the file itself.
+              </span>
+            )}
           </span>
           {runningId === kid
             ? <span className="inline-flex items-center gap-1 text-[10px] font-black text-cyan-700 shrink-0"><Loader2 className="w-3 h-3 animate-spin" /> Reading…</span>
@@ -978,7 +1010,7 @@ function ReadFlowsModal({ orgId, unitCode, onClose, onDone }: {
                     {g.docs.map((d) => docRow({
                       dcDocId: `up-${d.kdocId}`, name: d.name, state: d.state,
                       kdocId: d.kdocId, pageCount: d.pageCount, error: d.error ?? null,
-                    }))}
+                    }, undefined, true))}
                   </div>
                 </div>
               ))}
