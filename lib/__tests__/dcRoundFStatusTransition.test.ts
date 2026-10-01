@@ -101,10 +101,10 @@ describe("20261144 — the guard is re-created from the NEWEST earlier definitio
     // (today that is P12's 20261139 — the scan, not this comment, decides)
   });
 
-  /** The three contiguous additions (the declarations, the v_issuing block, the issue block). */
-  const DECL = "  v_issuing      boolean;\n  v_new_door     boolean;\n  v_issue_reqs   integer;\n  v_issue_signed integer;\n";
+  /** The three contiguous additions (the declarations, the v_issuing + retirement-stamp block, the issue block). */
+  const DECL = "  v_issuing      boolean;\n  v_new_door     boolean;\n  v_issue_reqs   integer;\n  v_issue_signed integer;\n  v_restoring    boolean;\n";
   const advStart = next.indexOf("  -- REV-18 (document-control Round F wave 2, P13): a status change that");
-  const advEnd = next.indexOf("  v_advancing := v_advancing OR v_issuing;\n") + "  v_advancing := v_advancing OR v_issuing;\n".length;
+  const advEnd = next.indexOf("  IF NOT v_advancing THEN\n    RETURN NEW;\n  END IF;");
   const blockStart = next.indexOf("  -- REV-18 (P13): the issue itself.");
   const blockEnd = next.indexOf("  -- OWN-3/DEC-2: controllers are a property of the role COLLECTION.");
   const added = DECL + next.slice(advStart, advEnd) + next.slice(blockStart, blockEnd);
@@ -123,11 +123,32 @@ describe("20261144 — the guard is re-created from the NEWEST earlier definitio
       "  v_new_door     boolean;",
       "  v_issue_reqs   integer;",
       "  v_issue_signed integer;",
+      "  v_restoring    boolean;",
       "  v_issuing := NEW.current_version_id IS NOT NULL",
       "               AND NOT is_controlled_issue_status(OLD.status)",
       "               AND is_controlled_issue_status(NEW.status);",
-      "  v_new_door := v_issuing AND NOT v_advancing;",
+      "  v_new_door := v_issuing AND NOT COALESCE(v_advancing, false);",
       "  v_advancing := v_advancing OR v_issuing;",
+      "  v_restoring := COALESCE(v_issuing",
+      "                 AND OLD.status IN ('Superseded', 'Archived', 'Void')",
+      "                 AND OLD.retired_issue_version_id IS NOT NULL",
+      "                 AND NEW.current_version_id = OLD.retired_issue_version_id",
+      "                 AND NEW.current_version_id = OLD.current_version_id, false);",
+      "  IF COALESCE(NEW.status IN ('Superseded', 'Archived', 'Void'), false) THEN",
+      "    IF COALESCE(OLD.status IN ('Superseded', 'Archived', 'Void'), false) THEN",
+      "      NEW.retired_issue_status := OLD.retired_issue_status;",
+      "      NEW.retired_issue_version_id := OLD.retired_issue_version_id;",
+      "    ELSIF OLD.current_version_id IS NOT NULL AND is_controlled_issue_status(OLD.status) THEN",
+      "      NEW.retired_issue_status := OLD.status;",
+      "      NEW.retired_issue_version_id := OLD.current_version_id;",
+      "    ELSE",
+      "      NEW.retired_issue_status := NULL;",
+      "      NEW.retired_issue_version_id := NULL;",
+      "    END IF;",
+      "  ELSE",
+      "    NEW.retired_issue_status := NULL;",
+      "    NEW.retired_issue_version_id := NULL;",
+      "  END IF;",
       "  IF v_issuing THEN",
       "    IF v_new_door AND EXISTS (",
       "         SELECT 1 FROM document_holds h",
@@ -138,6 +159,7 @@ describe("20261144 — the guard is re-created from the NEWEST earlier definitio
       "        USING ERRCODE = 'check_violation';",
       "    END IF;",
       "    IF NOT is_org_controller(NEW.org_id)",
+      "       AND NOT v_restoring",
       "       AND (review_control_mode_for(NULL, NEW.collection_id, NEW.library_id) = 'require'",
       "            OR review_control_mode_for(NEW.review_control, NEW.collection_id, NEW.library_id) = 'require') THEN",
       "      SELECT COALESCE(sum(g.reqs), 0), COALESCE(sum(LEAST(g.reqs, g.filled)), 0)",
@@ -184,6 +206,7 @@ describe("20261144 — the guard is re-created from the NEWEST earlier definitio
     const nullUid = at("IF v_actor IS NULL THEN\n    RETURN NEW;\n  END IF;");
     const adv = at("  v_advancing :=\n");
     const issuing = at("  v_issuing := NEW.current_version_id IS NOT NULL");
+    const stamp = at("  IF COALESCE(NEW.status IN ('Superseded', 'Archived', 'Void'), false) THEN");
     const notAdv = at("  IF NOT v_advancing THEN\n    RETURN NEW;\n  END IF;");
     const sec14 = at("-- SEC-14 (projects Round G)");
     const block = at("  IF v_issuing THEN\n");
@@ -192,7 +215,9 @@ describe("20261144 — the guard is re-created from the NEWEST earlier definitio
     const hold = at("Document has an active hold; release the hold before publishing a new revision.");
     expect(nullUid).toBeLessThan(adv);
     expect(adv).toBeLessThan(issuing);
-    expect(issuing).toBeLessThan(notAdv);
+    expect(issuing).toBeLessThan(stamp);
+    // the stamp is kept / written / cleared on EVERY signed-in write (before the not-advancing return), so no caller's value survives
+    expect(stamp).toBeLessThan(notAdv);
     expect(sec14).toBeLessThan(block);
     expect(block).toBeLessThan(controller);
     expect(controller).toBeLessThan(tier);
@@ -211,7 +236,7 @@ describe("20261144 — the guard is re-created from the NEWEST earlier definitio
 
   it("the require-mode limb reads the governing policy as REV-17's first-issue rule does: the folder / library chain OR the document's own (a document-level 'none' is no exemption — DEC-44 (P13))", () => {
     const rev17 = between(next, "      IF OLD.current_version_id IS NULL AND v_intake_link IS NULL", "THEN\n");
-    const mine = between(next, "    IF NOT is_org_controller(NEW.org_id)\n       AND (review_control_mode_for(NULL", "THEN\n");
+    const mine = between(next, "    IF NOT is_org_controller(NEW.org_id)\n       AND NOT v_restoring\n       AND (review_control_mode_for(NULL", "THEN\n");
     for (const arm of [
       "review_control_mode_for(NULL, NEW.collection_id, NEW.library_id) = 'require'",
       "OR review_control_mode_for(NEW.review_control, NEW.collection_id, NEW.library_id) = 'require')",
@@ -221,10 +246,80 @@ describe("20261144 — the guard is re-created from the NEWEST earlier definitio
     }
   });
 
-  it("SECURITY DEFINER with search_path pinned; EXECUTE revoked from every client role (DRLS-16); the trigger binding is untouched", () => {
+  it("SECURITY DEFINER with search_path pinned; EXECUTE revoked from every client role (DRLS-16); the guard's trigger binding is untouched — the one trigger created is the stamp's BEFORE INSERT", () => {
     expect(next).toMatch(/RETURNS trigger LANGUAGE plpgsql SECURITY DEFINER SET search_path = public AS \$\$/);
     expect(M).toMatch(/REVOKE ALL ON FUNCTION enforce_document_publish_guard\(\) FROM PUBLIC, anon, authenticated, service_role;/);
-    expect(stripComments(M)).not.toMatch(/CREATE TRIGGER|DROP TRIGGER|GRANT /);
+    const code = stripComments(M);
+    expect(code).not.toMatch(/GRANT /);
+    expect(code).not.toMatch(/(?:CREATE|DROP) TRIGGER (?:IF EXISTS )?trg_document_publish_guard/);
+    expect(code.match(/CREATE TRIGGER/g)).toHaveLength(1);
+    expect(code.match(/DROP TRIGGER/g)).toHaveLength(1);
+    expect(code).toContain("DROP TRIGGER IF EXISTS trg_document_retired_issue_stamp_insert ON documents;\nCREATE TRIGGER trg_document_retired_issue_stamp_insert\n  BEFORE INSERT ON documents\n  FOR EACH ROW EXECUTE FUNCTION document_retired_issue_stamp_on_insert();");
+  });
+});
+
+describe("20261144 — P13 review fixes: a NULL status meets the hold; the put-back of a retired issue is spared the require limb (the retirement stamp)", () => {
+  it("minor 3: v_new_door COALESCEs v_advancing — the carried v_advancing expression is byte-identical (a NULL NEW.status makes it NULL, and the app calls NULL an issue)", () => {
+    expect(next).toContain("  v_new_door := v_issuing AND NOT COALESCE(v_advancing, false);\n");
+    expect(next).not.toContain("v_new_door := v_issuing AND NOT v_advancing;");
+    const carried = between(live, "  v_advancing :=\n", "<> 'Archived');\n");
+    expect(next).toContain(carried);
+    expect(isControlledIssueStatus(null)).toBe(true);
+  });
+
+  it("the stamp columns are added in the transaction, before the guard that writes them; nullable, never backfilled", () => {
+    const begin = M.indexOf("\nBEGIN;");
+    for (const col of ["retired_issue_status text", "retired_issue_version_id uuid"]) {
+      const at = M.indexOf(`ALTER TABLE documents ADD COLUMN IF NOT EXISTS ${col};`);
+      expect(at, col).toBeGreaterThan(begin);
+      expect(at, col).toBeLessThan(M.indexOf(GUARD_HEAD));
+    }
+    expect(stripComments(M)).not.toMatch(/UPDATE documents SET retired_issue/);
+    expect(stripComments(M)).not.toMatch(/ADD COLUMN IF NOT EXISTS retired_issue_\w+ \w+ (?:NOT NULL|DEFAULT)/);
+  });
+
+  it("the INSERT side: a signed-in INSERT clears the stamp (not SECURITY DEFINER, search_path pinned, EXECUTE revoked from every client role; the service role untouched); the paste-time probe reads its body", () => {
+    const fn = between(M, "CREATE OR REPLACE FUNCTION document_retired_issue_stamp_on_insert()", "\n$$;");
+    expect(fn).toMatch(/RETURNS trigger LANGUAGE plpgsql SET search_path = public AS \$\$/);
+    expect(fn).not.toMatch(/SECURITY DEFINER/);
+    expect(code(fn.split("\n")).slice(2)).toEqual([
+      "BEGIN",
+      "  IF auth.uid() IS NOT NULL THEN",
+      "    NEW.retired_issue_status := NULL;",
+      "    NEW.retired_issue_version_id := NULL;",
+      "  END IF;",
+      "  RETURN NEW;",
+      "END;",
+      "$$;",
+    ]);
+    expect(M).toMatch(/REVOKE ALL ON FUNCTION document_retired_issue_stamp_on_insert\(\) FROM PUBLIC, anon, authenticated, service_role;/);
+    const tail = M.slice(M.lastIndexOf("\nCOMMIT;"));
+    const seg = tail.split(/\nUNION ALL\n/).find((x) => x.includes("trg_document_retired_issue_stamp_insert"))!;
+    for (const m of seg.matchAll(/prosrc LIKE '((?:[^']|'')*)'/g)) {
+      for (const f of m[1].replace(/''/g, "'").split("%").filter(Boolean)) expect(fn).toContain(f);
+    }
+  });
+
+  it("the put-back test is exact: an issue transition, out of a retired status, of the SAME revision the stamp recorded, with no pointer move — and it spares only the require limb (the new-door hold, the publisher tier and the hold after it are untouched)", () => {
+    const restoring = between(next, "  v_restoring := COALESCE(v_issuing", ", false);");
+    expect(restoring).toContain("AND OLD.status IN ('Superseded', 'Archived', 'Void')");
+    expect(restoring).toContain("AND NEW.current_version_id = OLD.retired_issue_version_id");
+    expect(restoring).toContain("AND NEW.current_version_id = OLD.current_version_id");
+    expect(stripComments(next).match(/v_restoring/g)).toHaveLength(3); // declared, set, read once
+    expect(between(next, "    IF NOT is_org_controller(NEW.org_id)\n       AND NOT v_restoring", "THEN\n")).toBeTruthy();
+    // the stamp is written only on entry FROM an issue status with a current revision
+    expect(next).toContain("    ELSIF OLD.current_version_id IS NOT NULL AND is_controlled_issue_status(OLD.status) THEN\n      NEW.retired_issue_status := OLD.status;\n      NEW.retired_issue_version_id := OLD.current_version_id;");
+  });
+
+  it("no app code reads or writes the stamp (only the guard writes it, only the guard reads it)", () => {
+    const roots = ["lib", "components", "app"];
+    const walk = (d: string): string[] => readdirSync(join(process.cwd(), d), { withFileTypes: true }).flatMap((e) => {
+      const p = `${d}/${e.name}`;
+      if (e.isDirectory()) return e.name === "__tests__" || e.name === "node_modules" ? [] : walk(p);
+      return /\.(ts|tsx)$/.test(e.name) ? [p] : [];
+    });
+    const hits = roots.flatMap(walk).filter((f) => /retired_issue_(status|version_id)/.test(readFileSync(join(process.cwd(), f), "utf8")));
+    expect(hits).toEqual([]);
   });
 });
 
@@ -314,14 +409,18 @@ describe("20261144 — is_controlled_issue_status is isControlledIssueStatus (li
   it("the inventory's status tests use the same trim and the same five statuses", () => {
     const inv = between(M, "CREATE TEMP TABLE dc_round_f_144_before", "\nBEGIN;");
     const lits = [...inv.matchAll(TRIM_LITERAL_RE)].map((m) => m[1]);
-    expect(lits).toHaveLength(3);
+    expect(lits).toHaveLength(4);
     for (const l of lits) expect(l).toBe(lit);
-    const lists = [...inv.matchAll(/'\) (NOT )?IN \(('Draft', 'In Review'(?:, 'Superseded', 'Void', 'Archived')?)\)/g)].map((m) => [m[1] ?? "", m[2]]);
+    const lists = [...inv.matchAll(/'\) (NOT )?IN \(((?:'[A-Za-z ]+'(?:, )?)+)\)/g)].map((m) => [m[1] ?? "", m[2]]);
     expect(lists).toEqual([
       ["NOT ", "'Draft', 'In Review', 'Superseded', 'Void', 'Archived'"], // in an issue status
-      ["", "'Draft', 'In Review', 'Superseded', 'Void', 'Archived'"],     // not in an issue status
+      ["", "'Draft', 'In Review'"],                                       // work in progress: its next issue needs a controller
+      ["", "'Superseded', 'Void', 'Archived'"],                           // retired before the stamp: its restore needs a controller
       ["", "'Draft', 'In Review'"],                                       // work in progress (the hold row)
     ]);
+    // the two not-an-issue rows together are exactly the five statuses (WORK_IN_PROGRESS_STATUSES + NOT_CURRENT_STATUSES)
+    expect(["Draft", "In Review", "Superseded", "Void", "Archived"].sort())
+      .toEqual([...WORK_IN_PROGRESS_STATUSES, ...NOT_CURRENT_STATUSES].sort());
   });
 });
 
@@ -355,11 +454,11 @@ describe("20261144 — one script, inventory first, one final result set (the on
     expect(tail).toMatch(/AS check,[\s\S]*AS ok,\s*\n\s*NULL::text AS n/);
     expect(tail).toMatch(new RegExp(`SELECT inventory, NULL, n FROM ${TEMP};\\s*$`));
   });
-  it("the inventory is aggregate counts only — three COUNT(*) rows, never a row, a number or a title", () => {
+  it("the inventory is aggregate counts only — four COUNT(*) rows, never a row, a number or a title", () => {
     const inv = between(M, `CREATE TEMP TABLE ${TEMP}`, "\nBEGIN;");
     const rows = inv.slice(inv.indexOf("\nSELECT 'inventory"));
-    expect((rows.match(/^SELECT 'inventory/gm) ?? []).length).toBe(3);
-    expect((rows.match(/COUNT\(\*\)::text/g) ?? []).length).toBe(3);
+    expect((rows.match(/^SELECT 'inventory/gm) ?? []).length).toBe(4);
+    expect((rows.match(/COUNT\(\*\)::text/g) ?? []).length).toBe(4);
     expect(inv).not.toMatch(/document_number|title|SELECT \*|array_agg|string_agg/);
     // the CTEs aggregate too (count(*) FILTER, sum) — no row escapes into the result
     expect(inv).toMatch(/WITH slot_fill AS \(/);
@@ -426,17 +525,18 @@ describe("REV-18 — the census of every app write of documents.status (each cla
   it("the literal status writes are exactly these — each one classified", () => {
     // INSERTs are not decided by the publish guard (BEFORE UPDATE); a signed-in
     // INSERT is born pointerless (20261131), and its first pointer write is
-    // REV-17's. Entries into Superseded / Archived are OWN-19's (unchanged);
-    // writes OUT of Superseded / Archived / Void into an issue status now also
-    // take the require-mode limb (compensations and restores: a controller, or
-    // the throw is reported — dcRoundFRevUpFirstIssue.test.ts drives them).
+    // REV-17's. Entries into Superseded / Archived are OWN-19's (unchanged) and
+    // stamp what was issued; a write OUT of Superseded / Archived / Void that
+    // puts that same revision back is spared the require-mode limb (P13 review
+    // fix); any other exit into an issue status takes it (a controller, or the
+    // throw is reported — dcRoundFRevUpFirstIssue.test.ts drives them).
     expect(literal.sort()).toEqual([
       "app/(protected)/documents/[libraryId]/page.tsx insert",  // uploadOne: INSERT (pointerless); its first pointer write is REV-17's
       "app/(protected)/documents/[libraryId]/page.tsx update",  // archive: entry into Archived (OWN-19) — not an issue
       "components/documents/CsvImportModal.tsx insert",          // INSERT, no file: a register row (nothing to issue)
       "lib/documentLifecycle/common.ts insert",                  // createNewDocWithFirstVersion: INSERT; its first pointer write is REV-17's
       "lib/documentLifecycle/common.ts update",                  // archiveRolledBackDoc: entry into Archived — not an issue
-      "lib/documentLifecycle/common.ts update",                  // restoreSupersededSource: Superseded -> prior (an issue when prior is): controller / complete roster / any non-require library; else thrown
+      "lib/documentLifecycle/common.ts update",                  // restoreSupersededSource: Superseded -> prior: the put-back of the stamped issue (publisher tier); unstamped (retired before 20261144): controller / complete roster / non-require library, else thrown
       "lib/documentLifecycle/common.ts update",                  // markSupersededAndLink: entry into Superseded — not an issue
       "lib/documentLifecycle/reverse.ts update",                 // put-back of a reversal (controller-only flow): passes
       "lib/documentLifecycle/reverse.ts update",                 // park: entry into Superseded — not an issue
@@ -445,8 +545,8 @@ describe("REV-18 — the census of every app write of documents.status (each cla
       "lib/reviewControl.ts update",                             // finalizeReviewedRevision: pointer + Issued — a complete roster, a controller, or a non-require library (intake: SEC-13 already)
       "lib/revisions.ts insert",                                 // createDocumentWithFile: INSERT; first pointer REV-17's
       "lib/revisions.ts update",                                 // archiveDocument: entry into Archived — not an issue
-      "lib/revisions.ts update",                                 // unarchiveDocument: Archived -> Issued: publisher tier (as before) + the require-mode limb
-      "lib/revisions.ts update",                                 // undoFailedSupersede: Superseded -> prior (a compensation; refused restore is thrown with "ask Doc Control")
+      "lib/revisions.ts update",                                 // unarchiveDocument: Archived -> Issued: publisher tier (as before); the require-mode limb unless it puts back the stamped issue
+      "lib/revisions.ts update",                                 // undoFailedSupersede: Superseded -> prior: the put-back of the stamped issue (publisher tier); a refused restore is thrown with "ask Doc Control"
       "lib/revisions.ts update",                                 // supersedeDocument: entry into Superseded — not an issue
     ].sort());
   });

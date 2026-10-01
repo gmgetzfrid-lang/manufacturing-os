@@ -7,6 +7,7 @@
 import { supabase } from "@/lib/supabase";
 import { uploadToPath } from "@/lib/storage";
 import { uniqueFilenames, type Placeholder } from "@/lib/outputTemplateText";
+import { requestUnitCodeDecode } from "@/lib/unitCodeClient";
 
 export type { Placeholder } from "@/lib/outputTemplateText";
 
@@ -262,12 +263,15 @@ export async function fileDocumentsToLibrary(input: {
   target: FilingTarget;
   actorUserId: string; actorEmail?: string;
   onProgress?: (done: number, total: number) => void;
-}): Promise<{ filed: number; errors: string[] }> {
+}): Promise<{ filed: number; errors: string[]; unitCodeNote?: string }> {
   const { createDocumentWithFile } = await import("@/lib/revisions");
   const out = await renderAllAsJson(input);
 
   const errors: string[] = [];
   let filed = 0;
+  // GAP-314 (P13 review fix): the filed documents' unit codes are decoded in
+  // ONE batched call after the run, not one route call per document.
+  const filedIds: string[] = [];
   // Filed counts are closed out per production record (one per slice):
   // expand the slice sizes into a per-file generation id.
   const generationOfFile: Array<string | null> = out.perGeneration.flatMap((g) => Array<string | null>(g.count).fill(g.generationId));
@@ -281,7 +285,7 @@ export async function fileDocumentsToLibrary(input: {
       const values = input.documents[i]?.values ?? {};
       const numberFromTag = input.target.numberTag ? (values[input.target.numberTag] ?? "").trim() : "";
       const documentNumber = numberFromTag || f.name.replace(/\.[^.]+$/, "");
-      await createDocumentWithFile({
+      const created = await createDocumentWithFile({
         orgId: input.orgId,
         libraryId: input.target.libraryId,
         collectionId: input.target.collectionId ?? null,
@@ -291,7 +295,9 @@ export async function fileDocumentsToLibrary(input: {
         status: "Draft",
         actorUserId: input.actorUserId,
         actorEmail: input.actorEmail,
+        decodeUnitCode: false,
       });
+      if (created?.documentId) filedIds.push(created.documentId);
       filed++;
       if (generationId) filedPerGeneration.set(generationId, (filedPerGeneration.get(generationId) ?? 0) + 1);
     } catch (e) {
@@ -299,6 +305,8 @@ export async function fileDocumentsToLibrary(input: {
     }
     input.onProgress?.(i + 1, out.files.length);
   }
+  const unitCode = await requestUnitCodeDecode(input.orgId, filedIds, "upload");
+  if (unitCode.note) console.warn(`[fileDocumentsToLibrary] ${unitCode.note}`);
 
   // Close the loop on the production record: "12 generated, 12 filed" is the
   // line someone needs months later. Best-effort — the documents are already
@@ -313,7 +321,7 @@ export async function fileDocumentsToLibrary(input: {
       }),
     }).catch(() => undefined);
   }
-  return { filed, errors };
+  return unitCode.note ? { filed, errors, unitCodeNote: unitCode.note } : { filed, errors };
 }
 
 /** The download name from a Content-Disposition header: the UTF-8

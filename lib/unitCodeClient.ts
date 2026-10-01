@@ -13,6 +13,14 @@
 // render, a test without a window) it does nothing: the route is the
 // browser's door, and a server path calls lib/unitCodeDecode.ts directly.
 // The next unit-identity run on /admin/scope places anything this missed.
+//
+// BOUNDED (P13 review fix): each route call is aborted after
+// UNIT_CODE_TIMEOUT_MS, so a slow or hung route never holds a creation that
+// already landed; a door that creates many documents (the template filing)
+// decodes them in ONE call per PER_CALL ids, not one call per document. When
+// the call itself does not run, the route has nothing to record: the `note`
+// is the only report (shown by the door that awaits it, logged by the one
+// that does not), and the next unit-identity run places the document.
 
 import { supabase } from "@/lib/supabase";
 
@@ -37,6 +45,9 @@ export interface UnitCodeAnswer {
 
 /** The route's per-call limit (lib/unitCodeDecode.ts DECODE_MAX_DOCUMENTS). */
 const PER_CALL = 200;
+/** How long one route call may take before it is abandoned (the decode is
+ *  best-effort; the documents already exist). */
+export const UNIT_CODE_TIMEOUT_MS = 15_000;
 const LATER = "the next unit-identity run on Operational scope will place it";
 
 export async function requestUnitCodeDecode(orgId: string, documentIds: string[], via: UnitCodeVia): Promise<UnitCodeAnswer> {
@@ -49,12 +60,25 @@ export async function requestUnitCodeDecode(orgId: string, documentIds: string[]
     const results: UnitCodeResult[] = [];
     const notes: string[] = [];
     for (let i = 0; i < ids.length; i += PER_CALL) {
-      const res = await fetch("/api/documents/unit-code", {
-        method: "POST",
-        headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
-        body: JSON.stringify({ orgId, documentIds: ids.slice(i, i + PER_CALL), via }),
-      });
-      const body = (await res.json().catch(() => ({}))) as { error?: string; results?: UnitCodeResult[]; notes?: string[] };
+      const abort = new AbortController();
+      const timer = setTimeout(() => abort.abort(), UNIT_CODE_TIMEOUT_MS);
+      let res: Response;
+      let body: { error?: string; results?: UnitCodeResult[]; notes?: string[] };
+      try {
+        res = await fetch("/api/documents/unit-code", {
+          method: "POST",
+          headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+          body: JSON.stringify({ orgId, documentIds: ids.slice(i, i + PER_CALL), via }),
+          signal: abort.signal,
+        });
+        body = (await res.json().catch(() => ({}))) as typeof body;
+      } catch (e) {
+        const why = abort.signal.aborted ? `no answer within ${UNIT_CODE_TIMEOUT_MS / 1000}s` : ((e as Error)?.message || "the request failed");
+        notes.push(`The unit code of ${Math.min(PER_CALL, ids.length - i)} document(s) was not decoded (${why}) — ${LATER}.`);
+        continue;
+      } finally {
+        clearTimeout(timer);
+      }
       if (!res.ok) {
         notes.push(`The unit code of ${Math.min(PER_CALL, ids.length - i)} document(s) was not decoded (${body.error || `HTTP ${res.status}`}) — ${LATER}.`);
         continue;

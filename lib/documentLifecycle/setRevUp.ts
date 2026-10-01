@@ -10,7 +10,7 @@
 // by the caller because each sheet's file is different.
 
 import { logRevisionEvent } from "@/lib/audit";
-import { revUpDocument, submitForReview } from "@/lib/revisions";
+import { revUpDocument, submitForReview, firstIssueGateForRevUp } from "@/lib/revisions";
 import { effectiveReviewControlForDocument, effectiveModeForRevUp } from "@/lib/reviewControl";
 import type { DocumentRecord, DocumentVersion } from "@/types/schema";
 
@@ -78,9 +78,18 @@ export async function setLevelRevUp(input: SetRevUpInput): Promise<SetRevUpResul
           collectionId: sheet.doc.collectionId ?? null,
           libraryId,
         });
+        // REV-18 (P13 review fix): a sheet that is not issued yet (a Draft,
+        // or no current revision) would be ISSUED by this bump — a first
+        // issue, which under a require policy (chain OR document) only a
+        // controller publishes unreviewed. Whatever the change type, such a
+        // sheet goes to review like a Major change, never to `failed` for a
+        // direct publish revUpDocument would refuse.
+        const firstIssue = await firstIssueGateForRevUp({
+          doc: sheet.doc, libraryId, actor: { orgId, actorUserId, actorRole },
+        });
         // Batch bumps have no per-sheet "route through review?" checkbox, so
         // publisher_choice defaults to the safe side: through review.
-        willReview = effectiveModeForRevUp({ control, changeType }) !== "none";
+        willReview = effectiveModeForRevUp({ control, changeType, firstIssueMustReview: firstIssue.mustReview }) !== "none";
       } catch (e) {
         // RG-6: an unresolved policy is UNKNOWN, never "no policy". The sheet
         // is refused (it lands in `failed`, like RevUpModal's refusal) — a

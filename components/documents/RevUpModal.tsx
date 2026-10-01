@@ -31,7 +31,7 @@ import {
 } from "lucide-react";
 import {
   revUpDocument, submitForReview, suggestNextRevisionLabel, listVersions,
-  StaleBaseError, DuplicateLabelError, type StaleBaseInfo,
+  StaleBaseError, DuplicateLabelError, type StaleBaseInfo, firstIssueGateForRevUp,
 } from "@/lib/revisions";
 import { effectiveReviewControlForDocument, effectiveModeForRevUp } from "@/lib/reviewControl";
 import { effectiveDocClassForDocument, type DocClass } from "@/lib/docClass";
@@ -124,6 +124,10 @@ export default function RevUpModal({
   const [sourceFileName, setSourceFileName] = useState("");
   const [overrideReason, setOverrideReason] = useState("");
   const [reviewControl, setReviewControl] = useState<ReviewControl | null>(null);
+  // REV-18: this rev-up would ISSUE the document for the first time (a Draft,
+  // or no current revision) and the actor may not publish that unreviewed —
+  // it goes to review whatever the change type (firstIssueGateForRevUp).
+  const [firstIssueMustReview, setFirstIssueMustReview] = useState(false);
   const [routeThroughReview, setRouteThroughReview] = useState(true);
   const [showMore, setShowMore] = useState(false);
   const [effectiveDate, setEffectiveDate] = useState("");
@@ -228,7 +232,11 @@ export default function RevUpModal({
     (async () => {
       try {
         const c = await effectiveReviewControlForDocument({ reviewControl: doc.reviewControl ?? null, collectionId: doc.collectionId ?? null, libraryId });
-        if (alive) { setReviewControl(c); setReviewPolicyStatus("resolved"); }
+        const first = await firstIssueGateForRevUp({
+          doc: { id: doc.id, collectionId: doc.collectionId, currentVersionId: doc.currentVersionId, status: doc.status, reviewControl: doc.reviewControl },
+          libraryId, actor: { orgId, actorUserId, actorRole },
+        });
+        if (alive) { setReviewControl(c); setFirstIssueMustReview(first.mustReview); setReviewPolicyStatus("resolved"); }
       } catch (e) {
         if (alive) { setReviewControl(null); setReviewPolicyStatus("unknown"); setReviewPolicyError((e as Error).message || "unknown error"); }
       }
@@ -240,13 +248,14 @@ export default function RevUpModal({
       }
     })();
     return () => { alive = false; };
-  }, [isOpen, doc.id, doc.reviewControl, doc.collectionId, libraryId, policyAttempt]);
+  }, [isOpen, doc.id, doc.reviewControl, doc.collectionId, doc.currentVersionId, doc.status, libraryId, orgId, actorUserId, actorRole, policyAttempt]);
 
   // The mode that actually applies to THIS rev-up — a Minor/Correction change is
-  // an escape hatch that always publishes directly (no sign-off cycle). An
-  // unresolved policy is not a mode at all: the publish controls stay disabled.
+  // an escape hatch that publishes directly (no sign-off cycle), except for a
+  // first issue the actor may not make unreviewed (REV-18). An unresolved
+  // policy is not a mode at all: the publish controls stay disabled.
   const policyResolved = reviewPolicyStatus === "resolved";
-  const effMode = effectiveModeForRevUp({ control: reviewControl ?? { mode: "none" }, changeType });
+  const effMode = effectiveModeForRevUp({ control: reviewControl ?? { mode: "none" }, changeType, firstIssueMustReview });
   const willReview = effMode === "require" || (effMode === "publisher_choice" && routeThroughReview);
 
   // THE PSM GATE (OSHA 1910.119(l)): a non-minor revision of a declared
@@ -784,6 +793,9 @@ export default function RevUpModal({
                 <ShieldCheck className="w-4 h-4 mt-0.5 shrink-0 text-violet-600" />
                 <span>
                   This library requires <b>pre-publish review</b>.{" "}
+                  {firstIssueMustReview && (
+                    <>This revision would be the document&apos;s <b>first controlled issue</b> — not a revision through the gate — so a Minor or Correction change doesn&apos;t skip the review.{" "}</>
+                  )}
                   {willReview
                     ? <>Your revision will be submitted as an <b>in-review draft ({revisionLabel || "?"}A)</b> for reviewer sign-off — it won&apos;t go live until approved.</>
                     : <>You&apos;ve chosen to publish directly, without review.</>}

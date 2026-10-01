@@ -18,6 +18,8 @@
 //     split / merge source restore, each passes or surfaces its refusal.
 
 import { describe, it, expect, vi, beforeEach } from "vitest";
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
 import { newFakeDb, makeFakeSupabase, type FakeDb, type Row } from "./helpers/fakeSupabase";
 import { isControlledIssueStatus } from "@/lib/issueStatus";
 
@@ -85,9 +87,14 @@ vi.mock("@/lib/staleCopies", () => ({ recallRetiredDocument: vi.fn(async () => {
 vi.mock("@/lib/distributionAcks", () => ({ closeStaleAcksForDocument: vi.fn(async () => {}) }));
 vi.mock("@/lib/docClass", () => ({ effectiveDocClassForDocument: vi.fn(async () => null) }));
 
-import { revUpDocument, unarchiveDocument } from "@/lib/revisions";
-import { finalizeReviewedRevision, effectiveReviewControlForDocument } from "@/lib/reviewControl";
+import {
+  revUpDocument, unarchiveDocument, archiveDocument, supersedeDocument, firstIssueGateForRevUp,
+} from "@/lib/revisions";
+import { finalizeReviewedRevision, effectiveReviewControlForDocument, effectiveModeForRevUp } from "@/lib/reviewControl";
 import { restoreSupersededSource } from "@/lib/documentLifecycle/common";
+import { mergeDocuments } from "@/lib/documentLifecycle/merge";
+import { setLevelRevUp } from "@/lib/documentLifecycle/setRevUp";
+import { supabase } from "@/lib/supabase";
 import { uploadToPath } from "@/lib/storage";
 import type { DocumentRecord } from "@/types/schema";
 
@@ -123,15 +130,30 @@ const HOLD_ISSUE = "Document has an active hold; release the hold before issuing
 const UNREVIEWED = "This library requires reviewer sign-off, so a revision that was not reviewed can't be made a controlled issue; submit it for review, or ask Document Control.";
 const NO_AUTHORITY = "You do not have authority to publish revisions in this library.";
 const HOLD_PUBLISH = "Document has an active hold; release the hold before publishing a new revision.";
+const RETIRED = ["Superseded", "Archived", "Void"];
 function transcribedGuard(next: Row, old: Row): Row {
-  if (!state.uid) return next; // the service role: today's treatment, untouched
+  if (!state.uid) return next; // the service role: today's treatment, untouched (no stamp written or cleared)
   const controller = state.roles.some((r) => r === "Admin" || r === "DocCtrl");
   const issuing = next.current_version_id != null && !isControlledIssueStatus(old.status as string | null) && isControlledIssueStatus(next.status as string | null);
   const advancing0 = next.current_version_id !== old.current_version_id
     || (next.status === "Superseded" && (old.status ?? "") !== "Superseded")
-    || (["Superseded", "Archived", "Void"].includes(String(old.status)) && next.status !== old.status)
+    || (RETIRED.includes(String(old.status)) && next.status !== old.status)
     || (next.status === "Archived" && (old.status ?? "") !== "Archived");
   const newDoor = issuing && !advancing0;
+  // P13 review fix: the retirement stamp (written only here) and the put-back it allows.
+  const restoring = issuing && RETIRED.includes(String(old.status)) && old.retired_issue_version_id != null
+    && next.current_version_id === old.retired_issue_version_id && next.current_version_id === old.current_version_id;
+  if (RETIRED.includes(String(next.status))) {
+    if (RETIRED.includes(String(old.status))) {
+      next.retired_issue_status = old.retired_issue_status ?? null; next.retired_issue_version_id = old.retired_issue_version_id ?? null;
+    } else if (old.current_version_id != null && isControlledIssueStatus(old.status as string | null)) {
+      next.retired_issue_status = old.status; next.retired_issue_version_id = old.current_version_id;
+    } else {
+      next.retired_issue_status = null; next.retired_issue_version_id = null;
+    }
+  } else {
+    next.retired_issue_status = null; next.retired_issue_version_id = null;
+  }
   if (!advancing0 && !issuing) return next;
   const held = T("document_holds").some((h) => h.document_id === next.id && h.released_at == null);
   if (issuing) {
@@ -139,7 +161,7 @@ function transcribedGuard(next: Row, old: Row): Row {
     const require = state.reviewMode === "require" || (next.review_control as { mode?: string } | null)?.mode === "require";
     const rows = T("document_review_signoffs").filter((s) => s.document_version_id === next.current_version_id && s.slot === "primary");
     const complete = rows.length > 0 && rows.every((s) => s.status === "signed" && s.signature_id != null);
-    if (!controller && require && !complete) throw { code: "23514", message: UNREVIEWED };
+    if (!controller && !restoring && require && !complete) throw { code: "23514", message: UNREVIEWED };
   }
   if (controller) return next;
   if (!(state.canControl || next.owner_user_id === state.uid)) throw { code: "23514", message: NO_AUTHORITY };
@@ -299,5 +321,196 @@ describe("REV-18 regression — the legitimate status writers pass the issue rul
     T("document_holds").push({ id: "h1", document_id: "svc1", released_at: null });
     await unarchiveDocument({ doc: asRecord(d), reason: "restore job", orgId: ORG, actorUserId: ME });
     expect(docRow("svc1").status).toBe("Issued");
+  });
+});
+
+// ─── P13 review fix 2: a put-back of the retired issue is not a new issue ──
+describe("P13 review fix — the require limb spares the put-back of the issue a retirement took away (the retirement stamp, 20261144)", () => {
+  beforeEach(() => {
+    state.reviewMode = "require";
+    state.canControl = true; // a library publisher …
+    state.isOwner = false;   // … who is not the owner, and not a controller (Engineer)
+  });
+
+  it("the reviewer's case: a publisher supersedes an Issued document whose revision was published unreviewed (a Minor), the lineage write fails, and undoFailedSupersede PUTS IT BACK to Issued — before the fix it stayed Superseded with no successor", async () => {
+    seedDoc("su1", { status: "Issued", owner_user_id: "someone-else" });
+    seedDoc("rep1", { status: "Issued", document_number: "REP1" });
+    state.db.refuseWrites.add("document_supersessions");
+    await expect(supersedeDocument({
+      doc: asRecord(docRow("su1")), replacementDocNumbers: ["REP1"], libraryId: LIB, reason: "replaced", orgId: ORG, actorUserId: ME,
+    })).rejects.toThrow(/Nothing was superseded: [\s\S]*The document is back to Issued\./);
+    expect(docRow("su1").status).toBe("Issued");
+    expect(docRow("su1").retired_issue_version_id).toBeNull();
+  });
+
+  it("a split / merge source flipped by the saga is put back by restoreSupersededSource (the stamp is the guard's: Issued, its current revision)", async () => {
+    seedDoc("sp3", { status: "Issued", owner_user_id: "someone-else" });
+    const { error } = await supabase.from("documents").update({ status: "Superseded" }).eq("id", "sp3");
+    expect(error).toBeNull();
+    expect(docRow("sp3")).toMatchObject({ status: "Superseded", retired_issue_status: "Issued", retired_issue_version_id: "sp3-v0" });
+    await restoreSupersededSource("sp3", "Issued", [], { orgId: ORG, actorUserId: ME });
+    expect(docRow("sp3").status).toBe("Issued");
+  });
+
+  it("archive then un-archive of an unreviewed Issued document by the publisher: restored; a Draft archived the same way is NOT issued by its un-archive (the stamp says it was no issue)", async () => {
+    seedDoc("ar1", { status: "Issued", owner_user_id: "someone-else" });
+    await archiveDocument({ doc: asRecord(docRow("ar1")), reason: "tidy", orgId: ORG, actorUserId: ME });
+    expect(docRow("ar1").retired_issue_status).toBe("Issued");
+    await unarchiveDocument({ doc: asRecord(docRow("ar1")), reason: "back", orgId: ORG, actorUserId: ME });
+    expect(docRow("ar1").status).toBe("Issued");
+
+    seedDoc("ar2", { status: "Draft", owner_user_id: "someone-else" });
+    await archiveDocument({ doc: asRecord(docRow("ar2")), reason: "tidy", orgId: ORG, actorUserId: ME });
+    expect(docRow("ar2").retired_issue_status).toBeNull();
+    await expect(unarchiveDocument({ doc: asRecord(docRow("ar2")), reason: "back", orgId: ORG, actorUserId: ME })).rejects.toThrow(UNREVIEWED);
+    expect(docRow("ar2").status).toBe("Archived");
+  });
+
+  it("a caller cannot write the stamp: a forged stamp on an archived Draft is overwritten, and the put-back of a DIFFERENT revision than the stamped one is a new issue", async () => {
+    seedDoc("fg1", { status: "Draft", owner_user_id: "someone-else" });
+    await archiveDocument({ doc: asRecord(docRow("fg1")), reason: "tidy", orgId: ORG, actorUserId: ME });
+    await supabase.from("documents").update({ retired_issue_status: "Issued", retired_issue_version_id: "fg1-v0" }).eq("id", "fg1");
+    expect(docRow("fg1").retired_issue_version_id).toBeNull();
+    await expect(unarchiveDocument({ doc: asRecord(docRow("fg1")), reason: "back", orgId: ORG, actorUserId: ME })).rejects.toThrow(UNREVIEWED);
+
+    seedDoc("fg2", { status: "Issued", owner_user_id: "someone-else" });
+    await supabase.from("documents").update({ status: "Superseded" }).eq("id", "fg2");
+    T("document_versions").push({ id: "fg2-v1", org_id: ORG, record_id: "fg2", revision_label: "1", superseded_at: null });
+    await supabase.from("documents").update({ current_version_id: "fg2-v1" }).eq("id", "fg2");
+    expect(docRow("fg2").retired_issue_version_id).toBe("fg2-v0");
+    await expect(restoreSupersededSource("fg2", "Issued", [], { orgId: ORG, actorUserId: ME })).rejects.toThrow(/still Superseded/);
+  });
+});
+
+// ─── P13 review fix 1 / minor 4: every rev-up door asks the first issue up front
+describe("P13 review fix — the first issue is answered by effectiveModeForRevUp for every rev-up door, before anything is written", () => {
+  const C = (mode: string) => ({ mode }) as never;
+
+  it("effectiveModeForRevUp: a first issue the actor may not make unreviewed answers 'require' whatever the change type or the document's own policy; otherwise unchanged", () => {
+    for (const changeType of ["Minor", "Correction", "Major", null]) {
+      expect(effectiveModeForRevUp({ control: C("require"), changeType, firstIssueMustReview: true })).toBe("require");
+      expect(effectiveModeForRevUp({ control: C("none"), changeType, firstIssueMustReview: true })).toBe("require");
+    }
+    expect(effectiveModeForRevUp({ control: C("require"), changeType: "Minor", firstIssueMustReview: false })).toBe("none");
+    expect(effectiveModeForRevUp({ control: C("require"), changeType: "Minor" })).toBe("none");
+    expect(effectiveModeForRevUp({ control: C("publisher_choice"), changeType: "Major" })).toBe("publisher_choice");
+  });
+
+  it("firstIssueGateForRevUp reads the LIVE pointer, status and document policy: an issued document is no first issue (no policy read); a Draft or a pointerless row is; under require only a controller is spared review", async () => {
+    state.reviewMode = "require";
+    seedDoc("g1", { status: "Issued" });
+    const actor = { orgId: ORG, actorUserId: ME };
+    expect(await firstIssueGateForRevUp({ doc: asRecord(docRow("g1")), libraryId: LIB, actor })).toMatchObject({ firstIssue: false, mustReview: false });
+    expect(effectiveReviewControlForDocument).not.toHaveBeenCalled();
+    // the caller's copy says Issued, the row is a Draft: the row decides
+    const stale = asRecord(docRow("g1"));
+    docRow("g1").status = "Draft";
+    expect(await firstIssueGateForRevUp({ doc: stale, libraryId: LIB, actor })).toMatchObject({ firstIssue: true, requiresSignOff: true, mustReview: true, status: "Draft" });
+    seedDoc("g2", { current_version_id: null, status: "Issued" });
+    expect(await firstIssueGateForRevUp({ doc: asRecord(docRow("g2")), libraryId: LIB, actor })).toMatchObject({ firstIssue: true, hasCurrentRevision: false, mustReview: true });
+    state.roles = ["Manager", "DocCtrl"];
+    expect(await firstIssueGateForRevUp({ doc: asRecord(docRow("g2")), libraryId: LIB, actor })).toMatchObject({ firstIssue: true, requiresSignOff: true, mustReview: false });
+    state.roles = ["Engineer"];
+    state.reviewMode = "none";
+    expect(await firstIssueGateForRevUp({ doc: asRecord(docRow("g2")), libraryId: LIB, actor })).toMatchObject({ firstIssue: true, requiresSignOff: false, mustReview: false });
+    // the document's own 'require' (read from the row) binds in a 'none' library — DEC-44 (P13)
+    docRow("g2").review_control = { mode: "require" };
+    expect(await firstIssueGateForRevUp({ doc: { ...asRecord(docRow("g2")), reviewControl: null } as DocumentRecord, libraryId: LIB, actor })).toMatchObject({ mustReview: true });
+  });
+
+  describe("mergeDocuments into an existing target with a rev-up", () => {
+    const revUp = (changeType = "Minor") => ({ file: pdf("merged.pdf"), revisionLabel: "1", changeLog: "merged content", changeType: changeType as never });
+    const supersededWrites = () => state.db.calls
+      .filter((c) => c.table === "documents" && c.method === "update" && (c.args[0] as Row)?.status === "Superseded");
+    const merge = (t: Row, sources: Row[], changeType = "Minor") => mergeDocuments({
+      sources: [asRecord(t), ...sources.map(asRecord)],
+      target: { kind: "extend_existing", target: asRecord(t), libraryId: LIB, revUp: revUp(changeType), assetTagsUnion: [] },
+      reason: "combine", orgId: ORG, actorUserId: ME,
+    });
+    beforeEach(() => {
+      state.reviewMode = "require";
+      state.canControl = true;
+      state.isOwner = false;
+      published();
+    });
+
+    it("the reviewer's case: a publisher merges two Issued sources into a DRAFT target with a Minor rev-up in a require library — refused BEFORE anything is written: no source is superseded, nothing is published", async () => {
+      const t = seedDoc("mt1", { status: "Draft" });
+      const a = seedDoc("ms1", { status: "Issued" });
+      const b = seedDoc("ms2", { status: "Issued" });
+      const e = (await merge(t, [a, b]).catch((err) => err)) as Error;
+      expect(e).toBeInstanceOf(Error);
+      expect(e.message).toMatch(/MT1 requires reviewer sign-off for this revision — a merge can't publish it unreviewed \(MT1 is not issued yet \(Draft\), so publishing Rev 1 makes it a controlled issue for the first time; a Minor or Correction change doesn't exempt a first issue\)\. Nothing was merged\./);
+      expect(docRow("ms1").status).toBe("Issued");
+      expect(docRow("ms2").status).toBe("Issued");
+      expect(T("document_supersessions")).toHaveLength(0);
+      expect(supersededWrites()).toEqual([]); // never flipped (not flipped and put back)
+      expect(state.rpc).not.toHaveBeenCalled();
+      expect(uploadToPath).not.toHaveBeenCalled();
+    });
+
+    it("a pointerless target (a register row) is a first issue too — refused up front", async () => {
+      const t = seedDoc("mt2", { status: "Issued", current_version_id: null });
+      const a = seedDoc("ms3", { status: "Issued" });
+      await expect(merge(t, [a])).rejects.toThrow(/MT2 has no current revision, so Rev 1 would be its first controlled issue/);
+      expect(docRow("ms3").status).toBe("Issued");
+      expect(supersededWrites()).toEqual([]); // never flipped (not flipped and put back)
+      expect(state.rpc).not.toHaveBeenCalled();
+    });
+
+    it("a controller's merge into a Draft target proceeds (the database admits a controller's first issue) and is RECORDED as made without the required sign-off", async () => {
+      state.roles = ["Manager", "DocCtrl"];
+      const t = seedDoc("mt3", { status: "Draft" });
+      const a = seedDoc("ms4", { status: "Issued" });
+      await merge(t, [a]);
+      expect(state.rpc).toHaveBeenCalledTimes(1);
+      expect(docRow("ms4").status).toBe("Superseded");
+      const ev = T("audit_logs").find((r) => r.action === "CREATED_FROM_MERGE");
+      expect((ev!.details as Record<string, unknown>).reviewPolicy).toBe("require — the merged revision is MT3's FIRST issue, published WITHOUT the sign-off the policy requires, by controller u1 (DEC-63 §2)");
+    });
+
+    it("an ISSUED target keeps the Minor hatch (an ordinary revision through the gate): the merge proceeds for the publisher, as before", async () => {
+      const t = seedDoc("mt4", { status: "Issued" });
+      const a = seedDoc("ms5", { status: "Issued" });
+      await merge(t, [a]);
+      expect(state.rpc).toHaveBeenCalledTimes(1);
+      expect(docRow("ms5").status).toBe("Superseded");
+    });
+  });
+
+  it("setLevelRevUp: a Minor set bump in a require library publishes the Issued sheets and sends the not-yet-issued ones to REVIEW — never to `failed` for a direct publish revUpDocument would refuse; a controller's Draft sheet publishes directly", async () => {
+    state.reviewMode = "require";
+    state.canControl = true;
+    published();
+    const issued = seedDoc("st1", { status: "Issued" });
+    const draft = seedDoc("st2", { status: "Draft" });
+    const sheets = [issued, draft].map((d) => ({ doc: asRecord(d), file: pdf(`${d.id}.pdf`), revisionLabel: "1" }));
+    const r = await setLevelRevUp({
+      setId: "set1", sheets, libraryId: LIB, sharedChangeLog: "bump", changeType: "Minor" as never, orgId: ORG, actorUserId: ME,
+    });
+    expect(r.failed.filter((f) => /first controlled issue|is not issued yet/.test(f.error))).toEqual([]);
+    expect(r.succeeded).toBe(1);
+    expect((state.rpc.mock.calls[0][1] as Record<string, unknown>).p_doc).toBe("st1");
+    // the Draft went to review: an in-review draft on its pending pointer; the document stays a Draft until it is approved
+    expect(r).toMatchObject({ succeeded: 1, sentForReview: 1, failed: [] });
+    expect(docRow("st2").status).toBe("Draft");
+    expect(T("document_versions").find((v) => v.id === docRow("st2").pending_version_id)).toMatchObject({ review_state: "in_review" });
+
+    state.rpc.mockClear();
+    state.roles = ["Manager", "DocCtrl"];
+    const draft2 = seedDoc("st3", { status: "Draft" });
+    const r2 = await setLevelRevUp({
+      setId: "set2", sheets: [{ doc: asRecord(draft2), file: pdf("st3.pdf"), revisionLabel: "1" }], libraryId: LIB,
+      sharedChangeLog: "bump", changeType: "Minor" as never, orgId: ORG, actorUserId: ME,
+    });
+    expect(r2).toMatchObject({ succeeded: 1, sentForReview: 0, failed: [] });
+  });
+
+  it("RevUpModal asks the same gate and routes a first issue it may not publish to review (pinned)", () => {
+    const m = readFileSync(join(process.cwd(), "components/documents/RevUpModal.tsx"), "utf8");
+    expect(m).toContain("const first = await firstIssueGateForRevUp({");
+    expect(m).toContain("setFirstIssueMustReview(first.mustReview)");
+    expect(m).toContain("const effMode = effectiveModeForRevUp({ control: reviewControl ?? { mode: \"none\" }, changeType, firstIssueMustReview });");
+    expect(m).toContain('const willReview = effMode === "require" || (effMode === "publisher_choice" && routeThroughReview);');
   });
 });

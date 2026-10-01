@@ -35,7 +35,7 @@ import { notify } from "@/lib/inAppNotifications";
 import { getMyEditBase, recordIntent } from "@/lib/intents";
 import { announceBranchOpened } from "@/lib/branches";
 import { isControllerPrincipal, type Principal } from "@/lib/permissions";
-import type { DocumentRecord, DocumentVersion } from "@/types/schema";
+import type { DocumentRecord, DocumentVersion, ReviewControl } from "@/types/schema";
 import { letterLabelFor, openReviewRoster, invalidateDraftSignoffs, effectiveReviewControlForDocument } from "@/lib/reviewControl";
 import { applyEffectiveDate } from "@/lib/effectiveDate";
 import { isEffectiveOwnerOfDocument } from "@/lib/ownership";
@@ -735,15 +735,11 @@ export async function resolveCreationReviewGate(target: {
   libraryId: string; collectionId?: string | null; what: string;
   /** Who is issuing — asked only when the policy requires sign-off. */
   actor: { orgId: string; actorUserId: string; actorRole?: string };
-  /** REV-18: the caller's own words for the two refusals (the rev-up flow
-   *  is not a creation); omitted, the creation flow's sentences. */
-  wording?: { refused: string; unreadable: (reason: string) => string };
 }): Promise<{ mode: string; recorded: string }> {
   let control;
   try {
     control = await effectiveReviewControlForDocument({ reviewControl: null, collectionId: target.collectionId ?? null, libraryId: target.libraryId });
   } catch (e) {
-    if (target.wording) throw new Error(target.wording.unreadable((e as Error).message));
     throw new Error(`Couldn't verify the review policy for ${target.what} — nothing was created: ${(e as Error).message}`);
   }
   const mode = control?.mode ?? "none";
@@ -752,7 +748,6 @@ export async function resolveCreationReviewGate(target: {
       uid: target.actor.actorUserId, orgId: target.actor.orgId, headlineRole: target.actor.actorRole,
     });
     if (!isControllerPrincipal(principal)) {
-      if (target.wording) throw new Error(target.wording.refused);
       throw new Error(
         `This library requires reviewer sign-off, so ${target.what} can't be issued unreviewed. ` +
         "Create it as a Draft and submit it for review, then retire the old document once it is approved — or ask Document Control, who may issue it and is recorded doing so.",
@@ -827,6 +822,9 @@ export async function createDocumentWithFile(input: {
   actorUserId: string;
   actorEmail?: string;
   actorRole?: string;
+  /** GAP-314: false when the caller decodes its documents' unit codes itself,
+   *  in one batched call (a door that creates many — the template filing). */
+  decodeUnitCode?: boolean;
 }): Promise<{ documentId: string; status: CreationStatus; reviewPolicy: string | null; creationAuditError: string | null }> {
   const now = new Date().toISOString();
   const docNum = input.documentNumber.trim();
@@ -951,44 +949,76 @@ export async function createDocumentWithFile(input: {
   try { await recomputeRetention(documentId); } catch { /* best-effort */ }
   // GAP-314: the unit decode at create time (documents.unit_code, written by
   // the service role from the stored number) — best-effort, after the
-  // creation is complete: a decode that cannot run never fails it; it is
-  // logged, and the route records a document it left without a code, with why.
-  const unitCode = await requestUnitCodeDecode(input.orgId, [documentId], "upload");
-  if (unitCode.note) console.warn(`[createDocumentWithFile] ${unitCode.note}`);
+  // creation is complete, and NOT awaited (P13 review fix): the creation is
+  // done whatever the route does (the call is bounded besides). What it left
+  // undone is logged; the route records a document it left without a code,
+  // with why. A caller filing many documents passes decodeUnitCode: false
+  // and decodes them in one call.
+  if (input.decodeUnitCode !== false) {
+    void requestUnitCodeDecode(input.orgId, [documentId], "upload").then((unitCode) => {
+      if (unitCode.note) console.warn(`[createDocumentWithFile] ${unitCode.note}`);
+    });
+  }
   return { documentId, status: input.status, reviewPolicy, creationAuditError };
 }
 
-/** REV-18 (addendum 1): the up-front refusal of a rev-up that would ISSUE the
- *  document for the first time (revUpDocument decides when). The governing
- *  policy is read as the database reads it (DEC-44 (P13)): the folder /
- *  library chain — resolveCreationReviewGate, the creation flows' gate — OR
- *  the document's own; a document-level 'none' does not exempt it. Under a
- *  policy that requires sign-off only a controller publishes it directly;
- *  anyone else is told to submit it for review. Nothing is written. */
-async function assertRevUpMayIssue(opts: {
-  doc: DocumentRecord; libraryId: string; revisionLabel: string; hasCurrentRevision: boolean;
+/** REV-18 (addendum 1; P13 review fix): would this rev-up ISSUE the document
+ *  for the first time, and may THIS actor publish that issue directly?
+ *  A first issue: the document has no current revision (a register row's
+ *  first file — a CSV import) or its status is not one the app calls an
+ *  issue (a Draft: every direct rev-up writes Issued). Under a policy that
+ *  requires sign-off — read as the database reads it (DEC-44 (P13)): the
+ *  folder / library chain OR the document's own, so a document-level 'none'
+ *  does not exempt it — only a controller publishes it unreviewed (DEC-63
+ *  §2); anyone else must take it through review (`mustReview`), and the
+ *  Minor / Correction hatch does not open it (effectiveModeForRevUp's
+ *  `firstIssueMustReview`). Every rev-up door asks it BEFORE it writes
+ *  anything: revUpDocument (refuses), RevUpModal and setLevelRevUp (route it
+ *  to review), mergeDocuments' gate (refuses before a source is superseded).
+ *  `requiresSignOff` says the policy requires it (a controller's direct
+ *  first issue is then recorded as made without it). The live pointer,
+ *  status and document policy are read here unless the caller has just read
+ *  them. An unreadable policy THROWS (RG-6) — never
+ *  "no policy". Nothing is written. */
+export async function firstIssueGateForRevUp(opts: {
+  doc: Pick<DocumentRecord, "id" | "collectionId" | "currentVersionId" | "status" | "reviewControl">;
+  libraryId: string;
   actor: { orgId: string; actorUserId: string; actorRole?: string };
-}): Promise<void> {
-  const label = opts.doc.documentNumber || opts.doc.title || "this document";
-  const why = opts.hasCurrentRevision
-    ? `${label} is not issued yet (${opts.doc.status || "Draft"}), so publishing Rev ${opts.revisionLabel} makes it a controlled issue for the first time`
-    : `${label} has no current revision, so Rev ${opts.revisionLabel} would be its first controlled issue`;
-  const refused =
-    `This library requires reviewer sign-off, and ${why} — a first issue is not a revision through the review gate, so a Minor or Correction change doesn't exempt it. ` +
-    "Nothing was uploaded. Choose Major and submit it for review, or ask Document Control, who may issue it.";
-  await resolveCreationReviewGate({
-    libraryId: opts.libraryId, collectionId: opts.doc.collectionId ?? null, what: label, actor: opts.actor,
-    wording: {
-      refused,
-      unreadable: (reason) => `Couldn't verify the review policy for ${label} — nothing was uploaded or published: ${reason}`,
-    },
-  });
-  if (opts.doc.reviewControl?.mode === "require") {
-    const principal: Principal = await resolveActorPrincipal({
-      uid: opts.actor.actorUserId, orgId: opts.actor.orgId, headlineRole: opts.actor.actorRole,
-    });
-    if (!isControllerPrincipal(principal)) throw new Error(refused);
+  live?: { current: string | null; status: string | null; reviewControl?: ReviewControl | null };
+}): Promise<{ firstIssue: boolean; hasCurrentRevision: boolean; status: string | null; requiresSignOff: boolean; mustReview: boolean }> {
+  let live = opts.live;
+  if (!live) {
+    const { data, error } = await supabase
+      .from("documents").select("current_version_id, status, review_control").eq("id", opts.doc.id ?? "").maybeSingle();
+    if (error) throw new Error(`Couldn't read the document's current state: ${error.message}`);
+    live = data
+      ? {
+        current: (data.current_version_id as string | null) ?? null,
+        status: (data.status as string | null) ?? null,
+        reviewControl: (data.review_control as ReviewControl | null) ?? null,
+      }
+      : { current: opts.doc.currentVersionId ?? null, status: opts.doc.status ?? null };
   }
+  const seen = { hasCurrentRevision: !!live.current, status: live.status };
+  if (live.current && isControlledIssueStatus(live.status)) return { ...seen, firstIssue: false, requiresSignOff: false, mustReview: false };
+  const chain = await effectiveReviewControlForDocument({
+    reviewControl: null, collectionId: opts.doc.collectionId ?? null, libraryId: opts.libraryId,
+  });
+  const own = live.reviewControl !== undefined ? live.reviewControl : (opts.doc.reviewControl ?? null);
+  if (chain.mode !== "require" && own?.mode !== "require") return { ...seen, firstIssue: true, requiresSignOff: false, mustReview: false };
+  const principal: Principal = await resolveActorPrincipal({
+    uid: opts.actor.actorUserId, orgId: opts.actor.orgId, headlineRole: opts.actor.actorRole,
+  });
+  return { ...seen, firstIssue: true, requiresSignOff: true, mustReview: !isControllerPrincipal(principal) };
+}
+
+/** REV-18: why a rev-up is a first issue, in one clause (the refusals of
+ *  revUpDocument and mergeDocuments' gate both say it). */
+export function describeFirstIssue(label: string, gate: { hasCurrentRevision: boolean; status: string | null }, revisionLabel?: string): string {
+  const rev = revisionLabel?.trim() ? `Rev ${revisionLabel.trim()}` : "this revision";
+  return gate.hasCurrentRevision
+    ? `${label} is not issued yet (${gate.status || "Draft"}), so publishing ${rev} makes it a controlled issue for the first time`
+    : `${label} has no current revision, so ${rev} would be its first controlled issue`;
 }
 
 export async function revUpDocument(input: RevUpInput): Promise<RevUpResult> {
@@ -1055,7 +1085,7 @@ export async function revUpDocument(input: RevUpInput): Promise<RevUpResult> {
   //     re-checks transactionally (this is an optimization, not the guard).
   if (!input.asBranch) {
     const { data: freshDoc } = await supabase
-      .from("documents").select("current_version_id, status").eq("id", doc.id).maybeSingle();
+      .from("documents").select("current_version_id, status, review_control").eq("id", doc.id).maybeSingle();
     const liveCurrent = (freshDoc?.current_version_id as string | null) ?? null;
     // REV-18 (addendum 1): a rev-up that makes the document a controlled
     // issue for the FIRST time — its first file (no current revision: a
@@ -1067,7 +1097,11 @@ export async function revUpDocument(input: RevUpInput): Promise<RevUpResult> {
     // refusal comes in this flow's words (the database refuses the same
     // write: 20261139 for a first pointer, 20261144 for an issue).
     const live = freshDoc
-      ? { current: liveCurrent, status: (freshDoc.status as string | null) ?? null }
+      ? {
+        current: liveCurrent,
+        status: (freshDoc.status as string | null) ?? null,
+        reviewControl: (freshDoc.review_control as ReviewControl | null) ?? null,
+      }
       : { current: doc.currentVersionId ?? null, status: doc.status ?? null };
     if (freshDoc && liveCurrent !== expectedBase) {
       const { data: cur } = liveCurrent
@@ -1085,11 +1119,18 @@ export async function revUpDocument(input: RevUpInput): Promise<RevUpResult> {
         currentChangeLog: (c?.change_log as string | null) ?? null,
       });
     }
-    if (!live.current || !isControlledIssueStatus(live.status)) {
-      await assertRevUpMayIssue({
-        doc, libraryId, revisionLabel: revisionLabel.trim(), hasCurrentRevision: !!live.current,
-        actor: { orgId, actorUserId, actorRole },
-      });
+    const label = doc.documentNumber || doc.title || "this document";
+    let firstIssue: Awaited<ReturnType<typeof firstIssueGateForRevUp>>;
+    try {
+      firstIssue = await firstIssueGateForRevUp({ doc, libraryId, actor: { orgId, actorUserId, actorRole }, live });
+    } catch (e) {
+      throw new Error(`Couldn't verify the review policy for ${label} — nothing was uploaded or published: ${(e as Error).message}`);
+    }
+    if (firstIssue.mustReview) {
+      throw new Error(
+        `This library requires reviewer sign-off, and ${describeFirstIssue(label, firstIssue, revisionLabel)} — a first issue is not a revision through the review gate, so a Minor or Correction change doesn't exempt it. ` +
+        "Nothing was uploaded. Choose Major and submit it for review, or ask Document Control, who may issue it.",
+      );
     }
   }
 

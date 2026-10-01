@@ -80,12 +80,21 @@ export async function effectiveReviewControlForDocument(doc: {
  *
  *  REV-18: the hatch is for a revision THROUGH the gate. A rev-up that makes
  *  the document a controlled issue for the first time (no current revision,
- *  or a status that is not an issue) is a first issue: revUpDocument asks the
- *  creation gate (resolveCreationReviewGate) before anything is uploaded, and
- *  the database refuses it too (20261139 / 20261144). */
+ *  or a status that is not an issue) is a first issue: under a policy that
+ *  requires sign-off — the folder / library chain OR the document's own
+ *  (DEC-44 (P13)) — only a controller may publish it unreviewed (DEC-63 §2),
+ *  and the database refuses anyone else (20261139 / 20261144). The caller
+ *  asks lib/revisions.ts firstIssueGateForRevUp and passes its `mustReview`:
+ *  true answers 'require' whatever the change type and whatever the
+ *  document's own policy says, so RevUpModal and setLevelRevUp route it to
+ *  review and a merge refuses it before it writes anything. */
 export function effectiveModeForRevUp(input: {
   control: ReviewControl; changeType?: string | null;
+  /** REV-18: a first issue this actor may not publish unreviewed
+   *  (firstIssueGateForRevUp's `mustReview`). */
+  firstIssueMustReview?: boolean;
 }): ReviewControlMode {
+  if (input.firstIssueMustReview) return "require";
   if (input.control.mode === "none") return "none";
   if (input.changeType === "Minor" || input.changeType === "Correction") return "none";
   return input.control.mode; // 'require' or 'publisher_choice'

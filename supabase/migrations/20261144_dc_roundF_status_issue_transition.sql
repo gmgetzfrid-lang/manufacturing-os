@@ -20,7 +20,7 @@
 --           Re-created from its NEWEST body (20261139, P12 — nothing later
 --           re-creates it; the shape test finds the newest earlier
 --           definition by scanning this directory) plus three added blocks
---           and four declarations (pinned line for line by a lineDiff test;
+--           and five declarations (pinned line for line by a lineDiff test;
 --           every other line of the 20261139 body is carried byte for byte):
 --             * v_issuing: the write moves a document that HAS a current
 --               revision (NEW.current_version_id IS NOT NULL) out of a status
@@ -45,9 +45,27 @@
 --               that does not carry a complete roster (every primary slot
 --               filled by a bound signature, counted as the review gate
 --               counts it).
+--             * a put-back is not a new issue (P13 review fix): entering
+--               Superseded / Archived / Void from an issue status stamps what
+--               was issued — documents.retired_issue_status and
+--               retired_issue_version_id (new columns, written ONLY by this
+--               guard: it overwrites a caller's value on every signed-in
+--               UPDATE, and trg_document_retired_issue_stamp_insert clears
+--               them on a signed-in INSERT). Putting that same revision back
+--               into an issue status (v_restoring: a failed supersede / split
+--               / merge's compensation, an un-archive) is not decided by the
+--               require-mode limb — the publisher tier and the hold check
+--               still decide it, exactly as OWN-15 did before. A document
+--               retired BEFORE this migration carries no stamp, so its
+--               restore of an unreviewed revision needs a controller (counted
+--               by the inventory).
+--             * a NULL status is no way past the hold: v_new_door COALESCEs
+--               v_advancing (a NULL NEW.status makes the carried expression
+--               NULL, and the app calls a NULL status an issue).
 --           A NULL auth.uid() (the service role: the cron, an org restore,
 --           the intake route's settle) keeps exactly today's treatment: the
---           guard's first statement returns before any rule, as before.
+--           guard's first statement returns before any rule, as before (and
+--           it neither writes nor clears a stamp).
 --
 --   is_controlled_issue_status(text): new, IMMUTABLE, not SECURITY DEFINER.
 --           btrim of exactly the characters JavaScript's String.trim()
@@ -57,14 +75,27 @@
 --           IS an issue (as in the app). EXECUTE revoked from every client
 --           role: only the guard (its owner) calls it.
 --
--- NOT a widening: every change refuses something that was allowed. DEC-30
--- inventories (aggregate counts, captured BEFORE the transaction; kept as
--- they are — the rule binds the next transition): documents already in an
--- issue status under a require policy whose current revision has no
--- complete roster; documents NOT in an issue status under a require policy
+--   documents.retired_issue_status / retired_issue_version_id: new nullable
+--           columns (no backfill — what a retired document was before this
+--           migration is not known, and a guess would let a Draft archived
+--           by a publisher come back Issued); BEFORE INSERT trigger
+--           trg_document_retired_issue_stamp_insert ->
+--           document_retired_issue_stamp_on_insert() (not SECURITY DEFINER,
+--           search_path pinned, EXECUTE revoked from every client role).
+--
+-- NOT a widening: every change refuses something that was allowed (the
+-- put-back exemption only spares a restore the require limb, itself new
+-- here). DEC-30 inventories (aggregate counts, captured BEFORE the
+-- transaction; kept as they are — the rule binds the next transition):
+-- documents already in an issue status under a require policy whose current
+-- revision has no complete roster (once retired after this migration, their
+-- put-back is spared); Draft / In Review documents under a require policy
 -- whose current revision has no complete roster (from now on only a
--- controller issues or restores them, until a review completes); Draft / In
--- Review documents with a current revision and an active hold.
+-- controller issues them, until a review completes); Superseded / Void /
+-- Archived documents under a require policy whose current revision has no
+-- complete roster (retired before this migration, unstamped: only a
+-- controller restores them to an issue status, until a review completes);
+-- Draft / In Review documents with a current revision and an active hold.
 -- The trigger function is not callable directly (it RETURNS trigger); its
 -- EXECUTE stays revoked from PUBLIC and every client role (DRLS-16 rule, as
 -- 20261139 left it).
@@ -118,10 +149,15 @@ SELECT 'inventory (before apply): documents in an issue status, with a current r
   FROM governed g
  WHERE btrim(COALESCE(g.status, ''), E' \t\n\u000B\f\r\u00A0\u1680\u2000\u2001\u2002\u2003\u2004\u2005\u2006\u2007\u2008\u2009\u200A\u2028\u2029\u202F\u205F\u3000\uFEFF') NOT IN ('Draft', 'In Review', 'Superseded', 'Void', 'Archived')
 UNION ALL
-SELECT 'inventory (before apply): documents NOT in an issue status (Draft / In Review / Superseded / Void / Archived), with a current revision, under a policy that requires sign-off, whose current revision carries no complete roster (REV-18: from now on only a controller may issue or restore them until a review completes)',
+SELECT 'inventory (before apply): documents in Draft / In Review, with a current revision, under a policy that requires sign-off, whose current revision carries no complete roster (REV-18: from now on only a controller may issue them until a review completes)',
        COUNT(*)::text
   FROM governed g
- WHERE btrim(COALESCE(g.status, ''), E' \t\n\u000B\f\r\u00A0\u1680\u2000\u2001\u2002\u2003\u2004\u2005\u2006\u2007\u2008\u2009\u200A\u2028\u2029\u202F\u205F\u3000\uFEFF') IN ('Draft', 'In Review', 'Superseded', 'Void', 'Archived')
+ WHERE btrim(COALESCE(g.status, ''), E' \t\n\u000B\f\r\u00A0\u1680\u2000\u2001\u2002\u2003\u2004\u2005\u2006\u2007\u2008\u2009\u200A\u2028\u2029\u202F\u205F\u3000\uFEFF') IN ('Draft', 'In Review')
+UNION ALL
+SELECT 'inventory (before apply): documents in Superseded / Void / Archived, with a current revision, under a policy that requires sign-off, whose current revision carries no complete roster (REV-18: retired before this migration, so they carry no retirement stamp — only a controller may restore them to an issue status until a review completes; one retired after it is put back by the publisher tier)',
+       COUNT(*)::text
+  FROM governed g
+ WHERE btrim(COALESCE(g.status, ''), E' \t\n\u000B\f\r\u00A0\u1680\u2000\u2001\u2002\u2003\u2004\u2005\u2006\u2007\u2008\u2009\u200A\u2028\u2029\u202F\u205F\u3000\uFEFF') IN ('Superseded', 'Void', 'Archived')
 UNION ALL
 SELECT 'inventory (before apply): documents in Draft / In Review, with a current revision and an active hold (REV-18: their status-only issue is now refused for everyone until the hold is released)',
        COUNT(*)::text
@@ -144,7 +180,17 @@ RETURNS boolean LANGUAGE sql IMMUTABLE PARALLEL SAFE SET search_path = public AS
 $$;
 REVOKE ALL ON FUNCTION is_controlled_issue_status(text) FROM PUBLIC, anon, authenticated, service_role;
 
--- ── 2. REV-18: the publish guard — 20261139 body + the issue-transition rule ─
+-- ── 2. REV-18: the retirement stamp (what was issued when it was retired) ───
+-- Written ONLY by the guard below (a signed-in caller's value is overwritten
+-- on UPDATE; the INSERT trigger in §4 clears it); read only by it.
+ALTER TABLE documents ADD COLUMN IF NOT EXISTS retired_issue_status text;
+ALTER TABLE documents ADD COLUMN IF NOT EXISTS retired_issue_version_id uuid;
+COMMENT ON COLUMN documents.retired_issue_status IS
+  'REV-18 (20261144): the issue status the document held when it entered Superseded / Archived / Void (NULL when it was not an issue). Written only by enforce_document_publish_guard.';
+COMMENT ON COLUMN documents.retired_issue_version_id IS
+  'REV-18 (20261144): the revision that was current when the document entered Superseded / Archived / Void from an issue status; putting that revision back is not a new issue. Written only by enforce_document_publish_guard.';
+
+-- ── 3. REV-18: the publish guard — 20261139 body + the issue-transition rule ─
 CREATE OR REPLACE FUNCTION enforce_document_publish_guard()
 RETURNS trigger LANGUAGE plpgsql SECURITY DEFINER SET search_path = public AS $$
 DECLARE
@@ -167,6 +213,7 @@ DECLARE
   v_new_door     boolean;
   v_issue_reqs   integer;
   v_issue_signed integer;
+  v_restoring    boolean;
 BEGIN
   IF v_actor IS NULL THEN
     RETURN NEW;
@@ -191,12 +238,43 @@ BEGIN
   -- the pointer. The predicate is is_controlled_issue_status (this
   -- migration; pinned to the app's by test). v_new_door marks the one
   -- write no rule above saw before: a status-only move out of Draft / In
-  -- Review into an issue.
+  -- Review into an issue. (v_advancing is NULL for a NULL NEW.status, which
+  -- the app calls an issue: COALESCE, so a NULL is no way past the hold.)
   v_issuing := NEW.current_version_id IS NOT NULL
                AND NOT is_controlled_issue_status(OLD.status)
                AND is_controlled_issue_status(NEW.status);
-  v_new_door := v_issuing AND NOT v_advancing;
+  v_new_door := v_issuing AND NOT COALESCE(v_advancing, false);
   v_advancing := v_advancing OR v_issuing;
+  -- REV-18 (P13 review fix): the retirement stamp. Entering Superseded /
+  -- Archived / Void from an ISSUE status stamps what was issued (the status
+  -- and the revision); moving between those statuses keeps it; any other
+  -- write clears it. A caller's own value is overwritten here on every
+  -- signed-in UPDATE (and cleared on INSERT, §4), so the stamp says what the
+  -- document WAS. v_restoring: this write puts that same revision back into
+  -- an issue status — the put-back of the issue its retirement took away (a
+  -- failed supersede / split / merge's compensation, an un-archive), not a
+  -- new issue — so the require-mode limb below does not decide it; the
+  -- publisher tier and the hold check still do (OWN-15).
+  v_restoring := COALESCE(v_issuing
+                 AND OLD.status IN ('Superseded', 'Archived', 'Void')
+                 AND OLD.retired_issue_version_id IS NOT NULL
+                 AND NEW.current_version_id = OLD.retired_issue_version_id
+                 AND NEW.current_version_id = OLD.current_version_id, false);
+  IF COALESCE(NEW.status IN ('Superseded', 'Archived', 'Void'), false) THEN
+    IF COALESCE(OLD.status IN ('Superseded', 'Archived', 'Void'), false) THEN
+      NEW.retired_issue_status := OLD.retired_issue_status;
+      NEW.retired_issue_version_id := OLD.retired_issue_version_id;
+    ELSIF OLD.current_version_id IS NOT NULL AND is_controlled_issue_status(OLD.status) THEN
+      NEW.retired_issue_status := OLD.status;
+      NEW.retired_issue_version_id := OLD.current_version_id;
+    ELSE
+      NEW.retired_issue_status := NULL;
+      NEW.retired_issue_version_id := NULL;
+    END IF;
+  ELSE
+    NEW.retired_issue_status := NULL;
+    NEW.retired_issue_version_id := NULL;
+  END IF;
   IF NOT v_advancing THEN
     RETURN NEW;
   END IF;
@@ -364,7 +442,9 @@ BEGIN
   -- — only a controller may issue a revision that does not carry a
   -- complete roster (every primary slot filled by a bound signature,
   -- counted as the review gate above counts it). Who may issue at all is
-  -- the publisher tier below (OWN-15 / OWN-19's authority).
+  -- the publisher tier below (OWN-15 / OWN-19's authority). A put-back of
+  -- the retired issue (v_restoring) is not a new issue: the require limb
+  -- does not decide it.
   IF v_issuing THEN
     IF v_new_door AND EXISTS (
          SELECT 1 FROM document_holds h
@@ -375,6 +455,7 @@ BEGIN
         USING ERRCODE = 'check_violation';
     END IF;
     IF NOT is_org_controller(NEW.org_id)
+       AND NOT v_restoring
        AND (review_control_mode_for(NULL, NEW.collection_id, NEW.library_id) = 'require'
             OR review_control_mode_for(NEW.review_control, NEW.collection_id, NEW.library_id) = 'require') THEN
       SELECT COALESCE(sum(g.reqs), 0), COALESCE(sum(LEAST(g.reqs, g.filled)), 0)
@@ -440,6 +521,26 @@ $$;
 -- client role needs it (DRLS-16: grant only to the roles that call it).
 REVOKE ALL ON FUNCTION enforce_document_publish_guard() FROM PUBLIC, anon, authenticated, service_role;
 
+-- ── 4. REV-18: a signed-in INSERT never carries a retirement stamp ──────────
+-- Otherwise a member could insert a retired document already "stamped" and
+-- restore it as an issue past the require limb. The service role (a restore
+-- replays documents with their stamps) is untouched, as in the guard.
+CREATE OR REPLACE FUNCTION document_retired_issue_stamp_on_insert()
+RETURNS trigger LANGUAGE plpgsql SET search_path = public AS $$
+BEGIN
+  IF auth.uid() IS NOT NULL THEN
+    NEW.retired_issue_status := NULL;
+    NEW.retired_issue_version_id := NULL;
+  END IF;
+  RETURN NEW;
+END;
+$$;
+REVOKE ALL ON FUNCTION document_retired_issue_stamp_on_insert() FROM PUBLIC, anon, authenticated, service_role;
+DROP TRIGGER IF EXISTS trg_document_retired_issue_stamp_insert ON documents;
+CREATE TRIGGER trg_document_retired_issue_stamp_insert
+  BEFORE INSERT ON documents
+  FOR EACH ROW EXECUTE FUNCTION document_retired_issue_stamp_on_insert();
+
 COMMIT;
 
 -- ── Verification + inventory — ONE result set (the editor shows only the last)
@@ -457,15 +558,24 @@ SELECT 'REV-18: the guard makes an issue transition advancing (v_issuing joins v
        (SELECT prosrc LIKE '%v_issuing := NEW.current_version_id IS NOT NULL%'
            AND prosrc LIKE '%AND NOT is_controlled_issue_status(OLD.status)%'
            AND prosrc LIKE '%AND is_controlled_issue_status(NEW.status);%'
-           AND prosrc LIKE '%v_new_door := v_issuing AND NOT v_advancing;%'
            AND prosrc LIKE '%v_advancing := v_advancing OR v_issuing;%'
           FROM pg_proc WHERE proname = 'enforce_document_publish_guard'),
        NULL
 UNION ALL
-SELECT 'REV-18: the issue is refused over an active hold (the new door, for everyone) and, under a require policy, without a complete roster for anyone but a controller',
+SELECT 'REV-18: a NULL status is no way past the hold (v_new_door COALESCEs v_advancing); entering Superseded / Archived / Void from an issue stamps it, any other signed-in write keeps or clears it, and putting the stamped revision back is v_restoring',
+       (SELECT prosrc LIKE '%v_new_door := v_issuing AND NOT COALESCE(v_advancing, false);%'
+           AND prosrc LIKE '%v_restoring := COALESCE(v_issuing%'
+           AND prosrc LIKE '%AND NEW.current_version_id = OLD.retired_issue_version_id%'
+           AND prosrc LIKE '%NEW.retired_issue_status := OLD.status;%'
+           AND prosrc LIKE '%NEW.retired_issue_version_id := OLD.current_version_id;%'
+           AND prosrc LIKE '%NEW.retired_issue_version_id := NULL;%'
+          FROM pg_proc WHERE proname = 'enforce_document_publish_guard'),
+       NULL
+UNION ALL
+SELECT 'REV-18: the issue is refused over an active hold (the new door, for everyone) and, under a require policy, without a complete roster for anyone but a controller (a put-back of the retired issue excepted)',
        (SELECT prosrc LIKE '%IF v_new_door AND EXISTS (%'
            AND prosrc LIKE '%release the hold before issuing it.%'
-           AND prosrc LIKE '%IF NOT is_org_controller(NEW.org_id)%'
+           AND prosrc LIKE '%IF NOT is_org_controller(NEW.org_id)%AND NOT v_restoring%'
            AND prosrc LIKE '%IF COALESCE(v_issue_reqs, 0) = 0 OR COALESCE(v_issue_signed, 0) < v_issue_reqs THEN%'
            AND prosrc LIKE '%a revision that was not reviewed can''''t be made a controlled issue%'
           FROM pg_proc WHERE proname = 'enforce_document_publish_guard'),
@@ -504,6 +614,21 @@ SELECT 'REV-18: trg_document_publish_guard still fires the guard on every docume
        EXISTS (SELECT 1 FROM pg_trigger t JOIN pg_proc p ON p.oid = t.tgfoid
                 WHERE t.tgname = 'trg_document_publish_guard' AND NOT t.tgisinternal
                   AND t.tgrelid = 'documents'::regclass AND p.proname = 'enforce_document_publish_guard'),
+       NULL
+UNION ALL
+SELECT 'REV-18: the retirement stamp columns exist, and a signed-in INSERT clears them (trg_document_retired_issue_stamp_insert, BEFORE INSERT; its function not SECURITY DEFINER, executable by no client role)',
+       (SELECT count(*) = 2 FROM information_schema.columns
+         WHERE table_schema = 'public' AND table_name = 'documents'
+           AND column_name IN ('retired_issue_status', 'retired_issue_version_id'))
+       AND EXISTS (SELECT 1 FROM pg_trigger t JOIN pg_proc p ON p.oid = t.tgfoid
+                    WHERE t.tgname = 'trg_document_retired_issue_stamp_insert' AND NOT t.tgisinternal
+                      AND t.tgrelid = 'documents'::regclass AND p.proname = 'document_retired_issue_stamp_on_insert'
+                      AND (t.tgtype & 2) = 2 AND (t.tgtype & 4) = 4)
+       AND EXISTS (SELECT 1 FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace
+                    WHERE n.nspname = 'public' AND p.proname = 'document_retired_issue_stamp_on_insert'
+                      AND NOT p.prosecdef AND p.proconfig @> ARRAY['search_path=public']
+                      AND p.prosrc LIKE '%NEW.retired_issue_version_id := NULL;%')
+       AND NOT has_function_privilege('authenticated', 'document_retired_issue_stamp_on_insert()', 'EXECUTE'),
        NULL
 UNION ALL
 SELECT inventory, NULL, n FROM dc_round_f_144_before;

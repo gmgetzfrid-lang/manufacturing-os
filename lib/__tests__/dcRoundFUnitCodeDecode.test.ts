@@ -59,7 +59,7 @@ vi.mock("@/lib/supabase", () => ({
 }));
 
 import { POST } from "@/app/api/documents/unit-code/route";
-import { requestUnitCodeDecode } from "@/lib/unitCodeClient";
+import { requestUnitCodeDecode, UNIT_CODE_TIMEOUT_MS } from "@/lib/unitCodeClient";
 import { decodeDocumentUnitCodes, DECODE_MAX_DOCUMENTS } from "@/lib/unitCodeDecode";
 
 const ORG = "org-1";
@@ -172,6 +172,26 @@ describe("GAP-314 acceptance 3 — a document created and then renumbered carrie
     await expect(requestUnitCodeDecode(ORG, ["n3"], "upload")).resolves.toEqual({ results: [], note: null });
     expect(doc("n3").unit_code).toBeNull();
   });
+
+  it("P13 review fix: a route that does not answer is abandoned after UNIT_CODE_TIMEOUT_MS (the call is aborted) and comes back as a note — it never holds the creation that called it", async () => {
+    create("n4", "2002-D-4");
+    let aborted = false;
+    g.fetch = ((_url: string, init?: RequestInit) => new Promise((_resolve, reject) => {
+      init?.signal?.addEventListener("abort", () => { aborted = true; reject(new Error("The operation was aborted.")); });
+    })) as unknown as typeof fetch;
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+    try {
+      const pending = requestUnitCodeDecode(ORG, ["n4"], "upload");
+      await vi.advanceTimersByTimeAsync(UNIT_CODE_TIMEOUT_MS);
+      const r = await pending;
+      expect(aborted).toBe(true);
+      expect(r.results).toEqual([]);
+      expect(r.note).toMatch(/The unit code of 1 document\(s\) was not decoded \(no answer within 15s\) — the next unit-identity run/);
+    } finally {
+      vi.useRealTimers();
+    }
+    expect(UNIT_CODE_TIMEOUT_MS).toBe(15_000);
+  });
 });
 
 describe("POST /api/documents/unit-code — who may ask, what is read, what is recorded", () => {
@@ -260,8 +280,18 @@ describe("GAP-314 — every door this package owns asks for the decode after its
   const src = (p: string) => readFileSync(join(process.cwd(), p), "utf8");
   it("createDocumentWithFile, split, merge (a created target), renumber, the reversal of a renumber, the CSV import and the metadata editor's renumber", () => {
     const rev = src("lib/revisions.ts");
-    const create = rev.slice(rev.indexOf("export async function createDocumentWithFile"), rev.indexOf("/** REV-18 (addendum 1): the up-front refusal"));
+    const create = rev.slice(rev.indexOf("export async function createDocumentWithFile"), rev.indexOf("/** REV-18 (addendum 1; P13 review fix): would this rev-up"));
     expect(create.indexOf('requestUnitCodeDecode(input.orgId, [documentId], "upload")')).toBeGreaterThan(create.indexOf("recomputeRetention(documentId)"));
+    // P13 review fix: NOT awaited — the creation returns whatever the route does; a batch door opts out and decodes once
+    expect(create).toContain('if (input.decodeUnitCode !== false) {\n    void requestUnitCodeDecode(input.orgId, [documentId], "upload").then((unitCode) => {');
+    expect(create).not.toMatch(/await requestUnitCodeDecode/);
+    const tpl = src("lib/outputTemplates.ts");
+    const filing = tpl.slice(tpl.indexOf("export async function fileDocumentsToLibrary"));
+    expect(filing).toContain("decodeUnitCode: false,");
+    expect(filing.match(/requestUnitCodeDecode\(/g)).toHaveLength(1);
+    expect(filing.indexOf("requestUnitCodeDecode(input.orgId, filedIds, \"upload\")")).toBeGreaterThan(filing.indexOf("input.onProgress?.(i + 1, out.files.length);"));
+    // the renumber dialog shows the note instead of dropping it
+    expect(src("components/documents/lifecycle/RenumberModal.tsx")).toMatch(/const \{ unitCodeNote: note \} = await renumberDocument\(/);
     expect(src("lib/documentLifecycle/split.ts")).toMatch(/const unitCode = await requestUnitCodeDecode\(orgId, newDocumentIds, "split"\);/);
     expect(src("lib/documentLifecycle/merge.ts")).toMatch(/target\.kind === "create_new"\s*\? \(await requestUnitCodeDecode\(orgId, \[targetDocumentId\], "merge"\)\)\.note/);
     const ren = src("lib/documentLifecycle/renumber.ts");

@@ -22,6 +22,7 @@ const s = vi.hoisted(() => ({
   mergeDocuments: vi.fn(async (..._a: unknown[]) => ({})),
   reverseSplit: vi.fn(async (..._a: unknown[]) => ({ reversedDocIds: [], preservedAsSuperseded: 0, warnings: [] })),
   reverseMerge: vi.fn(async (..._a: unknown[]) => ({ reversedDocIds: [], preservedAsSuperseded: 0, warnings: [] })),
+  renumberDocument: vi.fn(async (..._a: unknown[]) => ({ unitCodeNote: null as string | null })),
 }));
 
 vi.mock("@/lib/supabase", () => {
@@ -43,6 +44,7 @@ vi.mock("@/lib/documentLifecycle", () => ({
   reverseSplit: (...a: unknown[]) => s.reverseSplit(...a),
   reverseMerge: (...a: unknown[]) => s.reverseMerge(...a),
   reverseRenumber: vi.fn(),
+  renumberDocument: (...a: unknown[]) => s.renumberDocument(...a),
   LEGACY_RESTORE_STATUSES: ["Issued", "Draft", "In Review", "Void"],
   reversalNeedsLegacyStatus: () => false,
 }));
@@ -62,6 +64,7 @@ vi.mock("@/lib/inputValidation", () => ({
 
 import SplitWizard from "@/components/documents/lifecycle/SplitWizard";
 import MergeWizard from "@/components/documents/lifecycle/MergeWizard";
+import RenumberModal from "@/components/documents/lifecycle/RenumberModal";
 import type { DocumentRecord } from "@/types/schema";
 
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
@@ -71,7 +74,7 @@ let root: Root;
 beforeEach(() => {
   s.roles = ["Engineer"]; s.activeRole = "Engineer";
   s.holds = {}; s.holdsFail = false; s.searchRows = [];
-  s.splitDocument.mockClear(); s.mergeDocuments.mockClear(); s.reverseSplit.mockClear(); s.reverseMerge.mockClear();
+  s.splitDocument.mockClear(); s.mergeDocuments.mockClear(); s.reverseSplit.mockClear(); s.reverseMerge.mockClear(); s.renumberDocument.mockClear();
   host = document.createElement("div");
   document.body.appendChild(host);
   root = createRoot(host);
@@ -188,5 +191,38 @@ describe("REV-15 remainder — the Merge wizard shows complianceClockWarnings", 
     await click(button("Confirm Merge"));
     await tick();
     expect(onSuccess).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("GAP-314 (P13 review fix) — the Renumber dialog says when the new number's unit decode did not run, before it closes", () => {
+  async function renumberTo(onSuccess: () => void) {
+    await act(async () => {
+      root.render(React.createElement(RenumberModal, {
+        doc: SOURCE, orgId: "o", actorUserId: "me", onCancel: () => {}, onSuccess,
+      }));
+    });
+    const inputs = host.querySelectorAll<HTMLInputElement>("input");
+    await act(async () => setValue(inputs[inputs.length - 1], "P-201"));
+    await act(async () => setValue(host.querySelector("textarea")!, "scheme migration"));
+    await act(async () => { host.querySelector("form")!.dispatchEvent(new Event("submit", { bubbles: true, cancelable: true })); });
+    await tick();
+  }
+  it("a note: the renumber stands, the note is shown, onSuccess waits for Done", async () => {
+    const NOTE = "The unit code of 1 document(s) was not decoded (no answer within 15s) — the next unit-identity run on Operational scope will place it.";
+    s.renumberDocument.mockResolvedValueOnce({ unitCodeNote: NOTE });
+    const onSuccess = vi.fn();
+    await renumberTo(onSuccess);
+    expect(s.renumberDocument).toHaveBeenCalledTimes(1);
+    expect(onSuccess).not.toHaveBeenCalled();
+    expect(host.querySelector('[data-testid="renumber-unit-code-note"]')?.textContent).toBe(`Renumbered. ${NOTE}`);
+    await click(button("Done"));
+    expect(onSuccess).toHaveBeenCalledTimes(1);
+  });
+  it("no note: the dialog closes at once, as before", async () => {
+    s.renumberDocument.mockResolvedValueOnce({ unitCodeNote: null });
+    const onSuccess = vi.fn();
+    await renumberTo(onSuccess);
+    expect(onSuccess).toHaveBeenCalledTimes(1);
+    expect(host.querySelector('[data-testid="renumber-unit-code-note"]')).toBeNull();
   });
 });

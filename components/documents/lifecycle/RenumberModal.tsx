@@ -24,6 +24,9 @@ export default function RenumberModal(props: RenumberModalProps) {
   const [reason, setReason] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  // GAP-314 (P13 review fix): the renumber stands, but the new number's unit
+  // decode did not run (or was refused) — said before the dialog closes.
+  const [unitCodeNote, setUnitCodeNote] = useState<string | null>(null);
 
   const valid = newNumber.trim().length > 0
     && newNumber.trim() !== (doc.documentNumber ?? "")
@@ -35,11 +38,12 @@ export default function RenumberModal(props: RenumberModalProps) {
     setBusy(true);
     setError(null);
     try {
-      await renumberDocument({
+      const { unitCodeNote: note } = await renumberDocument({
         doc, newDocumentNumber: newNumber, reason,
         orgId, actorUserId, actorEmail, actorRole,
       });
-      onSuccess();
+      if (note) setUnitCodeNote(note);
+      else onSuccess();
     } catch (e) {
       setError((e as Error).message);
     } finally {
@@ -58,7 +62,7 @@ export default function RenumberModal(props: RenumberModalProps) {
               <div className="text-[11px] text-[var(--color-text-muted)] mt-0.5">Existing revisions and history are preserved.</div>
             </div>
           </div>
-          <button type="button" onClick={onCancel} className="p-1.5 rounded hover:bg-slate-200 text-[var(--color-text-muted)]">
+          <button type="button" onClick={unitCodeNote ? onSuccess : onCancel} className="p-1.5 rounded hover:bg-slate-200 text-[var(--color-text-muted)]">
             <X className="w-4 h-4" />
           </button>
         </div>
@@ -102,14 +106,28 @@ export default function RenumberModal(props: RenumberModalProps) {
               <AlertTriangle className="w-3.5 h-3.5 mt-0.5 shrink-0" /> {error}
             </div>
           )}
+          {unitCodeNote && (
+            <div role="status" data-testid="renumber-unit-code-note" className="flex items-start gap-2 text-xs text-amber-900 bg-amber-50 border border-amber-200 rounded px-2.5 py-1.5">
+              <AlertTriangle className="w-3.5 h-3.5 mt-0.5 shrink-0" />
+              <span>Renumbered. {unitCodeNote}</span>
+            </div>
+          )}
         </div>
 
         <div className="px-5 py-3 border-t border-[var(--color-border)] bg-[var(--color-surface-2)] flex items-center justify-end gap-2">
-          <button type="button" onClick={onCancel} disabled={busy} className="text-sm text-[var(--color-text-muted)] hover:text-[var(--color-text)] px-3 py-1.5">Cancel</button>
-          <button type="submit" disabled={!valid || busy} className="inline-flex items-center gap-1.5 text-sm font-bold bg-slate-700 hover:bg-slate-800 text-white px-3 py-1.5 rounded disabled:opacity-40">
-            {busy ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Check className="w-3.5 h-3.5" />}
-            Renumber
-          </button>
+          {unitCodeNote ? (
+            <button type="button" onClick={onSuccess} className="inline-flex items-center gap-1.5 text-sm font-bold bg-slate-700 hover:bg-slate-800 text-white px-3 py-1.5 rounded">
+              <Check className="w-3.5 h-3.5" /> Done
+            </button>
+          ) : (
+            <>
+              <button type="button" onClick={onCancel} disabled={busy} className="text-sm text-[var(--color-text-muted)] hover:text-[var(--color-text)] px-3 py-1.5">Cancel</button>
+              <button type="submit" disabled={!valid || busy} className="inline-flex items-center gap-1.5 text-sm font-bold bg-slate-700 hover:bg-slate-800 text-white px-3 py-1.5 rounded disabled:opacity-40">
+                {busy ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Check className="w-3.5 h-3.5" />}
+                Renumber
+              </button>
+            </>
+          )}
         </div>
       </form>
     </div>
