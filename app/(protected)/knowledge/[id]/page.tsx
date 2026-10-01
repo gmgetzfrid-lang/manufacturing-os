@@ -38,7 +38,7 @@ import {
   type KnowledgeLibraryLink,
   rebuildDrawingIndex,
   acceptPartialIndex, planTableAwareReindex, runTableAwareReindex, tableAwareReindexMessage,
-  ownVisionKeyProblem, tableAwareReindexKeyRefusal, reindexVisionPages, clampedVisionPages,
+  ownVisionKeyProblem, tableAwareReindexKeyRefusal, clampedVisionPages,
   pdfUploadRefusal, readUploadHead,
 } from "@/lib/knowledge";
 import GraphShapeWizard from "@/components/graph/GraphShapeWizard";
@@ -1663,12 +1663,12 @@ export default function KnowledgeLibraryPage() {
       // vision page with its text layer only and records nothing to retry,
       // so in a library AI vision reads, a person whose own key cannot read
       // is stopped here, before anything is reset. A check that cannot be
-      // made stops it too. The key is asked for on the route's own count (the
-      // larger, never the smaller); the figure the person is SHOWN is the
-      // smaller of that count and this page's own documents, each clamped as
-      // its row counter is (ING-12 inflated vision_pages on existing rows).
+      // made stops it too. The AI-vision figure is the route's own, quoted as
+      // is, never cut down to this page's document list: the route reads
+      // every document live, while the list is capped at the row limit and
+      // goes stale. (The figure is not exact either way —
+      // tableAwareReindexMessage says why.)
       const visionAllPages = library?.aiFeatures?.visionAllPages === true;
-      const shown = { ...plan, visionPagesToReread: reindexVisionPages(plan, docs) };
       if (plan.visionPagesToReread > 0 || visionAllPages) {
         let problem: string | null;
         try {
@@ -1678,13 +1678,13 @@ export default function KnowledgeLibraryPage() {
           return;
         }
         if (problem) {
-          showToast({ type: "error", title: tableAwareReindexKeyRefusal(shown, problem, { visionAllPages }) });
+          showToast({ type: "error", title: tableAwareReindexKeyRefusal(plan, problem, { visionAllPages }) });
           return;
         }
       }
       const ok = await appConfirm({
         title: "Re-index with table-aware chunking?",
-        message: tableAwareReindexMessage(shown, { visionAllPages }),
+        message: tableAwareReindexMessage(plan, { visionAllPages }),
         confirmLabel: "Re-index",
       });
       if (!ok) return;

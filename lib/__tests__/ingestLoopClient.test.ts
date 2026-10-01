@@ -22,14 +22,14 @@
 // the clicking person's first — and what becomes of it otherwise; the
 // person's own key is checked by the ingest route's own test.
 //
-// Integration (2026-10-01): the confirmation's figure is the smaller of the
-// route's raw sum and the page's own documents clamped per row
-// (reindexVisionPages — ING-12 inflated vision_pages); it is a floor, and a
-// page that needs AI vision but is not counted is said to be read, and
-// billed, too — never the flat "No page needs AI vision again"; the nightly
-// run's conditions include the signed AI agreement; and in a read-every-page
-// library an unsponsored document is said to be indexed text-only by a
-// keyless controller's open app, not to stay out of Ask.
+// Integration (2026-10-01): the confirmation quotes the route's figure as a
+// count, neither a floor nor a ceiling, and says why each way (an older
+// document's count can include earlier indexings; a page that needs AI
+// vision but is not counted is read, and billed, too) — never the flat "No
+// page needs AI vision again"; the nightly run's conditions include the
+// signed AI agreement; and in a read-every-page library an unsponsored
+// document is said to be indexed text-only by a keyless controller's open
+// app, not to stay out of Ask.
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 
 /** The rows `knowledge_documents` answers with (listKnowledgeDocuments). */
@@ -51,7 +51,6 @@ vi.mock("@/lib/storage", () => ({ uploadToPath: vi.fn() }));
 import {
   ingestKnowledgeDocument, INGEST_BUSY_ROUNDS_MAX, acceptPartialIndex, planTableAwareReindex, runTableAwareReindex,
   tableAwareReindexMessage, listKnowledgeDocuments, ownVisionKeyProblem, tableAwareReindexKeyRefusal,
-  reindexVisionPages, clampedVisionPages, type KnowledgeDocument,
 } from "@/lib/knowledge";
 
 type Answer = Record<string, unknown>;
@@ -358,10 +357,10 @@ describe("the accept-partial and table-aware re-index calls (ING-6, ING-4)", () 
     // The first-pass promise is gone.
     expect(msg).not.toContain("AI vision reads 52 pages again, billed to the AI key of whoever indexes them");
     expect(msg).toContain(
-      "52 pages of them were read by AI vision. They are read again, and billed, only where whoever indexes them has an "
-      + "AI key with budget left: this page starts on your key as soon as you confirm; after that, an Admin or Doc Control "
-      + "member with the app open indexes on their own key, and the nightly maintenance run on the uploader's key — only "
-      + "if they have one with budget left and have signed the AI agreement (a doc-control mirror has no uploader).",
+      "AI vision reads, and bills, a page only where whoever indexes it has an AI key with budget left: this page starts "
+      + "on your key as soon as you confirm; after that, an Admin or Doc Control member with the app open indexes on their "
+      + "own key, and the nightly maintenance run on the uploader's key — only if they have one with budget left and have "
+      + "signed the AI agreement (a doc-control mirror has no uploader).",
     );
     expect(msg).toContain(
       "A page indexed with no such key comes back with only what its text layer holds — for a scan or a CAD sheet, "
@@ -370,7 +369,7 @@ describe("the accept-partial and table-aware re-index calls (ING-6, ING-4)", () 
     // Not a read-every-page library: no claim about the nightly run skipping documents.
     expect(msg).not.toMatch(/never indexes a document/);
     expect(tableAwareReindexMessage({ documents: 2, toReset: 1, visionPagesToReread: 1 }))
-      .toContain("1 page of them was read by AI vision. It is read again, and billed, only where");
+      .toContain("The dry run counts 1 page of them as read by AI vision before.");
   });
 
   it("the nightly run's conditions include the signed AI agreement (loadSponsorVision's gate), stated as conditions it needs — never as enough", () => {
@@ -388,12 +387,16 @@ describe("the accept-partial and table-aware re-index calls (ING-6, ING-4)", () 
     }
   });
 
-  it("the count is a floor, not a ceiling: a page that needs AI vision and is not in it is read, and billed, on the same terms", () => {
-    const msg = tableAwareReindexMessage({ documents: 6, toReset: 4, visionPagesToReread: 52 });
+  it("the route's figure is quoted as is, as a count — neither a floor nor a ceiling, and the confirmation says why each way", () => {
+    const msg = tableAwareReindexMessage({ documents: 6, toReset: 4, visionPagesToReread: 3000 });
     expect(msg).toContain(
-      "That count is only the pages AI vision read and kept: a page that needs AI vision and is not in it — one indexed "
-      + "before with no key, one AI vision found blank, or one it could not read — is read, and billed, on the same terms.",
+      "The dry run counts 3000 pages of them as read by AI vision before. That count is not exact either way: an older "
+      + "document's count can include pages read in earlier indexings, and a page that needs AI vision but is not counted "
+      + "— never read by it, found blank, or one it could not read — is read, and billed, too.",
     );
+    // Never stated as the pages the run re-reads, nor as a floor.
+    expect(msg).not.toMatch(/They are read again|It is read again|were read by AI vision\./);
+    expect(msg).not.toContain("That count is only the pages AI vision read and kept");
   });
 
   it("no counted vision page: never the flat 'No page needs AI vision again' — a textless page may still be read, and billed", () => {
@@ -408,8 +411,8 @@ describe("the accept-partial and table-aware re-index calls (ING-6, ING-4)", () 
       + "maintenance run on the uploader's key — only if they have one with budget left and have signed the AI agreement "
       + "(a doc-control mirror has no uploader). With no such key it comes back with its text layer only.",
     );
-    // The page did not check this person's key here (nothing was counted), so
-    // it never says the run starts "on your key" outright.
+    // With nothing counted (and not a read-every-page library) the page asks
+    // for no key, so it never says the run starts "on your key" outright.
     expect(msg).not.toContain("this page starts on your key as soon as you confirm");
   });
 
@@ -421,65 +424,33 @@ describe("the accept-partial and table-aware re-index calls (ING-6, ING-4)", () 
       + "the app open and no usable key of their own indexes them text-only.";
     const msg = tableAwareReindexMessage({ documents: 6, toReset: 4, visionPagesToReread: 52 }, { visionAllPages: true });
     expect(msg).toContain(skipped);
-    expect(msg).toContain("This library reads every page with AI vision. 52 pages of them were read by AI vision before. "
-      + "Every page of those documents is read, and billed, only where whoever indexes it has an AI key with budget left");
+    expect(msg).toContain("This library reads every page with AI vision. The dry run counts 52 pages of them as read by "
+      + "AI vision before. Every page of those documents is read, and billed, whatever that count, but only where whoever "
+      + "indexes it has an AI key with budget left");
     // The second false claim is gone: they do not "stay out of Ask until" a keyed controller indexes them.
     expect(msg).not.toMatch(/stay out of Ask until/);
     const none = tableAwareReindexMessage({ documents: 6, toReset: 4, visionPagesToReread: 0 }, { visionAllPages: true });
     expect(none).not.toContain("No page of those documents is counted");
-    expect(none).toContain("This library reads every page with AI vision. Every page of those documents is read, and billed, only where whoever indexes it has an AI key with budget left");
+    expect(none).not.toContain("The dry run counts");
+    expect(none).toContain("This library reads every page with AI vision. Every page of those documents is read, and "
+      + "billed, whatever that count, but only where whoever indexes it has an AI key with budget left");
     expect(none).toContain(skipped);
   });
 
-  it("the refusal for a person whose own key cannot read names the pages, the reason, and what would be lost", () => {
+  it("the refusal for a person whose own key cannot read quotes the count as a count, the reason, and what would be lost", () => {
     expect(tableAwareReindexKeyRefusal({ documents: 6, toReset: 4, visionPagesToReread: 52 }, "you have no AI key saved — add yours in AI settings first"))
-      .toBe("Nothing was reset. This re-index re-reads 52 pages of this library with AI vision, and this page starts indexing "
-        + "what it resets on your key as soon as it runs — but you have no AI key saved — add yours in AI settings first. "
-        + "Indexed with no usable key, those pages would come back with only their text layer, and AI vision would not read "
-        + "them again until the document is re-indexed on a key.");
+      .toBe("Nothing was reset. The dry run counts 52 pages of this library as read by AI vision, and this re-index reads "
+        + "such pages with AI vision again; this page starts indexing what it resets on your key as soon as it runs — but "
+        + "you have no AI key saved — add yours in AI settings first. Indexed with no usable key, those pages would come "
+        + "back with only their text layer, and AI vision would not read them again until the document is re-indexed on a key.");
     expect(tableAwareReindexKeyRefusal({ documents: 6, toReset: 4, visionPagesToReread: 0 }, "x", { visionAllPages: true }))
-      .toContain("re-reads every page of the documents it resets with AI vision");
+      .toContain("This re-index reads every page of the documents it resets with AI vision;");
     expect(tableAwareReindexKeyRefusal({ documents: 6, toReset: 4, visionPagesToReread: 52 }, "x", { visionAllPages: true }))
-      .toContain("re-reads every page of the documents it resets with AI vision");
-    // The route counted pages the page's own figure does not stand behind: named without a count.
+      .toContain("This re-index reads every page of the documents it resets with AI vision;");
+    // Nothing counted and not a read-every-page library: the page never asks
+    // for a key then, so this wording is for any other caller.
     expect(tableAwareReindexKeyRefusal({ documents: 6, toReset: 4, visionPagesToReread: 0 }, "x"))
-      .toContain("re-reads the AI-vision pages of the documents it resets with AI vision");
-  });
-});
-
-describe("reindexVisionPages — the figure the re-index confirmation names (ING-4, ING-12)", () => {
-  const d = (over: Partial<KnowledgeDocument>): KnowledgeDocument => ({
-    id: "d", libraryId: "lib-1", name: "doc.pdf", fileKey: "k", fileSize: 1, pageCount: 40, pagesIndexed: 40,
-    status: "ready", error: null, createdByName: null, createdAt: "2026-09-01T00:00:00Z",
-    sourceId: null, sourceDocumentId: null, sourceRev: null, visionPages: 0,
-    emptyPages: 0, visionFailedPages: [], visionPartialAccepted: false, chunkVersion: 1,
-    ...over,
-  });
-
-  it("a row whose vision_pages ING-12 inflated past its page count counts its page count, never the raw sum", () => {
-    // The route sums vision_pages raw: 120 + 12 = 132. The page clamps the
-    // inflated row to its 40 pages, as its row counter does: 40 + 12 = 52.
-    const docs = [d({ id: "inflated", visionPages: 120 }), d({ id: "fine", visionPages: 12 })];
-    expect(reindexVisionPages({ documents: 2, toReset: 2, visionPagesToReread: 132 }, docs)).toBe(52);
-    expect(clampedVisionPages(docs[0])).toBe(40);
-  });
-
-  it("uses the route's selector: pages indexed, on a chunker other than table-aware", () => {
-    const docs = [
-      d({ id: "v1", visionPages: 10 }),
-      d({ id: "v2", visionPages: 30, chunkVersion: 2 }),                    // already table-aware: not reset
-      d({ id: "queued", visionPages: 7, pagesIndexed: 0, pageCount: null }), // nothing indexed: not reset (and its count is the last generation's)
-      d({ id: "fresh", visionPages: 5, chunkVersion: null }),               // chunker 1 by default
-      d({ id: "midway", visionPages: 25, pagesIndexed: 20, pageCount: 40 }), // clamped to the pages indexed
-    ];
-    expect(reindexVisionPages({ documents: 5, toReset: 3, visionPagesToReread: 1000 }, docs)).toBe(10 + 5 + 20);
-  });
-
-  it("shows the smaller of the two: never more than the route's own count either", () => {
-    const docs = [d({ visionPages: 30 })];
-    expect(reindexVisionPages({ documents: 1, toReset: 1, visionPagesToReread: 12 }, docs)).toBe(12);
-    expect(reindexVisionPages({ documents: 1, toReset: 1, visionPagesToReread: 0 }, docs)).toBe(0);
-    expect(reindexVisionPages({ documents: 1, toReset: 1, visionPagesToReread: 30 }, [])).toBe(0);
+      .toContain("This re-index reads the AI-vision pages of the documents it resets with AI vision again;");
   });
 });
 

@@ -35,10 +35,11 @@
 // leftovers is counted as reset, never "could not be"; a document that
 // really could not be reset is said with what is left to run.
 //
-// Integration (2026-10-01): the confirmation names the smaller of the
-// route's AI-vision count and the page's own documents, each clamped as its
-// row counter is (ING-12); the key is still asked for on the route's count,
-// and a refusal names the pages by the page's figure.
+// Integration (2026-10-01): the confirmation and the key refusal quote the
+// route's AI-vision count as is — never one built from the page's own
+// document list, which is capped at the row limit and goes stale — so a
+// short or stale list never makes the page quote less than the route
+// counted.
 
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import React, { act } from "react";
@@ -308,11 +309,9 @@ describe("ING-11 — the empty-page count on the document list", () => {
 });
 
 describe("ING-4 / ING-7 — Re-index with table-aware chunking", () => {
+  // The route counts 52 AI-vision pages; docs() on the page holds only 12
+  // (the "parked" row). The page quotes the route's 52, never its own list.
   const plan = { documents: 6, toReset: 4, visionPagesToReread: 52 };
-  // What the page SHOWS for that plan over docs(): the route's raw 52 is
-  // more than its own documents stand behind — only "parked" (12 vision
-  // pages, chunker 1, indexed) counts — so the confirmation names 12.
-  const shown = { ...plan, visionPagesToReread: 12 };
 
   it("the dry run comes first; the confirmation is the full message — counts and the Ask outage; then the run", async () => {
     setRole(true);
@@ -327,7 +326,8 @@ describe("ING-4 / ING-7 — Re-index with table-aware chunking", () => {
     expect(lib.ownVisionKeyProblem).toHaveBeenCalledWith("o1");
     const ask = dlg.appConfirm.mock.calls[0][0] as { title: string; message: string };
     expect(ask.title).toBe("Re-index with table-aware chunking?");
-    expect(ask.message).toBe(tableAwareReindexMessage(shown));
+    expect(ask.message).toBe(tableAwareReindexMessage(plan));
+    expect(ask.message).toContain("The dry run counts 52 pages of them as read by AI vision before.");
     expect(ask.message).toMatch(/drops out of Ask/);
     expect(lib.runTableAwareReindex).toHaveBeenCalledWith("lib-1");
     expect(toast.showToast).toHaveBeenCalledWith({
@@ -412,8 +412,8 @@ describe("ING-4 / ING-7 — Re-index with table-aware chunking", () => {
     expect(lib.ownVisionKeyProblem).toHaveBeenCalledWith("o1");
     expect(dlg.appConfirm).not.toHaveBeenCalled();
     expect(lib.runTableAwareReindex).not.toHaveBeenCalled();
-    expect(toast.showToast).toHaveBeenCalledWith({ type: "error", title: tableAwareReindexKeyRefusal(shown, problem, { visionAllPages: false }) });
-    expect(toast.showToast).toHaveBeenCalledWith({ type: "error", title: expect.stringContaining("re-reads 12 pages of this library") });
+    expect(toast.showToast).toHaveBeenCalledWith({ type: "error", title: tableAwareReindexKeyRefusal(plan, problem, { visionAllPages: false }) });
+    expect(toast.showToast).toHaveBeenCalledWith({ type: "error", title: expect.stringContaining("The dry run counts 52 pages of this library as read by AI vision") });
   });
 
   it("a key check that cannot be made stops it too — nothing is reset", async () => {
@@ -462,41 +462,51 @@ describe("ING-4 / ING-7 — Re-index with table-aware chunking", () => {
     expect(message).toMatch(/any Admin or Doc Control member with the app open and no usable key of their own indexes them text-only/);
   });
 
-  it("the confirmation's figure is the smaller of the route's count and the page's own documents, each clamped as its row counter is (ING-12)", async () => {
+  it("a short document list (the page's list is capped at the row limit) still quotes the route's number", async () => {
     setRole(true);
-    // The route sums vision_pages raw: 300 (inflated past a 40-page row) + 12
-    // + 30 on a document already table-aware that the run does not reset.
+    // The page holds two documents; the route paged through 3,000 of them.
     await mount([
-      doc({ id: "inflated", name: "inflated.pdf", visionPages: 300 }),
-      doc({ id: "fine", name: "fine.pdf", visionPages: 12 }),
-      doc({ id: "done", name: "done.pdf", visionPages: 30, chunkVersion: 2 }),
+      doc({ id: "a", name: "a.pdf", visionPages: 12 }),
+      doc({ id: "b", name: "b.pdf", visionPages: 300 }),           // even one inflated past its 40 pages
     ]);
-    lib.planTableAwareReindex.mockResolvedValue({ documents: 3, toReset: 2, visionPagesToReread: 312 });
+    const big = { documents: 3000, toReset: 2900, visionPagesToReread: 41000 };
+    lib.planTableAwareReindex.mockResolvedValue(big);
     dlg.appConfirm.mockResolvedValue(false);
     await act(async () => { byText("button", /Re-index with table-aware chunking/)!.click(); });
     await flush();
     const message = (dlg.appConfirm.mock.calls[0][0] as { message: string }).message;
-    expect(message).toBe(tableAwareReindexMessage({ documents: 3, toReset: 2, visionPagesToReread: 52 }));
-    expect(message).toContain("52 pages of them were read by AI vision.");
-    expect(message).not.toContain("312");
+    expect(message).toBe(tableAwareReindexMessage(big));
+    expect(message).toContain("2900 of 3000 documents");
+    expect(message).toContain("The dry run counts 41000 pages of them as read by AI vision before.");
+    expect(message).not.toMatch(/counts (52|312) pages/);
   });
 
-  it("a route count the page's documents do not stand behind still asks for the key — the refusal then names the pages without a count", async () => {
+  it("a stale document list that shows no AI-vision page still quotes the route's count, and still asks for the key", async () => {
     setRole(true);
+    // Since the list was read, another driver indexed pages with AI vision.
     await mount([doc({ id: "a", name: "a.pdf", visionPages: 0 })]);
-    const stale = { documents: 1, toReset: 1, visionPagesToReread: 9 };
-    lib.planTableAwareReindex.mockResolvedValue(stale);
+    const live = { documents: 1, toReset: 1, visionPagesToReread: 9 };
+    lib.planTableAwareReindex.mockResolvedValue(live);
+    dlg.appConfirm.mockResolvedValue(false);
+    await act(async () => { byText("button", /Re-index with table-aware chunking/)!.click(); });
+    await flush();
+    expect(lib.ownVisionKeyProblem).toHaveBeenCalledWith("o1");
+    const message = (dlg.appConfirm.mock.calls[0][0] as { message: string }).message;
+    expect(message).toBe(tableAwareReindexMessage(live));
+    expect(message).toContain("The dry run counts 9 pages of them as read by AI vision before.");
+    expect(message).not.toContain("No page of those documents is counted");
+
+    // And with a key that cannot read, the refusal quotes the same count.
+    toast.showToast.mockReset();
+    dlg.appConfirm.mockReset();
     const problem = "you have no AI key saved — add yours in AI settings first";
     lib.ownVisionKeyProblem.mockResolvedValue(problem);
     await act(async () => { byText("button", /Re-index with table-aware chunking/)!.click(); });
     await flush();
-    expect(lib.ownVisionKeyProblem).toHaveBeenCalledWith("o1");
     expect(dlg.appConfirm).not.toHaveBeenCalled();
     expect(lib.runTableAwareReindex).not.toHaveBeenCalled();
-    expect(toast.showToast).toHaveBeenCalledWith({
-      type: "error", title: tableAwareReindexKeyRefusal({ ...stale, visionPagesToReread: 0 }, problem, { visionAllPages: false }),
-    });
-    expect(toast.showToast).toHaveBeenCalledWith({ type: "error", title: expect.stringContaining("re-reads the AI-vision pages of the documents it resets") });
+    expect(toast.showToast).toHaveBeenCalledWith({ type: "error", title: tableAwareReindexKeyRefusal(live, problem, { visionAllPages: false }) });
+    expect(toast.showToast).toHaveBeenCalledWith({ type: "error", title: expect.stringContaining("The dry run counts 9 pages of this library as read by AI vision") });
   });
 
   it("a document reset whose old passages could not all be deleted counts as reset — the toast never says it could not be", async () => {
