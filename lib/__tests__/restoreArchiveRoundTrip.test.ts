@@ -32,6 +32,12 @@
 // library everything else hangs off. Every one of them lands; the only
 // outcomes are the placeholder's own: its team membership is refused
 // (person_not_restored) and the team's creator / the adder are cleared.
+//
+// admin-and-org P2 (BKP-9): the export's file manifest now reads the storage-
+// key registry, so the output template's .docx (KEY_T) is a file of the
+// backup like the two revisions — three files, packed, put back, restored.
+// lib/__tests__/exportContractRoundTrip.test.ts carries every registered
+// binary and the org-less tables (BKP-4) through the same round trip.
 
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { NextRequest } from "next/server";
@@ -76,7 +82,8 @@ const SRC = "11111111-1111-4111-8111-111111111111";
 const TARGET = "22222222-2222-4222-8222-222222222222";
 const KEY_A = `orgs/${SRC}/libraries/lib-1/P-101.pdf`;
 const KEY_B = `orgs/${SRC}/libraries/lib-1/P-102.pdf`;
-const BYTES: Record<string, string> = { [KEY_A]: "AAAA", [KEY_B]: "BBBB" };
+const KEY_T = `orgs/${SRC}/templates/ds.docx`;
+const BYTES: Record<string, string> = { [KEY_A]: "AAAA", [KEY_B]: "BBBB", [KEY_T]: "TTTT" };
 
 function seedSource() {
   db.rows = {
@@ -119,7 +126,7 @@ function seedSource() {
     knowledge_chunks: [{ id: "kc-1", org_id: SRC, library_id: "kl-1", document_id: "kd-1", page: 1, seq: 0, section: "Specs", content: "Pump P-101A", tsv: "'p-101a':3B 'pump':2B 'spec':1A" }],
     knowledge_page_entities: [{ id: "kpe-1", org_id: SRC, library_id: "kl-1", document_id: "kd-1", page: 1 }],
     knowledge_questions: [{ id: "kq-1", org_id: SRC, library_id: "kl-1", user_id: "u-alice", question: "Which pump?", answer: "P-101A", search_tsv: "'p-101a':3 'pump':2" }],
-    output_templates: [{ id: "ot-1", org_id: SRC, name: "Datasheet", template_file_key: `orgs/${SRC}/templates/ds.docx` }],
+    output_templates: [{ id: "ot-1", org_id: SRC, name: "Datasheet", template_file_key: KEY_T }],
     output_generations: [{ id: "og-1", org_id: SRC, template_id: "ot-1" }],
     document_shares: [{ id: "sh-1", org_id: SRC, document_id: "doc-1", token: "live-share-token", revoked_at: null }],
     audit_logs: [],
@@ -245,18 +252,20 @@ describe("BKP-7 — the browser-built Full ZIP is written in the one layout and 
     const envelope = await exportEnvelope();
     stubFetch(envelope);
     const { result, parts } = await browserBackup({ partCapBytes: 4 }); // one 4-byte file per part
-    expect(result).toMatchObject({ parts: 2, filesPacked: 2, cancelled: false, filesTotal: 2, notAttempted: [] });
+    expect(result).toMatchObject({ parts: 3, filesPacked: 3, cancelled: false, filesTotal: 3, notAttempted: [] });
     expect(parts.map((p) => p.name)).toEqual([
       `backup-Acme-${envelope.manifest.exportedAt.slice(0, 10)}-part1.zip`,
       `backup-Acme-${envelope.manifest.exportedAt.slice(0, 10)}-part2.zip`,
+      `backup-Acme-${envelope.manifest.exportedAt.slice(0, 10)}-part3.zip`,
     ]);
-    const [p1, p2] = parts;
+    const [p1, p2, p3] = parts;
     expect(entryNames(p1)).toContain(BACKUP_ARCHIVE_ENTRIES.manifest);
     expect(entryNames(p1)).toContain("tables/documents.json");
     expect(entryNames(p1)).toContain(`files/${KEY_A}`);
     expect(entryNames(p1)).not.toContain("data.json");
     expect(entryNames(p2)).toContain(`files/${KEY_B}`);
-    expect(entryNames(p2)).toContain(BACKUP_ARCHIVE_ENTRIES.report);
+    expect(entryNames(p3)).toContain(`files/${KEY_T}`); // BKP-9: the template binary is in the backup
+    expect(entryNames(p3)).toContain(BACKUP_ARCHIVE_ENTRIES.report);
     for (const p of parts) {
       expect(entryNames(p), p.name).toContain(BACKUP_ARCHIVE_ENTRIES.filesManifest);
       expect(entryNames(p), p.name).toContain(BACKUP_ARCHIVE_ENTRIES.part);
@@ -264,12 +273,13 @@ describe("BKP-7 — the browser-built Full ZIP is written in the one layout and 
     // the restore page's own patterns find them (ILIFE-3's round-trip check)
     expect(entryNames(p1).some((n) => /(^|\/)manifest\.json$/i.test(n))).toBe(true);
     expect(entryNames(p1).filter((n) => /(^|\/)tables\/[^/]+\.json$/i.test(n)).length).toBe(Object.keys(envelope.tables).length);
-    // hashes in part 1 already (BKP-10), cumulative in part 2
+    // hashes in part 1 already (BKP-10), cumulative in the later parts
     expect(Object.keys(await readJsonEntry(p1, "files-manifest.json"))).toEqual([KEY_A]);
     expect(Object.keys(await readJsonEntry(p2, "files-manifest.json")).sort()).toEqual([KEY_A, KEY_B]);
+    expect(Object.keys(await readJsonEntry(p3, "files-manifest.json")).sort()).toEqual([KEY_A, KEY_B, KEY_T].sort());
   });
 
-  it("both parts dropped together: records restore into another workspace and every file is found for 'Put the files back'", async () => {
+  it("every part dropped together: records restore into another workspace and every file is found for 'Put the files back'", async () => {
     const envelope = await exportEnvelope();
     stubFetch(envelope);
     const { parts } = await browserBackup({ partCapBytes: 4 });
@@ -277,7 +287,7 @@ describe("BKP-7 — the browser-built Full ZIP is written in the one layout and 
     expect(read.layout).toBe("manifest+tables");
     expect(read.recordsPart).toMatch(/part1\.zip$/);
     expect(read.warnings).toEqual([]);
-    expect(read.files.map((f) => f.key).sort()).toEqual([KEY_A, KEY_B]);
+    expect(read.files.map((f) => f.key).sort()).toEqual([KEY_A, KEY_B, KEY_T].sort());
     expect(remapOrgPath(read.files[0].key, [[SRC, TARGET]])).toMatch(new RegExp(`^orgs/${TARGET}/`));
 
     seedTarget();
@@ -310,7 +320,7 @@ describe("BKP-7 — the browser-built Full ZIP is written in the one layout and 
     const zip = (await JSZip.loadAsync(out.zipBytes!)) as unknown as Part["zip"];
     const read = await readBackupArchive([{ name: "manufacturing-os-backup.zip", zip }]);
     expect(read.layout).toBe("manifest+tables");
-    expect(read.files.map((f) => f.key).sort()).toEqual([KEY_A, KEY_B]);
+    expect(read.files.map((f) => f.key).sort()).toEqual([KEY_A, KEY_B, KEY_T].sort());
     seedTarget();
     enforceForeignKeys();
     const result = await restoreInto(read.envelope);
@@ -399,7 +409,7 @@ describe("BKP-7 — an archive written before this change, and archives that can
     const { parts } = await browserBackup({ partCapBytes: 4 });
     const read = await readBackupArchive([parts[0]]);
     expect(read.files.map((f) => f.key)).toEqual([KEY_A]);
-    expect(read.warnings.join(" ")).toMatch(/The backup lists 2 file\(s\); the dropped part\(s\) carry 1\./);
+    expect(read.warnings.join(" ")).toMatch(/The backup lists 3 file\(s\); the dropped part\(s\) carry 1\./);
     // with both parts there is no shortfall
     expect((await readBackupArchive(parts)).warnings).toEqual([]);
   });
@@ -410,17 +420,17 @@ describe("BKP-10 — a cancelled or partial backup says so in the archive itself
     stubFetch(await exportEnvelope());
     let attempted = 0;
     const { result, parts } = await browserBackup({ isCancelled: () => attempted++ >= 1 });
-    expect(result).toMatchObject({ cancelled: true, filesTotal: 2, filesPacked: 1, notAttempted: [KEY_B] });
+    expect(result).toMatchObject({ cancelled: true, filesTotal: 3, filesPacked: 1, notAttempted: [KEY_B, KEY_T] });
     const last = parts[parts.length - 1];
     expect(last.name).toMatch(/-part1-INCOMPLETE\.zip$/);
     const report = await readJsonEntry(last, "backup-report.json");
-    expect(report).toMatchObject({ cancelled: true, filesTotal: 2, filesPacked: 1, notAttempted: [KEY_B], complete: expect.any(Boolean) });
+    expect(report).toMatchObject({ cancelled: true, filesTotal: 3, filesPacked: 1, notAttempted: [KEY_B, KEY_T], complete: expect.any(Boolean) });
     expect(Array.isArray(report.manifestNotes)).toBe(true);
-    expect(report.note).toMatch(/^INCOMPLETE — the backup was cancelled after 1 of 2 file\(s\)/);
+    expect(report.note).toMatch(/^INCOMPLETE — the backup was cancelled after 1 of 3 file\(s\)/);
     expect(report.note).not.toMatch(/Every file verified/);
     // the restore page warns from the report
     const read = await readBackupArchive(parts);
-    expect(read.warnings.join(" ")).toMatch(/CANCELLED before every file was packed: 1 file\(s\) are in no part/);
+    expect(read.warnings.join(" ")).toMatch(/CANCELLED before every file was packed: 2 file\(s\) are in no part/);
   });
 
   it("a failed file: the note names the gap; a clean run alone says every file is verified, and the report carries manifest.complete / notes", async () => {
@@ -433,7 +443,7 @@ describe("BKP-10 — a cancelled or partial backup says so in the archive itself
     stubFetch(envelope);
     const clean = await browserBackup();
     const r2 = await readJsonEntry(clean.parts[0], "backup-report.json");
-    expect(r2).toMatchObject({ cancelled: false, filesTotal: 2, filesPacked: 2, notAttempted: [], complete: envelope.manifest.complete, manifestNotes: envelope.manifest.notes });
+    expect(r2).toMatchObject({ cancelled: false, filesTotal: 3, filesPacked: 3, notAttempted: [], complete: envelope.manifest.complete, manifestNotes: envelope.manifest.notes });
     expect(r2.note).toBe("Every file verified by SHA-256 in files-manifest.json.");
   });
 });

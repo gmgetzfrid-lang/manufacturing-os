@@ -48,19 +48,33 @@ describe("s3PurgeOlderThan (XEDGE-4)", () => {
   });
 });
 
-describe("collectReferencedKeys (XEDGE-13)", () => {
-  function sbWith(opts: { rows: Array<Record<string, unknown>>; count: number; ordered: { value: boolean } }) {
+describe("collectReferencedKeys (XEDGE-13; keyset paging — ILIFE-6 criterion 3, admin-and-org P2)", () => {
+  /** A thenable stand-in: every chain awaits to the source rows (after the
+   *  keyset `.gt("id", …)` and `.limit(…)` it was given) or, for a head
+   *  select, to `count`. Records whether `.order("id")` and `.gt` were used. */
+  function sbWith(opts: { rows: Array<Record<string, unknown>>; count: number; ordered: { value: boolean }; gts?: string[] }) {
     return {
       from: () => {
+        let head = false;
+        let after: string | null = null;
+        let cap: number | null = null;
         const c: Record<string, unknown> = {};
         const h: ProxyHandler<Record<string, unknown>> = {
           get(_t, prop: string) {
+            if (prop === "then") {
+              return (resolve: (v: unknown) => void) => {
+                if (head) return resolve({ data: null, count: opts.count, error: null });
+                let out = opts.rows.filter((r) => after === null || String(r.id) > after);
+                if (cap !== null) out = out.slice(0, cap);
+                resolve({ data: out, error: null });
+              };
+            }
             return (...args: unknown[]) => {
-              if (prop === "order") opts.ordered.value = true;
-              if (prop === "range") return Promise.resolve({ data: opts.rows, error: null });
-              if (prop === "select" && (args[1] as { head?: boolean } | undefined)?.head) {
-                return Promise.resolve({ count: opts.count, error: null });
-              }
+              if (prop === "order" && args[0] === "id") opts.ordered.value = true;
+              if (prop === "select") head = (args[1] as { head?: boolean } | undefined)?.head === true;
+              if (prop === "gt") { after = String(args[1]); opts.gts?.push(after); }
+              if (prop === "limit") cap = args[0] as number;
+              if (prop === "range") throw new Error("the collector pages by keyset, never by OFFSET (.range)");
               return new Proxy(c, h);
             };
           },
@@ -74,7 +88,7 @@ describe("collectReferencedKeys (XEDGE-13)", () => {
     const ordered = { value: false };
     const sb = sbWith({ rows: [{ id: "1", file_url: "orgs/o/a.pdf" }], count: 1, ordered });
     const keys = await collectReferencedKeys(sb);
-    expect(ordered.value).toBe(true); // .order() applied to the paged scan
+    expect(ordered.value).toBe(true); // .order("id") applied to the paged scan
     expect(keys.has("orgs/o/a.pdf")).toBe(true);
   });
 
@@ -82,5 +96,15 @@ describe("collectReferencedKeys (XEDGE-13)", () => {
     const ordered = { value: false };
     const sb = sbWith({ rows: [{ id: "1", file_url: "orgs/o/a.pdf" }], count: 2, ordered });
     await expect(collectReferencedKeys(sb)).rejects.toThrow(/may be incomplete/);
+  });
+
+  it("a full page continues from the last id it read (keyset), never from an offset", async () => {
+    const ordered = { value: false };
+    const gts: string[] = [];
+    const rows = Array.from({ length: 1001 }, (_, i) => ({ id: `r${String(i).padStart(5, "0")}`, file_url: `orgs/o/${i}.pdf` }));
+    const keys = await collectReferencedKeys(sbWith({ rows, count: 1001, ordered, gts }));
+    expect(keys.has("orgs/o/1000.pdf")).toBe(true);
+    // every source with a full first page continues after r00999
+    expect(new Set(gts)).toEqual(new Set(["r00999"]));
   });
 });

@@ -17,7 +17,7 @@ import { NextRequest, NextResponse } from "next/server";
 
 export const maxDuration = 300;
 import { createClient } from "@supabase/supabase-js";
-import { buildAndDeliverExport, computeNextRunAt, type ExportDestination } from "@/lib/exportRunner";
+import { buildAndDeliverExport, computeNextRunAt, exportEmbedDeadline, type ExportDestination } from "@/lib/exportRunner";
 import { scheduledRunGate } from "@/lib/exportEntitlement";
 
 const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL || process.env.SUPABASE_URL || "";
@@ -48,6 +48,8 @@ type ScheduledRunResult = {
 };
 
 async function handler(req: NextRequest) {
+  // The ZIP's embed loop (and the export's storage checks) stop at this route's own deadline, so the archive is delivered.
+  const routeStart = Date.now();
   if (!supabaseUrl || !serviceRoleKey) {
     return NextResponse.json({ error: "Supabase credentials missing" }, { status: 500 });
   }
@@ -156,6 +158,7 @@ async function handler(req: NextRequest) {
         exporterEmail: "cron@manufacturing-os",
         includeFiles: dest.include_files ?? true,
         delivery: { kind: "destination", destination: dest },
+        deadlineAt: exportEmbedDeadline(routeStart, maxDuration),
       });
 
       const completedAt = new Date().toISOString();

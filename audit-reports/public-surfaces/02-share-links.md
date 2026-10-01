@@ -609,7 +609,7 @@ file/route.ts:109-117 `await applyStampToPdfDoc(pdfDoc, { userLabel: "shared-lin
 ## SHR-12 · bump_share_access is SECURITY DEFINER with no SET search_path, its rpc error is unchecked, and it is the sole basis for the access counter the UI and landing page present as an audit trail
 
 - **Severity:** LOW
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Assigned:** admin-and-org P2 — by the integrator, 2026-10-01 (orphan sweep: the package that left this remainder has merged; fleet plan `audit-reports/fleet-plans/`).
 - **Verification:** CONFIRMED
 - **Locations:** `supabase/migrations/20260818_followups_rls.sql:95-102`, `app/api/share/resolve/route.ts:59`, `components/documents/ShareLinkModal.tsx:205`, `app/share/[token]/page.tsx:141`
@@ -650,6 +650,21 @@ file/route.ts:109-117 `await applyStampToPdfDoc(pdfDoc, { userLabel: "shared-lin
 4. ✗ Not done — `lib/schemaExpectations.ts` is not in this package's files (public-surfaces PS-VERIFY edits it this wave for its `verify_scans` row), so no `bump_share_access(uuid)` / `document_share_accesses` expectation was added.
 
 **Scope / residual.** Item 4 keeps this finding OPEN. Owner: the integrator's tracked follow-up — PS-VERIFY edits `lib/schemaExpectations.ts` this wave but its brief does not list `SHR-12`, so nothing assigns it. Whoever adds the expectation (the function `bump_share_access(uuid)` and the `document_share_accesses` table, both from `20261081`) closes `SHR-12`.
+
+**Resolution (2026-10-01, admin-and-org Round G).** Done-when 4, the last open item, landed in admin-and-org package P2. `lib/schemaExpectations.ts EXPECTED_FUNCTIONS` names `bump_share_access(uuid)` with the file that pins it (`20261081_dc_roundF_share_access_log.sql`). `/api/admin/schema-health` (`app/api/admin/schema-health/route.ts`) now probes functions. It calls each one through PostgREST with an argument its parameter type refuses (`p_share: "schema-health-probe"`, which is not a uuid). PostgREST resolves the function, answering PGRST202 when it is missing, and Postgres then rejects the argument (22P02) before the body runs, so no counter moves. A missing function (PGRST202 / 42883) is listed with the missing tables (`kind: "function"`), turns the panel red and names its file in `migrationsToRun`; the existing panel renders it without a UI change. The table half was `20261081`'s `document_share_accesses` row (J9 / `REL-7`).
+- Files: `lib/schemaExpectations.ts`; `app/api/admin/schema-health/route.ts` (in no package's file list; it is the list's only consumer).
+- Tests: `lib/__tests__/schemaExpectations.test.ts`:
+  - "SHR-12 Done-when 4: bump_share_access is probed, against the file that pins it, with an argument its uuid parameter refuses". The CREATE in `20261081` has that signature, the resolve route calls it with the same parameter name, and the probe value is not a uuid.
+  - The route block: "present: the probe resolves the function and stops at its argument — healthy" and "missing (PGRST202): named, with the file that supplies it, and the panel goes red".
+- **Pending migration:** `20261081_dc_roundF_share_access_log.sql` (Done-when 1-2) — not applied, as recorded above.
+
+**Done-when.**
+1. ✓ (pending migration `20261081`).
+2. ✓ (pending migration `20261081`).
+3. ✓.
+4. ✓ — `lib/schemaExpectations.ts` checks for the function, not only the tables.
+
+**Scope / residual.** The probe proves the function exists, not that it is the pinned `20261081` body: a database with only `20260818`'s version passes. PostgREST exposes no catalog to check the pin, and `20261081`'s own final SELECT checks it at paste time.
 
 ---
 

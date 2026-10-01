@@ -17,8 +17,8 @@
       "LOW": 6
     },
     "by_status": {
-      "OPEN": 50,
-      "RESOLVED": 6
+      "OPEN": 45,
+      "RESOLVED": 11
     }
   },
   "status_vocabulary": [
@@ -63,7 +63,7 @@
       "id": "BKP-1",
       "title": "Exports embed live unauthenticated bearer tokens — share links, transmittal portal links, and WRITE-capable vendor intake links — in plaintext in a file designed to be mailed around",
       "severity": "CRITICAL",
-      "status": "OPEN",
+      "status": "RESOLVED",
       "verification": "CONFIRMED",
       "verification_note": null,
       "blast_radius": null,
@@ -94,7 +94,7 @@
       "id": "BKP-2",
       "title": "cost_documents binaries are referenced by nothing the system knows about — absent from every backup AND eligible for permanent orphan deletion after 7 days",
       "severity": "CRITICAL",
-      "status": "OPEN",
+      "status": "RESOLVED",
       "verification": "CONFIRMED",
       "verification_note": null,
       "blast_radius": null,
@@ -453,7 +453,7 @@
       "id": "BKP-4",
       "title": "Four tables in ORG_SCOPED_TABLES have no org_id column — every export is stamped INCOMPLETE and permanently drops project rosters and curated-collection contents",
       "severity": "HIGH",
-      "status": "OPEN",
+      "status": "RESOLVED",
       "verification": "CONFIRMED",
       "verification_note": null,
       "blast_radius": null,
@@ -597,7 +597,7 @@
       "id": "BKP-9",
       "title": "The file manifest misses native CAD source files, knowledge-library PDFs and output templates — the README still claims \"every binary file, path-preserved\"",
       "severity": "HIGH",
-      "status": "OPEN",
+      "status": "RESOLVED",
       "verification": "CONFIRMED",
       "verification_note": null,
       "blast_radius": null,
@@ -1202,7 +1202,7 @@
       "id": "BKP-14",
       "title": "lib/schemaExpectations.ts has a phantom table scraped from a prose comment and omits 24 real tables — the schema-health panel is permanently red and blind to the newest migrations",
       "severity": "MEDIUM",
-      "status": "OPEN",
+      "status": "RESOLVED",
       "verification": "CONFIRMED",
       "verification_note": null,
       "blast_radius": null,

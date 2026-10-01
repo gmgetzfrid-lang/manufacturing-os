@@ -16,6 +16,17 @@
 // document_share_accesses (DC-P1-share, 20261081), turnover_review_events
 // (J2, 20261091), milestone_baseline_history (J6a, 20261099). Each merge
 // adds its EXPECTED_TABLES row; none is grandfathered.
+//
+// admin-and-org Round G P2 — BKP-14 (intelligence ILIFE-12 / IRLS-12): the
+// regeneration. The grandfather set is EMPTY; the scan now reads schema.sql
+// too (eleven base tables — documents, document_versions, tickets,
+// audit_logs, org_members… — were never probed); the tripwire runs BOTH ways
+// (a row whose named file creates no such table fails — the phantom
+// `statements`, scraped from a header comment, did); a dropped table is
+// RETIRED, never expected. Plus the curated probes this package adds:
+// org_configurations.data (ALOG-1 Done-when 4), the AI ledger's 20260916
+// columns (GOV-4 Done-when 3) and the bump_share_access function (SHR-12
+// Done-when 4) — and the route's function probe and PGRST205 handling.
 
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { readFileSync, readdirSync, existsSync } from "node:fs";
@@ -24,6 +35,9 @@ import { NextRequest } from "next/server";
 
 const state = vi.hoisted(() => ({
   errors: {} as Record<string, { code?: string; message?: string }>,
+  /** rpc name → the error PostgREST answers; default: the probe's own 22P02 (the function exists). */
+  rpcErrors: {} as Record<string, { code?: string; message?: string }>,
+  rpcCalls: [] as Array<{ fn: string; args: unknown }>,
 }));
 
 vi.mock("@/lib/supabaseAdmin", () => {
@@ -48,11 +62,15 @@ vi.mock("@/lib/supabaseAdmin", () => {
     supabaseAdmin: {
       auth: { getUser: vi.fn(async () => ({ data: { user: { id: "u1" } }, error: null })) },
       from: (t: string) => chain(t),
+      rpc: vi.fn(async (fn: string, args: unknown) => {
+        state.rpcCalls.push({ fn, args });
+        return { data: null, error: state.rpcErrors[fn] ?? { code: "22P02", message: 'invalid input syntax for type uuid: "schema-health-probe"' } };
+      }),
     },
   };
 });
 
-import { EXPECTED_TABLES, EXPECTED_COLUMNS } from "@/lib/schemaExpectations";
+import { EXPECTED_TABLES, EXPECTED_COLUMNS, EXPECTED_FUNCTIONS, RETIRED_TABLES } from "@/lib/schemaExpectations";
 import { GET as schemaHealth } from "@/app/api/admin/schema-health/route";
 
 const root = process.cwd();
@@ -65,17 +83,21 @@ const PC_COLUMNS = [
   ["cost_entries", "created_by_name"],
 ];
 
-/** Unlisted when the tripwire landed (2026-09-30). The regeneration that
- *  lists them is admin-and-org BKP-14 / intelligence ILIFE-12; this set may
- *  only shrink. */
-const GRANDFATHERED = new Set(["answer_skills", "document_markups", "knowledge_line_traces", "link_rules", "process_flows"]);
+/** Unlisted when the tripwire landed (2026-09-30); emptied by the BKP-14
+ *  regeneration (admin-and-org Round G P2). It stays empty. */
+const GRANDFATHERED = new Set<string>();
 
-/** table → the migration files that CREATE it (comments stripped; TEMP
- *  tables are not matched). */
+const BASE = "schema.sql (base schema)";
+const sqlOf = (file: string) =>
+  readFileSync(file === BASE || file === "schema.sql" ? join(root, "supabase", "schema.sql") : join(MIGRATIONS, file), "utf8")
+    .replace(/--[^\n]*/g, "");
+
+/** table → the files that CREATE it — supabase/schema.sql (as BASE) and the
+ *  numbered migrations (comments stripped; TEMP tables are not matched). */
 function createdTables(): Map<string, string[]> {
   const out = new Map<string, string[]>();
-  for (const f of readdirSync(MIGRATIONS).filter((n) => n.endsWith(".sql")).sort()) {
-    const sql = readFileSync(join(MIGRATIONS, f), "utf8").replace(/--[^\n]*/g, "");
+  for (const f of [BASE, ...readdirSync(MIGRATIONS).filter((n) => /^\d{8}.*\.sql$/.test(n)).sort()]) {
+    const sql = sqlOf(f);
     for (const m of sql.matchAll(/CREATE\s+TABLE\s+(?:IF\s+NOT\s+EXISTS\s+)?(?:public\.)?"?([a-z_][a-z0-9_]*)"?/gi)) {
       const t = m[1].toLowerCase();
       out.set(t, [...(out.get(t) ?? []), f]);
@@ -153,12 +175,122 @@ describe("REL-7 tripwire — every table a migration creates is on the health ch
   });
 
   it("no created table is missing from EXPECTED_TABLES — add a row when a migration creates one", () => {
-    const missing = [...created.keys()].filter((t) => !listed.has(t) && !GRANDFATHERED.has(t))
+    const retired = new Set(RETIRED_TABLES.map((r) => r.table));
+    const missing = [...created.keys()].filter((t) => !listed.has(t) && !GRANDFATHERED.has(t) && !retired.has(t))
       .map((t) => `${t} (${created.get(t)!.join(", ")})`);
     expect(missing, "add these to lib/schemaExpectations.ts EXPECTED_TABLES").toEqual([]);
   });
 
-  it("every grandfathered name is a real created table — the exemption cannot hide a typo", () => {
-    for (const t of GRANDFATHERED) expect(created.has(t), t).toBe(true);
+  it("the grandfather set is empty (BKP-14 regenerated the list)", () => {
+    expect([...GRANDFATHERED]).toEqual([]);
+  });
+
+  it("BKP-14: every row names a file that really creates that table — no phantom (the scraped `statements` row is gone)", () => {
+    expect(listed.has("statements")).toBe(false);
+    const bad = EXPECTED_TABLES.filter((r) => !(created.get(r.table) ?? []).includes(r.migration))
+      .map((r) => `${r.table} ← ${r.migration} (created by: ${(created.get(r.table) ?? ["nothing"]).join(", ")})`);
+    expect(bad, "EXPECTED_TABLES rows whose named file does not create the table").toEqual([]);
+  });
+
+  it("BKP-14: the list covers every table supabase/ creates, schema.sql's included, less the retired", () => {
+    for (const t of ["documents", "document_versions", "tickets", "audit_logs", "org_members", "collections", "libraries", "process_flows", "answer_skills", "link_rules", "document_markups"]) {
+      expect(listed.has(t), t).toBe(true);
+    }
+    expect(listed.size).toBe(created.size - RETIRED_TABLES.length);
+  });
+
+  it("a retired table was created and dropped where the row says, and is never probed (IRLS-12: knowledge_line_traces must not exist)", () => {
+    expect(RETIRED_TABLES.map((r) => r.table)).toEqual(["knowledge_line_traces"]);
+    for (const r of RETIRED_TABLES) {
+      expect(created.get(r.table), r.table).toContain(r.createdBy);
+      expect(sqlOf(r.droppedBy)).toMatch(new RegExp(`DROP\\s+TABLE\\s+(IF\\s+EXISTS\\s+)?(public\\.)?${r.table}\\b`, "i"));
+      expect(r.droppedBy > r.createdBy || r.droppedBy.startsWith(r.createdBy.slice(0, 8))).toBe(true);
+      expect(listed.has(r.table)).toBe(false);
+    }
+  });
+});
+
+/** Does `file` add `column` to `table` — an ALTER … ADD COLUMN, or a line of
+ *  its CREATE TABLE body? */
+function fileAddsColumn(file: string, table: string, column: string): boolean {
+  const sql = sqlOf(file);
+  const alter = new RegExp(`ALTER\\s+TABLE\\s+(?:IF\\s+EXISTS\\s+)?(?:ONLY\\s+)?(?:public\\.)?"?${table}"?\\s+[^;]*?ADD\\s+COLUMN\\s+(?:IF\\s+NOT\\s+EXISTS\\s+)?"?${column}"?\\b`, "i");
+  if (alter.test(sql)) return true;
+  const create = new RegExp(`CREATE\\s+TABLE\\s+(?:IF\\s+NOT\\s+EXISTS\\s+)?(?:public\\.)?"?${table}"?\\s*\\(`, "i");
+  const m = create.exec(sql);
+  if (!m) return false;
+  let depth = 0;
+  for (let i = m.index + m[0].length - 1; i < sql.length; i++) {
+    if (sql[i] === "(") depth++;
+    else if (sql[i] === ")" && --depth === 0) return new RegExp(`(^|[(,\\n])\\s*"?${column}"?\\s+[A-Za-z]`, "i").test(sql.slice(m.index + m[0].length, i));
+  }
+  return false;
+}
+
+describe("curated probes: each names the column or function the code needs and the file that supplies it", () => {
+  it("every EXPECTED_COLUMNS row's file really adds that column (the first file named)", () => {
+    const bad = EXPECTED_COLUMNS.filter((c) => !fileAddsColumn(c.migration.split(" (repair:")[0].trim(), c.table, c.column))
+      .map((c) => `${c.table}.${c.column} ← ${c.migration}`);
+    expect(bad).toEqual([]);
+  });
+
+  it("ALOG-1 Done-when 4: the org_configurations column the capability policy reads is probed — and it is `data`, never `value`", () => {
+    const policy = readFileSync(join(root, "lib", "capabilityPolicy.ts"), "utf8");
+    const reads = [...policy.matchAll(/\.from\("org_configurations"\)\s*\.select\("([a-z_]+)/g)].map((m) => m[1]);
+    expect(reads.length).toBeGreaterThan(0);
+    expect(new Set(reads)).toEqual(new Set(["data"]));
+    expect(EXPECTED_COLUMNS).toContainEqual(expect.objectContaining({ table: "org_configurations", column: "data", migration: BASE }));
+  });
+
+  it("GOV-4 Done-when 3: every ledger column lib/ai/usageServer.ts reads that 20260916 adds is probed", () => {
+    const usage = readFileSync(join(root, "lib", "ai", "usageServer.ts"), "utf8");
+    const cols = (usage.match(/const USAGE_COLUMNS = "([^"]+)"/)?.[1] ?? "").split(",").map((c) => c.trim());
+    const fromGovernance = cols.filter((c) => fileAddsColumn("20260916_ai_governance.sql", "ai_usage_events", c));
+    expect(fromGovernance.sort()).toEqual(["est_cost_usd", "input_tokens", "model", "output_tokens"]);
+    for (const c of fromGovernance) {
+      expect(EXPECTED_COLUMNS, c).toContainEqual(expect.objectContaining({ table: "ai_usage_events", column: c, migration: "20260916_ai_governance.sql" }));
+    }
+  });
+
+  it("SHR-12 Done-when 4: bump_share_access is probed, against the file that pins it, with an argument its uuid parameter refuses", () => {
+    const fn = EXPECTED_FUNCTIONS.find((f) => f.fn === "bump_share_access")!;
+    expect(fn).toBeDefined();
+    expect(fn.signature).toBe("bump_share_access(uuid)");
+    expect(sqlOf(fn.migration)).toMatch(/CREATE\s+OR\s+REPLACE\s+FUNCTION\s+bump_share_access\s*\(\s*p_share\s+uuid\s*\)/i);
+    // the route calls it with the same parameter name
+    expect(readFileSync(join(root, "app", "api", "share", "resolve", "route.ts"), "utf8")).toMatch(/rpc\("bump_share_access", \{ p_share: /);
+    expect(Object.keys(fn.probeArgs)).toEqual(["p_share"]);
+    // not a uuid: the call cannot run the body (no counter moves)
+    expect(String(fn.probeArgs.p_share)).not.toMatch(/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i);
+  });
+});
+
+describe("/api/admin/schema-health — functions, and a table PostgREST cannot find (PGRST205)", () => {
+  const probe = () => schemaHealth(new NextRequest("http://test/api/admin/schema-health?orgId=o1", {
+    headers: { authorization: "Bearer tok" },
+  }));
+  beforeEach(() => { state.errors = {}; state.rpcErrors = {}; state.rpcCalls = []; });
+
+  it("present: the probe resolves the function and stops at its argument — healthy", async () => {
+    const body = await (await probe()).json() as { healthy: boolean; checkedFunctions: number };
+    expect(body.healthy).toBe(true);
+    expect(body.checkedFunctions).toBe(EXPECTED_FUNCTIONS.length);
+    expect(state.rpcCalls).toEqual([{ fn: "bump_share_access", args: { p_share: "schema-health-probe" } }]);
+  });
+
+  it("missing (PGRST202): named, with the file that supplies it, and the panel goes red", async () => {
+    state.rpcErrors.bump_share_access = { code: "PGRST202", message: "Could not find the function public.bump_share_access(p_share) in the schema cache" };
+    const body = await (await probe()).json() as { healthy: boolean; migrationsToRun: string[]; missingTables: Array<{ table: string; kind: string; migration: string }> };
+    expect(body.healthy).toBe(false);
+    expect(body.missingTables).toEqual([expect.objectContaining({ table: "bump_share_access(uuid)", kind: "function", migration: "20261081_dc_roundF_share_access_log.sql" })]);
+    expect(body.migrationsToRun).toEqual(["20261081_dc_roundF_share_access_log.sql"]);
+  });
+
+  it("a table answered with PGRST205 is missing, not present", async () => {
+    state.errors.process_flows = { code: "PGRST205", message: "Could not find the table 'public.process_flows' in the schema cache" };
+    const body = await (await probe()).json() as { healthy: boolean; migrationsToRun: string[]; missingTables: Array<{ table: string; kind: string }> };
+    expect(body.healthy).toBe(false);
+    expect(body.missingTables).toEqual([expect.objectContaining({ table: "process_flows", kind: "table" })]);
+    expect(body.migrationsToRun).toEqual(["20261017_process_flows.sql"]);
   });
 });

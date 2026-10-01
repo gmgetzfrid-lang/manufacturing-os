@@ -111,7 +111,10 @@
     "BKP-6 residual",
     "BILL-3 dw3",
     "projects-and-cost INTK-6 (remainder re-owned by the integrator 2026-10-01, orphan sweep: 'The export API still admits Manager ... while the table's RLS is controller-or-project-owner'. Redaction (EGR-7) and restore scrub (DEC-45) are done; only the role-set limb remains, and it closes by pointer when A&O P3 makes \u2026)",
-    "intelligence ILIFE-4 (remainder re-owned by the integrator 2026-10-01 at the A&O P1 merge: done-when 2 \u2014 /api/admin/restore/apply has no caller; delete it, or wire it as the restore page's small-backup path; it already shares applyRestoreChunk and the stop rule)"
+    "intelligence ILIFE-4 (remainder re-owned by the integrator 2026-10-01 at the A&O P1 merge: done-when 2 \u2014 /api/admin/restore/apply has no caller; delete it, or wire it as the restore page's small-backup path; it already shares applyRestoreChunk and the stop rule)",
+    "BKP-11 (remainder re-owned by the integrator 2026-10-01 at the A&O P2 merge: done-when 3's remaining limb \u2014 PATCH /api/data-export/destinations/[id] refuses enabled:true on a row with no credentials or no webhook secret; done-when 1 is the paste of 20261154)",
+    "intelligence ILIFE-14 (opened by the integrator 2026-10-01 at the A&O P2 merge: app/api/storage/delete/route.ts DELETE refuses (409) a key any other registered key column still names, via keysReferencedOutside, fail closed; the hunk is in ILIFE-5's record)",
+    "intelligence ILIFE-6 (criterion 3, re-owned by the integrator 2026-10-01 at the A&O P2 merge: lib/storageOrphans.ts deleteOrphans re-checks each candidate key just before its DeleteObjects batch \u2014 keysReferencedOutside for the plain key columns plus one containment read per key for JSON_KEY_COLUMNS; a read error stops the purge before that batch with nothing deleted)"
    ],
    "files": [
     "app/api/data-export/structured/route.ts",
@@ -121,13 +124,17 @@
     "app/api/data-export/destinations/[id]/route.ts",
     "lib/exportRunner.ts (retention deleted/failed counts on export_runs)",
     "app/(protected)/admin/data-export/page.tsx (prefix required before retention_days)",
-    "new lib/__tests__/dataExportRoutes.test.ts"
+    "new lib/__tests__/dataExportRoutes.test.ts",
+    "app/api/storage/delete/route.ts (ILIFE-14; after document-control P14's RET-2 edit merges)",
+    "lib/storageOrphans.ts deleteOrphans (ILIFE-6 criterion 3)"
    ],
    "migrationsLikely": 0,
    "dependsOn": [
     "After DC P10 EDGES (XEDGE-7/8/9 same files)",
     "Use lib/adminGate.ts authorizeAdminSurface (SURF-19 pattern) \u2014 no new constant, no new capability",
-    "Do NOT edit lib/downloads.ts / download_audits"
+    "Do NOT edit lib/downloads.ts / download_audits",
+    "document-control P14 merged (app/api/storage/delete/route.ts carries RET-2)",
+    "admin-and-org P2 merged (DEC-78; lib/exportRunner.ts carries P2's size-unknown cap and embed deadline \u2014 start from it, do not undo it)"
    ],
    "sequencingNotes": "Admin-only export satisfies BKP-8's ACL criterion by refusal (DEC-43). run-scheduled writes no audit row and never calls alertAdminsOfExport today. BKP-8 dw3: audit_logs bulk record.",
    "decisionsNeeded": [

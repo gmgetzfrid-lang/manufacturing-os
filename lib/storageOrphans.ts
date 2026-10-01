@@ -8,7 +8,9 @@
 //
 // SAFETY MODEL — deleting a live file is unrecoverable, so this fails
 // closed at every layer:
-//   - the reference collector queries a fixed list of known key columns;
+//   - the reference collector queries every key column of the one registry
+//     the backup also reads (lib/storageKeyRegistry.ts, BKP-2), and refuses
+//     to run when that list falls short of the schema's;
 //     if ANY query errors (table renamed, column dropped), the whole scan
 //     ABORTS rather than treating those keys as unreferenced;
 //   - objects younger than MIN_AGE_DAYS are never candidates (in-flight
@@ -26,97 +28,61 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import { ListObjectsV2Command, DeleteObjectsCommand } from "@aws-sdk/client-s3";
 import { r2, R2_BUCKET } from "@/lib/r2";
 import { orgKeyPrefix } from "@/lib/shedKeyGuard";
+import { STORAGE_KEY_SOURCES, keysOf, selectFor, registryGaps, type StorageKeySource } from "@/lib/storageKeyRegistry";
 
 const MIN_AGE_DAYS = 7;
 const PROTECTED_PREFIXES = ["data/", "exports/"];
-
-const isStorageKey = (path: string | null | undefined): path is string =>
-  !!path && !/^(https?:|blob:|data:)/i.test(path);
+const PAGE = 1000;
 
 /** Every storage key the database references. Throws on ANY query error —
- *  an incomplete reference set must never masquerade as a complete one. */
-export async function collectReferencedKeys(sb: SupabaseClient): Promise<Set<string>> {
+ *  an incomplete reference set must never masquerade as a complete one.
+ *
+ *  The sources are lib/storageKeyRegistry.ts STORAGE_KEY_SOURCES — the SAME
+ *  list the backup's file manifest is built from (BKP-2 / BKP-9), so a key
+ *  column is registered once for both. `sources` exists for tests; the scan
+ *  refuses to run when it reads fewer key columns than the schema declares
+ *  (STORAGE_KEY_COLUMNS, pinned to supabase/ by the census test). */
+export async function collectReferencedKeys(
+  sb: SupabaseClient,
+  sources: readonly StorageKeySource[] = STORAGE_KEY_SOURCES,
+): Promise<Set<string>> {
+  const gaps = registryGaps(sources);
+  if (gaps.unread.length > 0) {
+    throw new Error(
+      `reference scan refused: the schema's storage-key columns ${gaps.unread.join(", ")} are read by no collector source — aborting (fail-closed)`,
+    );
+  }
   const keys = new Set<string>();
-  const add = (path: string | null | undefined) => {
-    if (isStorageKey(path)) keys.add(path);
-  };
 
-  // Each source: [label, query, extractor]. Tables added later MUST be
-  // registered here — the exportTables tripwire's cousin for binaries.
-  type Extractor = (rows: Array<Record<string, unknown>>) => void;
-  const sources: Array<[string, string, string, Extractor]> = [
-    ["document_versions", "document_versions", "file_url, source_file_key", (rows) => {
-      for (const r of rows) { add(r.file_url as string); add(r.source_file_key as string); }
-    }],
-    ["knowledge_documents", "knowledge_documents", "file_key", (rows) => {
-      for (const r of rows) add(r.file_key as string);
-    }],
-    ["asset_photos", "asset_photos", "file_url", (rows) => {
-      for (const r of rows) add(r.file_url as string);
-    }],
-    ["tickets(attachments)", "tickets", "attachments", (rows) => {
-      for (const r of rows) {
-        for (const att of (r.attachments as Array<{ url?: string }> | null) ?? []) add(att.url);
-      }
-    }],
-    ["markup_requests", "markup_requests", "shared_markup_url", (rows) => {
-      for (const r of rows) add(r.shared_markup_url as string);
-    }],
-    ["plot_plans", "plot_plans", "image_path", (rows) => {
-      for (const r of rows) add(r.image_path as string);
-    }],
-    ["libraries(cover)", "libraries", "cover_image_url", (rows) => {
-      for (const r of rows) add(r.cover_image_url as string);
-    }],
-    ["collections(cover)", "collections", "cover_image_url", (rows) => {
-      for (const r of rows) add(r.cover_image_url as string);
-    }],
-    ["users(avatar)", "users", "avatar_path", (rows) => {
-      for (const r of rows) add(r.avatar_path as string);
-    }],
-    ["org_configurations(branding)", "org_configurations", "key, data", (rows) => {
-      for (const r of rows) {
-        if (r.key === "branding") add((r.data as { logoPath?: string } | null)?.logoPath);
-      }
-    }],
-    // Registered late — output templates shipped after this collector was
-    // written, so every uploaded .docx/.xlsx template and example was an
-    // "orphan" seven days after upload and eligible for permanent deletion.
-    ["output_templates", "output_templates", "template_file_key, example_files", (rows) => {
-      for (const r of rows) {
-        add(r.template_file_key as string);
-        for (const ex of (r.example_files as Array<{ key?: string; url?: string }> | null) ?? []) {
-          add(ex?.key ?? ex?.url);
-        }
-      }
-    }],
-  ];
-
-  for (const [label, table, select, extract] of sources) {
-    // Page through — .range in 1000-row windows so big tables don't truncate,
-    // ORDERED BY id so windows are STABLE (XEDGE-13): without an ORDER BY,
-    // Postgres gives no row order across separate LIMIT/OFFSET queries, so a
-    // concurrent update or plan switch could make a row vanish between pages
-    // — and a reference silently missed here is an object permanently deleted
-    // as an "orphan". The per-table count cross-check below turns any
-    // remaining drift into a loud abort instead of an incomplete set that
-    // masquerades as complete.
-    let from = 0;
+  for (const source of sources) {
+    const { label, table } = source;
+    // KEYSET pages of 1000, ordered by id (ILIFE-6 criterion 3). XEDGE-13
+    // ordered the OFFSET windows; but an offset still moves when a row the
+    // scan has already read is deleted — every later row shifts up one place,
+    // the first row of the next window is never read, and a count taken
+    // after the loop agrees. A reference silently missed here is an object
+    // permanently deleted as an "orphan". `.gt("id", last)` never moves: a
+    // concurrent delete cannot hide a row that is still there. The per-table
+    // count cross-check below still turns any remaining drift (a row inserted
+    // behind the cursor) into a loud abort.
+    let last: string | null = null;
     let paged = 0;
     for (;;) {
-      const { data, error } = await sb
-        .from(table)
-        .select(select)
-        .order("id", { ascending: true })
-        .range(from, from + 999);
+      let q = sb.from(table).select(selectFor(source)).order("id", { ascending: true });
+      if (last !== null) q = q.gt("id", last);
+      const { data, error } = await q.limit(PAGE);
       if (error) {
         throw new Error(`reference scan failed at ${label}: ${error.message} — aborting (fail-closed)`);
       }
       const rows = (data ?? []) as unknown as Array<Record<string, unknown>>;
-      extract(rows);
+      for (const r of rows) for (const k of keysOf(source, r)) keys.add(k.path);
       paged += rows.length;
-      if (rows.length < 1000) break;
-      from += 1000;
+      if (rows.length < PAGE) break;
+      const id = rows[rows.length - 1].id;
+      if (id === null || id === undefined || String(id) === last) {
+        throw new Error(`reference scan at ${label} cannot advance past a page (no id) — aborting (fail-closed)`);
+      }
+      last = String(id);
     }
     const { count, error: countErr } = await sb
       .from(table)

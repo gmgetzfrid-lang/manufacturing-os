@@ -49,9 +49,9 @@ export default function DataPortabilityPage() {
 
         <Section title="What's in the export">
           <ul className="space-y-3 text-sm text-[var(--color-text)]">
-            <Bullet icon={<FileJson className="w-4 h-4 text-blue-600" />} title="One JSON file" body="Self-describing. Every Postgres column from our schema preserved verbatim. Read it with jq, import into Postgres, or open it in any text editor." />
+            <Bullet icon={<FileJson className="w-4 h-4 text-blue-600" />} title="One JSON file" body="Self-describing. Every Postgres column from our schema preserved verbatim, except the credential columns (share, vendor-intake and transmittal-portal link tokens; backup-destination keys), which are exported empty and named in the manifest. Read it with jq, import into Postgres, or open it in any text editor." />
             <Bullet icon={<Layers className="w-4 h-4 text-purple-600" />} title="Every record type" body="Documents, document_versions, tickets, projects, project_activity, audit_logs, checkout sessions, markup requests, comments, history, configuration — every org-scoped table." />
-            <Bullet icon={<Inbox className="w-4 h-4 text-emerald-600" />} title="File manifest with presigned URLs" body="Every PDF, DWG, redline, IFC stamp — listed with size + a 24-hour signed download URL so you can pull binaries with curl, wget, or any S3 SDK." />
+            <Bullet icon={<Inbox className="w-4 h-4 text-emerald-600" />} title="File manifest with presigned URLs" body="Every file your records reference — issued PDFs and their native CAD sources, redlines, knowledge-library PDFs, output templates, vendor quotes, photos — listed with size + a 24-hour signed download URL so you can pull binaries with curl, wget, or any S3 SDK." />
             <Bullet icon={<Database className="w-4 h-4 text-amber-600" />} title="Schema DDL in the public repo" body="The complete database schema lives at supabase/schema.sql in our source tree. You can reconstruct the data layer in your own Postgres in minutes." />
           </ul>
         </Section>
@@ -61,7 +61,7 @@ export default function DataPortabilityPage() {
             <UseCase title="Offsite backup" body="Run it monthly, archive to your own S3 / R2 / NAS. Your continuity plan is yours to control." />
             <UseCase title="Compliance archive" body="OSHA PSM 1910.119 requires document and change history retention. Every revision + audit row is included." />
             <UseCase title="Migration to a different system" body="Standard JSON + standard PDFs. Any competitor can import — that's the point." />
-            <UseCase title="Disaster recovery" body="Even if our service is offline, your backed-up export contains every byte you've ever uploaded." />
+            <UseCase title="Disaster recovery" body="Even if our service is offline, your backed-up export contains every file your records reference. Files you archived offline to save space stay in your space-archive zips, which the backup names." />
           </div>
         </Section>
 

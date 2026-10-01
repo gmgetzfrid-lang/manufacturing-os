@@ -57,6 +57,12 @@ lib/capabilityPolicy.ts:173-176 — `.from("org_configurations")` / `.select("va
 - [ ] `org_capability_allows()` is executed at least once against the real schema (e.g. by an EXPLAIN or a smoke insert into document_holds) and returns without raising 42703.
 - [ ] lib/schemaExpectations.ts EXPECTED_COLUMNS carries a probe for the org_configurations column the code reads, so /api/admin/schema-health would have caught this.
 
+**Partial (2026-10-01, admin-and-org Round G, P2) — Done-when 4 only.** `lib/schemaExpectations.ts EXPECTED_COLUMNS` now probes `org_configurations.data` (migration `schema.sql (base schema)`; feature "Capability policy, per-person grants, branding and drafting config"). On HEAD the policy reads and writes `data` (`lib/capabilityPolicy.ts`, `.select("data")` — the roles-and-permissions `DB-1` / `WF-1` fix). The test "ALOG-1 Done-when 4: the org_configurations column the capability policy reads is probed — and it is `data`, never `value`" (`lib/__tests__/schemaExpectations.test.ts`) reads every `.from("org_configurations").select(…)` in `lib/capabilityPolicy.ts`. It fails if any of them reads another column, or if the probe is missing. A database whose `org_configurations` lacks `data` now shows on `/api/admin/schema-health` with the file to run. Done-when 1-3 are package P0's verify-and-record close (by pointer to R&P `DB-1` / `WF-1`, `20261025`), and the status is left for it.
+
+**Done-when.**
+4. ✓ the `EXPECTED_COLUMNS` probe, pinned to the column the code reads.
+1-3. not this package's (P0).
+
 ---
 
 <a id="alog-2"></a>

@@ -146,6 +146,23 @@ export interface ExportDestination {
   retention_days?: number;
 }
 
+/** Held back from a ZIP route's `maxDuration` (app/api/data-export/run and
+ *  run-scheduled: 300 s) for what follows the embed loop: compressing the
+ *  ZIP, delivering it (the download, the bucket push and its read-back, the
+ *  webhook) and closing the run row. */
+export const EMBED_HEADROOM_MS = 90_000;
+
+/** The instant (epoch ms) after which the server ZIP embeds no more files
+ *  (and the export starts no more storage checks), for a route that started
+ *  at `routeStart` with `maxDurationSeconds`. */
+export function exportEmbedDeadline(routeStart: number, maxDurationSeconds: number): number {
+  return routeStart + maxDurationSeconds * 1000 - EMBED_HEADROOM_MS;
+}
+
+/** files-omitted.json reasons the embed-cap path does not cover. */
+const OMITTED_AT_DEADLINE = "not embedded: the export reached its time limit";
+const OMITTED_SIZE_UNKNOWN = "not embedded: storage did not report its size, so it could not be held to the embed cap";
+
 export async function buildAndDeliverExport(params: {
   supabaseUrl: string;
   serviceRoleKey: string;
@@ -154,9 +171,15 @@ export async function buildAndDeliverExport(params: {
   exporterEmail: string;
   includeFiles: boolean;
   delivery: DeliveryMode;
+  /** The route's own deadline (exportEmbedDeadline(routeStart, maxDuration)):
+   *  past it no file is embedded and no storage check starts, so the archive
+   *  is always built and delivered. Default: this call's start, as a 300 s
+   *  route. */
+  deadlineAt?: number;
 }): Promise<ExportRunResult & { zipBytes?: Uint8Array }> {
   const diagnostics: DiagnosticStep[] = [];
   const step = (s: string, d?: string) => diagnostics.push({ ts: new Date().toISOString(), step: s, detail: d });
+  const deadlineAt = params.deadlineAt ?? exportEmbedDeadline(Date.now(), 300);
 
   step("envelope:start");
   const envelope = await runOrgExport({
@@ -165,6 +188,7 @@ export async function buildAndDeliverExport(params: {
     orgId: params.orgId,
     exporterUserId: params.exporterUserId,
     exporterEmail: params.exporterEmail,
+    deadlineAt,
   });
   step("envelope:done", `${envelope.manifest.tables.length} tables, ${envelope.files.length} files`);
 
@@ -213,36 +237,76 @@ export async function buildAndDeliverExport(params: {
   const MAX_EMBED_BYTES = Number(process.env.EXPORT_MAX_EMBED_BYTES || 1_500_000_000);
   let fileBytes = 0;
   const omitted: Array<{ path: string; size?: number | null; reason?: string }> = [];
+  // Of `omitted`: the files left out at the deadline, and the size-unknown ones.
+  const late = { atDeadline: 0, sizeUnknown: 0 };
   if (params.includeFiles && envelope.files.length > 0) {
     step("files:fetch", `${envelope.files.length} files`);
     const filesFolder = zip.folder("files");
     const fileManifest: Record<string, { sha256: string; size: number }> = {};
     for (const f of envelope.files) {
       if (!f.presignedUrl) continue;
+      // The embed loop's ceiling: past the route's deadline every remaining
+      // file is listed omitted, so the ZIP is still built and delivered.
+      if (Date.now() >= deadlineAt) {
+        omitted.push({ path: f.path, size: f.size ?? null, reason: OMITTED_AT_DEADLINE });
+        late.atDeadline++;
+        continue;
+      }
       if (fileBytes >= MAX_EMBED_BYTES || (f.size != null && fileBytes + Number(f.size) > MAX_EMBED_BYTES)) {
         omitted.push({ path: f.path, size: f.size ?? null });
         continue;
       }
       try {
-        const res = await fetch(f.presignedUrl);
+        // A download still running at the deadline is stopped there.
+        const res = await fetch(f.presignedUrl, { signal: AbortSignal.timeout(Math.min(Math.max(1, deadlineAt - Date.now()), 2_147_483_647)) });
         if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        if (f.size == null) {
+          // A file the export could not size-check (its URL, no size) is held
+          // to the same cap by the length storage reports, BEFORE its body is
+          // buffered; with no length it is not embedded at all.
+          const header = res.headers.get("content-length");
+          const length = header != null && /^\d+$/.test(header.trim()) ? Number(header) : null;
+          if (length == null || fileBytes + length > MAX_EMBED_BYTES) {
+            await res.body?.cancel().catch(() => undefined);
+            if (length == null) {
+              omitted.push({ path: f.path, size: null, reason: OMITTED_SIZE_UNKNOWN });
+              late.sizeUnknown++;
+            } else {
+              omitted.push({ path: f.path, size: length });
+            }
+            continue;
+          }
+        }
         const buf = new Uint8Array(await res.arrayBuffer());
         filesFolder?.file(f.path, buf);
         fileManifest[f.path] = { sha256: createHash("sha256").update(buf).digest("hex"), size: buf.byteLength };
         fileBytes += buf.byteLength;
       } catch (e) {
+        if (Date.now() >= deadlineAt || (e as Error)?.name === "TimeoutError") {
+          omitted.push({ path: f.path, size: f.size ?? null, reason: OMITTED_AT_DEADLINE });
+          late.atDeadline++;
+          continue;
+        }
         step("files:miss", `${f.path}: ${(e as Error).message}`);
         omitted.push({ path: f.path, reason: (e as Error).message });
       }
     }
     zip.file("files-manifest.json", JSON.stringify(fileManifest, null, 2));
     if (omitted.length > 0) {
+      const capReason = `Embedded binaries are capped at ${formatBytes(MAX_EMBED_BYTES)} per ZIP to protect the export runtime. `;
       zip.file("files-omitted.json", JSON.stringify({
-        reason: `Embedded binaries are capped at ${formatBytes(MAX_EMBED_BYTES)} per ZIP to protect the export runtime. ` +
+        reason: (late.atDeadline > 0
+          ? `This export stopped embedding binaries when it neared its time limit, so the archive is delivered rather than lost; ` +
+            `${late.atDeadline} file(s) here say so in their reason. `
+          : "") +
+          capReason +
+          (late.sizeUnknown > 0 ? `A file whose size storage did not report is not embedded, since it cannot be held to that cap (${late.sizeUnknown} here). ` : "") +
           "These files are NOT in this ZIP. Download them via the JSON export's presigned URLs, or shed old history first to shrink the set.",
         files: omitted,
       }, null, 2));
-      step("files:omitted", `${omitted.length} over the ${formatBytes(MAX_EMBED_BYTES)} cap`);
+      step("files:omitted", late.atDeadline + late.sizeUnknown === 0
+        ? `${omitted.length} over the ${formatBytes(MAX_EMBED_BYTES)} cap`
+        : `${omitted.length} omitted: ${late.atDeadline} at the time limit, ${late.sizeUnknown} of unknown size, the rest over the ${formatBytes(MAX_EMBED_BYTES)} cap or not downloaded`);
     }
     step("files:done", `${formatBytes(fileBytes)} bundled`);
   } else {
@@ -250,7 +314,7 @@ export async function buildAndDeliverExport(params: {
   }
 
   // README last — it names any omitted-file shortfall from the loop above.
-  zip.file("README.md", buildReadme(envelope, omitted.length));
+  zip.file("README.md", buildReadme(envelope, omitted.length, late));
 
   step("zip:compress");
   const zipBytes = await zip.generateAsync({
@@ -523,12 +587,19 @@ export async function testDestinationConnection(dest: ExportDestination): Promis
 
 // ─── Helpers ──────────────────────────────────────────────────────
 
-function buildReadme(envelope: DataExportEnvelope, omittedCount = 0): string {
+function buildReadme(envelope: DataExportEnvelope, omittedCount = 0, late = { atDeadline: 0, sizeUnknown: 0 }): string {
   const m = envelope.manifest;
   const totalRows = m.tables.reduce((s, t) => s + t.rowCount, 0);
-  const omittedNote = omittedCount > 0
-    ? `\n## ⚠ Omitted binaries\n\n${omittedCount} file(s) exceeded this ZIP's embedded-bytes cap and are NOT inside — see files-omitted.json for the list and how to fetch them.\n`
-    : "";
+  const omittedNote = omittedCount === 0
+    ? ""
+    : late.atDeadline + late.sizeUnknown === 0
+      ? `\n## ⚠ Omitted binaries\n\n${omittedCount} file(s) exceeded this ZIP's embedded-bytes cap and are NOT inside — see files-omitted.json for the list and how to fetch them.\n`
+      : `\n## ⚠ Omitted binaries\n\n${omittedCount} file(s) are NOT inside this ZIP — see files-omitted.json for the list, the reason for each, and how to fetch them.` +
+        (late.atDeadline > 0
+          ? ` ${late.atDeadline} were left out because the export reached its time limit while embedding (the archive is delivered rather than lost).`
+          : "") +
+        (late.sizeUnknown > 0 ? ` ${late.sizeUnknown} were left out because storage did not report their size.` : "") +
+        "\n";
   const shedNote = (m.spaceArchives?.length ?? 0) > 0
     ? `\n## Offline space archives\n\n${m.files.archivedOffline ?? 0} file(s) were archived offline before this export to reclaim cloud storage.\nTheir records are in tables/, but their binaries live ONLY in these space archive zip(s):\n${(m.spaceArchives ?? []).map((id) => `- <archive root>/data/${id}.zip`).join("\n")}\nKeep those zips with this backup for full binary coverage.\n`
     : "";

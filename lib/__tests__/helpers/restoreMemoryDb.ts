@@ -15,7 +15,13 @@
 // `authUsers` set, `users` behaves like users.id REFERENCES auth.users: a
 // profile for a uid that is no sign-in account is refused 23503. Fix pass 5:
 // `lt` filters (a guarded update), and `update(...).select()` answers the
-// rows it changed.
+// rows it changed. Admin-and-org P2 fix pass (ILIFE-6, the export's keyset
+// paging): `gt` filters, and `order` / `limit` are honoured (they were
+// no-ops) — sorted by each order column in turn, nulls last, before `range`,
+// `limit` and the max-rows cut. Its second review fix pass (composite-key
+// keyset): `or(...)` filters in PostgREST's logic-tree syntax — terms
+// `col.eq.v` / `col.gt.v` / `col.lt.v`, nested `and(...)` / `or(...)`, and
+// double-quoted values with backslash escapes.
 
 export type Row = Record<string, unknown>;
 
@@ -43,13 +49,66 @@ export const db = {
 function keysOf(table: string): string[][] { return db.keys[table] ?? [["id"]]; }
 const sameKey = (a: Row, b: Row, cols: string[]) => cols.every((c) => a[c] !== undefined && a[c] !== null && String(a[c]) === String(b[c]));
 
-function exec(table: string, op: string, payload: unknown, opts: Record<string, unknown> | undefined, filters: Array<(r: Row) => boolean>, single: boolean, range: [number, number] | null) {
+/** Postgres-like ascending comparison: numbers numerically, everything else as text, nulls last. */
+function cmp(a: unknown, b: unknown): number {
+  const an = a === null || a === undefined; const bn = b === null || b === undefined;
+  if (an || bn) return an === bn ? 0 : an ? 1 : -1;
+  if (typeof a === "number" && typeof b === "number") return a - b;
+  const as = String(a); const bs = String(b);
+  return as < bs ? -1 : as > bs ? 1 : 0;
+}
+
+/** Split a logic-tree list on its top-level commas (not inside parentheses or quotes). */
+function splitTerms(src: string): string[] {
+  const out: string[] = []; let depth = 0; let quoted = false; let cur = "";
+  for (let i = 0; i < src.length; i++) {
+    const ch = src[i];
+    if (quoted) {
+      cur += ch;
+      if (ch === "\\") { cur += src[++i] ?? ""; continue; }
+      if (ch === '"') quoted = false;
+      continue;
+    }
+    if (ch === '"') { quoted = true; cur += ch; continue; }
+    if (ch === "(") depth++;
+    if (ch === ")") depth--;
+    if (ch === "," && depth === 0) { out.push(cur); cur = ""; continue; }
+    cur += ch;
+  }
+  if (cur) out.push(cur);
+  return out;
+}
+const unquote = (v: string) => (v.startsWith('"') && v.endsWith('"') ? v.slice(1, -1).replace(/\\(.)/g, "$1") : v);
+/** One PostgREST logic-tree term as a row predicate. */
+function logicTerm(term: string): (r: Row) => boolean {
+  const group = /^(and|or)\(([\s\S]*)\)$/.exec(term);
+  if (group) {
+    const parts = splitTerms(group[2]).map(logicTerm);
+    return group[1] === "and" ? (r) => parts.every((f) => f(r)) : (r) => parts.some((f) => f(r));
+  }
+  const m = /^([^.]+)\.(eq|gt|lt)\.([\s\S]*)$/.exec(term);
+  if (!m) throw new Error(`restoreMemoryDb: unsupported or() term ${term}`);
+  const [, col, op, raw] = m;
+  const v = unquote(raw);
+  return (r) => {
+    const x = r[col];
+    if (x === null || x === undefined) return false;
+    const c = cmp(typeof x === "number" ? x : String(x), typeof x === "number" ? Number(v) : v);
+    return op === "eq" ? c === 0 : op === "gt" ? c > 0 : c < 0;
+  };
+}
+
+function exec(table: string, op: string, payload: unknown, opts: Record<string, unknown> | undefined, filters: Array<(r: Row) => boolean>, single: boolean, range: [number, number] | null, orders: Array<{ col: string; asc: boolean }> = [], limit: number | null = null) {
   const all = (db.rows[table] ??= []);
   if (op === "select") {
     if (db.readError[table]) return { data: null, error: { code: "XX000", message: db.readError[table] } };
     const matched = all.filter((r) => filters.every((f) => f(r)));
-    const ranged = range ? matched.slice(range[0], range[1] + 1) : matched;
-    const out = ranged.slice(0, db.maxRows);
+    const sorted = orders.length === 0 ? matched : [...matched].sort((x, y) => {
+      for (const o of orders) { const c = cmp(x[o.col], y[o.col]); if (c !== 0) return o.asc ? c : -c; }
+      return 0;
+    });
+    const ranged = range ? sorted.slice(range[0], range[1] + 1) : sorted;
+    const out = (limit !== null ? ranged.slice(0, limit) : ranged).slice(0, db.maxRows);
     return { data: single ? (out[0] ?? null) : out, error: null, count: matched.length };
   }
   if (op === "insert" || op === "upsert") {
@@ -105,6 +164,8 @@ function exec(table: string, op: string, payload: unknown, opts: Record<string, 
 export function from(table: string) {
   let op = "select"; let payload: unknown; let opts: Record<string, unknown> | undefined; let single = false;
   let range: [number, number] | null = null;
+  let limit: number | null = null;
+  const orders: Array<{ col: string; asc: boolean }> = [];
   const filters: Array<(r: Row) => boolean> = [];
   const b: Record<string, unknown> = {
     select: () => b,
@@ -116,12 +177,15 @@ export function from(table: string) {
     not: (c: string, _o: string, _v: unknown) => { filters.push((r) => r[c] !== null && r[c] !== undefined); return b; },
     is: (c: string, v: unknown) => { filters.push((r) => (r[c] ?? null) === v); return b; },
     lt: (c: string, v: unknown) => { filters.push((r) => typeof r[c] === "number" && typeof v === "number" && (r[c] as number) < v); return b; },
-    order: () => b, limit: () => b,
+    gt: (c: string, v: unknown) => { filters.push((r) => r[c] !== null && r[c] !== undefined && cmp(r[c], v) > 0); return b; },
+    or: (expr: string) => { const fs = splitTerms(expr).map(logicTerm); filters.push((r) => fs.some((f) => f(r))); return b; },
+    order: (c: string, o?: { ascending?: boolean }) => { orders.push({ col: c, asc: o?.ascending !== false }); return b; },
+    limit: (n: number) => { limit = n; return b; },
     range: (from: number, to: number) => { range = [from, to]; return b; },
     maybeSingle: () => { single = true; return b; },
     single: () => { single = true; return b; },
     then: (res: (v: unknown) => void, rej: (e: unknown) => void) => {
-      try { res(exec(table, op, payload, opts, filters, single, range)); } catch (e) { rej(e); }
+      try { res(exec(table, op, payload, opts, filters, single, range, orders, limit)); } catch (e) { rej(e); }
     },
   };
   return b;

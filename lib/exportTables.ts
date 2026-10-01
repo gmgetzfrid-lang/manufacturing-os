@@ -88,7 +88,9 @@ export const ORG_SCOPED_TABLES = [
   "work_package_prints",
   "distribution_acks",
 
-  // Access + cost tracking
+  // Access + cost tracking. access_requests has carried org_id since
+  // 20261023 (BKP-4 / DEC-75: it stays exported — a pending request is the
+  // org's own record of who asked in).
   "access_requests",
   "cost_accounts",
   "cost_documents",
@@ -165,6 +167,50 @@ export const ORG_SCOPED_TABLES = [
   "ai_key_agreements",
   "ai_usage_limits",
 ] as const;
+
+/** BKP-4: the ORG_SCOPED_TABLES entries with NO `org_id` column. Every other
+ *  entry is dumped `.eq("org_id", <org>)`; on these that read fails (42703)
+ *  and the whole backup was stamped INCOMPLETE with the table empty — project
+ *  rosters and curated-collection contents never reached a backup. Each is
+ *  read by its own key instead: `orgs` by its id (the workspace row itself),
+ *  an org-less child through its parent's ids (the parent is exported first,
+ *  by org_id, so only this workspace's children are read). The restore binds
+ *  the same two children to a parent in the target workspace
+ *  (lib/dataRestore.ts ORG_LESS_RESTORE_PARENTS, DEC-75);
+ *  lib/__tests__/exportCoverage.test.ts fails when a table without org_id is
+ *  listed above with no entry here, or an entry here has gained org_id. */
+export const EXPORT_KEYED_BY: Record<string, { column: string; parent?: string; reason: string }> = {
+  orgs: { column: "id", reason: "the workspace row itself — its primary key IS the org id" },
+  project_members: { column: "project_id", parent: "projects", reason: "the project roster carries no org_id; read through this workspace's projects" },
+  curated_collection_items: { column: "collection_id", parent: "curated_collections", reason: "a curated collection's contents carry no org_id; read through this workspace's curated collections" },
+};
+
+/** intelligence ILIFE-6 (the export half): the export pages every table in
+ *  a STABLE, UNIQUE order, so no row is read twice or skipped between pages.
+ *  A table pages by `id` (keyset: `id > last`, so a concurrent delete can
+ *  never move a page); the exported tables with no `id` column are listed
+ *  here with their PRIMARY KEY / UNIQUE key — a one-column key pages by
+ *  keyset too, a composite key pages ordered by every key column.
+ *  lib/__tests__/exportCoverage.test.ts fails when an exported table has
+ *  neither an `id` column nor an entry here, or an entry is not one of the
+ *  table's keys. */
+export const EXPORT_ORDER_KEYS: Record<string, readonly string[]> = {
+  archive_settings: ["org_id"],
+  codebook_config: ["org_id"],
+  curated_collection_items: ["collection_id", "document_id"],
+  document_equipment_suggestions: ["org_id", "document_id"],
+  document_favorites: ["user_id", "document_id"],
+  library_numbering: ["library_id"],
+  notification_preferences: ["user_id"],
+  recently_viewed_docs: ["user_id", "document_id"],
+  team_members: ["team_id", "uid"],
+  ticket_number_counters: ["org_id", "year"],
+};
+
+/** The columns the export orders `table` by (see EXPORT_ORDER_KEYS). */
+export function exportOrderKey(table: string): readonly string[] {
+  return Object.prototype.hasOwnProperty.call(EXPORT_ORDER_KEYS, table) ? EXPORT_ORDER_KEYS[table] : ["id"];
+}
 
 /** User-scoped tables exported alongside (membership in this org acts as
  *  the join — we only include rows for users who belong to the org). */

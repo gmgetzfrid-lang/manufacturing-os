@@ -11,7 +11,7 @@ import { NextRequest, NextResponse } from "next/server";
 
 export const maxDuration = 300;
 import { authorizeOrgRole } from "@/lib/serverAuth";
-import { buildAndDeliverExport, computeNextRunAt, type ExportDestination } from "@/lib/exportRunner";
+import { buildAndDeliverExport, computeNextRunAt, exportEmbedDeadline, type ExportDestination } from "@/lib/exportRunner";
 import { makeArchiveId } from "@/lib/archive";
 import { roleFilter } from "@/lib/roleHeld";
 
@@ -69,6 +69,8 @@ async function alertAdminsOfExport(
 }
 
 export async function POST(req: NextRequest) {
+  // The ZIP's embed loop (and the export's storage checks) stop at this route's own deadline, so the archive is delivered.
+  const routeStart = Date.now();
   let body: RunBody;
   try { body = await req.json(); } catch { return NextResponse.json({ error: "Invalid JSON" }, { status: 400 }); }
 
@@ -128,6 +130,7 @@ export async function POST(req: NextRequest) {
       delivery: dest
         ? { kind: "destination", destination: dest }
         : { kind: "inline" },
+      deadlineAt: exportEmbedDeadline(routeStart, maxDuration),
     });
 
     // OUT-OF-BAND ALERT (finding: compromised-admin exfiltration). A full-org

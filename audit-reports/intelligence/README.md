@@ -56,7 +56,7 @@ It is not a missing brain. It is a missing memory.
 
 ## Findings
 
-**264 findings** — 9 CRITICAL, 59 HIGH, 148 MEDIUM, 48 LOW — plus **14 gap specs** (`GAP-313`, `GAP-314` opened at I-13, 2026-10-01; `GOV-15` opened at the I-05 merge, 2026-10-01).
+**265 findings** — 9 CRITICAL, 59 HIGH, 148 MEDIUM, 49 LOW — plus **14 gap specs** (`GAP-313`, `GAP-314` opened at I-13, 2026-10-01; `GOV-15` opened at the I-05 merge, 2026-10-01; `ILIFE-14` opened at the admin-and-org P2 merge, 2026-10-01).
 
 > **One finding here carries `Status: REFUTED`** — `IEDGE-9`. An independent pass disproved it; the reason is on the finding. Kept rather than deleted (`DEC-41`). **Do not queue it as work.**
 
@@ -81,7 +81,7 @@ It is not a missing brain. It is a missing memory.
 | 15 | [Orchestrator](./15-orchestrator.md) | 11 | The highest-privilege AI surface |
 | 16 | [Persistence & RLS](./16-persistence-rls.md) | 15 | Table by table — `IRLS-13`, `IRLS-14`, `IRLS-15` opened by intelligence Round G (I-08), 2026-09-30 |
 | 17 | [Hub UX](./17-hub-ux.md) | 12 | What a new org sees; whether the numbers are real |
-| 18 | [Lifecycle](./18-lifecycle.md) | 13 | Export, restore, delete, orphans |
+| 18 | [Lifecycle](./18-lifecycle.md) | 14 | Export, restore, delete, orphans |
 | 19 | [Wiring](./19-wiring.md) | 10 | De-facto links, dead FKs, one-directional joins |
 | 20 | [Prompts](./20-prompts.md) | 12 | Every prompt read as a contract |
 | 21 | [Edges & invariants](./21-edges-and-invariants.md) | 12 | The critic, plus what is sound. **Verified by hand** — record at the top of the file |

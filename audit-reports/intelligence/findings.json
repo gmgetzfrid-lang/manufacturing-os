@@ -25,17 +25,17 @@
     "audit-reports/intelligence/21-edges-and-invariants.md"
   ],
   "totals": {
-    "findings": 264,
+    "findings": 265,
     "gaps": 14,
     "by_severity": {
       "CRITICAL": 9,
       "HIGH": 59,
       "MEDIUM": 148,
-      "LOW": 48
+      "LOW": 49
     },
     "by_status": {
-      "OPEN": 155,
-      "RESOLVED": 104,
+      "OPEN": 153,
+      "RESOLVED": 107,
       "REFUTED": 2,
       "WONTFIX": 2,
       "INVALID": 1
@@ -911,7 +911,7 @@
       "id": "GOV-4",
       "title": "The spend gate fails OPEN: any ledger read error, and any pre-migration metering row, resolves to $0 spent",
       "severity": "HIGH",
-      "status": "OPEN",
+      "status": "RESOLVED",
       "verification": "CONFIRMED",
       "verification_note": null,
       "blast_radius": null,
@@ -4324,7 +4324,7 @@
       "id": "ILIFE-5",
       "title": "knowledge_documents.source_document_id has no foreign key — deleting a controlled document leaves its whole AI shadow alive",
       "severity": "MEDIUM",
-      "status": "OPEN",
+      "status": "RESOLVED",
       "verification": "CONFIRMED",
       "verification_note": null,
       "blast_radius": null,
@@ -4515,7 +4515,7 @@
       "id": "ILIFE-12",
       "title": "schemaExpectations does not cover the newest intelligence tables, contains a phantom, and has no tripwire test — schema-health reports on a list nobody validates",
       "severity": "MEDIUM",
-      "status": "OPEN",
+      "status": "RESOLVED",
       "verification": "CONFIRMED",
       "verification_note": null,
       "blast_radius": null,
@@ -6529,6 +6529,30 @@
       ],
       "refuted": false,
       "summary": "A deployment reaches 30 knowledge libraries with sources. Libraries in positions 26+ are never reconciled: newly filed controlled documents never appear in them, rev-ups never flip their mirrors to 'stale' so answers keep citing a superseded revision, and — the lifecycle half — the REMOVE pass at knowledgeSourceSync.ts:286-292 (for (const [dcDocId, row] of existingByDcDoc) { if (wanted.has(dcDocId",
+      "area": "intelligence",
+      "report": "audit-reports/intelligence/18-lifecycle.md"
+    },
+    {
+      "id": "ILIFE-14",
+      "title": "The direct storage delete frees a key that a knowledge-library mirror still names — the shed's mirror check (ILIFE-5) has a second door",
+      "severity": "LOW",
+      "status": "OPEN",
+      "verification": "CONFIRMED",
+      "verification_note": "CONFIRMED (read at the admin-and-org P2 merge: `app/api/storage/delete/route.ts` `DELETE` refuses a key a held or retained revision names, then frees it without asking `lib/storageKeyRegistry.ts` whether any other registered key column — a `knowledge_documents.file_key` mirror among them — still names it)",
+      "blast_radius": null,
+      "related": [],
+      "locations": [
+        "app/api/storage/delete/route.ts",
+        "lib/storageKeyRegistry.ts",
+        "lib/knowledgeSourceSync.ts"
+      ],
+      "has_verifier_correction": false,
+      "verified_by": "author",
+      "challenges": [
+        "author"
+      ],
+      "refuted": false,
+      "summary": "A Controller (the route's tier) calls DELETE /api/storage/delete for the key of a superseded revision whose knowledge mirror is still indexed. The route deletes the object. The mirror's file is now gone, so a re-index or a page render of that mirror fails, and the library's citations point at a document whose bytes no longer exist. The app's only caller sends project-cost keys (lib/costDocs.ts), s",
       "area": "intelligence",
       "report": "audit-reports/intelligence/18-lifecycle.md"
     },

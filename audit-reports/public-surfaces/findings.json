@@ -17,8 +17,8 @@
       "LOW": 24
     },
     "by_status": {
-      "RESOLVED": 48,
-      "OPEN": 13,
+      "RESOLVED": 49,
+      "OPEN": 12,
       "WONTFIX": 1
     }
   },
@@ -1330,7 +1330,7 @@
       "id": "SHR-12",
       "title": "bump_share_access is SECURITY DEFINER with no SET search_path, its rpc error is unchecked, and it is the sole basis for the access counter the UI and landing page present as an audit trail",
       "severity": "LOW",
-      "status": "OPEN",
+      "status": "RESOLVED",
       "verification": "CONFIRMED",
       "verification_note": null,
       "blast_radius": null,

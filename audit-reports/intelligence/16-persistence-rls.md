@@ -520,6 +520,8 @@ lib/schemaExpectations.ts:11-13 — `// Generated from supabase/migrations (CREA
 
 **Partial (2026-09-30, intelligence Round G).** Re-verified at HEAD `1b71ca1`. Landed elsewhere: the seven project-controls tables are on the list with their migration (`lib/schemaExpectations.ts:51`–`:126`, projects Round G J9 `REL-7`), and criterion 2's tripwire exists — `lib/__tests__/schemaExpectations.test.ts:155-159` fails when a migration creates a table absent from `EXPECTED_TABLES` — ✓ for every table created from now on. Open: `answer_skills`, `link_rules` and `process_flows` are still absent, and the tripwire grandfathers them — among five (`answer_skills`, `document_markups`, `knowledge_line_traces`, `link_rules`, `process_flows`, `:71`) — so criterion 1's intelligence half is not done; criterion 3 (42P01 vs an empty result, in what the libs show) is untouched. Owners: criterion 1 → admin-and-org **P2** (`BKP-14`, the list regeneration that empties the grandfather set; cross-note there); criterion 3 → the limbs in intelligence **I-08** (`lib/linkRules.ts`, `lib/answerSkills.ts`) and **I-09** (`lib/processFlows.ts`).
 
+*Cross-note (2026-10-01, admin-and-org Round G, P2): criteria 1 and 2 ✓ by admin-and-org `BKP-14` (RESOLVED). The three tables are listed with their files, `knowledge_line_traces` is recorded as retired, and the grandfather set is empty. Criterion 3 (42P01 vs an empty result in what the libs show) remains I-08's and I-09's.*
+
 ---
 
 
