@@ -24,6 +24,7 @@ import type { ReviewControl, ReviewControlMode } from "@/types/schema";
 import { heldRoles, roleFilter } from "@/lib/roleHeld";
 import { loadContainerChain, firstDefinedInChain, folderChainFromMap, type ContainerChain } from "@/lib/containerChain";
 import { NOT_CURRENT_STATUSES } from "@/lib/aiBoundary";
+import { ISSUE_REFUSAL } from "@/lib/issueStatus";
 
 type Level = "library" | "collection" | "document";
 const uniq = (xs: string[]) => Array.from(new Set(xs.filter(Boolean)));
@@ -845,7 +846,17 @@ export function finalizeReasonMessage(reason: string | undefined): string {
     case "conflict": return "The document changed while you were publishing — reload and try again.";
     case "no_pending_draft": return "There is no draft in review on this document.";
     case "not_found": return "The document could not be found.";
-    default: return `Couldn't publish: ${reason ?? "unknown"}`;
+    default:
+      // REV-20 (P14 review fix): the publish guard refuses a held document's
+      // promote — a controller's in the new-door sentence (which also names
+      // publish_revision's recorded override: a NEW version's door, not this
+      // reviewed draft's), anyone else's in the publisher tier's. Neither
+      // this finalize nor the review promote has an override, so the person
+      // is told what they can do: release the hold, then publish again.
+      if (reason && (reason.includes(ISSUE_REFUSAL.newDoorHold) || reason.includes(ISSUE_REFUSAL.publishHold))) {
+        return "This document has an active hold, so the reviewed revision was not published and nothing was changed. Release the hold, then publish the reviewed revision — its sign-offs stand.";
+      }
+      return `Couldn't publish: ${reason ?? "unknown"}`;
   }
 }
 

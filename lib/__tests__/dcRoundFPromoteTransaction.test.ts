@@ -129,6 +129,23 @@ describe("20261151 — the guard and publish_revision re-created from their NEWE
     expect(sentence).toContain(ISSUE_REFUSAL.newDoorHold);
   });
 
+  it("P14 review fix — a refused review promote over a hold never tells the controller to use an override the review promote does not have: release the hold, then publish the reviewed revision", async () => {
+    const { finalizeReasonMessage } = await import("@/lib/reviewControl");
+    // the guard's two hold sentences, read from the migration itself (SQL '' → ')
+    const sqlSentences = [...M.matchAll(/'(Document has an active hold;[^']*(?:''[^']*)*)'/g)].map((m) => m[1].replace(/''/g, "'"));
+    const controller = "Document has an active hold; release the hold before issuing it, or publish over it with Document Control's recorded override.";
+    const publisher = "Document has an active hold; release the hold before publishing a new revision.";
+    expect(sqlSentences).toContain(controller);
+    expect(sqlSentences).toContain(publisher);
+    for (const s of [controller, publisher, "Document has an active hold; release the hold before issuing it."]) {
+      const msg = finalizeReasonMessage(s);
+      expect(msg, s).toBe("This document has an active hold, so the reviewed revision was not published and nothing was changed. Release the hold, then publish the reviewed revision — its sign-offs stand.");
+      expect(msg, s).not.toMatch(/override/i);
+    }
+    // any other refusal keeps the database's words
+    expect(finalizeReasonMessage("permission denied for table documents")).toBe("Couldn't publish: permission denied for table documents");
+  });
+
   it("publish_revision: nothing removed, every new line is one of the REV-20 additions, and the body minus them IS the base byte for byte", () => {
     const { onlyInA, onlyInB } = lineDiff(P.live, P.next);
     expect(onlyInA).toEqual([]);
@@ -391,8 +408,11 @@ describe("RG-12 — finalizeReviewedRevision promotes through finalize_reviewed_
       expect(r).toEqual({ published: false, reason: message });
       expect(st.writes).toEqual([]);
       expect(st.pipeline).toBe(0);
-      // what the inspector shows (ReviewGateSection: finalizeReasonMessage(res.reason))
-      expect(finalizeReasonMessage(r.reason)).toBe(`Couldn't publish: ${message}`);
+      // what the inspector shows (ReviewGateSection: finalizeReasonMessage(res.reason)) —
+      // a hold is told as what to do (P14 review fix: never the override this promote lacks)
+      expect(finalizeReasonMessage(r.reason)).toBe(message.startsWith("Document has an active hold")
+        ? "This document has an active hold, so the reviewed revision was not published and nothing was changed. Release the hold, then publish the reviewed revision — its sign-offs stand."
+        : `Couldn't publish: ${message}`);
     }
   });
 
