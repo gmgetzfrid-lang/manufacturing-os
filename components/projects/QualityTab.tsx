@@ -53,6 +53,7 @@ import {
   listChecklists, listChecklistItems, createChecklist, applyAssessment,
   updateChecklistItem, setChecklistStatus, runAutoEvidence, computeChecklistProgress,
   loadSignoffAuthority, signoffSeparation, type SignoffAuthority, type SignoffInput,
+  describeProjectSweep, type ProjectSweepOutcome,
 } from "@/lib/checklists";
 import SignatureCeremony from "@/components/signatures/SignatureCeremony";
 import { useRole } from "@/components/providers/RoleContext";
@@ -150,6 +151,9 @@ export default function QualityTab({ orgId, projectId, canManage, uid, userEmail
   const [events, setEvents] = useState<TurnoverReviewEvent[]>([]);
   const [punch, setPunch] = useState<PunchItem[]>([]);
   const [loading, setLoading] = useState(true);
+  /** UX-16: bumped when a turnover acceptance swept the checklists, so their
+   *  cards re-read the items the sweep changed. */
+  const [sweepTick, setSweepTick] = useState(0);
 
   const refresh = useCallback(async () => {
     // The sign-off decision is re-read beside the lists (it never throws:
@@ -184,11 +188,11 @@ export default function QualityTab({ orgId, projectId, canManage, uid, userEmail
       {authority?.error && (
         <Notice notice={info(`Couldn't read who may sign off on this project (${authority.error}) — the controls shown are the ones the project owner, Admin and Document Control always have.`)} />
       )}
-      <ChecklistsSection orgId={orgId} projectId={projectId} canManage={canSignOff} actor={actor} signoff={signoff}
+      <ChecklistsSection key={sweepTick} orgId={orgId} projectId={projectId} canManage={canSignOff} actor={actor} signoff={signoff}
         checklists={checklists} loadError={loadErrors.checklists} onRetry={retry} onChanged={retry} />
       <TurnoverSection orgId={orgId} projectId={projectId} canManage={canSignOff} actor={actor} signoff={signoff}
         items={turnover} events={events} loadError={loadErrors.turnover} historyError={loadErrors.history} onRetry={retry}
-        jobKind={jobKind} onChanged={retry} />
+        jobKind={jobKind} onChanged={retry} onEvidenceSwept={() => setSweepTick((t) => t + 1)} />
       <PunchSection orgId={orgId} projectId={projectId} canManage={canSignOff} actor={actor}
         items={punch} loadError={loadErrors.punch} onRetry={retry} onChanged={retry} />
     </div>
@@ -947,13 +951,15 @@ function DocPicker({ orgId, title, onPick, onSkip, onCancel }: {
   );
 }
 
-function TurnoverSection({ orgId, projectId, canManage, actor, signoff, items, events, loadError, historyError, onRetry, jobKind, onChanged }: {
+function TurnoverSection({ orgId, projectId, canManage, actor, signoff, items, events, loadError, historyError, onRetry, jobKind, onChanged, onEvidenceSwept }: {
   orgId: string; projectId: string; canManage: boolean; actor: Actor; signoff: SignoffContext;
   items: TurnoverItem[]; events: TurnoverReviewEvent[];
   /** The items' read failed / the history's read failed (UX-10). */
   loadError?: string; historyError?: string; onRetry: () => void;
   jobKind: string | null;
   onChanged: () => void;
+  /** UX-16: an acceptance swept the checklists — the section re-reads them. */
+  onEvidenceSwept: () => void;
 }) {
   const [busy, setBusy] = useState<string | null>(null);
   const [addName, setAddName] = useState("");
@@ -1007,10 +1013,14 @@ function TurnoverSection({ orgId, projectId, canManage, actor, signoff, items, e
   };
 
   /** Settles a write and hands its result back, so a caller closes what it
-   *  opened only once the write landed. */
-  const finish = (res: { ok: boolean; error?: string }): { ok: boolean; error?: string } => {
+   *  opened only once the write landed. UX-16: an acceptance (or the
+   *  reopening of one) swept the project's open checklists — say what it
+   *  did, and have the checklists re-read the items it changed. */
+  const finish = (res: { ok: boolean; error?: string; evidenceSweep?: ProjectSweepOutcome }): { ok: boolean; error?: string } => {
     setBusy(null);
     if (!res.ok) setNotice(failure(res.error ?? "Couldn't update.")); else { setNotice(null); onChanged(); }
+    const swept = res.ok && res.evidenceSweep ? describeProjectSweep(res.evidenceSweep) : null;
+    if (swept) { setNotice(swept.ok ? success(swept.text) : failure(swept.text)); onEvidenceSwept(); }
     return res;
   };
 

@@ -366,7 +366,10 @@ export function buildCoachItems(s: ProjectStateSnapshot, projectId: string): Coa
   if (s.checklistNeedsEvidence > 0) add({
     id: "evidence", kind: "quality", weight: 76,
     title: `Provide evidence for ${s.checklistNeedsEvidence} checklist item${s.checklistNeedsEvidence === 1 ? "" : "s"}`,
-    payoff: "Nothing runs on its own — run \"Check evidence we already hold\" on the Quality tab; items with a matching document on file turn green with the citation attached.",
+    // UX-16: the sweep runs on its own at the two moments evidence arrives
+    // (lib/reviewControl finalizeReviewedRevision, lib/turnover
+    // reviewTurnoverItem); the button runs it any other time.
+    payoff: "It runs on its own when a contractor submission is approved or a turnover item is accepted; to run it now, use \"Check evidence we already hold\" on the Quality tab — items with a matching document on file turn green with the citation attached.",
     href: `${base}?tab=quality`,
   });
   if (s.turnoverRequired > 0 && s.turnoverAccepted < s.turnoverRequired) add({

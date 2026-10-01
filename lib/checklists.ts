@@ -772,10 +772,13 @@ export interface SweepOutcome {
  *  announces. */
 export async function runAutoEvidence(input: {
   orgId: string; projectId: string; checklistId: string; actor: Actor;
+  /** UX-16: a project-wide sweep gathers the evidence once and hands it to
+   *  each checklist's run. */
+  state?: ProjectEvidenceState;
 }): Promise<SweepOutcome> {
   const [read, state] = await Promise.all([
     readChecklistItems(input.checklistId),
-    gatherProjectEvidenceState(input.orgId, input.projectId),
+    input.state ?? gatherProjectEvidenceState(input.orgId, input.projectId),
   ]);
   if (read.error) return { satisfied: 0, needsEvidence: 0, retracted: 0, refused: 0, failed: 0, error: read.error };
   const items = read.rows;
@@ -830,6 +833,102 @@ export async function runAutoEvidence(input: {
     : w.refused.length > 0 ? `${w.refused.length} item${w.refused.length === 1 ? "" : "s"} changed while the sweep ran and were left alone — run it again.`
     : undefined;
   return { satisfied, needsEvidence, retracted, refused: w.refused.length, failed: w.failed.length, ...(error ? { error } : {}) };
+}
+
+// ── UX-16: the sweep runs when evidence arrives ──────────────────────────
+
+/** An automatic, project-wide sweep: the sum over every OPEN checklist it
+ *  ran on. `error` is a read that failed before any checklist ran. */
+export interface ProjectSweepOutcome extends SweepOutcome {
+  checklists: number;
+}
+
+const EMPTY_PROJECT_SWEEP: ProjectSweepOutcome = { checklists: 0, satisfied: 0, needsEvidence: 0, retracted: 0, refused: 0, failed: 0 };
+
+/**
+ * The evidence sweep for a whole project — every OPEN checklist, against one
+ * gather of what the project can prove (the SAF-1 / QUAL-13 evidence
+ * contract: Issued / Locked documents only, an intake submission only once
+ * approved). Run when evidence actually arrives: a turnover item accepted
+ * (lib/turnover) and a revision approved on a document the project's
+ * register cites (sweepEvidenceForDocument, from finalizeReviewedRevision).
+ * It is the same sweep as the Quality tab's button — machine-stamped,
+ * checked, one audit row per checklist it changed — and it never throws:
+ * the write that triggered it has already landed.
+ */
+export async function runProjectEvidenceSweep(input: {
+  orgId: string; projectId: string; actor: Actor;
+}): Promise<ProjectSweepOutcome> {
+  try {
+    const { data, error } = await supabase.from("project_checklists").select("id")
+      .eq("project_id", input.projectId).eq("status", "open").limit(50);
+    if (error) return { ...EMPTY_PROJECT_SWEEP, error: `the project's checklists could not be read (${error.message})` };
+    const ids = ((data ?? []) as Array<{ id: string }>).map((r) => String(r.id));
+    if (ids.length === 0) return { ...EMPTY_PROJECT_SWEEP };
+    const state = await gatherProjectEvidenceState(input.orgId, input.projectId);
+    const out: ProjectSweepOutcome = { ...EMPTY_PROJECT_SWEEP, checklists: ids.length };
+    for (const checklistId of ids) {
+      const r = await runAutoEvidence({ orgId: input.orgId, projectId: input.projectId, checklistId, actor: input.actor, state });
+      out.satisfied += r.satisfied; out.needsEvidence += r.needsEvidence; out.retracted += r.retracted;
+      out.refused += r.refused; out.failed += r.failed;
+      // A checklist whose items could not be read counts as failed whole.
+      if (r.error && r.refused === 0 && r.failed === 0 && r.satisfied + r.needsEvidence + r.retracted === 0) out.failed += 1;
+    }
+    return out;
+  } catch (e) {
+    return { ...EMPTY_PROJECT_SWEEP, error: (e as Error).message };
+  }
+}
+
+/**
+ * UX-16: a revision was approved on `documentId` — sweep every project whose
+ * evidence register cites it: the project's intake folder holds it, it is
+ * the project's Summary of Work, or an ACCEPTED turnover item names it
+ * (gatherProjectEvidenceState's three sources). Nothing cites it → no
+ * project, no sweep. Never throws.
+ */
+export async function sweepEvidenceForDocument(input: {
+  orgId: string; documentId: string; actor: Actor;
+}): Promise<ProjectSweepOutcome & { projects: number }> {
+  try {
+    const [docRes, tovRes] = await Promise.all([
+      supabase.from("documents").select("collection_id").eq("id", input.documentId).maybeSingle(),
+      supabase.from("turnover_items").select("project_id").eq("document_id", input.documentId).eq("status", "accepted").limit(50),
+    ]);
+    const collectionId = (docRes.data as { collection_id?: string | null } | null)?.collection_id ?? null;
+    const or = [`sow_document_id.eq.${input.documentId}`, ...(collectionId ? [`intake_collection_id.eq.${collectionId}`] : [])];
+    const projRes = await supabase.from("projects").select("id").eq("org_id", input.orgId).or(or.join(",")).limit(20);
+    const failedRead = docRes.error ?? tovRes.error ?? projRes.error;
+    const ids = [...new Set([
+      ...((projRes.data ?? []) as Array<{ id: string }>).map((p) => String(p.id)),
+      ...((tovRes.data ?? []) as Array<{ project_id: string }>).map((t) => String(t.project_id)),
+    ])];
+    const out: ProjectSweepOutcome & { projects: number } = { ...EMPTY_PROJECT_SWEEP, projects: ids.length };
+    for (const projectId of ids) {
+      const r = await runProjectEvidenceSweep({ orgId: input.orgId, projectId, actor: input.actor });
+      out.checklists += r.checklists; out.satisfied += r.satisfied; out.needsEvidence += r.needsEvidence;
+      out.retracted += r.retracted; out.refused += r.refused; out.failed += r.failed;
+      if (r.error && !out.error) out.error = r.error;
+    }
+    if (failedRead && !out.error) out.error = `the projects citing this document could not all be read (${failedRead.message})`;
+    return out;
+  } catch (e) {
+    return { ...EMPTY_PROJECT_SWEEP, projects: 0, error: (e as Error).message };
+  }
+}
+
+/** One sentence for an automatic sweep, said beside the write that ran it
+ *  (null when it changed nothing and nothing failed). */
+export function describeProjectSweep(o: ProjectSweepOutcome): { text: string; ok: boolean } | null {
+  const skipped = o.refused + o.failed;
+  if (o.error) return { ok: false, text: `The evidence check did not run on the project's checklists — ${o.error}. Run "Check evidence we already hold" on the Quality tab.` };
+  if (o.satisfied + o.needsEvidence + o.retracted === 0 && skipped === 0) return null;
+  const parts: string[] = [];
+  if (o.satisfied > 0) parts.push(`${o.satisfied} item${o.satisfied === 1 ? "" : "s"} proven`);
+  if (o.needsEvidence > 0) parts.push(`${o.needsEvidence} need evidence`);
+  if (o.retracted > 0) parts.push(`${o.retracted} withdrawn — the cited document is no longer current`);
+  if (skipped > 0) parts.push(`${skipped} could not be updated — run "Check evidence we already hold" on the Quality tab (it needs write access to the project's quality records)`);
+  return { ok: skipped === 0, text: `The evidence check ran on the project's open checklists: ${parts.join("; ")}.` };
 }
 
 // ── Progress (pure) ──────────────────────────────────────────────────────

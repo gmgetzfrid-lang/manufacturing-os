@@ -21,6 +21,7 @@ import {
   type ReviewSignoffRow,
 } from "@/lib/reviewControl";
 import type { DocumentRecord, ReviewControl } from "@/types/schema";
+import { describeProjectSweep } from "@/lib/checklists";
 
 export default function ReviewGateSection({ doc, orgId, canManage, onChanged }: {
   doc: DocumentRecord;
@@ -141,6 +142,10 @@ export default function ReviewGateSection({ doc, orgId, canManage, onChanged }: 
     try {
       const res = await finalizeReviewedRevision({ orgId, documentId: doc.id, actorId: uid, actorName: userEmail });
       if (!res.published) { await appAlert({ tone: "danger", message: finalizeReasonMessage(res.reason) }); }
+      // UX-16: the publish swept the open checklists of the projects citing
+      // this document; a sweep that could not finish is said, never silent.
+      const swept = res.published && res.evidenceSweep ? describeProjectSweep(res.evidenceSweep) : null;
+      if (swept && !swept.ok) await appAlert({ tone: "danger", message: swept.text });
       await load(); onChanged?.();
     } finally { setBusy(false); }
   };

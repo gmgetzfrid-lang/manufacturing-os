@@ -28,6 +28,7 @@ import {
 import { effectiveDocClassForDocument } from "@/lib/docClass";
 import { appConfirm, appPrompt } from "@/components/providers/DialogProvider";
 import { INTAKE_LINK_DEFAULT_DAYS, INTAKE_LINK_MAX_DAYS, intakeExpiryFor } from "@/lib/intakeLinks";
+import { describeProjectSweep } from "@/lib/checklists";
 import type { ReviewControl } from "@/types/schema";
 
 // SEC-5: the date picker works in the user's LOCAL calendar (the expiry
@@ -361,9 +362,12 @@ export default function IntakePanel({ orgId, projectId, canManage, uid, userEmai
       if (!res.published) throw new Error(finalizeReasonMessage(res.reason));
       // Name what actually became current — never the stale row's label.
       const { data: after } = await supabase.from("documents").select("rev, current_version_id").eq("id", p.docId).maybeSingle();
-      setMsg(String(after?.current_version_id ?? "") === p.pendingVersionId
+      // UX-16: the approval swept the project's open checklists — say what it did.
+      const swept = res.evidenceSweep ? describeProjectSweep(res.evidenceSweep) : null;
+      setMsg((String(after?.current_version_id ?? "") === p.pendingVersionId
         ? `${p.label} Rev ${String(after?.rev ?? p.revLabel ?? "")} approved — it is now the current revision.`
-        : `${p.label}: the approval went through, but the current revision is not the submission you approved — refresh and check the document.`);
+        : `${p.label}: the approval went through, but the current revision is not the submission you approved — refresh and check the document.`)
+        + (swept ? ` ${swept.text}` : ""));
       await refresh();
     } catch (e) { setMsg((e as Error).message); }
     finally { setBusy(null); }
