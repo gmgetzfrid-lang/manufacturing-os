@@ -523,11 +523,11 @@ lib/checklists.ts:103 — `const { data } = await supabase...` with no `error` d
 - **While the gates are not in hand, the dialog says so** where the panel will be.
   - Loading: "Checking the closeout gates…" (`role="status"`).
   - Failure: "The closeout gates could not be loaded — <reason>. Confirm waits until the closeout gates are on screen — they are recorded with the completion." (`role="alert"`). A Retry, with the decision floor, gathers again.
-- **Confirm waits for the gates.** For a completion, Confirm is disabled until the gates are on screen, and its title says why. Once they are on screen the dialog is as before: the recorded gate lines, the override line, and a live Confirm. The gates stay warnings, not walls, and `gateSnapshot` still records what the actor was shown. Other transitions are unaffected.
+- **Confirm waits for the gates.** For a completion, Confirm is disabled until the gates are on screen, and its title says why. Once they are on screen the dialog is as before: the recorded gate lines, the override line, and a live Confirm. The gates stay warnings, not walls, and `gateSnapshot` still records what the actor was shown. Other transitions are unaffected. *Review hardening:* `handleTransition` also returns early for a completion with no gates in hand, before the busy flag and the write, so no other caller of the handler can record a completion without them.
 - Tests: `lib/__tests__/j10bCloseoutGates.test.ts`.
   - Rendered: the loading status.
   - Rendered: the failure alert with its reason and the Confirm sentence, and a Retry that works.
-  - Source pins on the page: the rejection is kept and Retry gathers again; the pending panel; Confirm's disabled condition and title; the loaded panel and `gateSnapshot`, unchanged.
+  - Source pins on the page: the rejection is kept and Retry gathers again; the pending panel; Confirm's disabled condition and title; the loaded panel and `gateSnapshot`, unchanged; the handler's early return, before `setTransitionBusy(true)` and the write.
 
 **Done-when.**
 - ✓ `listChecklistItems` returns a distinguishable error, and `setChecklistStatus` refuses to complete when the item read failed (2026-09-29).
@@ -886,5 +886,7 @@ Tests — new `lib/__tests__/qual15CloseoutSignoff.test.ts`: "an OPEN checklist 
 - A voided checklist cannot silently leave the closeout gate — ✓: J2b's rail makes a void a controller's (`20261136`), and the Complete dialog, the closeout audit row and the report now show each voided checklist and who voided it (the branch the record offered; no reason column is added — none exists, as J2b recorded).
 
 **Scope / residual.** A void made outside `setChecklistStatus` (a direct write) has no `CHECKLIST_STATUS` row and is shown as "who voided it is not on record" — honest, not attributed. The project health score's Quality part still scores item colours (not this finding's surfaces). Pending migration for the signature half: `20261136` (J2b's).
+
+*Later (2026-10-01, projects Round G J10b, `REL-9`):* the Quality tab now offers the void, to the controller tier. It asks for a reason (`REASON_MIN_LENGTH`), and the reason goes on the void's `CHECKLIST_STATUS` audit row as `details.reason`, so a void made through the product now records why as well as who. That row's insert is checked for a void (`setChecklistStatus` returns `auditError`). A void whose row failed is said to the voider, and closeout shows it as "who voided it is not on record", the same way it shows a direct write.
 
 ---

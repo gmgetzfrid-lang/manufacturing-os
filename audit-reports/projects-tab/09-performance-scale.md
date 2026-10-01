@@ -225,7 +225,7 @@ Tests (`lib/__tests__/projectSnapshot.test.ts`): "a sharing request joins the ro
 - ✓ The snapshot query selects only the columns it reads (2026-09-29).
 - ✓ An unmounted coach's in-flight requests are aborted (2026-09-29).
 
-**Scope / residual.** `SNAPSHOT_REUSE_MS` (1.5 s) and the coach's first-re-key `share` (`snapshotRekeyMayShare`) are now vestigial. The only re-keys left (`page.tsx` `onDataChanged` on the Costs and Quality tabs) follow a write whose `afterWrite` has already invalidated the round, so a sharing request has nothing recorded to join. The page's own `refresh()` bump still lands while the coach is unmounted. Setting the window to 0 and retiring the share rule would change no behaviour. They are edits to `lib/projectSnapshot.ts` and `components/projects/ProjectCoach.tsx`, which are projects-joint J12's files this round, so they are left to J12.
+**Scope / residual.** `SNAPSHOT_REUSE_MS` (1.5 s) and the coach's first-re-key `share` (`snapshotRekeyMayShare`) are now vestigial. The only re-keys left (`page.tsx` `onDataChanged` on the Costs and Quality tabs) follow a write whose `afterWrite` has already invalidated the round, so a sharing request has nothing recorded to join. The page's own `refresh()` bump still lands while the coach is unmounted. Setting the window to 0 and retiring the share rule would change no behaviour. They are edits to `lib/projectSnapshot.ts` and `components/projects/ProjectCoach.tsx`, which are projects-joint J12's files this round, so they are left to J12. *Review note:* the window is safe today only because every `onDataChanged` caller invalidates first. A future caller that told the page about a write without calling `invalidateProjectSnapshot` would let the coach's first re-key reuse a snapshot gathered before the write, inside the 1.5 s window. Retiring the window removes that hazard, which is a reason for J12 to do it rather than leave it.
 
 ---
 
@@ -612,9 +612,9 @@ once. Hoist the `toLocaleString` formatters out of the row components.
 **Done-when.**
 1. ✓ `fmtMoney` reuses formatters (J3, 2026-09-29).
 2. ✓ `buildCostSeries` parses each entry date once (J5, 2026-09-30).
-3. ✓ List rows do not construct a formatter per render. This covers the Costs tab's entry rows (J3), the S-curve's points (J5), and now the timeline feed and the Quality tab's rows. The finding's `projects/[id]/page.tsx:1012` site is `formatRelative`, which the independent pass showed is arithmetic. Its `toLocaleDateString()` fallback runs only for a checkout older than seven days, on a short list, and it is not changed.
+3. ✓ for the finding's locations. The rows it named no longer construct a formatter per render: the Costs tab's entry rows (J3), the S-curve's points (J5), and now the timeline feed and the Quality tab's rows. The finding's `projects/[id]/page.tsx:1012` site is `formatRelative`, which the independent pass showed is arithmetic. Its `toLocaleDateString()` fallback runs only for a checkout older than seven days, on a short list, and it is not changed. *Review correction:* this ✓ does not cover every list row in the tree. Short lists outside the finding's locations still call the default-locale `toLocaleDateString()` per row, including in files this package edited for other findings: `IntakePanel.tsx:542, :582`, `cost/ChangeOrdersPanel.tsx:264`, `cost/QuotesPanel.tsx:1585` and `companies/[id]/page.tsx:461`. V8 caches the default-locale formatter behind that call, so none of them is the measured hot path this finding is about. They are left unchanged (DEC-31).
 
-**Scope / residual.** None.
+**Scope / residual.** None in the finding's locations. The short-list `toLocaleDateString()` calls named in done-when 3 are not part of this finding.
 
 ---
 

@@ -73,5 +73,12 @@ describe("QUAL-8 — the closeout dialog never omits its gates silently", () => 
     expect(dialog).toContain('title={pendingStatus === "completed" && !gates ? CLOSEOUT_GATES_WAIT : undefined}');
     // the transition still records the gates the actor was shown
     expect(page).toContain('gateSnapshot: pendingStatus === "completed" ? gates : undefined,');
+    // and the handler itself refuses a completion with no gates in hand (the review's cheap hardening):
+    // the guard sits before the busy flag and the write
+    const handler = page.slice(page.indexOf("const handleTransition = async () => {"));
+    const guard = 'if (pendingStatus === "completed" && !gates) return;';
+    expect(handler).toContain(guard);
+    expect(handler.indexOf(guard)).toBeLessThan(handler.indexOf("setTransitionBusy(true);"));
+    expect(handler.indexOf(guard)).toBeLessThan(handler.indexOf("await transitionProjectStatus({"));
   });
 });

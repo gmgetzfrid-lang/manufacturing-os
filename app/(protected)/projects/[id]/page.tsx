@@ -359,6 +359,9 @@ export default function ProjectDetailPage() {
 
   const handleTransition = async () => {
     if (!project || !uid || !pendingStatus) return;
+    // QUAL-8: a completion waits for its gates — the disabled Confirm is the
+    // visible half; this keeps any other caller from recording none.
+    if (pendingStatus === "completed" && !gates) return;
     if (pendingStatus === "cancelled" && !statusReason.trim()) {
       setActionError("Cancellation reason is required"); return;
     }
