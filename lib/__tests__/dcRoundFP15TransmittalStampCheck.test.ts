@@ -5,11 +5,14 @@
 // document — against the file the issue will pin; /api/transmittal/stamp-check
 // answers it for a draft, to a transmit authority, read-only.
 //
-// P15 review fix (the blocker): PDF or not is decided BEFORE the size bound,
-// as the portal decides it — a large CAD model, zip or image is `not_pdf`
-// (released unmarked, never a warning), never `oversize`; a file is told by
-// its name / recorded type first (nothing read), then by its first four
-// bytes from a RANGED read — a non-PDF is never downloaded whole.
+// P15 review fix (the blocker): PDF or not is decided BEFORE the size bound
+// — a large CAD model, zip or image is `not_pdf` (released unmarked, never a
+// warning), never `oversize`; a non-PDF is never downloaded whole.
+// Third review fix: PDF or not is decided by the first four bytes ALONE (a
+// RANGED read), as the download route that stamps decides it
+// (app/api/transmittal/route.ts `isPdf = looksLikePdf(head)`), never by the
+// file's name or recorded type — a real PDF keyed .dwg or typed image/* is
+// stamped at download, so it is checked (and an encrypted one warned).
 
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { readFileSync } from "node:fs";
@@ -238,31 +241,50 @@ describe("TRX-16 — checkItemsStampable runs the portal's stamp test on the fil
   });
 });
 
-describe("TRX-16 (P15 review fix) — PDF or not is decided before the size, as the portal decides it", () => {
+describe("TRX-16 (P15 review fix) — PDF or not is decided before the size, by the bytes, as the download route decides it", () => {
   const MODEL_KEY = (n: string, ext: string) => `orgs/${ORG}/docs/${n}.${ext}`;
-  it("a .dwg over the bound by its recorded size is not_pdf — nothing read, no warning (it was 'oversize: split it')", async () => {
+  it("a .dwg over the bound by its recorded size is not_pdf — only its first four bytes are read, no warning (it was 'oversize: split it')", async () => {
     file("m1", { key: MODEL_KEY("plant", "dwg"), bytes: DWG, size: PORTAL_STAMP_MAX_BYTES + 50 * 1024 * 1024 });
     const out = await run([item("m1", "P-MODEL-1")]);
     expect(out).toEqual([{ documentId: "m1", number: "P-MODEL-1", verdict: "not_pdf" }]);
-    expect(st.heads).toEqual([]);
+    expect(st.heads).toEqual([MODEL_KEY("plant", "dwg")]);
+    expect(st.ranges).toEqual(["bytes=0-3"]);
     expect(st.fetched).toEqual([]);
     expect(unstampableItems(out)).toEqual([]); // so issueTransmittal raises no UnstampableItemsError
     expect(describeUnstampable(out)).toBeNull();
   });
-  it("a .png / .rvt over the bound by the object's length (no size recorded) is not_pdf — nothing read", async () => {
+  it("a .png / .rvt over the bound by the object's length (no size recorded) is not_pdf — never downloaded whole", async () => {
     file("m2", { key: MODEL_KEY("site-photo", "png"), bytes: PNG, size: null, contentLength: PORTAL_STAMP_MAX_BYTES + 1 });
     file("m3", { key: MODEL_KEY("building", "rvt"), bytes: ZIP, size: null, contentLength: 120 * 1024 * 1024 });
     const out = await run([item("m2"), item("m3")]);
     expect(out.map((c) => c.verdict)).toEqual(["not_pdf", "not_pdf"]);
-    expect(st.heads).toEqual([]);
+    expect(st.heads).toEqual([MODEL_KEY("site-photo", "png"), MODEL_KEY("building", "rvt")]);
     expect(st.fetched).toEqual([]);
     expect(unstampableItems(out)).toEqual([]);
   });
-  it("a recorded non-PDF type says so too (the portal page's isPdfFile) — nothing read", async () => {
+  it("a recorded non-PDF type whose bytes are not %PDF is not_pdf — never downloaded whole", async () => {
     file("m4", { key: `orgs/${ORG}/docs/upload-7f3a`, fileType: "image/tiff", bytes: PNG, size: PORTAL_STAMP_MAX_BYTES + 1 });
     expect((await run([item("m4")]))[0].verdict).toBe("not_pdf");
-    expect(st.heads).toEqual([]);
+    expect(st.heads).toEqual([`orgs/${ORG}/docs/upload-7f3a`]);
     expect(st.fetched).toEqual([]);
+  });
+  it("third review fix: a real PDF keyed .dwg or typed image/* is checked as the download route will stamp it — loaded; an ENCRYPTED one warns", async () => {
+    file("x1", { key: MODEL_KEY("vendor-drawing", "dwg"), bytes: GOOD });
+    file("x2", { key: MODEL_KEY("vendor-datasheet", "dwg"), bytes: ENCRYPTED });
+    file("x3", { key: `orgs/${ORG}/docs/scan-11`, fileType: "image/png", bytes: ENCRYPTED });
+    const out = await run([item("x1", "VD-1"), item("x2", "VDS-2"), item("x3", "VDS-3")]);
+    expect(out).toEqual([
+      { documentId: "x1", number: "VD-1", verdict: "stampable" },
+      { documentId: "x2", number: "VDS-2", verdict: "unloadable", detail: "encrypted (permission-restricted) PDF" },
+      { documentId: "x3", number: "VDS-3", verdict: "unloadable", detail: "encrypted (permission-restricted) PDF" },
+    ]);
+    expect(st.fetched).toEqual([MODEL_KEY("vendor-drawing", "dwg"), MODEL_KEY("vendor-datasheet", "dwg"), `orgs/${ORG}/docs/scan-11`]);
+    // the issuer is warned before anything is sent (it was silently not_pdf, then released unmarked at download)
+    expect(unstampableItems(out).map((c) => c.documentId)).toEqual(["x2", "x3"]);
+    expect(describeUnstampable(out)).not.toBeNull();
+    // …and a %PDF keyed .dwg over the bound is oversize (the route refuses or releases it as oversize too)
+    file("x4", { key: MODEL_KEY("big-vendor-set", "dwg"), bytes: GOOD, size: PORTAL_STAMP_MAX_BYTES + 1 });
+    expect((await run([item("x4")]))[0].verdict).toBe("oversize");
   });
   it("a file its name and type do not settle is told by its first four bytes (a ranged read): a zip over the bound by recorded size or by length is not_pdf, never downloaded", async () => {
     file("m5", { key: `orgs/${ORG}/docs/upload-a1`, fileType: "application/octet-stream", bytes: ZIP, size: PORTAL_STAMP_MAX_BYTES + 1 });
@@ -303,17 +325,20 @@ describe("TRX-16 (P15 review fix) — PDF or not is decided before the size, as 
     file("e1", { bytes: new Uint8Array(), size: 0 });
     expect((await run([item("e1")]))[0].verdict).toBe("not_pdf");
   });
-  it("the check selects the version's file_type with its key and size, and classifies with the portal page's isPdfFile", () => {
+  it("the check decides PDF-or-not by the bytes alone, as the stamping route does — never by name or type", () => {
     const lib = readFileSync(join(process.cwd(), "lib/transmittalStampCheck.ts"), "utf8");
-    expect(lib).toContain('.select("id, file_url, file_type, size")');
-    expect(lib).toContain('import { isPdfFile } from "@/lib/verifyVerdict";');
+    expect(lib).toContain('.select("id, file_url, size")');
+    const code = lib.replace(/^\s*\/\/[^\n]*$/gm, "").replace(/\/\*[\s\S]*?\*\//g, "");
+    expect(code).not.toContain("isPdfFile");
+    expect(code).not.toContain("file_type");
     expect(lib).toContain('Range: "bytes=0-3"');
-    // PDF or not before the bound: the isPdfFile test and the ranged head read precede any oversize verdict
+    // PDF or not before the bound: the ranged head read precedes any oversize verdict
     const body = lib.slice(lib.indexOf("async function checkOne"));
-    expect(body.indexOf("if (!isPdfFile(key, v?.file_type ?? null)) return notPdf;")).toBeLessThan(body.indexOf('verdict: "oversize"'));
     expect(body.indexOf("if (!looksLikePdf(first)) return notPdf;")).toBeLessThan(body.indexOf('verdict: "oversize"'));
+    // the route that STAMPS decides by the head bytes (its page's listing rule, isPdfFile, is not the stamping rule)
     const route = readFileSync(join(process.cwd(), "app/api/transmittal/route.ts"), "utf8");
-    expect(route).toContain("if (!isPdfFile(f.file_url, f.file_type)) return \"not_pdf\";");
+    expect(route).toContain("const isPdf = looksLikePdf(head);");
+    expect(route).toContain('let unstampedReason: "not_pdf" | "oversize" | "stamp_failed" | null = !isPdf ? "not_pdf" : source ? null : "oversize";');
   });
 });
 

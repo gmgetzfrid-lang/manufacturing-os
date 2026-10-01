@@ -10,14 +10,15 @@
 // it (TRX-15). This check runs the portal's own test at ISSUE, against the
 // file the issue will pin (the document's CURRENT version — the database
 // pins it, 20261133), so the issuer is warned before anything is sent:
-//   * PDF or not FIRST, as the portal decides it (P15 review fix — a large
-//     CAD model, zip or image was reported "oversize" before): a file whose
-//     name or recorded type says it is not a PDF (lib/verifyVerdict.ts
-//     isPdfFile, the portal page's own rule) is `not_pdf` with nothing read;
-//     otherwise its first four bytes, by a ranged read (`bytes=0-3`, never
-//     the body): not "%PDF" → `not_pdf` whatever its length (the portal's
-//     looksLikePdf(head) does the same, and releases it unmarked — not a
-//     warning);
+//   * PDF or not FIRST (P15 review fix — a large CAD model, zip or image
+//     was reported "oversize" before), and by its BYTES alone, as the
+//     download route that stamps decides it (app/api/transmittal/route.ts
+//     `isPdf = looksLikePdf(head)`; third review fix — the name / recorded
+//     type rule, isPdfFile, is the portal PAGE's listing rule, and a real
+//     PDF stored under a .dwg key or an image/* type is still stamped at
+//     download): its first four bytes, by a ranged read (`bytes=0-3`, never
+//     the body), whatever its name or type: not "%PDF" → `not_pdf` whatever
+//     its length (the route releases it unmarked — not a warning);
 //   * only then the bound, for a PDF: the version's recorded size or the
 //     object's length (from the ranged answer) over it → `oversize` (an
 //     oversize file is never read whole);
@@ -36,7 +37,6 @@ import { r2, R2_BUCKET } from "@/lib/r2";
 import { applyStampToPdfDoc } from "@/lib/stamping";
 import type { supabase } from "@/lib/supabase";
 import { PORTAL_STAMP_MAX_BYTES, STAMP_CHECK_TIME_BUDGET_MS, portalKeyAllowed, type ItemStampCheck, type TransmittalItem } from "@/lib/transmittals";
-import { isPdfFile } from "@/lib/verifyVerdict";
 
 /** The check's total time budget across a transmittal's items (defined in
  *  lib/transmittals.ts, so the issuer's browser bounds its wait by it). */
@@ -103,20 +103,21 @@ async function checkOne(sb: Reader, orgId: string, it: TransmittalItem, outOfTim
   if (docErr) return unchecked("the document could not be read");
   const current = (doc as { current_version_id?: string | null } | null)?.current_version_id ?? null;
   if (!current) return unchecked("no published file to check"); // the issue gate refuses it anyway
-  const { data: ver, error: verErr } = await sb.from("document_versions").select("id, file_url, file_type, size").eq("id", current).eq("org_id", orgId).maybeSingle();
+  const { data: ver, error: verErr } = await sb.from("document_versions").select("id, file_url, size").eq("id", current).eq("org_id", orgId).maybeSingle();
   if (verErr) return unchecked("the file's record could not be read");
-  const v = ver as { file_url?: string | null; file_type?: string | null; size?: number | null } | null;
+  const v = ver as { file_url?: string | null; size?: number | null } | null;
   const key = v?.file_url ?? null;
   if (!key) return unchecked("no stored file to check");
   if (!portalKeyAllowed(key, orgId)) return unchecked("the stored file is outside this workspace");
-  // P15 review fix: PDF or not is decided BEFORE the size, as the portal
-  // decides it — a non-PDF is never stamped, so it is never "oversize".
-  // Its name or recorded type first (the portal page's rule, nothing read).
+  // P15 review fix: PDF or not is decided BEFORE the size — a non-PDF is
+  // never stamped, so it is never "oversize". Third review fix: by the
+  // file's first bytes ALONE, as the download route that stamps decides it
+  // (`isPdf = looksLikePdf(head)`), never by its name or recorded type — a
+  // real PDF keyed .dwg or typed image/* is stamped at download, so it is
+  // checked here. A ranged read (never the body), which also gives the
+  // object's length when no size is recorded.
   const notPdf: ItemStampCheck = { ...base, verdict: "not_pdf" };
-  if (!isPdfFile(key, v?.file_type ?? null)) return notPdf;
   if (outOfTime()) return unchecked("not checked — the check ran out of time");
-  // Then its first bytes, by a ranged read — never the body — which also
-  // gives the object's length when no size is recorded.
   let total: number | null;
   try {
     const head = await r2.send(new GetObjectCommand({ Bucket: R2_BUCKET, Key: key, Range: "bytes=0-3" }));
