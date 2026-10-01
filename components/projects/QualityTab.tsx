@@ -47,7 +47,7 @@ import {
   ListChecks, Ban, Wand2, Info, CheckCircle2, RotateCcw,
 } from "lucide-react";
 import { supabase } from "@/lib/supabase";
-import type { Actor } from "@/lib/costs";
+import { listParties, type Actor, type CostParty } from "@/lib/costs";
 import {
   type Checklist, type ChecklistItem, type ChecklistKind, type AssessmentProposal, CHECKLIST_KIND_LABEL,
   listChecklists, listChecklistItems, createChecklist, applyAssessment,
@@ -164,6 +164,17 @@ export default function QualityTab({ orgId, projectId, canManage, uid, userEmail
   /** UX-16: bumped when a turnover acceptance swept the checklists, so their
    *  cards re-read the items the sweep changed. */
   const [sweepTick, setSweepTick] = useState(0);
+  /** COST-12 / MON-7: the project's contractors, for the turnover and punch
+   *  add rows — read on its own, so a failure only hides the picker (the
+   *  item is still added, unassigned) and never the lists. */
+  const [contractors, setContractors] = useState<CostParty[]>([]);
+  useEffect(() => {
+    let cancelled = false;
+    listParties(orgId, projectId)
+      .then((ps) => { if (!cancelled) setContractors(ps.filter((p) => p.status !== "inactive")); })
+      .catch((e: unknown) => { console.warn(`[QualityTab] contractors not read: ${(e as Error).message}`); });
+    return () => { cancelled = true; };
+  }, [orgId, projectId]);
 
   const refresh = useCallback(async () => {
     // The sign-off decision is re-read beside the lists (it never throws:
@@ -202,9 +213,9 @@ export default function QualityTab({ orgId, projectId, canManage, uid, userEmail
         checklists={checklists} loadError={loadErrors.checklists} onRetry={retry} onChanged={retry} />
       <TurnoverSection orgId={orgId} projectId={projectId} canManage={canSignOff} actor={actor} signoff={signoff}
         items={turnover} events={events} loadError={loadErrors.turnover} historyError={loadErrors.history} onRetry={retry}
-        jobKind={jobKind} onChanged={retry} onEvidenceSwept={() => setSweepTick((t) => t + 1)} />
+        jobKind={jobKind} onChanged={retry} onEvidenceSwept={() => setSweepTick((t) => t + 1)} contractors={contractors} />
       <PunchSection orgId={orgId} projectId={projectId} canManage={canSignOff} actor={actor}
-        items={punch} loadError={loadErrors.punch} onRetry={retry} onChanged={retry} />
+        items={punch} loadError={loadErrors.punch} onRetry={retry} onChanged={retry} contractors={contractors} />
     </div>
   );
 }
@@ -969,7 +980,7 @@ function DocPicker({ orgId, title, onPick, onSkip, onCancel }: {
   );
 }
 
-function TurnoverSection({ orgId, projectId, canManage, actor, signoff, items, events, loadError, historyError, onRetry, jobKind, onChanged, onEvidenceSwept }: {
+function TurnoverSection({ orgId, projectId, canManage, actor, signoff, items, events, loadError, historyError, onRetry, jobKind, onChanged, onEvidenceSwept, contractors = [] }: {
   orgId: string; projectId: string; canManage: boolean; actor: Actor; signoff: SignoffContext;
   items: TurnoverItem[]; events: TurnoverReviewEvent[];
   /** The items' read failed / the history's read failed (UX-10). */
@@ -978,9 +989,20 @@ function TurnoverSection({ orgId, projectId, canManage, actor, signoff, items, e
   onChanged: () => void;
   /** UX-16: an acceptance swept the checklists — the section re-reads them. */
   onEvidenceSwept: () => void;
+  /** COST-12 / MON-7: who delivers an item — its acceptance counts for the
+   *  Known Company that contractor is linked to. */
+  contractors?: CostParty[];
 }) {
   const [busy, setBusy] = useState<string | null>(null);
   const [addName, setAddName] = useState("");
+  const [addParty, setAddParty] = useState("");
+  const contractorName = useMemo(() => new Map(contractors.map((c) => [c.id, c.name])), [contractors]);
+  const addItem = async () => {
+    if (!addName.trim()) return;
+    const r = await addTurnoverItem({ orgId, projectId, name: addName, partyId: addParty || null, actor });
+    if (!r.ok) setNotice(failure(r.error ?? "Couldn't add."));
+    else { setAddName(""); onChanged(); }
+  };
   const [notice, setNotice] = useState<NoticeState | null>(null);
   const [accepting, setAccepting] = useState<TurnoverItem | null>(null);
   /** QUAL-4: an acceptance or a waiver waiting on the signing ceremony — the
@@ -1133,6 +1155,7 @@ function TurnoverSection({ orgId, projectId, canManage, actor, signoff, items, e
               <li key={it.id} className="px-4 py-2.5 text-xs">
                 <div className="flex items-center gap-2 flex-wrap">
                   <span className="font-bold text-[var(--color-text)]">{it.name}</span>
+                  {it.partyId && contractorName.get(it.partyId) && <span className="text-[10px] text-[var(--color-text-muted)]">· {contractorName.get(it.partyId)}</span>}
                   {!it.required && <span className="text-[9px] font-bold text-[var(--color-text-faint)]">optional</span>}
                   <TurnoverChip status={it.status} />
                   {canManage && busy !== it.id && (
@@ -1255,18 +1278,36 @@ function TurnoverSection({ orgId, projectId, canManage, actor, signoff, items, e
       )}
 
       {canManage && !loadError && (
-        <div className="px-4 py-2.5 border-t border-[var(--color-border)] flex items-center gap-2">
+        <div className="px-4 py-2.5 border-t border-[var(--color-border)] flex items-center gap-2 flex-wrap">
           <input value={addName} onChange={(e) => setAddName(e.target.value)}
-            onKeyDown={(e) => { if (e.key === "Enter" && addName.trim()) { void (async () => { const r = await addTurnoverItem({ orgId, projectId, name: addName, actor }); if (!r.ok) setNotice(failure(r.error ?? "Couldn't add.")); else { setAddName(""); onChanged(); } })(); } }}
+            onKeyDown={(e) => { if (e.key === "Enter") void addItem(); }}
             placeholder="Add a required item — e.g. Torque records"
-            className="h-8 flex-1 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-2 text-xs" />
-          <button onClick={() => { if (addName.trim()) void (async () => { const r = await addTurnoverItem({ orgId, projectId, name: addName, actor }); if (!r.ok) setNotice(failure(r.error ?? "Couldn't add.")); else { setAddName(""); onChanged(); } })(); }}
+            className="h-8 flex-1 min-w-40 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-2 text-xs" />
+          {contractors.length > 0 && (
+            <ContractorPicker contractors={contractors} value={addParty} onChange={setAddParty} label="Contractor who delivers it" />
+          )}
+          <button onClick={() => void addItem()}
             className="h-8 inline-flex items-center gap-1 px-3 rounded-lg bg-[var(--color-accent)] text-[var(--color-accent-fg)] text-[11px] font-black hover:bg-[var(--color-accent-hover)]">
             <Plus className="w-3 h-3" /> Add
           </button>
         </div>
       )}
     </div>
+  );
+}
+
+/** The contractor an item is assigned to (optional). Its acceptance or
+ *  close-out counts for the Known Company that contractor is linked to; an
+ *  unassigned or unlinked one counts for nobody (never as a zero). */
+function ContractorPicker({ contractors, value, onChange, label }: {
+  contractors: CostParty[]; value: string; onChange: (v: string) => void; label: string;
+}) {
+  return (
+    <select value={value} onChange={(e) => onChange(e.target.value)} aria-label={label} title={`${label} — their company's scorecard counts it`}
+      className="h-8 max-w-48 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-2 text-xs">
+      <option value="">Contractor (optional)…</option>
+      {contractors.map((c) => <option key={c.id} value={c.id}>{c.name}{c.companyId ? "" : " (unlinked)"}</option>)}
+    </select>
   );
 }
 
@@ -1285,11 +1326,16 @@ function TurnoverChip({ status }: { status: TurnoverItem["status"] }) {
 
 // ── Punch list ───────────────────────────────────────────────────────────
 
-function PunchSection({ orgId, projectId, canManage, actor, items, loadError, onRetry, onChanged }: {
+function PunchSection({ orgId, projectId, canManage, actor, items, loadError, onRetry, onChanged, contractors = [] }: {
   orgId: string; projectId: string; canManage: boolean; actor: Actor;
   items: PunchItem[]; loadError?: string; onRetry: () => void; onChanged: () => void;
+  /** COST-12 / MON-7: whose snag it is — its burn-down counts for the
+   *  Known Company that contractor is linked to. */
+  contractors?: CostParty[];
 }) {
   const [title, setTitle] = useState("");
+  const [party, setParty] = useState("");
+  const contractorName = useMemo(() => new Map(contractors.map((c) => [c.id, c.name])), [contractors]);
   const [location, setLocation] = useState("");
   const [description, setDescription] = useState("");
   const [due, setDue] = useState("");
@@ -1303,10 +1349,10 @@ function PunchSection({ orgId, projectId, canManage, actor, items, loadError, on
   const add = async () => {
     if (!title.trim()) return;
     setBusy("add"); setNotice(null);
-    const res = await addPunchItem({ orgId, projectId, title, dueDate: due || null, location: location || null, description: description || null, actor });
+    const res = await addPunchItem({ orgId, projectId, title, dueDate: due || null, location: location || null, description: description || null, partyId: party || null, actor });
     setBusy(null);
     if (!res.ok) { setNotice(failure(res.error ?? "Couldn't add.")); return; }
-    setTitle(""); setDue(""); setLocation(""); setDescription(""); onChanged();
+    setTitle(""); setDue(""); setLocation(""); setDescription(""); setParty(""); onChanged();
   };
 
   const close = async (it: PunchItem, status: "done" | "void") => {
@@ -1348,6 +1394,9 @@ function PunchSection({ orgId, projectId, canManage, actor, items, loadError, on
             className="h-8 w-48 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-2 text-xs" />
           <input type="date" value={due} onChange={(e) => setDue(e.target.value)} aria-label="Due date"
             className="h-8 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-2 text-xs [color-scheme:light] dark:[color-scheme:dark]" />
+          {contractors.length > 0 && (
+            <ContractorPicker contractors={contractors} value={party} onChange={setParty} label="Contractor responsible" />
+          )}
           <button onClick={() => void add()} disabled={busy === "add"}
             className="h-8 inline-flex items-center gap-1 px-3 rounded-lg bg-[var(--color-accent)] text-[var(--color-accent-fg)] text-[11px] font-black hover:bg-[var(--color-accent-hover)] disabled:opacity-50">
             {busy === "add" ? <Loader2 className="w-3 h-3 animate-spin" /> : <Plus className="w-3 h-3" />} Add
@@ -1373,6 +1422,7 @@ function PunchSection({ orgId, projectId, canManage, actor, items, loadError, on
                   <StatusMark spec={PUNCH_STATUS_MARKS[it.status === "done" ? "done" : it.status === "void" ? "void" : overdue ? "overdue" : "open"]} />
                   <span className={`text-[var(--color-text)] ${it.status !== "open" ? "line-through" : ""}`}>{it.title}</span>
                   {it.location && <span className="text-[10px] font-bold text-[var(--color-text-muted)]">@ {it.location}</span>}
+                  {it.partyId && contractorName.get(it.partyId) && <span className="text-[10px] text-[var(--color-text-muted)]">· {contractorName.get(it.partyId)}</span>}
                   {it.dueDate && it.status === "open" && (
                     <span className={`text-[10px] font-bold ${overdue ? "text-rose-600 dark:text-rose-400" : "text-[var(--color-text-muted)]"}`}>
                       due {new Date(it.dueDate + "T00:00:00").toLocaleDateString()}{overdue ? " — overdue" : ""}

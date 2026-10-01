@@ -12,6 +12,7 @@
 // 20261013); everyone on the project reads the same picture.
 
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import Link from "next/link";
 import {
   CircleDollarSign, Plus, X, Loader2, Check, ChevronDown, ChevronRight,
   Landmark, HardHat, Scale, TrendingUp, TrendingDown, AlertTriangle, Ban,
@@ -20,7 +21,7 @@ import { supabase } from "@/lib/supabase";
 import { userFacingReadError } from "@/lib/userFacingError";
 import {
   CostAccount, CostEntry, CostParty, CostEntryType,
-  listAccounts, listEntries, listParties, saveAccount, addEntry, voidEntry, saveParty,
+  listAccounts, listEntries, listParties, saveAccount, addEntry, voidEntry, saveParty, linkPartyToCompany,
   computeCostRollup, milestonePctIndex, fmtMoney,
 } from "@/lib/costs";
 import {
@@ -36,6 +37,8 @@ import { vizCat } from "@/components/dashboard/viz";
 import QuotesPanel from "@/components/projects/cost/QuotesPanel";
 import ChangeOrdersPanel from "@/components/projects/cost/ChangeOrdersPanel";
 import { COMPANY_KINDS, COMPANY_KIND_LABEL } from "@/lib/projectVocabulary";
+import { listCompanies, type Company } from "@/lib/companies";
+import { matchCompanyByName } from "@/lib/bidTab";
 import { appConfirm, appPrompt } from "@/components/providers/DialogProvider";
 
 const COST_TYPES = ["labor", "material", "equipment", "subcontract", "other"] as const;
@@ -758,6 +761,10 @@ function AccountForm({ orgId, projectId, actor, parties, milestones, onDone, onC
   );
 }
 
+/** The Known Companies list the contractor pickers offer: loading, read, or
+ *  unreadable (then contractors are added unlinked and say so). */
+type RegistryRead = { state: "loading" } | { state: "ready"; companies: Company[] } | { state: "failed"; error: string };
+
 function PartiesPanel({ orgId, projectId, actor, parties, canManage, onChanged }: {
   orgId: string; projectId: string; actor: { uid: string; email: string | null };
   parties: CostParty[]; canManage: boolean; onChanged: () => void;
@@ -766,32 +773,90 @@ function PartiesPanel({ orgId, projectId, actor, parties, canManage, onChanged }
   const [kind, setKind] = useState("contractor");
   const [trade, setTrade] = useState("");
   const [contract, setContract] = useState("");
+  /** The registry pick: undefined = follow the name's suggestion, "" = none. */
+  const [companyPick, setCompanyPick] = useState<string | undefined>(undefined);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [registry, setRegistry] = useState<RegistryRead>({ state: "loading" });
+  const [linking, setLinking] = useState<string | null>(null);
+  const [linkPick, setLinkPick] = useState("");
+
+  // COST-12 / MON-7: the Known Companies the contractor can be linked to. A
+  // failed read never blocks adding — the contractor is added unlinked.
+  useEffect(() => {
+    let cancelled = false;
+    listCompanies(orgId)
+      .then((companies) => { if (!cancelled) setRegistry({ state: "ready", companies }); })
+      .catch((e: unknown) => { if (!cancelled) setRegistry({ state: "failed", error: (e as Error).message }); });
+    return () => { cancelled = true; };
+  }, [orgId]);
+  const companies = registry.state === "ready" ? registry.companies : [];
+  const companyName = new Map(companies.map((c) => [c.id, c.name]));
+  const suggestion = matchCompanyByName(name.trim(), companies);
+  const chosenCompany = companyPick === undefined ? (suggestion?.id ?? "") : companyPick;
+
+  /** A link the registry objects to (the name could be a do-not-use
+   *  company) asks for the reason and goes again with it. */
+  const withOverride = async <T extends { ok: boolean; error?: string; needsOverride?: { company: string } }>(
+    run: (reason: string | null) => Promise<T>,
+  ): Promise<T | null> => {
+    const first = await run(null);
+    if (first.ok || !first.needsOverride) return first;
+    const reason = await appPrompt({
+      title: `Link despite ${first.needsOverride.company}?`,
+      message: `${first.error ?? ""} Say why this contractor is not ${first.needsOverride.company}.`,
+      placeholder: "e.g. Same trade name, different company — checked their licence number",
+    });
+    if (reason === null || !reason.trim()) return null;
+    return run(reason.trim());
+  };
 
   const add = async () => {
     if (!name.trim()) { setError("Name is required."); return; }
     setSaving(true); setError(null);
-    const res = await saveParty({
+    const res = await withOverride((reason) => saveParty({
       orgId, projectId,
       patch: {
         name: name.trim(), kind, trade: trade || null,
         contractValue: contract ? Number(contract) : null,
+        ...(chosenCompany ? { companyId: chosenCompany } : {}),
       },
+      linkOverrideReason: reason,
       actor,
-    });
+    }));
     setSaving(false);
+    if (!res) return;
     if (!res.ok) { setError(res.error ?? "Couldn't add the contractor."); return; }
-    setName(""); setTrade(""); setContract("");
+    setName(""); setTrade(""); setContract(""); setCompanyPick(undefined);
+    onChanged();
+  };
+
+  const link = async (p: CostParty) => {
+    if (!linkPick) return;
+    setSaving(true); setError(null);
+    const res = await withOverride((reason) => linkPartyToCompany({ orgId, partyId: p.id, companyId: linkPick, overrideReason: reason, actor }));
+    setSaving(false);
+    if (!res) return;
+    if (!res.ok) { setError(res.error ?? "Couldn't link the contractor."); return; }
+    setLinking(null); setLinkPick("");
     onChanged();
   };
 
   return (
     <div className="px-4 pb-4 space-y-2 border-t border-[var(--color-border)]">
+      <p className="pt-3 text-[10px] text-[var(--color-text-muted)]">
+        Link each contractor to its <Link href="/companies" className="underline">Known Companies</Link> record — that is how
+        its awards, change orders, accepted turnover and punch items reach the company&apos;s scorecard. A link is set once and never re-pointed.
+      </p>
+      {registry.state === "failed" && (
+        <p role="alert" className="text-[10px] font-bold text-amber-800 dark:text-amber-300">
+          The Known Companies list couldn&apos;t be loaded ({registry.error}) — contractors are added unlinked; link them once it loads.
+        </p>
+      )}
       {parties.length > 0 && (
-        <ul className="pt-3 grid grid-cols-1 sm:grid-cols-2 gap-2">
+        <ul className="grid grid-cols-1 sm:grid-cols-2 gap-2">
           {parties.map((p) => (
-            <li key={p.id} className="rounded-xl border border-[var(--color-border)] px-3 py-2">
+            <li key={p.id} data-party={p.id} className="rounded-xl border border-[var(--color-border)] px-3 py-2">
               <div className="flex items-center gap-2">
                 <span className="text-xs font-bold text-[var(--color-text)] truncate">{p.name}</span>
                 {p.kind && <span className="text-[9px] font-bold uppercase tracking-wider text-[var(--color-text-muted)]">{COMPANY_KIND_LABEL[p.kind as keyof typeof COMPANY_KIND_LABEL] ?? p.kind}</span>}
@@ -800,24 +865,58 @@ function PartiesPanel({ orgId, projectId, actor, parties, canManage, onChanged }
               <div className="text-[10px] text-[var(--color-text-muted)] mt-0.5">
                 {[p.trade, p.contractValue != null ? `contract ${fmtMoney(p.contractValue)}` : null].filter(Boolean).join(" · ") || "—"}
               </div>
+              <div className="text-[10px] mt-0.5" data-company-link={p.companyId ? "linked" : "unlinked"}>
+                {p.companyId ? (
+                  <Link href={`/companies/${p.companyId}`} className="font-bold text-[var(--color-accent)] hover:underline">
+                    Known company: {companyName.get(p.companyId) ?? "open the record"}
+                  </Link>
+                ) : linking === p.id ? (
+                  <span className="inline-flex flex-wrap items-center gap-1.5">
+                    <select value={linkPick} onChange={(e) => setLinkPick(e.target.value)} aria-label={`Known company for ${p.name}`}
+                      className="h-7 max-w-48 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-1.5 text-[11px]">
+                      <option value="">Pick the company…</option>
+                      {companies.map((c) => <option key={c.id} value={c.id}>{c.name}{c.status === "do_not_use" ? " — DO NOT USE" : c.status === "inactive" ? " — inactive" : ""}</option>)}
+                    </select>
+                    <button type="button" onClick={() => void link(p)} disabled={!linkPick || saving}
+                      className="h-7 px-2 rounded-lg bg-[var(--color-accent)] text-[var(--color-accent-fg)] text-[10px] font-black disabled:opacity-50">Link</button>
+                    <button type="button" onClick={() => { setLinking(null); setLinkPick(""); }} className="text-[10px] font-bold text-[var(--color-text-muted)]">Cancel</button>
+                  </span>
+                ) : (
+                  <span className="inline-flex items-center gap-1.5">
+                    <span className="italic text-[var(--color-text-faint)]">Unlinked — its record can&apos;t reach a company scorecard</span>
+                    {canManage && registry.state === "ready" && (
+                      <button type="button" onClick={() => { setLinking(p.id); setLinkPick(matchCompanyByName(p.name, companies)?.id ?? ""); }}
+                        className="font-bold text-[var(--color-accent)] hover:underline">Link to a known company</button>
+                    )}
+                  </span>
+                )}
+              </div>
             </li>
           ))}
         </ul>
       )}
       {canManage && (
         <div className="pt-1 flex items-end gap-2 flex-wrap">
-          <input value={name} onChange={(e) => setName(e.target.value)} placeholder="Company name" className="h-8 flex-1 min-w-40 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-2 text-xs" />
-          <select value={kind} onChange={(e) => setKind(e.target.value)} className="h-8 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-2 text-xs">
+          <input value={name} onChange={(e) => setName(e.target.value)} placeholder="Company name" aria-label="Contractor name" className="h-8 flex-1 min-w-40 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-2 text-xs" />
+          <select value={kind} onChange={(e) => setKind(e.target.value)} aria-label="Kind" className="h-8 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-2 text-xs">
             {COMPANY_KINDS.map((k) => <option key={k} value={k}>{COMPANY_KIND_LABEL[k]}</option>)}
           </select>
-          <input value={trade} onChange={(e) => setTrade(e.target.value)} placeholder="Trade (piping, E&I…)" className="h-8 w-36 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-2 text-xs" />
-          <input value={contract} onChange={(e) => setContract(e.target.value)} placeholder="Contract value" inputMode="decimal" className="h-8 w-32 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-2 text-xs font-mono tabular-nums" />
+          {registry.state === "ready" && (
+            <select value={chosenCompany} onChange={(e) => setCompanyPick(e.target.value)} aria-label="Known company"
+              title="The Known Companies record this contractor is — suggested from the name; pick another or none"
+              className="h-8 max-w-52 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-2 text-xs">
+              <option value="">Not in Known Companies (unlinked)</option>
+              {companies.map((c) => <option key={c.id} value={c.id}>{c.name}{c.status === "do_not_use" ? " — DO NOT USE" : c.status === "inactive" ? " — inactive" : ""}</option>)}
+            </select>
+          )}
+          <input value={trade} onChange={(e) => setTrade(e.target.value)} placeholder="Trade (piping, E&I…)" aria-label="Trade" className="h-8 w-36 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-2 text-xs" />
+          <input value={contract} onChange={(e) => setContract(e.target.value)} placeholder="Contract value" aria-label="Contract value" inputMode="decimal" className="h-8 w-32 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-2 text-xs font-mono tabular-nums" />
           <button onClick={() => void add()} disabled={saving} className="h-8 inline-flex items-center gap-1 px-3 rounded-lg bg-[var(--color-accent)] text-[var(--color-accent-fg)] text-[11px] font-black hover:bg-[var(--color-accent-hover)] disabled:opacity-50">
             {saving ? <Loader2 className="w-3 h-3 animate-spin" /> : <Plus className="w-3 h-3" />} Add
           </button>
-          {error && <span role="alert" className="text-[11px] font-bold text-rose-700 dark:text-rose-300">{error}</span>}
         </div>
       )}
+      {error && <p role="alert" className="text-[11px] font-bold text-rose-700 dark:text-rose-300">{error}</p>}
     </div>
   );
 }

@@ -20,6 +20,8 @@
 
 import { supabase } from "@/lib/supabase";
 import { userFacingError, userFacingReadError } from "@/lib/userFacingError";
+import { listBarredCompanies } from "@/lib/companies";
+import { barredCompanyFor } from "@/lib/bidTab";
 
 export type CostEntryType = "commitment" | "actual" | "adjustment";
 
@@ -162,11 +164,42 @@ export async function listParties(orgId: string, projectId: string): Promise<Cos
   return (((data ?? []) as Array<Record<string, unknown>>)).map(mapParty);
 }
 
+/** A contractor's company link may need a stated reason: returned when the
+ *  link was refused only for want of one (the caller asks and retries). */
+export interface PartyLinkOverrideNeeded { companyId: string; company: string }
+
+/**
+ * The do-not-use rule for a contractor's Known Companies link (COST-12 /
+ * MON-12). An award reads the company THROUGH the quote's party
+ * (lib/costDocs companyBehind: the quote's own link, then its party's, then
+ * the bidder's name), so a contractor whose NAME could be a do-not-use
+ * company, bound to some other company, would carry its awards past the
+ * flag. Such a link needs a reason, which is recorded (returned as
+ * overrideDoNotUse for the audit row).
+ */
+async function partyLinkCheck(orgId: string, name: string, companyId: string, overrideReason: string | null): Promise<
+  | { refused: { error: string; needsOverride?: PartyLinkOverrideNeeded } }
+  | { refused: null; overrideDoNotUse: (PartyLinkOverrideNeeded & { reason: string }) | null }
+> {
+  let barred: { id: string; name: string } | null;
+  try { barred = barredCompanyFor(name, null, await listBarredCompanies(orgId)); }
+  catch (e) { return { refused: { error: `Couldn't check the company registry (${(e as Error).message}) — nothing was linked.` } }; }
+  if (!barred || barred.id === companyId) return { refused: null, overrideDoNotUse: null };
+  if (overrideReason) return { refused: null, overrideDoNotUse: { companyId: barred.id, company: barred.name, reason: overrideReason } };
+  return { refused: {
+    error: `"${name}" could be ${barred.name}, flagged DO NOT USE in the registry. Linking it to another company needs a reason, which goes on the record.`,
+    needsOverride: { companyId: barred.id, company: barred.name },
+  } };
+}
+
 export async function saveParty(input: {
   orgId: string; projectId: string; id?: string | null;
   patch: Partial<Pick<CostParty, "name" | "kind" | "trade" | "defaultRate" | "contractValue" | "contactName" | "contactEmail" | "status" | "companyId">>;
+  /** A new contractor linked to a company although its name could be a
+   *  do-not-use one: the reason, recorded on the audit row. */
+  linkOverrideReason?: string | null;
   actor: Actor;
-}): Promise<{ ok: boolean; error?: string }> {
+}): Promise<{ ok: boolean; error?: string; needsOverride?: PartyLinkOverrideNeeded }> {
   const row: Record<string, unknown> = {};
   if (input.patch.name !== undefined) row.name = input.patch.name?.trim();
   if (input.patch.kind !== undefined) row.kind = input.patch.kind || null;
@@ -178,6 +211,10 @@ export async function saveParty(input: {
   if (input.patch.status !== undefined) row.status = input.patch.status;
   if (input.patch.companyId !== undefined) row.company_id = input.patch.companyId || null;
   if (input.id) {
+    // An existing contractor's link is set only by linkPartyToCompany, and
+    // only while it has none: re-pointing a link would move the do-not-use
+    // flag an award reads through it (COST-12).
+    if (input.patch.companyId !== undefined) return { ok: false, error: "A contractor's company link is set with “Link to a known company” — nothing was changed." };
     const { data: hit, error } = await supabase.from("project_parties").update(row).eq("id", input.id).select("id");
     if (error) return { ok: false, error: userFacingError(error, { context: "saveParty" }) };
     if (!hit || hit.length === 0) return { ok: false, error: NO_ROW_MATCHED };
@@ -185,11 +222,53 @@ export async function saveParty(input: {
     return { ok: true };
   }
   if (!row.name) return { ok: false, error: "Contractor name is required." };
+  let overrideDoNotUse: (PartyLinkOverrideNeeded & { reason: string }) | null = null;
+  if (row.company_id) {
+    const chk = await partyLinkCheck(input.orgId, String(row.name), String(row.company_id), input.linkOverrideReason?.trim() || null);
+    if (chk.refused) return { ok: false, error: chk.refused.error, needsOverride: chk.refused.needsOverride };
+    overrideDoNotUse = chk.overrideDoNotUse;
+  }
   const { data, error } = await supabase.from("project_parties")
     .insert({ org_id: input.orgId, project_id: input.projectId, created_by: input.actor.uid, ...row })
     .select("id").single();
   if (error || !data) return { ok: false, error: error ? userFacingError(error, { context: "saveParty" }) : "Couldn't add the contractor." };
-  await audit("COST_PARTY_CREATED", input.orgId, String(data.id), input.actor, { name: row.name });
+  await audit("COST_PARTY_CREATED", input.orgId, String(data.id), input.actor, {
+    name: row.name,
+    ...(row.company_id ? { companyId: row.company_id } : {}),
+    ...(overrideDoNotUse ? { overrideDoNotUse } : {}),
+  });
+  return { ok: true };
+}
+
+/**
+ * COST-12 / MON-7: bind a contractor that has NO company link yet to its
+ * Known Companies record, so its awards, change orders, accepted turnover
+ * and punch reach that company's scorecard. The update's own filter is
+ * `company_id IS NULL` — a concurrent link is never overwritten and an
+ * existing link is never re-pointed (see partyLinkCheck). Audited as
+ * COST_PARTY_LINKED, with the do-not-use reason when one was needed.
+ */
+export async function linkPartyToCompany(input: {
+  orgId: string; partyId: string; companyId: string;
+  overrideReason?: string | null;
+  actor: Actor;
+}): Promise<{ ok: boolean; error?: string; needsOverride?: PartyLinkOverrideNeeded }> {
+  const { data: party, error: readErr } = await supabase.from("project_parties").select("id, name, company_id")
+    .eq("id", input.partyId).eq("org_id", input.orgId).maybeSingle();
+  if (readErr) return { ok: false, error: userFacingError(readErr, { context: "linkPartyToCompany" }) };
+  const p = party as { id: string; name: string | null; company_id: string | null } | null;
+  if (!p) return { ok: false, error: "That contractor wasn't found — it may have been removed. Refresh and try again." };
+  if (p.company_id) return { ok: false, error: "This contractor is already linked to a company — refresh to see it. A link is never re-pointed." };
+  const chk = await partyLinkCheck(input.orgId, String(p.name ?? ""), input.companyId, input.overrideReason?.trim() || null);
+  if (chk.refused) return { ok: false, error: chk.refused.error, needsOverride: chk.refused.needsOverride };
+  const { data: hit, error } = await supabase.from("project_parties").update({ company_id: input.companyId })
+    .eq("id", input.partyId).eq("org_id", input.orgId).is("company_id", null).select("id");
+  if (error) return { ok: false, error: userFacingError(error, { context: "linkPartyToCompany" }) };
+  if (!hit || hit.length === 0) return { ok: false, error: "This contractor was linked (or removed) by someone else just now — refresh to see it." };
+  await audit("COST_PARTY_LINKED", input.orgId, input.partyId, input.actor, {
+    companyId: input.companyId, party: p.name,
+    ...(chk.overrideDoNotUse ? { overrideDoNotUse: chk.overrideDoNotUse } : {}),
+  });
   return { ok: true };
 }
 
