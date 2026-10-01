@@ -10,12 +10,14 @@
 // is good. A verdict this module does not recognise (an older or newer API
 // build) never falls through to green.
 
+import { isRecognisedStatus } from "@/lib/verifyVerdict";
+
 // ─── /verify/[docId] — one printed sheet ─────────────────────────────────
 
 export type DocVerdict =
   | "current" | "not_yet_effective" | "held"
   | "superseded" | "void" | "archived" | "retired" | "draft" | "not_issued"
-  | "superseded_version" | "unverifiable";
+  | "superseded_version" | "unverifiable" | "no_current_revision";
 
 export interface DocVerifyResult {
   docNumber: string | null;
@@ -56,6 +58,7 @@ export function formatEffectiveDay(day: string | null): string | null {
 
 const STOP_ADVICE = "Get the current revision from Document Control before performing any work from this drawing. Mark this print “SUPERSEDED” or destroy it.";
 const NOT_ISSUED_ADVICE = "This is not an approved revision. Get the issued revision from Document Control before performing any work.";
+const UNCONFIRMED_ADVICE = "Check the revision with Document Control before performing any work from this print.";
 
 /** Map /api/verify's verdict to its full-screen presentation. Falls back to
  *  the legacy isCurrent / notYetEffective booleans when an older API build
@@ -96,12 +99,24 @@ export function presentDocVerdict(r: DocVerifyResult): VerdictView {
       return { bg: "bg-red-600", icon: "x", ok: false, headline: "DRAFT — NOT ISSUED", advice: NOT_ISSUED_ADVICE,
         blurb: "This is an unissued draft, not a controlled revision. Do not use for construction." };
     case "not_issued":
+      // A status the vocabulary does not know ("IFC", a free value — VFY-20)
+      // is not in force, but the scan cannot say it is "not approved": it
+      // says it does not recognise the status. Still red, still no work.
+      if (!isRecognisedStatus(r.docStatus)) {
+        return { bg: "bg-red-600", icon: "q", ok: false, headline: "STATUS NOT RECOGNISED",
+          advice: "Do not perform any work from this print until Document Control confirms it is an issued, current revision.",
+          blurb: `This document's status${status} is not one the system recognises as issued, so this scan cannot confirm the print. Check with Document Control.` };
+      }
       return { bg: "bg-red-600", icon: "x", ok: false, headline: "NOT ISSUED — DO NOT USE", advice: NOT_ISSUED_ADVICE,
         blurb: `This document is not an issued, controlled revision${status}.` };
     case "unverifiable":
-      return { bg: "bg-slate-700", icon: "q", ok: false, headline: "CAN'T CONFIRM THIS REVISION",
-        advice: "Check the revision with Document Control before performing any work from this print.",
+      return { bg: "bg-slate-700", icon: "q", ok: false, headline: "CAN'T CONFIRM THIS REVISION", advice: UNCONFIRMED_ADVICE,
         blurb: "This code does not say which revision was printed, so it cannot confirm the paper is current. Do not assume it is." };
+    case "no_current_revision":
+      // The code DID name the printed revision; the document has no current
+      // one on record to compare it with.
+      return { bg: "bg-slate-700", icon: "q", ok: false, headline: "CAN'T CONFIRM THIS REVISION", advice: UNCONFIRMED_ADVICE,
+        blurb: "This document has no current revision on record, so the system cannot confirm this print is current. Do not assume it is — check with Document Control." };
     case "superseded_version":
     default:
       return { bg: "bg-red-600", icon: "x", ok: false, headline: "DO NOT USE", advice: STOP_ADVICE,
@@ -132,11 +147,13 @@ export interface PackSheetRow {
 
 /** Why a sheet of the package that is not in this pack cannot be printed
  *  NOW — the same refusals the print gate applies (document-control PKG-4,
- *  lib/docPack.ts filterPackDocs): not issued, withdrawn, under a hold (or a
- *  hold state that could not be read), no longer readable, no current file.
- *  Present tense on purpose: the route knows what is true of the sheet now,
- *  not what the print gate saw — a re-print would leave it out too. */
-export type NotPrintableReason = "not_issued" | "withdrawn" | "on_hold" | "hold_unknown" | "unavailable" | "no_file";
+ *  lib/docPack.ts filterPackDocs, then buildAndDownloadDocPack): not issued,
+ *  withdrawn, under a hold (or a hold state that could not be read), no
+ *  longer readable, a current revision with no file on record, a file that
+ *  is not a PDF (a DWG, a spreadsheet, an image — the builder can only stamp
+ *  a PDF). Present tense on purpose: the route knows what is true of the
+ *  sheet now, not what the print gate saw — a re-print would leave it out too. */
+export type NotPrintableReason = "not_issued" | "withdrawn" | "on_hold" | "hold_unknown" | "unavailable" | "no_file" | "not_pdf";
 
 const NOT_PRINTABLE_TEXT: Record<NotPrintableReason, string> = {
   not_issued: "not issued",
@@ -145,6 +162,7 @@ const NOT_PRINTABLE_TEXT: Record<NotPrintableReason, string> = {
   hold_unknown: "hold status unknown",
   unavailable: "no longer available",
   no_file: "no current file",
+  not_pdf: "not a printable PDF",
 };
 
 /** The words for one not-printable reason (an unknown one reads "cannot be printed"). */
@@ -226,14 +244,15 @@ export function presentPackVerdict(r: PackVerifyResult): VerdictView {
     }
     case "incomplete": {
       // Every printed sheet is current; the package also holds sheets that
-      // cannot be printed now (not issued, withdrawn, held …). A re-print
-      // would leave them out too, so this is not "stale" — but it is not
-      // green either: part of the package's scope is not in the crew's hands.
+      // cannot be printed now (not issued, withdrawn, held, no file, not a
+      // PDF …). A re-print would leave them out too, so this is not "stale"
+      // — but it is not green either: part of the package's scope is not in
+      // the crew's hands.
       const left = r.notPrintable ?? [];
       const k = left.length;
       const why = [...new Set(left.map((s) => notPrintableText(s.reason)))];
       return { bg: "bg-amber-500", icon: "q", ok: false, headline: "PACK INCOMPLETE",
-        advice: "Work only from the sheets in this pack. Do not work to the sheets listed as not in it until Document Control issues or releases them — a re-printed pack includes them once they can be printed.",
+        advice: "Work only from the sheets in this pack. Do not do any work the sheets listed as not in it cover until Document Control supplies them — they cannot be printed into a pack now; a re-printed pack includes them once they can be.",
         blurb: `Every sheet in this pack is current, but ${k > 0 ? sheets(k) : "a sheet"} in the package ${k === 1 || k === 0 ? "is" : "are"} not in it and cannot be printed now${why.length ? ` (${why.join(", ")})` : ""} — listed below.` };
     }
     case "closed":

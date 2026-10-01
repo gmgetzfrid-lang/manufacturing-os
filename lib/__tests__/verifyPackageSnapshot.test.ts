@@ -10,14 +10,17 @@
 // package in the pack. A package sheet missing from the paper that could be
 // printed now makes the pack red ("in the package but not in this pack" —
 // never "added since printing": the snapshot cannot prove that, VFY-19); one
-// that cannot be printed now (the PKG-4 refusals) makes an otherwise current
-// pack amber "incomplete", never stale. A legacy QR (no print id) is never green.
+// that cannot be printed now (the print gate's refusals: not issued,
+// withdrawn, held, no current file, a file that is not a PDF) makes an
+// otherwise current pack amber "incomplete", never stale. A legacy QR (no
+// print id) is never green.
 
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { NextRequest } from "next/server";
 import { presentPackVerdict, type PackVerifyResult } from "@/lib/verifyPresent";
+import { isPdfFile } from "@/lib/verifyVerdict";
 
 const PKG = "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa";
 const PRINT = "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb";
@@ -35,6 +38,10 @@ const state = vi.hoisted(() => ({
   errors: {} as Record<string, boolean>,
   /** The Postgres error code a failing table's read carries (e.g. 42703). */
   errorCodes: {} as Record<string, string>,
+  /** A read that fails for ONE select only, keyed "table|columns"; the value
+   *  is the error code it carries ("" for none). */
+  selectErrors: {} as Record<string, string>,
+  selects: [] as Array<{ table: string; cols: string }>,
   inserts: [] as Array<{ table: string; row: Record<string, unknown> }>,
 }));
 
@@ -42,6 +49,7 @@ function chain(table: string) {
   const eqs: Record<string, unknown> = {};
   const ins: Record<string, unknown[]> = {};
   let head = false;
+  let cols = "";
   const rowsFor = (): unknown[] => {
     const src =
       table === "work_package_documents" ? state.liveMembers
@@ -59,13 +67,23 @@ function chain(table: string) {
     get(_t, p: string) {
       if (p === "then") {
         return (resolve: (v: unknown) => void) => {
+          const key = `${table}|${cols}`;
+          if (key in state.selectErrors) return resolve({ data: null, error: { message: `${key} read failed`, code: state.selectErrors[key] || undefined } });
           if (state.errors[table]) return resolve({ data: null, error: { message: `${table} read failed`, code: state.errorCodes[table] } });
           if (head) return resolve({ data: null, error: null, count: 0 });
-          resolve({ data: rowsFor(), error: null });
+          // document_versions answers with exactly the columns selected, so a
+          // column-less retry cannot see a column it did not ask for
+          const rows = rowsFor();
+          const pick = table === "document_versions" && /^[\w, ]+$/.test(cols) ? cols.split(",").map((x) => x.trim()) : null;
+          resolve({ data: pick ? rows.map((r) => Object.fromEntries(pick.filter((k) => k in (r as object)).map((k) => [k, (r as Record<string, unknown>)[k]]))) : rows, error: null });
         };
       }
       return (...args: unknown[]) => {
-        if (p === "select" && (args[1] as { head?: boolean } | undefined)?.head) head = true;
+        if (p === "select") {
+          cols = String(args[0]);
+          state.selects.push({ table, cols });
+          if ((args[1] as { head?: boolean } | undefined)?.head) head = true;
+        }
         if (p === "insert") state.inserts.push({ table, row: args[0] as Record<string, unknown> });
         if (p === "eq") eqs[args[0] as string] = args[1];
         if (p === "in") ins[args[0] as string] = args[1] as unknown[];
@@ -102,6 +120,8 @@ beforeEach(() => {
   state.versions = [];
   state.errors = {};
   state.errorCodes = {};
+  state.selectErrors = {};
+  state.selects = [];
   state.inserts = [];
 });
 
@@ -172,6 +192,7 @@ describe("VFY-2 — the printed manifest, not the live package", () => {
     state.print = printAt([sheetV2]);
     state.liveMembers.push({ document_id: DOC2, pinned_version_id: "w1", pinned_rev_label: "1" });
     state.docs.push(docRow({ id: DOC2, document_number: "P-102", current_version_id: "w1", rev: "1" }));
+    state.versions = [{ id: "w1", file_url: "org/lib/P-102__rev1__1.pdf", file_type: "application/pdf" }];
     const r = await verify(true);
     expect(r.notInPack).toEqual([{ label: "P-102" }]);
     expect(r.notPrintable).toEqual([]);
@@ -258,6 +279,7 @@ describe("VFY-2 review fix — a package sheet the print gate could not print is
     state.print = printAt([sheetV2]);
     member(DOC2, { status: "Draft" });
     member(DOC3);
+    state.versions = [{ id: "w1", file_url: "org/lib/P-103__rev1__1.pdf", file_type: "application/pdf" }];
     const r = await verify(true);
     expect(r.verdict).toBe("stale");
     expect(r.notInPack).toEqual([{ label: "P-103" }]);
@@ -301,6 +323,132 @@ describe("VFY-2 review fix — a package sheet the print gate could not print is
   });
 });
 
+describe("VFY-2 third review fix — a sheet the print gate can NEVER print (no file on its current revision, not a PDF) is amber, never red", () => {
+  // P-101 (Issued PDF) is printed; P-102 is Issued, hold-free, in the package,
+  // and its current revision is the version below. The print gate
+  // (lib/docPack.ts buildAndDownloadDocPack) skips a revision with no file
+  // ("no current file") and a file pdf-lib cannot load — every re-print, so
+  // the snapshot never carries it.
+  const W2 = "w2";
+  const withMember = (version: Record<string, unknown> | null) => {
+    state.print = printAt([sheetV2]);
+    state.liveMembers.push({ document_id: DOC2, pinned_version_id: W2, pinned_rev_label: "1" });
+    state.docs.push(docRow({ id: DOC2, document_number: "P-102", current_version_id: W2, rev: "1" }));
+    state.versions = version ? [{ id: W2, ...version }] : [];
+  };
+  const view = (r: Record<string, unknown>) => presentPackVerdict(r as unknown as PackVerifyResult);
+  const allText = (r: Record<string, unknown>) => { const v = view(r); return `${v.headline} ${v.blurb} ${v.advice ?? ""}`; };
+
+  it("the review's scenario: P-102's current revision is a .dwg → notPrintable not_pdf, AMBER 'incomplete' — not red 'PACK IS MISSING SHEETS'", async () => {
+    withMember({ file_url: "org/lib/P-102__rev1__1700000000000.dwg", file_type: "application/octet-stream" });
+    const r = await verify(true);
+    expect(r.notPrintable).toEqual([{ label: "P-102", reason: "not_pdf" }]);
+    expect(r.notInPack).toEqual([]);
+    expect(r.verdict).toBe("incomplete");
+    expect(r.staleCount).toBe(0);
+    expect(states(r)).toEqual(["fresh"]);
+    const v = view(r);
+    expect(v.bg).toBe("bg-amber-500");
+    expect(v.headline).toBe("PACK INCOMPLETE");
+    expect(v.blurb).toContain("1 sheet in the package is not in it and cannot be printed now (not a printable PDF)");
+    expect(allText(r)).not.toMatch(/MISSING SHEETS|re-printed pack —|stale|added/i);
+  });
+  it.each([
+    ["a spreadsheet", "org/lib/P-102__rev1__1.xlsx", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"],
+    ["a Word file", "org/lib/P-102__rev1__1.docx", "application/vnd.openxmlformats-officedocument.wordprocessingml.document"],
+    ["an image", "org/lib/P-102__rev1__1.png", "image/png"],
+    ["a DWG with a CAD MIME type", "org/lib/P-102__rev1__1.dwg", "image/vnd.dwg"],
+    ["a non-PDF with no type recorded", "org/lib/P-102__rev1__1.dxf", null],
+  ])("%s → not_pdf, incomplete", async (_what, file_url, file_type) => {
+    withMember({ file_url, file_type });
+    const r = await verify(true);
+    expect(r.notPrintable).toEqual([{ label: "P-102", reason: "not_pdf" }]);
+    expect(r.verdict).toBe("incomplete");
+  });
+  it("a current revision with NO file on record (file_url null), or no version row at all → no_file, incomplete", async () => {
+    withMember({ file_url: null, file_type: "application/pdf" });
+    let r = await verify(true);
+    expect(r.notPrintable).toEqual([{ label: "P-102", reason: "no_file" }]);
+    expect(r.verdict).toBe("incomplete");
+    expect(allText(r)).toContain("(no current file)");
+    withMember(null);
+    r = await verify(true);
+    expect(r.notPrintable).toEqual([{ label: "P-102", reason: "no_file" }]);
+    expect(r.verdict).toBe("incomplete");
+  });
+  it("a PDF member a re-print WOULD carry stays notInPack and the pack red — by extension, by MIME type, or behind a signed URL's query string", async () => {
+    for (const version of [
+      { file_url: "org/lib/P-102__rev1__1.PDF", file_type: "application/octet-stream" },
+      { file_url: "org/lib/P-102-no-extension", file_type: "application/pdf" },
+      { file_url: "https://x.supabase.co/storage/v1/object/sign/docs/P-102.pdf?token=abc", file_type: null },
+    ]) {
+      state.liveMembers = [{ document_id: DOC, pinned_version_id: "v2", pinned_rev_label: "4" }];
+      state.docs = [docRow()];
+      withMember(version);
+      const r = await verify(true);
+      expect(r.notInPack, version.file_url).toEqual([{ label: "P-102" }]);
+      expect(r.notPrintable).toEqual([]);
+      expect(r.verdict).toBe("stale");
+      expect(view(r).headline).toBe("PACK IS MISSING SHEETS");
+      expect(view(r).bg).toBe("bg-red-600");
+    }
+  });
+  it("a re-print that skips the non-PDF again still reads amber — the pack is never stuck on red", async () => {
+    withMember({ file_url: "org/lib/P-102.dwg", file_type: null });
+    expect((await verify(true)).verdict).toBe("incomplete");
+    // a fresh print (new id, same skip) — same answer
+    state.print = { ...printAt([sheetV2]), printed_at: "2026-09-30T00:00:00Z" };
+    expect((await verify(true)).verdict).toBe("incomplete");
+  });
+  it("the file is read once, only for the sheets that pass every other refusal", async () => {
+    state.print = printAt([sheetV2]);
+    state.liveMembers.push({ document_id: DOC2, pinned_version_id: W2, pinned_rev_label: "1" });
+    state.docs.push(docRow({ id: DOC2, document_number: "P-102", current_version_id: W2, rev: "1", status: "Draft" }));
+    await verify(true);
+    // a Draft member is refused before its file matters — no file read
+    expect(state.selects.filter((x) => x.table === "document_versions" && x.cols.includes("file_url"))).toEqual([]);
+    withMember({ file_url: "org/lib/P-102.pdf", file_type: "application/pdf" });
+    state.docs = [docRow(), docRow({ id: DOC2, document_number: "P-102", current_version_id: W2, rev: "1" })];
+    state.selects = [];
+    await verify(true);
+    expect(state.selects.filter((x) => x.table === "document_versions" && x.cols.includes("file_url"))).toEqual([
+      { table: "document_versions", cols: "id, file_url, file_type" },
+    ]);
+  });
+  it("a file read that ERRORS leaves the split unknown — 503 with an 'error' scan row, never a guess at red or amber", async () => {
+    withMember({ file_url: "org/lib/P-102.dwg", file_type: null });
+    state.selectErrors["document_versions|id, file_url, file_type"] = ""; // a transient failure, no code
+    const res = await call(true);
+    expect(res.status).toBe(503);
+    expect(res.headers.get("cache-control")).toBe("no-store");
+    expect(state.inserts.filter((i) => i.table === "verify_scans").map((i) => i.row.verdict)).toEqual(["error"]);
+  });
+  it("only a missing column (42703) on the file read retries with the path alone — and the retry is checked", async () => {
+    withMember({ file_url: "org/lib/P-102.dwg", file_type: "application/pdf" });
+    state.selectErrors["document_versions|id, file_url, file_type"] = "42703";
+    const r = await verify(true);
+    // file_type unread → judged by the path: a .dwg is not a PDF
+    expect(r.notPrintable).toEqual([{ label: "P-102", reason: "not_pdf" }]);
+    expect(state.selects.filter((x) => x.table === "document_versions" && x.cols.includes("file_url")).map((x) => x.cols)).toEqual([
+      "id, file_url, file_type", "id, file_url",
+    ]);
+    state.selectErrors["document_versions|id, file_url"] = "";
+    expect((await call(true)).status).toBe(503);
+  });
+  it("isPdfFile — the print gate's file rule (lib/knowledgeSourceSync.ts isPdf, plus a query string on an http URL)", () => {
+    expect(isPdfFile("a/b/c.pdf", null)).toBe(true);
+    expect(isPdfFile("a/b/C.PDF", "application/octet-stream")).toBe(true);
+    expect(isPdfFile("a/b/c", "application/pdf")).toBe(true);
+    expect(isPdfFile("https://h/x/c.pdf?token=1#p=2", null)).toBe(true);
+    expect(isPdfFile("a/b/P&ID #3__revA__1.pdf", null)).toBe(true); // a '#' in a storage path is not a fragment
+    expect(isPdfFile("a/b/c.dwg", null)).toBe(false);
+    expect(isPdfFile("a/b/c.pdf.dwg", "application/octet-stream")).toBe(false);
+    // a doubtful file leans to "a PDF" — a sheet a re-print would carry (the red side), never amber
+    expect(isPdfFile("https://h/x/c.dwg?f=.pdf", null)).toBe(true);
+    expect(isPdfFile(null, null)).toBe(false);
+  });
+});
+
 describe("VFY-1 / PKG-8 — the shared allow-list decides every sheet", () => {
   it.each([["Void", "void"], ["Superseded", "superseded"], ["Archived", "archived"], ["Draft", "draft"], [null, "not_issued"], ["In Review", "not_issued"]])(
     "status %j at the printed (current) version → state %s, fresh false, never green", async (status, expected) => {
@@ -341,7 +489,7 @@ describe("VFY-1 / PKG-8 — the shared allow-list decides every sheet", () => {
   });
   it("the route imports the shared decision and never spells a status list", () => {
     const src = readFileSync(join(process.cwd(), "app/api/verify-package/route.ts"), "utf8");
-    expect(src).toContain('import { documentStanding, isUndefinedColumnError } from "@/lib/verifyVerdict";');
+    expect(src).toContain('import { documentStanding, isPdfFile, isUndefinedColumnError } from "@/lib/verifyVerdict";');
     expect(src).not.toMatch(/status === "Superseded"|status === "Void"|status === "Archived"/);
   });
 });

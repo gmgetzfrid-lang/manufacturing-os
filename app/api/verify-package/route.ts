@@ -22,14 +22,15 @@
 // package but not in this pack"; the snapshot does not record what the print
 // gate left out, so the route never claims it was "added since printing" —
 // VFY-19); one that cannot be printed now (not issued, withdrawn, held, no
-// file — PKG-4's refusals) is listed with why and makes an otherwise current
-// pack amber "incomplete", never stale: a re-print would leave it out too.
+// current file, a file that is not a PDF — the print gate's refusals) is
+// listed with why and makes an otherwise current pack amber "incomplete",
+// never stale: a re-print would leave it out too.
 // A cover QR with no print id cannot say which printing it is and is never
 // green (VFY-2's fail-safe default, 2026-09-17).
 
 import { NextRequest } from "next/server";
 import { createClient } from "@supabase/supabase-js";
-import { documentStanding, isUndefinedColumnError } from "@/lib/verifyVerdict";
+import { documentStanding, isPdfFile, isUndefinedColumnError } from "@/lib/verifyVerdict";
 import { effectiveStatusFor } from "@/lib/effectiveDate";
 import { publicHoldReason } from "@/lib/holds";
 import { checkVerifyRate, clientIp, verifyJson, verifyRateLimitedResponse } from "@/lib/verifyRateLimit";
@@ -54,6 +55,7 @@ interface DocRow {
 }
 interface HoldRow { document_id: string; reason: string | null }
 interface VersionDateRow { id: string; effective_date: string | null }
+interface VersionFileRow { id: string; file_url: string | null; file_type?: string | null }
 
 /** One sheet as the paper (or, for a legacy QR, the live pin) records it. */
 interface SheetSource { document_id: string; version_id: string | null; rev_label: string | null; label: string | null }
@@ -244,18 +246,23 @@ export async function GET(req: NextRequest) {
     };
   });
   // Each package sheet missing from the paper, by what is true of it NOW.
-  // Not printable now — the print gate's own refusals (lib/docPack.ts
-  // filterPackDocs: not Issued / Locked, a hold or an unreadable hold state,
-  // no current file; an unreadable document is never packed either), read
-  // the way every verify surface reads them (the shared allow-list, so an
-  // empty status is "not issued" — VFY-17; the legal hold is a hold) — means
-  // a re-print would (or should) leave it out too: listed with why, never
-  // "stale". Anything else could be printed now and is not in the folder.
+  // Not printable now — the print gate's own refusals, read the way every
+  // verify surface reads them: lib/docPack.ts filterPackDocs refuses a status
+  // outside Issued / Locked (the shared allow-list here, so an empty status
+  // is "not issued" — VFY-17) and a hold or an unreadable hold state (the
+  // legal hold is a hold); buildAndDownloadDocPack then skips a current
+  // revision with no file on record ("no current file") and a file pdf-lib
+  // cannot load — a DWG, XLSX, DOCX or image (`not_pdf`, isPdfFile); an
+  // unreadable document is never packed either. Such a sheet would be left
+  // out of a re-print too: listed with why, never "stale". What stays in
+  // notInPack is an in-force, hold-free sheet with a PDF on file — one a
+  // re-print would carry. (A fetch that failed at print, or a PDF pdf-lib
+  // could not parse, is not visible here: the snapshot does not record the
+  // builder's skips — VFY-19.)
   const notPrintable: Array<{ label: string; reason: NotPrintableReason }> = [];
   const notInPack: Array<{ label: string }> = [];
-  for (const id of offPaperIds) {
+  const offPaper = offPaperIds.map((id) => {
     const d = byId.get(id);
-    const label = labelOf(id, null);
     const standing = documentStanding(d?.status);
     let reason: NotPrintableReason | null = null;
     if (!d) reason = "unavailable";
@@ -264,6 +271,35 @@ export async function GET(req: NextRequest) {
     else if (standing === "draft" || standing === "not_issued") reason = "not_issued";
     else if (standing !== "in_force") reason = "withdrawn";
     else if (!d.current_version_id) reason = "no_file";
+    return { id, curId: d?.current_version_id ?? null, reason };
+  });
+  // The file of each remaining sheet's current revision — read once, only
+  // when one is needed. file_type is in the base schema; a database without
+  // it (42703) still reads the path alone. Any other error leaves the split
+  // unknown — 503, never a guess at red or amber.
+  const fileIds = [...new Set(offPaper.filter((o) => !o.reason && o.curId).map((o) => o.curId as string))];
+  const fileByVersion = new Map<string, VersionFileRow>();
+  if (fileIds.length) {
+    const first = await sb.from("document_versions").select("id, file_url, file_type").in("id", fileIds);
+    let fileErr = first.error;
+    let fileRows = first.data as VersionFileRow[] | null;
+    if (fileErr && isUndefinedColumnError(fileErr)) {
+      const retry = await sb.from("document_versions").select("id, file_url").in("id", fileIds);
+      fileErr = retry.error;
+      fileRows = retry.data as VersionFileRow[] | null;
+    }
+    if (fileErr) return unavailable();
+    for (const v of fileRows ?? []) fileByVersion.set(String(v.id), v);
+  }
+  for (const o of offPaper) {
+    let reason: NotPrintableReason | null = o.reason;
+    if (!reason && o.curId) {
+      const f = fileByVersion.get(o.curId);
+      // No version row, or one with no file, is the builder's "no current file".
+      if (!f?.file_url) reason = "no_file";
+      else if (!isPdfFile(f.file_url, f.file_type ?? null)) reason = "not_pdf";
+    }
+    const label = labelOf(o.id, null);
     if (reason) notPrintable.push({ label, reason });
     else notInPack.push({ label });
   }

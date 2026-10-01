@@ -39,6 +39,16 @@
 -- paste, so a second paste in the same editor session reports the counts
 -- from before THAT paste, never the first one's.
 --
+-- DEPLOY IMPACT (counts only, not changed by this paste): the PS-VERIFY code
+-- reads ONLY Issued / Locked as in force (VFY-1 / VFY-9), so field paper of a
+-- document whose status is empty, "In Review", "IFC" (offered by two editors,
+-- accepted nowhere downstream — VFY-20) or any other value outside the
+-- vocabulary — which could scan GREEN before (a current, hold-free print) —
+-- scans red from the day the code deploys, whether or not this file is pasted. The four "documents" rows
+-- count those documents (with a current revision, so a printed sheet can
+-- carry their QR), all orgs together, so the operator knows how much paper
+-- to expect calls about.
+--
 -- ⚠ APPLIED BY HAND (DEC-30). Idempotent: paste the whole file once into the
 -- Supabase SQL editor. A verify_scans table an earlier draft of this file
 -- created without printed_ref gains the column (ADD COLUMN IF NOT EXISTS). The editor shows only the LAST result set — the one
@@ -65,7 +75,20 @@ SELECT 'inventory: prune_verify_scans() already existed before this paste',
         WHERE ns.nspname = 'public' AND p.proname = 'prune_verify_scans'
 UNION ALL
 SELECT 'inventory: policies on verify_scans before this paste (must be 0 — service role only)',
-       COUNT(*)::text FROM pg_policies WHERE schemaname = 'public' AND tablename = 'verify_scans';
+       COUNT(*)::text FROM pg_policies WHERE schemaname = 'public' AND tablename = 'verify_scans'
+UNION ALL
+SELECT 'inventory (deploy impact): documents with a current revision and NO status — sheet scans read NOT ISSUED (red; could read green before)',
+       COUNT(*)::text FROM documents WHERE current_version_id IS NOT NULL AND (status IS NULL OR btrim(status) = '')
+UNION ALL
+SELECT 'inventory (deploy impact): documents with a current revision and status In Review — sheet scans read NOT ISSUED (red; could read green before)',
+       COUNT(*)::text FROM documents WHERE current_version_id IS NOT NULL AND status = 'In Review'
+UNION ALL
+SELECT 'inventory (deploy impact): documents with a current revision and status IFC — sheet scans read STATUS NOT RECOGNISED (red; could read green before; VFY-20)',
+       COUNT(*)::text FROM documents WHERE current_version_id IS NOT NULL AND status = 'IFC'
+UNION ALL
+SELECT 'inventory (deploy impact): documents with a current revision and any other status outside Issued / Locked / Draft / Superseded / Void / Archived — STATUS NOT RECOGNISED (red; could read green before)',
+       COUNT(*)::text FROM documents WHERE current_version_id IS NOT NULL AND btrim(status) <> ''
+        AND status NOT IN ('Issued', 'Locked', 'Draft', 'Superseded', 'Void', 'Archived', 'In Review', 'IFC');
 
 BEGIN;
 

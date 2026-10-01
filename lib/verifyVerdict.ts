@@ -13,6 +13,9 @@
 // and an empty / NULL status, is not in force. Retirement is still read from
 // the shared not-current set (NOT_CURRENT_STATUSES, lib/aiBoundary.ts — never
 // an inline list), so a status added to THAT set reads retired here too.
+// Beside it: whether a page can NAME what a status means (isRecognisedStatus)
+// and the pack print gate's file rule (isPdfFile), which the pack route uses
+// to tell a sheet a re-print would carry from one it never can.
 //
 // Pure: no client, no I/O — importable from a route handler and a test alike.
 
@@ -59,4 +62,43 @@ export function documentStanding(status: string | null | undefined): DocumentSta
  *    held-at rev is then unknown (null). Any other error is a 503. */
 export function isUndefinedColumnError(error: { code?: string | null } | null | undefined): boolean {
   return !!error && error.code === "42703";
+}
+
+/** Whether a scan can say what a document's status MEANS: the DocumentStatus
+ *  vocabulary (types/schema.ts — the two in-force statuses, the shared
+ *  not-current set, Draft) plus the "In Review" workflow state the editors
+ *  offer (not yet issued — VFY-9). A non-empty status outside it — "IFC",
+ *  which two editors still offer though nothing downstream accepts it
+ *  (VFY-20), or any free value — is not in force either (documentStanding
+ *  reads it `not_issued`), but the scan cannot tell what the status was
+ *  meant to say, so the page says "status not recognised — check with
+ *  Document Control" rather than asserting "not an approved revision"
+ *  (lib/verifyPresent.ts). An empty (or blank) status is recognised: it says
+ *  nothing, so it is not issued. Compared exactly, as documentStanding
+ *  compares — " Issued" is not Issued there, so it is not recognised here. */
+export function isRecognisedStatus(status: string | null | undefined): boolean {
+  const s = status ?? "";
+  if (!s.trim()) return true;
+  return IN_FORCE_STATUSES.has(s) || NOT_CURRENT_STATUSES.has(s) || s === "Draft" || s === "In Review";
+}
+
+/** Whether a version's file is one the pack print gate can print: a PDF.
+ *  lib/docPack.ts buildAndDownloadDocPack stamps every sheet through
+ *  pdf-lib's PDFDocument.load, so a DWG, XLSX, DOCX or image the package
+ *  holds is skipped at print — every time. The rule is lib/knowledgeSourceSync.ts
+ *  isPdf's (the MIME type names PDF, or the path ends .pdf), widened only so
+ *  a query string or fragment on an http(s) URL does not hide the extension:
+ *  a doubtful file leans to "a PDF" — a sheet a re-print would carry, which
+ *  /api/verify-package reports red (`notInPack`) — never to the amber
+ *  "cannot be printed now". */
+export function isPdfFile(fileUrl: string | null | undefined, fileType: string | null | undefined): boolean {
+  if ((fileType ?? "").toLowerCase().includes("pdf")) return true;
+  const raw = (fileUrl ?? "").toLowerCase();
+  if (raw.endsWith(".pdf")) return true;
+  if (!/^https?:\/\//.test(raw)) return false;
+  try {
+    return new URL(raw).pathname.endsWith(".pdf");
+  } catch {
+    return false;
+  }
 }

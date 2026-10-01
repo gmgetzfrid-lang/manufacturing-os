@@ -10,6 +10,7 @@ import {
   presentDocVerdict, presentPackVerdict, presentHoldVerdict, sheetLabel, formatEffectiveDay, notPrintableText,
   type DocVerifyResult, type PackVerifyResult, type HoldVerifyResult, type DocVerdict, type PackVerdict,
 } from "@/lib/verifyPresent";
+import { isRecognisedStatus } from "@/lib/verifyVerdict";
 
 const doc = (over: Partial<DocVerifyResult> = {}): DocVerifyResult => ({
   docNumber: "P-101", title: "P&ID", printedRev: "5", printedAt: null, currentRev: "5", currentIssuedAt: null,
@@ -19,7 +20,7 @@ const GREEN = "bg-emerald-600";
 
 describe("presentDocVerdict — /verify/[docId]", () => {
   it("green ONLY for 'current'", () => {
-    const all: DocVerdict[] = ["current", "not_yet_effective", "held", "superseded", "void", "archived", "retired", "draft", "not_issued", "superseded_version", "unverifiable"];
+    const all: DocVerdict[] = ["current", "not_yet_effective", "held", "superseded", "void", "archived", "retired", "draft", "not_issued", "superseded_version", "unverifiable", "no_current_revision"];
     for (const v of all) {
       const view = presentDocVerdict(doc({ verdict: v }));
       expect(view.bg === GREEN, v).toBe(v === "current");
@@ -38,9 +39,41 @@ describe("presentDocVerdict — /verify/[docId]", () => {
     expect(presentDocVerdict(doc({ verdict: "not_issued", docStatus: "In Review" })).blurb).toContain("(In Review)");
     expect(presentDocVerdict(doc({ verdict: "draft" })).headline).toBe("DRAFT — NOT ISSUED");
     expect(presentDocVerdict(doc({ verdict: "unverifiable" })).blurb).toMatch(/does not say which revision/);
-    for (const v of ["superseded_version", "unverifiable", "current"] as DocVerdict[]) {
+    for (const v of ["superseded_version", "unverifiable", "no_current_revision", "current"] as DocVerdict[]) {
       expect(presentDocVerdict(doc({ verdict: v, printedRev: null, currentRev: null })).blurb).not.toContain("Rev ?");
     }
+  });
+  it("no_current_revision (the code named the printed version; the document has no current one) never claims the code did not say which revision was printed", () => {
+    const named = presentDocVerdict(doc({ verdict: "no_current_revision", printedRev: "5", currentRev: null }));
+    expect(named.ok).toBe(false);
+    expect(named.bg).toBe("bg-slate-700");
+    expect(named.headline).toBe("CAN'T CONFIRM THIS REVISION");
+    expect(named.blurb).toBe("This document has no current revision on record, so the system cannot confirm this print is current. Do not assume it is — check with Document Control.");
+    expect(named.blurb).not.toMatch(/does not say which revision/);
+    // the doc-only QR keeps its own words
+    const docOnly = presentDocVerdict(doc({ verdict: "unverifiable", printedRev: null }));
+    expect(docOnly.blurb).toMatch(/does not say which revision was printed/);
+    expect(docOnly.blurb).not.toBe(named.blurb);
+    expect(named.advice).toBe(docOnly.advice);
+  });
+  it("a status the vocabulary does not know (IFC, a free value) is red but NEUTRAL — 'status not recognised', never 'not an approved revision' (VFY-20)", () => {
+    for (const docStatus of ["IFC", "Pending", "SomeFutureStatus", " Issued"]) {
+      const v = presentDocVerdict(doc({ verdict: "not_issued", docStatus }));
+      expect(v.ok, docStatus).toBe(false);
+      expect(v.bg, docStatus).toBe("bg-red-600");
+      expect(v.headline, docStatus).toBe("STATUS NOT RECOGNISED");
+      expect(v.blurb, docStatus).toContain(`(${docStatus})`);
+      expect(v.blurb, docStatus).toContain("Check with Document Control");
+      expect(`${v.blurb} ${v.advice}`, docStatus).not.toMatch(/not an approved revision|not an issued, controlled revision/);
+    }
+    // a recognised not-issued status keeps VFY-9's wording
+    for (const docStatus of ["In Review", null, ""]) {
+      const v = presentDocVerdict(doc({ verdict: "not_issued", docStatus }));
+      expect(v.headline, String(docStatus)).toBe("NOT ISSUED — DO NOT USE");
+      expect(v.advice, String(docStatus)).toMatch(/This is not an approved revision/);
+    }
+    expect(["Issued", "Locked", "Draft", "In Review", "Superseded", "Void", "Archived", null, "", "  "].every(isRecognisedStatus)).toBe(true);
+    expect(["IFC", "Pending", " Issued", "issued"].some(isRecognisedStatus)).toBe(false);
   });
   it("held names the hold categories and the count", () => {
     const view = presentDocVerdict(doc({ verdict: "held", activeHolds: 2, holdReasons: ["Client Review", "On hold"] }));
@@ -116,13 +149,16 @@ describe("presentPackVerdict — /verify-package/[packageId]", () => {
     expect(view.headline).toBe("PACK INCOMPLETE");
     expect(view.blurb).toBe("Every sheet in this pack is current, but 3 sheets in the package are not in it and cannot be printed now (not issued, on hold) — listed below.");
     expect(view.advice).toMatch(/Work only from the sheets in this pack/);
+    // the advice fits every reason — a DWG or a file-less sheet is not waiting to be "issued or released"
+    expect(view.advice).toContain("until Document Control supplies them");
+    expect(view.advice).not.toMatch(/issues or releases/);
     expect(`${view.headline} ${view.blurb} ${view.advice}`).not.toMatch(/added|stale/i);
     // a payload with no list still never prints "0 sheets"
     expect(presentPackVerdict(pack({ verdict: "incomplete" })).blurb).not.toMatch(/\b0 sheet/);
   });
   it("notPrintableText names every reason; an unknown one reads 'cannot be printed'", () => {
-    expect(["not_issued", "withdrawn", "on_hold", "hold_unknown", "unavailable", "no_file"].map(notPrintableText)).toEqual([
-      "not issued", "withdrawn", "on hold", "hold status unknown", "no longer available", "no current file",
+    expect(["not_issued", "withdrawn", "on_hold", "hold_unknown", "unavailable", "no_file", "not_pdf"].map(notPrintableText)).toEqual([
+      "not issued", "withdrawn", "on hold", "hold status unknown", "no longer available", "no current file", "not a printable PDF",
     ]);
     expect(notPrintableText("brand_new")).toBe("cannot be printed");
     expect(notPrintableText(null)).toBe("cannot be printed");

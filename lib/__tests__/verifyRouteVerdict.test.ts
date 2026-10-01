@@ -226,9 +226,15 @@ describe("VFY-3 — a code with no ?v= never reads green", () => {
     state.holdRows = [{ reason: "Client Review" }];
     expect((await verify({ v: null })).verdict).toBe("held");
   });
-  it("a document with no current revision cannot be confirmed either", async () => {
+  it("a document with no current revision cannot be confirmed either — in its own verdict when the code DID name the printed version", async () => {
     state.doc = docWith("Issued", { current_version_id: null });
-    expect((await verify()).verdict).toBe("unverifiable");
+    const r = await verify();
+    expect(r.verdict).toBe("no_current_revision");
+    expect(r.isCurrent).toBe(false);
+    expect(r.printedRev).toBe("5"); // the code named it, and the page shows it
+    // a doc-only QR on the same document is still "the code does not say"
+    expect((await verify({ v: null })).verdict).toBe("unverifiable");
+    expect(state.inserts.filter((i) => i.table === "verify_scans").map((i) => i.row.verdict)).toEqual(["no_current_revision", "unverifiable"]);
   });
 });
 

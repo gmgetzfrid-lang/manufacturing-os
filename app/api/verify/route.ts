@@ -190,9 +190,13 @@ export async function GET(req: NextRequest) {
   else if (standing === "retired") verdict = "retired";
   else if (standing === "draft") verdict = "draft";
   else if (standing === "not_issued") verdict = "not_issued";
-  // VFY-3: a QR with no ?v= (or a document with no current revision) cannot
-  // say WHICH revision the paper is — "cannot confirm", never green.
-  else if (!versionId || !d.current_version_id) verdict = "unverifiable";
+  // VFY-3: a QR with no ?v= cannot say WHICH revision the paper is —
+  // "cannot confirm", never green.
+  else if (!versionId) verdict = "unverifiable";
+  // The QR names the printed version, but the document has no current
+  // revision on record to compare it with — "cannot confirm" too, in its own
+  // words: the code DID say which revision was printed.
+  else if (!d.current_version_id) verdict = "no_current_revision";
   else if (versionId !== d.current_version_id) verdict = "superseded_version";
   // VFY-4 / REV-9: a published rev with a FUTURE effective date is the
   // latest issue but not yet in force — decided in the facility's calendar

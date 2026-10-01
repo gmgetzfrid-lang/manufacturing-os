@@ -131,6 +131,24 @@ describe("VFY-12 — migration 20261134 (one-paste protocol, service role only)"
     // and the inventory says whether printed_ref was already there (aggregate count)
     expect(code.slice(create, code.indexOf("\nBEGIN;"))).toContain("'inventory: verify_scans.printed_ref already existed before this paste'");
   });
+  it("the deploy-impact inventory counts the documents whose field paper turns red under the allow-list (no status, In Review, IFC, any other) — counts only, before BEGIN", () => {
+    const inv = code.slice(code.indexOf("CREATE TEMP TABLE _ps_f34_before AS"), code.indexOf("\nBEGIN;"));
+    for (const label of [
+      "'inventory (deploy impact): documents with a current revision and NO status",
+      "'inventory (deploy impact): documents with a current revision and status In Review",
+      "'inventory (deploy impact): documents with a current revision and status IFC",
+      "'inventory (deploy impact): documents with a current revision and any other status outside Issued / Locked / Draft / Superseded / Void / Archived",
+    ]) expect(inv).toContain(label);
+    // every documents row is a COUNT — never a status value, a title or an id
+    const docRows = inv.split("UNION ALL").filter((x) => /FROM documents/.test(x));
+    expect(docRows).toHaveLength(4);
+    for (const r of docRows) {
+      expect(r).toMatch(/COUNT\(\*\)::text FROM documents WHERE current_version_id IS NOT NULL AND /);
+      expect(r).not.toMatch(/GROUP BY|string_agg|array_agg|SELECT status|title|document_number/i);
+    }
+    // the four buckets do not overlap: "any other" excludes the named ones
+    expect(inv).toContain("AND status NOT IN ('Issued', 'Locked', 'Draft', 'Superseded', 'Void', 'Archived', 'In Review', 'IFC')");
+  });
   it("a verify_scans table an earlier draft created without printed_ref gains it inside the transaction (the paste stays idempotent)", () => {
     const add = code.indexOf("ALTER TABLE verify_scans ADD COLUMN IF NOT EXISTS printed_ref UUID;");
     expect(add).toBeGreaterThan(code.indexOf("CREATE TABLE IF NOT EXISTS verify_scans ("));
