@@ -49,7 +49,7 @@ stated.
 <a id="gap-1"></a>
 ## GAP-1 · Only certain people can approve certain types of requests
 
-**Verdict: BUILD** · Effort: **L** · Depends on: `WF-15`, then `DEC-13` · **BUILT (stages 1–2) 2026-09-03, Round D3**
+**Verdict: BUILD** · Effort: **L** · Depends on: `WF-15`, then `DEC-13` · **BUILT (stages 1–2) 2026-09-03, Round D3; stage 3 2026-09-17, Round E**
 
 > *"The issue mostly is that in the drafting work flow only certain people can
 > approve certain types of requests."*
@@ -135,8 +135,21 @@ sites, pinned by source). 4 ✓ (`WF-15`).
 
 **Not built, by this spec's own "Out":** per-discipline reviewers (the
 `discipline` key is reserved; no taxonomy), `team:` / `uid:` subject tokens
-(personal grants cover a person; grants stay unscoped). Stage 3 — the engineer
-gate as a real capability — is the next round.
+(personal grants cover a person; grants stay unscoped).
+
+### Built — stage 3 (2026-09-17, Round E)
+
+*Corrected 2026-10-01 (projects Round G, J13 records reconcile). This note used to say that stage 3 was "the next round". It landed in roles-and-permissions Round E (commit `e32b554`), and DECISIONS.md records it under `DEC-13` (`audit-reports/DECISIONS.md:575`, the "Landed 2026-09-17" line). Verified against HEAD `4dd0df7`.*
+
+The engineer gate is now a capability.
+- `ticket.engineer_gate_exempt` ("Approve own request without an engineer") is declared at `lib/capabilityPolicy.ts:59` and `:124`. Its default list is Admin, Manager, Supervisor, Engineer and DocCtrl, byte-identical to the old hardcoded test.
+- `engineerApprovalRequired` and `requiresEngineerApproval` (`lib/workflow.ts:105-143`, the `policyAllows` calls at :139 and :142) consult it, scoped to the ticket's resource, so a personal grant of it or a request-type override is honoured. The `DEC-16` snapshot-OR-current disjunction is unchanged.
+- The database evaluator carries the same default as a CASE row. It was added by `20261057_rp_roundE_engineer_gate_capability.sql`, and each later re-creation kept the row: the newest `org_capability_allows_for` is `20261137_intel_roundG_ai_manage_caps.sql:89`, with the row at :177.
+- The sketched name `requests.requires_engineer_approval` was not used. The capability lists the EXEMPT roles, in the `ticket.*` namespace the evaluators share.
+
+Tests:
+- `lib/__tests__/sweepRoundE_policyServer.test.ts`: "DEC-13 stage 3 — ticket.engineer_gate_exempt" (:150) and "20261057 — the SQL default CASE gains the engineer-gate row …" (:214). Exit 0 (44 passed).
+- `lib/__tests__/rpPhase4Migration.test.ts`: the WF-23 census reads the newest evaluator. Exit 0 (24 passed).
 
 
 ---
