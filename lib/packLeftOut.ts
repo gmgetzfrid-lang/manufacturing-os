@@ -38,9 +38,14 @@ export type PackLeftOutCode =
   | "no_file"
   /** The file could not be fetched at print time (a re-print may carry it). */
   | "fetch_failed"
-  /** The file was fetched but could not be read or stamped as a PDF (an
-   *  unparseable or encrypted "PDF", a file that is not a PDF). */
-  | "unreadable_pdf";
+  /** The file was fetched but could not be read or stamped as a PDF: pdf-lib
+   *  could not load it (unparseable, a file that is not a PDF) or it is
+   *  encrypted (the stamper's refusal). A re-print would leave it out too. */
+  | "unreadable_pdf"
+  /** The file was fetched and read, but adding it to the pack failed (a page
+   *  copy that threw, a device out of memory merging a large valid PDF) — a
+   *  re-print, e.g. on a desktop, may carry it. */
+  | "build_failed";
 
 const TEXT: Record<PackLeftOutCode, string> = {
   not_issued: "not an issued revision when printed",
@@ -52,6 +57,7 @@ const TEXT: Record<PackLeftOutCode, string> = {
   no_file: "no current file when printed",
   fetch_failed: "its file could not be fetched when printed",
   unreadable_pdf: "its file could not be read as a PDF when printed",
+  build_failed: "its file could not be added to the pack when printed",
 };
 
 export function isPackLeftOutCode(v: unknown): v is PackLeftOutCode {

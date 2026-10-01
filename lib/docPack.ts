@@ -384,6 +384,9 @@ export async function buildAndDownloadDocPack(input: {
     const documentId = String(d.id);
     const label = packLabel(d);
     const versionId = (d.current_version_id as string | null) ?? null;
+    // The parsed file, once pdf-lib has loaded it — what tells "could not be
+    // read as a PDF" from a later build failure (VFY-19, below).
+    let single: PDFDocument | null = null;
     try {
       const rawUrl = versionId ? urlByVersion.get(versionId) : undefined;
       if (!rawUrl) { skipped.push({ documentId, label, reason: "no current file", code: "no_file", versionId }); continue; }
@@ -402,7 +405,7 @@ export async function buildAndDownloadDocPack(input: {
       }
 
       // Stamp each document individually so its footer + QR are its own.
-      const single = await PDFDocument.load(bytes, { ignoreEncryption: true });
+      single = await PDFDocument.load(bytes, { ignoreEncryption: true });
       const pageCount = single.getPageCount();
       const over = packContentBudgetRefusal({
         label, merged: included, total: docs.length,
@@ -435,9 +438,15 @@ export async function buildAndDownloadDocPack(input: {
       includedRows.push(d);
     } catch (e) {
       if (e instanceof PackTooLargeError) throw e;
-      // Fetched, but not a PDF pdf-lib can read and stamp (unparseable,
-      // encrypted, not a PDF at all) — VFY-19's "could not be read".
-      skipped.push({ documentId, label, reason: (e as Error).message, code: "unreadable_pdf", versionId });
+      // VFY-19: "could not be read as a PDF" (unreadable_pdf — a re-print
+      // would leave it out too, so /verify-package reads it amber) ONLY when
+      // pdf-lib could not load the file (unparseable, not a PDF at all) or
+      // loaded an encrypted one the stamper refuses. Anything else after the
+      // fetch — a copyPages failure, a tablet running out of memory merging a
+      // large valid PDF — is build_failed: a desktop re-print may well carry
+      // it, so the verify door keeps it red ("not in this pack").
+      const unreadablePdf = !single || single.isEncrypted;
+      skipped.push({ documentId, label, reason: (e as Error).message, code: unreadablePdf ? "unreadable_pdf" : "build_failed", versionId });
     } finally {
       done += 1;
       input.onProgress?.(done, docs.length);

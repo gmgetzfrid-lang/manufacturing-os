@@ -314,8 +314,10 @@ describe("PKG-13 dw3 — an encrypted source is refused by the stamper, never me
     const pack = readFileSyncSafe("lib/docPack.ts");
     expect(pack).toMatch(/await applyStampToPdfDoc\(single, \{/);
     // document-control P8 (VFY-19): the skip also carries the document, a
-    // code ("unreadable_pdf") and the revision tried — the reason unchanged.
-    expect(pack).toMatch(/\} catch \(e\) \{\s*\n\s*if \(e instanceof PackTooLargeError\) throw e;[\s\S]{0,200}?skipped\.push\(\{ documentId, label, reason: \(e as Error\)\.message, code: "unreadable_pdf", versionId \}\);/);
+    // code and the revision tried — the reason unchanged. The encrypted
+    // refusal is "unreadable_pdf" (the parsed file says isEncrypted); a
+    // failure after a clean load is "build_failed" (fix pass).
+    expect(pack).toMatch(/\} catch \(e\) \{\s*\n\s*if \(e instanceof PackTooLargeError\) throw e;[\s\S]{0,800}?const unreadablePdf = !single \|\| single\.isEncrypted;\s*\n\s*skipped\.push\(\{ documentId, label, reason: \(e as Error\)\.message, code: unreadablePdf \? "unreadable_pdf" : "build_failed", versionId \}\);/);
   });
 });
 

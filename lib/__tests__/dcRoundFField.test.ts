@@ -43,7 +43,12 @@ const state = vi.hoisted(() => ({
   pagesByUrl: {} as Record<string, number>,
   failUrls: new Set<string>(),
   unparseable: new Set<number>(),
+  /** Page counts whose parsed document is encrypted / whose page copy throws. */
+  encrypted: new Set<number>(),
+  copyFails: new Set<number>(),
   user: { id: "u1", email: "u1@example.com" } as { id: string; email: string } | null,
+  /** Every `.in()` filter, per table (the chunking pins). */
+  inCalls: [] as Array<{ table: string; column: string; n: number }>,
 }));
 
 function chain(table: string) {
@@ -84,7 +89,7 @@ function chain(table: string) {
         if (p === "update") { op = "update"; payload = args[0]; }
         if (p === "eq") filters[String(args[0])] = args[1];
         if (p === "is") filters[String(args[0])] = args[1];
-        if (p === "in") ins[String(args[0])] = args[1] as unknown[];
+        if (p === "in") { ins[String(args[0])] = args[1] as unknown[]; state.inCalls.push({ table, column: String(args[0]), n: (args[1] as unknown[]).length }); }
         if (p === "single" || p === "maybeSingle") single = true;
         return new Proxy(c, h);
       };
@@ -106,7 +111,10 @@ vi.mock("@/lib/acknowledgments", () => ({
   effectiveAckPolicyForDocument: vi.fn(async (d: { libraryId: string }) => state.ackPolicies[d.libraryId] ?? null),
 }));
 vi.mock("@/lib/stamping", () => ({
-  applyStampToPdfDoc: vi.fn(async (_doc: unknown, opts: Record<string, unknown>) => { state.stamps.push(opts); }),
+  applyStampToPdfDoc: vi.fn(async (doc: { isEncrypted?: boolean }, opts: Record<string, unknown>) => {
+    if (doc?.isEncrypted) throw new Error("the PDF is encrypted, so it cannot be stamped — it was not issued as a copy");
+    state.stamps.push(opts);
+  }),
   stampPdf: vi.fn(async (_url: string, opts: Record<string, unknown>) => { state.stamps.push(opts); return new Blob(["%PDF"]); }),
   downloadStampedPdf: vi.fn(async (p: { filename: string; options: Record<string, unknown> }) => {
     state.events.push("download");
@@ -118,7 +126,11 @@ vi.mock("@/lib/publicOrigin", () => ({ publicOrigin: () => "https://app.example.
 vi.mock("@/lib/notify/dispatch", () => ({ emit: vi.fn(async () => {}) }));
 vi.mock("pdf-lib", () => {
   const doc = (pages: number) => ({
-    copyPages: async (_src: unknown, idx: number[]) => idx.map(() => "page"),
+    isEncrypted: state.encrypted.has(pages),
+    copyPages: async (src: { getPageCount: () => number }, idx: number[]) => {
+      if (state.copyFails.has(src.getPageCount())) throw new RangeError("Array buffer allocation failed");
+      return idx.map(() => "page");
+    },
     addPage: () => {},
     insertPage: (i: number) => { state.events.push(`insert@${i}`); },
     getPageIndices: () => Array.from({ length: pages }, (_, i) => i),
@@ -145,6 +157,7 @@ import {
   downloadDocumentPdf, printDocumentPdf, buildFooterNotice, copyControlState, copyWatermark, holdFooterLine,
   logDownloadAudit, DownloadUnrecordedError, AcknowledgmentRequiredError, ackGatedDocumentIds,
 } from "@/lib/downloads";
+import { packLeftOutText } from "@/lib/packLeftOut";
 import type { DocumentRecord } from "@/types/schema";
 
 const src = (p: string) => readFileSync(join(process.cwd(), p), "utf8");
@@ -175,7 +188,10 @@ beforeEach(() => {
   state.pagesByUrl = {};
   state.failUrls = new Set();
   state.unparseable = new Set();
+  state.encrypted = new Set();
+  state.copyFails = new Set();
   state.user = { id: "u1", email: "u1@example.com" };
+  state.inCalls = [];
   resetPackageSchemaFlag();
   vi.stubGlobal("fetch", vi.fn(async (url: string) => {
     const u = String(url);
@@ -244,10 +260,48 @@ describe("PKG-7 — a member the reader cannot open is never silently erased", (
       ["hidden", "unknown", false, false],
     ]);
     expect(pkg.docs[1].docLabel).toBe("Restricted document");
+    expect(pkg.docs[1].unknownReason).toBe("restricted");
+    expect(pkg.docs[0].unknownReason).toBeNull();
     expect(pkg.unknownCount).toBe(1);
     expect(pkg.staleCount).toBe(0);
+    expect(pkg.membersUnread).toBe(false);
     expect(memberFreshness("v1", { current_version_id: "v2" })).toBe("drifted");
     expect(memberFreshness("v1", null)).toBe("unknown");
+  });
+
+  it("listWorkPackages: a member read that FAILS is never '0 docs, Fresh' — the package's sheets are unknown, and the page says 'not read'", async () => {
+    state.tables.work_packages = [{ id: "p1", org_id: "org1", name: "Pump swap", status: "open", owner_user_id: "owner", created_at: "2026-09-01" }];
+    state.readErrors.work_package_documents = { message: "upstream timeout" };
+    const [pkg] = await listWorkPackages("org1");
+    expect(pkg.membersUnread).toBe(true);
+    expect(pkg.docs).toEqual([]);
+    const page = src("app/(protected)/packages/page.tsx");
+    expect(page).toContain("const unknown = !stale && (pkg.unknownCount > 0 || pkg.membersUnread);");
+    expect(page).toContain('{stale ? `Stale · ${pkg.staleCount}` : unknown ? (pkg.membersUnread ? "Unknown · not read" : `Unknown · ${pkg.unknownCount}`) : "Fresh"}');
+    expect(page).toContain("disabled={printing === pkg.id || pkg.membersUnread}");
+  });
+
+  it("listWorkPackages: a documents read that FAILS says 'not read just now', never 'restricted' (a permission it did not learn)", async () => {
+    state.tables.work_packages = [{ id: "p1", org_id: "org1", name: "Pump swap", status: "open", owner_user_id: "owner", created_at: "2026-09-01" }];
+    state.tables.work_package_documents = [{ id: "m1", package_id: "p1", document_id: "a", pinned_version_id: "v-a", pinned_rev_label: "1" }];
+    state.readErrors.documents = { message: "URI too long" };
+    const [pkg] = await listWorkPackages("org1");
+    expect(pkg.docs[0]).toMatchObject({ freshness: "unknown", unknownReason: "unread", docLabel: "Document (not read just now)", readable: false });
+    expect(pkg.unknownCount).toBe(1);
+    const page = src("app/(protected)/packages/page.tsx");
+    expect(page).toContain('{d.freshness === "unknown" && d.unknownReason === "unread" ? (');
+    expect(page).toMatch(/not read just now\n/);
+  });
+
+  it("listWorkPackages chunks its .in() reads (150 ids per read) — ~30 open packages of ~20 sheets is not one 600-id GET", async () => {
+    state.tables.work_packages = Array.from({ length: 160 }, (_, i) => ({ id: `p${i}`, org_id: "org1", name: `P${i}`, status: "open", owner_user_id: "owner", created_at: "2026-09-01" }));
+    state.tables.work_package_documents = Array.from({ length: 320 }, (_, i) => ({ id: `m${i}`, package_id: `p${i % 160}`, document_id: `d${i}`, pinned_version_id: `v-d${i}`, pinned_rev_label: "1" }));
+    state.tables.documents = Array.from({ length: 320 }, (_, i) => docRow(`d${i}`));
+    const pkgs = await listWorkPackages("org1");
+    expect(pkgs).toHaveLength(160);
+    expect(pkgs.every((p) => p.docs.length === 2 && p.unknownCount === 0 && !p.membersUnread)).toBe(true);
+    expect(state.inCalls.filter((c) => c.table === "work_package_documents").map((c) => c.n)).toEqual([150, 10]);
+    expect(state.inCalls.filter((c) => c.table === "documents").map((c) => c.n)).toEqual([150, 150, 20]);
   });
 
   it("refreshWorkPackage NEVER writes a pin for a document the reader cannot open — the others move, then the refresh fails naming them", async () => {
@@ -306,6 +360,24 @@ describe("PKG-9 — the hard read-&-understood gate binds every pack button", ()
     const doc = { id: "g", orgId: "org1", libraryId: "libGated", documentNumber: "G-1" } as DocumentRecord;
     await expect(downloadDocumentPdf({ doc, fileUrl: "https://files/g.pdf", userId: "u1" })).rejects.toBeInstanceOf(AcknowledgmentRequiredError);
     expect(state.stampedDownloads).toHaveLength(0);
+  });
+
+  it("reads the printer's PENDING acknowledgments first (chunked), and resolves a policy only for a sheet with one — none pending, no policy round trip at all", async () => {
+    const { effectiveAckPolicyForDocument } = await import("@/lib/acknowledgments");
+    const policy = vi.mocked(effectiveAckPolicyForDocument);
+    policy.mockClear();
+    const many = Array.from({ length: 200 }, (_, i) => ({ id: `x${i}`, libraryId: `lib${i % 40}`, collectionId: `col${i}` }));
+    state.tables.document_acknowledgments = [];
+    expect((await ackGatedDocumentIds(many, "u1")).size).toBe(0);
+    expect(policy).not.toHaveBeenCalled();
+    expect(state.inCalls.filter((c) => c.table === "document_acknowledgments").map((c) => c.n)).toEqual([150, 50]);
+    // one pending → one policy resolved, for that sheet only
+    state.inCalls = [];
+    state.tables.document_acknowledgments = [{ id: "k", document_id: "x7", assignee_user_id: "u1", status: "pending" }];
+    state.ackPolicies.lib7 = { enabled: true, hardGate: true };
+    expect([...await ackGatedDocumentIds(many, "u1")]).toEqual(["x7"]);
+    expect(policy).toHaveBeenCalledTimes(1);
+    expect(policy.mock.calls[0][0]).toMatchObject({ libraryId: "lib7", collectionId: "col7" });
   });
 
   it("fails OPEN on a broken policy read (unchanged rule) — a lookup error gates nothing", async () => {
@@ -369,8 +441,21 @@ describe("PKG-12 — a pack has a budget, keeps its order, and the cover gives e
     expect(coverEntryLabels([{ label: "X".repeat(60), pageCount: 1 }], 1)[0]).toMatch(/^X{43}… · p\. 2$/);
   });
 
+  it("the asset hub turns a refused pack into the parts it names — 'Print part 1 of N' (fix pass: splitPackIds is no longer unused)", () => {
+    const hub = src("app/(protected)/assets/[tag]/page.tsx");
+    expect(hub).toContain('const { buildAndDownloadDocPack, PackTooLargeError, splitPackIds } = await import("@/lib/docPack");');
+    expect(hub).toMatch(/if \(e instanceof PackTooLargeError && e\.perPack > 1\) \{[\s\S]{0,200}?setPackParts\(splitPackIds\(all, e\.perPack\)\);/);
+    expect(hub).toContain("onClick={() => void runPack(ids, { n: i + 1, of: packParts.length })}>");
+    expect(hub).toContain("Print part {i + 1} of {packParts.length} ({ids.length})");
+    // the split the refusal names is the split the page offers
+    const ids = Array.from({ length: 320 }, (_, i) => `d${i}`);
+    const refusal = packSheetBudgetRefusal(ids.length)!;
+    expect(splitPackIds(ids, refusal.perPack).map((p) => p.length)).toEqual([150, 150, 20]);
+    expect(refusal.parts).toBe(3);
+  });
+
   it("the work-package member query orders deterministically; the page builds the cover with page numbers", () => {
-    expect(src("lib/workPackages.ts")).toMatch(/\.in\("package_id", pkgRows\.map\(\(p\) => String\(p\.id\)\)\)\s*\n\s*\.order\("added_at", \{ ascending: true \}\)\s*\n\s*\.order\("id", \{ ascending: true \}\);/);
+    expect(src("lib/workPackages.ts")).toMatch(/\.in\("package_id", ids\)\s*\n\s*\.order\("added_at", \{ ascending: true \}\)\s*\n\s*\.order\("id", \{ ascending: true \}\);/);
     const page = src("app/(protected)/packages/page.tsx");
     expect(page).toContain("const labels = coverEntryLabels(includedSheets, coverContentsChunks(includedSheets.length).length);");
     expect(page).toContain("label: labels[i],");
@@ -435,6 +520,22 @@ describe("EGR-6 — the pack's distribution record is written after the download
     state.unparseable.add(7);
     const r = await buildAndDownloadDocPack(packInput(["a", "b"]) as never);
     expect(r.skipped).toEqual([expect.objectContaining({ documentId: "b", code: "unreadable_pdf", versionId: "v-b", reason: "Failed to parse PDF document" })]);
+  });
+
+  it("an encrypted file (the stamper's refusal) is 'unreadable_pdf' too", async () => {
+    state.pagesByUrl["https://files/b.pdf"] = 5;
+    state.encrypted.add(5);
+    const r = await buildAndDownloadDocPack(packInput(["a", "b"]) as never);
+    expect(r.skipped).toEqual([expect.objectContaining({ documentId: "b", code: "unreadable_pdf", reason: expect.stringMatching(/encrypted/) })]);
+  });
+
+  it("a failure AFTER a clean load (out of memory at copyPages) is 'build_failed' — never 'could not be read as a PDF', so the verify door keeps it red", async () => {
+    state.pagesByUrl["https://files/b.pdf"] = 9;
+    state.copyFails.add(9);
+    const r = await buildAndDownloadDocPack(packInput(["a", "b"]) as never);
+    expect(r.included).toBe(1);
+    expect(r.skipped).toEqual([expect.objectContaining({ documentId: "b", code: "build_failed", versionId: "v-b", reason: "Array buffer allocation failed" })]);
+    expect(packLeftOutText("build_failed")).toBe("its file could not be added to the pack when printed");
   });
 });
 
@@ -522,6 +623,20 @@ describe("HLD-1 / PKG-10 / EGR-6 — the single-document copy", () => {
     // HLD-1 in the book
     expect(v).toMatch(/const hold = await readCopyHoldState\(entry\.doc\.id\);/);
   });
+
+  it("every caller SAYS a delivered-but-unrecorded copy where the person can see it (fix pass)", () => {
+    // MultiDocViewer: the holder's direct action opens no dialog → an alert
+    expect(src("components/viewers/MultiDocViewer.tsx")).toContain("if (!downloadConfirm) void appAlert(message);");
+    // FullScreenViewer: actionError renders only inside the `pending` dialog → an alert when there is none
+    const fsv = src("components/viewers/FullScreenViewer.tsx");
+    expect(fsv).toContain('import { appAlert } from "@/components/providers/DialogProvider";');
+    expect(fsv).toMatch(/setActionError\(message\);[\s\S]{0,400}?if \(!pending\) void appAlert\(message\);/);
+    // VersionHistoryPanel: an inline line above the list — never the load-error state that replaces the panel
+    const vh = src("components/documents/VersionHistoryPanel.tsx");
+    expect(vh).toContain('setDownloadError((e as Error).message || "Download failed");');
+    expect(vh).not.toContain('setError((e as Error).message || "Download failed");');
+    expect(vh).toMatch(/\{downloadError && \(\s*\n\s*<div role="alert"/);
+  });
 });
 
 // ─── DRLS-10 ────────────────────────────────────────────────────────────────
@@ -566,6 +681,53 @@ describe("DRLS-10 — a re-pin records the stale signal it resolves; a refused c
   it("a Viewer's re-pin of another member's package is refused (the PKG-5 policy matches zero rows) — and said, never 'refreshed'", async () => {
     state.updateDenied = new Set(["m1", "m2"]);
     await expect(refreshWorkPackage("p1", { actor: { userId: "viewer" } })).rejects.toThrow(/the pins did NOT move\. Moving pins requires being the package's owner or Document Control/);
+    // The trail stays truthful: the intent row is followed by a compensating
+    // row naming the drifted member that did NOT move — no unqualified
+    // WORK_PACKAGE_REPINNED is left standing alone.
+    const audits = state.inserts.filter((i) => i.table === "audit_logs").map((i) => i.row as Row);
+    expect(audits.map((a) => a.action)).toEqual(["WORK_PACKAGE_REPINNED", "WORK_PACKAGE_REPIN_REFUSED"]);
+    expect(audits[1].resource_id).toBe("p1");
+    expect(audits[1].user_id).toBe("viewer");
+    expect(audits[1].details).toEqual({
+      reason: "refresh", corrects: "WORK_PACKAGE_REPINNED", notMovedCount: 1, movedCount: 0,
+      notMoved: [{ documentId: "a", fromVersionId: "v-old", fromRev: "4", toVersionId: "v-a", toRev: "5", cause: "refused" }],
+    });
+    expect(state.events.lastIndexOf("insert:audit_logs")).toBeGreaterThan(state.events.lastIndexOf("update:work_package_documents"));
+  });
+
+  it("a partial re-pin names only the members that did not move (a refused no-op on a fresh member is not a correction)", async () => {
+    state.tables.work_package_documents.push({ id: "m3", package_id: "p1", org_id: "org1", document_id: "c", pinned_version_id: "v-c0", pinned_rev_label: "0" });
+    state.tables.documents.push(docRow("c", { rev: "1" }));
+    state.updateDenied = new Set(["m2", "m3"]);
+    await expect(refreshWorkPackage("p1", { actor: { userId: "owner" }, reason: "print" })).rejects.toThrow(/matched 0 rows for 2 of 3 pins/);
+    const audits = state.inserts.filter((i) => i.table === "audit_logs").map((i) => i.row as Row);
+    expect(audits.map((a) => a.action)).toEqual(["WORK_PACKAGE_REPINNED", "WORK_PACKAGE_REPIN_REFUSED"]);
+    expect((audits[0].details as Row).staleCount).toBe(2);
+    const d = audits[1].details as Row;
+    expect(d.reason).toBe("print");
+    expect(d.movedCount).toBe(1);
+    expect((d.notMoved as Row[]).map((m) => [m.documentId, m.cause])).toEqual([["c", "refused"]]);
+  });
+
+  it("only a fresh member refused (every drifted pin moved): no correction is written", async () => {
+    state.updateDenied = new Set(["m2"]);
+    await expect(refreshWorkPackage("p1", { actor: { userId: "owner" } })).rejects.toThrow(/matched 0 rows for 1 of 2 pins/);
+    expect(state.inserts.filter((i) => i.table === "audit_logs").map((i) => (i.row as Row).action)).toEqual(["WORK_PACKAGE_REPINNED"]);
+  });
+
+  it("a correction that cannot be written is said in the refusal", async () => {
+    state.updateDenied = new Set(["m1"]);
+    let n = 0;
+    const realInsertErrors = state.insertErrors;
+    state.insertErrors = new Proxy(realInsertErrors, {
+      get: (t, k) => (k === "audit_logs" ? (n++ === 0 ? undefined : { message: "denied" }) : (t as Record<string, unknown>)[k as string]),
+    }) as typeof state.insertErrors;
+    const err = vi.spyOn(console, "error").mockImplementation(() => {});
+    await expect(refreshWorkPackage("p1", { actor: { userId: "owner" } })).rejects.toThrow(
+      /The correction to the re-pin record could not be written either \(denied\): the audit trail names 1 pin as moved that did not move/,
+    );
+    err.mockRestore();
+    state.insertErrors = {};
   });
 
   it("a close that matches no row is a refusal, not 'closed'", async () => {

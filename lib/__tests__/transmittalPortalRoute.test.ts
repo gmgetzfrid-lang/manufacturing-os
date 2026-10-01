@@ -61,6 +61,10 @@ const state = vi.hoisted(() => ({
   getInputs: [] as Array<Record<string, unknown>>,
   secondGetError: null as Error | null,
   destroyed: 0,
+  // TRX-15 (fix pass): what the issuer is told
+  notifications: [] as Array<Record<string, unknown>>,
+  emails: [] as Array<Record<string, unknown>>,
+  issuerEmail: null as string | null,
 }));
 
 function chain(table: string) {
@@ -78,6 +82,13 @@ function chain(table: string) {
       state.updates.push({ ...payload!, __filters: { ...filters } });
       return { data: state.updateRows, error: null };
     }
+    if (table === "audit_logs" && op === "select") {
+      // the dedupe read: the trail rows of this action, transmittal and document
+      const rows = state.audits.filter((a) =>
+        a.action === filters.action && a.resource_id === filters.resource_id &&
+        (a.details as Record<string, unknown> | undefined)?.documentId === filters["details->>documentId"]);
+      return { data: rows.map((_, i) => ({ id: `a${i}` })), error: null };
+    }
     return { data: [], error: null };
   };
   const handler: ProxyHandler<Record<string, unknown>> = {
@@ -91,6 +102,8 @@ function chain(table: string) {
           op = "insert";
           const row = args[0] as Record<string, unknown>;
           if (table === "audit_logs") { state.audits.push(row); return Promise.resolve({ error: null }); }
+          if (table === "notifications") { state.notifications.push(row); return Promise.resolve({ error: null }); }
+          if (table === "email_notifications") { state.emails.push(row); return Promise.resolve({ error: null }); }
           if (table === "download_audits") {
             state.order.push("download_audits");
             state.downloads.push(row);
@@ -102,7 +115,7 @@ function chain(table: string) {
         if (prop === "maybeSingle") {
           if (table === "transmittals") return Promise.resolve({ data: state.transmittal, error: null });
           if (table === "orgs") return Promise.resolve({ data: { name: "Acme" }, error: null });
-          if (table === "org_members") return Promise.resolve({ data: null, error: null });
+          if (table === "org_members") return Promise.resolve({ data: state.issuerEmail ? { email: state.issuerEmail } : null, error: null });
           const ok = state.versionRow && filters.org_id === (state.versionRow.org_id ?? null);
           return Promise.resolve({ data: ok ? state.versionRow : null, error: null });
         }
@@ -201,6 +214,9 @@ beforeEach(async () => {
   state.getInputs = [];
   state.secondGetError = null;
   state.destroyed = 0;
+  state.notifications = [];
+  state.emails = [];
+  state.issuerEmail = null;
 });
 
 describe("GET /api/transmittal file resolver (EGR-1)", () => {
@@ -583,6 +599,47 @@ describe("TRX-15 — a PDF leaves the portal stamped or not at all", () => {
     expect(state.downloads).toHaveLength(0);
     const trail = state.audits.find((a) => a.action === "TRANSMITTAL_PORTAL_UNSTAMPABLE_REFUSED")!;
     expect(trail.details).toMatchObject({ reason: "stamp_failed", detail: expect.stringMatching(/encrypted/) });
+  });
+
+  it("the issuer is TOLD — a bell and an email naming the document and the likely cause — once per transmittal and document (deduped on the trail)", async () => {
+    state.issuerEmail = "issuer@acme.com";
+    vi.mocked(applyStampToPdfDoc).mockImplementation(async () => {
+      throw new Error("Input document to `PDFDocument.load` is encrypted.");
+    });
+    try {
+      expect((await get(DOC)).status).toBe(422);
+      expect(state.notifications).toHaveLength(1);
+      const n = state.notifications[0];
+      expect(n).toMatchObject({
+        org_id: "orgA", user_id: "issuer1", kind: "transmittal_unstampable",
+        link: "/transmittals", resource_type: "transmittal", resource_id: "t1",
+        metadata: { documentId: DOC, reason: "stamp_failed" },
+      });
+      expect(String(n.title)).toBe("Transmittal TR-0001: P-101 Rev 3 was refused to the recipient");
+      expect(String(n.body)).toMatch(/security or permission restrictions \(common for vendor and certified drawings\)/);
+      expect(String(n.body)).toMatch(/this one still reads issued on the register/);
+      expect(state.emails).toHaveLength(1);
+      expect(state.emails[0]).toMatchObject({ to_user_id: "issuer1", to_email: "issuer@acme.com", subject: n.title, event_type: "transmittal_refused", status: "queued" });
+      // the recipient retries: refused again, on the trail again, but the issuer is not told twice
+      expect((await get(DOC)).status).toBe(422);
+      expect(state.audits.filter((a) => a.action === "TRANSMITTAL_PORTAL_UNSTAMPABLE_REFUSED")).toHaveLength(2);
+      expect(state.notifications).toHaveLength(1);
+      expect(state.emails).toHaveLength(1);
+    } finally {
+      vi.mocked(applyStampToPdfDoc).mockReset();
+      vi.mocked(applyStampToPdfDoc).mockImplementation(async (_doc: unknown, opts: Record<string, unknown>) => { state.order.push("stamp"); state.stamps.push(opts); });
+    }
+  });
+
+  it("an oversize PDF names the bound; no issuer on the row → nobody to tell, still refused", async () => {
+    state.contentLength = 64 * 1024 * 1024 + 1;
+    expect((await get(DOC)).status).toBe(422);
+    expect(String(state.notifications[0].body)).toMatch(/larger than the portal can mark \(64 MB\)/);
+    expect(state.emails).toHaveLength(0); // no member email on record — the bell still rang
+    state.audits = []; state.notifications = [];
+    state.transmittal!.created_by = null;
+    expect((await get(DOC)).status).toBe(422);
+    expect(state.notifications).toHaveLength(0);
   });
 
   it("only a file that is not a PDF ever leaves unstamped — the route has no unstamped-PDF branch left", () => {

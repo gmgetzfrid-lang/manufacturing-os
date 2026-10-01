@@ -49,6 +49,7 @@ import { recordIntent } from "@/lib/intents";
 import QrBadge from "@/components/ui/QrBadge";
 import type { DocumentRecord, DocumentVersion } from "@/types/schema";
 import { supabase } from "@/lib/supabase";
+import { appAlert } from "@/components/providers/DialogProvider";
 import { bakeMarkupIntoPdf, bakeMarkupIntoDoc } from "@/lib/markupExport";
 import { stashDraft } from "@/lib/draftHandoff";
 import {
@@ -866,7 +867,13 @@ export default function FullScreenViewer({
       else await printDocumentPdf(ctx);
       setPending(null);
     } catch (e) {
-      setActionError((e as Error).message || "Action failed");
+      const message = (e as Error).message || "Action failed";
+      setActionError(message);
+      // The checkout holder's direct download / print opens no dialog, and
+      // actionError renders only inside it — say it anyway (EGR-6: a copy
+      // delivered but not recorded, a hold or an acknowledgment refusal is
+      // never silent).
+      if (!pending) void appAlert(message);
     } finally { setActionBusy(false); }
   };
   const requestDownload = () => {

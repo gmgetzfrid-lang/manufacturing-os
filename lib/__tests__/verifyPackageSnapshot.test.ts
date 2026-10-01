@@ -784,6 +784,16 @@ describe("VFY-19 — the snapshot records what the print LEFT OUT, so a missing 
     expect(r.verdict).toBe("stale");
   });
 
+  it("a sheet the print could not ADD (build_failed — e.g. a tablet out of memory merging a valid PDF) stays RED 'not in this pack': a re-print may carry it", async () => {
+    member(DOC2, "P-102");
+    state.versions = [{ id: "w1", file_url: "org/lib/P-102.pdf", file_type: "application/pdf" }];
+    state.print = printAt([printed, leftOut(DOC2, "build_failed", "w1")]);
+    const r = await verify(true);
+    expect(r.notPrintable).toEqual([]);
+    expect(r.notInPack).toEqual([{ label: "P-102", leftOutAtPrint: "build_failed" }]);
+    expect(r.verdict).toBe("stale");
+  });
+
   it("ADDED SINCE: a member the snapshot neither printed nor left out joined after this printing", async () => {
     member(DOC3, "P-103");
     state.versions = [{ id: "w1", file_url: "org/lib/P-103.pdf", file_type: "application/pdf" }];

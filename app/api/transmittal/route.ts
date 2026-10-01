@@ -22,9 +22,14 @@
 // TRX-15 (document-control P8 FIELD): a PDF goes out STAMPED OR NOT AT ALL.
 // A PDF the portal cannot stamp — over the stamping bound, or one pdf-lib
 // cannot load or stamp (encrypted, malformed) — is refused (422
-// "unstampable", with the reason) and the refusal is on the issuer's trail
-// (TRANSMITTAL_PORTAL_UNSTAMPABLE_REFUSED): an unmarked PDF is
-// indistinguishable from a controlled print once it is on paper.
+// "unstampable", with the reason), the refusal is on the issuer's trail
+// (TRANSMITTAL_PORTAL_UNSTAMPABLE_REFUSED) and the issuer is told — a bell and
+// an email, once per transmittal and document: an unmarked PDF is
+// indistinguishable from a controlled print once it is on paper. pdf-lib
+// refuses every encrypted PDF, owner-password (permission-restricted) vendor
+// PDFs included — the main population this refuses. Checking stampability
+// at ISSUE, so the issuer is refused or warned before the recipient is, is
+// TRX-16 (P7 / lib/transmittals.ts).
 //
 // Size: the response is a STREAMED body handed out in 1 MiB chunks, never one
 // buffered body — the platform caps a buffered function response at ~4.5 MB
@@ -216,6 +221,90 @@ async function bumpUse(id: string, kind: "open" | "download"): Promise<void> {
   }
 }
 
+/** TRX-15: whether a portal refusal of this (transmittal, document) as
+ *  unstampable is already on the trail — i.e. the issuer was told the first
+ *  time. An unreadable trail answers "no" (a second notice beats silence). */
+async function unstampableAlreadyOnTrail(transmittalId: string, documentId: string): Promise<boolean> {
+  try {
+    const { data, error } = await supabaseAdmin
+      .from("audit_logs").select("id")
+      .eq("action", "TRANSMITTAL_PORTAL_UNSTAMPABLE_REFUSED")
+      .eq("resource_type", "transmittal").eq("resource_id", transmittalId)
+      .eq("details->>documentId", documentId)
+      .limit(1);
+    if (error) return false;
+    return ((data as unknown[] | null) ?? []).length > 0;
+  } catch {
+    return false;
+  }
+}
+
+/** TRX-15: the issuer is TOLD when a recipient is refused a PDF the portal
+ *  cannot stamp — a bell and an email, once per (transmittal, document) — so
+ *  an issued transmittal does not read "delivered" on the register while the
+ *  recipient holds nothing. The route's own issuer path (the receipt below
+ *  writes the same two rows): lib/notify's emit() runs on the signed-in
+ *  browser client and cannot be called from this service-role route. The
+ *  likeliest cause is named — a PDF saved with security / permission
+ *  restrictions (common for vendor and certified drawings), which pdf-lib
+ *  will not load. Best-effort; never throws. */
+async function tellIssuerUnstampable(
+  t: Record<string, unknown>,
+  item: Item,
+  reason: "oversize" | "stamp_failed",
+  origin: string,
+): Promise<void> {
+  const issuer = (t.created_by as string | null) ?? null;
+  if (!issuer) return;
+  const orgId = t.org_id as string;
+  const label = `${item.number || "a document"}${item.rev ? ` Rev ${item.rev}` : ""}`;
+  const why = reason === "oversize"
+    ? `it is larger than the portal can mark (${Math.round(PORTAL_STAMP_MAX_BYTES / (1024 * 1024))} MB)`
+    : "it could not be marked UNCONTROLLED — most often a PDF saved with security or permission restrictions (common for vendor and certified drawings), otherwise a damaged file";
+  const title = `Transmittal ${String(t.number ?? "")}: ${label} was refused to the recipient`;
+  const body =
+    `The recipient tried to download ${label} through the portal and was refused: ${why}. ` +
+    "A PDF leaves the portal stamped or not at all, so they do not have it. Re-save it without restrictions " +
+    "(or split it), then issue a new transmittal — this one still reads issued on the register.";
+  try {
+    await supabaseAdmin.from("notifications").insert({
+      org_id: orgId, user_id: issuer,
+      kind: "transmittal_unstampable",
+      title, body,
+      link: "/transmittals",
+      resource_type: "transmittal", resource_id: String(t.id),
+      metadata: { documentId: item.documentId ?? null, reason },
+    }).then(() => undefined, () => undefined);
+    const { data: member } = await supabaseAdmin
+      .from("org_members").select("email")
+      .eq("org_id", orgId).eq("uid", issuer)
+      .maybeSingle();
+    const email = (member as { email?: string | null } | null)?.email ?? null;
+    if (email) {
+      await supabaseAdmin.from("email_notifications").insert({
+        org_id: orgId,
+        to_user_id: issuer,
+        to_email: email,
+        subject: title,
+        body_text: body,
+        resource_id: String(t.id),
+        // Not a per-category toggle (a refused delivery is never muted).
+        event_type: "transmittal_refused",
+        status: "queued",
+      }).then(() => undefined, () => undefined);
+      const cronSecret = process.env.CRON_SECRET;
+      if (cronSecret) {
+        void fetch(`${origin}/api/notifications/send-queued`, {
+          method: "POST",
+          headers: { Authorization: `Bearer ${cronSecret}` },
+        }).catch(() => undefined);
+      }
+    }
+  } catch (e) {
+    console.warn("[transmittal portal] the issuer could not be told of an unstampable refusal", (e as Error)?.message);
+  }
+}
+
 export async function GET(req: NextRequest) {
   const token = (req.nextUrl.searchParams.get("token") ?? "").trim();
   const fileDoc = req.nextUrl.searchParams.get("file");
@@ -240,9 +329,11 @@ export async function GET(req: NextRequest) {
     }
 
     // TRX-15: a PDF the portal cannot stamp is never released — refused with
-    // the reason, on the issuer's trail, nothing recorded as delivered.
+    // the reason, on the issuer's trail, nothing recorded as delivered — and
+    // the issuer is told (once per transmittal and document).
     const refuseUnstampable = async (reason: "oversize" | "stamp_failed", detail: string | null) => {
       console.warn("[transmittal portal] a PDF that cannot be stamped was refused", { transmittal: t.id, document: fileDoc, reason, detail });
+      const alreadyTold = await unstampableAlreadyOnTrail(String(t.id), fileDoc);
       const { error: trailErr } = await supabaseAdmin.from("audit_logs").insert({
         action: "TRANSMITTAL_PORTAL_UNSTAMPABLE_REFUSED",
         resource_type: "transmittal", resource_id: String(t.id),
@@ -250,6 +341,7 @@ export async function GET(req: NextRequest) {
         details: { number: t.number, documentId: fileDoc, versionId: file.versionId, reason, detail, maxStampBytes: PORTAL_STAMP_MAX_BYTES },
       });
       if (trailErr) console.error("[transmittal portal] the unstampable refusal could not be put on the issuer's trail", trailErr.message);
+      if (!alreadyTold) await tellIssuerUnstampable(t, item, reason, req.nextUrl.origin);
       return refuse({ error: "unstampable", reason }, 422);
     };
 

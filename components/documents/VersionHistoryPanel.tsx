@@ -46,6 +46,10 @@ export default function VersionHistoryPanel({
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [downloadingId, setDownloadingId] = useState<string | null>(null);
+  // EGR-6: a download's refusal — or a copy delivered but NOT recorded — is
+  // shown above the list, never in place of it (the load-error state below
+  // replaces the whole panel).
+  const [downloadError, setDownloadError] = useState<string | null>(null);
   // Compare modal: when set, opens CompareRevisionsModal preselecting the
   // chosen older revision as base and the current revision as compare.
   const [diffBaseVersion, setDiffBaseVersion] = useState<DocumentVersion | null>(null);
@@ -129,6 +133,7 @@ export default function VersionHistoryPanel({
   const handleDownload = async (v: DocumentVersion) => {
     if (!currentUserId || !v.id) return;
     setDownloadingId(v.id);
+    setDownloadError(null);
     try {
       // Resolve the storage path before downloading. If the binary was shed to
       // a cold archive, open the in-memory viewer with the exact archive to
@@ -165,7 +170,7 @@ export default function VersionHistoryPanel({
       });
     } catch (e) {
       console.error(e);
-      setError((e as Error).message || "Download failed");
+      setDownloadError((e as Error).message || "Download failed");
     } finally {
       setDownloadingId(null);
     }
@@ -245,6 +250,10 @@ export default function VersionHistoryPanel({
           <div className="text-[10px] text-[var(--color-text-muted)] font-mono">{versions.length} rev{versions.length === 1 ? "" : "s"}</div>
         </div>
       </div>
+
+      {downloadError && (
+        <div role="alert" className="text-xs text-red-700 bg-red-50 border border-red-200 rounded-lg px-2.5 py-1.5">{downloadError}</div>
+      )}
 
       <div className="space-y-2">
         {versions.map((v) => {

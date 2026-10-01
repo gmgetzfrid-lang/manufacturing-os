@@ -277,7 +277,7 @@ export default function PackagesPage() {
   };
 
   const staleTotal = useMemo(
-    () => (packages ?? []).filter((p) => p.staleCount > 0 || p.unknownCount > 0).length,
+    () => (packages ?? []).filter((p) => p.staleCount > 0 || p.unknownCount > 0 || p.membersUnread).length,
     [packages],
   );
 
@@ -319,8 +319,9 @@ export default function PackagesPage() {
           {packages.map((pkg) => {
             const stale = pkg.staleCount > 0;
             // PKG-7: a member this reader cannot open is "unknown" — the
-            // package is never shown plainly Fresh over it.
-            const unknown = !stale && pkg.unknownCount > 0;
+            // package is never shown plainly Fresh over it; nor is one whose
+            // member list could not be read just now.
+            const unknown = !stale && (pkg.unknownCount > 0 || pkg.membersUnread);
             const manage = canManage(pkg);
             return (
               <div
@@ -336,16 +337,20 @@ export default function PackagesPage() {
                   <div className="min-w-0 flex-1">
                     <div className="text-sm font-black text-[var(--color-text)] truncate">{pkg.name}</div>
                     <div className="text-[10px] text-[var(--color-text-muted)]">
-                      {pkg.ownerName || "—"} · {new Date(pkg.createdAt).toLocaleDateString()} · {pkg.docs.length} doc{pkg.docs.length === 1 ? "" : "s"}
+                      {pkg.ownerName || "—"} · {new Date(pkg.createdAt).toLocaleDateString()} · {pkg.membersUnread ? "sheets not read just now" : `${pkg.docs.length} doc${pkg.docs.length === 1 ? "" : "s"}`}
                     </div>
                   </div>
                   <span
                     className={`shrink-0 text-[10px] font-black uppercase tracking-wide px-2 py-0.5 rounded-full ${
                       stale ? "bg-amber-500 text-white" : unknown ? "bg-slate-200 text-slate-700" : "bg-emerald-100 text-emerald-700"
                     }`}
-                    title={unknown ? "Some sheets in this package are documents you cannot open, so whether they are current is unknown to you." : undefined}
+                    title={!unknown ? undefined
+                      : pkg.membersUnread ? "This package's sheets could not be read just now, so whether they are current is unknown — reload to try again."
+                      : pkg.docs.some((d) => d.unknownReason === "restricted")
+                        ? "Some sheets in this package are documents you cannot open, so whether they are current is unknown to you."
+                        : "Some sheets in this package could not be read just now, so whether they are current is unknown — reload to try again."}
                   >
-                    {stale ? `Stale · ${pkg.staleCount}` : unknown ? `Unknown · ${pkg.unknownCount}` : "Fresh"}
+                    {stale ? `Stale · ${pkg.staleCount}` : unknown ? (pkg.membersUnread ? "Unknown · not read" : `Unknown · ${pkg.unknownCount}`) : "Fresh"}
                   </span>
                 </div>
 
@@ -358,7 +363,11 @@ export default function PackagesPage() {
                     >
                       <span className={`w-1.5 h-1.5 rounded-full shrink-0 ${d.drifted ? "bg-amber-500 animate-pulse" : d.freshness === "unknown" ? "bg-slate-400" : "bg-emerald-400"}`} />
                       <span className="text-xs font-bold text-[var(--color-text)] group-hover:text-blue-700 truncate flex-1">{d.docLabel}</span>
-                      {d.freshness === "unknown" ? (
+                      {d.freshness === "unknown" && d.unknownReason === "unread" ? (
+                        <span className="text-[10px] font-bold text-slate-500 shrink-0" title="This sheet could not be read just now, so whether its pin is current is unknown — reload to try again.">
+                          not read just now
+                        </span>
+                      ) : d.freshness === "unknown" ? (
                         <span className="text-[10px] font-bold text-slate-500 shrink-0" title="You cannot open this document, so whether its pin is current is unknown to you.">
                           status unknown to you
                         </span>
@@ -379,7 +388,7 @@ export default function PackagesPage() {
                       pins auto-refresh to match the paper. */}
                   <button
                     onClick={() => void handlePrintPack(pkg)}
-                    disabled={printing === pkg.id}
+                    disabled={printing === pkg.id || pkg.membersUnread}
                     className="inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-[11px] font-bold text-white bg-blue-600 hover:bg-blue-500 disabled:opacity-50"
                     title="One PDF: cover sheet (contents + scan-before-starting QR) + every drawing at its current revision, stamped. Pins refresh to match."
                   >

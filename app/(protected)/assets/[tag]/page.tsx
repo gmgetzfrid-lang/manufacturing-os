@@ -59,6 +59,9 @@ export default function AssetHubPage() {
   const [packing, setPacking] = useState(false);
   const [packProgress, setPackProgress] = useState<[number, number] | null>(null);
   const [packNote, setPackNote] = useState<string | null>(null);
+  // PKG-12 (document-control P8): a pack over the field budget is refused
+  // with a split — these are the parts this page then offers to print.
+  const [packParts, setPackParts] = useState<string[][] | null>(null);
 
   const [asset, setAsset] = useState<Asset | null>(null);
   const [docs, setDocs] = useState<HubDoc[]>([]);
@@ -67,9 +70,63 @@ export default function AssetHubPage() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
+  /** Print a doc pack of `ids` — the whole tag, or one part of the split a
+   *  refused pack offers (PKG-12: "Print part 1 of N"). */
+  const runPack = async (ids: string[], part?: { n: number; of: number }) => {
+    if (!uid || !activeOrgId) return;
+    setPacking(true);
+    setPackNote(null);
+    // No pre-seeded total: the pack gate may refuse sheets, so
+    // the denominator comes from the builder's first progress
+    // callback (the GATED count), never this page's raw count.
+    setPackProgress(null);
+    const partLabel = part ? ` (part ${part.n} of ${part.of})` : "";
+    try {
+      const { buildAndDownloadDocPack, PackTooLargeError, splitPackIds } = await import("@/lib/docPack");
+      try {
+        const result = await buildAndDownloadDocPack({
+          orgId: activeOrgId,
+          packLabel: `${tag}${partLabel}`,
+          documentIds: ids,
+          userId: uid,
+          userEmail,
+          onProgress: (done, total) => setPackProgress([done, total]),
+        });
+        // "all current" is an earned claim: docPack refuses
+        // every sheet outside the verify allow-list (VFY-17),
+        // held, unreadable or ack-gated, so zero skips means
+        // every included sheet was Issued/Locked and hold-free
+        // (PKG-4). A copy missing from the distribution record
+        // is said (EGR-6, document-control P8).
+        setPackNote(
+          (result.skipped.length === 0
+            ? `Pack${partLabel} ready — ${result.included} drawing${result.included === 1 ? "" : "s"}, all current, all stamped.`
+            : `Pack${partLabel} ready — ${result.included} included; ${result.skipped.length} left out: ${result.skipped.map((s) => `${s.label} (${s.reason})`).join(", ")}.`) +
+          (result.unrecorded.length > 0
+            ? ` ${result.unrecorded.length} sheet${result.unrecorded.length === 1 ? " is" : "s are"} NOT on the distribution record (the record write was refused) — tell Document Control.`
+            : ""),
+        );
+      } catch (e) {
+        // PKG-12: over the budget → the split the refusal names, as parts
+        // this page prints (a single sheet over the budget alone is not
+        // split — it is downloaded on its own).
+        if (e instanceof PackTooLargeError && e.perPack > 1) {
+          const all = docs.map((d) => d.id);
+          if (all.length > e.perPack) setPackParts(splitPackIds(all, e.perPack));
+        }
+        throw e;
+      }
+    } catch (e) {
+      setPackNote(`Pack${partLabel} failed: ${(e as Error).message}`);
+    } finally {
+      setPacking(false);
+      setPackProgress(null);
+    }
+  };
+
   const refresh = useCallback(async () => {
     if (!activeOrgId || !tag) return;
-    setLoading(true); setError(null);
+    setLoading(true); setError(null); setPackParts(null);
     try {
       const a = await getAssetByTag(activeOrgId, tag).catch(() => null);
       setAsset(a);
@@ -158,44 +215,7 @@ export default function AssetHubPage() {
                 <Button
                   size="sm"
                   disabled={packing}
-                  onClick={async () => {
-                    setPacking(true);
-                    setPackNote(null);
-                    // No pre-seeded total: the pack gate may refuse sheets, so
-                    // the denominator comes from the builder's first progress
-                    // callback (the GATED count), never this page's raw count.
-                    setPackProgress(null);
-                    try {
-                      const { buildAndDownloadDocPack } = await import("@/lib/docPack");
-                      const result = await buildAndDownloadDocPack({
-                        orgId: activeOrgId,
-                        packLabel: tag,
-                        documentIds: docs.map((d) => d.id),
-                        userId: uid,
-                        userEmail,
-                        onProgress: (done, total) => setPackProgress([done, total]),
-                      });
-                      // "all current" is an earned claim: docPack refuses
-                      // every sheet outside the verify allow-list (VFY-17),
-                      // held, unreadable or ack-gated, so zero skips means
-                      // every included sheet was Issued/Locked and hold-free
-                      // (PKG-4). A copy missing from the distribution record
-                      // is said (EGR-6, document-control P8).
-                      setPackNote(
-                        (result.skipped.length === 0
-                          ? `Pack ready — ${result.included} drawing${result.included === 1 ? "" : "s"}, all current, all stamped.`
-                          : `Pack ready — ${result.included} included; ${result.skipped.length} left out: ${result.skipped.map((s) => `${s.label} (${s.reason})`).join(", ")}.`) +
-                        (result.unrecorded.length > 0
-                          ? ` ${result.unrecorded.length} sheet${result.unrecorded.length === 1 ? " is" : "s are"} NOT on the distribution record (the record write was refused) — tell Document Control.`
-                          : ""),
-                      );
-                    } catch (e) {
-                      setPackNote(`Pack failed: ${(e as Error).message}`);
-                    } finally {
-                      setPacking(false);
-                      setPackProgress(null);
-                    }
-                  }}
+                  onClick={() => void runPack(docs.map((d) => d.id))}
                 >
                   {packing
                     ? <><Loader2 className="w-3.5 h-3.5 animate-spin" /> {packProgress ? `Packing ${packProgress[0]}/${packProgress[1]}…` : "Packing…"}</>
@@ -234,8 +254,19 @@ export default function AssetHubPage() {
         />
 
         {packNote && (
-          <div className={`mb-4 rounded-xl border p-3 text-xs ${packNote.startsWith("Pack failed") ? "border-red-200 bg-red-50 text-red-800" : "border-emerald-200 bg-emerald-50 text-emerald-800"}`}>
+          <div className={`mb-4 rounded-xl border p-3 text-xs ${/^Pack( \(part \d+ of \d+\))? failed/.test(packNote) ? "border-red-200 bg-red-50 text-red-800" : "border-emerald-200 bg-emerald-50 text-emerald-800"}`}>
             {packNote}
+          </div>
+        )}
+        {packParts && packParts.length > 1 && uid && activeOrgId && (
+          <div className="mb-4 rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] p-3 text-xs flex flex-wrap items-center gap-2">
+            <span className="text-[var(--color-text-muted)]">Too many sheets for one field pack — print it in {packParts.length} parts:</span>
+            {packParts.map((ids, i) => (
+              <Button key={i} size="sm" variant="secondary" disabled={packing}
+                onClick={() => void runPack(ids, { n: i + 1, of: packParts.length })}>
+                <Printer className="w-3.5 h-3.5" /> Print part {i + 1} of {packParts.length} ({ids.length})
+              </Button>
+            ))}
           </div>
         )}
 

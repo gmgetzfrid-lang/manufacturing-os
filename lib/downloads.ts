@@ -312,6 +312,9 @@ export class AcknowledgmentRequiredError extends Error {
 // 60s, which is faster than the page reload that usually follows them.
 const ackPolicyMemo = new Map<string, { at: number; policy: unknown }>();
 const ACK_POLICY_TTL_MS = 60_000;
+/** The pending-acknowledgment read is chunked so a large pack stays under
+ *  PostgREST's URL limit (the lib/acknowledgments.ts chunk size). */
+const ACK_IN_CHUNK = 150;
 
 /** A document as the read-&-understood gate reads it — a DocumentRecord, or
  *  a raw pack row mapped to these four fields (lib/docPack.ts). */
@@ -328,11 +331,33 @@ export interface AckGateDoc {
  *  the ids of the documents whose effective ack policy sets `hardGate` AND
  *  for which `userId` still has a pending acknowledgment. Fails OPEN per
  *  document on a lookup error (unchanged: a broken policy read must never
- *  brick every copy — this gate is a client-side courtesy, not a rail). */
+ *  brick every copy — this gate is a client-side courtesy, not a rail).
+ *  The person's PENDING acknowledgments are read first (one chunked read),
+ *  and a policy is resolved only for a document with one — most people
+ *  printing have none, so a pack spread over many folders makes no policy
+ *  round trips at all (it used to resolve every sheet's policy, up to two
+ *  sequential reads per folder / library, before asking). */
 export async function ackGatedDocumentIds(docs: AckGateDoc[], userId: string): Promise<Set<string>> {
   const gated = new Set<string>();
   const candidates = docs.filter((d): d is AckGateDoc & { id: string; libraryId: string } => !!d.id && !!d.libraryId);
   if (candidates.length === 0) return gated;
+  const pending = new Set<string>();
+  const ids = [...new Set(candidates.map((d) => d.id))];
+  for (let i = 0; i < ids.length; i += ACK_IN_CHUNK) {
+    try {
+      const { data, error } = await supabase
+        .from("document_acknowledgments")
+        .select("document_id")
+        .in("document_id", ids.slice(i, i + ACK_IN_CHUNK))
+        .eq("assignee_user_id", userId)
+        .eq("status", "pending");
+      if (error) continue; // fail open for this chunk
+      for (const r of (data as Array<{ document_id: string }> | null) ?? []) pending.add(String(r.document_id));
+    } catch {
+      /* fail open */
+    }
+  }
+  if (pending.size === 0) return gated;
   let effectiveAckPolicyForDocument: typeof import("@/lib/acknowledgments").effectiveAckPolicyForDocument;
   try {
     ({ effectiveAckPolicyForDocument } = await import("@/lib/acknowledgments"));
@@ -340,8 +365,8 @@ export async function ackGatedDocumentIds(docs: AckGateDoc[], userId: string): P
     return gated; // fail open
   }
   type Policy = Awaited<ReturnType<typeof effectiveAckPolicyForDocument>>;
-  const hard: string[] = [];
   for (const d of candidates) {
+    if (!pending.has(d.id) || gated.has(d.id)) continue;
     try {
       const memoKey = `${JSON.stringify(d.ackPolicy ?? null)}|${d.collectionId ?? ""}|${d.libraryId}`;
       const hit = ackPolicyMemo.get(memoKey);
@@ -360,22 +385,10 @@ export async function ackGatedDocumentIds(docs: AckGateDoc[], userId: string): P
           if (oldest !== undefined) ackPolicyMemo.delete(oldest);
         }
       }
-      if (policy?.enabled && policy.hardGate) hard.push(d.id);
+      if (policy?.enabled && policy.hardGate) gated.add(d.id);
     } catch {
       /* fail open for this document: enforcement must not outlive its data */
     }
-  }
-  if (hard.length === 0) return gated;
-  try {
-    const { data } = await supabase
-      .from("document_acknowledgments")
-      .select("document_id")
-      .in("document_id", hard)
-      .eq("assignee_user_id", userId)
-      .eq("status", "pending");
-    for (const r of (data as Array<{ document_id: string }> | null) ?? []) gated.add(String(r.document_id));
-  } catch {
-    /* fail open */
   }
   return gated;
 }

@@ -41,6 +41,10 @@ export interface WorkPackageDoc {
   /** PKG-7: false when this reader cannot read the member's document. */
   readable: boolean;
   freshness: WorkPackageDocFreshness;
+  /** Why an `unknown` member is unknown: `restricted` — the document read
+   *  answered and this reader cannot open it; `unread` — the read itself
+   *  failed just now (a reload may answer). Null when known. */
+  unknownReason: "restricted" | "unread" | null;
 }
 
 export interface WorkPackage {
@@ -57,11 +61,26 @@ export interface WorkPackage {
   /** PKG-7: members whose freshness this reader cannot know — a package
    *  with any is never shown as plainly "Fresh". */
   unknownCount: number;
+  /** PKG-7: the package's member list itself could not be read just now —
+   *  its sheets are unknown (never "0 docs, Fresh"). */
+  membersUnread: boolean;
 }
 
 /** PKG-7: the label of a member the reader cannot open — named as what it
  *  is, never the bare "Document" that read like a rendering bug. */
 export const RESTRICTED_MEMBER_LABEL = "Restricted document";
+/** PKG-7: the label of a member whose document could not be read JUST NOW
+ *  (the read failed) — not a permission statement. */
+export const UNREAD_MEMBER_LABEL = "Document (not read just now)";
+
+/** PKG-7: `.in()` reads are chunked so a large set of open packages stays
+ *  under PostgREST's URL limit (the lib/acknowledgments.ts chunk size). */
+const IN_CHUNK = 150;
+function chunked<T>(xs: T[]): T[][] {
+  const out: T[][] = [];
+  for (let i = 0; i < xs.length; i += IN_CHUNK) out.push(xs.slice(i, i + IN_CHUNK));
+  return out;
+}
 
 /** PKG-7: one member's freshness. Pure. */
 export function memberFreshness(
@@ -107,24 +126,35 @@ export async function listWorkPackages(
     if (pkgRows.length === 0) return [];
 
     // PKG-12: a deterministic member order (joined first, then id) — the
-    // order the package lists, prints and covers its sheets in.
-    const { data: memberRows } = await supabase
-      .from("work_package_documents")
-      .select("*")
-      .in("package_id", pkgRows.map((p) => String(p.id)))
-      .order("added_at", { ascending: true })
-      .order("id", { ascending: true });
-    const members = (memberRows as Array<Record<string, unknown>>) ?? [];
+    // order the package lists, prints and covers its sheets in. Chunked by
+    // package, so each package's members come from one read, in order.
+    // PKG-7: a member read that FAILS marks its packages' sheets unknown —
+    // never "0 docs, Fresh".
+    const members: Array<Record<string, unknown>> = [];
+    const membersUnread = new Set<string>();
+    for (const ids of chunked(pkgRows.map((p) => String(p.id)))) {
+      const { data: memberRows, error: memberErr } = await supabase
+        .from("work_package_documents")
+        .select("*")
+        .in("package_id", ids)
+        .order("added_at", { ascending: true })
+        .order("id", { ascending: true });
+      if (memberErr) { ids.forEach((id) => membersUnread.add(id)); continue; }
+      members.push(...((memberRows as Array<Record<string, unknown>>) ?? []));
+    }
 
     const docIds = [...new Set(members.map((m) => String(m.document_id)))];
     const docById = new Map<string, Record<string, unknown>>();
-    if (docIds.length > 0) {
-      // A failed read leaves every member UNKNOWN (PKG-7) — never "fresh".
+    // A failed read leaves its members UNKNOWN (PKG-7) — never "fresh" — and
+    // says so as "not read just now", never as a permission ("restricted").
+    const docsUnread = new Set<string>();
+    for (const ids of chunked(docIds)) {
       const { data: docs, error: docErr } = await supabase
         .from("documents")
         .select("id, document_number, title, name, rev, library_id, current_version_id")
-        .in("id", docIds);
-      if (!docErr) for (const d of (docs as Array<Record<string, unknown>>) ?? []) docById.set(String(d.id), d);
+        .in("id", ids);
+      if (docErr) { ids.forEach((id) => docsUnread.add(id)); continue; }
+      for (const d of (docs as Array<Record<string, unknown>>) ?? []) docById.set(String(d.id), d);
     }
 
     return pkgRows.map((p) => {
@@ -134,10 +164,13 @@ export async function listWorkPackages(
           const doc = docById.get(String(m.document_id));
           const pinned = (m.pinned_version_id as string | null) ?? null;
           const freshness = memberFreshness(pinned, doc);
+          const unread = !doc && docsUnread.has(String(m.document_id));
           return {
             id: String(m.id),
             documentId: String(m.document_id),
-            docLabel: doc ? String(doc.document_number || doc.title || doc.name || "Document") : RESTRICTED_MEMBER_LABEL,
+            docLabel: doc
+              ? String(doc.document_number || doc.title || doc.name || "Document")
+              : unread ? UNREAD_MEMBER_LABEL : RESTRICTED_MEMBER_LABEL,
             libraryId: (doc?.library_id as string | null) ?? null,
             pinnedVersionId: pinned,
             pinnedRevLabel: (m.pinned_rev_label as string | null) ?? null,
@@ -145,6 +178,7 @@ export async function listWorkPackages(
             drifted: freshness === "drifted",
             readable: !!doc,
             freshness,
+            unknownReason: doc ? null : unread ? "unread" : "restricted",
           };
         });
       return {
@@ -159,6 +193,7 @@ export async function listWorkPackages(
         docs,
         staleCount: docs.filter((d) => d.drifted).length,
         unknownCount: docs.filter((d) => d.freshness === "unknown").length,
+        membersUnread: membersUnread.has(String(p.id)),
       };
     });
   } catch {
@@ -370,7 +405,9 @@ export async function recordPackagePrint(input: {
  *  DRLS-10: a re-pin RESOLVES a stale signal, it must not erase it — the
  *  members that had drifted (pinned → current) are written to the audit
  *  trail as WORK_PACKAGE_REPINNED BEFORE any pin moves; if that record
- *  cannot be written, nothing moves. */
+ *  cannot be written, nothing moves. Any of those whose pin then did NOT
+ *  move (refused or failed) is named in a compensating
+ *  WORK_PACKAGE_REPIN_REFUSED row, so the trail stays truthful. */
 export async function refreshWorkPackage(
   packageId: string,
   opts?: {
@@ -418,13 +455,14 @@ export async function refreshWorkPackage(
       };
     })
     .filter((m) => m.fromVersionId !== m.toVersionId);
-  if (moved.length > 0) {
-    const actor = opts?.actor ?? await signedInActor();
+  const actor = moved.length > 0 ? opts?.actor ?? await signedInActor() : null;
+  const orgId = (rows[0].org_id as string | null | undefined) ?? undefined;
+  if (actor) {
     const { error: auditErr } = await logAuditAction({
       action: "WORK_PACKAGE_REPINNED",
       resourceType: "work_package",
       resourceId: packageId,
-      orgId: (rows[0].org_id as string | null | undefined) ?? undefined,
+      orgId,
       userId: actor.userId,
       userEmail: actor.email ?? undefined,
       details: { reason: opts?.reason ?? "refresh", staleCount: moved.length, moved },
@@ -454,10 +492,20 @@ export async function refreshWorkPackage(
   const failed = results.filter((res) => res.error).length;
   const unmatched = results.filter((res) => !res.error && ((res.data as unknown[]) ?? []).length === 0).length;
   if (failed > 0 || unmatched > 0) {
+    // DRLS-10: the record stays truthful. WORK_PACKAGE_REPINNED above was
+    // written before the writes (nothing moves without a record); every
+    // drifted member whose pin did NOT move — the policy matched no row (a
+    // stale page, a lost role, another person's package) or the write
+    // failed — is named again in a compensating WORK_PACKAGE_REPIN_REFUSED
+    // row, so the trail never claims a re-pin that did not happen.
+    const correction = actor ? await recordRepinRefused(packageId, orgId, actor, opts?.reason ?? "refresh", moved, readable, results) : null;
     throw new Error(
-      failed > 0
+      (failed > 0
         ? `Refresh failed for ${failed} of ${rows.length} pins: ${results.find((r) => r.error)?.error?.message}`
-        : `Refresh matched 0 rows for ${unmatched} of ${rows.length} pins — the pins did NOT move. Moving pins requires being the package's owner or Document Control (PKG-5); on an older database, apply migration 20260828 and retry.`,
+        : `Refresh matched 0 rows for ${unmatched} of ${rows.length} pins — the pins did NOT move. Moving pins requires being the package's owner or Document Control (PKG-5); on an older database, apply migration 20260828 and retry.`) +
+      (correction?.error
+        ? ` The correction to the re-pin record could not be written either (${correction.error}): the audit trail names ${correction.notMoved} pin${correction.notMoved === 1 ? "" : "s"} as moved that did not move — tell Document Control.`
+        : ""),
     );
   }
   if (unreadable > 0) {
@@ -468,6 +516,48 @@ export async function refreshWorkPackage(
   }
 }
 
+/** DRLS-10: the compensating record for a re-pin that did not (fully)
+ *  happen — every drifted member named in WORK_PACKAGE_REPINNED whose pin
+ *  did not move, with why (`refused`: the write matched no row; `failed`:
+ *  it errored). Writes nothing when every drifted member did move (only an
+ *  already-fresh member's no-op write was refused). */
+async function recordRepinRefused(
+  packageId: string,
+  orgId: string | undefined,
+  actor: { userId: string; email?: string | null },
+  reason: "refresh" | "print",
+  moved: Array<{ documentId: string; fromVersionId: string | null; fromRev: string | null; toVersionId: string | null; toRev: string | null }>,
+  written: Array<{ document_id: string }>,
+  results: Array<{ data: unknown; error: { message: string } | null }>,
+): Promise<{ notMoved: number; error: string | null } | null> {
+  const cause = new Map<string, "refused" | "failed">();
+  written.forEach((r, i) => {
+    const res = results[i];
+    if (res.error) cause.set(r.document_id, "failed");
+    else if (((res.data as unknown[] | null) ?? []).length === 0) cause.set(r.document_id, "refused");
+  });
+  const notMoved = moved
+    .filter((m) => cause.has(m.documentId))
+    .map((m) => ({ ...m, cause: cause.get(m.documentId)! }));
+  if (notMoved.length === 0) return null;
+  const { error } = await logAuditAction({
+    action: "WORK_PACKAGE_REPIN_REFUSED",
+    resourceType: "work_package",
+    resourceId: packageId,
+    orgId,
+    userId: actor.userId,
+    userEmail: actor.email ?? undefined,
+    details: {
+      reason,
+      corrects: "WORK_PACKAGE_REPINNED",
+      notMovedCount: notMoved.length,
+      movedCount: moved.length - notMoved.length,
+      notMoved,
+    },
+  });
+  return { notMoved: notMoved.length, error };
+}
+
 /** The signed-in user, for a record written without an explicit actor. */
 async function signedInActor(): Promise<{ userId: string; email?: string | null }> {
   const { data } = await supabase.auth.getUser();
@@ -476,10 +566,10 @@ async function signedInActor(): Promise<{ userId: string; email?: string | null 
   return { userId: user.id, email: user.email ?? null };
 }
 
-/** DRLS-10 (app half): closing reports a refusal instead of a silent no-op —
- *  the write selects its row back, and zero rows is "not allowed", never
- *  "closed". (The database's work_packages UPDATE policy is still
- *  member-level; narrowing it to the owner and controllers is a migration.) */
+/** DRLS-10: closing reports a refusal instead of a silent no-op — the write
+ *  selects its row back, and zero rows is "not allowed", never "closed". The
+ *  database holds the same line since migration 20261143 (work_packages
+ *  UPDATE / DELETE: the package owner or a controller). */
 export async function setWorkPackageStatus(
   packageId: string,
   status: WorkPackage["status"],
