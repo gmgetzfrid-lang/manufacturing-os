@@ -643,7 +643,9 @@ export function UsagePanel({ orgId }: { orgId: string }) {
             : res.selfCapOwnLowering === true ? " — your own lowering of a figure another person who manages AI caps set"
               : " — set by another person who manages AI caps"}.`
         : typeof res.selfHeldAtUsd === "number"
-          ? `Default monthly cap set to ${fmtUsd(cap)} per person. Your own cap stays at ${fmtUsd(res.selfHeldAtUsd)} — nobody raises their own cap, so another person who manages AI caps has to raise yours.`
+          // The hold is a personal cap: a later change to the default no
+          // longer moves it (the other holders are told the same).
+          ? `Default monthly cap set to ${fmtUsd(cap)} per person. Your own cap stays at ${res.selfHeldAtUsd === 0 ? "$0 (AI locked)" : fmtUsd(res.selfHeldAtUsd)} as a personal cap — a change to the default no longer moves it, and nobody raises their own cap, so another person who manages AI caps has to raise yours.`
           : res.soleHolder === true
             ? `Default monthly cap set to ${fmtUsd(cap)} per person, yours included — you're the only person who manages AI caps here, so there is nobody else to raise it. The change is recorded in the audit log.`
             : `Default monthly cap set to ${fmtUsd(cap)} per person.` });

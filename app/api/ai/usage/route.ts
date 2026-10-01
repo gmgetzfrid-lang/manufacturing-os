@@ -100,7 +100,7 @@ import { randomUUID } from "node:crypto";
 import { NextRequest, NextResponse } from "next/server";
 import { supabaseAdmin } from "@/lib/supabaseAdmin";
 import {
-  getMonthUsage, getMonthUsageByUser, getCapUsd, DEFAULT_MONTHLY_CAP_USD, capIsLocked, displayCapUsd,
+  getMonthUsage, getMonthUsageByUser, getCapUsd, DEFAULT_MONTHLY_CAP_USD, capIsLocked, displayCapUsd, LOCKED_CAP_USD,
   AiUsageUnavailableError, type MonthUsage,
 } from "@/lib/ai/usageServer";
 import { GovernedCallError } from "@/lib/ai/gateError";
@@ -488,6 +488,10 @@ export async function GET(req: NextRequest) {
 
   const payload: Record<string, unknown> = {
     ...mine,
+    // GOV-3: getMonthUsage floors a locked member's month at LOCKED_CAP_USD
+    // so the legacy `cap > 0 && spent >= cap` gates refuse; that floor is a
+    // device for those gates, not money — the meter shows what was spent.
+    spentUsd: capIsLocked(capUsd) && mine.spentUsd <= LOCKED_CAP_USD ? 0 : mine.spentUsd,
     capUsd: displayCapUsd(capUsd),
     locked: capIsLocked(capUsd),
     percent: usagePercent(mine.spentUsd, capUsd),
@@ -538,6 +542,13 @@ export async function GET(req: NextRequest) {
     payload.selfFollowsDefault = !overrideByUser.has(auth.userId);
     if (caps.ok && caps.allowed && !membersRes.error) {
       payload.soleCapsHolder = holdersAmong(membersRes.data, caps.policy).every((uid) => uid === auth.userId);
+    }
+    // GOV-4: a member list that cannot be read is said the way an
+    // unsummable ledger is (`teamUnavailable`) — never an empty team, which
+    // reads as nobody having spent anything.
+    if (membersRes.error) {
+      payload.teamUnavailable ??= `the member list can't be read (${membersRes.error.message})`;
+      return NextResponse.json(payload);
     }
     if (byUser === null) return NextResponse.json(payload);
     const spendByUser = byUser;

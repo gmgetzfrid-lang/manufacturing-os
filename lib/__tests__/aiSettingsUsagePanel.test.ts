@@ -145,7 +145,18 @@ describe("UsagePanel", () => {
     await render(React.createElement(UsagePanel, { orgId: "o1" }));
     await setDefaultCap("500");
     expect(kn.setAiCap).toHaveBeenCalledWith("o1", 500);
-    expect(lastToast()).toMatch(/Default monthly cap set to \$500\.00 per person\. Your own cap stays at \$10\.00 — nobody raises their own cap/);
+    expect(lastToast()).toMatch(/Default monthly cap set to \$500\.00 per person\. Your own cap stays at \$10\.00 as a personal cap — a change to the default no longer moves it, and nobody raises their own cap/);
+    kn.getAiUsage.mockReset();
+  });
+
+  it("GOV-10 (integrator, final review): a setter held at a LOCK when they unlock the default is told it as a lock, never '$0.00', and as a personal cap", async () => {
+    const team = [{ userId: "u1", name: "Ada", spentUsd: 0, asks: 0, calls: 0, inputTokens: 0, outputTokens: 0, capUsd: 0, locked: true, hasOverride: false, byOp: {} }];
+    kn.getAiUsage.mockResolvedValue({ ...base, spentUsd: 0, percent: 100, capUsd: 0, locked: true, orgCapUsd: 0, team, canManageCaps: true, selfFollowsDefault: true });
+    kn.setAiCap.mockResolvedValueOnce({ ok: true, capUsd: 10, locked: false, selfHeldAtUsd: 0 });
+    await render(React.createElement(UsagePanel, { orgId: "o1" }));
+    await setDefaultCap("10");
+    expect(lastToast()).toMatch(/Default monthly cap set to \$10\.00 per person\. Your own cap stays at \$0 \(AI locked\) as a personal cap — a change to the default no longer moves it/);
+    expect(lastToast()).not.toMatch(/\$0\.00/);
     kn.getAiUsage.mockReset();
   });
 

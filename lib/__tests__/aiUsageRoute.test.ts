@@ -590,6 +590,31 @@ describe("GOV-4 / GOV-1 — a team ledger that can't be summed leaves the viewer
   });
 });
 
+describe("integrator, I-05 final review — the GET says what was spent and whose list it couldn't read", () => {
+  it("GOV-3: a locked member who spent nothing reads spentUsd 0 — the lock floor the server gates on is never sent as money", async () => {
+    db.tables.ai_usage_events = [];
+    db.tables.ai_usage_limits = [{ org_id: ORG, user_id: null, monthly_cap_usd: 0 }];
+    const r = await get(ENG);
+    expect(r.status).toBe(200);
+    expect(r.json).toMatchObject({ spentUsd: 0, capUsd: 0, locked: true, percent: 100 });
+    // a locked member who DID spend this month still reads what they spent
+    db.tables.ai_usage_events = [spend(ENG, "knowledgeAsk", 1.25)];
+    const spent = await get(ENG);
+    expect(spent.json).toMatchObject({ spentUsd: 1.25, capUsd: 0, locked: true, percent: 100 });
+  });
+
+  it("GOV-4: a member list that can't be read is said as teamUnavailable — never 200 with an empty team; the viewer's own meter and the default's editor stay", async () => {
+    db.tables.ai_usage_events = [spend(ADMIN, "knowledgeAsk", 1), spend(ENG, "knowledgeAsk", 3)];
+    db.errors["org_members:select:many"] = { message: "connection reset" };
+    const r = await get(ADMIN);
+    expect(r.status).toBe(200);
+    expect(r.json).toMatchObject({ spentUsd: 1, canManageCaps: true, orgCapUsd: 10 });
+    expect(r.json.team).toBeUndefined();
+    expect(r.json.soleCapsHolder).toBeUndefined();
+    expect(r.json.teamUnavailable).toBe("the member list can't be read (connection reset)");
+  });
+});
+
 describe("GOV-10 — the sequential matrix: the reviewer's flows T1–T10, each request finished before the next (committed in fix pass 12)", () => {
   const limitsOf = (uid: string | null) => db.tables.ai_usage_limits.filter((l) => (l.user_id ?? null) === uid).map((l) => l.monthly_cap_usd);
   const capDetails = () => db.tables.audit_logs.filter((a) => a.action === "AI_CAP_CHANGED").map((a) => plainDetails(a.details));
