@@ -10,6 +10,8 @@
 
 import { supabase } from "@/lib/supabase";
 import { uploadToPath, type UploadProgress } from "@/lib/storage";
+import { ALLOWED_PROVIDERS } from "@/lib/ai/pricing";
+import type { AiProviderId } from "@/lib/ai/providerCall";
 
 export interface KnowledgeLibrary {
   id: string;
@@ -76,6 +78,20 @@ export interface KnowledgeDocument {
   sourceRev: string | null;
   /** Pages that had no text layer and were read by AI vision instead. */
   visionPages: number;
+  /** Pages with no extractable text at all — the running count the engine
+   *  keeps on the row (`empty_pages`, ING-11). 0 on a database without
+   *  20261122, and for documents indexed before it. */
+  emptyPages: number;
+  /** Pages AI vision failed to read, waiting on a retry — or, once a
+   *  controller accepted the partial index, the pages accepted unread
+   *  (`vision_failed_pages`, ING-6). */
+  visionFailedPages: number[];
+  /** A controller accepted the index with the unread pages still listed. */
+  visionPartialAccepted: boolean;
+  /** The chunker that wrote this document's index (1 or 2); null before its
+   *  first batch; `undefined` on a database without 20261122, which has no
+   *  column to hold it — no library there can choose a chunker (ING-4). */
+  chunkVersion: number | null | undefined;
 }
 
 /** Library answers cite (document, page, verbatim quote); internet answers
@@ -389,6 +405,16 @@ const mapDocument = (r: Record<string, unknown>): KnowledgeDocument => ({
   sourceDocumentId: (r.source_document_id as string | null) ?? null,
   sourceRev: (r.source_rev as string | null) ?? null,
   visionPages: (r.vision_pages as number | null) ?? 0,
+  // The 20261122 columns ride the same select("*"); absent keys (a database
+  // without it) read as nothing recorded.
+  emptyPages: Number(r.empty_pages ?? 0) || 0,
+  visionFailedPages: Array.isArray(r.vision_failed_pages)
+    ? (r.vision_failed_pages as unknown[]).map(Number).filter((n) => Number.isInteger(n) && n > 0)
+    : [],
+  visionPartialAccepted: r.vision_partial_accepted === true,
+  // A missing key is a missing column (the select is "*"), never "chunker 1":
+  // the page offers the table-aware re-index only where it can run.
+  chunkVersion: "chunk_version" in r ? (typeof r.chunk_version === "number" ? r.chunk_version : null) : undefined,
 });
 
 export async function listKnowledgeDocuments(libraryId: string): Promise<KnowledgeDocument[]> {
@@ -397,6 +423,93 @@ export async function listKnowledgeDocuments(libraryId: string): Promise<Knowled
     .order("created_at", { ascending: true });
   if (error) return [];
   return (data ?? []).map(mapDocument);
+}
+
+// ── The browser-side PDF check (ING-9) ────────────────────────────────────
+// The ingest engine reads a stored file's first KB before pdf.js sees it and
+// refuses another format (sniffBytes / notPdfMessage in lib/knowledgeIngest,
+// which is server-only). The same rule runs here, in the browser, BEFORE
+// anything is uploaded: a renamed spreadsheet never makes a round trip to
+// storage and back, and the refusal names where the file belongs. Both are
+// pinned to the engine's own by lib/__tests__/knowledgeUploadSniff.test.ts.
+// Like the engine, a head with no "%PDF-" that carries no other format's
+// signature is NOT refused here: pdf.js opens a PDF behind a preamble, and
+// the server refuses such a file only once pdf.js has failed (nothing is
+// left behind either way).
+
+export type UploadHeadKind = "pdf" | "office" | "text" | "image" | "unknown";
+
+/** Classify a file by its leading bytes — the engine's sniffBytes, as is. */
+export function sniffUploadHead(head: Uint8Array): UploadHeadKind {
+  const at = (sig: number[], off = 0) => sig.every((b, i) => head[off + i] === b);
+  const ascii = String.fromCharCode(...head.subarray(0, 1024));
+  if (ascii.includes("%PDF-")) return "pdf";
+  if (at([0x50, 0x4b, 0x03, 0x04]) || at([0xd0, 0xcf, 0x11, 0xe0, 0xa1, 0xb1, 0x1a, 0xe1])) return "office";
+  if (at([0x89, 0x50, 0x4e, 0x47]) || at([0xff, 0xd8, 0xff]) || at([0x49, 0x49, 0x2a, 0x00]) || at([0x4d, 0x4d, 0x00, 0x2a])) return "image";
+  const sample = head.subarray(0, 512);
+  if (sample.length > 0) {
+    let printable = 0;
+    for (const b of sample) if (b === 9 || b === 10 || b === 13 || (b >= 32 && b < 127) || b >= 0x80) printable++;
+    if (printable / sample.length > 0.95) return "text";
+  }
+  return "unknown";
+}
+
+/** The refusal for a non-PDF, naming where the file belongs — the engine's
+ *  notPdfMessage, word for word. */
+export function notPdfUploadMessage(name: string, kind: UploadHeadKind): string {
+  const head = `Only PDF files can be indexed — "${name}" is not a PDF`;
+  switch (kind) {
+    case "office":
+    case "text":
+      return `${head} (it looks like ${kind === "office" ? "an Excel or Word file" : "a text or CSV file"}). ` +
+        "To load an equipment list, open Operating areas and use Import CSV — it takes .xlsx, .xls and .csv. " +
+        "For a document, save it as PDF and add it again.";
+    case "image":
+      return `${head} (it looks like an image). Save or scan it to PDF, then add it again.`;
+    default:
+      return `${head}. Save it as PDF, then add it again.`;
+  }
+}
+
+const EXTENSION_KIND: Record<string, UploadHeadKind> = {
+  xlsx: "office", xlsm: "office", xls: "office", docx: "office", doc: "office",
+  csv: "text", tsv: "text", txt: "text",
+  png: "image", jpg: "image", jpeg: "image", tif: "image", tiff: "image", gif: "image", bmp: "image", heic: "image",
+};
+
+/** Why a file must not be uploaded to a knowledge library, or null when it
+ *  may go (the server still has the last word). A name without ".pdf" is
+ *  refused, as it always was, now naming the right destination; a ".pdf"
+ *  whose first bytes carry another format's signature (a spreadsheet, a Word
+ *  file, an image) is refused before upload. `head` is the file's first KB
+ *  (readUploadHead); null when it could not be read. */
+export function pdfUploadRefusal(name: string, head: Uint8Array | null): string | null {
+  const sniffed = head && head.length > 0 ? sniffUploadHead(head) : "unknown";
+  if (!/\.pdf$/i.test(name)) {
+    if (sniffed === "pdf") return `"${name}" is a PDF without the .pdf ending — rename it to end in .pdf, then add it again.`;
+    const ext = (/\.([a-z0-9]+)$/i.exec(name)?.[1] ?? "").toLowerCase();
+    const kind = EXTENSION_KIND[ext] ?? (sniffed === "office" || sniffed === "image" || sniffed === "text" ? sniffed : "unknown");
+    return notPdfUploadMessage(name, kind);
+  }
+  return sniffed === "office" || sniffed === "image" ? notPdfUploadMessage(name, sniffed) : null;
+}
+
+/** A file's first KB, read in the browser; null when it cannot be read. */
+export async function readUploadHead(file: Blob): Promise<Uint8Array | null> {
+  try {
+    const part = file.slice(0, 1024);
+    if (typeof part.arrayBuffer === "function") return new Uint8Array(await part.arrayBuffer());
+    // An engine without Blob.arrayBuffer (older Safari) still has FileReader.
+    return await new Promise<Uint8Array | null>((resolve) => {
+      const reader = new FileReader();
+      reader.onload = () => resolve(reader.result instanceof ArrayBuffer ? new Uint8Array(reader.result) : null);
+      reader.onerror = () => resolve(null);
+      reader.readAsArrayBuffer(part);
+    });
+  } catch {
+    return null;
+  }
 }
 
 /** Upload the PDF to R2, register the document row, and drive the ingest
@@ -445,16 +558,32 @@ export function isIngestActive(documentId: string): boolean {
   return activeIngests.has(documentId);
 }
 
+/** What a call to ingestKnowledgeDocument did: ran the loop to the end
+ *  (`indexed`), or ran nothing because another loop in this tab already
+ *  owns the document (`already-active`) — the caller's own request, a
+ *  person's `retryNow` included, was not sent. */
+export type IngestRunOutcome = "indexed" | "already-active";
+
+/** `retryNow` marks the run as a PERSON's explicit re-run — the library
+ *  page's Resume button and nothing else (ING-8, DEC-58 item 3). The run
+ *  carries it until its first answer that is not `busy` (see ingestLoop);
+ *  the route records it (KNOWLEDGE_DOC_RETRY_NOW) only for the batch the
+ *  engine lets past a failed batch's back-off and performs. The page's
+ *  automatic loop and the app-shell indicator never pass it. */
 export async function ingestKnowledgeDocument(
   documentId: string,
   onIndex?: (indexed: number, total: number | null, progress?: IngestProgress) => void,
-): Promise<void> {
+  opts: { retryNow?: boolean } = {},
+): Promise<IngestRunOutcome> {
   // Another loop in this tab already owns the document — let it finish.
   // Progress lives on the row, so the caller's refreshes still see movement.
-  if (activeIngests.has(documentId)) return;
+  // Said, not swallowed: a person's Resume must not report a re-run that
+  // never left the tab.
+  if (activeIngests.has(documentId)) return "already-active";
   activeIngests.add(documentId);
   try {
-    await ingestLoop(documentId, onIndex);
+    await ingestLoop(documentId, onIndex, opts.retryNow === true);
+    return "indexed";
   } finally {
     activeIngests.delete(documentId);
   }
@@ -470,6 +599,7 @@ const INGEST_BUSY_WAIT_MS = 30_000;
 async function ingestLoop(
   documentId: string,
   onIndex?: (indexed: number, total: number | null, progress?: IngestProgress) => void,
+  retryNow = false,
 ): Promise<void> {
   // Bounded loop. Vision-read pages advance in small batches (render +
   // transcribe is seconds per page), so the round budget is generous.
@@ -487,7 +617,23 @@ async function ingestLoop(
   // stall: the loop waits `retryAfterMs` and asks again, and only a long run
   // of busy answers ends it, with the true reason. A vision retry that
   // re-reads failed pages does not move `pagesIndexed`; a fall in
-  // `visionFailedPages` (or a rise in `pagesReadable`) is progress too.
+  // `visionFailedPages` (or a rise in `pagesReadable`) is progress too. So is
+  // a retry batch whose tries all failed (`visionRetryAttempts` > 0): it
+  // moved them to the back of the queue, the next batch tries the pages
+  // behind, and the batch that completes the round answers 409 with the
+  // real reason — never a false "stalled" (ING-6).
+  //
+  // A person's `retryNow` (ING-8) rides every POST until the first answer
+  // that is not `busy`: a busy POST never reached the back-off gate (the
+  // engine records a re-run only under the claim), so the intent is kept;
+  // any other answer — a batch performed, a 409/502 refusal — settles it.
+  // So does a transient failure: an invocation the platform killed may
+  // already have let the re-run through and recorded it, and resending the
+  // flag on every re-POST would let one click skip the back-off (audited,
+  // re-billing up to a batch of AI-vision pages) up to five times. If that
+  // invocation died before the gate, the next POST meets the back-off's 409
+  // and the loop stops on its reason — Resume again re-runs it.
+  let sendRetryNow = retryNow;
   let visionPages = 0;
   let lastIndexed = -1;
   let lastFailed: number | null = null;
@@ -500,17 +646,19 @@ async function ingestLoop(
       done: boolean; pageCount: number; pagesIndexed: number;
       visionPages?: number; visionSkipReason?: string | null;
       busy?: boolean; retryAfterMs?: number | null;
-      visionFailedPages?: number[]; pagesReadable?: number;
+      visionFailedPages?: number[]; pagesReadable?: number; visionRetryAttempts?: number;
     };
     try {
-      out = await apiPost("/api/knowledge/ingest", { documentId });
+      out = await apiPost("/api/knowledge/ingest", sendRetryNow ? { documentId, retryNow: true } : { documentId });
       transientFailures = 0;
     } catch (e) {
+      sendRetryNow = false;
       if (!(e as { transient?: boolean }).transient || ++transientFailures > 4) throw e;
       // Back off and pick up where the last committed batch stopped.
       await new Promise((r) => setTimeout(r, 1500 * transientFailures));
       continue;
     }
+    if (!out.busy) sendRetryNow = false;
     visionPages += out.visionPages ?? 0;
     onIndex?.(out.pagesIndexed, out.pageCount, {
       indexed: out.pagesIndexed, total: out.pageCount,
@@ -534,7 +682,8 @@ async function ingestLoop(
     const readable = typeof out.pagesReadable === "number" ? out.pagesReadable : -1;
     const progressed = out.pagesIndexed > lastIndexed
       || (failed !== null && lastFailed !== null && failed < lastFailed)
-      || readable > lastReadable;
+      || readable > lastReadable
+      || (typeof out.visionRetryAttempts === "number" && out.visionRetryAttempts > 0);
     noProgressRounds = progressed ? 0 : noProgressRounds + 1;
     lastIndexed = Math.max(lastIndexed, out.pagesIndexed);
     if (failed !== null) lastFailed = failed;
@@ -548,6 +697,265 @@ async function ingestLoop(
     }
   }
   throw new Error("Indexing did not finish — reopen the library to resume.");
+}
+
+/** ING-6's explicit exit: a controller accepts a document whose remaining
+ *  pages AI vision could not read. The route takes the document's claim,
+ *  audits the acceptance FIRST (an acceptance it cannot record changes
+ *  nothing) and makes the document 'ready' with those pages still listed.
+ *  Every refusal (409: being indexed, already accepted, not at the end yet,
+ *  changed underneath; 500: not recorded) is thrown with its message. */
+export async function acceptPartialIndex(documentId: string): Promise<{ acceptedPages: number[] }> {
+  const out = await apiPost<{ acceptedPages?: unknown }>("/api/knowledge/ingest", { documentId, action: "accept-partial" });
+  return { acceptedPages: Array.isArray(out.acceptedPages) ? out.acceptedPages.map(Number) : [] };
+}
+
+/** What a table-aware re-index of a library would do (the route's dry run —
+ *  nothing is changed): its documents, the ones it would reset, and the AI-
+ *  vision pages those hold, which are read and billed again (ING-4). */
+export interface TableAwareReindexPlan { documents: number; toReset: number; visionPagesToReread: number }
+
+export async function planTableAwareReindex(libraryId: string): Promise<TableAwareReindexPlan> {
+  const out = await apiPost<{ documents?: unknown; toReset?: unknown; visionPagesToReread?: unknown }>(
+    "/api/knowledge/ingest", { action: "reindex", libraryId, chunker: 2, dryRun: true },
+  );
+  return {
+    documents: Number(out.documents ?? 0), toReset: Number(out.toReset ?? 0),
+    visionPagesToReread: Number(out.visionPagesToReread ?? 0),
+  };
+}
+
+/** Run the re-index (chunker 2). Each call resets documents until the
+ *  route's invocation deadline and answers `remaining`; it is called again
+ *  while documents remain AND the last call reset something — a call that
+ *  reset nothing means what is left is busy (mid-batch elsewhere) or failed,
+ *  and running it again later picks those up. Every call is audited by the
+ *  route before it resets anything.
+ *
+ *  The route names each problem `${id}: …`, and they are of two kinds:
+ *
+ *    - `leftovers`: the document WAS reset (counted in `reset`, out of Ask,
+ *      queued), but deleting part of its old index failed — the engine's
+ *      message ends "(the row is queued; the re-index's first batch clears
+ *      what is left)". Reported once, by the call that reset it.
+ *    - `errors`: the document was NOT reset. It stays in the route's
+ *      selector, so every later call that reaches it tries it again — and
+ *      the run's last call is the one that says how each still stands: a
+ *      run that ends with nothing remaining reset them all; one that ends
+ *      on a call that reset nothing has just tried them. So `errors` is the
+ *      last answered call's failures, never an earlier call's for a
+ *      document a later call reset. (A document the last call did not reach
+ *      before its deadline is not named, but is counted in `remaining`.)
+ *
+ *  The first call's refusal is thrown as is (nothing was reset). A later
+ *  call that fails does NOT throw away what the calls before it did:
+ *  documents they reset are already out of Ask, waiting to be re-indexed,
+ *  so the result carries them with `stopped` — the reason the run stopped —
+ *  and the `errors` and `remaining` the last answer gave. */
+export async function runTableAwareReindex(libraryId: string): Promise<{
+  reset: number; busy: number; errors: string[]; leftovers: string[]; remaining: number; stopped: string | null;
+}> {
+  let reset = 0;
+  let last = { busy: 0, remaining: 0 };
+  let errors: string[] = [];
+  const leftoversByDoc = new Map<string, string>();
+  let stopped: string | null = null;
+  for (let round = 0; round < 200; round++) {
+    let out: { reset?: unknown; busy?: unknown; errors?: unknown; remaining?: unknown };
+    try {
+      out = await apiPost<typeof out>("/api/knowledge/ingest", { action: "reindex", libraryId, chunker: 2 });
+    } catch (e) {
+      if (round === 0) throw e;
+      stopped = (e as Error).message;
+      break;
+    }
+    const did = Number(out.reset ?? 0);
+    reset += did;
+    last = { busy: Number(out.busy ?? 0), remaining: Number(out.remaining ?? 0) };
+    errors = [];
+    if (Array.isArray(out.errors)) {
+      for (const msg of out.errors.map(String)) {
+        if (RESET_WITH_LEFTOVERS.test(msg)) {
+          const sep = msg.indexOf(": ");
+          leftoversByDoc.set(sep > 0 ? msg.slice(0, sep) : msg, msg);
+        } else {
+          errors.push(msg);
+        }
+      }
+    }
+    if (last.remaining <= 0 || did === 0) break;
+  }
+  return {
+    reset, busy: last.busy, errors: errors.slice(0, 20), leftovers: [...leftoversByDoc.values()].slice(0, 20),
+    remaining: last.remaining, stopped,
+  };
+}
+
+/** The engine's mark on a document it reset whose old index it could not
+ *  fully delete (`resetKnowledgeIndex` in lib/knowledgeIngest.ts): reset,
+ *  queued, and cleared by its first re-index batch. The route returns its
+ *  problems as free text, so this is matched against the engine's own
+ *  wording; lib/__tests__/reindexLeftoversCoupling.test.ts ties the two
+ *  together (structured leftovers are ING-13's). */
+export const RESET_WITH_LEFTOVERS = /\(the row is queued; /;
+
+/** Whether THIS person's own AI key could read pages with AI vision right
+ *  now, by the ingest route's own test (app/api/knowledge/ingest): a saved
+ *  connection on an allowed provider, under its monthly cap. Null when it
+ *  could; otherwise the reason it could not, phrased to follow "but". A
+ *  check that cannot be made throws.
+ *
+ *  The table-aware re-index asks it first in a library AI vision reads
+ *  (ING-4): the library page's own loop is the first driver of every
+ *  document the run resets, on the clicking person's key, and a batch run
+ *  with no usable key commits a vision page with its text layer only — for
+ *  a scan or a CAD sheet, nothing — without recording it for a retry. */
+export async function ownVisionKeyProblem(orgId: string): Promise<string | null> {
+  const conns = await getAiConnections(orgId);
+  const conn = conns.effective ?? conns.personal;
+  if (!conn) return "you have no AI key saved — add yours in AI settings first";
+  if (!ALLOWED_PROVIDERS.includes(conn.provider as AiProviderId)) {
+    return `your AI key's provider (${conn.provider}) cannot be used for indexing — change it in AI settings`;
+  }
+  const usage = await getAiUsage(orgId);
+  const spent = Number(usage.spentUsd) || 0;
+  const cap = Number(usage.capUsd) || 0;
+  if (cap > 0 && spent >= cap) {
+    return `your monthly AI budget is reached ($${spent.toFixed(2)} of $${cap.toFixed(2)}) — it resets next month, or an admin can raise it`;
+  }
+  return null;
+}
+
+const pagesLabel = (n: number) => `${n} page${n === 1 ? "" : "s"}`;
+
+/** A row's AI-vision page count as far as its current index stands behind
+ *  it: none on a row with no pages indexed (a reset row keeps the last
+ *  generation's count until its first batch commits), and never more than
+ *  the pages indexed or the page count — ING-12 records `vision_pages`
+ *  already inflated past the page count on existing rows. The library page's
+ *  row counter reads it. (The table-aware re-index's confirmation does not:
+ *  it quotes the route's own count, which reads every document live.) */
+export function clampedVisionPages(d: Pick<KnowledgeDocument, "visionPages" | "pagesIndexed" | "pageCount">): number {
+  if (!(d.pagesIndexed > 0)) return 0;
+  return Math.max(0, Math.min(d.visionPages, d.pagesIndexed, d.pageCount ?? d.pagesIndexed));
+}
+
+/** Who reads a page with AI vision once the run has reset its document, and
+ *  on whose key. The interactive drivers read on the indexing person's own
+ *  key (the ingest route: a saved connection on an allowed provider, under
+ *  its cap); the nightly drain on the uploader's (`loadSponsorVision` in
+ *  lib/knowledgeIngest.ts: the same gates plus a signed AI agreement). */
+const reindexVisionDrivers = (yours: string): string =>
+  `${yours}; after that, an Admin or Doc Control member with the app open indexes on their own key, and the nightly `
+  + "maintenance run on the uploader's key — only if they have one with budget left and have signed the AI agreement "
+  + "(a doc-control mirror has no uploader)";
+
+/** The confirmation before a table-aware re-index: what the dry run counts
+ *  (documents reset, AI-vision pages), on what condition AI vision reads a
+ *  page at all, and what the count leaves out — every document it resets has
+ *  its passages deleted and drops out of Ask until it is re-indexed (ING-4 /
+ *  ING-7).
+ *
+ *  `plan.visionPagesToReread` is the route's own figure, quoted as is and
+ *  never cut down to the page's document list: the route pages through
+ *  every document of the library and reads them live, while the list is
+ *  capped at the row limit and goes stale, so a figure built from it could
+ *  quote less than the route counted. The figure (the documents'
+ *  `vision_pages`, summed) is neither a floor nor a ceiling on what the run
+ *  reads and bills:
+ *    - not a ceiling: every page that needs AI vision (`pageNeedsVision`, or
+ *      every page in a read-every-page library) is read and billed wherever
+ *      the batch has a usable key, counted or not — a page indexed before
+ *      with no key, one AI vision found blank (a billed read `vision_pages`
+ *      never counts), one it could not read;
+ *    - not a floor: a row whose count predates the ING-12 fix still carries
+ *      reads from earlier index generations, and a page read only because
+ *      the library once read every page with AI vision is not read with it
+ *      again once that setting is off.
+ *
+ *  AI vision reads a page only on a usable key: interactively the indexing
+ *  person's, on the nightly run the uploader's (which also needs a signed AI
+ *  agreement). A batch with no usable key commits the page with its text
+ *  layer only and records nothing to retry. The page asks this only after it
+ *  checked the clicking person's own key (ownVisionKeyProblem) wherever the
+ *  dry run counts AI-vision pages or the library reads every page with AI
+ *  vision, since its own loop indexes first. A library that reads every page
+ *  with AI vision (`visionAllPages`) is never indexed by the nightly run
+ *  without a sponsored key (`fileBehind`), and a doc-control mirror has no
+ *  uploader to sponsor it; but a keyless Admin or Doc Control member with the
+ *  app open still indexes such a document, text-only (ING-13). */
+export function tableAwareReindexMessage(
+  plan: TableAwareReindexPlan, opts: { visionAllPages?: boolean } = {},
+): string {
+  const docs = `${plan.toReset} of ${plan.documents} document${plan.documents === 1 ? "" : "s"}`;
+  const p = plan.visionPagesToReread;
+  const allPages = opts.visionAllPages === true;
+  const parts: string[] = [
+    `${docs} will be re-read with table-aware chunking: a table stays one passage with a row per line, `
+      + "and a sentence that runs over a page break is kept whole.",
+  ];
+  const counted = `The dry run counts ${pagesLabel(p)} of them as read by AI vision before.`;
+  const noKey = "A page indexed with no such key comes back with only what its text layer holds — for a scan or a CAD "
+    + "sheet, nothing — and AI vision does not read it again until the document is re-indexed on a key (Re-index all).";
+  if (allPages) {
+    parts.push(
+      `This library reads every page with AI vision.${p > 0 ? ` ${counted}` : ""} Every page of those documents is read, `
+      + "and billed, whatever that count, but only where whoever indexes it has an AI key with budget left: "
+      + `${reindexVisionDrivers("this page starts on your key as soon as you confirm")}. ${noKey}`,
+    );
+    parts.push(
+      "Because this library reads every page with AI vision, the nightly run never indexes a document whose uploader "
+      + "has no AI key with budget left and a signed AI agreement — every doc-control mirror among them. Until a driver "
+      + "with a usable key reaches those documents, the nightly run skips them, but any Admin or Doc Control member with "
+      + "the app open and no usable key of their own indexes them text-only.",
+    );
+  } else if (p > 0) {
+    parts.push(
+      `${counted} That count is not exact either way: an older document's count can include pages read in earlier `
+      + "indexings, and a page that needs AI vision but is not counted — never read by it, found blank, or one it could "
+      + "not read — is read, and billed, too. AI vision reads, and bills, a page only where whoever indexes it has an AI "
+      + `key with budget left: ${reindexVisionDrivers("this page starts on your key as soon as you confirm")}. ${noKey}`,
+    );
+  } else {
+    parts.push(
+      "No page of those documents is counted as read by AI vision. Even so, a page that needs AI vision — one with no "
+      + "usable text layer, such as a scan or a CAD sheet, that was indexed before with no key, or that AI vision found "
+      + "blank or could not read — may still be read, and billed, on the re-index, but only where whoever indexes it has "
+      + "an AI key with budget left: "
+      + `${reindexVisionDrivers("this page starts as soon as you confirm, on your key if you have one with budget left")}. `
+      + "With no such key it comes back with its text layer only.",
+    );
+  }
+  parts.push(
+    "What that count leaves out: each document it resets drops out of Ask — its passages are deleted and it waits "
+    + "in the indexing queue — until it is re-indexed. Indexing runs while an Admin or Doc Control member has the app "
+    + "open, otherwise on the nightly maintenance run, so a library read by AI vision can take days to come back in full.",
+  );
+  return parts.join(" ");
+}
+
+/** Why the page will not run a table-aware re-index for this person
+ *  (ownVisionKeyProblem's `problem`): its own loop would index what the run
+ *  resets on their key at once, and with no usable key those AI-vision
+ *  pages would come back with their text layer only, not read by AI vision
+ *  again until the document is re-indexed on a key. */
+export function tableAwareReindexKeyRefusal(
+  plan: TableAwareReindexPlan, problem: string, opts: { visionAllPages?: boolean } = {},
+): string {
+  // The figure is the route's, as the confirmation quotes it. The page asks
+  // for a key only when it counts pages or the library reads every page, so
+  // the uncounted wording is for any other caller. A library that reads
+  // every page with AI vision reads every page of what it resets, counted or
+  // not.
+  // The count is the dry run's, not exact either way (tableAwareReindexMessage),
+  // so it is quoted as a count, never as the pages the run re-reads.
+  const p = plan.visionPagesToReread;
+  const lead = opts.visionAllPages === true ? "This re-index reads every page of the documents it resets with AI vision"
+    : p > 0 ? `The dry run counts ${pagesLabel(p)} of this library as read by AI vision, and this re-index reads such pages with AI vision again`
+      : "This re-index reads the AI-vision pages of the documents it resets with AI vision again";
+  return `Nothing was reset. ${lead}; this page starts indexing what it resets on your key as soon as it runs — `
+    + `but ${problem}. Indexed with no usable key, those pages would come back with only their text layer, and AI `
+    + "vision would not read them again until the document is re-indexed on a key.";
 }
 
 /** Thumbs-up/down on an answer. 1 = useful (its cited pages will seed

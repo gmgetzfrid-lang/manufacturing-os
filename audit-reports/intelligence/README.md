@@ -56,7 +56,7 @@ It is not a missing brain. It is a missing memory.
 
 ## Findings
 
-**262 findings** — 9 CRITICAL, 59 HIGH, 146 MEDIUM, 48 LOW — plus **12 gap specs**.
+**263 findings** — 9 CRITICAL, 59 HIGH, 147 MEDIUM, 48 LOW — plus **12 gap specs**.
 
 > **One finding here carries `Status: REFUTED`** — `IEDGE-9`. An independent pass disproved it; the reason is on the finding. Kept rather than deleted (`DEC-41`). **Do not queue it as work.**
 
@@ -64,7 +64,7 @@ It is not a missing brain. It is a missing memory.
 
 | # | Report | n | Focus |
 |---|---|---|---|
-| 01 | [Ingestion](./01-ingestion.md) | 12 | PDF → chunks, and what is lost on the way |
+| 01 | [Ingestion](./01-ingestion.md) | 13 | PDF → chunks, and what is lost on the way — `ING-13` opened by the I-02b integration (intelligence Round G), 2026-10-01 |
 | 02 | [Ask & retrieval](./02-ask-and-retrieval.md) | 11 | Ranking, grounding, citation verification, the injection surface |
 | 03 | [Semantic layer](./03-semantic-layer.md) | 13 | Coverage, drift, chunks that never embed |
 | 04 | [AI governance](./04-ai-governance.md) | 14 | Keys, allowlist, metering, calls that bypass governance |

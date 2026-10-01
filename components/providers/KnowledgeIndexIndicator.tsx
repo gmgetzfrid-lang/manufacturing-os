@@ -21,6 +21,26 @@
 //   - Re-checks the queue every POLL_MS, so documents added from any page
 //     (uploads, linked sources, rev-ups going stale) start without a visit
 //     to the knowledge library.
+//   - Parked documents are left alone (ING-6 / ING-8, intelligence Round G
+//     I-02b). A document whose back-off is in force (`vision_retry_after` in
+//     the future: a failed batch's, or a refused vision retry's) is not even
+//     read — the engine would answer 409 and do nothing. Every back-off the
+//     engine holds carries its reason in `error`, so a future stamp with no
+//     reason (a row the drawing rebuild reset, which nulls `error` and keeps
+//     the stamp) holds nothing back and IS read. A document that carries a
+//     reason (`error`) or a lapsed stamp is tried once per state per tab: on
+//     its row the message promises another try "while an Admin or Doc
+//     Control member has the app open", and this is that try. If the row is
+//     unchanged on the next poll (a keyless park answers 409 and writes
+//     nothing), it is not POSTed again until something moves it. That try
+//     can itself move the row — the engine re-stamps a keyless park whose
+//     stamp is half an hour old — so a parked row is POSTed at most twice
+//     per tab per state change, and every other open tab sees the re-stamp
+//     as a new state and tries it once more.
+//   - The card shows only when a batch made progress — never just because a
+//     document was attempted, so a dismissed card stays dismissed while the
+//     queue holds only parked or busy documents. It never passes `retryNow`:
+//     that is a person's Resume on the library page (ING-8).
 
 import React, { useEffect, useRef, useState } from "react";
 import { Loader2, X, BookOpenText, CheckCircle2, Eye, Minus } from "lucide-react";
@@ -31,6 +51,22 @@ import { ingestKnowledgeDocument, isIngestActive } from "@/lib/knowledge";
 import { isUploading, onUploadActivity } from "@/lib/uploadActivity";
 
 const POLL_MS = 120_000;
+
+interface QueuedRow {
+  id: string;
+  name: string;
+  pages_indexed?: number | null;
+  error?: string | null;
+  vision_retry_after?: string | null;
+}
+
+/** A row that carries a reason or a stamp: a failed batch (ING-8) or a park
+ *  (ING-6) whose back-off has lapsed, or a keyless park (stamped at once). */
+const isParked = (d: QueuedRow) => !!d.error || !!d.vision_retry_after;
+/** The row's parked state — a new failure, park or stamp is a new state. */
+const parkedState = (d: QueuedRow) => `${d.error ?? ""}|${d.vision_retry_after ?? ""}`;
+const isMissingStampColumn = (e: { code?: string; message?: string } | null) =>
+  !!e && (e.code === "42703" || /vision_retry_after/.test(e.message ?? ""));
 
 interface DriveState {
   phase: "working" | "done";
@@ -55,10 +91,38 @@ export default function KnowledgeIndexIndicator() {
   // user deliberately tucked away.
   const [minimized, setMinimized] = useState(false);
   const runningRef = useRef(false);
+  // Parked rows this tab already tried, by the state it tried them in.
+  const parkedTriedRef = useRef(new Map<string, string>());
 
   useEffect(() => {
     if (!activeOrgId || !isController) return;
     let alive = true;
+
+    // A back-off in force (a future stamp WITH its reason) is left out by the
+    // query itself, and work with no stamp comes first (as the cron drain
+    // orders it).
+    const readQueue = async (): Promise<QueuedRow[]> => {
+      const nowIso = new Date().toISOString();
+      const { data, error } = await supabase
+        .from("knowledge_documents")
+        .select("id, name, status, pages_indexed, page_count, error, vision_retry_after")
+        .eq("org_id", activeOrgId)
+        .in("status", ["pending", "stale", "indexing"])
+        .or(`vision_retry_after.is.null,vision_retry_after.lte.${nowIso},error.is.null`)
+        .order("vision_retry_after", { ascending: true, nullsFirst: true })
+        .order("created_at", { ascending: true })
+        .limit(50);
+      if (!isMissingStampColumn(error)) return (data ?? []) as QueuedRow[];
+      // A database without 20261122 has no back-off to leave out.
+      const legacy = await supabase
+        .from("knowledge_documents")
+        .select("id, name, status, pages_indexed, page_count, error")
+        .eq("org_id", activeOrgId)
+        .in("status", ["pending", "stale", "indexing"])
+        .order("created_at", { ascending: true })
+        .limit(50);
+      return (legacy.data ?? []) as QueuedRow[];
+    };
 
     const drain = async () => {
       if (runningRef.current) return;
@@ -70,45 +134,47 @@ export default function KnowledgeIndexIndicator() {
       try {
         const attempted = new Set<string>();
         let finished = 0;
-        let sawWork = false;
+        let sawProgress = false;
         for (;;) {
           if (!alive) return;
           // Re-checked between documents, not just at the top: a batch that
           // starts mid-drain must not have to wait out a long document.
           if (isUploading()) break;
-          const { data } = await supabase
-            .from("knowledge_documents")
-            .select("id, name, status, pages_indexed, page_count")
-            .eq("org_id", activeOrgId)
-            .in("status", ["pending", "stale", "indexing"])
-            .order("created_at", { ascending: true })
-            .limit(50);
-          const queue = ((data ?? []) as Array<{ id: string; name: string }>)
-            .filter((d) => !attempted.has(d.id) && !isIngestActive(d.id));
+          const queue = (await readQueue())
+            .filter((d) => !attempted.has(d.id) && !isIngestActive(d.id))
+            .filter((d) => !isParked(d) || parkedTriedRef.current.get(d.id) !== parkedState(d));
           const next = queue[0];
           if (!next) break;
           attempted.add(next.id);
-          sawWork = true;
-          setHidden(false);
-          setState({
-            phase: "working", docName: next.name, indexed: 0, total: null,
-            queued: queue.length - 1, visionPages: 0, visionSkipReason: null, finished,
-          });
+          if (isParked(next)) parkedTriedRef.current.set(next.id, parkedState(next));
+          else parkedTriedRef.current.delete(next.id);
+          // The card comes up only once this document's batch moved: pages
+          // indexed past where the row stood, or pages read by AI vision (a
+          // vision retry reads pages without moving the resume point).
+          const startIndexed = Number(next.pages_indexed ?? 0);
+          let shown = false;
           try {
             await ingestKnowledgeDocument(next.id, (indexed, total, progress) => {
               if (!alive) return;
+              const visionPages = progress?.visionPages ?? 0;
+              if (!shown && indexed <= startIndexed && visionPages === 0) return;
+              if (!shown) {
+                shown = true;
+                sawProgress = true;
+                setHidden(false);
+              }
               setState({
                 phase: "working", docName: next.name, indexed, total,
                 queued: queue.length - 1,
-                visionPages: progress?.visionPages ?? 0,
+                visionPages,
                 visionSkipReason: progress?.visionSkipReason ?? null,
                 finished,
               });
             });
-            finished++;
-          } catch { /* row is marked errored server-side; move on */ }
+            if (shown) finished++;
+          } catch { /* the reason is on the row (or answered 409); move on */ }
         }
-        if (alive && sawWork) {
+        if (alive && sawProgress) {
           setState((s) => s ? { ...s, phase: "done", finished } : null);
         }
       } finally {

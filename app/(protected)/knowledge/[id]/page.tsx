@@ -22,7 +22,10 @@ import { Button } from "@/components/ui/Button";
 import { Textarea } from "@/components/ui/Field";
 import { Spinner } from "@/components/ui/Spinner";
 import { appConfirm } from "@/components/providers/DialogProvider";
-import { parseAnswerBlocks, extractCitationNumbers, proofTerms, highlightQuote, type AnswerBlock } from "@/lib/knowledgeText";
+import {
+  parseAnswerBlocks, extractCitationNumbers, proofTerms, highlightQuote, chunkerVersionOf, CHUNKER_TABLE_AWARE,
+  type AnswerBlock,
+} from "@/lib/knowledgeText";
 import {
   getKnowledgeLibrary, listKnowledgeDocuments, addKnowledgeDocument,
   ingestKnowledgeDocument, deleteKnowledgeDocument, deleteKnowledgeLibrary,
@@ -34,6 +37,9 @@ import {
   type KnowledgeQuestion, type KnowledgeCitation, type AskMode,
   type KnowledgeLibraryLink,
   rebuildDrawingIndex,
+  acceptPartialIndex, planTableAwareReindex, runTableAwareReindex, tableAwareReindexMessage,
+  ownVisionKeyProblem, tableAwareReindexKeyRefusal, clampedVisionPages,
+  pdfUploadRefusal, readUploadHead,
 } from "@/lib/knowledge";
 import GraphShapeWizard from "@/components/graph/GraphShapeWizard";
 import LibraryAiModal from "@/components/knowledge/LibraryAiModal";
@@ -70,6 +76,39 @@ interface ViewerTarget {
  *  default (no links, no opener) leaves older saved answers unchanged. */
 type DocLink = NonNullable<KnowledgeAnswer["mentionedDocs"]>[number];
 const DocLinkContext = React.createContext<{ links: DocLink[]; open: ((d: DocLink) => void) | null }>({ links: [], open: null });
+
+/** "3, 7, 12" — at most twelve page numbers, then "…" (as the engine's own
+ *  messages list them). */
+const pageListLabel = (pages: number[]) => pages.slice(0, 12).join(", ") + (pages.length > 12 ? ", …" : "");
+
+/** ING-6's explicit exit is open only where the route would take it: the
+ *  main pass reached the end, pages still wait on AI vision, and nobody
+ *  accepted them yet (the route refuses every other case with 409). */
+const canAcceptPartial = (d: KnowledgeDocument) =>
+  d.status !== "ready" && !d.visionPartialAccepted && d.visionFailedPages.length > 0
+  && d.pageCount != null && d.pagesIndexed >= d.pageCount;
+
+/** The per-row counters (ING-6 / ING-11), only where the CURRENT index
+ *  stands behind them. A reset row ("Re-index all" — the drawing rebuild —
+ *  writes status, pages_indexed 0, page_count null and error, nothing else)
+ *  keeps the last generation's vision_pages, empty_pages and vision-failed
+ *  list until its first new batch commits and the engine restarts them
+ *  (ING-12), which can be days for a vision library on the nightly run: no
+ *  counter is shown on a row with no pages indexed. vision_pages already
+ *  inflated past the page count (ING-12) is clamped to the pages indexed,
+ *  and an empty-page count larger than the pages it is counted against is
+ *  left out rather than shown as "34 of 0". */
+function docRowCounters(d: KnowledgeDocument): {
+  visionPages: number; failedPages: number[]; emptyPages: number | null; emptyOf: number;
+} | null {
+  if (!(d.pagesIndexed > 0)) return null;
+  const visionPages = clampedVisionPages(d);
+  const emptyOf = d.status === "ready" ? (d.pageCount ?? d.pagesIndexed) : d.pagesIndexed;
+  const emptyPages = d.emptyPages > 0 && d.emptyPages <= emptyOf ? d.emptyPages : null;
+  const failedPages = d.visionFailedPages;
+  if (visionPages === 0 && failedPages.length === 0 && emptyPages === null) return null;
+  return { visionPages, failedPages, emptyPages, emptyOf };
+}
 
 // ── Instant proof ───────────────────────────────────────────────────────────
 //
@@ -1175,6 +1214,8 @@ export default function KnowledgeLibraryPage() {
   const fileInput = useRef<HTMLInputElement>(null);
   const [uploadState, setUploadState] = useState<{ name: string; phase: string } | null>(null);
   const [reindexing, setReindexing] = useState<string | null>(null);
+  const [accepting, setAccepting] = useState<string | null>(null);
+  const [chunkReindexing, setChunkReindexing] = useState(false);
   // Browser-driven queue drain: linked source documents index right here,
   // automatically — free-tier hosting kills long server jobs, so the open
   // page is the reliable indexing engine.
@@ -1302,7 +1343,7 @@ export default function KnowledgeLibraryPage() {
   const hasQueued = isController && docs.some((d) =>
     d.status === "pending" || d.status === "stale" || d.status === "indexing");
   useEffect(() => {
-    if (!hasQueued || autoIndexRef.current || uploadState !== null || reindexing !== null) return;
+    if (!hasQueued || autoIndexRef.current || uploadState !== null || reindexing !== null || chunkReindexing) return;
     autoIndexRef.current = true;
     const attempted = new Set<string>();
     (async () => {
@@ -1363,7 +1404,7 @@ export default function KnowledgeLibraryPage() {
         }
       }
     })();
-  }, [hasQueued, uploadState, reindexing, libraryId, refresh]);
+  }, [hasQueued, uploadState, reindexing, chunkReindexing, libraryId, refresh]);
 
   // Ask memory: a near-duplicate of a past question in THIS library gets
   // offered from the team's record BEFORE a fresh AI call spends anything —
@@ -1521,8 +1562,14 @@ export default function KnowledgeLibraryPage() {
   const onFiles = async (files: FileList | null) => {
     if (!files || !activeOrgId || !uid) return;
     for (const file of Array.from(files)) {
-      if (!/\.pdf$/i.test(file.name)) {
-        showToast({ type: "error", title: `${file.name}: only PDF files can be indexed.` });
+      // ING-9: checked here, before anything is uploaded — a name without
+      // .pdf, or a .pdf whose first bytes are a spreadsheet, a Word file or
+      // an image, is refused naming where it belongs (an equipment list goes
+      // to Operating areas → Import CSV). The server checks again and has
+      // the last word.
+      const refusal = pdfUploadRefusal(file.name, await readUploadHead(file));
+      if (refusal) {
+        showToast({ type: "error", title: refusal });
         continue;
       }
       try {
@@ -1548,15 +1595,141 @@ export default function KnowledgeLibraryPage() {
     await refresh();
   };
 
+  // Resume is a PERSON's explicit re-run (ING-8, DEC-58 item 3): it skips a
+  // failed batch's back-off, and the route records it. The page's automatic
+  // loop above and the app-shell indicator never pass retryNow.
   const resumeIndex = async (doc: KnowledgeDocument) => {
     setReindexing(doc.id);
     try {
-      await ingestKnowledgeDocument(doc.id, () => { void listKnowledgeDocuments(libraryId).then(setDocs); });
-      showToast({ type: "success", title: `${doc.name} indexed.` });
+      const outcome = await ingestKnowledgeDocument(doc.id, () => { void listKnowledgeDocuments(libraryId).then(setDocs); }, { retryNow: true });
+      // Another loop in this tab (the page's own, or the app-shell
+      // indicator) already owns the document: nothing was sent, so the
+      // person's re-run did not happen — said, never "indexed".
+      if (outcome === "already-active") {
+        showToast({ type: "info", title: `${doc.name} is already being indexed in this tab — try Resume again when it finishes.` });
+      } else {
+        showToast({ type: "success", title: `${doc.name} indexed.` });
+      }
     } catch (e) {
       showToast({ type: "error", title: (e as Error).message });
     } finally {
       setReindexing(null);
+      await refresh();
+    }
+  };
+
+  // ING-6's explicit exit: accept the pages AI vision could not read, unread.
+  // Controller-only, like the route, which takes the document's claim and
+  // audits the acceptance before it changes anything.
+  const acceptPartial = async (doc: KnowledgeDocument) => {
+    const n = doc.visionFailedPages.length;
+    const ok = await appConfirm({
+      title: "Accept the partial index?",
+      message: `AI vision could not read ${n} page${n === 1 ? "" : "s"} of "${doc.name}" (p. ${pageListLabel(doc.visionFailedPages)}). `
+        + "Accepting makes the document ready and searchable without them. Those pages stay unread and listed on the "
+        + "document, and they are not tried again unless the document is re-indexed. The acceptance is recorded in the audit log.",
+      confirmLabel: "Accept partial index",
+    });
+    if (!ok) return;
+    setAccepting(doc.id);
+    try {
+      const res = await acceptPartialIndex(doc.id);
+      const k = res.acceptedPages.length || n;
+      showToast({ type: "success", title: `${doc.name} is ready — ${k} page${k === 1 ? "" : "s"} accepted unread.` });
+    } catch (e) {
+      showToast({ type: "error", title: (e as Error).message });
+    } finally {
+      setAccepting(null);
+      await refresh();
+    }
+  };
+
+  // ING-4 / ING-7: move this library to the table-aware chunker. The dry run
+  // comes first and changes nothing; the confirmation says what it counts
+  // (documents reset, AI-vision pages billed again), on what condition those
+  // pages are read again at all, and what it does not count — the library
+  // drops out of Ask until each document is re-indexed.
+  const tableAwareReindex = async () => {
+    setChunkReindexing(true);
+    try {
+      const plan = await planTableAwareReindex(libraryId);
+      if (plan.toReset === 0) {
+        showToast({ type: "info", title: "Every indexed document in this library already uses table-aware chunking." });
+        return;
+      }
+      // AI vision reads a page only on a usable key, and this page's own
+      // loop is the first to index what the run resets — on THIS person's
+      // key, the moment the run ends. A batch with no usable key commits a
+      // vision page with its text layer only and records nothing to retry,
+      // so in a library AI vision reads, a person whose own key cannot read
+      // is stopped here, before anything is reset. A check that cannot be
+      // made stops it too. The AI-vision figure is the route's own, quoted as
+      // is, never cut down to this page's document list: the route reads
+      // every document live, while the list is capped at the row limit and
+      // goes stale. (The figure is not exact either way —
+      // tableAwareReindexMessage says why.)
+      const visionAllPages = library?.aiFeatures?.visionAllPages === true;
+      if (plan.visionPagesToReread > 0 || visionAllPages) {
+        let problem: string | null;
+        try {
+          problem = await ownVisionKeyProblem(library?.orgId ?? activeOrgId ?? "");
+        } catch (e) {
+          showToast({ type: "error", title: `Nothing was reset: your AI key could not be checked — ${(e as Error).message}` });
+          return;
+        }
+        if (problem) {
+          showToast({ type: "error", title: tableAwareReindexKeyRefusal(plan, problem, { visionAllPages }) });
+          return;
+        }
+      }
+      const ok = await appConfirm({
+        title: "Re-index with table-aware chunking?",
+        message: tableAwareReindexMessage(plan, { visionAllPages }),
+        confirmLabel: "Re-index",
+      });
+      if (!ok) return;
+      const out = await runTableAwareReindex(libraryId);
+      const docsLabel = (n: number) => `${n} document${n === 1 ? "" : "s"}`;
+      // Documents that WERE reset, but whose old passages could not all be
+      // deleted yet: out of Ask and queued all the same — never counted as
+      // "could not be reset".
+      const leftovers = out.leftovers.length > 0
+        ? ` For ${out.leftovers.length} of them the old passages could not all be deleted yet: ${out.leftovers[0]}`
+        : "";
+      if (out.stopped) {
+        // A later call failed: the documents already reset are out of Ask,
+        // waiting to be re-indexed — say how many, and why it stopped.
+        showToast({
+          type: "error",
+          title: `${docsLabel(out.reset)} reset for table-aware chunking, then the run stopped: ${out.stopped}`
+            + (out.remaining > 0 ? ` — ${out.remaining} still to reset; run it again to finish.` : "")
+            + leftovers,
+        });
+      } else if (out.errors.length > 0) {
+        // Documents the run's last call could not reset (the route tries
+        // each again on every call it reaches them).
+        showToast({
+          type: "error",
+          title: `${docsLabel(out.reset)} reset for table-aware chunking; ${out.errors.length} could not be reset: ${out.errors[0]}.`
+            + (out.remaining > 0
+              ? ` ${out.remaining} still to reset${out.busy > 0 ? ` (${out.busy} being indexed right now)` : ""} — run it again to finish.`
+              : "")
+            + leftovers,
+        });
+      } else {
+        showToast({
+          type: out.remaining > 0 || leftovers ? "warning" : "success",
+          title: (out.reset > 0
+            ? `${docsLabel(out.reset)} reset for table-aware chunking — re-indexing starts now.`
+              + (out.remaining > 0 ? ` ${out.remaining} could not be reset right now (being indexed) — run it again to finish.` : "")
+            : `No document could be reset — ${out.remaining} ${out.remaining === 1 ? "is" : "are"} being indexed right now. Run it again in a few minutes.`)
+            + leftovers,
+        });
+      }
+    } catch (e) {
+      showToast({ type: "error", title: (e as Error).message });
+    } finally {
+      setChunkReindexing(false);
       await refresh();
     }
   };
@@ -1600,6 +1773,12 @@ export default function KnowledgeLibraryPage() {
 
   const readyDocs = docs.filter((d) => d.status === "ready").length;
   const indexingDocs = docs.filter((d) => d.status === "indexing" || d.status === "pending" || d.status === "stale").length;
+  // Offered while any indexed document is still on the original chunker —
+  // including one a run found busy, which the next run picks up (ING-4).
+  // Never on a database without 20261122 (no chunk_version column: the row
+  // reads `undefined`), where the action can only answer 424.
+  const onLegacyChunker = docs.some((d) =>
+    d.chunkVersion !== undefined && d.pagesIndexed > 0 && chunkerVersionOf(d.chunkVersion) !== CHUNKER_TABLE_AWARE);
 
   return (
     <PageShell>
@@ -1845,7 +2024,7 @@ export default function KnowledgeLibraryPage() {
             <SourcesPanel orgId={activeOrgId} libraryId={libraryId}
               isController={isController} onChanged={() => void refresh()} />
           )}
-          <div className="flex items-center justify-between mb-2">
+          <div className="flex items-center justify-between gap-y-1.5 flex-wrap mb-2">
             <button onClick={() => setDocsOpen((v) => !v)}
               className="flex items-center gap-1.5 text-xs font-black uppercase tracking-widest text-[var(--color-text-muted)] hover:text-[var(--color-text)] transition-colors">
               {docsOpen ? <ChevronDown className="w-3.5 h-3.5" /> : <ChevronRight className="w-3.5 h-3.5" />}
@@ -1856,6 +2035,7 @@ export default function KnowledgeLibraryPage() {
                 made rebuilding unreachable for every prose library. The
                 action was always general; now its home is too. */}
             {isController && docs.length > 0 && (
+              <span className="mr-auto ml-3 flex items-center gap-1.5 flex-wrap">
               <button
                 onClick={async () => {
                   const ok = await appConfirm({
@@ -1875,10 +2055,24 @@ export default function KnowledgeLibraryPage() {
                     showToast({ type: "error", title: (e as Error).message });
                   }
                 }}
-                className="text-[10px] font-black px-2 py-1 rounded-lg border border-[var(--color-border)] text-[var(--color-text-muted)] hover:bg-[var(--color-surface-2)] hover:text-[var(--color-text)] transition-colors mr-auto ml-3"
+                className="text-[10px] font-black px-2 py-1 rounded-lg border border-[var(--color-border)] text-[var(--color-text-muted)] hover:bg-[var(--color-surface-2)] hover:text-[var(--color-text)] transition-colors"
               >
                 Re-index all
               </button>
+              {/* ING-4 / ING-7: the library's explicit, audited move to the
+                  table-aware chunker — offered while any indexed document is
+                  still on the original one. */}
+              {onLegacyChunker && (
+                <button
+                  onClick={() => void tableAwareReindex()}
+                  disabled={chunkReindexing}
+                  title="Keeps each table whole, one row per line, and a sentence that crosses a page break in one passage. Shows what it would reset and re-bill before anything changes."
+                  className="text-[10px] font-black px-2 py-1 rounded-lg border border-[var(--color-border)] text-[var(--color-text-muted)] hover:bg-[var(--color-surface-2)] hover:text-[var(--color-text)] transition-colors disabled:opacity-50 inline-flex items-center gap-1"
+                >
+                  {chunkReindexing ? <Loader2 className="w-3 h-3 animate-spin" /> : null} Re-index with table-aware chunking
+                </button>
+              )}
+              </span>
             )}
             {isController && (
               <>
@@ -1954,6 +2148,52 @@ export default function KnowledgeLibraryPage() {
                         <div className="h-full bg-orange-500 transition-all" style={{ width: `${Math.round((doc.pagesIndexed / doc.pageCount) * 100)}%` }} />
                       </div>
                     ) : null}
+                    {/* ING-6 / ING-8: a document still indexing (or queued)
+                        can carry a reason on its row — pages waiting on AI
+                        vision, or a failed batch waiting out its back-off —
+                        and it is said here, never only once it is 'error'. */}
+                    {doc.error && doc.status !== "error" && doc.status !== "ready" && (
+                      <div data-doc-held="true" className="mt-1 flex items-start gap-1 text-[10px] text-amber-700 dark:text-amber-400 break-words">
+                        <AlertTriangle className="w-3 h-3 shrink-0 mt-px" /> <span>{doc.error}</span>
+                      </div>
+                    )}
+                    {(() => {
+                      const c = docRowCounters(doc);
+                      if (!c) return null;
+                      return (
+                        <div className="mt-0.5 flex flex-wrap gap-x-2 gap-y-0.5 text-[10px] text-[var(--color-text-muted)]">
+                          {c.visionPages > 0 && (
+                            <span className="inline-flex items-center gap-1">
+                              <Eye className="w-3 h-3 text-sky-600 shrink-0" /> {c.visionPages} page{c.visionPages === 1 ? "" : "s"} read by AI vision
+                            </span>
+                          )}
+                          {c.failedPages.length > 0 && (
+                            <span data-vision-failed="true" className="text-amber-700 dark:text-amber-400 font-bold">
+                              {c.failedPages.length} page{c.failedPages.length === 1 ? "" : "s"}
+                              {doc.visionPartialAccepted
+                                ? ` accepted unread — AI vision could not read p. ${pageListLabel(c.failedPages)}`
+                                : ` AI vision could not read yet (p. ${pageListLabel(c.failedPages)})`}
+                            </span>
+                          )}
+                          {/* ING-11: the running count the engine keeps on the row. */}
+                          {c.emptyPages !== null && (
+                            <span data-empty-pages="true"
+                              title="These pages gave no text — not from their text layer, and not from AI vision where it ran — so nothing on them can be found by Ask.">
+                              {doc.status === "ready"
+                                ? `${c.emptyPages} of ${c.emptyOf} pages had no extractable text`
+                                : `${c.emptyPages} of ${c.emptyOf} pages indexed so far had no extractable text`}
+                            </span>
+                          )}
+                        </div>
+                      );
+                    })()}
+                    {isController && canAcceptPartial(doc) && (
+                      <button onClick={() => void acceptPartial(doc)} disabled={accepting !== null}
+                        title="Make the document ready and searchable without the pages AI vision could not read — they stay listed. Recorded in the audit log."
+                        className="mt-1 text-[10px] font-black px-2 py-0.5 rounded-lg border border-amber-300 dark:border-amber-800 text-amber-800 dark:text-amber-300 hover:bg-amber-500/10 disabled:opacity-50 inline-flex items-center gap-1">
+                        {accepting === doc.id ? <Loader2 className="w-3 h-3 animate-spin" /> : null} Accept partial index
+                      </button>
+                    )}
                   </div>
                   {isController && doc.status !== "ready" && (
                     <button onClick={() => void resumeIndex(doc)} disabled={reindexing !== null}

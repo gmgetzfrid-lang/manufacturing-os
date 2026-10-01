@@ -25,16 +25,16 @@
     "audit-reports/intelligence/21-edges-and-invariants.md"
   ],
   "totals": {
-    "findings": 262,
+    "findings": 263,
     "gaps": 12,
     "by_severity": {
       "CRITICAL": 9,
       "HIGH": 59,
-      "MEDIUM": 146,
+      "MEDIUM": 147,
       "LOW": 48
     },
     "by_status": {
-      "OPEN": 208,
+      "OPEN": 209,
       "RESOLVED": 51,
       "REFUTED": 2,
       "INVALID": 1
@@ -4698,6 +4698,40 @@
       ],
       "refuted": false,
       "summary": "A drawing library is indexed once with a valid AI key: 40 pages read by vision. Someone later hits 'Rebuild index' with no key saved (or after the monthly cap is hit). Every sheet re-indexes text-only and comes back empty — but the sheet card still says verdict 'vision' ('AI read it — SHX/scan handled'), and the library shows 40 vision pages that were never re-read. The one screen built to tell an",
+      "area": "intelligence",
+      "report": "audit-reports/intelligence/01-ingestion.md"
+    },
+    {
+      "id": "ING-13",
+      "title": "Nothing server-side stops a keyless table-aware re-index, or a keyless batch committing a regenerated document's AI-vision pages text-only as if complete — the library page's own key check is the only guard, and the client reads the re-index's leftovers out of free text",
+      "severity": "MEDIUM",
+      "status": "OPEN",
+      "verification": "CONFIRMED",
+      "verification_note": "CONFIRMED (reproduced 2026-10-01 at HEAD `1363b8d` through the ingest route, the real engine and the in-memory database; see Evidence)",
+      "blast_radius": null,
+      "related": [
+        "ING-4",
+        "ING-6",
+        "ING-12",
+        "DEC-58"
+      ],
+      "locations": [
+        "app/api/knowledge/ingest/route.ts:396-445",
+        "app/api/knowledge/ingest/route.ts:164-197",
+        "lib/knowledgeIngest.ts:1295-1349",
+        "lib/knowledgeIngest.ts:802-841",
+        "lib/knowledgeIngest.ts:2064-2094",
+        "lib/knowledge.ts:755-800",
+        "app/(protected)/knowledge/[id]/page.tsx:1652-1687",
+        "components/providers/KnowledgeIndexIndicator.tsx:104-157"
+      ],
+      "has_verifier_correction": false,
+      "verified_by": "author",
+      "challenges": [
+        "author"
+      ],
+      "refuted": false,
+      "summary": "A Doc Control lead with no AI key saved runs the table-aware re-index on a P&ID library through the API, or through any client other than the library page; the dry run counts 240 pages AI vision read. The route audits the run and resets every document. Within minutes the app-shell indicator in the lead's own tab (it polls every two minutes), or in any keyless controller's, picks the stale document",
       "area": "intelligence",
       "report": "audit-reports/intelligence/01-ingestion.md"
     },
