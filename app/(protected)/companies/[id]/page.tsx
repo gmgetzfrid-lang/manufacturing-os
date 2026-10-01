@@ -29,7 +29,7 @@ import {
   COMPANY_KIND_LABEL, EVENT_KIND_LABEL,
   type Company, type CompanyEvent, type CompanyProfileData,
 } from "@/lib/companies";
-import { scoreBand, MIN_EVIDENCE_FOR_BAND, type CompanyScorecard } from "@/lib/companyScore";
+import { scoreBand, MIN_EVIDENCE_FOR_BAND } from "@/lib/companyScore";
 import { readExtent } from "@/lib/bidTab";
 import { QUALITY_MANUAL_RUBRIC, type RubricFinding } from "@/lib/checklistEngine";
 import { CO_REASON_LABEL, type CoReason } from "@/lib/changeOrders";
@@ -190,7 +190,7 @@ export default function CompanyProfilePage() {
         canManage={canManage} actorId={uid ?? ""} actorName={userEmail?.split("@")[0] ?? null}
         onChanged={() => void refresh()} setErr={setActionError} />
 
-      <HistoryPanels profile={profile} scorecard={sc} />
+      <HistoryPanels profile={profile} />
 
       {showEdit && uid && (
         <EditCompanyModal company={company} actorId={uid}
@@ -471,8 +471,9 @@ function EventsPanel({ orgId, company, events, canManage, actorId, actorName, on
 
 // ── History: jobs, bids, change orders ───────────────────────────────────
 
-function HistoryPanels({ profile, scorecard }: { profile: CompanyProfileData | null; scorecard: CompanyScorecard | null }) {
-  void scorecard;
+// REL-9: the panels never read the scorecard (the dial above renders it) —
+// the dead prop is gone.
+function HistoryPanels({ profile }: { profile: CompanyProfileData | null }) {
   if (!profile) return null;
   const { projects, bids, changeOrders } = profile;
   if (projects.length === 0 && bids.length === 0 && changeOrders.length === 0) return null;

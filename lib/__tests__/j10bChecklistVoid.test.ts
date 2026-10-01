@@ -188,3 +188,13 @@ describe("REL-9 — a mistaken checklist can be voided, by the tier the database
     expect(ctl).toContain("AND (role IN ('Admin', 'DocCtrl') OR roles && ARRAY['Admin', 'DocCtrl']::text[])");
   });
 });
+
+describe("REL-9 — the company history panels' dead scorecard prop is gone", () => {
+  it("HistoryPanels takes the profile only; the dial is the scorecard's one reader on the page", () => {
+    const page = src("app/(protected)/companies/[id]/page.tsx");
+    expect(page).toContain("<HistoryPanels profile={profile} />");
+    expect(page).toContain("function HistoryPanels({ profile }: { profile: CompanyProfileData | null }) {");
+    expect(page).not.toContain("void scorecard;");
+    expect(page).not.toMatch(/scorecard=\{sc\}/);
+  });
+});
