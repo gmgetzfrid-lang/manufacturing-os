@@ -4,8 +4,10 @@
 import { describe, it, expect } from "vitest";
 import {
   modelPricePerMTok, estimateCostUsd, addUsage, ZERO_USAGE,
-  ALLOWED_PROVIDERS, buildAgreementText,
+  ALLOWED_PROVIDERS, ALLOWED_EMBEDDING_PROVIDERS, buildAgreementText, AGREEMENT_VERSION,
+  worstCaseCostUsd, UPPER_CHARS_PER_TOKEN, UPPER_TOKENS_PER_IMAGE,
 } from "../ai/pricing";
+import { EMBEDDING_PROVIDERS } from "../ai/embeddings";
 
 describe("modelPricePerMTok", () => {
   it("prices known model families", () => {
@@ -62,9 +64,69 @@ describe("addUsage", () => {
   });
 });
 
-describe("ALLOWED_PROVIDERS", () => {
-  it("is exactly the no-training pair — nothing else, any scope", () => {
+describe("ALLOWED_PROVIDERS / ALLOWED_EMBEDDING_PROVIDERS — the two-list model (GOV-6)", () => {
+  it("a CHAT key: exactly the no-training pair Anthropic + OpenAI", () => {
     expect([...ALLOWED_PROVIDERS].sort()).toEqual(["anthropic", "openai"]);
+  });
+  it("an EMBEDDINGS key: exactly Voyage AI + OpenAI — nothing else, and no chat-only provider", () => {
+    expect([...ALLOWED_EMBEDDING_PROVIDERS].sort()).toEqual(["openai", "voyage"]);
+    expect(ALLOWED_EMBEDDING_PROVIDERS).not.toContain("anthropic");
+  });
+  it("every provider the embeddings picker offers is on the embeddings allowlist", () => {
+    for (const p of EMBEDDING_PROVIDERS) expect(ALLOWED_EMBEDDING_PROVIDERS, p.id).toContain(p.id);
+  });
+});
+
+describe("GOV-6 — Voyage at its published rates; the agreement names every vendor; re-sign required", () => {
+  it("prices the three offered Voyage models at the published list (longest prefix wins)", () => {
+    expect(modelPricePerMTok("voyage-3.5-lite")).toEqual([0.02, 0]);
+    expect(modelPricePerMTok("voyage-3.5")).toEqual([0.06, 0]);
+    expect(modelPricePerMTok("voyage-3-large")).toEqual([0.18, 0]);
+    // any other Voyage model keeps the conservative family row, above every published rate
+    expect(modelPricePerMTok("voyage-law-2")).toEqual([0.2, 0]);
+    // a million embedded tokens on the default model costs two cents
+    expect(estimateCostUsd("voyage-3.5-lite", { inputTokens: 1_000_000, outputTokens: 0 })).toBe(0.02);
+  });
+  it("the version moved off 2026-07-v2, so every earlier acceptance is re-signed against the corrected text", () => {
+    expect(AGREEMENT_VERSION).not.toBe("2026-07-v2");
+    expect(AGREEMENT_VERSION).toBe("2026-10-v3");
+  });
+  it("every agreement text — whatever the member's keys — names Anthropic, OpenAI and Voyage AI and what each receives", () => {
+    for (const [chat, emb] of [[undefined, undefined], ["anthropic", undefined], ["openai", "openai"], ["anthropic", "voyage"]] as const) {
+      const text = buildAgreementText(chat, emb);
+      expect(text).toMatch(/Anthropic or OpenAI/);
+      expect(text).toMatch(/Voyage AI/);
+      expect(text).toMatch(/text of every page in the libraries you index is also sent to your embeddings provider/);
+    }
+  });
+  it("a Claude member with a Voyage key gets both providers' paragraphs; a shared OpenAI key gets one", () => {
+    const both = buildAgreementText("anthropic", "voyage");
+    expect(both).toMatch(/This workspace runs on Claude/);
+    expect(both).toMatch(/Your meaning index is built by Voyage AI/);
+    const openai = buildAgreementText("openai", "openai");
+    expect(openai.match(/This workspace runs on OpenAI/g)).toHaveLength(1);
+    // a caller that hands the embeddings provider first still gets its paragraph
+    expect(buildAgreementText("voyage")).toMatch(/Your meaning index is built by Voyage AI/);
+  });
+});
+
+describe("worstCaseCostUsd (GOV-13) — what a pending call could cost", () => {
+  it("text at 3 chars a token, every image at 1,600 tokens, output at the full maxTokens", () => {
+    expect(UPPER_CHARS_PER_TOKEN).toBe(3);
+    expect(UPPER_TOKENS_PER_IMAGE).toBe(1600);
+    // 30,000 chars → 10,000 tokens @ $3/M = $0.03; 4,000 out @ $15/M = $0.06
+    expect(worstCaseCostUsd("claude-sonnet-5", { inputChars: 30_000, maxTokens: 4000 })).toBeCloseTo(0.09, 6);
+    // + 5 images = 8,000 tokens more = $0.024
+    expect(worstCaseCostUsd("claude-sonnet-5", { inputChars: 30_000, images: 5, maxTokens: 4000 })).toBeCloseTo(0.114, 6);
+  });
+  it("is never below what the same call is estimated at once its counts come back (text is over-estimated)", () => {
+    const chars = 40_000;
+    const realisticInput = Math.round(chars / 4);
+    expect(worstCaseCostUsd("gpt-4o", { inputChars: chars, maxTokens: 2000 }))
+      .toBeGreaterThanOrEqual(estimateCostUsd("gpt-4o", { inputTokens: realisticInput, outputTokens: 2000 }));
+  });
+  it("an embeddings call has no output side", () => {
+    expect(worstCaseCostUsd("voyage-3.5-lite", { inputChars: 3_000_000, maxTokens: 0 })).toBeCloseTo(0.02, 6);
   });
 });
 
@@ -84,8 +146,9 @@ describe("buildAgreementText", () => {
     expect(buildAgreementText("openai")).toContain("OpenAI");
   });
 
-  it("stays general for unknown/no provider", () => {
-    expect(buildAgreementText(undefined)).not.toContain("Anthropic");
-    expect(buildAgreementText("gemini")).not.toContain("Anthropic");
+  it("adds no provider paragraph for an unknown/no provider (the core still names the vendors)", () => {
+    expect(buildAgreementText(undefined)).not.toMatch(/This workspace runs on/);
+    expect(buildAgreementText("gemini")).not.toMatch(/This workspace runs on/);
+    expect(buildAgreementText("gemini")).not.toMatch(/gemini/i);
   });
 });

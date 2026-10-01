@@ -59,6 +59,8 @@ vi.mock("@/lib/ai/keyVault", () => ({ openAiKey: (v: unknown) => v }));
 import { embedLibrarySlice, parseEmbedBuildMarker, loadEmbedDetail } from "@/lib/knowledgeEmbedCore";
 import { drainEmbedBacklog, orderDrainQueue, nextMonthStartIso, errorBackoffMs, MAX_ERROR_RUNS } from "@/lib/knowledgeEmbedDrain";
 import { EMBED_MAX_ATTEMPTS, EMBEDDING_DIMENSIONS } from "@/lib/ai/embeddings";
+// The CURRENT agreement version (GOV-6 bumped it; a pinned literal would go stale).
+import { AGREEMENT_VERSION } from "@/lib/ai/pricing";
 
 const repo = (p: string) => readFileSync(join(process.cwd(), p), "utf8");
 const mig = (f: string) => repo(join("supabase", "migrations", f));
@@ -413,7 +415,7 @@ const LIBS = Array.from({ length: 8 }, (_, i) => `0b000000-0000-4000-8000-000000
 function seedDrainWorld() {
   admin.state.tables.org_members = [{ org_id: ORG, uid: PAYER, status: "active" }];
   admin.state.tables.ai_connections = [{ org_id: ORG, user_id: PAYER, provider: "anthropic", api_key: "x", embedding_provider: "voyage", embedding_model: "voyage-3.5-lite", embedding_api_key: "pa-x" }];
-  admin.state.tables.ai_key_agreements = [{ org_id: ORG, user_id: PAYER, scope: "use", agreement_version: "2026-07-v2" }];
+  admin.state.tables.ai_key_agreements = [{ org_id: ORG, user_id: PAYER, scope: "use", agreement_version: AGREEMENT_VERSION }];
 }
 
 describe("SEM-11 — no library starves another; every hold has a date", () => {
