@@ -19,12 +19,19 @@
 //     download): its first four bytes, by a ranged read (`bytes=0-3`, never
 //     the body), whatever its name or type: not "%PDF" → `not_pdf` whatever
 //     its length (the route releases it unmarked — not a warning);
-//   * only then the bound, for a PDF: the version's recorded size or the
-//     object's length (from the ranged answer) over it → `oversize` (an
-//     oversize file is never read whole);
+//   * only then the bound, for a PDF: the OBJECT's own length (the ranged
+//     answer's total, else the whole read's Content-Length) over it →
+//     `oversize`, as the route decides it by the object's ContentLength —
+//     never the version's recorded size (final review fix: a recorded size
+//     that disagrees with the object warned of a file the portal stamps).
+//     The recorded size only spares reading a file whole when neither
+//     answer gives a length (then `unchecked`); an oversize file is never
+//     read whole;
 //   * PDFDocument.load(bytes) with no `ignoreEncryption` — exactly the
-//     portal's call — then the portal's stamp (applyStampToPdfDoc) on the
-//     loaded document, discarded (nothing is saved or kept).
+//     portal's call — then the portal's stamp (applyStampToPdfDoc) and its
+//     save (pdfDoc.save(), final review fix: a save that throws fails the
+//     portal's stamp too) on the loaded document; the bytes are discarded
+//     (nothing is kept).
 // It reads with the caller's (service-role) client, scoped to the
 // transmittal's org; a storage key outside the org is never fetched
 // (portalKeyAllowed, the portal's rule). Nothing is written. A time budget
@@ -129,8 +136,10 @@ async function checkOne(sb: Reader, orgId: string, it: TransmittalItem, outOfTim
     if (isEmptyObjectRange(e)) return notPdf; // an empty object has no "%PDF"
     return unchecked("the file could not be fetched");
   }
-  // A PDF: now the bound — recorded size, then the object's own length.
-  if ((typeof v?.size === "number" && v.size > PORTAL_STAMP_MAX_BYTES) || (total !== null && total > PORTAL_STAMP_MAX_BYTES)) {
+  // A PDF: now the bound, by the OBJECT's own length (final review fix) —
+  // the route decides oversize by the stored object's ContentLength, never
+  // by the version's recorded size.
+  if (total !== null && total > PORTAL_STAMP_MAX_BYTES) {
     return { ...base, verdict: "oversize" };
   }
   if (outOfTime()) return unchecked("not checked — the check ran out of time");
@@ -141,6 +150,13 @@ async function checkOne(sb: Reader, orgId: string, it: TransmittalItem, outOfTim
     if (len !== null && len > PORTAL_STAMP_MAX_BYTES) {
       try { (obj.Body as { destroy?: () => void } | undefined)?.destroy?.(); } catch { /* already closed */ }
       return { ...base, verdict: "oversize" };
+    }
+    // Neither answer gave the object's length: the recorded size only spares
+    // reading a file it puts over the bound whole. Not `oversize` — without
+    // the object's length the check cannot say what the route will decide.
+    if (len === null && total === null && typeof v?.size === "number" && v.size > PORTAL_STAMP_MAX_BYTES) {
+      try { (obj.Body as { destroy?: () => void } | undefined)?.destroy?.(); } catch { /* already closed */ }
+      return unchecked("the stored file's length could not be read, and its recorded size is over the portal's bound — not read whole");
     }
     const read = await obj.Body?.transformToByteArray();
     if (!read) return unchecked("the file could not be fetched");
@@ -161,8 +177,10 @@ async function checkOne(sb: Reader, orgId: string, it: TransmittalItem, outOfTim
     };
   }
   try {
-    // The portal's stamp, on a document that is then dropped: a PDF that
-    // loads but cannot take the marking fails here, as it would at download.
+    // The portal's stamp and save, on a document that is then dropped: a PDF
+    // that loads but cannot take the marking, or cannot be written back out
+    // (the route's `outBytes = await pdfDoc.save()`, inside its stamp try),
+    // fails here, as it would at download.
     await applyStampToPdfDoc(pdfDoc, {
       userLabel: "transmittal stamp check",
       timestamp: new Date(),
@@ -170,6 +188,7 @@ async function checkOne(sb: Reader, orgId: string, it: TransmittalItem, outOfTim
       footerNotice: `${base.number} as issued on a transmittal (issue-time stamp check).`,
       verifyUrl: "https://stamp-check.invalid/verify",
     });
+    await pdfDoc.save();
   } catch {
     return { ...base, verdict: "unloadable", detail: "the PDF could not be stamped (damaged or unsupported)" };
   }

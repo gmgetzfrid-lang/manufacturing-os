@@ -13,6 +13,10 @@
 // (app/api/transmittal/route.ts `isPdf = looksLikePdf(head)`), never by the
 // file's name or recorded type — a real PDF keyed .dwg or typed image/* is
 // stamped at download, so it is checked (and an encrypted one warned).
+// Final review fix: oversize is decided by the OBJECT's own length (the
+// route's ContentLength), never the version's recorded size, and the check
+// saves the stamped document as the route does (a save that throws is
+// `unloadable`).
 
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { readFileSync } from "node:fs";
@@ -25,7 +29,7 @@ const st = vi.hoisted(() => ({
   docs: {} as Record<string, Row | null>,
   versions: {} as Record<string, Row | null>,
   readErrors: {} as Record<string, { message: string } | undefined>,
-  objects: {} as Record<string, { ContentLength?: number; bytes: Uint8Array; ignoreRange?: boolean; stream?: boolean }>,
+  objects: {} as Record<string, { ContentLength?: number; bytes: Uint8Array; ignoreRange?: boolean; stream?: boolean; noLength?: boolean }>,
   /** whole-body reads (no Range) */
   fetched: [] as string[],
   /** ranged first-bytes reads (Range: bytes=0-3) */
@@ -94,12 +98,13 @@ vi.mock("@/lib/r2", () => ({
         const part = o.bytes.subarray(0, 4);
         return {
           ContentLength: part.byteLength,
-          ContentRange: `bytes 0-${part.byteLength - 1}/${total}`,
+          // noLength: a store whose ranged answer does not say the total
+          ContentRange: `bytes 0-${part.byteLength - 1}/${o.noLength ? "*" : total}`,
           Body: { transformToByteArray: async () => part, destroy: () => { st.destroyed++; } },
         };
       }
       return {
-        ContentLength: total,
+        ...(o.noLength ? {} : { ContentLength: total }),
         Body: o.stream ? streamBody(o.bytes) : { transformToByteArray: async () => o.bytes, destroy: () => { st.destroyed++; } },
       };
     }),
@@ -134,7 +139,7 @@ async function fixtures() {
   ENCRYPTED = new Uint8Array(Buffer.from(s, "latin1"));
 }
 
-function file(doc: string, opts: { bytes?: Uint8Array; size?: number | null; contentLength?: number; key?: string; fileType?: string | null; ignoreRange?: boolean; stream?: boolean } = {}) {
+function file(doc: string, opts: { bytes?: Uint8Array; size?: number | null; contentLength?: number; key?: string; fileType?: string | null; ignoreRange?: boolean; stream?: boolean; noLength?: boolean } = {}) {
   const key = opts.key ?? KEY(doc);
   st.docs[doc] = { id: doc, current_version_id: `${doc}-v` };
   st.versions[`${doc}-v`] = { id: `${doc}-v`, file_url: key, file_type: opts.fileType ?? null, size: opts.size === undefined ? (opts.bytes ?? GOOD).byteLength : opts.size };
@@ -143,6 +148,7 @@ function file(doc: string, opts: { bytes?: Uint8Array; size?: number | null; con
     ...(opts.contentLength !== undefined ? { ContentLength: opts.contentLength } : {}),
     ...(opts.ignoreRange ? { ignoreRange: true } : {}),
     ...(opts.stream ? { stream: true } : {}),
+    ...(opts.noLength ? { noLength: true } : {}),
   };
 }
 const item = (doc: string, number = doc.toUpperCase()): TransmittalItem => ({ documentId: doc, number });
@@ -172,8 +178,8 @@ describe("TRX-16 — checkItemsStampable runs the portal's stamp test on the fil
     file("d2", { bytes: ENCRYPTED });
     expect(await run([item("d2", "VDS-7")])).toEqual([{ documentId: "d2", number: "VDS-7", verdict: "unloadable", detail: "encrypted (permission-restricted) PDF" }]);
   });
-  it("a PDF over the portal's bound is oversize by its recorded size — only its first bytes are read (to know it is a PDF), never the body", async () => {
-    file("d3", { size: PORTAL_STAMP_MAX_BYTES + 1 });
+  it("a PDF over the portal's bound is oversize by the object's own length — only its first bytes are read (to know it is a PDF), never the body", async () => {
+    file("d3", { size: PORTAL_STAMP_MAX_BYTES + 1, contentLength: PORTAL_STAMP_MAX_BYTES + 1 });
     expect(await run([item("d3")])).toEqual([{ documentId: "d3", number: "D3", verdict: "oversize" }]);
     expect(st.heads).toEqual([KEY("d3")]);
     expect(st.fetched).toEqual([]);
@@ -283,7 +289,7 @@ describe("TRX-16 (P15 review fix) — PDF or not is decided before the size, by 
     expect(unstampableItems(out).map((c) => c.documentId)).toEqual(["x2", "x3"]);
     expect(describeUnstampable(out)).not.toBeNull();
     // …and a %PDF keyed .dwg over the bound is oversize (the route refuses or releases it as oversize too)
-    file("x4", { key: MODEL_KEY("big-vendor-set", "dwg"), bytes: GOOD, size: PORTAL_STAMP_MAX_BYTES + 1 });
+    file("x4", { key: MODEL_KEY("big-vendor-set", "dwg"), bytes: GOOD, size: PORTAL_STAMP_MAX_BYTES + 1, contentLength: PORTAL_STAMP_MAX_BYTES + 1 });
     expect((await run([item("x4")]))[0].verdict).toBe("oversize");
   });
   it("a file its name and type do not settle is told by its first four bytes (a ranged read): a zip over the bound by recorded size or by length is not_pdf, never downloaded", async () => {
@@ -303,8 +309,8 @@ describe("TRX-16 (P15 review fix) — PDF or not is decided before the size, by 
     expect(out.map((c) => c.verdict)).toEqual(["not_pdf", "stampable"]);
     expect(st.fetched).toEqual([KEY("d1")]); // only the PDF is read whole
   });
-  it("REGRESSION: a %PDF over the bound is still oversize — by recorded size and by length — and still warns", async () => {
-    file("p1", { size: PORTAL_STAMP_MAX_BYTES + 1 });
+  it("REGRESSION: a %PDF over the bound is still oversize — by the object's length, with or without a recorded size — and still warns", async () => {
+    file("p1", { size: PORTAL_STAMP_MAX_BYTES + 1, contentLength: PORTAL_STAMP_MAX_BYTES + 1 });
     file("p2", { size: null, contentLength: PORTAL_STAMP_MAX_BYTES + 1 });
     const out = await run([item("p1"), item("p2")]);
     expect(out.map((c) => c.verdict)).toEqual(["oversize", "oversize"]);
@@ -339,6 +345,57 @@ describe("TRX-16 (P15 review fix) — PDF or not is decided before the size, by 
     const route = readFileSync(join(process.cwd(), "app/api/transmittal/route.ts"), "utf8");
     expect(route).toContain("const isPdf = looksLikePdf(head);");
     expect(route).toContain('let unstampedReason: "not_pdf" | "oversize" | "stamp_failed" | null = !isPdf ? "not_pdf" : source ? null : "oversize";');
+  });
+});
+
+describe("TRX-16 (P15 final review fix) — oversize by the object's own length; the stamped document is saved, as the route does", () => {
+  it("a recorded size over the bound with the object under it is NOT oversize — the object is read, loaded and stamped (the route stamps it)", async () => {
+    file("r1", { size: PORTAL_STAMP_MAX_BYTES + 50 * 1024 * 1024 }); // the object is GOOD (a few hundred bytes)
+    file("r2", { size: PORTAL_STAMP_MAX_BYTES + 1, ignoreRange: true }); // a store that ignores the range: its Content-Length
+    const out = await run([item("r1", "P-201"), item("r2", "P-202")]);
+    expect(out).toEqual([
+      { documentId: "r1", number: "P-201", verdict: "stampable" },
+      { documentId: "r2", number: "P-202", verdict: "stampable" },
+    ]);
+    expect(st.fetched).toEqual([KEY("r1"), KEY("r2")]);
+    expect(unstampableItems(out)).toEqual([]); // no false "larger than the portal can mark" warning
+  });
+  it("neither answer gives the object's length: a recorded size over the bound is unchecked and never read whole; one under it is read and stamped", async () => {
+    file("n1", { size: PORTAL_STAMP_MAX_BYTES + 1, noLength: true });
+    file("n2", { size: null, noLength: true });
+    const out = await run([item("n1"), item("n2")]);
+    expect(out.map((c) => [c.documentId, c.verdict, c.detail])).toEqual([
+      ["n1", "unchecked", "the stored file's length could not be read, and its recorded size is over the portal's bound — not read whole"],
+      ["n2", "stampable", undefined],
+    ]);
+    expect(st.destroyed).toBeGreaterThanOrEqual(1); // n1's body released unread
+    expect(unstampableItems(out)).toEqual([]);
+  });
+  it("a PDF that loads and stamps but whose save() throws is unloadable — the route's save is inside its stamp try", async () => {
+    file("v1");
+    const save = vi.spyOn(PDFDocument.prototype, "save").mockRejectedValueOnce(new Error("cannot serialise"));
+    try {
+      expect(await run([item("v1", "P-301")])).toEqual([
+        { documentId: "v1", number: "P-301", verdict: "unloadable", detail: "the PDF could not be stamped (damaged or unsupported)" },
+      ]);
+      expect(save).toHaveBeenCalledTimes(1);
+    } finally {
+      save.mockRestore();
+    }
+    // REGRESSION: the same file with a working save is stampable
+    expect(await run([item("v1", "P-301")])).toEqual([{ documentId: "v1", number: "P-301", verdict: "stampable" }]);
+  });
+  it("source pins: the bound reads the object's length only, and the check saves inside its stamp try as the route does", () => {
+    const lib = readFileSync(join(process.cwd(), "lib/transmittalStampCheck.ts"), "utf8");
+    const code = lib.replace(/^\s*\/\/[^\n]*$/gm, "");
+    expect(code).toContain("if (total !== null && total > PORTAL_STAMP_MAX_BYTES) {");
+    expect(code).not.toMatch(/v\.size > PORTAL_STAMP_MAX_BYTES\) \|\|/);
+    const stampTry = code.slice(code.indexOf("await applyStampToPdfDoc(pdfDoc, {"), code.indexOf('detail: "the PDF could not be stamped (damaged or unsupported)"'));
+    expect(stampTry).toContain("await pdfDoc.save();");
+    const route = readFileSync(join(process.cwd(), "app/api/transmittal/route.ts"), "utf8");
+    expect(route).toContain("outBytes = await pdfDoc.save();");
+    expect(route).toContain("const size = typeof obj.ContentLength === \"number\" ? obj.ContentLength : null;");
+    expect(route).toContain("if (size !== null && size > PORTAL_STAMP_MAX_BYTES) {");
   });
 });
 
