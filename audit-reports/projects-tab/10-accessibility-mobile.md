@@ -656,12 +656,42 @@ background to the one date input.
 
 Tests: `a11y13FinalReview.test.ts` (4: the delete error rendered from a refused delete, in the recipe, with the old pair under 4.5 : 1 on the dark footer and the new one over it in both themes; a ratchet census over this list — per file, no more such sites than listed — mutation-checked).
 
+**Partial (2026-10-01, projects Round G).** Package J10b UI REMAINDERS cleared the final review's ratchet down to its one site outside this package. Each change is on its own element; no global stylesheet rule was added.
+- **Text.** Rose and emerald text uses the 700 step with a 300 dark twin, and amber uses 800 / 300.
+  - `TaskDetailPanel.tsx`: the "Delete task" label, whose hover slab is now `hover:bg-rose-500/10` with `dark:hover:text-rose-200`, and the field note.
+  - `ExecutionReportView.tsx`: the ten figures.
+  - `ExecutionView.tsx`.
+  - `ScheduleProgress.tsx`: the SPI figure.
+  - `ScheduleCalendarTileView.tsx`: today's date.
+  - `TransitionInPanel.tsx`.
+  - `CostsTab.tsx`: a line's negative remaining.
+- **Icons** (SC 1.4.11). The 600 step stays on light, and `dark:text-{hue}-400` is added.
+  - `CostsTab.tsx`: the stat-card chips.
+  - `EditProjectModal.tsx`, `ExecutionReportView.tsx`, `ExecutionView.tsx`, `IntakePanel.tsx`, `ProjectWizard.tsx`, `ScheduleImportModal.tsx`, `ScheduleProgress.tsx`, `TabErrorBoundary.tsx`, `app/(protected)/companies/error.tsx` and `app/submit/[token]/page.tsx`.
+  - `StaleCheckoutBanner.tsx`: the dismiss X also gets `dark:hover:text-amber-200 dark:hover:bg-amber-500/15`.
+- **Hover-only.** `dark:hover:text-rose-300` sits beside every `hover:text-rose-600` in `CostsTab.tsx`, `EditProjectModal.tsx`, `IntakePanel.tsx`, `ProjectDocumentsCard.tsx`, `ProjectWizard.tsx`, `QualityTab.tsx`, `cost/ChangeOrdersPanel.tsx`, `cost/QuotesPanel.tsx` and `app/(protected)/companies/[id]/page.tsx`.
+- Tests: `lib/__tests__/a11y13FinalReview.test.ts`.
+  - The ratchet's recorded residual is now `{ "components/projects/ProjectCoach.tsx": 1 }`: 60 of the 61 sites are gone. The census is still mutation-checked.
+  - A new "A11Y-13 (J10b) —" block computes each recipe on the area's light and dark surfaces by the WCAG formula, over Tailwind v3 sRGB steps. Text must reach 4.5 : 1 (3 : 1 for the large figures), icons 3 : 1, and the hover twins their floor.
+  - The block also pins that no global stylesheet rule was added for these hues.
+
+**Done-when.**
+- ✗ Every text / background pair in the Projects area clears 4.5 : 1 in both themes.
+  - Of the 61 uncited `-600` pairs, one is left: `components/projects/ProjectCoach.tsx:101`, an icon in projects-joint J12's file this round.
+  - The light tint slabs listed above remain: the schedule engine's `bg-{hue}-50|100` with no dark variant, 29 at the last count. They were not in this package's brief. This package changed only two hover slabs, on elements it was already editing: the "Delete task" label's (now `hover:bg-rose-500/10`) and the stale-checkout dismiss's (it gained a dark twin).
+- ✓ No error panel renders light-on-dark (unchanged).
+- ✓ All date inputs match the theme (unchanged).
+
+**Scope / residual.** OPEN for two things:
+- `ProjectCoach.tsx:101`: J12 can add `dark:text-{hue}-400` beside the 600 icon. When that lands, the ratchet's `RECORDED_RESIDUAL` drops to `{}`.
+- The light tint slabs.
+
 ---
 
 ## A11Y-14 · Decision controls outside the Quality tab are still under 24 px
 
 - **Severity:** MEDIUM
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Assigned:** projects-joint J10b UI REMAINDERS (the decision controls under 24 px outside the Quality tab: intake panel, quotes panel, change-order panel, Costs tab) — by the integrator, 2026-10-01 (at the J10 merge: the package that left this remainder has merged; fleet plan `audit-reports/fleet-plans/`).
 - **Verification:** CARRIED — the sites `A11Y-8` measured; not re-measured
 - **Blast radius:** accessibility / mobile
@@ -680,6 +710,27 @@ Tests: `a11y13FinalReview.test.ts` (4: the delete error rendered from a refused 
 **Done when.**
 - No decision control in the Projects area is under 24 px, or under 44 px on a coarse pointer.
 - A census test pins it, as `a11yProjects.test.ts` "A11Y-8 —" does for the Quality tab.
+
+**Resolution (2026-10-01, projects Round G).** Package J10b UI REMAINDERS lifted the Quality tab's floor into one shared constant: `components/projects/decisionTarget.ts` `DECISION_TARGET` (`min-h-6 min-w-6 pointer-coarse:min-h-11 pointer-coarse:min-w-11 pointer-coarse:px-3`). `QualityTab.tsx` imports it, and its local copy is removed. The constant is set on the control itself, never through a bare element rule, on every button whose click starts a write in these files:
+- `components/projects/IntakePanel.tsx`: approve, reject, copy link, reissue, revoke, assign documents, unassign, assign pick and create link.
+- `components/projects/cost/QuotesPanel.tsx`: type or correct a total, Award, Decline, post invoice, void, create, submit, RFQ, quote-link copy, reissue and revoke.
+- `components/projects/cost/ChangeOrdersPanel.tsx`: approve, reject, reverse and propose.
+- `components/projects/CostsTab.tsx`: ledger repair, CO repair, void entry, post, create, link and add.
+- The new closeout Retry (`components/projects/CloseoutGatesPending.tsx`, `QUAL-8`).
+
+Clusters of decisions are spaced 8 px (`gap-2` / `ml-2`), up from 4-6 px.
+- Tests: `lib/__tests__/j10bDecisionTargets.test.ts` (6).
+  - One shared constant: the Quality tab and the four surfaces import it, none keeps a local copy, and `app/globals.css` has no bare `button` rule.
+  - Per file, a census of every button whose click starts a write. Each must carry `${DECISION_TARGET}`. The census is counted against a floor and names writers by their handler, so a new writer added without the floor fails.
+  - The clusters' spacing.
+
+  `lib/__tests__/a11yProjects.test.ts`' DECISION_TARGET pin now reads the shared module.
+
+**Done-when.**
+- ✓ No decision control in the Projects area is under 24 px, or under 44 px on a coarse pointer. This covers the four surfaces this finding names here, and the Quality tab (`A11Y-8`).
+- ✓ A census test pins it, as `a11yProjects.test.ts` "A11Y-8 —" does for the Quality tab.
+
+**Scope / residual.** A "decision control" is read as a button that starts a write, as the finding's mechanism describes. Read-only toggles and navigation links keep their sizes. The finding's Locations and Assigned line name these four surfaces outside the Quality tab, and all four are done.
 
 ---
 

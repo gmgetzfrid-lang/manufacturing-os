@@ -188,6 +188,33 @@ comment claims a guard the code lacks; make the code true or the comment go.
 
 On the "Do not infer identity from the task name" rule: a keyless row's content key includes its name, and legacy position rows are adopted once by a name that is unique on both sides (PT `SCH-3`, which records the duplication residual). This spec's Scope allows a deterministic key where the source has no id; a file with a real id column is keyed on that column.
 
+**Status: BUILT (2026-10-01, projects Round G — J10b UI REMAINDERS completed acceptance 3).**
+
+**Resolution (2026-10-01, projects Round G).** The date question and the skip warning now name the column, spelled as the file spells its header.
+- `lib/scheduleParsers.ts`:
+  - `ParseResult.dateSource` (`{ columns, sampleColumn }`) records the start / finish columns the slash dates came from and the column of the sample.
+  - The ambiguity warning reads `Every slash date in the "Start Date" and "Due Date" columns (e.g. 05/08/2026 in "Start Date") reads as either day/month or month/day. Choose how to read dates before importing — the choice applies to every row.`
+  - A file that contradicts itself names the column of each side: `(15/08/2026 in "Finish" vs 08/15/2026 in "Start")`.
+  - A row skipped under the chosen order is counted per column: `2 rows skipped (a start or finish date could not be read as month/day/year) — in "Finish" (1 row), "Start" (1 row).`
+- `components/projects/ScheduleImportModal.tsx`: the date question names the same columns and the sample's column.
+- The never-guessed half is unchanged. Rows are withheld until the order is chosen, on a radio with no default. XML and XER carry ISO dates and never reach the question.
+- Tests: `lib/__tests__/j10bScheduleDateColumns.test.ts` (6):
+  - the question naming two columns and the sample's column;
+  - a single column;
+  - the contradiction;
+  - the per-column skip count under both orders;
+  - XML, with no date source;
+  - rendered: the import modal's question names the columns.
+
+  The skip-message pin in `lib/__tests__/scheduleParsers.test.ts` now carries the column.
+
+**Acceptance.**
+1. ✓ Unchanged (J6a).
+2. ✓ Unchanged (J6a).
+3. ✓ An ambiguous date is rejected with a named column, never guessed.
+
+**Scope / residual.** None for this spec. The existing `dates` record is unchanged; `dateSource` is additive.
+
 ---
 
 <a id="gap-404"></a>
@@ -385,6 +412,30 @@ timeline.
 1. ✓ Change orders, checklist completions, turnover and punch closure appear. `lib/timeline.ts` `getProjectTimeline` reads the project-scoped audit rows (:711-712) and the cost documents' audit rows (:745) through the vocabulary. Test: `timeline.test.ts` "an award, an approved change order, a turnover acceptance and a checklist ruling all appear; noise and mirrored rows do not" (:98), exit 0 (10 passed).
 2. ✗ **Each links to its record: not built.** The Activity tab renders a controls event (`components/documents/TimelineFeed.tsx:130-190`, `TimelineRow`) as a summary line with a time, an actor and a kind tag, and nothing to click. The event does not carry its record as its resource either: a project-scoped row's `resource_id` is the project (`lib/timeline.ts:711-712`), and a cost row's is the cost document. Owed: a per-action link on the controls vocabulary's milestone events, rendered by the Activity tab. The link should go to the change order, checklist, turnover item or punch item, or at least to its tab (`?tab=costs` / `?tab=quality`).
 3. ✓ The event vocabulary is one list, extended deliberately: `PROJECT_EVENT_VOCABULARY` (`lib/timeline.ts:407`), with every action classified as milestone, noise or mirrored. An unclassified action is shown (:477). Test: `timeline.test.ts` "the vocabulary is ONE map; an unclassified action is SHOWN, never silently dropped" (:131), exit 0.
+
+**Status: BUILT (2026-10-01, projects Round G — J10b UI REMAINDERS completed acceptance 2).**
+
+**Resolution (2026-10-01, projects Round G).** Each controls milestone now carries a link to its record's tab, and the Activity tab renders it.
+- `lib/timeline.ts`:
+  - `TimelineEvent.link` is `{ href, label } | null`.
+  - `PROJECT_EVENT_TAB` is a per-action map held to the one vocabulary: every key is a `milestone` in `PROJECT_EVENT_VOCABULARY`. The award and change-order milestones map to Costs, the checklist / turnover / punch milestones to Quality, and the schedule milestones to Schedule.
+  - `projectEventLink(action, projectId)` returns `/projects/<id>?tab=<tab>` labelled "Open in Costs", "Open in Quality" or "Open in Schedule". It returns nothing for an unmapped action or an empty id.
+  - `getProjectTimeline` attaches the link to the project and cost audit rows it reads. Document events carry none.
+- `components/documents/TimelineFeed.tsx`: `TimelineRow` renders the link (a Next `Link`) under the summary.
+- The project page already follows a same-page `?tab=` navigation. That code is unchanged, and a test pins it.
+- The link goes to the record's tab, the spec's "or at least to its tab". A project-scoped audit row's `resource_id` is the project, so there is no per-record id to deep-link to without a second event store, which the spec's "Do not" rules out.
+- Tests: `lib/__tests__/j10bLabelsFormattersLinks.test.ts` "GAP-408 —" (4):
+  - an award, a change order, a checklist ruling, a turnover review, a punch close and a schedule miss each carry their tab, and a download carries none;
+  - the tab map is held to the vocabulary, and every controls milestone has a tab;
+  - rendered: the feed shows the link on a linked row only;
+  - the page's `?tab=` handling.
+
+**Acceptance.**
+1. ✓ Unchanged (J8).
+2. ✓ Each links to its record, at the level of its record's tab (the spec's stated minimum).
+3. ✓ Unchanged (J8). The tab map is now also checked against the one list.
+
+**Scope / residual.** Not built: a deep link to the individual change order, checklist or item. It would need the record's id on the audit row and a per-tab focus parameter. The spec's minimum is met.
 
 ---
 

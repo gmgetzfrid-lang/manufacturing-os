@@ -225,6 +225,33 @@ but the three above remove the user-visible damage for far less work.
 
 **Scope / residual.** OPEN for the other areas' lookups and CHECKs. A zod row-validation layer is not attempted (DEC-31).
 
+**Partial (2026-10-01, projects Round G).** Package J10b UI REMAINDERS made every label lookup in its files total. Each is `LABEL[x] ?? x`, so an unmapped value renders as itself instead of as a blank chip.
+- `components/projects/QualityTab.tsx`: `CHECKLIST_KIND_LABEL[checklist.kind] ?? checklist.kind` and `TURNOVER_STATUS_LABEL[status] ?? status`.
+- `app/(protected)/companies/page.tsx`: `COMPANY_KIND_LABEL[c.kind] ?? c.kind`.
+- `app/(protected)/companies/[id]/page.tsx`: `COMPANY_KIND_LABEL[company.kind] ?? company.kind` and `EVENT_KIND_LABEL[e.kind] ?? e.kind`.
+- `components/projects/cost/QuotesPanel.tsx`: the bid table's status chip reads through `costDocStatusLabel(status)` (J3's total helper) instead of `COST_DOC_STATUS_LABEL[status]`.
+- `components/projects/cost/ChangeOrdersPanel.tsx`: the reason donut uses `CO_REASON_LABEL[r.reason] ?? r.reason`.
+- The other bare indexings in these files are `<option>` lists that iterate the label map's own keys, so they are total by construction.
+- Tests: `lib/__tests__/j10bLabelsFormattersLinks.test.ts`:
+  - "the Quality tab: an unmapped checklist kind and turnover status show their raw value" (rendered)
+  - "census: every lookup the remainder named — and the bid tab's status chip and the change-order donut — falls back to the value itself"
+
+**Done-when.**
+1. ◐ Every lookup in the Projects and Companies surfaces is total except two in `lib/projectReport.ts`:
+   - `:289` `CO_REASON_LABEL[x.reason]`, the closeout report's change-order line.
+   - `:400` `CO_REASON_LABEL[r.reason]`, with `why[r.reason]`, in the coach text.
+
+   That file is projects-joint J12's this round and is not edited here.
+2. ✓ `fmtMoney(NaN)` never renders "$NaN" (J3).
+3. ✓ The database rejects an unmapped value on every table the finding names:
+   - `cost_documents.status` and `.kind`: `20261093` (J3).
+   - Company kind and status, change-order reason and status, checklist kind and status, turnover status and punch status: CHECKs inline in the `CREATE TABLE`s of `20261013_project_controls_program.sql` (`:72, :74, :124-125, :144, :146, :180, :197`).
+   - `companies.status`: also guarded by `20261095` for a table created before that file.
+
+   No migration was needed.
+
+**Scope / residual.** OPEN only for the two `lib/projectReport.ts` lookups in J12's file. The fix is `CO_REASON_LABEL[x] ?? x` at both sites and a fallback for `why[r.reason]` at `:400`. A zod row-validation layer is not attempted (DEC-31).
+
 ---
 
 ## REL-5 · One tab crashing unmounts the entire project page
@@ -479,6 +506,37 @@ also pure cost, per report `09`).
 3. ✗ Partly — `posted_entry_id` is no longer dead. `kind: "po"` is RETAINED (the `20261093` CHECK admits it so a restored row cannot violate it; there is still no creator) and `companies.status: 'inactive'` gained behaviour in `MON-12` instead of being removed; `trend`, `equipmentTags`, `HistoryPanels`' `scorecard`, `setup_state` and `addEvidence` are other packages' files.
 
 **Scope / residual.** OPEN for J2's checklist void and the remaining dead declarations outside the money files.
+
+**Partial (2026-10-01, projects Round G).** Package J10b UI REMAINDERS landed the checklist void and removed one dead declaration.
+- **The checklist void.** `components/projects/QualityTab.tsx` `ChecklistCard` offers "Void checklist" on an open or completed checklist, to the controller tier only.
+  - The tier is `isControllerPrincipal({ role: activeRole, roles })` (`lib/permissions.ts`). It mirrors `is_org_controller`, Admin or DocCtrl held as the active role or in `roles[]`, which is the tier the database rail `project_checklists_signoff_rail` (`20261136`, QUAL-15) admits a void from.
+  - The confirm says what voiding does. For a signed-off checklist it also says the sign-off leaves the closeout count with it.
+  - Confirming writes `void` through `lib/checklists.setChecklistStatus`, the checked write, unchanged.
+  - A refusal shows the rail's sentence on the card, and nothing else changes.
+  - On success the tab re-reads, so the card leaves the list and the `!== "void"` filters are no longer dead, and the page is told (`afterWrite`, `PERF-4`).
+  - The project owner, a sign-off grantee and every other role see no control, and the rail would refuse them anyway. DEC-35 holds: the tab names no role literal.
+- **The dead `scorecard` prop.** In `app/(protected)/companies/[id]/page.tsx`, `HistoryPanels` no longer takes the `scorecard` it discarded. `void scorecard;` is gone, and the dial above is the scorecard's only reader on the page.
+- Tests: `lib/__tests__/j10bChecklistVoid.test.ts`.
+  - Rendered: a controller (DocCtrl in `roles[]` beside a headline Engineer role) voids an open checklist; the test checks the confirm's wording, the lib write, the card leaving and the page being told.
+  - Rendered: a completed checklist's confirm, and that declining it writes nothing.
+  - Rendered: a refusal shown on the card.
+  - Rendered: no control for no role, Engineer, Manager + Supervisor, or Viewer.
+  - Source: the client gate pinned against `isControllerPrincipal`, the 20261136 rail and the controller predicate.
+  - Source: `HistoryPanels`' signature.
+
+  In `lib/__tests__/qualitySignoff.test.ts`, "tab calls setChecklistStatus …" now counts the complete call and the void call, and still finds no reopen.
+
+**Done-when.**
+1. ✓ A mistaken checklist can be voided, by the tier the database lets void it.
+2. ✓ An approved change order can be unwound in one action (J3, 2026-09-29/30).
+3. ◐ The remaining dead declarations. ✓ `HistoryPanels`' `scorecard` is removed. These remain, none of them in this package's file list:
+   - `equipmentTags` (`lib/checklists.ts:753`): gathered for the sweep and read by no rule.
+   - `trend` (`lib/projectHealth.ts`): J12's file this round.
+   - `setup_state` (`lib/projectWizardWrites.ts:126`): written, with no reader found by grep.
+   - `addEvidence` (`lib/checklists.ts` `updateChecklistItem`): a patch field with no interface caller.
+   - `kind: "po"`: retained under J3's CHECK decision.
+
+**Scope / residual.** OPEN for the dead declarations above, which belong to the owners of those files.
 
 ---
 

@@ -767,7 +767,7 @@ Exercised on a throwaway PostgreSQL 16 with the fixed body and a stub schema (`a
 
 - **Severity:** LOW
 - **Severity rationale:** The link itself is not left live by mistake. The panel refreshes after a revoke, and a link that was not revoked still shows as live. What is false is the audit trail: an `INTAKE_LINK_REVOKED` row for a revocation that did not happen, or a second one that moves the recorded revocation time. This is the `SAF-3` / `GAP-402` class of defect (projects-tab), on a smaller surface.
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Assigned:** projects-joint J10b UI REMAINDERS (`components/projects/IntakePanel.tsx`: the revoke guarded by `.is("revoked_at", null)` with a row read-back, no audit on zero rows) — by the integrator, 2026-10-01 (at the J13 merge: the record reconcile left this remainder open; fleet plan `audit-reports/fleet-plans/`).
 - **Verification:** CONFIRMED (by reading; not exercised against a live database)
 - **Blast radius:** audit integrity
@@ -787,5 +787,21 @@ Exercised on a throwaway PostgreSQL 16 with the fixed body and a stub schema (`a
 - IntakePanel's revoke updates only a still-unrevoked link of this project and reads back the rows it changed.
 - A revoke that changed no row writes no `INTAKE_LINK_REVOKED` row and says so. A second click on an already-revoked link does not move its `revoked_at`.
 - A render test drives both cases. The harness is `lib/__tests__/intakePanelLinkAudit.test.ts`; QuotesPanel's twin is pinned in `lib/__tests__/quotesPanelAwardAndQuoteLinks.test.ts` (:216).
+
+**Resolution (2026-10-01, projects Round G).** Package J10b UI REMAINDERS mirrored the Costs tab's twin in `components/projects/IntakePanel.tsx` `revoke`.
+- The update is `.update({ revoked_at }).eq("id", l.id).eq("project_id", projectId).is("revoked_at", null).select("id")`, and `{ error }` is still checked.
+- When no row changes, no `INTAKE_LINK_REVOKED` row is written. The panel says "<Company>'s link was not revoked — it may already be revoked, or you may not have permission. The list now shows its current state." and re-reads the list.
+- When one row changes, it is audited by link id, as before.
+- Tests: `lib/__tests__/j10bIntakeLinksOrigin.test.ts` "INTK-17 —" (3):
+  - Rendered: the update's filters and read-back, and one row writing the audit row by link id.
+  - Rendered: zero rows writing no audit row, showing the sentence and re-reading the list.
+  - A second click on an already-revoked link only ever matches `revoked_at IS NULL`, so its `revoked_at` cannot move.
+
+**Done-when.**
+- ✓ IntakePanel's revoke updates only a still-unrevoked link of this project and reads back the rows it changed.
+- ✓ A revoke that changed no row writes no `INTAKE_LINK_REVOKED` row and says so. A second click on an already-revoked link does not move its `revoked_at`.
+- ✓ A render test drives both cases (`j10bIntakeLinksOrigin.test.ts`). `intakePanelLinkAudit.test.ts` still passes.
+
+**Scope / residual.** None.
 
 ---

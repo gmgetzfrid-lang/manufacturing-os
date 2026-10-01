@@ -605,6 +605,29 @@ group. Send the notification promised at `upload/route.ts:127`.
 
 **Scope / residual.** Open on the J4 panel wiring (warning + Decline control) and the contractor notification. `BID-10` (group normalisation) is J4's and would make the grouped rule catch more real competitors.
 
+**Partial (2026-10-01, projects Round G).** Package J10b UI REMAINDERS wired J3's pointer into `components/projects/cost/QuotesPanel.tsx`.
+- **The award's warning is shown.** `awardQuote` returns `{ ok: true, warning }` when rivals could not be marked not selected, or when ungrouped quotes stay open, and names them. The panel captures the warning and sets it on its notice after the re-read, so the refresh does not wipe it.
+- **The award confirm no longer promises a decline it does not make.** A grouped quote's confirm says "… and marks the other open bids in this RFQ group not selected.". An ungrouped one's says "This quote has no RFQ group, so no other bid is marked not selected — decline any that competed for this scope.".
+- **"Decline" on an open ungrouped quote** (`doc.kind === "quote"`, no RFQ group).
+  - It opens an `appPrompt` for an optional reason: "It is marked not selected — the contractor's portal shows that — and it can no longer be awarded …".
+  - It then calls `declineQuote({ doc, actor, reason })`.
+  - A cancelled prompt writes nothing. A refusal is said and nothing is re-read.
+  - The button carries the decision floor (`A11Y-14`).
+- **Void on a declined bid.** It goes through `lib/costDocs.voidCostDoc`, which admits `declined`, not through the panel's open-only void.
+- **The status chip.** The bid table's status chip reads through `costDocStatusLabel` (`REL-4`).
+- Tests: `lib/__tests__/j10bQuotesAwardDecline.test.ts` "MON-10 —" (5, rendered):
+  - an ungrouped award's confirm, and its warning, which persists;
+  - a grouped award's confirm, and no warning on a clean award;
+  - Decline offered on an open ungrouped quote only, with its reason;
+  - a cancelled Decline and a refused one;
+  - a declined bid's Void through `voidCostDoc`.
+
+**Done-when.**
+1. ✓ Every losing bid on an awarded scope reaches a terminal status. A grouped rival gets there automatically (J3). An ungrouped one gets there through the hand decline: the award's warning names it and the bid table offers it, per DEC-50 rule 8.
+2. ✗ The contractor is notified of the outcome. Not done, and unchanged since 2026-09-29: the contractor has no user id, and `lib/notify` has no vendor-email kind (the notifications area keeps that taxonomy, PROD-6). The portal status chip renders the status the decline sets.
+
+**Scope / residual.** OPEN for the contractor notification only (notifications area). `BID-10` group normalisation is J4's.
+
 ---
 
 ## MON-11 · Only one event in the entire controls program notifies anyone

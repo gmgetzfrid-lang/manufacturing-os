@@ -262,6 +262,21 @@ lib/transmittals.ts:390 `const origin = typeof window !== "undefined" ? window.l
 
 **Hand-off.** The owners of IntakePanel, QuotesPanel and the library page, for their copy links: build them on `publicOrigin()`.
 
+**Partial (2026-10-01, projects Round G).** Package J10b UI REMAINDERS built the projects sites of done-when 1 on `publicOrigin()` (`lib/publicOrigin.ts`), the app's one configured-origin helper. No second helper was added.
+- **The sites.** `components/projects/IntakePanel.tsx`: the Intake tab's minted or reissued `/submit/<token>` link, `${publicOrigin()}${intakePortalPath(token)}`. `components/projects/cost/QuotesPanel.tsx`: the Costs tab's quote-link copy and reissue, with the same builder.
+- **What the copied link carries.** With `NEXT_PUBLIC_SITE_URL` set, it carries the configured site, never the preview host the controller happens to be on. With nothing configured, a browser falls back to Vercel's production domain, or, last, to the page's own origin, as every other `publicOrigin()` browser caller does.
+- **Why `publicOrigin()` and not `recipientOrigin()`.** The token is shown once, at mint, to be copied. `recipientOrigin()` returns "" on a loopback or Vercel deployment host when nothing is configured, which would leave a just-minted token with no link to copy on a local or preview install.
+- Tests: `lib/__tests__/j10bIntakeLinksOrigin.test.ts` "XEDGE-5 / PHYS-13 —".
+  - Rendered: the Intake tab's minted link and the Costs tab's quote link copy with the configured site URL, not the page's host.
+  - Source census: no file under `components/projects` reads `window.location.origin`, and both builders call `publicOrigin()`.
+
+**Done-when.**
+1. ◐ `transmittalPortalUrl` ✓ and `ShareLinkModal` ✓ (earlier passes); the `/submit` link builders ✓ (here). Left: the two `/d/` copy actions in `app/(protected)/documents/[libraryId]/page.tsx` (`:755`, `:3159` at this commit), which is identity-and-session IS-P1's file this round.
+2. ✓ Unchanged (public-surfaces Round F).
+3. ✓ Unchanged (P7).
+
+**Scope / residual.** OPEN for the library page's two `/d/` copies (IS-P1). The `/submit` links have one gap, shared with every `publicOrigin()` browser caller: in a Vercel deployment with nothing configured and the production-domain exposure off, they carry the page's own host. That is `PHYS-11`'s residual.
+
 ---
 
 <a id="xedge-6"></a>

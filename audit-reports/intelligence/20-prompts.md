@@ -109,6 +109,26 @@ bidTab.ts:190-224 — the whole of validateParsedQuote; the only cross-field log
 
 **Scope / residual.** Criteria 2 (display) and 3 → the projects fleet (`QuotesPanel.tsx`; the cost-docs route). Cross-referenced on projects-and-cost `COST-3` and `COST-5`, which also edit `lib/bidTab.ts` (scoring), not `validateParsedQuote`.
 
+**Partial (2026-10-01, projects Round G).** Package J10b UI REMAINDERS built criterion 2's display to the hand-over above. It uses `lib/bidTab.ts` read-only.
+- **The rule.** `components/projects/cost/QuotesPanel.tsx` exports `quoteTotalNote(q)`:
+  - a price-only quote has no note;
+  - when `q.totalSource === "human"`, it reconciles the number on screen with `reconcileQuoteTotal(q.total, q.lineItems)` and returns that `note` when it mismatches;
+  - otherwise it returns the stored `q.totalCheck.note` when `totalCheck.mismatch`.
+- **The display.** The bid table shows "lines ≠ total — check the PDF" under the total, with the full sentence as its title, and the full sentence again in the row's extras ("total check: …"). The stored note is never shown beside a total a person corrected.
+- **It never blocks.** Award and the human total stay offered (DEC-72 item 5).
+- Tests: `lib/__tests__/j10bQuotesAwardDecline.test.ts` "PR-2 criterion 2 —" (4):
+  - the finding's 182,000-vs-1,820,000 extraction is flagged beside the total and under the row, and Award is still offered;
+  - a person restating 1,820,000 gets no note;
+  - a person restating a figure the lines still miss gets the on-screen total reconciled and named;
+  - the rule's four cases.
+
+**Done-when.**
+1. ✓ Unchanged (intelligence Round G).
+2. ✓ For the display: the review screen shows the discrepancy, by the decided default (flag, never block). "Cannot be used in the bid tab until a human resolves it" stays declined (DEC-72 item 5).
+3. ✗ Not done here. The cost-docs route's invoice branch (`app/api/projects/cost-docs/**`) is projects-joint J12's.
+
+**Scope / residual.** OPEN for criterion 3 (J12).
+
 ---
 
 <a id="pr-3"></a>
