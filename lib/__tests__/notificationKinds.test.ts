@@ -552,7 +552,11 @@ describe("action, compliance, icon, tone, group — the other classifiers, in on
 
   it("the PSM obligations stay FYI until their rows clear on discharge — a met obligation must not keep the rail red", () => {
     // ack_overdue / review_overdue are escalation copies to the owner and
-    // controllers: FYI by the registry's own rule as well.
+    // controllers, pinned FYI here with the obligations. No registry rule
+    // makes an escalation copy FYI: the conflict class's controller copies
+    // (escalateStaleCheckouts' checkout_released, announceBranchOpened's
+    // branch_open) are actions, and nothing clears them either — the TRAIL-9
+    // class (N4), DEC-44 (N2) §2.
     for (const k of PSM_OBLIGATIONS_FYI_UNTIL_CLEARED) {
       expect(isNotificationKind(k), k).toBe(true);
       expect(KIND_META[k as keyof typeof KIND_META].actionRequired, k).toBe(false);

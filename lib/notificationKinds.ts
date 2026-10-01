@@ -63,18 +63,27 @@ export interface KindMeta {
 // actionRequired (DEC-44 (N2) §2) — true for exactly the conflict class
 // (checkout_conflict, checkout_released, overlap_advisory, branch_open): the
 // feed's actionKinds on b9cdfdc, which now also turn the Documents badge red
-// (TRAIL-5). Everything else is false, as it was on b9cdfdc — an FYI (someone
-// else's sign-off, a completion, an escalation copy to the owner and
-// controllers) and, for now, the PSM obligations too (ack_requested,
-// review_requested, review_invalidated, access_recert_due, …). Deliberately:
-// an action notification stays red, pulsing and in the Action count until
-// its row is read, and nothing marks a PSM row read when the person
-// acknowledges or signs (lib/acknowledgments.ts, lib/reviewControl.ts,
-// lib/effectiveDate.ts never touch notifications.read_at; the hook reconciles
-// ticket workflow rows only). Flipping an obligation to true is one line
-// here, and lands with the change that clears its row once the obligation is
-// discharged (the TRAIL-9 class) and after the badge's reduced-motion /
-// accessible-name work (NEDGE-5) — DEC-44 (N2) §2.
+// (TRAIL-5). Everything else is false, as it was on b9cdfdc — someone else's
+// sign-off, a completion, and, for now, the PSM obligations (ack_requested,
+// review_requested, review_invalidated, access_recert_due, …) with their
+// overdue copies to the owner and controllers (ack_overdue, review_overdue).
+// The flag is per kind, whoever receives the row, so no rule here makes an
+// escalation copy FYI: the conflict class fans out to controllers as an
+// action — escalateStaleCheckouts (app/api/cron/maintenance/route.ts) writes
+// checkout_released with metadata.escalation to every active Admin / DocCtrl
+// but the holder, and announceBranchOpened (lib/branches.ts) writes
+// branch_open to every DocCtrl. An action notification stays red, pulsing
+// and in the Action count until its row is read, and nothing reads a row
+// when its condition ends: not a PSM row when the person acknowledges or
+// signs (lib/acknowledgments.ts, lib/reviewControl.ts, lib/effectiveDate.ts
+// never touch notifications.read_at; the hook reconciles ticket workflow rows
+// only), and not those controller copies when the checkout is released or
+// the branch resolves (branch_resolved reaches only the branch's creator).
+// Clearing a row whose condition is gone is the TRAIL-9 class (N4), for the
+// controller copies as much as for the PSM obligations. Flipping an
+// obligation to true is one line here, and lands with that clearing and
+// after the badge's reduced-motion / accessible-name work (NEDGE-5) —
+// DEC-44 (N2) §2.
 
 export const KIND_META = {
   // ── Drafting requests (the 'requests' row) ────────────────────────────────
@@ -120,12 +129,19 @@ export const KIND_META = {
   ack_unsatisfiable:        { section: "documents", actionRequired: false, compliance: true, icon: "Bell", tone: "slate", group: "documents" },
   // the review family — periodic review and the pre-publish sign-off
   review_due:               { section: "documents", actionRequired: false, compliance: true, icon: "GitBranch", tone: "blue", group: "documents" },
-  // review_requested is overloaded: besides a document's sign-off request, the
-  // contractor-intake folded digest writes it (lib/intakeRateLimit.ts
-  // foldedDigestKind — doc_superseded when a revision was published) with
-  // resource_type 'project' and a /projects/<id> link, so that digest badges
-  // Documents too. Recorded for ratification (DEC-44 (N2) §3); the digest's
-  // own kind (section 'projects') belongs to that file's owner.
+  // review_requested is overloaded: besides a document's sign-off request,
+  // the contractor-intake path writes it for three notices that open a project —
+  //   · every contractor quote: app/api/intake/upload/route.ts notifyTeam,
+  //     "Quote received: …", resource 'project', /projects/<id>?tab=costs;
+  //   · every intake submission awaiting review: the same notifyTeam,
+  //     "Intake submission awaiting review: …", a /projects/<id> link;
+  //   · the folded digest when nothing was published: lib/intakeRateLimit.ts
+  //     foldedDigestKind (doc_superseded when a revision was), resource
+  //     'project', a /projects/<id> link.
+  // So a project-scoped quote or intake notice now raises the Documents
+  // badge. Recorded for ratification (DEC-44 (N2) §3); kinds of the intake
+  // route's own for notifyTeam and the digest (e.g. intake_quote /
+  // intake_submission, section 'projects') belong to those files' owner.
   review_requested:         { section: "documents", actionRequired: false, compliance: true, icon: "GitBranch", tone: "blue", group: "documents" },
   review_signed:            { section: "documents", actionRequired: false, compliance: false, icon: "GitBranch", tone: "blue", group: "documents" },
   review_invalidated:       { section: "documents", actionRequired: false, compliance: true, icon: "GitBranch", tone: "blue", group: "documents" },
