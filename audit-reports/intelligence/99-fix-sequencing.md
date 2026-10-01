@@ -133,38 +133,86 @@ route, the ingest drain and the codebook import catch it (I-05). The ask
 unhandled 500. They refuse their AI work either way, but the sentence is lost.
 Each maps `GovernedCallError` onto its response as it adopts `assertAiGates`.
 
-⛔ **MERGE GATE for I-05 — locate keeps its non-AI output during a ledger
-outage** (`GOV-4`; I-07's file, I-07 runs in parallel). `app/api/knowledge/locate/route.ts`
-is NOT refused either way. When its AI step is refused (no key, cap reached)
-it still answers the text-layer `positions`, `notOnPage` and the
-library-wide `elsewhere` hits with a `skipped` sentence; with I-05 an
-unreadable ledger throws at its
-`Promise.all([getMonthUsage(...), getCapUsd(...)])` (line 185 at I-05's head)
-and the whole response is a 500 — the positions already found and the
-"V-3 is on 025-PID-0103" navigation are lost. **When I-05 merges, if I-07 has
-not already landed this, the integrator applies it in the same merge** (the
-locate route is otherwise I-07's):
+⛔ **MERGE GATE for I-05 — locate keeps its non-AI output when the cap
+table cannot be read, and refuses a $0 lock before its first call** (`GOV-4`,
+`GOV-3`; I-07's file, merged at `d466a59`). *Restated in I-05 fix pass 10:*
+the gate as first written replaced a `Promise.all([getMonthUsage(...),
+getCapUsd(...)])` that I-07 as merged no longer has, so it could not be
+applied as written. On the integration branch,
+`app/api/knowledge/locate/route.ts:303` reads, outside any try:
+
+```ts
+const [spentUsd, cap] = await Promise.all([monthSpendAllOps(orgId, user.id), getCapUsd(orgId, user.id)]);
+```
+
+`monthSpendAllOps` is locate's own ledger read. It answers null on a read
+error, and the route already handles that null. With I-05 two things change
+under it:
+
+- (a) `getCapUsd` THROWS `AiUsageUnavailableError` (503) when the cap table
+  cannot be read; at `052271b` it answered $10. Uncaught, the whole locate
+  response is a 500. The text-layer `positions`, `notOnPage` and the
+  library-wide `elsewhere` hits, which spend nothing, are lost.
+- (b) A stored $0 cap is `LOCKED_CAP_USD`, the smallest positive number.
+  `monthSpendAllOps` has no lock floor (I-05's `getMonthUsage` has one).
+  For a locked member with no spend this month, `overCap(ZERO_USAGE)` =
+  `cap > 0 && 0 >= 5e-324` is false, so the coarse pass, a paid page-vision
+  call, is made. The per-call re-checks refuse after it. Until this lands,
+  `GOV-3`'s "every gate refuses at $0 spent" does not hold for locate.
+
+**When I-05 merges, if I-07 has not already landed this, the integrator
+applies it in the same merge** (the locate route is otherwise I-07's):
 
 ```ts
 import { isAiUsageUnavailable } from "@/lib/ai/gateError";
-import type { MonthUsage } from "@/lib/ai/usageServer";
-// …replacing `const [spent, cap] = await Promise.all([...]);`
-let spent: MonthUsage, cap: number;
+import { getCapUsd, capIsLocked, recordAskUsage, monthStartIso } from "@/lib/ai/usageServer";
+// …replacing line 303's `const [spentUsd, cap] = await Promise.all([...]);`
+let spentUsd: number | null;
+let cap: number;
 try {
-  [spent, cap] = await Promise.all([getMonthUsage(orgId, user.id), getCapUsd(orgId, user.id)]);
+  [spentUsd, cap] = await Promise.all([monthSpendAllOps(orgId, user.id), getCapUsd(orgId, user.id)]);
 } catch (e) {
+  // GOV-4: a cap table that cannot be read refuses the AI step, never the free answer.
   if (!isAiUsageUnavailable(e)) throw e;
   return NextResponse.json({
     positions: [...found.values()], notOnPage: trulyAbsent, elsewhere,
     skipped: `${(e as Error).message} The sheet still opens at the right page.`,
   });
 }
+// (the existing `if (spentUsd === null) { … }` stays as it is)
+// GOV-3: a $0 cap locks. It is refused before the first call, at $0 spent too:
+// monthSpendAllOps has no lock floor, so overCap alone admits it.
+if (capIsLocked(cap)) {
+  return NextResponse.json({
+    positions: [...found.values()], notOnPage: trulyAbsent, elsewhere,
+    skipped: "Your monthly AI cap is set to $0, so AI is locked for you until someone who manages AI caps raises it — the sheet still opens at the right page.",
+  });
+}
 ```
 
-Test (with it): a vision-read sheet, a key on file, and `ai_usage_events`
-answering a read error → 200 with the text-layer `positions`, `notOnPage`
-and `elsewhere` intact and `skipped` carrying the "AI usage can't be read
-right now" sentence; no provider call. Any other error still throws.
+(Replacing `monthSpendAllOps` with I-05's `getMonthUsage(...).spentUsd`,
+which counts every op and carries the floor, would also close (b). It would
+not close (a). It is I-07's call; either way (a) needs the catch.)
+
+**I-07's test file changes with it.** `lib/__tests__/intelRoundGDrawingRoutes.test.ts`
+mocks `@/lib/ai/usageServer` whole. Its mock gains
+`capIsLocked: (c: number) => c <= Number.MIN_VALUE`. Its `getCapUsd`
+default, `vi.fn(async () => 0)`, and the `beforeEach`'s
+`mockResolvedValue(0)`, become a figure the scripted calls never reach,
+such as `1000`. With I-05, `getCapUsd` never answers 0: 0 meant "no cap",
+and it is now the lock. Tests, with I-07's route:
+
+1. A vision-read sheet, a key on file and a signed agreement, with
+   `getCapUsd` rejecting with `new GovernedCallError("AI usage can't be read
+   right now, so AI calls are refused until it can (down).", 503,
+   { usageUnavailable: true })` (from `@/lib/ai/gateError`, not mocked).
+   Expect 200, with the text-layer `positions`, `notOnPage` and `elsewhere`
+   intact, and `skipped` carrying "AI usage can't be read right now". There
+   is no provider call and no metering row. Any other error still throws.
+2. The same sheet with `getCapUsd` resolving `Number.MIN_VALUE` (a $0 cap)
+   and no spend this month. Expect 200 with the free answer and `skipped`
+   naming the $0 lock. `ai.calls` is empty and `recordAskUsage` is not
+   called. Without the check, the coarse pass is made: one call.
 
 **The current month of the AI spend ledger is never purged — coordinated
 limb in A&O's file** (`GOV-4` / `GOV-10`, I-05 fix pass 3).
