@@ -9,17 +9,17 @@
     "audit-reports/projects-and-cost/05-intake-door.md"
   ],
   "totals": {
-    "findings": 73,
+    "findings": 75,
     "gaps": 0,
     "by_severity": {
       "CRITICAL": 2,
       "HIGH": 22,
-      "MEDIUM": 37,
+      "MEDIUM": 39,
       "LOW": 12
     },
     "by_status": {
-      "RESOLVED": 56,
-      "OPEN": 17
+      "RESOLVED": 57,
+      "OPEN": 18
     }
   },
   "status_vocabulary": [
@@ -502,7 +502,7 @@
       "id": "QUAL-4",
       "title": "No qualified sign-off and no separation of duties anywhere in the quality program — only Admin/DocCtrl or the one project owner may record any decision, and that same person can author, auto-green, sign, complete and close alone",
       "severity": "HIGH",
-      "status": "OPEN",
+      "status": "RESOLVED",
       "verification": "CONFIRMED",
       "verification_note": null,
       "blast_radius": null,
@@ -1479,6 +1479,64 @@
       ],
       "refuted": false,
       "summary": "QA/QC accepts the \"NDE reports\" turnover item after reading a 40-page package. The row records status: accepted, reviewedbyname: 'jchen', reviewedat, and a note — and nothing that identifies which document was reviewed. Six months later the NDE package is superseded or three candidate files exist in the folder; nobody can establish which one jchen accepted. Meanwhile the checklist engine, which wa",
+      "area": "projects-and-cost",
+      "report": "audit-reports/projects-and-cost/03-quality.md"
+    },
+    {
+      "id": "QUAL-14",
+      "title": "A project-scoped quality sign-off grant has no authoring surface — the permissions console edits request-type overrides only, so per-project discipline reviewers are configured by an API call, and only role-wide",
+      "severity": "MEDIUM",
+      "status": "OPEN",
+      "verification": "CONFIRMED",
+      "verification_note": "CONFIRMED (by reading)",
+      "blast_radius": null,
+      "related": [
+        "QUAL-4",
+        "ORG-14",
+        "DEC-13",
+        "DEC-66"
+      ],
+      "locations": [
+        "components/permissions/CapabilityPolicyEditor.tsx",
+        "app/api/admin/capability-policy/route.ts",
+        "components/projects/QualityTab.tsx"
+      ],
+      "has_verifier_correction": false,
+      "verified_by": "author",
+      "challenges": [
+        "author"
+      ],
+      "refuted": false,
+      "summary": "A PSSR needs the Operations and Maintenance representatives to confirm their lines on one project. An Admin opens the permissions console: the Quality row offers the role grid (all projects) and personal grants (all projects visible to the person). Granting org-wide is broader than the PSSR needs; granting per project requires hand-writing the policy JSON.",
+      "area": "projects-and-cost",
+      "report": "audit-reports/projects-and-cost/03-quality.md"
+    },
+    {
+      "id": "QUAL-15",
+      "title": "Project closeout never requires a checklist's signed completion — an open checklist whose items are all green reads \"Checklists clear\", and a voided one leaves every count, so the separated, signed sign-off can simply be skipped",
+      "severity": "MEDIUM",
+      "status": "OPEN",
+      "verification": "CONFIRMED",
+      "verification_note": "CONFIRMED (by reading)",
+      "blast_radius": null,
+      "related": [
+        "QUAL-4",
+        "QUAL-9",
+        "SAF-14",
+        "DEC-66"
+      ],
+      "locations": [
+        "lib/projectSnapshot.ts:318-329",
+        "lib/projects.ts:353-374",
+        "app/(protected)/projects/[id]/page.tsx:756"
+      ],
+      "has_verifier_correction": false,
+      "verified_by": "author",
+      "challenges": [
+        "author"
+      ],
+      "refuted": false,
+      "summary": "The owner authors a PSSR, the evidence sweep and their own item decisions turn every line green, and the separation rule refuses their completion because a controller exists. They leave the checklist open and complete the project: the Complete dialog shows \"Checklists clear\" in green with no override note, the completion's audit row records the gate as clear (SAF-14), and the project closes with a",
       "area": "projects-and-cost",
       "report": "audit-reports/projects-and-cost/03-quality.md"
     },

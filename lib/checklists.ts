@@ -28,11 +28,30 @@
 // write is stamped with the caller, a decision needs its own reason, an item
 // is never deleted on its own, item writes serialise with the completion,
 // and a completed checklist's items are frozen until it is reopened.
+//
+// Sign-off authority (QUAL-4, 20261136): who may write a project's quality
+// records is the database's decision — a controller, the project owner, or
+// whoever the org grants `quality.sign_off` (per project, through the
+// capability policy's resource dimension); loadSignoffAuthority asks it. A
+// completion (and a turnover acceptance or waiver, lib/turnover.ts) is a
+// SIGNED sign-off: the e-signature ceremony's row (20261050 — the route
+// re-authenticates and mints it), bound to the record by the database. The
+// author of a checklist does not sign it off while another eligible signer
+// exists (DEC-12 / DEC-37); with nobody else it is allowed and marked
+// single-signer. Checked here for a readable refusal; enforced there. A
+// completed checklist is reopened by a controller only, ANY checklist is
+// voided by a controller only (QUAL-15: a void takes it out of closeout),
+// and one that was ever signed off is deleted by a controller only — the
+// database keeps that mark on the row (ever_completed_signature_id) from
+// the first completion it records, through any reopen or void (20261136).
 
 import { supabase } from "@/lib/supabase";
 import type { Actor } from "@/lib/costs";
 import { NOT_CURRENT_STATUSES } from "@/lib/aiBoundary";
 import { checkedWrite, describeWriteError } from "@/lib/checkedWrite";
+import { recordSignature, type SigningCredential } from "@/lib/eSignatures";
+import { isControllerPrincipal } from "@/lib/permissions";
+import type { Role } from "@/types/schema";
 import {
   applyAutoEvidence,
   completionBasis,
@@ -72,6 +91,16 @@ export interface Checklist {
   completedBasis: "human" | "auto" | null;
   createdAt: string | null;
   createdByName: string | null;
+  /** QUAL-4: the author (the database stamps the caller from 20261136) —
+   *  the separation-of-duties rule compares the signer against it. */
+  createdBy?: string | null;
+  /** QUAL-4 (20261136): the completion's sign-off, written by the database. */
+  completedBy?: string | null;
+  completedByName?: string | null;
+  completedAt?: string | null;
+  completedSignatureId?: string | null;
+  /** DEC-12: completed by its author because nobody else could sign it off. */
+  completedSingleSigner?: boolean | null;
 }
 
 export interface ChecklistItem {
@@ -114,6 +143,12 @@ function mapChecklist(r: Record<string, unknown>): Checklist {
     completedBasis: basis === "human" || basis === "auto" ? basis : null,
     createdAt: (r.created_at as string | null) ?? null,
     createdByName: (r.created_by_name as string | null) ?? null,
+    createdBy: (r.created_by as string | null) ?? null,
+    completedBy: (r.completed_by as string | null) ?? null,
+    completedByName: (r.completed_by_name as string | null) ?? null,
+    completedAt: (r.completed_at as string | null) ?? null,
+    completedSignatureId: (r.completed_signature_id as string | null) ?? null,
+    completedSingleSigner: typeof r.completed_single_signer === "boolean" ? r.completed_single_signer : null,
   };
 }
 
@@ -141,6 +176,149 @@ async function audit(action: string, orgId: string, resourceId: string, actor: A
     org_id: orgId, user_id: actor.uid, user_email: actor.email,
     details,
   }).then(() => undefined, () => undefined);
+}
+
+// ── Sign-off authority (QUAL-4) ──────────────────────────────────────────
+
+/** The e_signatures binding of a quality sign-off: the resource_type each
+ *  sign-off's signature row carries and the intent the ceremony records — the
+ *  20261136 rails look the row up by exactly these. */
+export const QUALITY_SIGNOFF_RESOURCE = { checklist: "project_checklist", turnoverItem: "turnover_item" } as const;
+export const QUALITY_SIGNOFF_INTENT = "Reviewed" as const;
+
+/** What the signing ceremony collected. It goes to /api/signatures/sign,
+ *  which verifies the re-authentication and names the signer from
+ *  org_members itself (20261050) — nothing here is trusted beyond that. */
+export interface SignoffInput {
+  /** The plain-language statement the signer affirmed. */
+  statement: string;
+  /** The re-authentication the ceremony collected — verified by the route. */
+  reauth?: SigningCredential | null;
+  signatureImage?: string | null;
+  /** The name the signer confirmed (the route records its own). */
+  signerName: string;
+}
+
+/** Who may sign off a project's quality records, and whether anyone else
+ *  could (the separation-of-duties count). */
+export interface SignoffAuthority {
+  /** The caller may write and sign off this project's quality records. */
+  maySign: boolean;
+  /** Other members who could (DEC-12: an author's own sign-off is refused
+   *  only while this is above zero). NULL when it is not known — the read
+   *  failed, or the database gave no answer — never a guessed zero. */
+  otherSigners: number | null;
+  /** "database": quality_signoff_status (20261136) answered. "fallback":
+   *  before 20261136 — the controller tier and the project owner, the only
+   *  writers the policies admit then. */
+  source: "database" | "fallback";
+  /** The decision could not be read: callers fail closed (DEC-16). */
+  error?: string;
+}
+
+/** A function the database does not have yet (raw 42883, PostgREST's
+ *  PGRST202 schema-cache miss) — the migration is not applied. */
+function isMissingFunction(err: { message?: string | null; code?: string | null }): boolean {
+  const code = err.code ?? "";
+  const msg = err.message ?? "";
+  return code === "42883" || code === "PGRST202" || /could not find the function/i.test(msg) || /function .* does not exist/i.test(msg);
+}
+
+/** The caller's sign-off authority on a project, read from the database
+ *  (quality_signoff_status) — the same predicate its write policies and
+ *  rails apply. Before 20261136 the answer is the controller tier and the
+ *  project owner (all the policies admit then). A read that fails is an
+ *  error the caller fails closed on, never a "yes" (DEC-16). */
+export async function loadSignoffAuthority(orgId: string, projectId: string, actor: Actor): Promise<SignoffAuthority> {
+  try {
+    const { data, error } = await supabase.rpc("quality_signoff_status", { p_project: projectId });
+    if (!error) {
+      const d = (data ?? null) as { maySign?: unknown; otherSigners?: unknown } | null;
+      const others = d?.otherSigners == null ? NaN : Number(d.otherSigners);
+      return { maySign: d?.maySign === true, otherSigners: Number.isFinite(others) ? Math.max(0, others) : null, source: "database" };
+    }
+    if (!isMissingFunction(error)) {
+      return { maySign: false, otherSigners: null, source: "database", error: describeWriteError(error) };
+    }
+  } catch (e) {
+    return { maySign: false, otherSigners: null, source: "database", error: (e as Error)?.message || "the sign-off check failed" };
+  }
+  const [membersRes, projectRes] = await Promise.all([
+    supabase.from("org_members").select("uid, role, roles").eq("org_id", orgId).eq("status", "active"),
+    supabase.from("projects").select("owner_user_id").eq("id", projectId).maybeSingle(),
+  ]);
+  const readError = membersRes.error ?? projectRes.error;
+  if (readError) return { maySign: false, otherSigners: null, source: "fallback", error: describeWriteError(readError) };
+  const members = ((membersRes.data ?? []) as Array<{ uid?: string | null; role?: string | null; roles?: string[] | null }>);
+  const eligible = new Set<string>();
+  for (const m of members) {
+    if (m.uid && isControllerPrincipal({ role: (m.role ?? "") as Role, roles: (m.roles ?? undefined) as Role[] | undefined })) eligible.add(m.uid);
+  }
+  const owner = ((projectRes.data as { owner_user_id?: string | null } | null)?.owner_user_id) ?? null;
+  // user_owns_project requires the owner to be an ACTIVE member.
+  if (owner && members.some((m) => m.uid === owner)) eligible.add(owner);
+  return { maySign: eligible.has(actor.uid), otherSigners: [...eligible].filter((u) => u !== actor.uid).length, source: "fallback" };
+}
+
+/** DEC-12 / DEC-37, per slot: the person who put the record on the books
+ *  (a checklist's author, a turnover item's creator — whoever seeded it,
+ *  for a seeded item) does not sign it off (complete; accept or waive) while
+ *  anyone else could; with nobody else it is allowed and MARKED. The
+ *  database rails (20261136) apply the same rule. An unknown count (`null`:
+ *  still loading, or unreadable) holds the author's sign-off — `pending` —
+ *  rather than guessing either way (DEC-16). */
+export function signoffSeparation(
+  authorUid: string | null | undefined,
+  actorUid: string,
+  otherSigners: number | null,
+  what: "checklist" | "turnover",
+): { blocked: boolean; singleSigner: boolean; pending: boolean; reason: string | null } {
+  if (!authorUid || authorUid !== actorUid) return { blocked: false, singleSigner: false, pending: false, reason: null };
+  if (otherSigners == null) {
+    return {
+      blocked: true, singleSigner: false, pending: true,
+      reason: what === "checklist"
+        ? "You created this checklist, and who else on this project can sign it off is not known yet — that decides whether a second person must."
+        : "You added this turnover item, and who else on this project can accept or waive it is not known yet — that decides whether a second person must.",
+    };
+  }
+  if (otherSigners > 0) {
+    const others = `${otherSigners} other eligible signer${otherSigners === 1 ? "" : "s"} on this project`;
+    return {
+      blocked: true, singleSigner: false, pending: false,
+      reason: what === "checklist"
+        ? `You created this checklist, so a second person signs it off — ${others}.`
+        : `You added this turnover item, so a second person accepts or waives it — ${others}.`,
+    };
+  }
+  return { blocked: false, singleSigner: true, pending: false, reason: null };
+}
+
+/** Mint the sign-off's e-signature through the ceremony's server half
+ *  (/api/signatures/sign: re-authentication verified, signer named from
+ *  org_members, written with the service key — 20261050). No ceremony
+ *  output, no sign-off. */
+export async function captureQualitySignoff(input: {
+  orgId: string; resourceType: string; resourceId: string;
+  signoff: SignoffInput | null | undefined; actor: Actor;
+}): Promise<{ ok: true; signatureId: string } | { ok: false; error: string }> {
+  const s = input.signoff;
+  if (!s || !s.statement?.trim()) {
+    return { ok: false, error: "A quality sign-off is signed: confirm the statement with your e-signature (your password, or a recent sign-in) — nothing was changed." };
+  }
+  try {
+    const sig = await recordSignature({
+      orgId: input.orgId, resourceType: input.resourceType, resourceId: input.resourceId,
+      intent: QUALITY_SIGNOFF_INTENT, statement: s.statement.trim(),
+      signerUserId: input.actor.uid, signerName: s.signerName,
+      signerEmail: input.actor.email ?? undefined,
+      signatureImage: s.signatureImage ?? null,
+      reauth: s.reauth ?? null,
+    });
+    return { ok: true, signatureId: sig.id };
+  } catch (e) {
+    return { ok: false, error: `Your signature wasn't recorded, so nothing was signed off: ${(e as Error)?.message || "the signing ceremony failed"}` };
+  }
 }
 
 // ── Reads (UX-10 / QUAL-8: a failed read is an error, never an empty list) ──
@@ -392,12 +570,29 @@ export async function updateChecklistItem(input: {
  *  DATABASE's to record — its rail computes it with completionBasis()'s rule
  *  and ignores a client value — so this write sends the status only (and
  *  works before 20261091, when no basis exists and nothing cites one); the
- *  stored basis is read back for the caller and the audit row. */
+ *  stored basis is read back for the caller and the audit row.
+ *  A completion is a SIGNED sign-off (QUAL-4): its author is refused while
+ *  another eligible signer exists (DEC-12 — readable here, enforced by
+ *  20261136), and the completer's e-signature on this checklist is minted
+ *  through the ceremony (`signoff`) before the write; the database binds it
+ *  and records who completed it. Undoing a completion — reopening or voiding
+ *  a COMPLETED checklist — is a controller's alone from 20261136 (the
+ *  completion record is cleared and checklists keep no history, so anyone
+ *  else could otherwise erase a second person's signed sign-off), and so is
+ *  voiding an OPEN one (QUAL-15: a void takes the checklist out of every
+ *  count closeout reads — the author refused the sign-off could otherwise
+ *  void it away; checklists have no reason column, so none is asked); the
+ *  database refuses anyone else and that refusal comes back here as the
+ *  error, with nothing audited. No product surface reopens or voids one. */
 export async function setChecklistStatus(input: {
   orgId: string; projectId: string; checklist: Checklist;
   status: "open" | "complete" | "void"; actor: Actor;
+  /** QUAL-4: the signing ceremony's output — required to complete. */
+  signoff?: SignoffInput | null;
 }): Promise<{ ok: boolean; error?: string; basis?: "human" | "auto" }> {
   let basis: "human" | "auto" | undefined;
+  let signatureId: string | undefined;
+  let singleSigner = false;
   if (input.status === "complete") {
     const read = await readChecklistItems(input.checklist.id);
     if (read.error) return { ok: false, error: `Couldn't verify the items, so the checklist stays open: ${read.error}` };
@@ -413,19 +608,41 @@ export async function setChecklistStatus(input: {
       return { ok: false, error: `${stale.length} green item${stale.length === 1 ? " rests" : "s rest"} on a document that is no longer current (voided, superseded, back to Draft, or no longer readable) — run "Check evidence we already hold" first. The checklist stays open.` };
     }
     basis = completionBasis(states);
+    // QUAL-4 / DEC-12: the author does not sign their own checklist off
+    // while anyone else on the project could (fail closed on an unreadable
+    // decision — DEC-16).
+    if (input.checklist.createdBy && input.checklist.createdBy === input.actor.uid) {
+      const authority = await loadSignoffAuthority(input.orgId, input.projectId, input.actor);
+      if (authority.error) return { ok: false, error: `Couldn't check who else can sign this checklist off (${authority.error}) — it stays open.` };
+      const sod = signoffSeparation(input.checklist.createdBy, input.actor.uid, authority.otherSigners, "checklist");
+      if (sod.blocked) return { ok: false, error: sod.reason ?? "A second person signs this checklist off." };
+      singleSigner = sod.singleSigner;
+    }
+    // QUAL-4: the completer's own e-signature on this checklist, minted by
+    // the ceremony's server half before the write the database binds it to.
+    const sig = await captureQualitySignoff({
+      orgId: input.orgId, resourceType: QUALITY_SIGNOFF_RESOURCE.checklist, resourceId: input.checklist.id,
+      signoff: input.signoff, actor: input.actor,
+    });
+    if (!sig.ok) return { ok: false, error: sig.error };
+    signatureId = sig.signatureId;
   }
   const w = await checkedWrite(supabase.from("project_checklists").update({ status: input.status }).eq("id", input.checklist.id).select("id"));
   if (!w.ok) return { ok: false, error: w.error };
   if (basis) {
     // The stored value is the database's (same rule); before 20261091 there
-    // is no column and the lib's reading stands in for the audit row.
+    // is no column and the lib's reading stands in for the audit row. So is
+    // the single-signer marker (20261136).
     const back = await supabase.from("project_checklists").select("*").eq("id", input.checklist.id).maybeSingle();
-    const stored = (back.data as { completed_basis?: unknown } | null)?.completed_basis;
+    const row = back.data as { completed_basis?: unknown; completed_single_signer?: unknown } | null;
+    const stored = row?.completed_basis;
     if (stored === "human" || stored === "auto") basis = stored;
+    if (typeof row?.completed_single_signer === "boolean") singleSigner = row.completed_single_signer;
   }
   await audit("CHECKLIST_STATUS", input.orgId, input.projectId, input.actor, {
     checklistId: input.checklist.id, status: input.status, title: input.checklist.title,
     ...(basis ? { completedBasis: basis } : {}),
+    ...(signatureId ? { signatureId, singleSigner } : {}),
   });
   return { ok: true, ...(basis ? { basis } : {}) };
 }

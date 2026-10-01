@@ -29,8 +29,18 @@
 //
 //   Punch list: the closeout snag list, visible until it's empty — each
 //   closure records who closed it and what closed it; done and void differ.
+//
+//   Sign-off authority (QUAL-4): every write control here is drawn from the
+//   database's decision for THIS project (quality_signoff_status, 20261136 —
+//   a controller, the owner, or a quality.sign_off holder for the project),
+//   never from a role list. "Mark complete" and turnover "Accept" / "Waive"
+//   are signed with the e-signature ceremony, and the author of a checklist
+//   (or the creator of a turnover item) sees why a second person signs it off
+//   rather than a missing button (DEC-12); a lone signer's sign-off is
+//   marked. Until the database says how many others could sign, the author's
+//   sign-off waits (and says why) — never a guessed "nobody else".
 
-import React, { useCallback, useEffect, useMemo, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   ClipboardCheck, FileText, Loader2, Sparkles, Search, X, Plus, Check,
   ChevronDown, ChevronRight, AlertTriangle, ShieldCheck, PackageCheck,
@@ -42,13 +52,16 @@ import {
   type Checklist, type ChecklistItem, type ChecklistKind, type AssessmentProposal, CHECKLIST_KIND_LABEL,
   listChecklists, listChecklistItems, createChecklist, applyAssessment,
   updateChecklistItem, setChecklistStatus, runAutoEvidence, computeChecklistProgress,
+  loadSignoffAuthority, signoffSeparation, type SignoffAuthority, type SignoffInput,
 } from "@/lib/checklists";
+import SignatureCeremony from "@/components/signatures/SignatureCeremony";
+import { useRole } from "@/components/providers/RoleContext";
 import {
   type TurnoverItem, type PunchItem, type TurnoverReviewEvent, TURNOVER_STATUS_LABEL,
   listTurnoverItems, listTurnoverReviewEvents, seedTurnoverItems, addTurnoverItem, reviewTurnoverItem, reopenTurnoverItem,
   listPunchItems, addPunchItem, setPunchStatus, computeTurnoverProgress,
 } from "@/lib/turnover";
-import { type SegmentedItem, isAutoOnlyGreen, isHumanGreen, isUnreasonedNa, isMachineActorName, REASON_MIN_LENGTH } from "@/lib/checklistEngine";
+import { type SegmentedItem, isAutoOnlyGreen, isHumanGreen, isUnreasonedNa, isMachineActorName, reasonProblem, REASON_MIN_LENGTH } from "@/lib/checklistEngine";
 import { NOT_CURRENT_STATUSES } from "@/lib/aiBoundary";
 import { appPrompt } from "@/components/providers/DialogProvider";
 
@@ -90,6 +103,12 @@ function Notice({ notice, onClose, action }: { notice: NoticeState | null; onClo
 const promptReason = (title: string, message: string, placeholder = "Why? (at least 10 characters)") =>
   appPrompt({ title, message, placeholder, required: true, minLength: REASON_MIN_LENGTH });
 
+/** QUAL-4: what a sign-off control needs beside the write decision — how
+ *  many others could sign off on this project (the separation-of-duties
+ *  count; NULL while it loads or when it cannot be read), what the author is
+ *  told meanwhile, and the name the ceremony asks the signer to confirm. */
+interface SignoffContext { otherSigners: number | null; pendingReason: string; signerName: string }
+
 export default function QualityTab({ orgId, projectId, canManage, uid, userEmail, jobKind, onDataChanged }: {
   orgId: string; projectId: string; canManage: boolean;
   uid: string; userEmail?: string | null;
@@ -98,6 +117,32 @@ export default function QualityTab({ orgId, projectId, canManage, uid, userEmail
   onDataChanged?: () => void;
 }) {
   const actor: Actor = useMemo(() => ({ uid, email: userEmail ?? null }), [uid, userEmail]);
+  const { member } = useRole();
+  /** QUAL-4: the database's sign-off decision for this project — read with
+   *  the lists on every refresh (mount, Retry, after each change), so a grant,
+   *  a revocation or a new eligible signer is seen without a page reload. */
+  const [authority, setAuthority] = useState<SignoffAuthority | null>(null);
+  /** Only the newest read may land: an older answer never overwrites it. */
+  const authoritySeq = useRef(0);
+  const loadAuthority = useCallback(async () => {
+    const seq = ++authoritySeq.current;
+    const a = await loadSignoffAuthority(orgId, projectId, actor);
+    if (seq === authoritySeq.current) setAuthority(a);
+  }, [orgId, projectId, actor]);
+  // QUAL-4 done-when 4: the write controls follow the decision the policies
+  // apply. Until it answers — or when it cannot be read — they follow the
+  // controller / owner rule the page computed (people the policies always
+  // admit), and the failure is said. The separation count is never guessed:
+  // while it is unknown the author's own sign-off waits (signoffSeparation
+  // reads NULL as pending), so nobody is told they are the only signer.
+  const canSignOff = authority && !authority.error ? authority.maySign : canManage;
+  const signoff: SignoffContext = {
+    otherSigners: authority && !authority.error ? authority.otherSigners : null,
+    pendingReason: authority?.error
+      ? `You created this record, so whether a second person must sign it off depends on who else can — and that couldn't be read (${authority.error}). Reload to try again.`
+      : "Checking who else on this project can sign this off — you created it, so that decides whether a second person must.",
+    signerName: (member?.displayName ?? "").trim() || (userEmail?.split("@")[0] ?? "").trim() || "user",
+  };
   /** Per read: each section shows its own data or its own failure (UX-10). */
   const [loadErrors, setLoadErrors] = useState<{ checklists?: string; turnover?: string; history?: string; punch?: string }>({});
   const [checklists, setChecklists] = useState<Checklist[]>([]);
@@ -107,6 +152,9 @@ export default function QualityTab({ orgId, projectId, canManage, uid, userEmail
   const [loading, setLoading] = useState(true);
 
   const refresh = useCallback(async () => {
+    // The sign-off decision is re-read beside the lists (it never throws:
+    // a failed read comes back as authority.error and the controls fall back).
+    void loadAuthority();
     // allSettled: one failing read never hides the three that answered, and
     // a denied policy or a missing migration is a failure to load — never
     // "No checklists yet" (UX-10).
@@ -125,7 +173,7 @@ export default function QualityTab({ orgId, projectId, canManage, uid, userEmail
     setLoading(false);
     onDataChanged?.();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [orgId, projectId]);
+  }, [orgId, projectId, loadAuthority]);
   useEffect(() => { void refresh(); }, [refresh]);
 
   if (loading) return <div className="py-12 flex justify-center"><Loader2 className="w-5 h-5 animate-spin text-[var(--color-accent)]" /></div>;
@@ -133,12 +181,15 @@ export default function QualityTab({ orgId, projectId, canManage, uid, userEmail
   const retry = () => void refresh();
   return (
     <div className="space-y-4">
-      <ChecklistsSection orgId={orgId} projectId={projectId} canManage={canManage} actor={actor}
+      {authority?.error && (
+        <Notice notice={info(`Couldn't read who may sign off on this project (${authority.error}) — the controls shown are the ones the project owner, Admin and Document Control always have.`)} />
+      )}
+      <ChecklistsSection orgId={orgId} projectId={projectId} canManage={canSignOff} actor={actor} signoff={signoff}
         checklists={checklists} loadError={loadErrors.checklists} onRetry={retry} onChanged={retry} />
-      <TurnoverSection orgId={orgId} projectId={projectId} canManage={canManage} actor={actor}
+      <TurnoverSection orgId={orgId} projectId={projectId} canManage={canSignOff} actor={actor} signoff={signoff}
         items={turnover} events={events} loadError={loadErrors.turnover} historyError={loadErrors.history} onRetry={retry}
         jobKind={jobKind} onChanged={retry} />
-      <PunchSection orgId={orgId} projectId={projectId} canManage={canManage} actor={actor}
+      <PunchSection orgId={orgId} projectId={projectId} canManage={canSignOff} actor={actor}
         items={punch} loadError={loadErrors.punch} onRetry={retry} onChanged={retry} />
     </div>
   );
@@ -157,8 +208,8 @@ function LoadFailed({ what, error, onRetry }: { what: string; error: string; onR
 
 // ── Checklists ───────────────────────────────────────────────────────────
 
-function ChecklistsSection({ orgId, projectId, canManage, actor, checklists, loadError, onRetry, onChanged }: {
-  orgId: string; projectId: string; canManage: boolean; actor: Actor;
+function ChecklistsSection({ orgId, projectId, canManage, actor, signoff, checklists, loadError, onRetry, onChanged }: {
+  orgId: string; projectId: string; canManage: boolean; actor: Actor; signoff: SignoffContext;
   checklists: Checklist[]; loadError?: string; onRetry: () => void; onChanged: () => void;
 }) {
   const [showNew, setShowNew] = useState(false);
@@ -199,7 +250,7 @@ function ChecklistsSection({ orgId, projectId, canManage, actor, checklists, loa
         <div className="divide-y divide-[var(--color-border)]">
           {checklists.filter((c) => c.status !== "void").map((c) => (
             <ChecklistCard key={c.id} orgId={orgId} projectId={projectId} checklist={c}
-              canManage={canManage} actor={actor} onChanged={onChanged} />
+              canManage={canManage} actor={actor} signoff={signoff} onChanged={onChanged} />
           ))}
         </div>
       )}
@@ -347,12 +398,14 @@ type ReviewProposal = AssessmentProposal & {
 /** The cited document's current standing, for the evidence chip (SAF-1 / QUAL-1). */
 type DocStanding = { status: string | null; rev: string | null; label: string };
 
-function ChecklistCard({ orgId, projectId, checklist, canManage, actor, onChanged }: {
+function ChecklistCard({ orgId, projectId, checklist, canManage, actor, signoff, onChanged }: {
   orgId: string; projectId: string; checklist: Checklist;
-  canManage: boolean; actor: Actor;
+  canManage: boolean; actor: Actor; signoff: SignoffContext;
   onChanged: () => void;
 }) {
   const [open, setOpen] = useState(false);
+  /** QUAL-4: the signing ceremony is open for "Mark complete". */
+  const [signing, setSigning] = useState(false);
   const [items, setItems] = useState<ChecklistItem[] | null>(null);
   const [itemsError, setItemsError] = useState<string | null>(null);
   const [docs, setDocs] = useState<Record<string, DocStanding>>({});
@@ -470,13 +523,21 @@ function ChecklistCard({ orgId, projectId, checklist, canManage, actor, onChange
     } finally { setBusy(null); }
   };
 
-  const complete = async () => {
+  // QUAL-4: "Mark complete" is a signed sign-off — the ceremony collects the
+  // statement and the re-authentication; the lib mints the signature through
+  // the signing route and the database binds it to the completion.
+  const complete = async (signed: SignoffInput) => {
     setBusy("complete"); setNotice(null);
-    const res = await setChecklistStatus({ orgId, projectId, checklist, status: "complete", actor });
+    const res = await setChecklistStatus({ orgId, projectId, checklist, status: "complete", actor, signoff: signed });
     setBusy(null);
+    setSigning(false);
     if (!res.ok) { setNotice(failure(res.error ?? "Couldn't complete.")); return; }
     onChanged();
   };
+  /** DEC-12: the author signs off only when nobody else on the project can
+   *  — and waits while that is not known (`pending`). */
+  const separation = signoffSeparation(checklist.createdBy, actor.uid, signoff.otherSigners, "checklist");
+  const separationReason = separation.pending ? signoff.pendingReason : separation.reason;
 
   // Group items by section for rendering.
   const sections = useMemo(() => {
@@ -488,7 +549,7 @@ function ChecklistCard({ orgId, projectId, checklist, canManage, actor, onChange
     return [...by.entries()];
   }, [items]);
 
-  const completeBlocked = progress != null && (progress.total === 0 || blocking > 0 || staleGreens > 0);
+  const completeBlocked = progress != null && (progress.total === 0 || blocking > 0 || staleGreens > 0 || separation.blocked);
   const autoReasons = [
     autoGreens > 0 ? `${autoGreens} green${autoGreens === 1 ? " carries" : "s carry"} no person's reason — the sweep's alone, or a chip with no note (✓ Verify)` : null,
     unreasonedNa > 0 ? `${unreasonedNa} N/A${unreasonedNa === 1 ? " carries" : "s carry"} no person's reason (✓ Confirm N/A)` : null,
@@ -498,6 +559,7 @@ function ChecklistCard({ orgId, projectId, checklist, canManage, actor, onChange
     : progress.total === 0 ? "No items — nothing to verify, so this checklist cannot be completed."
     : blocking > 0 ? `${blocking} item${blocking === 1 ? " is" : "s are"} not satisfied yet — a checklist only completes when every applicable item is green or N/A.`
     : staleGreens > 0 ? `${staleGreens} green item${staleGreens === 1 ? " rests" : "s rest"} on a document that is no longer current — run "Check evidence we already hold" first.`
+    : separation.blocked ? `${separationReason ?? "A second person signs this checklist off."}`
     : autoReasons.length > 0 ? `Every applicable item is green or N/A, but ${autoReasons.join("; ")} — completing now records this checklist as "auto", which no other checklist can cite.`
     : "Every applicable item is green or N/A, and a person stands behind every green and every N/A.";
 
@@ -511,6 +573,18 @@ function ChecklistCard({ orgId, projectId, checklist, canManage, actor, onChange
           <span className="inline-flex items-center gap-0.5 text-[9px] font-black uppercase text-emerald-700 dark:text-emerald-300"
             title={checklist.completedBasis === "human" ? "Completed on human sign-off — a person stands behind every green and every N/A" : checklist.completedBasis === "auto" ? "Completed while a green or an N/A carried no person's reason, or no green was a person's decision — not citable as proof by another checklist" : "Completed"}>
             <ShieldCheck className="w-3 h-3" /> complete{checklist.completedBasis === "auto" ? " (auto)" : ""}
+          </span>
+        )}
+        {checklist.status === "complete" && checklist.completedByName && (
+          <span className="text-[9px] font-bold text-[var(--color-text-muted)]"
+            title={checklist.completedSignatureId ? "Signed off with an e-signature (re-authenticated at signing)" : undefined}>
+            signed off by {checklist.completedByName}{checklist.completedAt ? ` · ${new Date(checklist.completedAt).toLocaleDateString()}` : ""}
+          </span>
+        )}
+        {checklist.status === "complete" && checklist.completedSingleSigner && (
+          <span className="text-[9px] font-black uppercase text-amber-700 dark:text-amber-300"
+            title="Signed off by its own author because nobody else on the project could — a second person's sign-off was not possible">
+            single-signer
           </span>
         )}
         {progress && checklist.status === "open" && (
@@ -534,7 +608,7 @@ function ChecklistCard({ orgId, projectId, checklist, canManage, actor, onChange
                 title="Deterministic — no AI. Greens items the platform can PROVE (accepted turnover on the same subject, Issued documents on file), citation attached; withdraws a green whose document is no longer current; flags the rest needs-evidence.">
                 {busy === "sweep" ? <Loader2 className="w-3 h-3 animate-spin" /> : <ListChecks className="w-3 h-3" />} Check evidence we already hold
               </button>
-              <button onClick={() => void complete()} disabled={busy != null || completeBlocked}
+              <button onClick={() => setSigning(true)} disabled={busy != null || completeBlocked}
                 aria-disabled={completeBlocked || undefined}
                 title={completeTitle}
                 className="ml-auto inline-flex items-center gap-1 px-2.5 py-1 rounded-lg bg-emerald-600 text-white text-[11px] font-black hover:bg-emerald-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors">
@@ -546,7 +620,25 @@ function ChecklistCard({ orgId, projectId, checklist, canManage, actor, onChange
               {!completeBlocked && progress && autoReasons.length > 0 && (
                 <span className="basis-full text-[10px] font-bold text-amber-700 dark:text-amber-300">{completeTitle}</span>
               )}
+              {!completeBlocked && progress && separation.singleSigner && (
+                <span className="basis-full text-[10px] font-bold text-amber-700 dark:text-amber-300">
+                  You created this checklist and nobody else on this project can sign it off — your completion will be marked single-signer.
+                </span>
+              )}
             </div>
+          )}
+
+          {signing && (
+            <SignatureCeremony
+              signerName={signoff.signerName}
+              resourceLabel={`checklist "${checklist.title}"`}
+              defaultIntent="Reviewed"
+              lockIntent
+              defaultStatement={`I, ${signoff.signerName}, have verified the checklist "${checklist.title}" complete — every applicable item is green or N/A as recorded — and affirm this as my electronic signature.`}
+              busy={busy === "complete"}
+              onCancel={() => { if (busy !== "complete") setSigning(false); }}
+              onSign={(_intent, statement, signatureImage, reauth) => void complete({ statement, signatureImage: signatureImage ?? null, reauth: reauth ?? null, signerName: signoff.signerName })}
+            />
           )}
 
           <Notice notice={notice} onClose={() => setNotice(null)} />
@@ -855,8 +947,8 @@ function DocPicker({ orgId, title, onPick, onSkip, onCancel }: {
   );
 }
 
-function TurnoverSection({ orgId, projectId, canManage, actor, items, events, loadError, historyError, onRetry, jobKind, onChanged }: {
-  orgId: string; projectId: string; canManage: boolean; actor: Actor;
+function TurnoverSection({ orgId, projectId, canManage, actor, signoff, items, events, loadError, historyError, onRetry, jobKind, onChanged }: {
+  orgId: string; projectId: string; canManage: boolean; actor: Actor; signoff: SignoffContext;
   items: TurnoverItem[]; events: TurnoverReviewEvent[];
   /** The items' read failed / the history's read failed (UX-10). */
   loadError?: string; historyError?: string; onRetry: () => void;
@@ -867,6 +959,15 @@ function TurnoverSection({ orgId, projectId, canManage, actor, items, events, lo
   const [addName, setAddName] = useState("");
   const [notice, setNotice] = useState<NoticeState | null>(null);
   const [accepting, setAccepting] = useState<TurnoverItem | null>(null);
+  /** QUAL-4: an acceptance or a waiver waiting on the signing ceremony — the
+   *  reviewed document already picked (undefined when the picker was
+   *  skipped) or the waiver's reason already given. */
+  const [signingDecision, setSigningDecision] = useState<
+    { item: TurnoverItem; status: "accepted"; documentId?: string } | { item: TurnoverItem; status: "waived"; note: string } | null
+  >(null);
+  /** Why the open ceremony's last signing failed — said inside the ceremony,
+   *  which stays open (and keeps the decision) until a signing lands. */
+  const [signingError, setSigningError] = useState<string | null>(null);
   const [reviewedDocs, setReviewedDocs] = useState<Record<string, { label: string; status: string | null; rev: string | null; libraryId: string | null }>>({});
   const progress = useMemo(() => computeTurnoverProgress(items), [items]);
   const documentIds = useMemo(() => [...new Set(items.map((i) => i.documentId).filter((x): x is string => Boolean(x)))].sort().join(","), [items]);
@@ -905,25 +1006,41 @@ function TurnoverSection({ orgId, projectId, canManage, actor, items, events, lo
     onChanged();
   };
 
-  const finish = (res: { ok: boolean; error?: string }) => {
+  /** Settles a write and hands its result back, so a caller closes what it
+   *  opened only once the write landed. */
+  const finish = (res: { ok: boolean; error?: string }): { ok: boolean; error?: string } => {
     setBusy(null);
     if (!res.ok) setNotice(failure(res.error ?? "Couldn't update.")); else { setNotice(null); onChanged(); }
+    return res;
   };
 
-  const review = async (item: TurnoverItem, status: TurnoverItem["status"], documentId?: string | null) => {
-    let note: string | null = null;
-    if (status === "rejected" || status === "waived") {
+  const review = async (item: TurnoverItem, status: TurnoverItem["status"], documentId?: string | null, signed?: SignoffInput, waiverNote?: string): Promise<{ ok: boolean; error?: string } | null> => {
+    let note: string | null = waiverNote ?? null;
+    if (status === "rejected") {
       note = await promptReason(
-        status === "rejected" ? `Reject "${item.name}"` : `Waive "${item.name}"`,
-        status === "rejected"
-          ? "Why is it not acceptable? The contractor sees this reason, it lands on their record, and it is kept as a nonconformance."
-          : "Why is this not required for this job? Waivers go on the record — and a waived item is counted apart from an accepted one.",
+        `Reject "${item.name}"`,
+        "Why is it not acceptable? The contractor sees this reason, it lands on their record, and it is kept as a nonconformance.",
         "Reason (at least 10 characters)",
       );
-      if (note === null) return;
+      if (note === null) return null;
     }
     setBusy(item.id); setNotice(null);
-    finish(await reviewTurnoverItem({ item, status, note, ...(documentId !== undefined ? { documentId } : {}), actor }));
+    return finish(await reviewTurnoverItem({ item, status, note, ...(documentId !== undefined ? { documentId } : {}), actor, ...(signed ? { signoff: signed } : {}) }));
+  };
+
+  // QUAL-4: a waiver clears the item from the package as an acceptance does,
+  // so it is a signed sign-off too — the reason first (checked against the
+  // bar before anyone is asked to sign), then the ceremony.
+  const startWaive = async (item: TurnoverItem) => {
+    const note = await promptReason(
+      `Waive "${item.name}"`,
+      "Why is this not required for this job? A waiver is a signed sign-off: it goes on the record with your e-signature — and a waived item is counted apart from an accepted one.",
+      "Reason (at least 10 characters)",
+    );
+    if (note === null) return;
+    const problem = reasonProblem(note);
+    if (problem) { setNotice(failure(problem)); return; }
+    setSigningDecision({ item, status: "waived", note: note.trim() });
   };
 
   const reopen = async (item: TurnoverItem) => {
@@ -973,6 +1090,10 @@ function TurnoverSection({ orgId, projectId, canManage, actor, items, events, lo
         <ul className="divide-y divide-[var(--color-border)]">
           {items.map((it) => {
             const history = eventsByItem.get(it.id) ?? [];
+            // DEC-12: whoever added the item sees why a second person accepts
+            // or waives it — and, while that is not known, why it waits.
+            const separation = signoffSeparation(it.createdBy, actor.uid, signoff.otherSigners, "turnover");
+            const separationReason = separation.pending ? signoff.pendingReason : separation.reason;
             return (
               <li key={it.id} className="px-4 py-2.5 text-xs">
                 <div className="flex items-center gap-2 flex-wrap">
@@ -984,15 +1105,31 @@ function TurnoverSection({ orgId, projectId, canManage, actor, items, events, lo
                       {it.status === "open" && (
                         <button onClick={() => void review(it, "received")} className="px-1.5 py-0.5 rounded text-[10px] font-bold text-sky-700 dark:text-sky-300 hover:bg-sky-500/10">Received</button>
                       )}
-                      {(it.status === "received" || it.status === "rejected") && (
-                        <button onClick={() => setAccepting(it)} className="px-1.5 py-0.5 rounded text-[10px] font-bold text-emerald-700 dark:text-emerald-300 hover:bg-emerald-500/10">Accept</button>
-                      )}
+                      {(it.status === "received" || it.status === "rejected") && (separation.blocked ? (
+                        <button type="button" disabled aria-disabled title={separationReason ?? undefined}
+                          className="px-1.5 py-0.5 rounded text-[10px] font-bold text-emerald-700/50 dark:text-emerald-300/50 cursor-not-allowed">
+                          {separation.pending ? "Accept — checking who else can sign" : "Accept — needs a second person"}
+                        </button>
+                      ) : (
+                        <button onClick={() => setAccepting(it)} className="px-1.5 py-0.5 rounded text-[10px] font-bold text-emerald-700 dark:text-emerald-300 hover:bg-emerald-500/10"
+                          title={separation.singleSigner ? "You added this item and nobody else on this project can accept it — your acceptance will be marked single-signer." : "Accept — signed with your e-signature"}>
+                          Accept
+                        </button>
+                      ))}
                       {it.status === "received" && (
                         <button onClick={() => void review(it, "rejected")} className="px-1.5 py-0.5 rounded text-[10px] font-bold text-rose-700 dark:text-rose-300 hover:bg-rose-500/10">Reject</button>
                       )}
-                      {(it.status === "open" || it.status === "received") && (
-                        <button onClick={() => void review(it, "waived")} className="px-1.5 py-0.5 rounded text-[10px] font-bold text-[var(--color-text-muted)] hover:bg-[var(--color-surface-2)]">Waive</button>
-                      )}
+                      {(it.status === "open" || it.status === "received") && (separation.blocked ? (
+                        <button type="button" disabled aria-disabled title={separationReason ?? undefined}
+                          className="px-1.5 py-0.5 rounded text-[10px] font-bold text-[var(--color-text-faint)] cursor-not-allowed">
+                          {separation.pending ? "Waive — checking who else can sign" : "Waive — needs a second person"}
+                        </button>
+                      ) : (
+                        <button onClick={() => void startWaive(it)} className="px-1.5 py-0.5 rounded text-[10px] font-bold text-[var(--color-text-muted)] hover:bg-[var(--color-surface-2)]"
+                          title={separation.singleSigner ? "You added this item and nobody else on this project can waive it — your waiver will be marked single-signer." : "Waive — your reason, signed with your e-signature"}>
+                          Waive
+                        </button>
+                      ))}
                       {(it.status === "accepted" || it.status === "waived") && (
                         <button onClick={() => void reopen(it)} className="inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded text-[10px] font-bold text-[var(--color-text-muted)] hover:bg-[var(--color-surface-2)]"
                           title={`Reopen this ${it.status} item for review — the ${it.status === "accepted" ? "acceptance" : "waiver"} stays in the history.`}>
@@ -1007,6 +1144,8 @@ function TurnoverSection({ orgId, projectId, canManage, actor, items, events, lo
                   {[
                     it.description,
                     it.reviewedByName ? `${it.status} by ${it.reviewedByName}${it.reviewedAt ? ` on ${new Date(it.reviewedAt).toLocaleDateString()}` : ""}` : null,
+                    (it.status === "accepted" || it.status === "waived") && it.reviewedSignatureId ? "signed" : null,
+                    (it.status === "accepted" || it.status === "waived") && it.reviewedSingleSigner ? "single-signer (nobody else could sign it off)" : null,
                     it.reviewNote ? `“${it.reviewNote}”` : null,
                   ].filter(Boolean).join(" · ")}
                   {it.documentId && (() => {
@@ -1038,9 +1177,41 @@ function TurnoverSection({ orgId, projectId, canManage, actor, items, events, lo
                 )}
                 {accepting?.id === it.id && (
                   <DocPicker orgId={orgId} title={`Accept "${it.name}" — which document did you review?`}
-                    onPick={(d) => { setAccepting(null); void review(it, "accepted", d.id); }}
-                    onSkip={() => { setAccepting(null); void review(it, "accepted"); }}
+                    onPick={(d) => { setAccepting(null); setSigningDecision({ item: it, status: "accepted", documentId: d.id }); }}
+                    onSkip={() => { setAccepting(null); setSigningDecision({ item: it, status: "accepted" }); }}
                     onCancel={() => setAccepting(null)} />
+                )}
+                {signingDecision?.item.id === it.id && (
+                  <SignatureCeremony
+                    signerName={signoff.signerName}
+                    resourceLabel={`turnover item "${it.name}"`}
+                    defaultIntent="Reviewed"
+                    lockIntent
+                    defaultStatement={signingDecision.status === "accepted"
+                      ? `I, ${signoff.signerName}, have reviewed "${it.name}" and accept it for this project's turnover package, and affirm this as my electronic signature.`
+                      : `I, ${signoff.signerName}, waive "${it.name}" for this project's turnover package — ${signingDecision.note} — and affirm this as my electronic signature.`}
+                    busy={busy === it.id}
+                    error={signingError}
+                    onCancel={() => { if (busy !== it.id) { setSigningError(null); setSigningDecision(null); } }}
+                    onSign={(_intent, statement, signatureImage, reauth) => {
+                      // The ceremony stays open, busy, while the decision is
+                      // written, and closes only once it lands: a refused or
+                      // failed signature keeps the reviewer's document pick
+                      // or waiver reason, says why inside the ceremony, and
+                      // lets them sign again or cancel (as ChecklistCard keeps
+                      // its ceremony open until complete() has its answer).
+                      const pending = signingDecision;
+                      setSigningError(null);
+                      const signed: SignoffInput = { statement, signatureImage: signatureImage ?? null, reauth: reauth ?? null, signerName: signoff.signerName };
+                      const decided = pending.status === "accepted"
+                        ? review(pending.item, "accepted", pending.documentId, signed)
+                        : review(pending.item, "waived", undefined, signed, pending.note);
+                      void decided.then((res) => {
+                        if (res?.ok) setSigningDecision((cur) => (cur === pending ? null : cur));
+                        else if (res) setSigningError(res.error ?? "Couldn't update.");
+                      });
+                    }}
+                  />
                 )}
               </li>
             );

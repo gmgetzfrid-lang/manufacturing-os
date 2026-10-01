@@ -112,11 +112,13 @@ describe("shape: parsing and validation of rule lists", () => {
     expect(normalizeCapabilityEntry(["Admin", "DocCtrl"])).toEqual(["Admin", "DocCtrl"]);
     expect(normalizeCapabilityEntry([])).toEqual([]);
     expect(normalizeCapabilityEntry("Admin")).toBeUndefined();
-    expect(normalizeCapabilityEntry([{ tokens: ["A"], when: { requestType: ["X"], projectId: ["p"], unit: [] } }, { tokens: "bad" }, null]))
+    expect(normalizeCapabilityEntry([{ tokens: ["A"], when: { requestType: ["X"], costCode: ["p"], unit: [] } }, { tokens: "bad" }, null]))
       .toEqual([{ tokens: ["A"], when: { requestType: ["X"] } }]);
+    // QUAL-4 (20261136) made projectId a resource key: it is kept now.
+    expect(normalizeCapabilityEntry([{ tokens: ["A"], when: { projectId: ["p"] } }])).toEqual([{ tokens: ["A"], when: { projectId: ["p"] } }]);
     expect(normalizeCapabilityEntry([{ tokens: ["A"], when: { unit: [] } }])).toEqual([{ tokens: ["A"] }]);
     expect(normalizeCapabilityEntry([{ nope: 1 }])).toBeUndefined();
-    expect(RESOURCE_KEYS).toEqual(["requestType", "unit", "libraryId", "discipline"]);
+    expect(RESOURCE_KEYS).toEqual(["requestType", "unit", "libraryId", "discipline", "projectId"]);
   });
   it("validate: Admin is required on EVERY rule of a critical capability, and unknown keys are refused", () => {
     expect(validateCapabilityPolicy({ caps: { "ticket.manage": [{ tokens: ["Admin"] }, { tokens: ["DocCtrl"], when: { requestType: ["ASBUILT"] } }] } }))
@@ -124,8 +126,10 @@ describe("shape: parsing and validation of rule lists", () => {
     expect(validateCapabilityPolicy({ caps: { "ticket.manage": [{ tokens: ["Manager"] }, { tokens: ["Admin"], when: { requestType: ["ASBUILT"] } }] } }))
       .toMatch(/Management override: Admin cannot be removed/);
     expect(validateCapabilityPolicy(ASBUILT_DOCCTRL)).toBeNull();
-    expect(validateCapabilityPolicy({ caps: { "ticket.assign": [{ tokens: ["A"], when: { projectId: ["p"] } as never }] } }))
-      .toMatch(/unknown resource key "projectId"/);
+    expect(validateCapabilityPolicy({ caps: { "ticket.assign": [{ tokens: ["A"], when: { costCode: ["p"] } as never }] } }))
+      .toMatch(/unknown resource key "costCode"/);
+    // projectId is a resource key since 20261136 (QUAL-4)
+    expect(validateCapabilityPolicy({ caps: { "quality.sign_off": [{ tokens: ["Admin", "DocCtrl"] }, { tokens: ["Safety"], when: { projectId: ["p"] } }] } })).toBeNull();
     expect(validateCapabilityPolicy({ caps: { "ticket.assign": [{ tokens: "A" } as never] } })).toMatch(/invalid value/);
     expect(describeWhen({ requestType: ["A", "B"], unit: ["U"] })).toBe("requestType ∈ {A, B} and unit ∈ {U}");
     expect(describeWhen(undefined)).toBe("always");
@@ -398,7 +402,11 @@ describe("20261052 — org_capability_allows_for + the 3-argument wrapper", () =
   });
   it("the evaluator reads exactly RESOURCE_KEYS, in order, and resolves rules as tokensFor does", () => {
     expect(forFn).toMatch(/org_capability_allows_for\(p_org UUID, p_cap TEXT, p_uid UUID, p_resource JSONB\)\s*\nRETURNS BOOLEAN LANGUAGE plpgsql STABLE SECURITY DEFINER SET search_path = public/);
-    const keys = `ARRAY[${RESOURCE_KEYS.map((k) => `'${k}'`).join(", ")}]`;
+    // 20261052 is HISTORICAL for the key list: it read the first four keys;
+    // QUAL-4's 20261136 (the newest re-creation) added projectId — the live
+    // evaluator reads exactly RESOURCE_KEYS (pinned in qualitySignoff.test.ts).
+    const historicalKeys = RESOURCE_KEYS.filter((k) => k !== "projectId");
+    const keys = `ARRAY[${historicalKeys.map((k) => `'${k}'`).join(", ")}]`;
     expect(forFn.split(keys).length - 1).toBe(2); // the match pass and the base pass
     expect(forFn).toContain("IF p_resource->>v_key IS NULL OR NOT (v_list ? (p_resource->>v_key)) THEN");
     expect(forFn).toContain("IF v_cond AND v_hit THEN");

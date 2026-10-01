@@ -35,6 +35,10 @@
 //     so every unconfigured org is byte-identical to today. The four
 //     evaluators — getActions, holds, the simulator and the SQL
 //     org_capability_allows_for — read the SAME shape with the SAME rule.
+//     projects Round G (QUAL-4, 20261136) adds ONE resource key, projectId,
+//     so a rule can name a single project: that is how "this project's
+//     Safety lead signs its quality records" is said (quality.sign_off —
+//     the one capability a rule may scope to a project, PROJECT_SCOPED_CAPS).
 
 import { supabase } from "@/lib/supabase";
 import { MANAGEMENT_ROLES } from "@/lib/managementRoles";
@@ -59,7 +63,8 @@ export type CapabilityId =
   | "admin.analytics_view"
   | "admin.archive_view"
   | "admin.audit_view"
-  | "transmittal.issue";        // TRX-1: issue / void / revoke / record receipt (drafting stays open)
+  | "transmittal.issue"         // TRX-1: issue / void / revoke / record receipt (drafting stays open)
+  | "quality.sign_off";         // QUAL-4: write + sign off a project's checklists / turnover / punch, per project
 
 export interface CapabilityDef {
   id: CapabilityId;
@@ -148,6 +153,21 @@ export const CAPABILITY_DEFS: CapabilityDef[] = [
   { id: "transmittal.issue", area: "Transmittals", label: "Issue transmittals",
     description: "Issue a drafted transmittal to its recipient, void it, revoke its portal link and record a receipt on the recipient's behalf. Every member may draft. Enforced at the database, which reads this policy per item library.",
     defaultRoles: ["Admin", "DocCtrl"] },
+  // QUAL-4 (projects Round G, J2b): who ELSE may record and sign off a
+  // project's quality decisions — checklists, turnover, punch. Its standing
+  // holders are not tokens: the controllers (Admin / DocCtrl — the four
+  // quality write policies' is_org_controller clause) and the project OWNER
+  // (the owner disjunct, identity) always can, whatever this row says, so
+  // the default grants nobody beyond them and the permissions grid never
+  // shows a controller cell that unticks nothing. A discipline reviewer is
+  // GRANTED it — org-wide, or for one project by a rule scoped on projectId
+  // (DEC-13) — never named in code (DEC-35), and never by widening
+  // project_members.role. Enforced at the database (20261136: the write
+  // policies, the separation-of-duties rail and the signed sign-off), which
+  // evaluates it per project.
+  { id: "quality.sign_off", area: "Quality", label: "Sign off quality records",
+    description: "Grants more people what Admin, Document Control and the project owner can always do, whatever this row says: record decisions on a project's checklists, turnover package and punch list, complete a checklist and accept or waive turnover with an e-signature. Tick a role to grant it on every project it can see; a rule scoped to a project grants one project only. The author of a checklist (or the creator of a turnover item) cannot sign it off while another eligible signer exists. Enforced at the database, which reads this policy per project.",
+    defaultRoles: [] },
 ];
 
 /** A per-PERSON delegation of one capability — temporary (expiresAt) or
@@ -174,12 +194,38 @@ export interface CapabilityResource {
   unit?: string | null;
   libraryId?: string | null;
   discipline?: string | null;
+  /** QUAL-4 (20261136): the project a quality.sign_off decision is about. */
+  projectId?: string | null;
 }
 
 /** The resource keys a `when` clause may condition on — the ONLY keys either
- *  evaluator reads. Extend here and in org_capability_allows_for together. */
-export const RESOURCE_KEYS = ["requestType", "unit", "libraryId", "discipline"] as const;
+ *  evaluator reads. Extend here and in org_capability_allows_for together
+ *  (projectId: 20261136, which re-created the evaluator with it). */
+export const RESOURCE_KEYS = ["requestType", "unit", "libraryId", "discipline", "projectId"] as const;
 export type ResourceKey = (typeof RESOURCE_KEYS)[number];
+
+/** The capabilities a rule may scope to ONE project (QUAL-4, 20261136) —
+ *  the only ones any evaluator is ever handed a projectId for. A projectId
+ *  condition on any other capability is refused at save
+ *  (validateCapabilityPolicy): it could never match there, and the SQL
+ *  evaluator before 20261136 (20261132) reads four keys, not five, so it
+ *  would read such a rule as UNCONDITIONAL — its tokens would become the
+ *  base list of a capability the database enforces with it (holds,
+ *  force-release, the audit trail, transmittal.issue): a widening wherever
+ *  they name more than the base list. A quality.sign_off rule is harmless
+ *  under 20261132: no policy or function consults that capability until
+ *  20261136 re-creates the evaluator and the policies that read it, in one
+ *  transaction. The policy route still refuses to store a project-scoped
+ *  rule until the live database proves it reads the key
+ *  (app/api/admin/capability-policy/route.ts). */
+export const PROJECT_SCOPED_CAPS: ReadonlySet<CapabilityId> = new Set<CapabilityId>(["quality.sign_off"]);
+
+/** Does the policy carry a rule conditioned on a project? (The policy route
+ *  probes the live evaluator before storing one.) */
+export function policyHasProjectScopedRule(policy: CapabilityPolicy | null | undefined): boolean {
+  return Object.values(policy?.caps ?? {}).some((entry) =>
+    isRuleArray(entry) && entry.some((r) => (r?.when?.projectId?.length ?? 0) > 0));
+}
 
 /** `when`: every listed key must match (AND across keys, OR within a list).
  *  A clause with no non-empty list is unconditional. */
@@ -487,6 +533,14 @@ export function validateCapabilityPolicy(policy: CapabilityPolicy): string | nul
       for (const r of v) {
         for (const k of Object.keys(r.when ?? {})) {
           if (!(RESOURCE_KEYS as readonly string[]).includes(k)) return `${def.label}: a rule conditions on an unknown resource key "${k}"`;
+        }
+        // QUAL-4: only a capability evaluated per project may be scoped to
+        // one (PROJECT_SCOPED_CAPS). Anywhere else the rule never matches —
+        // and the database's evaluator before 20261136 would read it as
+        // unconditional, widening the capability for everyone it names.
+        if ((r.when?.projectId?.length ?? 0) > 0 && !PROJECT_SCOPED_CAPS.has(def.id)) {
+          const scoped = CAPABILITY_DEFS.filter((d) => PROJECT_SCOPED_CAPS.has(d.id)).map((d) => `"${d.label}"`).join(", ");
+          return `${def.label}: a rule cannot be scoped to a project — only ${scoped} is decided per project. Anywhere else the rule would never match, and a database without 20261136 would read it as unconditional — applying it everywhere.`;
         }
       }
     }

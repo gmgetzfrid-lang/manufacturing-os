@@ -27,6 +27,11 @@ vi.mock("@/lib/supabase", async () => {
   const { makeSupabase } = await import("./helpers/memoryDb");
   return { supabase: makeSupabase(state) };
 });
+// QUAL-4 (20261136): an acceptance is a signed sign-off — a stand-in for the
+// ceremony's server half.
+vi.mock("@/lib/eSignatures", () => ({
+  recordSignature: async (input: Record<string, unknown>) => ({ id: "sig-1", ...input }),
+}));
 
 import {
   addPunchItem, computeTurnoverProgress, listPunchItems, listTurnoverItems, listTurnoverReviewEvents,
@@ -35,6 +40,7 @@ import {
 } from "@/lib/turnover";
 
 const actor = { uid: "u1", email: "jchen@plant.io" };
+const signoff = { statement: "I reviewed and accept this item", signerName: "J Chen", reauth: { method: "password" as const, password: "pw" } };
 const audits = () => state.writes.filter((w) => w.table === "audit_logs").map((w) => w.payload as Record<string, unknown>);
 
 const item = (over: Partial<TurnoverItem> = {}): TurnoverItem => ({
@@ -96,7 +102,8 @@ describe("reviewTurnoverItem — the reason bar (SAF-4) and the history (QUAL-11
     expect(res.ok).toBe(false);
     expect(res.error).toMatch(/its own reason/);
     expect(state.writes).toHaveLength(0);
-    const ok = await reviewTurnoverItem({ item: was, status: "waived", note: "Spools replaced under NCR-22; the certs are moot", actor });
+    // a waiver is a signed sign-off (QUAL-4, 20261136): the ceremony's output goes with it
+    const ok = await reviewTurnoverItem({ item: was, status: "waived", note: "Spools replaced under NCR-22; the certs are moot", actor, signoff });
     expect(ok.ok).toBe(true);
   });
 
@@ -115,7 +122,7 @@ describe("reviewTurnoverItem — the reason bar (SAF-4) and the history (QUAL-11
     await reviewTurnoverItem({ item: item(), status: "rejected", note: "Heat numbers on the MTRs do not trace to the installed spools", actor });
     const firstStamp = state.tables.turnover_items[0].reviewed_at;
     await new Promise((r) => setTimeout(r, 2));
-    const res = await reviewTurnoverItem({ item: item({ status: "rejected" }), status: "accepted", note: "Resubmitted with the traceability matrix", documentId: "doc-mtr-2", actor });
+    const res = await reviewTurnoverItem({ item: item({ status: "rejected" }), status: "accepted", note: "Resubmitted with the traceability matrix", documentId: "doc-mtr-2", actor, signoff });
     expect(res.ok).toBe(true);
     expect(state.tables.turnover_items[0]).toMatchObject({ status: "accepted", document_id: "doc-mtr-2", review_note: "Resubmitted with the traceability matrix" });
     expect(state.tables.turnover_items[0].reviewed_at).not.toBe(firstStamp);   // the trigger carries name + note only on a fresh stamp
@@ -124,14 +131,14 @@ describe("reviewTurnoverItem — the reason bar (SAF-4) and the history (QUAL-11
 
   it("before 20261091 a decision still lands and reports success — there is no client history insert to fail", async () => {
     state.tableWriteError = { turnover_review_events: { message: "Could not find the table 'public.turnover_review_events' in the schema cache", code: "PGRST205" } };
-    const res = await reviewTurnoverItem({ item: item(), status: "accepted", actor });
+    const res = await reviewTurnoverItem({ item: item(), status: "accepted", actor, signoff });
     expect(res).toEqual({ ok: true });
     expect(state.tables.turnover_items[0].status).toBe("accepted");
   });
 
   it("an RLS-refused decision returns the refusal and writes NO audit row (SAF-3)", async () => {
     state.refuse = true;
-    const res = await reviewTurnoverItem({ item: item(), status: "accepted", actor });
+    const res = await reviewTurnoverItem({ item: item(), status: "accepted", actor, signoff });
     expect(res.ok).toBe(false);
     expect(res.error).toMatch(/don't have permission|someone else changed/);
     expect(audits()).toHaveLength(0);

@@ -8,16 +8,16 @@
     "audit-reports/admin-and-org/04-billing.md"
   ],
   "totals": {
-    "findings": 55,
+    "findings": 56,
     "gaps": 0,
     "by_severity": {
       "CRITICAL": 5,
       "HIGH": 17,
-      "MEDIUM": 27,
+      "MEDIUM": 28,
       "LOW": 6
     },
     "by_status": {
-      "OPEN": 55
+      "OPEN": 56
     }
   },
   "status_vocabulary": [
@@ -1376,6 +1376,38 @@
       ],
       "refuted": false,
       "summary": "A malformed or hostile branding.palette — from a direct PostgREST PATCH, or from restoring a backup whose orgconfigurations rows were edited — is loaded by OrgBrandingProvider for every member on every page load and applied unvalidated. Accent, hover, ring and soft-tint tokens resolve to #NaNNaNNaN org-wide: primary buttons, focus rings and the brand gradient lose their color for every user simult",
+      "area": "admin-and-org",
+      "report": "audit-reports/admin-and-org/01-org-lifecycle.md"
+    },
+    {
+      "id": "ORG-14",
+      "title": "The \"View as\" simulator reports that Admin, Document Control and the project owner cannot sign off quality records — and cannot show a project-scoped grantee at all — while the database admits all of them",
+      "severity": "MEDIUM",
+      "status": "OPEN",
+      "verification": "CONFIRMED",
+      "verification_note": "CONFIRMED (by reading)",
+      "blast_radius": null,
+      "related": [
+        "QUAL-4",
+        "QUAL-14",
+        "ORG-10",
+        "ALOG-14",
+        "DEC-13"
+      ],
+      "locations": [
+        "components/permissions/ViewAsSimulator.tsx:142-148",
+        "components/permissions/ViewAsSimulator.tsx:157",
+        "components/permissions/ViewAsSimulator.tsx:185",
+        "lib/capabilityPolicy.ts:168-170",
+        "supabase/migrations/20261136_prj_roundG_quality_signoff.sql:428-437"
+      ],
+      "has_verifier_correction": false,
+      "verified_by": "author",
+      "challenges": [
+        "author"
+      ],
+      "refuted": false,
+      "summary": "An Admin preparing a PSSR access review asks the console who can sign off project X's quality records. View-as on the project owner, on a Document Control member and on the Safety lead granted on project X shows \"Sign off quality records\" unticked for all three. The Admin records that none of them can sign off; in fact each can complete X's checklists and accept or waive its turnover, and the owne",
       "area": "admin-and-org",
       "report": "audit-reports/admin-and-org/01-org-lifecycle.md"
     },

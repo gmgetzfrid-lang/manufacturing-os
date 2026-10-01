@@ -897,7 +897,8 @@
      "INTK-15",
      "INTK-16",
      "PM-15",
-     "COST-15"
+     "COST-15",
+     "QUAL-15 (closeout half: an open checklist the author may not complete still reads clear at closeout \u2014 lib/projectSnapshot.ts, lib/projects.ts; the void half landed in J2b's 20261136)"
     ]
    },
    "files": [

@@ -22,13 +22,13 @@ The project model and its server behaviour, scheduling and the critical path, th
 
 ## Findings
 
-**73 findings** — 2 CRITICAL, 22 HIGH, 37 MEDIUM, 12 LOW.
+**75 findings** — 2 CRITICAL, 22 HIGH, 39 MEDIUM, 12 LOW.
 
 | # | Report | n | Note |
 |---|---|---|---|
 | 01 | [The project model, membership & lifecycle](./01-project-model.md) | 15 |  |
 | 02 | [Scheduling — dependencies, critical path, import](./02-scheduling.md) | 14 |  |
-| 03 | [The quality program — checklists, turnover, punch](./03-quality.md) | 13 |  |
+| 03 | [The quality program — checklists, turnover, punch](./03-quality.md) | 15 | `QUAL-14` and `QUAL-15` opened by projects Round G package J2b, 2026-10-01 (`QUAL-14` re-graded LOW → MEDIUM at its integration) |
 | 04 | [Cost, change orders & bid tabulation](./04-cost-and-bids.md) | 15 |  |
 | 05 | [External intake & the contractor door](./05-intake-door.md) | 16 | `INTK-15` and `INTK-16` opened by projects Round G package J1, 2026-09-30 |
 
