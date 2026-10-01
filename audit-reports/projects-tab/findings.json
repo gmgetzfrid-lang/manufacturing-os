@@ -2355,9 +2355,9 @@
         "components/ui/ChartKit.tsx"
       ],
       "has_verifier_correction": false,
-      "verified_by": "adversarial-independent",
+      "verified_by": "author",
       "challenges": [
-        "adversarial-independent"
+        "author"
       ],
       "refuted": false,
       "summary": "A project scoring 78 shows \"78 · Good\" in the health header at 3.6:1 in light mode. A white-label org with a pale brand colour pushes it lower.",
@@ -3466,9 +3466,9 @@
         "lib/clientBackup.ts:136"
       ],
       "has_verifier_correction": false,
-      "verified_by": "adversarial-independent",
+      "verified_by": "author",
       "challenges": [
-        "adversarial-independent"
+        "author"
       ],
       "refuted": false,
       "summary": "The SEC-7 scenario through the \"open\" link of an archive-aware file list: a stored payload.html opens as a page on the storage origin (phishing or malware delivery — the origin is R2's, not the app's, which is why this is MEDIUM, as SEC-7 was). Or: an admin runs the JSON export and opens a listed URL for an intake upload stored as text/html; it renders inline on the R2 origin.",
@@ -3499,9 +3499,9 @@
         "supabase/migrations/20261103_prj_roundG_project_closeout_rails.sql"
       ],
       "has_verifier_correction": false,
-      "verified_by": "adversarial-independent",
+      "verified_by": "author",
       "challenges": [
-        "adversarial-independent"
+        "author"
       ],
       "refuted": false,
       "summary": "A member who is not on a private MOC project reads its award amounts and change-order values with one PostgREST query on auditlogs filtered by resourcetype = 'project' / 'cost' — the same data SEC-2 now hides in the tables. The project's Activity tab (SAF-6) is not the channel: it opens only for someone who can see the project.",
@@ -3597,9 +3597,9 @@
         "lib/turnover.ts"
       ],
       "has_verifier_correction": false,
-      "verified_by": "adversarial-independent",
+      "verified_by": "author",
       "challenges": [
-        "adversarial-independent"
+        "author"
       ],
       "refuted": false,
       "summary": "Same as UX-3's: the evidence lands the day before startup and the checklist stays red.",
@@ -3677,9 +3677,9 @@
         "components/projects/cost/QuotesPanel.tsx"
       ],
       "has_verifier_correction": false,
-      "verified_by": "adversarial-independent",
+      "verified_by": "author",
       "challenges": [
-        "adversarial-independent"
+        "author"
       ],
       "refuted": false,
       "summary": null,

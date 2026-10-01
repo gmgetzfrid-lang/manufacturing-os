@@ -222,9 +222,16 @@ function parseArea(area) {
         // An agent weighting by confidence should read this, not just severity.
         ...(() => {
           const chain = [];
-          if (/^- \*\*Re-verified:\*\*/m.test(block)) chain.push("hardening-pass");
+          // Only a recorded pass counts: "✓ SURVIVES…" or "⛔ REFUTED…". A
+          // finding opened mid-fleet carries the label with "— (author: … not
+          // yet challenged)": no challenge at all, and none of the report's
+          // own passes either (it postdates them), so it grades `author`.
+          const indep = field(block, "Independently verified");
+          const unchallenged = indep !== null && !/^(✓|⛔)/.test(indep);
+          if (unchallenged) chain.push("author");
+          else if (/^- \*\*Re-verified:\*\*/m.test(block)) chain.push("hardening-pass");
           else if (reportMode !== "author") chain.push(reportMode);
-          if (/^- \*\*Independently verified:\*\*/m.test(block)) {
+          if (indep !== null && !unchallenged) {
             chain.push("adversarial-independent");
           }
           if (chain.length === 0) chain.push(reportMode);

