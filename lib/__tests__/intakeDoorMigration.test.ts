@@ -202,7 +202,9 @@ describe("20261105 — the review side of the door", () => {
     // guard from THIS file's body plus one block — its byte-fidelity proof
     // (lineDiff + ordered cut) is lib/__tests__/dcRoundFWave2ResidualsMigrations.test.ts.
     const guardDefs = files.filter((f) => /CREATE OR REPLACE FUNCTION enforce_document_publish_guard\(\)/.test(stripComments(mig(f))));
-    expect(guardDefs.slice(-2)).toEqual(["20261105_prj_roundG_intake_review_and_attempts.sql", "20261139_dc_roundF_first_issue_and_branch_closeout.sql"]);
+    // adjacency (a later re-creation — P13's 20261144, REV-18 — starts from 20261139's body)
+    const at105 = guardDefs.indexOf("20261105_prj_roundG_intake_review_and_attempts.sql");
+    expect(guardDefs.slice(at105, at105 + 2)).toEqual(["20261105_prj_roundG_intake_review_and_attempts.sql", "20261139_dc_roundF_first_issue_and_branch_closeout.sql"]);
     // document-control Round F wave 2 (DCK-8) — its lineDiff against this
     // file's body is lib/__tests__/dcRoundFLifecycleMigration.test.ts.
     expect(newest(/CREATE OR REPLACE FUNCTION publish_revision\(/)).toBe("20261130_dc_roundF_publish_override_reason.sql");

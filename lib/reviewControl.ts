@@ -76,7 +76,13 @@ export async function effectiveReviewControlForDocument(doc: {
  *  Ticket origin NEVER waives review (DEC-23). Ticket approval is not the
  *  document's reviewer roster, is not bound to the file's content hash, and
  *  produces no e-signature on the version — so `related_ticket_id` is written
- *  for provenance only and must never satisfy a document sign-off. */
+ *  for provenance only and must never satisfy a document sign-off.
+ *
+ *  REV-18: the hatch is for a revision THROUGH the gate. A rev-up that makes
+ *  the document a controlled issue for the first time (no current revision,
+ *  or a status that is not an issue) is a first issue: revUpDocument asks the
+ *  creation gate (resolveCreationReviewGate) before anything is uploaded, and
+ *  the database refuses it too (20261139 / 20261144). */
 export function effectiveModeForRevUp(input: {
   control: ReviewControl; changeType?: string | null;
 }): ReviewControlMode {

@@ -176,8 +176,11 @@ describe("20261130 — publish_revision re-created from 20261105 with the DCK-8 
     const files = readdirSync(dir).filter((f) => /^\d{8}.*\.sql$/.test(f)).sort();
     const newest = (fn: RegExp) => files.filter((f) => fn.test(stripComments(mig(f)))).pop();
     expect(newest(/CREATE OR REPLACE FUNCTION publish_revision\(/)).toBe("20261130_dc_roundF_publish_override_reason.sql");
-    // P12 WAVE-2 RESIDUALS (REV-17) re-creates the guard from 20261105's body + one block (its own lineDiff test)
-    expect(newest(/CREATE OR REPLACE FUNCTION enforce_document_publish_guard\(\)/)).toBe("20261139_dc_roundF_first_issue_and_branch_closeout.sql");
+    // P12 WAVE-2 RESIDUALS (REV-17) re-creates the guard from 20261105's body + one block (its own lineDiff test),
+    // and P13 STATUS-TRANSITION (REV-18) re-creates it next from 20261139's (dcRoundFStatusTransition.test.ts)
+    const guardDefs = files.filter((f) => /CREATE OR REPLACE FUNCTION enforce_document_publish_guard\(\)/.test(stripComments(mig(f))));
+    const at105 = guardDefs.indexOf("20261105_prj_roundG_intake_review_and_attempts.sql");
+    expect(guardDefs.slice(at105 + 1, at105 + 3)).toEqual(["20261139_dc_roundF_first_issue_and_branch_closeout.sql", "20261144_dc_roundF_status_issue_transition.sql"]);
     expect(stripComments(mig("20261130_dc_roundF_publish_override_reason.sql"))).not.toMatch(/FUNCTION enforce_document_publish_guard\(/);
     expect(stripComments(M131)).not.toMatch(/FUNCTION (publish_revision|enforce_document_publish_guard|user_can_publish_on_library)\(/);
   });

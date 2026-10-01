@@ -44,7 +44,7 @@ import { onDocumentIssued } from "@/lib/reviewCycles";
 import { onDocumentIssuedAck } from "@/lib/acknowledgments";
 import { recomputeRetention } from "@/lib/retention";
 import { assertNotOnHold } from "@/lib/holdGate";
-import { NOT_CURRENT_STATUSES } from "@/lib/aiBoundary";
+import { isControlledIssueStatus } from "@/lib/issueStatus";
 
 // ─── Publish contract errors ─────────────────────────────────────────────
 //
@@ -683,23 +683,11 @@ export async function revokeLiveSharesForDocument(documentId: string, actorUserI
 export const CREATION_STATUSES = ["Draft", "Issued"] as const;
 export type CreationStatus = (typeof CREATION_STATUSES)[number];
 
-/** REV-15 / REV-17: the statuses in which a NEW document is not a controlled
- *  copy — work in progress. With the shared not-current set
- *  (NOT_CURRENT_STATUSES), they are the only statuses a first revision may
- *  be written under without being an ISSUE. */
-export const WORK_IN_PROGRESS_STATUSES: ReadonlySet<string> = new Set(["Draft", "In Review"]);
-
-/** REV-15 / REV-17: does a document born in this status ISSUE its first
- *  revision as a controlled copy? Everything but work in progress and the
- *  not-current statuses does (Issued, IFC, a library's own status). Such a
- *  creation starts the compliance clocks (startIssuedDocumentClocks), and in
- *  a library whose policy requires sign-off only a controller may make it —
- *  the database's publish guard reads the same set (20261139, pinned by
- *  test). */
-export function isControlledIssueStatus(status: string | null | undefined): boolean {
-  const s = (status ?? "").trim();
-  return !WORK_IN_PROGRESS_STATUSES.has(s) && !NOT_CURRENT_STATUSES.has(s);
-}
+/** REV-15 / REV-17 / REV-18: which statuses ISSUE a revision, and which status
+ *  changes make a document a controlled issue — lib/issueStatus.ts (pure, so
+ *  the client status editors can ask it too). Re-exported here, where every
+ *  creation door already imports them. */
+export { WORK_IN_PROGRESS_STATUSES, isControlledIssueStatus, isIssueTransition } from "@/lib/issueStatus";
 
 /** REV-15: the compliance clocks a newly ISSUED document starts — the
  *  periodic-review clock and the read-&-understood roster its governing
@@ -746,11 +734,15 @@ export async function resolveCreationReviewGate(target: {
   libraryId: string; collectionId?: string | null; what: string;
   /** Who is issuing — asked only when the policy requires sign-off. */
   actor: { orgId: string; actorUserId: string; actorRole?: string };
+  /** REV-18: the caller's own words for the two refusals (the rev-up flow
+   *  is not a creation); omitted, the creation flow's sentences. */
+  wording?: { refused: string; unreadable: (reason: string) => string };
 }): Promise<{ mode: string; recorded: string }> {
   let control;
   try {
     control = await effectiveReviewControlForDocument({ reviewControl: null, collectionId: target.collectionId ?? null, libraryId: target.libraryId });
   } catch (e) {
+    if (target.wording) throw new Error(target.wording.unreadable((e as Error).message));
     throw new Error(`Couldn't verify the review policy for ${target.what} — nothing was created: ${(e as Error).message}`);
   }
   const mode = control?.mode ?? "none";
@@ -759,6 +751,7 @@ export async function resolveCreationReviewGate(target: {
       uid: target.actor.actorUserId, orgId: target.actor.orgId, headlineRole: target.actor.actorRole,
     });
     if (!isControllerPrincipal(principal)) {
+      if (target.wording) throw new Error(target.wording.refused);
       throw new Error(
         `This library requires reviewer sign-off, so ${target.what} can't be issued unreviewed. ` +
         "Create it as a Draft and submit it for review, then retire the old document once it is approved — or ask Document Control, who may issue it and is recorded doing so.",
@@ -958,6 +951,39 @@ export async function createDocumentWithFile(input: {
   return { documentId, status: input.status, reviewPolicy, creationAuditError };
 }
 
+/** REV-18 (addendum 1): the up-front refusal of a rev-up that would ISSUE the
+ *  document for the first time (revUpDocument decides when). The governing
+ *  policy is read as the database reads it (DEC-44 (P13)): the folder /
+ *  library chain — resolveCreationReviewGate, the creation flows' gate — OR
+ *  the document's own; a document-level 'none' does not exempt it. Under a
+ *  policy that requires sign-off only a controller publishes it directly;
+ *  anyone else is told to submit it for review. Nothing is written. */
+async function assertRevUpMayIssue(opts: {
+  doc: DocumentRecord; libraryId: string; revisionLabel: string; hasCurrentRevision: boolean;
+  actor: { orgId: string; actorUserId: string; actorRole?: string };
+}): Promise<void> {
+  const label = opts.doc.documentNumber || opts.doc.title || "this document";
+  const why = opts.hasCurrentRevision
+    ? `${label} is not issued yet (${opts.doc.status || "Draft"}), so publishing Rev ${opts.revisionLabel} makes it a controlled issue for the first time`
+    : `${label} has no current revision, so Rev ${opts.revisionLabel} would be its first controlled issue`;
+  const refused =
+    `This library requires reviewer sign-off, and ${why} — a first issue is not a revision through the review gate, so a Minor or Correction change doesn't exempt it. ` +
+    "Nothing was uploaded. Choose Major and submit it for review, or ask Document Control, who may issue it.";
+  await resolveCreationReviewGate({
+    libraryId: opts.libraryId, collectionId: opts.doc.collectionId ?? null, what: label, actor: opts.actor,
+    wording: {
+      refused,
+      unreadable: (reason) => `Couldn't verify the review policy for ${label} — nothing was uploaded or published: ${reason}`,
+    },
+  });
+  if (opts.doc.reviewControl?.mode === "require") {
+    const principal: Principal = await resolveActorPrincipal({
+      uid: opts.actor.actorUserId, orgId: opts.actor.orgId, headlineRole: opts.actor.actorRole,
+    });
+    if (!isControllerPrincipal(principal)) throw new Error(refused);
+  }
+}
+
 export async function revUpDocument(input: RevUpInput): Promise<RevUpResult> {
   const {
     doc, libraryId, folderPath, file,
@@ -1022,8 +1048,20 @@ export async function revUpDocument(input: RevUpInput): Promise<RevUpResult> {
   //     re-checks transactionally (this is an optimization, not the guard).
   if (!input.asBranch) {
     const { data: freshDoc } = await supabase
-      .from("documents").select("current_version_id").eq("id", doc.id).maybeSingle();
+      .from("documents").select("current_version_id, status").eq("id", doc.id).maybeSingle();
     const liveCurrent = (freshDoc?.current_version_id as string | null) ?? null;
+    // REV-18 (addendum 1): a rev-up that makes the document a controlled
+    // issue for the FIRST time — its first file (no current revision: a
+    // register row, e.g. a CSV import) or the publish of a document whose
+    // status is not an issue (a Draft: this publish writes Issued) — is a
+    // first issue, not a revision through the review gate, so the Minor /
+    // Correction escape hatch (effectiveModeForRevUp) does not open it. The
+    // creation gate is asked here, before anything is uploaded, so the
+    // refusal comes in this flow's words (the database refuses the same
+    // write: 20261139 for a first pointer, 20261144 for an issue).
+    const live = freshDoc
+      ? { current: liveCurrent, status: (freshDoc.status as string | null) ?? null }
+      : { current: doc.currentVersionId ?? null, status: doc.status ?? null };
     if (freshDoc && liveCurrent !== expectedBase) {
       const { data: cur } = liveCurrent
         ? await supabase.from("document_versions")
@@ -1038,6 +1076,12 @@ export async function revUpDocument(input: RevUpInput): Promise<RevUpResult> {
         currentByName: (c?.created_by_name as string | null) ?? null,
         currentAt: (c?.created_at as string | null) ?? null,
         currentChangeLog: (c?.change_log as string | null) ?? null,
+      });
+    }
+    if (!live.current || !isControlledIssueStatus(live.status)) {
+      await assertRevUpMayIssue({
+        doc, libraryId, revisionLabel: revisionLabel.trim(), hasCurrentRevision: !!live.current,
+        actor: { orgId, actorUserId, actorRole },
       });
     }
   }

@@ -9,6 +9,15 @@
 // DRLS-15: Revision is not a bulk field. A document's revision label is its
 // current revision's (the database refuses any other), so it is corrected on
 // the revision itself, never set across rows.
+//
+// REV-18: setting an issue status (Issued, IFC, …) on a row that has a
+// current revision and is not issued yet (Draft / In Review / Superseded /
+// Void / Archived) ISSUES that revision — a guarded write at the database
+// (20261144: the publisher tier, never over an active hold, and under a
+// policy that requires sign-off a controller's unless the revision's review
+// is complete). The modal says how many selected rows that is before the
+// apply; each row is still its own write, so a refused row is named with the
+// database's reason and every other row keeps its change.
 
 import React, { useState } from "react";
 import {
@@ -16,6 +25,7 @@ import {
 } from "lucide-react";
 import { supabase } from "@/lib/supabase";
 import { computeUniquenessKey } from "@/lib/uniqueness";
+import { isIssueTransition, isIssueRefusal } from "@/lib/issueStatus";
 import type { DocumentRecord, LibraryConfig, MetadataFieldDefinition } from "@/types/schema";
 
 interface BulkEditModalProps {
@@ -40,9 +50,14 @@ export default function BulkEditModal({
   const [target, setTarget] = useState<TargetField>({ kind: "status" });
   const [newValue, setNewValue] = useState<string>(STATUS_OPTIONS[0]);
   const [busy, setBusy] = useState(false);
-  const [results, setResults] = useState<{ ok: number; failed: Array<{ doc: string; reason: string }> } | null>(null);
+  const [results, setResults] = useState<{ ok: number; failed: Array<{ doc: string; reason: string; issue: boolean }> } | null>(null);
 
   if (!isOpen) return null;
+
+  // REV-18: the selected rows this status change would ISSUE.
+  const issuingRows = target.kind === "status"
+    ? docs.filter((d) => isIssueTransition({ fromStatus: d.status, toStatus: newValue, hasCurrentRevision: !!d.currentVersionId }))
+    : [];
 
   const customCols = (library.customColumns ?? []).filter((c) => !["title", "rev", "status", "documentNumber"].includes(c.key));
   const selectOptions = target.kind === "custom" && target.def.type === "select" ? (target.def.options ?? []) : null;
@@ -50,7 +65,8 @@ export default function BulkEditModal({
   const apply = async () => {
     setBusy(true);
     setResults(null);
-    const failed: Array<{ doc: string; reason: string }> = [];
+    const failed: Array<{ doc: string; reason: string; issue: boolean }> = [];
+    const issuingIds = new Set(issuingRows.map((d) => d.id));
     let ok = 0;
     const now = new Date().toISOString();
     for (const doc of docs) {
@@ -85,7 +101,8 @@ export default function BulkEditModal({
         if (!written || written.length === 0) throw new Error("refused — the database updated nothing (no edit access to this document)");
         ok += 1;
       } catch (e) {
-        failed.push({ doc: doc.documentNumber || doc.title || doc.id || "?", reason: (e as Error).message });
+        const reason = (e as Error).message;
+        failed.push({ doc: doc.documentNumber || doc.title || doc.id || "?", reason, issue: issuingIds.has(doc.id) && isIssueRefusal(reason) });
       }
     }
     setResults({ ok, failed });
@@ -164,6 +181,13 @@ export default function BulkEditModal({
             )}
           </div>
 
+          {!results && issuingRows.length > 0 && (
+            // REV-18: say which rows this ISSUES before the apply.
+            <div data-testid="bulk-issue-note" className="rounded-lg bg-amber-50 border border-amber-200 p-3 text-xs text-amber-900">
+              {issuingRows.length} of the selected row{issuingRows.length === 1 ? "" : "s"} ({issuingRows.slice(0, 5).map((d) => d.documentNumber || d.title || d.id).join(", ")}{issuingRows.length > 5 ? `, +${issuingRows.length - 5} more` : ""}) {issuingRows.length === 1 ? "is" : "are"} not issued yet: setting {newValue} issues {issuingRows.length === 1 ? "its" : "their"} current revision as a controlled copy. The database refuses a row on hold, and — in a library that requires reviewer sign-off — a row whose revision was not reviewed, unless you are Document Control. A refused row is named after the apply; the others keep the change.
+            </div>
+          )}
+
           {results && (
             <div className="space-y-2">
               <div className="rounded-lg bg-emerald-50 border border-emerald-200 p-3 text-xs text-emerald-800 flex items-start gap-2">
@@ -173,12 +197,16 @@ export default function BulkEditModal({
               {results.failed.length > 0 && (
                 <div className="rounded-lg bg-red-50 border border-red-200 p-3 text-xs text-red-800">
                   <div className="font-bold flex items-center gap-1.5 mb-1"><AlertTriangle className="w-4 h-4" /> {results.failed.length} failed</div>
-                  <ul className="ml-5 list-disc space-y-0.5">
-                    {results.failed.slice(0, 5).map((f, i) => (
-                      <li key={i}><span className="font-mono">{f.doc}</span> — {f.reason}</li>
+                  {/* REV-18: every refused row is named (none hidden behind "+N more"),
+                      and the issue rule's refusals say so; the other rows were applied. */}
+                  <ul data-testid="bulk-refused-rows" className="ml-5 list-disc space-y-0.5 max-h-48 overflow-y-auto">
+                    {results.failed.map((f, i) => (
+                      <li key={i}><span className="font-mono">{f.doc}</span> — {f.issue ? "not issued: " : ""}{f.reason}</li>
                     ))}
-                    {results.failed.length > 5 && <li className="italic">+{results.failed.length - 5} more</li>}
                   </ul>
+                  {results.ok > 0 && (
+                    <div className="mt-1">The other {results.ok} row{results.ok === 1 ? " was" : "s were"} applied — each row is its own write, so nothing was rolled back.</div>
+                  )}
                 </div>
               )}
             </div>
