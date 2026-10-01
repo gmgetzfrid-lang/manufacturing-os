@@ -51,15 +51,13 @@
 // columns as upload-url does; they are now plain `it`.
 //
 // ILIFE-6 criterion 3 (the orphan collector must never miss a reference —
-// deleteOrphans is irreversible) does NOT hold at HEAD either, and the last
-// block drives the real collectReferencedKeys to show it: it pages by OFFSET
-// (`.order("id").range(from, from + 999)`) and counts after the loop, so a row
-// the scan already read, deleted before the next window, shifts that window by
-// one; the first row of the next window is never read and the count still
-// agrees. That case is an `it.fails` — it asserts what criterion 3 requires,
-// fails at HEAD, and starts failing the suite the day keyset paging (owner
-// admin-and-org P2, BKP-2) makes it hold, so whoever lands the fix flips it to
-// `it`.
+// deleteOrphans is irreversible): the last block drives the real
+// collectReferencedKeys. It paged by OFFSET (`.order("id").range(from,
+// from + 999)`) and counted after the loop, so a row the scan already read,
+// deleted before the next window, shifted that window by one; the first row
+// of the next window was never read and the count still agreed. That case was
+// an `it.fails`; admin-and-org P2 (BKP-2) landed keyset paging and flipped it
+// to `it`.
 
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { NextRequest } from "next/server";
@@ -545,17 +543,16 @@ describe("ILIFE-6 criterion 3 (→ admin-and-org P2, BKP-2): the orphan referenc
     expect(versions(1500).every((r) => keys.has(r.file_url as string))).toBe(true);
   });
 
-  // ✗ at HEAD (lib/storageOrphans.ts:104-131): OFFSET windows + a count taken
-  // after the loop. Deleting v00010 after window 1 moves every later row up
-  // one place, window 2 (offset 1000) starts at v01002, v01001 is never read,
-  // and 1,499 paged = 1,499 counted, so nothing aborts — the collector returns
-  // a set missing a LIVE reference, which deleteOrphans would delete. Flip to
-  // `it` when keyset paging lands — that is the only edit this file needs from
-  // the package that lands it (admin-and-org P2 / BKP-2: the flip is named in
-  // BKP-2's record, audit-reports/admin-and-org/02-backup-restore.md, beside
-  // the destructiveDeletes.test.ts fake update, and on the integrator's list
-  // for that package's plan).
-  it.fails("a row deleted after the first window never hides a live reference in the next one — the scan returns every live key or aborts", async () => {
+  // Was ✗ (an `it.fails`) on OFFSET windows + a count taken after the loop:
+  // deleting v00010 after window 1 moved every later row up one place, window
+  // 2 (offset 1000) started at v01002, v01001 was never read, and 1,499 paged
+  // = 1,499 counted, so nothing aborted. Flipped to `it` by admin-and-org P2
+  // (BKP-2): lib/storageOrphans.ts collectReferencedKeys now pages by KEYSET
+  // (`.gt("id", last).order("id").limit(1000)`), so window 2 starts after
+  // v01000 whatever was deleted behind it — every live key is read (the
+  // delete then shows as 1,500 paged against 1,499 counted, and the scan
+  // aborts fail-closed; either outcome satisfies the criterion).
+  it("a row deleted after the first window never hides a live reference in the next one — the scan returns every live key or aborts", async () => {
     const h = collectorClient(versions(1500), (live) => { live.splice(9, 1); });
     const outcome = await collectReferencedKeys(h.client).then(
       (keys) => {

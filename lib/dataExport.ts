@@ -29,8 +29,12 @@ import { presignedGetDisposition } from "@/lib/presignedDisposition";
 // coverage tripwire test can import them without pulling in AWS clients.
 // Adding a table to the schema without deciding its backup fate fails the
 // test suite — see that file for the contract.
-import { ORG_SCOPED_TABLES, USER_SCOPED_FOR_ORG_TABLES, REDACT_COLUMNS, redactRow } from "@/lib/exportTables";
+import { ORG_SCOPED_TABLES, USER_SCOPED_FOR_ORG_TABLES, REDACT_COLUMNS, EXPORT_KEYED_BY, redactRow } from "@/lib/exportTables";
 export { ORG_SCOPED_TABLES, USER_SCOPED_FOR_ORG_TABLES, EXPORT_EXCLUDED_TABLES, REDACT_COLUMNS } from "@/lib/exportTables";
+// BKP-2 / BKP-9: the file manifest reads the ONE storage-key registry the
+// orphan sweep reads too — a key column registered there is in every backup
+// and protected from the sweep, both at once.
+import { STORAGE_KEY_SOURCES, keysOf, findUnregisteredOrgKeys } from "@/lib/storageKeyRegistry";
 
 export interface DataExportManifest {
   schemaVersion: string;
@@ -47,6 +51,11 @@ export interface DataExportManifest {
     count: number;
     /** Files referenced by a record but not found in storage (no URL). */
     missing: number;
+    /** BKP-9: files under this workspace's prefix that a value scan of the
+     *  exported rows found in a column the storage-key registry does not
+     *  list. They ARE in `files` (carried, and counted in `missing` when
+     *  storage lacks them); this says how many no registered column named. */
+    unregistered: number;
     /** Files shed to offline space archives — expected to be absent from
      *  cloud storage; they live in the org's <root>/data/<archive>.zip files. */
     archivedOffline: number;
@@ -100,7 +109,7 @@ export async function runOrgExport(params: {
   const tableCounts: Array<{ name: string; rowCount: number; error?: string }> = [];
   for (const tbl of ORG_SCOPED_TABLES) {
     try {
-      const rows = await dumpTable(sb, tbl, "org_id", params.orgId);
+      const rows = await dumpOrgTable(sb, tbl, params.orgId, tables, tableCounts);
       tables[tbl] = rows;
       tableCounts.push({ name: tbl, rowCount: rows.length });
     } catch (e) {
@@ -129,9 +138,11 @@ export async function runOrgExport(params: {
     }
   }
 
-  // 3. File manifest: walk every storage path referenced by document_versions,
+  // 3. File manifest: every storage key the exported rows reference, read
+  //    through lib/storageKeyRegistry.ts (document revisions and their native
+  //    CAD sources, knowledge-library PDFs, output templates, vendor quotes,
   //    ticket attachments, equipment photos, plot plans, markup-request shared
-  //    files, folder/library covers, and the org logo. Files live in Cloudflare
+  //    files, folder/library covers, the org logo). Files live in Cloudflare
   //    R2 (the S3 API) — the same backend the app uploads to — so URLs MUST be
   //    signed against R2, not Supabase Storage. (Signing against Supabase
   //    Storage was the bug that produced "complete" backups containing no
@@ -142,7 +153,16 @@ export async function runOrgExport(params: {
   //    absent from cloud storage — they're accounted separately (which zips
   //    hold them) instead of being miscounted as "missing".
   const shedInfo = collectShedOffline(tables);
-  const fileRefs = collectFilePaths(tables).filter((r) => !shedInfo.keys.has(r.path));
+  const registered = collectFilePaths(tables);
+  // BKP-9 Done-when 3: a key no registered column names is not silently
+  // left out. A value scan of every exported row finds keys under this
+  // workspace's prefix that the registry did not collect; they are carried
+  // (head-checked like the rest — counted in `missing` when storage lacks
+  // them) and counted and named in the manifest.
+  const knownKeys = new Set<string>([...registered.map((r) => r.path), ...shedInfo.keys]);
+  const unregistered = findUnregisteredOrgKeys(tables, params.orgId, knownKeys);
+  const fileRefs = [...registered, ...unregistered.map((u) => ({ path: u.path, size: null }))]
+    .filter((r) => !shedInfo.keys.has(r.path));
   const files: DataExportEnvelope["files"] = [];
   let totalBytes = 0;
   let missingFiles = 0;
@@ -233,6 +253,15 @@ export async function runOrgExport(params: {
       `${files.length - missingFiles} of ${files.length} files are downloadable.`,
     );
   }
+  if (unregistered.length > 0) {
+    const where = Array.from(new Set(unregistered.map((u) => u.at))).sort();
+    notes.push(
+      `⚠ ${unregistered.length} file(s) under this workspace's storage prefix are referenced from column(s) the storage-key registry ` +
+      `(lib/storageKeyRegistry.ts) does not list: ${where.slice(0, 10).join(", ")}${where.length > 10 ? ", …" : ""}. ` +
+      "They ARE included in this backup (found by a scan of every exported value), but until the column is registered the " +
+      "storage orphan sweep does not count them as referenced.",
+    );
+  }
   if (shedInfo.keys.size > 0) {
     notes.push(
       `${shedInfo.keys.size} file(s) were previously archived OFFLINE to reclaim cloud storage; they are not in cloud ` +
@@ -268,6 +297,7 @@ export async function runOrgExport(params: {
     files: {
       count: files.length,
       missing: missingFiles,
+      unregistered: unregistered.length,
       archivedOffline: shedInfo.keys.size,
       totalBytes,
       presignedUrlExpiresIn: expiresIn,
@@ -301,6 +331,42 @@ function collectShedOffline(tables: Record<string, unknown[]>): { keys: Set<stri
     }
   }
   return { keys, archiveIds: Array.from(ids).sort() };
+}
+
+/** How many parent ids one `.in()` read carries (UUIDs: well inside a URL). */
+const PARENT_ID_CHUNK = 150;
+
+/** BKP-4: dump one ORG_SCOPED_TABLES entry by its own key. `org_id` for every
+ *  table that has one; lib/exportTables.ts EXPORT_KEYED_BY names the rest —
+ *  `orgs` by its id, an org-less child through the ids of its parent, which
+ *  ORG_SCOPED_TABLES lists (and so dumps) first. A parent that failed or was
+ *  not dumped fails the child: its rows cannot be scoped to this workspace,
+ *  so the table is recorded as an error, never exported unscoped. */
+async function dumpOrgTable(
+  sb: SupabaseClient,
+  table: string,
+  orgId: string,
+  dumped: Record<string, unknown[]>,
+  outcomes: ReadonlyArray<{ name: string; error?: string }>,
+): Promise<unknown[]> {
+  const keyed = EXPORT_KEYED_BY[table];
+  if (!keyed) return dumpTable(sb, table, "org_id", orgId);
+  if (!keyed.parent) return dumpTable(sb, table, keyed.column, orgId);
+  const parent = keyed.parent;
+  const parentOutcome = outcomes.find((t) => t.name === parent);
+  if (!parentOutcome || parentOutcome.error || !Object.prototype.hasOwnProperty.call(dumped, parent)) {
+    throw new Error(`its parent table ${parent} was not exported, so its rows cannot be scoped to this workspace`);
+  }
+  const ids = Array.from(new Set(
+    (dumped[parent] as Array<{ id?: unknown }>)
+      .map((r) => r?.id)
+      .filter((v): v is string => typeof v === "string" && v.length > 0),
+  ));
+  const out: unknown[] = [];
+  for (let i = 0; i < ids.length; i += PARENT_ID_CHUNK) {
+    out.push(...(await dumpTable(sb, table, keyed.column, ids.slice(i, i + PARENT_ID_CHUNK), true)));
+  }
+  return out;
 }
 
 async function dumpTable(
@@ -337,51 +403,22 @@ async function dumpTable(
   return out;
 }
 
+/** Every storage key the exported rows reference, through the one registry
+ *  (lib/storageKeyRegistry.ts) — the same sources, in the same order, as the
+ *  orphan sweep's reference set. A source whose table this export does not
+ *  carry (`users`, excluded whole) contributes nothing here; the census test
+ *  pins which those are. Deduped by key, preferring a recorded byte size over
+ *  none so the export can skip a HeadObject round-trip. */
 export function collectFilePaths(tables: Record<string, unknown[]>): Array<{ path: string; size: number | null }> {
-  // Dedupe by R2 key, preferring a known byte size over null so we can skip a
-  // HeadObject round-trip when the row already recorded it.
   const map = new Map<string, number | null>();
-  const add = (path: string | undefined | null, size?: number | null) => {
-    if (!path) return;
-    // Only storage KEYS belong here — some columns (covers, legacy rows) may
-    // hold full URLs or data URIs, which can't be signed as R2 keys.
-    if (/^(https?:|blob:|data:)/i.test(path)) return;
-    if (!map.has(path)) { map.set(path, size ?? null); return; }
-    if (map.get(path) == null && size != null) map.set(path, size);
-  };
-
-  // Document versions store file_url (the R2 key) and a recorded byte size.
-  for (const row of (tables.document_versions as Array<{ file_url?: string; size?: number }>) ?? []) {
-    add(row.file_url, row.size ?? null);
+  for (const source of STORAGE_KEY_SOURCES) {
+    for (const row of (tables[source.table] as Array<Record<string, unknown>> | undefined) ?? []) {
+      if (!row || typeof row !== "object") continue;
+      for (const { path, size } of keysOf(source, row)) {
+        if (!map.has(path)) { map.set(path, size); continue; }
+        if (map.get(path) == null && size != null) map.set(path, size);
+      }
+    }
   }
-  // Ticket attachments are nested in JSONB; a size may travel with them.
-  for (const t of (tables.tickets as Array<{ attachments?: Array<{ url?: string; size?: number }> }>) ?? []) {
-    for (const att of t.attachments ?? []) add(att.url, att.size ?? null);
-  }
-  // Markup-request shared files
-  for (const r of (tables.markup_requests as Array<{ shared_markup_url?: string }>) ?? []) {
-    add(r.shared_markup_url);
-  }
-  // Equipment photos (byte size lives in file_size on this table)
-  for (const p of (tables.asset_photos as Array<{ file_url?: string; file_size?: number }>) ?? []) {
-    add(p.file_url, p.file_size ?? null);
-  }
-  // Plot-plan / P&ID background images
-  for (const pp of (tables.plot_plans as Array<{ image_path?: string }>) ?? []) {
-    add(pp.image_path);
-  }
-  // Library + folder cover images (skipped automatically when the field holds
-  // a pasted external URL rather than an uploaded storage key)
-  for (const l of (tables.libraries as Array<{ cover_image_url?: string | null }>) ?? []) {
-    add(l.cover_image_url);
-  }
-  for (const c of (tables.collections as Array<{ cover_image_url?: string | null }>) ?? []) {
-    add(c.cover_image_url);
-  }
-  // Org branding logo — org_configurations row {key:'branding', data:{logoPath}}
-  for (const cfg of (tables.org_configurations as Array<{ key?: string; data?: { logoPath?: string } | null }>) ?? []) {
-    if (cfg?.key === "branding") add(cfg.data?.logoPath);
-  }
-
   return Array.from(map.entries()).map(([path, size]) => ({ path, size }));
 }
