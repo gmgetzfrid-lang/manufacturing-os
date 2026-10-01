@@ -84,7 +84,14 @@ export function aiReadinessRefuses(r: AiReadiness): boolean {
  *  disabled on a stale answer. */
 const TTL_MS = 60_000;
 const REFUSAL_TTL_MS = 3_000;
-const cache = new Map<string, { at: number; value: Promise<AiReadiness>; ttl: number }>();
+/** A FRESH read (the re-check on focus / visibility) still shares a read
+ *  that is in flight or was started this recently: every button on the
+ *  page re-checks on the same event (the checklist cards hold one each, up
+ *  to 50), and one alt-tab fires both `focus` and `visibilitychange` — so
+ *  they cost one read of the three routes, not one per button. A re-check
+ *  after the window reads again. */
+export const FRESH_SHARE_MS = 1_000;
+const cache = new Map<string, { at: number; value: Promise<AiReadiness>; ttl: number; settled: boolean }>();
 
 /** Forget what was read (a key was just saved, or a test). */
 export function clearAiReadinessCache(orgId?: string): void {
@@ -93,10 +100,11 @@ export function clearAiReadinessCache(orgId?: string): void {
 
 /** Read the three facts for `orgId` (one request each, shared by the
  *  buttons on the page) and derive the precondition. Never throws: a failed
- *  read is "unknown". `fresh` skips the cache (a re-check on focus). */
+ *  read is "unknown". `fresh` (a re-check on focus) skips the cached answer
+ *  but shares a read still in flight or started within FRESH_SHARE_MS. */
 export function fetchAiReadiness(orgId: string, fetcher: Fetcher, now = Date.now(), opts: { fresh?: boolean } = {}): Promise<AiReadiness> {
   const hit = cache.get(orgId);
-  if (!opts.fresh && hit && now - hit.at < hit.ttl) return hit.value;
+  if (hit && (opts.fresh ? !hit.settled || now - hit.at < FRESH_SHARE_MS : now - hit.at < hit.ttl)) return hit.value;
   const read = async <T,>(path: string): Promise<T | null> => {
     try {
       const res = await fetcher(`${path}?orgId=${encodeURIComponent(orgId)}`);
@@ -112,11 +120,12 @@ export function fetchAiReadiness(orgId: string, fetcher: Fetcher, now = Date.now
     ]);
     return aiReadinessFrom({ connection, agreement, usage });
   })();
-  const entry = { at: now, value, ttl: TTL_MS };
+  const entry = { at: now, value, ttl: TTL_MS, settled: false };
   cache.set(orgId, entry);
   // A refusal is not kept: once the answer is known, its entry shrinks to
   // the short window (only while it is still the one cached).
   void value.then((r) => {
+    entry.settled = true;
     if (r.state !== "ready" && r.state !== "unknown" && cache.get(orgId) === entry) entry.ttl = REFUSAL_TTL_MS;
   });
   return value;

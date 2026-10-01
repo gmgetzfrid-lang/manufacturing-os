@@ -33,7 +33,8 @@ vi.mock("next/link", () => ({
 vi.mock("@/lib/costs", async (importOriginal) => ({ ...(await importOriginal<typeof import("@/lib/costs")>()), ...costs }));
 vi.mock("@/lib/companies", async (importOriginal) => ({ ...(await importOriginal<typeof import("@/lib/companies")>()), ...reg }));
 
-import { aiReadinessFrom, fetchAiReadiness, clearAiReadinessCache, AI_SETTINGS_HREF } from "@/lib/aiReadiness";
+import { aiReadinessFrom, fetchAiReadiness, clearAiReadinessCache, AI_SETTINGS_HREF, FRESH_SHARE_MS } from "@/lib/aiReadiness";
+import { useAiReadiness } from "@/components/projects/AiPrecondition";
 import QuotesPanel from "@/components/projects/cost/QuotesPanel";
 import type { CostDocument } from "@/lib/costDocs";
 
@@ -95,8 +96,12 @@ describe("UX-13 — the AI precondition, derived (governedCall's order: key, agr
     hasKey = true;                                                        // saved in another tab, back within the minute
     expect((await fetchAiReadiness("o1", fetcher, 10_000)).state).toBe("ready");
     expect(fetcher).toHaveBeenCalledTimes(6);
-    // `fresh` skips the cache outright (a re-check on focus)
+    // `fresh` (a re-check on focus) skips the cached answer — but, since the
+    // final review, shares a read started within FRESH_SHARE_MS (every
+    // button re-checks on the same focus event); past the window it reads.
     expect((await fetchAiReadiness("o1", fetcher, 10_500, { fresh: true })).state).toBe("ready");
+    expect(fetcher).toHaveBeenCalledTimes(6);
+    expect((await fetchAiReadiness("o1", fetcher, 10_000 + FRESH_SHARE_MS, { fresh: true })).state).toBe("ready");
     expect(fetcher).toHaveBeenCalledTimes(9);
   });
 
@@ -107,10 +112,56 @@ describe("UX-13 — the AI precondition, derived (governedCall's order: key, agr
     const read = () => [...host.querySelectorAll("button")].find((b) => /^\s*Read\s*$/.test(b.textContent ?? "")) as HTMLButtonElement;
     expect(read().disabled).toBe(true);
     hasKey = true;
-    await act(async () => { window.dispatchEvent(new Event("focus")); });
-    await flush();
+    // back from saving the key in another tab — longer than FRESH_SHARE_MS
+    const later = Date.now() + 5_000;
+    const clock = vi.spyOn(Date, "now").mockReturnValue(later);
+    try {
+      await act(async () => { window.dispatchEvent(new Event("focus")); });
+      await flush();
+    } finally { clock.mockRestore(); }
     expect(read().disabled).toBe(false);
     expect(host.querySelector("#quotes-ai-precondition")).toBeNull();
+  });
+
+  it("final review: N mounted buttons re-check with ONE read of the three routes per focus (focus and visibilitychange together), and a later focus — past the window — reads again", async () => {
+    const fetchMock = vi.fn(async (url: string) => String(url).startsWith("/api/ai/connection") ? ok({ personal: null }) : ok({ accepted: true, spentUsd: 0, capUsd: 10 }));
+    vi.stubGlobal("fetch", fetchMock);
+    let t = 1_700_000_000_000;
+    const clock = vi.spyOn(Date, "now").mockImplementation(() => t);
+    try {
+      const N = 12;
+      function Probe({ i }: { i: number }) {
+        const r = useAiReadiness("o1");
+        return React.createElement("span", { "data-probe": i }, r.state);
+      }
+      const seen = () => [...host.querySelectorAll("[data-probe]")].map((el) => el.textContent);
+      await act(async () => {
+        root.render(React.createElement(React.Fragment, null, ...Array.from({ length: N }, (_, i) => React.createElement(Probe, { key: i, i }))));
+      });
+      await flush();
+      expect(seen().filter((s) => s === "no_key")).toHaveLength(N); // a standing refusal: each hook re-checks on focus
+      expect(fetchMock).toHaveBeenCalledTimes(3);                    // the mount: one read, shared
+
+      t += 5_000;                                                    // past the refusal's short cache and the window
+      await act(async () => {
+        window.dispatchEvent(new Event("focus"));
+        document.dispatchEvent(new Event("visibilitychange"));      // one alt-tab fires both
+      });
+      await flush();
+      expect(fetchMock).toHaveBeenCalledTimes(6);                    // ONE triplet for N hooks — not N × 3
+      expect(fetchMock.mock.calls.slice(3).map((c) => String(c[0])).sort())
+        .toEqual(["/api/ai/agreement?orgId=o1", "/api/ai/connection?orgId=o1", "/api/ai/usage?orgId=o1"]);
+
+      t += FRESH_SHARE_MS / 2;                                       // a second focus inside the window shares it
+      await act(async () => { window.dispatchEvent(new Event("focus")); });
+      await flush();
+      expect(fetchMock).toHaveBeenCalledTimes(6);
+
+      t += FRESH_SHARE_MS;                                           // a later focus, past the window, reads again — once
+      await act(async () => { window.dispatchEvent(new Event("focus")); });
+      await flush();
+      expect(fetchMock).toHaveBeenCalledTimes(9);
+    } finally { clock.mockRestore(); }
   });
 });
 

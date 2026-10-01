@@ -168,6 +168,10 @@ export async function listParties(orgId: string, projectId: string): Promise<Cos
  *  link was refused only for want of one (the caller asks and retries). */
 export interface PartyLinkOverrideNeeded { companyId: string; company: string }
 
+/** What an unreadable registry refusal says did NOT happen, per path. */
+const REGISTRY_UNREAD_NOT_ADDED = "the contractor was not added; try again, or add it with no company link";
+const REGISTRY_UNREAD_NOT_LINKED = "nothing was linked";
+
 /**
  * The do-not-use rule for a contractor's Known Companies link (COST-12 /
  * MON-12). An award reads the company THROUGH the quote's party
@@ -176,14 +180,19 @@ export interface PartyLinkOverrideNeeded { companyId: string; company: string }
  * company, bound to some other company, would carry its awards past the
  * flag. Such a link needs a reason, which is recorded (returned as
  * overrideDoNotUse for the audit row).
+ *
+ * An unreadable registry refuses the write the check guards, so the refusal
+ * says what did NOT happen on that path (`unreadOutcome`): on the Costs
+ * tab's add (saveParty create) the contractor was not added at all; on a
+ * later link (linkPartyToCompany) nothing was linked.
  */
-async function partyLinkCheck(orgId: string, name: string, companyId: string, overrideReason: string | null): Promise<
+async function partyLinkCheck(orgId: string, name: string, companyId: string, overrideReason: string | null, unreadOutcome: string = REGISTRY_UNREAD_NOT_LINKED): Promise<
   | { refused: { error: string; needsOverride?: PartyLinkOverrideNeeded } }
   | { refused: null; overrideDoNotUse: (PartyLinkOverrideNeeded & { reason: string }) | null }
 > {
   let barred: { id: string; name: string } | null;
   try { barred = barredCompanyFor(name, null, await listBarredCompanies(orgId)); }
-  catch (e) { return { refused: { error: `Couldn't check the company registry (${userFacingCaughtError(e, { action: "read", context: "partyLinkCheck" }).replace(/\.$/, "")}) — nothing was linked.` } }; }
+  catch (e) { return { refused: { error: `Couldn't check the company registry (${userFacingCaughtError(e, { action: "read", context: "partyLinkCheck" }).replace(/\.$/, "")}) — ${unreadOutcome}.` } }; }
   if (!barred || barred.id === companyId) return { refused: null, overrideDoNotUse: null };
   if (overrideReason) return { refused: null, overrideDoNotUse: { companyId: barred.id, company: barred.name, reason: overrideReason } };
   return { refused: {
@@ -245,7 +254,8 @@ export async function saveParty(input: {
   if (!row.name) return { ok: false, error: "Contractor name is required." };
   let overrideDoNotUse: (PartyLinkOverrideNeeded & { reason: string }) | null = null;
   if (row.company_id) {
-    const chk = await partyLinkCheck(input.orgId, String(row.name), String(row.company_id), input.linkOverrideReason?.trim() || null);
+    // Refused here, the INSERT never runs — the contractor is not added.
+    const chk = await partyLinkCheck(input.orgId, String(row.name), String(row.company_id), input.linkOverrideReason?.trim() || null, REGISTRY_UNREAD_NOT_ADDED);
     if (chk.refused) return { ok: false, error: chk.refused.error, needsOverride: chk.refused.needsOverride };
     overrideDoNotUse = chk.overrideDoNotUse;
   }
@@ -280,7 +290,7 @@ export async function linkPartyToCompany(input: {
   const p = party as { id: string; name: string | null; company_id: string | null } | null;
   if (!p) return { ok: false, error: "That contractor wasn't found — it may have been removed. Refresh and try again." };
   if (p.company_id) return { ok: false, error: "This contractor is already linked to a company — refresh to see it. A link is never re-pointed." };
-  const chk = await partyLinkCheck(input.orgId, String(p.name ?? ""), input.companyId, input.overrideReason?.trim() || null);
+  const chk = await partyLinkCheck(input.orgId, String(p.name ?? ""), input.companyId, input.overrideReason?.trim() || null, REGISTRY_UNREAD_NOT_LINKED);
   if (chk.refused) return { ok: false, error: chk.refused.error, needsOverride: chk.refused.needsOverride };
   const { data: hit, error } = await supabase.from("project_parties").update({ company_id: input.companyId })
     .eq("id", input.partyId).eq("org_id", input.orgId).is("company_id", null).select("id");

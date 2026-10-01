@@ -13,7 +13,7 @@
 import { describe, it, expect } from "vitest";
 import React from "react";
 import { renderToStaticMarkup } from "react-dom/server";
-import CostCharts, { COST_GLOSSARY_TERMS, BURN_LINES_SHOWN, accountCurrency } from "@/components/projects/cost/CostCharts";
+import CostCharts, { COST_GLOSSARY_TERMS, BURN_LINES_SHOWN, accountCurrency, CostGlossary } from "@/components/projects/cost/CostCharts";
 import { computeCostRollup, type CostAccount, type CostEntry } from "@/lib/costs";
 
 function render(el: React.ReactElement): Document {
@@ -359,5 +359,47 @@ describe("MON-4 dw2 · the glossary defines the headline figure", () => {
       term: "Available (uncommitted)",
       plain: "Budget minus what you've spent minus what you've promised (open commitments, net of the invoices already posted against them). The number you can still award.",
     });
+  });
+});
+
+describe("final review · the glossary says what the rollup computes for Spent and Unspent", () => {
+  // computeCostRollup: spent = actual + adjustments (signed); Unspent
+  // (remainingActualsOnly) = revisedBudget − spent; Available (remaining) =
+  // revisedBudget − spent − openCommitments, and openCommitments ≥ 0.
+  const SPENT = "Spent = actuals plus signed adjustments (a negative adjustment credits money back).";
+  const UNSPENT = "The revised budget minus Spent — it ignores open commitments, so it is never smaller than Available.";
+
+  it("the rendered glossary carries the two sentences, and neither old misstatement", () => {
+    const doc = render(React.createElement(CostGlossary));
+    const entry = (term: string) => [...doc.querySelectorAll("dt")].find((dt) => dt.textContent === term)!.nextElementSibling!.textContent!;
+    expect(entry("Actual")).toBe(`Money that really left — an invoice or timesheet posted against a budget line. ${SPENT}`);
+    expect(entry("Unspent (actuals only)")).toBe(UNSPENT);
+    const all = doc.body.textContent!;
+    expect(all).not.toContain("Actuals add up to Spent");
+    expect(all).not.toContain("minus the actuals alone");
+  });
+
+  it("…and each sentence is the rollup's own arithmetic, on a line with a NEGATIVE adjustment", () => {
+    const accounts = [account({ id: "a1", budget: 1_000 })];
+    const entries = [
+      entry({ id: "e1", entryType: "actual", amount: 500, partyId: "p-q" }),
+      entry({ id: "e2", entryType: "adjustment", amount: -100 }),                 // a credit back
+      entry({ id: "e3", entryType: "commitment", amount: 300, partyId: "p-c" }),  // promised, not yet invoiced
+    ];
+    const r = computeCostRollup(accounts, entries, new Map(), new Map([["a1", 200]]));   // + an approved CO
+    const line = r.accounts[0];
+    expect(line.revisedBudget).toBe(1_200);
+    // Spent = actuals plus signed adjustments — not the actuals alone (500)
+    expect(line.spent).toBe(500 + -100);
+    expect(r.spent).toBe(400);
+    // Unspent = the revised budget minus Spent — not minus the actuals alone (700)
+    expect(line.remainingActualsOnly).toBe(1_200 - 400);
+    expect(r.remainingActualsOnly).toBe(800);
+    // it ignores the open commitment that Available subtracts …
+    expect(line.openCommitments).toBe(300);
+    expect(line.remaining).toBe(1_200 - 400 - 300);
+    // … so it is never smaller than Available: the gap is exactly the open commitments
+    expect(line.remainingActualsOnly - line.remaining).toBe(line.openCommitments);
+    expect(line.remainingActualsOnly).toBeGreaterThanOrEqual(line.remaining);
   });
 });

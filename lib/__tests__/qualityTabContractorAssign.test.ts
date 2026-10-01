@@ -8,7 +8,9 @@
 // row's select changed — a keyboard arrow on a closed select fires `change`
 // — with no confirmation, and a rejected item could be attributed with no
 // way to correct it. Now:
-//   * an undecided item's pick is still its write (it can be changed);
+//   * an undecided item's pick writes nothing either (final review): its
+//     contractor is written by the "Assign" / "Save" beside the select, with
+//     no confirm — it can still be changed while the item is undecided;
 //   * a decided item (accepted / waived turnover, closed / voided punch)
 //     with no contractor shows a select plus "Assign": the pick writes
 //     nothing, and Assign asks first — naming the item, the contractor and
@@ -18,7 +20,11 @@
 //   * an item assigned to a contractor later set inactive still names it,
 //     and an open row's select still shows it — only the add / seed pickers
 //     leave inactive contractors out;
-//   * every Quality-tab button that writes carries the decision-target floor.
+//   * every Quality-tab button that writes carries the decision-target floor;
+//   * (final review, UX-10) when the project's contractors cannot be read,
+//     the tab says so with Retry; an assigned item says "contractor not
+//     loaded" — never "not on this project's list" — and each picker says
+//     why it is not there.
 
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import React, { act } from "react";
@@ -193,11 +199,45 @@ describe("MON-7 / COST-12 (J10 third fix) — a decided item's contractor is nev
     expect(row.textContent).toContain("no contractor — name one once the resubmission is accepted");
   });
 
-  it("an UNDECIDED item's pick is still its write (it can be changed while undecided)", async () => {
+  it("final review: an UNDECIDED item's pick writes nothing either — its Assign / Save writes it, with no confirm (it can still be changed while undecided)", async () => {
     await render();
-    await choose(select("Contractor who delivers Weld map")!, "p-gulf");
+    // turnover, received and unassigned: the keystroke case writes nothing …
+    const weld = select("Contractor who delivers Weld map")!;
+    await choose(weld, "p-gulf");
+    expect(m.assignTurnoverContractor).not.toHaveBeenCalled();
+    // … the explicit button does
+    const assign = assignNextTo(weld);
+    expect(assign.disabled).toBe(false);
+    expect(assign.getAttribute("aria-label")).toBe("Assign Gulf Mechanical");
+    expect(assign.className).toContain("pointer-coarse:min-h-11");   // A11Y-8 floor
+    await click(assign);
     expect(m.appConfirm).not.toHaveBeenCalled();
+    expect(m.assignTurnoverContractor).toHaveBeenCalledTimes(1);
     expect(m.assignTurnoverContractor).toHaveBeenCalledWith(expect.objectContaining({ item: RECEIVED, partyId: "p-gulf" }));
+
+    // punch, open and assigned (to an inactive contractor): a change alone writes nothing; Save writes it
+    const paint = select("Contractor responsible for Paint touch-up")!;
+    const save = () => [...select("Contractor responsible for Paint touch-up")!.parentElement!.querySelectorAll("button")].find((b) => b.textContent?.trim() === "Save") as HTMLButtonElement;
+    expect(save().disabled).toBe(true);                               // nothing picked yet: nothing to write
+    await choose(paint, "p-gulf");
+    expect(m.assignPunchContractor).not.toHaveBeenCalled();
+    expect(select("Contractor responsible for Paint touch-up")!.selectedOptions[0].textContent).toBe("Gulf Mechanical");
+    // the item's own contractor stays on offer while another is picked
+    expect([...select("Contractor responsible for Paint touch-up")!.options].map((o) => o.textContent)).toContain("Old Crew (inactive)");
+    await click(save());
+    expect(m.assignPunchContractor).toHaveBeenCalledTimes(1);
+    expect(m.assignPunchContractor).toHaveBeenCalledWith(expect.objectContaining({ item: OPEN_OLD, partyId: "p-gulf" }));
+    expect(m.appConfirm).not.toHaveBeenCalled();
+  });
+
+  it("final review: clearing an undecided item's contractor is a Save too — the select alone writes nothing", async () => {
+    await render();
+    await choose(select("Contractor responsible for Paint touch-up")!, "");
+    expect(m.assignPunchContractor).not.toHaveBeenCalled();
+    const save = [...select("Contractor responsible for Paint touch-up")!.parentElement!.querySelectorAll("button")].find((b) => b.textContent?.trim() === "Save")!;
+    expect(save.getAttribute("aria-label")).toBe("Save — clear the contractor");
+    await click(save);
+    expect(m.assignPunchContractor).toHaveBeenCalledWith(expect.objectContaining({ item: OPEN_OLD, partyId: null }));
   });
 
   it("a closed punch item with no contractor: the pick writes nothing; Assign asks, says it is permanent, and writes on yes", async () => {
@@ -236,12 +276,13 @@ describe("A11Y-8 (J10 third fix) — every Quality-tab button that writes carrie
     await render();
     const buttons = [...host.querySelectorAll("button")];
     const byText = (t: string) => buttons.filter((b) => b.textContent?.trim() === t);
-    for (const b of [...byText("Seed required contents"), ...byText("Add"), ...byText("Assign")]) {
+    for (const b of [...byText("Seed required contents"), ...byText("Add"), ...byText("Assign"), ...byText("Save")]) {
       expect(b.className, b.textContent ?? "").toContain("min-h-6");
       expect(b.className, b.textContent ?? "").toContain("pointer-coarse:min-h-11");
     }
     expect(byText("Add")).toHaveLength(2);
-    expect(byText("Assign").length).toBeGreaterThanOrEqual(3);
+    expect(byText("Assign").length).toBeGreaterThanOrEqual(4);   // + the undecided rows' (final review)
+    expect(byText("Save").length).toBeGreaterThanOrEqual(1);
   });
 
   it("source census (counted): every button whose click starts a write — read, save, seed, add, assess, sweep, review, waive, reopen, override, close, assign, apply, pick, skip — carries the floor", () => {
@@ -257,14 +298,65 @@ describe("A11Y-8 (J10 third fix) — every Quality-tab button that writes carrie
       }
       tags.push(q.slice(at, i + 1));
     }
-    const WRITES = /onClick=\{(?:\(\) => (?:void )?(?:read|save|seed|addItem|add|assess|sweep|review|startWaive|reopen|override|close|setSigning|setAccepting|onPick)\(|onApply\b|onSkip\b|\(\) => \{ if \(chosen\) onAssign)/;
+    const WRITES = /onClick=\{(?:\(\) => (?:void )?(?:read|save|seed|addItem|add|assess|sweep|review|startWaive|reopen|override|close|setSigning|setAccepting|onPick)\(|onApply\b|onSkip\b|\(\) => \{ if \(chosen\) onAssign|\(\) => \{ if \(changed\) onSave)/;
     const writers = tags.filter((t) => WRITES.test(t));
     const bare = writers.filter((t) => !t.includes("${DECISION_TARGET}"));
     expect(bare).toEqual([]);
     // counted, so a write button added without the floor fails here
-    expect(writers.length).toBeGreaterThanOrEqual(24);
+    expect(writers.length).toBeGreaterThanOrEqual(25);
+    expect(writers.some((t) => t.includes("if (changed) onSave(pick)")), "the undecided rows' Assign / Save").toBe(true);
     for (const label of ["void read()", "void save()", "void seed()", "void addItem()", "void add()"]) {
       expect(writers.some((t) => t.includes(label)), label).toBe(true);
     }
+  });
+});
+
+describe("UX-10 (final review) — an unreadable contractors list is said, never shown as data", () => {
+  const WHY = "Couldn't load the contractors: You don't have permission to see this.";
+  const RECEIVED_GULF = turnover("t6", "Isometrics", "received", "p-gulf");
+  const ACCEPTED_GULF = turnover("t7", "NDE reports", "accepted", "p-gulf");
+
+  it("the tab says so with a working Retry; an assigned item says 'contractor not loaded', never 'not on this project's list'; the add / seed / assign pickers say why they are not there", async () => {
+    m.listParties.mockReset();
+    m.listParties.mockRejectedValueOnce(new Error(WHY)).mockResolvedValue([GULF, DAY, OLD]);
+    m.listTurnoverItems.mockResolvedValue([ACCEPTED, RECEIVED, RECEIVED_GULF, ACCEPTED_GULF, ACCEPTED_OLD]);
+    await render();
+
+    const alert = [...host.querySelectorAll('[role="alert"]')].find((a) => a.textContent?.includes("contractors couldn't be loaded"))!;
+    expect(alert).toBeTruthy();
+    expect(alert.textContent).toContain("The project's contractors couldn't be loaded — You don't have permission to see this. Each item keeps its contractor, but it can't be shown or changed until the list loads.");
+    expect(alert.textContent).not.toContain("Couldn't load the contractors:");   // said once, not twice
+
+    const text = host.textContent ?? "";
+    expect(text).not.toMatch(/not on this project.s list/i);
+    const row = (name: string) => [...host.querySelectorAll("li")].find((li) => li.textContent?.includes(name))!;
+    for (const name of ["Isometrics", "NDE reports", "MTRs", "Paint touch-up"]) expect(row(name).textContent, name).toContain("· contractor not loaded");
+    // no picker anywhere — and each place one would be says why
+    expect(host.querySelectorAll("select")).toHaveLength(0);
+    expect(text).toContain("Seeded items get no contractor — the project's contractors couldn't be loaded");
+    expect(host.querySelectorAll("[data-contractors-unavailable]").length).toBeGreaterThanOrEqual(2 + 1 + 3);
+    expect(text.match(/No contractor can be chosen — the project's contractors couldn't be loaded; the item is added without one/g)).toHaveLength(2);
+    for (const name of ["Torque records", "Weld map", "Reinstall insulation"]) {
+      expect(row(name).textContent, name).toContain("· no contractor — one can be assigned once the project's contractors load");
+    }
+
+    // Retry reads again; the names and the pickers come back, the note goes
+    const retry = [...alert.querySelectorAll("button")].find((b) => b.textContent === "Retry")!;
+    await click(retry);
+    expect(m.listParties).toHaveBeenCalledTimes(2);
+    expect(host.textContent).not.toContain("contractors couldn't be loaded");
+    expect(row("Isometrics").querySelector("select")!.value).toBe("p-gulf");
+    expect(row("NDE reports").textContent).toContain("· Gulf Mechanical");
+    expect(row("MTRs").textContent).toContain("· Old Crew (inactive)");
+    expect(select("Contractor who delivers it")).not.toBeNull();
+    expect(host.querySelectorAll("[data-contractors-unavailable]")).toHaveLength(0);
+  });
+
+  it("once the list HAS loaded, an id it does not hold is still named as missing from it (that is data, not a broken read)", async () => {
+    m.listParties.mockResolvedValue([GULF, DAY]);                      // OLD is not on the list
+    await render();
+    const mtrs = [...host.querySelectorAll("li")].find((li) => li.textContent?.includes("MTRs"))!;
+    expect(mtrs.textContent).toContain("· a contractor not on this project's list");
+    expect(host.textContent).not.toContain("contractor not loaded");
   });
 });

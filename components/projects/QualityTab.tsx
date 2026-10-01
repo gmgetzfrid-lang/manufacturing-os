@@ -168,19 +168,32 @@ export default function QualityTab({ orgId, projectId, canManage, uid, userEmail
    *  cards re-read the items the sweep changed. */
   const [sweepTick, setSweepTick] = useState(0);
   /** COST-12 / MON-7: the project's contractors, for the turnover and punch
-   *  add rows — read on its own, so a failure only hides the picker (the
-   *  item is still added, unassigned) and never the lists. EVERY contractor
-   *  is kept (J10 third fix): an item assigned to one later set inactive
-   *  still names it; only the pickers that choose a new one leave inactive
-   *  contractors out (`pickableContractors`). */
+   *  add rows — read on its own, so a failure never hides the lists (an
+   *  item is still added, unassigned). EVERY contractor is kept (J10 third
+   *  fix): an item assigned to one later set inactive still names it; only
+   *  the pickers that choose a new one leave inactive contractors out
+   *  (`pickableContractors`). */
   const [contractors, setContractors] = useState<CostParty[]>([]);
+  /** UX-10 (final review): a failed contractors read is said, with Retry —
+   *  never shown as data. Until the list answers, an assigned item's
+   *  contractor is "not loaded", never "not on this project's list", and
+   *  each picker says why it is not there. */
+  const [contractorsError, setContractorsError] = useState<string | null>(null);
+  const [contractorsState, setContractorsState] = useState<ContractorsState>("loading");
+  const [contractorsTry, setContractorsTry] = useState(0);
   useEffect(() => {
     let cancelled = false;
     listParties(orgId, projectId)
-      .then((ps) => { if (!cancelled) setContractors(ps); })
-      .catch((e: unknown) => { console.warn(`[QualityTab] contractors not read: ${(e as Error).message}`); });
+      .then((ps) => { if (!cancelled) { setContractors(ps); setContractorsError(null); setContractorsState("ready"); } })
+      .catch((e: unknown) => {
+        if (cancelled) return;
+        // listParties says "Couldn't load the contractors: <reason>" — the
+        // note below says the first half itself.
+        const why = userFacingCaughtError(e, { action: "read", context: "QualityTab.contractors" }).replace(/^Couldn't load the contractors:\s*/, "");
+        setContractors([]); setContractorsError(why); setContractorsState("failed");
+      });
     return () => { cancelled = true; };
-  }, [orgId, projectId]);
+  }, [orgId, projectId, contractorsTry]);
 
   const refresh = useCallback(async () => {
     // The sign-off decision is re-read beside the lists (it never throws:
@@ -215,13 +228,17 @@ export default function QualityTab({ orgId, projectId, canManage, uid, userEmail
       {authority?.error && (
         <Notice notice={info(`Couldn't read who may sign off on this project (${asClause(authority.error)}) — the controls shown are the ones the project owner, Admin and Document Control always have.`)} />
       )}
+      {contractorsError && (
+        <Notice notice={failure(`The project's contractors couldn't be loaded — ${asClause(contractorsError)}. Each item keeps its contractor, but it can't be shown or changed until the list loads.`)}
+          action={<button type="button" onClick={() => setContractorsTry((n) => n + 1)} className="underline">Retry</button>} />
+      )}
       <ChecklistsSection key={sweepTick} orgId={orgId} projectId={projectId} canManage={canSignOff} actor={actor} signoff={signoff}
         checklists={checklists} loadError={loadErrors.checklists} onRetry={retry} onChanged={retry} />
       <TurnoverSection orgId={orgId} projectId={projectId} canManage={canSignOff} actor={actor} signoff={signoff}
         items={turnover} events={events} loadError={loadErrors.turnover} historyError={loadErrors.history} onRetry={retry}
-        jobKind={jobKind} onChanged={retry} onEvidenceSwept={() => setSweepTick((t) => t + 1)} contractors={contractors} />
+        jobKind={jobKind} onChanged={retry} onEvidenceSwept={() => setSweepTick((t) => t + 1)} contractors={contractors} contractorsState={contractorsState} />
       <PunchSection orgId={orgId} projectId={projectId} canManage={canSignOff} actor={actor}
-        items={punch} loadError={loadErrors.punch} onRetry={retry} onChanged={retry} contractors={contractors} />
+        items={punch} loadError={loadErrors.punch} onRetry={retry} onChanged={retry} contractors={contractors} contractorsState={contractorsState} />
     </div>
   );
 }
@@ -989,7 +1006,7 @@ function DocPicker({ orgId, title, onPick, onSkip, onCancel }: {
   );
 }
 
-function TurnoverSection({ orgId, projectId, canManage, actor, signoff, items, events, loadError, historyError, onRetry, jobKind, onChanged, onEvidenceSwept, contractors = [] }: {
+function TurnoverSection({ orgId, projectId, canManage, actor, signoff, items, events, loadError, historyError, onRetry, jobKind, onChanged, onEvidenceSwept, contractors = [], contractorsState = "ready" }: {
   orgId: string; projectId: string; canManage: boolean; actor: Actor; signoff: SignoffContext;
   items: TurnoverItem[]; events: TurnoverReviewEvent[];
   /** The items' read failed / the history's read failed (UX-10). */
@@ -1001,6 +1018,8 @@ function TurnoverSection({ orgId, projectId, canManage, actor, signoff, items, e
   /** COST-12 / MON-7: who delivers an item — its acceptance counts for the
    *  Known Company that contractor is linked to. */
   contractors?: CostParty[];
+  /** Whether `contractors` is the project's list yet (UX-10, final review). */
+  contractorsState?: ContractorsState;
 }) {
   const [busy, setBusy] = useState<string | null>(null);
   const [addName, setAddName] = useState("");
@@ -1009,6 +1028,7 @@ function TurnoverSection({ orgId, projectId, canManage, actor, signoff, items, e
   const [seedParty, setSeedParty] = useState("");
   const contractorName = useMemo(() => contractorNames(contractors), [contractors]);
   const pickable = useMemo(() => pickableContractors(contractors), [contractors]);
+  const unread = contractorsState === "failed";
   const addItem = async () => {
     if (!addName.trim()) return;
     const r = await addTurnoverItem({ orgId, projectId, name: addName, partyId: addParty || null, actor });
@@ -1145,9 +1165,11 @@ function TurnoverSection({ orgId, projectId, canManage, actor, signoff, items, e
         )}
         {canManage && !loadError && (
           <span className="ml-auto flex flex-wrap items-center justify-end gap-2">
-            {pickable.length > 0 && (
+            {pickable.length > 0 ? (
               <ContractorPicker contractors={pickable} value={seedParty} onChange={setSeedParty} label="Contractor who delivers the seeded items" />
-            )}
+            ) : unread ? (
+              <ContractorsUnavailable text="Seeded items get no contractor — the project's contractors couldn't be loaded" />
+            ) : null}
             <button onClick={() => void seed()} disabled={busy != null}
               className={`${DECISION_TARGET} inline-flex items-center gap-1 px-2.5 py-1 rounded-lg border border-[var(--color-border-strong)] text-[11px] font-bold text-[var(--color-text)] hover:bg-[var(--color-surface-2)] disabled:opacity-50 transition-colors`}
               title={`Adds the required contents for a ${jobKind ?? "standard"} job (existing items are kept).`}>
@@ -1192,14 +1214,17 @@ function TurnoverSection({ orgId, projectId, canManage, actor, signoff, items, e
                 <div className="flex items-center gap-2 flex-wrap">
                   <span className="font-bold text-[var(--color-text)]">{it.name}</span>
                   {canManage && busy !== it.id && pickable.length > 0 && (it.status === "open" || it.status === "received") ? (
-                    // Undecided: the pick is the write — it can still be changed.
-                    <ContractorPicker contractors={contractors} value={it.partyId ?? ""} onChange={(v) => void assign(it, v)}
-                      label={`Contractor who delivers ${it.name}`} placeholder={it.partyId ? "No contractor" : "Assign contractor…"} compact />
+                    // Undecided: written only by Assign / Save (the select
+                    // alone writes nothing) — it can still be changed.
+                    <ContractorSave key={it.partyId ?? ""} contractors={contractors} current={it.partyId ?? ""}
+                      label={`Contractor who delivers ${it.name}`} onSave={(v) => void assign(it, v)} />
                   ) : canManage && busy !== it.id && pickable.length > 0 && !it.partyId && (it.status === "accepted" || it.status === "waived") ? (
                     // Decided: nothing is written until Assign is confirmed.
                     <LateContractorAssign contractors={pickable} label={`Contractor who delivered ${it.name}`} onAssign={(c) => void lateAssign(it, c)} />
                   ) : it.partyId ? (
-                    <span className="text-[10px] text-[var(--color-text-muted)]">· {contractorName.get(it.partyId) ?? "a contractor not on this project's list"}</span>
+                    <span className="text-[10px] text-[var(--color-text-muted)]">· {assignedName(contractorName, it.partyId, contractorsState)}</span>
+                  ) : canManage && unread && it.status !== "rejected" ? (
+                    <ContractorsUnavailable text="· no contractor — one can be assigned once the project's contractors load" />
                   ) : canManage && it.status === "rejected" && pickable.length > 0 ? (
                     <span className="text-[10px] text-[var(--color-text-muted)]">· no contractor — name one once the resubmission is accepted</span>
                   ) : null}
@@ -1330,9 +1355,11 @@ function TurnoverSection({ orgId, projectId, canManage, actor, signoff, items, e
             onKeyDown={(e) => { if (e.key === "Enter") void addItem(); }}
             placeholder="Add a required item — e.g. Torque records"
             className="h-8 flex-1 min-w-40 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-2 text-xs" />
-          {pickable.length > 0 && (
+          {pickable.length > 0 ? (
             <ContractorPicker contractors={pickable} value={addParty} onChange={setAddParty} label="Contractor who delivers it" />
-          )}
+          ) : unread ? (
+            <ContractorsUnavailable text="No contractor can be chosen — the project's contractors couldn't be loaded; the item is added without one" />
+          ) : null}
           <button onClick={() => void addItem()}
             className={`${DECISION_TARGET} h-8 inline-flex items-center gap-1 px-3 rounded-lg bg-[var(--color-accent)] text-[var(--color-accent-fg)] text-[11px] font-black hover:bg-[var(--color-accent-hover)]`}>
             <Plus className="w-3 h-3" /> Add
@@ -1355,19 +1382,38 @@ function contractorNames(contractors: CostParty[]): Map<string, string> {
   return new Map(contractors.map((c) => [c.id, c.status === "inactive" ? `${c.name} (inactive)` : c.name]));
 }
 
+/** Whether the project's contractors have been read (UX-10, final review). */
+type ContractorsState = "loading" | "ready" | "failed";
+
+/** The name an assigned item shows. "Not on this project's list" is said
+ *  only once the list answered — while it is unread, an id it cannot name
+ *  is "not loaded" (a broken read is never shown as data). */
+function assignedName(names: Map<string, string>, partyId: string, state: ContractorsState): string {
+  return names.get(partyId) ?? (state === "ready" ? "a contractor not on this project's list" : "contractor not loaded");
+}
+
+/** Where a contractor picker would be while the project's contractors
+ *  can't be read: it says why it is not there, never vanishes silently. */
+function ContractorsUnavailable({ text }: { text: string }) {
+  return <span data-contractors-unavailable className="text-[10px] text-[var(--color-text-muted)]">{text}</span>;
+}
+
 /** The contractor an item is assigned to (optional). Its acceptance or
  *  close-out counts for the Known Company that contractor is linked to; an
  *  unassigned or unlinked one counts for nobody (never as a zero). The
- *  options are the active contractors plus the one already chosen — marked
- *  "(inactive)" when it is, and named as missing when it is not on the list
- *  at all — so the select never shows another contractor than the item's. */
-function ContractorPicker({ contractors, value, onChange, label, placeholder = "Contractor (optional)…", compact = false }: {
+ *  options are the active contractors plus the one already chosen (and the
+ *  item's own, `keep`) — marked "(inactive)" when it is, and named as
+ *  missing when it is not on the list at all — so the select never shows
+ *  another contractor than the item's. */
+function ContractorPicker({ contractors, value, onChange, label, placeholder = "Contractor (optional)…", compact = false, keep = "" }: {
   contractors: CostParty[]; value: string; onChange: (v: string) => void; label: string;
   placeholder?: string;
   /** A row's own control (MON-7): smaller, with the decision-target floor. */
   compact?: boolean;
+  /** The item's recorded contractor, offered even while another is picked. */
+  keep?: string;
 }) {
-  const options = contractors.filter((c) => c.status !== "inactive" || c.id === value);
+  const options = contractors.filter((c) => c.status !== "inactive" || c.id === value || (keep !== "" && c.id === keep));
   const missing = value !== "" && !options.some((c) => c.id === value);
   return (
     <select value={value} onChange={(e) => onChange(e.target.value)} aria-label={label} title={`${label} — their company's scorecard counts it`}
@@ -1378,6 +1424,32 @@ function ContractorPicker({ contractors, value, onChange, label, placeholder = "
       {missing && <option value={value}>A contractor not on this project&apos;s list</option>}
       {options.map((c) => <option key={c.id} value={c.id}>{c.name}{c.status === "inactive" ? " (inactive)" : ""}{c.companyId ? "" : " (unlinked)"}</option>)}
     </select>
+  );
+}
+
+/** MON-7 / COST-12 (final review): an UNDECIDED item's contractor is
+ *  written only by its button — the select alone writes nothing (a
+ *  keyboard arrow on a closed select fires `change` in some browsers, so
+ *  one keystroke used to assign the first contractor). "Assign" names one
+ *  for an unassigned item, "Save" changes or clears it; it can still be
+ *  changed while the item is undecided, so no confirm is asked. */
+function ContractorSave({ contractors, current, label, onSave }: {
+  contractors: CostParty[]; current: string; label: string; onSave: (partyId: string) => void;
+}) {
+  const [pick, setPick] = useState(current);
+  const changed = pick !== current;
+  const chosen = contractors.find((c) => c.id === pick) ?? null;
+  const verb = current ? "Save" : "Assign";
+  return (
+    <span className="inline-flex flex-wrap items-center gap-2">
+      <ContractorPicker contractors={contractors} value={pick} keep={current} onChange={setPick} label={label}
+        placeholder={current ? "No contractor" : "Assign contractor…"} compact />
+      <button type="button" disabled={!changed} onClick={() => { if (changed) onSave(pick); }}
+        aria-label={!changed ? `${verb} — choose a different contractor first` : chosen ? `${verb} ${chosen.name}` : `${verb} — clear the contractor`}
+        className={`${DECISION_TARGET} px-1.5 py-0.5 rounded text-[10px] font-bold text-[var(--color-text)] border border-[var(--color-border-strong)] hover:bg-[var(--color-surface-2)] disabled:opacity-50 disabled:cursor-not-allowed`}>
+        {verb}
+      </button>
+    </span>
   );
 }
 
@@ -1450,17 +1522,20 @@ function TurnoverChip({ status }: { status: TurnoverItem["status"] }) {
 
 // ── Punch list ───────────────────────────────────────────────────────────
 
-function PunchSection({ orgId, projectId, canManage, actor, items, loadError, onRetry, onChanged, contractors = [] }: {
+function PunchSection({ orgId, projectId, canManage, actor, items, loadError, onRetry, onChanged, contractors = [], contractorsState = "ready" }: {
   orgId: string; projectId: string; canManage: boolean; actor: Actor;
   items: PunchItem[]; loadError?: string; onRetry: () => void; onChanged: () => void;
   /** COST-12 / MON-7: whose snag it is — its burn-down counts for the
    *  Known Company that contractor is linked to. */
   contractors?: CostParty[];
+  /** Whether `contractors` is the project's list yet (UX-10, final review). */
+  contractorsState?: ContractorsState;
 }) {
   const [title, setTitle] = useState("");
   const [party, setParty] = useState("");
   const contractorName = useMemo(() => contractorNames(contractors), [contractors]);
   const pickable = useMemo(() => pickableContractors(contractors), [contractors]);
+  const unread = contractorsState === "failed";
   const [location, setLocation] = useState("");
   const [description, setDescription] = useState("");
   const [due, setDue] = useState("");
@@ -1537,9 +1612,11 @@ function PunchSection({ orgId, projectId, canManage, actor, items, loadError, on
             className="h-8 w-48 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-2 text-xs" />
           <input type="date" value={due} onChange={(e) => setDue(e.target.value)} aria-label="Due date"
             className="h-8 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-2 text-xs [color-scheme:light] dark:[color-scheme:dark]" />
-          {pickable.length > 0 && (
+          {pickable.length > 0 ? (
             <ContractorPicker contractors={pickable} value={party} onChange={setParty} label="Contractor responsible" />
-          )}
+          ) : unread ? (
+            <ContractorsUnavailable text="No contractor can be chosen — the project's contractors couldn't be loaded; the item is added without one" />
+          ) : null}
           <button onClick={() => void add()} disabled={busy === "add"}
             className={`${DECISION_TARGET} h-8 inline-flex items-center gap-1 px-3 rounded-lg bg-[var(--color-accent)] text-[var(--color-accent-fg)] text-[11px] font-black hover:bg-[var(--color-accent-hover)] disabled:opacity-50`}>
             {busy === "add" ? <Loader2 className="w-3 h-3 animate-spin" /> : <Plus className="w-3 h-3" />} Add
@@ -1569,14 +1646,17 @@ function PunchSection({ orgId, projectId, canManage, actor, items, loadError, on
                   <span className={it.status !== "open" ? "text-[var(--color-text-muted)] line-through" : "text-[var(--color-text)]"}>{it.title}</span>
                   {it.location && <span className="text-[10px] font-bold text-[var(--color-text-muted)]">@ {it.location}</span>}
                   {canManage && busy !== it.id && pickable.length > 0 && it.status === "open" ? (
-                    // Open: the pick is the write — it can still be changed.
-                    <ContractorPicker contractors={contractors} value={it.partyId ?? ""} onChange={(v) => void assign(it, v)}
-                      label={`Contractor responsible for ${it.title}`} placeholder={it.partyId ? "No contractor" : "Assign contractor…"} compact />
+                    // Open: written only by Assign / Save (the select alone
+                    // writes nothing) — it can still be changed.
+                    <ContractorSave key={it.partyId ?? ""} contractors={contractors} current={it.partyId ?? ""}
+                      label={`Contractor responsible for ${it.title}`} onSave={(v) => void assign(it, v)} />
                   ) : canManage && busy !== it.id && pickable.length > 0 && !it.partyId ? (
                     // Closed or voided: nothing is written until Assign is confirmed.
                     <LateContractorAssign contractors={pickable} label={`Contractor who was responsible for ${it.title}`} onAssign={(c) => void lateAssign(it, c)} />
                   ) : it.partyId ? (
-                    <span className="text-[10px] text-[var(--color-text-muted)]">· {contractorName.get(it.partyId) ?? "a contractor not on this project's list"}</span>
+                    <span className="text-[10px] text-[var(--color-text-muted)]">· {assignedName(contractorName, it.partyId, contractorsState)}</span>
+                  ) : canManage && unread ? (
+                    <ContractorsUnavailable text="· no contractor — one can be assigned once the project's contractors load" />
                   ) : null}
                   {it.dueDate && it.status === "open" && (
                     <span className={`text-[10px] font-bold ${overdue ? "text-rose-600 dark:text-rose-400" : "text-[var(--color-text-muted)]"}`}>

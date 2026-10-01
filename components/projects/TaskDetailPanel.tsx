@@ -442,7 +442,7 @@ export default function TaskDetailPanel({
             <button onClick={() => void onDelete()} className="inline-flex items-center gap-1.5 text-[11px] font-bold text-rose-600 hover:text-rose-800 hover:bg-rose-50 px-2 py-1 rounded-md">
               <Trash2 className="w-3.5 h-3.5" /> Delete task
             </button>
-            {deleteError && <span role="alert" className="text-[11px] text-rose-600">{deleteError}</span>}
+            {deleteError && <span role="alert" className="text-[11px] text-rose-700 dark:text-rose-300">{deleteError}</span>}
           </div>
         )}
         {saving && <div className="absolute inset-0 bg-white/40 flex items-center justify-center"><Loader2 className="w-6 h-6 animate-spin text-indigo-600" /></div>}

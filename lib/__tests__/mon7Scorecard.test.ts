@@ -21,6 +21,8 @@ const db = vi.hoisted(() => ({
   rows: {} as Record<string, Array<Record<string, unknown>>>,
   writes: [] as Array<{ table: string; op: "insert" | "update"; payload: unknown; filters: string[] }>,
   seq: 0,
+  /** A table whose reads fail with this driver error (the registry check). */
+  readError: {} as Record<string, { code: string; message: string }>,
 }));
 function orPredicate(expr: string): (r: Record<string, unknown>) => boolean {
   const preds = expr.split(",").map((t) => {
@@ -41,7 +43,8 @@ function chain(table: string) {
   let payload: Record<string, unknown> | Array<Record<string, unknown>> | null = null;
   let selected = false;
   const all = () => (db.rows[table] ??= []);
-  const run = (): { data: unknown; error: null } => {
+  const run = (): { data: unknown; error: unknown } => {
+    if (op === "select" && db.readError[table]) return { data: null, error: db.readError[table] };
     if (op === "insert") {
       const rows = (Array.isArray(payload) ? payload : [payload!]).map((r) => ({ id: `${table}-${++db.seq}`, ...r }));
       all().push(...rows);
@@ -104,6 +107,7 @@ beforeEach(() => {
   db.rows = { companies: [GULF, APEX_BARRED, APEX_OTHER].map(companyRow), projects: [{ id: "p1", name: "Unit 3 turnaround" }] };
   db.writes = [];
   db.seq = 0;
+  db.readError = {};
 });
 
 describe("MON-7 dw1 / COST-12 dw1 — a contractor added on the Costs tab appears on its company's profile", () => {
@@ -156,6 +160,31 @@ describe("MON-7 dw1 / COST-12 dw1 — a contractor added on the Costs tab appear
     const r = await linkPartyToCompany({ orgId: "o1", partyId: unlinked.id, companyId: "c1", actor });
     expect(r.needsOverride).toEqual({ companyId: "c9", company: "Apex Industrial" });
     expect((await listParties("o1", "p1")).find((p) => p.id === unlinked.id)!.companyId).toBeNull();
+  });
+
+  it("final review: an unreadable registry says what did NOT happen on each path — the Costs-tab add says the contractor was not added; a later link says nothing was linked", async () => {
+    await saveParty({ orgId: "o1", projectId: "p1", patch: { name: "Gulf Mech (field crew)" }, actor });   // an unlinked contractor, for the link path
+    const existing = db.rows.project_parties[0].id as string;
+    db.writes = [];
+    db.readError = { companies: { code: "57014", message: "canceling statement due to statement timeout" } };
+    const why = "Couldn't check the company registry (The database took too long to answer — try again)";
+
+    // the add refuses the WHOLE insert, so it must not read as "added, unlinked"
+    const add = await saveParty({ orgId: "o1", projectId: "p1", patch: { name: "Gulf Mechanical", companyId: "c1" }, actor });
+    expect(add).toEqual({ ok: false, error: `${why} — the contractor was not added; try again, or add it with no company link.` });
+    expect(add.error).not.toContain("nothing was linked");
+    expect(db.rows.project_parties.map((p) => p.name)).toEqual(["Gulf Mech (field crew)"]);   // not added
+    // …and "add it with no company link" works (no registry read is needed)
+    expect((await saveParty({ orgId: "o1", projectId: "p1", patch: { name: "Gulf Mechanical" }, actor })).ok).toBe(true);
+
+    // the later link: the contractor exists, only the link was refused
+    const link = await linkPartyToCompany({ orgId: "o1", partyId: existing, companyId: "c1", actor });
+    expect(link).toEqual({ ok: false, error: `${why} — nothing was linked.` });
+    expect(db.rows.project_parties.find((p) => p.id === existing)!.company_id ?? null).toBeNull();
+    expect(db.writes.filter((w) => w.op === "update")).toEqual([]);
+    // the wizard's note keeps its own wording (the contractor IS added there, unlinked)
+    const note = await checkPartyCompanyLink("o1", "Gulf Mechanical", "c1");
+    expect(note).toEqual({ ok: false, note: `"Gulf Mechanical" was added without a company link: ${why}. Link it on the project's Costs tab.` });
   });
 });
 
@@ -331,7 +360,7 @@ describe("MON-7 dw2 / COST-12 dw3 (fix pass) — a SEEDED or existing item is as
     expect((await assignPunchContractor({ item: named, partyId: null, actor })).error).toBe("This punch item is voided — its contractor stays as recorded.");
   });
 
-  it("the Quality tab wires it: an undecided row's pick is its write; a decided, unassigned row (accepted / waived, closed / voided) goes through Assign and a confirm; a rejected one has no control; a picker beside Seed required contents", () => {
+  it("the Quality tab wires it: an undecided row is written by its Assign / Save (final review — never by the select alone); a decided, unassigned row (accepted / waived, closed / voided) goes through Assign and a confirm; a rejected one has no control; a picker beside Seed required contents", () => {
     const q = readFileSync(join(process.cwd(), "components/projects/QualityTab.tsx"), "utf8");
     expect(q).toContain("seedTurnoverItems({ orgId, projectId, jobKind, partyId: seedParty || null, actor })");
     expect(q).toContain('label="Contractor who delivers the seeded items"');
@@ -344,6 +373,8 @@ describe("MON-7 dw2 / COST-12 dw3 (fix pass) — a SEEDED or existing item is as
     expect(q).toContain('{canManage && busy !== it.id && pickable.length > 0 && it.status === "open" ? (');
     expect(q).toContain("if (!(await confirmLateContractor({ itemName: it.title, decided: it.status, contractor }))) return;");
     expect(q).toContain("label={`Contractor responsible for ${it.title}`}");
+    expect(q).toContain("onSave={(v) => void assign(it, v)} />");
+    expect(q).not.toContain("onChange={(v) => void assign(it, v)}");
     // rendered behaviour: qualityTabContractorAssign.test.ts
   });
 });
