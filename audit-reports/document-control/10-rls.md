@@ -651,7 +651,7 @@ schema.sql:144 `current_version_id UUID,` — the column immediately follows `st
 
 **Failure scenario.** An outsider with the anon key (shipped in every page) and a document id (printed on every `/verify` QR) calls `rpc('publish_revision', { p_doc, p_expected_base: null, p_actor: <any member's uid>, p_version: {...} })`. The first call answers `stale_base`, which hands back `current_version_id`; the second, with that id, publishes arbitrary bytes as the named member — no guard runs, and no audit row points at the real caller.
 
-**Hotfix — paste now, independent of wave 2** (one script; the final SELECT is the only result the SQL editor shows):
+**Hotfix — paste now, independent of wave 2** (one script; the final SELECT is the only result the SQL editor shows). *Superseded 2026-10-01 by migration `20261129_dc_hotfix_anon_execute.sql` (below), which covers every overload of both functions; the snippet is kept as first written:*
 
 ```sql
 -- DRLS-16 hotfix: anon may not execute the live 11-argument publish_revision.
@@ -668,13 +668,18 @@ SELECT 'authenticated can still execute publish_revision/11 (expect ok = true)',
 
 **Sweep.** Every SECURITY DEFINER function that treats `auth.uid() IS NULL` as the service role is exposed the same way unless `anon` is revoked. A scan of the migration sequence at `a11e1e4` for non-trigger SECURITY DEFINER functions reading `auth.uid() IS [NOT] NULL` without a `REVOKE … anon` found, besides `publish_revision`: `post_ticket_comment` (`20260810_archive_invariants.sql` — skips the membership check for a NULL uid; outside document-control). `force_release_document` and `revoke_member` (`20261043`) refuse a NULL uid and are safe. The scan is textual; the live check is `SELECT p.oid::regprocedure FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace WHERE n.nspname = 'public' AND p.prosecdef AND has_function_privilege('anon', p.oid, 'EXECUTE');` — every row it returns is a function an outsider can call, to be read for a NULL-uid branch.
 
+**Partial (2026-10-01, integrator hotfix).** Landed as migration **`supabase/migrations/20261129_dc_hotfix_anon_execute.sql` — not yet pasted, so nothing below binds the live database yet.** For every overload of `publish_revision` and `post_ticket_comment` present in `public` (a `pg_proc` loop by name, so whichever signature is live — `20261049` / `20261060` / `20261105` / `20261130`'s — is covered), it first restates `GRANT EXECUTE … TO authenticated, service_role` (every defining migration grants both explicitly; restating keeps them on a database that only ever had them through `PUBLIC`), then revokes EXECUTE from `anon` and `PUBLIC`. One transaction; idempotent; narrows only; independent of every other pending migration and safe before or after `20261130`. Its final SELECT probes both functions refused to `anon`, `publish_revision` still executable by `authenticated` and `post_ticket_comment` by `service_role`, and lists the live sweep (a count plus one row per SECURITY DEFINER function in `public` that `anon` can still execute — signatures only). Exercised on a throwaway PostgreSQL 16 with stub overloads granted to all three roles, re-run for idempotence, and with one overload reachable only through `PUBLIC`: all four probes `true` each time, the sweep listing only the unrelated stub, the ACLs afterwards `authenticated` / `service_role` (plus the owner) only.
+
+- Shape test (done-when 3): `lib/__tests__/dcHotfixAnonExecute.test.ts` reads the numbered migration sequence and refuses any non-trigger SECURITY DEFINER function whose newest definition tests a uid for NULL (`auth.uid()` directly, or a variable assigned from it) unless the body refuses a NULL uid (`IF <uid> IS NULL THEN RAISE`) or a migration at or after that definition revokes `anon` on it. It sees eleven such functions today: five refuse a NULL uid (`force_release_document`, `revoke_member` — `20261043`; `delete_project_record`, `reopen_project` — `20261103`; `transfer_project_ownership` — `20261102`); six let it through and revoke `anon` (`publish_revision` — `20261130`; `post_ticket_comment` — this hotfix; `document_share_refusal` — `20261080`; `apply_milestone_moves` — `20261098`; `set_project_baseline`, `clear_project_baseline` — `20261099`). Only the session uid counts for a refusal — `auth.uid()` or a variable DECLAREd from it — so `publish_revision`'s `ELSIF p_actor IS NULL THEN RAISE` is not read as one. Negative controls: with `20261129` removed it fails naming `post_ticket_comment (newest definition 20260810_archive_invariants.sql)`; with `anon` dropped from `20261130`'s REVOKE it fails naming `publish_revision`. The scan is textual; the live sweep is the hotfix's result set.
+- Remainder: done-when 1 is the paste; done-when 2 is reading the paste's sweep rows (any row other than a function that refuses a NULL uid is a new finding).
+
 **Done when.**
 
 - [ ] The hotfix is pasted and its two probes read `true` (or `20261130` is pasted, which drops the signature and grants the new one to `authenticated` / `service_role` only, revoking `PUBLIC` and `anon`, with a probe).
 - [ ] The live sweep query above has been run and every SECURITY DEFINER function with a NULL-uid branch revokes `anon` (`post_ticket_comment` first).
-- [ ] A shape test refuses any migration that grants a SECURITY DEFINER function with a NULL-uid branch without revoking `anon`.
+- [x] A shape test refuses any migration that grants a SECURITY DEFINER function with a NULL-uid branch without revoking `anon`. *(2026-10-01: `lib/__tests__/dcHotfixAnonExecute.test.ts`.)*
 
-**Closer:** the operator pastes the hotfix today (no package needed); the sweep and the shape test are unassigned — the integrator assigns them (cross-area).
+**Closer:** the operator pastes `20261129` today (no package needed) and reads its sweep rows back; the shape test landed with the hotfix (2026-10-01).
 
 ---
 

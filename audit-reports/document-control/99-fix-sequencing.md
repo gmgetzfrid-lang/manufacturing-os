@@ -160,7 +160,7 @@ themselves app changes.)*
 
 **Order.**
 
-0. Paste the `DRLS-16` hotfix now (below), independent of everything else.
+0. Paste the `DRLS-16` hotfix now (below) — migration `20261129_dc_hotfix_anon_execute.sql` — independent of everything else.
 1. Deploy the `DRLS-15` and `DRLS-17` page fixes.
 2. Paste `20261130` (the override reason inside `publish_revision`).
 3. Paste `20261131` (the documents-table rails) — only now (rule 1).
@@ -191,9 +191,14 @@ the page fixes.
 ⚠ **Paste NOW, independent of wave 2 — `DRLS-16` (CRITICAL).** The live
 11-argument `publish_revision` was never revoked from `anon`, and it reads a
 NULL `auth.uid()` as a service-role call that may name any actor. The
-one-statement hotfix and its check are in the `DRLS-16` record
-(`10-rls.md`); `20261130` later drops the signature and grants the new one
-without `anon`.
+hotfix is migration `20261129_dc_hotfix_anon_execute.sql` (2026-10-01; it
+supersedes the one-statement snippet first written into the `DRLS-16`
+record): it revokes `anon` on every overload of `publish_revision` and of
+`post_ticket_comment` (the same NULL-uid shape) and its result set lists
+every SECURITY DEFINER function `anon` can still execute, to be read back
+into `DRLS-16`. `20261130` later drops the signature and grants the new one
+without `anon`; `lib/__tests__/dcHotfixAnonExecute.test.ts` refuses any
+future migration that re-opens the shape.
 
 **`REV-9` closes** when P8 swaps `/api/verify`'s inline date for
 `effectiveTodayISO()` and every deployment names its zone (rule 2).
