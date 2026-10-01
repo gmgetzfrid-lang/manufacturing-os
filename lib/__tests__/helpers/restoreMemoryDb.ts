@@ -18,7 +18,10 @@
 // rows it changed. Admin-and-org P2 fix pass (ILIFE-6, the export's keyset
 // paging): `gt` filters, and `order` / `limit` are honoured (they were
 // no-ops) — sorted by each order column in turn, nulls last, before `range`,
-// `limit` and the max-rows cut.
+// `limit` and the max-rows cut. Its second review fix pass (composite-key
+// keyset): `or(...)` filters in PostgREST's logic-tree syntax — terms
+// `col.eq.v` / `col.gt.v` / `col.lt.v`, nested `and(...)` / `or(...)`, and
+// double-quoted values with backslash escapes.
 
 export type Row = Record<string, unknown>;
 
@@ -53,6 +56,46 @@ function cmp(a: unknown, b: unknown): number {
   if (typeof a === "number" && typeof b === "number") return a - b;
   const as = String(a); const bs = String(b);
   return as < bs ? -1 : as > bs ? 1 : 0;
+}
+
+/** Split a logic-tree list on its top-level commas (not inside parentheses or quotes). */
+function splitTerms(src: string): string[] {
+  const out: string[] = []; let depth = 0; let quoted = false; let cur = "";
+  for (let i = 0; i < src.length; i++) {
+    const ch = src[i];
+    if (quoted) {
+      cur += ch;
+      if (ch === "\\") { cur += src[++i] ?? ""; continue; }
+      if (ch === '"') quoted = false;
+      continue;
+    }
+    if (ch === '"') { quoted = true; cur += ch; continue; }
+    if (ch === "(") depth++;
+    if (ch === ")") depth--;
+    if (ch === "," && depth === 0) { out.push(cur); cur = ""; continue; }
+    cur += ch;
+  }
+  if (cur) out.push(cur);
+  return out;
+}
+const unquote = (v: string) => (v.startsWith('"') && v.endsWith('"') ? v.slice(1, -1).replace(/\\(.)/g, "$1") : v);
+/** One PostgREST logic-tree term as a row predicate. */
+function logicTerm(term: string): (r: Row) => boolean {
+  const group = /^(and|or)\(([\s\S]*)\)$/.exec(term);
+  if (group) {
+    const parts = splitTerms(group[2]).map(logicTerm);
+    return group[1] === "and" ? (r) => parts.every((f) => f(r)) : (r) => parts.some((f) => f(r));
+  }
+  const m = /^([^.]+)\.(eq|gt|lt)\.([\s\S]*)$/.exec(term);
+  if (!m) throw new Error(`restoreMemoryDb: unsupported or() term ${term}`);
+  const [, col, op, raw] = m;
+  const v = unquote(raw);
+  return (r) => {
+    const x = r[col];
+    if (x === null || x === undefined) return false;
+    const c = cmp(typeof x === "number" ? x : String(x), typeof x === "number" ? Number(v) : v);
+    return op === "eq" ? c === 0 : op === "gt" ? c > 0 : c < 0;
+  };
 }
 
 function exec(table: string, op: string, payload: unknown, opts: Record<string, unknown> | undefined, filters: Array<(r: Row) => boolean>, single: boolean, range: [number, number] | null, orders: Array<{ col: string; asc: boolean }> = [], limit: number | null = null) {
@@ -135,6 +178,7 @@ export function from(table: string) {
     is: (c: string, v: unknown) => { filters.push((r) => (r[c] ?? null) === v); return b; },
     lt: (c: string, v: unknown) => { filters.push((r) => typeof r[c] === "number" && typeof v === "number" && (r[c] as number) < v); return b; },
     gt: (c: string, v: unknown) => { filters.push((r) => r[c] !== null && r[c] !== undefined && cmp(r[c], v) > 0); return b; },
+    or: (expr: string) => { const fs = splitTerms(expr).map(logicTerm); filters.push((r) => fs.some((f) => f(r))); return b; },
     order: (c: string, o?: { ascending?: boolean }) => { orders.push({ col: c, asc: o?.ascending !== false }); return b; },
     limit: (n: number) => { limit = n; return b; },
     range: (from: number, to: number) => { range = [from, to]; return b; },

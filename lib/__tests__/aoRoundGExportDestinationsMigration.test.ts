@@ -9,6 +9,12 @@
 // authenticated USING (EXISTS (… org_members … uid = auth.uid() … 'active'))`
 // with no column restriction and no REVOKE anywhere in the sequence, so every
 // active member could select *_encrypted.
+//
+// Second review fix pass: export_runs_member_select (20260605:147-150, the
+// only definition) let the same members read every column of export_runs —
+// destination_path (the webhook URL, or <bucket>/<key>), diagnostics (the
+// push step naming the same) and error_message (the raw runner message). The
+// file now narrows export_runs to its card columns too.
 
 import { describe, it, expect } from "vitest";
 import { readFileSync, readdirSync } from "node:fs";
@@ -29,11 +35,14 @@ const COORDINATES = ["endpoint", "region", "bucket", "prefix", "webhook_url"];
  *  failure names the host; a webhook failure carries the remote's body). */
 const RAW_ERRORS = ["last_run_error"];
 
-function grantedColumns(): string[] {
-  const m = sql.match(/GRANT\s+SELECT\s*\(([^)]*)\)\s*ON\s+TABLE\s+export_destinations\s+TO\s+authenticated\s*;/i);
-  expect(m, "the column grant").not.toBeNull();
+function grantedColumns(table = "export_destinations"): string[] {
+  const m = sql.match(new RegExp(`GRANT\\s+SELECT\\s*\\(([^)]*)\\)\\s*ON\\s+TABLE\\s+${table}\\s+TO\\s+authenticated\\s*;`, "i"));
+  expect(m, `the column grant on ${table}`).not.toBeNull();
   return m![1].split(",").map((c) => c.trim()).filter(Boolean);
 }
+/** export_runs columns a member never reads: where a run went, its step
+ *  trace, its raw error, the archive link, and who triggered it by address. */
+const RUN_WITHHELD = ["destination_path", "diagnostics", "error_message", "download_url", "download_url_expires_at", "triggered_by_email"];
 
 describe("20261154 — the one-paste shape", () => {
   it("inventory TEMP table (counts only) before ONE transaction, then ONE final (check, ok, n) SELECT", () => {
@@ -66,8 +75,9 @@ describe("20261154 — the one-paste shape", () => {
     expect(sql).not.toMatch(/CREATE\s+(OR\s+REPLACE\s+)?TRIGGER/i);
   });
 
-  it("the header carries the one-line rollback to the previous privileges", () => {
+  it("the header carries the rollback to the previous privileges, one line per table", () => {
     expect(raw).toMatch(/--\s+GRANT SELECT ON export_destinations TO anon, authenticated;/);
+    expect(raw).toMatch(/--\s+GRANT SELECT ON export_runs TO anon, authenticated;/);
   });
 });
 
@@ -135,6 +145,71 @@ describe("nothing in the app reads export_destinations with a member's session (
     expect(readers.length).toBeGreaterThan(0);
     for (const r of readers) expect(r, r).toMatch(/^app\/api\/data-export\/.*route\.ts$/);
     // and none of them uses the browser client
+    for (const r of readers) expect(readFileSync(join(root, r), "utf8"), r).not.toMatch(/from\s+["']@\/lib\/supabase["']/);
+  });
+});
+
+describe("20261154 — export_runs: the same coordinates, one row per run, narrowed the same way (second review fix pass)", () => {
+  it("the member policy is defined once in the whole sequence (20260605), no earlier file narrowed it, and this file leaves it as it is", () => {
+    const definers = numbered.filter((f) => /CREATE\s+POLICY\s+"?export_runs_member_select"?/i.test(readFileSync(join(MIGRATIONS, f), "utf8").replace(/--[^\n]*/g, "")));
+    expect(definers).toEqual(["20260605_rls_policies_new_tables.sql"]);
+    for (const f of numbered.filter((n) => n < FILE)) {
+      expect(readFileSync(join(MIGRATIONS, f), "utf8").replace(/--[^\n]*/g, ""), f).not.toMatch(/(REVOKE|GRANT)\s+[^;]*\bON\s+(TABLE\s+)?export_runs\b/i);
+    }
+  });
+
+  it("revokes the table-level SELECT from PUBLIC, anon and authenticated", () => {
+    expect(sql).toMatch(/REVOKE\s+SELECT\s+ON\s+TABLE\s+export_runs\s+FROM\s+PUBLIC,\s*anon,\s*authenticated\s*;/i);
+  });
+
+  it("grants back exactly the card columns: every column of the table but where it went, its trace, its raw error, the archive link and the email", () => {
+    const cols = [...(censusSchema().get("export_runs")?.columns ?? [])];
+    expect(cols.length).toBeGreaterThan(15);
+    for (const c of RUN_WITHHELD) expect(cols, c).toContain(c);
+    const expected = cols.filter((c) => !RUN_WITHHELD.includes(c)).sort();
+    expect(grantedColumns("export_runs").sort()).toEqual(expected);
+    expect(grantedColumns("export_runs")).toEqual(expect.arrayContaining(["status", "total_bytes", "started_at", "completed_at"]));
+  });
+
+  it("the withheld columns are the ones the runner writes the destination and the raw error into", () => {
+    const runner = readFileSync(join(root, "lib", "exportRunner.ts"), "utf8");
+    expect(runner).toMatch(/step\("webhook:push", dest\.webhook_url/);      // diagnostics names the webhook URL
+    expect(runner).toMatch(/step\("s3:push", `\$\{dest\.bucket\}\//);         // … and the bucket
+    for (const route of ["run", "run-scheduled"]) {
+      const src = readFileSync(join(root, "app", "api", "data-export", route, "route.ts"), "utf8");
+      expect(src, route).toMatch(/destination_path: result\.destinationPath/);
+      expect(src, route).toMatch(/error_message: msg\.slice\(0, 1000\)/);
+    }
+    for (const c of RUN_WITHHELD) expect(grantedColumns("export_runs"), c).not.toContain(c);
+  });
+
+  it("the probes check each limb: RLS on, policy kept, no table-level SELECT, each withheld column, the card columns, the service role", () => {
+    expect(sql).toMatch(/to_regclass\('public\.export_runs'\)/);
+    expect(sql).toMatch(/policyname = 'export_runs_member_select'/);
+    expect(sql).toMatch(/NOT has_table_privilege\('authenticated', 'public\.export_runs', 'SELECT'\)/);
+    expect(sql).toMatch(/NOT has_any_column_privilege\('anon', 'public\.export_runs', 'SELECT'\)/);
+    for (const c of RUN_WITHHELD) {
+      expect(sql).toMatch(new RegExp(`NOT has_column_privilege\\('authenticated', 'public\\.export_runs', '${c}', 'SELECT'\\)`));
+    }
+    expect(sql).toMatch(/has_table_privilege\('service_role', 'public\.export_runs', 'SELECT'\)/);
+    // and the inventory counts what members could read before the paste
+    const inventory = sql.slice(sql.indexOf("CREATE TEMP TABLE _ao_g54_before"), sql.indexOf("BEGIN;"));
+    expect(inventory).toMatch(/FROM export_runs\s+WHERE destination_path IS NOT NULL OR diagnostics IS NOT NULL OR error_message IS NOT NULL/);
+  });
+
+  it("nothing in the app reads export_runs with a member's session: every reader is a server route under app/api/data-export", () => {
+    function walk(dir: string): string[] {
+      return readdirSync(dir, { withFileTypes: true }).flatMap((d) => {
+        const p = join(dir, d.name);
+        if (d.isDirectory()) return d.name === "__tests__" || d.name === "node_modules" ? [] : walk(p);
+        return /\.(ts|tsx)$/.test(d.name) ? [p] : [];
+      });
+    }
+    const readers = [...walk(join(root, "app")), ...walk(join(root, "lib")), ...walk(join(root, "components")), ...walk(join(root, "hooks"))]
+      .filter((f) => /from\(\s*["']export_runs["']\s*\)/.test(readFileSync(f, "utf8")))
+      .map((f) => f.slice(root.length + 1).split("\\").join("/"))
+      .sort();
+    expect(readers).toEqual(["app/api/data-export/run-scheduled/route.ts", "app/api/data-export/run/route.ts", "app/api/data-export/runs/route.ts"]);
     for (const r of readers) expect(readFileSync(join(root, r), "utf8"), r).not.toMatch(/from\s+["']@\/lib\/supabase["']/);
   });
 });

@@ -85,7 +85,7 @@ vi.mock("@/lib/supabase", () => ({
   supabase: { auth: { getSession: async () => ({ data: { session: { access_token: "tok" } } }) } },
 }));
 
-import { runOrgExport, collectFilePaths, FILE_CHECK_CONCURRENCY, type DataExportEnvelope } from "@/lib/dataExport";
+import { runOrgExport, collectFilePaths, keysetAfter, FILE_CHECK_CONCURRENCY, FILE_CHECK_CEILING_MS, type DataExportEnvelope } from "@/lib/dataExport";
 import { buildAndDeliverExport } from "@/lib/exportRunner";
 import { runFullBackup } from "@/lib/clientBackup";
 import { REDACT_COLUMNS } from "@/lib/exportTables";
@@ -447,6 +447,41 @@ describe("the storage checks run side by side, in manifest order, under a time b
     expect(env.manifest.files).toMatchObject({ missing: 0, unchecked: sizeless.length });
     expect(env.manifest.notes.join(" ")).toMatch(new RegExp(`${sizeless.length} file\\(s\\) could not be checked against storage within this export's time limit`));
   });
+
+  it("a slow table dump shrinks the checks' budget: no check starts past the ceiling counted from the export's START, nor past the caller's deadline", async () => {
+    seedAttachments();
+    const { r2 } = await import("@/lib/r2");
+    const realNow = Date.now.bind(Date);
+    let skew = 0;
+    const clock = vi.spyOn(Date, "now").mockImplementation(() => realNow() + skew);
+    try {
+      // The dump "takes" 200 s (the clock jumps while the first table is read): the file phase
+      // starts past FILE_CHECK_CEILING_MS from the export's start, so its own 90 s never begins.
+      vi.mocked(r2.send).mockClear();
+      hooks.onRead = (t) => { if (t === "documents" && skew === 0) skew = FILE_CHECK_CEILING_MS + 50_000; };
+      const slow = await exportEnvelope();
+      expect(vi.mocked(r2.send)).not.toHaveBeenCalled();
+      const sizeless = slow.files.filter((f) => f.size == null);
+      expect(sizeless.length).toBeGreaterThan(N);
+      expect(slow.manifest.files.unchecked).toBe(sizeless.length);
+      // A dump of 30 s leaves the checks their time: every size-less file is checked.
+      skew = 0; vi.mocked(r2.send).mockClear();
+      hooks.onRead = (t) => { if (t === "documents" && skew === 0) skew = 30_000; };
+      const quick = await exportEnvelope();
+      expect(vi.mocked(r2.send)).toHaveBeenCalled();
+      expect(quick.manifest.files.unchecked).toBe(0);
+      // A caller's own deadline, already passed, stops every check whatever the budget.
+      skew = 0; hooks.onRead = null; vi.mocked(r2.send).mockClear();
+      const capped = await runOrgExport({
+        supabaseUrl: "https://x.supabase.co", serviceRoleKey: "svc", orgId: SRC, exporterUserId: "u-alice", exporterEmail: "alice@acme.com",
+        deadlineAt: Date.now() - 1,
+      });
+      expect(vi.mocked(r2.send)).not.toHaveBeenCalled();
+      expect(capped.manifest.files.unchecked).toBe(capped.files.filter((f) => f.size == null).length);
+    } finally {
+      clock.mockRestore();
+    }
+  });
 });
 
 describe("ILIFE-6 (export half) — every table is read once per row, in a stable order, past a row cap, and reconciled", () => {
@@ -500,24 +535,115 @@ describe("ILIFE-6 (export half) — every table is read once per row, in a stabl
     expect(env.manifest.complete).toBe(true);
   });
 
-  it("still short on the second read: the table is an error and the backup INCOMPLETE — never quietly short", async () => {
-    db.rows.documents = docs(2500);
+  /** Between pages of the first read (and of the re-read when `twice`), ten unread rows go and ten land behind the cursor. */
+  function churn(table: string, make: (n: number, prefix: string) => Row[], twice = true) {
     let reads = 0; let wave = 0;
     hooks.onRead = (t) => {
-      if (t !== "documents") return;
+      if (t !== table) return;
       reads++;
       // after page 1 of EACH read. First read: 1 count, 2 page 1, 3 page 2, 4 page 3, 5 the empty page,
       // 6 the count after. The re-read: 7 count, 8 page 1, 9 page 2.
-      if (reads === 3 || reads === 9) {
+      if (reads === 3 || (twice && reads === 9)) {
         wave++;
-        db.rows.documents = [...db.rows.documents.filter((r) => !new RegExp(`^d-2${wave}0\\d$`).test(String(r.id))), ...docs(10, `c${wave}`)];
+        db.rows[table] = [...db.rows[table].filter((r) => !new RegExp(`^[a-z]-2${wave}0\\d$`).test(String(r.id))), ...make(10, `c${wave}`)];
       }
     };
+    return () => wave;
+  }
+
+  it("still short on the second read: the backup is INCOMPLETE and names the counts — and the table KEEPS every row the reads found", async () => {
+    db.rows.documents = docs(2500);
+    const waves = churn("documents", docs);
     const env = await exportEnvelope();
-    expect(wave).toBe(2);
+    expect(waves()).toBe(2);
     expect(env.manifest.complete).toBe(false);
-    expect(env.manifest.tables.find((t) => t.name === "documents")?.error).toMatch(/read 2490 row\(s\), but the table held 2500 before the read and 2500 after it/);
-    expect(env.manifest.notes[0]).toMatch(/INCOMPLETE BACKUP/);
+    const entry = env.manifest.tables.find((t) => t.name === "documents")!;
+    expect(entry.error).toBeUndefined();
+    expect(entry.short).toMatch(/read 2490 row\(s\), but the table held 2500 before the read and 2500 after it/);
+    expect(entry.short).toMatch(/read twice: 2490 and 2490 row\(s\); the 2500 distinct row\(s\) the two reads found are included/);
+    // The rows are kept, not thrown away: the second read's 2,490 (c1-*, and d-* less the
+    // twenty deleted while it ran) plus the ten the first read found that the second did not.
+    const ids = new Set((env.tables.documents as Row[]).map((r) => String(r.id)));
+    expect(ids.size).toBe((env.tables.documents as Row[]).length);
+    const expected = [...docs(2500).map((r) => r.id as string).filter((id) => !/^d-210\d$/.test(id)), ...docs(10, "c1").map((r) => r.id as string)];
+    expect([...ids].sort()).toEqual(expected.sort());
+    expect(entry.rowCount).toBe(2500);
+    expect([...ids].some((id) => id.startsWith("c2-"))).toBe(false); // never read: the backup says it may be short
+    expect(env.manifest.notes[0]).toMatch(/^⚠ INCOMPLETE BACKUP — 1 table\(s\) changed while they were read and came up short of their own row count twice; the rows that were read ARE included, but some rows may be missing: documents \(read 2490 row/);
+    expect(env.manifest.notes[0]).not.toMatch(/could not be exported/);
+  });
+
+  it("a short PARENT still scopes its child: the child is exported through the rows read and marked short, never failed or emptied", async () => {
+    const projects = (n: number, prefix = "p") => Array.from({ length: n }, (_, i) => ({ id: `${prefix}-${String(i).padStart(4, "0")}`, org_id: SRC, name: `P${i}` }));
+    db.rows.projects = projects(2500);
+    db.rows.project_members = db.rows.projects.map((p, i) => ({ id: `m-${i}`, project_id: p.id, user_id: "u-alice", role: "member" }));
+    const waves = churn("projects", projects);
+    const env = await exportEnvelope();
+    expect(waves()).toBe(2);
+    const parent = env.manifest.tables.find((t) => t.name === "projects")!;
+    const child = env.manifest.tables.find((t) => t.name === "project_members")!;
+    expect(parent.short).toMatch(/read twice/);
+    expect(child.error).toBeUndefined();
+    expect(child.short).toMatch(/read through the 2500 row\(s\) of its parent table projects that the export could read; the read of projects came up short/);
+    // every roster row of a project the export read is carried (2,500 projects: the merged reads,
+    // which include p-220x, gone during the re-read); the ten projects deleted during the first
+    // read (p-210x) were never read, so their roster rows are the ones the backup may be missing
+    const carried = (env.tables.project_members as Row[]).map((r) => String(r.project_id));
+    expect(child.rowCount).toBe(2490);
+    expect(carried).toContain("p-2200");
+    expect(carried.some((id) => /^p-210\d$/.test(id))).toBe(false);
+    expect(env.manifest.complete).toBe(false);
+    expect(env.manifest.notes[0]).toMatch(/2 table\(s\) changed while they were read/);
+  });
+
+  it("a composite-keyed table pages by keyset too: one delete of a row already read hides no live row (offset paging skipped one)", async () => {
+    db.rows.document_equipment_suggestions = Array.from({ length: 1500 }, (_, i) => ({
+      org_id: SRC, document_id: `doc-${String(i).padStart(4, "0")}`, status: "pending",
+    }));
+    let reads = 0;
+    hooks.onRead = (t) => {
+      if (t !== "document_equipment_suggestions") return;
+      reads++;
+      // read 1 = the count, read 2 = page 1 (doc-0000..doc-0999); before page 2, one row already read goes
+      if (reads === 3) db.rows.document_equipment_suggestions = db.rows.document_equipment_suggestions.filter((r) => r.document_id !== "doc-0005");
+    };
+    const env = await exportEnvelope();
+    const ids = (env.tables.document_equipment_suggestions as Row[]).map((r) => String(r.document_id));
+    expect(new Set(ids).size).toBe(ids.length);
+    expect(ids).toContain("doc-1000");   // the live row an OFFSET window at 1000 skipped
+    expect(ids).toHaveLength(1500);      // doc-0005 was read before it went
+    expect(env.manifest.complete).toBe(true);
+  });
+
+  it("a two-column key whose leading column varies pages past a row cap with every row once", async () => {
+    db.maxRows = 7;
+    db.rows.document_favorites = ["u-a", "u-b", "u-c"].flatMap((u) => Array.from({ length: 5 }, (_, i) => ({ org_id: SRC, user_id: u, document_id: `doc-${i}` })));
+    const env = await exportEnvelope();
+    const got = (env.tables.document_favorites as Row[]).map((r) => `${r.user_id}/${r.document_id}`);
+    expect(got).toEqual(db.rows.document_favorites.map((r) => `${r.user_id}/${r.document_id}`));
+    expect(env.manifest.complete).toBe(true);
+  });
+
+  it("keysetAfter: (k1, k2) > (v1, v2) as PostgREST's or-syntax, quoting a value only when it holds a reserved character", () => {
+    expect(keysetAfter(["collection_id", "document_id"], ["cc-1", "doc-9"])).toBe("collection_id.gt.cc-1,and(collection_id.eq.cc-1,document_id.gt.doc-9)");
+    expect(keysetAfter(["org_id", "year"], [SRC, 2026])).toBe(`org_id.gt.${SRC},and(org_id.eq.${SRC},year.gt.2026)`);
+    expect(keysetAfter(["a", "b"], ['x,"y"', "z.w"])).toBe('a.gt."x,\\"y\\"",and(a.eq."x,\\"y\\"",b.gt."z.w")');
+  });
+
+  it("the user-scoped table (notification_preferences) records a failed read as an error — the backup is INCOMPLETE, not complete with the table empty", async () => {
+    db.rows.notification_preferences = [{ user_id: "u-alice", email_enabled: true }];
+    db.readError.notification_preferences = "permission denied for table notification_preferences";
+    const env = await exportEnvelope();
+    expect(env.manifest.tables.find((t) => t.name === "notification_preferences")).toEqual({
+      name: "notification_preferences", rowCount: 0, error: "permission denied for table notification_preferences",
+    });
+    expect(env.manifest.complete).toBe(false);
+    expect(env.manifest.notes[0]).toMatch(/INCOMPLETE BACKUP — 1 table\(s\) could not be exported and their data is NOT included: notification_preferences/);
+    // and read cleanly, it is carried
+    delete db.readError.notification_preferences;
+    const ok = await exportEnvelope();
+    expect(ok.tables.notification_preferences).toEqual([{ user_id: "u-alice", email_enabled: true }]);
+    expect(ok.manifest.complete).toBe(true);
   });
 });
 

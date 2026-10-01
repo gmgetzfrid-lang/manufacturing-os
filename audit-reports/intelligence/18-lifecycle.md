@@ -173,7 +173,7 @@ app/(protected)/admin/restore/page.tsx:200-209 `const body = await res.json().ca
 ## ILIFE-5 · knowledge_documents.source_document_id has no foreign key — deleting a controlled document leaves its whole AI shadow alive
 
 - **Severity:** MEDIUM
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Assigned:** admin-and-org P2 (the storage-key registry extended to the document shed) — by the integrator, 2026-10-01 (orphan sweep: the package that left this remainder has merged; fleet plan `audit-reports/fleet-plans/`).
 - **Verification:** CONFIRMED
 - **Locations:** `supabase/migrations/20260917_knowledge_sources.sql:54`, `supabase/migrations/20260911_knowledge_ai.sql:81`, `supabase/migrations/20260921_drawing_entities.sql:24`, `lib/knowledge.ts:467`, `app/(protected)/documents/[libraryId]/page.tsx:1011`, `lib/knowledgeSourceSync.ts:286`
@@ -279,6 +279,26 @@ The route's one caller in the app, `lib/costDocs.ts` (`deleteFile(key)` after th
 2. ✓ (above).
 3. ◐ — the predicate exists and is tested, but neither the shed's candidate query nor the direct storage delete calls it yet. OPEN on the two handoffs above.
 
+**Resolution (2026-10-01, admin-and-org Round G).** Package P2, second review fix pass. The review found that the shed hunks above had no owner: the shed routes are on no running package's list, since document-control P9, which wrote them, has merged. P2 had already edited another file on no package's list for the same reason (`app/api/admin/schema-health/route.ts`). So the two hunks are landed here, as recorded above:
+- **Preview and produce.** In `app/api/admin/shed/route.ts refineSelection`, after RET-8's `sharedLiveKeys`, the route calls `keysReferencedOutside(sb, keys, ["document_versions.file_url"])`. A superseded revision whose key a knowledge mirror still names is never claimed. The same holds for a key any other registered plain key column names. Such a revision is counted in `sharedSkipped`.
+- **Commit.** In `app/api/admin/shed/commit/route.ts`, the RET-8 block adds the same keys to `shared`, so they are never stamped and never freed.
+- **Fail closed.** Both calls sit inside the existing `try`. A read error answers 503: preview and produce refuse, and commit says "… Nothing was freed."
+- **Wording.** The commit notes and the archive's `ARCHIVE.txt` now say "a current revision or a knowledge-library copy".
+
+Tests are in `lib/__tests__/dcRoundFShed.test.ts`, "document shed — intelligence ILIFE-5: a key a knowledge-library mirror still names is never claimed, never freed":
+- preview and produce leave the mirrored revision out, and count it;
+- a commit of an archive that a pre-fix produce linked stamps and deletes only the other key;
+- a failing mirror read answers 503 on preview, produce and commit, with nothing claimed, stamped or deleted.
+
+Mutation-checked: with the two route hunks removed, all three fail.
+
+**Done-when.**
+1. ✓ — intelligence Round G (`20261122`, pending paste).
+2. ✓ — the same.
+3. ✓ — the shed's candidate selection (preview and produce) excludes any `file_url` a `knowledge_documents.file_key` still names, and so does its commit.
+
+**Scope / residual.** The direct storage delete (`app/api/storage/delete/route.ts`, the second call site found at the first review fix pass) frees bytes too, but it is outside this finding's criteria. That route is in the brief of document-control **P14**, which runs in parallel and which this package may not edit. So the hunk recorded above ("the second call site") is handed to P14 by name, and the handoff is recorded in `audit-reports/document-control/99-fix-sequencing.md`. Migration `20261122` (criteria 1 and 2) is still to be pasted.
+
 ---
 
 <a id="ilife-6"></a>
@@ -345,6 +365,40 @@ Tests:
 3. ◐ — the collector pages by keyset (A&O P2). The balanced case (a read row deleted while a row lands behind the cursor) still needs a re-check of each candidate before `DeleteObjects` in `deleteOrphans`, the purge side. That belongs to document-control (P9 RET-7 owns the purge), and no running package lists it.
 
 **Scope / residual.** OPEN on criterion 3's purge-side re-check. The six composite-keyed tables still page by offset: `curated_collection_items`, `document_equipment_suggestions`, `document_favorites`, `recently_viewed_docs`, `team_members` and `ticket_number_counters`. On those, a balanced write (one read row deleted while a row lands behind the cursor) can hide a skip from the counts. The other 103 exported tables page by keyset.
+
+**Partial (2026-10-01, admin-and-org Round G, P2 second review fix pass).** Four corrections to the export half, and an owner for the purge half.
+
+1. **The composite keys page by keyset too. The residual above understated the gap.** Under offset paging, a single delete of a row already read hid a skip on the six composite-keyed tables, with no balanced insert needed. Take `document_equipment_suggestions` with 1,500 rows for one org. Page 1 reads rows 0 to 999, then row 5 is deleted. Page 2 at offset 1000 starts at the old row 1001, so live row 1000 is never read. The read holds 1,499 rows, the count before was 1,500 and the count after 1,499. The read was not below the count after, so it was not flagged. Now every key pages by keyset: `readScoped` asks for the rows after the last one read, `(a, b) > (x, y)`. That is written as PostgREST's `or(a.gt.x,and(a.eq.x,b.gt.y))` (`lib/dataExport.ts keysetAfter`, which quotes a value only when it holds a reserved character; keys are UUIDs and integers). The in-memory stand-in (`lib/__tests__/helpers/restoreMemoryDb.ts`) now honours `or(...)`. Tests in `lib/__tests__/exportContractRoundTrip.test.ts`:
+   - "a composite-keyed table pages by keyset too: …": the 1,500-row case above, with `doc-1000` read and nothing doubled;
+   - "a two-column key whose leading column varies pages past a row cap …";
+   - "keysetAfter: …".
+
+   Mutation-checked: offset paging for composite keys fails the first.
+2. **A twice-short read keeps its rows.** The first fix pass threw a twice-short table away whole: the export carried it empty, and its parent-keyed children failed with it. That is worse than base for a table with steady churn, such as `knowledge_chunks` during a knowledge re-sync or `notifications`. Now:
+   - the table keeps every row either read found, once per key (`exportOrderKey`), with the later read's copy winning;
+   - it is marked with the new `manifest.tables[].short`, which gives the counts;
+   - the backup is INCOMPLETE (`complete: false`), and its note names each short table with its counts and says the rows read ARE included;
+   - a short parent still scopes its child through the rows it read, and the child is marked `short` too (`BKP-4`).
+
+   Tests: "still short on the second read: …". The kept rows are asserted exactly: the second read's 2,490 rows, plus the ten that only the first read found. Also "a short PARENT still scopes its child: …".
+3. **The user-scoped table records its failures.** `notification_preferences` (`USER_SCOPED_FOR_ORG_TABLES`) is read in a `catch` that recorded no error, so a failed read exported it empty while `complete` stayed true. It now records the error as an org-scoped table does, and a short read marks it `short`. Test: "the user-scoped table (notification_preferences) records a failed read as an error …". Mutation-checked: the old `catch` fails it.
+4. **Criterion 2's first ✓ was overstated** for that one table. It holds for every exported table now.
+
+**Done-when.**
+1. ✓ — every exported table (109) pages by keyset on a unique key. The collector does too (`BKP-2`).
+2. ✓ — an exact count is taken before and after each read. A read short of both is read again, and a second short read makes the backup INCOMPLETE and names the counts, for every exported table, the user-scoped one included. The limit of counts taken around a read is unchanged. A row already read is deleted while a row lands behind the cursor, so both counts equal the rows read and nothing is flagged. Only a single-snapshot read could tell that apart from a skip.
+3. ◐ — the collector pages by keyset. The purge-side re-check now has a named owner: document-control **P14**, which already owns the other byte-freeing door (`app/api/storage/delete/route.ts`). The handoff is recorded in `audit-reports/document-control/99-fix-sequencing.md`. The hunk goes in `lib/storageOrphans.ts deleteOrphans`, before each `DeleteObjects` batch:
+   ```diff
+   +    // ILIFE-6 criterion 3: re-check every candidate just before it is deleted. The scan read the reference set page by
+   +    // page, so a reference that moved behind its cursor can be missing; one statement per column sees one snapshot.
+   +    const stillNamed = await keysReferencedOutside(sb, batch.map((o) => o.key));   // every plain key column (lib/storageKeyRegistry.ts)
+   +    // and every JSON-embedded key column (JSON_KEY_COLUMNS), one containment read per key, e.g.
+   +    //   sb.from("tickets").select("id").contains("attachments", JSON.stringify([{ url: key }])).limit(1)
+   +    const doomed = batch.filter((o) => !stillNamed.has(o.key));
+   ```
+   A read error there stops the purge before that batch, with nothing deleted. The test shape is `lib/__tests__/dcRoundFShed.test.ts`'s orphan block: a key the scan missed but a row names at re-check time is kept.
+
+**Scope / residual.** OPEN on criterion 3's purge-side re-check (document-control P14). The export half has no open criterion. The restore preview says the same thing for a short table as for a failed one ("some tables were not exported", `lib/dataRestore.ts planRestore`, which this package does not own). The manifest's `tables[]` says which kind each table is.
 
 ---
 
@@ -532,7 +586,7 @@ lib/dataExport.ts:300 `let q = sb.from(table).select("*").range(from, from + pag
 ## ILIFE-12 · schemaExpectations does not cover the newest intelligence tables, contains a phantom, and has no tripwire test — schema-health reports on a list nobody validates
 
 - **Severity:** MEDIUM
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Verification:** CONFIRMED
 - **Locations:** `lib/schemaExpectations.ts:1`, `lib/schemaExpectations.ts:29`, `lib/schemaExpectations.ts:104`, `app/api/admin/schema-health/route.ts:45`, `app/api/admin/schema-health/route.ts:78`, `lib/processFlows.ts:44`, `lib/linkRules.ts:48`
 - **Independently verified:** ✓ **SURVIVES** — second independent adversarial pass. All three sub-claims verified. One nuance on the stated consequence: schema-health's `missingTable` (route.ts:24) matches only code 42P01 or /does not exist/i, and PostgREST returns PGRST205 ("Could not find the table … in the schema cache") for an absent table — a code this repo handles explicitly elsewhere (lib/branches.ts:65, lib/workPackages.ts:48). So depending on PostgREST version the phantom is either reported missing forever (as the finding says) or reported PRESENT — a false clean bill. Either way the list is unvalidated and the finding stands.
@@ -564,6 +618,18 @@ lib/schemaExpectations.ts:10-13 `// Generated from supabase/migrations (CREATE T
 - *Criterion 2 ✓: `process_flows`, `link_rules` and `answer_skills` are probed with their files, and `knowledge_line_traces` is recorded as retired.*
 - *Criterion 3 ✓, vacuously: 20261015/16/17 add no column to an older table.*
 - *The route reads PGRST205 as missing, which settles the verifier's "phantom may pass as present".*
+
+**Resolution (2026-10-01, admin-and-org Round G).** Closed by pointer to admin-and-org `BKP-14` (RESOLVED, package P2), the owner this record names. The cross-note above said "closes by pointer" but left the status OPEN; the second review of P2 found that, and P2 makes the change. Verified on the branch:
+- `lib/__tests__/schemaExpectations.test.ts` discovers every `CREATE TABLE` in `supabase/schema.sql` and the numbered migrations and checks both directions. Every created table is listed (less the retired), and every listed row names a file that really creates its table. The grandfather set is empty, and the phantom `statements` row is gone.
+- `lib/schemaExpectations.ts` lists `answer_skills` (`20261016_reasoning_skills.sql`), `link_rules` (`20261015_connection_skills.sql`) and `process_flows` (`20261017_process_flows.sql`). `knowledge_line_traces` is in `RETIRED_TABLES` and is never probed.
+- `app/api/admin/schema-health/route.ts` reads PGRST205 as a missing table.
+
+**Done-when.**
+1. ✓ — the two-way tripwire (`BKP-14`).
+2. ✓ — the three intelligence tables are probed with their files; `knowledge_line_traces` is recorded as retired.
+3. ✓, vacuously — `20261015`, `20261016` and `20261017` add no column to an older table; they create the three tables now probed.
+
+**Scope / residual.** None here. The sibling `IRLS-12` stays OPEN on its own criterion 3 (42P01 against an empty result in the libraries), which belongs to intelligence I-08 and I-09.
 
 ---
 

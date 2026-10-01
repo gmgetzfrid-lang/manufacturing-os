@@ -23,6 +23,7 @@ import { r2, R2_BUCKET } from "@/lib/r2";
 import { selectShedCandidates, type ShedCandidateRow } from "@/lib/shed";
 import { makeArchiveId, archiveLocation } from "@/lib/archive";
 import { partitionOrgKeys, sharedLiveKeys } from "@/lib/shedKeyGuard";
+import { keysReferencedOutside } from "@/lib/storageKeyRegistry";
 
 export const runtime = "nodejs";
 
@@ -81,22 +82,29 @@ async function fetchCandidates(sb: SupabaseClient, orgId: string): Promise<ShedC
   return heldIds.size === 0 ? rows : rows.filter((r) => !heldIds.has(r.record_id as string));
 }
 
-/** The two storage-key guards, applied to a selection BEFORE anything is
- *  claimed (RET-6 / RET-8, see lib/shedKeyGuard.ts):
+/** The storage-key guards, applied to a selection BEFORE anything is
+ *  claimed (RET-6 / RET-8, see lib/shedKeyGuard.ts; intelligence ILIFE-5):
  *    · a key outside `orgs/<orgId>/` (or unsafe) is never read or claimed —
  *      a member can repoint file_url via PostgREST, and the archive must not
  *      become the exfiltration channel;
  *    · a key still referenced by a NON-archived row outside the selection
  *      (a revert's current revision shares the reverted-to key) is never
- *      claimed — freeing it would delete the current revision's bytes.
- *  Throws when the shared-key read fails (fail closed). */
+ *      claimed — freeing it would delete the current revision's bytes;
+ *    · a key any other registered key column still names — above all a
+ *      knowledge-library mirror (`knowledge_documents.file_key`), which names
+ *      the SAME object as the revision it mirrors until the next sync — is
+ *      never claimed (lib/storageKeyRegistry.ts keysReferencedOutside).
+ *  Both counted in `sharedSkipped`. Throws when either read fails (fail
+ *  closed). */
 async function refineSelection(sb: SupabaseClient, orgId: string, selected: ShedCandidateRow[]): Promise<{
   rows: ShedCandidateRow[]; rejectedKeys: number; sharedSkipped: number;
 }> {
   const { owned, rejected } = partitionOrgKeys(selected, orgId, (r) => r.file_url);
   const insideIds = new Set(owned.map((r) => r.id));
   const shared = await sharedLiveKeys(sb, orgId, owned.map((r) => r.file_url as string), insideIds);
-  const rows = shared.size === 0 ? owned : owned.filter((r) => !shared.has(r.file_url as string));
+  // ILIFE-5: a key a knowledge mirror (or any other registered column) still names is never claimed.
+  const elsewhere = await keysReferencedOutside(sb, owned.map((r) => r.file_url as string), ["document_versions.file_url"]);
+  const rows = owned.filter((r) => !shared.has(r.file_url as string) && !elsewhere.has(r.file_url as string));
   return { rows, rejectedKeys: rejected.length, sharedSkipped: owned.length - rows.length };
 }
 
@@ -131,7 +139,7 @@ export async function GET(req: NextRequest) {
     remainingCount: sel.skipped,
     /** RET-6: rows whose storage key is not under this org's prefix — never read, never freed. */
     rejectedKeys: refined.rejectedKeys,
-    /** RET-8: rows whose key a live revision outside the selection still shares — left in place. */
+    /** RET-8 / ILIFE-5: rows whose key a live revision outside the selection, or a knowledge-library copy, still names — left in place. */
     sharedSkipped: refined.sharedSkipped,
     maxArchiveBytes: MAX_PRODUCE_BYTES,
     sample: refined.rows.slice(0, 20).map((r) => ({
@@ -272,7 +280,7 @@ export async function POST(req: NextRequest) {
     `hash the database recorded at upload (dbSha256). ${unhashed} file(s) had no recorded hash; ` +
     `${hashMismatch} file(s) whose live bytes disagreed with their recorded hash were NOT captured and stay in live storage; ` +
     `${refined.rejectedKeys} row(s) with a storage key outside this workspace were refused; ` +
-    `${refined.sharedSkipped} row(s) whose key a current revision still shares were left in place.\n`);
+    `${refined.sharedSkipped} row(s) whose key a current revision or a knowledge-library copy still names were left in place.\n`);
   const zipBytes = await zip.generateAsync({ type: "uint8array", compression: "DEFLATE", compressionOptions: { level: 6 } });
 
   // Finalize the catalog counts (reserved + versions already claimed above).

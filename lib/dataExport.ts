@@ -46,6 +46,13 @@ export const FILE_CHECK_CONCURRENCY = 24;
 /** Wall-clock budget for those checks. A file not checked when it runs out
  *  keeps its download URL, carries no size, and is counted `unchecked`. */
 export const FILE_CHECK_BUDGET_MS = 90_000;
+/** The checks' hard ceiling, counted from the moment runOrgExport STARTS (not
+ *  from the start of the file phase): no check starts later than this, however
+ *  long the table dump took. The three callers run under maxDuration = 300
+ *  and still have to build and deliver the export after it returns, so a slow
+ *  dump spends the checks' time, never the route's. A caller that knows its
+ *  own start passes a tighter `deadlineAt`. */
+export const FILE_CHECK_CEILING_MS = 150_000;
 
 export interface DataExportManifest {
   schemaVersion: string;
@@ -54,9 +61,12 @@ export interface DataExportManifest {
   orgName?: string;
   exportedBy: { userId: string; email: string };
   /** Per-table outcome. `error` is set when a table could not be exported
-   *  (e.g. it isn't org_id-scoped) — its data is NOT in this backup. */
-  tables: Array<{ name: string; rowCount: number; error?: string }>;
-  /** True when every listed table exported cleanly. False = INCOMPLETE backup. */
+   *  (e.g. it isn't org_id-scoped) — its data is NOT in this backup. `short`
+   *  is set when the table WAS exported but its read came up short of the
+   *  table's own count twice while the export ran (intelligence ILIFE-6): the
+   *  rows read ARE in this backup, and some rows may be missing. */
+  tables: Array<{ name: string; rowCount: number; error?: string; short?: string }>;
+  /** True when every listed table exported cleanly and in full. False = INCOMPLETE backup. */
   complete: boolean;
   files: {
     count: number;
@@ -114,7 +124,13 @@ export async function runOrgExport(params: {
   presignedUrlSeconds?: number;
   /** Override FILE_CHECK_BUDGET_MS (tests). */
   fileCheckBudgetMs?: number;
+  /** Absolute time (epoch ms) after which no storage check starts — the
+   *  caller's own deadline, already less what it needs after the export
+   *  returns (e.g. route start + 240 s). Capped by FILE_CHECK_CEILING_MS from
+   *  this call's start either way. */
+  deadlineAt?: number;
 }): Promise<DataExportEnvelope> {
+  const exportStart = Date.now();
   const expiresIn = params.presignedUrlSeconds ?? 24 * 60 * 60;
   const sb: SupabaseClient = createClient(params.supabaseUrl, params.serviceRoleKey, {
     auth: { persistSession: false },
@@ -124,12 +140,12 @@ export async function runOrgExport(params: {
 
   // 1. Dump every org-scoped table
   const tables: Record<string, unknown[]> = {};
-  const tableCounts: Array<{ name: string; rowCount: number; error?: string }> = [];
+  const tableCounts: DataExportManifest["tables"] = [];
   for (const tbl of ORG_SCOPED_TABLES) {
     try {
-      const rows = await dumpOrgTable(sb, tbl, params.orgId, tables, tableCounts);
-      tables[tbl] = rows;
-      tableCounts.push({ name: tbl, rowCount: rows.length });
+      const read = await dumpOrgTable(sb, tbl, params.orgId, tables, tableCounts);
+      tables[tbl] = read.rows;
+      tableCounts.push(outcomeOf(tbl, read));
     } catch (e) {
       // A table we couldn't export (e.g. not org_id-scoped) is RECORDED as an
       // error, not silently treated as empty — a backup must never hide a gap.
@@ -145,14 +161,17 @@ export async function runOrgExport(params: {
       const memberIds = ((tables.org_members as Array<{ uid: string }>) ?? [])
         .map((r) => r.uid)
         .filter(Boolean);
-      const rows = memberIds.length === 0
-        ? []
+      const read: TableRead = memberIds.length === 0
+        ? { rows: [], short: null }
         : await dumpTable(sb, tbl, "user_id", memberIds, true);
-      tables[tbl] = rows;
-      tableCounts.push({ name: tbl, rowCount: rows.length });
-    } catch {
+      tables[tbl] = read.rows;
+      tableCounts.push(outcomeOf(tbl, read));
+    } catch (e) {
+      // Recorded like an org-scoped table's failure: a read error here is a
+      // gap in the backup, never an empty table in a "complete" one.
       tables[tbl] = [];
-      tableCounts.push({ name: tbl, rowCount: 0 });
+      tableCounts.push({ name: tbl, rowCount: 0, error: (e as Error).message });
+      console.warn(`[dataExport] table ${tbl} FAILED:`, (e as Error).message);
     }
   }
 
@@ -189,7 +208,14 @@ export async function runOrgExport(params: {
   let missingFiles = 0;
   let missingUnregistered = 0;
   let uncheckedFiles = 0;
-  const checkDeadline = Date.now() + (params.fileCheckBudgetMs ?? FILE_CHECK_BUDGET_MS);
+  // The budget runs from here, but never past the ceiling counted from this
+  // export's start, nor past the caller's own deadline: a slow table dump
+  // leaves the checks less time, not the route.
+  const checkDeadline = Math.min(
+    Date.now() + (params.fileCheckBudgetMs ?? FILE_CHECK_BUDGET_MS),
+    exportStart + FILE_CHECK_CEILING_MS,
+    params.deadlineAt ?? Number.POSITIVE_INFINITY,
+  );
   await forEachBounded(fileRefs, FILE_CHECK_CONCURRENCY, async (ref, i) => {
     const { path } = ref;
     // Presigning an R2 GET is a local crypto op (no network), so it always
@@ -265,12 +291,26 @@ export async function runOrgExport(params: {
   } catch {}
 
   const failedTables = tableCounts.filter((t) => t.error);
+  const shortTables = tableCounts.filter((t) => !t.error && t.short);
   const notes: string[] = [];
-  if (failedTables.length > 0) {
-    notes.push(
-      `⚠ INCOMPLETE BACKUP — ${failedTables.length} table(s) could not be exported and their data is NOT included: ` +
-      `${failedTables.map((t) => t.name).join(", ")}. See each table's "error" in tables[] (a read the database refused, or rows that changed while the export ran — run it again). Resolve before relying on this as a full backup.`,
-    );
+  if (failedTables.length > 0 || shortTables.length > 0) {
+    const parts: string[] = [];
+    if (failedTables.length > 0) {
+      parts.push(
+        `${failedTables.length} table(s) could not be exported and their data is NOT included: ` +
+        `${failedTables.map((t) => t.name).join(", ")}. See each table's "error" in tables[] for why, and run the export again.`,
+      );
+    }
+    if (shortTables.length > 0) {
+      // ILIFE-6: the rows read are kept — a table that changed while it was
+      // read is exported slightly short, never empty — and named with counts.
+      parts.push(
+        `${shortTables.length} table(s) changed while they were read and came up short of their own row count twice; ` +
+        `the rows that were read ARE included, but some rows may be missing: ` +
+        `${shortTables.map((t) => `${t.name} (${t.short})`).join("; ")}.`,
+      );
+    }
+    notes.push(`⚠ INCOMPLETE BACKUP — ${parts.join(" ")} Resolve before relying on this as a full backup.`);
   } else {
     notes.push("This document is a complete export of every record this organization owns.");
   }
@@ -332,7 +372,7 @@ export async function runOrgExport(params: {
     orgName,
     exportedBy: { userId: params.exporterUserId, email: params.exporterEmail },
     tables: tableCounts,
-    complete: failedTables.length === 0,
+    complete: failedTables.length === 0 && shortTables.length === 0,
     files: {
       count: files.length,
       missing: missingFiles,
@@ -376,19 +416,37 @@ function collectShedOffline(tables: Record<string, unknown[]>): { keys: Set<stri
 /** How many parent ids one `.in()` read carries (UUIDs: well inside a URL). */
 const PARENT_ID_CHUNK = 150;
 
+/** One table's read: its (redacted) rows, and — when the read came up short
+ *  of the table's own count twice while the export ran — why, with the
+ *  counts. A short table keeps the rows that were read (ILIFE-6). */
+interface TableRead {
+  rows: unknown[];
+  short: string | null;
+}
+
+/** The manifest entry for a table that was read. */
+function outcomeOf(name: string, read: TableRead): DataExportManifest["tables"][number] {
+  return read.short
+    ? { name, rowCount: read.rows.length, short: read.short }
+    : { name, rowCount: read.rows.length };
+}
+
 /** BKP-4: dump one ORG_SCOPED_TABLES entry by its own key. `org_id` for every
  *  table that has one; lib/exportTables.ts EXPORT_KEYED_BY names the rest —
  *  `orgs` by its id, an org-less child through the ids of its parent, which
  *  ORG_SCOPED_TABLES lists (and so dumps) first. A parent that failed or was
  *  not dumped fails the child: its rows cannot be scoped to this workspace,
- *  so the table is recorded as an error, never exported unscoped. */
+ *  so the table is recorded as an error, never exported unscoped. A parent
+ *  whose read came up SHORT still scopes its child through the rows it read,
+ *  and the child is marked short too (rows under the parent rows the read
+ *  missed are not in it). */
 async function dumpOrgTable(
   sb: SupabaseClient,
   table: string,
   orgId: string,
   dumped: Record<string, unknown[]>,
-  outcomes: ReadonlyArray<{ name: string; error?: string }>,
-): Promise<unknown[]> {
+  outcomes: ReadonlyArray<{ name: string; error?: string; short?: string }>,
+): Promise<TableRead> {
   const keyed = EXPORT_KEYED_BY[table];
   if (!keyed) return dumpTable(sb, table, "org_id", orgId);
   if (!keyed.parent) return dumpTable(sb, table, keyed.column, orgId);
@@ -403,10 +461,16 @@ async function dumpOrgTable(
       .filter((v): v is string => typeof v === "string" && v.length > 0),
   ));
   const out: unknown[] = [];
-  for (let i = 0; i < ids.length; i += PARENT_ID_CHUNK) {
-    for (const row of await dumpTable(sb, table, keyed.column, ids.slice(i, i + PARENT_ID_CHUNK), true)) out.push(row);
+  const shorts: string[] = [];
+  if (parentOutcome.short) {
+    shorts.push(`read through the ${ids.length} row(s) of its parent table ${parent} that the export could read; the read of ${parent} came up short, so rows under the ones it missed are not included`);
   }
-  return out;
+  for (let i = 0; i < ids.length; i += PARENT_ID_CHUNK) {
+    const read = await dumpTable(sb, table, keyed.column, ids.slice(i, i + PARENT_ID_CHUNK), true);
+    for (const row of read.rows) out.push(row);
+    if (read.short) shorts.push(read.short);
+  }
+  return { rows: out, short: shorts.length > 0 ? shorts.join("; ") : null };
 }
 
 /** Rows per page read. */
@@ -420,27 +484,44 @@ const PAGE_SIZE = 1000;
  *    id-less table). Before this, `.range()` windows had no ORDER BY, so a
  *    parallel or bitmap plan, or a concurrent write, could hand one row to
  *    two windows and skip another, and the backup still said complete.
- *  - KEYSET: a one-column key pages `key > last`, so a row deleted behind
- *    the cursor never moves the next page. A composite key (a few small link
- *    tables) pages by offset in key order, deduplicated by key.
+ *  - KEYSET, every key: the next page starts AFTER the last row read — `key
+ *    > last` for a one-column key, `(a, b) > (x, y)` for a composite one
+ *    (`a > x OR (a = x AND b > y)`) — so a row deleted behind the cursor
+ *    never moves the next page. (An OFFSET window does move: one delete of a
+ *    row already read and the next window skips a live row, while the count
+ *    taken after the read agrees with what was read.)
  *  - NO EARLY STOP: an exact count is taken first, and a short page ends the
  *    read only once that many rows are in hand — a server row cap
  *    (PostgREST max-rows) below PAGE_SIZE answers short pages long before
  *    the end.
  *  - RECONCILED: a read that ends with fewer rows than the table held both
  *    before AND after it (a delete alone, or an insert alone, never does
- *    that) is read once more; still short, the table is an error and the
- *    backup is INCOMPLETE, never quietly short. */
+ *    that) is read once more. Still short, the table is marked short and the
+ *    backup INCOMPLETE — never quietly short — and it KEEPS the rows the two
+ *    reads found (deduplicated by key, the later read's copy winning): a
+ *    table that kept changing is exported slightly short, never empty. */
 async function dumpTable(
   sb: SupabaseClient,
   table: string,
   column: string,
   value: string | string[],
   arrayValue = false,
-): Promise<unknown[]> {
-  let read = await readScoped(sb, table, column, value, arrayValue);
-  if (read.short) read = await readScoped(sb, table, column, value, arrayValue);
-  if (read.short) throw new Error(read.short);
+): Promise<TableRead> {
+  const first = await readScoped(sb, table, column, value, arrayValue);
+  let read: { rows: Array<Record<string, unknown>>; short: string | null } = first;
+  if (first.short) {
+    const second = await readScoped(sb, table, column, value, arrayValue);
+    read = second.short
+      ? (() => {
+          const merged = mergeReads(table, first.rows, second.rows);
+          return {
+            rows: merged,
+            short: `${second.short} (read twice: ${first.rows.length} and ${second.rows.length} row(s); ` +
+              `the ${merged.length} distinct row(s) the two reads found are included)`,
+          };
+        })()
+      : second;
+  }
   const out: unknown[] = [];
   // A page at a time: spreading a whole large table into one push() would
   // overflow the call stack.
@@ -452,7 +533,41 @@ async function dumpTable(
     // carry a live token or an encrypted destination credential.
     out.push(...rows.map((r) => redactRow(table, r as Record<string, unknown>)));
   }
+  return { rows: out, short: read.short };
+}
+
+/** Two reads of one table, as one set of rows: every row either read found,
+ *  once per key (exportOrderKey), the later read's copy winning. */
+function mergeReads(
+  table: string,
+  earlier: Array<Record<string, unknown>>,
+  later: Array<Record<string, unknown>>,
+): Array<Record<string, unknown>> {
+  const keys = exportOrderKey(table);
+  const keyOf = (r: Record<string, unknown>) => JSON.stringify(keys.map((c) => r[c] ?? null));
+  const seen = new Set(later.map(keyOf));
+  const out = [...later];
+  for (const r of earlier) if (!seen.has(keyOf(r))) out.push(r);
   return out;
+}
+
+/** A PostgREST filter value, double-quoted when it holds a character the
+ *  logic-tree syntax reserves (keys are UUIDs and integers, which never do). */
+function filterValue(v: string | number): string {
+  const s = String(v);
+  return /[,.:()"\\\s]/.test(s) ? `"${s.replace(/\\/g, "\\\\").replace(/"/g, '\\"')}"` : s;
+}
+
+/** The keyset condition "after `last`" over a composite key, as a PostgREST
+ *  `or` filter: (k1, k2, …) > (v1, v2, …) is
+ *  k1 > v1 OR (k1 = v1 AND k2 > v2) OR … */
+export function keysetAfter(keys: readonly string[], last: ReadonlyArray<string | number>): string {
+  return keys.map((k, i) => {
+    const gt = `${k}.gt.${filterValue(last[i])}`;
+    if (i === 0) return gt;
+    const eqs = keys.slice(0, i).map((e, j) => `${e}.eq.${filterValue(last[j])}`);
+    return `and(${[...eqs, gt].join(",")})`;
+  }).join(",");
 }
 
 async function readScoped(
@@ -474,42 +589,27 @@ async function readScoped(
 
   const before = await countNow();
   const keys = exportOrderKey(table);
-  const keyset = keys.length === 1 ? keys[0] : null;
-  const seen = keyset ? null : new Set<string>();
   const rows: Array<Record<string, unknown>> = [];
-  let last: string | number | null = null;
-  let offset = 0;
+  let last: Array<string | number> | null = null;
   for (;;) {
     let q = scoped(false);
     for (const k of keys) q = q.order(k, { ascending: true });
-    if (keyset) {
-      if (last !== null) q = q.gt(keyset, last);
-      q = q.limit(PAGE_SIZE);
-    } else {
-      q = q.range(offset, offset + PAGE_SIZE - 1);
-    }
-    const { data, error } = await q;
+    if (last !== null) q = keys.length === 1 ? q.gt(keys[0], last[0]) : q.or(keysetAfter(keys, last));
+    const { data, error } = await q.limit(PAGE_SIZE);
     if (error) throw new Error(error.message);
     const page = (data ?? []) as unknown as Array<Record<string, unknown>>;
-    for (const r of page) {
-      if (seen) {
-        const k = JSON.stringify(keys.map((c) => r[c] ?? null));
-        if (seen.has(k)) continue;
-        seen.add(k);
-      }
-      rows.push(r);
-    }
+    for (const r of page) rows.push(r);
     if (page.length === 0) break;
     if (page.length < PAGE_SIZE && (before === null || rows.length >= before)) break;
-    if (keyset) {
-      const next = page[page.length - 1][keyset];
-      if ((typeof next !== "string" && typeof next !== "number") || (last !== null && String(next) === String(last))) {
-        throw new Error(`the read cannot page past ${table}.${keyset} (no usable key on the last row) — refused rather than export part of the table`);
-      }
-      last = next;
-    } else {
-      offset += page.length;
+    const tail = page[page.length - 1];
+    const next = keys.map((k) => tail[k]);
+    if (
+      next.some((v) => typeof v !== "string" && typeof v !== "number") ||
+      (last !== null && next.every((v, i) => String(v) === String(last![i])))
+    ) {
+      throw new Error(`the read cannot page past ${table}.(${keys.join(", ")}) (no usable key on the last row) — refused rather than export part of the table`);
     }
+    last = next as Array<string | number>;
   }
 
   if (before !== null && rows.length < before) {

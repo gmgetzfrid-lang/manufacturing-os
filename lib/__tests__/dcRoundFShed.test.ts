@@ -8,6 +8,9 @@
 //   RET-13 the delete shortfall is persisted on the catalog row;
 //   RET-14 restore writes only exact-path, manifest-verified bytes;
 //   RET-7  the orphan sweep is confined to the caller's org prefix.
+//   intelligence ILIFE-5 (admin-and-org Round G P2, second review fix pass):
+//          a key a knowledge-library mirror still names is never claimed at
+//          produce and never freed at commit.
 //
 // Route tests use the vi.hoisted state + Proxy-chain mock shape of
 // shedLegalHold.test.ts, generalised: every builder call is recorded and a
@@ -144,9 +147,16 @@ function shedResolver(opts: {
   versions: Array<Record<string, unknown>>; liveRows?: Array<{ id: string; file_url: string }>;
   liveError?: string; claims?: string[][]; unclaims?: string[][]; stamps?: string[][]; archiveUpdates?: Array<Record<string, unknown>>;
   archiveUpdateError?: { code?: string; message: string };
+  /** ILIFE-5: knowledge_documents.file_key values (a mirror of a controlled revision names the SAME key). */
+  mirrorKeys?: string[]; mirrorError?: string;
 }) {
   return (table: string, ops: Op[]) => {
     if (table === "documents") return { data: [], error: null };
+    if (table === "knowledge_documents") {
+      const keys = (filter(ops, "in", "file_key") as string[] | undefined) ?? [];
+      if (opts.mirrorError) return { data: null, error: { message: opts.mirrorError } };
+      return { data: (opts.mirrorKeys ?? []).filter((k) => keys.includes(k)).map((k) => ({ file_key: k })), error: null };
+    }
     if (table === "archives") {
       if (argOf(ops, "update")) {
         opts.archiveUpdates?.push(argOf(ops, "update")![0] as Record<string, unknown>);
@@ -169,6 +179,7 @@ function shedResolver(opts: {
         if (opts.liveError) return { data: null, error: { message: opts.liveError } };
         return { data: (opts.liveRows ?? []).filter((r) => keys.includes(r.file_url)), error: null };
       }
+      if (filter(ops, "in", "source_file_key")) return { data: [], error: null };
       return { data: opts.versions, error: null };
     }
     return { data: [], error: null };
@@ -327,6 +338,63 @@ describe("shed commit — RET-6 / RET-8 at the destructive step, RET-13 shortfal
     expect(body.keysDeleted).toBe(0);
     expect(state.r2Deletes).toEqual([]);
     expect(stamps).toEqual([]);
+  });
+});
+
+describe("document shed — intelligence ILIFE-5: a key a knowledge-library mirror still names is never claimed, never freed", () => {
+  // lib/knowledgeSourceSync.ts mirrors a controlled revision with `file_key: version.file_url`: the
+  // SAME object. Between a rev-up and the next sync, the superseded revision is shed-eligible while a
+  // 'ready' mirror still points at its bytes.
+  const mirrored = `orgs/${ORG}/mirrored.pdf`;
+
+  it("preview and produce leave the mirrored revision out, counted with the shared ones", async () => {
+    const versions = [...pair("ok", `orgs/${ORG}/ok.pdf`), ...pair("mirrored", mirrored)];
+    state.resolve = shedResolver({ versions, mirrorKeys: [mirrored] });
+    const preview = (await (await SHED_GET(new NextRequest(`https://app/api/admin/shed?orgId=${ORG}&keep=1`))).json()) as { sample: Array<{ id: string }>; sharedSkipped: number };
+    expect(preview.sample.map((r) => r.id)).toEqual(["ok"]);
+    expect(preview.sharedSkipped).toBe(1);
+
+    state.objects[`orgs/${ORG}/ok.pdf`] = bytes("ok");
+    state.objects[mirrored] = bytes("mirrored");
+    const claims: string[][] = [];
+    state.resolve = shedResolver({ versions, claims, mirrorKeys: [mirrored] });
+    const res = await SHED_PRODUCE(post("https://app/api/admin/shed", { orgId: ORG, keep: 1, confirm: true }));
+    expect(res.status).toBe(200);
+    expect(claims.flat()).toEqual(["ok"]);
+    expect(res.headers.get("X-Archive-Shared-Skipped")).toBe("1");
+  });
+
+  it("commit (a pre-fix produce linked it): the mirrored key is not stamped and not deleted; the rest is freed", async () => {
+    const versions = [
+      version("ok", `orgs/${ORG}/ok.pdf`, { archive_id: "arch1" }),
+      version("mirrored", mirrored, { archive_id: "arch1" }),
+    ];
+    const stamps: string[][] = [];
+    state.resolve = shedResolver({ versions, stamps, mirrorKeys: [mirrored] });
+    const res = await SHED_COMMIT(post("https://app/api/admin/shed/commit", { orgId: ORG, archiveId: "arch1", confirm: true }));
+    const body = (await res.json()) as { sharedSkipped: number; keysDeleted: number; note?: string };
+    expect(res.status).toBe(200);
+    expect(stamps.flat()).toEqual(["ok"]);
+    expect(state.r2Deletes).toEqual([`orgs/${ORG}/ok.pdf`]);
+    expect(body.sharedSkipped).toBe(1);
+    expect(body.note).toMatch(/1 row\(s\) share their storage key with a current revision or a knowledge-library copy/);
+  });
+
+  it("fails CLOSED when the mirror read errors: preview and produce 503, commit 503 with nothing stamped or deleted", async () => {
+    const versions = pair("ok", `orgs/${ORG}/ok.pdf`);
+    state.resolve = shedResolver({ versions, mirrorError: "db down" });
+    expect((await SHED_GET(new NextRequest(`https://app/api/admin/shed?orgId=${ORG}&keep=1`))).status).toBe(503);
+    const claims: string[][] = [];
+    state.resolve = shedResolver({ versions, claims, mirrorError: "db down" });
+    expect((await SHED_PRODUCE(post("https://app/api/admin/shed", { orgId: ORG, keep: 1, confirm: true }))).status).toBe(503);
+    expect(claims).toEqual([]);
+    const stamps: string[][] = [];
+    state.resolve = shedResolver({ versions: [version("ok", `orgs/${ORG}/ok.pdf`, { archive_id: "arch1" })], stamps, mirrorError: "db down" });
+    const commit = await SHED_COMMIT(post("https://app/api/admin/shed/commit", { orgId: ORG, archiveId: "arch1", confirm: true }));
+    expect(commit.status).toBe(503);
+    expect(((await commit.json()) as { error: string }).error).toMatch(/knowledge_documents\.file_key.*Nothing was freed/);
+    expect(stamps).toEqual([]);
+    expect(state.r2Deletes).toEqual([]);
   });
 });
 

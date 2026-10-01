@@ -131,7 +131,7 @@ Tests, all in `lib/__tests__/storageKeyRegistry.test.ts`:
 
 **Scope / residual.** The column census reads column NAMES, so a key put inside a JSON column under another name is invisible to it. The writer census closes that from the writing side, for every write site that exists today. A key that reaches a row by any route other than a storage write in the app is still caught only at run time, by the export's value scan (`BKP-9` Done-when 3), for example a key copied from another row, or a hand edit. On the cross-notes above:
 - Intelligence `ILIFE-1`'s third criterion (the purge's audit row records the deleted KEYS) belongs to `app/api/admin/orphans/route.ts`, which is outside this package's files; `ILIFE-1` stays OPEN on it.
-- `ILIFE-6` criterion 3 landed here. `collectReferencedKeys` pages `.order("id").gt("id", last).limit(1000)` (keyset), so a row deleted behind the cursor can no longer move a window. The tripwire in `lib/__tests__/intelRoundGRecords.test.ts` is flipped to `it`. `lib/__tests__/destructiveDeletes.test.ts`'s stand-in answers the keyset chain and throws on `.range`. One case keyset paging alone cannot rule out: a row already read is deleted while a row is inserted behind the cursor, and the count balances. Closing it needs a re-check of each candidate just before `DeleteObjects`, in `deleteOrphans` (the purge side), which this package's brief does not cover; recorded on `ILIFE-6`. *Review fix pass:* `ILIFE-6`'s export half (criteria 1 and 2 for `dumpTable`) landed too; see the `ILIFE-6` record.
+- `ILIFE-6` criterion 3 landed here. `collectReferencedKeys` pages `.order("id").gt("id", last).limit(1000)` (keyset), so a row deleted behind the cursor can no longer move a window. The tripwire in `lib/__tests__/intelRoundGRecords.test.ts` is flipped to `it`. `lib/__tests__/destructiveDeletes.test.ts`'s stand-in answers the keyset chain and throws on `.range`. One case keyset paging alone cannot rule out: a row already read is deleted while a row is inserted behind the cursor, and the count balances. Closing it needs a re-check of each candidate just before `DeleteObjects`, in `deleteOrphans` (the purge side), which this package's brief does not cover; recorded on `ILIFE-6`. *Review fix pass:* `ILIFE-6`'s export half (criteria 1 and 2 for `dumpTable`) landed too; see the `ILIFE-6` record. *Second review fix pass:* the purge-side re-check now has a named owner, document-control **P14**, with the exact hunk; the handoff is in `audit-reports/document-control/99-fix-sequencing.md` and on `ILIFE-6`.
 - `ILIFE-8`'s `referencedKeys` residual is not in this package's plan and is untouched.
 
 ---
@@ -225,6 +225,8 @@ Fix: `lib/exportTables.ts EXPORT_KEYED_BY` names each such table's own key: `org
 - [x] the coverage tripwire asserts every ORG_SCOPED_TABLES entry has an org_id column — or names its own key ✓.
 
 **Scope / residual.** `manifest.complete` now carries a signal; on base it was false on every export. The chain reaction (the browser backup never read `manifest.complete`) was closed by P1 (`BKP-10`: the browser backup's report carries `complete` and the manifest notes).
+
+*Second review fix pass (2026-10-01):* a parent whose read came up short (intelligence `ILIFE-6`: rows changed while it was read, on both reads) no longer fails its child. Before this, the review found, a short `projects` read was thrown away whole and `project_members` failed with it. Now the parent keeps the rows it read, and the child is read through those rows. The child is marked `short` too, with a reason: rows under the parent rows the reads missed are not included. Only a parent that FAILED, or was not dumped, still fails its child. Test: `lib/__tests__/exportContractRoundTrip.test.ts`, "a short PARENT still scopes its child: …".
 
 ---
 
@@ -510,6 +512,8 @@ app/api/data-export/structured/route.ts:55 `if (!["Admin", "Manager", "DocCtrl"]
 
 *Cross-area note (2026-09-30, intelligence Round G): intelligence `ILIFE-7`, `DACL-7` and `IEDGE-10` (the same Manager / DocCtrl export) close by pointer when this lands. Together they add: destination create / edit Admin-only; the `DATA_EXPORT` row recording the exporter's role and whether presigned URLs were minted or the dump was ACL-filtered; the manifest naming withheld rows; and a test that the export role list and the ACL controller tier cannot drift.*
 
+*Cross-note (2026-10-01, admin-and-org Round G, P2 second review fix pass): two handoffs for P3, which owns the export routes and `lib/exportRunner.ts`. Both are recorded with the hunk under `BKP-9`'s "Second review fix pass". (1) In `buildAndDeliverExport`'s embed loop, a file listed unchecked (it has a URL but size `null`) must be capped by the size storage reports before it is buffered. Today it skips the per-file embed-cap test. (2) The three export routes can pass `deadlineAt` (route start + 240 s) into `runOrgExport`. A third item stands as before: `buildReadme` does not print `manifest.files.unchecked`.*
+
 ---
 
 <a id="bkp-9"></a>
@@ -576,6 +580,26 @@ Done-when 3: after the registry has collected, `findUnregisteredOrgKeys` scans e
 4. **Page backgrounds.** Every backup now carries `libraries.page_config` and `collections.page_config` backgrounds (`BKP-2` fix pass). The round trip seeds both and restores them.
 
 **Scope / residual.** `lib/exportRunner.ts`'s README line "every binary file, path-preserved" (admin-and-org P3's file) is now true for every file the records reference, and was not edited. Avatars are personal and are not in an org backup, by design. A workspace with more size-less files than 24 checks can clear in 90 s (on the order of 50,000 at 40 ms each) lists the rest unchecked rather than timing the route out. The README that `buildReadme` writes (P3's file) does not yet print `files.unchecked`. The manifest and its notes do.
+
+**Second review fix pass (2026-10-01, admin-and-org Round G, P2).** Two corrections.
+
+1. **The check budget is now tied to the export's start, not only to the file phase.** The 90 s budget counted from the start of the file phase. That phase now begins after a table dump that does more work than base did: an exact count per table, an ORDER BY on every page, and possibly a full re-read (`ILIFE-6`). So a dump of about 230 s could still be followed by 90 s of checks, past the routes' `maxDuration = 300`. Fix in `lib/dataExport.ts runOrgExport`: no check starts after the earliest of three times. Those are the file phase's start plus `FILE_CHECK_BUDGET_MS` (90 s), the export's own start plus `FILE_CHECK_CEILING_MS` (150 s), and the caller's optional `deadlineAt`. A slow dump therefore shortens the checks, never the route. Test: "a slow table dump shrinks the checks' budget: …" in `exportContractRoundTrip.test.ts`:
+   - a dump that "takes" 200 s (the clock is advanced while the first table is read) starts no check, and every size-less file is listed unchecked;
+   - a 30 s dump still checks every file;
+   - a caller's `deadlineAt` that has already passed stops every check.
+   Mutation-checked: without the ceiling, the slow case fails.
+2. **Handoff to admin-and-org P3, which owns `lib/exportRunner.ts`.** An unchecked file (a URL, size `null`) passes the server ZIP's per-file embed-cap test, `f.size != null && fileBytes + size > cap`. On base no size-less file ever had a URL, so this could not happen. The ZIP builder then buffers it whatever its size, so a large unchecked DWG near the 1.5 GB cap pushes the in-memory ZIP past the ceiling the cap exists to protect. The hunk, for P3, goes in the `buildAndDeliverExport` embed loop, after `res.ok` and before `arrayBuffer()`:
+   ```diff
+   +        // BKP-9: an unchecked file (size null) is capped by the size storage reports, before it is buffered.
+   +        const header = res.headers.get("content-length");
+   +        const reported = header == null ? NaN : Number(header);
+   +        if (f.size == null && (!Number.isFinite(reported) || fileBytes + reported > MAX_EMBED_BYTES)) {
+   +          await res.body?.cancel();
+   +          omitted.push({ path: f.path, size: Number.isFinite(reported) ? reported : null, reason: "not size-checked; over the embed cap or of unknown size" });
+   +          continue;
+   +        }
+   ```
+   P3's three routes (`/api/data-export/structured`, `run`, `run-scheduled`) can also pass `deadlineAt: routeStart + 240_000` into `runOrgExport`, so the deadline is the route's own rather than the export's. Until P3 lands the hunk, the ceiling above makes unchecked files rarer, and each one is still named in `files.unchecked` and in a note.
 
 ---
 
@@ -671,18 +695,31 @@ The plan's fail-safe default was taken, the reversible option:
 - Not granted: the credentials, and the destination's coordinates (`endpoint`, `region`, `bucket`, `prefix`, `webhook_url`). A webhook URL can carry its own secret; Admins, Managers and DocCtrls read the coordinates through the role-gated API.
 - *Corrected at the review fix pass:* `last_run_error` is not granted either. The first version granted it, but it holds the runner's raw message (`msg.slice(0, 500)` in `app/api/data-export/run-scheduled/route.ts`), which can name the endpoint's host (a DNS failure: `getaddrinfo ENOTFOUND <host>`) or carry the remote's response body (`Webhook <status>: <body>`, `lib/exportRunner.ts`). A ninth probe checks it; the shape test pins the grant to the table's columns less the credentials, the coordinates and `last_run_error` ("last_run_error is withheld because the runner stores raw messages that can name the destination").
 
-Nothing in the app reads the table with a member session, and a test pins that. The file is one paste:
-- a count-only inventory before the transaction: rows, rows holding a credential, active members who could read them, and whether `authenticated` held SELECT;
-- one final `(check, ok, n)` SELECT carrying nine probes;
-- the rollback in the header: `GRANT SELECT ON export_destinations TO anon, authenticated;`.
+- *Corrected at the second review fix pass:* the decision, its Acceptance line and the table COMMENT said a member never reads a destination's coordinates or the last run's raw error. That did not hold. `export_runs_member_select` (`20260605:147-150`, the only definition) let every active member, a Viewer included, read every column of `export_runs`:
+  - `destination_path` holds the webhook URL for a webhook run and `<bucket>/<key>` for an S3 / R2 run (`lib/exportRunner.ts`);
+  - `diagnostics` records `webhook:push <url>` and `s3:push <bucket>/<key>`;
+  - `error_message` holds the raw runner message (`msg.slice(0, 1000)` in `run` and `run-scheduled`).
 
-Test: `lib/__tests__/aoRoundGExportDestinationsMigration.test.ts`.
+  The same file now narrows `export_runs` in the same way. Its policy is kept. The table-level SELECT is revoked from PUBLIC, anon and authenticated, and SELECT is granted back on the run's card columns: `id`, `org_id`, `destination_id`, `trigger_type`, `triggered_by`, `status`, `table_count`, `total_rows`, `file_count`, `total_bytes`, `destination_type`, `started_at`, `completed_at` and `duration_ms`. Withheld: `destination_path`, `diagnostics`, `error_message`, `download_url`, `download_url_expires_at` and `triggered_by_email`. The only readers are `app/api/data-export/runs` and the `run` / `run-scheduled` writers, all the service role behind a role-gated route, so no screen breaks; a test pins that census.
+
+Nothing in the app reads either table with a member session, and a test pins that. The file is one paste:
+- a count-only inventory before the transaction: rows, rows holding a credential, active members who could read them, and whether `authenticated` held SELECT; and, for `export_runs`, its rows, the rows naming where a run went or why it failed, and whether `authenticated` held SELECT;
+- one final `(check, ok, n)` SELECT carrying seventeen probes, nine for `export_destinations` and eight for `export_runs`;
+- the rollback in the header, one line per table: `GRANT SELECT ON export_destinations TO anon, authenticated;` and `GRANT SELECT ON export_runs TO anon, authenticated;`.
+
+Test: `lib/__tests__/aoRoundGExportDestinationsMigration.test.ts`. The second fix pass adds the `export_runs` block, which checks:
+- the policy is defined once and never narrowed before this file;
+- the REVOKE;
+- the grant list is the census of the table's columns less the six withheld;
+- the withheld columns are the ones the runner writes the destination and the raw error into;
+- every probe and the inventory row;
+- every reader is a server route.
 - **Pending migration:** `supabase/migrations/20261154_ao_roundG_export_destinations_select.sql` — **not applied** (DEC-30).
 
 Done-when 2 (the export nulls the credentials) holds by document-control `XEDGE-10` (`REDACT_COLUMNS.export_destinations`), and is now pinned by value as well (`lib/__tests__/exportContractRoundTrip.test.ts`, the `BKP-1` block).
 
 **Done-when.**
-1. ✓ (pending migration `20261154`) — narrowed to the card columns (no credential, coordinate or raw run error) by a column privilege, the policy kept.
+1. ✓ (pending migration `20261154`). Narrowed to the card columns by a column privilege, with the policy kept: no credential, coordinate or raw run error on `export_destinations`, and, since the second review fix pass, no destination path, step trace, raw error, archive link or email on `export_runs`. The first ✓ was overstated, because `export_runs` still exposed the coordinates.
 2. ✓ — the export nulls the credential columns (`XEDGE-10`; pinned by value).
 3. ◐ — the restore half ✓ (P1). The remaining limb is that enabling a destination must require its credentials (the s3 / r2 keys, the webhook secret). It belongs to `app/api/data-export/destinations/[id]/route.ts` PATCH, admin-and-org P3's file, as P1 recorded.
 

@@ -15,6 +15,19 @@
 --   never directly touches them"): every read in the app is the service role
 --   behind a role-gated route (app/api/data-export/destinations*, run,
 --   run-scheduled, runs). Nothing reads it with a member's session.
+--   (Second review fix pass) export_runs carries the same coordinates, one
+--   row per run, and export_runs_member_select (20260605:147-150, the only
+--   definition) lets every active member read every column of it:
+--   destination_path is the webhook URL for a webhook run and
+--   <bucket>/<key> for an S3 / R2 run (lib/exportRunner.ts), diagnostics
+--   records the push step with the same URL or bucket ("webhook:push <url>",
+--   "s3:push <bucket>/<key>"), and error_message holds the runner's raw
+--   message (msg.slice(0, 1000) in app/api/data-export/run and
+--   run-scheduled). Narrowing export_destinations alone left a Viewer one
+--   `select('destination_path, diagnostics, error_message')` away from the
+--   webhook URL this file withholds. The only reader of export_runs is
+--   app/api/data-export/runs (and the run / run-scheduled writers), all the
+--   service role behind a role-gated route.
 --
 -- WHAT (the reversible narrowing, the plan's fail-safe default — a
 -- column-level privilege, not a dropped policy):
@@ -40,6 +53,17 @@
 --      A member's `select('*')` on the table is now refused (42501); a
 --      select of the card columns still answers, for their own org only (the
 --      policy). The service role is untouched.
+--   3. The same for export_runs: its member policy is KEPT; the table-level
+--      SELECT is revoked from PUBLIC, anon and authenticated; SELECT is
+--      granted back to authenticated on the run's CARD columns only: which
+--      destination, how it was triggered and by whom (the uid), its status,
+--      how much it carried (tables, rows, files, bytes), the destination's
+--      kind, and its times. NOT granted: destination_path (the webhook URL,
+--      or the bucket and key a run wrote), diagnostics (the step trace, which
+--      names the same URL or bucket), error_message (the raw runner message),
+--      download_url / download_url_expires_at (a presigned link to the
+--      finished archive), and triggered_by_email (the role-gated runs API
+--      returns it to the roles that may see it).
 --   The export half (BKP-11 Done-when 2: credentials nulled in every export)
 --   is document-control XEDGE-10's REDACT_COLUMNS; the restore half (Done-when
 --   3: restored destinations land disabled, no next run, no credentials) is
@@ -49,8 +73,9 @@
 -- before-apply inventory (aggregate counts only, never rows) records what the
 -- members could read before this paste.
 --
--- ROLLBACK (one line, restores the previous privileges exactly):
+-- ROLLBACK (restores the previous privileges exactly):
 --   GRANT SELECT ON export_destinations TO anon, authenticated;
+--   GRANT SELECT ON export_runs TO anon, authenticated;
 --
 -- ⚠ APPLIED BY HAND (DEC-30). Idempotent: paste the whole file once into the
 -- Supabase SQL editor. The editor shows only the LAST result set — the final
@@ -75,7 +100,17 @@ SELECT 'inventory: active members in an org that holds such a row (who could rea
                          AND (d.access_key_id_encrypted IS NOT NULL OR d.secret_access_key_encrypted IS NOT NULL OR d.webhook_secret_encrypted IS NOT NULL))
 UNION ALL
 SELECT 'inventory: authenticated held table-level SELECT before this paste (1 = yes; 0 = a re-run)',
-       (CASE WHEN has_table_privilege('authenticated', 'public.export_destinations', 'SELECT') THEN 1 ELSE 0 END)::text;
+       (CASE WHEN has_table_privilege('authenticated', 'public.export_destinations', 'SELECT') THEN 1 ELSE 0 END)::text
+UNION ALL
+SELECT 'inventory: export_runs rows',
+       COUNT(*)::text FROM export_runs
+UNION ALL
+SELECT 'inventory: export_runs rows naming where a run went or why it failed (destination_path, diagnostics or error_message set; readable by every active member before this paste)',
+       COUNT(*)::text FROM export_runs
+        WHERE destination_path IS NOT NULL OR diagnostics IS NOT NULL OR error_message IS NOT NULL
+UNION ALL
+SELECT 'inventory: authenticated held table-level SELECT on export_runs before this paste (1 = yes; 0 = a re-run)',
+       (CASE WHEN has_table_privilege('authenticated', 'public.export_runs', 'SELECT') THEN 1 ELSE 0 END)::text;
 
 BEGIN;
 
@@ -90,6 +125,16 @@ GRANT SELECT (
 
 COMMENT ON TABLE export_destinations IS
   'Scheduled-export destinations. Service role only by design; members may SELECT the card columns of their own org (export_dest_member_select + a column grant, 20261154). Credentials, the destination''s coordinates and the last run''s raw error are never readable by a member (BKP-11).';
+
+REVOKE SELECT ON TABLE export_runs FROM PUBLIC, anon, authenticated;
+GRANT SELECT (
+  id, org_id, destination_id, trigger_type, triggered_by, status,
+  table_count, total_rows, file_count, total_bytes, destination_type,
+  started_at, completed_at, duration_ms
+) ON TABLE export_runs TO authenticated;
+
+COMMENT ON TABLE export_runs IS
+  'One row per export run. Service role writes; members may SELECT the card columns of their own org (export_runs_member_select + a column grant, 20261154). Where a run went (destination_path), its step trace (diagnostics), its raw error, its download link and the triggering email are never readable by a member (BKP-11).';
 
 COMMIT;
 
@@ -130,4 +175,34 @@ UNION ALL SELECT 'authenticated can SELECT the card columns (id, org_id, name, t
        AND has_column_privilege('authenticated', 'public.export_destinations', 'last_run_status', 'SELECT'), NULL
 UNION ALL SELECT 'service_role keeps SELECT on the whole table',
        has_table_privilege('service_role', 'public.export_destinations', 'SELECT'), NULL
+UNION ALL SELECT 'export_runs: RLS still on',
+       COALESCE((SELECT relrowsecurity FROM pg_class WHERE oid = to_regclass('public.export_runs')), false), NULL
+UNION ALL SELECT 'export_runs_member_select is kept: a SELECT policy for authenticated bound to the caller''s active membership',
+       EXISTS (SELECT 1 FROM pg_policies
+                WHERE schemaname = 'public' AND tablename = 'export_runs' AND policyname = 'export_runs_member_select'
+                  AND cmd = 'SELECT' AND 'authenticated' = ANY (roles)
+                  AND qual LIKE '%org_members%' AND qual LIKE '%auth.uid()%' AND qual LIKE '%active%'), NULL
+UNION ALL SELECT 'export_runs: authenticated and anon hold no table-level SELECT, and anon can SELECT no column',
+       NOT has_table_privilege('authenticated', 'public.export_runs', 'SELECT')
+       AND NOT has_table_privilege('anon', 'public.export_runs', 'SELECT')
+       AND NOT has_any_column_privilege('anon', 'public.export_runs', 'SELECT'), NULL
+UNION ALL SELECT 'export_runs: authenticated cannot SELECT where a run went (destination_path) or its step trace (diagnostics)',
+       NOT has_column_privilege('authenticated', 'public.export_runs', 'destination_path', 'SELECT')
+       AND NOT has_column_privilege('authenticated', 'public.export_runs', 'diagnostics', 'SELECT'), NULL
+UNION ALL SELECT 'export_runs: authenticated cannot SELECT the raw error (error_message)',
+       NOT has_column_privilege('authenticated', 'public.export_runs', 'error_message', 'SELECT'), NULL
+UNION ALL SELECT 'export_runs: authenticated cannot SELECT the archive link (download_url, download_url_expires_at) or the triggering email',
+       NOT has_column_privilege('authenticated', 'public.export_runs', 'download_url', 'SELECT')
+       AND NOT has_column_privilege('authenticated', 'public.export_runs', 'download_url_expires_at', 'SELECT')
+       AND NOT has_column_privilege('authenticated', 'public.export_runs', 'triggered_by_email', 'SELECT'), NULL
+UNION ALL SELECT 'export_runs: authenticated can SELECT the card columns (id, org_id, destination, trigger, status, counts, times)',
+       has_column_privilege('authenticated', 'public.export_runs', 'id', 'SELECT')
+       AND has_column_privilege('authenticated', 'public.export_runs', 'org_id', 'SELECT')
+       AND has_column_privilege('authenticated', 'public.export_runs', 'destination_id', 'SELECT')
+       AND has_column_privilege('authenticated', 'public.export_runs', 'status', 'SELECT')
+       AND has_column_privilege('authenticated', 'public.export_runs', 'total_bytes', 'SELECT')
+       AND has_column_privilege('authenticated', 'public.export_runs', 'started_at', 'SELECT')
+       AND has_column_privilege('authenticated', 'public.export_runs', 'completed_at', 'SELECT'), NULL
+UNION ALL SELECT 'export_runs: service_role keeps SELECT on the whole table',
+       has_table_privilege('service_role', 'public.export_runs', 'SELECT'), NULL
 UNION ALL SELECT inventory, NULL, n FROM _ao_g54_before;

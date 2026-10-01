@@ -14,6 +14,7 @@ import { DeleteObjectsCommand } from "@aws-sdk/client-s3";
 import { authorizeOrgRole } from "@/lib/serverAuth";
 import { r2, R2_BUCKET } from "@/lib/r2";
 import { partitionOrgKeys, sharedLiveKeys } from "@/lib/shedKeyGuard";
+import { keysReferencedOutside } from "@/lib/storageKeyRegistry";
 import { persistReclaimShortfall } from "@/lib/archiveCatalog";
 
 export const runtime = "nodejs";
@@ -112,10 +113,15 @@ export async function POST(req: NextRequest) {
   // (a revert's current revision reuses the reverted-to key) is never
   // freed — deleting it would destroy the current revision's bytes. Those
   // rows stay linked, unstamped and undeleted. Fail CLOSED on the read.
+  // ILIFE-5: the same for a key a knowledge-library mirror (or any other
+  // registered key column) still names — a shed between a rev-up and the
+  // next sync must not delete the bytes a 'ready' mirror points at.
   let sharedSkipped = 0;
   try {
     const linkedIds = new Set(versions.map((v) => v.id));
     const shared = await sharedLiveKeys(sb, orgId, versions.map((v) => v.file_url as string), linkedIds);
+    // ILIFE-5: never free bytes a knowledge mirror still names.
+    for (const k of await keysReferencedOutside(sb, versions.map((v) => v.file_url as string), ["document_versions.file_url"])) shared.add(k);
     if (shared.size > 0) {
       const before = versions.length;
       versions = versions.filter((v) => !shared.has(v.file_url as string));
@@ -132,7 +138,7 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({
       ok: true, reclaimed: 0, keysDeleted: 0, keysFailed: 0, shortfallPersisted: cleared.ok,
       errors: cleared.ok ? [] : [cleared.error], heldSkipped, rejectedKeys, sharedSkipped,
-      note: `Nothing freed: ${rejectedKeys} row(s) had a storage key outside this workspace and ${sharedSkipped} row(s) share their key with a current revision.`,
+      note: `Nothing freed: ${rejectedKeys} row(s) had a storage key outside this workspace and ${sharedSkipped} row(s) share their key with a current revision or a knowledge-library copy.`,
     });
   }
   const unstamped = versions.filter((v) => !v.archived_at);
@@ -204,7 +210,7 @@ export async function POST(req: NextRequest) {
   const notes = [
     heldSkipped > 0 ? `${heldSkipped} revision(s) under LEGAL HOLD were left untouched.` : "",
     rejectedKeys > 0 ? `${rejectedKeys} row(s) had a storage key outside this workspace and were refused.` : "",
-    sharedSkipped > 0 ? `${sharedSkipped} row(s) share their storage key with a current revision and were left in place.` : "",
+    sharedSkipped > 0 ? `${sharedSkipped} row(s) share their storage key with a current revision or a knowledge-library copy and were left in place.` : "",
   ].filter(Boolean);
   return NextResponse.json({
     ok: true, archiveId, reclaimed, keysDeleted: deletedKeys, keysFailed, shortfallPersisted: persisted.ok, errors,
