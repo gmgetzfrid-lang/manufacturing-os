@@ -55,10 +55,13 @@ export default function RelatedPanel({
   const [busy, setBusy] = useState(false);
   const [copied, setCopied] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  /** A Related read that failed — said, never shown as an empty or
+   *  "restricted" list. */
+  const [readError, setReadError] = useState<string | null>(null);
 
   const refresh = useCallback(async () => {
-    try { setCurated(await listRelatedResources(documentId)); }
-    catch { setCurated([]); }
+    try { setCurated(await listRelatedResources(documentId)); setReadError(null); }
+    catch (e) { setCurated((prev) => prev ?? []); setReadError((e as Error).message); }
   }, [documentId]);
 
   useEffect(() => {
@@ -162,6 +165,11 @@ export default function RelatedPanel({
       {error && (
         <div className="flex items-start gap-1.5 rounded-lg border border-rose-200 bg-rose-50 dark:bg-rose-950/40 px-2 py-1.5 text-[11px] text-rose-700 dark:text-rose-300">
           <AlertTriangle className="w-3 h-3 mt-0.5 shrink-0" /> {error}
+        </div>
+      )}
+      {readError && (
+        <div className="flex items-start gap-1.5 rounded-lg border border-rose-200 bg-rose-50 dark:bg-rose-950/40 px-2 py-1.5 text-[11px] text-rose-700 dark:text-rose-300">
+          <AlertTriangle className="w-3 h-3 mt-0.5 shrink-0" /> Related links could not be loaded — {readError}
         </div>
       )}
 

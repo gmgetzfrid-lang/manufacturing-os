@@ -61,16 +61,26 @@ export interface SkillControls {
   /** A controller turns a share request down (the row stays private). */
   declineShare: boolean;
   remove: boolean;
+  /** Why this private skill cannot be published as written — a pack or a
+   *  pattern written before 20261125's checks, which the guards re-run on
+   *  publish (23514). Approve, Share and the request are withheld and the
+   *  card says this instead: no control edits a skill, so its author
+   *  re-creates it to share it. */
+  publishRefused: string | null;
 }
 
 const NONE: SkillControls = {
   toggle: false, share: false, approveShare: false, unshare: false, requestShare: false,
-  withdrawRequest: false, declineShare: false, remove: false,
+  withdrawRequest: false, declineShare: false, remove: false, publishRefused: null,
 };
 
+/** `publishIssue` is what the database would refuse on publishing this row
+ *  (answerSkillIssue of its pack / the first of refusedSkillPatterns of its
+ *  patterns), worked out by the card that knows the skill's kind. */
 export function skillControls(
   row: SkillRowLike,
   viewer: { uid: string | null; isController: boolean },
+  publishIssue: string | null = null,
 ): SkillControls {
   if (row.builtin_key) return { ...NONE, toggle: viewer.isController };
   const mine = viewer.uid !== null && row.created_by === viewer.uid;
@@ -79,21 +89,27 @@ export function skillControls(
   // Before 20261125 the row has no share_requested column at all, and a
   // request could not be recorded — the control is not offered.
   const sharingInstalled = row.share_requested !== undefined;
+  // A private skill the database would refuse to publish: nothing offers a
+  // publish that can only fail (the reason is shown instead).
+  const refused = !org && publishIssue ? publishIssue : null;
   if (viewer.isController) {
     // A member's private skill: the controller decides its OPEN share
     // request — approve or decline — and nothing else; a draft its author
     // has not offered (or withdrew) is not theirs to publish (20261125's
     // guards).
-    if (!mine && !org) return { ...NONE, approveShare: requested, declineShare: requested };
+    if (!mine && !org) {
+      return { ...NONE, approveShare: requested && !refused, declineShare: requested, publishRefused: requested ? refused : null };
+    }
     return {
       ...NONE,
       toggle: true,
-      share: !org,
+      share: !org && !refused,
       unshare: org,
       // A controller's own private draft is simply shared.
       requestShare: false,
       withdrawRequest: mine && !org && requested,
       remove: true,
+      publishRefused: refused,
     };
   }
   if (!mine) return NONE;
@@ -101,9 +117,10 @@ export function skillControls(
     ...NONE,
     toggle: !org,
     unshare: org,
-    requestShare: sharingInstalled && !org && !requested,
+    requestShare: sharingInstalled && !org && !requested && !refused,
     withdrawRequest: !org && requested,
     remove: true,
+    publishRefused: refused,
   };
 }
 
@@ -150,13 +167,20 @@ export async function readSkillShelf<T extends ShelfRow>(
   const rows: T[] = [];
   const notes: string[] = [];
   for (let from = 0; from < SKILL_SHELF_CEILING; from += SKILL_SHELF_PAGE) {
-    const { data, error } = await readPage(from, from + SKILL_SHELF_PAGE - 1);
+    // The last page reads one row past the ceiling: that row is how the
+    // shelf knows a skill is left unshown (a shelf of exactly the ceiling
+    // hides nothing and says nothing).
+    const to = Math.min(from + SKILL_SHELF_PAGE, SKILL_SHELF_CEILING) - 1;
+    const last = to === SKILL_SHELF_CEILING - 1;
+    const want = to - from + 1 + (last ? 1 : 0);
+    const { data, error } = await readPage(from, from + want - 1);
     if (error) return { rows: [], error, notes };
     const page = data ?? [];
     rows.push(...page);
-    if (page.length < SKILL_SHELF_PAGE) break;
+    if (page.length < want) break;
   }
-  if (rows.length >= SKILL_SHELF_CEILING) {
+  if (rows.length > SKILL_SHELF_CEILING) {
+    rows.length = SKILL_SHELF_CEILING;
     notes.push(`This shelf lists the first ${SKILL_SHELF_CEILING.toLocaleString("en-US")} org-wide and own skills — any beyond that are not shown.`);
   }
   const req = await readRequests(SKILL_REQUEST_CEILING + 1);

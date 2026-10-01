@@ -30,7 +30,10 @@
 --      withdrawn draft is not theirs to publish); the author's edit of a
 --      requested draft withdraws the request, so the version a controller
 --      approves is one its author asked for (the Skill Library approves
---      only the version it showed — the row's updated_at). Nobody changes a skill's
+--      only the version it showed — the row's updated_at, which the
+--      database stamps on every person's write, a new row included, so a
+--      draft deleted and re-inserted under its old id and date is a new
+--      version). Nobody changes a skill's
 --      org, author or built-in key, and an author keeps a row only in an
 --      org they are an active member of.
 --   2. Built-ins belong to nobody: created_by NULL, managed by controllers,
@@ -44,7 +47,9 @@
 --      Rows a controller has approved carry shared_by and are never touched.
 --   4. New custom rows default to 'private' (GOV-2).
 --   5. Guards (BEFORE INSERT OR UPDATE). Sharing is stamped by the database,
---      not claimed by the client; updated_at is stamped on every update;
+--      not claimed by the client; updated_at is stamped on every update,
+--      and a person's new row takes the database's id, created_at and
+--      updated_at (the service role's restore keeps its own);
 --      re-enabling a connection skill clears the engine's note. The byline
 --      (created_by_name, what every card shows as the author — GOV-2) is
 --      the database's too: a person's new custom skill is signed with their
@@ -405,6 +410,14 @@ BEGIN
   END IF;
   -- The service role (built-in seeding, the org restore) is not a person.
   IF auth.uid() IS NULL THEN RETURN NEW; END IF;
+  -- A person's new row is keyed and dated by the database (DEC-55): its
+  -- updated_at is the version a share approval names and the date every
+  -- card shows, so no client chooses it — a draft deleted and re-inserted
+  -- under its old id and date is a new row and a new version, never the
+  -- one a controller reviewed. (The service role, above, keeps its own.)
+  IF TG_OP = 'INSERT' THEN
+    NEW.id := gen_random_uuid(); NEW.created_at := now(); NEW.updated_at := now();
+  END IF;
   -- A person never changes a skill's org, author or built-in key (a
   -- controller could otherwise retarget a private skill onto one member; an
   -- author could move their skill into another org's queue).
@@ -520,6 +533,14 @@ BEGIN
     IF auth.uid() IS NOT NULL THEN NEW.shared_by := auth.uid(); NEW.shared_at := now(); END IF;
   END IF;
   IF auth.uid() IS NULL THEN RETURN NEW; END IF;
+  -- A person's new row is keyed and dated by the database (DEC-55): its
+  -- updated_at is the version a share approval names and the date every
+  -- card shows, so no client chooses it — a draft deleted and re-inserted
+  -- under its old id and date is a new row and a new version, never the
+  -- one a controller reviewed. (The service role, above, keeps its own.)
+  IF TG_OP = 'INSERT' THEN
+    NEW.id := gen_random_uuid(); NEW.created_at := now(); NEW.updated_at := now();
+  END IF;
   -- A person never changes a skill's org, author or built-in key (a
   -- controller could otherwise retarget a private pack onto one member's
   -- prompts; an author could move their pack into another org's queue).
@@ -830,6 +851,14 @@ SELECT 'both guards: a controller publishes a member''s private skill only while
               FROM pg_proc WHERE proname = 'link_rules_guard')
        AND (SELECT prosrc LIKE '%OR NEW.instructions IS DISTINCT FROM OLD.instructions) THEN%'
               FROM pg_proc WHERE proname = 'answer_skills_guard'),
+       NULL
+UNION ALL
+SELECT 'both guards: a person''s new row takes the database''s id, created_at and updated_at (the version a share approval names), after the service role''s early return',
+       (SELECT COUNT(*) = 2 FROM pg_proc
+         WHERE proname IN ('link_rules_guard', 'answer_skills_guard')
+           AND prosrc LIKE '%IF TG_OP = ''INSERT'' THEN%NEW.id := gen_random_uuid(); NEW.created_at := now(); NEW.updated_at := now();%'
+           AND position('IF auth.uid() IS NULL THEN RETURN NEW;' in prosrc)
+               < position('NEW.id := gen_random_uuid(); NEW.created_at := now(); NEW.updated_at := now();' in prosrc)),
        NULL
 UNION ALL
 SELECT 'skills_audit records person-initiated SKILL_CREATED / SKILL_UPDATED / SKILL_DELETED; the text only while the row is org-visible, a private skill''s words withheld',

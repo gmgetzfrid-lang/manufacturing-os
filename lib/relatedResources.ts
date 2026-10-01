@@ -79,10 +79,15 @@ const missingTable = (e: ReadError) => !!e && (e.code === "42P01" || /does not e
  *  So the inbound read fetches only which document carries each link; its
  *  label and evidence are read afterwards, for the carriers the viewer's
  *  own documents read returns (fix pass 4 — the browser never receives
- *  what an unreadable carrier says). A link this document carries to a
- *  document the viewer cannot read stays listed with no `target` (the panel
- *  says "restricted document"). The table's own read policy still admits
- *  every active member (20260806) — IRLS-15. */
+ *  what an unreadable carrier says). Since 20261126 the table's own read
+ *  policy says the same (document_related_resources_read_endpoints, IRLS-15):
+ *  a link is readable only by someone who can read its carrier and, for a
+ *  document link, its target — so a link to a document the viewer cannot
+ *  read is not returned at all. On a database without that policy such a
+ *  link is listed with no `target` (the panel says "restricted document").
+ *  A documents read that FAILS is an error, never an access verdict: it
+ *  would otherwise list every linked document as restricted and drop every
+ *  inbound link. */
 export async function listRelatedResources(documentId: string): Promise<RelatedResource[]> {
   const [outRes, inRes] = await Promise.all([
     supabase.from("document_related_resources").select(RELATED_COLS)
@@ -107,9 +112,10 @@ export async function listRelatedResources(documentId: string): Promise<RelatedR
   const byId = new Map<string, { document_number: string | null; title: string | null; library_id: string }>();
   if (ids.length > 0) {
     // Read through the viewer's own documents RLS: what does not come back
-    // is a document they cannot read.
-    const { data: docs } = await supabase
+    // is a document they cannot read — but only when the read answered.
+    const { data: docs, error: docsErr } = await supabase
       .from("documents").select("id, document_number, title, library_id").in("id", ids);
+    if (docsErr) throw new Error(`The linked documents could not be read (${docsErr.message}).`);
     for (const d of docs ?? []) {
       byId.set((d as { id: string }).id, d as { document_number: string | null; title: string | null; library_id: string });
     }

@@ -32,11 +32,11 @@ import { PageShell, PageHeaderBar } from "@/components/ui/PageShell";
 import ViewTabs, { INTELLIGENCE_VIEWS } from "@/components/navigation/ViewTabs";
 import SkillStudio from "@/components/intelligence/SkillStudio";
 import ConnectionSkillsPanel, {
-  SkillActions, SkillBadges, SkillByline, listedSkills, type SkillOps,
+  SkillActions, SkillBadges, SkillByline, SkillPublishRefused, listedSkills, type SkillOps,
 } from "@/components/intelligence/ConnectionSkillsPanel";
 import type { LinkRule } from "@/lib/linkRules";
 import {
-  listAnswerSkills, seedBuiltinAnswerSkills, setAnswerSkillEnabled,
+  listAnswerSkills, seedBuiltinAnswerSkills, setAnswerSkillEnabled, answerSkillIssue,
   setAnswerSkillVisibility, approveAnswerSkillShare, setAnswerSkillShareRequest, deleteAnswerSkill, type AnswerSkill,
 } from "@/lib/answerSkills";
 import { isSkillController, skillControls } from "@/lib/skillAuthority";
@@ -190,7 +190,12 @@ export default function SkillLibraryPage() {
                 <div className="text-[11px] text-[var(--color-text-muted)]">Run the reasoning-skills migration to unlock this shelf.</div>
               ) : (
                 <div className="grid md:grid-cols-2 gap-3">
-                  {shownReasoning.map((r, i) => (
+                  {shownReasoning.map((r, i) => {
+                    // What publishing would be refused for (20261125 re-checks
+                    // a pack on publish): no Approve or Share that can only fail.
+                    const controls = skillControls(r, { uid: uid ?? null, isController },
+                      r.builtin_key ? null : answerSkillIssue(r.instructions));
+                    return (
                     <div key={r.id}
                       style={{ animation: "rise 0.45s var(--ease-fluid) both", animationDelay: `${Math.min(i, 8) * 60}ms` }}
                       className={`rounded-2xl border overflow-hidden transition-all ${r.enabled
@@ -206,15 +211,18 @@ export default function SkillLibraryPage() {
                             <div className="text-sm font-black text-[var(--color-text)] leading-tight">{r.name}</div>
                             <SkillBadges row={r} kindLabel="Answer discipline" />
                           </div>
-                          <SkillActions row={r} controls={skillControls(r, { uid: uid ?? null, isController })}
+                          <SkillActions row={r} controls={controls}
                             ops={ANSWER_OPS} busy={busyId === r.id} run={run} />
                         </div>
                         {r.description && (
                           <p className="text-[11px] text-[var(--color-text-muted)] leading-relaxed">{r.description}</p>
                         )}
+                        <SkillPublishRefused controls={controls} isAuthor={!!uid && r.created_by === uid} />
                         {/* The pack itself, on demand — the description sells it,
-                            the details prove it. */}
-                        <details className="group">
+                            the details prove it. Open while a controller is
+                            asked to approve it: the version approved is the
+                            one shown (DEC-55). */}
+                        <details className="group" open={controls.approveShare || undefined}>
                           <summary className="cursor-pointer text-[10px] font-black uppercase tracking-wider text-[var(--color-text-faint)] hover:text-[var(--color-text-muted)] list-none">
                             View the discipline ▸
                           </summary>
@@ -225,7 +233,8 @@ export default function SkillLibraryPage() {
                         </div>
                       </div>
                     </div>
-                  ))}
+                    );
+                  })}
                   {activeOrgId && uid && (
                     <button type="button" onClick={() => setStudioOpen(true)}
                       style={{ animation: "rise 0.45s var(--ease-fluid) both", animationDelay: `${Math.min(shownReasoning.length, 9) * 60}ms` }}

@@ -55,9 +55,31 @@
 --      them). The inventory counts them; the retired rows keep their
 --      evidence text, readable as before only by members who can read both
 --      documents (4).
+--   6. IRLS-15 — applied links (document_related_resources) were readable by
+--      every active member whatever the ACL says about the documents they
+--      connect, and since (1) the engine applies provable links there with
+--      their evidence ("Off-page connector 44-098 continues onto
+--      44-PID-013"). A RESTRICTIVE SELECT policy now requires the carrier
+--      document AND, for a document link, the target document to be readable
+--      by the caller — the same documents-RLS subqueries as (4). RESTRICTIVE
+--      because document_related_resources_write is FOR ALL: its USING would
+--      otherwise grant SELECT on every row to the writer tier. Both endpoints,
+--      not only the carrier: a link to a document you cannot read says that
+--      the relationship exists and what it is (a person's label usually names
+--      the target), which is what (4) withholds for proposals. So a link this
+--      document carries to a document the viewer cannot read is no longer
+--      listed to them (before, the Related panel showed it as "restricted
+--      document"); the inventory counts the links that touch a restricted
+--      document. URL links (no target) need only the carrier. The engine,
+--      the evidence audit and the publish sweep run on the service role and
+--      are unaffected; a person's unpin of a link they cannot read matches
+--      nothing (a checked write says so). Until this file is applied the
+--      engine applies no provable link at all — they wait in the review
+--      queue (lib/linkProposerServer.ts: no plain index, 42P10, means this
+--      policy is not there either).
 --
--- NARROWS (members lose proposals whose documents they cannot read); nobody
--- gains. Pre-apply inventory (DEC-30) is captured into a TEMP TABLE before
+-- NARROWS (members lose proposals and applied links whose documents they
+-- cannot read); nobody gains. Pre-apply inventory (DEC-30) is captured into a TEMP TABLE before
 -- the transaction: aggregate counts only. Single paste: inventory ->
 -- BEGIN/DDL/COMMIT -> ONE SELECT (check text, ok boolean, n text) — the
 -- editor shows only the last result. Every function pins SET search_path =
@@ -109,6 +131,31 @@ SELECT 'proposed_links pending rows from a connection skill that is private (ret
 UNION ALL
 SELECT 'proposed_links rows waiting for review (now readable only by members who can read both documents)', COUNT(*)
   FROM proposed_links WHERE status = 'pending';
+
+-- IRLS-15: who loses which applied links depends on each member's grants,
+-- so the inventory counts the links that touch a document with restricted
+-- visibility (anything but normal / unset — node_visible's open case): each
+-- becomes readable only by members who can read both of its documents.
+CREATE TEMP TABLE IF NOT EXISTS _intel_g26_links_before AS
+SELECT 'document_related_resources links touching a document with restricted visibility (now readable only by members who can read the carrier and the target)' AS what, COUNT(*) AS n
+  FROM document_related_resources l
+ WHERE EXISTS (SELECT 1 FROM documents d
+                WHERE d.id IN (l.document_id, l.target_document_id)
+                  AND d.visibility IS NOT NULL AND d.visibility <> 'normal')
+UNION ALL
+SELECT 'of those, applied by the engine or approved from a proposal (origin system / proposed — they carry evidence)', COUNT(*)
+  FROM document_related_resources l
+ WHERE l.origin IN ('system', 'proposed')
+   AND EXISTS (SELECT 1 FROM documents d
+                WHERE d.id IN (l.document_id, l.target_document_id)
+                  AND d.visibility IS NOT NULL AND d.visibility <> 'normal')
+UNION ALL
+SELECT 'of those, carried by an open document to a restricted one (no longer listed as "restricted document" to a member who cannot read the target)', COUNT(*)
+  FROM document_related_resources l
+  JOIN documents c ON c.id = l.document_id
+  JOIN documents t ON t.id = l.target_document_id
+ WHERE (c.visibility IS NULL OR c.visibility = 'normal')
+   AND t.visibility IS NOT NULL AND t.visibility <> 'normal';
 
 BEGIN;
 
@@ -186,6 +233,16 @@ UPDATE proposed_links p SET status = 'stale'
  WHERE p.status = 'pending' AND p.org_id = r.org_id
    AND p.proposer = 'rule:' || r.id::text AND r.visibility <> 'org';
 
+-- ── 6. IRLS-15: an applied link is readable only with both of its documents ─
+DROP POLICY IF EXISTS document_related_resources_read_endpoints ON document_related_resources;
+CREATE POLICY document_related_resources_read_endpoints ON document_related_resources
+  AS RESTRICTIVE FOR SELECT
+  USING (
+    EXISTS (SELECT 1 FROM documents d WHERE d.id = document_related_resources.document_id)
+    AND (document_related_resources.target_document_id IS NULL
+         OR EXISTS (SELECT 1 FROM documents d WHERE d.id = document_related_resources.target_document_id))
+  );
+
 COMMIT;
 
 -- ── Verification (read-only) + inventory — ONE result set ───────────────────
@@ -251,12 +308,31 @@ SELECT 'proposed_links_read (membership) still present; proposed_links_write / e
                AND qual NOT LIKE '%role = ANY%' AND with_check NOT LIKE '%role = ANY%'),
        NULL
 UNION ALL
+SELECT 'IRLS-15: document_related_resources SELECT is RESTRICTIVE on the carrier and (for a document link) the target being readable (documents RLS)',
+       EXISTS (SELECT 1 FROM pg_policies
+                WHERE tablename = 'document_related_resources' AND policyname = 'document_related_resources_read_endpoints'
+                  AND permissive = 'RESTRICTIVE' AND cmd = 'SELECT'
+                  AND qual LIKE '%FROM documents d%'
+                  AND qual LIKE '%d.id = document_related_resources.document_id%'
+                  AND qual LIKE '%target_document_id IS NULL%'
+                  AND qual LIKE '%d.id = document_related_resources.target_document_id%'),
+       NULL
+UNION ALL
+SELECT 'document_related_resources_read (membership) and document_related_resources_write still present (the endpoints policy narrows them; it replaces neither)',
+       (SELECT COUNT(*) = 2 FROM pg_policies
+         WHERE tablename = 'document_related_resources'
+           AND policyname IN ('document_related_resources_read', 'document_related_resources_write')
+           AND permissive = 'PERMISSIVE'),
+       NULL
+UNION ALL
 SELECT 'LNK-5: no pending proposal comes from a private connection skill',
        NOT EXISTS (SELECT 1 FROM proposed_links p JOIN link_rules r ON r.org_id = p.org_id AND p.proposer = 'rule:' || r.id::text
                     WHERE p.status = 'pending' AND r.visibility <> 'org'),
        NULL
 UNION ALL
 SELECT 'inventory (before): ' || what, NULL, n::text FROM _intel_g26_before
+UNION ALL
+SELECT 'inventory (before): ' || what, NULL, n::text FROM _intel_g26_links_before
 UNION ALL
 SELECT 'inventory (after): origin CHECK validated (true = every row inside the declared set)', NULL,
        COALESCE((SELECT convalidated FROM pg_constraint

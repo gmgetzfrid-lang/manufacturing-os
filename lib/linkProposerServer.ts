@@ -91,7 +91,8 @@ export interface ProposerRun {
   /** 'inferred' proposals waiting for room in the queue (LNK-10). */
   heldInferred: number;
   /** Provable connections that could not be applied and were queued for a
-   *  person instead of vanishing (IRLS-2). */
+   *  person instead of vanishing (IRLS-2) — including every provable
+   *  connection while 20261126 is not applied (IRLS-15). */
   fellBackToQueue: number;
   /** Connection Skills the engine switched off this pass (LNK-6). */
   disabledSkills: string[];
@@ -753,11 +754,15 @@ export async function runLinkProposers(
   // ── Write ─────────────────────────────────────────────────────────────
   // LNK-3 / IRLS-2: provable links apply against the plain (document_id,
   // target_document_id) unique index (20261126) — the carrier is the lower
-  // document number (LNK-13). If the batch cannot be written (a database
-  // without that index answers 42P10), each row is inserted on its own; a
-  // pair already linked is skipped; a row that still fails goes to the
-  // review queue for a person instead of vanishing, and the run says so as
-  // an ERROR.
+  // document number (LNK-13). A database without that index (42P10) has not
+  // applied 20261126, so it lacks document_related_resources_read_endpoints
+  // too: an applied link there would be readable by every active member,
+  // evidence and all, whatever the ACL says about its documents (IRLS-15).
+  // Nothing is applied then — the provable drafts wait in the review queue
+  // for a person, and the run says why. Any other batch failure (the index,
+  // and so the policy, is there) is retried row by row; a pair already
+  // linked is skipped; a row that still fails goes to the review queue
+  // instead of vanishing, and the run says so as an ERROR.
   let autoApplied = 0;
   let fellBackToQueue = 0;
   const queueDrafts = [...queue];
@@ -785,10 +790,11 @@ export async function runLinkProposers(
       .select("id");
     if (!error) {
       autoApplied = ((data as unknown[] | null) ?? []).length;
+    } else if (error.code === "42P10") {
+      queueDrafts.push(...autoApply);
+      fellBackToQueue += autoApply.length;
+      notes.push(`${autoApply.length} provable connection${autoApply.length === 1 ? " was" : "s were"} queued for review instead of applied — the 20261126 migration (the plain link index and the read policy that shows an applied link only to members who can read both documents) is not applied yet.`);
     } else {
-      if (error.code === "42P10") {
-        notes.push("Provable links were applied one by one — the 20261126 migration (plain link index) is not applied yet.");
-      }
       let lastError: string | null = null;
       for (const d of autoApply) {
         const one = await admin.from("document_related_resources").insert(rowFor(d)).select("id");

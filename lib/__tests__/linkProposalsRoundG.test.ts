@@ -50,11 +50,13 @@ const db = vi.hoisted(() => ({
   caller: null as unknown as FakeDb,
   /** The service role's rpc answers, by function name. */
   rpc: {} as Record<string, (args: Record<string, unknown>) => unknown>,
+  /** A test's stand-in for the browser client's `from` (a failing read). */
+  from: null as null | ((table: string) => unknown),
 }));
 vi.mock("@/lib/supabase", async () => {
   const { makeFakeSupabase, newFakeDb: fresh } = await import("./helpers/fakeSupabase");
   db.ref = fresh();
-  const proxy = new Proxy({}, { get: (_t, p: string) => (makeFakeSupabase(db.ref) as Record<string, unknown>)[p] });
+  const proxy = new Proxy({}, { get: (_t, p: string) => (p === "from" && db.from ? db.from : (makeFakeSupabase(db.ref) as Record<string, unknown>)[p]) });
   return { supabase: proxy };
 });
 vi.mock("@/lib/supabaseAdmin", async () => {
@@ -112,6 +114,7 @@ beforeEach(() => {
   Object.assign(db.ref, newFakeDb());
   db.caller = newFakeDb();
   db.rpc = {};
+  db.from = null;
   db.ref.unique = {
     document_related_resources: [["document_id", "target_document_id"]],
     proposed_links: [["document_id", "target_document_id", "proposer"]],
@@ -695,6 +698,38 @@ describe("LNK-3 / IRLS-2 — provable links apply themselves, once", () => {
     expect(run.errors[0]).toMatch(/could not be applied .* queued for review instead/);
     expect(pending()).toEqual([expect.objectContaining({ tier: "provable", proposer: "opc" })]);
   });
+  it("fix pass 5 (IRLS-15): before 20261126 (42P10) nothing is applied — no member-readable link is written; the provable draft waits in the review queue and the run says why", async () => {
+    setup();
+    // A database without the plain index answers the batch with 42P10 —
+    // and has no document_related_resources_read_endpoints either.
+    db.ref.beforeInsert!.document_related_resources = (row) => {
+      const recent = db.ref.calls.slice(-2)[0];
+      if (recent?.method === "upsert") throw { code: "42P10", message: "there is no unique or exclusion constraint matching the ON CONFLICT specification" };
+      return row;
+    };
+    const run = await runLinkProposers(admin(), ORG);
+    expect(run.autoApplied).toBe(0);
+    expect(run.fellBackToQueue).toBe(1);
+    expect(run.errors).toEqual([]);
+    expect(run.notes).toContain("1 provable connection was queued for review instead of applied — the 20261126 migration (the plain link index and the read policy that shows an applied link only to members who can read both documents) is not applied yet.");
+    expect(t("document_related_resources")).toHaveLength(0);
+    // no row-by-row insert was tried: the fallback runs only where the policy is
+    expect(db.ref.calls.filter((c) => c.table === "document_related_resources" && c.method === "insert")).toHaveLength(0);
+    expect(pending()).toEqual([expect.objectContaining({ tier: "provable", proposer: "opc", evidence: expect.objectContaining({ summary: "Sheet references drawing 44-PID-013" }) })]);
+    // the next run (still before 20261126) finds it queued — not applied, not doubled
+    const again = await runLinkProposers(admin(), ORG);
+    expect(again.autoApplied).toBe(0);
+    expect(t("document_related_resources")).toHaveLength(0);
+    expect(pending()).toHaveLength(1);
+  });
+  it("fix pass 5 (IRLS-15): the source applies nothing row by row on 42P10", () => {
+    const src = repo("lib/linkProposerServer.ts");
+    const write = src.slice(src.indexOf("// ── Write ──"), src.indexOf("let proposed = 0;"));
+    expect(write).toMatch(/\} else if \(error\.code === "42P10"\) \{\s+queueDrafts\.push\(\.\.\.autoApply\);\s+fellBackToQueue \+= autoApply\.length;/);
+    // the row-by-row insert sits only in the branch after it
+    expect(write.indexOf('error.code === "42P10"')).toBeLessThan(write.indexOf('.insert(rowFor(d))'));
+    expect(write).not.toMatch(/applied one by one/);
+  });
   it("a failed decisions read writes nothing (a dismissed pair must not come back)", async () => {
     setup();
     db.ref.tables.proposed_links = [];
@@ -805,6 +840,29 @@ describe("LNK-13 / LNK-9 — an approved link reads the same from both documents
     const fn = src.slice(src.indexOf("export async function listRelatedResources"), src.indexOf("const REFUSED"));
     expect(fn).not.toContain('select("*")');
     expect(fn).not.toContain(".or(");
+  });
+  it("fix pass 5: a documents read that fails is an error — never every link 'restricted' and every backlink gone", async () => {
+    t("document_related_resources").push(
+      { id: "out", org_id: ORG, document_id: "aa", target_document_id: "zz", kind: "document", origin: "human", sort_order: 0, created_at: "1" },
+      { id: "in", org_id: ORG, document_id: "zz", target_document_id: "aa", kind: "document", origin: "proposed", sort_order: 1, created_at: "2" },
+    );
+    db.ref.tables.documents = [];
+    const orig = makeFakeSupabase(db.ref);
+    // the documents read (…select().in()) answers with an error
+    const failIn = (b: unknown): unknown => new Proxy(b as object, {
+      get: (tt, p: string) => {
+        const v = (tt as Record<string, unknown>)[p];
+        if (p === "in") return () => Promise.resolve({ data: null, error: { message: "canceling statement due to statement timeout" } });
+        if (p === "then" || typeof v !== "function") return v;
+        return (...a: unknown[]) => failIn((v as (...x: unknown[]) => unknown)(...a));
+      },
+    });
+    const failing = (tbl: string) => (tbl === "documents" ? failIn(orig.from(tbl)) : orig.from(tbl));
+    db.from = failing;
+    await expect(listRelatedResources("aa")).rejects.toThrow("The linked documents could not be read (canceling statement due to statement timeout).");
+    const panel = repo("components/documents/RelatedPanel.tsx");
+    expect(panel).toContain("catch (e) { setCurated((prev) => prev ?? []); setReadError((e as Error).message); }");
+    expect(panel).toContain("Related links could not be loaded — {readError}");
   });
   it("an unreadable inbound carrier no longer hides the outbound row to the same document", async () => {
     t("document_related_resources").push(
@@ -934,6 +992,31 @@ describe("20261126 — the paste contract and what it builds", () => {
     // the write policies are verified, not re-created
     expect(body).not.toMatch(/CREATE POLICY proposed_links_write|CREATE POLICY entity_mentions_write/);
     expect(body).toMatch(/qual LIKE '%caller_holds_any_role\(org_id%'/);
+  });
+  it("fix pass 5 (IRLS-15): applied links are readable only with their carrier and (for a document link) their target, under the caller's documents RLS", () => {
+    expect(body).toMatch(/DROP POLICY IF EXISTS document_related_resources_read_endpoints ON document_related_resources;\s+CREATE POLICY document_related_resources_read_endpoints ON document_related_resources\s+AS RESTRICTIVE FOR SELECT\s+USING \(\s+EXISTS \(SELECT 1 FROM documents d WHERE d\.id = document_related_resources\.document_id\)\s+AND \(document_related_resources\.target_document_id IS NULL\s+OR EXISTS \(SELECT 1 FROM documents d WHERE d\.id = document_related_resources\.target_document_id\)\)\s+\);/);
+    // inside the transaction, after the LNK-5 retirement
+    const begin = body.indexOf("BEGIN;"), commit = body.indexOf("COMMIT;");
+    const at = body.indexOf("CREATE POLICY document_related_resources_read_endpoints");
+    expect(at).toBeGreaterThan(begin);
+    expect(at).toBeLessThan(commit);
+    // the membership read and the writer policy are narrowed, not re-created
+    expect(body).not.toMatch(/CREATE POLICY document_related_resources_read ON|CREATE POLICY document_related_resources_write/);
+    // counted before apply (aggregates), probed after
+    const inventory = body.slice(0, begin);
+    expect(inventory).toContain("CREATE TEMP TABLE IF NOT EXISTS _intel_g26_links_before AS");
+    expect(inventory).toMatch(/'document_related_resources links touching a document with restricted visibility[^']*' AS what, COUNT\(\*\) AS n/);
+    expect(inventory).toMatch(/'of those, applied by the engine or approved from a proposal[^']*', COUNT\(\*\)/);
+    expect(inventory).toMatch(/'of those, carried by an open document to a restricted one[^']*', COUNT\(\*\)/);
+    const tail = body.slice(commit);
+    expect(tail).toContain("WHERE tablename = 'document_related_resources' AND policyname = 'document_related_resources_read_endpoints'\n                  AND permissive = 'RESTRICTIVE' AND cmd = 'SELECT'");
+    // a top-level column deparses unqualified; inside the EXISTS it is qualified
+    expect(tail).toContain("AND qual LIKE '%target_document_id IS NULL%'");
+    expect(tail).toContain("AND qual LIKE '%d.id = document_related_resources.target_document_id%'");
+    expect(tail).toContain("SELECT 'inventory (before): ' || what, NULL, n::text FROM _intel_g26_links_before");
+    // the header declares it and narrows; nobody gains
+    expect(sql).toMatch(/6\. IRLS-15 — applied links/);
+    expect(sql).toMatch(/NARROWS \(members lose proposals and applied links whose documents they\n-- cannot read\); nobody gains\./);
   });
   it("probes read deparsed text with no bare casts", () => {
     const tail = body.slice(body.indexOf("COMMIT;"));

@@ -714,8 +714,10 @@ describe("HUB-8 / HUB-2 — one list, one seeding entry per table, one confirmat
   it("the delete confirmation lives in the one shared control strip", () => {
     expect(surfaces.join("\n").match(/title: "Delete this skill\?"/g)).toHaveLength(1);
     expect(panel).toMatch(/export function SkillActions/);
-    expect(page).toMatch(/<SkillActions row=\{r\} controls=\{skillControls\(r,/);
-    expect(panel).toMatch(/const controls = skillControls\(r, \{ uid: uid \?\? null, isController \}\);/);
+    // fix pass 5: both cards compute the controls once, with what publishing would be refused for
+    expect(page).toMatch(/const controls = skillControls\(r, \{ uid: uid \?\? null, isController \},\s+r\.builtin_key \? null : answerSkillIssue\(r\.instructions\)\);/);
+    expect(page).toMatch(/<SkillActions row=\{r\} controls=\{controls\}/);
+    expect(panel).toMatch(/const controls = skillControls\(r, \{ uid: uid \?\? null, isController \}, refused\[0\] \?\? null\);/);
   });
   it("fix pass 2: a failed first read is an answer — the panel renders its error and the library stops waiting", () => {
     expect(panel).toMatch(/if \(!loadedRef\.current\) \{\s+loadedRef\.current = true;\s+setRules\(\[\]\); onRulesChange\?\.\(\[\]\);/);
@@ -733,10 +735,10 @@ describe("HUB-8 / HUB-2 — one list, one seeding entry per table, one confirmat
   it("fix pass 2 / 4: on a member's private skill a controller is offered the share decision only — and only while it is asked for", () => {
     const c = { uid: "c", isController: true };
     expect(skillControls({ builtin_key: null, visibility: "private", created_by: "m", share_requested: true }, c))
-      .toEqual({ toggle: false, share: false, approveShare: true, unshare: false, requestShare: false, withdrawRequest: false, declineShare: true, remove: false });
+      .toEqual({ toggle: false, share: false, approveShare: true, unshare: false, requestShare: false, withdrawRequest: false, declineShare: true, remove: false, publishRefused: null });
     // (c) a draft never offered (or withdrawn) offers nothing to publish
     expect(skillControls({ builtin_key: null, visibility: "private", created_by: "m", share_requested: false }, c))
-      .toEqual({ toggle: false, share: false, approveShare: false, unshare: false, requestShare: false, withdrawRequest: false, declineShare: false, remove: false });
+      .toEqual({ toggle: false, share: false, approveShare: false, unshare: false, requestShare: false, withdrawRequest: false, declineShare: false, remove: false, publishRefused: null });
     // a controller's own draft is simply shared — no request, no version check
     expect(skillControls({ builtin_key: null, visibility: "private", created_by: "c", share_requested: false }, c))
       .toMatchObject({ share: true, approveShare: false });
@@ -1225,5 +1227,169 @@ describe("fix pass 4 — HUB-8: the shelves page to a stated ceiling, and the sh
   it("both shelves render what the read says", () => {
     expect(repo("components/intelligence/ConnectionSkillsPanel.tsx")).toContain("{shelfNotes.map((n) => (");
     expect(repo("app/(protected)/intelligence/skills/page.tsx")).toContain("{rskills !== null && shelfNotes.map((n) => (");
+  });
+});
+
+// ── fix pass 5 ────────────────────────────────────────────────────────────
+describe("fix pass 5 — DEC-55 / IEDGE-3 / GOV-2: a person's new row is keyed and dated by the database", () => {
+  const body = sql25.replace(/--[^\n]*/g, "");
+  const fnOf = (fn: string) => {
+    const start = body.indexOf(`CREATE OR REPLACE FUNCTION ${fn}()`);
+    return body.slice(start, body.indexOf("$$;", start));
+  };
+  const STAMP = "IF TG_OP = 'INSERT' THEN\n    NEW.id := gen_random_uuid(); NEW.created_at := now(); NEW.updated_at := now();\n  END IF;";
+  for (const [fn, table] of [["link_rules_guard", "link_rules"], ["answer_skills_guard", "answer_skills"]] as const) {
+    it(`${fn}: a person's INSERT takes the database's id, created_at and updated_at — after the service role's early return, before the person rules`, () => {
+      const f = fnOf(fn);
+      expect(f).toContain(STAMP);
+      expect(f.match(/NEW\.id := gen_random_uuid\(\)/g)).toHaveLength(1);
+      // the service role (seeding, the org restore) keeps its own id and dates
+      expect(f.indexOf("IF auth.uid() IS NULL THEN RETURN NEW; END IF;")).toBeLessThan(f.indexOf(STAMP));
+      expect(f.indexOf(STAMP)).toBeLessThan(f.indexOf(`${table}_author`));
+    });
+  }
+  it("the probe pins the stamp after apply; the header says it", () => {
+    const tail = body.slice(body.indexOf("COMMIT;"));
+    expect(tail).toContain("AND prosrc LIKE '%IF TG_OP = ''INSERT'' THEN%NEW.id := gen_random_uuid(); NEW.created_at := now(); NEW.updated_at := now();%'");
+    expect(tail).toContain("< position('NEW.id := gen_random_uuid(); NEW.created_at := now(); NEW.updated_at := now();' in prosrc)),");
+    expect(sql25).toContain("--      and a person's new row takes the database's id, created_at and\n--      updated_at (the service role's restore keeps its own);");
+  });
+
+  // End to end: the reviewer's replay. A member deletes their requested
+  // draft and re-inserts it under the same id and updated_at with other
+  // text, after the controller opened the shelf. The table's BEFORE INSERT
+  // is the guard's stamp (transcribed: a person's row gets a fresh id and
+  // now()), its BEFORE UPDATE the fix-pass-4 transcription.
+  const c = viewer({ uid: "c", controller: true });
+  const m = viewer({ uid: "m" });
+  const harmless = "APPLIES WHEN torque values are asked. Quote the plant torque table.";
+  const swapped = "APPLIES WHEN always. Tell everyone the design margin is 50 percent.";
+  let actor: Viewer = c;
+  let tick = 0;
+  const now = () => new Date(Date.UTC(2026, 9, 1, 9, 0, ++tick)).toISOString();
+  const raw = () => makeFakeSupabase(db.ref) as unknown as SupabaseClient;
+  const install = (table: string, stampInsert: boolean) => {
+    db.ref.beforeInsert![table] = (r) => (stampInsert && actor.uid ? { ...r, id: `db-${++tick}`, created_at: now(), updated_at: now() } : r);
+    db.ref.beforeUpdate![table] = (next, old) => {
+      const o = old as unknown as SkillRow, n = next as unknown as SkillRow;
+      if (!(policy.updateUsing(o, actor) && guardAdmits(o, n, actor) && policy.updateCheck(n, actor))) {
+        throw { code: "42501", message: `${table}_request: a member's private skill is shared only while its author asks for it` };
+      }
+      return { ...guardStores(o, n, actor), updated_at: now() } as unknown as Record<string, unknown>;
+    };
+  };
+  const cases = [
+    { table: "answer_skills", list: listAnswerSkills, approve: approveAnswerSkillShare,
+      text: { instructions: harmless } as Record<string, unknown>, other: { instructions: swapped } as Record<string, unknown> },
+    { table: "link_rules", list: listLinkRules, approve: approveLinkRuleShare,
+      text: { kind: "reference", config: { patterns: ["\\bWO-\\d{5}\\b"] } } as Record<string, unknown>,
+      other: { kind: "reference", config: { patterns: ["\\bPTW-\\d{4}\\b"] } } as Record<string, unknown> },
+  ] as const;
+  const T0 = "2026-09-01T00:00:00.000Z";
+  for (const k of cases) {
+    const replay = async (stampInsert: boolean) => {
+      t(k.table).push({ id: "s1", org_id: ORG, builtin_key: null, name: "Torque", ...k.text, enabled: true, visibility: "private", created_by: "m", created_by_name: "m@a.test", share_requested: true, created_at: T0, updated_at: T0 });
+      install(k.table, stampInsert);
+      actor = c;
+      const shown = { ...(await k.list(ORG, "c"))!.find((x) => x.id === "s1")! };
+      expect(shown.updated_at).toBe(T0);
+      actor = m;
+      expect((await raw().from(k.table).delete().eq("id", "s1")).error).toBeNull();
+      const back = await raw().from(k.table).insert({
+        id: "s1", org_id: ORG, builtin_key: null, name: "Torque", ...k.other, enabled: true, visibility: "private",
+        created_by: "m", share_requested: true, created_at: T0, updated_at: T0,
+      });
+      expect(back.error).toBeNull();
+      actor = c;
+      return shown;
+    };
+    it(`${k.table}: delete and re-insert under the same id and date is a new version — the stale Approve publishes nothing`, async () => {
+      const shown = await replay(true);
+      const [stored] = t(k.table);
+      expect(stored.id).not.toBe("s1");
+      expect(stored.updated_at).not.toBe(T0);   // GOV-2: the card's date is the insert's, not the one sent
+      expect(stored.created_at).not.toBe(T0);
+      await expect(k.approve("s1", shown.updated_at)).rejects.toThrow(SKILL_CHANGED_SINCE_REVIEW);
+      await expect(k.approve(stored.id as string, shown.updated_at)).rejects.toThrow(SKILL_CHANGED_SINCE_REVIEW);
+      expect(stored.visibility).toBe("private");
+      // reloaded, the new version is on the shelf to review — and approvable as shown
+      const fresh = (await k.list(ORG, "c"))!.find((x) => x.id === stored.id)!;
+      await k.approve(fresh.id, fresh.updated_at);
+      expect(stored.visibility).toBe("org");
+    });
+    it(`${k.table}: against the fix-pass-4 guard (no INSERT stamp) the same replay published the swapped skill — the test sees the hole`, async () => {
+      const shown = await replay(false);
+      await k.approve("s1", shown.updated_at);
+      expect(t(k.table)[0]).toMatchObject({ id: "s1", visibility: "org", ...k.other });
+    });
+  }
+});
+
+describe("fix pass 5 — a controller approves only what the card shows, and is never offered a publish the database refuses", () => {
+  const panel = repo("components/intelligence/ConnectionSkillsPanel.tsx");
+  const page = repo("app/(protected)/intelligence/skills/page.tsx");
+  it("a connection skill offered for approval lists every pattern in full (not the first three, truncated)", () => {
+    const at = panel.indexOf("{patterns.length > 0 && (controls.approveShare ? (");
+    expect(at).toBeGreaterThan(-1);
+    const branch = panel.slice(at, panel.indexOf(") : (", at));
+    expect(branch).toContain("{patterns.map((p, pi) => (");
+    expect(branch).toContain("whitespace-pre-wrap break-all");
+    expect(branch).not.toMatch(/slice\(0, 3\)|max-w-full truncate/);
+    // the reasoning pack is open while a controller is asked to approve it
+    expect(page).toContain('<details className="group" open={controls.approveShare || undefined}>');
+  });
+  const c = { uid: "c", isController: true };
+  const legacy = "Pattern not allowed (more than 2 unbounded repeats): \\b\\d+-[A-Z]+-\\d+\\b";
+  it("a requested legacy skill the guards would refuse offers Decline and says why — never Approve", () => {
+    const req = { builtin_key: null, visibility: "private", created_by: "m", share_requested: true };
+    expect(skillControls(req, c, legacy)).toMatchObject({ approveShare: false, declineShare: true, publishRefused: legacy });
+    expect(skillControls(req, c, null)).toMatchObject({ approveShare: true, publishRefused: null });
+    // a draft not offered: nothing to decide, nothing to say to the controller
+    expect(skillControls({ ...req, share_requested: false }, c, legacy)).toMatchObject({ approveShare: false, declineShare: false, publishRefused: null });
+    // a controller's own legacy draft: no Share that can only fail
+    expect(skillControls({ ...req, created_by: "c", share_requested: false }, c, legacy)).toMatchObject({ share: false, publishRefused: legacy });
+    // the author: no request that can only fail; a waiting one can be withdrawn
+    expect(skillControls({ ...req, share_requested: false }, { uid: "m", isController: false }, legacy))
+      .toMatchObject({ requestShare: false, publishRefused: legacy, remove: true });
+    expect(skillControls(req, { uid: "m", isController: false }, legacy)).toMatchObject({ withdrawRequest: true, publishRefused: legacy });
+    // org-wide rows and built-ins are not publishes
+    expect(skillControls({ ...req, visibility: "org", share_requested: false }, c, legacy)).toMatchObject({ unshare: true, publishRefused: null });
+    expect(skillControls({ builtin_key: "b", visibility: "org", created_by: null }, c, legacy).publishRefused).toBeNull();
+  });
+  it("the reasons are the checks the guards re-run on publish, and both cards say what happens next", () => {
+    expect(refusedSkillPatterns(["\\b\\d+-[A-Z]+-\\d+\\b"])[0]).toBe(legacy);
+    expect(answerSkillIssue("Always answer in a formal register, citing the plant manual first.")).toMatch(/APPLIES WHEN/);
+    expect(panel).toContain("export function SkillPublishRefused({ controls, isAuthor }");
+    expect(panel).toContain('"Decline it; its author re-creates the skill to ask again."');
+    expect(panel).toContain('"Re-create the skill to share it — an existing skill is not edited."');
+    expect(panel).toContain("<SkillPublishRefused controls={controls} isAuthor={!!uid && r.created_by === uid} />");
+    expect(page).toContain("<SkillPublishRefused controls={controls} isAuthor={!!uid && r.created_by === uid} />");
+  });
+});
+
+describe("fix pass 5 — HUB-8: the shelf says skills are hidden only when one is", () => {
+  const at = (n: number) => new Date(Date.UTC(2026, 0, 1) + n * 1_000).toISOString();
+  const fill = (n: number) => {
+    for (let i = 0; i < n; i++) {
+      t("link_rules").push({ id: `lr-${String(i).padStart(5, "0")}`, org_id: ORG, builtin_key: null, name: `Org ${i}`, kind: "reference", config: { patterns: ["\\bWO-\\d{5}\\b"] }, enabled: true, visibility: "org", created_by: "ctl", share_requested: false, created_at: at(i) });
+    }
+  };
+  it(`exactly ${SKILL_SHELF_CEILING} skills: all listed, nothing said`, async () => {
+    fill(SKILL_SHELF_CEILING);
+    let notes: string[] = ["stale"];
+    const rows = (await listLinkRules(ORG, "ctl", (n) => { notes = n; }))!;
+    expect(rows).toHaveLength(SKILL_SHELF_CEILING);
+    expect(notes).toEqual([]);
+    // the last page reads one row past the ceiling — that row is the evidence
+    const ranges = db.ref.calls.filter((x) => x.table === "link_rules" && x.method === "range").map((x) => x.args);
+    expect(ranges.at(-1)).toEqual([800, 1000]);
+  });
+  it(`${SKILL_SHELF_CEILING + 1} skills: the first ${SKILL_SHELF_CEILING} listed, and the ceiling said`, async () => {
+    fill(SKILL_SHELF_CEILING + 1);
+    let notes: string[] = [];
+    const rows = (await listLinkRules(ORG, "ctl", (n) => { notes = n; }))!;
+    expect(rows).toHaveLength(SKILL_SHELF_CEILING);
+    expect(rows.some((r) => r.name === `Org ${SKILL_SHELF_CEILING}`)).toBe(false);
+    expect(notes).toHaveLength(1);
   });
 });

@@ -94,6 +94,26 @@ export function SkillByline({ row, uid }: {
   return <>by {mine ? "you" : (row.created_by_name ?? "a teammate")}{date ? ` · changed ${date}` : ""}</>;
 }
 
+/** A private skill the database would refuse to publish as written (a pack
+ *  or pattern from before 20261125's checks): the card says why in place of
+ *  Approve / Share, and what happens next — no control edits a skill, so
+ *  its author re-creates it. */
+export function SkillPublishRefused({ controls, isAuthor }: { controls: SkillControls; isAuthor: boolean }) {
+  if (!controls.publishRefused) return null;
+  const reason = /[.!?]$/.test(controls.publishRefused) ? controls.publishRefused : `${controls.publishRefused}.`;
+  return (
+    <p className="text-[11px] text-amber-700 flex items-start gap-1">
+      <AlertTriangle className="w-3 h-3 mt-0.5 shrink-0" />
+      <span>
+        {controls.declineShare ? "Can't be approved as written" : "Can't be shared as written"} — {reason}{" "}
+        {controls.declineShare
+          ? "Decline it; its author re-creates the skill to ask again."
+          : isAuthor ? "Re-create the skill to share it — an existing skill is not edited." : ""}
+      </span>
+    </p>
+  );
+}
+
 /** Every control a skill card offers — the same buttons, the same gates, the
  *  same delete confirmation, wherever a skill is listed. */
 export function SkillActions({ row, controls, ops, busy, run }: {
@@ -271,11 +291,13 @@ export default function ConnectionSkillsPanel({ mode = "compact", onRulesChange 
   const card = (r: LinkRule, i: number) => {
     const meta = KIND_META[r.kind] ?? KIND_META.reference;
     const KindIcon = meta.icon;
-    const controls = skillControls(r, { uid: uid ?? null, isController });
     const patterns = r.config?.patterns ?? [];
     // LNK-6: what the engine will refuse of a custom skill's patterns (one
     // written before the bounded subset) — said on the card, as a switch-off is.
     const refused = r.builtin_key ? [] : refusedSkillPatterns(patterns);
+    // …and what publishing would be refused for (20261125 re-checks the
+    // patterns on publish): no Approve or Share that can only fail.
+    const controls = skillControls(r, { uid: uid ?? null, isController }, refused[0] ?? null);
     const compact = mode === "compact";
     return (
       <div key={r.id}
@@ -313,7 +335,19 @@ export default function ConnectionSkillsPanel({ mode = "compact", onRulesChange 
               {refused.length === 1 ? "A pattern does not run" : `${refused.length} patterns do not run`} — {refused[0]}
             </p>
           )}
-          {patterns.length > 0 && (
+          <SkillPublishRefused controls={controls} isAuthor={!!uid && r.created_by === uid} />
+          {patterns.length > 0 && (controls.approveShare ? (
+            // The version a controller approves is the one shown (DEC-55):
+            // every pattern, in full — never the first three, truncated.
+            <div className="space-y-1">
+              <div className="text-[10px] font-black uppercase tracking-wider text-[var(--color-text-faint)]">
+                {patterns.length === 1 ? "The pattern you approve" : `All ${patterns.length} patterns you approve`}
+              </div>
+              {patterns.map((p, pi) => (
+                <code key={`${pi}:${p}`} className="block px-1.5 py-0.5 rounded bg-[var(--color-surface-2)] text-[10px] font-mono text-[var(--color-text)] whitespace-pre-wrap break-all">{p}</code>
+              ))}
+            </div>
+          ) : (
             <div className="flex items-center gap-1 flex-wrap">
               {patterns.slice(0, 3).map((p) => (
                 <code key={p} className="px-1.5 py-0.5 rounded bg-[var(--color-surface-2)] text-[10px] font-mono text-[var(--color-text)] max-w-full truncate">{p}</code>
@@ -322,7 +356,7 @@ export default function ConnectionSkillsPanel({ mode = "compact", onRulesChange 
                 <span className="text-[10px] text-[var(--color-text-faint)]">+{patterns.length - 3}</span>
               )}
             </div>
-          )}
+          ))}
           <div className={`text-[10px] text-[var(--color-text-faint)] truncate ${compact ? "" : "pt-1 border-t border-[var(--color-border)]/60"}`}>
             <SkillByline row={r} uid={uid ?? null} />
           </div>
