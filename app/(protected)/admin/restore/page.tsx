@@ -196,6 +196,7 @@ export default function RestorePage() {
       });
       if (!ok) return;
       const result = await runChunkedRestore({ orgId: activeOrgId, envelope, plan, orgNameChoice: keepName, post, onProgress });
+      idRemapRef.current = result.idRemap; // "Put the files back" follows the org remap
       setApplyProgress((p) => ({ ...p, phase: "done" }));
       setApplyResult(result);
     } catch (e) {
@@ -509,6 +510,7 @@ function RestoreResultPanel({ result }: { result: ChunkedRestoreResult }) {
         <div>
           Imported <b>{fmtNum(result.totalInserted)}</b> new record(s) · <b>{fmtNum(result.totalExisting)}</b> already here, kept exactly as they were
           {result.totalUncounted > 0 && <> · <b>{fmtNum(result.totalUncounted)}</b> not counted by the server</>}
+          {result.totalFiltered > 0 && <> · <b>{fmtNum(result.totalFiltered)}</b> comment(s) on tickets archived since the backup left out</>}
           {" "}· re-linked <b>{result.linkedUsers}</b> user(s) · created <b>{result.createdUsers}</b> restored placeholder(s).
         </div>
         {result.totalExisting > 0 && <div>{RESTORE_ADDITIVE_NOTE}</div>}

@@ -324,6 +324,18 @@ describe("BKP-5 — a restore says what it added and what it kept, before and af
     expect(chunkAudit?.details).toMatchObject({ inserted: 1, existing: 1 });
   });
 
+  it("comments of a ticket archived since the backup are left out AND counted — never silently lost", async () => {
+    db.rows.tickets = [{ id: "t-archived", org_id: ORG, archived_at: "2026-09-01T00:00:00Z" }, { id: "t-live", org_id: ORG, archived_at: null }];
+    const r = await chunk("ticket_comments", [{ id: "c1", ticket_id: "t-archived" }, { id: "c2", ticket_id: "t-live" }]);
+    expect(r.body).toEqual({ ok: true, inserted: 1, filtered: 1 });
+    expect(rowsOf("ticket_comments").map((c) => c.id)).toEqual(["c2"]);
+    expect(audits("RESTORE_CHUNK")[0].details).toMatchObject({ rowsReceived: 2, rowsAfterFilters: 1, inserted: 1 });
+    db.readError.tickets = "timeout";
+    const failed = await chunk("ticket_comments", [{ id: "c3", ticket_id: "t-archived" }]);
+    expect(failed.status).toBe(500); // an unreadable ticket list never resurrects the comments
+    expect(rowsOf("ticket_comments").map((c) => c.id)).toEqual(["c2"]);
+  });
+
   it("a server that reports no count is 'uncounted', never assumed written", async () => {
     db.countless = true;
     const r = await chunk("notes", [{ id: "n1" }, { id: "n2" }]);

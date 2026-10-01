@@ -90,25 +90,26 @@ export async function POST(req: NextRequest) {
   // 3) Insert records in FK order.
   const importable = plan.counts.tables.filter((t) => t.willImport && t.rows > 0).map((t) => t.name);
   const order = orderTablesForRestore(importable);
-  const results: Array<{ name: string; inserted: number; existing?: number; uncounted?: number; error?: string; refused?: RestoreRowRefusal[] }> = [];
+  const results: Array<{ name: string; inserted: number; existing?: number; uncounted?: number; filtered?: number; error?: string; refused?: RestoreRowRefusal[] }> = [];
   let totalInserted = 0;
   let totalExisting = 0;
   for (const name of order) {
     const raw = envelope.tables[name];
     const rows = (Array.isArray(raw) ? raw : []) as Record<string, unknown>[];
     if (!rows.length) continue;
-    let inserted = 0; let existing = 0; let uncounted = 0; let error: string | undefined; const refused: RestoreRowRefusal[] = [];
+    let inserted = 0; let existing = 0; let uncounted = 0; let filtered = 0; let error: string | undefined; const refused: RestoreRowRefusal[] = [];
     for (let i = 0; i < rows.length; i += 500) {
       const r = await applyRestoreChunk(sb, { orgId, table: name, rows: rows.slice(i, i + 500), idRemap });
       inserted += r.inserted;
       existing += r.existing;
       uncounted += r.uncounted;
+      filtered += r.filtered;
       refused.push(...r.refused);
       if (!r.ok) { error = r.error ?? "restore write failed"; break; }
     }
     // Report what actually landed — earlier chunks committed even on failure.
     // BKP-5: and what did not — rows whose key already exists were skipped.
-    results.push({ name, inserted, ...(existing ? { existing } : {}), ...(uncounted ? { uncounted } : {}), error, ...(refused.length ? { refused } : {}) });
+    results.push({ name, inserted, ...(existing ? { existing } : {}), ...(uncounted ? { uncounted } : {}), ...(filtered ? { filtered } : {}), error, ...(refused.length ? { refused } : {}) });
     totalInserted += inserted;
     totalExisting += existing;
     if (error) {

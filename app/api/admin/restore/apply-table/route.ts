@@ -63,11 +63,12 @@ export async function POST(req: NextRequest) {
   // Remap, FORCE the org boundary, filter, bound org-less rows by their
   // parent, write — the shared function both restore routes call.
   const result = await applyRestoreChunk(sb, { orgId, table, rows, idRemap });
-  const { inserted, existing, uncounted, refused } = result;
+  const { inserted, existing, uncounted, filtered, refused } = result;
   const counts = {
     inserted,
     ...(existing ? { existing } : {}),
     ...(uncounted ? { uncounted } : {}),
+    ...(filtered ? { filtered } : {}),
     ...(refused.length ? { refused } : {}),
   };
   // A chunk that failed before writing anything leaves nothing to record.

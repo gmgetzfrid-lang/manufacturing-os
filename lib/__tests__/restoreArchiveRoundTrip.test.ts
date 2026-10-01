@@ -175,6 +175,7 @@ describe("BKP-7 — the browser-built Full ZIP is written in the one layout and 
     seedTarget();
     const result = await restoreInto(read.envelope);
     expect(result.stoppedAt).toBeNull();
+    expect(result.idRemap.orgId).toEqual({ [SRC]: TARGET }); // what "Put the files back" remaps keys with
     expect(result.totalInserted).toBeGreaterThanOrEqual(5);
     expect(rowsOf("documents")).toEqual([expect.objectContaining({ id: "doc-1", org_id: TARGET, created_by: "t-alice" })]);
     expect(rowsOf("document_versions").map((v) => v.file_url).sort()).toEqual([
@@ -321,6 +322,7 @@ describe("BKP-7 — /admin/restore takes every part of one backup", () => {
     expect(page).toMatch(/<input ref=\{inputRef\} type="file" multiple /);
     expect(page).toMatch(/const dropped = Array\.from\(e\.dataTransfer\.files \?\? \[\]\);/);
     expect(page).toMatch(/const blob = await zips\[item\.zip\]\.file\(item\.entry\)!\.async\("blob"\);/);
+    expect(page).toMatch(/idRemapRef\.current = result\.idRemap;/);
     // the old single-layout gate is gone
     expect(page).not.toMatch(/No manifest\.json — this doesn't look like a manufacturing-os backup ZIP/);
   });

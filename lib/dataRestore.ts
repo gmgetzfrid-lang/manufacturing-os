@@ -604,6 +604,8 @@ export interface RestoreChunkResult {
   /** Rows left after the restore's own filters (comments of a ticket archived
    *  since the backup are dropped). */
   rowsAfterFilters: number;
+  /** Rows dropped by those filters — counted, never silently lost. */
+  filtered: number;
 }
 
 /** Codes a single document_holds row may be refused with (HLD-9, 20261073):
@@ -637,7 +639,7 @@ export async function applyRestoreChunk(
   let existing = 0;
   let uncounted = 0;
   const fail = (status: number, error: string, inserted = 0, rowsAfterFilters = 0, code?: string | null): RestoreChunkResult =>
-    ({ ok: false, status, error, ...(code ? { code: String(code) } : {}), inserted, existing, uncounted, refused, rowsAfterFilters });
+    ({ ok: false, status, error, ...(code ? { code: String(code) } : {}), inserted, existing, uncounted, refused, rowsAfterFilters, filtered: params.rows.length - rowsAfterFilters });
   // count: "exact" reports the rows the statement WROTE; ON CONFLICT DO
   // NOTHING skips the rest. No count is recorded as unknown, never as written.
   const tally = (count: number | null | undefined, sent: number): number => {
@@ -647,8 +649,8 @@ export async function applyRestoreChunk(
   };
 
   const refusal = restoreTableRefusal(table);
-  if (refusal) return fail(400, refusal);
-  if (!orgId) return fail(400, "No target workspace.");
+  if (refusal) return fail(400, refusal, 0, params.rows.length);
+  if (!orgId) return fail(400, "No target workspace.", 0, params.rows.length);
 
   let mapped = params.rows.map((r) => landRestoredRow(table, bindRestoredRow(table, remapRow(r, idRemap), orgId)));
 
@@ -661,7 +663,7 @@ export async function applyRestoreChunk(
       const { data, error } = await sb
         .from("tickets").select("id")
         .in("id", ticketIds.slice(i, i + 500)).eq("org_id", orgId).not("archived_at", "is", null);
-      if (error) return fail(500, `Could not check for archived tickets: ${error.message}`);
+      if (error) return fail(500, `Could not check for archived tickets: ${error.message}`, 0, params.rows.length);
       for (const t of ((data ?? []) as Array<{ id: string }>)) archived.add(t.id);
     }
     if (archived.size) mapped = mapped.filter((r) => !archived.has(r.ticket_id as string));
@@ -717,7 +719,7 @@ export async function applyRestoreChunk(
       refused.push({ id: typeof row.id === "string" ? row.id : null, code: String(one.error.code), message: one.error.message });
     }
   }
-  return { ok: true, inserted, existing, uncounted, refused, rowsAfterFilters };
+  return { ok: true, inserted, existing, uncounted, refused, rowsAfterFilters, filtered: params.rows.length - rowsAfterFilters };
 }
 
 /** BKP-5: what a restore of these rows WOULD do, read-only — how many already
@@ -801,16 +803,21 @@ export interface RestoreTableOutcome {
   inserted: number;
   existing: number;
   uncounted: number;
+  /** Dropped by a restore rule (comments of a ticket archived since the backup). */
+  filtered: number;
   refused: RestoreRowRefusal[];
   error?: string;
 }
 
 export interface ChunkedRestoreResult {
+  /** The org + uid map /begin answered — "Put the files back" remaps storage keys with it. */
+  idRemap: RestorePlan["idRemap"];
   createdUsers: number;
   linkedUsers: number;
   totalInserted: number;
   totalExisting: number;
   totalUncounted: number;
+  totalFiltered: number;
   totalRefused: number;
   tables: RestoreTableOutcome[];
   /** BKP-5 Done-when 2: the table the restore STOPPED at (tables are
@@ -893,14 +900,14 @@ export async function runChunkedRestore(params: {
   const idRemap = begin.body?.idRemap as RestorePlan["idRemap"];
 
   const result: ChunkedRestoreResult = {
-    createdUsers: num(begin.body?.createdUsers), linkedUsers: num(begin.body?.linkedUsers),
-    totalInserted: 0, totalExisting: 0, totalUncounted: 0, totalRefused: 0,
+    idRemap, createdUsers: num(begin.body?.createdUsers), linkedUsers: num(begin.body?.linkedUsers),
+    totalInserted: 0, totalExisting: 0, totalUncounted: 0, totalFiltered: 0, totalRefused: 0,
     tables: [], stoppedAt: null, notAttempted: [],
   };
   let rowsDone = 0;
   for (const [tablesDone, table] of order.entries()) {
     const rows = tableRows(envelope, table);
-    const t: RestoreTableOutcome = { name: table, rows: rows.length, inserted: 0, existing: 0, uncounted: 0, refused: [] };
+    const t: RestoreTableOutcome = { name: table, rows: rows.length, inserted: 0, existing: 0, uncounted: 0, filtered: 0, refused: [] };
     for (let i = 0; i < rows.length; i += RESTORE_CHUNK_ROWS) {
       params.onProgress?.({ phase: "tables", currentTable: table, rowsDone, rowsTotal, tablesDone, tablesTotal: order.length });
       const chunk = rows.slice(i, i + RESTORE_CHUNK_ROWS);
@@ -909,6 +916,7 @@ export async function runChunkedRestore(params: {
       t.inserted += num(res.body?.inserted);
       t.existing += num(res.body?.existing);
       t.uncounted += num(res.body?.uncounted);
+      t.filtered += num(res.body?.filtered);
       if (Array.isArray(res.body?.refused)) t.refused.push(...(res.body.refused as RestoreRowRefusal[]));
       if (!res.ok) { t.error = String(res.body?.error ?? `HTTP ${res.status}`); break; }
       rowsDone += chunk.length;
@@ -917,6 +925,7 @@ export async function runChunkedRestore(params: {
     result.totalInserted += t.inserted;
     result.totalExisting += t.existing;
     result.totalUncounted += t.uncounted;
+    result.totalFiltered += t.filtered;
     result.totalRefused += t.refused.length;
     if (t.error) {
       result.stoppedAt = { table, error: t.error };
