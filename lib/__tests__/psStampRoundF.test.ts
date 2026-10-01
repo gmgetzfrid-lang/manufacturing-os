@@ -45,7 +45,9 @@ describe("PHYS-5 — a marked-up export is always stamped and recorded uncontrol
     expect(fn).not.toMatch(/if \(\s*liveState/);
     // the stamp call sits directly in the try block, not under a condition
     expect(fn).toMatch(/\n {6}await applyStampToPdfDoc\(pdfDoc, \{\n {8}sourceBytes: pdfBytes \?\? undefined,/);
-    expect(fn).toContain('watermarkText: "UNCONTROLLED — FOR REVIEW ONLY",');
+    // HLD-1 (P15): a held document's export takes the hold watermark (lib/downloads.ts copyWatermark);
+    // every other export keeps the review watermark — never a checkout-state branch.
+    expect(fn).toContain('watermarkText: hold.blocked ? copyWatermark({ versionIsCurrent: viewingIsCurrent }, hold) : "UNCONTROLLED — FOR REVIEW ONLY",');
     expect(fn).toContain("WITH MARKUPS at time of export — markups are not part of the controlled revision.");
   });
 
