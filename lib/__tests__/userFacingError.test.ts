@@ -136,15 +136,23 @@ describe("REL-3 — the Projects and Companies libraries route through it", () =
     expect((err as Error).message).toBe("This needs the latest database migration applied.");
   });
 
-  it("source census: in the cited libraries every database error message reaches the user only through the translator", () => {
+  it("source census: in the Projects / Companies libraries every database error message reaches the user only through the translator", () => {
     const offenders: string[] = [];
-    for (const f of ["lib/companies.ts", "lib/costs.ts", "lib/costDocs.ts", "lib/changeOrders.ts", "lib/checklists.ts", "lib/turnover.ts"]) {
+    // The cited libraries, then the rest of the Projects area's data layer
+    // (the schedule engine, project lifecycle, activity feed, transition-in,
+    // intake links, the export and the report) — UX-10 done-when 2.
+    for (const f of ["lib/companies.ts", "lib/costs.ts", "lib/costDocs.ts", "lib/changeOrders.ts", "lib/checklists.ts", "lib/turnover.ts",
+      "lib/milestones.ts", "lib/projects.ts", "lib/timeline.ts", "lib/transitionIn.ts", "lib/intakeLinks.ts", "lib/projectExport.ts", "lib/projectReport.ts"]) {
       const lines = readFileSync(join(process.cwd(), f), "utf8").split("\n");
       lines.forEach((line, i) => {
         // any `<name>.message` / `<name>?.message` — a caught Error re-thrown
         // from an already-translated lib call ((e as Error).message) is fine
         if (!/\b[A-Za-z_][\w.]*\??\.message\b/.test(line.replace(/\(e as Error\)\??\.message/g, ""))) return;
-        if (/console\.(warn|error|log)|\.test\(|isMissing|missingColumn|=== |\/does not exist|const msg = err\.message/.test(line)) return;
+        // logic that reads the driver text (never shown): schema step-down,
+        // missing-RPC / missing-table probes, classification, a structured
+        // {message, code} handed to a translating caller, a rail's own
+        // sentence under 23514, an Error already translated upstream.
+        if (/console\.(warn|error|log)|\.test\(|isMissing|missingColumn|looksLikeUnknownColumn|refusedColumn|=== |\/does not exist|const msg = (err\.message|\(error\.message|`\$\{(error|e)\.message)|\{ message: error\.message, code|releaseFailure\.message|code === "23514" && error\.message/.test(line)) return;
         offenders.push(`${f}:${i + 1}: ${line.trim()}`);
       });
     }

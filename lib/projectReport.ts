@@ -15,6 +15,7 @@
 // schedule loaded".
 
 import { supabase } from "@/lib/supabase";
+import { userFacingError, userFacingReadError } from "@/lib/userFacingError";
 import { listAccounts, listEntries, computeCostRollup, milestonePctIndex, fmtMoney } from "@/lib/costs";
 import {
   listChangeOrders, summarizeChangeOrders, approvedChangesByAccount, CO_REASON_LABEL, type CoReason,
@@ -161,7 +162,7 @@ export async function gatherReportData(orgId: string, projectId: string): Promis
     named(R.milestones, supabase.from("milestones").select("id, name, planned_at, planned_start_at, status, percent_complete, source", { count: "exact" })
       .eq("project_id", projectId).order("planned_at").order("id").limit(PROJECT_MILESTONE_READ_LIMIT)
       .then((r) => {
-        if (r.error) throw new Error(r.error.message);
+        if (r.error) throw new Error(userFacingReadError(r.error, "projectReport"));
         return { rows: (r.data ?? []) as Array<Record<string, unknown>>, total: r.count ?? (r.data ?? []).length };
       }),
       { rows: [] as Array<Record<string, unknown>>, total: 0 }),
@@ -437,7 +438,7 @@ export async function saveLessonsLearned(input: {
   const { error } = await supabase.from("projects")
     .update({ lessons_learned: input.text.trim() || null })
     .eq("id", input.projectId);
-  if (error) return { ok: false, error: error.message };
+  if (error) return { ok: false, error: userFacingError(error, { context: "projectReport" }) };
   await supabase.from("audit_logs").insert({
     action: "PROJECT_LESSONS_SAVED", resource_type: "project", resource_id: input.projectId,
     org_id: input.orgId, user_id: input.actorId, user_email: input.actorEmail ?? null,

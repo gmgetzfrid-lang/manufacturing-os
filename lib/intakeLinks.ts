@@ -23,6 +23,7 @@
 // Client-safe: no service-role import. The server passes its own client.
 
 import { supabase } from "@/lib/supabase";
+import { userFacingError } from "@/lib/userFacingError";
 import { computeUniquenessKey, type DocFieldsForUniqueness } from "@/lib/uniqueness";
 
 /** The token format both public routes accept. */
@@ -172,7 +173,7 @@ export async function revokeProjectIntakeLinks(input: {
     .update({ revoked_at: nowIso })
     .eq("org_id", input.orgId).eq("project_id", input.projectId).is("revoked_at", null)
     .select("id");
-  if (error) return { ok: false, revoked: [], error: `Couldn't revoke the project's contractor links: ${error.message}` };
+  if (error) return { ok: false, revoked: [], error: `Couldn't revoke the project's contractor links: ${userFacingError(error, { context: "intakeLinks" })}` };
   const revoked = (((data ?? []) as Array<{ id: string }>)).map((r) => String(r.id));
   if (revoked.length > 0) {
     const { error: auditErr } = await client.from("audit_logs").insert({
@@ -181,7 +182,7 @@ export async function revokeProjectIntakeLinks(input: {
       org_id: input.orgId, user_id: input.actorId ?? null, user_email: input.actorEmail ?? null,
       details: { linkIds: revoked, reason: input.reason },
     });
-    if (auditErr) return { ok: true, revoked, error: `The links were revoked, but the audit record failed: ${auditErr.message}` };
+    if (auditErr) return { ok: true, revoked, error: `The links were revoked, but the audit record failed: ${userFacingError(auditErr, { context: "intakeLinks" })}` };
   }
   return { ok: true, revoked };
 }
@@ -276,7 +277,7 @@ export async function reissueIntakeLink(input: {
     .update({ token }).eq("id", input.linkId).is("revoked_at", null)
     .or(`expires_at.is.null,expires_at.gt.${new Date().toISOString()}`)
     .select("id");
-  if (error) return { ok: false, error: `Couldn't re-issue the link: ${error.message}` };
+  if (error) return { ok: false, error: `Couldn't re-issue the link: ${userFacingError(error, { context: "intakeLinks" })}` };
   if (((data ?? []) as unknown[]).length === 0) {
     return { ok: false, error: `${input.company}'s link was not re-issued — it may have been revoked or have expired (an expired link is not revived: create a new one), or you may not have permission. Refresh to see its state.` };
   }
@@ -286,5 +287,5 @@ export async function reissueIntakeLink(input: {
     org_id: input.orgId, user_id: input.actorId, user_email: input.actorEmail ?? null,
     details: { company: input.company, projectId: input.projectId },
   });
-  return auditErr ? { ok: true, token, auditError: auditErr.message } : { ok: true, token };
+  return auditErr ? { ok: true, token, auditError: userFacingError(auditErr, { context: "intakeLinks" }) } : { ok: true, token };
 }

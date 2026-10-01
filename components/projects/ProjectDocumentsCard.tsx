@@ -21,6 +21,7 @@
 
 import React, { useCallback, useEffect, useRef, useState } from "react";
 import Link from "next/link";
+import { userFacingError } from "@/lib/userFacingError";
 import { FileStack, Search, Plus, X, Loader2, ExternalLink, EyeOff } from "lucide-react";
 import { supabase } from "@/lib/supabase";
 import { writeActivity, listProjectDocuments, type ProjectDocumentRow, type ProjectDocumentRegister } from "@/lib/projects";
@@ -108,7 +109,7 @@ export default function ProjectDocumentsCard({ orgId, projectId, canManage, uid,
         { org_id: orgId, project_id: projectId, document_id: doc.id, source: "manual", last_seen_at: nowIso },
         { onConflict: "project_id,document_id", ignoreDuplicates: false },
       );
-      if (error) throw new Error(error.message);
+      if (error) throw new Error(userFacingError(error, { context: "ProjectDocumentsCard" }));
       const feedErr = await activity("doc_added", `${doc.label} attached to the project`, doc.id);
       setQ(""); setResults([]);
       await refresh();
@@ -130,7 +131,7 @@ export default function ProjectDocumentsCard({ orgId, projectId, canManage, uid,
     setBusy(r.linkId); setErr(null);
     try {
       const { data: gone, error } = await supabase.from("project_documents").delete().eq("id", r.linkId).select("id");
-      if (error) throw new Error(error.message);
+      if (error) throw new Error(userFacingError(error, { context: "ProjectDocumentsCard" }));
       if (!gone || (gone as unknown[]).length === 0) throw new Error("The document was not removed — only the project owner or an Admin / Document Control can change the register.");
       const feedErr = await activity("doc_removed", `${r.label} removed from the project`, r.docId);
       await refresh();

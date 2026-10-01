@@ -10,6 +10,7 @@
 import React, { useEffect, useState } from "react";
 import { X, Loader2, Check, Pencil, Lock, Globe, Target, Plus, FileText, Search } from "lucide-react";
 import { supabase } from "@/lib/supabase";
+import { userFacingReadError } from "@/lib/userFacingError";
 import { updateProjectMeta } from "@/lib/projects";
 import { logAuditAction } from "@/lib/audit";
 import { invalidateProjectSnapshot } from "@/lib/projectSnapshot";
@@ -67,7 +68,7 @@ export default function EditProjectModal({ project, actorUserId, actorEmail, act
       if (readErr) {
         // Pre-migration DB or a refused read: say so rather than offering
         // blank fields that would overwrite what is stored.
-        setFieldsLoadError(readErr.message);
+        setFieldsLoadError(userFacingReadError(readErr, "EditProjectModal"));
         return;
       }
       const row = (data ?? {}) as Record<string, unknown>;

@@ -625,7 +625,7 @@ describe("SCH-14 · caps, chunks, progress and cancel", () => {
     const rows = Array.from({ length: 10 }, (_, i) => ({ name: `T${i}`, plannedAt: "2026-01-01", externalRef: `csv:${i}` }));
     const res = await importMilestonesFromParsed({ ...scope, rows });
     expect(res.inserted).toBe(9);
-    expect(res.errors).toEqual(["Row 8: invalid input syntax for type timestamp"]);
+    expect(res.errors).toEqual(["Row 8: A value isn't in the expected format — nothing was changed."]);   // REL-3
   });
 
   it("a database without 20261097 drops import_batch_id alone and keeps the hierarchy fields", async () => {
@@ -706,7 +706,7 @@ describe("SCH-14 / SCH-16 · an older database: the existing-row read drops each
   it("any other read failure still stops the import before a write", async () => {
     db.failSelect = (t) => (t === "milestones" ? "permission denied for table milestones" : null);
     const res = await importMilestonesFromParsed({ ...scope, rows: rowsOf(fileA) });
-    expect(res.errors).toEqual(["Could not read the existing schedule: permission denied for table milestones. Nothing was written."]);
+    expect(res.errors).toEqual(["Could not read the existing schedule: You don't have permission to see this. Nothing was written."]);   // REL-3
     expect(db.writes).toEqual([]);
   });
 });
@@ -882,7 +882,7 @@ describe("SCH-7 / SCHED-11 · applyMilestoneMoves", () => {
     db.failInsert = (t) => (t === "audit_logs" ? (attempts++, "new row violates row-level security policy") : null);
     const res = await applyMilestoneMoves({ ...actor, moves: many });
     expect(attempts).toBe(2);
-    expect(res.auditError).toBe("audit: new row violates row-level security policy");
+    expect(res.auditError).toBe("audit: You don't have permission to do this — nothing was changed.");   // REL-3
     // and the payload shape it tried to write
     const tried = db.writes.filter((w) => w.table === "audit_logs").at(-1)!.payload as Row[];
     expect((tried[0].details as Row)).toMatchObject({ shown: 50, total: 60, truncated: true });
@@ -906,11 +906,11 @@ describe("SCH-7 / SCHED-11 · applyMilestoneMoves", () => {
     seed();
     db.failSelect = (t) => (t === "milestones" ? "permission denied for table milestones" : null);
     db.rpcImpl = () => ({ data: { count: 2, matched: ["a", "b"], unmatched: [] }, error: null });
-    await expect(applyMilestoneMoves({ ...actor, moves })).rejects.toThrow(/Could not read the tasks before moving them \(permission denied for table milestones\) — nothing was moved/);
+    await expect(applyMilestoneMoves({ ...actor, moves })).rejects.toThrow(/Could not read the tasks before moving them \(You don.t have permission to see this\.\) — nothing was moved/);
     expect(db.rpcCalls).toEqual([]);
 
     const locked = moves.map((m) => ({ ...m, expectedUpdatedAt: "2026-05-01T00:00:00+00:00" }));
-    await expect(applyMilestoneMoves({ ...actor, moves: locked })).rejects.toThrow(/Could not read the tasks before moving them \(permission denied for table milestones\) — nothing was moved/);
+    await expect(applyMilestoneMoves({ ...actor, moves: locked })).rejects.toThrow(/Could not read the tasks before moving them \(You don.t have permission to see this\.\) — nothing was moved/);
     expect(db.rpcCalls).toEqual([]);
   });
 });

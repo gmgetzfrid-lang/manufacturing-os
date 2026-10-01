@@ -6,6 +6,7 @@
 // always see everything for audit purposes).
 
 import { supabase } from "@/lib/supabase";
+import { userFacingError, userFacingReadError } from "@/lib/userFacingError";
 import { normalizeRoles } from "@/lib/roleCapabilities";
 import { isControllerPrincipal } from "@/lib/permissions";
 import { SNAPSHOT_READS, type ProjectStateSnapshot } from "@/lib/projectHealth";
@@ -124,7 +125,7 @@ export async function createProject(input: CreateProjectInput): Promise<Project>
     })
     .select("*")
     .single();
-  if (error || !data) throw new Error(error?.message || "Failed to create project");
+  if (error || !data) throw new Error(error ? userFacingError(error, { context: "projects" }) : "Failed to create project");
 
   // Owner is automatically a member with role 'owner'.
   await supabase.from("project_members").insert({
@@ -212,7 +213,7 @@ export async function writeActivity(input: WriteActivityInput): Promise<string |
       metadata: input.metadata || null,
       created_at: now,
     });
-    return error ? `The project activity row was not written: ${error.message}` : null;
+    return error ? `The project activity row was not written: ${userFacingError(error, { context: "projects" })}` : null;
   } catch (e) {
     return `The project activity row was not written: ${(e as Error).message}`;
   }
@@ -249,7 +250,7 @@ export async function listProjects(f: ListProjectsFilters): Promise<Project[]> {
   if (f.search?.trim()) q = q.ilike("name", `%${f.search.trim()}%`);
   q = q.order("last_activity_at", { ascending: false });
   const { data, error } = await q;
-  if (error) throw new Error(error.message);
+  if (error) throw new Error(userFacingReadError(error, "projects"));
   let rows = (data ?? []).map((r) => rowToProject(r as Record<string, unknown>));
 
   // If the caller wants private projects filtered, we need a second pass
@@ -285,7 +286,7 @@ export async function getProject(projectId: string): Promise<Project | null> {
  *  a second round trip for one column. A refused read throws. */
 export async function getProjectForPage(projectId: string): Promise<{ project: Project; jobKind: string | null } | null> {
   const { data, error } = await supabase.from("projects").select("*").eq("id", projectId).maybeSingle();
-  if (error) throw new Error(error.message);
+  if (error) throw new Error(userFacingReadError(error, "projects"));
   if (!data) return null;
   const r = data as Record<string, unknown>;
   return { project: rowToProject(r), jobKind: (r.job_kind as string | null | undefined) ?? null };
@@ -298,7 +299,7 @@ export async function activeOrgMemberIds(orgId: string, userIds: string[]): Prom
   if (userIds.length === 0) return new Set();
   const { data, error } = await supabase.from("org_members").select("uid")
     .eq("org_id", orgId).eq("status", "active").in("uid", userIds);
-  if (error) throw new Error(error.message);
+  if (error) throw new Error(userFacingReadError(error, "projects"));
   return new Set(((data ?? []) as Array<{ uid: string }>).map((r) => String(r.uid)));
 }
 
@@ -308,7 +309,7 @@ export async function listMembers(projectId: string): Promise<ProjectMember[]> {
     .select("*")
     .eq("project_id", projectId)
     .order("joined_at", { ascending: true });
-  if (error) throw new Error(error.message);
+  if (error) throw new Error(userFacingReadError(error, "projects"));
   return (data ?? []).map((r) => rowToMember(r as Record<string, unknown>));
 }
 
@@ -510,7 +511,7 @@ export async function transitionProjectStatus(input: StatusTransitionInput): Pro
   // error. The status did NOT change then, so nothing below — the feed row,
   // the audit row, the release, the notice — may happen.
   const { data: changed, error } = await supabase.from("projects").update(update).eq("id", input.projectId).select("id");
-  if (error) throw new Error(error.message);
+  if (error) throw new Error(userFacingError(error, { context: "projects" }));
   if (((changed ?? []) as unknown[]).length === 0) {
     throw new Error(`The project's status did not change: the database did not update it (you may no longer be allowed to manage it).${revokedIntakeLinks > 0 ? ` Its ${revokedIntakeLinks} contractor intake link(s) were revoked first — mint new ones if the project stays open.` : ""}`);
   }
@@ -604,7 +605,7 @@ async function revokeProjectIntakeLinks(projectId: string, nowIso: string): Prom
     .select("id");
   if (error) {
     if (error.code === "42P01" || error.code === "PGRST205") return 0;
-    throw new Error(`The project's contractor intake links could not be revoked, so the project was not closed: ${error.message}`);
+    throw new Error(`The project's contractor intake links could not be revoked, so the project was not closed: ${userFacingError(error, { context: "projects" })}`);
   }
   return ((data ?? []) as unknown[]).length;
 }
@@ -625,7 +626,7 @@ export async function reopenProject(input: {
   const { error } = await supabase.rpc("reopen_project", { p_project: input.projectId, p_reason: input.reason.trim() });
   if (error) {
     if (isMissingRpc(error)) throw new Error("Reopening a closed project needs database migration 20261103 (reopen_project). Ask an administrator to apply it.");
-    throw new Error(error.message);
+    throw new Error(userFacingError(error, { context: "projects" }));
   }
   await notifyProjectAudience({
     projectId: input.projectId, orgId: input.orgId,
@@ -651,7 +652,7 @@ export async function listProjectCheckouts(projectId: string): Promise<CheckoutS
     .select("*")
     .eq("project_id", projectId)
     .order("started_at", { ascending: false });
-  if (error) throw new Error(error.message);
+  if (error) throw new Error(userFacingReadError(error, "projects"));
   return (data ?? []).map(rowToCheckoutSession);
 }
 
@@ -662,7 +663,7 @@ export async function listAllActiveCheckouts(orgId: string): Promise<CheckoutSes
     .eq("org_id", orgId)
     .eq("status", "active")
     .order("started_at", { ascending: false });
-  if (error) throw new Error(error.message);
+  if (error) throw new Error(userFacingReadError(error, "projects"));
   return (data ?? []).map(rowToCheckoutSession);
 }
 
@@ -728,7 +729,7 @@ export async function releaseAllCheckoutsForProject(params: {
     .select("id, document_id, org_id, user_id, user_name")
     .eq("project_id", params.projectId)
     .eq("status", "active");
-  if (listErr) throw new Error(`Project checkouts could not be read: ${listErr.message}`);
+  if (listErr) throw new Error(`Project checkouts could not be read: ${userFacingReadError(listErr, "projects")}`);
 
   const none: ProjectReleaseOutcome = { released: 0, releasedSessionIds: [], stillHeld: [] };
   if (!active || active.length === 0) return none;
@@ -772,14 +773,14 @@ export async function releaseAllCheckoutsForProject(params: {
   // exceed the API gateway's URL limit.
   for (let i = 0; i < own.length; i += IN_FILTER_CHUNK) {
     const res = await endSessions(own.slice(i, i + IN_FILTER_CHUNK).map((r) => r.id));
-    if (res.error) throw new Error(`The project's active checkouts were NOT released: ${res.error.message}`);
+    if (res.error) throw new Error(`The project's active checkouts were NOT released: ${userFacingError(res.error, { context: "projects" })}`);
     endedRows.push(...res.ended);
   }
   // Everyone else's: one session at a time, so a refusal holds only itself.
   for (const r of rows.filter((x) => String(x.user_id) !== String(params.actorUserId))) {
     const res = await endSessions([r.id]);
     if (res.error) {
-      stillHeld.push({ sessionId: r.id, documentId: r.document_id, userId: r.user_id, userName: r.user_name, reason: res.error.message });
+      stillHeld.push({ sessionId: r.id, documentId: r.document_id, userId: r.user_id, userName: r.user_name, reason: userFacingError(res.error, { context: "projects" }) });
       continue;
     }
     endedRows.push(...res.ended);
@@ -897,7 +898,7 @@ export async function listProjectDocuments(projectId: string): Promise<ProjectDo
   ]);
   const links = linkRows as Array<{ id: string; document_id: string; source: string | null; last_seen_at: string | null }>;
   if (projRes.error && !isMissingIntakeColumn(projRes.error)) {
-    throw new Error(`The project could not be read, so its approved intake documents cannot be listed: ${projRes.error.message}`);
+    throw new Error(`The project could not be read, so its approved intake documents cannot be listed: ${userFacingReadError(projRes.error, "projects")}`);
   }
   const proj = (projRes.error ? null : projRes.data) as { org_id: string; intake_collection_id: string | null } | null;
 
@@ -908,7 +909,7 @@ export async function listProjectDocuments(projectId: string): Promise<ProjectDo
     const out: DocRow[] = [];
     for (let i = 0; i < linkedIds.length; i += REGISTER_DOC_CHUNK) {
       const { data, error } = await supabase.from("documents").select(COLS).in("id", linkedIds.slice(i, i + REGISTER_DOC_CHUNK));
-      if (error) throw new Error(error.message);
+      if (error) throw new Error(userFacingReadError(error, "projects"));
       out.push(...((data ?? []) as DocRow[]));
     }
     return out;
@@ -974,7 +975,7 @@ export async function listActivity(projectId: string, limit = 100): Promise<Proj
     .eq("project_id", projectId)
     .order("created_at", { ascending: false })
     .limit(limit);
-  if (error) throw new Error(error.message);
+  if (error) throw new Error(userFacingReadError(error, "projects"));
   return (data ?? []).map((r) => rowToActivity(r as Record<string, unknown>));
 }
 
@@ -1024,7 +1025,7 @@ export async function attachCheckoutToProject(input: {
     .from("checkout_sessions")
     .update({ project_id: input.projectId })
     .eq("id", input.checkoutSessionId);
-  if (error) throw new Error(error.message);
+  if (error) throw new Error(userFacingError(error, { context: "projects" }));
   const activityError = await writeActivity({
     projectId: input.projectId,
     orgId: input.orgId,
@@ -1059,7 +1060,7 @@ export async function addMember(input: {
     role: input.role || "collaborator",
     responsibility: input.responsibility?.trim() || null,
   }, { onConflict: "project_id,user_id" });
-  if (error) throw new Error(error.message);
+  if (error) throw new Error(userFacingError(error, { context: "projects" }));
   const activityError = await writeActivity({
     projectId: input.projectId,
     orgId: input.orgId,
@@ -1109,7 +1110,7 @@ export async function removeMember(input: {
     .delete()
     .eq("project_id", input.projectId)
     .eq("user_id", input.userId);
-  if (error) throw new Error(error.message);
+  if (error) throw new Error(userFacingError(error, { context: "projects" }));
   const activityError = await writeActivity({
     projectId: input.projectId,
     orgId: input.orgId,
@@ -1158,7 +1159,7 @@ export async function assertCanManageProject(projectId: string, actorUserId: str
   const out: ManagedProject = { id: p.id, orgId: p.org_id, ownerUserId: p.owner_user_id, name: p.name, status: p.status ?? null };
   const { data: mem, error: memErr } = await supabase
     .from("org_members").select("role, roles").eq("org_id", p.org_id).eq("uid", actorUserId).eq("status", "active").maybeSingle();
-  if (memErr) throw new Error(`Your membership could not be checked: ${memErr.message}`);
+  if (memErr) throw new Error(`Your membership could not be checked: ${userFacingReadError(memErr, "projects")}`);
   if (!mem) throw new Error("Only an active member of this workspace can manage its projects.");
   if (String(p.owner_user_id) === String(actorUserId)) return out;
   const m = mem as { role?: string | null; roles?: unknown };
@@ -1287,7 +1288,7 @@ export async function deleteProject(input: {
   });
   if (error) {
     if (isMissingRpc(error)) return legacyDeleteRecordlessProject(p, input);
-    throw new Error(error.message);
+    throw new Error(userFacingError(error, { context: "projects" }));
   }
   const counts = (data && typeof data === "object" ? (data as { counts?: Record<string, unknown> }).counts : null) ?? null;
   return { counts };
@@ -1309,14 +1310,14 @@ async function legacyDeleteRecordlessProject(
     throw new Error("This project carries cost or quality records (or they could not be counted). It cannot be deleted until database migration 20261103 (delete_project_record) is applied — archive it instead.");
   }
   const { data: ms, error: msErr } = await supabase.from("milestones").select("id").eq("project_id", input.projectId);
-  if (msErr) throw new Error(`The project's schedule could not be read, so nothing was deleted: ${msErr.message}`);
+  if (msErr) throw new Error(`The project's schedule could not be read, so nothing was deleted: ${userFacingReadError(msErr, "projects")}`);
   const milestoneIds = ((ms ?? []) as Array<{ id: string }>).map((r) => r.id);
   const revokedLinks = await revokeProjectIntakeLinks(input.projectId, new Date().toISOString());
   // RETURNING: a DELETE the policy filters out matches zero rows with no
   // error — the project is still there, so its schedule is NOT deleted and
   // PROJECT_DELETED is NOT written.
   const { data: gone, error } = await supabase.from("projects").delete().eq("id", input.projectId).select("id");
-  if (error) throw new Error(error.message);
+  if (error) throw new Error(userFacingError(error, { context: "projects" }));
   if (((gone ?? []) as unknown[]).length === 0) {
     throw new Error(`Nothing was deleted: the database did not remove the project (you may no longer be allowed to delete it).${revokedLinks > 0 ? ` Its ${revokedLinks} contractor intake link(s) were revoked first — mint new ones if the project stays in use.` : ""}`);
   }
@@ -1324,7 +1325,7 @@ async function legacyDeleteRecordlessProject(
   let scheduleError: string | null = null;
   if (milestoneIds.length > 0) {
     const { error: mdErr } = await supabase.from("milestones").delete().in("id", milestoneIds);
-    if (mdErr) scheduleError = mdErr.message;
+    if (mdErr) scheduleError = userFacingError(mdErr, { context: "projects" });
   }
   await logAuditAction({
     action: "PROJECT_DELETED", resourceId: input.projectId, resourceType: "project",
@@ -1374,7 +1375,7 @@ async function legacyTransferOwnership(
 ): Promise<void> {
   const { data: target, error: tErr } = await supabase.from("org_members").select("uid")
     .eq("org_id", p.orgId).eq("uid", input.newOwnerUserId).eq("status", "active").maybeSingle();
-  if (tErr) throw new Error(`The new owner's membership could not be checked: ${tErr.message}`);
+  if (tErr) throw new Error(`The new owner's membership could not be checked: ${userFacingReadError(tErr, "projects")}`);
   if (!target) throw new Error("The new owner must be an active member of this workspace.");
   const now = new Date().toISOString();
   const { data: moved, error } = await supabase.from("projects").update({
@@ -1390,11 +1391,11 @@ async function legacyTransferOwnership(
     project_id: input.projectId, user_id: input.newOwnerUserId,
     user_name: input.newOwnerName || null, user_email: input.newOwnerEmail || null, role: "owner",
   }, { onConflict: "project_id,user_id" });
-  if (upErr) throw new Error(`Ownership moved, but the roster was not updated: ${upErr.message}`);
+  if (upErr) throw new Error(`Ownership moved, but the roster was not updated: ${userFacingError(upErr, { context: "projects" })}`);
   if (String(p.ownerUserId) !== String(input.newOwnerUserId)) {
     const { error: dErr } = await supabase.from("project_members").update({ role: "collaborator" })
       .eq("project_id", input.projectId).eq("user_id", p.ownerUserId).eq("role", "owner");
-    if (dErr) throw new Error(`Ownership moved, but the previous owner's roster row was not updated: ${dErr.message}`);
+    if (dErr) throw new Error(`Ownership moved, but the previous owner's roster row was not updated: ${userFacingError(dErr, { context: "projects" })}`);
   }
   const activityError = await writeActivity({
     projectId: input.projectId, orgId: p.orgId, userId: input.actorUserId, userName: input.actorEmail,
@@ -1428,7 +1429,7 @@ export async function updateMember(input: {
   if (Object.keys(patch).length === 0) return;
   const { error } = await supabase.from("project_members").update(patch)
     .eq("project_id", input.projectId).eq("user_id", input.userId);
-  if (error) throw new Error(error.message);
+  if (error) throw new Error(userFacingError(error, { context: "projects" }));
 }
 
 // ─── AUDIENCE FAN-OUT ────────────────────────────────────────────────────
@@ -1496,7 +1497,7 @@ export async function updateProjectMeta(input: {
   if (input.patch.targetCompletionDate !== undefined) update.target_completion_date = input.patch.targetCompletionDate || null;
   if (input.patch.visibility !== undefined) update.visibility = input.patch.visibility;
   const { error } = await supabase.from("projects").update(update).eq("id", input.projectId);
-  if (error) throw new Error(error.message);
+  if (error) throw new Error(userFacingError(error, { context: "projects" }));
 
   const activityError = await writeActivity({
     projectId: input.projectId, orgId: proj.orgId,
@@ -1550,7 +1551,7 @@ export async function convertTicketToProject(input: {
     .select("id, title, description, request_type, requester_id, requester_name")
     .eq("id", input.ticketId)
     .single();
-  if (tErr || !ticket) throw new Error(tErr?.message || "Ticket not found");
+  if (tErr || !ticket) throw new Error(tErr ? userFacingReadError(tErr, "projects") : "Ticket not found");
 
   // Description is required by createProject. If the ticket has none, fall
   // back to the title so the project is still meaningfully described and
@@ -1726,7 +1727,7 @@ export async function bulkCheckoutToProject(input: BulkCheckoutInput): Promise<B
     const { error: insertErr } = await supabase.from("checkout_sessions").insert(sessionRow);
 
     if (insertErr) {
-      skipped.push({ docId: doc.id, reason: insertErr.message });
+      skipped.push({ docId: doc.id, reason: userFacingError(insertErr, { context: "projects" }) });
       continue;
     }
 
@@ -1839,7 +1840,7 @@ export async function autoReleaseExpiredAdHoc(
   if (browserMode) query = query.eq("user_id", opts!.userId as string);
 
   const { data, error: listErr } = await query;
-  if (listErr) throw new Error(`Expired checkouts could not be read: ${listErr.message}`);
+  if (listErr) throw new Error(`Expired checkouts could not be read: ${userFacingReadError(listErr, "projects")}`);
 
   let released = 0;
   const ids = ((data ?? []) as Array<{ id: string }>).map((r) => r.id);
@@ -1878,7 +1879,7 @@ async function readAllPages(label: string, page: RowPage): Promise<Array<Record<
   const rows: Array<Record<string, unknown>> = [];
   for (let from = 0; ; from += PAGE_ROWS) {
     const { data, error } = await page(from, from + PAGE_ROWS - 1);
-    if (error) throw new Error(`${label}: ${error.message}`);
+    if (error) throw new Error(`${label}: ${userFacingError(error, { context: "projects" })}`);
     const batch = (data ?? []) as Array<Record<string, unknown>>;
     rows.push(...batch);
     if (batch.length < PAGE_ROWS) return rows;
@@ -2003,7 +2004,7 @@ async function sweepSessions(
         .from("checkout_sessions").update(basePayload).in("id", ids).eq("status", "active").select(RETURNING));
     }
   }
-  if (sweepErr) throw new Error(`Expired checkouts were NOT released: ${sweepErr.message}`);
+  if (sweepErr) throw new Error(`Expired checkouts were NOT released: ${userFacingError(sweepErr, { context: "projects" })}`);
   const released = ((swept ?? []) as SweptSession[]);
   if (released.length === 0) return 0;
 

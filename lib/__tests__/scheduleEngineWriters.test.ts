@@ -419,7 +419,7 @@ describe("SCH-4 / SCH-9 · grouping under an existing phase is checked for loops
     let n = 0;
     db.failSelect = (table) => (table === "milestones" && ++n === 3 ? { message: "statement timeout" } : null); // the selected rows, the parent, then the project
     const grp = await groupTasksUnderParent({ orgId: ORG, projectId: PROJECT, parentId: "Q", childIds: ["t"], actorUserId: USER });
-    expect(grp.errors).toEqual(["Couldn't check the grouping for loops (statement timeout). Nothing was grouped."]);
+    expect(grp.errors).toEqual(["Couldn't check the grouping for loops (The database took too long to answer — try again.). Nothing was grouped."]);   // REL-3: a sentence, never the driver text
     expect(updates()).toEqual([]);
   });
 
@@ -674,7 +674,7 @@ describe("SAF-7 · every captured baseline is available for drift, newest first"
     expect(await listBaselineCaptures({ orgId: ORG, projectId: PROJECT, milestones: live })).toMatchObject({ historyUnavailable: true });
     db.failSelect = (t) => (t === "milestone_baseline_history" ? { message: "permission denied for table milestone_baseline_history" } : null);
     const res = await listBaselineCaptures({ orgId: ORG, projectId: PROJECT, milestones: live });
-    expect(res.error).toMatch(/permission denied/);
+    expect(res.error).toBe("You don't have permission to see this.");   // REL-3
     expect(res.captures.map((c) => c.id)).toEqual(["current"]);
   });
 });

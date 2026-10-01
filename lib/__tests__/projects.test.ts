@@ -505,8 +505,8 @@ describe("PM-7 / PM-9 — the feed write is checked and no longer touches projec
   it("a refused insert comes back as text (never a throw); writeActivityChecked throws it; the client never UPDATEs projects.last_activity_at", async () => {
     const RLS = { message: "new row violates row-level security policy for table \"project_activity\"" };
     state.queue["project_activity.insert"] = [{ error: RLS }, { error: RLS }];
-    await expect(writeActivity({ projectId: "p1", orgId: "o1", userId: "u1", type: "checkout_added" })).resolves.toMatch(/^The project activity row was not written: new row violates/);
-    await expect(writeActivityChecked({ projectId: "p1", orgId: "o1", userId: "u1", type: "comment", body: "x" })).rejects.toThrow(/^The project activity row was not written: new row violates/);
+    await expect(writeActivity({ projectId: "p1", orgId: "o1", userId: "u1", type: "checkout_added" })).resolves.toMatch(/^The project activity row was not written: You don't have permission to do this/);   // REL-3
+    await expect(writeActivityChecked({ projectId: "p1", orgId: "o1", userId: "u1", type: "comment", body: "x" })).rejects.toThrow(/^The project activity row was not written: You don't have permission to do this/);
     await expect(writeActivity({ projectId: "p1", orgId: "o1", userId: "u1", type: "checkout_added" })).resolves.toBeNull();
     expect(writesTo("projects")).toHaveLength(0);
   });
@@ -534,7 +534,7 @@ describe("PM-7 / PM-9 — the feed write is checked and no longer touches projec
 
   it("an observer's refused comment is 'not posted', and nobody is notified of it", async () => {
     state.queue["project_activity.insert"] = [{ error: { message: "new row violates row-level security policy for table \"project_activity\"" } }];
-    await expect(postComment({ projectId: "p1", orgId: "o1", body: "looks fine", actorUserId: "obs" })).rejects.toThrow(/^Your comment was not posted: new row violates/);
+    await expect(postComment({ projectId: "p1", orgId: "o1", body: "looks fine", actorUserId: "obs" })).rejects.toThrow(/^Your comment was not posted: You don't have permission to do this/);   // REL-3
     expect(state.emits).toHaveLength(0);
   });
 
@@ -654,7 +654,7 @@ describe("UX-11 — the register the Documents tab shows, and its badge", () => 
   it("a failed project read throws — it no longer reads as 'no intake collection' and drops the approved sheets silently", async () => {
     state.rows.project_documents = [];
     state.errors["projects.select"] = { message: "canceling statement due to statement timeout", code: "57014" };
-    await expect(listProjectDocuments("p1")).rejects.toThrow(/^The project could not be read, so its approved intake documents cannot be listed: canceling statement/);
+    await expect(listProjectDocuments("p1")).rejects.toThrow(/^The project could not be read, so its approved intake documents cannot be listed: The database took too long to answer/);   // REL-3
     // Before 20260902 the column does not exist: then there is simply no intake collection.
     state.errors["projects.select"] = { message: 'column projects.intake_collection_id does not exist', code: "42703" };
     state.rows.project_documents = [{ id: "l1", project_id: "p1", document_id: "d1", source: "manual", last_seen_at: "2026-09-02" }];
