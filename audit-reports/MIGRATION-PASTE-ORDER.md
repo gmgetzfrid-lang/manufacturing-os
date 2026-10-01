@@ -11,7 +11,7 @@ This is a read-only reference, compiled 2026-10-01 by the integrator from two so
 - `h:N` = line N of the row's own migration file. `20261130:47` = line 47 of `supabase/migrations/20261130_*.sql`.
 - **(derived)** marks an ordering fact I worked out from which files CREATE the same function, policy or trigger. No record states it.
 
-**Keeping this current.** The integrator updates this guide at every merge that adds a migration, and whenever you report a paste. Not listed yet, because they are still on unmerged package branches: 20261124 (intelligence I-07), 20261137 (I-05), 20261141 and 20261142 (projects J11), 20261143 (document-control P8) and 20261144 (P13). When you paste a file, send back its result rows; the integrator then marks it **LIVE** here and in the finding records.
+**Keeping this current.** The integrator updates this guide at every merge that adds a migration, and whenever you report a paste. Not listed yet, because they are still on unmerged package branches: 20261137 (I-05), 20261141 and 20261142 (projects J11), 20261143 (document-control P8) and 20261144 (P13). When you paste a file, send back its result rows; the integrator then marks it **LIVE** here and in the finding records.
 
 ---
 
@@ -36,7 +36,6 @@ This is a read-only reference, compiled 2026-10-01 by the integrator from two so
 3. **An ERROR instead of rows also means stop and report.** These raise on purpose when a prerequisite is missing:
    - 20261133 needs 20261132 (h:3-6).
    - 20261136 needs 20261091, 20261125 and 20261132 (h:3-5).
-   - 20261009_trace_method raises 42P01 (see row 7).
 4. **Older result shapes.**
    - 20261007–20261025 end with no SELECT at all (DDL only).
    - 20261026–20261052 end in other shapes: (`check`, `ok`), (`check`, `result` text), or a column list (20261039).
@@ -98,6 +97,7 @@ The file loops over every overload of both functions by name (h:31-45), inside o
 | | **Status.** Both fixes are RESOLVED in code (dc/10-rls.md:633, :722): *"Landed 2026-10-01 in P12's first commit … Step 3 waits only for the app carrying that commit to be deployed"* (SEQ:164). **No record says that app is deployed.** | |
 | | **One-deploy variant.** Paste 20261130 → deploy the app with the page fixes → paste 20261131 (SEQ:170-173). | |
 | **20261139** first issue and branch close-out | *"Deploy the app carrying `REV-15`'s bulk upload change with or before it"*. REV-15 itself is still OPEN, with a Partial block (dc/02-revisions-publish.md:664, :681). | SEQ:217-219 |
+| **20261124** drawing audit scope | Paste after the app carrying intelligence **I-04** is deployed. I-04 moves the orchestrator's `log_audit_completion` onto the new `(org, library, sheet, revision)` key; before that, the paste makes that one tool's write fail (42P10). | h:23-28 |
 | 20261019 *(LIVE, historical)* | The app that stops sending `p_actor_role` had to deploy before this file was applied. | 20261019:18-19 |
 | 20261050 *(LIVE, historical)* | Applied after the app carrying the signing route was deployed. | 20261050:25-27 |
 
@@ -127,7 +127,6 @@ The other order is tolerated: the app degrades or fails closed until the paste l
 - **ASK**: the records don't say whether it is live. Confirm before pasting (see §5).
 - **PASTE**: pending, no deploy gate.
 - **HOLD**: pending, deploy gate in §3A.
-- **SKIP**: the records say it fails.
 - **NOW**: §2.
 
 All PASTE and HOLD rows read *"Pending migration"* or *"not applied"* in the records. The file and line are given in the last column.
@@ -140,7 +139,7 @@ All PASTE and HOLD rows read *"Pending migration"* or *"not applied"* in the rec
 | 4 ASK | `20261008_knowledge_threads.sql`: `thread_id` groups asks into conversations | — | — | no later re-creation found | — | unknown |
 | 5 ASK | `20261008_storage_estimate_knowledge.sql`: `mfg_storage_estimate()` now counts knowledge files (DROP + CREATE, h:18-22) | — | 20260805 (h:16) | no later re-creation found | — | unknown |
 | 6 ASK | `20261009_folder_order.sql`: `collections.sort_order` | — | — | — | — | unknown |
-| 7 SKIP | `20261009_trace_method.sql` ALTERs `knowledge_line_traces` | DWG-9 (the defect *is* this file) | header says "after 20261007" (h:14) | Raises 42P01 once `20261007_retire_line_traces` has dropped the table. DWG-9's done-when: delete the file, or guard it with `to_regclass`. | — | DWG-9 **OPEN** (int/14-drawing-intelligence.md:414-417, :424, :430) |
+| 7 ASK | `20261009_trace_method.sql` ALTERs `knowledge_line_traces`, now only while that table exists (guarded at the I-07 merge, 2026-10-01) | DWG-9 | header says "after 20261007" (h:14) | Harmless in any order now: a no-op once `20261007_retire_line_traces` has dropped the table. | — | DWG-9 RESOLVED (int/14-drawing-intelligence.md) |
 | 8 ASK | `20261010_explorer_view_prefs.sql`: `table_views.view_config`, plus restrictive policies so only controllers write org-default rows | — | — | no later re-creation found | — | unknown |
 | 9 ASK | `20261010_signup_rate_limit.sql`: `signup_attempts` (IP rate limit, service-role only) | finding H4 (pre-corpus id, h:9) | — | — | — | unknown |
 | 10 ASK | `20261011_collections_guard_and_trash.sql`: controller-only folder INSERT/UPDATE policies, a document move guard and folder trash | — | — | **(derived)** It re-creates `collections_update_controllers` (DROP + CREATE, h:30-34), which **LIVE** 20261044 widened (20261044:93-105). It also CREATE OR REPLACEs `enforce_document_move_guard` with no `search_path`, which **LIVE** 20261020 pinned (20261020:54). **Pasting it now would revert both.** | — | unknown. 20261044:16-18 and 20261072:7-8 describe its policy as having been in force (§5 #1) |
@@ -225,6 +224,7 @@ All PASTE and HOLD rows read *"Pending migration"* or *"not applied"* in the rec
 | 89 PASTE | `20261121`: embed claim queue, retrievable coverage, `ef_search` | SEM-4, SEM-7, SEM-1, SEM-5, SEM-13, SEM-9 | **(derived)** 20261007_rag_hardening, 20261011_semantic_coverage_fast and 20261014 (it re-creates their functions, h:26, :44) | — | — | Pending (int/03-semantic-layer.md:62) |
 | 90 PASTE | `20261122`: ingest claim, counters, chunker version, provenance, sync cursor, mirror FK | ING-1/2/4/6/7/8/11/12, GOV-9, ILIFE-5/13, IRLS-7 | — | — | — | Pending (int/01-ingestion.md:139, :318) |
 | 91 PASTE | `20261123`: `knowledge_questions` search column re-stated after 20260911 | IRLS-6 | — | — | — | Pending. *"On live deployments it is a no-op"* (int/16-persistence-rls.md:287) |
+| 91a HOLD | `20261124`: drawing audit verdicts keyed by library (`drawing_audit_logs.library_id`, new unique key), and the census counted in the database (`drawing_entity_rollup()`, `knowledge_doc_text_stats()`, service_role only) | DWG-6, DWG-11 (I-07) | — | — | **Wait for intelligence I-04** (h:23-28): until I-04 moves the orchestrator's `log_audit_completion` onto the new key, that one tool's upsert is refused (42P10) after this paste. The drawing page itself works either way. | Pending (int/14-drawing-intelligence.md DWG-6) |
 | 92 PASTE | `20261125`: skills authority and `is_org_controller_for` | IEDGE-3, GOV-2, IRLS-3, ORCH-2, PR-3, HUB-2, LNK-7 | 20261016 (h:12), and 20261015 (re-creates its policies) | precede 20261126 (20261126:5) and **20261136** (20261136:3-5) | — | Pending (int/04-ai-governance.md:152) |
 | 93 PASTE | `20261126`: plain conflict-target indexes, link provenance, readable-only link policy | LNK-3, IRLS-2, WIRE-2, IRLS-4, LNK-9, LNK-4, LNK-5, IRLS-15 | 20261125 (h:5) | — | — | Pending (int/09-link-proposals.md:164; int/16-persistence-rls.md:585) |
 | 94 PASTE | `20261127`: one tag grammar | GAP-310, CB-9 | — | — | — | Pending (int/10-codebook.md:407; int/90-gap-register.md:550) |
@@ -249,7 +249,7 @@ All PASTE and HOLD rows read *"Pending migration"* or *"not applied"* in the rec
    - 20261120, 20261121, 20261122, 20261123, 20261125, 20261126, 20261127, 20261128
    - 20261130, 20261132, 20261133, 20261134, 20261136, 20261138, 20261140
 4. Deploy the app build carrying the wave-2 changes (SEQ:167-168).
-5. Paste 20261131 once DRLS-15 and DRLS-17 are deployed, and 20261139 once REV-15 is deployed (either order).
+5. Paste 20261131 once DRLS-15 and DRLS-17 are deployed, and 20261139 once REV-15 is deployed (either order). Paste 20261124 once intelligence I-04 is deployed.
 6. Paste 20261138 again after the first decode run.
 
 No record or header makes 20261132–20261140 depend on 20261131, so holding 20261131 does not block them (derived from the headers above).
@@ -267,10 +267,7 @@ No record or header makes 20261132–20261140 depend on 20261131, so holding 202
    - Yet every projects Round G file builds on its tables (20261091:67,76; 20261094:4; 20261095:16), and 20261136 runs end to end only on a database that has it (pc/03-quality.md:259).
    - A verifier notes that if it were unapplied, `project_checklists` would not exist either (pc/03-quality.md:463).
    - Confirm with schema-health (pt/08-reliability.md:343) before pasting 20261091 and later.
-3. **20261009_trace_method cannot succeed in filename order.**
-   - Its header says *"Apply after 20261007"* (h:14), but `20261007_retire_line_traces.sql:9` drops the table, so the file raises 42P01.
-   - DWG-9 is OPEN, and its done-when is to delete the file or guard it (int/14-drawing-intelligence.md:414-448).
-   - **(derived)** Pasting `20261007_line_traces` now would resurrect the retired table.
+3. **20261009_trace_method (resolved 2026-10-01).** It raised 42P01 after `20261007_retire_line_traces`. Since the I-07 merge it runs its ALTER only while the table exists (DWG-9). **(derived)** Pasting `20261007_line_traces` now would still resurrect the retired table, so keep row 1 as ASK.
 4. **A wrong citation in 20261129 (corrected 2026-10-01).** Its header and dc/10-rls.md listed 20261060 among the `publish_revision` signatures, but `20261060_rp_roundE_archive_publish_authority.sql` contains no `publish_revision` at all. The real chain is 19 → 31 → 34 → 36 → 40 → 49 → 105 → 130. Both comments now read `20261049 / 20261105 / 20261130`; the SQL is unchanged, and it was harmless anyway, because the hotfix loops over overloads by name.
 5. **SEQ contradicts itself on the one-deploy order.**
    - SEQ:183-184 labels the window "wave-2 app deployed, `20261130` not yet pasted" as *"(the one-deploy order)"*.

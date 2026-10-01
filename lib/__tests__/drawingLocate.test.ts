@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { parseLocateResponse } from "../drawingLocate";
+import { parseLocateResponse, buildRelocateUser, textMarkPosition } from "../drawingLocate";
 
 // A marker in the wrong place on an E-size drawing is worse than no marker:
 // it sends someone to the wrong corner with confidence. Everything this
@@ -61,5 +61,35 @@ describe("parseLocateResponse", () => {
   it("keeps the first position when a tag repeats", () => {
     const out = parseLocateResponse('{"V-3": [0.1, 0.1], "v-3": [0.9, 0.9]}', asked);
     expect(out).toEqual([{ tag: "V-3", nx: 0.1, ny: 0.1 }]);
+  });
+});
+
+describe("buildRelocateUser — the relocate round says what was actually observed (PR-10 / DWG-13)", () => {
+  it("names the wrong spot, says the close-up did not show it, and asks for an omission over a guess", () => {
+    const u = buildRelocateUser(["V-3"], "025-PID-0104.pdf", 1, { "V-3": [0.5, 0.05] });
+    expect(u).toContain("V-3 at [0.50, 0.05]");
+    expect(u).toMatch(/close-up of that spot does NOT show/);
+    expect(u).toMatch(/If you cannot see it, omit it/);
+  });
+});
+
+describe("textMarkPosition — text-layer marks on the page as drawn (DWG-3)", () => {
+  const plain = { rotate: 0, view: [0, 0, 612, 792], userUnit: 1 };
+  it("a plain page maps every stored mark to itself — edges included", () => {
+    for (const [x, y] of [[0.1, 0.2], [0, 1], [1, 0], [0.5, 0.5]]) {
+      expect(textMarkPosition(x, y, plain)).toEqual({ nx: x, ny: y });
+    }
+  });
+  it("/Rotate 180 puts an upper-left store in the lower-right — the PID-Legend fixture's arithmetic", () => {
+    // fixtures/PID-Legend.pdf: rotate 180, view [0,0,1224,792], a glyph at (72, 767).
+    const stored = { nx: 72 / 1224, ny: 1 - 767 / 792 };
+    const at = textMarkPosition(stored.nx, stored.ny, { rotate: 180, view: [0, 0, 1224, 792] })!;
+    expect(at.nx).toBeCloseTo(0.941, 3);
+    expect(at.ny).toBeCloseTo(0.968, 3);
+  });
+  it("refuses a value the ingest clamp pinned to an edge on a page that is not plain", () => {
+    expect(textMarkPosition(0, 0.4, { rotate: 90, view: [0, 0, 612, 792] })).toBeNull();
+    expect(textMarkPosition(0.4, 1, { rotate: 0, view: [20, 30, 632, 822] })).toBeNull();
+    expect(textMarkPosition(Number.NaN, 0.4, plain)).toBeNull();
   });
 });

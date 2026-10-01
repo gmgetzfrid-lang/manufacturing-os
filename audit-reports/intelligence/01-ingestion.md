@@ -89,6 +89,8 @@ Each new guard was mutation-checked: with the guard removed, its test fails.
 
 **Pending build (DEC-29 item 4).** On this branch, `npx tsc --noEmit`, `npx eslint --max-warnings=0` on every changed file, and the full `npx vitest run` pass. `next build` was not run: the fleet's standing rule leaves it to the integrator, who runs it before merging and records it in the round section. This status stands on that build. If the build fails, the finding returns to OPEN.
 
+**Handoff landed (2026-10-01, intelligence Round G, I-07).** The drawing rebuild in `app/api/knowledge/drawing/route.ts` now goes through `resetKnowledgeIndex`, taking each document's ingest claim. A document a batch holds is reported `busy` and left alone, never reset under it. The one interleaving the residual above named (a rebuild landing under a first batch, `pages_indexed` 0 → 0, same file) is closed by the claim. Test: `lib/__tests__/intelRoundGDrawingRoutes.test.ts` "… leaves a document another driver holds alone".
+
 ---
 
 <a id="ing-2"></a>
@@ -327,7 +329,7 @@ Tests:
 ## ING-5 · 'anchor' is a fifth entity kind written on every page, but ENTITY_KINDS documents itself as complete and omits it — and the guard test exempts the writer
 
 - **Severity:** LOW
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Verification:** CONFIRMED
 - **Locations:** `lib/knowledgeIngest.ts:301-313`, `lib/knowledgeEntityKinds.ts:25-33`, `lib/__tests__/entityKindGuard.test.ts:26-33`, `lib/knowledgeIngest.ts:417-425`, `app/api/knowledge/ask/route.ts:1296-1299`
 - **Independently verified:** ✓ **SURVIVES, corrected** — second independent adversarial pass. Severity **MEDIUM → LOW** by this pass. Factually correct on every point. Lowered to LOW because there is no live consequence: 20260925_entity_kinds.sql drops the kind CHECK entirely so 'anchor' inserts succeed, and every bulk reader already names its kinds in the QUERY (ask/route.ts:952 `.in("kind", TAG_ENTITY_KINDS ...)`, equipmentBridgeServer.ts:69 `.eq("kind","equipment")`), so anchor rows never compete for a row cap. The only consumer of anchors, ask/route.ts:1298, filters `.eq("kind", "anchor")`. This is a documentation/latent-hazard defect, not a current defect.
@@ -349,6 +351,26 @@ lib/knowledgeIngest.ts:309 `page: p, kind: "anchor", tag: `${kindWord} ${cap[2].
 - [ ] ENTITY_KINDS includes "anchor" and TAG_ENTITY_KINDS explicitly states it is excluded and why
 - [ ] The guard test also asserts that every `kind: "…"` literal written in the ingest insert appears in ENTITY_KINDS
 - [ ] The CHECK-constraint fallback's CORE_KINDS choice is re-decided now that four non-core kinds exist
+
+**Resolution (2026-10-01, intelligence Round G, I-07).** Verified against HEAD first (DEC-29): `lib/knowledgeIngest.ts` writes five entity kinds (`equipment`, `ref`, `opc`, `self`, `anchor`), `ENTITY_KINDS` declared four, and the guard exempted the writer by file. What landed:
+
+- **The inventory is complete.** `lib/knowledgeEntityKinds.ts`: `ENTITY_KINDS` now includes `"anchor"`, and the module's table of kinds describes it: on every page, prose included, so the most numerous kind in a standards library. `TAG_ENTITY_KINDS` states that `anchor` is excluded and why. A caption's address is not a tag, and in a bulk read it would swamp the drawing kinds under the row cap; its one reader asks for it by name.
+- **The guard holds the inventory to the writer, both ways.** `lib/__tests__/entityKindGuard.test.ts` collects every entity `kind:` literal `lib/knowledgeIngest.ts` pushes (`page: p, kind: "…"`, so the lease's own `kind:` union is left out). It asserts that each one is declared, AND that each declared kind is one the ingest writes. A kind can no longer be written undeclared, or declared ahead of its writer. DWG-2's `'line'` kind will have to be declared when its ingest call lands.
+- **The guard is per read.** The file exemption for the writer is gone with the rest (DWG-12): every statement in every file is checked, and writes are recognised as writes.
+- **CORE_KINDS re-decided: kept, and pinned.** The fallback fires only on a database that never applied `20260925`, whose column CHECK admits exactly `('equipment', 'ref')`. `CORE_KINDS` must equal that list, or the fallback insert fails again. A test pins `CORE_KINDS` to `20260921`'s CHECK, and pins `20260925`'s `DROP CONSTRAINT`.
+
+Tests: `lib/__tests__/entityKindGuard.test.ts`, block "the entity-kind inventory is the ingest's, both ways (ING-5)":
+- "every kind the ingest writes is declared in ENTITY_KINDS";
+- "every declared kind is one the ingest writes — nothing declared ahead of its writer";
+- "anchor is declared but kept out of the tag kinds every census reads";
+- "the CHECK fallback keeps exactly the kinds the pre-20260925 CHECK admits (CORE_KINDS re-decided)".
+
+**Done-when.**
+- ✓ `ENTITY_KINDS` includes `"anchor"`, and `TAG_ENTITY_KINDS` explicitly states it is excluded and why.
+- ✓ The guard test asserts that every `kind: "…"` literal written in the ingest insert appears in `ENTITY_KINDS`, and the reverse.
+- ✓ The CHECK-constraint fallback's `CORE_KINDS` choice is re-decided: kept as exactly the pre-`20260925` CHECK's list, for the reason above, and pinned. `lib/knowledgeIngest.ts` is not edited.
+
+**Scope / residual.** None.
 
 ---
 
@@ -482,6 +504,8 @@ Resume's `retryNow` is recorded under ING-8. The second criterion's "except by a
 - the `fileBehind` drain test that the I-06 merge carried here — now `ING-13`'s fourth done-when, with an owner (2026-10-01, the I-02b integration). `ING-13` also carries the keyless half this finding leaves: a keyless batch commits a page AI vision should read with its text layer, as if complete, and never lists it on `vision_failed_pages`.
 
 The engine's park message still reads "ask an admin to accept the partial index" (`visionRetryMessage` in `lib/knowledgeIngest.ts`, not this package's file). It stays true, because the button is a controller's (Admin or Doc Control).
+
+**Handoff landed (2026-10-01, intelligence Round G, I-07).** The drawing-lens limb is done. In `app/api/knowledge/drawing/route.ts`, a parked document (`vision_retry_after` set, or a non-null `error` on a document that is not `error`) is shown as `indexing`, never as a finished sheet, and is not counted ready. Each such sheet carries `waiting: { pages (from vision_failed_pages), reason (error), retryAfter }`, and the panel shows "⏳ page(s) … wait on AI vision — <reason>". An ACCEPTED partial index is finished: its unread pages are listed (`acceptedUnread`), not shown as waiting. Its audit verdict is `skipped` while it waits. Test: `lib/__tests__/intelRoundGDrawingRoutes.test.ts` "a parked document is indexing, with the pages it waits on and why — never ready". No status change: ING-6 stays OPEN for I-03's DRAWING FACTS limb.
 
 ---
 
@@ -738,6 +762,8 @@ Now the keyless park skips its UPDATE when the row already carries the same mess
 
 **Integration (2026-10-01, at the I-06 merge).** The final review's four minors, handled at merge. (1) The re-run record: `ingestKnowledgeDocBatch` now treats any `onRetryNow` answer other than `null` — an empty string included — as a refusal ("the record failed"), so a record that returns `''` no longer lets an unrecorded re-run through; the route always passes `onRetryNow`, and a caller that omits it (the engine's own tests) runs the re-run unrecorded — the comment at the call now says exactly that. Test: `lib/__tests__/ingestLock.test.ts` "a re-run is recorded only when it is performed …" gains the empty-answer case. (2) The failure message no longer promises the nightly run for documents the drain never works on: it reads "or the nightly maintenance run where the library can be indexed unattended" (`NEXT_INDEXING_PASS`); the long-cause test is rebalanced for the longer copy (same surrogate-pair cut). (3) `DEC-58`'s acceptance line carried the drain bound one run early; it now states run ⌊N / 20⌋ + 1, as this record and probe D2 do. (4) **Residual, not fixed:** no test exercises `fileBehind`'s guards in the drain (`lib/knowledgeIngest.ts` — the compare-and-set on `file_key` and the stamp as read, the claim-free `.or()` filter, the legacy `hasStamp` early return). The code is as the review read it; a test that drives the drain over a claimed row and a pre-20261122 row is owed — carried here, with `ING-6`'s owner. The integrator's `next build` gate that the "Pending build" lines in this report wait on is run at this merge, before the push.
 
+**Handoff landed (2026-10-01, intelligence Round G, I-07).** The drawing rebuild now calls `resetKnowledgeIndex`, so it zeroes `ingest_failures` and `vision_retry_after` and takes the document's claim (see ING-12's Resolution; test "zeroes every counter under the claim …" in `lib/__tests__/intelRoundGDrawingRoutes.test.ts`). The residual named above is closed. A rebuilt document starts its failure count at zero.
+
 ---
 
 <a id="ing-9"></a>
@@ -890,7 +916,7 @@ Tests: `lib/__tests__/ingestLock.test.ts` ("empty pages accumulate across batche
 ## ING-12 · vision_pages is monotonic forever — rebuild and rev-up reset every other counter but not this one, so the per-sheet 'read by AI vision' verdict is永 sticky and the count inflates
 
 - **Severity:** MEDIUM
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Assigned:** intelligence I-07 DRAWING INTELLIGENCE (running; its branch carries the code — reconciled at its merge) — by the integrator, 2026-10-01 (orphan sweep: the package that left this remainder has merged; fleet plan `audit-reports/fleet-plans/`).
 - **Verification:** CONFIRMED
 - **Locations:** `lib/knowledgeIngest.ts:458-467`, `app/api/knowledge/drawing/route.ts:371`, `lib/knowledgeSourceSync.ts:248-260`, `app/api/knowledge/drawing/route.ts:290-297`
@@ -929,6 +955,54 @@ Tests: `lib/__tests__/sourceSync.test.ts` ("chunks, page entities, machine menti
 
 **Scope / residual.** No migration is needed: `vision_pages` exists since `20260922`. Values already inflated in the database stay until each document's next re-index; the `20261122` inventory counts documents whose `vision_pages` exceeds their page count. The same handoff to I-07 covers the two columns `20261122` adds for ING-8. The rebuild must also zero `ingest_failures` and `vision_retry_after`, which `resetKnowledgeIndex` does. Until then a rebuilt document keeps its failure count: one that had failed twice goes to `error` on its first failure, and one at the bound reads "failed 4 times in a row". A failure back-off no longer outlives the rebuild, because the rebuild nulls `error` and the back-off holds only while the row carries the failure's message (see ING-8). OPEN until I-07's rebuild calls `resetKnowledgeIndex`.
 
+**Resolution (2026-10-01, intelligence Round G, I-07).** The missing half landed. The drawing rebuild (`app/api/knowledge/drawing/route.ts`, POST `action: "rebuild"`) no longer resets rows itself. It calls `resetKnowledgeIndex` per document, under that document's ingest claim, so the row is written with `RESET_ROW`'s zeros: `vision_pages: 0`, empty pages, the vision retry queue, `ingest_failures` and `vision_retry_after` (ING-8). Then chunks, page entities and machine mentions go, each checked.
+- **Busy documents.** A document another driver is indexing is left alone and reported (`busy`).
+- **Large libraries.** A large library is reset in id order within a time budget and continued by cursor, so no document is reset (and re-billed) twice. The Drawing intelligence panel follows the cursor. The library page's "Re-index all" did not (review fix pass below). Since I-07's second review fix pass the route keeps that caller's place, so each press continues where the last stopped.
+- **Failures.** Failures are reported, never a silent success — by the panel, and by the route to a caller that cannot show them (review fix pass below).
+
+Test: `lib/__tests__/intelRoundGDrawingRoutes.test.ts` "zeroes every counter under the claim, clears chunks and entities, and leaves a document another driver holds alone", with `vision_pages` 7 → 0, `ingest_failures` 2 → 0 and `vision_retry_after` → null. It also covers "a continuation cursor never resets the same document twice". It fails against the base route.
+
+**Done-when.**
+- ✓ Both reset paths (drawing rebuild, sourceSync refresh) set `vision_pages: 0`. Both are `resetKnowledgeIndex`.
+- ✓ The counter is scoped to the current index generation (I-06, above).
+
+**Scope / residual.** Values already inflated stay until each document's next re-index (I-06's note above).
+
+**Review fix pass (2026-10-01, intelligence Round G, I-07).** The resolution above claimed the cursor and the failure reporting for every caller, and the implementer's note called `rebuildDrawingIndex` (`lib/knowledge.ts`) unused. It is not: the library page's general "Re-index all" button (`app/(protected)/knowledge/[id]/page.tsx`) calls it without a cursor, ignores `remaining`, `busy` and `errors`, and toasts "N document(s) queued" — on a library past what one call can reset, or with documents an indexer holds, a partial reset read as complete. Both files are I-02's (the knowledge UI), so they were not edited here.
+- **Handed to I-02.** `rebuildDrawingIndex` must loop on `cursor` until `remaining` is 0, and surface `busy` and `errors`, as `rebuildAll` in `components/knowledge/DrawingIntelPanel.tsx` does; its return type gains those fields.
+- **Until then, the route refuses to be read as done.** `POST /api/knowledge/drawing { action: "rebuild" }` from a caller that sends no `cursor` key at all (the panel always sends one, `null` on its first call) answers 409 with `partial: true` and a message `apiPost` throws as the error toast — "Re-index is not complete: N of M document(s) were queued; K were being indexed right then and were left alone (…); R were not reached in time …" — whenever documents were left unreached, busy, or failed. A complete reset still answers 200.
+- **A spent budget no longer crashes.** When the document listing alone outlasted the budget, `all[next - 1]` read `undefined` and the call answered 500; it now returns the cursor it was given.
+- **The panel's own ceiling is said.** Its follow loop stops after 50 calls; any documents still `remaining` are now shown ("press Rebuild index again to continue").
+
+Tests: `lib/__tests__/intelRoundGDrawingRoutes.test.ts` "a caller that sends no cursor (the library page's Re-index all) can never read a partial reset as done (fix pass)" and "a budget spent before the first reset answers the cursor it was given, not a crash (fix pass)"; both fail against the round's first commit. The existing rebuild test now sends the panel's shape (`cursor: null`).
+
+
+**Review fix pass 2 (2026-10-01, intelligence Round G, I-07).** The first fix pass made a cursorless call answer 409 when documents were left unreached. It did not make such a call progress. Every press of the library page's "Re-index all" sent no cursor and restarted at the first document. A library larger than one 40-second budget could never finish: each press re-reset, and re-billed, the same head documents. The 409 pointed to the Drawing intelligence panel, but that panel renders only for libraries marked as drawing sets (`aiFeatures.drawingIntel`). A large prose or standards library therefore had no complete re-index path until I-02 lands.
+- **The route keeps the place.** `rebuild()` in `app/api/knowledge/drawing/route.ts` reads `knowledge_libraries.ai_features.rebuildCursor` for a call that sends no `cursor` key. That is `{ cursor, at }`, written by that caller's last partial call. If it is younger than `REBUILD_RESUME_WINDOW_MS` (6 hours), the call resumes after it. The call writes the new place while documents remain, and clears it once a press takes the last document. The response carries `resumedFrom`. The 409 now says "Press the button again (within 6 hours) to continue from where this call stopped; no document is reset twice". If the place cannot be saved, it says the next press starts from the first document.
+- **What the mark touches.** The library row is read again right before the write, and only that key changes. A Library AI setup saved meanwhile is kept, apart from a one-round-trip race. `LibraryAiModal` writes a fresh features object, so a save can only erase the mark; it can never restore a stale one. An erased mark restarts at the head, which costs extra resets and never skips a document. A mark older than the window is ignored. Calls that send a cursor key (the panel) neither read nor write the mark.
+- **The panel keeps what earlier rounds did.** `rebuildAll` in `components/knowledge/DrawingIntelPanel.tsx` threw on any failed round, losing the totals of the rounds that had already queued documents. Now it returns those totals with the error. The toast says "The rebuild stopped part-way (…) — N document(s) already queued are re-indexing", and the page refreshes whenever anything was queued.
+- **Hand-off to I-06.** `lib/knowledgeIngest.ts` (I-06's file) still says, at the header and at `RESET_ROW` / `resetKnowledgeIndex`, that the drawing rebuild "today resets without the claim". That has been false since this package moved the rebuild onto `resetKnowledgeIndex`. I-06 should drop those two sentences. The file was not edited here.
+
+I-02's loop in `rebuildDrawingIndex` (above) is still the better shape: one press, the whole library, with `busy` and errors shown. Until it lands, presses complete the re-index.
+
+Tests:
+- `lib/__tests__/intelRoundGDrawingRoutes.test.ts`, block "ING-12 — the library page's Re-index all continues where it stopped":
+  - eight documents, one round of six per press: the second press resets only the last two and clears the place, and the library's decoder is kept;
+  - a place older than the window is ignored;
+  - the panel's calls never read or write the place.
+- `lib/__tests__/drawingIntelPanelRebuild.test.ts` (rendered): a failed second round and a network failure each keep the first round's six documents in the toast and refresh the page; a failed first round with nothing queued is only the error.
+
+Each behavioural case fails against the first fix pass.
+
+**Review fix pass 3 (2026-10-01, intelligence Round G, I-07).** Two gaps remain on the library page, and its files are I-02's (`app/(protected)/knowledge/[id]/page.tsx`, `lib/knowledge.ts`).
+- **The reset documents disappear until a poll.** A cursorless press that resets documents and then answers 409 (`partial: true`) has already deleted their chunks. The page throws on the 409 and calls `refresh()` only on success. Its auto-indexer is keyed on its `docs` state, so it does not see the queued documents. They stay listed as ready with no chunks until the app-shell indicator's two-minute poll or a reload, and Ask over them returns nothing meanwhile.
+  - **Handed to I-02:** every caller of `rebuildDrawingIndex` must `refresh()` whenever the response carries `partial` (or `docs > 0`), on the error path too. The single-press cursor loop, owed since the first fix pass, would close this as well.
+- **A resumed press said nothing.** A press that continued from the kept place answered 200 with only this press's count ("2 document(s) queued"). It did not say that it continued, or that the documents earlier presses queued were not reset again, so a Library AI setting saved between presses never reached them a second time.
+  - `rebuild()` now adds a `notice` to such a press: "Continued from where the last press stopped: N document(s) queued by this press; the documents earlier presses queued were not reset again." When nothing was left, it says "earlier presses had already queued every document". A press that starts from the first document carries no notice.
+  - A Library AI save through `LibraryAiModal` erases the mark (above), so the next press after such a save starts again from the first document.
+  - **Handed to I-02:** the page shows `notice` in its toast.
+
+Test: `lib/__tests__/intelRoundGDrawingRoutes.test.ts`, block "ING-12 — the library page's Re-index all continues where it stopped". The resumed press carries the notice; a press from the top carries none. It fails against fix pass 2 (`4e549d0`).
 ---
 
 

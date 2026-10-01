@@ -125,6 +125,17 @@ describe("auditDrawingRefs", () => {
     expect(audit.outOfScope).toEqual([]);
   });
 
+  // Review fix pass 5: the display cut (six) is not the record's list.
+  it("a missing sheet names every referencing sheet for the record — six for display", () => {
+    const many = Array.from({ length: 8 }, (_, i) => ({ id: `s${i}`, name: `025-PID-010${i + 1}.pdf` }));
+    const refs = new Map(many.map((d) => [d.id, ["025-PID-0199"]]));
+    const audit = auditDrawingRefs(many, refs);
+    expect(audit.missingInSeries).toHaveLength(1);
+    expect(audit.missingInSeries[0].referencedBy).toHaveLength(6);
+    expect(audit.missingInSeries[0].referencedByAll).toEqual(many.map((d) => d.name));
+    expect(audit.missingInSeries[0].count).toBe(8);
+  });
+
   it("reports a connector that never comes back as one-way, not broken", () => {
     const oneWayRefs = new Map<string, string[]>([["a", ["025-PID-0102"]]]);
     const oneWay = auditDrawingRefs(docs, oneWayRefs);
@@ -488,5 +499,1210 @@ describe("SHX drawings whose only text is the title block", () => {
 
   it("does not spend vision on a thin page that really did carry its tags", () => {
     expect(pageNeedsVision(TITLE_BLOCK_ONLY, MIN_TAGS_THIN_PAGE)).toBe(false);
+  });
+});
+
+// ── intelligence Round G (I-07) ────────────────────────────────────────────
+
+import {
+  extractLineNumbers, drawingSignals, auditOpcBoxes, declaredSheetIdentity, rollUpEntities, parseOpcLine, drawingRefTargets,
+  sheetIdentities, sheetDrawingNumbers, filenameSheets,
+  OPC_LINE_EXAMPLE, OPC_LINE_FORMAT, OPC_NO_DRAWING, OPC_SAME_DRAWING, OPC_RAW_STORED_MAX, TITLE_BLOCK_OPEN, TITLE_BLOCK_CLOSE,
+  SPARSE_PAGE_MAX_CHARS, DENSE_DRAWING_MIN_TAGS_PER_KCHAR, DRAWING_MAX_LOWERCASE_RATIO,
+} from "../drawingText";
+import { truncateSafe } from "../knowledgeText";
+import { VISION_SYSTEM } from "../knowledgeVision";
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
+
+describe("DWG-2 — a pipe line number is never equipment", () => {
+  it("every executed line-number case yields no tag (the finding's list)", () => {
+    for (const s of ['6"-P-1024-A1A', '2"-CWS-101-B2', '10"-HC-15003-A1A-HC', 'FROM 8"-P-2201-C1', 'LINE 12"-S-4410-D1']) {
+      expect(extractEquipmentTags(s), s).toEqual([]);
+    }
+  });
+
+  it("every size form drawings use: fractions, whole-and-fraction, doubled quote, typographic marks, IN", () => {
+    for (const s of ['3/4"-P-101-A1A', '1-1/2"-CWS-12-B2', '1 1/2"-P-7-A', "6''-P-1024-A1A", '6”-P-1024', '6″-P-1024', '6 IN-P-1024-A1A', '6IN-P-1024', '6INCH-P-1024', '.75"-IA-12', '6" P-1024-A1A']) {
+      expect(extractEquipmentTags(s), s).toEqual([]);
+    }
+  });
+
+  it("a LINE-labelled token is a line (the vision prompt's label)", () => {
+    expect(extractEquipmentTags("LINE P-1024-A1A")).toEqual([]);
+    expect(extractEquipmentTags("LINE NO. P-1024")).toEqual([]);
+    expect(extractEquipmentTags("LINE # P-1024")).toEqual([]);
+    expect(extractEquipmentTags('LINE 6"-P-1024-A1A')).toEqual([]);
+  });
+
+  it("a valve or instrument written with the size of its line is still a tag (fix pass)", () => {
+    // The base extracted every one of these; a size with only a space (or
+    // nothing) before a tag is a line number only when a spec segment follows.
+    const cases: Array<[string, string[]]> = [
+      ['2" PSV-2001', ["PSV-2001"]], ['4" FCV-101', ["FCV-101"]], ['6" SDV-1001', ["SDV-1001"]],
+      ['3"x4" PSV-101', ["PSV-101"]], ['1-1/2" PSV-12', ["PSV-12"]], ['3/4" TW-12', ["TW-12"]],
+      ['2"PSV-2001', ["PSV-2001"]], ["NPS 2 IN PSV-101", ["PSV-101"]], ['2" V-1 DRAIN', ["V-1"]],
+      ['2"x3" PSV-2001 SET 150 PSIG', ["PSV-2001"]], ['2" PSV-2001-A', ["PSV-2001"]],
+      // A bare LINE word is a label only with the line's spec segment after it.
+      ["SUCTION LINE P-101A", ["P-101A"]],
+    ];
+    for (const [s, tags] of cases) {
+      expect(extractEquipmentTags(s).map((t) => t.tag), s).toEqual(tags);
+      expect(extractLineNumbers(s), s).toEqual([]);
+    }
+  });
+
+  it("real tags still extract — alone, next to a line number, and after a dimension that is not a line size", () => {
+    expect(extractEquipmentTags("V-3 P-101A PSV-2001").map((t) => t.tag)).toEqual(["V-3", "P-101A", "PSV-2001"]);
+    expect(extractEquipmentTags('6"-P-1024-A1A TO V-3').map((t) => t.tag)).toEqual(["V-3"]);
+    expect(extractEquipmentTags('V-1402 6" DRAIN TO P-205A').map((t) => t.tag)).toEqual(["V-1402", "P-205A"]);
+    expect(extractEquipmentTags("TRAIN 2 P-101A").map((t) => t.tag)).toEqual(["P-101A"]);
+  });
+
+  it("extractLineNumbers keeps the whole number, normalised, by the SAME size grammar", () => {
+    expect(extractLineNumbers('6"-P-1024-A1A TO V-3')).toEqual(['6"-P-1024-A1A']);
+    expect(extractLineNumbers("FROM 10''-HC-15003-A1A-HC")).toEqual(['10"-HC-15003-A1A-HC']);
+    expect(extractLineNumbers('1-1/2"-CWS-12-B2 AND 3/4"-IA-7')).toEqual(['1-1/2"-CWS-12-B2', '3/4"-IA-7']);
+    expect(extractLineNumbers("6 IN-P-1024")).toEqual(['6"-P-1024']);
+    expect(extractLineNumbers("V-3 P-101A")).toEqual([]);
+    // Whatever extractLineNumbers calls a line, extractEquipmentTags never counts.
+    const page = '6"-P-1024-A1A 2"-CWS-101-B2 10"-HC-15003-A1A-HC V-3 E-204';
+    expect(extractLineNumbers(page)).toHaveLength(3);
+    expect(extractEquipmentTags(page).map((t) => t.tag)).toEqual(["V-3", "E-204"]);
+  });
+});
+
+/** The pages each declared number stands on (the roll-up's `pages` for
+ *  kind 'self'): every one on `pageOf(doc)` — page 1 unless said. Box
+ *  pairing reads the sheet by its page (review fix pass 5). */
+const onPage = (self: ReadonlyMap<string, readonly string[]>, pageOf: (doc: string) => number = () => 1) =>
+  new Map([...self].map(([doc, tags]) => [doc, new Map(tags.map((t) => [t, [pageOf(doc)]]))]));
+
+describe("DWG-4 — the connector line contract between the vision prompt and the parser", () => {
+  it("the prompt's own example parses: box number, and the destination drawing with its sheet", () => {
+    expect(parseOpcBoxes(OPC_LINE_EXAMPLE)).toEqual(["14"]);
+    expect(extractDrawingRefs(OPC_LINE_EXAMPLE)).toEqual(["2002-D-2001-SH4"]);
+    expect(parseOpcLine(OPC_LINE_EXAMPLE)).toEqual({
+      box: "14", destination: "2002-D-2001", sheet: "4", none: false, empty: false, sameDrawing: false,
+    });
+    expect(OPC_LINE_FORMAT.startsWith("OPC <box number>: DWG <destination drawing number>")).toBe(true);
+  });
+
+  it("a prompt-shaped transcript round-trips through parseOpcBoxes + auditOpcBoxes with a non-empty boxCount", () => {
+    const sheetA = [
+      "=== TITLE BLOCK ===", "DRAWING NO: 2002-D-2001", "SHEET: 3 OF 12", "REV: 4", "=== END TITLE BLOCK ===",
+      "OPC 14: DWG 2002-D-2001 SH 4 — TO V-1402 CRUDE OVERHEAD",
+      `OPC 15: DWG ${OPC_NO_DRAWING} — FROM DESALTER`,
+      "OPC 16: DWG 2002-D-2001 SH 5 — TO E-201 FEED",
+    ];
+    const sheetB = ["OPC 14: DWG 2002-D-2001 SH 3 — FROM V-1401"];
+    // SH5's own transcript names its connectors too — box 21, never 16.
+    const sheetC = ["OPC 21: DWG 2002-D-2001 SH 6 — TO P-201A"];
+    const rowsOf = (doc: string, page: number, lines: string[]) =>
+      lines.flatMap((l) => parseOpcBoxes(l).map((box) => ({ document_id: doc, page, tag: box, raw: l })));
+    const rows = [...rowsOf("a", 3, sheetA), ...rowsOf("b", 4, sheetB), ...rowsOf("c", 5, sheetC)];
+    const self = new Map([
+      ["a", ["2002-D-2001", "2002-D-2001-SH3"]], ["b", ["2002-D-2001", "2002-D-2001-SH4"]], ["c", ["2002-D-2001", "2002-D-2001-SH5"]],
+    ]);
+    const names = new Map([["a", "SH3.pdf"], ["b", "SH4.pdf"], ["c", "SH5.pdf"]]);
+    const audit = auditOpcBoxes(rows, self, names, undefined, onPage(self, (d) => ({ a: 3, b: 4, c: 5 } as Record<string, number>)[d]));
+    expect(audit.boxCount).toBe(5);
+    // Box 14 comes back on SH4; box 16 names SH5, whose boxes WERE read and
+    // carry no 16.
+    expect(audit.unreturned).toEqual([expect.objectContaining({ box: "16", from: "SH3.pdf", to: "SH5.pdf" })]);
+    // NONE in place of a drawing number and a sheet is the one
+    // broken-by-definition case.
+    expect(audit.noRef).toEqual([expect.objectContaining({ box: "15", sheet: "SH3.pdf" })]);
+    expect(audit.unknown).toEqual([]);
+    // Box 21 names SH6, which is not loaded: no pairing to judge.
+    expect(audit.unpaired).toEqual([]);
+  });
+
+  it("a connector into a sheet with NO box numbers read is unpaired — never unreturned, never broken (review fix pass 2)", () => {
+    // SH3 is vision-read under the contract; SH4 is a text layer (it never
+    // prints a box token) or was read before connector boxes were
+    // transcribed: it has no opc rows at all.
+    const rows = [{ document_id: "a", page: 3, tag: "14", raw: OPC_LINE_EXAMPLE }];
+    const self = new Map([["a", ["2002-D-2001", "2002-D-2001-SH3"]], ["b", ["2002-D-2001", "2002-D-2001-SH4"]]]);
+    const audit = auditOpcBoxes(rows, self, new Map([["a", "SH3.pdf"], ["b", "SH4.pdf"]]), undefined, onPage(self));
+    expect(audit.unreturned).toEqual([]);
+    expect(audit.noRef).toEqual([]);
+    expect(audit.unpaired).toEqual([{ box: "14", from: "SH3.pdf", to: "SH4.pdf", toId: "b", line: OPC_LINE_EXAMPLE }]);
+  });
+
+  // Fix pass: the destination is read BY POSITION, so a site's own numbering
+  // can never turn a connector into a broken one.
+  const one = (raw: string, self: Array<[string, string[]]> = []) => auditOpcBoxes(
+    [{ document_id: "a", page: 1, tag: parseOpcBoxes(raw)[0] ?? "1", raw }],
+    new Map(self), new Map([["a", "A.pdf"], ["b", "B.pdf"]]), undefined, onPage(new Map(self)),
+  );
+
+  it("a destination in any numbering scheme is a destination — never 'names no drawing'", () => {
+    for (const n of ["025-M-0107", "21-A-1105", "100-E-001", "025-P-1001", "4410-01-001", "123456", "D-2001", "M-101", "2002-D-2001"]) {
+      const raw = `OPC 7: DWG ${n} SH 2 — TO V-1402`;
+      expect(parseOpcLine(raw), n).toMatchObject({ box: "7", destination: n, sheet: "2", none: false });
+      const audit = one(raw);
+      expect(audit.noRef, n).toEqual([]);
+      expect(audit.unknown, n).toEqual([]);
+    }
+  });
+
+  it("the DWG label gives the reference layer its context: loose-shaped numbers are references too", () => {
+    expect(extractDrawingRefs("OPC 7: DWG 025-M-0107 SH 2 — TO V-1402")).toEqual(["025-M-0107-SH2"]);
+    // …which the base contract, with the bare number after the colon, lost.
+    expect(extractDrawingRefs("OPC 7: 025-M-0107 SH 2 — TO V-1402")).toEqual([]);
+  });
+
+  /** A connector on A, with B's box numbers read (`boxesOnB`) or not. */
+  const pair = (raw: string, selfA: string[], selfB: string[], boxesOnB: string[] | null) => auditOpcBoxes(
+    [
+      { document_id: "a", page: 1, tag: parseOpcBoxes(raw)[0] ?? "1", raw },
+      ...(boxesOnB ?? []).map((box) => ({ document_id: "b", page: 1, tag: box, raw: `OPC ${box}: DWG 9999-X-0001 — TO V-1` })),
+    ],
+    new Map([["a", selfA], ["b", selfB]]), new Map([["a", "A.pdf"], ["b", "B.pdf"]]),
+    undefined, onPage(new Map([["a", selfA], ["b", selfB]])),
+  );
+
+  it("pairs by the positional destination, whatever its shape: the box must come back on that sheet", () => {
+    const raw = "OPC 7: DWG 4410-01-001 SH 2 — TO V-1402";
+    expect(extractDrawingRefs(raw)).toEqual([]);                    // the grammar cannot read it…
+    const audit = pair(raw, [], ["4410-01-001", "4410-01-001-SH2"], ["3"]);
+    expect(audit.unreturned).toEqual([expect.objectContaining({ box: "7", from: "A.pdf", to: "B.pdf" })]);  // …the position can
+    expect(pair(raw, [], ["4410-01-001", "4410-01-001-SH2"], ["7"]).unreturned).toEqual([]);
+    // B with no box numbers read cannot say: unpaired, never unreturned.
+    const unread = pair(raw, [], ["4410-01-001", "4410-01-001-SH2"], null);
+    expect(unread.unreturned).toEqual([]);
+    expect(unread.unpaired).toEqual([expect.objectContaining({ box: "7", from: "A.pdf", to: "B.pdf" })]);
+    // A sheet named by the connector is never checked against a document
+    // that did not declare it: which of its pages is sheet 2 is not known.
+    // Unpaired — never unreturned, and never dropped (review fix pass 7:
+    // dropped, the source passed, settled).
+    const set = pair(raw, [], ["4410-01-001"], ["3"]);
+    expect(set.unreturned).toEqual([]);
+    expect(set.unpaired).toEqual([expect.objectContaining({
+      box: "7", to: "B.pdf", why: "no page of it declares sheet 2, so which of its pages is the sheet named is not known",
+    })]);
+  });
+
+  it("a connector naming only a sheet continues within its own drawing — paired there, never broken (review fix pass 2)", () => {
+    const selfA = ["2002-D-2001", "2002-D-2001-SH3"];
+    const selfB = ["2002-D-2001", "2002-D-2001-SH4"];
+    for (const raw of [
+      `OPC 14: DWG ${OPC_SAME_DRAWING} SH 4 — TO V-1402`,  // the contract's own form
+      `OPC 14: DWG ${OPC_NO_DRAWING} SH 4 — TO V-1402`,    // the first contract's wording: NONE, with a sheet
+      "OPC 14: DWG SH 4 — TO V-1402",                      // an empty field, with a sheet
+    ]) {
+      expect(parseOpcLine(raw), raw).toMatchObject({ box: "14", destination: null, sheet: "4", none: false, empty: false, sameDrawing: true });
+      // SH4's boxes were read and 14 is among them: paired, nothing to say.
+      const ok = pair(raw, selfA, selfB, ["14"]);
+      expect(ok.noRef, raw).toEqual([]);
+      expect(ok.unreturned, raw).toEqual([]);
+      expect(ok.unpaired, raw).toEqual([]);
+      expect(ok.unknown, raw).toEqual([]);
+      // SH4's boxes were read and 14 is not: unreturned, on the sheet named.
+      expect(pair(raw, selfA, selfB, ["15"]).unreturned, raw).toEqual([expect.objectContaining({ box: "14", from: "A.pdf", to: "B.pdf" })]);
+      // SH4 has no box numbers read: unpaired.
+      expect(pair(raw, selfA, selfB, null).unpaired, raw).toEqual([expect.objectContaining({ box: "14", to: "B.pdf" })]);
+    }
+    // The source declared no drawing number: the sheet cannot be found —
+    // unpaired, never broken.
+    const blind = pair(`OPC 14: DWG ${OPC_SAME_DRAWING} SH 4 — TO V-1402`, [], selfB, ["15"]);
+    expect(blind.noRef).toEqual([]);
+    expect(blind.unreturned).toEqual([]);
+    expect(blind.unpaired).toEqual([expect.objectContaining({ box: "14", from: "A.pdf", to: expect.stringMatching(/sheet 4 of its own drawing/) })]);
+    // SAME with no sheet is outside the contract's meaning: unknown, never broken.
+    const noSheet = one(`OPC 14: DWG ${OPC_SAME_DRAWING} — TO V-1402`);
+    expect(noSheet.noRef).toEqual([]);
+    expect(noSheet.unknown).toHaveLength(1);
+  });
+
+  it("broken means what the contract says: the field reads NONE, or is empty", () => {
+    expect(one(`OPC 15: DWG ${OPC_NO_DRAWING} — FROM DESALTER`).noRef).toHaveLength(1);
+    expect(one("OPC 15: DWG NONE SHOWN — FROM DESALTER").noRef).toHaveLength(1);
+    expect(one("OPC 15: DWG — FROM DESALTER").noRef).toHaveLength(1);
+    expect(one("OPC 15: DWG").noRef).toHaveLength(1);
+    // …unless a drawing number stands elsewhere on the line: which sheet the
+    // box means is then unclear — unknown, never broken, and never paired
+    // against that number (review fix pass 3).
+    const tail = pair("OPC 15: DWG NONE — CONT ON DWG 025-PID-0107", [], ["025-PID-0107"], ["9"]);
+    expect(tail.noRef).toEqual([]);
+    expect(tail.unknown).toHaveLength(1);
+    expect(tail.unreturned).toEqual([]);
+    expect(tail.unpaired).toEqual([]);
+  });
+
+  it("a drawing number in the service tail is never the destination: no false unreturned against it (review fix pass 3)", () => {
+    // A (0104): box 14 continues on 0105; its service comes FROM a header
+    // drawn on 0101. B (0105) carries box 14; C (0101) carries only box 3.
+    const self = new Map([["a", ["025-PID-0104"]], ["b", ["025-PID-0105"]], ["c", ["025-PID-0101"]]]);
+    const names = new Map([["a", "A.pdf"], ["b", "B.pdf"], ["c", "C.pdf"]]);
+    for (const raw of [
+      "OPC 14: DWG 025-PID-0105 — FROM 025-PID-0101 HEADER",  // the contract's shape
+      "OPC 14: DWG 025-PID-0105 FROM 025-PID-0101 HEADER",    // the tail's dash left out
+      "OPC 14: DWG 025-PID-0105 -- TO 025-PID-0101 HEADER",
+    ]) {
+      expect(parseOpcLine(raw), raw).toMatchObject({ box: "14", destination: "025-PID-0105" });
+      const audit = auditOpcBoxes([
+        { document_id: "a", page: 1, tag: "14", raw },
+        { document_id: "b", page: 1, tag: "14", raw: "OPC 14: DWG 025-PID-0104 — TO V-1402" },
+        { document_id: "c", page: 1, tag: "3", raw: "OPC 3: DWG 025-PID-0102 — TO V-3" },
+      ], self, names, undefined, onPage(self));
+      expect(audit.unreturned, raw).toEqual([]);
+      expect(audit.unpaired, raw).toEqual([]);
+      expect(audit.noRef, raw).toEqual([]);
+      // A's verdict depends on B's box numbers — never on C's.
+      expect(audit.targetsByDoc.get("a"), raw).toEqual(["b"]);
+      // …and a missing box on the sheet the field DOES name is still caught.
+      const missing = auditOpcBoxes([
+        { document_id: "a", page: 1, tag: "14", raw },
+        { document_id: "b", page: 1, tag: "7", raw: "OPC 7: DWG 025-PID-0199 — TO V-1402" },
+      ], self, names, undefined, onPage(self));
+      expect(missing.unreturned, raw).toEqual([expect.objectContaining({ box: "14", from: "A.pdf", to: "B.pdf" })]);
+    }
+    // A line outside the contract still reads its references whole, as before.
+    expect(pair("OPC 3 CONT ON DWG 025-PID-0107", [], ["025-PID-0107"], ["9"]).targetsByDoc.get("a")).toEqual(["b"]);
+  });
+
+  it("a destination present but not shaped like a drawing number is unknown, never broken", () => {
+    for (const raw of ["OPC 9: DWG SEE NOTE 3 — TO FLARE", "OPC 9: DWG ILLEGIBLE — TO FLARE", "OPC 9: DWG [illegible] SH 2"]) {
+      const audit = one(raw);
+      expect(audit.noRef, raw).toEqual([]);
+      expect(audit.unknown, raw).toHaveLength(1);
+    }
+  });
+
+  it("a line outside the contract: unknown when something on it could still be a drawing number, broken only when nothing could", () => {
+    // A text layer's own "OPC" box with a loose number and no context word.
+    expect(one("OPC 3 TO 025-M-0107").unknown).toHaveLength(1);
+    expect(one("OPC 3 TO 025-M-0107").noRef).toEqual([]);
+    // Only the box, equipment and a sheet number: nothing names a drawing.
+    expect(one("OPC 3 TO V-1402 SH 2 CRUDE").noRef).toHaveLength(1);
+    expect(one("OPC 3 FROM 12\"-P-14022-A1A").noRef).toHaveLength(1);
+    // A readable reference outside the contract still pairs as before —
+    // against a sheet whose box numbers were read; one whose were not is
+    // unpaired.
+    expect(pair("OPC 3 CONT ON DWG 025-PID-0107", [], ["025-PID-0107"], ["9"]).unreturned).toHaveLength(1);
+    expect(one("OPC 3 CONT ON DWG 025-PID-0107", [["b", ["025-PID-0107"]]]).unpaired).toHaveLength(1);
+    expect(one("OPC 3 CONT ON DWG 025-PID-0107", [["b", ["025-PID-0107"]]]).unreturned).toEqual([]);
+    // A row with no stored line says nothing about its destination.
+    const bare = auditOpcBoxes([{ document_id: "a", page: 1, tag: "3", raw: null }], new Map(), new Map([["a", "A.pdf"]]));
+    expect(bare.noRef).toEqual([]);
+    expect(bare.unknown).toHaveLength(1);
+  });
+
+  it("drawingRefTargets: the one sheet each reference resolves to — what a one-way finding is read off (review fix pass 3)", () => {
+    const docs = [
+      { id: "a", name: "025-PID-0106.pdf" }, { id: "b", name: "025-PID-0107.pdf" },
+      { id: "s1", name: "x.pdf" }, { id: "s2", name: "y.pdf" },
+    ];
+    const self = new Map([["s1", ["2002-D-2001", "2002-D-2001-SH1"]], ["s2", ["2002-D-2001", "2002-D-2001-SH2"]]]);
+    const refs = new Map([
+      ["a", ["025-PID-0107", "025-PID-0106", "025-PID-0999", "2002-D-2001", "2002-D-2001-SH2"]],
+    ]);
+    // 0107 is one sheet; its own number links nothing; 0999 is not loaded;
+    // the bare 2002-D-2001 names a whole set (no single sheet); SH2 is one.
+    expect(drawingRefTargets(docs, refs, self).get("a")).toEqual(["b", "s2"]);
+    expect(drawingRefTargets(docs, new Map([["b", ["025-PID-0107"]]]), self).has("b")).toBe(false);
+  });
+
+  it("the text layer's connectors are its references: CONT ON / pennant numbers extract as refs and pair one-way", () => {
+    expect(extractDrawingRefs("CONT ON DWG 025-PID-0107")).toEqual(["025-PID-0107"]);
+    expect(extractDrawingRefs("025-PID-0108 SH 2")).toEqual(["025-PID-0108-SH2"]);
+    const docs = [{ id: "a", name: "025-PID-0106.pdf" }, { id: "b", name: "025-PID-0107.pdf" }];
+    const audit = auditDrawingRefs(docs, new Map([["a", ["025-PID-0107"]]]));
+    expect(audit.oneWay).toEqual([{ from: "025-PID-0106.pdf", to: "025-PID-0107.pdf", count: 1 }]);
+  });
+
+  // Review fix pass 4: a sheet that was not read whole (pages AI vision never
+  // read, still indexing, failed) is no evidence of what it lacks. The box,
+  // or the reference back, may stand on a page nobody read; filing it
+  // `unreturned` recorded `broken_connectors`, never lowered at that revision.
+  it("a box not on what was read of a sheet not read whole is unpaired with the reason — never unreturned (review fix pass 4)", () => {
+    const self = new Map([["a", ["025-PID-0104", "025-PID-0104-SH1"]], ["b", ["025-PID-0105", "025-PID-0105-SH1"]]]);
+    const names = new Map([["a", "025-PID-0104.pdf"], ["b", "025-PID-0105.pdf"]]);
+    const line = "OPC 14: DWG 025-PID-0105 SH 1 — TO V-1402";
+    // 0105: page 1 read (box 7), page 2 waits on AI vision — box 14 is there.
+    const rows = [{ document_id: "a", page: 1, tag: "14", raw: line }, { document_id: "b", page: 1, tag: "7", raw: "OPC 7: DWG 025-PID-0199 — TO V-7" }];
+    const pages = onPage(self);
+    const partly = auditOpcBoxes(rows, self, names, new Map([["b", "page(s) 2 never read"]]), pages);
+    expect(partly.unreturned).toEqual([]);
+    expect(partly.noRef).toEqual([]);
+    expect(partly.unpaired).toEqual([{ box: "14", from: "025-PID-0104.pdf", to: "025-PID-0105.pdf", toId: "b", line, unread: "page(s) 2 never read" }]);
+    // The verdict still depends on 0105: re-judged once it is read whole.
+    expect(partly.targetsByDoc.get("a")).toEqual(["b"]);
+    // Read whole and still without box 14: that one is unreturned.
+    expect(auditOpcBoxes(rows, self, names, undefined, pages).unreturned).toEqual([expect.objectContaining({ box: "14", to: "025-PID-0105.pdf" })]);
+    // A box that IS on what was read pairs, whole or not.
+    const found = auditOpcBoxes([...rows, { document_id: "b", page: 1, tag: "14", raw: "OPC 14: DWG 025-PID-0104 — FROM V-1401" }],
+      self, names, new Map([["b", "page(s) 2 never read"]]), pages);
+    expect(found.unpaired).toEqual([]);
+    expect(found.unreturned).toEqual([]);
+    // No box numbers read at all on a sheet not read whole: unpaired, with why.
+    expect(auditOpcBoxes([rows[0]], self, names, new Map([["b", "its indexing failed"]]), pages).unpaired)
+      .toEqual([expect.objectContaining({ box: "14", unread: "its indexing failed" })]);
+  });
+
+  // Review fix pass 5: box numbers are read page by page — AI vision reads
+  // only the pages that need it, a text layer prints a pennant, never a box
+  // token. Pooled per document, a combined PDF with one vision-read page
+  // looked box-complete on every page, and a correctly drafted connector into
+  // its text-layer page was filed `unreturned` — recorded broken_connectors.
+  it("a box pairs on the SHEET its connector names: a combined PDF's text-layer page is never box-complete because another page was vision-read (review fix pass 5)", () => {
+    const line = "OPC 14: DWG 025-PID-0105 SH 1 — TO V-1402";
+    const self = new Map([
+      ["a", ["025-PID-0104", "025-PID-0104-SH1"]],
+      // b: page 1 declares 0105 from a TrueType text layer (no box rows);
+      // page 2 (0106) is SHX, read by AI vision, with box 3.
+      ["b", ["025-PID-0105", "025-PID-0105-SH1", "025-PID-0106", "025-PID-0106-SH1"]],
+    ]);
+    const pages = new Map([
+      ["a", new Map([["025-PID-0104", [1]], ["025-PID-0104-SH1", [1]]])],
+      ["b", new Map([["025-PID-0105", [1]], ["025-PID-0105-SH1", [1]], ["025-PID-0106", [2]], ["025-PID-0106-SH1", [2]]])],
+    ]);
+    const names = new Map([["a", "025-PID-0104.pdf"], ["b", "combined.pdf"]]);
+    const src = { document_id: "a", page: 1, tag: "14", raw: line };
+    const box = (page: number, tag: string) => ({ document_id: "b", page, tag, raw: `OPC ${tag}: DWG 025-PID-0199 — TO V-${tag}` });
+
+    // The reviewer's probe: page 1's box numbers were never read.
+    const probe = auditOpcBoxes([src, box(2, "3")], self, names, undefined, pages);
+    expect(probe.unreturned).toEqual([]);
+    expect(probe.noRef).toEqual([]);
+    expect(probe.unpaired).toEqual([{
+      box: "14", from: "025-PID-0104.pdf", to: "combined.pdf", toId: "b", line,
+      why: "page 1 of it is the sheet named, and no box numbers were read there",
+    }]);
+    expect(probe.targetsByDoc.get("a")).toEqual(["b"]);
+    // Page 1 read with its boxes, 14 among them: paired.
+    expect(auditOpcBoxes([src, box(1, "14"), box(2, "3")], self, names, undefined, pages).unpaired).toEqual([]);
+    // Page 1's boxes read without 14 — and 14 stands on page 2, ANOTHER
+    // sheet (0106): it does not come back on the sheet named.
+    const other = auditOpcBoxes([src, box(1, "7"), box(2, "14")], self, names, undefined, pages);
+    expect(other.unreturned).toEqual([expect.objectContaining({ box: "14", to: "combined.pdf" })]);
+    expect(other.unpaired).toEqual([]);
+    // 14 on a page that declares no number at all: that page may be the
+    // sheet named — unpaired, never unreturned.
+    const blind = auditOpcBoxes([src, box(1, "7"), box(3, "14")], self, names, undefined, pages);
+    expect(blind.unreturned).toEqual([]);
+    expect(blind.unpaired).toEqual([expect.objectContaining({
+      box: "14", why: "box 14 stands on page 3 of it, whose drawing number was not read, and that page may be the sheet named",
+    })]);
+    // A bare number declared on several pages (one multi-sheet drawing in one
+    // PDF): every page that is it must have had its boxes read.
+    const set = new Map([["a", ["025-PID-0104"]], ["b", ["2002-D-2001"]]]);
+    const setPages = new Map([["a", new Map([["025-PID-0104", [1]]])], ["b", new Map([["2002-D-2001", [1, 2]]])]]);
+    const toSet = { document_id: "a", page: 1, tag: "14", raw: "OPC 14: DWG 2002-D-2001 — TO V-1402" };
+    expect(auditOpcBoxes([toSet, box(1, "7")], set, names, undefined, setPages).unpaired)
+      .toEqual([expect.objectContaining({ box: "14", why: "page 2 of it is the sheet named, and no box numbers were read there" })]);
+    expect(auditOpcBoxes([toSet, box(1, "7"), box(2, "9")], set, names, undefined, setPages).unreturned)
+      .toEqual([expect.objectContaining({ box: "14" })]);
+    expect(auditOpcBoxes([toSet, box(1, "7"), box(2, "14")], set, names, undefined, setPages).unreturned).toEqual([]);
+    // Without the pages, which page is the sheet is not known: never unreturned.
+    const unknown = auditOpcBoxes([src, box(1, "7")], self, names);
+    expect(unknown.unreturned).toEqual([]);
+    expect(unknown.unpaired).toEqual([expect.objectContaining({ box: "14", why: "which of its pages is the sheet named is not known" })]);
+  });
+
+  // Review fix pass 6, the reviewer's probe F: 0105 is a two-page PDF of one
+  // drawing. Page 1 was read by AI vision (title block, box 7); page 2 was
+  // indexed text-only (a keyless or over-cap driver): no title block, no box
+  // numbers. A connector that names the drawing, not a sheet, may continue
+  // on page 2.
+  it("a connector naming no sheet is never unreturned while a page of its destination declares no number and had no box numbers read", () => {
+    const self = new Map([["a", ["025-PID-0104"]], ["b", ["025-PID-0105", "025-PID-0105-SH1"]]]);
+    const pages = new Map([
+      ["a", new Map([["025-PID-0104", [1]]])],
+      ["b", new Map([["025-PID-0105", [1]], ["025-PID-0105-SH1", [1]]])],
+    ]);
+    const names = new Map([["a", "025-PID-0104.pdf"], ["b", "025-PID-0105.pdf"]]);
+    const bare = { document_id: "a", page: 1, tag: "14", raw: "OPC 14: DWG 025-PID-0105 — TO V-1402" };
+    const box7 = { document_id: "b", page: 1, tag: "7", raw: "OPC 7: DWG 025-PID-0199 — TO V-7" };
+    const two = new Map([["a", 1], ["b", 2]]);
+    const probe = auditOpcBoxes([bare, box7], self, names, undefined, pages, { pageCounts: two });
+    expect(probe.unreturned).toEqual([]);
+    expect(probe.unpaired).toEqual([{
+      box: "14", from: "025-PID-0104.pdf", to: "025-PID-0105.pdf", toId: "b", line: bare.raw,
+      why: "page 2 of it declares no drawing number and no box numbers were read there — it may be the sheet named",
+    }]);
+    // Page 2's boxes read (vision read it, its title block unread) without 14:
+    // it is not there — unreturned, where every page of the drawing was read.
+    const read2 = { document_id: "b", page: 2, tag: "9", raw: "OPC 9: DWG 025-PID-0199 — TO V-9" };
+    expect(auditOpcBoxes([bare, box7, read2], self, names, undefined, pages, { pageCounts: two }).unreturned)
+      .toEqual([expect.objectContaining({ box: "14" })]);
+    // A one-page document: nothing else it could be on.
+    expect(auditOpcBoxes([bare, box7], self, names, undefined, pages, { pageCounts: new Map([["b", 1]]) }).unreturned)
+      .toEqual([expect.objectContaining({ box: "14" })]);
+    // A connector that names SHEET 1, declared on page 1: page 2 is not it.
+    const sh1 = { ...bare, raw: "OPC 14: DWG 025-PID-0105 SH 1 — TO V-1402" };
+    expect(auditOpcBoxes([sh1, box7], self, names, undefined, pages, { pageCounts: two }).unreturned)
+      .toEqual([expect.objectContaining({ box: "14" })]);
+  });
+
+  // Review fix pass 6, the reviewer's probes C and D: a rebuild resets 0105
+  // (its rows cleared, queued). No document declares 025-PID-0105 any more,
+  // so the connector resolved to nothing and was dropped — the sheet passed,
+  // settled, over a recorded broken_connectors.
+  it("a connector whose destination no document declares, while a document still being read may hold it, is unpaired and names it", () => {
+    const self = new Map([["a", ["025-PID-0104", "025-PID-0104-SH1"]]]);
+    const names = new Map([["a", "025-PID-0104.pdf"], ["b", "025-PID-0105.pdf"], ["c", "040-TK-0001.pdf"]]);
+    const pages = new Map([["a", new Map([["025-PID-0104", [1]], ["025-PID-0104-SH1", [1]]])]]);
+    const line = "OPC 14: DWG 025-PID-0105 SH 1 — TO V-1402";
+    const rows = [{ document_id: "a", page: 1, tag: "14", raw: line }];
+    const reset = auditOpcBoxes(rows, self, names, new Map([["b", "not finished indexing"]]), pages, { inProgress: new Set(["b"]) });
+    expect(reset.unreturned).toEqual([]);
+    expect(reset.unpaired).toEqual([{
+      box: "14", from: "025-PID-0104.pdf", to: "025-PID-0105-SH1", line, maybeInIds: ["b"],
+      why: "no sheet in the set declares it yet, and it may be in 025-PID-0105.pdf (not finished indexing), not read whole yet",
+    }]);
+    // Any document still being read may hold a destination in the set's
+    // scope — whatever its filename says.
+    expect(auditOpcBoxes(rows, self, names, new Map([["c", "not finished indexing"]]), pages, { inProgress: new Set(["c"]) }).unpaired)
+      .toEqual([expect.objectContaining({ box: "14", maybeInIds: ["c"] })]);
+    // Nothing still being read: the destination is outside the library — no
+    // box finding (the reference audit says missing or out of scope).
+    expect(auditOpcBoxes(rows, self, names, undefined, pages).unpaired).toEqual([]);
+    // A destination outside the set's scope (another unit) waits only on a
+    // document whose number is not read yet, which may be anything.
+    const elsewhere = [{ document_id: "a", page: 1, tag: "15", raw: "OPC 15: DWG 077-PID-0001 — TO V-1" }];
+    expect(auditOpcBoxes(elsewhere, self, names, new Map([["b", "not finished indexing"]]), pages, { inProgress: new Set(["b"]) }).unpaired).toEqual([]);
+    const scanNames = new Map([...names, ["s", "scan_002.pdf"]]);
+    expect(auditOpcBoxes(elsewhere, self, scanNames, new Map([["s", "not finished indexing"]]), pages, { inProgress: new Set(["s"]) }).unpaired)
+      .toEqual([expect.objectContaining({ box: "15", maybeInIds: ["s"] })]);
+  });
+
+  it("a reference back, or a sheet, not found on a sheet not read whole is unchecked — never one-way, never a gap (review fix pass 4)", () => {
+    const docs = [{ id: "a", name: "025-PID-0104.pdf" }, { id: "b", name: "025-PID-0105.pdf" }];
+    const self = new Map([["a", ["025-PID-0104"]], ["b", ["025-PID-0105", "025-PID-0105-SH1"]]]);
+    // 0104 points at 0105 (SH1 read) and at 0105 SH2 (its page never read),
+    // at 025-PID-0199, which is not in the library at all, and at 040-TK-0009
+    // (a series 0105 declares nothing of; 040-TK is held through t1/t2).
+    const withTk = [...docs, { id: "t1", name: "040-TK-0001.pdf" }, { id: "t2", name: "040-TK-0002.pdf" }];
+    const refs = new Map([["a", ["025-PID-0105", "025-PID-0105-SH2", "025-PID-0199", "040-TK-0009"]]]);
+    const unread = new Map([["b", "page(s) 2 never read"]]);
+    // 0105 still being READ (parked on AI vision): what it has declared so far
+    // says nothing about its unread page — a combined PDF of several series,
+    // or a file named for something else, may stand there. Every sheet the set
+    // is missing may be on it: no gap until it is read (review fix pass 6 —
+    // fix pass 5 filed 040-TK-0009 a settled gap here, never lowered once the
+    // page turned out to hold it).
+    const reading = auditDrawingRefs(withTk, refs, self, null, unread, new Set(["b"]));
+    expect(reading.oneWay).toEqual([]);
+    expect(reading.oneWayUnread).toEqual([{ from: "025-PID-0104.pdf", to: "025-PID-0105.pdf", toId: "b", count: 1, unread: "page(s) 2 never read" }]);
+    expect(reading.missingInSeries).toEqual([]);
+    expect(reading.missingUnread.find((m) => m.ref === "025-PID-0105-SH2")).toEqual({
+      ref: "025-PID-0105-SH2", referencedBy: ["025-PID-0104.pdf"], referencedByAll: ["025-PID-0104.pdf"], count: 1,
+      maybeIn: ["025-PID-0105.pdf (page(s) 2 never read)"], maybeInIds: ["b"],
+    });
+    expect(reading.missingUnread.map((m) => [m.ref, m.maybeInIds]).sort()).toEqual([
+      ["025-PID-0105-SH2", ["b"]], ["025-PID-0199", ["b"]], ["040-TK-0009", ["b"]],
+    ]);
+    // 0105 an accepted partial index — settled: it changes only when a person
+    // acts. One drawing's file holds only that drawing's sheets: 0105 SH2 is
+    // unchecked; 0199 and 040-TK-0009 are gaps (review fix pass 6 — fix pass
+    // 5 let any one-drawing file stand for its whole series, so one accepted
+    // partial index silenced every gap in 025-PID for good).
+    const settled = auditDrawingRefs(withTk, refs, self, null, unread);
+    expect(settled.oneWayUnread).toEqual(reading.oneWayUnread);
+    expect(settled.missingInSeries.map((m) => m.ref).sort()).toEqual(["025-PID-0199", "040-TK-0009"]);
+    expect(settled.missingUnread.map((m) => m.ref)).toEqual(["025-PID-0105-SH2"]);
+    // A settled combined PDF — two or more different drawings declared — may
+    // hold any drawing of a series it declares: 0199 unchecked; 040-TK a gap.
+    const combinedSelf = new Map([["a", ["025-PID-0104"]], ["b", ["025-PID-0105", "025-PID-0105-SH1", "025-PID-0106"]]]);
+    const combined = auditDrawingRefs(withTk, refs, combinedSelf, null, unread);
+    expect(combined.missingInSeries.map((m) => m.ref)).toEqual(["040-TK-0009"]);
+    expect(combined.missingUnread.map((m) => m.ref).sort()).toEqual(["025-PID-0105-SH2", "025-PID-0199"]);
+    // Read whole: the same references are one-way and missing, as before.
+    const whole = auditDrawingRefs(withTk, refs, self);
+    expect(whole.oneWay).toEqual([{ from: "025-PID-0104.pdf", to: "025-PID-0105.pdf", count: 1 }]);
+    expect(whole.missingInSeries.map((m) => m.ref).sort()).toEqual(["025-PID-0105-SH2", "025-PID-0199", "040-TK-0009"]);
+    expect(whole.oneWayUnread).toEqual([]);
+    expect(whole.missingUnread).toEqual([]);
+    // A document whose number was never read (no title block declared, none
+    // in its filename) that is not read whole may be any sheet: no gap.
+    const scan = auditDrawingRefs([...docs, { id: "s", name: "scan_003.pdf" }], refs, self, null, new Map([["s", "its indexing failed"]]));
+    expect(scan.missingInSeries).toEqual([]);
+    expect(scan.missingUnread.map((m) => [m.ref, m.maybeIn])).toEqual(expect.arrayContaining([
+      ["025-PID-0199", ["scan_003.pdf (its indexing failed)"]],
+    ]));
+  });
+
+  // Review fix pass 6, the reviewer's probe A: a combined PDF holding two
+  // series is reset by a rebuild and has re-read only its 026-PID page. The
+  // 025-PID sheet it holds on its next page is not declared by anyone yet.
+  it("a document still being read may hold a sheet of a series it has not declared yet — or under a filename that names something else", () => {
+    const docs = [
+      { id: "a", name: "025-PID-0104.pdf" }, { id: "b", name: "025-PID-0106.pdf" }, { id: "x", name: "Unit PIDs.pdf" },
+    ];
+    const self = new Map([["a", ["025-PID-0104"]], ["b", ["025-PID-0106"]], ["x", ["026-PID-0201"]]]);
+    const refs = new Map([["a", ["025-PID-0105"]]]);
+    const mid = auditDrawingRefs(docs, refs, self, null, new Map([["x", "not finished indexing"]]), new Set(["x"]));
+    expect(mid.missingInSeries).toEqual([]);
+    expect(mid.missingUnread).toEqual([expect.objectContaining({ ref: "025-PID-0105", maybeInIds: ["x"] })]);
+    // A rebuild-reset document named for an unrelated number holds it too.
+    const named = auditDrawingRefs([...docs.slice(0, 2), { id: "x", name: "040-TK-0001.pdf" }], refs,
+      new Map([["a", ["025-PID-0104"]], ["b", ["025-PID-0106"]]]), null, new Map([["x", "not finished indexing"]]), new Set(["x"]));
+    expect(named.missingUnread.map((m) => m.maybeInIds)).toEqual([["x"]]);
+    // A library being indexed has many such documents: every one may hold it
+    // (all their ids kept, for the record to wait on), named to six.
+    const many = Array.from({ length: 8 }, (_, i) => ({ id: `n${i}`, name: `upload_${i}.pdf` }));
+    const busy = auditDrawingRefs([...docs, ...many], refs, self, null,
+      new Map(many.map((d) => [d.id, "not finished indexing"])), new Set(many.map((d) => d.id)));
+    expect(busy.missingUnread[0].maybeInIds).toEqual(many.map((d) => d.id));
+    expect(busy.missingUnread[0].maybeIn).toHaveLength(7);
+    expect(busy.missingUnread[0].maybeIn[6]).toBe("2 more document(s) not read whole");
+    // Without the in-progress set (the same document settled), it holds only
+    // what it declares: a gap.
+    expect(auditDrawingRefs(docs, refs, self, null, new Map([["x", "page(s) 2 never read"]])).missingInSeries.map((m) => m.ref))
+      .toEqual(["025-PID-0105"]);
+  });
+
+  // Review fix pass 7, the reviewer's probe "parked": a numbered single-
+  // drawing PDF parked on AI vision (the monthly cap: until next month)
+  // held ANY missing sheet under fix pass 6, so a real 040-TK gap waited on
+  // it for as long as it stayed parked.
+  it("a parked document whose number is declared holds by the settled rule — only one in flight may hold any sheet (review fix pass 7)", () => {
+    const docs = [
+      { id: "t1", name: "040-TK-0001.pdf" }, { id: "t2", name: "040-TK-0002.pdf" }, { id: "p", name: "025-PID-0107.pdf" },
+    ];
+    const self = new Map([["t1", ["040-TK-0001"]], ["t2", ["040-TK-0002"]], ["p", ["025-PID-0107", "025-PID-0107-SH1"]]]);
+    const refs = new Map([["t1", ["040-TK-0009", "025-PID-0107-SH2"]]]);
+    const parked = new Map([["p", "page(s) 2 never read"]]);
+    // Not in flight (the route leaves it out: its title block was read and
+    // its unread page is known): 040-TK-0009 is a gap; its own drawing's
+    // sheet is unchecked, and waits on it.
+    const settled = auditDrawingRefs(docs, refs, self, null, parked, new Set());
+    expect(settled.missingInSeries.map((m) => m.ref)).toEqual(["040-TK-0009"]);
+    expect(settled.missingUnread.map((m) => [m.ref, m.maybeInIds])).toEqual([["025-PID-0107-SH2", ["p"]]]);
+    // In flight (reset by a rebuild, nothing declared): it may hold any.
+    const reset = auditDrawingRefs(docs, refs, new Map([...self].filter(([k]) => k !== "p")), null,
+      new Map([["p", "not finished indexing"]]), new Set(["p"]));
+    expect(reset.missingInSeries).toEqual([]);
+    expect(reset.missingUnread.map((m) => m.ref).sort()).toEqual(["040-TK-0009"]);
+  });
+
+  // Review fix pass 7, the reviewer's probe "failed": a rebuild reset 0105
+  // and its re-index then FAILED. No document declares 025-PID-0105, and the
+  // failed document is not in flight, so fix pass 6 found no holder: the
+  // connector was dropped and the source filed a settled passed.
+  it("a connector into a destination whose title block a failed re-index cleared is unpaired and names that document (review fix pass 7)", () => {
+    const self = new Map([["a", ["025-PID-0104", "025-PID-0104-SH1"]]]);
+    const pages = new Map([["a", new Map([["025-PID-0104", [1]], ["025-PID-0104-SH1", [1]]])]]);
+    const line = "OPC 14: DWG 025-PID-0105 SH 1 — TO V-1402";
+    const rows = [{ document_id: "a", page: 1, tag: "14", raw: line }];
+    const failed = new Map([["b", "its indexing failed"]]);
+    const names = new Map([["a", "025-PID-0104.pdf"], ["b", "025-PID-0105.pdf"]]);
+    const probe = auditOpcBoxes(rows, self, names, failed, pages, { inProgress: new Set(), forNow: new Set(["b"]) });
+    expect(probe.unreturned).toEqual([]);
+    expect(probe.unpaired).toEqual([{
+      box: "14", from: "025-PID-0104.pdf", to: "025-PID-0105-SH1", line, maybeInIds: ["b"],
+      why: "no sheet in the set declares it yet, and it may be in 025-PID-0105.pdf (its indexing failed), not read whole yet",
+    }]);
+    // Named for another drawing: a failed one-drawing file does not hold it.
+    const other = new Map([["a", "025-PID-0104.pdf"], ["b", "025-PID-0199.pdf"]]);
+    expect(auditOpcBoxes(rows, self, other, failed, pages, { inProgress: new Set(), forNow: new Set(["b"]) }).unpaired).toEqual([]);
+    // Its number never read (no title block, none in its filename): any
+    // destination in the set's scope — never one in another unit.
+    const scan = new Map([["a", "025-PID-0104.pdf"], ["b", "scan_004.pdf"]]);
+    expect(auditOpcBoxes(rows, self, scan, failed, pages, { inProgress: new Set(), forNow: new Set(["b"]) }).unpaired)
+      .toEqual([expect.objectContaining({ box: "14", maybeInIds: ["b"] })]);
+    const elsewhere = [{ document_id: "a", page: 1, tag: "15", raw: "OPC 15: DWG 077-PID-0001 — TO V-1" }];
+    expect(auditOpcBoxes(elsewhere, self, scan, failed, pages, { inProgress: new Set(), forNow: new Set(["b"]) }).unpaired).toEqual([]);
+    // Several may hold it: the one named for it comes first, the rest counted.
+    const crowd = new Map([...names, ...Array.from({ length: 5 }, (_, i) => [`u${i}`, `upload_${i}.pdf`] as [string, string])]);
+    const reading = new Set(["b", "u0", "u1", "u2", "u3", "u4"]);
+    const busy = auditOpcBoxes(rows, self, crowd, new Map([...reading].map((id) => [id, "not finished indexing"])), pages,
+      { inProgress: reading });
+    expect(busy.unpaired[0].maybeInIds).toEqual(["b", "u0", "u1", "u2", "u3", "u4"]);
+    expect(busy.unpaired[0].why).toBe(
+      "no sheet in the set declares it yet, and it may be in 025-PID-0105.pdf (not finished indexing); upload_0.pdf (not finished indexing); " +
+      "upload_1.pdf (not finished indexing); upload_2.pdf (not finished indexing) or 2 more document(s), not read whole yet");
+  });
+
+  // Review fix pass 7, the reviewer's minor: a connector naming SH n of a
+  // loaded drawing whose sheet n no title block declares was dropped (the
+  // probe-F fix covered only a connector naming no sheet).
+  it("a connector naming a sheet no title block declares, of a drawing one document declares, is unpaired — never dropped (review fix pass 7)", () => {
+    const self = new Map([["a", ["025-PID-0104"]], ["b", ["025-PID-0105"]]]);
+    const pages = new Map([["a", new Map([["025-PID-0104", [1]]])], ["b", new Map([["025-PID-0105", [1]]])]]);
+    const names = new Map([["a", "025-PID-0104.pdf"], ["b", "025-PID-0105.pdf"]]);
+    const line = "OPC 14: DWG 025-PID-0105 SH 2 — TO V-1402";
+    const rows = [
+      { document_id: "a", page: 1, tag: "14", raw: line },
+      { document_id: "b", page: 1, tag: "7", raw: "OPC 7: DWG 025-PID-0199 — TO V-7" },
+    ];
+    // The reviewer's case: page 2 of 0105 indexed text-only.
+    const probe = auditOpcBoxes(rows, self, names, undefined, pages, { pageCounts: new Map([["a", 1], ["b", 2]]) });
+    expect(probe.unreturned).toEqual([]);
+    expect(probe.unpaired).toEqual([{
+      box: "14", from: "025-PID-0104.pdf", to: "025-PID-0105.pdf", toId: "b", line,
+      why: "no page of it declares sheet 2, so which of its pages is the sheet named is not known",
+    }]);
+    expect(probe.targetsByDoc.get("a")).toEqual(["b"]);
+    // Not read whole: unpaired with why, and the record waits on it.
+    const parked = auditOpcBoxes(rows, self, names, new Map([["b", "page(s) 2 never read"]]), pages, { pageCounts: new Map([["b", 2]]) });
+    expect(parked.unpaired).toEqual([expect.objectContaining({ box: "14", toId: "b", unread: "page(s) 2 never read" })]);
+    // Every page of 0105 declares a sheet of it, and none is sheet 2: sheet 2
+    // is not in that document — no box finding there (the reference audit
+    // says missing).
+    const perSheet = new Map([["a", ["025-PID-0104"]], ["b", ["025-PID-0105", "025-PID-0105-SH1"]]]);
+    const perSheetPages = new Map([["a", new Map([["025-PID-0104", [1]]])], ["b", new Map([["025-PID-0105", [1]], ["025-PID-0105-SH1", [1]]])]]);
+    expect(auditOpcBoxes(rows, perSheet, names, undefined, perSheetPages, { pageCounts: new Map([["b", 1]]) }).unpaired).toEqual([]);
+    // Two documents declare the drawing and either may hold sheet 2: which
+    // one is not guessed — but the connector is unpaired, naming both, never
+    // dropped with its pairing unchecked (review fix pass 10).
+    const twoOwners = new Map([...self, ["c", ["025-PID-0105"]]]);
+    expect(auditOpcBoxes(rows, twoOwners, new Map([...names, ["c", "025-PID-0105 copy.pdf"]]), undefined,
+      new Map([...pages, ["c", new Map([["025-PID-0105", [1]]])]]), { pageCounts: new Map([["b", 2], ["c", 2]]) }).unpaired).toEqual([{
+      box: "14", from: "025-PID-0104.pdf", to: "025-PID-0105-SH2", line, maybeInIds: ["b", "c"],
+      why: "no page in the set declares it, and it may be in 025-PID-0105.pdf (its sheet number was not read on page(s) 1, 2); " +
+        "025-PID-0105 copy.pdf (its sheet number was not read on page(s) 1, 2)",
+    }]);
+    // One of the two accounts for every page — a sheet of the drawing on
+    // each: the other is guessed, as a sole declarer is.
+    const oneRuledOut = new Map([...self, ["c", ["025-PID-0105", "025-PID-0105-SH1"]]]);
+    expect(auditOpcBoxes(rows, oneRuledOut, new Map([...names, ["c", "025-PID-0105 copy.pdf"]]), undefined,
+      new Map([...pages, ["c", new Map([["025-PID-0105", [1]], ["025-PID-0105-SH1", [1]]])]]), { pageCounts: new Map([["b", 2], ["c", 1]]) }).unpaired)
+      .toEqual([expect.objectContaining({ box: "14", toId: "b", why: "no page of it declares sheet 2, so which of its pages is the sheet named is not known" })]);
+  });
+
+  // Review fix pass 7, the reviewer's perf probe: fix pass 6 re-checked the
+  // set's scope for every document in flight, for every connector — 11.5 s
+  // for 600 sheets mid-rebuild, 28 s for 1,000 (the route's limit is 60 s).
+  it("pairing a large library mid-rebuild stays fast (review fix pass 7)", () => {
+    const N = 600;
+    const self = new Map<string, string[]>();
+    const pages = new Map<string, Map<string, number[]>>();
+    const names = new Map<string, string>();
+    const rows: Array<{ document_id: string; page: number; tag: string; raw: string }> = [];
+    const reading = new Set<string>();
+    const incomplete = new Map<string, string>();
+    const num = (i: number) => `025-PID-${String(1000 + i).padStart(4, "0")}`;
+    for (let i = 0; i < N; i++) {
+      const id = `d${i}`;
+      names.set(id, `${num(i)}.pdf`);
+      if (i < N / 2) {
+        self.set(id, [num(i), `${num(i)}-SH1`]);
+        pages.set(id, new Map([[num(i), [1]], [`${num(i)}-SH1`, [1]]]));
+        for (let k = 0; k < 10; k++) {
+          rows.push({ document_id: id, page: 1, tag: String(k + 1), raw: `OPC ${k + 1}: DWG ${num((i + 300 + k) % N)} SH 1 — TO V-${i}` });
+        }
+      } else { reading.add(id); incomplete.set(id, "not finished indexing"); }
+    }
+    const run = () => auditOpcBoxes(rows, self, names, incomplete, pages, {
+      pageCounts: new Map([...names.keys()].map((k) => [k, 1])), inProgress: reading,
+    });
+    // The faster of two runs: a parallel suite's load is not the code's cost.
+    let ms = Number.POSITIVE_INFINITY;
+    let audit = run();
+    for (let i = 0; i < 2; i++) {
+      const t0 = performance.now();
+      audit = run();
+      ms = Math.min(ms, performance.now() - t0);
+    }
+    expect(audit.unreturned).toEqual([]);
+    expect(audit.unpaired.length).toBeGreaterThan(2900);
+    // The document named for the destination is named first.
+    const first = audit.unpaired.find((u) => u.to === `${num(300)}-SH1`)!;
+    expect(first.maybeInIds![0]).toBe("d300");
+    expect(ms).toBeLessThan(1000);
+  });
+
+  // Review fix pass 8, the reviewer's probe parked2: a parked document held
+  // only its own drawing by the settled rule, so a sheet on its unread page
+  // under another number was filed a SETTLED gap — at a known revision never
+  // lowered once the page was read.
+  it("a gap a parked document does not hold by the settled rule is filed, but not settled: it names the parked documents (review fix pass 8)", () => {
+    const docs = [
+      { id: "t1", name: "040-TK-0001.pdf" }, { id: "t2", name: "040-TK-0002.pdf" }, { id: "p", name: "025-PID-0107.pdf" },
+    ];
+    const self = new Map([["t1", ["040-TK-0001"]], ["t2", ["040-TK-0002"]], ["p", ["025-PID-0107", "025-PID-0107-SH1"]]]);
+    const refs = new Map([["t1", ["040-TK-0009", "025-PID-0107-SH2"]]]);
+    const parked = new Map([["p", "page(s) 2 never read"]]);
+    const audit = auditDrawingRefs(docs, refs, self, null, parked, new Set(), new Set(["p"]));
+    expect(audit.missingInSeries).toEqual([{
+      ref: "040-TK-0009", referencedBy: ["040-TK-0001.pdf"], referencedByAll: ["040-TK-0001.pdf"], count: 1,
+      pendingIn: ["025-PID-0107.pdf (page(s) 2 never read)"], pendingIds: ["p"],
+    }]);
+    // What it holds by the settled rule is unchecked, as before.
+    expect(audit.missingUnread.map((m) => [m.ref, m.maybeInIds])).toEqual([["025-PID-0107-SH2", ["p"]]]);
+    // A failed or accepted-partial document (not being read) leaves the gap
+    // settled: only a person's act changes it.
+    expect(auditDrawingRefs(docs, refs, self, null, parked, new Set(), new Set()).missingInSeries[0]).not.toHaveProperty("pendingIds");
+    // Many parked: every id kept, six named and the rest counted.
+    const many = Array.from({ length: 8 }, (_, i) => ({ id: `q${i}`, name: `026-PID-020${i}.pdf` }));
+    const crowd = auditDrawingRefs([...docs, ...many], refs, self, null,
+      new Map([...parked, ...many.map((d) => [d.id, "page(s) 1 never read"] as [string, string])]), new Set(), new Set(["p", ...many.map((d) => d.id)]));
+    const gap = crowd.missingInSeries.find((m) => m.ref === "040-TK-0009")!;
+    expect(gap.pendingIds).toEqual(["p", ...many.map((d) => d.id)]);
+    expect(gap.pendingIn).toHaveLength(7);
+    expect(gap.pendingIn![6]).toBe("3 more document(s) not read whole");
+  });
+
+  // Review fix pass 9 (the reviewer's probe unnum): a parked scan whose
+  // number was read neither from a title block nor from its filename held
+  // EVERY missing sheet by the settled rule's "anything" clause, so every
+  // real gap in every series was shown unchecked ("NOT counted as …
+  // missing") until next month — where a numbered parked PDF's gap was a
+  // gap that waits on it.
+  it("a parked document whose number was never read holds no gap by that alone: the gap is filed, waiting on it — a failed or accepted one still holds it, settled (review fix pass 9)", () => {
+    const docs = [{ id: "t1", name: "040-TK-0001.pdf" }, { id: "t2", name: "040-TK-0002.pdf" }, { id: "p", name: "Scan_0001.pdf" }];
+    const self = new Map([["t1", ["040-TK-0001"]], ["t2", ["040-TK-0002"]]]);
+    const refs = new Map([["t1", ["040-TK-0009"]]]);
+    const unread = new Map([["p", "page(s) 1 never read"]]);
+    const parked = auditDrawingRefs(docs, refs, self, null, unread, new Set(), new Set(["p"]));
+    expect(parked.missingUnread).toEqual([]);
+    expect(parked.missingInSeries).toEqual([{
+      ref: "040-TK-0009", referencedBy: ["040-TK-0001.pdf"], referencedByAll: ["040-TK-0001.pdf"], count: 1,
+      pendingIn: ["Scan_0001.pdf (page(s) 1 never read)"], pendingIds: ["p"],
+    }]);
+    // In flight it may still hold any sheet: unchecked, waiting on it.
+    const inFlight = auditDrawingRefs(docs, refs, self, null, unread, new Set(["p"]), new Set(["p"]));
+    expect(inFlight.missingInSeries).toEqual([]);
+    expect(inFlight.missingUnread.map((m) => [m.ref, m.maybeInIds])).toEqual([["040-TK-0009", ["p"]]]);
+    // Failed, or its partial index accepted (not being read): the settled
+    // rule's "anything when its number was never read" stands — unchecked,
+    // and settled.
+    const settled = auditDrawingRefs(docs, refs, self, null, unread, new Set(), new Set());
+    expect(settled.missingInSeries).toEqual([]);
+    expect(settled.missingUnread.map((m) => [m.ref, m.maybeInIds])).toEqual([["040-TK-0009", ["p"]]]);
+    // A parked document still holds its own drawing's sheets, numbered by
+    // its filename: unchecked, as before.
+    const named = auditDrawingRefs([...docs.slice(0, 2), { id: "p", name: "025-PID-0107 SH1.pdf" }],
+      new Map([["t1", ["040-TK-0009", "025-PID-0107-SH2"]]]), self, null, unread, new Set(), new Set(["p"]));
+    expect(named.missingUnread.map((m) => [m.ref, m.maybeInIds])).toEqual([["025-PID-0107-SH2", ["p"]]]);
+    expect(named.missingInSeries.map((m) => [m.ref, m.pendingIds])).toEqual([["040-TK-0009", ["p"]]]);
+  });
+
+  it("a sheet's drawing numbers never include its filename standing in for one (review fix pass 9)", () => {
+    expect(sheetDrawingNumbers("Pump Manual.pdf", [])).toEqual([]);
+    expect(sheetIdentities("Pump Manual.pdf", [])).toEqual([normalizeRef("Pump Manual.pdf")]);
+    expect(sheetDrawingNumbers("Spec Section 15000.pdf", [])).toEqual([]);
+    expect(sheetDrawingNumbers("025-PID-0107.pdf", [])).toEqual(["025-PID-0107"]);
+    expect(sheetDrawingNumbers("Scan_0001.pdf", ["040-TK-0001"])).toEqual(["040-TK-0001"]);
+    // What the title block declared beats the filename, as in sheetIdentities.
+    expect(sheetDrawingNumbers("025-PID-0107.pdf", ["025-PID-0108"])).toEqual(sheetIdentities("025-PID-0107.pdf", ["025-PID-0108"]));
+  });
+
+  // Review fix pass 8, the reviewer's probe parked-opc: a connector into a
+  // parked document's unread page was dropped (the settled rule held only
+  // its own drawing), and an unrevised broken_connectors was overwritten
+  // with a settled passed.
+  it("a parked document may hold any destination in the set's scope: a connector into its unread page is unpaired and names it (review fix pass 8)", () => {
+    const self = new Map([["a", ["025-PID-0104", "025-PID-0104-SH1"]], ["p", ["025-PID-0107", "025-PID-0107-SH1"]]]);
+    const pages = new Map([["a", new Map([["025-PID-0104", [1]], ["025-PID-0104-SH1", [1]]])], ["p", new Map([["025-PID-0107", [1]], ["025-PID-0107-SH1", [1]]])]]);
+    const names = new Map([["a", "025-PID-0104.pdf"], ["p", "025-PID-0107.pdf"]]);
+    const line = "OPC 14: DWG 025-PID-0108 SH 1 — TO V-1402";
+    const rows = [{ document_id: "a", page: 1, tag: "14", raw: line }];
+    const parked = new Map([["p", "page(s) 2 never read"]]);
+    const audit = auditOpcBoxes(rows, self, names, parked, pages, { inProgress: new Set(), forNow: new Set(["p"]), reading: new Set(["p"]) });
+    expect(audit.unpaired).toEqual([{
+      box: "14", from: "025-PID-0104.pdf", to: "025-PID-0108-SH1", line, maybeInIds: ["p"],
+      why: "no sheet in the set declares it yet, and it may be in 025-PID-0107.pdf (page(s) 2 never read), not read whole yet",
+    }]);
+    // Failed (not being read): the settled rule only — another drawing's
+    // number is not its own, so nothing waits on it.
+    expect(auditOpcBoxes(rows, self, names, parked, pages, { inProgress: new Set(), forNow: new Set(["p"]) }).unpaired).toEqual([]);
+    // Outside the set's scope (another unit): a numbered parked document
+    // does not hold it — the guard under an unknown revision covers it.
+    const elsewhere = [{ document_id: "a", page: 1, tag: "15", raw: "OPC 15: DWG 077-PID-0001 — TO V-1" }];
+    expect(auditOpcBoxes(elsewhere, self, names, parked, pages, { inProgress: new Set(), forNow: new Set(["p"]), reading: new Set(["p"]) }).unpaired).toEqual([]);
+  });
+
+  // Review fix pass 8, the reviewer's probes undecl-reset / undecl-failed:
+  // fix pass 7 paired a connector into X-SHn against the sole declarer of X
+  // and skipped the documents that may hold the sheet — so while SH2's own
+  // PDF was reset (or failed), the connector was filed a SETTLED unpaired
+  // against SH1, and a known revision's passed became flagged for good.
+  it("a sheet no title block declares is guessed into its drawing's sole declarer only when no other document not read whole may hold it (review fix pass 8)", () => {
+    const self = new Map([["a", ["025-PID-0104", "025-PID-0104-SH1"]], ["s1", ["025-PID-0105"]]]);
+    const pages = new Map([["a", new Map([["025-PID-0104", [1]], ["025-PID-0104-SH1", [1]]])], ["s1", new Map([["025-PID-0105", [1]]])]]);
+    const names = new Map([["a", "025-PID-0104.pdf"], ["s1", "025-PID-0105 SH1.pdf"], ["s2", "025-PID-0105 SH2.pdf"]]);
+    const line = "OPC 14: DWG 025-PID-0105 SH 2 — TO V-1402";
+    const rows = [
+      { document_id: "a", page: 1, tag: "14", raw: line },
+      // SH1's own box numbers were read (its connector leaves the unit).
+      { document_id: "s1", page: 1, tag: "9", raw: "OPC 9: DWG 077-PID-0001 — TO V-9" },
+    ];
+    const pageCounts = new Map([["a", 1], ["s1", 1], ["s2", 1]]);
+    // SH2 reset by a rebuild (in flight): the connector waits on it.
+    const reset = auditOpcBoxes(rows, self, names, new Map([["s2", "not finished indexing"]]), pages,
+      { pageCounts, inProgress: new Set(["s2"]), forNow: new Set(["s2"]), reading: new Set(["s2"]) });
+    expect(reset.unpaired).toEqual([{
+      box: "14", from: "025-PID-0104.pdf", to: "025-PID-0105-SH2", line, maybeInIds: ["s2"],
+      why: "no sheet in the set declares it yet, and it may be in 025-PID-0105 SH2.pdf (not finished indexing), not read whole yet",
+    }]);
+    expect(reset.targetsByDoc.get("a")).toBeUndefined();
+    // SH2's re-index failed: its filename names the drawing, so it holds the
+    // sheet by the settled rule, and the connector waits on it.
+    const failed = auditOpcBoxes(rows, self, names, new Map([["s2", "its indexing failed"]]), pages,
+      { pageCounts, inProgress: new Set(), forNow: new Set(["s2"]), reading: new Set() });
+    expect(failed.unpaired).toEqual([expect.objectContaining({ box: "14", maybeInIds: ["s2"] })]);
+    expect(failed.unpaired[0]).not.toHaveProperty("toId");
+    // Nothing else may hold it: the guess stands, settled — against SH1.
+    const alone = auditOpcBoxes(rows, self, names, undefined, pages, { pageCounts });
+    expect(alone.unpaired).toEqual([{
+      box: "14", from: "025-PID-0104.pdf", to: "025-PID-0105 SH1.pdf", toId: "s1", line,
+      why: "no page of it declares sheet 2, so which of its pages is the sheet named is not known",
+    }]);
+    // The sole declarer is itself the only document not read whole: the
+    // guess stands, and waits on it (`unread`).
+    const own = auditOpcBoxes(rows, self, names, new Map([["s1", "page(s) 2 never read"]]), pages,
+      { pageCounts, inProgress: new Set(), forNow: new Set(["s1"]), reading: new Set(["s1"]) });
+    expect(own.unpaired).toEqual([expect.objectContaining({ box: "14", toId: "s1", unread: "page(s) 2 never read" })]);
+  });
+
+  it("the prompt says how to write a sheet-only connector, and never to invent a box number (review fix pass 2)", () => {
+    // A same-drawing continuation: SAME with its sheet — parsed as such.
+    expect(VISION_SYSTEM).toContain(`'OPC 14: DWG ${OPC_SAME_DRAWING} SH 4 — TO V-1402'`);
+    expect(parseOpcLine(`OPC 14: DWG ${OPC_SAME_DRAWING} SH 4 — TO V-1402`)).toMatchObject({ sameDrawing: true, sheet: "4" });
+    expect(VISION_SYSTEM).toMatch(/only a sheet number \(it continues on another sheet of this same drawing\), write SAME/);
+    expect(VISION_SYSTEM).toMatch(/neither a drawing number nor a sheet, write NONE/);
+    // A pennant with no box number gets no OPC line — it is transcribed as
+    // continuation phrasing, which the reference layer reads.
+    expect(VISION_SYSTEM).toMatch(/shows NO box number, do not write an OPC line for it and never make a number up/);
+    expect(VISION_SYSTEM).toContain("'CONT ON DWG <drawing number> SH <sheet>'");
+    expect(parseOpcBoxes("CONT ON DWG 2002-D-2001 SH 4")).toEqual([]);
+    expect(extractDrawingRefs("CONT ON DWG 2002-D-2001 SH 4")).toEqual(["2002-D-2001-SH4"]);
+  });
+
+  it("the vision prompt is built from the parser's constants (they cannot drift apart)", () => {
+    const vision = readFileSync(join(__dirname, "..", "knowledgeVision.ts"), "utf8");
+    expect(vision).toMatch(/import \{[\s\S]*OPC_LINE_FORMAT, OPC_LINE_EXAMPLE, OPC_NO_DRAWING, OPC_SAME_DRAWING, TITLE_BLOCK_OPEN, TITLE_BLOCK_CLOSE,[\s\S]*\} from "@\/lib\/drawingText"/);
+    expect(vision).toContain("${OPC_LINE_FORMAT}");
+    expect(vision).toContain("${OPC_SAME_DRAWING}");
+    expect(vision).toContain("${TITLE_BLOCK_OPEN}");
+    expect(vision).not.toMatch(/instrument bubble \(V-3, P-101A, PSV-2001, "\s*\+?\s*"6\\"-P-1024-A1A\)/);
+  });
+});
+
+describe("PR-11 — a connector never becomes the sheet's identity", () => {
+  it("labelled continuation phrasing is a connector, not a title block", () => {
+    expect(extractTitleBlock("CONT ON DWG NO. 040-B-2002 SH 1").drawingNumber).toBeNull();
+    expect(extractTitleBlock("CONTINUED ON DRAWING NO 021-PID-0107").drawingNumber).toBeNull();
+    expect(extractTitleBlock("SEE DWG NO. 12-A-3003").drawingNumber).toBeNull();
+    expect(extractTitleBlock("FROM DWG # 040-B-2001").drawingNumber).toBeNull();
+    expect(extractTitleBlock("REF DWG NO. 025-PID-0001").drawingNumber).toBeNull();
+  });
+
+  it("a text layer with the connector FIRST still declares its own border number", () => {
+    const tb = extractTitleBlock("CONT ON DWG NO. 040-B-2002 SH 1\nTO V-3\nDRAWING NO: 025-PID-0104  SHEET 2 OF 4  REV C");
+    expect(tb).toEqual({ drawingNumber: "025-PID-0104", sheetNumber: "2", rev: "C" });
+  });
+
+  it("a fenced transcript is read ONLY inside the fence — whatever precedes it", () => {
+    const transcript = [
+      "OPC 14: 040-B-2002 SH 1 — TO V-1402",
+      "CONT ON DWG NO. 040-B-2002 SHEET 1",
+      TITLE_BLOCK_OPEN, "DRAWING NO: 025-PID-0104", "SHEET: 3 OF 4", "REV: D", TITLE_BLOCK_CLOSE,
+      "NOTES: 1. SEE DWG NO. 999-X-1.",
+    ].join("\n");
+    expect(extractTitleBlock(transcript)).toEqual({ drawingNumber: "025-PID-0104", sheetNumber: "3", rev: "D" });
+  });
+
+  it("an unclosed fence still bounds the read to the border's fields", () => {
+    const t = `${TITLE_BLOCK_OPEN}\nDRAWING NO: 025-PID-0104\nSHEET: 1 OF 1\nREV: 2\nTITLE: X\nLINE 6"-P-1\nNOTE 4\nDWG NO. 777-Z-0001`;
+    expect(extractTitleBlock(t).drawingNumber).toBe("025-PID-0104");
+  });
+});
+
+describe("DWG-7 / BR-12 — a dense text-layer P&ID is a drawing; prose is not", () => {
+  // A TrueType P&ID: every tag, line number, note and revision row in the
+  // text layer, several thousand characters (the case no fixture had).
+  const densePid = [
+    "DRAWING NO: 025-PID-0104  SHEET 1 OF 3  REV 2",
+    ...Array.from({ length: 50 }, (_, i) =>
+      `V-${101 + i} SUCTION DRUM  6"-P-${1000 + i}-A1A  TO E-${201 + i} VIA FV-${301 + i}`),
+    "NOTES: 1. ALL DIMENSIONS IN MM. 2. ALL LINES INSULATED UNLESS NOTED. 3. SEE DWG 025-PID-0105 FOR CONTINUATION.",
+  ].join("\n");
+
+  it("the fixture is past the sparse ceiling, and is read as a drawing by its signals", () => {
+    expect(densePid.length).toBeGreaterThan(SPARSE_PAGE_MAX_CHARS);
+    const s = drawingSignals(densePid);
+    expect(s.tagsPerKchar).toBeGreaterThanOrEqual(DENSE_DRAWING_MIN_TAGS_PER_KCHAR);
+    expect(s.lowercaseRatio).toBeLessThanOrEqual(DRAWING_MAX_LOWERCASE_RATIO);
+    expect(isDrawingLikePage(densePid)).toBe(true);
+    // …and yields equipment tags and a title-block identity — never line numbers.
+    const tags = extractEquipmentTags(densePid).map((t) => t.tag);
+    expect(tags).toContain("V-101");
+    expect(tags).toContain("FV-301");
+    expect(tags.some((t) => t.startsWith("P-10"))).toBe(false);
+    expect(extractTitleBlock(densePid).drawingNumber).toBe("025-PID-0104");
+  });
+
+  it("dense prose stays prose — even prose that names equipment", () => {
+    const procedure = Array.from({ length: 40 }, (_, i) =>
+      `Before starting pump P-${100 + i}A, the operator shall confirm that the suction valve is open and the casing is vented.`).join(" ");
+    expect(procedure.length).toBeGreaterThan(SPARSE_PAGE_MAX_CHARS);
+    expect(isDrawingLikePage(procedure)).toBe(false);
+    expect(drawingSignals(procedure).lowercaseRatio).toBeGreaterThan(DRAWING_MAX_LOWERCASE_RATIO);
+  });
+
+  it("dense capitals with no tags (a legal notice) are not a tag list — unless the sheet's border declares it a drawing", () => {
+    const notes = "ALL WORK SHALL CONFORM TO THE LATEST EDITION OF THE APPLICABLE CODES AND STANDARDS. ".repeat(40);
+    expect(isDrawingLikePage(notes)).toBe(false);
+    // A general-notes SHEET: same capitals, plus its own title block.
+    expect(isDrawingLikePage(`${notes}\nDRAWING NO: 025-GN-0001  SHEET 1 OF 1  REV 0`)).toBe(true);
+    // Prose citing a drawing number in mixed case is still prose.
+    const spec = "Refer to drawing no. 123-A-4567 for the general arrangement of the unit. ".repeat(40);
+    expect(isDrawingLikePage(spec)).toBe(false);
+  });
+
+  it("sparse pages keep the fast path exactly as before", () => {
+    expect(isDrawingLikePage("V-101  P-205A  TO 025-PID-002")).toBe(true);
+    expect(isDrawingLikePage("a short prose line.")).toBe(true);
+  });
+});
+
+describe("DWG-8 — a cut evidence line is unknown, never broken", () => {
+  const long = "OPC 14: TO CRUDE COLUMN OVERHEAD ACCUMULATOR V-1402, THEN 12\"-P-14022-A1A AND THE OVERHEAD RECEIVER BYPASS, " +
+    "SERVICE: SOUR WATER RETURN, CONTINUED ON DRAWING 2002-D-2001 SHEET 4 OF 12";
+  it("a >160-character connector line, cut the way ingest cuts it, does not report noRef", () => {
+    expect(long.length).toBeGreaterThan(OPC_RAW_STORED_MAX);
+    const raw = truncateSafe(long, OPC_RAW_STORED_MAX);           // ingest's own cut
+    expect(extractDrawingRefs(raw)).toEqual([]);                   // the drawing number is gone…
+    const audit = auditOpcBoxes([{ document_id: "a", page: 2, tag: "14", raw }], new Map(), new Map([["a", "A.pdf"]]));
+    expect(audit.noRef).toEqual([]);                               // …so it is NOT broken
+    expect(audit.unknown).toEqual([expect.objectContaining({ box: "14", sheet: "A.pdf", page: 2, line: raw })]);
+  });
+
+  it("a complete short line with no drawing number is still broken by definition", () => {
+    for (const raw of ["OPC 7: DWG NONE — FROM DESALTER", "OPC 7: NONE — FROM DESALTER"]) {
+      const audit = auditOpcBoxes([{ document_id: "a", page: 1, tag: "7", raw }], new Map(), new Map([["a", "A.pdf"]]));
+      expect(audit.noRef, raw).toHaveLength(1);
+      expect(audit.unknown, raw).toEqual([]);
+    }
+  });
+
+  it("a contract line keeps its destination at the head, so the storage cut can never take it", () => {
+    const longContract = `OPC 14: DWG 2002-D-2001 SH 4 — TO ${"CRUDE COLUMN OVERHEAD ACCUMULATOR ".repeat(6)}`;
+    const raw = truncateSafe(longContract, OPC_RAW_STORED_MAX);
+    const audit = auditOpcBoxes([{ document_id: "a", page: 2, tag: "14", raw }], new Map(), new Map([["a", "A.pdf"]]));
+    expect(audit.noRef).toEqual([]);
+    expect(audit.unknown).toEqual([]);
+  });
+
+  it("the stored cut is the one ingest makes (OPC_RAW_STORED_MAX pinned to lib/knowledgeIngest.ts)", () => {
+    const ingest = readFileSync(join(__dirname, "..", "knowledgeIngest.ts"), "utf8");
+    expect(ingest).toMatch(new RegExp(`kind: "opc", tag: box, raw: truncateSafe\\(line, ${OPC_RAW_STORED_MAX}\\)`));
+  });
+});
+
+describe("DWG-10 — one deterministic sheet identity for the lens and the record", () => {
+  it("shortest declared number without -SHn, independent of row order", () => {
+    const tags = ["025-PID-0101-SH3", "025-PID-0101", "025-PID-0101-SH2"];
+    for (const order of [tags, [...tags].reverse(), [tags[2], tags[0], tags[1]]]) {
+      expect(declaredSheetIdentity(order)).toEqual({ base: "025-PID-0101", sheetsDeclared: 2 });
+    }
+  });
+  it("ties break in code-unit order; only sheet forms → their shared number; nothing → null", () => {
+    expect(declaredSheetIdentity(["B-100", "A-100"]).base).toBe("A-100");
+    expect(declaredSheetIdentity(["A-100", "B-100"]).base).toBe("A-100");
+    expect(declaredSheetIdentity(["21-D-1105-SH3"])).toEqual({ base: "21-D-1105", sheetsDeclared: 1 });
+    expect(declaredSheetIdentity([])).toEqual({ base: null, sheetsDeclared: 0 });
+  });
+});
+
+describe("DWG-11 — the roll-up the census is computed from", () => {
+  const rows = [
+    { document_id: "d2", page: 3, kind: "equipment", tag: "V-1" },
+    { document_id: "d1", page: 2, kind: "equipment", tag: "V-1" },
+    { document_id: "d1", page: 1, kind: "equipment", tag: "V-1" },
+    { document_id: "d1", page: 1, kind: "equipment", tag: "V-1" },
+    { document_id: "d1", page: 1, kind: "ref", tag: "025-PID-0102" },
+  ];
+  it("one row per sheet, kind and tag: occurrences, first page, distinct pages — ordered", () => {
+    expect(rollUpEntities(rows)).toEqual([
+      { document_id: "d1", kind: "equipment", tag: "V-1", occurrences: 3, first_page: 1, pages: [1, 2] },
+      { document_id: "d1", kind: "ref", tag: "025-PID-0102", occurrences: 1, first_page: 1, pages: [1] },
+      { document_id: "d2", kind: "equipment", tag: "V-1", occurrences: 1, first_page: 3, pages: [3] },
+    ]);
+  });
+  it("a census from counted rows equals the census from every occurrence", () => {
+    const eq = rows.filter((r) => r.kind === "equipment");
+    const counted = rollUpEntities(eq).map((r) => ({ tag: r.tag, count: r.occurrences }));
+    expect(buildEquipmentCensus(counted)).toEqual(buildEquipmentCensus(eq));
+  });
+  it("the CSV register from counted rows names the first page per sheet, whatever the row order", () => {
+    const csv = equipmentRegisterCsv([
+      { tag: "V-1", documentName: "PID-1", page: 4, count: 2 },
+      { tag: "V-1", documentName: "PID-1", page: 2, count: 1 },
+    ]);
+    expect(csv.split("\r\n")[1]).toBe("V-1,Vessels / Drums,3,PID-1,2");
+  });
+});
+
+// Review fix pass 10 (the reviewer's probes p2, p3 and p4). A sheet's title
+// block can give its drawing number and not its sheet field. The reference
+// audit filed a reference into that sheet a settled GAP ("isn't in the set")
+// and the reference back one-way; the box pairing counted a page that
+// declared only the bare number as "declares a number" and dropped the
+// connector, its sheet recorded passed with the pairing never checked. And a
+// parked scan whose number was never read held ANY connector destination —
+// every sheet at the battery limit waited on it, "flagged", for a month.
+describe("DWG-4 — a sheet whose title block gave the drawing number but not the sheet is no gap, no one-way, and no dropped connector (review fix pass 10)", () => {
+  it("filenameSheets: the sheet a filename names, only for a drawing the title block declared without any sheet", () => {
+    expect(filenameSheets("025-PID-0105-SH2.pdf", ["025-PID-0105"])).toEqual(["025-PID-0105-SH2"]);
+    expect(filenameSheets("025-PID-0105_SHT2.pdf", ["025-PID-0105"])).toEqual(["025-PID-0105-SH2"]);
+    expect(filenameSheets("025-PID-0105 Sheet 2.pdf", ["025-PID-0105"])).toEqual(["025-PID-0105-SH2"]);
+    // The title block rules: a sheet of it declared, or the drawing never declared.
+    expect(filenameSheets("025-PID-0105-SH2.pdf", ["025-PID-0105", "025-PID-0105-SH1"])).toEqual([]);
+    expect(filenameSheets("025-PID-0105-SH2.pdf", ["025-PID-0106"])).toEqual([]);
+    expect(filenameSheets("025-PID-0105-SH2.pdf", [])).toEqual([]);
+    expect(filenameSheets("025-PID-0105.pdf", ["025-PID-0105"])).toEqual([]);
+    // It is a number the sheet answers to.
+    expect(sheetIdentities("025-PID-0105-SH2.pdf", ["025-PID-0105"])).toEqual(["025-PID-0105", "025-PID-0105-SH2"]);
+    expect(sheetDrawingNumbers("025-PID-0105-SH2.pdf", ["025-PID-0105"])).toEqual(["025-PID-0105", "025-PID-0105-SH2"]);
+  });
+
+  const docs = [
+    { id: "a", name: "025-PID-0104.pdf" }, { id: "s1", name: "025-PID-0105-SH1.pdf" }, { id: "s2", name: "025-PID-0105-SH2.pdf" },
+  ];
+  const refs = new Map([["a", ["025-PID-0105-SH2"]], ["s2", ["025-PID-0104"]]]);
+  const pagesOf = (self: Map<string, string[]>) => ({
+    selfPages: new Map([...self].map(([id, tags]) => [id, new Map(tags.map((t) => [t, [1]] as [string, number[]]))])),
+    pageCounts: new Map([["a", 1], ["s1", 1], ["s2", 1]]),
+  });
+
+  it("the reviewer's probe p3: per-sheet PDFs, SH2's sheet field unread — SH2 answers to the sheet its filename names: no gap, no one-way", () => {
+    const self = new Map([["a", ["025-PID-0104"]], ["s1", ["025-PID-0105", "025-PID-0105-SH1"]], ["s2", ["025-PID-0105"]]]);
+    const audit = auditDrawingRefs(docs, refs, self, null, undefined, undefined, undefined, pagesOf(self));
+    expect(audit.missingInSeries).toEqual([]);
+    expect(audit.missingSheetUnread).toEqual([]);
+    expect(audit.oneWay).toEqual([]);
+    expect(audit.oneWaySheetUnread).toEqual([]);
+    expect(audit.resolved).toBe(2);
+  });
+
+  it("…and named for nothing: the reference is unchecked, settled — never a gap — and the reference back is never one-way", () => {
+    const named = [docs[0], docs[1], { id: "s2", name: "025-PID-0105 scan.pdf" }];
+    const self = new Map([["a", ["025-PID-0104"]], ["s1", ["025-PID-0105", "025-PID-0105-SH1"]], ["s2", ["025-PID-0105"]]]);
+    const audit = auditDrawingRefs(named, refs, self, null, undefined, undefined, undefined, pagesOf(self));
+    expect(audit.missingInSeries).toEqual([]);
+    expect(audit.missingSheetUnread).toEqual([{
+      ref: "025-PID-0105-SH2", referencedBy: ["025-PID-0104.pdf"], referencedByAll: ["025-PID-0104.pdf"], count: 1,
+      maybeIn: ["025-PID-0105 scan.pdf (its sheet number was not read on page(s) 1)"], maybeInIds: ["s2"],
+    }]);
+    expect(audit.oneWay).toEqual([]);
+    expect(audit.oneWaySheetUnread).toEqual([{
+      from: "025-PID-0105 scan.pdf", to: "025-PID-0104.pdf", count: 1, via: "025-PID-0105-SH2", why: "its sheet number was not read on page(s) 1",
+    }]);
+    // A document parked meanwhile: the unchecked reference waits on it, as a gap would.
+    const parked = auditDrawingRefs([...named, { id: "p", name: "040-TK-0001.pdf" }], refs, self, null,
+      new Map([["p", "page(s) 2 never read"]]), new Set(), new Set(["p"]), pagesOf(self));
+    expect(parked.missingSheetUnread[0]).toMatchObject({ pendingIn: ["040-TK-0001.pdf (page(s) 2 never read)"], pendingIds: ["p"] });
+    // Without page facts, a document whose title block declared no sheet of
+    // the drawing may be the sheet; one that declared a sheet of it is not.
+    const blind = auditDrawingRefs(named, refs, self);
+    expect(blind.missingSheetUnread.map((m) => [m.ref, m.maybeIn])).toEqual([
+      ["025-PID-0105-SH2", ["025-PID-0105 scan.pdf (which of its pages is which sheet was not read)"]],
+    ]);
+    // Its sheet field read at last (sheet 3): a gap, and one-way.
+    const read = new Map([...self, ["s2", ["025-PID-0105", "025-PID-0105-SH3"]]]);
+    const after = auditDrawingRefs(named, refs, read, null, undefined, undefined, undefined, pagesOf(read));
+    expect(after.missingInSeries.map((m) => m.ref)).toEqual(["025-PID-0105-SH2"]);
+    expect(after.missingSheetUnread).toEqual([]);
+    expect(after.oneWay).toEqual([{ from: "025-PID-0105 scan.pdf", to: "025-PID-0104.pdf", count: 1 }]);
+  });
+
+  it("the reviewer's probe p2: a combined PDF whose page 2 declares only the drawing number — page 2 may be sheet 2; a page that declares a sheet, or only other drawings, is accounted for", () => {
+    const combined = [{ id: "a", name: "025-PID-0104.pdf" }, { id: "b", name: "025-PID-0105.pdf" }];
+    const self = new Map([["a", ["025-PID-0104"]], ["b", ["025-PID-0105", "025-PID-0105-SH1", "025-PID-0105-SH3"]]]);
+    const selfPages = new Map([
+      ["a", new Map([["025-PID-0104", [1]]])],
+      ["b", new Map([["025-PID-0105", [1, 2, 3]], ["025-PID-0105-SH1", [1]], ["025-PID-0105-SH3", [3]]])],
+    ]);
+    const pageCounts = new Map([["a", 1], ["b", 3]]);
+    const r = new Map([["a", ["025-PID-0105-SH2"]], ["b", ["025-PID-0104"]]]);
+    const audit = auditDrawingRefs(combined, r, self, null, undefined, undefined, undefined, { selfPages, pageCounts });
+    expect(audit.missingInSeries).toEqual([]);
+    expect(audit.missingSheetUnread.map((m) => [m.ref, m.maybeIn])).toEqual([
+      ["025-PID-0105-SH2", ["025-PID-0105.pdf (its sheet number was not read on page(s) 2)"]],
+    ]);
+    expect(audit.oneWay).toEqual([]);
+    expect(audit.oneWaySheetUnread).toEqual([expect.objectContaining({ from: "025-PID-0105.pdf", to: "025-PID-0104.pdf", via: "025-PID-0105-SH2" })]);
+    // A page that declared nothing at all may be it too.
+    const blindPage = new Map([...selfPages, ["b", new Map([["025-PID-0105", [1, 3]], ["025-PID-0105-SH1", [1]], ["025-PID-0105-SH3", [3]]])]]);
+    expect(auditDrawingRefs(combined, r, self, null, undefined, undefined, undefined, { selfPages: blindPage, pageCounts })
+      .missingSheetUnread[0].maybeIn).toEqual(["025-PID-0105.pdf (its sheet number was not read on page(s) 2)"]);
+    // Page 2 is a sheet of another drawing: every page accounted for — a gap.
+    const other = new Map([...selfPages, ["b", new Map([["025-PID-0105", [1, 3]], ["025-PID-0105-SH1", [1]], ["025-PID-0105-SH3", [3]], ["025-PID-0106", [2]]])]]);
+    const otherSelf = new Map([...self, ["b", [...self.get("b")!, "025-PID-0106"]]]);
+    const accounted = auditDrawingRefs(combined, r, otherSelf, null, undefined, undefined, undefined, { selfPages: other, pageCounts });
+    expect(accounted.missingInSeries.map((m) => m.ref)).toEqual(["025-PID-0105-SH2"]);
+    expect(accounted.missingSheetUnread).toEqual([]);
+    // A reference into its own drawing's undeclared sheet, from the document
+    // whose page may be it: unchecked too — maybe its own page 2, maybe a
+    // sheet the set lacks.
+    const own = auditDrawingRefs(combined, new Map([["b", ["025-PID-0105-SH2"]]]), self, null, undefined, undefined, undefined, { selfPages, pageCounts });
+    expect(own.missingInSeries).toEqual([]);
+    expect(own.missingSheetUnread.map((m) => [m.ref, m.referencedBy, m.maybeInIds])).toEqual([["025-PID-0105-SH2", ["025-PID-0105.pdf"], ["b"]]]);
+  });
+
+  it("the reviewer's probe p2, connectors: a page that declares only the drawing number never rules the sheet out — the connector is unpaired, never dropped", () => {
+    const self = new Map([["a", ["025-PID-0104"]], ["b", ["025-PID-0105", "025-PID-0105-SH1", "025-PID-0105-SH3"]]]);
+    const selfPages = new Map([
+      ["a", new Map([["025-PID-0104", [1]]])],
+      ["b", new Map([["025-PID-0105", [1, 2, 3]], ["025-PID-0105-SH1", [1]], ["025-PID-0105-SH3", [3]]])],
+    ]);
+    const names = new Map([["a", "025-PID-0104.pdf"], ["b", "025-PID-0105.pdf"]]);
+    const line = "OPC 16: DWG 025-PID-0105 SH 2 — TO V-1402";
+    for (const boxOnPage2 of ["16", "99"]) {
+      const rows = [
+        { document_id: "a", page: 1, tag: "16", raw: line },
+        { document_id: "b", page: 2, tag: boxOnPage2, raw: `OPC ${boxOnPage2}: DWG 025-PID-0104 — FROM V-1` },
+      ];
+      const audit = auditOpcBoxes(rows, self, names, undefined, selfPages, { pageCounts: new Map([["a", 1], ["b", 3]]) });
+      expect(audit.unpaired.filter((u) => u.box === "16")).toEqual([{
+        box: "16", from: "025-PID-0104.pdf", to: "025-PID-0105.pdf", toId: "b", line,
+        why: "no page of it declares sheet 2, so which of its pages is the sheet named is not known",
+      }]);
+    }
+    // Every page declares a sheet of the drawing, or only another drawing:
+    // sheet 2 is not in it — no box finding (the reference audit says missing).
+    const accounted = new Map([...selfPages, ["b", new Map([["025-PID-0105", [1, 3]], ["025-PID-0105-SH1", [1]], ["025-PID-0105-SH3", [3]], ["025-PID-0106", [2]]])]]);
+    const rows = [{ document_id: "a", page: 1, tag: "16", raw: line }];
+    expect(auditOpcBoxes(rows, new Map([...self, ["b", [...self.get("b")!, "025-PID-0106"]]]), names, undefined, accounted,
+      { pageCounts: new Map([["a", 1], ["b", 3]]) }).unpaired).toEqual([]);
+  });
+
+  it("the reviewer's probe p3, connectors: the sheet a filename names pairs its box — and a box missing from it is unpaired, never unreturned", () => {
+    const self = new Map([["a", ["025-PID-0104"]], ["s1", ["025-PID-0105", "025-PID-0105-SH1"]], ["s2", ["025-PID-0105"]]]);
+    const selfPages = new Map([...self].map(([id, tags]) => [id, new Map(tags.map((t) => [t, [1]] as [string, number[]]))]));
+    const names = new Map([["a", "025-PID-0104.pdf"], ["s1", "025-PID-0105-SH1.pdf"], ["s2", "025-PID-0105-SH2.pdf"]]);
+    const line = "OPC 16: DWG 025-PID-0105 SH 2 — TO V-1402";
+    const ctx = { pageCounts: new Map([["a", 1], ["s1", 1], ["s2", 1]]) };
+    const back = { document_id: "s2", page: 1, tag: "16", raw: "OPC 16: DWG 025-PID-0104 — FROM V-1402" };
+    const paired = auditOpcBoxes([{ document_id: "a", page: 1, tag: "16", raw: line }, back], self, names, undefined, selfPages, ctx);
+    expect(paired.unpaired).toEqual([]);
+    expect(paired.unreturned).toEqual([]);
+    expect(paired.targetsByDoc.get("a")).toEqual(["s2"]);
+    const missing = auditOpcBoxes([{ document_id: "a", page: 1, tag: "16", raw: line }, { ...back, tag: "17", raw: "OPC 17: DWG 025-PID-0104 — FROM V-1" }],
+      self, names, undefined, selfPages, ctx);
+    expect(missing.unreturned.filter((u) => u.box === "16")).toEqual([]);
+    expect(missing.unpaired.filter((u) => u.box === "16")).toEqual([{
+      box: "16", from: "025-PID-0104.pdf", to: "025-PID-0105-SH2.pdf", toId: "s2", line,
+      why: "only its filename names 025-PID-0105-SH2 — its title block gave the drawing number without the sheet — and box 16 is not on page 1 of it",
+    }]);
+    // A title block that declares the sheet rules over a filename naming it.
+    const declared = new Map([...self, ["c", ["025-PID-0105", "025-PID-0105-SH2"]]]);
+    const both = auditOpcBoxes([{ document_id: "a", page: 1, tag: "16", raw: line }], declared,
+      new Map([...names, ["c", "Crude PIDs.pdf"]]), undefined, new Map([...selfPages, ["c", new Map([["025-PID-0105", [1]], ["025-PID-0105-SH2", [1]]])]]),
+      { pageCounts: new Map([...ctx.pageCounts, ["c", 1]]) });
+    expect(both.targetsByDoc.get("a")).toEqual(["c"]);
+  });
+
+  it("the reviewer's probe p4: a parked scan whose number was never read holds only a destination in the set's scope — never one in a unit the set was never given", () => {
+    const self = new Map([["a", ["025-PID-0104"]], ["b", ["025-PID-0101"]]]);
+    const names = new Map([["a", "025-PID-0104.pdf"], ["b", "025-PID-0101.pdf"], ["p", "Scan_0001.pdf"]]);
+    const pages = new Map([["a", new Map([["025-PID-0104", [1]]])], ["b", new Map([["025-PID-0101", [1]]])]]);
+    const parked = { pageCounts: new Map([["a", 1], ["b", 1], ["p", 1]]), inProgress: new Set<string>(), forNow: new Set(["p"]), reading: new Set(["p"]) };
+    const unread = new Map([["p", "page(s) 1 never read"]]);
+    const outOfUnit = [{ document_id: "a", page: 1, tag: "3", raw: "OPC 3: DWG 999-PID-0001 SH 1 — TO V-9901" }];
+    expect(auditOpcBoxes(outOfUnit, self, names, unread, pages, parked).unpaired).toEqual([]);
+    // Inside the set's scope it still waits on the scan.
+    const inScope = [{ document_id: "a", page: 1, tag: "4", raw: "OPC 4: DWG 025-PID-0108 SH 1 — TO V-1" }];
+    expect(auditOpcBoxes(inScope, self, names, unread, pages, parked).unpaired).toEqual([expect.objectContaining({ box: "4", maybeInIds: ["p"] })]);
+    // In flight, it may still hold anything.
+    expect(auditOpcBoxes(outOfUnit, self, names, new Map([["p", "not finished indexing"]]), pages,
+      { ...parked, inProgress: new Set(["p"]) }).unpaired).toEqual([expect.objectContaining({ box: "3", maybeInIds: ["p"] })]);
   });
 });

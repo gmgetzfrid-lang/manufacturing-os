@@ -422,6 +422,7 @@ The test path also accepts a caller-supplied `model` while using the SAVED key (
 
 - **Severity:** MEDIUM
 - **Status:** OPEN
+- **Assigned:** intelligence I-03 THE ASK ROUTE (AiCallError carries the reported usage — lib/ai/providerCall.ts) — by the integrator, 2026-10-01 (I-07 merge: I-07 landed its own half; fleet plan `audit-reports/fleet-plans/`).
 - **Verification:** CONFIRMED
 - **Locations:** `app/api/knowledge/locate/route.ts:206-220`, `app/api/knowledge/locate/route.ts:236-238`, `app/api/knowledge/locate/route.ts:259-271`
 - **Independently verified:** ✓ **SURVIVES** — second independent adversarial pass. Confirmed: 1 metered coarse call + up to 4x2 = 8 unmetered refine calls, tokens accumulated into an already-written row's source object. The 8 are bounded further by the 40s budget check at :244, so the real-world miss is often smaller than 8/9 — but the structural bug (meter-before-spend) is exactly as described. Corroborates the cap-exclusion claim: lib/ai/usageServer.ts:63 filters `.eq("op", "knowledgeAsk")`, so drawingLocate rows never count toward the cap at all.
@@ -462,6 +463,23 @@ Read the file end to end. The write is on line 216, inside `try {` opened at 196
 - [ ] The metering row is written once, after all passes, with the summed usage — or one row per pass
 - [ ] The refine loop's per-call token counts appear in ai_usage_events for the op
 - [ ] A refine call that throws still contributes its (already-spent) tokens to the recorded total where the provider reported them
+
+**Partial (2026-10-01, intelligence Round G, I-07).** Reproduced first (DEC-29). Against the base route, a locate request with a coarse pass and four close-ups wrote one metering row with the coarse pass's 1,000 input tokens, against 5,000 spent. What landed in `app/api/knowledge/locate/route.ts`, with DWG-5:
+
+- **One row, after the last call.** Every model call (coarse, close-up, relocate) goes through one helper that sums its usage. One `recordAskUsage` row (`op: drawingLocate`) is written in a `finally` after the last call, covering all of them.
+- **A thrown call counts what it carries.** A thrown call adds whatever usage the error carries.
+- **The cap is checked before each extra call**, counting every op this month. This is a local gate, HLD-1 pattern; I-05's `lib/ai/aiGates` unifies it.
+
+Tests: `lib/__tests__/intelRoundGDrawingRoutes.test.ts`, block "DWG-5 / GOV-8":
+- "one coarse pass + four close-ups = five calls, one metering row covering all five, written after the last call";
+- "a refine call that throws still counts the usage it carries; the coarse point is kept".
+
+**Done-when.**
+- ✓ The metering row is written once, after all passes, with the summed usage.
+- ✓ The refine loop's per-call token counts appear in `ai_usage_events` for the op (summed into the one row).
+- Half done. ✓ A refine call that throws contributes the usage its error carries. ✗ For a refusal or an empty answer, the provider reports usage but `callAiModel` throws an `AiCallError` that does not carry it (`lib/ai/providerCall.ts`, I-03's file for ASK-3's `stopReason`; not this package's). The route already reads `usage` off any thrown error, so the limb closes with that additive change, and with no edit here. A call that fails on HTTP, or times out, gets no token report from the provider, so nothing is lost there.
+
+**Scope / residual.** OPEN until `AiCallError` carries the usage the provider reported (owner: `lib/ai/providerCall.ts`, I-03). The cross-route cap count is I-05's GOV-1.
 
 ---
 

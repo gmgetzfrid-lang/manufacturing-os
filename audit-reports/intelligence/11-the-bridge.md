@@ -398,7 +398,7 @@ app/api/equipment-bridge/route.ts:121-123 — `for (const t of (twins ?? []) as 
 ## BR-12 · Text-rich P&IDs are excluded from equipment extraction by a 2000-character page gate, so the Bridge sees nothing on them
 
 - **Severity:** MEDIUM
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Verification:** CONFIRMED
 - **Locations:** `lib/drawingText.ts:19-25`, `lib/knowledgeIngest.ts:231-262`, `lib/equipmentBridgeServer.ts:64-83`
 - **Independently verified:** ✓ **SURVIVES** — second independent adversarial pass. Vision does not rescue these pages: lib/drawingText.ts:609-635 `pageNeedsVision` returns false for any page over TEXTLESS_PAGE_MAX_CHARS (60) that is not 'thin' — `const thin = text.length <= THIN_PAGE_MAX_CHARS (1200); if (tagsFound >= (thin ? MIN_TAGS_THIN_PAGE : 1)) return false; if (!thin) return false;` — so a >2000-char sheet never gets the visionRead branch at knowledgeIngest.ts:214 either. The empty result is indistinguishable in the sweep modal from a genuinely tagless sheet ('0 tags'). Confirmed.
@@ -420,6 +420,23 @@ lib/drawingText.ts:23-25 — `export function isDrawingLikePage(pageText: string
 - [ ] a page classified as a drawing by any signal (title block found, doc_class='drawing', low text-to-area ratio) gets equipment extraction regardless of character count
 - [ ] or the threshold is raised/made per-library and the sweep distinguishes 'no tags found' from 'page skipped as prose'
 - [ ] a dense-but-drawing test fixture produces equipment entities
+
+**Resolution (2026-10-01, intelligence Round G, I-07).** Same change as DWG-7. Reproduced first (DEC-29): through the real ingest, a real 2,683-character TrueType P&ID page wrote zero `kind = 'equipment'` rows, so `computeForKnowledgeDoc` had nothing to bridge. What landed:
+
+- **Signals, not a ceiling.** `isDrawingLikePage` (`lib/drawingText.ts`) classifies a page over the 2,000-character fast path as a drawing by signals. The page must be lettered in capitals, and then either a tag list (4 or more tags or references per 1,000 characters) or a page whose own title block declares a drawing number.
+- **No ingest change needed.** Ingest calls it before extraction, so a dense drawing sheet now gets positional equipment extraction and a title-block identity, which the Bridge reads, without a change to `lib/knowledgeIngest.ts`.
+- **The lens tells skipped from tagless.** The drawing lens marks a text sheet with no tags as "Drawing, no tags" or "Prose" (`looksLike`).
+
+Tests:
+- `lib/__tests__/intelRoundGDrawing.test.ts` "yields equipment tags and a title-block identity past 2,000 characters — and no phantom pumps from line numbers" (real ingest, real PDF; fails at base);
+- `lib/__tests__/drawingText.test.ts` "DWG-7 / BR-12" (signals; prose stays prose; a notes sheet with a title block is a drawing).
+
+**Done-when.**
+- ✓ A page classified as a drawing by any of its signals (a title block found, tag density, capital lettering) gets equipment extraction regardless of character count. `doc_class` is not a per-page signal the extractor can see. Text-to-area ratio needs the page geometry, which the decision does not use.
+- ✓ The "or" alternative is not needed with the first criterion met. The drawing lens does tell a drawing with no tags apart from prose (DWG-7). The Bridge's sweep modal is I-11's (`lib/equipmentBridgeServer.ts`).
+- ✓ A dense-but-drawing test fixture produces equipment entities, through the real ingest.
+
+**Scope / residual.** Dense sheets indexed before this gain their equipment at their next re-index, and the Bridge sees them from then. Decision: `DEC-68` item 1.
 
 ---
 

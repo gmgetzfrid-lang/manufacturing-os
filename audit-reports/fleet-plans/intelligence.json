@@ -217,7 +217,8 @@
         "SEM-6 (remainder re-owned by the integrator 2026-10-01, orphan sweep: Resolve p_model per searched library with planQueryEmbedding(resolveCorpusModel(detail.models), connection), embed once per distinct (provider, model), and report libraries that contributed no semantic rows.)",
         "SEM-12 (remainder re-owned by the integrator 2026-10-01, orphan sweep: The ask response must carry retrievalCoverage { embedded, total } over every library searched (linked ones included); the page renderer is ready.)",
         "SEM-3 (remainder re-owned by the integrator 2026-10-01, orphan sweep: The ask route must embed the query via planQueryEmbedding (corpus provider/model) and report its reasons instead of the empty catch; the removal dialog must say vectors work again only with a key for the provider that built them.)",
-        "GOV-9 (remainder re-owned by the integrator 2026-10-01, orphan sweep: CitationOut must carry the chunk source/model and the answer UI mark vision-derived quotes; the ask prompt must flag transcribed passages; title-block fields from a vision transcript must not be authoritative identity without …)"
+        "GOV-9 (remainder re-owned by the integrator 2026-10-01, orphan sweep: CitationOut must carry the chunk source/model and the answer UI mark vision-derived quotes; the ask prompt must flag transcribed passages; title-block fields from a vision transcript must not be authoritative identity without …)",
+        "GOV-8 (added at the I-07 merge 2026-10-01: AiCallError carries the usage the provider reported — lib/ai/providerCall.ts — so a failed call's tokens are metered; the cross-route cap count is I-05's GOV-1)"
       ],
       "severityMix": "0 CRITICAL / 5 HIGH / 13 MEDIUM / 1 LOW",
       "files": [
@@ -279,7 +280,8 @@
         "R&P EGRESS-3 / Round C1 (ToolContext.principal, readableIds/unreadableMirrors) — build on it; DEC-43; DEC-35 (controller tier via helper, no new literals)",
         "I-07 DWG-6 changes drawing_audit_logs' unique key (library_id) — land the log_audit_completion upsert after I-07's migration, or agree the key now",
         "projects-and-cost fleet (unplanned) targets lib/bidTab.ts (COST-3, COST-5 scoreBids) — PR-2 edits validateParsedQuote and the cost-docs route only; cross-reference in both records",
-        "I-05 GOV-1 makes orchestrator spend count (ORCH-5 is I-05's); I-05 reservation for ORCH-7"
+        "I-05 GOV-1 makes orchestrator spend count (ORCH-5 is I-05's); I-05 reservation for ORCH-7",
+        "I-07 merged 2026-10-01: 20261124 makes drawing_audit_logs unique on (org_id, library_id, sheet_number, revision_code) NULLS NOT DISTINCT — log_audit_completion must upsert org-wide rows (library_id NULL) on that key (DEC-68 item 2), and check_audit_history must not answer 'already audited' for a provisional row (DEC-68). 20261124's paste waits for this package's deploy (audit-reports/MIGRATION-PASTE-ORDER.md)."
       ],
       "sequencingNotes": "Phase 1 per 99 ('IEDGE-1 and IEDGE-2 belong in Phase 1'). Order: graph/ask ACL (fail closed) -> IEDGE-11 contract -> ORCH-4 proposal store + execute binding -> ORCH-1/PR-1 notify authority + ORCH-8 helper -> ORCH-10 -> ORCH-6/ORCH-9 -> ORCH-11 -> PR-2. Verified sound, keep: the fingerprint comparison, the handoff (href) actions never executing server-side, readableIds fail-closed.",
       "decisionsNeeded": [
@@ -892,7 +894,10 @@
       "findings": [
         "ING-13 (opened 2026-10-01 at the I-02b integration: the reindex action and keyless drivers have no server-side vision-key gate; the route's leftovers are free text)",
         "ING-6 (the fileBehind drain test the I-06 merge left owed; ING-6's other open limbs are I-03's and I-07's)",
-        "ILIFE-13 (remainder re-owned by the integrator 2026-10-01, orphan sweep: Forward `unsynced` in the maintenance cron's knowledgeSync result, and show a per-library last-synced timestamp on the knowledge library UI. Plus paste 20261122 (last_synced_at).)"
+        "ILIFE-13 (remainder re-owned by the integrator 2026-10-01, orphan sweep: Forward `unsynced` in the maintenance cron's knowledgeSync result, and show a per-library last-synced timestamp on the knowledge library UI. Plus paste 20261122 (last_synced_at).)",
+        "DWG-2 (added at the I-07 merge 2026-10-01: the ingest half — store line numbers as their own entity kind 'line' in lib/knowledgeIngest.ts beside extractEquipmentTags, using I-07's extractLineNumbers; 20261124's inventory counts the equipment rows minted from line numbers)",
+        "DWG-3 (added at the I-07 merge 2026-10-01: the ingest half — norm() in lib/knowledgeIngest.ts divides by the unrotated, CropBox-offset viewport and writes a new pos_source; old rows re-derived or marked, per the record)",
+        "DWG-8 (added at the I-07 merge 2026-10-01: the ingest half — store the full line's drawing reference (or a longer cut) for opc rows on knowledge_page_entities; a new column is a migration)"
       ],
       "files": [
         "app/api/knowledge/ingest/route.ts (reindex(): refuse 409 when visionPagesToReread > 0 or visionAllPages and the caller fails the vision test; structured leftovers next to errors)",

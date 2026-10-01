@@ -314,7 +314,7 @@ ask/route.ts:1442-1450, the full calcProtocol string. The only post-processing o
 ## PR-10 · The locate prompt forbids guessing; the code caches whatever comes back as a permanent 'vision' position
 
 - **Severity:** MEDIUM
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Verification:** CONFIRMED
 - **Locations:** `lib/drawingLocate.ts:34-35`, `app/api/knowledge/locate/route.ts:281-288`, `app/api/knowledge/locate/route.ts:236-279`, `lib/drawingLocate.ts:68-97`
 - **Independently verified:** ✓ **SURVIVES** — second independent adversarial pass. The repo's own designed remedy is dead code: `buildRelocateUser` (lib/drawingLocate.ts:102), written for exactly the 'no pipe line-work near there → summary-row hit' case, has zero callers repo-wide. The only path that ever clears a cached vision point is a full re-ingest (lib/knowledgeIngest.ts:400-402 deletes the page's entities); no UI or API can correct one.
@@ -337,6 +337,31 @@ locate/route.ts:282-288 is the cache write, inside a loop over every returned po
 - [ ] the relocate round (buildRelocateUser) is wired in, or the dead helper is removed
 - [ ] a viewer can reject a marker and clear the cached position
 
+**Resolution (2026-10-01, intelligence Round G, I-07).** Reproduced first (DEC-29). Against the base route, a coarse point whose close-up did not see the tag was cached as the tag's `vision` position, and no route could clear it short of a library rebuild. The tests below fail there. What landed:
+
+- **An estimate, labelled as one.** A cached vision position is the model's estimate, and the route and viewer say so.
+  - `app/api/knowledge/locate/route.ts` returns every `pos_source = 'vision'` position with `approximate: true` and `readOnRevision`, the knowledge document's `source_rev`.
+  - A rev-up or a rebuild clears every page entity, cached positions included, through `resetKnowledgeIndex` (DEC-58). That is the decision's default: they expire on rev-up.
+  - `components/knowledge/CitedPageViewer.tsx` labels the marker "~ AI estimate", with a tooltip "AI estimate (read on rev C) — approximate, not surveyed", and keeps the dashed tolerance box.
+- **The relocate round is wired** (DWG-13). A close-up that does not see the tag refutes the coarse point. One relocate round asks again with `buildRelocateUser`; a point a close-up refuted is never cached. A point no close-up checked (a tag past the first four, or one the refine loop never reached because time, the cap, a provider error or the canvas stopped it) is cached as the coarse estimate it is, returned `approximate` and rejectable like every other estimate. (Corrected in the review fix pass: this line first said "a point no round confirmed is never cached", which the code never did.)
+- **A viewer can reject an estimate.** `POST /api/knowledge/locate { action: "reject", orgId, documentId, page, tags: [tag] }` clears `nx`/`ny`/`pos_source` on that page's row, only where `pos_source = 'vision'`. A text-layer position is read from the PDF and cannot be rejected. The same fail-closed ACL as any locate read applies; the write is checked and reports `cleared`. The viewer puts a ✕ on each estimate.
+
+Tests: `lib/__tests__/intelRoundGDrawingRoutes.test.ts`:
+- "a close-up that does not see the tag triggers buildRelocateUser; the relocated point is cached as an estimate" (asserts `approximate` and `readOnRevision`);
+- "when the relocate round finds nothing either, the tag is not visible and nothing is cached";
+- "a viewer can reject an AI estimate — and only an estimate".
+
+Also `lib/__tests__/drawingLocate.test.ts` "buildRelocateUser — the relocate round says what was actually observed".
+
+**Done-when.**
+- ✓ A cached vision position records that it is a model estimate (`pos_source 'vision'`, returned as `approximate` with the revision it was read on), and the viewer marker says so.
+- ✓ The relocate round (`buildRelocateUser`) is wired in.
+- ✓ A viewer can reject a marker and clear the cached position.
+
+**Scope / residual.** Positions cached before this were never checked by a relocate round. They still render as estimates and can be rejected. Decision: `DEC-68` item 3.
+
+**Review fix pass (2026-10-01, intelligence Round G).** The record (and `DEC-68` item 3, its acceptance line, the locate route's header and `lib/drawingLocate.ts`) said a point no round confirmed is never cached. The code caches every coarse point no close-up refuted, including ones no close-up checked. That is consistent with this finding's done-when (each such point is cached and returned as an approximate estimate, labelled "~ AI estimate", rejectable), so the claim was corrected rather than the behaviour: dropping unchecked points would re-bill the coarse pass on every view of a sheet whose canvas is unavailable. Pinned by `lib/__tests__/intelRoundGDrawingRoutes.test.ts` "a point no close-up checked (past REFINE_MAX) is cached as the coarse estimate it is — approximate, rejectable".
+
 ---
 
 <a id="pr-11"></a>
@@ -344,7 +369,7 @@ locate/route.ts:282-288 is the cache write, inside a loop over every returned po
 ## PR-11 · The vision transcription prompt and the title-block parser disagree: an off-page connector can become a sheet's declared identity
 
 - **Severity:** MEDIUM
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Verification:** CONFIRMED
 - **Locations:** `lib/knowledgeVision.ts:36-47`, `lib/drawingText.ts:190-211`, `lib/knowledgeIngest.ts:281-293`, `app/api/knowledge/ask/route.ts:1059-1061`, `lib/drawingText.ts:422-500`
 - **Independently verified:** ✓ **SURVIVES** — second independent adversarial pass. Correct, and the gap is narrower than 'no guard' but real: the NO/NUMBER requirement stops the bare 'CONT ON DWG X' phrasing and nothing else, while 'CONT ON DWG NO. X' — ordinary on P&IDs — passes and wins by being first in the transcript. Nothing cross-checks the declared identity against the filename or against other pages of the same document.
@@ -366,6 +391,26 @@ Verified by executing the regex: `node -e` over TB_DWG_RE against the three OPC 
 - [ ] the vision prompt emits the title block inside an unambiguous delimited region (e.g. a === TITLE BLOCK === fence) and extractTitleBlock parses only that region
 - [ ] extractTitleBlock rejects a candidate preceded by continuation phrasing (CONT ON / CONTINUED ON / SEE / TO / FROM) within a few tokens
 - [ ] a test covers "CONT ON DWG NO. 040-B-2002 SH 1" and asserts drawingNumber is null
+
+**Resolution (2026-10-01, intelligence Round G, I-07).** Reproduced first (DEC-29). The base `extractTitleBlock("CONT ON DWG NO. 040-B-2002 SH 1")` returned `040-B-2002`. Through the real ingest, such a transcript declared the sheet to be the one it points at. What landed:
+
+- **A fenced title block, read alone.** `VISION_SYSTEM` (`lib/knowledgeVision.ts`) asks for the title block from the border's own fields only, fenced between `TITLE_BLOCK_OPEN` (`=== TITLE BLOCK ===`) and `TITLE_BLOCK_CLOSE`, both constants from `lib/drawingText.ts`. When the fence is present, `extractTitleBlock` reads ONLY the fenced lines. An unclosed fence still bounds the read to the border's fields.
+- **Continuation phrasing marks a connector.** On a text layer (no fence), a labelled number introduced by continuation phrasing directly before the label, on the same line, is a connector, never the identity, for the drawing number and the sheet alike: `CONT ON` / `CONTINUED ON` / `CONT'D` / `SEE` / `TO` / `FROM` / `REF` / `REFER TO`. A destination on the line above a border strip (`TO V-3`) does not disqualify the border.
+
+Tests:
+- `lib/__tests__/drawingText.test.ts`, block "PR-11 — a connector never becomes the sheet's identity":
+  - "CONT ON DWG NO. 040-B-2002 SH 1", "CONTINUED ON DRAWING NO 021-PID-0107", "SEE DWG NO.", "FROM DWG #" and "REF DWG NO." all give `drawingNumber: null`;
+  - a text layer with the connector first still declares its border's number;
+  - a fenced transcript is read only inside the fence;
+  - an unclosed fence is bounded.
+- `lib/__tests__/intelRoundGDrawing.test.ts` "a labelled connector before the fenced title block never becomes the identity …" (real ingest; fails at base).
+
+**Done-when.**
+- ✓ The vision prompt emits the title block inside an unambiguous delimited region, and `extractTitleBlock` parses only that region when it is present.
+- ✓ `extractTitleBlock` rejects a candidate preceded by continuation phrasing (CONT ON / CONTINUED ON / SEE / TO / FROM / REF).
+- ✓ A test covers "CONT ON DWG NO. 040-B-2002 SH 1" and asserts `drawingNumber` is null.
+
+**Scope / residual.** Sheets whose identity was taken from a connector before this keep the wrong `self` row until their next re-index. The fence also carries over to old transcripts: a transcript written before the fence existed is parsed as a text layer, with the connector rejection.
 
 ---
 
@@ -396,5 +441,11 @@ Two search shapes confirm the set: `grep -rn ai_key_agreements` and `grep -rn AG
 - [ ] flows/read is rewritten to call governedAiCall with its images instead of duplicating a weaker gate stack, and the two stale 'doesn't carry images' comments are deleted
 - [ ] knowledge/locate and templates/generate check ai_key_agreements before their first provider call, returning 428 with agreementText like the ask route
 - [ ] a test asserts that every route importing callAiModel either goes through governedAiCall or checks AGREEMENT_VERSION
+
+**Pointer (2026-10-01, intelligence Round G, I-07): the locate limb.** No status change; PR-12 is I-05's.
+- **The gate.** `app/api/knowledge/locate/route.ts` checks `ai_key_agreements` (scope `use`, `AGREEMENT_VERSION`) before its first provider call, the same record the ask route checks. A pre-migration database with no table skips the gate, as there.
+- **The answer is still 200.** An unsigned caller gets the free answer (cached text-layer positions and the "where else" jumps) with `skipped` and `agreementRequired`, `agreementText` and `agreementVersion`. It is not a bare 428, because opening a sheet must keep working without a provider call. A read error on the agreement table refuses too.
+- **Tested.** `lib/__tests__/intelRoundGDrawingRoutes.test.ts` "an unreadable ledger refuses rather than assume $0; an unsigned agreement sends nothing".
+- **Local.** It is a local gate, the HLD-1 pattern. I-05's `lib/ai/aiGates` is the one helper and unifies it (and may choose the 428).
 
 ---

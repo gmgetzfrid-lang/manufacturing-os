@@ -1,0 +1,216 @@
+// @vitest-environment jsdom
+//
+// intelligence Round G (I-07) review fix pass 2 — the Drawing intelligence
+// panel's "Rebuild index" as RENDERED (ING-12). Its loop follows the route's
+// cursor; a round that fails must not discard what the earlier rounds did:
+// those documents ARE queued and re-indexing, so the toast says both, and
+// the page is told to refresh whenever anything was queued.
+
+import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
+import React, { act } from "react";
+import { createRoot, type Root } from "react-dom/client";
+
+const ui = vi.hoisted(() => ({ showToast: vi.fn(), appConfirm: vi.fn(async () => true), getDrawingIntel: vi.fn(), recordDrawingAudit: vi.fn() }));
+
+vi.mock("@/lib/supabase", () => ({
+  supabase: { auth: { getSession: async () => ({ data: { session: { access_token: "tok" } } }) } },
+}));
+vi.mock("@/components/providers/ToastProvider", () => ({ useToast: () => ({ showToast: ui.showToast }) }));
+vi.mock("@/components/providers/DialogProvider", () => ({ appConfirm: ui.appConfirm }));
+vi.mock("@/lib/knowledge", () => ({
+  getDrawingIntel: ui.getDrawingIntel, downloadEquipmentRegister: vi.fn(), recordDrawingAudit: ui.recordDrawingAudit,
+}));
+
+import DrawingIntelPanel from "@/components/knowledge/DrawingIntelPanel";
+
+(globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
+
+const INTEL = {
+  sheetCount: 8, readyCount: 8, suggestions: [],
+  census: { totalDistinct: 1, totalOccurrences: 1, categories: [], unknownPrefixes: [] },
+  audit: { resolved: 0, totalRefs: 0, seriesInScope: [], missingInSeries: [], outOfScope: [], oneWay: [] },
+};
+
+let host: HTMLDivElement;
+let root: Root;
+beforeEach(() => {
+  host = document.createElement("div");
+  document.body.appendChild(host);
+  root = createRoot(host);
+  ui.showToast.mockReset();
+  ui.getDrawingIntel.mockResolvedValue(INTEL);
+});
+afterEach(() => {
+  act(() => root.unmount());
+  host.remove();
+  vi.unstubAllGlobals();
+});
+
+const json = (status: number, body: unknown) => ({ ok: status >= 200 && status < 300, status, json: async () => body });
+
+async function pressRebuild(onRebuilt: () => void) {
+  await act(async () => {
+    root.render(React.createElement(DrawingIntelPanel, { orgId: "o1", libraryId: "kl-1", isController: true, refreshKey: 0, onRebuilt }));
+  });
+  const button = [...host.querySelectorAll("button")].find((b) => b.textContent?.includes("Rebuild index"));
+  expect(button).toBeTruthy();
+  await act(async () => { button!.click(); });
+  await act(async () => { await new Promise((r) => setTimeout(r, 0)); });
+}
+
+describe("the panel's rebuild keeps what earlier rounds did when a later round fails (review fix pass 2)", () => {
+  it("round 1 queues six, round 2 fails: the toast says both, and the page refreshes", async () => {
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(json(200, { ok: true, docs: 6, busy: [], errors: [], remaining: 2, cursor: "r-5" }))
+      .mockResolvedValueOnce(json(500, { ok: false, docs: 0, busy: [], errors: ["D7.pdf: boom"], remaining: 2, cursor: "r-5", error: "The rebuild failed: D7.pdf: boom" }));
+    vi.stubGlobal("fetch", fetchMock);
+    const onRebuilt = vi.fn();
+    await pressRebuild(onRebuilt);
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(JSON.parse(fetchMock.mock.calls[1][1].body)).toMatchObject({ action: "rebuild", cursor: "r-5" });
+    const titles = ui.showToast.mock.calls.map((c) => c[0].title as string);
+    expect(titles).toContainEqual(expect.stringMatching(/stopped part-way \(The rebuild failed: D7\.pdf: boom\) — 6 document\(s\) already queued are re-indexing/));
+    expect(titles).toContainEqual(expect.stringMatching(/Part of the rebuild failed: D7\.pdf: boom/));
+    expect(onRebuilt).toHaveBeenCalledTimes(1);
+  });
+
+  it("a network failure after a good round still reports the queued documents", async () => {
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(json(200, { ok: true, docs: 6, busy: [], errors: [], remaining: 2, cursor: "r-5" }))
+      .mockRejectedValueOnce(new Error("Failed to fetch"));
+    vi.stubGlobal("fetch", fetchMock);
+    const onRebuilt = vi.fn();
+    await pressRebuild(onRebuilt);
+    expect(ui.showToast.mock.calls.map((c) => c[0].title)).toContainEqual(expect.stringMatching(/Failed to fetch\) — 6 document\(s\) already queued/));
+    expect(onRebuilt).toHaveBeenCalledTimes(1);
+  });
+
+  it("a first round that fails with nothing queued is just the error — no refresh", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValueOnce(json(500, { ok: false, docs: 0, busy: [], errors: ["x"], remaining: 0, cursor: null, error: "The rebuild failed: x" })));
+    const onRebuilt = vi.fn();
+    await pressRebuild(onRebuilt);
+    expect(ui.showToast.mock.calls.map((c) => c[0])).toContainEqual(expect.objectContaining({ type: "error", title: "The rebuild failed: x" }));
+    expect(onRebuilt).not.toHaveBeenCalled();
+  });
+});
+
+describe("the lens and the record name what they did not judge (review fix pass 3)", () => {
+  async function render() {
+    await act(async () => {
+      root.render(React.createElement(DrawingIntelPanel, { orgId: "o1", libraryId: "kl-2", isController: true, refreshKey: 0, onRebuilt: () => undefined }));
+    });
+  }
+
+  it("the lens names the series whose gaps it does not judge — the record's own rule and words", async () => {
+    ui.getDrawingIntel.mockResolvedValue({ ...INTEL, seriesNotJudged: ["025-PID"] });
+    await render();
+    expect(host.textContent).toMatch(/Gaps are not judged in 025-PID — this library holds no more than one drawing number of that series/);
+  });
+
+  const pressRecord = async () => {
+    const button = [...host.querySelectorAll("button")].find((b) => b.textContent?.includes("Record audit"));
+    expect(button).toBeTruthy();
+    await act(async () => { button!.click(); });
+    await act(async () => { await new Promise((r) => setTimeout(r, 0)); });
+  };
+
+  it("the record names the series it did not judge, in the record's own words", async () => {
+    ui.recordDrawingAudit.mockResolvedValue({
+      recorded: 0, counts: {}, sheets: [], alreadyRecorded: [{ name: "A.pdf", sheetNumber: "025-PID-0104", revision: "C", status: "flagged" }],
+      notRecorded: [], seriesNotJudged: ["040-TK"],
+    });
+    await render();
+    await pressRecord();
+    expect(host.textContent).toMatch(/this library holds no more than one drawing number of\s*that series/);
+    expect(host.textContent).not.toMatch(/holds only one sheet of/);
+    // Nothing was kept or left waiting: nothing is said about it.
+    expect(host.textContent).not.toMatch(/stored verdict\(s\) kept|waiting on a sheet not read whole/);
+  });
+
+  it("a refused record (a partial index) is the toast, and nothing is shown as recorded", async () => {
+    const message = "This library's index holds more rows than one pass can read whole, so nothing was recorded — an audit " +
+      "computed from part of the set would file gaps that are not there.";
+    ui.recordDrawingAudit.mockRejectedValue(new Error(message));
+    await render();
+    await pressRecord();
+    expect(ui.showToast.mock.calls.map((c) => c[0])).toContainEqual({ type: "error", title: message });
+    expect(host.textContent).not.toMatch(/Audit recorded/);
+  });
+
+  // Review fix pass 5: the route said a stored verdict was kept (keptStored),
+  // or left waiting on a sheet not read whole (waitingOn), only in its JSON.
+  it("a stored verdict kept, or left waiting, is shown with what was computed now — and the toast counts both (review fix pass 5)", async () => {
+    ui.recordDrawingAudit.mockResolvedValue({
+      recorded: 1, counts: { passed: 1 }, sheets: [], alreadyRecorded: [], notRecorded: [], seriesNotJudged: [],
+      keptStored: [{ sheetNumber: "025-PID-0104", revision: "C", stored: "flagged", computed: "passed" }],
+      waitingOn: [{
+        sheetNumber: "025-PID-0106", revision: "B", stored: "passed", computed: "flagged",
+        waitingOn: ["025-PID-0105.pdf (page(s) 2 never read)"],
+      }],
+    });
+    await render();
+    await pressRecord();
+    expect(host.textContent).toMatch(/1 stored verdict\(s\) kept — a verdict at a known revision is never lowered:\s*025-PID-0104 rev C: kept flagged — computed passed now/);
+    expect(host.textContent).toMatch(/1 left as stored, waiting on a sheet not read whole yet:\s*025-PID-0106 rev B: kept passed — computed flagged now, waiting on 025-PID-0105\.pdf \(page\(s\) 2 never read\) — judged again once it is\./);
+    expect(ui.showToast.mock.calls.map((c) => c[0])).toContainEqual(expect.objectContaining({
+      type: "success",
+      title: "Audit recorded for 1 sheet(s) — 1 stored verdict(s) kept, differing from what was computed now — 1 waiting on a sheet not read whole yet.",
+    }));
+  });
+
+  // Review fix pass 8: a gap a document parked on AI vision may yet hold on
+  // a page it has not read is shown as a gap — never hidden as unchecked —
+  // and said to be unsettled.
+  it("a gap a parked document may yet hold is listed as a gap, and says it is not settled (review fix pass 8)", async () => {
+    ui.getDrawingIntel.mockResolvedValue({
+      ...INTEL,
+      audit: {
+        ...INTEL.audit,
+        missingInSeries: [
+          { ref: "040-TK-0009", referencedBy: ["040-TK-0001.pdf"], count: 1, pendingIn: ["025-PID-0107.pdf (page(s) 1 never read)"] },
+          { ref: "040-TK-0010", referencedBy: ["040-TK-0002.pdf"], count: 1 },
+        ],
+      },
+    });
+    await render();
+    const toggle = [...host.querySelectorAll("button")].find((b) => b.textContent?.includes("referenced but not loaded"));
+    expect(toggle).toBeTruthy();
+    await act(async () => { toggle!.click(); });
+    expect(host.textContent).toMatch(/040-TK-0009referenced 1× by 040-TK-0001\.pdf — not settled yet: 025-PID-0107\.pdf \(page\(s\) 1 never read\) still has pages waiting on AI vision/);
+    expect(host.textContent).toMatch(/040-TK-0010referenced 1× by 040-TK-0002\.pdf(?! — not settled)/);
+  });
+
+  it("an unpaired box on a page whose box numbers were never read says which page (review fix pass 5)", async () => {
+    ui.getDrawingIntel.mockResolvedValue({
+      ...INTEL,
+      opcUnpaired: [{
+        box: "14", from: "025-PID-0104.pdf", to: "combined.pdf", line: "OPC 14: DWG 025-PID-0105 SH 1 — TO V-1402",
+        why: "page 1 of it is the sheet named, and no box numbers were read there",
+      }],
+    });
+    await render();
+    const toggle = [...host.querySelectorAll("button")].find((b) => b.textContent?.includes("connector box(es) not paired"));
+    expect(toggle).toBeTruthy();
+    await act(async () => { toggle!.click(); });
+    expect(host.textContent).toMatch(/combined\.pdf \(page 1 of it is the sheet named, and no box numbers were read there\)/);
+  });
+
+  // Review fix pass 10: since fix pass 9 a provisional verdict is audited
+  // again, and rewritten, on every record until it settles — the footer
+  // said recorded sheets are not audited again, and the count gave no hint
+  // that the same unchanged rows were being written again.
+  it("the record says a waiting verdict is audited again on every record, and counts the unchanged ones apart (review fix pass 10)", async () => {
+    ui.recordDrawingAudit.mockResolvedValue({
+      recorded: 2, counts: { flagged: 2 }, stillWaiting: 1, sheets: [], alreadyRecorded: [], notRecorded: [], seriesNotJudged: [],
+      keptStored: [], waitingOn: [],
+    });
+    await render();
+    await pressRecord();
+    expect(host.textContent).toMatch(/A verdict that waits on a sheet not read whole yet is audited again on every record\s*until it settles\./);
+    expect(host.textContent).toMatch(/1 of them unchanged — still waiting on a sheet not read whole yet, and\s*audited again on every record until it settles\./);
+    expect(ui.showToast.mock.calls.map((c) => c[0])).toContainEqual(expect.objectContaining({
+      type: "success",
+      title: "Audit recorded for 2 sheet(s) (1 of them unchanged, still waiting on a sheet not read whole yet).",
+    }));
+  });
+});

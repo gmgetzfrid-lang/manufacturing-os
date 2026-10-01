@@ -13,8 +13,10 @@
 //     export, so highlighting finds nothing and the sheet just opens with
 //     the engineer hunting an E-size page by eye. Instead we POINT: a ring
 //     over each tag the answer is about, positioned from stored coordinates
-//     (exact, from ingest) or located on demand by the model (approximate,
-//     and labeled that way). Plus a find box for any other tag.
+//     (from ingest, mapped through the page's /Rotate, CropBox and
+//     /UserUnit — DWG-3) or located on demand by the model (an ESTIMATE,
+//     labeled that way, and rejectable — PR-10). Plus a find box for any
+//     other tag.
 //
 // Built on the same react-pdf + self-hosted worker the document viewers use.
 
@@ -29,6 +31,8 @@ import {
 } from "lucide-react";
 import { getSignedUrlForPath } from "@/lib/storage";
 import { locateTagsOnPage, type TagPosition, type TagElsewhere } from "@/lib/knowledge";
+import { textMarkPosition, type PageGeometry } from "@/lib/drawingLocate";
+import { supabase } from "@/lib/supabase";
 
 pdfjs.GlobalWorkerOptions.workerSrc = "/pdf.worker.min.mjs";
 
@@ -36,6 +40,25 @@ const escapeHtml = (s: string) =>
   s.replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]!));
 
 const normalize = (s: string) => s.toLowerCase().replace(/[^a-z0-9]+/g, " ").trim();
+
+/** A position as the locate route returns it: an AI estimate says so, with
+ *  the revision it was read on (PR-10). */
+type Mark = TagPosition & { approximate?: boolean; readOnRevision?: string | null };
+
+/** "This AI estimate is wrong" — clears the cached point so the next look
+ *  asks the model afresh (PR-10). Only estimates can be rejected. */
+async function rejectVisionMark(input: { orgId: string; documentId: string; page: number; tag: string }): Promise<number> {
+  const { data: { session } } = await supabase.auth.getSession();
+  if (!session?.access_token) throw new Error("Not authenticated");
+  const res = await fetch("/api/knowledge/locate", {
+    method: "POST",
+    headers: { "content-type": "application/json", authorization: `Bearer ${session.access_token}` },
+    body: JSON.stringify({ orgId: input.orgId, documentId: input.documentId, page: input.page, tags: [input.tag], action: "reject" }),
+  });
+  const data = (await res.json().catch(() => null)) as { cleared?: number; error?: string } | null;
+  if (!res.ok || !data) throw new Error(data?.error || `HTTP ${res.status}`);
+  return Number(data.cleared ?? 0);
+}
 
 /** One stop on the answer's evidence trail — everything needed to open a
  *  document at a cited page with its passage highlighted. */
@@ -234,7 +257,10 @@ export default function CitedPageViewer({
   }, [list, viewKey]);
 
   // ── Pointing at tags on a drawing ────────────────────────────────────
-  const [marks, setMarks] = useState<TagPosition[]>([]);
+  const [marks, setMarks] = useState<Mark[]>([]);
+  // The page as drawn: /Rotate, CropBox, /UserUnit — what a text-layer mark
+  // is mapped through (DWG-3). Null until the page has loaded.
+  const [geometry, setGeometry] = useState<PageGeometry | null>(null);
   const [elsewhere, setElsewhere] = useState<TagElsewhere[]>([]);
   const [locating, setLocating] = useState(false);
   const [locateNote, setLocateNote] = useState<string | null>(null);
@@ -309,6 +335,32 @@ export default function CitedPageViewer({
     setPageNumber(e.page);
     setPendingFind(e.tag);
   };
+
+  /** Clear an AI estimate the reader says is wrong. */
+  const reject = async (m: Mark) => {
+    if (!orgId || !view.documentId) return;
+    try {
+      await rejectVisionMark({ orgId, documentId: view.documentId, page: pageNumber, tag: m.tag });
+      setMarks((prev) => prev.filter((x) => x.tag !== m.tag));
+      setLocateNote(`Cleared the AI's estimate for ${m.tag} — Find asks the model to look again.`);
+    } catch (e) {
+      setLocateNote(`Couldn't clear ${m.tag}: ${(e as Error).message}`);
+    }
+  };
+
+  // Where each mark is drawn. A text-layer position is mapped through the
+  // page's own geometry; one that cannot be placed honestly is not drawn.
+  const placed = useMemo(() => {
+    const out: Array<Mark & { x: number; y: number }> = [];
+    let unplaced = 0;
+    for (const m of marks) {
+      if (m.source !== "text") { out.push({ ...m, x: m.nx, y: m.ny }); continue; }
+      if (!geometry) continue;                       // page not loaded yet
+      const at = textMarkPosition(m.nx, m.ny, geometry);
+      if (at) out.push({ ...m, x: at.nx, y: at.ny }); else unplaced++;
+    }
+    return { marks: out, unplaced };
+  }, [marks, geometry]);
 
   const searchNorm = useMemo(() => normalize(findApplied), [findApplied]);
 
@@ -444,7 +496,13 @@ export default function CitedPageViewer({
             </form>
             {marks.some((m) => m.source === "vision") && (
               <span className="text-[10px] text-sky-700 dark:text-sky-400">
-                Blue swipes are approximate — this sheet was read by AI, not extracted.
+                Blue swipes are the AI&apos;s estimate — approximate, not extracted. Wrong spot? Press ✕ on it to clear it.
+              </span>
+            )}
+            {placed.unplaced > 0 && (
+              <span className="text-[10px] text-amber-700 dark:text-amber-400">
+                {placed.unplaced} tag position(s) on this rotated sheet were cut off when it was indexed and can&apos;t be placed —
+                they&apos;re not drawn rather than drawn in the wrong spot.
               </span>
             )}
             {elsewhere.map((e) => (
@@ -496,6 +554,7 @@ export default function CitedPageViewer({
                   width={Math.round(baseWidth * zoom)}
                   customTextRenderer={textRenderer}
                   renderAnnotationLayer={false}
+                  onLoadSuccess={(p) => setGeometry({ rotate: p.rotate, view: [...p.view], userUnit: p.userUnit })}
                   className="shadow-xl"
                   loading={<div className="py-16 text-center"><Loader2 className="w-5 h-5 animate-spin inline text-[var(--color-text-muted)]" /></div>}
                 />
@@ -505,12 +564,15 @@ export default function CitedPageViewer({
                     a big circle reads as "somewhere in here". Vision-located
                     marks get a wider swipe and a dashed tolerance box —
                     honest about being approximate without being a blob. */}
-                {marks.map((m) => {
+                {placed.marks.map((m) => {
                   const approx = m.source !== "text";
                   return (
                     <div key={m.tag}
                       className="absolute pointer-events-none -translate-x-1/2 -translate-y-1/2"
-                      style={{ left: `${m.nx * 100}%`, top: `${m.ny * 100}%` }}>
+                      style={{ left: `${m.x * 100}%`, top: `${m.y * 100}%` }}
+                      title={approx
+                        ? `AI estimate${m.readOnRevision ? ` (read on rev ${m.readOnRevision})` : ""} — approximate, not surveyed`
+                        : undefined}>
                       {approx && (
                         <span className="absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2
                           w-24 h-14 rounded-md border-2 border-dashed border-sky-500/70" />
@@ -521,8 +583,15 @@ export default function CitedPageViewer({
                           : "w-14 h-4 bg-yellow-300/60 ring-1 ring-amber-500/70"
                       }`} />
                       <span className="absolute left-1/2 -translate-x-1/2 top-full mt-1 whitespace-nowrap
-                        px-1.5 py-0.5 rounded text-[10px] font-black text-white bg-slate-900/85">
-                        {m.tag}{approx ? " ~" : ""}
+                        px-1.5 py-0.5 rounded text-[10px] font-black text-white bg-slate-900/85 inline-flex items-center gap-1">
+                        {m.tag}{approx ? " ~ AI estimate" : ""}
+                        {approx && canLocate && (
+                          <button type="button" onClick={() => void reject(m)}
+                            className="pointer-events-auto ml-0.5 px-1 rounded bg-white/15 hover:bg-rose-500/80"
+                            title="Wrong spot — clear this AI estimate">
+                            ✕
+                          </button>
+                        )}
                       </span>
                     </div>
                   );
