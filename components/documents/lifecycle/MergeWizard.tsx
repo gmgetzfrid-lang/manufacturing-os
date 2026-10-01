@@ -23,6 +23,7 @@ import { supabase } from "@/lib/supabase";
 import { mergeDocuments, type MergeTargetSpec } from "@/lib/documentLifecycle";
 import { heldRetirementDecision, type HeldRetirementDecision } from "@/lib/revisions";
 import { listActiveHoldsForDocument, type HoldRecord } from "@/lib/holds";
+import { holdReasonLabel } from "@/lib/holdGate";
 import { isControllerPrincipal } from "@/lib/permissions";
 import { useRole } from "@/components/providers/RoleContext";
 import HeldSourceNotice, { holdSetKey } from "@/components/documents/lifecycle/HeldSourceNotice";
@@ -129,7 +130,7 @@ export default function MergeWizard(props: MergeWizardProps) {
     .map((s) => ({ doc: s, holds: holdsBySource?.[s.id!] ?? [] }));
   const holdDecision = heldRetirementDecision({
     operation: "merge",
-    held: heldAbsorbed.map((h) => ({ label: h.doc.documentNumber || h.doc.title || "A source", reasons: h.holds.map((x) => x.reason) })),
+    held: heldAbsorbed.map((h) => ({ label: h.doc.documentNumber || h.doc.title || "A source", reasons: h.holds.map(holdReasonLabel) })), // VFY-6 (P15): a custom hold by its description
     isController,
   });
   const holdKey = holdSetKey(heldAbsorbed.flatMap((h) => h.holds));

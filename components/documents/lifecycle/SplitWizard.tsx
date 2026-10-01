@@ -28,6 +28,7 @@ import {
 import { splitDocument, type SplitTargetSpec } from "@/lib/documentLifecycle";
 import { heldRetirementDecision, type HeldRetirementDecision } from "@/lib/revisions";
 import { listActiveHoldsForDocument, type HoldRecord } from "@/lib/holds";
+import { holdReasonLabel } from "@/lib/holdGate";
 import { isControllerPrincipal } from "@/lib/permissions";
 import { useRole } from "@/components/providers/RoleContext";
 import HeldSourceNotice, { holdSetKey } from "@/components/documents/lifecycle/HeldSourceNotice";
@@ -120,7 +121,7 @@ export default function SplitWizard(props: SplitWizardProps) {
   const holdDecision = heldRetirementDecision({
     operation: "split",
     held: sourceHolds && sourceHolds.length > 0
-      ? [{ label: doc.documentNumber || doc.title || "This document", reasons: sourceHolds.map((h) => h.reason) }]
+      ? [{ label: doc.documentNumber || doc.title || "This document", reasons: sourceHolds.map(holdReasonLabel) }] // VFY-6 (P15): a custom hold by its description
       : [],
     isController,
   });

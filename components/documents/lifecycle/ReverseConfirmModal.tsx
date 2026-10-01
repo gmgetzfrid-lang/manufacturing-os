@@ -22,6 +22,7 @@ import {
 } from "@/lib/documentLifecycle";
 import type { TimelineEvent } from "@/lib/timeline";
 import { listActiveHoldsForDocument } from "@/lib/holds";
+import { holdReasonLabel } from "@/lib/holdGate";
 import HeldSourceNotice, { holdSetKey } from "@/components/documents/lifecycle/HeldSourceNotice";
 
 /** HLD-2 (review fix 4): the documents a reversal of this event would park —
@@ -75,7 +76,7 @@ export default function ReverseConfirmModal({
     let alive = true;
     const ids = parkIdsKey.split(",").filter(Boolean);
     if (ids.length === 0) return;
-    Promise.all(ids.map(async (docId) => (await listActiveHoldsForDocument(docId)).map((h) => ({ docId, id: h.id, reason: h.reason })))).then(
+    Promise.all(ids.map(async (docId) => (await listActiveHoldsForDocument(docId)).map((h) => ({ docId, id: h.id, reason: holdReasonLabel(h) /* VFY-6 (P15): a custom hold by its description */ })))).then(
       (lists) => { if (alive) { setParkedHolds(lists.flat()); setHoldsReadError(null); } },
       (e) => { if (alive) setHoldsReadError((e as Error).message); },
     );
