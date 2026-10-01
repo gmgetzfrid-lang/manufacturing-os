@@ -519,3 +519,30 @@ Two search shapes: grep -rn 'useRevLetters' across .ts/.tsx/.sql, and a case-ins
 **Scope / residual.** `letterLabelFor`'s call site in `lib/revisions.ts` (P3) is unchanged and correct as it stands. If a facility ever needs suffix-less drafts, the prerequisite is a supersede-before-insert resubmit in `submitForReview` (REV-7's index is the constraint), not a toggle.
 
 ---
+
+<a id="rg-14"></a>
+
+## RG-14 · The database completion gate does not know an owner-must-approve policy — a roster opened without the owner's row completes without the owner
+
+- **Severity:** LOW
+- **Status:** OPEN
+- **Assigned:** unassigned — opened 2026-10-01 by document-control P14 RECORDS & REVIEW REMAINDERS at its review fix (DEC-31: the database half of roles-and-permissions `GAP-4`, which the package built in the app); the integrator assigns it.
+- **Verification:** CONFIRMED (read from `20261151`'s `enforce_document_publish_guard` — the completion count reads the roster's rows only — and `20261070`'s `doc_review_signoff_insert` policy)
+- **Locations:** `supabase/migrations/20261151_dc_roundF_promote_transaction_and_hold_override.sql` (`enforce_document_publish_guard`, the per-slot completion count), `supabase/migrations/20261070_dc_roundF_review_gate_slots.sql` (`doc_review_signoff_insert`), `lib/reviewControl.ts` (`openReviewRoster` / `placeOwnerSlot` — where the rule lives today)
+- **Independently verified:** — opened 2026-10-01 by P14's review fix from the package's review (minor 4); not yet challenged by a second party.
+
+**Mechanism.** `GAP-4` (P14) makes an owner-must-approve review policy roster the effective owner as a REQUIRED primary in a slot of their own (`owner:<uid>`). The rule lives in the app's roster composition (`openReviewRoster` → `placeOwnerSlot`). The database counts the owner's row once it exists — every primary row per slot group — but it never reads `ReviewControl.ownerMustApprove`, so it cannot tell a roster that should carry an owner slot from one that should not. `20261070`'s insert policy admits any publisher-shaped pending row, so a roster can be opened without the owner.
+
+**Failure scenario.** A library publisher who is not the owner opens a roster directly through PostgREST with no `owner:<uid>` row. The reviewers sign, the per-slot count is complete, and the guard admits the publish in a require-mode library without the owner's signature, although the effective policy sets `ownerMustApprove`.
+
+**Why not closed at P14.** A guard that reads the CURRENT policy at publish would retrofit every roster opened before the flag was set — `GAP-4`'s scope says the rule applies only to rosters opened after the change (done-when 2: rosters opened before it still complete), and the editor promises "Reviews already in progress keep the roster they opened with." The database half therefore needs the roster to carry the policy it was opened under (for example a stamp on the draft's version or on its roster rows, written when the roster opens and immutable after), with the author and no-active-owner exceptions the app applies (`DEC-21`; `placeOwnerSlot`'s `author` / `no_owner` outcomes) — a design decision, not a guard line.
+
+**Done when.**
+
+- [ ] The database refuses the publish of a draft whose roster was opened under an owner-must-approve policy unless an `owner:%` slot group is filled by the effective owner's bound signature — with the author and no-active-owner exceptions the app applies, and without retrofitting rosters opened before the policy was set.
+- [ ] The guard is re-created from its newest body with a lineDiff proof, and the opened-under stamp cannot be written by a client after the roster opens.
+- [ ] A test drives a roster opened without the owner's row against the guard (PostgreSQL 16, or a pinned transcription) and a pre-existing roster that still completes.
+
+**Closer:** unassigned (document-control; the integrator assigns it).
+
+---

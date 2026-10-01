@@ -382,8 +382,27 @@ describe("GAP-4 — the policy editor sets it", () => {
     expect(m).toContain("...(ownerMustApprove ? { ownerMustApprove: true } : {}),");
     expect(m).toContain("The owner must approve.</span>");
     expect(m).toContain("Reviews already in progress keep the roster they opened with.");
-    expect(m).toContain("const noReviewers = gated && !ownerMustApprove && reviewers.length === 0");
+    expect(m).toContain("{noReviewerText && <div className=\"text-[11px] text-amber-600\">{noReviewerText}</div>}");
+    expect(m).toContain("authorSkipped: level !== \"library\" || requireIndependent,");
     expect(src("types/schema.ts")).toMatch(/ownerMustApprove\?: boolean;/);
+  });
+
+  it("P14 review fix — a policy whose ONLY approver is the owner still warns: a revision the owner authors opens an empty roster (DEC-21 skips the author) and can never publish", async () => {
+    const { noReviewerWarning } = await import("@/components/documents/ReviewControlModal");
+    const none = { gated: true, ownerMustApprove: false, hasPrimaries: false, authorSkipped: true };
+    // no approver at all: the warning it always gave
+    expect(noReviewerWarning(none)).toBe("Add at least one primary reviewer (person, role, or department), or a rev can never publish.");
+    // owner only, independence on (a library's default; a folder policy assumes it): warned, and told why
+    const ownerOnly = noReviewerWarning({ ...none, ownerMustApprove: true });
+    expect(ownerOnly).toMatch(/^Only the owner approves under this policy, so a revision the owner authors has no reviewer \(a reviewer never signs their own work\) and can never publish\. Add at least one primary reviewer/);
+    // owner only in a library that opted out of independent review: the owner is rostered on their own revision too — no warning
+    expect(noReviewerWarning({ ...none, ownerMustApprove: true, authorSkipped: false })).toBeNull();
+    // any primary reviewer, or an ungated policy: nothing to warn about
+    expect(noReviewerWarning({ ...none, ownerMustApprove: true, hasPrimaries: true })).toBeNull();
+    expect(noReviewerWarning({ ...none, hasPrimaries: true })).toBeNull();
+    expect(noReviewerWarning({ ...none, gated: false, ownerMustApprove: true })).toBeNull();
+    // the rule it mirrors: openReviewRoster skips the author only where independent review is required
+    expect(src("lib/reviewControl.ts")).toContain("skipAuthorUid: requireIndependent ? authorUid : null");
   });
 });
 
