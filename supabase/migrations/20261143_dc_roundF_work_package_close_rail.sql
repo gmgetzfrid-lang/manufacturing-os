@@ -46,13 +46,16 @@
 -- the SQL editor shows. MEASURE rows ride along (read-only, changed by
 -- nothing here), so the reach of two app-side behaviour changes in the same
 -- package is a count, not a guess:
---   · PKG-12, the field pack's budget (150 sheets / 1000 pages / 150 MB): the
+--   · PKG-12, the field pack's budget (150 sheets / 1000 pages / 150 MB —
+--     shipped OFF; it binds once the user ratifies DEC-44 (P8 FIELD) §2
+--     against these rows and the deployment switches it on): the
 --     open packages and asset tags over 150 sheets, and over 150 MB of
 --     recorded file size, counted over the sheets the print gate admits
 --     (Issued / Locked, no active document hold — an upper bound: a
 --     printer's outstanding sign-offs and unreadable sheets are per person
---     and not subtracted); the single current files over 150 MB (left out of
---     every pack as too large); and the in-force files with no recorded size,
+--     and not subtracted); the single current files over 150 MB (no field
+--     pack can carry one: a work package holding it is refused naming it, the
+--     asset hub leaves it out); and the in-force files with no recorded size,
 --     which the size rows cannot see. The 1000-page budget has no row: page
 --     counts are not stored.
 --   · TRX-15, the transmittal portal: the live items whose file is a PDF over
@@ -60,13 +63,19 @@
 --     the issuer told; refused only once the issue-time check, TRX-16, marks
 --     such an item), and the live items whose size is not recorded.
 --
--- DEPLOY ORDER (PKG-12): paste this file BEFORE the P8 FIELD app deploys and
--- read the MEASURE rows first — a package or asset tag they count prints
--- today and is refused with a split (or loses a too-large sheet) once the
--- app ships, so its owner is told before, not by the refusal. Applied before
--- the app, the narrowing is already in force: on the old page a non-owner's
--- Close matches no row (the old lib then reads it as closed; the package
--- stays open and listed) until the app deploys.
+-- DEPLOY ORDER: paste this file WITH the P8 FIELD app deploy or just AFTER
+-- it — never before. Pasted first, the narrowing meets the OLD page, which
+-- offers Close to every member and reads a zero-row close as success: a
+-- non-owner would be told "Package closed" while the package stays open and
+-- reappears on reload. The P8 page offers Close only to the owner or a
+-- controller and reports a zero-row close as a refusal, so app-then-paste
+-- has no such window (until the paste a direct API close by a member is
+-- still possible, as today). The MEASURE rows are read at this paste,
+-- BEFORE the field-pack budget is switched on: the P8 app ships with it OFF
+-- (NEXT_PUBLIC_FIELD_PACK_BUDGET unset — packs build as before), and the
+-- user ratifies DEC-44 (P8 FIELD) §2 against these counts before the
+-- deployment sets it, so the owners of a counted package or tag are told
+-- before the refusal tells them (PKG-12).
 --
 -- ⚠ APPLIED BY HAND (DEC-30). One script; re-running is safe. Needs 20260825
 -- and 20261028 (both live since 2026-08); the TRX-15 rows read 20261133's
@@ -142,7 +151,7 @@ SELECT 'MEASURE (PKG-12, not changed by this file): asset tags whose printable d
              AND v.size <= 157286400
            GROUP BY d.org_id, t->>'tag' HAVING SUM(v.size) > 157286400) x)::text
 UNION ALL
-SELECT 'MEASURE (PKG-12, not changed by this file): Issued / Locked documents whose current file records more than 150 MB — left out of every field pack as too large (downloaded on their own)',
+SELECT 'MEASURE (PKG-12, not changed by this file): Issued / Locked documents whose current file records more than 150 MB — no field pack can carry one (a work package holding it is refused naming it; the asset hub leaves it out); downloaded on their own',
        (SELECT COUNT(*) FROM documents d
           JOIN document_versions v ON v.id = d.current_version_id
          WHERE d.status IN ('Issued', 'Locked') AND v.size > 157286400)::text

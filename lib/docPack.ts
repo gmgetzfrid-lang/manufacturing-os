@@ -15,10 +15,11 @@
 // Document-control Round F (P8 FIELD): every requested document is accounted
 // for — one the person printing cannot read is an explicit skip, never a
 // silent hole (PKG-7); the hard read-&-understood gate applies sheet by sheet
-// through the same helper a single download uses (PKG-9); the print gate is
-// the verify allow-list (VFY-17); a pack has a budget and keeps the caller's
-// order (PKG-12); every skip carries a code the print snapshot records
-// (VFY-19, lib/packLeftOut.ts).
+// through the same helper a single download uses, failing CLOSED here (PKG-9);
+// the print gate is the verify allow-list (VFY-17); a pack keeps the caller's
+// order and has a budget, enforced once the deployment switches it on
+// (PKG-12, fieldPackBudgetEnforced); every skip carries a code the print
+// snapshot records (VFY-19, lib/packLeftOut.ts).
 
 import { PDFDocument } from "pdf-lib";
 import { supabase } from "@/lib/supabase";
@@ -26,7 +27,7 @@ import { applyStampToPdfDoc } from "@/lib/stamping";
 import { recordIntent } from "@/lib/intents";
 import { publicOrigin } from "@/lib/publicOrigin";
 import { documentStanding, isUndefinedColumnError } from "@/lib/verifyVerdict";
-import { ackGatedDocumentIds } from "@/lib/downloads";
+import { ackGateDocuments } from "@/lib/downloads";
 import type { PackLeftOutCode } from "@/lib/packLeftOut";
 import type { DocumentRecord } from "@/types/schema";
 
@@ -68,12 +69,30 @@ export interface PackSheetRef {
  *  count, or whose sheets TOGETHER pass the page / byte budget, is REFUSED
  *  before anything is recorded or downloaded, with a split the person can
  *  act on. A sheet over the page / byte budget ON ITS OWN cannot be helped by
- *  any split: it is left out (`too_large`, named in the toast and on the
- *  print record) and the rest of the pack is built. Stated defaults
- *  (document-control Round F, P8). */
+ *  any split: the pack is refused naming it (`PackSheetTooLargeError` —
+ *  download it on its own), or, for a caller whose pack has no print
+ *  snapshot, it is left out and named (`sheetTooLarge: "leave_out"`). Stated
+ *  defaults (document-control Round F, P8), ENFORCED only once the
+ *  deployment switches them on (`fieldPackBudgetEnforced`). */
 export const PACK_MAX_SHEETS = 150;
 export const PACK_MAX_PAGES = 1000;
 export const PACK_MAX_BYTES = 150 * 1024 * 1024;
+
+/** PKG-12 / DEC-44 (P8 FIELD) §2: is the budget ENFORCED? Its values are a
+ *  stated default that removes a capability that worked before — one pack of
+ *  a large work package or asset tag, on a desktop too, with no override — so
+ *  they bind only after the user has ratified them against `20261143`'s
+ *  MEASURE rows and the deployment sets `NEXT_PUBLIC_FIELD_PACK_BUDGET=on`.
+ *  Until then a pack builds as it did before P8 FIELD: no sheet, page or byte
+ *  refusal, and no sheet refused or left out for its size (the print gate,
+ *  the caller's order, the left-out codes and the checked record all apply
+ *  regardless). Read at call time; the literal
+ *  `process.env.NEXT_PUBLIC_FIELD_PACK_BUDGET` reference is what Next inlines
+ *  into the browser bundle, so switching it needs a rebuild (a redeploy). */
+export function fieldPackBudgetEnforced(): boolean {
+  const raw = (process.env.NEXT_PUBLIC_FIELD_PACK_BUDGET ?? "").trim().toLowerCase();
+  return raw === "on" || raw === "true" || raw === "1";
+}
 
 /** The number of packs `count` sheets split into at `perPack` each. */
 export function packPartsFor(count: number, perPack: number): number {
@@ -103,6 +122,43 @@ export class PackTooLargeError extends Error {
     super(message);
     this.name = "PackTooLargeError";
   }
+}
+
+/** PKG-12: ONE sheet over a field pack's page / byte budget on its own — no
+ *  split can carry it, so the pack is REFUSED naming it, before anything is
+ *  recorded or downloaded, and the person is told to download it on its own.
+ *  (P8's fourth fix pass: it used to be left out of the pack, which made a
+ *  work package's cover scan red — "ask for a re-printed pack" — for as long
+ *  as that revision is current, since no re-print could carry it.) A caller
+ *  whose pack has no print snapshot may leave it out instead
+ *  (`sheetTooLarge: "leave_out"`). */
+export class PackSheetTooLargeError extends Error {
+  readonly code = "pack_sheet_too_large" as const;
+  constructor(readonly documentId: string, readonly label: string, readonly why: string) {
+    super(
+      `${label} is ${why}, so no field pack can carry it — this pack was not built and nothing was printed. ` +
+      `Download ${label} on its own (from its document page), take it out of this pack, and print the rest.`,
+    );
+    this.name = "PackSheetTooLargeError";
+  }
+}
+
+/** PKG-12: a refused pack's split in words a person can follow — each part
+ *  by its sheets' labels, in order: a part of one sheet is named ("A on its
+ *  own"), a part of two lists both, a longer part gives its first and last
+ *  sheet and its count ("B … F (5 sheets)"). The parts are consecutive in the
+ *  order the pack was requested, so first … last names a part exactly.
+ *  Pure. */
+export function describePackSplit(split: string[][], labelOf: (id: string) => string): string {
+  return split.map((part, i) => {
+    const names = part.map(labelOf);
+    const body = names.length === 1
+      ? `${names[0]} on its own`
+      : names.length === 2
+        ? `${names[0]}, ${names[1]}`
+        : `${names[0]} … ${names[names.length - 1]} (${names.length} sheets)`;
+    return `part ${i + 1}: ${body}`;
+  }).join("; ");
 }
 
 /** PKG-12: one sheet of a split plan — its bytes (the recorded
@@ -168,27 +224,36 @@ export function packSheetBudgetRefusal(count: number, plan?: PackPlanSheet[]): P
   const perPack = split ? largestPart(split) : PACK_MAX_SHEETS;
   return new PackTooLargeError(
     `This pack has ${count} sheets — a field pack holds at most ${PACK_MAX_SHEETS}, because it is assembled in this ` +
-    `browser's memory. Nothing was printed. Split it into ${parts} packs of at most ${perPack} sheets each ` +
-    "(e.g. one work package per area) and print them separately.",
+    `browser's memory. Nothing was printed. ${splitAdvice(parts, perPack, split)}`,
     parts, perPack, split,
   );
+}
+
+/** The split sentence of a refusal: a size-filled split (`packSplitPlan`)
+ *  holds different numbers of sheets per part, so it is never described as
+ *  "of at most M sheets" — the parts themselves say which sheets go together
+ *  (the asset hub's part buttons; `describePackSplit` on /packages). */
+function splitAdvice(parts: number, perPack: number, split: string[][] | null): string {
+  return split
+    ? `Split it into ${parts} packs — filled by the sheets' sizes, so the parts hold different numbers of sheets — and print them separately.`
+    : `Split it into ${parts} packs of at most ${perPack} sheet${perPack === 1 ? "" : "s"} each (e.g. one work package per area) and print them separately.`;
 }
 
 const MB = 1024 * 1024;
 
 /** PKG-12: why ONE sheet is over a field pack's budget on its own — its file
- *  over the byte budget (known from the fetched bytes, before pdf-lib parses
- *  anything) or its pages over the page budget — or null when it fits. Such a
- *  sheet is left out (`too_large`), never the reason a whole pack is refused:
- *  no split could carry it. Pure. */
+ *  over the byte budget (known from its recorded size, the response's
+ *  declared length or the fetched bytes, before pdf-lib parses anything) or
+ *  its pages over the page budget — or null when it fits. No split could
+ *  carry such a sheet: the pack is refused naming it
+ *  (`PackSheetTooLargeError`), or an opted-in caller leaves it out
+ *  (`too_large`). Pure. */
 export function packSheetOverBudget(sheet: { bytes?: number | null; pages?: number | null }): string | null {
   if (typeof sheet.bytes === "number" && sheet.bytes > PACK_MAX_BYTES) {
-    return `${Math.ceil(sheet.bytes / MB)} MB on its own — over a field pack's ${Math.round(PACK_MAX_BYTES / MB)} MB budget, ` +
-      "so it was left out; download it on its own";
+    return `${Math.ceil(sheet.bytes / MB)} MB on its own — over a field pack's ${Math.round(PACK_MAX_BYTES / MB)} MB budget`;
   }
   if (typeof sheet.pages === "number" && sheet.pages > PACK_MAX_PAGES) {
-    return `${sheet.pages} pages on its own — over a field pack's ${PACK_MAX_PAGES}-page budget, ` +
-      "so it was left out; download it on its own";
+    return `${sheet.pages} pages on its own — over a field pack's ${PACK_MAX_PAGES}-page budget`;
   }
   return null;
 }
@@ -196,8 +261,8 @@ export function packSheetOverBudget(sheet: { bytes?: number | null; pages?: numb
 /** PKG-12: the CUMULATIVE page / byte budget, checked as sheets are merged.
  *  `merged` sheets are already in; `total` is the gated sheet count. Every
  *  sheet that reaches this check fits the budget on its own
- *  (`packSheetOverBudget` left the others out), so the overflow is the
- *  pack's. With `plan` (every requested sheet, with the bytes and pages
+ *  (`packSheetOverBudget` refused or left out the others), so the overflow
+ *  is the pack's. With `plan` (every requested sheet, with the bytes and pages
  *  known so far — the merged sheets' and the overflowing sheet's measured)
  *  the split is filled from the sizes (`packSplitPlan`): the parts follow
  *  where the weight is, so one large early sheet no longer makes every part
@@ -220,8 +285,7 @@ export function packContentBudgetRefusal(input: {
   const parts = split ? split.length : Math.max(2, packPartsFor(input.total, perPack));
   return new PackTooLargeError(
     `This pack passed a field pack's ${budget} at ${input.label} (sheet ${input.merged + 1} of ${input.total}), ` +
-    `so it was not built and nothing was printed. Split it into ${parts} packs of at most ${perPack} sheet${perPack === 1 ? "" : "s"} each ` +
-    "and print them separately.",
+    `so it was not built and nothing was printed. ${splitAdvice(parts, perPack, split)}`,
     parts, perPack, split,
   );
 }
@@ -247,11 +311,13 @@ const PDF_FORMAT_ERROR = /^(Failed to parse\b|No PDF header found|Parser stalled
 
 /** VFY-19: the code for a sheet whose build failed AFTER its file was
  *  fetched. `unreadable_pdf` — "could not be read as a PDF; a re-print would
- *  leave it out too", which the verify door reads amber — ONLY when pdf-lib
- *  refused the file with its own parse / format error at load, or loaded it
- *  encrypted (the stamper's refusal). An out-of-memory failure at ANY stage
- *  (load included), and anything else, is `build_failed`, which the verify
- *  door keeps red: a re-print, e.g. on a desktop, may well carry it. Pure. */
+ *  leave it out too" — ONLY when pdf-lib refused the file with its own parse /
+ *  format error at load, or loaded it encrypted (the stamper's refusal). An
+ *  out-of-memory failure at ANY stage (load included), and anything else, is
+ *  `build_failed`: a re-print, e.g. on a desktop, may well carry it. The
+ *  print record keeps the difference; the verify door reads both red today
+ *  (whether a still-current `unreadable_pdf` sheet may read amber is
+ *  PS-VERIFY's verdict to make — VFY-19's record). Pure. */
 export function packBuildFailureCode(
   e: unknown,
   at: { loaded: boolean; encrypted: boolean },
@@ -309,14 +375,19 @@ export function accountForRequested(
 }
 
 /** PKG-9: the hard read-&-understood gate over a pack's rows, through the
- *  ONE helper a single download uses (lib/downloads.ts ackGatedDocumentIds).
- *  A gated sheet is left out with the reason — never merged. */
+ *  ONE helper a single download uses (lib/downloads.ts ackGateDocuments).
+ *  A gated sheet is left out with the reason — never merged. The pack fails
+ *  CLOSED where the single download fails open: a sheet whose sign-off status
+ *  could not be read (a failed pending-acknowledgment or policy read) is left
+ *  out too (`ack_unknown`), as an unreadable hold state is (`hold_unknown`) —
+ *  the pack is the field egress, and a transient read error must not carry a
+ *  hard-gated sheet into it (P8's fourth fix pass). */
 async function ackGatePackRows(
   rows: Array<Record<string, unknown>>,
   userId: string | null | undefined,
 ): Promise<{ rows: Array<Record<string, unknown>>; skipped: PackSkip[] }> {
   if (!userId || rows.length === 0) return { rows, skipped: [] };
-  const gated = await ackGatedDocumentIds(
+  const gate = await ackGateDocuments(
     rows.map((d) => ({
       id: String(d.id),
       libraryId: (d.library_id as string | null) ?? null,
@@ -328,12 +399,20 @@ async function ackGatePackRows(
   const kept: Array<Record<string, unknown>> = [];
   const skipped: PackSkip[] = [];
   for (const d of rows) {
-    if (gated.has(String(d.id))) {
+    const id = String(d.id);
+    if (gate.gated.has(id)) {
       skipped.push({
-        documentId: String(d.id),
+        documentId: id,
         label: packLabel(d),
         reason: "read-&-understood sign-off outstanding — sign it before taking a copy",
         code: "ack_required",
+      });
+    } else if (gate.unknown.has(id)) {
+      skipped.push({
+        documentId: id,
+        label: packLabel(d),
+        reason: "read-&-understood sign-off status could not be checked just now — try the print again",
+        code: "ack_unknown",
       });
     } else kept.push(d);
   }
@@ -495,6 +574,15 @@ export async function buildAndDownloadDocPack(input: {
    *  caller reports its own failures as warnings, not as a failed print. */
   afterDownload?: (included: PackSheetRef[]) => Promise<void>;
   onProgress?: (done: number, total: number) => void;
+  /** PKG-12 (only while the budget is enforced): a sheet over the page /
+   *  byte budget ON ITS OWN refuses the pack naming it ("refuse", the
+   *  default — `PackSheetTooLargeError`), or is left out and named
+   *  (`too_large`) while the rest is built ("leave_out"). Leaving out is for
+   *  a caller whose pack has NO print snapshot (the asset hub): a work
+   *  package's cover scan would read the missing sheet red, "ask for a
+   *  re-printed pack", for as long as its revision is current — so the
+   *  builder ignores "leave_out" when `buildCoverAfter` is given. */
+  sheetTooLarge?: "refuse" | "leave_out";
 }): Promise<DocPackResult> {
   const { docs, skipped } = await readAndGatePackDocs(
     input.documentIds,
@@ -531,9 +619,15 @@ export async function buildAndDownloadDocPack(input: {
     const v = (d.current_version_id as string | null) ?? null;
     return v ? sizeByVersion.get(v) ?? null : null;
   };
+  // PKG-12: the budget binds only once the deployment switches it on
+  // (DEC-44 (P8 FIELD) §2, for the user's ratification) — until then this
+  // builds as it did before P8: no sheet / page / byte refusal, nothing
+  // refused or left out for its size.
+  const enforce = fieldPackBudgetEnforced();
+  const leaveOutTooLarge = input.sheetTooLarge === "leave_out" && !input.buildCoverAfter;
   // PKG-12: a split plan over EVERY requested sheet, in the caller's order —
   // the gate's refusals ride weightless (each part's print names its own),
-  // and so does a file recorded over the byte budget on its own.
+  // and so does a file recorded over the byte budget on its own (left out).
   const packableIds = new Set(docs.map((d) => String(d.id)));
   const docById = new Map(docs.map((d) => [String(d.id), d]));
   const measured = new Map<string, { bytes: number; pages: number }>();
@@ -547,12 +641,22 @@ export async function buildAndDownloadDocPack(input: {
     return { id, bytes: m?.bytes ?? rec, pages: m?.pages ?? null };
   });
 
-  // PKG-12: refuse an over-budget pack before a single byte is fetched —
-  // counting the sheets that can be merged (a file recorded over the byte
-  // budget on its own is left out below, never merged).
-  const mergeable = docs.filter((d) => !packSheetOverBudget({ bytes: recordedBytes(d) })).length;
-  const tooMany = mergeable > PACK_MAX_SHEETS ? packSheetBudgetRefusal(mergeable, planSheets()) : null;
-  if (tooMany) throw tooMany;
+  if (enforce) {
+    // PKG-12: a file RECORDED over the byte budget on its own refuses the
+    // pack before a single byte is fetched, naming it — unless this caller
+    // leaves such a sheet out (below, never merged).
+    if (!leaveOutTooLarge) {
+      for (const d of docs) {
+        const why = packSheetOverBudget({ bytes: recordedBytes(d) });
+        if (why) throw new PackSheetTooLargeError(String(d.id), packLabel(d), why);
+      }
+    }
+    // PKG-12: refuse an over-budget pack before a single byte is fetched —
+    // counting the sheets that can be merged.
+    const mergeable = docs.filter((d) => !packSheetOverBudget({ bytes: recordedBytes(d) })).length;
+    const tooMany = mergeable > PACK_MAX_SHEETS ? packSheetBudgetRefusal(mergeable, planSheets()) : null;
+    if (tooMany) throw tooMany;
+  }
 
   const merged = await PDFDocument.create();
   let included = 0;
@@ -573,16 +677,18 @@ export async function buildAndDownloadDocPack(input: {
       const rawUrl = versionId ? urlByVersion.get(versionId) : undefined;
       if (!rawUrl) { skipped.push({ documentId, label, reason: "no current file", code: "no_file", versionId }); continue; }
 
-      // PKG-12: a file over the byte budget on its own is left out BEFORE it
-      // is fetched whole — by its recorded size, then by the response's
-      // declared length — so the device never allocates it; the fetched
-      // length is the last check, for a file with neither.
-      const leaveOutTooLarge = (why: string) => {
+      // PKG-12 (enforced budget): a file over the byte budget on its own is
+      // caught BEFORE it is fetched whole — by its recorded size, then by the
+      // response's declared length — so the device never allocates it; the
+      // fetched length is the last check, for a file with neither. It
+      // refuses the pack naming it, or (opted in) is left out.
+      const overBudget = (why: string): void => {
+        if (!leaveOutTooLarge) throw new PackSheetTooLargeError(documentId, label, why);
         tooLargeIds.add(documentId);
-        skipped.push({ documentId, label, reason: why, code: "too_large", versionId });
+        skipped.push({ documentId, label, reason: `${why}, so it was left out; download it on its own`, code: "too_large", versionId });
       };
-      const recordedTooBig = packSheetOverBudget({ bytes: recordedBytes(d) });
-      if (recordedTooBig) { leaveOutTooLarge(recordedTooBig); continue; }
+      const recordedTooBig = enforce ? packSheetOverBudget({ bytes: recordedBytes(d) }) : null;
+      if (recordedTooBig) { overBudget(recordedTooBig); continue; }
 
       let bytes: ArrayBuffer;
       let declaredTooBig: string | null = null;
@@ -590,7 +696,7 @@ export async function buildAndDownloadDocPack(input: {
         const httpUrl = await resolveToHttpUrl(rawUrl);
         const res = await fetch(httpUrl);
         if (!res.ok) throw new Error(`HTTP ${res.status}`);
-        const declared = Number(res.headers?.get("content-length") ?? NaN);
+        const declared = enforce ? Number(res.headers?.get("content-length") ?? NaN) : NaN;
         declaredTooBig = Number.isFinite(declared) ? packSheetOverBudget({ bytes: declared }) : null;
         if (declaredTooBig) {
           try { await res.body?.cancel(); } catch { /* nothing to release */ }
@@ -604,30 +710,32 @@ export async function buildAndDownloadDocPack(input: {
         skipped.push({ documentId, label, reason: `the file could not be fetched (${(e as Error).message})`, code: "fetch_failed", versionId });
         continue;
       }
-      if (declaredTooBig) { leaveOutTooLarge(declaredTooBig); continue; }
+      if (declaredTooBig) { overBudget(declaredTooBig); continue; }
 
       // PKG-12: …and one with no recorded or declared size is checked on its
       // fetched length, still BEFORE pdf-lib parses it (parsing it is what
       // would exhaust the device).
-      const tooBig = packSheetOverBudget({ bytes: bytes.byteLength });
-      if (tooBig) { leaveOutTooLarge(tooBig); continue; }
+      const tooBig = enforce ? packSheetOverBudget({ bytes: bytes.byteLength }) : null;
+      if (tooBig) { overBudget(tooBig); continue; }
 
       // Stamp each document individually so its footer + QR are its own.
       single = await PDFDocument.load(bytes, { ignoreEncryption: true });
       const pageCount = single.getPageCount();
-      // PKG-12: so is one whose pages alone are over the page budget — the
-      // sheet is checked on its own before the pack's running total, so the
-      // pack is refused (with a split) only when its sheets TOGETHER pass it.
-      const tooLong = packSheetOverBudget({ pages: pageCount });
-      if (tooLong) { leaveOutTooLarge(tooLong); continue; }
-      measured.set(documentId, { bytes: bytes.byteLength, pages: pageCount });
-      const running = { pages: pageTotal + pageCount, bytes: byteTotal + bytes.byteLength };
-      const over = packContentBudgetRefusal({
-        label, merged: included, total: docs.length, ...running,
-        // the split plan is built only for a refusal
-        plan: running.pages > PACK_MAX_PAGES || running.bytes > PACK_MAX_BYTES ? planSheets() : undefined,
-      });
-      if (over) throw over;
+      if (enforce) {
+        // PKG-12: so is one whose pages alone are over the page budget — the
+        // sheet is checked on its own before the pack's running total, so the
+        // pack is refused with a split only when its sheets TOGETHER pass it.
+        const tooLong = packSheetOverBudget({ pages: pageCount });
+        if (tooLong) { overBudget(tooLong); continue; }
+        measured.set(documentId, { bytes: bytes.byteLength, pages: pageCount });
+        const running = { pages: pageTotal + pageCount, bytes: byteTotal + bytes.byteLength };
+        const over = packContentBudgetRefusal({
+          label, merged: included, total: docs.length, ...running,
+          // the split plan is built only for a refusal
+          plan: running.pages > PACK_MAX_PAGES || running.bytes > PACK_MAX_BYTES ? planSheets() : undefined,
+        });
+        if (over) throw over;
+      }
       const holderWarning = d.checked_out_by && (
         ` ACTIVE CHANGE IN PROGRESS: checked out by ${(d.checked_out_by_name as string) || "another user"} at time of issue.`
       );
@@ -653,14 +761,14 @@ export async function buildAndDownloadDocPack(input: {
       includedSheets.push({ documentId, versionId, label, pageCount: pages.length });
       includedRows.push(d);
     } catch (e) {
-      if (e instanceof PackTooLargeError) throw e;
+      if (e instanceof PackTooLargeError || e instanceof PackSheetTooLargeError) throw e;
       // VFY-19: "could not be read as a PDF" (unreadable_pdf — a re-print
-      // would leave it out too, so /verify-package reads it amber) ONLY when
-      // pdf-lib refused the file with its own parse / format error at load,
-      // or loaded an encrypted one the stamper refuses. A tablet running out
-      // of memory — at load (pdf-lib parses the whole file there) or merging —
-      // and anything else is build_failed: a desktop re-print may well carry
-      // it, so the verify door keeps it red ("not in this pack").
+      // would leave it out too) ONLY when pdf-lib refused the file with its
+      // own parse / format error at load, or loaded an encrypted one the
+      // stamper refuses. A tablet running out of memory — at load (pdf-lib
+      // parses the whole file there) or merging — and anything else is
+      // build_failed: a desktop re-print may well carry it. (The verify door
+      // reads both red, "not in this pack" — packBuildFailureCode.)
       const code = packBuildFailureCode(e, { loaded: !!single, encrypted: !!single?.isEncrypted });
       skipped.push({ documentId, label, reason: (e as Error)?.message || String(e), code, versionId });
     } finally {

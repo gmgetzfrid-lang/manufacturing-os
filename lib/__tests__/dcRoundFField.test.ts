@@ -19,7 +19,7 @@
 //   VFY-18   a print whose snapshot cannot be written stops before download.
 //   VFY-19   the snapshot records what the print left out, with a code.
 
-import { describe, it, expect, vi, beforeEach } from "vitest";
+import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { readFileSync, readdirSync } from "node:fs";
 import { join } from "node:path";
 
@@ -182,7 +182,7 @@ vi.mock("pdf-lib", () => {
 import {
   buildAndDownloadDocPack, assessPackDocs, PackTooLargeError, PACK_MAX_SHEETS, PACK_MAX_PAGES, PACK_MAX_BYTES, packPartsFor, splitPackIds,
   packSheetBudgetRefusal, accountForRequested, packSheetOverBudget, packContentBudgetRefusal, packBuildFailureCode, isOutOfMemoryError,
-  packSplitPlan,
+  packSplitPlan, PackSheetTooLargeError, fieldPackBudgetEnforced, describePackSplit,
 } from "@/lib/docPack";
 import {
   listWorkPackages, createWorkPackage, refreshWorkPackage, recordPackagePrint, setWorkPackageStatus,
@@ -191,7 +191,7 @@ import {
 } from "@/lib/workPackages";
 import {
   downloadDocumentPdf, printDocumentPdf, buildFooterNotice, copyControlState, copyWatermark, holdFooterLine,
-  logDownloadAudit, DownloadUnrecordedError, AcknowledgmentRequiredError, ackGatedDocumentIds,
+  logDownloadAudit, DownloadUnrecordedError, AcknowledgmentRequiredError, ackGatedDocumentIds, ackGateDocuments,
 } from "@/lib/downloads";
 import { packLeftOutText } from "@/lib/packLeftOut";
 import type { DocumentRecord } from "@/types/schema";
@@ -483,11 +483,13 @@ describe("PKG-9 — the hard read-&-understood gate binds every pack button", ()
     expect((await assessPackDocs(["a", "g"], { userId: "u1" })).packable.map((p) => p.id)).toEqual(["a", "g"]);
   });
 
-  it("ONE helper: the single download (assertAckGate), the pack and the book all call ackGatedDocumentIds", async () => {
+  it("ONE helper: the single download (assertAckGate), the pack and the book all go through ackGateDocuments", async () => {
     const downloads = src("lib/downloads.ts");
     expect(downloads).toMatch(/async function assertAckGate[\s\S]{0,200}?ackGatedDocumentIds\(\[ctx\.doc\], ctx\.userId\)/);
-    expect(src("lib/docPack.ts")).toContain('import { ackGatedDocumentIds } from "@/lib/downloads";');
-    expect(src("components/viewers/MultiDocViewer.tsx")).toMatch(/const gated = await ackGatedDocumentIds\(scope\.map\(\(e\) => e\.doc\), currentUserId\);/);
+    // the single download's wrapper is the same gate, its `gated` half alone (fail open)
+    expect(downloads).toMatch(/export async function ackGatedDocumentIds\(docs: AckGateDoc\[\], userId: string\): Promise<Set<string>> \{\s*\n\s*return \(await ackGateDocuments\(docs, userId\)\)\.gated;/);
+    expect(src("lib/docPack.ts")).toContain('import { ackGateDocuments } from "@/lib/downloads";');
+    expect(src("components/viewers/MultiDocViewer.tsx")).toMatch(/const gate = await ackGateDocuments\(scope\.map\(\(e\) => e\.doc\), currentUserId\);/);
     // and the single download still refuses through it
     const doc = { id: "g", orgId: "org1", libraryId: "libGated", documentNumber: "G-1" } as DocumentRecord;
     await expect(downloadDocumentPdf({ doc, fileUrl: "https://files/g.pdf", userId: "u1" })).rejects.toBeInstanceOf(AcknowledgmentRequiredError);
@@ -512,17 +514,103 @@ describe("PKG-9 — the hard read-&-understood gate binds every pack button", ()
     expect(policy.mock.calls[0][0]).toMatchObject({ libraryId: "lib7", collectionId: "col7" });
   });
 
-  it("fails OPEN on a broken policy read (unchanged rule) — a lookup error gates nothing", async () => {
+  it("the single download still fails OPEN on a broken policy read (unchanged rule) — the gate reports it UNKNOWN, never gated", async () => {
     const { effectiveAckPolicyForDocument } = await import("@/lib/acknowledgments");
     vi.mocked(effectiveAckPolicyForDocument).mockRejectedValueOnce(new Error("boom"));
     const gated = await ackGatedDocumentIds([{ id: "g", libraryId: "libBroken" }], "u1");
     expect(gated.size).toBe(0);
+    vi.mocked(effectiveAckPolicyForDocument).mockRejectedValueOnce(new Error("boom"));
+    const gate = await ackGateDocuments([{ id: "g", libraryId: "libBroken" }], "u1");
+    expect([...gate.gated]).toEqual([]);
+    expect([...gate.unknown]).toEqual(["g"]);
+  });
+
+  it("the PACK fails CLOSED (fix pass 4): a pending-acknowledgment read that errors leaves the sheet out as ack_unknown — never merged — while the desk download stays open", async () => {
+    state.readErrors.document_acknowledgments = { message: "PostgREST hiccup" };
+    const gate = await ackGateDocuments([{ id: "a", libraryId: "lib1" }, { id: "g", libraryId: "libGated" }], "u1");
+    expect([...gate.unknown].sort()).toEqual(["a", "g"]);
+    expect(gate.gated.size).toBe(0);
+    // the pack: both sheets undecided → both left out, named, nothing stamped
+    const a = await assessPackDocs(["a", "g"], { userId: "u1" });
+    expect(a.packable).toEqual([]);
+    expect(a.skipped).toEqual([
+      expect.objectContaining({ documentId: "a", code: "ack_unknown", reason: "read-&-understood sign-off status could not be checked just now — try the print again" }),
+      expect.objectContaining({ documentId: "g", code: "ack_unknown" }),
+    ]);
+    await expect(buildAndDownloadDocPack(packInput(["a", "g"]) as never)).rejects.toThrow(/No documents could be packed \(A: read-&-understood sign-off status could not be checked/);
+    expect(state.stamps).toHaveLength(0);
+    // the single desk download keeps its posture: an undecided gate does not block it
+    expect((await ackGatedDocumentIds([{ id: "g", libraryId: "libGated" }], "u1")).size).toBe(0);
+    // the print record and the scan say why (lib/packLeftOut.ts)
+    expect(packLeftOutText("ack_unknown")).toBe("its acknowledgment status could not be checked when printed");
+  });
+
+  it("a broken POLICY read for a sheet with a pending sign-off is ack_unknown in the pack too; a sheet with none pending needs no policy and packs", async () => {
+    // a library no earlier test resolved (the policy memo holds a resolved policy for a minute)
+    state.tables.documents.push(docRow("p", { library_id: "libFlaky" }));
+    state.tables.document_versions.push(versionFor("p"));
+    state.tables.document_acknowledgments = [{ id: "ack2", document_id: "p", assignee_user_id: "u1", status: "pending" }];
+    const { effectiveAckPolicyForDocument } = await import("@/lib/acknowledgments");
+    vi.mocked(effectiveAckPolicyForDocument).mockRejectedValueOnce(new Error("library read failed"));
+    const result = await buildAndDownloadDocPack(packInput(["a", "p"]) as never);
+    expect(result.included).toBe(1);
+    expect(result.skipped).toEqual([expect.objectContaining({ documentId: "p", code: "ack_unknown" })]);
+  });
+
+  it("the book viewer refuses a book holding a sheet whose sign-off status could not be checked, naming it (fail closed)", () => {
+    const v = src("components/viewers/MultiDocViewer.tsx");
+    expect(v).toMatch(/if \(gate\.unknown\.size > 0\) \{\s*\n\s*const names = namesOf\(gate\.unknown\);\s*\n\s*throw new Error\(\s*\n\s*`The read-&-understood sign-off status of \$\{names\.join\(", "\)\} could not be checked just now — nothing was downloaded\. `/);
   });
 });
 
 // ─── PKG-12 ─────────────────────────────────────────────────────────────────
 
-describe("PKG-12 — a pack has a budget, keeps its order, and the cover gives each entry its pages", () => {
+describe("PKG-12 — the budget is OFF until the deployment switches it on (DEC-44 (P8 FIELD) §2 awaits ratification — fix pass 4)", () => {
+  afterEach(() => { vi.unstubAllEnvs(); });
+
+  it("fieldPackBudgetEnforced: unset (the shipped default) or anything but on / true / 1 is OFF", () => {
+    vi.stubEnv("NEXT_PUBLIC_FIELD_PACK_BUDGET", "");
+    expect(fieldPackBudgetEnforced()).toBe(false);
+    for (const off of ["off", "0", "false", "yes please"]) {
+      vi.stubEnv("NEXT_PUBLIC_FIELD_PACK_BUDGET", off);
+      expect(fieldPackBudgetEnforced()).toBe(false);
+    }
+    for (const on of ["on", "ON", " true ", "1"]) {
+      vi.stubEnv("NEXT_PUBLIC_FIELD_PACK_BUDGET", on);
+      expect(fieldPackBudgetEnforced()).toBe(true);
+    }
+    // the literal reference Next inlines into the browser bundle
+    expect(src("lib/docPack.ts")).toContain('const raw = (process.env.NEXT_PUBLIC_FIELD_PACK_BUDGET ?? "").trim().toLowerCase();');
+  });
+
+  it("OFF: a 200-sheet work package prints as ONE pack, as it did before P8 — no refusal, no split", async () => {
+    vi.stubEnv("NEXT_PUBLIC_FIELD_PACK_BUDGET", "");
+    const ids = Array.from({ length: 200 }, (_, i) => `d${i}`);
+    state.tables.documents = ids.map((id) => docRow(id));
+    state.tables.document_versions = ids.map((id) => versionFor(id, 1));
+    const r = await buildAndDownloadDocPack(packInput(ids) as never);
+    expect(r.included).toBe(200);
+    expect(r.skipped).toEqual([]);
+    expect(state.events).toContain("download");
+  });
+
+  it("OFF: a file recorded (and declared) over 150 MB, and a pack over 1000 pages, are fetched and merged as before — nothing refused or left out for its size", async () => {
+    vi.stubEnv("NEXT_PUBLIC_FIELD_PACK_BUDGET", "");
+    state.tables.documents = [docRow("a"), docRow("big")];
+    state.tables.document_versions = [versionFor("a", 900), { ...versionFor("big", 300), size: 600 * 1024 * 1024 }];
+    state.declaredLengthByUrl["https://files/big.pdf"] = 600 * 1024 * 1024;
+    const r = await buildAndDownloadDocPack(packInput(["a", "big"], { buildCoverAfter: async () => null }) as never);
+    expect(r.included).toBe(2);
+    expect(r.skipped).toEqual([]);
+    expect(state.bodyReads).toEqual(["https://files/a.pdf", "https://files/big.pdf"]);
+    expect(state.events).not.toContain("cancel:https://files/big.pdf");
+  });
+});
+
+describe("PKG-12 — (budget ON) a pack has a budget, keeps its order, and the cover gives each entry its pages", () => {
+  beforeEach(() => { vi.stubEnv("NEXT_PUBLIC_FIELD_PACK_BUDGET", "on"); });
+  afterEach(() => { vi.unstubAllEnvs(); });
+
   it("over the sheet budget: refused before a single fetch, nothing recorded, with a split", async () => {
     const ids = Array.from({ length: PACK_MAX_SHEETS + 30 }, (_, i) => `d${i}`);
     state.tables.documents = ids.map((id) => docRow(id));
@@ -553,43 +641,71 @@ describe("PKG-12 — a pack has a budget, keeps its order, and the cover gives e
     expect(state.inserts).toEqual([]);
   });
 
-  it("a sheet over the PAGE budget on its own is LEFT OUT (too_large) and the rest is built — no split could carry it, so it never refuses the pack (fix pass 2)", async () => {
+  it("a sheet over the PAGE budget on its own REFUSES a work package's pack, naming it — no cover, no snapshot, no download, no record (fix pass 4: left out, it read red at the cover scan for as long as it is current)", async () => {
     state.tables.documents = [docRow("a"), docRow("b"), docRow("c")];
     state.tables.document_versions = [versionFor("a", 3), versionFor("b", PACK_MAX_PAGES + 1), versionFor("c", 2)];
-    let coverSkipped: Array<{ documentId?: string; code?: string }> = [];
-    const r = await buildAndDownloadDocPack(packInput(["a", "b", "c"], {
-      buildCoverAfter: async (_inc: unknown, skipped: typeof coverSkipped) => { coverSkipped = skipped; return null; },
-    }) as never);
+    const cover = vi.fn();
+    const after = vi.fn();
+    // a caller with a print snapshot cannot opt into leaving it out
+    const err = await buildAndDownloadDocPack(packInput(["a", "b", "c"], { buildCoverAfter: cover, afterDownload: after, sheetTooLarge: "leave_out" }) as never).catch((e) => e);
+    expect(err).toBeInstanceOf(PackSheetTooLargeError);
+    expect(err.code).toBe("pack_sheet_too_large");
+    expect(err.documentId).toBe("b");
+    expect(String(err.message)).toBe(
+      `B is ${PACK_MAX_PAGES + 1} pages on its own — over a field pack's ${PACK_MAX_PAGES}-page budget, so no field pack can carry it — ` +
+      "this pack was not built and nothing was printed. Download B on its own (from its document page), take it out of this pack, and print the rest.",
+    );
+    expect(cover).not.toHaveBeenCalled();
+    expect(after).not.toHaveBeenCalled();
+    expect(state.events).not.toContain("download");
+    expect(state.inserts).toEqual([]);
+  });
+
+  it("a pack with NO print snapshot (the asset hub, sheetTooLarge: 'leave_out') leaves that sheet out, named, and builds the rest", async () => {
+    state.tables.documents = [docRow("a"), docRow("b"), docRow("c")];
+    state.tables.document_versions = [versionFor("a", 3), versionFor("b", PACK_MAX_PAGES + 1), versionFor("c", 2)];
+    const r = await buildAndDownloadDocPack(packInput(["a", "b", "c"], { sheetTooLarge: "leave_out" }) as never);
     expect(r.included).toBe(2);
     expect(r.skipped).toEqual([expect.objectContaining({
       documentId: "b", code: "too_large", versionId: "v-b",
       reason: `${PACK_MAX_PAGES + 1} pages on its own — over a field pack's ${PACK_MAX_PAGES}-page budget, so it was left out; download it on its own`,
     })]);
-    // the print record receives it with its code (VFY-19), and the pack downloads
-    expect(coverSkipped).toEqual([expect.objectContaining({ documentId: "b", code: "too_large" })]);
     expect(state.events).toContain("download");
-    expect(packLeftOutText("too_large")).toBe("too large for a field pack when printed — it is printed on its own");
+    // the public words never claim a copy rides along (fix pass 4)
+    expect(packLeftOutText("too_large")).toBe("too large for a field pack when printed — get it separately");
+    expect(src("app/(protected)/assets/[tag]/page.tsx")).toContain('sheetTooLarge: "leave_out",');
+    expect(src("lib/docPack.ts")).toContain('const leaveOutTooLarge = input.sheetTooLarge === "leave_out" && !input.buildCoverAfter;');
   });
 
-  it("a file over the BYTE budget on its own is left out BEFORE pdf-lib parses it (parsing it is what would exhaust the tablet)", async () => {
+  it("a file over the BYTE budget on its own is caught BEFORE pdf-lib parses it (parsing it is what would exhaust the tablet) — refused, or left out by the hub", async () => {
     state.tables.documents = [docRow("a"), docRow("big")];
     state.tables.document_versions = [versionFor("a", 2), versionFor("big", 4)];
     state.byteLengthByUrl["https://files/big.pdf"] = 180 * 1024 * 1024;
-    const r = await buildAndDownloadDocPack(packInput(["a", "big"]) as never);
+    const err = await buildAndDownloadDocPack(packInput(["a", "big"]) as never).catch((e) => e);
+    expect(err).toBeInstanceOf(PackSheetTooLargeError);
+    expect(String(err.message)).toMatch(/^BIG is 180 MB on its own — over a field pack's 150 MB budget, so no field pack can carry it/);
+    expect(state.loads).toBe(1); // only "a" was ever parsed
+    expect(state.events).not.toContain("download");
+    state.loads = 0;
+    const r = await buildAndDownloadDocPack(packInput(["a", "big"], { sheetTooLarge: "leave_out" }) as never);
     expect(r.included).toBe(1);
     expect(r.skipped).toEqual([expect.objectContaining({
       documentId: "big", code: "too_large",
       reason: "180 MB on its own — over a field pack's 150 MB budget, so it was left out; download it on its own",
     })]);
-    expect(state.loads).toBe(1); // only "a" was ever parsed
+    expect(state.loads).toBe(1);
     expect(packSheetOverBudget({ bytes: PACK_MAX_BYTES })).toBeNull();
     expect(packSheetOverBudget({ pages: PACK_MAX_PAGES })).toBeNull();
   });
 
-  it("a file whose RECORDED size (document_versions.size) is over the byte budget is left out before it is fetched at all — the tablet never allocates it (fix pass 3)", async () => {
+  it("a file whose RECORDED size (document_versions.size) is over the byte budget refuses the pack before a single fetch; the hub leaves it out unfetched (fix pass 3)", async () => {
     state.tables.documents = [docRow("a"), docRow("big")];
     state.tables.document_versions = [versionFor("a", 2), { ...versionFor("big", 4), size: 600 * 1024 * 1024 }];
-    const r = await buildAndDownloadDocPack(packInput(["a", "big"]) as never);
+    const err = await buildAndDownloadDocPack(packInput(["a", "big"]) as never).catch((e) => e);
+    expect(err).toBeInstanceOf(PackSheetTooLargeError);
+    expect(err.documentId).toBe("big");
+    expect(vi.mocked(fetch)).not.toHaveBeenCalled();
+    const r = await buildAndDownloadDocPack(packInput(["a", "big"], { sheetTooLarge: "leave_out" }) as never);
     expect(r.included).toBe(1);
     expect(r.skipped).toEqual([expect.objectContaining({
       documentId: "big", code: "too_large", versionId: "v-big",
@@ -599,15 +715,19 @@ describe("PKG-12 — a pack has a budget, keeps its order, and the cover gives e
     expect(state.bodyReads).toEqual(["https://files/a.pdf"]);
   });
 
-  it("a file with no recorded size whose response DECLARES over the byte budget (Content-Length) is left out before its body is read", async () => {
+  it("a file with no recorded size whose response DECLARES over the byte budget (Content-Length) is caught before its body is read", async () => {
     state.tables.documents = [docRow("a"), docRow("big")];
     state.tables.document_versions = [versionFor("a", 2), versionFor("big", 4)];
     state.declaredLengthByUrl["https://files/big.pdf"] = 600 * 1024 * 1024;
-    const r = await buildAndDownloadDocPack(packInput(["a", "big"]) as never);
-    expect(r.skipped).toEqual([expect.objectContaining({ documentId: "big", code: "too_large" })]);
-    expect(state.bodyReads).toEqual(["https://files/a.pdf"]);      // never read whole
+    const err = await buildAndDownloadDocPack(packInput(["a", "big"]) as never).catch((e) => e);
+    expect(err).toBeInstanceOf(PackSheetTooLargeError);
     expect(state.events).toContain("cancel:https://files/big.pdf"); // the body is released
-    expect(state.loads).toBe(1);
+    state.events = [];
+    const r = await buildAndDownloadDocPack(packInput(["a", "big"], { sheetTooLarge: "leave_out" }) as never);
+    expect(r.skipped).toEqual([expect.objectContaining({ documentId: "big", code: "too_large" })]);
+    expect(state.bodyReads).toEqual(["https://files/a.pdf", "https://files/a.pdf"]); // big never read whole
+    expect(state.events).toContain("cancel:https://files/big.pdf");
+    expect(state.loads).toBe(2); // "a", once per build
     // a database without document_versions.size (42703) still builds from the path alone
     expect(src("lib/docPack.ts")).toMatch(/if \(versionErr && isUndefinedColumnError\(versionErr\)\) \{\s*\n\s*const retry = await supabase\.from\("document_versions"\)\.select\("id, file_url"\)/);
   });
@@ -626,7 +746,11 @@ describe("PKG-12 — a pack has a budget, keeps its order, and the cover gives e
     expect(err.split).toEqual([["a"], ["b", "c", "d", "e", "f"]]);
     expect(err.parts).toBe(2);
     expect(err.perPack).toBe(5);
-    expect(String(err.message)).toMatch(/Split it into 2 packs of at most 5 sheets each/);
+    // fix pass 4: a size-filled split is never described as "of at most M sheets"
+    expect(String(err.message)).toMatch(/Split it into 2 packs — filled by the sheets' sizes, so the parts hold different numbers of sheets — and print them separately\.$/);
+    expect(String(err.message)).not.toMatch(/of at most/);
+    // …and /packages names its parts by sheet, in order
+    expect(describePackSplit(err.split, (id) => id.toUpperCase())).toBe("part 1: A on its own; part 2: B … F (5 sheets)");
     expect(state.events).not.toContain("download");
   });
 
@@ -664,16 +788,26 @@ describe("PKG-12 — a pack has a budget, keeps its order, and the cover gives e
     expect(err).toBeInstanceOf(PackTooLargeError);
     expect(err.perPack).toBe(1);
     expect(err.parts).toBe(2);
-    expect(String(err.message)).toMatch(/at B \(sheet 2 of 2\).*Split it into 2 packs of at most 1 sheet each/);
+    expect(String(err.message)).toMatch(/at B \(sheet 2 of 2\).*Split it into 2 packs — filled by the sheets' sizes/);
     expect(state.events).not.toContain("download");
     expect(packContentBudgetRefusal({ label: "X", merged: 4, total: 9, pages: PACK_MAX_PAGES, bytes: PACK_MAX_BYTES })).toBeNull();
+    // with no split, the uniform count still reads "of at most M sheet(s)"
+    expect(String(packContentBudgetRefusal({ label: "X", merged: 1, total: 3, pages: PACK_MAX_PAGES + 1, bytes: 0 })!.message))
+      .toMatch(/Split it into 3 packs of at most 1 sheet each/);
     // the hub takes a split of one sheet a part too (each part then fits)
     expect(src("app/(protected)/assets/[tag]/page.tsx")).toMatch(/if \(e instanceof PackTooLargeError && e\.perPack >= 1\) \{/);
-    // /packages states the split in work packages (its remedy), with the refusal's own numbers
+    // /packages states the split in work packages (its remedy): a size-filled split part by part, by sheet label
+    // (fix pass 4 — a count alone cannot be followed); a uniform split by its numbers; a sheet too large for any pack by name
     const page = src("app/(protected)/packages/page.tsx");
-    expect(page).toContain('showToast(tooLarge.code === "pack_too_large"');
-    expect(page).toMatch(/For a work package that means \$\{tooLarge\.parts \?\? 2\} work packages of at most/);
+    expect(page).toContain('if (refusal.code === "pack_too_large") {');
+    expect(page).toContain("${describePackSplit(parts, (id) => labelById.get(id) ?? \"Document\")} — create them from this one's drawings, then print each.");
+    expect(page).toContain("for (const s of assessment.packable) labelById.set(s.id, s.label);");
+    expect(page).toMatch(/: `For a work package that means \$\{refusal\.parts \?\? 2\} work packages of at most `/);
+    expect(page).toContain('} else if (refusal.code === "pack_sheet_too_large") {');
     expect(err.code).toBe("pack_too_large");
+    // describePackSplit: one sheet named alone, two listed, more as first … last (n)
+    expect(describePackSplit([["x"], ["y", "z"], ["p", "q", "r"]], (id) => `S-${id}`))
+      .toBe("part 1: S-x on its own; part 2: S-y, S-z; part 3: S-p … S-r (3 sheets)");
   });
 
   it("the merged order is the CALLER's order, not the database's, and each included sheet carries its page count", async () => {
@@ -912,6 +1046,9 @@ describe("HLD-1 / PKG-10 / EGR-6 — the single-document copy", () => {
     const fsv = src("components/viewers/FullScreenViewer.tsx");
     expect(fsv).toContain('import { appAlert } from "@/components/providers/DialogProvider";');
     expect(fsv).toMatch(/setActionError\(message\);[\s\S]{0,400}?if \(!pending\) void appAlert\(message\);/);
+    // fix pass 4: the markup export no longer drops logDownloadAudit's outcome — a refused record is said, after delivery
+    expect(fsv).toMatch(/const audit = await logDownloadAudit\(\{[\s\S]{0,300}?\}\);\s*\n\s*if \(!audit\.recorded\) void appAlert\(new DownloadUnrecordedError\(audit\.error\)\.message\);/);
+    expect(fsv).not.toMatch(/\n\s*await logDownloadAudit\(/);
     // VersionHistoryPanel: an inline line above the list — never the load-error state that replaces the panel
     const vh = src("components/documents/VersionHistoryPanel.tsx");
     expect(vh).toContain('setDownloadError((e as Error).message || "Download failed");');

@@ -91,6 +91,10 @@ export default function AssetHubPage() {
           userId: uid,
           userEmail,
           onProgress: (done, total) => setPackProgress([done, total]),
+          // PKG-12: this pack has no cover QR or print snapshot, so a sheet
+          // too large for any pack is left out and named (never on a record
+          // the field verifies against), not a refusal of the whole tag.
+          sheetTooLarge: "leave_out",
         });
         // "all current" is an earned claim: docPack refuses
         // every sheet outside the verify allow-list (VFY-17),

@@ -30,7 +30,7 @@ import { supabase } from "@/lib/supabase";
 import type { DocumentRecord } from "@/types/schema";
 import {
   downloadDocumentPdf, printDocumentPdf, determineControlState, viewerStatusBadge, type ViewBadgeTone,
-  ackGatedDocumentIds, readCopyHoldState, holdFooterLine, copyWatermark,
+  ackGateDocuments, readCopyHoldState, holdFooterLine, copyWatermark,
 } from "@/lib/downloads";
 import { stampPdf } from "@/lib/stamping";
 import { recordIntent } from "@/lib/intents";
@@ -718,19 +718,29 @@ export default function MultiDocViewer({ docs, onClose, currentUserId, currentUs
   // Merge a scope of resolved PDFs into ONE stamped (uncontrolled) PDF and log
   // every included document to the audit trail. Shared by download + print.
   // Document-control Round F (P8): a hard read-&-understood gate refuses the
-  // book through the same helper a single download uses (PKG-9); a held
+  // book through the same helper a single download uses (PKG-9) — failing
+  // CLOSED here, as the field pack does: a sheet whose sign-off status could
+  // not be read refuses the book too; a held
   // sheet is stamped with its hold (HLD-1); only the sheets that actually
   // made it into the book are recorded, rows with no organization are never
   // sent, and a refused record is reported, not swallowed (EGR-6).
   const assembleStampedBook = async (scope: typeof entries): Promise<{ blob: Blob; unrecorded: number } | null> => {
     if (!currentUserId || scope.length === 0) return null;
-    const gated = await ackGatedDocumentIds(scope.map((e) => e.doc), currentUserId);
-    if (gated.size > 0) {
-      const names = scope.filter((e) => e.doc.id && gated.has(e.doc.id))
-        .map((e) => e.doc.documentNumber || e.doc.title || e.doc.name || "Document");
+    const gate = await ackGateDocuments(scope.map((e) => e.doc), currentUserId);
+    const namesOf = (ids: Set<string>) => scope.filter((e) => e.doc.id && ids.has(e.doc.id))
+      .map((e) => e.doc.documentNumber || e.doc.title || e.doc.name || "Document");
+    if (gate.gated.size > 0) {
+      const names = namesOf(gate.gated);
       throw new Error(
         `Read-&-understood required: ${names.join(", ")} ${names.length === 1 ? "has" : "have"} a hard acknowledgment gate and your sign-off is outstanding. ` +
         "Sign it (the document's Acknowledgments section, or your Inbox) or leave it out of the book — nothing was downloaded.",
+      );
+    }
+    if (gate.unknown.size > 0) {
+      const names = namesOf(gate.unknown);
+      throw new Error(
+        `The read-&-understood sign-off status of ${names.join(", ")} could not be checked just now — nothing was downloaded. ` +
+        `Try again, or leave ${names.length === 1 ? "it" : "them"} out of the book.`,
       );
     }
     const merged = await PDFDocument.create();

@@ -356,7 +356,7 @@ describe("VFY-2 review fix — a package sheet the print gate could not print is
     // lib/packLeftOut.ts, gated on the route's fields
     expect(page).toContain("missingSheetWhen(a)");
     const route = readFileSync(join(process.cwd(), "app/api/verify-package/route.ts"), "utf8");
-    expect(route).toContain("const when: WhenMissing = !recordsLeftOut ? {} : atPrint ? { leftOutAtPrint: atPrint.code } : { addedSincePrint: true };");
+    expect(route).toContain("const when: WhenMissing = !recordsLeftOut ? {} : atPrint ? { leftOutAtPrint: atPrint } : { addedSincePrint: true };");
   });
 });
 
@@ -768,20 +768,21 @@ describe("VFY-19 — the snapshot records what the print LEFT OUT, so a missing 
     expect(r.verdict).toBe("incomplete");
   });
 
-  it("a 'PDF' the print could not read, still the current revision, is amber not_pdf (a re-print cannot carry it) — no longer red on every re-print", async () => {
+  it("a 'PDF' the print could not read keeps the route's own verdict — RED 'not in this pack', now saying when (fix pass 4: P8's amber rule is withdrawn; whether such a sheet may read amber is PS-VERIFY's verdict to make)", async () => {
     member(DOC2, "P-102");
     state.versions = [{ id: "w1", file_url: "org/lib/P-102.pdf", file_type: "application/pdf" }];
     state.print = printAt([printed, leftOut(DOC2, "unreadable_pdf", "w1")]);
-    let r = await verify(true);
-    expect(r.notPrintable).toEqual([{ label: "P-102", reason: "not_pdf", leftOutAtPrint: "unreadable_pdf" }]);
-    expect(r.notInPack).toEqual([]);
-    expect(r.verdict).toBe("incomplete");
-    // a NEW revision since: the unreadable file is no longer current — a re-print may carry it (red)
-    state.docs = state.docs.map((d) => (d.id === DOC2 ? { ...d, current_version_id: "w9" } : d));
-    state.versions = [{ id: "w9", file_url: "org/lib/P-102-r2.pdf", file_type: "application/pdf" }];
-    r = await verify(true);
+    const r = await verify(true);
+    expect(r.notPrintable).toEqual([]);
     expect(r.notInPack).toEqual([{ label: "P-102", leftOutAtPrint: "unreadable_pdf" }]);
     expect(r.verdict).toBe("stale");
+    const { missingSheetWhen } = await import("@/lib/packLeftOut");
+    expect(missingSheetWhen((r.notInPack as Array<{ leftOutAtPrint?: string }>)[0])).toBe("left out of this printing — its file could not be read as a PDF when printed");
+    // P8 adds no verdict rule to this route: the snapshot only adds WHEN
+    const route = readFileSync(join(process.cwd(), "app/api/verify-package/route.ts"), "utf8");
+    expect(route).not.toMatch(/sameRevision/);
+    expect(route).not.toMatch(/atPrint\?\.code === "(unreadable_pdf|too_large)"/);
+    expect(route).not.toMatch(/reason = "too_large"/);
   });
 
   it("a sheet the print could not ADD (build_failed — e.g. a tablet out of memory merging a valid PDF) stays RED 'not in this pack': a re-print may carry it", async () => {
@@ -817,31 +818,28 @@ describe("VFY-19 — the snapshot records what the print LEFT OUT, so a missing 
     expect(r.verdict).toBe("stale");
   });
 
-  it("a sheet left out as too_large (over a field pack's budget on its own), still the current revision, is AMBER 'too large for a field pack — get it separately' — never a red 'ask for a re-printed pack' that no re-print can satisfy (fix pass 3)", async () => {
+  it("too_large never reaches a print snapshot now (a work package's pack over the budget is REFUSED, naming the sheet — fix pass 4); its public words say 'get it separately', never that a copy rides along", async () => {
+    // the only writer of `too_large` is a pack with no snapshot (the asset hub);
+    // a work package's print throws PackSheetTooLargeError instead
+    const docPack = readFileSync(join(process.cwd(), "lib/docPack.ts"), "utf8");
+    expect(docPack).toContain('const leaveOutTooLarge = input.sheetTooLarge === "leave_out" && !input.buildCoverAfter;');
+    expect(docPack).toContain("if (!leaveOutTooLarge) throw new PackSheetTooLargeError(documentId, label, why);");
+    // an entry carrying it (none is written) reads as any other left-out sheet: red, with when — no verdict rule
     member(DOC2, "P-102");
     state.versions = [{ id: "w1", file_url: "org/lib/P-102.pdf", file_type: "application/pdf" }];
     state.print = printAt([printed, leftOut(DOC2, "too_large", "w1")]);
-    let r = await verify(true);
-    expect(r.notPrintable).toEqual([{ label: "P-102", reason: "too_large", leftOutAtPrint: "too_large" }]);
-    expect(r.notInPack).toEqual([]);
-    expect(r.verdict).toBe("incomplete");
-    const v = view(r);
-    expect(v.headline).toBe("PACK INCOMPLETE");
-    expect(v.blurb).toContain("(too large for a field pack — get it separately)");
-    expect(`${v.headline} ${v.blurb} ${v.advice ?? ""}`).not.toMatch(/re-printed pack —|ask .* for a re-printed pack/i);
-    expect(notPrintableText("too_large")).toBe("too large for a field pack — get it separately");
-    // a NEW revision since: its file may fit a pack — a re-print may carry it (red)
-    state.docs = state.docs.map((d) => (d.id === DOC2 ? { ...d, current_version_id: "w9" } : d));
-    state.versions = [{ id: "w9", file_url: "org/lib/P-102-r2.pdf", file_type: "application/pdf" }];
-    r = await verify(true);
+    const r = await verify(true);
+    expect(r.notPrintable).toEqual([]);
     expect(r.notInPack).toEqual([{ label: "P-102", leftOutAtPrint: "too_large" }]);
     expect(r.verdict).toBe("stale");
-    // a snapshot with no revision on the entry is never matched to the current one (red)
-    state.docs = state.docs.map((d) => (d.id === DOC2 ? { ...d, current_version_id: "w1" } : d));
-    state.versions = [{ id: "w1", file_url: "org/lib/P-102.pdf", file_type: "application/pdf" }];
-    state.print = printAt([printed, leftOut(DOC2, "too_large", null)]);
-    r = await verify(true);
-    expect(r.verdict).toBe("stale");
+    // the words the pack page appends (minor 3: "it is printed on its own" was untrue — nothing prints it)
+    const { missingSheetWhen, packLeftOutText } = await import("@/lib/packLeftOut");
+    expect(packLeftOutText("too_large")).toBe("too large for a field pack when printed — get it separately");
+    expect(missingSheetWhen({ leftOutAtPrint: "too_large" })).toBe("left out of this printing — too large for a field pack when printed — get it separately");
+    expect(missingSheetWhen({ leftOutAtPrint: "too_large" })).not.toMatch(/printed on its own/);
+    // the presenter has no too_large reason (P8's fix-pass-3 addition is withdrawn with the route rule)
+    expect(readFileSync(join(process.cwd(), "lib/verifyPresent.ts"), "utf8")).not.toContain("too_large");
+    expect(notPrintableText("not_pdf")).toBe("not a printable PDF");
   });
 
   it("ADDED SINCE: a member the snapshot neither printed nor left out joined after this printing", async () => {

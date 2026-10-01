@@ -163,6 +163,9 @@ export default function PackagesPage() {
   const handlePrintPack = async (pkg: WorkPackage) => {
     if (!activeOrgId || !uid) return;
     setPrinting(pkg.id);
+    // PKG-12: the label of every sheet this print gated, so a refusal's split
+    // can be named sheet by sheet (the split holds document ids).
+    const labelById = new Map<string, string>();
     try {
       const { buildPackageCover, coverContentsChunks } = await import("@/lib/physicalBridge");
       const { buildAndDownloadDocPack, assessPackDocs } = await import("@/lib/docPack");
@@ -175,6 +178,7 @@ export default function PackagesPage() {
       // refreshed for a pack that would produce no paper. The printer's
       // read-&-understood gate is part of it (PKG-9).
       const assessment = await assessPackDocs(memberIds, { userId: uid });
+      for (const s of assessment.packable) labelById.set(s.id, s.label);
       if (assessment.packable.length === 0) {
         const first = assessment.skipped[0];
         showToast({
@@ -275,19 +279,36 @@ export default function PackagesPage() {
           unrecordedNote,
       });
     } catch (e) {
-      // PKG-12: a work package over a field pack's budget is split into
-      // PACKAGES (no part-print here: the parts not on a paper would scan
-      // "added since this pack was printed"). A sheet too large on its own
-      // never lands here — the builder leaves it out and names it.
-      const tooLarge = e as { code?: string; parts?: number; perPack?: number; message?: string };
-      showToast(tooLarge.code === "pack_too_large"
-        ? {
-            type: "error",
-            title: "Too large for one field pack — nothing was printed",
-            message: `${tooLarge.message ?? ""} For a work package that means ${tooLarge.parts ?? 2} work packages of at most ` +
-              `${tooLarge.perPack ?? 1} sheet${tooLarge.perPack === 1 ? "" : "s"} each — create them from this one's drawings (e.g. one per area), then print each.`,
-          }
-        : { type: "error", title: "Couldn't print the pack", message: (e as Error).message });
+      // PKG-12 (only while the budget is enforced): a work package over a
+      // field pack's budget is split into PACKAGES (no part-print here: the
+      // parts not on a paper would scan "added since this pack was printed").
+      // A size-filled split is named part by part, by sheet, in the
+      // package's order — its parts hold different numbers of sheets, so a
+      // count alone cannot be followed. A sheet too large for ANY pack
+      // refuses the print naming it (no snapshot ever records it as left out).
+      const refusal = e as { code?: string; parts?: number; perPack?: number; split?: string[][] | null; message?: string };
+      if (refusal.code === "pack_too_large") {
+        const { describePackSplit } = await import("@/lib/docPack");
+        const parts = refusal.split && refusal.split.length > 1 ? refusal.split : null;
+        showToast({
+          type: "error",
+          title: "Too large for one field pack — nothing was printed",
+          message: `${refusal.message ?? ""} ` + (parts
+            ? `For a work package that means ${parts.length} work packages, in this package's order — ` +
+              `${describePackSplit(parts, (id) => labelById.get(id) ?? "Document")} — create them from this one's drawings, then print each.`
+            : `For a work package that means ${refusal.parts ?? 2} work packages of at most ` +
+              `${refusal.perPack ?? 1} sheet${refusal.perPack === 1 ? "" : "s"} each — create them from this one's drawings (e.g. one per area), then print each.`),
+        });
+      } else if (refusal.code === "pack_sheet_too_large") {
+        showToast({
+          type: "error",
+          title: "A sheet is too large for any field pack — nothing was printed",
+          message: `${refusal.message ?? ""} For a work package: download that sheet on its own, then create a package from ` +
+            "this one's other drawings (and close this one) and print it.",
+        });
+      } else {
+        showToast({ type: "error", title: "Couldn't print the pack", message: (e as Error).message });
+      }
     } finally {
       setPrinting(null);
     }

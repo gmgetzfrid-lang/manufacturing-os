@@ -59,6 +59,7 @@ import {
   viewerStatusBadge,
   type ViewBadgeTone,
   logDownloadAudit,
+  DownloadUnrecordedError,
 } from "@/lib/downloads";
 import { applyStampToPdfDoc } from "@/lib/stamping";
 import { publicOrigin } from "@/lib/publicOrigin";
@@ -1042,8 +1043,10 @@ export default function FullScreenViewer({
       // 4. Audit log — same row shape as a plain uncontrolled Download: a
       //    markup export is ALWAYS an uncontrolled copy (PHYS-5), so the
       //    ledger never records an unmarked redline as a controlled copy.
+      //    EGR-6: a refused record is said once the copy is delivered (the
+      //    same words a single download uses), never only logged.
       if (docRecord && currentUserId) {
-        await logDownloadAudit({
+        const audit = await logDownloadAudit({
           doc: docRecord,
           versionId: servedVersionId,
           userId: currentUserId,
@@ -1051,6 +1054,7 @@ export default function FullScreenViewer({
           state: "uncontrolled",
           expiresAt,
         });
+        if (!audit.recorded) void appAlert(new DownloadUnrecordedError(audit.error).message);
         // Marking up is the most edit-like act in the viewer — record it so
         // overlap advisories and provenance see the work. But marking up an
         // OLD revision is a reference, not an edit base (REV-1 chain reaction).

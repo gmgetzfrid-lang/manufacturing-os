@@ -34,6 +34,11 @@ export type PackLeftOutCode =
   /** A hard read-&-understood gate with the printer's sign-off outstanding
    *  (PKG-9). */
   | "ack_required"
+  /** The printer's read-&-understood sign-off status could not be read (a
+   *  failed pending-acknowledgment or policy read) — treated as outstanding:
+   *  the pack fails closed (PKG-9, P8's fourth fix pass). A re-print may
+   *  carry it. */
+  | "ack_unknown"
   /** The current revision has no file on record. */
   | "no_file"
   /** The file could not be fetched at print time (a re-print may carry it). */
@@ -48,9 +53,11 @@ export type PackLeftOutCode =
    *  merging a large valid PDF (at any stage), a page copy that threw — so a
    *  re-print, e.g. on a desktop, may carry it. */
   | "build_failed"
-  /** PKG-12: the sheet ALONE is over a field pack's page or byte budget, so
-   *  it is left out (the rest of the pack is built) — it is downloaded on its
-   *  own. A re-print leaves it out too; the paper does not hold it. */
+  /** PKG-12: the sheet ALONE is over a field pack's page or byte budget
+   *  (enforced budget only). A work package's print REFUSES such a pack
+   *  naming the sheet, so no print snapshot records this code; only a pack
+   *  with no snapshot (the asset hub, `sheetTooLarge: "leave_out"`) leaves it
+   *  out and names it — it is downloaded on its own. */
   | "too_large";
 
 const TEXT: Record<PackLeftOutCode, string> = {
@@ -60,11 +67,12 @@ const TEXT: Record<PackLeftOutCode, string> = {
   hold_unknown: "hold status could not be confirmed when printed",
   unreadable: "not visible to the person who printed it",
   ack_required: "an acknowledgment was outstanding when printed",
+  ack_unknown: "its acknowledgment status could not be checked when printed",
   no_file: "no current file when printed",
   fetch_failed: "its file could not be fetched when printed",
   unreadable_pdf: "its file could not be read as a PDF when printed",
   build_failed: "its file could not be added to the pack when printed",
-  too_large: "too large for a field pack when printed — it is printed on its own",
+  too_large: "too large for a field pack when printed — get it separately",
 };
 
 export function isPackLeftOutCode(v: unknown): v is PackLeftOutCode {

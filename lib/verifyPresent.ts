@@ -162,10 +162,7 @@ export interface PackSheetRow {
  *  `notInPack`. Present tense on purpose: the route knows what is true of the
  *  sheet now, not what the print gate saw — a re-print would leave it out too. */
 export type NotPrintableReason =
-  | "not_issued" | "status_unrecognised" | "withdrawn" | "on_hold" | "hold_unknown" | "unavailable" | "no_file" | "not_pdf"
-  /** Over a field pack's page / byte budget on its own (document-control
-   *  PKG-12): every print leaves it out, so it is supplied separately. */
-  | "too_large";
+  | "not_issued" | "status_unrecognised" | "withdrawn" | "on_hold" | "hold_unknown" | "unavailable" | "no_file" | "not_pdf";
 
 const NOT_PRINTABLE_TEXT: Record<NotPrintableReason, string> = {
   not_issued: "not issued",
@@ -176,7 +173,6 @@ const NOT_PRINTABLE_TEXT: Record<NotPrintableReason, string> = {
   unavailable: "no longer available",
   no_file: "no current file",
   not_pdf: "not a printable PDF",
-  too_large: "too large for a field pack — get it separately",
 };
 
 /** The words for one not-printable reason (an unknown one reads "cannot be printed"). */

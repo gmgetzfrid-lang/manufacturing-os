@@ -246,25 +246,26 @@ async function bumpUse(id: string, kind: "open" | "download"): Promise<void> {
 /** TRX-15: every row a filtered read returns, paged past PostgREST's
  *  max-rows (each next window starts where the rows returned end, until an
  *  empty page), at most `maxPages` windows. A page that errors ends the read
- *  with the rows already in hand: every row is a fact, and a missing one is
- *  never read as a claim (the caller treats "not seen" as unknown). */
+ *  with the rows already in hand: every row is a fact. `complete` says
+ *  whether the read reached its end (an empty page) — false after an error,
+ *  a throw or the page cap, so the caller never reads "not seen" as "no". */
 async function readPaged<T>(
   page: (from: number, to: number) => PromiseLike<{ data: unknown; error: unknown }>,
   maxPages = 10,
-): Promise<T[]> {
+): Promise<{ rows: T[]; complete: boolean }> {
   const out: T[] = [];
   const size = 1000;
   try {
     for (let from = 0, n = 0; n < maxPages; n++) {
       const { data, error } = await page(from, from + size - 1);
-      if (error) break;
+      if (error) return { rows: out, complete: false };
       const rows = (data as T[] | null) ?? [];
-      if (rows.length === 0) break;
+      if (rows.length === 0) return { rows: out, complete: true };
       out.push(...rows);
       from += rows.length;
     }
   } catch { /* the rows in hand stand */ }
-  return out;
+  return { rows: out, complete: false };
 }
 
 /** TRX-15: the documents of this transmittal a copy of which LEFT the portal
@@ -282,9 +283,12 @@ async function readPaged<T>(
  *      database without the 20261068 columns.
  *  Any copy counts, not only the latest pull: a later stamped pull does not
  *  recall an unmarked copy already in the recipient's hands. A read that
- *  fails leaves its documents unflagged (unknown — the page's standing note
- *  covers them), never "marked". */
-async function unmarkedCopiesOut(transmittalId: string): Promise<Map<string, "not_pdf" | "oversize" | "stamp_failed" | null>> {
+ *  fails (or is cut short) sets `readFailed`: a document it did not flag is
+ *  then UNKNOWN (`releasedUnmarked: null` — the page's standing note covers
+ *  it), never "nothing says so" (false). */
+async function unmarkedCopiesOut(transmittalId: string): Promise<{
+  copies: Map<string, "not_pdf" | "oversize" | "stamp_failed" | null>; readFailed: boolean;
+}> {
   const out = new Map<string, "not_pdf" | "oversize" | "stamp_failed" | null>();
   const pulls = await readPaged<{ document_id?: string | null }>((from, to) => supabaseAdmin
     .from("download_audits").select("document_id")
@@ -292,7 +296,7 @@ async function unmarkedCopiesOut(transmittalId: string): Promise<Map<string, "no
     .eq("source", "transmittal_portal_unstamped")
     .order("id", { ascending: true })
     .range(from, to));
-  for (const p of pulls) if (p.document_id) out.set(String(p.document_id), null);
+  for (const p of pulls.rows) if (p.document_id) out.set(String(p.document_id), null);
   const trail = await readPaged<{ details?: Record<string, unknown> | null }>((from, to) => supabaseAdmin
     .from("audit_logs").select("details")
     .eq("action", "TRANSMITTAL_PORTAL_DOWNLOAD")
@@ -300,14 +304,32 @@ async function unmarkedCopiesOut(transmittalId: string): Promise<Map<string, "no
     .eq("details->>stamped", "false")
     .order("id", { ascending: true })
     .range(from, to));
-  for (const row of trail) {
+  for (const row of trail.rows) {
     const d = row.details ?? {};
     if (d.stamped !== false || typeof d.documentId !== "string") continue;
     const why = d.unstampedReason;
     const reason = why === "not_pdf" || why === "oversize" || why === "stamp_failed" ? why : null;
     out.set(d.documentId, reason ?? out.get(d.documentId) ?? null);
   }
-  return out;
+  return { copies: out, readFailed: !pulls.complete || !trail.complete };
+}
+
+/** TRX-15: how long after the portal's last recorded use (an open or a
+ *  download — `portal_last_used_at`, which every download bumps) the page's
+ *  `&recheck=1` re-read is taken as that visit's own, not counted as an open.
+ *  The page re-reads when a download settles and 45 s later; outside this
+ *  window a recheck IS an open, so a client that always sends it cannot keep
+ *  the issuer's open count at zero. */
+const RECHECK_WINDOW_MS = 10 * 60 * 1000;
+
+/** TRX-15: is this snapshot GET the page's post-download re-read? Only with
+ *  `&recheck=1` AND within RECHECK_WINDOW_MS of the portal's last recorded
+ *  use; a row without the 20261133 column, or a stamp that does not parse,
+ *  counts the GET as an open. */
+function isPortalRecheck(recheckParam: string | null, lastUsedAt: unknown, now: number = Date.now()): boolean {
+  if (recheckParam !== "1" || typeof lastUsedAt !== "string") return false;
+  const at = Date.parse(lastUsedAt);
+  return Number.isFinite(at) && now - at >= 0 && now - at <= RECHECK_WINDOW_MS;
 }
 
 /** TRX-15: the bell kind of an unstampable-PDF notice (refused or released
@@ -626,8 +648,10 @@ export async function GET(req: NextRequest) {
   // The snapshot the portal renders — nothing beyond this transmittal.
   const { data: org } = await supabaseAdmin.from("orgs").select("name").eq("id", orgId).maybeSingle();
   // TRX-15: the page re-reads the snapshot after a download (`&recheck=1`)
-  // to learn whether the copy left unmarked — that re-read is not an open.
-  if (req.nextUrl.searchParams.get("recheck") !== "1") await bumpUse(String(t.id), "open");
+  // to learn whether the copy left unmarked — that re-read is not an open,
+  // but only within minutes of the portal's last recorded use
+  // (`isPortalRecheck`); any other GET, flagged or not, is counted.
+  if (!isPortalRecheck(req.nextUrl.searchParams.get("recheck"), t.portal_last_used_at)) await bumpUse(String(t.id), "open");
   // TRX-15: the page saves a file without reading the response, so it can no
   // longer see the X-Transmittal-Stamped header — it says up front which
   // pinned files leave without the UNCONTROLLED marking: a file that is not a
@@ -649,7 +673,7 @@ export async function GET(req: NextRequest) {
       fileByVersion.set(String(v.id), { file_url: v.file_url ?? null, file_type: v.file_type ?? null, size: typeof v.size === "number" ? v.size : null });
     }
   }
-  const copiesOut = await unmarkedCopiesOut(String(t.id));
+  const { copies: copiesOut, readFailed: copiesUnread } = await unmarkedCopiesOut(String(t.id));
   const fromFile = (i: Item): "not_pdf" | "oversize" | null | undefined => {
     const f = fileByVersion.get(String(i.versionId ?? i.version_id ?? ""));
     if (!f?.file_url) return undefined; // unknown
@@ -658,8 +682,10 @@ export async function GET(req: NextRequest) {
     return !refusesUnstampable(i) && typeof size === "number" && size > PORTAL_STAMP_MAX_BYTES ? "oversize" : null;
   };
   // `releasedUnmarked`: true — it leaves (or a copy already left) WITHOUT the
-  // marking; false — nothing says so; null — unknown. `unmarkedReason`: why,
-  // when known (null with `true` = a copy left unmarked, cause not on the trail).
+  // marking; false — nothing says so; null — unknown (its file, or — when the
+  // record / trail read failed — whether a copy already left unmarked).
+  // `unmarkedReason`: why, when known (null with `true` = a copy left
+  // unmarked, cause not on the trail).
   const unmarked = (i: Item): { releasedUnmarked: boolean | null; unmarkedReason: "not_pdf" | "oversize" | "stamp_failed" | null } => {
     const known = fromFile(i);
     if (i.documentId && copiesOut.has(i.documentId)) {
@@ -667,6 +693,7 @@ export async function GET(req: NextRequest) {
       return { releasedUnmarked: true, unmarkedReason: why ?? (known === "not_pdf" || known === "oversize" ? known : null) };
     }
     if (known === undefined) return { releasedUnmarked: null, unmarkedReason: null };
+    if (known === null && copiesUnread) return { releasedUnmarked: null, unmarkedReason: null };
     return { releasedUnmarked: known !== null, unmarkedReason: known };
   };
   return NextResponse.json({

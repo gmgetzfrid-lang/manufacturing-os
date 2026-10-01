@@ -13,7 +13,9 @@
 //   · fix pass 2: the MEASURE rows count the population the app's budget
 //     (PKG-12) and the portal's stamping bound (TRX-15) actually reach — the
 //     print gate's sheets, recorded file sizes against the code's own
-//     constants — and the file asks for the paste BEFORE the app deploys.
+//     constants; fix pass 4: the file asks for the paste WITH or just AFTER
+//     the app deploy (never before), the counts read before the budget is
+//     switched on.
 
 import { describe, it, expect } from "vitest";
 import { readFileSync, readdirSync } from "node:fs";
@@ -175,8 +177,12 @@ describe("20261143 — work_packages UPDATE / DELETE narrowed to the owner or a 
       expect(r).toContain("to_jsonb(t)->>'portal_revoked_at' IS NULL");
       expect(r).not.toMatch(/\bt\.portal_(revoked|expires)_at\b/);
     }
-    // the operator reads the counts BEFORE the app ships
-    expect(m143).toMatch(/DEPLOY ORDER \(PKG-12\): paste this file BEFORE the P8 FIELD app deploys and\n-- read the MEASURE rows first/);
+    // fix pass 4: the paste goes WITH or just AFTER the app (pasted first, the
+    // narrowing met the old page's unchecked Close — a false "Package closed");
+    // the counts are read before the field-pack budget is switched ON
+    expect(m143).toMatch(/DEPLOY ORDER: paste this file WITH the P8 FIELD app deploy or just AFTER\n-- it — never before\./);
+    expect(m143).toContain("the P8 app ships with it OFF");
+    expect(m143).not.toMatch(/paste this file BEFORE the P8 FIELD app/);
   });
 
   it("probes match the DEPARSED policy text: no cast inside any LIKE pattern, and every pattern the policies would deparse to", () => {

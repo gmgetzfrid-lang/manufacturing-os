@@ -325,44 +325,59 @@ export interface AckGateDoc {
   ackPolicy?: unknown;
 }
 
+/** PKG-9: the gate's whole answer. `gated` — the documents whose effective
+ *  ack policy sets `hardGate` AND for which the person still has a pending
+ *  acknowledgment; `unknown` — the documents it could not decide because a
+ *  read failed (their chunk's pending-acknowledgment read, the policy
+ *  module, or their own policy read). */
+export interface AckGateOutcome {
+  gated: Set<string>;
+  unknown: Set<string>;
+}
+
 /** PKG-9: THE hard read-&-understood gate — the one helper every copy path
- *  calls: the single-document download and print (assertAckGate below), the
- *  field doc pack (lib/docPack.ts) and the book viewer's merged book. Returns
- *  the ids of the documents whose effective ack policy sets `hardGate` AND
- *  for which `userId` still has a pending acknowledgment. Fails OPEN per
- *  document on a lookup error (unchanged: a broken policy read must never
- *  brick every copy — this gate is a client-side courtesy, not a rail).
+ *  calls: the single-document download and print (assertAckGate below, via
+ *  `ackGatedDocumentIds`), the field doc pack (lib/docPack.ts) and the book
+ *  viewer's merged book. It never decides a document it could not read:
+ *  those are `unknown`, and each caller chooses its posture. The single
+ *  download reads `gated` alone and so fails OPEN (unchanged: a broken read
+ *  must never brick every desk copy — this gate is a client-side courtesy,
+ *  not a rail); the field pack and the book refuse `unknown` too — they fail
+ *  CLOSED, as the pack's hold gate does (P8's fourth fix pass).
  *  The person's PENDING acknowledgments are read first (one chunked read),
  *  and a policy is resolved only for a document with one — most people
  *  printing have none, so a pack spread over many folders makes no policy
  *  round trips at all (it used to resolve every sheet's policy, up to two
  *  sequential reads per folder / library, before asking). */
-export async function ackGatedDocumentIds(docs: AckGateDoc[], userId: string): Promise<Set<string>> {
+export async function ackGateDocuments(docs: AckGateDoc[], userId: string): Promise<AckGateOutcome> {
   const gated = new Set<string>();
+  const unknown = new Set<string>();
   const candidates = docs.filter((d): d is AckGateDoc & { id: string; libraryId: string } => !!d.id && !!d.libraryId);
-  if (candidates.length === 0) return gated;
+  if (candidates.length === 0) return { gated, unknown };
   const pending = new Set<string>();
   const ids = [...new Set(candidates.map((d) => d.id))];
   for (let i = 0; i < ids.length; i += ACK_IN_CHUNK) {
+    const chunk = ids.slice(i, i + ACK_IN_CHUNK);
     try {
       const { data, error } = await supabase
         .from("document_acknowledgments")
         .select("document_id")
-        .in("document_id", ids.slice(i, i + ACK_IN_CHUNK))
+        .in("document_id", chunk)
         .eq("assignee_user_id", userId)
         .eq("status", "pending");
-      if (error) continue; // fail open for this chunk
+      if (error) { for (const id of chunk) unknown.add(id); continue; } // this chunk is undecided
       for (const r of (data as Array<{ document_id: string }> | null) ?? []) pending.add(String(r.document_id));
     } catch {
-      /* fail open */
+      for (const id of chunk) unknown.add(id);
     }
   }
-  if (pending.size === 0) return gated;
+  if (pending.size === 0) return { gated, unknown };
   let effectiveAckPolicyForDocument: typeof import("@/lib/acknowledgments").effectiveAckPolicyForDocument;
   try {
     ({ effectiveAckPolicyForDocument } = await import("@/lib/acknowledgments"));
   } catch {
-    return gated; // fail open
+    for (const id of pending) unknown.add(id);
+    return { gated, unknown };
   }
   type Policy = Awaited<ReturnType<typeof effectiveAckPolicyForDocument>>;
   for (const d of candidates) {
@@ -387,10 +402,17 @@ export async function ackGatedDocumentIds(docs: AckGateDoc[], userId: string): P
       }
       if (policy?.enabled && policy.hardGate) gated.add(d.id);
     } catch {
-      /* fail open for this document: enforcement must not outlive its data */
+      unknown.add(d.id); // undecided: its policy could not be read
     }
   }
-  return gated;
+  return { gated, unknown };
+}
+
+/** PKG-9: the gated ids alone — the single download's posture: it fails
+ *  OPEN on a read error (an `unknown` document is not gated), as it always
+ *  has. */
+export async function ackGatedDocumentIds(docs: AckGateDoc[], userId: string): Promise<Set<string>> {
+  return (await ackGateDocuments(docs, userId)).gated;
 }
 
 async function assertAckGate(ctx: DownloadContext): Promise<void> {

@@ -923,7 +923,7 @@ describe("TRX-15 — the snapshot flags a pinned file that leaves unmarked (the 
     expect(state.ranges.some((r) => r.table === "audit_logs" && r.from === 0 && r.to === 999)).toBe(true);
   });
 
-  it("the record without a trail reason still flags the copy (reason unknown); a record read that fails flags nothing — never 'marked' (fix pass 3)", async () => {
+  it("the record without a trail reason still flags the copy (reason unknown); a record read that fails leaves the item UNKNOWN — never 'marked', never 'nothing says so' (fix pass 4)", async () => {
     state.versionRows = [{ id: VER, file_url: `orgs/orgA/d/${DOC}.pdf`, file_type: "application/pdf", size: 10, org_id: "orgA" }];
     state.downloads = [{ document_id: DOC, transmittal_id: "t1", source: "transmittal_portal_unstamped" }];
     let body = await (await get()).json() as { items: Array<Record<string, unknown>> };
@@ -932,16 +932,39 @@ describe("TRX-15 — the snapshot flags a pinned file that leaves unmarked (the 
     state.downloads = [{ document_id: DOC, transmittal_id: "t2", source: "transmittal_portal_unstamped" }];
     body = await (await get()).json() as { items: Array<Record<string, unknown>> };
     expect(body.items[0]).toMatchObject({ releasedUnmarked: false });
-    // a database without the 20261068 columns: the read errors → the item keeps what the file says
+    // the read errors (a transient fault, or a database without the 20261068 columns): whether a copy
+    // already left unmarked is UNKNOWN — null, the value the page covers with its standing note —
+    // never false ("nothing says so"), which a consumer could read as "stamped" (fix pass 4)
     state.downloadReadError = { code: "42703", message: "column download_audits.transmittal_id does not exist" };
     body = await (await get()).json() as { items: Array<Record<string, unknown>> };
-    expect(body.items[0]).toMatchObject({ releasedUnmarked: false, unmarkedReason: null });
+    expect(body.items[0]).toMatchObject({ releasedUnmarked: null, unmarkedReason: null });
+    // …but what the FILE says still stands: a non-PDF leaves unmarked whatever the record read did
+    state.versionRows = [{ id: VER, file_url: `orgs/orgA/d/${DOC}.dwg`, file_type: "application/acad", size: 10, org_id: "orgA" }];
+    body = await (await get()).json() as { items: Array<Record<string, unknown>> };
+    expect(body.items[0]).toMatchObject({ releasedUnmarked: true, unmarkedReason: "not_pdf" });
+    const route = readFileSync("app/api/transmittal/route.ts", "utf8");
+    expect(route).toContain("if (known === null && copiesUnread) return { releasedUnmarked: null, unmarkedReason: null };");
+    // a read cut short at the page cap is not "complete" either
+    expect(route).toMatch(/return \{ rows: out, complete: false \};\s*\n\}/);
   });
 
-  it("the page's re-read after a download (`&recheck=1`) is not an open on the usage trail (fix pass 3)", async () => {
+  it("the page's re-read after a download (`&recheck=1`) is not an open — only within minutes of the portal's last recorded use; otherwise it IS counted (fix pass 4)", async () => {
+    // right after a download / open (portal_last_used_at fresh): the page's re-read is that visit's own
+    state.transmittal!.portal_last_used_at = new Date(Date.now() - 60_000).toISOString();
     await get(undefined, { recheck: "1" });
     expect(state.rpcs).toEqual([]);
+    // a plain open is always counted
     await get();
+    expect(state.rpcs).toEqual([{ fn: "bump_transmittal_portal_use", args: { p_id: "t1", p_kind: "open" } }]);
+    // a client that always sends recheck=1 cannot hide an open: stale last use → counted
+    state.rpcs = [];
+    state.transmittal!.portal_last_used_at = new Date(Date.now() - 30 * 60_000).toISOString();
+    await get(undefined, { recheck: "1" });
+    expect(state.rpcs).toEqual([{ fn: "bump_transmittal_portal_use", args: { p_id: "t1", p_kind: "open" } }]);
+    // never used (or a database without the 20261133 column) → counted
+    state.rpcs = [];
+    delete state.transmittal!.portal_last_used_at;
+    await get(undefined, { recheck: "1" });
     expect(state.rpcs).toEqual([{ fn: "bump_transmittal_portal_use", args: { p_id: "t1", p_kind: "open" } }]);
   });
 
