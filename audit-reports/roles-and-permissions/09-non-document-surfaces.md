@@ -148,7 +148,7 @@ round-trip.
    refused.
 4. Every deletion writes an audit row.
 
-*Cross-area note (2026-09-30, intelligence Round G): intelligence `DACL-2` re-verified against this route — controller gate, safe key, hold refusal and the custody row hold; its "inside retention" limb is not in the route (nothing reads `retention_until`), so DACL-2 stays OPEN on that limb alone.*
+*Cross-area note (2026-09-30, intelligence Round G; corrected by its fix pass 3): intelligence `DACL-2` re-verified against this route — the controller gate, the safe key and the custody row hold, but the hold refusal covers only a key that matches a version's `file_url`: the route resolves the key with `.eq("file_url", path)` alone (`app/api/storage/delete/route.ts:79-84`), so a revision's native source file (`document_versions.source_file_key`, stored under `orgs/<org>/libraries/…` by `lib/revisions.ts:504-510`) resolves to no document, skips the `legal_hold` / `document_holds` checks (`:86-101`) and is destroyed with a 200 (reproduced: `lib/__tests__/intelRoundGRecords.test.ts` "DACL-2 criterion 1 …", two `it.fails`; this record's `storageDeleteRoute.test.ts` stand-in answers every `document_versions` read with the row whatever the filter, so it could not see the limb). This record's criterion 3 ("A key belonging to a document under legal hold or an unreleased hold is refused") therefore does not hold for source keys; the status is left to roles-and-permissions. DACL-2 also lacks its "inside retention" limb (nothing reads `retention_until`), so DACL-2 stays OPEN on retention AND the source-key hold bypass — owner document-control's retention rail, whose fix resolves the key against both columns as `upload-url` already does (`app/api/storage/upload-url/route.ts:60`).*
 
 ---
 

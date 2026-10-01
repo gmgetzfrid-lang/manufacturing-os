@@ -57,7 +57,7 @@ about the system.
 | [DEC-20](#dec-20) | Implement **both** a DELETE policy and a real suspend | high | `SURF-1`, `OWN-12`, `SURF-16` |
 | [DEC-21](#dec-21) | Reviewer independence is a per-library policy, default **on** where a roster exists | medium | `DEL-5`, `WF-14` |
 | [DEC-22](#dec-22) | The hand-back is an explicit guarded action routed through `revUpDocument` | high | `LIFE-1`, `GAP-6` |
-| [DEC-23](#dec-23) | **Delete the `related_ticket_id` review waiver outright** | medium | `LIFE-2`, `LIFE-12`, `GAP-6` |
+| [DEC-23](#dec-23) | **Delete the `related_ticket_id` review waiver outright** | medium | `LIFE-2`, `LIFE-12`, `GAP-6`, `WIRE-9` |
 | [DEC-24](#dec-24) | Markup persists server-side, keyed to document + version + user + session | medium | `LIFE-3`, `LIFE-8`, `GAP-7` |
 | [DEC-25](#dec-25) | A ticket cannot close silently over its own open hold. Never auto-release | medium | `LIFE-6` |
 | [DEC-26](#dec-26) | An `ASBUILT` ticket defaults the resulting version to `issue_type: "As-Built"` | low | `LIFE-11` |
@@ -89,6 +89,7 @@ about the system.
 | [DEC-53](#dec-53) | The equipment registry: writer tier edits and archives, controller tier deletes; a site code identifies the **type**, one code is one asset; codebook edits never rewrite codes | medium | `AREA-1`, `IRLS-5`, `CB-3`, `CB-5`, `CB-6`, `CB-10`, `GAP-310` |
 | [DEC-54](#dec-54) | A closed project is a **closed record**: closing releases its checkouts and closes its intake door, reopening is explicit and audited, and a project carrying cost or quality records is archived — deleted only by a controller with a reason, its rows snapshotted first | medium | `PM-1`, `PM-4`, `PM-6`, `PM-11`, `SEC-9`, `SEC-15`, `SEC-17`, `SAF-6` |
 | [DEC-55](#dec-55) | The cost charts draw **only what the data holds and say what they are**: series identity is a validated categorical pair plus shape; one number is shown as a number; example data only on an empty project, every figure marked; the example shows only what the real view draws | low | `CHART-2`, `CHART-3`, `CHART-4`, `REL-10`, `REL-11` |
+| [DEC-56](#dec-56) | The orphan sweep's **reference collector stays bucket-wide**: the walk and the delete set are confined to the caller's `orgs/<orgId>/` prefix, the reference set never is | low | `ILIFE-8`, `RET-7`, `BKP-2` |
 
 ---
 
@@ -3123,8 +3124,12 @@ reference queries to the caller's org is declined; this is intelligence
 Done-when 2 already states.
 
 > Made during intelligence Round G (2026-09-30), package I-01 phase A, under
-> the protocol's fail-safe rule, to back a declined limb with a decision
-> rather than with another finding's Done-when (`DEC-29` rule 3).
+> the fail-safe rule in *How to use this file* (a call no `DEC-` covers is made
+> on the option that fails safe, written into the record, and added here as the
+> next free number), so that a declined limb rests on a decision rather than
+> on another finding's Done-when. A decision is not a ticked criterion: it
+> does not satisfy `DEC-29` rule 3 (every Done-when holds), and `ILIFE-8`
+> stays OPEN until its `referencedKeys` residual is scoped or dropped.
 > *Numbering: the next free number on this base (DEC-44 to DEC-55 are taken);
 > the integrator renumbers on a collision.*
 
@@ -3139,7 +3144,8 @@ a storage cost, never a loss.
 **Consequences.** The collector's output must not leave the server as a
 cross-tenant aggregate. Today the scan's `referencedKeys` count does
 (`lib/storageOrphans.ts:187`, returned by `app/api/admin/orphans/route.ts:30`);
-that is `ILIFE-8`'s residual, owner admin-and-org P2 (`BKP-2`). This decision
+that is `ILIFE-8`'s residual, owner admin-and-org P2 (`BKP-2`), and `ILIFE-8`
+stays OPEN on it. This decision
 says nothing about the collector's completeness, which is `ILIFE-6`
 criterion 3 (keyset paging, same owner).
 

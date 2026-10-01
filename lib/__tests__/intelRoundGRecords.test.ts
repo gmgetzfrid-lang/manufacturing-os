@@ -29,11 +29,25 @@
 // library-level deny is a readable container too (folderChain drops the
 // missing library's ACL); and loadPrincipal swallows a failed `team_members`
 // read (`teams ?? []`), so the principal carries no teams and a TEAM DENY
-// stops applying. Opened as KACL-12 (owner I-12, lib/knowledgeAccess.ts); the
-// three it.todo entries below are the tests that land with that fix. The
-// stand-in honours `.order()` and `.range()` / `.limit()` (filter, sort, then
-// window, as PostgREST does), so when the container reads start paging, the
-// first of them exercises the real paging loop here.
+// stops applying. Opened as KACL-12 (owner I-12, lib/knowledgeAccess.ts). The
+// KACL-12 block reproduces each limb against the real seam as an `it.fails`:
+// it asserts what KACL-12's Done-when require, fails at HEAD (the leak), and
+// starts failing the suite the day the fix makes it hold, so I-12 flips each
+// to `it` as it lands. The stand-in honours `.order()` and `.range()` /
+// `.limit()` (filter, sort, then window, as PostgREST does), so when the
+// container reads start paging these cases run that loop too; the row-cap
+// limb itself (more folders than one window) is KACL-12 Done-when 4 and is not
+// reproduced here.
+//
+// DACL-2 criterion 1 (a key belonging to a held document is refused) does not
+// hold for a revision's NATIVE SOURCE file at HEAD: /api/storage/delete
+// resolves the key to its version by `file_url` alone, so a `source_file_key`
+// matches no row, the hold checks never run, and the bytes are destroyed with
+// a 200. SURF-2's own test (storageDeleteRoute.test.ts) uses a filter-blind
+// stand-in that answers every document_versions read with the row, so it could
+// not see this; the filter-aware stand-in here does. Two `it.fails` (owner:
+// document-control's retention rail, which flips them when the route resolves
+// both columns as upload-url does).
 //
 // ILIFE-6 criterion 3 (the orphan collector must never miss a reference —
 // deleteOrphans is irreversible) does NOT hold at HEAD either, and the last
@@ -141,7 +155,8 @@ vi.mock("@/lib/inAppNotifications", () => ({ notify: vi.fn(async () => {}) }));
 vi.mock("@/lib/audit", () => ({ logAuditAction: vi.fn(async () => {}), logRevisionEvent: vi.fn(async () => {}), logHoldEvent: vi.fn(async () => {}) }));
 vi.mock("@/lib/notify/dispatch", () => ({ emit: vi.fn(async () => {}) }));
 // lib/storageOrphans (ILIFE-6 block) builds its S3 client at import; the
-// collector under test never touches the bucket.
+// collector under test never touches the bucket. The DACL-2 block counts the
+// route's DeleteObject sends on the same mock.
 vi.mock("@/lib/r2", () => ({ r2: { send: vi.fn(async () => ({})) }, R2_BUCKET: "test-bucket" }));
 // The route must refuse before a provider is ever called.
 vi.mock("@/lib/ai/providerCall", () => ({
@@ -150,9 +165,11 @@ vi.mock("@/lib/ai/providerCall", () => ({
 }));
 
 import { toolByName, type ToolContext } from "@/lib/orchestrator/tools";
-import { loadPrincipal, type KnowledgePrincipal } from "@/lib/knowledgeAccess";
+import { loadPrincipal, loadDcLandscape, containerReadable, type KnowledgePrincipal } from "@/lib/knowledgeAccess";
 import { POST as orchestratorPOST } from "@/app/api/orchestrator/route";
 import { collectReferencedKeys } from "@/lib/storageOrphans";
+import { DELETE as storageDELETE } from "@/app/api/storage/delete/route";
+import { r2 } from "@/lib/r2";
 
 const ORG = "o1";
 const LIB = "L-ops";
@@ -299,16 +316,148 @@ describe("KACL-2 (→ R&P EGRESS-3) — Done-when 2 and 3: a FOLDER-level ACL re
     expect(passageDocs(await run("search_documents", { query: "knockout drum" }, viewer))).toEqual(["Site note"]);
   });
 
-  it.todo("KACL-12 (owner I-12): a libraries / collections read error inside loadDcLandscape fails CLOSED — today it drops the container ACL and the folder-denied document reads as open; with the fix, both container reads page (.order(\"id\") and .range() / .limit() until a short page) and this runs that loop against the stand-in over more folders than one window");
-  it.todo("KACL-12 (owner I-12): a libraries read error never makes a folder under a library-level deny a readable CONTAINER — today containerReadable(\"folder\") answers true (folderChain builds [lib?.acl ?? null, ...lineage] with the library missing), so the sources picker and add-source re-check, /api/flows/browse and /api/area/knowledge-status name the folder");
-  it.todo("KACL-12 (owner I-12): a team_members read error inside loadPrincipal yields no principal (or throws to a fail-closed caller) — today the principal loads with no teams, so a folder ACL [allow role Viewer read, deny team T read] reads as open to a Viewer in T");
-
   it("fails CLOSED on the mirror hop: when knowledge_documents cannot be read, every returned knowledge document is hidden", async () => {
     seed(null);
     const viewer = await ctxFor("u-viewer");
     db.errors.knowledge_documents = { message: "timeout" };
     expect(passageDocs(await run("search_documents", { query: "knockout drum" }, viewer))).toEqual([]);
   });
+});
+
+describe("KACL-12 (owner I-12): the seam's own reads fail OPEN — it.fails until the fix lands, then flip each to `it`", () => {
+  /** What a denied Viewer gets back from both tools: the denied document's
+   *  match and its passage, if either leaks. The tools catch a throwing seam
+   *  (tools.ts:89, :112), so a fix that throws reads as "nothing leaked". */
+  async function leakedTo(viewer: ToolContext): Promise<string[]> {
+    const found = await run("find_documents", { query: "flare" }, viewer);
+    const searched = await run("search_documents", { query: "knockout drum" }, viewer);
+    return [
+      ...(matchIds(found).includes(IN_FOLDER) ? ["find_documents: INC-0042"] : []),
+      ...(passageDocs(searched).includes("INC-0042") ? ["search_documents: INC-0042 passage"] : []),
+    ];
+  }
+
+  // ✗ at HEAD (lib/knowledgeAccess.ts:105-125): loadDcLandscape never reads
+  // the `error` of either container read, so a failed read is an EMPTY map;
+  // the document's chain is evaluated without the missing ACL and the no-ACL
+  // fallback (:91) answers readable. Done-when 1 and 6.
+  for (const [table, where] of [
+    ["collections", "folder"],
+    ["libraries", "library"],
+  ] as const) {
+    it.fails(`a ${table} read error never lets a document under a ${where}-level deny through either tool — nothing controlled comes back, or the seam aborts`, async () => {
+      seed(where === "folder" ? (DENY_VIEWER_READ as unknown as Row) : null);
+      if (where === "library") db.tables.libraries[0].acl = DENY_VIEWER_READ;
+      const viewer = await ctxFor("u-viewer");
+      // Non-vacuous: with every read answering, the deny removes the document.
+      const control = await leakedTo(viewer);
+      db.errors[table] = { message: "statement timeout" };
+      const leaked = await leakedTo(viewer);
+      expect({ control, leaked }).toEqual({ control: [], leaked: [] });
+    });
+  }
+
+  // ✗ at HEAD (lib/knowledgeAccess.ts:36-49): loadPrincipal destructures only
+  // `data` from the team_members read, so an error builds a principal with NO
+  // teams and a team DENY stops matching. Done-when 2 and 6.
+  it.fails("a team_members read error never drops a team deny — no principal, an abort, or the deny still applies", async () => {
+    const TEAM_DENY = { inherit: true, visibility: "normal", rules: [
+      { effect: "allow", subject: { type: "role", id: "Viewer" }, actions: ["read", "discover"] },
+      { effect: "deny", subject: { type: "team", id: "T-contract" }, actions: ["read", "discover"] },
+    ] };
+    seed(TEAM_DENY as unknown as Row);
+    db.tables.team_members.push({ uid: "u-viewer", team_id: "T-contract" });
+    db.tables.teams.push({ id: "T-contract", org_id: ORG, supervisor_user_id: null });
+    // Non-vacuous: with team_members answering, the Viewer is in T-contract
+    // and the deny removes the document.
+    const control = await leakedTo(await ctxFor("u-viewer"));
+    db.errors.team_members = { message: "statement timeout" };
+    const outcome = await loadPrincipal(ORG, "u-viewer").then(
+      async (p) => {
+        if (!p) return "no principal";
+        const leaked = await leakedTo({ orgId: ORG, userId: "u-viewer", role: p.role, principal: p, actorName: "Pat Example", approved: new Set() });
+        return leaked.length ? `teams [${p.teamIds.join(", ")}] leaked ${leaked.join("; ")}` : "deny applied";
+      },
+      () => "aborted",
+    );
+    expect({ control, outcome: ["no principal", "aborted", "deny applied"].includes(outcome) ? "refused" : outcome })
+      .toEqual({ control: [], outcome: "refused" });
+  });
+
+  // ✗ at HEAD (lib/knowledgeAccess.ts:188-189): with `libraries` erroring and
+  // `collections` read, the folder is in its map and its library is not, so
+  // folderChain builds [lib?.acl ?? null, ...lineage] — the library deny drops
+  // out and the folder is a readable CONTAINER (the sources picker and
+  // add-source re-check, /api/flows/browse, /api/area/knowledge-status name
+  // it). Done-when 1, 3 and 6.
+  it.fails("a libraries read error never makes a folder under a library-level deny a readable container — refused, or the landscape load aborts", async () => {
+    seed(null);
+    db.tables.libraries[0].acl = DENY_VIEWER_READ;
+    const principal = (await loadPrincipal(ORG, "u-viewer")) as KnowledgePrincipal;
+    expect(principal).not.toBeNull();
+    const readable = (l: Awaited<ReturnType<typeof loadDcLandscape>>) =>
+      [containerReadable("library", LIB, principal, l), containerReadable("folder", FOLDER, principal, l)];
+    // Non-vacuous: with every read answering, neither container is readable.
+    const control = readable(await loadDcLandscape(ORG));
+    db.errors.libraries = { message: "statement timeout" };
+    const outcome = await loadDcLandscape(ORG).then(
+      (l) => {
+        const [lib, folder] = readable(l);
+        return lib || folder ? `readable: library ${lib}, folder ${folder}` : "refused";
+      },
+      () => "aborted",
+    );
+    expect({ control, outcome: outcome === "aborted" ? "refused" : outcome })
+      .toEqual({ control: [false, false], outcome: "refused" });
+  });
+});
+
+describe("DACL-2 criterion 1 (→ document-control retention rail): the hold refusal reaches a revision's native source file", () => {
+  const ORG_U = "12345678-1234-1234-1234-123456789abc";
+  const RENDERED = `orgs/${ORG_U}/libraries/L1/P-101__revC__1.pdf`;
+  const SOURCE = `orgs/${ORG_U}/libraries/L1/P-101__revC__source__1.dwg`;
+  /** One revision of a held document: its rendered file and its native
+   *  source are both keys of the same document_versions row
+   *  (lib/revisions.ts:504-510 writes the source under the library prefix,
+   *  :528 records it as source_file_key). The caller is a controller by the
+   *  role collection, so only the hold check stands between them and the
+   *  bytes. */
+  function seedHeld(hold: "legal_hold" | "document_holds") {
+    db.user = { id: "u-dc", email: "dc@example.com" };
+    db.tables = {
+      org_members: [{ org_id: ORG_U, uid: "u-dc", role: "Requester", roles: ["Requester", "DocCtrl"], status: "active" }],
+      document_versions: [{ id: "v-C", record_id: "d-pid", file_url: RENDERED, source_file_key: SOURCE }],
+      documents: [{ id: "d-pid", org_id: ORG_U, legal_hold: hold === "legal_hold" }],
+      document_holds: hold === "document_holds" ? [{ id: "h-1", document_id: "d-pid", released_at: null }] : [],
+    };
+  }
+  /** The status, plus " deleted" if the route sent a DeleteObject. */
+  async function attempt(path: string): Promise<string> {
+    vi.mocked(r2.send).mockClear();
+    const res = await storageDELETE(new NextRequest("http://test/api/storage/delete", {
+      method: "DELETE",
+      headers: { authorization: "Bearer tok", "content-type": "application/json" },
+      body: JSON.stringify({ path }),
+    }));
+    return `${res.status}${vi.mocked(r2.send).mock.calls.length ? " deleted" : ""}`;
+  }
+
+  // ✗ at HEAD (app/api/storage/delete/route.ts:79-84): `.eq("file_url",
+  // path)` is the only lookup, so the source key matches nothing, documentId
+  // stays null, the legal_hold / document_holds checks (:86-101) are skipped
+  // and the route answers 200 after DeleteObject. The rendered file is the
+  // control: it is refused 423 with nothing sent. Flip each to `it` when the
+  // route resolves the key against both columns (upload-url's pattern,
+  // app/api/storage/upload-url/route.ts:60) — DACL-2's Remaining / owner and
+  // document-control RET-2's cross-note name the flip.
+  for (const hold of ["legal_hold", "document_holds"] as const) {
+    it.fails(`a document held by ${hold}: its native source file is refused 423 like its rendered file, and nothing is deleted`, async () => {
+      seedHeld(hold);
+      const rendered = await attempt(RENDERED);
+      const source = await attempt(SOURCE);
+      expect({ rendered, source }).toEqual({ rendered: "423", source: "423" });
+    });
+  }
 });
 
 describe("ILIFE-6 criterion 3 (→ admin-and-org P2, BKP-2): the orphan reference scan under a concurrent delete", () => {
@@ -381,7 +530,11 @@ describe("ILIFE-6 criterion 3 (→ admin-and-org P2, BKP-2): the orphan referenc
   // one place, window 2 (offset 1000) starts at v01002, v01001 is never read,
   // and 1,499 paged = 1,499 counted, so nothing aborts — the collector returns
   // a set missing a LIVE reference, which deleteOrphans would delete. Flip to
-  // `it` when keyset paging lands.
+  // `it` when keyset paging lands — that is the only edit this file needs from
+  // the package that lands it (admin-and-org P2 / BKP-2: the flip is named in
+  // BKP-2's record, audit-reports/admin-and-org/02-backup-restore.md, beside
+  // the destructiveDeletes.test.ts fake update, and on the integrator's list
+  // for that package's plan).
   it.fails("a row deleted after the first window never hides a live reference in the next one — the scan returns every live key or aborts", async () => {
     const h = collectorClient(versions(1500), (live) => { live.splice(9, 1); });
     const outcome = await collectReferencedKeys(h.client).then(
