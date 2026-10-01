@@ -36,7 +36,7 @@ import { getMyEditBase, recordIntent } from "@/lib/intents";
 import { announceBranchOpened } from "@/lib/branches";
 import { isControllerPrincipal, type Principal } from "@/lib/permissions";
 import type { DocumentRecord, DocumentVersion, ReviewControl } from "@/types/schema";
-import { letterLabelFor, openReviewRoster, invalidateDraftSignoffs, effectiveReviewControlForDocument } from "@/lib/reviewControl";
+import { letterLabelFor, openReviewRoster, invalidateDraftSignoffs, effectiveReviewControlForDocument, reviewCompletionForDraft } from "@/lib/reviewControl";
 import { applyEffectiveDate } from "@/lib/effectiveDate";
 import { isEffectiveOwnerOfDocument } from "@/lib/ownership";
 import { runPostPublishSideEffects } from "@/lib/postPublish";
@@ -44,7 +44,7 @@ import { onDocumentIssued } from "@/lib/reviewCycles";
 import { onDocumentIssuedAck } from "@/lib/acknowledgments";
 import { recomputeRetention } from "@/lib/retention";
 import { assertNotOnHold } from "@/lib/holdGate";
-import { isControlledIssueStatus, isRetiredStatus, RETIRED_NOT_ISSUED_STAMP } from "@/lib/issueStatus";
+import { isControlledIssueStatus, isRetiredStatus, isIssueTransition, RETIRED_NOT_ISSUED_STAMP } from "@/lib/issueStatus";
 import { requestUnitCodeDecode } from "@/lib/unitCodeClient";
 
 // ─── Publish contract errors ─────────────────────────────────────────────
@@ -2092,7 +2092,7 @@ export async function unarchiveRestoreDefault(documentId: string): Promise<{
   return { status: "Issued", basis: "unknown" };
 }
 
-export async function unarchiveDocument(input: ArchiveInput & { restoreStatus?: string }): Promise<void> {
+export async function unarchiveDocument(input: ArchiveInput & { restoreStatus?: string }): Promise<StatusIssueOutcome> {
   const { doc, reason, orgId, actorUserId, actorEmail, actorRole, restoreStatus } = input;
   if (!doc.id) throw new Error("Document is missing an id");
   if (restoreStatus && !(UNARCHIVE_RESTORE_STATUSES as readonly string[]).includes(restoreStatus)) {
@@ -2100,6 +2100,11 @@ export async function unarchiveDocument(input: ArchiveInput & { restoreStatus?: 
   }
 
   const restoredStatus = restoreStatus || "Issued";
+  // REV-19: what this restore issues, read BEFORE the write — the publish
+  // guard (20261144) clears the retirement stamp as the document leaves its
+  // retirement, so afterwards it can no longer say whether this is the
+  // put-back of the issue the archive took away.
+  const before = isControlledIssueStatus(restoredStatus) ? await readStatusIssueBasis(doc.id, doc) : null;
   const now = new Date().toISOString();
   // P13 third review fix: a checked write, as archiveDocument's — a restore
   // the database filtered to zero rows (no edit access to the row) is a
@@ -2131,6 +2136,168 @@ export async function unarchiveDocument(input: ArchiveInput & { restoreStatus?: 
     userRole: actorRole ?? "",
     type: "ARCHIVE_DOC",
     details: { reason: reason?.trim() || "Restored from archive", action: "unarchive", restoredStatus },
+  });
+
+  // REV-19: an un-archive into an issue status is an issue — its clocks and
+  // its record (a put-back of the stamped issue keeps the clocks it had).
+  if (before && isIssueTransition({ fromStatus: before.fromStatus, toStatus: restoredStatus, hasCurrentRevision: !!before.versionId })) {
+    return await recordStatusIssue({
+      orgId, documentId: doc.id, fromStatus: before.fromStatus, toStatus: restoredStatus,
+      versionId: before.versionId, rev: before.rev, putBack: before.putBack, door: "unarchive",
+      actorUserId, actorEmail: actorEmail ?? null, actorRole: actorRole ?? null,
+    });
+  }
+  return NO_STATUS_ISSUE;
+}
+
+// ─── REV-19: a status change that issues starts the clocks and is recorded ──
+// 20261144 (REV-18) made a status change that makes a document a controlled
+// issue a guarded write; the write it admits still started no compliance
+// clock and recorded nothing. These are the app's doors for it: the
+// un-archive above, and changeDocumentStatus — the one function a status
+// editor calls (the library page's metadata save and the bulk editor adopt
+// it as their next owners touch them: identity IS-P1 / intelligence I-12 for
+// the page, document-control P15 for the bulk editor).
+
+export type StatusIssueDoor = "metadata" | "bulk" | "unarchive";
+
+export interface StatusIssueOutcome {
+  /** The write made the document a controlled issue (isIssueTransition). */
+  issued: boolean;
+  /** The put-back of the issue its retirement took away (20261144's stamp
+   *  names this revision): the clocks it had keep running and are not
+   *  restarted. NULL when the stamp could not be read. */
+  putBack: boolean | null;
+  /** What of the review clock / acknowledgment roster did not start. */
+  complianceClockErrors: string[];
+  /** The issue record could not be written (the issue itself stands). */
+  recordError: string | null;
+}
+
+const NO_STATUS_ISSUE: StatusIssueOutcome = { issued: false, putBack: false, complianceClockErrors: [], recordError: null };
+
+interface StatusIssueBasis { fromStatus: string | null; versionId: string | null; rev: string | null; putBack: boolean | null }
+
+/** The document as a status change finds it — its status, current revision
+ *  and whether an exit from its retirement puts back the stamped issue.
+ *  `select("*")` so a database without 20261144's stamp columns still
+ *  answers (the stamp reads as absent: no put-back known). An unreadable
+ *  row falls back to what the caller holds, with the put-back unknown. */
+async function readStatusIssueBasis(documentId: string, held?: Pick<DocumentRecord, "status" | "currentVersionId" | "rev">): Promise<StatusIssueBasis> {
+  const { data, error } = await supabase.from("documents").select("*").eq("id", documentId).maybeSingle();
+  if (error || !data) {
+    return { fromStatus: held?.status ?? null, versionId: held?.currentVersionId ?? null, rev: held?.rev ?? null, putBack: null };
+  }
+  const row = data as Record<string, unknown>;
+  const fromStatus = (row.status as string | null) ?? null;
+  const versionId = (row.current_version_id as string | null) ?? null;
+  const stamped = (row.retired_issue_version_id as string | null | undefined) ?? null;
+  return {
+    fromStatus, versionId, rev: (row.rev as string | null) ?? null,
+    putBack: isRetiredStatus(fromStatus) && !!versionId && stamped === versionId,
+  };
+}
+
+/** REV-19: what a landed status-change issue owes. A NEW issue starts the
+ *  compliance clocks through the one path every creation door uses
+ *  (startIssuedDocumentClocks: the review clock and the read-&-understood
+ *  roster); the put-back of a stamped issue does not (its clocks were never
+ *  stopped — restarting them would mark it reviewed today and could hide a
+ *  review already due). Either way the issue is RECORDED: DOCUMENT_ISSUED
+ *  naming the document, the revision, the status before and after, the door,
+ *  the actor, and the policy decision (DEC-63 §2: an issue under a policy
+ *  that requires sign-off made without a complete roster — which only a
+ *  controller, or the put-back of a stamped issue, gets past the database).
+ *  Never throws: the issue has landed; what did not follow is returned and
+ *  on the record. */
+export async function recordStatusIssue(input: {
+  orgId: string; documentId: string; fromStatus: string | null; toStatus: string;
+  versionId: string | null; rev?: string | null; putBack: boolean | null; door: StatusIssueDoor;
+  actorUserId: string; actorEmail?: string | null; actorRole?: string | null;
+}): Promise<StatusIssueOutcome> {
+  const complianceClockErrors: string[] = [];
+  if (input.putBack !== true) {
+    try {
+      complianceClockErrors.push(...await startIssuedDocumentClocks({
+        orgId: input.orgId, documentId: input.documentId, actorUserId: input.actorUserId, actorName: input.actorEmail ?? null,
+      }));
+    } catch (e) {
+      complianceClockErrors.push(`the start failed (${(e as Error).message})`);
+    }
+  }
+  // The policy decision, best-effort: an unreadable policy or roster is
+  // recorded as unknown (null), never guessed.
+  let reviewPolicyMode: string | null = null;
+  let rosterComplete: boolean | null = null;
+  try {
+    const { data: row } = await supabase.from("documents")
+      .select("collection_id, library_id, review_control").eq("id", input.documentId).maybeSingle();
+    if (row) {
+      const chain = await effectiveReviewControlForDocument({
+        reviewControl: null, collectionId: (row.collection_id as string | null) ?? null, libraryId: row.library_id as string,
+      });
+      const own = (row.review_control as ReviewControl | null) ?? null;
+      reviewPolicyMode = chain.mode === "require" || own?.mode === "require" ? "require" : (chain.mode ?? null);
+    }
+    if (input.versionId) rosterComplete = (await reviewCompletionForDraft(input.documentId, input.versionId)).complete;
+  } catch { /* recorded as unknown */ }
+  const { error: recordErr } = await logAuditAction({
+    action: "DOCUMENT_ISSUED",
+    resourceType: "document",
+    resourceId: input.documentId,
+    orgId: input.orgId,
+    userId: input.actorUserId,
+    userEmail: input.actorEmail ?? undefined,
+    userRole: input.actorRole ?? undefined,
+    details: {
+      door: input.door,
+      fromStatus: input.fromStatus,
+      toStatus: input.toStatus,
+      versionId: input.versionId,
+      rev: input.rev ?? null,
+      putBack: input.putBack,
+      reviewPolicyMode,
+      rosterComplete,
+      issuedWithoutSignOff: reviewPolicyMode === "require" && rosterComplete === false,
+      complianceClocksStarted: input.putBack !== true,
+      complianceClockErrors: complianceClockErrors.length > 0 ? complianceClockErrors : null,
+    },
+  });
+  if (complianceClockErrors.length > 0) {
+    console.warn(`[revisions] REV-19: the review clock / acknowledgment roster of document ${input.documentId} did not fully start (${complianceClockErrors.join("; ")})`);
+  }
+  return { issued: true, putBack: input.putBack, complianceClockErrors, recordError: recordErr ?? null };
+}
+
+/** REV-19: THE status write for a status editor — one checked UPDATE of the
+ *  status (and any other columns the editor saves with it), then, when it
+ *  made the document a controlled issue, recordStatusIssue. A refusal is
+ *  thrown in the database's own words (the publish guard's sentences, which
+ *  isIssueRefusal recognises); a write that matched no row is a refusal,
+ *  never a silent success. */
+export async function changeDocumentStatus(input: {
+  orgId: string; documentId: string; toStatus: string; door: Exclude<StatusIssueDoor, "unarchive">;
+  actorUserId: string; actorEmail?: string | null; actorRole?: string | null;
+  /** Other columns written in the same checked UPDATE (a metadata save). */
+  patch?: Record<string, unknown>;
+}): Promise<StatusIssueOutcome> {
+  const before = await readStatusIssueBasis(input.documentId);
+  const now = new Date().toISOString();
+  const { data: rows, error } = await supabase.from("documents")
+    .update({ ...(input.patch ?? {}), status: input.toStatus, updated_at: now, updated_by: input.actorUserId })
+    .eq("id", input.documentId)
+    .select("id");
+  if (error) throw new Error(error.message);
+  if (((rows as unknown[] | null) ?? []).length === 0) {
+    throw new Error("The status was NOT changed — you don't have authority to change this document, or it is no longer visible to you. Nothing was changed.");
+  }
+  if (!isIssueTransition({ fromStatus: before.fromStatus, toStatus: input.toStatus, hasCurrentRevision: !!before.versionId })) {
+    return NO_STATUS_ISSUE;
+  }
+  return await recordStatusIssue({
+    orgId: input.orgId, documentId: input.documentId, fromStatus: before.fromStatus, toStatus: input.toStatus,
+    versionId: before.versionId, rev: before.rev, putBack: before.putBack, door: input.door,
+    actorUserId: input.actorUserId, actorEmail: input.actorEmail ?? null, actorRole: input.actorRole ?? null,
   });
 }
 
