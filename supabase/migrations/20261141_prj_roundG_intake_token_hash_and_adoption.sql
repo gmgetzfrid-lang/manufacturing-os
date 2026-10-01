@@ -94,7 +94,10 @@
 -- /submit/null address sent to a vendor). A code ROLLBACK to a build before
 -- J11 after this is applied breaks every link the same way — the plain
 -- tokens are not kept anywhere, so there is no way back but re-issuing each
--- link. The FIRST statement refuses to run until the operator confirms:
+-- link. A browser tab opened before the deploy still runs the old Intake
+-- and Costs tabs until it reloads (the update pill offers it within five
+-- minutes or on focus), so let open tabs reload before applying.
+-- The FIRST statement refuses to run until the operator confirms:
 -- uncomment the SET line just above it once the J11 build is live.
 --
 -- NOT a widening: every change narrows who may do what or adds a fact. The
@@ -254,18 +257,21 @@ BEGIN
   -- (refused anyway by trg_documents_authorship_fixed) is judged as the sheet it was.
   IF COALESCE(OLD.authored_by_link_id, NEW.authored_by_link_id) IS NULL THEN RETURN NEW; END IF;   -- an org document: not this rule's
   IF NEW.status IS NULL OR NEW.status IN ('Archived', 'Superseded') THEN RETURN NEW; END IF;
+  -- A sheet that stays in (or lands in) a project's intake folder is not in
+  -- the register yet, so adoption's rule is not its: an in-place renumber,
+  -- or a renumber's reversal, inside the intake folder is the door's and the
+  -- renumber flow's business (integration fix, 2026-10-01).
+  IF EXISTS (SELECT 1 FROM projects p
+              WHERE p.org_id = NEW.org_id AND p.intake_collection_id = NEW.collection_id) THEN
+    RETURN NEW;
+  END IF;
   IF NEW.library_id IS NOT DISTINCT FROM OLD.library_id
      AND NEW.collection_id IS NOT DISTINCT FROM OLD.collection_id
      AND NEW.document_number IS NOT DISTINCT FROM OLD.document_number THEN
     -- Not a move. Only a sheet coming back to life (Archived / Superseded →
     -- live) is this rule's — a move made while archived, revived after,
-    -- would otherwise skip it — and not one still in a project's intake
-    -- folder (not in the register yet).
+    -- would otherwise skip it.
     IF OLD.status IS NOT NULL AND OLD.status NOT IN ('Archived', 'Superseded') THEN RETURN NEW; END IF;
-    IF EXISTS (SELECT 1 FROM projects p
-                WHERE p.org_id = NEW.org_id AND p.intake_collection_id = NEW.collection_id) THEN
-      RETURN NEW;
-    END IF;
   END IF;
   IF NULLIF(btrim(NEW.document_number), '') IS NULL THEN RETURN NEW; END IF;
   -- Does the number alone identify a document in the destination library?
@@ -289,7 +295,7 @@ BEGIN
    ORDER BY d.id
    LIMIT 1;
   IF FOUND THEN
-    RAISE EXCEPTION '% (Rev %) is already a live document with this number — an intake sheet is adopted only under a number no other live document carries (renumber it, or resolve which one is the source of truth first). Nothing was changed. INTK-16, 20261141',
+    RAISE EXCEPTION '% (Rev %) is already a live document with this number — an intake-born sheet joins the register only under a number no other live document carries (renumber it, or resolve which one is the source of truth first). Nothing was changed. INTK-16, 20261141',
       v_hit.document_number, COALESCE(v_hit.rev, '—')
       USING ERRCODE = 'check_violation';
   END IF;

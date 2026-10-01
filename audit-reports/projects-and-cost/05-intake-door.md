@@ -727,4 +727,17 @@ Header, the functions' comments, the probes (the stored-fact line, the `UPDATE O
 
 **Scope / residual.** Pending migration: `20261141` (its deploy prerequisite is projects-tab `SEC-19`'s: apply only once the J11 build is live). The inventory counts intake-born live documents whose number is ALREADY a live document's in another library (two sources of truth today) — they are reported, not changed; the guard binds their next move or renumber. A document in the intake folder that the door did not create is adopted by the direct update, under the client's checks, the move guard and the unique index — the cross-library number rule in the database binds intake-born sheets only (the record's scope). Project-tracking (`project_documents`) and equipment links are still written by the client after the move, as before (not the number rule). The revival branch exempts a sheet in ANY project's intake folder (the folder is the project's, `projects.intake_collection_id`); a supersede reversal that restores an adopted intake-born sheet while a same-numbered live document stands outside its folder is refused like any other revival (the reversal's own pre-check and saga carry the sentence). The guard's not-live set is `Archived` / `Superseded` (as first landed); `Void` counts as live for it, so a move made while Void is checked.
 
+**Integration fix (2026-10-01).** The final review found that the guard refused a renumber of an intake-born sheet inside its project's intake folder, in place or as a renumber's reversal. That is a signed-in write the guard newly refused, and the sheet is not in the register yet. `documents_intake_adoption_guard` (`20261141`) now returns before any judgement when the sheet stays in, or lands in, a project's intake folder. The exit sits before the not-a-move block, so it covers a number change as well as a revival. The refusal now reads "an intake-born sheet joins the register only under a number no other live document carries", which fits an adopted sheet renumbered later too.
+
+Exercised on a throwaway PostgreSQL 16 with the fixed body and a stub schema (`auth.uid()` from a session setting; scratch, not committed):
+- in-place renumber inside the intake folder onto a live number held elsewhere: `UPDATE 1`;
+- its reversal: `UPDATE 1`;
+- adoption out of the intake folder under that clashing number: refused (23514);
+- adoption under a fresh number: `UPDATE 1`;
+- the adopted sheet renumbered in the register onto the clash: refused;
+- archived, moved by the service pass, then revived outside the intake folder onto the clash: refused;
+- the service pass: never judged.
+
+`lib/__tests__/prjRoundGJ11Migrations.test.ts` pins the exit's position.
+
 ---

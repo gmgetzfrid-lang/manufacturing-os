@@ -501,7 +501,10 @@ export async function POST(req: NextRequest) {
   // INTK-15: the staged object this request OWNS — a finalize's, once it
   // claimed the reservation; a multipart fallback's, once it claimed its
   // begin — is removed when the request ends, whatever it answered: filed
-  // under its own key, refused, or a retry answered with the original.
+  // under its own key, refused, or a retry answered with the original. The
+  // one exception: a fallback whose begin was claimed but whose link could
+  // not then be read has no prefix to name, so its object is left to the
+  // maintenance cron's staging sweep (STAGING_TTL_MS).
   const staged: { key: string | null } = { key: null };
   try {
     return await door(req, ref, staged);

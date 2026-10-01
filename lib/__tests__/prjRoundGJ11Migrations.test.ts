@@ -141,11 +141,21 @@ describe("20261141 — INTK-16: adoption's number rule in the database", () => {
     expect(c).toContain("pg_get_triggerdef(t.oid) LIKE '%BEFORE INSERT OR UPDATE OF authored_by_link_id ON %'");
   });
   it("review fix: a sheet coming back to life (Archived / Superseded → live) outside a project's intake folder is judged like a move — archive-and-move, then revive, does not skip the rule", () => {
-    expect(guard).toMatch(/IF NEW\.status IS NULL OR NEW\.status IN \('Archived', 'Superseded'\) THEN RETURN NEW; END IF;\s*\n\s*IF NEW\.library_id IS NOT DISTINCT FROM OLD\.library_id/);
+    expect(guard).toMatch(/IF NEW\.status IS NULL OR NEW\.status IN \('Archived', 'Superseded'\) THEN RETURN NEW; END IF;/);
+    expect(guard.indexOf("IF NEW.status IS NULL")).toBeLessThan(guard.indexOf("IF NEW.library_id IS NOT DISTINCT FROM OLD.library_id"));
     expect(guard).toContain("IF OLD.status IS NOT NULL AND OLD.status NOT IN ('Archived', 'Superseded') THEN RETURN NEW; END IF;");
     expect(guard).toMatch(/IF EXISTS \(SELECT 1 FROM projects p\s*\n\s*WHERE p\.org_id = NEW\.org_id AND p\.intake_collection_id = NEW\.collection_id\) THEN\s*\n\s*RETURN NEW;/);
     // the not-a-move exits come before the clash query, the clash query is unchanged
     expect(guard.indexOf("IF OLD.status IS NOT NULL")).toBeLessThan(guard.indexOf("SELECT d.document_number, d.rev INTO v_hit"));
+  });
+  it("integration fix: a sheet that stays in (or lands in) a project's intake folder is never judged — an in-place renumber or its reversal there is not an adoption", () => {
+    const intakeExit = guard.indexOf("p.intake_collection_id = NEW.collection_id");
+    expect(intakeExit).toBeGreaterThan(guard.indexOf("IF NEW.status IS NULL"));
+    // before the not-a-move block, so it covers a number change as well as a revival
+    expect(intakeExit).toBeLessThan(guard.indexOf("IF NEW.library_id IS NOT DISTINCT FROM OLD.library_id"));
+    expect(intakeExit).toBeLessThan(guard.indexOf("SELECT d.document_number, d.rev INTO v_hit"));
+    expect(guard.match(/p\.intake_collection_id = NEW\.collection_id/g)).toHaveLength(1);
+    expect(guard).toContain("joins the register only under a number no other live document carries");
   });
   it("the SAF-12 rule (DEC-56 item 6): a live same number outside the sheet's folder blocks — anywhere when the number is the destination's key, in ANOTHER library when it is a multi-part library", () => {
     expect(guard).toMatch(/l\.uniqueness_keys IS NULL OR cardinality\(l\.uniqueness_keys\) = 0\s*\n\s*OR l\.uniqueness_keys = ARRAY\['documentNumber'\]::text\[\]/);

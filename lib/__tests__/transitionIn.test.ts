@@ -528,7 +528,7 @@ describe("INTK-16 — adoption goes through adopt_intake_document", () => {
 
   it("the database's refusal reaches the operator as its sentence — the cross-library number rule, a sheet in review", async () => {
     seed();
-    const msg = "P-100 (Rev 3) is already a live document with this number — an intake sheet is adopted only under a number no other live document carries (renumber it, or resolve which one is the source of truth first). Nothing was changed. INTK-16, 20261141";
+    const msg = "P-100 (Rev 3) is already a live document with this number — an intake-born sheet joins the register only under a number no other live document carries (renumber it, or resolve which one is the source of truth first). Nothing was changed. INTK-16, 20261141";
     db.rpc = () => ({ data: null, error: { message: msg, code: "23514" } });
     expect(await adopt()).toEqual({ ok: false, error: msg });
     expect(auditInserts()).toEqual([]);
