@@ -508,7 +508,7 @@ sw.js:196-213 `event.respondWith((async () => { try { const res = await fetch(re
 ## SHR-11 · The verify QR the shared copy promises is silently omitted whenever NEXT_PUBLIC_SITE_URL is unset — while the footer printed on the page tells the reader to scan it
 
 - **Severity:** MEDIUM
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Assigned:** document-control P12 WAVE-2 RESIDUALS for done-when 2 off Vercel — by the integrator, 2026-10-01 (fleet plan `audit-reports/fleet-plans/`).
 - **Verification:** SUSPECTED
 - **Locations:** `app/api/share/file/route.ts:114-116`, `lib/publicOrigin.ts:17-21`, `lib/stamping.ts:246-254`, `app/api/share/file/route.ts:113`, `.env.example:46`, `app/share/[token]/page.tsx:140-142`
@@ -565,6 +565,18 @@ file/route.ts:109-117 `await applyStampToPdfDoc(pdfDoc, { userLabel: "shared-lin
 4. ✓ `.env.example` documents `NEXT_PUBLIC_SITE_URL` as required.
 
 **Scope / residual.** Stays OPEN for done-when 2 off Vercel (see `PHYS-11`'s residual). It closes when the share download, with no configured origin, falls back to the request's own origin (refusing a `*.vercel.app` or loopback host, as `recipientOrigin()` does) or refuses loudly — assigned to document-control P12, whose files include the share routes' residuals — or when every deployment sets `NEXT_PUBLIC_SITE_URL` (the operator; the Docker build argument is documented in `.env.example`).
+
+**Resolution (2026-10-01, document-control Round F wave 2).** P12 WAVE-2 RESIDUALS — done-when 2 off Vercel, the one limb left after P1 SHARE (item 1) and PS-STAMP (items 2 on Vercel, 3, 4). Reproduced on `00560fb`: `app/api/share/file/route.ts` built `verifyUrl` from `publicOrigin()`, which on a server with neither `NEXT_PUBLIC_SITE_URL` nor `VERCEL_PROJECT_PRODUCTION_URL` returns `""`, so the copy shipped with no QR (honest, warned, but unverifiable) — neither a fallback nor a loud refusal.
+- `app/api/share/file/route.ts` (the route's origin rule only; PS-STAMP's stamping rules unchanged): a private `verifyOrigin(req)` takes `configuredPublicOrigin()` (DEC-64 §1 steps 1–2, PS-STAMP's helper — no parallel origin rule); else the request's own origin (`req.nextUrl.origin` — the deployment the recipient just reached, so the QR on their copy opens the same one) unless its host is one an outside party cannot open, judged by PS-STAMP's `isUnreachableRecipientHost` (a `*.vercel.app` deployment host or loopback) exactly as `recipientOrigin()` judges a browser's page host; else `""`. With `""` the route refuses LOUDLY, before any byte is read: `503 { error: "unverifiable", message }`, a `console.error` naming `NEXT_PUBLIC_SITE_URL` and the Docker build argument, and a `refused` / `unverifiable` row on the share's access trail (`recordShareAccess`); nothing is stamped, no `download_audits` row is written, no copy leaves. When an origin exists the QR and the scan instruction are always stamped (the footer's "no QR, no scan" branch stays in `shareFooterNotice` and the stamper's backstop).
+- Tests: `lib/__tests__/shareRoutes.test.ts` — "with no configured origin the verify QR is built on the request's OWN origin …" (and a configured origin still wins), "… on a host an outsider cannot open (*.vercel.app, loopback), the download is refused LOUDLY — no bytes read, no copy, no record, the refusal on the access trail" (a preview host, `localhost`, `127.0.0.1`), "the footer never tells a reader to scan a QR the copy does not carry" (the earlier route-level pin of item 1, now on `shareFooterNotice` directly, since the route no longer produces a QR-less copy). The `@/lib/publicOrigin` mock now carries the real `isUnreachableRecipientHost`. Every existing share test is green.
+
+**Done-when.**
+1. ✓ (P1 SHARE) The footer text is conditional on the QR actually being stamped.
+2. ✓ On Vercel (PS-STAMP) the server falls back to the production domain; off Vercel (this pass) the share download falls back to the request's own origin, refusing a `*.vercel.app` or loopback host as `recipientOrigin()` does, and otherwise fails loudly rather than shipping an unverifiable copy.
+3. ✓ (PS-STAMP) `lib/stamping.ts` logs when `verifyUrl` is absent.
+4. ✓ (PS-STAMP) `.env.example` documents `NEXT_PUBLIC_SITE_URL` as required.
+
+**Scope / residual.** Code only; no migration. The request's origin is what the server sees: behind a reverse proxy that does not forward the public `Host`, it is the upstream address (loopback is refused loudly; an internal LAN name is not recognisable and is used) — setting `NEXT_PUBLIC_SITE_URL` removes the guess, as DEC-64 §1 says. The share landing page (`app/share/[token]/page.tsx`, P1's) shows its generic failure for the new `unverifiable` answer rather than a dedicated sentence. A Vercel deployment with system-variable exposure off and nothing configured now refuses share downloads on its `*.vercel.app` host instead of serving a QR-less copy — the loud failure the finding asks for.
 
 ---
 

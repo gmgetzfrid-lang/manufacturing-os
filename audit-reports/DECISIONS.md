@@ -3997,3 +3997,5 @@ were wrong:
 - §5's watermark backstop left the drafting download's audit row recording
   "CONTROLLED COPY" for a copy printed "UNCONTROLLED COPY". The row now
   records the printed watermark.
+
+*Landed 2026-10-01 (document-control Round F wave 2, P12 WAVE-2 RESIDUALS): §1's server step for the share download — with nothing configured, `/api/share/file` builds the verify QR on the request's own origin (the deployment the recipient reached) unless its host is a Vercel deployment host or loopback (`isUnreachableRecipientHost`, the rule `recipientOrigin()` applies to a browser's page host), and otherwise refuses the download loudly (`503 unverifiable`, logged, on the share's access trail) instead of shipping a copy with no QR. §2 still governs every other server stamp. See public-surfaces `SHR-11`.*

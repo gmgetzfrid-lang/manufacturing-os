@@ -165,7 +165,12 @@ function makeClient() {
 vi.mock("@supabase/supabase-js", () => ({ createClient: () => makeClient() }));
 vi.mock("@/lib/supabase", () => ({ supabase: makeClient() }));
 vi.mock("@/lib/shareAuthorization", () => ({ shareStillAuthorized: vi.fn(async () => state.authorized) }));
-vi.mock("@/lib/publicOrigin", () => ({ publicOrigin: () => state.origin }));
+vi.mock("@/lib/publicOrigin", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@/lib/publicOrigin")>()),
+  publicOrigin: () => state.origin,
+  // the server's configured origin (NEXT_PUBLIC_SITE_URL, else Vercel's production domain)
+  configuredPublicOrigin: () => state.origin,
+}));
 vi.mock("@/lib/audit", () => ({ logAuditAction: vi.fn(async (e: Row) => { state.audits.push(e); return { error: state.auditError }; }) }));
 vi.mock("@aws-sdk/client-s3", () => ({ GetObjectCommand: class { constructor(public input: unknown) {} } }));
 const r2 = vi.hoisted(() => ({ send: vi.fn(async () => { state.seq.push("r2"); return { Body: { transformToByteArray: async () => new Uint8Array([9, 9, 9]) } }; }) }));
@@ -211,9 +216,9 @@ beforeEach(() => {
   r2.send.mockClear();
 });
 
-const fileGet = async (headers: Record<string, string> = {}) => {
+const fileGet = async (headers: Record<string, string> = {}, base = "https://app") => {
   const { GET } = await import("@/app/api/share/file/route");
-  return GET(new NextRequest(`https://app/api/share/file?token=${TOKEN}`, { headers }));
+  return GET(new NextRequest(`${base}/api/share/file?token=${TOKEN}`, { headers }));
 };
 const resolveGet = async (headers: Record<string, string> = {}) => {
   const { GET } = await import("@/app/api/share/resolve/route");
@@ -375,13 +380,40 @@ describe("GET /api/share/file — refuses before any byte leaves", () => {
     // and the response only after all of them (the route awaited each before returning)
     expect(state.seq).toEqual(["r2", "stamp", "insert:download_audits", "insert:document_share_accesses"]);
   });
-  it("with no public origin there is no verify URL and the footer never says 'scan' (SHR-11)", async () => {
+  it("with no configured origin the verify QR is built on the request's OWN origin — the deployment the recipient reached (SHR-11 off Vercel)", async () => {
     state.origin = "";
-    const res = await fileGet();
+    const res = await fileGet({}, "https://docs.plant.example");
     expect(res.status).toBe(200);
-    expect(stamp.calls[0].verifyUrl).toBeUndefined();
-    expect(String(stamp.calls[0].footerNotice)).not.toMatch(/QR/);
-    expect(String(stamp.calls[0].footerNotice)).toMatch(/Verify the current revision/);
+    expect(stamp.calls[0].verifyUrl).toBe("https://docs.plant.example/verify/docA?v=v-cur");
+    expect(String(stamp.calls[0].footerNotice)).toMatch(/Scan the QR/);
+    expect(inserted("download_audits")).toHaveLength(1);
+    // a configured origin still wins over the request's host
+    state.origin = "https://app.example.com"; stamp.calls = [];
+    await fileGet({}, "https://docs.plant.example");
+    expect(stamp.calls[0].verifyUrl).toBe("https://app.example.com/verify/docA?v=v-cur");
+  });
+  it("with no configured origin on a host an outsider cannot open (*.vercel.app, loopback), the download is refused LOUDLY — no bytes read, no copy, no record, the refusal on the access trail (SHR-11)", async () => {
+    state.origin = "";
+    const err = vi.spyOn(console, "error").mockImplementation(() => {});
+    for (const base of ["https://myapp-git-feature-acme.vercel.app", "http://localhost:3000", "http://127.0.0.1:3000"]) {
+      state.inserts = []; stamp.calls = []; r2.send.mockClear(); err.mockClear();
+      const res = await fileGet({ "x-forwarded-for": "198.51.100.7" }, base);
+      expect(res.status, base).toBe(503);
+      expect((await res.json()).error).toBe("unverifiable");
+      expect(r2.send).not.toHaveBeenCalled();
+      expect(stamp.calls).toHaveLength(0);
+      expect(inserted("download_audits")).toHaveLength(0);
+      expect(inserted("document_share_accesses")).toEqual([expect.objectContaining({ kind: "refused", reason: "unverifiable", share_id: "s1" })]);
+      expect(String(err.mock.calls[0]?.[0])).toMatch(/no public origin for the verify QR[\s\S]*NEXT_PUBLIC_SITE_URL/);
+    }
+    err.mockRestore();
+  });
+  it("the footer never tells a reader to scan a QR the copy does not carry (shareFooterNotice, SHR-11 item 1)", async () => {
+    const { shareFooterNotice } = await import("@/lib/shareServe");
+    const without = shareFooterNotice({ label: "P-101", rev: "B", status: "Issued", verifyUrl: undefined });
+    expect(without).not.toMatch(/QR/);
+    expect(without).toMatch(/Verify the current revision/);
+    expect(shareFooterNotice({ label: "P-101", rev: "B", status: "Issued", verifyUrl: "https://x/verify/d" })).toMatch(/Scan the QR/);
   });
   it("ahead of 20261068 (the missing-column refusal) the record is retried ONCE in the pre-20261068 shape — recorded, attributed to the sharer, and served; never a wholesale lockout", async () => {
     for (const missing of [
