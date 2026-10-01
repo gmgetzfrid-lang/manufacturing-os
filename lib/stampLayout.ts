@@ -196,9 +196,14 @@ export function titleBlockReserve(pageW: number): number {
 /** A page's /Rotate, normalized to the four values PDF allows. */
 export type PageRotation = 0 | 90 | 180 | 270;
 
+/** Normalized exactly as pdf.js does (Page.rotate): a value that is not a
+ *  multiple of 90 — or not a number — is treated as 0, never rounded to the
+ *  nearest quarter turn; anything else is reduced mod 360 (a negative value
+ *  read counter-clockwise). pdf.js is both the ink analysis and the viewers'
+ *  renderer, so the stamp must agree with it on every page. */
 export function normalizeRotation(angleDeg: number): PageRotation {
-  const quarterTurns = Math.round((Number.isFinite(angleDeg) ? angleDeg : 0) / 90);
-  return ((((quarterTurns % 4) + 4) % 4) * 90) as PageRotation;
+  if (!Number.isFinite(angleDeg) || angleDeg % 90 !== 0) return 0;
+  return ((((angleDeg % 360) + 360) % 360)) as PageRotation;
 }
 
 /** The page as displayed and printed: a quarter turn swaps the MediaBox's sides. */

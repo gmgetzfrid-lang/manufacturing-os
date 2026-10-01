@@ -508,7 +508,8 @@ sw.js:196-213 `event.respondWith((async () => { try { const res = await fetch(re
 ## SHR-11 · The verify QR the shared copy promises is silently omitted whenever NEXT_PUBLIC_SITE_URL is unset — while the footer printed on the page tells the reader to scan it
 
 - **Severity:** MEDIUM
-- **Status:** RESOLVED
+- **Status:** OPEN
+- **Assigned:** document-control P12 WAVE-2 RESIDUALS for done-when 2 off Vercel — by the integrator, 2026-10-01 (fleet plan `audit-reports/fleet-plans/`).
 - **Verification:** SUSPECTED
 - **Locations:** `app/api/share/file/route.ts:114-116`, `lib/publicOrigin.ts:17-21`, `lib/stamping.ts:246-254`, `app/api/share/file/route.ts:113`, `.env.example:46`, `app/share/[token]/page.tsx:140-142`
 - **Independently verified:** ✓ **SURVIVES** — second independent adversarial pass. Confirmed with no mitigating path: nothing logs or warns when the QR is dropped, and app/share/[token]/page.tsx:141 additionally promises the recipient the 'copy is watermarked with a verify QR'. The .env.example comment even claims a VERCEL_URL fallback that publicOrigin() does not implement.
@@ -550,7 +551,7 @@ file/route.ts:109-117 `await applyStampToPdfDoc(pdfDoc, { userLabel: "shared-lin
 
 **Verification fix (2026-09-30, document-control Round F wave 2).** Citation only: `shareFooterNotice` moved from `lib/shareServe.ts:224` to `:240` when `SHR-3`'s serve-time download-deny check landed above it; the code and this finding's status are unchanged.
 
-**Resolution (2026-10-01, public-surfaces Round F).** Items 2–4 are `PHYS-11` (03-physical-bridge.md), which landed in this package; item 1 landed in P1 SHARE (above).
+**Partial (2026-10-01, public-surfaces Round F; first recorded as resolved — corrected at integration from the final review).** Items 2–4 are `PHYS-11` (03-physical-bridge.md), which landed in this package; item 1 landed in P1 SHARE (above).
 - `lib/publicOrigin.ts`: on the server, an unset `NEXT_PUBLIC_SITE_URL` falls back to Vercel's production domain (`VERCEL_PROJECT_PRODUCTION_URL`, never the preview host `VERCEL_URL`). With neither, the share download fails honestly: the copy has no QR, no instruction to scan one, and a logged warning.
 - `lib/stamping.ts` logs when `verifyUrl` is absent and, as a backstop for every caller, drops any scan instruction from a page that carries no QR.
 - `.env.example` documents `NEXT_PUBLIC_SITE_URL` as required for share and print verification.
@@ -559,11 +560,11 @@ file/route.ts:109-117 `await applyStampToPdfDoc(pdfDoc, { userLabel: "shared-lin
 
 **Done-when.**
 1. ✓ (P1) The footer text is conditional on the QR actually being stamped. The stamper now also enforces it for a QR that failed to generate.
-2. ✓ `publicOrigin()` on the server falls back to Vercel's production domain instead of returning `""`. It chooses that over `VERCEL_URL`, which on a preview is the gated host.
+2. ◐ On Vercel, `publicOrigin()` on the server falls back to Vercel's production domain instead of returning `""` (while the project exposes its system environment variables, the default). It chooses that over `VERCEL_URL`, which on a preview is the gated host. **Not met off Vercel** (self-hosted or Docker) with `NEXT_PUBLIC_SITE_URL` unset: the server still returns `""`, so the share download ships a QR-less copy. It is honest (no QR, no scan instruction, a server-side `console.warn`) but unverifiable, and it neither falls back nor fails loudly.
 3. ✓ `lib/stamping.ts` logs when `verifyUrl` is absent, not only when QR generation throws.
 4. ✓ `.env.example` documents `NEXT_PUBLIC_SITE_URL` as required.
 
-**Scope / residual.** None. Closed by pointer to `PHYS-11`.
+**Scope / residual.** Stays OPEN for done-when 2 off Vercel (see `PHYS-11`'s residual). It closes when the share download, with no configured origin, falls back to the request's own origin (refusing a `*.vercel.app` or loopback host, as `recipientOrigin()` does) or refuses loudly — assigned to document-control P12, whose files include the share routes' residuals — or when every deployment sets `NEXT_PUBLIC_SITE_URL` (the operator; the Docker build argument is documented in `.env.example`).
 
 ---
 

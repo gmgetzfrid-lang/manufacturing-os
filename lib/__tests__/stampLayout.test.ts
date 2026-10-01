@@ -146,7 +146,12 @@ describe("page rotation — display space ↔ user space", () => {
     expect(normalizeRotation(-90)).toBe(270);
     expect(normalizeRotation(450)).toBe(90);
     expect(normalizeRotation(-180)).toBe(180);
-    expect(normalizeRotation(269.9999)).toBe(270);
+    // pdf.js treats a /Rotate that is not a multiple of 90 as 0 — never rounded
+    expect(normalizeRotation(269.9999)).toBe(0);
+    expect(normalizeRotation(45)).toBe(0);
+    expect(normalizeRotation(135)).toBe(0);
+    expect(normalizeRotation(-270)).toBe(90);
+    expect(normalizeRotation(720)).toBe(0);
     expect(normalizeRotation(Number.NaN)).toBe(0);
   });
   it("a quarter turn swaps the displayed sides; a half turn does not", () => {

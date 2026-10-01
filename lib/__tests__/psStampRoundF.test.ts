@@ -126,7 +126,7 @@ describe("PHYS-11 — publicOrigin(): configured, else production, else (browser
     expect(publicOrigin()).toBe("https://app.example.com");
   });
 
-  it("server, NEXT_PUBLIC_SITE_URL unset: Vercel's PRODUCTION domain (always set on Vercel, previews included), given https", () => {
+  it("server, NEXT_PUBLIC_SITE_URL unset: Vercel's PRODUCTION domain (set on Vercel, previews included, while the project exposes its system environment variables — the default), given https", () => {
     env({ VERCEL_PROJECT_PRODUCTION_URL: "app.example.com", VERCEL_URL: "mfgos-abc123-team.vercel.app" });
     expect(publicOrigin()).toBe("https://app.example.com");
     env({ VERCEL_PROJECT_PRODUCTION_URL: "https://app.example.com/" });

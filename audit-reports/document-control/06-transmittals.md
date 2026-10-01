@@ -622,7 +622,7 @@ supabase/migrations/20260910_transmittal_portal.sql:12-13 — `--      from an i
 ## TRX-14 · transmittalPortalUrl builds the external link from window.location.origin, bypassing the publicOrigin() helper that exists in this repo specifically to stop that
 
 - **Severity:** MEDIUM
-- **Status:** RESOLVED
+- **Status:** OPEN
 - **Verification:** CONFIRMED
 - **Locations:** `lib/transmittals.ts:381-384`, `lib/publicOrigin.ts:1-22`, `lib/downloads.ts:90-100`, `lib/transmittals.ts:304-314`, `app/(protected)/transmittals/page.tsx:261`
 - **Independently verified:** ✓ **SURVIVES** — second independent adversarial pass. Confirmed — transmittalPortalUrl is the only URL builder in the repo that still uses window.location.origin for an externally-consumed link, and publicOrigin() exists precisely for this. Note the fix only helps where NEXT_PUBLIC_SITE_URL is set, since publicOrigin falls back to window.location.origin (publicOrigin.ts:20).
@@ -660,7 +660,7 @@ lib/publicOrigin.ts:8-11 — `// point at the PUBLIC production domain. \`window
 
 **Scope / residual.** Left OPEN for the browser half of done-when 1. Making `publicOrigin()` itself refuse when NEXT_PUBLIC_SITE_URL is unset is PS-STAMP's (XEDGE-5 dw2); when it lands, `transmittalPortalUrl` follows it with no change here. The other builders XEDGE-5 names belong to their owners (XEDGE-5 stays OPEN for them).
 
-**Resolution (2026-10-01, public-surfaces Round F).** The browser half is closed by the origin rule changing in `lib/publicOrigin.ts`, as P7 anticipated ("until the origin rule itself changes").
+**Partial (2026-10-01, public-surfaces Round F; first recorded as resolved — corrected at integration from the final review).** The browser half is closed by the origin rule changing in `lib/publicOrigin.ts`, as P7 anticipated ("until the origin rule itself changes").
 - `lib/publicOrigin.ts` (PS-STAMP) gains:
   - `configuredPublicOrigin()`: `NEXT_PUBLIC_SITE_URL`, else Vercel's production domain (`VERCEL_PROJECT_PRODUCTION_URL` on the server, its `NEXT_PUBLIC_` twin in a browser; never `VERCEL_URL`). It never answers with the page's own host.
   - `recipientOrigin()`, for a link handed to an outside party: the configured origin; else, in a browser, the page's own origin, but only when that host is one the recipient can open; else `""`. On a server it is the configured origin alone.
@@ -696,10 +696,12 @@ lib/publicOrigin.ts:8-11 — `// point at the PUBLIC production domain. \`window
 - Verified: `tsc` 0, `eslint` 0 on every touched file, full `vitest` green (258 files / 4636 tests: 4629 passed, 7 expected-fail). Re-run after the review fix pass: `tsc` 0, `eslint` 0, full `vitest` green (258 files / 4639 tests: 4632 passed, 7 expected-fail). Re-run after the second review fix pass: `tsc` 0, `eslint` 0, full `vitest` green (258 files / 4653 tests: 4646 passed, 7 expected-fail).
 
 **Done-when.**
-1. ✓ `transmittalPortalUrl` builds on the public-origin helper (`recipientOrigin()`) and returns `null` whenever the link would be hostless or on a host the recipient cannot open: a server with nothing configured, or a browser on a Vercel deployment (preview) host or loopback with nothing configured. Callers therefore refuse to email or print a hostless, preview-host or localhost link.
+1. ◐ `transmittalPortalUrl` builds on the public-origin helper (`recipientOrigin()`) and returns `null` whenever the link would be hostless or on a host the recipient cannot open: a server with nothing configured, or a browser on a Vercel deployment (preview) host or loopback with nothing configured. Callers therefore refuse to email or print a hostless, preview-host or localhost link.
    - One deliberate departure from the literal "returns null when no origin is configured": a browser on a self-hosted address with nothing configured builds the link on that address, as on the base. The address is the deployment's own, the preview-host case this finding names cannot arise there, and the issue and copy toasts warn that the link uses this browser's address.
 2. ✓ (P7) `sendTransmittalEmail` (its route) and `openTransmittalSheet` handle the no-origin case explicitly.
 3. ✓ The issue flow warns when `NEXT_PUBLIC_SITE_URL` is unset. It says when this browser builds no link, and what to set instead; when the link uses this browser's address, it says so. A preview deploy cannot mint a portal link: a `*.vercel.app` host with nothing configured gets none.
+
+**Scope / residual (integration, 2026-10-01).** Done-when 1 is met except for the deliberate departure above (DEC-44 §1): with nothing configured, a browser on a self-hosted address builds the link on that address rather than returning null. That is not the hostless or preview-host link the finding is about, but it is not the done-when as written, so the finding stays OPEN under DEC-29. It closes when the user ratifies DEC-44 §1's self-hosted trade (the done-when then reads "never a hostless, preview-host or loopback link"), which the integrator has put to them, or when the browser returns null there too.
 
 **Scope / residual.**
 - Recorded in DEC-44 (public-surfaces PS-STAMP) §1:
