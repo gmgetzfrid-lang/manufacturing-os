@@ -10,6 +10,9 @@ import {
 } from '@/lib/ticketAttention';
 import { loadCapabilityPolicy, type CapabilityPolicy } from '@/lib/capabilityPolicy';
 import { flaggedRequestTypes } from '@/lib/requestTypes';
+import {
+  KIND_META, NOTIFICATION_SECTIONS, isNotificationKind, kindMeta, type NotificationSection,
+} from '@/lib/notificationKinds';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Single source of truth for "what needs my attention right now".
@@ -25,6 +28,23 @@ import { flaggedRequestTypes } from '@/lib/requestTypes';
 // Both the ticket feed AND the notification rows are scoped to the active
 // workspace, and stale workflow alerts (whose ticket has already moved on) are
 // reconciled away — so the badge can never disagree with the portal.
+//
+// Where a notification lands — its sidebar section, whether it is an action —
+// is read from ONE table, lib/notificationKinds.ts KIND_META (notifications
+// Round G, N2). A kind with no section there is bell-only: the header bell
+// owns it, no rail row counts it.
+//
+// VOCABULARY — "unread" means three different things in this app (TAX-7):
+//   * DB-unread: notifications.read_at IS NULL. Every notification row in
+//     this feed is DB-unread (only those are loaded); marking one read removes
+//     it. lib/inbox.ts's unreadNotificationCount is a head count of these.
+//   * ticket-unread: tickets.unread_by contains me — a ticket with activity I
+//     have not opened. It enters the feed as a non-action ticket row.
+//   * action vs activity: the feed's own split. `counts.action` is every item
+//     that needs me to DO something (an action-required ticket, or a kind
+//     KIND_META marks actionRequired); `counts.activity` is everything else
+//     (the Center's "Activity" filter). `counts` is computed here, once, and
+//     every surface reads it — no surface recounts.
 // ─────────────────────────────────────────────────────────────────────────────
 
 // Cap open-ticket fetches so the attention feed can't pull an unbounded set
@@ -65,43 +85,26 @@ function fromDbTicket(row: Record<string, unknown>): Ticket {
 export type AttentionSource = 'ticket' | 'notification';
 
 /** Which sidebar destination an item belongs to. Drives the PER-SECTION
- *  badges so a scratchpad nudge never shows up on the Drafting Requests item,
- *  and vice-versa. 'other' is anything not pinned to a specific section. */
-export type AttentionSection = 'requests' | 'scratchpad' | 'documents' | 'projects' | 'other';
+ *  badges so a document conflict never shows up on the Drafting Requests
+ *  item, and vice-versa. Exactly the rows the Sidebar badges (a test pins
+ *  the two equal); a bell-only item has section null. */
+export type AttentionSection = NotificationSection;
 
-/** Map a notification kind (or a ticket row) to the section it belongs to. */
-export function sectionForKind(kind: NotificationRow['kind'] | 'ticket'): AttentionSection {
-  switch (kind) {
-    case 'ticket':
-    case 'ticket_comment':
-    case 'ticket_mention':
-    case 'ticket_status':
-    case 'ticket_assigned':
-    case 'request_pending_approval':
-      return 'requests';
-    case 'task_nudge':
-    case 'task_overdue_digest':
-    case 'morning_digest':
-      return 'scratchpad';
-    case 'doc_superseded':
-    case 'markup_request':
-    case 'checkout_conflict':
-    case 'checkout_handoff':
-    case 'checkout_message':
-    case 'checkout_released':
-    case 'overlap_advisory':
-    case 'branch_open':
-    case 'branch_resolved':
-    case 'provenance_flag':
-    case 'hold_opened':
-    case 'hold_released':
-      return 'documents';
-    case 'project_member':
-    case 'project_status':
-      return 'projects';
-    default:
-      return 'other';
-  }
+/** Map a notification kind (or a ticket row) to the section it belongs to,
+ *  or null when it is bell-only. Read from KIND_META, where each kind's
+ *  section is decided and written down. */
+export function sectionForKind(kind: NotificationRow['kind'] | 'ticket'): AttentionSection | null {
+  if (kind === 'ticket') return 'requests';
+  if (isNotificationKind(kind)) return KIND_META[kind].section;
+  // Exhaustiveness (GAP-201): every NotificationKind returned above, so a
+  // kind added to the union without a KIND_META entry is a BUILD ERROR here
+  // (and at KIND_META's `satisfies`) until it is classified.
+  const _never: never = kind;
+  void _never;
+  // Runtime only: a row whose kind no union declares any more (a legacy
+  // task_nudge from the removed scratchpad) is bell-only — where it badged
+  // before (its 'scratchpad' / 'other' bucket was rendered by no row).
+  return null;
 }
 
 export interface AttentionItem {
@@ -110,8 +113,8 @@ export interface AttentionItem {
   /** Whether this is something I must DO (action-required) vs. FYI activity. */
   actionRequired: boolean;
   kind: NotificationRow['kind'] | 'ticket';
-  /** The sidebar section this item badges. */
-  section: AttentionSection;
+  /** The sidebar section this item badges; null = bell-only. */
+  section: AttentionSection | null;
   title: string;
   subtitle: string;
   link: string;
@@ -123,14 +126,16 @@ export interface AttentionItem {
 export interface SectionCount { total: number; actionRequired: number; }
 export type SectionCounts = Record<AttentionSection, SectionCount>;
 
+/** The feed's three counts, computed once here and read by every surface
+ *  (the Center, the cockpit, the dashboard widget, the Command Deck): `all`
+ *  items, `action` items, and `activity` (the rest). See VOCABULARY above. */
+export interface AttentionCounts { all: number; action: number; activity: number; }
+
+/** One bucket per section a sidebar row renders — and no other. */
 function emptySectionCounts(): SectionCounts {
-  return {
-    requests: { total: 0, actionRequired: 0 },
-    scratchpad: { total: 0, actionRequired: 0 },
-    documents: { total: 0, actionRequired: 0 },
-    projects: { total: 0, actionRequired: 0 },
-    other: { total: 0, actionRequired: 0 },
-  };
+  return Object.fromEntries(
+    NOTIFICATION_SECTIONS.map((s) => [s, { total: 0, actionRequired: 0 }]),
+  ) as SectionCounts;
 }
 
 export function useTicketNotifications() {
@@ -276,11 +281,9 @@ export function useTicketNotifications() {
     return () => { alive = false; supabase.removeChannel(channel); };
   }, [roles, activeOrgId, uid, channelId, membershipState]);
 
-  const { items, actionRequiredCount, unreadCount, sectionCounts } = useMemo(() => {
+  const { items, counts, sectionCounts } = useMemo(() => {
     const out: AttentionItem[] = [];
     const ticketIds = new Set<string>();
-    let ar = 0;
-    let ur = 0;
 
     // Index the most recent notification per ticket so a ticket row can carry
     // the latest activity's description + deep-link (e.g. straight to a comment)
@@ -300,7 +303,6 @@ export function useTicketNotifications() {
       const actionReq = isActionRequired(t, { uid, roles, policy, engineeringFirstTypes, closeWithoutReviewTypes, activeMemberCount });
       const unread = !!uid && !!t.unreadBy?.includes(uid);
       if (!actionReq && !unread) continue;
-      if (actionReq) ar++; else ur++;
       const matched = t.id ? notifByTicket.get(t.id) : undefined;
       out.push({
         key: `ticket:${t.id}`,
@@ -320,19 +322,18 @@ export function useTicketNotifications() {
       if (t.id) ticketIds.add(t.id);
     }
 
-    // Conflict-class notifications carry the "action" treatment in the feed:
-    // a stale-base branch, a lost checkout, or an edit overlap is something
-    // to ACT on, not passive activity.
-    const actionKinds = new Set(['checkout_conflict', 'checkout_released', 'overlap_advisory', 'branch_open']);
-
     for (const n of notifs) {
       // Dedupe: if a ticket is already in the feed, fold its notification in.
       if (n.resourceId && ticketIds.has(n.resourceId)) continue;
       const section = sectionForKind(n.kind);
+      // KIND_META decides what is an action: the conflict class (a stale-base
+      // branch, a lost checkout, an edit overlap) and the PSM obligations. A
+      // legacy kind no union declares is FYI.
+      const actionRequired = kindMeta(n.kind)?.actionRequired ?? false;
       out.push({
         key: `notif:${n.id}`,
         source: 'notification',
-        actionRequired: actionKinds.has(n.kind),
+        actionRequired,
         kind: n.kind,
         section,
         title: n.title,
@@ -345,11 +346,15 @@ export function useTicketNotifications() {
         when: n.createdAt,
         notificationId: n.id,
       });
-      tally(section, false);
+      // TRAIL-5: the computed flag reaches the tally, so a notification can
+      // turn its row's badge red. A bell-only kind tallies into no row.
+      if (section) tally(section, actionRequired);
     }
 
     out.sort((a, b) => (b.when || '').localeCompare(a.when || ''));
-    return { items: out, actionRequiredCount: ar, unreadCount: ur, sectionCounts };
+    const action = out.filter((i) => i.actionRequired).length;
+    const counts: AttentionCounts = { all: out.length, action, activity: out.length - action };
+    return { items: out, counts, sectionCounts };
   }, [tickets, notifs, uid, roles, policy, engineeringFirstTypes, closeWithoutReviewTypes, activeMemberCount]);
 
   return {
@@ -357,9 +362,15 @@ export function useTicketNotifications() {
     items,
     /** The single count every surface badges (the header bell + Home). */
     count: items.length,
-    actionRequiredCount,
-    unreadCount,
-    totalNotifications: items.length,
+    /** { all, action, activity } — the one place the feed is counted (TAX-7). */
+    counts,
+    /** = counts.action: every action item, tickets AND notifications (TRAIL-13
+     *  — it used to count tickets only, so the Command Deck's Action stat
+     *  disagreed with the Center's Action tab it opens). */
+    actionRequiredCount: counts.action,
+    /** = counts.activity: the feed's non-action items (the "Activity" filter)
+     *  — not DB-unread and not ticket-unread; see VOCABULARY above. */
+    unreadCount: counts.activity,
     /** Per-sidebar-section counts so each nav item badges only ITS own items. */
     sectionCounts,
     loading,

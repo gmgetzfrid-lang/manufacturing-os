@@ -1,29 +1,34 @@
 // @vitest-environment jsdom
 //
 // notifications Round G, N2 KIND-REGISTRY — the kind → section / action /
-// icon / group / compliance classification, pinned.
+// icon / group / compliance classification (lib/notificationKinds.ts
+// KIND_META), pinned against what it replaced.
 //
-// REGRESSION FIRST. The tables below are what the code did on b9cdfdc, read
-// from the source, before the registry changed anything: every notification a
-// user sees today lands in the same section with the same count unless a
-// record names that kind as misfiled.
+// REGRESSION FIRST. The TODAY tables are what the code did on b9cdfdc, read
+// from the source before the registry changed anything (committed first,
+// e595cf5). Every kind lands where it did and counts as it did, EXCEPT the
+// departures listed below — each names the record that calls the old
+// placement wrong (PROD-1 / TRAIL-2 / DELIV-3 / TAX-2 / OS-12 / RT-6, TRAIL-5,
+// PROD-8 / OS-7 / NEDGE-13, PROD-10 / TAX-11) or the decision (DEC-44 (N2)).
 
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import React, { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
-import { readFileSync } from "node:fs";
-import { join } from "node:path";
+import { readFileSync, readdirSync, statSync } from "node:fs";
+import { join, relative } from "node:path";
+import ts from "typescript";
 
 const fixture = vi.hoisted(() => ({
   rows: [] as Array<Record<string, unknown>>,
+  tickets: [] as Array<Record<string, unknown>>,
   // one identity for the whole run: a fresh array per render would re-run
   // the hook's fetch effect on every render
   role: { roles: ["Viewer"], activeOrgId: "o1", uid: "u1", membershipState: "member" },
 }));
 
 vi.mock("@/lib/supabase", () => {
-  const result = { data: [], error: null, count: 0 };
-  const chain = (): Record<string, unknown> => {
+  const chain = (table: string): Record<string, unknown> => {
+    const result = { data: table === "tickets" ? fixture.tickets : [], error: null, count: 0 };
     const q: Record<string, unknown> = {};
     for (const m of ["select", "eq", "not", "in", "order", "limit", "is", "or", "gte"]) q[m] = () => q;
     q.maybeSingle = async () => ({ data: null, error: null });
@@ -33,7 +38,7 @@ vi.mock("@/lib/supabase", () => {
   const channel = { on: () => channel, subscribe: () => channel };
   return {
     supabase: {
-      from: () => chain(),
+      from: (table: string) => chain(table),
       channel: () => channel,
       removeChannel: () => {},
     },
@@ -42,7 +47,10 @@ vi.mock("@/lib/supabase", () => {
 vi.mock("@/components/providers/RoleContext", () => ({
   useRole: () => fixture.role,
 }));
-vi.mock("@/lib/capabilityPolicy", () => ({ loadCapabilityPolicy: async () => undefined }));
+vi.mock("@/lib/capabilityPolicy", async (importOriginal) => ({
+  ...(await importOriginal<Record<string, unknown>>()),
+  loadCapabilityPolicy: async () => undefined,
+}));
 vi.mock("@/lib/inAppNotifications", async (importOriginal) => {
   const actual = await importOriginal<Record<string, unknown>>();
   return {
@@ -55,10 +63,14 @@ vi.mock("@/lib/inAppNotifications", async (importOriginal) => {
 });
 
 import { sectionForKind, useTicketNotifications } from "@/hooks/useTicketNotifications";
+import {
+  KIND_META, NOTIFICATION_KINDS, NOTIFICATION_SECTIONS, isNotificationKind, kindMeta,
+} from "@/lib/notificationKinds";
 
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
-const src = (p: string) => readFileSync(join(process.cwd(), p), "utf8");
+const ROOT = process.cwd();
+const src = (p: string) => readFileSync(join(ROOT, p), "utf8");
 
 /** The NotificationKind union, parsed from its declaration. */
 const unionKinds = (): string[] => {
@@ -156,6 +168,235 @@ const cronComplianceKinds = (): string[] => {
   return [...m[1].matchAll(/"([a-z_]+)"/g)].map((x) => x[1]);
 };
 
+// ── THE DEPARTURES — every change from TODAY, each with its reason ───────────
+// Kinds no longer declared: zero producers anywhere (PROD-8 / OS-7 / NEDGE-13).
+const RETIRED = ["task_overdue_digest", "morning_digest", "task_nudge", "task_reminder"];
+// Kinds now declared: they were WRITTEN on b9cdfdc by raw inserts outside any
+// union (PROD-10 / TAX-11 for the storage three; the census below found the
+// other two).
+const ADDED = TODAY_OFF_UNION;
+// Section: TODAY's 'other' becomes bell-only (null) — the same thing to a user
+// (no rail row counted it; the header bell did) — except the kinds the records
+// name as misfiled, which now badge a row.
+const SECTION_DEPARTURES: Record<string, { to: "documents" | "projects"; why: string }> = Object.fromEntries([
+  ...[
+    "revision_published_over_checkout", "library_doc_added", "library_doc_revised", "review_due", "owner_assigned",
+    "owner_behind", "deletion_requested", "ack_requested", "ack_complete", "ack_overdue", "ack_unsatisfiable",
+    "review_requested", "review_signed", "review_invalidated", "review_complete", "review_overdue",
+    "review_alternate_activated", "effective_now", "retention_eligible", "legal_hold_placed", "legal_hold_released",
+    "access_recert_due",
+  ].map((k) => [k, { to: "documents" as const, why: "document-scoped: TRAIL-2 dw1 / PROD-1 / DELIV-3 / TAX-2 / OS-12 / RT-6" }]),
+  ["project_comment", { to: "projects" as const, why: "a comment on a project: TRAIL-2 dw1" }],
+]);
+// Bell-only by decision (DEC-44 (N2) §1): TODAY 'other', and kept off every
+// rail row — the header bell owns them. A new bell-only kind must be added
+// here deliberately.
+const BELL_ONLY = [
+  "orchestrator_message", "security_export", "member_revoked", "library_unowned",
+  "storage_alert", "storage_platform_r2", "storage_platform_db", "ai_cap_changed", "transmittal_unstampable",
+];
+// actionRequired: TODAY_ACTION plus the PSM obligations (DEC-44 (N2) §2,
+// TRAIL-5 — so the Documents badge can turn red for one).
+const ACTION_ADDED = [
+  "ack_requested", "review_requested", "review_invalidated", "ack_overdue", "review_overdue", "access_recert_due", "effective_now",
+];
+// icon / tone / group departures from the predecessors.
+const ICON_DEPARTURES: Record<string, { icon: string; why: string }> = {
+  storage_alert: { icon: "HardDrive", why: "the bell's new entry for the storage kinds (the plan names it)" },
+  storage_platform_r2: { icon: "HardDrive", why: "the bell's new entry for the storage kinds" },
+  storage_platform_db: { icon: "Database", why: "the bell's new entry for the storage kinds" },
+  member_revoked: { icon: "Bell", why: "the feed's GitBranch came from 'rev' inside 'revoked' — a substring accident" },
+};
+const TONE_DEPARTURES: Record<string, string> = { member_revoked: "slate" };
+const GROUP_DEPARTURES: Record<string, string> = { member_revoked: "other" };
+
+/** What a kind's section must be now: TODAY, with the departures applied. */
+const expectedSection = (k: string): string | null => {
+  if (RETIRED.includes(k)) return null; // a legacy row: bell-only, as its unrendered bucket was
+  if (SECTION_DEPARTURES[k]) return SECTION_DEPARTURES[k].to;
+  const today = TODAY_SECTION[k] ?? "other";
+  return today === "other" ? null : today;
+};
+const expectedAction = (k: string): boolean => TODAY_ACTION.has(k) || ACTION_ADDED.includes(k);
+
+// ── THE PRODUCER CENSUS ──────────────────────────────────────────────────────
+// Every object literal under app/ lib/ components/ hooks/ shaped like a
+// notification payload (kind + title + orgId|org_id), with its kind
+// evaluated. A raw `.from("notifications").insert(` payload bypasses the
+// NotificationKind type, so its kind must evaluate to literals here — this
+// is the type check the compiler cannot do for it.
+type Payload = { file: string; line: number; raw: boolean; kinds: string[] | "typed" };
+const NOT_NOTIFICATIONS: Record<string, string> = {
+  "lib/checklists.ts": "a checklist row's own kind (ChecklistKind)",
+  "components/projects/QualityTab.tsx": "a checklist's kind",
+  "lib/inAppNotifications.ts": "the typed sink itself (input.kind: NotificationKind) and its row mapper",
+};
+// Non-literal kinds at raw sites, resolved by reading the type that bounds them.
+const RAW_RESOLVED: Record<string, { kinds: string[]; proof: [string, string] }> = {
+  "app/api/tickets/workflow-action/route.ts|cls.inAppKind": {
+    kinds: ["ticket_assigned", "ticket_status"],
+    proof: ["lib/ticketTransitions.ts", 'inAppKind: "ticket_assigned" | "ticket_status";'],
+  },
+};
+function sourceFiles(): string[] {
+  const out: string[] = [];
+  const walk = (d: string) => {
+    for (const n of readdirSync(d)) {
+      const p = join(d, n);
+      if (statSync(p).isDirectory()) { if (n !== "node_modules" && n !== "__tests__" && !n.startsWith(".")) walk(p); }
+      else if (/\.tsx?$/.test(n) && !n.endsWith(".d.ts")) out.push(p);
+    }
+  };
+  for (const d of ["app", "lib", "components", "hooks"]) walk(join(ROOT, d));
+  return out;
+}
+const parse = (abs: string) =>
+  ts.createSourceFile(abs, readFileSync(abs, "utf8"), ts.ScriptTarget.Latest, true, abs.endsWith("x") ? ts.ScriptKind.TSX : ts.ScriptKind.TS);
+const propName = (p: ts.ObjectLiteralElementLike, sf: ts.SourceFile) =>
+  ts.isPropertyAssignment(p) || ts.isShorthandPropertyAssignment(p) ? p.name.getText(sf) : null;
+const literalUnion = (t: ts.TypeNode | undefined): string[] | null => {
+  if (!t) return null;
+  const parts = ts.isUnionTypeNode(t) ? [...t.types] : [t];
+  const lits = parts.map((x) => (ts.isLiteralTypeNode(x) && ts.isStringLiteral(x.literal) ? x.literal.text : null));
+  return lits.every((x) => x !== null) ? (lits as string[]) : null;
+};
+/** Resolve a name: a const in this file, a parameter typed as literals, or an
+ *  `@/` import's exported const / function return type. */
+function resolveName(name: string, sf: ts.SourceFile, depth = 0): string[] | null {
+  let found: string[] | null = null;
+  const visit = (n: ts.Node) => {
+    if (found) return;
+    if (ts.isVariableDeclaration(n) && ts.isIdentifier(n.name) && n.name.text === name && n.initializer) found = evalKind(n.initializer, sf, depth + 1);
+    else if (ts.isParameter(n) && ts.isIdentifier(n.name) && n.name.text === name) found = literalUnion(n.type);
+    else if (ts.isFunctionDeclaration(n) && n.name?.text === name) found = literalUnion(n.type);
+    n.forEachChild(visit);
+  };
+  visit(sf);
+  if (found || depth > 3) return found;
+  for (const st of sf.statements) {
+    if (!ts.isImportDeclaration(st) || !ts.isStringLiteral(st.moduleSpecifier) || !st.moduleSpecifier.text.startsWith("@/")) continue;
+    const named = st.importClause?.namedBindings;
+    if (!named || !ts.isNamedImports(named) || !named.elements.some((e) => e.name.text === name)) continue;
+    const base = join(ROOT, st.moduleSpecifier.text.slice(2));
+    for (const ext of [".ts", ".tsx"]) {
+      try { return resolveName(name, parse(base + ext), depth + 1); } catch { /* next */ }
+    }
+  }
+  return null;
+}
+function evalKind(e: ts.Expression, sf: ts.SourceFile, depth = 0): string[] | null {
+  if (ts.isStringLiteralLike(e)) return [e.text];
+  if (ts.isParenthesizedExpression(e) || ts.isAsExpression(e) || ts.isSatisfiesExpression(e)) return evalKind(e.expression, sf, depth);
+  if (ts.isConditionalExpression(e)) {
+    const a = evalKind(e.whenTrue, sf, depth), b = evalKind(e.whenFalse, sf, depth);
+    return a && b ? [...a, ...b] : null;
+  }
+  if (ts.isIdentifier(e)) return resolveName(e.text, sf, depth);
+  if (ts.isCallExpression(e) && ts.isIdentifier(e.expression)) return resolveName(e.expression.text, sf, depth);
+  return null; // a template literal, a property read, … — not enumerable here
+}
+const isNotificationsInsert = (call: ts.CallExpression): boolean => {
+  if (!ts.isPropertyAccessExpression(call.expression) || call.expression.name.text !== "insert") return false;
+  let cur: ts.Expression = call.expression.expression;
+  for (;;) {
+    if (ts.isCallExpression(cur)) {
+      const c = cur.expression;
+      if (ts.isPropertyAccessExpression(c) && c.name.text === "from" && cur.arguments[0] && ts.isStringLiteralLike(cur.arguments[0])) {
+        return cur.arguments[0].text === "notifications";
+      }
+      cur = ts.isPropertyAccessExpression(c) ? c.expression : c;
+    } else if (ts.isPropertyAccessExpression(cur)) cur = cur.expression;
+    else return false;
+  }
+};
+let censusCache: Payload[] | null = null;
+function census(): Payload[] {
+  if (censusCache) return censusCache;
+  const out: Payload[] = [];
+  for (const abs of sourceFiles()) {
+    const file = relative(ROOT, abs);
+    if (NOT_NOTIFICATIONS[file]) continue;
+    const text = readFileSync(abs, "utf8");
+    if (!text.includes("kind")) continue;
+    const sf = parse(abs);
+    // raw sites: payloads inside a notifications insert, directly or via a
+    // variable the insert is given
+    const rawNodes = new Set<ts.Node>();
+    const rawVars = new Set<string>();
+    const findRaw = (n: ts.Node) => {
+      if (ts.isCallExpression(n) && isNotificationsInsert(n)) {
+        for (const a of n.arguments) { rawNodes.add(a); if (ts.isIdentifier(a)) rawVars.add(a.text); }
+      }
+      n.forEachChild(findRaw);
+    };
+    findRaw(sf);
+    const markVars = (n: ts.Node) => {
+      if (ts.isVariableDeclaration(n) && ts.isIdentifier(n.name) && rawVars.has(n.name.text) && n.initializer) rawNodes.add(n.initializer);
+      n.forEachChild(markVars);
+    };
+    markVars(sf);
+    const insideRaw = (n: ts.Node) => { for (let c: ts.Node | undefined = n; c; c = c.parent) if (rawNodes.has(c)) return true; return false; };
+    const visit = (n: ts.Node) => {
+      if (ts.isObjectLiteralExpression(n)) {
+        const names = new Set(n.properties.map((p) => propName(p, sf)));
+        if (names.has("kind") && names.has("title") && (names.has("orgId") || names.has("org_id"))) {
+          const kp = n.properties.find((p) => propName(p, sf) === "kind")!;
+          const expr = ts.isShorthandPropertyAssignment(kp) ? kp.name : (kp as ts.PropertyAssignment).initializer;
+          const raw = insideRaw(n);
+          let kinds: string[] | "typed" | null = evalKind(expr, sf);
+          if (!kinds && raw) kinds = RAW_RESOLVED[`${file}|${expr.getText(sf)}`]?.kinds ?? null;
+          if (!kinds && !raw) kinds = "typed"; // a typed sink (notify / notifyMany / emit): the compiler checks it
+          out.push({ file, line: sf.getLineAndCharacterOfPosition(n.getStart()).line + 1, raw, kinds: kinds ?? ["<unresolvable: " + expr.getText(sf) + ">"] });
+        }
+      }
+      n.forEachChild(visit);
+    };
+    visit(sf);
+  }
+  censusCache = out;
+  return out;
+}
+// The raw notifications inserts left outside notify(), by file — each in a
+// file another package owns (DEC-31: a pointer, not an edit). A NEW raw insert
+// fails here: route it through notify() / notifyMany() / emit(). N5's
+// notification_kinds allowlist backs this up in the database.
+const RAW_SITES: Record<string, number> = {
+  "app/api/ai/usage/route.ts": 1,                 // ai_cap_changed — intelligence
+  "app/api/cron/maintenance/route.ts": 1,         // checkout_released escalation — N6 / DC
+  "app/api/data-export/run/route.ts": 1,          // security_export — admin-and-org
+  "app/api/tickets/comment/route.ts": 1,          // ticket_comment / ticket_mention — drafting-flow, N6
+  "app/api/tickets/workflow-action/route.ts": 2,  // ticket_comment, ticket_assigned / ticket_status — drafting-flow, N6
+  "app/api/transmittal/route.ts": 2,              // transmittal_unstampable, ack_complete — document-control, N9
+  "lib/intakeRateLimit.ts": 1,                    // doc_superseded / review_requested digest — projects
+  "lib/orchestrator/tools.ts": 1,                 // orchestrator_message — intelligence
+  "lib/projects.ts": 1,                           // checkout_released auto-release — document-control, N9
+};
+
+// ── GAP-201 acceptance 1: an unclassified kind is a BUILD error ─────────────
+/** Type-check the hook (and, through it, the registry) with one extra member
+ *  appended to the union, in memory. */
+function typeErrorsWithExtraKind(extra: string | null): string[] {
+  const cfg = ts.readConfigFile(join(ROOT, "tsconfig.json"), ts.sys.readFile);
+  const parsed = ts.parseJsonConfigFileContent(cfg.config, ts.sys, ROOT);
+  const options = { ...parsed.options, noEmit: true };
+  const target = join(ROOT, "lib/inAppNotifications.ts");
+  const host = ts.createCompilerHost(options);
+  const original = host.getSourceFile.bind(host);
+  host.getSourceFile = (f, lang, onError, create) => {
+    if (extra && f === target) {
+      const text = readFileSync(target, "utf8").replace('| "transmittal_unstampable";', `| "transmittal_unstampable" | "${extra}";`);
+      if (!text.includes(extra)) throw new Error("the probe kind was not appended — the union's last member moved");
+      return ts.createSourceFile(f, text, lang);
+    }
+    return original(f, lang, onError, create);
+  };
+  const program = ts.createProgram({ rootNames: [join(ROOT, "hooks/useTicketNotifications.ts")], options, host });
+  return ts.getPreEmitDiagnostics(program)
+    .filter((d) => d.file && !d.file.fileName.includes("node_modules"))
+    .map((d) => `${relative(ROOT, d.file!.fileName)}: ${ts.flattenDiagnosticMessageText(d.messageText, "\n")}`);
+}
+
+// ── the hook, rendered ───────────────────────────────────────────────────────
 let host: HTMLDivElement;
 let root: Root;
 // every committed render's hook value, recorded from an effect
@@ -166,13 +407,14 @@ function Probe() {
   return null;
 }
 const flush = async () => { for (let i = 0; i < 6; i++) await act(async () => { await new Promise((r) => setTimeout(r, 0)); }); };
-const row = (kind: string, i: number) => ({
+const row = (kind: string, i: number, resourceId = `doc-${i}`) => ({
   id: `n${i}`, orgId: "o1", userId: "u1", kind, title: `t ${kind}`, body: null, link: `/x/${i}`,
-  resourceType: "document", resourceId: `doc-${i}`, actorUserId: null, actorName: null, metadata: null,
+  resourceType: "document", resourceId, actorUserId: null, actorName: null, metadata: null,
   readAt: null, createdAt: `2026-10-01T00:00:${String(i % 60).padStart(2, "0")}Z`,
 });
-const mount = async (kinds: string[]) => {
-  fixture.rows = kinds.map(row);
+const mount = async (rows: Array<Record<string, unknown>>, tickets: Array<Record<string, unknown>> = []) => {
+  fixture.rows = rows;
+  fixture.tickets = tickets;
   await act(async () => { root.render(React.createElement(Probe)); });
   await flush();
   return seen[seen.length - 1];
@@ -188,49 +430,130 @@ afterEach(() => {
   host.remove();
 });
 
-describe("TODAY — the classification on b9cdfdc, pinned before the registry", () => {
-  it("the union is the 50 kinds the map is pinned for", () => {
-    expect(unionKinds().sort()).toEqual(Object.keys(TODAY_SECTION).sort());
+describe("the union (PROD-8 / OS-7 / NEDGE-13 retired; PROD-10 / TAX-11 added)", () => {
+  it("is TODAY's union, minus the four retired kinds, plus the five that were written outside it", () => {
+    const today = Object.keys(TODAY_SECTION);
+    expect(unionKinds().sort()).toEqual([...today.filter((k) => !RETIRED.includes(k)), ...ADDED].sort());
   });
 
-  it("sectionForKind: every union member resolves where it did", () => {
-    for (const k of Object.keys(TODAY_SECTION)) {
-      expect(sectionForKind(k as never), k).toBe(TODAY_SECTION[k]);
-    }
-    for (const k of TODAY_OFF_UNION) expect(sectionForKind(k as never), k).toBe("other");
+  it("KIND_META classifies exactly the union — no kind missing, none extra", () => {
+    expect(Object.keys(KIND_META).sort()).toEqual(unionKinds().sort());
+    expect([...NOTIFICATION_KINDS].sort()).toEqual(unionKinds().sort());
   });
 
-  it("the hook: one row of every written kind — per-section totals, action flags and counts", async () => {
-    const kinds = [...Object.keys(TODAY_SECTION), ...TODAY_OFF_UNION];
-    const r = await mount(kinds);
-    expect(r.items).toHaveLength(kinds.length);
-    for (const it of r.items) {
-      expect(it.section, String(it.kind)).toBe(TODAY_SECTION[String(it.kind)] ?? "other");
-      expect(it.actionRequired, String(it.kind)).toBe(TODAY_ACTION.has(String(it.kind)));
+  it("a retired kind has no producer anywhere — app, lib, components, hooks, scripts, types, public, SQL", () => {
+    const hits: string[] = [];
+    const walk = (d: string) => {
+      for (const n of readdirSync(d)) {
+        const p = join(d, n);
+        if (statSync(p).isDirectory()) { if (n !== "node_modules" && n !== "__tests__" && !n.startsWith(".")) walk(p); continue; }
+        if (!/\.(tsx?|m?js|sql|json)$/.test(n)) continue;
+        // comments are not producers (the union records why these left)
+        const text = readFileSync(p, "utf8").replace(/\/\*[\s\S]*?\*\//g, "").replace(/\/\/[^\n]*/g, "").replace(/--[^\n]*/g, "");
+        for (const k of RETIRED) if (text.includes(k)) hits.push(`${relative(ROOT, p)}: ${k}`);
+      }
+    };
+    for (const d of ["app", "lib", "components", "hooks", "scripts", "types", "public", "supabase"]) {
+      try { statSync(join(ROOT, d)); } catch { continue; }
+      walk(join(ROOT, d));
     }
-    const tally = (s: string) => kinds.filter((k) => (TODAY_SECTION[k] ?? "other") === s).length;
-    expect(r.sectionCounts).toEqual({
-      requests: { total: tally("requests"), actionRequired: 0 },
-      scratchpad: { total: tally("scratchpad"), actionRequired: 0 },
-      documents: { total: tally("documents"), actionRequired: 0 },
-      projects: { total: tally("projects"), actionRequired: 0 },
-      other: { total: tally("other"), actionRequired: 0 },
-    });
-    expect(r.sectionCounts.documents.total).toBe(12);
-    expect(r.sectionCounts.projects.total).toBe(2);
-    expect(r.sectionCounts.requests.total).toBe(5);
-    expect(r.count).toBe(kinds.length);
-    // ticket-only counters: no tickets in the fixture
-    expect(r.actionRequiredCount).toBe(0);
-    expect(r.unreadCount).toBe(0);
+    expect(hits).toEqual([]);
+  });
+
+  it("a legacy row of a retired kind is bell-only and FYI — where its unrendered bucket left it", () => {
+    for (const k of RETIRED) {
+      expect(isNotificationKind(k), k).toBe(false);
+      expect(kindMeta(k), k).toBeNull();
+      expect(sectionForKind(k as never), k).toBeNull();
+    }
+  });
+
+  it("GAP-201 acceptance 1: a kind added without a KIND_META entry fails the type check (never guard + satisfies)", () => {
+    const clean = typeErrorsWithExtraKind(null);
+    expect(clean).toEqual([]);
+    const probe = typeErrorsWithExtraKind("zz_unclassified_probe");
+    expect(probe.some((e) => e.startsWith("hooks/useTicketNotifications.ts") && /"zz_unclassified_probe"' is not assignable to type 'never'/.test(e)), probe.join("\n")).toBe(true);
+    expect(probe.some((e) => e.startsWith("lib/notificationKinds.ts") && /does not satisfy the expected type 'Record<NotificationKind, KindMeta>'/.test(e)), probe.join("\n")).toBe(true);
+  }, 120_000);
+});
+
+describe("sections — every kind where it was, except the kinds the records name", () => {
+  it("sectionForKind and KIND_META agree with TODAY + the departures, kind by kind", () => {
+    for (const k of unionKinds()) {
+      expect(sectionForKind(k as never), k).toBe(expectedSection(k));
+      expect(KIND_META[k as keyof typeof KIND_META].section, k).toBe(expectedSection(k));
+    }
+    expect(sectionForKind("ticket")).toBe("requests");
+  });
+
+  it("every kind that badged a row on b9cdfdc badges the same row now", () => {
+    for (const [k, s] of Object.entries(TODAY_SECTION)) {
+      if (s === "documents" || s === "projects" || s === "requests") expect(sectionForKind(k as never), k).toBe(s);
+    }
+  });
+
+  it("the sections are exactly the rows the Sidebar badges — nothing is tallied and thrown away", () => {
+    const sidebar = src("components/navigation/Sidebar.tsx");
+    const badged = [...sidebar.matchAll(/badgeOf\(sectionCounts\.(\w+)\)/g)].map((m) => m[1]);
+    expect([...new Set(badged)].sort()).toEqual([...NOTIFICATION_SECTIONS].sort());
+    for (const k of unionKinds()) {
+      const s = KIND_META[k as keyof typeof KIND_META].section;
+      expect(s === null || (NOTIFICATION_SECTIONS as readonly string[]).includes(s), k).toBe(true);
+    }
+  });
+
+  it("'other' is gone: the bell-only kinds are exactly the deliberate list", () => {
+    const bellOnly = unionKinds().filter((k) => KIND_META[k as keyof typeof KIND_META].section === null);
+    expect(bellOnly.sort()).toEqual([...BELL_ONLY].sort());
+  });
+
+  it("TAX-2 dw1: every compliance-digest kind badges the Documents row", () => {
+    for (const k of TODAY_COMPLIANCE) expect(sectionForKind(k as never), k).toBe("documents");
   });
 });
 
-describe("TODAY — the other hand-maintained classifiers (TAX-5), pinned before the registry", () => {
-  it("the bell's icon map is the table above", () => {
-    expect(bellIconMap()).toEqual(TODAY_BELL_ICON);
+describe("action, compliance, icon, tone, group — the other classifiers, in one table", () => {
+  it("actionRequired: the conflict class as before, plus the PSM obligations (DEC-44 (N2) §2)", () => {
+    for (const k of unionKinds()) expect(KIND_META[k as keyof typeof KIND_META].actionRequired, k).toBe(expectedAction(k));
   });
-  it("the feed's visual and group predicates are the verbatim copies above", () => {
+
+  it("compliance is the cron's COMPLIANCE_KINDS, unchanged", () => {
+    expect(cronComplianceKinds()).toEqual(TODAY_COMPLIANCE);
+    const flagged = unionKinds().filter((k) => KIND_META[k as keyof typeof KIND_META].compliance);
+    expect(flagged.sort()).toEqual([...TODAY_COMPLIANCE].sort());
+  });
+
+  it("icon: every kind has one — the bell's where it had one, else the feed's, except the named departures", () => {
+    for (const k of unionKinds()) {
+      const want = ICON_DEPARTURES[k]?.icon ?? TODAY_BELL_ICON[k] ?? TODAY_FEED(k).icon;
+      const got = KIND_META[k as keyof typeof KIND_META].icon;
+      expect(got, k).toBeTruthy();
+      expect(got, k).toBe(want);
+    }
+  });
+
+  it("tone and group are what the feed's predicates produced, except the named departures", () => {
+    for (const k of unionKinds()) {
+      const m = KIND_META[k as keyof typeof KIND_META];
+      expect(m.tone, k).toBe(TONE_DEPARTURES[k] ?? TODAY_FEED(k).tone);
+      expect(m.group, k).toBe(GROUP_DEPARTURES[k] ?? TODAY_GROUP(k));
+    }
+  });
+
+  it("the bell's icon map: the dead task_overdue_digest entry gone, the storage kinds added, and every entry agrees with KIND_META", () => {
+    const want: Record<string, string> = { ...TODAY_BELL_ICON };
+    delete want.task_overdue_digest;
+    for (const k of ["storage_alert", "storage_platform_r2", "storage_platform_db"]) want[k] = ICON_DEPARTURES[k].icon;
+    const bell = bellIconMap();
+    expect(bell).toEqual(want);
+    for (const [k, icon] of Object.entries(bell)) {
+      if (k === "ticket") continue; // the ticket pseudo-kind is not a notification kind
+      expect(isNotificationKind(k), k).toBe(true);
+      expect(KIND_META[k as keyof typeof KIND_META].icon, k).toBe(icon);
+    }
+  });
+
+  it("the feed's predicates are still the verbatim copies (N3 derives them from KIND_META next)", () => {
     const feed = src("components/cockpit/AttentionFeed.tsx");
     for (const line of [
       'if (k.includes("reminder")) return { Icon: Bell, tone: "amber" };',
@@ -251,15 +574,140 @@ describe("TODAY — the other hand-maintained classifiers (TAX-5), pinned before
       '{ key: "requests", label: "Requests", match: (k) => k.includes("ticket") || k.includes("assign") || k.includes("approval") || k.includes("engineer") || k.includes("markup") },',
       '{ key: "locks", label: "Checkouts & holds", match: (k) => k.includes("checkout") || k.includes("lock") || k.includes("hold") || k.includes("conflict") },',
     ]) expect(feed, line).toContain(line);
-    // two spot checks of the copies themselves (the substring accidents included)
     expect(TODAY_FEED("member_revoked")).toEqual({ icon: "GitBranch", tone: "blue" });
     expect(TODAY_GROUP("checkout_message")).toBe("mentions");
   });
-  it("the cron's compliance set is the table above", () => {
-    expect(cronComplianceKinds()).toEqual(TODAY_COMPLIANCE);
-  });
-  it("the toast warns for exactly checkout_conflict and hold_opened", () => {
+
+  it("the toast still warns for exactly checkout_conflict and hold_opened (N3 derives it)", () => {
     expect(src("components/providers/NotificationListener.tsx"))
       .toContain('const isError = row.kind === "checkout_conflict" || row.kind === "hold_opened";');
+  });
+});
+
+describe("the hook — one row of every kind written on b9cdfdc", () => {
+  const kinds = [...Object.keys(TODAY_SECTION), ...TODAY_OFF_UNION];
+
+  it("every row still renders; each lands where TODAY + the departures say, with its action flag", async () => {
+    const r = await mount(kinds.map((k, i) => row(k, i)));
+    expect(r.items).toHaveLength(kinds.length);
+    expect(r.count).toBe(kinds.length);
+    for (const it of r.items) {
+      expect(it.section, String(it.kind)).toBe(expectedSection(String(it.kind)));
+      expect(it.actionRequired, String(it.kind)).toBe(expectedAction(String(it.kind)));
+    }
+  });
+
+  it("the per-row badges: the rows that counted before count the same kinds, plus the named ones", async () => {
+    const r = await mount(kinds.map((k, i) => row(k, i)));
+    expect(Object.keys(r.sectionCounts).sort()).toEqual([...NOTIFICATION_SECTIONS].sort());
+    const total = (s: string) => kinds.filter((k) => expectedSection(k) === s).length;
+    const action = (s: string) => kinds.filter((k) => expectedSection(k) === s && expectedAction(k)).length;
+    expect(r.sectionCounts).toEqual({
+      requests: { total: total("requests"), actionRequired: action("requests") },
+      documents: { total: total("documents"), actionRequired: action("documents") },
+      projects: { total: total("projects"), actionRequired: action("projects") },
+    });
+    // TODAY: requests 5, documents 12, projects 2 — the same plus the named moves
+    expect(r.sectionCounts.requests).toEqual({ total: 5, actionRequired: 0 });
+    expect(r.sectionCounts.documents).toEqual({ total: 12 + 22, actionRequired: 4 + 7 });
+    expect(r.sectionCounts.projects).toEqual({ total: 2 + 1, actionRequired: 0 });
+  });
+
+  it("TAX-7 / TRAIL-13: counts are computed once — action + activity = all — and actionRequiredCount is counts.action", async () => {
+    const r = await mount(kinds.map((k, i) => row(k, i)));
+    expect(r.counts).toEqual({ all: kinds.length, action: 11, activity: kinds.length - 11 });
+    expect(r.actionRequiredCount).toBe(r.counts.action);
+    expect(r.unreadCount).toBe(r.counts.activity);
+    expect("totalNotifications" in r).toBe(false);
+  });
+
+  it("TRAIL-5: a checkout_conflict row turns the Documents badge red", async () => {
+    const r = await mount([row("checkout_conflict", 1)]);
+    expect(r.sectionCounts.documents).toEqual({ total: 1, actionRequired: 1 });
+  });
+
+  it("TRAIL-13: tickets and notifications are counted together — the Deck's Action stat equals the Center's Action tab", async () => {
+    const ticket = {
+      id: "t1", org_id: "o1", ticket_id: "DR-1", title: "Pump", status: "PENDING_ASSIGNMENT", requester_id: "u1",
+      unread_by: ["u1"], created_at: "2026-10-01T00:00:00Z", last_modified: "2026-10-01T00:00:00Z",
+    };
+    const r = await mount([
+      row("checkout_conflict", 1),
+      row("library_doc_added", 2),
+      row("ticket_comment", 3, "t1"), // about the ticket in the feed: folds into it, as before
+    ], [ticket]);
+    expect(r.items.map((i) => i.key).sort()).toEqual(["notif:n1", "notif:n2", "ticket:t1"]);
+    const ticketItem = r.items.find((i) => i.key === "ticket:t1")!;
+    expect(ticketItem.actionRequired).toBe(false); // an unread ticket the requester need not act on
+    expect(r.counts).toEqual({ all: 3, action: 1, activity: 2 });
+    expect(r.actionRequiredCount).toBe(r.items.filter((i) => i.actionRequired).length);
+    expect(r.sectionCounts.requests).toEqual({ total: 1, actionRequired: 0 });
+    expect(r.sectionCounts.documents).toEqual({ total: 2, actionRequired: 1 });
+  });
+});
+
+describe("the surfaces read the hook's counts (TAX-7)", () => {
+  it("the filter key matches its label: 'activity', not 'unread'", () => {
+    const feed = src("components/cockpit/AttentionFeed.tsx");
+    expect(feed).toContain('export type AttnFilter = "all" | "action" | "activity";');
+    expect(feed).toContain('{ key: "activity", label: "Activity", n: counts.activity },');
+    expect(feed).toContain("counts: AttentionCounts;");
+    expect(feed).not.toMatch(/key: "unread"|counts\.unread/);
+  });
+
+  it("the Center, the cockpit and the widget take counts from the hook and recount nothing", () => {
+    for (const f of ["components/notifications/NotificationCenter.tsx", "app/(protected)/inbox/page.tsx", "components/dashboard/widgets.tsx"]) {
+      const s = src(f);
+      expect(s, f).not.toMatch(/\.filter\(\(i\) => !?i\.actionRequired\)\.length/);
+      expect(s, f).not.toMatch(/=== "unread"/);
+      expect(s, f).toMatch(/counts(: attnCounts)?,[\s\S]*?\} = useTicketNotifications\(\)/);
+    }
+  });
+});
+
+describe("the producer census — every written kind is declared and classified", { timeout: 120_000 }, () => {
+  it("every payload's kind resolves, and every resolved kind is a declared, classified kind", () => {
+    const bad: string[] = [];
+    for (const p of census()) {
+      if (p.kinds === "typed") continue;
+      for (const k of p.kinds) if (!isNotificationKind(k)) bad.push(`${p.file}:${p.line} ${k}${p.raw ? " (raw insert)" : ""}`);
+    }
+    expect(bad).toEqual([]);
+  });
+
+  it("no new raw notifications insert: the ones left are pinned, by file, each in a file another package owns", () => {
+    const byFile: Record<string, number> = {};
+    for (const p of census()) if (p.raw) byFile[p.file] = (byFile[p.file] ?? 0) + 1;
+    expect(byFile).toEqual(RAW_SITES);
+    expect(byFile["lib/storageAlerts.ts"]).toBeUndefined();
+    expect(byFile["lib/storageUsage.ts"]).toBeUndefined();
+    for (const p of census()) if (p.raw) expect(p.kinds, `${p.file}:${p.line}`).not.toBe("typed");
+    for (const { proof: [file, text] } of Object.values(RAW_RESOLVED)) expect(src(file), file).toContain(text);
+  });
+
+  it("the census sees through constants, parameters and branches (spot checks)", () => {
+    const kindsAt = (file: string) => census().filter((p) => p.file === file).flatMap((p) => (p.kinds === "typed" ? [] : p.kinds));
+    // PROD-8: the checkout thread now writes its own three kinds
+    expect(new Set(kindsAt("lib/activityThread.ts"))).toEqual(new Set(["checkout_handoff", "markup_request", "checkout_message"]));
+    // a typed parameter: notifyHold(kind: "legal_hold_placed" | "legal_hold_released")
+    expect(kindsAt("lib/retention.ts")).toEqual(expect.arrayContaining(["legal_hold_placed", "legal_hold_released"]));
+    // raw inserts, through a module constant and a literal
+    expect(new Set(kindsAt("app/api/transmittal/route.ts"))).toEqual(new Set(["transmittal_unstampable", "ack_complete"]));
+    expect(kindsAt("app/api/ai/usage/route.ts")).toEqual(["ai_cap_changed"]);
+    // raw, through a function's literal return type and a variable the insert is given
+    expect(new Set(kindsAt("lib/intakeRateLimit.ts"))).toEqual(new Set(["doc_superseded", "review_requested"]));
+    expect(kindsAt("lib/projects.ts")).toEqual(expect.arrayContaining(["checkout_released"]));
+    // the storage watchdogs: typed now (PROD-10)
+    expect(kindsAt("lib/storageAlerts.ts")).toEqual(["storage_alert"]);
+  });
+
+  it("no declared kind without a producer (PROD-8): the census writes every one", () => {
+    const written = new Set<string>();
+    for (const p of census()) if (p.kinds !== "typed") p.kinds.forEach((k) => written.add(k));
+    // storage_platform_*: written through the typed `alert.kind`, set from
+    // the literals in storageUsage's hot[] list
+    const usage = src("lib/storageUsage.ts");
+    for (const k of ["storage_platform_r2", "storage_platform_db"]) if (usage.includes(`kind: "${k}",`)) written.add(k);
+    expect(unionKinds().filter((k) => !written.has(k))).toEqual([]);
   });
 });

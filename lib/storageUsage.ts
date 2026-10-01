@@ -21,7 +21,8 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { ListObjectsV2Command } from "@aws-sdk/client-s3";
 import { r2, R2_BUCKET } from "@/lib/r2";
-import { alertBand, type AlertBand } from "@/lib/storageAlerts";
+import { alertBand, notifyAsServiceRole, type AlertBand } from "@/lib/storageAlerts";
+import type { NotificationKind } from "@/lib/inAppNotifications";
 
 const GiB = 1024 * 1024 * 1024;
 const MiB = 1024 * 1024;
@@ -213,10 +214,12 @@ export async function runPlatformStorageAlerts(sb: SupabaseClient): Promise<{
   const status = await measurePlatformStorage(sb);
   let alerts = 0;
 
-  const hot: Array<{ key: string; title: string; body: string }> = [];
+  // Each alert's kind is a NotificationKind (PROD-10 / TAX-11): the finite
+  // set storage_platform_r2 / storage_platform_db, never a template string.
+  const hot: Array<{ kind: NotificationKind; title: string; body: string }> = [];
   if (status.r2.band !== "ok") {
     hot.push({
-      key: "platform_r2",
+      kind: "storage_platform_r2",
       title: status.r2.band === "crit"
         ? `File storage critical — ${status.r2.pct}% of plan`
         : `File storage high — ${status.r2.pct}% of plan`,
@@ -228,7 +231,7 @@ export async function runPlatformStorageAlerts(sb: SupabaseClient): Promise<{
   }
   if (status.db.band !== "ok" && status.db.bytes !== null) {
     hot.push({
-      key: "platform_db",
+      kind: "storage_platform_db",
       title: status.db.band === "crit"
         ? `Database critical — ${status.db.pct}% of plan`
         : `Database high — ${status.db.pct}% of plan`,
@@ -250,13 +253,13 @@ export async function runPlatformStorageAlerts(sb: SupabaseClient): Promise<{
         const { count } = await sb
           .from("notifications").select("id", { count: "exact", head: true })
           .eq("org_id", org.id).eq("user_id", a.uid)
-          .eq("kind", `storage_${alert.key}`).gte("created_at", sevenDaysAgo);
+          .eq("kind", alert.kind).gte("created_at", sevenDaysAgo);
         if ((count ?? 0) > 0) continue;
-        const { error } = await sb.from("notifications").insert({
-          org_id: org.id, user_id: a.uid, kind: `storage_${alert.key}`,
+        const sent = await notifyAsServiceRole(sb, {
+          orgId: org.id, userId: a.uid, kind: alert.kind,
           title: alert.title, body: alert.body, link: "/admin/storage",
         });
-        if (!error) alerts++;
+        if (sent) alerts++;
       }
     }
   }

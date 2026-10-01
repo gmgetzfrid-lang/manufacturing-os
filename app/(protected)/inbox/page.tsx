@@ -33,7 +33,7 @@ export default function InboxPage() {
   const { uid, userEmail, activeRole, activeOrgId } = useRole();
   // Same unified feed the sidebar badge + header bell use, so all three agree.
   const {
-    items: attentionItems, count: attentionCount,
+    items: attentionItems, count: attentionCount, counts: attnCounts,
     actionRequiredCount, markRead, markAllRead,
   } = useTicketNotifications();
   const { showToast } = useToast();
@@ -68,18 +68,13 @@ export default function InboxPage() {
     return () => { alive = false; };
   }, [activeOrgId, lastLoadedAt]);
 
-  // Accurate per-filter counts (from the unified feed itself — the hook's
-  // ticket-only counters don't include notification rows).
-  const attnCounts = useMemo(() => ({
-    all: attentionItems.length,
-    action: attentionItems.filter((i) => i.actionRequired).length,
-    unread: attentionItems.filter((i) => !i.actionRequired).length,
-  }), [attentionItems]);
+  // Per-filter counts are the hook's (computed once from the unified feed,
+  // tickets and notification rows alike — TAX-7 / TRAIL-13).
 
   // Filtered attention feed for the segmented control.
   const filteredAttention = useMemo(() => {
     if (attnFilter === "action") return attentionItems.filter((i) => i.actionRequired);
-    if (attnFilter === "unread") return attentionItems.filter((i) => !i.actionRequired);
+    if (attnFilter === "activity") return attentionItems.filter((i) => !i.actionRequired);
     return attentionItems;
   }, [attentionItems, attnFilter]);
 
