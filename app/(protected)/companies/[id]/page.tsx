@@ -35,6 +35,7 @@ import { CO_REASON_LABEL, type CoReason } from "@/lib/changeOrders";
 import { ScoreDial, scoreBandColor } from "@/components/ui/ChartKit";
 import { fmtMoney } from "@/lib/costs";
 import { StatusMark, StatusLegend, RUBRIC_MARKS } from "@/components/projects/StatusMark";
+import { useAiReadiness, aiBlocked, AiPreconditionNote } from "@/components/projects/AiPrecondition";
 
 async function authHeader(): Promise<Record<string, string>> {
   const { data } = await supabase.auth.getSession();
@@ -215,6 +216,8 @@ function QualityManualPanel({ orgId, company, canManage, actorId, onChanged, set
   const [adjusted, setAdjusted] = useState<string>("");
   const [confirming, setConfirming] = useState(false);
   const areaLabel = useMemo(() => new Map(QUALITY_MANUAL_RUBRIC.map((a) => [a.key, a.label])), []);
+  // UX-13: the evaluation's precondition is stated before the search, not after the click.
+  const ai = useAiReadiness(orgId);
 
   useEffect(() => {
     const q = query.trim();
@@ -328,11 +331,12 @@ function QualityManualPanel({ orgId, company, canManage, actorId, onChanged, set
                       className="w-full h-8 pl-8 pr-2 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-xs" />
                   </span>
                 )}
-                <button onClick={() => void evaluate()} disabled={!doc || evaluating}
+                <button onClick={() => void evaluate()} disabled={!doc || evaluating || aiBlocked(ai)}
                   className="h-8 inline-flex items-center gap-1 px-3 rounded-lg bg-[var(--color-accent)] text-[var(--color-accent-fg)] text-[11px] font-black hover:bg-[var(--color-accent-hover)] disabled:opacity-50"
                   title="AI reads the manual against the ISO 9001-shaped rubric (doc control, welding, NDE, calibration, ITPs, materials, NCRs, training, records). You review before anything lands.">
                   {evaluating ? <Loader2 className="w-3 h-3 animate-spin" /> : <Sparkles className="w-3 h-3" />} Evaluate
                 </button>
+                <AiPreconditionNote readiness={ai} className="basis-full" />
               </div>
               {results.length > 0 && !doc && (
                 <ul className="rounded-xl border border-[var(--color-border)] divide-y divide-[var(--color-border)] overflow-hidden">

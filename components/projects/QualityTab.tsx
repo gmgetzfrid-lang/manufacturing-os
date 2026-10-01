@@ -66,6 +66,8 @@ import { type SegmentedItem, isAutoOnlyGreen, isHumanGreen, isUnreasonedNa, isMa
 import { NOT_CURRENT_STATUSES } from "@/lib/aiBoundary";
 import { appPrompt } from "@/components/providers/DialogProvider";
 import HelpTooltip from "@/components/ui/HelpTooltip";
+import Link from "next/link";
+import { useAiReadiness, aiBlocked, AiPreconditionNote } from "@/components/projects/AiPrecondition";
 import { StatusMark, StatusLegend, CHECKLIST_STATUS_MARKS, PUNCH_STATUS_MARKS } from "@/components/projects/StatusMark";
 
 /** A11Y-8: a decision control is never under 24 px, and on a coarse
@@ -256,6 +258,13 @@ function ChecklistsSection({ orgId, projectId, canManage, actor, signoff, checkl
             Upload your PSSR or QA/QC checklist to document control, then point at it here — the AI
             splits it into items, judges what applies to this job, and finds the evidence you already have.
           </div>
+          {/* UX-13: the way to do that, here — not a direction to another page. */}
+          <div className="mt-3 flex items-center justify-center gap-3 text-xs font-bold">
+            <Link href="/documents" className="underline text-[var(--color-accent)]">Upload it in document control</Link>
+            {canManage && (
+              <button type="button" onClick={() => setShowNew(true)} className="underline text-[var(--color-accent)]">Point at one already uploaded</button>
+            )}
+          </div>
         </div>
       ) : (
         <div className="divide-y divide-[var(--color-border)]">
@@ -281,6 +290,8 @@ function NewChecklistFlow({ orgId, projectId, actor, onDone, onCancel, notify }:
   const [proposed, setProposed] = useState<SegmentedItem[] | null>(null);
   const [title, setTitle] = useState("");
   const [saving, setSaving] = useState(false);
+  // UX-13: whether the AI read can run is said before the search, not after the click.
+  const ai = useAiReadiness(orgId);
 
   useEffect(() => {
     const q = query.trim();
@@ -354,12 +365,13 @@ function NewChecklistFlow({ orgId, projectId, actor, onDone, onCancel, notify }:
                 <option key={k} value={k}>{CHECKLIST_KIND_LABEL[k]}</option>
               ))}
             </select>
-            <button onClick={() => void read()} disabled={!doc || reading}
+            <button onClick={() => void read()} disabled={!doc || reading || aiBlocked(ai)}
               className="h-8 inline-flex items-center gap-1 px-3 rounded-lg bg-[var(--color-accent)] text-[var(--color-accent-fg)] text-[11px] font-black hover:bg-[var(--color-accent-hover)] disabled:opacity-50 transition-colors"
               title="AI reads the printed pages and splits them into checkable items — you review before anything saves.">
               {reading ? <Loader2 className="w-3 h-3 animate-spin" /> : <Sparkles className="w-3 h-3" />} Read it
             </button>
             <button onClick={onCancel} className="text-xs font-bold text-[var(--color-text-muted)] hover:text-[var(--color-text)]">Cancel</button>
+            <AiPreconditionNote readiness={ai} className="basis-full" />
           </div>
           {results.length > 0 && !doc && (
             <ul className="rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] divide-y divide-[var(--color-border)] overflow-hidden">
@@ -423,6 +435,7 @@ function ChecklistCard({ orgId, projectId, checklist, canManage, actor, signoff,
   /** The cited-document lookup answered (an error leaves chips without a standing). */
   const [docsChecked, setDocsChecked] = useState(false);
   const [busy, setBusy] = useState<string | null>(null);
+  const ai = useAiReadiness(orgId);
   const [notice, setNotice] = useState<NoticeState | null>(null);
   const [review, setReview] = useState<{ proposals: ReviewProposal[]; ticked: Set<string> } | null>(null);
 
@@ -609,10 +622,11 @@ function ChecklistCard({ orgId, projectId, checklist, canManage, actor, signoff,
         <div className="px-4 pb-4 space-y-2">
           {canManage && checklist.status === "open" && (
             <div className="flex items-center gap-2 flex-wrap">
-              <button onClick={() => void assess()} disabled={busy != null}
+              <button onClick={() => void assess()} disabled={busy != null || aiBlocked(ai)}
                 className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg border border-[var(--color-border-strong)] text-[11px] font-bold text-[var(--color-text)] hover:bg-[var(--color-surface-2)] disabled:opacity-50 transition-colors">
                 {busy === "assess" ? <Loader2 className="w-3 h-3 animate-spin" /> : <Wand2 className="w-3 h-3" />} Which items apply to this job?
               </button>
+              <AiPreconditionNote readiness={ai} />
               <HelpTooltip label="What “Which items apply to this job?” does">
                 AI judges which items apply to THIS job, grounded on the project&apos;s purpose, SOW, schedule, and documents. It only <b>proposes</b> — you review each proposal before it applies, and it never marks an item not applicable on its own.
               </HelpTooltip>

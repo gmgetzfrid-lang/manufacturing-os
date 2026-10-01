@@ -35,11 +35,13 @@
 import React, { useMemo, useState } from "react";
 import {
   FileText, UploadCloud, Loader2, Sparkles, Trophy, Link2, Copy, AlertTriangle,
-  CheckCircle2, ScanSearch, Ban, Receipt, ChevronDown, ChevronRight, ExternalLink, Pencil, RotateCcw,
+  CheckCircle2, ScanSearch, Ban, Receipt, ChevronDown, ChevronRight, ExternalLink, Pencil, RotateCcw, Plus,
 } from "lucide-react";
 import Link from "next/link";
 import { supabase } from "@/lib/supabase";
 import { userFacingError, userFacingReadError } from "@/lib/userFacingError";
+import { useAiReadiness, aiBlocked, AiPreconditionNote } from "@/components/projects/AiPrecondition";
+import { saveAccount } from "@/lib/costs";
 import { newIntakeToken, intakePortalPath, linkCredentialView, firstReadWithColumns, reissueIntakeLink } from "@/lib/intakeLinks";
 import { listCompanies, listBarredCompanies, getCompany, type Company } from "@/lib/companies";
 import { fmtMoney, type CostAccount, type Actor } from "@/lib/costs";
@@ -122,6 +124,10 @@ export default function QuotesPanel({ orgId, projectId, canManage, actor, accoun
 }) {
   const [busy, setBusy] = useState<string | null>(null);
   const [showLinks, setShowLinks] = useState(false);
+  // UX-13: the AI read's precondition, read once for the panel; the budget
+  // line an award or a post needs, creatable where the need shows.
+  const ai = useAiReadiness(orgId);
+  const budgetLineCtx = useMemo(() => ({ orgId, projectId, actor, onCreated: onChanged }), [orgId, projectId, actor, onChanged]);
   // Known Companies registry — matched to bidders by normalised name (or
   // an explicit link) so their record (quality-manual coverage, do-not-use
   // flags) sits beside every price. A FAILED load is said out loud: an
@@ -361,6 +367,8 @@ export default function QuotesPanel({ orgId, projectId, canManage, actor, accoun
   };
 
   return (
+    <AiReadinessContext.Provider value={ai}>
+    <BudgetLineContext.Provider value={budgetLineCtx}>
     <div className="bg-[var(--color-surface)] rounded-2xl border border-[var(--color-border)] overflow-hidden shadow-sm">
       <div className="px-4 py-3 border-b border-[var(--color-border)] flex items-center gap-2 flex-wrap">
         <ScanSearch className="w-4 h-4 text-[var(--color-accent)]" />
@@ -384,6 +392,15 @@ export default function QuotesPanel({ orgId, projectId, canManage, actor, accoun
         <div role="alert" className="px-4 py-2 border-b border-amber-500/40 bg-amber-500/[0.07] text-[11px] font-bold text-amber-800 dark:text-amber-300 flex items-center gap-2">
           <AlertTriangle className="w-3.5 h-3.5 shrink-0" />
           {companiesState === "failed" ? "The Known Companies registry" : "This project's bidder-to-company links"} couldn&apos;t be loaded — &quot;known&quot; and &quot;do not use&quot; flags may be missing from this table, so Award is withheld. Reload to try again.
+        </div>
+      )}
+
+      {/* UX-13: what reading and awarding need, said before the upload — not
+          discovered after the PDF, the vendor name and an AI call. */}
+      {canManage && (ai.message || accounts.length === 0) && (
+        <div id="quotes-ai-precondition" className="px-4 pt-2.5 flex flex-col gap-1">
+          <AiPreconditionNote readiness={ai} />
+          {accounts.length === 0 && <CreateBudgetLineInline label="Awarding a quote or posting an invoice" />}
         </div>
       )}
 
@@ -482,6 +499,8 @@ export default function QuotesPanel({ orgId, projectId, canManage, actor, accoun
         )}
       </div>
     </div>
+    </BudgetLineContext.Provider>
+    </AiReadinessContext.Provider>
   );
 }
 
@@ -1065,9 +1084,16 @@ function bidFromRow(d: CostDocument, q: ParsedQuote): ParsedQuote {
   };
 }
 
+/** UX-13: the panel's AI readiness, read once for every Read button in it. */
+const AiReadinessContext = React.createContext<ReturnType<typeof useAiReadiness> | null>(null);
+/** UX-13: what the "needs a budget line" fix-in-place needs to create one. */
+const BudgetLineContext = React.createContext<{ orgId: string; projectId: string; actor: Actor; onCreated: () => void } | null>(null);
+
 function ReadButton({ busy, onClick }: { busy: boolean; onClick: () => void }) {
+  const ai = React.useContext(AiReadinessContext);
+  const blocked = !!ai && aiBlocked(ai);
   return (
-    <button onClick={onClick} disabled={busy}
+    <button onClick={onClick} disabled={busy || blocked} aria-describedby={blocked ? "quotes-ai-precondition" : undefined}
       className="inline-flex items-center gap-1 px-2 py-0.5 rounded-lg bg-[var(--color-accent)] text-[var(--color-accent-fg)] text-[10px] font-black hover:bg-[var(--color-accent-hover)] disabled:opacity-50 transition-colors"
       title="AI reads the printed pages into numbers — on your own AI key. You review before anything posts.">
       {busy ? <Loader2 className="w-3 h-3 animate-spin" /> : <Sparkles className="w-3 h-3" />} Read
@@ -1079,10 +1105,10 @@ function PostControls({ accounts, busy, onPost, label }: {
   accounts: CostAccount[]; busy: boolean;
   onPost: (accountId: string) => void | Promise<void>; label: string;
 }) {
-  const [accountId, setAccountId] = useState(accounts.length === 1 ? accounts[0].id : "");
-  if (accounts.length === 0) {
-    return <span className="text-[10px] text-[var(--color-text-muted)]" title="Create a budget line first — money always posts somewhere.">needs a budget line</span>;
-  }
+  const [picked, setAccountId] = useState("");
+  // A single line is the obvious target — also once it was just created here.
+  const accountId = picked || (accounts.length === 1 ? accounts[0].id : "");
+  if (accounts.length === 0) return <CreateBudgetLineInline label={label} />;
   return (
     <span className="inline-flex items-center gap-1">
       <select value={accountId} onChange={(e) => setAccountId(e.target.value)}
@@ -1094,6 +1120,52 @@ function PostControls({ accounts, busy, onPost, label }: {
         className="inline-flex items-center gap-1 px-2 py-0.5 rounded-lg bg-[var(--color-accent)] text-[var(--color-accent-fg)] text-[10px] font-black hover:bg-[var(--color-accent-hover)] disabled:opacity-50 transition-colors">
         {busy ? <Loader2 className="w-3 h-3 animate-spin" /> : <CheckCircle2 className="w-3 h-3" />} {label}
       </button>
+    </span>
+  );
+}
+
+/** UX-13: "needs a budget line" offers the fix where the need is met — a
+ *  name and an optional budget, created right here — instead of a hover
+ *  title sending the user past the change-orders panel and back. */
+function CreateBudgetLineInline({ label }: { label: string }) {
+  const ctx = React.useContext(BudgetLineContext);
+  const [open, setOpen] = useState(false);
+  const [name, setName] = useState("");
+  const [budget, setBudget] = useState("");
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  if (!ctx) return <span className="text-[10px] text-[var(--color-text-muted)]">needs a budget line — create one in the accounts below</span>;
+  if (!open) {
+    return (
+      <span className="inline-flex items-center gap-1 text-[10px] text-[var(--color-text-muted)]">
+        {label} needs a budget line —
+        <button type="button" onClick={() => setOpen(true)} className="font-black text-[var(--color-accent)] underline">Create budget line</button>
+      </span>
+    );
+  }
+  const create = async () => {
+    if (!name.trim()) { setError("Name the budget line."); return; }
+    const b = budget.trim() ? Number(budget.replace(/[,$\s]/g, "")) : 0;
+    if (!Number.isFinite(b) || b < 0) { setError("Budget must be a non-negative number."); return; }
+    setSaving(true); setError(null);
+    const res = await saveAccount({ orgId: ctx.orgId, projectId: ctx.projectId, patch: { name: name.trim(), budget: b, costType: "subcontract" }, actor: ctx.actor });
+    setSaving(false);
+    if (!res.ok) { setError(res.error ?? "Couldn't create the budget line."); return; }
+    setOpen(false); setName(""); setBudget("");
+    ctx.onCreated();
+  };
+  return (
+    <span className="inline-flex items-center gap-1 flex-wrap">
+      <input value={name} onChange={(e) => setName(e.target.value)} placeholder="Budget line name" aria-label="New budget line name" autoFocus
+        className="h-6 w-36 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-1.5 text-[10px]" />
+      <input value={budget} onChange={(e) => setBudget(e.target.value)} placeholder="Budget (optional)" aria-label="New budget line budget" inputMode="decimal"
+        className="h-6 w-24 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-1.5 text-[10px] font-mono" />
+      <button type="button" onClick={() => void create()} disabled={saving}
+        className="inline-flex items-center gap-1 px-2 py-0.5 rounded-lg bg-[var(--color-accent)] text-[var(--color-accent-fg)] text-[10px] font-black disabled:opacity-50">
+        {saving ? <Loader2 className="w-3 h-3 animate-spin" /> : <Plus className="w-3 h-3" />} Create
+      </button>
+      <button type="button" onClick={() => { setOpen(false); setError(null); }} className="text-[10px] font-bold text-[var(--color-text-muted)]">Cancel</button>
+      {error && <span role="alert" className="text-[10px] font-bold text-rose-700 dark:text-rose-300">{error}</span>}
     </span>
   );
 }
