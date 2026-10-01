@@ -33,10 +33,12 @@
 //   Sign-off authority (QUAL-4): every write control here is drawn from the
 //   database's decision for THIS project (quality_signoff_status, 20261136 —
 //   a controller, the owner, or a quality.sign_off holder for the project),
-//   never from a role list. "Mark complete" and turnover "Accept" are signed
-//   with the e-signature ceremony, and the author of a checklist (or the
-//   creator of a turnover item) sees why a second person signs it off rather
-//   than a missing button (DEC-12); a lone signer's sign-off is marked.
+//   never from a role list. "Mark complete" and turnover "Accept" / "Waive"
+//   are signed with the e-signature ceremony, and the author of a checklist
+//   (or the creator of a turnover item) sees why a second person signs it off
+//   rather than a missing button (DEC-12); a lone signer's sign-off is
+//   marked. Until the database says how many others could sign, the author's
+//   sign-off waits (and says why) — never a guessed "nobody else".
 
 import React, { useCallback, useEffect, useMemo, useState } from "react";
 import {
@@ -59,7 +61,7 @@ import {
   listTurnoverItems, listTurnoverReviewEvents, seedTurnoverItems, addTurnoverItem, reviewTurnoverItem, reopenTurnoverItem,
   listPunchItems, addPunchItem, setPunchStatus, computeTurnoverProgress,
 } from "@/lib/turnover";
-import { type SegmentedItem, isAutoOnlyGreen, isHumanGreen, isUnreasonedNa, isMachineActorName, REASON_MIN_LENGTH } from "@/lib/checklistEngine";
+import { type SegmentedItem, isAutoOnlyGreen, isHumanGreen, isUnreasonedNa, isMachineActorName, reasonProblem, REASON_MIN_LENGTH } from "@/lib/checklistEngine";
 import { NOT_CURRENT_STATUSES } from "@/lib/aiBoundary";
 import { appPrompt } from "@/components/providers/DialogProvider";
 
@@ -103,8 +105,9 @@ const promptReason = (title: string, message: string, placeholder = "Why? (at le
 
 /** QUAL-4: what a sign-off control needs beside the write decision — how
  *  many others could sign off on this project (the separation-of-duties
- *  count) and the name the ceremony asks the signer to confirm. */
-interface SignoffContext { otherSigners: number; signerName: string }
+ *  count; NULL while it loads or when it cannot be read), what the author is
+ *  told meanwhile, and the name the ceremony asks the signer to confirm. */
+interface SignoffContext { otherSigners: number | null; pendingReason: string; signerName: string }
 
 export default function QualityTab({ orgId, projectId, canManage, uid, userEmail, jobKind, onDataChanged }: {
   orgId: string; projectId: string; canManage: boolean;
@@ -125,10 +128,15 @@ export default function QualityTab({ orgId, projectId, canManage, uid, userEmail
   // QUAL-4 done-when 4: the write controls follow the decision the policies
   // apply. Until it answers — or when it cannot be read — they follow the
   // controller / owner rule the page computed (people the policies always
-  // admit), and the failure is said, never a guess for anyone else.
+  // admit), and the failure is said. The separation count is never guessed:
+  // while it is unknown the author's own sign-off waits (signoffSeparation
+  // reads NULL as pending), so nobody is told they are the only signer.
   const canSignOff = authority && !authority.error ? authority.maySign : canManage;
   const signoff: SignoffContext = {
-    otherSigners: authority?.otherSigners ?? 0,
+    otherSigners: authority && !authority.error ? authority.otherSigners : null,
+    pendingReason: authority?.error
+      ? `You created this record, so whether a second person must sign it off depends on who else can — and that couldn't be read (${authority.error}). Reload to try again.`
+      : "Checking who else on this project can sign this off — you created it, so that decides whether a second person must.",
     signerName: (member?.displayName ?? "").trim() || (userEmail?.split("@")[0] ?? "").trim() || "user",
   };
   /** Per read: each section shows its own data or its own failure (UX-10). */
@@ -519,8 +527,10 @@ function ChecklistCard({ orgId, projectId, checklist, canManage, actor, signoff,
     if (!res.ok) { setNotice(failure(res.error ?? "Couldn't complete.")); return; }
     onChanged();
   };
-  /** DEC-12: the author signs off only when nobody else on the project can. */
+  /** DEC-12: the author signs off only when nobody else on the project can
+   *  — and waits while that is not known (`pending`). */
   const separation = signoffSeparation(checklist.createdBy, actor.uid, signoff.otherSigners, "checklist");
+  const separationReason = separation.pending ? signoff.pendingReason : separation.reason;
 
   // Group items by section for rendering.
   const sections = useMemo(() => {
@@ -542,7 +552,7 @@ function ChecklistCard({ orgId, projectId, checklist, canManage, actor, signoff,
     : progress.total === 0 ? "No items — nothing to verify, so this checklist cannot be completed."
     : blocking > 0 ? `${blocking} item${blocking === 1 ? " is" : "s are"} not satisfied yet — a checklist only completes when every applicable item is green or N/A.`
     : staleGreens > 0 ? `${staleGreens} green item${staleGreens === 1 ? " rests" : "s rest"} on a document that is no longer current — run "Check evidence we already hold" first.`
-    : separation.blocked ? `${separation.reason ?? "A second person signs this checklist off."}`
+    : separation.blocked ? `${separationReason ?? "A second person signs this checklist off."}`
     : autoReasons.length > 0 ? `Every applicable item is green or N/A, but ${autoReasons.join("; ")} — completing now records this checklist as "auto", which no other checklist can cite.`
     : "Every applicable item is green or N/A, and a person stands behind every green and every N/A.";
 
@@ -942,9 +952,12 @@ function TurnoverSection({ orgId, projectId, canManage, actor, signoff, items, e
   const [addName, setAddName] = useState("");
   const [notice, setNotice] = useState<NoticeState | null>(null);
   const [accepting, setAccepting] = useState<TurnoverItem | null>(null);
-  /** QUAL-4: an acceptance waiting on the signing ceremony (the reviewed
-   *  document already picked — undefined when the picker was skipped). */
-  const [signingAccept, setSigningAccept] = useState<{ item: TurnoverItem; documentId?: string } | null>(null);
+  /** QUAL-4: an acceptance or a waiver waiting on the signing ceremony — the
+   *  reviewed document already picked (undefined when the picker was
+   *  skipped) or the waiver's reason already given. */
+  const [signingDecision, setSigningDecision] = useState<
+    { item: TurnoverItem; status: "accepted"; documentId?: string } | { item: TurnoverItem; status: "waived"; note: string } | null
+  >(null);
   const [reviewedDocs, setReviewedDocs] = useState<Record<string, { label: string; status: string | null; rev: string | null; libraryId: string | null }>>({});
   const progress = useMemo(() => computeTurnoverProgress(items), [items]);
   const documentIds = useMemo(() => [...new Set(items.map((i) => i.documentId).filter((x): x is string => Boolean(x)))].sort().join(","), [items]);
@@ -988,20 +1001,33 @@ function TurnoverSection({ orgId, projectId, canManage, actor, signoff, items, e
     if (!res.ok) setNotice(failure(res.error ?? "Couldn't update.")); else { setNotice(null); onChanged(); }
   };
 
-  const review = async (item: TurnoverItem, status: TurnoverItem["status"], documentId?: string | null, signed?: SignoffInput) => {
-    let note: string | null = null;
-    if (status === "rejected" || status === "waived") {
+  const review = async (item: TurnoverItem, status: TurnoverItem["status"], documentId?: string | null, signed?: SignoffInput, waiverNote?: string) => {
+    let note: string | null = waiverNote ?? null;
+    if (status === "rejected") {
       note = await promptReason(
-        status === "rejected" ? `Reject "${item.name}"` : `Waive "${item.name}"`,
-        status === "rejected"
-          ? "Why is it not acceptable? The contractor sees this reason, it lands on their record, and it is kept as a nonconformance."
-          : "Why is this not required for this job? Waivers go on the record — and a waived item is counted apart from an accepted one.",
+        `Reject "${item.name}"`,
+        "Why is it not acceptable? The contractor sees this reason, it lands on their record, and it is kept as a nonconformance.",
         "Reason (at least 10 characters)",
       );
       if (note === null) return;
     }
     setBusy(item.id); setNotice(null);
     finish(await reviewTurnoverItem({ item, status, note, ...(documentId !== undefined ? { documentId } : {}), actor, ...(signed ? { signoff: signed } : {}) }));
+  };
+
+  // QUAL-4: a waiver clears the item from the package as an acceptance does,
+  // so it is a signed sign-off too — the reason first (checked against the
+  // bar before anyone is asked to sign), then the ceremony.
+  const startWaive = async (item: TurnoverItem) => {
+    const note = await promptReason(
+      `Waive "${item.name}"`,
+      "Why is this not required for this job? A waiver is a signed sign-off: it goes on the record with your e-signature — and a waived item is counted apart from an accepted one.",
+      "Reason (at least 10 characters)",
+    );
+    if (note === null) return;
+    const problem = reasonProblem(note);
+    if (problem) { setNotice(failure(problem)); return; }
+    setSigningDecision({ item, status: "waived", note: note.trim() });
   };
 
   const reopen = async (item: TurnoverItem) => {
@@ -1051,6 +1077,10 @@ function TurnoverSection({ orgId, projectId, canManage, actor, signoff, items, e
         <ul className="divide-y divide-[var(--color-border)]">
           {items.map((it) => {
             const history = eventsByItem.get(it.id) ?? [];
+            // DEC-12: whoever added the item sees why a second person accepts
+            // or waives it — and, while that is not known, why it waits.
+            const separation = signoffSeparation(it.createdBy, actor.uid, signoff.otherSigners, "turnover");
+            const separationReason = separation.pending ? signoff.pendingReason : separation.reason;
             return (
               <li key={it.id} className="px-4 py-2.5 text-xs">
                 <div className="flex items-center gap-2 flex-wrap">
@@ -1062,27 +1092,31 @@ function TurnoverSection({ orgId, projectId, canManage, actor, signoff, items, e
                       {it.status === "open" && (
                         <button onClick={() => void review(it, "received")} className="px-1.5 py-0.5 rounded text-[10px] font-bold text-sky-700 dark:text-sky-300 hover:bg-sky-500/10">Received</button>
                       )}
-                      {(it.status === "received" || it.status === "rejected") && (() => {
-                        // DEC-12: whoever added the item sees why a second person accepts it.
-                        const separation = signoffSeparation(it.createdBy, actor.uid, signoff.otherSigners, "turnover");
-                        return separation.blocked ? (
-                          <button type="button" disabled aria-disabled title={separation.reason ?? undefined}
-                            className="px-1.5 py-0.5 rounded text-[10px] font-bold text-emerald-700/50 dark:text-emerald-300/50 cursor-not-allowed">
-                            Accept — needs a second person
-                          </button>
-                        ) : (
-                          <button onClick={() => setAccepting(it)} className="px-1.5 py-0.5 rounded text-[10px] font-bold text-emerald-700 dark:text-emerald-300 hover:bg-emerald-500/10"
-                            title={separation.singleSigner ? "You added this item and nobody else on this project can accept it — your acceptance will be marked single-signer." : "Accept — signed with your e-signature"}>
-                            Accept
-                          </button>
-                        );
-                      })()}
+                      {(it.status === "received" || it.status === "rejected") && (separation.blocked ? (
+                        <button type="button" disabled aria-disabled title={separationReason ?? undefined}
+                          className="px-1.5 py-0.5 rounded text-[10px] font-bold text-emerald-700/50 dark:text-emerald-300/50 cursor-not-allowed">
+                          {separation.pending ? "Accept — checking who else can sign" : "Accept — needs a second person"}
+                        </button>
+                      ) : (
+                        <button onClick={() => setAccepting(it)} className="px-1.5 py-0.5 rounded text-[10px] font-bold text-emerald-700 dark:text-emerald-300 hover:bg-emerald-500/10"
+                          title={separation.singleSigner ? "You added this item and nobody else on this project can accept it — your acceptance will be marked single-signer." : "Accept — signed with your e-signature"}>
+                          Accept
+                        </button>
+                      ))}
                       {it.status === "received" && (
                         <button onClick={() => void review(it, "rejected")} className="px-1.5 py-0.5 rounded text-[10px] font-bold text-rose-700 dark:text-rose-300 hover:bg-rose-500/10">Reject</button>
                       )}
-                      {(it.status === "open" || it.status === "received") && (
-                        <button onClick={() => void review(it, "waived")} className="px-1.5 py-0.5 rounded text-[10px] font-bold text-[var(--color-text-muted)] hover:bg-[var(--color-surface-2)]">Waive</button>
-                      )}
+                      {(it.status === "open" || it.status === "received") && (separation.blocked ? (
+                        <button type="button" disabled aria-disabled title={separationReason ?? undefined}
+                          className="px-1.5 py-0.5 rounded text-[10px] font-bold text-[var(--color-text-faint)] cursor-not-allowed">
+                          {separation.pending ? "Waive — checking who else can sign" : "Waive — needs a second person"}
+                        </button>
+                      ) : (
+                        <button onClick={() => void startWaive(it)} className="px-1.5 py-0.5 rounded text-[10px] font-bold text-[var(--color-text-muted)] hover:bg-[var(--color-surface-2)]"
+                          title={separation.singleSigner ? "You added this item and nobody else on this project can waive it — your waiver will be marked single-signer." : "Waive — your reason, signed with your e-signature"}>
+                          Waive
+                        </button>
+                      ))}
                       {(it.status === "accepted" || it.status === "waived") && (
                         <button onClick={() => void reopen(it)} className="inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded text-[10px] font-bold text-[var(--color-text-muted)] hover:bg-[var(--color-surface-2)]"
                           title={`Reopen this ${it.status} item for review — the ${it.status === "accepted" ? "acceptance" : "waiver"} stays in the history.`}>
@@ -1097,8 +1131,8 @@ function TurnoverSection({ orgId, projectId, canManage, actor, signoff, items, e
                   {[
                     it.description,
                     it.reviewedByName ? `${it.status} by ${it.reviewedByName}${it.reviewedAt ? ` on ${new Date(it.reviewedAt).toLocaleDateString()}` : ""}` : null,
-                    it.status === "accepted" && it.reviewedSignatureId ? "signed" : null,
-                    it.status === "accepted" && it.reviewedSingleSigner ? "single-signer (nobody else could accept it)" : null,
+                    (it.status === "accepted" || it.status === "waived") && it.reviewedSignatureId ? "signed" : null,
+                    (it.status === "accepted" || it.status === "waived") && it.reviewedSingleSigner ? "single-signer (nobody else could sign it off)" : null,
                     it.reviewNote ? `“${it.reviewNote}”` : null,
                   ].filter(Boolean).join(" · ")}
                   {it.documentId && (() => {
@@ -1130,24 +1164,27 @@ function TurnoverSection({ orgId, projectId, canManage, actor, signoff, items, e
                 )}
                 {accepting?.id === it.id && (
                   <DocPicker orgId={orgId} title={`Accept "${it.name}" — which document did you review?`}
-                    onPick={(d) => { setAccepting(null); setSigningAccept({ item: it, documentId: d.id }); }}
-                    onSkip={() => { setAccepting(null); setSigningAccept({ item: it }); }}
+                    onPick={(d) => { setAccepting(null); setSigningDecision({ item: it, status: "accepted", documentId: d.id }); }}
+                    onSkip={() => { setAccepting(null); setSigningDecision({ item: it, status: "accepted" }); }}
                     onCancel={() => setAccepting(null)} />
                 )}
-                {signingAccept?.item.id === it.id && (
+                {signingDecision?.item.id === it.id && (
                   <SignatureCeremony
                     signerName={signoff.signerName}
                     resourceLabel={`turnover item "${it.name}"`}
                     defaultIntent="Reviewed"
                     lockIntent
-                    defaultStatement={`I, ${signoff.signerName}, have reviewed "${it.name}" and accept it for this project's turnover package, and affirm this as my electronic signature.`}
+                    defaultStatement={signingDecision.status === "accepted"
+                      ? `I, ${signoff.signerName}, have reviewed "${it.name}" and accept it for this project's turnover package, and affirm this as my electronic signature.`
+                      : `I, ${signoff.signerName}, waive "${it.name}" for this project's turnover package — ${signingDecision.note} — and affirm this as my electronic signature.`}
                     busy={busy === it.id}
-                    onCancel={() => { if (busy !== it.id) setSigningAccept(null); }}
+                    onCancel={() => { if (busy !== it.id) setSigningDecision(null); }}
                     onSign={(_intent, statement, signatureImage, reauth) => {
-                      const pending = signingAccept;
-                      setSigningAccept(null);
-                      void review(pending.item, "accepted", pending.documentId,
-                        { statement, signatureImage: signatureImage ?? null, reauth: reauth ?? null, signerName: signoff.signerName });
+                      const pending = signingDecision;
+                      setSigningDecision(null);
+                      const signed: SignoffInput = { statement, signatureImage: signatureImage ?? null, reauth: reauth ?? null, signerName: signoff.signerName };
+                      if (pending.status === "accepted") void review(pending.item, "accepted", pending.documentId, signed);
+                      else void review(pending.item, "waived", undefined, signed, pending.note);
                     }}
                   />
                 )}

@@ -6,9 +6,11 @@
 //        a controller or the owner, and never by naming a role in code
 //        (DEC-35). The SQL evaluator (20261136) reads the same key.
 //   dw2  the author of a checklist (the creator of a turnover item) cannot
-//        sign it off while another eligible signer exists; with nobody else
-//        it is allowed and MARKED single-signer (DEC-12 / DEC-37) — checked
-//        in the lib, enforced by 20261136's rails.
+//        sign it off — complete it; accept OR waive it, since a waiver clears
+//        the item from the package as an acceptance does — while another
+//        eligible signer exists; with nobody else it is allowed and MARKED
+//        single-signer (DEC-12 / DEC-37) — checked in the lib, enforced by
+//        20261136's rails. While the count is unknown the author waits.
 //   dw3  a sign-off carries a bound identity: an e_signatures row minted by
 //        the ceremony's server half (20261050), resource-addressed to the
 //        checklist / turnover item, which the database binds to the record.
@@ -24,7 +26,13 @@
 // project and not another, unsigned / someone-else's / pre-reopen signatures
 // refused, the sole signer marked, no item born accepted, a private project
 // closed to a non-member grantee, controllers and owners unchanged, anon
-// refused the evaluator. These pins keep the file from drifting from that run.
+// refused the evaluator. The review fix re-ran it (all 17 probes true, 54
+// scenarios): a creator's waiver refused like an acceptance, a second
+// person's signed waiver landing, no item born waived, a required item never
+// unmarked, a grantee's delete refused, a signed record or a required item a
+// controller's to delete, cascade and purge passing — and the 3-argument
+// wrapper still executable by anon, which the probe and the records now say.
+// These pins keep the file from drifting from those runs.
 
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { readFileSync, readdirSync } from "node:fs";
@@ -117,11 +125,19 @@ describe("quality.sign_off — the capability (dw1, DEC-13 / DEC-35)", () => {
 // ── dw2: separation of duties, derived from the eligible count ─────────────
 describe("signoffSeparation — DEC-12 / DEC-37 per slot (dw2)", () => {
   it("the author with another eligible signer is blocked, with the reason; alone, allowed and marked; anyone else, free", () => {
-    expect(signoffSeparation(OW, OW, 2, "checklist")).toEqual({ blocked: true, singleSigner: false, reason: "You created this checklist, so a second person signs it off — 2 other eligible signers on this project." });
-    expect(signoffSeparation(OW, OW, 1, "turnover").reason).toBe("You added this turnover item, so a second person accepts it — 1 other eligible signer on this project.");
-    expect(signoffSeparation(OW, OW, 0, "checklist")).toEqual({ blocked: false, singleSigner: true, reason: null });
-    expect(signoffSeparation(OW, SAFETY, 5, "checklist")).toEqual({ blocked: false, singleSigner: false, reason: null });
-    expect(signoffSeparation(null, OW, 5, "checklist")).toEqual({ blocked: false, singleSigner: false, reason: null });
+    expect(signoffSeparation(OW, OW, 2, "checklist")).toEqual({ blocked: true, singleSigner: false, pending: false, reason: "You created this checklist, so a second person signs it off — 2 other eligible signers on this project." });
+    expect(signoffSeparation(OW, OW, 1, "turnover").reason).toBe("You added this turnover item, so a second person accepts or waives it — 1 other eligible signer on this project.");
+    expect(signoffSeparation(OW, OW, 0, "checklist")).toEqual({ blocked: false, singleSigner: true, pending: false, reason: null });
+    expect(signoffSeparation(OW, SAFETY, 5, "checklist")).toEqual({ blocked: false, singleSigner: false, pending: false, reason: null });
+    expect(signoffSeparation(null, OW, 5, "checklist")).toEqual({ blocked: false, singleSigner: false, pending: false, reason: null });
+  });
+  it("an UNKNOWN count (null: loading, or unreadable) holds the author's sign-off — never a guessed 'nobody else', never single-signer", () => {
+    const c = signoffSeparation(OW, OW, null, "checklist");
+    expect(c).toMatchObject({ blocked: true, singleSigner: false, pending: true });
+    expect(c.reason).toMatch(/not known yet/);
+    expect(signoffSeparation(OW, OW, null, "turnover")).toMatchObject({ blocked: true, singleSigner: false, pending: true });
+    // nobody else's sign-off depends on the count
+    expect(signoffSeparation(OW, SAFETY, null, "turnover")).toEqual({ blocked: false, singleSigner: false, pending: false, reason: null });
   });
 });
 
@@ -129,8 +145,8 @@ describe("loadSignoffAuthority — the database's decision, fail-closed (dw4 / D
   it("reads quality_signoff_status (20261136) for the project", async () => {
     state.rpc = { quality_signoff_status: (args) => ({ data: args.p_project === "p1" ? { maySign: true, otherSigners: 3 } : null, error: null }) };
     expect(await loadSignoffAuthority("o1", "p1", actorOf(SAFETY))).toEqual({ maySign: true, otherSigners: 3, source: "database" });
-    // a project the caller cannot see: NULL — no
-    expect(await loadSignoffAuthority("o1", "p9", actorOf(SAFETY))).toEqual({ maySign: false, otherSigners: 0, source: "database" });
+    // a project the caller cannot see: NULL — no, and no count (not a guessed zero)
+    expect(await loadSignoffAuthority("o1", "p9", actorOf(SAFETY))).toEqual({ maySign: false, otherSigners: null, source: "database" });
   });
   it("before 20261136 (no such function) the answer is the controller tier and the active project owner — the writers the policies admit then", async () => {
     state.tables.org_members = [
@@ -146,12 +162,13 @@ describe("loadSignoffAuthority — the database's decision, fail-closed (dw4 / D
     state.rpc = { quality_signoff_status: () => ({ data: null, error: { message: "upstream timeout", code: "PGRST000" } }) };
     const a = await loadSignoffAuthority("o1", "p1", actorOf(SAFETY));
     expect(a.maySign).toBe(false);
+    expect(a.otherSigners).toBeNull();
     expect(a.error).toMatch(/upstream timeout/);
   });
   it("a failed fallback read is an error too", async () => {
     state.readError.org_members = { message: "permission denied", code: "42501" };
     const a = await loadSignoffAuthority("o1", "p1", actorOf(OW));
-    expect(a).toMatchObject({ maySign: false, source: "fallback" });
+    expect(a).toMatchObject({ maySign: false, otherSigners: null, source: "fallback" });
     expect(a.error).toMatch(/permission/);
   });
 });
@@ -260,7 +277,7 @@ const titem = (over: Partial<TurnoverItem> = {}): TurnoverItem => ({
   createdAt: null, createdBy: OW, ...over,
 });
 
-describe("reviewTurnoverItem('accepted') — QUAL-4", () => {
+describe("reviewTurnoverItem('accepted' / 'waived') — QUAL-4", () => {
   beforeEach(() => {
     state.tables.turnover_items = [{ id: "t1", org_id: "o1", project_id: "p1", name: "NDE reports", status: "received", created_by: OW }];
   });
@@ -268,7 +285,7 @@ describe("reviewTurnoverItem('accepted') — QUAL-4", () => {
   it("dw2: whoever added the item cannot accept it while a second signer exists", async () => {
     state.rpc = { quality_signoff_status: () => ({ data: { maySign: true, otherSigners: 1 }, error: null }) };
     const res = await reviewTurnoverItem({ item: titem(), status: "accepted", actor: actorOf(OW), signoff });
-    expect(res).toEqual({ ok: false, error: "You added this turnover item, so a second person accepts it — 1 other eligible signer on this project." });
+    expect(res).toEqual({ ok: false, error: "You added this turnover item, so a second person accepts or waives it — 1 other eligible signer on this project." });
     expect(ceremony.calls).toHaveLength(0);
     expect(state.tables.turnover_items[0].status).toBe("received");
   });
@@ -281,8 +298,12 @@ describe("reviewTurnoverItem('accepted') — QUAL-4", () => {
     expect(audits().at(-1)!.details).toMatchObject({ signatureId: "sig-1", singleSigner: false });
   });
 
-  it("dw3: an unsigned acceptance is refused; received / rejected / waived are not sign-offs and mint nothing", async () => {
+  it("dw3: an unsigned acceptance or waiver is refused; received / rejected are not sign-offs and mint nothing", async () => {
     expect((await reviewTurnoverItem({ item: titem(), status: "accepted", actor: actorOf(SAFETY) })).ok).toBe(false);
+    const unsignedWaiver = await reviewTurnoverItem({ item: titem(), status: "waived", note: "Vendor data sheets were not part of this scope", actor: actorOf(SAFETY) });
+    expect(unsignedWaiver.ok).toBe(false);
+    expect(unsignedWaiver.error).toMatch(/signed: confirm the statement with your e-signature/);
+    expect(state.tables.turnover_items[0].status).toBe("received");
     expect((await reviewTurnoverItem({ item: titem({ status: "open" }), status: "received", actor: actorOf(OW) })).ok).toBe(true);
     expect((await reviewTurnoverItem({ item: titem(), status: "rejected", note: "Two RT films are unreadable at the root", actor: actorOf(OW) })).ok).toBe(true);
     expect(ceremony.calls).toHaveLength(0);
@@ -292,6 +313,47 @@ describe("reviewTurnoverItem('accepted') — QUAL-4", () => {
     state.rpc = { quality_signoff_status: () => ({ data: { maySign: true, otherSigners: 0 }, error: null }) };
     expect((await reviewTurnoverItem({ item: titem(), status: "accepted", actor: actorOf(OW), signoff })).ok).toBe(true);
     expect(audits().at(-1)!.details).toMatchObject({ singleSigner: true });
+  });
+
+  // The review's major: a waiver clears a required item from the progress,
+  // the snapshot and the closeout gate exactly as an acceptance does, so the
+  // creator of a seeded item cannot route around the second person by waiving.
+  it("dw2: whoever added (or seeded) the item cannot WAIVE it while a second signer exists either — nothing minted, nothing written", async () => {
+    state.rpc = { quality_signoff_status: () => ({ data: { maySign: true, otherSigners: 1 }, error: null }) };
+    const res = await reviewTurnoverItem({ item: titem({ status: "open" }), status: "waived", note: "Contractor confirmed by phone it is not needed", actor: actorOf(OW), signoff });
+    expect(res).toEqual({ ok: false, error: "You added this turnover item, so a second person accepts or waives it — 1 other eligible signer on this project." });
+    expect(ceremony.calls).toHaveLength(0);
+    expect(state.writes.filter((w) => w.table === "turnover_items")).toHaveLength(0);
+    expect(audits()).toHaveLength(0);
+  });
+
+  it("dw3: a second person's waiver mints THEIR e-signature on THIS item first, keeps the reason, and the audit row names the signature", async () => {
+    const res = await reviewTurnoverItem({ item: titem(), status: "waived", note: "Vendor data sheets were not part of this scope", actor: actorOf(SAFETY), signoff });
+    expect(res).toEqual({ ok: true });
+    expect(ceremony.calls).toEqual([expect.objectContaining({ resourceType: "turnover_item", resourceId: "t1", intent: "Reviewed", signerUserId: SAFETY })]);
+    expect(state.tables.turnover_items[0]).toMatchObject({ status: "waived", reviewed_by: SAFETY, review_note: "Vendor data sheets were not part of this scope" });
+    expect(audits().at(-1)!.details).toMatchObject({ status: "waived", signatureId: "sig-1", singleSigner: false });
+  });
+
+  it("the waiver's reason is checked BEFORE anyone signs — a canned or short reason mints no signature", async () => {
+    for (const note of ["n/a", "too short", ""]) {
+      const res = await reviewTurnoverItem({ item: titem(), status: "waived", note, actor: actorOf(SAFETY), signoff });
+      expect(res.ok, note).toBe(false);
+    }
+    expect(ceremony.calls).toHaveLength(0);
+    expect(state.writes).toHaveLength(0);
+  });
+
+  it("dw2: alone on the project, the creator waives — signed and marked single-signer; DEC-16: an unreadable count waives nothing", async () => {
+    state.rpc = { quality_signoff_status: () => ({ data: { maySign: true, otherSigners: 0 }, error: null }) };
+    expect((await reviewTurnoverItem({ item: titem(), status: "waived", note: "Vendor data sheets were not part of this scope", actor: actorOf(OW), signoff })).ok).toBe(true);
+    expect(audits().at(-1)!.details).toMatchObject({ status: "waived", singleSigner: true });
+    state.tables.turnover_items[0].status = "received";
+    state.rpc = { quality_signoff_status: () => ({ data: null, error: { message: "upstream timeout", code: "PGRST000" } }) };
+    const res = await reviewTurnoverItem({ item: titem(), status: "waived", note: "Vendor data sheets were not part of this scope", actor: actorOf(OW), signoff });
+    expect(res.ok).toBe(false);
+    expect(res.error).toMatch(/Couldn't check who else can accept or waive this item \(upstream timeout\)/);
+    expect(ceremony.calls).toHaveLength(1);
   });
 });
 
@@ -461,10 +523,16 @@ describe("20261136 — the sign-off helpers and rails", () => {
     expect(r).toContain("NEW.completed_single_signer := (OLD.created_by IS NOT NULL AND OLD.created_by = v_uid);");
     expect(r).toContain("A completed checklist keeps its sign-off");
   });
-  it("the turnover rail: creator stamped and never rewritten; never born accepted; self-acceptance refused while others can sign; a fresh signature on THIS item, newer than its last history row", () => {
+  it("the turnover rail: creator stamped and never rewritten; never born accepted or waived; self-acceptance AND self-waiver refused while others can sign; a fresh signature on THIS item, newer than its last history row", () => {
     const r = fnBody(m136, "CREATE OR REPLACE FUNCTION turnover_items_signoff_rail()");
     expect(r).toContain("IF v_uid IS NULL THEN RETURN NEW; END IF;");
-    expect(r).toContain("never born accepted");
+    expect(r).toMatch(/IF TG_OP = 'INSERT' THEN\n    NEW\.created_by := v_uid;\n    IF NEW\.status IN \('accepted', 'waived'\) THEN\n      RAISE EXCEPTION '[^']*never born accepted or waived/);
+    // a waiver clears the item exactly as an acceptance does: the same sign-off branch
+    expect(r).toContain("IF NEW.status IN ('accepted', 'waived') AND NEW.status IS DISTINCT FROM OLD.status THEN");
+    expect(r).toContain("ELSIF NEW.status IN ('accepted', 'waived') THEN");
+    expect(r).not.toMatch(/NEW\.status = 'accepted'/);
+    // a required item leaves only by a signed waiver
+    expect(r).toContain("IF OLD.required AND NOT NEW.required THEN");
     expect(r).toContain("v_others := quality_other_signers(NEW.org_id, NEW.project_id, v_uid);");
     expect(r).toContain("SELECT max(h.created_at) INTO v_since FROM turnover_review_events h WHERE h.item_id = NEW.id;");
     expect(r).toContain(`AND s.resource_type = '${QUALITY_SIGNOFF_RESOURCE.turnoverItem}'`);
@@ -482,18 +550,51 @@ describe("20261136 — the sign-off helpers and rails", () => {
     expect("trg_turnover_items_signoff_rail" > "trg_turnover_items_decision_rail").toBe(true);
     expect("trg_turnover_items_signoff_rail" > "trg_turnover_items_org_matches_project").toBe(true);
   });
-  it("probes cover the evaluator, the policies, the helpers' grants, the columns and both rails", () => {
+  it("the delete rail: BEFORE DELETE on the three project quality tables; a grant never deletes (but the create rollback of its own item-less header); a signed sign-off or a required turnover item is a controller's; service, cascade and purge pass", () => {
+    const r = fnBody(m136, "CREATE OR REPLACE FUNCTION quality_records_delete_rail()");
+    expect(r).toMatch(/RETURNS trigger\nLANGUAGE plpgsql\nSECURITY DEFINER SET search_path = public/);
+    const order = [
+      "IF v_uid IS NULL THEN RETURN OLD; END IF;",
+      "IF pg_trigger_depth() > 1 THEN RETURN OLD; END IF;",
+      "IF COALESCE(current_setting('app.record_purge', true), '') = 'project:' || OLD.project_id::text THEN",
+      "IF is_org_controller(OLD.org_id) THEN RETURN OLD; END IF;",
+      "IF TG_TABLE_NAME = 'project_checklists' AND v_status = 'complete' THEN",
+      "AND (v_status IN ('accepted', 'waived') OR COALESCE((v_old->>'required')::boolean, true)) THEN",
+      "IF NOT user_owns_project(OLD.project_id) THEN",
+      "AND NOT EXISTS (SELECT 1 FROM checklist_items i WHERE i.checklist_id = OLD.id) THEN",
+    ];
+    let at = -1;
+    for (const line of order) { const i = r.indexOf(line); expect(i, line).toBeGreaterThan(at); at = i; }
+    // the purge GUC is 20261103's, set by delete_project_record
+    expect(read("20261103_prj_roundG_project_closeout_rails.sql")).toContain("PERFORM set_config('app.record_purge', 'project:' || p_project::text, true);");
+    for (const t of ["project_checklists", "turnover_items", "punch_items"]) {
+      expect(m136, t).toContain(`DROP TRIGGER IF EXISTS trg_${t}_signoff_delete_rail ON ${t};\nCREATE TRIGGER trg_${t}_signoff_delete_rail\n  BEFORE DELETE ON ${t}\n  FOR EACH ROW EXECUTE FUNCTION quality_records_delete_rail();`);
+    }
+    expect(m136).toContain("REVOKE ALL ON FUNCTION quality_records_delete_rail() FROM anon;");
+    // the only delete the app makes on these tables is createChecklist's rollback of its fresh header
+    expect(src("lib/checklists.ts").match(/\.delete\(\)/g)).toHaveLength(1);
+    expect(src("lib/turnover.ts")).not.toContain(".delete()");
+    expect(src("components/projects/QualityTab.tsx")).not.toContain(".delete()");
+  });
+  it("probes cover the evaluator, the policies, the helpers' grants, the columns and every rail", () => {
     for (const label of [
       "the evaluator carries the quality.sign_off default (Admin, DocCtrl) and every earlier default",
       "the evaluator reads five resource keys (projectId added) in both rule passes",
-      "anon cannot execute the evaluator; authenticated and service_role can (DRLS-16)",
+      // only the resource-aware entry point is closed to anon; the wrapper's default grant is said, not claimed closed
+      "anon cannot execute the resource-aware evaluator org_capability_allows_for; authenticated and service_role can (DRLS-16) — the 3-argument wrapper keeps its default grant",
       "project_checklists_write is the ONLY permissive write policy on project_checklists",
       "checklist_items_write is the ONLY permissive write policy on checklist_items",
       "turnover_items_write is the ONLY permissive write policy on turnover_items",
       "punch_items_write is the ONLY permissive write policy on punch_items",
       "the sign-off record columns exist",
       "both sign-off rails fire BEFORE INSERT OR UPDATE",
+      "the turnover rail treats an acceptance AND a waiver as a sign-off",
+      "the delete rail fires BEFORE DELETE on project_checklists, turnover_items and punch_items",
     ]) expect(tail, label).toContain(label);
+    expect(tail).not.toContain("anon cannot execute the evaluator;");
+    // the AFTER count includes open items (every seeded item is born open)
+    expect(tail).toContain("WHERE t.status NOT IN ('accepted', 'waived') AND t.created_by IS NOT NULL");
+    expect(tail).not.toContain("t.status IN ('received', 'rejected')");
     // deparsed policy text is matched on the function call, never a bare cast
     expect(tail).toContain("qual LIKE '%quality_signoff_granted(org_id, project_id)%'");
     expect(tail).toContain("with_check LIKE '%quality_signoff_granted(c.org_id, c.project_id)%'");
@@ -518,11 +619,17 @@ describe("QualityTab census — controls from the decision (dw4)", () => {
     expect(top.match(/canManage=\{canManage\}/g)).toBeNull();
     expect((top.match(/\bcanManage\b(?!=)/g) ?? []).length).toBe(3);   // the destructure, its type, the fallback
   });
-  it("Mark complete and turnover Accept go through the signing ceremony and pass its output to the lib", () => {
+  it("Mark complete and turnover Accept / Waive go through the signing ceremony and pass its output to the lib", () => {
     expect(tab).toContain('<button onClick={() => setSigning(true)} disabled={busy != null || completeBlocked}');
     expect(tab).toContain("setChecklistStatus({ orgId, projectId, checklist, status: \"complete\", actor, signoff: signed })");
-    expect(tab).toContain("setSigningAccept({ item: it, documentId: d.id })");
+    expect(tab).toContain("setSigningDecision({ item: it, status: \"accepted\", documentId: d.id })");
     expect(tab).toContain("...(signed ? { signoff: signed } : {})");
+    // Waive: the reason first (checked against the bar), then the ceremony — never a direct unsigned write
+    expect(tab).toContain("onClick={() => void startWaive(it)}");
+    expect(tab).not.toContain('review(it, "waived")');
+    expect(tab).toContain("const problem = reasonProblem(note);");
+    expect(tab).toContain("setSigningDecision({ item, status: \"waived\", note: note.trim() });");
+    expect(tab).toContain("else void review(pending.item, \"waived\", undefined, signed, pending.note);");
     expect((tab.match(/<SignatureCeremony/g) ?? []).length).toBe(2);
     expect((tab.match(/lockIntent/g) ?? []).length).toBe(2);
   });
@@ -530,7 +637,17 @@ describe("QualityTab census — controls from the decision (dw4)", () => {
     expect(tab).toContain("const separation = signoffSeparation(checklist.createdBy, actor.uid, signoff.otherSigners, \"checklist\");");
     expect(tab).toContain("completeBlocked = progress != null && (progress.total === 0 || blocking > 0 || staleGreens > 0 || separation.blocked)");
     expect(tab).toContain("Accept — needs a second person");
+    expect(tab).toContain("Waive — needs a second person");
     expect(tab).toContain("single-signer");
     expect(tab).toContain("signed off by {checklist.completedByName}");
+  });
+  it("the separation count is never guessed: unknown (loading or unreadable) is NULL, and the author's controls wait with the reason", () => {
+    expect(tab).toContain("otherSigners: authority && !authority.error ? authority.otherSigners : null,");
+    expect(tab).not.toMatch(/otherSigners \?\? 0/);
+    expect(tab).toContain("const separationReason = separation.pending ? signoff.pendingReason : separation.reason;");
+    expect(tab).toContain("Accept — checking who else can sign");
+    expect(tab).toContain("Waive — checking who else can sign");
+    // the single-signer promise only on a known zero (pending is never singleSigner)
+    expect(tab).toContain("{!completeBlocked && progress && separation.singleSigner && (");
   });
 });

@@ -26,13 +26,17 @@
 // reason) until the next decision, and stamps the reviewer / closer with the
 // caller's uid and profile name whatever the client sends (20261091).
 //
-// An acceptance is a SIGNED sign-off (QUAL-4, 20261136): the acceptor's
-// e-signature on the item, minted through the ceremony (20261050) before the
-// write, which the database binds to the item; and whoever added the item
-// does not accept it while another eligible signer exists on the project
-// (DEC-12 / DEC-37 — allowed and marked single-signer when nobody else can).
-// Who may write these rows at all is the database's decision: a controller,
-// the project owner, or a quality.sign_off holder for the project.
+// An acceptance and a waiver are SIGNED sign-offs (QUAL-4, 20261136) — both
+// clear the item from the package (the progress, the project snapshot, the
+// closeout gate): the decider's e-signature on the item, minted through the
+// ceremony (20261050) before the write, which the database binds to the
+// item; and whoever added the item (whoever seeded it, for a seeded item)
+// does not accept or waive it while another eligible signer exists on the
+// project (DEC-12 / DEC-37 — allowed and marked single-signer when nobody
+// else can). Who may write these rows at all is the database's decision: a
+// controller, the project owner, or a quality.sign_off holder for the
+// project; the database also keeps a required item required (a waiver sets
+// it aside) and a grant from deleting anything.
 
 import { supabase } from "@/lib/supabase";
 import type { Actor } from "@/lib/costs";
@@ -294,10 +298,11 @@ export async function addTurnoverItem(input: {
  * `nonconformance` event (QUAL-11) — so there is no second request that
  * could fail after the decision landed. Acceptance rates feed the
  * contractor's scorecard, so the decision is the record.
- * An acceptance is a signed sign-off (QUAL-4): the item's creator is
- * refused while another eligible signer exists (DEC-12), and the acceptor's
- * e-signature on the item is minted through the ceremony (`signoff`) before
- * the write — the database (20261136) binds it and refuses an unsigned one.
+ * An acceptance and a waiver are signed sign-offs (QUAL-4): the item's
+ * creator is refused while another eligible signer exists (DEC-12), and the
+ * decider's e-signature on the item is minted through the ceremony
+ * (`signoff`) before the write — after the waiver's reason passes the bar —
+ * and the database (20261136) binds it and refuses an unsigned one.
  */
 export async function reviewTurnoverItem(input: {
   item: TurnoverItem;
@@ -305,7 +310,7 @@ export async function reviewTurnoverItem(input: {
   note?: string | null;
   documentId?: string | null;
   actor: Actor;
-  /** QUAL-4: the signing ceremony's output — required to accept. */
+  /** QUAL-4: the signing ceremony's output — required to accept or waive. */
   signoff?: SignoffInput | null;
 }): Promise<{ ok: boolean; error?: string }> {
   const { item } = input;
@@ -317,14 +322,15 @@ export async function reviewTurnoverItem(input: {
   }
   let signatureId: string | undefined;
   let singleSigner = false;
-  if (input.status === "accepted") {
-    // DEC-12 / DEC-37: whoever added the item does not accept it while
-    // anyone else on the project could (fail closed — DEC-16).
+  if (input.status === "accepted" || input.status === "waived") {
+    // DEC-12 / DEC-37: whoever added the item does not accept or waive it —
+    // either clears it from the package — while anyone else on the project
+    // could (fail closed — DEC-16).
     if (item.createdBy && item.createdBy === input.actor.uid) {
       const authority = await loadSignoffAuthority(item.orgId, item.projectId, input.actor);
-      if (authority.error) return { ok: false, error: `Couldn't check who else can accept this item (${authority.error}) — nothing was changed.` };
+      if (authority.error) return { ok: false, error: `Couldn't check who else can accept or waive this item (${authority.error}) — nothing was changed.` };
       const sod = signoffSeparation(item.createdBy, input.actor.uid, authority.otherSigners, "turnover");
-      if (sod.blocked) return { ok: false, error: sod.reason ?? "A second person accepts this item." };
+      if (sod.blocked) return { ok: false, error: sod.reason ?? "A second person accepts or waives this item." };
       singleSigner = sod.singleSigner;
     }
     const sig = await captureQualitySignoff({

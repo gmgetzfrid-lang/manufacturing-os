@@ -25,7 +25,12 @@
 --    EXECUTE is revoked from PUBLIC and anon (DRLS-16: the evaluator answers
 --    for ANY uid it is handed) and granted to authenticated (transmittals_guard
 --    runs under the caller's rights) and service_role. The 3-argument wrapper
---    org_capability_allows is untouched.
+--    org_capability_allows is untouched — and keeps the platform's default
+--    EXECUTE for anon: it is SECURITY DEFINER, so it still answers the
+--    base-list question (no resource) for any uid, quality.sign_off included.
+--    Policies anon may evaluate call it (audit_logs_admin_trail, the
+--    document_holds and transmittals policies), so closing it is not this
+--    file's change; only the resource-aware entry point is closed here.
 -- 2. The quality sign-off helpers — SECURITY DEFINER, search_path pinned,
 --    EXECUTE revoked from PUBLIC and anon:
 --      quality_signoff_granted_for(org, project, uid) — the capability decision
@@ -77,23 +82,39 @@
 --          database's values, a client's are ignored; a standing completion
 --          keeps them; any other status clears them (the signature row stays).
 --      turnover_items_signoff_rail — the creator is the caller at insert and is
---      never rewritten; an item is never BORN accepted; a move to accepted
---      carries the same two rules (the creator against a second eligible
---      signer; the acceptor's e-signature on THIS item — 'turnover_item' —
---      in the last 15 minutes and after the item's last history row) and
---      records reviewed_signature_id + reviewed_single_signer.
+--      never rewritten; an item is never BORN accepted or waived; a required
+--      item is never unmarked (it leaves the package by a signed waiver); a
+--      move to accepted OR waived — either one clears the item from the
+--      progress, the project snapshot and the closeout gate — carries the
+--      same two rules (the creator against a second eligible signer; the
+--      decider's e-signature on THIS item — 'turnover_item' — in the last 15
+--      minutes and after the item's last history row) and records
+--      reviewed_signature_id + reviewed_single_signer. The creator of a
+--      seeded item (seedTurnoverItems, the project wizard) is whoever seeded
+--      it — usually the owner — so a second eligible signer accepts or
+--      waives every seeded item while one exists (DEC-44 (provisional)).
 --    The service pass (auth.uid() IS NULL — restores, server routes, the SQL
 --    editor) passes, as in 20261091.
+-- 5. Deleting (quality_records_delete_rail, BEFORE DELETE on
+--    project_checklists, turnover_items and punch_items): the FOR ALL
+--    policies' new disjunct would admit DELETE as well, so the rail refuses a
+--    grantee's delete (except createChecklist taking back its own item-less
+--    header) and keeps a signed sign-off — a completed checklist, an
+--    accepted or waived turnover item — and a required turnover item to
+--    controllers (NARROWS the owner there; no product path deletes one). An
+--    FK cascade and delete_project_record's audited purge pass.
 --
 -- DEC-30 inventory (captured BEFORE the transaction; aggregate counts only,
 -- never rows): stored policies / grants already naming quality.sign_off and
 -- stored rules conditioned on projectId (expect 0 each); and, informational
 -- (the plan's two), completed checklists whose completion audit row names
 -- their own author, and accepted turnover items whose reviewer is the project
--- owner on projects whose org has other active members — plus accepted items
--- whose reviewer created them. Nothing is rewritten: the rails bind the next
--- completion / acceptance. The AFTER rows ask the new helpers whom they admit
--- and how many open records now need a second signer.
+-- owner on projects whose org has other active members — plus accepted or
+-- waived items whose reviewer created them. Nothing is rewritten: the rails
+-- bind the next completion / acceptance / waiver. The AFTER rows ask the new
+-- helpers whom they admit and how many undecided records now need a second
+-- signer (every open, received or rejected turnover item counts — a seeded
+-- item is born open).
 -- The inventory's label column is `label`, never a reserved word.
 --
 -- ⚠ APPLIED BY HAND (DEC-30). One script; re-running is safe.
@@ -169,16 +190,19 @@ SELECT 'BEFORE (informational, QUAL-4): accepted turnover items whose reviewer i
                         WHERE m.org_id = p.org_id AND m.status = 'active'
                           AND m.uid::text IS DISTINCT FROM p.owner_user_id::text))::text
 UNION ALL
-SELECT 'BEFORE (informational): accepted turnover items whose reviewer created them (the shape the rail now refuses where a second signer exists; nothing is rewritten)',
+SELECT 'BEFORE (informational): accepted or waived turnover items whose reviewer created them (the shape the rail now refuses where a second signer exists; nothing is rewritten)',
        (SELECT COUNT(*) FROM turnover_items t
-         WHERE t.status = 'accepted' AND t.reviewed_by IS NOT NULL AND t.created_by IS NOT NULL
+         WHERE t.status IN ('accepted', 'waived') AND t.reviewed_by IS NOT NULL AND t.created_by IS NOT NULL
            AND t.reviewed_by::text = t.created_by::text)::text
 UNION ALL
 SELECT 'BEFORE: completed checklists (all)',
        (SELECT COUNT(*) FROM project_checklists WHERE status = 'complete')::text
 UNION ALL
 SELECT 'BEFORE: accepted turnover items (all)',
-       (SELECT COUNT(*) FROM turnover_items WHERE status = 'accepted')::text;
+       (SELECT COUNT(*) FROM turnover_items WHERE status = 'accepted')::text
+UNION ALL
+SELECT 'BEFORE: waived turnover items (all — a waiver is a signed sign-off from now on; earlier ones keep their records)',
+       (SELECT COUNT(*) FROM turnover_items WHERE status = 'waived')::text;
 
 BEGIN;
 
@@ -469,9 +493,9 @@ COMMENT ON COLUMN project_checklists.completed_signature_id IS
 COMMENT ON COLUMN project_checklists.completed_single_signer IS
   'QUAL-4 / DEC-12: true when the author completed it because nobody else on the project could sign it off — allowed, and marked on the record.';
 COMMENT ON COLUMN turnover_items.reviewed_signature_id IS
-  'QUAL-4: the e_signatures row (resource_type turnover_item) a standing acceptance rests on — written by turnover_items_signoff_rail, never by a client.';
+  'QUAL-4: the e_signatures row (resource_type turnover_item) a standing acceptance or waiver rests on — written by turnover_items_signoff_rail, never by a client.';
 COMMENT ON COLUMN turnover_items.reviewed_single_signer IS
-  'QUAL-4 / DEC-12: true when the item''s creator accepted it because nobody else on the project could — allowed, and marked on the record.';
+  'QUAL-4 / DEC-12: true when the item''s creator accepted or waived it because nobody else on the project could — allowed, and marked on the record.';
 
 -- ── 5. Separation of duties + the signed sign-off, at the database ──────────
 CREATE OR REPLACE FUNCTION project_checklists_signoff_rail()
@@ -584,8 +608,8 @@ BEGIN
 
   IF TG_OP = 'INSERT' THEN
     NEW.created_by := v_uid;
-    IF NEW.status = 'accepted' THEN
-      RAISE EXCEPTION 'A turnover item is accepted by its review, never born accepted — add it, then accept it with your signature. Nothing was changed. QUAL-4, 20261136'
+    IF NEW.status IN ('accepted', 'waived') THEN
+      RAISE EXCEPTION 'A turnover item is accepted or waived by its signed review, never born accepted or waived — add it, then decide it with your signature. Nothing was changed. QUAL-4, 20261136'
         USING ERRCODE = 'check_violation';
     END IF;
     NEW.reviewed_signature_id := NULL;
@@ -597,18 +621,26 @@ BEGIN
     RAISE EXCEPTION 'The creator of a turnover item is never rewritten; nothing was changed. QUAL-4, 20261136'
       USING ERRCODE = 'check_violation';
   END IF;
+  -- A required item leaves the package only by a signed waiver: unmarking it
+  -- would clear it from every count an acceptance clears it from, unsigned.
+  IF OLD.required AND NOT NEW.required THEN
+    RAISE EXCEPTION 'A required turnover item stays required — set it aside with a signed waiver and its reason instead. Nothing was changed. QUAL-4, 20261136'
+      USING ERRCODE = 'check_violation';
+  END IF;
 
-  IF NEW.status = 'accepted' AND OLD.status IS DISTINCT FROM 'accepted' THEN
-    -- DEC-12 / DEC-37: whoever put the item on the record does not accept it
-    -- while anyone else on the project could.
+  IF NEW.status IN ('accepted', 'waived') AND NEW.status IS DISTINCT FROM OLD.status THEN
+    -- An acceptance and a waiver both clear the item from the package (the
+    -- progress, the project snapshot, the closeout gate), so both are signed
+    -- sign-offs. DEC-12 / DEC-37: whoever put the item on the record does not
+    -- accept or waive it while anyone else on the project could.
     IF OLD.created_by IS NOT NULL AND OLD.created_by = v_uid THEN
       v_others := quality_other_signers(NEW.org_id, NEW.project_id, v_uid);
       IF v_others > 0 THEN
-        RAISE EXCEPTION 'You added this turnover item, so a second person accepts it — % other eligible signer(s) on this project. Nothing was changed. QUAL-4, 20261136', v_others
+        RAISE EXCEPTION 'You added this turnover item, so a second person accepts or waives it — % other eligible signer(s) on this project. Nothing was changed. QUAL-4, 20261136', v_others
           USING ERRCODE = 'check_violation';
       END IF;
     END IF;
-    -- The acceptor's own ceremony signature on THIS item, made after its last
+    -- The decider's own ceremony signature on THIS item, made after its last
     -- status change (its newest history row, 20261091) and in the last 15 minutes.
     SELECT max(h.created_at) INTO v_since FROM turnover_review_events h WHERE h.item_id = NEW.id;
     SELECT s.id INTO v_sig
@@ -623,16 +655,16 @@ BEGIN
      ORDER BY s.signed_at DESC
      LIMIT 1;
     IF v_sig IS NULL THEN
-      RAISE EXCEPTION 'A turnover acceptance is a signed sign-off: sign it (your e-signature on this item, made in the last 15 minutes) and accept it again. Nothing was changed. QUAL-4, 20261136'
+      RAISE EXCEPTION 'A turnover acceptance or waiver is a signed sign-off: sign it (your e-signature on this item, made in the last 15 minutes) and decide it again. Nothing was changed. QUAL-4, 20261136'
         USING ERRCODE = 'check_violation';
     END IF;
     NEW.reviewed_signature_id := v_sig;
     NEW.reviewed_single_signer := (OLD.created_by IS NOT NULL AND OLD.created_by = v_uid);
-  ELSIF NEW.status = 'accepted' THEN
-    -- A standing acceptance keeps its sign-off until it is reopened.
+  ELSIF NEW.status IN ('accepted', 'waived') THEN
+    -- A standing acceptance or waiver keeps its sign-off until it is reopened.
     IF NEW.reviewed_signature_id IS DISTINCT FROM OLD.reviewed_signature_id
        OR NEW.reviewed_single_signer IS DISTINCT FROM OLD.reviewed_single_signer THEN
-      RAISE EXCEPTION 'A standing acceptance keeps its sign-off — reopen the item to change it; nothing was changed. QUAL-4, 20261136'
+      RAISE EXCEPTION 'A standing acceptance or waiver keeps its sign-off — reopen the item to change it; nothing was changed. QUAL-4, 20261136'
         USING ERRCODE = 'check_violation';
     END IF;
   ELSE
@@ -644,12 +676,80 @@ END;
 $$;
 
 COMMENT ON FUNCTION turnover_items_signoff_rail() IS
-  'QUAL-4: the creator is the caller at insert and never rewritten; no item is born accepted; a move to accepted is refused for the creator while another eligible signer exists (allowed and marked single-signer otherwise) and needs the acceptor''s own e-signature on this item from the last 15 minutes and after its last history row.';
+  'QUAL-4: the creator is the caller at insert and never rewritten; no item is born accepted or waived; a required item is never unmarked; a move to accepted or waived (either clears the item from the package) is refused for the creator while another eligible signer exists (allowed and marked single-signer otherwise) and needs the decider''s own e-signature on this item from the last 15 minutes and after its last history row.';
 
 DROP TRIGGER IF EXISTS trg_turnover_items_signoff_rail ON turnover_items;
 CREATE TRIGGER trg_turnover_items_signoff_rail
   BEFORE INSERT OR UPDATE ON turnover_items
   FOR EACH ROW EXECUTE FUNCTION turnover_items_signoff_rail();
+
+-- ── 6. Deleting a quality record: never the grant's, never a signed one ─────
+-- The four write policies are FOR ALL, so the sign-off disjunct would admit
+-- DELETE too. A grant writes a project's quality records; it does not delete
+-- them. A signed sign-off (a completed checklist, an accepted or waived
+-- turnover item) and a required turnover item are deleted by a controller
+-- only: they leave by a reopen, a void or a signed waiver, or with their
+-- project. The owner's delete of anything else (20261013) stands. The
+-- service pass, an FK cascade (one trigger level down) and
+-- delete_project_record's audited purge (20261103's app.record_purge) pass.
+CREATE OR REPLACE FUNCTION quality_records_delete_rail()
+RETURNS trigger
+LANGUAGE plpgsql
+SECURITY DEFINER SET search_path = public
+AS $$
+DECLARE
+  v_uid uuid := auth.uid();
+  v_old jsonb;
+  v_status text;
+BEGIN
+  IF v_uid IS NULL THEN RETURN OLD; END IF;            -- service pass: restores, server routes, the SQL editor
+  IF pg_trigger_depth() > 1 THEN RETURN OLD; END IF;   -- an FK cascade: the project's or the org's own delete
+  v_old := to_jsonb(OLD);                              -- one function for three tables: read fields by name
+  v_status := v_old->>'status';
+  IF COALESCE(current_setting('app.record_purge', true), '') = 'project:' || OLD.project_id::text THEN
+    RETURN OLD;                                        -- delete_project_record's audited purge (20261103)
+  END IF;
+  IF is_org_controller(OLD.org_id) THEN RETURN OLD; END IF;
+
+  IF TG_TABLE_NAME = 'project_checklists' AND v_status = 'complete' THEN
+    RAISE EXCEPTION 'A completed checklist is a signed sign-off — reopen or void it; only Admin / Document Control deletes one. Nothing was changed. QUAL-4, 20261136'
+      USING ERRCODE = 'insufficient_privilege';
+  END IF;
+  IF TG_TABLE_NAME = 'turnover_items'
+     AND (v_status IN ('accepted', 'waived') OR COALESCE((v_old->>'required')::boolean, true)) THEN
+    RAISE EXCEPTION 'A required or decided turnover item leaves the package by a signed waiver (or with its project), never by a delete; only Admin / Document Control deletes one. Nothing was changed. QUAL-4, 20261136'
+      USING ERRCODE = 'insufficient_privilege';
+  END IF;
+  IF NOT user_owns_project(OLD.project_id) THEN
+    -- The one delete the app makes: createChecklist taking back the header
+    -- it just inserted when its items failed to save (no item exists).
+    IF TG_TABLE_NAME = 'project_checklists' AND v_status = 'open'
+       AND v_old->>'created_by' = v_uid::text
+       AND NOT EXISTS (SELECT 1 FROM checklist_items i WHERE i.checklist_id = OLD.id) THEN
+      RETURN OLD;
+    END IF;
+    RAISE EXCEPTION 'A quality sign-off grant writes this project''s quality records but does not delete them — void or waive with a reason, or ask the project owner or Admin / Document Control. Nothing was changed. QUAL-4, 20261136'
+      USING ERRCODE = 'insufficient_privilege';
+  END IF;
+  RETURN OLD;
+END;
+$$;
+
+COMMENT ON FUNCTION quality_records_delete_rail() IS
+  'QUAL-4: a quality.sign_off grant never deletes a project''s checklists, turnover or punch (only its own item-less checklist header, the create rollback); a completed checklist, an accepted or waived turnover item and a required turnover item are deleted by a controller only. The service pass, an FK cascade and delete_project_record''s purge pass.';
+
+DROP TRIGGER IF EXISTS trg_project_checklists_signoff_delete_rail ON project_checklists;
+CREATE TRIGGER trg_project_checklists_signoff_delete_rail
+  BEFORE DELETE ON project_checklists
+  FOR EACH ROW EXECUTE FUNCTION quality_records_delete_rail();
+DROP TRIGGER IF EXISTS trg_turnover_items_signoff_delete_rail ON turnover_items;
+CREATE TRIGGER trg_turnover_items_signoff_delete_rail
+  BEFORE DELETE ON turnover_items
+  FOR EACH ROW EXECUTE FUNCTION quality_records_delete_rail();
+DROP TRIGGER IF EXISTS trg_punch_items_signoff_delete_rail ON punch_items;
+CREATE TRIGGER trg_punch_items_signoff_delete_rail
+  BEFORE DELETE ON punch_items
+  FOR EACH ROW EXECUTE FUNCTION quality_records_delete_rail();
 
 -- Trigger functions run only as triggers; no client role needs them directly.
 REVOKE ALL ON FUNCTION project_checklists_signoff_rail() FROM PUBLIC;
@@ -658,6 +758,9 @@ GRANT EXECUTE ON FUNCTION project_checklists_signoff_rail() TO authenticated, se
 REVOKE ALL ON FUNCTION turnover_items_signoff_rail() FROM PUBLIC;
 REVOKE ALL ON FUNCTION turnover_items_signoff_rail() FROM anon;
 GRANT EXECUTE ON FUNCTION turnover_items_signoff_rail() TO authenticated, service_role;
+REVOKE ALL ON FUNCTION quality_records_delete_rail() FROM PUBLIC;
+REVOKE ALL ON FUNCTION quality_records_delete_rail() FROM anon;
+GRANT EXECUTE ON FUNCTION quality_records_delete_rail() TO authenticated, service_role;
 
 COMMIT;
 
@@ -695,7 +798,7 @@ SELECT 'search_path pinned on both evaluator entry points',
            AND array_to_string(proconfig, ',') LIKE '%search_path=public%'),
        NULL::text
 UNION ALL
-SELECT 'anon cannot execute the evaluator; authenticated and service_role can (DRLS-16)',
+SELECT 'anon cannot execute the resource-aware evaluator org_capability_allows_for; authenticated and service_role can (DRLS-16) — the 3-argument wrapper keeps its default grant',
        (NOT has_function_privilege('anon', 'org_capability_allows_for(uuid,text,uuid,jsonb)', 'EXECUTE')
         AND has_function_privilege('authenticated', 'org_capability_allows_for(uuid,text,uuid,jsonb)', 'EXECUTE')
         AND has_function_privilege('service_role', 'org_capability_allows_for(uuid,text,uuid,jsonb)', 'EXECUTE')),
@@ -787,15 +890,34 @@ SELECT 'the checklist rail refuses the author''s own completion while others can
           FROM pg_proc WHERE proname = 'project_checklists_signoff_rail' AND pronargs = 0),
        NULL::text
 UNION ALL
-SELECT 'the turnover rail refuses the creator''s own acceptance while others can sign, an item born accepted, and requires a fresh signature on the item',
-       (SELECT prosrc LIKE '%v_others := quality_other_signers(NEW.org_id, NEW.project_id, v_uid);%'
+SELECT 'the turnover rail treats an acceptance AND a waiver as a sign-off (the creator refused while others can sign; a fresh signature on the item), refuses an item born accepted or waived, and never unmarks a required item',
+       (SELECT prosrc LIKE '%IF NEW.status IN (''accepted'', ''waived'') AND NEW.status IS DISTINCT FROM OLD.status THEN%'
+              AND prosrc LIKE '%v_others := quality_other_signers(NEW.org_id, NEW.project_id, v_uid);%'
               AND prosrc LIKE '%s.resource_type = ''turnover_item''%'
               AND prosrc LIKE '%s.signer_user_id = v_uid%'
               AND prosrc LIKE '%s.signed_at > NOW() - interval ''15 minutes''%'
-              AND prosrc LIKE '%never born accepted%'
+              AND prosrc LIKE '%IF NEW.status IN (''accepted'', ''waived'') THEN%never born accepted or waived%'
+              AND prosrc LIKE '%IF OLD.required AND NOT NEW.required THEN%'
               AND prosrc LIKE '%NEW.reviewed_single_signer := (OLD.created_by IS NOT NULL AND OLD.created_by = v_uid);%'
               AND prosecdef AND array_to_string(proconfig, ',') LIKE '%search_path=public%'
           FROM pg_proc WHERE proname = 'turnover_items_signoff_rail' AND pronargs = 0),
+       NULL::text
+UNION ALL
+SELECT 'the delete rail fires BEFORE DELETE on project_checklists, turnover_items and punch_items: a grant never deletes; a signed sign-off or a required turnover item is a controller''s to delete; cascade and purge pass',
+       (SELECT COUNT(*) = 3 FROM pg_trigger t
+         WHERE NOT t.tgisinternal
+           AND ((t.tgname = 'trg_project_checklists_signoff_delete_rail' AND t.tgrelid = 'project_checklists'::regclass)
+                OR (t.tgname = 'trg_turnover_items_signoff_delete_rail' AND t.tgrelid = 'turnover_items'::regclass)
+                OR (t.tgname = 'trg_punch_items_signoff_delete_rail' AND t.tgrelid = 'punch_items'::regclass))
+           AND (t.tgtype & 2) = 2 AND (t.tgtype & 8) = 8 AND (t.tgtype & 1) = 1)
+       AND (SELECT prosrc LIKE '%IF pg_trigger_depth() > 1 THEN RETURN OLD; END IF;%'
+                   AND prosrc LIKE '%current_setting(''app.record_purge'', true)%'
+                   AND prosrc LIKE '%IF is_org_controller(OLD.org_id) THEN RETURN OLD; END IF;%'
+                   AND prosrc LIKE '%v_status = ''complete''%'
+                   AND prosrc LIKE '%v_status IN (''accepted'', ''waived'') OR COALESCE((v_old->>''required'')::boolean, true)%'
+                   AND prosrc LIKE '%IF NOT user_owns_project(OLD.project_id) THEN%'
+                   AND prosecdef AND array_to_string(proconfig, ',') LIKE '%search_path=public%'
+              FROM pg_proc WHERE proname = 'quality_records_delete_rail' AND pronargs = 0),
        NULL::text
 UNION ALL
 SELECT label, NULL::boolean, n FROM prj_roundg_signoff_before
@@ -820,7 +942,7 @@ SELECT 'AFTER: open checklists whose author is the only eligible signer (their c
  WHERE c.status = 'open' AND c.created_by IS NOT NULL
    AND quality_other_signers(c.org_id, c.project_id, c.created_by) = 0
 UNION ALL
-SELECT 'AFTER: received / rejected turnover items whose creator now needs a second person to accept them', NULL::boolean, COUNT(*)::text
+SELECT 'AFTER: undecided turnover items (open, received or rejected — every seeded item is born open) whose creator now needs a second person to accept or waive them', NULL::boolean, COUNT(*)::text
   FROM turnover_items t
- WHERE t.status IN ('received', 'rejected') AND t.created_by IS NOT NULL
+ WHERE t.status NOT IN ('accepted', 'waived') AND t.created_by IS NOT NULL
    AND quality_other_signers(t.org_id, t.project_id, t.created_by) > 0;

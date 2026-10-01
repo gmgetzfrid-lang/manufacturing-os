@@ -33,8 +33,8 @@
 // records is the database's decision — a controller, the project owner, or
 // whoever the org grants `quality.sign_off` (per project, through the
 // capability policy's resource dimension); loadSignoffAuthority asks it. A
-// completion (and a turnover acceptance, lib/turnover.ts) is a SIGNED
-// sign-off: the e-signature ceremony's row (20261050 — the route
+// completion (and a turnover acceptance or waiver, lib/turnover.ts) is a
+// SIGNED sign-off: the e-signature ceremony's row (20261050 — the route
 // re-authenticates and mints it), bound to the record by the database. The
 // author of a checklist does not sign it off while another eligible signer
 // exists (DEC-12 / DEC-37); with nobody else it is allowed and marked
@@ -200,8 +200,9 @@ export interface SignoffAuthority {
   /** The caller may write and sign off this project's quality records. */
   maySign: boolean;
   /** Other members who could (DEC-12: an author's own sign-off is refused
-   *  only while this is above zero). */
-  otherSigners: number;
+   *  only while this is above zero). NULL when it is not known — the read
+   *  failed, or the database gave no answer — never a guessed zero. */
+  otherSigners: number | null;
   /** "database": quality_signoff_status (20261136) answered. "fallback":
    *  before 20261136 — the controller tier and the project owner, the only
    *  writers the policies admit then. */
@@ -228,21 +229,21 @@ export async function loadSignoffAuthority(orgId: string, projectId: string, act
     const { data, error } = await supabase.rpc("quality_signoff_status", { p_project: projectId });
     if (!error) {
       const d = (data ?? null) as { maySign?: unknown; otherSigners?: unknown } | null;
-      const others = Number(d?.otherSigners);
-      return { maySign: d?.maySign === true, otherSigners: Number.isFinite(others) && others > 0 ? others : 0, source: "database" };
+      const others = d?.otherSigners == null ? NaN : Number(d.otherSigners);
+      return { maySign: d?.maySign === true, otherSigners: Number.isFinite(others) ? Math.max(0, others) : null, source: "database" };
     }
     if (!isMissingFunction(error)) {
-      return { maySign: false, otherSigners: 0, source: "database", error: describeWriteError(error) };
+      return { maySign: false, otherSigners: null, source: "database", error: describeWriteError(error) };
     }
   } catch (e) {
-    return { maySign: false, otherSigners: 0, source: "database", error: (e as Error)?.message || "the sign-off check failed" };
+    return { maySign: false, otherSigners: null, source: "database", error: (e as Error)?.message || "the sign-off check failed" };
   }
   const [membersRes, projectRes] = await Promise.all([
     supabase.from("org_members").select("uid, role, roles").eq("org_id", orgId).eq("status", "active"),
     supabase.from("projects").select("owner_user_id").eq("id", projectId).maybeSingle(),
   ]);
   const readError = membersRes.error ?? projectRes.error;
-  if (readError) return { maySign: false, otherSigners: 0, source: "fallback", error: describeWriteError(readError) };
+  if (readError) return { maySign: false, otherSigners: null, source: "fallback", error: describeWriteError(readError) };
   const members = ((membersRes.data ?? []) as Array<{ uid?: string | null; role?: string | null; roles?: string[] | null }>);
   const eligible = new Set<string>();
   for (const m of members) {
@@ -255,26 +256,37 @@ export async function loadSignoffAuthority(orgId: string, projectId: string, act
 }
 
 /** DEC-12 / DEC-37, per slot: the person who put the record on the books
- *  (a checklist's author, a turnover item's creator) does not sign it off
- *  while anyone else could; with nobody else it is allowed and MARKED. The
- *  database rails (20261136) apply the same rule. */
+ *  (a checklist's author, a turnover item's creator — whoever seeded it,
+ *  for a seeded item) does not sign it off (complete; accept or waive) while
+ *  anyone else could; with nobody else it is allowed and MARKED. The
+ *  database rails (20261136) apply the same rule. An unknown count (`null`:
+ *  still loading, or unreadable) holds the author's sign-off — `pending` —
+ *  rather than guessing either way (DEC-16). */
 export function signoffSeparation(
   authorUid: string | null | undefined,
   actorUid: string,
-  otherSigners: number,
+  otherSigners: number | null,
   what: "checklist" | "turnover",
-): { blocked: boolean; singleSigner: boolean; reason: string | null } {
-  if (!authorUid || authorUid !== actorUid) return { blocked: false, singleSigner: false, reason: null };
+): { blocked: boolean; singleSigner: boolean; pending: boolean; reason: string | null } {
+  if (!authorUid || authorUid !== actorUid) return { blocked: false, singleSigner: false, pending: false, reason: null };
+  if (otherSigners == null) {
+    return {
+      blocked: true, singleSigner: false, pending: true,
+      reason: what === "checklist"
+        ? "You created this checklist, and who else on this project can sign it off is not known yet — that decides whether a second person must."
+        : "You added this turnover item, and who else on this project can accept or waive it is not known yet — that decides whether a second person must.",
+    };
+  }
   if (otherSigners > 0) {
     const others = `${otherSigners} other eligible signer${otherSigners === 1 ? "" : "s"} on this project`;
     return {
-      blocked: true, singleSigner: false,
+      blocked: true, singleSigner: false, pending: false,
       reason: what === "checklist"
         ? `You created this checklist, so a second person signs it off — ${others}.`
-        : `You added this turnover item, so a second person accepts it — ${others}.`,
+        : `You added this turnover item, so a second person accepts or waives it — ${others}.`,
     };
   }
-  return { blocked: false, singleSigner: true, reason: null };
+  return { blocked: false, singleSigner: true, pending: false, reason: null };
 }
 
 /** Mint the sign-off's e-signature through the ceremony's server half

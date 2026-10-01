@@ -102,7 +102,8 @@ describe("reviewTurnoverItem — the reason bar (SAF-4) and the history (QUAL-11
     expect(res.ok).toBe(false);
     expect(res.error).toMatch(/its own reason/);
     expect(state.writes).toHaveLength(0);
-    const ok = await reviewTurnoverItem({ item: was, status: "waived", note: "Spools replaced under NCR-22; the certs are moot", actor });
+    // a waiver is a signed sign-off (QUAL-4, 20261136): the ceremony's output goes with it
+    const ok = await reviewTurnoverItem({ item: was, status: "waived", note: "Spools replaced under NCR-22; the certs are moot", actor, signoff });
     expect(ok.ok).toBe(true);
   });
 
