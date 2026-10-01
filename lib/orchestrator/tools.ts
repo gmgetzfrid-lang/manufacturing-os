@@ -351,9 +351,14 @@ const checkPermissions: ToolDef = {
     // A document can carry several open holds at once (one per reason), so
     // this asks "any" rather than "the" — maybeSingle() would throw on the
     // second one and report a permission answer as an error.
-    const { data: holds } = await supabaseAdmin
+    const { data: holds, error: holdsErr } = await supabaseAdmin
       .from("document_holds").select("id, reason")
       .eq("document_id", String(args.document_id)).is("released_at", null).limit(5);
+    // A hold read that failed is not "no hold": editable is the real door's
+    // answer, and the door refuses a held document — so it fails closed.
+    if (holdsErr) {
+      return { data: { readable: true, editable: false, on_hold: null, error: "Hold status could not be checked — this is not the same as no hold." } };
+    }
     const hold = (holds ?? []).length > 0;
     // ORCH-8: editable is the real door's answer for THIS caller on THIS
     // document (mayEdit), not a role list — a Drafter the ACL grants is
@@ -687,22 +692,48 @@ const notifyPersonnel: ToolDef = {
     );
     if (gate) return gate;
 
-    // A send that fails is reported as a failure — never "sent". /execute
-    // then records AI_ACTION_FAILED and gives the claim back, so the person
-    // can try again while the proposal is live.
-    const { emit } = await import("@/lib/notify/dispatch");
+    // The bell row IS the delivery, so it is written HERE, on the service
+    // role, and checked. It used to ride emit(), which writes through the
+    // shared client — in /execute (a server route with no browser session)
+    // that is the anon client: RLS refuses its insert (notifications_org_insert
+    // needs auth.uid() to be an active member) and emit() swallows the
+    // refusal, so "sent" was reported for a message nobody received. A
+    // refused insert is a failure, never "sent": /execute records
+    // AI_ACTION_FAILED and gives the claim back, so the person can retry.
+    const recipient = String(args.user_id);
+    const title = `About ${d.document_number}`;
+    const body = String(args.message);
+    const link = `/documents/${d.library_id}?doc=${args.document_id}`;
+    const { error: bellErr } = await supabaseAdmin.from("notifications").insert({
+      org_id: ctx.orgId, user_id: recipient, kind: "orchestrator_message",
+      title, body, link,
+      resource_type: "document", resource_id: String(args.document_id),
+      actor_user_id: ctx.userId, actor_name: ctx.actorName, metadata: null,
+    });
+    if (bellErr) {
+      return { data: { error: "The notification could not be sent — nothing reached them. Try again." } };
+    }
+    // The email copy goes through the dispatcher (the recipient's email
+    // preferences and the 60-second dedupe apply as everywhere else), with
+    // the shared client bound to the service role for THIS call only
+    // (lib/serverClientScope — the intake door's pattern). The bell row has
+    // already delivered the message, so a failure here is logged, not
+    // reported as a failed send: a retry would deliver the message twice.
     try {
-      await emit({
+      const [{ emit }, { runWithServerClient }] = await Promise.all([
+        import("@/lib/notify/dispatch"),
+        import("@/lib/serverClientScope"),
+      ]);
+      await runWithServerClient(supabaseAdmin, () => emit({
         orgId: ctx.orgId, category: "watched", kind: "orchestrator_message",
-        title: `About ${d.document_number}`,
-        body: String(args.message),
-        link: `/documents/${d.library_id}?doc=${args.document_id}`,
+        title, body, link,
         resource: { type: "document", id: String(args.document_id) },
         actorUserId: ctx.userId, actorName: ctx.actorName,
-        audience: { involved: [String(args.user_id)] },
-      });
-    } catch {
-      return { data: { error: "The notification could not be sent — it may not have reached them. Try again." } };
+        audience: { involved: [recipient] },
+        channels: ["email"],
+      }));
+    } catch (e) {
+      console.error("[orchestrator] notify_personnel: the email copy was not queued (the in-app notification was delivered):", e instanceof Error ? e.message : e);
     }
     return { data: { status: "sent" } };
   },
@@ -748,21 +779,35 @@ async function storedOrgWideVerdict(orgId: string, sheet: string, revision: stri
   return { legacy: true, row: legacy.data as { status: string; revision_code: string; audit_details: unknown } | null };
 }
 
-/** Would writing `status` over the stored verdict lower what it settled?
- *  The drawing layer's own rule (lib/drawingAuditLog replaceDecision, RANK):
- *  a known revision's verdict is never lowered; a provisional row's floor is
- *  what it settled; on the pre-20261124 key a row a library filed is never
- *  lowered whatever its revision. Returns the refusal, or null to write. */
+/** Did a library's drawing audit file this row? Its details name the
+ *  library, or the knowledge document it judged — the key 20261124 backfills
+ *  library_id from. Only a pre-20261124 read can return such a row here. */
+function filedByLibrary(details: unknown): boolean {
+  const k = (details as { knowledgeDocumentId?: unknown } | null)?.knowledgeDocumentId;
+  return !!libraryOf(details) || (typeof k === "string" && k.length > 0);
+}
+
+/** Said when the only row at this key is a library's (before 20261124). */
+const LIBRARY_ROW_ON_LEGACY_KEY =
+  "This sheet's record at this revision belongs to a library's drawing audit, and this database cannot keep an "
+  + "org-wide record beside it until migration 20261124 is applied. Nothing was recorded — record it from that "
+  + "library's drawing audit, or ask again after 20261124.";
+
+/** Would writing `status` over the stored ORG-WIDE verdict lower what it
+ *  settled? The drawing layer's own rule (lib/drawingAuditLog
+ *  replaceDecision, RANK): a known revision's verdict is never lowered; a
+ *  provisional row's floor is what it settled. (A row a library filed is
+ *  never written here at all — LIBRARY_ROW_ON_LEGACY_KEY.) Returns the
+ *  refusal, or null to write. */
 function lowersStored(
   stored: { status: string; revision_code: string; audit_details: unknown } | null,
-  status: AuditStatus, legacy: boolean,
+  status: AuditStatus,
 ): string | null {
   if (!stored) return null;
   const provisional = storedProvisional(stored.audit_details);
   const decision = replaceDecision(
     { revision_code: stored.revision_code, status: stored.status, provisional },
     { status },
-    { neverLower: legacy && !!libraryOf(stored.audit_details) },
   );
   if (decision === "write") return null;
   const floor = provisional ? provisional.settledStatus : stored.status;
@@ -801,13 +846,25 @@ const logAuditCompletion: ToolDef = {
     // before proposing, and again when the confirmation runs.
     const stored = await storedOrgWideVerdict(ctx.orgId, sheet, revision);
     if ("error" in stored) return { data: { error: stored.error } };
-    const lowers = lowersStored(stored.row, status, stored.legacy);
+    // Before 20261124 the org-wide key is the only key, and the row on it may
+    // be a library's: writing over it — at any severity — would replace its
+    // library, findings and provisional marker with this note, and
+    // 20261124's backfill would then file the library's verdict as org-wide
+    // (DWG-6 / DEC-68: one scope's verdict never overwrites another's). It
+    // is refused, before proposing and again at execute.
+    if (stored.legacy && stored.row && filedByLibrary(stored.row.audit_details)) {
+      return { data: { error: LIBRARY_ROW_ON_LEGACY_KEY, kept: stored.row.status } };
+    }
+    const lowers = lowersStored(stored.row, status);
     if (lowers) return { data: { error: lowers, kept: stored.row?.status ?? null } };
 
     // ORCH-11: what was found travels IN the proposal — the same object the
     // fingerprint is computed over, stored, and executed — so the confirmed
-    // record keeps the finding instead of an empty note.
-    const details = typeof args.details === "string" ? args.details.slice(0, 2000) : "";
+    // record keeps the finding instead of an empty note. Cut, then trimmed:
+    // /execute re-validates the stored value (validateParams trims), so a
+    // cut that ended on a space would re-fingerprint differently there and
+    // the confirmation would never match.
+    const details = typeof args.details === "string" ? args.details.slice(0, 2000).trim() : "";
     // …and the record names the controlled document it is about, as the
     // drawing route's rows do (verdictRows): the one given, if the caller may
     // read it; otherwise the single readable document numbered exactly as the

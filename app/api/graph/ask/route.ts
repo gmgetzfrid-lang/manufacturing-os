@@ -217,8 +217,11 @@ export async function POST(req: NextRequest) {
   const nodeIds = new Set<string>();
   const assets = new Map<string, { assetId: string; tag: string; snippet: string; count: number }>();
 
-  // Only the surviving (readable) knowledge documents are fanned out.
-  const { data: mentions } = await supabaseAdmin
+  // Only the surviving (readable) knowledge documents are fanned out. A
+  // mentions read that failed is said as a failure — never as "not linked
+  // to equipment yet, run the indexer", which would send an admin to re-run
+  // an indexer that is not the problem.
+  const { data: mentions, error: mentionsErr } = await supabaseAdmin
     .from("entity_mentions")
     .select("asset_id, context_snippet, mention_count, document_id, assets(tag)")
     .eq("org_id", orgId)
@@ -276,7 +279,9 @@ export async function POST(req: NextRequest) {
     assets: [...assets.values()].sort((a, b) => b.count - a.count).slice(0, 12),
   };
 
-  if (payload.nodeIds.length === 0) {
+  if (mentionsErr) {
+    payload.note = "Couldn't load which equipment these passages mention right now — try again.";
+  } else if (payload.nodeIds.length === 0) {
     payload.note = "Found passages, but none of these documents are linked to equipment yet — run the mention indexer to place them on the map.";
   }
   if (view.unchecked) {

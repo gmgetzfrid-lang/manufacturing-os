@@ -87,6 +87,11 @@ export const REFUSAL = {
     "This proposal has already been run. Each confirmation runs once. Nothing was done this time.",
   dismissed:
     "You dismissed this proposal, so it can't be run. Ask the assistant again if you want it. Nothing was done.",
+  /** Appended to a refusal whose claim could not be given back: the
+   *  proposal stays spent, so confirming it again would read "already been
+   *  run" for an action that never ran. */
+  notReset:
+    "Nothing was done, and this proposal could not be reset, so it can't be confirmed again — ask the assistant again.",
 } as const;
 
 export type ProposalRefusal = {

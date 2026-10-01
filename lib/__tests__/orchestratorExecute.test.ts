@@ -10,7 +10,12 @@
 // Driven through both real routes, the real tools and the real ACL seam
 // (lib/knowledgeAccess) over the in-memory PostgREST stand-in
 // (./knowledgeFakeDb). The provider is a scripted model; the meter, key vault
-// and prompt blocks are stubs (no network, no key).
+// and prompt blocks are stubs (no network, no key). The notifier is NOT
+// mocked: lib/notify/dispatch, lib/inAppNotifications, lib/notifications and
+// lib/serverClientScope are the real modules, over a shared client
+// (lib/supabase) that behaves as it does in a server route with no browser
+// session — the anon client, whose writes RLS refuses — unless a
+// request-scoped binding resolves it to the service role.
 
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { readFileSync } from "node:fs";
@@ -24,9 +29,9 @@ const net = vi.hoisted(() => ({
   prompts: [] as string[],
   systems: [] as string[],
   users: { dc: "u-dc", viewer: "u-viewer", other: "u-other" } as Record<string, string>,
-  emitted: [] as Array<Record<string, unknown>>,
-  /** When set, the notifier throws (an in-app / email queue failure). */
-  emitFails: false,
+  /** Every statement the UNBOUND shared client (the anon client) was asked
+   *  to run: what a server route without a binding would really send. */
+  anon: [] as Array<{ table: string; kind: string }>,
   rpc: {} as Record<string, (args: Record<string, unknown>) => { data: unknown; error: unknown }>,
 }));
 
@@ -63,15 +68,49 @@ vi.mock("@/lib/ai/usageServer", () => ({
 vi.mock("@/lib/ai/keyVault", () => ({ openAiKey: (k: string) => k }));
 vi.mock("@/lib/aiInstructionsServer", () => ({ loadOrgInstructionsBlock: vi.fn(async () => "") }));
 vi.mock("@/lib/answerSkillsServer", () => ({ loadAnswerSkillsBlock: vi.fn(async () => "") }));
-vi.mock("@/lib/notify/dispatch", () => ({
-  emit: vi.fn(async (ev: Record<string, unknown>) => {
-    if (net.emitFails) throw new Error("notifications insert failed");
-    net.emitted.push(ev);
-  }),
-}));
-// lib/ownership (pulled in by lib/knowledgeAccess) imports these at load.
-vi.mock("@/lib/supabase", () => ({ supabase: {} }));
-vi.mock("@/lib/inAppNotifications", () => ({ notify: vi.fn(async () => {}) }));
+// The shared client (lib/supabase) as /api/orchestrator/execute really has
+// it: no browser session, so it is the ANON client — auth.uid() is NULL, RLS
+// refuses its writes (notifications_org_insert needs an active member) and
+// its reads see nothing. The real lib/serverClientScope registers its reader
+// here exactly as it does with the real module; inside
+// runWithServerClient(client, fn) the shared client resolves to `client`.
+vi.mock("@/lib/supabase", () => {
+  let scoped: (() => unknown) | null = null;
+  const anonFrom = (table: string) => {
+    let kind = "select";
+    const settle = () => {
+      net.anon.push({ table, kind });
+      return kind === "select"
+        ? { data: [], error: null }
+        : { data: null, error: { code: "42501", message: `new row violates row-level security policy for table "${table}"` } };
+    };
+    const chain: object = new Proxy({}, {
+      get(_t, prop: string) {
+        if (prop === "then") return (resolve: (v: unknown) => void) => resolve(settle());
+        return () => {
+          if (["insert", "upsert", "update", "delete"].includes(prop)) kind = prop;
+          if (prop === "maybeSingle" || prop === "single") {
+            const out = settle();
+            return Promise.resolve(kind === "select" ? { data: null, error: null } : out);
+          }
+          return chain;
+        };
+      },
+    });
+    return chain;
+  };
+  const anon = { from: anonFrom };
+  return {
+    __registerScopedServerClient: (read: () => unknown) => { scoped = read; },
+    supabase: new Proxy({}, {
+      get(_t, prop) {
+        const impl = (scoped?.() ?? anon) as Record<PropertyKey, unknown>;
+        const v = impl[prop];
+        return typeof v === "function" ? (v as (...a: unknown[]) => unknown).bind(impl) : v;
+      },
+    }),
+  };
+});
 vi.mock("@/lib/audit", () => ({ logAuditAction: vi.fn(async () => {}), logRevisionEvent: vi.fn(async () => {}), logHoldEvent: vi.fn(async () => {}) }));
 
 import { POST as runPOST } from "@/app/api/orchestrator/route";
@@ -79,6 +118,9 @@ import { POST as executePOST } from "@/app/api/orchestrator/execute/route";
 import { REFUSAL, NOT_INSTALLED, PROPOSAL_TTL_MS, PROPOSAL_KEEP_AFTER_EXPIRY_MS, pruneOrchestratorProposals } from "@/lib/orchestrator/proposals";
 import { toolByName, fingerprint, type ToolContext } from "@/lib/orchestrator/tools";
 import { loadPrincipal, type KnowledgePrincipal } from "@/lib/knowledgeAccess";
+import { supabaseAdmin } from "@/lib/supabaseAdmin";
+import { emit } from "@/lib/notify/dispatch";
+import { runWithServerClient } from "@/lib/serverClientScope";
 
 const ORG = "o1";
 const AUDIT_CALL = JSON.stringify({
@@ -110,6 +152,9 @@ function seed(extra: Record<string, Row[]> = {}): void {
     drawing_audit_logs: [],
     audit_logs: [],
     orchestrator_proposals: [],
+    notifications: [],
+    email_notifications: [],
+    notification_preferences: [],
     ...extra,
   });
 }
@@ -144,7 +189,7 @@ async function proposeAudit(token = "dc"): Promise<Pending> {
 
 beforeEach(() => {
   seed();
-  net.script = []; net.prompts = []; net.systems = []; net.emitted = []; net.rpc = {}; net.emitFails = false;
+  net.script = []; net.prompts = []; net.systems = []; net.anon = []; net.rpc = {};
 });
 
 describe("ORCH-4 — the legitimate flow keeps working: propose → confirm → execute ONCE", () => {
@@ -320,22 +365,47 @@ describe("ORCH-4 / ORCH-10 — an action that does not run gives its claim back 
     expect(rowsOf("orchestrator_proposals")[0].executed_at).toBeNull();
   });
 
-  it("notify_personnel: a send that fails is a failure, not 'sent' — 409, AI_ACTION_FAILED, the claim released; the person can retry", async () => {
+  it("notify_personnel: a bell row the database refuses is a failure, not 'sent' — 409, AI_ACTION_FAILED, the claim released, no email; the person can retry", async () => {
     net.script = [JSON.stringify({ tool_name: "notify_personnel", parameters: { user_id: "u-dc", document_id: "d-1", message: "Rev C is out" } }), "Proposed."];
     const [card] = pendingOf((await ask("viewer", "tell Dana rev C is out")).body);
-    net.emitFails = true;
+    db.hooks.push((op) => (op.table === "notifications" && op.kind === "insert"
+      ? { error: { code: "57014", message: "statement timeout" } } : undefined));
     const res = await execute("viewer", { proposalId: card.proposalId });
     expect(res.status).toBe(409);
-    expect(String(res.body.error)).toMatch(/could not be sent/);
+    expect(res.body.error).toBe("The notification could not be sent — nothing reached them. Try again.");
     expect(res.body).not.toHaveProperty("result");
     expect(auditRows("AI_ACTION_FAILED")).toHaveLength(1);
     expect(auditRows("AI_ACTION_EXECUTED")).toHaveLength(0);
     expect(rowsOf("orchestrator_proposals")[0].executed_at).toBeNull();
-    // The notifier recovers: the same proposal runs, once.
-    net.emitFails = false;
+    expect(rowsOf("notifications")).toHaveLength(0);
+    expect(rowsOf("email_notifications")).toHaveLength(0);
+    // The database recovers: the same proposal runs, once — and is delivered.
+    db.hooks = [];
     expect(await execute("viewer", { proposalId: card.proposalId })).toMatchObject({ status: 200, body: { ok: true, result: { status: "sent" } } });
-    expect(net.emitted).toHaveLength(1);
+    expect(rowsOf("notifications")).toHaveLength(1);
+    expect(rowsOf("email_notifications")).toHaveLength(1);
     expect(auditRows("AI_ACTION_EXECUTED")).toHaveLength(1);
+  });
+
+  it("the claim cannot be given back after a refusal → the person is told it can't be confirmed again, not 'try again'", async () => {
+    const card = await proposeAudit();
+    // The audit log is unwritable AND the release update fails with it.
+    db.hooks.push((op) => (op.table === "audit_logs" && op.kind === "insert" ? { error: { code: "57014", message: "statement timeout" } } : undefined));
+    db.hooks.push((op) => (op.table === "orchestrator_proposals" && op.kind === "update" && (op.payload as Row).executed_at === null
+      ? { error: { code: "57014", message: "statement timeout" } } : undefined));
+    const logged = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    const res = await execute("dc", { proposalId: card.proposalId });
+    expect(res.status).toBe(503);
+    expect(res.body.error).toBe(`The action could not be recorded in the audit log, so it was not run. ${REFUSAL.notReset}`);
+    expect(String(res.body.error)).not.toMatch(/Try again/);
+    expect(logged.mock.calls.some((c) => /could not be released after a refusal/.test(String(c[0])))).toBe(true);
+    logged.mockRestore();
+    expect(rowsOf("drawing_audit_logs")).toHaveLength(0);
+    // A released claim is still the ordinary "try again" (the case above).
+    db.hooks = [];
+    const other = await proposeAudit();
+    db.hooks.push((op) => (op.table === "audit_logs" && op.kind === "insert" ? { error: { code: "57014", message: "statement timeout" } } : undefined));
+    expect((await execute("dc", { proposalId: other.proposalId })).body.error).toBe("The action could not be recorded in the audit log, so it was not run. Try again.");
   });
 });
 
@@ -469,17 +539,64 @@ describe("ORCH-1 / PR-1 — authority at execute: the controller tier for the au
     expect(rowsOf("orchestrator_proposals")).toHaveLength(0);
   });
 
-  it("notify_personnel (DEC-44 (I-04)): a Viewer may notify a colleague about a document they can read — once, in their own name", async () => {
+  it("notify_personnel (DEC-44 (I-04)): a Viewer may notify a colleague about a document they can read — DELIVERED once, in their own name, through the real notifier", async () => {
     net.script = [JSON.stringify({ tool_name: "notify_personnel", parameters: { user_id: "u-dc", document_id: "d-1", message: "Rev C is out" } }), "Proposed."];
     const { body } = await ask("viewer", "tell Dana rev C is out");
     const [card] = pendingOf(body);
     expect(card.proposalId).toEqual(expect.any(String));
     const res = await execute("viewer", { proposalId: card.proposalId });
     expect(res).toMatchObject({ status: 200, body: { ok: true, result: { status: "sent" } } });
-    expect(net.emitted).toHaveLength(1);
-    expect(net.emitted[0]).toMatchObject({ actorUserId: "u-viewer", actorName: "Vic Viewer", audience: { involved: ["u-dc"] } });
+    // The bell row landed — written on the service role, in the caller's name.
+    expect(rowsOf("notifications")).toHaveLength(1);
+    expect(rowsOf("notifications")[0]).toMatchObject({
+      org_id: ORG, user_id: "u-dc", kind: "orchestrator_message", title: "About 025-PID-0103", body: "Rev C is out",
+      link: "/documents/L-ops?doc=d-1", resource_type: "document", resource_id: "d-1",
+      actor_user_id: "u-viewer", actor_name: "Vic Viewer",
+    });
+    // The email copy was queued by the real dispatcher, bound to the service
+    // role for that call: the recipient's address was found and the row written.
+    expect(rowsOf("email_notifications")).toHaveLength(1);
+    expect(rowsOf("email_notifications")[0]).toMatchObject({ org_id: ORG, to_user_id: "u-dc", to_email: "dana@example.com", subject: "About 025-PID-0103", event_type: "watcher_activity", status: "queued" });
+    // Nothing went through the unbound (anon) client.
+    expect(net.anon.filter((o) => ["notifications", "email_notifications", "org_members", "notification_preferences"].includes(o.table))).toEqual([]);
+    expect(auditRows("AI_ACTION_EXECUTED")).toHaveLength(1);
     expect((await execute("viewer", { proposalId: card.proposalId })).status).toBe(409);
-    expect(net.emitted).toHaveLength(1);
+    expect(rowsOf("notifications")).toHaveLength(1);
+    expect(rowsOf("email_notifications")).toHaveLength(1);
+  });
+
+  it("why the bell row is written here: the dispatcher on the UNBOUND shared client delivers nothing and still resolves — bound to the service role, it delivers", async () => {
+    const ev = {
+      orgId: ORG, category: "watched" as const, kind: "orchestrator_message" as const, title: "About 025-PID-0103", body: "Rev C is out",
+      resource: { type: "document" as const, id: "d-1" }, actorUserId: "u-viewer", actorName: "Vic Viewer",
+      audience: { involved: ["u-dc"] },
+    };
+    const warned = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    await expect(emit(ev)).resolves.toBeUndefined();
+    warned.mockRestore();
+    expect(net.anon).toEqual(expect.arrayContaining([{ table: "notifications", kind: "insert" }, { table: "org_members", kind: "select" }]));
+    expect(rowsOf("notifications")).toHaveLength(0);
+    expect(rowsOf("email_notifications")).toHaveLength(0);
+    // The same call inside the request-scoped binding reaches the database.
+    await runWithServerClient(supabaseAdmin, () => emit(ev));
+    expect(rowsOf("notifications")).toHaveLength(1);
+    expect(rowsOf("email_notifications")).toHaveLength(1);
+    // …and the tool does not rely on it for the bell: the source writes the
+    // row itself and checks it, and binds the dispatcher for the email copy.
+    const src = readFileSync(join(process.cwd(), "lib/orchestrator/tools.ts"), "utf8");
+    const notifyBody = src.slice(src.indexOf("const notifyPersonnel: ToolDef"), src.indexOf("type DbError ="));
+    expect(notifyBody).toMatch(/const \{ error: bellErr \} = await supabaseAdmin\.from\("notifications"\)\.insert\(/);
+    expect(notifyBody).toMatch(/if \(bellErr\) \{\s*return \{ data: \{ error: /);
+    expect(notifyBody).toMatch(/runWithServerClient\(supabaseAdmin, \(\) => emit\(\{[\s\S]*channels: \["email"\],/);
+  });
+
+  it("notify_personnel: an email copy the queue refuses does not undo the delivered bell row — 200 'sent', once", async () => {
+    net.script = [JSON.stringify({ tool_name: "notify_personnel", parameters: { user_id: "u-dc", document_id: "d-1", message: "Rev C is out" } }), "Proposed."];
+    const [card] = pendingOf((await ask("viewer", "tell Dana rev C is out")).body);
+    db.hooks.push((op) => (op.table === "email_notifications" && op.kind === "insert" ? { error: { code: "57014", message: "statement timeout" } } : undefined));
+    expect(await execute("viewer", { proposalId: card.proposalId })).toMatchObject({ status: 200, body: { ok: true, result: { status: "sent" } } });
+    expect(rowsOf("notifications")).toHaveLength(1);
+    expect(rowsOf("orchestrator_proposals")[0].executed_at).toEqual(expect.any(String));
   });
 
   it("notify_personnel about a document the caller cannot read is refused — at proposal and again at execute", async () => {
@@ -490,7 +607,8 @@ describe("ORCH-1 / PR-1 — authority at execute: the controller tier for the au
     const id = storedProposal({ user_id: "u-viewer", tool: "notify_personnel", parameters: { user_id: "u-dc", document_id: "d-1", message: "hi" } });
     const res = await execute("viewer", { proposalId: id });
     expect(res.status).toBe(409);
-    expect(net.emitted).toHaveLength(0);
+    expect(rowsOf("notifications")).toHaveLength(0);
+    expect(rowsOf("email_notifications")).toHaveLength(0);
   });
 });
 
@@ -562,19 +680,52 @@ describe("ORCH-1 criterion 3 / DEC-68 — log_audit_completion writes ORG-WIDE r
     expect(rowsOf("drawing_audit_logs")[0]).toMatchObject({ status: "flagged" });
   });
 
-  it("before 20261124 (no library_id column) it writes on the org-wide key that database has, and never lowers a library's row there", async () => {
+  it("before 20261124 (no library_id column) it writes on the org-wide key that database has, and never writes over a library's row there", async () => {
     db.missingColumns.drawing_audit_logs = ["library_id"];
     db.tables.drawing_audit_logs.push({ id: "v1", org_id: ORG, sheet_number: "025-PID-0103", revision_code: "", status: "broken_connectors", audit_details: { libraryId: "KL-1" } });
     const ctx = await ctxOf("u-dc");
     const refused = await toolByName("log_audit_completion")!.run({ sheet_number: "025-PID-0103", revision: "", status: "passed" }, ctx);
     // revision "" is treated as given here (the tool is called directly).
-    expect(String((refused.data as { error?: string }).error)).toMatch(/already recorded/);
+    expect(String((refused.data as { error?: string }).error)).toMatch(/belongs to a library's drawing audit[\s\S]*migration 20261124/);
+    expect(refused.pending).toBeUndefined();
     const fp = fingerprint("log_audit_completion", { sheet_number: "025-PID-0103", revision: "D", status: "passed", document_id: "d-1" });
     const ok = await toolByName("log_audit_completion")!.run({ sheet_number: "025-PID-0103", revision: "D", status: "passed" }, { ...ctx, approved: new Set([fp]) });
     expect(ok.data).toMatchObject({ status: "logged" });
     const writes = db.ops.filter((o) => o.table === "drawing_audit_logs" && o.kind === "upsert");
     expect(writes).toHaveLength(1);
     expect(Object.keys(writes[0].payload as Row)).not.toContain("library_id");
+  });
+
+  it("before 20261124, a library's row is never replaced — not even by an equal or MORE severe verdict: its library, findings and provisional marker survive for 20261124's backfill", async () => {
+    db.missingColumns.drawing_audit_logs = ["library_id"];
+    // Filed by the Unit-12 library's audit: it names the knowledge document it
+    // judged (what 20261124 backfills library_id from) and carries findings.
+    const libraryDetails = { knowledgeDocumentId: "11111111-1111-4111-8111-111111111111", brokenConnectors: [{ tag: "OPC-7" }], provisional: { waitingOn: ["0104.pdf"], settledStatus: "flagged" } };
+    db.tables.drawing_audit_logs.push({ id: "v1", org_id: ORG, sheet_number: "025-PID-0103", revision_code: "C", status: "broken_connectors", audit_details: libraryDetails });
+    const ctx = await ctxOf("u-dc");
+    for (const status of ["broken_connectors", "flagged", "passed"]) {
+      const out = await toolByName("log_audit_completion")!.run({ sheet_number: "025-PID-0103", revision: "C", status, details: "two OPCs unpaired" }, ctx);
+      expect(out.pending, status).toBeUndefined();
+      expect(out.data, status).toMatchObject({ error: expect.stringMatching(/belongs to a library's drawing audit/), kept: "broken_connectors" });
+    }
+    // Proposed while no row was there; the library's row appears before the
+    // confirmation runs: refused at execute too, and the row is untouched.
+    db.tables.drawing_audit_logs = [];
+    net.script = [JSON.stringify({ tool_name: "log_audit_completion", parameters: { sheet_number: "025-PID-0103", revision: "C", status: "broken_connectors", details: "two OPCs unpaired" } }), "Proposed."];
+    const [card] = pendingOf((await ask("dc", "record 0103 rev C broken")).body);
+    db.tables.drawing_audit_logs.push({ id: "v1", org_id: ORG, sheet_number: "025-PID-0103", revision_code: "C", status: "broken_connectors", audit_details: libraryDetails });
+    const res = await execute("dc", { proposalId: card.proposalId });
+    expect(res.status).toBe(409);
+    expect(res.body.error).toMatch(/belongs to a library's drawing audit/);
+    expect(rowsOf("drawing_audit_logs")).toHaveLength(1);
+    expect(rowsOf("drawing_audit_logs")[0].audit_details).toEqual(libraryDetails);
+    expect(db.ops.filter((o) => o.table === "drawing_audit_logs" && o.kind === "upsert")).toHaveLength(0);
+    // An org-wide row on the old key (no library named) is still written over
+    // at equal or higher severity.
+    db.tables.drawing_audit_logs = [{ id: "v2", org_id: ORG, sheet_number: "025-PID-0103", revision_code: "C", status: "passed", audit_details: { note: "", source: "orchestrator" } }];
+    const fp = fingerprint("log_audit_completion", { sheet_number: "025-PID-0103", revision: "C", status: "flagged", document_id: "d-1" });
+    expect((await toolByName("log_audit_completion")!.run({ sheet_number: "025-PID-0103", revision: "C", status: "flagged" }, { ...ctx, approved: new Set([fp]) })).data).toMatchObject({ status: "logged" });
+    expect(rowsOf("drawing_audit_logs")[0]).toMatchObject({ status: "flagged" });
   });
 });
 
@@ -731,6 +882,23 @@ describe("ORCH-11 — the finding travels in the proposal: propose → execute s
     // The fingerprint was computed over the same object on both sides.
     expect(card.fingerprint).toContain(`details=${finding}`);
     expect(card.fingerprint).toContain("document_id=d-1");
+  });
+
+  it("a finding longer than the cap whose cut ends on a space still confirms: propose → execute once → 200 (the stored value re-validates to the same fingerprint)", async () => {
+    // Character 2,000 (index 1999) is a space; the text runs to 2,500.
+    const finding = `${"A".repeat(1999)} ${"B".repeat(500)}`;
+    net.script = [
+      JSON.stringify({ tool_name: "log_audit_completion", parameters: { sheet_number: "025-PID-0103", revision: "C", status: "broken_connectors", details: finding } }),
+      "Proposed.",
+    ];
+    const [card] = pendingOf((await ask("dc", "record 0103 rev C broken")).body);
+    expect(card.proposalId).toEqual(expect.any(String));
+    expect(card.parameters.details).toBe("A".repeat(1999));
+    const res = await execute("dc", { proposalId: card.proposalId, fingerprint: card.fingerprint });
+    expect(res.status).toBe(200);
+    expect(res.body).toMatchObject({ ok: true, result: { status: "logged" } });
+    expect((rowsOf("drawing_audit_logs")[0].audit_details as { note: string }).note).toBe("A".repeat(1999));
+    expect(auditRows("AI_ACTION_FAILED")).toHaveLength(0);
   });
 
   it("a document_id outside the caller's org is refused; an ambiguous number records no document", async () => {

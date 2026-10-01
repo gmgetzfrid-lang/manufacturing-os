@@ -14,6 +14,7 @@ const state = vi.hoisted(() => ({
   lists: {} as Record<string, Array<Record<string, unknown>>>,
   readable: new Set<string>(),
   upserts: [] as Array<{ table: string; row: Record<string, unknown>; opts: unknown }>,
+  inserts: [] as Array<{ table: string; row: Record<string, unknown> }>,
   askedFor: [] as string[][],
   emitted: [] as Array<Record<string, unknown>>,
   rpc: [] as Array<Record<string, unknown>>,
@@ -36,6 +37,7 @@ function chain(table: string) {
       }
       return (...args: unknown[]) => {
         if (prop === "or") state.orCalls.push({ table, list: String(args[0]) });
+        if (prop === "insert") state.inserts.push({ table, row: args[0] as Record<string, unknown> });
         if (prop === "maybeSingle") return Promise.resolve({ data: state.single[table] ?? null, error: null });
         if (prop === "upsert") {
           state.upserts.push({ table, row: args[0] as Record<string, unknown>, opts: args[1] });
@@ -92,7 +94,7 @@ const run = (name: string, args: Record<string, string | number | boolean>, ctx:
 
 beforeEach(() => {
   state.single = {}; state.lists = {}; state.readable = new Set();
-  state.upserts = []; state.askedFor = []; state.emitted = []; state.rpc = [];
+  state.upserts = []; state.inserts = []; state.askedFor = []; state.emitted = []; state.rpc = [];
   state.denies = {}; state.rpcCalls = []; state.errors = {}; state.orCalls = [];
 });
 
@@ -160,6 +162,17 @@ describe("SURF-7 / EGRESS-3 — check_permissions evaluates the caller's real AC
     state.readable.add("d1");
     state.denies = { write: undefined as unknown as boolean };
     expect((await run("check_permissions", { document_id: "d1" }, ctxFor(["Drafter"]))).data).toMatchObject({ editable: false });
+  });
+  it("ORCH-8: a hold read that fails is not 'no hold' — editable is false, on_hold unknown, and the failure is said (even for a controller)", async () => {
+    state.single.documents = { id: "d1", document_number: "P-1", status: "Issued", org_id: "o1", acl_index: null };
+    state.readable.add("d1");
+    state.errors.document_holds = { message: "statement timeout" };
+    for (const roles of [["Drafter"], ["Requester", "DocCtrl"]]) {
+      const out = (await run("check_permissions", { document_id: "d1" }, ctxFor(roles))).data;
+      expect(out, roles.join("+")).toEqual({ readable: true, editable: false, on_hold: null, error: "Hold status could not be checked — this is not the same as no hold." });
+    }
+    delete state.errors.document_holds;
+    expect((await run("check_permissions", { document_id: "d1" }, ctxFor(["Requester", "DocCtrl"]))).data).toMatchObject({ editable: true, on_hold: false });
   });
 });
 
@@ -261,8 +274,12 @@ describe("SURF-7 / EGRESS-3 — reads and acts are filtered through the caller",
     expect(state.emitted).toHaveLength(0);
     state.readable.add("d1");
     expect((await run("notify_personnel", params, ctxFor(["Viewer"], [fp]))).data).toMatchObject({ status: "sent" });
+    // The bell row — the delivery — is written on the service role in the
+    // caller's name; the dispatcher carries only the email copy.
+    expect(state.inserts.filter((i) => i.table === "notifications")).toHaveLength(1);
+    expect(state.inserts.find((i) => i.table === "notifications")!.row).toMatchObject({ org_id: "o1", user_id: "u2", kind: "orchestrator_message", actor_user_id: "u1", actor_name: "Pat Example" });
     expect(state.emitted).toHaveLength(1);
-    expect(state.emitted[0]).toMatchObject({ actorUserId: "u1", actorName: "Pat Example", orgId: "o1" });
+    expect(state.emitted[0]).toMatchObject({ actorUserId: "u1", actorName: "Pat Example", orgId: "o1", channels: ["email"] });
     expect(state.emitted[0].actorName).not.toBe("Document controller");
   });
   it("log_audit_completion: a Viewer's — or a Manager's / Supervisor's — confirmation cannot mint an audit row; a controller by collection can (ORCH-1 / ORCH-8)", async () => {

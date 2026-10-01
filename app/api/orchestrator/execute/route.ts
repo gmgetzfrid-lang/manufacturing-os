@@ -99,13 +99,19 @@ export async function POST(req: NextRequest) {
     details: { tool: proposal.tool, proposalId: proposal.id, fingerprint: proposal.fingerprint, ...details },
   });
 
-  // Every outcome below that did NOT run the write hands the claim back.
+  // Every outcome below that did NOT run the write hands the claim back. If
+  // the claim cannot be given back the proposal stays spent, so "try again"
+  // would be false — the retry would read "already been run" for an action
+  // that never ran. The person is told that instead.
   const refuse = async (msg: string, status: number, failed?: { error: string }) => {
     if (failed) {
       const { error: auditErr } = await supabaseAdmin.from("audit_logs").insert(auditRow("AI_ACTION_FAILED", { error: failed.error }));
       if (auditErr) console.error("[orchestrator/execute] AI_ACTION_FAILED not recorded:", auditErr.message);
     }
-    await releaseProposal(proposal.id, claimedAt);
+    if (!(await releaseProposal(proposal.id, claimedAt))) {
+      console.error(`[orchestrator/execute] proposal ${proposal.id} could not be released after a refusal; it stays spent although it did not run`);
+      return bad(`${msg.replace(/\s*(?:Try again\.|Nothing was done\.)\s*$/, "")} ${REFUSAL.notReset}`, status);
+    }
     return bad(msg, status);
   };
 

@@ -222,6 +222,21 @@ describe("GPV-1 / IEDGE-1 — the graph's Ask box reads only what the asker may 
     expect((body.nodeIds as string[])).toContain("asset:a-up");
   });
 
+  it("a mentions read that fails is said as a failure — never 'not linked to equipment yet, run the indexer'", async () => {
+    net.graphAsk = [HIT.up];
+    db.hooks.push((op) => (op.table === "entity_mentions" ? { error: { code: "57014", message: "statement timeout" } } : undefined));
+    const { status, body } = await ask("dc", "support");
+    expect(status).toBe(200);
+    expect(hitDocs(body)).toEqual(["k-up"]);
+    expect(body.nodeIds).toEqual([]);
+    expect(body.note).toBe("Couldn't load which equipment these passages mention right now — try again.");
+    expect(String(body.note)).not.toMatch(/mention indexer/);
+    // A passage genuinely linked to no equipment still gets the indexer advice.
+    db.hooks = [];
+    db.tables.entity_mentions = [];
+    expect((await ask("dc", "support")).body.note).toMatch(/none of these documents are linked to equipment yet — run the mention indexer/);
+  });
+
   it("a stranger is refused before any search runs", async () => {
     net.graphAsk = [HIT.legal];
     const res = await POST(new NextRequest("http://test/api/graph/ask", {
