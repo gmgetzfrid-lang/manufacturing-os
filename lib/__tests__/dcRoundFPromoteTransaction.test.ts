@@ -129,7 +129,7 @@ describe("20261151 — the guard and publish_revision re-created from their NEWE
     expect(sentence).toContain(ISSUE_REFUSAL.newDoorHold);
   });
 
-  it("P14 review fix — a refused review promote over a hold never tells the controller to use an override the review promote does not have: release the hold, then publish the reviewed revision", async () => {
+  it("P14 review fix — where no force is offered (anyone below a controller; the intake approve) a refused review promote over a hold is told as what to do: release the hold, then publish the reviewed revision — never an override", async () => {
     const { finalizeReasonMessage } = await import("@/lib/reviewControl");
     // the guard's two hold sentences, read from the migration itself (SQL '' → ')
     const sqlSentences = [...M.matchAll(/'(Document has an active hold;[^']*(?:''[^']*)*)'/g)].map((m) => m[1].replace(/''/g, "'"));
@@ -184,8 +184,12 @@ describe("20261151 — the guard and publish_revision re-created from their NEWE
     expect(M).toContain("REVOKE ALL ON FUNCTION enforce_document_publish_guard() FROM PUBLIC, anon, authenticated, service_role;");
     expect(P.next).toContain("LANGUAGE plpgsql SECURITY DEFINER SET search_path = public AS $$");
     expect(G.next).toContain("RETURNS trigger LANGUAGE plpgsql SECURITY DEFINER SET search_path = public AS $$");
-    // no second overload is created: the 12-argument signature only
-    expect(stripComments(M)).not.toMatch(/DROP FUNCTION/);
+    // no second overload is created: the 12-argument signature only (the one
+    // DROP FUNCTION is finalize_reviewed_promote's own earlier five-argument
+    // form — P14 final review; publish_revision is re-created in place)
+    expect([...stripComments(M).matchAll(/DROP FUNCTION[^;]*;/g)].map((m) => m[0])).toEqual([
+      "DROP FUNCTION IF EXISTS finalize_reviewed_promote(uuid, uuid, uuid, text, uuid);",
+    ]);
   });
 });
 
@@ -197,8 +201,53 @@ describe("20261151 — RG-12: finalize_reviewed_promote, the promote and its boo
     for (const f of files.filter((x) => x < FILE)) expect(stripComments(mig(f)), f).not.toMatch(/finalize_reviewed_promote/);
     expect(F).toContain("LANGUAGE plpgsql SECURITY INVOKER SET search_path = public AS $$");
     expect(F).not.toMatch(/SECURITY DEFINER/);
-    expect(M).toContain("REVOKE ALL ON FUNCTION finalize_reviewed_promote(uuid, uuid, uuid, text, uuid) FROM PUBLIC, anon;");
-    expect(M).toContain("GRANT EXECUTE ON FUNCTION finalize_reviewed_promote(uuid, uuid, uuid, text, uuid) TO authenticated, service_role;");
+    // P14 final review: seven arguments (the force and its reason, both
+    // DEFAULTed); the five-argument form is dropped before the create, and
+    // the grants name the new signature
+    expect(M).toContain("REVOKE ALL ON FUNCTION finalize_reviewed_promote(uuid, uuid, uuid, text, uuid, boolean, text) FROM PUBLIC, anon;");
+    expect(M).toContain("GRANT EXECUTE ON FUNCTION finalize_reviewed_promote(uuid, uuid, uuid, text, uuid, boolean, text) TO authenticated, service_role;");
+    expect(M).not.toMatch(/(?:GRANT|REVOKE)[^;]*finalize_reviewed_promote\(uuid, uuid, uuid, text, uuid\)/);
+    expect(M.indexOf("DROP FUNCTION IF EXISTS finalize_reviewed_promote(uuid, uuid, uuid, text, uuid);")).toBeLessThan(M.indexOf(F_HEAD));
+    expect(F).toContain("  p_actor uuid DEFAULT NULL,\n  p_force_hold boolean DEFAULT false,\n  p_override_reason text DEFAULT NULL\n) RETURNS text");
+  });
+
+  it("P14 final review (REV-20) — the review promote's own recorded force: a controller's only, while a hold is active, flagged ONLY around its own promote, recorded in the same transaction", () => {
+    const force = F.slice(F.indexOf("  IF p_force_hold THEN"), F.indexOf("  -- The promote: the write trg_document_publish_guard inspects, AS THE"));
+    expect(code(force.split("\n"))).toEqual([
+      "  IF p_force_hold THEN",
+      "    SELECT d.org_id INTO v_org FROM documents d WHERE d.id = p_document_id;",
+      "    IF v_org IS NOT NULL",
+      "       AND (CASE WHEN auth.uid() IS NOT NULL THEN is_org_controller(v_org)",
+      "                 ELSE EXISTS (SELECT 1 FROM org_members m",
+      "                               WHERE m.org_id = v_org AND m.uid = p_actor AND m.status = 'active'",
+      "                                 AND (m.role IN ('Admin','DocCtrl') OR m.roles && ARRAY['Admin','DocCtrl']::text[]))",
+      "            END)",
+      "       AND EXISTS (SELECT 1 FROM document_holds h",
+      "                    WHERE h.document_id = p_document_id AND h.released_at IS NULL) THEN",
+      "      v_hold_forced := TRUE;",
+      "    END IF;",
+      "  END IF;",
+    ]);
+    // the session's tier is the one the guard reads (is_org_controller); a
+    // service-role call's actor is judged by publish_revision's own predicate
+    expect(G.next).toContain("is_org_controller(NEW.org_id)");
+    expect(P.next).toContain("AND (role IN ('Admin','DocCtrl') OR roles && ARRAY['Admin','DocCtrl']::text[])");
+    // the flag: set immediately before the promote, cleared immediately after it — before the no_match return
+    expect(F).toContain("  IF v_hold_forced THEN\n    PERFORM set_config('app.publish_hold_override', p_document_id::text, true);\n  END IF;\n  UPDATE documents\n     SET current_version_id = p_pending_id,");
+    expect(F).toContain("  GET DIAGNOSTICS v_n = ROW_COUNT;\n  IF v_hold_forced THEN\n    PERFORM set_config('app.publish_hold_override', '', true);\n  END IF;\n  IF v_n = 0 THEN\n    RETURN 'no_match';");
+    expect(F.split("set_config(").length - 1).toBe(2);
+    // the record: after the bookkeeping, before the answer, naming the holds, the reason and the door
+    const record = F.slice(F.indexOf("  IF v_hold_forced THEN\n    INSERT INTO audit_logs"), F.indexOf("  RETURN 'promoted';"));
+    expect(record).toContain("VALUES ('REV_HOLD_OVERRIDDEN', p_document_id::text, 'document', v_org, COALESCE(auth.uid(), p_actor),");
+    expect(record).toContain("'via', 'review_promote',");
+    expect(record).toMatch(/'holds', \(SELECT jsonb_agg\(jsonb_build_object\('id', h\.id, 'reason', h\.reason\) ORDER BY h\.opened_at\)/);
+    expect(record).toContain("'reason', NULLIF(btrim(COALESCE(p_override_reason, '')), ''),");
+    expect(F.indexOf(record)).toBeGreaterThan(F.indexOf("    UPDATE document_versions SET superseded_at = v_now WHERE id = p_expected_current;"));
+    // still SECURITY INVOKER: the guard and the row-level policies decide every write, the record included
+    expect(F).toContain("LANGUAGE plpgsql SECURITY INVOKER SET search_path = public AS $$");
+    // in this file the flag is set only by publish_revision and finalize_reviewed_promote (the guard reads it)
+    const setters = [GUARD_HEAD, PUB_HEAD, F_HEAD].filter((h) => between(M, h, "\n$$;").includes("set_config('app.publish_hold_override'"));
+    expect(setters).toEqual([PUB_HEAD, F_HEAD]);
   });
 
   it("does the app's three writes, in the app's order, with the app's compare-and-set — and raises (rolling the promote back) when a bookkeeping write matches no row", () => {
@@ -341,7 +390,7 @@ vi.mock("@/lib/effectiveDate", () => ({ applyEffectiveDate: vi.fn(async () => un
 vi.mock("@/lib/intents", () => ({ recordIntent: vi.fn(async () => undefined) }));
 vi.mock("@/lib/checklists", () => ({ sweepEvidenceForDocument: vi.fn(async () => ({ projects: 0 })) }));
 
-import { finalizeReviewedRevision, finalizeReasonMessage } from "@/lib/reviewControl";
+import { finalizeReviewedRevision, finalizeReasonMessage, isFinalizeHoldRefusal } from "@/lib/reviewControl";
 
 /** An Issued document at v1 with an approved-to-be draft v2A in review —
  *  an intake approval (requireRosterComplete: false), so the roster read is
@@ -438,8 +487,42 @@ describe("RG-12 — finalizeReviewedRevision promotes through finalize_reviewed_
     }
   });
 
-  it("the inspector's Publish button surfaces any refusal through finalizeReasonMessage (pinned by source)", () => {
+  it("the inspector's Publish button surfaces any refusal through finalizeReasonMessage — except a controller's hold refusal, which offers the recorded force (pinned by source; driven rendered in dcRoundFReviewHoldForce.test.ts)", () => {
     const src = readFileSync(join(process.cwd(), "components/documents/ReviewGateSection.tsx"), "utf8");
-    expect(src).toContain("if (!res.published) { await appAlert({ tone: \"danger\", message: finalizeReasonMessage(res.reason) }); }");
+    expect(src).toContain("if (!forceHold && isController && isFinalizeHoldRefusal(res.reason)) {");
+    expect(src).toContain("await appAlert({ tone: \"danger\", message: finalizeReasonMessage(res.reason) });");
+  });
+
+  it("P14 final review — a controller's force rides the call (p_force_hold, the reason trimmed or null); without it the call is exactly the five named arguments", async () => {
+    const forced = (overrideReason?: string | null) => finalizeReviewedRevision({ orgId: "o1", documentId: "d1", actorId: "ctl1", actorName: "ctl@example.com", requireRosterComplete: false, forceHold: true, overrideReason });
+    expect(await forced("  shutdown work pack issued under MOC-77  ")).toEqual({ published: true });
+    expect(st.rpcCalls.filter((c) => c.fn === "finalize_reviewed_promote")[0].args).toEqual({
+      p_document_id: "d1", p_pending_id: "v2", p_expected_current: "v1", p_base_rev: "2", p_actor: "ctl1",
+      p_force_hold: true, p_override_reason: "shutdown work pack issued under MOC-77",
+    });
+    seed(); st.rpcCalls = [];
+    await forced("   ");
+    expect(st.rpcCalls[0].args).toMatchObject({ p_force_hold: true, p_override_reason: null });
+    seed(); st.rpcCalls = [];
+    await finalizeReviewedRevision({ orgId: "o1", documentId: "d1", actorId: "ctl1", requireRosterComplete: false, forceHold: false, overrideReason: "ignored" });
+    expect(Object.keys(st.rpcCalls[0].args).sort()).toEqual(["p_actor", "p_base_rev", "p_document_id", "p_expected_current", "p_pending_id"]);
+  });
+
+  it("P14 final review — a database without the function takes the three checked writes even when forced: that path carries no force and writes nothing more", async () => {
+    st.rpcAnswer = { data: null, error: { code: "PGRST202", message: "Could not find the function public.finalize_reviewed_promote" } };
+    expect(await finalizeReviewedRevision({ orgId: "o1", documentId: "d1", actorId: "ctl1", requireRosterComplete: false, forceHold: true, overrideReason: "MOC-77" })).toEqual({ published: true });
+    const w = legacyWrites();
+    expect(w).toHaveLength(3);
+    expect(w[0].payload).not.toHaveProperty("p_force_hold");
+    expect(st.audits.map((a) => a.action)).not.toContain("REV_HOLD_OVERRIDDEN");
+  });
+
+  it("P14 final review — isFinalizeHoldRefusal: either of the guard's hold sentences (read from the migration), nothing else", () => {
+    const sqlSentences = [...M.matchAll(/'(Document has an active hold;[^']*(?:''[^']*)*)'/g)].map((m) => m[1].replace(/''/g, "'"));
+    expect(sqlSentences.length).toBeGreaterThanOrEqual(3);
+    for (const sentence of sqlSentences) expect(isFinalizeHoldRefusal(sentence), sentence).toBe(true);
+    for (const other of [undefined, "", "This revision still has outstanding review sign-offs; complete the review before publishing.", "You do not have authority to publish revisions in this library.", "permission denied for table documents"]) {
+      expect(isFinalizeHoldRefusal(other), String(other)).toBe(false);
+    }
   });
 });

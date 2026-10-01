@@ -27,7 +27,12 @@
 --           authenticated and service_role (the callers), never PUBLIC /
 --           anon. The app calls it first and keeps its three-step path only
 --           for a database without this function (PGRST202 / 42883), so the
---           app may deploy before or after this paste.
+--           app may deploy before or after this paste. P14 final review: it
+--           also carries the review promote's OWN recorded force past an
+--           active hold (p_force_hold, p_override_reason — REV-20 below), so
+--           the controller's review promote of a held Draft / In Review
+--           document that REV-20 (b) would otherwise refuse stays possible,
+--           recorded; both arguments DEFAULT to the call without a force.
 --           document_versions.updated_at: the relabel has always written it
 --           (lib/reviewControl.ts) but no migration in this repository adds
 --           it; it is added IF NOT EXISTS so the function cannot fail on a
@@ -55,22 +60,28 @@
 --           (b) ONE write that moves the pointer AND makes the status an
 --               issue (a direct PATCH; the review promote of a Draft / In
 --               Review document) — an advancing write a controller passed.
---               Now a controller passes a hold there only through
---               publish_revision's force: publish_revision sets the
---               transaction-local flag app.publish_hold_override to the
---               document's id around its promote (and clears it after), and
---               RECORDS the force past the hold — REV_HOLD_OVERRIDDEN, in
---               the same transaction, naming the holds — as it records a
---               lock override (REV_LOCK_OVERRIDDEN, DCK-8). A bare UPDATE
---               carries no flag and is refused ("…release the hold before
---               issuing it, or publish over it with Document Control's
---               recorded override.").
+--               Now a controller passes a hold there only through a
+--               recorded force: publish_revision's, or (P14 final review)
+--               the review promote's own — finalize_reviewed_promote's
+--               p_force_hold, which a controller is offered after the hold
+--               refused the promote; without it a legitimate controller
+--               flow (finalizing a held Draft's review) became impossible.
+--               Each sets the transaction-local flag
+--               app.publish_hold_override to the document's id around its
+--               promote (and clears it after), and RECORDS the force past
+--               the hold — REV_HOLD_OVERRIDDEN, in the same transaction,
+--               naming the holds — as publish_revision records a lock
+--               override (REV_LOCK_OVERRIDDEN, DCK-8). A bare UPDATE carries
+--               no flag and is refused ("…release the hold before issuing
+--               it, or publish over it with Document Control's recorded
+--               override.").
 --           Both limbs bind a controller only: below a controller nothing
 --           changes (the publisher tier's own hold check, the guard's last,
 --           still refuses every advancing write over a hold in its own
 --           words). The flag cannot be set by a client: PostgREST sets only
 --           request.* settings, and no function a client may call sets it
---           but publish_revision, after re-deriving the controller tier.
+--           but publish_revision and finalize_reviewed_promote, each after
+--           re-deriving the controller tier, each around its own promote.
 --
 --   RE-CREATED FROM THE NEWEST BODIES (found by scanning; lineDiff-pinned —
 --   every line of each base body is kept, the lines added are exactly the
@@ -82,9 +93,11 @@
 --   service-role call that may name its actor).
 --
 -- NOT a widening: every change refuses something that was allowed, or
--- records it. DEC-30 inventories (aggregate counts only, captured BEFORE the
+-- records it (the review promote's force passes, recorded, only what a
+-- controller's promote passed unrecorded before this paste). DEC-30 inventories (aggregate counts only, captured BEFORE the
 -- transaction): the documents whose finalize or direct pointer-and-issue
--- write by a controller is now refused while a hold stands; the unstamped
+-- write by a controller is now refused while a hold stands (a finalize
+-- unless forced, recorded); the unstamped
 -- Archived / Void retirements, and those of them under an active hold (their
 -- exit into an issue now needs the hold released, controllers included);
 -- the unstamped Superseded documents REV-20 spares, and those of them under
@@ -101,7 +114,9 @@
 -- relabel still syncs the label as before), 20261143, 20261149 and
 -- 20261150. Deploy the app carrying P14 with or after the paste; the app
 -- before it keeps working (it never calls finalize_reviewed_promote, and its
--- three-step promote meets the same guard).
+-- three-step promote meets the same guard — with no force, so its
+-- controller's review promote of a HELD Draft / In Review document is
+-- refused until the hold is released or the app carrying P14 is deployed).
 -- Single paste: prerequisite check → temp-table inventory →
 -- BEGIN/DDL/COMMIT → one SELECT (check text, ok boolean, n text).
 -- ⚠ APPLIED BY HAND (DEC-30). Idempotent.
@@ -125,7 +140,7 @@ $$;
 -- ── Pre-apply inventory (aggregate only; captured BEFORE the DDL) ───────────
 DROP TABLE IF EXISTS dc_round_f_151_before;
 CREATE TEMP TABLE dc_round_f_151_before AS
-SELECT 'inventory (before apply): documents in Draft / In Review with a review draft pending and an active hold (REV-20: a controller''s finalize of these is now refused until the hold is released)' AS inventory,
+SELECT 'inventory (before apply): documents in Draft / In Review with a review draft pending and an active hold (REV-20: a controller''s finalize of these is now refused until the hold is released, or forced with Document Control''s recorded override)' AS inventory,
        COUNT(*)::text AS n
   FROM documents d
  WHERE d.pending_version_id IS NOT NULL
@@ -182,22 +197,60 @@ BEGIN;
 ALTER TABLE document_versions ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ;
 
 -- ── 2. RG-12: the review promote and its bookkeeping, ONE transaction ──────
+-- REV-20 (P14 final review): with its own recorded force past an active hold
+-- (p_force_hold / p_override_reason), as publish_revision's. The two
+-- DEFAULTed arguments change the signature, which CREATE OR REPLACE cannot
+-- do: the five-argument form (this file's earlier text, never pasted — but a
+-- database that took it must end with ONE signature, or PostgREST's call by
+-- name is ambiguous) is dropped first. Nothing references it: no view,
+-- trigger, policy or other function calls it; only the app's RPC does.
+DROP FUNCTION IF EXISTS finalize_reviewed_promote(uuid, uuid, uuid, text, uuid);
 CREATE OR REPLACE FUNCTION finalize_reviewed_promote(
   p_document_id uuid,
   p_pending_id uuid,
   p_expected_current uuid,
   p_base_rev text,
-  p_actor uuid DEFAULT NULL
+  p_actor uuid DEFAULT NULL,
+  p_force_hold boolean DEFAULT false,
+  p_override_reason text DEFAULT NULL
 ) RETURNS text
 LANGUAGE plpgsql SECURITY INVOKER SET search_path = public AS $$
 DECLARE
   v_now timestamptz := now();
   v_n   integer;
+  v_org uuid;
+  v_hold_forced boolean := false;
 BEGIN
+  -- REV-20 (P14 final review): a controller's force past an active hold is
+  -- an ACT, as publish_revision's (§4 below). It is honoured only for a
+  -- controller — the session's tier as the publish guard reads it
+  -- (is_org_controller), or, for a service-role call, the named actor's,
+  -- re-derived as publish_revision derives it — and only while a hold is
+  -- active. The guard then admits this promote over the hold under the
+  -- transaction-local flag set around it, and the force is recorded below in
+  -- the same transaction (REV_HOLD_OVERRIDDEN). Anyone else's force is
+  -- ignored: the guard refuses their promote over a hold in its own words.
+  IF p_force_hold THEN
+    SELECT d.org_id INTO v_org FROM documents d WHERE d.id = p_document_id;
+    IF v_org IS NOT NULL
+       AND (CASE WHEN auth.uid() IS NOT NULL THEN is_org_controller(v_org)
+                 ELSE EXISTS (SELECT 1 FROM org_members m
+                               WHERE m.org_id = v_org AND m.uid = p_actor AND m.status = 'active'
+                                 AND (m.role IN ('Admin','DocCtrl') OR m.roles && ARRAY['Admin','DocCtrl']::text[]))
+            END)
+       AND EXISTS (SELECT 1 FROM document_holds h
+                    WHERE h.document_id = p_document_id AND h.released_at IS NULL) THEN
+      v_hold_forced := TRUE;
+    END IF;
+  END IF;
+
   -- The promote: the write trg_document_publish_guard inspects, AS THE
   -- CALLER. Compare-and-set on both pointers: a concurrent finaliser (the
   -- promote clears pending_version_id) or a document that moved on matches
   -- no row, and nothing else is written.
+  IF v_hold_forced THEN
+    PERFORM set_config('app.publish_hold_override', p_document_id::text, true);
+  END IF;
   UPDATE documents
      SET current_version_id = p_pending_id,
          rev = p_base_rev,
@@ -210,6 +263,9 @@ BEGIN
      AND pending_version_id = p_pending_id
      AND current_version_id IS NOT DISTINCT FROM p_expected_current;
   GET DIAGNOSTICS v_n = ROW_COUNT;
+  IF v_hold_forced THEN
+    PERFORM set_config('app.publish_hold_override', '', true);
+  END IF;
   IF v_n = 0 THEN
     RETURN 'no_match';
   END IF;
@@ -242,11 +298,32 @@ BEGIN
     END IF;
   END IF;
 
+  -- REV-20 (P14 final review): the force past a hold is on the document's
+  -- record in the same transaction — a record that cannot be written rolls
+  -- the promote back with it. Written as the caller: audit_logs' insert
+  -- policy admits the session's own row in its own org.
+  IF v_hold_forced THEN
+    INSERT INTO audit_logs (action, resource_id, resource_type, org_id, user_id, user_email, details)
+    VALUES ('REV_HOLD_OVERRIDDEN', p_document_id::text, 'document', v_org, COALESCE(auth.uid(), p_actor),
+            (SELECT m.email FROM org_members m WHERE m.org_id = v_org AND m.uid = COALESCE(auth.uid(), p_actor) LIMIT 1),
+            jsonb_build_object(
+              'via', 'review_promote',
+              'holds', (SELECT jsonb_agg(jsonb_build_object('id', h.id, 'reason', h.reason) ORDER BY h.opened_at)
+                          FROM document_holds h
+                         WHERE h.document_id = p_document_id AND h.released_at IS NULL),
+              'reason', NULLIF(btrim(COALESCE(p_override_reason, '')), ''),
+              'versionId', p_pending_id,
+              'revisionLabel', p_base_rev,
+              'newStatus', 'Issued',
+              'branch', false
+            ));
+  END IF;
+
   RETURN 'promoted';
 END;
 $$;
-REVOKE ALL ON FUNCTION finalize_reviewed_promote(uuid, uuid, uuid, text, uuid) FROM PUBLIC, anon;
-GRANT EXECUTE ON FUNCTION finalize_reviewed_promote(uuid, uuid, uuid, text, uuid) TO authenticated, service_role;
+REVOKE ALL ON FUNCTION finalize_reviewed_promote(uuid, uuid, uuid, text, uuid, boolean, text) FROM PUBLIC, anon;
+GRANT EXECUTE ON FUNCTION finalize_reviewed_promote(uuid, uuid, uuid, text, uuid, boolean, text) TO authenticated, service_role;
 
 -- ── 3. REV-20: the publish guard — 20261144 body + the two hold limbs ──────
 CREATE OR REPLACE FUNCTION enforce_document_publish_guard()
@@ -323,7 +400,8 @@ BEGIN
   -- (v_restoring) passes a controller; the bare un-supersede left open is
   -- REV-22. (b) ONE write that moves the
   -- pointer AND makes the status an issue: a controller passes a hold only
-  -- through publish_revision's recorded force, which sets the
+  -- through a recorded force — publish_revision's, or the review promote's
+  -- (finalize_reviewed_promote, P14 final review) — each of which sets the
   -- transaction-local flag app.publish_hold_override to this document's id
   -- (20261151) and records REV_HOLD_OVERRIDDEN; a bare UPDATE carries no
   -- flag. Both bind a controller only: below a controller nothing changes —
@@ -555,7 +633,8 @@ BEGIN
         USING ERRCODE = 'check_violation';
     END IF;
     -- REV-20 (b): a controller's pointer-and-issue write over an active hold
-    -- carries publish_revision's recorded force, or it is refused.
+    -- carries a recorded force (publish_revision's or the review promote's),
+    -- or it is refused.
     IF v_unforced_issue AND EXISTS (
          SELECT 1 FROM document_holds h
           WHERE h.document_id = NEW.id AND h.released_at IS NULL
@@ -953,7 +1032,7 @@ GRANT EXECUTE ON FUNCTION publish_revision(uuid, uuid, text, jsonb, uuid, text, 
 COMMIT;
 
 -- ── Verification + inventory (the only result set the SQL editor shows) ──
--- Probes: ok = true × 10. Inventory rows: n = the aggregate count.
+-- Probes: ok = true × 11. Inventory rows: n = the aggregate count.
 -- pg_proc.prosrc is verbatim (an apostrophe inside a body's string literal is
 -- '''' here).
 SELECT 'RG-12: finalize_reviewed_promote promotes with compare-and-set on both pointers, then relabels / approves the draft and supersedes the prior revision in the SAME call, raising (so rolling the promote back) when either matches no row' AS check,
@@ -971,10 +1050,23 @@ UNION ALL
 SELECT 'RG-12: finalize_reviewed_promote runs as the CALLER (SECURITY INVOKER — the publish guard and the row-level policies apply), search_path pinned; authenticated and service_role may execute it, PUBLIC and anon may not',
        EXISTS (SELECT 1 FROM pg_proc WHERE proname = 'finalize_reviewed_promote'
                 AND NOT prosecdef AND proconfig @> ARRAY['search_path=public'])
-       AND has_function_privilege('authenticated', 'finalize_reviewed_promote(uuid, uuid, uuid, text, uuid)', 'EXECUTE')
-       AND has_function_privilege('service_role', 'finalize_reviewed_promote(uuid, uuid, uuid, text, uuid)', 'EXECUTE')
-       AND NOT has_function_privilege('public', 'finalize_reviewed_promote(uuid, uuid, uuid, text, uuid)', 'EXECUTE')
-       AND NOT has_function_privilege('anon', 'finalize_reviewed_promote(uuid, uuid, uuid, text, uuid)', 'EXECUTE'),
+       AND has_function_privilege('authenticated', 'finalize_reviewed_promote(uuid, uuid, uuid, text, uuid, boolean, text)', 'EXECUTE')
+       AND has_function_privilege('service_role', 'finalize_reviewed_promote(uuid, uuid, uuid, text, uuid, boolean, text)', 'EXECUTE')
+       AND NOT has_function_privilege('public', 'finalize_reviewed_promote(uuid, uuid, uuid, text, uuid, boolean, text)', 'EXECUTE')
+       AND NOT has_function_privilege('anon', 'finalize_reviewed_promote(uuid, uuid, uuid, text, uuid, boolean, text)', 'EXECUTE'),
+       NULL
+UNION ALL
+SELECT 'REV-20 (P14 final review): finalize_reviewed_promote has exactly one signature (7 arguments); its controller force past a hold sets the flag around its own promote, clears it, and records REV_HOLD_OVERRIDDEN',
+       (SELECT COUNT(*) = 1 FROM pg_proc WHERE proname = 'finalize_reviewed_promote')
+       AND (SELECT pronargs = 7
+               AND prosrc LIKE '%IF p_force_hold THEN%'
+               AND prosrc LIKE '%THEN is_org_controller(v_org)%'
+               AND prosrc LIKE '%v_hold_forced := TRUE;%'
+               AND prosrc LIKE '%PERFORM set_config(''app.publish_hold_override'', p_document_id%'
+               AND prosrc LIKE '%PERFORM set_config(''app.publish_hold_override'', '''', true);%'
+               AND prosrc LIKE '%VALUES (''REV_HOLD_OVERRIDDEN''%'
+               AND prosrc LIKE '%''via'', ''review_promote''%'
+              FROM pg_proc WHERE proname = 'finalize_reviewed_promote'),
        NULL
 UNION ALL
 SELECT 'RG-12: document_versions.updated_at exists (the relabel writes it)',
