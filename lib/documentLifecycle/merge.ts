@@ -29,6 +29,7 @@ import {
   withCompensation,
   archiveRolledBackDoc,
   releaseCarriedHolds,
+  startClocksForIssuedDocuments,
 } from "./common";
 
 export type MergeTargetSpec =
@@ -92,6 +93,9 @@ export interface MergeDocumentsResult {
   supersededSourceIds: string[];
   holdsCopied: number;
   projectMembershipsCopied: number;
+  /** REV-15: a newly created target whose review clock / acknowledgment
+   *  roster did not start (the merge stands); empty otherwise. */
+  complianceClockWarnings: string[];
 }
 
 interface MergeGate {
@@ -432,6 +436,15 @@ async function finishMerge(
     });
   }
 
+  // 6b. REV-15: a target CREATED by the merge is an issued first revision —
+  //     its review clock and read-&-understood roster start now, after the
+  //     saga (the call createDocumentWithFile makes). An extended target's
+  //     rev-up started its own through the post-publish pipeline; without a
+  //     rev-up its content did not change.
+  const complianceClockWarnings = target.kind === "create_new"
+    ? await startClocksForIssuedDocuments([targetDocumentId], actor)
+    : [];
+
   // 7. Project memberships from each source — a secondary effect, reported
   //    via an honest count, never cause for a rollback.
   let projectsCopied = 0;
@@ -459,6 +472,7 @@ async function finishMerge(
     supersededSourceIds: absorbed.map((s) => s.id!),
     holdsCopied,
     projectMembershipsCopied: projectsCopied,
+    complianceClockWarnings,
   };
 }
 

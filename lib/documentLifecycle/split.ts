@@ -22,6 +22,7 @@ import {
   withCompensation,
   archiveRolledBackDoc,
   releaseCarriedHolds,
+  startClocksForIssuedDocuments,
 } from "./common";
 
 export interface SplitTargetSpec {
@@ -81,6 +82,9 @@ export interface SplitDocumentResult {
   newDocumentIds: string[];
   holdsCopied: number;
   projectMembershipsCopied: number;
+  /** REV-15: a new sheet whose review clock / acknowledgment roster did not
+   *  start (the split stands); empty when every sheet's started. */
+  complianceClockWarnings: string[];
 }
 
 export async function splitDocument(input: SplitDocumentInput): Promise<SplitDocumentResult> {
@@ -246,6 +250,12 @@ export async function splitDocument(input: SplitDocumentInput): Promise<SplitDoc
     },
   });
 
+  // 4b. REV-15: every new sheet is an ISSUED first revision — its review
+  //     clock and read-&-understood roster start now (the call
+  //     createDocumentWithFile makes), after the saga, so nobody is asked to
+  //     acknowledge a sheet a rollback archived.
+  const complianceClockWarnings = await startClocksForIssuedDocuments(newDocumentIds, actor);
+
   // 5. Project memberships are a SECONDARY effect: the split itself (new
   //    docs + carried holds + supersession) is durable and correct above; a
   //    membership hiccup is reported via an honest count, never a rollback.
@@ -281,5 +291,6 @@ export async function splitDocument(input: SplitDocumentInput): Promise<SplitDoc
     newDocumentIds,
     holdsCopied,
     projectMembershipsCopied: projectsCopied,
+    complianceClockWarnings,
   };
 }

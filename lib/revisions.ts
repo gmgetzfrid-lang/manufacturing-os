@@ -44,6 +44,7 @@ import { onDocumentIssued } from "@/lib/reviewCycles";
 import { onDocumentIssuedAck } from "@/lib/acknowledgments";
 import { recomputeRetention } from "@/lib/retention";
 import { assertNotOnHold } from "@/lib/holdGate";
+import { NOT_CURRENT_STATUSES } from "@/lib/aiBoundary";
 
 // ─── Publish contract errors ─────────────────────────────────────────────
 //
@@ -682,6 +683,40 @@ export async function revokeLiveSharesForDocument(documentId: string, actorUserI
 export const CREATION_STATUSES = ["Draft", "Issued"] as const;
 export type CreationStatus = (typeof CREATION_STATUSES)[number];
 
+/** REV-15 / REV-17: the statuses in which a NEW document is not a controlled
+ *  copy — work in progress. With the shared not-current set
+ *  (NOT_CURRENT_STATUSES), they are the only statuses a first revision may
+ *  be written under without being an ISSUE. */
+export const WORK_IN_PROGRESS_STATUSES: ReadonlySet<string> = new Set(["Draft", "In Review"]);
+
+/** REV-15 / REV-17: does a document born in this status ISSUE its first
+ *  revision as a controlled copy? Everything but work in progress and the
+ *  not-current statuses does (Issued, IFC, a library's own status). Such a
+ *  creation starts the compliance clocks (startIssuedDocumentClocks), and in
+ *  a library whose policy requires sign-off only a controller may make it —
+ *  the database's publish guard reads the same set (20261139, pinned by
+ *  test). */
+export function isControlledIssueStatus(status: string | null | undefined): boolean {
+  const s = (status ?? "").trim();
+  return !WORK_IN_PROGRESS_STATUSES.has(s) && !NOT_CURRENT_STATUSES.has(s);
+}
+
+/** REV-15: the compliance clocks a newly ISSUED document starts — the
+ *  periodic-review clock and the read-&-understood roster its governing
+ *  policies call for. The ONE call every creation door makes for an issued
+ *  first revision (createDocumentWithFile, the split / merge sheets once
+ *  their operation can no longer roll back, the library's bulk upload) —
+ *  never a parallel path. A rev-up starts them through
+ *  runPostPublishSideEffects instead. */
+export async function startIssuedDocumentClocks(input: {
+  orgId: string; documentId: string; actorUserId: string; actorName?: string | null;
+}): Promise<void> {
+  // Seed the review clock so a new doc picks up any library/folder review cycle.
+  await onDocumentIssued({ orgId: input.orgId, documentId: input.documentId, userId: input.actorUserId, userName: input.actorName });
+  // Open the read-&-understood roster if an ack policy covers this new doc.
+  await onDocumentIssuedAck({ orgId: input.orgId, documentId: input.documentId, actorId: input.actorUserId, actorName: input.actorName });
+}
+
 /** REV-11: the review policy that governs a NEW controlled document in this
  *  folder / library, and whether it may be issued without reviewers. The
  *  first issue of a document is outside the database's revision gate (RG-7),
@@ -903,10 +938,8 @@ export async function createDocumentWithFile(input: {
     },
   });
   if (input.status === "Issued") {
-    // Seed the review clock so a new doc picks up any library/folder review cycle.
-    await onDocumentIssued({ orgId: input.orgId, documentId, userId: input.actorUserId, userName: input.actorEmail });
-    // Open the read-&-understood roster if an ack policy covers this new doc.
-    await onDocumentIssuedAck({ orgId: input.orgId, documentId, actorId: input.actorUserId, actorName: input.actorEmail });
+    // REV-15: the one clock-start path every creation door shares.
+    await startIssuedDocumentClocks({ orgId: input.orgId, documentId, actorUserId: input.actorUserId, actorName: input.actorEmail });
   }
   // Seed retention state so a doc created AFTER a library/folder retention
   // policy exists is not invisible to the retention system.

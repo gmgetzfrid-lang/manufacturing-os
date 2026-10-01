@@ -1695,3 +1695,116 @@ describe("REV-10 (review fix 4) — only LIVE links (unrevoked and unexpired, P1
     expect(src("lib/revisions.ts")).toMatch(/RETIRER'S BROWSER/);
   });
 });
+
+// ─── REV-15 (P12 WAVE-2 RESIDUALS) ────────────────────────────────────────
+describe("REV-15 — split / merge sheets and the bulk upload start the review clock and the ack roster, through the ONE path", () => {
+  const sheet = (n: string) => ({ documentNumber: n, title: n, assetTags: [], file: pdf(`${n}.pdf`), initialRevLabel: "0", changeLog: "" });
+  const started = () => vi.mocked(onDocumentIssued).mock.calls.map((c) => (c[0] as { documentId: string }).documentId).sort();
+  const rostered = () => vi.mocked(onDocumentIssuedAck).mock.calls.map((c) => (c[0] as { documentId: string }).documentId).sort();
+
+  it("a split starts the clock and the roster of EVERY new sheet — after the saga committed (after DOC_SPLIT), attributed to the actor", async () => {
+    const s = seedDoc("k1");
+    let splitRecordedWhenStarted = false;
+    vi.mocked(onDocumentIssued).mockImplementation(async () => { splitRecordedWhenStarted = audit("DOC_SPLIT").length === 1; });
+    const r = await splitDocument({ source: asRecord(s), libraryId: LIB, targets: [sheet("K1A"), sheet("K1B")], reason: "declutter", orgId: ORG, actorUserId: ME, actorEmail: "me@x" });
+    expect(started()).toEqual([...r.newDocumentIds].sort());
+    expect(rostered()).toEqual([...r.newDocumentIds].sort());
+    expect(splitRecordedWhenStarted).toBe(true); // the irreversible half had run: the operation could no longer roll back
+    expect(vi.mocked(onDocumentIssued).mock.calls[0][0]).toMatchObject({ orgId: ORG, userId: ME, userName: "me@x" });
+    expect(vi.mocked(onDocumentIssuedAck).mock.calls[0][0]).toMatchObject({ orgId: ORG, actorId: ME, actorName: "me@x" });
+    expect(r.complianceClockWarnings).toEqual([]);
+    // the source's clocks are not restarted — it is retired, not issued
+    expect(started()).not.toContain("k1");
+  });
+
+  it("a split that ROLLS BACK starts no clock and opens no roster (nobody is asked to acknowledge an archived sheet)", async () => {
+    const s = seedDoc("k2");
+    state.db.refuseWrites.add("document_supersessions");
+    await expect(splitDocument({ source: asRecord(s), libraryId: LIB, targets: [sheet("K2A"), sheet("K2B")], reason: "x", orgId: ORG, actorUserId: ME }))
+      .rejects.toThrow(/rolled back/);
+    expect(onDocumentIssued).not.toHaveBeenCalled();
+    expect(onDocumentIssuedAck).not.toHaveBeenCalled();
+  });
+
+  it("a clock that fails to start leaves the split standing and is returned per sheet — never swallowed, never a rollback", async () => {
+    const s = seedDoc("k3");
+    vi.mocked(onDocumentIssued).mockImplementationOnce(async () => { throw new Error("review policy unreadable"); });
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const r = await splitDocument({ source: asRecord(s), libraryId: LIB, targets: [sheet("K3A"), sheet("K3B")], reason: "x", orgId: ORG, actorUserId: ME });
+    warn.mockRestore();
+    expect(docRow("k3").status).toBe("Superseded");
+    expect(r.complianceClockWarnings).toHaveLength(1);
+    expect(r.complianceClockWarnings[0]).toMatch(/review clock \/ acknowledgment roster of document .* did not start \(review policy unreadable\)/);
+    expect(started()).toHaveLength(2); // the second sheet still started
+  });
+
+  it("a merge into a NEW target starts its clock and roster after the saga; an extended target (rev-up through the pipeline, or none) starts none here", async () => {
+    const a = seedDoc("k4"); const b = seedDoc("k5");
+    const r = await mergeDocuments({
+      sources: [asRecord(a), asRecord(b)],
+      target: { kind: "create_new", documentNumber: "K-NEW", title: "m", assetTags: [], file: pdf("m.pdf"), initialRevLabel: "0", changeLog: "", libraryId: LIB },
+      reason: "combine", orgId: ORG, actorUserId: ME,
+    });
+    expect(started()).toEqual([r.targetDocumentId]);
+    expect(rostered()).toEqual([r.targetDocumentId]);
+    expect(r.complianceClockWarnings).toEqual([]);
+
+    vi.mocked(onDocumentIssued).mockClear(); vi.mocked(onDocumentIssuedAck).mockClear();
+    const t = seedDoc("k6"); const c = seedDoc("k7");
+    const kept = await mergeDocuments({
+      sources: [asRecord(t), asRecord(c)],
+      target: { kind: "extend_existing", target: asRecord(t), libraryId: LIB, assetTagsUnion: [] },
+      reason: "absorb", orgId: ORG, actorUserId: ME,
+    });
+    expect(onDocumentIssued).not.toHaveBeenCalled();
+    expect(kept.complianceClockWarnings).toEqual([]);
+  });
+
+  it("createDocumentWithFile, split / merge and the bulk upload share startIssuedDocumentClocks — no parallel clock path", () => {
+    const rev = src("lib/revisions.ts");
+    // the helper is the only caller of the two clock functions in lib/revisions.ts
+    const helper = rev.slice(rev.indexOf("export async function startIssuedDocumentClocks"), rev.indexOf("export async function startIssuedDocumentClocks") + 900);
+    expect(helper).toMatch(/await onDocumentIssued\(\{ orgId: input\.orgId, documentId: input\.documentId, userId: input\.actorUserId, userName: input\.actorName \}\);/);
+    expect(helper).toMatch(/await onDocumentIssuedAck\(\{ orgId: input\.orgId, documentId: input\.documentId, actorId: input\.actorUserId, actorName: input\.actorName \}\);/);
+    expect(rev.match(/await onDocumentIssued\(/g)).toHaveLength(1);
+    expect(rev.match(/await onDocumentIssuedAck\(/g)).toHaveLength(1);
+    expect(rev).toMatch(/if \(input\.status === "Issued"\) \{\s*\/\/ REV-15[^\n]*\n\s*await startIssuedDocumentClocks\(\{ orgId: input\.orgId, documentId, actorUserId: input\.actorUserId, actorName: input\.actorEmail \}\);/);
+    for (const f of ["lib/documentLifecycle/split.ts", "lib/documentLifecycle/merge.ts", "lib/documentLifecycle/common.ts"]) {
+      expect(src(f), f).not.toMatch(/onDocumentIssued(Ack)?\(/);
+    }
+  });
+
+  it("the bulk upload (uploadOne): an issued file is gated BEFORE anything is written, its pointer write is checked, its creation recorded, and its clocks started", () => {
+    const page = src("app/(protected)/documents/[libraryId]/page.tsx");
+    const start = page.indexOf("      const uploadOne = async (");
+    const body = page.slice(start, page.indexOf("\n      };", start));
+    const at = (needle: string) => { const i = body.indexOf(needle); expect(i, needle).toBeGreaterThan(-1); return i; };
+    const gate = at("? await resolveCreationReviewGate({");
+    expect(at("const issues = isControlledIssueStatus(item.status || \"Issued\");")).toBeLessThan(gate);
+    // the gate precedes the upload and every insert
+    expect(gate).toBeLessThan(at("const uploadResult = await uploadToPath("));
+    expect(gate).toBeLessThan(at('await supabase.from("documents").insert({'));
+    // the first pointer write is checked (error + rows) and throws into the batch report
+    const ptr = at('.from("documents").update({ current_version_id: newVersion.id }).eq("id", newDoc.id).select("id");');
+    expect(at("if (ptrErr || !promoted || promoted.length === 0) {")).toBeGreaterThan(ptr);
+    // the creation record carries the decision; the clocks follow the checked write
+    const rec = at('action: "DOCUMENT_CREATED",');
+    expect(body).toMatch(/initialStatus: status, reviewPolicyMode: gate\?\.mode \?\? null, reviewPolicy: gate\?\.recorded \?\? null,/);
+    const clocks = at("await startIssuedDocumentClocks({ orgId: activeOrgId, documentId: newDoc.id, actorUserId: uid, actorName: userEmail ?? null });");
+    expect(rec).toBeGreaterThan(ptr);
+    expect(clocks).toBeGreaterThan(rec);
+    expect(body).toMatch(/if \(issues\) \{\s*await startIssuedDocumentClocks\(/);
+    // a refused creation record is reported with the batch, never dropped
+    expect(page).toMatch(/if \(creationAuditFailures\.length > 0\) \{\s*notes\.push\(`The creation record of/);
+  });
+});
+
+describe("REV-15 / REV-17 — which statuses ISSUE a first revision (one predicate the app and the database share)", () => {
+  it("work in progress and the not-current statuses do not; everything else does", async () => {
+    const { isControlledIssueStatus, WORK_IN_PROGRESS_STATUSES } = await import("@/lib/revisions");
+    const { NOT_CURRENT_STATUSES } = await import("@/lib/aiBoundary");
+    expect([...WORK_IN_PROGRESS_STATUSES]).toEqual(["Draft", "In Review"]);
+    for (const s of ["Draft", "In Review", ...NOT_CURRENT_STATUSES]) expect(isControlledIssueStatus(s), s).toBe(false);
+    for (const s of ["Issued", "IFC", "Locked", "Approved for Construction", "", null, undefined]) expect(isControlledIssueStatus(s), String(s)).toBe(true);
+  });
+});

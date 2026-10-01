@@ -12,6 +12,7 @@ import {
   voidPendingDraftAfterPublish,
   revokeLiveSharesForDocument,
   writeSupersessionLineage,
+  startIssuedDocumentClocks,
   type CreationStatus,
 } from "@/lib/revisions";
 import type { AssetTag } from "@/types/schema";
@@ -167,6 +168,28 @@ export async function sha256Hex(file: File): Promise<string> {
   return Array.from(new Uint8Array(digest))
     .map((b) => b.toString(16).padStart(2, "0"))
     .join("");
+}
+
+/** REV-15: start the compliance clocks of the documents a split / merge just
+ *  ISSUED — startIssuedDocumentClocks, the one call createDocumentWithFile
+ *  makes for an issued first revision. The CALLER runs it only after its
+ *  saga has committed (the acknowledgment roster notifies people, so it is
+ *  never opened for a sheet a rollback would archive) — which is why
+ *  createNewDocWithFirstVersion, inside the saga, does not. A clock that
+ *  fails to start leaves the operation standing (it is irreversible by then)
+ *  and is returned per document for the caller's result — never swallowed. */
+export async function startClocksForIssuedDocuments(documentIds: string[], actor: ActorContext): Promise<string[]> {
+  const warnings: string[] = [];
+  for (const documentId of documentIds) {
+    try {
+      await startIssuedDocumentClocks({ orgId: actor.orgId, documentId, actorUserId: actor.actorUserId, actorName: actor.actorEmail ?? null });
+    } catch (e) {
+      const msg = `The review clock / acknowledgment roster of document ${documentId} did not start (${(e as Error).message}); Document Control can set it from the document.`;
+      console.warn(`[documentLifecycle] ${msg}`);
+      warnings.push(msg);
+    }
+  }
+  return warnings;
 }
 
 /** Insert a brand-new document row + first version row + set

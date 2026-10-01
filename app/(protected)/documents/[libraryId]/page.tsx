@@ -2496,10 +2496,25 @@ export default function LibraryExplorerPage() {
       });
 
       // ── Upload + insert one file ─────────────────────────────────
+      // DOCUMENT_CREATED rows the audit table refused (those files landed).
+      const creationAuditFailures: string[] = [];
       const uploadOne = async (entry: { item: StagedItem; docNumber: string }) => {
         const { item, docNumber } = entry;
         const file = item.file;
         const subPath = pathByFile.get(file) ?? [];
+        // REV-15 / REV-17 / DEC-63 §2: a first revision born in a controlled
+        // status ISSUES it. In a library whose policy requires sign-off only a
+        // controller may (the database refuses anyone else's first pointer
+        // write) — asked BEFORE anything is uploaded or inserted, so a refusal
+        // leaves nothing half-created; the decision goes on the creation record.
+        const { isControlledIssueStatus, resolveCreationReviewGate, startIssuedDocumentClocks } = await import("@/lib/revisions");
+        const issues = isControlledIssueStatus(item.status || "Issued");
+        const gate = issues
+          ? await resolveCreationReviewGate({
+              libraryId, collectionId: targetFolderFor(file), what: docNumber,
+              actor: { orgId: activeOrgId, actorUserId: uid, actorRole: activeRole ?? undefined },
+            })
+          : null;
         // PKG-3: salted per-upload name — the raw filename made the key a pure
         // function of (org, library, folder, name), so a second same-named
         // upload silently overwrote the first document's bytes while the
@@ -2570,7 +2585,37 @@ export default function LibraryExplorerPage() {
 
         if (verErr || !newVersion) throw new Error(verErr?.message || "Failed to create document version");
 
-        await supabase.from("documents").update({ current_version_id: newVersion.id }).eq("id", newDoc.id);
+        // Checked, as every first pointer write is: a refusal (the publish
+        // guard) or a zero-row answer fails this file in the batch report —
+        // a document with no current file never reads as uploaded.
+        const { data: promoted, error: ptrErr } = await supabase
+          .from("documents").update({ current_version_id: newVersion.id }).eq("id", newDoc.id).select("id");
+        if (ptrErr || !promoted || promoted.length === 0) {
+          throw new Error(`${docNumber} was created but its file could not be attached (${ptrErr?.message ?? "the write was refused"}) — ask Doc Control to remove it or attach its file.`);
+        }
+        // The creation is on the record — with, for an issue, the review
+        // policy decision and who made it (createDocumentWithFile's row).
+        const { logAuditAction } = await import("@/lib/audit");
+        const { error: creationAuditError } = await logAuditAction({
+          action: "DOCUMENT_CREATED",
+          resourceId: newDoc.id,
+          resourceType: "document",
+          orgId: activeOrgId,
+          userId: uid,
+          userEmail: userEmail ?? undefined,
+          userRole: activeRole ?? undefined,
+          details: {
+            versionId: newVersion.id, documentNumber: docNumber, revisionLabel: item.rev.trim() || "0",
+            initialStatus: status, reviewPolicyMode: gate?.mode ?? null, reviewPolicy: gate?.recorded ?? null,
+            via: "bulk_upload",
+          },
+        });
+        if (creationAuditError) creationAuditFailures.push(`${docNumber} (${creationAuditError})`);
+        // REV-15: an issued first revision starts its review clock and its
+        // read-&-understood roster — the one call createDocumentWithFile makes.
+        if (issues) {
+          await startIssuedDocumentClocks({ orgId: activeOrgId, documentId: newDoc.id, actorUserId: uid, actorName: userEmail ?? null });
+        }
       };
 
       // ── Run in capped-concurrency chunks ──────────────────────────
@@ -2615,6 +2660,9 @@ export default function LibraryExplorerPage() {
       }
       if (notStarted > 0) {
         notes.push(`${notStarted} file${notStarted === 1 ? " was" : "s were"} not started because you stopped the upload.`);
+      }
+      if (creationAuditFailures.length > 0) {
+        notes.push(`The creation record of ${creationAuditFailures.length} uploaded document${creationAuditFailures.length === 1 ? "" : "s"} could not be written: ${creationAuditFailures.slice(0, 3).join("; ")}. Tell Document Control so the record can be completed.`);
       }
       if (failures.length > 0 || notStarted > 0) {
         if (failures.length > 0) {
